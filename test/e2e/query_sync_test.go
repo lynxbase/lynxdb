@@ -12,7 +12,7 @@ import (
 
 func TestE2E_QuerySync_SimpleCount(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
 	result := h.MustQuery(`FROM idx_ssh | STATS count`)
 	requireAggValue(t, result, "count", 2000)
@@ -20,7 +20,7 @@ func TestE2E_QuerySync_SimpleCount(t *testing.T) {
 
 func TestE2E_QuerySync_EventsResult(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
 	result := h.MustQuery(`FROM idx_ssh | HEAD 5`)
 	if result.Type != client.ResultTypeEvents {
@@ -36,7 +36,7 @@ func TestE2E_QuerySync_EventsResult(t *testing.T) {
 
 func TestE2E_QuerySync_AggregateResult(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
 	// Use BIN + STATS BY — does not depend on REX (which is broken, see bugs-e2e.md)
 	// and does not end with HEAD (which changes the result type to "events").
@@ -65,7 +65,7 @@ func TestE2E_QuerySync_AggregateResult(t *testing.T) {
 
 func TestE2E_QueryGet_ReturnsResults(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

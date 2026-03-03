@@ -10,7 +10,7 @@ import (
 
 func TestE2E_QueryAsync_ReturnsJobHandle(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -27,7 +27,7 @@ func TestE2E_QueryAsync_ReturnsJobHandle(t *testing.T) {
 
 func TestE2E_QueryAsync_PollJob_ReturnsResult(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -46,7 +46,7 @@ func TestE2E_QueryAsync_PollJob_ReturnsResult(t *testing.T) {
 
 func TestE2E_QueryAsync_GetJob_CompletedJob_HasStatus(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -76,7 +76,7 @@ func TestE2E_QueryAsync_GetJob_CompletedJob_HasStatus(t *testing.T) {
 
 func TestE2E_QueryAsync_ListJobs_ContainsSubmittedJob(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -108,7 +108,7 @@ func TestE2E_QueryAsync_ListJobs_ContainsSubmittedJob(t *testing.T) {
 
 func TestE2E_QueryAsync_CancelJob(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()

@@ -16,8 +16,8 @@ import (
 // once, then queried many times.
 func TestE2E_QueryCorrectness(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
-	h.IngestFile("idx_openstack", "testdata/OpenStack_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
+	h.IngestFile("idx_openstack", "testdata/logs/OpenStack_2k.log")
 
 	// ─── Category 1: Data Ingestion & Basic Count ───────────────────────
 	t.Run("Ingestion", func(t *testing.T) {

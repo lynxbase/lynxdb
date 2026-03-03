@@ -9,7 +9,7 @@ import (
 
 func TestE2E_Histogram_ReturnsBuckets(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
 	ctx := context.Background()
 	// Use a wide time range to cover all ingested events regardless of their

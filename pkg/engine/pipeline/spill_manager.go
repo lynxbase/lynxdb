@@ -97,9 +97,16 @@ func (m *SpillManager) NewSpillFile(prefix string) (*os.File, error) {
 
 	f, err := os.CreateTemp(m.dir, "lynxdb-spill-"+prefix+"-*.tmp")
 	if err != nil {
-		m.mu.Unlock()
+		if os.IsNotExist(err) {
+			if mkErr := os.MkdirAll(m.dir, 0o700); mkErr == nil {
+				f, err = os.CreateTemp(m.dir, "lynxdb-spill-"+prefix+"-*.tmp")
+			}
+		}
+		if err != nil {
+			m.mu.Unlock()
 
-		return nil, fmt.Errorf("spill_manager: create temp file: %w", err)
+			return nil, fmt.Errorf("spill_manager: create temp file: %w", err)
+		}
 	}
 
 	m.files[f.Name()] = struct{}{}
@@ -147,8 +154,14 @@ func (m *SpillManager) TrackBytes(delta int64) {
 }
 
 // CleanupAll removes all tracked spill files and clears the tracking map.
-// Called during server shutdown as a safety net. Also removes the spill
-// directory itself if it is empty after cleanup.
+// Called during server shutdown or query completion as a safety net.
+//
+// The spill directory itself is intentionally NOT removed because it is a
+// process-wide shared resource (named by PID). Multiple concurrent
+// SpillManager instances may share the same directory. Removing it here
+// would cause "no such file or directory" errors in concurrent callers.
+// Directory cleanup is handled by CleanupOrphans at startup.
+//
 // Nil-safe: no-op on nil receiver.
 func (m *SpillManager) CleanupAll() {
 	if m == nil {
@@ -169,9 +182,6 @@ func (m *SpillManager) CleanupAll() {
 		}
 	}
 	m.totalBytes.Store(0)
-
-	// Best-effort remove the spill directory.
-	os.Remove(m.dir)
 }
 
 // Stats returns a snapshot of the current spill file count and total bytes on disk.

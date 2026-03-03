@@ -13,7 +13,7 @@ import (
 
 func TestE2E_IngestRaw_TextPlain_CountMatches(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
 	result := h.MustQuery(`FROM idx_ssh | STATS count`)
 	requireAggValue(t, result, "count", 2000)
@@ -21,8 +21,8 @@ func TestE2E_IngestRaw_TextPlain_CountMatches(t *testing.T) {
 
 func TestE2E_IngestRaw_MultipleIndexes(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
-	h.IngestFile("idx_openstack", "testdata/OpenStack_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
+	h.IngestFile("idx_openstack", "testdata/logs/OpenStack_2k.log")
 
 	r1 := h.MustQuery(`FROM idx_ssh | STATS count`)
 	requireAggValue(t, r1, "count", 2000)

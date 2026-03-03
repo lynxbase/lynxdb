@@ -46,7 +46,7 @@ func sshEngine(t *testing.T) *storage.Engine {
 	sshOnce.Do(func() {
 		sshEng = storage.NewEphemeralEngine()
 		var err error
-		sshCount, err = sshEng.IngestFile(testdataPath("OpenSSH_2k.log"), storage.IngestOpts{Source: "ssh"})
+		sshCount, err = sshEng.IngestFile(testdataPath("logs/OpenSSH_2k.log"), storage.IngestOpts{Source: "ssh"})
 		if err != nil {
 			t.Fatalf("ingest OpenSSH_2k.log: %v", err)
 		}
@@ -70,7 +70,7 @@ func openstackEngine(t *testing.T) *storage.Engine {
 	openstackOnce.Do(func() {
 		openstackEng = storage.NewEphemeralEngine()
 		var err error
-		openstackCount, err = openstackEng.IngestFile(testdataPath("OpenStack_2k.log"), storage.IngestOpts{Source: "openstack"})
+		openstackCount, err = openstackEng.IngestFile(testdataPath("logs/OpenStack_2k.log"), storage.IngestOpts{Source: "openstack"})
 		if err != nil {
 			t.Fatalf("ingest OpenStack_2k.log: %v", err)
 		}

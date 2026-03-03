@@ -9,7 +9,7 @@ import (
 
 func TestE2E_Fields_ReturnsFieldCatalog(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
 	ctx := context.Background()
 	fields, err := h.Client().Fields(ctx)
@@ -59,7 +59,7 @@ func TestE2E_FieldValues_ReturnsTopValues(t *testing.T) {
 
 func TestE2E_Sources_ReturnsIngestedSources(t *testing.T) {
 	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/OpenSSH_2k.log")
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
 	ctx := context.Background()
 	sources, err := h.Client().Sources(ctx)
