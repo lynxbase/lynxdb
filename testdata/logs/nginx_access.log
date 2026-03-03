@@ -1,0 +1,34 @@
+192.168.1.42 - john.doe [10/Feb/2026:08:12:03 +0000] "GET /api/v2/users/profile HTTP/1.1" 200 1243 "https://app.example.com/dashboard" "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" rt=0.032
+192.168.1.42 - john.doe [10/Feb/2026:08:15:22 +0000] "POST /api/v2/users/settings HTTP/1.1" 200 856 "https://app.example.com/settings" "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" rt=0.045
+10.0.1.50 - stripe-webhook [10/Feb/2026:08:20:01 +0000] "POST /webhooks/stripe HTTP/1.1" 500 142 "-" "Stripe/1.0" rt=5.230
+10.0.1.50 - stripe-webhook [10/Feb/2026:08:20:15 +0000] "POST /webhooks/stripe HTTP/1.1" 500 142 "-" "Stripe/1.0" rt=5.110
+10.0.1.50 - stripe-webhook [10/Feb/2026:08:21:03 +0000] "POST /webhooks/stripe HTTP/1.1" 200 89 "-" "Stripe/1.0" rt=0.087
+192.168.1.55 - maria.garcia [10/Feb/2026:08:30:05 +0000] "GET /api/v2/projects HTTP/1.1" 200 3421 "https://app.example.com/projects" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" rt=0.058
+192.168.1.55 - maria.garcia [10/Feb/2026:08:32:18 +0000] "POST /api/v2/projects HTTP/1.1" 201 567 "https://app.example.com/projects/new" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" rt=0.120
+192.168.1.55 - maria.garcia [10/Feb/2026:08:45:30 +0000] "POST /api/v2/deployments HTTP/1.1" 201 890 "https://app.example.com/deploy" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" rt=0.340
+192.168.1.55 - maria.garcia [10/Feb/2026:09:10:45 +0000] "POST /api/v2/deployments/rollback HTTP/1.1" 200 445 "https://app.example.com/deploy" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" rt=0.210
+203.0.113.77 - - [10/Feb/2026:08:45:01 +0000] "GET /api/v2/users?id=1%20OR%201=1;DROP%20TABLE%20users HTTP/1.1" 400 245 "-" "python-requests/2.28.0" rt=0.003
+203.0.113.77 - - [10/Feb/2026:08:45:15 +0000] "POST /api/v2/login HTTP/1.1" 401 189 "-" "python-requests/2.28.0" rt=0.012
+203.0.113.77 - - [10/Feb/2026:08:45:30 +0000] "POST /api/v2/login HTTP/1.1" 401 189 "-" "python-requests/2.28.0" rt=0.011
+203.0.113.77 - - [10/Feb/2026:08:45:45 +0000] "POST /api/v2/login HTTP/1.1" 401 189 "-" "python-requests/2.28.0" rt=0.010
+203.0.113.77 - - [10/Feb/2026:08:46:00 +0000] "GET /../../etc/passwd HTTP/1.1" 403 156 "-" "python-requests/2.28.0" rt=0.002
+203.0.113.77 - - [10/Feb/2026:08:46:15 +0000] "GET /api/v2/admin/config HTTP/1.1" 403 178 "-" "python-requests/2.28.0" rt=0.005
+203.0.113.77 - - [10/Feb/2026:08:46:30 +0000] "GET /api/v2/users?q=SELECT%20*%20FROM%20users HTTP/1.1" 400 245 "-" "python-requests/2.28.0" rt=0.003
+198.51.100.22 - - [10/Feb/2026:09:00:01 +0000] "POST /api/v2/login HTTP/1.1" 401 189 "-" "curl/7.88.1" rt=0.008
+198.51.100.22 - - [10/Feb/2026:09:00:15 +0000] "POST /api/v2/login HTTP/1.1" 401 189 "-" "curl/7.88.1" rt=0.009
+198.51.100.22 - - [10/Feb/2026:09:00:30 +0000] "GET /../../etc/shadow HTTP/1.1" 403 156 "-" "curl/7.88.1" rt=0.002
+198.51.100.22 - - [10/Feb/2026:09:00:45 +0000] "GET /api/v2/users?filter=1;DROP%20TABLE%20sessions HTTP/1.1" 400 245 "-" "curl/7.88.1" rt=0.003
+198.51.100.22 - - [10/Feb/2026:09:01:00 +0000] "POST /api/v2/login HTTP/1.1" 429 120 "-" "curl/7.88.1" rt=0.001
+192.168.1.60 - alex.kim [10/Feb/2026:09:15:00 +0000] "GET /api/v2/users HTTP/1.1" 200 5670 "https://app.example.com/admin" "Mozilla/5.0 (X11; Linux x86_64)" rt=0.078
+192.168.1.60 - alex.kim [10/Feb/2026:09:30:00 +0000] "PUT /api/v2/users/roles HTTP/1.1" 200 234 "https://app.example.com/admin" "Mozilla/5.0 (X11; Linux x86_64)" rt=0.150
+192.168.1.42 - john.doe [10/Feb/2026:09:45:00 +0000] "GET /api/v2/reports/daily HTTP/1.1" 200 8902 "https://app.example.com/reports" "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" rt=0.250
+192.168.1.42 - john.doe [10/Feb/2026:10:00:00 +0000] "GET /api/v2/analytics HTTP/1.1" 200 12456 "https://app.example.com/analytics" "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" rt=0.180
+192.168.1.70 - sarah.chen [10/Feb/2026:10:15:00 +0000] "GET /api/v2/projects HTTP/1.1" 200 4521 "https://app.example.com/projects" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" rt=0.065
+192.168.1.70 - sarah.chen [10/Feb/2026:10:20:00 +0000] "POST /api/v2/imports/bulk HTTP/1.1" 200 1234 "https://app.example.com/imports" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" rt=1.540
+192.168.1.42 - john.doe [10/Feb/2026:10:30:00 +0000] "GET /api/v2/dashboard HTTP/1.1" 200 6780 "https://app.example.com/" "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" rt=0.095
+192.168.1.55 - maria.garcia [10/Feb/2026:10:45:00 +0000] "GET /api/v2/notifications HTTP/1.1" 200 2341 "https://app.example.com/notifications" "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)" rt=0.043
+203.0.113.77 - - [10/Feb/2026:08:47:00 +0000] "POST /api/v2/login HTTP/1.1" 401 189 "-" "python-requests/2.28.0" rt=0.010
+203.0.113.77 - - [10/Feb/2026:08:47:15 +0000] "POST /api/v2/login HTTP/1.1" 429 120 "-" "python-requests/2.28.0" rt=0.001
+10.0.1.100 - healthcheck [10/Feb/2026:08:00:00 +0000] "GET /health HTTP/1.1" 200 15 "-" "kube-probe/1.27" rt=0.001
+10.0.1.100 - healthcheck [10/Feb/2026:09:00:00 +0000] "GET /health HTTP/1.1" 200 15 "-" "kube-probe/1.27" rt=0.001
+10.0.1.100 - healthcheck [10/Feb/2026:10:00:00 +0000] "GET /health HTTP/1.1" 200 15 "-" "kube-probe/1.27" rt=0.001

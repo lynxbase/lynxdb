@@ -1,0 +1,183 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"strconv"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+// formatBoolPtr formats a *bool as "true", "false", or "" (unset).
+func formatBoolPtr(b *bool) string {
+	if b == nil {
+		return ""
+	}
+
+	return strconv.FormatBool(*b)
+}
+
+// Entry describes a single config value with its source.
+type Entry struct {
+	Key    string
+	Value  string
+	Source string // "default", "config file", "env var", or a CLI flag like "--addr"
+}
+
+// CLIOverride represents a CLI flag that was explicitly set.
+type CLIOverride struct {
+	Key   string // config key, e.g. "listen", "data_dir"
+	Value string // display value
+	Flag  string // the flag name, e.g. "--addr", "--data-dir"
+}
+
+// Entries returns all config entries with their sources for display.
+// ConfigPath is the explicit --config flag value (empty = auto-discover).
+func Entries(configPath string) []Entry {
+	return EntriesWithCLI(configPath, nil)
+}
+
+// EntriesWithCLI returns all config entries with sources, including CLI flag overrides.
+// CLI overrides take highest precedence: CLI > env > config file > default.
+func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
+	dflt := DefaultConfig()
+
+	// Build CLI lookup map.
+	cliMap := make(map[string]CLIOverride, len(cli))
+	for _, o := range cli {
+		cliMap[o.Key] = o
+	}
+
+	// Load file-only config (without env overlays) to detect file sources.
+	path, _ := resolveConfigPath(configPath)
+	var fileCfg Config
+	hasFile := false
+	if path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			if err := yaml.Unmarshal(data, &fileCfg); err == nil {
+				hasFile = true
+			}
+		}
+	}
+
+	// Final config with full precedence (file + env, no CLI).
+	cfg, _, _ := Load(configPath)
+
+	var entries []Entry
+	add := func(key, value, dfltValue, fileValue, envVar string) {
+		// CLI flag takes highest precedence.
+		if o, ok := cliMap[key]; ok {
+			entries = append(entries, Entry{Key: key, Value: o.Value, Source: o.Flag})
+
+			return
+		}
+		source := "default"
+		if os.Getenv(envVar) != "" {
+			source = "env var"
+		} else if hasFile && fileValue != "" && fileValue != dfltValue {
+			source = "config file"
+		}
+		entries = append(entries, Entry{Key: key, Value: value, Source: source})
+	}
+
+	// Top-level.
+	add("listen", cfg.Listen, dflt.Listen, fileCfg.Listen, "LYNXDB_LISTEN")
+	add("data_dir", cfg.DataDir, dflt.DataDir, fileCfg.DataDir, "LYNXDB_DATA_DIR")
+	add("retention", cfg.Retention.String(), dflt.Retention.String(), fileCfg.Retention.String(), "LYNXDB_RETENTION")
+	add("log_level", cfg.LogLevel, dflt.LogLevel, fileCfg.LogLevel, "LYNXDB_LOG_LEVEL")
+
+	// Storage.
+	add("storage.compression", cfg.Storage.Compression, dflt.Storage.Compression, fileCfg.Storage.Compression, "LYNXDB_STORAGE_COMPRESSION")
+	add("storage.row_group_size", fmt.Sprintf("%d", cfg.Storage.RowGroupSize), fmt.Sprintf("%d", dflt.Storage.RowGroupSize), fmt.Sprintf("%d", fileCfg.Storage.RowGroupSize), "LYNXDB_STORAGE_ROW_GROUP_SIZE")
+	add("storage.flush_threshold", cfg.Storage.FlushThreshold.String(), dflt.Storage.FlushThreshold.String(), fileCfg.Storage.FlushThreshold.String(), "LYNXDB_STORAGE_FLUSH_THRESHOLD")
+	add("storage.flush_idle_timeout", cfg.Storage.FlushIdleTimeout.String(), dflt.Storage.FlushIdleTimeout.String(), fileCfg.Storage.FlushIdleTimeout.String(), "LYNXDB_STORAGE_FLUSH_IDLE_TIMEOUT")
+	add("storage.max_columns_per_part", fmt.Sprintf("%d", cfg.Storage.MaxColumnsPerPart), fmt.Sprintf("%d", dflt.Storage.MaxColumnsPerPart), fmt.Sprintf("%d", fileCfg.Storage.MaxColumnsPerPart), "LYNXDB_STORAGE_MAX_COLUMNS_PER_PART")
+	add("storage.partition_by", cfg.Storage.PartitionBy, dflt.Storage.PartitionBy, fileCfg.Storage.PartitionBy, "LYNXDB_STORAGE_PARTITION_BY")
+	add("storage.compaction_interval", cfg.Storage.CompactionInterval.String(), dflt.Storage.CompactionInterval.String(), fileCfg.Storage.CompactionInterval.String(), "LYNXDB_STORAGE_COMPACTION_INTERVAL")
+	add("storage.compaction_workers", fmt.Sprintf("%d", cfg.Storage.CompactionWorkers), fmt.Sprintf("%d", dflt.Storage.CompactionWorkers), fmt.Sprintf("%d", fileCfg.Storage.CompactionWorkers), "LYNXDB_STORAGE_COMPACTION_WORKERS")
+	add("storage.compaction_rate_limit_mb", fmt.Sprintf("%d", cfg.Storage.CompactionRateLimitMB), fmt.Sprintf("%d", dflt.Storage.CompactionRateLimitMB), fmt.Sprintf("%d", fileCfg.Storage.CompactionRateLimitMB), "LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB")
+	add("storage.l0_threshold", fmt.Sprintf("%d", cfg.Storage.L0Threshold), fmt.Sprintf("%d", dflt.Storage.L0Threshold), fmt.Sprintf("%d", fileCfg.Storage.L0Threshold), "LYNXDB_STORAGE_L0_THRESHOLD")
+	add("storage.l1_threshold", fmt.Sprintf("%d", cfg.Storage.L1Threshold), fmt.Sprintf("%d", dflt.Storage.L1Threshold), fmt.Sprintf("%d", fileCfg.Storage.L1Threshold), "LYNXDB_STORAGE_L1_THRESHOLD")
+	add("storage.l2_target_size", cfg.Storage.L2TargetSize.String(), dflt.Storage.L2TargetSize.String(), fileCfg.Storage.L2TargetSize.String(), "LYNXDB_STORAGE_L2_TARGET_SIZE")
+	add("storage.s3_bucket", cfg.Storage.S3Bucket, dflt.Storage.S3Bucket, fileCfg.Storage.S3Bucket, "LYNXDB_STORAGE_S3_BUCKET")
+	add("storage.s3_region", cfg.Storage.S3Region, dflt.Storage.S3Region, fileCfg.Storage.S3Region, "LYNXDB_STORAGE_S3_REGION")
+	add("storage.s3_prefix", cfg.Storage.S3Prefix, dflt.Storage.S3Prefix, fileCfg.Storage.S3Prefix, "LYNXDB_STORAGE_S3_PREFIX")
+	add("storage.s3_endpoint", cfg.Storage.S3Endpoint, dflt.Storage.S3Endpoint, fileCfg.Storage.S3Endpoint, "LYNXDB_STORAGE_S3_ENDPOINT")
+	add("storage.s3_force_path_style", strconv.FormatBool(cfg.Storage.S3ForcePathStyle), strconv.FormatBool(dflt.Storage.S3ForcePathStyle), strconv.FormatBool(fileCfg.Storage.S3ForcePathStyle), "LYNXDB_STORAGE_S3_FORCE_PATH_STYLE")
+	add("storage.tiering_interval", cfg.Storage.TieringInterval.String(), dflt.Storage.TieringInterval.String(), fileCfg.Storage.TieringInterval.String(), "LYNXDB_STORAGE_TIERING_INTERVAL")
+	add("storage.tiering_parallelism", fmt.Sprintf("%d", cfg.Storage.TieringParallelism), fmt.Sprintf("%d", dflt.Storage.TieringParallelism), fmt.Sprintf("%d", fileCfg.Storage.TieringParallelism), "LYNXDB_STORAGE_TIERING_PARALLELISM")
+	add("storage.segment_cache_size", cfg.Storage.SegmentCacheSize.String(), dflt.Storage.SegmentCacheSize.String(), fileCfg.Storage.SegmentCacheSize.String(), "LYNXDB_STORAGE_SEGMENT_CACHE_SIZE")
+	add("storage.cache_max_bytes", cfg.Storage.CacheMaxBytes.String(), dflt.Storage.CacheMaxBytes.String(), fileCfg.Storage.CacheMaxBytes.String(), "LYNXDB_STORAGE_CACHE_MAX_BYTES")
+	add("storage.cache_ttl", cfg.Storage.CacheTTL.String(), dflt.Storage.CacheTTL.String(), fileCfg.Storage.CacheTTL.String(), "LYNXDB_STORAGE_CACHE_TTL")
+
+	// Helper for duration fields.
+	durationEntry := func(key string, val, dfltVal, fileVal time.Duration, envVar string) {
+		add(key, val.String(), dfltVal.String(), fileVal.String(), envVar)
+	}
+
+	// Storage — additional fields.
+	durationEntry("storage.remote_fetch_timeout", cfg.Storage.RemoteFetchTimeout, dflt.Storage.RemoteFetchTimeout, fileCfg.Storage.RemoteFetchTimeout, "LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT")
+
+	// Query.
+	durationEntry("query.sync_timeout", cfg.Query.SyncTimeout, dflt.Query.SyncTimeout, fileCfg.Query.SyncTimeout, "LYNXDB_QUERY_SYNC_TIMEOUT")
+	durationEntry("query.max_query_runtime", cfg.Query.MaxQueryRuntime, dflt.Query.MaxQueryRuntime, fileCfg.Query.MaxQueryRuntime, "LYNXDB_QUERY_MAX_QUERY_RUNTIME")
+	durationEntry("query.job_ttl", cfg.Query.JobTTL, dflt.Query.JobTTL, fileCfg.Query.JobTTL, "LYNXDB_QUERY_JOB_TTL")
+	durationEntry("query.job_gc_interval", cfg.Query.JobGCInterval, dflt.Query.JobGCInterval, fileCfg.Query.JobGCInterval, "LYNXDB_QUERY_JOB_GC_INTERVAL")
+	add("query.max_concurrent", fmt.Sprintf("%d", cfg.Query.MaxConcurrent), fmt.Sprintf("%d", dflt.Query.MaxConcurrent), fmt.Sprintf("%d", fileCfg.Query.MaxConcurrent), "LYNXDB_QUERY_MAX_CONCURRENT")
+	add("query.default_result_limit", fmt.Sprintf("%d", cfg.Query.DefaultResultLimit), fmt.Sprintf("%d", dflt.Query.DefaultResultLimit), fmt.Sprintf("%d", fileCfg.Query.DefaultResultLimit), "LYNXDB_QUERY_DEFAULT_RESULT_LIMIT")
+	add("query.max_result_limit", fmt.Sprintf("%d", cfg.Query.MaxResultLimit), fmt.Sprintf("%d", dflt.Query.MaxResultLimit), fmt.Sprintf("%d", fileCfg.Query.MaxResultLimit), "LYNXDB_QUERY_MAX_RESULT_LIMIT")
+	add("query.max_query_memory_bytes", cfg.Query.MaxQueryMemory.String(), dflt.Query.MaxQueryMemory.String(), fileCfg.Query.MaxQueryMemory.String(), "LYNXDB_QUERY_MAX_QUERY_MEMORY_BYTES")
+	add("query.bitmap_selectivity_threshold", fmt.Sprintf("%.2f", cfg.Query.BitmapSelectivityThreshold), fmt.Sprintf("%.2f", dflt.Query.BitmapSelectivityThreshold), fmt.Sprintf("%.2f", fileCfg.Query.BitmapSelectivityThreshold), "LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD")
+	add("query.global_query_pool_bytes", cfg.Query.GlobalQueryPoolBytes.String(), dflt.Query.GlobalQueryPoolBytes.String(), fileCfg.Query.GlobalQueryPoolBytes.String(), "LYNXDB_QUERY_GLOBAL_QUERY_POOL_BYTES")
+	add("query.spill_dir", cfg.Query.SpillDir, dflt.Query.SpillDir, fileCfg.Query.SpillDir, "LYNXDB_QUERY_SPILL_DIR")
+	add("query.max_temp_dir_size_bytes", cfg.Query.MaxTempDirSizeBytes.String(), dflt.Query.MaxTempDirSizeBytes.String(), fileCfg.Query.MaxTempDirSizeBytes.String(), "LYNXDB_QUERY_MAX_TEMP_DIR_SIZE_BYTES")
+	add("query.dedup_exact", strconv.FormatBool(cfg.Query.DedupExact), strconv.FormatBool(dflt.Query.DedupExact), strconv.FormatBool(fileCfg.Query.DedupExact), "LYNXDB_QUERY_DEDUP_EXACT")
+	add("query.slow_query_threshold_ms", strconv.FormatInt(cfg.Query.SlowQueryThresholdMs, 10), strconv.FormatInt(dflt.Query.SlowQueryThresholdMs, 10), strconv.FormatInt(fileCfg.Query.SlowQueryThresholdMs, 10), "LYNXDB_QUERY_SLOW_QUERY_THRESHOLD_MS")
+	add("query.max_branch_parallelism", strconv.Itoa(cfg.Query.MaxBranchParallelism), strconv.Itoa(dflt.Query.MaxBranchParallelism), strconv.Itoa(fileCfg.Query.MaxBranchParallelism), "LYNXDB_QUERY_MAX_BRANCH_PARALLELISM")
+
+	// Ingest.
+	add("ingest.max_body_size", cfg.Ingest.MaxBodySize.String(), dflt.Ingest.MaxBodySize.String(), fileCfg.Ingest.MaxBodySize.String(), "LYNXDB_INGEST_MAX_BODY_SIZE")
+	add("ingest.max_batch_size", fmt.Sprintf("%d", cfg.Ingest.MaxBatchSize), fmt.Sprintf("%d", dflt.Ingest.MaxBatchSize), fmt.Sprintf("%d", fileCfg.Ingest.MaxBatchSize), "LYNXDB_INGEST_MAX_BATCH_SIZE")
+	add("ingest.fsync", formatBoolPtr(cfg.Ingest.FSync), formatBoolPtr(dflt.Ingest.FSync), formatBoolPtr(fileCfg.Ingest.FSync), "LYNXDB_INGEST_FSYNC")
+	add("ingest.dedup_enabled", strconv.FormatBool(cfg.Ingest.DedupEnabled), strconv.FormatBool(dflt.Ingest.DedupEnabled), strconv.FormatBool(fileCfg.Ingest.DedupEnabled), "LYNXDB_INGEST_DEDUP_ENABLED")
+	add("ingest.dedup_capacity", strconv.Itoa(cfg.Ingest.DedupCapacity), strconv.Itoa(dflt.Ingest.DedupCapacity), strconv.Itoa(fileCfg.Ingest.DedupCapacity), "LYNXDB_INGEST_DEDUP_CAPACITY")
+
+	// HTTP.
+	durationEntry("http.idle_timeout", cfg.HTTP.IdleTimeout, dflt.HTTP.IdleTimeout, fileCfg.HTTP.IdleTimeout, "LYNXDB_HTTP_IDLE_TIMEOUT")
+	durationEntry("http.shutdown_timeout", cfg.HTTP.ShutdownTimeout, dflt.HTTP.ShutdownTimeout, fileCfg.HTTP.ShutdownTimeout, "LYNXDB_HTTP_SHUTDOWN_TIMEOUT")
+	add("http.rate_limit", fmt.Sprintf("%.2f", cfg.HTTP.RateLimit), fmt.Sprintf("%.2f", dflt.HTTP.RateLimit), fmt.Sprintf("%.2f", fileCfg.HTTP.RateLimit), "LYNXDB_HTTP_RATE_LIMIT")
+
+	// Tail.
+	add("tail.max_concurrent_sessions", strconv.Itoa(cfg.Tail.MaxConcurrentSessions), strconv.Itoa(dflt.Tail.MaxConcurrentSessions), strconv.Itoa(fileCfg.Tail.MaxConcurrentSessions), "LYNXDB_TAIL_MAX_CONCURRENT_SESSIONS")
+	durationEntry("tail.max_session_duration", cfg.Tail.MaxSessionDuration, dflt.Tail.MaxSessionDuration, fileCfg.Tail.MaxSessionDuration, "LYNXDB_TAIL_MAX_SESSION_DURATION")
+
+	// TLS.
+	add("tls.enabled", strconv.FormatBool(cfg.TLS.Enabled), strconv.FormatBool(dflt.TLS.Enabled), strconv.FormatBool(fileCfg.TLS.Enabled), "LYNXDB_TLS_ENABLED")
+	add("tls.cert_file", cfg.TLS.CertFile, dflt.TLS.CertFile, fileCfg.TLS.CertFile, "LYNXDB_TLS_CERT_FILE")
+	add("tls.key_file", cfg.TLS.KeyFile, dflt.TLS.KeyFile, fileCfg.TLS.KeyFile, "LYNXDB_TLS_KEY_FILE")
+
+	// Auth.
+	add("auth.enabled", strconv.FormatBool(cfg.Auth.Enabled), strconv.FormatBool(dflt.Auth.Enabled), strconv.FormatBool(fileCfg.Auth.Enabled), "LYNXDB_AUTH_ENABLED")
+
+	// Server.
+	add("server.total_memory_pool_bytes", cfg.Server.TotalMemoryPoolBytes.String(), dflt.Server.TotalMemoryPoolBytes.String(), fileCfg.Server.TotalMemoryPoolBytes.String(), "LYNXDB_SERVER_TOTAL_MEMORY_POOL_BYTES")
+	add("server.cache_reserve_percent", strconv.Itoa(cfg.Server.CacheReservePercent), strconv.Itoa(dflt.Server.CacheReservePercent), strconv.Itoa(fileCfg.Server.CacheReservePercent), "LYNXDB_SERVER_CACHE_RESERVE_PERCENT")
+
+	// Views.
+	add("views.max_backfill_memory_bytes", cfg.Views.MaxBackfillMemoryBytes.String(), dflt.Views.MaxBackfillMemoryBytes.String(), fileCfg.Views.MaxBackfillMemoryBytes.String(), "LYNXDB_VIEWS_MAX_BACKFILL_MEMORY_BYTES")
+	add("views.backfill_backpressure_wait", cfg.Views.BackfillBackpressureWait.String(), dflt.Views.BackfillBackpressureWait.String(), fileCfg.Views.BackfillBackpressureWait.String(), "LYNXDB_VIEWS_BACKFILL_BACKPRESSURE_WAIT")
+	add("views.backfill_max_retries", strconv.Itoa(cfg.Views.BackfillMaxRetries), strconv.Itoa(dflt.Views.BackfillMaxRetries), strconv.Itoa(fileCfg.Views.BackfillMaxRetries), "LYNXDB_VIEWS_BACKFILL_MAX_RETRIES")
+
+	// Buffer Manager.
+	add("buffer_manager.enabled", strconv.FormatBool(cfg.BufferManager.Enabled), strconv.FormatBool(dflt.BufferManager.Enabled), strconv.FormatBool(fileCfg.BufferManager.Enabled), "LYNXDB_BUFFER_MANAGER_ENABLED")
+	add("buffer_manager.max_memory_bytes", cfg.BufferManager.MaxMemoryBytes.String(), dflt.BufferManager.MaxMemoryBytes.String(), fileCfg.BufferManager.MaxMemoryBytes.String(), "LYNXDB_BUFFER_MANAGER_MAX_MEMORY_BYTES")
+	add("buffer_manager.page_size", strconv.Itoa(cfg.BufferManager.PageSize), strconv.Itoa(dflt.BufferManager.PageSize), strconv.Itoa(fileCfg.BufferManager.PageSize), "LYNXDB_BUFFER_MANAGER_PAGE_SIZE")
+	add("buffer_manager.cache_target_percent", strconv.Itoa(cfg.BufferManager.CacheTargetPercent), strconv.Itoa(dflt.BufferManager.CacheTargetPercent), strconv.Itoa(fileCfg.BufferManager.CacheTargetPercent), "LYNXDB_BUFFER_MANAGER_CACHE_TARGET_PERCENT")
+	add("buffer_manager.query_target_percent", strconv.Itoa(cfg.BufferManager.QueryTargetPercent), strconv.Itoa(dflt.BufferManager.QueryTargetPercent), strconv.Itoa(fileCfg.BufferManager.QueryTargetPercent), "LYNXDB_BUFFER_MANAGER_QUERY_TARGET_PERCENT")
+	add("buffer_manager.batcher_target_percent", strconv.Itoa(cfg.BufferManager.BatcherTargetPercent), strconv.Itoa(dflt.BufferManager.BatcherTargetPercent), strconv.Itoa(fileCfg.BufferManager.BatcherTargetPercent), "LYNXDB_BUFFER_MANAGER_BATCHER_TARGET_PERCENT")
+	add("buffer_manager.enable_off_heap", strconv.FormatBool(cfg.BufferManager.EnableOffHeap), strconv.FormatBool(dflt.BufferManager.EnableOffHeap), strconv.FormatBool(fileCfg.BufferManager.EnableOffHeap), "LYNXDB_BUFFER_MANAGER_ENABLE_OFF_HEAP")
+	add("buffer_manager.max_pinned_pages_per_query", strconv.Itoa(cfg.BufferManager.MaxPinnedPagesPerQuery), strconv.Itoa(dflt.BufferManager.MaxPinnedPagesPerQuery), strconv.Itoa(fileCfg.BufferManager.MaxPinnedPagesPerQuery), "LYNXDB_BUFFER_MANAGER_MAX_PINNED_PAGES_PER_QUERY")
+
+	return entries
+}

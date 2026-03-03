@@ -1,0 +1,180 @@
+# .github/workflows/release.yaml
+#
+# Release pipeline for LynxDB
+#
+# Triggered by pushing a version tag (v*).
+# Steps:
+#   1. Build binaries for all platforms via GoReleaser
+#   2. Publish to GitHub Releases with checksums
+#   3. Sync artifacts to CDN (Cloudflare R2)
+#   4. Update manifest.json on CDN
+#   5. Update Homebrew tap
+#   6. Build & push Docker images
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write  # For OIDC signing
+
+env:
+  GO_VERSION: "1.25.4"
+
+jobs:
+  # ── Build & Release ─────────────────────────────────────────────────────
+  goreleaser:
+    name: Build & Publish
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for changelog
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract version metadata
+        id: meta
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Releasing version: $VERSION"
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Upload artifacts for CDN sync
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/checksums.txt
+          retention-days: 5
+
+  # ── CDN Sync (Cloudflare R2) ────────────────────────────────────────────
+  cdn-sync:
+    name: Sync to CDN
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts
+          path: artifacts/
+
+      - name: Install rclone
+        run: |
+          curl -fsSL https://rclone.org/install.sh | sudo bash
+
+      - name: Configure rclone for R2
+        run: |
+          mkdir -p ~/.config/rclone
+          cat > ~/.config/rclone/rclone.conf <<EOF
+          [r2]
+          type = s3
+          provider = Cloudflare
+          access_key_id = ${{ secrets.R2_ACCESS_KEY_ID }}
+          secret_access_key = ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          endpoint = https://${{ secrets.CF_ACCOUNT_ID }}.r2.cloudflarestorage.com
+          acl = private
+          no_check_bucket = true
+          EOF
+
+      - name: Upload artifacts to R2
+        env:
+          VERSION: ${{ needs.goreleaser.outputs.version }}
+        run: |
+          echo "Syncing artifacts for $VERSION to CDN..."
+
+          # Upload versioned artifacts: dl.lynxdb.org/{version}/
+          rclone copy artifacts/ "r2:lynxdb-releases/${VERSION}/" \
+            --include "*.tar.gz" \
+            --include "*.zip" \
+            --include "checksums.txt" \
+            --progress
+
+          echo "Artifacts uploaded to CDN"
+
+      - name: Generate & upload manifest.json
+        env:
+          VERSION: ${{ needs.goreleaser.outputs.version }}
+        run: |
+          # Generate manifest from checksums + artifact list
+          python3 scripts/generate-manifest.py \
+            --version "$VERSION" \
+            --checksums artifacts/checksums.txt \
+            --artifacts-dir artifacts/ \
+            --base-url "https://dl.lynxdb.org" \
+            --output manifest.json
+
+          # Upload manifest to CDN root
+          rclone copyto manifest.json "r2:lynxdb-releases/manifest.json"
+
+          # Also keep a versioned copy
+          rclone copyto manifest.json "r2:lynxdb-releases/${VERSION}/manifest.json"
+
+          echo "Manifest updated on CDN"
+
+      - name: Upload install.sh to CDN
+        run: |
+          rclone copyto scripts/install.sh "r2:lynxdb-releases/install.sh"
+          echo "install.sh updated on CDN"
+
+      - name: Verify CDN artifacts
+        env:
+          VERSION: ${{ needs.goreleaser.outputs.version }}
+        run: |
+          echo "Verifying CDN artifacts..."
+          # Verify manifest is accessible
+          curl -fsSL "https://dl.lynxdb.org/manifest.json" | python3 -m json.tool
+          # Verify install.sh is accessible
+          curl -fsSL "https://dl.lynxdb.org/install.sh" | head -5
+          echo "CDN verification passed"
+
+  # ── Update install.sh on lynxdb.org ─────────────────────────────────────
+  update-website:
+    name: Update Website
+    needs: [goreleaser, cdn-sync]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger website deploy
+        run: |
+          # If lynxdb.org is on Cloudflare Pages / Vercel / Netlify,
+          # trigger a redeploy or update the install.sh redirect
+          curl -fsSL -X POST \
+            -H "Authorization: Bearer ${{ secrets.CF_PAGES_TOKEN }}" \
+            "https://api.cloudflare.com/client/v4/accounts/${{ secrets.CF_ACCOUNT_ID }}/pages/projects/lynxdb-org/deployments" \
+            || echo "Website deploy trigger skipped (optional)"

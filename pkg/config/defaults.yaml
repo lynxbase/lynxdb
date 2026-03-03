@@ -1,0 +1,117 @@
+# LynxDB Configuration
+# Uncomment and modify values as needed. All values shown are defaults.
+
+# Listen address for the HTTP API server.
+# listen: localhost:3100
+
+# Root data directory. Set to "" for ephemeral in-memory mode.
+# data_dir: ~/.local/share/lynxdb
+
+# Global data retention period. Events older than this are deleted.
+# retention: 7d
+
+# Log level: debug, info, warn, error.
+# log_level: info
+
+# Storage engine configuration.
+# storage:
+#   compression: lz4                 # Block compression: "lz4" or "zstd"
+#   row_group_size: 65536            # Rows per row group in segments
+#   flush_threshold: 512mb           # Batcher flush threshold
+#   flush_idle_timeout: 30s          # Flush batcher after this idle period (0 = disabled)
+#
+#   compaction_interval: 30s         # Compaction check interval
+#   compaction_workers: 2            # Parallel compaction workers
+#   compaction_rate_limit_mb: 100    # Compaction disk bandwidth limit (MB/s)
+#   l0_threshold: 4                  # L0->L1 compaction trigger
+#   l1_threshold: 4                  # L1->L2 compaction trigger
+#   l2_target_size: 1gb              # Target size for L2 segments
+#
+#   s3_bucket:                       # S3 bucket for warm/cold storage
+#   s3_region: us-east-1             # AWS region
+#   s3_prefix: lynxdb/               # Key prefix in S3
+#   s3_endpoint:                     # S3-compatible endpoint (for MinIO, etc.)
+#   s3_force_path_style: false       # Use path-style addressing
+#
+#   tiering_interval: 5m             # Tier evaluation interval
+#   tiering_parallelism: 3           # Concurrent tier uploads
+#   segment_cache_size: 10gb         # Local disk cache for remote segments
+#   remote_fetch_timeout: 30s        # Timeout for fetching remote segments
+#
+#   cache_max_bytes: 1gb             # Query result cache memory limit
+#   cache_ttl: 5m                    # Query result cache TTL
+
+# Query execution configuration.
+# query:
+#   sync_timeout: 30s                # Max wait for synchronous query completion
+#   max_query_runtime: 5m            # Max query execution time (0 = unlimited)
+#   job_ttl: 5m                      # Completed job retention time
+#   job_gc_interval: 30s             # Job garbage collection interval
+#   max_concurrent: 10               # Max concurrent async queries
+#   default_result_limit: 1000       # Default result row limit
+#   max_result_limit: 50000          # Maximum allowed result row limit
+#   max_query_memory_bytes: 1gb      # Per-query memory budget
+#   bitmap_selectivity_threshold: 0.9  # Skip bitmap when >90% of rows match
+#   global_query_pool_bytes: 0       # Total query memory pool (0 = auto: 25% RAM)
+#   spill_dir:                       # Temp dir for spill files (empty = os.TempDir)
+#   max_temp_dir_size_bytes: 10gb    # Max disk space for spill files (0 = unlimited)
+#   dedup_exact: false               # Use exact string matching for dedup
+#   slow_query_threshold_ms: 1000    # Log slow queries above this threshold (0 = disabled)
+#   max_branch_parallelism: 0        # Max goroutines for branch parallelism (0 = GOMAXPROCS)
+
+# Ingestion configuration.
+# ingest:
+#   max_body_size: 100mb             # Max HTTP request body size
+#   max_batch_size: 1000             # Max events per streaming batch
+
+# HTTP server configuration.
+# http:
+#   idle_timeout: 120s               # HTTP keep-alive idle timeout
+#   shutdown_timeout: 30s            # Graceful shutdown timeout
+#   rate_limit: 0                    # Requests per second (0 = unlimited)
+
+# Live tail session configuration.
+# tail:
+#   max_concurrent_sessions: 100     # Max concurrent tail sessions (0 = unlimited)
+#   max_session_duration: 24h        # Max duration per tail session (0 = unlimited)
+
+# TLS/HTTPS configuration.
+# tls:
+#   enabled: false                   # Enable TLS (auto self-signed if no cert/key)
+#   cert_file:                       # Path to PEM certificate file
+#   key_file:                        # Path to PEM private key file
+
+# Authentication configuration.
+# auth:
+#   enabled: false                   # Enable API key authentication
+
+# Server-level memory pool configuration.
+# server:
+#   total_memory_pool_bytes: 0       # Total memory for queries + cache (0 = auto: 40% RAM)
+#   cache_reserve_percent: 20        # Minimum cache floor as % of pool (0-50)
+
+# Materialized views configuration.
+# views:
+#   max_backfill_memory_bytes: 0     # Memory budget per backfill (0 = auto)
+#   backfill_backpressure_wait: 5s   # Wait time when pool is under pressure
+#   backfill_max_retries: 60         # Max backpressure retries before failing
+
+# Unified buffer manager (Phase 3 — opt-in).
+# buffer_manager:
+#   enabled: false                   # Activate unified buffer manager
+#   max_memory_bytes: 0              # Total buffer pool memory (0 = auto: 80% RAM)
+#   page_size: 65536                 # Page size in bytes (must be power of 2, >= 4096)
+#   cache_target_percent: 60         # Advisory % of pool for segment cache
+#   query_target_percent: 30         # Advisory % of pool for query operators
+#   batcher_target_percent: 10       # Advisory % of pool for batcher
+#   enable_off_heap: true            # Use mmap for page data
+#   max_pinned_pages_per_query: 1024 # Safety limit for pinned pages (0 = no limit)
+
+# Connection profiles for multi-server setups.
+# profiles:
+#   staging:
+#     url: https://staging.example.com:3100
+#     token: ""
+#   production:
+#     url: https://prod.example.com:3100
+#     token: ""

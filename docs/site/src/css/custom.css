@@ -1,0 +1,161 @@
+/**
+ * LynxDB brand colors and global overrides.
+ * Infima CSS framework variables: https://infima.dev/docs/getting-started/introduction
+ */
+
+:root {
+  /* LynxDB brand: deep indigo / electric blue */
+  --ifm-color-primary: #4f46e5;
+  --ifm-color-primary-dark: #4338ca;
+  --ifm-color-primary-darker: #3730a3;
+  --ifm-color-primary-darkest: #312e81;
+  --ifm-color-primary-light: #6366f1;
+  --ifm-color-primary-lighter: #818cf8;
+  --ifm-color-primary-lightest: #a5b4fc;
+
+  --ifm-code-font-size: 95%;
+  --ifm-font-family-monospace: 'JetBrains Mono', 'Fira Code', 'Source Code Pro',
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='dark'] {
+  --ifm-color-primary: #818cf8;
+  --ifm-color-primary-dark: #6366f1;
+  --ifm-color-primary-darker: #4f46e5;
+  --ifm-color-primary-darkest: #4338ca;
+  --ifm-color-primary-light: #a5b4fc;
+  --ifm-color-primary-lighter: #c7d2fe;
+  --ifm-color-primary-lightest: #e0e7ff;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.3);
+}
+
+/* Hero section */
+.hero--lynxdb {
+  background: linear-gradient(135deg, #1e1b4b 0%, #312e81 50%, #4338ca 100%);
+  color: #fff;
+  padding: 4rem 0;
+}
+
+[data-theme='dark'] .hero--lynxdb {
+  background: linear-gradient(135deg, #0f0d24 0%, #1e1b4b 50%, #312e81 100%);
+}
+
+.hero--lynxdb .hero__title {
+  font-size: 3rem;
+  font-weight: 800;
+}
+
+.hero--lynxdb .hero__subtitle {
+  font-size: 1.25rem;
+  opacity: 0.9;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* Terminal mockup */
+.terminal {
+  background: #1a1a2e;
+  border-radius: 8px;
+  padding: 0;
+  max-width: 680px;
+  margin: 2rem auto 0;
+  text-align: left;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.terminal-header {
+  background: #2d2d44;
+  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.terminal-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.terminal-dot--red { background: #ff5f56; }
+.terminal-dot--yellow { background: #ffbd2e; }
+.terminal-dot--green { background: #27c93f; }
+
+.terminal-body {
+  padding: 1rem 1.25rem;
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.875rem;
+  line-height: 1.6;
+  color: #e2e8f0;
+}
+
+.terminal-body .prompt {
+  color: #22d3ee;
+}
+
+.terminal-body .output {
+  color: #94a3b8;
+}
+
+.terminal-body .highlight {
+  color: #a5b4fc;
+}
+
+.terminal-body .success {
+  color: #4ade80;
+}
+
+/* Feature cards */
+.feature-card {
+  padding: 1.5rem;
+  border-radius: 8px;
+  background: var(--ifm-card-background-color);
+  border: 1px solid var(--ifm-color-emphasis-200);
+  height: 100%;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.feature-card:hover {
+  border-color: var(--ifm-color-primary);
+  box-shadow: 0 4px 12px rgba(79, 70, 229, 0.1);
+}
+
+.feature-card h3 {
+  margin-top: 0;
+}
+
+/* Comparison table improvements */
+.comparison-table {
+  overflow-x: auto;
+  margin: 2rem 0;
+}
+
+.comparison-table table {
+  min-width: 700px;
+}
+
+/* Install one-liner */
+.install-block {
+  background: #1a1a2e;
+  border-radius: 8px;
+  padding: 1.25rem 1.5rem;
+  text-align: center;
+  margin: 2rem auto;
+  max-width: 600px;
+}
+
+.install-block code {
+  color: #e2e8f0;
+  font-size: 1rem;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+/* Sidebar refinements */
+.theme-doc-sidebar-menu {
+  font-size: 0.9rem;
+}

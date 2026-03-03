@@ -1,0 +1,98 @@
+# .github/workflows/ci.yaml
+#
+# CI pipeline for LynxDB
+#
+# Runs on every push to main and every pull request targeting main.
+# Jobs:
+#   1. build     — compile + vet (fast gate)
+#   2. test-unit — unit tests with race detector
+#   3. test-e2e  — end-to-end tests (full server harness)
+#   4. test-cli  — CLI integration tests against compiled binary
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25.4"
+
+jobs:
+  # ── Build & Vet (fast gate) ───────────────────────────────────────────────
+  build:
+    name: Build & Vet
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+  # ── Unit Tests ─────────────────────────────────────────────────────────────
+  test-unit:
+    name: Unit Tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run unit tests
+        run: go test ./... -count=1 -timeout 120s -race
+
+  # ── E2E Tests ──────────────────────────────────────────────────────────────
+  test-e2e:
+    name: E2E Tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run E2E tests
+        run: go test -tags e2e -count=1 -timeout 180s ./test/e2e/
+
+  # ── CLI Tests ──────────────────────────────────────────────────────────────
+  test-cli:
+    name: CLI Tests
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build binary
+        run: go build -o lynxdb ./cmd/lynxdb/
+
+      - name: Run CLI tests
+        run: go test -tags clitest -count=1 -timeout 120s ./test/cli/

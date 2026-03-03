@@ -1,0 +1,1000 @@
+Feb 14 00:00:00 prod-db-01 order-svc[6435]: response sent status=300 bytes=4712 from 10.115.87.131
+Feb 14 00:00:00 prod-app-01 search-svc[1248]: TLS handshake completed protocol=TLSv1.2
+Feb 14 00:00:00 prod-app-01 notification-svc[5413]: database query completed rows=%!d(string=session:512a6b49) duration=414ms
+%!(EXTRA int=54)Feb 14 00:00:00 prod-db-01 analytics-svc[7574]: response sent status=300 bytes=2890 from 10.137.179.41
+Feb 14 00:00:00 prod-web-02 analytics-svc[7818]: cache lookup key=session:b7859220 result=hit latency=312ns
+%!(EXTRA int=13)Feb 14 00:00:00 prod-web-02 notification-svc[4173]: compression applied ratio=0.32
+Feb 14 00:00:00 prod-app-01 order-svc[3495]: database query completed rows=%!d(string=session:cded3db3) duration=959ms
+%!(EXTRA int=73)Feb 14 00:00:00 prod-web-02 analytics-svc[8074]: health check target=search-svc status=healthy
+Feb 14 00:00:00 prod-web-01 user-svc[3592]: compression applied ratio=0.17
+Feb 14 00:00:00 prod-app-02 cache-svc[4119]: database query completed rows=%!d(string=session:31584348) duration=378ms
+%!(EXTRA int=33)Feb 14 00:00:01 prod-web-02 cdn-edge[4615]: rate limit bucket=api-default tokens=39
+Feb 14 00:00:01 prod-db-01 auth-svc[8565]: cache lookup key=session:ac8ce8a6 result=hit latency=350ns
+%!(EXTRA int=1)Feb 14 00:00:01 prod-web-02 auth-svc[3821]: cache lookup key=session:f7710e43 result=miss latency=786ns
+%!(EXTRA int=69)Feb 14 00:00:01 prod-web-01 api-gw[4048]: response sent status=300 bytes=2884 from 10.29.99.170
+Feb 14 00:00:01 prod-app-01 analytics-svc[5525]: circuit breaker state=open threshold=21
+Feb 14 00:00:01 prod-web-01 notification-svc[7194]: cache lookup key=session:41d28ec5 result=miss latency=374ns
+%!(EXTRA int=89)Feb 14 00:00:01 prod-app-02 search-svc[9444]: auth token validated user=bob
+Feb 14 00:00:01 prod-db-01 payment-svc[4594]: response sent status=500 bytes=1064 from 10.67.135.235
+Feb 14 00:00:01 prod-web-01 user-svc[5904]: cache lookup key=session:81dbb2b4 result=hit latency=445ns
+%!(EXTRA int=52)Feb 14 00:00:01 prod-app-01 payment-svc[4605]: circuit breaker state=half-open threshold=22
+Feb 14 00:00:02 prod-app-01 cache-svc[2929]: cache lookup key=session:8b5a538a result=miss latency=397ns
+%!(EXTRA int=59)Feb 14 00:00:02 prod-web-02 api-gw[6431]: circuit breaker state=open threshold=56
+Feb 14 00:00:02 prod-web-02 notification-svc[9791]: health check target=user-svc status=degraded
+Feb 14 00:00:02 prod-app-01 api-gw[4954]: request completed status=400 duration=3289ms from 10.49.236.234
+Feb 14 00:00:02 prod-db-01 notification-svc[9317]: compression applied ratio=0.66
+Feb 14 00:00:02 prod-web-02 cdn-edge[4888]: circuit breaker state=open threshold=94
+Feb 14 00:00:02 prod-db-01 auth-svc[9710]: response sent status=500 bytes=3156 from 10.154.121.8
+Feb 14 00:00:02 prod-app-01 auth-svc[7970]: response sent status=300 bytes=1982 from 10.81.49.160
+Feb 14 00:00:02 prod-web-02 auth-svc[7720]: timeout connecting to /user_profile/api from 10.38.139.36
+Feb 14 00:00:02 prod-web-01 notification-svc[4539]: database query completed rows=%!d(string=session:c3db34f3) duration=176ms
+%!(EXTRA int=46)Feb 14 00:00:03 prod-db-01 cdn-edge[7928]: connection refused to /user_service/health from 10.19.67.152
+Feb 14 00:00:03 prod-web-01 cache-svc[3496]: circuit breaker state=closed threshold=2
+Feb 14 00:00:03 prod-web-01 notification-svc[9891]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:00:03 prod-web-02 user-svc[1696]: health check target=order-svc status=degraded
+Feb 14 00:00:03 prod-web-01 cdn-edge[2391]: response sent status=400 bytes=3917 from 10.99.125.31
+Feb 14 00:00:03 prod-web-02 cache-svc[3130]: cache lookup key=session:6ebf879a result=hit latency=551ns
+%!(EXTRA int=16)Feb 14 00:00:03 prod-web-02 auth-svc[1746]: response sent status=200 bytes=717 from 10.111.212.126
+Feb 14 00:00:03 prod-app-02 order-svc[8757]: response sent status=500 bytes=80 from 10.222.81.36
+Feb 14 00:00:03 prod-db-01 order-svc[6697]: auth token validated user=charlie
+Feb 14 00:00:03 prod-web-01 cache-svc[7179]: database query completed rows=%!d(string=session:a8db0d24) duration=686ms
+%!(EXTRA int=17)Feb 14 00:00:04 prod-db-01 order-svc[2710]: upstream retry attempt=4 target=order-svc
+Feb 14 00:00:04 prod-app-02 user-svc[9646]: response sent status=200 bytes=2214 from 10.118.118.229
+Feb 14 00:00:04 prod-app-02 analytics-svc[6765]: TLS handshake completed protocol=TLSv1.2
+Feb 14 00:00:04 prod-web-02 analytics-svc[2019]: response sent status=400 bytes=2744 from 10.159.108.153
+Feb 14 00:00:04 prod-web-02 notification-svc[5284]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:00:04 prod-app-02 order-svc[5808]: cache lookup key=session:163e1d10 result=miss latency=622ns
+%!(EXTRA int=97)Feb 14 00:00:04 prod-app-02 analytics-svc[7341]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:00:04 prod-app-01 notification-svc[1266]: DNS resolved host=api.example.com addr=10.58.176.50 ttl=201s
+Feb 14 00:00:04 prod-web-01 user-svc[9123]: DNS resolved host=api.example.com addr=10.238.194.204 ttl=40s
+Feb 14 00:00:04 prod-web-01 analytics-svc[9201]: request completed status=300 duration=1636ms from 10.36.171.71
+Feb 14 00:00:05 prod-web-01 api-gw[7377]: CORS preflight origin=https://admin.example.com allowed=false
+Feb 14 00:00:05 prod-app-02 auth-svc[8046]: TLS handshake completed protocol=TLSv1.2
+Feb 14 00:00:05 prod-web-02 order-svc[8971]: upstream retry attempt=2 target=user-svc
+Feb 14 00:00:05 prod-db-01 auth-svc[6611]: cache lookup key=session:fa69b00c result=miss latency=322ns
+%!(EXTRA int=56)Feb 14 00:00:05 prod-web-01 analytics-svc[2465]: cache lookup key=session:9062558f result=hit latency=724ns
+%!(EXTRA int=92)Feb 14 00:00:05 prod-web-01 cdn-edge[9595]: request completed status=500 duration=1588ms from 10.9.125.162
+Feb 14 00:00:05 prod-db-01 cdn-edge[4298]: timeout connecting to /user_profile/api from 10.28.69.190
+Feb 14 00:00:05 prod-app-02 user-svc[8735]: circuit breaker state=half-open threshold=78
+Feb 14 00:00:05 prod-web-02 cache-svc[4688]: CORS preflight origin=https://admin.example.com allowed=false
+Feb 14 00:00:05 prod-app-01 auth-svc[9611]: circuit breaker state=half-open threshold=5
+Feb 14 00:00:06 prod-app-02 search-svc[3686]: connection refused to /user_service/health from 10.220.226.205
+Feb 14 00:00:06 prod-app-01 cache-svc[8933]: upstream retry attempt=2 target=auth-svc
+Feb 14 00:00:06 prod-app-02 order-svc[5512]: failed to reach /user_settings/preferences from 10.76.173.1
+Feb 14 00:00:06 prod-app-01 api-gw[7420]: auth token validated user=charlie
+Feb 14 00:00:06 prod-app-02 search-svc[3976]: request completed status=200 duration=4631ms from 10.208.106.198
+Feb 14 00:00:06 prod-db-01 notification-svc[6764]: DNS resolved host=api.example.com addr=10.249.203.145 ttl=267s
+Feb 14 00:00:06 prod-app-02 notification-svc[5481]: connection pool active=19 idle=18 max=100
+Feb 14 00:00:06 prod-web-02 payment-svc[3595]: rate limit bucket=api-default tokens=10
+Feb 14 00:00:06 prod-web-01 cdn-edge[1912]: auth token validated user=charlie
+Feb 14 00:00:06 prod-web-02 cache-svc[6194]: connection pool active=22 idle=15 max=100
+Feb 14 00:00:07 prod-db-01 user-svc[4803]: database query completed rows=%!d(string=session:51855bc8) duration=834ms
+%!(EXTRA int=58)Feb 14 00:00:07 prod-db-01 api-gw[9986]: response sent status=300 bytes=4971 from 10.24.102.249
+Feb 14 00:00:07 prod-db-01 analytics-svc[9752]: timeout connecting to /user_profile/api from 10.168.44.134
+Feb 14 00:00:07 prod-db-01 notification-svc[3740]: connection pool active=39 idle=9 max=100
+Feb 14 00:00:07 prod-app-02 search-svc[8326]: DNS resolved host=api.example.com addr=10.177.253.118 ttl=77s
+Feb 14 00:00:07 prod-web-02 analytics-svc[7244]: upstream retry attempt=5 target=order-svc
+Feb 14 00:00:07 prod-web-01 analytics-svc[1616]: circuit breaker state=half-open threshold=32
+Feb 14 00:00:07 prod-app-02 api-gw[6081]: compression applied ratio=0.55
+Feb 14 00:00:07 prod-db-01 auth-svc[4794]: request completed status=200 duration=4152ms from 10.164.113.179
+Feb 14 00:00:07 prod-web-01 analytics-svc[6026]: database query completed rows=%!d(string=session:4c894cca) duration=927ms
+%!(EXTRA int=39)Feb 14 00:00:08 prod-app-01 payment-svc[9252]: response sent status=200 bytes=1037 from 10.18.136.194
+Feb 14 00:00:08 prod-app-02 search-svc[2366]: cache lookup key=session:151c0bb2 result=hit latency=6ns
+%!(EXTRA int=85)Feb 14 00:00:08 prod-web-01 analytics-svc[7236]: cache lookup key=session:aaeef626 result=hit latency=141ns
+%!(EXTRA int=26)Feb 14 00:00:08 prod-web-01 api-gw[4097]: upstream retry attempt=2 target=cdn-edge
+Feb 14 00:00:08 prod-web-01 user-svc[9628]: cache lookup key=session:af468efd result=miss latency=302ns
+%!(EXTRA int=28)Feb 14 00:00:08 prod-web-02 payment-svc[9135]: DNS resolved host=api.example.com addr=10.117.242.24 ttl=181s
+Feb 14 00:00:08 prod-web-02 api-gw[1410]: database query completed rows=%!d(string=session:a2fb07d0) duration=664ms
+%!(EXTRA int=33)Feb 14 00:00:08 prod-db-01 search-svc[4584]: load balance algo=round_robin target=search-svc
+Feb 14 00:00:08 prod-app-02 payment-svc[2752]: connection refused to /user_service/health from 10.6.17.249
+Feb 14 00:00:08 prod-app-02 cdn-edge[3216]: TLS handshake completed protocol=TLSv1.2
+Feb 14 00:00:09 prod-app-02 analytics-svc[1946]: request completed status=200 duration=555ms from 10.83.42.46
+Feb 14 00:00:09 prod-web-01 cache-svc[6501]: health check target=cache-svc status=healthy
+Feb 14 00:00:09 prod-app-02 cdn-edge[9744]: cache lookup key=session:da775b7a result=miss latency=483ns
+%!(EXTRA int=43)Feb 14 00:00:09 prod-db-01 search-svc[4734]: DNS resolved host=api.example.com addr=10.125.117.98 ttl=179s
+Feb 14 00:00:09 prod-web-01 search-svc[7118]: request completed status=200 duration=1519ms from 10.209.5.118
+Feb 14 00:00:09 prod-app-02 search-svc[9600]: load balance algo=round_robin target=cdn-edge
+Feb 14 00:00:09 prod-db-01 search-svc[3422]: DNS resolved host=api.example.com addr=10.212.188.164 ttl=249s
+Feb 14 00:00:09 prod-app-01 user-svc[5938]: response sent status=300 bytes=788 from 10.249.152.229
+Feb 14 00:00:09 prod-db-01 cdn-edge[6363]: circuit breaker state=closed threshold=88
+Feb 14 00:00:09 prod-app-01 analytics-svc[2544]: auth token validated user=bob
+Feb 14 00:00:10 prod-db-01 user-svc[2657]: request completed status=200 duration=4639ms from 10.191.183.32
+Feb 14 00:00:10 prod-web-01 cache-svc[2328]: cache lookup key=session:63c2462a result=miss latency=820ns
+%!(EXTRA int=84)Feb 14 00:00:10 prod-db-01 analytics-svc[4137]: response sent status=200 bytes=945 from 10.193.67.233
+Feb 14 00:00:10 prod-app-02 cdn-edge[8013]: response sent status=400 bytes=2659 from 10.251.239.183
+Feb 14 00:00:10 prod-db-01 analytics-svc[8296]: connection pool active=0 idle=10 max=100
+Feb 14 00:00:10 prod-db-01 search-svc[3609]: compression applied ratio=0.93
+Feb 14 00:00:10 prod-web-01 search-svc[2955]: connection pool active=19 idle=0 max=100
+Feb 14 00:00:10 prod-web-02 cache-svc[6943]: response sent status=200 bytes=1724 from 10.170.62.216
+Feb 14 00:00:10 prod-web-01 cache-svc[5304]: connection pool active=15 idle=16 max=100
+Feb 14 00:00:10 prod-db-01 order-svc[9602]: TLS handshake completed protocol=TLSv1.2
+Feb 14 00:00:11 prod-app-02 auth-svc[4828]: request completed status=200 duration=3895ms from 10.95.212.177
+Feb 14 00:00:11 prod-web-01 api-gw[4785]: cache lookup key=session:f7639c9d result=miss latency=330ns
+%!(EXTRA int=42)Feb 14 00:00:11 prod-web-02 user-svc[9648]: auth token validated user=alice
+Feb 14 00:00:11 prod-app-01 api-gw[8444]: rate limit bucket=api-default tokens=85
+Feb 14 00:00:11 prod-web-02 auth-svc[1238]: request completed status=300 duration=349ms from 10.40.0.172
+Feb 14 00:00:11 prod-web-02 analytics-svc[5387]: cache lookup key=session:2361f14f result=hit latency=493ns
+%!(EXTRA int=27)Feb 14 00:00:11 prod-db-01 search-svc[6815]: rate limit bucket=api-default tokens=61
+Feb 14 00:00:11 prod-app-02 cache-svc[5103]: request completed status=400 duration=1362ms from 10.103.229.235
+Feb 14 00:00:11 prod-web-01 order-svc[6998]: cache lookup key=session:decf0c0b result=miss latency=897ns
+%!(EXTRA int=39)Feb 14 00:00:11 prod-web-02 notification-svc[6987]: load balance algo=round_robin target=order-svc
+Feb 14 00:00:12 prod-web-02 analytics-svc[9941]: failed to reach /user_settings/preferences from 10.68.164.208
+Feb 14 00:00:12 prod-web-01 analytics-svc[6037]: database query completed rows=%!d(string=session:915d3d9b) duration=872ms
+%!(EXTRA int=33)Feb 14 00:00:12 prod-app-02 payment-svc[7445]: CORS preflight origin=https://app.example.com allowed=false
+Feb 14 00:00:12 prod-web-01 payment-svc[3967]: circuit breaker state=open threshold=37
+Feb 14 00:00:12 prod-web-02 auth-svc[5367]: circuit breaker state=closed threshold=6
+Feb 14 00:00:12 prod-db-01 search-svc[1646]: request completed status=500 duration=535ms from 10.56.34.25
+Feb 14 00:00:12 prod-app-01 user-svc[6800]: rate limit bucket=api-default tokens=52
+Feb 14 00:00:12 prod-web-02 search-svc[5936]: connection pool active=13 idle=12 max=100
+Feb 14 00:00:12 prod-db-01 payment-svc[9136]: load balance algo=round_robin target=cdn-edge
+Feb 14 00:00:12 prod-app-02 search-svc[2835]: load balance algo=round_robin target=notification-svc
+Feb 14 00:00:13 prod-web-01 notification-svc[3180]: health check target=analytics-svc status=degraded
+Feb 14 00:00:13 prod-db-01 notification-svc[4211]: cache lookup key=session:bb28a632 result=miss latency=99ns
+%!(EXTRA int=39)Feb 14 00:00:13 prod-db-01 api-gw[7572]: failed to reach /user_settings/preferences from 10.196.237.208
+Feb 14 00:00:13 prod-app-02 analytics-svc[1051]: cache lookup key=session:39579548 result=hit latency=274ns
+%!(EXTRA int=4)Feb 14 00:00:13 prod-web-02 analytics-svc[5791]: connection pool active=25 idle=7 max=100
+Feb 14 00:00:13 prod-app-02 cache-svc[9022]: connection pool active=22 idle=7 max=100
+Feb 14 00:00:13 prod-app-02 auth-svc[7805]: database query completed rows=%!d(string=session:82763c77) duration=717ms
+%!(EXTRA int=25)Feb 14 00:00:13 prod-app-01 auth-svc[1447]: cache lookup key=session:8ba4d9d1 result=miss latency=582ns
+%!(EXTRA int=72)Feb 14 00:00:13 prod-app-02 analytics-svc[5956]: connection pool active=35 idle=4 max=100
+Feb 14 00:00:13 prod-web-01 cache-svc[2119]: failed to reach /user_settings/preferences from 10.33.58.63
+Feb 14 00:00:14 prod-db-01 user-svc[8226]: cache lookup key=session:26afb96c result=hit latency=805ns
+%!(EXTRA int=95)Feb 14 00:00:14 prod-web-01 search-svc[1149]: auth token validated user=diana
+Feb 14 00:00:14 prod-db-01 search-svc[8158]: failed to reach /user_settings/preferences from 10.56.5.153
+Feb 14 00:00:14 prod-web-02 search-svc[5930]: compression applied ratio=0.44
+Feb 14 00:00:14 prod-web-02 notification-svc[4109]: cache lookup key=session:9a98a0e2 result=hit latency=740ns
+%!(EXTRA int=37)Feb 14 00:00:14 prod-web-01 order-svc[9443]: rate limit bucket=api-default tokens=64
+Feb 14 00:00:14 prod-db-01 order-svc[7678]: response sent status=300 bytes=2189 from 10.84.78.48
+Feb 14 00:00:14 prod-app-02 cdn-edge[5043]: request completed status=400 duration=507ms from 10.141.56.6
+Feb 14 00:00:14 prod-web-02 order-svc[8263]: response sent status=400 bytes=3666 from 10.162.87.143
+Feb 14 00:00:14 prod-app-02 cdn-edge[9309]: payload validated size=63347 bytes
+Feb 14 00:00:15 prod-db-01 order-svc[3021]: request completed status=200 duration=3838ms from 10.138.96.31
+Feb 14 00:00:15 prod-app-01 notification-svc[5456]: load balance algo=round_robin target=user-svc
+Feb 14 00:00:15 prod-app-01 auth-svc[6443]: load balance algo=round_robin target=auth-svc
+Feb 14 00:00:15 prod-app-01 user-svc[2698]: health check target=user-svc status=degraded
+Feb 14 00:00:15 prod-web-01 order-svc[4511]: DNS resolved host=api.example.com addr=10.211.144.155 ttl=65s
+Feb 14 00:00:15 prod-app-01 auth-svc[1877]: cache lookup key=session:17b6874a result=miss latency=684ns
+%!(EXTRA int=11)Feb 14 00:00:15 prod-app-02 payment-svc[7973]: DNS resolved host=api.example.com addr=10.195.249.137 ttl=121s
+Feb 14 00:00:15 prod-web-02 cdn-edge[3114]: database query completed rows=%!d(string=session:7f4b9e2c) duration=608ms
+%!(EXTRA int=60)Feb 14 00:00:15 prod-app-02 api-gw[7997]: database query completed rows=%!d(string=session:a886322a) duration=877ms
+%!(EXTRA int=2)Feb 14 00:00:15 prod-app-02 cdn-edge[4472]: health check target=notification-svc status=unhealthy
+Feb 14 00:00:16 prod-db-01 notification-svc[6996]: load balance algo=round_robin target=order-svc
+Feb 14 00:00:16 prod-app-01 order-svc[7397]: response sent status=500 bytes=3698 from 10.75.184.119
+Feb 14 00:00:16 prod-db-01 user-svc[7212]: DNS resolved host=api.example.com addr=10.212.206.4 ttl=22s
+Feb 14 00:00:16 prod-web-01 notification-svc[1177]: CORS preflight origin=https://app.example.com allowed=false
+Feb 14 00:00:16 prod-web-01 api-gw[6431]: failed to reach /user_settings/preferences from 10.127.234.158
+Feb 14 00:00:16 prod-app-01 cache-svc[3967]: response sent status=400 bytes=2728 from 10.214.108.49
+Feb 14 00:00:16 prod-web-02 cache-svc[5567]: request completed status=200 duration=1818ms from 10.170.138.196
+Feb 14 00:00:16 prod-web-02 user-svc[1888]: cache lookup key=session:5c50ce05 result=hit latency=836ns
+%!(EXTRA int=49)Feb 14 00:00:16 prod-app-01 order-svc[4764]: compression applied ratio=0.60
+Feb 14 00:00:16 prod-web-02 cache-svc[6713]: request completed status=300 duration=226ms from 10.56.201.21
+Feb 14 00:00:17 prod-web-01 search-svc[4975]: response sent status=400 bytes=3536 from 10.153.168.4
+Feb 14 00:00:17 prod-db-01 analytics-svc[8037]: response sent status=200 bytes=1982 from 10.77.128.189
+Feb 14 00:00:17 prod-web-01 user-svc[5135]: rate limit bucket=api-default tokens=3
+Feb 14 00:00:17 prod-web-02 cache-svc[5999]: TLS handshake completed protocol=TLSv1.2
+Feb 14 00:00:17 prod-web-02 cache-svc[1815]: circuit breaker state=open threshold=19
+Feb 14 00:00:17 prod-app-01 user-svc[5388]: health check target=auth-svc status=degraded
+Feb 14 00:00:17 prod-app-02 user-svc[4324]: response sent status=300 bytes=940 from 10.77.89.107
+Feb 14 00:00:17 prod-app-01 cdn-edge[3845]: rate limit bucket=api-default tokens=29
+Feb 14 00:00:17 prod-db-01 analytics-svc[1465]: payload validated size=11413 bytes
+Feb 14 00:00:17 prod-web-02 analytics-svc[8585]: cache lookup key=session:2f407875 result=hit latency=129ns
+%!(EXTRA int=88)Feb 14 00:00:18 prod-app-01 api-gw[3629]: request completed status=300 duration=1466ms from 10.7.30.35
+Feb 14 00:00:18 prod-web-01 notification-svc[8305]: auth token validated user=bob
+Feb 14 00:00:18 prod-app-01 search-svc[6834]: connection pool active=24 idle=4 max=100
+Feb 14 00:00:18 prod-web-02 search-svc[5224]: upstream retry attempt=5 target=payment-svc
+Feb 14 00:00:18 prod-app-02 cdn-edge[5627]: response sent status=200 bytes=2610 from 10.74.182.249
+Feb 14 00:00:18 prod-web-02 cache-svc[8054]: request completed status=200 duration=1054ms from 10.131.9.253
+Feb 14 00:00:18 prod-db-01 search-svc[4940]: load balance algo=round_robin target=notification-svc
+Feb 14 00:00:18 prod-app-02 auth-svc[5346]: compression applied ratio=0.11
+Feb 14 00:00:18 prod-web-02 user-svc[3043]: health check target=analytics-svc status=healthy
+Feb 14 00:00:18 prod-app-01 analytics-svc[4490]: cache lookup key=session:6232e0fc result=miss latency=928ns
+%!(EXTRA int=23)Feb 14 00:00:19 prod-app-02 order-svc[6208]: response sent status=500 bytes=3157 from 10.63.39.198
+Feb 14 00:00:19 prod-web-01 analytics-svc[6883]: load balance algo=round_robin target=user-svc
+Feb 14 00:00:19 prod-web-02 payment-svc[9041]: database query completed rows=%!d(string=session:af058725) duration=937ms
+%!(EXTRA int=58)Feb 14 00:00:19 prod-web-02 search-svc[6802]: payload validated size=85774 bytes
+Feb 14 00:00:19 prod-app-01 api-gw[5907]: DNS resolved host=api.example.com addr=10.27.75.237 ttl=38s
+Feb 14 00:00:19 prod-app-02 order-svc[2490]: response sent status=300 bytes=3225 from 10.68.102.41
+Feb 14 00:00:19 prod-app-02 order-svc[4881]: request completed status=300 duration=3723ms from 10.86.62.94
+Feb 14 00:00:19 prod-db-01 user-svc[1031]: load balance algo=round_robin target=auth-svc
+Feb 14 00:00:19 prod-web-01 auth-svc[1532]: circuit breaker state=closed threshold=21
+Feb 14 00:00:19 prod-db-01 cache-svc[2188]: rate limit bucket=api-default tokens=70
+Feb 14 00:00:20 prod-web-01 search-svc[6088]: CORS preflight origin=https://app.example.com allowed=true
+Feb 14 00:00:20 prod-app-01 order-svc[6672]: load balance algo=round_robin target=notification-svc
+Feb 14 00:00:20 prod-web-01 cache-svc[3312]: cache lookup key=session:22423720 result=hit latency=131ns
+%!(EXTRA int=1)Feb 14 00:00:20 prod-web-01 user-svc[1826]: cache lookup key=session:8e2d5823 result=miss latency=464ns
+%!(EXTRA int=84)Feb 14 00:00:20 prod-db-01 cache-svc[7289]: database query completed rows=%!d(string=session:746bffd3) duration=628ms
+%!(EXTRA int=62)Feb 14 00:00:20 prod-web-01 search-svc[8763]: response sent status=200 bytes=1801 from 10.25.101.77
+Feb 14 00:00:20 prod-app-02 analytics-svc[7588]: connection pool active=28 idle=17 max=100
+Feb 14 00:00:20 prod-db-01 user-svc[3326]: rate limit bucket=api-default tokens=33
+Feb 14 00:00:20 prod-web-01 cache-svc[2170]: CORS preflight origin=https://app.example.com allowed=false
+Feb 14 00:00:20 prod-app-01 auth-svc[1230]: DNS resolved host=api.example.com addr=10.77.70.176 ttl=130s
+Feb 14 00:00:21 prod-web-02 order-svc[4641]: cache lookup key=session:ed8d9535 result=miss latency=113ns
+%!(EXTRA int=70)Feb 14 00:00:21 prod-app-01 search-svc[8663]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:00:21 prod-web-02 analytics-svc[7702]: load balance algo=round_robin target=analytics-svc
+Feb 14 00:00:21 prod-web-02 cdn-edge[4653]: database query completed rows=%!d(string=session:c721506b) duration=113ms
+%!(EXTRA int=99)Feb 14 00:00:21 prod-web-01 order-svc[8016]: response sent status=200 bytes=15 from 10.149.105.5
+Feb 14 00:00:21 prod-app-02 auth-svc[9185]: rate limit bucket=api-default tokens=30
+Feb 14 00:00:21 prod-web-02 api-gw[3035]: request completed status=400 duration=69ms from 10.137.41.52
+Feb 14 00:00:21 prod-web-02 search-svc[9454]: request completed status=400 duration=1898ms from 10.67.241.35
+Feb 14 00:00:21 prod-web-02 analytics-svc[4765]: CORS preflight origin=https://admin.example.com allowed=false
+Feb 14 00:00:21 prod-web-02 notification-svc[1508]: cache lookup key=session:d54b746a result=miss latency=163ns
+%!(EXTRA int=22)Feb 14 00:00:22 prod-app-02 api-gw[1248]: compression applied ratio=0.76
+Feb 14 00:00:22 prod-app-02 analytics-svc[2369]: upstream retry attempt=4 target=cdn-edge
+Feb 14 00:00:22 prod-web-02 cache-svc[3809]: connection refused to /user_service/health from 10.103.78.113
+Feb 14 00:00:22 prod-web-01 payment-svc[7358]: auth token validated user=eve
+Feb 14 00:00:22 prod-web-02 analytics-svc[3771]: request completed status=200 duration=1981ms from 10.54.202.140
+Feb 14 00:00:22 prod-web-01 notification-svc[3451]: request completed status=500 duration=3251ms from 10.186.173.186
+Feb 14 00:00:22 prod-app-01 auth-svc[6123]: timeout connecting to /user_profile/api from 10.12.196.150
+Feb 14 00:00:22 prod-db-01 user-svc[9328]: cache lookup key=session:6c0865ce result=hit latency=751ns
+%!(EXTRA int=44)Feb 14 00:00:22 prod-db-01 auth-svc[9413]: cache lookup key=session:8044d3ab result=miss latency=277ns
+%!(EXTRA int=62)Feb 14 00:00:22 prod-app-01 cdn-edge[1783]: cache lookup key=session:3eb46429 result=hit latency=184ns
+%!(EXTRA int=94)Feb 14 00:00:23 prod-web-01 notification-svc[2027]: CORS preflight origin=https://admin.example.com allowed=true
+Feb 14 00:00:23 prod-app-01 analytics-svc[9763]: compression applied ratio=0.38
+Feb 14 00:00:23 prod-web-01 cache-svc[4113]: database query completed rows=%!d(string=session:dd059619) duration=526ms
+%!(EXTRA int=70)Feb 14 00:00:23 prod-web-01 analytics-svc[7659]: upstream retry attempt=5 target=analytics-svc
+Feb 14 00:00:23 prod-db-01 user-svc[6532]: cache lookup key=session:74b2044f result=miss latency=946ns
+%!(EXTRA int=46)Feb 14 00:00:23 prod-db-01 auth-svc[1169]: compression applied ratio=0.48
+Feb 14 00:00:23 prod-web-02 payment-svc[1477]: response sent status=200 bytes=73 from 10.214.222.118
+Feb 14 00:00:23 prod-web-02 analytics-svc[1935]: request completed status=500 duration=4402ms from 10.125.71.106
+Feb 14 00:00:23 prod-web-02 order-svc[5436]: timeout connecting to /user_profile/api from 10.100.80.237
+Feb 14 00:00:23 prod-app-02 payment-svc[8788]: compression applied ratio=0.27
+Feb 14 00:00:24 prod-db-01 user-svc[5448]: circuit breaker state=open threshold=16
+Feb 14 00:00:24 prod-web-01 user-svc[3484]: response sent status=500 bytes=4541 from 10.248.51.206
+Feb 14 00:00:24 prod-web-01 order-svc[4201]: response sent status=200 bytes=3652 from 10.37.65.214
+Feb 14 00:00:24 prod-web-01 notification-svc[7015]: rate limit bucket=api-default tokens=11
+Feb 14 00:00:24 prod-app-01 auth-svc[5359]: cache lookup key=session:4d90d291 result=miss latency=733ns
+%!(EXTRA int=49)Feb 14 00:00:24 prod-web-02 order-svc[3968]: auth token validated user=charlie
+Feb 14 00:00:24 prod-web-02 user-svc[6610]: request completed status=400 duration=4828ms from 10.33.160.115
+Feb 14 00:00:24 prod-db-01 cache-svc[7240]: payload validated size=22457 bytes
+Feb 14 00:00:24 prod-web-02 user-svc[3031]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:00:24 prod-web-02 order-svc[2859]: cache lookup key=session:d2f7f0ab result=miss latency=155ns
+%!(EXTRA int=11)Feb 14 00:00:25 prod-web-02 analytics-svc[9465]: rate limit bucket=api-default tokens=86
+Feb 14 00:00:25 prod-web-02 cache-svc[2378]: load balance algo=round_robin target=order-svc
+Feb 14 00:00:25 prod-db-01 analytics-svc[7100]: circuit breaker state=half-open threshold=3
+Feb 14 00:00:25 prod-web-02 cdn-edge[8422]: response sent status=200 bytes=2595 from 10.3.94.124
+Feb 14 00:00:25 prod-app-02 payment-svc[7049]: circuit breaker state=half-open threshold=29
+Feb 14 00:00:25 prod-app-02 cache-svc[6455]: request completed status=500 duration=1439ms from 10.108.163.201
+Feb 14 00:00:25 prod-app-02 analytics-svc[4849]: request completed status=200 duration=1641ms from 10.153.234.213
+Feb 14 00:00:25 prod-app-01 notification-svc[3729]: circuit breaker state=open threshold=25
+Feb 14 00:00:25 prod-app-02 order-svc[3182]: request completed status=400 duration=3626ms from 10.207.124.143
+Feb 14 00:00:25 prod-web-01 api-gw[6297]: timeout connecting to /user_profile/api from 10.243.138.101
+Feb 14 00:00:26 prod-app-01 payment-svc[4861]: timeout connecting to /user_profile/api from 10.165.145.50
+Feb 14 00:00:26 prod-app-02 payment-svc[1093]: request completed status=200 duration=4656ms from 10.8.195.153
+Feb 14 00:00:26 prod-web-01 search-svc[7874]: payload validated size=88343 bytes
+Feb 14 00:00:26 prod-web-02 cache-svc[1299]: DNS resolved host=api.example.com addr=10.182.60.65 ttl=251s
+Feb 14 00:00:26 prod-db-01 cdn-edge[8536]: cache lookup key=session:7527dced result=hit latency=721ns
+%!(EXTRA int=41)Feb 14 00:00:26 prod-web-02 user-svc[7714]: rate limit bucket=api-default tokens=34
+Feb 14 00:00:26 prod-db-01 cdn-edge[6543]: compression applied ratio=0.20
+Feb 14 00:00:26 prod-app-02 payment-svc[7825]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:00:26 prod-web-01 cache-svc[8656]: cache lookup key=session:6d6c0d71 result=miss latency=101ns
+%!(EXTRA int=0)Feb 14 00:00:26 prod-web-01 analytics-svc[2933]: cache lookup key=session:a7c5ff49 result=hit latency=52ns
+%!(EXTRA int=27)Feb 14 00:00:27 prod-web-02 payment-svc[7078]: request completed status=200 duration=2403ms from 10.58.165.20
+Feb 14 00:00:27 prod-app-02 order-svc[5302]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:00:27 prod-web-02 auth-svc[1691]: response sent status=400 bytes=193 from 10.160.180.222
+Feb 14 00:00:27 prod-app-01 user-svc[4340]: load balance algo=round_robin target=notification-svc
+Feb 14 00:00:27 prod-web-02 notification-svc[7625]: response sent status=400 bytes=712 from 10.92.148.40
+Feb 14 00:00:27 prod-app-01 order-svc[3573]: database query completed rows=%!d(string=session:424acc76) duration=247ms
+%!(EXTRA int=15)Feb 14 00:00:27 prod-app-01 auth-svc[9918]: connection pool active=14 idle=17 max=100
+Feb 14 00:00:27 prod-web-02 search-svc[1175]: request completed status=200 duration=4907ms from 10.135.201.137
+Feb 14 00:00:27 prod-app-01 search-svc[6832]: response sent status=200 bytes=4438 from 10.218.32.139
+Feb 14 00:00:27 prod-db-01 cdn-edge[3198]: database query completed rows=%!d(string=session:2296744e) duration=261ms
+%!(EXTRA int=97)Feb 14 00:00:28 prod-db-01 order-svc[7109]: failed to reach /user_settings/preferences from 10.200.228.46
+Feb 14 00:00:28 prod-app-01 search-svc[4895]: cache lookup key=session:798d7062 result=miss latency=356ns
+%!(EXTRA int=7)Feb 14 00:00:28 prod-web-02 api-gw[2993]: compression applied ratio=0.73
+Feb 14 00:00:28 prod-app-02 search-svc[1691]: response sent status=500 bytes=1558 from 10.83.74.156
+Feb 14 00:00:28 prod-db-01 analytics-svc[5540]: response sent status=200 bytes=4952 from 10.234.155.218
+Feb 14 00:00:28 prod-web-01 api-gw[9690]: health check target=order-svc status=healthy
+Feb 14 00:00:28 prod-app-02 cache-svc[4423]: rate limit bucket=api-default tokens=51
+Feb 14 00:00:28 prod-db-01 user-svc[3555]: cache lookup key=session:516df0e4 result=miss latency=465ns
+%!(EXTRA int=7)Feb 14 00:00:28 prod-app-01 payment-svc[6391]: response sent status=500 bytes=4674 from 10.157.181.33
+Feb 14 00:00:28 prod-app-01 user-svc[2415]: response sent status=200 bytes=2734 from 10.0.61.208
+Feb 14 00:00:29 prod-web-02 notification-svc[1127]: request completed status=300 duration=2502ms from 10.175.185.52
+Feb 14 00:00:29 prod-db-01 cache-svc[6326]: load balance algo=round_robin target=notification-svc
+Feb 14 00:00:29 prod-app-01 api-gw[8538]: connection pool active=10 idle=15 max=100
+Feb 14 00:00:29 prod-web-02 search-svc[5695]: failed to reach /user_settings/preferences from 10.49.15.104
+Feb 14 00:00:29 prod-web-02 auth-svc[5440]: request completed status=500 duration=1222ms from 10.175.89.2
+Feb 14 00:00:29 prod-web-01 analytics-svc[5764]: TLS handshake completed protocol=TLSv1.2
+Feb 14 00:00:29 prod-web-01 order-svc[7480]: payload validated size=62888 bytes
+Feb 14 00:00:29 prod-db-01 analytics-svc[8616]: auth token validated user=alice
+Feb 14 00:00:29 prod-app-01 notification-svc[7099]: database query completed rows=%!d(string=session:6601a8d3) duration=360ms
+%!(EXTRA int=77)Feb 14 00:00:29 prod-db-01 order-svc[9452]: rate limit bucket=api-default tokens=83
+Feb 14 00:00:30 prod-app-02 cache-svc[8181]: database query completed rows=%!d(string=session:d31c4bed) duration=883ms
+%!(EXTRA int=84)Feb 14 00:00:30 prod-app-01 analytics-svc[9422]: response sent status=400 bytes=1919 from 10.250.56.64
+Feb 14 00:00:30 prod-db-01 payment-svc[4757]: TLS handshake completed protocol=TLSv1.2
+Feb 14 00:00:30 prod-web-01 notification-svc[7277]: connection pool active=30 idle=6 max=100
+Feb 14 00:00:30 prod-web-02 user-svc[3013]: upstream retry attempt=1 target=search-svc
+Feb 14 00:00:30 prod-app-02 cdn-edge[8547]: compression applied ratio=0.13
+Feb 14 00:00:30 prod-app-02 notification-svc[9750]: payload validated size=77396 bytes
+Feb 14 00:00:30 prod-web-02 cache-svc[6951]: response sent status=500 bytes=1084 from 10.202.63.77
+Feb 14 00:00:30 prod-db-01 search-svc[3095]: cache lookup key=session:398bb91a result=hit latency=429ns
+%!(EXTRA int=51)Feb 14 00:00:30 prod-web-01 auth-svc[7746]: circuit breaker state=open threshold=99
+Feb 14 00:00:31 prod-web-01 payment-svc[6773]: request completed status=200 duration=3800ms from 10.32.158.198
+Feb 14 00:00:31 prod-db-01 payment-svc[7463]: payload validated size=94556 bytes
+Feb 14 00:00:31 prod-app-01 cache-svc[2873]: response sent status=500 bytes=4774 from 10.30.53.31
+Feb 14 00:00:31 prod-web-02 auth-svc[1030]: DNS resolved host=api.example.com addr=10.119.83.154 ttl=40s
+Feb 14 00:00:31 prod-app-01 payment-svc[5107]: TLS handshake completed protocol=TLSv1.2
+Feb 14 00:00:31 prod-web-01 user-svc[7884]: request completed status=400 duration=2556ms from 10.247.107.248
+Feb 14 00:00:31 prod-app-02 analytics-svc[8550]: response sent status=400 bytes=2462 from 10.236.202.245
+Feb 14 00:00:31 prod-app-01 user-svc[8174]: response sent status=400 bytes=1176 from 10.28.47.224
+Feb 14 00:00:31 prod-app-01 search-svc[2699]: timeout connecting to /user_profile/api from 10.148.154.18
+Feb 14 00:00:31 prod-db-01 cache-svc[1039]: timeout connecting to /user_profile/api from 10.110.81.91
+Feb 14 00:00:32 prod-app-01 order-svc[2194]: connection pool active=27 idle=11 max=100
+Feb 14 00:00:32 prod-db-01 payment-svc[1288]: upstream retry attempt=5 target=analytics-svc
+Feb 14 00:00:32 prod-web-02 auth-svc[6639]: upstream retry attempt=5 target=auth-svc
+Feb 14 00:00:32 prod-app-01 api-gw[2765]: cache lookup key=session:bad4ee94 result=miss latency=924ns
+%!(EXTRA int=13)Feb 14 00:00:32 prod-app-01 analytics-svc[3736]: circuit breaker state=open threshold=28
+Feb 14 00:00:32 prod-app-01 cache-svc[6341]: cache lookup key=session:e26128b5 result=hit latency=873ns
+%!(EXTRA int=61)Feb 14 00:00:32 prod-web-02 analytics-svc[6163]: health check target=cache-svc status=healthy
+Feb 14 00:00:32 prod-web-01 order-svc[9320]: database query completed rows=%!d(string=session:9a682657) duration=105ms
+%!(EXTRA int=90)Feb 14 00:00:32 prod-app-01 user-svc[1296]: database query completed rows=%!d(string=session:58077084) duration=720ms
+%!(EXTRA int=37)Feb 14 00:00:32 prod-web-01 payment-svc[7509]: payload validated size=69341 bytes
+Feb 14 00:00:33 prod-app-01 cache-svc[7014]: response sent status=400 bytes=830 from 10.15.55.120
+Feb 14 00:00:33 prod-app-02 user-svc[3015]: cache lookup key=session:e28904b5 result=hit latency=736ns
+%!(EXTRA int=5)Feb 14 00:00:33 prod-db-01 payment-svc[1131]: response sent status=400 bytes=4504 from 10.61.118.42
+Feb 14 00:00:33 prod-app-01 analytics-svc[2549]: DNS resolved host=api.example.com addr=10.27.71.214 ttl=3s
+Feb 14 00:00:33 prod-web-02 cache-svc[1472]: cache lookup key=session:2357d57c result=hit latency=355ns
+%!(EXTRA int=51)Feb 14 00:00:33 prod-web-01 api-gw[7774]: rate limit bucket=api-default tokens=16
+Feb 14 00:00:33 prod-db-01 order-svc[9503]: cache lookup key=session:a7082a6d result=hit latency=945ns
+%!(EXTRA int=60)Feb 14 00:00:33 prod-app-01 analytics-svc[9370]: cache lookup key=session:23d5c310 result=hit latency=366ns
+%!(EXTRA int=80)Feb 14 00:00:33 prod-db-01 analytics-svc[7790]: health check target=notification-svc status=healthy
+Feb 14 00:00:33 prod-app-01 search-svc[3052]: request completed status=500 duration=1709ms from 10.51.51.6
+Feb 14 00:00:34 prod-web-01 api-gw[7053]: auth token validated user=charlie
+Feb 14 00:00:34 prod-db-01 auth-svc[9951]: request completed status=200 duration=1721ms from 10.159.179.241
+Feb 14 00:00:34 prod-app-02 payment-svc[4333]: rate limit bucket=api-default tokens=24
+Feb 14 00:00:34 prod-app-01 analytics-svc[9686]: failed to reach /user_settings/preferences from 10.85.177.5
+Feb 14 00:00:34 prod-app-02 cache-svc[5778]: cache lookup key=session:829a7fe0 result=miss latency=924ns
+%!(EXTRA int=17)Feb 14 00:00:34 prod-app-01 api-gw[9766]: cache lookup key=session:9f67d7ae result=miss latency=732ns
+%!(EXTRA int=8)Feb 14 00:00:34 prod-app-01 payment-svc[1244]: cache lookup key=session:4e2d42e0 result=hit latency=750ns
+%!(EXTRA int=3)Feb 14 00:00:34 prod-web-02 api-gw[8436]: health check target=cdn-edge status=degraded
+Feb 14 00:00:34 prod-web-01 user-svc[9815]: connection pool active=46 idle=2 max=100
+Feb 14 00:00:34 prod-web-02 api-gw[5187]: request completed status=300 duration=3401ms from 10.226.184.235
+Feb 14 00:00:35 prod-app-02 order-svc[8116]: connection pool active=26 idle=19 max=100
+Feb 14 00:00:35 prod-db-01 order-svc[8071]: database query completed rows=%!d(string=session:184f6c62) duration=141ms
+%!(EXTRA int=14)Feb 14 00:00:35 prod-app-02 payment-svc[8395]: response sent status=300 bytes=1651 from 10.120.14.187
+Feb 14 00:00:35 prod-web-02 api-gw[5936]: cache lookup key=session:e26118c3 result=hit latency=123ns
+%!(EXTRA int=44)Feb 14 00:00:35 prod-db-01 search-svc[4870]: request completed status=200 duration=519ms from 10.223.43.204
+Feb 14 00:00:35 prod-db-01 user-svc[3578]: cache lookup key=session:22f05341 result=hit latency=503ns
+%!(EXTRA int=14)Feb 14 00:00:35 prod-db-01 order-svc[2643]: auth token validated user=diana
+Feb 14 00:00:35 prod-app-02 auth-svc[5729]: TLS handshake completed protocol=TLSv1.2
+Feb 14 00:00:35 prod-db-01 notification-svc[3864]: request completed status=200 duration=3600ms from 10.179.139.185
+Feb 14 00:00:35 prod-app-02 payment-svc[9671]: request completed status=400 duration=702ms from 10.152.55.221
+Feb 14 00:00:36 prod-web-02 payment-svc[4910]: cache lookup key=session:1aeb1e7a result=miss latency=589ns
+%!(EXTRA int=29)Feb 14 00:00:36 prod-web-01 cache-svc[7381]: compression applied ratio=0.82
+Feb 14 00:00:36 prod-app-01 payment-svc[7094]: cache lookup key=session:33b02c67 result=hit latency=329ns
+%!(EXTRA int=75)Feb 14 00:00:36 prod-db-01 search-svc[6864]: response sent status=200 bytes=2804 from 10.32.91.55
+Feb 14 00:00:36 prod-web-02 cdn-edge[4712]: response sent status=300 bytes=340 from 10.154.170.38
+Feb 14 00:00:36 prod-web-01 cache-svc[9415]: cache lookup key=session:267a7fd4 result=miss latency=70ns
+%!(EXTRA int=63)Feb 14 00:00:36 prod-db-01 auth-svc[6810]: cache lookup key=session:ad3acde1 result=miss latency=490ns
+%!(EXTRA int=66)Feb 14 00:00:36 prod-app-01 analytics-svc[7149]: TLS handshake completed protocol=TLSv1.2
+Feb 14 00:00:36 prod-app-01 cdn-edge[1842]: compression applied ratio=0.14
+Feb 14 00:00:36 prod-db-01 cache-svc[2582]: upstream retry attempt=3 target=user-svc
+Feb 14 00:00:37 prod-web-02 cache-svc[6617]: request completed status=200 duration=1801ms from 10.48.115.35
+Feb 14 00:00:37 prod-app-01 order-svc[9095]: load balance algo=round_robin target=auth-svc
+Feb 14 00:00:37 prod-web-02 cdn-edge[8004]: response sent status=200 bytes=3770 from 10.133.57.73
+Feb 14 00:00:37 prod-app-02 order-svc[4701]: response sent status=200 bytes=4359 from 10.70.53.230
+Feb 14 00:00:37 prod-app-02 search-svc[3553]: load balance algo=round_robin target=search-svc
+Feb 14 00:00:37 prod-app-02 cdn-edge[9184]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:00:37 prod-app-01 auth-svc[3142]: connection refused to /user_service/health from 10.63.64.254
+Feb 14 00:00:37 prod-web-02 cache-svc[1785]: circuit breaker state=half-open threshold=11
+Feb 14 00:00:37 prod-app-01 user-svc[2203]: health check target=order-svc status=unhealthy
+Feb 14 00:00:37 prod-db-01 api-gw[2463]: load balance algo=round_robin target=cdn-edge
+Feb 14 00:00:38 prod-app-01 notification-svc[4465]: request completed status=200 duration=4678ms from 10.90.127.117
+Feb 14 00:00:38 prod-app-01 payment-svc[4193]: response sent status=400 bytes=2188 from 10.186.180.70
+Feb 14 00:00:38 prod-web-02 auth-svc[4689]: circuit breaker state=open threshold=74
+Feb 14 00:00:38 prod-web-01 payment-svc[1206]: rate limit bucket=api-default tokens=48
+Feb 14 00:00:38 prod-web-01 user-svc[7544]: circuit breaker state=half-open threshold=2
+Feb 14 00:00:38 prod-web-01 cache-svc[5447]: cache lookup key=session:d1087b42 result=miss latency=956ns
+%!(EXTRA int=43)Feb 14 00:00:38 prod-web-02 user-svc[3870]: auth token validated user=charlie
+Feb 14 00:00:38 prod-web-01 user-svc[4003]: compression applied ratio=0.44
+Feb 14 00:00:38 prod-web-01 cache-svc[1468]: CORS preflight origin=https://admin.example.com allowed=false
+Feb 14 00:00:38 prod-web-01 cache-svc[3729]: database query completed rows=%!d(string=session:b1c7554c) duration=208ms
+%!(EXTRA int=83)Feb 14 00:00:39 prod-app-02 user-svc[8761]: rate limit bucket=api-default tokens=65
+Feb 14 00:00:39 prod-app-02 search-svc[6865]: CORS preflight origin=https://admin.example.com allowed=true
+Feb 14 00:00:39 prod-app-02 search-svc[7679]: cache lookup key=session:a78af25a result=miss latency=147ns
+%!(EXTRA int=9)Feb 14 00:00:39 prod-app-01 analytics-svc[6604]: auth token validated user=bob
+Feb 14 00:00:39 prod-web-02 notification-svc[9864]: cache lookup key=session:90003eff result=hit latency=547ns
+%!(EXTRA int=75)Feb 14 00:00:39 prod-web-01 analytics-svc[4101]: request completed status=400 duration=4183ms from 10.223.130.175
+Feb 14 00:00:39 prod-web-02 auth-svc[8038]: CORS preflight origin=https://admin.example.com allowed=true
+Feb 14 00:00:39 prod-web-02 cache-svc[6717]: cache lookup key=session:6f6396d8 result=hit latency=195ns
+%!(EXTRA int=75)Feb 14 00:00:39 prod-app-02 api-gw[5876]: response sent status=400 bytes=4804 from 10.170.108.102
+Feb 14 00:00:39 prod-web-02 api-gw[3495]: compression applied ratio=0.65
+Feb 14 00:00:40 prod-web-02 api-gw[3896]: database query completed rows=%!d(string=session:d4a6fc1a) duration=195ms
+%!(EXTRA int=97)Feb 14 00:00:40 prod-web-01 user-svc[5119]: response sent status=300 bytes=2289 from 10.63.106.180
+Feb 14 00:00:40 prod-web-01 cdn-edge[7755]: auth token validated user=alice
+Feb 14 00:00:40 prod-web-01 search-svc[4387]: response sent status=200 bytes=4639 from 10.120.30.149
+Feb 14 00:00:40 prod-web-01 search-svc[2066]: request completed status=500 duration=3603ms from 10.73.228.35
+Feb 14 00:00:40 prod-app-02 user-svc[8785]: compression applied ratio=0.27
+Feb 14 00:00:40 prod-web-02 payment-svc[9748]: connection pool active=3 idle=19 max=100
+Feb 14 00:00:40 prod-db-01 notification-svc[8418]: request completed status=500 duration=149ms from 10.22.187.26
+Feb 14 00:00:40 prod-web-02 api-gw[7188]: DNS resolved host=api.example.com addr=10.49.218.207 ttl=207s
+Feb 14 00:00:40 prod-app-02 cdn-edge[4373]: response sent status=300 bytes=1378 from 10.156.14.14
+Feb 14 00:00:41 prod-db-01 user-svc[6669]: request completed status=200 duration=4476ms from 10.95.201.7
+Feb 14 00:00:41 prod-app-02 search-svc[2103]: health check target=cache-svc status=unhealthy
+Feb 14 00:00:41 prod-app-02 cache-svc[9918]: request completed status=300 duration=1073ms from 10.202.84.123
+Feb 14 00:00:41 prod-app-01 cdn-edge[1868]: health check target=api-gw status=healthy
+Feb 14 00:00:41 prod-db-01 cache-svc[3914]: timeout connecting to /user_profile/api from 10.129.162.188
+Feb 14 00:00:41 prod-web-01 auth-svc[7240]: upstream retry attempt=5 target=auth-svc
+Feb 14 00:00:41 prod-app-02 user-svc[2900]: compression applied ratio=0.55
+Feb 14 00:00:41 prod-web-01 order-svc[4065]: response sent status=200 bytes=896 from 10.51.195.117
+Feb 14 00:00:41 prod-web-01 user-svc[8176]: compression applied ratio=0.87
+Feb 14 00:00:41 prod-app-02 order-svc[4939]: timeout connecting to /user_profile/api from 10.3.222.252
+Feb 14 00:00:42 prod-app-02 cache-svc[8799]: request completed status=500 duration=2815ms from 10.26.2.235
+Feb 14 00:00:42 prod-web-02 cdn-edge[9881]: DNS resolved host=api.example.com addr=10.138.163.22 ttl=154s
+Feb 14 00:00:42 prod-app-02 notification-svc[9833]: cache lookup key=session:cd4dd164 result=miss latency=376ns
+%!(EXTRA int=49)Feb 14 00:00:42 prod-web-01 order-svc[3672]: auth token validated user=diana
+Feb 14 00:00:42 prod-app-02 api-gw[9476]: request completed status=200 duration=1870ms from 10.151.242.90
+Feb 14 00:00:42 prod-db-01 api-gw[3793]: request completed status=200 duration=709ms from 10.253.97.114
+Feb 14 00:00:42 prod-web-01 order-svc[5135]: CORS preflight origin=https://app.example.com allowed=false
+Feb 14 00:00:42 prod-app-01 api-gw[2677]: DNS resolved host=api.example.com addr=10.191.169.246 ttl=193s
+Feb 14 00:00:42 prod-db-01 notification-svc[7136]: response sent status=200 bytes=1270 from 10.248.121.203
+Feb 14 00:00:42 prod-app-02 cdn-edge[7131]: failed to reach /user_settings/preferences from 10.19.161.118
+Feb 14 00:00:43 prod-db-01 analytics-svc[7999]: response sent status=400 bytes=4454 from 10.202.40.29
+Feb 14 00:00:43 prod-web-01 api-gw[5747]: compression applied ratio=0.69
+Feb 14 00:00:43 prod-web-01 analytics-svc[2299]: request completed status=200 duration=379ms from 10.101.4.45
+Feb 14 00:00:43 prod-web-01 notification-svc[1253]: health check target=search-svc status=healthy
+Feb 14 00:00:43 prod-app-01 search-svc[4773]: rate limit bucket=api-default tokens=62
+Feb 14 00:00:43 prod-db-01 order-svc[5026]: response sent status=500 bytes=2116 from 10.179.124.221
+Feb 14 00:00:43 prod-web-01 cache-svc[1963]: compression applied ratio=0.63
+Feb 14 00:00:43 prod-web-02 cdn-edge[7311]: DNS resolved host=api.example.com addr=10.168.166.30 ttl=161s
+Feb 14 00:00:43 prod-app-02 payment-svc[9021]: rate limit bucket=api-default tokens=33
+Feb 14 00:00:43 prod-web-02 search-svc[9416]: cache lookup key=session:f408a2b9 result=hit latency=627ns
+%!(EXTRA int=90)Feb 14 00:00:44 prod-db-01 order-svc[8356]: circuit breaker state=half-open threshold=42
+Feb 14 00:00:44 prod-web-02 cdn-edge[4294]: connection pool active=30 idle=11 max=100
+Feb 14 00:00:44 prod-app-01 api-gw[1160]: payload validated size=55888 bytes
+Feb 14 00:00:44 prod-db-01 search-svc[4769]: cache lookup key=session:9acd3d67 result=hit latency=321ns
+%!(EXTRA int=22)Feb 14 00:00:44 prod-web-02 payment-svc[8931]: response sent status=500 bytes=3168 from 10.237.108.59
+Feb 14 00:00:44 prod-app-01 cache-svc[2379]: response sent status=400 bytes=2882 from 10.232.188.198
+Feb 14 00:00:44 prod-web-02 search-svc[2076]: response sent status=200 bytes=4155 from 10.119.173.48
+Feb 14 00:00:44 prod-db-01 search-svc[6754]: CORS preflight origin=https://app.example.com allowed=true
+Feb 14 00:00:44 prod-web-01 cache-svc[4287]: compression applied ratio=0.98
+Feb 14 00:00:44 prod-web-02 api-gw[3727]: timeout connecting to /user_profile/api from 10.103.186.62
+Feb 14 00:00:45 prod-app-02 order-svc[5169]: cache lookup key=session:4bbd4bbb result=miss latency=193ns
+%!(EXTRA int=49)Feb 14 00:00:45 prod-web-02 cdn-edge[2616]: response sent status=200 bytes=915 from 10.50.100.217
+Feb 14 00:00:45 prod-db-01 search-svc[2054]: response sent status=500 bytes=4968 from 10.167.121.227
+Feb 14 00:00:45 prod-app-01 analytics-svc[7946]: auth token validated user=charlie
+Feb 14 00:00:45 prod-app-02 notification-svc[5245]: response sent status=200 bytes=1975 from 10.251.99.114
+Feb 14 00:00:45 prod-web-01 api-gw[9478]: DNS resolved host=api.example.com addr=10.100.217.91 ttl=225s
+Feb 14 00:00:45 prod-db-01 user-svc[2725]: response sent status=200 bytes=1839 from 10.204.49.216
+Feb 14 00:00:45 prod-db-01 search-svc[6258]: request completed status=200 duration=4986ms from 10.55.253.86
+Feb 14 00:00:45 prod-db-01 order-svc[1811]: compression applied ratio=0.44
+Feb 14 00:00:45 prod-app-02 user-svc[9717]: response sent status=500 bytes=190 from 10.183.148.92
+Feb 14 00:00:46 prod-web-02 api-gw[9507]: connection pool active=22 idle=15 max=100
+Feb 14 00:00:46 prod-app-02 payment-svc[1803]: load balance algo=round_robin target=api-gw
+Feb 14 00:00:46 prod-web-01 payment-svc[8649]: connection pool active=20 idle=8 max=100
+Feb 14 00:00:46 prod-web-02 search-svc[5267]: request completed status=200 duration=1914ms from 10.127.32.35
+Feb 14 00:00:46 prod-db-01 search-svc[3981]: rate limit bucket=api-default tokens=25
+Feb 14 00:00:46 prod-web-01 auth-svc[8608]: cache lookup key=session:d1064e57 result=hit latency=185ns
+%!(EXTRA int=45)Feb 14 00:00:46 prod-web-02 payment-svc[8415]: response sent status=400 bytes=3513 from 10.229.171.241
+Feb 14 00:00:46 prod-web-02 payment-svc[3041]: response sent status=500 bytes=3854 from 10.35.235.240
+Feb 14 00:00:46 prod-app-02 payment-svc[7523]: response sent status=200 bytes=3004 from 10.30.212.143
+Feb 14 00:00:46 prod-web-02 auth-svc[1160]: payload validated size=33333 bytes
+Feb 14 00:00:47 prod-app-01 search-svc[3788]: auth token validated user=diana
+Feb 14 00:00:47 prod-web-01 api-gw[3676]: cache lookup key=session:8bcf65f7 result=miss latency=579ns
+%!(EXTRA int=83)Feb 14 00:00:47 prod-app-02 search-svc[5450]: upstream retry attempt=1 target=cdn-edge
+Feb 14 00:00:47 prod-web-01 payment-svc[9293]: CORS preflight origin=https://admin.example.com allowed=true
+Feb 14 00:00:47 prod-web-02 cache-svc[1243]: auth token validated user=alice
+Feb 14 00:00:47 prod-app-02 notification-svc[1580]: upstream retry attempt=2 target=auth-svc
+Feb 14 00:00:47 prod-app-02 payment-svc[9171]: database query completed rows=%!d(string=session:91b3355d) duration=373ms
+%!(EXTRA int=29)Feb 14 00:00:47 prod-app-02 search-svc[8102]: payload validated size=81780 bytes
+Feb 14 00:00:47 prod-app-01 api-gw[5134]: cache lookup key=session:db49e561 result=hit latency=926ns
+%!(EXTRA int=17)Feb 14 00:00:47 prod-db-01 payment-svc[6116]: connection pool active=49 idle=17 max=100
+Feb 14 00:00:48 prod-app-01 auth-svc[8175]: response sent status=200 bytes=2319 from 10.156.96.155
+Feb 14 00:00:48 prod-app-01 order-svc[5213]: response sent status=500 bytes=1846 from 10.224.198.37
+Feb 14 00:00:48 prod-web-02 notification-svc[8446]: response sent status=300 bytes=1198 from 10.104.200.131
+Feb 14 00:00:48 prod-app-02 user-svc[8482]: auth token validated user=eve
+Feb 14 00:00:48 prod-web-01 auth-svc[1920]: rate limit bucket=api-default tokens=23
+Feb 14 00:00:48 prod-web-02 user-svc[7202]: auth token validated user=diana
+Feb 14 00:00:48 prod-db-01 search-svc[9245]: request completed status=300 duration=131ms from 10.15.125.216
+Feb 14 00:00:48 prod-db-01 api-gw[1700]: response sent status=400 bytes=3352 from 10.129.183.241
+Feb 14 00:00:48 prod-db-01 notification-svc[2336]: connection pool active=13 idle=17 max=100
+Feb 14 00:00:48 prod-web-01 auth-svc[5792]: cache lookup key=session:47b8f539 result=hit latency=937ns
+%!(EXTRA int=62)Feb 14 00:00:49 prod-web-01 user-svc[8164]: compression applied ratio=0.73
+Feb 14 00:00:49 prod-app-02 cache-svc[5532]: cache lookup key=session:526248dc result=miss latency=844ns
+%!(EXTRA int=58)Feb 14 00:00:49 prod-web-01 order-svc[7282]: response sent status=400 bytes=4531 from 10.79.95.77
+Feb 14 00:00:49 prod-web-01 user-svc[6545]: circuit breaker state=half-open threshold=17
+Feb 14 00:00:49 prod-app-02 analytics-svc[1854]: database query completed rows=%!d(string=session:a627090a) duration=624ms
+%!(EXTRA int=87)Feb 14 00:00:49 prod-app-02 search-svc[8361]: upstream retry attempt=5 target=auth-svc
+Feb 14 00:00:49 prod-web-02 cache-svc[1262]: cache lookup key=session:9240cace result=hit latency=377ns
+%!(EXTRA int=77)Feb 14 00:00:49 prod-app-01 search-svc[8615]: health check target=cache-svc status=healthy
+Feb 14 00:00:49 prod-web-01 order-svc[1074]: load balance algo=round_robin target=order-svc
+Feb 14 00:00:49 prod-app-01 notification-svc[2960]: payload validated size=82565 bytes
+Feb 14 00:00:50 prod-web-01 search-svc[6766]: response sent status=200 bytes=711 from 10.30.157.175
+Feb 14 00:00:50 prod-web-02 notification-svc[7518]: cache lookup key=session:e4c6504b result=hit latency=410ns
+%!(EXTRA int=16)Feb 14 00:00:50 prod-web-01 cdn-edge[2428]: response sent status=200 bytes=541 from 10.9.52.139
+Feb 14 00:00:50 prod-web-01 notification-svc[8805]: rate limit bucket=api-default tokens=72
+Feb 14 00:00:50 prod-web-02 user-svc[9403]: cache lookup key=session:afe2aea8 result=miss latency=4ns
+%!(EXTRA int=90)Feb 14 00:00:50 prod-web-01 cdn-edge[1174]: rate limit bucket=api-default tokens=80
+Feb 14 00:00:50 prod-db-01 user-svc[5704]: load balance algo=round_robin target=auth-svc
+Feb 14 00:00:50 prod-web-01 cdn-edge[8601]: load balance algo=round_robin target=user-svc
+Feb 14 00:00:50 prod-web-01 auth-svc[6887]: response sent status=400 bytes=3636 from 10.91.131.48
+Feb 14 00:00:50 prod-db-01 payment-svc[7158]: response sent status=200 bytes=181 from 10.79.40.181
+Feb 14 00:00:51 prod-web-01 cdn-edge[2270]: cache lookup key=session:cc024931 result=hit latency=335ns
+%!(EXTRA int=90)Feb 14 00:00:51 prod-db-01 auth-svc[5807]: auth token validated user=bob
+Feb 14 00:00:51 prod-web-02 api-gw[3579]: auth token validated user=charlie
+Feb 14 00:00:51 prod-web-01 cache-svc[4552]: request completed status=200 duration=510ms from 10.55.203.137
+Feb 14 00:00:51 prod-app-02 payment-svc[6990]: response sent status=400 bytes=3263 from 10.243.29.236
+Feb 14 00:00:51 prod-web-02 analytics-svc[7140]: rate limit bucket=api-default tokens=38
+Feb 14 00:00:51 prod-app-02 order-svc[5016]: connection pool active=41 idle=7 max=100
+Feb 14 00:00:51 prod-db-01 user-svc[1716]: failed to reach /user_settings/preferences from 10.18.122.162
+Feb 14 00:00:51 prod-db-01 payment-svc[3329]: database query completed rows=%!d(string=session:7f8044c0) duration=317ms
+%!(EXTRA int=47)Feb 14 00:00:51 prod-db-01 cache-svc[5722]: compression applied ratio=0.14
+Feb 14 00:00:52 prod-db-01 cdn-edge[8621]: request completed status=300 duration=655ms from 10.0.86.253
+Feb 14 00:00:52 prod-app-02 api-gw[3226]: CORS preflight origin=https://admin.example.com allowed=true
+Feb 14 00:00:52 prod-app-02 search-svc[7144]: request completed status=500 duration=128ms from 10.75.86.223
+Feb 14 00:00:52 prod-web-02 search-svc[4313]: cache lookup key=session:04c9c6a1 result=hit latency=927ns
+%!(EXTRA int=31)Feb 14 00:00:52 prod-db-01 cache-svc[2257]: response sent status=200 bytes=4031 from 10.98.35.190
+Feb 14 00:00:52 prod-web-01 search-svc[9804]: compression applied ratio=0.53
+Feb 14 00:00:52 prod-web-01 auth-svc[2841]: rate limit bucket=api-default tokens=80
+Feb 14 00:00:52 prod-app-02 payment-svc[5590]: database query completed rows=%!d(string=session:8b90177d) duration=612ms
+%!(EXTRA int=4)Feb 14 00:00:52 prod-app-01 notification-svc[9570]: response sent status=200 bytes=4738 from 10.201.48.101
+Feb 14 00:00:52 prod-app-02 auth-svc[7744]: connection pool active=49 idle=9 max=100
+Feb 14 00:00:53 prod-app-01 notification-svc[2688]: CORS preflight origin=https://app.example.com allowed=false
+Feb 14 00:00:53 prod-web-02 payment-svc[7710]: request completed status=300 duration=1965ms from 10.146.87.106
+Feb 14 00:00:53 prod-app-01 api-gw[6434]: upstream retry attempt=4 target=notification-svc
+Feb 14 00:00:53 prod-app-02 order-svc[6769]: auth token validated user=diana
+Feb 14 00:00:53 prod-app-01 search-svc[4579]: compression applied ratio=0.97
+Feb 14 00:00:53 prod-app-01 cache-svc[7906]: cache lookup key=session:085f445d result=hit latency=27ns
+%!(EXTRA int=73)Feb 14 00:00:53 prod-web-01 order-svc[3513]: request completed status=200 duration=527ms from 10.91.204.15
+Feb 14 00:00:53 prod-web-01 user-svc[8267]: request completed status=300 duration=1101ms from 10.120.238.216
+Feb 14 00:00:53 prod-web-01 payment-svc[6546]: cache lookup key=session:a1a2a728 result=miss latency=521ns
+%!(EXTRA int=78)Feb 14 00:00:53 prod-db-01 order-svc[9725]: request completed status=200 duration=2130ms from 10.68.26.121
+Feb 14 00:00:54 prod-db-01 cache-svc[2455]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:00:54 prod-web-01 auth-svc[9262]: response sent status=200 bytes=3589 from 10.63.14.166
+Feb 14 00:00:54 prod-web-01 cdn-edge[1827]: DNS resolved host=api.example.com addr=10.164.51.29 ttl=220s
+Feb 14 00:00:54 prod-db-01 cache-svc[1721]: database query completed rows=%!d(string=session:3bda93aa) duration=63ms
+%!(EXTRA int=61)Feb 14 00:00:54 prod-web-01 search-svc[1496]: auth token validated user=charlie
+Feb 14 00:00:54 prod-web-02 auth-svc[2926]: rate limit bucket=api-default tokens=24
+Feb 14 00:00:54 prod-app-02 user-svc[6404]: request completed status=500 duration=811ms from 10.156.209.21
+Feb 14 00:00:54 prod-web-02 auth-svc[3712]: rate limit bucket=api-default tokens=28
+Feb 14 00:00:54 prod-web-02 notification-svc[1699]: connection pool active=43 idle=15 max=100
+Feb 14 00:00:54 prod-web-02 auth-svc[8820]: database query completed rows=%!d(string=session:151b35a3) duration=598ms
+%!(EXTRA int=13)Feb 14 00:00:55 prod-app-01 user-svc[5869]: cache lookup key=session:9d3839a9 result=miss latency=841ns
+%!(EXTRA int=6)Feb 14 00:00:55 prod-db-01 notification-svc[7554]: upstream retry attempt=3 target=user-svc
+Feb 14 00:00:55 prod-web-02 cdn-edge[3319]: DNS resolved host=api.example.com addr=10.22.143.205 ttl=134s
+Feb 14 00:00:55 prod-db-01 api-gw[8835]: request completed status=300 duration=2410ms from 10.52.97.98
+Feb 14 00:00:55 prod-web-02 cdn-edge[3187]: rate limit bucket=api-default tokens=55
+Feb 14 00:00:55 prod-web-01 payment-svc[2921]: timeout connecting to /user_profile/api from 10.74.8.15
+Feb 14 00:00:55 prod-web-02 cache-svc[1061]: database query completed rows=%!d(string=session:58bb5e60) duration=647ms
+%!(EXTRA int=16)Feb 14 00:00:55 prod-web-02 api-gw[7038]: request completed status=400 duration=4750ms from 10.243.116.58
+Feb 14 00:00:55 prod-app-01 order-svc[4617]: failed to reach /user_settings/preferences from 10.206.30.38
+Feb 14 00:00:55 prod-app-02 analytics-svc[4113]: upstream retry attempt=1 target=payment-svc
+Feb 14 00:00:56 prod-web-02 cdn-edge[7483]: health check target=user-svc status=healthy
+Feb 14 00:00:56 prod-app-02 notification-svc[2051]: load balance algo=round_robin target=notification-svc
+Feb 14 00:00:56 prod-db-01 search-svc[4387]: cache lookup key=session:23f4a158 result=miss latency=996ns
+%!(EXTRA int=26)Feb 14 00:00:56 prod-db-01 payment-svc[3022]: connection pool active=30 idle=12 max=100
+Feb 14 00:00:56 prod-db-01 user-svc[7945]: payload validated size=60705 bytes
+Feb 14 00:00:56 prod-web-02 cache-svc[3138]: cache lookup key=session:e44b9a32 result=miss latency=141ns
+%!(EXTRA int=2)Feb 14 00:00:56 prod-web-02 notification-svc[8767]: failed to reach /user_settings/preferences from 10.43.124.98
+Feb 14 00:00:56 prod-app-01 auth-svc[9006]: DNS resolved host=api.example.com addr=10.206.170.65 ttl=227s
+Feb 14 00:00:56 prod-web-01 cdn-edge[5542]: request completed status=400 duration=3218ms from 10.87.130.221
+Feb 14 00:00:56 prod-web-02 cdn-edge[2434]: response sent status=300 bytes=1850 from 10.138.21.221
+Feb 14 00:00:57 prod-app-01 order-svc[3352]: database query completed rows=%!d(string=session:572be76d) duration=380ms
+%!(EXTRA int=85)Feb 14 00:00:57 prod-web-02 order-svc[9206]: DNS resolved host=api.example.com addr=10.107.158.233 ttl=62s
+Feb 14 00:00:57 prod-db-01 analytics-svc[2998]: connection pool active=41 idle=17 max=100
+Feb 14 00:00:57 prod-web-01 analytics-svc[1363]: request completed status=300 duration=1925ms from 10.115.136.147
+Feb 14 00:00:57 prod-web-01 order-svc[9601]: rate limit bucket=api-default tokens=54
+Feb 14 00:00:57 prod-app-02 auth-svc[5681]: DNS resolved host=api.example.com addr=10.92.168.51 ttl=290s
+Feb 14 00:00:57 prod-app-02 order-svc[8849]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:00:57 prod-web-02 analytics-svc[3866]: response sent status=300 bytes=3501 from 10.10.64.176
+Feb 14 00:00:57 prod-web-02 payment-svc[3166]: payload validated size=6042 bytes
+Feb 14 00:00:57 prod-app-02 analytics-svc[2184]: circuit breaker state=half-open threshold=53
+Feb 14 00:00:58 prod-web-02 order-svc[3769]: response sent status=200 bytes=2984 from 10.190.121.234
+Feb 14 00:00:58 prod-web-02 api-gw[8938]: compression applied ratio=0.69
+Feb 14 00:00:58 prod-web-01 api-gw[8054]: response sent status=200 bytes=4910 from 10.34.111.127
+Feb 14 00:00:58 prod-db-01 search-svc[9171]: rate limit bucket=api-default tokens=45
+Feb 14 00:00:58 prod-web-01 user-svc[8685]: DNS resolved host=api.example.com addr=10.106.23.161 ttl=18s
+Feb 14 00:00:58 prod-web-02 analytics-svc[4292]: cache lookup key=session:094b71a9 result=hit latency=836ns
+%!(EXTRA int=21)Feb 14 00:00:58 prod-db-01 analytics-svc[3169]: load balance algo=round_robin target=notification-svc
+Feb 14 00:00:58 prod-app-01 user-svc[2944]: cache lookup key=session:ffd417bf result=hit latency=366ns
+%!(EXTRA int=31)Feb 14 00:00:58 prod-web-01 cache-svc[5352]: circuit breaker state=closed threshold=56
+Feb 14 00:00:58 prod-web-01 user-svc[8518]: connection refused to /user_service/health from 10.25.154.194
+Feb 14 00:00:59 prod-web-02 api-gw[8377]: connection pool active=44 idle=14 max=100
+Feb 14 00:00:59 prod-app-01 cdn-edge[1135]: request completed status=300 duration=2825ms from 10.161.255.68
+Feb 14 00:00:59 prod-app-01 api-gw[3151]: connection refused to /user_service/health from 10.145.152.228
+Feb 14 00:00:59 prod-app-01 api-gw[7757]: response sent status=200 bytes=2451 from 10.13.58.72
+Feb 14 00:00:59 prod-web-02 payment-svc[5134]: cache lookup key=session:2715ef19 result=miss latency=930ns
+%!(EXTRA int=92)Feb 14 00:00:59 prod-app-01 payment-svc[2531]: DNS resolved host=api.example.com addr=10.80.243.133 ttl=31s
+Feb 14 00:00:59 prod-web-01 order-svc[9998]: cache lookup key=session:6fd714fe result=hit latency=522ns
+%!(EXTRA int=79)Feb 14 00:00:59 prod-db-01 user-svc[9681]: request completed status=400 duration=4631ms from 10.244.243.226
+Feb 14 00:00:59 prod-db-01 payment-svc[4113]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:00:59 prod-db-01 order-svc[9799]: response sent status=400 bytes=4730 from 10.81.128.65
+Feb 14 00:01:00 prod-db-01 cache-svc[8138]: TLS handshake completed protocol=TLSv1.2
+Feb 14 00:01:00 prod-app-02 cache-svc[2483]: connection pool active=12 idle=6 max=100
+Feb 14 00:01:00 prod-web-02 analytics-svc[8564]: rate limit bucket=api-default tokens=32
+Feb 14 00:01:00 prod-web-02 cache-svc[1111]: cache lookup key=session:15614672 result=miss latency=692ns
+%!(EXTRA int=51)Feb 14 00:01:00 prod-app-01 order-svc[7246]: connection pool active=4 idle=2 max=100
+Feb 14 00:01:00 prod-web-01 analytics-svc[5272]: circuit breaker state=open threshold=52
+Feb 14 00:01:00 prod-db-01 search-svc[3440]: CORS preflight origin=https://admin.example.com allowed=true
+Feb 14 00:01:00 prod-web-01 notification-svc[3478]: load balance algo=round_robin target=api-gw
+Feb 14 00:01:00 prod-web-02 user-svc[1464]: response sent status=300 bytes=2355 from 10.237.186.223
+Feb 14 00:01:00 prod-app-02 order-svc[1016]: payload validated size=91441 bytes
+Feb 14 00:01:01 prod-app-01 analytics-svc[9753]: CORS preflight origin=https://app.example.com allowed=true
+Feb 14 00:01:01 prod-app-01 cache-svc[6560]: auth token validated user=charlie
+Feb 14 00:01:01 prod-web-02 order-svc[3687]: payload validated size=67243 bytes
+Feb 14 00:01:01 prod-db-01 cache-svc[5115]: payload validated size=37914 bytes
+Feb 14 00:01:01 prod-db-01 cdn-edge[2106]: database query completed rows=%!d(string=session:c0faf051) duration=563ms
+%!(EXTRA int=42)Feb 14 00:01:01 prod-web-01 search-svc[5172]: request completed status=300 duration=4927ms from 10.147.8.200
+Feb 14 00:01:01 prod-app-01 api-gw[9306]: load balance algo=round_robin target=search-svc
+Feb 14 00:01:01 prod-db-01 notification-svc[3019]: DNS resolved host=api.example.com addr=10.66.199.250 ttl=52s
+Feb 14 00:01:01 prod-web-01 user-svc[4706]: upstream retry attempt=4 target=payment-svc
+Feb 14 00:01:01 prod-app-02 order-svc[7313]: response sent status=200 bytes=1183 from 10.54.194.248
+Feb 14 00:01:02 prod-web-02 cdn-edge[7952]: load balance algo=round_robin target=order-svc
+Feb 14 00:01:02 prod-app-01 analytics-svc[6088]: cache lookup key=session:af3f4340 result=miss latency=541ns
+%!(EXTRA int=82)Feb 14 00:01:02 prod-web-02 order-svc[3855]: CORS preflight origin=https://admin.example.com allowed=true
+Feb 14 00:01:02 prod-web-01 notification-svc[3922]: CORS preflight origin=https://admin.example.com allowed=false
+Feb 14 00:01:02 prod-web-02 order-svc[7260]: response sent status=500 bytes=187 from 10.242.53.25
+Feb 14 00:01:02 prod-db-01 order-svc[9207]: database query completed rows=%!d(string=session:daa8fe65) duration=272ms
+%!(EXTRA int=97)Feb 14 00:01:02 prod-web-02 analytics-svc[3127]: circuit breaker state=closed threshold=12
+Feb 14 00:01:02 prod-app-01 cdn-edge[8789]: health check target=analytics-svc status=degraded
+Feb 14 00:01:02 prod-web-01 cdn-edge[1367]: cache lookup key=session:fa9a160d result=miss latency=606ns
+%!(EXTRA int=79)Feb 14 00:01:02 prod-web-02 user-svc[2143]: health check target=user-svc status=unhealthy
+Feb 14 00:01:03 prod-db-01 user-svc[1179]: response sent status=400 bytes=1991 from 10.50.143.192
+Feb 14 00:01:03 prod-db-01 api-gw[9756]: cache lookup key=session:77e0d753 result=hit latency=117ns
+%!(EXTRA int=84)Feb 14 00:01:03 prod-app-02 order-svc[9646]: connection pool active=7 idle=9 max=100
+Feb 14 00:01:03 prod-web-01 api-gw[3421]: DNS resolved host=api.example.com addr=10.78.60.234 ttl=73s
+Feb 14 00:01:03 prod-web-02 cdn-edge[9958]: database query completed rows=%!d(string=session:9bed36e0) duration=247ms
+%!(EXTRA int=72)Feb 14 00:01:03 prod-app-01 notification-svc[2582]: auth token validated user=alice
+Feb 14 00:01:03 prod-app-01 cdn-edge[3132]: circuit breaker state=open threshold=8
+Feb 14 00:01:03 prod-web-01 user-svc[7738]: response sent status=200 bytes=680 from 10.236.192.135
+Feb 14 00:01:03 prod-web-02 user-svc[6168]: database query completed rows=%!d(string=session:6af426e3) duration=271ms
+%!(EXTRA int=69)Feb 14 00:01:03 prod-web-02 api-gw[8510]: health check target=notification-svc status=healthy
+Feb 14 00:01:04 prod-app-02 notification-svc[8779]: database query completed rows=%!d(string=session:8f4f910e) duration=428ms
+%!(EXTRA int=29)Feb 14 00:01:04 prod-db-01 user-svc[8590]: DNS resolved host=api.example.com addr=10.69.204.198 ttl=14s
+Feb 14 00:01:04 prod-app-01 order-svc[8286]: DNS resolved host=api.example.com addr=10.123.187.179 ttl=249s
+Feb 14 00:01:04 prod-app-02 payment-svc[5545]: cache lookup key=session:c143aad2 result=miss latency=96ns
+%!(EXTRA int=38)Feb 14 00:01:04 prod-app-01 api-gw[5010]: cache lookup key=session:bfbb47f7 result=miss latency=761ns
+%!(EXTRA int=35)Feb 14 00:01:04 prod-app-02 api-gw[9414]: database query completed rows=%!d(string=session:cf8f30bf) duration=391ms
+%!(EXTRA int=27)Feb 14 00:01:04 prod-web-01 auth-svc[8539]: cache lookup key=session:510a0532 result=hit latency=610ns
+%!(EXTRA int=73)Feb 14 00:01:04 prod-app-02 payment-svc[2052]: CORS preflight origin=https://app.example.com allowed=true
+Feb 14 00:01:04 prod-web-01 notification-svc[6374]: cache lookup key=session:b5aededf result=hit latency=402ns
+%!(EXTRA int=87)Feb 14 00:01:04 prod-app-01 payment-svc[5738]: response sent status=300 bytes=1047 from 10.80.165.76
+Feb 14 00:01:05 prod-app-01 cache-svc[2350]: upstream retry attempt=5 target=user-svc
+Feb 14 00:01:05 prod-app-01 order-svc[8309]: circuit breaker state=open threshold=2
+Feb 14 00:01:05 prod-app-02 api-gw[1444]: CORS preflight origin=https://admin.example.com allowed=false
+Feb 14 00:01:05 prod-db-01 notification-svc[2787]: response sent status=400 bytes=4850 from 10.187.167.229
+Feb 14 00:01:05 prod-db-01 user-svc[7320]: circuit breaker state=half-open threshold=43
+Feb 14 00:01:05 prod-app-01 api-gw[7436]: response sent status=300 bytes=757 from 10.22.213.205
+Feb 14 00:01:05 prod-web-01 analytics-svc[6170]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:01:05 prod-app-02 search-svc[7397]: upstream retry attempt=2 target=auth-svc
+Feb 14 00:01:05 prod-web-01 api-gw[8519]: health check target=cdn-edge status=unhealthy
+Feb 14 00:01:05 prod-web-02 search-svc[6202]: auth token validated user=bob
+Feb 14 00:01:06 prod-web-01 analytics-svc[8560]: response sent status=300 bytes=4551 from 10.216.5.212
+Feb 14 00:01:06 prod-db-01 auth-svc[5768]: request completed status=400 duration=3003ms from 10.44.11.8
+Feb 14 00:01:06 prod-app-01 cdn-edge[1009]: request completed status=400 duration=1636ms from 10.254.0.97
+Feb 14 00:01:06 prod-web-02 api-gw[5554]: auth token validated user=diana
+Feb 14 00:01:06 prod-app-02 notification-svc[2530]: auth token validated user=charlie
+Feb 14 00:01:06 prod-db-01 search-svc[3468]: failed to reach /user_settings/preferences from 10.103.38.232
+Feb 14 00:01:06 prod-app-02 search-svc[2296]: database query completed rows=%!d(string=session:5d0724b5) duration=214ms
+%!(EXTRA int=99)Feb 14 00:01:06 prod-web-01 payment-svc[3587]: cache lookup key=session:86da8535 result=hit latency=414ns
+%!(EXTRA int=51)Feb 14 00:01:06 prod-app-01 order-svc[7969]: cache lookup key=session:c1e8d6bb result=hit latency=688ns
+%!(EXTRA int=16)Feb 14 00:01:06 prod-app-01 notification-svc[8279]: connection pool active=30 idle=6 max=100
+Feb 14 00:01:07 prod-app-01 auth-svc[6584]: request completed status=200 duration=1812ms from 10.99.138.40
+Feb 14 00:01:07 prod-web-01 user-svc[5411]: circuit breaker state=half-open threshold=59
+Feb 14 00:01:07 prod-web-01 search-svc[2783]: circuit breaker state=closed threshold=27
+Feb 14 00:01:07 prod-app-02 auth-svc[2100]: health check target=order-svc status=degraded
+Feb 14 00:01:07 prod-db-01 user-svc[8972]: connection pool active=29 idle=7 max=100
+Feb 14 00:01:07 prod-app-02 auth-svc[1934]: request completed status=200 duration=3628ms from 10.151.139.244
+Feb 14 00:01:07 prod-web-01 order-svc[6141]: database query completed rows=%!d(string=session:f70da7a3) duration=146ms
+%!(EXTRA int=29)Feb 14 00:01:07 prod-web-02 search-svc[2303]: cache lookup key=session:0778364e result=hit latency=999ns
+%!(EXTRA int=84)Feb 14 00:01:07 prod-web-01 api-gw[1847]: load balance algo=round_robin target=order-svc
+Feb 14 00:01:07 prod-web-02 user-svc[9626]: response sent status=200 bytes=420 from 10.174.175.220
+Feb 14 00:01:08 prod-db-01 cdn-edge[4720]: response sent status=200 bytes=3590 from 10.79.8.221
+Feb 14 00:01:08 prod-app-01 api-gw[4658]: CORS preflight origin=https://app.example.com allowed=false
+Feb 14 00:01:08 prod-db-01 cache-svc[1654]: payload validated size=29262 bytes
+Feb 14 00:01:08 prod-db-01 cdn-edge[5001]: request completed status=500 duration=2049ms from 10.205.82.248
+Feb 14 00:01:08 prod-app-01 notification-svc[7345]: database query completed rows=%!d(string=session:7b299492) duration=823ms
+%!(EXTRA int=73)Feb 14 00:01:08 prod-app-01 search-svc[5496]: CORS preflight origin=https://admin.example.com allowed=false
+Feb 14 00:01:08 prod-app-02 cache-svc[1373]: cache lookup key=session:026061b7 result=miss latency=232ns
+%!(EXTRA int=25)Feb 14 00:01:08 prod-app-02 payment-svc[9664]: load balance algo=round_robin target=analytics-svc
+Feb 14 00:01:08 prod-web-02 notification-svc[5606]: cache lookup key=session:899c56b9 result=hit latency=139ns
+%!(EXTRA int=53)Feb 14 00:01:08 prod-app-02 user-svc[3788]: cache lookup key=session:4758b600 result=miss latency=648ns
+%!(EXTRA int=72)Feb 14 00:01:09 prod-db-01 user-svc[7535]: auth token validated user=eve
+Feb 14 00:01:09 prod-app-01 notification-svc[7953]: connection refused to /user_service/health from 10.63.126.121
+Feb 14 00:01:09 prod-app-02 search-svc[9386]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:01:09 prod-web-02 payment-svc[5855]: response sent status=200 bytes=1553 from 10.250.255.172
+Feb 14 00:01:09 prod-web-01 search-svc[1823]: request completed status=400 duration=4832ms from 10.181.139.43
+Feb 14 00:01:09 prod-db-01 cdn-edge[3647]: circuit breaker state=half-open threshold=26
+Feb 14 00:01:09 prod-web-02 cdn-edge[8291]: response sent status=500 bytes=886 from 10.6.9.70
+Feb 14 00:01:09 prod-app-01 cdn-edge[7935]: connection pool active=30 idle=6 max=100
+Feb 14 00:01:09 prod-app-02 cdn-edge[1343]: CORS preflight origin=https://admin.example.com allowed=false
+Feb 14 00:01:09 prod-app-01 cache-svc[4296]: rate limit bucket=api-default tokens=57
+Feb 14 00:01:10 prod-web-01 cdn-edge[8460]: payload validated size=85390 bytes
+Feb 14 00:01:10 prod-app-01 cache-svc[9265]: load balance algo=round_robin target=cdn-edge
+Feb 14 00:01:10 prod-web-01 user-svc[9460]: payload validated size=29683 bytes
+Feb 14 00:01:10 prod-web-01 api-gw[4326]: DNS resolved host=api.example.com addr=10.125.197.196 ttl=36s
+Feb 14 00:01:10 prod-web-01 notification-svc[5559]: circuit breaker state=closed threshold=15
+Feb 14 00:01:10 prod-db-01 auth-svc[9509]: request completed status=300 duration=1270ms from 10.162.144.209
+Feb 14 00:01:10 prod-db-01 cache-svc[9291]: request completed status=500 duration=1862ms from 10.26.58.89
+Feb 14 00:01:10 prod-web-01 search-svc[9918]: upstream retry attempt=4 target=cache-svc
+Feb 14 00:01:10 prod-app-02 search-svc[6707]: response sent status=200 bytes=3707 from 10.226.61.118
+Feb 14 00:01:10 prod-app-01 analytics-svc[2230]: request completed status=400 duration=96ms from 10.179.128.227
+Feb 14 00:01:11 prod-app-02 analytics-svc[8893]: database query completed rows=%!d(string=session:ba00ef59) duration=640ms
+%!(EXTRA int=53)Feb 14 00:01:11 prod-app-02 search-svc[3940]: CORS preflight origin=https://app.example.com allowed=true
+Feb 14 00:01:11 prod-web-01 search-svc[1889]: load balance algo=round_robin target=analytics-svc
+Feb 14 00:01:11 prod-app-02 auth-svc[9157]: circuit breaker state=closed threshold=8
+Feb 14 00:01:11 prod-app-02 payment-svc[6529]: response sent status=500 bytes=3744 from 10.34.167.23
+Feb 14 00:01:11 prod-web-02 api-gw[7766]: circuit breaker state=closed threshold=70
+Feb 14 00:01:11 prod-web-02 payment-svc[6981]: health check target=api-gw status=unhealthy
+Feb 14 00:01:11 prod-web-02 auth-svc[3011]: database query completed rows=%!d(string=session:6be5f17b) duration=467ms
+%!(EXTRA int=95)Feb 14 00:01:11 prod-app-02 auth-svc[5653]: upstream retry attempt=3 target=search-svc
+Feb 14 00:01:11 prod-web-01 user-svc[6361]: response sent status=300 bytes=3762 from 10.106.189.60
+Feb 14 00:01:12 prod-web-02 analytics-svc[1564]: request completed status=400 duration=2273ms from 10.113.99.37
+Feb 14 00:01:12 prod-web-01 auth-svc[2335]: DNS resolved host=api.example.com addr=10.26.225.37 ttl=220s
+Feb 14 00:01:12 prod-web-02 api-gw[5841]: cache lookup key=session:c5bdd68b result=hit latency=483ns
+%!(EXTRA int=16)Feb 14 00:01:12 prod-web-01 analytics-svc[7329]: connection pool active=5 idle=2 max=100
+Feb 14 00:01:12 prod-app-01 api-gw[5728]: request completed status=300 duration=3976ms from 10.254.201.5
+Feb 14 00:01:12 prod-app-01 order-svc[9835]: cache lookup key=session:a87afd2c result=hit latency=337ns
+%!(EXTRA int=75)Feb 14 00:01:12 prod-db-01 user-svc[5749]: request completed status=300 duration=664ms from 10.146.183.237
+Feb 14 00:01:12 prod-db-01 search-svc[3569]: cache lookup key=session:8fb49423 result=hit latency=203ns
+%!(EXTRA int=54)Feb 14 00:01:12 prod-web-01 user-svc[8496]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:01:12 prod-app-02 analytics-svc[3186]: auth token validated user=eve
+Feb 14 00:01:13 prod-app-01 api-gw[8628]: upstream retry attempt=4 target=user-svc
+Feb 14 00:01:13 prod-web-01 api-gw[4711]: health check target=cdn-edge status=healthy
+Feb 14 00:01:13 prod-web-02 notification-svc[4221]: CORS preflight origin=https://app.example.com allowed=false
+Feb 14 00:01:13 prod-app-02 payment-svc[1346]: response sent status=200 bytes=829 from 10.148.112.217
+Feb 14 00:01:13 prod-db-01 analytics-svc[8780]: request completed status=500 duration=3830ms from 10.60.210.109
+Feb 14 00:01:13 prod-web-01 cache-svc[5838]: response sent status=500 bytes=533 from 10.113.217.140
+Feb 14 00:01:13 prod-app-02 analytics-svc[4935]: upstream retry attempt=4 target=api-gw
+Feb 14 00:01:13 prod-app-02 auth-svc[6353]: payload validated size=9475 bytes
+Feb 14 00:01:13 prod-app-02 search-svc[3951]: compression applied ratio=0.74
+Feb 14 00:01:13 prod-app-02 payment-svc[9796]: compression applied ratio=0.78
+Feb 14 00:01:14 prod-web-02 analytics-svc[3770]: upstream retry attempt=4 target=cdn-edge
+Feb 14 00:01:14 prod-web-01 api-gw[8829]: request completed status=200 duration=3498ms from 10.145.23.81
+Feb 14 00:01:14 prod-app-01 analytics-svc[9737]: cache lookup key=session:6e465332 result=hit latency=700ns
+%!(EXTRA int=20)Feb 14 00:01:14 prod-app-02 cache-svc[2670]: response sent status=500 bytes=493 from 10.222.201.41
+Feb 14 00:01:14 prod-web-01 cdn-edge[9098]: response sent status=500 bytes=1167 from 10.189.102.36
+Feb 14 00:01:14 prod-app-01 order-svc[1705]: cache lookup key=session:285d53d0 result=miss latency=920ns
+%!(EXTRA int=1)Feb 14 00:01:14 prod-web-01 analytics-svc[8249]: load balance algo=round_robin target=notification-svc
+Feb 14 00:01:14 prod-app-02 auth-svc[8207]: DNS resolved host=api.example.com addr=10.2.154.110 ttl=232s
+Feb 14 00:01:14 prod-web-02 order-svc[7324]: cache lookup key=session:16430251 result=miss latency=479ns
+%!(EXTRA int=3)Feb 14 00:01:14 prod-web-02 cache-svc[8644]: database query completed rows=%!d(string=session:95400a8c) duration=206ms
+%!(EXTRA int=84)Feb 14 00:01:15 prod-app-02 auth-svc[5062]: circuit breaker state=open threshold=89
+Feb 14 00:01:15 prod-app-02 auth-svc[3201]: compression applied ratio=0.48
+Feb 14 00:01:15 prod-web-02 order-svc[6027]: compression applied ratio=0.67
+Feb 14 00:01:15 prod-web-02 cache-svc[7977]: cache lookup key=session:50462e53 result=hit latency=657ns
+%!(EXTRA int=77)Feb 14 00:01:15 prod-web-02 api-gw[2599]: CORS preflight origin=https://admin.example.com allowed=false
+Feb 14 00:01:15 prod-db-01 notification-svc[5877]: upstream retry attempt=3 target=user-svc
+Feb 14 00:01:15 prod-app-01 user-svc[6652]: cache lookup key=session:fe323f22 result=hit latency=944ns
+%!(EXTRA int=77)Feb 14 00:01:15 prod-app-01 search-svc[4339]: load balance algo=round_robin target=api-gw
+Feb 14 00:01:15 prod-web-01 analytics-svc[7382]: rate limit bucket=api-default tokens=9
+Feb 14 00:01:15 prod-app-02 notification-svc[7084]: connection refused to /user_service/health from 10.47.38.147
+Feb 14 00:01:16 prod-db-01 payment-svc[8604]: response sent status=500 bytes=2274 from 10.246.72.87
+Feb 14 00:01:16 prod-db-01 payment-svc[5704]: connection pool active=0 idle=4 max=100
+Feb 14 00:01:16 prod-app-01 user-svc[7844]: DNS resolved host=api.example.com addr=10.225.161.81 ttl=144s
+Feb 14 00:01:16 prod-app-02 analytics-svc[3660]: auth token validated user=diana
+Feb 14 00:01:16 prod-app-02 search-svc[7962]: cache lookup key=session:b38631ba result=miss latency=826ns
+%!(EXTRA int=31)Feb 14 00:01:16 prod-db-01 order-svc[3810]: request completed status=200 duration=2916ms from 10.1.208.163
+Feb 14 00:01:16 prod-app-02 api-gw[2342]: database query completed rows=%!d(string=session:01cfb039) duration=59ms
+%!(EXTRA int=95)Feb 14 00:01:16 prod-app-02 auth-svc[3176]: connection pool active=5 idle=2 max=100
+Feb 14 00:01:16 prod-web-02 order-svc[3799]: auth token validated user=diana
+Feb 14 00:01:16 prod-web-01 analytics-svc[2024]: cache lookup key=session:2732d8e5 result=miss latency=198ns
+%!(EXTRA int=82)Feb 14 00:01:17 prod-app-02 payment-svc[1506]: rate limit bucket=api-default tokens=38
+Feb 14 00:01:17 prod-app-02 cache-svc[9284]: cache lookup key=session:a56a8e21 result=miss latency=494ns
+%!(EXTRA int=92)Feb 14 00:01:17 prod-app-01 cache-svc[9281]: response sent status=200 bytes=3695 from 10.232.115.165
+Feb 14 00:01:17 prod-app-01 payment-svc[2161]: circuit breaker state=half-open threshold=57
+Feb 14 00:01:17 prod-app-01 notification-svc[4884]: upstream retry attempt=3 target=notification-svc
+Feb 14 00:01:17 prod-app-02 api-gw[2305]: load balance algo=round_robin target=auth-svc
+Feb 14 00:01:17 prod-app-01 analytics-svc[7573]: request completed status=300 duration=787ms from 10.51.89.154
+Feb 14 00:01:17 prod-web-02 order-svc[6167]: health check target=api-gw status=unhealthy
+Feb 14 00:01:17 prod-web-01 cdn-edge[9383]: request completed status=400 duration=1385ms from 10.183.44.49
+Feb 14 00:01:17 prod-db-01 payment-svc[9384]: cache lookup key=session:aa4e2f9a result=hit latency=379ns
+%!(EXTRA int=83)Feb 14 00:01:18 prod-app-02 notification-svc[6531]: health check target=analytics-svc status=degraded
+Feb 14 00:01:18 prod-db-01 cdn-edge[6468]: DNS resolved host=api.example.com addr=10.35.20.79 ttl=150s
+Feb 14 00:01:18 prod-web-02 api-gw[1580]: response sent status=400 bytes=19 from 10.116.142.216
+Feb 14 00:01:18 prod-web-02 order-svc[7542]: request completed status=200 duration=2617ms from 10.185.217.220
+Feb 14 00:01:18 prod-web-02 search-svc[5974]: response sent status=500 bytes=2274 from 10.15.206.156
+Feb 14 00:01:18 prod-web-01 notification-svc[7669]: auth token validated user=alice
+Feb 14 00:01:18 prod-app-02 analytics-svc[1772]: timeout connecting to /user_profile/api from 10.211.81.226
+Feb 14 00:01:18 prod-web-01 notification-svc[5880]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:01:18 prod-app-02 order-svc[9040]: auth token validated user=alice
+Feb 14 00:01:18 prod-web-02 search-svc[6148]: database query completed rows=%!d(string=session:26f0906f) duration=455ms
+%!(EXTRA int=12)Feb 14 00:01:19 prod-web-02 notification-svc[1457]: request completed status=200 duration=1493ms from 10.189.78.211
+Feb 14 00:01:19 prod-db-01 api-gw[3834]: response sent status=200 bytes=4710 from 10.254.151.132
+Feb 14 00:01:19 prod-app-01 analytics-svc[4376]: DNS resolved host=api.example.com addr=10.55.69.19 ttl=258s
+Feb 14 00:01:19 prod-app-01 auth-svc[8845]: response sent status=500 bytes=767 from 10.83.201.61
+Feb 14 00:01:19 prod-web-01 auth-svc[9166]: connection refused to /user_service/health from 10.20.156.157
+Feb 14 00:01:19 prod-db-01 payment-svc[6628]: response sent status=200 bytes=770 from 10.229.133.219
+Feb 14 00:01:19 prod-app-02 auth-svc[8876]: response sent status=400 bytes=281 from 10.201.147.160
+Feb 14 00:01:19 prod-app-01 analytics-svc[4444]: upstream retry attempt=4 target=analytics-svc
+Feb 14 00:01:19 prod-web-01 analytics-svc[6822]: request completed status=200 duration=4452ms from 10.15.116.104
+Feb 14 00:01:19 prod-web-02 order-svc[5651]: request completed status=200 duration=907ms from 10.5.55.246
+Feb 14 00:01:20 prod-app-01 analytics-svc[7506]: auth token validated user=eve
+Feb 14 00:01:20 prod-web-01 payment-svc[5676]: auth token validated user=charlie
+Feb 14 00:01:20 prod-app-01 notification-svc[8416]: cache lookup key=session:b23a03ac result=miss latency=871ns
+%!(EXTRA int=86)Feb 14 00:01:20 prod-db-01 search-svc[9661]: CORS preflight origin=https://app.example.com allowed=true
+Feb 14 00:01:20 prod-app-02 search-svc[1806]: request completed status=200 duration=1776ms from 10.210.114.68
+Feb 14 00:01:20 prod-web-01 notification-svc[6350]: database query completed rows=%!d(string=session:13426969) duration=487ms
+%!(EXTRA int=65)Feb 14 00:01:20 prod-web-02 search-svc[9161]: rate limit bucket=api-default tokens=19
+Feb 14 00:01:20 prod-web-02 auth-svc[8228]: DNS resolved host=api.example.com addr=10.143.85.254 ttl=212s
+Feb 14 00:01:20 prod-web-01 notification-svc[1230]: request completed status=200 duration=3045ms from 10.211.19.36
+Feb 14 00:01:20 prod-db-01 order-svc[3724]: request completed status=400 duration=3534ms from 10.82.203.109
+Feb 14 00:01:21 prod-db-01 cache-svc[3482]: CORS preflight origin=https://admin.example.com allowed=true
+Feb 14 00:01:21 prod-app-02 analytics-svc[7145]: database query completed rows=%!d(string=session:26f8d3ab) duration=648ms
+%!(EXTRA int=53)Feb 14 00:01:21 prod-web-01 payment-svc[2105]: connection pool active=46 idle=7 max=100
+Feb 14 00:01:21 prod-app-02 notification-svc[4945]: connection pool active=35 idle=4 max=100
+Feb 14 00:01:21 prod-db-01 analytics-svc[6297]: DNS resolved host=api.example.com addr=10.240.134.130 ttl=129s
+Feb 14 00:01:21 prod-app-02 cache-svc[1985]: request completed status=400 duration=3152ms from 10.211.21.149
+Feb 14 00:01:21 prod-app-01 notification-svc[4142]: response sent status=400 bytes=294 from 10.81.190.107
+Feb 14 00:01:21 prod-db-01 payment-svc[7789]: CORS preflight origin=https://app.example.com allowed=false
+Feb 14 00:01:21 prod-db-01 api-gw[4017]: request completed status=200 duration=2016ms from 10.90.151.244
+Feb 14 00:01:21 prod-app-02 cdn-edge[7078]: cache lookup key=session:78ff6f15 result=miss latency=985ns
+%!(EXTRA int=43)Feb 14 00:01:22 prod-db-01 auth-svc[4740]: health check target=cache-svc status=degraded
+Feb 14 00:01:22 prod-web-01 analytics-svc[1730]: health check target=user-svc status=degraded
+Feb 14 00:01:22 prod-app-02 analytics-svc[9379]: auth token validated user=diana
+Feb 14 00:01:22 prod-db-01 user-svc[9224]: cache lookup key=session:bf969715 result=miss latency=33ns
+%!(EXTRA int=24)Feb 14 00:01:22 prod-web-02 cache-svc[6476]: response sent status=400 bytes=2731 from 10.43.189.227
+Feb 14 00:01:22 prod-db-01 api-gw[4291]: request completed status=200 duration=4582ms from 10.32.81.215
+Feb 14 00:01:22 prod-web-02 order-svc[4843]: connection pool active=15 idle=6 max=100
+Feb 14 00:01:22 prod-web-02 cache-svc[6872]: request completed status=200 duration=1711ms from 10.146.14.191
+Feb 14 00:01:22 prod-app-02 payment-svc[5215]: payload validated size=83934 bytes
+Feb 14 00:01:22 prod-web-02 order-svc[5065]: request completed status=300 duration=3270ms from 10.4.177.75
+Feb 14 00:01:23 prod-web-02 order-svc[8575]: circuit breaker state=open threshold=97
+Feb 14 00:01:23 prod-web-02 search-svc[2122]: rate limit bucket=api-default tokens=29
+Feb 14 00:01:23 prod-app-01 cdn-edge[2648]: request completed status=200 duration=1205ms from 10.44.137.87
+Feb 14 00:01:23 prod-app-01 cdn-edge[9187]: payload validated size=47867 bytes
+Feb 14 00:01:23 prod-web-01 search-svc[5564]: response sent status=200 bytes=105 from 10.175.226.37
+Feb 14 00:01:23 prod-web-01 payment-svc[5947]: request completed status=200 duration=673ms from 10.251.162.48
+Feb 14 00:01:23 prod-db-01 api-gw[7427]: request completed status=500 duration=966ms from 10.35.99.24
+Feb 14 00:01:23 prod-app-01 cache-svc[5268]: compression applied ratio=0.70
+Feb 14 00:01:23 prod-web-02 notification-svc[3487]: database query completed rows=%!d(string=session:ae88b24f) duration=55ms
+%!(EXTRA int=58)Feb 14 00:01:23 prod-web-02 auth-svc[6870]: response sent status=300 bytes=419 from 10.115.135.64
+Feb 14 00:01:24 prod-app-02 order-svc[1132]: request completed status=300 duration=2163ms from 10.166.163.165
+Feb 14 00:01:24 prod-app-02 user-svc[6125]: CORS preflight origin=https://admin.example.com allowed=false
+Feb 14 00:01:24 prod-app-02 order-svc[7600]: cache lookup key=session:a95b2481 result=miss latency=946ns
+%!(EXTRA int=37)Feb 14 00:01:24 prod-web-02 search-svc[3320]: health check target=order-svc status=degraded
+Feb 14 00:01:24 prod-web-02 auth-svc[1377]: compression applied ratio=0.28
+Feb 14 00:01:24 prod-app-02 cdn-edge[5251]: health check target=payment-svc status=healthy
+Feb 14 00:01:24 prod-web-01 api-gw[5204]: request completed status=300 duration=895ms from 10.158.162.129
+Feb 14 00:01:24 prod-app-02 cdn-edge[8553]: failed to reach /user_settings/preferences from 10.191.72.58
+Feb 14 00:01:24 prod-web-01 cache-svc[8883]: timeout connecting to /user_profile/api from 10.6.245.19
+Feb 14 00:01:24 prod-app-01 notification-svc[2646]: auth token validated user=bob
+Feb 14 00:01:25 prod-app-01 payment-svc[2589]: response sent status=500 bytes=2144 from 10.164.44.28
+Feb 14 00:01:25 prod-db-01 cache-svc[1959]: response sent status=400 bytes=1965 from 10.34.229.229
+Feb 14 00:01:25 prod-app-01 api-gw[6326]: auth token validated user=eve
+Feb 14 00:01:25 prod-db-01 cdn-edge[1497]: DNS resolved host=api.example.com addr=10.114.144.141 ttl=179s
+Feb 14 00:01:25 prod-app-01 auth-svc[3554]: upstream retry attempt=2 target=api-gw
+Feb 14 00:01:25 prod-app-02 api-gw[4693]: upstream retry attempt=4 target=search-svc
+Feb 14 00:01:25 prod-app-02 user-svc[6514]: response sent status=400 bytes=4045 from 10.121.230.120
+Feb 14 00:01:25 prod-web-02 cdn-edge[1847]: cache lookup key=session:0c1ff3e1 result=hit latency=762ns
+%!(EXTRA int=77)Feb 14 00:01:25 prod-web-02 auth-svc[7283]: response sent status=500 bytes=2366 from 10.10.31.199
+Feb 14 00:01:25 prod-web-01 cdn-edge[9528]: upstream retry attempt=3 target=auth-svc
+Feb 14 00:01:26 prod-web-01 cdn-edge[3651]: response sent status=200 bytes=75 from 10.35.49.223
+Feb 14 00:01:26 prod-db-01 cdn-edge[2301]: response sent status=300 bytes=2707 from 10.113.6.254
+Feb 14 00:01:26 prod-web-01 cache-svc[6069]: response sent status=200 bytes=955 from 10.244.152.153
+Feb 14 00:01:26 prod-app-01 auth-svc[4013]: cache lookup key=session:7165cf3b result=miss latency=318ns
+%!(EXTRA int=44)Feb 14 00:01:26 prod-web-01 cache-svc[5454]: response sent status=200 bytes=3543 from 10.23.203.191
+Feb 14 00:01:26 prod-web-01 user-svc[6030]: cache lookup key=session:e1898045 result=miss latency=941ns
+%!(EXTRA int=55)Feb 14 00:01:26 prod-web-02 user-svc[1044]: health check target=user-svc status=unhealthy
+Feb 14 00:01:26 prod-web-01 auth-svc[1501]: response sent status=200 bytes=2421 from 10.176.253.81
+Feb 14 00:01:26 prod-app-02 api-gw[1025]: DNS resolved host=api.example.com addr=10.147.217.157 ttl=5s
+Feb 14 00:01:26 prod-app-02 auth-svc[8223]: request completed status=200 duration=2693ms from 10.145.212.80
+Feb 14 00:01:27 prod-web-02 api-gw[5226]: load balance algo=round_robin target=api-gw
+Feb 14 00:01:27 prod-app-02 api-gw[5129]: request completed status=300 duration=1053ms from 10.211.37.221
+Feb 14 00:01:27 prod-web-02 cache-svc[8688]: cache lookup key=session:1f91f55b result=miss latency=863ns
+%!(EXTRA int=0)Feb 14 00:01:27 prod-app-02 user-svc[1292]: payload validated size=19389 bytes
+Feb 14 00:01:27 prod-app-02 cache-svc[8064]: health check target=auth-svc status=degraded
+Feb 14 00:01:27 prod-db-01 api-gw[2169]: database query completed rows=%!d(string=session:f099efe2) duration=32ms
+%!(EXTRA int=74)Feb 14 00:01:27 prod-web-02 order-svc[2650]: request completed status=300 duration=68ms from 10.195.142.160
+Feb 14 00:01:27 prod-web-02 cdn-edge[7254]: failed to reach /user_settings/preferences from 10.76.164.229
+Feb 14 00:01:27 prod-app-01 analytics-svc[9821]: DNS resolved host=api.example.com addr=10.203.223.244 ttl=255s
+Feb 14 00:01:27 prod-app-02 cdn-edge[6284]: cache lookup key=session:ad8d8126 result=miss latency=659ns
+%!(EXTRA int=0)Feb 14 00:01:28 prod-web-01 auth-svc[7460]: connection pool active=7 idle=16 max=100
+Feb 14 00:01:28 prod-web-01 cache-svc[3577]: timeout connecting to /user_profile/api from 10.163.67.140
+Feb 14 00:01:28 prod-app-01 analytics-svc[2209]: circuit breaker state=half-open threshold=86
+Feb 14 00:01:28 prod-app-02 user-svc[7759]: database query completed rows=%!d(string=session:4d17c97f) duration=330ms
+%!(EXTRA int=24)Feb 14 00:01:28 prod-app-02 notification-svc[2504]: request completed status=200 duration=3641ms from 10.207.174.65
+Feb 14 00:01:28 prod-db-01 analytics-svc[4006]: CORS preflight origin=https://app.example.com allowed=true
+Feb 14 00:01:28 prod-web-02 auth-svc[7576]: rate limit bucket=api-default tokens=55
+Feb 14 00:01:28 prod-app-01 order-svc[8710]: compression applied ratio=0.22
+Feb 14 00:01:28 prod-web-02 notification-svc[7802]: connection pool active=43 idle=12 max=100
+Feb 14 00:01:28 prod-web-01 cache-svc[7492]: load balance algo=round_robin target=analytics-svc
+Feb 14 00:01:29 prod-web-02 notification-svc[7358]: response sent status=400 bytes=4178 from 10.166.91.152
+Feb 14 00:01:29 prod-web-02 notification-svc[5977]: cache lookup key=session:120ed82a result=miss latency=473ns
+%!(EXTRA int=71)Feb 14 00:01:29 prod-web-01 cdn-edge[5780]: request completed status=200 duration=1751ms from 10.104.23.130
+Feb 14 00:01:29 prod-web-02 notification-svc[3011]: response sent status=200 bytes=188 from 10.46.56.172
+Feb 14 00:01:29 prod-db-01 search-svc[7307]: response sent status=300 bytes=1513 from 10.17.189.41
+Feb 14 00:01:29 prod-app-01 search-svc[2344]: failed to reach /user_settings/preferences from 10.125.230.73
+Feb 14 00:01:29 prod-web-01 auth-svc[4307]: upstream retry attempt=4 target=cdn-edge
+Feb 14 00:01:29 prod-db-01 cdn-edge[2653]: request completed status=200 duration=223ms from 10.38.139.153
+Feb 14 00:01:29 prod-db-01 auth-svc[8702]: health check target=api-gw status=unhealthy
+Feb 14 00:01:29 prod-db-01 analytics-svc[6847]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:01:30 prod-db-01 notification-svc[1677]: cache lookup key=session:f4719f76 result=hit latency=435ns
+%!(EXTRA int=67)Feb 14 00:01:30 prod-app-02 order-svc[4175]: auth token validated user=diana
+Feb 14 00:01:30 prod-web-02 order-svc[9628]: payload validated size=65848 bytes
+Feb 14 00:01:30 prod-web-02 cdn-edge[2947]: compression applied ratio=0.93
+Feb 14 00:01:30 prod-web-02 auth-svc[3308]: cache lookup key=session:c7c0bd25 result=hit latency=500ns
+%!(EXTRA int=56)Feb 14 00:01:30 prod-web-01 analytics-svc[8620]: cache lookup key=session:2f1d2dce result=hit latency=99ns
+%!(EXTRA int=67)Feb 14 00:01:30 prod-web-02 cdn-edge[8061]: cache lookup key=session:a7d0a596 result=miss latency=893ns
+%!(EXTRA int=78)Feb 14 00:01:30 prod-web-02 user-svc[3914]: DNS resolved host=api.example.com addr=10.30.105.242 ttl=250s
+Feb 14 00:01:30 prod-web-02 cache-svc[7537]: request completed status=500 duration=3774ms from 10.30.175.208
+Feb 14 00:01:30 prod-app-01 auth-svc[2294]: cache lookup key=session:bfb81e67 result=hit latency=54ns
+%!(EXTRA int=19)Feb 14 00:01:31 prod-web-01 analytics-svc[6741]: response sent status=300 bytes=4622 from 10.69.165.165
+Feb 14 00:01:31 prod-app-02 analytics-svc[3538]: rate limit bucket=api-default tokens=11
+Feb 14 00:01:31 prod-web-02 user-svc[4960]: request completed status=200 duration=4629ms from 10.180.113.68
+Feb 14 00:01:31 prod-app-02 notification-svc[4140]: request completed status=500 duration=959ms from 10.67.209.239
+Feb 14 00:01:31 prod-app-02 analytics-svc[6325]: compression applied ratio=0.38
+Feb 14 00:01:31 prod-app-01 auth-svc[1727]: response sent status=300 bytes=2760 from 10.133.100.27
+Feb 14 00:01:31 prod-app-02 payment-svc[7323]: cache lookup key=session:c0a5a602 result=miss latency=610ns
+%!(EXTRA int=96)Feb 14 00:01:31 prod-app-01 user-svc[1065]: rate limit bucket=api-default tokens=67
+Feb 14 00:01:31 prod-app-02 api-gw[3915]: CORS preflight origin=https://app.example.com allowed=false
+Feb 14 00:01:31 prod-app-01 api-gw[8857]: CORS preflight origin=https://admin.example.com allowed=true
+Feb 14 00:01:32 prod-app-02 payment-svc[7141]: rate limit bucket=api-default tokens=97
+Feb 14 00:01:32 prod-web-02 search-svc[1023]: circuit breaker state=open threshold=80
+Feb 14 00:01:32 prod-app-01 cache-svc[5837]: DNS resolved host=api.example.com addr=10.9.11.162 ttl=235s
+Feb 14 00:01:32 prod-web-01 search-svc[5750]: payload validated size=17203 bytes
+Feb 14 00:01:32 prod-app-01 notification-svc[1913]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:01:32 prod-web-01 order-svc[9565]: response sent status=500 bytes=1131 from 10.24.138.24
+Feb 14 00:01:32 prod-web-02 auth-svc[8531]: failed to reach /user_settings/preferences from 10.246.254.164
+Feb 14 00:01:32 prod-web-01 user-svc[2910]: connection refused to /user_service/health from 10.107.171.202
+Feb 14 00:01:32 prod-app-02 cache-svc[1603]: response sent status=400 bytes=984 from 10.200.92.231
+Feb 14 00:01:32 prod-web-01 cdn-edge[7173]: health check target=search-svc status=degraded
+Feb 14 00:01:33 prod-app-02 order-svc[4165]: database query completed rows=%!d(string=session:849f81c6) duration=809ms
+%!(EXTRA int=32)Feb 14 00:01:33 prod-web-01 notification-svc[3220]: load balance algo=round_robin target=user-svc
+Feb 14 00:01:33 prod-app-01 cdn-edge[2428]: response sent status=200 bytes=2551 from 10.188.54.21
+Feb 14 00:01:33 prod-app-02 auth-svc[5243]: TLS handshake completed protocol=TLSv1.2
+Feb 14 00:01:33 prod-web-01 auth-svc[7644]: load balance algo=round_robin target=order-svc
+Feb 14 00:01:33 prod-web-02 auth-svc[3656]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:01:33 prod-app-02 notification-svc[5685]: circuit breaker state=open threshold=29
+Feb 14 00:01:33 prod-db-01 payment-svc[6777]: health check target=cache-svc status=healthy
+Feb 14 00:01:33 prod-web-01 user-svc[8599]: DNS resolved host=api.example.com addr=10.254.248.236 ttl=82s
+Feb 14 00:01:33 prod-app-02 cdn-edge[8459]: DNS resolved host=api.example.com addr=10.211.197.88 ttl=218s
+Feb 14 00:01:34 prod-web-01 api-gw[4437]: request completed status=200 duration=1212ms from 10.141.45.233
+Feb 14 00:01:34 prod-app-01 notification-svc[1183]: compression applied ratio=0.82
+Feb 14 00:01:34 prod-db-01 cache-svc[7993]: request completed status=400 duration=2546ms from 10.96.0.138
+Feb 14 00:01:34 prod-db-01 search-svc[3929]: health check target=notification-svc status=unhealthy
+Feb 14 00:01:34 prod-app-02 payment-svc[2737]: rate limit bucket=api-default tokens=95
+Feb 14 00:01:34 prod-app-01 analytics-svc[7975]: request completed status=300 duration=1344ms from 10.13.200.23
+Feb 14 00:01:34 prod-web-01 api-gw[4190]: response sent status=300 bytes=2218 from 10.18.182.152
+Feb 14 00:01:34 prod-app-01 analytics-svc[9557]: circuit breaker state=open threshold=53
+Feb 14 00:01:34 prod-db-01 analytics-svc[9710]: response sent status=200 bytes=458 from 10.148.128.32
+Feb 14 00:01:34 prod-db-01 cache-svc[1022]: circuit breaker state=half-open threshold=71
+Feb 14 00:01:35 prod-app-01 cache-svc[8706]: response sent status=200 bytes=1610 from 10.240.235.234
+Feb 14 00:01:35 prod-web-02 auth-svc[5379]: rate limit bucket=api-default tokens=63
+Feb 14 00:01:35 prod-app-02 cache-svc[1702]: cache lookup key=session:1a0d5e75 result=hit latency=966ns
+%!(EXTRA int=84)Feb 14 00:01:35 prod-web-02 payment-svc[7449]: connection pool active=42 idle=12 max=100
+Feb 14 00:01:35 prod-web-01 notification-svc[6145]: connection refused to /user_service/health from 10.58.216.153
+Feb 14 00:01:35 prod-app-02 cdn-edge[9642]: DNS resolved host=api.example.com addr=10.37.169.161 ttl=62s
+Feb 14 00:01:35 prod-db-01 cache-svc[4273]: request completed status=200 duration=4039ms from 10.86.218.234
+Feb 14 00:01:35 prod-app-01 analytics-svc[8351]: response sent status=400 bytes=1915 from 10.52.226.223
+Feb 14 00:01:35 prod-app-01 auth-svc[4981]: compression applied ratio=0.92
+Feb 14 00:01:35 prod-db-01 search-svc[3296]: cache lookup key=session:d6a3bcce result=miss latency=574ns
+%!(EXTRA int=56)Feb 14 00:01:36 prod-db-01 payment-svc[5592]: cache lookup key=session:9efb10a6 result=hit latency=223ns
+%!(EXTRA int=67)Feb 14 00:01:36 prod-web-01 cache-svc[5085]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:01:36 prod-app-02 notification-svc[6418]: response sent status=400 bytes=4689 from 10.201.238.174
+Feb 14 00:01:36 prod-app-02 cdn-edge[1577]: load balance algo=round_robin target=notification-svc
+Feb 14 00:01:36 prod-db-01 search-svc[5436]: compression applied ratio=0.41
+Feb 14 00:01:36 prod-web-02 analytics-svc[6269]: payload validated size=66310 bytes
+Feb 14 00:01:36 prod-app-01 cdn-edge[3050]: connection refused to /user_service/health from 10.3.108.178
+Feb 14 00:01:36 prod-app-02 analytics-svc[3065]: upstream retry attempt=5 target=analytics-svc
+Feb 14 00:01:36 prod-app-01 api-gw[2783]: upstream retry attempt=5 target=search-svc
+Feb 14 00:01:36 prod-app-01 analytics-svc[3374]: rate limit bucket=api-default tokens=54
+Feb 14 00:01:37 prod-db-01 cache-svc[5153]: database query completed rows=%!d(string=session:bde8b982) duration=943ms
+%!(EXTRA int=89)Feb 14 00:01:37 prod-db-01 user-svc[8383]: cache lookup key=session:819dc1df result=hit latency=263ns
+%!(EXTRA int=88)Feb 14 00:01:37 prod-app-01 payment-svc[9531]: cache lookup key=session:30dd3281 result=hit latency=495ns
+%!(EXTRA int=10)Feb 14 00:01:37 prod-db-01 payment-svc[2140]: response sent status=400 bytes=2378 from 10.43.217.182
+Feb 14 00:01:37 prod-app-02 auth-svc[9987]: DNS resolved host=api.example.com addr=10.82.87.207 ttl=201s
+Feb 14 00:01:37 prod-app-02 payment-svc[2936]: connection refused to /user_service/health from 10.254.109.140
+Feb 14 00:01:37 prod-web-02 auth-svc[4482]: cache lookup key=session:24375bbf result=miss latency=740ns
+%!(EXTRA int=17)Feb 14 00:01:37 prod-db-01 order-svc[6391]: TLS handshake completed protocol=TLSv1.3
+Feb 14 00:01:37 prod-web-01 user-svc[9869]: DNS resolved host=api.example.com addr=10.146.46.221 ttl=102s
+Feb 14 00:01:37 prod-web-02 user-svc[5790]: payload validated size=18717 bytes
+Feb 14 00:01:38 prod-web-02 auth-svc[9527]: request completed status=400 duration=356ms from 10.20.56.67
+Feb 14 00:01:38 prod-db-01 api-gw[3397]: connection refused to /user_service/health from 10.113.226.81
+Feb 14 00:01:38 prod-db-01 order-svc[2179]: connection refused to /user_service/health from 10.79.137.54
+Feb 14 00:01:38 prod-app-02 analytics-svc[8873]: connection pool active=17 idle=17 max=100
+Feb 14 00:01:38 prod-web-02 search-svc[2372]: circuit breaker state=open threshold=6
+Feb 14 00:01:38 prod-web-02 analytics-svc[6601]: response sent status=200 bytes=6 from 10.21.179.48
+Feb 14 00:01:38 prod-app-02 cache-svc[3197]: request completed status=300 duration=3572ms from 10.116.81.190
+Feb 14 00:01:38 prod-app-01 analytics-svc[3446]: CORS preflight origin=https://admin.example.com allowed=true
+Feb 14 00:01:38 prod-db-01 search-svc[3188]: DNS resolved host=api.example.com addr=10.186.0.222 ttl=171s
+Feb 14 00:01:38 prod-app-01 auth-svc[9000]: upstream retry attempt=3 target=search-svc
+Feb 14 00:01:39 prod-web-01 order-svc[1413]: database query completed rows=%!d(string=session:41a487f5) duration=423ms
+%!(EXTRA int=30)Feb 14 00:01:39 prod-app-01 order-svc[9902]: response sent status=300 bytes=3802 from 10.3.52.68
+Feb 14 00:01:39 prod-app-01 notification-svc[1060]: response sent status=300 bytes=2657 from 10.119.231.153
+Feb 14 00:01:39 prod-db-01 search-svc[1690]: cache lookup key=session:e38cca64 result=miss latency=623ns
+%!(EXTRA int=39)Feb 14 00:01:39 prod-app-01 analytics-svc[8495]: cache lookup key=session:49cab342 result=hit latency=302ns
+%!(EXTRA int=17)Feb 14 00:01:39 prod-web-02 user-svc[8603]: upstream retry attempt=5 target=payment-svc
+Feb 14 00:01:39 prod-web-02 search-svc[7395]: request completed status=500 duration=3198ms from 10.171.131.6
+Feb 14 00:01:39 prod-db-01 notification-svc[4605]: failed to reach /user_settings/preferences from 10.203.229.214
+Feb 14 00:01:39 prod-db-01 auth-svc[6322]: database query completed rows=%!d(string=session:e52cf028) duration=211ms
+%!(EXTRA int=86)Feb 14 00:01:39 prod-db-01 payment-svc[8329]: request completed status=500 duration=1269ms from 10.3.47.27

@@ -1,0 +1,5 @@
+FROM scratch
+COPY lynxdb /usr/local/bin/lynxdb
+EXPOSE 3100
+ENTRYPOINT ["/usr/local/bin/lynxdb"]
+CMD ["server"]

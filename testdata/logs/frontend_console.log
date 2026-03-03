@@ -1,0 +1,38 @@
+2026-02-10T08:11:55.001Z [INFO] [app-init] Application bootstrap started | version=3.14.2 | build=20260209-a7f3c1 | env=production
+2026-02-10T08:12:00.100Z [INFO] [router] Navigation: /dashboard loaded | load_time_ms=1200 | lcp_ms=1800 | cls=0.05 | fid_ms=45 | user_id=usr-1001
+2026-02-10T08:12:05.200Z [INFO] [auth] Session validated | user_id=usr-1001 | token_age_min=12 | refresh=false
+2026-02-10T08:15:20.300Z [INFO] [router] Navigation: /settings loaded | load_time_ms=800 | lcp_ms=950 | cls=0.02 | fid_ms=30 | user_id=usr-1001
+2026-02-10T08:30:00.400Z [INFO] [router] Navigation: /projects loaded | load_time_ms=1500 | lcp_ms=2200 | cls=0.08 | fid_ms=60 | user_id=usr-1003
+2026-02-10T08:32:15.500Z [INFO] [router] Navigation: /projects/new loaded | load_time_ms=900 | lcp_ms=1100 | cls=0.03 | fid_ms=35 | user_id=usr-1003
+2026-02-10T08:40:00.600Z [WARN] [performance] Memory usage high: 78% of budget | heap_mb=245 | limit_mb=314 | gc_count=42 | user_id=usr-1003
+2026-02-10T08:42:00.700Z [ERROR] [csp-violation] Content Security Policy violation: inline script blocked | directive=script-src | blocked_uri=inline | document_uri=https://app.example.com/dashboard | user_id=usr-1001
+2026-02-10T08:43:00.800Z [ERROR] [csp-violation] Content Security Policy violation: eval blocked | directive=script-src | blocked_uri=eval | document_uri=https://app.example.com/analytics | user_id=usr-1003
+2026-02-10T08:44:00.900Z [ERROR] [error-boundary] React error boundary caught: TypeError: Cannot read properties of undefined (reading 'map') | component=ProjectList | stack=ProjectList.render | user_id=usr-1003
+2026-02-10T08:45:00.100Z [WARN] [websocket] WebSocket connection dropped, reconnecting | attempt=1 | endpoint=wss://api.example.com/ws | user_id=usr-1001
+2026-02-10T08:45:30.200Z [WARN] [websocket] WebSocket reconnection successful | attempt=1 | downtime_ms=30100 | user_id=usr-1001
+2026-02-10T08:50:00.300Z [INFO] [router] Navigation: /analytics loaded | load_time_ms=2800 | lcp_ms=3500 | cls=0.15 | fid_ms=120 | user_id=usr-1001
+2026-02-10T08:55:00.400Z [ERROR] [error-boundary] React error boundary caught: ReferenceError: chartConfig is not defined | component=AnalyticsDashboard | stack=AnalyticsDashboard.componentDidMount | user_id=usr-1001
+2026-02-10T09:00:00.500Z [WARN] [performance] Long task detected: 850ms blocking time | task=dataGridRender | threshold_ms=200 | user_id=usr-1003
+2026-02-10T09:05:00.600Z [ERROR] [csp-violation] Content Security Policy violation: font-src blocked | directive=font-src | blocked_uri=https://fonts.external.com/roboto.woff2 | document_uri=https://app.example.com/settings | user_id=usr-1005
+2026-02-10T09:10:00.700Z [INFO] [router] Navigation: /deploy loaded | load_time_ms=1100 | lcp_ms=1500 | cls=0.04 | fid_ms=50 | user_id=usr-1003
+2026-02-10T09:10:40.800Z [INFO] [deploy-ui] Deployment status: monitoring analytics-v2 | status=in_progress | user_id=usr-1003
+2026-02-10T09:10:45.900Z [WARN] [deploy-ui] Deployment rollback triggered by user | reason=error_rate_spike | user_id=usr-1003
+2026-02-10T09:15:00.100Z [INFO] [router] Navigation: /admin loaded | load_time_ms=1000 | lcp_ms=1300 | cls=0.03 | fid_ms=40 | user_id=usr-1005
+2026-02-10T09:20:00.200Z [WARN] [performance] Memory usage high: 82% of budget | heap_mb=258 | limit_mb=314 | gc_count=55 | user_id=usr-1005
+2026-02-10T09:25:00.300Z [ERROR] [error-boundary] React error boundary caught: TypeError: Cannot read properties of null (reading 'id') | component=UserRoleEditor | stack=UserRoleEditor.handleSubmit | user_id=usr-1005
+2026-02-10T09:30:00.400Z [INFO] [router] Navigation: /dashboard loaded | load_time_ms=1150 | lcp_ms=1700 | cls=0.04 | fid_ms=42 | user_id=usr-1001
+2026-02-10T09:35:00.500Z [WARN] [websocket] WebSocket connection dropped, reconnecting | attempt=1 | endpoint=wss://api.example.com/ws | user_id=usr-1003
+2026-02-10T09:35:05.600Z [WARN] [websocket] WebSocket reconnection successful | attempt=2 | downtime_ms=5100 | user_id=usr-1003
+2026-02-10T09:40:00.700Z [ERROR] [csp-violation] Content Security Policy violation: connect-src blocked | directive=connect-src | blocked_uri=https://tracking.thirdparty.com/pixel | document_uri=https://app.example.com/dashboard | user_id=usr-1001
+2026-02-10T09:45:00.800Z [INFO] [router] Navigation: /reports loaded | load_time_ms=1400 | lcp_ms=2100 | cls=0.06 | fid_ms=55 | user_id=usr-1001
+2026-02-10T09:50:00.900Z [WARN] [performance] Slow network request: 3200ms for /api/v2/reports/export | threshold_ms=2000 | user_id=usr-1001
+2026-02-10T10:00:00.100Z [INFO] [router] Navigation: /analytics loaded | load_time_ms=2600 | lcp_ms=3200 | cls=0.12 | fid_ms=110 | user_id=usr-1003
+2026-02-10T10:05:00.200Z [ERROR] [error-boundary] React error boundary caught: unhandled promise rejection: Network timeout | component=DataExporter | stack=DataExporter.exportCSV | user_id=usr-1003
+2026-02-10T10:10:00.300Z [WARN] [performance] Memory usage critical: 91% of budget | heap_mb=286 | limit_mb=314 | gc_count=68 | user_id=usr-1001
+2026-02-10T10:15:00.400Z [INFO] [router] Navigation: /settings loaded | load_time_ms=750 | lcp_ms=900 | cls=0.02 | fid_ms=28 | user_id=usr-1005
+2026-02-10T10:20:00.500Z [INFO] [router] Navigation: /imports loaded | load_time_ms=1050 | lcp_ms=1400 | cls=0.05 | fid_ms=48 | user_id=usr-1005
+2026-02-10T10:25:00.600Z [WARN] [websocket] WebSocket connection dropped, reconnecting | attempt=1 | endpoint=wss://api.example.com/ws | user_id=usr-1005
+2026-02-10T10:25:03.700Z [WARN] [websocket] WebSocket reconnection successful | attempt=1 | downtime_ms=3100 | user_id=usr-1005
+2026-02-10T10:30:00.800Z [INFO] [router] Navigation: /dashboard loaded | load_time_ms=1100 | lcp_ms=1650 | cls=0.04 | fid_ms=40 | user_id=usr-1001
+2026-02-10T10:35:00.900Z [ERROR] [error-boundary] React error boundary caught: TypeError: Cannot read properties of undefined (reading 'length') | component=NotificationBell | stack=NotificationBell.render | user_id=usr-1001
+2026-02-10T10:45:00.100Z [INFO] [router] Navigation: /projects loaded | load_time_ms=1450 | lcp_ms=2150 | cls=0.07 | fid_ms=58 | user_id=usr-1003

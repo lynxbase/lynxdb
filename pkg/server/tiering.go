@@ -1,0 +1,292 @@
+package server
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/OrlovEvgeny/Lynxdb/pkg/model"
+	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
+)
+
+// startTiering runs background tiering evaluation when dataDir is set.
+func (e *Engine) startTiering(ctx context.Context) {
+	interval := e.storageCfg.TieringInterval
+	if interval == 0 {
+		interval = 5 * time.Minute
+	}
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				// Bound each cycle so a hung S3 call can't block the next tick.
+				cycleTimeout := interval - 5*time.Second
+				if cycleTimeout < 30*time.Second {
+					cycleTimeout = 30 * time.Second
+				}
+				cycleCtx, cancel := context.WithTimeout(ctx, cycleTimeout)
+				e.runTieringCycle(cycleCtx)
+				cancel()
+			}
+		}
+	}()
+}
+
+// runTieringCycle evaluates and executes tier moves.
+func (e *Engine) runTieringCycle(ctx context.Context) {
+	e.mu.RLock()
+	configs := make(map[string]model.IndexConfig, len(e.indexes))
+	for k, v := range e.indexes {
+		configs[k] = v
+	}
+	e.mu.RUnlock()
+
+	result := e.tierMgr.Evaluate(configs)
+
+	// Move to warm: upload to object store, close local mmap, delete local file.
+	for _, id := range result.MovedToWarm {
+		// Copy mmap data under read lock to avoid use-after-unlock race
+		// with concurrent compaction or shutdown.
+		e.mu.RLock()
+		var sh *segmentHandle
+		for _, h := range e.currentEpoch.segments {
+			if h.meta.ID == id {
+				sh = h
+
+				break
+			}
+		}
+		var data []byte
+		if sh != nil && sh.mmap != nil {
+			src := sh.mmap.Bytes()
+			data = make([]byte, len(src))
+			copy(data, src)
+		}
+		e.mu.RUnlock()
+		if sh == nil || data == nil {
+			continue
+		}
+
+		if err := e.tierMgr.MoveToWarm(ctx, id, data); err != nil {
+			e.logger.Error("tiering: move to warm failed", "id", id, "error", err)
+
+			continue
+		}
+		e.metrics.TieringUploads.Add(1)
+		e.metrics.TieringUploadBytes.Add(int64(len(data)))
+
+		// Create a new warm handle (nil reader/mmap) and retire the old one
+		// via epoch advance. Pinned readers on the old epoch keep the mmap
+		// alive until they unpin; drainAndClose handles the deferred close.
+		e.mu.Lock()
+		var oldSH *segmentHandle
+		newSegments := make([]*segmentHandle, len(e.currentEpoch.segments))
+		copy(newSegments, e.currentEpoch.segments)
+		for i, h := range newSegments {
+			if h.meta.ID != id {
+				continue
+			}
+
+			oldSH = h
+			warmMeta := h.meta
+			warmMeta.Tier = "warm"
+			if ts, _ := e.tierMgr.GetSegment(id); ts != nil {
+				warmMeta.ObjectKey = ts.ObjectKey
+			}
+			warmMeta.Path = ""
+			newSegments[i] = &segmentHandle{
+				meta:        warmMeta,
+				index:       h.index,
+				bloom:       h.bloom,
+				invertedIdx: h.invertedIdx,
+			}
+
+			break
+		}
+		var retired []*segmentHandle
+		if oldSH != nil {
+			retired = []*segmentHandle{oldSH}
+		}
+		e.advanceEpoch(newSegments, retired)
+		e.mu.Unlock()
+
+		// Delete local file. File deletion on a mmap'd file is safe on
+		// Linux/macOS — pages remain valid until munmap.
+		if oldSH != nil && oldSH.meta.Path != "" {
+			if err := os.Remove(oldSH.meta.Path); err != nil && !os.IsNotExist(err) {
+				e.logger.Warn("tiering: failed to remove local file", "path", oldSH.meta.Path, "error", err)
+			}
+		}
+	}
+
+	// Process retry queue: re-attempt warm uploads for previously failed segments.
+	for _, id := range e.tierMgr.RetryReady() {
+		e.mu.RLock()
+		var sh *segmentHandle
+		for _, h := range e.currentEpoch.segments {
+			if h.meta.ID == id {
+				sh = h
+
+				break
+			}
+		}
+		var data []byte
+		if sh != nil && sh.mmap != nil {
+			src := sh.mmap.Bytes()
+			data = make([]byte, len(src))
+			copy(data, src)
+		}
+		e.mu.RUnlock()
+		if sh == nil || data == nil {
+			e.tierMgr.ClearRetry(id) // segment gone, no point retrying
+
+			continue
+		}
+
+		if err := e.tierMgr.MoveToWarm(ctx, id, data); err != nil {
+			e.logger.Warn("tiering: retry move to warm failed", "id", id, "error", err)
+			// MoveToWarm already re-enqueues on failure.
+			continue
+		}
+		e.tierMgr.ClearRetry(id)
+		e.logger.Info("tiering: retry move to warm succeeded", "id", id)
+	}
+
+	// Move to cold.
+	for _, id := range result.MovedToCold {
+		if err := e.tierMgr.MoveToCold(ctx, id); err != nil {
+			e.logger.Error("tiering: move to cold failed", "id", id, "error", err)
+
+			continue
+		}
+		e.mu.Lock()
+		for _, sh := range e.currentEpoch.segments {
+			if sh.meta.ID != id {
+				continue
+			}
+			sh.meta.Tier = "cold"
+			ts, _ := e.tierMgr.GetSegment(id)
+			if ts != nil {
+				sh.meta.ObjectKey = ts.ObjectKey
+			}
+
+			break
+		}
+		e.mu.Unlock()
+	}
+
+	// Delete expired.
+	for _, id := range result.Expired {
+		if err := e.tierMgr.DeleteExpired(ctx, id); err != nil {
+			e.logger.Error("tiering: delete expired failed", "id", id, "error", err)
+
+			continue
+		}
+		e.mu.Lock()
+		var expiredSH *segmentHandle
+		newSegments := make([]*segmentHandle, 0, len(e.currentEpoch.segments))
+		for _, sh := range e.currentEpoch.segments {
+			if sh.meta.ID == id {
+				expiredSH = sh
+			} else {
+				newSegments = append(newSegments, sh)
+			}
+		}
+		var retired []*segmentHandle
+		if expiredSH != nil {
+			retired = []*segmentHandle{expiredSH}
+		}
+		e.advanceEpoch(newSegments, retired)
+		e.mu.Unlock()
+
+		if expiredSH != nil && expiredSH.meta.Path != "" {
+			os.Remove(expiredSH.meta.Path)
+		}
+	}
+}
+
+// loadRemoteSegment attempts to load a warm/cold segment from cache or object store.
+// On success, the MmapSegment and reader are cached on the segment handle (under
+// e.mu write lock) so subsequent queries reuse them and the mmap is properly
+// closed on engine shutdown.
+//
+// Accepts a context so that cancelled queries also cancel in-flight S3 fetches.
+// Falls back to a timeout derived from config when the context has no deadline.
+func (e *Engine) loadRemoteSegment(sh *segmentHandle) *segment.Reader {
+	return e.loadRemoteSegmentWithCtx(context.Background(), sh)
+}
+
+// loadRemoteSegmentWithCtx is the context-aware implementation of loadRemoteSegment.
+func (e *Engine) loadRemoteSegmentWithCtx(parentCtx context.Context, sh *segmentHandle) *segment.Reader {
+	if e.dataDir == "" || e.tierMgr == nil {
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Join(e.dataDir, "segment-cache"), 0o755); err != nil {
+		e.logger.Warn("failed to create segment-cache dir", "error", err)
+
+		return nil
+	}
+	cachePath := filepath.Join(e.dataDir, "segment-cache", sh.meta.ID+".lsg")
+
+	// Check local cache first.
+	if ms, err := segment.OpenSegmentFile(cachePath); err == nil {
+		return e.cacheRemoteMmap(sh, ms)
+	}
+
+	// Download from object store, using the caller's context for cancellation.
+	fetchTimeout := e.storageCfg.RemoteFetchTimeout
+	if fetchTimeout == 0 {
+		fetchTimeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(parentCtx, fetchTimeout)
+	defer cancel()
+
+	data, err := e.tierMgr.ReadFromStore(ctx, sh.meta.ID)
+	if err != nil {
+		e.logger.Error("failed to read remote segment", "id", sh.meta.ID, "error", err)
+
+		return nil
+	}
+
+	// Write to cache.
+	if err := os.WriteFile(cachePath, data, 0o600); err != nil {
+		e.logger.Warn("failed to cache remote segment", "id", sh.meta.ID, "error", err)
+	}
+
+	// Open from cache.
+	if ms, err := segment.OpenSegmentFile(cachePath); err == nil {
+		return e.cacheRemoteMmap(sh, ms)
+	}
+
+	// Fallback: open from downloaded bytes directly (no mmap to cache).
+	sr, err := segment.OpenSegment(data)
+	if err != nil {
+		return nil
+	}
+
+	return sr
+}
+
+// cacheRemoteMmap stores a remote segment's MmapSegment and reader on the handle
+// so subsequent queries reuse the cached reader and the mmap is closed on shutdown.
+// Returns the valid reader (winner's cached reader if another goroutine raced).
+func (e *Engine) cacheRemoteMmap(sh *segmentHandle, ms *segment.MmapSegment) *segment.Reader {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	// Another goroutine may have raced and already cached.
+	if sh.reader != nil {
+		ms.Close()
+
+		return sh.reader // return winner's cached reader
+	}
+	sh.mmap = ms
+	sh.reader = ms.Reader()
+
+	return sh.reader
+}

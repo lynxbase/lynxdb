@@ -1,0 +1,40 @@
+# Binaries
+/cmd/lynxdb/lynxdb
+/cmd/lynxctl/lynxctl
+lynxdb
+/testdata/db
+*.exe
+
+# Test artifacts
+*.test
+*.out
+coverage.html
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+
+# Build artifacts
+custom-gcl
+release-tmp
+
+# Python
+__pycache__/
+*.pyc
+
+# GoReleaser
+dist/
+# Claude
+.claude/
+_plans/
+log20250630.csv
+shading-proposal.md
+es_bulk.md
+dashboard.md
+CLAUDE.md
+/docs/site/node_modules/
+/docs/site/build/

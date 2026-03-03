@@ -1,0 +1,3743 @@
+openapi: 3.0.3
+info:
+  title: LynxDB API
+  version: 1.0.0
+  description: |
+    Splunk-power log analytics in a single binary. Zero dependencies. SPL2-compatible.
+
+    ## Design Principles
+
+    1. **One URL — one resource.** `POST /query` does a query. `POST /ingest` ingests.
+    2. **Streaming-first.** Large-data endpoints support NDJSON via `Accept: application/x-ndjson`.
+    3. **Errors are UX.** Every error carries `code`, `message`, and optionally `suggestion` and `docs_url`.
+    4. **Single auth model.** Bearer token. Optional. Off by default.
+    5. **Zero required headers.** `Content-Type` defaults to `application/json`. `curl` just works.
+
+    ## Authentication
+
+    Off by default. When enabled via `lynxdb server --auth`:
+
+    ```
+    Authorization: Bearer <token>
+    ```
+
+    ## Response Envelope
+
+    ```json
+    // Success — "data" present, "error" absent
+    {"data": {...}, "meta": {"took_ms": 89}}
+
+    // Error — "error" present, "data" absent
+    {"error": {"code": "INVALID_QUERY", "message": "...", "suggestion": "..."}}
+    ```
+
+    No `"status": "ok"`. HTTP status codes carry that.
+
+  contact:
+    name: LynxDB
+    url: https://lynxdb.io
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0
+
+servers:
+  - url: http://localhost:3100/api/v1
+    description: Local development
+
+tags:
+  - name: Ingest
+    description: Send log events into LynxDB
+  - name: Query
+    description: Search, aggregate, and analyze logs using SPL2
+  - name: Live
+    description: Real-time log streaming and histogram
+  - name: Schema
+    description: Field discovery and value stats
+  - name: Server
+    description: Health checks and server status
+  - name: Saved Queries
+    description: Persist and reuse SPL2 queries
+  - name: Alerts
+    description: Threshold-based alerting with multi-channel notifications
+  - name: Dashboards
+    description: Panel-based dashboard definitions
+  - name: Materialized Views
+    description: Precomputed projections and aggregations for query acceleration
+  - name: Config
+    description: Runtime configuration management
+  - name: Compatibility
+    description: Elasticsearch and OpenTelemetry compatibility endpoints
+
+# ──────────────────────────────────────────────
+# SECURITY
+# ──────────────────────────────────────────────
+security:
+  - BearerAuth: []
+  - {}
+
+# ──────────────────────────────────────────────
+# PATHS
+# ──────────────────────────────────────────────
+paths:
+
+  # ════════════════════════════════════════════
+  # INGEST
+  # ════════════════════════════════════════════
+
+  /ingest:
+    post:
+      operationId: ingest
+      tags: [Ingest]
+      summary: Ingest events
+      description: |
+        Primary ingest endpoint. Accepts single events, JSON arrays, NDJSON streams, or plain text.
+
+        - No required schema — send any JSON, fields are indexed automatically.
+        - `_timestamp` auto-assigned if absent. Recognized aliases: `timestamp`, `@timestamp`, `time`, `ts`, `datetime`.
+        - `_source` settable via `X-Source` header or `source`/`_source` field in body.
+        - Events > 1 MB rejected with `413`.
+        - Server assigns `_id` (ULID) to each event.
+      parameters:
+        - $ref: '#/components/parameters/XSource'
+        - $ref: '#/components/parameters/XFormat'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/LogEvent'
+                - type: array
+                  items:
+                    $ref: '#/components/schemas/LogEvent'
+            examples:
+              single:
+                summary: Single event
+                value:
+                  message: "user login"
+                  user_id: 42
+              batch:
+                summary: Batch of events
+                value:
+                  - message: "request started"
+                    trace_id: "abc123"
+                  - message: "request completed"
+                    trace_id: "abc123"
+                    duration_ms: 45
+          application/x-ndjson:
+            schema:
+              type: string
+            example: |
+              {"message": "event 1", "level": "info"}
+              {"message": "event 2", "level": "error"}
+          text/plain:
+            schema:
+              type: string
+            example: |
+              192.168.1.1 - - [14/Feb/2026:14:23:01 +0000] "GET /api/users HTTP/1.1" 200 1234
+              192.168.1.2 - - [14/Feb/2026:14:23:02 +0000] "POST /api/orders HTTP/1.1" 500 89
+      responses:
+        '200':
+          description: All events accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestResponse'
+              example:
+                data:
+                  accepted: 3
+                  failed: 0
+        '207':
+          description: Partial failure — some events accepted, some rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestPartialResponse'
+              example:
+                data:
+                  accepted: 2
+                  failed: 1
+                  errors:
+                    - index: 1
+                      code: "PARSE_ERROR"
+                      message: "Invalid JSON at line 2"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /ingest/bulk:
+    post:
+      operationId: ingestBulk
+      tags: [Ingest]
+      summary: Elasticsearch-compatible bulk ingest
+      description: |
+        Accepts Elasticsearch `_bulk` API format for zero-config migration from Filebeat, Logstash, Vector, Fluentd.
+
+        - `_index` is accepted but mapped to `_source` tag (LynxDB is single-index by design).
+        - `_type` is ignored.
+        - Response mimics ES bulk shape for client compatibility.
+      requestBody:
+        required: true
+        content:
+          application/x-ndjson:
+            schema:
+              type: string
+            example: |
+              {"index": {"_index": "logs"}}
+              {"message": "hello from filebeat", "@timestamp": "2026-02-14T12:00:00Z"}
+              {"index": {"_index": "logs"}}
+              {"message": "another event"}
+      responses:
+        '200':
+          description: Bulk ingest result (ES-compatible shape)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ESBulkResponse'
+              example:
+                took: 12
+                errors: false
+                items:
+                  - index:
+                      _id: "01JKNM3VXQP..."
+                      status: 201
+                  - index:
+                      _id: "01JKNM4ABCD..."
+                      status: 201
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  # ════════════════════════════════════════════
+  # QUERY
+  # ════════════════════════════════════════════
+
+  /query:
+    post:
+      operationId: queryPost
+      tags: [Query]
+      summary: Execute SPL2 query
+      description: |
+        Core search endpoint. Executes any SPL2 pipeline including search, aggregation, and management commands.
+
+        **Execution modes** (controlled by `wait` parameter):
+
+        | `wait` value | Behavior | Response |
+        |---|---|---|
+        | `null` (default) | **Sync.** Block until complete or server timeout. | `200` with results, or `408` timeout |
+        | `0` | **Async.** Return immediately. | `202` with job handle |
+        | `N` (seconds) | **Hybrid.** Wait up to N seconds. | `200` if done in time, `202` + job otherwise |
+
+        Hybrid mode (`wait: 5`) is ideal for Web UI — fast queries return instantly, slow ones degrade to async with progress tracking.
+
+        **Response `data.type` determines rendering:**
+        - `events` → log viewer (raw events)
+        - `aggregate` → table (stats results)
+        - `timechart` → chart (time-series)
+        - `view_created` → MV creation confirmation (when query contains `| materialize`)
+        - `job` → async job handle (when `wait` is set and query didn't complete in time)
+
+        **MV acceleration:** when the query planner detects a Materialized View that covers the query,
+        `meta.accelerated_by` is present in the response.
+
+        **SPL2 management commands** also flow through this endpoint:
+        - `| materialize "name"` — create MV
+        - `| from mv_name` — read from MV
+        - `| views` — list MVs
+        - `| dropview "name"` — delete MV
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+            examples:
+              search:
+                summary: Basic log search (sync, default)
+                value:
+                  q: "level=error"
+                  from: "-1h"
+                  limit: 100
+              aggregation:
+                summary: Aggregation query (sync)
+                value:
+                  q: "source=nginx status>=500 | stats count by uri | sort -count | head 10"
+                  from: "-1h"
+                  to: "now"
+              hybrid:
+                summary: Hybrid mode — wait up to 5s, then fall back to async
+                value:
+                  q: "* | stats count by source, status"
+                  from: "-30d"
+                  wait: 5
+              async:
+                summary: Async — return job handle immediately
+                value:
+                  q: "* | stats dc(user_id) by source"
+                  from: "-90d"
+                  wait: 0
+              timechart:
+                summary: Time-series chart
+                value:
+                  q: "level=error | timechart count span=5m"
+                  from: "-6h"
+              mv_query:
+                summary: Query a materialized view
+                value:
+                  q: "| from mv_errors_5m | where source=\"nginx\" | sort -count | head 10"
+              mv_create:
+                summary: Create a materialized view
+                value:
+                  q: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket | materialize \"mv_errors_5m\" retention=90d"
+      responses:
+        '200':
+          description: |
+            Query completed synchronously. Returned when:
+            - `wait` is `null` (default sync mode) and query completes before server timeout
+            - `wait` is `N > 0` (hybrid mode) and query completes within N seconds
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/QueryEventsResponse'
+                  - $ref: '#/components/schemas/QueryAggregateResponse'
+                  - $ref: '#/components/schemas/QueryTimechartResponse'
+                  - $ref: '#/components/schemas/QueryViewCreatedResponse'
+              examples:
+                events:
+                  summary: Raw events result
+                  value:
+                    data:
+                      type: events
+                      events:
+                        - _id: "01JKNM3VXQP..."
+                          _timestamp: "2026-02-14T14:52:01.234Z"
+                          _source: nginx
+                          level: error
+                          status: 502
+                          uri: "/api/v1/users"
+                          method: GET
+                          duration_ms: 12
+                      total: 1247
+                      has_more: true
+                    meta:
+                      took_ms: 89
+                      scanned: 12400000
+                      query_id: "qry_7f3a..."
+                aggregate:
+                  summary: Aggregation result
+                  value:
+                    data:
+                      type: aggregate
+                      columns: ["uri", "count"]
+                      rows:
+                        - ["/api/v1/users", 1247]
+                        - ["/api/v1/orders", 893]
+                        - ["/health", 412]
+                      total_rows: 42
+                    meta:
+                      took_ms: 34
+                      scanned: 12400000
+                      query_id: "qry_8b2c..."
+                accelerated:
+                  summary: MV-accelerated result
+                  value:
+                    data:
+                      type: aggregate
+                      columns: ["source", "count"]
+                      rows:
+                        - ["nginx", 142847]
+                        - ["api-gw", 89234]
+                      total_rows: 5
+                    meta:
+                      took_ms: 3
+                      scanned: 142847
+                      query_id: "qry_d4e1..."
+                      accelerated_by:
+                        view: mv_errors_5m
+                        original_scan: 12400000
+                        speedup: "~400x"
+                partial:
+                  summary: Partial result (MV still backfilling)
+                  value:
+                    data:
+                      type: aggregate
+                      partial: true
+                      columns: ["source", "count"]
+                      rows:
+                        - ["nginx", 95231]
+                        - ["api-gw", 42100]
+                    meta:
+                      took_ms: 4
+                      scanned: 95231
+                      query_id: "qry_f2a1..."
+                      accelerated_by:
+                        view: mv_errors_5m
+                        status: backfilling
+                        coverage_percent: 66.7
+                timechart:
+                  summary: Time-series result
+                  value:
+                    data:
+                      type: timechart
+                      interval: "5m"
+                      columns: ["_time", "count"]
+                      rows:
+                        - ["2026-02-14T14:00:00Z", 42]
+                        - ["2026-02-14T14:05:00Z", 87]
+                        - ["2026-02-14T14:10:00Z", 156]
+                    meta:
+                      took_ms: 45
+                      scanned: 12400000
+                      query_id: "qry_9c1d..."
+                view_created:
+                  summary: Materialized view created
+                  value:
+                    data:
+                      type: view_created
+                      view:
+                        name: mv_errors_5m
+                        query: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket"
+                        kind: aggregation
+                        retention: "90d"
+                        status: backfilling
+                        version: 1
+                        backfill:
+                          total: 12400000
+                          processed: 0
+                          percent: 0
+                    meta:
+                      took_ms: 12
+        '202':
+          description: |
+            Query accepted for async execution. Returned when:
+            - `wait: 0` (async mode) — always returns 202 immediately
+            - `wait: N` (hybrid mode) — query didn't complete within N seconds
+
+            Response contains a job handle with current progress. Use `GET /query/jobs/{id}` to poll
+            or `GET /query/jobs/{id}/stream` for real-time SSE updates.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryJobResponse'
+              examples:
+                async_immediate:
+                  summary: Async — job just started
+                  value:
+                    data:
+                      type: job
+                      job_id: "qry_9c1d4e"
+                      status: running
+                      query: "* | stats dc(user_id) by source"
+                      from: "-90d"
+                      to: "now"
+                      progress:
+                        phase: scanning
+                        scanned: 0
+                        total_estimate: 84700000000
+                        percent: 0
+                        events_matched: 0
+                        elapsed_ms: 0
+                        eta_ms: null
+                hybrid_fallback:
+                  summary: Hybrid — timed out after 5s, shows progress so far
+                  value:
+                    data:
+                      type: job
+                      job_id: "qry_7f3a2b"
+                      status: running
+                      query: "* | stats count by source"
+                      from: "-30d"
+                      to: "now"
+                      progress:
+                        phase: scanning
+                        scanned: 2100000000
+                        total_estimate: 10400000000
+                        percent: 20.2
+                        events_matched: 847291
+                        elapsed_ms: 5000
+                        eta_ms: 19700
+                      partial_results:
+                        type: aggregate
+                        columns: ["source", "count"]
+                        rows:
+                          - ["nginx", 142000]
+                          - ["api-gw", 71000]
+                        note: "Based on 20% of data. Final values will change."
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
+        '408':
+          $ref: '#/components/responses/QueryTimeout'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+    get:
+      operationId: queryGet
+      tags: [Query]
+      summary: Execute SPL2 query (GET convenience)
+      description: GET variant for simple queries. Use POST for complex or long queries.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "level=error"
+        - name: from
+          in: query
+          schema:
+            type: string
+            default: "-15m"
+          example: "-1h"
+        - name: to
+          in: query
+          schema:
+            type: string
+            default: "now"
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 1000
+            maximum: 50000
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json, csv, raw]
+            default: json
+      responses:
+        '200':
+          description: Query result
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/QueryEventsResponse'
+                  - $ref: '#/components/schemas/QueryAggregateResponse'
+                  - $ref: '#/components/schemas/QueryTimechartResponse'
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
+
+  /query/stream:
+    post:
+      operationId: queryStream
+      tags: [Query]
+      summary: Execute query with NDJSON streaming
+      description: |
+        Same input as `POST /query`, returns NDJSON stream. For large result sets, exports, piping.
+
+        **This is different from job SSE** (`GET /query/jobs/{id}/stream`):
+        - `/query/stream` — NDJSON export of results. One event per line. For `curl | jq`, data pipelines.
+        - `/query/jobs/{id}/stream` — SSE progress tracking. For Web UI real-time updates.
+
+        - Response: `Transfer-Encoding: chunked`, one JSON object per line.
+        - Last line is always `{"__meta": {...}}` — stream summary.
+        - No default `limit` (streaming is for export). Client disconnect = cancellation.
+        - `wait` parameter is ignored — streaming always blocks until complete.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QueryRequest'
+            example:
+              q: "level=error"
+              from: "-24h"
+      responses:
+        '200':
+          description: NDJSON event stream
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+              example: |
+                {"_id":"01JKN...","_timestamp":"2026-02-14T14:52:01Z","level":"error","message":"timeout"}
+                {"_id":"01JKN...","_timestamp":"2026-02-14T14:51:58Z","level":"error","message":"refused"}
+                {"__meta":{"total":8432,"scanned":12400000,"took_ms":342}}
+        '400':
+          $ref: '#/components/responses/InvalidQuery'
+
+  /query/explain:
+    get:
+      operationId: queryExplain
+      tags: [Query]
+      summary: Parse and explain query without executing
+      description: |
+        Returns the parsed pipeline, estimated cost, fields involved, and MV acceleration availability.
+        Powers autocomplete, red-underline validation, and query planner UI.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "source=nginx | stats count by uri"
+      responses:
+        '200':
+          description: Query explanation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryExplainResponse'
+              examples:
+                valid:
+                  summary: Valid query with MV acceleration
+                  value:
+                    data:
+                      parsed:
+                        pipeline:
+                          - type: search
+                            filters:
+                              - field: source
+                                op: "="
+                                value: nginx
+                          - type: stats
+                            aggregations:
+                              - fn: count
+                            group_by: ["uri"]
+                        result_type: aggregate
+                        estimated_cost: low
+                        uses_full_scan: false
+                        fields_read: ["source", "uri"]
+                        fields_produced: ["uri", "count"]
+                      acceleration:
+                        available: true
+                        view: mv_nginx_parsed
+                        reason: "MV covers filter (source=nginx) and GROUP BY (uri) with count aggregate"
+                        estimated_speedup: "~200x"
+                      is_valid: true
+                invalid:
+                  summary: Invalid query with suggestion
+                  value:
+                    data:
+                      is_valid: false
+                      errors:
+                        - position: 24
+                          length: 6
+                          message: "Unknown command 'staats'"
+                          suggestion: stats
+
+  /query/jobs:
+    get:
+      operationId: listJobs
+      tags: [Query]
+      summary: List active and recent query jobs
+      description: |
+        Returns all running jobs and recently completed jobs (kept for `job_ttl`, default 5 minutes).
+        Useful for Web UI job manager and debugging.
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [running, complete, failed, cancelled]
+          description: Filter by job status
+      responses:
+        '200':
+          description: Job list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListResponse'
+              example:
+                data:
+                  jobs:
+                    - job_id: "qry_9c1d4e"
+                      status: running
+                      query: "* | stats dc(user_id) by source"
+                      from: "-90d"
+                      to: "now"
+                      created_at: "2026-02-14T14:50:00Z"
+                      progress:
+                        phase: scanning
+                        percent: 45.2
+                        elapsed_ms: 18000
+                        eta_ms: 21800
+                    - job_id: "qry_7f3a2b"
+                      status: complete
+                      query: "level=error | stats count by source"
+                      from: "-7d"
+                      to: "now"
+                      created_at: "2026-02-14T14:48:12Z"
+                      completed_at: "2026-02-14T14:48:49Z"
+                      expires_at: "2026-02-14T14:53:49Z"
+                      progress:
+                        phase: complete
+                        percent: 100
+                        elapsed_ms: 37200
+                  meta:
+                    max_concurrent: 10
+                    active: 1
+
+  /query/jobs/{jobId}:
+    get:
+      operationId: getJob
+      tags: [Query]
+      summary: Get job status, progress, and results
+      description: |
+        Poll this endpoint to track query progress. Response shape depends on `status`:
+
+        - `running` → `progress` + optional `partial_results` (intermediate data, will change)
+        - `complete` → `progress` + `results` (final data)
+        - `failed` → `progress` + `error`
+        - `cancelled` → `progress` at time of cancellation
+
+        **Partial results** are available for both event queries (first N matched events) and
+        aggregations (intermediate values based on data scanned so far). The `partial_results.note`
+        field always warns the client that values are not final.
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "qry_9c1d4e"
+      responses:
+        '200':
+          description: Job status and results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QueryJobResponse'
+              examples:
+                running_with_partial:
+                  summary: Running — 50% scanned, partial results available
+                  value:
+                    data:
+                      type: job
+                      job_id: "qry_9c1d4e"
+                      status: running
+                      query: "* | stats dc(user_id) by source, status"
+                      from: "-90d"
+                      to: "now"
+                      created_at: "2026-02-14T14:50:00Z"
+                      progress:
+                        phase: scanning
+                        scanned: 42350000000
+                        total_estimate: 84700000000
+                        percent: 50.0
+                        events_matched: 423000000
+                        elapsed_ms: 18400
+                        eta_ms: 18400
+                      partial_results:
+                        type: aggregate
+                        columns: ["source", "status", "dc(user_id)"]
+                        rows:
+                          - ["nginx", 200, 892341]
+                          - ["nginx", 404, 42891]
+                          - ["api-gw", 200, 612044]
+                        note: "Based on 50% of data. Final values will change."
+                running_events:
+                  summary: Running event search — first matches available
+                  value:
+                    data:
+                      type: job
+                      job_id: "qry_a1b2c3"
+                      status: running
+                      query: "message=\"connection refused\" source=api-gateway"
+                      from: "-30d"
+                      to: "now"
+                      created_at: "2026-02-14T14:50:00Z"
+                      progress:
+                        phase: scanning
+                        scanned: 5200000000
+                        total_estimate: 31200000000
+                        percent: 16.7
+                        events_matched: 1247
+                        elapsed_ms: 4100
+                        eta_ms: 20500
+                      partial_results:
+                        type: events
+                        events:
+                          - _id: "01JKNM3VXQP..."
+                            _timestamp: "2026-02-14T14:52:01.234Z"
+                            _source: api-gateway
+                            message: "connection refused"
+                            host: "db-primary-01"
+                          - _id: "01JKNM2ABCD..."
+                            _timestamp: "2026-02-14T14:51:58.112Z"
+                            _source: api-gateway
+                            message: "connection refused"
+                            host: "db-replica-03"
+                        total_so_far: 1247
+                        note: "First 100 matches shown. More results still scanning."
+                complete:
+                  summary: Completed — final results
+                  value:
+                    data:
+                      type: job
+                      job_id: "qry_9c1d4e"
+                      status: complete
+                      query: "* | stats dc(user_id) by source, status"
+                      from: "-90d"
+                      to: "now"
+                      created_at: "2026-02-14T14:50:00Z"
+                      completed_at: "2026-02-14T14:50:37Z"
+                      expires_at: "2026-02-14T14:55:37Z"
+                      progress:
+                        phase: complete
+                        scanned: 84700000000
+                        total_estimate: 84700000000
+                        percent: 100
+                        events_matched: 847000000
+                        elapsed_ms: 37200
+                        eta_ms: 0
+                      results:
+                        type: aggregate
+                        columns: ["source", "status", "dc(user_id)"]
+                        rows:
+                          - ["nginx", 200, 1784682]
+                          - ["nginx", 404, 85762]
+                          - ["api-gw", 200, 1224088]
+                          - ["api-gw", 500, 12044]
+                        total_rows: 14
+                    meta:
+                      took_ms: 37200
+                      scanned: 84700000000
+                failed:
+                  summary: Failed — error details
+                  value:
+                    data:
+                      type: job
+                      job_id: "qry_d4e1f2"
+                      status: failed
+                      query: "* | stats count by uri"
+                      from: "-365d"
+                      to: "now"
+                      created_at: "2026-02-14T14:50:00Z"
+                      failed_at: "2026-02-14T14:50:42Z"
+                      progress:
+                        phase: scanning
+                        scanned: 62100000000
+                        total_estimate: 310000000000
+                        percent: 20.0
+                        events_matched: 62100000
+                        elapsed_ms: 42000
+                        eta_ms: null
+                      error:
+                        code: QUERY_MEMORY_EXCEEDED
+                        message: "Query exceeded 512 MB memory limit at 20% scan. Too many unique 'uri' values (>2M) for GROUP BY."
+                        suggestion: "Add a filter to reduce cardinality, or increase max_query_memory_mb in /config."
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Job results expired (past TTL)
+          content:
+            application/json:
+              example:
+                error:
+                  code: JOB_EXPIRED
+                  message: "Job 'qry_9c1d4e' completed but results have expired (TTL: 5m). Re-run the query."
+    delete:
+      operationId: cancelJob
+      tags: [Query]
+      summary: Cancel a running query job
+      description: |
+        Cancels a running job. If the job is already complete, returns the completed status.
+        Partial results scanned up to cancellation point are preserved in the response.
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "qry_9c1d4e"
+      responses:
+        '200':
+          description: Job cancelled (or already finished)
+          content:
+            application/json:
+              examples:
+                cancelled:
+                  summary: Successfully cancelled
+                  value:
+                    data:
+                      type: job
+                      job_id: "qry_9c1d4e"
+                      status: cancelled
+                      progress:
+                        phase: scanning
+                        scanned: 42350000000
+                        total_estimate: 84700000000
+                        percent: 50.0
+                        elapsed_ms: 18400
+                      partial_results:
+                        type: aggregate
+                        columns: ["source", "count"]
+                        rows:
+                          - ["nginx", 284000]
+                          - ["api-gw", 139000]
+                        note: "Partial results at cancellation (50% scanned)."
+                already_complete:
+                  summary: Job already finished
+                  value:
+                    data:
+                      type: job
+                      job_id: "qry_9c1d4e"
+                      status: complete
+                      progress:
+                        phase: complete
+                        percent: 100
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /query/jobs/{jobId}/stream:
+    get:
+      operationId: streamJob
+      tags: [Query]
+      summary: SSE stream of job progress and partial results
+      description: |
+        Server-Sent Events stream for real-time job tracking. Preferred over polling for Web UI.
+
+        **Event types:**
+
+        | Event | When | Data |
+        |---|---|---|
+        | `progress` | Every ~1s while running | `{phase, percent, scanned, events_matched, eta_ms}` |
+        | `partial` | Periodically (every ~10% progress) | Intermediate results (same shape as final `data.type`) |
+        | `complete` | Query finished | Final results |
+        | `failed` | Query errored | Error object |
+        | `cancelled` | Job was cancelled | Progress at cancellation |
+
+        SSE (not WebSocket) because this is a unidirectional server→client stream. SSE auto-reconnects,
+        passes through proxies, and works with the native `EventSource` browser API.
+
+        ```javascript
+        const es = new EventSource("/api/v1/query/jobs/qry_xxx/stream");
+        es.addEventListener("progress", (e) => updateProgressBar(JSON.parse(e.data)));
+        es.addEventListener("partial",  (e) => updateTable(JSON.parse(e.data)));
+        es.addEventListener("complete", (e) => { showFinalResults(JSON.parse(e.data)); es.close(); });
+        es.addEventListener("failed",   (e) => { showError(JSON.parse(e.data)); es.close(); });
+        ```
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: "qry_9c1d4e"
+      responses:
+        '200':
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: progress
+                data: {"phase":"scanning","scanned":2100000000,"total_estimate":10400000000,"percent":20.2,"events_matched":847291,"elapsed_ms":5000,"eta_ms":19700}
+
+                event: partial
+                data: {"type":"aggregate","columns":["source","count"],"rows":[["nginx",142000],["api-gw",71000]],"note":"Based on 20% of data. Final values will change."}
+
+                event: progress
+                data: {"phase":"scanning","scanned":5200000000,"total_estimate":10400000000,"percent":50.0,"events_matched":2100000,"elapsed_ms":12500,"eta_ms":12500}
+
+                event: partial
+                data: {"type":"aggregate","columns":["source","count"],"rows":[["nginx",355000],["api-gw",178000]],"note":"Based on 50% of data. Final values will change."}
+
+                event: progress
+                data: {"phase":"aggregating","scanned":10400000000,"total_estimate":10400000000,"percent":92.0,"events_matched":4200000,"elapsed_ms":23100,"eta_ms":2000}
+
+                event: complete
+                data: {"type":"aggregate","columns":["source","count"],"rows":[["nginx",712345],["api-gw",356789]],"total_rows":5}
+
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          description: Job expired
+
+  # ════════════════════════════════════════════
+  # LIVE
+  # ════════════════════════════════════════════
+
+  /tail:
+    get:
+      operationId: liveTail
+      tags: [Live]
+      summary: SSE live tail with full SPL2 pipeline
+      description: |
+        Server-Sent Events stream for real-time log tailing with full SPL2 pipeline support.
+        Uses the same query engine as `POST /query`, but in streaming mode.
+
+        **Two phases:**
+
+        1. **Catchup** — replays the last `count` matching events from storage (time range: `from` to now).
+           Each event is sent as `event: result`. Phase ends with `event: catchup_done`.
+        2. **Live** — streams new events from the EventBus through the SPL2 pipeline in real time.
+           Events are sent as `event: result`. Heartbeat every 15s as `event: heartbeat`.
+
+        **Supported SPL2 commands** (streaming, event-by-event):
+        `search`, `where`, `eval`, `fields`, `table`, `rename`, `rex`, `fillnull`, `head`, `bin`.
+
+        Commands requiring full materialization (`stats`, `sort`, `join`, `dedup`, `timechart`, etc.)
+        are rejected with `422`.
+
+        ```javascript
+        const es = new EventSource("/api/v1/tail?q=search+ERROR+|+where+status>500&count=100&from=-1h");
+        es.addEventListener("result",       (e) => appendRow(JSON.parse(e.data)));
+        es.addEventListener("catchup_done", (e) => showLiveIndicator());
+        es.addEventListener("heartbeat",    (e) => updatePing());
+        es.addEventListener("error",        (e) => showError(JSON.parse(e.data)));
+        ```
+
+        SSE (not WebSocket) because this is a unidirectional server-to-client stream. SSE auto-reconnects,
+        passes through proxies, and works with the native `EventSource` browser API.
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: SPL2 query (streaming commands only)
+          examples:
+            keyword:
+              summary: Simple keyword search
+              value: "search ERROR"
+            filtered:
+              summary: Filter with eval and projection
+              value: "search index=main ERROR | where status > 500 | eval sev=upper(level) | fields _time, _raw, sev"
+        - name: count
+          in: query
+          schema:
+            type: integer
+            default: 100
+            minimum: 0
+            maximum: 10000
+          description: Number of historical events to replay during catchup phase
+        - name: from
+          in: query
+          schema:
+            type: string
+            default: "-1h"
+          description: Catchup lookback window (relative or ISO 8601)
+          example: "-1h"
+      responses:
+        '200':
+          description: SSE event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+              example: |
+                event: result
+                data: {"_time":"2026-02-14T14:51:58Z","_raw":"level=ERROR status=502 uri=/api/users","status":502}
+
+                event: result
+                data: {"_time":"2026-02-14T14:52:01Z","_raw":"level=ERROR status=503 uri=/api/orders","status":503}
+
+                event: catchup_done
+                data: {"count":2}
+
+                event: result
+                data: {"_time":"2026-02-14T14:52:15Z","_raw":"level=ERROR status=500 uri=/api/pay","status":500}
+
+                event: heartbeat
+                data: {"ts":"2026-02-14T14:52:30Z"}
+
+        '400':
+          description: Parse error — invalid SPL2 query
+          content:
+            application/json:
+              example:
+                error: "Unknown command 'staats'"
+                suggestion: stats
+        '422':
+          description: Query contains unsupported commands for tail
+          content:
+            application/json:
+              example:
+                error: "unsupported commands for tail: stats (aggregation and stateful commands require full materialization)"
+                unsupported: ["stats"]
+
+  /histogram:
+    get:
+      operationId: histogram
+      tags: [Live]
+      summary: Time-bucketed event counts
+      description: |
+        Powers the timeline bar chart in the Web UI. Fires on every filter change — must be blazing fast.
+        Separate from `/query` because it runs independently and concurrently.
+      parameters:
+        - name: q
+          in: query
+          schema:
+            type: string
+          description: SPL2 filter expression (search part only, before pipes)
+          example: "level=error"
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+          example: "-1h"
+        - name: to
+          in: query
+          schema:
+            type: string
+            default: "now"
+        - name: buckets
+          in: query
+          schema:
+            type: integer
+            default: 60
+          description: Target number of buckets. Server picks the best interval (1s, 5s, 1m, 5m, 1h).
+      responses:
+        '200':
+          description: Histogram data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HistogramResponse'
+              example:
+                data:
+                  interval: "1m"
+                  buckets:
+                    - time: "2026-02-14T14:00:00Z"
+                      count: 42
+                    - time: "2026-02-14T14:01:00Z"
+                      count: 87
+                    - time: "2026-02-14T14:02:00Z"
+                      count: 156
+                  total: 8432
+                meta:
+                  took_ms: 12
+
+  # ════════════════════════════════════════════
+  # SCHEMA
+  # ════════════════════════════════════════════
+
+  /fields:
+    get:
+      operationId: listFields
+      tags: [Schema]
+      summary: List all fields with types and stats
+      description: Essential for autocomplete and the Fields sidebar in the Web UI.
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+          description: Restrict stats to time range start
+          example: "-1h"
+        - name: to
+          in: query
+          schema:
+            type: string
+          description: Restrict stats to time range end
+        - name: prefix
+          in: query
+          schema:
+            type: string
+          description: Filter fields by name prefix (for autocomplete)
+          example: "sta"
+        - name: source
+          in: query
+          schema:
+            type: string
+          description: Fields seen from a specific source
+          example: "nginx"
+      responses:
+        '200':
+          description: Field list with stats
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FieldsResponse'
+              example:
+                data:
+                  fields:
+                    - name: "_timestamp"
+                      type: datetime
+                      count: 847000000
+                      coverage: 1.0
+                    - name: level
+                      type: string
+                      count: 847000000
+                      coverage: 1.0
+                      top_values:
+                        - value: info
+                          count: 612000000
+                        - value: error
+                          count: 142000000
+                        - value: warn
+                          count: 93000000
+                    - name: status
+                      type: integer
+                      count: 423000000
+                      coverage: 0.50
+                      min: 200
+                      max: 504
+                      top_values:
+                        - value: 200
+                          count: 380000000
+                        - value: 404
+                          count: 21000000
+                    - name: duration_ms
+                      type: float
+                      count: 423000000
+                      coverage: 0.50
+                      min: 0.1
+                      max: 30001.0
+                      avg: 145.3
+                      p50: 42.0
+                      p99: 3200.0
+
+  /fields/{name}/values:
+    get:
+      operationId: fieldValues
+      tags: [Schema]
+      summary: Top values for a specific field
+      description: Powers "Quick Stats" sidebar and value autocomplete in the search bar.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          example: status
+        - name: from
+          in: query
+          schema:
+            type: string
+          example: "-1h"
+        - name: to
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 10
+            maximum: 100
+      responses:
+        '200':
+          description: Top field values
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FieldValuesResponse'
+              example:
+                data:
+                  field: status
+                  type: integer
+                  values:
+                    - value: 200
+                      count: 89421
+                      percent: 72.3
+                    - value: 404
+                      count: 18234
+                      percent: 14.7
+                    - value: 500
+                      count: 9123
+                      percent: 7.4
+                    - value: 502
+                      count: 4521
+                      percent: 3.7
+                    - value: 504
+                      count: 2401
+                      percent: 1.9
+                  unique_count: 14
+                  total_count: 123700
+                meta:
+                  from: "2026-02-14T13:52:00Z"
+                  to: "2026-02-14T14:52:00Z"
+
+  /sources:
+    get:
+      operationId: listSources
+      tags: [Schema]
+      summary: List log sources with volume stats
+      responses:
+        '200':
+          description: Source list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SourcesResponse'
+              example:
+                data:
+                  sources:
+                    - name: nginx
+                      event_count: 423000000
+                      last_event: "2026-02-14T14:52:01Z"
+                      first_event: "2026-01-15T00:00:01Z"
+                      rate: 1200.5
+                      storage_bytes: 5200000000
+                    - name: api-gateway
+                      event_count: 312000000
+                      last_event: "2026-02-14T14:52:00Z"
+                      first_event: "2026-01-15T00:00:02Z"
+                      rate: 890.2
+                      storage_bytes: 4100000000
+
+  # ════════════════════════════════════════════
+  # SERVER
+  # ════════════════════════════════════════════
+
+  /status:
+    get:
+      operationId: serverStatus
+      tags: [Server]
+      summary: Server info, storage, event stats, and health
+      responses:
+        '200':
+          description: Full server status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              example:
+                data:
+                  version: "0.4.0"
+                  uptime_seconds: 1234567
+                  storage:
+                    used_bytes: 13300000000
+                    total_bytes: 53700000000
+                    usage_percent: 24.8
+                  events:
+                    total: 847000000
+                    today: 1200000
+                    ingest_rate: 2340.5
+                  queries:
+                    active: 12
+                    avg_duration_ms: 45
+                    jobs:
+                      running: 2
+                      queued: 0
+                      max_concurrent: 10
+                  views:
+                    total: 3
+                    active: 2
+                    backfilling: 1
+                    storage_bytes: 2267789702
+                  retention:
+                    policy: "7d"
+                    oldest_event: "2026-02-07T00:00:01Z"
+                  health: healthy
+
+  /health:
+    get:
+      operationId: healthCheck
+      tags: [Server]
+      summary: Minimal health check for load balancers
+      description: Returns `200` when healthy, `503` when not. No envelope — trivially parseable.
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [ok]
+              example:
+                status: ok
+        '503':
+          description: Unhealthy
+          content:
+            application/json:
+              example:
+                status: unhealthy
+
+  # ════════════════════════════════════════════
+  # SAVED QUERIES
+  # ════════════════════════════════════════════
+
+  /queries:
+    get:
+      operationId: listSavedQueries
+      tags: [Saved Queries]
+      summary: List saved queries
+      responses:
+        '200':
+          description: Saved query list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedQueriesResponse'
+              example:
+                data:
+                  queries:
+                    - id: sq_abc123
+                      name: "High 5xx rate"
+                      q: "source=nginx status>=500 | stats count by uri | sort -count"
+                      from: "-1h"
+                      created_at: "2026-02-10T12:00:00Z"
+                      updated_at: "2026-02-14T08:00:00Z"
+    post:
+      operationId: createSavedQuery
+      tags: [Saved Queries]
+      summary: Create a saved query
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavedQueryInput'
+            example:
+              name: "High 5xx rate"
+              q: "source=nginx status>=500 | stats count by uri | sort -count"
+              from: "-1h"
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedQueryResponse'
+
+  /queries/{id}:
+    put:
+      operationId: updateSavedQuery
+      tags: [Saved Queries]
+      summary: Replace a saved query
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SavedQueryInput'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SavedQueryResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteSavedQuery
+      tags: [Saved Queries]
+      summary: Delete a saved query
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted
+
+  # ════════════════════════════════════════════
+  # ALERTS
+  # ════════════════════════════════════════════
+
+  /alerts:
+    get:
+      operationId: listAlerts
+      tags: [Alerts]
+      summary: List all alerts
+      responses:
+        '200':
+          description: Alert list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertsResponse'
+              example:
+                data:
+                  alerts:
+                    - id: alt_xyz789
+                      name: "High error rate"
+                      q: "level=error | stats count as errors | where errors > 100"
+                      interval: "5m"
+                      channels:
+                        - type: webhook
+                          name: "Slack Ops"
+                          config:
+                            url: "https://hooks.slack.com/services/T00/B00/xxx"
+                        - type: telegram
+                          name: "SRE Chat"
+                          config:
+                            bot_token: "token"
+                            chat_id: "channel"
+                      enabled: true
+                      last_triggered: "2026-02-14T13:25:00Z"
+                      last_checked: "2026-02-14T14:50:00Z"
+                      status: ok
+    post:
+      operationId: createAlert
+      tags: [Alerts]
+      summary: Create an alert with multi-channel notifications
+      description: |
+        Each alert can send to **multiple notification channels** simultaneously.
+
+        **Supported channel types:**
+
+        | Type | Required config fields |
+        |---|---|
+        | `webhook` | `url`, optional `method`, `headers`, `body_template` |
+        | `telegram` | `bot_token`, `chat_id`, optional `message_template`, `parse_mode` |
+        | `slack` | `webhook_url`, optional `channel`, `username`, `icon_emoji` |
+        | `pagerduty` | `routing_key`, optional `severity` |
+        | `opsgenie` | `api_key`, optional `priority`, `tags` |
+        | `email` | `to` (array), `from`, optional `smtp_host`, `smtp_port` |
+        | `incidentio` | `api_key`, optional `severity`, `mode` |
+        | `generic_http` | `url`, `method`, `headers`, `body_template` |
+
+        Each channel has an independent `enabled` flag so you can mute a channel without removing it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertInput'
+            examples:
+              multi_channel:
+                summary: Alert with webhook + Telegram + PagerDuty
+                value:
+                  name: "High error rate"
+                  q: "level=error | stats count as errors | where errors > 100"
+                  interval: "5m"
+                  channels:
+                    - type: webhook
+                      name: "Slack Ops"
+                      config:
+                        url: "https://hooks.slack.com/services/T00/B00/xxx"
+                    - type: telegram
+                      name: "SRE Chat"
+                      config:
+                        bot_token: "token"
+                        chat_id: "channel"
+                        message_template: "🔴 {{.alert.name}}: {{.result.errors}} errors in last {{.alert.interval}}"
+                    - type: pagerduty
+                      name: "P1 Escalation"
+                      config:
+                        routing_key: "R012ABCDEF..."
+                        severity: "critical"
+              simple_webhook:
+                summary: Single webhook alert
+                value:
+                  name: "5xx spike"
+                  q: "source=nginx status>=500 | stats count as cnt | where cnt > 50"
+                  interval: "1m"
+                  channels:
+                    - type: webhook
+                      config:
+                        url: "https://hooks.slack.com/services/T00/B00/xxx"
+              incidentio:
+                summary: Alert with incident.io escalation
+                value:
+                  name: "Database connection failures"
+                  q: "source=api-gateway message=\"connection refused\" | stats count as failures | where failures > 10"
+                  interval: "2m"
+                  channels:
+                    - type: incidentio
+                      name: "DB Incident"
+                      config:
+                        api_key: "inc_live_xxxx"
+                        severity: "major"
+                        mode: "real"
+                    - type: slack
+                      name: "DB Alerts"
+                      config:
+                        webhook_url: "https://hooks.slack.com/services/T00/B00/yyy"
+                        channel: "#db-alerts"
+      responses:
+        '201':
+          description: Alert created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertResponse'
+        '422':
+          description: Validation error (e.g., unknown channel type, missing required config field)
+          content:
+            application/json:
+              example:
+                error:
+                  code: VALIDATION_ERROR
+                  message: "channels[1].config.bot_token is required for type 'telegram'"
+
+  /alerts/{id}:
+    put:
+      operationId: updateAlert
+      tags: [Alerts]
+      summary: Replace an alert definition
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertInput'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteAlert
+      tags: [Alerts]
+      summary: Delete an alert
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted
+
+  /alerts/{id}/test:
+    post:
+      operationId: testAlert
+      tags: [Alerts]
+      summary: Test an alert without sending notifications
+      description: |
+        Executes the alert query and evaluates the condition, but does **not** send notifications.
+        Returns the query result and which channels **would** have fired.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Test result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertTestResponse'
+              example:
+                data:
+                  would_trigger: true
+                  result:
+                    errors: 247
+                  channels_that_would_fire:
+                    - type: webhook
+                      name: "Slack Ops"
+                      status: reachable
+                    - type: telegram
+                      name: "SRE Chat"
+                      status: reachable
+                    - type: pagerduty
+                      name: "P1 Escalation"
+                      status: reachable
+                  message: "Condition met: errors (247) > 100. Notifications NOT sent (test mode)."
+
+  /alerts/{id}/test-channels:
+    post:
+      operationId: testAlertChannels
+      tags: [Alerts]
+      summary: Send a test notification to all channels
+      description: |
+        Sends a test message (clearly marked as `[TEST]`) to every enabled channel
+        on this alert. Use to verify connectivity before going live.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Channel test results
+          content:
+            application/json:
+              example:
+                data:
+                  results:
+                    - type: webhook
+                      name: "Slack Ops"
+                      status: ok
+                      latency_ms: 142
+                    - type: telegram
+                      name: "SRE Chat"
+                      status: ok
+                      latency_ms: 310
+                    - type: pagerduty
+                      name: "P1 Escalation"
+                      status: error
+                      error: "HTTP 403: invalid routing_key"
+
+  # ════════════════════════════════════════════
+  # DASHBOARDS
+  # ════════════════════════════════════════════
+
+  /dashboards:
+    get:
+      operationId: listDashboards
+      tags: [Dashboards]
+      summary: List dashboards
+      responses:
+        '200':
+          description: Dashboard list
+          content:
+            application/json:
+              example:
+                data:
+                  dashboards:
+                    - id: dsh_abc123
+                      name: "Production Overview"
+                      created_at: "2026-02-10T12:00:00Z"
+                      updated_at: "2026-02-14T08:00:00Z"
+                      panels_count: 6
+    post:
+      operationId: createDashboard
+      tags: [Dashboards]
+      summary: Create a dashboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DashboardInput'
+            example:
+              name: "Production Overview"
+              panels:
+                - id: p1
+                  title: "Error Rate"
+                  type: timechart
+                  q: "level=error | timechart count span=5m"
+                  from: "-6h"
+                  position: {x: 0, y: 0, w: 6, h: 4}
+                - id: p2
+                  title: "Top Error Sources"
+                  type: table
+                  q: "level=error | stats count by source | sort -count | head 10"
+                  from: "-1h"
+                  position: {x: 6, y: 0, w: 6, h: 4}
+              variables:
+                - name: source
+                  type: field_values
+                  field: source
+                  default: "*"
+                  label: Source
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+
+  /dashboards/{id}:
+    get:
+      operationId: getDashboard
+      tags: [Dashboards]
+      summary: Get full dashboard definition
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Full dashboard with panels and variables
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: updateDashboard
+      tags: [Dashboards]
+      summary: Replace a dashboard definition
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DashboardInput'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteDashboard
+      tags: [Dashboards]
+      summary: Delete a dashboard
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Deleted
+
+  # ════════════════════════════════════════════
+  # MATERIALIZED VIEWS
+  # ════════════════════════════════════════════
+
+  /views:
+    get:
+      operationId: listViews
+      tags: [Materialized Views]
+      summary: List all materialized views
+      description: Returns every MV with operational status, storage, lag, and backfill progress.
+      responses:
+        '200':
+          description: MV list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ViewsListResponse'
+              example:
+                data:
+                  views:
+                    - name: mv_errors_5m
+                      kind: aggregation
+                      query: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket"
+                      retention: "90d"
+                      status: active
+                      version: 1
+                      rows: 142847
+                      segments: 12
+                      storage_bytes: 12582912
+                      lag_ms: 1200
+                      created_at: "2026-02-12T10:00:00Z"
+                      last_event: "2026-02-14T14:52:01Z"
+                    - name: mv_5xx_hourly
+                      kind: aggregation
+                      query: "source=nginx status>=500 | stats count, p95(duration) by uri, time_bucket(timestamp, '1h') AS hour"
+                      retention: "365d"
+                      status: backfilling
+                      version: 1
+                      rows: 6720
+                      segments: 3
+                      storage_bytes: 348160
+                      lag_ms: null
+                      backfill:
+                        total: 12600000
+                        processed: 8400000
+                        percent: 66.7
+                        eta_seconds: 134
+                      created_at: "2026-02-14T14:30:00Z"
+                      last_event: null
+    post:
+      operationId: createView
+      tags: [Materialized Views]
+      summary: Create a materialized view (or trigger rebuild)
+      description: |
+        REST equivalent of `| materialize`. If name already exists, triggers a **versioned rebuild**:
+        old version keeps serving queries, new version builds in background, atomic swap on completion.
+
+        Send `If-None-Match: *` to get `409 Conflict` if the view already exists (prevents accidental rebuilds).
+      parameters:
+        - name: If-None-Match
+          in: header
+          schema:
+            type: string
+          description: 'Set to `*` to prevent rebuild of existing view'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ViewInput'
+            examples:
+              aggregation:
+                summary: Aggregation MV
+                value:
+                  name: mv_errors_5m
+                  q: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket"
+                  retention: "90d"
+              projection:
+                summary: Projection MV
+                value:
+                  name: mv_access
+                  q: "source=nginx | extract timestamp, method, uri, status, size, duration"
+                  retention: "14d"
+                  partition_by: "date(timestamp)"
+              cascading:
+                summary: Cascading MV (built on another MV)
+                value:
+                  name: mv_errors_1h
+                  q: "| from mv_errors_5m | stats sum(count) AS count by source, time_bucket(bucket, '1h') AS hour"
+                  retention: "365d"
+      responses:
+        '201':
+          description: MV created, backfill started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ViewResponse'
+              example:
+                data:
+                  name: mv_errors_5m
+                  kind: aggregation
+                  query: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket"
+                  retention: "90d"
+                  status: backfilling
+                  version: 1
+                  backfill:
+                    total: 12400000
+                    processed: 0
+                    percent: 0
+        '200':
+          description: Existing MV — versioned rebuild triggered
+          content:
+            application/json:
+              example:
+                data:
+                  name: mv_errors_5m
+                  kind: aggregation
+                  query: "level=error | stats count, avg(duration), p99(duration) by source, time_bucket(timestamp, '5m') AS bucket"
+                  retention: "90d"
+                  status: rebuilding
+                  version: 2
+                  previous_version:
+                    version: 1
+                    status: active
+                  backfill:
+                    total: 12400000
+                    processed: 0
+                    percent: 0
+        '409':
+          description: Conflict — view exists and `If-None-Match` was set
+          content:
+            application/json:
+              example:
+                error:
+                  code: ALREADY_EXISTS
+                  message: "View 'mv_errors_5m' already exists. Remove If-None-Match header to trigger rebuild."
+
+  /views/{name}:
+    get:
+      operationId: getView
+      tags: [Materialized Views]
+      summary: Get MV details, column schema, and stats
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+          example: mv_errors_5m
+      responses:
+        '200':
+          description: Full MV details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ViewDetailResponse'
+              example:
+                data:
+                  name: mv_errors_5m
+                  kind: aggregation
+                  query: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket"
+                  retention: "90d"
+                  status: active
+                  version: 1
+                  columns:
+                    - name: source
+                      type: string
+                      encoding: dictionary
+                    - name: bucket
+                      type: timestamp
+                      encoding: delta-of-delta
+                    - name: count
+                      type: int64
+                      encoding: delta-varint
+                    - name: "avg(duration)"
+                      type: float64
+                      derived_from: ["_sum_duration", "_count_duration"]
+                  group_by: ["source", "bucket"]
+                  aggregations: ["count", "avg(duration)"]
+                  stats:
+                    rows: 142847
+                    segments: 12
+                    segments_pending_merge: 3
+                    storage_bytes: 12582912
+                    compression_ratio: 18.4
+                    lag_ms: 1200
+                    ingest_rate: 234.5
+                    oldest_event: "2026-01-15T00:00:01Z"
+                    newest_event: "2026-02-14T14:52:01Z"
+                  source_view: null
+                  created_at: "2026-02-12T10:00:00Z"
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patchView
+      tags: [Materialized Views]
+      summary: Update mutable MV properties
+      description: |
+        Only `retention` and `paused` can be changed without rebuild.
+        To change `q`, `partition_by`, or `group_by`, use `POST /views` with the same name (triggers rebuild).
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ViewPatchInput'
+            examples:
+              change_retention:
+                summary: Change retention
+                value:
+                  retention: "30d"
+              pause:
+                summary: Pause MV pipeline
+                value:
+                  paused: true
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ViewResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteView
+      tags: [Materialized Views]
+      summary: Delete MV and all its data
+      description: |
+        Atomic deletion. If the view has cascading dependents, returns `409`.
+        Use `?force=true` to delete the view and all dependents.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: force
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Delete view and all cascading dependents
+      responses:
+        '204':
+          description: Deleted
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: View has dependents
+          content:
+            application/json:
+              example:
+                error:
+                  code: HAS_DEPENDENTS
+                  message: "Cannot delete 'mv_errors_5m': view 'mv_errors_1h' depends on it."
+                  dependents: ["mv_errors_1h"]
+                  suggestion: "Delete dependent views first, or use ?force=true to delete all."
+
+  /views/{name}/backfill:
+    get:
+      operationId: viewBackfill
+      tags: [Materialized Views]
+      summary: Backfill/rebuild progress
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Backfill status
+          content:
+            application/json:
+              examples:
+                in_progress:
+                  summary: Backfill in progress
+                  value:
+                    data:
+                      status: backfilling
+                      version: 1
+                      total: 12600000
+                      processed: 8400000
+                      percent: 66.7
+                      rate: 62500
+                      eta_seconds: 67
+                      started_at: "2026-02-14T14:30:00Z"
+                      cursor: "seg-004:offset-847291"
+                      errors: 0
+                idle:
+                  summary: No backfill running
+                  value:
+                    data:
+                      status: idle
+                      last_completed: "2026-02-12T10:04:23Z"
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ════════════════════════════════════════════
+  # CONFIG
+  # ════════════════════════════════════════════
+
+  /config:
+    get:
+      operationId: getConfig
+      tags: [Config]
+      summary: Current runtime configuration
+      responses:
+        '200':
+          description: Configuration
+          content:
+            application/json:
+              example:
+                data:
+                  listen: "localhost:3100"
+                  data_dir: "~/.lynxdb/data"
+                  retention: "7d"
+                  auth_enabled: false
+                  otlp_enabled: false
+                  syslog_enabled: false
+                  max_query_memory_mb: 512
+    patch:
+      operationId: patchConfig
+      tags: [Config]
+      summary: Update runtime configuration
+      description: Only runtime-adjustable fields. Fields requiring restart are flagged in `meta.restart_required`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfigPatch'
+            example:
+              retention: "30d"
+              max_query_memory_mb: 1024
+      responses:
+        '200':
+          description: Updated config
+          content:
+            application/json:
+              example:
+                data:
+                  listen: "localhost:3100"
+                  data_dir: "~/.lynxdb/data"
+                  retention: "30d"
+                  auth_enabled: false
+                  otlp_enabled: false
+                  syslog_enabled: false
+                  max_query_memory_mb: 1024
+                meta:
+                  restart_required: []
+
+  # ════════════════════════════════════════════
+  # COMPATIBILITY
+  # ════════════════════════════════════════════
+
+  /es/_bulk:
+    post:
+      operationId: esBulk
+      tags: [Compatibility]
+      summary: Elasticsearch _bulk API
+      description: |
+        Drop-in compatible with Filebeat, Logstash, Vector, Fluentd.
+        `_index` maps to `_source` tag. `_type` is ignored.
+
+        ```yaml
+        # Filebeat config:
+        output.elasticsearch:
+          hosts: ["http://lynxdb:3100/api/v1/es"]
+        ```
+      requestBody:
+        required: true
+        content:
+          application/x-ndjson:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: ES-compatible bulk response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ESBulkResponse'
+
+  /es/{index}/_doc:
+    post:
+      operationId: esIndexDoc
+      tags: [Compatibility]
+      summary: Elasticsearch single-doc ingest
+      parameters:
+        - name: index
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogEvent'
+      responses:
+        '201':
+          description: Document indexed
+          content:
+            application/json:
+              example:
+                _id: "01JKNM3VXQP..."
+                result: created
+
+  /es/:
+    get:
+      operationId: esClusterInfo
+      tags: [Compatibility]
+      summary: Fake ES cluster info (Filebeat handshake)
+      responses:
+        '200':
+          description: Minimal cluster info for client compatibility
+          content:
+            application/json:
+              example:
+                name: lynxdb
+                cluster_name: lynxdb
+                version:
+                  number: "8.0.0"
+                  build_flavor: default
+                tagline: "LynxDB — Splunk-power log analytics in a single binary"
+
+  /otlp/v1/logs:
+    post:
+      operationId: otlpLogs
+      tags: [Compatibility]
+      summary: OpenTelemetry OTLP log ingest
+      description: |
+        Accepts OTLP HTTP logs in protobuf or JSON format.
+
+        ```yaml
+        # OTEL Collector config:
+        exporters:
+          otlphttp:
+            endpoint: http://lynxdb:3100/api/v1/otlp
+        ```
+      requestBody:
+        required: true
+        content:
+          application/x-protobuf:
+            schema:
+              type: string
+              format: binary
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Accepted
+
+# ──────────────────────────────────────────────
+# COMPONENTS
+# ──────────────────────────────────────────────
+components:
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: Optional. Off by default. Enable with `lynxdb server --auth`.
+
+  parameters:
+    XSource:
+      name: X-Source
+      in: header
+      schema:
+        type: string
+      description: Tag events with a source label (e.g., `nginx`, `api-gateway`)
+      example: nginx
+    XFormat:
+      name: X-Format
+      in: header
+      schema:
+        type: string
+        enum: [json, syslog, clf, raw, auto]
+        default: auto
+      description: Force log format parser. Default `auto` detects format.
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: AUTH_REQUIRED
+              message: "Authentication is enabled. Provide a Bearer token."
+              docs_url: "https://lynxdb.io/docs/auth"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: NOT_FOUND
+              message: "Resource not found."
+    InvalidQuery:
+      description: Invalid SPL2 query
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: INVALID_QUERY
+              message: "Unknown field 'stauts'."
+              suggestion: "status"
+    QueryTimeout:
+      description: Query exceeded time limit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: QUERY_TIMEOUT
+              message: "Query exceeded 30s timeout. Try narrowing the time range or adding filters."
+    PayloadTooLarge:
+      description: Event or batch exceeds size limit
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: PAYLOAD_TOO_LARGE
+              message: "Event exceeds 1 MB limit."
+    RateLimited:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds to wait before retrying
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: RATE_LIMITED
+              message: "Ingest rate limit exceeded. Retry after 1s."
+
+  schemas:
+
+    # ── Generic ──
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Machine-readable SCREAMING_SNAKE code
+              example: INVALID_QUERY
+            message:
+              type: string
+              example: "Unknown field 'stauts'"
+            suggestion:
+              type: string
+              example: status
+            docs_url:
+              type: string
+              format: uri
+
+    Meta:
+      type: object
+      properties:
+        took_ms:
+          type: number
+        scanned:
+          type: integer
+        query_id:
+          type: string
+
+    # ── Ingest ──
+
+    LogEvent:
+      type: object
+      additionalProperties: true
+      description: Any JSON object. No required schema.
+      example:
+        message: "GET /api/users 200 12ms"
+        level: info
+        source: nginx
+        status: 200
+
+    IngestResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [accepted, failed]
+          properties:
+            accepted:
+              type: integer
+            failed:
+              type: integer
+
+    IngestPartialResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [accepted, failed, errors]
+          properties:
+            accepted:
+              type: integer
+            failed:
+              type: integer
+            errors:
+              type: array
+              items:
+                type: object
+                properties:
+                  index:
+                    type: integer
+                  code:
+                    type: string
+                  message:
+                    type: string
+
+    ESBulkResponse:
+      type: object
+      properties:
+        took:
+          type: integer
+        errors:
+          type: boolean
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                type: object
+                properties:
+                  _id:
+                    type: string
+                  status:
+                    type: integer
+
+    # ── Query ──
+
+    QueryRequest:
+      type: object
+      required: [q]
+      properties:
+        q:
+          type: string
+          description: SPL2 query string
+          example: "source=nginx status>=500 | stats count by uri"
+        from:
+          type: string
+          description: "Start time: relative (`-1h`, `-7d`) or ISO 8601. Default: `-15m`"
+          default: "-15m"
+          example: "-1h"
+        to:
+          type: string
+          description: "End time: relative (`now`, `-5m`) or ISO 8601. Default: `now`"
+          default: "now"
+        limit:
+          type: integer
+          default: 1000
+          maximum: 50000
+          description: Max events to return
+        offset:
+          type: integer
+          default: 0
+          description: Offset for pagination (tabular results only)
+        format:
+          type: string
+          enum: [json, csv, raw]
+          default: json
+        wait:
+          type: number
+          nullable: true
+          default: null
+          description: |
+            Controls sync/async behavior:
+            - `null` (default) — **Sync.** Block until query completes or server timeout (30s). Returns `200` with results or `408` on timeout.
+            - `0` — **Async.** Return `202` immediately with a job handle. Client polls or subscribes to SSE for progress.
+            - `N` (seconds) — **Hybrid.** Wait up to N seconds. If query completes in time → `200` with results. If not → `202` with job handle and current progress. Best for UI: short queries feel instant, long queries degrade gracefully.
+          example: 5
+
+    AcceleratedBy:
+      type: object
+      properties:
+        view:
+          type: string
+          description: Name of the MV used
+        original_scan:
+          type: integer
+          description: Events that would have been scanned without MV
+        speedup:
+          type: string
+          example: "~400x"
+        status:
+          type: string
+          enum: [active, backfilling]
+        coverage_percent:
+          type: number
+          description: Only present when MV is backfilling
+
+    QueryEventsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, events, total]
+          properties:
+            type:
+              type: string
+              enum: [events]
+            events:
+              type: array
+              items:
+                $ref: '#/components/schemas/LogEvent'
+            total:
+              type: integer
+            has_more:
+              type: boolean
+            partial:
+              type: boolean
+              description: Present and `true` when served from a backfilling MV
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: object
+              properties:
+                accelerated_by:
+                  $ref: '#/components/schemas/AcceleratedBy'
+
+    QueryAggregateResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, columns, rows]
+          properties:
+            type:
+              type: string
+              enum: [aggregate]
+            columns:
+              type: array
+              items:
+                type: string
+            rows:
+              type: array
+              items:
+                type: array
+            total_rows:
+              type: integer
+            partial:
+              type: boolean
+        meta:
+          allOf:
+            - $ref: '#/components/schemas/Meta'
+            - type: object
+              properties:
+                accelerated_by:
+                  $ref: '#/components/schemas/AcceleratedBy'
+
+    QueryTimechartResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, interval, columns, rows]
+          properties:
+            type:
+              type: string
+              enum: [timechart]
+            interval:
+              type: string
+              example: "5m"
+            columns:
+              type: array
+              items:
+                type: string
+            rows:
+              type: array
+              items:
+                type: array
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    QueryViewCreatedResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [type, view]
+          properties:
+            type:
+              type: string
+              enum: [view_created]
+            view:
+              $ref: '#/components/schemas/ViewSummary'
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    # ── Query Jobs (async) ──
+
+    JobProgress:
+      type: object
+      required: [phase, percent]
+      properties:
+        phase:
+          type: string
+          enum: [scanning, aggregating, sorting, complete]
+          description: |
+            Current execution phase:
+            - `scanning` — reading raw segments, matching filters
+            - `aggregating` — computing stats/group-by after scan
+            - `sorting` — sorting results (for `| sort`)
+            - `complete` — done
+        scanned:
+          type: integer
+          format: int64
+          description: Events scanned so far
+          example: 42350000000
+        total_estimate:
+          type: integer
+          format: int64
+          description: Estimated total events to scan (may refine as scan progresses)
+          example: 84700000000
+        percent:
+          type: number
+          minimum: 0
+          maximum: 100
+          example: 50.0
+        events_matched:
+          type: integer
+          format: int64
+          description: Events that passed the filter so far
+          example: 423000000
+        elapsed_ms:
+          type: integer
+          description: Wall-clock time since job started
+          example: 18400
+        eta_ms:
+          type: integer
+          nullable: true
+          description: Estimated time remaining. `null` when not enough data to estimate.
+          example: 18400
+
+    PartialResults:
+      type: object
+      description: |
+        Intermediate results based on data scanned so far. Same shape as final results
+        (`events`, `aggregate`, or `timechart`) plus a `note` field warning that values are not final.
+
+        For aggregation queries: intermediate values that will change as more data is scanned.
+        For event queries: first N matched events found so far.
+      properties:
+        type:
+          type: string
+          enum: [events, aggregate, timechart]
+        columns:
+          type: array
+          items:
+            type: string
+        rows:
+          type: array
+          items:
+            type: array
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/LogEvent'
+        total_so_far:
+          type: integer
+          description: Total matches found so far (for event queries)
+        note:
+          type: string
+          description: Always present — warns client that data is not final
+          example: "Based on 50% of data. Final values will change."
+
+    QueryJobResponse:
+      type: object
+      required: [data]
+      description: |
+        Returned as `202` from `POST /query` (async/hybrid) and `200` from `GET /query/jobs/{id}`.
+        The `status` field determines which result fields are present:
+        - `running` → `progress`, optional `partial_results`
+        - `complete` → `progress`, `results`
+        - `failed` → `progress`, `error`
+        - `cancelled` → `progress`, optional `partial_results`
+      properties:
+        data:
+          type: object
+          required: [type, job_id, status, progress]
+          properties:
+            type:
+              type: string
+              enum: [job]
+            job_id:
+              type: string
+              example: "qry_9c1d4e"
+            status:
+              type: string
+              enum: [running, complete, failed, cancelled]
+            query:
+              type: string
+              description: The original SPL2 query
+            from:
+              type: string
+            to:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+            completed_at:
+              type: string
+              format: date-time
+              description: Present when `status` is `complete`
+            failed_at:
+              type: string
+              format: date-time
+              description: Present when `status` is `failed`
+            expires_at:
+              type: string
+              format: date-time
+              description: When results will be garbage-collected (present for `complete` jobs)
+            progress:
+              $ref: '#/components/schemas/JobProgress'
+            partial_results:
+              $ref: '#/components/schemas/PartialResults'
+            results:
+              description: Final query results. Present only when `status` is `complete`. Same shape as sync `200` response `data`.
+              oneOf:
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      enum: [events]
+                    events:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/LogEvent'
+                    total:
+                      type: integer
+                    has_more:
+                      type: boolean
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      enum: [aggregate]
+                    columns:
+                      type: array
+                      items:
+                        type: string
+                    rows:
+                      type: array
+                      items:
+                        type: array
+                    total_rows:
+                      type: integer
+                - type: object
+                  properties:
+                    type:
+                      type: string
+                      enum: [timechart]
+                    interval:
+                      type: string
+                    columns:
+                      type: array
+                      items:
+                        type: string
+                    rows:
+                      type: array
+                      items:
+                        type: array
+            error:
+              description: Present only when `status` is `failed`
+              type: object
+              properties:
+                code:
+                  type: string
+                  example: QUERY_MEMORY_EXCEEDED
+                message:
+                  type: string
+                suggestion:
+                  type: string
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    JobListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [jobs]
+          properties:
+            jobs:
+              type: array
+              items:
+                type: object
+                properties:
+                  job_id:
+                    type: string
+                  status:
+                    type: string
+                    enum: [running, complete, failed, cancelled]
+                  query:
+                    type: string
+                  from:
+                    type: string
+                  to:
+                    type: string
+                  created_at:
+                    type: string
+                    format: date-time
+                  completed_at:
+                    type: string
+                    format: date-time
+                  expires_at:
+                    type: string
+                    format: date-time
+                  progress:
+                    $ref: '#/components/schemas/JobProgress'
+            meta:
+              type: object
+              properties:
+                max_concurrent:
+                  type: integer
+                  description: Max concurrent jobs allowed
+                  example: 10
+                active:
+                  type: integer
+                  description: Currently running jobs
+                  example: 3
+
+    QueryExplainResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          properties:
+            parsed:
+              type: object
+              properties:
+                pipeline:
+                  type: array
+                  items:
+                    type: object
+                result_type:
+                  type: string
+                  enum: [events, aggregate, timechart]
+                estimated_cost:
+                  type: string
+                  enum: [low, medium, high]
+                uses_full_scan:
+                  type: boolean
+                fields_read:
+                  type: array
+                  items:
+                    type: string
+                fields_produced:
+                  type: array
+                  items:
+                    type: string
+            acceleration:
+              type: object
+              properties:
+                available:
+                  type: boolean
+                view:
+                  type: string
+                reason:
+                  type: string
+                estimated_speedup:
+                  type: string
+            is_valid:
+              type: boolean
+            errors:
+              type: array
+              items:
+                type: object
+                properties:
+                  position:
+                    type: integer
+                  length:
+                    type: integer
+                  message:
+                    type: string
+                  suggestion:
+                    type: string
+
+    # ── Schema ──
+
+    FieldsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [fields]
+          properties:
+            fields:
+              type: array
+              items:
+                type: object
+                required: [name, type, count, coverage]
+                properties:
+                  name:
+                    type: string
+                  type:
+                    type: string
+                    enum: [string, integer, float, boolean, datetime]
+                  count:
+                    type: integer
+                  coverage:
+                    type: number
+                    description: Fraction of events containing this field (0.0–1.0)
+                  min:
+                    type: number
+                  max:
+                    type: number
+                  avg:
+                    type: number
+                  p50:
+                    type: number
+                  p99:
+                    type: number
+                  top_values:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        value: {}
+                        count:
+                          type: integer
+
+    FieldValuesResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [field, type, values]
+          properties:
+            field:
+              type: string
+            type:
+              type: string
+            values:
+              type: array
+              items:
+                type: object
+                properties:
+                  value: {}
+                  count:
+                    type: integer
+                  percent:
+                    type: number
+            unique_count:
+              type: integer
+            total_count:
+              type: integer
+        meta:
+          type: object
+          properties:
+            from:
+              type: string
+              format: date-time
+            to:
+              type: string
+              format: date-time
+
+    SourcesResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [sources]
+          properties:
+            sources:
+              type: array
+              items:
+                type: object
+                properties:
+                  name:
+                    type: string
+                  event_count:
+                    type: integer
+                  last_event:
+                    type: string
+                    format: date-time
+                  first_event:
+                    type: string
+                    format: date-time
+                  rate:
+                    type: number
+                    description: Events per second (current)
+                  storage_bytes:
+                    type: integer
+
+    # ── Histogram ──
+
+    HistogramResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [interval, buckets, total]
+          properties:
+            interval:
+              type: string
+              example: "1m"
+            buckets:
+              type: array
+              items:
+                type: object
+                required: [time, count]
+                properties:
+                  time:
+                    type: string
+                    format: date-time
+                  count:
+                    type: integer
+            total:
+              type: integer
+        meta:
+          $ref: '#/components/schemas/Meta'
+
+    # ── Status ──
+
+    StatusResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          properties:
+            version:
+              type: string
+            uptime_seconds:
+              type: integer
+            storage:
+              type: object
+              properties:
+                used_bytes:
+                  type: integer
+                total_bytes:
+                  type: integer
+                usage_percent:
+                  type: number
+            events:
+              type: object
+              properties:
+                total:
+                  type: integer
+                today:
+                  type: integer
+                ingest_rate:
+                  type: number
+            queries:
+              type: object
+              properties:
+                active:
+                  type: integer
+                avg_duration_ms:
+                  type: number
+            views:
+              type: object
+              properties:
+                total:
+                  type: integer
+                active:
+                  type: integer
+                backfilling:
+                  type: integer
+                storage_bytes:
+                  type: integer
+            retention:
+              type: object
+              properties:
+                policy:
+                  type: string
+                oldest_event:
+                  type: string
+                  format: date-time
+            health:
+              type: string
+              enum: [healthy, degraded, unhealthy]
+
+    # ── Saved Queries ──
+
+    SavedQuery:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        q:
+          type: string
+        from:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    SavedQueryInput:
+      type: object
+      required: [name, q]
+      properties:
+        name:
+          type: string
+          example: "High 5xx rate"
+        q:
+          type: string
+          example: "source=nginx status>=500 | stats count by uri | sort -count"
+        from:
+          type: string
+          example: "-1h"
+
+    SavedQueriesResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [queries]
+          properties:
+            queries:
+              type: array
+              items:
+                $ref: '#/components/schemas/SavedQuery'
+
+    SavedQueryResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/SavedQuery'
+
+    # ── Alerts ──
+
+    NotificationChannel:
+      type: object
+      required: [type, config]
+      description: |
+        A notification destination. Each alert can have multiple channels.
+      properties:
+        type:
+          type: string
+          enum: [webhook, telegram, slack, pagerduty, opsgenie, email, incidentio, generic_http]
+        name:
+          type: string
+          description: Human-readable label for this channel
+          example: "Slack Ops"
+        enabled:
+          type: boolean
+          default: true
+          description: Mute a channel without removing it
+        config:
+          type: object
+          description: Channel-specific configuration (see table below)
+          additionalProperties: true
+      discriminator:
+        propertyName: type
+      example:
+        type: webhook
+        name: "Slack Ops"
+        config:
+          url: "https://hooks.slack.com/services/T00/B00/xxx"
+
+    WebhookConfig:
+      type: object
+      required: [url]
+      description: "`type: webhook` config"
+      properties:
+        url:
+          type: string
+          format: uri
+        method:
+          type: string
+          enum: [POST, PUT]
+          default: POST
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        body_template:
+          type: string
+          description: Go template. Variables `{{.alert.*}}`, `{{.result.*}}`, `{{.timestamp}}`
+
+    TelegramConfig:
+      type: object
+      required: [bot_token, chat_id]
+      description: "`type: telegram` config"
+      properties:
+        bot_token:
+          type: string
+        chat_id:
+          type: string
+          description: Chat or group ID. Prefix group IDs with `-100`.
+        message_template:
+          type: string
+          description: "Go template. Default: `🔴 {{.alert.name}}: triggered`"
+          example: "🔴 {{.alert.name}}: {{.result.errors}} errors in last {{.alert.interval}}"
+        parse_mode:
+          type: string
+          enum: [HTML, MarkdownV2]
+          default: HTML
+
+    SlackConfig:
+      type: object
+      required: [webhook_url]
+      description: "`type: slack` config"
+      properties:
+        webhook_url:
+          type: string
+          format: uri
+        channel:
+          type: string
+          example: "#alerts"
+        username:
+          type: string
+          default: LynxDB
+        icon_emoji:
+          type: string
+          default: ":rotating_light:"
+
+    PagerDutyConfig:
+      type: object
+      required: [routing_key]
+      description: "`type: pagerduty` config"
+      properties:
+        routing_key:
+          type: string
+          description: Events API v2 routing key
+        severity:
+          type: string
+          enum: [critical, error, warning, info]
+          default: error
+
+    OpsgenieConfig:
+      type: object
+      required: [api_key]
+      description: "`type: opsgenie` config"
+      properties:
+        api_key:
+          type: string
+        priority:
+          type: string
+          enum: [P1, P2, P3, P4, P5]
+          default: P3
+        tags:
+          type: array
+          items:
+            type: string
+
+    EmailConfig:
+      type: object
+      required: [to, from]
+      description: "`type: email` config"
+      properties:
+        to:
+          type: array
+          items:
+            type: string
+            format: email
+        from:
+          type: string
+          format: email
+        smtp_host:
+          type: string
+          default: localhost
+        smtp_port:
+          type: integer
+          default: 587
+
+    IncidentIOConfig:
+      type: object
+      required: [api_key]
+      description: "`type: incidentio` config"
+      properties:
+        api_key:
+          type: string
+        severity:
+          type: string
+          enum: [minor, major, critical]
+          default: major
+        mode:
+          type: string
+          enum: [real, test]
+          default: real
+          description: "`test` creates test incidents that don't page"
+
+    GenericHTTPConfig:
+      type: object
+      required: [url, method]
+      description: "`type: generic_http` config — for any HTTP-based integration"
+      properties:
+        url:
+          type: string
+          format: uri
+        method:
+          type: string
+          enum: [POST, PUT, PATCH]
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        body_template:
+          type: string
+          description: Go template for request body
+
+    Alert:
+      type: object
+      properties:
+        id:
+          type: string
+          example: alt_xyz789
+        name:
+          type: string
+        q:
+          type: string
+        interval:
+          type: string
+          description: Check frequency
+          example: "5m"
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/NotificationChannel'
+        enabled:
+          type: boolean
+        last_triggered:
+          type: string
+          format: date-time
+          nullable: true
+        last_checked:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [ok, triggered, error]
+          description: "`ok` = last check didn't fire, `triggered` = last check fired, `error` = query failed"
+
+    AlertInput:
+      type: object
+      required: [name, q, interval, channels]
+      properties:
+        name:
+          type: string
+          example: "High error rate"
+        q:
+          type: string
+          description: SPL2 query. Must produce a numeric result to evaluate as condition.
+          example: "level=error | stats count as errors | where errors > 100"
+        interval:
+          type: string
+          description: "Check frequency: `30s`, `1m`, `5m`, `15m`, `1h`"
+          example: "5m"
+        channels:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/NotificationChannel'
+        enabled:
+          type: boolean
+          default: true
+
+    AlertsResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [alerts]
+          properties:
+            alerts:
+              type: array
+              items:
+                $ref: '#/components/schemas/Alert'
+
+    AlertResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/Alert'
+
+    AlertTestResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          properties:
+            would_trigger:
+              type: boolean
+            result:
+              type: object
+              additionalProperties: true
+            channels_that_would_fire:
+              type: array
+              items:
+                type: object
+                properties:
+                  type:
+                    type: string
+                  name:
+                    type: string
+                  status:
+                    type: string
+                    enum: [reachable, unreachable, error]
+            message:
+              type: string
+
+    # ── Dashboards ──
+
+    PanelPosition:
+      type: object
+      required: [x, y, w, h]
+      properties:
+        x:
+          type: integer
+        y:
+          type: integer
+        w:
+          type: integer
+          description: Width in grid units (12-column grid)
+        h:
+          type: integer
+          description: Height in grid units
+
+    Panel:
+      type: object
+      required: [id, title, type, q, position]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        type:
+          type: string
+          enum: [timechart, table, bar, line, area, stat, pie]
+        q:
+          type: string
+        from:
+          type: string
+          default: "-1h"
+        position:
+          $ref: '#/components/schemas/PanelPosition'
+
+    DashboardVariable:
+      type: object
+      required: [name, type, field]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [field_values, custom]
+        field:
+          type: string
+        default:
+          type: string
+        label:
+          type: string
+
+    Dashboard:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        panels:
+          type: array
+          items:
+            $ref: '#/components/schemas/Panel'
+        variables:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardVariable'
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    DashboardInput:
+      type: object
+      required: [name, panels]
+      properties:
+        name:
+          type: string
+        panels:
+          type: array
+          items:
+            $ref: '#/components/schemas/Panel'
+        variables:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardVariable'
+
+    DashboardResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/Dashboard'
+
+    # ── Materialized Views ──
+
+    ViewSummary:
+      type: object
+      required: [name, kind, query, status]
+      properties:
+        name:
+          type: string
+        kind:
+          type: string
+          enum: [projection, aggregation]
+        query:
+          type: string
+        retention:
+          type: string
+        status:
+          type: string
+          enum: [active, backfilling, rebuilding, paused, error]
+        version:
+          type: integer
+        rows:
+          type: integer
+        segments:
+          type: integer
+        storage_bytes:
+          type: integer
+        lag_ms:
+          type: integer
+          nullable: true
+        backfill:
+          $ref: '#/components/schemas/BackfillProgress'
+        previous_version:
+          type: object
+          properties:
+            version:
+              type: integer
+            status:
+              type: string
+        created_at:
+          type: string
+          format: date-time
+        last_event:
+          type: string
+          format: date-time
+          nullable: true
+
+    BackfillProgress:
+      type: object
+      properties:
+        total:
+          type: integer
+        processed:
+          type: integer
+        percent:
+          type: number
+        eta_seconds:
+          type: integer
+
+    ViewColumn:
+      type: object
+      required: [name, type]
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          enum: [string, int64, float64, timestamp, boolean]
+        encoding:
+          type: string
+          enum: [dictionary, delta-of-delta, delta-varint, gorilla, bitpacked]
+        derived_from:
+          type: array
+          items:
+            type: string
+          description: Internal state columns for computed aggregates (e.g., avg = sum/count)
+
+    ViewInput:
+      type: object
+      required: [name, q]
+      properties:
+        name:
+          type: string
+          pattern: '^mv_[a-z0-9_]+$'
+          description: "Must start with `mv_`. Lowercase, underscores, alphanumeric."
+          example: mv_errors_5m
+        q:
+          type: string
+          description: SPL2 pipeline (without `| materialize`)
+          example: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket"
+        retention:
+          type: string
+          description: "Duration string. Default: same as index retention."
+          example: "90d"
+        partition_by:
+          type: string
+          description: Partition strategy expression
+          example: "date(timestamp)"
+
+    ViewPatchInput:
+      type: object
+      properties:
+        retention:
+          type: string
+          example: "30d"
+        paused:
+          type: boolean
+
+    ViewResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: '#/components/schemas/ViewSummary'
+
+    ViewDetailResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          allOf:
+            - $ref: '#/components/schemas/ViewSummary'
+            - type: object
+              properties:
+                columns:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/ViewColumn'
+                group_by:
+                  type: array
+                  items:
+                    type: string
+                aggregations:
+                  type: array
+                  items:
+                    type: string
+                stats:
+                  type: object
+                  properties:
+                    rows:
+                      type: integer
+                    segments:
+                      type: integer
+                    segments_pending_merge:
+                      type: integer
+                    storage_bytes:
+                      type: integer
+                    compression_ratio:
+                      type: number
+                    lag_ms:
+                      type: integer
+                    ingest_rate:
+                      type: number
+                    oldest_event:
+                      type: string
+                      format: date-time
+                    newest_event:
+                      type: string
+                      format: date-time
+                source_view:
+                  type: string
+                  nullable: true
+                  description: Parent MV name for cascading views
+
+    ViewsListResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [views]
+          properties:
+            views:
+              type: array
+              items:
+                $ref: '#/components/schemas/ViewSummary'
+
+    # ── Config ──
+
+    ConfigPatch:
+      type: object
+      properties:
+        retention:
+          type: string
+          example: "30d"
+        max_query_memory_mb:
+          type: integer
+          example: 1024
+        listen:
+          type: string
+          description: Requires restart
+        auth_enabled:
+          type: boolean
+        otlp_enabled:
+          type: boolean
+        syslog_enabled:
+          type: boolean
