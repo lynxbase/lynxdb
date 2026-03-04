@@ -16,11 +16,11 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/buildinfo"
-	"github.com/OrlovEvgeny/Lynxdb/internal/ui"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/api/rest"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/auth"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/internal/buildinfo"
+	"github.com/lynxbase/lynxdb/internal/ui"
+	"github.com/lynxbase/lynxdb/pkg/api/rest"
+	"github.com/lynxbase/lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 var (

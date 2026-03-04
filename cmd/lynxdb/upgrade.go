@@ -10,8 +10,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/buildinfo"
-	"github.com/OrlovEvgeny/Lynxdb/internal/upgrade"
+	"github.com/lynxbase/lynxdb/internal/buildinfo"
+	"github.com/lynxbase/lynxdb/internal/upgrade"
 )
 
 func init() {
@@ -74,7 +74,7 @@ func runUpgrade(check bool, version string, force, yes bool) error {
 		result, err = upgrade.CheckAgainstManifest(manifest, buildinfo.Version)
 		if err != nil {
 			if errors.Is(err, upgrade.ErrPlatformNotFound) {
-				return fmt.Errorf("no build for %s/%s in %s. Check available builds at https://github.com/OrlovEvgeny/Lynxdb/releases/%s",
+				return fmt.Errorf("no build for %s/%s in %s. Check available builds at https://github.com/lynxbase/lynxdb/releases/%s",
 					runtime.GOOS, runtime.GOARCH, version, version)
 			}
 			return err
@@ -95,7 +95,7 @@ func runUpgrade(check bool, version string, force, yes bool) error {
 		result, err = upgrade.Check(ctx, buildinfo.Version)
 		if err != nil {
 			if errors.Is(err, upgrade.ErrPlatformNotFound) {
-				return fmt.Errorf("no build for %s/%s. Check available builds at https://github.com/OrlovEvgeny/Lynxdb/releases",
+				return fmt.Errorf("no build for %s/%s. Check available builds at https://github.com/lynxbase/lynxdb/releases",
 					runtime.GOOS, runtime.GOARCH)
 			}
 			return fmt.Errorf("update check failed: %w", err)

@@ -13,11 +13,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/engine/pipeline"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/storage"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
 const (

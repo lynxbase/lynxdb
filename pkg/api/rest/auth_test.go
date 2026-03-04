@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/auth"
 )
 
 func startAuthServer(t *testing.T) (*Server, *auth.KeyStore, string, func()) {

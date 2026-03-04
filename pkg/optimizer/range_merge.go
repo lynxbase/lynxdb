@@ -3,7 +3,7 @@ package optimizer
 import (
 	"strings"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // rangeMergeRule detects field >= A AND field < B and emits rangePredicates annotation.

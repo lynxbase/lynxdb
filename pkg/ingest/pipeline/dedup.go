@@ -23,7 +23,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // DedupStage removes duplicate events within a batch and across recent batches.

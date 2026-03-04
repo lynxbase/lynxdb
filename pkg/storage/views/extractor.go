@@ -3,7 +3,7 @@ package views
 import (
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // Extractor creates new events with only the specified columns populated.

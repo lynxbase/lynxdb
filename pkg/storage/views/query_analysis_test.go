@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 func TestAnalyzeQuery_ProjectionView(t *testing.T) {

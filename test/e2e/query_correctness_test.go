@@ -736,7 +736,6 @@ func TestE2E_QueryCorrectness(t *testing.T) {
 			}
 		})
 		t.Run("WithBY_TopIP_867", func(t *testing.T) {
-			t.Skip("bug: EVENTSTATS with BY clause returns 0 — needs fix in application code")
 			r := h.MustQuery(`FROM idx_ssh
     | REX "(?<ip>\d+\.\d+\.\d+\.\d+)"
     | WHERE isnotnull(ip)
@@ -778,7 +777,6 @@ func TestE2E_QueryCorrectness(t *testing.T) {
 	// Category 12: STREAMSTATS
 	t.Run("STREAMSTATS", func(t *testing.T) {
 		t.Run("RunningCount_10Rows", func(t *testing.T) {
-			t.Skip("bug: STREAMSTATS returns 0 rows — needs fix in application code")
 			requireEventCount(t, h.MustQuery(`FROM idx_ssh | STREAMSTATS count AS row_num | WHERE row_num <= 10 | TABLE row_num`), 10)
 		})
 		t.Run("Window_10Rows", func(t *testing.T) {
@@ -791,14 +789,12 @@ func TestE2E_QueryCorrectness(t *testing.T) {
     | TABLE rt, rolling_avg`), 10)
 		})
 		t.Run("CurrentTrue_LastRow2000", func(t *testing.T) {
-			t.Skip("bug: STREAMSTATS returns 0 — needs fix in application code")
 			requireAggValue(t, h.MustQuery(`FROM idx_ssh
     | STREAMSTATS count AS running_total current=true
     | WHERE running_total = 2000
     | STATS count`), "count", 1)
 		})
 		t.Run("WithBY_FirstOccurrence", func(t *testing.T) {
-			t.Skip("bug: STREAMSTATS with BY returns 0 — needs fix in application code")
 			requireAggValue(t, h.MustQuery(`FROM idx_ssh
     | REX "(?<ip>\d+\.\d+\.\d+\.\d+)"
     | WHERE isnotnull(ip)

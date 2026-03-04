@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/model"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/model"
 )
 
 // Ingest buffers events in the async batcher (which flushes to parts on

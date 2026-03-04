@@ -8,7 +8,7 @@ import (
 	"path/filepath"
 	"sync"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
 // knownDirs tracks directories already created to avoid os.MkdirAll syscalls on every write.

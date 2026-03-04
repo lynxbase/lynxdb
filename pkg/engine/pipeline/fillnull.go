@@ -3,7 +3,8 @@ package pipeline
 import (
 	"context"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // FillnullIterator replaces null values with a specified value.
@@ -11,6 +12,7 @@ type FillnullIterator struct {
 	child  Iterator
 	value  string
 	fields []string // empty = all fields
+	acct   stats.MemoryAccount
 }
 
 // NewFillnullIterator creates a fillnull iterator.
@@ -19,7 +21,19 @@ func NewFillnullIterator(child Iterator, value string, fields []string) *Fillnul
 		child:  child,
 		value:  value,
 		fields: fields,
+		acct:   stats.NopAccount(),
 	}
+}
+
+// NewFillnullIteratorWithBudget creates a fillnull iterator with memory budget
+// tracking. Fillnull is a streaming operator with no persistent state beyond
+// the current batch, so the account provides lifecycle consistency rather than
+// active tracking.
+func NewFillnullIteratorWithBudget(child Iterator, value string, fields []string, acct stats.MemoryAccount) *FillnullIterator {
+	f := NewFillnullIterator(child, value, fields)
+	f.acct = stats.EnsureAccount(acct)
+
+	return f
 }
 
 func (f *FillnullIterator) Init(ctx context.Context) error {
@@ -68,5 +82,9 @@ func (f *FillnullIterator) Next(ctx context.Context) (*Batch, error) {
 	return batch, nil
 }
 
-func (f *FillnullIterator) Close() error        { return f.child.Close() }
+func (f *FillnullIterator) Close() error {
+	f.acct.Close()
+
+	return f.child.Close()
+}
 func (f *FillnullIterator) Schema() []FieldInfo { return f.child.Schema() }

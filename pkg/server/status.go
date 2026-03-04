@@ -4,11 +4,11 @@ import (
 	"sort"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/buffer"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/cache"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/model"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage"
+	"github.com/lynxbase/lynxdb/pkg/buffer"
+	"github.com/lynxbase/lynxdb/pkg/cache"
+	"github.com/lynxbase/lynxdb/pkg/model"
+	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/storage"
 )
 
 // MemoryPoolStats returns a point-in-time snapshot of the unified memory pool.

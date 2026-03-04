@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // cuMockIterator is a test helper that produces N batches of the given size.

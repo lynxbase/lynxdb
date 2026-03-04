@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/api/rest"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/client"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/api/rest"
+	"github.com/lynxbase/lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 // Harness

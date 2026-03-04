@@ -9,8 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/ui"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/timerange"
+	"github.com/lynxbase/lynxdb/internal/ui"
+	"github.com/lynxbase/lynxdb/pkg/timerange"
 )
 
 func init() {

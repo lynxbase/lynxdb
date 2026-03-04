@@ -5,7 +5,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 const defaultMaxSubscribers = 1024

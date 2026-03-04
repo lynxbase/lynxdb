@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
-	enginepipeline "github.com/OrlovEvgeny/Lynxdb/pkg/engine/pipeline"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/planner"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage"
+	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/planner"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/storage"
 )
 
 // TailRequest describes a live tail request.

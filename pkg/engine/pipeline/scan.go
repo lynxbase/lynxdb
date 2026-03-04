@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // ScanIterator reads events from a pre-loaded slice and yields batches.

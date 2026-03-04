@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 // resetConfigFlags clears the Changed state and resets values of config

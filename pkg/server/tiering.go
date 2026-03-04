@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/model"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/model"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
 // startTiering runs background tiering evaluation when dataDir is set.

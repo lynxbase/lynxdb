@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/server"
+	"github.com/lynxbase/lynxdb/pkg/server"
 )
 
 // handleGetJob returns the status/results of a job by string ID.

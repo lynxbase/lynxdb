@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/auth"
 )
 
 func TestGenerateKey(t *testing.T) {

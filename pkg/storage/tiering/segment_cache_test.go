@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/objstore"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/model"
-	segment "github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/internal/objstore"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/model"
+	segment "github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
 // SegmentCache tests

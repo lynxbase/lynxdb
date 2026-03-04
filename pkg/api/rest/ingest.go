@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/ingest/pipeline"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/ingest/receiver"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/server"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/part"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/ingest/receiver"
+	"github.com/lynxbase/lynxdb/pkg/server"
+	"github.com/lynxbase/lynxdb/pkg/storage/part"
 )
 
 // respondIngestError maps engine errors to the appropriate HTTP status and error code.

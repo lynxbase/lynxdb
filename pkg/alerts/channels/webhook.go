@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/alerts"
+	"github.com/lynxbase/lynxdb/pkg/alerts"
 )
 
 var httpClient = &http.Client{Timeout: 10 * time.Second}

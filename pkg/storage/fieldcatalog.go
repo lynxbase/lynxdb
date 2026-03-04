@@ -4,8 +4,8 @@ import (
 	"sort"
 	"strconv"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
 // FieldInfo describes a known field across all segments.

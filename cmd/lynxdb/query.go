@@ -13,14 +13,14 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/output"
-	"github.com/OrlovEvgeny/Lynxdb/internal/ui"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/client"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/config"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/timerange"
+	"github.com/lynxbase/lynxdb/internal/output"
+	"github.com/lynxbase/lynxdb/internal/ui"
+	"github.com/lynxbase/lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/storage"
+	"github.com/lynxbase/lynxdb/pkg/timerange"
 )
 
 // noResultsError is a sentinel error for --fail-on-empty.

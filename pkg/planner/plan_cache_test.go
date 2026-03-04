@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/server"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/server"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 func makePlan(query string) *Plan {

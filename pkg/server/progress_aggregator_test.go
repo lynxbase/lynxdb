@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	enginepipeline "github.com/OrlovEvgeny/Lynxdb/pkg/engine/pipeline"
+	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 )
 
 // TestProgressAggregator_SumsAcrossIterators verifies that the aggregator

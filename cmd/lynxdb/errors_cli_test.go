@@ -6,7 +6,7 @@ import (
 	"syscall"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
 func TestIsConnectionError_NetOpError(t *testing.T) {

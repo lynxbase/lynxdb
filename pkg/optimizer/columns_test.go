@@ -4,7 +4,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 func TestColumnPruning_StatsQuery(t *testing.T) {
@@ -140,7 +140,7 @@ func TestProjectionPushdown_InsertEarlyBeforeSort(t *testing.T) {
 	result := opt.Optimize(q)
 
 	if opt.Stats["ProjectionPushdown"] == 0 {
-		t.Skip("ProjectionPushdown didn't fire — may depend on command count threshold")
+		t.Error("expected ProjectionPushdown rule to fire, but Stats shows 0")
 	}
 
 	// Check that a FieldsCommand was inserted before the SortCommand.

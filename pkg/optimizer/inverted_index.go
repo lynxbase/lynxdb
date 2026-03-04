@@ -3,7 +3,7 @@ package optimizer
 import (
 	"strings"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // invertedIndexPruningRule extracts field=value predicates from WHERE for indexed fields.

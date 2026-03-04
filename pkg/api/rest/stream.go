@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/usecases"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
 func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {

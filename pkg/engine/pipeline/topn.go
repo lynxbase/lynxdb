@@ -4,9 +4,9 @@ import (
 	"container/heap"
 	"context"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/vm"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // TopNIterator implements heap-based top-N selection.

@@ -6,11 +6,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/buffer"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/vm"
+	"github.com/lynxbase/lynxdb/pkg/buffer"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // IndexStore provides events for a given index.
@@ -777,7 +777,8 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 	case *spl2.StreamstatsCommand:
 		aggs := qc.convertAggs(c.Aggregations)
 
-		return NewStreamStatsIterator(child, aggs, c.GroupBy, c.Window, c.Current), nil
+		return NewStreamStatsIteratorWithBudget(child, aggs, c.GroupBy, c.Window, c.Current,
+			qc.newAccount("streamstats")), nil
 
 	case *spl2.EventstatsCommand:
 		aggs := qc.convertAggs(c.Aggregations)
@@ -865,7 +866,7 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		return NewTopIteratorWithBudget(child, c.Field, c.ByField, c.N, true, qc.batchSize, qc.newAccount("rare")), nil
 
 	case *spl2.FillnullCommand:
-		return NewFillnullIterator(child, c.Value, c.Fields), nil
+		return NewFillnullIteratorWithBudget(child, c.Value, c.Fields, qc.newAccount("fillnull")), nil
 
 	case *spl2.TimechartCommand:
 		// Timechart = BIN + STATS.

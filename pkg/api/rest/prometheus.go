@@ -7,7 +7,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/server"
+	"github.com/lynxbase/lynxdb/pkg/server"
 )
 
 // PrometheusMetrics holds Prometheus metric collectors for query observability.

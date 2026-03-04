@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/alerts"
+	"github.com/lynxbase/lynxdb/pkg/alerts"
 )
 
 func TestWebhookSend(t *testing.T) {

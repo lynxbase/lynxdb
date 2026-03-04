@@ -15,7 +15,7 @@ lynxdb upgrade --check
 
 ```
 Update available: v0.4.0 -> v0.5.0
-Changelog: https://github.com/OrlovEvgeny/Lynxdb/releases/tag/v0.5.0
+Changelog: https://github.com/lynxbase/lynxdb/releases/tag/v0.5.0
 ```
 
 If you are already on the latest version:
@@ -81,17 +81,17 @@ LYNXDB_VERSION=v0.5.0 curl -fsSL https://lynxdb.org/install.sh | sh
 
 ```bash
 brew update
-brew upgrade lynxdb/tap/lynxdb
+brew upgrade lynxbase/tap/lynxdb
 ```
 
 ## Docker
 
 ```bash
 # Pull the latest image
-docker pull OrlovEvgeny/Lynxdb:latest
+docker pull ghcr.io/lynxbase/lynxdb:latest
 
 # Or a specific version
-docker pull OrlovEvgeny/Lynxdb:0.5.0
+docker pull ghcr.io/lynxbase/lynxdb:0.5.0
 ```
 
 ### Docker Compose
@@ -105,7 +105,7 @@ docker compose up -d
 
 ```bash
 # Update the image tag in your manifest
-kubectl -n lynxdb set image statefulset/lynxdb lynxdb=OrlovEvgeny/Lynxdb:0.5.0
+kubectl -n lynxdb set image statefulset/lynxdb lynxdb=ghcr.io/lynxbase/lynxdb:0.5.0
 
 # Watch the rollout
 kubectl -n lynxdb rollout status statefulset/lynxdb
@@ -232,7 +232,7 @@ spec:
     spec:
       containers:
         - name: lynxdb
-          image: OrlovEvgeny/Lynxdb:0.5.0  # New version
+          image: ghcr.io/lynxbase/lynxdb:0.5.0  # New version
   updateStrategy:
     type: RollingUpdate
     rollingUpdate:
@@ -280,7 +280,7 @@ LYNXDB_VERSION=v0.4.0 curl -fsSL https://lynxdb.org/install.sh | sh
 ### Docker
 
 ```bash
-docker pull OrlovEvgeny/Lynxdb:0.4.0
+docker pull ghcr.io/lynxbase/lynxdb:0.4.0
 docker compose up -d
 ```
 

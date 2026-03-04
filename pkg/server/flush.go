@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/model"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment/index"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/model"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
 )
 
 // DefaultIndexName is the index name used when an event has no explicit index.

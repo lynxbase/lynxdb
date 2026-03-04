@@ -1,8 +1,8 @@
 package planner
 
 import (
-	"github.com/OrlovEvgeny/Lynxdb/pkg/optimizer"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/views"
+	"github.com/lynxbase/lynxdb/pkg/optimizer"
+	"github.com/lynxbase/lynxdb/pkg/storage/views"
 )
 
 // ViewLister provides a list of materialized views. Server.Engine satisfies this.

@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/config"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/model"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/model"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // discardLogger returns a logger that suppresses all output below error level.
@@ -23,11 +23,14 @@ func discardLogger() *slog.Logger {
 func newTestEngine(t *testing.T) *Engine {
 	t.Helper()
 
+	queryCfg := config.DefaultConfig().Query
+	queryCfg.SpillDir = t.TempDir()
+
 	cfg := Config{
 		DataDir: "",
 		Storage: config.DefaultConfig().Storage,
 		Logger:  discardLogger(),
-		Query:   config.DefaultConfig().Query,
+		Query:   queryCfg,
 	}
 
 	e := NewEngine(cfg)

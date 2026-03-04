@@ -226,7 +226,7 @@ docker run -d \
   -v /backups/lynxdb-latest:/data \
   -e LYNXDB_LISTEN=0.0.0.0:3100 \
   -e LYNXDB_DATA_DIR=/data \
-  OrlovEvgeny/Lynxdb:latest
+  ghcr.io/lynxbase/lynxdb:latest
 
 # Verify data is intact
 curl -s localhost:3101/api/v1/stats | jq .events_total

@@ -10,8 +10,8 @@ import (
 
 	"github.com/vmihailenco/msgpack/v5"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/vm"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // SpillWriter writes sorted partial results to a temporary file.

@@ -12,9 +12,9 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/pierrec/lz4/v4"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment/column"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment/index"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment/column"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
 )
 
 // Pooled ZSTD encoder/decoder to avoid ~1ms + ~1MB allocation per call.

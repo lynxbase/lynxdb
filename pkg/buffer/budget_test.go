@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // Verify PoolAccount satisfies stats.MemoryAccount at compile time.

@@ -4,12 +4,12 @@ import (
 	"context"
 	"time"
 
-	enginepipeline "github.com/OrlovEvgeny/Lynxdb/pkg/engine/pipeline"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/server"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/views"
+	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/server"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/storage"
+	"github.com/lynxbase/lynxdb/pkg/storage/views"
 )
 
 // QueryEngine is the subset of server.Engine needed by QueryService.

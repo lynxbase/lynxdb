@@ -12,8 +12,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment/column"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment/column"
 )
 
 // columnarBatchSize is the number of rows buffered before flushing a columnar

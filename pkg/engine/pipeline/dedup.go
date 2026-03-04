@@ -8,7 +8,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // estimatedDedupHashEntryBytes is the estimated memory per entry in the

@@ -3,7 +3,7 @@ package pipeline
 import (
 	"sort"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // builtinFieldOrder defines the canonical display order for LynxDB internal

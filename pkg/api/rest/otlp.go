@@ -5,8 +5,8 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/ingest/pipeline"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/ingest/receiver"
+	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/ingest/receiver"
 )
 
 func (s *Server) handleOTLPLogs(w http.ResponseWriter, r *http.Request) {

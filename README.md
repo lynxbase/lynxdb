@@ -11,10 +11,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/OrlovEvgeny/Lynxdb/releases"><img src="https://img.shields.io/github/v/release/OrlovEvgeny/Lynxdb?color=blue&label=release" alt="Release"></a>
-  <a href="https://github.com/OrlovEvgeny/Lynxdb/actions/workflows/ci.yaml"><img src="https://img.shields.io/github/actions/workflow/status/OrlovEvgeny/Lynxdb/ci.yaml?branch=main&label=CI" alt="CI"></a>
-  <a href="https://goreportcard.com/report/github.com/OrlovEvgeny/Lynxdb"><img src="https://goreportcard.com/badge/github.com/OrlovEvgeny/Lynxdb" alt="Go Report"></a>
-  <a href="https://codecov.io/gh/OrlovEvgeny/Lynxdb"><img src="https://img.shields.io/codecov/c/github/OrlovEvgeny/Lynxdb" alt="Coverage"></a>
+  <a href="https://github.com/lynxbase/lynxdb/releases"><img src="https://img.shields.io/github/v/release/lynxbase/Lynxdb?color=blue&label=release" alt="Release"></a>
+  <a href="https://github.com/lynxbase/lynxdb/actions/workflows/ci.yaml"><img src="https://img.shields.io/github/actions/workflow/status/lynxbase/Lynxdb/ci.yaml?branch=main&label=CI" alt="CI"></a>
+  <a href="https://goreportcard.com/report/github.com/lynxbase/lynxdb"><img src="https://goreportcard.com/badge/github.com/lynxbase/lynxdb" alt="Go Report"></a>
+  <a href="https://codecov.io/gh/lynxbase/Lynxdb"><img src="https://img.shields.io/codecov/c/github/lynxbase/Lynxdb" alt="Coverage"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-green" alt="License"></a>
   <a href="https://docs.lynxdb.org"><img src="https://img.shields.io/badge/docs-lynxdb.org-blue" alt="Docs"></a>
   <a href="https://discord.gg/RgggCFdgWK"><img src="https://img.shields.io/discord/000000000?label=discord&color=5865F2" alt="Discord"></a>
@@ -391,7 +391,7 @@ This project started in early 2025 out of a deep appreciation for these tools an
 See [CONTRIBUTING.md](CONTRIBUTING.md) for architecture overview, project structure, and development setup.
 
 ```bash
-git clone https://github.com/OrlovEvgeny/Lynxdb.git && cd Lynxdb
+git clone https://github.com/lynxbase/lynxdb.git && cd Lynxdb
 go build -o lynxdb ./cmd/lynxdb/
 go test ./...
 ```
@@ -400,7 +400,7 @@ go test ./...
 
 - **Docs:** [docs.lynxdb.org](https://docs.lynxdb.org)
 - **Discord:** [discord.gg/RgggCFdgWK](https://discord.gg/RgggCFdgWK)
-- **Issues:** [Bug reports and feature requests](https://github.com/OrlovEvgeny/Lynxdb/issues)
+- **Issues:** [Bug reports and feature requests](https://github.com/lynxbase/lynxdb/issues)
 
 ## License
 

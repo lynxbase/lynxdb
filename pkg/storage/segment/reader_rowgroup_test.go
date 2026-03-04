@@ -7,7 +7,7 @@ import (
 
 	"github.com/RoaringBitmap/roaring"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // TestReadRowGroupFiltered_NoFilters verifies ReadRowGroupFiltered with no

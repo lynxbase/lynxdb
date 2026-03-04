@@ -10,13 +10,17 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // maxExternalLimitEntries caps the number of entries in the external limit
 // counts map to prevent OOM. When exceeded, limit>1 dedup degrades to
 // limit=1 behavior (bloom-only dedup) and logs a warning.
 const maxExternalLimitEntries = 1_000_000
+
+// estimatedLimitCountEntryBytes is the estimated memory per entry in the
+// externalLimitCounts map: uint64 key (8B) + int value (8B) + map bucket overhead (~40B).
+const estimatedLimitCountEntryBytes int64 = 56
 
 // externalDedupMaxBloomBits is the maximum number of bits in the bloom filter
 // used for the external dedup seen set. 64MB = 536M bits, supporting ~56M unique
@@ -511,10 +515,18 @@ func (d *DedupIterator) spill() error {
 		}
 	}
 
+	// Calculate limit map memory before clearing accounts.
+	limitMapBytes := int64(len(d.externalLimitCounts)) * estimatedLimitCountEntryBytes
+
 	// Clear in-memory maps.
 	d.seenHash = nil
 	d.seenExact = nil
 	d.acct.Shrink(d.acct.Used())
+
+	// Re-track the limit counts map that persists after spill.
+	if limitMapBytes > 0 {
+		_ = d.acct.Grow(limitMapBytes)
+	}
 
 	// Notify coordinator that this operator has spilled, allowing rebalancing.
 	if sn, ok := d.acct.(SpillNotifier); ok {
@@ -560,6 +572,8 @@ func (d *DedupIterator) processRemainingExternal(batch *Batch, startRow int, mat
 			return matchCount, fmt.Errorf("dedup_external: add: %w", err)
 		}
 		if d.limit > 1 && !limitCapped {
+			// Track memory for the new limit count entry (best-effort).
+			_ = d.acct.Grow(estimatedLimitCountEntryBytes)
 			d.externalLimitCounts[h] = 1
 			// Re-check cap after insertion.
 			if len(d.externalLimitCounts) > maxExternalLimitEntries {

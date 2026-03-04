@@ -1,7 +1,7 @@
 package optimizer
 
 import (
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // flattenNestedAppendRule transforms chained APPEND commands into a single

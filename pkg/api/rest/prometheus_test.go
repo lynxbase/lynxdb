@@ -9,7 +9,7 @@ import (
 
 	dto "github.com/prometheus/client_model/go"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/server"
+	"github.com/lynxbase/lynxdb/pkg/server"
 )
 
 func TestPrometheusMetrics_RecordQuery(t *testing.T) {

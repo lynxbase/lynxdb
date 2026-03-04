@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/engine/pipeline"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // QueryAnalysis holds the result of analyzing an MV query for pipeline splitting.

@@ -1,6 +1,6 @@
 package vm
 
-import "github.com/OrlovEvgeny/Lynxdb/pkg/event"
+import "github.com/lynxbase/lynxdb/pkg/event"
 
 // Program holds compiled bytecode for one expression/predicate.
 type Program struct {

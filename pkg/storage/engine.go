@@ -10,13 +10,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/config"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/engine/pipeline"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	ingestpipeline "github.com/OrlovEvgeny/Lynxdb/pkg/ingest/pipeline"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/optimizer"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	ingestpipeline "github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/optimizer"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // applyBudgetAndCPUStats populates resource stats from a BudgetMonitor and CPU snapshots.

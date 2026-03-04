@@ -1,9 +1,9 @@
 package pipeline
 
 import (
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment/index"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
 )
 
 // BuildRGFilter translates SegmentStreamHints into an RGFilterNode tree for

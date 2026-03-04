@@ -8,11 +8,11 @@ import (
 
 	"github.com/RoaringBitmap/roaring"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment/index"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
 )
 
 // scanPhase tracks the current iteration phase of SegmentStreamIterator.

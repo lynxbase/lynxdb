@@ -11,8 +11,8 @@ func TestEntriesDefaultsOnly(t *testing.T) {
 
 	// Change to temp dir so no ./lynxdb.yaml is found.
 	tmpDir := t.TempDir()
-	t.Setenv("HOME", tmpDir)           // prevents ~/.config/lynxdb/config.yaml
-	t.Setenv("XDG_CONFIG_HOME", "")    // prevents XDG override
+	t.Setenv("HOME", tmpDir)        // prevents ~/.config/lynxdb/config.yaml
+	t.Setenv("XDG_CONFIG_HOME", "") // prevents XDG override
 	origDir, _ := os.Getwd()
 	os.Chdir(tmpDir)
 	defer os.Chdir(origDir)

@@ -750,7 +750,6 @@ func TestServerFormat_Table_ContainsHeaders(t *testing.T) {
 }
 
 func TestServerFormat_Raw_LinesMatchCount(t *testing.T) {
-	t.Skip("flaky: raw format query returns 0 lines due to flush timing — needs investigation")
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "raw",

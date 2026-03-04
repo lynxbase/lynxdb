@@ -7,15 +7,15 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/objstore"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/model"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/compaction"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/part"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment/index"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/tiering"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/views"
+	"github.com/lynxbase/lynxdb/internal/objstore"
+	"github.com/lynxbase/lynxdb/pkg/model"
+	"github.com/lynxbase/lynxdb/pkg/storage"
+	"github.com/lynxbase/lynxdb/pkg/storage/compaction"
+	"github.com/lynxbase/lynxdb/pkg/storage/part"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
+	"github.com/lynxbase/lynxdb/pkg/storage/tiering"
+	"github.com/lynxbase/lynxdb/pkg/storage/views"
 )
 
 // initDataDir creates the data directory structure using the Layout manager.

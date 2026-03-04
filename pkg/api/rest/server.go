@@ -12,16 +12,16 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/alerts"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/alerts/channels"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/auth"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/config"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/dashboards"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/planner"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/server"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/savedqueries"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/usecases"
+	"github.com/lynxbase/lynxdb/pkg/alerts"
+	"github.com/lynxbase/lynxdb/pkg/alerts/channels"
+	"github.com/lynxbase/lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/dashboards"
+	"github.com/lynxbase/lynxdb/pkg/planner"
+	"github.com/lynxbase/lynxdb/pkg/server"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/storage/savedqueries"
+	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
 // Server is the main LynxDB API server.

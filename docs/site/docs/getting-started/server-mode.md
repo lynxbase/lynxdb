@@ -176,7 +176,7 @@ sudo systemctl start lynxdb
 docker run -d --name lynxdb \
   -p 3100:3100 \
   -v lynxdb-data:/data \
-  OrlovEvgeny/Lynxdb server --data-dir /data
+  ghcr.io/lynxbase/lynxdb server --data-dir /data
 ```
 
 ## Configuration

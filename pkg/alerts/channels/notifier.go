@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/alerts"
+	"github.com/lynxbase/lynxdb/pkg/alerts"
 )
 
 // Registry maps channel types to their constructors.

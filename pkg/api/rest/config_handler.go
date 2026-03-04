@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {

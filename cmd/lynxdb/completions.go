@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
 // completionClient returns a short-timeout client for tab completion.

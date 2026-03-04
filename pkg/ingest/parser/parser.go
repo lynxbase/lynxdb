@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // LoadIndex loads a log file and parses it into ResultRows for an index.

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 func TestTopN_BasicOrdering(t *testing.T) {

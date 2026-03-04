@@ -3,7 +3,7 @@ package optimizer
 import (
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 type staticCatalog struct {

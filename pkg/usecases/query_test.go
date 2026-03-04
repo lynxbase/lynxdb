@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/config"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/planner"
+	"github.com/lynxbase/lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/planner"
 )
 
 func TestExplain_ValidQuery(t *testing.T) {
@@ -85,7 +85,7 @@ func TestExplain_CostEstimation(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if !result.IsValid {
-				t.Skip("query did not parse; skip cost check")
+				t.Fatal("expected query to parse successfully, but IsValid=false")
 			}
 			if result.Parsed.EstimatedCost != tt.cost {
 				t.Errorf("expected cost %q, got %q", tt.cost, result.Parsed.EstimatedCost)

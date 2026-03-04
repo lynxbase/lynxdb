@@ -30,7 +30,7 @@ The install script auto-detects your architecture (amd64/arm64) and libc (glibc/
 curl -fsSL https://lynxdb.org/install.sh | sh
 
 # Or via Homebrew
-brew install lynxdb/tap/lynxdb
+brew install lynxbase/tap/lynxdb
 ```
 
 </TabItem>
@@ -38,10 +38,10 @@ brew install lynxdb/tap/lynxdb
 
 ```powershell
 # Download from GitHub Releases
-# https://github.com/OrlovEvgeny/Lynxdb/releases
+# https://github.com/lynxbase/lynxdb/releases
 
 # Or use Go
-go install github.com/OrlovEvgeny/Lynxdb/cmd/lynxdb@latest
+go install github.com/lynxbase/lynxdb/cmd/lynxdb@latest
 ```
 
 On Windows, LynxDB works best under WSL2 or Git Bash.
@@ -75,11 +75,11 @@ LYNXDB_INSTALL_DIR=/opt/bin curl -fsSL https://lynxdb.org/install.sh | sh
 docker run -d --name lynxdb \
   -p 3100:3100 \
   -v lynxdb-data:/data \
-  OrlovEvgeny/Lynxdb server --data-dir /data
+  ghcr.io/lynxbase/lynxdb server --data-dir /data
 
 # Run a one-off query
 echo '{"level":"error","msg":"test"}' | \
-  docker run -i OrlovEvgeny/Lynxdb query '| stats count by level'
+  docker run -i ghcr.io/lynxbase/lynxdb query '| stats count by level'
 ```
 
 ### Docker Compose
@@ -87,7 +87,7 @@ echo '{"level":"error","msg":"test"}' | \
 ```yaml
 services:
   lynxdb:
-    image: OrlovEvgeny/Lynxdb:latest
+    image: ghcr.io/lynxbase/lynxdb:latest
     command: server --data-dir /data
     ports:
       - "3100:3100"
@@ -104,10 +104,10 @@ Requires Go 1.25+:
 
 ```bash
 # Via go install
-go install github.com/OrlovEvgeny/Lynxdb/cmd/lynxdb@latest
+go install github.com/lynxbase/lynxdb/cmd/lynxdb@latest
 
 # Or clone and build
-git clone https://github.com/OrlovEvgeny/Lynxdb.git
+git clone https://github.com/lynxbase/lynxdb.git
 cd lynxdb
 go build -o lynxdb ./cmd/lynxdb/
 ```

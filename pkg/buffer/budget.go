@@ -3,7 +3,7 @@ package buffer
 import (
 	"fmt"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // PoolAccount implements stats.MemoryAccount backed by the unified buffer

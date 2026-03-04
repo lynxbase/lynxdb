@@ -9,12 +9,12 @@ import (
 	"runtime"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/buildinfo"
+	"github.com/lynxbase/lynxdb/internal/buildinfo"
 )
 
 const (
 	manifestURL         = "https://dl.lynxdb.org/manifest.json"
-	manifestFallbackURL = "https://raw.githubusercontent.com/OrlovEvgeny/Lynxdb/main/dist/manifest.json"
+	manifestFallbackURL = "https://raw.githubusercontent.com/lynxbase/Lynxdb/main/dist/manifest.json"
 	httpTimeout         = 30 * time.Second
 
 	// maxManifestSize limits the manifest body to prevent abuse (1 MB).
@@ -65,7 +65,7 @@ func FetchManifest(ctx context.Context) (*Manifest, error) {
 // falling back to GitHub if the primary CDN endpoint fails.
 func FetchVersionedManifest(ctx context.Context, version string) (*Manifest, error) {
 	primary := fmt.Sprintf("https://dl.lynxdb.org/%s/manifest.json", version)
-	fallback := fmt.Sprintf("https://raw.githubusercontent.com/OrlovEvgeny/Lynxdb/main/dist/manifest.json")
+	fallback := fmt.Sprintf("https://raw.githubusercontent.com/lynxbase/Lynxdb/main/dist/manifest.json")
 	return fetchManifestFromEndpoints(ctx, primary, fallback)
 }
 

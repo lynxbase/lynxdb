@@ -42,7 +42,7 @@ func TestEphemeralMemoryLimit_HalfOfTotal(t *testing.T) {
 	switch runtime.GOOS {
 	case "linux", "darwin":
 		if total <= 0 {
-			t.Skip("system memory detection failed")
+			t.Fatal("system memory detection failed — expected positive total memory")
 		}
 		expected := total / 2
 		if limit != expected {
@@ -50,7 +50,7 @@ func TestEphemeralMemoryLimit_HalfOfTotal(t *testing.T) {
 		}
 	case "windows":
 		if total <= 0 {
-			t.Skip("system memory detection failed")
+			t.Fatal("system memory detection failed — expected positive total memory")
 		}
 		expected := total / 2
 		if limit != expected {

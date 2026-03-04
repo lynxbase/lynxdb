@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/alerts"
+	"github.com/lynxbase/lynxdb/pkg/alerts"
 )
 
 func (s *Server) handleCreateAlert(w http.ResponseWriter, r *http.Request) {

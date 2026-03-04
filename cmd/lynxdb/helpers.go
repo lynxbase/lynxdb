@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/ui"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/internal/ui"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // TTY-aware number formatting

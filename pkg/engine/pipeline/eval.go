@@ -4,8 +4,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/vm"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // EvalIterator runs compiled EVAL assignments on each row in a batch.

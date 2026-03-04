@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/objstore"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/model"
+	"github.com/lynxbase/lynxdb/internal/objstore"
+	"github.com/lynxbase/lynxdb/pkg/model"
 )
 
 // Tier represents a storage tier.

@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/auth"
 )
 
 // handleCreateKey creates a new API key. Requires a root key.

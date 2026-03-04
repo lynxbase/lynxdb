@@ -4,8 +4,8 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/engine/pipeline"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // ViewType classifies the kind of materialized view.

@@ -8,7 +8,7 @@ import (
 
 	"github.com/RoaringBitmap/roaring"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // TestReadColumnar_Correctness verifies that the columnar read path produces
@@ -458,10 +458,6 @@ func TestReadColumnar_EmptyBitmap(t *testing.T) {
 
 // TestReadColumnar_LargeDataset verifies the columnar path with multiple row groups.
 func TestReadColumnar_LargeDataset(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping large dataset test in short mode")
-	}
-
 	events := generateTestEvents(100000)
 
 	var buf bytes.Buffer
@@ -476,7 +472,7 @@ func TestReadColumnar_LargeDataset(t *testing.T) {
 	}
 
 	if r.RowGroupCount() <= 1 {
-		t.Skipf("need multiple row groups, got %d (DefaultRowGroupSize=%d)", r.RowGroupCount(), DefaultRowGroupSize)
+		t.Fatalf("expected multiple row groups for 100K events, got %d (DefaultRowGroupSize=%d)", r.RowGroupCount(), DefaultRowGroupSize)
 	}
 
 	// Reference: row-oriented path.
@@ -509,10 +505,6 @@ func TestReadColumnar_LargeDataset(t *testing.T) {
 
 // TestReadColumnar_LargeWithBitmap verifies bitmap filtering across multiple row groups.
 func TestReadColumnar_LargeWithBitmap(t *testing.T) {
-	if testing.Short() {
-		t.Skip("skipping large dataset test in short mode")
-	}
-
 	events := generateTestEvents(100000)
 
 	var buf bytes.Buffer
@@ -527,7 +519,7 @@ func TestReadColumnar_LargeWithBitmap(t *testing.T) {
 	}
 
 	if r.RowGroupCount() <= 1 {
-		t.Skipf("need multiple row groups, got %d", r.RowGroupCount())
+		t.Fatalf("expected multiple row groups for 100K events, got %d (DefaultRowGroupSize=%d)", r.RowGroupCount(), DefaultRowGroupSize)
 	}
 
 	// Bitmap spanning across row group boundaries: rows 60000-70000.

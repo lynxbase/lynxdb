@@ -3,7 +3,7 @@ package rest
 import (
 	"net/http"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/buildinfo"
+	"github.com/lynxbase/lynxdb/internal/buildinfo"
 )
 
 func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request) {

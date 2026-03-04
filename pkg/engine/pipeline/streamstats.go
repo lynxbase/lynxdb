@@ -5,9 +5,15 @@ import (
 	"math"
 	"strings"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/vm"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/vm"
 )
+
+// estimatedRingBufferOverhead is the estimated per-group memory overhead for a
+// ring buffer entry in the streamstats group map: ringBuffer struct (~64B) +
+// map entry overhead (~48B).
+const estimatedRingBufferOverhead int64 = 112
 
 // StreamStatsIterator implements rolling window aggregation.
 type StreamStatsIterator struct {
@@ -17,6 +23,7 @@ type StreamStatsIterator struct {
 	window   int
 	current  bool
 	ringBufs map[string]*ringBuffer
+	acct     stats.MemoryAccount // per-operator memory tracking
 }
 
 type ringBuffer struct {
@@ -81,7 +88,19 @@ func NewStreamStatsIterator(child Iterator, aggs []AggFunc, groupBy []string, wi
 		window:   window,
 		current:  current,
 		ringBufs: make(map[string]*ringBuffer),
+		acct:     stats.NopAccount(),
 	}
+}
+
+// NewStreamStatsIteratorWithBudget creates a streaming rolling window aggregation
+// with memory budget tracking. The account tracks ring buffer allocations for
+// observability — streamstats has no spill support, so tracking is best-effort.
+func NewStreamStatsIteratorWithBudget(child Iterator, aggs []AggFunc, groupBy []string,
+	window int, current bool, acct stats.MemoryAccount) *StreamStatsIterator {
+	s := NewStreamStatsIterator(child, aggs, groupBy, window, current)
+	s.acct = stats.EnsureAccount(acct)
+
+	return s
 }
 
 func (s *StreamStatsIterator) Init(ctx context.Context) error {
@@ -101,9 +120,21 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 		if !ok {
 			rb = newRingBuffer(s.window)
 			s.ringBufs[key] = rb
+			// Track ring buffer struct + map entry + key string overhead.
+			_ = s.acct.Grow(estimatedRingBufferOverhead + int64(len(key)))
+			// Pre-allocated slots for bounded windows.
+			if rb.capacity > 0 {
+				_ = s.acct.Grow(int64(rb.capacity) * estimatedRowBytes)
+			}
 		}
 
 		if s.current {
+			// For unlimited window, each append grows memory; for bounded
+			// window not yet full, track the new slot. At capacity, the add
+			// replaces an existing slot — memory-neutral.
+			if rb.capacity == 0 || rb.count < rb.capacity {
+				_ = s.acct.Grow(estimatedRowBytes)
+			}
 			rb.add(row)
 		}
 
@@ -119,6 +150,9 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 		}
 
 		if !s.current {
+			if rb.capacity == 0 || rb.count < rb.capacity {
+				_ = s.acct.Grow(estimatedRowBytes)
+			}
 			rb.add(row)
 		}
 	}
@@ -126,10 +160,23 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 	return batch, nil
 }
 
-func (s *StreamStatsIterator) Close() error { return s.child.Close() }
+func (s *StreamStatsIterator) Close() error {
+	s.acct.Close()
+	s.ringBufs = nil
+
+	return s.child.Close()
+}
 
 func (s *StreamStatsIterator) Schema() []FieldInfo { return s.child.Schema() }
 
+// groupKey builds a composite key from the BY-clause fields of a row.
+//
+// Uses null byte (\x00) as separator instead of '|' to avoid collisions when
+// field values contain the separator character. Each field is prefixed with a
+// presence marker: \x01 for present values, \x00 for null/missing. This
+// ensures that ("a", null) and (null, "a") produce distinct keys, and that
+// values like "x|y" in a single field don't collide with "x" and "y" in two
+// separate fields.
 func (s *StreamStatsIterator) groupKey(row map[string]event.Value) string {
 	if len(s.groupBy) == 0 {
 		return ""
@@ -137,9 +184,13 @@ func (s *StreamStatsIterator) groupKey(row map[string]event.Value) string {
 	var sb strings.Builder
 	for i, g := range s.groupBy {
 		if i > 0 {
-			sb.WriteByte('|')
+			sb.WriteByte(0) // null byte separator
 		}
-		if v, ok := row[g]; ok {
+		v, ok := row[g]
+		if !ok || v.IsNull() {
+			sb.WriteByte(0) // null/missing marker
+		} else {
+			sb.WriteByte(1) // present marker
 			sb.WriteString(v.String())
 		}
 	}

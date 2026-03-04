@@ -33,14 +33,14 @@ const config: Config = {
       {
         docs: {
           sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/OrlovEvgeny/Lynxdb/edit/main/docs/site/',
+          editUrl: 'https://github.com/lynxbase/lynxdb/edit/main/docs/site/',
           // Enable once docs are committed to git:
           // showLastUpdateTime: true,
           // showLastUpdateAuthor: true,
         },
         blog: {
           showReadingTime: true,
-          editUrl: 'https://github.com/OrlovEvgeny/Lynxdb/edit/main/docs/site/',
+          editUrl: 'https://github.com/lynxbase/lynxdb/edit/main/docs/site/',
           onInlineTags: 'warn',
           onInlineAuthors: 'warn',
           onUntruncatedBlogPosts: 'warn',
@@ -73,7 +73,7 @@ const config: Config = {
     announcementBar: {
       id: 'star-us',
       content:
-        'If you like LynxDB, give us a <a href="https://github.com/OrlovEvgeny/Lynxdb">star on GitHub</a>!',
+        'If you like LynxDB, give us a <a href="https://github.com/lynxbase/lynxdb">star on GitHub</a>!',
       isCloseable: true,
     },
     navbar: {
@@ -97,7 +97,7 @@ const config: Config = {
         },
         {to: '/blog', label: 'Blog', position: 'left'},
         {
-          href: 'https://github.com/OrlovEvgeny/Lynxdb',
+          href: 'https://github.com/lynxbase/lynxdb',
           label: 'GitHub',
           position: 'right',
         },
@@ -141,7 +141,7 @@ const config: Config = {
             },
             {
               label: 'GitHub',
-              href: 'https://github.com/OrlovEvgeny/Lynxdb',
+              href: 'https://github.com/lynxbase/lynxdb',
             },
             {
               label: 'Twitter',
@@ -158,7 +158,7 @@ const config: Config = {
             },
             {
               label: 'Releases',
-              href: 'https://github.com/OrlovEvgeny/Lynxdb/releases',
+              href: 'https://github.com/lynxbase/lynxdb/releases',
             },
           ],
         },

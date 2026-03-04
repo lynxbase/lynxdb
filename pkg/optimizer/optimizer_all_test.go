@@ -9,12 +9,12 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/engine/pipeline"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment/column"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment/index"
+	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment/column"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
 )
 
 // Test 1: PredicatePushdownRowGroup
@@ -761,8 +761,7 @@ func TestOptimization_16_AdaptiveExecution(t *testing.T) {
 		// We'll read with NewSpillReader then close the writer manually.
 		sr, err := pipeline.NewSpillReader(path2)
 		if err != nil {
-			// File might not be flushed yet. Try approach without close.
-			t.Skipf("could not open spill file for reading: %v", err)
+			t.Fatalf("could not open spill file for reading: %v", err)
 		}
 
 		count := 0

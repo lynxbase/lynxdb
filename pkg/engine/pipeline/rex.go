@@ -5,7 +5,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // RexIterator performs regex field extraction per batch.

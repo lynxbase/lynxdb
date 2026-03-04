@@ -1,7 +1,7 @@
 package pipeline
 
 import (
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // TypedBatch holds typed column arrays for vectorized execution.

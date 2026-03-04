@@ -13,8 +13,8 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/auth"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
 var flagLoginToken string

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 func TestRexIterator_Match(t *testing.T) {

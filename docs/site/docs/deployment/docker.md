@@ -17,7 +17,7 @@ docker run -d \
   -v lynxdb-data:/data \
   -e LYNXDB_LISTEN=0.0.0.0:3100 \
   -e LYNXDB_DATA_DIR=/data \
-  OrlovEvgeny/Lynxdb:latest
+  ghcr.io/lynxbase/lynxdb:latest
 
 # Verify
 curl http://localhost:3100/health
@@ -27,9 +27,9 @@ curl http://localhost:3100/health
 
 | Image | Description |
 |-------|-------------|
-| `OrlovEvgeny/Lynxdb:latest` | Latest stable release |
-| `OrlovEvgeny/Lynxdb:0.5.0` | Specific version |
-| `OrlovEvgeny/Lynxdb:0.5` | Latest patch for minor version |
+| `ghcr.io/lynxbase/lynxdb:latest` | Latest stable release |
+| `ghcr.io/lynxbase/lynxdb:0.5.0` | Specific version |
+| `ghcr.io/lynxbase/lynxdb:0.5` | Latest patch for minor version |
 
 Images are available for `linux/amd64` and `linux/arm64`.
 
@@ -42,7 +42,7 @@ docker run -d \
   --name lynxdb \
   -p 3100:3100 \
   -e LYNXDB_LISTEN=0.0.0.0:3100 \
-  OrlovEvgeny/Lynxdb:latest
+  ghcr.io/lynxbase/lynxdb:latest
 ```
 
 ### Persistent Storage
@@ -55,7 +55,7 @@ docker run -d \
   -e LYNXDB_LISTEN=0.0.0.0:3100 \
   -e LYNXDB_DATA_DIR=/data \
   -e LYNXDB_RETENTION=30d \
-  OrlovEvgeny/Lynxdb:latest
+  ghcr.io/lynxbase/lynxdb:latest
 ```
 
 ### With S3 Tiering
@@ -71,7 +71,7 @@ docker run -d \
   -e LYNXDB_STORAGE_S3_REGION=us-east-1 \
   -e AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE \
   -e AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY \
-  OrlovEvgeny/Lynxdb:latest
+  ghcr.io/lynxbase/lynxdb:latest
 ```
 
 ### With Config File
@@ -82,7 +82,7 @@ docker run -d \
   -p 3100:3100 \
   -v lynxdb-data:/data \
   -v /path/to/config.yaml:/etc/lynxdb/config.yaml:ro \
-  OrlovEvgeny/Lynxdb:latest server --config /etc/lynxdb/config.yaml
+  ghcr.io/lynxbase/lynxdb:latest server --config /etc/lynxdb/config.yaml
 ```
 
 ### With TLS and Auth
@@ -95,7 +95,7 @@ docker run -d \
   -v /path/to/certs:/certs:ro \
   -e LYNXDB_LISTEN=0.0.0.0:3100 \
   -e LYNXDB_DATA_DIR=/data \
-  OrlovEvgeny/Lynxdb:latest server \
+  ghcr.io/lynxbase/lynxdb:latest server \
     --tls-cert /certs/lynxdb.crt \
     --tls-key /certs/lynxdb.key \
     --auth
@@ -109,7 +109,7 @@ docker run -d \
 # docker-compose.yaml
 services:
   lynxdb:
-    image: OrlovEvgeny/Lynxdb:latest
+    image: ghcr.io/lynxbase/lynxdb:latest
     ports:
       - "3100:3100"
     volumes:
@@ -139,7 +139,7 @@ volumes:
 # docker-compose.yaml
 services:
   lynxdb:
-    image: OrlovEvgeny/Lynxdb:latest
+    image: ghcr.io/lynxbase/lynxdb:latest
     ports:
       - "3100:3100"
     volumes:
@@ -199,7 +199,7 @@ volumes:
 # docker-compose.yaml
 services:
   lynxdb:
-    image: OrlovEvgeny/Lynxdb:latest
+    image: ghcr.io/lynxbase/lynxdb:latest
     ports:
       - "3100:3100"
     volumes:
@@ -240,7 +240,7 @@ Set memory and CPU limits appropriate for your workload:
 ```yaml
 services:
   lynxdb:
-    image: OrlovEvgeny/Lynxdb:latest
+    image: ghcr.io/lynxbase/lynxdb:latest
     deploy:
       resources:
         limits:
@@ -256,7 +256,7 @@ services:
 If you need to customize the image (e.g., add a config file):
 
 ```dockerfile
-FROM OrlovEvgeny/Lynxdb:latest
+FROM ghcr.io/lynxbase/lynxdb:latest
 
 COPY config.yaml /etc/lynxdb/config.yaml
 
@@ -288,12 +288,12 @@ docker logs --since 1h lynxdb  # Last hour
 
 ```bash
 # Pull new image
-docker pull OrlovEvgeny/Lynxdb:latest
+docker pull ghcr.io/lynxbase/lynxdb:latest
 
 # Recreate container (data is on the volume, so nothing is lost)
 docker stop lynxdb
 docker rm lynxdb
-docker run -d --name lynxdb ... OrlovEvgeny/Lynxdb:latest
+docker run -d --name lynxdb ... ghcr.io/lynxbase/lynxdb:latest
 
 # Or with Docker Compose
 docker compose pull

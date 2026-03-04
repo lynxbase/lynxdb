@@ -3,7 +3,7 @@ package usecases
 import (
 	"errors"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/server"
+	"github.com/lynxbase/lynxdb/pkg/server"
 )
 
 // ErrTooManyQueries is returned when the concurrency limit is exceeded.

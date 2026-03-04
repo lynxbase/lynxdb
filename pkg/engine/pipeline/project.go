@@ -3,7 +3,7 @@ package pipeline
 import (
 	"context"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // ProjectIterator selects/removes columns from passing batches.

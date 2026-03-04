@@ -9,9 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/buffer"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/buffer"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // makeRowsWithField creates n rows with field "key" set to sequential integers
@@ -367,7 +367,6 @@ func TestSpillMergerTwoRuns(t *testing.T) {
 }
 
 func TestSpillMergerManyRuns(t *testing.T) {
-	t.Skip("flaky: fails under parallel package execution due to spill resource contention")
 	dir := t.TempDir()
 	mgr, err := NewSpillManager(dir, nil)
 	if err != nil {
@@ -671,7 +670,6 @@ func TestAggregateNoSpillSmallGroups(t *testing.T) {
 }
 
 func TestAggregateSpillWithAvg(t *testing.T) {
-	t.Skip("flaky: fails under parallel package execution due to spill resource contention")
 	// Test that AVG is correctly computed across spills (sum/count tuples).
 	n := 5000
 	rows := make([]map[string]event.Value, n)
@@ -721,7 +719,6 @@ func TestAggregateSpillWithAvg(t *testing.T) {
 }
 
 func TestAggregateSpillWithDC(t *testing.T) {
-	t.Skip("flaky: fails under parallel package execution due to spill resource contention")
 	// Test dc (distinct count) correctness across spill boundaries.
 	// 100 groups, each with 50 events. Each event has a unique "item" per group,
 	// so dc(item) should be 50 per group.
@@ -773,7 +770,6 @@ func TestAggregateSpillWithDC(t *testing.T) {
 }
 
 func TestAggregateSpillWithValues(t *testing.T) {
-	t.Skip("flaky: fails under parallel package execution due to spill resource contention")
 	// Test values() correctness across spill boundaries.
 	// 50 groups, each with 20 events. Each event has "item" = "v_<group>_<seq>".
 	n := 1000
@@ -829,7 +825,6 @@ func TestAggregateSpillWithValues(t *testing.T) {
 }
 
 func TestAggregateSpillWithStdev(t *testing.T) {
-	t.Skip("flaky: fails under parallel package execution due to spill resource contention")
 	// Test stdev correctness across spill boundaries by comparing to a
 	// non-spill reference computation.
 	n := 5000
@@ -896,7 +891,6 @@ func TestAggregateSpillWithStdev(t *testing.T) {
 }
 
 func TestAggregateSpillWithPerc95(t *testing.T) {
-	t.Skip("flaky: fails under parallel package execution due to spill resource contention")
 	// Test percentile correctness across spill boundaries.
 	n := 5000
 	numGroups := 100

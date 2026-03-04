@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/ui"
+	"github.com/lynxbase/lynxdb/internal/ui"
 )
 
 // Format represents an output format.
@@ -189,18 +189,31 @@ type RawFormatter struct{}
 func (f *RawFormatter) Format(w io.Writer, rows []map[string]interface{}) error {
 	for _, row := range rows {
 		if raw, ok := row["_raw"]; ok {
-			fmt.Fprintln(w, formatValue(raw))
-		} else {
-			parts := make([]string, 0, len(row))
-			for k, v := range row {
-				parts = append(parts, k+"="+formatValue(v))
+			s := formatValue(raw)
+			if s != "" {
+				fmt.Fprintln(w, s)
+			} else {
+				// Fallback for empty _raw (e.g., column pruning missed it
+				// or segment reader returned an empty string for the field).
+				writeFieldValueLine(w, row)
 			}
-			sort.Strings(parts)
-			fmt.Fprintln(w, strings.Join(parts, "\t"))
+		} else {
+			writeFieldValueLine(w, row)
 		}
 	}
 
 	return nil
+}
+
+// writeFieldValueLine writes a tab-separated field=value line for a row,
+// sorted alphabetically for deterministic output.
+func writeFieldValueLine(w io.Writer, row map[string]interface{}) {
+	parts := make([]string, 0, len(row))
+	for k, v := range row {
+		parts = append(parts, k+"="+formatValue(v))
+	}
+	sort.Strings(parts)
+	fmt.Fprintln(w, strings.Join(parts, "\t"))
 }
 
 // SingleValueFormatter outputs a single value with formatting.

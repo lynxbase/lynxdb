@@ -3,7 +3,7 @@ package pipeline
 import (
 	"context"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // RowScanIterator scans from pre-materialized pipeline rows ([]map[string]event.Value).

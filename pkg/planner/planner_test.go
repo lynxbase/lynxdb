@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/server"
+	"github.com/lynxbase/lynxdb/pkg/server"
 )
 
 func TestPlan_ValidQuery(t *testing.T) {

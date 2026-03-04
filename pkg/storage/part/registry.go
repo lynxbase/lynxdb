@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
 // Registry tracks all known parts in memory.

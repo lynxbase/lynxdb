@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/optimizer"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/optimizer"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // PlanCache caches optimized query plans by normalized query string.

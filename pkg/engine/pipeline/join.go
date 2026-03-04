@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // defaultGracePartitions is the number of partitions used in grace hash join.
@@ -55,9 +55,10 @@ type JoinIterator struct {
 
 	// Prefetch state: when enabled, left-side batches are read into a
 	// buffered channel concurrently with the right-side hash table build.
-	prefetch   bool
-	prefetchCh chan batchResult // buffered channel for prefetched left batches
-	prefetchWg sync.WaitGroup
+	prefetch       bool
+	prefetchCh     chan batchResult // buffered channel for prefetched left batches
+	prefetchWg     sync.WaitGroup
+	prefetchCancel context.CancelFunc // cancels the prefetch goroutine's context
 }
 
 // NewJoinIterator creates a hash join operator.
@@ -180,6 +181,12 @@ func (j *JoinIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (j *JoinIterator) Close() error {
+	// Cancel the prefetch context first — this unblocks a left.Next() call
+	// that may be stuck on slow I/O, allowing the goroutine to exit promptly.
+	if j.prefetchCancel != nil {
+		j.prefetchCancel()
+	}
+
 	// Wait for prefetch goroutine to exit (if running).
 	// Drain the channel to unblock the goroutine if it's stuck on send.
 	if j.prefetchCh != nil {
@@ -187,8 +194,8 @@ func (j *JoinIterator) Close() error {
 			for range j.prefetchCh {
 			}
 		}()
-		// Use a timeout to avoid blocking forever if the prefetch goroutine
-		// is stuck in a left.Next() call on slow I/O.
+		// Use a generous timeout as a last resort — the cancel above should
+		// cause a prompt exit in most cases.
 		done := make(chan struct{})
 		go func() {
 			j.prefetchWg.Wait()
@@ -196,7 +203,7 @@ func (j *JoinIterator) Close() error {
 		}()
 		select {
 		case <-done:
-		case <-time.After(5 * time.Second):
+		case <-time.After(30 * time.Second):
 			// Prefetch goroutine is stuck — proceed with cleanup anyway.
 			// The goroutine will eventually exit when the left iterator
 			// returns an error or EOF.
@@ -295,7 +302,13 @@ func (j *JoinIterator) buildHashTable(ctx context.Context) error {
 // startPrefetch spawns a goroutine that reads left-side batches into a
 // buffered channel. This overlaps left-side I/O with right-side hash table
 // construction.
+//
+// A derived context with cancel is used so that Close() can immediately
+// unblock a left.Next() call that may be stuck on slow I/O, rather than
+// relying on a wall-clock timeout.
 func (j *JoinIterator) startPrefetch(ctx context.Context) {
+	prefetchCtx, cancel := context.WithCancel(ctx)
+	j.prefetchCancel = cancel
 	j.prefetchCh = make(chan batchResult, joinPrefetchBuffer)
 	j.prefetchWg.Add(1)
 
@@ -304,11 +317,11 @@ func (j *JoinIterator) startPrefetch(ctx context.Context) {
 		defer close(j.prefetchCh)
 
 		for {
-			batch, err := j.left.Next(ctx)
+			batch, err := j.left.Next(prefetchCtx)
 			if err != nil {
 				select {
 				case j.prefetchCh <- batchResult{err: err}:
-				case <-ctx.Done():
+				case <-prefetchCtx.Done():
 				}
 
 				return
@@ -318,7 +331,7 @@ func (j *JoinIterator) startPrefetch(ctx context.Context) {
 			}
 			select {
 			case j.prefetchCh <- batchResult{batch: batch}:
-			case <-ctx.Done():
+			case <-prefetchCtx.Done():
 				return
 			}
 		}

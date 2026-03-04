@@ -185,7 +185,7 @@ lynxdb server \
 ```yaml
 services:
   lynxdb:
-    image: OrlovEvgeny/Lynxdb:latest
+    image: ghcr.io/lynxbase/lynxdb:latest
     ports:
       - "3100:3100"
     volumes:

@@ -4,9 +4,9 @@
 //
 // Build example:
 //
-//	go build -ldflags "-X github.com/OrlovEvgeny/Lynxdb/internal/buildinfo.Version=1.0.0
-//	  -X github.com/OrlovEvgeny/Lynxdb/internal/buildinfo.Commit=abc1234
-//	  -X github.com/OrlovEvgeny/Lynxdb/internal/buildinfo.Date=2026-02-25T12:00:00Z"
+//	go build -ldflags "-X github.com/lynxbase/lynxdb/internal/buildinfo.Version=1.0.0
+//	  -X github.com/lynxbase/lynxdb/internal/buildinfo.Commit=abc1234
+//	  -X github.com/lynxbase/lynxdb/internal/buildinfo.Date=2026-02-25T12:00:00Z"
 //	  ./cmd/lynxdb/
 package buildinfo
 

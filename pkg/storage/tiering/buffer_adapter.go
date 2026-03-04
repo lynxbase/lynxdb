@@ -3,7 +3,7 @@ package tiering
 import (
 	"log/slog"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/buffer"
+	"github.com/lynxbase/lynxdb/pkg/buffer"
 )
 
 // Compile-time check: BufferPoolChunkAdapter satisfies ChunkCache.

@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/model"
+	"github.com/lynxbase/lynxdb/pkg/model"
 )
 
 func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {

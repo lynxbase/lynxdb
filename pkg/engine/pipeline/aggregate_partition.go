@@ -8,8 +8,8 @@ import (
 	"math/bits"
 	"strings"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/vm"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // DefaultAggPartitions is the default number of hash partitions for
@@ -136,8 +136,9 @@ func (ps *aggPartitionSet) spillToPartitions(
 		if w == nil {
 			continue
 		}
-		if err := w.CloseFile(); err != nil && writeErr == nil {
-			writeErr = err
+		closeErr := w.CloseFile()
+		if closeErr != nil && writeErr == nil {
+			writeErr = closeErr
 		}
 		ps.partPaths[i] = append(ps.partPaths[i], w.Path())
 	}
@@ -231,8 +232,8 @@ func (ps *aggPartitionSet) mergePartitionFiles(a *AggregateIterator, partIdx int
 	for _, path := range ps.partPaths[partIdx] {
 		sr, err := NewColumnarSpillReader(path)
 		if err != nil {
-			slog.Warn("aggregate: failed to open partition spill file",
-				"path", path, "error", err)
+			slog.Error("aggregate: failed to open partition spill file",
+				"path", path, "error", err, "partition", partIdx)
 
 			continue
 		}

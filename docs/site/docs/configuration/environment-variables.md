@@ -152,7 +152,7 @@ These are used by the `install.sh` script, not by the LynxDB binary itself:
 ## Usage in Docker
 
 ```dockerfile
-FROM OrlovEvgeny/Lynxdb:latest
+FROM ghcr.io/lynxbase/lynxdb:latest
 
 ENV LYNXDB_LISTEN=0.0.0.0:3100
 ENV LYNXDB_DATA_DIR=/data

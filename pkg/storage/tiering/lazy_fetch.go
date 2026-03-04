@@ -7,8 +7,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/objstore"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/internal/objstore"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
 const (

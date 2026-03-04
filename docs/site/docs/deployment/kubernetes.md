@@ -72,7 +72,7 @@ spec:
     spec:
       containers:
         - name: lynxdb
-          image: OrlovEvgeny/Lynxdb:latest
+          image: ghcr.io/lynxbase/lynxdb:latest
           args: ["server", "--config", "/etc/lynxdb/config.yaml"]
           ports:
             - name: http
@@ -272,7 +272,7 @@ spec:
     spec:
       containers:
         - name: lynxdb
-          image: OrlovEvgeny/Lynxdb:latest
+          image: ghcr.io/lynxbase/lynxdb:latest
           args:
             - server
             - --config

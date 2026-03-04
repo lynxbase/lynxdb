@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // HistogramFromMetadata computes histogram buckets using segment metadata

@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/usecases"
+	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
 // ErrorCode is a machine-readable SCREAMING_SNAKE error code.

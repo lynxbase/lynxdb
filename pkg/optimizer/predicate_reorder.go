@@ -4,7 +4,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // predicateReorderingRule reorders AND-connected predicates in WHERE clauses

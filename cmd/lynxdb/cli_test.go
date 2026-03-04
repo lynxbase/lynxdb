@@ -16,9 +16,9 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/ui"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/api/rest"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/internal/ui"
+	"github.com/lynxbase/lynxdb/pkg/api/rest"
+	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 // resetAllFlags clears the Changed state and resets values of all global vars

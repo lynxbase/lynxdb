@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 func TestEngine_EphemeralIngestAndQuery(t *testing.T) {

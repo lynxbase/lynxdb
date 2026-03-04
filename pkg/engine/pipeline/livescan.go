@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // LiveScanIterator is a pipeline source that reads from an EventBus channel.

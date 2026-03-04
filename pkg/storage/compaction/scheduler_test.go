@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/model"
+	"github.com/lynxbase/lynxdb/pkg/model"
 )
 
 func TestSizeTiered_GroupsBySize(t *testing.T) {

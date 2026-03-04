@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/buildinfo"
-	"github.com/OrlovEvgeny/Lynxdb/internal/ui"
+	"github.com/lynxbase/lynxdb/internal/buildinfo"
+	"github.com/lynxbase/lynxdb/internal/ui"
 )
 
 func init() {

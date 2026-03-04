@@ -3,9 +3,9 @@ package usecases
 import (
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/server"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/views"
+	"github.com/lynxbase/lynxdb/pkg/server"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/storage/views"
 )
 
 // QueryMode controls sync/async/hybrid dispatch.

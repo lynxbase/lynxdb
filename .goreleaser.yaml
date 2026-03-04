@@ -40,9 +40,9 @@ builds:
         goarch: arm  # No 32-bit ARM macOS
     ldflags:
       - -s -w
-      - -X github.com/OrlovEvgeny/Lynxdb/internal/buildinfo.Version={{.Version}}
-      - -X github.com/OrlovEvgeny/Lynxdb/internal/buildinfo.Commit={{.ShortCommit}}
-      - -X github.com/OrlovEvgeny/Lynxdb/internal/buildinfo.Date={{.Date}}
+      - -X github.com/lynxbase/lynxdb/internal/buildinfo.Version={{.Version}}
+      - -X github.com/lynxbase/lynxdb/internal/buildinfo.Commit={{.ShortCommit}}
+      - -X github.com/lynxbase/lynxdb/internal/buildinfo.Date={{.Date}}
     flags:
       - -trimpath
 
@@ -59,9 +59,9 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/OrlovEvgeny/Lynxdb/internal/buildinfo.Version={{.Version}}
-      - -X github.com/OrlovEvgeny/Lynxdb/internal/buildinfo.Commit={{.ShortCommit}}
-      - -X github.com/OrlovEvgeny/Lynxdb/internal/buildinfo.Date={{.Date}}
+      - -X github.com/lynxbase/lynxdb/internal/buildinfo.Version={{.Version}}
+      - -X github.com/lynxbase/lynxdb/internal/buildinfo.Commit={{.ShortCommit}}
+      - -X github.com/lynxbase/lynxdb/internal/buildinfo.Date={{.Date}}
     flags:
       - -trimpath
     # Tag these so archive names include "-musl"
@@ -70,14 +70,14 @@ builds:
 archives:
   # ── Standard archives (tar.gz for Unix, zip for Windows) ───────────────
   - id: default
-    builds:
+    ids:
       - lynxdb-gnu
-    format: tar.gz
+    formats: [tar.gz]
     name_template: >-
       lynxdb-v{{ .Version }}-{{ .Os }}-{{ .Arch }}{{ if .Arm }}v{{ .Arm }}{{ end }}
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
     files:
       - LICENSE
       - README.md
@@ -85,9 +85,9 @@ archives:
 
   # ── Musl archives ──────────────────────────────────────────────────────
   - id: musl
-    builds:
+    ids:
       - lynxdb-musl
-    format: tar.gz
+    formats: [tar.gz]
     name_template: >-
       lynxdb-v{{ .Version }}-{{ .Os }}-{{ .Arch }}-musl
     files:
@@ -118,11 +118,13 @@ release:
     ```
   footer: |
     ---
-    **Full changelog**: https://github.com/OrlovEvgeny/Lynxdb/compare/{{ .PreviousTag }}...{{ .Tag }}
+    **Full changelog**: https://github.com/lynxbase/lynxdb/compare/{{ .PreviousTag }}...{{ .Tag }}
 
 # ── Homebrew Tap ──────────────────────────────────────────────────────────
 brews:
   - name: lynxdb
+    ids:
+      - default
     repository:
       owner: lynxbase
       name: homebrew-tap
@@ -138,11 +140,11 @@ brews:
     test: |
       system "#{bin}/lynxdb", "version"
 
-# ── Docker images ─────────────────────────────────────────────────────────
+# ── Docker images (GitHub Container Registry) ────────────────────────────
 dockers:
   - image_templates:
-      - "orlovevgeny/lynxdb:{{ .Version }}-amd64"
-      - "orlovevgeny/lynxdb:latest-amd64"
+      - "ghcr.io/lynxbase/lynxdb:{{ .Version }}-amd64"
+      - "ghcr.io/lynxbase/lynxdb:latest-amd64"
     use: buildx
     dockerfile: Dockerfile.release
     build_flag_templates:
@@ -152,8 +154,8 @@ dockers:
     goarch: amd64
 
   - image_templates:
-      - "orlovevgeny/lynxdb:{{ .Version }}-arm64"
-      - "orlovevgeny/lynxdb:latest-arm64"
+      - "ghcr.io/lynxbase/lynxdb:{{ .Version }}-arm64"
+      - "ghcr.io/lynxbase/lynxdb:latest-arm64"
     use: buildx
     dockerfile: Dockerfile.release
     build_flag_templates:
@@ -163,14 +165,14 @@ dockers:
     goarch: arm64
 
 docker_manifests:
-  - name_template: "orlovevgeny/lynxdb:{{ .Version }}"
+  - name_template: "ghcr.io/lynxbase/lynxdb:{{ .Version }}"
     image_templates:
-      - "orlovevgeny/lynxdb:{{ .Version }}-amd64"
-      - "orlovevgeny/lynxdb:{{ .Version }}-arm64"
-  - name_template: "orlovevgeny/lynxdb:latest"
+      - "ghcr.io/lynxbase/lynxdb:{{ .Version }}-amd64"
+      - "ghcr.io/lynxbase/lynxdb:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/lynxbase/lynxdb:latest"
     image_templates:
-      - "orlovevgeny/lynxdb:latest-amd64"
-      - "orlovevgeny/lynxdb:latest-arm64"
+      - "ghcr.io/lynxbase/lynxdb:latest-amd64"
+      - "ghcr.io/lynxbase/lynxdb:latest-arm64"
 
 # ── Announce ──────────────────────────────────────────────────────────────
 changelog:

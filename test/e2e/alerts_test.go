@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
 func TestE2E_Alerts_CRUD(t *testing.T) {

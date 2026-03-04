@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
 func TestE2E_Tail_ReceivesEvents(t *testing.T) {

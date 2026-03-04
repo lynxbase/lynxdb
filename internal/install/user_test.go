@@ -9,7 +9,7 @@ func TestUserExists(t *testing.T) {
 	// The current user should always exist.
 	u, err := user.Current()
 	if err != nil {
-		t.Skipf("cannot determine current user: %v", err)
+		t.Fatalf("test requires current user: %v", err)
 	}
 
 	if !userExists(u.Username) {
@@ -37,7 +37,7 @@ func TestUserGroupExists(t *testing.T) {
 	}
 
 	if !found {
-		t.Skip("no known group found on this system")
+		t.Fatal("test requires at least one known group (staff/root/wheel/users)")
 	}
 
 	if userGroupExists("lynxdb_nonexistent_test_group_12345") {

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"hash/crc32"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/objstore"
+	"github.com/lynxbase/lynxdb/internal/objstore"
 )
 
 const (

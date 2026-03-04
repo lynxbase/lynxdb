@@ -109,7 +109,7 @@ func TestParseManifest(t *testing.T) {
 		"version": "v0.5.0",
 		"channel": "stable",
 		"released_at": "2025-06-15T10:30:00Z",
-		"changelog_url": "https://github.com/OrlovEvgeny/Lynxdb/releases/tag/v0.5.0",
+		"changelog_url": "https://github.com/lynxbase/lynxdb/releases/tag/v0.5.0",
 		"artifacts": {
 			"linux-amd64": {
 				"url": "https://dl.lynxdb.org/v0.5.0/lynxdb-v0.5.0-linux-amd64.tar.gz",

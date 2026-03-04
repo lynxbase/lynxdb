@@ -1,4 +1,9 @@
+FROM debian:bookworm-slim AS certs
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
 FROM scratch
+COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
 COPY lynxdb /usr/local/bin/lynxdb
 EXPOSE 3100
 ENTRYPOINT ["/usr/local/bin/lynxdb"]

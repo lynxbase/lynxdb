@@ -8,8 +8,8 @@ import (
 	"math"
 	"strings"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/vm"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // PartialAggSpec describes what to aggregate for pushdown.

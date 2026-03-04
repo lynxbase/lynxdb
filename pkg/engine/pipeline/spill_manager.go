@@ -260,6 +260,15 @@ func CleanupOrphans(dir string, logger *slog.Logger) int {
 				return fs.SkipDir
 			}
 
+			// Don't recurse into non-spill subdirectories. CleanupOrphans should
+			// only inspect the root dir and lynxdb-spill-* directories within it.
+			// Without this guard, WalkDir enters unrelated directories (e.g., Go
+			// test temp dirs from other processes) and deletes spill files that
+			// belong to concurrently running test binaries.
+			if path != dir {
+				return fs.SkipDir
+			}
+
 			return nil
 		}
 		if strings.HasPrefix(d.Name(), "lynxdb-spill-") {

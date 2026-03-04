@@ -96,7 +96,7 @@ def build_manifest(
         "version": version,
         "channel": "prerelease" if is_prerelease else channel,
         "released_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "changelog_url": f"https://github.com/OrlovEvgeny/Lynxdb/releases/tag/{version}",
+        "changelog_url": f"https://github.com/lynxbase/lynxdb/releases/tag/{version}",
         "artifacts": artifacts,
         "notices": [],
     }

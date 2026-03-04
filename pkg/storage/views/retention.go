@@ -7,8 +7,8 @@ import (
 	"sort"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/storage"
+	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
 // EnforceRetention deletes view segments that are older than the view's retention period.

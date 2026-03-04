@@ -5,7 +5,7 @@ package e2e
 import (
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
 // TestE2E_Persistence_DataSurvivesRestart ingests data to disk, restarts the

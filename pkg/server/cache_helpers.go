@@ -3,9 +3,9 @@ package server
 import (
 	"fmt"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/cache"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/cache"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // pipelineRowsToResultRows converts pipeline engine output to spl2.ResultRow.

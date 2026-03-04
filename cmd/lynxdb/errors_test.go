@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
 func TestExtractPositionFromError(t *testing.T) {

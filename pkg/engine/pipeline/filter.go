@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/vm"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // FilterIterator evaluates a predicate per row and drops non-matching rows.
@@ -165,8 +165,12 @@ func (f *FilterIterator) tryVectorizedFilter(batch *Batch) (*Batch, bool) {
 			matches = FilterInt64GTE(intCol, threshold)
 		case "<":
 			matches = FilterInt64LT(intCol, threshold)
+		case "<=":
+			matches = FilterInt64LTE(intCol, threshold)
 		case "=", "==":
 			matches = FilterInt64EQ(intCol, threshold)
+		case "!=":
+			matches = FilterInt64NE(intCol, threshold)
 		default:
 			return nil, false
 		}
@@ -188,8 +192,12 @@ func (f *FilterIterator) tryVectorizedFilter(batch *Batch) (*Batch, bool) {
 			matches = FilterFloat64GTE(fCol, threshold)
 		case "<":
 			matches = FilterFloat64LT(fCol, threshold)
+		case "<=":
+			matches = FilterFloat64LTE(fCol, threshold)
 		case "=", "==":
 			matches = FilterFloat64EQ(fCol, threshold)
+		case "!=":
+			matches = FilterFloat64NE(fCol, threshold)
 		default:
 			return nil, false
 		}
@@ -205,6 +213,14 @@ func (f *FilterIterator) tryVectorizedFilter(batch *Batch) (*Batch, bool) {
 			matches = FilterStringEQ(sCol, f.vecValue)
 		case "!=":
 			matches = FilterStringNE(sCol, f.vecValue)
+		case ">":
+			matches = FilterStringGT(sCol, f.vecValue)
+		case ">=":
+			matches = FilterStringGTE(sCol, f.vecValue)
+		case "<":
+			matches = FilterStringLT(sCol, f.vecValue)
+		case "<=":
+			matches = FilterStringLTE(sCol, f.vecValue)
 		default:
 			return nil, false
 		}

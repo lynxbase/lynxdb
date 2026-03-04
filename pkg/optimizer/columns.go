@@ -1,6 +1,6 @@
 package optimizer
 
-import "github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+import "github.com/lynxbase/lynxdb/pkg/spl2"
 
 // Column Pruning Rule
 // Walks the AST and computes the minimal set of columns required at each stage.
@@ -26,6 +26,7 @@ func (r *columnPruningRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 func computeRequiredColumns(q *spl2.Query) []string {
 	cols := make(map[string]bool)
 	cols["_time"] = true
+	cols["_raw"] = true // always include _raw — it's the core log line field
 
 	for _, cmd := range q.Commands {
 		commandAccessedFields(cmd, cols)
@@ -253,6 +254,16 @@ func (r *projectionPushdownRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 	}
 	if insertBefore < 0 {
 		return q, false
+	}
+
+	// Guard against infinite re-insertion: if there is already a FIELDS
+	// command immediately before the expensive operator, do not insert again.
+	// Without this check, the optimizer loop (capped at 10 iterations)
+	// inserts a new FIELDS on every pass, producing 10 redundant FIELDS.
+	if insertBefore > 0 {
+		if _, isFields := q.Commands[insertBefore-1].(*spl2.FieldsCommand); isFields {
+			return q, false
+		}
 	}
 
 	// Compute fields needed by commands between insertBefore and termIdx.

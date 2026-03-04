@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/buffer"
+	"github.com/lynxbase/lynxdb/pkg/buffer"
 )
 
 func newTestBufferPool(t *testing.T, maxPages int) *buffer.Pool {

@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // makeSortBenchRows creates n rows with a "key" field set to descending integers

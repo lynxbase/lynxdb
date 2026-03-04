@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // Tests for computeQueryFunnel

@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/internal/buildinfo"
+	"github.com/lynxbase/lynxdb/internal/buildinfo"
 )
 
 // ProgressFunc is called periodically during download to report progress.

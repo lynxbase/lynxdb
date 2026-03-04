@@ -8,9 +8,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/vm"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // EventStatsIterator implements two-pass aggregation: accumulate globals, then enrich rows.
@@ -347,6 +347,14 @@ func (e *EventStatsIterator) nextFromSpill() (*Batch, error) {
 	return batch, nil
 }
 
+// groupKey builds a composite key from the BY-clause fields of a row.
+//
+// Uses null byte (\x00) as separator instead of '|' to avoid collisions when
+// field values contain the separator character. Each field is prefixed with a
+// presence marker: \x01 for present values, \x00 for null/missing. This
+// ensures that ("a", null) and (null, "a") produce distinct keys, and that
+// values like "x|y" in a single field don't collide with "x" and "y" in two
+// separate fields.
 func (e *EventStatsIterator) groupKey(row map[string]event.Value) string {
 	if len(e.groupBy) == 0 {
 		return ""
@@ -354,9 +362,13 @@ func (e *EventStatsIterator) groupKey(row map[string]event.Value) string {
 	var sb strings.Builder
 	for i, g := range e.groupBy {
 		if i > 0 {
-			sb.WriteByte('|')
+			sb.WriteByte(0) // null byte separator
 		}
-		if v, ok := row[g]; ok {
+		v, ok := row[g]
+		if !ok || v.IsNull() {
+			sb.WriteByte(0) // null/missing marker
+		} else {
+			sb.WriteByte(1) // present marker
 			sb.WriteString(v.String())
 		}
 	}

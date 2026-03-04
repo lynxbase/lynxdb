@@ -22,7 +22,7 @@ LynxDB has no other external dependencies. No JVM, no C libraries, no protobuf c
 
 ```bash
 # Clone the repository
-git clone https://github.com/OrlovEvgeny/Lynxdb.git
+git clone https://github.com/lynxbase/lynxdb.git
 cd lynxdb
 
 # Build the binary

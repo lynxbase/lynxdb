@@ -5,8 +5,8 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/views"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/usecases"
+	"github.com/lynxbase/lynxdb/pkg/storage/views"
+	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
 // Materialized View Handlers

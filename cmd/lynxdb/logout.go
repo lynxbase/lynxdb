@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/auth"
 )
 
 var flagLogoutAll bool

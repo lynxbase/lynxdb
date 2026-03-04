@@ -3,7 +3,7 @@ package spl2
 import (
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // Glob Pattern Tests

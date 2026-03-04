@@ -12,7 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/auth"
 )
 
 // statusWriter wraps http.ResponseWriter to capture the status code.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // InstrumentedIterator wraps any Iterator to collect per-operator statistics.

@@ -88,7 +88,7 @@ func TestAllocateOffHeap_LargeAllocation(t *testing.T) {
 
 func TestPoolWithOffHeap(t *testing.T) {
 	if !mmapAvailable() {
-		t.Skip("mmap not available on this platform")
+		t.Fatal("test requires mmap support")
 	}
 
 	bp, err := NewPool(PoolConfig{

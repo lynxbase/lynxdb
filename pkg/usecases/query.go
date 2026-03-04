@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/config"
-	enginepipeline "github.com/OrlovEvgeny/Lynxdb/pkg/engine/pipeline"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/optimizer"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/planner"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/server"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/config"
+	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/optimizer"
+	"github.com/lynxbase/lynxdb/pkg/planner"
+	"github.com/lynxbase/lynxdb/pkg/server"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // QueryService orchestrates query planning and execution.

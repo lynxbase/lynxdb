@@ -8,7 +8,7 @@ import (
 
 	"github.com/spf13/pflag"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 // resetInitFlags clears the Changed state and resets values of init
@@ -166,7 +166,7 @@ func TestInit_InvalidRetention(t *testing.T) {
 func TestExpandHome(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		t.Skip("no home directory")
+		t.Fatalf("test requires home directory: %v", err)
 	}
 
 	tests := []struct {

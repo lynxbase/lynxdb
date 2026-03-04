@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/model"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/compaction"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/part"
+	"github.com/lynxbase/lynxdb/pkg/model"
+	"github.com/lynxbase/lynxdb/pkg/storage/compaction"
+	"github.com/lynxbase/lynxdb/pkg/storage/part"
 )
 
 const compactionEscalateThreshold = 5

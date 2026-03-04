@@ -22,7 +22,7 @@ set -eu
 
 # ─── Constants ────────────────────────────────────────────────────────────────
 
-GITHUB_REPO="OrlovEvgeny/Lynxdb"
+GITHUB_REPO="lynxbase/Lynxdb"
 DEFAULT_BASE_URL="https://dl.lynxdb.org"
 FALLBACK_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download"
 MANIFEST_URL="https://dl.lynxdb.org/manifest.json"

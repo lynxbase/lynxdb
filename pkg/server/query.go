@@ -9,13 +9,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/cache"
-	enginepipeline "github.com/OrlovEvgeny/Lynxdb/pkg/engine/pipeline"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/optimizer"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/timerange"
+	"github.com/lynxbase/lynxdb/pkg/cache"
+	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/optimizer"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/timerange"
 )
 
 // DetectResultType walks the pipeline backwards, skipping pass-through commands
@@ -35,8 +35,15 @@ func DetectResultType(prog *spl2.Program) ResultType {
 		case *spl2.TimechartCommand:
 			return ResultTypeTimechart
 		case *spl2.StatsCommand, *spl2.TopCommand, *spl2.RareCommand,
-			*spl2.EventstatsCommand, *spl2.XYSeriesCommand:
+			*spl2.XYSeriesCommand:
 			return ResultTypeAggregate
+		case *spl2.EventstatsCommand:
+			// EVENTSTATS is an enrichment command — it adds computed fields
+			// to every input event while preserving the original row count.
+			// When it's the terminal command, the result is still Events format,
+			// not Aggregate. Treating it as Aggregate would misclassify queries
+			// like "FROM idx | EVENTSTATS count BY group".
+			return ResultTypeEvents
 		case *spl2.MaterializeCommand:
 			return ResultTypeViewCreated
 		default:

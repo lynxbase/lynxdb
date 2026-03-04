@@ -3,7 +3,7 @@ package rest
 import (
 	"net/http"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/usecases"
+	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
 func (s *Server) handleQueryExplain(w http.ResponseWriter, r *http.Request) {

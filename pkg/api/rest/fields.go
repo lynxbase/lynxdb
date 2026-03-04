@@ -5,7 +5,7 @@ import (
 	"path"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/usecases"
+	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
 func (s *Server) handleFieldValues(w http.ResponseWriter, r *http.Request) {

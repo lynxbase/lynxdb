@@ -11,10 +11,6 @@ import (
 func TestResolvePathsSystem(t *testing.T) {
 	paths := ResolvePaths(Options{Mode: ModeSystem})
 
-	if runtime.GOOS == "windows" {
-		t.Skip("system paths not applicable on Windows")
-	}
-
 	if paths.Binary != "/usr/local/bin/lynxdb" {
 		t.Errorf("Binary = %q, want /usr/local/bin/lynxdb", paths.Binary)
 	}
@@ -64,7 +60,7 @@ func TestResolvePathsSystemWithDataDir(t *testing.T) {
 func TestResolvePathsUser(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		t.Skip("cannot determine home directory")
+		t.Fatal("test requires home directory")
 	}
 
 	// Clear XDG vars for predictable test.

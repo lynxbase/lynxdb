@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // ViewResolver provides access to materialized view data.

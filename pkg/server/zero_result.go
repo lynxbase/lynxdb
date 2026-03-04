@@ -3,7 +3,7 @@ package server
 import (
 	"fmt"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // zeroResultSuggestions generates actionable suggestions when a query returns

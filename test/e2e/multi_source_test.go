@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
 // ingestSourceEvents ingests n simple plain-text events into the given index.

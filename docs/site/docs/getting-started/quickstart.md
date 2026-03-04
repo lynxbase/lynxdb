@@ -24,21 +24,21 @@ curl -fsSL https://lynxdb.org/install.sh | sh
 <TabItem value="brew" label="Homebrew">
 
 ```bash
-brew install lynxdb/tap/lynxdb
+brew install lynxbase/tap/lynxdb
 ```
 
 </TabItem>
 <TabItem value="docker" label="Docker">
 
 ```bash
-docker run -p 3100:3100 OrlovEvgeny/Lynxdb server
+docker run -p 3100:3100 ghcr.io/lynxbase/lynxdb server
 ```
 
 </TabItem>
 <TabItem value="source" label="From Source">
 
 ```bash
-go install github.com/OrlovEvgeny/Lynxdb/cmd/lynxdb@latest
+go install github.com/lynxbase/lynxdb/cmd/lynxdb@latest
 ```
 
 </TabItem>

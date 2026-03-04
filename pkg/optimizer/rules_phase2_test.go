@@ -3,8 +3,8 @@ package optimizer
 import (
 	"testing"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/engine/pipeline"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/spl2"
+	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 func TestBloomEnrichment_WhereSource(t *testing.T) {

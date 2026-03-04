@@ -48,7 +48,7 @@ function HomepageHeader() {
           <Link
             className="button button--outline button--lg"
             style={{color: 'white', borderColor: 'rgba(255,255,255,0.4)', marginLeft: '1rem'}}
-            href="https://github.com/OrlovEvgeny/Lynxdb">
+            href="https://github.com/lynxbase/lynxdb">
             GitHub
           </Link>
         </div>

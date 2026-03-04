@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/storage/views"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/storage/views"
 )
 
 // ViewService orchestrates materialized view operations.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // ColumnarScanIterator serves pre-built Batch objects from the direct columnar

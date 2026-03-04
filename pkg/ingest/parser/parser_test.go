@@ -146,7 +146,7 @@ func TestParseTransactions(t *testing.T) {
 func TestLoadAllIndexes(t *testing.T) {
 	dir := testdataDir()
 	if _, err := os.Stat(dir); err != nil {
-		t.Skipf("testdata/logs not found: %v", err)
+		t.Fatalf("testdata/logs not found: %v — ensure test fixtures exist", err)
 	}
 
 	store, err := LoadAllIndexes(dir)
@@ -180,7 +180,7 @@ func TestLoadIndex_NginxFile(t *testing.T) {
 	dir := testdataDir()
 	path := filepath.Join(dir, "nginx_access.log")
 	if _, err := os.Stat(path); err != nil {
-		t.Skipf("test file not found: %v", err)
+		t.Fatalf("test file not found: %v — ensure test fixtures exist", err)
 	}
 
 	rows, err := LoadIndex(path, "idx_nginx", "nginx")

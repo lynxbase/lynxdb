@@ -1,6 +1,6 @@
 package segment
 
-import "github.com/OrlovEvgeny/Lynxdb/pkg/event"
+import "github.com/lynxbase/lynxdb/pkg/event"
 
 // PrefetchReader wraps a Reader with row group prefetching.
 // While processing row group N, it prefetches row group N+1 in background.

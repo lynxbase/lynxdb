@@ -13,10 +13,10 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/OrlovEvgeny/Lynxdb/pkg/buffer"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/event"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/stats"
-	"github.com/OrlovEvgeny/Lynxdb/pkg/vm"
+	"github.com/lynxbase/lynxdb/pkg/buffer"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // BufferedSortIterator is the buffer-pool-aware sort operator. Accumulation
