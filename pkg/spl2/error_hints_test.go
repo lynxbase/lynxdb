@@ -55,6 +55,21 @@ func TestSuggestFix_ImplicitSearch_NotPosition0(t *testing.T) {
 	}
 }
 
+func TestSuggestFix_SPL1_Spath(t *testing.T) {
+	// SPL1 users may try "| spath" — should hint to use "| json" or "| unpack_json".
+	errMsg := `spl2: unexpected command IDENT "spath" at position 10`
+	hint := SuggestFix(errMsg, nil)
+	if !strings.Contains(hint, "spath") {
+		t.Errorf("expected mention of spath, got: %s", hint)
+	}
+	if !strings.Contains(hint, "json") {
+		t.Errorf("expected mention of json, got: %s", hint)
+	}
+	if !strings.Contains(hint, "unpack_json") {
+		t.Errorf("expected mention of unpack_json, got: %s", hint)
+	}
+}
+
 func TestSuggestFix_UnknownFunction(t *testing.T) {
 	// Simulate parser error for misspelled function name in stats context.
 	errMsg := `spl2: unexpected token IDENT "cunt" at position 8`

@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -32,6 +33,22 @@ type VM struct {
 	regexCache   []*regexp.Regexp
 	replaceHints []func(s, replacement string) string // per-regex fast-path; nil = use regex
 	matchHints   []func(string) bool                  // per-regex fast-path; nil = use regex
+
+	// jsonCache is a single-entry cache for JSON dot-notation lookups.
+	// When a query accesses multiple paths from the same root (e.g.
+	// request.method, request.path, request.duration), the first access
+	// unmarshals the root field and caches the top-level keys. Subsequent
+	// accesses skip re-parsing. The cache is keyed by the root field's
+	// string value — a new event naturally invalidates it because the
+	// string value differs.
+	jsonCache jsonParseCache
+}
+
+// jsonParseCache caches the result of unmarshaling a JSON string so that
+// multiple dot-path lookups against the same root object avoid redundant parsing.
+type jsonParseCache struct {
+	source string                     // source JSON string (cache key)
+	parsed map[string]json.RawMessage // top-level keys → raw JSON
 }
 
 // isASCIILower returns true if s contains only lowercase ASCII and non-letter ASCII.
@@ -157,6 +174,9 @@ func (vm *VM) execConst(prog *Program, ins []byte, ip int) (int, error) {
 }
 
 // execLoadField loads a field value onto the stack with bounds checking.
+// When a direct field lookup fails and the field name contains a dot, the VM
+// attempts JSON extraction as a fallback — enabling `response.status` syntax
+// without an explicit unpack step. The fast path (direct lookup) is unchanged.
 func (vm *VM) execLoadField(prog *Program, ins []byte, ip int, fields map[string]event.Value) (int, error) {
 	if vm.sp >= StackSize {
 		return 0, ErrStackOverflow
@@ -169,7 +189,22 @@ func (vm *VM) execLoadField(prog *Program, ins []byte, ip int, fields map[string
 
 	name := prog.FieldNames[idx]
 	if val, ok := fields[name]; ok {
+		// Fast path: field exists directly (e.g., unpack_json already ran,
+		// or the field was set by EVAL, or it's a physical column).
 		vm.stack[vm.sp] = val
+	} else if dotIdx := strings.IndexByte(name, '.'); dotIdx > 0 {
+		// Dot-notation fallback: try JSON extraction from the root field
+		// or from _raw. Only triggered on cache-miss (field not in map)
+		// and only when the field name contains a dot.
+		root := name[:dotIdx]
+		path := name[dotIdx+1:]
+		if rootVal, ok := fields[root]; ok && !rootVal.IsNull() {
+			vm.stack[vm.sp] = vm.jsonExtractCached(rootVal.String(), path)
+		} else if rawVal, ok := fields["_raw"]; ok && !rawVal.IsNull() {
+			vm.stack[vm.sp] = vm.jsonExtractCached(rawVal.String(), name)
+		} else {
+			vm.stack[vm.sp] = event.NullValue()
+		}
 	} else {
 		vm.stack[vm.sp] = event.NullValue()
 	}
@@ -825,6 +860,100 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			vm.sp--
 			vm.stack[vm.sp-1] = strftimeValue(ts, format)
 
+		// === JSON Functions ===
+		case OpJsonExtract:
+			// Stack: [..., field, path] → [..., result]
+			path := vm.stack[vm.sp-1]
+			field := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = jsonExtractValue(field, path)
+
+		case OpJsonValid:
+			// Stack: [..., field] → [..., bool]
+			field := vm.stack[vm.sp-1]
+			vm.stack[vm.sp-1] = jsonValidValue(field)
+
+		case OpJsonKeys:
+			// Stack: [..., field, path] → [..., result]
+			path := vm.stack[vm.sp-1]
+			field := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = jsonKeysValue(field, path)
+
+		case OpJsonArrayLen:
+			// Stack: [..., field, path] → [..., result]
+			path := vm.stack[vm.sp-1]
+			field := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = jsonArrayLenValue(field, path)
+
+		case OpJsonObject:
+			// Operand: arg count (must be even). Pop N values, build JSON object.
+			operand, opErr := readOperandSafe(ins, ip)
+			if opErr != nil {
+				return event.NullValue(), opErr
+			}
+			count := int(operand)
+			ip += 2
+			values := make([]event.Value, count)
+			for i := 0; i < count; i++ {
+				values[i] = vm.stack[vm.sp-count+i]
+			}
+			vm.sp -= count
+			if vm.sp >= StackSize {
+				return event.NullValue(), ErrStackOverflow
+			}
+			vm.stack[vm.sp] = jsonObjectValue(values)
+			vm.sp++
+
+		case OpJsonArray:
+			// Operand: arg count. Pop N values, build JSON array.
+			operand, opErr := readOperandSafe(ins, ip)
+			if opErr != nil {
+				return event.NullValue(), opErr
+			}
+			count := int(operand)
+			ip += 2
+			values := make([]event.Value, count)
+			for i := 0; i < count; i++ {
+				values[i] = vm.stack[vm.sp-count+i]
+			}
+			vm.sp -= count
+			if vm.sp >= StackSize {
+				return event.NullValue(), ErrStackOverflow
+			}
+			vm.stack[vm.sp] = jsonArrayValue(values)
+			vm.sp++
+
+		case OpJsonType:
+			// Stack: [..., field, path] → [..., type_string]
+			path := vm.stack[vm.sp-1]
+			field := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = jsonTypeValue(field, path)
+
+		case OpJsonSet:
+			// Stack: [..., field, path, value] → [..., modified_json]
+			value := vm.stack[vm.sp-1]
+			path := vm.stack[vm.sp-2]
+			field := vm.stack[vm.sp-3]
+			vm.sp -= 2
+			vm.stack[vm.sp-1] = jsonSetValue(field, path, value)
+
+		case OpJsonRemove:
+			// Stack: [..., field, path] → [..., modified_json]
+			path := vm.stack[vm.sp-1]
+			field := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = jsonRemoveValue(field, path)
+
+		case OpJsonMerge:
+			// Stack: [..., json1, json2] → [..., merged_json]
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = jsonMergeValue(a, b)
+
 		// === Return ===
 		case OpReturn:
 			if vm.sp > 0 {
@@ -862,6 +991,44 @@ func (vm *VM) ensureRegexCache(prog *Program) {
 		vm.replaceHints[i] = analyzeReplacePattern(p)
 		vm.matchHints[i] = analyzeMatchPattern(p)
 	}
+}
+
+// jsonExtractCached extracts a dot-path from a JSON string, using a single-entry
+// cache to avoid re-parsing the same JSON object on consecutive calls. When the
+// source string matches the cached value, top-level key lookup is O(1).
+// Otherwise the JSON is parsed and cached for subsequent calls.
+func (vm *VM) jsonExtractCached(source, path string) event.Value {
+	parts := strings.Split(path, ".")
+	if len(parts) == 0 {
+		return event.NullValue()
+	}
+
+	// Check if cache is valid for this source.
+	if vm.jsonCache.source != source || vm.jsonCache.parsed == nil {
+		s := strings.TrimSpace(source)
+		if len(s) == 0 || s[0] != '{' {
+			return event.NullValue()
+		}
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(s), &obj); err != nil {
+			return event.NullValue()
+		}
+		vm.jsonCache.source = source
+		vm.jsonCache.parsed = obj
+	}
+
+	// Fast single-level lookup.
+	raw, ok := vm.jsonCache.parsed[parts[0]]
+	if !ok {
+		return event.NullValue()
+	}
+
+	if len(parts) == 1 {
+		return jsonFragmentToValue(raw)
+	}
+
+	// Multi-level: walk remaining path from the cached first-level value.
+	return walkJSONPath(raw, parts[1:])
 }
 
 // Value helper functions

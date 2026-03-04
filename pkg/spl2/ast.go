@@ -542,6 +542,87 @@ func (c *DropviewCommand) String() string {
 	return fmt.Sprintf("dropview %q", c.Name)
 }
 
+// UnpackCommand represents: | unpack_json/unpack_logfmt/unpack_syslog/unpack_combined/... [from <field>] [fields (<f1>, <f2>, ...)] [prefix "<p>"] [keep_original].
+// All formats share identical option grammar — the Format string differentiates.
+// The Delim/Assign/Quote fields are only used by the "kv" format.
+// The Header field is only used by the "w3c" format.
+// The Pattern field is only used by the "pattern" format.
+type UnpackCommand struct {
+	Format       string   // "json", "logfmt", "syslog", "combined", "clf", "nginx_error", "cef", "kv", "docker", "redis", "apache_error", "postgres", "mysql_slow", "haproxy", "leef", "w3c", "pattern"
+	SourceField  string   // default: "_raw"
+	Fields       []string // extract only these (nil = all)
+	Prefix       string   // prefix for output field names
+	KeepOriginal bool     // don't overwrite existing non-null fields
+	Delim        string   // kv pair delimiter (default: " ", only used by "kv")
+	Assign       string   // kv assignment character (default: "=", only used by "kv")
+	Quote        string   // kv quote character (default: "\"", only used by "kv")
+	Header       string   // W3C #Fields directive (only used by "w3c")
+	Pattern      string   // user-defined extraction pattern (only used by "pattern")
+}
+
+func (*UnpackCommand) commandNode() {}
+func (c *UnpackCommand) String() string {
+	s := fmt.Sprintf("unpack_%s", c.Format)
+	if c.SourceField != "" && c.SourceField != "_raw" {
+		s += " from " + c.SourceField
+	}
+	if len(c.Fields) > 0 {
+		s += fmt.Sprintf(" fields (%s)", joinStrings(c.Fields, ", "))
+	}
+	if c.Prefix != "" {
+		s += fmt.Sprintf(" prefix %q", c.Prefix)
+	}
+	if c.KeepOriginal {
+		s += " keep_original"
+	}
+
+	return s
+}
+
+// JsonPath represents a single path extraction for the | json command,
+// with an optional AS alias for renaming the output field.
+type JsonPath struct {
+	Path  string // dot-separated path, e.g. "user.id"
+	Alias string // optional output name (empty = use Path)
+}
+
+// OutputName returns the field name that should be used in the output.
+// If an alias is set, returns the alias; otherwise returns the path.
+func (jp JsonPath) OutputName() string {
+	if jp.Alias != "" {
+		return jp.Alias
+	}
+	return jp.Path
+}
+
+// JsonCommand represents: | json [field=<field>] [path="<p>" AS alias] [paths="<p1> AS a1, <p2>"].
+// Lighter-weight shorthand for JSON extraction compared to full unpack_json.
+type JsonCommand struct {
+	SourceField string     // source field (default: "_raw")
+	Paths       []JsonPath // specific dot-paths to extract (nil = all)
+}
+
+func (*JsonCommand) commandNode() {}
+func (c *JsonCommand) String() string {
+	s := "json"
+	if c.SourceField != "" && c.SourceField != "_raw" {
+		s += " field=" + c.SourceField
+	}
+	if len(c.Paths) > 0 {
+		parts := make([]string, len(c.Paths))
+		for i, jp := range c.Paths {
+			if jp.Alias != "" {
+				parts[i] = jp.Path + " AS " + jp.Alias
+			} else {
+				parts[i] = jp.Path
+			}
+		}
+		s += fmt.Sprintf(" paths=%q", joinStrings(parts, ", "))
+	}
+
+	return s
+}
+
 func joinStrings(ss []string, sep string) string {
 	if len(ss) == 0 {
 		return ""
@@ -552,6 +633,35 @@ func joinStrings(ss []string, sep string) string {
 	}
 
 	return result
+}
+
+// UnrollCommand represents: | unroll field=<field>.
+// Explodes a JSON array field into multiple rows, one per element.
+// If an element is an object, its keys are flattened with dot-notation prefix.
+type UnrollCommand struct {
+	Field string // field containing JSON array to explode
+}
+
+func (*UnrollCommand) commandNode() {}
+func (c *UnrollCommand) String() string {
+	return fmt.Sprintf("unroll field=%s", c.Field)
+}
+
+// PackJsonCommand represents: | pack_json [<f1>, <f2>, ...] into <target>.
+// Assembles event fields into a JSON string stored in target field.
+// Without field list, packs all non-internal fields.
+type PackJsonCommand struct {
+	Fields []string // nil = all non-internal fields
+	Target string   // output field name (required)
+}
+
+func (*PackJsonCommand) commandNode() {}
+func (c *PackJsonCommand) String() string {
+	if len(c.Fields) > 0 {
+		return fmt.Sprintf("pack_json %s into %s", joinStrings(c.Fields, ", "), c.Target)
+	}
+
+	return fmt.Sprintf("pack_json into %s", c.Target)
 }
 
 // TopNCommand is an internal optimizer command: sort + head fused into a heap selection.

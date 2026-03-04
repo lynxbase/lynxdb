@@ -153,6 +153,16 @@ func commandAccessedFields(cmd spl2.Command, cols map[string]bool) {
 				commandAccessedFields(subcmd, cols)
 			}
 		}
+	case *spl2.UnpackCommand:
+		cols[c.SourceField] = true
+	case *spl2.JsonCommand:
+		cols[c.SourceField] = true
+	case *spl2.UnrollCommand:
+		cols[c.Field] = true
+	case *spl2.PackJsonCommand:
+		for _, f := range c.Fields {
+			cols[f] = true
+		}
 	}
 }
 

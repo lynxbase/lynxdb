@@ -108,6 +108,18 @@ const (
 	// Time Functions.
 	OpStrftime Opcode = 0xC0
 
+	// JSON Functions.
+	OpJsonExtract  Opcode = 0xD0 // pop path, pop field, push extracted value
+	OpJsonValid    Opcode = 0xD1 // pop field, push bool
+	OpJsonKeys     Opcode = 0xD2 // pop path, pop field, push JSON array of keys
+	OpJsonArrayLen Opcode = 0xD3 // pop path, pop field, push int length
+	OpJsonObject   Opcode = 0xD4 // 2-byte operand: arg count; pop N values, push JSON object
+	OpJsonArray    Opcode = 0xD5 // 2-byte operand: arg count; pop N values, push JSON array
+	OpJsonType     Opcode = 0xD6 // pop path, pop field, push type string
+	OpJsonSet      Opcode = 0xD7 // pop value, pop path, pop field, push modified JSON
+	OpJsonRemove   Opcode = 0xD8 // pop path, pop field, push modified JSON
+	OpJsonMerge    Opcode = 0xD9 // pop json2, pop json1, push merged JSON
+
 	// Return.
 	OpReturn Opcode = 0xFF
 )
@@ -202,6 +214,17 @@ var definitions = map[Opcode]*Definition{
 	OpIsNotNull: {"OpIsNotNull", nil},
 
 	OpStrftime: {"OpStrftime", nil},
+
+	OpJsonExtract:  {"OpJsonExtract", nil},
+	OpJsonValid:    {"OpJsonValid", nil},
+	OpJsonKeys:     {"OpJsonKeys", nil},
+	OpJsonArrayLen: {"OpJsonArrayLen", nil},
+	OpJsonObject:   {"OpJsonObject", []int{2}},
+	OpJsonArray:    {"OpJsonArray", []int{2}},
+	OpJsonType:     {"OpJsonType", nil},
+	OpJsonSet:      {"OpJsonSet", nil},
+	OpJsonRemove:   {"OpJsonRemove", nil},
+	OpJsonMerge:    {"OpJsonMerge", nil},
 
 	OpReturn: {"OpReturn", nil},
 }

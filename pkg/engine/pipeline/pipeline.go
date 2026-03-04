@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/buffer"
+	"github.com/lynxbase/lynxdb/pkg/engine/unpack"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/stats"
@@ -458,6 +459,14 @@ func commandStageName(cmd spl2.Command) string {
 		return "Views"
 	case *spl2.DropviewCommand:
 		return "Dropview"
+	case *spl2.UnpackCommand:
+		return "Unpack"
+	case *spl2.JsonCommand:
+		return "Json"
+	case *spl2.UnrollCommand:
+		return "Unroll"
+	case *spl2.PackJsonCommand:
+		return "PackJson"
 	default:
 		return "Unknown"
 	}
@@ -911,6 +920,59 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		}
 
 		return NewDropviewIterator(c.Name, qc.viewManager), nil
+
+	case *spl2.UnpackCommand:
+		var parser unpack.FormatParser
+		var pErr error
+		switch {
+		case c.Format == "kv" && (c.Delim != "" || c.Assign != "" || c.Quote != ""):
+			// Custom KV parser with user-specified delimiters.
+			kvp := &unpack.KVParser{}
+			if c.Delim != "" && len(c.Delim) > 0 {
+				kvp.Delim = c.Delim[0]
+			}
+			if c.Assign != "" && len(c.Assign) > 0 {
+				kvp.Assign = c.Assign[0]
+			}
+			if c.Quote != "" && len(c.Quote) > 0 {
+				kvp.Quote = c.Quote[0]
+			}
+			parser = kvp
+		case c.Format == "w3c" && c.Header != "":
+			// W3C parser with pre-configured field names from header directive.
+			parser = unpack.NewW3CParser(c.Header)
+		case c.Format == "pattern":
+			// Pattern parser compiled from user-provided extraction pattern.
+			parser, pErr = unpack.NewPatternParser(c.Pattern)
+			if pErr != nil {
+				return nil, fmt.Errorf("build unpack_pattern: %w", pErr)
+			}
+		default:
+			parser, pErr = unpack.NewParser(c.Format)
+			if pErr != nil {
+				return nil, fmt.Errorf("build unpack_%s: %w", c.Format, pErr)
+			}
+		}
+		field := c.SourceField
+		if field == "" {
+			field = "_raw"
+		}
+
+		return NewUnpackIterator(child, parser, field, c.Fields, c.Prefix, c.KeepOriginal), nil
+
+	case *spl2.JsonCommand:
+		field := c.SourceField
+		if field == "" {
+			field = "_raw"
+		}
+
+		return NewJsonCmdIterator(child, field, c.Paths), nil
+
+	case *spl2.UnrollCommand:
+		return NewUnrollIterator(child, c.Field, qc.batchSize), nil
+
+	case *spl2.PackJsonCommand:
+		return NewPackJsonIterator(child, c.Fields, c.Target), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported command type: %T", cmd)

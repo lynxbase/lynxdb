@@ -13,6 +13,8 @@
 
 SPL2-powered log analytics. Single binary. No dependencies.
 
+> LynxDB is in active development and **not yet production-ready**. APIs, storage format, and query behavior may change without notice between releases. Feedback and contributions are welcome
+
 ## Quick start
 
 ```bash
@@ -22,8 +24,23 @@ curl -fsSL https://lynxdb.org/install.sh | sh
 Pipe logs through lynxdb — no server, no config:
 
 ```bash
+# From raw logs to p99 latency in one line
 kubectl logs deploy/api | lynxdb query '| stats avg(duration_ms), p99(duration_ms) by endpoint'
-cat app.json | lynxdb query '| where duration_ms > 1000 | stats count by endpoint'
+
+# Three nested formats, one pipeline, zero config
+docker logs api-server 2>&1 | lynxdb query '
+      | unpack_docker
+      | unpack_json from message
+      | unroll field=errors
+      | stats count by errors.code, errors.service
+      | sort -count | head 10'
+      
+ # Wildcard array extraction — like jq, but with aggregation:
+  cat orders.json | lynxdb query '
+      | json items[*].price AS price, items[*].product AS product
+      | unroll field=product
+      | eval revenue = price * qty
+      | stats sum(revenue) by product | sort -sum(revenue)'
 ```
 
 Or run as a persistent server:
@@ -31,7 +48,15 @@ Or run as a persistent server:
 ```bash
 lynxdb server
 lynxdb ingest nginx_access.log --source nginx_access --index balancer --batch-size 100000
-lynxdb query 'index balancer | status>=500 | stats count, p99(duration_ms) by uri | sort -count'
+lynxdb query '
+      | unpack_combined
+      | where method="POST" AND status < 300
+      | unpack_json from request_body
+      | json items[*].sku AS skus
+      | unroll field=skus
+      | stats count AS purchases, dc(client_ip) AS unique_buyers by skus
+      | sort -purchases
+      | head 20'
 ```
 
 Generate sample data and explore:

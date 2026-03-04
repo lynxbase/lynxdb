@@ -12,6 +12,12 @@ var knownCommands = []string{
 	"bin", "streamstats", "eventstats", "join", "append",
 	"multisearch", "transaction", "xyseries", "top", "rare", "fillnull",
 	"limit", "from", "materialize",
+	"unpack_json", "unpack_logfmt", "unpack_syslog", "unpack_combined",
+	"unpack_clf", "unpack_nginx_error", "unpack_cef", "unpack_kv",
+	"unpack_docker", "unpack_redis", "unpack_apache_error",
+	"unpack_postgres", "unpack_mysql_slow", "unpack_haproxy",
+	"unpack_leef", "unpack_w3c", "unpack_pattern",
+	"json", "unroll", "pack_json",
 }
 
 // knownFunctions is the list of all supported eval/aggregation functions.
@@ -25,6 +31,10 @@ var knownFunctions = []string{
 	"count", "sum", "avg", "dc", "values", "stdev",
 	"perc50", "perc75", "perc90", "perc95", "perc99",
 	"earliest", "latest", "first", "last", "percentile",
+	// JSON functions
+	"json_extract", "json_valid", "json_keys", "json_array_length",
+	"json_object", "json_array", "json_type", "json_set", "json_remove",
+	"json_merge",
 }
 
 // SuggestFix examines a parse or execution error and returns a hint string
@@ -86,6 +96,13 @@ func suggestUnknownCommand(errMsg string) string {
 	// The token is at position 0 and is a lowercase identifier — likely a field name.
 	if strings.Contains(errMsg, "at position 0") && name == strings.ToLower(name) {
 		return fmt.Sprintf("Did you mean: search %s ...? Bare field=value syntax requires the \"search\" keyword.", name)
+	}
+
+	// SPL1 compatibility: spath → json / unpack_json.
+	// "spath" has edit-distance 5 from "json" which won't match within maxDist=3,
+	// so we handle it as a special case before generic fuzzy matching.
+	if strings.ToLower(name) == "spath" {
+		return `Unknown command "spath". In LynxDB, use: | json (quick extraction) or | unpack_json (full extraction with from/prefix/fields options).`
 	}
 
 	if match := ClosestMatch(name, knownCommands, 3); match != "" {

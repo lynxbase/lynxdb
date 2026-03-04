@@ -458,6 +458,32 @@ func collectGeneratedFields(q *spl2.Query) map[string]bool {
 			for _, r := range c.Renames {
 				gen[r.New] = true
 			}
+		case *spl2.UnpackCommand:
+			// Unpack generates fields from the parsed format. If Fields is
+			// specified, only those are generated. Otherwise, we can't know
+			// at optimization time which fields will be generated (schema-on-read),
+			// so we conservatively don't mark any — this means predicates
+			// referencing unpack-generated fields won't be pushed down, which
+			// is correct (the segment doesn't have them).
+			for _, f := range c.Fields {
+				name := f
+				if c.Prefix != "" {
+					name = c.Prefix + f
+				}
+				gen[name] = true
+			}
+		case *spl2.JsonCommand:
+			// Like unpack, json generates fields dynamically. If Paths are
+			// specified, mark the output names (alias or path) as generated.
+			for _, p := range c.Paths {
+				gen[p.OutputName()] = true
+			}
+		case *spl2.UnrollCommand:
+			// Unroll explodes a JSON array field into multiple rows and generates
+			// dot-notation fields from object elements (e.g., items.sku, items.qty).
+			// We can't know the exact generated field names at optimization time,
+			// so we mark the source field as generated (it's replaced with element values).
+			gen[c.Field] = true
 		}
 	}
 	return gen

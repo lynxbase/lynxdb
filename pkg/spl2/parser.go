@@ -251,6 +251,46 @@ func (p *Parser) parseCommand() (Command, error) {
 		return p.parseViews()
 	case TokenDropview:
 		return p.parseDropview()
+	case TokenUnpackJSON:
+		return p.parseUnpack("json")
+	case TokenUnpackLogfmt:
+		return p.parseUnpack("logfmt")
+	case TokenUnpackSyslog:
+		return p.parseUnpack("syslog")
+	case TokenUnpackCombined:
+		return p.parseUnpack("combined")
+	case TokenUnpackCLF:
+		return p.parseUnpack("clf")
+	case TokenUnpackNginxError:
+		return p.parseUnpack("nginx_error")
+	case TokenUnpackCEF:
+		return p.parseUnpack("cef")
+	case TokenUnpackKV:
+		return p.parseUnpack("kv")
+	case TokenUnpackDocker:
+		return p.parseUnpack("docker")
+	case TokenUnpackRedis:
+		return p.parseUnpack("redis")
+	case TokenUnpackApacheError:
+		return p.parseUnpack("apache_error")
+	case TokenUnpackPostgres:
+		return p.parseUnpack("postgres")
+	case TokenUnpackMySQLSlow:
+		return p.parseUnpack("mysql_slow")
+	case TokenUnpackHAProxy:
+		return p.parseUnpack("haproxy")
+	case TokenUnpackLEEF:
+		return p.parseUnpack("leef")
+	case TokenUnpackW3C:
+		return p.parseUnpack("w3c")
+	case TokenUnpackPattern:
+		return p.parseUnpackPattern()
+	case TokenJson:
+		return p.parseJsonCmd()
+	case TokenUnroll:
+		return p.parseUnroll()
+	case TokenPackJson:
+		return p.parsePackJson()
 	case TokenEOF:
 		return nil, nil
 	default:
@@ -1186,6 +1226,411 @@ func (p *Parser) readSpanValue() string {
 	return ""
 }
 
+// parseUnpack parses: unpack_<format> [from <field>] [fields (<f1>, <f2>, ...)] [prefix "<p>"] [keep_original].
+// All formats share identical option grammar.
+func (p *Parser) parseUnpack(format string) (*UnpackCommand, error) {
+	p.advance() // consume the keyword (unpack_json, unpack_logfmt, etc.)
+	cmd := &UnpackCommand{Format: format, SourceField: "_raw"}
+
+	// Parse options in any order.
+	for {
+		tok := p.peek()
+
+		// Handle "from" which is TokenFrom (keyword), not TokenIdent.
+		if tok.Type == TokenFrom {
+			p.advance() // consume "from"
+			fieldTok := p.peek()
+			if fieldTok.Type == TokenIdent || fieldTok.Type == TokenString {
+				p.advance()
+				cmd.SourceField = fieldTok.Literal
+			} else {
+				return nil, fmt.Errorf("spl2: unpack_%s: expected field name after 'from', got %s", format, fieldTok.Type)
+			}
+
+			continue
+		}
+
+		// Handle "fields" which is TokenFields (keyword), not TokenIdent.
+		if tok.Type == TokenFields {
+			p.advance() // consume "fields"
+			// Expect ( field1, field2, ... )
+			if _, err := p.expect(TokenLParen); err != nil {
+				return nil, fmt.Errorf("spl2: unpack_%s: expected '(' after 'fields'", format)
+			}
+			var fieldList []string
+			for p.peek().Type != TokenRParen && p.peek().Type != TokenEOF {
+				if len(fieldList) > 0 {
+					if p.peek().Type == TokenComma {
+						p.advance()
+					}
+				}
+				f := p.peek()
+				if f.Type != TokenIdent && f.Type != TokenString {
+					return nil, fmt.Errorf("spl2: unpack_%s: expected field name in fields(), got %s", format, f.Type)
+				}
+				p.advance()
+				fieldList = append(fieldList, f.Literal)
+			}
+			if _, err := p.expect(TokenRParen); err != nil {
+				return nil, fmt.Errorf("spl2: unpack_%s: expected ')' after fields list", format)
+			}
+			cmd.Fields = fieldList
+
+			continue
+		}
+
+		if tok.Type != TokenIdent {
+			break
+		}
+
+		name := strings.ToLower(tok.Literal)
+		switch name {
+		case "prefix":
+			p.advance() // consume "prefix"
+			prefixTok := p.peek()
+			if prefixTok.Type == TokenString {
+				p.advance()
+				cmd.Prefix = prefixTok.Literal
+			} else if prefixTok.Type == TokenIdent {
+				p.advance()
+				cmd.Prefix = prefixTok.Literal
+			} else {
+				return nil, fmt.Errorf("spl2: unpack_%s: expected prefix value, got %s", format, prefixTok.Type)
+			}
+
+		case "keep_original":
+			p.advance()
+			cmd.KeepOriginal = true
+
+		case "delim":
+			p.advance() // consume "delim"
+			// Expect = then value
+			if p.peek().Type == TokenEq {
+				p.advance() // consume "="
+			}
+			valTok := p.peek()
+			if valTok.Type == TokenString || valTok.Type == TokenIdent {
+				p.advance()
+				cmd.Delim = valTok.Literal
+			} else {
+				return nil, fmt.Errorf("spl2: unpack_%s: expected delim value, got %s", format, valTok.Type)
+			}
+
+		case "assign":
+			p.advance()
+			if p.peek().Type == TokenEq {
+				p.advance()
+			}
+			valTok := p.peek()
+			if valTok.Type == TokenString || valTok.Type == TokenIdent {
+				p.advance()
+				cmd.Assign = valTok.Literal
+			} else {
+				return nil, fmt.Errorf("spl2: unpack_%s: expected assign value, got %s", format, valTok.Type)
+			}
+
+		case "quote":
+			p.advance()
+			if p.peek().Type == TokenEq {
+				p.advance()
+			}
+			valTok := p.peek()
+			if valTok.Type == TokenString || valTok.Type == TokenIdent {
+				p.advance()
+				cmd.Quote = valTok.Literal
+			} else {
+				return nil, fmt.Errorf("spl2: unpack_%s: expected quote value, got %s", format, valTok.Type)
+			}
+
+		case "header":
+			p.advance() // consume "header"
+			if p.peek().Type == TokenEq {
+				p.advance() // consume "="
+			}
+			valTok := p.peek()
+			if valTok.Type == TokenString {
+				p.advance()
+				cmd.Header = valTok.Literal
+			} else {
+				return nil, fmt.Errorf("spl2: unpack_%s: expected header string, got %s", format, valTok.Type)
+			}
+
+		default:
+			// Unknown option — stop parsing options.
+			goto done
+		}
+	}
+done:
+
+	return cmd, nil
+}
+
+// parseUnpackPattern parses: unpack_pattern "<pattern>" [from <field>] [fields (...)] [prefix "<p>"] [keep_original].
+// The positional pattern string argument is required and stored in cmd.Pattern.
+func (p *Parser) parseUnpackPattern() (*UnpackCommand, error) {
+	p.advance() // consume "unpack_pattern"
+
+	// Expect a positional string argument as the pattern.
+	patternTok := p.peek()
+	if patternTok.Type != TokenString {
+		return nil, fmt.Errorf("spl2: unpack_pattern: expected pattern string, got %s at position %d", patternTok.Type, patternTok.Pos)
+	}
+	p.advance()
+
+	cmd, err := p.parseUnpackOptions("pattern")
+	if err != nil {
+		return nil, err
+	}
+	cmd.Pattern = patternTok.Literal
+
+	return cmd, nil
+}
+
+// parseUnpackOptions parses the shared option grammar for unpack commands
+// (from, fields, prefix, keep_original, etc.) without consuming the keyword.
+// Used by parseUnpackPattern to parse options after the positional pattern argument.
+func (p *Parser) parseUnpackOptions(format string) (*UnpackCommand, error) {
+	cmd := &UnpackCommand{Format: format, SourceField: "_raw"}
+
+	for {
+		tok := p.peek()
+
+		if tok.Type == TokenFrom {
+			p.advance()
+			fieldTok := p.peek()
+			if fieldTok.Type == TokenIdent || fieldTok.Type == TokenString {
+				p.advance()
+				cmd.SourceField = fieldTok.Literal
+			} else {
+				return nil, fmt.Errorf("spl2: unpack_%s: expected field name after 'from', got %s", format, fieldTok.Type)
+			}
+
+			continue
+		}
+
+		if tok.Type == TokenFields {
+			p.advance()
+			if _, err := p.expect(TokenLParen); err != nil {
+				return nil, fmt.Errorf("spl2: unpack_%s: expected '(' after 'fields'", format)
+			}
+			var fieldList []string
+			for p.peek().Type != TokenRParen && p.peek().Type != TokenEOF {
+				if len(fieldList) > 0 {
+					if p.peek().Type == TokenComma {
+						p.advance()
+					}
+				}
+				f := p.peek()
+				if f.Type != TokenIdent && f.Type != TokenString {
+					return nil, fmt.Errorf("spl2: unpack_%s: expected field name in fields(), got %s", format, f.Type)
+				}
+				p.advance()
+				fieldList = append(fieldList, f.Literal)
+			}
+			if _, err := p.expect(TokenRParen); err != nil {
+				return nil, fmt.Errorf("spl2: unpack_%s: expected ')' after fields list", format)
+			}
+			cmd.Fields = fieldList
+
+			continue
+		}
+
+		if tok.Type != TokenIdent {
+			break
+		}
+
+		name := strings.ToLower(tok.Literal)
+		switch name {
+		case "prefix":
+			p.advance()
+			prefixTok := p.peek()
+			if prefixTok.Type == TokenString || prefixTok.Type == TokenIdent {
+				p.advance()
+				cmd.Prefix = prefixTok.Literal
+			} else {
+				return nil, fmt.Errorf("spl2: unpack_%s: expected prefix value, got %s", format, prefixTok.Type)
+			}
+
+		case "keep_original":
+			p.advance()
+			cmd.KeepOriginal = true
+
+		default:
+			return cmd, nil
+		}
+	}
+
+	return cmd, nil
+}
+
+// parseUnroll parses: unroll field=<field>.
+func (p *Parser) parseUnroll() (*UnrollCommand, error) {
+	p.advance() // consume "unroll"
+
+	cmd := &UnrollCommand{}
+
+	// Expect field=<ident>
+	tok := p.peek()
+	if tok.Type == TokenIdent && strings.ToLower(tok.Literal) == "field" {
+		p.advance() // consume "field"
+		if p.peek().Type == TokenEq {
+			p.advance() // consume "="
+		}
+		fieldTok := p.peek()
+		if fieldTok.Type == TokenIdent || fieldTok.Type == TokenString {
+			p.advance()
+			cmd.Field = fieldTok.Literal
+		} else {
+			return nil, fmt.Errorf("spl2: unroll: expected field name after 'field=', got %s", fieldTok.Type)
+		}
+	} else if tok.Type == TokenIdent {
+		// Allow bare field name: unroll items
+		p.advance()
+		cmd.Field = tok.Literal
+	} else {
+		return nil, fmt.Errorf("spl2: unroll: expected field name or field=<name>, got %s", tok.Type)
+	}
+
+	return cmd, nil
+}
+
+// parseJsonCmd parses: json [field=<field>] [paths="<p1>, <p2>"].
+func (p *Parser) parseJsonCmd() (*JsonCommand, error) {
+	p.advance() // consume "json"
+	cmd := &JsonCommand{SourceField: "_raw"}
+
+	// Parse options.
+	for p.peek().Type == TokenIdent {
+		name := strings.ToLower(p.peek().Literal)
+		switch name {
+		case "field":
+			if p.peekAt(1).Type != TokenEq {
+				goto done
+			}
+			p.advance() // consume "field"
+			p.advance() // consume "="
+			tok := p.peek()
+			if tok.Type != TokenIdent && tok.Type != TokenString {
+				return nil, fmt.Errorf("spl2: json: expected field name after 'field=', got %s", tok.Type)
+			}
+			p.advance()
+			cmd.SourceField = tok.Literal
+
+		case "paths":
+			if p.peekAt(1).Type != TokenEq {
+				goto done
+			}
+			p.advance() // consume "paths"
+			p.advance() // consume "="
+			tok, err := p.expect(TokenString)
+			if err != nil {
+				return nil, fmt.Errorf("spl2: json: expected quoted paths list after 'paths='")
+			}
+			// Parse comma-separated paths from the quoted string.
+			// Each part may contain " AS alias" (case-insensitive).
+			for _, part := range strings.Split(tok.Literal, ",") {
+				part = strings.TrimSpace(part)
+				if part == "" {
+					continue
+				}
+				jp := JsonPath{}
+				if asIdx := indexCaseInsensitive(part, " as "); asIdx >= 0 {
+					jp.Path = strings.TrimSpace(part[:asIdx])
+					jp.Alias = strings.TrimSpace(part[asIdx+4:])
+				} else {
+					jp.Path = part
+				}
+				cmd.Paths = append(cmd.Paths, jp)
+			}
+
+		case "path":
+			if p.peekAt(1).Type != TokenEq {
+				goto done
+			}
+			p.advance() // consume "path"
+			p.advance() // consume "="
+			tok, err := p.expect(TokenString)
+			if err != nil {
+				return nil, fmt.Errorf("spl2: json: expected quoted path after 'path='")
+			}
+			jp := JsonPath{Path: strings.TrimSpace(tok.Literal)}
+			// Check for trailing AS <alias> outside the quoted string.
+			if p.peek().Type == TokenAs {
+				p.advance() // consume AS
+				aliasTok := p.peek()
+				if aliasTok.Type != TokenIdent && aliasTok.Type != TokenString {
+					return nil, fmt.Errorf("spl2: json: expected alias name after AS")
+				}
+				p.advance()
+				jp.Alias = aliasTok.Literal
+			}
+			cmd.Paths = append(cmd.Paths, jp)
+
+		default:
+			goto done
+		}
+	}
+done:
+
+	return cmd, nil
+}
+
+// parsePackJson parses: pack_json [<f1>, <f2>, ...] into <target>.
+func (p *Parser) parsePackJson() (*PackJsonCommand, error) {
+	p.advance() // consume "pack_json"
+	cmd := &PackJsonCommand{}
+
+	// Check if the next token is "into" (no field list → pack all).
+	tok := p.peek()
+	if tok.Type == TokenIdent && strings.ToLower(tok.Literal) == "into" {
+		// No fields specified — pack all.
+		p.advance() // consume "into"
+		targetTok := p.peek()
+		if targetTok.Type != TokenIdent && targetTok.Type != TokenString {
+			return nil, fmt.Errorf("spl2: pack_json: expected target field name after 'into', got %s", targetTok.Type)
+		}
+		p.advance()
+		cmd.Target = targetTok.Literal
+
+		return cmd, nil
+	}
+
+	// Parse comma-separated field list until "into".
+	for {
+		tok := p.peek()
+		if tok.Type != TokenIdent && tok.Type != TokenString {
+			return nil, fmt.Errorf("spl2: pack_json: expected field name or 'into', got %s %q", tok.Type, tok.Literal)
+		}
+		if strings.ToLower(tok.Literal) == "into" {
+			break
+		}
+		p.advance()
+		cmd.Fields = append(cmd.Fields, tok.Literal)
+
+		// Consume optional comma.
+		if p.peek().Type == TokenComma {
+			p.advance()
+		}
+	}
+
+	// Consume "into".
+	intoTok := p.peek()
+	if intoTok.Type != TokenIdent || strings.ToLower(intoTok.Literal) != "into" {
+		return nil, fmt.Errorf("spl2: pack_json: expected 'into', got %s %q", intoTok.Type, intoTok.Literal)
+	}
+	p.advance()
+
+	// Consume target field.
+	targetTok := p.peek()
+	if targetTok.Type != TokenIdent && targetTok.Type != TokenString {
+		return nil, fmt.Errorf("spl2: pack_json: expected target field name after 'into', got %s", targetTok.Type)
+	}
+	p.advance()
+	cmd.Target = targetTok.Literal
+
+	return cmd, nil
+}
+
 // parseExpr parses a boolean expression with OR as lowest precedence.
 func (p *Parser) parseExpr() (Expr, error) {
 	p.depth++
@@ -1542,4 +1987,11 @@ func (p *Parser) parseIdentList() ([]string, error) {
 	}
 
 	return names, nil
+}
+
+// indexCaseInsensitive returns the index of the first case-insensitive match
+// of substr in s, or -1 if not found.
+func indexCaseInsensitive(s, substr string) int {
+	lower := strings.ToLower(s)
+	return strings.Index(lower, strings.ToLower(substr))
 }

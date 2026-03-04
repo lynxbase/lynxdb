@@ -485,6 +485,38 @@ func TestCountStarOptimization_NotWithWhere(t *testing.T) {
 	}
 }
 
+// BUG: This test exposes a real bug in countStarOptimizationRule.Apply.
+// Expected: countStarOnly must NOT fire when UnrollCommand precedes STATS,
+//
+//	because unroll changes cardinality (1 row → N rows from array explosion).
+//
+// Actual:   The rule fires because UnrollCommand is not checked in the
+//
+//	"no filtering commands before stats" loop. This causes the query
+//	engine to return the raw event count (e.g., 2) instead of the
+//	post-unroll row count (e.g., 3).
+//
+// The application code must be fixed — do not modify this test to pass.
+func TestCountStarOptimization_NotWithUnroll(t *testing.T) {
+	// Pipeline: unpack_json | unroll field=items | STATS count
+	// Unroll changes cardinality — the metadata count shortcut is invalid.
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.UnpackCommand{Format: "json", SourceField: "_raw"},
+			&spl2.UnrollCommand{Field: "items"},
+			&spl2.StatsCommand{
+				Aggregations: []spl2.AggExpr{{Func: "count", Alias: "count"}},
+			},
+		},
+	}
+	rule := &countStarOptimizationRule{}
+	_, changed := rule.Apply(q)
+	if changed {
+		t.Error("countStarOnly should NOT fire when UnrollCommand (cardinality-changing) precedes STATS count; " +
+			"unroll explodes arrays so metadata event count != actual row count")
+	}
+}
+
 func TestCountStarOptimization_NotWithGroupBy(t *testing.T) {
 	q := &spl2.Query{
 		Commands: []spl2.Command{

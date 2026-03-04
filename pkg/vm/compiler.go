@@ -503,6 +503,126 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 		}
 
 		return c.compileMaxMin(e.Args[0], e.Args[1], false)
+	case "json_extract":
+		if len(e.Args) != 2 {
+			return fmt.Errorf("json_extract expects 2 arguments, got %d", len(e.Args))
+		}
+		// Compile field (first arg), then path (second arg).
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		if err := c.compileExpr(e.Args[1]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpJsonExtract)
+	case "json_valid":
+		if len(e.Args) != 1 {
+			return fmt.Errorf("json_valid expects 1 argument, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpJsonValid)
+	case "json_keys":
+		if len(e.Args) < 1 || len(e.Args) > 2 {
+			return fmt.Errorf("json_keys expects 1-2 arguments, got %d", len(e.Args))
+		}
+		// Compile field (first arg).
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		// Compile path (second arg) or push empty string.
+		if len(e.Args) == 2 {
+			if err := c.compileExpr(e.Args[1]); err != nil {
+				return err
+			}
+		} else {
+			idx := c.prog.AddConstant(event.StringValue(""))
+			c.prog.EmitOp(OpConstStr, idx)
+		}
+		c.prog.EmitOp(OpJsonKeys)
+	case "json_array_length":
+		if len(e.Args) < 1 || len(e.Args) > 2 {
+			return fmt.Errorf("json_array_length expects 1-2 arguments, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		if len(e.Args) == 2 {
+			if err := c.compileExpr(e.Args[1]); err != nil {
+				return err
+			}
+		} else {
+			idx := c.prog.AddConstant(event.StringValue(""))
+			c.prog.EmitOp(OpConstStr, idx)
+		}
+		c.prog.EmitOp(OpJsonArrayLen)
+	case "json_object":
+		// json_object(k1, v1, k2, v2, ...) — even number of args.
+		if len(e.Args)%2 != 0 {
+			return fmt.Errorf("json_object expects an even number of arguments, got %d", len(e.Args))
+		}
+		for _, arg := range e.Args {
+			if err := c.compileExpr(arg); err != nil {
+				return err
+			}
+		}
+		c.prog.EmitOp(OpJsonObject, len(e.Args))
+	case "json_array":
+		for _, arg := range e.Args {
+			if err := c.compileExpr(arg); err != nil {
+				return err
+			}
+		}
+		c.prog.EmitOp(OpJsonArray, len(e.Args))
+	case "json_type":
+		if len(e.Args) < 1 || len(e.Args) > 2 {
+			return fmt.Errorf("json_type expects 1-2 arguments, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		if len(e.Args) == 2 {
+			if err := c.compileExpr(e.Args[1]); err != nil {
+				return err
+			}
+		} else {
+			idx := c.prog.AddConstant(event.StringValue(""))
+			c.prog.EmitOp(OpConstStr, idx)
+		}
+		c.prog.EmitOp(OpJsonType)
+	case "json_set":
+		if len(e.Args) != 3 {
+			return fmt.Errorf("json_set expects 3 arguments, got %d", len(e.Args))
+		}
+		for _, arg := range e.Args {
+			if err := c.compileExpr(arg); err != nil {
+				return err
+			}
+		}
+		c.prog.EmitOp(OpJsonSet)
+	case "json_remove":
+		if len(e.Args) != 2 {
+			return fmt.Errorf("json_remove expects 2 arguments, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		if err := c.compileExpr(e.Args[1]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpJsonRemove)
+	case "json_merge":
+		if len(e.Args) != 2 {
+			return fmt.Errorf("json_merge expects 2 arguments, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		if err := c.compileExpr(e.Args[1]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpJsonMerge)
 	default:
 		return fmt.Errorf("unknown function: %s", e.Name)
 	}

@@ -72,10 +72,14 @@ func NormalizeQuery(q string) string {
 
 	// Splunk-style index selection: index=<name> or index <name>.
 	// Rewrites to FROM <name> so the parser handles glob/multi-source.
-	// Note: source=<name> is NOT rewritten here — it falls through to
-	// implicit search so it becomes a field filter (source is a field, not an index).
 	if indexName, rest, ok := extractIndexPrefix(trimmed); ok {
 		return buildFromWithRest(indexName, rest)
+	}
+
+	// Splunk-style source selection: source=<name>.
+	// Unlike index=, source is a field filter — scan all indexes and filter by _source.
+	if sourceName, rest, ok := extractSourcePrefix(trimmed); ok {
+		return buildSourceFilter(sourceName, rest)
 	}
 
 	// Implicit search: prepend FROM main and "search" keyword.
@@ -255,6 +259,48 @@ func buildSourceInFilter(names []string, rest string) string {
 	if isKnownCommand(strings.ToLower(word)) {
 		return base + " | " + rest
 	}
+	return base + " | search " + rest
+}
+
+// extractSourcePrefix detects "source=<value>" at the start of a query.
+// Returns the source name and the remaining query text.
+//
+// Supported forms:
+//
+//	source=<name>          source=nginx | stats count
+//	source="<name>"        source="my-app" | stats count
+//	SOURCE=<name>          SOURCE=nginx (case-insensitive)
+func extractSourcePrefix(q string) (sourceName, rest string, ok bool) {
+	lower := strings.ToLower(q)
+	if !strings.HasPrefix(lower, "source=") {
+		return "", "", false
+	}
+
+	after := q[len("source="):]
+	name, remainder := extractValue(after)
+	if name == "" {
+		return "", "", false
+	}
+
+	return name, strings.TrimSpace(remainder), true
+}
+
+// buildSourceFilter constructs a FROM * | where _source="<name>" query.
+// This scans all indexes and filters by the _source field, since source=
+// is a logical tag, not a physical index selector.
+func buildSourceFilter(name, rest string) string {
+	base := fmt.Sprintf(`FROM * | where _source=%q`, name)
+	if rest == "" {
+		return base
+	}
+	if strings.HasPrefix(rest, "|") {
+		return base + " " + rest
+	}
+	word := firstToken(rest)
+	if isKnownCommand(strings.ToLower(word)) {
+		return base + " | " + rest
+	}
+
 	return base + " | search " + rest
 }
 

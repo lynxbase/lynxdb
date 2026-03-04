@@ -63,12 +63,15 @@ func TestNormalizeQuery(t *testing.T) {
 		{name: "source!=value", input: "source!=internal", want: `FROM * | where _source!="internal"`},
 		{name: "index!= with known cmd", input: "index!=internal stats count", want: `FROM * | where _source!="internal" | stats count`},
 
-		// source= is a field filter, not an index selector — falls through to implicit search
-		{name: "source=nginx", input: "source=nginx", want: "FROM main | search source=nginx"},
-		{name: "source=nginx with pipe", input: "source=nginx | stats count", want: "FROM main | search source=nginx | stats count"},
-		{name: "source=logs*", input: "source=logs*", want: "FROM main | search source=logs*"},
-		{name: "source=* all", input: "source=*", want: "FROM main | search source=*"},
-		{name: "source=nginx with search", input: "source=nginx level=error", want: "FROM main | search source=nginx level=error"},
+		// source= is a field filter — scans all indexes, filters by _source
+		{name: "source=nginx", input: "source=nginx", want: `FROM * | where _source="nginx"`},
+		{name: "source=nginx with pipe", input: "source=nginx | stats count", want: `FROM * | where _source="nginx" | stats count`},
+		{name: "source=logs*", input: "source=logs*", want: `FROM * | where _source="logs*"`},
+		{name: "source=* all", input: "source=*", want: `FROM * | where _source="*"`},
+		{name: "source=nginx with search", input: "source=nginx level=error", want: `FROM * | where _source="nginx" | search level=error`},
+		{name: "source=nginx with known cmd", input: "source=nginx stats count", want: `FROM * | where _source="nginx" | stats count`},
+		{name: "SOURCE=nginx uppercase", input: "SOURCE=nginx | stats count", want: `FROM * | where _source="nginx" | stats count`},
+		{name: "source=quoted", input: `source="my-app" | stats count`, want: `FROM * | where _source="my-app" | stats count`},
 	}
 
 	for _, tt := range tests {

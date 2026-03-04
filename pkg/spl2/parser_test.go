@@ -636,3 +636,267 @@ func TestParse_SearchFieldIn(t *testing.T) {
 		}
 	}
 }
+
+// --- unpack_* and json command tests ---
+
+func TestParse_UnpackJSON_Default(t *testing.T) {
+	q, err := Parse(`| unpack_json`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Commands) != 1 {
+		t.Fatalf("commands: got %d, want 1", len(q.Commands))
+	}
+	cmd, ok := q.Commands[0].(*UnpackCommand)
+	if !ok {
+		t.Fatalf("cmd type: got %T, want *UnpackCommand", q.Commands[0])
+	}
+	if cmd.Format != "json" {
+		t.Errorf("format: got %q, want %q", cmd.Format, "json")
+	}
+	if cmd.SourceField != "_raw" {
+		t.Errorf("sourceField: got %q, want %q", cmd.SourceField, "_raw")
+	}
+	if cmd.Fields != nil {
+		t.Errorf("fields: got %v, want nil", cmd.Fields)
+	}
+	if cmd.Prefix != "" {
+		t.Errorf("prefix: got %q, want empty", cmd.Prefix)
+	}
+	if cmd.KeepOriginal {
+		t.Error("keepOriginal: got true, want false")
+	}
+}
+
+func TestParse_UnpackJSON_FromField(t *testing.T) {
+	q, err := Parse(`| unpack_json from message`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*UnpackCommand)
+	if cmd.SourceField != "message" {
+		t.Errorf("sourceField: got %q, want %q", cmd.SourceField, "message")
+	}
+}
+
+func TestParse_UnpackJSON_FieldsList(t *testing.T) {
+	q, err := Parse(`| unpack_json fields (level, service)`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*UnpackCommand)
+	if len(cmd.Fields) != 2 || cmd.Fields[0] != "level" || cmd.Fields[1] != "service" {
+		t.Errorf("fields: got %v, want [level service]", cmd.Fields)
+	}
+}
+
+func TestParse_UnpackJSON_PrefixAndKeepOriginal(t *testing.T) {
+	q, err := Parse(`| unpack_json from payload prefix "app_" keep_original`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*UnpackCommand)
+	if cmd.SourceField != "payload" {
+		t.Errorf("sourceField: got %q, want %q", cmd.SourceField, "payload")
+	}
+	if cmd.Prefix != "app_" {
+		t.Errorf("prefix: got %q, want %q", cmd.Prefix, "app_")
+	}
+	if !cmd.KeepOriginal {
+		t.Error("keepOriginal: got false, want true")
+	}
+}
+
+func TestParse_UnpackLogfmt(t *testing.T) {
+	q, err := Parse(`| unpack_logfmt from message`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*UnpackCommand)
+	if cmd.Format != "logfmt" {
+		t.Errorf("format: got %q, want %q", cmd.Format, "logfmt")
+	}
+	if cmd.SourceField != "message" {
+		t.Errorf("sourceField: got %q, want %q", cmd.SourceField, "message")
+	}
+}
+
+func TestParse_UnpackSyslog(t *testing.T) {
+	q, err := Parse(`| unpack_syslog`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*UnpackCommand)
+	if cmd.Format != "syslog" {
+		t.Errorf("format: got %q, want %q", cmd.Format, "syslog")
+	}
+}
+
+func TestParse_UnpackCombined(t *testing.T) {
+	q, err := Parse(`| unpack_combined`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*UnpackCommand)
+	if cmd.Format != "combined" {
+		t.Errorf("format: got %q, want %q", cmd.Format, "combined")
+	}
+}
+
+func TestParse_JsonCmd_Default(t *testing.T) {
+	q, err := Parse(`| json`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd, ok := q.Commands[0].(*JsonCommand)
+	if !ok {
+		t.Fatalf("cmd type: got %T, want *JsonCommand", q.Commands[0])
+	}
+	if cmd.SourceField != "_raw" {
+		t.Errorf("sourceField: got %q, want %q", cmd.SourceField, "_raw")
+	}
+	if cmd.Paths != nil {
+		t.Errorf("paths: got %v, want nil", cmd.Paths)
+	}
+}
+
+func TestParse_JsonCmd_FieldAndPaths(t *testing.T) {
+	q, err := Parse(`| json field=payload paths="user.id, request.method"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*JsonCommand)
+	if cmd.SourceField != "payload" {
+		t.Errorf("sourceField: got %q, want %q", cmd.SourceField, "payload")
+	}
+	if len(cmd.Paths) != 2 || cmd.Paths[0].Path != "user.id" || cmd.Paths[1].Path != "request.method" {
+		t.Errorf("paths: got %v, want [user.id request.method]", cmd.Paths)
+	}
+	// No aliases specified.
+	if cmd.Paths[0].Alias != "" || cmd.Paths[1].Alias != "" {
+		t.Errorf("aliases should be empty: got %q, %q", cmd.Paths[0].Alias, cmd.Paths[1].Alias)
+	}
+}
+
+func TestParse_JsonCmd_PathsWithAS(t *testing.T) {
+	q, err := Parse(`| json paths="user.id AS uid, request.method AS method"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*JsonCommand)
+	if len(cmd.Paths) != 2 {
+		t.Fatalf("paths count: got %d, want 2", len(cmd.Paths))
+	}
+	if cmd.Paths[0].Path != "user.id" || cmd.Paths[0].Alias != "uid" {
+		t.Errorf("paths[0]: got {%q, %q}, want {user.id, uid}", cmd.Paths[0].Path, cmd.Paths[0].Alias)
+	}
+	if cmd.Paths[1].Path != "request.method" || cmd.Paths[1].Alias != "method" {
+		t.Errorf("paths[1]: got {%q, %q}, want {request.method, method}", cmd.Paths[1].Path, cmd.Paths[1].Alias)
+	}
+}
+
+func TestParse_JsonCmd_PathsMixedAS(t *testing.T) {
+	q, err := Parse(`| json paths="user.id AS uid, action"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*JsonCommand)
+	if len(cmd.Paths) != 2 {
+		t.Fatalf("paths count: got %d, want 2", len(cmd.Paths))
+	}
+	if cmd.Paths[0].Path != "user.id" || cmd.Paths[0].Alias != "uid" {
+		t.Errorf("paths[0]: got {%q, %q}, want {user.id, uid}", cmd.Paths[0].Path, cmd.Paths[0].Alias)
+	}
+	if cmd.Paths[1].Path != "action" || cmd.Paths[1].Alias != "" {
+		t.Errorf("paths[1]: got {%q, %q}, want {action, \"\"}", cmd.Paths[1].Path, cmd.Paths[1].Alias)
+	}
+}
+
+func TestParse_JsonCmd_SingularPathWithAS(t *testing.T) {
+	q, err := Parse(`| json path="items[0].name" AS first_item`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*JsonCommand)
+	if len(cmd.Paths) != 1 {
+		t.Fatalf("paths count: got %d, want 1", len(cmd.Paths))
+	}
+	if cmd.Paths[0].Path != "items[0].name" || cmd.Paths[0].Alias != "first_item" {
+		t.Errorf("paths[0]: got {%q, %q}, want {items[0].name, first_item}", cmd.Paths[0].Path, cmd.Paths[0].Alias)
+	}
+}
+
+func TestParse_JsonCmd_SingularPathNoAS(t *testing.T) {
+	q, err := Parse(`| json path="user.id"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*JsonCommand)
+	if len(cmd.Paths) != 1 {
+		t.Fatalf("paths count: got %d, want 1", len(cmd.Paths))
+	}
+	if cmd.Paths[0].Path != "user.id" || cmd.Paths[0].Alias != "" {
+		t.Errorf("paths[0]: got {%q, %q}, want {user.id, \"\"}", cmd.Paths[0].Path, cmd.Paths[0].Alias)
+	}
+}
+
+func TestParse_UnpackInPipeline(t *testing.T) {
+	q, err := Parse(`| unpack_json | where level="error" | stats count by service`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Commands) != 3 {
+		t.Fatalf("commands: got %d, want 3", len(q.Commands))
+	}
+	if _, ok := q.Commands[0].(*UnpackCommand); !ok {
+		t.Errorf("cmd[0]: got %T, want *UnpackCommand", q.Commands[0])
+	}
+	if _, ok := q.Commands[1].(*WhereCommand); !ok {
+		t.Errorf("cmd[1]: got %T, want *WhereCommand", q.Commands[1])
+	}
+	if _, ok := q.Commands[2].(*StatsCommand); !ok {
+		t.Errorf("cmd[2]: got %T, want *StatsCommand", q.Commands[2])
+	}
+}
+
+func TestParse_PackJson_WithFields(t *testing.T) {
+	input := `FROM main | pack_json level, service into output`
+	q, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Commands) != 1 {
+		t.Fatalf("commands: got %d, want 1", len(q.Commands))
+	}
+	pj, ok := q.Commands[0].(*PackJsonCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: got %T, want *PackJsonCommand", q.Commands[0])
+	}
+	if len(pj.Fields) != 2 || pj.Fields[0] != "level" || pj.Fields[1] != "service" {
+		t.Errorf("fields: got %v, want [level service]", pj.Fields)
+	}
+	if pj.Target != "output" {
+		t.Errorf("target: got %q, want %q", pj.Target, "output")
+	}
+}
+
+func TestParse_PackJson_AllFields(t *testing.T) {
+	input := `FROM main | pack_json into output_json`
+	q, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Commands) != 1 {
+		t.Fatalf("commands: got %d, want 1", len(q.Commands))
+	}
+	pj, ok := q.Commands[0].(*PackJsonCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: got %T, want *PackJsonCommand", q.Commands[0])
+	}
+	if pj.Fields != nil {
+		t.Errorf("fields: got %v, want nil", pj.Fields)
+	}
+	if pj.Target != "output_json" {
+		t.Errorf("target: got %q, want %q", pj.Target, "output_json")
+	}
+}

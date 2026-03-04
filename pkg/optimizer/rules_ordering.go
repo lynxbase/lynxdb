@@ -247,7 +247,10 @@ func orderingBehavior(cmd spl2.Command) OrderingBehavior {
 		*spl2.FromCommand,
 		*spl2.MaterializeCommand,
 		*spl2.ViewsCommand,
-		*spl2.DropviewCommand:
+		*spl2.DropviewCommand,
+		*spl2.UnpackCommand,
+		*spl2.JsonCommand,
+		*spl2.PackJsonCommand:
 		return OrderPreserving
 
 	// OrderEstablishing: these commands produce output with a defined ordering.
@@ -258,6 +261,8 @@ func orderingBehavior(cmd spl2.Command) OrderingBehavior {
 
 	// OrderDestroying: these commands use hash-based or set-based processing;
 	// output ordering is implementation-defined and not guaranteed.
+	// UnrollCommand changes cardinality (one row → N rows from array explosion),
+	// so the output ordering relative to the original stream is not preserved.
 	case *spl2.StatsCommand,
 		*spl2.DedupCommand,
 		*spl2.TopCommand,
@@ -266,7 +271,8 @@ func orderingBehavior(cmd spl2.Command) OrderingBehavior {
 		*spl2.AppendCommand,
 		*spl2.MultisearchCommand,
 		*spl2.TransactionCommand,
-		*spl2.XYSeriesCommand:
+		*spl2.XYSeriesCommand,
+		*spl2.UnrollCommand:
 		return OrderDestroying
 
 	default:

@@ -239,8 +239,36 @@ kubectl logs deploy/api | lynxdb query '
 
 ---
 
+## Structured log parsing with unpack
+
+For structured log formats, LynxDB provides purpose-built `unpack_*` commands that are faster and more accurate than regex extraction:
+
+| Format | Command | Example input |
+|--------|---------|---------------|
+| JSON | [`unpack_json`](/docs/spl2/commands/unpack-json) | `{"level":"error","msg":"timeout"}` |
+| logfmt | [`unpack_logfmt`](/docs/spl2/commands/unpack-logfmt) | `level=error msg="request failed" duration=245ms` |
+| Syslog | [`unpack_syslog`](/docs/spl2/commands/unpack-syslog) | `<134>Jan 15 14:23:01 web-01 nginx: connection reset` |
+| Combined (access log) | [`unpack_combined`](/docs/spl2/commands/unpack-combined) | `10.0.1.5 - - [10/Oct/2025:13:55:36 -0700] "GET /api HTTP/1.1" 200 2326 "-" "curl/7.64"` |
+| CLF | [`unpack_clf`](/docs/spl2/commands/unpack-clf) | `127.0.0.1 - frank [10/Oct/2025:13:55:36 -0700] "GET /api HTTP/1.1" 200 2326` |
+| Nginx error | [`unpack_nginx_error`](/docs/spl2/commands/unpack-nginx-error) | `2026/02/14 14:52:01 [error] 12345#67: *890 message, client: 10.0.1.5` |
+| CEF | [`unpack_cef`](/docs/spl2/commands/unpack-cef) | `CEF:0\|Vendor\|Product\|1.0\|100\|Alert\|7\|src=10.0.0.1` |
+| Key=value | [`unpack_kv`](/docs/spl2/commands/unpack-kv) | `host=web-01 status=200 duration=45ms` |
+
+```bash
+# Parse logfmt and aggregate
+cat app.log | lynxdb query '| unpack_logfmt | stats count by level'
+
+# Parse nginx access logs
+lynxdb query --file access.log '| unpack_combined | where status >= 500 | stats count by uri'
+```
+
+For JSON-specific workflows (dot-notation, json_extract, unroll), see the [Working with JSON Logs](/docs/guides/json-processing) guide.
+
+---
+
 ## Next steps
 
+- [Working with JSON Logs](/docs/guides/json-processing) -- dot-notation, json commands, unroll
 - [Search and filter logs](/docs/guides/search-and-filter) -- filter before extracting fields
 - [Run aggregations](/docs/guides/aggregations) -- aggregate over extracted fields
 - [REX command reference](/docs/spl2/commands/rex) -- full REX syntax and options

@@ -43,11 +43,13 @@ func (r *countStarOptimizationRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 	if len(stats.Aggregations[0].Args) > 0 {
 		return q, false // count(field) is different from count
 	}
-	// Check no filtering commands before stats.
+	// Check no filtering or cardinality-changing commands before stats.
 	for i := 0; i < statsIdx; i++ {
 		switch cmd := q.Commands[i].(type) {
 		case *spl2.WhereCommand:
 			return q, false
+		case *spl2.UnrollCommand:
+			return q, false // unroll changes cardinality (1→N rows)
 		case *spl2.SearchCommand:
 			if cmd.Term != "" || cmd.Expression != nil {
 				return q, false // has a search filter
@@ -243,7 +245,9 @@ func isStreamableTransform(cmd spl2.Command) bool {
 	switch cmd.(type) {
 	case *spl2.RexCommand, *spl2.EvalCommand, *spl2.WhereCommand,
 		*spl2.FieldsCommand, *spl2.RenameCommand, *spl2.FillnullCommand,
-		*spl2.BinCommand, *spl2.SearchCommand:
+		*spl2.BinCommand, *spl2.SearchCommand,
+		*spl2.UnpackCommand, *spl2.JsonCommand,
+		*spl2.PackJsonCommand:
 		return true
 	default:
 		return false
@@ -581,7 +585,8 @@ func isTailScanSafe(cmd spl2.Command) bool {
 	switch cmd.(type) {
 	case *spl2.SearchCommand, *spl2.WhereCommand, *spl2.EvalCommand,
 		*spl2.FieldsCommand, *spl2.TableCommand, *spl2.RenameCommand,
-		*spl2.RexCommand, *spl2.BinCommand, *spl2.FillnullCommand:
+		*spl2.RexCommand, *spl2.BinCommand, *spl2.FillnullCommand,
+		*spl2.UnpackCommand, *spl2.JsonCommand, *spl2.PackJsonCommand:
 		return true
 	default:
 		return false
