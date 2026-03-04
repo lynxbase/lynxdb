@@ -12,7 +12,7 @@ Saved queries let you store frequently used SPL2 queries on the server so you ca
 Use [`lynxdb save`](/docs/cli/shortcuts) (shortcut for `lynxdb saved create`):
 
 ```bash
-lynxdb save "5xx-rate" 'source=nginx status>=500 | stats count by uri | sort -count'
+lynxdb save "5xx-rate" '_source=nginx status>=500 | stats count by uri | sort -count'
 ```
 
 Or use the full form:
@@ -106,7 +106,7 @@ Save the queries your on-call team uses most often:
 lynxdb save "oncall-errors" 'level=error | stats count by source | sort -count | head 20'
 
 # Slow endpoints
-lynxdb save "oncall-slow-endpoints" 'source=nginx duration_ms>1000 | stats count, avg(duration_ms) AS avg, p99(duration_ms) AS p99 by uri | sort -count | head 10'
+lynxdb save "oncall-slow-endpoints" '_source=nginx duration_ms>1000 | stats count, avg(duration_ms) AS avg, p99(duration_ms) AS p99 by uri | sort -count | head 10'
 
 # Recent fatal errors
 lynxdb save "oncall-fatal" 'level=fatal | sort -_timestamp | head 20 | table _timestamp, source, message'
@@ -121,7 +121,7 @@ lynxdb run oncall-fatal --since 1h
 
 ```bash
 # Save the report query
-lynxdb save "daily-summary" 'source=nginx | stats count, count(eval(status>=500)) AS errors, avg(duration_ms) AS avg_lat by uri | eval error_rate=round(errors/count*100, 1) | sort -count | head 20'
+lynxdb save "daily-summary" '_source=nginx | stats count, count(eval(status>=500)) AS errors, avg(duration_ms) AS avg_lat by uri | eval error_rate=round(errors/count*100, 1) | sort -count | head 20'
 
 # Generate a daily CSV
 lynxdb run daily-summary --since 24h --format csv > "report-$(date +%Y-%m-%d).csv"

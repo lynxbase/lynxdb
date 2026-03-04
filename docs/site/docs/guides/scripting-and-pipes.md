@@ -72,13 +72,13 @@ lynxdb query --file access.log '| stats count' > result.json
 ### Extract a single field
 
 ```bash
-lynxdb query 'source=nginx | stats count by uri | sort -count | head 10' | jq '.uri'
+lynxdb query '_source=nginx | stats count by uri | sort -count | head 10' | jq '.uri'
 ```
 
 ### Filter results
 
 ```bash
-lynxdb query 'source=nginx | stats count by uri' | jq 'select(.count > 1000)'
+lynxdb query '_source=nginx | stats count by uri' | jq 'select(.count > 1000)'
 ```
 
 ### Transform to a different shape
@@ -90,7 +90,7 @@ lynxdb query '| stats count by source' | jq '{source: .source, events: .count}'
 ### Aggregate in jq
 
 ```bash
-lynxdb query 'source=nginx | stats count by status' | jq -s 'map(.count) | add'
+lynxdb query '_source=nginx | stats count by status' | jq -s 'map(.count) | add'
 ```
 
 ### Pretty-print
@@ -107,7 +107,7 @@ Export query results as CSV for spreadsheets, data tools, or further processing:
 
 ```bash
 # Export to CSV file
-lynxdb query 'source=nginx | stats count, avg(duration_ms) by uri | sort -count' \
+lynxdb query '_source=nginx | stats count, avg(duration_ms) by uri | sort -count' \
   --format csv > report.csv
 
 # Open in a spreadsheet
@@ -131,7 +131,7 @@ Pipe the output of one LynxDB query into another:
 
 ```bash
 # Query server, then post-process locally
-lynxdb query 'source=nginx status>=500' --since 1h \
+lynxdb query '_source=nginx status>=500' --since 1h \
   | lynxdb query '| stats count by uri | sort -count | head 5'
 ```
 
@@ -292,7 +292,7 @@ See the [environment variables reference](/docs/configuration/environment-variab
 
 ```bash
 #!/bin/bash
-ERROR_RATE=$(lynxdb query 'source=nginx | stats count AS total, count(eval(status>=500)) AS errors | eval rate=round(errors/total*100,2)' \
+ERROR_RATE=$(lynxdb query '_source=nginx | stats count AS total, count(eval(status>=500)) AS errors | eval rate=round(errors/total*100,2)' \
   --since 5m --format json | jq -r '.rate')
 
 if (( $(echo "$ERROR_RATE > 5.0" | bc -l) )); then
@@ -305,7 +305,7 @@ fi
 
 ```bash
 #!/bin/bash
-QUERY='source=nginx | stats count, avg(duration_ms) AS avg_lat, p99(duration_ms) AS p99_lat by uri | sort -count | head 20'
+QUERY='_source=nginx | stats count, avg(duration_ms) AS avg_lat, p99(duration_ms) AS p99_lat by uri | sort -count | head 20'
 
 lynxdb query "$QUERY" --since 24h --format csv > report.csv
 lynxdb query "$QUERY" --since 24h --format json > report.json
@@ -316,7 +316,7 @@ lynxdb query "$QUERY" --since 24h --format table
 
 ```bash
 # Tail and pipe through grep for secondary filtering
-lynxdb tail 'source=nginx' --format json | jq -r 'select(.status >= 500) | "\(.uri) \(.status)"'
+lynxdb tail '_source=nginx' --format json | jq -r 'select(.status >= 500) | "\(.uri) \(.status)"'
 ```
 
 ---

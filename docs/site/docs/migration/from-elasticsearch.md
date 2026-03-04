@@ -188,7 +188,7 @@ lynxdb import es_export.json --format esbulk --dry-run
 # ]}}, "aggs": {"by_uri": {"terms": {"field": "uri", "size": 10}}}}
 
 # LynxDB SPL2:
-lynxdb query 'source=nginx status>=500 | stats count by uri | sort -count | head 10' --since 1h
+lynxdb query '_source=nginx status>=500 | stats count by uri | sort -count | head 10' --since 1h
 ```
 
 ```bash

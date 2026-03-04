@@ -370,7 +370,7 @@ The first argument is parsed as a number (sample size, default 5). Any remaining
 ```bash
 lynxdb sample                          # 5 random events (default)
 lynxdb sample 10                       # 10 events
-lynxdb sample 5 'source=nginx'         # 5 nginx events
+lynxdb sample 5 '_source=nginx'         # 5 nginx events
 lynxdb sample 3 --format json | jq .   # JSON for inspecting structure
 ```
 
@@ -523,7 +523,7 @@ lynxdb tail [filter] [flags]
 ```bash
 lynxdb tail                                    # Stream all events
 lynxdb tail 'level=error'                      # Stream errors only
-lynxdb tail 'source=nginx status>=500'         # Stream 5xx from nginx
+lynxdb tail '_source=nginx status>=500'         # Stream 5xx from nginx
 lynxdb tail --count 50 --from -1h              # Last 50 events + live
 ```
 
@@ -1042,7 +1042,7 @@ lynxdb save <name> <query>
 ```
 
 ```bash
-lynxdb save "5xx-rate" 'source=nginx status>=500 | stats count by uri | sort -count'
+lynxdb save "5xx-rate" '_source=nginx status>=500 | stats count by uri | sort -count'
 ```
 
 ### `run`

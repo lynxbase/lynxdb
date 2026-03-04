@@ -40,7 +40,7 @@ lynxdb alerts create --name "High errors" \
 
 # Alert on 5xx spike
 lynxdb alerts create --name "5xx spike" \
-  --query 'source=nginx status>=500 | stats count as c | where c > 50' \
+  --query '_source=nginx status>=500 | stats count as c | where c > 50' \
   --interval 1m
 
 # Alert on slow queries

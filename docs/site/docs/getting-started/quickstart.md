@@ -76,7 +76,7 @@ lynxdb demo
 
 ```bash
 # Terminal 2: Query the demo data
-lynxdb query 'source=nginx status>=500
+lynxdb query '_source=nginx status>=500
   | stats count, avg(duration_ms) as avg_lat by uri
   | sort -count
   | head 5'

@@ -6,13 +6,21 @@ LDFLAGS  = -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).Dat
 
 CUSTOM_GCL = ./custom-gcl
 
-.PHONY: build test vet clean lint lint-build
+.PHONY: build test test-unit test-e2e test-cli vet clean lint lint-build
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o lynxdb ./cmd/lynxdb/
 
-test:
-	go test ./... -count=1 -timeout 120s
+test: test-unit test-e2e test-cli
+
+test-unit:
+	go test ./... -count=1 -timeout 120s -race
+
+test-e2e:
+	go test -tags e2e -count=1 -timeout 180s ./test/e2e/
+
+test-cli: build
+	go test -tags clitest -count=1 -timeout 120s ./test/cli/
 
 vet:
 	go vet ./...

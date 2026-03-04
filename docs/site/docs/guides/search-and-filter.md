@@ -47,7 +47,7 @@ If your events have structured fields (JSON logs, or fields extracted at ingest 
 
 ```bash
 lynxdb query 'level=error'
-lynxdb query 'source=nginx'
+lynxdb query '_source=nginx'
 lynxdb query 'host="web-01"'
 ```
 
@@ -64,7 +64,7 @@ lynxdb query 'status!=200'
 Multiple field-value pairs are ANDed together:
 
 ```bash
-lynxdb query 'source=nginx status>=500'
+lynxdb query '_source=nginx status>=500'
 ```
 
 This returns events where `source` is "nginx" AND `status` is 500 or above.
@@ -79,7 +79,7 @@ Use `AND`, `OR`, and `NOT` for more complex filter logic. These work in both the
 
 ```bash
 lynxdb query 'level=error OR level=warn'
-lynxdb query 'source=nginx NOT status=200'
+lynxdb query '_source=nginx NOT status=200'
 lynxdb query '(level=error OR level=warn) source=nginx'
 ```
 
@@ -104,7 +104,7 @@ Use `*` as a wildcard in field-value filters:
 lynxdb query 'host=web-*'
 
 # Match any source ending in "-gateway"
-lynxdb query 'source=*-gateway'
+lynxdb query '_source=*-gateway'
 
 # Match paths containing "api"
 lynxdb query 'path=*api*'
@@ -151,7 +151,7 @@ lynxdb query '| where isnull(response_code)'
 `WHERE` can appear anywhere in the pipeline, including after `STATS`:
 
 ```bash
-lynxdb query 'source=nginx | stats count by uri | where count > 100'
+lynxdb query '_source=nginx | stats count by uri | where count > 100'
 ```
 
 ---
@@ -199,13 +199,13 @@ See the [time ranges reference](/docs/spl2/time-ranges) for all supported format
 Use [`HEAD`](/docs/spl2/commands/head) to return only the first N results:
 
 ```bash
-lynxdb query 'source=nginx status>=500 | head 10'
+lynxdb query '_source=nginx status>=500 | head 10'
 ```
 
 Use [`TAIL`](/docs/spl2/commands/tail) for the last N:
 
 ```bash
-lynxdb query 'source=nginx | tail 5'
+lynxdb query '_source=nginx | tail 5'
 ```
 
 ### Dedup
@@ -271,7 +271,7 @@ LynxDB provides shortcut commands for common search patterns:
 lynxdb count 'level=error' --since 1h
 
 # Peek at data shape
-lynxdb sample 5 'source=nginx'
+lynxdb sample 5 '_source=nginx'
 
 # See field catalog
 lynxdb fields status --values

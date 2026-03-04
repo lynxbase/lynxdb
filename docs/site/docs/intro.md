@@ -44,7 +44,7 @@ Persistent storage with a full REST API, materialized views, alerts, and dashboa
 
 ```bash
 lynxdb server
-lynxdb query 'source=nginx status>=500 | stats count by uri | sort -count | head 10'
+lynxdb query '_source=nginx status>=500 | stats count by uri | sort -count | head 10'
 ```
 
 ### Cluster Mode (Distributed)

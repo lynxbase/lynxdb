@@ -24,10 +24,10 @@ Apply any search filter to tail only matching events:
 lynxdb tail 'level=error'
 
 # Tail 5xx from nginx
-lynxdb tail 'source=nginx status>=500'
+lynxdb tail '_source=nginx status>=500'
 
 # Tail with field-value filter
-lynxdb tail 'source=api-gateway duration_ms>1000'
+lynxdb tail '_source=api-gateway duration_ms>1000'
 ```
 
 ### Apply an SPL2 pipeline
@@ -142,7 +142,7 @@ Open two terminals:
 lynxdb tail 'level=error | fields _timestamp, source, message'
 
 # Terminal 2: Tail slow queries
-lynxdb tail 'source=postgres duration_ms>500 | fields _timestamp, query, duration_ms'
+lynxdb tail '_source=postgres duration_ms>500 | fields _timestamp, query, duration_ms'
 ```
 
 ### Monitor a deployment
@@ -156,7 +156,7 @@ lynxdb tail 'level=error OR level=fatal | fields _timestamp, source, level, mess
 ### Watch a specific service
 
 ```bash
-lynxdb tail 'source=api-gateway | fields _timestamp, level, endpoint, duration_ms, message'
+lynxdb tail '_source=api-gateway | fields _timestamp, level, endpoint, duration_ms, message'
 ```
 
 ### Tail with grep-like filtering
@@ -165,7 +165,7 @@ Combine tail with Unix tools for additional processing:
 
 ```bash
 # Pipe tail output to grep for secondary filtering
-lynxdb tail 'source=nginx' --format json | grep "timeout"
+lynxdb tail '_source=nginx' --format json | grep "timeout"
 ```
 
 ---

@@ -130,7 +130,7 @@ Run the built-in demo to generate realistic log data:
 go run ./cmd/lynxdb/ demo
 
 # Terminal 2: Query the demo data
-./lynxdb query 'source=nginx | stats count by status'
+./lynxdb query '_source=nginx | stats count by status'
 ./lynxdb query 'level=error | timechart count span=1m'
 ```
 

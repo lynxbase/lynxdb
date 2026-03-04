@@ -4,9 +4,10 @@
     <img alt="LynxDB logo" src="docs/assets/lynxdb-logo-transparent.png" height="300">
   </picture>
 </div>
-<p>
-  <a href="https://github.com/lynxbase/lynxdb/releases"><img src="https://img.shields.io/github/v/release/lynxbase/lynxdb?label=release&color=gray" alt="Latest Release"></a>
-  <a href="https://github.com/lynxbase/lynxdb/actions"><img src="https://github.com/lynxbase/lynxdb/workflows/build/badge.svg" alt="Build Status"></a>
+
+<p align="center">
+  <a href="https://github.com/lynxbase/lynxdb/releases"><img src="https://img.shields.io/github/v/release/lynxbase/lynxdb?color=brightgreen&display_name=tag" alt="Latest Release"></a>
+  <a href="https://github.com/lynxbase/lynxdb/actions/workflows/ci.yaml"><img src="https://img.shields.io/github/actions/workflow/status/lynxbase/lynxdb/ci.yaml?branch=main&label=build" alt="Build Status"></a>
   <a href="https://docs.lynxdb.org/"><img src="https://img.shields.io/badge/docs-lynxdb.org-blue" alt="Docs"></a>
 </p>
 
@@ -29,33 +30,21 @@ Or run as a persistent server:
 
 ```bash
 lynxdb server
-lynxdb query 'source=nginx status>=500 | stats count, p99(duration_ms) by uri | sort -count'
+lynxdb ingest nginx_access.log --source nginx_access --index balancer --batch-size 100000
+lynxdb query 'index balancer | status>=500 | stats count, p99(duration_ms) by uri | sort -count'
 ```
 
 Generate sample data and explore:
 
 ```bash
 # Start the demo (streams realistic logs from 4 sources at 200 events/sec)
-lynxdb demo &
+lynxdb demo
 
-# Find slow endpoints with high error rates
-lynxdb query '
-  source=nginx
-  | stats count as total, count(eval(status>=500)) as errors, p99(duration_ms) as p99
-    by uri
-  | eval error_rate = round(errors/total*100, 1)
-  | where error_rate > 5
-  | sort -error_rate'
+# Try in another terminal:
+lynxdb query '_source=nginx | stats count by status'
+lynxdb query 'level=ERROR | stats count by host' --since 5m
+lynxdb tail 'level=ERROR'
 
-# Live tail errors across all sources
-lynxdb tail 'level=error | fields _timestamp, source, message'
-
-# Correlate slow DB queries with error spikes
-lynxdb query '
-  source=postgres duration_ms>1000
-  | bin _timestamp span=5m
-  | stats count as slow_queries, avg(duration_ms) as avg_lat by _timestamp
-  | where slow_queries > 10'
 ```
 
 ## Features
@@ -147,13 +136,10 @@ go test ./...
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Feedback
-
-- [Discord](https://discord.gg/lynxdb)
 - [Issues](https://github.com/lynxbase/lynxdb/issues)
-- [Twitter](https://twitter.com/lynxdb)
 
 ---
 

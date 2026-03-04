@@ -54,7 +54,11 @@ func NormalizeQuery(q string) string {
 		return buildFromIN(names, negated, rest)
 	}
 	if names, negated, rest, ok := extractSourceInPrefix(trimmed); ok {
-		return buildFromIN(names, negated, rest)
+		if negated {
+			return buildFromIN(names, negated, rest) // Already correct: FROM * | where _source NOT IN (...)
+		}
+		// Non-negated: field filter, not index selector.
+		return buildSourceInFilter(names, rest)
 	}
 
 	// index!=<value> / source!=<value> — rewrite to FROM * | where _source!="<value>".
@@ -67,12 +71,10 @@ func NormalizeQuery(q string) string {
 	}
 
 	// Splunk-style index selection: index=<name> or index <name>.
-	// Also handles: source=<name>, source <name>.
 	// Rewrites to FROM <name> so the parser handles glob/multi-source.
+	// Note: source=<name> is NOT rewritten here — it falls through to
+	// implicit search so it becomes a field filter (source is a field, not an index).
 	if indexName, rest, ok := extractIndexPrefix(trimmed); ok {
-		return buildFromWithRest(indexName, rest)
-	}
-	if indexName, rest, ok := extractSourcePrefix(trimmed); ok {
 		return buildFromWithRest(indexName, rest)
 	}
 
@@ -234,6 +236,28 @@ func buildFromNegation(name, rest string) string {
 	return base + " | search " + rest
 }
 
+// buildSourceInFilter constructs a normalized query for non-negated source IN (...).
+// Unlike index IN (...) which selects physical indexes, source IN (...) is a
+// field-level filter: FROM main | where _source IN ("a", "b") [| rest].
+func buildSourceInFilter(names []string, rest string) string {
+	quoted := make([]string, len(names))
+	for i, n := range names {
+		quoted[i] = fmt.Sprintf("%q", n)
+	}
+	base := fmt.Sprintf("FROM main | where _source IN (%s)", strings.Join(quoted, ", "))
+	if rest == "" {
+		return base
+	}
+	if strings.HasPrefix(rest, "|") {
+		return base + " " + rest
+	}
+	word := firstToken(rest)
+	if isKnownCommand(strings.ToLower(word)) {
+		return base + " | " + rest
+	}
+	return base + " | search " + rest
+}
+
 // extractIndexPrefix detects Splunk-style index selection at the start of a
 // query and returns the index name plus the remaining query text.
 //
@@ -330,25 +354,6 @@ func buildFromWithRest(indexName, rest string) string {
 
 	// Otherwise treat remainder as implicit search terms.
 	return "FROM " + indexName + " | search " + rest
-}
-
-// extractSourcePrefix detects source=<name> at the start of a query.
-// Works identically to extractIndexPrefix but for the "source" keyword.
-func extractSourcePrefix(q string) (sourceName, rest string, ok bool) {
-	lower := strings.ToLower(q)
-
-	// Form 1: source=<value>
-	if strings.HasPrefix(lower, "source=") {
-		after := q[len("source="):]
-		name, remainder := extractValue(after)
-		if name == "" {
-			return "", "", false
-		}
-
-		return name, strings.TrimSpace(remainder), true
-	}
-
-	return "", "", false
 }
 
 // isKnownCommand reports whether name (lowercase) is a recognized SPL2 command.

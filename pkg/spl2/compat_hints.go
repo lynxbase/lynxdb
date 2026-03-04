@@ -96,7 +96,7 @@ func DetectCompatHints(query string) []CompatHint {
 		seen["index"] = true
 		hints = append(hints, CompatHint{
 			Pattern:    "index=",
-			Suggestion: "In LynxDB, 'index=' maps to the '_source' field. Both 'index=main' and 'source=main' work identically. Use FROM for multi-source: FROM a, b, c.",
+			Suggestion: "In LynxDB, 'index=' maps to the '_source' field. Both 'index=main' and '_source=main' work identically. Use FROM for multi-source: FROM a, b, c.",
 		})
 	}
 
@@ -159,7 +159,7 @@ func DetectScopeHint(query string, sourceCount int) *CompatHint {
 
 	return &CompatHint{
 		Pattern:    "implicit_all_sources",
-		Suggestion: "LynxDB searches all sources by default. Use 'source=nginx' or 'index=nginx' to narrow scope.",
+		Suggestion: "LynxDB searches all sources by default. Use '_source=nginx' or 'index=nginx' to narrow scope.",
 	}
 }
 

@@ -42,16 +42,16 @@ Use any aggregation function, not just count:
 
 ```bash
 # Average latency over time
-lynxdb query 'source=nginx | timechart avg(duration_ms) span=5m'
+lynxdb query '_source=nginx | timechart avg(duration_ms) span=5m'
 
 # P99 latency over time
-lynxdb query 'source=nginx | timechart perc99(duration_ms) AS p99 span=5m'
+lynxdb query '_source=nginx | timechart perc99(duration_ms) AS p99 span=5m'
 
 # Multiple aggregations
-lynxdb query 'source=nginx | timechart count, avg(duration_ms) AS avg_lat, perc99(duration_ms) AS p99_lat span=5m'
+lynxdb query '_source=nginx | timechart count, avg(duration_ms) AS avg_lat, perc99(duration_ms) AS p99_lat span=5m'
 
 # Sum of bytes transferred
-lynxdb query 'source=nginx | timechart sum(bytes) AS total_bytes span=1h'
+lynxdb query '_source=nginx | timechart sum(bytes) AS total_bytes span=1h'
 ```
 
 ### Split by a field
@@ -63,10 +63,10 @@ Use `by <field>` to produce separate series for each value:
 lynxdb query 'level=error | timechart count span=5m by source'
 
 # Latency by endpoint
-lynxdb query 'source=nginx | timechart avg(duration_ms) span=5m by uri'
+lynxdb query '_source=nginx | timechart avg(duration_ms) span=5m by uri'
 
 # Status code distribution over time
-lynxdb query 'source=nginx | timechart count span=5m by status'
+lynxdb query '_source=nginx | timechart count span=5m by status'
 ```
 
 ---
@@ -78,7 +78,7 @@ The [`BIN`](/docs/spl2/commands/bin) command groups the `_timestamp` field into 
 ### Basic binning
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | bin _timestamp span=5m
   | stats count, avg(duration_ms) AS avg_lat by _timestamp'
 ```
@@ -86,7 +86,7 @@ lynxdb query 'source=nginx
 ### Correlate metrics with binned timestamps
 
 ```bash
-lynxdb query 'source=postgres duration_ms>1000
+lynxdb query '_source=postgres duration_ms>1000
   | bin _timestamp span=5m
   | stats count AS slow_queries, avg(duration_ms) AS avg_latency by _timestamp
   | where slow_queries > 10'
@@ -120,7 +120,7 @@ lynxdb query 'level=error
 ### Use in EVAL
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | eval hour_bucket = time_bucket(_timestamp, "1h")
   | stats avg(duration_ms) AS avg_lat, count by hour_bucket
   | sort hour_bucket'
@@ -153,7 +153,7 @@ lynxdb query 'level=error
 ### Compare latency across endpoints
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | timechart avg(duration_ms) span=10m by uri' --since 6h
 ```
 
@@ -162,7 +162,7 @@ lynxdb query 'source=nginx
 See how request volume changes hour by hour:
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | timechart count span=1h' --since 7d
 ```
 
@@ -179,7 +179,7 @@ lynxdb query 'level=error OR (source=postgres AND duration_ms>1000)
 Smooth out spiky time series with a running average:
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | timechart avg(duration_ms) AS avg_lat span=5m
   | streamstats avg(avg_lat) AS moving_avg window=6
   | table _timestamp, avg_lat, moving_avg'

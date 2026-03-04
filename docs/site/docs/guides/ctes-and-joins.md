@@ -72,7 +72,7 @@ The [`JOIN`](/docs/spl2/commands/join) command combines events from two datasets
 Keep only events that have a match in both datasets:
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | JOIN type=inner client_ip [
       FROM main WHERE source="auth" type="login"
       | FIELDS client_ip, user_id
@@ -85,7 +85,7 @@ lynxdb query 'source=nginx
 Keep all events from the left side, with null values for unmatched right-side fields:
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | JOIN type=outer client_ip [
       FROM main WHERE source="geo"
       | FIELDS client_ip, country, city
@@ -110,7 +110,7 @@ lynxdb query 'source=nginx
 When you need to join on multiple fields, list them separated by commas:
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | JOIN type=inner host, timestamp [
       FROM main WHERE source="metrics"
       | FIELDS host, timestamp, cpu_pct, mem_pct
@@ -125,7 +125,7 @@ lynxdb query 'source=nginx
 The [`APPEND`](/docs/spl2/commands/append) command concatenates the results of a subsearch to the end of the current result set:
 
 ```bash
-lynxdb query 'source=nginx status>=500 | stats count AS errors by uri
+lynxdb query '_source=nginx status>=500 | stats count AS errors by uri
   | APPEND [
       source=nginx | stats count AS total by uri
     ]
@@ -177,7 +177,7 @@ lynxdb query '| MULTISEARCH
 The [`TRANSACTION`](/docs/spl2/commands/transaction) command groups events into transactions (sequences of related events) based on shared field values:
 
 ```bash
-lynxdb query 'source=api-gateway
+lynxdb query '_source=api-gateway
   | TRANSACTION session_id startswith="request started" endswith="request completed"
   | EVAL duration = latest_time - earliest_time
   | TABLE session_id, duration, eventcount'
@@ -211,7 +211,7 @@ lynxdb query '
 ### Enrich nginx logs with geo data
 
 ```bash
-lynxdb query 'source=nginx status>=500
+lynxdb query '_source=nginx status>=500
   | JOIN type=outer client_ip [
       FROM main WHERE source="geoip"
       | DEDUP client_ip

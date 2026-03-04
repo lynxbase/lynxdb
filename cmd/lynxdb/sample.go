@@ -26,7 +26,7 @@ func newSampleCmd() *cobra.Command {
 		Long:  `Fetch a small sample of recent events, useful for exploring data structure and field names.`,
 		Example: `  lynxdb sample                         5 random events (default)
   lynxdb sample 10                      10 events
-  lynxdb sample 5 'source=nginx'        5 nginx events
+  lynxdb sample 5 '_source=nginx'        5 nginx events
   lynxdb sample 3 --format json | jq .  JSON for inspecting structure`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			count := 5

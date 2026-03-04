@@ -35,7 +35,7 @@ lynxdb tail
 lynxdb tail 'level=error'
 
 # Stream 5xx from nginx
-lynxdb tail 'source=nginx status>=500'
+lynxdb tail '_source=nginx status>=500'
 
 # Last 50 events + live
 lynxdb tail --count 50 --from -1h

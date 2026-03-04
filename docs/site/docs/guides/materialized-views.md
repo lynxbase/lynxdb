@@ -161,7 +161,7 @@ Set a retention period to automatically discard old precomputed data:
 
 ```bash
 lynxdb mv create mv_5xx_hourly \
-  'source=nginx status>=500 | stats count, perc95(duration_ms) by uri, time_bucket(_timestamp, "1h") AS hour' \
+  '_source=nginx status>=500 | stats count, perc95(duration_ms) by uri, time_bucket(_timestamp, "1h") AS hour' \
   --retention 30d
 ```
 
@@ -234,7 +234,7 @@ Think about what queries you run most often and include those aggregations in th
 ```bash
 # If you often query count, avg, and p99, include all three:
 lynxdb mv create mv_nginx_5m \
-  'source=nginx | stats count, avg(duration_ms), perc99(duration_ms) by uri, time_bucket(_timestamp, "5m") AS bucket' \
+  '_source=nginx | stats count, avg(duration_ms), perc99(duration_ms) by uri, time_bucket(_timestamp, "5m") AS bucket' \
   --retention 90d
 ```
 
@@ -254,7 +254,7 @@ lynxdb mv create mv_errors_5m \
 
 # 2. Nginx latency tracking
 lynxdb mv create mv_nginx_latency_5m \
-  'source=nginx | stats count, avg(duration_ms), perc95(duration_ms), perc99(duration_ms) by uri, time_bucket(_timestamp, "5m") AS bucket' \
+  '_source=nginx | stats count, avg(duration_ms), perc95(duration_ms), perc99(duration_ms) by uri, time_bucket(_timestamp, "5m") AS bucket' \
   --retention 90d
 
 # 3. Hourly rollup for long-term trends
@@ -264,7 +264,7 @@ lynxdb mv create mv_errors_1h \
 
 # 4. Now your dashboard queries are instant:
 lynxdb query 'level=error | stats count by source' --since 7d
-lynxdb query 'source=nginx | stats avg(duration_ms), p99(duration_ms) by uri' --since 24h
+lynxdb query '_source=nginx | stats avg(duration_ms), p99(duration_ms) by uri' --since 24h
 ```
 
 ---

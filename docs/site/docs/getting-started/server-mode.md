@@ -112,7 +112,7 @@ lynxdb tail
 lynxdb tail 'level=error'
 
 # Tail with pipeline
-lynxdb tail 'source=nginx status>=500 | fields _time, uri, status'
+lynxdb tail '_source=nginx status>=500 | fields _time, uri, status'
 ```
 
 ## Check Server Status

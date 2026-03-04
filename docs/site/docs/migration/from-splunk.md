@@ -145,7 +145,7 @@ Convert your Splunk saved searches to LynxDB saved queries:
 ```bash
 # Splunk: index=main sourcetype=nginx status>=500 | stats count by uri | sort -count | head 10
 # LynxDB:
-lynxdb save "5xx-by-uri" 'source=nginx status>=500 | stats count by uri | sort -count | head 10'
+lynxdb save "5xx-by-uri" '_source=nginx status>=500 | stats count by uri | sort -count | head 10'
 
 # Run saved query
 lynxdb run 5xx-by-uri --since 24h

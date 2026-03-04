@@ -3,32 +3,40 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
+	"log/slog"
 	"math/rand"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/lynxbase/lynxdb/internal/ui"
-	"github.com/lynxbase/lynxdb/pkg/storage"
+	"github.com/lynxbase/lynxdb/pkg/api/rest"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 )
 
 var (
 	flagDemoRate int
+	flagDemoAddr string
 )
 
 var demoCmd = &cobra.Command{
 	Use:   "demo",
 	Short: "Run a demo with live-generated logs",
-	Long:  `Starts an in-process engine and continuously generates realistic logs from multiple sources.`,
-	RunE:  runDemo,
+	Long: `Starts a LynxDB server in demo mode with continuously generated realistic logs.
+
+The server runs in-memory and listens on localhost:3100 (override with --addr).
+All normal commands (query, tail, ingest) and the REST API work against it.`,
+	RunE: runDemo,
 }
 
 func init() {
 	demoCmd.Flags().IntVar(&flagDemoRate, "rate", 200, "Events per second")
+	demoCmd.Flags().StringVar(&flagDemoAddr, "addr", "localhost:3100", "Listen address for demo server")
 	rootCmd.AddCommand(demoCmd)
 }
 
@@ -40,27 +48,62 @@ func runDemo(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--rate exceeds maximum (1,000,000 events/sec)")
 	}
 
-	eng := storage.NewEphemeralEngine()
-	defer eng.Close()
+	// Quiet logger — demo banner and progress are the UI, not slog output.
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	// Create REST server in in-memory mode (DataDir="" = no persistence).
+	srv, err := rest.NewServer(rest.Config{
+		Addr:    flagDemoAddr,
+		DataDir: "", // in-memory, no persistence
+		Logger:  logger,
+	})
+	if err != nil {
+		return fmt.Errorf("demo: failed to create server: %w", err)
+	}
+
+	// Start server in background goroutine.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	serverErr := make(chan error, 1)
+	go func() { serverErr <- srv.Start(ctx) }()
+
+	// Wait for server ready OR startup failure (e.g. port in use).
+	readyCh := make(chan struct{})
+	go func() { srv.WaitReady(); close(readyCh) }()
+	select {
+	case <-readyCh:
+		// Server is ready to accept requests.
+	case err := <-serverErr:
+		return fmt.Errorf("demo: failed to start on %s: %w\n\n  Hint: Try --addr localhost:3101", flagDemoAddr, err)
+	}
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
+	// Print startup banner.
 	t := ui.Stdout
+	scheme := "http"
 	fmt.Printf("\n  %s\n", t.Bold.Render("LynxDB Demo Mode"))
-	fmt.Printf("  %s\n\n", t.Rule.Render(strings.Repeat("─", 40)))
-	fmt.Printf("  Generating %s events/sec from 4 sources\n\n",
-		t.Success.Render(fmt.Sprintf("%d", flagDemoRate)))
-	fmt.Printf("  %s nginx, api-gateway, postgres, redis\n\n", t.Bold.Render("Sources:"))
-	fmt.Printf("  %s\n", t.Dim.Render("Try these queries in another terminal:"))
-	fmt.Printf("    %s\n", t.Info.Render("lynxdb query 'source=nginx | stats count by status'"))
+	fmt.Printf("  %s\n\n", t.HRule(40))
+	fmt.Println(t.KeyValue("Server", scheme+"://"+srv.Addr()))
+	fmt.Println(t.KeyValue("Data", "(in-memory)"))
+	fmt.Println(t.KeyValue("Rate", fmt.Sprintf("%d events/sec", flagDemoRate)))
+	fmt.Println(t.KeyValue("Sources", "nginx, api-gateway, postgres, redis"))
+	fmt.Println()
+	fmt.Printf("  %s\n", t.Dim.Render("Try in another terminal:"))
+	fmt.Printf("    %s\n", t.Info.Render("lynxdb query '_source=nginx | stats count by status'"))
 	fmt.Printf("    %s\n", t.Info.Render("lynxdb query 'level=ERROR | stats count by host' --since 5m"))
-	fmt.Printf("    %s\n", t.Info.Render("lynxdb query 'source=nginx | top 10 path'"))
-	fmt.Printf("    %s\n\n", t.Info.Render("lynxdb tail 'level=ERROR'"))
+	fmt.Printf("    %s\n", t.Info.Render("lynxdb tail 'level=ERROR'"))
+	fmt.Println()
+	fmt.Printf("  %s\n", t.Dim.Render("REST API:"))
+	fmt.Printf("    %s\n", t.Info.Render(
+		fmt.Sprintf("curl -s %s://%s/api/v1/query -d '{\"q\":\"| stats count by source\"}' | jq .", scheme, srv.Addr())))
+	fmt.Println()
 	fmt.Printf("  %s\n\n", t.Dim.Render("Press Ctrl+C to stop."))
 
+	// Set up event generation.
+	pipe := pipeline.DefaultPipeline()
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	interval := time.Second / time.Duration(flagDemoRate)
 	ticker := time.NewTicker(interval)
@@ -76,13 +119,22 @@ func runDemo(cmd *cobra.Command, args []string) error {
 			fmt.Printf("\n\n  %s Generated %s events in %s\n",
 				t.IconOK(), formatCount(int64(generated)), time.Since(start).Round(time.Second))
 
+			// Trigger graceful server shutdown and wait for it.
+			cancel()
+			<-serverErr
+
 			return nil
-		case <-ctx.Done():
-			return nil
+		case err := <-serverErr:
+			// Server died unexpectedly.
+			return fmt.Errorf("demo: server exited unexpectedly: %w", err)
 		case <-ticker.C:
 			line := generateDemoLine(rng, time.Now())
-			_, err := eng.IngestLines([]string{line}, storage.IngestOpts{})
-			if err != nil {
+			ev := event.NewEvent(time.Time{}, line)
+			processed, pErr := pipe.Process([]*event.Event{ev})
+			if pErr != nil {
+				continue
+			}
+			if iErr := srv.Engine().Ingest(processed); iErr != nil {
 				continue
 			}
 			generated++

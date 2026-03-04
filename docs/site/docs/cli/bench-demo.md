@@ -116,7 +116,7 @@ lynxdb query 'FROM main | stats count by source'
 lynxdb query 'level=error | stats count by source'
 
 # Top slow endpoints
-lynxdb query 'source=nginx duration_ms > 1000 | top 10 uri'
+lynxdb query '_source=nginx duration_ms > 1000 | top 10 uri'
 
 # Live tail
 lynxdb tail 'level=error'

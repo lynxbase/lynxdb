@@ -105,7 +105,7 @@ api-gateway	120
 ### raw
 
 ```bash
-lynxdb query 'source=nginx | head 3' --format raw
+lynxdb query '_source=nginx | head 3' --format raw
 ```
 
 ```

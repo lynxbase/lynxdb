@@ -50,7 +50,8 @@ func TestNormalizeQuery(t *testing.T) {
 		{name: "index IN with search", input: `index IN ("a","b") level=error`, want: "FROM a, b | search level=error"},
 		{name: "index NOT IN", input: `index NOT IN ("internal", "audit")`, want: `FROM * | where _source NOT IN ("internal", "audit")`},
 		{name: "INDEX IN uppercase", input: `INDEX IN ("a","b")`, want: "FROM a, b"},
-		{name: "source IN", input: `source IN ("nginx","postgres")`, want: "FROM nginx, postgres"},
+		{name: "source IN", input: `source IN ("nginx","postgres")`, want: `FROM main | where _source IN ("nginx", "postgres")`},
+		{name: "source IN with pipe", input: `source IN ("nginx","postgres") | stats count`, want: `FROM main | where _source IN ("nginx", "postgres") | stats count`},
 		{name: "source NOT IN", input: `source NOT IN ("internal")`, want: `FROM * | where _source NOT IN ("internal")`},
 		{name: "index NOT IN with pipe", input: `index NOT IN ("a") | stats count`, want: `FROM * | where _source NOT IN ("a") | stats count`},
 		{name: "index IN with known cmd", input: `index IN ("a","b") stats count`, want: "FROM a, b | stats count"},
@@ -62,12 +63,12 @@ func TestNormalizeQuery(t *testing.T) {
 		{name: "source!=value", input: "source!=internal", want: `FROM * | where _source!="internal"`},
 		{name: "index!= with known cmd", input: "index!=internal stats count", want: `FROM * | where _source!="internal" | stats count`},
 
-		// source= prefix rewriting
-		{name: "source=nginx", input: "source=nginx", want: "FROM nginx"},
-		{name: "source=nginx with pipe", input: "source=nginx | stats count", want: "FROM nginx | stats count"},
-		{name: "source=logs*", input: "source=logs*", want: "FROM logs*"},
-		{name: "source=* all", input: "source=*", want: "FROM *"},
-		{name: "source=nginx with search", input: "source=nginx level=error", want: "FROM nginx | search level=error"},
+		// source= is a field filter, not an index selector — falls through to implicit search
+		{name: "source=nginx", input: "source=nginx", want: "FROM main | search source=nginx"},
+		{name: "source=nginx with pipe", input: "source=nginx | stats count", want: "FROM main | search source=nginx | stats count"},
+		{name: "source=logs*", input: "source=logs*", want: "FROM main | search source=logs*"},
+		{name: "source=* all", input: "source=*", want: "FROM main | search source=*"},
+		{name: "source=nginx with search", input: "source=nginx level=error", want: "FROM main | search source=nginx level=error"},
 	}
 
 	for _, tt := range tests {

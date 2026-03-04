@@ -102,7 +102,7 @@ The [`EVAL`](/docs/spl2/commands/eval) command creates new fields by evaluating 
 ### Create a computed field
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | eval duration_sec = duration_ms / 1000
   | table uri, duration_ms, duration_sec'
 ```
@@ -110,7 +110,7 @@ lynxdb query 'source=nginx
 ### Conditional fields with IF
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | eval severity = if(status >= 500, "critical", if(status >= 400, "warning", "ok"))
   | stats count by severity'
 ```
@@ -118,7 +118,7 @@ lynxdb query 'source=nginx
 ### Conditional fields with CASE
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | eval category = case(
       status >= 500, "5xx",
       status >= 400, "4xx",

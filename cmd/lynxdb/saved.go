@@ -81,7 +81,7 @@ func newSaveCmd() *cobra.Command {
 		Use:   "save <name> <query>",
 		Short: "Save a query (shortcut for 'saved create')",
 		Args:  cobra.ExactArgs(2),
-		Example: `  lynxdb save "5xx-rate" 'source=nginx status>=500 | stats count by uri | sort -count'
+		Example: `  lynxdb save "5xx-rate" '_source=nginx status>=500 | stats count by uri | sort -count'
   lynxdb save "error-by-host" 'level=error | stats count by host | sort -count'`,
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runSavedCreate(args[0], args[1])

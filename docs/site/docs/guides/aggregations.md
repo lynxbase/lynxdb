@@ -42,7 +42,7 @@ lynxdb query 'level=error | stats count by source'
 ### Group by multiple fields
 
 ```bash
-lynxdb query 'source=nginx | stats count by status, uri'
+lynxdb query '_source=nginx | stats count by status, uri'
 ```
 
 ### Name your aggregation
@@ -62,13 +62,13 @@ LynxDB supports 15+ aggregation functions. Here are the most common ones.
 ### Count, sum, avg
 
 ```bash
-lynxdb query 'source=nginx | stats count, sum(bytes), avg(duration_ms) by uri'
+lynxdb query '_source=nginx | stats count, sum(bytes), avg(duration_ms) by uri'
 ```
 
 ### Min and max
 
 ```bash
-lynxdb query 'source=nginx | stats min(duration_ms) AS fastest, max(duration_ms) AS slowest by uri'
+lynxdb query '_source=nginx | stats min(duration_ms) AS fastest, max(duration_ms) AS slowest by uri'
 ```
 
 ### Distinct count
@@ -76,7 +76,7 @@ lynxdb query 'source=nginx | stats min(duration_ms) AS fastest, max(duration_ms)
 Count unique values with `dc()`:
 
 ```bash
-lynxdb query 'source=nginx | stats dc(client_ip) AS unique_visitors by uri'
+lynxdb query '_source=nginx | stats dc(client_ip) AS unique_visitors by uri'
 ```
 
 ### Percentiles
@@ -84,7 +84,7 @@ lynxdb query 'source=nginx | stats dc(client_ip) AS unique_visitors by uri'
 Compute latency percentiles:
 
 ```bash
-lynxdb query 'source=nginx | stats avg(duration_ms) AS avg_lat, perc50(duration_ms) AS p50, perc95(duration_ms) AS p95, perc99(duration_ms) AS p99 by uri'
+lynxdb query '_source=nginx | stats avg(duration_ms) AS avg_lat, perc50(duration_ms) AS p50, perc95(duration_ms) AS p95, perc99(duration_ms) AS p99 by uri'
 ```
 
 Available percentile functions: `perc50`, `perc75`, `perc90`, `perc95`, `perc99`.
@@ -92,7 +92,7 @@ Available percentile functions: `perc50`, `perc75`, `perc90`, `perc95`, `perc99`
 ### Standard deviation
 
 ```bash
-lynxdb query 'source=nginx | stats avg(duration_ms) AS mean, stdev(duration_ms) AS stddev by uri'
+lynxdb query '_source=nginx | stats avg(duration_ms) AS mean, stdev(duration_ms) AS stddev by uri'
 ```
 
 ### Collect values
@@ -120,7 +120,7 @@ See the [aggregation functions reference](/docs/spl2/functions/aggregation-funct
 Count events that match a condition using `count(eval(...))`:
 
 ```bash
-lynxdb query 'source=nginx | stats count AS total, count(eval(status>=500)) AS errors by uri'
+lynxdb query '_source=nginx | stats count AS total, count(eval(status>=500)) AS errors by uri'
 ```
 
 ### Compute error rates
@@ -128,7 +128,7 @@ lynxdb query 'source=nginx | stats count AS total, count(eval(status>=500)) AS e
 Combine conditional counting with [`EVAL`](/docs/spl2/commands/eval) to calculate ratios:
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | stats count AS total, count(eval(status>=500)) AS errors by uri
   | eval error_rate = round(errors / total * 100, 1)
   | where error_rate > 5
@@ -150,7 +150,7 @@ lynxdb query 'level=error | stats count by source | sort -count'
 lynxdb query 'level=error | stats count by source | sort count'
 
 # Sort by multiple fields
-lynxdb query 'source=nginx | stats count by status, uri | sort status, -count'
+lynxdb query '_source=nginx | stats count by status, uri | sort status, -count'
 ```
 
 ---
@@ -161,7 +161,7 @@ The [`TOP`](/docs/spl2/commands/top) and [`RARE`](/docs/spl2/commands/rare) comm
 
 ```bash
 # Top 10 URIs by request count
-lynxdb query 'source=nginx | top 10 uri'
+lynxdb query '_source=nginx | top 10 uri'
 
 # Rarest error messages
 lynxdb query 'level=error | rare 10 message'
@@ -194,7 +194,7 @@ lynxdb query 'level=error
 [`STREAMSTATS`](/docs/spl2/commands/streamstats) computes running (cumulative) aggregations without collapsing events:
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | sort _timestamp
   | streamstats count AS request_num, avg(duration_ms) AS running_avg_latency'
 ```
@@ -204,7 +204,7 @@ lynxdb query 'source=nginx
 [`EVENTSTATS`](/docs/spl2/commands/eventstats) adds aggregation values to each event without collapsing:
 
 ```bash
-lynxdb query 'source=nginx
+lynxdb query '_source=nginx
   | eventstats avg(duration_ms) AS global_avg by uri
   | where duration_ms > global_avg * 3
   | table _timestamp, uri, duration_ms, global_avg'

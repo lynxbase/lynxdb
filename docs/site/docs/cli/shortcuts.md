@@ -63,7 +63,7 @@ lynxdb sample
 lynxdb sample 10
 
 # 5 nginx events
-lynxdb sample 5 'source=nginx'
+lynxdb sample 5 '_source=nginx'
 
 # JSON for inspecting structure
 lynxdb sample 3 --format json | jq .
