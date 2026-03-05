@@ -116,7 +116,6 @@ func (lf *LazyFetcher) FetchFooter(ctx context.Context, key string, totalSize in
 		return cached, nil
 	}
 
-	// Read the last footerReadSize bytes to get the footer.
 	readSize := int64(footerReadSize)
 	if readSize > totalSize {
 		readSize = totalSize

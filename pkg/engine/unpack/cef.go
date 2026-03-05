@@ -137,7 +137,7 @@ func parseCEFExtension(s string, emit func(key string, val event.Value) bool) {
 		s = s[eqIdx+1:]
 
 		// Value extends until the next " key=" pattern or end of string.
-		// We look for the next " word=" pattern.
+		// Look for the next " word=" pattern.
 		val := ""
 		nextKeyIdx := findNextCEFKey(s)
 		if nextKeyIdx >= 0 {

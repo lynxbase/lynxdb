@@ -54,7 +54,6 @@ func runUpgrade(check bool, version string, force, yes bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// Dev guard: warn when running a development build.
 	if buildinfo.IsDev() && !force {
 		printWarning("Development build detected. Use 'go install' to update, or pass --force to override.")
 		return nil
@@ -66,7 +65,6 @@ func runUpgrade(check bool, version string, force, yes bool) error {
 	var err error
 
 	if version != "" {
-		// Specific version requested — fetch the versioned manifest.
 		manifest, fetchErr := upgrade.FetchVersionedManifest(ctx, version)
 		if fetchErr != nil {
 			return fmt.Errorf("failed to fetch version info: %w", fetchErr)
@@ -79,8 +77,7 @@ func runUpgrade(check bool, version string, force, yes bool) error {
 			}
 			return err
 		}
-		// Override: if a specific version was requested with --version, always
-		// consider it an update if versions differ (even downgrade).
+		// Treat explicit --version as an update even for downgrades.
 		if result.LatestVersion != buildinfo.Version {
 			result.UpdateAvail = true
 			// Re-fetch the artifact for this platform.

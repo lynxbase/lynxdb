@@ -7,8 +7,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
-// sortStatsReorderRule
-
 // sortStatsReorderRule rewrites sort-before-stats into stats-then-sort when
 // the sort fields are a prefix of the group-by fields. This is vastly cheaper
 // because stats produces one row per group (often orders of magnitude fewer
@@ -82,8 +80,6 @@ func (r *sortStatsReorderRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 
 	return q, false
 }
-
-// removeSortOnScanOrderRule
 
 // removeSortOnScanOrderRule eliminates a SortCommand on `_time` when the scan
 // naturally produces time-ordered output, making the sort a no-op. The default
@@ -281,8 +277,6 @@ func orderingBehavior(cmd spl2.Command) OrderingBehavior {
 	}
 }
 
-// removeDeadSortRule
-
 // removeDeadSortRule eliminates a SortCommand when every downstream consumer
 // either destroys or re-establishes ordering, making the sort's output
 // unobservable. Special case: StreamstatsCommand depends on input ordering,
@@ -389,8 +383,6 @@ func hasDownstreamLimit(commands []spl2.Command, sortIdx int) bool {
 
 	return false
 }
-
-// removeRedundantSortRule
 
 // removeRedundantSortRule eliminates sorts that are provably no-ops:
 //

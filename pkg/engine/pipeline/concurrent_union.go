@@ -92,7 +92,7 @@ func NewConcurrentUnionIterator(children []Iterator, mode UnionOrderMode, cfg *P
 
 // Init initializes all child iterators. For OrderPreserved, only child[0]
 // needs to be initialized upfront — others are initialized lazily. However,
-// we initialize all children here to catch setup errors early (e.g., missing
+// all children are initialized here to catch setup errors early (e.g., missing
 // segment files, permission errors) before any goroutines are spawned.
 func (c *ConcurrentUnionIterator) Init(ctx context.Context) error {
 	for _, child := range c.children {

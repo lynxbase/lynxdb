@@ -181,7 +181,6 @@ func (rm *RetentionManager) deletePartition(index, partition string) error {
 		return fmt.Errorf("part.RetentionManager.deletePartition: remove %s: %w", dir, err)
 	}
 
-	// Remove parts from the registry.
 	for _, id := range removedIDs {
 		rm.registry.Remove(id)
 	}

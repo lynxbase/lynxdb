@@ -338,8 +338,8 @@ func FromSearchStats(
 		st.ScanType = ScanTypeFullScan
 	}
 
-	// Compute TotalRowsInRange as scanned + skipped segment event estimates.
-	// We approximate by assuming skipped segments have similar density to scanned ones.
+	// TotalRowsInRange = scanned + skipped segment event estimates.
+	// Skipped segments are assumed to have similar density to scanned ones.
 	st.TotalRowsInRange = rowsScanned
 	if segmentsScanned > 0 {
 		totalSkipped := segmentsSkippedIdx + segmentsSkippedTime + segmentsSkippedStat +
@@ -367,8 +367,6 @@ func FromMeta(tookMS float64, scanned, rowsReturned int64) *QueryStats {
 func timeDurFromMS(ms float64) time.Duration {
 	return time.Duration(ms * float64(time.Millisecond))
 }
-
-// Computed helpers
 
 // ScanRateRowsPerSec returns the scan throughput in rows per second.
 func (s *QueryStats) ScanRateRowsPerSec() float64 {

@@ -116,11 +116,9 @@ func (p *Plan) Clone() *Plan {
 		RawQuery:   p.RawQuery,
 		ResultType: p.ResultType,
 	}
-	// Deep clone Program.
 	if p.Program != nil {
 		clone.Program = cloneProgram(p.Program)
 	}
-	// Clone hints.
 	if p.Hints != nil {
 		h := *p.Hints
 		if p.Hints.TimeBounds != nil {
@@ -132,14 +130,12 @@ func (p *Plan) Clone() *Plan {
 		h.FieldPredicates = append([]spl2.FieldPredicate(nil), p.Hints.FieldPredicates...)
 		clone.Hints = &h
 	}
-	// Clone optimizer stats.
 	if p.OptimizerStats != nil {
 		clone.OptimizerStats = make(map[string]int, len(p.OptimizerStats))
 		for k, v := range p.OptimizerStats {
 			clone.OptimizerStats[k] = v
 		}
 	}
-	// Clone external time bounds.
 	if p.ExternalTimeBounds != nil {
 		tb := *p.ExternalTimeBounds
 		clone.ExternalTimeBounds = &tb
@@ -191,8 +187,6 @@ func cloneQuery(q *spl2.Query) *spl2.Query {
 
 	return clone
 }
-
-// Plan CLOCK buffer (uint64 keys)
 
 type planClockBuffer struct {
 	slots    []planClockSlot

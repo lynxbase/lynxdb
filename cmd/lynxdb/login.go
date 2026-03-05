@@ -61,7 +61,6 @@ func runLogin(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("no API key provided; use --token or run interactively")
 	}
 
-	// Validate the token against the server.
 	opts := append([]client.Option{
 		client.WithBaseURL(globalServer),
 		client.WithAuthToken(token),
@@ -158,14 +157,13 @@ func handleLoginTLS() (string, []client.Option, error) {
 	// Self-signed: TOFU flow.
 	gotFP := auth.CertFingerprint(serverCert)
 
-	// Check for saved fingerprint.
 	_, savedFP, loadErr := auth.LoadCredentials(globalServer)
 	if loadErr != nil {
 		return "", nil, fmt.Errorf("load credentials: %w", loadErr)
 	}
 
 	if savedFP != "" {
-		// We have a saved fingerprint — verify it matches.
+		// Saved fingerprint exists — verify it matches.
 		if savedFP != gotFP {
 			return "", nil, fmt.Errorf(
 				"TLS certificate fingerprint mismatch for %s!\n\n"+

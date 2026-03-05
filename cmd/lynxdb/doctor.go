@@ -111,7 +111,6 @@ func checkDataDir() checkResult {
 		return checkResult{name: "Data dir", ok: false, detail: fmt.Sprintf("%s (not a directory)", cfg.DataDir)}
 	}
 
-	// Report free disk space (best-effort).
 	freeBytes, err := diskFreeBytes(cfg.DataDir)
 	if err == nil {
 		return checkResult{
@@ -135,7 +134,6 @@ func checkServer() []checkResult {
 
 	ctx := context.Background()
 
-	// Check health.
 	health, err := c.Health(ctx)
 	if err != nil {
 		results = append(results, checkResult{
@@ -149,7 +147,6 @@ func checkServer() []checkResult {
 
 	serverDetail := fmt.Sprintf("%s (%s)", globalServer, health.Status)
 
-	// Fetch status for uptime.
 	status, statusErr := c.Status(ctx)
 	if statusErr == nil && status.UptimeSeconds > 0 {
 		serverDetail = fmt.Sprintf("%s (%s, uptime %s)",
@@ -162,7 +159,6 @@ func checkServer() []checkResult {
 		detail: serverDetail,
 	})
 
-	// Fetch stats for additional info.
 	results = append(results, checkServerStats(c)...)
 
 	return results
@@ -180,7 +176,6 @@ func checkServerStats(c *client.Client) []checkResult {
 		return results
 	}
 
-	// Events total + storage usage.
 	results = append(results,
 		checkResult{
 			name:   "Events",
@@ -194,7 +189,6 @@ func checkServerStats(c *client.Client) []checkResult {
 		},
 	)
 
-	// Retention warning: if the oldest event is near the retention boundary.
 	results = append(results, checkRetention(stats.OldestEvent)...)
 
 	return results
@@ -215,7 +209,6 @@ func checkRetention(oldestEvent string) []checkResult {
 
 	detail := cfg.Retention.String()
 
-	// Check if oldest event timestamp is near the retention boundary.
 	if oldestEvent != "" {
 		if oldest, parseErr := time.Parse(time.RFC3339Nano, oldestEvent); parseErr == nil {
 			ageSecs := time.Since(oldest).Seconds()
@@ -262,8 +255,6 @@ func checkCompletion() checkResult {
 }
 
 func checkCompletionFile(shell, installCmd string) checkResult {
-	// Check if lynxdb appears in the shell's completion system.
-	// Heuristic — check if the command exists in PATH.
 	_, err := exec.LookPath("lynxdb")
 	if err != nil {
 		return checkResult{
@@ -315,7 +306,6 @@ func printDoctorHuman(results []checkResult) error {
 
 		fmt.Fprintf(os.Stdout, "  %s %s\n", t.IconError(), t.Error.Render(summary))
 
-		// Suggest next action when server is not running.
 		for _, r := range results {
 			if r.name == "Server" && !r.ok {
 				fmt.Fprintf(os.Stdout, "  %s\n", t.Dim.Render("Run 'lynxdb server' to start."))

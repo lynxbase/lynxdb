@@ -122,7 +122,6 @@ func (w *Writer) Write(ctx context.Context, index string, events []*event.Event,
 	tmpName := "tmp_" + hex.EncodeToString(randBytes) + ".lsg"
 	tmpPath := filepath.Join(partDir, tmpName)
 
-	// Write to temp file.
 	f, err := os.Create(tmpPath)
 	if err != nil {
 		return nil, fmt.Errorf("part.Writer.Write: create temp: %w", err)

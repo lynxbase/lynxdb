@@ -3,11 +3,14 @@ package rest
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -453,5 +456,416 @@ func TestAuth_DisabledReturns404(t *testing.T) {
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestAuth_ApiKeyFormat(t *testing.T) {
+	srv, ks, _, cleanup := startAuthServer(t)
+	defer cleanup()
+
+	// Create a regular key.
+	regular, err := ks.CreateKey("apikey-test", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Construct ApiKey header: base64(id:token).
+	composite := regular.ID + ":" + regular.Token
+	b64 := base64.StdEncoding.EncodeToString([]byte(composite))
+	header := "ApiKey " + b64
+
+	req, _ := http.NewRequest("GET",
+		fmt.Sprintf("http://%s/api/v1/stats", srv.Addr()),
+		http.NoBody,
+	)
+	req.Header.Set("Authorization", header)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestAuth_BasicFormat(t *testing.T) {
+	srv, ks, _, cleanup := startAuthServer(t)
+	defer cleanup()
+
+	regular, err := ks.CreateKey("basic-test", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Basic auth: base64(username:password), password = token.
+	composite := "lynxdb:" + regular.Token
+	b64 := base64.StdEncoding.EncodeToString([]byte(composite))
+	header := "Basic " + b64
+
+	req, _ := http.NewRequest("GET",
+		fmt.Sprintf("http://%s/api/v1/stats", srv.Addr()),
+		http.NoBody,
+	)
+	req.Header.Set("Authorization", header)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestAuth_ApiKeyFormat_Invalid(t *testing.T) {
+	srv, _, _, cleanup := startAuthServer(t)
+	defer cleanup()
+
+	// Invalid base64.
+	req, _ := http.NewRequest("GET",
+		fmt.Sprintf("http://%s/api/v1/stats", srv.Addr()),
+		http.NoBody,
+	)
+	req.Header.Set("Authorization", "ApiKey not-valid-base64!!!")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestAuth_ExpiredKey(t *testing.T) {
+	srv, ks, _, cleanup := startAuthServer(t)
+	defer cleanup()
+
+	// Create a key that already expired.
+	expired, err := ks.CreateKeyWithOpts(auth.CreateKeyOpts{
+		Name:      "expired-test",
+		Scope:     auth.ScopeFull,
+		ExpiresAt: time.Now().Add(-1 * time.Hour), // 1 hour ago
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := authReq("GET",
+		fmt.Sprintf("http://%s/api/v1/stats", srv.Addr()),
+		expired.Token, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 (expired key)", resp.StatusCode)
+	}
+}
+
+func TestAuth_ScopeIngest_CanIngest(t *testing.T) {
+	srv, ks, _, cleanup := startAuthServer(t)
+	defer cleanup()
+
+	ingestKey, err := ks.CreateKeyWithOpts(auth.CreateKeyOpts{
+		Name:  "ingest-only",
+		Scope: auth.ScopeIngest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Ingest should work.
+	body := []byte(`[{"event":"test","source":"test","index":"main"}]`)
+	resp, err := authReq("POST",
+		fmt.Sprintf("http://%s/api/v1/ingest", srv.Addr()),
+		ingestKey.Token, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("ingest status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestAuth_CreateKeyWithScope(t *testing.T) {
+	srv, _, rootToken, cleanup := startAuthServer(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]string{
+		"name":        "scoped-key",
+		"scope":       "ingest",
+		"description": "Filebeat agent",
+		"expires_in":  "30d",
+	})
+
+	resp, err := authReq("POST",
+		fmt.Sprintf("http://%s/api/v1/auth/keys", srv.Addr()),
+		rootToken, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 201, body: %s", resp.StatusCode, b)
+	}
+
+	var result struct {
+		Data struct {
+			Token       string `json:"token"`
+			APIKey      string `json:"api_key"`
+			Name        string `json:"name"`
+			Scope       string `json:"scope"`
+			Description string `json:"description"`
+			ExpiresAt   string `json:"expires_at"`
+			ID          string `json:"id"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+
+	if result.Data.Token == "" {
+		t.Error("token should be returned on create")
+	}
+	if result.Data.APIKey == "" {
+		t.Error("api_key should be returned on create")
+	}
+	if result.Data.Scope != "ingest" {
+		t.Errorf("scope = %q, want ingest", result.Data.Scope)
+	}
+	if result.Data.Description != "Filebeat agent" {
+		t.Errorf("description = %q, want 'Filebeat agent'", result.Data.Description)
+	}
+	if result.Data.ExpiresAt == "" {
+		t.Error("expires_at should be set")
+	}
+	// Verify new ID format (ak_ prefix).
+	if !strings.HasPrefix(result.Data.ID, "ak_") {
+		t.Errorf("ID = %q, expected ak_ prefix", result.Data.ID)
+	}
+	// api_key should be id:token.
+	if result.Data.APIKey != result.Data.ID+":"+result.Data.Token {
+		t.Errorf("api_key = %q, want %q", result.Data.APIKey, result.Data.ID+":"+result.Data.Token)
+	}
+}
+
+func TestAuth_CreateKeyInvalidScope(t *testing.T) {
+	srv, _, rootToken, cleanup := startAuthServer(t)
+	defer cleanup()
+
+	body, _ := json.Marshal(map[string]string{
+		"name":  "bad-scope",
+		"scope": "superadmin",
+	})
+
+	resp, err := authReq("POST",
+		fmt.Sprintf("http://%s/api/v1/auth/keys", srv.Addr()),
+		rootToken, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestAuth_ScopeIngest_CannotQuery(t *testing.T) {
+	srv, ks, _, cleanup := startAuthServer(t)
+	defer cleanup()
+
+	ingestKey, err := ks.CreateKeyWithOpts(auth.CreateKeyOpts{
+		Name:  "ingest-nq",
+		Scope: auth.ScopeIngest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Query should be forbidden.
+	body := []byte(`{"q":"FROM main | head 5"}`)
+	resp, err := authReq("POST",
+		fmt.Sprintf("http://%s/api/v1/query", srv.Addr()),
+		ingestKey.Token, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want 403, body: %s", resp.StatusCode, b)
+	}
+
+	var errResp struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	json.NewDecoder(resp.Body).Decode(&errResp)
+	if errResp.Error.Code != "FORBIDDEN" {
+		t.Errorf("code = %q, want FORBIDDEN", errResp.Error.Code)
+	}
+}
+
+func TestAuth_ScopeQuery_CannotIngest(t *testing.T) {
+	srv, ks, _, cleanup := startAuthServer(t)
+	defer cleanup()
+
+	queryKey, err := ks.CreateKeyWithOpts(auth.CreateKeyOpts{
+		Name:  "query-only",
+		Scope: auth.ScopeQuery,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Ingest should be forbidden.
+	body := []byte(`[{"event":"test","source":"test","index":"main"}]`)
+	resp, err := authReq("POST",
+		fmt.Sprintf("http://%s/api/v1/ingest", srv.Addr()),
+		queryKey.Token, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestAuth_ScopeQuery_CannotESBulk(t *testing.T) {
+	srv, ks, _, cleanup := startAuthServer(t)
+	defer cleanup()
+
+	queryKey, err := ks.CreateKeyWithOpts(auth.CreateKeyOpts{
+		Name:  "query-noes",
+		Scope: auth.ScopeQuery,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// ES _bulk should be forbidden for query-scoped key.
+	body := `{"index":{"_index":"logs"}}
+{"message":"test"}
+`
+	req, _ := http.NewRequest("POST",
+		fmt.Sprintf("http://%s/api/v1/es/_bulk", srv.Addr()),
+		strings.NewReader(body),
+	)
+	req.Header.Set("Authorization", "Bearer "+queryKey.Token)
+	req.Header.Set("Content-Type", "application/x-ndjson")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+func TestAuth_VerifyByID(t *testing.T) {
+	dir := t.TempDir()
+	ks, err := auth.OpenKeyStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	created, err := ks.CreateKey("test", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// VerifyByID with correct ID + token should succeed.
+	info := ks.VerifyByID(created.ID, created.Token)
+	if info == nil {
+		t.Fatal("VerifyByID returned nil for valid ID+token")
+	}
+	if info.ID != created.ID {
+		t.Errorf("info.ID = %q, want %q", info.ID, created.ID)
+	}
+
+	// Wrong ID should fail.
+	info = ks.VerifyByID("nonexistent", created.Token)
+	if info != nil {
+		t.Error("VerifyByID should return nil for wrong ID")
+	}
+
+	// Wrong token should fail.
+	info = ks.VerifyByID(created.ID, "wrong_token")
+	if info != nil {
+		t.Error("VerifyByID should return nil for wrong token")
+	}
+}
+
+func TestAuth_ListKeysShowsScope(t *testing.T) {
+	srv, ks, rootToken, cleanup := startAuthServer(t)
+	defer cleanup()
+
+	_, err := ks.CreateKeyWithOpts(auth.CreateKeyOpts{
+		Name:  "ingest-key",
+		Scope: auth.ScopeIngest,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp, err := authReq("GET",
+		fmt.Sprintf("http://%s/api/v1/auth/keys", srv.Addr()),
+		rootToken, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	// Just verify the response decodes with scope fields.
+	var result struct {
+		Data struct {
+			Keys []struct {
+				ID    string `json:"id"`
+				Scope string `json:"scope"`
+			} `json:"keys"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(result.Data.Keys) < 2 {
+		t.Fatalf("expected at least 2 keys, got %d", len(result.Data.Keys))
+	}
+
+	// Find the ingest key.
+	found := false
+	for _, k := range result.Data.Keys {
+		if k.Scope == "ingest" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected to find a key with scope=ingest in list")
 	}
 }

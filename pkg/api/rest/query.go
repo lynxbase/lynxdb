@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/server"
@@ -16,6 +17,10 @@ import (
 
 // handleQueryGet is the GET variant for simple queries (query params: q, from, to, limit, format).
 func (s *Server) handleQueryGet(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeQuery) {
+		return
+	}
+
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		respondError(w, ErrCodeValidationError, http.StatusBadRequest, "query parameter 'q' is required")
@@ -35,6 +40,10 @@ func (s *Server) handleQueryGet(w http.ResponseWriter, r *http.Request) {
 
 // handleQuery is the three-mode query handler (sync/hybrid/async).
 func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeQuery) {
+		return
+	}
+
 	var req QueryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")
@@ -298,7 +307,6 @@ func buildAggregateResponse(rt server.ResultType, rows []spl2.ResultRow) map[str
 			"type": string(rt), "columns": []string{}, "rows": [][]interface{}{}, "total_rows": 0,
 		}
 	}
-	// Collect unique column names from all rows.
 	seen := map[string]struct{}{}
 	for _, row := range rows {
 		for k := range row.Fields {

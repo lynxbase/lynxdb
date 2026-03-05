@@ -65,10 +65,8 @@ func runCount(filter, since string) error {
 		return err
 	}
 
-	// Extract count from the result.
 	count := extractCount(result)
 
-	// When --format is explicitly set (not "auto"), use the unified formatter.
 	if globalFormat != "auto" {
 		return printFormattedRows([]map[string]interface{}{{"count": count}})
 	}

@@ -52,8 +52,6 @@ func NewAggregator(name string) (Aggregator, error) {
 	return factory(), nil
 }
 
-// Count
-
 type countState struct {
 	count int64
 }
@@ -72,8 +70,6 @@ func (a *CountAgg) Finalize(state State) interface{} {
 	return state.(*countState).count
 }
 
-// Sum
-
 type sumState struct {
 	sum float64
 }
@@ -91,8 +87,6 @@ func (a *SumAgg) Merge(sa, sb State) State {
 func (a *SumAgg) Finalize(state State) interface{} {
 	return state.(*sumState).sum
 }
-
-// Avg
 
 type avgState struct {
 	sum   float64
@@ -121,8 +115,6 @@ func (a *AvgAgg) Finalize(state State) interface{} {
 
 	return s.sum / float64(s.count)
 }
-
-// Min
 
 type minState struct {
 	min float64
@@ -164,8 +156,6 @@ func (a *MinAgg) Finalize(state State) interface{} {
 	return s.min
 }
 
-// Max
-
 type maxState struct {
 	max float64
 	set bool
@@ -206,8 +196,6 @@ func (a *MaxAgg) Finalize(state State) interface{} {
 	return s.max
 }
 
-// Distinct Count (dc)
-
 type dcState struct {
 	values map[string]struct{}
 }
@@ -235,8 +223,6 @@ func (a *DCCountAgg) Finalize(state State) interface{} {
 	return int64(len(state.(*dcState).values))
 }
 
-// Values
-
 type valuesState struct {
 	values []interface{}
 }
@@ -256,8 +242,6 @@ func (a *ValuesAgg) Merge(sa, sb State) State {
 func (a *ValuesAgg) Finalize(state State) interface{} {
 	return state.(*valuesState).values
 }
-
-// First
 
 type firstState struct {
 	value interface{}
@@ -286,8 +270,6 @@ func (a *FirstAgg) Merge(sa, sb State) State {
 func (a *FirstAgg) Finalize(state State) interface{} {
 	return state.(*firstState).value
 }
-
-// Last
 
 type lastState struct {
 	value interface{}

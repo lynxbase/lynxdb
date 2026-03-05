@@ -212,12 +212,12 @@ func (l *SearchLexer) readWord() (SearchToken, error) {
 	literal := l.input[startPos:l.pos]
 	upper := strings.ToUpper(literal)
 
-	// Check for CASE() and TERM() directives — word immediately followed by (
+	// CASE() and TERM() directives — word immediately followed by (
 	if (upper == "CASE" || upper == "TERM") && l.pos < len(l.input) && l.input[l.pos] == '(' {
 		return l.readDirective(startPos, upper)
 	}
 
-	// Check for keywords (case-insensitive)
+	// Keywords (case-insensitive)
 	switch upper {
 	case "AND":
 		return SearchToken{Type: STokAND, Literal: literal, Pos: startPos}, nil

@@ -48,10 +48,8 @@ func runDemo(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--rate exceeds maximum (1,000,000 events/sec)")
 	}
 
-	// Quiet logger — demo banner and progress are the UI, not slog output.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	// Create REST server in in-memory mode (DataDir="" = no persistence).
 	srv, err := rest.NewServer(rest.Config{
 		Addr:    flagDemoAddr,
 		DataDir: "", // in-memory, no persistence
@@ -61,14 +59,12 @@ func runDemo(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("demo: failed to create server: %w", err)
 	}
 
-	// Start server in background goroutine.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	serverErr := make(chan error, 1)
 	go func() { serverErr <- srv.Start(ctx) }()
 
-	// Wait for server ready OR startup failure (e.g. port in use).
 	readyCh := make(chan struct{})
 	go func() { srv.WaitReady(); close(readyCh) }()
 	select {
@@ -81,7 +77,6 @@ func runDemo(cmd *cobra.Command, args []string) error {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	// Print startup banner.
 	t := ui.Stdout
 	scheme := "http"
 	fmt.Printf("\n  %s\n", t.Bold.Render("LynxDB Demo Mode"))
@@ -102,7 +97,6 @@ func runDemo(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Printf("  %s\n\n", t.Dim.Render("Press Ctrl+C to stop."))
 
-	// Set up event generation.
 	pipe := pipeline.DefaultPipeline()
 	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 	interval := time.Second / time.Duration(flagDemoRate)
@@ -119,7 +113,6 @@ func runDemo(cmd *cobra.Command, args []string) error {
 			fmt.Printf("\n\n  %s Generated %s events in %s\n",
 				t.IconOK(), formatCount(int64(generated)), time.Since(start).Round(time.Second))
 
-			// Trigger graceful server shutdown and wait for it.
 			cancel()
 			<-serverErr
 

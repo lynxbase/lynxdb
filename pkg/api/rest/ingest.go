@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver"
@@ -38,6 +39,10 @@ func respondIngestError(w http.ResponseWriter, err error) bool {
 }
 
 func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeIngest) {
+		return
+	}
+
 	var payload []receiver.EventPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
@@ -70,6 +75,10 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIngestRaw(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeIngest) {
+		return
+	}
+
 	source := r.Header.Get("X-Source")
 	if source == "" {
 		source = "http"
@@ -119,6 +128,10 @@ func (s *Server) handleIngestRaw(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleIngestHEC(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeIngest) {
+		return
+	}
+
 	var skippedLines int64
 
 	buildEvent := func(line string) *event.Event {

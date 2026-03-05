@@ -93,7 +93,6 @@ func runStatus(_ *cobra.Command, _ []string) error {
 		healthStatus = h.Status
 	}
 
-	// JSON output mode.
 	if isJSONFormat() {
 		out := map[string]interface{}{
 			"uptime_seconds":  stats.UptimeSeconds,
@@ -116,7 +115,6 @@ func runStatus(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	// Human-readable output.
 	t := ui.Stdout
 
 	uptimeStr := formatDuration(int64(stats.UptimeSeconds))
@@ -158,7 +156,6 @@ func runStatus(_ *cobra.Command, _ []string) error {
 
 	fmt.Println(t.KeyValue("Indexes", formatCount(int64(stats.IndexCount))))
 
-	// Memory pool section (only when unified pool is active).
 	statusData, statusErr := c.Status(ctx)
 	if statusErr == nil && statusData.MemoryPool != nil {
 		mp := statusData.MemoryPool

@@ -95,10 +95,8 @@ func runFieldsList(since, from, to, source, prefix string) error {
 		return err
 	}
 
-	// Convert to local fieldEntry type for display.
 	fields := clientFieldsToEntries(clientFields)
 
-	// Apply client-side prefix filter (server may not support it yet).
 	if prefix != "" {
 		fields = filterFieldsByPrefix(fields, prefix)
 	}
@@ -162,7 +160,6 @@ func runFieldDetail(name, since, from, to, source string) error {
 
 	fields := clientFieldsToEntries(clientFields)
 
-	// Find the target field.
 	var field *fieldEntry
 
 	for i := range fields {
@@ -174,7 +171,6 @@ func runFieldDetail(name, since, from, to, source string) error {
 	}
 
 	if field == nil {
-		// Suggest similar fields.
 		suggestions := findSimilarFields(name, fields)
 		if len(suggestions) > 0 {
 			return fmt.Errorf("unknown field %q. Did you mean: %s?\n\nRun 'lynxdb fields' to see all known fields",
@@ -191,7 +187,6 @@ func runFieldDetail(name, since, from, to, source string) error {
 		return nil
 	}
 
-	// Fetch top values for the detail view.
 	topValues := fetchFieldTopValuesDetailed(name)
 
 	t := ui.Stdout

@@ -130,7 +130,6 @@ func NewStore(dir string, maxBytes int64, ttl time.Duration) *Store {
 		maxBytes: maxBytes,
 		ttl:      ttl,
 	}
-	// Load existing cache entries from disk
 	if dir != "" {
 		cs.loadFromDisk()
 	}
@@ -160,7 +159,6 @@ func (cs *Store) Get(ctx context.Context, key Key) (*CachedResult, error) {
 
 		return nil, nil
 	}
-	// Check TTL
 	if time.Since(entry.result.CreatedAt) > cs.ttl {
 		cs.mu.Lock()
 		cs.removeEntryLocked(hex, entry)
@@ -243,10 +241,8 @@ func (cs *Store) Put(ctx context.Context, key Key, result *CachedResult) error {
 	}
 	cs.mu.Unlock()
 
-	// Evict if over max size
 	cs.evictIfNeeded()
 
-	// Persist to disk
 	if cs.dir != "" {
 		cs.writeToDisk(hex, result)
 	}

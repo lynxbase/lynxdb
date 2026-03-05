@@ -114,7 +114,6 @@ func (s *SegmentSpiller) flush() error {
 		return fmt.Errorf("close segment: %w", err)
 	}
 
-	// Open via mmap for reading.
 	mms, err := segment.OpenSegmentFile(path)
 	if err != nil {
 		os.Remove(path) // clean up the file we just wrote
@@ -135,7 +134,6 @@ func (s *SegmentSpiller) flush() error {
 		path:  path,
 	})
 
-	// Reset buffer.
 	s.buffer = s.buffer[:0]
 	s.sizeBytes = 0
 

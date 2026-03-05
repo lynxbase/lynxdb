@@ -124,7 +124,6 @@ func runLast(sinceOverride string) error {
 		fmt.Fprintln(os.Stderr)
 	}
 
-	// Build args for the query command.
 	var cmdArgs []string
 	cmdArgs = append(cmdArgs, "query")
 

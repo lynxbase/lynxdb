@@ -68,7 +68,6 @@ func SaveToken(serverURL, token string) error {
 		return err
 	}
 
-	// Load existing file.
 	var f credentialsFile
 
 	data, readErr := os.ReadFile(path)

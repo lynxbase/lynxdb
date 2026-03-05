@@ -379,7 +379,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			vm.stack[vm.sp] = vm.stack[vm.sp-1]
 			vm.sp++
 
-		// === Constants ===
 		case OpConstInt, OpConstFloat, OpConstStr:
 			newIP, err := vm.execConst(prog, ins, ip)
 			if err != nil {
@@ -408,7 +407,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			vm.stack[vm.sp] = event.NullValue()
 			vm.sp++
 
-		// === Field Access ===
 		case OpLoadField:
 			newIP, err := vm.execLoadField(prog, ins, ip, fields)
 			if err != nil {
@@ -430,7 +428,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			}
 			ip = newIP
 
-		// === Integer Arithmetic ===
 		case OpAddInt:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
@@ -475,7 +472,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = event.IntValue(-a.AsInt())
 
-		// === Float Arithmetic ===
 		case OpAddFloat:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
@@ -509,7 +505,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = event.FloatValue(-a.AsFloat())
 
-		// === Mixed Arithmetic ===
 		case OpAdd:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
@@ -540,7 +535,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			vm.sp--
 			vm.stack[vm.sp-1] = modValues(a, b)
 
-		// === String Operations ===
 		case OpConcat:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
@@ -618,7 +612,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 				vm.stack[vm.sp-1] = event.StringValue(strings.Join(parts, "|||"))
 			}
 
-		// === Comparison ===
 		case OpEq:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
@@ -672,7 +665,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			}
 			ip = newIP
 
-		// === Logic ===
 		case OpAnd:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
@@ -689,7 +681,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = event.BoolValue(!IsTruthy(a))
 
-		// === Control Flow ===
 		case OpJump:
 			operand, opErr := readOperandSafe(ins, ip)
 			if opErr != nil {
@@ -723,7 +714,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 				ip = pos
 			}
 
-		// === Type Conversion ===
 		case OpToInt:
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = toIntValue(a)
@@ -744,7 +734,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = event.BoolValue(IsTruthy(a))
 
-		// === Math Functions ===
 		case OpRound:
 			decimals := vm.stack[vm.sp-1]
 			num := vm.stack[vm.sp-2]
@@ -771,7 +760,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = sqrtValue(a)
 
-		// === Multivalue ===
 		case OpMvAppend:
 			operand, opErr := readOperandSafe(ins, ip)
 			if opErr != nil {
@@ -825,7 +813,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 				vm.stack[vm.sp-1] = event.IntValue(int64(len(parts)))
 			}
 
-		// === Null Handling ===
 		case OpCoalesce:
 			operand, opErr := readOperandSafe(ins, ip)
 			if opErr != nil {
@@ -853,14 +840,12 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = event.BoolValue(!a.IsNull())
 
-		// === Time ===
 		case OpStrftime:
 			format := vm.stack[vm.sp-1]
 			ts := vm.stack[vm.sp-2]
 			vm.sp--
 			vm.stack[vm.sp-1] = strftimeValue(ts, format)
 
-		// === JSON Functions ===
 		case OpJsonExtract:
 			// Stack: [..., field, path] → [..., result]
 			path := vm.stack[vm.sp-1]
@@ -954,7 +939,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			vm.sp--
 			vm.stack[vm.sp-1] = jsonMergeValue(a, b)
 
-		// === Return ===
 		case OpReturn:
 			if vm.sp > 0 {
 				return vm.stack[vm.sp-1], nil
@@ -1030,8 +1014,6 @@ func (vm *VM) jsonExtractCached(source, path string) event.Value {
 	// Multi-level: walk remaining path from the cached first-level value.
 	return walkJSONPath(raw, parts[1:])
 }
-
-// Value helper functions
 
 // IsTruthy returns whether an event value is considered true.
 func IsTruthy(v event.Value) bool {

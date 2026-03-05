@@ -575,7 +575,6 @@ func handleAsyncFallback(ctx context.Context, jobID string, failEmpty bool, anal
 
 	result, err := apiClient().PollJob(ctx, jobID, nil)
 	if err != nil {
-		// Check for specific error patterns from the job.
 		var apiErr *client.APIError
 		if errors.As(err, &apiErr) {
 			return apiErr

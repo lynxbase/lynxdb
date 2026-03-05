@@ -198,7 +198,6 @@ func (c *Compactor) Merge(ctx context.Context, plan *Plan) (*MergeResult, error)
 
 	index := plan.InputSegments[0].Meta.Index
 
-	// Open all segment readers and build cursors.
 	// Track mmap handles for cleanup after merge.
 	var mmapHandles []*segment.MmapSegment
 	defer func() {
@@ -224,7 +223,6 @@ func (c *Compactor) Merge(ctx context.Context, plan *Plan) (*MergeResult, error)
 			rgCount: reader.RowGroupCount(),
 		}
 
-		// Load first row group.
 		if err := cur.advance(); err != nil {
 			return nil, fmt.Errorf("compaction: read segment %s: %w", seg.Meta.ID, err)
 		}
@@ -262,7 +260,6 @@ func (c *Compactor) Merge(ctx context.Context, plan *Plan) (*MergeResult, error)
 		cur := cursors[0]
 		ev := cur.current()
 
-		// Track time bounds.
 		if totalEvents == 0 {
 			minTime = ev.Time
 			maxTime = ev.Time
@@ -279,7 +276,6 @@ func (c *Compactor) Merge(ctx context.Context, plan *Plan) (*MergeResult, error)
 		allEvents = append(allEvents, ev)
 		totalEvents++
 
-		// Advance cursor.
 		cur.pos++
 
 		if cur.pos >= len(cur.events) {
@@ -366,7 +362,6 @@ func (c *Compactor) Execute(ctx context.Context, plan *Plan) (*SegmentInfo, erro
 		return nil, fmt.Errorf("compaction: write output: %w", err)
 	}
 
-	// Build output metadata.
 	now := time.Now()
 	outMeta := model.SegmentMeta{
 		ID:         fmt.Sprintf("compact-%s-%d-%d", result.Index, result.Level, now.UnixNano()),
@@ -470,12 +465,10 @@ func (c *Compactor) ApplyCompaction(ctx context.Context, plan *Plan) (*SegmentIn
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	// Remove input segments.
 	for _, seg := range plan.InputSegments {
 		delete(c.segments, seg.Meta.ID)
 	}
 
-	// Add output segment.
 	c.segments[output.Meta.ID] = output
 
 	return output, nil

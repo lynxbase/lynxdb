@@ -5,8 +5,6 @@ import (
 	"strings"
 )
 
-// Status output (writes to Stderr, respects quiet)
-
 // PrintSuccess prints a green "check" message to the theme's writer.
 func (t *Theme) PrintSuccess(quiet bool, format string, args ...interface{}) {
 	if quiet {
@@ -54,8 +52,6 @@ func (t *Theme) PrintNextSteps(quiet bool, steps ...string) {
 	}
 }
 
-// Icons
-
 // IconOK returns a green check mark.
 func (t *Theme) IconOK() string { return t.StatusOK.Render("\u2714") }
 
@@ -64,8 +60,6 @@ func (t *Theme) IconWarn() string { return t.StatusWarn.Render("\u26a0") }
 
 // IconError returns a red cross mark.
 func (t *Theme) IconError() string { return t.StatusErr.Render("\u2716") }
-
-// Structural
 
 // KeyValue returns a formatted "  Label:  Value" string.
 func (t *Theme) KeyValue(key, value string) string {
@@ -80,8 +74,6 @@ func (t *Theme) HRule(width int) string {
 
 	return t.Rule.Render(strings.Repeat("\u2500", width))
 }
-
-// Error rendering
 
 // RenderError prints a formatted generic error to the theme's writer.
 func (t *Theme) RenderError(err error) {

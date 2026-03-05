@@ -265,7 +265,6 @@ func (r *HTTPReceiver) handleHealth(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *HTTPReceiver) processAndWrite(events []*event.Event) error {
-	// Acquire ingest semaphore for backpressure.
 	select {
 	case r.ingestSem <- struct{}{}:
 		defer func() { <-r.ingestSem }()

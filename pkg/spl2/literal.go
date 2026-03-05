@@ -26,7 +26,6 @@ func ExtractLiterals(pattern string) []string {
 	// Split on wildcard characters: * and ?
 	parts := splitOnWildcards(pattern)
 
-	// Filter out substrings shorter than 3 bytes
 	var result []string
 	for _, p := range parts {
 		if len(p) >= 3 {

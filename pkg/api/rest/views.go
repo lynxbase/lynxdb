@@ -9,8 +9,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
-// Materialized View Handlers
-
 func (s *Server) handleCreateMV(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name      string `json:"name"`

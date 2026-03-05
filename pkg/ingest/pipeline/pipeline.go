@@ -39,8 +39,6 @@ func (p *Pipeline) Process(events []*event.Event) ([]*event.Event, error) {
 	return events, nil
 }
 
-// ParseStage: JSON parser
-
 // JSONParser parses events with JSON raw data and extracts fields.
 type JSONParser struct{}
 
@@ -49,7 +47,6 @@ func (p *JSONParser) Process(events []*event.Event) ([]*event.Event, error) {
 		if e.Raw == "" {
 			continue
 		}
-		// Try to parse as JSON.
 		var fields map[string]interface{}
 		if err := json.Unmarshal([]byte(e.Raw), &fields); err != nil {
 			continue // Not JSON, skip.
@@ -59,7 +56,6 @@ func (p *JSONParser) Process(events []*event.Event) ([]*event.Event, error) {
 			case string:
 				e.SetField(k, event.StringValue(val))
 			case float64:
-				// Check if it's an integer.
 				if val == float64(int64(val)) {
 					e.SetField(k, event.IntValue(int64(val)))
 				} else {
@@ -117,7 +113,6 @@ func parseKeyValuePairs(s string) map[string]string {
 	for _, m := range matches {
 		key := m[1]
 		value := m[2]
-		// Strip quotes if present.
 		if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
 			value = value[1 : len(value)-1]
 		}
@@ -126,8 +121,6 @@ func parseKeyValuePairs(s string) map[string]string {
 
 	return result
 }
-
-// TransformStage
 
 // TimestampNormalizer extracts and normalizes timestamps from events.
 type TimestampNormalizer struct {
@@ -153,7 +146,6 @@ func DefaultTimestampNormalizer() *TimestampNormalizer {
 func (t *TimestampNormalizer) Process(events []*event.Event) ([]*event.Event, error) {
 	for _, e := range events {
 		if e.Time.IsZero() {
-			// Try to extract timestamp from raw.
 			for _, format := range t.Formats {
 				if ts, err := tryParseTime(e.Raw, format); err == nil {
 					e.Time = ts
@@ -161,7 +153,6 @@ func (t *TimestampNormalizer) Process(events []*event.Event) ([]*event.Event, er
 					break
 				}
 			}
-			// Fall back to current time.
 			if e.Time.IsZero() {
 				e.Time = time.Now()
 			}
@@ -219,8 +210,6 @@ func tryParseAt(raw string, start int, format string, fmtLen int) (time.Time, bo
 	return time.Time{}, false
 }
 
-// RouteStage
-
 // Router determines the target index and partition for each event.
 type Router struct {
 	DefaultIndex   string
@@ -245,8 +234,6 @@ func (r *Router) Partition(e *event.Event) int {
 	return int(h.Sum32() % uint32(r.PartitionCount))
 }
 
-// BatchStage
-
 // Batcher collects events into batches.
 type Batcher struct {
 	BatchSize int
@@ -269,8 +256,6 @@ func (b *Batcher) Batch(events []*event.Event) [][]*event.Event {
 
 	return batches
 }
-
-// SyslogParser
 
 // SyslogParser extracts fields from syslog-formatted messages.
 type SyslogParser struct{}
@@ -344,7 +329,6 @@ func (f *FastTimestampAssigner) Process(events []*event.Event) ([]*event.Event, 
 // fields (like _raw, _time), JSON and KV parsing are skipped entirely,
 // and timestamp normalization uses a fast path (no format parsing).
 func SelectivePipeline(requiredFields map[string]bool) *Pipeline {
-	// Determine if we need JSON/KV parsing.
 	needParsing := requiredFields == nil // nil means "all fields needed"
 	if !needParsing {
 		for field := range requiredFields {

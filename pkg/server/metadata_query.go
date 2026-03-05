@@ -129,7 +129,6 @@ func (e *Engine) FieldValuesFromMetadata(ctx context.Context, fieldName string, 
 	valueCounts := make(map[string]int)
 	totalCount := 0
 
-	// Scan segments.
 	for _, seg := range segs {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -180,7 +179,6 @@ func (e *Engine) FieldValuesFromMetadata(ctx context.Context, fieldName string, 
 		}
 	}
 
-	// Sort and limit.
 	sorted := make([]FieldValue, 0, len(valueCounts))
 	for val, cnt := range valueCounts {
 		sorted = append(sorted, FieldValue{
@@ -197,7 +195,6 @@ func (e *Engine) FieldValuesFromMetadata(ctx context.Context, fieldName string, 
 		sorted = sorted[:limit]
 	}
 
-	// Compute percentages.
 	for i := range sorted {
 		if totalCount > 0 {
 			sorted[i].Percent = float64(sorted[i].Count) / float64(totalCount) * 100
@@ -242,7 +239,6 @@ func (e *Engine) ListSourcesFromMetadata(ctx context.Context, indexName string,
 		}
 	}
 
-	// Scan segments.
 	for _, seg := range segs {
 		if err := ctx.Err(); err != nil {
 			return nil, err

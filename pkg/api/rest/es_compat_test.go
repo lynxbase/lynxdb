@@ -2,6 +2,7 @@ package rest
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -549,7 +550,7 @@ func TestESClusterInfo_Basic(t *testing.T) {
 	if result.ClusterName != "lynxdb" {
 		t.Fatalf("cluster_name: %q", result.ClusterName)
 	}
-	if result.Version.Number != "8.0.0" {
+	if result.Version.Number != "8.11.0" {
 		t.Fatalf("version.number: %q", result.Version.Number)
 	}
 }
@@ -595,6 +596,265 @@ func TestESBulk_QueryAfterIngest(t *testing.T) {
 	n := queryEventCount(t, srv.Addr(), `{"q":"FROM main"}`)
 	if n < 10 {
 		t.Fatalf("expected 10 events, got %d", n)
+	}
+}
+
+func TestESBulk_GzipCompressed(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	body := `{"index":{"_index":"logs"}}
+{"@timestamp":"2026-03-05T10:00:00Z","message":"gzip hello"}
+{"index":{"_index":"logs"}}
+{"@timestamp":"2026-03-05T10:01:00Z","message":"gzip world"}
+`
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	gz.Write([]byte(body))
+	gz.Close()
+
+	req, err := http.NewRequest("POST",
+		fmt.Sprintf("http://%s/api/v1/es/_bulk", srv.Addr()),
+		&buf,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-ndjson")
+	req.Header.Set("Content-Encoding", "gzip")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d, body: %s", resp.StatusCode, b)
+	}
+
+	var result esBulkResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result.Errors {
+		t.Fatal("expected errors=false")
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("items: got %d, want 2", len(result.Items))
+	}
+	for i, item := range result.Items {
+		if item.Index == nil || item.Index.Status != 201 {
+			t.Fatalf("item %d: expected 201", i)
+		}
+	}
+
+	// Verify events queryable.
+	time.Sleep(200 * time.Millisecond)
+	n := queryEventCount(t, srv.Addr(), `{"q":"FROM main"}`)
+	if n < 2 {
+		t.Fatalf("expected at least 2 events, got %d", n)
+	}
+}
+
+func TestESBulk_InvalidGzip(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	req, _ := http.NewRequest("POST",
+		fmt.Sprintf("http://%s/api/v1/es/_bulk", srv.Addr()),
+		strings.NewReader("not-gzip-data"),
+	)
+	req.Header.Set("Content-Encoding", "gzip")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 400 {
+		t.Fatalf("status: %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestESStub_ILMPolicy(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/es/_ilm/policy/filebeat", srv.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status: %d, want 200", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	if len(result) != 0 {
+		t.Fatalf("expected empty JSON object, got %v", result)
+	}
+
+	// Check X-Elastic-Product header.
+	if h := resp.Header.Get("X-Elastic-Product"); h != "Elasticsearch" {
+		t.Fatalf("X-Elastic-Product: got %q, want Elasticsearch", h)
+	}
+}
+
+func TestESStub_IndexTemplate(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/es/_index_template/filebeat-8.11.0", srv.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status: %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestESStub_IngestPipeline(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/es/_ingest/pipeline/filebeat-test", srv.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status: %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestESStub_PutIndex(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	req, _ := http.NewRequest("PUT",
+		fmt.Sprintf("http://%s/api/v1/es/myindex", srv.Addr()),
+		strings.NewReader(`{"settings":{}}`),
+	)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status: %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestESClusterInfo_XElasticProductHeader(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/es/", srv.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if h := resp.Header.Get("X-Elastic-Product"); h != "Elasticsearch" {
+		t.Fatalf("X-Elastic-Product: got %q, want Elasticsearch", h)
+	}
+}
+
+func TestESBulk_MsgFieldParam(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	body := `{"index":{"_index":"logs"}}
+{"@timestamp":"2026-03-05T10:00:00Z","message":"hello msg field","extra":"data"}
+`
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/api/v1/es/_bulk?_msg_field=message", srv.Addr()),
+		"application/x-ndjson",
+		strings.NewReader(body),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+
+	var result esBulkResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result.Errors {
+		t.Fatal("expected errors=false")
+	}
+}
+
+func TestESBulk_TimeFieldParam(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	body := `{"index":{"_index":"logs"}}
+{"ts":"2026-03-05T10:00:00Z","message":"custom time field"}
+`
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/api/v1/es/_bulk?_time_field=ts", srv.Addr()),
+		"application/x-ndjson",
+		strings.NewReader(body),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+
+	var result esBulkResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result.Errors {
+		t.Fatal("expected errors=false")
+	}
+}
+
+func TestESIndexDoc_GzipCompressed(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	body := `{"message":"gzip doc","level":"info"}`
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	gz.Write([]byte(body))
+	gz.Close()
+
+	req, _ := http.NewRequest("POST",
+		fmt.Sprintf("http://%s/api/v1/es/logs/_doc", srv.Addr()),
+		&buf,
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Encoding", "gzip")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 201 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d, body: %s", resp.StatusCode, b)
+	}
+
+	var result esIndexDocResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result.ID == "" {
+		t.Fatal("empty _id")
 	}
 }
 

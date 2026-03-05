@@ -745,8 +745,6 @@ func printImportSummary(stats importStats, elapsed time.Duration, dryRun bool) {
 	)
 }
 
-// Helpers
-
 // countingReader wraps an io.Reader and counts bytes read.
 type countingReader struct {
 	r io.Reader

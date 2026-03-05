@@ -37,7 +37,7 @@ func (s *Server) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 		case "listen":
 			restartRequired = append(restartRequired, "listen")
 		case "query", "ingest", "storage", "http":
-			// Sub-configs are runtime adjustable for now.
+			// Sub-configs are runtime adjustable.
 		default:
 			respondError(w, ErrCodeValidationError, http.StatusBadRequest, "unknown config key: "+key)
 

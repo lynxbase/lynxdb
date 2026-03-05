@@ -114,8 +114,6 @@ func runShare(query, since, from, to string) error {
 	return nil
 }
 
-// Helpers
-
 // buildSearchURL constructs a Web UI search URL with query parameters.
 func buildSearchURL(query, since, from, to string) string {
 	params := url.Values{}

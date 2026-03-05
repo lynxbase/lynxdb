@@ -116,7 +116,6 @@ func (s *Scheduler) UnscheduleAlert(id string) {
 }
 
 func (s *Scheduler) executeCheck(ctx context.Context, alertID string) {
-	// Acquire semaphore slot.
 	select {
 	case s.sem <- struct{}{}:
 		defer func() { <-s.sem }()

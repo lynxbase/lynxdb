@@ -602,7 +602,7 @@ func extractSearchTerms(expr SearchExpr, terms *[]string) {
 		extractSearchTerms(ex.Left, terms)
 		extractSearchTerms(ex.Right, terms)
 	case *SearchOrExpr:
-		// For OR, we can't use individual terms for bloom filter pruning
+		// OR branches: individual terms cannot be used for bloom filter pruning
 		// since the event might match either branch.
 	case *SearchNotExpr:
 		// NOT terms can't be used for bloom filter (bloom only proves presence)

@@ -63,7 +63,6 @@ func (p *plannerImpl) Plan(req PlanRequest) (*Plan, error) {
 	// before parsing so all clients benefit from bare field=value support.
 	query := spl2.NormalizeQuery(req.Query)
 
-	// Check plan cache first.
 	if p.planCache != nil {
 		if cached, ok := p.planCache.Get(query); ok {
 			// Deep clone to prevent mutation of cached plan.
@@ -89,7 +88,6 @@ func (p *plannerImpl) Plan(req PlanRequest) (*Plan, error) {
 	parseDuration := time.Since(parseStart)
 	optimizeStart := time.Now()
 
-	// Build optimizer options.
 	var optOpts []optimizer.OptOption
 	if p.viewCatalog != nil {
 		optOpts = append(optOpts, optimizer.WithCatalog(p.viewCatalog))

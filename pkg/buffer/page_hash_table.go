@@ -60,7 +60,6 @@ func NewPageHashTable(allocator *OperatorPageAllocator) *PageHashTable {
 // Returns the PageRef for the value portion of the entry, allowing the caller
 // to read/write the aggregation state directly in the page.
 func (ht *PageHashTable) Put(hash uint64, key, value []byte) (PageRef, error) {
-	// Check for existing entry with same hash+key.
 	if locs, ok := ht.directory[hash]; ok {
 		for _, loc := range locs {
 			if ht.keyEquals(loc, key) {
@@ -150,7 +149,6 @@ func (ht *PageHashTable) ForEach(fn func(hash uint64, key []byte, valRef PageRef
 func (ht *PageHashTable) appendEntry(hash uint64, key, value []byte) (PageRef, error) {
 	totalLen := entryHeaderSize + len(key) + len(value)
 
-	// Ensure we have a page with enough space.
 	if ht.curPage == nil || ht.curOffset+totalLen > ht.curPage.Size() {
 		if err := ht.allocEntryPage(); err != nil {
 			return PageRef{}, err

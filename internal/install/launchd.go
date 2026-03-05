@@ -89,7 +89,6 @@ func installLaunchdService(_ Options, paths Paths) (string, error) {
 		return "", err
 	}
 
-	// Ensure the parent directory exists.
 	plistDir := filepath.Dir(paths.ServiceFile)
 	if err := os.MkdirAll(plistDir, 0o755); err != nil {
 		return "", fmt.Errorf("install.installLaunchdService: create dir: %w", err)

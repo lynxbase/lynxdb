@@ -481,7 +481,7 @@ func (j *JoinIterator) graceHashJoin(ctx context.Context, overflowBatch *Batch) 
 
 // partitionLeftSide reads the entire left side and writes rows to partition
 // writers. When prefetch is active, the prefetch goroutine owns j.left, so
-// we drain from j.prefetchCh instead of calling j.left.Next() directly.
+// rows are drained from j.prefetchCh instead of calling j.left.Next() directly.
 // This prevents a data race between two goroutines calling Next() on the
 // same non-thread-safe iterator.
 func (j *JoinIterator) partitionLeftSide(ctx context.Context, writers []*SpillWriter, numParts int) error {

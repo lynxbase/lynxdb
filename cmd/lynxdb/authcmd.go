@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -15,8 +16,11 @@ import (
 )
 
 var (
-	flagAuthKeyName string
-	flagAuthYes     bool
+	flagAuthKeyName     string
+	flagAuthScope       string
+	flagAuthExpires     string
+	flagAuthDescription string
+	flagAuthYes         bool
 )
 
 var authCmd = &cobra.Command{
@@ -25,25 +29,29 @@ var authCmd = &cobra.Command{
 }
 
 var authCreateKeyCmd = &cobra.Command{
-	Use:   "create-key",
-	Short: "Create a new API key",
-	Example: `  lynxdb auth create-key --name ci-pipeline
-  lynxdb auth create-key --name grafana --server https://lynxdb.prod.com`,
+	Use:     "create",
+	Aliases: []string{"create-key"}, // backward compat
+	Short:   "Create a new API key",
+	Example: `  lynxdb auth create --name web-01 --scope ingest
+  lynxdb auth create --name grafana-dash --scope query --expires 90d
+  lynxdb auth create --name ci-pipeline
+  lynxdb auth create --name web-01 --scope ingest --format json | jq -r .api_key`,
 	RunE: runAuthCreateKey,
 }
 
 var authListKeysCmd = &cobra.Command{
-	Use:     "list-keys",
+	Use:     "list",
+	Aliases: []string{"list-keys", "ls"}, // backward compat
 	Short:   "List all API keys",
-	Aliases: []string{"ls"},
 	RunE:    runAuthListKeys,
 }
 
 var authRevokeKeyCmd = &cobra.Command{
-	Use:   "revoke-key <id>",
-	Short: "Revoke an API key",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runAuthRevokeKey,
+	Use:     "revoke <id>",
+	Aliases: []string{"revoke-key"}, // backward compat
+	Short:   "Revoke an API key",
+	Args:    cobra.ExactArgs(1),
+	RunE:    runAuthRevokeKey,
 }
 
 var authRotateRootCmd = &cobra.Command{
@@ -61,6 +69,9 @@ var authStatusCmd = &cobra.Command{
 func init() {
 	authCreateKeyCmd.Flags().StringVar(&flagAuthKeyName, "name", "", "Human-readable name (required)")
 	_ = authCreateKeyCmd.MarkFlagRequired("name")
+	authCreateKeyCmd.Flags().StringVar(&flagAuthScope, "scope", "full", "Scope: ingest|query|admin|full")
+	authCreateKeyCmd.Flags().StringVar(&flagAuthExpires, "expires", "never", "Expiration: 30d|90d|1y|never")
+	authCreateKeyCmd.Flags().StringVar(&flagAuthDescription, "description", "", "Optional description")
 
 	authRevokeKeyCmd.Flags().BoolVarP(&flagAuthYes, "yes", "y", false, "Skip confirmation prompt")
 	authRotateRootCmd.Flags().BoolVarP(&flagAuthYes, "yes", "y", false, "Skip confirmation prompt")
@@ -74,22 +85,98 @@ func init() {
 }
 
 func runAuthCreateKey(_ *cobra.Command, _ []string) error {
+	if !auth.ValidScope(flagAuthScope) {
+		return fmt.Errorf("invalid scope %q: must be one of ingest, query, admin, full", flagAuthScope)
+	}
+
+	input := client.CreateKeyInput{
+		Name:        flagAuthKeyName,
+		Scope:       flagAuthScope,
+		Description: flagAuthDescription,
+	}
+	if flagAuthExpires != "" && flagAuthExpires != "never" {
+		input.ExpiresIn = flagAuthExpires
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	created, err := apiClient().AuthCreateKey(ctx, flagAuthKeyName)
+	created, err := apiClient().AuthCreateKeyWithOpts(ctx, input)
 	if err != nil {
 		return err
 	}
 
+	if globalFormat == formatJSON {
+		return json.NewEncoder(os.Stdout).Encode(created)
+	}
+
 	t := ui.Stderr
-	printSuccess("Created API key:\n")
-	fmt.Fprintln(os.Stderr, t.KeyValue("Key ID", created.ID))
+
+	printSuccess("API key created\n")
+	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, t.KeyValue("Name", created.Name))
-	fmt.Fprintln(os.Stderr, t.KeyValue("Token", t.Bold.Render(created.Token)))
-	fmt.Fprintf(os.Stderr, "\n  %s\n", t.Dim.Render("Save this key now. It will NOT be shown again."))
+	fmt.Fprintln(os.Stderr, t.KeyValue("ID", created.ID))
+	fmt.Fprintln(os.Stderr, t.KeyValue("Scope", string(created.Scope)))
+
+	if !created.ExpiresAt.IsZero() {
+		remaining := time.Until(created.ExpiresAt)
+		days := int(remaining.Hours() / 24)
+		fmt.Fprintln(os.Stderr, t.KeyValue("Expires", fmt.Sprintf("%s (%dd)", created.ExpiresAt.Format("2006-01-02"), days)))
+	} else {
+		fmt.Fprintln(os.Stderr, t.KeyValue("Expires", "never"))
+	}
+	if created.Description != "" {
+		fmt.Fprintln(os.Stderr, t.KeyValue("Description", created.Description))
+	}
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "  Token (shown once — save it now):\n")
+	fmt.Fprintf(os.Stderr, "    %s\n", t.Bold.Render(created.Token))
+
+	scope := created.Scope
+	switch scope {
+	case "ingest":
+		printFilebeatSnippet(t, created)
+	case "query":
+		printQuerySnippet(t, created)
+	}
+
+	fmt.Fprintln(os.Stderr)
 
 	return nil
+}
+
+// printFilebeatSnippet prints a ready-to-paste filebeat.yml snippet.
+func printFilebeatSnippet(t *ui.Theme, created *client.AuthCreatedKey) {
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "  %s filebeat.yml %s\n",
+		t.Dim.Render("───"),
+		t.Dim.Render("─────────────────────────────────────────"))
+
+	host := strings.TrimRight(globalServer, "/") + "/api/v1/es"
+
+	fmt.Fprintf(os.Stderr, "  output.elasticsearch:\n")
+	fmt.Fprintf(os.Stderr, "    hosts: [\"%s\"]\n", host)
+	fmt.Fprintf(os.Stderr, "    api_key: \"%s\"\n", created.APIKeyComposite)
+	fmt.Fprintf(os.Stderr, "    allow_older_versions: true\n")
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "  setup.ilm.enabled: false\n")
+	fmt.Fprintf(os.Stderr, "  setup.template.enabled: false\n")
+
+	fmt.Fprintf(os.Stderr, "  %s\n",
+		t.Dim.Render("─────────────────────────────────────────────────────────────"))
+}
+
+// printQuerySnippet prints usage hints for query-scoped keys.
+func printQuerySnippet(t *ui.Theme, created *client.AuthCreatedKey) {
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "  %s Usage %s\n",
+		t.Dim.Render("───"),
+		t.Dim.Render("───────────────────────────────────────────"))
+	fmt.Fprintf(os.Stderr, "  CLI:      lynxdb query 'level=error' --token %s\n", truncateStr(created.Token, 20)+"...")
+	fmt.Fprintf(os.Stderr, "  Header:   Authorization: Bearer %s\n", truncateStr(created.Token, 20)+"...")
+	fmt.Fprintf(os.Stderr, "  %s\n",
+		t.Dim.Render("─────────────────────────────────────────────────────────────"))
 }
 
 func runAuthListKeys(_ *cobra.Command, _ []string) error {
@@ -108,11 +195,12 @@ func runAuthListKeys(_ *cobra.Command, _ []string) error {
 	}
 
 	t := ui.Stdout
-	tbl := ui.NewTable(t).SetColumns("ID", "NAME", "PREFIX", "CREATED", "LAST USED")
+	tbl := ui.NewTable(t).SetColumns("ID", "NAME", "SCOPE", "EXPIRES", "LAST USED", "CREATED")
 
+	expiresSoon := 0
 	for _, k := range keys {
 		age := formatRelativeTime(k.CreatedAt.Format(time.RFC3339))
-		lastUsed := "never"
+		lastUsed := "—"
 
 		if !k.LastUsedAt.IsZero() {
 			lastUsed = formatRelativeTime(k.LastUsedAt.Format(time.RFC3339))
@@ -120,17 +208,38 @@ func runAuthListKeys(_ *cobra.Command, _ []string) error {
 
 		name := k.Name
 		if k.IsRoot {
-			name += " (root)"
+			name = "[root]"
+		}
+
+		scope := k.Scope
+		if scope == "" {
+			scope = "full"
+		}
+
+		expires := "never"
+		if !k.ExpiresAt.IsZero() {
+			expires = k.ExpiresAt.Format("2006-01-02")
+			if time.Until(k.ExpiresAt) < 30*24*time.Hour {
+				expiresSoon++
+			}
 		}
 
 		tbl.AddRow(
-			truncateStr(k.ID, 13),
-			truncateStr(name, 13),
-			k.Prefix,
+			truncateStr(k.ID, 18),
+			truncateStr(name, 18),
+			scope,
+			expires,
+			lastUsed,
 			age,
-			lastUsed)
+		)
 	}
 	fmt.Print(tbl.String())
+
+	summary := fmt.Sprintf("  %d keys", len(keys))
+	if expiresSoon > 0 {
+		summary += fmt.Sprintf("  •  %d expires soon (< 30d)", expiresSoon)
+	}
+	fmt.Fprintf(os.Stderr, "\n%s\n", summary)
 
 	return nil
 }
@@ -139,7 +248,7 @@ func runAuthRevokeKey(_ *cobra.Command, args []string) error {
 	id := args[0]
 
 	if !flagAuthYes && isStdinTTY() {
-		if !confirmAction(fmt.Sprintf("Revoke key %s? This cannot be undone.", id)) {
+		if !confirmAction(fmt.Sprintf("Revoke key %s? This will immediately reject all requests using this key.", id)) {
 			fmt.Fprintln(os.Stderr, "  Aborted.")
 
 			return nil
@@ -153,7 +262,7 @@ func runAuthRevokeKey(_ *cobra.Command, args []string) error {
 		return err
 	}
 
-	printSuccess("Revoked key %s", id)
+	printSuccess("Key revoked")
 
 	return nil
 }
@@ -183,7 +292,6 @@ func runAuthRotateRoot(_ *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stderr, "  %s\n", t.Dim.Render("Save this key now. It will NOT be shown again."))
 	fmt.Fprintf(os.Stderr, "  %s\n", t.Dim.Render(fmt.Sprintf("Old root key (%s) has been revoked.", result.RevokedKeyID)))
 
-	// Auto-update credentials file if we had the old key saved.
 	if err := auth.SaveToken(globalServer, result.Token); err != nil {
 		printWarning("Could not update credentials file: %v", err)
 	}
@@ -195,7 +303,6 @@ func runAuthStatus(_ *cobra.Command, _ []string) error {
 	t := ui.Stderr
 	fmt.Fprintln(os.Stderr, t.KeyValue("Server", globalServer))
 
-	// Show TLS status for HTTPS servers.
 	if strings.HasPrefix(globalServer, "https://") {
 		_, fp, loadErr := auth.LoadCredentials(globalServer)
 		if loadErr == nil && fp != "" {
@@ -217,7 +324,6 @@ func runAuthStatus(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	// Try to authenticate.
 	c := client.NewClient(
 		client.WithBaseURL(globalServer),
 		client.WithAuthToken(token),

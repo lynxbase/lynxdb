@@ -118,7 +118,6 @@ func printTailEvent(data string) {
 		msg, _ = event["_raw"].(string)
 	}
 
-	// Colorize level (lipgloss handles no-color automatically).
 	var levelStr string
 
 	switch strings.ToUpper(level) {

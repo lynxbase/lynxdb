@@ -105,7 +105,6 @@ func ExtractQueryHints(prog *Program) *QueryHints {
 func extractQueryHintsFromQuery(q *Query) *QueryHints {
 	h := &QueryHints{}
 
-	// Extract index name and multi-source info from source clause.
 	if q.Source != nil && !q.Source.IsVariable {
 		h.IndexName = q.Source.Index
 		if len(q.Source.Indices) > 0 {
@@ -146,14 +145,14 @@ func extractQueryHintsFromQuery(q *Query) *QueryHints {
 		h.FieldPredicates = filtered
 	}
 
-	// Check for terminal HeadCommand.
+	// Terminal HeadCommand → set Limit hint.
 	if len(q.Commands) > 0 {
 		if hc, ok := q.Commands[len(q.Commands)-1].(*HeadCommand); ok {
 			h.Limit = hc.Count
 		}
 	}
 
-	// Check for terminal TailCommand.
+	// Terminal TailCommand → set TailLimit hint.
 	if len(q.Commands) > 0 {
 		if tc, ok := q.Commands[len(q.Commands)-1].(*TailCommand); ok {
 			h.TailLimit = tc.Count
@@ -416,7 +415,7 @@ func extractWhereHints(expr Expr, h *QueryHints) {
 			extractWhereHints(e.Left, h)
 			extractWhereHints(e.Right, h)
 		}
-		// For OR, we can't safely push down predicates.
+		// OR branches cannot be safely pushed down as conjunctive predicates.
 	}
 }
 

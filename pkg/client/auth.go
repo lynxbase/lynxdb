@@ -7,18 +7,22 @@ import (
 
 // AuthKeyInfo is the public representation of an API key (no token or hash).
 type AuthKeyInfo struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Prefix     string    `json:"prefix"`
-	IsRoot     bool      `json:"is_root"`
-	CreatedAt  time.Time `json:"created_at"`
-	LastUsedAt time.Time `json:"last_used_at,omitempty"`
+	ID          string    `json:"id"`
+	Name        string    `json:"name"`
+	Prefix      string    `json:"prefix"`
+	Scope       string    `json:"scope"`
+	Description string    `json:"description,omitempty"`
+	ExpiresAt   time.Time `json:"expires_at,omitempty"`
+	IsRoot      bool      `json:"is_root"`
+	CreatedAt   time.Time `json:"created_at"`
+	LastUsedAt  time.Time `json:"last_used_at,omitempty"`
 }
 
 // AuthCreatedKey is returned when a new key is created, including the one-time token.
 type AuthCreatedKey struct {
 	AuthKeyInfo
-	Token string `json:"token"`
+	Token           string `json:"token"`
+	APIKeyComposite string `json:"api_key"`
 }
 
 // AuthRotatedKey is returned from rotate-root, including the new token and revoked key ID.
@@ -32,11 +36,24 @@ type AuthRotatedKey struct {
 	CreatedAt    time.Time `json:"created_at"`
 }
 
-// AuthCreateKey creates a new API key. Requires a root key.
+// CreateKeyInput holds parameters for creating a new API key.
+type CreateKeyInput struct {
+	Name        string `json:"name"`
+	Scope       string `json:"scope,omitempty"`
+	Description string `json:"description,omitempty"`
+	ExpiresIn   string `json:"expires_in,omitempty"`
+}
+
+// AuthCreateKey creates a new API key with default options. Requires a root key.
 func (c *Client) AuthCreateKey(ctx context.Context, name string) (*AuthCreatedKey, error) {
+	return c.AuthCreateKeyWithOpts(ctx, CreateKeyInput{Name: name})
+}
+
+// AuthCreateKeyWithOpts creates a new API key with full options. Requires a root key.
+func (c *Client) AuthCreateKeyWithOpts(ctx context.Context, input CreateKeyInput) (*AuthCreatedKey, error) {
 	var result AuthCreatedKey
 
-	_, err := c.doJSON(ctx, "POST", "/auth/keys", map[string]string{"name": name}, &result)
+	_, err := c.doJSON(ctx, "POST", "/auth/keys", input, &result)
 	if err != nil {
 		return nil, err
 	}

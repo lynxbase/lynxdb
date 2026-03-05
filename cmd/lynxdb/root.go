@@ -50,12 +50,9 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.SuggestionsMinimumDistance = 2
-	// SetHelpTemplate controls `--help` output. We use a custom layout that
-	// puts Examples before Usage for better discoverability.
-	// SetUsageTemplate controls the shorter output shown on argument errors.
-	// Splitting these avoids the Long description being printed twice — the
-	// default help template prints Long then calls UsageString, so if the
-	// usage template also contains Long it appears twice.
+	// Custom help layout: Examples before Usage for better discoverability.
+	// Separate usage template avoids Long description appearing twice —
+	// the default help template prints Long then calls UsageString.
 	rootCmd.SetHelpTemplate(helpTemplate)
 	rootCmd.SetUsageTemplate(usageTemplate)
 	cobra.OnInitialize(initTheme)
@@ -146,10 +143,9 @@ func runWelcome(_ *cobra.Command, _ []string) error {
 // Execute runs the root command and exits with an appropriate code.
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		// Ensure the UI theme is initialized. cobra.OnInitialize callbacks
-		// only run when a command successfully resolves and starts executing.
-		// If flag parsing fails (e.g. unknown flag), initTheme was never
-		// called and ui.Stderr is nil — which would panic in renderError.
+		// cobra.OnInitialize callbacks only run on successful command resolution.
+		// On flag parse failures, initTheme was never called and ui.Stderr is
+		// nil — which would panic in renderError.
 		ensureThemeInit()
 
 		// noResultsError is a clean exit with a specific code; already printed.

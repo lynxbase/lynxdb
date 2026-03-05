@@ -42,7 +42,6 @@ func DetectCompatHints(query string) []CompatHint {
 	lower := strings.ToLower(query)
 	seen := make(map[string]bool)
 
-	// Check for unsupported commands.
 	for cmd, msg := range unsupportedCommands {
 		pattern := "| " + cmd
 		if strings.Contains(lower, pattern) || strings.Contains(lower, "|"+cmd) {

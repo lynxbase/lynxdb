@@ -357,8 +357,6 @@ func (s *SegmentStreamIterator) MemoryUsed() int64 {
 	return s.acct.Used()
 }
 
-// Memtable phase
-
 func (s *SegmentStreamIterator) nextMemtableBatch(_ context.Context) (*Batch, error) {
 	if s.memOff >= len(s.memEvents) {
 		return nil, nil
@@ -432,15 +430,13 @@ func (s *SegmentStreamIterator) nextMemtableBatch(_ context.Context) (*Batch, er
 		s.totalYielded, minAdaptiveBatchSize)
 }
 
-// Segment phase
-
 func (s *SegmentStreamIterator) nextSegmentBatch(ctx context.Context) (*Batch, error) {
 	for {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
 
-		// If we have buffered row group events, yield from them.
+		// If there are buffered row group events, yield from them.
 		if s.rgOff < len(s.rgEvents) {
 			batch, err := s.yieldFromRGBuffer()
 			if err != nil {
@@ -705,8 +701,6 @@ func (s *SegmentStreamIterator) loadCurrentRowGroup() error {
 	return nil
 }
 
-// Segment skip checks
-
 // matchesStreamSourceScope checks if a segment's index matches the streaming
 // query's source scope. Returns true if the segment should be scanned.
 func (s *SegmentStreamIterator) matchesStreamSourceScope(segIndex string) bool {
@@ -924,8 +918,6 @@ func evaluateTermTree(tree *spl2.SearchTermTree, idx *index.SerializedIndex) *ro
 	return nil
 }
 
-// Row group pruning
-
 func (s *SegmentStreamIterator) canPruneRowGroupByTime(reader *segment.Reader, rgIdx int) bool {
 	tb := s.hints.TimeBounds
 	if tb == nil {
@@ -960,8 +952,6 @@ func (s *SegmentStreamIterator) canPruneRowGroupByBloom(reader *segment.Reader, 
 
 	return !bf.MayContainAll(s.hints.SearchTerms)
 }
-
-// Progress reporting
 
 func (s *SegmentStreamIterator) buildProgress() SegmentStreamProgress {
 	return SegmentStreamProgress{
@@ -1027,8 +1017,6 @@ func (s *SegmentStreamIterator) reportRowGroupDone() {
 	p.CurrentRGTotal = s.rgTotal
 	s.onProgress(p)
 }
-
-// Helpers
 
 // filterEventsByTimeBounds filters events by time bounds.
 // Returns the input slice unmodified if no bounds are set.

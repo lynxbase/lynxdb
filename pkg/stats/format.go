@@ -386,8 +386,6 @@ type jsonStats struct {
 	PipelineMS        *float64 `json:"pipeline_ms,omitempty"`
 }
 
-// Internal formatting helpers
-
 func writeIOLine(w io.Writer, s *QueryStats) {
 	totalBytes := s.DiskBytesRead + s.CacheBytesRead + s.S3BytesRead
 	if totalBytes == 0 {

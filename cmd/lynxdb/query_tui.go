@@ -17,8 +17,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
-// TUI Messages
-
 type jobCreatedMsg string
 type pollTickMsg struct{}
 
@@ -42,8 +40,6 @@ type searchDoneMsg struct {
 }
 
 type searchErrMsg struct{ err error }
-
-// TUI Model
 
 type searchModel struct {
 	spinner   spinner.Model
@@ -98,8 +94,6 @@ func newSearchModel(c *client.Client, query, earliest, latest string) searchMode
 func (m searchModel) Init() tea.Cmd {
 	return tea.Batch(m.spinner.Tick, submitJobCmd(m.client, m.query, m.earliest, m.latest))
 }
-
-// TUI Commands
 
 func submitJobCmd(c *client.Client, query, earliest, latest string) tea.Cmd {
 	return func() tea.Msg {
@@ -161,7 +155,6 @@ func pollJobCmd(c *client.Client, jobID string, pollCount int) tea.Cmd {
 func extractDoneFromJob(job *client.JobResult) searchDoneMsg {
 	var rows []map[string]interface{}
 
-	// Parse results from the raw JSON results field.
 	if job.Results != nil {
 		var typed struct {
 			Type    string                   `json:"type"`
@@ -208,8 +201,6 @@ func extractProgressFromJob(prog *client.JobProgress) progressMsg {
 		elapsedMS:           float64(prog.ElapsedMS),
 	}
 }
-
-// TUI Update
 
 func (m searchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -379,7 +370,6 @@ func doQueryTUI(_ context.Context, query, since, earliest, latest string, failEm
 	c := apiClient()
 	m := newSearchModel(c, query, earliest, latest)
 
-	// Render the progress spinner to stderr so stdout stays clean for results.
 	p := tea.NewProgram(m, tea.WithOutput(os.Stderr))
 
 	final, err := p.Run()

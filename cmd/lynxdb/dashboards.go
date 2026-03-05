@@ -174,7 +174,6 @@ func runDashboardCreate(filePath string) error {
 		return fmt.Errorf("read file: %w", err)
 	}
 
-	// Validate and parse the JSON.
 	var input client.DashboardInput
 	if err := json.Unmarshal(data, &input); err != nil {
 		return fmt.Errorf("invalid JSON in %s: %w", filePath, err)

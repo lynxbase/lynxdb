@@ -64,12 +64,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Print warnings for unknown keys.
 	for _, w := range warnings {
 		fmt.Fprintf(os.Stderr, "Warning: %s\n", w)
 	}
 
-	// Apply CLI flag overrides (only when explicitly set).
 	_, cliOverrides, err := applyCLIOverrides(cmd, cfg)
 	if err != nil {
 		return err
@@ -79,7 +77,6 @@ func runServer(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Track auth/TLS flags in the overrides list for the startup banner.
 	if cmd.Flags().Changed("auth") {
 		cliOverrides = append(cliOverrides, "--auth")
 	}
@@ -93,17 +90,14 @@ func runServer(cmd *cobra.Command, args []string) error {
 		cliOverrides = append(cliOverrides, "--tls-key")
 	}
 
-	// Write PID file so "config reload" can find us.
 	pidPath := config.PIDFilePath(cfg.DataDir)
 	if err := writePIDFile(pidPath); err != nil {
 		return err
 	}
 	defer removePIDFile(pidPath)
 
-	// Print startup banner to stdout.
 	printStartupBanner(cfgPath, cfg, envOverrides, cliOverrides)
 
-	// Bootstrap auth if --auth flag or config is set.
 	var keyStore *auth.KeyStore
 
 	authEnabled := flagAuthEnabled || cfg.Auth.Enabled
@@ -114,7 +108,6 @@ func runServer(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Bootstrap TLS if --tls flag, --tls-cert/--tls-key, or config is set.
 	var tlsCfg *tls.Config
 
 	tlsCfg, err = bootstrapTLS(cmd, cfg)
@@ -122,7 +115,6 @@ func runServer(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("tls init: %w", err)
 	}
 
-	// Set up slog with LevelVar for hot-reloadable log level.
 	var levelVar slog.LevelVar
 	levelVar.Set(parseLogLevel(cfg.LogLevel))
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: &levelVar}))
@@ -222,14 +214,12 @@ func removePIDFile(path string) {
 func printStartupBanner(cfgPath string, cfg *config.Config, envOverrides []config.Override, cliFlags []string) {
 	t := ui.Stdout
 
-	// Config source.
 	if cfgPath != "" {
 		fmt.Println(t.KeyValue("Config", cfgPath))
 	} else {
 		fmt.Println(t.KeyValue("Config", t.Dim.Render("(defaults)")))
 	}
 
-	// Collect all override names.
 	var overrideNames []string
 	for _, o := range envOverrides {
 		overrideNames = append(overrideNames, o.Source)
@@ -239,34 +229,28 @@ func printStartupBanner(cfgPath string, cfg *config.Config, envOverrides []confi
 		fmt.Println(t.KeyValue("Overrides", strings.Join(overrideNames, ", ")))
 	}
 
-	// Data dir.
 	if cfg.DataDir != "" {
 		fmt.Println(t.KeyValue("Data", cfg.DataDir))
 	} else {
 		fmt.Println(t.KeyValue("Data", t.Dim.Render("(in-memory)")))
 	}
 
-	// Listen address.
 	fmt.Println(t.KeyValue("Listen", cfg.Listen))
 	fmt.Println()
 }
 
 func applyHotReload(logger *slog.Logger, old, updated *config.Config, levelVar *slog.LevelVar, srv *rest.Server) {
-	// Log level — hot reloadable.
 	if old.LogLevel != updated.LogLevel {
 		levelVar.Set(parseLogLevel(updated.LogLevel))
 		logger.Info("reloaded log_level", "old", old.LogLevel, "new", updated.LogLevel)
 	}
 
-	// Engine hot-reloadable fields (max_concurrent, query config).
 	srv.Engine().ReloadConfig(updated)
 
-	// Retention — hot reloadable.
 	if old.Retention != updated.Retention {
 		logger.Info("reloaded retention", "old", old.Retention.String(), "new", updated.Retention.String())
 	}
 
-	// Warn about restart-required fields.
 	if old.Listen != updated.Listen {
 		logger.Warn("listen changed, restart required", "old", old.Listen, "new", updated.Listen)
 	}
@@ -323,7 +307,6 @@ func bootstrapAuth(dataDir string) (*auth.KeyStore, error) {
 // bootstrapTLS sets up TLS based on CLI flags and config.
 // Returns nil if TLS is not enabled.
 func bootstrapTLS(cmd *cobra.Command, cfg *config.Config) (*tls.Config, error) {
-	// Determine if TLS is requested via flags or config.
 	hasCertFlag := cmd.Flags().Changed("tls-cert") || cmd.Flags().Changed("tls-key")
 	tlsEnabled := flagTLSEnabled || cfg.TLS.Enabled || hasCertFlag
 
@@ -331,7 +314,6 @@ func bootstrapTLS(cmd *cobra.Command, cfg *config.Config) (*tls.Config, error) {
 		return nil, nil
 	}
 
-	// Resolve cert and key file paths: CLI flags override config.
 	certFile := cfg.TLS.CertFile
 	keyFile := cfg.TLS.KeyFile
 
@@ -342,7 +324,6 @@ func bootstrapTLS(cmd *cobra.Command, cfg *config.Config) (*tls.Config, error) {
 		keyFile = flagTLSKey
 	}
 
-	// Validate: both or neither must be set.
 	if (certFile == "") != (keyFile == "") {
 		return nil, fmt.Errorf("both --tls-cert and --tls-key must be provided together")
 	}
@@ -350,13 +331,11 @@ func bootstrapTLS(cmd *cobra.Command, cfg *config.Config) (*tls.Config, error) {
 	t := ui.Stdout
 
 	if certFile != "" && keyFile != "" {
-		// Bring-your-own cert.
 		tlsCert, err := auth.LoadCertificate(certFile, keyFile)
 		if err != nil {
 			return nil, err
 		}
 
-		// Parse leaf for fingerprint display.
 		leaf, parseErr := parseCertLeaf(&tlsCert)
 		if parseErr != nil {
 			return nil, parseErr

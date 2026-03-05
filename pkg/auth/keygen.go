@@ -53,7 +53,6 @@ func ParseKeyType(token string) (KeyType, error) {
 
 	rest := token[len(keyPrefix):]
 
-	// Find the type delimiter.
 	for i, ch := range rest {
 		if ch == '_' {
 			kt := KeyType(rest[:i])

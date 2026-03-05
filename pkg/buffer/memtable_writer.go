@@ -105,7 +105,6 @@ func (mw *MemtablePageWriter) ReleaseAll() {
 	mw.mu.Unlock()
 
 	for _, p := range pages {
-		// Ensure unpinned before freeing.
 		for p.PinCount() > 0 {
 			p.Unpin()
 		}

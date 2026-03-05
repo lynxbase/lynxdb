@@ -42,7 +42,6 @@ func (e *Event) SetField(name string, v Value) {
 
 // GetField returns the named field value, or NullValue if not present.
 func (e *Event) GetField(name string) Value {
-	// Handle built-in fields.
 	switch name {
 	case "_time":
 		return TimestampValue(e.Time)

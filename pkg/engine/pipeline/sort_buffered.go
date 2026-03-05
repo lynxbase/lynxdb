@@ -675,8 +675,6 @@ func (bs *BufferedSortIterator) sortInPlaceCtx(ctx context.Context) error {
 	return nil
 }
 
-// Batch serialization (in-memory columnar format, same as ColumnarSpillWriter)
-
 // serializeBatchToBytes encodes rows as a columnar batch into a byte buffer.
 // Uses the same binary format as ColumnarSpillWriter.flushBatch() so that
 // deserializeBatchFromBytes can read it identically to ColumnarSpillReader.
@@ -878,8 +876,6 @@ func deserializeBatchFromBytes(data []byte) (*Batch, error) {
 
 	return batch, nil
 }
-
-// Merge phase: bufferedRunReader + bufferedRunMerger
 
 // bufferedRunReader reads rows from a single buffered run, page by page.
 // Tries pool first (cache hit), falls back to spill file (evicted).
@@ -1085,10 +1081,6 @@ func (bs *BufferedSortIterator) buildMerger() (SpillMergerI, error) {
 
 	return newBufferedRunMerger(readers, bs.fields)
 }
-
-// Heap wrappers — thin aliases to container/heap for readability.
-// container/heap is also imported in spill.go and spill_columnar.go
-// within this package; Go allows the same import in multiple files.
 
 func bsortHeapInit(h *mergeHeap) {
 	heap.Init(h)

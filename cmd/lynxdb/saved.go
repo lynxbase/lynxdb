@@ -19,8 +19,6 @@ func init() {
 	rootCmd.AddCommand(newRunCmd())
 }
 
-// lynxdb saved (subcommand group)
-
 func newSavedCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "saved",
@@ -74,8 +72,6 @@ func newSavedCmd() *cobra.Command {
 	return cmd
 }
 
-// lynxdb save (shortcut alias)
-
 func newSaveCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "save <name> <query>",
@@ -88,8 +84,6 @@ func newSaveCmd() *cobra.Command {
 		},
 	}
 }
-
-// lynxdb run (shortcut alias)
 
 func newRunCmd() *cobra.Command {
 	var (
@@ -117,8 +111,6 @@ func newRunCmd() *cobra.Command {
 
 	return cmd
 }
-
-// Implementation
 
 func runSavedList(_ *cobra.Command, _ []string) error {
 	ctx := context.Background()
@@ -181,13 +173,11 @@ func runSavedCreate(name, query string) error {
 }
 
 func runSavedRun(name, since, from, to string) error {
-	// Look up the saved query by name.
 	sq, err := findSavedQueryByName(name)
 	if err != nil {
 		return err
 	}
 
-	// Execute the query using the standard query flow.
 	query := sq.Q
 	SaveLastQuery(query, since, from, to)
 
@@ -195,7 +185,6 @@ func runSavedRun(name, since, from, to string) error {
 }
 
 func runSavedDelete(name string, force bool) error {
-	// Look up the saved query by name to get the ID.
 	sq, err := findSavedQueryByName(name)
 	if err != nil {
 		return err

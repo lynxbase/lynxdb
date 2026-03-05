@@ -74,7 +74,6 @@ func runJobsList(statusFilter string) error {
 		return nil
 	}
 
-	// Table output using lipgloss/table.
 	tbl := ui.NewTable(ui.Stdout).
 		SetColumns("ID", "STATUS", "PROGRESS", "QUERY")
 
@@ -111,7 +110,6 @@ func runJobDetail(jobID string) error {
 		return nil
 	}
 
-	// Human-readable detail.
 	t := ui.Stdout
 	fmt.Println()
 	fmt.Println(t.KeyValue("Job", job.JobID))

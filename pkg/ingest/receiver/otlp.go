@@ -193,7 +193,6 @@ func (r *OTLPLogsRequest) ToEvents() []*event.Event {
 	var events []*event.Event
 
 	for _, rl := range r.ResourceLogs {
-		// Collect resource-level attributes.
 		var source, host, index string
 		resourceAttrs := make(map[string]event.Value)
 
@@ -212,7 +211,6 @@ func (r *OTLPLogsRequest) ToEvents() []*event.Event {
 
 		for _, sl := range rl.ScopeLogs {
 			for _, lr := range sl.LogRecords {
-				// Parse timestamp.
 				var ts time.Time
 				if lr.TimeUnixNano != "" {
 					if nanos, err := strconv.ParseInt(lr.TimeUnixNano, 10, 64); err == nil {
@@ -220,7 +218,6 @@ func (r *OTLPLogsRequest) ToEvents() []*event.Event {
 					}
 				}
 
-				// Build raw from body.
 				raw := toStringForRaw(lr.Body)
 
 				e := event.NewEvent(ts, raw)
@@ -242,7 +239,6 @@ func (r *OTLPLogsRequest) ToEvents() []*event.Event {
 					e.SetField("otel.scope.version", event.StringValue(sl.Scope.Version))
 				}
 
-				// Severity.
 				level := otlpSeverityText(lr.SeverityNumber, lr.SeverityText)
 				if level != "" {
 					e.SetField("level", event.StringValue(level))
@@ -251,7 +247,6 @@ func (r *OTLPLogsRequest) ToEvents() []*event.Event {
 					e.SetField("severity_number", event.IntValue(int64(lr.SeverityNumber)))
 				}
 
-				// Trace context.
 				if lr.TraceID != "" {
 					e.SetField("trace_id", event.StringValue(lr.TraceID))
 				}

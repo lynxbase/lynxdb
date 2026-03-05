@@ -32,7 +32,7 @@ func (e *Engine) initDataDir() error {
 		return err
 	}
 
-	// Ensure query-cache dir exists (not managed by Layout).
+	// Query-cache dir is not managed by Layout; create if absent.
 	queryCacheDir := filepath.Join(e.dataDir, "query-cache")
 	if err := os.MkdirAll(queryCacheDir, 0o755); err != nil {
 		return fmt.Errorf("create %s: %w", queryCacheDir, err)

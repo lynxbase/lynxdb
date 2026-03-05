@@ -20,13 +20,11 @@ func FormatConfigError(err error, path string) string {
 		return ""
 	}
 
-	// Check for ValidationError first.
 	var ve *ValidationError
 	if errors.As(err, &ve) {
 		return formatValidationError(ve)
 	}
 
-	// Check for YAML parse error with line number.
 	msg := err.Error()
 	if m := yamlLineRegexp.FindStringSubmatch(msg); m != nil {
 		lineNum, _ := strconv.Atoi(m[1])

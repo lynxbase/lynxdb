@@ -83,7 +83,6 @@ type shellSession struct {
 }
 
 func runShellServer(since string) error {
-	// Print banner with server info.
 	t := ui.Stdout
 	fmt.Println()
 	fmt.Printf("  \U0001F43E %s — Interactive Shell\n", t.Bold.Render(fmt.Sprintf("LynxDB %s", buildinfo.Version)))
@@ -156,7 +155,6 @@ func runShellFile(file, since string) error {
 
 // Do implements readline.AutoCompleter for dynamic tab completion.
 func (s *shellSession) Do(line []rune, pos int) ([][]rune, int) {
-	// Extract the word being completed (from last space to cursor).
 	left := string(line[:pos])
 	lastSpace := strings.LastIndexByte(left, ' ')
 
@@ -169,7 +167,6 @@ func (s *shellSession) Do(line []rune, pos int) ([][]rune, int) {
 
 	lowerPrefix := strings.ToLower(prefix)
 
-	// Collect candidates from SPL2 commands, agg functions, and field names.
 	var candidates [][]rune
 	for _, cmd := range spl2Commands {
 		if strings.HasPrefix(strings.ToLower(cmd), lowerPrefix) {
@@ -184,7 +181,6 @@ func (s *shellSession) Do(line []rune, pos int) ([][]rune, int) {
 		}
 	}
 
-	// Lazily fetch and cache field names.
 	if s.cachedFields == nil && s.mode == "server" {
 		s.cachedFields = fetchFieldNames()
 	}
@@ -244,7 +240,6 @@ func (s *shellSession) run() error {
 			continue
 		}
 
-		// Handle dot commands (only when not in multi-line mode).
 		if s.multiLine == "" && strings.HasPrefix(line, ".") {
 			if s.handleDotCommand(line) {
 				return nil // .quit
@@ -253,7 +248,6 @@ func (s *shellSession) run() error {
 			continue
 		}
 
-		// Multi-line: if the line ends with a pipe, accumulate.
 		if strings.HasSuffix(line, "|") {
 			s.multiLine += line + " "
 			rl.SetPrompt("    ...> ")
@@ -261,12 +255,10 @@ func (s *shellSession) run() error {
 			continue
 		}
 
-		// Combine multi-line input.
 		fullQuery := s.multiLine + line
 		s.multiLine = ""
 		rl.SetPrompt(s.prompt)
 
-		// Execute the query.
 		s.executeQuery(fullQuery)
 	}
 }
@@ -540,7 +532,6 @@ func shellHistoryPath() string {
 
 	dir := filepath.Join(dataDir, ".local", "share", "lynxdb")
 
-	// Best-effort directory creation.
 	_ = os.MkdirAll(dir, 0o755)
 
 	return filepath.Join(dir, "history")

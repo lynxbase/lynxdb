@@ -463,7 +463,6 @@ func runConfigEdit(_ *cobra.Command, _ []string) error {
 		path = config.DefaultConfigFilePath()
 	}
 
-	// Create the file with defaults if it doesn't exist.
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		dir := filepath.Dir(path)
 		if err := os.MkdirAll(dir, 0o755); err != nil {

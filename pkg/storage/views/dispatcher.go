@@ -683,8 +683,6 @@ func (d *Dispatcher) UpdateView(newDef ViewDefinition) error {
 	return nil
 }
 
-// Partial Aggregation Serialization
-
 // PartialGroupsToEvents converts partial aggregation groups into events for storage.
 // Each group becomes one event with group-by key fields and intermediate state
 // stored in _pa_ prefixed columns (e.g., _pa_count_count, _pa_avg_sum).
@@ -924,8 +922,6 @@ func mapBuiltinField(ev *event.Event, k string, v event.Value) {
 		}
 	}
 }
-
-// Helpers
 
 // sortEventsBySortKey sorts events by the view's sort key fields.
 // If no sort key is defined, events remain in insertion order.

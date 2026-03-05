@@ -27,8 +27,6 @@ var columnarSpillMagic = [4]byte{'C', 'S', 'P', 'B'}
 // encodingNone indicates an all-null column with no encoded data.
 const encodingNone uint8 = 0
 
-// ColumnarSpillWriter
-
 // ColumnarSpillWriter buffers rows and writes them as columnar batches to a
 // temporary file. Each batch transposes rows into typed columns and applies
 // production-tested encoders (delta-varint, Gorilla XOR, dictionary, LZ4)
@@ -291,8 +289,6 @@ func (w *ColumnarSpillWriter) flushBatch() error {
 	return nil
 }
 
-// ColumnarSpillReader
-
 // ColumnarSpillReader reads columnar batches from a spill file produced by
 // ColumnarSpillWriter.
 type ColumnarSpillReader struct {
@@ -450,8 +446,6 @@ func (r *ColumnarSpillReader) ReadRow() (map[string]event.Value, error) {
 func (r *ColumnarSpillReader) Close() error {
 	return r.file.Close()
 }
-
-// ColumnarSpillMerger
 
 // ColumnarSpillMerger performs k-way merge of sorted columnar spill files.
 // Uses the same heap-based merge algorithm as SpillMerger but reads from
@@ -638,8 +632,6 @@ func (m *ColumnarSpillMerger) Close() error {
 	return nil
 }
 
-// SpillMergerI — common interface for both merger implementations
-
 // SpillMergerI is the interface for k-way merge over spill files.
 // Both SpillMerger and ColumnarSpillMerger implement this interface.
 type SpillMergerI interface {
@@ -653,8 +645,6 @@ var (
 	_ SpillMergerI = (*SpillMerger)(nil)
 	_ SpillMergerI = (*ColumnarSpillMerger)(nil)
 )
-
-// Encoding helpers
 
 // buildNullBitmap creates a null bitmap for the given values.
 // Returns the bitmap, whether any nulls exist, and whether all values are null.
@@ -907,7 +897,6 @@ func decodeColumnValues(fieldType, encoding uint8, data, nullBitmap []byte, rowC
 }
 
 // countWriter wraps an io.Writer and counts bytes written.
-
 type countWriter struct {
 	w io.Writer
 	n *int64

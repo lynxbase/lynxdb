@@ -69,7 +69,6 @@ func runInit(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("invalid retention %q: %w", retention, err)
 	}
 
-	// Check for existing config
 	if _, err := os.Stat(cfgPath); err == nil {
 		if flagInitNoInteractive {
 			return fmt.Errorf("config already exists: %s", cfgPath)
@@ -81,17 +80,14 @@ func runInit(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	// Create data directory
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("create data directory: %w", err)
 	}
 
-	// Write config file
 	if err := writeInitConfig(cfgPath, dataDir, retDuration); err != nil {
 		return err
 	}
 
-	// Print success
 	if interactive {
 		fmt.Fprintln(os.Stderr)
 	}

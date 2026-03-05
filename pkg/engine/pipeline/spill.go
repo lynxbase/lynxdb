@@ -128,7 +128,7 @@ func (sw *SpillWriter) WriteRow(row map[string]event.Value) error {
 	sw.rows++
 
 	// Track estimated bytes written for SpillManager quota enforcement.
-	// We use a fixed estimate rather than Seek-based position tracking to
+	// A fixed estimate is used rather than Seek-based position tracking to
 	// avoid overhead on hot paths and interaction with encoder buffering.
 	sw.mgr.TrackBytes(estimatedSpillRowBytes)
 
@@ -247,8 +247,6 @@ func (sr *SpillReader) ReadRow() (map[string]event.Value, error) {
 func (sr *SpillReader) Close() error {
 	return sr.file.Close()
 }
-
-// Heap-based k-way SpillMerger
 
 // mergeEntry holds a row and its source reader index for the merge heap.
 type mergeEntry struct {

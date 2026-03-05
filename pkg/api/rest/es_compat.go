@@ -2,19 +2,60 @@ package rest
 
 import (
 	"bufio"
+	"compress/gzip"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 )
 
-// Types
+// setESHeaders sets standard Elasticsearch compatibility headers.
+// Filebeat 8.x checks X-Elastic-Product and rejects responses without it.
+func setESHeaders(w http.ResponseWriter) {
+	w.Header().Set("X-Elastic-Product", "Elasticsearch")
+}
+
+// esFieldMapping controls how ES document fields map to LynxDB event fields.
+// Parsed once per request from URL query parameters.
+type esFieldMapping struct {
+	MsgField  string // If non-empty, extract this doc field as _raw instead of full JSON.
+	TimeField string // Which doc field to use for _time (default: "@timestamp").
+}
+
+// parseFieldMapping parses optional VL-style query parameters from the request URL.
+func parseFieldMapping(r *http.Request) esFieldMapping {
+	q := r.URL.Query()
+	m := esFieldMapping{TimeField: "@timestamp"}
+	if v := q.Get("_msg_field"); v != "" {
+		m.MsgField = v
+	}
+	if v := q.Get("_time_field"); v != "" {
+		m.TimeField = v
+	}
+	return m
+}
+
+// decompressBody returns an io.ReadCloser that decompresses the request body
+// if Content-Encoding is gzip, or returns r.Body unchanged otherwise.
+// The caller must close the returned reader.
+func decompressBody(r *http.Request) (io.ReadCloser, error) {
+	if r.Header.Get("Content-Encoding") != "gzip" {
+		return r.Body, nil
+	}
+	gz, err := gzip.NewReader(r.Body)
+	if err != nil {
+		return nil, fmt.Errorf("gzip decode: %w", err)
+	}
+	return gz, nil
+}
 
 type esBulkAction struct {
 	Index  *esBulkActionMeta `json:"index,omitempty"`
@@ -91,8 +132,6 @@ type esVersionInfo struct {
 	LuceneVersion string `json:"lucene_version"`
 }
 
-// ID Generation
-
 func generateESDocID() string {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
@@ -101,8 +140,6 @@ func generateESDocID() string {
 
 	return hex.EncodeToString(b)
 }
-
-// Field Mapping
 
 var esTimestampFormats = []string{
 	time.RFC3339Nano,
@@ -129,17 +166,28 @@ func parseESTimestamp(v interface{}) time.Time {
 }
 
 func esDocToEvent(doc map[string]interface{}, indexName string) *event.Event {
+	return esDocToEventWithMapping(doc, indexName, esFieldMapping{TimeField: "@timestamp"})
+}
+
+func esDocToEventWithMapping(doc map[string]interface{}, indexName string, fm esFieldMapping) *event.Event {
 	e := event.NewEvent(time.Time{}, "")
 	e.SourceType = "json"
 	e.Index = "main"
 
-	// Extract timestamp.
-	if ts, ok := doc["@timestamp"]; ok {
+	// Extract timestamp using configured field.
+	timeField := fm.TimeField
+	if timeField == "" {
+		timeField = "@timestamp"
+	}
+	if ts, ok := doc[timeField]; ok {
 		e.Time = parseESTimestamp(ts)
-		delete(doc, "@timestamp")
-	} else if ts, ok := doc["timestamp"]; ok {
-		e.Time = parseESTimestamp(ts)
-		delete(doc, "timestamp")
+		delete(doc, timeField)
+	} else if timeField != "timestamp" {
+		// Fallback to "timestamp" if configured field not found.
+		if ts, ok := doc["timestamp"]; ok {
+			e.Time = parseESTimestamp(ts)
+			delete(doc, "timestamp")
+		}
 	}
 
 	// Map _index to source.
@@ -174,9 +222,16 @@ func esDocToEvent(doc map[string]interface{}, indexName string) *event.Event {
 		}
 	}
 
-	// Serialize full document as raw.
-	if raw, err := json.Marshal(doc); err == nil {
-		e.Raw = string(raw)
+	// Build _raw: either a specific message field or the full JSON doc.
+	if fm.MsgField != "" {
+		if msgVal, ok := doc[fm.MsgField]; ok {
+			e.Raw = fmt.Sprint(msgVal)
+		}
+	}
+	if e.Raw == "" {
+		if raw, err := json.Marshal(doc); err == nil {
+			e.Raw = string(raw)
+		}
 	}
 
 	// Map remaining fields.
@@ -186,8 +241,6 @@ func esDocToEvent(doc map[string]interface{}, indexName string) *event.Event {
 
 	return e
 }
-
-// Handlers
 
 // esPendingItem tracks a parsed bulk item awaiting commit confirmation (H4 fix).
 // ItemIdx is the pre-allocated slot in the items slice, preserving request ordering
@@ -200,6 +253,12 @@ type esPendingItem struct {
 }
 
 func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
+	setESHeaders(w)
+
+	if !s.requireScope(w, r, auth.ScopeIngest) {
+		return
+	}
+
 	start := time.Now()
 
 	batchSize := s.ingestCfg.MaxBatchSize
@@ -207,7 +266,24 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 		batchSize = 1000
 	}
 
-	scanner := bufio.NewScanner(r.Body)
+	// Decompress gzip body if Content-Encoding: gzip (Filebeat default).
+	body, err := decompressBody(r)
+	if err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":   "mapper_parsing_exception",
+				"reason": fmt.Sprintf("failed to decompress request body: %v", err),
+			},
+			"status": http.StatusBadRequest,
+		})
+		return
+	}
+	defer body.Close()
+
+	// Parse optional field mapping from query parameters.
+	fm := parseFieldMapping(r)
+
+	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
 	pipe := pipeline.DefaultPipeline()
@@ -300,7 +376,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		ev := esDocToEvent(doc, meta.Index)
+		ev := esDocToEventWithMapping(doc, meta.Index, fm)
 		batch = append(batch, ev)
 
 		docID := meta.ID
@@ -372,13 +448,33 @@ func makeErrorItem(action, index, id string, httpStatus int, errType, reason str
 }
 
 func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
+	setESHeaders(w)
+
+	if !s.requireScope(w, r, auth.ScopeIngest) {
+		return
+	}
+
 	indexName, ok := requirePathValue(r, w, "index")
 	if !ok {
 		return
 	}
 
+	// Decompress gzip body if Content-Encoding: gzip.
+	body, err := decompressBody(r)
+	if err != nil {
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":   "mapper_parsing_exception",
+				"reason": fmt.Sprintf("failed to decompress request body: %v", err),
+			},
+			"status": http.StatusBadRequest,
+		})
+		return
+	}
+	defer body.Close()
+
 	var doc map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&doc); err != nil {
+	if err := json.NewDecoder(body).Decode(&doc); err != nil {
 		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
 			"error": map[string]interface{}{
 				"type":   "mapper_parsing_exception",
@@ -418,17 +514,26 @@ func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleESClusterInfo(w http.ResponseWriter, r *http.Request) {
+	setESHeaders(w)
 	respondJSON(w, http.StatusOK, esClusterInfoResponse{
 		Name:        "lynxdb",
 		ClusterName: "lynxdb",
 		ClusterUUID: "lynxdb-single-node",
 		Version: esVersionInfo{
-			Number:        "8.0.0",
+			Number:        "8.11.0",
 			BuildFlavor:   "default",
 			BuildType:     "tar",
 			BuildHash:     "000000",
-			LuceneVersion: "9.0.0",
+			LuceneVersion: "9.8.0",
 		},
 		Tagline: "LynxDB — Splunk-power log analytics in a single binary",
 	})
+}
+
+// handleESStub is a catch-all handler for ES management endpoints that Filebeat
+// calls during startup (ILM policies, index templates, ingest pipelines, etc.).
+// Returns 200 with an empty JSON object so Filebeat doesn't fail with 404.
+func (s *Server) handleESStub(w http.ResponseWriter, r *http.Request) {
+	setESHeaders(w)
+	respondJSON(w, http.StatusOK, map[string]interface{}{})
 }

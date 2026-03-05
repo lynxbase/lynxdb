@@ -21,16 +21,15 @@ func (r *invertedIndexPruningRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 		}
 	}
 
-	// Fields that have inverted index entries via AddField().
-	// NOTE: The segment writer currently only indexes _raw text (via inv.Add).
+	// Fields with inverted index entries via AddField().
+	// The segment writer only indexes _raw text (via inv.Add).
 	// Field:value composite keys (via inv.AddField) are NOT written for
 	// built-in columns (_source, host, index, etc.), so they MUST NOT be
 	// listed here. Including unindexed fields causes SearchField to return
-	// empty bitmaps, which are misinterpreted as "no matching rows" and
-	// cause entire segments to be skipped (returning 0 results).
+	// empty bitmaps, misinterpreted as "no matching rows", which makes
+	// entire segments get skipped (returning 0 results).
 	indexedFields := map[string]bool{
-		// Currently no fields are indexed via AddField in the segment writer.
-		// When field-level inverted indexing is implemented, add fields here.
+		// No fields are indexed via AddField yet.
 	}
 
 	var preds []spl2.InvertedIndexPredicate

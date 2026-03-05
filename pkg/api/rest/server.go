@@ -319,6 +319,24 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("GET /api/v1/es/", s.handleESClusterInfo)
 	mux.HandleFunc("GET /api/v1/es", s.handleESClusterInfo)
 
+	// ES stub endpoints — Filebeat calls these during startup.
+	// Return 200 + {} to prevent 404 errors when setup.ilm.enabled/setup.template.enabled
+	// are not explicitly set to false in filebeat.yml.
+	esStub := s.handleESStub
+	mux.HandleFunc("GET /api/v1/es/_ilm/policy/{name...}", esStub)
+	mux.HandleFunc("PUT /api/v1/es/_ilm/policy/{name...}", esStub)
+	mux.HandleFunc("GET /api/v1/es/_index_template/{name...}", esStub)
+	mux.HandleFunc("PUT /api/v1/es/_index_template/{name...}", esStub)
+	mux.HandleFunc("GET /api/v1/es/_ingest/pipeline/{name...}", esStub)
+	mux.HandleFunc("PUT /api/v1/es/_ingest/pipeline/{name...}", esStub)
+	mux.HandleFunc("GET /api/v1/es/_nodes/{path...}", esStub)
+	mux.HandleFunc("GET /api/v1/es/_license", esStub)
+	mux.HandleFunc("GET /api/v1/es/_data_stream/{name...}", esStub)
+	mux.HandleFunc("GET /api/v1/es/_alias", esStub)
+	// PUT/HEAD /{index} must be registered after underscore-prefixed paths
+	// to avoid Go 1.22+ ServeMux wildcard-vs-specific conflicts.
+	mux.HandleFunc("PUT /api/v1/es/{index}", esStub)
+
 	// OTLP HTTP Logs ingestion.
 	mux.HandleFunc("POST /api/v1/otlp/v1/logs", s.handleOTLPLogs)
 

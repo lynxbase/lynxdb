@@ -1091,8 +1091,6 @@ func percentile(all []interface{}, pct float64) event.Value {
 	return event.FloatValue(floats[lower] + frac*(floats[lower+1]-floats[lower]))
 }
 
-// Spill serialization helpers
-
 // encodeBase64 encodes binary data to a base64 string for safe spill storage.
 func encodeBase64(data []byte) string {
 	return base64.StdEncoding.EncodeToString(data)

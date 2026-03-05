@@ -115,7 +115,6 @@ func installSystemdService(opts Options, paths Paths) (string, error) {
 		return "", err
 	}
 
-	// Ensure the parent directory exists.
 	serviceDir := filepath.Dir(paths.ServiceFile)
 	if err := os.MkdirAll(serviceDir, 0o755); err != nil {
 		return "", fmt.Errorf("install.installSystemdService: create dir: %w", err)

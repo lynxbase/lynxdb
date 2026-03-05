@@ -430,8 +430,6 @@ func (eds *externalDedupSet) close() {
 	eds.sparseIndex = nil
 }
 
-// Integration with DedupIterator
-
 // computeDedupHash computes xxhash64 for dedup key fields at row i.
 func computeDedupHash(batch *Batch, row int, fields []string, singleField bool) uint64 {
 	if singleField {

@@ -110,11 +110,9 @@ func printDiffTable(curRows, prevRows []map[string]interface{}, period string) e
 		return nil
 	}
 
-	// Collect all columns from both result sets.
 	cols := collectDiffColumns(curRows, prevRows)
 	numericCols, groupCols := classifyColumns(cols, curRows, prevRows)
 
-	// Build lookup for previous period rows.
 	prevLookup := make(map[string]map[string]interface{}, len(prevRows))
 
 	for _, row := range prevRows {
@@ -139,13 +137,11 @@ func printDiffTable(curRows, prevRows []map[string]interface{}, period string) e
 		delete(prevLookup, key)
 	}
 
-	// Rows that exist in prev but not current.
 	for _, prevRow := range prevLookup {
 		dr := buildDiffRow(nil, prevRow, groupCols, numericCols)
 		dRows = append(dRows, dr)
 	}
 
-	// Build table with lipgloss/table.
 	headers := append(groupCols, "NOW", "PREV", "CHANGE")
 	tbl := ui.NewTable(t).
 		SetColumns(headers...)
@@ -162,7 +158,6 @@ func printDiffTable(curRows, prevRows []map[string]interface{}, period string) e
 
 	fmt.Print(tbl.String())
 
-	// Total summary.
 	curTotal, prevTotal := sumNumericColumns(curRows, numericCols), sumNumericColumns(prevRows, numericCols)
 	if curTotal > 0 || prevTotal > 0 {
 		change := formatDiffPct(curTotal, prevTotal)
@@ -243,7 +238,6 @@ func buildDiffRow(curRow, prevRow map[string]interface{}, groupCols, numericCols
 		change []string
 	}
 
-	// Group columns from whichever row exists.
 	srcRow := curRow
 	if srcRow == nil {
 		srcRow = prevRow
@@ -253,7 +247,6 @@ func buildDiffRow(curRow, prevRow map[string]interface{}, groupCols, numericCols
 		dr.group = append(dr.group, fmt.Sprint(srcRow[col]))
 	}
 
-	// Numeric columns.
 	for _, col := range numericCols {
 		var curVal, prevVal float64
 

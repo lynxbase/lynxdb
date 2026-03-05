@@ -69,7 +69,6 @@ func runIngest(args []string, source, sourcetype, index string, batchSize int) e
 		defer f.Close()
 		input = f
 
-		// Get file size for progress bar.
 		if fi, err := f.Stat(); err == nil {
 			fileSize = fi.Size()
 		}
@@ -137,7 +136,6 @@ func runIngest(args []string, source, sourcetype, index string, batchSize int) e
 		}
 	}
 
-	// Clear progress line by overwriting with spaces.
 	if !globalQuiet && isTTY() {
 		fmt.Fprintf(os.Stderr, "\r%s\r", strings.Repeat(" ", 80))
 	}

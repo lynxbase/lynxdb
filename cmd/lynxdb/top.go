@@ -45,8 +45,6 @@ func newTopCmd() *cobra.Command {
 	return cmd
 }
 
-// Data types
-
 type topStats struct {
 	Version       string
 	UptimeSeconds float64
@@ -71,16 +69,12 @@ type topSource struct {
 	Count int64
 }
 
-// Bubble Tea messages
-
 type topFetchedMsg struct {
 	stats topStats
 	err   error
 }
 
 type topTickMsg struct{}
-
-// Model
 
 type topModel struct {
 	spinner  spinner.Model
@@ -135,7 +129,6 @@ func (m topModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err
 		} else {
-			// Compute ingest rate from delta.
 			now := time.Now()
 			if m.loaded && m.prevTime.Before(now) {
 				elapsed := now.Sub(m.prevTime).Seconds()
@@ -217,27 +210,18 @@ func (m topModel) renderView() string {
 		fmt.Fprintf(&b, "\n  %s %s\n", t.IconError(), m.err.Error())
 	}
 
-	// Calculate panel widths.
-	totalW := m.width - 4 // 2 margin each side
+	totalW := m.width - 4
 	if totalW < 40 {
 		totalW = 40
 	}
 	leftW := totalW / 2
 	rightW := totalW - leftW - 2 // 2 for gap
 
-	// Ingest Panel
 	ingestLines := m.renderIngestPanel(leftW)
-
-	// Queries Panel
 	queryLines := m.renderQueriesPanel(rightW)
-
-	// Storage Panel
 	storageLines := m.renderStoragePanel(leftW)
-
-	// Sources Panel
 	sourceLines := m.renderSourcesPanel(rightW)
 
-	// Render side-by-side panels.
 	b.WriteByte('\n')
 	renderSideBySide(&b, t, ingestLines, queryLines, leftW, rightW)
 	b.WriteByte('\n')
@@ -250,8 +234,6 @@ func (m topModel) renderView() string {
 
 	return b.String()
 }
-
-// Panel Renderers
 
 func (m topModel) renderIngestPanel(width int) []string {
 	t := m.theme
@@ -321,7 +303,6 @@ func (m topModel) renderSourcesPanel(width int) []string {
 	if len(m.stats.Sources) == 0 {
 		lines = append(lines, renderPanelLine(t, t.Dim.Render("  No sources yet"), width))
 	} else {
-		// Find max count for bar scaling.
 		maxCount := int64(1)
 		for _, s := range m.stats.Sources {
 			if s.Count > maxCount {
@@ -329,7 +310,6 @@ func (m topModel) renderSourcesPanel(width int) []string {
 			}
 		}
 
-		// Show up to 8 sources.
 		shown := m.stats.Sources
 		if len(shown) > 8 {
 			shown = shown[:8]
@@ -365,8 +345,6 @@ func (m topModel) renderSourcesPanel(width int) []string {
 
 	return lines
 }
-
-// Panel rendering helpers
 
 func renderPanelHeader(t *ui.Theme, title string, width int) string {
 	prefix := "\u250c\u2500 "
@@ -451,8 +429,6 @@ func renderSideBySide(b *strings.Builder, _ *ui.Theme, left, right []string, lef
 	}
 }
 
-// Fetch command
-
 func fetchTopStatsCmd(c *client.Client) tea.Cmd {
 	return func() tea.Msg {
 		stats, err := fetchTopStats(c)
@@ -467,7 +443,6 @@ func fetchTopStats(c *client.Client) (topStats, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer cancel()
 
-	// Fetch /api/v1/status (unified endpoint).
 	status, err := c.Status(ctx)
 	if err != nil {
 		return ts, fmt.Errorf("connect: %w", err)
@@ -497,8 +472,7 @@ func fetchTopStats(c *client.Client) (topStats, error) {
 		ts.OldestEvent = status.Retention.OldestEvent
 	}
 
-	// Fetch /api/v1/stats for source info and segment counts.
-	ts.CacheHitRate = -1 // default: not available
+	ts.CacheHitRate = -1
 
 	stats, statsErr := c.Stats(ctx)
 	if statsErr == nil {
@@ -516,12 +490,10 @@ func fetchTopStats(c *client.Client) (topStats, error) {
 		}
 	}
 
-	// Sort sources by count descending.
 	sort.Slice(ts.Sources, func(i, j int) bool {
 		return ts.Sources[i].Count > ts.Sources[j].Count
 	})
 
-	// Fetch cache hit rate.
 	cacheStats, cacheErr := c.CacheStats(ctx)
 	if cacheErr == nil {
 		if v, ok := cacheStats["hit_rate"].(float64); ok {

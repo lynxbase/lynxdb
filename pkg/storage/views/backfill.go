@@ -130,8 +130,8 @@ func (b *Backfiller) Run(ctx context.Context, name string, source EventSource, d
 	cursor := def.Cursor
 	// Validate cursor is not obviously corrupt. A valid cursor is either
 	// empty (start from beginning) or a non-empty string from ScanEvents.
-	// We don't validate the cursor format deeply here (that's the EventSource's
-	// responsibility), but we reject cursors that are clearly invalid.
+	// Deep format validation is the EventSource's responsibility; this
+	// rejects cursors that are clearly invalid.
 	if len(cursor) > 4096 {
 		b.logger.Warn("backfill: cursor too long, resetting to start",
 			"view", name, "cursor_len", len(cursor))

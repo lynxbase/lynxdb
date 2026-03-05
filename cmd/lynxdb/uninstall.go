@@ -63,7 +63,6 @@ func runUninstall(_ *cobra.Command, _ []string) error {
 		t = ui.Stderr
 	}
 
-	// Detect installation mode.
 	mode, paths := install.DetectInstallMode()
 
 	fmt.Fprintln(os.Stderr)
@@ -84,7 +83,6 @@ func runUninstall(_ *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stderr, "  Data:     %s %s\n", paths.DataDir, t.Success.Render("(preserved)"))
 	fmt.Fprintln(os.Stderr)
 
-	// Confirm.
 	if !flagUninstallYes && isStdinTTY() {
 		msg := "This will remove LynxDB binary and service. Data is preserved."
 		if flagUninstallPurge {
@@ -137,7 +135,6 @@ func runUninstall(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("uninstall completed with errors")
 	}
 
-	// Final message.
 	fmt.Fprintf(os.Stderr, "  %s %s\n", t.IconOK(), t.Success.Render("LynxDB has been uninstalled."))
 	fmt.Fprintf(os.Stderr, "  %s\n", t.Dim.Render(fmt.Sprintf("Data preserved at %s. To remove: rm -rf %s", paths.DataDir, paths.DataDir)))
 	fmt.Fprintln(os.Stderr)

@@ -405,8 +405,6 @@ func (bp *Pool) Close() error {
 	return bp.closePages()
 }
 
-// Internal helpers
-
 // newPage creates a Page with allocated data memory.
 func (bp *Pool) newPage(id PageID, slot int) (*Page, error) {
 	p := &Page{

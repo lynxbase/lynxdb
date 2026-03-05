@@ -633,8 +633,6 @@ func (e *Engine) advanceEpoch(newSegments, retired []*segmentHandle) {
 	old.drainAndClose(e.logger)
 }
 
-// Test helpers
-
 // BufferedEventCount returns the number of events buffered in the async batcher.
 func (e *Engine) BufferedEventCount() int64 {
 	if e.batcher != nil {

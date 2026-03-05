@@ -353,8 +353,6 @@ func formatCaret(query string, pos int) string {
 	return fmt.Sprintf("  %s\n  %s^", line, strings.Repeat(" ", col))
 }
 
-// closestMatch returns the closest string from candidates within maxDist,
-// or empty if no close match is found.
 // ClosestMatch returns the closest string from candidates within maxDist
 // edit distance, or empty if no close match is found. Exported for use
 // by the server package (fuzzy source name matching in warnings).

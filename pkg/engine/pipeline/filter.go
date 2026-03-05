@@ -317,7 +317,7 @@ func (f *FilterIterator) VMStats() (calls, timeNS int64) {
 // field comparisons, wildcards, IN, CASE, TERM) against event rows.
 //
 // Optimization: if the search expression contains keyword terms (searches on _raw),
-// we extract literal substrings and use strings.Contains as a pre-filter on the
+// literal substrings are extracted and used as a strings.Contains pre-filter on the
 // _raw column BEFORE reconstructing rows. This avoids the expensive per-row map
 // construction for rows that can't possibly match.
 //

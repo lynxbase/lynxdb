@@ -92,7 +92,6 @@ func Parse(s string, now time.Time) (time.Time, error) {
 	if s[0] == '-' {
 		body := s[1:]
 
-		// Check for snap-to suffix (@unit).
 		var snapUnit byte
 		if idx := strings.LastIndex(body, "@"); idx >= 0 {
 			snapPart := body[idx+1:]

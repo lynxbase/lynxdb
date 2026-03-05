@@ -1,6 +1,8 @@
 # LynxDB
 <div align="center">
   <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/lynxdb-logo-transparent-w.png">
+    <source media="(prefers-color-scheme: light)" srcset="docs/assets/lynxdb-logo-transparent.png">
     <img alt="LynxDB logo" src="docs/assets/lynxdb-logo-transparent.png" height="300">
   </picture>
 </div>
@@ -14,6 +16,10 @@
 SPL2-powered log analytics. Single binary. No dependencies.
 
 > LynxDB is in active development and **not yet production-ready**. APIs, storage format, and query behavior may change without notice between releases. Feedback and contributions are welcome
+
+<p align="center">
+  <img src="docs/assets/pg_demo.gif" alt="LynxDB demo">
+</p>
 
 ## Quick start
 

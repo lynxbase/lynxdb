@@ -11,9 +11,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
-// TTY-aware number formatting
-
-// FormatValueTTY formats a value for human-friendly TTY display.
+// formatValueTTY formats a value for human-friendly TTY display.
 // Integers get comma separators; large floats that are whole get commas too.
 func formatValueTTY(v interface{}) string {
 	if !isTTY() {
@@ -36,8 +34,6 @@ func formatValueTTY(v interface{}) string {
 	}
 }
 
-// Core TTY / color detection
-
 // isTTY reports whether stdout is connected to a terminal.
 func isTTY() bool {
 	fi, err := os.Stdout.Stat()
@@ -57,8 +53,6 @@ func isStdinPiped() bool {
 
 	return fi != nil && (fi.Mode()&os.ModeCharDevice) == 0
 }
-
-// Number / size / duration formatting
 
 // formatCount returns a human-readable count string with commas.
 func formatCount(n int64) string {
@@ -148,8 +142,6 @@ func formatElapsed(d time.Duration) string {
 	return fmt.Sprintf("%dm %ds", mins, secs)
 }
 
-// Query helpers
-
 // ensureFromClause normalizes a query so it always has a FROM clause.
 // Delegates to spl2.NormalizeQuery which handles all cases (pipe-prefixed,
 // known commands, implicit search) and prepends "FROM main" as needed.
@@ -169,8 +161,6 @@ func truncateStr(s string, maxLen int) string {
 
 	return string(runes[:maxLen-3]) + "..."
 }
-
-// Stderr output helpers (delegate to ui.Stderr)
 
 // printSuccess prints a green success message to stderr (respects --quiet).
 func printSuccess(format string, args ...interface{}) {
@@ -206,8 +196,6 @@ func printNextSteps(steps ...string) {
 	ui.Stderr.PrintNextSteps(globalQuiet, steps...)
 }
 
-// Confirmation prompts (delegate to ui.Stderr)
-
 // isStdinTTY reports whether stdin is connected to a terminal.
 func isStdinTTY() bool {
 	fi, err := os.Stdin.Stat()
@@ -227,8 +215,6 @@ func confirmAction(prompt string) bool {
 func confirmDestructive(message, confirmValue string) bool {
 	return ui.Stderr.ConfirmDestructive(message, confirmValue)
 }
-
-// Field value suggestions (via pkg/client)
 
 // fetchFieldTopValues fetches top values for a field from the server.
 // Returns nil on any error (best-effort).
@@ -295,7 +281,6 @@ func printEmptyResultGuidance(query, since string) {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintf(os.Stderr, "  %s\n\n", t.Bold.Render("No results found."))
 
-	// Try to extract fields from the query and look up known values.
 	filterFields := extractFilterFields(query)
 	suggestionsShown := false
 
@@ -303,14 +288,11 @@ func printEmptyResultGuidance(query, since string) {
 
 	bullet := t.Info.Render("\u2022")
 
-	// Lazily fetch field catalog for fuzzy matching (only if needed).
 	var knownFields []fieldEntry
 
 	for field, usedValue := range filterFields {
 		topValues := fetchFieldTopValues(field)
 		if len(topValues) == 0 {
-			// Field returned no values — it may not exist.
-			// Try fuzzy matching against known field names.
 			if knownFields == nil {
 				knownFields = fetchFieldCatalog()
 			}
@@ -326,7 +308,6 @@ func printEmptyResultGuidance(query, since string) {
 			continue
 		}
 
-		// Check if the user's value matches any known values.
 		found := false
 
 		for _, v := range topValues {
@@ -351,7 +332,6 @@ func printEmptyResultGuidance(query, since string) {
 		}
 	}
 
-	// Suggest widening time range.
 	if since != "" {
 		wider := suggestWiderTimeRange(since)
 		if wider != "" {

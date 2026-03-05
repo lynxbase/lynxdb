@@ -93,7 +93,6 @@ func runInstall(_ *cobra.Command, _ []string) error {
 	opts.SkipUlimits = flagInstallSkipUlimits
 	opts.SkipSelfTest = flagInstallSkipSelfTest
 
-	// Preview what we're about to do.
 	paths := install.ResolvePaths(opts)
 
 	t := ui.Stderr
@@ -103,7 +102,6 @@ func runInstall(_ *cobra.Command, _ []string) error {
 		t = ui.Stderr
 	}
 
-	// Print header.
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintf(os.Stderr, "  %s\n", ui.Stdout.Bold.Render("LynxDB Install"))
 	fmt.Fprintf(os.Stderr, "  %s\n", t.Rule.Render("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"))
@@ -119,7 +117,6 @@ func runInstall(_ *cobra.Command, _ []string) error {
 
 	fmt.Fprintln(os.Stderr)
 
-	// Confirm unless --yes.
 	if !opts.Yes && isStdinTTY() {
 		if !confirmAction("Proceed with installation?") {
 			fmt.Fprintln(os.Stderr, "  Aborted.")
@@ -128,7 +125,6 @@ func runInstall(_ *cobra.Command, _ []string) error {
 		fmt.Fprintln(os.Stderr)
 	}
 
-	// Build and execute steps.
 	steps, _ := install.BuildSteps(opts)
 
 	var hasErrors bool
@@ -161,7 +157,6 @@ func runInstall(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("install completed with errors")
 	}
 
-	// Print next steps.
 	printInstallNextSteps(opts, paths)
 
 	return nil

@@ -946,7 +946,6 @@ func (e *Engine) runStreamingPipeline(
 		streamHints.IndexName = ""
 	}
 
-	// Create the streaming store.
 	store := &StreamingServerStore{
 		segments:     sources,
 		allMemEvents: memEvents,

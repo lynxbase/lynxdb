@@ -347,7 +347,7 @@ func extractBloomTermsFromExpr(expr spl2.Expr, bloomFields map[string]bool, term
 			extractBloomTermsFromExpr(e.Left, bloomFields, terms)
 			extractBloomTermsFromExpr(e.Right, bloomFields, terms)
 		}
-		// For OR, we can't safely extract terms for bloom pruning.
+		// OR branches: terms cannot be safely extracted for bloom pruning.
 	}
 }
 
@@ -460,11 +460,11 @@ func collectGeneratedFields(q *spl2.Query) map[string]bool {
 			}
 		case *spl2.UnpackCommand:
 			// Unpack generates fields from the parsed format. If Fields is
-			// specified, only those are generated. Otherwise, we can't know
-			// at optimization time which fields will be generated (schema-on-read),
-			// so we conservatively don't mark any — this means predicates
-			// referencing unpack-generated fields won't be pushed down, which
-			// is correct (the segment doesn't have them).
+			// specified, only those are generated. Otherwise, the exact fields
+			// are unknown at optimization time (schema-on-read), so none are
+			// marked conservatively — predicates referencing unpack-generated
+			// fields won't be pushed down, which is correct (the segment
+			// doesn't have them).
 			for _, f := range c.Fields {
 				name := f
 				if c.Prefix != "" {
@@ -481,8 +481,8 @@ func collectGeneratedFields(q *spl2.Query) map[string]bool {
 		case *spl2.UnrollCommand:
 			// Unroll explodes a JSON array field into multiple rows and generates
 			// dot-notation fields from object elements (e.g., items.sku, items.qty).
-			// We can't know the exact generated field names at optimization time,
-			// so we mark the source field as generated (it's replaced with element values).
+			// The exact generated field names are unknown at optimization time,
+			// so the source field is marked as generated (it's replaced with element values).
 			gen[c.Field] = true
 		}
 	}

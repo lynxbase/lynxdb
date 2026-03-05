@@ -2,6 +2,7 @@ package rest
 
 import (
 	"container/heap"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"net"
@@ -90,9 +91,15 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// KeyAuthMiddleware checks for Bearer token on all routes (except /health)
-// when a KeyStore is provided. Verifies the token against stored argon2id
-// hashes and attaches the authenticated key info to the request context.
+// KeyAuthMiddleware checks for authentication on all routes (except /health)
+// when a KeyStore is provided. Supports three auth schemes:
+//
+//   - Bearer <token>          — standard LynxDB token
+//   - ApiKey <base64(id:secret)> — Elasticsearch/Filebeat compatible
+//   - Basic <base64(user:pass)>  — password is used as token, username informational
+//
+// Verifies the token against stored argon2id hashes and attaches the
+// authenticated key info to the request context.
 //
 // When ks is nil, auth is disabled and all requests pass through.
 func KeyAuthMiddleware(ks *auth.KeyStore, next http.Handler) http.Handler {
@@ -117,14 +124,20 @@ func KeyAuthMiddleware(ks *auth.KeyStore, next http.Handler) http.Handler {
 			return
 		}
 
-		if !strings.HasPrefix(header, "Bearer ") {
-			respondError(w, ErrCodeInvalidToken, http.StatusUnauthorized, "Invalid API key")
+		keyID, token, ok := extractToken(header)
+		if !ok {
+			respondError(w, ErrCodeInvalidToken, http.StatusUnauthorized, "Invalid Authorization header format")
 
 			return
 		}
 
-		token := header[7:]
-		info := ks.Verify(token)
+		// When keyID is available (ApiKey scheme), use O(1) ID lookup.
+		var info *auth.KeyInfo
+		if keyID != "" {
+			info = ks.VerifyByID(keyID, token)
+		} else {
+			info = ks.Verify(token)
+		}
 
 		if info == nil {
 			respondError(w, ErrCodeInvalidToken, http.StatusUnauthorized, "Invalid API key")
@@ -136,6 +149,73 @@ func KeyAuthMiddleware(ks *auth.KeyStore, next http.Handler) http.Handler {
 		ctx := auth.WithKeyInfo(r.Context(), info)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// extractToken parses the Authorization header and returns (keyID, token, ok).
+// keyID is non-empty only for the ApiKey scheme (enables O(1) lookup).
+func extractToken(header string) (keyID, token string, ok bool) {
+	switch {
+	case strings.HasPrefix(header, "Bearer "):
+		return "", strings.TrimSpace(header[7:]), true
+
+	case strings.HasPrefix(header, "ApiKey "):
+		// Filebeat format: ApiKey <base64(id:secret)>
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(header[7:]))
+		if err != nil {
+			return "", "", false
+		}
+		parts := strings.SplitN(string(decoded), ":", 2)
+		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+			return "", "", false
+		}
+		return parts[0], parts[1], true
+
+	case strings.HasPrefix(header, "Basic "):
+		// Basic base64(username:password) — password = token, username informational.
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(header[6:]))
+		if err != nil {
+			return "", "", false
+		}
+		parts := strings.SplitN(string(decoded), ":", 2)
+		if len(parts) != 2 || parts[1] == "" {
+			return "", "", false
+		}
+		return "", parts[1], true
+	}
+
+	return "", "", false
+}
+
+// requireScope checks that the request was authenticated with a key that has
+// at least one of the required scopes. Root keys and full-scope keys pass all
+// checks. Returns true if access is allowed; writes an error response and
+// returns false otherwise.
+func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, required ...auth.Scope) bool {
+	// When auth is disabled (no keyStore), all requests pass through.
+	if s.keyStore == nil {
+		return true
+	}
+
+	info := auth.KeyInfoFromContext(r.Context())
+	if info == nil {
+		respondError(w, ErrCodeAuthRequired, http.StatusUnauthorized, "Authentication required")
+		return false
+	}
+
+	// Root keys and full-scope keys have access to everything.
+	if info.IsRoot || info.Scope == auth.ScopeFull {
+		return true
+	}
+
+	for _, req := range required {
+		if info.Scope == req {
+			return true
+		}
+	}
+
+	respondError(w, ErrCodeForbidden, http.StatusForbidden,
+		fmt.Sprintf("This operation requires scope: %s (your key has scope: %s)", required[0], info.Scope))
+	return false
 }
 
 // RateLimiter implements a per-IP token bucket rate limiter.

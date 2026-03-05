@@ -40,7 +40,6 @@ func (r *constantFoldingRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 func foldExpr(expr spl2.Expr) (spl2.Expr, bool) {
 	switch e := expr.(type) {
 	case *spl2.ArithExpr:
-		// Recursively fold children first
 		left, lChanged := foldExpr(e.Left)
 		right, rChanged := foldExpr(e.Right)
 		if lChanged || rChanged {
@@ -88,7 +87,6 @@ func foldExpr(expr spl2.Expr) (spl2.Expr, bool) {
 			return e, true
 		}
 	case *spl2.CompareExpr:
-		// Recursively fold children first
 		left, lChanged := foldExpr(e.Left)
 		right, rChanged := foldExpr(e.Right)
 		if lChanged || rChanged {

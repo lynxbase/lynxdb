@@ -107,7 +107,6 @@ func parseAudit(line, indexName string) (spl2.ResultRow, error) {
 		"type":      m[3],
 	}
 
-	// Extract key-value pairs from the rest.
 	rest := m[4]
 	kvMatches := auditKVRe.FindAllStringSubmatch(rest, -1)
 	for _, kv := range kvMatches {
@@ -116,7 +115,6 @@ func parseAudit(line, indexName string) (spl2.ResultRow, error) {
 		if key == "type" {
 			continue
 		}
-		// Try to parse as number.
 		if i, err := strconv.ParseInt(val, 10, 64); err == nil {
 			fields[key] = i
 		} else {
@@ -124,7 +122,6 @@ func parseAudit(line, indexName string) (spl2.ResultRow, error) {
 		}
 	}
 
-	// Extract inner msg content.
 	msgIdx := strings.Index(rest, "msg='")
 	if msgIdx >= 0 {
 		msgStart := msgIdx + 5
@@ -132,7 +129,6 @@ func parseAudit(line, indexName string) (spl2.ResultRow, error) {
 		if msgEnd >= 0 {
 			innerMsg := rest[msgStart : msgStart+msgEnd]
 			fields["msg"] = innerMsg
-			// Parse inner msg KVs.
 			innerKVs := auditKVRe.FindAllStringSubmatch(innerMsg, -1)
 			for _, kv := range innerKVs {
 				key := kv[1]
@@ -142,7 +138,7 @@ func parseAudit(line, indexName string) (spl2.ResultRow, error) {
 		}
 	}
 
-	// Extract key= from the end of the line (audit key field).
+	// Audit log "key=" field appears at end of line.
 	keyRe := regexp.MustCompile(`\bkey=(\S+)`)
 	km := keyRe.FindStringSubmatch(line)
 	if km != nil {
@@ -177,7 +173,6 @@ func parseJSON(line, indexName string) (spl2.ResultRow, error) {
 		}
 	}
 
-	// Parse timestamp.
 	if ts, ok := data["timestamp"].(string); ok {
 		t, err := time.Parse(time.RFC3339Nano, ts)
 		if err == nil {
@@ -186,7 +181,7 @@ func parseJSON(line, indexName string) (spl2.ResultRow, error) {
 		}
 	}
 
-	// Ensure numeric fields are properly typed.
+	// Coerce known numeric fields from float64 (JSON default) to int64.
 	for _, key := range []string{"status", "duration_ms", "amount_cents"} {
 		if v, ok := fields[key]; ok {
 			if val, isFloat := v.(float64); isFloat {
@@ -223,14 +218,12 @@ func parseFrontend(line, indexName string) (spl2.ResultRow, error) {
 		fields["message"] = strings.TrimSpace(parts[0])
 	}
 
-	// Parse KV pairs from pipe-delimited sections.
 	for _, part := range parts[1:] {
 		part = strings.TrimSpace(part)
 		if eqIdx := strings.Index(part, "="); eqIdx > 0 {
 			key := strings.TrimSpace(part[:eqIdx])
 			val := strings.TrimSpace(part[eqIdx+1:])
-			// Try to parse as number.
-			if i, err := strconv.ParseInt(val, 10, 64); err == nil {
+				if i, err := strconv.ParseInt(val, 10, 64); err == nil {
 				fields[key] = i
 			} else if f, err := strconv.ParseFloat(val, 64); err == nil {
 				fields[key] = f
@@ -260,7 +253,6 @@ func parseTransactions(line, indexName string) (spl2.ResultRow, error) {
 		"action_type": strings.TrimSpace(parts[3]),
 	}
 
-	// Parse remaining pipe-separated key=value pairs.
 	for _, part := range parts[4:] {
 		part = strings.TrimSpace(part)
 		if eqIdx := strings.Index(part, "="); eqIdx > 0 {

@@ -291,8 +291,6 @@ func emitPartitionGroups(a *AggregateIterator, result *Batch) {
 	}
 }
 
-// Methods on AggregateIterator called from aggregate_partition.go
-
 // serializeGroup converts an aggGroup's intermediate state into a
 // map[string]event.Value suitable for spill serialization. The map
 // contains group-by keys plus aggregation-specific suffixed keys

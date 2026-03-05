@@ -210,8 +210,6 @@ func buildProfileJSON(s *QueryStats) profileJSON {
 	return p
 }
 
-// Internal formatting helpers
-
 func writePhaseBreakdown(w io.Writer, s *QueryStats) {
 	total := s.TotalDuration
 	if total <= 0 {
@@ -459,8 +457,6 @@ func writeRecommendations(w io.Writer, s *QueryStats) {
 func durMS(d time.Duration) float64 {
 	return float64(d.Microseconds()) / 1000
 }
-
-// JSON types for profile output
 
 type profileJSON struct {
 	TotalMS    int64           `json:"total_ms"`

@@ -312,8 +312,6 @@ func (mc *MemoryCoordinator) Stats() []CoordinatorSlotStats {
 	return result
 }
 
-// CoordinatedAccount implements stats.MemoryAccount
-
 // Grow requests n bytes. First checks the coordinator-managed sub-limit
 // (fast atomic load, no lock). If the sub-limit would be exceeded, returns
 // a *stats.BudgetExceededError. Otherwise delegates to the inner account
@@ -402,8 +400,6 @@ func (ca *CoordinatedAccount) SetPhase(phase OperatorPhase) {
 		ca.coordinator.reclaimFromCompleted(ca.slot)
 	}
 }
-
-// AST pre-scan for spillable operator count
 
 // countSpillableOps counts the number of spillable operators in a Program,
 // including CTEs and subqueries. Used to determine whether a coordinator

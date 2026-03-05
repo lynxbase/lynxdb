@@ -82,8 +82,18 @@ func (ks *KeyStore) IsEmpty() bool {
 // CreateKey generates a new API key, hashes it, stores it, and returns the
 // plaintext token. The token is never stored and cannot be retrieved later.
 func (ks *KeyStore) CreateKey(name string, isRoot bool) (*CreatedKey, error) {
+	return ks.CreateKeyWithOpts(CreateKeyOpts{
+		Name:   name,
+		IsRoot: isRoot,
+		Scope:  ScopeFull,
+	})
+}
+
+// CreateKeyWithOpts generates a new API key with full configuration options.
+// The plaintext token is returned once and never stored.
+func (ks *KeyStore) CreateKeyWithOpts(opts CreateKeyOpts) (*CreatedKey, error) {
 	keyType := KeyTypeRegular
-	if isRoot {
+	if opts.IsRoot {
 		keyType = KeyTypeRoot
 	}
 
@@ -97,19 +107,29 @@ func (ks *KeyStore) CreateKey(name string, isRoot bool) (*CreatedKey, error) {
 		return nil, fmt.Errorf("auth.CreateKey: %w", err)
 	}
 
+	scope := opts.Scope
+	if scope == "" {
+		scope = ScopeFull
+	}
+
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
-	ks.seq++
-	id := fmt.Sprintf("key_%05d", ks.seq)
+	id, err := generateKeyID(opts.IsRoot)
+	if err != nil {
+		return nil, fmt.Errorf("auth.CreateKey: %w", err)
+	}
 
 	key := APIKey{
-		ID:        id,
-		Prefix:    KeyPrefix(token),
-		Hash:      hash,
-		Name:      name,
-		CreatedAt: time.Now().UTC(),
-		IsRoot:    isRoot,
+		ID:          id,
+		Prefix:      KeyPrefix(token),
+		Hash:        hash,
+		Name:        opts.Name,
+		Scope:       scope,
+		Description: opts.Description,
+		ExpiresAt:   opts.ExpiresAt,
+		CreatedAt:   time.Now().UTC(),
+		IsRoot:      opts.IsRoot,
 	}
 
 	ks.keys = append(ks.keys, key)
@@ -117,27 +137,45 @@ func (ks *KeyStore) CreateKey(name string, isRoot bool) (*CreatedKey, error) {
 	if err := ks.saveLocked(); err != nil {
 		// Roll back.
 		ks.keys = ks.keys[:len(ks.keys)-1]
-		ks.seq--
 
 		return nil, fmt.Errorf("auth.CreateKey: %w", err)
 	}
 
 	return &CreatedKey{
-		KeyInfo: key.Info(),
-		Token:   token,
+		KeyInfo:         key.Info(),
+		Token:           token,
+		APIKeyComposite: id + ":" + token,
 	}, nil
+}
+
+// generateKeyID creates a new key ID with format "ak_<12 random>" or "rk_<12 random>".
+func generateKeyID(isRoot bool) (string, error) {
+	prefix := "ak"
+	if isRoot {
+		prefix = "rk"
+	}
+	random, err := randomAlphanumeric(12)
+	if err != nil {
+		return "", fmt.Errorf("generate key ID: %w", err)
+	}
+	return prefix + "_" + random, nil
 }
 
 // Verify checks a plaintext token against all stored key hashes.
 // Returns the matching key info on success, or nil if no key matches.
-// Updates last_used_at on the matched key.
+// Expired keys are skipped. Updates last_used_at on the matched key.
 func (ks *KeyStore) Verify(token string) *KeyInfo {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
+	now := time.Now()
 	for i := range ks.keys {
+		// Skip expired keys.
+		if !ks.keys[i].ExpiresAt.IsZero() && now.After(ks.keys[i].ExpiresAt) {
+			continue
+		}
 		if verifyToken(token, ks.keys[i].Hash) {
-			ks.keys[i].LastUsedAt = time.Now().UTC()
+			ks.keys[i].LastUsedAt = now.UTC()
 			// Best-effort persist last_used_at — don't fail auth on write error.
 			_ = ks.saveLocked()
 
@@ -148,6 +186,34 @@ func (ks *KeyStore) Verify(token string) *KeyInfo {
 	}
 
 	return nil
+}
+
+// VerifyByID checks a token against a specific key identified by ID.
+// This is O(1) lookup + single argon2id computation instead of O(N) scan,
+// used when the client provides both key ID and token (e.g. ES ApiKey format).
+// Returns nil if the ID is not found, the token is wrong, or the key is expired.
+func (ks *KeyStore) VerifyByID(keyID, token string) *KeyInfo {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+
+	now := time.Now()
+	for i := range ks.keys {
+		if ks.keys[i].ID == keyID {
+			// Check expiration first (cheap) before argon2id (expensive).
+			if !ks.keys[i].ExpiresAt.IsZero() && now.After(ks.keys[i].ExpiresAt) {
+				return nil
+			}
+			if verifyToken(token, ks.keys[i].Hash) {
+				ks.keys[i].LastUsedAt = now.UTC()
+				_ = ks.saveLocked()
+
+				info := ks.keys[i].Info()
+				return &info
+			}
+			return nil // ID matched but token wrong.
+		}
+	}
+	return nil // ID not found.
 }
 
 // List returns public info for all stored keys.
@@ -197,7 +263,6 @@ func (ks *KeyStore) Revoke(id string) error {
 		}
 	}
 
-	// Remove from slice.
 	ks.keys = append(ks.keys[:idx], ks.keys[idx+1:]...)
 
 	if err := ks.saveLocked(); err != nil {
@@ -223,7 +288,6 @@ func (ks *KeyStore) RotateRoot(oldID string) (*CreatedKey, error) {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
-	// Find the old key.
 	oldIdx := -1
 
 	for i := range ks.keys {
@@ -242,18 +306,20 @@ func (ks *KeyStore) RotateRoot(oldID string) (*CreatedKey, error) {
 		return nil, fmt.Errorf("auth.RotateRoot: key %q not found", oldID)
 	}
 
-	// Create new root key.
-	ks.seq++
+	newID, err := generateKeyID(true)
+	if err != nil {
+		return nil, fmt.Errorf("auth.RotateRoot: %w", err)
+	}
 	newKey := APIKey{
-		ID:        fmt.Sprintf("key_%05d", ks.seq),
+		ID:        newID,
 		Prefix:    KeyPrefix(token),
 		Hash:      hash,
 		Name:      "root",
+		Scope:     ScopeFull,
 		CreatedAt: time.Now().UTC(),
 		IsRoot:    true,
 	}
 
-	// Add new key, then remove old.
 	ks.keys = append(ks.keys, newKey)
 	ks.keys = append(ks.keys[:oldIdx], ks.keys[oldIdx+1:]...)
 
@@ -262,8 +328,9 @@ func (ks *KeyStore) RotateRoot(oldID string) (*CreatedKey, error) {
 	}
 
 	return &CreatedKey{
-		KeyInfo: newKey.Info(),
-		Token:   token,
+		KeyInfo:         newKey.Info(),
+		Token:           token,
+		APIKeyComposite: newKey.ID + ":" + token,
 	}, nil
 }
 

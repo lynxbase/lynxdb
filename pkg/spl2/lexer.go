@@ -218,7 +218,7 @@ func (l *Lexer) readNumber() (Token, error) {
 		l.pos++
 	}
 
-	// Check for decimal point.
+	// Decimal point.
 	if l.pos < len(l.input) && l.input[l.pos] == '.' && l.pos+1 < len(l.input) && isDigit(l.input[l.pos+1]) {
 		l.pos++ // skip dot
 		for l.pos < len(l.input) && isDigit(l.input[l.pos]) {
@@ -238,12 +238,12 @@ func (l *Lexer) readIdentOrGlob() (Token, error) {
 
 	literal := l.input[startPos:l.pos]
 
-	// Check if it contains wildcard characters → glob.
+	// Wildcard characters → glob token.
 	if strings.ContainsAny(literal, "*?") {
 		return Token{Type: TokenGlob, Literal: literal, Pos: startPos}, nil
 	}
 
-	// Check for keywords (case-insensitive).
+	// Keywords (case-insensitive).
 	lower := strings.ToLower(literal)
 	if tokType := lookupKeyword(lower); tokType != TokenIdent {
 		return Token{Type: tokType, Literal: literal, Pos: startPos}, nil

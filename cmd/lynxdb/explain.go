@@ -50,7 +50,6 @@ func runExplainAnalyze(query string) error {
 	c := apiClient()
 	start := time.Now()
 
-	// Get the logical plan.
 	explainResult, err := c.Explain(ctx, query)
 	if err != nil {
 		var apiErr *client.APIError

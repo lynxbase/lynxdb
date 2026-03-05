@@ -28,7 +28,6 @@ func resultRowsToCachedResult(rows []spl2.ResultRow) *cache.CachedResult {
 	if len(rows) == 0 {
 		return &cache.CachedResult{}
 	}
-	// Collect all column names.
 	colSet := make(map[string]struct{})
 	for _, row := range rows {
 		for k := range row.Fields {

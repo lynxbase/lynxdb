@@ -16,8 +16,6 @@ import (
 // backfillTimeout is the maximum duration for a single backfill run.
 const backfillTimeout = 30 * time.Minute
 
-// Materialized View Operations
-
 // CreateMV creates a materialized view definition and launches async backfill.
 func (e *Engine) CreateMV(def views.ViewDefinition) error {
 	if e.viewRegistry == nil {
@@ -105,8 +103,6 @@ func (e *Engine) NewBackfiller() *views.Backfiller {
 	return views.NewBackfillerWithBudget(e.viewRegistry, e.rootMonitor, cfg, e.logger)
 }
 
-// Pipeline interfaces (ViewResolver + ViewManager)
-
 // ResolveView implements pipeline.ViewResolver for the engine.
 func (e *Engine) ResolveView(name string) ([]*event.Event, error) {
 	if e.viewRegistry == nil {
@@ -157,8 +153,6 @@ func (e *Engine) CreateView(name, query, retention string) error {
 
 	return nil
 }
-
-// Query-Based Backfill
 
 // launchBackfill starts an asynchronous backfill goroutine for the named view.
 // The goroutine executes the view's SPL2 query through the full query engine,
@@ -285,10 +279,10 @@ func (e *Engine) RunQueryBackfill(ctx context.Context, viewName string) error {
 // to be stored in the same partial-state format as live dispatch data.
 //
 // For most functions the conversion is straightforward (count→{Count:N},
-// min→{Min:V}, max→{Max:V}). For avg, we need both sum and count to store
+// min→{Min:V}, max→{Max:V}). For avg, both sum and count are needed to store
 // correct intermediate state. If the spec also includes a count function,
-// we use it to reconstruct: sum = avg_value * count. Otherwise we store
-// {Sum: avg_value, Count: 1} — a documented v1 limitation that means
+// it is used to reconstruct: sum = avg_value * count. Otherwise
+// {Sum: avg_value, Count: 1} is stored — a documented v1 limitation that means
 // backfill avg and live avg merge as if backfill represents 1 observation
 // per group. Users who need exact avg merge should include count in the query.
 func finalizedResultsToPartialGroups(

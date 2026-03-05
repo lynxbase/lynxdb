@@ -86,12 +86,10 @@ func runSample(count int, filter, since string) error {
 		return nil
 	}
 
-	// When --format is explicitly set (not "auto"), use the unified formatter.
 	if globalFormat != "auto" {
 		return printFormattedRows(rows)
 	}
 
-	// Human-readable numbered output.
 	for i, row := range rows {
 		printSampleEvent(i+1, row)
 		if i < len(rows)-1 {
@@ -107,7 +105,6 @@ func runSample(count int, filter, since string) error {
 func printSampleEvent(idx int, row map[string]interface{}) {
 	t := ui.Stdout
 
-	// Extract well-known fields for the header line.
 	ts, _ := row["_time"].(string)
 	if ts == "" {
 		ts, _ = row["_timestamp"].(string)
@@ -115,7 +112,6 @@ func printSampleEvent(idx int, row map[string]interface{}) {
 
 	fmt.Printf("  %s  %s\n", t.Bold.Render(fmt.Sprintf("#%d", idx)), t.Dim.Render(ts))
 
-	// Print key=value pairs for all fields.
 	for k, v := range row {
 		if k == "_time" || k == "_timestamp" {
 			continue

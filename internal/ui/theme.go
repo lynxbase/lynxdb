@@ -21,8 +21,6 @@ import (
 	"github.com/charmbracelet/colorprofile"
 )
 
-// Env — centralized terminal environment
-
 // Env holds terminal detection results that are computed once and shared.
 type Env struct {
 	// Profile is the resolved color profile (TrueColor, ANSI256, ANSI, Ascii, NoTTY).
@@ -76,8 +74,6 @@ func InitEnv(noColor bool) {
 
 // Init is the legacy entry point. It delegates to InitEnv.
 func Init(noColor bool) { InitEnv(noColor) }
-
-// Adaptive color palette — all lipgloss.Color() calls live here
 
 // ColorSuccess returns the semantic "success / ok" green.
 func ColorSuccess() color.Color {
@@ -146,8 +142,6 @@ func ColorDuration(ms float64) color.Color {
 		return ColorError()
 	}
 }
-
-// Theme — backward-compatible struct used by components, table, JSON, confirm
 
 // Theme holds all lipgloss styles for consistent CLI rendering.
 // A Theme is bound to a specific io.Writer. Colors are sourced from the
@@ -355,15 +349,11 @@ func newNoColorTheme(w io.Writer) *Theme {
 	}
 }
 
-// Style constructors — semantic helpers for callers outside this package
-
 // StyleTableHeader returns the style for table column headers.
 func StyleTableHeader() lipgloss.Style { return lipgloss.NewStyle().Bold(true) }
 
 // StyleTableSeparator returns the style for table separator rules.
 func StyleTableSeparator() lipgloss.Style { return lipgloss.NewStyle().Foreground(ColorDark()) }
-
-// Separator constant
 
 // Separator is the short 3-char rule printed before the stats block.
 const Separator = "\u2500\u2500\u2500"

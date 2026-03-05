@@ -42,12 +42,10 @@ func runBench(cmd *cobra.Command, args []string) error {
 	fmt.Printf("\n  %s — %s events\n", t.Bold.Render("LynxDB Benchmark"), formatCount(int64(n)))
 	fmt.Printf("  %s\n", t.Rule.Render(strings.Repeat("━", 60)))
 
-	// Generate events.
 	fmt.Print("  Generating events... ")
 	lines := generateBenchLines(n)
 	fmt.Printf("%s lines\n", formatCount(int64(len(lines))))
 
-	// Ingest.
 	eng := storage.NewEphemeralEngine()
 	defer eng.Close()
 	ingestStart := time.Now()
@@ -66,7 +64,6 @@ func runBench(cmd *cobra.Command, args []string) error {
 		formatElapsed(ingestDur),
 		formatCount(int64(eps)))
 
-	// Benchmark queries.
 	queries := []struct {
 		name  string
 		query string

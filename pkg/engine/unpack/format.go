@@ -27,7 +27,7 @@ type FormatParser interface {
 // NewParser creates a FormatParser for the given format name.
 // Supported formats: json, logfmt, syslog, combined, clf, nginx_error, cef, kv,
 // docker, redis, apache_error, postgres, mysql_slow, haproxy, leef, w3c.
-// Note: "pattern" and "w3c" (with custom header) require constructor arguments
+// "pattern" and "w3c" (with custom header) require constructor arguments
 // and should be instantiated directly via NewPatternParser / NewW3CParser.
 func NewParser(format string) (FormatParser, error) {
 	switch strings.ToLower(format) {

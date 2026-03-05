@@ -2,10 +2,6 @@ package optimizer
 
 import "github.com/lynxbase/lynxdb/pkg/spl2"
 
-// Column Pruning Rule
-// Walks the AST and computes the minimal set of columns required at each stage.
-// Writes result to q.Annotations["requiredColumns"].
-
 func (r *columnPruningRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 	if q.Annotations != nil {
 		if _, done := q.Annotations["requiredColumns"]; done {
@@ -219,10 +215,6 @@ func collectSearchExprFieldsForOpt(expr spl2.SearchExpr, cols map[string]bool) {
 		cols[e.Field] = true
 	}
 }
-
-// Projection Pushdown Rule
-// When TABLE or FIELDS appear late in the pipeline and earlier commands
-// don't need the dropped fields, insert an early FIELDS command.
 
 func (r *projectionPushdownRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 	if len(q.Commands) < 3 {

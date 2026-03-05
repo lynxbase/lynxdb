@@ -114,7 +114,6 @@ func renderError(err error) {
 		return
 	}
 
-	// Check for query errors first (caret display with position info).
 	var qe *queryError
 	if errors.As(err, &qe) {
 		var apiErr *client.APIError
