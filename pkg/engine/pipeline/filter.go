@@ -23,6 +23,8 @@ type FilterIterator struct {
 	vecValue string // literal value
 	vecReady bool   // true if vectorized fast path is available
 	vecUsed  bool   // true after vectorized fast path was actually used at least once
+	// Compound vectorized plan: handles AND/OR trees, IN, NULL, LIKE, BETWEEN.
+	vecPlan vecNode // recursive bitmap evaluator (nil = not available)
 	// VM profiling (trace level only).
 	profileVM bool
 	vmCalls   int64
@@ -38,14 +40,28 @@ func NewFilterIterator(child Iterator, predicate *vm.Program) *FilterIterator {
 // for simple CompareExpr(FieldExpr, op, LiteralExpr) patterns.
 func NewFilterIteratorWithExpr(child Iterator, predicate *vm.Program, expr spl2.Expr) *FilterIterator {
 	fi := &FilterIterator{child: child, predicate: predicate}
-	// Detect simple vectorizable pattern.
+
+	// Try compound vectorized plan first (handles AND/OR, IN, NULL, LIKE, BETWEEN).
+	if plan := analyzeVecExpr(expr); plan != nil {
+		fi.vecPlan = plan
+		fi.vecReady = true
+
+		return fi
+	}
+
+	// Fall back to simple vectorizable pattern detection.
+	// Skip vectorized path when the literal contains glob wildcards (* or ?)
+	// because the vectorized path does exact string comparison which would be
+	// incorrect — the compiler rewrites these to OpStrMatch (regex) instead.
 	if cmp, ok := expr.(*spl2.CompareExpr); ok {
 		if field, ok := cmp.Left.(*spl2.FieldExpr); ok {
 			if lit, ok := cmp.Right.(*spl2.LiteralExpr); ok {
-				fi.vecField = field.Name
-				fi.vecOp = cmp.Op
-				fi.vecValue = lit.Value
-				fi.vecReady = true
+				if !strings.ContainsAny(lit.Value, "*?") {
+					fi.vecField = field.Name
+					fi.vecOp = cmp.Op
+					fi.vecValue = lit.Value
+					fi.vecReady = true
+				}
 			}
 		}
 	}
@@ -85,7 +101,7 @@ func (f *FilterIterator) Next(ctx context.Context) (*Batch, error) {
 			}
 		}
 
-		// Pass 1: evaluate predicates with reusable row map, build match bitmap.
+		// Evaluate predicates with reusable row map, build match bitmap.
 		matches := make([]bool, batch.Len)
 		matchCount := 0
 		row := make(map[string]event.Value, len(batch.Columns))
@@ -108,7 +124,7 @@ func (f *FilterIterator) Next(ctx context.Context) (*Batch, error) {
 			return batch, nil // all matched, return as-is
 		}
 
-		// Pass 2: compact columns using bitmap.
+		// Compact columns using bitmap.
 		result := &Batch{
 			Columns: make(map[string][]event.Value, len(batch.Columns)),
 			Len:     matchCount,
@@ -130,6 +146,24 @@ func (f *FilterIterator) Next(ctx context.Context) (*Batch, error) {
 // tryVectorizedFilter attempts to use typed column arrays for fast filtering.
 // Returns (result, true) if vectorized path was used, (nil, false) otherwise.
 func (f *FilterIterator) tryVectorizedFilter(batch *Batch) (*Batch, bool) {
+	// Compound vectorized plan: recursive bitmap evaluation.
+	if f.vecPlan != nil {
+		matches, ok := f.vecPlan.evalBitmap(batch)
+		if !ok {
+			return nil, false
+		}
+		matchCount := CountTrue(matches)
+		if matchCount == 0 {
+			return nil, true // all filtered
+		}
+		if matchCount == batch.Len {
+			return batch, true
+		}
+
+		return compactBatch(batch, matches, matchCount), true
+	}
+
+	// Simple (legacy) vectorized path: single field op literal.
 	col, ok := batch.Columns[f.vecField]
 	if !ok || len(col) == 0 {
 		return nil, false
@@ -279,7 +313,6 @@ func (f *FilterIterator) matchesRow(row map[string]event.Value) bool {
 			return false
 		}
 	}
-	// VM predicate
 	if f.predicate != nil {
 		if f.profileVM {
 			start := time.Now()

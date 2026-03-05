@@ -61,6 +61,7 @@ type QueryHints struct {
 	FieldPredicates         []FieldPredicate         // simple field op literal from WHERE
 	InvertedIndexPredicates []InvertedIndexPredicate // field=value for inverted index
 	RangePredicates         []RangePredicate         // field range for pushdown
+	InPredicates            []InPredicate            // field IN (values) for segment-level pushdown
 	searchExpr              SearchExpr               // first search expression (for pushdown analysis)
 	streamable              bool                     // true if query can execute without accumulating all events
 	terminalCmd             string                   // type of last command ("stats", "head", "search", etc.)
@@ -91,6 +92,14 @@ type RangePredicate struct {
 	Field string
 	Min   string
 	Max   string
+}
+
+// InPredicate represents a field IN (val1, val2, ...) predicate extracted
+// from WHERE for segment-level pushdown. Only non-negated predicates with
+// all-literal value lists are eligible.
+type InPredicate struct {
+	Field  string
+	Values []string
 }
 
 // ExtractQueryHints walks the AST of a Program and extracts optimization hints.
@@ -143,6 +152,18 @@ func extractQueryHintsFromQuery(q *Query) *QueryHints {
 			}
 		}
 		h.FieldPredicates = filtered
+	}
+
+	// Same filter for IN predicates — fields created by pipeline operators
+	// (EVAL, REX, STREAMSTATS, etc.) don't exist in segment data.
+	if len(generatedFields) > 0 && len(h.InPredicates) > 0 {
+		filtered := h.InPredicates[:0]
+		for _, ip := range h.InPredicates {
+			if !generatedFields[ip.Field] {
+				filtered = append(filtered, ip)
+			}
+		}
+		h.InPredicates = filtered
 	}
 
 	// Terminal HeadCommand → set Limit hint.
@@ -416,7 +437,35 @@ func extractWhereHints(expr Expr, h *QueryHints) {
 			extractWhereHints(e.Right, h)
 		}
 		// OR branches cannot be safely pushed down as conjunctive predicates.
+	case *InExpr:
+		extractInHints(e, h)
 	}
+}
+
+// extractInHints extracts field IN (values) predicates for segment-level pushdown.
+// Only non-negated predicates with a field reference and all-literal values are eligible.
+// NOT IN cannot safely prune segments (absence of a value doesn't mean the row group
+// can be skipped — other values in the set may still match).
+func extractInHints(e *InExpr, h *QueryHints) {
+	if e.Negated {
+		return // NOT IN cannot safely prune segments
+	}
+	field, ok := e.Field.(*FieldExpr)
+	if !ok {
+		return
+	}
+	var values []string
+	for _, v := range e.Values {
+		lit, ok := v.(*LiteralExpr)
+		if !ok {
+			return // Non-literal value (subquery, field ref) — bail out entirely
+		}
+		values = append(values, lit.Value)
+	}
+	h.InPredicates = append(h.InPredicates, InPredicate{
+		Field:  field.Name,
+		Values: values,
+	})
 }
 
 func extractCompareHints(e *CompareExpr, h *QueryHints) {
@@ -452,6 +501,15 @@ func extractCompareHints(e *CompareExpr, h *QueryHints) {
 			h.TimeBounds.Latest = ts
 		}
 
+		return
+	}
+
+	// Skip wildcard patterns — they are compiled to OpStrMatch (regex) by the
+	// VM compiler, but FieldPredicates are pushed to the segment reader which
+	// uses literal string equality. Pushing "*ssh*" as a literal "=" predicate
+	// causes evalStringPredicate to compare val == "*ssh*" (always false),
+	// incorrectly filtering out all events.
+	if (e.Op == "=" || e.Op == "==" || e.Op == "!=") && containsWildcard(lit.Value) {
 		return
 	}
 

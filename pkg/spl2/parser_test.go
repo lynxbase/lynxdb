@@ -637,8 +637,6 @@ func TestParse_SearchFieldIn(t *testing.T) {
 	}
 }
 
-// --- unpack_* and json command tests ---
-
 func TestParse_UnpackJSON_Default(t *testing.T) {
 	q, err := Parse(`| unpack_json`)
 	if err != nil {
@@ -898,5 +896,180 @@ func TestParse_PackJson_AllFields(t *testing.T) {
 	}
 	if pj.Target != "output_json" {
 		t.Errorf("target: got %q, want %q", pj.Target, "output_json")
+	}
+}
+
+func TestParse_WhereNotIn(t *testing.T) {
+	q, err := Parse(`| where status NOT IN (200, 301, 302)`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Commands) != 1 {
+		t.Fatalf("commands: got %d, want 1", len(q.Commands))
+	}
+	w, ok := q.Commands[0].(*WhereCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected WhereCommand, got %T", q.Commands[0])
+	}
+	in, ok := w.Expr.(*InExpr)
+	if !ok {
+		t.Fatalf("expr: expected InExpr, got %T", w.Expr)
+	}
+	if !in.Negated {
+		t.Error("expected Negated=true")
+	}
+	if len(in.Values) != 3 {
+		t.Errorf("values: got %d, want 3", len(in.Values))
+	}
+	// Check the String() output includes "not in"
+	s := in.String()
+	if !strings.Contains(s, "not in") {
+		t.Errorf("String(): got %q, want to contain 'not in'", s)
+	}
+}
+
+func TestParse_WhereNotLike(t *testing.T) {
+	q, err := Parse(`| where host NOT LIKE "web%"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	w := q.Commands[0].(*WhereCommand)
+	cmp, ok := w.Expr.(*CompareExpr)
+	if !ok {
+		t.Fatalf("expr: expected CompareExpr, got %T", w.Expr)
+	}
+	if cmp.Op != "not like" {
+		t.Errorf("op: got %q, want 'not like'", cmp.Op)
+	}
+}
+
+func TestParse_WhereBetween(t *testing.T) {
+	q, err := Parse(`| where status BETWEEN 200 AND 299`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	w := q.Commands[0].(*WhereCommand)
+	bin, ok := w.Expr.(*BinaryExpr)
+	if !ok {
+		t.Fatalf("expr: expected BinaryExpr (AND), got %T", w.Expr)
+	}
+	if bin.Op != "and" {
+		t.Errorf("op: got %q, want 'and'", bin.Op)
+	}
+	// Left: status >= 200
+	left, ok := bin.Left.(*CompareExpr)
+	if !ok {
+		t.Fatalf("left: expected CompareExpr, got %T", bin.Left)
+	}
+	if left.Op != ">=" {
+		t.Errorf("left op: got %q, want '>='", left.Op)
+	}
+	// Right: status <= 299
+	right, ok := bin.Right.(*CompareExpr)
+	if !ok {
+		t.Fatalf("right: expected CompareExpr, got %T", bin.Right)
+	}
+	if right.Op != "<=" {
+		t.Errorf("right op: got %q, want '<='", right.Op)
+	}
+}
+
+func TestParse_WhereRegexMatch(t *testing.T) {
+	q, err := Parse(`| where message =~ "^error"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	w := q.Commands[0].(*WhereCommand)
+	cmp, ok := w.Expr.(*CompareExpr)
+	if !ok {
+		t.Fatalf("expr: expected CompareExpr, got %T", w.Expr)
+	}
+	if cmp.Op != "=~" {
+		t.Errorf("op: got %q, want '=~'", cmp.Op)
+	}
+}
+
+func TestParse_WhereRegexNotMatch(t *testing.T) {
+	q, err := Parse(`| where message !~ "^debug"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	w := q.Commands[0].(*WhereCommand)
+	cmp, ok := w.Expr.(*CompareExpr)
+	if !ok {
+		t.Fatalf("expr: expected CompareExpr, got %T", w.Expr)
+	}
+	if cmp.Op != "!~" {
+		t.Errorf("op: got %q, want '!~'", cmp.Op)
+	}
+}
+
+func TestParse_WhereIsNull(t *testing.T) {
+	q, err := Parse(`| where host IS NULL`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	w := q.Commands[0].(*WhereCommand)
+	fn, ok := w.Expr.(*FuncCallExpr)
+	if !ok {
+		t.Fatalf("expr: expected FuncCallExpr, got %T", w.Expr)
+	}
+	if fn.Name != "isnull" {
+		t.Errorf("name: got %q, want 'isnull'", fn.Name)
+	}
+	if len(fn.Args) != 1 {
+		t.Fatalf("args: got %d, want 1", len(fn.Args))
+	}
+}
+
+func TestParse_WhereIsNotNull(t *testing.T) {
+	q, err := Parse(`| where host IS NOT NULL`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	w := q.Commands[0].(*WhereCommand)
+	fn, ok := w.Expr.(*FuncCallExpr)
+	if !ok {
+		t.Fatalf("expr: expected FuncCallExpr, got %T", w.Expr)
+	}
+	if fn.Name != "isnotnull" {
+		t.Errorf("name: got %q, want 'isnotnull'", fn.Name)
+	}
+}
+
+func TestParse_BetweenWithExpressions(t *testing.T) {
+	// BETWEEN should work with arithmetic expressions
+	q, err := Parse(`| where duration BETWEEN 1.5 AND 10.0`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	w := q.Commands[0].(*WhereCommand)
+	bin, ok := w.Expr.(*BinaryExpr)
+	if !ok {
+		t.Fatalf("expr: expected BinaryExpr, got %T", w.Expr)
+	}
+	if bin.Op != "and" {
+		t.Errorf("op: got %q, want 'and'", bin.Op)
+	}
+}
+
+func TestParse_NotNotAmbiguity(t *testing.T) {
+	// NOT followed by something other than IN/LIKE should be handled
+	// as a boolean NOT in the caller (parseNot), not in parseComparison.
+	q, err := Parse(`| where NOT status = 200`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	w := q.Commands[0].(*WhereCommand)
+	not, ok := w.Expr.(*NotExpr)
+	if !ok {
+		t.Fatalf("expr: expected NotExpr, got %T", w.Expr)
+	}
+	cmp, ok := not.Expr.(*CompareExpr)
+	if !ok {
+		t.Fatalf("inner: expected CompareExpr, got %T", not.Expr)
+	}
+	if cmp.Op != "=" {
+		t.Errorf("op: got %q, want '='", cmp.Op)
 	}
 }

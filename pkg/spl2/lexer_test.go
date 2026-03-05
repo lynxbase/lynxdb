@@ -167,3 +167,129 @@ func TestLexer_UnterminatedString(t *testing.T) {
 		t.Error("expected error for unterminated string")
 	}
 }
+
+func TestLexer_RegexOperators(t *testing.T) {
+	tests := []struct {
+		input   string
+		tokType TokenType
+		literal string
+	}{
+		{"=~", TokenRegexMatch, "=~"},
+		{"!~", TokenRegexNotMatch, "!~"},
+	}
+
+	for _, tt := range tests {
+		lexer := NewLexer(tt.input)
+		tokens, err := lexer.Tokenize()
+		if err != nil {
+			t.Fatalf("Tokenize(%q): %v", tt.input, err)
+		}
+		if tokens[0].Type != tt.tokType {
+			t.Errorf("%q: got %s, want %s", tt.input, tokens[0].Type, tt.tokType)
+		}
+		if tokens[0].Literal != tt.literal {
+			t.Errorf("%q: got %q, want %q", tt.input, tokens[0].Literal, tt.literal)
+		}
+	}
+}
+
+func TestLexer_RegexOperatorsInContext(t *testing.T) {
+	input := `field =~ "^err" AND status !~ "^2"`
+	lexer := NewLexer(input)
+	tokens, err := lexer.Tokenize()
+	if err != nil {
+		t.Fatalf("Tokenize: %v", err)
+	}
+
+	expected := []TokenType{
+		TokenIdent,         // field
+		TokenRegexMatch,    // =~
+		TokenString,        // "^err"
+		TokenAnd,           // AND
+		TokenIdent,         // status
+		TokenRegexNotMatch, // !~
+		TokenString,        // "^2"
+		TokenEOF,
+	}
+
+	if len(tokens) != len(expected) {
+		t.Fatalf("got %d tokens, want %d", len(tokens), len(expected))
+	}
+
+	for i, exp := range expected {
+		if tokens[i].Type != exp {
+			t.Errorf("token[%d]: got %s, want %s (literal=%q)", i, tokens[i].Type, exp, tokens[i].Literal)
+		}
+	}
+}
+
+func TestLexer_NewKeywords(t *testing.T) {
+	tests := []struct {
+		input   string
+		tokType TokenType
+	}{
+		{"between", TokenBetween},
+		{"BETWEEN", TokenBetween},
+		{"is", TokenIs},
+		{"IS", TokenIs},
+		{"null", TokenNull},
+		{"NULL", TokenNull},
+	}
+
+	for _, tt := range tests {
+		lexer := NewLexer(tt.input)
+		tokens, err := lexer.Tokenize()
+		if err != nil {
+			t.Fatalf("Tokenize(%q): %v", tt.input, err)
+		}
+		if tokens[0].Type != tt.tokType {
+			t.Errorf("%q: got %s, want %s", tt.input, tokens[0].Type, tt.tokType)
+		}
+	}
+}
+
+func TestLexer_BangAlone(t *testing.T) {
+	lexer := NewLexer(`!`)
+	_, err := lexer.Tokenize()
+	if err == nil {
+		t.Error("expected error for bare '!'")
+	}
+}
+
+func TestLexer_EqualsVariants(t *testing.T) {
+	input := `= == =~`
+	lexer := NewLexer(input)
+	tokens, err := lexer.Tokenize()
+	if err != nil {
+		t.Fatalf("Tokenize: %v", err)
+	}
+
+	expected := []TokenType{TokenEq, TokenEq, TokenRegexMatch, TokenEOF}
+	if len(tokens) != len(expected) {
+		t.Fatalf("got %d tokens, want %d", len(tokens), len(expected))
+	}
+	for i, exp := range expected {
+		if tokens[i].Type != exp {
+			t.Errorf("token[%d]: got %s, want %s", i, tokens[i].Type, exp)
+		}
+	}
+}
+
+func TestLexer_BangVariants(t *testing.T) {
+	input := `!= !~`
+	lexer := NewLexer(input)
+	tokens, err := lexer.Tokenize()
+	if err != nil {
+		t.Fatalf("Tokenize: %v", err)
+	}
+
+	expected := []TokenType{TokenNeq, TokenRegexNotMatch, TokenEOF}
+	if len(tokens) != len(expected) {
+		t.Fatalf("got %d tokens, want %d", len(tokens), len(expected))
+	}
+	for i, exp := range expected {
+		if tokens[i].Type != exp {
+			t.Errorf("token[%d]: got %s, want %s", i, tokens[i].Type, exp)
+		}
+	}
+}

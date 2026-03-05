@@ -342,13 +342,93 @@ func extractBloomTermsFromExpr(expr spl2.Expr, bloomFields map[string]bool, term
 				}
 			}
 		}
+		// Extract leading literal from LIKE pattern for bloom pre-filter.
+		// "uri LIKE '/api/%'" → bloom term "/api/" (if len >= 3).
+		if e.Op == "like" {
+			if field, ok := e.Left.(*spl2.FieldExpr); ok && bloomFields[field.Name] {
+				if lit, ok := e.Right.(*spl2.LiteralExpr); ok {
+					if prefix := extractLikePrefix(lit.Value); len(prefix) >= 3 {
+						// Tokenize the same way the bloom filter writer does so
+						// multi-token prefixes like "Dec 10 09:" become ["dec", "09"].
+						tokens := index.Tokenize(prefix)
+						for _, tok := range tokens {
+							if len(tok) >= 3 {
+								*terms = append(*terms, tok)
+							}
+						}
+					}
+				}
+			}
+		}
+		// Extract leading literals from =~ regex operator for bloom pre-filter.
+		// "uri =~ /\/api\/users\/\d+/" → bloom term "/api/users/" (if len >= 3).
+		if e.Op == "=~" {
+			if field, ok := e.Left.(*spl2.FieldExpr); ok && bloomFields[field.Name] {
+				if lit, ok := e.Right.(*spl2.LiteralExpr); ok {
+					extractRegexBloomTerms(lit.Value, terms)
+				}
+			}
+		}
+	case *spl2.InExpr:
+		// Extract bloom terms from IN value lists on bloom-eligible fields.
+		// WHERE _source IN ("nginx", "redis") → bloom terms ["nginx", "redis"].
+		if !e.Negated {
+			if field, ok := e.Field.(*spl2.FieldExpr); ok && bloomFields[field.Name] {
+				for _, v := range e.Values {
+					if lit, ok := v.(*spl2.LiteralExpr); ok {
+						*terms = append(*terms, strings.ToLower(lit.Value))
+					}
+				}
+			}
+		}
 	case *spl2.BinaryExpr:
 		if strings.EqualFold(e.Op, "and") {
 			extractBloomTermsFromExpr(e.Left, bloomFields, terms)
 			extractBloomTermsFromExpr(e.Right, bloomFields, terms)
 		}
 		// OR branches: terms cannot be safely extracted for bloom pruning.
+	case *spl2.FuncCallExpr:
+		// Extract bloom terms from match(field, "regex") calls.
+		if strings.EqualFold(e.Name, "match") && len(e.Args) == 2 {
+			if field, ok := e.Args[0].(*spl2.FieldExpr); ok && bloomFields[field.Name] {
+				if lit, ok := e.Args[1].(*spl2.LiteralExpr); ok {
+					extractRegexBloomTerms(lit.Value, terms)
+				}
+			}
+		}
 	}
+}
+
+// extractRegexBloomTerms extracts leading literals from a regex pattern
+// for bloom pre-filtering. Extracted literals are tokenized using the same
+// tokenizer the bloom filter writer uses so that multi-token strings like
+// "173.234.31.186" are split into individual tokens ["173", "234", "31", "186"].
+// Only tokens >= 3 characters are useful for bloom filtering.
+func extractRegexBloomTerms(pattern string, terms *[]string) {
+	lits := extractRegexLiterals(pattern)
+	for _, lit := range lits {
+		// Must tokenize the same way the bloom filter writer does.
+		// index.Tokenize already lowercases, so no need for strings.ToLower.
+		tokens := index.Tokenize(lit)
+		for _, tok := range tokens {
+			if len(tok) >= 3 {
+				*terms = append(*terms, tok)
+			}
+		}
+	}
+}
+
+// extractLikePrefix returns the leading literal portion of a LIKE pattern
+// (everything before the first % or _). Returns "" if the pattern starts
+// with a wildcard or the prefix is too short to be useful.
+func extractLikePrefix(pattern string) string {
+	for i := 0; i < len(pattern); i++ {
+		if pattern[i] == '%' || pattern[i] == '_' {
+			return pattern[:i]
+		}
+	}
+
+	return pattern // No wildcards — entire pattern is literal
 }
 
 // extractBloomTermsFromSearch extracts bloom-eligible terms from search expressions.
@@ -565,6 +645,11 @@ func extractFieldPredicatesFromExpr(expr spl2.Expr, preds *[]FieldPredInfo) {
 		if field.Name == "_time" {
 			return // time handled by time range rule
 		}
+		// Skip wildcard patterns — they are compiled to OpStrMatch (regex) by
+		// the VM but column stats pruning uses literal comparison.
+		if (e.Op == "=" || e.Op == "==" || e.Op == "!=") && strings.ContainsAny(lit.Value, "*?") {
+			return
+		}
 		*preds = append(*preds, FieldPredInfo{
 			Field: field.Name, Op: e.Op, Value: lit.Value,
 		})
@@ -572,6 +657,41 @@ func extractFieldPredicatesFromExpr(expr spl2.Expr, preds *[]FieldPredInfo) {
 		if strings.EqualFold(e.Op, "and") {
 			extractFieldPredicatesFromExpr(e.Left, preds)
 			extractFieldPredicatesFromExpr(e.Right, preds)
+		}
+	case *spl2.InExpr:
+		// Extract min/max of IN-list literal values as synthetic range predicates.
+		// This enables segment skipping when column stats show the segment's range
+		// doesn't overlap the IN values. Example:
+		//   status IN (400, 404, 500) → status >= 400 AND status <= 500
+		if e.Negated {
+			return // NOT IN doesn't define a range
+		}
+		field, ok := e.Field.(*spl2.FieldExpr)
+		if !ok {
+			return
+		}
+		if field.Name == "_time" {
+			return
+		}
+
+		var minStr, maxStr string
+		for _, v := range e.Values {
+			lit, ok := v.(*spl2.LiteralExpr)
+			if !ok {
+				return // non-literal value, bail out
+			}
+			if minStr == "" || lit.Value < minStr {
+				minStr = lit.Value
+			}
+			if maxStr == "" || lit.Value > maxStr {
+				maxStr = lit.Value
+			}
+		}
+		if minStr != "" {
+			*preds = append(*preds,
+				FieldPredInfo{Field: field.Name, Op: ">=", Value: minStr},
+				FieldPredInfo{Field: field.Name, Op: "<=", Value: maxStr},
+			)
 		}
 	}
 }

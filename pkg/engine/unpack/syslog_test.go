@@ -110,13 +110,46 @@ func TestSyslogParser_RFC5424_NilValues(t *testing.T) {
 }
 
 func TestSyslogParser_NoPRI(t *testing.T) {
+	// Without a PRI header, the parser now falls through to RFC 3164 body parsing.
+	// A non-syslog message should still emit at least a "message" field.
 	p := &SyslogParser{}
+	fields := make(map[string]event.Value)
 	err := p.Parse(`not a syslog message`, func(k string, v event.Value) bool {
-		t.Errorf("should not emit for non-syslog input: key=%s", k)
+		fields[k] = v
 		return true
 	})
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
+	}
+	// Short/non-matching input goes to the message fallback in parseRFC3164.
+	if len(fields) == 0 {
+		t.Error("expected at least one field emitted")
+	}
+}
+
+func TestSyslogParser_RFC3164_NoPRI(t *testing.T) {
+	// Messages from log shippers often lack the PRI header.
+	p := &SyslogParser{}
+	fields := make(map[string]event.Value)
+	err := p.Parse(`Mar 05 01:16:54 busybox cron[9242]: Accepted publickey for user from 10.0.123.206 port 22 ssh2`, func(k string, v event.Value) bool {
+		fields[k] = v
+		return true
+	})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	assertStringValue(t, fields, "timestamp", "Mar 05 01:16:54")
+	assertStringValue(t, fields, "hostname", "busybox")
+	assertStringValue(t, fields, "appname", "cron")
+	assertStringValue(t, fields, "procid", "9242")
+	assertStringValue(t, fields, "message", "Accepted publickey for user from 10.0.123.206 port 22 ssh2")
+
+	// No PRI fields should be present.
+	for _, key := range []string{"priority", "facility", "severity", "facility_name", "severity_name", "format"} {
+		if _, ok := fields[key]; ok {
+			t.Errorf("field %q should not be present without PRI header", key)
+		}
 	}
 }
 

@@ -54,6 +54,7 @@ type SegmentStreamHints struct {
 	SearchTermTree             *spl2.SearchTermTree // structured boolean tree for inverted index OR/AND
 	FieldPreds                 []spl2.FieldPredicate
 	RangePreds                 []spl2.RangePredicate
+	InPreds                    []spl2.InPredicate
 	InvertedPreds              []spl2.InvertedIndexPredicate
 	RequiredCols               []string
 	Limit                      int  // early termination for head/tail (0 = unlimited)
@@ -393,7 +394,7 @@ func (s *SegmentStreamIterator) nextMemtableBatch(_ context.Context) (*Batch, er
 		// After Shrink, the account reflects only the new batch. If Grow still
 		// fails, retry with a smaller batch before giving up.
 		//
-		// CRITICAL: s.memOff is advanced AFTER the Grow check. If sort catches a
+		// s.memOff is advanced after the Grow check. If sort catches a
 		// BudgetExceededError from this iterator, spills its buffer, and retries
 		// Next(), the offset must still point at this batch so no events are skipped.
 		if s.acct != nil {
@@ -496,12 +497,11 @@ func (s *SegmentStreamIterator) yieldFromRGBuffer() (*Batch, error) {
 
 		slice := s.rgEvents[s.rgOff:end]
 
-		// Track memory for observability (PeakMemoryBytes).
 		// After Shrink, the account reflects only the new batch. If Grow still
 		// fails, it means real pressure from downstream operators (dedup hash map,
 		// sort buffer, etc.) — retry with a smaller batch before giving up.
 		//
-		// CRITICAL: s.rgOff is advanced AFTER the Grow check. If sort catches a
+		// s.rgOff is advanced after the Grow check. If sort catches a
 		// BudgetExceededError from this iterator, spills its buffer, and retries
 		// Next(), the offset must still point at this batch so no events are skipped.
 		if s.acct != nil {
@@ -637,8 +637,8 @@ func (s *SegmentStreamIterator) advanceRowGroup() bool {
 	}
 }
 
-// loadCurrentRowGroup reads the current row group into rgEvents.
-// CRITICAL: this replaces rgEvents, making the old slice GC-eligible.
+// loadCurrentRowGroup reads the current row group into rgEvents,
+// replacing the previous slice to make it eligible for GC.
 func (s *SegmentStreamIterator) loadCurrentRowGroup() error {
 	seg := s.segments[s.segIdx]
 	reader := seg.Reader

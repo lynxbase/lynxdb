@@ -75,7 +75,6 @@ func (c *compiler) compileExpr(expr spl2.Expr) error {
 
 func (c *compiler) compileLiteral(lit *spl2.LiteralExpr) error {
 	val := lit.Value
-	// Try to detect quoted strings
 	if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
 		s := val[1 : len(val)-1]
 		idx := c.prog.AddConstant(event.StringValue(s))
@@ -83,21 +82,18 @@ func (c *compiler) compileLiteral(lit *spl2.LiteralExpr) error {
 
 		return nil
 	}
-	// Try integer
 	if n, err := strconv.ParseInt(val, 10, 64); err == nil {
 		idx := c.prog.AddConstant(event.IntValue(n))
 		c.prog.EmitOp(OpConstInt, idx)
 
 		return nil
 	}
-	// Try float
 	if f, err := strconv.ParseFloat(val, 64); err == nil {
 		idx := c.prog.AddConstant(event.FloatValue(f))
 		c.prog.EmitOp(OpConstFloat, idx)
 
 		return nil
 	}
-	// Boolean
 	if strings.EqualFold(val, "true") {
 		c.prog.EmitOp(OpConstTrue)
 
@@ -113,7 +109,6 @@ func (c *compiler) compileLiteral(lit *spl2.LiteralExpr) error {
 
 		return nil
 	}
-	// Default to string
 	idx := c.prog.AddConstant(event.StringValue(val))
 	c.prog.EmitOp(OpConstStr, idx)
 
@@ -121,6 +116,40 @@ func (c *compiler) compileLiteral(lit *spl2.LiteralExpr) error {
 }
 
 func (c *compiler) compileCompare(e *spl2.CompareExpr) error {
+	// Detect glob wildcard pattern in = / != comparisons.
+	// When the right operand contains * or ?, convert the glob to an anchored
+	// regex and emit OpStrMatch instead of OpEq/OpNeq. This reuses the VM's
+	// regex caching infrastructure (ensureRegexCache, matchHints).
+	if e.Op == "=" || e.Op == "==" || e.Op == "!=" {
+		if pattern, ok := extractWildcardPattern(e.Right); ok && containsWildcard(pattern) {
+			if err := c.compileExpr(e.Left); err != nil {
+				return err
+			}
+			regIdx := c.prog.AddRegex(globToRegexString(pattern))
+			c.prog.EmitOp(OpStrMatch, regIdx)
+			if e.Op == "!=" {
+				c.prog.EmitOp(OpNot)
+			}
+			return nil
+		}
+	}
+
+	// Regex operators: the right side must be a literal pattern string that goes
+	// into the regex pool — it is not compiled as a stack value.
+	if e.Op == "=~" || e.Op == "!~" {
+		if err := c.compileExpr(e.Left); err != nil {
+			return err
+		}
+		pattern := exprToString(e.Right)
+		regIdx := c.prog.AddRegex(pattern)
+		c.prog.EmitOp(OpStrMatch, regIdx)
+		if e.Op == "!~" {
+			c.prog.EmitOp(OpNot)
+		}
+
+		return nil
+	}
+
 	if err := c.compileExpr(e.Left); err != nil {
 		return err
 	}
@@ -142,11 +171,66 @@ func (c *compiler) compileCompare(e *spl2.CompareExpr) error {
 		c.prog.EmitOp(OpGte)
 	case "like":
 		c.prog.EmitOp(OpLike)
+	case "not like":
+		c.prog.EmitOp(OpLike)
+		c.prog.EmitOp(OpNot)
 	default:
 		return fmt.Errorf("unknown comparison operator: %s", e.Op)
 	}
 
 	return nil
+}
+
+// extractWildcardPattern extracts the raw pattern string from a LiteralExpr
+// (quoted string) or GlobExpr (unquoted wildcard token) on the right side of
+// a comparison. Returns ("", false) for all other expression types.
+func extractWildcardPattern(expr spl2.Expr) (string, bool) {
+	switch e := expr.(type) {
+	case *spl2.LiteralExpr:
+		val := e.Value
+		// Strip surrounding quotes if present.
+		if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+			return val[1 : len(val)-1], true
+		}
+		return val, true
+	case *spl2.GlobExpr:
+		return e.Pattern, true
+	default:
+		return "", false
+	}
+}
+
+// containsWildcard reports whether s contains glob wildcard characters (* or ?).
+func containsWildcard(s string) bool {
+	return strings.ContainsAny(s, "*?")
+}
+
+// globToRegexString converts a glob pattern to an anchored regex string.
+// Conversion rules:
+//   - * → .*
+//   - ? → .
+//   - Regex metacharacters (. ( ) [ ] { } + ^ $ | \) are escaped.
+//   - Result is anchored with ^ and $.
+func globToRegexString(pattern string) string {
+	var b strings.Builder
+	b.Grow(len(pattern)*2 + 2)
+	b.WriteByte('^')
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		switch c {
+		case '*':
+			b.WriteString(".*")
+		case '?':
+			b.WriteByte('.')
+		case '.', '(', ')', '[', ']', '{', '}', '+', '^', '$', '|', '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteByte('$')
+	return b.String()
 }
 
 func (c *compiler) compileBinary(e *spl2.BinaryExpr) error {
@@ -623,6 +707,99 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 			return err
 		}
 		c.prog.EmitOp(OpJsonMerge)
+
+	// String predicates.
+	case "startswith":
+		if len(e.Args) != 2 {
+			return fmt.Errorf("startswith expects 2 arguments, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		if err := c.compileExpr(e.Args[1]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpStartsWith)
+	case "endswith":
+		if len(e.Args) != 2 {
+			return fmt.Errorf("endswith expects 2 arguments, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		if err := c.compileExpr(e.Args[1]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpEndsWith)
+	case "contains":
+		if len(e.Args) != 2 {
+			return fmt.Errorf("contains expects 2 arguments, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		if err := c.compileExpr(e.Args[1]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpContains)
+
+	// CIDR matching.
+	case "cidrmatch":
+		if len(e.Args) != 2 {
+			return fmt.Errorf("cidrmatch expects 2 arguments, got %d", len(e.Args))
+		}
+		// First arg must be a literal CIDR string.
+		cidrStr := exprToString(e.Args[0])
+		idx, err := c.prog.AddCIDR(cidrStr)
+		if err != nil {
+			return fmt.Errorf("cidrmatch: %w", err)
+		}
+		// Second arg is the IP field/expression.
+		if err := c.compileExpr(e.Args[1]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpCIDRMatch, idx)
+
+	// Type checks.
+	case "isnum", "isnumeric":
+		if len(e.Args) != 1 {
+			return fmt.Errorf("isnum expects 1 argument, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpIsNum)
+	case "isint":
+		if len(e.Args) != 1 {
+			return fmt.Errorf("isint expects 1 argument, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpIsInt)
+	case "isstr":
+		// In schema-on-read, all non-null values are strings.
+		if len(e.Args) != 1 {
+			return fmt.Errorf("isstr expects 1 argument, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpIsNotNull)
+
+	// LIKE as eval function (already case-insensitive).
+	case "ilike":
+		if len(e.Args) != 2 {
+			return fmt.Errorf("ilike expects 2 arguments, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		if err := c.compileExpr(e.Args[1]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpLike)
+
 	default:
 		return fmt.Errorf("unknown function: %s", e.Name)
 	}
@@ -650,7 +827,6 @@ func (c *compiler) compileIf(e *spl2.FuncCallExpr) error {
 		return err
 	}
 	endPos := c.prog.Len()
-	// Patch jumps
 	c.prog.PatchUint16(jumpFalse+1, uint16(elsePos))
 	c.prog.PatchUint16(jumpEnd+1, uint16(endPos))
 
@@ -745,6 +921,9 @@ func (c *compiler) compileIn(e *spl2.InExpr) error {
 		}
 	}
 	c.prog.EmitOp(OpInList, len(e.Values))
+	if e.Negated {
+		c.prog.EmitOp(OpNot)
+	}
 
 	return nil
 }

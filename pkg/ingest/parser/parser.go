@@ -223,7 +223,7 @@ func parseFrontend(line, indexName string) (spl2.ResultRow, error) {
 		if eqIdx := strings.Index(part, "="); eqIdx > 0 {
 			key := strings.TrimSpace(part[:eqIdx])
 			val := strings.TrimSpace(part[eqIdx+1:])
-				if i, err := strconv.ParseInt(val, 10, 64); err == nil {
+			if i, err := strconv.ParseInt(val, 10, 64); err == nil {
 				fields[key] = i
 			} else if f, err := strconv.ParseFloat(val, 64); err == nil {
 				fields[key] = f

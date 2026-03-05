@@ -562,6 +562,219 @@ func TestCompileIndexFieldRewrite(t *testing.T) {
 	}
 }
 
+func TestGlobToRegexString(t *testing.T) {
+	tests := []struct {
+		glob string
+		want string
+	}{
+		{"web*", `^web.*$`},
+		{"*.log", `^.*\.log$`},
+		{"*error*", `^.*error.*$`},
+		{"web-??", `^web-..$`},
+		{"*", `^.*$`},
+		{"file.txt", `^file\.txt$`},
+		{"a(b)", `^a\(b\)$`},
+		{"a[b]", `^a\[b\]$`},
+		{"a+b", `^a\+b$`},
+		{"a^b", `^a\^b$`},
+		{"a$b", `^a\$b$`},
+		{"a|b", `^a\|b$`},
+		{`a\b`, `^a\\b$`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.glob, func(t *testing.T) {
+			got := globToRegexString(tt.glob)
+			if got != tt.want {
+				t.Errorf("globToRegexString(%q) = %q, want %q", tt.glob, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestContainsWildcard(t *testing.T) {
+	tests := []struct {
+		s    string
+		want bool
+	}{
+		{"web*", true},
+		{"web-??", true},
+		{"*", true},
+		{"?", true},
+		{"no-wildcards", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.s, func(t *testing.T) {
+			if got := containsWildcard(tt.s); got != tt.want {
+				t.Errorf("containsWildcard(%q) = %v, want %v", tt.s, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompileWhereGlobEqual(t *testing.T) {
+	// host="web*" — quoted literal with wildcard → OpLoadField + OpStrMatch
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "host"},
+		Op:    "=",
+		Right: &spl2.LiteralExpr{Value: `"web*"`},
+	}
+	prog, err := CompilePredicate(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Verify bytecode contains OpStrMatch, not OpEq
+	foundStrMatch := false
+	foundEq := false
+	for i := 0; i < len(prog.Instructions); i++ {
+		op := Opcode(prog.Instructions[i])
+		if op == OpStrMatch {
+			foundStrMatch = true
+		}
+		if op == OpEq {
+			foundEq = true
+		}
+		if def := definitions[op]; def != nil {
+			for _, w := range def.OperandWidths {
+				i += w
+			}
+		}
+	}
+	if !foundStrMatch {
+		t.Error("expected OpStrMatch in bytecode for wildcard comparison")
+	}
+	if foundEq {
+		t.Error("did not expect OpEq in bytecode for wildcard comparison")
+	}
+}
+
+func TestCompileWhereGlobNotEqual(t *testing.T) {
+	// host!="web*" → OpLoadField + OpStrMatch + OpNot
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "host"},
+		Op:    "!=",
+		Right: &spl2.LiteralExpr{Value: `"web*"`},
+	}
+	prog, err := CompilePredicate(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Verify bytecode contains OpStrMatch and OpNot
+	foundStrMatch := false
+	foundNot := false
+	for i := 0; i < len(prog.Instructions); i++ {
+		op := Opcode(prog.Instructions[i])
+		if op == OpStrMatch {
+			foundStrMatch = true
+		}
+		if op == OpNot {
+			foundNot = true
+		}
+		if def := definitions[op]; def != nil {
+			for _, w := range def.OperandWidths {
+				i += w
+			}
+		}
+	}
+	if !foundStrMatch {
+		t.Error("expected OpStrMatch in bytecode for wildcard != comparison")
+	}
+	if !foundNot {
+		t.Error("expected OpNot in bytecode for wildcard != comparison")
+	}
+}
+
+func TestCompileWhereGlobExpr(t *testing.T) {
+	// host=web* (unquoted GlobExpr) — same bytecode as quoted
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "host"},
+		Op:    "=",
+		Right: &spl2.GlobExpr{Pattern: "web*"},
+	}
+	prog, err := CompilePredicate(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundStrMatch := false
+	for i := 0; i < len(prog.Instructions); i++ {
+		op := Opcode(prog.Instructions[i])
+		if op == OpStrMatch {
+			foundStrMatch = true
+		}
+		if def := definitions[op]; def != nil {
+			for _, w := range def.OperandWidths {
+				i += w
+			}
+		}
+	}
+	if !foundStrMatch {
+		t.Error("expected OpStrMatch in bytecode for GlobExpr comparison")
+	}
+}
+
+func TestCompileWhereNoWildcard(t *testing.T) {
+	// host="web-01" (no wildcard) — should still use OpEq, NOT OpStrMatch
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "host"},
+		Op:    "=",
+		Right: &spl2.LiteralExpr{Value: `"web-01"`},
+	}
+	prog, err := CompilePredicate(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundEq := false
+	foundStrMatch := false
+	for i := 0; i < len(prog.Instructions); i++ {
+		op := Opcode(prog.Instructions[i])
+		if op == OpEq {
+			foundEq = true
+		}
+		if op == OpStrMatch {
+			foundStrMatch = true
+		}
+		if def := definitions[op]; def != nil {
+			for _, w := range def.OperandWidths {
+				i += w
+			}
+		}
+	}
+	if !foundEq {
+		t.Error("expected OpEq in bytecode for non-wildcard comparison")
+	}
+	if foundStrMatch {
+		t.Error("did not expect OpStrMatch for non-wildcard comparison")
+	}
+}
+
+func TestCompileWhereGlobQuestionMark(t *testing.T) {
+	// host="web-??" — question mark wildcards → OpStrMatch
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "host"},
+		Op:    "=",
+		Right: &spl2.LiteralExpr{Value: `"web-??"`},
+	}
+	prog, err := CompilePredicate(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundStrMatch := false
+	for i := 0; i < len(prog.Instructions); i++ {
+		op := Opcode(prog.Instructions[i])
+		if op == OpStrMatch {
+			foundStrMatch = true
+		}
+		if def := definitions[op]; def != nil {
+			for _, w := range def.OperandWidths {
+				i += w
+			}
+		}
+	}
+	if !foundStrMatch {
+		t.Error("expected OpStrMatch in bytecode for ? wildcard comparison")
+	}
+}
+
 func TestProgramCacheHit(t *testing.T) {
 	cache := NewProgramCache()
 	expr := "status >= 500"

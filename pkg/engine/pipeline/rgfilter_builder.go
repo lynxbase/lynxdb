@@ -10,12 +10,9 @@ import (
 // row-group-level pruning. Called once per query during iterator construction.
 // Returns nil when no prunable predicates exist (callers skip RG filtering).
 //
-// Sources merged into a single AND root:
-//  1. SearchTermTree → recursive conversion (bare terms check _raw bloom).
-//  2. SearchTerms (flat fallback) → AND of Term nodes on _raw.
-//  3. FieldPreds → FieldEq / FieldNeq / FieldRange (op-dependent).
-//  4. RangePreds → FieldRange nodes.
-//  5. InvertedPreds → FieldEq nodes (field=value with bloom terms).
+// All predicate sources are merged under a single AND root: SearchTermTree
+// (recursive bloom check), flat SearchTerms fallback, FieldPreds, RangePreds,
+// and InvertedPreds (field=value with bloom terms).
 func BuildRGFilter(hints *SegmentStreamHints) *segment.RGFilterNode {
 	if hints == nil {
 		return nil
@@ -84,6 +81,22 @@ func BuildRGFilter(hints *SegmentStreamHints) *segment.RGFilterNode {
 				RangeVal: rp.Max,
 			})
 		}
+	}
+
+	// IN predicates from WHERE field IN (val1, val2, ...).
+	for _, ip := range hints.InPreds {
+		physField := normalizeField(ip.Field)
+		// Tokenize all values and deduplicate for bloom filter terms.
+		var allTerms []string
+		for _, v := range ip.Values {
+			allTerms = append(allTerms, index.TokenizeUnique(v)...)
+		}
+		children = append(children, segment.RGFilterNode{
+			Op:     segment.RGFilterFieldIn,
+			Field:  physField,
+			Values: ip.Values,
+			Terms:  deduplicateStrings(allTerms),
+		})
 	}
 
 	// Inverted index field=value predicates (field bloom check).
@@ -186,4 +199,22 @@ func normalizeField(name string) string {
 	}
 
 	return name
+}
+
+// deduplicateStrings returns a new slice with duplicate strings removed.
+// Preserves order of first occurrence.
+func deduplicateStrings(ss []string) []string {
+	if len(ss) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(ss))
+	result := make([]string, 0, len(ss))
+	for _, s := range ss {
+		if _, ok := seen[s]; !ok {
+			seen[s] = struct{}{}
+			result = append(result, s)
+		}
+	}
+
+	return result
 }

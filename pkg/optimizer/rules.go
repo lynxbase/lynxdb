@@ -164,7 +164,6 @@ func (r *constantPropagationRule) Description() string {
 	return "Substitutes known constant values into downstream expressions"
 }
 func (r *constantPropagationRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
-	// Track known constants from EVAL assignments
 	constants := make(map[string]string) // field → literal value
 	changed := false
 
@@ -247,6 +246,13 @@ func (r *predicateSimplificationRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 
 func simplifyPredicate(expr spl2.Expr) (spl2.Expr, bool) {
 	if e, ok := expr.(*spl2.BinaryExpr); ok {
+		// Recursively simplify children first.
+		left, lChanged := simplifyPredicate(e.Left)
+		right, rChanged := simplifyPredicate(e.Right)
+		if lChanged || rChanged {
+			e = &spl2.BinaryExpr{Left: left, Op: e.Op, Right: right}
+		}
+
 		// x AND x → x
 		if strings.EqualFold(e.Op, "and") && exprEqual(e.Left, e.Right) {
 			return e.Left, true
@@ -281,9 +287,55 @@ func simplifyPredicate(expr spl2.Expr) (spl2.Expr, bool) {
 		if strings.EqualFold(e.Op, "or") && isLiteralFalse(e.Right) {
 			return e.Left, true
 		}
+
+		// Contradiction detection: field = A AND field = B where A != B → false.
+		// This triggers dead code elimination downstream.
+		if strings.EqualFold(e.Op, "and") && isContradiction(e.Left, e.Right) {
+			return &spl2.LiteralExpr{Value: "false"}, true
+		}
+
+		if lChanged || rChanged {
+			return e, true
+		}
 	}
 
 	return expr, false
+}
+
+// isContradiction checks if two expressions form an unsatisfiable conjunction.
+// Currently detects: field = A AND field = B where A != B.
+func isContradiction(a, b spl2.Expr) bool {
+	aCmp, aOk := a.(*spl2.CompareExpr)
+	bCmp, bOk := b.(*spl2.CompareExpr)
+	if !aOk || !bOk {
+		return false
+	}
+
+	// Both must be equality comparisons.
+	if !isEqualityOp(aCmp.Op) || !isEqualityOp(bCmp.Op) {
+		return false
+	}
+
+	// Both must be on the same field.
+	aField, aFOk := aCmp.Left.(*spl2.FieldExpr)
+	bField, bFOk := bCmp.Left.(*spl2.FieldExpr)
+	if !aFOk || !bFOk || aField.Name != bField.Name {
+		return false
+	}
+
+	// Both must have literal values.
+	aLit, aLOk := aCmp.Right.(*spl2.LiteralExpr)
+	bLit, bLOk := bCmp.Right.(*spl2.LiteralExpr)
+	if !aLOk || !bLOk {
+		return false
+	}
+
+	// Different values on the same field with equality → contradiction.
+	return aLit.Value != bLit.Value
+}
+
+func isEqualityOp(op string) bool {
+	return op == "=" || op == "=="
 }
 
 type negationPushdownRule struct{}
@@ -338,6 +390,14 @@ func negateOp(op string) string {
 		return "!="
 	case "!=":
 		return "="
+	case "like":
+		return "not like"
+	case "not like":
+		return "like"
+	case "=~":
+		return "!~"
+	case "!~":
+		return "=~"
 	}
 
 	return ""
@@ -448,7 +508,7 @@ func exprEqual(a, b spl2.Expr) bool {
 		return true
 	case *spl2.InExpr:
 		y, ok := b.(*spl2.InExpr)
-		if !ok || !exprEqual(x.Field, y.Field) || len(x.Values) != len(y.Values) {
+		if !ok || x.Negated != y.Negated || !exprEqual(x.Field, y.Field) || len(x.Values) != len(y.Values) {
 			return false
 		}
 		for i := range x.Values {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -33,6 +34,7 @@ type VM struct {
 	regexCache   []*regexp.Regexp
 	replaceHints []func(s, replacement string) string // per-regex fast-path; nil = use regex
 	matchHints   []func(string) bool                  // per-regex fast-path; nil = use regex
+	cidrNets     []*net.IPNet                         // lazy-copied from Program.CIDRNets
 
 	// jsonCache is a single-entry cache for JSON dot-notation lookups.
 	// When a query accesses multiple paths from the same root (e.g.
@@ -351,6 +353,7 @@ func (vm *VM) execReplace(ins []byte, ip int) (int, error) {
 func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value, error) {
 	vm.sp = 0
 	vm.ensureRegexCache(prog)
+	vm.ensureCIDRCache(prog)
 
 	ins := prog.Instructions
 	ip := 0
@@ -939,6 +942,87 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (event.Value
 			vm.sp--
 			vm.stack[vm.sp-1] = jsonMergeValue(a, b)
 
+		case OpStartsWith:
+			b := vm.stack[vm.sp-1] // prefix
+			a := vm.stack[vm.sp-2] // value
+			vm.sp--
+			if a.IsNull() || b.IsNull() {
+				vm.stack[vm.sp-1] = event.BoolValue(false)
+			} else {
+				vm.stack[vm.sp-1] = event.BoolValue(strings.HasPrefix(valueToString(a), valueToString(b)))
+			}
+
+		case OpEndsWith:
+			b := vm.stack[vm.sp-1] // suffix
+			a := vm.stack[vm.sp-2] // value
+			vm.sp--
+			if a.IsNull() || b.IsNull() {
+				vm.stack[vm.sp-1] = event.BoolValue(false)
+			} else {
+				vm.stack[vm.sp-1] = event.BoolValue(strings.HasSuffix(valueToString(a), valueToString(b)))
+			}
+
+		case OpContains:
+			b := vm.stack[vm.sp-1] // substr
+			a := vm.stack[vm.sp-2] // value
+			vm.sp--
+			if a.IsNull() || b.IsNull() {
+				vm.stack[vm.sp-1] = event.BoolValue(false)
+			} else {
+				vm.stack[vm.sp-1] = event.BoolValue(strings.Contains(valueToString(a), valueToString(b)))
+			}
+
+		case OpIsNum:
+			a := vm.stack[vm.sp-1]
+			if a.IsNull() {
+				vm.stack[vm.sp-1] = event.BoolValue(false)
+			} else {
+				switch a.Type() {
+				case event.FieldTypeInt, event.FieldTypeFloat:
+					vm.stack[vm.sp-1] = event.BoolValue(true)
+				default:
+					_, err := strconv.ParseFloat(valueToString(a), 64)
+					vm.stack[vm.sp-1] = event.BoolValue(err == nil)
+				}
+			}
+
+		case OpIsInt:
+			a := vm.stack[vm.sp-1]
+			if a.IsNull() {
+				vm.stack[vm.sp-1] = event.BoolValue(false)
+			} else {
+				switch a.Type() {
+				case event.FieldTypeInt:
+					vm.stack[vm.sp-1] = event.BoolValue(true)
+				default:
+					_, err := strconv.ParseInt(valueToString(a), 10, 64)
+					vm.stack[vm.sp-1] = event.BoolValue(err == nil)
+				}
+			}
+
+		case OpCIDRMatch:
+			operand, opErr := readOperandSafe(ins, ip)
+			if opErr != nil {
+				return event.NullValue(), opErr
+			}
+			idx := int(operand)
+			ip += 2
+			if idx >= len(vm.cidrNets) {
+				return event.NullValue(), fmt.Errorf("%w: CIDR index %d out of range (len=%d)", ErrInvalidBytecode, idx, len(vm.cidrNets))
+			}
+			a := vm.stack[vm.sp-1]
+			if a.IsNull() {
+				vm.stack[vm.sp-1] = event.BoolValue(false)
+			} else {
+				ipStr := valueToString(a)
+				parsedIP := net.ParseIP(ipStr)
+				if parsedIP == nil {
+					vm.stack[vm.sp-1] = event.BoolValue(false)
+				} else {
+					vm.stack[vm.sp-1] = event.BoolValue(vm.cidrNets[idx].Contains(parsedIP))
+				}
+			}
+
 		case OpReturn:
 			if vm.sp > 0 {
 				return vm.stack[vm.sp-1], nil
@@ -975,6 +1059,15 @@ func (vm *VM) ensureRegexCache(prog *Program) {
 		vm.replaceHints[i] = analyzeReplacePattern(p)
 		vm.matchHints[i] = analyzeMatchPattern(p)
 	}
+}
+
+// ensureCIDRCache lazily copies CIDRNets from the program into the VM.
+func (vm *VM) ensureCIDRCache(prog *Program) {
+	if len(vm.cidrNets) == len(prog.CIDRNets) {
+		return
+	}
+	vm.cidrNets = make([]*net.IPNet, len(prog.CIDRNets))
+	copy(vm.cidrNets, prog.CIDRNets)
 }
 
 // jsonExtractCached extracts a dot-path from a JSON string, using a single-entry

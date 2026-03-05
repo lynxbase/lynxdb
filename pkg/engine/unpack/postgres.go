@@ -182,4 +182,13 @@ func emitDuration(message string, emit func(key string, val event.Value) bool) {
 	if f, err := strconv.ParseFloat(numStr, 64); err == nil {
 		emit("duration_ms", event.FloatValue(f))
 	}
+
+	// Extract SQL statement if present: "duration: 1.234 ms  statement: SELECT ..."
+	const stmtPrefix = " ms  statement: "
+	if strings.HasPrefix(after, stmtPrefix) {
+		stmt := strings.TrimSpace(after[len(stmtPrefix):])
+		if stmt != "" {
+			emit("statement", event.StringValue(stmt))
+		}
+	}
 }

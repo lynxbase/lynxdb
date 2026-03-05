@@ -23,7 +23,7 @@ type PlanCache struct {
 type planCacheEntry struct {
 	plan       *Plan
 	hash       uint64
-	normalized string // normalized query string for collision detection (P1)
+	normalized string // normalized query string for collision detection
 	createdAt  time.Time
 }
 
@@ -45,7 +45,7 @@ func NewPlanCache(capacity int, ttl time.Duration) *PlanCache {
 }
 
 // Get looks up a cached plan by query string. Returns the plan and true on hit.
-// Verifies the normalized query string matches to detect hash collisions (P1).
+// Verifies the normalized query string matches to detect hash collisions.
 func (c *PlanCache) Get(query string) (*Plan, bool) {
 	norm := normalize(query)
 	h := hashNormalized(norm)
@@ -56,7 +56,7 @@ func (c *PlanCache) Get(query string) (*Plan, bool) {
 	if !ok {
 		return nil, false
 	}
-	// Collision detection: verify the normalized query matches (P1).
+	// Collision detection: verify the normalized query matches.
 	if entry.normalized != norm {
 		return nil, false
 	}
@@ -128,6 +128,7 @@ func (p *Plan) Clone() *Plan {
 		h.SearchTerms = append([]string(nil), p.Hints.SearchTerms...)
 		h.RequiredCols = append([]string(nil), p.Hints.RequiredCols...)
 		h.FieldPredicates = append([]spl2.FieldPredicate(nil), p.Hints.FieldPredicates...)
+		h.InPredicates = append([]spl2.InPredicate(nil), p.Hints.InPredicates...)
 		clone.Hints = &h
 	}
 	if p.OptimizerStats != nil {

@@ -263,7 +263,6 @@ func doWatchQuery(query, since string) ([]map[string]interface{}, time.Duration,
 	return queryResultToRows(result), time.Since(start), nil
 }
 
-
 func buildPrevLookup(prevRows []map[string]interface{}, cols []string) map[string]map[string]interface{} {
 	if len(prevRows) == 0 || len(cols) == 0 {
 		return nil

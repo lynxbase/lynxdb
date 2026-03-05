@@ -59,6 +59,50 @@ func TestPostgresParser_Duration(t *testing.T) {
 	}
 }
 
+func TestPostgresParser_DurationWithStatement(t *testing.T) {
+	input := `2026-02-14 14:52:01.234 UTC [12345] postgres@mydb LOG:  duration: 1.234 ms  statement: SELECT * FROM users WHERE id = 42`
+
+	p := &PostgresParser{}
+	fields := make(map[string]event.Value)
+	err := p.Parse(input, func(key string, val event.Value) bool {
+		fields[key] = val
+		return true
+	})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	if fields["duration_ms"].AsFloat() != 1.234 {
+		t.Errorf("duration_ms: got %v, want 1.234", fields["duration_ms"])
+	}
+	stmt := fields["statement"].String()
+	if stmt != "SELECT * FROM users WHERE id = 42" {
+		t.Errorf("statement: got %q, want %q", stmt, "SELECT * FROM users WHERE id = 42")
+	}
+}
+
+func TestPostgresParser_DurationWithoutStatement(t *testing.T) {
+	// Plain duration without statement suffix — no statement field emitted.
+	input := `2026-02-14 14:52:01.234 UTC [12345] postgres@mydb LOG:  duration: 3.456 ms`
+
+	p := &PostgresParser{}
+	fields := make(map[string]event.Value)
+	err := p.Parse(input, func(key string, val event.Value) bool {
+		fields[key] = val
+		return true
+	})
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	if fields["duration_ms"].AsFloat() != 3.456 {
+		t.Errorf("duration_ms: got %v, want 3.456", fields["duration_ms"])
+	}
+	if _, ok := fields["statement"]; ok {
+		t.Errorf("statement should not be emitted for plain duration lines, got %q", fields["statement"].String())
+	}
+}
+
 func TestPostgresParser_Error(t *testing.T) {
 	input := `2026-02-14 14:52:01.234 UTC [99] app@testdb ERROR:  relation "users" does not exist`
 

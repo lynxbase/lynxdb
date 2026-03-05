@@ -1717,29 +1717,105 @@ func (p *Parser) parseComparison() (Expr, error) {
 
 		return &CompareExpr{Left: left, Op: "like", Right: right}, nil
 	case TokenIn:
+		return p.parseInExpr(left, false)
+	case TokenRegexMatch:
 		p.advance()
-		if _, err := p.expect(TokenLParen); err != nil {
+		right, err := p.parseAddSub()
+		if err != nil {
 			return nil, err
 		}
-		var values []Expr
-		for p.peek().Type != TokenRParen {
-			if len(values) > 0 {
-				if _, err := p.expect(TokenComma); err != nil {
-					return nil, err
-				}
+
+		return &CompareExpr{Left: left, Op: "=~", Right: right}, nil
+	case TokenRegexNotMatch:
+		p.advance()
+		right, err := p.parseAddSub()
+		if err != nil {
+			return nil, err
+		}
+
+		return &CompareExpr{Left: left, Op: "!~", Right: right}, nil
+	case TokenBetween:
+		// BETWEEN low AND high → desugars to (left >= low AND left <= high)
+		p.advance() // consume BETWEEN
+		low, err := p.parseAddSub()
+		if err != nil {
+			return nil, err
+		}
+		if _, err := p.expect(TokenAnd); err != nil {
+			return nil, fmt.Errorf("spl2: BETWEEN requires AND between bounds")
+		}
+		high, err := p.parseAddSub()
+		if err != nil {
+			return nil, err
+		}
+
+		return &BinaryExpr{
+			Left:  &CompareExpr{Left: left, Op: ">=", Right: low},
+			Op:    "and",
+			Right: &CompareExpr{Left: left, Op: "<=", Right: high},
+		}, nil
+	case TokenIs:
+		// IS NULL or IS NOT NULL
+		p.advance() // consume IS
+		if p.peek().Type == TokenNull {
+			p.advance() // consume NULL
+
+			return &FuncCallExpr{Name: "isnull", Args: []Expr{left}}, nil
+		}
+		if p.peek().Type == TokenNot {
+			p.advance() // consume NOT
+			if _, err := p.expect(TokenNull); err != nil {
+				return nil, fmt.Errorf("spl2: expected NULL after IS NOT")
 			}
-			val, err := p.parseAddSub()
+
+			return &FuncCallExpr{Name: "isnotnull", Args: []Expr{left}}, nil
+		}
+
+		return nil, fmt.Errorf("spl2: expected NULL or NOT NULL after IS at position %d", p.peek().Pos)
+	case TokenNot:
+		// NOT IN (...) or NOT LIKE "pattern"
+		if p.peekAt(1).Type == TokenIn {
+			p.advance() // consume NOT
+			return p.parseInExpr(left, true)
+		}
+		if p.peekAt(1).Type == TokenLike {
+			p.advance() // consume NOT
+			p.advance() // consume LIKE
+			right, err := p.parseAddSub()
 			if err != nil {
 				return nil, err
 			}
-			values = append(values, val)
-		}
-		p.advance() // consume )
 
-		return &InExpr{Field: left, Values: values}, nil
+			return &CompareExpr{Left: left, Op: "not like", Right: right}, nil
+		}
+		// NOT is part of a boolean expression; let the caller handle it.
 	}
 
 	return left, nil
+}
+
+// parseInExpr parses the IN (val1, val2, ...) portion of an IN or NOT IN expression.
+func (p *Parser) parseInExpr(left Expr, negated bool) (Expr, error) {
+	p.advance() // consume IN
+	if _, err := p.expect(TokenLParen); err != nil {
+		return nil, err
+	}
+	var values []Expr
+	for p.peek().Type != TokenRParen {
+		if len(values) > 0 {
+			if _, err := p.expect(TokenComma); err != nil {
+				return nil, err
+			}
+		}
+		val, err := p.parseAddSub()
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, val)
+	}
+	p.advance() // consume )
+
+	return &InExpr{Field: left, Values: values, Negated: negated}, nil
 }
 
 func (p *Parser) parseAddSub() (Expr, error) {

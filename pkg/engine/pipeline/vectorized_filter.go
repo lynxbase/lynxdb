@@ -259,3 +259,86 @@ func CompactStringByBitmap(col []string, bitmap []bool) []string {
 
 	return result
 }
+
+// NotBitmap inverts a bitmap element-wise.
+func NotBitmap(bitmap []bool) []bool {
+	result := make([]bool, len(bitmap))
+	for i, v := range bitmap {
+		result[i] = !v
+	}
+
+	return result
+}
+
+// FilterInt64InSet checks membership in a hashset for int64 columns.
+func FilterInt64InSet(col []int64, set map[int64]struct{}) []bool {
+	bitmap := make([]bool, len(col))
+	for i, v := range col {
+		_, bitmap[i] = set[v]
+	}
+
+	return bitmap
+}
+
+// FilterFloat64InSet checks membership in a hashset for float64 columns.
+func FilterFloat64InSet(col []float64, set map[float64]struct{}) []bool {
+	bitmap := make([]bool, len(col))
+	for i, v := range col {
+		_, bitmap[i] = set[v]
+	}
+
+	return bitmap
+}
+
+// FilterStringInSet checks membership in a hashset for string columns.
+func FilterStringInSet(col []string, set map[string]struct{}) []bool {
+	bitmap := make([]bool, len(col))
+	for i, v := range col {
+		_, bitmap[i] = set[v]
+	}
+
+	return bitmap
+}
+
+// FilterInt64Range checks min <= col[i] <= max in a single pass.
+// minExclusive/maxExclusive control whether bounds are strict (> / <).
+func FilterInt64Range(col []int64, minVal, maxVal int64, minExclusive, maxExclusive bool) []bool {
+	bitmap := make([]bool, len(col))
+	for i, v := range col {
+		var aboveMin, belowMax bool
+		if minExclusive {
+			aboveMin = v > minVal
+		} else {
+			aboveMin = v >= minVal
+		}
+		if maxExclusive {
+			belowMax = v < maxVal
+		} else {
+			belowMax = v <= maxVal
+		}
+		bitmap[i] = aboveMin && belowMax
+	}
+
+	return bitmap
+}
+
+// FilterFloat64Range checks min <= col[i] <= max in a single pass.
+func FilterFloat64Range(col []float64, minVal, maxVal float64, minExclusive, maxExclusive bool) []bool {
+	bitmap := make([]bool, len(col))
+	for i, v := range col {
+		var aboveMin, belowMax bool
+		if minExclusive {
+			aboveMin = v > minVal
+		} else {
+			aboveMin = v >= minVal
+		}
+		if maxExclusive {
+			belowMax = v < maxVal
+		} else {
+			belowMax = v <= maxVal
+		}
+		bitmap[i] = aboveMin && belowMax
+	}
+
+	return bitmap
+}

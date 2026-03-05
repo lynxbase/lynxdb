@@ -296,6 +296,7 @@ func buildStreamHints(hints *spl2.QueryHints, bitmapThreshold float64) *enginepi
 
 	sh.FieldPreds = append(sh.FieldPreds, hints.FieldPredicates...)
 	sh.RangePreds = append(sh.RangePreds, hints.RangePredicates...)
+	sh.InPreds = append(sh.InPreds, hints.InPredicates...)
 	sh.InvertedPreds = append(sh.InvertedPreds, hints.InvertedIndexPredicates...)
 
 	// Multi-source fields for wildcard/list queries.
@@ -1621,8 +1622,8 @@ func readSegmentColumnar(
 // bypassing the per-event *event.Event intermediate representation. Memtable
 // events are still converted via BatchFromEvents since they originate as Event structs.
 //
-// WARNING: This path materializes ALL matching segment data into memory upfront.
-// It is only used when an external IndexStore is injected (test path). All
+// This path materializes all matching segment data into memory upfront.
+// It is only used when an external IndexStore is injected (test path); all
 // production server-mode queries use the streaming path (runStreamingPipeline)
 // which reads row groups on-demand and allows operators to spill to disk.
 func (e *Engine) buildColumnarStore(ctx context.Context, hints *spl2.QueryHints, onProgress func(*SearchProgress), monitor *stats.BudgetMonitor, traceSegments ...bool) (map[string][]*enginepipeline.Batch, storeStats, error) {

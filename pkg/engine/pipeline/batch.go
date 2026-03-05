@@ -187,14 +187,35 @@ func BatchFromEvents(events []*event.Event) *Batch {
 	b := &Batch{Columns: make(map[string][]event.Value, colCount), Len: n}
 
 	// Pre-allocate builtin columns with exact size.
-	times := make([]event.Value, n)
-	raws := make([]event.Value, n)
-	for i, ev := range events {
-		times[i] = event.TimestampValue(ev.Time)
-		raws[i] = event.StringValue(ev.Raw)
+	// Skip _time when all events have zero time (e.g. aggregation results)
+	// to avoid int64 overflow from time.Time{}.UnixNano() (year 0001 < 1678 minimum).
+	// Skip _raw when all events have empty raw (meaningless for aggregation output).
+	hasTime, hasRaw := false, false
+	for _, ev := range events {
+		if !ev.Time.IsZero() {
+			hasTime = true
+		}
+		if ev.Raw != "" {
+			hasRaw = true
+		}
+		if hasTime && hasRaw {
+			break
+		}
 	}
-	b.Columns["_time"] = times
-	b.Columns["_raw"] = raws
+	if hasTime {
+		times := make([]event.Value, n)
+		for i, ev := range events {
+			times[i] = event.TimestampValue(ev.Time)
+		}
+		b.Columns["_time"] = times
+	}
+	if hasRaw {
+		raws := make([]event.Value, n)
+		for i, ev := range events {
+			raws[i] = event.StringValue(ev.Raw)
+		}
+		b.Columns["_raw"] = raws
+	}
 
 	if hasSource {
 		col := make([]event.Value, n)

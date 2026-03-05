@@ -220,6 +220,69 @@ func TestBuildRGFilter_Combined(t *testing.T) {
 	}
 }
 
+func TestBuildRGFilter_InPreds(t *testing.T) {
+	node := BuildRGFilter(&SegmentStreamHints{
+		InPreds: []spl2.InPredicate{
+			{Field: "source", Values: []string{"nginx", "redis"}},
+		},
+	})
+	if node == nil {
+		t.Fatal("expected non-nil node")
+	}
+	if node.Op != segment.RGFilterFieldIn {
+		t.Errorf("Op: got %d, want RGFilterFieldIn(%d)", node.Op, segment.RGFilterFieldIn)
+	}
+	// Verify field normalization: source → _source.
+	if node.Field != "_source" {
+		t.Errorf("Field: got %q, want _source", node.Field)
+	}
+	if len(node.Values) != 2 || node.Values[0] != "nginx" || node.Values[1] != "redis" {
+		t.Errorf("Values: got %v, want [nginx redis]", node.Values)
+	}
+	// Terms should contain tokenized versions of the values.
+	if len(node.Terms) == 0 {
+		t.Error("expected pre-tokenized terms for bloom filter")
+	}
+}
+
+func TestBuildRGFilter_InPreds_WithFieldPreds(t *testing.T) {
+	// IN predicate combined with a field predicate → AND.
+	node := BuildRGFilter(&SegmentStreamHints{
+		FieldPreds: []spl2.FieldPredicate{
+			{Field: "status", Op: ">=", Value: "500"},
+		},
+		InPreds: []spl2.InPredicate{
+			{Field: "source", Values: []string{"nginx", "api-gw"}},
+		},
+	})
+	if node == nil {
+		t.Fatal("expected non-nil node")
+	}
+	if node.Op != segment.RGFilterAnd {
+		t.Errorf("Op: got %d, want RGFilterAnd(%d)", node.Op, segment.RGFilterAnd)
+	}
+	if len(node.Children) != 2 {
+		t.Fatalf("Children: got %d, want 2", len(node.Children))
+	}
+	// One child should be FieldRange (status), other should be FieldIn (source).
+	hasRange := false
+	hasIn := false
+	for _, child := range node.Children {
+		if child.Op == segment.RGFilterFieldRange {
+			hasRange = true
+		}
+		if child.Op == segment.RGFilterFieldIn {
+			hasIn = true
+		}
+	}
+	if !hasRange {
+		t.Error("expected FieldRange child for status>=500")
+	}
+	if !hasIn {
+		t.Error("expected FieldIn child for source IN (...)")
+	}
+}
+
 func TestBuildRGFilter_FieldNormalization(t *testing.T) {
 	node := BuildRGFilter(&SegmentStreamHints{
 		FieldPreds: []spl2.FieldPredicate{

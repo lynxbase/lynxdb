@@ -520,6 +520,75 @@ func TestRGFilter_FieldIn_ZoneMap_Skip(t *testing.T) {
 	}
 }
 
+func TestRGFilter_FieldIn_BloomSkip(t *testing.T) {
+	// Multi-value segment with levels [error, warn]. Source is "nginx" (const).
+	// IN {_source: "postgres", "mysql"} with bloom terms that don't match.
+	// After const check passes (source is non-const for this field),
+	// bloom should skip if terms don't appear.
+	r := makeMultiValueSegment(t, []string{"error", "warn"}, []int64{200, 500}, 100)
+
+	// level column has values [error, warn]. Query for level IN {debug, critical}
+	// with bloom terms ["debug", "critical"] that shouldn't appear in the bloom.
+	node := &RGFilterNode{
+		Op:     RGFilterFieldIn,
+		Field:  "level",
+		Values: []string{"debug", "critical"},
+		Terms:  []string{"debug", "critical"},
+	}
+	eval := NewRGFilterEvaluator(node, r)
+
+	var stats RGFilterStats
+	v := eval.EvaluateRowGroup(0, &stats)
+	// Either zone map or bloom should skip this.
+	if v != RGSkip {
+		t.Errorf("expected RGSkip for IN with non-matching bloom terms, got %d", v)
+	}
+}
+
+func TestRGFilter_FieldIn_BloomMaybe(t *testing.T) {
+	// _source is const "nginx" in makeSingleSourceSegment.
+	// IN {_source: "nginx", "redis"} with bloom terms ["nginx"].
+	// Const check should pass (nginx is in the set), so we get RGMaybe.
+	r := makeSingleSourceSegment(t, "nginx", "info", 200, 100)
+
+	node := &RGFilterNode{
+		Op:     RGFilterFieldIn,
+		Field:  "_source",
+		Values: []string{"nginx", "redis"},
+		Terms:  []string{"nginx"},
+	}
+	eval := NewRGFilterEvaluator(node, r)
+
+	var stats RGFilterStats
+	if v := eval.EvaluateRowGroup(0, &stats); v != RGMaybe {
+		t.Errorf("expected RGMaybe for IN with matching const, got %d", v)
+	}
+}
+
+func TestRGFilter_FieldIn_BloomStats(t *testing.T) {
+	// Multi-value segment. Query for level IN with terms that are in the bloom.
+	r := makeMultiValueSegment(t, []string{"error", "warn"}, []int64{200}, 100)
+
+	node := &RGFilterNode{
+		Op:     RGFilterFieldIn,
+		Field:  "level",
+		Values: []string{"error", "info"},
+		Terms:  []string{"error"}, // error is in the segment
+	}
+	eval := NewRGFilterEvaluator(node, r)
+
+	var stats RGFilterStats
+	v := eval.EvaluateRowGroup(0, &stats)
+	// "error" is within zone map [error, warn] and in bloom → RGMaybe.
+	if v != RGMaybe {
+		t.Errorf("expected RGMaybe when bloom hits, got %d", v)
+	}
+	// Bloom should have been checked.
+	if stats.BloomsChecked != 1 {
+		t.Errorf("BloomsChecked: got %d, want 1", stats.BloomsChecked)
+	}
+}
+
 func TestRGFilter_Neq_ZoneMap_AllSameValue(t *testing.T) {
 	// All statuses are 200 → zone map min=max="200".
 	// Predicate: status != 200 → min==max==200 → skip via zone map.

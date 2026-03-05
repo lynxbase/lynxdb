@@ -117,10 +117,10 @@ func batchFromEventsFiltered(events []*event.Event, columns []string) *Batch {
 	}
 	for _, ev := range events {
 		fields := make(map[string]event.Value, len(columns))
-		if colSet["_time"] {
+		if colSet["_time"] && !ev.Time.IsZero() {
 			fields["_time"] = event.TimestampValue(ev.Time)
 		}
-		if colSet["_raw"] {
+		if colSet["_raw"] && ev.Raw != "" {
 			fields["_raw"] = event.StringValue(ev.Raw)
 		}
 		if ev.Source != "" {

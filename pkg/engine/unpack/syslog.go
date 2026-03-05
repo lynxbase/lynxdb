@@ -61,7 +61,9 @@ func (p *SyslogParser) Parse(input string, emit func(key string, val event.Value
 		priority = pri
 		i++ // skip '>'
 	} else {
-		return nil // no PRI header — not syslog
+		// No PRI header — common when syslog messages come through log shippers
+		// (filebeat, fluentd, vector) that strip the PRI. Try parsing as RFC 3164 body.
+		return p.parseRFC3164(s, emit)
 	}
 
 	// Emit priority, facility, severity.

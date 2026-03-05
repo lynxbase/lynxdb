@@ -182,7 +182,7 @@ func TestMVRewrite_InactiveView(t *testing.T) {
 				Filter:       "nginx",
 				GroupBy:      []string{"host"},
 				Aggregations: []string{"count"},
-				Status:       "backfill",
+				Status:       "disabled",
 			},
 		},
 	}
@@ -200,7 +200,48 @@ func TestMVRewrite_InactiveView(t *testing.T) {
 
 	_, applied := rule.Apply(q)
 	if applied {
-		t.Error("expected rule to NOT apply for non-active view")
+		t.Error("expected rule to NOT apply for disabled view")
+	}
+}
+
+func TestMVRewrite_BackfillView(t *testing.T) {
+	catalog := &staticCatalog{
+		views: []ViewInfo{
+			{
+				Name:         "mv_backfilling",
+				Filter:       "nginx",
+				GroupBy:      []string{"host"},
+				Aggregations: []string{"count"},
+				Status:       "backfill",
+				Rows:         5000,
+			},
+		},
+	}
+	rule := NewMVRewriteRule(catalog)
+
+	q := &spl2.Query{
+		Source: &spl2.SourceClause{Index: "nginx"},
+		Commands: []spl2.Command{
+			&spl2.StatsCommand{
+				Aggregations: []spl2.AggExpr{{Func: "count"}},
+				GroupBy:      []string{"host"},
+			},
+		},
+	}
+
+	newQ, applied := rule.Apply(q)
+	if !applied {
+		t.Fatal("expected rule to apply for backfilling view")
+	}
+
+	// Verify annotation status.
+	ann, ok := newQ.GetAnnotation("mvAccelerated")
+	if !ok {
+		t.Fatal("expected mvAccelerated annotation")
+	}
+	mvAnn := ann.(*MVAccelAnnotation)
+	if mvAnn.Status != "backfilling" {
+		t.Errorf("expected status 'backfilling', got %q", mvAnn.Status)
 	}
 }
 
@@ -282,7 +323,6 @@ func TestMVRewrite_PreservesPostStatsCommands(t *testing.T) {
 		t.Fatal("expected rule to apply")
 	}
 
-	// FROM + stats + head = 3 commands
 	if len(newQ.Commands) != 3 {
 		t.Fatalf("expected 3 commands, got %d", len(newQ.Commands))
 	}
@@ -347,6 +387,228 @@ func TestHelpers_AggsAreMergeable(t *testing.T) {
 		got := aggsAreMergeable(tt.queryAggs, tt.mvAggs)
 		if got != tt.want {
 			t.Errorf("aggsAreMergeable(%v, %v) = %v, want %v", tt.queryAggs, tt.mvAggs, got, tt.want)
+		}
+	}
+}
+
+func TestExprImplies_StructuralEquality(t *testing.T) {
+	// source = "nginx" implies source = "nginx"
+	query := &spl2.CompareExpr{
+		Left: &spl2.FieldExpr{Name: "source"}, Op: "=",
+		Right: &spl2.LiteralExpr{Value: "nginx"},
+	}
+	mv := &spl2.CompareExpr{
+		Left: &spl2.FieldExpr{Name: "source"}, Op: "=",
+		Right: &spl2.LiteralExpr{Value: "nginx"},
+	}
+	if !exprImplies(query, mv) {
+		t.Error("expected source=nginx to imply source=nginx")
+	}
+}
+
+func TestExprImplies_RangeTightening_LowerBound(t *testing.T) {
+	// status >= 500 implies status >= 400
+	query := &spl2.CompareExpr{
+		Left: &spl2.FieldExpr{Name: "status"}, Op: ">=",
+		Right: &spl2.LiteralExpr{Value: "500"},
+	}
+	mv := &spl2.CompareExpr{
+		Left: &spl2.FieldExpr{Name: "status"}, Op: ">=",
+		Right: &spl2.LiteralExpr{Value: "400"},
+	}
+	if !exprImplies(query, mv) {
+		t.Error("expected status>=500 to imply status>=400")
+	}
+}
+
+func TestExprImplies_RangeTightening_UpperBound(t *testing.T) {
+	// status <= 300 implies status <= 400
+	query := &spl2.CompareExpr{
+		Left: &spl2.FieldExpr{Name: "status"}, Op: "<=",
+		Right: &spl2.LiteralExpr{Value: "300"},
+	}
+	mv := &spl2.CompareExpr{
+		Left: &spl2.FieldExpr{Name: "status"}, Op: "<=",
+		Right: &spl2.LiteralExpr{Value: "400"},
+	}
+	if !exprImplies(query, mv) {
+		t.Error("expected status<=300 to imply status<=400")
+	}
+}
+
+func TestExprImplies_RangeTightening_Negative(t *testing.T) {
+	// status >= 300 does NOT imply status >= 500
+	query := &spl2.CompareExpr{
+		Left: &spl2.FieldExpr{Name: "status"}, Op: ">=",
+		Right: &spl2.LiteralExpr{Value: "300"},
+	}
+	mv := &spl2.CompareExpr{
+		Left: &spl2.FieldExpr{Name: "status"}, Op: ">=",
+		Right: &spl2.LiteralExpr{Value: "500"},
+	}
+	if exprImplies(query, mv) {
+		t.Error("expected status>=300 to NOT imply status>=500")
+	}
+}
+
+func TestExprImplies_EqualityImpliesRange(t *testing.T) {
+	// status = 500 implies status >= 400
+	query := &spl2.CompareExpr{
+		Left: &spl2.FieldExpr{Name: "status"}, Op: "=",
+		Right: &spl2.LiteralExpr{Value: "500"},
+	}
+	mv := &spl2.CompareExpr{
+		Left: &spl2.FieldExpr{Name: "status"}, Op: ">=",
+		Right: &spl2.LiteralExpr{Value: "400"},
+	}
+	if !exprImplies(query, mv) {
+		t.Error("expected status=500 to imply status>=400")
+	}
+}
+
+func TestExprImplies_INContainment(t *testing.T) {
+	// status IN (200, 404) implies status IN (200, 404, 500)
+	query := &spl2.InExpr{
+		Field: &spl2.FieldExpr{Name: "status"},
+		Values: []spl2.Expr{
+			&spl2.LiteralExpr{Value: "200"},
+			&spl2.LiteralExpr{Value: "404"},
+		},
+	}
+	mv := &spl2.InExpr{
+		Field: &spl2.FieldExpr{Name: "status"},
+		Values: []spl2.Expr{
+			&spl2.LiteralExpr{Value: "200"},
+			&spl2.LiteralExpr{Value: "404"},
+			&spl2.LiteralExpr{Value: "500"},
+		},
+	}
+	if !exprImplies(query, mv) {
+		t.Error("expected IN(200,404) to imply IN(200,404,500)")
+	}
+}
+
+func TestExprImplies_INContainment_Negative(t *testing.T) {
+	// status IN (200, 999) does NOT imply status IN (200, 404)
+	query := &spl2.InExpr{
+		Field: &spl2.FieldExpr{Name: "status"},
+		Values: []spl2.Expr{
+			&spl2.LiteralExpr{Value: "200"},
+			&spl2.LiteralExpr{Value: "999"},
+		},
+	}
+	mv := &spl2.InExpr{
+		Field: &spl2.FieldExpr{Name: "status"},
+		Values: []spl2.Expr{
+			&spl2.LiteralExpr{Value: "200"},
+			&spl2.LiteralExpr{Value: "404"},
+		},
+	}
+	if exprImplies(query, mv) {
+		t.Error("expected IN(200,999) to NOT imply IN(200,404)")
+	}
+}
+
+func TestExprImplies_ConjunctionSubset(t *testing.T) {
+	// (source = "nginx" AND status >= 500) implies (source = "nginx")
+	query := &spl2.BinaryExpr{
+		Left: &spl2.CompareExpr{
+			Left: &spl2.FieldExpr{Name: "source"}, Op: "=",
+			Right: &spl2.LiteralExpr{Value: "nginx"},
+		},
+		Op: "and",
+		Right: &spl2.CompareExpr{
+			Left: &spl2.FieldExpr{Name: "status"}, Op: ">=",
+			Right: &spl2.LiteralExpr{Value: "500"},
+		},
+	}
+	mv := &spl2.CompareExpr{
+		Left: &spl2.FieldExpr{Name: "source"}, Op: "=",
+		Right: &spl2.LiteralExpr{Value: "nginx"},
+	}
+	if !exprImplies(query, mv) {
+		t.Error("expected (source=nginx AND status>=500) to imply source=nginx")
+	}
+}
+
+func TestExprImplies_DifferentField(t *testing.T) {
+	// source = "nginx" does NOT imply host = "nginx"
+	query := &spl2.CompareExpr{
+		Left: &spl2.FieldExpr{Name: "source"}, Op: "=",
+		Right: &spl2.LiteralExpr{Value: "nginx"},
+	}
+	mv := &spl2.CompareExpr{
+		Left: &spl2.FieldExpr{Name: "host"}, Op: "=",
+		Right: &spl2.LiteralExpr{Value: "nginx"},
+	}
+	if exprImplies(query, mv) {
+		t.Error("expected source=nginx to NOT imply host=nginx")
+	}
+}
+
+func TestMVRewrite_WithFilterExpr(t *testing.T) {
+	// Test AST-based matching with FilterExpr field.
+	catalog := &staticCatalog{
+		views: []ViewInfo{
+			{
+				Name: "mv_errors",
+				FilterExpr: &spl2.CompareExpr{
+					Left: &spl2.FieldExpr{Name: "level"}, Op: "=",
+					Right: &spl2.LiteralExpr{Value: "error"},
+				},
+				GroupBy:      []string{"source"},
+				Aggregations: []string{"count"},
+				Status:       "active",
+			},
+		},
+	}
+	rule := NewMVRewriteRule(catalog)
+
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.CompareExpr{
+					Left: &spl2.FieldExpr{Name: "level"}, Op: "=",
+					Right: &spl2.LiteralExpr{Value: "error"},
+				},
+			},
+			&spl2.StatsCommand{
+				Aggregations: []spl2.AggExpr{{Func: "count"}},
+				GroupBy:      []string{"source"},
+			},
+		},
+	}
+
+	newQ, applied := rule.Apply(q)
+	if !applied {
+		t.Fatal("expected rule to apply with AST-based FilterExpr matching")
+	}
+	from, ok := newQ.Commands[0].(*spl2.FromCommand)
+	if !ok {
+		t.Fatalf("expected FromCommand, got %T", newQ.Commands[0])
+	}
+	if from.ViewName != "mv_errors" {
+		t.Errorf("view name: got %q, want %q", from.ViewName, "mv_errors")
+	}
+}
+
+func TestParseViewFilter(t *testing.T) {
+	tests := []struct {
+		filter  string
+		wantNil bool
+	}{
+		{"status >= 500", false},
+		{"level = \"error\" AND source = \"nginx\"", false},
+		{"", true},
+	}
+
+	for _, tt := range tests {
+		expr := parseViewFilter(tt.filter)
+		if tt.wantNil && expr != nil {
+			t.Errorf("parseViewFilter(%q): expected nil, got %v", tt.filter, expr)
+		}
+		if !tt.wantNil && expr == nil {
+			t.Errorf("parseViewFilter(%q): expected non-nil", tt.filter)
 		}
 	}
 }

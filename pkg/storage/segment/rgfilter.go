@@ -173,7 +173,7 @@ func (e *RGFilterEvaluator) evalTerm(node *RGFilterNode, rgIdx int, stats *RGFil
 // evalFieldEq checks field = value using layered checks (cheapest first):
 // const column match → column presence → zone map exclusion → per-column bloom.
 func (e *RGFilterEvaluator) evalFieldEq(node *RGFilterNode, rgIdx int, stats *RGFilterStats) RGVerdict {
-	// Layer 1: Const column — O(1), definitive.
+	// Const column — O(1), definitive.
 	if constVal, ok := e.reader.GetConstValue(rgIdx, node.Field); ok {
 		if constVal != node.Value {
 			if stats != nil {
@@ -186,7 +186,7 @@ func (e *RGFilterEvaluator) evalFieldEq(node *RGFilterNode, rgIdx int, stats *RG
 		return RGMaybe // const matches — must scan rows (other predicates may filter)
 	}
 
-	// Layer 2: Column presence — O(1) bitmap check.
+	// Column presence — O(1) bitmap check.
 	if !e.reader.HasColumnInRowGroup(rgIdx, node.Field) {
 		if stats != nil {
 			stats.PresenceSkips++
@@ -195,7 +195,7 @@ func (e *RGFilterEvaluator) evalFieldEq(node *RGFilterNode, rgIdx int, stats *RG
 		return RGSkip
 	}
 
-	// Layer 3: Zone map — string comparison for range exclusion.
+	// Zone map — string comparison for range exclusion.
 	if cc := e.reader.ColumnChunkInRowGroup(rgIdx, node.Field); cc != nil {
 		// For equality: value must be within [min, max].
 		if node.Value < cc.MinValue || node.Value > cc.MaxValue {
@@ -207,7 +207,7 @@ func (e *RGFilterEvaluator) evalFieldEq(node *RGFilterNode, rgIdx int, stats *RG
 		}
 	}
 
-	// Layer 4: Per-column bloom filter.
+	// Per-column bloom filter.
 	if len(node.Terms) > 0 {
 		if stats != nil {
 			stats.BloomsChecked++
@@ -260,7 +260,7 @@ func (e *RGFilterEvaluator) evalFieldNeq(node *RGFilterNode, rgIdx int, stats *R
 // For numeric fields, the values are stored as their string representation,
 // so we attempt numeric comparison when both values parse as numbers.
 func (e *RGFilterEvaluator) evalFieldRange(node *RGFilterNode, rgIdx int, stats *RGFilterStats) RGVerdict {
-	// Layer 1: Const column.
+	// Const column check.
 	if constVal, ok := e.reader.GetConstValue(rgIdx, node.Field); ok {
 		if !evalRangeCheck(constVal, node.RangeOp, node.RangeVal) {
 			if stats != nil {
@@ -273,7 +273,7 @@ func (e *RGFilterEvaluator) evalFieldRange(node *RGFilterNode, rgIdx int, stats 
 		return RGMaybe
 	}
 
-	// Layer 2: Column presence.
+	// Column presence.
 	if !e.reader.HasColumnInRowGroup(rgIdx, node.Field) {
 		if stats != nil {
 			stats.PresenceSkips++
@@ -282,7 +282,7 @@ func (e *RGFilterEvaluator) evalFieldRange(node *RGFilterNode, rgIdx int, stats 
 		return RGSkip
 	}
 
-	// Layer 3: Zone map range disjointness.
+	// Zone map range disjointness.
 	if cc := e.reader.ColumnChunkInRowGroup(rgIdx, node.Field); cc != nil {
 		if zoneMapExcludesRange(cc.MinValue, cc.MaxValue, node.RangeOp, node.RangeVal) {
 			if stats != nil {
@@ -296,9 +296,9 @@ func (e *RGFilterEvaluator) evalFieldRange(node *RGFilterNode, rgIdx int, stats 
 	return RGMaybe
 }
 
-// EvalFieldIn checks field IN (values) using const column and bloom.
+// EvalFieldIn checks field IN (values) using const column, presence, zone map, and bloom.
 func (e *RGFilterEvaluator) evalFieldIn(node *RGFilterNode, rgIdx int, stats *RGFilterStats) RGVerdict {
-	// Layer 1: Const column — if const value is not in the set, skip.
+	// Const column — if the const value is not in the set, skip.
 	if constVal, ok := e.reader.GetConstValue(rgIdx, node.Field); ok {
 		found := false
 		for _, v := range node.Values {
@@ -319,7 +319,7 @@ func (e *RGFilterEvaluator) evalFieldIn(node *RGFilterNode, rgIdx int, stats *RG
 		return RGMaybe
 	}
 
-	// Layer 2: Column presence.
+	// Column presence.
 	if !e.reader.HasColumnInRowGroup(rgIdx, node.Field) {
 		if stats != nil {
 			stats.PresenceSkips++
@@ -328,7 +328,7 @@ func (e *RGFilterEvaluator) evalFieldIn(node *RGFilterNode, rgIdx int, stats *RG
 		return RGSkip
 	}
 
-	// Layer 3: Zone map — if all values are outside [min, max], skip.
+	// Zone map — skip if all values are outside [min, max].
 	if cc := e.reader.ColumnChunkInRowGroup(rgIdx, node.Field); cc != nil {
 		anyInRange := false
 		for _, v := range node.Values {
@@ -341,6 +341,35 @@ func (e *RGFilterEvaluator) evalFieldIn(node *RGFilterNode, rgIdx int, stats *RG
 		if !anyInRange {
 			if stats != nil {
 				stats.ZoneMapSkips++
+			}
+
+			return RGSkip
+		}
+	}
+
+	// Per-column bloom filter — if none of the tokenized terms appear
+	// in the bloom, the row group cannot contain any of the IN values.
+	if len(node.Terms) > 0 {
+		if stats != nil {
+			stats.BloomsChecked++
+		}
+		anyMayExist := false
+		for _, term := range node.Terms {
+			mayContain, err := e.reader.CheckColumnBloom(rgIdx, node.Field, term)
+			if err != nil {
+				anyMayExist = true // conservative on error
+
+				break
+			}
+			if mayContain {
+				anyMayExist = true
+
+				break
+			}
+		}
+		if !anyMayExist {
+			if stats != nil {
+				stats.BloomSkips++
 			}
 
 			return RGSkip

@@ -60,6 +60,11 @@ const (
 	OpReplace   Opcode = 0x4F
 	OpSplit     Opcode = 0x57
 
+	// String Predicates (pop 2, push bool).
+	OpStartsWith Opcode = 0x59
+	OpEndsWith   Opcode = 0x5A
+	OpContains   Opcode = 0x5B
+
 	// Comparison (pop 2, push bool).
 	OpEq     Opcode = 0x50
 	OpNeq    Opcode = 0x51
@@ -105,8 +110,15 @@ const (
 	OpIsNull    Opcode = 0xB1
 	OpIsNotNull Opcode = 0xB2
 
+	// Type Checks (pop 1, push bool).
+	OpIsNum Opcode = 0xB3
+	OpIsInt Opcode = 0xB4
+
 	// Time Functions.
 	OpStrftime Opcode = 0xC0
+
+	// Network (operand: 2-byte CIDR pool index).
+	OpCIDRMatch Opcode = 0xE0 // net.IPNet.Contains
 
 	// JSON Functions.
 	OpJsonExtract  Opcode = 0xD0 // pop path, pop field, push extracted value
@@ -175,6 +187,10 @@ var definitions = map[Opcode]*Definition{
 	OpReplace:   {"OpReplace", []int{2}},
 	OpSplit:     {"OpSplit", nil},
 
+	OpStartsWith: {"OpStartsWith", nil},
+	OpEndsWith:   {"OpEndsWith", nil},
+	OpContains:   {"OpContains", nil},
+
 	OpEq:     {"OpEq", nil},
 	OpNeq:    {"OpNeq", nil},
 	OpLt:     {"OpLt", nil},
@@ -212,8 +228,12 @@ var definitions = map[Opcode]*Definition{
 	OpCoalesce:  {"OpCoalesce", []int{2}},
 	OpIsNull:    {"OpIsNull", nil},
 	OpIsNotNull: {"OpIsNotNull", nil},
+	OpIsNum:     {"OpIsNum", nil},
+	OpIsInt:     {"OpIsInt", nil},
 
 	OpStrftime: {"OpStrftime", nil},
+
+	OpCIDRMatch: {"OpCIDRMatch", []int{2}},
 
 	OpJsonExtract:  {"OpJsonExtract", nil},
 	OpJsonValid:    {"OpJsonValid", nil},

@@ -923,6 +923,199 @@ func TestEarlyLimit_TailWithoutSort_NoChange(t *testing.T) {
 	}
 }
 
+func TestBloomEnrichment_InExpr(t *testing.T) {
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.InExpr{
+					Field: &spl2.FieldExpr{Name: "_source"},
+					Values: []spl2.Expr{
+						&spl2.LiteralExpr{Value: "nginx"},
+						&spl2.LiteralExpr{Value: "redis"},
+					},
+				},
+			},
+		},
+	}
+	rule := &bloomFilterPruningRule{}
+	result, changed := rule.Apply(q)
+	if !changed {
+		t.Fatal("bloom filter rule should have fired for IN on bloom-eligible field")
+	}
+	ann, ok := result.GetAnnotation("bloomTerms")
+	if !ok {
+		t.Fatal("bloomTerms annotation not set")
+	}
+	terms := ann.([]string)
+	if len(terms) != 2 {
+		t.Fatalf("expected 2 bloom terms, got %d: %v", len(terms), terms)
+	}
+	termSet := map[string]bool{}
+	for _, term := range terms {
+		termSet[term] = true
+	}
+	if !termSet["nginx"] || !termSet["redis"] {
+		t.Errorf("expected terms [nginx, redis], got %v", terms)
+	}
+}
+
+func TestBloomEnrichment_InExpr_NotIn(t *testing.T) {
+	// NOT IN should not produce bloom terms.
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.InExpr{
+					Field:   &spl2.FieldExpr{Name: "_source"},
+					Negated: true,
+					Values: []spl2.Expr{
+						&spl2.LiteralExpr{Value: "nginx"},
+					},
+				},
+			},
+		},
+	}
+	rule := &bloomFilterPruningRule{}
+	_, changed := rule.Apply(q)
+	if changed {
+		t.Error("bloom filter rule should NOT fire for NOT IN")
+	}
+}
+
+func TestBloomEnrichment_InExpr_NonBloomField(t *testing.T) {
+	// IN on a non-bloom field should not produce terms.
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.InExpr{
+					Field: &spl2.FieldExpr{Name: "status"},
+					Values: []spl2.Expr{
+						&spl2.LiteralExpr{Value: "200"},
+						&spl2.LiteralExpr{Value: "500"},
+					},
+				},
+			},
+		},
+	}
+	rule := &bloomFilterPruningRule{}
+	_, changed := rule.Apply(q)
+	if changed {
+		t.Error("bloom filter rule should NOT fire for non-bloom field IN")
+	}
+}
+
+func TestBloomEnrichment_LikePrefix(t *testing.T) {
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.CompareExpr{
+					Left:  &spl2.FieldExpr{Name: "_raw"},
+					Op:    "like",
+					Right: &spl2.LiteralExpr{Value: "/api/users/%"},
+				},
+			},
+		},
+	}
+	rule := &bloomFilterPruningRule{}
+	result, changed := rule.Apply(q)
+	if !changed {
+		t.Fatal("bloom filter rule should have fired for LIKE with long prefix")
+	}
+	ann, ok := result.GetAnnotation("bloomTerms")
+	if !ok {
+		t.Fatal("bloomTerms annotation not set")
+	}
+	terms := ann.([]string)
+	// Tokenizer splits "/api/users/" into ["api", "users"] (>= 3 chars each).
+	termSet := map[string]bool{}
+	for _, term := range terms {
+		termSet[term] = true
+	}
+	if !termSet["api"] || !termSet["users"] {
+		t.Errorf("expected bloom terms [api users], got %v", terms)
+	}
+}
+
+func TestBloomEnrichment_LikePrefixTooShort(t *testing.T) {
+	// Prefix "ab" is < 3 chars → should not produce a bloom term.
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.CompareExpr{
+					Left:  &spl2.FieldExpr{Name: "_raw"},
+					Op:    "like",
+					Right: &spl2.LiteralExpr{Value: "ab%"},
+				},
+			},
+		},
+	}
+	rule := &bloomFilterPruningRule{}
+	_, changed := rule.Apply(q)
+	if changed {
+		t.Error("bloom filter rule should NOT fire for LIKE prefix shorter than 3 chars")
+	}
+}
+
+func TestBloomEnrichment_LikeLeadingWildcard(t *testing.T) {
+	// Leading wildcard → empty prefix → no bloom term.
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.CompareExpr{
+					Left:  &spl2.FieldExpr{Name: "_raw"},
+					Op:    "like",
+					Right: &spl2.LiteralExpr{Value: "%error%"},
+				},
+			},
+		},
+	}
+	rule := &bloomFilterPruningRule{}
+	_, changed := rule.Apply(q)
+	if changed {
+		t.Error("bloom filter rule should NOT fire for LIKE with leading wildcard")
+	}
+}
+
+func TestBloomEnrichment_LikeNonBloomField(t *testing.T) {
+	// LIKE on a non-bloom field should not produce terms.
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.CompareExpr{
+					Left:  &spl2.FieldExpr{Name: "uri"},
+					Op:    "like",
+					Right: &spl2.LiteralExpr{Value: "/api/%"},
+				},
+			},
+		},
+	}
+	rule := &bloomFilterPruningRule{}
+	_, changed := rule.Apply(q)
+	if changed {
+		t.Error("bloom filter rule should NOT fire for LIKE on non-bloom field")
+	}
+}
+
+func TestExtractLikePrefix(t *testing.T) {
+	tests := []struct {
+		pattern string
+		want    string
+	}{
+		{"/api/users/%", "/api/users/"},
+		{"%error%", ""},
+		{"exact_match", "exact"}, // '_' is LIKE single-char wildcard
+		{"ab%", "ab"},
+		{"_starts", ""},
+		{"/api/%/users", "/api/"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := extractLikePrefix(tt.pattern)
+		if got != tt.want {
+			t.Errorf("extractLikePrefix(%q) = %q, want %q", tt.pattern, got, tt.want)
+		}
+	}
+}
+
 func TestConstantPropagation_MultiAssignment(t *testing.T) {
 	// eval x=5, y=10 | WHERE x > 3
 	// → eval x=5, y=10 | WHERE 5 > 3
@@ -956,5 +1149,283 @@ func TestConstantPropagation_MultiAssignment(t *testing.T) {
 	}
 	if lit.Value != "5" {
 		t.Errorf("expected '5', got '%s'", lit.Value)
+	}
+}
+
+func TestContradictionDetection_SameFieldDifferentValues(t *testing.T) {
+	// WHERE status = 200 AND status = 500 → false (contradiction)
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.BinaryExpr{
+					Left: &spl2.CompareExpr{
+						Left:  &spl2.FieldExpr{Name: "status"},
+						Op:    "=",
+						Right: &spl2.LiteralExpr{Value: "200"},
+					},
+					Op: "and",
+					Right: &spl2.CompareExpr{
+						Left:  &spl2.FieldExpr{Name: "status"},
+						Op:    "=",
+						Right: &spl2.LiteralExpr{Value: "500"},
+					},
+				},
+			},
+		},
+	}
+	rule := &predicateSimplificationRule{}
+	result, changed := rule.Apply(q)
+	if !changed {
+		t.Fatal("contradiction detection should fire")
+	}
+	w := result.Commands[0].(*spl2.WhereCommand)
+	if !isLiteralFalse(w.Expr) {
+		t.Errorf("expected false literal, got %v", w.Expr)
+	}
+}
+
+func TestContradictionDetection_SameFieldSameValue(t *testing.T) {
+	// WHERE status = 200 AND status = 200 → status = 200 (not a contradiction)
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.BinaryExpr{
+					Left: &spl2.CompareExpr{
+						Left:  &spl2.FieldExpr{Name: "status"},
+						Op:    "=",
+						Right: &spl2.LiteralExpr{Value: "200"},
+					},
+					Op: "and",
+					Right: &spl2.CompareExpr{
+						Left:  &spl2.FieldExpr{Name: "status"},
+						Op:    "=",
+						Right: &spl2.LiteralExpr{Value: "200"},
+					},
+				},
+			},
+		},
+	}
+	rule := &predicateSimplificationRule{}
+	result, changed := rule.Apply(q)
+	if !changed {
+		t.Fatal("x AND x → x simplification should fire")
+	}
+	w := result.Commands[0].(*spl2.WhereCommand)
+	// Should simplify to just status = 200, not false.
+	if isLiteralFalse(w.Expr) {
+		t.Error("same value should not be detected as contradiction")
+	}
+}
+
+func TestContradictionDetection_DifferentFields(t *testing.T) {
+	// WHERE status = 200 AND level = "ERROR" → no contradiction (different fields)
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.BinaryExpr{
+					Left: &spl2.CompareExpr{
+						Left:  &spl2.FieldExpr{Name: "status"},
+						Op:    "=",
+						Right: &spl2.LiteralExpr{Value: "200"},
+					},
+					Op: "and",
+					Right: &spl2.CompareExpr{
+						Left:  &spl2.FieldExpr{Name: "level"},
+						Op:    "=",
+						Right: &spl2.LiteralExpr{Value: "ERROR"},
+					},
+				},
+			},
+		},
+	}
+	rule := &predicateSimplificationRule{}
+	_, changed := rule.Apply(q)
+	if changed {
+		t.Error("different fields should not trigger contradiction detection")
+	}
+}
+
+func TestContradictionDetection_NonEquality(t *testing.T) {
+	// WHERE status > 200 AND status > 500 → not a contradiction (both can be true)
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.BinaryExpr{
+					Left: &spl2.CompareExpr{
+						Left:  &spl2.FieldExpr{Name: "status"},
+						Op:    ">",
+						Right: &spl2.LiteralExpr{Value: "200"},
+					},
+					Op: "and",
+					Right: &spl2.CompareExpr{
+						Left:  &spl2.FieldExpr{Name: "status"},
+						Op:    ">",
+						Right: &spl2.LiteralExpr{Value: "500"},
+					},
+				},
+			},
+		},
+	}
+	rule := &predicateSimplificationRule{}
+	_, changed := rule.Apply(q)
+	if changed {
+		t.Error("non-equality comparisons should not trigger contradiction detection")
+	}
+}
+
+func TestColumnStats_InExpr(t *testing.T) {
+	// WHERE status IN (400, 404, 500) → should produce >=400 and <=500 predicates
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.InExpr{
+					Field: &spl2.FieldExpr{Name: "status"},
+					Values: []spl2.Expr{
+						&spl2.LiteralExpr{Value: "400"},
+						&spl2.LiteralExpr{Value: "404"},
+						&spl2.LiteralExpr{Value: "500"},
+					},
+				},
+			},
+		},
+	}
+	rule := &columnStatsPruningRule{}
+	result, changed := rule.Apply(q)
+	if !changed {
+		t.Fatal("column stats rule should have fired for IN expression")
+	}
+	ann, ok := result.GetAnnotation("fieldPredicates")
+	if !ok {
+		t.Fatal("fieldPredicates annotation not set")
+	}
+	preds := ann.([]FieldPredInfo)
+	if len(preds) != 2 {
+		t.Fatalf("expected 2 predicates (min/max from IN), got %d: %+v", len(preds), preds)
+	}
+
+	// Should have >= min and <= max.
+	hasGTE := false
+	hasLTE := false
+	for _, p := range preds {
+		if p.Field != "status" {
+			t.Errorf("expected field 'status', got %q", p.Field)
+		}
+		if p.Op == ">=" {
+			hasGTE = true
+			if p.Value != "400" {
+				t.Errorf("expected min value '400', got %q", p.Value)
+			}
+		}
+		if p.Op == "<=" {
+			hasLTE = true
+			if p.Value != "500" {
+				t.Errorf("expected max value '500', got %q", p.Value)
+			}
+		}
+	}
+	if !hasGTE || !hasLTE {
+		t.Errorf("expected both >= and <= predicates, got %+v", preds)
+	}
+}
+
+func TestColumnStats_InExpr_NotIn(t *testing.T) {
+	// WHERE status NOT IN (200, 404) → should NOT produce range predicates
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.InExpr{
+					Field:   &spl2.FieldExpr{Name: "status"},
+					Negated: true,
+					Values: []spl2.Expr{
+						&spl2.LiteralExpr{Value: "200"},
+						&spl2.LiteralExpr{Value: "404"},
+					},
+				},
+			},
+		},
+	}
+	rule := &columnStatsPruningRule{}
+	_, changed := rule.Apply(q)
+	if changed {
+		t.Error("column stats rule should NOT fire for NOT IN")
+	}
+}
+
+func TestBloomEnrichment_RegexMatch(t *testing.T) {
+	// WHERE _raw =~ "connection refused"
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.CompareExpr{
+					Left:  &spl2.FieldExpr{Name: "_raw"},
+					Op:    "=~",
+					Right: &spl2.LiteralExpr{Value: `connection refused to (?P<host>\S+)`},
+				},
+			},
+		},
+	}
+	rule := &bloomFilterPruningRule{}
+	result, changed := rule.Apply(q)
+	if !changed {
+		t.Fatal("bloom filter rule should have fired for =~ with literal")
+	}
+	ann, ok := result.GetAnnotation("bloomTerms")
+	if !ok {
+		t.Fatal("bloomTerms annotation not set")
+	}
+	terms := ann.([]string)
+	// Tokenizer splits "connection refused to " into ["connection", "refused"].
+	// "to" is < 3 chars and filtered out.
+	termSet := map[string]bool{}
+	for _, term := range terms {
+		termSet[term] = true
+	}
+	if !termSet["connection"] {
+		t.Errorf("expected bloom term 'connection', got %v", terms)
+	}
+	if !termSet["refused"] {
+		t.Errorf("expected bloom term 'refused', got %v", terms)
+	}
+}
+
+func TestBloomEnrichment_MatchFunc(t *testing.T) {
+	// WHERE match(_raw, "error.*timeout")
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.WhereCommand{
+				Expr: &spl2.FuncCallExpr{
+					Name: "match",
+					Args: []spl2.Expr{
+						&spl2.FieldExpr{Name: "_raw"},
+						&spl2.LiteralExpr{Value: `error_handler.*timeout`},
+					},
+				},
+			},
+		},
+	}
+	rule := &bloomFilterPruningRule{}
+	result, changed := rule.Apply(q)
+	if !changed {
+		t.Fatal("bloom filter rule should have fired for match() with literals")
+	}
+	ann, ok := result.GetAnnotation("bloomTerms")
+	if !ok {
+		t.Fatal("bloomTerms annotation not set")
+	}
+	terms := ann.([]string)
+	// Tokenizer splits "error_handler" into ["error", "handler"] (underscore is a breaker)
+	// and "timeout" stays as ["timeout"]. All >= 3 chars.
+	termSet := map[string]bool{}
+	for _, term := range terms {
+		termSet[term] = true
+	}
+	if !termSet["error"] {
+		t.Errorf("expected bloom term 'error', got %v", terms)
+	}
+	if !termSet["handler"] {
+		t.Errorf("expected bloom term 'handler', got %v", terms)
+	}
+	if !termSet["timeout"] {
+		t.Errorf("expected bloom term 'timeout', got %v", terms)
 	}
 }

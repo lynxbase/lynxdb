@@ -1,6 +1,11 @@
 package vm
 
-import "github.com/lynxbase/lynxdb/pkg/event"
+import (
+	"fmt"
+	"net"
+
+	"github.com/lynxbase/lynxdb/pkg/event"
+)
 
 // Program holds compiled bytecode for one expression/predicate.
 type Program struct {
@@ -8,6 +13,7 @@ type Program struct {
 	Constants     []event.Value
 	FieldNames    []string
 	RegexPatterns []string
+	CIDRNets      []*net.IPNet // compiled CIDR networks for cidrmatch()
 }
 
 // AddConstant appends a constant and returns its index.
@@ -39,6 +45,22 @@ func (p *Program) AddRegex(pattern string) int {
 	p.RegexPatterns = append(p.RegexPatterns, pattern)
 
 	return len(p.RegexPatterns) - 1
+}
+
+// AddCIDR parses a CIDR string, deduplicates, and returns its pool index.
+func (p *Program) AddCIDR(cidr string) (int, error) {
+	for i, n := range p.CIDRNets {
+		if n.String() == cidr {
+			return i, nil
+		}
+	}
+	_, ipNet, err := net.ParseCIDR(cidr)
+	if err != nil {
+		return 0, fmt.Errorf("vm.Program.AddCIDR: invalid CIDR %q: %w", cidr, err)
+	}
+	p.CIDRNets = append(p.CIDRNets, ipNet)
+
+	return len(p.CIDRNets) - 1, nil
 }
 
 // Emit appends raw bytes to the instruction stream.

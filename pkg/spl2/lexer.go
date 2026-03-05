@@ -96,12 +96,27 @@ func (l *Lexer) next() (Token, error) {
 
 			return Token{Type: TokenEq, Literal: "==", Pos: startPos}, nil
 		}
+		if l.pos < len(l.input) && l.input[l.pos] == '~' {
+			l.pos++
+
+			return Token{Type: TokenRegexMatch, Literal: "=~", Pos: startPos}, nil
+		}
 
 		return Token{Type: TokenEq, Literal: "=", Pos: startPos}, nil
-	case ch == '!' && l.pos+1 < len(l.input) && l.input[l.pos+1] == '=':
-		l.pos += 2
+	case ch == '!':
+		l.pos++
+		if l.pos < len(l.input) && l.input[l.pos] == '=' {
+			l.pos++
 
-		return Token{Type: TokenNeq, Literal: "!=", Pos: startPos}, nil
+			return Token{Type: TokenNeq, Literal: "!=", Pos: startPos}, nil
+		}
+		if l.pos < len(l.input) && l.input[l.pos] == '~' {
+			l.pos++
+
+			return Token{Type: TokenRegexNotMatch, Literal: "!~", Pos: startPos}, nil
+		}
+
+		return Token{}, fmt.Errorf("unexpected character '!' at position %d (expected '=' or '~' after '!')", startPos)
 	case ch == '<':
 		l.pos++
 		if l.pos < len(l.input) && l.input[l.pos] == '=' {
@@ -157,7 +172,7 @@ func (l *Lexer) isNegativeNumberContext() bool {
 	switch prev.Type {
 	case TokenEq, TokenNeq, TokenLt, TokenLte, TokenGt, TokenGte,
 		TokenLParen, TokenComma, TokenPipe, TokenPlus, TokenMinus,
-		TokenSlash, TokenStar:
+		TokenSlash, TokenStar, TokenRegexMatch, TokenRegexNotMatch:
 		return true
 	}
 	// After keywords like WHERE, EVAL, etc.

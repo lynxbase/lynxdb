@@ -97,6 +97,15 @@ const (
 	TokenJson
 	TokenUnroll
 	TokenPackJson
+
+	// Regex operators.
+	TokenRegexMatch    // =~
+	TokenRegexNotMatch // !~
+
+	// Additional keywords.
+	TokenBetween // BETWEEN
+	TokenIs      // IS
+	TokenNull    // NULL
 )
 
 var tokenNames = map[TokenType]string{
@@ -181,6 +190,11 @@ var tokenNames = map[TokenType]string{
 	TokenJson:              "JSON",
 	TokenUnroll:            "UNROLL",
 	TokenPackJson:          "PACK_JSON",
+	TokenRegexMatch:        "REGEX_MATCH",
+	TokenRegexNotMatch:     "REGEX_NOT_MATCH",
+	TokenBetween:           "BETWEEN",
+	TokenIs:                "IS",
+	TokenNull:              "NULL",
 }
 
 func (t TokenType) String() string {
@@ -262,6 +276,9 @@ var keywords = map[string]TokenType{
 	"json":                TokenJson,
 	"unroll":              TokenUnroll,
 	"pack_json":           TokenPackJson,
+	"between":             TokenBetween,
+	"is":                  TokenIs,
+	"null":                TokenNull,
 }
 
 func lookupKeyword(ident string) TokenType {

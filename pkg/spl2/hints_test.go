@@ -151,6 +151,50 @@ func TestExtractQueryHints_WhereOr(t *testing.T) {
 	}
 }
 
+func TestExtractQueryHints_WhereWildcard(t *testing.T) {
+	// Wildcard patterns in WHERE (e.g., message="*ssh*") are compiled to
+	// OpStrMatch (regex) by the VM. They must NOT be extracted as literal
+	// FieldPredicates because the segment reader uses exact string comparison,
+	// which would compare val == "*ssh*" (always false) and drop all events.
+	prog, err := ParseProgram(`FROM main | where message="*ssh*"`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	hints := ExtractQueryHints(prog)
+	if len(hints.FieldPredicates) != 0 {
+		t.Errorf("FieldPredicates: got %d, want 0 (wildcard should not be pushed down)", len(hints.FieldPredicates))
+	}
+}
+
+func TestExtractQueryHints_WhereWildcardQuestion(t *testing.T) {
+	prog, err := ParseProgram(`FROM main | where host="web-??"`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	hints := ExtractQueryHints(prog)
+	if len(hints.FieldPredicates) != 0 {
+		t.Errorf("FieldPredicates: got %d, want 0 (? wildcard should not be pushed down)", len(hints.FieldPredicates))
+	}
+}
+
+func TestExtractQueryHints_WhereNoWildcard(t *testing.T) {
+	// Non-wildcard string equality should still be pushed down.
+	prog, err := ParseProgram(`FROM main | where source="nginx"`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	hints := ExtractQueryHints(prog)
+	if len(hints.FieldPredicates) != 1 {
+		t.Fatalf("FieldPredicates: got %d, want 1", len(hints.FieldPredicates))
+	}
+	if hints.FieldPredicates[0].Value != "nginx" {
+		t.Errorf("value: got %q, want %q", hints.FieldPredicates[0].Value, "nginx")
+	}
+}
+
 func TestExtractQueryHints_NilProgram(t *testing.T) {
 	hints := ExtractQueryHints(nil)
 	if hints == nil {
@@ -277,6 +321,79 @@ func TestExtractQueryHints_ReverseScanFromAnnotation(t *testing.T) {
 	}
 	if !hints.ReverseScan {
 		t.Error("ReverseScan should be true when tailScanOptimization annotation is present")
+	}
+}
+
+func TestExtractQueryHints_WhereIn(t *testing.T) {
+	prog, err := ParseProgram(`FROM main | where status IN (200, 404, 500)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	hints := ExtractQueryHints(prog)
+	if len(hints.InPredicates) != 1 {
+		t.Fatalf("InPredicates: got %d, want 1", len(hints.InPredicates))
+	}
+	ip := hints.InPredicates[0]
+	if ip.Field != "status" {
+		t.Errorf("Field: got %q, want status", ip.Field)
+	}
+	if len(ip.Values) != 3 {
+		t.Fatalf("Values: got %d, want 3", len(ip.Values))
+	}
+	wantValues := []string{"200", "404", "500"}
+	for i, want := range wantValues {
+		if ip.Values[i] != want {
+			t.Errorf("Values[%d]: got %q, want %q", i, ip.Values[i], want)
+		}
+	}
+}
+
+func TestExtractQueryHints_WhereNotIn(t *testing.T) {
+	// NOT IN predicates should NOT be extracted (not safe to prune segments).
+	prog, err := ParseProgram(`FROM main | where status NOT IN (200, 404)`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	hints := ExtractQueryHints(prog)
+	if len(hints.InPredicates) != 0 {
+		t.Errorf("InPredicates: got %d, want 0 (NOT IN should not be extracted)", len(hints.InPredicates))
+	}
+}
+
+func TestExtractQueryHints_WhereInAndFieldPred(t *testing.T) {
+	// IN combined with a simple field predicate via AND.
+	prog, err := ParseProgram(`FROM main | where source IN ("nginx", "redis") and status >= 500`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	hints := ExtractQueryHints(prog)
+	if len(hints.InPredicates) != 1 {
+		t.Fatalf("InPredicates: got %d, want 1", len(hints.InPredicates))
+	}
+	if hints.InPredicates[0].Field != "source" {
+		t.Errorf("InPredicates[0].Field: got %q, want source", hints.InPredicates[0].Field)
+	}
+	if len(hints.FieldPredicates) != 1 {
+		t.Fatalf("FieldPredicates: got %d, want 1", len(hints.FieldPredicates))
+	}
+	if hints.FieldPredicates[0].Field != "status" {
+		t.Errorf("FieldPredicates[0].Field: got %q, want status", hints.FieldPredicates[0].Field)
+	}
+}
+
+func TestExtractQueryHints_WhereInGeneratedField(t *testing.T) {
+	// IN predicate on a field created by EVAL — should be filtered out.
+	prog, err := ParseProgram(`FROM main | eval category = "test" | where category IN ("a", "b")`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	hints := ExtractQueryHints(prog)
+	if len(hints.InPredicates) != 0 {
+		t.Errorf("InPredicates: got %d, want 0 (eval-generated field should be filtered)", len(hints.InPredicates))
 	}
 }
 

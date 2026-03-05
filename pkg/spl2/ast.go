@@ -472,14 +472,19 @@ func (e *FuncCallExpr) String() string {
 	return fmt.Sprintf("%s(%v)", e.Name, e.Args)
 }
 
-// InExpr represents: field IN (val1, val2, ...)
+// InExpr represents: field IN (val1, val2, ...) or field NOT IN (val1, val2, ...)
 type InExpr struct {
-	Field  Expr
-	Values []Expr
+	Field   Expr
+	Values  []Expr
+	Negated bool // true for NOT IN
 }
 
 func (*InExpr) exprNode() {}
 func (e *InExpr) String() string {
+	if e.Negated {
+		return fmt.Sprintf("%s not in (...)", e.Field)
+	}
+
 	return fmt.Sprintf("%s in (...)", e.Field)
 }
 

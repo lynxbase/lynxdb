@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
-// helper: build and run a program, return result
 func runProgram(t *testing.T, prog *Program, fields map[string]event.Value) event.Value {
 	t.Helper()
 	vm := &VM{}
@@ -1171,6 +1171,253 @@ func buildArith(ops ...interface{}) *Program {
 	return p
 }
 
+func TestVMWhereGlobMatch(t *testing.T) {
+	// host="web*" should match "webserver01" but not "api-01"
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "host"},
+		Op:    "=",
+		Right: &spl2.LiteralExpr{Value: `"web*"`},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	fields := map[string]event.Value{"host": event.StringValue("webserver01")}
+	result, err := vm.Execute(prog, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.AsBool() {
+		t.Error("expected 'webserver01' to match 'web*'")
+	}
+
+	fields["host"] = event.StringValue("api-01")
+	result, err = vm.Execute(prog, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AsBool() {
+		t.Error("expected 'api-01' NOT to match 'web*'")
+	}
+}
+
+func TestVMWhereGlobNotMatch(t *testing.T) {
+	// host!="web*" should NOT match "webserver01" but SHOULD match "api-01"
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "host"},
+		Op:    "!=",
+		Right: &spl2.LiteralExpr{Value: `"web*"`},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	fields := map[string]event.Value{"host": event.StringValue("webserver01")}
+	result, err := vm.Execute(prog, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AsBool() {
+		t.Error("expected 'webserver01' NOT to match != 'web*'")
+	}
+
+	fields["host"] = event.StringValue("api-01")
+	result, err = vm.Execute(prog, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.AsBool() {
+		t.Error("expected 'api-01' to match != 'web*'")
+	}
+}
+
+func TestVMWhereGlobSuffix(t *testing.T) {
+	// host="*.example.com" should match "web.example.com"
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "host"},
+		Op:    "=",
+		Right: &spl2.LiteralExpr{Value: `"*.example.com"`},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	fields := map[string]event.Value{"host": event.StringValue("web.example.com")}
+	result, err := vm.Execute(prog, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.AsBool() {
+		t.Error("expected 'web.example.com' to match '*.example.com'")
+	}
+
+	fields["host"] = event.StringValue("web.other.com")
+	result, err = vm.Execute(prog, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AsBool() {
+		t.Error("expected 'web.other.com' NOT to match '*.example.com'")
+	}
+}
+
+func TestVMWhereGlobContains(t *testing.T) {
+	// msg="*error*" should match "an error occurred"
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "msg"},
+		Op:    "=",
+		Right: &spl2.LiteralExpr{Value: `"*error*"`},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"an error occurred", true},
+		{"error", true},
+		{"error at start", true},
+		{"at end error", true},
+		{"no match here", false},
+	}
+	for _, tt := range tests {
+		fields := map[string]event.Value{"msg": event.StringValue(tt.input)}
+		result, err := vm.Execute(prog, fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.AsBool() != tt.want {
+			t.Errorf("msg=%q match '*error*': got %v, want %v", tt.input, result.AsBool(), tt.want)
+		}
+	}
+}
+
+func TestVMWhereGlobQuestionMark(t *testing.T) {
+	// code="4??" should match "404" but not "4001"
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "code"},
+		Op:    "=",
+		Right: &spl2.LiteralExpr{Value: `"4??"`},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"404", true},
+		{"400", true},
+		{"4AB", true},
+		{"4001", false}, // too long
+		{"50", false},   // too short
+	}
+	for _, tt := range tests {
+		fields := map[string]event.Value{"code": event.StringValue(tt.input)}
+		result, err := vm.Execute(prog, fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.AsBool() != tt.want {
+			t.Errorf("code=%q match '4??': got %v, want %v", tt.input, result.AsBool(), tt.want)
+		}
+	}
+}
+
+func TestVMWhereGlobStarOnly(t *testing.T) {
+	// field="*" should match everything (except null)
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "f"},
+		Op:    "=",
+		Right: &spl2.LiteralExpr{Value: `"*"`},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	for _, s := range []string{"", "anything", "123", "hello world"} {
+		fields := map[string]event.Value{"f": event.StringValue(s)}
+		result, err := vm.Execute(prog, fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !result.AsBool() {
+			t.Errorf("expected %q to match '*'", s)
+		}
+	}
+}
+
+func TestVMWhereGlobNullHandling(t *testing.T) {
+	// Null field should not match any glob
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "host"},
+		Op:    "=",
+		Right: &spl2.LiteralExpr{Value: `"web*"`},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	// field not present → null
+	fields := map[string]event.Value{}
+	result, err := vm.Execute(prog, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AsBool() {
+		t.Error("expected null field NOT to match any glob")
+	}
+}
+
+func TestVMWhereGlobExprUnquoted(t *testing.T) {
+	// host=web* (unquoted GlobExpr) — should match same as quoted
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "host"},
+		Op:    "=",
+		Right: &spl2.GlobExpr{Pattern: "web*"},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	fields := map[string]event.Value{"host": event.StringValue("webserver01")}
+	result, err := vm.Execute(prog, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.AsBool() {
+		t.Error("expected 'webserver01' to match GlobExpr 'web*'")
+	}
+
+	fields["host"] = event.StringValue("api-01")
+	result, err = vm.Execute(prog, fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AsBool() {
+		t.Error("expected 'api-01' NOT to match GlobExpr 'web*'")
+	}
+}
+
 func TestCompareValues_NumericStrings(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1209,5 +1456,611 @@ func TestCompareValues_NumericStrings(t *testing.T) {
 				t.Errorf("CompareValues(%v, %v) = %d, want %d", tt.a, tt.b, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestVMStartsWith(t *testing.T) {
+	tests := []struct {
+		name string
+		val  event.Value
+		pfx  event.Value
+		want bool
+	}{
+		{"match", event.StringValue("hello world"), event.StringValue("hello"), true},
+		{"no_match", event.StringValue("hello world"), event.StringValue("world"), false},
+		{"empty_prefix", event.StringValue("hello"), event.StringValue(""), true},
+		{"null_val", event.NullValue(), event.StringValue("x"), false},
+		{"null_pfx", event.StringValue("x"), event.NullValue(), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Program{}
+			p.AddConstant(tt.val)
+			p.AddConstant(tt.pfx)
+			p.EmitOp(OpConstStr, 0)
+			p.EmitOp(OpConstStr, 1)
+			p.EmitOp(OpStartsWith)
+			p.EmitOp(OpReturn)
+
+			result := runProgram(t, p, nil)
+			if result.AsBool() != tt.want {
+				t.Errorf("got %v, want %v", result.AsBool(), tt.want)
+			}
+		})
+	}
+}
+
+func TestVMEndsWith(t *testing.T) {
+	tests := []struct {
+		name string
+		val  event.Value
+		sfx  event.Value
+		want bool
+	}{
+		{"match", event.StringValue("hello world"), event.StringValue("world"), true},
+		{"no_match", event.StringValue("hello world"), event.StringValue("hello"), false},
+		{"empty_suffix", event.StringValue("hello"), event.StringValue(""), true},
+		{"null_val", event.NullValue(), event.StringValue("x"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Program{}
+			p.AddConstant(tt.val)
+			p.AddConstant(tt.sfx)
+			p.EmitOp(OpConstStr, 0)
+			p.EmitOp(OpConstStr, 1)
+			p.EmitOp(OpEndsWith)
+			p.EmitOp(OpReturn)
+
+			result := runProgram(t, p, nil)
+			if result.AsBool() != tt.want {
+				t.Errorf("got %v, want %v", result.AsBool(), tt.want)
+			}
+		})
+	}
+}
+
+func TestVMContains(t *testing.T) {
+	tests := []struct {
+		name string
+		val  event.Value
+		sub  event.Value
+		want bool
+	}{
+		{"match", event.StringValue("hello world"), event.StringValue("lo wo"), true},
+		{"no_match", event.StringValue("hello world"), event.StringValue("xyz"), false},
+		{"empty_sub", event.StringValue("hello"), event.StringValue(""), true},
+		{"null_val", event.NullValue(), event.StringValue("x"), false},
+		{"null_sub", event.StringValue("x"), event.NullValue(), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Program{}
+			p.AddConstant(tt.val)
+			p.AddConstant(tt.sub)
+			p.EmitOp(OpConstStr, 0)
+			p.EmitOp(OpConstStr, 1)
+			p.EmitOp(OpContains)
+			p.EmitOp(OpReturn)
+
+			result := runProgram(t, p, nil)
+			if result.AsBool() != tt.want {
+				t.Errorf("got %v, want %v", result.AsBool(), tt.want)
+			}
+		})
+	}
+}
+
+func TestVMIsNum(t *testing.T) {
+	tests := []struct {
+		name string
+		val  event.Value
+		want bool
+	}{
+		{"int_type", event.IntValue(42), true},
+		{"float_type", event.FloatValue(3.14), true},
+		{"str_numeric", event.StringValue("123"), true},
+		{"str_float", event.StringValue("3.14"), true},
+		{"str_neg", event.StringValue("-5"), true},
+		{"str_non_numeric", event.StringValue("hello"), false},
+		{"str_empty", event.StringValue(""), false},
+		{"null_val", event.NullValue(), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Program{}
+			p.AddConstant(tt.val)
+			if tt.val.IsNull() {
+				p.EmitOp(OpConstNull)
+			} else {
+				switch tt.val.Type() {
+				case event.FieldTypeInt:
+					p.EmitOp(OpConstInt, 0)
+				case event.FieldTypeFloat:
+					p.EmitOp(OpConstFloat, 0)
+				default:
+					p.EmitOp(OpConstStr, 0)
+				}
+			}
+			p.EmitOp(OpIsNum)
+			p.EmitOp(OpReturn)
+
+			result := runProgram(t, p, nil)
+			if result.AsBool() != tt.want {
+				t.Errorf("got %v, want %v", result.AsBool(), tt.want)
+			}
+		})
+	}
+}
+
+func TestVMIsInt(t *testing.T) {
+	tests := []struct {
+		name string
+		val  event.Value
+		want bool
+	}{
+		{"int_type", event.IntValue(42), true},
+		{"str_int", event.StringValue("42"), true},
+		{"str_neg_int", event.StringValue("-5"), true},
+		{"str_float", event.StringValue("3.14"), false},
+		{"float_type", event.FloatValue(3.14), false},
+		{"str_non_numeric", event.StringValue("hello"), false},
+		{"null_val", event.NullValue(), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Program{}
+			p.AddConstant(tt.val)
+			if tt.val.IsNull() {
+				p.EmitOp(OpConstNull)
+			} else {
+				switch tt.val.Type() {
+				case event.FieldTypeInt:
+					p.EmitOp(OpConstInt, 0)
+				case event.FieldTypeFloat:
+					p.EmitOp(OpConstFloat, 0)
+				default:
+					p.EmitOp(OpConstStr, 0)
+				}
+			}
+			p.EmitOp(OpIsInt)
+			p.EmitOp(OpReturn)
+
+			result := runProgram(t, p, nil)
+			if result.AsBool() != tt.want {
+				t.Errorf("got %v, want %v", result.AsBool(), tt.want)
+			}
+		})
+	}
+}
+
+func TestVMCIDRMatch(t *testing.T) {
+	tests := []struct {
+		name string
+		cidr string
+		ip   string
+		want bool
+	}{
+		{"match_ipv4", "192.168.1.0/24", "192.168.1.42", true},
+		{"no_match_ipv4", "192.168.1.0/24", "192.168.2.1", false},
+		{"match_ipv4_32", "10.0.0.1/32", "10.0.0.1", true},
+		{"no_match_ipv4_32", "10.0.0.1/32", "10.0.0.2", false},
+		{"match_wide", "10.0.0.0/8", "10.255.255.255", true},
+		{"invalid_ip", "10.0.0.0/8", "not-an-ip", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Program{}
+			idx, err := p.AddCIDR(tt.cidr)
+			if err != nil {
+				t.Fatalf("AddCIDR: %v", err)
+			}
+			p.AddConstant(event.StringValue(tt.ip))
+			p.EmitOp(OpConstStr, 0)
+			p.EmitOp(OpCIDRMatch, idx)
+			p.EmitOp(OpReturn)
+
+			result := runProgram(t, p, nil)
+			if result.AsBool() != tt.want {
+				t.Errorf("cidrmatch(%q, %q) = %v, want %v", tt.cidr, tt.ip, result.AsBool(), tt.want)
+			}
+		})
+	}
+}
+
+func TestVMCIDRMatch_NullIP(t *testing.T) {
+	p := &Program{}
+	idx, err := p.AddCIDR("10.0.0.0/8")
+	if err != nil {
+		t.Fatalf("AddCIDR: %v", err)
+	}
+	p.EmitOp(OpConstNull)
+	p.EmitOp(OpCIDRMatch, idx)
+	p.EmitOp(OpReturn)
+
+	result := runProgram(t, p, nil)
+	if result.AsBool() != false {
+		t.Errorf("cidrmatch with null IP: got %v, want false", result.AsBool())
+	}
+}
+
+func TestCompileNotIn(t *testing.T) {
+	expr := &spl2.InExpr{
+		Field:   &spl2.FieldExpr{Name: "status"},
+		Values:  []spl2.Expr{&spl2.LiteralExpr{Value: "200"}, &spl2.LiteralExpr{Value: "301"}},
+		Negated: true,
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatalf("CompileExpr: %v", err)
+	}
+
+	vm := &VM{}
+
+	// status=200 → NOT IN (200, 301) → false
+	result, err := vm.Execute(prog, map[string]event.Value{"status": event.StringValue("200")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != false {
+		t.Errorf("status=200 NOT IN (200,301): got %v, want false", result.AsBool())
+	}
+
+	// status=404 → NOT IN (200, 301) → true
+	result, err = vm.Execute(prog, map[string]event.Value{"status": event.StringValue("404")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != true {
+		t.Errorf("status=404 NOT IN (200,301): got %v, want true", result.AsBool())
+	}
+}
+
+func TestCompileNotLike(t *testing.T) {
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "host"},
+		Op:    "not like",
+		Right: &spl2.LiteralExpr{Value: `"web%"`},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatalf("CompileExpr: %v", err)
+	}
+
+	vm := &VM{}
+
+	// host="web-01" → NOT LIKE "web%" → false
+	result, err := vm.Execute(prog, map[string]event.Value{"host": event.StringValue("web-01")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != false {
+		t.Errorf("'web-01' NOT LIKE 'web%%': got %v, want false", result.AsBool())
+	}
+
+	// host="db-01" → NOT LIKE "web%" → true
+	result, err = vm.Execute(prog, map[string]event.Value{"host": event.StringValue("db-01")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != true {
+		t.Errorf("'db-01' NOT LIKE 'web%%': got %v, want true", result.AsBool())
+	}
+}
+
+func TestCompileRegexMatch(t *testing.T) {
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "msg"},
+		Op:    "=~",
+		Right: &spl2.LiteralExpr{Value: `"^error"`},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatalf("CompileExpr: %v", err)
+	}
+
+	vm := &VM{}
+
+	result, err := vm.Execute(prog, map[string]event.Value{"msg": event.StringValue("error: connection refused")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != true {
+		t.Error("expected true for matching regex")
+	}
+
+	result, err = vm.Execute(prog, map[string]event.Value{"msg": event.StringValue("info: started")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != false {
+		t.Error("expected false for non-matching regex")
+	}
+}
+
+func TestCompileRegexNotMatch(t *testing.T) {
+	expr := &spl2.CompareExpr{
+		Left:  &spl2.FieldExpr{Name: "msg"},
+		Op:    "!~",
+		Right: &spl2.LiteralExpr{Value: `"^debug"`},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatalf("CompileExpr: %v", err)
+	}
+
+	vm := &VM{}
+
+	// "error: xyz" !~ "^debug" → true
+	result, err := vm.Execute(prog, map[string]event.Value{"msg": event.StringValue("error: xyz")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != true {
+		t.Error("expected true for non-matching !~")
+	}
+
+	// "debug: xyz" !~ "^debug" → false
+	result, err = vm.Execute(prog, map[string]event.Value{"msg": event.StringValue("debug: xyz")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != false {
+		t.Error("expected false for matching !~")
+	}
+}
+
+func TestCompileStartsWith(t *testing.T) {
+	expr := &spl2.FuncCallExpr{
+		Name: "startswith",
+		Args: []spl2.Expr{
+			&spl2.FieldExpr{Name: "path"},
+			&spl2.LiteralExpr{Value: `"/api"`},
+		},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatalf("CompileExpr: %v", err)
+	}
+
+	vm := &VM{}
+
+	result, err := vm.Execute(prog, map[string]event.Value{"path": event.StringValue("/api/v1/users")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != true {
+		t.Error("expected true for startswith")
+	}
+
+	result, err = vm.Execute(prog, map[string]event.Value{"path": event.StringValue("/web/login")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != false {
+		t.Error("expected false for non-matching startswith")
+	}
+}
+
+func TestCompileEndsWith(t *testing.T) {
+	expr := &spl2.FuncCallExpr{
+		Name: "endswith",
+		Args: []spl2.Expr{
+			&spl2.FieldExpr{Name: "file"},
+			&spl2.LiteralExpr{Value: `".log"`},
+		},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatalf("CompileExpr: %v", err)
+	}
+
+	vm := &VM{}
+
+	result, err := vm.Execute(prog, map[string]event.Value{"file": event.StringValue("app.log")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != true {
+		t.Error("expected true for endswith")
+	}
+
+	result, err = vm.Execute(prog, map[string]event.Value{"file": event.StringValue("app.txt")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != false {
+		t.Error("expected false for non-matching endswith")
+	}
+}
+
+func TestCompileContains(t *testing.T) {
+	expr := &spl2.FuncCallExpr{
+		Name: "contains",
+		Args: []spl2.Expr{
+			&spl2.FieldExpr{Name: "msg"},
+			&spl2.LiteralExpr{Value: `"refused"`},
+		},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatalf("CompileExpr: %v", err)
+	}
+
+	vm := &VM{}
+
+	result, err := vm.Execute(prog, map[string]event.Value{"msg": event.StringValue("connection refused by host")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != true {
+		t.Error("expected true for contains")
+	}
+
+	result, err = vm.Execute(prog, map[string]event.Value{"msg": event.StringValue("timeout exceeded")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != false {
+		t.Error("expected false for non-matching contains")
+	}
+}
+
+func TestCompileCIDRMatch(t *testing.T) {
+	expr := &spl2.FuncCallExpr{
+		Name: "cidrmatch",
+		Args: []spl2.Expr{
+			&spl2.LiteralExpr{Value: `"10.0.0.0/8"`},
+			&spl2.FieldExpr{Name: "ip"},
+		},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatalf("CompileExpr: %v", err)
+	}
+
+	vm := &VM{}
+
+	result, err := vm.Execute(prog, map[string]event.Value{"ip": event.StringValue("10.1.2.3")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != true {
+		t.Error("expected true for matching CIDR")
+	}
+
+	result, err = vm.Execute(prog, map[string]event.Value{"ip": event.StringValue("192.168.1.1")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != false {
+		t.Error("expected false for non-matching CIDR")
+	}
+}
+
+func TestCompileIsNum(t *testing.T) {
+	expr := &spl2.FuncCallExpr{
+		Name: "isnum",
+		Args: []spl2.Expr{&spl2.FieldExpr{Name: "val"}},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatalf("CompileExpr: %v", err)
+	}
+
+	vm := &VM{}
+
+	result, err := vm.Execute(prog, map[string]event.Value{"val": event.StringValue("42")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != true {
+		t.Error("expected true for numeric string")
+	}
+
+	result, err = vm.Execute(prog, map[string]event.Value{"val": event.StringValue("hello")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != false {
+		t.Error("expected false for non-numeric string")
+	}
+}
+
+func TestCompileIsInt(t *testing.T) {
+	expr := &spl2.FuncCallExpr{
+		Name: "isint",
+		Args: []spl2.Expr{&spl2.FieldExpr{Name: "val"}},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatalf("CompileExpr: %v", err)
+	}
+
+	vm := &VM{}
+
+	result, err := vm.Execute(prog, map[string]event.Value{"val": event.StringValue("42")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != true {
+		t.Error("expected true for integer string")
+	}
+
+	result, err = vm.Execute(prog, map[string]event.Value{"val": event.StringValue("3.14")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != false {
+		t.Error("expected false for float string")
+	}
+}
+
+func TestCompileIsStr(t *testing.T) {
+	// isstr() is an alias for isnotnull() in schema-on-read
+	expr := &spl2.FuncCallExpr{
+		Name: "isstr",
+		Args: []spl2.Expr{&spl2.FieldExpr{Name: "val"}},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatalf("CompileExpr: %v", err)
+	}
+
+	vm := &VM{}
+
+	result, err := vm.Execute(prog, map[string]event.Value{"val": event.StringValue("hello")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != true {
+		t.Error("expected true for non-null value")
+	}
+
+	result, err = vm.Execute(prog, map[string]event.Value{})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != false {
+		t.Error("expected false for missing field")
+	}
+}
+
+func TestCompileILike(t *testing.T) {
+	expr := &spl2.FuncCallExpr{
+		Name: "ilike",
+		Args: []spl2.Expr{
+			&spl2.FieldExpr{Name: "host"},
+			&spl2.LiteralExpr{Value: `"WEB%"`},
+		},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatalf("CompileExpr: %v", err)
+	}
+
+	vm := &VM{}
+
+	// ilike is case-insensitive (same as OpLike)
+	result, err := vm.Execute(prog, map[string]event.Value{"host": event.StringValue("web-01")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != true {
+		t.Error("expected true for case-insensitive match")
+	}
+
+	result, err = vm.Execute(prog, map[string]event.Value{"host": event.StringValue("db-01")})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsBool() != false {
+		t.Error("expected false for non-matching ilike")
 	}
 }
