@@ -111,6 +111,51 @@ Press `q` or `Ctrl+C` to exit.
 | Segment cache hit rate | Local cache for warm segments | Low rate = increase cache |
 | Upload/download bytes | S3 transfer volume | Cost monitoring |
 
+## Cluster Metrics
+
+In cluster mode, additional metrics are available for monitoring distributed operations.
+
+### Shard Metrics
+
+| Metric | Description | What to Watch |
+|--------|-------------|---------------|
+| `shard_active` | Shards in active state | Should match expected partition count |
+| `shard_draining` | Shards being drained | Non-zero during rebalance |
+| `shard_migrating` | Shards being migrated | Non-zero during rebalance or split |
+| `shard_splitting` | Shards being split | Non-zero during hot partition split |
+| `shard_map_epoch` | Current shard map version | Monotonically increasing |
+
+### Rebalance Metrics
+
+| Metric | Description | What to Watch |
+|--------|-------------|---------------|
+| `rebalance_total` | Total rebalances applied | Increasing during topology changes |
+| `rebalance_move_total` | Total shard moves across all rebalances | Large numbers indicate frequent topology changes |
+| `rebalance_duration_ns` | Duration of last rebalance | Growing duration may indicate large clusters |
+
+### Node Health Metrics
+
+| Metric | Description | What to Watch |
+|--------|-------------|---------------|
+| `nodes_alive` | Nodes sending heartbeats normally | Should match cluster size |
+| `nodes_suspect` | Nodes with missed heartbeats | Non-zero may indicate network issues |
+| `nodes_dead` | Nodes declared dead | Should be 0 in healthy cluster |
+| `leader_changes_total` | Raft leader transitions | Frequent changes indicate instability |
+
+### Split Metrics
+
+| Metric | Description | What to Watch |
+|--------|-------------|---------------|
+| `split_total` | Total partition splits proposed | Increasing under hot-spot load |
+| `split_duration_ns` | Duration of last split | |
+
+### Meta Loss Metrics
+
+| Metric | Description | What to Watch |
+|--------|-------------|---------------|
+| `meta_loss_duration_ns` | Duration of current/last meta-loss episode | Should be 0 normally |
+| `meta_loss_duplicate_parts` | Duplicate partitions detected during meta loss | Non-zero indicates potential conflicts |
+
 ## Cache Statistics
 
 ```bash
@@ -248,6 +293,13 @@ For production deployments, monitor these at minimum:
 - [ ] Cache hit rate -- query performance optimization
 - [ ] WAL size -- flush health
 - [ ] Compaction backlog -- storage health
+
+**Cluster-specific items** (when running in cluster mode):
+- [ ] `nodes_alive` -- all nodes healthy
+- [ ] `nodes_dead` -- should be 0
+- [ ] `shard_draining` + `shard_migrating` -- rebalance in progress
+- [ ] `leader_changes_total` -- Raft leader stability
+- [ ] `meta_loss_duration_ns` -- meta quorum health
 
 ## Next Steps
 

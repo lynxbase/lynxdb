@@ -7,12 +7,18 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
 // knownDirs tracks directories already created to avoid os.MkdirAll syscalls on every write.
-var knownDirs sync.Map
+// Bounded to knownDirsMaxEntries to prevent unbounded growth on long-running servers.
+var (
+	knownDirs           sync.Map
+	knownDirsCount      int64 // approximate count, updated atomically
+	knownDirsMaxEntries int64 = 10000
+)
 
 const (
 	defaultMaxCacheBytes = 10 << 30 // 10GB local disk cache
@@ -196,6 +202,14 @@ func (sc *SegmentCache) PutChunk(segmentID string, rgIndex int, column string, d
 	dir := filepath.Dir(path)
 	if _, ok := knownDirs.Load(dir); !ok {
 		_ = os.MkdirAll(dir, 0o755)
+		// Bound the map: if we've accumulated too many entries, clear and start fresh.
+		if atomic.AddInt64(&knownDirsCount, 1) > knownDirsMaxEntries {
+			knownDirs.Range(func(k, _ any) bool {
+				knownDirs.Delete(k)
+				return true
+			})
+			atomic.StoreInt64(&knownDirsCount, 0)
+		}
 		knownDirs.Store(dir, struct{}{})
 	}
 	if err := os.WriteFile(path, data, 0o600); err != nil {
@@ -228,7 +242,11 @@ func (sc *SegmentCache) PutChunk(segmentID string, rgIndex int, column string, d
 		}
 		evicted := sc.chunkLRU.Remove(back).(*chunkEntry)
 		delete(sc.chunkMap, evicted.key)
-		os.Remove(evicted.path)
+		if err := os.Remove(evicted.path); err != nil && !os.IsNotExist(err) {
+			slog.Warn("segment_cache: failed to evict chunk file", "path", evicted.path, "error", err)
+			// Don't decrement diskBytes — file still on disk.
+			continue
+		}
 		sc.diskBytes -= evicted.sizeBytes
 	}
 	sc.mu.Unlock()
@@ -258,13 +276,17 @@ func (sc *SegmentCache) Clear() {
 	sc.footerMap = make(map[string]*list.Element)
 	sc.footerLRU.Init()
 
+	var remainingBytes int64
 	for _, elem := range sc.chunkMap {
 		ce := elem.Value.(*chunkEntry)
-		os.Remove(ce.path)
+		if err := os.Remove(ce.path); err != nil && !os.IsNotExist(err) {
+			slog.Warn("segment_cache: failed to remove chunk during clear", "path", ce.path, "error", err)
+			remainingBytes += ce.sizeBytes
+		}
 	}
 	sc.chunkMap = make(map[string]*list.Element)
 	sc.chunkLRU.Init()
-	sc.diskBytes = 0
+	sc.diskBytes = remainingBytes
 }
 
 func chunkKey(segmentID string, rgIndex int, column string) string {

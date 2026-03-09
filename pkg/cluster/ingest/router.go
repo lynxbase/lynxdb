@@ -6,12 +6,16 @@ import (
 	"log/slog"
 
 	"github.com/vmihailenco/msgpack/v5"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/lynxbase/lynxdb/pkg/cluster"
 	"github.com/lynxbase/lynxdb/pkg/cluster/rpc"
 	clusterpb "github.com/lynxbase/lynxdb/pkg/cluster/rpc/proto"
 	"github.com/lynxbase/lynxdb/pkg/cluster/sharding"
+	"github.com/lynxbase/lynxdb/pkg/cluster/tracing"
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
@@ -81,6 +85,12 @@ func (r *Router) Route(ctx context.Context, events []*event.Event) error {
 		return nil
 	}
 
+	ctx, span := tracing.Tracer().Start(ctx, "lynxdb.ingest.route",
+		trace.WithAttributes(
+			attribute.Int(tracing.AttrEventsCount, len(events)),
+		))
+	defer span.End()
+
 	// Step 1: Group events by ShardID.
 	shardGroups := make(map[string][]*event.Event)
 	shardIDs := make(map[string]sharding.ShardID)
@@ -96,6 +106,10 @@ func (r *Router) Route(ctx context.Context, events []*event.Event) error {
 		shardGroups[key] = append(shardGroups[key], ev)
 		shardIDs[key] = sid
 	}
+
+	span.SetAttributes(
+		attribute.Int(tracing.AttrShardsCount, len(shardGroups)),
+	)
 
 	// Step 2: Resolve shard -> primary node.
 	sm := r.shardMapCache.Get()
@@ -115,9 +129,19 @@ func (r *Router) Route(ctx context.Context, events []*event.Event) error {
 
 	// Local fast path.
 	if localEvents, ok := nodeGroups[r.selfID]; ok {
+		_, localSpan := tracing.Tracer().Start(ctx, "lynxdb.ingest.route.local",
+			trace.WithAttributes(
+				attribute.Int(tracing.AttrEventsCount, len(localEvents)),
+			))
+
 		if err := r.localIngest(ctx, localEvents); err != nil {
+			localSpan.RecordError(err)
+			localSpan.SetStatus(codes.Error, "local ingest failed")
+			localSpan.End()
+
 			return fmt.Errorf("ingest.Router.Route: local ingest: %w", err)
 		}
+		localSpan.End()
 
 		// Replicate to ISR peers for local shards.
 		if r.replicator != nil {
@@ -150,7 +174,23 @@ func (r *Router) Route(ctx context.Context, events []*event.Event) error {
 		evts := evts
 
 		g.Go(func() error {
-			return r.sendRemote(gCtx, nodeID, addrs[nodeID], evts)
+			_, remoteSpan := tracing.Tracer().Start(gCtx, "lynxdb.ingest.route.remote",
+				trace.WithAttributes(
+					attribute.String(tracing.AttrNodeID, string(nodeID)),
+					attribute.Int(tracing.AttrEventsCount, len(evts)),
+				))
+
+			if err := r.sendRemote(gCtx, nodeID, addrs[nodeID], evts); err != nil {
+				remoteSpan.RecordError(err)
+				remoteSpan.SetStatus(codes.Error, "remote ingest failed")
+				remoteSpan.End()
+
+				return err
+			}
+
+			remoteSpan.End()
+
+			return nil
 		})
 	}
 

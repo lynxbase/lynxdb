@@ -121,6 +121,27 @@ ingest:
 http:
   idle_timeout: "2m"                 # Keep-alive idle timeout
   shutdown_timeout: "30s"            # Graceful shutdown deadline
+
+# Cluster settings (see Configuration > Cluster for full reference)
+cluster:
+  enabled: false                      # Enable cluster mode
+  node_id: ""                         # Unique node identifier
+  roles: []                           # Roles: meta, ingest, query
+  seeds: []                           # Seed node addresses (host:grpc_port)
+  grpc_port: 9400                     # Inter-node gRPC port
+  heartbeat_interval: "5s"            # Heartbeat frequency to meta leader
+  lease_duration: "10s"               # Shard lease validity period
+  max_clock_skew: "50ms"             # Maximum tolerated clock skew
+  virtual_partition_count: 1024       # Hash partitions for sharding
+  time_bucket_size: "24h"            # Time granularity for shard bucketing (1h/6h/24h)
+  ack_level: "one"                   # Replication ACK: none/one/all
+  replication_factor: 1              # Replicas per shard (including primary)
+  meta_loss_timeout: "30s"           # Degraded-mode timeout on meta quorum loss
+  max_concurrent_shard_queries: 50   # Concurrent shard RPCs per query
+  shard_query_timeout: "30s"         # Per-shard query timeout
+  partial_results: true              # Return partial results on shard failures
+  partial_failure_threshold: 0.5     # Min success rate before query fails
+  dc_hll_threshold: 10000            # dc() cardinality before HLL promotion
 ```
 
 ## Project File (`.lynxdbrc`)
@@ -155,6 +176,9 @@ These take effect immediately after reload:
 - `query.default_result_limit`
 - `query.max_result_limit`
 - `query.max_query_runtime`
+- `cluster.max_concurrent_shard_queries`
+- `cluster.shard_query_timeout`
+- `cluster.partial_results`
 
 ### Settings Requiring Restart
 
@@ -217,4 +241,5 @@ export LYNXDB_PROFILE=prod
 - [Query Settings](/docs/configuration/query) -- concurrency, timeouts, limits
 - [Ingest Settings](/docs/configuration/ingest) -- body size, batch size
 - [S3 Tiering](/docs/configuration/s3-tiering) -- S3 bucket, region, tiering policies
+- [Cluster Settings](/docs/configuration/cluster) -- cluster mode, sharding, replication, failover
 - [Environment Variables](/docs/configuration/environment-variables) -- complete `LYNXDB_*` reference

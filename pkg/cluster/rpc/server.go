@@ -23,8 +23,11 @@ type Server struct {
 // options provided by the caller.
 func NewServer(addr string, logger *slog.Logger, opts ...grpc.ServerOption) *Server {
 	// Prepend OTel interceptors so they wrap all registered services.
+	// The custom tracing interceptor enriches otelgrpc spans with LynxDB
+	// business attributes (shard_id, node_id) extracted from request messages.
 	defaultOpts := []grpc.ServerOption{
 		grpc.StatsHandler(otelgrpc.NewServerHandler()),
+		grpc.ChainUnaryInterceptor(NewTracingUnaryServerInterceptor()),
 	}
 	allOpts := append(defaultOpts, opts...)
 

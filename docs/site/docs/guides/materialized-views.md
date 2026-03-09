@@ -269,6 +269,24 @@ lynxdb query '_source=nginx | stats avg(duration_ms), p99(duration_ms) by uri' -
 
 ---
 
+## Materialized views in cluster mode
+
+In a distributed LynxDB cluster, materialized view definitions are stored in the Raft FSM, making them consistent across all nodes. The view lifecycle works across the cluster automatically.
+
+### How cluster views work
+
+- **Registration**: When you create a view, the definition is committed to the Raft FSM via the `RegisterView` RPC. All meta nodes store the same view definition.
+- **Coordination**: Each view has a `CoordinatorNode` that manages its lifecycle (backfill, status transitions). If the coordinator node fails, a new one is assigned.
+- **Backfill**: The backfill coordinator uses scatter-gather to process historical data across all shards, then aggregates results.
+- **Status tracking**: View status (`pending` → `running` → `complete`) and backfill progress are tracked in the FSM, visible from any node.
+- **Query acceleration**: The optimizer on any query node can rewrite queries to use cluster-wide views. The acceleration metadata (view name, speedup) is included in the query response.
+
+### View operations in cluster mode
+
+All view operations (create, list, status, drop, pause, resume) work identically in single-node and cluster modes. The CLI and API commands are the same -- the cluster coordination is transparent.
+
+---
+
 ## Next steps
 
 - [Create dashboards](/docs/guides/dashboards) -- build dashboards that benefit from MV acceleration

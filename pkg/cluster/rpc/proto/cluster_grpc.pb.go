@@ -19,14 +19,19 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	MetaService_Handshake_FullMethodName         = "/lynxdb.cluster.v1.MetaService/Handshake"
-	MetaService_Heartbeat_FullMethodName         = "/lynxdb.cluster.v1.MetaService/Heartbeat"
-	MetaService_WatchShardMap_FullMethodName     = "/lynxdb.cluster.v1.MetaService/WatchShardMap"
-	MetaService_RenewLease_FullMethodName        = "/lynxdb.cluster.v1.MetaService/RenewLease"
-	MetaService_RequestCompaction_FullMethodName = "/lynxdb.cluster.v1.MetaService/RequestCompaction"
-	MetaService_ReleaseCompaction_FullMethodName = "/lynxdb.cluster.v1.MetaService/ReleaseCompaction"
-	MetaService_ProposeDrain_FullMethodName      = "/lynxdb.cluster.v1.MetaService/ProposeDrain"
-	MetaService_CompleteDrain_FullMethodName     = "/lynxdb.cluster.v1.MetaService/CompleteDrain"
+	MetaService_Handshake_FullMethodName          = "/lynxdb.cluster.v1.MetaService/Handshake"
+	MetaService_Heartbeat_FullMethodName          = "/lynxdb.cluster.v1.MetaService/Heartbeat"
+	MetaService_WatchShardMap_FullMethodName      = "/lynxdb.cluster.v1.MetaService/WatchShardMap"
+	MetaService_RenewLease_FullMethodName         = "/lynxdb.cluster.v1.MetaService/RenewLease"
+	MetaService_RequestCompaction_FullMethodName  = "/lynxdb.cluster.v1.MetaService/RequestCompaction"
+	MetaService_ReleaseCompaction_FullMethodName  = "/lynxdb.cluster.v1.MetaService/ReleaseCompaction"
+	MetaService_ProposeDrain_FullMethodName       = "/lynxdb.cluster.v1.MetaService/ProposeDrain"
+	MetaService_CompleteDrain_FullMethodName      = "/lynxdb.cluster.v1.MetaService/CompleteDrain"
+	MetaService_ReportFieldCatalog_FullMethodName = "/lynxdb.cluster.v1.MetaService/ReportFieldCatalog"
+	MetaService_ReportSources_FullMethodName      = "/lynxdb.cluster.v1.MetaService/ReportSources"
+	MetaService_AssignAlert_FullMethodName        = "/lynxdb.cluster.v1.MetaService/AssignAlert"
+	MetaService_ReportAlertFired_FullMethodName   = "/lynxdb.cluster.v1.MetaService/ReportAlertFired"
+	MetaService_RegisterView_FullMethodName       = "/lynxdb.cluster.v1.MetaService/RegisterView"
 )
 
 // MetaServiceClient is the client API for MetaService service.
@@ -51,6 +56,16 @@ type MetaServiceClient interface {
 	ProposeDrain(ctx context.Context, in *ProposeDrainRequest, opts ...grpc.CallOption) (*ProposeDrainResponse, error)
 	// CompleteDrain marks a shard drain as complete, transitions to new primary.
 	CompleteDrain(ctx context.Context, in *CompleteDrainRequest, opts ...grpc.CallOption) (*CompleteDrainResponse, error)
+	// ReportFieldCatalog reports local field catalog deltas from an ingest node.
+	ReportFieldCatalog(ctx context.Context, in *ReportFieldCatalogRequest, opts ...grpc.CallOption) (*ReportFieldCatalogResponse, error)
+	// ReportSources reports local source registry deltas from an ingest node.
+	ReportSources(ctx context.Context, in *ReportSourcesRequest, opts ...grpc.CallOption) (*ReportSourcesResponse, error)
+	// AssignAlert assigns an alert to a query node via rendezvous hashing.
+	AssignAlert(ctx context.Context, in *AssignAlertRequest, opts ...grpc.CallOption) (*AssignAlertResponse, error)
+	// ReportAlertFired records the timestamp of an alert trigger.
+	ReportAlertFired(ctx context.Context, in *ReportAlertFiredRequest, opts ...grpc.CallOption) (*ReportAlertFiredResponse, error)
+	// RegisterView registers or updates a materialized view definition.
+	RegisterView(ctx context.Context, in *RegisterViewRequest, opts ...grpc.CallOption) (*RegisterViewResponse, error)
 }
 
 type metaServiceClient struct {
@@ -150,6 +165,56 @@ func (c *metaServiceClient) CompleteDrain(ctx context.Context, in *CompleteDrain
 	return out, nil
 }
 
+func (c *metaServiceClient) ReportFieldCatalog(ctx context.Context, in *ReportFieldCatalogRequest, opts ...grpc.CallOption) (*ReportFieldCatalogResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReportFieldCatalogResponse)
+	err := c.cc.Invoke(ctx, MetaService_ReportFieldCatalog_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *metaServiceClient) ReportSources(ctx context.Context, in *ReportSourcesRequest, opts ...grpc.CallOption) (*ReportSourcesResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReportSourcesResponse)
+	err := c.cc.Invoke(ctx, MetaService_ReportSources_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *metaServiceClient) AssignAlert(ctx context.Context, in *AssignAlertRequest, opts ...grpc.CallOption) (*AssignAlertResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AssignAlertResponse)
+	err := c.cc.Invoke(ctx, MetaService_AssignAlert_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *metaServiceClient) ReportAlertFired(ctx context.Context, in *ReportAlertFiredRequest, opts ...grpc.CallOption) (*ReportAlertFiredResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReportAlertFiredResponse)
+	err := c.cc.Invoke(ctx, MetaService_ReportAlertFired_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *metaServiceClient) RegisterView(ctx context.Context, in *RegisterViewRequest, opts ...grpc.CallOption) (*RegisterViewResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterViewResponse)
+	err := c.cc.Invoke(ctx, MetaService_RegisterView_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // MetaServiceServer is the server API for MetaService service.
 // All implementations must embed UnimplementedMetaServiceServer
 // for forward compatibility.
@@ -172,6 +237,16 @@ type MetaServiceServer interface {
 	ProposeDrain(context.Context, *ProposeDrainRequest) (*ProposeDrainResponse, error)
 	// CompleteDrain marks a shard drain as complete, transitions to new primary.
 	CompleteDrain(context.Context, *CompleteDrainRequest) (*CompleteDrainResponse, error)
+	// ReportFieldCatalog reports local field catalog deltas from an ingest node.
+	ReportFieldCatalog(context.Context, *ReportFieldCatalogRequest) (*ReportFieldCatalogResponse, error)
+	// ReportSources reports local source registry deltas from an ingest node.
+	ReportSources(context.Context, *ReportSourcesRequest) (*ReportSourcesResponse, error)
+	// AssignAlert assigns an alert to a query node via rendezvous hashing.
+	AssignAlert(context.Context, *AssignAlertRequest) (*AssignAlertResponse, error)
+	// ReportAlertFired records the timestamp of an alert trigger.
+	ReportAlertFired(context.Context, *ReportAlertFiredRequest) (*ReportAlertFiredResponse, error)
+	// RegisterView registers or updates a materialized view definition.
+	RegisterView(context.Context, *RegisterViewRequest) (*RegisterViewResponse, error)
 	mustEmbedUnimplementedMetaServiceServer()
 }
 
@@ -205,6 +280,21 @@ func (UnimplementedMetaServiceServer) ProposeDrain(context.Context, *ProposeDrai
 }
 func (UnimplementedMetaServiceServer) CompleteDrain(context.Context, *CompleteDrainRequest) (*CompleteDrainResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CompleteDrain not implemented")
+}
+func (UnimplementedMetaServiceServer) ReportFieldCatalog(context.Context, *ReportFieldCatalogRequest) (*ReportFieldCatalogResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportFieldCatalog not implemented")
+}
+func (UnimplementedMetaServiceServer) ReportSources(context.Context, *ReportSourcesRequest) (*ReportSourcesResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportSources not implemented")
+}
+func (UnimplementedMetaServiceServer) AssignAlert(context.Context, *AssignAlertRequest) (*AssignAlertResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AssignAlert not implemented")
+}
+func (UnimplementedMetaServiceServer) ReportAlertFired(context.Context, *ReportAlertFiredRequest) (*ReportAlertFiredResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReportAlertFired not implemented")
+}
+func (UnimplementedMetaServiceServer) RegisterView(context.Context, *RegisterViewRequest) (*RegisterViewResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method RegisterView not implemented")
 }
 func (UnimplementedMetaServiceServer) mustEmbedUnimplementedMetaServiceServer() {}
 func (UnimplementedMetaServiceServer) testEmbeddedByValue()                     {}
@@ -364,6 +454,96 @@ func _MetaService_CompleteDrain_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _MetaService_ReportFieldCatalog_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportFieldCatalogRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MetaServiceServer).ReportFieldCatalog(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MetaService_ReportFieldCatalog_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MetaServiceServer).ReportFieldCatalog(ctx, req.(*ReportFieldCatalogRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MetaService_ReportSources_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportSourcesRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MetaServiceServer).ReportSources(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MetaService_ReportSources_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MetaServiceServer).ReportSources(ctx, req.(*ReportSourcesRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MetaService_AssignAlert_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AssignAlertRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MetaServiceServer).AssignAlert(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MetaService_AssignAlert_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MetaServiceServer).AssignAlert(ctx, req.(*AssignAlertRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MetaService_ReportAlertFired_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReportAlertFiredRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MetaServiceServer).ReportAlertFired(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MetaService_ReportAlertFired_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MetaServiceServer).ReportAlertFired(ctx, req.(*ReportAlertFiredRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _MetaService_RegisterView_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterViewRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MetaServiceServer).RegisterView(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: MetaService_RegisterView_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MetaServiceServer).RegisterView(ctx, req.(*RegisterViewRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // MetaService_ServiceDesc is the grpc.ServiceDesc for MetaService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -398,6 +578,26 @@ var MetaService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CompleteDrain",
 			Handler:    _MetaService_CompleteDrain_Handler,
+		},
+		{
+			MethodName: "ReportFieldCatalog",
+			Handler:    _MetaService_ReportFieldCatalog_Handler,
+		},
+		{
+			MethodName: "ReportSources",
+			Handler:    _MetaService_ReportSources_Handler,
+		},
+		{
+			MethodName: "AssignAlert",
+			Handler:    _MetaService_AssignAlert_Handler,
+		},
+		{
+			MethodName: "ReportAlertFired",
+			Handler:    _MetaService_ReportAlertFired_Handler,
+		},
+		{
+			MethodName: "RegisterView",
+			Handler:    _MetaService_RegisterView_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

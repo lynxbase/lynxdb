@@ -157,7 +157,7 @@ func (e *Engine) runTieringCycle(ctx context.Context) {
 		e.logger.Info("tiering: retry move to warm succeeded", "id", id)
 	}
 
-	// Move to cold.
+	// Move to cold: same pattern as Hot→Warm — create a new handle and advance epoch.
 	for _, id := range result.MovedToCold {
 		if err := e.tierMgr.MoveToCold(ctx, id); err != nil {
 			e.logger.Error("tiering: move to cold failed", "id", id, "error", err)
@@ -165,18 +165,33 @@ func (e *Engine) runTieringCycle(ctx context.Context) {
 			continue
 		}
 		e.mu.Lock()
-		for _, sh := range e.currentEpoch.segments {
-			if sh.meta.ID != id {
+		var oldSH *segmentHandle
+		newSegments := make([]*segmentHandle, len(e.currentEpoch.segments))
+		copy(newSegments, e.currentEpoch.segments)
+		for i, h := range newSegments {
+			if h.meta.ID != id {
 				continue
 			}
-			sh.meta.Tier = "cold"
-			ts, _ := e.tierMgr.GetSegment(id)
-			if ts != nil {
-				sh.meta.ObjectKey = ts.ObjectKey
+			oldSH = h
+			coldMeta := h.meta
+			coldMeta.Tier = "cold"
+			if ts, _ := e.tierMgr.GetSegment(id); ts != nil {
+				coldMeta.ObjectKey = ts.ObjectKey
+			}
+			newSegments[i] = &segmentHandle{
+				meta:        coldMeta,
+				index:       h.index,
+				bloom:       h.bloom,
+				invertedIdx: h.invertedIdx,
 			}
 
 			break
 		}
+		var retired []*segmentHandle
+		if oldSH != nil {
+			retired = []*segmentHandle{oldSH}
+		}
+		e.advanceEpoch(newSegments, retired)
 		e.mu.Unlock()
 	}
 
@@ -207,6 +222,9 @@ func (e *Engine) runTieringCycle(ctx context.Context) {
 		if expiredSH != nil && expiredSH.meta.Path != "" {
 			os.Remove(expiredSH.meta.Path)
 		}
+		// Also remove any cached remote segment file (P1-4).
+		cachePath := filepath.Join(e.dataDir, "segment-cache", id+".lsg")
+		os.Remove(cachePath) // ignore error — file may not exist
 	}
 }
 
@@ -215,28 +233,45 @@ func (e *Engine) runTieringCycle(ctx context.Context) {
 // e.mu write lock) so subsequent queries reuse them and the mmap is properly
 // closed on engine shutdown.
 //
+// Concurrent requests for the same segment are coalesced via singleflight to
+// avoid redundant S3 downloads.
+//
 // Accepts a context so that cancelled queries also cancel in-flight S3 fetches.
 // Falls back to a timeout derived from config when the context has no deadline.
-func (e *Engine) loadRemoteSegment(sh *segmentHandle) *segment.Reader {
-	return e.loadRemoteSegmentWithCtx(context.Background(), sh)
-}
-
-// loadRemoteSegmentWithCtx is the context-aware implementation of loadRemoteSegment.
-func (e *Engine) loadRemoteSegmentWithCtx(parentCtx context.Context, sh *segmentHandle) *segment.Reader {
+func (e *Engine) loadRemoteSegment(ctx context.Context, sh *segmentHandle) *segment.Reader {
 	if e.dataDir == "" || e.tierMgr == nil {
 		return nil
 	}
 
-	if err := os.MkdirAll(filepath.Join(e.dataDir, "segment-cache"), 0o755); err != nil {
-		e.logger.Warn("failed to create segment-cache dir", "error", err)
-
-		return nil
-	}
 	cachePath := filepath.Join(e.dataDir, "segment-cache", sh.meta.ID+".lsg")
 
-	// Check local cache first.
+	// Check local cache first (fast path, no singleflight needed).
 	if ms, err := segment.OpenSegmentFile(cachePath); err == nil {
 		return e.cacheRemoteMmap(sh, ms)
+	}
+
+	// Coalesce concurrent downloads for the same segment. The singleflight
+	// key is the segment ID — all concurrent callers share a single S3 fetch.
+	v, err, _ := e.remoteLoadGroup.Do(sh.meta.ID, func() (any, error) {
+		return e.doRemoteSegmentLoad(ctx, sh, cachePath)
+	})
+	if err != nil {
+		e.logger.Error("failed to load remote segment", "id", sh.meta.ID, "error", err)
+		return nil
+	}
+	if v == nil {
+		return nil
+	}
+	return v.(*segment.Reader)
+}
+
+// doRemoteSegmentLoad performs the actual S3 download and cache write.
+// Called inside singleflight.Do to ensure at most one concurrent download per segment.
+func (e *Engine) doRemoteSegmentLoad(ctx context.Context, sh *segmentHandle, cachePath string) (*segment.Reader, error) {
+	// Re-check cache — another goroutine in the singleflight group may have
+	// completed while we were waiting.
+	if ms, err := segment.OpenSegmentFile(cachePath); err == nil {
+		return e.cacheRemoteMmap(sh, ms), nil
 	}
 
 	// Download from object store, using the caller's context for cancellation.
@@ -244,33 +279,36 @@ func (e *Engine) loadRemoteSegmentWithCtx(parentCtx context.Context, sh *segment
 	if fetchTimeout == 0 {
 		fetchTimeout = 30 * time.Second
 	}
-	ctx, cancel := context.WithTimeout(parentCtx, fetchTimeout)
+	fetchCtx, cancel := context.WithTimeout(ctx, fetchTimeout)
 	defer cancel()
 
-	data, err := e.tierMgr.ReadFromStore(ctx, sh.meta.ID)
+	data, err := e.tierMgr.ReadFromStore(fetchCtx, sh.meta.ID)
 	if err != nil {
-		e.logger.Error("failed to read remote segment", "id", sh.meta.ID, "error", err)
-
-		return nil
+		return nil, err
 	}
 
-	// Write to cache.
-	if err := os.WriteFile(cachePath, data, 0o600); err != nil {
-		e.logger.Warn("failed to cache remote segment", "id", sh.meta.ID, "error", err)
+	// Write to cache atomically: tmp file + rename to avoid partial cache files
+	// if the process crashes mid-write (P3-12).
+	tmpPath := cachePath + ".tmp"
+	if werr := os.WriteFile(tmpPath, data, 0o600); werr != nil {
+		e.logger.Warn("failed to write segment cache temp file", "id", sh.meta.ID, "error", werr)
+	} else if rerr := os.Rename(tmpPath, cachePath); rerr != nil {
+		e.logger.Warn("failed to rename segment cache file", "id", sh.meta.ID, "error", rerr)
+		os.Remove(tmpPath) // clean up orphan
 	}
 
 	// Open from cache.
 	if ms, err := segment.OpenSegmentFile(cachePath); err == nil {
-		return e.cacheRemoteMmap(sh, ms)
+		return e.cacheRemoteMmap(sh, ms), nil
 	}
 
 	// Fallback: open from downloaded bytes directly (no mmap to cache).
 	sr, err := segment.OpenSegment(data)
 	if err != nil {
-		return nil
+		return nil, nil // non-fatal: segment may be corrupt
 	}
 
-	return sr
+	return sr, nil
 }
 
 // cacheRemoteMmap stores a remote segment's MmapSegment and reader on the handle

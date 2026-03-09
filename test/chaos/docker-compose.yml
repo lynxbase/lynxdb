@@ -1,0 +1,108 @@
+# 5-node all-role cluster for chaos testing.
+# All nodes run meta, ingest, and query roles.
+# Usage: docker compose -f test/chaos/docker-compose.yml up --build
+
+services:
+  node1:
+    build:
+      context: ../..
+      dockerfile: test/chaos/Dockerfile
+    command: >
+      server
+      --cluster.enabled
+      --cluster.node-id=node-1
+      --cluster.roles=meta,ingest,query
+      --cluster.seeds=node1:9400,node2:9400,node3:9400
+      --cluster.grpc-port=9400
+      --addr=0.0.0.0:3100
+      --data-dir=/data
+    ports:
+      - "3101:3100"
+    networks:
+      - chaos-net
+    cap_add:
+      - NET_ADMIN
+
+  node2:
+    build:
+      context: ../..
+      dockerfile: test/chaos/Dockerfile
+    command: >
+      server
+      --cluster.enabled
+      --cluster.node-id=node-2
+      --cluster.roles=meta,ingest,query
+      --cluster.seeds=node1:9400,node2:9400,node3:9400
+      --cluster.grpc-port=9400
+      --addr=0.0.0.0:3100
+      --data-dir=/data
+    ports:
+      - "3102:3100"
+    networks:
+      - chaos-net
+    cap_add:
+      - NET_ADMIN
+
+  node3:
+    build:
+      context: ../..
+      dockerfile: test/chaos/Dockerfile
+    command: >
+      server
+      --cluster.enabled
+      --cluster.node-id=node-3
+      --cluster.roles=meta,ingest,query
+      --cluster.seeds=node1:9400,node2:9400,node3:9400
+      --cluster.grpc-port=9400
+      --addr=0.0.0.0:3100
+      --data-dir=/data
+    ports:
+      - "3103:3100"
+    networks:
+      - chaos-net
+    cap_add:
+      - NET_ADMIN
+
+  node4:
+    build:
+      context: ../..
+      dockerfile: test/chaos/Dockerfile
+    command: >
+      server
+      --cluster.enabled
+      --cluster.node-id=node-4
+      --cluster.roles=meta,ingest,query
+      --cluster.seeds=node1:9400,node2:9400,node3:9400
+      --cluster.grpc-port=9400
+      --addr=0.0.0.0:3100
+      --data-dir=/data
+    ports:
+      - "3104:3100"
+    networks:
+      - chaos-net
+    cap_add:
+      - NET_ADMIN
+
+  node5:
+    build:
+      context: ../..
+      dockerfile: test/chaos/Dockerfile
+    command: >
+      server
+      --cluster.enabled
+      --cluster.node-id=node-5
+      --cluster.roles=meta,ingest,query
+      --cluster.seeds=node1:9400,node2:9400,node3:9400
+      --cluster.grpc-port=9400
+      --addr=0.0.0.0:3100
+      --data-dir=/data
+    ports:
+      - "3105:3100"
+    networks:
+      - chaos-net
+    cap_add:
+      - NET_ADMIN
+
+networks:
+  chaos-net:
+    driver: bridge

@@ -37,11 +37,17 @@ func (s ShardState) String() string {
 
 // ShardAssignment describes which nodes own a shard and its current state.
 type ShardAssignment struct {
-	ShardID  ShardID          `json:"shard_id" msgpack:"shard_id"`
-	Primary  NodeID   `json:"primary" msgpack:"primary"`
-	Replicas []NodeID `json:"replicas" msgpack:"replicas"`
-	State    ShardState       `json:"state" msgpack:"state"`
-	Epoch    uint64           `json:"epoch" msgpack:"epoch"`
+	ShardID  ShardID    `json:"shard_id" msgpack:"shard_id"`
+	Primary  NodeID     `json:"primary" msgpack:"primary"`
+	Replicas []NodeID   `json:"replicas" msgpack:"replicas"`
+	State    ShardState `json:"state" msgpack:"state"`
+	Epoch    uint64     `json:"epoch" msgpack:"epoch"`
+
+	// PendingPrimary is the target primary during a ShardMigrating transition.
+	// Set by CmdApplyRebalance, cleared when the drain completes.
+	PendingPrimary NodeID `json:"pending_primary,omitempty" msgpack:"pending_primary,omitempty"`
+	// PendingReplicas is the target replica set during a ShardMigrating transition.
+	PendingReplicas []NodeID `json:"pending_replicas,omitempty" msgpack:"pending_replicas,omitempty"`
 }
 
 // ShardMap is a point-in-time snapshot of all shard assignments in the cluster.

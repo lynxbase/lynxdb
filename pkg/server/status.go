@@ -34,6 +34,20 @@ func (e *Engine) BufferPoolStats() *buffer.PoolStats {
 	return &s
 }
 
+// NodeStatusInfo holds per-node status data for cluster mode.
+type NodeStatusInfo struct {
+	ID            string   `json:"id"`
+	Roles         []string `json:"roles"`
+	State         string   `json:"state"`
+	CPUPercent    float64  `json:"cpu_percent"`
+	MemoryUsed    int64    `json:"memory_used"`
+	MemoryTotal   int64    `json:"memory_total"`
+	DiskUsed      int64    `json:"disk_used"`
+	DiskTotal     int64    `json:"disk_total"`
+	ActiveQueries int64    `json:"active_queries"`
+	IngestRateEPS int64    `json:"ingest_rate_eps"`
+}
+
 // ClusterStatusInfo holds cluster status data.
 type ClusterStatusInfo struct {
 	Status         string `json:"status"`
@@ -43,6 +57,15 @@ type ClusterStatusInfo struct {
 	BufferedSize   int64  `json:"buffered_size"`
 	BufferedEvents int64  `json:"buffered_events"`
 	DataDir        string `json:"data_dir"`
+
+	// Cluster-mode fields (zero-valued in single-node mode).
+	MetaNodes         int              `json:"meta_nodes,omitempty"`
+	IngestNodes       int              `json:"ingest_nodes,omitempty"`
+	QueryNodes        int              `json:"query_nodes,omitempty"`
+	ShardCount        int              `json:"shard_count,omitempty"`
+	TotalEvents       int64            `json:"total_events,omitempty"`
+	TotalStorageBytes int64            `json:"total_storage_bytes,omitempty"`
+	Nodes             []NodeStatusInfo `json:"nodes,omitempty"`
 }
 
 // ClusterStatus returns the current cluster status.

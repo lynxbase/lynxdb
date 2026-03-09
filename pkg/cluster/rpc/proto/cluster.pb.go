@@ -472,11 +472,13 @@ func (x *WatchShardMapRequest) GetCurrentEpoch() uint64 {
 }
 
 type ShardMapUpdate struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ShardMap      []byte                 `protobuf:"bytes,1,opt,name=shard_map,json=shardMap,proto3" json:"shard_map,omitempty"` // msgpack-encoded ShardMap
-	Epoch         uint64                 `protobuf:"varint,2,opt,name=epoch,proto3" json:"epoch,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ShardMap       []byte                 `protobuf:"bytes,1,opt,name=shard_map,json=shardMap,proto3" json:"shard_map,omitempty"` // msgpack-encoded ShardMap
+	Epoch          uint64                 `protobuf:"varint,2,opt,name=epoch,proto3" json:"epoch,omitempty"`
+	FieldCatalog   []byte                 `protobuf:"bytes,3,opt,name=field_catalog,json=fieldCatalog,proto3" json:"field_catalog,omitempty"`       // msgpack-encoded []GlobalFieldInfo (piggybacked)
+	SourceRegistry []byte                 `protobuf:"bytes,4,opt,name=source_registry,json=sourceRegistry,proto3" json:"source_registry,omitempty"` // msgpack-encoded []GlobalSourceInfo (piggybacked)
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *ShardMapUpdate) Reset() {
@@ -521,6 +523,20 @@ func (x *ShardMapUpdate) GetEpoch() uint64 {
 		return x.Epoch
 	}
 	return 0
+}
+
+func (x *ShardMapUpdate) GetFieldCatalog() []byte {
+	if x != nil {
+		return x.FieldCatalog
+	}
+	return nil
+}
+
+func (x *ShardMapUpdate) GetSourceRegistry() []byte {
+	if x != nil {
+		return x.SourceRegistry
+	}
+	return nil
 }
 
 type RenewLeaseRequest struct {
@@ -1101,6 +1117,690 @@ func (x *CompleteDrainResponse) GetLeaderAddr() string {
 	return ""
 }
 
+type FieldDeltaProto struct {
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Name          string                  `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Type          string                  `protobuf:"bytes,2,opt,name=type,proto3" json:"type,omitempty"`
+	Count         int64                   `protobuf:"varint,3,opt,name=count,proto3" json:"count,omitempty"`
+	TopValues     []*FieldValueEntryProto `protobuf:"bytes,4,rep,name=top_values,json=topValues,proto3" json:"top_values,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FieldDeltaProto) Reset() {
+	*x = FieldDeltaProto{}
+	mi := &file_cluster_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FieldDeltaProto) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FieldDeltaProto) ProtoMessage() {}
+
+func (x *FieldDeltaProto) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FieldDeltaProto.ProtoReflect.Descriptor instead.
+func (*FieldDeltaProto) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *FieldDeltaProto) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *FieldDeltaProto) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *FieldDeltaProto) GetCount() int64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+func (x *FieldDeltaProto) GetTopValues() []*FieldValueEntryProto {
+	if x != nil {
+		return x.TopValues
+	}
+	return nil
+}
+
+type FieldValueEntryProto struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Value         string                 `protobuf:"bytes,1,opt,name=value,proto3" json:"value,omitempty"`
+	Count         int64                  `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FieldValueEntryProto) Reset() {
+	*x = FieldValueEntryProto{}
+	mi := &file_cluster_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FieldValueEntryProto) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FieldValueEntryProto) ProtoMessage() {}
+
+func (x *FieldValueEntryProto) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FieldValueEntryProto.ProtoReflect.Descriptor instead.
+func (*FieldValueEntryProto) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *FieldValueEntryProto) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+func (x *FieldValueEntryProto) GetCount() int64 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+type ReportFieldCatalogRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Fields        []*FieldDeltaProto     `protobuf:"bytes,2,rep,name=fields,proto3" json:"fields,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportFieldCatalogRequest) Reset() {
+	*x = ReportFieldCatalogRequest{}
+	mi := &file_cluster_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportFieldCatalogRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportFieldCatalogRequest) ProtoMessage() {}
+
+func (x *ReportFieldCatalogRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportFieldCatalogRequest.ProtoReflect.Descriptor instead.
+func (*ReportFieldCatalogRequest) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *ReportFieldCatalogRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *ReportFieldCatalogRequest) GetFields() []*FieldDeltaProto {
+	if x != nil {
+		return x.Fields
+	}
+	return nil
+}
+
+type ReportFieldCatalogResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportFieldCatalogResponse) Reset() {
+	*x = ReportFieldCatalogResponse{}
+	mi := &file_cluster_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportFieldCatalogResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportFieldCatalogResponse) ProtoMessage() {}
+
+func (x *ReportFieldCatalogResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportFieldCatalogResponse.ProtoReflect.Descriptor instead.
+func (*ReportFieldCatalogResponse) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *ReportFieldCatalogResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+type SourceDeltaProto struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Name           string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	EventCount     int64                  `protobuf:"varint,2,opt,name=event_count,json=eventCount,proto3" json:"event_count,omitempty"`
+	LastSeenUnixNs int64                  `protobuf:"varint,3,opt,name=last_seen_unix_ns,json=lastSeenUnixNs,proto3" json:"last_seen_unix_ns,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SourceDeltaProto) Reset() {
+	*x = SourceDeltaProto{}
+	mi := &file_cluster_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SourceDeltaProto) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SourceDeltaProto) ProtoMessage() {}
+
+func (x *SourceDeltaProto) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SourceDeltaProto.ProtoReflect.Descriptor instead.
+func (*SourceDeltaProto) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *SourceDeltaProto) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *SourceDeltaProto) GetEventCount() int64 {
+	if x != nil {
+		return x.EventCount
+	}
+	return 0
+}
+
+func (x *SourceDeltaProto) GetLastSeenUnixNs() int64 {
+	if x != nil {
+		return x.LastSeenUnixNs
+	}
+	return 0
+}
+
+type ReportSourcesRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Sources       []*SourceDeltaProto    `protobuf:"bytes,2,rep,name=sources,proto3" json:"sources,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportSourcesRequest) Reset() {
+	*x = ReportSourcesRequest{}
+	mi := &file_cluster_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportSourcesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportSourcesRequest) ProtoMessage() {}
+
+func (x *ReportSourcesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportSourcesRequest.ProtoReflect.Descriptor instead.
+func (*ReportSourcesRequest) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *ReportSourcesRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *ReportSourcesRequest) GetSources() []*SourceDeltaProto {
+	if x != nil {
+		return x.Sources
+	}
+	return nil
+}
+
+type ReportSourcesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportSourcesResponse) Reset() {
+	*x = ReportSourcesResponse{}
+	mi := &file_cluster_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportSourcesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportSourcesResponse) ProtoMessage() {}
+
+func (x *ReportSourcesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportSourcesResponse.ProtoReflect.Descriptor instead.
+func (*ReportSourcesResponse) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *ReportSourcesResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+type AssignAlertRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AlertId       string                 `protobuf:"bytes,1,opt,name=alert_id,json=alertId,proto3" json:"alert_id,omitempty"`
+	QueryNodeIds  []string               `protobuf:"bytes,2,rep,name=query_node_ids,json=queryNodeIds,proto3" json:"query_node_ids,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AssignAlertRequest) Reset() {
+	*x = AssignAlertRequest{}
+	mi := &file_cluster_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AssignAlertRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AssignAlertRequest) ProtoMessage() {}
+
+func (x *AssignAlertRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AssignAlertRequest.ProtoReflect.Descriptor instead.
+func (*AssignAlertRequest) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *AssignAlertRequest) GetAlertId() string {
+	if x != nil {
+		return x.AlertId
+	}
+	return ""
+}
+
+func (x *AssignAlertRequest) GetQueryNodeIds() []string {
+	if x != nil {
+		return x.QueryNodeIds
+	}
+	return nil
+}
+
+type AssignAlertResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Ok             bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	AssignedNodeId string                 `protobuf:"bytes,2,opt,name=assigned_node_id,json=assignedNodeId,proto3" json:"assigned_node_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *AssignAlertResponse) Reset() {
+	*x = AssignAlertResponse{}
+	mi := &file_cluster_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AssignAlertResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AssignAlertResponse) ProtoMessage() {}
+
+func (x *AssignAlertResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AssignAlertResponse.ProtoReflect.Descriptor instead.
+func (*AssignAlertResponse) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *AssignAlertResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *AssignAlertResponse) GetAssignedNodeId() string {
+	if x != nil {
+		return x.AssignedNodeId
+	}
+	return ""
+}
+
+type ReportAlertFiredRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AlertId       string                 `protobuf:"bytes,1,opt,name=alert_id,json=alertId,proto3" json:"alert_id,omitempty"`
+	FiredAtUnixNs int64                  `protobuf:"varint,2,opt,name=fired_at_unix_ns,json=firedAtUnixNs,proto3" json:"fired_at_unix_ns,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportAlertFiredRequest) Reset() {
+	*x = ReportAlertFiredRequest{}
+	mi := &file_cluster_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportAlertFiredRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportAlertFiredRequest) ProtoMessage() {}
+
+func (x *ReportAlertFiredRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportAlertFiredRequest.ProtoReflect.Descriptor instead.
+func (*ReportAlertFiredRequest) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *ReportAlertFiredRequest) GetAlertId() string {
+	if x != nil {
+		return x.AlertId
+	}
+	return ""
+}
+
+func (x *ReportAlertFiredRequest) GetFiredAtUnixNs() int64 {
+	if x != nil {
+		return x.FiredAtUnixNs
+	}
+	return 0
+}
+
+type ReportAlertFiredResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReportAlertFiredResponse) Reset() {
+	*x = ReportAlertFiredResponse{}
+	mi := &file_cluster_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReportAlertFiredResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReportAlertFiredResponse) ProtoMessage() {}
+
+func (x *ReportAlertFiredResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReportAlertFiredResponse.ProtoReflect.Descriptor instead.
+func (*ReportAlertFiredResponse) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *ReportAlertFiredResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+type RegisterViewRequest struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Name              string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Query             string                 `protobuf:"bytes,2,opt,name=query,proto3" json:"query,omitempty"`
+	Status            string                 `protobuf:"bytes,3,opt,name=status,proto3" json:"status,omitempty"`
+	CoordinatorNodeId string                 `protobuf:"bytes,4,opt,name=coordinator_node_id,json=coordinatorNodeId,proto3" json:"coordinator_node_id,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *RegisterViewRequest) Reset() {
+	*x = RegisterViewRequest{}
+	mi := &file_cluster_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterViewRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterViewRequest) ProtoMessage() {}
+
+func (x *RegisterViewRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterViewRequest.ProtoReflect.Descriptor instead.
+func (*RegisterViewRequest) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *RegisterViewRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *RegisterViewRequest) GetQuery() string {
+	if x != nil {
+		return x.Query
+	}
+	return ""
+}
+
+func (x *RegisterViewRequest) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+func (x *RegisterViewRequest) GetCoordinatorNodeId() string {
+	if x != nil {
+		return x.CoordinatorNodeId
+	}
+	return ""
+}
+
+type RegisterViewResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RegisterViewResponse) Reset() {
+	*x = RegisterViewResponse{}
+	mi := &file_cluster_proto_msgTypes[29]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegisterViewResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegisterViewResponse) ProtoMessage() {}
+
+func (x *RegisterViewResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_cluster_proto_msgTypes[29]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegisterViewResponse.ProtoReflect.Descriptor instead.
+func (*RegisterViewResponse) Descriptor() ([]byte, []int) {
+	return file_cluster_proto_rawDescGZIP(), []int{29}
+}
+
+func (x *RegisterViewResponse) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
 type IngestBatchRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ShardId       string                 `protobuf:"bytes,1,opt,name=shard_id,json=shardId,proto3" json:"shard_id,omitempty"`
@@ -1114,7 +1814,7 @@ type IngestBatchRequest struct {
 
 func (x *IngestBatchRequest) Reset() {
 	*x = IngestBatchRequest{}
-	mi := &file_cluster_proto_msgTypes[17]
+	mi := &file_cluster_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1126,7 +1826,7 @@ func (x *IngestBatchRequest) String() string {
 func (*IngestBatchRequest) ProtoMessage() {}
 
 func (x *IngestBatchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_msgTypes[17]
+	mi := &file_cluster_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1139,7 +1839,7 @@ func (x *IngestBatchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IngestBatchRequest.ProtoReflect.Descriptor instead.
 func (*IngestBatchRequest) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_rawDescGZIP(), []int{17}
+	return file_cluster_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *IngestBatchRequest) GetShardId() string {
@@ -1187,7 +1887,7 @@ type IngestBatchResponse struct {
 
 func (x *IngestBatchResponse) Reset() {
 	*x = IngestBatchResponse{}
-	mi := &file_cluster_proto_msgTypes[18]
+	mi := &file_cluster_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1199,7 +1899,7 @@ func (x *IngestBatchResponse) String() string {
 func (*IngestBatchResponse) ProtoMessage() {}
 
 func (x *IngestBatchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_msgTypes[18]
+	mi := &file_cluster_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1212,7 +1912,7 @@ func (x *IngestBatchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IngestBatchResponse.ProtoReflect.Descriptor instead.
 func (*IngestBatchResponse) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_rawDescGZIP(), []int{18}
+	return file_cluster_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *IngestBatchResponse) GetOk() bool {
@@ -1241,7 +1941,7 @@ type ReplicateEntry struct {
 
 func (x *ReplicateEntry) Reset() {
 	*x = ReplicateEntry{}
-	mi := &file_cluster_proto_msgTypes[19]
+	mi := &file_cluster_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1253,7 +1953,7 @@ func (x *ReplicateEntry) String() string {
 func (*ReplicateEntry) ProtoMessage() {}
 
 func (x *ReplicateEntry) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_msgTypes[19]
+	mi := &file_cluster_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1266,7 +1966,7 @@ func (x *ReplicateEntry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReplicateEntry.ProtoReflect.Descriptor instead.
 func (*ReplicateEntry) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_rawDescGZIP(), []int{19}
+	return file_cluster_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ReplicateEntry) GetShardId() string {
@@ -1300,7 +2000,7 @@ type ReplicateBatchResponse struct {
 
 func (x *ReplicateBatchResponse) Reset() {
 	*x = ReplicateBatchResponse{}
-	mi := &file_cluster_proto_msgTypes[20]
+	mi := &file_cluster_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1312,7 +2012,7 @@ func (x *ReplicateBatchResponse) String() string {
 func (*ReplicateBatchResponse) ProtoMessage() {}
 
 func (x *ReplicateBatchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_msgTypes[20]
+	mi := &file_cluster_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1325,7 +2025,7 @@ func (x *ReplicateBatchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReplicateBatchResponse.ProtoReflect.Descriptor instead.
 func (*ReplicateBatchResponse) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_rawDescGZIP(), []int{20}
+	return file_cluster_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ReplicateBatchResponse) GetOk() bool {
@@ -1356,7 +2056,7 @@ type ExecuteQueryRequest struct {
 
 func (x *ExecuteQueryRequest) Reset() {
 	*x = ExecuteQueryRequest{}
-	mi := &file_cluster_proto_msgTypes[21]
+	mi := &file_cluster_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1368,7 +2068,7 @@ func (x *ExecuteQueryRequest) String() string {
 func (*ExecuteQueryRequest) ProtoMessage() {}
 
 func (x *ExecuteQueryRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_msgTypes[21]
+	mi := &file_cluster_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1381,7 +2081,7 @@ func (x *ExecuteQueryRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecuteQueryRequest.ProtoReflect.Descriptor instead.
 func (*ExecuteQueryRequest) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_rawDescGZIP(), []int{21}
+	return file_cluster_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ExecuteQueryRequest) GetQuery() string {
@@ -1436,7 +2136,7 @@ type QueryResult struct {
 
 func (x *QueryResult) Reset() {
 	*x = QueryResult{}
-	mi := &file_cluster_proto_msgTypes[22]
+	mi := &file_cluster_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1448,7 +2148,7 @@ func (x *QueryResult) String() string {
 func (*QueryResult) ProtoMessage() {}
 
 func (x *QueryResult) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_msgTypes[22]
+	mi := &file_cluster_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1461,7 +2161,7 @@ func (x *QueryResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use QueryResult.ProtoReflect.Descriptor instead.
 func (*QueryResult) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_rawDescGZIP(), []int{22}
+	return file_cluster_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *QueryResult) GetRow() []byte {
@@ -1494,7 +2194,7 @@ type PartCommittedNotification struct {
 
 func (x *PartCommittedNotification) Reset() {
 	*x = PartCommittedNotification{}
-	mi := &file_cluster_proto_msgTypes[23]
+	mi := &file_cluster_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1506,7 +2206,7 @@ func (x *PartCommittedNotification) String() string {
 func (*PartCommittedNotification) ProtoMessage() {}
 
 func (x *PartCommittedNotification) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_msgTypes[23]
+	mi := &file_cluster_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1519,7 +2219,7 @@ func (x *PartCommittedNotification) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PartCommittedNotification.ProtoReflect.Descriptor instead.
 func (*PartCommittedNotification) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_rawDescGZIP(), []int{23}
+	return file_cluster_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *PartCommittedNotification) GetShardId() string {
@@ -1580,7 +2280,7 @@ type PartCommittedResponse struct {
 
 func (x *PartCommittedResponse) Reset() {
 	*x = PartCommittedResponse{}
-	mi := &file_cluster_proto_msgTypes[24]
+	mi := &file_cluster_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1592,7 +2292,7 @@ func (x *PartCommittedResponse) String() string {
 func (*PartCommittedResponse) ProtoMessage() {}
 
 func (x *PartCommittedResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_msgTypes[24]
+	mi := &file_cluster_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1605,7 +2305,7 @@ func (x *PartCommittedResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PartCommittedResponse.ProtoReflect.Descriptor instead.
 func (*PartCommittedResponse) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_rawDescGZIP(), []int{24}
+	return file_cluster_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *PartCommittedResponse) GetOk() bool {
@@ -1625,7 +2325,7 @@ type SubscribeTailRequest struct {
 
 func (x *SubscribeTailRequest) Reset() {
 	*x = SubscribeTailRequest{}
-	mi := &file_cluster_proto_msgTypes[25]
+	mi := &file_cluster_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1637,7 +2337,7 @@ func (x *SubscribeTailRequest) String() string {
 func (*SubscribeTailRequest) ProtoMessage() {}
 
 func (x *SubscribeTailRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_msgTypes[25]
+	mi := &file_cluster_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1650,7 +2350,7 @@ func (x *SubscribeTailRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubscribeTailRequest.ProtoReflect.Descriptor instead.
 func (*SubscribeTailRequest) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_rawDescGZIP(), []int{25}
+	return file_cluster_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *SubscribeTailRequest) GetQuery() string {
@@ -1678,7 +2378,7 @@ type TailEvent struct {
 
 func (x *TailEvent) Reset() {
 	*x = TailEvent{}
-	mi := &file_cluster_proto_msgTypes[26]
+	mi := &file_cluster_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1690,7 +2390,7 @@ func (x *TailEvent) String() string {
 func (*TailEvent) ProtoMessage() {}
 
 func (x *TailEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_cluster_proto_msgTypes[26]
+	mi := &file_cluster_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1703,7 +2403,7 @@ func (x *TailEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TailEvent.ProtoReflect.Descriptor instead.
 func (*TailEvent) Descriptor() ([]byte, []int) {
-	return file_cluster_proto_rawDescGZIP(), []int{26}
+	return file_cluster_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *TailEvent) GetEvent() []byte {
@@ -1762,10 +2462,12 @@ const file_cluster_proto_rawDesc = "" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x1b\n" +
 	"\tleader_id\x18\x02 \x01(\tR\bleaderId\";\n" +
 	"\x14WatchShardMapRequest\x12#\n" +
-	"\rcurrent_epoch\x18\x01 \x01(\x04R\fcurrentEpoch\"C\n" +
+	"\rcurrent_epoch\x18\x01 \x01(\x04R\fcurrentEpoch\"\x91\x01\n" +
 	"\x0eShardMapUpdate\x12\x1b\n" +
 	"\tshard_map\x18\x01 \x01(\fR\bshardMap\x12\x14\n" +
-	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\"]\n" +
+	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\x12#\n" +
+	"\rfield_catalog\x18\x03 \x01(\fR\ffieldCatalog\x12'\n" +
+	"\x0fsource_registry\x18\x04 \x01(\fR\x0esourceRegistry\"]\n" +
 	"\x11RenewLeaseRequest\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x19\n" +
 	"\bshard_id\x18\x02 \x01(\tR\ashardId\x12\x14\n" +
@@ -1807,7 +2509,49 @@ const file_cluster_proto_rawDesc = "" +
 	"\x15CompleteDrainResponse\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x1f\n" +
 	"\vleader_addr\x18\x02 \x01(\tR\n" +
-	"leaderAddr\"\xbf\x01\n" +
+	"leaderAddr\"\x97\x01\n" +
+	"\x0fFieldDeltaProto\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
+	"\x04type\x18\x02 \x01(\tR\x04type\x12\x14\n" +
+	"\x05count\x18\x03 \x01(\x03R\x05count\x12F\n" +
+	"\n" +
+	"top_values\x18\x04 \x03(\v2'.lynxdb.cluster.v1.FieldValueEntryProtoR\ttopValues\"B\n" +
+	"\x14FieldValueEntryProto\x12\x14\n" +
+	"\x05value\x18\x01 \x01(\tR\x05value\x12\x14\n" +
+	"\x05count\x18\x02 \x01(\x03R\x05count\"p\n" +
+	"\x19ReportFieldCatalogRequest\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12:\n" +
+	"\x06fields\x18\x02 \x03(\v2\".lynxdb.cluster.v1.FieldDeltaProtoR\x06fields\",\n" +
+	"\x1aReportFieldCatalogResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"r\n" +
+	"\x10SourceDeltaProto\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1f\n" +
+	"\vevent_count\x18\x02 \x01(\x03R\n" +
+	"eventCount\x12)\n" +
+	"\x11last_seen_unix_ns\x18\x03 \x01(\x03R\x0elastSeenUnixNs\"n\n" +
+	"\x14ReportSourcesRequest\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12=\n" +
+	"\asources\x18\x02 \x03(\v2#.lynxdb.cluster.v1.SourceDeltaProtoR\asources\"'\n" +
+	"\x15ReportSourcesResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"U\n" +
+	"\x12AssignAlertRequest\x12\x19\n" +
+	"\balert_id\x18\x01 \x01(\tR\aalertId\x12$\n" +
+	"\x0equery_node_ids\x18\x02 \x03(\tR\fqueryNodeIds\"O\n" +
+	"\x13AssignAlertResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12(\n" +
+	"\x10assigned_node_id\x18\x02 \x01(\tR\x0eassignedNodeId\"]\n" +
+	"\x17ReportAlertFiredRequest\x12\x19\n" +
+	"\balert_id\x18\x01 \x01(\tR\aalertId\x12'\n" +
+	"\x10fired_at_unix_ns\x18\x02 \x01(\x03R\rfiredAtUnixNs\"*\n" +
+	"\x18ReportAlertFiredResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"\x87\x01\n" +
+	"\x13RegisterViewRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05query\x18\x02 \x01(\tR\x05query\x12\x16\n" +
+	"\x06status\x18\x03 \x01(\tR\x06status\x12.\n" +
+	"\x13coordinator_node_id\x18\x04 \x01(\tR\x11coordinatorNodeId\"&\n" +
+	"\x14RegisterViewResponse\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\"\xbf\x01\n" +
 	"\x12IngestBatchRequest\x12\x19\n" +
 	"\bshard_id\x18\x01 \x01(\tR\ashardId\x12\x16\n" +
 	"\x06events\x18\x02 \x01(\fR\x06events\x12\x1f\n" +
@@ -1861,7 +2605,8 @@ const file_cluster_proto_rawDesc = "" +
 	"\bAckLevel\x12\f\n" +
 	"\bACK_NONE\x10\x00\x12\v\n" +
 	"\aACK_ONE\x10\x01\x12\v\n" +
-	"\aACK_ALL\x10\x022\x9c\x06\n" +
+	"\aACK_ALL\x10\x022\x9f\n" +
+	"\n" +
 	"\vMetaService\x12V\n" +
 	"\tHandshake\x12#.lynxdb.cluster.v1.HandshakeRequest\x1a$.lynxdb.cluster.v1.HandshakeResponse\x12V\n" +
 	"\tHeartbeat\x12#.lynxdb.cluster.v1.HeartbeatRequest\x1a$.lynxdb.cluster.v1.HeartbeatResponse\x12]\n" +
@@ -1871,7 +2616,12 @@ const file_cluster_proto_rawDesc = "" +
 	"\x11RequestCompaction\x12+.lynxdb.cluster.v1.RequestCompactionRequest\x1a,.lynxdb.cluster.v1.RequestCompactionResponse\x12n\n" +
 	"\x11ReleaseCompaction\x12+.lynxdb.cluster.v1.ReleaseCompactionRequest\x1a,.lynxdb.cluster.v1.ReleaseCompactionResponse\x12_\n" +
 	"\fProposeDrain\x12&.lynxdb.cluster.v1.ProposeDrainRequest\x1a'.lynxdb.cluster.v1.ProposeDrainResponse\x12b\n" +
-	"\rCompleteDrain\x12'.lynxdb.cluster.v1.CompleteDrainRequest\x1a(.lynxdb.cluster.v1.CompleteDrainResponse2\xcf\x01\n" +
+	"\rCompleteDrain\x12'.lynxdb.cluster.v1.CompleteDrainRequest\x1a(.lynxdb.cluster.v1.CompleteDrainResponse\x12q\n" +
+	"\x12ReportFieldCatalog\x12,.lynxdb.cluster.v1.ReportFieldCatalogRequest\x1a-.lynxdb.cluster.v1.ReportFieldCatalogResponse\x12b\n" +
+	"\rReportSources\x12'.lynxdb.cluster.v1.ReportSourcesRequest\x1a(.lynxdb.cluster.v1.ReportSourcesResponse\x12\\\n" +
+	"\vAssignAlert\x12%.lynxdb.cluster.v1.AssignAlertRequest\x1a&.lynxdb.cluster.v1.AssignAlertResponse\x12k\n" +
+	"\x10ReportAlertFired\x12*.lynxdb.cluster.v1.ReportAlertFiredRequest\x1a+.lynxdb.cluster.v1.ReportAlertFiredResponse\x12_\n" +
+	"\fRegisterView\x12&.lynxdb.cluster.v1.RegisterViewRequest\x1a'.lynxdb.cluster.v1.RegisterViewResponse2\xcf\x01\n" +
 	"\rIngestService\x12\\\n" +
 	"\vIngestBatch\x12%.lynxdb.cluster.v1.IngestBatchRequest\x1a&.lynxdb.cluster.v1.IngestBatchResponse\x12`\n" +
 	"\x0eReplicateBatch\x12!.lynxdb.cluster.v1.ReplicateEntry\x1a).lynxdb.cluster.v1.ReplicateBatchResponse(\x012\xb1\x02\n" +
@@ -1893,71 +2643,97 @@ func file_cluster_proto_rawDescGZIP() []byte {
 }
 
 var file_cluster_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_cluster_proto_msgTypes = make([]protoimpl.MessageInfo, 40)
 var file_cluster_proto_goTypes = []any{
-	(AckLevel)(0),                     // 0: lynxdb.cluster.v1.AckLevel
-	(*HandshakeRequest)(nil),          // 1: lynxdb.cluster.v1.HandshakeRequest
-	(*HandshakeResponse)(nil),         // 2: lynxdb.cluster.v1.HandshakeResponse
-	(*HeartbeatRequest)(nil),          // 3: lynxdb.cluster.v1.HeartbeatRequest
-	(*NodeResourceReport)(nil),        // 4: lynxdb.cluster.v1.NodeResourceReport
-	(*HeartbeatResponse)(nil),         // 5: lynxdb.cluster.v1.HeartbeatResponse
-	(*WatchShardMapRequest)(nil),      // 6: lynxdb.cluster.v1.WatchShardMapRequest
-	(*ShardMapUpdate)(nil),            // 7: lynxdb.cluster.v1.ShardMapUpdate
-	(*RenewLeaseRequest)(nil),         // 8: lynxdb.cluster.v1.RenewLeaseRequest
-	(*RenewLeaseResponse)(nil),        // 9: lynxdb.cluster.v1.RenewLeaseResponse
-	(*RequestCompactionRequest)(nil),  // 10: lynxdb.cluster.v1.RequestCompactionRequest
-	(*RequestCompactionResponse)(nil), // 11: lynxdb.cluster.v1.RequestCompactionResponse
-	(*ReleaseCompactionRequest)(nil),  // 12: lynxdb.cluster.v1.ReleaseCompactionRequest
-	(*ReleaseCompactionResponse)(nil), // 13: lynxdb.cluster.v1.ReleaseCompactionResponse
-	(*ProposeDrainRequest)(nil),       // 14: lynxdb.cluster.v1.ProposeDrainRequest
-	(*ProposeDrainResponse)(nil),      // 15: lynxdb.cluster.v1.ProposeDrainResponse
-	(*CompleteDrainRequest)(nil),      // 16: lynxdb.cluster.v1.CompleteDrainRequest
-	(*CompleteDrainResponse)(nil),     // 17: lynxdb.cluster.v1.CompleteDrainResponse
-	(*IngestBatchRequest)(nil),        // 18: lynxdb.cluster.v1.IngestBatchRequest
-	(*IngestBatchResponse)(nil),       // 19: lynxdb.cluster.v1.IngestBatchResponse
-	(*ReplicateEntry)(nil),            // 20: lynxdb.cluster.v1.ReplicateEntry
-	(*ReplicateBatchResponse)(nil),    // 21: lynxdb.cluster.v1.ReplicateBatchResponse
-	(*ExecuteQueryRequest)(nil),       // 22: lynxdb.cluster.v1.ExecuteQueryRequest
-	(*QueryResult)(nil),               // 23: lynxdb.cluster.v1.QueryResult
-	(*PartCommittedNotification)(nil), // 24: lynxdb.cluster.v1.PartCommittedNotification
-	(*PartCommittedResponse)(nil),     // 25: lynxdb.cluster.v1.PartCommittedResponse
-	(*SubscribeTailRequest)(nil),      // 26: lynxdb.cluster.v1.SubscribeTailRequest
-	(*TailEvent)(nil),                 // 27: lynxdb.cluster.v1.TailEvent
+	(AckLevel)(0),                      // 0: lynxdb.cluster.v1.AckLevel
+	(*HandshakeRequest)(nil),           // 1: lynxdb.cluster.v1.HandshakeRequest
+	(*HandshakeResponse)(nil),          // 2: lynxdb.cluster.v1.HandshakeResponse
+	(*HeartbeatRequest)(nil),           // 3: lynxdb.cluster.v1.HeartbeatRequest
+	(*NodeResourceReport)(nil),         // 4: lynxdb.cluster.v1.NodeResourceReport
+	(*HeartbeatResponse)(nil),          // 5: lynxdb.cluster.v1.HeartbeatResponse
+	(*WatchShardMapRequest)(nil),       // 6: lynxdb.cluster.v1.WatchShardMapRequest
+	(*ShardMapUpdate)(nil),             // 7: lynxdb.cluster.v1.ShardMapUpdate
+	(*RenewLeaseRequest)(nil),          // 8: lynxdb.cluster.v1.RenewLeaseRequest
+	(*RenewLeaseResponse)(nil),         // 9: lynxdb.cluster.v1.RenewLeaseResponse
+	(*RequestCompactionRequest)(nil),   // 10: lynxdb.cluster.v1.RequestCompactionRequest
+	(*RequestCompactionResponse)(nil),  // 11: lynxdb.cluster.v1.RequestCompactionResponse
+	(*ReleaseCompactionRequest)(nil),   // 12: lynxdb.cluster.v1.ReleaseCompactionRequest
+	(*ReleaseCompactionResponse)(nil),  // 13: lynxdb.cluster.v1.ReleaseCompactionResponse
+	(*ProposeDrainRequest)(nil),        // 14: lynxdb.cluster.v1.ProposeDrainRequest
+	(*ProposeDrainResponse)(nil),       // 15: lynxdb.cluster.v1.ProposeDrainResponse
+	(*CompleteDrainRequest)(nil),       // 16: lynxdb.cluster.v1.CompleteDrainRequest
+	(*CompleteDrainResponse)(nil),      // 17: lynxdb.cluster.v1.CompleteDrainResponse
+	(*FieldDeltaProto)(nil),            // 18: lynxdb.cluster.v1.FieldDeltaProto
+	(*FieldValueEntryProto)(nil),       // 19: lynxdb.cluster.v1.FieldValueEntryProto
+	(*ReportFieldCatalogRequest)(nil),  // 20: lynxdb.cluster.v1.ReportFieldCatalogRequest
+	(*ReportFieldCatalogResponse)(nil), // 21: lynxdb.cluster.v1.ReportFieldCatalogResponse
+	(*SourceDeltaProto)(nil),           // 22: lynxdb.cluster.v1.SourceDeltaProto
+	(*ReportSourcesRequest)(nil),       // 23: lynxdb.cluster.v1.ReportSourcesRequest
+	(*ReportSourcesResponse)(nil),      // 24: lynxdb.cluster.v1.ReportSourcesResponse
+	(*AssignAlertRequest)(nil),         // 25: lynxdb.cluster.v1.AssignAlertRequest
+	(*AssignAlertResponse)(nil),        // 26: lynxdb.cluster.v1.AssignAlertResponse
+	(*ReportAlertFiredRequest)(nil),    // 27: lynxdb.cluster.v1.ReportAlertFiredRequest
+	(*ReportAlertFiredResponse)(nil),   // 28: lynxdb.cluster.v1.ReportAlertFiredResponse
+	(*RegisterViewRequest)(nil),        // 29: lynxdb.cluster.v1.RegisterViewRequest
+	(*RegisterViewResponse)(nil),       // 30: lynxdb.cluster.v1.RegisterViewResponse
+	(*IngestBatchRequest)(nil),         // 31: lynxdb.cluster.v1.IngestBatchRequest
+	(*IngestBatchResponse)(nil),        // 32: lynxdb.cluster.v1.IngestBatchResponse
+	(*ReplicateEntry)(nil),             // 33: lynxdb.cluster.v1.ReplicateEntry
+	(*ReplicateBatchResponse)(nil),     // 34: lynxdb.cluster.v1.ReplicateBatchResponse
+	(*ExecuteQueryRequest)(nil),        // 35: lynxdb.cluster.v1.ExecuteQueryRequest
+	(*QueryResult)(nil),                // 36: lynxdb.cluster.v1.QueryResult
+	(*PartCommittedNotification)(nil),  // 37: lynxdb.cluster.v1.PartCommittedNotification
+	(*PartCommittedResponse)(nil),      // 38: lynxdb.cluster.v1.PartCommittedResponse
+	(*SubscribeTailRequest)(nil),       // 39: lynxdb.cluster.v1.SubscribeTailRequest
+	(*TailEvent)(nil),                  // 40: lynxdb.cluster.v1.TailEvent
 }
 var file_cluster_proto_depIdxs = []int32{
 	4,  // 0: lynxdb.cluster.v1.HeartbeatRequest.resources:type_name -> lynxdb.cluster.v1.NodeResourceReport
-	0,  // 1: lynxdb.cluster.v1.IngestBatchRequest.ack_level:type_name -> lynxdb.cluster.v1.AckLevel
-	1,  // 2: lynxdb.cluster.v1.MetaService.Handshake:input_type -> lynxdb.cluster.v1.HandshakeRequest
-	3,  // 3: lynxdb.cluster.v1.MetaService.Heartbeat:input_type -> lynxdb.cluster.v1.HeartbeatRequest
-	6,  // 4: lynxdb.cluster.v1.MetaService.WatchShardMap:input_type -> lynxdb.cluster.v1.WatchShardMapRequest
-	8,  // 5: lynxdb.cluster.v1.MetaService.RenewLease:input_type -> lynxdb.cluster.v1.RenewLeaseRequest
-	10, // 6: lynxdb.cluster.v1.MetaService.RequestCompaction:input_type -> lynxdb.cluster.v1.RequestCompactionRequest
-	12, // 7: lynxdb.cluster.v1.MetaService.ReleaseCompaction:input_type -> lynxdb.cluster.v1.ReleaseCompactionRequest
-	14, // 8: lynxdb.cluster.v1.MetaService.ProposeDrain:input_type -> lynxdb.cluster.v1.ProposeDrainRequest
-	16, // 9: lynxdb.cluster.v1.MetaService.CompleteDrain:input_type -> lynxdb.cluster.v1.CompleteDrainRequest
-	18, // 10: lynxdb.cluster.v1.IngestService.IngestBatch:input_type -> lynxdb.cluster.v1.IngestBatchRequest
-	20, // 11: lynxdb.cluster.v1.IngestService.ReplicateBatch:input_type -> lynxdb.cluster.v1.ReplicateEntry
-	22, // 12: lynxdb.cluster.v1.QueryService.ExecuteQuery:input_type -> lynxdb.cluster.v1.ExecuteQueryRequest
-	24, // 13: lynxdb.cluster.v1.QueryService.NotifyPartCommitted:input_type -> lynxdb.cluster.v1.PartCommittedNotification
-	26, // 14: lynxdb.cluster.v1.QueryService.SubscribeTail:input_type -> lynxdb.cluster.v1.SubscribeTailRequest
-	2,  // 15: lynxdb.cluster.v1.MetaService.Handshake:output_type -> lynxdb.cluster.v1.HandshakeResponse
-	5,  // 16: lynxdb.cluster.v1.MetaService.Heartbeat:output_type -> lynxdb.cluster.v1.HeartbeatResponse
-	7,  // 17: lynxdb.cluster.v1.MetaService.WatchShardMap:output_type -> lynxdb.cluster.v1.ShardMapUpdate
-	9,  // 18: lynxdb.cluster.v1.MetaService.RenewLease:output_type -> lynxdb.cluster.v1.RenewLeaseResponse
-	11, // 19: lynxdb.cluster.v1.MetaService.RequestCompaction:output_type -> lynxdb.cluster.v1.RequestCompactionResponse
-	13, // 20: lynxdb.cluster.v1.MetaService.ReleaseCompaction:output_type -> lynxdb.cluster.v1.ReleaseCompactionResponse
-	15, // 21: lynxdb.cluster.v1.MetaService.ProposeDrain:output_type -> lynxdb.cluster.v1.ProposeDrainResponse
-	17, // 22: lynxdb.cluster.v1.MetaService.CompleteDrain:output_type -> lynxdb.cluster.v1.CompleteDrainResponse
-	19, // 23: lynxdb.cluster.v1.IngestService.IngestBatch:output_type -> lynxdb.cluster.v1.IngestBatchResponse
-	21, // 24: lynxdb.cluster.v1.IngestService.ReplicateBatch:output_type -> lynxdb.cluster.v1.ReplicateBatchResponse
-	23, // 25: lynxdb.cluster.v1.QueryService.ExecuteQuery:output_type -> lynxdb.cluster.v1.QueryResult
-	25, // 26: lynxdb.cluster.v1.QueryService.NotifyPartCommitted:output_type -> lynxdb.cluster.v1.PartCommittedResponse
-	27, // 27: lynxdb.cluster.v1.QueryService.SubscribeTail:output_type -> lynxdb.cluster.v1.TailEvent
-	15, // [15:28] is the sub-list for method output_type
-	2,  // [2:15] is the sub-list for method input_type
-	2,  // [2:2] is the sub-list for extension type_name
-	2,  // [2:2] is the sub-list for extension extendee
-	0,  // [0:2] is the sub-list for field type_name
+	19, // 1: lynxdb.cluster.v1.FieldDeltaProto.top_values:type_name -> lynxdb.cluster.v1.FieldValueEntryProto
+	18, // 2: lynxdb.cluster.v1.ReportFieldCatalogRequest.fields:type_name -> lynxdb.cluster.v1.FieldDeltaProto
+	22, // 3: lynxdb.cluster.v1.ReportSourcesRequest.sources:type_name -> lynxdb.cluster.v1.SourceDeltaProto
+	0,  // 4: lynxdb.cluster.v1.IngestBatchRequest.ack_level:type_name -> lynxdb.cluster.v1.AckLevel
+	1,  // 5: lynxdb.cluster.v1.MetaService.Handshake:input_type -> lynxdb.cluster.v1.HandshakeRequest
+	3,  // 6: lynxdb.cluster.v1.MetaService.Heartbeat:input_type -> lynxdb.cluster.v1.HeartbeatRequest
+	6,  // 7: lynxdb.cluster.v1.MetaService.WatchShardMap:input_type -> lynxdb.cluster.v1.WatchShardMapRequest
+	8,  // 8: lynxdb.cluster.v1.MetaService.RenewLease:input_type -> lynxdb.cluster.v1.RenewLeaseRequest
+	10, // 9: lynxdb.cluster.v1.MetaService.RequestCompaction:input_type -> lynxdb.cluster.v1.RequestCompactionRequest
+	12, // 10: lynxdb.cluster.v1.MetaService.ReleaseCompaction:input_type -> lynxdb.cluster.v1.ReleaseCompactionRequest
+	14, // 11: lynxdb.cluster.v1.MetaService.ProposeDrain:input_type -> lynxdb.cluster.v1.ProposeDrainRequest
+	16, // 12: lynxdb.cluster.v1.MetaService.CompleteDrain:input_type -> lynxdb.cluster.v1.CompleteDrainRequest
+	20, // 13: lynxdb.cluster.v1.MetaService.ReportFieldCatalog:input_type -> lynxdb.cluster.v1.ReportFieldCatalogRequest
+	23, // 14: lynxdb.cluster.v1.MetaService.ReportSources:input_type -> lynxdb.cluster.v1.ReportSourcesRequest
+	25, // 15: lynxdb.cluster.v1.MetaService.AssignAlert:input_type -> lynxdb.cluster.v1.AssignAlertRequest
+	27, // 16: lynxdb.cluster.v1.MetaService.ReportAlertFired:input_type -> lynxdb.cluster.v1.ReportAlertFiredRequest
+	29, // 17: lynxdb.cluster.v1.MetaService.RegisterView:input_type -> lynxdb.cluster.v1.RegisterViewRequest
+	31, // 18: lynxdb.cluster.v1.IngestService.IngestBatch:input_type -> lynxdb.cluster.v1.IngestBatchRequest
+	33, // 19: lynxdb.cluster.v1.IngestService.ReplicateBatch:input_type -> lynxdb.cluster.v1.ReplicateEntry
+	35, // 20: lynxdb.cluster.v1.QueryService.ExecuteQuery:input_type -> lynxdb.cluster.v1.ExecuteQueryRequest
+	37, // 21: lynxdb.cluster.v1.QueryService.NotifyPartCommitted:input_type -> lynxdb.cluster.v1.PartCommittedNotification
+	39, // 22: lynxdb.cluster.v1.QueryService.SubscribeTail:input_type -> lynxdb.cluster.v1.SubscribeTailRequest
+	2,  // 23: lynxdb.cluster.v1.MetaService.Handshake:output_type -> lynxdb.cluster.v1.HandshakeResponse
+	5,  // 24: lynxdb.cluster.v1.MetaService.Heartbeat:output_type -> lynxdb.cluster.v1.HeartbeatResponse
+	7,  // 25: lynxdb.cluster.v1.MetaService.WatchShardMap:output_type -> lynxdb.cluster.v1.ShardMapUpdate
+	9,  // 26: lynxdb.cluster.v1.MetaService.RenewLease:output_type -> lynxdb.cluster.v1.RenewLeaseResponse
+	11, // 27: lynxdb.cluster.v1.MetaService.RequestCompaction:output_type -> lynxdb.cluster.v1.RequestCompactionResponse
+	13, // 28: lynxdb.cluster.v1.MetaService.ReleaseCompaction:output_type -> lynxdb.cluster.v1.ReleaseCompactionResponse
+	15, // 29: lynxdb.cluster.v1.MetaService.ProposeDrain:output_type -> lynxdb.cluster.v1.ProposeDrainResponse
+	17, // 30: lynxdb.cluster.v1.MetaService.CompleteDrain:output_type -> lynxdb.cluster.v1.CompleteDrainResponse
+	21, // 31: lynxdb.cluster.v1.MetaService.ReportFieldCatalog:output_type -> lynxdb.cluster.v1.ReportFieldCatalogResponse
+	24, // 32: lynxdb.cluster.v1.MetaService.ReportSources:output_type -> lynxdb.cluster.v1.ReportSourcesResponse
+	26, // 33: lynxdb.cluster.v1.MetaService.AssignAlert:output_type -> lynxdb.cluster.v1.AssignAlertResponse
+	28, // 34: lynxdb.cluster.v1.MetaService.ReportAlertFired:output_type -> lynxdb.cluster.v1.ReportAlertFiredResponse
+	30, // 35: lynxdb.cluster.v1.MetaService.RegisterView:output_type -> lynxdb.cluster.v1.RegisterViewResponse
+	32, // 36: lynxdb.cluster.v1.IngestService.IngestBatch:output_type -> lynxdb.cluster.v1.IngestBatchResponse
+	34, // 37: lynxdb.cluster.v1.IngestService.ReplicateBatch:output_type -> lynxdb.cluster.v1.ReplicateBatchResponse
+	36, // 38: lynxdb.cluster.v1.QueryService.ExecuteQuery:output_type -> lynxdb.cluster.v1.QueryResult
+	38, // 39: lynxdb.cluster.v1.QueryService.NotifyPartCommitted:output_type -> lynxdb.cluster.v1.PartCommittedResponse
+	40, // 40: lynxdb.cluster.v1.QueryService.SubscribeTail:output_type -> lynxdb.cluster.v1.TailEvent
+	23, // [23:41] is the sub-list for method output_type
+	5,  // [5:23] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_cluster_proto_init() }
@@ -1971,7 +2747,7 @@ func file_cluster_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_cluster_proto_rawDesc), len(file_cluster_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   27,
+			NumMessages:   40,
 			NumExtensions: 0,
 			NumServices:   3,
 		},

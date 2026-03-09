@@ -209,6 +209,24 @@ lynxdb watch '| stats count by level' --since 15m --diff
 
 ---
 
+## Live tail in cluster mode
+
+In a distributed LynxDB cluster, the tail stream aggregates events from multiple nodes to provide a unified real-time view.
+
+### How cluster tail works
+
+1. **Catchup phase**: The query coordinator performs a distributed query across all relevant shards to fetch historical events. This is the same scatter-gather mechanism used for regular queries.
+2. **Live phase**: After catchup, the coordinator opens streaming connections to all ingest nodes that own active shards. New events matching the filter are forwarded in near-real-time.
+3. **Ordering**: Events from multiple ingest nodes are merged using watermark-based ordering to provide a roughly time-ordered stream. Due to clock skew and network latency, strict global ordering is not guaranteed -- events may arrive slightly out of order.
+
+### Behavior differences
+
+- **Latency**: In cluster mode, tail events pass through one additional hop (ingest node → query coordinator → client) compared to single-node mode.
+- **Completeness**: The tail stream includes events from all ingest nodes. If an ingest node fails during tailing, events from that node stop arriving, but the stream continues from surviving nodes.
+- **From the user's perspective**: The CLI, SSE endpoint, and Web UI behave identically in single-node and cluster modes.
+
+---
+
 ## Next steps
 
 - [Search and filter logs](/docs/guides/search-and-filter) -- craft effective filter expressions for tail

@@ -54,3 +54,26 @@ func AssignShard(source, host, index string, ts time.Time, cfg ShardConfig) Shar
 		Partition:  partition,
 	}
 }
+
+// AssignShardWithSplits computes the ShardID like AssignShard, but also
+// consults a SplitRegistry to resolve the final partition when splits
+// are active. The full hash value is passed to the registry for bit
+// subdivision routing.
+func AssignShardWithSplits(source, host, index string, ts time.Time, cfg ShardConfig, splits *SplitRegistry) ShardID {
+	bucket := ts.Truncate(cfg.TimeBucketSize).UTC()
+
+	key := source + "\x00" + host
+	h := xxhash.Sum64String(key)
+	partition := uint32(h % uint64(cfg.VirtualPartitionCount))
+
+	// Resolve through split registry if present.
+	if splits != nil {
+		partition = splits.Resolve(partition, h)
+	}
+
+	return ShardID{
+		Index:      index,
+		TimeBucket: bucket,
+		Partition:  partition,
+	}
+}

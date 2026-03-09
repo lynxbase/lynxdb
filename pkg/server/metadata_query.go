@@ -146,7 +146,7 @@ func (e *Engine) FieldValuesFromMetadata(ctx context.Context, fieldName string, 
 
 		reader := seg.reader
 		if reader == nil {
-			reader = e.loadRemoteSegment(seg)
+			reader = e.loadRemoteSegment(ctx, seg)
 		}
 		if reader == nil {
 			continue
@@ -256,7 +256,7 @@ func (e *Engine) ListSourcesFromMetadata(ctx context.Context, indexName string,
 
 		reader := seg.reader
 		if reader == nil {
-			reader = e.loadRemoteSegment(seg)
+			reader = e.loadRemoteSegment(ctx, seg)
 		}
 		if reader == nil {
 			continue

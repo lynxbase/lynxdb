@@ -96,6 +96,13 @@ func (e *Engine) initDiskPersistence(ctx context.Context) error {
 	// Init tiering manager.
 	e.tierMgr = tiering.NewManager(e.objStore, e.logger)
 
+	// Pre-create segment-cache directory for remote segment downloads.
+	// Done once here to avoid os.MkdirAll syscalls on every remote load.
+	segCacheDir := filepath.Join(e.dataDir, "segment-cache")
+	if err := os.MkdirAll(segCacheDir, 0o755); err != nil {
+		return fmt.Errorf("create segment-cache dir: %w", err)
+	}
+
 	// Create part writer (shared by batcher and compaction).
 	compression := segment.CompressionLZ4
 	fsyncEnabled := true // safe default

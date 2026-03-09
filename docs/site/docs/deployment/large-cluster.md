@@ -13,10 +13,10 @@ For large-scale deployments, LynxDB supports role splitting. Each node runs one 
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
 │ Meta Nodes   │    │ Ingest Nodes │    │ Query Nodes  │
 │ (3-5, Raft)  │    │ (N, stateless│    │ (M, stateless│
-│              │    │  except WAL) │    │  + cache)    │
-│ - Shard map  │    │ - WAL write  │    │ - Scatter-   │
+│              │    │  + batcher)  │    │  + cache)    │
+│ - Shard map  │    │ - Batcher    │    │ - Scatter-   │
 │ - Node reg   │    │ - Memtable   │    │   gather     │
-│ - Failover   │    │ - Flush→S3   │    │ - Partial    │
+│ - Leases     │    │ - Flush→S3   │    │ - Partial    │
 │              │    │ - Replicate  │    │   merge      │
 └──────┬───────┘    └──────┬───────┘    └──────┬───────┘
        │                   │                   │
@@ -32,8 +32,8 @@ For large-scale deployments, LynxDB supports role splitting. Each node runs one 
 
 | Role | Scales with | Count | Responsibility |
 |------|-------------|-------|----------------|
-| **Meta** | Cluster size | 3-5 (fixed) | Raft consensus, shard map, node registry, failure detection |
-| **Ingest** | Write throughput | N nodes | WAL, memtable, segment flush, S3 upload, WAL replication |
+| **Meta** | Cluster size | 3-5 (fixed) | Raft consensus, shard map, node registry, leader leases, field catalog, source registry, alert assignment |
+| **Ingest** | Write throughput | N nodes | Batcher, memtable, segment flush, S3 upload, batcher replication |
 | **Query** | Query concurrency | M nodes | Scatter-gather, partial aggregation merge, result caching |
 
 ## Meta Node Configuration
@@ -57,7 +57,7 @@ cluster:
 
 ## Ingest Node Configuration
 
-Ingest nodes receive data, write to WAL, buffer in memtable, flush segments to S3, and replicate WAL to ISR peers. They are stateless after flush -- if an ingest node dies, its shards are reassigned and the WAL is replayed from replicas.
+Ingest nodes receive data, buffer in the batcher, insert into memtable, flush segments to S3, and replicate batches to ISR peers via gRPC streaming. They are stateless after flush -- if an ingest node dies, its shards are reassigned and replicated batches are available on ISR peers.
 
 ```yaml
 # /etc/lynxdb/config.yaml (ingest nodes)
@@ -66,19 +66,25 @@ data_dir: "/var/lib/lynxdb"
 log_level: "info"
 
 cluster:
+  enabled: true
   node_id: "ingest-1"    # Unique per node
   roles: [ingest]
   seeds:
     - "meta-1.example.com:9400"
     - "meta-2.example.com:9400"
     - "meta-3.example.com:9400"
+  virtual_partition_count: 1024
+  time_bucket_size: "24h"
+  replication_factor: 3
+  ack_level: "one"
+  heartbeat_interval: "5s"
+  lease_duration: "10s"
 
 storage:
   s3_bucket: "my-lynxdb-logs"
   s3_region: "us-east-1"
   compression: "lz4"
   flush_threshold: "512mb"
-  wal_sync_mode: "write"
   compaction_workers: 4
 
 ingest:
@@ -198,12 +204,13 @@ Meta nodes are lightweight. 3 nodes handle clusters up to ~500 nodes. Use 5 for 
 
 | Scenario | Impact | Recovery Time |
 |----------|--------|---------------|
-| Ingest node failure | Shards reassigned to surviving ingest nodes | ~16 seconds |
-| Query node failure | Load balancer routes to surviving query nodes | Immediate (health check) |
+| Ingest node failure | Shards reassigned to surviving ingest nodes | ~25 seconds |
+| Query node failure | Load balancer routes to surviving query nodes; alerts reassigned | Immediate (health check) |
 | Meta node failure (1 of 3) | Raft quorum maintained, cluster operates normally | Automatic |
 | Meta node failure (2 of 3) | Raft quorum lost, no new shard assignments | Bring 1 meta node back |
+| Meta quorum loss (all) | Ingest continues in degraded mode for `meta_loss_timeout` (30s) | Restore meta quorum |
 
-S3 is the source of truth. No data is lost when ingest nodes fail because WAL is replicated to ISR peers.
+S3 is the source of truth. No data is lost when ingest nodes fail because batches are replicated to ISR peers.
 
 ## Example: 50-Node Cluster
 

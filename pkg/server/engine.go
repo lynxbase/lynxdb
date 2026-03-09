@@ -30,6 +30,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/storage/sources"
 	"github.com/lynxbase/lynxdb/pkg/storage/tiering"
 	"github.com/lynxbase/lynxdb/pkg/storage/views"
+	"golang.org/x/sync/singleflight"
 )
 
 // ErrShuttingDown is returned when ingest is called after PrepareShutdown.
@@ -72,9 +73,10 @@ type Engine struct {
 	metrics *storage.Metrics
 
 	// Disk persistence components (nil when dataDir=="").
-	compactor *compaction.Compactor
-	tierMgr   *tiering.Manager
-	objStore  objstore.ObjectStore
+	compactor       *compaction.Compactor
+	tierMgr         *tiering.Manager
+	objStore        objstore.ObjectStore
+	remoteLoadGroup singleflight.Group // deduplicates concurrent S3 fetches for the same segment
 
 	// Data directory layout (nil when dataDir=="").
 	layout *storage.Layout

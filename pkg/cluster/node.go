@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/hashicorp/raft"
 
 	"github.com/lynxbase/lynxdb/pkg/cluster/meta"
+	"github.com/lynxbase/lynxdb/pkg/cluster/rebalance"
 	"github.com/lynxbase/lynxdb/pkg/cluster/rpc"
 	clusterpb "github.com/lynxbase/lynxdb/pkg/cluster/rpc/proto"
 	"github.com/lynxbase/lynxdb/pkg/config"
@@ -29,6 +31,8 @@ type Node struct {
 	clock          ClockProvider
 	logger         *slog.Logger
 	dataDir        string
+
+	rebalanceCancel context.CancelFunc // cancels the rebalancer goroutine
 }
 
 // NewNode creates a new cluster node from config. Call Start() to begin operations.
@@ -99,6 +103,9 @@ func (n *Node) Start(ctx context.Context) error {
 func (n *Node) Stop() error {
 	n.logger.Info("stopping cluster node", "node_id", n.cfg.NodeID)
 
+	// Stop rebalancer before Raft shutdown.
+	n.StopRebalancer()
+
 	// Shut down Raft first (if meta role).
 	if n.raft != nil {
 		if f := n.raft.Shutdown(); f.Error() != nil {
@@ -165,6 +172,146 @@ func (n *Node) IngestService() clusterpb.IngestServiceServer {
 func (n *Node) RegisterQueryService(svc clusterpb.QueryServiceServer) {
 	clusterpb.RegisterQueryServiceServer(n.grpcServer.GRPCServer(), svc)
 	n.logger.Info("registered QueryService on gRPC server")
+}
+
+// StartRebalancer starts the background rebalancer goroutine. Must only
+// be called on meta leader nodes. The rebalancer is stopped when Stop()
+// is called or when StopRebalancer() is called on leadership loss.
+func (n *Node) StartRebalancer() {
+	if n.raft == nil || n.metaFSM == nil {
+		return
+	}
+
+	// Stop any existing rebalancer.
+	n.StopRebalancer()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	n.rebalanceCancel = cancel
+
+	cfg := rebalance.DefaultRebalancerConfig()
+	cfg.VirtualPartitionCount = uint32(n.cfg.VirtualPartitionCount)
+	cfg.ReplicationFactor = n.cfg.ReplicationFactor
+
+	provider := &raftMetaStateProvider{
+		raft: n.raft,
+		fsm:  n.metaFSM,
+	}
+
+	r := rebalance.NewRebalancer(cfg, provider, n.logger)
+
+	go func() {
+		if err := r.Run(ctx); err != nil && err != context.Canceled {
+			n.logger.Error("rebalancer exited with error", "error", err)
+		}
+	}()
+
+	n.logger.Info("rebalancer started on leader")
+}
+
+// StopRebalancer stops the background rebalancer goroutine.
+func (n *Node) StopRebalancer() {
+	if n.rebalanceCancel != nil {
+		n.rebalanceCancel()
+		n.rebalanceCancel = nil
+	}
+}
+
+// raftMetaStateProvider adapts the Raft FSM to the MetaStateProvider interface.
+type raftMetaStateProvider struct {
+	raft *raft.Raft
+	fsm  *meta.MetaFSM
+}
+
+func (p *raftMetaStateProvider) StateVersion() uint64 {
+	return p.fsm.Version()
+}
+
+func (p *raftMetaStateProvider) ComputeRebalancePlan(vPartCount uint32, rf int) *rebalance.RebalancePlan {
+	state := p.fsm.State()
+
+	return state.IncrementalRebalance(vPartCount, rf)
+}
+
+func (p *raftMetaStateProvider) ApplyRebalancePlan(ctx context.Context, plan *rebalance.RebalancePlan) error {
+	payload, err := meta.MarshalPayload(meta.ApplyRebalancePayload{Plan: *plan})
+	if err != nil {
+		return fmt.Errorf("cluster.raftMetaStateProvider.ApplyRebalancePlan: marshal: %w", err)
+	}
+
+	cmdData, err := meta.EncodeCommand(&meta.Command{Type: meta.CmdApplyRebalance, Data: payload})
+	if err != nil {
+		return fmt.Errorf("cluster.raftMetaStateProvider.ApplyRebalancePlan: encode: %w", err)
+	}
+
+	future := p.raft.Apply(cmdData, 10*time.Second)
+	if err := future.Error(); err != nil {
+		return fmt.Errorf("cluster.raftMetaStateProvider.ApplyRebalancePlan: raft apply: %w", err)
+	}
+
+	if resp := future.Response(); resp != nil {
+		if applyErr, ok := resp.(error); ok {
+			return applyErr
+		}
+	}
+
+	return nil
+}
+
+func (p *raftMetaStateProvider) PromoteISRReplica(ctx context.Context, deadNode string) (int, error) {
+	state := p.fsm.State()
+	promotions := 0
+
+	for shardKey, a := range state.ShardMap.Assignments {
+		if string(a.Primary) != deadNode {
+			continue
+		}
+		if len(a.Replicas) == 0 {
+			continue
+		}
+
+		// Promote first ISR replica by completing drain (skip draining state).
+		payload, err := meta.MarshalPayload(meta.CompleteDrainPayload{
+			ShardID:      shardKey,
+			NodeID:       a.Primary,
+			NewPrimaryID: a.Replicas[0],
+		})
+		if err != nil {
+			return promotions, fmt.Errorf("cluster.raftMetaStateProvider.PromoteISRReplica: marshal: %w", err)
+		}
+
+		// First, force transition to draining (bypassing the active check
+		// since the primary is dead).
+		drainPayload, _ := meta.MarshalPayload(meta.ProposeDrainPayload{
+			ShardID: shardKey,
+			NodeID:  a.Primary,
+		})
+		drainCmd, _ := meta.EncodeCommand(&meta.Command{Type: meta.CmdProposeDrain, Data: drainPayload})
+		if f := p.raft.Apply(drainCmd, 5*time.Second); f.Error() != nil {
+			continue // Best effort — shard may already be in a different state.
+		}
+
+		cmdData, err := meta.EncodeCommand(&meta.Command{Type: meta.CmdCompleteDrain, Data: payload})
+		if err != nil {
+			return promotions, fmt.Errorf("cluster.raftMetaStateProvider.PromoteISRReplica: encode: %w", err)
+		}
+
+		if f := p.raft.Apply(cmdData, 5*time.Second); f.Error() == nil {
+			promotions++
+		}
+	}
+
+	return promotions, nil
+}
+
+// MetaState returns a read-only reference to the current Raft FSM state.
+// Returns nil if this node does not have the meta role.
+// The caller must NOT modify the returned state.
+func (n *Node) MetaState() *meta.MetaState {
+	if n.metaFSM == nil {
+		return nil
+	}
+
+	return n.metaFSM.State()
 }
 
 // ClientPool returns the shared gRPC client connection pool.

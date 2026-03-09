@@ -26,10 +26,10 @@ In a small cluster, every node runs all three roles (meta, ingest, query). This 
 
 Key properties:
 - **Raft consensus** for metadata (hashicorp/raft) -- needs 3+ nodes for quorum
-- **WAL-based ISR replication** for data durability (Kafka model)
-- **S3 is the source of truth** for segments -- nodes are stateless except for WAL + memtable
-- **Sharding** by `fnv32a(host) % partition_count`
-- **Node failure** triggers shard reassignment in ~16 seconds with no data loss
+- **Batcher replication** for data durability via gRPC streaming with configurable ACK levels
+- **S3 is the source of truth** for segments -- nodes are stateless except for batcher + memtable
+- **Two-level sharding**: time bucketing (default 24h) + `xxhash64(source + "\x00" + host) % 1024` virtual partitions
+- **Node failure** triggers shard reassignment in ~25 seconds with no data loss
 
 ## Prerequisites
 
@@ -50,12 +50,19 @@ retention: "30d"
 log_level: "info"
 
 cluster:
+  enabled: true
   node_id: "node-1"
   roles: [meta, ingest, query]
   seeds:
     - "node-1.example.com:9400"
     - "node-2.example.com:9400"
     - "node-3.example.com:9400"
+  virtual_partition_count: 1024
+  time_bucket_size: "24h"
+  replication_factor: 3
+  ack_level: "one"
+  heartbeat_interval: "5s"
+  lease_duration: "10s"
 
 storage:
   s3_bucket: "my-lynxdb-logs"
@@ -78,12 +85,19 @@ retention: "30d"
 log_level: "info"
 
 cluster:
+  enabled: true
   node_id: "node-2"
   roles: [meta, ingest, query]
   seeds:
     - "node-1.example.com:9400"
     - "node-2.example.com:9400"
     - "node-3.example.com:9400"
+  virtual_partition_count: 1024
+  time_bucket_size: "24h"
+  replication_factor: 3
+  ack_level: "one"
+  heartbeat_interval: "5s"
+  lease_duration: "10s"
 
 storage:
   s3_bucket: "my-lynxdb-logs"
@@ -188,17 +202,17 @@ cluster:
 ### Removing a Node
 
 1. Stop the LynxDB process on the node
-2. Shards are reassigned to remaining nodes within ~16 seconds
-3. No data loss (WAL replicated via ISR, segments in S3)
+2. Shards are reassigned to remaining nodes within ~25 seconds
+3. No data loss (batches replicated to ISR peers, segments in S3)
 
 ## Failure Handling
 
 | Scenario | Impact | Recovery |
 |----------|--------|----------|
-| 1 node down (of 3) | Raft quorum maintained, reads and writes continue | Automatic shard reassignment in ~16s |
-| 2 nodes down (of 3) | Raft quorum lost, writes fail, reads may work from cache | Bring at least 1 node back |
+| 1 node down (of 3) | Raft quorum maintained, reads and writes continue | Automatic shard reassignment in ~25s |
+| 2 nodes down (of 3) | Raft quorum lost, writes degrade gracefully for `meta_loss_timeout` (30s), then fail | Bring at least 1 node back |
 | S3 unavailable | New segments cannot be tiered, local storage fills up | S3 recovery; pending segments are uploaded |
-| Network partition | Nodes on minority side lose Raft quorum | Network recovery; automatic rejoin |
+| Network partition | Nodes on minority side lose Raft quorum; leader leases prevent split-brain | Network recovery; automatic rejoin |
 
 ## Monitoring
 

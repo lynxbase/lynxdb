@@ -192,6 +192,16 @@ for node in node-1 node-2 node-3; do
 done
 ```
 
+### Protocol Version Compatibility
+
+LynxDB cluster nodes check protocol version compatibility during the `Handshake` RPC. Nodes with different protocol versions cannot join the same cluster. During a rolling upgrade:
+
+- Nodes running the **old** version continue to communicate normally.
+- The **new** binary must support the same protocol version as the old binary (backward-compatible within a minor version).
+- Major version upgrades that bump the protocol version require upgrading all nodes within a maintenance window.
+
+Check the release notes for protocol version changes before upgrading.
+
 ### Large Cluster (Role-Separated)
 
 Upgrade in this order to minimize disruption:
@@ -208,17 +218,17 @@ for node in query-1 query-2 query-3; do
   ssh $node "lynxdb health"
 done
 
-# 2. Ingest nodes (one at a time, wait for shard reassignment)
+# 2. Ingest nodes (one at a time, wait for shard reassignment ~25s)
 for node in ingest-1 ingest-2 ingest-3; do
   ssh $node "sudo systemctl stop lynxdb && sudo lynxdb upgrade && sudo systemctl start lynxdb"
-  sleep 30  # Wait for shard reassignment + rejoin
+  sleep 35  # Wait for shard reassignment (~25s) + rejoin
   ssh $node "lynxdb health"
 done
 
 # 3. Meta nodes (one at a time, maintain quorum)
 for node in meta-1 meta-2 meta-3; do
   ssh $node "sudo systemctl stop lynxdb && sudo lynxdb upgrade && sudo systemctl start lynxdb"
-  sleep 30  # Wait for Raft leader election
+  sleep 35  # Wait for Raft leader election + lease renewal
   ssh $node "lynxdb health"
 done
 ```

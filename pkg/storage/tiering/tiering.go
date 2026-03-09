@@ -19,6 +19,7 @@ const (
 	TierMigrating Tier = "migrating" // Upload in progress.
 	TierWarm      Tier = "warm"      // Object storage (e.g., S3).
 	TierCold      Tier = "cold"      // Archive storage (e.g., Glacier).
+	TierFailed    Tier = "failed"    // Tiering failed after max retries; requires manual intervention.
 )
 
 const (
@@ -84,7 +85,10 @@ func NewManager(store objstore.ObjectStore, logger *slog.Logger) *Manager {
 }
 
 // SetClock sets a custom clock function (for testing).
+// Must be called before any concurrent use, or externally synchronized.
 func (m *Manager) SetClock(fn func() time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.now = fn
 }
 
@@ -145,6 +149,12 @@ func ClassifyTier(segCreated, now time.Time, cfg model.IndexConfig) Tier {
 // MoveToWarm uploads a segment's data to the object store with safety verification.
 // After upload, a HeadObject check confirms the object exists before updating the tier.
 // Returns the object key if successful.
+//
+// TODO(tiering): Integrate UploadPipeline.SafeUpload() here to add CRC32
+// read-back verification. Currently we rely on HeadObject existence check only.
+// The UploadPipeline is implemented (pipeline.go) but not wired in because
+// the read-back doubles S3 GET cost per upload. Integrate once we have metrics
+// showing upload corruption rates to justify the cost.
 func (m *Manager) MoveToWarm(ctx context.Context, id string, data []byte) error {
 	m.mu.Lock()
 	seg, ok := m.segments[id]
@@ -356,6 +366,11 @@ func (m *Manager) Evaluate(configs map[string]model.IndexConfig) *EvaluateResult
 			continue
 		}
 
+		// Skip segments stuck in failed or migrating state.
+		if seg.Tier == TierFailed || seg.Tier == TierMigrating {
+			continue
+		}
+
 		target := ClassifyTier(seg.Meta.CreatedAt, now, cfg)
 		if target == TierWarm && seg.Tier == TierHot {
 			result.MovedToWarm = append(result.MovedToWarm, seg.Meta.ID)
@@ -377,9 +392,13 @@ func (m *Manager) enqueueRetryLocked(id string) {
 	}
 	entry.Attempts++
 	if entry.Attempts > retryMaxAttempts {
-		m.logger.Error("tiering: segment exceeded max retry attempts, requires manual intervention",
+		m.logger.Error("tiering: segment exceeded max retry attempts, marking as failed",
 			"id", id, "attempts", entry.Attempts)
 		delete(m.retryQueue, id)
+		// Mark segment as TierFailed so Evaluate() skips it.
+		if seg, ok := m.segments[id]; ok {
+			seg.Tier = TierFailed
+		}
 
 		return
 	}
@@ -443,4 +462,31 @@ func (m *Manager) DeleteExpired(ctx context.Context, id string) error {
 	m.logger.Info("deleted expired segment", "id", id)
 
 	return nil
+}
+
+// FailedSegments returns segment IDs that are stuck in TierFailed state.
+// Useful for status/monitoring APIs.
+func (m *Manager) FailedSegments() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var ids []string
+	for _, seg := range m.segments {
+		if seg.Tier == TierFailed {
+			ids = append(ids, seg.Meta.ID)
+		}
+	}
+	return ids
+}
+
+// ResetFailed moves a segment from TierFailed back to TierHot so that
+// tiering evaluation will retry it. Use after resolving the underlying issue.
+func (m *Manager) ResetFailed(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	seg, ok := m.segments[id]
+	if !ok || seg.Tier != TierFailed {
+		return false
+	}
+	seg.Tier = TierHot
+	return true
 }

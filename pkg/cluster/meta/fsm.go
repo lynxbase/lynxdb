@@ -64,6 +64,24 @@ func (f *MetaFSM) Apply(log *raft.Log) interface{} {
 		err = f.state.applyCompleteDrain(cmd.Data)
 	case CmdUpdateISR:
 		err = f.state.applyUpdateISR(cmd.Data)
+	case CmdUpdateFieldCatalog:
+		err = f.state.applyUpdateFieldCatalog(cmd.Data)
+	case CmdUpdateSourceRegistry:
+		err = f.state.applyUpdateSourceRegistry(cmd.Data)
+	case CmdAssignAlert:
+		err = f.state.applyAssignAlert(cmd.Data)
+	case CmdUpdateAlertFired:
+		err = f.state.applyUpdateAlertFired(cmd.Data)
+	case CmdRegisterView:
+		err = f.state.applyRegisterView(cmd.Data)
+	case CmdUnregisterView:
+		err = f.state.applyUnregisterView(cmd.Data)
+	case CmdApplyRebalance:
+		err = f.state.applyRebalance(cmd.Data)
+	case CmdProposeSplit:
+		err = f.state.applyProposeSplit(cmd.Data)
+	case CmdCompleteSplit:
+		err = f.state.applyCompleteSplit(cmd.Data)
 	default:
 		err = fmt.Errorf("meta.FSM.Apply: unknown command type %d", cmd.Type)
 	}
@@ -110,6 +128,24 @@ func (f *MetaFSM) Restore(rc io.ReadCloser) error {
 
 	// Rebuild the hash ring from the node list (not serialized).
 	state.Ring = rebuildRing(&state)
+
+	// Ensure new maps are initialized when restoring from older snapshots
+	// that predate Phase 5 distributed subsystems.
+	if state.FieldCatalog == nil {
+		state.FieldCatalog = make(map[string]*GlobalFieldInfo)
+	}
+	if state.Sources == nil {
+		state.Sources = make(map[string]*GlobalSourceInfo)
+	}
+	if state.AlertAssign == nil {
+		state.AlertAssign = make(map[string]*AlertAssignment)
+	}
+	if state.Views == nil {
+		state.Views = make(map[string]*GlobalViewInfo)
+	}
+	if state.Splits == nil {
+		state.Splits = make(map[uint32]*SplitInfo)
+	}
 
 	f.mu.Lock()
 	f.state = &state

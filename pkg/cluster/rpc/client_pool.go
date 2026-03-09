@@ -26,6 +26,7 @@ func NewClientPool(opts ...grpc.DialOption) *ClientPool {
 	defaultOpts := []grpc.DialOption{
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 		grpc.WithStatsHandler(otelgrpc.NewClientHandler()),
+		grpc.WithChainUnaryInterceptor(NewTracingUnaryClientInterceptor()),
 	}
 
 	return &ClientPool{

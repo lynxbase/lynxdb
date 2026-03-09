@@ -11,18 +11,28 @@ import (
 // QueryFunc executes an SPL2 query and returns rows.
 type QueryFunc func(ctx context.Context, query string) ([]map[string]interface{}, error)
 
+// ClusterGuard determines whether this node should evaluate an alert in
+// cluster mode. In single-node mode, this is nil and all alerts are evaluated.
+type ClusterGuard interface {
+	// ShouldEvaluate returns true if this node is responsible for the alert.
+	ShouldEvaluate(alertID string) bool
+	// OnFired reports an alert fire event to the cluster for dedup tracking.
+	OnFired(ctx context.Context, alertID string)
+}
+
 // Scheduler manages per-alert timer goroutines.
 type Scheduler struct {
-	store      *AlertStore
-	dispatcher *Dispatcher
-	queryFn    QueryFunc
-	logger     *slog.Logger
-	mu         sync.Mutex
-	timers     map[string]context.CancelFunc
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
-	sem        chan struct{} // concurrency limiter
+	store        *AlertStore
+	dispatcher   *Dispatcher
+	queryFn      QueryFunc
+	logger       *slog.Logger
+	mu           sync.Mutex
+	timers       map[string]context.CancelFunc
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	sem          chan struct{} // concurrency limiter
+	clusterGuard ClusterGuard // nil in single-node mode
 }
 
 // NewScheduler creates a Scheduler.
@@ -35,6 +45,13 @@ func NewScheduler(store *AlertStore, dispatcher *Dispatcher, queryFn QueryFunc, 
 		timers:     make(map[string]context.CancelFunc),
 		sem:        make(chan struct{}, 10),
 	}
+}
+
+// SetClusterGuard sets the cluster guard for distributed alert evaluation.
+// When set, only alerts assigned to this node via rendezvous hashing are
+// scheduled. Must be called before Start().
+func (s *Scheduler) SetClusterGuard(guard ClusterGuard) {
+	s.clusterGuard = guard
 }
 
 // Start loads all enabled alerts and starts their timer goroutines.
@@ -56,11 +73,17 @@ func (s *Scheduler) Stop() {
 }
 
 // ScheduleAlert starts or restarts the timer goroutine for an alert.
+// In cluster mode, only schedules if this node is assigned to evaluate the alert.
 // Holds the lock across cancel + reschedule to prevent duplicate goroutines.
 func (s *Scheduler) ScheduleAlert(alert Alert) {
 	if !alert.Enabled {
 		s.UnscheduleAlert(alert.ID)
 
+		return
+	}
+
+	// In cluster mode, skip scheduling if this node is not the evaluator.
+	if s.clusterGuard != nil && !s.clusterGuard.ShouldEvaluate(alert.ID) {
 		return
 	}
 
@@ -148,6 +171,12 @@ func (s *Scheduler) executeCheck(ctx context.Context, alertID string) {
 		if updateErr := s.store.UpdateStatus(alertID, StatusTriggered, now, &now); updateErr != nil {
 			s.logger.Warn("alert status update failed", "alert", alert.Name, "error", updateErr)
 		}
+
+		// Report fire to cluster for dedup tracking during failover.
+		if s.clusterGuard != nil {
+			s.clusterGuard.OnFired(ctx, alertID)
+		}
+
 		s.logger.Info("alert triggered", "alert", alert.Name, "rows", len(rows))
 	} else {
 		if updateErr := s.store.UpdateStatus(alertID, StatusOK, now, nil); updateErr != nil {

@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	footerReadSize   = 8192             // 8KB — enough for most segment footers
-	negCacheTTL      = 30 * time.Second // suppress repeated S3 requests for the same key
-	maxRetries       = 2
-	retryBaseBackoff = 100 * time.Millisecond
+	footerReadSize      = 8192             // 8KB — enough for most segment footers
+	negCacheTTL         = 30 * time.Second // suppress repeated S3 requests for the same key
+	negCacheMaxEntries  = 1000             // trigger lazy sweep when exceeded
+	maxRetries          = 2
+	retryBaseBackoff    = 100 * time.Millisecond
 )
 
 // LazyFetcher reads remote segments lazily: first the footer (to get the
@@ -72,10 +73,33 @@ func (lf *LazyFetcher) checkNegativeCache(key string) error {
 }
 
 // addNegativeCache marks a key as failed for negCacheTTL.
+// When the map exceeds negCacheMaxEntries, expired entries are swept lazily.
 func (lf *LazyFetcher) addNegativeCache(key string) {
 	lf.negMu.Lock()
 	lf.negCache[key] = time.Now().Add(negCacheTTL)
+	if len(lf.negCache) > negCacheMaxEntries {
+		lf.sweepExpiredNegCacheLocked()
+	}
 	lf.negMu.Unlock()
+}
+
+// sweepExpiredNegCacheLocked removes all expired entries from the negative cache.
+// Must be called with lf.negMu held.
+func (lf *LazyFetcher) sweepExpiredNegCacheLocked() {
+	now := time.Now()
+	for k, expiry := range lf.negCache {
+		if now.After(expiry) {
+			delete(lf.negCache, k)
+		}
+	}
+}
+
+// SweepExpiredNegCache removes expired entries from the negative cache.
+// Safe for concurrent use. Call periodically from the tiering cycle.
+func (lf *LazyFetcher) SweepExpiredNegCache() {
+	lf.negMu.Lock()
+	defer lf.negMu.Unlock()
+	lf.sweepExpiredNegCacheLocked()
 }
 
 // fetchWithRetry performs a store read with exponential backoff retries.

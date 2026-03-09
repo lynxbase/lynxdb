@@ -197,6 +197,7 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("cluster.max_concurrent_shard_queries", fmt.Sprintf("%d", cfg.Cluster.MaxConcurrentShardQueries), fmt.Sprintf("%d", dflt.Cluster.MaxConcurrentShardQueries), fmt.Sprintf("%d", fileCfg.Cluster.MaxConcurrentShardQueries), "LYNXDB_CLUSTER_MAX_CONCURRENT_SHARD_QUERIES")
 	durationEntry("cluster.shard_query_timeout", cfg.Cluster.ShardQueryTimeout.Duration(), dflt.Cluster.ShardQueryTimeout.Duration(), fileCfg.Cluster.ShardQueryTimeout.Duration(), "LYNXDB_CLUSTER_SHARD_QUERY_TIMEOUT")
 	add("cluster.partial_failure_threshold", fmt.Sprintf("%.2f", cfg.Cluster.PartialFailureThreshold), fmt.Sprintf("%.2f", dflt.Cluster.PartialFailureThreshold), fmt.Sprintf("%.2f", fileCfg.Cluster.PartialFailureThreshold), "LYNXDB_CLUSTER_PARTIAL_FAILURE_THRESHOLD")
+	add("cluster.partial_results", formatBoolPtr(cfg.Cluster.PartialResultsEnabled), formatBoolPtr(dflt.Cluster.PartialResultsEnabled), formatBoolPtr(fileCfg.Cluster.PartialResultsEnabled), "LYNXDB_CLUSTER_PARTIAL_RESULTS")
 	add("cluster.dc_hll_threshold", fmt.Sprintf("%d", cfg.Cluster.DCHLLThreshold), fmt.Sprintf("%d", dflt.Cluster.DCHLLThreshold), fmt.Sprintf("%d", fileCfg.Cluster.DCHLLThreshold), "LYNXDB_CLUSTER_DC_HLL_THRESHOLD")
 
 	return entries

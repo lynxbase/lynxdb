@@ -978,7 +978,7 @@ func (e *Engine) runStreamingPipeline(
 	var ss storeStats
 	ss.SegmentsTotal = len(segs)
 	ss.BufferedEvents = len(memEvents)
-	sources := e.buildSegmentSources(segs, segFilterHints, &ss)
+	sources := e.buildSegmentSources(ctx, segs, segFilterHints, &ss)
 
 	// Build streaming hints from query hints.
 	// For multi-index queries, clear IndexName — GetEventIterator sets it per-call.

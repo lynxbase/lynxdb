@@ -283,6 +283,28 @@ source=auth type="login_failed"
 
 ---
 
+## Alerts in cluster mode
+
+In a distributed LynxDB cluster, alerts are automatically distributed across query nodes. This is transparent to users -- you create and manage alerts with the same CLI and API commands regardless of cluster size.
+
+### How cluster alert assignment works
+
+Each alert is assigned to exactly one query node using **rendezvous hashing** (highest random weight). This provides:
+
+- **Exactly-once evaluation**: Each alert runs on exactly one query node, preventing duplicate notifications.
+- **Minimal disruption on topology changes**: When a query node joins or leaves, only ~1/N alerts are reassigned. Other alerts continue on their existing nodes.
+- **Automatic failover**: When a query node is declared dead (~25 seconds after heartbeats stop), its alerts are automatically reassigned to surviving query nodes.
+
+### Dedup during failover
+
+During failover, there is a brief window where the dying node may have just fired an alert that the new node also evaluates. LynxDB prevents duplicate notifications by storing `LastFiredAt` in the Raft FSM. When an alert is reassigned, the new node checks `LastFiredAt` to avoid re-firing within the same evaluation window.
+
+### Viewing alert assignments
+
+The alert assignment is managed internally by the meta FSM. From the user's perspective, alerts simply work -- you do not need to manually assign alerts to nodes.
+
+---
+
 ## Next steps
 
 - [Create dashboards](/docs/guides/dashboards) -- visualize the same queries your alerts monitor

@@ -17,16 +17,38 @@ type MetaState struct {
 	Compaction map[string]*CompactionTask          `msgpack:"compaction"` // key: ShardID.String()
 	Ring       *sharding.HashRing                  `msgpack:"-"`          // rebuilt from Nodes, not serialized
 	Version    uint64                              `msgpack:"version"`
+
+	// Distributed subsystem state (Phase 5).
+	FieldCatalog map[string]*GlobalFieldInfo  `msgpack:"field_catalog"` // key: field name
+	Sources      map[string]*GlobalSourceInfo `msgpack:"sources"`       // key: source name
+	AlertAssign  map[string]*AlertAssignment  `msgpack:"alert_assign"`  // key: alert ID
+	Views        map[string]*GlobalViewInfo   `msgpack:"views"`         // key: view name
+
+	// Rebalancing and splitting state (Phase 6).
+	Splits map[uint32]*SplitInfo `msgpack:"splits"` // key: parent partition
+}
+
+// SplitInfo records a partition split: parent -> two children via hash-bit subdivision.
+type SplitInfo struct {
+	ParentPartition uint32 `msgpack:"parent"`
+	ChildA          uint32 `msgpack:"child_a"`
+	ChildB          uint32 `msgpack:"child_b"`
+	SplitBit        uint8  `msgpack:"split_bit"`
 }
 
 // NewMetaState creates an empty MetaState.
 func NewMetaState() *MetaState {
 	return &MetaState{
-		Nodes:      make(map[sharding.NodeID]*NodeEntry),
-		ShardMap:   sharding.NewShardMap(),
-		Leases:     make(map[string]*ShardLease),
-		Compaction: make(map[string]*CompactionTask),
-		Ring:       sharding.NewHashRing(128),
+		Nodes:        make(map[sharding.NodeID]*NodeEntry),
+		ShardMap:     sharding.NewShardMap(),
+		Leases:       make(map[string]*ShardLease),
+		Compaction:   make(map[string]*CompactionTask),
+		Ring:         sharding.NewHashRing(128),
+		FieldCatalog: make(map[string]*GlobalFieldInfo),
+		Sources:      make(map[string]*GlobalSourceInfo),
+		AlertAssign:  make(map[string]*AlertAssignment),
+		Views:        make(map[string]*GlobalViewInfo),
+		Splits:       make(map[uint32]*SplitInfo),
 	}
 }
 
@@ -172,6 +194,121 @@ func (s *MetaState) applyCompleteDrain(payload []byte) error {
 type UpdateISRPayload struct {
 	ShardID string            `msgpack:"shard_id"`
 	Members []sharding.NodeID `msgpack:"members"`
+}
+
+// ProposeSplitPayload is the payload for CmdProposeSplit.
+type ProposeSplitPayload struct {
+	ParentPartition uint32 `msgpack:"parent"`
+	ChildA          uint32 `msgpack:"child_a"`
+	ChildB          uint32 `msgpack:"child_b"`
+	SplitBit        uint8  `msgpack:"split_bit"`
+}
+
+// CompleteSplitPayload is the payload for CmdCompleteSplit.
+type CompleteSplitPayload struct {
+	ParentPartition uint32 `msgpack:"parent"`
+}
+
+// applyProposeSplit transitions the parent partition to ShardSplitting and
+// records the split info. Child partitions are created in ShardMigrating
+// state (they become active after CmdCompleteSplit).
+func (s *MetaState) applyProposeSplit(payload []byte) error {
+	var p ProposeSplitPayload
+	if err := UnmarshalPayload(payload, &p); err != nil {
+		return fmt.Errorf("meta.applyProposeSplit: %w", err)
+	}
+
+	parentKey := fmt.Sprintf("p%d", p.ParentPartition)
+	parent, ok := s.ShardMap.Assignments[parentKey]
+	if !ok {
+		return fmt.Errorf("meta.applyProposeSplit: parent partition %q not found", parentKey)
+	}
+	if parent.State != sharding.ShardActive {
+		return fmt.Errorf("meta.applyProposeSplit: parent %q is %s, expected active", parentKey, parent.State)
+	}
+
+	// Check for existing split.
+	if _, exists := s.Splits[p.ParentPartition]; exists {
+		return fmt.Errorf("meta.applyProposeSplit: partition %d already splitting", p.ParentPartition)
+	}
+
+	// Record split info.
+	s.Splits[p.ParentPartition] = &SplitInfo{
+		ParentPartition: p.ParentPartition,
+		ChildA:          p.ChildA,
+		ChildB:          p.ChildB,
+		SplitBit:        p.SplitBit,
+	}
+
+	// Mark parent as splitting.
+	parent.State = sharding.ShardSplitting
+	parent.Epoch++
+
+	// Create child assignments in migrating state with same primary/replicas.
+	childAKey := fmt.Sprintf("p%d", p.ChildA)
+	childBKey := fmt.Sprintf("p%d", p.ChildB)
+
+	replicasCopy := func() []sharding.NodeID {
+		c := make([]sharding.NodeID, len(parent.Replicas))
+		copy(c, parent.Replicas)
+		return c
+	}
+
+	s.ShardMap.Assignments[childAKey] = &sharding.ShardAssignment{
+		ShardID:  sharding.ShardID{Partition: p.ChildA},
+		Primary:  parent.Primary,
+		Replicas: replicasCopy(),
+		State:    sharding.ShardMigrating,
+		Epoch:    s.ShardMap.Epoch,
+	}
+	s.ShardMap.Assignments[childBKey] = &sharding.ShardAssignment{
+		ShardID:  sharding.ShardID{Partition: p.ChildB},
+		Primary:  parent.Primary,
+		Replicas: replicasCopy(),
+		State:    sharding.ShardMigrating,
+		Epoch:    s.ShardMap.Epoch,
+	}
+
+	s.ShardMap.Epoch++
+	s.Version++
+
+	return nil
+}
+
+// applyCompleteSplit activates child partitions and removes the parent.
+func (s *MetaState) applyCompleteSplit(payload []byte) error {
+	var p CompleteSplitPayload
+	if err := UnmarshalPayload(payload, &p); err != nil {
+		return fmt.Errorf("meta.applyCompleteSplit: %w", err)
+	}
+
+	split, ok := s.Splits[p.ParentPartition]
+	if !ok {
+		return fmt.Errorf("meta.applyCompleteSplit: no split info for partition %d", p.ParentPartition)
+	}
+
+	// Activate children.
+	childAKey := fmt.Sprintf("p%d", split.ChildA)
+	childBKey := fmt.Sprintf("p%d", split.ChildB)
+
+	if a, ok := s.ShardMap.Assignments[childAKey]; ok {
+		a.State = sharding.ShardActive
+		a.Epoch++
+	}
+	if b, ok := s.ShardMap.Assignments[childBKey]; ok {
+		b.State = sharding.ShardActive
+		b.Epoch++
+	}
+
+	// Remove parent assignment and split record.
+	parentKey := fmt.Sprintf("p%d", p.ParentPartition)
+	delete(s.ShardMap.Assignments, parentKey)
+	delete(s.Splits, p.ParentPartition)
+
+	s.ShardMap.Epoch++
+	s.Version++
+
+	return nil
 }
 
 // applyUpdateISR updates the ISR (in-sync replica) membership for a shard.

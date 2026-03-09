@@ -51,9 +51,10 @@ type NodeInfo struct {
 
 // NodeEntry tracks a cluster node's info and health state.
 type NodeEntry struct {
-	Info          NodeInfo  `msgpack:"info"`
-	State         NodeState `msgpack:"state"`
-	LastHeartbeat time.Time `msgpack:"last_heartbeat"`
+	Info          NodeInfo           `msgpack:"info"`
+	State         NodeState          `msgpack:"state"`
+	LastHeartbeat time.Time          `msgpack:"last_heartbeat"`
+	Resources     NodeResourceReport `msgpack:"resources"`
 }
 
 // NodeResourceReport carries resource utilization data from heartbeats.
@@ -67,15 +68,16 @@ type NodeResourceReport struct {
 	IngestRateEPS   int64   `msgpack:"ingest_rate_eps"`
 }
 
-// ProcessHeartbeat updates the last heartbeat time for a node.
-// If the node is in Suspect state, it transitions back to Alive.
-func (s *MetaState) ProcessHeartbeat(nodeID sharding.NodeID, _ NodeResourceReport) {
+// ProcessHeartbeat updates the last heartbeat time for a node and stores the
+// latest resource report. If the node is in Suspect state, it transitions back to Alive.
+func (s *MetaState) ProcessHeartbeat(nodeID sharding.NodeID, resources NodeResourceReport) {
 	entry, ok := s.Nodes[nodeID]
 	if !ok {
 		return
 	}
 
 	entry.LastHeartbeat = time.Now()
+	entry.Resources = resources
 	if entry.State == NodeSuspect {
 		entry.State = NodeAlive
 	}
@@ -87,6 +89,8 @@ func (s *MetaState) ProcessHeartbeat(nodeID sharding.NodeID, _ NodeResourceRepor
 //   - Suspect -> Dead after deadTimeout without a heartbeat
 //
 // Returns the list of nodes that transitioned to Dead.
+// When a node transitions to Dead, any alerts assigned to it are reassigned
+// via rendezvous hashing to surviving query nodes.
 func (s *MetaState) DetectFailures(clock ClockProvider, suspectTimeout, deadTimeout time.Duration) []sharding.NodeID {
 	now := clock.Now()
 	var dead []sharding.NodeID
@@ -105,6 +109,11 @@ func (s *MetaState) DetectFailures(clock ClockProvider, suspectTimeout, deadTime
 				dead = append(dead, id)
 			}
 		}
+	}
+
+	// Reassign alerts from dead nodes to surviving query nodes.
+	for _, deadNodeID := range dead {
+		s.ReassignAlertsFromDeadNode(deadNodeID)
 	}
 
 	return dead

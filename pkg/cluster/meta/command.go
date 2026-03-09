@@ -32,6 +32,24 @@ const (
 	CmdCompleteDrain
 	// CmdUpdateISR updates the ISR membership for a shard.
 	CmdUpdateISR
+	// CmdUpdateFieldCatalog merges a field catalog delta from an ingest node.
+	CmdUpdateFieldCatalog
+	// CmdUpdateSourceRegistry merges a source set delta from an ingest node.
+	CmdUpdateSourceRegistry
+	// CmdAssignAlert assigns an alert to an evaluator node via rendezvous hash.
+	CmdAssignAlert
+	// CmdUpdateAlertFired records an alert fire timestamp.
+	CmdUpdateAlertFired
+	// CmdRegisterView registers or updates a materialized view definition in the cluster.
+	CmdRegisterView
+	// CmdUnregisterView removes a materialized view definition from the cluster.
+	CmdUnregisterView
+	// CmdApplyRebalance applies a pre-computed incremental rebalance plan.
+	CmdApplyRebalance
+	// CmdProposeSplit proposes splitting a hot partition into two children.
+	CmdProposeSplit
+	// CmdCompleteSplit completes a split and activates child partitions.
+	CmdCompleteSplit
 )
 
 // String returns the human-readable name of the command type.
@@ -57,6 +75,24 @@ func (ct CommandType) String() string {
 		return "CompleteDrain"
 	case CmdUpdateISR:
 		return "UpdateISR"
+	case CmdUpdateFieldCatalog:
+		return "UpdateFieldCatalog"
+	case CmdUpdateSourceRegistry:
+		return "UpdateSourceRegistry"
+	case CmdAssignAlert:
+		return "AssignAlert"
+	case CmdUpdateAlertFired:
+		return "UpdateAlertFired"
+	case CmdRegisterView:
+		return "RegisterView"
+	case CmdUnregisterView:
+		return "UnregisterView"
+	case CmdApplyRebalance:
+		return "ApplyRebalance"
+	case CmdProposeSplit:
+		return "ProposeSplit"
+	case CmdCompleteSplit:
+		return "CompleteSplit"
 	default:
 		return fmt.Sprintf("unknown(%d)", int(ct))
 	}

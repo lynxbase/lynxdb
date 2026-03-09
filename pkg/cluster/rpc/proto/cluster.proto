@@ -29,6 +29,21 @@ service MetaService {
 
   // CompleteDrain marks a shard drain as complete, transitions to new primary.
   rpc CompleteDrain(CompleteDrainRequest) returns (CompleteDrainResponse);
+
+  // ReportFieldCatalog reports local field catalog deltas from an ingest node.
+  rpc ReportFieldCatalog(ReportFieldCatalogRequest) returns (ReportFieldCatalogResponse);
+
+  // ReportSources reports local source registry deltas from an ingest node.
+  rpc ReportSources(ReportSourcesRequest) returns (ReportSourcesResponse);
+
+  // AssignAlert assigns an alert to a query node via rendezvous hashing.
+  rpc AssignAlert(AssignAlertRequest) returns (AssignAlertResponse);
+
+  // ReportAlertFired records the timestamp of an alert trigger.
+  rpc ReportAlertFired(ReportAlertFiredRequest) returns (ReportAlertFiredResponse);
+
+  // RegisterView registers or updates a materialized view definition.
+  rpc RegisterView(RegisterViewRequest) returns (RegisterViewResponse);
 }
 
 // IngestService handles distributed event ingestion.
@@ -98,6 +113,8 @@ message WatchShardMapRequest {
 message ShardMapUpdate {
   bytes shard_map = 1; // msgpack-encoded ShardMap
   uint64 epoch = 2;
+  bytes field_catalog = 3;    // msgpack-encoded []GlobalFieldInfo (piggybacked)
+  bytes source_registry = 4;  // msgpack-encoded []GlobalSourceInfo (piggybacked)
 }
 
 message RenewLeaseRequest {
@@ -157,6 +174,74 @@ message CompleteDrainRequest {
 message CompleteDrainResponse {
   bool ok = 1;
   string leader_addr = 2; // set when this node is not the leader (redirect)
+}
+
+// --- Distributed Subsystem Messages ---
+
+message FieldDeltaProto {
+  string name = 1;
+  string type = 2;
+  int64 count = 3;
+  repeated FieldValueEntryProto top_values = 4;
+}
+
+message FieldValueEntryProto {
+  string value = 1;
+  int64 count = 2;
+}
+
+message ReportFieldCatalogRequest {
+  string node_id = 1;
+  repeated FieldDeltaProto fields = 2;
+}
+
+message ReportFieldCatalogResponse {
+  bool ok = 1;
+}
+
+message SourceDeltaProto {
+  string name = 1;
+  int64 event_count = 2;
+  int64 last_seen_unix_ns = 3;
+}
+
+message ReportSourcesRequest {
+  string node_id = 1;
+  repeated SourceDeltaProto sources = 2;
+}
+
+message ReportSourcesResponse {
+  bool ok = 1;
+}
+
+message AssignAlertRequest {
+  string alert_id = 1;
+  repeated string query_node_ids = 2;
+}
+
+message AssignAlertResponse {
+  bool ok = 1;
+  string assigned_node_id = 2;
+}
+
+message ReportAlertFiredRequest {
+  string alert_id = 1;
+  int64 fired_at_unix_ns = 2;
+}
+
+message ReportAlertFiredResponse {
+  bool ok = 1;
+}
+
+message RegisterViewRequest {
+  string name = 1;
+  string query = 2;
+  string status = 3;
+  string coordinator_node_id = 4;
+}
+
+message RegisterViewResponse {
+  bool ok = 1;
 }
 
 // --- IngestService Messages ---

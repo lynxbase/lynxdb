@@ -110,11 +110,11 @@ Cluster mode uses the same binary with clustering flags. Nodes discover each oth
 
 | Role | Responsibility | Scales with |
 |------|----------------|-------------|
-| **Meta** (3-5 nodes) | Raft consensus, shard map, node registry, failure detection | Cluster size |
-| **Ingest** (N nodes) | WAL write, memtable, segment flush, S3 upload, ISR replication | Write throughput |
+| **Meta** (3-5 nodes) | Raft consensus, shard map, node registry, leader leases, field catalog, source registry, alert assignment, view coordination | Cluster size |
+| **Ingest** (N nodes) | Batcher write, memtable, segment flush, S3 upload, batcher replication | Write throughput |
 | **Query** (M nodes) | Scatter-gather, partial aggregation merge, segment caching | Query concurrency |
 
-In small clusters (< 10 nodes), every node runs all three roles. At scale, you split roles for independent scaling. The architecture is shared-storage: S3 is the source of truth for segments, making ingest and query nodes effectively stateless.
+In small clusters (< 10 nodes), every node runs all three roles. At scale, you split roles for independent scaling. The architecture is shared-storage: S3 is the source of truth for segments, making ingest and query nodes effectively stateless. Data is sharded using a two-level scheme (time bucketing + xxhash64 hash partitioning) and replicated via batcher-based replication with configurable ACK levels.
 
 See [Distributed Architecture](/docs/architecture/distributed) for full details.
 
@@ -196,7 +196,8 @@ See [REST API Overview](/docs/api/overview) for endpoint documentation.
 HTTP POST /api/v1/ingest
   → Parse (JSON / NDJSON / text / auto-detect)
   → Extract timestamp (_timestamp, @timestamp, time, ts, ...)
-  → Append to WAL (configurable fsync)
+  → [Single-node mode] Append to WAL (configurable fsync)
+  → [Cluster mode] Route to shard primary, replicate via batcher
   → Insert into sharded memtable
   → [When memtable >= 512 MB]
     → Flush to .lsg segment (columnar encoding + bloom + inverted index)

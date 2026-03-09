@@ -313,6 +313,7 @@ func buildStreamHints(hints *spl2.QueryHints, bitmapThreshold float64) *enginepi
 // Applies segment-level skip logic (index name, time bounds, bloom filter, stats)
 // and returns both the sources and updated storeStats.
 func (e *Engine) buildSegmentSources(
+	ctx context.Context,
 	segs []*segmentHandle,
 	hints *spl2.QueryHints,
 	ss *storeStats,
@@ -329,7 +330,7 @@ func (e *Engine) buildSegmentSources(
 		// Load remote segment if needed.
 		reader := seg.reader
 		if reader == nil {
-			reader = e.loadRemoteSegment(seg)
+			reader = e.loadRemoteSegment(ctx, seg)
 		}
 		if reader == nil {
 			continue
@@ -481,7 +482,7 @@ func (e *Engine) buildEventStore(ctx context.Context, hints *spl2.QueryHints, on
 				seg := job.seg
 				reader := seg.reader
 				if reader == nil {
-					reader = e.loadRemoteSegment(seg)
+					reader = e.loadRemoteSegment(ctx, seg)
 				}
 				if reader == nil {
 					continue
@@ -1148,7 +1149,7 @@ func (e *Engine) buildPartialAggStore(
 				seg := job.seg
 				reader := seg.reader
 				if reader == nil {
-					reader = e.loadRemoteSegment(seg)
+					reader = e.loadRemoteSegment(ctx, seg)
 				}
 				if reader == nil {
 					continue
@@ -1319,7 +1320,7 @@ func (e *Engine) buildTransformPartialAggStore(
 				seg := job.seg
 				reader := seg.reader
 				if reader == nil {
-					reader = e.loadRemoteSegment(seg)
+					reader = e.loadRemoteSegment(ctx, seg)
 				}
 				if reader == nil {
 					continue
@@ -1743,7 +1744,7 @@ func (e *Engine) buildColumnarStore(ctx context.Context, hints *spl2.QueryHints,
 				seg := job.seg
 				reader := seg.reader
 				if reader == nil {
-					reader = e.loadRemoteSegment(seg)
+					reader = e.loadRemoteSegment(ctx, seg)
 				}
 				if reader == nil {
 					continue

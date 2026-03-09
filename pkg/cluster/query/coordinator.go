@@ -8,10 +8,14 @@ import (
 	"time"
 
 	"github.com/vmihailenco/msgpack/v5"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/lynxbase/lynxdb/pkg/cluster/rpc"
 	clusterpb "github.com/lynxbase/lynxdb/pkg/cluster/rpc/proto"
+	"github.com/lynxbase/lynxdb/pkg/cluster/tracing"
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
@@ -87,19 +91,34 @@ func (c *Coordinator) ExecuteQuery(
 	prog *spl2.Program,
 	hints *spl2.QueryHints,
 ) (*DistributedQueryResult, error) {
+	ctx, span := tracing.Tracer().Start(ctx, "lynxdb.query.distributed")
+	defer span.End()
+
 	scanStart := time.Now()
 
 	// 1. Plan the distributed query.
 	plan, err := PlanDistributedQuery(prog)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "plan failed")
+
 		return nil, fmt.Errorf("Coordinator.ExecuteQuery: plan: %w", err)
 	}
 
 	// 2. Find relevant shards.
 	targets, err := c.pruner.FindRelevantShards(ctx, hints)
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "prune shards failed")
+
 		return nil, fmt.Errorf("Coordinator.ExecuteQuery: prune shards: %w", err)
 	}
+
+	span.SetAttributes(
+		attribute.String(tracing.AttrQueryText, plan.ShardQuery),
+		attribute.String(tracing.AttrMergeStrategy, plan.Strategy.String()),
+		attribute.Int(tracing.AttrShardsTotal, len(targets)),
+	)
 
 	meta := QueryMeta{
 		ShardsTotal: len(targets),
@@ -124,22 +143,40 @@ func (c *Coordinator) ExecuteQuery(
 	}
 
 	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "fan-out failed")
+
 		return nil, err
 	}
 
 	scanMS := float64(time.Since(scanStart).Milliseconds())
-	mergeStart := time.Now()
 
 	// 4. Apply coordinator commands if any.
+	var mergeMS float64
 	if len(plan.CoordCommands) > 0 {
+		_, mergeSpan := tracing.Tracer().Start(ctx, "lynxdb.query.merge")
+		mergeStart := time.Now()
+
 		rows, err = applyCoordCommands(ctx, rows, plan.CoordCommands)
 		if err != nil {
+			mergeSpan.RecordError(err)
+			mergeSpan.SetStatus(codes.Error, "coord pipeline failed")
+			mergeSpan.End()
+
 			return nil, fmt.Errorf("Coordinator.ExecuteQuery: coord pipeline: %w", err)
 		}
+
+		mergeMS = float64(time.Since(mergeStart).Milliseconds())
+		mergeSpan.End()
 	}
 
-	mergeMS := float64(time.Since(mergeStart).Milliseconds())
 	meta.Partial = meta.ShardsFailed > 0 && meta.ShardsSuccess > 0
+
+	span.SetAttributes(
+		attribute.Int(tracing.AttrShardsSuccess, meta.ShardsSuccess),
+		attribute.Int(tracing.AttrShardsFailed, meta.ShardsFailed),
+		attribute.Bool("lynxdb.query.partial", meta.Partial),
+	)
 
 	return &DistributedQueryResult{
 		Rows:    rows,
@@ -177,7 +214,12 @@ func (c *Coordinator) executePartialAgg(
 			}
 			defer c.flowCtrl.Release()
 
-			shardCtx, cancel := context.WithTimeout(gctx, c.cfg.ShardQueryTimeout)
+			shardCtx, shardSpan := tracing.Tracer().Start(gctx, "lynxdb.query.shard",
+				trace.WithAttributes(
+					attribute.String(tracing.AttrShardID, target.ShardID.String()),
+					attribute.String(tracing.AttrNodeID, target.NodeAddr),
+				))
+			shardCtx, cancel := context.WithTimeout(shardCtx, c.cfg.ShardQueryTimeout)
 			defer cancel()
 
 			groups, err := c.queryShardPartialAgg(shardCtx, target, plan, specBytes)
@@ -196,6 +238,10 @@ func (c *Coordinator) executePartialAgg(
 					"node", target.NodeAddr,
 					"error", err)
 
+				shardSpan.RecordError(err)
+				shardSpan.SetStatus(codes.Error, "shard query failed")
+				shardSpan.End()
+
 				return nil // don't abort — collect partial results
 			}
 
@@ -203,6 +249,8 @@ func (c *Coordinator) executePartialAgg(
 			if groups != nil {
 				partials = append(partials, groups)
 			}
+
+			shardSpan.End()
 
 			return nil
 		})
@@ -247,7 +295,12 @@ func (c *Coordinator) executeConcat(
 			}
 			defer c.flowCtrl.Release()
 
-			shardCtx, cancel := context.WithTimeout(gctx, c.cfg.ShardQueryTimeout)
+			shardCtx, shardSpan := tracing.Tracer().Start(gctx, "lynxdb.query.shard",
+				trace.WithAttributes(
+					attribute.String(tracing.AttrShardID, target.ShardID.String()),
+					attribute.String(tracing.AttrNodeID, target.NodeAddr),
+				))
+			shardCtx, cancel := context.WithTimeout(shardCtx, c.cfg.ShardQueryTimeout)
 			defer cancel()
 
 			rows, err := c.queryShardConcat(shardCtx, target, plan)
@@ -262,11 +315,17 @@ func (c *Coordinator) executeConcat(
 				meta.Warnings = append(meta.Warnings,
 					fmt.Sprintf("shard %s failed: %v", target.ShardID, err))
 
+				shardSpan.RecordError(err)
+				shardSpan.SetStatus(codes.Error, "shard query failed")
+				shardSpan.End()
+
 				return nil
 			}
 
 			meta.ShardsSuccess++
 			allRows = append(allRows, rows...)
+
+			shardSpan.End()
 
 			return nil
 		})
