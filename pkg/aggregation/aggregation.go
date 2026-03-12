@@ -40,6 +40,11 @@ var Registry = map[string]func() Aggregator{
 	"perc99":     func() Aggregator { return &PercentileAgg{Pct: 99} },
 	"earliest":   func() Aggregator { return &FirstAgg{} },
 	"latest":     func() Aggregator { return &LastAgg{} },
+	"p50":        func() Aggregator { return &PercentileAgg{Pct: 50} },
+	"p75":        func() Aggregator { return &PercentileAgg{Pct: 75} },
+	"p90":        func() Aggregator { return &PercentileAgg{Pct: 90} },
+	"p95":        func() Aggregator { return &PercentileAgg{Pct: 95} },
+	"p99":        func() Aggregator { return &PercentileAgg{Pct: 99} },
 }
 
 // NewAggregator creates an aggregator by name.

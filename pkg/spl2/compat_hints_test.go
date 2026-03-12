@@ -6,21 +6,12 @@ import (
 )
 
 func TestSplunkCompat_Lookup(t *testing.T) {
+	// "lookup" is a valid Lynx Flow command — should NOT produce an unsupported hint.
 	hints := DetectCompatHints(`index=main | lookup users uid OUTPUT username`)
-	if len(hints) == 0 {
-		t.Fatal("expected hint for lookup")
-	}
-	found := false
 	for _, h := range hints {
 		if h.Pattern == "lookup" && h.Unsupported {
-			found = true
-			if !strings.Contains(h.Suggestion, "not yet supported") {
-				t.Errorf("expected 'not yet supported', got: %s", h.Suggestion)
-			}
+			t.Errorf("lookup is a valid Lynx Flow command, should not be unsupported, got: %s", h.Suggestion)
 		}
-	}
-	if !found {
-		t.Error("missing lookup hint")
 	}
 }
 
@@ -140,18 +131,12 @@ func TestSplunkCompat_EarliestOnly(t *testing.T) {
 }
 
 func TestSplunkCompat_Bucket(t *testing.T) {
+	// "bucket" is a valid Lynx Flow command — should NOT produce a compat hint.
 	hints := DetectCompatHints(`index=main | bucket _time span=5m`)
-	found := false
 	for _, h := range hints {
 		if h.Pattern == "bucket" {
-			found = true
-			if !strings.Contains(h.Suggestion, "bin") {
-				t.Errorf("expected bin suggestion, got: %s", h.Suggestion)
-			}
+			t.Errorf("bucket is a valid Lynx Flow command, should not produce compat hint, got: %s", h.Suggestion)
 		}
-	}
-	if !found {
-		t.Error("missing bucket->bin hint")
 	}
 }
 
@@ -293,5 +278,204 @@ func TestDetectScopeHint_HasPipe(t *testing.T) {
 	hint := DetectScopeHint("error | stats count", 10)
 	if hint != nil {
 		t.Error("expected no hint when query has a pipe")
+	}
+}
+
+// =============================================================================
+// DetectLynxFlowHints — cross-syntax migration hints (SPL2 → Lynx Flow)
+// =============================================================================
+
+func TestDetectLynxFlowHints_Eval(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&EvalCommand{Field: "x"}})
+	if len(hints) != 1 || hints[0].Pattern != "eval" {
+		t.Fatalf("expected eval hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "let") {
+		t.Errorf("expected 'let' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_Stats(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&StatsCommand{}})
+	if len(hints) != 1 || hints[0].Pattern != "stats" {
+		t.Fatalf("expected stats hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "group") {
+		t.Errorf("expected 'group' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_FieldsInclude(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&FieldsCommand{Remove: false}})
+	if len(hints) != 1 || hints[0].Pattern != "fields" {
+		t.Fatalf("expected fields hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "keep") {
+		t.Errorf("expected 'keep' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_FieldsExclude(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&FieldsCommand{Remove: true}})
+	if len(hints) != 1 || hints[0].Pattern != "fields -" {
+		t.Fatalf("expected 'fields -' hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "omit") {
+		t.Errorf("expected 'omit' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_Streamstats(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&StreamstatsCommand{}})
+	if len(hints) != 1 || hints[0].Pattern != "streamstats" {
+		t.Fatalf("expected streamstats hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "running") {
+		t.Errorf("expected 'running' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_Eventstats(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&EventstatsCommand{}})
+	if len(hints) != 1 || hints[0].Pattern != "eventstats" {
+		t.Fatalf("expected eventstats hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "enrich") {
+		t.Errorf("expected 'enrich' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_Rex(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&RexCommand{Field: "_raw", Pattern: "test"}})
+	if len(hints) != 1 || hints[0].Pattern != "rex" {
+		t.Fatalf("expected rex hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "parse regex") {
+		t.Errorf("expected 'parse regex' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_UnpackJSON(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&UnpackCommand{Format: "json"}})
+	if len(hints) != 1 || hints[0].Pattern != "unpack_json" {
+		t.Fatalf("expected unpack_json hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "parse json") {
+		t.Errorf("expected 'parse json' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_Head(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&HeadCommand{Count: 10}})
+	if len(hints) != 1 || hints[0].Pattern != "head" {
+		t.Fatalf("expected head hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "take") {
+		t.Errorf("expected 'take' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_Bin(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&BinCommand{Field: "_time", Span: "5m"}})
+	if len(hints) != 1 || hints[0].Pattern != "bin" {
+		t.Fatalf("expected bin hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "bucket") {
+		t.Errorf("expected 'bucket' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_Timechart(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&TimechartCommand{Span: "5m"}})
+	if len(hints) != 1 || hints[0].Pattern != "timechart" {
+		t.Fatalf("expected timechart hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "every") {
+		t.Errorf("expected 'every' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_Sort(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&SortCommand{}})
+	if len(hints) != 1 || hints[0].Pattern != "sort" {
+		t.Fatalf("expected sort hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "order by") {
+		t.Errorf("expected 'order by' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_Unroll(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&UnrollCommand{Field: "tags"}})
+	if len(hints) != 1 || hints[0].Pattern != "unroll" {
+		t.Fatalf("expected unroll hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "explode") {
+		t.Errorf("expected 'explode' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_PackJson(t *testing.T) {
+	hints := DetectLynxFlowHints([]Command{&PackJsonCommand{Target: "out"}})
+	if len(hints) != 1 || hints[0].Pattern != "pack_json" {
+		t.Fatalf("expected pack_json hint, got %v", hints)
+	}
+	if !strings.Contains(hints[0].Suggestion, "pack") {
+		t.Errorf("expected 'pack' suggestion, got: %s", hints[0].Suggestion)
+	}
+}
+
+func TestDetectLynxFlowHints_NoDuplicates(t *testing.T) {
+	// Multiple commands of same type should produce only one hint.
+	hints := DetectLynxFlowHints([]Command{
+		&EvalCommand{Field: "a"},
+		&EvalCommand{Field: "b"},
+	})
+	count := 0
+	for _, h := range hints {
+		if h.Pattern == "eval" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("expected 1 eval hint, got %d", count)
+	}
+}
+
+func TestDetectLynxFlowHints_Empty(t *testing.T) {
+	hints := DetectLynxFlowHints(nil)
+	if len(hints) != 0 {
+		t.Errorf("expected no hints for nil commands, got %d", len(hints))
+	}
+}
+
+func TestDetectLynxFlowHints_NoHintForLynxFlowCmds(t *testing.T) {
+	// SelectCommand is Lynx Flow native — should produce no hint.
+	hints := DetectLynxFlowHints([]Command{&SelectCommand{
+		Columns: []SelectColumn{{Name: "f1"}},
+	}})
+	if len(hints) != 0 {
+		t.Errorf("expected no hints for Lynx Flow-native SelectCommand, got %d", len(hints))
+	}
+}
+
+func TestDetectLynxFlowHints_Multi(t *testing.T) {
+	// A pipeline mixing multiple SPL2 commands should produce multiple hints.
+	hints := DetectLynxFlowHints([]Command{
+		&EvalCommand{Field: "x"},
+		&StatsCommand{},
+		&HeadCommand{Count: 10},
+	})
+	if len(hints) != 3 {
+		t.Fatalf("expected 3 hints, got %d", len(hints))
+	}
+	patterns := make(map[string]bool)
+	for _, h := range hints {
+		patterns[h.Pattern] = true
+	}
+	for _, want := range []string{"eval", "stats", "head"} {
+		if !patterns[want] {
+			t.Errorf("missing hint for %q", want)
+		}
 	}
 }

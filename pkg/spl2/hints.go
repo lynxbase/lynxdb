@@ -596,6 +596,18 @@ func GetRequiredColumns(q *Query) []string {
 		case *TransactionCommand:
 			cols[c.Field] = true
 			cols["_raw"] = true
+		case *UnpackCommand:
+			if c.SourceField != "" {
+				cols[c.SourceField] = true
+			} else {
+				cols["_raw"] = true
+			}
+		case *JsonCommand:
+			if c.SourceField != "" {
+				cols[c.SourceField] = true
+			} else {
+				cols["_raw"] = true
+			}
 		}
 	}
 	result := make([]string, 0, len(cols))

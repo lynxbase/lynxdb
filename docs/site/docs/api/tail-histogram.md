@@ -204,4 +204,4 @@ curl -s "localhost:3100/api/v1/histogram?from=-6h&buckets=72" | jq .
 - **[`lynxdb tail` CLI command](/docs/cli/tail)** -- live tail from the command line
 - **[Live Tail guide](/docs/guides/live-tail)** -- usage patterns and tips
 - **[Query API](/docs/api/query)** -- full SPL2 query execution
-- **[Time Ranges](/docs/spl2/time-ranges)** -- relative and absolute time syntax
+- **[Time Ranges](/docs/lynx-flow/time-ranges)** -- relative and absolute time syntax

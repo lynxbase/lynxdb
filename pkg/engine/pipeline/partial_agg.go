@@ -53,13 +53,23 @@ type PartialAggState struct {
 	// DistinctHLL is used when the distinct set exceeds dcHLLThreshold.
 	// When non-nil, DistinctSet is nil and cardinality is approximate.
 	DistinctHLL *HyperLogLog
+	// Digest holds t-digest state for approximate percentile computation
+	// in partial aggregation. Merged across segments via TDigest.Merge().
+	Digest *TDigest
+	// StdevMean and StdevM2 hold Welford's online algorithm state for
+	// numerically stable standard deviation in partial aggregation.
+	// Merged across segments via Chan et al. parallel variance formula.
+	StdevMean float64
+	StdevM2   float64
 }
 
 // IsPushableAgg returns true if the aggregation function can be decomposed
 // into partial aggregation + merge.
 func IsPushableAgg(name string) bool {
 	switch strings.ToLower(name) {
-	case aggCount, aggSum, aggAvg, aggMin, aggMax, "dc":
+	case aggCount, aggSum, aggAvg, aggMin, aggMax, "dc",
+		aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99,
+		aggStdev:
 		return true
 	default:
 		return false
@@ -204,8 +214,8 @@ func MergePartialAggs(partials [][]*PartialAggGroup, spec *PartialAggSpec) []map
 					States: make([]PartialAggState, len(pg.States)),
 				}
 				copy(clone.States, pg.States)
-				// Deep-copy DistinctSet maps and HLLs to avoid shared-state mutation
-				// when subsequent groups merge into this clone.
+				// Deep-copy DistinctSet maps, HLLs, and TDigests to avoid
+				// shared-state mutation when subsequent groups merge into this clone.
 				for j := range clone.States {
 					if pg.States[j].DistinctSet != nil {
 						clone.States[j].DistinctSet = make(map[string]bool, len(pg.States[j].DistinctSet))
@@ -216,6 +226,10 @@ func MergePartialAggs(partials [][]*PartialAggGroup, spec *PartialAggSpec) []map
 					if pg.States[j].DistinctHLL != nil {
 						data := pg.States[j].DistinctHLL.MarshalBinary()
 						clone.States[j].DistinctHLL = UnmarshalHyperLogLog(data)
+					}
+					if pg.States[j].Digest != nil {
+						data := pg.States[j].Digest.MarshalBinary()
+						clone.States[j].Digest = UnmarshalTDigest(data)
 					}
 				}
 				merged[h] = append(chain, clone)
@@ -284,7 +298,7 @@ func MergePartialGroupsNoFinalize(groups []*PartialAggGroup, spec *PartialAggSpe
 				States: make([]PartialAggState, len(pg.States)),
 			}
 			copy(clone.States, pg.States)
-			// Deep-copy DistinctSet maps and HLLs to avoid mutation of original.
+			// Deep-copy DistinctSet maps, HLLs, and TDigests to avoid mutation of original.
 			for j := range clone.States {
 				if pg.States[j].DistinctSet != nil {
 					clone.States[j].DistinctSet = make(map[string]bool, len(pg.States[j].DistinctSet))
@@ -295,6 +309,10 @@ func MergePartialGroupsNoFinalize(groups []*PartialAggGroup, spec *PartialAggSpe
 				if pg.States[j].DistinctHLL != nil {
 					data := pg.States[j].DistinctHLL.MarshalBinary()
 					clone.States[j].DistinctHLL = UnmarshalHyperLogLog(data)
+				}
+				if pg.States[j].Digest != nil {
+					data := pg.States[j].Digest.MarshalBinary()
+					clone.States[j].Digest = UnmarshalTDigest(data)
 				}
 			}
 			merged[h] = append(chain, clone)
@@ -613,6 +631,22 @@ func updatePartialState(s *PartialAggState, fn string, val event.Value) {
 				}
 			}
 		}
+	case aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99:
+		if f, ok := vm.ValueToFloat(val); ok {
+			if s.Digest == nil {
+				s.Digest = NewTDigest(100)
+			}
+			s.Digest.Add(f)
+		}
+	case aggStdev:
+		if f, ok := vm.ValueToFloat(val); ok {
+			// Welford's online algorithm for numerically stable variance.
+			s.Count++
+			delta := f - s.StdevMean
+			s.StdevMean += delta / float64(s.Count)
+			delta2 := f - s.StdevMean
+			s.StdevM2 += delta * delta2
+		}
 	}
 }
 
@@ -678,6 +712,30 @@ func mergePartialState(dst, src *PartialAggState, fn string) {
 		// Accumulate count as upper-bound fallback for the backfill path
 		// where the exact distinct set is lost but counts are preserved.
 		dst.Count += src.Count
+	case aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99:
+		if src.Digest != nil {
+			if dst.Digest == nil {
+				dst.Digest = NewTDigest(100)
+			}
+			dst.Digest.Merge(src.Digest)
+		}
+	case aggStdev:
+		// Chan et al. parallel algorithm for combining Welford states.
+		if src.Count == 0 {
+			return
+		}
+		if dst.Count == 0 {
+			dst.Count = src.Count
+			dst.StdevMean = src.StdevMean
+			dst.StdevM2 = src.StdevM2
+
+			return
+		}
+		totalCount := dst.Count + src.Count
+		delta := src.StdevMean - dst.StdevMean
+		dst.StdevM2 += src.StdevM2 + delta*delta*float64(dst.Count)*float64(src.Count)/float64(totalCount)
+		dst.StdevMean = (dst.StdevMean*float64(dst.Count) + src.StdevMean*float64(src.Count)) / float64(totalCount)
+		dst.Count = totalCount
 	}
 }
 
@@ -712,7 +770,32 @@ func finalizePartialState(s *PartialAggState, fn string) event.Value {
 		}
 
 		return event.IntValue(0)
+	case aggPerc50:
+		return finalizeTDigest(s, 0.50)
+	case aggPerc75:
+		return finalizeTDigest(s, 0.75)
+	case aggPerc90:
+		return finalizeTDigest(s, 0.90)
+	case aggPerc95:
+		return finalizeTDigest(s, 0.95)
+	case aggPerc99:
+		return finalizeTDigest(s, 0.99)
+	case aggStdev:
+		if s.Count < 2 {
+			return event.NullValue()
+		}
+
+		return event.FloatValue(math.Sqrt(s.StdevM2 / float64(s.Count-1)))
 	}
 
 	return event.NullValue()
+}
+
+// finalizeTDigest extracts a quantile from the partial state's t-digest.
+func finalizeTDigest(s *PartialAggState, q float64) event.Value {
+	if s.Digest == nil || s.Digest.Count() == 0 {
+		return event.NullValue()
+	}
+
+	return event.FloatValue(s.Digest.Quantile(q))
 }

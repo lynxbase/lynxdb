@@ -11,7 +11,11 @@ import (
 func (n *vecCompareNode) evalBitmap(batch *Batch) ([]bool, bool) {
 	col, ok := batch.Columns[n.field]
 	if !ok || len(col) == 0 {
-		// Missing column: all values are null → all comparisons return false.
+		// Column missing: fall back to VM path (which has JSON extraction
+		// from _raw) when _raw is available. Otherwise all-false.
+		if _, rawOk := batch.Columns["_raw"]; rawOk {
+			return nil, false // delegate to VM with JSON fallback
+		}
 		return make([]bool, batch.Len), true
 	}
 
@@ -153,7 +157,11 @@ func (n *vecNotNode) evalBitmap(batch *Batch) ([]bool, bool) {
 func (n *vecInNode) evalBitmap(batch *Batch) ([]bool, bool) {
 	col, ok := batch.Columns[n.field]
 	if !ok || len(col) == 0 {
-		// Missing column: all null → IN returns false, NOT IN returns true.
+		// Column missing: fall back to VM path (which has JSON extraction
+		// from _raw) when _raw is available. Otherwise use null semantics.
+		if _, rawOk := batch.Columns["_raw"]; rawOk {
+			return nil, false // delegate to VM with JSON fallback
+		}
 		bitmap := make([]bool, batch.Len)
 		if n.negated {
 			for i := range bitmap {

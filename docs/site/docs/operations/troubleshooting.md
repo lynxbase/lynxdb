@@ -114,7 +114,7 @@ LynxDB provides compatibility hints for common Splunk SPL1 patterns:
 hint: "index=main" is Splunk SPL syntax. In LynxDB SPL2, use "FROM main" instead.
 ```
 
-See the [SPL2 Overview](/docs/spl2/overview) for the full query language reference.
+See the [Lynx Flow Reference](/docs/lynx-flow/overview) for the full query language reference.
 
 ### "Query timeout"
 
@@ -360,4 +360,4 @@ lynxdb shell
 - [Monitoring](/docs/operations/monitoring) -- track server health
 - [Performance Tuning](/docs/operations/performance-tuning) -- optimize performance
 - [Configuration Overview](/docs/configuration/overview) -- configuration reference
-- [SPL2 Overview](/docs/spl2/overview) -- query language reference
+- [Lynx Flow Reference](/docs/lynx-flow/overview) -- query language reference

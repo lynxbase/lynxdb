@@ -648,6 +648,293 @@ func TestPartialAgg_DC_BelowThreshold_Exact(t *testing.T) {
 	assertIntField(t, rows[0], "dc_user", 25)
 }
 
+// --- Percentile partial aggregation tests ---
+
+func TestIsPushableAgg_Percentiles(t *testing.T) {
+	for _, name := range []string{"perc50", "perc75", "perc90", "perc95", "perc99", "stdev"} {
+		if !IsPushableAgg(name) {
+			t.Errorf("IsPushableAgg(%q) = false, want true", name)
+		}
+	}
+	// Non-pushable should still return false.
+	for _, name := range []string{"values", "first", "last"} {
+		if IsPushableAgg(name) {
+			t.Errorf("IsPushableAgg(%q) = true, want false", name)
+		}
+	}
+}
+
+func TestPartialAgg_Perc99(t *testing.T) {
+	// Create 100 events with values 1..100.
+	var fieldSets []map[string]event.Value
+	for i := 1; i <= 100; i++ {
+		fieldSets = append(fieldSets, map[string]event.Value{
+			"latency": event.FloatValue(float64(i)),
+		})
+	}
+	events := makePartialAggEvents(fieldSets...)
+
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "perc99", Field: "latency", Alias: "p99"}},
+	}
+	partials := ComputePartialAgg(events, spec)
+	if len(partials) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(partials))
+	}
+	if partials[0].States[0].Digest == nil {
+		t.Fatal("expected Digest to be non-nil")
+	}
+
+	rows := MergePartialAggs([][]*PartialAggGroup{partials}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	got := rows[0]["p99"].AsFloat()
+	// p99 of [1..100] should be ~99.
+	if got < 95 || got > 100 {
+		t.Errorf("perc99: expected ~99, got %f", got)
+	}
+}
+
+func TestMergePartialAggs_Perc99(t *testing.T) {
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "perc99", Field: "latency", Alias: "p99"}},
+	}
+
+	// Segment 1: values 1..50.
+	td1 := NewTDigest(100)
+	for i := 1; i <= 50; i++ {
+		td1.Add(float64(i))
+	}
+	p1 := []*PartialAggGroup{
+		{Key: map[string]event.Value{}, States: []PartialAggState{{Digest: td1}}},
+	}
+
+	// Segment 2: values 51..100.
+	td2 := NewTDigest(100)
+	for i := 51; i <= 100; i++ {
+		td2.Add(float64(i))
+	}
+	p2 := []*PartialAggGroup{
+		{Key: map[string]event.Value{}, States: []PartialAggState{{Digest: td2}}},
+	}
+
+	rows := MergePartialAggs([][]*PartialAggGroup{p1, p2}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	got := rows[0]["p99"].AsFloat()
+	// p99 of [1..100] should be ~99.
+	if got < 95 || got > 100 {
+		t.Errorf("merged perc99: expected ~99, got %f", got)
+	}
+}
+
+func TestPartialAgg_Perc50_EmptyInput(t *testing.T) {
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "perc50", Field: "v", Alias: "p50"}},
+	}
+	partials := ComputePartialAgg(nil, spec)
+	rows := MergePartialAggs([][]*PartialAggGroup{partials}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if !rows[0]["p50"].IsNull() {
+		t.Errorf("expected null for empty perc50, got %v", rows[0]["p50"])
+	}
+}
+
+func TestPartialAgg_Perc50_GroupBy(t *testing.T) {
+	var fieldSets []map[string]event.Value
+	for i := 1; i <= 10; i++ {
+		fieldSets = append(fieldSets, map[string]event.Value{
+			"host": event.StringValue("a"), "v": event.FloatValue(float64(i)),
+		})
+	}
+	for i := 91; i <= 100; i++ {
+		fieldSets = append(fieldSets, map[string]event.Value{
+			"host": event.StringValue("b"), "v": event.FloatValue(float64(i)),
+		})
+	}
+	events := makePartialAggEvents(fieldSets...)
+
+	spec := &PartialAggSpec{
+		GroupBy: []string{"host"},
+		Funcs:   []PartialAggFunc{{Name: "perc50", Field: "v", Alias: "p50"}},
+	}
+	partials := ComputePartialAgg(events, spec)
+	rows := MergePartialAggs([][]*PartialAggGroup{partials}, spec)
+	byHost := rowsByKey(rows, "host")
+	// Median of [1..10] ≈ 5.5; median of [91..100] ≈ 95.5.
+	p50a := byHost["a"]["p50"].AsFloat()
+	p50b := byHost["b"]["p50"].AsFloat()
+	if p50a < 4 || p50a > 7 {
+		t.Errorf("host=a p50: expected ~5.5, got %f", p50a)
+	}
+	if p50b < 93 || p50b > 97 {
+		t.Errorf("host=b p50: expected ~95.5, got %f", p50b)
+	}
+}
+
+// --- Stdev partial aggregation tests ---
+
+func TestPartialAgg_Stdev(t *testing.T) {
+	events := makePartialAggEvents(
+		map[string]event.Value{"v": event.FloatValue(2)},
+		map[string]event.Value{"v": event.FloatValue(4)},
+		map[string]event.Value{"v": event.FloatValue(4)},
+		map[string]event.Value{"v": event.FloatValue(4)},
+		map[string]event.Value{"v": event.FloatValue(5)},
+		map[string]event.Value{"v": event.FloatValue(5)},
+		map[string]event.Value{"v": event.FloatValue(7)},
+		map[string]event.Value{"v": event.FloatValue(9)},
+	)
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "stdev", Field: "v", Alias: "sd"}},
+	}
+	partials := ComputePartialAgg(events, spec)
+	if len(partials) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(partials))
+	}
+	if partials[0].States[0].Count != 8 {
+		t.Errorf("expected count=8, got %d", partials[0].States[0].Count)
+	}
+
+	rows := MergePartialAggs([][]*PartialAggGroup{partials}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	got := rows[0]["sd"].AsFloat()
+	// Sample stdev of [2,4,4,4,5,5,7,9]: mean=5, sum_sq_diff=32, s=sqrt(32/7)≈2.138
+	if math.Abs(got-math.Sqrt(32.0/7.0)) > 0.01 {
+		t.Errorf("stdev: expected ~2.138, got %f", got)
+	}
+}
+
+func TestMergePartialAggs_Stdev(t *testing.T) {
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "stdev", Field: "v", Alias: "sd"}},
+	}
+
+	// Segment 1: values [2, 4, 4, 4].
+	s1 := PartialAggState{}
+	for _, v := range []float64{2, 4, 4, 4} {
+		s1.Count++
+		delta := v - s1.StdevMean
+		s1.StdevMean += delta / float64(s1.Count)
+		delta2 := v - s1.StdevMean
+		s1.StdevM2 += delta * delta2
+	}
+	p1 := []*PartialAggGroup{
+		{Key: map[string]event.Value{}, States: []PartialAggState{s1}},
+	}
+
+	// Segment 2: values [5, 5, 7, 9].
+	s2 := PartialAggState{}
+	for _, v := range []float64{5, 5, 7, 9} {
+		s2.Count++
+		delta := v - s2.StdevMean
+		s2.StdevMean += delta / float64(s2.Count)
+		delta2 := v - s2.StdevMean
+		s2.StdevM2 += delta * delta2
+	}
+	p2 := []*PartialAggGroup{
+		{Key: map[string]event.Value{}, States: []PartialAggState{s2}},
+	}
+
+	rows := MergePartialAggs([][]*PartialAggGroup{p1, p2}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	got := rows[0]["sd"].AsFloat()
+	// Sample stdev of [2,4,4,4,5,5,7,9]: mean=5, sum_sq_diff=32, s=sqrt(32/7)≈2.138
+	if math.Abs(got-math.Sqrt(32.0/7.0)) > 0.01 {
+		t.Errorf("merged stdev: expected ~2.138, got %f", got)
+	}
+}
+
+func TestPartialAgg_Stdev_SingleValue(t *testing.T) {
+	events := makePartialAggEvents(
+		map[string]event.Value{"v": event.FloatValue(42)},
+	)
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "stdev", Field: "v", Alias: "sd"}},
+	}
+	partials := ComputePartialAgg(events, spec)
+	rows := MergePartialAggs([][]*PartialAggGroup{partials}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	if !rows[0]["sd"].IsNull() {
+		t.Errorf("expected null for stdev of single value, got %v", rows[0]["sd"])
+	}
+}
+
+func TestPartialAgg_MixedPushable(t *testing.T) {
+	// Verify count, perc99, stdev all work together in one spec.
+	var fieldSets []map[string]event.Value
+	for i := 1; i <= 100; i++ {
+		fieldSets = append(fieldSets, map[string]event.Value{
+			"latency": event.FloatValue(float64(i)),
+		})
+	}
+	events := makePartialAggEvents(fieldSets...)
+
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{
+			{Name: "count", Alias: "count"},
+			{Name: "perc99", Field: "latency", Alias: "p99"},
+			{Name: "stdev", Field: "latency", Alias: "sd"},
+		},
+	}
+	partials := ComputePartialAgg(events, spec)
+	rows := MergePartialAggs([][]*PartialAggGroup{partials}, spec)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row, got %d", len(rows))
+	}
+	row := rows[0]
+	assertIntField(t, row, "count", 100)
+	p99 := row["p99"].AsFloat()
+	if p99 < 95 || p99 > 100 {
+		t.Errorf("p99: expected ~99, got %f", p99)
+	}
+	sd := row["sd"].AsFloat()
+	// stdev of uniform [1..100] = ~29.01
+	if sd < 28 || sd > 30 {
+		t.Errorf("stdev: expected ~29, got %f", sd)
+	}
+}
+
+func TestMergePartialAggs_TDigestNotMutated(t *testing.T) {
+	// Verify that merging doesn't mutate the original TDigest.
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: "perc50", Field: "v", Alias: "p50"}},
+	}
+
+	td := NewTDigest(100)
+	for i := 0; i < 100; i++ {
+		td.Add(float64(i))
+	}
+	countBefore := td.Count()
+
+	original := &PartialAggGroup{
+		Key:    map[string]event.Value{},
+		States: []PartialAggState{{Digest: td}},
+	}
+	addition := &PartialAggGroup{
+		Key:    map[string]event.Value{},
+		States: []PartialAggState{{Digest: NewTDigest(100)}},
+	}
+	addition.States[0].Digest.Add(999)
+
+	_ = MergePartialAggs([][]*PartialAggGroup{{original}, {addition}}, spec)
+
+	// Original TDigest count should not change.
+	if td.Count() != countBefore {
+		t.Errorf("original TDigest was mutated: count before=%.0f, after=%.0f", countBefore, td.Count())
+	}
+}
+
 func TestPartialAgg_DC_HighCardinality_Accuracy(t *testing.T) {
 	// Accuracy test: 50K events with 20K distinct values.
 	// HLL should return within ~1% of 20,000.

@@ -178,4 +178,4 @@ curl -s localhost:3100/api/v1/query \
 - **[Saved Queries guide](/docs/guides/saved-queries)** -- patterns for organizing and sharing queries
 - **[Query API](/docs/api/query)** -- executing SPL2 queries
 - **[Dashboards API](/docs/api/dashboards)** -- using queries in dashboard panels
-- **[SPL2 Overview](/docs/spl2/overview)** -- query language reference
+- **[Lynx Flow Reference](/docs/lynx-flow/overview)** -- query language reference

@@ -740,6 +740,6 @@ The `data.type` field in query responses determines how results should be render
 ## Related
 
 - **[`lynxdb query` CLI command](/docs/cli/query)** -- query from the command line
-- **[SPL2 Overview](/docs/spl2/overview)** -- query language reference
+- **[Lynx Flow Reference](/docs/lynx-flow/overview)** -- query language reference
 - **[Materialized Views](/docs/api/views)** -- query acceleration
 - **[Live Tail](/docs/api/tail-histogram)** -- real-time streaming

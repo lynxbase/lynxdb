@@ -42,14 +42,8 @@ func NormalizeQuery(q string) string {
 		return "FROM main " + trimmed
 	}
 
-	// Known command (search, stats, where, etc.) — prepend FROM main.
-	firstWord := firstToken(trimmed)
-	if isKnownCommand(strings.ToLower(firstWord)) {
-		return "FROM main | " + trimmed
-	}
-
 	// index IN (...) / index NOT IN (...) — rewrite to FROM list or negation filter.
-	// Must come before extractIndexPrefix since "index IN ..." doesn't start with "index=".
+	// Must come before known-command and extractIndexPrefix checks.
 	if names, negated, rest, ok := extractIndexInPrefix(trimmed); ok {
 		return buildFromIN(names, negated, rest)
 	}
@@ -62,7 +56,7 @@ func NormalizeQuery(q string) string {
 	}
 
 	// index!=<value> / source!=<value> — rewrite to FROM * | where _source!="<value>".
-	// Must come before extractIndexPrefix since "index!=" doesn't start with "index=".
+	// Must come before known-command and extractIndexPrefix checks.
 	if name, rest, ok := extractIndexNegationPrefix(trimmed); ok {
 		return buildFromNegation(name, rest)
 	}
@@ -72,6 +66,8 @@ func NormalizeQuery(q string) string {
 
 	// Splunk-style index selection: index=<name> or index <name>.
 	// Rewrites to FROM <name> so the parser handles glob/multi-source.
+	// Must come before known-command check since "index" is a known command
+	// but "index=foo" and "index foo" are source-selection patterns.
 	if indexName, rest, ok := extractIndexPrefix(trimmed); ok {
 		return buildFromWithRest(indexName, rest)
 	}
@@ -80,6 +76,17 @@ func NormalizeQuery(q string) string {
 	// Unlike index=, source is a field filter — scan all indexes and filter by _source.
 	if sourceName, rest, ok := extractSourcePrefix(trimmed); ok {
 		return buildSourceFilter(sourceName, rest)
+	}
+
+	// Known command (search, stats, where, etc.) — prepend FROM main.
+	// "index" is excluded here because all valid index-as-source patterns
+	// (index=foo, index foo, index IN (...), index!=foo) are already handled
+	// above. If we reach here with firstWord == "index", it means something
+	// like "index stats" where the extraction rejected it — treat as search.
+	firstWord := firstToken(trimmed)
+	lowerFirst := strings.ToLower(firstWord)
+	if lowerFirst != "index" && isKnownCommand(lowerFirst) {
+		return "FROM main | " + trimmed
 	}
 
 	// Implicit search: prepend FROM main and "search" keyword.

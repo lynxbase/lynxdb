@@ -41,7 +41,7 @@ Every error response carries machine-readable `code`, human-readable `message`, 
     "code": "INVALID_QUERY",
     "message": "Unknown field 'stauts'.",
     "suggestion": "status",
-    "docs_url": "https://lynxdb.io/docs/spl2/overview"
+    "docs_url": "https://lynxdb.io/docs/lynx-flow/overview"
   }
 }
 ```

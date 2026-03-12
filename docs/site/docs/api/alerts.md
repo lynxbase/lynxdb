@@ -423,4 +423,4 @@ curl -X POST localhost:3100/api/v1/alerts/alt_xyz789/test-channels | jq .
 - **[`lynxdb alerts` CLI command](/docs/cli/alerts)** -- manage alerts from the command line
 - **[Alerts guide](/docs/guides/alerts)** -- end-to-end alerting walkthrough
 - **[Query API](/docs/api/query)** -- the query engine that powers alert evaluation
-- **[SPL2 `stats` command](/docs/spl2/commands/stats)** -- aggregations used in alert queries
+- **[SPL2 `stats` command](/docs/lynx-flow/commands/stats)** -- aggregations used in alert queries

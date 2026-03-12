@@ -242,7 +242,7 @@ curl -X POST localhost:3100/api/v1/dashboards -d '{
 
 ## Next Steps
 
-- [SPL2 Overview](/docs/spl2/overview) -- learn the query language
+- [Lynx Flow Reference](/docs/lynx-flow/overview) -- learn the query language
 - [Quick Start](/docs/getting-started/quickstart) -- get started in 5 minutes
 - [REST API](/docs/api/overview) -- full API reference
 - [Materialized Views](/docs/guides/materialized-views) -- accelerate repeated queries

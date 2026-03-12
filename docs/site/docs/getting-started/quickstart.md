@@ -128,4 +128,4 @@ If your query starts with `|`, LynxDB automatically prepends `FROM main` -- so `
 - **[Pipe Mode](/docs/getting-started/pipe-mode)** -- Master serverless querying
 - **[Server Mode](/docs/getting-started/server-mode)** -- Set up persistent storage
 - **[Your First SPL2 Query](/docs/getting-started/first-query)** -- SPL2 crash course
-- **[SPL2 Reference](/docs/spl2/overview)** -- Full language reference
+- **[Lynx Flow Reference](/docs/lynx-flow/overview)** -- Full language reference

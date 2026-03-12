@@ -5,7 +5,7 @@ description: How to extract fields from unstructured logs at query time using RE
 
 # Extract Fields at Query Time
 
-LynxDB follows a schema-on-read philosophy: you do not need to define a schema before ingesting data. Send any JSON, any text, any format. Fields from JSON events are indexed automatically. For unstructured text logs, use [`REX`](/docs/spl2/commands/rex) and [`EVAL`](/docs/spl2/commands/eval) to extract and compute fields at query time.
+LynxDB follows a schema-on-read philosophy: you do not need to define a schema before ingesting data. Send any JSON, any text, any format. Fields from JSON events are indexed automatically. For unstructured text logs, use [`REX`](/docs/lynx-flow/commands/rex) and [`EVAL`](/docs/lynx-flow/commands/eval) to extract and compute fields at query time.
 
 ## How schema-on-read works
 
@@ -36,7 +36,7 @@ See the [`lynxdb fields`](/docs/cli/shortcuts) command reference for details.
 
 ## Extract fields with REX
 
-The [`REX`](/docs/spl2/commands/rex) command extracts fields from a text field using named capture groups in a regular expression.
+The [`REX`](/docs/lynx-flow/commands/rex) command extracts fields from a text field using named capture groups in a regular expression.
 
 ### Basic extraction
 
@@ -97,7 +97,7 @@ lynxdb query '| rex field=message "user_id=(?P<uid>\d+)"
 
 ## Compute fields with EVAL
 
-The [`EVAL`](/docs/spl2/commands/eval) command creates new fields by evaluating expressions.
+The [`EVAL`](/docs/lynx-flow/commands/eval) command creates new fields by evaluating expressions.
 
 ### Create a computed field
 
@@ -166,7 +166,7 @@ lynxdb query '| eval human_time = strftime(_timestamp, "%Y-%m-%d %H:%M:%S")
   | table human_time, level, message'
 ```
 
-See the [eval functions reference](/docs/spl2/functions/eval-functions) for the complete list of available functions.
+See the [eval functions reference](/docs/lynx-flow/functions/eval-functions) for the complete list of available functions.
 
 ---
 
@@ -245,14 +245,14 @@ For structured log formats, LynxDB provides purpose-built `unpack_*` commands th
 
 | Format | Command | Example input |
 |--------|---------|---------------|
-| JSON | [`unpack_json`](/docs/spl2/commands/unpack-json) | `{"level":"error","msg":"timeout"}` |
-| logfmt | [`unpack_logfmt`](/docs/spl2/commands/unpack-logfmt) | `level=error msg="request failed" duration=245ms` |
-| Syslog | [`unpack_syslog`](/docs/spl2/commands/unpack-syslog) | `<134>Jan 15 14:23:01 web-01 nginx: connection reset` |
-| Combined (access log) | [`unpack_combined`](/docs/spl2/commands/unpack-combined) | `10.0.1.5 - - [10/Oct/2025:13:55:36 -0700] "GET /api HTTP/1.1" 200 2326 "-" "curl/7.64"` |
-| CLF | [`unpack_clf`](/docs/spl2/commands/unpack-clf) | `127.0.0.1 - frank [10/Oct/2025:13:55:36 -0700] "GET /api HTTP/1.1" 200 2326` |
-| Nginx error | [`unpack_nginx_error`](/docs/spl2/commands/unpack-nginx-error) | `2026/02/14 14:52:01 [error] 12345#67: *890 message, client: 10.0.1.5` |
-| CEF | [`unpack_cef`](/docs/spl2/commands/unpack-cef) | `CEF:0\|Vendor\|Product\|1.0\|100\|Alert\|7\|src=10.0.0.1` |
-| Key=value | [`unpack_kv`](/docs/spl2/commands/unpack-kv) | `host=web-01 status=200 duration=45ms` |
+| JSON | [`unpack_json`](/docs/lynx-flow/commands/unpack-json) | `{"level":"error","msg":"timeout"}` |
+| logfmt | [`unpack_logfmt`](/docs/lynx-flow/commands/unpack-logfmt) | `level=error msg="request failed" duration=245ms` |
+| Syslog | [`unpack_syslog`](/docs/lynx-flow/commands/unpack-syslog) | `<134>Jan 15 14:23:01 web-01 nginx: connection reset` |
+| Combined (access log) | [`unpack_combined`](/docs/lynx-flow/commands/unpack-combined) | `10.0.1.5 - - [10/Oct/2025:13:55:36 -0700] "GET /api HTTP/1.1" 200 2326 "-" "curl/7.64"` |
+| CLF | [`unpack_clf`](/docs/lynx-flow/commands/unpack-clf) | `127.0.0.1 - frank [10/Oct/2025:13:55:36 -0700] "GET /api HTTP/1.1" 200 2326` |
+| Nginx error | [`unpack_nginx_error`](/docs/lynx-flow/commands/unpack-nginx-error) | `2026/02/14 14:52:01 [error] 12345#67: *890 message, client: 10.0.1.5` |
+| CEF | [`unpack_cef`](/docs/lynx-flow/commands/unpack-cef) | `CEF:0\|Vendor\|Product\|1.0\|100\|Alert\|7\|src=10.0.0.1` |
+| Key=value | [`unpack_kv`](/docs/lynx-flow/commands/unpack-kv) | `host=web-01 status=200 duration=45ms` |
 
 ```bash
 # Parse logfmt and aggregate
@@ -271,6 +271,6 @@ For JSON-specific workflows (dot-notation, json_extract, unroll), see the [Worki
 - [Working with JSON Logs](/docs/guides/json-processing) -- dot-notation, json commands, unroll
 - [Search and filter logs](/docs/guides/search-and-filter) -- filter before extracting fields
 - [Run aggregations](/docs/guides/aggregations) -- aggregate over extracted fields
-- [REX command reference](/docs/spl2/commands/rex) -- full REX syntax and options
-- [EVAL command reference](/docs/spl2/commands/eval) -- full EVAL syntax and all functions
-- [Eval functions reference](/docs/spl2/functions/eval-functions) -- complete function list
+- [REX command reference](/docs/lynx-flow/commands/rex) -- full REX syntax and options
+- [EVAL command reference](/docs/lynx-flow/commands/eval) -- full EVAL syntax and all functions
+- [Eval functions reference](/docs/lynx-flow/functions/eval-functions) -- complete function list

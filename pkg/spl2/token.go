@@ -102,10 +102,57 @@ const (
 	TokenRegexMatch    // =~
 	TokenRegexNotMatch // !~
 
+	// Source selection keywords.
+	TokenIndex // INDEX (alias for FROM as source command)
+
 	// Additional keywords.
 	TokenBetween // BETWEEN
 	TokenIs      // IS
 	TokenNull    // NULL
+
+	// Lynx Flow command keywords.
+	TokenLet
+	TokenKeep
+	TokenOmit
+	TokenSelect
+	TokenGroup
+	TokenCompute
+	TokenEvery
+	TokenBucket
+	TokenOrder
+	TokenTake
+	TokenRank
+	TokenTopby
+	TokenBottomby
+	TokenBottom
+	TokenRunning
+	TokenEnrich
+	TokenParse
+	TokenExplode
+	TokenPack
+	TokenLookup
+
+	// Lynx Flow clause keywords.
+	TokenUsing
+	TokenExtract
+	TokenIfMissing
+	TokenPer
+	TokenOn
+	TokenInto
+	TokenAsc
+	TokenDesc
+
+	// Lynx Flow domain sugar keywords.
+	TokenLatency
+	TokenErrors
+	TokenRate
+	TokenPercentiles
+	TokenSlowest
+
+	// Lynx Flow punctuation (NOT in keywords map — lexed directly).
+	TokenQuestionMark   // ?
+	TokenDoubleQuestion // ??
+	TokenPercent        // %
 )
 
 var tokenNames = map[TokenType]string{
@@ -192,9 +239,46 @@ var tokenNames = map[TokenType]string{
 	TokenPackJson:          "PACK_JSON",
 	TokenRegexMatch:        "REGEX_MATCH",
 	TokenRegexNotMatch:     "REGEX_NOT_MATCH",
+	TokenIndex:             "INDEX",
 	TokenBetween:           "BETWEEN",
 	TokenIs:                "IS",
 	TokenNull:              "NULL",
+	TokenLet:               "LET",
+	TokenKeep:              "KEEP",
+	TokenOmit:              "OMIT",
+	TokenSelect:            "SELECT",
+	TokenGroup:             "GROUP",
+	TokenCompute:           "COMPUTE",
+	TokenEvery:             "EVERY",
+	TokenBucket:            "BUCKET",
+	TokenOrder:             "ORDER",
+	TokenTake:              "TAKE",
+	TokenRank:              "RANK",
+	TokenTopby:             "TOPBY",
+	TokenBottomby:          "BOTTOMBY",
+	TokenBottom:            "BOTTOM",
+	TokenRunning:           "RUNNING",
+	TokenEnrich:            "ENRICH",
+	TokenParse:             "PARSE",
+	TokenExplode:           "EXPLODE",
+	TokenPack:              "PACK",
+	TokenLookup:            "LOOKUP",
+	TokenUsing:             "USING",
+	TokenExtract:           "EXTRACT",
+	TokenIfMissing:         "IF_MISSING",
+	TokenPer:               "PER",
+	TokenOn:                "ON",
+	TokenInto:              "INTO",
+	TokenAsc:               "ASC",
+	TokenDesc:              "DESC",
+	TokenLatency:           "LATENCY",
+	TokenErrors:            "ERRORS",
+	TokenRate:              "RATE",
+	TokenPercentiles:       "PERCENTILES",
+	TokenSlowest:           "SLOWEST",
+	TokenQuestionMark:      "QUESTION",
+	TokenDoubleQuestion:    "DOUBLE_QUESTION",
+	TokenPercent:           "PERCENT",
 }
 
 func (t TokenType) String() string {
@@ -219,6 +303,7 @@ func (t Token) String() string {
 
 var keywords = map[string]TokenType{
 	"from":                TokenFrom,
+	"index":               TokenIndex,
 	"where":               TokenWhere,
 	"search":              TokenSearch,
 	"stats":               TokenStats,
@@ -279,6 +364,39 @@ var keywords = map[string]TokenType{
 	"between":             TokenBetween,
 	"is":                  TokenIs,
 	"null":                TokenNull,
+	"let":                 TokenLet,
+	"keep":                TokenKeep,
+	"omit":                TokenOmit,
+	"select":              TokenSelect,
+	"group":               TokenGroup,
+	"compute":             TokenCompute,
+	"every":               TokenEvery,
+	"bucket":              TokenBucket,
+	"order":               TokenOrder,
+	"take":                TokenTake,
+	"rank":                TokenRank,
+	"topby":               TokenTopby,
+	"bottomby":            TokenBottomby,
+	"bottom":              TokenBottom,
+	"running":             TokenRunning,
+	"enrich":              TokenEnrich,
+	"parse":               TokenParse,
+	"explode":             TokenExplode,
+	"pack":                TokenPack,
+	"lookup":              TokenLookup,
+	"using":               TokenUsing,
+	"extract":             TokenExtract,
+	"if_missing":          TokenIfMissing,
+	"per":                 TokenPer,
+	"on":                  TokenOn,
+	"into":                TokenInto,
+	"asc":                 TokenAsc,
+	"desc":                TokenDesc,
+	"latency":             TokenLatency,
+	"errors":              TokenErrors,
+	"rate":                TokenRate,
+	"percentiles":         TokenPercentiles,
+	"slowest":             TokenSlowest,
 }
 
 func lookupKeyword(ident string) TokenType {

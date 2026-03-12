@@ -1,6 +1,7 @@
 package spl2
 
 import (
+	"encoding/json"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,6 +17,12 @@ type SearchEvaluator struct {
 	globCache  map[string]*regexp.Regexp
 	planCache  map[string]matchPlan
 	lowerCache map[string]string // cached lowered strings to avoid per-row allocation
+	// jsonCache caches the parsed JSON from _raw so that multiple field
+	// lookups against the same row avoid redundant JSON parsing.
+	jsonCache struct {
+		source string
+		parsed map[string]json.RawMessage
+	}
 }
 
 // NewSearchEvaluator creates a new evaluator for the given search expression.
@@ -25,6 +32,93 @@ func NewSearchEvaluator(expr SearchExpr) *SearchEvaluator {
 		globCache:  make(map[string]*regexp.Regexp),
 		planCache:  make(map[string]matchPlan),
 		lowerCache: make(map[string]string),
+	}
+}
+
+// resolveField attempts to find a field value in the row. If the field is not
+// present as a direct column, it falls back to JSON extraction from _raw.
+// This enables search predicates like `log_type = "postgres"` to work without
+// an explicit `parse json(_raw)` in the pipeline.
+func (e *SearchEvaluator) resolveField(field string, row map[string]event.Value) (event.Value, bool) {
+	if val, ok := row[field]; ok && !val.IsNull() {
+		return val, true
+	}
+
+	// JSON fallback: extract the field from _raw.
+	rawVal, ok := row["_raw"]
+	if !ok || rawVal.IsNull() {
+		return event.NullValue(), false
+	}
+
+	rawStr := rawVal.AsString()
+
+	// Populate or revalidate the cache.
+	if e.jsonCache.source != rawStr || e.jsonCache.parsed == nil {
+		s := strings.TrimSpace(rawStr)
+		if len(s) == 0 || s[0] != '{' {
+			return event.NullValue(), false
+		}
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(s), &obj); err != nil {
+			return event.NullValue(), false
+		}
+		e.jsonCache.source = rawStr
+		e.jsonCache.parsed = obj
+	}
+
+	raw, ok := e.jsonCache.parsed[field]
+	if !ok {
+		return event.NullValue(), false
+	}
+
+	return jsonRawToValue(raw), true
+}
+
+// jsonRawToValue converts a json.RawMessage to a typed event.Value.
+// Handles strings, numbers, booleans, and null. Objects/arrays are returned as
+// their JSON string representation.
+func jsonRawToValue(raw json.RawMessage) event.Value {
+	s := strings.TrimSpace(string(raw))
+	if len(s) == 0 {
+		return event.NullValue()
+	}
+
+	switch s[0] {
+	case 'n':
+		if s == "null" {
+			return event.NullValue()
+		}
+		return event.StringValue(s)
+	case 't':
+		if s == "true" {
+			return event.BoolValue(true)
+		}
+		return event.StringValue(s)
+	case 'f':
+		if s == "false" {
+			return event.BoolValue(false)
+		}
+		return event.StringValue(s)
+	case '"':
+		var str string
+		if err := json.Unmarshal(raw, &str); err != nil {
+			return event.StringValue(s)
+		}
+		return event.StringValue(str)
+	case '{', '[':
+		return event.StringValue(s)
+	default:
+		// Number: try integer first, then float.
+		var num json.Number
+		if err := json.Unmarshal(raw, &num); err == nil {
+			if n, err := num.Int64(); err == nil {
+				return event.IntValue(n)
+			}
+			if f, err := num.Float64(); err == nil {
+				return event.FloatValue(f)
+			}
+		}
+		return event.StringValue(s)
 	}
 }
 
@@ -159,8 +253,7 @@ func (e *SearchEvaluator) evalCompare(cmp *SearchCompareExpr, row map[string]eve
 		field = "_source"
 	}
 
-	fieldVal, exists := row[field]
-	fieldExists := exists && !fieldVal.IsNull()
+	fieldVal, fieldExists := e.resolveField(field, row)
 
 	// Special case: field=* means "field exists"
 	if cmp.Op == OpEq && cmp.Value == "*" {
@@ -203,8 +296,8 @@ func (e *SearchEvaluator) evalIn(in *SearchInExpr, row map[string]event.Value) b
 		field = "_source"
 	}
 
-	fieldVal, exists := row[field]
-	if !exists || fieldVal.IsNull() {
+	fieldVal, fieldExists := e.resolveField(field, row)
+	if !fieldExists {
 		return false
 	}
 

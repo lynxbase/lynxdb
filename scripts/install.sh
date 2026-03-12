@@ -553,7 +553,7 @@ print_completion() {
         printf '\n'
     fi
     printf '  %s\n' "${DIM}Docs:    https://docs.lynxdb.org/${RESET}"
-    printf '  %s\n' "${DIM}Discord: https://discord.gg/lynxdb${RESET}"
+    printf '  %s\n' "${DIM}Discord: https://discord.gg/RgggCFdgWK${RESET}"
     printf '\n'
 }
 

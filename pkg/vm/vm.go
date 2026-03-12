@@ -176,9 +176,10 @@ func (vm *VM) execConst(prog *Program, ins []byte, ip int) (int, error) {
 }
 
 // execLoadField loads a field value onto the stack with bounds checking.
-// When a direct field lookup fails and the field name contains a dot, the VM
-// attempts JSON extraction as a fallback — enabling `response.status` syntax
-// without an explicit unpack step. The fast path (direct lookup) is unchanged.
+// When a direct field lookup fails, the VM attempts JSON extraction from the
+// root field (for dot-notation like `response.status`) or from `_raw` as a
+// fallback — enabling field access without an explicit parse/unpack step.
+// The fast path (direct lookup) is unchanged.
 func (vm *VM) execLoadField(prog *Program, ins []byte, ip int, fields map[string]event.Value) (int, error) {
 	if vm.sp >= StackSize {
 		return 0, ErrStackOverflow
@@ -207,6 +208,10 @@ func (vm *VM) execLoadField(prog *Program, ins []byte, ip int, fields map[string
 		} else {
 			vm.stack[vm.sp] = event.NullValue()
 		}
+	} else if rawVal, ok := fields["_raw"]; ok && !rawVal.IsNull() {
+		// Simple field fallback: try JSON extraction from _raw.
+		// Enables `log_type` access without explicit `parse json(_raw)`.
+		vm.stack[vm.sp] = vm.jsonExtractCached(rawVal.String(), name)
 	} else {
 		vm.stack[vm.sp] = event.NullValue()
 	}
@@ -231,6 +236,7 @@ func (vm *VM) execStoreField(prog *Program, ins []byte, ip int, fields map[strin
 }
 
 // execFieldExists pushes a bool indicating whether a field exists with bounds checking.
+// Falls back to JSON extraction from _raw when the field is not a direct column.
 func (vm *VM) execFieldExists(prog *Program, ins []byte, ip int, fields map[string]event.Value) (int, error) {
 	if vm.sp >= StackSize {
 		return 0, ErrStackOverflow
@@ -243,7 +249,15 @@ func (vm *VM) execFieldExists(prog *Program, ins []byte, ip int, fields map[stri
 
 	name := prog.FieldNames[idx]
 	val, ok := fields[name]
-	vm.stack[vm.sp] = event.BoolValue(ok && !val.IsNull())
+	exists := ok && !val.IsNull()
+	if !exists {
+		// JSON fallback: check if the field is extractable from _raw.
+		if rawVal, rawOk := fields["_raw"]; rawOk && !rawVal.IsNull() {
+			extracted := vm.jsonExtractCached(rawVal.String(), name)
+			exists = !extracted.IsNull()
+		}
+	}
+	vm.stack[vm.sp] = event.BoolValue(exists)
 	vm.sp++
 
 	return ip + 2, nil
