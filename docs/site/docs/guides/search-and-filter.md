@@ -17,7 +17,7 @@ The simplest way to find events is to search for text that appears anywhere in t
 lynxdb query 'search "connection refused"'
 ```
 
-The [`SEARCH`](/docs/spl2/commands/search) command scans the `_raw` field of every event. LynxDB uses an FST-based inverted index with bloom filters, so full-text search is fast even over millions of events.
+The [`SEARCH`](/docs/lynx-flow/commands/search) command scans the `_raw` field of every event. LynxDB uses an FST-based inverted index with bloom filters, so full-text search is fast even over millions of events.
 
 ### Search for multiple terms
 
@@ -73,7 +73,7 @@ This returns events where `source` is "nginx" AND `status` is 500 or above.
 
 ## Boolean operators
 
-Use `AND`, `OR`, and `NOT` for more complex filter logic. These work in both the implicit search and the [`WHERE`](/docs/spl2/commands/where) command.
+Use `AND`, `OR`, and `NOT` for more complex filter logic. These work in both the implicit search and the [`WHERE`](/docs/lynx-flow/commands/where) command.
 
 ### In the search expression
 
@@ -116,13 +116,13 @@ Wildcards work in the search expression. For more complex pattern matching insid
 lynxdb query '| where match(path, "^/api/v[0-9]+")'
 ```
 
-See the [eval functions reference](/docs/spl2/functions/eval-functions) for details on `match()`.
+See the [eval functions reference](/docs/lynx-flow/functions/eval-functions) for details on `match()`.
 
 ---
 
 ## The WHERE command
 
-[`WHERE`](/docs/spl2/commands/where) is the primary filtering command in SPL2 pipelines. It evaluates a typed boolean expression and keeps only events where the expression is true.
+[`WHERE`](/docs/lynx-flow/commands/where) is the primary filtering command in SPL2 pipelines. It evaluates a typed boolean expression and keeps only events where the expression is true.
 
 ### Basic filtering
 
@@ -158,7 +158,7 @@ lynxdb query '_source=nginx | stats count by uri | where count > 100'
 
 ## The FROM command
 
-Use [`FROM`](/docs/spl2/commands/from) to query a specific index:
+Use [`FROM`](/docs/lynx-flow/commands/from) to query a specific index:
 
 ```bash
 lynxdb query 'FROM production | where level="error" | stats count by service'
@@ -188,7 +188,7 @@ lynxdb query 'level=error' \
   --to 2026-01-15T23:59:59Z
 ```
 
-See the [time ranges reference](/docs/spl2/time-ranges) for all supported formats.
+See the [time ranges reference](/docs/lynx-flow/time-ranges) for all supported formats.
 
 ---
 
@@ -196,13 +196,13 @@ See the [time ranges reference](/docs/spl2/time-ranges) for all supported format
 
 ### Head and tail
 
-Use [`HEAD`](/docs/spl2/commands/head) to return only the first N results:
+Use [`HEAD`](/docs/lynx-flow/commands/head) to return only the first N results:
 
 ```bash
 lynxdb query '_source=nginx status>=500 | head 10'
 ```
 
-Use [`TAIL`](/docs/spl2/commands/tail) for the last N:
+Use [`TAIL`](/docs/lynx-flow/commands/tail) for the last N:
 
 ```bash
 lynxdb query '_source=nginx | tail 5'
@@ -210,7 +210,7 @@ lynxdb query '_source=nginx | tail 5'
 
 ### Dedup
 
-Remove duplicate events based on a field with [`DEDUP`](/docs/spl2/commands/dedup):
+Remove duplicate events based on a field with [`DEDUP`](/docs/lynx-flow/commands/dedup):
 
 ```bash
 lynxdb query 'level=error | dedup host'
@@ -239,7 +239,7 @@ lynxdb query 'level=error | fields - _raw'
 lynxdb query '| stats count by source | rename count AS total_events'
 ```
 
-See the [`TABLE`](/docs/spl2/commands/table), [`FIELDS`](/docs/spl2/commands/fields), and [`RENAME`](/docs/spl2/commands/rename) command references.
+See the [`TABLE`](/docs/lynx-flow/commands/table), [`FIELDS`](/docs/lynx-flow/commands/fields), and [`RENAME`](/docs/lynx-flow/commands/rename) command references.
 
 ---
 
@@ -285,5 +285,5 @@ See the [CLI shortcuts reference](/docs/cli/shortcuts) for the full list.
 
 - [Run aggregations](/docs/guides/aggregations) -- compute statistics from your filtered events
 - [Extract fields at query time](/docs/guides/field-extraction) -- parse unstructured logs with REX and EVAL
-- [SPL2 search syntax](/docs/spl2/search-syntax) -- full reference for search expressions
-- [WHERE command](/docs/spl2/commands/where) -- complete WHERE syntax and examples
+- [SPL2 search syntax](/docs/lynx-flow/search-syntax) -- full reference for search expressions
+- [WHERE command](/docs/lynx-flow/commands/where) -- complete WHERE syntax and examples

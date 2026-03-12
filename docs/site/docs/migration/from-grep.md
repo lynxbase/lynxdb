@@ -225,6 +225,6 @@ LynxDB complements grep rather than replacing it. Use grep for quick text search
 ## Next Steps
 
 - [Pipe Mode Guide](/docs/getting-started/pipe-mode) -- full pipe mode documentation
-- [SPL2 Overview](/docs/spl2/overview) -- learn the query language
+- [Lynx Flow Reference](/docs/lynx-flow/overview) -- learn the query language
 - [First Query](/docs/getting-started/first-query) -- your first SPL2 query
 - [Server Mode](/docs/getting-started/server-mode) -- when you need persistence

@@ -167,7 +167,7 @@ source=nginx
 
 ## Next Steps
 
-- **[SPL2 Overview](/docs/spl2/overview)** -- Full language reference
+- **[Lynx Flow Reference](/docs/lynx-flow/overview)** -- Full language reference
 - **[Searching & Filtering](/docs/guides/search-and-filter)** -- Advanced search techniques
 - **[Aggregations](/docs/guides/aggregations)** -- All aggregation functions
-- **[SPL2 Commands](/docs/spl2/commands/stats)** -- Detailed command reference
+- **[SPL2 Commands](/docs/lynx-flow/commands/stats)** -- Detailed command reference

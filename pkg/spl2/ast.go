@@ -640,15 +640,20 @@ func joinStrings(ss []string, sep string) string {
 	return result
 }
 
-// UnrollCommand represents: | unroll field=<field>.
+// UnrollCommand represents: | unroll field=<field> or | explode <field> [as <alias>].
 // Explodes a JSON array field into multiple rows, one per element.
 // If an element is an object, its keys are flattened with dot-notation prefix.
 type UnrollCommand struct {
 	Field string // field containing JSON array to explode
+	Alias string // optional output field name (Lynx Flow: explode tags as tag)
 }
 
 func (*UnrollCommand) commandNode() {}
 func (c *UnrollCommand) String() string {
+	if c.Alias != "" {
+		return fmt.Sprintf("unroll field=%s as %s", c.Field, c.Alias)
+	}
+
 	return fmt.Sprintf("unroll field=%s", c.Field)
 }
 
@@ -667,6 +672,24 @@ func (c *PackJsonCommand) String() string {
 	}
 
 	return fmt.Sprintf("pack_json into %s", c.Target)
+}
+
+// SelectCommand represents: | select <field> [as <alias>], ...
+// Ordered projection with optional inline rename. Unlike FieldsCommand (keep),
+// SelectCommand enforces output column order as specified in the command.
+type SelectCommand struct {
+	Columns []SelectColumn
+}
+
+// SelectColumn is a single column in a select command.
+type SelectColumn struct {
+	Name  string
+	Alias string // empty = no rename
+}
+
+func (*SelectCommand) commandNode() {}
+func (c *SelectCommand) String() string {
+	return fmt.Sprintf("select <%d columns>", len(c.Columns))
 }
 
 // TopNCommand is an internal optimizer command: sort + head fused into a heap selection.

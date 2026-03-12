@@ -1073,3 +1073,286 @@ func TestParse_NotNotAmbiguity(t *testing.T) {
 		t.Errorf("op: got %q, want '='", cmp.Op)
 	}
 }
+
+// --- INDEX as alias for FROM ---
+
+func TestParse_IndexBare(t *testing.T) {
+	// index nginx === from nginx
+	tests := []struct {
+		name      string
+		input     string
+		wantIndex string
+	}{
+		{"index nginx", "index nginx | stats count", "nginx"},
+		{"INDEX nginx", "INDEX nginx | stats count", "nginx"},
+		{"index quoted", `index "my-logs" | stats count`, "my-logs"},
+		{"index mv name", "index mv_errors_5m | stats count", "mv_errors_5m"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.input)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.input, err)
+			}
+			if q.Source == nil {
+				t.Fatal("Source is nil")
+			}
+			if q.Source.Index != tt.wantIndex {
+				t.Errorf("Source.Index = %q, want %q", q.Source.Index, tt.wantIndex)
+			}
+		})
+	}
+}
+
+func TestParse_IndexEqualsName(t *testing.T) {
+	// index="nginx" === from nginx (SPL1 compat)
+	tests := []struct {
+		name      string
+		input     string
+		wantIndex string
+		wantGlob  bool
+	}{
+		{"index=nginx", `index=nginx | stats count`, "nginx", false},
+		{"index=\"nginx\"", `index="nginx" | stats count`, "nginx", false},
+		{"index=logs*", `index=logs* | stats count`, "logs*", true},
+		{"index=*", `index=* | stats count`, "*", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.input)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.input, err)
+			}
+			if q.Source == nil {
+				t.Fatal("Source is nil")
+			}
+			if q.Source.Index != tt.wantIndex {
+				t.Errorf("Source.Index = %q, want %q", q.Source.Index, tt.wantIndex)
+			}
+			if q.Source.IsGlob != tt.wantGlob {
+				t.Errorf("Source.IsGlob = %v, want %v", q.Source.IsGlob, tt.wantGlob)
+			}
+		})
+	}
+}
+
+func TestParse_IndexEqualsDesugarsSearch(t *testing.T) {
+	// index="nginx" status>=500 desugars to: from nginx | search status>=500
+	q, err := Parse(`index="nginx" status>=500`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if q.Source == nil || q.Source.Index != "nginx" {
+		t.Fatalf("Source: got %v, want nginx", q.Source)
+	}
+	if len(q.Commands) != 1 {
+		t.Fatalf("Commands: got %d, want 1 (desugared search)", len(q.Commands))
+	}
+	search, ok := q.Commands[0].(*SearchCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected SearchCommand, got %T", q.Commands[0])
+	}
+	if search.Expression == nil {
+		t.Fatal("search.Expression is nil — expected desugared search expression")
+	}
+}
+
+func TestParse_IndexEqualsDesugarsComplex(t *testing.T) {
+	// index=nginx status>=500 method="POST" desugars with implicit search
+	q, err := Parse(`index=nginx status>=500 method="POST"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if q.Source == nil || q.Source.Index != "nginx" {
+		t.Fatalf("Source: got %v, want nginx", q.Source)
+	}
+	if len(q.Commands) != 1 {
+		t.Fatalf("Commands: got %d, want 1", len(q.Commands))
+	}
+	_, ok := q.Commands[0].(*SearchCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected SearchCommand, got %T", q.Commands[0])
+	}
+}
+
+func TestParse_IndexEqualsThenPipe(t *testing.T) {
+	// index=nginx | where status>=500 — no implicit search, just source + pipe
+	q, err := Parse(`index=nginx | where status>=500`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if q.Source == nil || q.Source.Index != "nginx" {
+		t.Fatalf("Source: got %v, want nginx", q.Source)
+	}
+	if len(q.Commands) != 1 {
+		t.Fatalf("Commands: got %d, want 1", len(q.Commands))
+	}
+	_, ok := q.Commands[0].(*WhereCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected WhereCommand, got %T", q.Commands[0])
+	}
+}
+
+func TestParse_IndexEqualsNoSearch(t *testing.T) {
+	// index=nginx alone — just source, no commands
+	q, err := Parse(`index=nginx`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if q.Source == nil || q.Source.Index != "nginx" {
+		t.Fatalf("Source: got %v, want nginx", q.Source)
+	}
+	if len(q.Commands) != 0 {
+		t.Fatalf("Commands: got %d, want 0", len(q.Commands))
+	}
+}
+
+func TestParse_IndexEquivalentToFrom(t *testing.T) {
+	// Verify that index nginx and from nginx produce identical ASTs.
+	tests := []struct {
+		indexQuery string
+		fromQuery  string
+	}{
+		{"index nginx | stats count", "FROM nginx | stats count"},
+		{`index="nginx" | stats count`, `FROM nginx | stats count`},
+		{"index nginx, api_gw | stats count", "FROM nginx, api_gw | stats count"},
+		{"index logs* | stats count", "FROM logs* | stats count"},
+		{"index * | stats count", "FROM * | stats count"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.indexQuery, func(t *testing.T) {
+			iq, err := Parse(tt.indexQuery)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.indexQuery, err)
+			}
+			fq, err := Parse(tt.fromQuery)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.fromQuery, err)
+			}
+
+			// Compare source.
+			if iq.Source == nil || fq.Source == nil {
+				t.Fatal("one of the sources is nil")
+			}
+			if iq.Source.Index != fq.Source.Index {
+				t.Errorf("Index: index=%q vs from=%q", iq.Source.Index, fq.Source.Index)
+			}
+			if iq.Source.IsGlob != fq.Source.IsGlob {
+				t.Errorf("IsGlob: index=%v vs from=%v", iq.Source.IsGlob, fq.Source.IsGlob)
+			}
+			if len(iq.Source.Indices) != len(fq.Source.Indices) {
+				t.Errorf("Indices len: index=%d vs from=%d", len(iq.Source.Indices), len(fq.Source.Indices))
+			}
+		})
+	}
+}
+
+func TestParse_FromEqualsError(t *testing.T) {
+	// from="nginx" should produce a helpful error (not silently succeed).
+	_, err := Parse(`from="nginx"`)
+	if err == nil {
+		t.Fatal("expected error for from=\"nginx\"")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "unexpected '='") {
+		t.Errorf("error should mention unexpected '=', got: %s", errStr)
+	}
+	if !strings.Contains(errStr, "from nginx") {
+		t.Errorf("error should suggest 'from nginx', got: %s", errStr)
+	}
+	if !strings.Contains(errStr, `index="nginx"`) {
+		t.Errorf("error should suggest index=\"nginx\", got: %s", errStr)
+	}
+}
+
+func TestParse_IndexMulti(t *testing.T) {
+	// index nginx, api_gw === from nginx, api_gw
+	q, err := Parse(`index nginx, api_gw | stats count by source`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if q.Source == nil {
+		t.Fatal("Source is nil")
+	}
+	expected := []string{"nginx", "api_gw"}
+	if len(q.Source.Indices) != len(expected) {
+		t.Fatalf("Indices: got %v, want %v", q.Source.Indices, expected)
+	}
+	for i, want := range expected {
+		if q.Source.Indices[i] != want {
+			t.Errorf("Indices[%d]: got %q, want %q", i, q.Source.Indices[i], want)
+		}
+	}
+}
+
+func TestParse_IndexGlob(t *testing.T) {
+	// index logs* === from logs*
+	q, err := Parse(`index logs* | stats count`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if q.Source == nil {
+		t.Fatal("Source is nil")
+	}
+	if !q.Source.IsGlob {
+		t.Error("expected IsGlob=true")
+	}
+	if q.Source.Index != "logs*" {
+		t.Errorf("Index: got %q, want logs*", q.Source.Index)
+	}
+}
+
+func TestParse_IndexStar(t *testing.T) {
+	// index * === from *
+	q, err := Parse(`index * | stats count`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if q.Source == nil {
+		t.Fatal("Source is nil")
+	}
+	if !q.Source.IsGlob || q.Source.Index != "*" {
+		t.Errorf("expected glob '*', got Index=%q IsGlob=%v", q.Source.Index, q.Source.IsGlob)
+	}
+	if !q.Source.IsAllSources() {
+		t.Error("expected IsAllSources()=true")
+	}
+}
+
+func TestParse_IndexVariable(t *testing.T) {
+	// index $threats === from $threats
+	q, err := Parse(`index $threats | stats count`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if q.Source == nil {
+		t.Fatal("Source is nil")
+	}
+	if !q.Source.IsVariable {
+		t.Error("expected IsVariable=true")
+	}
+	if q.Source.Index != "threats" {
+		t.Errorf("Index: got %q, want threats", q.Source.Index)
+	}
+}
+
+func TestParse_IndexWithWhere(t *testing.T) {
+	// index nginx WHERE status>=500 — WHERE after INDEX (same as FROM ... WHERE)
+	q, err := Parse(`index nginx WHERE status>=500`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if q.Source == nil || q.Source.Index != "nginx" {
+		t.Fatalf("Source: got %v, want nginx", q.Source)
+	}
+	if len(q.Commands) != 1 {
+		t.Fatalf("Commands: got %d, want 1", len(q.Commands))
+	}
+	_, ok := q.Commands[0].(*WhereCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected WhereCommand, got %T", q.Commands[0])
+	}
+}

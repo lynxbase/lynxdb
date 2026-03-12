@@ -11,7 +11,7 @@ type CompatHint struct {
 
 // unsupportedCommands maps Splunk-only commands to their hint messages.
 var unsupportedCommands = map[string]string{
-	"lookup":       "lookup is not yet supported. Consider using JOIN with a dataset.",
+	// Note: "lookup" is NOT listed here — it is a valid Lynx Flow command (desugars to left join).
 	"inputlookup":  "inputlookup is not yet supported. Use FROM $dataset with CTE syntax.",
 	"outputlookup": "outputlookup is not yet supported.",
 	"collect":      "collect is not yet supported.",
@@ -23,7 +23,7 @@ var unsupportedCommands = map[string]string{
 	"addinfo":      "addinfo is not yet supported.",
 	"return":       "return is not yet supported. Use head or fields to limit output.",
 	"format":       "format is not yet supported.",
-	"bucket":       "bucket is a Splunk alias for bin. Use: | bin <field> span=<value>",
+	// Note: "bucket" is NOT listed here — it is a valid Lynx Flow command (desugars to bin).
 	"sistats":      "sistats is not yet supported. Use stats instead.",
 }
 
@@ -67,17 +67,8 @@ func DetectCompatHints(query string) []CompatHint {
 		}
 	}
 
-	// Check for "| bucket" when it's not already caught by unsupportedCommands
-	// (handles the "| bucket" vs "| bin" confusion explicitly).
-	if (strings.Contains(lower, "| bucket") || strings.Contains(lower, "|bucket")) && !strings.Contains(lower, "| bin") {
-		if !seen["bucket"] {
-			seen["bucket"] = true
-			hints = append(hints, CompatHint{
-				Pattern:    "bucket",
-				Suggestion: "In LynxDB, 'bucket' is called 'bin'. Try: | bin <field> span=<value>",
-			})
-		}
-	}
+	// Note: "| bucket" is a valid Lynx Flow command (desugars to bin).
+	// No compat hint needed — both "bucket" and "bin" are supported.
 
 	// Check for Splunk inline time modifiers (earliest=/latest=).
 	if strings.Contains(lower, "earliest=") || strings.Contains(lower, "latest=") {
@@ -160,6 +151,92 @@ func DetectScopeHint(query string, sourceCount int) *CompatHint {
 		Pattern:    "implicit_all_sources",
 		Suggestion: "LynxDB searches all sources by default. Use '_source=nginx' or 'index=nginx' to narrow scope.",
 	}
+}
+
+// lynxFlowHints maps SPL2 command types to Lynx Flow alternatives.
+// Both syntaxes are first-class citizens — these are advisory suggestions only.
+var lynxFlowHints = map[string]string{
+	"eval":           "Lynx Flow: | let <field> = <expr>",
+	"stats":          "Lynx Flow: | group by <fields> compute <aggs>",
+	"fields":         "Lynx Flow: | keep <fields> (include) or | omit <fields> (exclude)",
+	"fields -":       "Lynx Flow: | omit <fields>",
+	"streamstats":    "Lynx Flow: | running [window=N] <aggs> [by <fields>]",
+	"eventstats":     "Lynx Flow: | enrich <aggs> [by <fields>]",
+	"rex":            "Lynx Flow: | parse regex(<field>, \"<pattern>\")",
+	"unpack_json":    "Lynx Flow: | parse json(<field>) [as <ns>] [extract (<fields>)]",
+	"unpack_logfmt":  "Lynx Flow: | parse logfmt(<field>)",
+	"unpack_syslog":  "Lynx Flow: | parse syslog(<field>)",
+	"head":           "Lynx Flow: | take <N>",
+	"bin":            "Lynx Flow: | bucket <field> span=<dur> [as <alias>]",
+	"timechart":      "Lynx Flow: | every <span> [by <field>] compute <aggs>",
+	"sort":           "Lynx Flow: | order by <field> [asc|desc]",
+	"unroll":         "Lynx Flow: | explode <field> [as <alias>]",
+	"pack_json":      "Lynx Flow: | pack <fields> into <target>",
+}
+
+// DetectLynxFlowHints examines a parsed query's commands and returns advisory
+// hints suggesting Lynx Flow equivalents for SPL2 commands. Both syntaxes are
+// first-class citizens — these hints are informational only.
+func DetectLynxFlowHints(cmds []Command) []CompatHint {
+	var hints []CompatHint
+	seen := make(map[string]bool)
+
+	for _, cmd := range cmds {
+		var key string
+		switch c := cmd.(type) {
+		case *EvalCommand:
+			key = "eval"
+		case *StatsCommand:
+			key = "stats"
+		case *FieldsCommand:
+			if c.Remove {
+				key = "fields -"
+			} else {
+				key = "fields"
+			}
+		case *StreamstatsCommand:
+			key = "streamstats"
+		case *EventstatsCommand:
+			key = "eventstats"
+		case *RexCommand:
+			key = "rex"
+		case *UnpackCommand:
+			switch c.Format {
+			case "json":
+				key = "unpack_json"
+			case "logfmt":
+				key = "unpack_logfmt"
+			case "syslog":
+				key = "unpack_syslog"
+			default:
+				// Other formats have no specific Lynx Flow mapping hint.
+			}
+		case *HeadCommand:
+			key = "head"
+		case *BinCommand:
+			key = "bin"
+		case *TimechartCommand:
+			key = "timechart"
+		case *SortCommand:
+			key = "sort"
+		case *UnrollCommand:
+			key = "unroll"
+		case *PackJsonCommand:
+			key = "pack_json"
+		}
+
+		if key != "" && !seen[key] {
+			if suggestion, ok := lynxFlowHints[key]; ok {
+				seen[key] = true
+				hints = append(hints, CompatHint{
+					Pattern:    key,
+					Suggestion: suggestion,
+				})
+			}
+		}
+	}
+
+	return hints
 }
 
 // FormatCompatHints returns a formatted multi-line string of compatibility hints.

@@ -137,7 +137,26 @@ func (l *Lexer) next() (Token, error) {
 		return Token{Type: TokenGt, Literal: ">", Pos: startPos}, nil
 	case ch == '"':
 		return l.readString()
+	case ch == '?':
+		l.pos++
+		if l.pos < len(l.input) && l.input[l.pos] == '?' {
+			l.pos++
+
+			return Token{Type: TokenDoubleQuestion, Literal: "??", Pos: startPos}, nil
+		}
+
+		return Token{Type: TokenQuestionMark, Literal: "?", Pos: startPos}, nil
+	case ch == '%':
+		l.pos++
+
+		return Token{Type: TokenPercent, Literal: "%", Pos: startPos}, nil
 	case ch == '-':
+		// -- line comment: skip to end of line.
+		if l.pos+1 < len(l.input) && l.input[l.pos+1] == '-' {
+			l.skipLineComment()
+
+			return l.next()
+		}
 		// Could be negative number or minus operator.
 		// Negative number: if previous token is an operator, keyword, comma, lparen, or start.
 		if l.pos+1 < len(l.input) && isDigit(l.input[l.pos+1]) && l.isNegativeNumberContext() {
@@ -172,7 +191,8 @@ func (l *Lexer) isNegativeNumberContext() bool {
 	switch prev.Type {
 	case TokenEq, TokenNeq, TokenLt, TokenLte, TokenGt, TokenGte,
 		TokenLParen, TokenComma, TokenPipe, TokenPlus, TokenMinus,
-		TokenSlash, TokenStar, TokenRegexMatch, TokenRegexNotMatch:
+		TokenSlash, TokenStar, TokenPercent, TokenDoubleQuestion,
+		TokenRegexMatch, TokenRegexNotMatch:
 		return true
 	}
 	// After keywords like WHERE, EVAL, etc.
@@ -273,6 +293,13 @@ func (l *Lexer) skipWhitespace() {
 	}
 }
 
+// skipLineComment advances past a -- line comment to the end of the line.
+func (l *Lexer) skipLineComment() {
+	for l.pos < len(l.input) && l.input[l.pos] != '\n' {
+		l.pos++
+	}
+}
+
 func isDigit(ch byte) bool {
 	return ch >= '0' && ch <= '9'
 }
@@ -284,5 +311,5 @@ func isIdentStart(ch byte) bool {
 func isIdentPart(ch byte) bool {
 	r := rune(ch)
 
-	return unicode.IsLetter(r) || unicode.IsDigit(r) || ch == '_' || ch == '-' || ch == '.' || ch == '*' || ch == '?' || ch == ':'
+	return unicode.IsLetter(r) || unicode.IsDigit(r) || ch == '_' || ch == '-' || ch == '.' || ch == '*' || ch == ':'
 }

@@ -237,4 +237,4 @@ curl -s localhost:3100/api/v1/sources | jq .
 - **[`lynxdb fields` CLI command](/docs/cli/shortcuts)** -- field catalog from the command line
 - **[Schema-on-Read](/docs/architecture/storage-engine)** -- how fields are discovered automatically
 - **[Field Extraction guide](/docs/guides/field-extraction)** -- extracting fields at query time with `rex` and `eval`
-- **[Search Syntax](/docs/spl2/search-syntax)** -- using field values in queries
+- **[Search Syntax](/docs/lynx-flow/search-syntax)** -- using field values in queries

@@ -126,7 +126,7 @@ Use JSON functions in `eval` and `where` for precise extraction and validation.
 | table summary
 ```
 
-See the [JSON Functions Reference](/docs/spl2/functions/json-functions) for the complete API.
+See the [JSON Functions Reference](/docs/lynx-flow/functions/json-functions) for the complete API.
 
 ---
 
@@ -236,8 +236,8 @@ cat access.log | lynxdb query '
 
 ## Next steps
 
-- [json command reference](/docs/spl2/commands/json-cmd)
-- [unpack_json reference](/docs/spl2/commands/unpack-json)
-- [unroll reference](/docs/spl2/commands/unroll)
-- [JSON Functions reference](/docs/spl2/functions/json-functions)
+- [json command reference](/docs/lynx-flow/commands/json-cmd)
+- [unpack_json reference](/docs/lynx-flow/commands/unpack-json)
+- [unroll reference](/docs/lynx-flow/commands/unroll)
+- [JSON Functions reference](/docs/lynx-flow/functions/json-functions)
 - [Field Extraction Guide](/docs/guides/field-extraction) -- REX, EVAL, and schema-on-read

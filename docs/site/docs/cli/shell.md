@@ -141,4 +141,4 @@ lynxdb> | stats count by status
 
 - [query](/docs/cli/query) for one-shot queries
 - [Shortcuts](/docs/cli/shortcuts) for quick access commands
-- [SPL2 Overview](/docs/spl2/overview) for the query language reference
+- [Lynx Flow Reference](/docs/lynx-flow/overview) for the query language reference

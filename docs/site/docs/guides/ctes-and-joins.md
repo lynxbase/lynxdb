@@ -5,7 +5,7 @@ description: How to use Common Table Expressions (CTEs), JOIN, APPEND, and MULTI
 
 # CTEs, Joins, and Subsearches
 
-When a single pipeline is not enough, LynxDB supports Common Table Expressions (CTEs), the [`JOIN`](/docs/spl2/commands/join) command, [`APPEND`](/docs/spl2/commands/append), and [`MULTISEARCH`](/docs/spl2/commands/multisearch) for combining data from multiple sources or running multi-step analysis.
+When a single pipeline is not enough, LynxDB supports Common Table Expressions (CTEs), the [`JOIN`](/docs/lynx-flow/commands/join) command, [`APPEND`](/docs/lynx-flow/commands/append), and [`MULTISEARCH`](/docs/lynx-flow/commands/multisearch) for combining data from multiple sources or running multi-step analysis.
 
 ## Common Table Expressions (CTEs)
 
@@ -65,7 +65,7 @@ lynxdb query '
 
 ## JOIN
 
-The [`JOIN`](/docs/spl2/commands/join) command combines events from two datasets based on a shared field.
+The [`JOIN`](/docs/lynx-flow/commands/join) command combines events from two datasets based on a shared field.
 
 ### Inner join
 
@@ -122,7 +122,7 @@ lynxdb query '_source=nginx
 
 ## APPEND
 
-The [`APPEND`](/docs/spl2/commands/append) command concatenates the results of a subsearch to the end of the current result set:
+The [`APPEND`](/docs/lynx-flow/commands/append) command concatenates the results of a subsearch to the end of the current result set:
 
 ```bash
 lynxdb query '_source=nginx status>=500 | stats count AS errors by uri
@@ -150,7 +150,7 @@ lynxdb query '| stats count AS total_events
 
 ## MULTISEARCH
 
-The [`MULTISEARCH`](/docs/spl2/commands/multisearch) command runs multiple independent searches and unions the results:
+The [`MULTISEARCH`](/docs/lynx-flow/commands/multisearch) command runs multiple independent searches and unions the results:
 
 ```bash
 lynxdb query '| MULTISEARCH
@@ -174,7 +174,7 @@ lynxdb query '| MULTISEARCH
 
 ## TRANSACTION
 
-The [`TRANSACTION`](/docs/spl2/commands/transaction) command groups events into transactions (sequences of related events) based on shared field values:
+The [`TRANSACTION`](/docs/lynx-flow/commands/transaction) command groups events into transactions (sequences of related events) based on shared field values:
 
 ```bash
 lynxdb query '_source=api-gateway
@@ -249,7 +249,7 @@ lynxdb query '| MULTISEARCH
 
 - [Search and filter logs](/docs/guides/search-and-filter) -- write effective filters for subsearches
 - [Run aggregations](/docs/guides/aggregations) -- build aggregations for CTE pipelines
-- [JOIN command reference](/docs/spl2/commands/join) -- full JOIN syntax and options
-- [APPEND command reference](/docs/spl2/commands/append) -- full APPEND syntax
-- [MULTISEARCH command reference](/docs/spl2/commands/multisearch) -- full MULTISEARCH syntax
-- [TRANSACTION command reference](/docs/spl2/commands/transaction) -- full TRANSACTION syntax
+- [JOIN command reference](/docs/lynx-flow/commands/join) -- full JOIN syntax and options
+- [APPEND command reference](/docs/lynx-flow/commands/append) -- full APPEND syntax
+- [MULTISEARCH command reference](/docs/lynx-flow/commands/multisearch) -- full MULTISEARCH syntax
+- [TRANSACTION command reference](/docs/lynx-flow/commands/transaction) -- full TRANSACTION syntax

@@ -218,7 +218,7 @@ curl -X POST localhost:3100/api/v1/alerts -d '{
 
 ## Next Steps
 
-- [SPL2 Overview](/docs/spl2/overview) -- learn the full query language
+- [Lynx Flow Reference](/docs/lynx-flow/overview) -- learn the full query language
 - [Quick Start](/docs/getting-started/quickstart) -- get started in 5 minutes
 - [Pipe Mode](/docs/getting-started/pipe-mode) -- query local files without a server
 - [Migration from grep/awk](/docs/migration/from-grep) -- for CLI-first workflows

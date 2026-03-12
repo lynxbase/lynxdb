@@ -82,6 +82,6 @@ lynxdb server --cluster.seeds node1:9400,node2:9400,node3:9400
 ## Next Steps
 
 - **[Quick Start](/docs/getting-started/quickstart)** -- Install and run your first query in 5 minutes
-- **[SPL2 Overview](/docs/spl2/overview)** -- Learn the query language
+- **[Lynx Flow Reference](/docs/lynx-flow/overview)** -- Learn the query language
 - **[CLI Reference](/docs/cli/overview)** -- Explore all commands
 - **[REST API](/docs/api/overview)** -- Integrate with your stack

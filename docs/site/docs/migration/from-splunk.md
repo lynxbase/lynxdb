@@ -219,7 +219,7 @@ curl -X POST localhost:3100/api/v1/dashboards -d '{
 
 ## Next Steps
 
-- [SPL2 Overview](/docs/spl2/overview) -- learn the full SPL2 query language
-- [SPL to SPL2 Migration Guide](/docs/spl2/splunk-migration) -- detailed syntax comparison
+- [Lynx Flow Reference](/docs/lynx-flow/overview) -- learn the full SPL2 query language
+- [SPL to SPL2 Migration Guide](/docs/lynx-flow/splunk-migration) -- detailed syntax comparison
 - [Quick Start](/docs/getting-started/quickstart) -- get started with LynxDB
 - [Alerts](/docs/guides/alerts) -- set up alerting

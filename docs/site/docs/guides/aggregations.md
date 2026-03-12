@@ -5,7 +5,7 @@ description: How to aggregate log data in LynxDB using stats, count, avg, percen
 
 # Run Aggregations
 
-The [`STATS`](/docs/spl2/commands/stats) command is the core of log analytics in LynxDB. It computes aggregation functions over events, optionally grouped by one or more fields. This guide covers all the aggregation patterns you need for day-to-day log analysis.
+The [`STATS`](/docs/lynx-flow/commands/stats) command is the core of log analytics in LynxDB. It computes aggregation functions over events, optionally grouped by one or more fields. This guide covers all the aggregation patterns you need for day-to-day log analysis.
 
 ## Basic counting
 
@@ -111,7 +111,7 @@ Get the first and last value seen (by time):
 lynxdb query '| stats earliest(message) AS first_msg, latest(message) AS last_msg by source'
 ```
 
-See the [aggregation functions reference](/docs/spl2/functions/aggregation-functions) for the complete list.
+See the [aggregation functions reference](/docs/lynx-flow/functions/aggregation-functions) for the complete list.
 
 ---
 
@@ -125,7 +125,7 @@ lynxdb query '_source=nginx | stats count AS total, count(eval(status>=500)) AS 
 
 ### Compute error rates
 
-Combine conditional counting with [`EVAL`](/docs/spl2/commands/eval) to calculate ratios:
+Combine conditional counting with [`EVAL`](/docs/lynx-flow/commands/eval) to calculate ratios:
 
 ```bash
 lynxdb query '_source=nginx
@@ -140,7 +140,7 @@ lynxdb query '_source=nginx
 
 ## Sorting results
 
-Pipe aggregation results into [`SORT`](/docs/spl2/commands/sort) to order them:
+Pipe aggregation results into [`SORT`](/docs/lynx-flow/commands/sort) to order them:
 
 ```bash
 # Sort descending by count (prefix with -)
@@ -157,7 +157,7 @@ lynxdb query '_source=nginx | stats count by status, uri | sort status, -count'
 
 ## Top and rare
 
-The [`TOP`](/docs/spl2/commands/top) and [`RARE`](/docs/spl2/commands/rare) commands are shortcuts for the most and least common values:
+The [`TOP`](/docs/lynx-flow/commands/top) and [`RARE`](/docs/lynx-flow/commands/rare) commands are shortcuts for the most and least common values:
 
 ```bash
 # Top 10 URIs by request count
@@ -191,7 +191,7 @@ lynxdb query 'level=error
 
 ### STREAMSTATS -- running aggregations
 
-[`STREAMSTATS`](/docs/spl2/commands/streamstats) computes running (cumulative) aggregations without collapsing events:
+[`STREAMSTATS`](/docs/lynx-flow/commands/streamstats) computes running (cumulative) aggregations without collapsing events:
 
 ```bash
 lynxdb query '_source=nginx
@@ -201,7 +201,7 @@ lynxdb query '_source=nginx
 
 ### EVENTSTATS -- enrich events with aggregates
 
-[`EVENTSTATS`](/docs/spl2/commands/eventstats) adds aggregation values to each event without collapsing:
+[`EVENTSTATS`](/docs/lynx-flow/commands/eventstats) adds aggregation values to each event without collapsing:
 
 ```bash
 lynxdb query '_source=nginx
@@ -244,5 +244,5 @@ lynxdb query --file access.log '| stats count by status' --format csv | sort -t,
 
 - [Time series analysis](/docs/guides/time-series) -- aggregate over time windows with TIMECHART and BIN
 - [Materialized views](/docs/guides/materialized-views) -- precompute aggregations for repeated queries
-- [STATS command reference](/docs/spl2/commands/stats) -- full syntax and all options
-- [Aggregation functions reference](/docs/spl2/functions/aggregation-functions) -- complete list of aggregation functions
+- [STATS command reference](/docs/lynx-flow/commands/stats) -- full syntax and all options
+- [Aggregation functions reference](/docs/lynx-flow/functions/aggregation-functions) -- complete list of aggregation functions

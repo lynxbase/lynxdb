@@ -11,13 +11,19 @@ var knownCommands = []string{
 	"timechart", "rex", "fields", "table", "dedup", "rename",
 	"bin", "streamstats", "eventstats", "join", "append",
 	"multisearch", "transaction", "xyseries", "top", "rare", "fillnull",
-	"limit", "from", "materialize",
+	"limit", "from", "index", "materialize",
 	"unpack_json", "unpack_logfmt", "unpack_syslog", "unpack_combined",
 	"unpack_clf", "unpack_nginx_error", "unpack_cef", "unpack_kv",
 	"unpack_docker", "unpack_redis", "unpack_apache_error",
 	"unpack_postgres", "unpack_mysql_slow", "unpack_haproxy",
 	"unpack_leef", "unpack_w3c", "unpack_pattern",
 	"json", "unroll", "pack_json",
+	// Lynx Flow commands.
+	"let", "keep", "omit", "select", "group", "every", "bucket",
+	"order", "take", "rank", "topby", "bottomby", "bottom",
+	"running", "enrich", "parse", "explode", "pack", "lookup",
+	"latency", "errors", "rate", "percentiles", "slowest",
+	"views", "dropview",
 }
 
 // knownFunctions is the list of all supported eval/aggregation functions.
@@ -47,6 +53,9 @@ var knownFunctions = []string{
 // "Syntax error at position N" string redundant and shadowing better hints.
 func SuggestFix(errMsg string, knownFields []string) string {
 	// Try each hint generator in priority order.
+	if hint := suggestClauseAsCommand(errMsg); hint != "" {
+		return hint
+	}
 	if hint := suggestUnknownCommand(errMsg); hint != "" {
 		return hint
 	}
@@ -66,6 +75,12 @@ func SuggestFix(errMsg string, knownFields []string) string {
 		return hint
 	}
 	if hint := suggestMissingBy(errMsg); hint != "" {
+		return hint
+	}
+	if hint := suggestParseFormat(errMsg); hint != "" {
+		return hint
+	}
+	if hint := suggestMissingCompute(errMsg); hint != "" {
 		return hint
 	}
 	if hint := suggestEmptyPipeline(errMsg); hint != "" {
@@ -419,6 +434,78 @@ func min3(a, b, c int) int {
 	}
 
 	return c
+}
+
+// suggestClauseAsCommand detects when a Lynx Flow clause keyword (like
+// "compute", "using", "into") is mistakenly used as a standalone command.
+// These keywords only make sense inside their parent commands.
+func suggestClauseAsCommand(errMsg string) string {
+	const prefix = "unexpected command"
+	idx := strings.Index(errMsg, prefix)
+	if idx < 0 {
+		return ""
+	}
+
+	rest := errMsg[idx+len(prefix):]
+	name := extractQuoted(rest)
+	if name == "" {
+		return ""
+	}
+
+	switch strings.ToLower(name) {
+	case "compute":
+		return `"compute" is a clause, not a command. Use: | group [by field] compute count()`
+	case "using":
+		return `"using" is a clause for topby/bottomby. Use: | topby 10 uri using avg(duration_ms)`
+	case "asc", "desc":
+		return fmt.Sprintf(`"%s" is a direction modifier. Use: | order by field %s`, name, strings.ToLower(name))
+	case "if_missing":
+		return `"if_missing" is a modifier for parse. Use: | parse json(_raw) if_missing`
+	case "extract":
+		return `"extract" is a modifier for parse. Use: | parse json(_raw) extract (field1, field2)`
+	case "into":
+		return `"into" is a clause for pack. Use: | pack f1, f2 into target`
+	case "per":
+		return `"per" is a clause for rate. Use: | rate per 5m by service`
+	}
+
+	return ""
+}
+
+// suggestParseFormat detects errors from the Lynx Flow "parse" command when
+// the user provides a format name without parentheses, or when the format is
+// unrecognizable. It suggests known parse formats.
+func suggestParseFormat(errMsg string) string {
+	lower := strings.ToLower(errMsg)
+
+	// "parse: expected '(' after format name" — user may have written: | parse json _raw
+	if strings.Contains(lower, "parse") && strings.Contains(lower, "expected '(' after format") {
+		return "parse requires parentheses around arguments. Example: | parse json(_raw) or | parse regex(_raw, \"pattern\")"
+	}
+
+	// "parse: expected format name" — user may have written: | parse (_raw)
+	if strings.Contains(lower, "parse") && strings.Contains(lower, "expected format name") {
+		return "parse requires a format name. Known formats: json, logfmt, syslog, combined, clf, regex, pattern, " +
+			"nginx_error, cef, kv, docker, redis, apache_error, postgres, mysql_slow, haproxy, leef, w3c"
+	}
+
+	return ""
+}
+
+// suggestMissingCompute detects the "group: expected 'compute'" or "every: expected 'compute'"
+// error and provides a clear suggestion with an example.
+func suggestMissingCompute(errMsg string) string {
+	lower := strings.ToLower(errMsg)
+
+	if strings.Contains(lower, "group") && strings.Contains(lower, "expected 'compute'") {
+		return "group requires a 'compute' clause with aggregations. Example: | group by host compute count() as n"
+	}
+
+	if strings.Contains(lower, "every") && strings.Contains(lower, "expected 'compute'") {
+		return "every requires a 'compute' clause with aggregations. Example: | every 5m compute count()"
+	}
+
+	return ""
 }
 
 // extractQuoted extracts the first double-quoted string from s.

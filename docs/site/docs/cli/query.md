@@ -211,4 +211,4 @@ lynxdb query 'FROM main | stats count' --format json
 - [Output Formats](/docs/cli/output-formats) for details on `--format` options
 - [Shortcuts](/docs/cli/shortcuts) for `count`, `sample`, `last`, and `explain` shortcuts
 - [Interactive Shell](/docs/cli/shell) for the REPL interface
-- [SPL2 Overview](/docs/spl2/overview) for the query language reference
+- [Lynx Flow Reference](/docs/lynx-flow/overview) for the query language reference

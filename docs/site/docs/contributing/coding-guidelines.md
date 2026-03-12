@@ -129,7 +129,7 @@ return &model.APIError{
     Code:       "INVALID_QUERY",
     Message:    "Unknown command 'staats'.",
     Suggestion: "stats",
-    DocsURL:    "https://lynxdb.io/docs/spl2/overview",
+    DocsURL:    "https://lynxdb.io/docs/lynx-flow/overview",
 }
 ```
 

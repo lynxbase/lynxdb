@@ -227,5 +227,5 @@ Run this command when you need a quick reference for SPL2 syntax and patterns.
 
 - [query](/docs/cli/query) for the full query command reference
 - [Real-Time Commands](/docs/cli/tail) for `tail`, `top`, `watch`, and `diff`
-- [SPL2 Overview](/docs/spl2/overview) for the complete query language reference
+- [Lynx Flow Reference](/docs/lynx-flow/overview) for the complete query language reference
 - [Output Formats](/docs/cli/output-formats) for `--format` options

@@ -369,5 +369,5 @@ Variable types:
 
 - **[Dashboards guide](/docs/guides/dashboards)** -- building effective dashboards
 - **[Query API](/docs/api/query)** -- the query engine behind each panel
-- **[SPL2 `timechart` command](/docs/spl2/commands/timechart)** -- time-series queries
+- **[SPL2 `timechart` command](/docs/lynx-flow/commands/timechart)** -- time-series queries
 - **[Fields API](/docs/api/fields)** -- powers template variable dropdowns

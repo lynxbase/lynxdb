@@ -4,7 +4,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'LynxDB',
-  tagline: 'Log analytics in a single binary. Zero dependencies. SPL2 query language.',
+  tagline: 'Log analytics in a single binary. Zero dependencies. Lynx Flow query language.',
   favicon: 'img/favicon.ico',
   url: 'https://docs.lynxdb.org',
   baseUrl: '/',
@@ -103,7 +103,7 @@ const config: Config = {
           position: 'right',
         },
         {
-          href: 'https://discord.gg/lynxdb',
+          href: 'https://discord.gg/RgggCFdgWK',
           label: 'Discord',
           position: 'right',
         },
@@ -120,8 +120,8 @@ const config: Config = {
               to: '/docs/getting-started/quickstart',
             },
             {
-              label: 'SPL2 Reference',
-              to: '/docs/spl2/overview',
+              label: 'Lynx Flow Reference',
+              to: '/docs/lynx-flow/overview',
             },
             {
               label: 'REST API',
@@ -138,7 +138,7 @@ const config: Config = {
           items: [
             {
               label: 'Discord',
-              href: 'https://discord.gg/lynxdb',
+              href: 'https://discord.gg/RgggCFdgWK',
             },
             {
               label: 'GitHub',

@@ -5,11 +5,11 @@ description: How to analyze log data over time using TIMECHART, BIN, time_bucket
 
 # Time Series Analysis
 
-Log analytics often requires understanding trends over time: when do errors spike? Is latency increasing? How does traffic change throughout the day? LynxDB provides [`TIMECHART`](/docs/spl2/commands/timechart), [`BIN`](/docs/spl2/commands/bin), and the `time_bucket()` eval function for time-based aggregation.
+Log analytics often requires understanding trends over time: when do errors spike? Is latency increasing? How does traffic change throughout the day? LynxDB provides [`TIMECHART`](/docs/lynx-flow/commands/timechart), [`BIN`](/docs/lynx-flow/commands/bin), and the `time_bucket()` eval function for time-based aggregation.
 
 ## TIMECHART -- time series aggregation
 
-The [`TIMECHART`](/docs/spl2/commands/timechart) command is the primary tool for time series analysis. It buckets events into time intervals and computes aggregations for each bucket.
+The [`TIMECHART`](/docs/lynx-flow/commands/timechart) command is the primary tool for time series analysis. It buckets events into time intervals and computes aggregations for each bucket.
 
 ### Basic time series
 
@@ -73,7 +73,7 @@ lynxdb query '_source=nginx | timechart count span=5m by status'
 
 ## BIN -- bucket timestamps
 
-The [`BIN`](/docs/spl2/commands/bin) command groups the `_timestamp` field into fixed-size time buckets without aggregating. This is useful when you want to assign events to time windows and then aggregate with `STATS`.
+The [`BIN`](/docs/lynx-flow/commands/bin) command groups the `_timestamp` field into fixed-size time buckets without aggregating. This is useful when you want to assign events to time windows and then aggregate with `STATS`.
 
 ### Basic binning
 
@@ -107,7 +107,7 @@ Use `TIMECHART` for straightforward time series. Use `BIN + STATS` when you need
 
 ## time_bucket() in EVAL and STATS
 
-The `time_bucket()` function works inside [`EVAL`](/docs/spl2/commands/eval) and [`STATS`](/docs/spl2/commands/stats) expressions for fine-grained control.
+The `time_bucket()` function works inside [`EVAL`](/docs/lynx-flow/commands/eval) and [`STATS`](/docs/lynx-flow/commands/stats) expressions for fine-grained control.
 
 ### Use in STATS
 
@@ -223,6 +223,6 @@ lynxdb query 'level=error | timechart count span=1h' --since 7d --format json
 
 - [Run aggregations](/docs/guides/aggregations) -- general aggregation patterns beyond time series
 - [Materialized views](/docs/guides/materialized-views) -- precompute time-bucketed aggregations
-- [TIMECHART command reference](/docs/spl2/commands/timechart) -- full TIMECHART syntax
-- [BIN command reference](/docs/spl2/commands/bin) -- full BIN syntax
-- [Time ranges reference](/docs/spl2/time-ranges) -- all supported time range formats
+- [TIMECHART command reference](/docs/lynx-flow/commands/timechart) -- full TIMECHART syntax
+- [BIN command reference](/docs/lynx-flow/commands/bin) -- full BIN syntax
+- [Time ranges reference](/docs/lynx-flow/time-ranges) -- all supported time range formats
