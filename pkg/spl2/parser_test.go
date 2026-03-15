@@ -1074,6 +1074,46 @@ func TestParse_NotNotAmbiguity(t *testing.T) {
 	}
 }
 
+// --- Implicit WHERE for function calls ---
+
+func TestParse_ImplicitWhereFuncCall(t *testing.T) {
+	// `| isnotnull(field)` should parse as WhereCommand with FuncCallExpr.
+	tests := []struct {
+		name     string
+		input    string
+		wantFunc string
+	}{
+		{"isnotnull", `FROM main | isnotnull(pg.duration_ms)`, "isnotnull"},
+		{"isnull", `FROM main | isnull(pg.duration_ms)`, "isnull"},
+		{"len", `FROM main | len(message) > 0`, ""},  // len() > 0 is a compare expr, not bare func
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.input)
+			if err != nil {
+				t.Fatalf("Parse(%q): %v", tt.input, err)
+			}
+			if len(q.Commands) == 0 {
+				t.Fatal("no commands parsed")
+			}
+			w, ok := q.Commands[len(q.Commands)-1].(*WhereCommand)
+			if !ok {
+				t.Fatalf("last command: expected WhereCommand, got %T", q.Commands[len(q.Commands)-1])
+			}
+			if tt.wantFunc != "" {
+				fc, ok := w.Expr.(*FuncCallExpr)
+				if !ok {
+					t.Fatalf("where expr: expected FuncCallExpr, got %T", w.Expr)
+				}
+				if fc.Name != tt.wantFunc {
+					t.Errorf("func name: got %q, want %q", fc.Name, tt.wantFunc)
+				}
+			}
+		})
+	}
+}
+
 // --- INDEX as alias for FROM ---
 
 func TestParse_IndexBare(t *testing.T) {
@@ -1423,5 +1463,79 @@ func TestParse_StatsMultiplePercentileAliases(t *testing.T) {
 	}
 	if len(stats.GroupBy) != 1 || stats.GroupBy[0] != "service" {
 		t.Errorf("GroupBy: got %v, want [service]", stats.GroupBy)
+	}
+}
+
+func TestParse_FieldsGlobPattern(t *testing.T) {
+	q, err := Parse(`FROM main | fields pg.*, status`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	fc, ok := q.Commands[0].(*FieldsCommand)
+	if !ok {
+		t.Fatalf("expected FieldsCommand, got %T", q.Commands[0])
+	}
+	if len(fc.Fields) != 2 {
+		t.Fatalf("fields count: got %d, want 2", len(fc.Fields))
+	}
+	if fc.Fields[0] != "pg.*" {
+		t.Errorf("fields[0]: got %q, want %q", fc.Fields[0], "pg.*")
+	}
+	if fc.Fields[1] != "status" {
+		t.Errorf("fields[1]: got %q, want %q", fc.Fields[1], "status")
+	}
+	if fc.Remove {
+		t.Error("expected Remove=false")
+	}
+}
+
+func TestParse_FieldsRemoveGlobPattern(t *testing.T) {
+	q, err := Parse(`FROM main | fields - pg.*`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	fc, ok := q.Commands[0].(*FieldsCommand)
+	if !ok {
+		t.Fatalf("expected FieldsCommand, got %T", q.Commands[0])
+	}
+	if len(fc.Fields) != 1 || fc.Fields[0] != "pg.*" {
+		t.Errorf("Fields: got %v, want [pg.*]", fc.Fields)
+	}
+	if !fc.Remove {
+		t.Error("expected Remove=true")
+	}
+}
+
+func TestParse_FieldsStar(t *testing.T) {
+	q, err := Parse(`FROM main | fields *`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	fc, ok := q.Commands[0].(*FieldsCommand)
+	if !ok {
+		t.Fatalf("expected FieldsCommand, got %T", q.Commands[0])
+	}
+	if len(fc.Fields) != 1 || fc.Fields[0] != "*" {
+		t.Errorf("Fields: got %v, want [*]", fc.Fields)
+	}
+}
+
+func TestParse_TableGlobPattern(t *testing.T) {
+	q, err := Parse(`FROM main | table pg.*, http.*`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	tc, ok := q.Commands[0].(*TableCommand)
+	if !ok {
+		t.Fatalf("expected TableCommand, got %T", q.Commands[0])
+	}
+	if len(tc.Fields) != 2 {
+		t.Fatalf("fields count: got %d, want 2", len(tc.Fields))
+	}
+	if tc.Fields[0] != "pg.*" {
+		t.Errorf("fields[0]: got %q, want %q", tc.Fields[0], "pg.*")
+	}
+	if tc.Fields[1] != "http.*" {
+		t.Errorf("fields[1]: got %q, want %q", tc.Fields[1], "http.*")
 	}
 }

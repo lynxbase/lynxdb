@@ -53,6 +53,11 @@ type BufferedSortIterator struct {
 	// Output.
 	merger      SpillMergerI
 	spilledRows int64
+
+	// Columnar fast path state (used when no spill occurs).
+	mergedBatch   *Batch // accumulated columnar data from child batches
+	sortedIndices []int  // permutation index after sort
+	useColumnar   bool   // true when columnar path is active
 }
 
 // dataPageRef tracks a pool page holding a serialized columnar batch.
@@ -230,7 +235,22 @@ func (bs *BufferedSortIterator) Next(ctx context.Context) (*Batch, error) {
 		return bs.merger.NextBatch(bs.batchSize)
 	}
 
-	// In-memory path: emit from sorted bs.rows.
+	// Columnar fast path: emit slices of the sorted permutation.
+	if bs.useColumnar {
+		if bs.offset >= len(bs.sortedIndices) {
+			return nil, nil
+		}
+		end := bs.offset + bs.batchSize
+		if end > len(bs.sortedIndices) {
+			end = len(bs.sortedIndices)
+		}
+		batch := bs.mergedBatch.PermuteSlice(bs.sortedIndices[bs.offset:end])
+		bs.offset = end
+
+		return batch, nil
+	}
+
+	// Row-based in-memory path (fallback after columnar→row degradation).
 	if bs.offset >= len(bs.rows) {
 		return nil, nil
 	}
@@ -295,6 +315,12 @@ func (bs *BufferedSortIterator) materialize(ctx context.Context) error {
 		pn.SetPhase(PhaseBuilding)
 	}
 
+	// Start in columnar mode. Accumulate child batches directly into a
+	// merged columnar buffer. If a spill is triggered, degrade to row path.
+	columnarMode := true
+	bs.mergedBatch = NewBatch(0)
+	var columnarRows int
+
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -305,11 +331,16 @@ func (bs *BufferedSortIterator) materialize(ctx context.Context) error {
 			// Bug fix: when child fails because the shared budget is exhausted,
 			// sort may hold a large spillable buffer. Spill that buffer to free
 			// shared budget capacity, then retry.
-			if stats.IsMemoryExhausted(err) && len(bs.rows) > 0 {
-				if spillErr := bs.spillCurrentBuffer(); spillErr != nil {
-					return fmt.Errorf("buffered_sort.materialize: spill on child budget pressure: %w", spillErr)
+			if stats.IsMemoryExhausted(err) {
+				if columnarMode && columnarRows > 0 {
+					bs.degradeToRowPath()
+					columnarMode = false
 				}
-
+				if len(bs.rows) > 0 {
+					if spillErr := bs.spillCurrentBuffer(); spillErr != nil {
+						return fmt.Errorf("buffered_sort.materialize: spill on child budget pressure: %w", spillErr)
+					}
+				}
 				batch, err = bs.child.Next(ctx)
 				if err != nil {
 					return err
@@ -322,11 +353,31 @@ func (bs *BufferedSortIterator) materialize(ctx context.Context) error {
 			break
 		}
 
-		// Materialize rows one at a time with per-row memory accounting.
-		// This replaces the previous batch-level Grow which would fail when
-		// a batch's total size exceeded the post-spill reservation (e.g.,
-		// 292KB batch vs 256KB reservation), even though individual rows
-		// are much smaller and can be accumulated with intermediate spills.
+		if columnarMode {
+			batchBytes := estimateColumnarBatchBytes(batch)
+			growErr := bs.acct.Grow(batchBytes)
+
+			if growErr != nil {
+				// Budget exceeded — degrade to row path and try spilling.
+				bs.degradeToRowPath()
+				columnarMode = false
+				// Fall through to row-based accumulation for this batch.
+			} else {
+				// Check row count safety valve.
+				if columnarRows+batch.Len > bs.maxSortRows {
+					// Degrade to row path and spill.
+					bs.degradeToRowPath()
+					columnarMode = false
+					// Fall through to row-based accumulation for this batch.
+				} else {
+					bs.mergedBatch.AppendBatch(batch)
+					columnarRows += batch.Len
+					continue
+				}
+			}
+		}
+
+		// Row-based accumulation path (after degradation or for spill support).
 		for i := 0; i < batch.Len; i++ {
 			row := batch.Row(i)
 			rowBytes := estimateRowMapBytes(row)
@@ -348,14 +399,30 @@ func (bs *BufferedSortIterator) materialize(ctx context.Context) error {
 		}
 	}
 
-	// All input consumed. Choose in-memory or external merge path.
+	// All input consumed. Choose sort strategy.
 	hasSpilledRuns := len(bs.runs) > 0 || len(bs.diskRuns) > 0
+
+	if columnarMode && columnarRows > 0 && !hasSpilledRuns {
+		// Columnar fast path: sort via permutation index.
+		if err := bs.sortColumnar(ctx); err != nil {
+			return err
+		}
+		if pn, ok := bs.acct.(PhaseNotifier); ok {
+			pn.SetPhase(PhaseProbing)
+		}
+		bs.sorted = true
+
+		return nil
+	}
+
+	// Clean up unused columnar state.
+	bs.mergedBatch = nil
+
 	if !hasSpilledRuns {
-		// Fast path: sort in-place, no spill occurred.
+		// Row-based in-memory fast path: sort in-place, no spill occurred.
 		if err := bs.sortInPlaceCtx(ctx); err != nil {
 			return err
 		}
-		// Transition to probing phase — producing sorted output.
 		if pn, ok := bs.acct.(PhaseNotifier); ok {
 			pn.SetPhase(PhaseProbing)
 		}
@@ -381,6 +448,70 @@ func (bs *BufferedSortIterator) materialize(ctx context.Context) error {
 	if pn, ok := bs.acct.(PhaseNotifier); ok {
 		pn.SetPhase(PhaseProbing)
 	}
+	bs.sorted = true
+
+	return nil
+}
+
+// degradeToRowPath converts accumulated columnar data to row maps and
+// resets the columnar state. Called when a spill is needed.
+func (bs *BufferedSortIterator) degradeToRowPath() {
+	if bs.mergedBatch == nil || bs.mergedBatch.Len == 0 {
+		bs.mergedBatch = nil
+		return
+	}
+	bs.rows = make([]map[string]event.Value, 0, bs.mergedBatch.Len)
+	for i := 0; i < bs.mergedBatch.Len; i++ {
+		bs.rows = append(bs.rows, bs.mergedBatch.Row(i))
+	}
+	bs.mergedBatch = nil
+}
+
+// sortColumnar sorts the accumulated columnar data using a permutation index.
+func (bs *BufferedSortIterator) sortColumnar(ctx context.Context) error {
+	n := bs.mergedBatch.Len
+	bs.sortedIndices = make([]int, n)
+	for i := range bs.sortedIndices {
+		bs.sortedIndices[i] = i
+	}
+
+	var canceled bool
+	var comparisons int64
+	sort.SliceStable(bs.sortedIndices, func(i, j int) bool {
+		if canceled {
+			return false
+		}
+		comparisons++
+		if comparisons&0x3FF == 0 {
+			select {
+			case <-ctx.Done():
+				canceled = true
+
+				return false
+			default:
+			}
+		}
+		for _, sf := range bs.fields {
+			a := bs.mergedBatch.Value(sf.Name, bs.sortedIndices[i])
+			b := bs.mergedBatch.Value(sf.Name, bs.sortedIndices[j])
+			cmp := vm.CompareValues(a, b)
+			if cmp == 0 {
+				continue
+			}
+			if sf.Desc {
+				return cmp > 0
+			}
+
+			return cmp < 0
+		}
+
+		return false
+	})
+	if canceled {
+		return ctx.Err()
+	}
+
+	bs.useColumnar = true
 	bs.sorted = true
 
 	return nil

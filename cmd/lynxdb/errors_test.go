@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/client"
@@ -79,6 +80,97 @@ func TestQueryErrorUnwrap(t *testing.T) {
 	}
 	if apiErr.Code != client.ErrCodeInvalidQuery {
 		t.Errorf("Code = %q, want %q", apiErr.Code, client.ErrCodeInvalidQuery)
+	}
+}
+
+func TestIsRequiredFlagError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			name: "single flag",
+			err:  fmt.Errorf(`required flag(s) "name" not set`),
+			want: true,
+		},
+		{
+			name: "multiple flags",
+			err:  fmt.Errorf(`required flag(s) "name", "query" not set`),
+			want: true,
+		},
+		{
+			name: "unrelated error",
+			err:  fmt.Errorf("connection refused"),
+			want: false,
+		},
+		{
+			name: "nil error",
+			err:  nil,
+			want: false,
+		},
+		{
+			name: "partial match - has required flag but no not set",
+			err:  fmt.Errorf(`required flag(s) "name"`),
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isRequiredFlagError(tt.err)
+			if got != tt.want {
+				t.Errorf("isRequiredFlagError() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseRequiredFlags(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want []string
+	}{
+		{
+			name: "single flag",
+			err:  fmt.Errorf(`required flag(s) "name" not set`),
+			want: []string{"name"},
+		},
+		{
+			name: "two flags",
+			err:  fmt.Errorf(`required flag(s) "name", "query" not set`),
+			want: []string{"name", "query"},
+		},
+		{
+			name: "four flags",
+			err:  fmt.Errorf(`required flag(s) "bar1", "bar2", "foo1", "foo2" not set`),
+			want: []string{"bar1", "bar2", "foo1", "foo2"},
+		},
+		{
+			name: "nil error",
+			err:  nil,
+			want: nil,
+		},
+		{
+			name: "no quotes",
+			err:  fmt.Errorf("some other error"),
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseRequiredFlags(tt.err)
+			if len(got) != len(tt.want) {
+				t.Fatalf("parseRequiredFlags() = %v (len %d), want %v (len %d)", got, len(got), tt.want, len(tt.want))
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("parseRequiredFlags()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
 	}
 }
 

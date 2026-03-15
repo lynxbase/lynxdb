@@ -1,0 +1,359 @@
+/* ---------------------------------------------------------------------------
+ * SourcesPanel
+ * --------------------------------------------------------------------------- */
+
+.sourcesPanel {
+  display: flex;
+  flex-direction: column;
+  border-block-end: 1px solid var(--border);
+  padding-block-end: 0.25rem;
+}
+
+.sourcesEmpty {
+  padding: 1rem 0.625rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.sectionHeader {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.375rem 0.625rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  inline-size: 100%;
+  text-align: start;
+  font-family: var(--font-sans);
+  transition: background-color 0.08s;
+}
+
+.sectionHeader:hover {
+  background: var(--bg-hover);
+}
+
+.sectionChevron {
+  flex-shrink: 0;
+  inline-size: 12px;
+  block-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.5rem;
+  color: var(--text-muted);
+  transition: transform 0.15s;
+}
+
+.sectionChevronExpanded {
+  transform: rotate(90deg);
+}
+
+.sectionTitle {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.sectionCount {
+  flex-shrink: 0;
+  font-size: 0.625rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sourceList {
+  display: flex;
+  flex-direction: column;
+}
+
+.sourceItem {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.1875rem 0.625rem 0.1875rem 1.375rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  inline-size: 100%;
+  text-align: start;
+  font-family: var(--font-sans);
+  transition: background-color 0.08s;
+}
+
+.sourceItem:hover {
+  background: var(--bg-hover);
+}
+
+.sourceIcon {
+  flex-shrink: 0;
+  font-size: 0.5rem;
+  color: var(--accent);
+}
+
+.sourceIconView {
+  flex-shrink: 0;
+  font-size: 0.5rem;
+  color: #7c3aed;
+}
+
+.sourceName {
+  flex: 1;
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---------------------------------------------------------------------------
+ * PipelinePanel
+ * --------------------------------------------------------------------------- */
+
+.pipelinePanel {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-block-size: 0;
+}
+
+.pipelineSectionHeader {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.375rem 0.625rem;
+  flex-shrink: 0;
+}
+
+.fieldsHero {
+  overflow-y: auto;
+  flex: 1;
+  min-block-size: 0;
+  padding-block-end: 0.25rem;
+  border-block-end: 1px solid var(--border);
+}
+
+.pipelineTree {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  overflow-y: auto;
+  padding-block-end: 0.5rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * StageNode (compact)
+ * --------------------------------------------------------------------------- */
+
+.stageCompact {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  inline-size: 100%;
+  text-align: start;
+  font-family: var(--font-sans);
+  transition: background-color 0.08s;
+}
+
+.stageCompact:hover {
+  background: var(--bg-hover);
+}
+
+.stageCompactSelected {
+  background: var(--bg-tertiary);
+}
+
+.stageCompactCmd {
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
+
+.stageCompactDesc {
+  flex: 1;
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stageNoFields {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  padding: 0.5rem 0.625rem;
+}
+
+/* ---------------------------------------------------------------------------
+ * FieldList
+ * --------------------------------------------------------------------------- */
+
+.fieldList {
+  display: flex;
+  flex-direction: column;
+}
+
+.fieldsSectionHeader {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.25rem;
+  padding: 0.25rem 0.625rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  inline-size: 100%;
+  text-align: start;
+  font-family: var(--font-sans);
+  font-size: 0.625rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.fieldsSectionHeader:hover {
+  color: var(--text-secondary);
+}
+
+/* ---------------------------------------------------------------------------
+ * FieldItem
+ * --------------------------------------------------------------------------- */
+
+.fieldItem {
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.fieldItemAdded {
+  border-inline-start: 2px solid var(--success);
+}
+
+.fieldItemRow {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.1875rem 0.5rem;
+  transition: background-color 0.08s;
+}
+
+.fieldItemRow:hover {
+  background: var(--bg-hover);
+}
+
+.fieldItemRow:hover .fieldMoreBtn {
+  opacity: 1;
+}
+
+.fieldItemName {
+  flex: 1;
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  text-align: start;
+}
+
+.fieldItemName:hover {
+  color: var(--accent);
+}
+
+.fieldTypeLabel {
+  flex-shrink: 0;
+  font-size: 0.625rem;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.fieldMoreBtn {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 1.25rem;
+  block-size: 1.25rem;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 0.875rem;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.1s, background-color 0.08s;
+}
+
+.fieldMoreBtn:hover {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+/* ---------------------------------------------------------------------------
+ * FieldCommandMenu
+ * --------------------------------------------------------------------------- */
+
+.commandMenu {
+  display: flex;
+  flex-direction: column;
+  min-inline-size: 180px;
+  max-inline-size: 260px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+  padding: 0.25rem 0;
+  z-index: 100;
+}
+
+.commandMenuItem {
+  display: flex;
+  align-items: center;
+  padding: 0.3125rem 0.75rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  inline-size: 100%;
+  text-align: start;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  transition: background-color 0.08s;
+}
+
+.commandMenuItem:hover {
+  background: var(--bg-hover);
+  color: var(--accent);
+}
+
+/* ---------------------------------------------------------------------------
+ * Reduced motion
+ * --------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .sectionChevron,
+  .fieldMoreBtn {
+    transition: none;
+  }
+}

@@ -8,7 +8,7 @@ import (
 )
 
 func TestEventBusSubscribePublish(t *testing.T) {
-	bus := NewEventBus()
+	bus := NewEventBus(0)
 
 	id, ch, err := bus.Subscribe()
 	if err != nil {
@@ -41,7 +41,7 @@ func TestEventBusSubscribePublish(t *testing.T) {
 }
 
 func TestEventBusMultipleSubscribers(t *testing.T) {
-	bus := NewEventBus()
+	bus := NewEventBus(0)
 
 	id1, ch1, err := bus.Subscribe()
 	if err != nil {
@@ -75,7 +75,7 @@ func TestEventBusMultipleSubscribers(t *testing.T) {
 }
 
 func TestEventBusUnsubscribe(t *testing.T) {
-	bus := NewEventBus()
+	bus := NewEventBus(0)
 
 	id, ch, err := bus.Subscribe()
 	if err != nil {
@@ -95,7 +95,7 @@ func TestEventBusUnsubscribe(t *testing.T) {
 }
 
 func TestEventBusDropOnFull(t *testing.T) {
-	bus := NewEventBus()
+	bus := NewEventBus(0)
 
 	id, ch, err := bus.Subscribe()
 	if err != nil {
@@ -129,8 +129,7 @@ done:
 }
 
 func TestEventBusMaxSubscribers(t *testing.T) {
-	bus := NewEventBus()
-	bus.maxSubscribers = 2
+	bus := NewEventBus(2)
 
 	id1, _, err := bus.Subscribe()
 	if err != nil {

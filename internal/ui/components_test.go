@@ -138,6 +138,67 @@ func TestRenderConnectionError(t *testing.T) {
 	}
 }
 
+func TestRenderRequiredFlagError_SingleFlag(t *testing.T) {
+	var buf bytes.Buffer
+	theme := NewTheme(&buf, true)
+
+	theme.RenderRequiredFlagError([]string{"name"}, "lynxdb auth create [flags]", "  lynxdb auth create --name web-01")
+	got := buf.String()
+
+	if !strings.Contains(got, "missing required flag: --name") {
+		t.Errorf("should contain 'missing required flag: --name', got: %q", got)
+	}
+
+	if !strings.Contains(got, "Usage:") {
+		t.Errorf("should contain 'Usage:', got: %q", got)
+	}
+
+	if !strings.Contains(got, "lynxdb auth create [flags]") {
+		t.Errorf("should contain usage line, got: %q", got)
+	}
+
+	if !strings.Contains(got, "Examples:") {
+		t.Errorf("should contain 'Examples:', got: %q", got)
+	}
+}
+
+func TestRenderRequiredFlagError_MultipleFlags(t *testing.T) {
+	var buf bytes.Buffer
+	theme := NewTheme(&buf, true)
+
+	theme.RenderRequiredFlagError([]string{"name", "query"}, "lynxdb alerts create [flags]", "")
+	got := buf.String()
+
+	if !strings.Contains(got, "missing required flags: --name, --query") {
+		t.Errorf("should contain 'missing required flags: --name, --query', got: %q", got)
+	}
+
+	// No example provided, should not contain Examples header.
+	if strings.Contains(got, "Examples:") {
+		t.Errorf("should not contain 'Examples:' when example is empty, got: %q", got)
+	}
+}
+
+func TestRenderRequiredFlagError_NoUsageOrExample(t *testing.T) {
+	var buf bytes.Buffer
+	theme := NewTheme(&buf, true)
+
+	theme.RenderRequiredFlagError([]string{"url"}, "", "")
+	got := buf.String()
+
+	if !strings.Contains(got, "missing required flag: --url") {
+		t.Errorf("should contain 'missing required flag: --url', got: %q", got)
+	}
+
+	if strings.Contains(got, "Usage:") {
+		t.Errorf("should not contain 'Usage:' when usage line is empty, got: %q", got)
+	}
+
+	if strings.Contains(got, "Examples:") {
+		t.Errorf("should not contain 'Examples:' when example is empty, got: %q", got)
+	}
+}
+
 func TestRenderQueryError(t *testing.T) {
 	var buf bytes.Buffer
 	theme := NewTheme(&buf, true)

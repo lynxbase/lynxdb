@@ -20,6 +20,14 @@ type RedisParser struct{}
 // Name returns the parser format name.
 func (p *RedisParser) Name() string { return "redis" }
 
+// DeclareFields declares the fields produced by the Redis parser.
+func (p *RedisParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{
+		Known:    []string{"pid", "role_char", "timestamp", "level_char", "message"},
+		Optional: []string{"role", "level"},
+	}
+}
+
 // roleMap maps Redis single-character roles to human-readable names.
 var roleMap = map[byte]string{
 	'M': "master",

@@ -22,6 +22,14 @@ type MySQLSlowParser struct{}
 // Name returns the parser format name.
 func (p *MySQLSlowParser) Name() string { return "mysql_slow" }
 
+// DeclareFields declares the fields produced by the MySQL slow query parser.
+func (p *MySQLSlowParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{
+		Known:    []string{"timestamp", "user", "host", "client_ip", "connection_id", "query_time", "lock_time", "rows_sent", "rows_examined", "statement"},
+		Optional: []string{"schema"},
+	}
+}
+
 // Parse extracts fields from a MySQL slow query log entry.
 func (p *MySQLSlowParser) Parse(input string, emit func(key string, val event.Value) bool) error {
 	s := strings.TrimSpace(input)

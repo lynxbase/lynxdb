@@ -33,6 +33,9 @@ func (s *Server) handleTail(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+	if !s.checkQueryLength(w, q) {
+		return
+	}
 
 	count := 100
 	if v := r.URL.Query().Get("count"); v != "" {

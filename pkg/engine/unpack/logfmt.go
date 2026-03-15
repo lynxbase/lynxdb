@@ -11,6 +11,11 @@ type LogfmtParser struct{}
 // Name returns the parser format name.
 func (p *LogfmtParser) Name() string { return "logfmt" }
 
+// DeclareFields declares the fields produced by the logfmt parser.
+func (p *LogfmtParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{Dynamic: true}
+}
+
 // Parse scans input for key=value pairs and calls emit for each.
 // Supports: unquoted values, double-quoted values, and empty values (key=).
 func (p *LogfmtParser) Parse(input string, emit func(key string, val event.Value) bool) error {

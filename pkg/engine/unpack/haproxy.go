@@ -22,6 +22,14 @@ type HAProxyParser struct{}
 // Name returns the parser format name.
 func (p *HAProxyParser) Name() string { return "haproxy" }
 
+// DeclareFields declares the fields produced by the HAProxy parser.
+func (p *HAProxyParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{
+		Known:    []string{"client_ip", "client_port", "timestamp", "frontend", "backend", "tq", "tw", "tc", "tr", "tt", "status", "bytes", "term_state"},
+		Optional: []string{"server", "actconn", "feconn", "beconn", "srv_conn", "retries", "method", "uri", "protocol"},
+	}
+}
+
 // Parse extracts fields from an HAProxy HTTP log line.
 func (p *HAProxyParser) Parse(input string, emit func(key string, val event.Value) bool) error {
 	s := strings.TrimSpace(input)

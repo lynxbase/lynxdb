@@ -146,6 +146,15 @@ func (r *columnPruningRule) Description() string {
 
 // Apply is implemented in columns.go
 
+type unpackFieldPruningRule struct{}
+
+func (r *unpackFieldPruningRule) Name() string { return "UnpackFieldPruning" }
+func (r *unpackFieldPruningRule) Description() string {
+	return "Restricts unpack field extraction to only downstream-consumed fields"
+}
+
+// Apply is implemented in columns.go
+
 type filterPushdownIntoJoinRule struct{}
 
 func (r *filterPushdownIntoJoinRule) Name() string { return "FilterPushdownIntoJoin" }
@@ -478,10 +487,10 @@ func (r *columnStatsPruningRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 	}
 
 	// Remove predicates that reference pipeline-generated fields.
-	if len(generatedFields) > 0 {
+	if !generatedFields.empty() {
 		filtered := preds[:0]
 		for _, p := range preds {
-			if !generatedFields[p.Field] {
+			if !generatedFields.contains(p.Field) {
 				filtered = append(filtered, p)
 			}
 		}
@@ -496,77 +505,106 @@ func (r *columnStatsPruningRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 	return q, true
 }
 
+// generatedFieldsInfo holds explicitly known generated field names and
+// prefixes from schema-on-read operators (UnpackCommand with no Fields list).
+type generatedFieldsInfo struct {
+	names    map[string]bool // explicit field names
+	prefixes []string        // prefixes from unpack (e.g., "pg.", "j.")
+}
+
+// contains returns true if the field is generated — either by exact name
+// match or by matching a prefix from a schema-on-read operator.
+func (g *generatedFieldsInfo) contains(field string) bool {
+	if g.names[field] {
+		return true
+	}
+	for _, prefix := range g.prefixes {
+		if strings.HasPrefix(field, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// empty returns true if no generated fields were collected.
+func (g *generatedFieldsInfo) empty() bool {
+	return len(g.names) == 0 && len(g.prefixes) == 0
+}
+
 // collectGeneratedFields walks all commands and returns a set of field names
-// that are created by pipeline operators (not present in segment data).
-// These fields must be excluded from segment-level predicate pushdown.
-func collectGeneratedFields(q *spl2.Query) map[string]bool {
-	gen := make(map[string]bool)
+// and prefixes that are created by pipeline operators (not present in segment
+// data). These fields must be excluded from segment-level predicate pushdown.
+func collectGeneratedFields(q *spl2.Query) *generatedFieldsInfo {
+	info := &generatedFieldsInfo{names: make(map[string]bool)}
 	for _, cmd := range q.Commands {
 		switch c := cmd.(type) {
 		case *spl2.StreamstatsCommand:
 			for _, agg := range c.Aggregations {
 				if agg.Alias != "" {
-					gen[agg.Alias] = true
+					info.names[agg.Alias] = true
 				}
 			}
 		case *spl2.EventstatsCommand:
 			for _, agg := range c.Aggregations {
 				if agg.Alias != "" {
-					gen[agg.Alias] = true
+					info.names[agg.Alias] = true
 				}
 			}
 		case *spl2.EvalCommand:
 			if c.Field != "" {
-				gen[c.Field] = true
+				info.names[c.Field] = true
 			}
 			for _, a := range c.Assignments {
-				gen[a.Field] = true
+				info.names[a.Field] = true
 			}
 		case *spl2.RexCommand:
 			// REX generates fields from named capture groups in the pattern.
 			// Go supports both (?P<name>...) and (?<name>...) syntax.
 			for _, name := range extractNamedGroups(c.Pattern) {
-				gen[name] = true
+				info.names[name] = true
 			}
 		case *spl2.BinCommand:
 			if c.Alias != "" {
-				gen[c.Alias] = true
+				info.names[c.Alias] = true
 			}
 			// BIN without alias overwrites the field — but it exists in
 			// segments already, so we don't mark it as generated.
 		case *spl2.RenameCommand:
 			for _, r := range c.Renames {
-				gen[r.New] = true
+				info.names[r.New] = true
 			}
 		case *spl2.UnpackCommand:
-			// Unpack generates fields from the parsed format. If Fields is
-			// specified, only those are generated. Otherwise, the exact fields
-			// are unknown at optimization time (schema-on-read), so none are
-			// marked conservatively — predicates referencing unpack-generated
-			// fields won't be pushed down, which is correct (the segment
-			// doesn't have them).
-			for _, f := range c.Fields {
-				name := f
-				if c.Prefix != "" {
-					name = c.Prefix + f
+			// Unpack generates fields from the parsed format. When Fields is
+			// specified, the exact output names are known. When Fields is empty
+			// (schema-on-read — the common case), the exact field set is unknown
+			// at optimization time. If the command has a Prefix, we record it so
+			// any field starting with that prefix is treated as generated.
+			if len(c.Fields) > 0 {
+				for _, f := range c.Fields {
+					name := f
+					if c.Prefix != "" {
+						name = c.Prefix + f
+					}
+					info.names[name] = true
 				}
-				gen[name] = true
+			} else if c.Prefix != "" {
+				info.prefixes = append(info.prefixes, c.Prefix)
 			}
 		case *spl2.JsonCommand:
 			// Like unpack, json generates fields dynamically. If Paths are
 			// specified, mark the output names (alias or path) as generated.
 			for _, p := range c.Paths {
-				gen[p.OutputName()] = true
+				info.names[p.OutputName()] = true
 			}
 		case *spl2.UnrollCommand:
 			// Unroll explodes a JSON array field into multiple rows and generates
 			// dot-notation fields from object elements (e.g., items.sku, items.qty).
 			// The exact generated field names are unknown at optimization time,
 			// so the source field is marked as generated (it's replaced with element values).
-			gen[c.Field] = true
+			info.names[c.Field] = true
 		}
 	}
-	return gen
+	return info
 }
 
 // extractNamedGroups returns the names of named capture groups from a regex

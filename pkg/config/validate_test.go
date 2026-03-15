@@ -31,6 +31,11 @@ func TestValidateTopLevel(t *testing.T) {
 			"retention: must not be negative",
 		},
 		{
+			"invalid listen address",
+			func(c *Config) { c.Listen = "not-a-valid-address" },
+			"listen: must be a valid host:port address",
+		},
+		{
 			"invalid log level",
 			func(c *Config) { c.LogLevel = "verbose" },
 			"log_level: must be debug, info, warn, or error",
@@ -145,6 +150,7 @@ func TestValidateHTTP(t *testing.T) {
 	}{
 		{"zero idle timeout", func(h *HTTPConfig) { h.IdleTimeout = 0 }, "http.idle_timeout"},
 		{"zero shutdown timeout", func(h *HTTPConfig) { h.ShutdownTimeout = 0 }, "http.shutdown_timeout"},
+		{"negative read_header_timeout", func(h *HTTPConfig) { h.ReadHeaderTimeout = -time.Second }, "http.read_header_timeout"},
 		// F9: RateLimit validation
 		{"negative rate_limit", func(h *HTTPConfig) { h.RateLimit = -1.0 }, "http.rate_limit"},
 	}

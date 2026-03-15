@@ -1,6 +1,9 @@
 package spl2
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // Program represents a full SPL2 program with optional CTEs and a main query.
 type Program struct {
@@ -702,6 +705,21 @@ type TopNCommand struct {
 func (*TopNCommand) commandNode() {}
 func (c *TopNCommand) String() string {
 	return fmt.Sprintf("topn %d <%d fields>", c.Limit, len(c.Fields))
+}
+
+// ContainsGlobWildcard reports whether s contains glob wildcard characters.
+func ContainsGlobWildcard(s string) bool {
+	return strings.ContainsAny(s, "*?")
+}
+
+// FieldListHasGlob returns true if any field in the list contains a glob wildcard.
+func FieldListHasGlob(fields []string) bool {
+	for _, f := range fields {
+		if ContainsGlobWildcard(f) {
+			return true
+		}
+	}
+	return false
 }
 
 // AggExpr represents an aggregation expression: func(args) [as alias].

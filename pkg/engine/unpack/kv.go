@@ -25,6 +25,11 @@ type KVParser struct {
 // Name returns the parser format name.
 func (p *KVParser) Name() string { return "kv" }
 
+// DeclareFields declares the fields produced by the KV parser.
+func (p *KVParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{Dynamic: true}
+}
+
 // defaults fills in zero-value config with sensible defaults.
 func (p *KVParser) defaults() (delim, assign, quote byte) {
 	delim = p.Delim

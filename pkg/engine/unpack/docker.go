@@ -21,6 +21,14 @@ type DockerParser struct {
 // Name returns the parser format name.
 func (p *DockerParser) Name() string { return "docker" }
 
+// DeclareFields declares the fields produced by the Docker json-file parser.
+func (p *DockerParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{
+		Known:   []string{"log", "stream", "time"},
+		Dynamic: true,
+	}
+}
+
 // Parse extracts fields from Docker json-file log line.
 // The "log" field has trailing \n stripped. All other fields pass through
 // with standard JSON type inference (booleans, numbers, nested objects).

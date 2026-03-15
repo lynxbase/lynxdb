@@ -23,6 +23,9 @@ func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+	if !s.checkQueryLength(w, query) {
+		return
+	}
 
 	start := time.Now()
 

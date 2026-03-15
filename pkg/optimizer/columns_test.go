@@ -219,3 +219,228 @@ func TestComputeRequiredColumns_Rename(t *testing.T) {
 		t.Error("expected src")
 	}
 }
+
+// TestColumnPruning_GlobWithUnpackPrefix tests that a glob pattern like "pg.*"
+// does NOT disable column pruning when an upstream UnpackCommand generates
+// fields with the matching prefix "pg.".
+func TestColumnPruning_GlobWithUnpackPrefix(t *testing.T) {
+	// Pipeline: search log_type="postgres" | parse postgres(message) as pg | keep pg.*
+	// The glob "pg.*" matches the unpack prefix "pg." — column pruning should
+	// remain active and only require segment columns (_time, _raw, log_type, message).
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.SearchCommand{
+				Expression: &spl2.SearchCompareExpr{
+					Field: "log_type",
+					Op:    spl2.OpEq,
+					Value: "postgres",
+				},
+			},
+			&spl2.UnpackCommand{
+				Format:      "postgres",
+				SourceField: "message",
+				Prefix:      "pg.",
+			},
+			&spl2.FieldsCommand{Fields: []string{"pg.*"}},
+		},
+	}
+
+	cols := computeRequiredColumns(q)
+	if cols == nil {
+		t.Fatal("expected column pruning to remain active (non-nil), got nil (disabled)")
+	}
+
+	colMap := make(map[string]bool, len(cols))
+	for _, c := range cols {
+		colMap[c] = true
+	}
+
+	// Should include base columns needed by the pipeline.
+	if !colMap["_time"] {
+		t.Error("expected _time in required columns")
+	}
+	if !colMap["_raw"] {
+		t.Error("expected _raw in required columns")
+	}
+	if !colMap["message"] {
+		t.Error("expected message (unpack source field) in required columns")
+	}
+	if !colMap["log_type"] {
+		t.Error("expected log_type (search filter field) in required columns")
+	}
+
+	// Should NOT include "*" (glob sentinel).
+	if colMap["*"] {
+		t.Error("cols should not contain '*' sentinel when glob matches unpack prefix")
+	}
+}
+
+// TestColumnPruning_GlobWithoutUnpackPrefix tests that a bare glob like "*"
+// or "foo.*" without a matching UnpackCommand still disables column pruning.
+func TestColumnPruning_GlobWithoutUnpackPrefix(t *testing.T) {
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.FieldsCommand{Fields: []string{"foo.*"}},
+		},
+	}
+
+	cols := computeRequiredColumns(q)
+	if cols != nil {
+		t.Errorf("expected nil (pruning disabled for unresolvable glob), got %v", cols)
+	}
+}
+
+// TestColumnPruning_GlobMixedWithUnpackPrefix tests a FIELDS command with both
+// a glob matching an unpack prefix and a plain field.
+func TestColumnPruning_GlobMixedWithUnpackPrefix(t *testing.T) {
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.UnpackCommand{
+				Format:      "json",
+				SourceField: "_raw",
+				Prefix:      "j.",
+			},
+			&spl2.FieldsCommand{Fields: []string{"j.*", "host"}},
+		},
+	}
+
+	cols := computeRequiredColumns(q)
+	if cols == nil {
+		t.Fatal("expected column pruning to remain active, got nil")
+	}
+
+	colMap := make(map[string]bool, len(cols))
+	for _, c := range cols {
+		colMap[c] = true
+	}
+
+	if !colMap["host"] {
+		t.Error("expected host in required columns")
+	}
+	if !colMap["_raw"] {
+		t.Error("expected _raw in required columns (unpack source)")
+	}
+}
+
+// TestUnpackFieldPruning_BasicPrefixed tests that the UnpackFieldPruning rule
+// restricts extraction to only downstream-consumed fields.
+func TestUnpackFieldPruning_BasicPrefixed(t *testing.T) {
+	// Pipeline: | parse json(_raw) as j | where j.status >= 500 | table j.status, j.uri
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.UnpackCommand{
+				Format:      "json",
+				SourceField: "_raw",
+				Prefix:      "j.",
+			},
+			&spl2.WhereCommand{
+				Expr: &spl2.CompareExpr{
+					Left:  &spl2.FieldExpr{Name: "j.status"},
+					Op:    ">=",
+					Right: &spl2.LiteralExpr{Value: "500"},
+				},
+			},
+			&spl2.TableCommand{Fields: []string{"j.status", "j.uri"}},
+		},
+	}
+
+	opt := New()
+	result := opt.Optimize(q)
+
+	if opt.Stats["UnpackFieldPruning"] == 0 {
+		t.Fatal("UnpackFieldPruning rule should have fired")
+	}
+
+	// Find the UnpackCommand and check its Fields.
+	for _, cmd := range result.Commands {
+		if u, ok := cmd.(*spl2.UnpackCommand); ok {
+			if len(u.Fields) == 0 {
+				t.Fatal("UnpackCommand.Fields should be non-empty after pruning")
+			}
+			fieldMap := make(map[string]bool, len(u.Fields))
+			for _, f := range u.Fields {
+				fieldMap[f] = true
+			}
+			if !fieldMap["status"] {
+				t.Error("expected 'status' in UnpackCommand.Fields")
+			}
+			if !fieldMap["uri"] {
+				t.Error("expected 'uri' in UnpackCommand.Fields")
+			}
+			return
+		}
+	}
+	t.Fatal("UnpackCommand not found in optimized query")
+}
+
+// TestUnpackFieldPruning_NoPrefix_Skipped tests that unpacks without a prefix
+// are not optimized (can't distinguish unpack fields from segment fields).
+func TestUnpackFieldPruning_NoPrefix_Skipped(t *testing.T) {
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.UnpackCommand{
+				Format:      "json",
+				SourceField: "_raw",
+				Prefix:      "", // no prefix
+			},
+			&spl2.TableCommand{Fields: []string{"status", "uri"}},
+		},
+	}
+
+	opt := New()
+	opt.Optimize(q)
+
+	if opt.Stats["UnpackFieldPruning"] != 0 {
+		t.Error("UnpackFieldPruning should NOT fire for prefix-less unpack")
+	}
+}
+
+// TestUnpackFieldPruning_GlobDownstream_Skipped tests that the rule does NOT
+// fire when downstream uses glob patterns (can't enumerate fields).
+func TestUnpackFieldPruning_GlobDownstream_Skipped(t *testing.T) {
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.UnpackCommand{
+				Format:      "postgres",
+				SourceField: "message",
+				Prefix:      "pg.",
+			},
+			&spl2.FieldsCommand{Fields: []string{"pg.*"}},
+		},
+	}
+
+	opt := New()
+	opt.Optimize(q)
+
+	if opt.Stats["UnpackFieldPruning"] != 0 {
+		t.Error("UnpackFieldPruning should NOT fire when downstream uses glob")
+	}
+}
+
+// TestGlobMatchesUnpackPrefix tests the glob matching helper.
+func TestGlobMatchesUnpackPrefix(t *testing.T) {
+	tests := []struct {
+		fields   []string
+		prefixes map[string]bool
+		want     bool
+	}{
+		{[]string{"pg.*"}, map[string]bool{"pg.": true}, true},
+		{[]string{"j.*"}, map[string]bool{"j.": true}, true},
+		{[]string{"pg.*", "j.*"}, map[string]bool{"pg.": true, "j.": true}, true},
+		{[]string{"pg.*"}, map[string]bool{"j.": true}, false},            // no matching prefix
+		{[]string{"pg.*", "j.*"}, map[string]bool{"pg.": true}, false},    // j.* not covered
+		{[]string{"*"}, map[string]bool{"pg.": true}, false},              // bare * not a prefix glob
+		{[]string{"pg.*"}, map[string]bool{}, false},                      // no prefixes
+		{[]string{"pg.*"}, nil, false},                                    // nil prefixes
+		{[]string{"host"}, map[string]bool{"pg.": true}, true},           // non-glob field → skip, all globs covered (vacuously)
+		{[]string{"host", "pg.*"}, map[string]bool{"pg.": true}, true},   // non-glob + covered glob
+	}
+
+	for _, tt := range tests {
+		got := globMatchesUnpackPrefix(tt.fields, tt.prefixes)
+		if got != tt.want {
+			t.Errorf("globMatchesUnpackPrefix(%v, %v) = %v, want %v",
+				tt.fields, tt.prefixes, got, tt.want)
+		}
+	}
+}

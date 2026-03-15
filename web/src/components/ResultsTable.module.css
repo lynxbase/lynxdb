@@ -1,0 +1,89 @@
+.wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+
+.headerRow {
+  display: flex;
+  flex-direction: row;
+  flex-shrink: 0;
+  border-block-end: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.headerCell {
+  flex: 0 0 auto;
+  padding: 0.375rem 0.75rem;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.viewport {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: auto;
+  position: relative;
+}
+
+.scrollContent {
+  position: relative;
+}
+
+.row {
+  display: flex;
+  flex-direction: row;
+  position: absolute;
+  inline-size: 100%;
+  block-size: 28px;
+  align-items: center;
+  cursor: pointer;
+  transition: background-color 0.08s;
+}
+
+.row:hover {
+  background: var(--bg-hover);
+}
+
+.rowSelected {
+  background: rgba(79, 70, 229, 0.08);
+}
+
+.rowSelected:hover {
+  background: rgba(79, 70, 229, 0.12);
+}
+
+.cell {
+  flex: 0 0 auto;
+  padding: 0 0.75rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-primary);
+  line-height: 28px;
+}
+
+.cellTime {
+  color: var(--text-secondary);
+}
+
+.empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  padding: 3rem 1rem;
+}

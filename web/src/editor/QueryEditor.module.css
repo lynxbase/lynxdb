@@ -1,0 +1,11 @@
+.editorWrap {
+  flex: 1;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+
+.editorWrap:focus-within {
+  border-color: var(--accent);
+}

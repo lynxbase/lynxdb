@@ -3,6 +3,7 @@ package rest
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"sort"
 	"time"
@@ -25,6 +26,9 @@ func (s *Server) handleQueryGet(w http.ResponseWriter, r *http.Request) {
 	if q == "" {
 		respondError(w, ErrCodeValidationError, http.StatusBadRequest, "query parameter 'q' is required")
 
+		return
+	}
+	if !s.checkQueryLength(w, q) {
 		return
 	}
 	limit := parseIntParam(r, "limit", 0)
@@ -59,6 +63,9 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 	if query == "" {
 		respondError(w, ErrCodeValidationError, http.StatusBadRequest, "query is required")
 
+		return
+	}
+	if !s.checkQueryLength(w, query) {
 		return
 	}
 
@@ -115,6 +122,19 @@ func clampLimit(limit int, cfg config.QueryConfig) int {
 	}
 
 	return limit
+}
+
+// checkQueryLength validates that the query string doesn't exceed the configured
+// maximum length. Returns true if the query is within limits. On failure, writes
+// a 400 error response and returns false.
+func (s *Server) checkQueryLength(w http.ResponseWriter, q string) bool {
+	maxLen := s.queryCfg.MaxQueryLength
+	if maxLen > 0 && len(q) > maxLen {
+		respondError(w, ErrCodeQueryTooLarge, http.StatusBadRequest,
+			fmt.Sprintf("query length %d exceeds maximum allowed length of %d bytes", len(q), maxLen))
+		return false
+	}
+	return true
 }
 
 // handlePlanError maps domain errors to HTTP responses.

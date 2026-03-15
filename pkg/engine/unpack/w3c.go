@@ -47,6 +47,16 @@ func NewW3CParser(header string) *W3CParser {
 // Name returns the parser format name.
 func (p *W3CParser) Name() string { return "w3c" }
 
+// DeclareFields declares the fields produced by this W3C parser instance.
+func (p *W3CParser) DeclareFields() FieldDeclaration {
+	if len(p.fields) == 0 {
+		return FieldDeclaration{Dynamic: true}
+	}
+	names := make([]string, len(p.fields))
+	copy(names, p.fields)
+	return FieldDeclaration{Known: names}
+}
+
 // Parse extracts fields from a W3C Extended Log Format line.
 // Comment lines starting with '#' are used to update the field list.
 // Data lines are split by whitespace and matched positionally to field names.

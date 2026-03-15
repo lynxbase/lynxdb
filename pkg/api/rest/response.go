@@ -32,6 +32,7 @@ const (
 	ErrCodeInternalError       ErrorCode = "INTERNAL_ERROR"
 	ErrCodeQueryMemoryExceeded ErrorCode = "QUERY_MEMORY_EXCEEDED"
 	ErrCodeQueryPoolExhausted  ErrorCode = "QUERY_POOL_EXHAUSTED"
+	ErrCodeQueryTooLarge       ErrorCode = "QUERY_TOO_LARGE"
 )
 
 // errorBody is the structured error envelope.

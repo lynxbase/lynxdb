@@ -87,6 +87,7 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("data_dir", cfg.DataDir, dflt.DataDir, fileCfg.DataDir, "LYNXDB_DATA_DIR")
 	add("retention", cfg.Retention.String(), dflt.Retention.String(), fileCfg.Retention.String(), "LYNXDB_RETENTION")
 	add("log_level", cfg.LogLevel, dflt.LogLevel, fileCfg.LogLevel, "LYNXDB_LOG_LEVEL")
+	add("no_ui", strconv.FormatBool(cfg.NoUI), strconv.FormatBool(dflt.NoUI), strconv.FormatBool(fileCfg.NoUI), "LYNXDB_NO_UI")
 
 	// Storage.
 	add("storage.compression", cfg.Storage.Compression, dflt.Storage.Compression, fileCfg.Storage.Compression, "LYNXDB_STORAGE_COMPRESSION")
@@ -136,6 +137,7 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("query.dedup_exact", strconv.FormatBool(cfg.Query.DedupExact), strconv.FormatBool(dflt.Query.DedupExact), strconv.FormatBool(fileCfg.Query.DedupExact), "LYNXDB_QUERY_DEDUP_EXACT")
 	add("query.slow_query_threshold_ms", strconv.FormatInt(cfg.Query.SlowQueryThresholdMs, 10), strconv.FormatInt(dflt.Query.SlowQueryThresholdMs, 10), strconv.FormatInt(fileCfg.Query.SlowQueryThresholdMs, 10), "LYNXDB_QUERY_SLOW_QUERY_THRESHOLD_MS")
 	add("query.max_branch_parallelism", strconv.Itoa(cfg.Query.MaxBranchParallelism), strconv.Itoa(dflt.Query.MaxBranchParallelism), strconv.Itoa(fileCfg.Query.MaxBranchParallelism), "LYNXDB_QUERY_MAX_BRANCH_PARALLELISM")
+	add("query.max_query_length", strconv.Itoa(cfg.Query.MaxQueryLength), strconv.Itoa(dflt.Query.MaxQueryLength), strconv.Itoa(fileCfg.Query.MaxQueryLength), "LYNXDB_QUERY_MAX_QUERY_LENGTH")
 
 	// Ingest.
 	add("ingest.max_body_size", cfg.Ingest.MaxBodySize.String(), dflt.Ingest.MaxBodySize.String(), fileCfg.Ingest.MaxBodySize.String(), "LYNXDB_INGEST_MAX_BODY_SIZE")
@@ -147,6 +149,7 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	// HTTP.
 	durationEntry("http.idle_timeout", cfg.HTTP.IdleTimeout, dflt.HTTP.IdleTimeout, fileCfg.HTTP.IdleTimeout, "LYNXDB_HTTP_IDLE_TIMEOUT")
 	durationEntry("http.shutdown_timeout", cfg.HTTP.ShutdownTimeout, dflt.HTTP.ShutdownTimeout, fileCfg.HTTP.ShutdownTimeout, "LYNXDB_HTTP_SHUTDOWN_TIMEOUT")
+	durationEntry("http.read_header_timeout", cfg.HTTP.ReadHeaderTimeout, dflt.HTTP.ReadHeaderTimeout, fileCfg.HTTP.ReadHeaderTimeout, "LYNXDB_HTTP_READ_HEADER_TIMEOUT")
 	add("http.rate_limit", fmt.Sprintf("%.2f", cfg.HTTP.RateLimit), fmt.Sprintf("%.2f", dflt.HTTP.RateLimit), fmt.Sprintf("%.2f", fileCfg.HTTP.RateLimit), "LYNXDB_HTTP_RATE_LIMIT")
 
 	// Tail.
@@ -169,6 +172,8 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("views.max_backfill_memory_bytes", cfg.Views.MaxBackfillMemoryBytes.String(), dflt.Views.MaxBackfillMemoryBytes.String(), fileCfg.Views.MaxBackfillMemoryBytes.String(), "LYNXDB_VIEWS_MAX_BACKFILL_MEMORY_BYTES")
 	add("views.backfill_backpressure_wait", cfg.Views.BackfillBackpressureWait.String(), dflt.Views.BackfillBackpressureWait.String(), fileCfg.Views.BackfillBackpressureWait.String(), "LYNXDB_VIEWS_BACKFILL_BACKPRESSURE_WAIT")
 	add("views.backfill_max_retries", strconv.Itoa(cfg.Views.BackfillMaxRetries), strconv.Itoa(dflt.Views.BackfillMaxRetries), strconv.Itoa(fileCfg.Views.BackfillMaxRetries), "LYNXDB_VIEWS_BACKFILL_MAX_RETRIES")
+	add("views.dispatch_batch_size", strconv.Itoa(cfg.Views.DispatchBatchSize), strconv.Itoa(dflt.Views.DispatchBatchSize), strconv.Itoa(fileCfg.Views.DispatchBatchSize), "LYNXDB_VIEWS_DISPATCH_BATCH_SIZE")
+	add("views.dispatch_batch_delay", cfg.Views.DispatchBatchDelay.String(), dflt.Views.DispatchBatchDelay.String(), fileCfg.Views.DispatchBatchDelay.String(), "LYNXDB_VIEWS_DISPATCH_BATCH_DELAY")
 
 	// Buffer Manager.
 	add("buffer_manager.enabled", strconv.FormatBool(cfg.BufferManager.Enabled), strconv.FormatBool(dflt.BufferManager.Enabled), strconv.FormatBool(fileCfg.BufferManager.Enabled), "LYNXDB_BUFFER_MANAGER_ENABLED")

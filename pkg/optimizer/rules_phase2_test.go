@@ -1351,6 +1351,105 @@ func TestColumnStats_InExpr_NotIn(t *testing.T) {
 	}
 }
 
+func TestColumnStats_UnpackPrefixExcluded(t *testing.T) {
+	// Predicates on unpack-generated fields (prefix "pg.") must be excluded
+	// from segment-level pushdown. Without the fix, pg.duration_ms > 0 would
+	// be pushed to the segment reader which returns 0 results because the
+	// field doesn't exist in segment data.
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.UnpackCommand{
+				Format:      "postgres",
+				SourceField: "message",
+				Prefix:      "pg.",
+			},
+			&spl2.WhereCommand{
+				Expr: &spl2.CompareExpr{
+					Left:  &spl2.FieldExpr{Name: "pg.duration_ms"},
+					Op:    ">",
+					Right: &spl2.LiteralExpr{Value: "0"},
+				},
+			},
+		},
+	}
+	rule := &columnStatsPruningRule{}
+	_, changed := rule.Apply(q)
+	if changed {
+		t.Error("column stats rule should NOT fire for unpack-prefixed field pg.duration_ms")
+	}
+}
+
+func TestColumnStats_UnpackPrefixMixedWithSegmentField(t *testing.T) {
+	// Mix of unpack-generated and segment fields: only the segment field
+	// predicate should survive.
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.UnpackCommand{
+				Format:      "json",
+				SourceField: "message",
+				Prefix:      "j.",
+			},
+			&spl2.WhereCommand{
+				Expr: &spl2.BinaryExpr{
+					Left: &spl2.CompareExpr{
+						Left:  &spl2.FieldExpr{Name: "j.status"},
+						Op:    ">=",
+						Right: &spl2.LiteralExpr{Value: "500"},
+					},
+					Op: "and",
+					Right: &spl2.CompareExpr{
+						Left:  &spl2.FieldExpr{Name: "level"},
+						Op:    "=",
+						Right: &spl2.LiteralExpr{Value: "ERROR"},
+					},
+				},
+			},
+		},
+	}
+	rule := &columnStatsPruningRule{}
+	result, changed := rule.Apply(q)
+	if !changed {
+		t.Fatal("column stats rule should have fired for segment field 'level'")
+	}
+	ann, ok := result.GetAnnotation("fieldPredicates")
+	if !ok {
+		t.Fatal("fieldPredicates annotation not set")
+	}
+	preds := ann.([]FieldPredInfo)
+	if len(preds) != 1 {
+		t.Fatalf("expected 1 predicate (only 'level'), got %d: %+v", len(preds), preds)
+	}
+	if preds[0].Field != "level" {
+		t.Errorf("expected field 'level', got %q", preds[0].Field)
+	}
+}
+
+func TestColumnStats_UnpackWithExplicitFields(t *testing.T) {
+	// UnpackCommand with explicit Fields — those specific names should be excluded.
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.UnpackCommand{
+				Format:      "json",
+				SourceField: "message",
+				Prefix:      "j.",
+				Fields:      []string{"status", "host"},
+			},
+			&spl2.WhereCommand{
+				Expr: &spl2.CompareExpr{
+					Left:  &spl2.FieldExpr{Name: "j.status"},
+					Op:    ">=",
+					Right: &spl2.LiteralExpr{Value: "500"},
+				},
+			},
+		},
+	}
+	rule := &columnStatsPruningRule{}
+	_, changed := rule.Apply(q)
+	if changed {
+		t.Error("column stats rule should NOT fire for explicitly listed unpack field j.status")
+	}
+}
+
 func TestBloomEnrichment_RegexMatch(t *testing.T) {
 	// WHERE _raw =~ "connection refused"
 	q := &spl2.Query{

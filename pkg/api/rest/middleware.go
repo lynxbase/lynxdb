@@ -108,14 +108,30 @@ func KeyAuthMiddleware(ks *auth.KeyStore, next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /health is always exempt from auth.
-		if r.URL.Path == "/health" {
+		// /health, /metrics, and non-API paths (static UI assets) are exempt
+		// from auth. The web UI handles authentication by sending tokens
+		// with API requests.
+		if r.URL.Path == "/health" || r.URL.Path == "/metrics" || !strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 
 			return
 		}
 
 		header := r.Header.Get("Authorization")
+
+		// Fallback: accept token via query parameter for clients that cannot
+		// set headers (e.g. browser EventSource used for SSE live tail).
+		if header == "" {
+			if qToken := r.URL.Query().Get("_token"); qToken != "" {
+				header = "Bearer " + qToken
+				// Redact _token from the URL to prevent it from leaking into
+				// proxy access logs, Referer headers, or browser history.
+				q := r.URL.Query()
+				q.Del("_token")
+				r.URL.RawQuery = q.Encode()
+			}
+		}
+
 		if header == "" {
 			respondError(w, ErrCodeAuthRequired, http.StatusUnauthorized,
 				"Authentication required. Provide: Authorization: Bearer <key>",

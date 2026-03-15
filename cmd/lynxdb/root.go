@@ -156,6 +156,8 @@ func Execute() {
 
 		code := exitGeneral
 		switch {
+		case isRequiredFlagError(err):
+			code = exitUsage
 		case isConnectionError(err):
 			code = exitConnection
 		case isQueryParseError(err):

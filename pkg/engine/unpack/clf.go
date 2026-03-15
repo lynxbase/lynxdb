@@ -15,6 +15,13 @@ type CLFParser struct{}
 // Name returns the parser format name.
 func (p *CLFParser) Name() string { return "clf" }
 
+// DeclareFields declares the fields produced by the CLF parser.
+func (p *CLFParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{
+		Known: []string{"client_ip", "ident", "user", "timestamp", "request", "method", "uri", "protocol", "status", "bytes"},
+	}
+}
+
 // Parse extracts fields from an NCSA Common Log Format line.
 func (p *CLFParser) Parse(input string, emit func(key string, val event.Value) bool) error {
 	s := strings.TrimSpace(input)

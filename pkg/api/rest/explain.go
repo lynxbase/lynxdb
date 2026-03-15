@@ -16,6 +16,9 @@ func (s *Server) handleQueryExplain(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
+	if !s.checkQueryLength(w, q) {
+		return
+	}
 
 	// EXPLAIN ANALYZE: execute the query with profiling and return plan + stats.
 	if r.URL.Query().Get("analyze") == "true" {
@@ -108,9 +111,28 @@ func respondExplainResult(w http.ResponseWriter, result *usecases.ExplainResult)
 func buildExplainResponse(result *usecases.ExplainResult) map[string]interface{} {
 	stages := make([]map[string]interface{}, len(result.Parsed.Pipeline))
 	for i, s := range result.Parsed.Pipeline {
-		stages[i] = map[string]interface{}{
+		stageObj := map[string]interface{}{
 			"command": s.Command,
 		}
+		if s.Description != "" {
+			stageObj["description"] = s.Description
+		}
+		if len(s.FieldsAdded) > 0 {
+			stageObj["fields_added"] = s.FieldsAdded
+		}
+		if len(s.FieldsRemoved) > 0 {
+			stageObj["fields_removed"] = s.FieldsRemoved
+		}
+		if len(s.FieldsOut) > 0 {
+			stageObj["fields_out"] = s.FieldsOut
+		}
+		if len(s.FieldsOptional) > 0 {
+			stageObj["fields_optional"] = s.FieldsOptional
+		}
+		if s.FieldsUnknown {
+			stageObj["fields_unknown"] = true
+		}
+		stages[i] = stageObj
 	}
 
 	parsed := map[string]interface{}{

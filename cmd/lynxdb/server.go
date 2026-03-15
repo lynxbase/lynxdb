@@ -30,6 +30,7 @@ var (
 	flagTLSKey       string
 	flagMaxQueryPool string
 	flagSpillDir     string
+	flagNoUI         bool
 
 	// Cluster flags.
 	flagClusterEnabled  bool
@@ -61,6 +62,7 @@ func init() {
 	serverCmd.Flags().StringVar(&flagTLSKey, "tls-key", "", "Path to TLS private key PEM file")
 	serverCmd.Flags().StringVar(&flagMaxQueryPool, "max-query-pool", "", "Global query memory pool (e.g., 2gb, 4gb)")
 	serverCmd.Flags().StringVar(&flagSpillDir, "spill-dir", "", "Directory for temporary spill files (default: OS temp dir)")
+	serverCmd.Flags().BoolVar(&flagNoUI, "no-ui", false, "Disable embedded Web UI")
 
 	// Cluster flags.
 	serverCmd.Flags().BoolVar(&flagClusterEnabled, "cluster.enabled", false, "Enable cluster mode")
@@ -113,6 +115,11 @@ func runServer(cmd *cobra.Command, args []string) error {
 		cliOverrides = append(cliOverrides, "--cluster.grpc-port")
 	}
 
+	if cmd.Flags().Changed("no-ui") {
+		cfg.NoUI = flagNoUI
+		cliOverrides = append(cliOverrides, "--no-ui")
+	}
+
 	if cmd.Flags().Changed("auth") {
 		cliOverrides = append(cliOverrides, "--auth")
 	}
@@ -159,6 +166,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		Addr:          cfg.Listen,
 		DataDir:       cfg.DataDir,
 		Retention:     time.Duration(cfg.Retention),
+		NoUI:          cfg.NoUI,
 		KeyStore:      keyStore,
 		TLSConfig:     tlsCfg,
 		Storage:       cfg.Storage,

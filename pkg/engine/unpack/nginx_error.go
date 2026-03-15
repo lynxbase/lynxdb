@@ -17,6 +17,14 @@ type NginxErrorParser struct{}
 // Name returns the parser format name.
 func (p *NginxErrorParser) Name() string { return "nginx_error" }
 
+// DeclareFields declares the fields produced by the nginx error parser.
+func (p *NginxErrorParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{
+		Known:    []string{"timestamp", "severity", "pid", "tid", "message"},
+		Optional: []string{"cid", "client", "server", "request", "upstream", "host", "referrer"},
+	}
+}
+
 // Parse extracts fields from an nginx error log line.
 func (p *NginxErrorParser) Parse(input string, emit func(key string, val event.Value) bool) error {
 	s := strings.TrimSpace(input)

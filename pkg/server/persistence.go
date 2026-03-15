@@ -165,7 +165,7 @@ func (e *Engine) initDiskPersistence(ctx context.Context) error {
 	}
 
 	e.viewRegistry = viewReg
-	e.mvDispatcher = views.NewDispatcher(viewReg, e.layout, e.logger)
+	e.mvDispatcher = views.NewDispatcher(viewReg, e.layout, e.logger, e.viewsCfg.DispatchBatchSize, e.viewsCfg.DispatchBatchDelay.Duration())
 
 	if err := e.mvDispatcher.Start(ctx); err != nil {
 		return fmt.Errorf("start MV dispatcher: %w", err)

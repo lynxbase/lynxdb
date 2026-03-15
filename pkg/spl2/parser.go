@@ -483,7 +483,7 @@ func (p *Parser) parseCommand() ([]Command, error) {
 
 			return []Command{&WhereCommand{Expr: expr}}, nil
 		case TokenIdent:
-			if isBareExprContinuation(p.peekAt(1).Type) {
+			if isBareExprContinuation(p.peekAt(1).Type) || p.peekAt(1).Type == TokenLParen {
 				expr, err := p.parseExpr()
 				if err != nil {
 					return nil, fmt.Errorf("spl2: unexpected token %s %q at position %d", tok.Type, tok.Literal, tok.Pos)
@@ -771,6 +771,13 @@ func (p *Parser) parseFields() (*FieldsCommand, error) {
 		cmd.Remove = true
 	} else if p.peek().Type == TokenPlus {
 		p.advance()
+	}
+
+	// Handle "fields *" (all fields) — same as "table *".
+	if p.peek().Type == TokenStar {
+		p.advance()
+		cmd.Fields = []string{"*"}
+		return cmd, nil
 	}
 
 	fields, err := p.parseIdentList()
@@ -2278,7 +2285,7 @@ func (p *Parser) parseIdentList() ([]string, error) {
 
 	for {
 		tok := p.peek()
-		if !isIdentLike(tok.Type) {
+		if !isIdentLike(tok.Type) && tok.Type != TokenGlob {
 			break
 		}
 		p.advance()
@@ -3449,7 +3456,7 @@ func (p *Parser) parseIdentListLF() ([]string, error) {
 
 	for {
 		tok := p.peek()
-		if !isIdentLike(tok.Type) {
+		if !isIdentLike(tok.Type) && tok.Type != TokenGlob {
 			break
 		}
 		p.advance()

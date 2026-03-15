@@ -301,3 +301,13 @@ func (e *Engine) ListFields() []FieldInfo {
 
 	return fc.Build()
 }
+
+// ListFieldNames returns all known field names from the field catalog.
+func (e *Engine) ListFieldNames() []string {
+	fields := e.ListFields()
+	names := make([]string, len(fields))
+	for i, f := range fields {
+		names[i] = f.Name
+	}
+	return names
+}

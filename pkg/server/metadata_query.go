@@ -8,8 +8,10 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
-// HistogramFromMetadata computes histogram buckets using segment metadata
-// (zone maps) for event count distribution. All committed data is in segments.
+// HistogramFromMetadata computes histogram buckets by reading actual timestamps
+// from segments. For segments that fit within a single bucket, metadata (zone
+// maps) is used as a fast path. For multi-bucket segments, the timestamp column
+// is read to produce accurate per-bucket counts.
 func (e *Engine) HistogramFromMetadata(ctx context.Context, indexName string,
 	from, to time.Time, interval time.Duration, buckets []HistogramBucket) (int, error) {
 	ep := e.pinEpoch()
@@ -22,9 +24,10 @@ func (e *Engine) HistogramFromMetadata(ctx context.Context, indexName string,
 		return 0, nil
 	}
 
+	fromNs := from.UnixNano()
+	intervalNs := interval.Nanoseconds()
 	total := 0
 
-	// Distribute segment event counts across buckets using zone maps.
 	for _, seg := range segs {
 		if err := ctx.Err(); err != nil {
 			return 0, err
@@ -40,38 +43,18 @@ func (e *Engine) HistogramFromMetadata(ctx context.Context, indexName string,
 			continue
 		}
 
-		// Compute overlap of segment time range with the query time range.
+		// Compute which buckets this segment overlaps.
 		segStart := seg.meta.MinTime
 		if segStart.Before(from) {
 			segStart = from
 		}
-
 		segEnd := seg.meta.MaxTime
 		if segEnd.After(to) {
 			segEnd = to
 		}
 
-		segDuration := segEnd.Sub(segStart)
-		if segDuration <= 0 {
-			// Segment is a single point in time; put all events in one bucket.
-			idx := int(segStart.Sub(from).Nanoseconds() / interval.Nanoseconds())
-			if idx < 0 {
-				idx = 0
-			}
-			if idx >= bucketCount {
-				idx = bucketCount - 1
-			}
-
-			buckets[idx].Count += int(seg.meta.EventCount)
-			total += int(seg.meta.EventCount)
-
-			continue
-		}
-
-		// Distribute events proportionally across overlapping buckets.
-		firstBucket := int(segStart.Sub(from).Nanoseconds() / interval.Nanoseconds())
-		lastBucket := int(segEnd.Sub(from).Nanoseconds() / interval.Nanoseconds())
-
+		firstBucket := int(segStart.Sub(from).Nanoseconds() / intervalNs)
+		lastBucket := int(segEnd.Sub(from).Nanoseconds() / intervalNs)
 		if firstBucket < 0 {
 			firstBucket = 0
 		}
@@ -79,34 +62,40 @@ func (e *Engine) HistogramFromMetadata(ctx context.Context, indexName string,
 			lastBucket = bucketCount - 1
 		}
 
-		// Proportional overlap with the full segment range.
-		fullSegDur := seg.meta.MaxTime.Sub(seg.meta.MinTime).Nanoseconds()
-		if fullSegDur <= 0 {
-			fullSegDur = 1
-		}
-
-		overlapRatio := float64(segDuration.Nanoseconds()) / float64(fullSegDur)
-		overlapEvents := int(float64(seg.meta.EventCount) * overlapRatio)
-
+		// Fast path: segment fits within a single bucket — use metadata count.
 		if firstBucket == lastBucket {
-			buckets[firstBucket].Count += overlapEvents
-			total += overlapEvents
-
+			buckets[firstBucket].Count += int(seg.meta.EventCount)
+			total += int(seg.meta.EventCount)
 			continue
 		}
 
-		spanBuckets := lastBucket - firstBucket + 1
-		perBucket := overlapEvents / spanBuckets
-		remainder := overlapEvents % spanBuckets
+		// Multi-bucket segment: read actual timestamps for accurate distribution.
+		reader := seg.reader
+		if reader == nil {
+			reader = e.loadRemoteSegment(ctx, seg)
+		}
+		if reader == nil {
+			continue
+		}
 
-		for b := firstBucket; b <= lastBucket; b++ {
-			n := perBucket
-			if b-firstBucket < remainder {
-				n++
+		timestamps, err := reader.ReadTimestamps()
+		if err != nil {
+			continue
+		}
+
+		for _, ts := range timestamps {
+			if ts.Before(from) || ts.After(to) {
+				continue
 			}
-
-			buckets[b].Count += n
-			total += n
+			idx := int((ts.UnixNano() - fromNs) / intervalNs)
+			if idx < 0 {
+				idx = 0
+			}
+			if idx >= bucketCount {
+				idx = bucketCount - 1
+			}
+			buckets[idx].Count++
+			total++
 		}
 	}
 

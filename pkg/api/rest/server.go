@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lynxbase/lynxdb/internal/webui"
 	"github.com/lynxbase/lynxdb/pkg/alerts"
 	"github.com/lynxbase/lynxdb/pkg/alerts/channels"
 	"github.com/lynxbase/lynxdb/pkg/auth"
@@ -54,6 +55,7 @@ type Config struct {
 	Addr      string
 	DataDir   string        // Root directory for all data (segments, parts, indexes). Empty = in-memory only.
 	Retention time.Duration // Data retention period. 0 = use default (90 days).
+	NoUI      bool          // When true, the embedded Web UI is not served.
 
 	KeyStore      *auth.KeyStore
 	TLSConfig     *tls.Config // If non-nil, server listens with TLS.
@@ -365,6 +367,11 @@ func NewServer(cfg Config) (*Server, error) {
 	// Health.
 	mux.HandleFunc("GET /health", s.handleHealth)
 
+	// Embedded Web UI (SPA fallback — registered after all API routes).
+	if !cfg.NoUI && webui.Enabled() {
+		mux.Handle("/", webui.Handler())
+	}
+
 	idleTimeout := cfg.HTTP.IdleTimeout
 	if idleTimeout == 0 {
 		idleTimeout = 120 * time.Second
@@ -381,11 +388,16 @@ func NewServer(cfg Config) (*Server, error) {
 	handler = RequestIDMiddleware(handler)
 	handler = RecoveryMiddleware(cfg.Logger, handler)
 
+	readHeaderTimeout := cfg.HTTP.ReadHeaderTimeout
+	if readHeaderTimeout == 0 {
+		readHeaderTimeout = 10 * time.Second
+	}
+
 	s.httpServer = &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           handler,
 		IdleTimeout:       idleTimeout,
-		ReadHeaderTimeout: 10 * time.Second,
+		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
 	return s, nil
@@ -404,6 +416,8 @@ func (s *Server) Start(ctx context.Context) error {
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", s.httpServer.Addr)
 	if err != nil {
+		// Engine was started but we can't listen — shut it down.
+		_ = s.engine.Shutdown(5 * time.Second)
 		return fmt.Errorf("api: listen: %w", err)
 	}
 
@@ -425,7 +439,16 @@ func (s *Server) Start(ctx context.Context) error {
 			s.rateLimiter.Stop()
 		}
 		if s.alertMgr != nil {
-			s.alertMgr.Stop()
+			alertDone := make(chan struct{})
+			go func() {
+				s.alertMgr.Stop()
+				close(alertDone)
+			}()
+			select {
+			case <-alertDone:
+			case <-time.After(10 * time.Second):
+				s.engine.Logger().Warn("alert manager stop timed out after 10s, proceeding with shutdown")
+			}
 		}
 
 		// Shutdown ordering: reject ingests → drain HTTP → flush storage.

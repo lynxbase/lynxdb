@@ -21,6 +21,14 @@ type PostgresParser struct{}
 // Name returns the parser format name.
 func (p *PostgresParser) Name() string { return "postgres" }
 
+// DeclareFields declares the fields produced by the postgres parser.
+func (p *PostgresParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{
+		Known:    []string{"timestamp", "pid", "severity", "message"},
+		Optional: []string{"user", "database", "duration_ms", "statement"},
+	}
+}
+
 // Parse extracts fields from a PostgreSQL stderr log line.
 func (p *PostgresParser) Parse(input string, emit func(key string, val event.Value) bool) error {
 	s := strings.TrimSpace(input)

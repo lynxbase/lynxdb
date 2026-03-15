@@ -12,6 +12,7 @@ project_name: lynxdb
 before:
   hooks:
     - go mod tidy
+    - bash -c "cd web && bun install && bun run build && rm -rf ../internal/webui/dist && cp -r dist ../internal/webui/dist"
 
 builds:
   # ── GNU/glibc builds ────────────────────────────────────────────────────

@@ -141,3 +141,47 @@ func TestE2E_QuerySync_CountAlias_Bug(t *testing.T) {
 		t.Errorf("'STATS count AS total' should not produce column 'count'; got columns: %v", result.Aggregate.Columns)
 	}
 }
+
+// TestE2E_QuerySync_TailN verifies that "| tail N" returns exactly N events
+// when the dataset contains more than N events. This is a regression test:
+// parseTail() defaults count to 10 when no number follows the keyword;
+// we need to verify the explicit number is honoured end-to-end.
+func TestE2E_QuerySync_TailN(t *testing.T) {
+	h := NewHarness(t)
+	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
+
+	// tail 50 on 2000 events should return exactly 50.
+	result := h.MustQuery(`FROM idx_ssh | tail 50`)
+	got := EventCount(result)
+	if got != 50 {
+		t.Fatalf("tail 50: expected 50 events, got %d", got)
+	}
+
+	// tail (default, no number) should return exactly 10.
+	result2 := h.MustQuery(`FROM idx_ssh | tail`)
+	got2 := EventCount(result2)
+	if got2 != 10 {
+		t.Fatalf("tail (default): expected 10 events, got %d", got2)
+	}
+
+	// tail 5 should return exactly 5.
+	result3 := h.MustQuery(`FROM idx_ssh | tail 5`)
+	got3 := EventCount(result3)
+	if got3 != 5 {
+		t.Fatalf("tail 5: expected 5 events, got %d", got3)
+	}
+
+	// tail 100 should return exactly 100.
+	result4 := h.MustQuery(`FROM idx_ssh | tail 100`)
+	got4 := EventCount(result4)
+	if got4 != 100 {
+		t.Fatalf("tail 100: expected 100 events, got %d", got4)
+	}
+
+	// tail 5000 on 2000 events should return all 2000.
+	result5 := h.MustQuery(`FROM idx_ssh | tail 5000`)
+	got5 := EventCount(result5)
+	if got5 != 2000 {
+		t.Fatalf("tail 5000 on 2000 events: expected 2000 events, got %d", got5)
+	}
+}

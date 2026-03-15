@@ -19,6 +19,14 @@ type CEFParser struct{}
 // Name returns the parser format name.
 func (p *CEFParser) Name() string { return "cef" }
 
+// DeclareFields declares the fields produced by the CEF parser.
+func (p *CEFParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{
+		Known:   []string{"cef_version", "device_vendor", "device_product", "device_version", "signature_id", "name", "severity"},
+		Dynamic: true,
+	}
+}
+
 // Parse extracts fields from a CEF log line.
 func (p *CEFParser) Parse(input string, emit func(key string, val event.Value) bool) error {
 	s := strings.TrimSpace(input)

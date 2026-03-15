@@ -678,9 +678,9 @@ func TestRemoveDeadSort_SortEvalHeadKept(t *testing.T) {
 
 func TestTotalRulesCount(t *testing.T) {
 	opt := New()
-	// Base rules: 35 (from allRules including transformAggPushdown). Adding 4 ordering rules → 39.
+	// Base rules: 36 (from allRules including transformAggPushdown + unpackFieldPruning). Adding 4 ordering rules → 40.
 	// This test documents the expected count and catches accidental additions/removals.
-	expected := 39
+	expected := 40
 	got := opt.TotalRules()
 	if got != expected {
 		t.Errorf("TotalRules() = %d, want %d", got, expected)

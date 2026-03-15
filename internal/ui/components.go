@@ -107,6 +107,32 @@ func (t *Theme) RenderServerError(code, message, suggestion string) {
 	fmt.Fprintln(t.w)
 }
 
+// RenderRequiredFlagError prints a formatted error for missing required CLI flags,
+// with usage and example hints matching the style of other error renderers.
+func (t *Theme) RenderRequiredFlagError(flags []string, usageLine, example string) {
+	noun := "flag"
+	if len(flags) > 1 {
+		noun = "flags"
+	}
+
+	formatted := make([]string, len(flags))
+	for i, f := range flags {
+		formatted[i] = "--" + f
+	}
+
+	fmt.Fprintf(t.w, "\n  %s missing required %s: %s\n", t.IconError(), noun, strings.Join(formatted, ", "))
+
+	if usageLine != "" {
+		fmt.Fprintf(t.w, "\n  %s\n    %s\n", t.Bold.Render("Usage:"), usageLine)
+	}
+
+	if example != "" {
+		fmt.Fprintf(t.w, "\n  %s\n%s\n", t.Bold.Render("Examples:"), example)
+	}
+
+	fmt.Fprintln(t.w)
+}
+
 // RenderQueryError prints a query parse error with caret positioning.
 func (t *Theme) RenderQueryError(query string, position, length int, message, suggestion string) {
 	fmt.Fprintf(t.w, "\n  %s INVALID_QUERY: %s\n\n", t.IconError(), message)

@@ -259,6 +259,62 @@ func BatchFromEvents(events []*event.Event) *Batch {
 	return b
 }
 
+// AppendBatch appends all rows from other into b, merging columns.
+// Columns present in other but not in b are created with leading nulls.
+// Columns present in b but not in other are extended with trailing nulls.
+func (b *Batch) AppendBatch(other *Batch) {
+	if other == nil || other.Len == 0 {
+		return
+	}
+
+	newLen := b.Len + other.Len
+
+	// Extend existing columns that are NOT in other with trailing nulls.
+	for k, col := range b.Columns {
+		if _, exists := other.Columns[k]; !exists {
+			extended := make([]event.Value, newLen)
+			copy(extended, col)
+			b.Columns[k] = extended
+		}
+	}
+
+	// For each column in other: append (or create with leading nulls).
+	for k, otherCol := range other.Columns {
+		if col, exists := b.Columns[k]; exists {
+			extended := make([]event.Value, newLen)
+			copy(extended, col)
+			copy(extended[b.Len:], otherCol)
+			b.Columns[k] = extended
+		} else {
+			newCol := make([]event.Value, newLen)
+			copy(newCol[b.Len:], otherCol)
+			b.Columns[k] = newCol
+		}
+	}
+
+	b.Len = newLen
+}
+
+// PermuteSlice creates a new batch from a subset of rows reordered by indices.
+// Each element in indices refers to a row index in the original batch.
+func (b *Batch) PermuteSlice(indices []int) *Batch {
+	result := &Batch{
+		Columns: make(map[string][]event.Value, len(b.Columns)),
+		Len:     len(indices),
+	}
+	for k, col := range b.Columns {
+		newCol := make([]event.Value, len(indices))
+		for i, idx := range indices {
+			if idx < len(col) {
+				newCol[i] = col[idx]
+			}
+		}
+		result.Columns[k] = newCol
+	}
+
+	return result
+}
+
 // BatchFromRows converts a slice of field maps into a Batch.
 func BatchFromRows(rows []map[string]event.Value) *Batch {
 	b := NewBatch(len(rows))

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"strings"
 	"time"
 )
@@ -35,6 +36,9 @@ func validationErr(section, field, value, message string) *ValidationError {
 func (c *Config) Validate() error {
 	if c.Listen == "" {
 		return validationErr("", "listen", c.Listen, "must not be empty")
+	}
+	if _, _, err := net.SplitHostPort(c.Listen); err != nil {
+		return validationErr("", "listen", c.Listen, "must be a valid host:port address")
 	}
 
 	if c.Retention.Duration() < 0 {
@@ -239,6 +243,9 @@ func (q *QueryConfig) validate() error {
 		return validationErr("query", "global_query_pool_bytes", q.GlobalQueryPoolBytes.String(),
 			fmt.Sprintf("must be >= max_query_memory_bytes (%s); pool must fit at least one query", q.MaxQueryMemory.String()))
 	}
+	if q.MaxQueryLength < 0 {
+		return validationErr("query", "max_query_length", fmt.Sprintf("%d", q.MaxQueryLength), "must not be negative (0 = unlimited)")
+	}
 
 	return nil
 }
@@ -288,6 +295,13 @@ func (v *ViewsConfig) validate() error {
 	if v.BackfillMaxRetries < 0 {
 		return validationErr("views", "backfill_max_retries",
 			fmt.Sprintf("%d", v.BackfillMaxRetries), "must not be negative")
+	}
+	if v.DispatchBatchSize < 0 {
+		return validationErr("views", "dispatch_batch_size",
+			fmt.Sprintf("%d", v.DispatchBatchSize), "must not be negative (0 = use default)")
+	}
+	if v.DispatchBatchDelay.Duration() < 0 {
+		return validationErr("views", "dispatch_batch_delay", v.DispatchBatchDelay.String(), "must not be negative")
 	}
 
 	return nil
@@ -346,6 +360,9 @@ func (h *HTTPConfig) validate() error {
 	}
 	if h.ShutdownTimeout < time.Second {
 		return validationErr("http", "shutdown_timeout", h.ShutdownTimeout.String(), "must be at least 1s")
+	}
+	if h.ReadHeaderTimeout < 0 {
+		return validationErr("http", "read_header_timeout", h.ReadHeaderTimeout.String(), "must not be negative")
 	}
 	if h.RateLimit < 0 {
 		return validationErr("http", "rate_limit", fmt.Sprintf("%.2f", h.RateLimit), "must not be negative")

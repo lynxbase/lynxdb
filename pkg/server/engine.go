@@ -284,7 +284,7 @@ func NewEngine(cfg Config) *Engine {
 		retention:          cfg.Retention,
 		storageCfg:         storageCfg,
 		logger:             cfg.Logger,
-		eventBus:           storage.NewEventBus(),
+		eventBus:           storage.NewEventBus(0),
 		cache:              queryCache,
 		startTime:          time.Now(),
 		metrics:            storage.NewMetrics(),

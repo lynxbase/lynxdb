@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
@@ -17,6 +18,15 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/server"
 	"github.com/lynxbase/lynxdb/pkg/storage/part"
 )
+
+// scannerBufPool reuses scanner buffers across ingest requests to reduce
+// per-request allocations and GC pressure under high concurrency.
+var scannerBufPool = sync.Pool{
+	New: func() interface{} {
+		buf := make([]byte, 64*1024)
+		return &buf
+	},
+}
 
 // respondIngestError maps engine errors to the appropriate HTTP status and error code.
 // Returns true if an error response was written, false if err is nil.
@@ -45,7 +55,8 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 
 	var payload []receiver.EventPayload
 	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
-		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest,
+			fmt.Sprintf("invalid JSON: %s", sanitizeErrorMessage(err.Error())))
 
 		return
 	}
@@ -83,22 +94,25 @@ func (s *Server) handleIngestRaw(w http.ResponseWriter, r *http.Request) {
 	if source == "" {
 		source = "http"
 	} else if len(source) > 256 {
-		slog.Warn("ingest: field truncated", "field", "source", "original_len", len(source))
-		source = source[:256]
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest,
+			"X-Source header exceeds maximum length of 256 characters")
+		return
 	}
 	sourceType := r.Header.Get("X-Source-Type")
 	if sourceType == "" {
 		sourceType = "raw"
 	} else if len(sourceType) > 256 {
-		slog.Warn("ingest: field truncated", "field", "sourcetype", "original_len", len(sourceType))
-		sourceType = sourceType[:256]
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest,
+			"X-Source-Type header exceeds maximum length of 256 characters")
+		return
 	}
 	indexName := r.Header.Get("X-Index")
 	if indexName == "" {
 		indexName = "main"
 	} else if len(indexName) > 256 {
-		slog.Warn("ingest: field truncated", "field", "index", "original_len", len(indexName))
-		indexName = indexName[:256]
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest,
+			"X-Index header exceeds maximum length of 256 characters")
+		return
 	}
 
 	buildEvent := func(line string) *event.Event {
@@ -176,7 +190,9 @@ func (s *Server) processBatched(w http.ResponseWriter, r *http.Request, buildEve
 		batchSize = 1000
 	}
 	scanner := bufio.NewScanner(r.Body)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	bufp := scannerBufPool.Get().(*[]byte)
+	scanner.Buffer(*bufp, 1024*1024)
+	defer scannerBufPool.Put(bufp)
 
 	pipe := pipeline.DefaultPipeline()
 	batch := make([]*event.Event, 0, batchSize)
@@ -292,4 +308,20 @@ func (s *Server) processBatched(w http.ResponseWriter, r *http.Request, buildEve
 	}
 
 	return accepted, failed, truncated, nil
+}
+
+// sanitizeErrorMessage replaces control characters in error messages to prevent
+// log injection. User-provided JSON parse errors may contain arbitrary bytes
+// from the input that could confuse log parsers or terminals.
+func sanitizeErrorMessage(msg string) string {
+	var b strings.Builder
+	b.Grow(len(msg))
+	for _, r := range msg {
+		if r < 0x20 && r != '\n' && r != '\r' && r != '\t' {
+			b.WriteRune('?')
+		} else {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }

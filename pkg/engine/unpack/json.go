@@ -15,6 +15,11 @@ type JSONParser struct{}
 // Name returns the parser format name.
 func (p *JSONParser) Name() string { return "json" }
 
+// DeclareFields declares the fields produced by the JSON parser.
+func (p *JSONParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{Dynamic: true}
+}
+
 // Parse decodes a JSON object from input and emits flattened key-value pairs.
 // Nested objects are flattened with dot-notation (e.g., "request.method").
 // Arrays and nested arrays are emitted as JSON string values.

@@ -1,0 +1,162 @@
+.view {
+  display: flex;
+  flex-direction: column;
+  block-size: 100%;
+  overflow: hidden;
+}
+
+.queryBar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-primary);
+  border-block-end: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.runBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 36px;
+  block-size: 36px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--accent);
+  font-size: 1rem;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.runBtn:hover {
+  background: var(--accent);
+  color: var(--bg-primary);
+}
+
+.runBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.runBtn:disabled:hover {
+  background: transparent;
+  color: var(--accent);
+}
+
+/* Main body: sidebar + content side by side */
+.body {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Right side: timeline, stats bar, results, event detail */
+.mainContent {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-inline-size: 0;
+  overflow: hidden;
+}
+
+.resultsArea {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.newEventsBadge {
+  position: absolute;
+  inset-block-start: 0.5rem;
+  inset-inline-start: 50%;
+  transform: translateX(-50%);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--success);
+  border-radius: var(--radius-lg);
+  background: var(--bg-secondary);
+  color: var(--success);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  transition: background-color 0.15s;
+  white-space: nowrap;
+}
+
+.newEventsBadge:hover {
+  background: var(--bg-tertiary);
+}
+
+.newEventsBadge:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Empty states */
+.emptyState {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 3rem 1.5rem;
+  text-align: center;
+  gap: 0.375rem;
+}
+
+.emptyTitle {
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-block-end: 0.25rem;
+}
+
+.emptyHint {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+
+.emptyCode {
+  display: inline-block;
+  margin-block: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  color: var(--accent);
+  user-select: all;
+}
+
+.emptySubHint {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+/* Responsive layout */
+@media (max-width: 1024px) {
+  .body {
+    /* Sidebar hides via its own collapsed state; just ensure column layout is possible */
+  }
+}
+
+@media (max-width: 768px) {
+  .queryBar {
+    flex-wrap: wrap;
+  }
+}

@@ -284,7 +284,9 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 	fm := parseFieldMapping(r)
 
 	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	bufp := scannerBufPool.Get().(*[]byte)
+	scanner.Buffer(*bufp, 1024*1024)
+	defer scannerBufPool.Put(bufp)
 
 	pipe := pipeline.DefaultPipeline()
 	var items []esBulkItemResult

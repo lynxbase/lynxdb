@@ -68,6 +68,20 @@ func NewParser(format string) (FormatParser, error) {
 	}
 }
 
+// FieldDeclaration describes the fields a parser can produce, used for
+// static analysis in the query explain pipeline (Lynx Flow sidebar).
+type FieldDeclaration struct {
+	Known    []string // always produced
+	Optional []string // sometimes produced (input-dependent)
+	Dynamic  bool     // can produce arbitrary additional fields
+}
+
+// FieldDeclarer is an optional interface that FormatParsers can implement
+// to declare which fields they produce without needing to run Parse().
+type FieldDeclarer interface {
+	DeclareFields() FieldDeclaration
+}
+
 // InferValue auto-detects the type of a string value and returns a typed event.Value.
 // Detection order: bool → int → float → string.
 func InferValue(s string) event.Value {

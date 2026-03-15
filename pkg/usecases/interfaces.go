@@ -37,6 +37,9 @@ type QueryEngine interface {
 
 	// SourceCount returns the number of registered sources (index names) in the registry.
 	SourceCount() int
+
+	// ListFieldNames returns all known field names from the field catalog.
+	ListFieldNames() []string
 }
 
 // ViewEngine is the subset of server.Engine needed by ViewService.

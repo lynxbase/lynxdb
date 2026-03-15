@@ -17,6 +17,14 @@ type ApacheErrorParser struct{}
 // Name returns the parser format name.
 func (p *ApacheErrorParser) Name() string { return "apache_error" }
 
+// DeclareFields declares the fields produced by the Apache error parser.
+func (p *ApacheErrorParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{
+		Known:    []string{"timestamp", "severity", "message"},
+		Optional: []string{"module", "pid", "tid", "client_ip", "client_port", "error_code"},
+	}
+}
+
 // Parse extracts fields from an Apache 2.4+ error log line.
 func (p *ApacheErrorParser) Parse(input string, emit func(key string, val event.Value) bool) error {
 	s := strings.TrimSpace(input)

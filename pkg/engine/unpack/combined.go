@@ -14,6 +14,13 @@ type CombinedParser struct{}
 // Name returns the parser format name.
 func (p *CombinedParser) Name() string { return "combined" }
 
+// DeclareFields declares the fields produced by the combined log parser.
+func (p *CombinedParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{
+		Known: []string{"client_ip", "ident", "user", "timestamp", "request", "method", "uri", "protocol", "status", "bytes", "referer", "user_agent"},
+	}
+}
+
 // Parse extracts fields from an NCSA Combined Log Format line.
 func (p *CombinedParser) Parse(input string, emit func(key string, val event.Value) bool) error {
 	s := strings.TrimSpace(input)

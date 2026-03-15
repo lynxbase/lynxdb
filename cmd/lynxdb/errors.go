@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"strings"
 	"syscall"
 
@@ -150,6 +151,12 @@ func renderError(err error) {
 
 	if isAuthError(err) {
 		renderAuthError(err)
+
+		return
+	}
+
+	if isRequiredFlagError(err) {
+		renderRequiredFlagError(err)
 
 		return
 	}
@@ -310,6 +317,72 @@ func renderQueryParseError(ae *client.APIError, query string) {
 	}
 
 	ui.Stderr.RenderQueryError(query, pos, length, ae.Message, suggestion)
+}
+
+// isRequiredFlagError reports whether err is a cobra "required flag(s) not set" error.
+func isRequiredFlagError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	msg := err.Error()
+
+	return strings.Contains(msg, "required flag(s)") && strings.Contains(msg, "not set")
+}
+
+// parseRequiredFlags extracts flag names from a cobra required-flag error message.
+// Cobra formats: `required flag(s) "name" not set` or `required flag(s) "name", "query" not set`.
+func parseRequiredFlags(err error) []string {
+	if err == nil {
+		return nil
+	}
+
+	msg := err.Error()
+
+	start := strings.Index(msg, `"`)
+	end := strings.LastIndex(msg, `"`)
+
+	if start < 0 || end <= start {
+		return nil
+	}
+
+	// Extract the substring between first and last quote: name", "query
+	inner := msg[start+1 : end]
+
+	// Split on `", "` for multiple flags, otherwise single flag.
+	parts := strings.Split(inner, `", "`)
+
+	flags := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			flags = append(flags, p)
+		}
+	}
+
+	return flags
+}
+
+// renderRequiredFlagError prints a formatted error for missing required flags,
+// resolving the target command to display its usage line and examples.
+func renderRequiredFlagError(err error) {
+	flags := parseRequiredFlags(err)
+	if len(flags) == 0 {
+		// Fallback: unrecognized format, render generic.
+		ui.Stderr.RenderError(err)
+
+		return
+	}
+
+	var usageLine, example string
+
+	// Resolve the command that failed by walking os.Args through the command tree.
+	if cmd, _, findErr := rootCmd.Find(os.Args[1:]); findErr == nil && cmd != nil {
+		usageLine = cmd.UseLine()
+		example = cmd.Example
+	}
+
+	ui.Stderr.RenderRequiredFlagError(flags, usageLine, example)
 }
 
 // extractPositionFromError parses "at position N" from an error message and

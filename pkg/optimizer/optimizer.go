@@ -156,6 +156,7 @@ func allRules() []Rule {
 		&predicateReorderingRule{},
 		&projectionPushdownRule{},
 		&columnPruningRule{},
+		&unpackFieldPruningRule{},
 		&filterPushdownIntoJoinRule{},
 		&unionFilterPushdownRule{},
 		// Scan optimization.

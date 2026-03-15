@@ -1,0 +1,149 @@
+.panel {
+  flex-shrink: 0;
+  block-size: 40%;
+  min-block-size: 200px;
+  display: flex;
+  flex-direction: column;
+  border-block-start: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
+.toolbar {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.375rem 0.75rem;
+  border-block-end: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.tab {
+  padding: 0.25rem 0.625rem;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: background-color 0.1s, color 0.1s;
+}
+
+.tab:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tabActive {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+}
+
+.spacer {
+  flex: 1;
+}
+
+.copyBtn {
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.copyBtn:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+
+.closeBtn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 24px;
+  block-size: 24px;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 1rem;
+  cursor: pointer;
+  transition: background-color 0.1s, color 0.1s;
+  margin-inline-start: 0.25rem;
+}
+
+.closeBtn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.body {
+  flex: 1;
+  overflow: auto;
+  padding: 0.5rem 0.75rem;
+}
+
+/* Fields tab */
+.fieldsTable {
+  inline-size: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+}
+
+.fieldsTable tr:nth-child(even) {
+  background: var(--bg-tertiary);
+}
+
+.fieldKey {
+  padding: 0.25rem 0.75rem 0.25rem 0;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  vertical-align: top;
+  inline-size: 1%;
+}
+
+.fieldValue {
+  padding: 0.25rem 0;
+  color: var(--text-primary);
+  word-break: break-all;
+}
+
+/* JSON tab */
+.jsonPre {
+  font-family: var(--font-mono);
+  font-size: 0.8125rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-all;
+  margin: 0;
+}
+
+.jsonKey {
+  color: var(--text-primary);
+}
+
+.jsonString {
+  color: #2563eb;
+}
+
+.jsonNumber {
+  color: #0d9488;
+}
+
+.jsonBool {
+  color: #c4432b;
+}
+
+.jsonNull {
+  color: var(--text-muted);
+}
+
+.jsonPunct {
+  color: var(--text-secondary);
+}

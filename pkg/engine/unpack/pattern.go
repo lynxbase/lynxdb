@@ -122,6 +122,15 @@ func NewPatternParser(pattern string) (*PatternParser, error) {
 // Name returns the parser format name.
 func (p *PatternParser) Name() string { return "pattern" }
 
+// DeclareFields declares the fields produced by this pattern parser instance.
+func (p *PatternParser) DeclareFields() FieldDeclaration {
+	names := make([]string, len(p.fields))
+	for i, f := range p.fields {
+		names[i] = f.name
+	}
+	return FieldDeclaration{Known: names}
+}
+
 // Parse applies the compiled pattern to input and emits captured fields.
 func (p *PatternParser) Parse(input string, emit func(key string, val event.Value) bool) error {
 	matches := p.re.FindStringSubmatch(input)

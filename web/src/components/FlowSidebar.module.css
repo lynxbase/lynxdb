@@ -1,0 +1,93 @@
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  inline-size: 280px;
+  flex-shrink: 0;
+  background: var(--bg-secondary);
+  border-inline-end: 1px solid var(--border);
+  overflow: hidden;
+  position: relative;
+}
+
+.toggleBtn {
+  position: absolute;
+  inset-block-start: 0.5rem;
+  inset-inline-end: -24px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 24px;
+  block-size: 24px;
+  border: 1px solid var(--border);
+  border-radius: 0 calc(var(--radius) - 2px) calc(var(--radius) - 2px) 0;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.toggleBtn:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.collapsedToggle {
+  position: absolute;
+  inset-block-start: 0.5rem;
+  inset-inline-start: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  inline-size: 24px;
+  block-size: 24px;
+  border: 1px solid var(--border);
+  border-radius: 0 calc(var(--radius) - 2px) calc(var(--radius) - 2px) 0;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s;
+}
+
+.collapsedToggle:hover {
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow-y: auto;
+  min-block-size: 0;
+}
+
+.emptyPipeline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem 1rem;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .toggleBtn,
+  .collapsedToggle {
+    transition: none;
+  }
+}
+
+@media (max-width: 1024px) {
+  .sidebar {
+    display: none;
+  }
+
+  .collapsedToggle {
+    display: none;
+  }
+}

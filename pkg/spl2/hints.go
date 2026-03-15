@@ -141,13 +141,13 @@ func extractQueryHintsFromQuery(q *Query) *QueryHints {
 
 	// Remove predicates that reference pipeline-generated fields.
 	// These fields are created during pipeline execution (by STREAMSTATS,
-	// EVENTSTATS, EVAL, REX, BIN, RENAME) and don't exist in segment data.
-	// Pushing them to the segment reader causes evalPredicatesOnEvent to
+	// EVENTSTATS, EVAL, REX, BIN, RENAME, UNPACK) and don't exist in segment
+	// data. Pushing them to the segment reader causes evalPredicatesOnEvent to
 	// reject ALL events (null field → no match → 0 rows returned).
-	if len(generatedFields) > 0 && len(h.FieldPredicates) > 0 {
+	if !generatedFields.empty() && len(h.FieldPredicates) > 0 {
 		filtered := h.FieldPredicates[:0]
 		for _, fp := range h.FieldPredicates {
-			if !generatedFields[fp.Field] {
+			if !generatedFields.contains(fp.Field) {
 				filtered = append(filtered, fp)
 			}
 		}
@@ -155,11 +155,11 @@ func extractQueryHintsFromQuery(q *Query) *QueryHints {
 	}
 
 	// Same filter for IN predicates — fields created by pipeline operators
-	// (EVAL, REX, STREAMSTATS, etc.) don't exist in segment data.
-	if len(generatedFields) > 0 && len(h.InPredicates) > 0 {
+	// (EVAL, REX, STREAMSTATS, UNPACK, etc.) don't exist in segment data.
+	if !generatedFields.empty() && len(h.InPredicates) > 0 {
 		filtered := h.InPredicates[:0]
 		for _, ip := range h.InPredicates {
-			if !generatedFields[ip.Field] {
+			if !generatedFields.contains(ip.Field) {
 				filtered = append(filtered, ip)
 			}
 		}
@@ -347,54 +347,99 @@ func extractSearchHints(cmd *SearchCommand, h *QueryHints) {
 	}
 }
 
-// collectGeneratedFieldsFromQuery returns the set of field names that are
-// created by pipeline operators in the query. These fields don't exist in
-// segment data and must not be used for segment-level predicate pushdown.
-func collectGeneratedFieldsFromQuery(q *Query) map[string]bool {
-	gen := make(map[string]bool)
+// generatedFieldInfo holds both explicitly known generated field names and
+// prefixes from schema-on-read operators (UnpackCommand with no Fields list).
+// A field is considered "generated" if it's in the Names set OR if it starts
+// with any of the Prefixes.
+type generatedFieldInfo struct {
+	Names    map[string]bool // explicit field names
+	Prefixes []string        // prefixes from unpack (e.g., "pg.", "j.")
+}
+
+// contains returns true if the field is generated — either by exact name
+// match or by matching a prefix from a schema-on-read operator.
+func (g *generatedFieldInfo) contains(field string) bool {
+	if g.Names[field] {
+		return true
+	}
+	for _, prefix := range g.Prefixes {
+		if strings.HasPrefix(field, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// empty returns true if no generated fields were collected.
+func (g *generatedFieldInfo) empty() bool {
+	return len(g.Names) == 0 && len(g.Prefixes) == 0
+}
+
+// collectGeneratedFieldsFromQuery returns the set of field names and prefixes
+// that are created by pipeline operators in the query. These fields don't exist
+// in segment data and must not be used for segment-level predicate pushdown.
+func collectGeneratedFieldsFromQuery(q *Query) *generatedFieldInfo {
+	info := &generatedFieldInfo{Names: make(map[string]bool)}
 	for _, cmd := range q.Commands {
 		switch c := cmd.(type) {
 		case *StreamstatsCommand:
 			for _, agg := range c.Aggregations {
 				if agg.Alias != "" {
-					gen[agg.Alias] = true
+					info.Names[agg.Alias] = true
 				}
 			}
 		case *EventstatsCommand:
 			for _, agg := range c.Aggregations {
 				if agg.Alias != "" {
-					gen[agg.Alias] = true
+					info.Names[agg.Alias] = true
 				}
 			}
 		case *EvalCommand:
 			if c.Field != "" {
-				gen[c.Field] = true
+				info.Names[c.Field] = true
 			}
 			for _, a := range c.Assignments {
-				gen[a.Field] = true
+				info.Names[a.Field] = true
 			}
 		case *RexCommand:
 			// REX generates fields from named capture groups.
 			// Go supports both (?P<name>...) and (?<name>...) syntax.
-			for _, name := range extractNamedGroupsFromPattern(c.Pattern) {
-				gen[name] = true
+			for _, name := range ExtractNamedGroupsFromPattern(c.Pattern) {
+				info.Names[name] = true
 			}
 		case *BinCommand:
 			if c.Alias != "" {
-				gen[c.Alias] = true
+				info.Names[c.Alias] = true
 			}
 		case *RenameCommand:
 			for _, r := range c.Renames {
-				gen[r.New] = true
+				info.Names[r.New] = true
+			}
+		case *UnpackCommand:
+			// Unpack generates fields from the parsed format. When Fields is
+			// specified, the exact output names are known. When Fields is empty
+			// (schema-on-read — the common case), the exact field set is unknown
+			// at optimization time. If the command has a Prefix, we record it so
+			// any field starting with that prefix is treated as generated.
+			if len(c.Fields) > 0 {
+				for _, f := range c.Fields {
+					name := f
+					if c.Prefix != "" {
+						name = c.Prefix + f
+					}
+					info.Names[name] = true
+				}
+			} else if c.Prefix != "" {
+				info.Prefixes = append(info.Prefixes, c.Prefix)
 			}
 		}
 	}
-	return gen
+	return info
 }
 
-// extractNamedGroupsFromPattern returns names from named capture groups in a
+// ExtractNamedGroupsFromPattern returns names from named capture groups in a
 // Go-style regex pattern. Handles both (?P<name>...) and (?<name>...) syntax.
-func extractNamedGroupsFromPattern(pattern string) []string {
+func ExtractNamedGroupsFromPattern(pattern string) []string {
 	var names []string
 	for i := 0; i < len(pattern)-3; i++ {
 		if pattern[i] != '(' || pattern[i+1] != '?' {
@@ -552,10 +597,16 @@ func GetRequiredColumns(q *Query) []string {
 				cols[normalizeFieldName(sf.Name)] = true
 			}
 		case *FieldsCommand:
+			if FieldListHasGlob(c.Fields) {
+				return nil // glob patterns — all columns needed
+			}
 			for _, f := range c.Fields {
 				cols[normalizeFieldName(f)] = true
 			}
 		case *TableCommand:
+			if FieldListHasGlob(c.Fields) {
+				return nil // glob patterns — all columns needed
+			}
 			for _, f := range c.Fields {
 				cols[normalizeFieldName(f)] = true
 			}

@@ -24,7 +24,7 @@ __pycache__/
 *.pyc
 
 # GoReleaser
-dist/
+/dist/
 log20250630.csv
 shading-proposal.md
 es_bulk.md
@@ -35,3 +35,10 @@ lynxdb
 !/cmd/lynxdb/
 /tmp/
 _lynxflow_spec
+
+# Web UI
+web/node_modules/
+web/dist/
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep
+duckdb-ui-design.json

@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	batchMaxEvents = 1000                   // flush batch after this many events
-	batchMaxDelay  = 100 * time.Millisecond // flush batch after this delay
+	defaultBatchMaxEvents = 1000                   // default flush batch after this many events
+	defaultBatchMaxDelay  = 100 * time.Millisecond // default flush batch after this delay
 
 	// ProcessInsertTimeout bounds insert-time pipeline execution. If a rex
 	// regex backtracks or an eval hangs, we abort rather than blocking the
@@ -56,8 +56,10 @@ type activeView struct {
 	events []*event.Event
 
 	// Batching state (protected by mu).
-	pending    []*event.Event
-	firstAdded time.Time // time of first event in current batch
+	pending        []*event.Event
+	firstAdded     time.Time     // time of first event in current batch
+	batchMaxEvents int           // flush batch after this many events
+	batchMaxDelay  time.Duration // flush batch after this delay
 }
 
 // addPendingBatch adds multiple events under a single lock acquisition.
@@ -70,7 +72,7 @@ func (av *activeView) addPendingBatch(events []*event.Event) {
 		av.firstAdded = time.Now()
 	}
 	av.pending = append(av.pending, events...)
-	if len(av.pending) >= batchMaxEvents {
+	if len(av.pending) >= av.batchMaxEvents {
 		av.flushPendingLocked()
 	}
 	av.mu.Unlock()
@@ -97,7 +99,7 @@ func (av *activeView) sortedEvents() []*event.Event {
 // flushIfExpired flushes the batch if it has exceeded the max delay.
 func (av *activeView) flushIfExpired() {
 	av.mu.Lock()
-	if len(av.pending) > 0 && time.Since(av.firstAdded) >= batchMaxDelay {
+	if len(av.pending) > 0 && time.Since(av.firstAdded) >= av.batchMaxDelay {
 		av.flushPendingLocked()
 	}
 	av.mu.Unlock()
@@ -105,23 +107,35 @@ func (av *activeView) flushIfExpired() {
 
 // Dispatcher routes incoming events to matching materialized views.
 type Dispatcher struct {
-	mu       sync.RWMutex
-	views    map[string]*activeView
-	registry *ViewRegistry
-	layout   *storage.Layout
-	logger   *slog.Logger
-	done     chan struct{}
-	wg       sync.WaitGroup
+	mu             sync.RWMutex
+	views          map[string]*activeView
+	registry       *ViewRegistry
+	layout         *storage.Layout
+	logger         *slog.Logger
+	done           chan struct{}
+	wg             sync.WaitGroup
+	batchMaxEvents int
+	batchMaxDelay  time.Duration
 }
 
-// NewDispatcher creates a new MV dispatcher.
-func NewDispatcher(registry *ViewRegistry, layout *storage.Layout, logger *slog.Logger) *Dispatcher {
+// NewDispatcher creates a new MV dispatcher. batchMaxEvents and batchMaxDelay
+// control per-view event batching. Pass 0 for either to use compiled defaults
+// (1000 events, 100ms delay).
+func NewDispatcher(registry *ViewRegistry, layout *storage.Layout, logger *slog.Logger, batchMaxEvents int, batchMaxDelay time.Duration) *Dispatcher {
+	if batchMaxEvents <= 0 {
+		batchMaxEvents = defaultBatchMaxEvents
+	}
+	if batchMaxDelay <= 0 {
+		batchMaxDelay = defaultBatchMaxDelay
+	}
 	return &Dispatcher{
-		views:    make(map[string]*activeView),
-		registry: registry,
-		layout:   layout,
-		logger:   logger,
-		done:     make(chan struct{}),
+		views:          make(map[string]*activeView),
+		registry:       registry,
+		layout:         layout,
+		logger:         logger,
+		done:           make(chan struct{}),
+		batchMaxEvents: batchMaxEvents,
+		batchMaxDelay:  batchMaxDelay,
 	}
 }
 
@@ -164,7 +178,7 @@ func (d *Dispatcher) Start(ctx context.Context) error {
 
 // batchFlushLoop periodically flushes expired view batches.
 func (d *Dispatcher) batchFlushLoop() {
-	ticker := time.NewTicker(batchMaxDelay / 2) // check at half the max delay
+	ticker := time.NewTicker(d.batchMaxDelay / 2) // check at half the max delay
 	defer ticker.Stop()
 
 	for {
@@ -236,9 +250,11 @@ func (d *Dispatcher) activateView(def ViewDefinition) error {
 	}
 
 	av := &activeView{
-		def:       def,
-		filter:    filter,
-		extractor: NewExtractor(def.Columns),
+		def:            def,
+		filter:         filter,
+		extractor:      NewExtractor(def.Columns),
+		batchMaxEvents: d.batchMaxEvents,
+		batchMaxDelay:  d.batchMaxDelay,
 	}
 
 	// Rebuild pipeline analysis from query string. This is idempotent — we

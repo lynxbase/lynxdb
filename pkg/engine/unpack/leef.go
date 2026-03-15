@@ -26,6 +26,14 @@ type LEEFParser struct{}
 // Name returns the parser format name.
 func (p *LEEFParser) Name() string { return "leef" }
 
+// DeclareFields declares the fields produced by the LEEF parser.
+func (p *LEEFParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{
+		Known:   []string{"leef_version", "device_vendor", "device_product", "device_version", "event_id"},
+		Dynamic: true,
+	}
+}
+
 // Parse extracts fields from a LEEF log line.
 func (p *LEEFParser) Parse(input string, emit func(key string, val event.Value) bool) error {
 	s := strings.TrimSpace(input)

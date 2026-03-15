@@ -34,6 +34,14 @@ type SyslogParser struct{}
 // Name returns the parser format name.
 func (p *SyslogParser) Name() string { return "syslog" }
 
+// DeclareFields declares the fields produced by the syslog parser.
+func (p *SyslogParser) DeclareFields() FieldDeclaration {
+	return FieldDeclaration{
+		Known:    []string{"priority", "facility", "severity", "facility_name", "severity_name", "format", "timestamp", "hostname", "appname", "message"},
+		Optional: []string{"procid", "version", "msgid", "structured_data"},
+	}
+}
+
 // Parse extracts syslog fields from input and calls emit for each.
 func (p *SyslogParser) Parse(input string, emit func(key string, val event.Value) bool) error {
 	s := strings.TrimSpace(input)

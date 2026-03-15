@@ -26,11 +26,15 @@ type subscriber struct {
 	dropped atomic.Int64
 }
 
-// NewEventBus creates a new event bus with the default subscriber limit.
-func NewEventBus() *EventBus {
+// NewEventBus creates a new event bus. Pass maxSubscribers <= 0 to use the
+// default limit (1024).
+func NewEventBus(maxSubscribers int) *EventBus {
+	if maxSubscribers <= 0 {
+		maxSubscribers = defaultMaxSubscribers
+	}
 	return &EventBus{
 		subscribers:    make(map[uint64]*subscriber),
-		maxSubscribers: defaultMaxSubscribers,
+		maxSubscribers: maxSubscribers,
 	}
 }
 

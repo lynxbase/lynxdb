@@ -14,6 +14,7 @@ type Config struct {
 	DataDir   string   `yaml:"data_dir"  json:"data_dir"`
 	Retention Duration `yaml:"retention" json:"retention"`
 	LogLevel  string   `yaml:"log_level" json:"log_level"`
+	NoUI      bool     `yaml:"no_ui"     json:"no_ui"`
 
 	Storage       StorageConfig       `yaml:"storage"        json:"storage"`
 	Query         QueryConfig         `yaml:"query"          json:"query"`
@@ -193,6 +194,11 @@ type QueryConfig struct {
 	// branch-level parallelism in APPEND, MULTISEARCH, and multi-source FROM.
 	// 0 means auto (GOMAXPROCS). This is a soft limit on goroutines, not I/O.
 	MaxBranchParallelism int `yaml:"max_branch_parallelism" json:"max_branch_parallelism"`
+
+	// MaxQueryLength is the maximum allowed length of a query string in bytes.
+	// Requests exceeding this limit are rejected with HTTP 400.
+	// Default: 1048576 (1MB). Set to 0 to disable the limit.
+	MaxQueryLength int `yaml:"max_query_length" json:"max_query_length"`
 }
 
 // IngestConfig holds ingestion parameters.
@@ -222,9 +228,10 @@ type IngestConfig struct {
 
 // HTTPConfig holds HTTP server parameters.
 type HTTPConfig struct {
-	IdleTimeout     time.Duration `yaml:"idle_timeout"     json:"idle_timeout"`
-	ShutdownTimeout time.Duration `yaml:"shutdown_timeout" json:"shutdown_timeout"`
-	RateLimit       float64       `yaml:"rate_limit"       json:"rate_limit"` // requests per second; 0 = unlimited
+	IdleTimeout       time.Duration `yaml:"idle_timeout"          json:"idle_timeout"`
+	ShutdownTimeout   time.Duration `yaml:"shutdown_timeout"      json:"shutdown_timeout"`
+	ReadHeaderTimeout time.Duration `yaml:"read_header_timeout"   json:"read_header_timeout"`
+	RateLimit         float64       `yaml:"rate_limit"            json:"rate_limit"` // requests per second; 0 = unlimited
 }
 
 // TailConfig holds live tail session parameters.
@@ -264,6 +271,14 @@ type ViewsConfig struct {
 	// BackfillMaxRetries is the maximum number of backpressure retries before
 	// failing the backfill. Default: 60 (5 minutes at 5s intervals).
 	BackfillMaxRetries int `yaml:"backfill_max_retries" json:"backfill_max_retries"`
+
+	// DispatchBatchSize is the maximum number of events buffered per view
+	// before flushing to the events slice. Default: 1000.
+	DispatchBatchSize int `yaml:"dispatch_batch_size" json:"dispatch_batch_size"`
+
+	// DispatchBatchDelay is the maximum time to buffer events before flushing.
+	// Default: 100ms.
+	DispatchBatchDelay Duration `yaml:"dispatch_batch_delay" json:"dispatch_batch_delay"`
 }
 
 // BufferManagerConfig configures the unified buffer manager.
@@ -349,6 +364,7 @@ func DefaultConfig() *Config {
 			MaxTempDirSizeBytes:        10 * GB, // 10 GB
 			BitmapSelectivityThreshold: 0.9,
 			SlowQueryThresholdMs:       1000, // 1 second
+			MaxQueryLength:             1 << 20, // 1 MB
 		},
 
 		Ingest: IngestConfig{
@@ -358,8 +374,9 @@ func DefaultConfig() *Config {
 		},
 
 		HTTP: HTTPConfig{
-			IdleTimeout:     120 * time.Second,
-			ShutdownTimeout: 30 * time.Second,
+			IdleTimeout:       120 * time.Second,
+			ShutdownTimeout:   30 * time.Second,
+			ReadHeaderTimeout: 10 * time.Second,
 		},
 
 		Tail: TailConfig{
@@ -374,6 +391,8 @@ func DefaultConfig() *Config {
 		Views: ViewsConfig{
 			BackfillBackpressureWait: Duration(5 * time.Second),
 			BackfillMaxRetries:       60,
+			DispatchBatchSize:        1000,
+			DispatchBatchDelay:       Duration(100 * time.Millisecond),
 		},
 
 		Cluster: ClusterConfig{
