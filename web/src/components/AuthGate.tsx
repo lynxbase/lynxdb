@@ -1,6 +1,6 @@
 import { useState, useCallback } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import { token, authRequired, setToken, clearToken } from "../api/auth";
+import { token, authRequired, setToken } from "../stores/auth";
 import styles from "./AuthGate.module.css";
 
 interface Props {
@@ -38,39 +38,46 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
 
-  const handleSubmit = useCallback(async (e: Event) => {
-    e.preventDefault();
-    const val = inputValue.trim();
-    if (!val) return;
+  const handleSubmit = useCallback(
+    async (e: Event) => {
+      e.preventDefault();
+      const val = inputValue.trim();
+      if (!val) return;
 
-    setChecking(true);
-    setError(null);
+      setChecking(true);
+      setError(null);
 
-    try {
-      // Validate the token by making a lightweight API call
-      const resp = await fetch("/api/v1/status", {
-        headers: { Authorization: `Bearer ${val}` },
-      });
+      try {
+        // Validate the token by making a lightweight API call
+        const resp = await fetch("/api/v1/status", {
+          headers: { Authorization: `Bearer ${val}` },
+        });
 
-      if (resp.ok) {
-        setToken(val);
-      } else if (resp.status === 401) {
-        setError("Invalid API key");
-      } else {
-        setError(`Server error: ${resp.status}`);
+        if (resp.ok) {
+          setToken(val);
+        } else if (resp.status === 401) {
+          setError("Invalid API key");
+        } else {
+          setError(`Server error: ${resp.status}`);
+        }
+      } catch {
+        setError("connection_error");
+      } finally {
+        setChecking(false);
       }
-    } catch {
-      setError("Cannot connect to server");
-    } finally {
-      setChecking(false);
-    }
-  }, [inputValue]);
+    },
+    [inputValue],
+  );
+
+  const handleRetry = useCallback(() => {
+    setError(null);
+  }, []);
 
   return (
     <div class={styles.backdrop}>
       <form class={styles.card} onSubmit={handleSubmit}>
         <div class={styles.logo}>
-          <img src="/lynxdb-icon.png" alt="LynxDB" style={{ height: '32px' }} />
+          <img src="/favicon.svg" alt="LynxDB" class={styles.logoIcon} />
           LynxDB
         </div>
         <div class={styles.subtitle}>Enter your API key to continue</div>
@@ -86,7 +93,22 @@ function LoginForm() {
           autocomplete="off"
         />
 
-        {error && <div class={styles.error}>{error}</div>}
+        {error && error !== "connection_error" && (
+          <div class={styles.error}>{error}</div>
+        )}
+
+        {error === "connection_error" && (
+          <div class={styles.error}>
+            Cannot connect to server -- is LynxDB running?{" "}
+            <button
+              type="button"
+              class={styles.retryLink}
+              onClick={handleRetry}
+            >
+              Retry
+            </button>
+          </div>
+        )}
 
         <button
           type="submit"
@@ -101,22 +123,5 @@ function LoginForm() {
         </div>
       </form>
     </div>
-  );
-}
-
-/** Logout button for the nav bar. Only renders when a token is stored. */
-export function LogoutButton() {
-  if (!token.value) return null;
-
-  return (
-    <button
-      type="button"
-      class={styles.logoutBtn}
-      onClick={clearToken}
-      title="Sign out"
-      aria-label="Sign out"
-    >
-      Sign out
-    </button>
   );
 }

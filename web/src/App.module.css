@@ -1,0 +1,11 @@
+.shell {
+  display: flex;
+  block-size: 100vh;
+  block-size: 100dvh;
+}
+
+.content {
+  margin-inline-start: 48px;
+  flex: 1;
+  overflow: auto;
+}

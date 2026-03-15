@@ -32,6 +32,12 @@
   margin-block-end: 0.25rem;
 }
 
+.logoIcon {
+  inline-size: 28px;
+  block-size: 28px;
+  border-radius: 4px;
+}
+
 .subtitle {
   font-size: 0.8125rem;
   color: var(--text-secondary);
@@ -65,13 +71,29 @@
   text-align: center;
 }
 
+.retryLink {
+  display: inline;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.retryLink:hover {
+  color: var(--accent-hover);
+}
+
 .submitBtn {
   inline-size: 100%;
   padding: 0.5rem 1rem;
   border: none;
   border-radius: var(--radius);
   background: var(--accent);
-  color: var(--bg-primary);
+  color: #fff;
   font-family: var(--font-sans);
   font-size: 0.875rem;
   font-weight: 500;
@@ -102,19 +124,4 @@
   background: var(--bg-tertiary);
   border-radius: 3px;
   color: var(--text-secondary);
-}
-
-.logoutBtn {
-  border: none;
-  background: transparent;
-  color: var(--text-secondary);
-  font-family: var(--font-sans);
-  font-size: 0.8125rem;
-  cursor: pointer;
-  padding-block: 0.25rem;
-  transition: color 150ms ease;
-}
-
-.logoutBtn:hover {
-  color: var(--text-primary);
 }
