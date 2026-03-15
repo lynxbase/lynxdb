@@ -75,6 +75,13 @@
   text-align: center;
 }
 
+.fieldsDivider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 12px;
+  flex-shrink: 0;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .toggleBtn,
   .collapsedToggle {

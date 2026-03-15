@@ -2,9 +2,11 @@ import type {
   IndexInfo,
   ViewSummary,
   ExplainResult,
+  FieldInfo,
 } from "../api/client";
 import { SourcesPanel } from "./flow/SourcesPanel";
 import { PipelinePanel } from "./flow/PipelinePanel";
+import { FieldsPanel } from "./FieldsPanel";
 import styles from "./FlowSidebar.module.css";
 
 interface FlowSidebarProps {
@@ -13,6 +15,9 @@ interface FlowSidebarProps {
   views: ViewSummary[];
   explainResult: ExplainResult | null;
   fieldTypes?: Map<string, string>;
+  selectedFields?: string[];
+  catalogFields?: FieldInfo[];
+  onFilter?: (field: string, value: string, exclude: boolean) => void;
   onToggle: () => void;
   onSelectSource?: (name: string) => void;
   onInsertCommand?: (template: string) => void;
@@ -24,6 +29,9 @@ export function FlowSidebar({
   views,
   explainResult,
   fieldTypes,
+  selectedFields,
+  catalogFields,
+  onFilter,
   onToggle,
   onSelectSource,
   onInsertCommand,
@@ -76,6 +84,14 @@ export function FlowSidebar({
             Run a query to see the pipeline
           </div>
         )}
+
+        <div class={styles.fieldsDivider} />
+
+        <FieldsPanel
+          selectedFields={selectedFields ?? []}
+          catalogFields={catalogFields ?? []}
+          onFilter={onFilter}
+        />
       </div>
     </aside>
   );

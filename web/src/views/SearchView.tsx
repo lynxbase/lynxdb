@@ -189,6 +189,16 @@ function runQueryAndRefresh(
       fetchExplain(q, fromVal, toVal)
         .then((explain) => { explainResult.value = explain; })
         .catch(() => { /* non-critical -- explain is an enhancement */ });
+
+      // Re-fetch field catalog after each query to pick up newly discovered fields (Pitfall 5)
+      fetchFields()
+        .then((fields) => {
+          catalogFields.value = fields;
+          const m = new Map<string, string>();
+          for (const f of fields) m.set(f.name, f.type);
+          fieldTypeMap.value = m;
+        })
+        .catch(() => { /* non-critical */ });
     })
     .catch((err: unknown) => {
       const message = err instanceof Error ? err.message : "Unknown error";
@@ -572,6 +582,7 @@ export function SearchView(_props: Props) {
         if (idx.status === "fulfilled") sidebarIndexes.value = idx.value;
         if (views.status === "fulfilled") sidebarViews.value = views.value;
         if (fields.status === "fulfilled") {
+          catalogFields.value = fields.value;
           const m = new Map<string, string>();
           for (const f of fields.value) {
             m.set(f.name, f.type);
@@ -656,6 +667,9 @@ export function SearchView(_props: Props) {
           views={sidebarViews.value}
           explainResult={explainResult.value}
           fieldTypes={fieldTypeMap.value}
+          selectedFields={activeResult ? deriveColumns(activeResult) : []}
+          catalogFields={catalogFields.value}
+          onFilter={handleFilter}
           onToggle={handleSidebarToggle}
           onSelectSource={handleSetSource}
           onInsertCommand={handleInsertCommand}

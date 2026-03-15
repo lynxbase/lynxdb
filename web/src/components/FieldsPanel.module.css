@@ -1,0 +1,140 @@
+.fieldsPanel {
+  padding: 0;
+  font-size: 0.8125rem;
+}
+
+.searchInput {
+  width: 100%;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.75rem;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  margin-bottom: 4px;
+  outline: none;
+}
+
+.searchInput:focus {
+  border-color: var(--accent);
+}
+
+.sectionHeader {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+  font-weight: 500;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+  background: none;
+  border: none;
+  width: 100%;
+  text-align: left;
+}
+
+.sectionHeader:hover {
+  color: var(--text-primary);
+}
+
+.sectionChevron {
+  font-size: 0.625rem;
+  transition: transform 0.15s;
+  display: inline-block;
+}
+
+.sectionCollapsed .sectionChevron {
+  transform: rotate(-90deg);
+}
+
+.fieldRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+  border-radius: 3px;
+}
+
+.fieldRow:hover {
+  background: var(--bg-hover);
+}
+
+.fieldName {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-primary);
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+}
+
+.fieldName:hover {
+  color: var(--accent);
+}
+
+.typeBadge {
+  font-size: 0.625rem;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+
+.typeBadgeStr {
+  background: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+}
+
+.typeBadgeInt {
+  background: rgba(16, 185, 129, 0.1);
+  color: #10b981;
+}
+
+.typeBadgeFlt {
+  background: rgba(245, 158, 11, 0.1);
+  color: #f59e0b;
+}
+
+.typeBadgeTs {
+  background: rgba(139, 92, 246, 0.1);
+  color: #8b5cf6;
+}
+
+.typeBadgeBool {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.coverage {
+  font-size: 0.625rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.divider {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 0;
+}
+
+.emptyFields {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  padding: 8px 0;
+  text-align: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sectionChevron {
+    transition: none;
+  }
+}
