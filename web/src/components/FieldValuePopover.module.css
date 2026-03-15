@@ -1,0 +1,127 @@
+.popover {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  width: 280px;
+  max-height: 360px;
+  overflow-y: auto;
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  padding: 8px 0;
+}
+
+.popoverHeader {
+  padding: 4px 12px;
+  font-weight: 500;
+  font-size: 0.8125rem;
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border);
+}
+
+.popoverSubtitle {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  font-weight: normal;
+}
+
+.valuesList {
+  padding: 4px 0;
+}
+
+.valueRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 12px;
+}
+
+.valueRow:hover {
+  background: var(--bg-hover);
+}
+
+.valueName {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+  flex-shrink: 0;
+  color: var(--text-primary);
+}
+
+.valueBarContainer {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-tertiary);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.valueBar {
+  height: 100%;
+  background: var(--accent);
+  opacity: 0.4;
+  border-radius: 3px;
+}
+
+.valueCount {
+  font-size: 0.6875rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  min-width: 30px;
+  text-align: right;
+}
+
+.filterBtns {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.addBtn,
+.excludeBtn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+}
+
+.addBtn {
+  color: var(--accent);
+}
+
+.addBtn:hover {
+  background: var(--accent-subtle);
+}
+
+.excludeBtn {
+  color: var(--error);
+}
+
+.excludeBtn:hover {
+  background: rgba(220, 38, 38, 0.08);
+}
+
+.loadingState {
+  padding: 16px;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.emptyState {
+  padding: 16px;
+  text-align: center;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
