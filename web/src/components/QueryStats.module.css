@@ -99,3 +99,45 @@
   font-size: 0.8125rem;
   line-height: 1;
 }
+
+/* --- Progress bar (aggregation) --- */
+
+.progressTrack {
+  flex: 1;
+  max-inline-size: 200px;
+  block-size: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.progressFill {
+  block-size: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.3s ease-out;
+}
+
+/* --- Canceled state --- */
+
+.canceledIcon {
+  color: var(--text-muted);
+}
+
+/* --- Streaming state --- */
+
+.streamingDot {
+  display: inline-block;
+  inline-size: 8px;
+  block-size: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: tailPulse 1.5s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .streamingDot {
+    animation: none;
+  }
+}

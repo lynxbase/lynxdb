@@ -1,5 +1,6 @@
 import type { QueryStats as QueryStatsType } from "../api/client";
 import { formatCount, formatMs } from "../utils/format";
+import { formatElapsed } from "../utils/format";
 import styles from "./QueryStats.module.css";
 
 interface QueryStatsProps {
@@ -10,6 +11,18 @@ interface QueryStatsProps {
   tailActive?: boolean;
   tailEventCount?: number;
   tailCatchupDone?: boolean;
+
+  // Phase 5: Streaming & Progress
+  /** True while NDJSON search stream is active */
+  streaming?: boolean;
+  /** Row count ticking up during streaming */
+  streamingCount?: number;
+  /** Aggregation progress data from SSE */
+  progress?: { percent: number; scanned: number; total: number; elapsedMs: number } | null;
+  /** True when query was canceled by user */
+  canceled?: boolean;
+  /** Elapsed milliseconds since query started (ticking live) */
+  elapsedMs?: number;
 }
 
 export function QueryStatsBar({
@@ -20,6 +33,11 @@ export function QueryStatsBar({
   tailActive,
   tailEventCount,
   tailCatchupDone,
+  streaming,
+  streamingCount,
+  progress,
+  canceled,
+  elapsedMs,
 }: QueryStatsProps) {
   /* --- Live Tail mode --- */
   if (tailActive) {
@@ -46,6 +64,43 @@ export function QueryStatsBar({
         <span class={styles.tailLabel}>Live Tail</span>
         <span class={styles.tailSep} aria-hidden="true">&mdash;</span>
         <span>{statusText}</span>
+      </div>
+    );
+  }
+
+  /* --- Canceled state --- */
+  if (canceled) {
+    const elapsed = formatElapsed(elapsedMs ?? 0);
+    const hasPartialResults = streamingCount !== undefined && streamingCount > 0;
+
+    return (
+      <div class={styles.bar} role="status" aria-live="polite">
+        <span class={styles.canceledIcon} aria-hidden="true">&#9888;</span>
+        {hasPartialResults
+          ? `Canceled \u2014 ${formatCount(streamingCount!)} partial results in ${elapsed}`
+          : `Canceled \u2014 ${elapsed}`}
+      </div>
+    );
+  }
+
+  /* --- Streaming state (NDJSON search in progress) --- */
+  if (streaming) {
+    return (
+      <div class={styles.bar} role="status" aria-live="polite">
+        <span class={styles.streamingDot} aria-hidden="true" />
+        {`${formatCount(streamingCount ?? 0)} results (streaming...) \u2014 ${formatElapsed(elapsedMs ?? 0)}`}
+      </div>
+    );
+  }
+
+  /* --- Progress state (aggregation with progress bar) --- */
+  if (progress) {
+    return (
+      <div class={styles.bar} role="status" aria-live="polite">
+        <div class={styles.progressTrack}>
+          <div class={styles.progressFill} style={{ width: `${progress.percent}%` }} />
+        </div>
+        {`${formatCount(progress.scanned)}/${formatCount(progress.total)} segments (${Math.round(progress.percent)}%) \u2014 ${formatElapsed(elapsedMs ?? progress.elapsedMs)}`}
       </div>
     );
   }
