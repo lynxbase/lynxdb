@@ -88,6 +88,12 @@ const tailActive = signal(false);
 const tailEvents = signal<TailEvent[]>([]);
 const tailNewCount = signal(0);
 const tailCatchupDone = signal(false);
+/** True when the SSE tail connection is in reconnecting state */
+const tailReconnecting = signal(false);
+
+/* --- Phase 6: Explain inspector toggle --- */
+/** Controls whether the explain inspector panel is open (consumed by Plan 02) */
+const explainOpen = signal(false);
 
 /* --- Phase 5: Streaming & Progress signals --- */
 /** True while any query execution mode is active (sync wait, streaming, progress) */
@@ -795,6 +801,7 @@ export function SearchView(_props: Props) {
       tailEvents.value = [];
       tailNewCount.value = 0;
       tailCatchupDone.value = false;
+      tailReconnecting.value = false;
       autoScrollPaused.current = false;
       return;
     }
@@ -838,9 +845,17 @@ export function SearchView(_props: Props) {
           }
         }, 3000);
       },
+      onReconnecting(isReconnecting: boolean) {
+        tailReconnecting.value = isReconnecting;
+      },
     });
 
     tailCleanupRef.current = cleanup;
+  }, []);
+
+  /** Toggle the explain inspector panel */
+  const handleExplainToggle = useCallback(() => {
+    explainOpen.value = !explainOpen.value;
   }, []);
 
   /** Click handler for the "new events" badge -- scroll back to top */
@@ -1029,6 +1044,9 @@ export function SearchView(_props: Props) {
             progress={progressData.value}
             canceled={canceled.value}
             elapsedMs={elapsedMs.value}
+            onExplainToggle={handleExplainToggle}
+            explainAvailable={!!(explainResult.value?.is_valid && explainResult.value?.parsed)}
+            tailReconnecting={tailReconnecting.value}
           />
 
           {/* Table toolbar -- only show when results exist */}
