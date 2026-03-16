@@ -9,6 +9,7 @@ import { QueryStatsBar } from "../components/QueryStats";
 import { FlowSidebar } from "../components/FlowSidebar";
 import { Timeline } from "../components/Timeline";
 import { LiveTailButton } from "../components/LiveTailButton";
+import { ExplainInspector } from "../components/ExplainInspector";
 import { TableToolbar } from "../components/TableToolbar";
 import { PaginationBar } from "../components/PaginationBar";
 import { ListView } from "../components/ListView";
@@ -300,6 +301,7 @@ function runQueryAndRefresh(
     streamingCount.value = 0;
     progressData.value = null;
     error.value = null;
+    explainOpen.value = false;
   });
 
   // Start elapsed timer
@@ -1048,6 +1050,13 @@ export function SearchView(_props: Props) {
             explainAvailable={!!(explainResult.value?.is_valid && explainResult.value?.parsed)}
             tailReconnecting={tailReconnecting.value}
           />
+
+          {explainOpen.value && explainResult.value?.is_valid && explainResult.value?.parsed && (
+            <ExplainInspector
+              explain={explainResult.value}
+              stats={stats.value}
+            />
+          )}
 
           {/* Table toolbar -- only show when results exist */}
           {hasResults && (
