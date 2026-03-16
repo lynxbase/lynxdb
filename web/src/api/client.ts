@@ -285,3 +285,20 @@ export async function fetchViewDetail(name: string): Promise<ViewDetail> {
   const json: APIResponse<ViewDetail> = await resp.json();
   return json.data;
 }
+
+// ---------------------------------------------------------------------------
+// Re-export streaming types for convenience
+// ---------------------------------------------------------------------------
+
+export type {
+  HybridResult,
+  StreamCallbacks,
+  ProgressData,
+} from "./streaming";
+
+export {
+  submitHybridQuery,
+  streamQuery,
+  subscribeJobProgress,
+  cancelJob,
+} from "./streaming";

@@ -60,3 +60,8 @@ export function formatMs(ms: number): string {
   }
   return `${ms.toFixed(1)}ms`;
 }
+
+/** Format elapsed milliseconds as a live timer display (e.g. "1.2s", "0.3s"). */
+export function formatElapsed(ms: number): string {
+  return `${(ms / 1000).toFixed(1)}s`;
+}
