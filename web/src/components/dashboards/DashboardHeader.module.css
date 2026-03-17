@@ -122,3 +122,18 @@
 .btnSecondary:hover {
   background: var(--bg-secondary);
 }
+
+.btnDanger {
+  padding: 4px 12px;
+  border: 1px solid var(--text-error, #dc2626);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-error, #dc2626);
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.btnDanger:hover {
+  background: var(--text-error, #dc2626);
+  color: white;
+}

@@ -34,6 +34,9 @@ interface DashboardHeaderProps {
   onSave?: () => void;
   onDiscard?: () => void;
   saveDisabled?: boolean;
+  onDelete?: () => void;
+  onToggleVariables?: () => void;
+  showVariableEditor?: boolean;
 }
 
 export function DashboardHeader({
@@ -49,6 +52,9 @@ export function DashboardHeader({
   onSave,
   onDiscard,
   saveDisabled,
+  onDelete,
+  onToggleVariables,
+  showVariableEditor,
 }: DashboardHeaderProps) {
   const [editing, setEditing] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -144,6 +150,15 @@ export function DashboardHeader({
 
         {editMode && (
           <>
+            {onToggleVariables && (
+              <button
+                type="button"
+                class={showVariableEditor ? styles.btnPrimary : styles.btnSecondary}
+                onClick={onToggleVariables}
+              >
+                Variables
+              </button>
+            )}
             {onSave && (
               <button
                 type="button"
@@ -161,6 +176,15 @@ export function DashboardHeader({
                 onClick={onDiscard}
               >
                 Discard
+              </button>
+            )}
+            {onDelete && (
+              <button
+                type="button"
+                class={styles.btnDanger}
+                onClick={onDelete}
+              >
+                Delete
               </button>
             )}
           </>

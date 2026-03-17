@@ -7,9 +7,11 @@ import {
   fetchDashboard,
   createDashboard,
   updateDashboard,
+  deleteDashboard,
 } from "../../api/client";
 import { DashboardHeader } from "./DashboardHeader";
 import { PanelRenderer } from "./PanelRenderer";
+import { PanelEditForm } from "./PanelEditForm";
 import styles from "./DashboardDetail.module.css";
 
 interface DashboardDetailProps {
@@ -31,6 +33,8 @@ export function DashboardDetail({
   const [dashName, setDashName] = useState("");
   const [unsavedPanels, setUnsavedPanels] = useState<DashboardPanel[]>([]);
   const [variables] = useState<Record<string, string>>({});
+  const [showPanelForm, setShowPanelForm] = useState(false);
+  const [editingPanel, setEditingPanel] = useState<DashboardPanel | null>(null);
 
   const gridRef = useRef<HTMLDivElement>(null);
   const gsRef = useRef<GridStack | null>(null);
@@ -176,26 +180,48 @@ export function DashboardDetail({
   }
 
   function handleAddPanel() {
-    const newPanel: DashboardPanel = {
-      id: crypto.randomUUID(),
-      title: "New Panel",
-      type: "timechart",
-      q: "* | timechart count span=5m",
-      position: { x: 0, y: 0, w: 6, h: 4 },
-    };
-    setUnsavedPanels((prev) => [...prev, newPanel]);
+    setEditingPanel(null);
+    setShowPanelForm(true);
+  }
 
-    // Add to gridstack if initialized
-    const gs = gsRef.current;
-    if (gs) {
-      gs.addWidget({
-        id: newPanel.id,
-        x: newPanel.position.x,
-        y: newPanel.position.y,
-        w: newPanel.position.w,
-        h: newPanel.position.h,
-        content: `<div id="panel-${newPanel.id}"></div>`,
-      });
+  function handleEditPanel(panel: DashboardPanel) {
+    setEditingPanel(panel);
+    setShowPanelForm(true);
+  }
+
+  function handlePanelFormSave(panel: DashboardPanel) {
+    if (editingPanel) {
+      // Update existing panel
+      setUnsavedPanels((prev) =>
+        prev.map((p) => (p.id === panel.id ? panel : p)),
+      );
+    } else {
+      // Add new panel
+      setUnsavedPanels((prev) => [...prev, panel]);
+      const gs = gsRef.current;
+      if (gs) {
+        gs.addWidget({
+          id: panel.id,
+          x: panel.position.x,
+          y: panel.position.y,
+          w: panel.position.w,
+          h: panel.position.h,
+          content: `<div id="panel-${panel.id}"></div>`,
+        });
+      }
+    }
+    setShowPanelForm(false);
+    setEditingPanel(null);
+  }
+
+  async function handleDeleteDashboard() {
+    if (!dashboardId) return;
+    if (!window.confirm("Delete this dashboard? This action cannot be undone.")) return;
+    try {
+      await deleteDashboard(dashboardId);
+      route("/dashboards");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete dashboard");
     }
   }
 
@@ -267,6 +293,7 @@ export function DashboardDetail({
         onSave={handleSave}
         onDiscard={handleDiscard}
         saveDisabled={saveDisabled}
+        onDelete={dashboardId ? handleDeleteDashboard : undefined}
       />
 
       <div class={styles.gridArea}>
@@ -295,6 +322,7 @@ export function DashboardDetail({
                     variables={variables}
                     refreshTick={refreshTick}
                     editMode={editMode}
+                    onEdit={() => handleEditPanel(panel)}
                     onDelete={() => handleDeletePanel(panel.id)}
                   />
                 </div>
@@ -313,6 +341,17 @@ export function DashboardDetail({
           </button>
         )}
       </div>
+
+      {showPanelForm && (
+        <PanelEditForm
+          panel={editingPanel ?? undefined}
+          onSave={handlePanelFormSave}
+          onCancel={() => {
+            setShowPanelForm(false);
+            setEditingPanel(null);
+          }}
+        />
+      )}
     </div>
   );
 }
