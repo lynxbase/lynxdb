@@ -165,7 +165,7 @@ func writeSyncResultFromUsecase(w http.ResponseWriter, result *usecases.SubmitRe
 	var data interface{}
 	switch result.ResultType {
 	case server.ResultTypeAggregate, server.ResultTypeTimechart:
-		data = buildAggregateResponse(result.ResultType, result.Results)
+		data = buildAggregateResponse(result.ResultType, result.Results, limit, offset)
 	default:
 		data = buildEventsResponse(result.Results, limit, offset)
 	}
@@ -329,12 +329,25 @@ func buildEventsResponse(rows []spl2.ResultRow, limit, offset int) map[string]in
 	}
 }
 
-func buildAggregateResponse(rt server.ResultType, rows []spl2.ResultRow) map[string]interface{} {
+func buildAggregateResponse(rt server.ResultType, rows []spl2.ResultRow, limit, offset int) map[string]interface{} {
 	if len(rows) == 0 {
 		return map[string]interface{}{
-			"type": string(rt), "columns": []string{}, "rows": [][]interface{}{}, "total_rows": 0,
+			"type": string(rt), "columns": []string{}, "rows": [][]interface{}{}, "total_rows": 0, "has_more": false,
 		}
 	}
+
+	// Capture total before slicing for pagination.
+	totalRows := len(rows)
+	if offset > 0 && offset < len(rows) {
+		rows = rows[offset:]
+	} else if offset >= len(rows) {
+		rows = rows[:0]
+	}
+	hasMore := limit > 0 && len(rows) > limit
+	if limit > 0 && limit < len(rows) {
+		rows = rows[:limit]
+	}
+
 	seen := map[string]struct{}{}
 	for _, row := range rows {
 		for k := range row.Fields {
@@ -355,7 +368,7 @@ func buildAggregateResponse(rt server.ResultType, rows []spl2.ResultRow) map[str
 	}
 
 	return map[string]interface{}{
-		"type": string(rt), "columns": cols, "rows": tableRows, "total_rows": len(rows),
+		"type": string(rt), "columns": cols, "rows": tableRows, "total_rows": totalRows, "has_more": hasMore,
 	}
 }
 

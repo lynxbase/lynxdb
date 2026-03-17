@@ -55,15 +55,15 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 
 	// status == "done" — wrap results in a job envelope so the client
 	// always sees {type: "job", status: "done", job_id: "...", results: {...}}.
+	defaultLimit := s.queryCfg.DefaultResultLimit
+	if defaultLimit == 0 {
+		defaultLimit = 1000
+	}
 	var results interface{}
 	switch snap.ResultType {
 	case server.ResultTypeAggregate, server.ResultTypeTimechart:
-		results = buildAggregateResponse(snap.ResultType, snap.Results)
+		results = buildAggregateResponse(snap.ResultType, snap.Results, defaultLimit, 0)
 	default:
-		defaultLimit := s.queryCfg.DefaultResultLimit
-		if defaultLimit == 0 {
-			defaultLimit = 1000
-		}
 		results = buildEventsResponse(snap.Results, defaultLimit, 0)
 	}
 	respondData(w, http.StatusOK, map[string]interface{}{
@@ -171,7 +171,8 @@ func (s *Server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 				}
 				progress = map[string]interface{}{
 					"phase":          string(p.Phase),
-					"scanned":        p.RowsReadSoFar,
+					"scanned":        p.SegmentsScanned,
+					"segments_total": p.SegmentsTotal,
 					"percent":        pct,
 					"events_matched": p.RowsReadSoFar,
 					"elapsed_ms":     p.ElapsedMS,
@@ -183,18 +184,23 @@ func (s *Server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 			writeSSE("progress", progress)
 
 		case server.JobStatusDone:
+			defaultLimit := s.queryCfg.DefaultResultLimit
+			if defaultLimit == 0 {
+				defaultLimit = 1000
+			}
 			var data interface{}
 			switch snap.ResultType {
 			case server.ResultTypeAggregate, server.ResultTypeTimechart:
-				data = buildAggregateResponse(snap.ResultType, snap.Results)
+				data = buildAggregateResponse(snap.ResultType, snap.Results, defaultLimit, 0)
 			default:
-				defaultLimit := s.queryCfg.DefaultResultLimit
-				if defaultLimit == 0 {
-					defaultLimit = 1000
-				}
 				data = buildEventsResponse(snap.Results, defaultLimit, 0)
 			}
-			writeSSE("complete", data)
+			// Build stats meta for the complete event
+			statsEnvelope := searchStatsToMeta(&snap.Stats)
+			writeSSE("complete", map[string]interface{}{
+				"data": data,
+				"meta": statsEnvelope,
+			})
 
 			return
 
