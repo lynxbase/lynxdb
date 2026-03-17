@@ -59,12 +59,12 @@ function toStackedUPlotData(buckets: HistogramBucketGrouped[]): {
 } {
   const times: number[] = [];
 
-  // Discover all levels present across all buckets
+  // Discover all levels present across all buckets; normalize to lowercase
   const levelSet = new Set<string>();
   for (const b of buckets) {
     times.push(new Date(b.time).getTime() / 1000);
     for (const key of Object.keys(b.counts)) {
-      levelSet.add(key);
+      levelSet.add(key.toLowerCase());
     }
   }
 
@@ -85,11 +85,16 @@ function toStackedUPlotData(buckets: HistogramBucketGrouped[]): {
     levels.push(l);
   }
 
-  // Build cumulative stacked arrays
+  // Build cumulative stacked arrays; levels[s] is already lowercase —
+  // try lowercase key first, then the original uppercase variant.
   const rawArrays: number[][] = levels.map(() => new Array(buckets.length).fill(0));
   for (let i = 0; i < buckets.length; i++) {
     for (let s = 0; s < levels.length; s++) {
-      rawArrays[s][i] = buckets[i].counts[levels[s]] || 0;
+      const count =
+        buckets[i].counts[levels[s]] ??
+        buckets[i].counts[levels[s].toUpperCase()] ??
+        0;
+      rawArrays[s][i] = count;
     }
   }
 

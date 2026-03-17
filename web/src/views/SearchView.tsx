@@ -62,6 +62,19 @@ import type {
 import type { TailEvent } from "../api/sse";
 import styles from "./SearchView.module.css";
 
+// Known log level keys for histogram grouping detection
+const KNOWN_LEVELS = new Set(["debug", "info", "warn", "error"]);
+
+/** Returns true if any bucket in a grouped histogram response contains a known level key. */
+function hasKnownLevels(buckets: HistogramBucketGrouped[]): boolean {
+  for (const b of buckets) {
+    for (const key of Object.keys(b.counts)) {
+      if (KNOWN_LEVELS.has(key.toLowerCase())) return true;
+    }
+  }
+  return false;
+}
+
 interface Props {
   path?: string;
 }
@@ -238,10 +251,20 @@ function runPostQueryEffects(
 
   // Fetch grouped histogram (with ungrouped fallback) and explain in
   // parallel after query succeeds. Non-blocking -- failures ignored.
+  // If the grouped response contains no known level keys, fall through
+  // to the ungrouped single-color display so the legend stays clean.
   fetchHistogramGrouped(fromVal, toVal, 60, "level")
     .then((histResult) => {
-      groupedBuckets.value = histResult.buckets;
-      timelineBuckets.value = [];
+      if (histResult.buckets.length > 0 && hasKnownLevels(histResult.buckets)) {
+        groupedBuckets.value = histResult.buckets;
+        timelineBuckets.value = [];
+      } else {
+        // No known level keys — fall through to ungrouped display
+        groupedBuckets.value = [];
+        return fetchHistogram(fromVal, toVal, 60).then((h) => {
+          timelineBuckets.value = h.buckets;
+        });
+      }
     })
     .catch(() => {
       fetchHistogram(fromVal, toVal, 60)
