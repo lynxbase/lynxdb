@@ -1,0 +1,22 @@
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 4px;
+  padding: 8px;
+}
+
+.value {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.1;
+}
+
+.label {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  text-align: center;
+}
