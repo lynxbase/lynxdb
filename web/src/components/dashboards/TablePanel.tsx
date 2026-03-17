@@ -13,13 +13,13 @@ const thStyle: Record<string, string> = {
   textAlign: "left",
   fontWeight: "600",
   background: "var(--bg-secondary)",
-  borderBottom: "1px solid var(--border-primary)",
+  borderBottom: "1px solid var(--border)",
   whiteSpace: "nowrap",
 };
 
 const tdStyle: Record<string, string> = {
   padding: "3px 8px",
-  borderBottom: "1px solid var(--border-primary)",
+  borderBottom: "1px solid var(--border)",
   whiteSpace: "nowrap",
   overflow: "hidden",
   textOverflow: "ellipsis",

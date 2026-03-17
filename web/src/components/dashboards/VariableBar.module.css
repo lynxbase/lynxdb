@@ -4,7 +4,7 @@
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-2) var(--space-4);
-  border-bottom: 1px solid var(--border-secondary, var(--border-primary));
+  border-bottom: 1px solid var(--border-secondary, var(--border));
   background: var(--bg-secondary);
 }
 
@@ -25,7 +25,7 @@
 .varSelect {
   font-size: 0.8rem;
   padding: 4px 8px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg-primary);
   color: var(--text-primary);

@@ -1,6 +1,6 @@
 .section {
   padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--border-secondary, var(--border-primary));
+  border-bottom: 1px solid var(--border-secondary, var(--border));
   background: var(--bg-primary);
 }
 
@@ -22,7 +22,7 @@
 
 .varInput {
   padding: 4px 6px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border);
   border-radius: 3px;
   font-size: 0.8rem;
   background: var(--bg-secondary);
@@ -38,7 +38,7 @@
 
 .varSelect {
   padding: 4px 6px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border);
   border-radius: 3px;
   font-size: 0.8rem;
   background: var(--bg-secondary);

@@ -14,6 +14,26 @@ const COLORS = [
   "#06b6d4",
 ];
 
+/** Detect category vs value columns by inspecting row data types. */
+function classifyColumns(data: AggregateResult): { categoryIdx: number; valueIdxs: number[] } {
+  let categoryIdx = 0;
+  const valueIdxs: number[] = [];
+  for (let ci = 0; ci < data.columns.length; ci++) {
+    const isNumeric = data.rows.length > 0 && data.rows.every(
+      (r) => r[ci] == null || typeof r[ci] === "number" || (typeof r[ci] === "string" && !isNaN(Number(r[ci])) && String(r[ci]).trim() !== ""),
+    );
+    if (isNumeric) {
+      valueIdxs.push(ci);
+    } else {
+      categoryIdx = ci;
+    }
+  }
+  if (valueIdxs.length === 0) {
+    return { categoryIdx: 0, valueIdxs: data.columns.slice(1).map((_, i) => i + 1) };
+  }
+  return { categoryIdx, valueIdxs };
+}
+
 export function AreaPanel({ data }: { data: AggregateResult }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<uPlot | null>(null);
@@ -22,17 +42,18 @@ export function AreaPanel({ data }: { data: AggregateResult }) {
     const el = containerRef.current;
     if (!el || !data || data.rows.length === 0) return;
 
+    const { categoryIdx, valueIdxs } = classifyColumns(data);
     const xIsNumeric = data.rows.every(
-      (r) => typeof r[0] === "number" || !isNaN(Number(r[0])),
+      (r) => typeof r[categoryIdx] === "number" || !isNaN(Number(r[categoryIdx])),
     );
-    const labels = data.rows.map((r) => String(r[0] ?? ""));
+    const labels = data.rows.map((r) => String(r[categoryIdx] ?? ""));
     const xValues = xIsNumeric
-      ? data.rows.map((r) => Number(r[0]))
+      ? data.rows.map((r) => Number(r[categoryIdx]))
       : data.rows.map((_, i) => i);
 
-    const seriesCols = data.columns.slice(1);
-    const seriesData: number[][] = seriesCols.map((_, ci) =>
-      data.rows.map((r) => Number(r[ci + 1]) || 0),
+    const seriesCols = valueIdxs.map((i) => data.columns[i]);
+    const seriesData: number[][] = valueIdxs.map((idx) =>
+      data.rows.map((r) => Number(r[idx]) || 0),
     );
 
     const opts: uPlot.Options = {

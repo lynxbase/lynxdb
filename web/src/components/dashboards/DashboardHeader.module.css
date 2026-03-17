@@ -3,7 +3,7 @@
   align-items: center;
   gap: var(--space-3);
   padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--border-primary);
+  border-bottom: 1px solid var(--border);
   background: var(--bg-primary);
   flex-shrink: 0;
 }
@@ -41,7 +41,7 @@
 
 .select {
   padding: 4px 8px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg-primary);
   color: var(--text-primary);
@@ -75,7 +75,7 @@
 
 .iconBtn {
   background: none;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
   color: var(--text-secondary);
@@ -111,7 +111,7 @@
 
 .btnSecondary {
   padding: 4px 12px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg-primary);
   color: var(--text-primary);

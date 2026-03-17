@@ -18,6 +18,26 @@ interface Slice {
   pct: string;
 }
 
+/** Detect category vs value columns by inspecting row data types. */
+function classifyColumns(data: AggregateResult): { categoryIdx: number; valueIdxs: number[] } {
+  let categoryIdx = 0;
+  const valueIdxs: number[] = [];
+  for (let ci = 0; ci < data.columns.length; ci++) {
+    const isNumeric = data.rows.length > 0 && data.rows.every(
+      (r) => r[ci] == null || typeof r[ci] === "number" || (typeof r[ci] === "string" && !isNaN(Number(r[ci])) && String(r[ci]).trim() !== ""),
+    );
+    if (isNumeric) {
+      valueIdxs.push(ci);
+    } else {
+      categoryIdx = ci;
+    }
+  }
+  if (valueIdxs.length === 0) {
+    return { categoryIdx: 0, valueIdxs: data.columns.slice(1).map((_, i) => i + 1) };
+  }
+  return { categoryIdx, valueIdxs };
+}
+
 export function PiePanel({ data }: { data: AggregateResult }) {
   if (!data || data.rows.length === 0) {
     return (
@@ -36,7 +56,10 @@ export function PiePanel({ data }: { data: AggregateResult }) {
     );
   }
 
-  const total = data.rows.reduce((s, r) => s + (Number(r[1]) || 0), 0);
+  const { categoryIdx, valueIdxs } = classifyColumns(data);
+  const valIdx = valueIdxs[0] ?? 1;
+
+  const total = data.rows.reduce((s, r) => s + (Number(r[valIdx]) || 0), 0);
   if (total === 0) {
     return (
       <div
@@ -55,10 +78,10 @@ export function PiePanel({ data }: { data: AggregateResult }) {
   }
 
   const slices: Slice[] = data.rows.map((row, i) => ({
-    label: String(row[0] ?? ""),
-    value: Number(row[1]) || 0,
+    label: String(row[categoryIdx] ?? ""),
+    value: Number(row[valIdx]) || 0,
     color: PALETTE[i % PALETTE.length],
-    pct: (((Number(row[1]) || 0) / total) * 100).toFixed(1),
+    pct: (((Number(row[valIdx]) || 0) / total) * 100).toFixed(1),
   }));
 
   // Build SVG paths

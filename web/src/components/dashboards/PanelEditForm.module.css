@@ -11,7 +11,7 @@
 
 .form {
   background: var(--bg-primary);
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: var(--space-5);
   width: 500px;
@@ -44,7 +44,7 @@
 .textarea {
   width: 100%;
   padding: 8px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border);
   border-radius: 4px;
   font-size: 0.85rem;
   background: var(--bg-secondary);
@@ -127,7 +127,7 @@
 
 .btnCancel {
   padding: 8px 16px;
-  border: 1px solid var(--border-primary);
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: var(--bg-primary);
   color: var(--text-primary);
