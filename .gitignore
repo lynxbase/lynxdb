@@ -42,3 +42,4 @@ web/dist/
 internal/webui/dist/*
 !internal/webui/dist/.gitkeep
 duckdb-ui-design.json
+/web/.vite/

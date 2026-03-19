@@ -153,8 +153,8 @@ func (e *Engine) initDiskPersistence(ctx context.Context) error {
 		Interval: part.DefaultRetentionInterval,
 	}
 	e.retentionMgr = part.NewRetentionManager(e.partLayout, e.partRegistry, retentionCfg, e.logger)
-	e.retentionMgr.SetOnDelete(func(index, partition string, removedIDs []string) {
-		e.onPartitionDeleted(removedIDs)
+	e.retentionMgr.SetOnDelete(func(index, partition string, removedIDs []string, partitionDir string) {
+		e.onPartitionDeleted(removedIDs, partitionDir)
 	})
 	e.retentionMgr.Start(ctx)
 

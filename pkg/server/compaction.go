@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"os"
 	"sync"
 	"time"
 
@@ -158,16 +157,21 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx string, plan *co
 
 	e.tierMgr.AddSegment(partMetaToSegmentMeta(outputMeta))
 
-	// Remove old segments from subsystems while under lock.
+	// Remove old segments from subsystems and defer file deletion until
+	// mmap close (refs reaches 0). This prevents SIGSEGV on macOS arm64
+	// where the kernel can revoke page protections for unlinked mappings.
 	for _, old := range oldHandles {
 		e.compactor.RemoveSegment(old.meta.ID)
 		e.tierMgr.RemoveSegment(old.meta.ID)
+		if old.meta.Path != "" {
+			old.pendingDelete = []string{old.meta.Path}
+		}
 	}
 
 	e.advanceEpoch(newSegments, oldHandles) // schedules background mmap cleanup
 	e.mu.Unlock()
 
-	// Cache invalidation (outside lock).
+	// Cache invalidation and registry cleanup (outside lock).
 	removedIDs := make([]string, 0, len(oldHandles))
 	for _, old := range oldHandles {
 		removedIDs = append(removedIDs, old.meta.ID)
@@ -175,14 +179,7 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx string, plan *co
 
 	e.cache.OnCompaction(removedIDs, []string{outputMeta.ID})
 
-	// Delete old part files and remove from registry. unlink on mmap'd
-	// files is safe on Linux/macOS (pages remain valid until munmap).
-	// mmap.Close() is deferred to drainAndClose in the retired epoch.
 	for _, old := range oldHandles {
-		if old.meta.Path != "" {
-			os.Remove(old.meta.Path)
-		}
-
 		e.partRegistry.Remove(old.meta.ID)
 	}
 
@@ -234,7 +231,9 @@ func (e *Engine) maybeCompactAfterFlush(ctx context.Context, index string) {
 
 // onPartitionDeleted handles cleanup when the retention manager deletes a partition.
 // It closes mmap handles and removes segment handles for the deleted parts.
-func (e *Engine) onPartitionDeleted(removedIDs []string) {
+// File deletion is deferred to decRef (when refs reaches 0) to prevent SIGSEGV
+// from deleting mmap'd files while readers are still active.
+func (e *Engine) onPartitionDeleted(removedIDs []string, partitionDir string) {
 	if len(removedIDs) == 0 {
 		return
 	}
@@ -256,10 +255,13 @@ func (e *Engine) onPartitionDeleted(removedIDs []string) {
 		}
 	}
 
-	// Remove from subsystems.
+	// Remove from subsystems and defer file deletion until mmap close.
 	for _, old := range oldHandles {
 		e.compactor.RemoveSegment(old.meta.ID)
 		e.tierMgr.RemoveSegment(old.meta.ID)
+		if old.meta.Path != "" {
+			old.pendingDelete = []string{old.meta.Path}
+		}
 	}
 
 	e.advanceEpoch(newSegments, oldHandles) // schedules background mmap cleanup

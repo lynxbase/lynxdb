@@ -19,13 +19,15 @@
 }
 
 .dragHandle {
-  height: 4px;
-  cursor: ns-resize;
-  background: transparent;
-  border-top: 1px solid var(--border);
-  transition: background-color 0.15s;
-  width: 100%;
-  flex-shrink: 0;
+	position: absolute;
+	bottom: 0;
+	left: 0;
+	right: 0;
+	height: 4px;
+	cursor: ns-resize;
+	background: transparent;
+	transition: background-color 0.15s;
+	z-index: 2;
 }
 
 .dragHandle:hover {

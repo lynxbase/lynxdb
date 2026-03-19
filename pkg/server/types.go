@@ -5,6 +5,8 @@ import (
 	crypto_rand "crypto/rand"
 	"encoding/hex"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,6 +26,12 @@ type segmentHandle struct {
 	index       string
 	bloom       *index.BloomFilter     // cached for query skip
 	invertedIdx *index.SerializedIndex // cached inverted index for bitmap lookups
+
+	// pendingDelete holds file paths to delete when refs reaches 0 (after
+	// mmap.Close). This defers file deletion until no epoch references the
+	// segment, preventing SIGSEGV on macOS arm64 where the kernel can revoke
+	// page protections for unlinked file-backed mappings under memory pressure.
+	pendingDelete []string
 
 	// refs is an epoch-based reference count. Each epoch that includes this
 	// segment increments refs via incRef(); when the epoch drains it decrements
@@ -56,6 +64,11 @@ func (sh *segmentHandle) decRef() bool {
 	if new == 0 {
 		if sh.mmap != nil {
 			sh.mmap.Close() // idempotent via atomic.CompareAndSwap inside MmapSegment.Close
+		}
+		for _, p := range sh.pendingDelete {
+			if err := os.Remove(p); err == nil {
+				os.Remove(filepath.Dir(p)) // clean up empty partition dir; fails on non-empty (ENOTEMPTY)
+			}
 		}
 		return true
 	}

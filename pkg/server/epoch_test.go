@@ -1023,3 +1023,93 @@ func TestEpochMultiEpochRetirement(t *testing.T) {
 		t.Fatalf("segE.refs = %d, want 1 (still in current epoch)", got)
 	}
 }
+
+// TestPendingDeleteDefersFileDeletion verifies that files in pendingDelete are
+// not removed until refs reaches 0 (after mmap.Close). This is the fix for
+// SIGSEGV on macOS arm64 where the kernel revokes page protections for
+// unlinked file-backed mappings under memory pressure.
+func TestPendingDeleteDefersFileDeletion(t *testing.T) {
+	e := newTestEngine(t)
+
+	// Create a real segment file on disk.
+	dir := t.TempDir()
+	path := dir + "/test.lsg"
+
+	events := make([]*event.Event, 10)
+	now := time.Now()
+	for i := range events {
+		events[i] = &event.Event{
+			Time: now.Add(time.Duration(i) * time.Millisecond),
+			Raw:  fmt.Sprintf("event %d", i),
+			Host: "test-host",
+		}
+	}
+
+	var buf bytes.Buffer
+	w := segment.NewWriter(&buf)
+	if _, err := w.Write(events); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	if err := os.WriteFile(path, buf.Bytes(), 0o600); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	ms, err := segment.OpenSegmentFile(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	sh := &segmentHandle{
+		reader: ms.Reader(),
+		mmap:   ms,
+		meta: model.SegmentMeta{
+			ID:    "pending-delete-test",
+			Index: "main",
+			Path:  path,
+		},
+		index:         "main",
+		pendingDelete: []string{path},
+	}
+
+	// Add to epoch.
+	e.mu.Lock()
+	e.advanceEpoch([]*segmentHandle{sh}, nil)
+	e.mu.Unlock()
+
+	// Pin the epoch (simulates a query in flight).
+	ep := e.pinEpoch()
+
+	// Retire the segment via advanceEpoch (simulates compaction).
+	e.mu.Lock()
+	e.advanceEpoch(make([]*segmentHandle, 0), []*segmentHandle{sh})
+	e.mu.Unlock()
+
+	// File must still exist — the query is still pinned.
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Fatal("file deleted while epoch still pinned — pendingDelete fired too early")
+	}
+
+	// Reader should still be valid.
+	if count := sh.reader.EventCount(); count != 10 {
+		t.Fatalf("reader.EventCount = %d, want 10", count)
+	}
+
+	// Unpin — triggers drain, which calls decRef, which calls mmap.Close
+	// and then deletes pending files.
+	ep.unpin()
+
+	// Wait for drain goroutine.
+	select {
+	case <-ep.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("epoch done not signaled after unpin")
+	}
+
+	// Give drain goroutine time to complete decRef + file deletion.
+	time.Sleep(100 * time.Millisecond)
+
+	// File should now be deleted.
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("file still exists after refs reached 0: err=%v", err)
+	}
+}

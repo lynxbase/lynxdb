@@ -69,16 +69,34 @@ func (e *Engine) BuildStreamingPipeline(ctx context.Context, prog *spl2.Program,
 	pipeStore := &enginepipeline.ServerIndexStore{Events: eventStore}
 	iter, err := enginepipeline.BuildProgramWithViews(ctx, prog, pipeStore, e, e, 0)
 	if err != nil {
+		monitor.Close()
 		return nil, stats, err
 	}
 
 	if err := iter.Init(ctx); err != nil {
 		iter.Close()
-
+		monitor.Close()
 		return nil, stats, err
 	}
 
-	return iter, stats, nil
+	return &monitorClosingIterator{Iterator: iter, monitor: monitor}, stats, nil
+}
+
+// monitorClosingIterator wraps an Iterator and closes the BudgetMonitor when
+// the iterator is closed, ensuring pool bytes are returned to the parent.
+type monitorClosingIterator struct {
+	enginepipeline.Iterator
+	monitor *stats.BudgetMonitor
+	closed  bool
+}
+
+func (m *monitorClosingIterator) Close() error {
+	err := m.Iterator.Close()
+	if !m.closed {
+		m.monitor.Close()
+		m.closed = true
+	}
+	return err
 }
 
 // EventBus returns the engine's event bus for live subscriptions.

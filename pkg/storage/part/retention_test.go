@@ -80,11 +80,9 @@ func TestRetentionManager_DeletesOldPartitions(t *testing.T) {
 		t.Error("expected recent part to still be in registry")
 	}
 
-	// Old partition directory should be deleted.
-	oldDir := layout.PartitionDir("main", old)
-	if _, err := os.Stat(oldDir); !os.IsNotExist(err) {
-		t.Errorf("expected old partition dir to be deleted: %s", oldDir)
-	}
+	// Partition directory is no longer deleted by RetentionManager — file
+	// deletion is deferred to the engine (via pendingDelete on segmentHandle).
+	// The directory still exists on disk until the engine's decRef cleans it up.
 
 	// Recent partition directory should still exist.
 	recentDir := layout.PartitionDir("main", recent)
@@ -145,7 +143,7 @@ func TestRetentionManager_OnDeleteCallback(t *testing.T) {
 	var callbackIDs []string
 	var mu sync.Mutex
 
-	rm.SetOnDelete(func(index, partition string, removedIDs []string) {
+	rm.SetOnDelete(func(index, partition string, removedIDs []string, partitionDir string) {
 		mu.Lock()
 		callbackIndex = index
 		callbackPartition = partition
@@ -278,6 +276,11 @@ func TestRetentionManager_HourlyGranularity(t *testing.T) {
 		MaxAge: 90 * 24 * time.Hour,
 	}, testLogger())
 
+	var callbackDir string
+	rm.SetOnDelete(func(index, partition string, removedIDs []string, partitionDir string) {
+		callbackDir = partitionDir
+	})
+
 	deleted, err := rm.RunOnce()
 	if err != nil {
 		t.Fatalf("RunOnce: %v", err)
@@ -287,7 +290,10 @@ func TestRetentionManager_HourlyGranularity(t *testing.T) {
 		t.Errorf("expected 1 partition deleted, got %d", deleted)
 	}
 
-	if _, err := os.Stat(partDir); !os.IsNotExist(err) {
-		t.Error("expected partition dir to be deleted")
+	// Directory is no longer deleted by RetentionManager — file deletion
+	// is deferred to the engine via pendingDelete. Verify the callback
+	// received the correct partition dir for deferred cleanup.
+	if callbackDir != partDir {
+		t.Errorf("expected callback partitionDir %q, got %q", partDir, callbackDir)
 	}
 }

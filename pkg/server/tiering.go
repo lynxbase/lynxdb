@@ -110,18 +110,13 @@ func (e *Engine) runTieringCycle(ctx context.Context) {
 		}
 		var retired []*segmentHandle
 		if oldSH != nil {
+			if oldSH.meta.Path != "" {
+				oldSH.pendingDelete = []string{oldSH.meta.Path}
+			}
 			retired = []*segmentHandle{oldSH}
 		}
 		e.advanceEpoch(newSegments, retired)
 		e.mu.Unlock()
-
-		// Delete local file. File deletion on a mmap'd file is safe on
-		// Linux/macOS — pages remain valid until munmap.
-		if oldSH != nil && oldSH.meta.Path != "" {
-			if err := os.Remove(oldSH.meta.Path); err != nil && !os.IsNotExist(err) {
-				e.logger.Warn("tiering: failed to remove local file", "path", oldSH.meta.Path, "error", err)
-			}
-		}
 	}
 
 	// Process retry queue: re-attempt warm uploads for previously failed segments.
@@ -214,17 +209,17 @@ func (e *Engine) runTieringCycle(ctx context.Context) {
 		}
 		var retired []*segmentHandle
 		if expiredSH != nil {
+			var paths []string
+			if expiredSH.meta.Path != "" {
+				paths = append(paths, expiredSH.meta.Path)
+			}
+			cachePath := filepath.Join(e.dataDir, "segment-cache", id+".lsg")
+			paths = append(paths, cachePath)
+			expiredSH.pendingDelete = paths
 			retired = []*segmentHandle{expiredSH}
 		}
 		e.advanceEpoch(newSegments, retired)
 		e.mu.Unlock()
-
-		if expiredSH != nil && expiredSH.meta.Path != "" {
-			os.Remove(expiredSH.meta.Path)
-		}
-		// Also remove any cached remote segment file (P1-4).
-		cachePath := filepath.Join(e.dataDir, "segment-cache", id+".lsg")
-		os.Remove(cachePath) // ignore error — file may not exist
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 )
 
@@ -39,9 +38,9 @@ func (c RetentionConfig) withDefaults() RetentionConfig {
 	return c
 }
 
-// RetentionManager periodically deletes partition directories older than MaxAge.
-// Deletion is O(1) per partition (os.RemoveAll) instead of scanning individual
-// parts — the time-partitioned directory layout (YYYY-MM-DD) enables this.
+// RetentionManager periodically deletes partitions older than MaxAge.
+// File deletion is deferred to the engine (via onDelete callback) which
+// schedules removal after all mmap references are released.
 //
 // RetentionManager is safe for concurrent use.
 type RetentionManager struct {
@@ -51,9 +50,10 @@ type RetentionManager struct {
 	logger   *slog.Logger
 
 	// onDelete is called for each deleted partition with the index name,
-	// partition key, and the list of part IDs that were removed.
-	// Engine uses this to close mmap handles and remove segment handles.
-	onDelete func(index, partition string, removedIDs []string)
+	// partition key, the list of part IDs that were removed, and the
+	// partition directory path. Engine uses this to close mmap handles,
+	// remove segment handles, and defer file deletion until mmap close.
+	onDelete func(index, partition string, removedIDs []string, partitionDir string)
 }
 
 // NewRetentionManager creates a RetentionManager.
@@ -75,7 +75,7 @@ func NewRetentionManager(
 
 // SetOnDelete sets the callback invoked after each partition is deleted.
 // Must be called before Start.
-func (rm *RetentionManager) SetOnDelete(fn func(index, partition string, removedIDs []string)) {
+func (rm *RetentionManager) SetOnDelete(fn func(index, partition string, removedIDs []string, partitionDir string)) {
 	rm.onDelete = fn
 }
 
@@ -163,7 +163,10 @@ func (rm *RetentionManager) retainIndex(index string) (int, error) {
 	return deleted, nil
 }
 
-// deletePartition removes a partition directory and all its parts from the registry.
+// deletePartition removes a partition's parts from the registry and notifies
+// the engine. File deletion is deferred: individual .lsg files are deleted
+// when the segment's mmap ref count reaches 0 (via pendingDelete in decRef),
+// and the empty partition directory is cleaned up at the same time.
 func (rm *RetentionManager) deletePartition(index, partition string) error {
 	// Collect part IDs in this partition from the registry before deletion.
 	allParts := rm.registry.ByIndex(index)
@@ -175,11 +178,7 @@ func (rm *RetentionManager) deletePartition(index, partition string) error {
 		}
 	}
 
-	// Remove the entire partition directory (O(1) per partition).
 	dir := rm.layout.PartitionDirByKey(index, partition)
-	if err := os.RemoveAll(dir); err != nil {
-		return fmt.Errorf("part.RetentionManager.deletePartition: remove %s: %w", dir, err)
-	}
 
 	for _, id := range removedIDs {
 		rm.registry.Remove(id)
@@ -191,9 +190,10 @@ func (rm *RetentionManager) deletePartition(index, partition string) error {
 		"parts_removed", len(removedIDs),
 	)
 
-	// Notify engine to close mmap handles and remove segment handles.
+	// Notify engine to close mmap handles, remove segment handles, and
+	// defer file deletion until mmap close.
 	if rm.onDelete != nil {
-		rm.onDelete(index, partition, removedIDs)
+		rm.onDelete(index, partition, removedIDs, dir)
 	}
 
 	return nil
