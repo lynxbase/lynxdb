@@ -14,8 +14,27 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/vmihailenco/msgpack/v5"
 )
+
+// GovernorPoolAdapter adapts a memgov.Governor to the PoolReserver interface.
+type GovernorPoolAdapter struct {
+	gov memgov.Governor
+}
+
+// NewGovernorPoolAdapter creates a PoolReserver backed by the given governor.
+func NewGovernorPoolAdapter(gov memgov.Governor) *GovernorPoolAdapter {
+	return &GovernorPoolAdapter{gov: gov}
+}
+
+func (a *GovernorPoolAdapter) ReserveForCache(n int64) error {
+	return a.gov.Reserve(memgov.ClassPageCache, n)
+}
+
+func (a *GovernorPoolAdapter) ReleaseCache(n int64) {
+	a.gov.Release(memgov.ClassPageCache, n)
+}
 
 // Key uniquely identifies a cached result.
 type Key struct {
@@ -79,11 +98,11 @@ type Stats struct {
 	SizeBytes     int64
 	EntryCount    int64
 	HitRate       float64
-	PoolFullDrops int64 // inserts dropped because unified pool was full
+	PoolFullDrops int64 // inserts dropped because governor pool was full
 	RemoveErrors  int64 // os.Remove failures during eviction
 }
 
-// PoolReserver abstracts the UnifiedPool interface for cache integration.
+// PoolReserver abstracts the Governor interface for cache integration.
 // The cache calls ReserveForCache when inserting entries and ReleaseCache
 // when evicting them. This allows elastic sharing with query execution.
 type PoolReserver interface {
@@ -105,10 +124,10 @@ type Store struct {
 	currentSize int64 // running total of entry sizes, updated under mu
 
 	// Observability counters for cache pressure and disk errors.
-	poolFullDrops    atomic.Int64 // inserts dropped because unified pool was full
+	poolFullDrops    atomic.Int64 // inserts dropped because governor pool was full
 	removeErrors     atomic.Int64 // os.Remove failures during eviction
 
-	// pool is the optional unified memory pool. When non-nil, cache
+	// pool is the optional memory pool. When non-nil, cache
 	// insertions call ReserveForCache and evictions call ReleaseCache.
 	// Set via SetPool after construction to avoid import cycles.
 	pool PoolReserver
@@ -143,7 +162,7 @@ func NewStore(dir string, maxBytes int64, ttl time.Duration) *Store {
 	return cs
 }
 
-// SetPool sets the unified memory pool for elastic sharing. When set, cache
+// SetPool sets the memory pool for elastic sharing. When set, cache
 // insertions reserve memory from the pool and evictions release it back.
 // Must be called before any Get/Put operations (typically during server startup).
 func (cs *Store) SetPool(pool PoolReserver) {
@@ -184,7 +203,7 @@ func (cs *Store) Get(ctx context.Context, key Key) (*CachedResult, error) {
 	return entry.result, nil
 }
 
-// Put stores a result in the cache. When a unified pool is configured, it
+// Put stores a result in the cache. When a memory pool is configured, it
 // reserves memory from the pool before inserting. If the pool has no room
 // (queries are using the space), the entry is silently dropped.
 func (cs *Store) Put(ctx context.Context, key Key, result *CachedResult) error {
@@ -204,7 +223,7 @@ func (cs *Store) Put(ctx context.Context, key Key, result *CachedResult) error {
 		cs.currentSize -= existing.sizeBytes
 	}
 
-	// If pool is set, reserve the net increase from the unified pool.
+	// If pool is set, reserve the net increase from the memory pool.
 	if cs.pool != nil {
 		netIncrease := size - existingSize
 		if netIncrease > 0 {
@@ -260,9 +279,9 @@ func (cs *Store) Put(ctx context.Context, key Key, result *CachedResult) error {
 // EvictBytes evicts LRU entries until at least bytesNeeded bytes have been freed,
 // or no more entries remain. Returns the total bytes actually freed.
 //
-// Called from the UnifiedPool's cacheEvictor callback. The caller holds its own
+// Called from the Governor's cacheEvictor callback. The caller holds its own
 // mutex; this method acquires the cache's mu lock separately (no deadlock). Must
-// NOT call back into the UnifiedPool — the pool adjusts cacheAllocated after
+// NOT call back into the Governor — the pool adjusts cacheAllocated after
 // the evictor returns.
 func (cs *Store) EvictBytes(bytesNeeded int64) int64 {
 	if bytesNeeded <= 0 {
@@ -282,7 +301,7 @@ func (cs *Store) EvictBytes(bytesNeeded int64) int64 {
 			freed += entry.sizeBytes
 			cs.currentSize -= entry.sizeBytes
 			// Do NOT call cs.pool.ReleaseCache here — this method is called
-			// from the UnifiedPool's evictor, which adjusts cacheAllocated
+			// from the Governor's evictor, which adjusts cacheAllocated
 			// itself based on the returned freed value.
 		}
 		delete(cs.entries, evictedKey)

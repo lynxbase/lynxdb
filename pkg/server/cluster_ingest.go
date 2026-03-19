@@ -115,9 +115,10 @@ func (e *Engine) localClusterIngest(_ context.Context, events []*event.Event) er
 		}
 
 		e.mu.Lock()
-		combined := make([]*segmentHandle, len(e.currentEpoch.segments)+len(handles))
-		copy(combined, e.currentEpoch.segments)
-		copy(combined[len(e.currentEpoch.segments):], handles)
+		cur := e.currentEpoch.Load().segments
+		combined := make([]*segmentHandle, len(cur)+len(handles))
+		copy(combined, cur)
+		copy(combined[len(cur):], handles)
 		e.advanceEpoch(combined, nil)
 		e.mu.Unlock()
 	}

@@ -2963,3 +2963,88 @@ func TestLynxFlow_Pipeline_ParseThenGroupThenOrder(t *testing.T) {
 		t.Errorf("cmd[3]: expected HeadCommand, got %T", q.Commands[3])
 	}
 }
+
+// =============================================================================
+// Multi-field explode
+// =============================================================================
+
+func TestLynxFlow_ExplodeMultiField(t *testing.T) {
+	q, err := Parse(`| explode product, price`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	unroll, ok := q.Commands[0].(*UnrollCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected UnrollCommand, got %T", q.Commands[0])
+	}
+	if unroll.Field != "product" {
+		t.Errorf("Field: got %q, want product", unroll.Field)
+	}
+	if len(unroll.ExtraFields) != 1 || unroll.ExtraFields[0] != "price" {
+		t.Errorf("ExtraFields: got %v, want [price]", unroll.ExtraFields)
+	}
+	if unroll.Alias != "" {
+		t.Errorf("Alias: got %q, want empty (multi-field disallows alias)", unroll.Alias)
+	}
+}
+
+func TestLynxFlow_ExplodeMultiFieldThree(t *testing.T) {
+	q, err := Parse(`| explode a, b, c`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	unroll := q.Commands[0].(*UnrollCommand)
+	if unroll.Field != "a" {
+		t.Errorf("Field: got %q, want a", unroll.Field)
+	}
+	if len(unroll.ExtraFields) != 2 {
+		t.Fatalf("ExtraFields: got %v, want [b c]", unroll.ExtraFields)
+	}
+	if unroll.ExtraFields[0] != "b" || unroll.ExtraFields[1] != "c" {
+		t.Errorf("ExtraFields: got %v, want [b c]", unroll.ExtraFields)
+	}
+	all := unroll.AllFields()
+	if len(all) != 3 || all[0] != "a" || all[1] != "b" || all[2] != "c" {
+		t.Errorf("AllFields: got %v, want [a b c]", all)
+	}
+}
+
+func TestLynxFlow_ExplodeSingleStillWorks(t *testing.T) {
+	q, err := Parse(`| explode tags`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	unroll := q.Commands[0].(*UnrollCommand)
+	if unroll.Field != "tags" {
+		t.Errorf("Field: got %q, want tags", unroll.Field)
+	}
+	if len(unroll.ExtraFields) != 0 {
+		t.Errorf("ExtraFields: got %v, want empty", unroll.ExtraFields)
+	}
+	all := unroll.AllFields()
+	if len(all) != 1 || all[0] != "tags" {
+		t.Errorf("AllFields: got %v, want [tags]", all)
+	}
+}
+
+func TestLynxFlow_ExplodeAliasStillWorks(t *testing.T) {
+	q, err := Parse(`| explode tags as tag`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	unroll := q.Commands[0].(*UnrollCommand)
+	if unroll.Field != "tags" || unroll.Alias != "tag" {
+		t.Errorf("Field=%q, Alias=%q, want tags/tag", unroll.Field, unroll.Alias)
+	}
+	if len(unroll.ExtraFields) != 0 {
+		t.Errorf("ExtraFields: got %v, want empty", unroll.ExtraFields)
+	}
+}
+
+func TestLynxFlow_ExplodeMultiFieldString(t *testing.T) {
+	cmd := &UnrollCommand{Field: "product", ExtraFields: []string{"price", "qty"}}
+	s := cmd.String()
+	if !strings.Contains(s, "product") || !strings.Contains(s, "price") || !strings.Contains(s, "qty") {
+		t.Errorf("String() = %q, should contain all fields", s)
+	}
+}

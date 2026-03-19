@@ -1,8 +1,8 @@
 # Memory Management in LynxDB Query Pipeline
 
 ## Architecture
-- Each query gets a BudgetMonitor with a per-query limit (default: 1GB)
-- Operators create BoundAccounts for their buffers (sort rows, aggregate groups, etc.)
+- Each query gets a BudgetAdapter with a per-query limit (default: 1GB)
+- Operators create MemoryAccounts for their buffers (sort rows, aggregate groups, etc.)
 - Scan operators track only the CURRENT batch (Shrink previous, Grow new)
 - When Grow fails, operators with spill support write data to disk and retry
 
@@ -28,7 +28,7 @@
 ```
 SegmentStreamIterator (scan)
   -> yields 1024-event batches
-  -> Shrinks previous batch, Grows new batch in BoundAccount
+  -> Shrinks previous batch, Grows new batch in MemoryAccount
   -> if Grow fails: returns BudgetExceededError (offset NOT advanced)
 
 Sort (or other spill-capable operator)

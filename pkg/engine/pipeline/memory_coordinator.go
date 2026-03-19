@@ -4,8 +4,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
-	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // Reservation defaults: minimum useful memory for each spillable operator type.
@@ -56,7 +56,7 @@ type PhaseNotifier interface {
 // operators.
 //
 // Thread-safe: mu protects redistribution. CoordinatedAccounts themselves are
-// NOT thread-safe (same contract as BoundAccount — one goroutine per operator).
+// NOT thread-safe (same contract as AccountAdapter — one goroutine per operator).
 type MemoryCoordinator struct {
 	mu          sync.Mutex
 	slots       []*operatorSlot
@@ -73,12 +73,13 @@ type operatorSlot struct {
 	spilled     atomic.Bool  // one-way ratchet: once true, stays true
 	phase       atomic.Int32 // OperatorPhase stored as int32
 	acct        *CoordinatedAccount
+	onRevoke    func(target int64) int64 // governor pressure callback
 }
 
 // CoordinatedAccount wraps a MemoryAccount with a coordinator-managed sub-limit.
-// Implements stats.MemoryAccount. NOT thread-safe (same contract as BoundAccount).
+// Implements memgov.MemoryAccount. NOT thread-safe (same contract as AccountAdapter).
 type CoordinatedAccount struct {
-	inner       stats.MemoryAccount
+	inner       memgov.MemoryAccount
 	coordinator *MemoryCoordinator
 	slot        *operatorSlot
 	used        int64
@@ -130,7 +131,7 @@ func NewMemoryCoordinator(totalBudget int64, headroomFraction float64) *MemoryCo
 // RegisterOperator registers a spillable operator with the coordinator.
 // Returns a CoordinatedAccount that wraps the inner account with a
 // coordinator-managed sub-limit. Must be called before Finalize().
-func (mc *MemoryCoordinator) RegisterOperator(label string, inner stats.MemoryAccount, reservation int64) *CoordinatedAccount {
+func (mc *MemoryCoordinator) RegisterOperator(label string, inner memgov.MemoryAccount, reservation int64) *CoordinatedAccount {
 	slot := &operatorSlot{
 		label:       label,
 		reservation: reservation,
@@ -314,7 +315,7 @@ func (mc *MemoryCoordinator) Stats() []CoordinatorSlotStats {
 
 // Grow requests n bytes. First checks the coordinator-managed sub-limit
 // (fast atomic load, no lock). If the sub-limit would be exceeded, returns
-// a *stats.BudgetExceededError. Otherwise delegates to the inner account
+// a *memgov.BudgetExceededError. Otherwise delegates to the inner account
 // for total budget enforcement.
 func (ca *CoordinatedAccount) Grow(n int64) error {
 	if n <= 0 {
@@ -323,7 +324,7 @@ func (ca *CoordinatedAccount) Grow(n int64) error {
 
 	// Check coordinator sub-limit (fast path: one atomic load).
 	if ca.used+n > ca.slot.softLimit.Load() {
-		return &stats.BudgetExceededError{
+		return &memgov.BudgetExceededError{
 			Monitor:   "coordinator",
 			Account:   ca.slot.label,
 			Requested: n,
@@ -384,6 +385,17 @@ func (ca *CoordinatedAccount) NotifySpilled() {
 	}
 }
 
+// SetOnRevoke registers a callback that the governor can use to push
+// revocation pressure to this operator. When memory pressure occurs, the
+// governor invokes the callback with a target byte count; the operator
+// should spill data and return the actual number of bytes freed.
+//
+// This bridges the gap between the coordinator's phase-based redistribution
+// and the governor's proactive pressure system (memgov.OperatorMemory.SetOnRevoke).
+func (ca *CoordinatedAccount) SetOnRevoke(fn func(target int64) int64) {
+	ca.slot.onRevoke = fn
+}
+
 // SetPhase updates this operator's lifecycle phase. When the phase transitions
 // to PhaseComplete, the coordinator reclaims all remaining capacity from this
 // operator and redistributes it to active operators.
@@ -399,6 +411,54 @@ func (ca *CoordinatedAccount) SetPhase(phase OperatorPhase) {
 		defer ca.coordinator.mu.Unlock()
 		ca.coordinator.reclaimFromCompleted(ca.slot)
 	}
+}
+
+// HandleRevocation attempts to free target bytes by invoking OnRevoke callbacks
+// on operators in reverse-priority order (largest non-spilled operators first).
+// Returns the total bytes actually freed. This method is designed to be called
+// by the governor's pressure system.
+func (mc *MemoryCoordinator) HandleRevocation(target int64) int64 {
+	mc.mu.Lock()
+	// Collect active operators with OnRevoke callbacks, sorted by used desc.
+	type candidate struct {
+		slot *operatorSlot
+		used int64
+	}
+	var candidates []candidate
+	for _, s := range mc.slots {
+		if s.onRevoke == nil || s.spilled.Load() {
+			continue
+		}
+		phase := OperatorPhase(s.phase.Load())
+		if phase == PhaseComplete {
+			continue
+		}
+		candidates = append(candidates, candidate{slot: s, used: s.acct.used})
+	}
+	mc.mu.Unlock()
+
+	// Sort by used descending — evict from heaviest consumers first.
+	for i := 1; i < len(candidates); i++ {
+		for j := i; j > 0 && candidates[j].used > candidates[j-1].used; j-- {
+			candidates[j], candidates[j-1] = candidates[j-1], candidates[j]
+		}
+	}
+
+	var totalFreed int64
+	remaining := target
+	for _, c := range candidates {
+		if remaining <= 0 {
+			break
+		}
+		freed := c.slot.onRevoke(remaining)
+		if freed > 0 {
+			totalFreed += freed
+			remaining -= freed
+			// Mark as spilled and redistribute.
+			mc.NotifySpilled(c.slot)
+		}
+	}
+	return totalFreed
 }
 
 // countSpillableOps counts the number of spillable operators in a Program,

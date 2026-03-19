@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 const (
@@ -59,10 +59,10 @@ type EventSource interface {
 
 // Backfiller processes historical data through a view's pipeline.
 type Backfiller struct {
-	registry    *ViewRegistry
-	rootMonitor *stats.RootMonitor
-	config      BackfillConfig
-	logger      *slog.Logger
+	registry *ViewRegistry
+	gov      memgov.Governor
+	config   BackfillConfig
+	logger   *slog.Logger
 }
 
 // NewBackfiller creates a new backfiller.
@@ -74,27 +74,27 @@ func NewBackfiller(registry *ViewRegistry, logger *slog.Logger) *Backfiller {
 }
 
 // NewBackfillerWithBudget creates a new backfiller with a dedicated memory budget
-// backed by the global RootMonitor pool. The backfill gets its own BudgetMonitor
-// as a child of the RootMonitor, with backpressure when the pool is under pressure
-// from interactive queries.
+// backed by the Governor. The backfill gets its own BudgetAdapter as a child of
+// the Governor, with backpressure when the pool is under pressure from interactive
+// queries.
 func NewBackfillerWithBudget(
 	registry *ViewRegistry,
-	rootMonitor *stats.RootMonitor,
+	gov memgov.Governor,
 	cfg BackfillConfig,
 	logger *slog.Logger,
 ) *Backfiller {
 	return &Backfiller{
-		registry:    registry,
-		rootMonitor: rootMonitor,
-		config:      cfg,
-		logger:      logger,
+		registry: registry,
+		gov:      gov,
+		config:   cfg,
+		logger:   logger,
 	}
 }
 
 // Run executes backfill for a view, reading from source and dispatching to the view.
 // It is non-blocking (run in a goroutine), cursor-based, and rate-limited.
 //
-// When a RootMonitor is configured, the backfill creates a dedicated BudgetMonitor
+// When a Governor is configured, the backfill creates a dedicated BudgetAdapter
 // as a child. If the global pool is under pressure, the backfill pauses and retries
 // with backpressure instead of failing immediately.
 func (b *Backfiller) Run(ctx context.Context, name string, source EventSource, dispatch func([]*event.Event) error) error {
@@ -112,10 +112,10 @@ func (b *Backfiller) Run(ctx context.Context, name string, source EventSource, d
 		return fmt.Errorf("views backfill: compile filter: %w", err)
 	}
 
-	// Create dedicated budget monitor for this backfill.
-	monitor := b.createBudgetMonitor(name)
-	if monitor != nil {
-		defer monitor.Close()
+	// Create dedicated budget adapter for this backfill.
+	adapter := b.createBudgetAdapter(name)
+	if adapter != nil {
+		defer adapter.Close()
 	}
 
 	batchSize := b.config.BatchSize
@@ -195,20 +195,19 @@ func (b *Backfiller) Run(ctx context.Context, name string, source EventSource, d
 	return nil
 }
 
-// createBudgetMonitor creates a dedicated BudgetMonitor for this backfill as
-// a child of the global RootMonitor. The budget is limited to a fraction of
-// the global pool to avoid starving interactive queries.
+// createBudgetAdapter creates a dedicated BudgetAdapter for this backfill as
+// a child of the Governor. The budget is limited to a fraction of the global
+// pool to avoid starving interactive queries.
 //
-// Returns nil if no RootMonitor is configured (standalone/ephemeral mode).
-func (b *Backfiller) createBudgetMonitor(viewName string) *stats.BudgetMonitor {
-	if b.rootMonitor == nil {
+// Returns nil if no Governor is configured (standalone/ephemeral mode).
+func (b *Backfiller) createBudgetAdapter(viewName string) *memgov.BudgetAdapter {
+	if b.gov == nil {
 		return nil
 	}
 
 	budget := b.config.MaxMemoryBytes
 	if budget <= 0 {
-		// Auto-compute: 10% of global pool, minimum 256MB.
-		poolLimit := b.rootMonitor.Limit()
+		poolLimit := b.gov.TotalUsage().Limit
 		if poolLimit > 0 {
 			budget = poolLimit / int64(defaultBackfillBudgetFraction)
 		}
@@ -217,9 +216,9 @@ func (b *Backfiller) createBudgetMonitor(viewName string) *stats.BudgetMonitor {
 		}
 	}
 
-	label := "mv-backfill:" + viewName
+	qb := memgov.NewQueryBudget(b.gov, "mv-backfill:"+viewName)
 
-	return stats.NewBudgetMonitorWithParent(label, budget, b.rootMonitor)
+	return memgov.NewBudgetAdapterWithLimit(qb, b.gov, budget)
 }
 
 // scanWithBackpressure wraps the event source scan with backpressure retry logic.
@@ -247,7 +246,7 @@ func (b *Backfiller) scanWithBackpressure(
 			return events, nextCursor, more, nil
 		}
 
-		if !stats.IsPoolExhausted(err) {
+		if !memgov.IsMemoryExhausted(err) {
 			return nil, "", false, err
 		}
 

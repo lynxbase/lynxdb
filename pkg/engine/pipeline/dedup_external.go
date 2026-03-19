@@ -10,7 +10,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // maxExternalLimitEntries caps the number of entries in the external limit
@@ -460,7 +460,7 @@ func computeDedupHash(batch *Batch, row int, fields []string, singleField bool) 
 // and disk spill support. When the in-memory seen map exceeds the budget,
 // entries are migrated to a bloom filter + sorted disk hash file, allowing
 // dedup to continue with bounded memory at the cost of I/O.
-func newDedupIteratorWithSpill(child Iterator, fields []string, limit int, acct stats.MemoryAccount, mgr *SpillManager) *DedupIterator {
+func newDedupIteratorWithSpill(child Iterator, fields []string, limit int, acct memgov.MemoryAccount, mgr *SpillManager) *DedupIterator {
 	d := NewDedupIteratorWithBudget(child, fields, limit, acct)
 	d.spillMgr = mgr
 
@@ -469,7 +469,7 @@ func newDedupIteratorWithSpill(child Iterator, fields []string, limit int, acct 
 
 // newDedupIteratorExactWithSpill creates a dedup operator using exact string keys
 // with disk spill support.
-func newDedupIteratorExactWithSpill(child Iterator, fields []string, limit int, acct stats.MemoryAccount, mgr *SpillManager) *DedupIterator {
+func newDedupIteratorExactWithSpill(child Iterator, fields []string, limit int, acct memgov.MemoryAccount, mgr *SpillManager) *DedupIterator {
 	d := NewDedupIteratorExact(child, fields, limit, acct)
 	d.spillMgr = mgr
 
@@ -493,7 +493,7 @@ func (d *DedupIterator) spill() error {
 	d.spilledEntries = int64(len(d.seenHash)) + int64(len(d.seenExact))
 
 	// Track the bloom filter heap allocation for observability. The bloom is
-	// not budget-bound (it lives outside the BoundAccount) but we record the
+	// not budget-bound (it lives outside the MemoryAccount) but we record the
 	// size so ResourceStats can report total memory overhead accurately.
 	d.bloomAllocBytes = int64(len(eds.bloom)) * 8 // []uint64 → bytes
 

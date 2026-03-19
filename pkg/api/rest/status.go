@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"github.com/lynxbase/lynxdb/internal/buildinfo"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 func (s *Server) handleClusterStatus(w http.ResponseWriter, r *http.Request) {
@@ -84,12 +85,49 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if poolStats := s.engine.MemoryPoolStats(); poolStats != nil {
-		data["memory_pool"] = poolStats
+	// Memory governance stats.
+	memorySection := map[string]interface{}{}
+
+	if govStats := s.engine.GovernorStats(); govStats != nil {
+		govMap := map[string]interface{}{
+			"allocated_bytes": govStats.Allocated,
+			"peak_bytes":      govStats.Peak,
+			"limit_bytes":     govStats.Limit,
+		}
+		classes := map[string]interface{}{}
+		for i := 0; i < len(govStats.ByClass); i++ {
+			cs := govStats.ByClass[i]
+			if cs.Allocated > 0 || cs.Peak > 0 || cs.Limit > 0 {
+				classes[memgov.MemoryClass(i).String()] = map[string]interface{}{
+					"allocated_bytes": cs.Allocated,
+					"peak_bytes":      cs.Peak,
+					"limit_bytes":     cs.Limit,
+				}
+			}
+		}
+		if len(classes) > 0 {
+			govMap["by_class"] = classes
+		}
+		memorySection["governor"] = govMap
 	}
 
-	if bpStats := s.engine.BufferPoolStats(); bpStats != nil {
-		data["buffer_pool"] = bpStats
+	if bmStats := s.engine.BufMgrStats(); bmStats != nil {
+		memorySection["buffer_manager"] = map[string]interface{}{
+			"total_frames":    bmStats.TotalFrames,
+			"free_frames":     bmStats.FreeFrames,
+			"clean_frames":    bmStats.CleanFrames,
+			"dirty_frames":    bmStats.DirtyFrames,
+			"pinned_frames":   bmStats.PinnedFrames,
+			"eviction_count":  bmStats.EvictionCount,
+			"writeback_count": bmStats.WritebackCount,
+			"hit_count":       bmStats.HitCount,
+			"miss_count":      bmStats.MissCount,
+			"seg_cache_frames": bmStats.SegCacheFrames,
+		}
+	}
+
+	if len(memorySection) > 0 {
+		data["memory"] = memorySection
 	}
 
 	respondData(w, http.StatusOK, data)

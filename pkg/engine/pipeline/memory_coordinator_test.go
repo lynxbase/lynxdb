@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
-	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 func TestCoordinatorEqualSplit(t *testing.T) {
@@ -17,7 +17,7 @@ func TestCoordinatorEqualSplit(t *testing.T) {
 	budget := int64(300 << 20) // 300MB
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget)
+	mon := memgov.NewTestBudget("test", budget)
 	acct1 := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	acct2 := mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	acct3 := mc.RegisterOperator("join", mon.NewAccount("join"), reservationJoin)
@@ -68,7 +68,7 @@ func TestCoordinatorRedistributeAfterSpill(t *testing.T) {
 	budget := int64(100 << 20) // 100MB
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget)
+	mon := memgov.NewTestBudget("test", budget)
 	acctA := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	_ = mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	mc.Finalize()
@@ -105,7 +105,7 @@ func TestCoordinatorOneWayRatchet(t *testing.T) {
 	budget := int64(100 << 20)
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget)
+	mon := memgov.NewTestBudget("test", budget)
 	acctA := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	_ = mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	mc.Finalize()
@@ -131,7 +131,7 @@ func TestCoordinatorAllSpilled(t *testing.T) {
 	budget := int64(100 << 20)
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget)
+	mon := memgov.NewTestBudget("test", budget)
 	acctA := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	acctB := mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	mc.Finalize()
@@ -154,7 +154,7 @@ func TestCoordinatorGrowSubLimitEnforced(t *testing.T) {
 	budget := int64(1 << 20) // 1MB
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget)
+	mon := memgov.NewTestBudget("test", budget)
 	acct := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	_ = mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	mc.Finalize()
@@ -166,7 +166,7 @@ func TestCoordinatorGrowSubLimitEnforced(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when growing beyond sub-limit")
 	}
-	if !stats.IsBudgetExceeded(err) {
+	if !memgov.IsBudgetExceeded(err) {
 		t.Errorf("expected BudgetExceededError, got %T: %v", err, err)
 	}
 
@@ -179,7 +179,7 @@ func TestCoordinatorGrowSubLimitEnforced(t *testing.T) {
 func TestCoordinatorGrowDelegatesInnerError(t *testing.T) {
 	// Inner monitor has a very tight limit.
 	innerLimit := int64(1024)
-	mon := stats.NewBudgetMonitor("test", innerLimit)
+	mon := memgov.NewTestBudget("test", innerLimit)
 
 	// Coordinator has a much larger budget (so sub-limit is not the bottleneck).
 	budget := int64(100 << 20)
@@ -193,23 +193,21 @@ func TestCoordinatorGrowDelegatesInnerError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from inner account")
 	}
-	if !stats.IsBudgetExceeded(err) {
+	if !memgov.IsBudgetExceeded(err) {
 		t.Errorf("expected BudgetExceededError from inner, got %T: %v", err, err)
 	}
 }
 
 func TestCoordinatorSingleOperator(t *testing.T) {
 	// When coordinator is nil, newCoordinatedAccount should return plain account.
-	qc := &queryContext{
-		monitor: stats.NewBudgetMonitor("test", 100<<20),
-	}
+	qc := &queryContext{}
 
 	acct := qc.newCoordinatedAccount("sort", reservationSort)
 	if acct == nil {
 		t.Fatal("expected non-nil account")
 	}
 
-	// Should be a plain BoundAccount, not a CoordinatedAccount.
+	// Should be a plain NopAccount, not a CoordinatedAccount.
 	if _, ok := acct.(*CoordinatedAccount); ok {
 		t.Error("expected plain account when coordinator is nil, got CoordinatedAccount")
 	}
@@ -218,18 +216,12 @@ func TestCoordinatorSingleOperator(t *testing.T) {
 	if err := acct.Grow(1024); err != nil {
 		t.Errorf("grow: unexpected error: %v", err)
 	}
-	acct.Shrink(512)
-	if acct.Used() != 512 {
-		t.Errorf("used: got %d, want 512", acct.Used())
-	}
 	acct.Close()
 }
 
 func TestCoordinatorNilSafe(t *testing.T) {
 	// Nil coordinator on queryContext should not create coordinator.
-	qc := &queryContext{
-		monitor: stats.NewBudgetMonitor("test", 100<<20),
-	}
+	qc := &queryContext{}
 
 	if qc.coordinator != nil {
 		t.Error("expected nil coordinator")
@@ -400,7 +392,7 @@ func TestCoordinatorShrinkAfterSpill(t *testing.T) {
 	budget := int64(100 << 20)
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget)
+	mon := memgov.NewTestBudget("test", budget)
 	acct := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	_ = mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	mc.Finalize()
@@ -438,7 +430,7 @@ func TestCoordinatorSmallBudget(t *testing.T) {
 	budget := reservationSort / 2 // much less than one reservation
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget*10) // inner limit is generous
+	mon := memgov.NewTestBudget("test", budget*10) // inner limit is generous
 	_ = mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	_ = mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	mc.Finalize()
@@ -457,7 +449,7 @@ func TestSortAndAggregateCoordinated(t *testing.T) {
 	// Integration test: pipeline "| stats count by host | sort -count" with small budget.
 	// Verify correct results and that redistribution happened.
 	budget := int64(256 * 1024) // 256KB — enough for scan but forces spill on sort/aggregate
-	mon := stats.NewBudgetMonitor("test", budget)
+	gov := memgov.NewGovernor(memgov.GovernorConfig{TotalLimit: budget})
 
 	tmpDir := t.TempDir()
 	spillMgr, err := NewSpillManager(tmpDir, nil)
@@ -502,9 +494,12 @@ func TestSortAndAggregateCoordinated(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	result, err := BuildProgramWithBudget(ctx, prog, store, nil, nil, 64, "", mon, spillMgr, false, nil)
+	result, err := BuildProgramWithGovernor(ctx, prog, store, nil, nil, 64, "", gov, budget, spillMgr, false, nil)
 	if err != nil {
 		t.Fatalf("build program: %v", err)
+	}
+	if result.GovBudget != nil {
+		defer result.GovBudget.Close()
 	}
 
 	rows, err := CollectAll(ctx, result.Iterator)
@@ -545,7 +540,7 @@ func TestCoordinatorPhaseReclaim(t *testing.T) {
 	budget := int64(100 << 20) // 100MB
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget)
+	mon := memgov.NewTestBudget("test", budget)
 	acctA := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	_ = mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	mc.Finalize()
@@ -578,7 +573,7 @@ func TestCoordinatorPhaseInStats(t *testing.T) {
 	budget := int64(100 << 20)
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget)
+	mon := memgov.NewTestBudget("test", budget)
 	acctA := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	acctB := mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	mc.Finalize()
@@ -617,7 +612,7 @@ func TestCoordinatorReclaimIdempotent(t *testing.T) {
 	budget := int64(100 << 20)
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget)
+	mon := memgov.NewTestBudget("test", budget)
 	acctA := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	_ = mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	mc.Finalize()
@@ -645,7 +640,7 @@ func TestCoordinatorThreeOpPhaseHandoff(t *testing.T) {
 	budget := int64(300 << 20) // 300MB
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget)
+	mon := memgov.NewTestBudget("test", budget)
 	acctSort := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	acctAgg := mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	_ = mc.RegisterOperator("join", mon.NewAccount("join"), reservationJoin)
@@ -701,7 +696,7 @@ func TestCoordinatorTwoConcurrentSpill(t *testing.T) {
 	budget := int64(300 << 20) // 300MB
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget)
+	mon := memgov.NewTestBudget("test", budget)
 	acctSort := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	acctAgg := mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	_ = mc.RegisterOperator("join", mon.NewAccount("join"), reservationJoin)
@@ -765,7 +760,7 @@ func TestCoordinatorPhaseAwareReclamation(t *testing.T) {
 	budget := int64(300 << 20) // 300MB
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget)
+	mon := memgov.NewTestBudget("test", budget)
 	acctSort := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	acctAgg := mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	_ = mc.RegisterOperator("join", mon.NewAccount("join"), reservationJoin)
@@ -817,7 +812,7 @@ func TestCoordinatorMinReservationGuarantee(t *testing.T) {
 	budget := int64(100) // Extremely small budget
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("test", budget*1000) // inner limit generous
+	mon := memgov.NewTestBudget("test", budget*1000) // inner limit generous
 	_ = mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	_ = mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	_ = mc.RegisterOperator("join", mon.NewAccount("join"), reservationJoin)
@@ -841,7 +836,7 @@ func BenchmarkCoordinatedAccountGrow(b *testing.B) {
 	budget := int64(1 << 30) // 1GB
 	mc := NewMemoryCoordinator(budget, 0.10)
 
-	mon := stats.NewBudgetMonitor("bench", budget)
+	mon := memgov.NewTestBudget("bench", budget)
 	acct := mc.RegisterOperator("sort", mon.NewAccount("sort"), reservationSort)
 	_ = mc.RegisterOperator("aggregate", mon.NewAccount("aggregate"), reservationAggregate)
 	mc.Finalize()
@@ -857,10 +852,10 @@ func BenchmarkCoordinatedAccountGrow(b *testing.B) {
 	}
 }
 
-func BenchmarkBoundAccountGrow(b *testing.B) {
-	// Baseline: plain BoundAccount without coordinator.
+func BenchmarkAccountAdapterGrow(b *testing.B) {
+	// Baseline: plain AccountAdapter without coordinator.
 	budget := int64(1 << 30) // 1GB
-	mon := stats.NewBudgetMonitor("bench", budget)
+	mon := memgov.NewTestBudget("bench", budget)
 	acct := mon.NewAccount("sort")
 
 	b.ResetTimer()

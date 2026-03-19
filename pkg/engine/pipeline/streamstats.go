@@ -7,7 +7,7 @@ import (
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -24,7 +24,7 @@ type StreamStatsIterator struct {
 	window   int
 	current  bool
 	ringBufs map[string]*ringBuffer
-	acct     stats.MemoryAccount // per-operator memory tracking
+	acct     memgov.MemoryAccount // per-operator memory tracking
 }
 
 type ringBuffer struct {
@@ -89,7 +89,7 @@ func NewStreamStatsIterator(child Iterator, aggs []AggFunc, groupBy []string, wi
 		window:   window,
 		current:  current,
 		ringBufs: make(map[string]*ringBuffer),
-		acct:     stats.NopAccount(),
+		acct:     memgov.NopAccount(),
 	}
 }
 
@@ -97,9 +97,9 @@ func NewStreamStatsIterator(child Iterator, aggs []AggFunc, groupBy []string, wi
 // with memory budget tracking. The account tracks ring buffer allocations for
 // observability — streamstats has no spill support, so tracking is best-effort.
 func NewStreamStatsIteratorWithBudget(child Iterator, aggs []AggFunc, groupBy []string,
-	window int, current bool, acct stats.MemoryAccount) *StreamStatsIterator {
+	window int, current bool, acct memgov.MemoryAccount) *StreamStatsIterator {
 	s := NewStreamStatsIterator(child, aggs, groupBy, window, current)
-	s.acct = stats.EnsureAccount(acct)
+	s.acct = memgov.EnsureAccount(acct)
 
 	return s
 }

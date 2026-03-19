@@ -121,7 +121,7 @@ func (a *engineShardQueryAdapter) SubmitShardQuery(ctx context.Context, params q
 	qp := QueryParams{}
 	noop := func(*SearchProgress) {}
 	result, err := a.engine.runQueryPipeline(
-		ctx, prog, hints, qp, nil, queryAnnotations{}, noop, time.Now(), nil, "")
+		ctx, prog, hints, qp, nil, queryAnnotations{}, noop, time.Now())
 	if err != nil {
 		return nil, fmt.Errorf("engineShardQueryAdapter.SubmitShardQuery: %w", err)
 	}
@@ -161,7 +161,7 @@ func (a *engineShardQueryAdapter) SubmitShardPartialAgg(ctx context.Context, par
 	}
 
 	// Build event store filtered by hints.
-	store, _, _ := a.engine.buildEventStore(ctx, hints, nil, nil)
+	store, _, _ := a.engine.buildEventStore(ctx, hints, nil)
 
 	// Compute partial aggregation across all events in all indexes.
 	var allEvents []*event.Event

@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // estimatedCellBytes is the estimated memory per pivot cell in xyseries.
@@ -21,7 +21,7 @@ type XYSeriesIterator struct {
 	emitted    bool
 	offset     int
 	batchSize  int
-	acct       stats.MemoryAccount // per-operator memory tracking (nil *BoundAccount = no tracking)
+	acct       memgov.MemoryAccount // per-operator memory tracking
 }
 
 // NewXYSeriesIterator creates a pivot operator.
@@ -36,14 +36,14 @@ func NewXYSeriesIterator(child Iterator, xField, yField, valueField string, batc
 		yField:     yField,
 		valueField: valueField,
 		batchSize:  batchSize,
-		acct:       stats.NopAccount(),
+		acct:       memgov.NopAccount(),
 	}
 }
 
 // NewXYSeriesIteratorWithBudget creates a pivot operator with memory budget tracking.
-func NewXYSeriesIteratorWithBudget(child Iterator, xField, yField, valueField string, batchSize int, acct stats.MemoryAccount) *XYSeriesIterator {
+func NewXYSeriesIteratorWithBudget(child Iterator, xField, yField, valueField string, batchSize int, acct memgov.MemoryAccount) *XYSeriesIterator {
 	x := NewXYSeriesIterator(child, xField, yField, valueField, batchSize)
-	x.acct = stats.EnsureAccount(acct)
+	x.acct = memgov.EnsureAccount(acct)
 
 	return x
 }

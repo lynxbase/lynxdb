@@ -54,7 +54,7 @@ func (e *Engine) runTieringCycle(ctx context.Context) {
 		// with concurrent compaction or shutdown.
 		e.mu.RLock()
 		var sh *segmentHandle
-		for _, h := range e.currentEpoch.segments {
+		for _, h := range e.currentEpoch.Load().segments {
 			if h.meta.ID == id {
 				sh = h
 
@@ -85,8 +85,9 @@ func (e *Engine) runTieringCycle(ctx context.Context) {
 		// alive until they unpin; drainAndClose handles the deferred close.
 		e.mu.Lock()
 		var oldSH *segmentHandle
-		newSegments := make([]*segmentHandle, len(e.currentEpoch.segments))
-		copy(newSegments, e.currentEpoch.segments)
+		curSegs := e.currentEpoch.Load().segments
+		newSegments := make([]*segmentHandle, len(curSegs))
+		copy(newSegments, curSegs)
 		for i, h := range newSegments {
 			if h.meta.ID != id {
 				continue
@@ -123,7 +124,7 @@ func (e *Engine) runTieringCycle(ctx context.Context) {
 	for _, id := range e.tierMgr.RetryReady() {
 		e.mu.RLock()
 		var sh *segmentHandle
-		for _, h := range e.currentEpoch.segments {
+		for _, h := range e.currentEpoch.Load().segments {
 			if h.meta.ID == id {
 				sh = h
 
@@ -161,8 +162,9 @@ func (e *Engine) runTieringCycle(ctx context.Context) {
 		}
 		e.mu.Lock()
 		var oldSH *segmentHandle
-		newSegments := make([]*segmentHandle, len(e.currentEpoch.segments))
-		copy(newSegments, e.currentEpoch.segments)
+		coldSegs := e.currentEpoch.Load().segments
+		newSegments := make([]*segmentHandle, len(coldSegs))
+		copy(newSegments, coldSegs)
 		for i, h := range newSegments {
 			if h.meta.ID != id {
 				continue
@@ -199,8 +201,8 @@ func (e *Engine) runTieringCycle(ctx context.Context) {
 		}
 		e.mu.Lock()
 		var expiredSH *segmentHandle
-		newSegments := make([]*segmentHandle, 0, len(e.currentEpoch.segments))
-		for _, sh := range e.currentEpoch.segments {
+		newSegments := make([]*segmentHandle, 0, len(e.currentEpoch.Load().segments))
+		for _, sh := range e.currentEpoch.Load().segments {
 			if sh.meta.ID == id {
 				expiredSH = sh
 			} else {

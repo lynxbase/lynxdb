@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // FillnullIterator replaces null values with a specified value.
@@ -12,7 +12,7 @@ type FillnullIterator struct {
 	child  Iterator
 	value  string
 	fields []string // empty = all fields
-	acct   stats.MemoryAccount
+	acct   memgov.MemoryAccount
 }
 
 // NewFillnullIterator creates a fillnull iterator.
@@ -21,7 +21,7 @@ func NewFillnullIterator(child Iterator, value string, fields []string) *Fillnul
 		child:  child,
 		value:  value,
 		fields: fields,
-		acct:   stats.NopAccount(),
+		acct:   memgov.NopAccount(),
 	}
 }
 
@@ -29,9 +29,9 @@ func NewFillnullIterator(child Iterator, value string, fields []string) *Fillnul
 // tracking. Fillnull is a streaming operator with no persistent state beyond
 // the current batch, so the account provides lifecycle consistency rather than
 // active tracking.
-func NewFillnullIteratorWithBudget(child Iterator, value string, fields []string, acct stats.MemoryAccount) *FillnullIterator {
+func NewFillnullIteratorWithBudget(child Iterator, value string, fields []string, acct memgov.MemoryAccount) *FillnullIterator {
 	f := NewFillnullIterator(child, value, fields)
-	f.acct = stats.EnsureAccount(acct)
+	f.acct = memgov.EnsureAccount(acct)
 
 	return f
 }

@@ -16,7 +16,7 @@ func TestUnrollIterator_ArrayOfObjects(t *testing.T) {
 	}
 
 	child := NewRowScanIterator(rows, 1024)
-	iter := NewUnrollIterator(child, "items", 1024)
+	iter := NewUnrollIterator(child, []string{"items"}, 1024)
 	results, err := CollectAll(context.Background(), iter)
 	if err != nil {
 		t.Fatalf("CollectAll: %v", err)
@@ -59,7 +59,7 @@ func TestUnrollIterator_ArrayOfScalars(t *testing.T) {
 	}
 
 	child := NewRowScanIterator(rows, 1024)
-	iter := NewUnrollIterator(child, "tags", 1024)
+	iter := NewUnrollIterator(child, []string{"tags"}, 1024)
 	results, err := CollectAll(context.Background(), iter)
 	if err != nil {
 		t.Fatalf("CollectAll: %v", err)
@@ -89,7 +89,7 @@ func TestUnrollIterator_NonArrayField(t *testing.T) {
 	}
 
 	child := NewRowScanIterator(rows, 1024)
-	iter := NewUnrollIterator(child, "data", 1024)
+	iter := NewUnrollIterator(child, []string{"data"}, 1024)
 	results, err := CollectAll(context.Background(), iter)
 	if err != nil {
 		t.Fatalf("CollectAll: %v", err)
@@ -111,7 +111,7 @@ func TestUnrollIterator_NullField(t *testing.T) {
 	}
 
 	child := NewRowScanIterator(rows, 1024)
-	iter := NewUnrollIterator(child, "items", 1024)
+	iter := NewUnrollIterator(child, []string{"items"}, 1024)
 	results, err := CollectAll(context.Background(), iter)
 	if err != nil {
 		t.Fatalf("CollectAll: %v", err)
@@ -130,7 +130,7 @@ func TestUnrollIterator_EmptyArray(t *testing.T) {
 	}
 
 	child := NewRowScanIterator(rows, 1024)
-	iter := NewUnrollIterator(child, "items", 1024)
+	iter := NewUnrollIterator(child, []string{"items"}, 1024)
 	results, err := CollectAll(context.Background(), iter)
 	if err != nil {
 		t.Fatalf("CollectAll: %v", err)
@@ -139,5 +139,121 @@ func TestUnrollIterator_EmptyArray(t *testing.T) {
 	// Empty array: row passes through unchanged.
 	if len(results) != 1 {
 		t.Fatalf("expected 1 row, got %d", len(results))
+	}
+}
+
+func TestUnrollIterator_ZipExpansion(t *testing.T) {
+	rows := []map[string]event.Value{
+		{
+			"order":   event.StringValue("ORD-1"),
+			"product": event.StringValue(`["Widget","Gadget"]`),
+			"price":   event.StringValue(`[999.99,29.99]`),
+		},
+	}
+
+	child := NewRowScanIterator(rows, 1024)
+	iter := NewUnrollIterator(child, []string{"product", "price"}, 1024)
+	results, err := CollectAll(context.Background(), iter)
+	if err != nil {
+		t.Fatalf("CollectAll: %v", err)
+	}
+
+	if len(results) != 2 {
+		t.Fatalf("expected 2 rows, got %d", len(results))
+	}
+
+	// Row 0: product=Widget, price=999.99
+	if results[0]["product"].String() != "Widget" {
+		t.Errorf("row 0: product = %q, want %q", results[0]["product"].String(), "Widget")
+	}
+	if results[0]["price"].AsFloat() != 999.99 {
+		t.Errorf("row 0: price = %v, want 999.99", results[0]["price"])
+	}
+	if results[0]["order"].String() != "ORD-1" {
+		t.Errorf("row 0: order = %q, want %q", results[0]["order"].String(), "ORD-1")
+	}
+
+	// Row 1: product=Gadget, price=29.99
+	if results[1]["product"].String() != "Gadget" {
+		t.Errorf("row 1: product = %q, want %q", results[1]["product"].String(), "Gadget")
+	}
+	if results[1]["price"].AsFloat() != 29.99 {
+		t.Errorf("row 1: price = %v, want 29.99", results[1]["price"])
+	}
+}
+
+func TestUnrollIterator_ZipMismatchedLengths(t *testing.T) {
+	rows := []map[string]event.Value{
+		{
+			"a": event.StringValue(`[1,2,3]`),
+			"b": event.StringValue(`["x","y"]`),
+		},
+	}
+
+	child := NewRowScanIterator(rows, 1024)
+	iter := NewUnrollIterator(child, []string{"a", "b"}, 1024)
+	results, err := CollectAll(context.Background(), iter)
+	if err != nil {
+		t.Fatalf("CollectAll: %v", err)
+	}
+
+	// Mismatched lengths — pass through unchanged.
+	if len(results) != 1 {
+		t.Fatalf("expected 1 row (pass-through), got %d", len(results))
+	}
+	if results[0]["a"].String() != `[1,2,3]` {
+		t.Errorf("a = %q, want %q", results[0]["a"].String(), `[1,2,3]`)
+	}
+}
+
+func TestUnrollIterator_ZipOneNotArray(t *testing.T) {
+	rows := []map[string]event.Value{
+		{
+			"a": event.StringValue(`["x","y"]`),
+			"b": event.StringValue("scalar-value"),
+		},
+	}
+
+	child := NewRowScanIterator(rows, 1024)
+	iter := NewUnrollIterator(child, []string{"a", "b"}, 1024)
+	results, err := CollectAll(context.Background(), iter)
+	if err != nil {
+		t.Fatalf("CollectAll: %v", err)
+	}
+
+	// One field is not an array — pass through unchanged.
+	if len(results) != 1 {
+		t.Fatalf("expected 1 row (pass-through), got %d", len(results))
+	}
+}
+
+func TestUnrollIterator_SingleFieldBackwardCompat(t *testing.T) {
+	// Verify single-field mode produces identical results to the original behavior.
+	rows := []map[string]event.Value{
+		{
+			"id":   event.StringValue("1"),
+			"tags": event.StringValue(`["a","b","c"]`),
+		},
+	}
+
+	child := NewRowScanIterator(rows, 1024)
+	iter := NewUnrollIterator(child, []string{"tags"}, 1024)
+	results, err := CollectAll(context.Background(), iter)
+	if err != nil {
+		t.Fatalf("CollectAll: %v", err)
+	}
+
+	if len(results) != 3 {
+		t.Fatalf("expected 3 rows, got %d", len(results))
+	}
+
+	expected := []string{"a", "b", "c"}
+	for i, r := range results {
+		if r["tags"].String() != expected[i] {
+			t.Errorf("row %d: tags = %q, want %q", i, r["tags"].String(), expected[i])
+		}
+		if r["id"].String() != "1" {
+			t.Errorf("row %d: id = %q, want %q", i, r["id"].String(), "1")
+		}
 	}
 }

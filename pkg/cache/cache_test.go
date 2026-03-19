@@ -565,7 +565,7 @@ func (m *mockPool) snapshot() (int64, int, int) {
 	return m.reserved, m.reserveCalls, m.releaseCalls
 }
 
-func TestCachePutUsesUnifiedPool(t *testing.T) {
+func TestCachePutUsesGovernor(t *testing.T) {
 	cs := NewStore("", 1<<30, time.Hour)
 	pool := &mockPool{}
 	cs.SetPool(pool)

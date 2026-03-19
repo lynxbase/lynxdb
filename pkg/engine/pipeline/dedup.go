@@ -8,7 +8,7 @@ import (
 
 	"github.com/cespare/xxhash/v2"
 
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // estimatedDedupHashEntryBytes is the estimated memory per entry in the
@@ -47,7 +47,7 @@ type DedupIterator struct {
 	seenExact   map[string]int // exact mode (only when exactMode is true)
 	exactMode   bool
 	singleField bool // true when len(fields)==1, enables zero-copy fast path
-	acct        stats.MemoryAccount
+	acct        memgov.MemoryAccount
 	warnedSize  bool // true after warning was emitted for large map
 
 	// Spill-to-disk support.
@@ -75,21 +75,21 @@ func NewDedupIterator(child Iterator, fields []string, limit int) *DedupIterator
 		limit:       limit,
 		seenHash:    make(map[uint64]int),
 		singleField: len(fields) == 1,
-		acct:        stats.NopAccount(),
+		acct:        memgov.NopAccount(),
 	}
 }
 
 // NewDedupIteratorWithBudget creates a dedup operator with memory budget tracking.
-func NewDedupIteratorWithBudget(child Iterator, fields []string, limit int, acct stats.MemoryAccount) *DedupIterator {
+func NewDedupIteratorWithBudget(child Iterator, fields []string, limit int, acct memgov.MemoryAccount) *DedupIterator {
 	d := NewDedupIterator(child, fields, limit)
-	d.acct = stats.EnsureAccount(acct)
+	d.acct = memgov.EnsureAccount(acct)
 
 	return d
 }
 
 // NewDedupIteratorExact creates a dedup operator using exact string keys.
 // Use this when correctness is critical for very high cardinality datasets.
-func NewDedupIteratorExact(child Iterator, fields []string, limit int, acct stats.MemoryAccount) *DedupIterator {
+func NewDedupIteratorExact(child Iterator, fields []string, limit int, acct memgov.MemoryAccount) *DedupIterator {
 	if limit <= 0 {
 		limit = 1
 	}
@@ -101,7 +101,7 @@ func NewDedupIteratorExact(child Iterator, fields []string, limit int, acct stat
 		seenExact:   make(map[string]int),
 		exactMode:   true,
 		singleField: len(fields) == 1,
-		acct:        stats.EnsureAccount(acct),
+		acct:        memgov.EnsureAccount(acct),
 	}
 }
 

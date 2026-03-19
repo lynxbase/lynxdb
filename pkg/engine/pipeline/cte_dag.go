@@ -6,8 +6,8 @@ import (
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
-	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 // CTEExecutionPlan describes the order in which CTEs should be materialized.
@@ -210,8 +210,9 @@ func (qc *queryContext) materializeCTEsParallel(ctx context.Context, datasets []
 
 	// Compute per-CTE memory budget from remaining pool capacity.
 	var perCTELimit int64
-	if qc.monitor != nil && qc.monitor.Limit() > 0 {
-		remaining := qc.monitor.Limit() - qc.monitor.CurAllocated()
+	if qc.govBudget != nil && qc.govBudget.Limit() > 0 {
+		// Governor path: use per-query BudgetAdapter for remaining capacity.
+		remaining := qc.govBudget.Limit() - qc.govBudget.CurAllocated()
 		if remaining > 0 {
 			perCTELimit = remaining / int64(len(level))
 		}
@@ -229,25 +230,23 @@ func (qc *queryContext) materializeCTEsParallel(ctx context.Context, datasets []
 	for _, idx := range level {
 		ds := datasets[idx]
 		go func(ds spl2.DatasetDef) {
-			// Create child monitor with proportional budget.
-			var childMonitor *stats.BudgetMonitor
-			if perCTELimit > 0 {
-				childMonitor = stats.NewBudgetMonitorWithParent(
-					"cte-"+ds.Name, perCTELimit, qc.monitor.Parent(),
-				)
+			// Governor path: CTEs share the same governor. Each CTE
+			// gets its own BudgetAdapter with a per-CTE limit for
+			// local budget splitting, but enforcement is global.
+			var cteAdapter *memgov.BudgetAdapter
+			if qc.govBudget != nil && perCTELimit > 0 {
+				cteBudget := memgov.NewQueryBudget(qc.govBudget.Governor(), "cte-"+ds.Name)
+				cteAdapter = memgov.NewBudgetAdapterWithLimit(cteBudget, qc.govBudget.Governor(), perCTELimit)
 			}
-
-			// Build CTE query with child budget and pre-snapshotted datasets.
-			cteQC := qc.withMonitor(childMonitor, snapshot)
+			cteQC := qc.withGovBudget(cteAdapter, snapshot)
 			iter, err := cteQC.buildQuery(ctx, ds.Query)
 			if err != nil {
 				ch <- cteResult{name: ds.Name, err: err}
-
 				return
 			}
 			rows, err := CollectAll(ctx, iter)
-			if childMonitor != nil {
-				childMonitor.Close()
+			if cteAdapter != nil {
+				cteAdapter.Close()
 			}
 			ch <- cteResult{name: ds.Name, rows: rows, err: err}
 		}(ds)
@@ -265,27 +264,14 @@ func (qc *queryContext) materializeCTEsParallel(ctx context.Context, datasets []
 	return nil
 }
 
-// withMonitor returns a shallow copy of the queryContext with a replaced
-// BudgetMonitor and a pre-built dataset snapshot. All other fields are shared
-// with the parent context. The caller must provide a snapshot taken before
-// goroutines are launched to avoid a data race between goroutines reading
-// datasets and the main goroutine writing results back to qc.datasets.
-//
-// Thread-safety of shared fields:
-//   - store (IndexStore/StreamingIndexStore): read-only during query execution.
-//     GetEvents/GetEventIterator must be safe for concurrent calls.
-//   - progCache (*vm.ProgramCache): protected by internal sync.RWMutex.
-//   - viewResolver, viewManager: read-only interfaces during CTE materialization.
-//   - spillMgr (*SpillManager): its methods use internal synchronization.
-//   - parallelCfg (ParallelConfig): value type, copied by shallow copy.
-//   - bufferPool (*buffer.Pool): pool operations are internally synchronized.
-func (qc *queryContext) withMonitor(m *stats.BudgetMonitor, datasetSnapshot map[string][]map[string]event.Value) *queryContext {
+// withGovBudget returns a shallow copy of the queryContext with a replaced
+// governor BudgetAdapter for CTE sub-budgets. If adapter is nil, the parent's
+// govBudget is inherited.
+func (qc *queryContext) withGovBudget(adapter *memgov.BudgetAdapter, datasetSnapshot map[string][]map[string]event.Value) *queryContext {
 	cp := *qc // shallow copy
-	if m != nil {
-		cp.monitor = m
+	if adapter != nil {
+		cp.govBudget = adapter
 	}
-
 	cp.datasets = datasetSnapshot
-
 	return &cp
 }

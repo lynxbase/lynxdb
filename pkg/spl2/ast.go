@@ -643,16 +643,30 @@ func joinStrings(ss []string, sep string) string {
 	return result
 }
 
-// UnrollCommand represents: | unroll field=<field> or | explode <field> [as <alias>].
+// UnrollCommand represents: | unroll field=<field> or | explode <field>[, <field2>, ...] [as <alias>].
 // Explodes a JSON array field into multiple rows, one per element.
 // If an element is an object, its keys are flattened with dot-notation prefix.
+// When ExtraFields are specified, all fields are zip-expanded in parallel.
 type UnrollCommand struct {
-	Field string // field containing JSON array to explode
-	Alias string // optional output field name (Lynx Flow: explode tags as tag)
+	Field       string   // primary field containing JSON array to explode
+	Alias       string   // optional output field name (Lynx Flow: explode tags as tag; single-field only)
+	ExtraFields []string // additional fields for zip-expansion (multi-field explode)
+}
+
+// AllFields returns Field followed by ExtraFields.
+func (c *UnrollCommand) AllFields() []string {
+	if len(c.ExtraFields) == 0 {
+		return []string{c.Field}
+	}
+	all := make([]string, 0, 1+len(c.ExtraFields))
+	return append(append(all, c.Field), c.ExtraFields...)
 }
 
 func (*UnrollCommand) commandNode() {}
 func (c *UnrollCommand) String() string {
+	if len(c.ExtraFields) > 0 {
+		return fmt.Sprintf("explode %s, %s", c.Field, joinStrings(c.ExtraFields, ", "))
+	}
 	if c.Alias != "" {
 		return fmt.Sprintf("unroll field=%s as %s", c.Field, c.Alias)
 	}

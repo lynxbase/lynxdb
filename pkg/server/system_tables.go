@@ -52,7 +52,7 @@ func (r *systemTableResolver) resolveParts(_ context.Context) ([]map[string]even
 // when no part registry exists (in-memory mode without a data directory).
 func (r *systemTableResolver) resolvePartsInMemory() []map[string]event.Value {
 	r.engine.mu.RLock()
-	segs := r.engine.currentEpoch.segments
+	segs := r.engine.currentEpoch.Load().segments
 	r.engine.mu.RUnlock()
 
 	rows := make([]map[string]event.Value, 0, len(segs))
@@ -130,7 +130,7 @@ func (r *systemTableResolver) resolveColumns(_ context.Context) ([]map[string]ev
 		}
 	} else {
 		r.engine.mu.RLock()
-		segs := r.engine.currentEpoch.segments
+		segs := r.engine.currentEpoch.Load().segments
 		r.engine.mu.RUnlock()
 
 		totalParts = len(segs)

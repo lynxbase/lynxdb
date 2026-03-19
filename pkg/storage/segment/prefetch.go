@@ -86,9 +86,9 @@ func (pr *PrefetchReader) ReadEventsWithPrefetch(hints QueryHints) ([]*event.Eve
 				var events []*event.Event
 				var err error
 				if len(need) > 0 {
-					events, err = pr.reader.readRowGroupEventsProjected(nextRG, need)
+					events, err = pr.reader.readRowGroupEventsProjected(idx, nextRG, need)
 				} else {
-					events, err = pr.reader.readRowGroupEvents(nextRG)
+					events, err = pr.reader.readRowGroupEvents(idx, nextRG)
 				}
 				prefetchCh <- prefetchResult{events: events, err: err}
 			}(nextRGI)
@@ -98,9 +98,9 @@ func (pr *PrefetchReader) ReadEventsWithPrefetch(hints QueryHints) ([]*event.Eve
 		var rgEvents []*event.Event
 		var err error
 		if len(need) > 0 {
-			rgEvents, err = pr.reader.readRowGroupEventsProjected(rg, need)
+			rgEvents, err = pr.reader.readRowGroupEventsProjected(rgi, rg, need)
 		} else {
-			rgEvents, err = pr.reader.readRowGroupEvents(rg)
+			rgEvents, err = pr.reader.readRowGroupEvents(rgi, rg)
 		}
 		if err != nil {
 			return nil, err

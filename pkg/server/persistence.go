@@ -143,7 +143,7 @@ func (e *Engine) initDiskPersistence(ctx context.Context) error {
 		// exceed the threshold. When ingest bursts produce many L0 parts
 		// within a single compaction tick interval, this ensures compaction
 		// responds immediately instead of waiting up to 30 seconds.
-		e.maybeCompactAfterFlush(ctx, meta.Index)
+		e.maybeCompactAfterFlush(ctx, meta.Index, meta.Partition)
 	})
 	e.batcher.Start(ctx)
 
@@ -191,12 +191,19 @@ func (e *Engine) loadPartAsSegment(meta *part.Meta) error {
 		ii = i
 	}
 
+	// Enable decoded column caching on this reader to avoid repeated
+	// decompression across queries hitting the same segment.
+	if e.projectionCache != nil {
+		ms.Reader().SetColumnCache(e.projectionCache, meta.ID)
+	}
+
 	sh := &segmentHandle{
 		reader: ms.Reader(),
 		mmap:   ms,
 		meta: model.SegmentMeta{
 			ID:           meta.ID,
 			Index:        meta.Index,
+			Partition:    meta.Partition,
 			MinTime:      meta.MinTime,
 			MaxTime:      meta.MaxTime,
 			EventCount:   meta.EventCount,
@@ -214,8 +221,9 @@ func (e *Engine) loadPartAsSegment(meta *part.Meta) error {
 	}
 
 	e.mu.Lock()
-	combined := make([]*segmentHandle, len(e.currentEpoch.segments)+1)
-	copy(combined, e.currentEpoch.segments)
+	cur := e.currentEpoch.Load().segments
+	combined := make([]*segmentHandle, len(cur)+1)
+	copy(combined, cur)
 	combined[len(combined)-1] = sh
 	e.advanceEpoch(combined, nil)
 	e.mu.Unlock()

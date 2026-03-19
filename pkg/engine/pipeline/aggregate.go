@@ -17,7 +17,7 @@ import (
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -39,7 +39,7 @@ const maxInMemoryGroups = 10_000_000
 // group for values() and stdev. Prevents unbounded memory for high-cardinality groups.
 const maxValuesPerGroup = 100_000
 
-// Memory estimation constants for BoundAccount tracking.
+// Memory estimation constants for operator tracking.
 // These are deliberately conservative (over-estimates) to avoid under-counting.
 const (
 	estimatedKeyBytes      int64 = 48 // per group-by key map entry (string key + Value + map overhead)
@@ -76,7 +76,7 @@ type AggregateIterator struct {
 	spillFiles  []string
 	spillErr    error               // first spill error; checked in Next() to abort query
 	hasher      hash.Hash64         // persistent FNV-1a hasher, reset per call
-	acct        stats.MemoryAccount // per-operator memory tracking (nil *BoundAccount = no tracking)
+	acct        memgov.MemoryAccount // per-operator memory tracking
 	spillMgr    *SpillManager       // lifecycle manager for spill files (nil = unmanaged)
 	spilledRows int64               // total rows written to spill files (for ResourceReporter)
 	partitions  *aggPartitionSet    // nil until first partitioned spill (lazy init)
@@ -105,7 +105,7 @@ type aggState struct {
 
 // NewAggregateIterator creates a streaming hash aggregation operator.
 // The acct parameter is optional (nil = no memory tracking).
-func NewAggregateIterator(child Iterator, aggs []AggFunc, groupBy []string, acct stats.MemoryAccount) *AggregateIterator {
+func NewAggregateIterator(child Iterator, aggs []AggFunc, groupBy []string, acct memgov.MemoryAccount) *AggregateIterator {
 	needsValues := make([]bool, len(aggs))
 	for i, a := range aggs {
 		switch strings.ToLower(a.Name) {
@@ -121,13 +121,13 @@ func NewAggregateIterator(child Iterator, aggs []AggFunc, groupBy []string, acct
 		groups:      make(map[uint64][]*aggGroup),
 		needsValues: needsValues,
 		hasher:      fnv.New64a(),
-		acct:        stats.EnsureAccount(acct),
+		acct:        memgov.EnsureAccount(acct),
 	}
 }
 
 // NewAggregateIteratorWithSpill creates an aggregation operator with spill support.
 // When the memory budget is exceeded, groups are spilled to disk via the SpillManager.
-func NewAggregateIteratorWithSpill(child Iterator, aggs []AggFunc, groupBy []string, acct stats.MemoryAccount, mgr *SpillManager) *AggregateIterator {
+func NewAggregateIteratorWithSpill(child Iterator, aggs []AggFunc, groupBy []string, acct memgov.MemoryAccount, mgr *SpillManager) *AggregateIterator {
 	a := NewAggregateIterator(child, aggs, groupBy, acct)
 	a.spillMgr = mgr
 
@@ -159,7 +159,7 @@ func (a *AggregateIterator) Next(ctx context.Context) (*Batch, error) {
 			// Bug fix: when the child (e.g., scan) fails because the shared
 			// budget is exhausted, aggregate may hold spillable groups.
 			// Spill those groups to free shared budget capacity, then retry.
-			if stats.IsMemoryExhausted(err) && a.groupCount > 0 && a.spillMgr != nil {
+			if memgov.IsMemoryExhausted(err) && a.groupCount > 0 && a.spillMgr != nil {
 				a.spillToDisk()
 				if a.spillErr != nil {
 					return nil, fmt.Errorf("aggregate: spill on child budget pressure: %w", a.spillErr)

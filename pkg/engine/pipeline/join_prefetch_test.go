@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // TestJoin_Prefetch_SameResults verifies that enabling prefetch produces
@@ -21,7 +21,7 @@ func TestJoin_Prefetch_SameResults(t *testing.T) {
 			// Run without prefetch.
 			left1 := NewRowScanIterator(leftRows, DefaultBatchSize)
 			right1 := NewRowScanIterator(rightRows, DefaultBatchSize)
-			acct1 := stats.NewBudgetMonitor("test", 1<<30).NewAccount("join")
+			acct1 := memgov.NewTestBudget("test", 1<<30).NewAccount("join")
 			iter1 := NewJoinIteratorWithBudget(left1, right1, "key", joinType, acct1)
 			iter1.SetPrefetch(false)
 
@@ -34,7 +34,7 @@ func TestJoin_Prefetch_SameResults(t *testing.T) {
 			// Run with prefetch.
 			left2 := NewRowScanIterator(leftRows, DefaultBatchSize)
 			right2 := NewRowScanIterator(rightRows, DefaultBatchSize)
-			acct2 := stats.NewBudgetMonitor("test", 1<<30).NewAccount("join")
+			acct2 := memgov.NewTestBudget("test", 1<<30).NewAccount("join")
 			iter2 := NewJoinIteratorWithBudget(left2, right2, "key", joinType, acct2)
 			iter2.SetPrefetch(true)
 
@@ -70,7 +70,7 @@ func TestJoin_Prefetch_ContextCancel(t *testing.T) {
 	rightRows := makeJoinRows(10, 5, "right")
 	right := NewRowScanIterator(rightRows, DefaultBatchSize)
 
-	acct := stats.NewBudgetMonitor("test", 1<<30).NewAccount("join")
+	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("join")
 	iter := NewJoinIteratorWithBudget(slowLeft, right, "key", "inner", acct)
 	iter.SetPrefetch(true)
 
@@ -122,7 +122,7 @@ func TestJoin_Prefetch_GraceHashJoin(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Small budget to force grace hash join.
-	acct := stats.NewBudgetMonitor("test", 8*1024).NewAccount("join")
+	acct := memgov.NewTestBudget("test", 8*1024).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "inner", acct, mgr)
 	iter.SetPrefetch(true) // Enable prefetch — this is the critical part.
 
@@ -157,7 +157,7 @@ func TestJoin_Prefetch_EmptyLeft(t *testing.T) {
 	left := NewRowScanIterator(leftRows, DefaultBatchSize)
 	right := NewRowScanIterator(rightRows, DefaultBatchSize)
 
-	acct := stats.NewBudgetMonitor("test", 1<<30).NewAccount("join")
+	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("join")
 	iter := NewJoinIteratorWithBudget(left, right, "key", "inner", acct)
 	iter.SetPrefetch(true)
 

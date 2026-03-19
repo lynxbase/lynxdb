@@ -4,32 +4,32 @@ import (
 	"sort"
 	"time"
 
-	"github.com/lynxbase/lynxdb/pkg/buffer"
+	"github.com/lynxbase/lynxdb/pkg/bufmgr"
 	"github.com/lynxbase/lynxdb/pkg/cache"
+	ingestpipeline "github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/model"
-	"github.com/lynxbase/lynxdb/pkg/stats"
 	"github.com/lynxbase/lynxdb/pkg/storage"
 )
 
-// MemoryPoolStats returns a point-in-time snapshot of the unified memory pool.
-// Returns nil if the engine is running in legacy mode (no unified pool).
-func (e *Engine) MemoryPoolStats() *stats.UnifiedPoolStats {
-	if e.unifiedPool == nil {
+// GovernorStats returns memory governor v2 usage stats.
+func (e *Engine) GovernorStats() *memgov.TotalStats {
+	if e.governor == nil {
 		return nil
 	}
 
-	s := e.unifiedPool.Stats()
+	s := e.governor.TotalUsage()
 
 	return &s
 }
 
-// BufferPoolStats returns buffer pool metrics, or nil if buffer manager is disabled.
-func (e *Engine) BufferPoolStats() *buffer.PoolStats {
-	if e.bufferPool == nil {
+// BufMgrStats returns buffer manager v2 frame stats, or nil if not enabled.
+func (e *Engine) BufMgrStats() *bufmgr.ManagerStats {
+	if e.bufMgr == nil {
 		return nil
 	}
 
-	s := e.bufferPool.Stats()
+	s := e.bufMgr.Stats()
 
 	return &s
 }
@@ -89,7 +89,7 @@ func (e *Engine) ClusterStatus() ClusterStatusInfo {
 		Status:         "healthy",
 		NodeCount:      1,
 		IndexCount:     len(e.indexes),
-		SegmentCount:   len(e.currentEpoch.segments),
+		SegmentCount:   len(e.currentEpoch.Load().segments),
 		BufferedSize:   bufferedBytes,
 		BufferedEvents: bufferedEvents,
 		DataDir:        dataDir,
@@ -126,7 +126,7 @@ func (e *Engine) Stats() StatsInfo {
 	sourceCounts := make(map[string]int64)
 
 	// Count events from segments.
-	for _, sh := range e.currentEpoch.segments {
+	for _, sh := range e.currentEpoch.Load().segments {
 		totalEvents += sh.meta.EventCount
 		storageBytes += sh.meta.SizeBytes
 
@@ -154,7 +154,7 @@ func (e *Engine) Stats() StatsInfo {
 	var eventsToday int64
 
 	// Count today's events from segments.
-	for _, sh := range e.currentEpoch.segments {
+	for _, sh := range e.currentEpoch.Load().segments {
 		if !sh.meta.MaxTime.Before(todayStart) {
 			if !sh.meta.MinTime.Before(todayStart) {
 				eventsToday += sh.meta.EventCount
@@ -188,7 +188,7 @@ func (e *Engine) Stats() StatsInfo {
 		TotalEvents:    totalEvents,
 		EventsToday:    eventsToday,
 		IndexCount:     len(e.indexes),
-		SegmentCount:   len(e.currentEpoch.segments),
+		SegmentCount:   len(e.currentEpoch.Load().segments),
 		BufferedEvents: e.BufferedEventCount(),
 		Sources:        sources,
 	}
@@ -209,6 +209,17 @@ func (e *Engine) CacheStats() cache.Stats {
 	return e.cache.Stats()
 }
 
+// ProjectionCacheStats returns decoded column projection cache statistics.
+func (e *Engine) ProjectionCacheStats() *cache.ProjectionCacheStats {
+	if e.projectionCache == nil {
+		return nil
+	}
+
+	s := e.projectionCache.Stats()
+
+	return &s
+}
+
 // Metrics returns the storage metrics, populating dynamic values first.
 func (e *Engine) Metrics() *storage.Metrics {
 	// Populate dynamic metrics before returning.
@@ -220,9 +231,9 @@ func (e *Engine) Metrics() *storage.Metrics {
 	}
 	e.metrics.BatcherSizeBytes.Store(batcherBytes)
 	e.metrics.BatcherEvents.Store(batcherEvents)
-	e.metrics.SegmentCount.Store(int64(len(e.currentEpoch.segments)))
+	e.metrics.SegmentCount.Store(int64(len(e.currentEpoch.Load().segments)))
 	var segBytes int64
-	for _, sh := range e.currentEpoch.segments {
+	for _, sh := range e.currentEpoch.Load().segments {
 		segBytes += sh.meta.SizeBytes
 	}
 	e.metrics.SegmentTotalBytes.Store(segBytes)
@@ -235,28 +246,8 @@ func (e *Engine) Metrics() *storage.Metrics {
 	e.metrics.CacheEvictions.Store(cacheStats.Evictions)
 	e.metrics.CacheSizeBytes.Store(cacheStats.SizeBytes)
 
-	// Unified memory pool metrics.
-	if e.unifiedPool != nil {
-		ps := e.unifiedPool.Stats()
-		e.metrics.PoolTotalBytes.Store(ps.TotalLimitBytes)
-		e.metrics.PoolQueryAllocated.Store(ps.QueryAllocatedBytes)
-		e.metrics.PoolCacheAllocated.Store(ps.CacheAllocatedBytes)
-		e.metrics.PoolCacheReserveFloor.Store(ps.CacheReserveFloorBytes)
-		e.metrics.PoolFreeBytes.Store(ps.FreeBytes)
-		e.metrics.PoolEvictionCount.Store(ps.CacheEvictionCount)
-		e.metrics.PoolEvictionBytes.Store(ps.CacheEvictionBytes)
-		e.metrics.PoolQueryRejections.Store(ps.QueryRejections)
-	}
-
-	// Buffer pool metrics (unified buffer manager).
-	if e.bufferPool != nil {
-		bps := e.bufferPool.Stats()
-		e.metrics.BufferPoolTotalPages.Store(int64(bps.TotalPages))
-		e.metrics.BufferPoolFreePages.Store(int64(bps.FreePages))
-		e.metrics.BufferPoolHits.Store(bps.Hits)
-		e.metrics.BufferPoolMisses.Store(bps.Misses)
-		e.metrics.BufferPoolEvictions.Store(bps.Evictions)
-	}
+	// Ingest parse failure counter (from shared JSONParser).
+	e.metrics.IngestParseErrors.Store(ingestpipeline.ParseFailureCount())
 
 	return e.metrics
 }
@@ -291,7 +282,7 @@ func (e *Engine) ListFields() []FieldInfo {
 	fc := storage.NewFieldCatalog()
 
 	// Add stats from segments.
-	for _, sh := range e.currentEpoch.segments {
+	for _, sh := range e.currentEpoch.Load().segments {
 		if sh.reader != nil {
 			fc.AddSegmentStats(sh.reader.Stats(), sh.meta.EventCount)
 		}

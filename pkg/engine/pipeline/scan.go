@@ -5,7 +5,7 @@ import (
 	"fmt"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // ScanIterator reads events from a pre-loaded slice and yields batches.
@@ -15,7 +15,7 @@ type ScanIterator struct {
 	offset            int
 	columns           []string            // optional column filter (nil = all)
 	scanCalls         int                 // for testing: how many Next() calls produced data
-	acct              stats.MemoryAccount // per-operator memory tracking (nil *BoundAccount = no tracking)
+	acct              memgov.MemoryAccount // per-operator memory tracking
 	lastBatchEstimate int64               // tracks previous batch size for Shrink
 }
 
@@ -28,16 +28,16 @@ func NewScanIterator(events []*event.Event, batchSize int) *ScanIterator {
 	return &ScanIterator{
 		events:    events,
 		batchSize: batchSize,
-		acct:      stats.NopAccount(),
+		acct:      memgov.NopAccount(),
 	}
 }
 
 // NewScanIteratorWithBudget creates a scan iterator with memory budget tracking.
 // When the budget is genuinely exceeded (real pressure from downstream operators),
 // the scan returns an explicit error instead of silently truncating.
-func NewScanIteratorWithBudget(events []*event.Event, batchSize int, acct stats.MemoryAccount) *ScanIterator {
+func NewScanIteratorWithBudget(events []*event.Event, batchSize int, acct memgov.MemoryAccount) *ScanIterator {
 	s := NewScanIterator(events, batchSize)
-	s.acct = stats.EnsureAccount(acct)
+	s.acct = memgov.EnsureAccount(acct)
 
 	return s
 }

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // makeSortBenchRows creates n rows with a "key" field set to descending integers
@@ -41,7 +41,7 @@ func BenchmarkSortInMemory(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		child := NewRowScanIterator(rows, DefaultBatchSize)
 		// Large budget — no spill expected.
-		acct := stats.NewBudgetMonitor("bench", 1<<30).NewAccount("sort")
+		acct := memgov.NewTestBudget("bench", 1<<30).NewAccount("sort")
 		mgr, err := NewSpillManager(b.TempDir(), nil)
 		if err != nil {
 			b.Fatal(err)
@@ -82,7 +82,7 @@ func BenchmarkSortWithSpill(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		child := NewRowScanIterator(rows, 1024)
-		acct := stats.NewBudgetMonitor("bench", budget).NewAccount("sort")
+		acct := memgov.NewTestBudget("bench", budget).NewAccount("sort")
 		mgr, err := NewSpillManager(b.TempDir(), nil)
 		if err != nil {
 			b.Fatal(err)

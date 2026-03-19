@@ -33,6 +33,11 @@ type segmentHandle struct {
 	// page protections for unlinked file-backed mappings under memory pressure.
 	pendingDelete []string
 
+	// deleteFunc is an optional hook for rate-limited deletion via DeletionPacer.
+	// When set, files are enqueued for paced deletion instead of immediate os.Remove.
+	// When nil, falls back to immediate os.Remove.
+	deleteFunc func(path string, sizeBytes int64)
+
 	// refs is an epoch-based reference count. Each epoch that includes this
 	// segment increments refs via incRef(); when the epoch drains it decrements
 	// via decRef(). The mmap is closed only when refs reaches 0, ensuring that
@@ -66,8 +71,12 @@ func (sh *segmentHandle) decRef() bool {
 			sh.mmap.Close() // idempotent via atomic.CompareAndSwap inside MmapSegment.Close
 		}
 		for _, p := range sh.pendingDelete {
-			if err := os.Remove(p); err == nil {
-				os.Remove(filepath.Dir(p)) // clean up empty partition dir; fails on non-empty (ENOTEMPTY)
+			if sh.deleteFunc != nil {
+				sh.deleteFunc(p, sh.meta.SizeBytes)
+			} else {
+				if err := os.Remove(p); err == nil {
+					os.Remove(filepath.Dir(p)) // clean up empty partition dir; fails on non-empty (ENOTEMPTY)
+				}
 			}
 		}
 		return true
@@ -137,7 +146,7 @@ type SearchStats struct {
 	// Suggestion is an actionable recommendation based on query execution analysis.
 	Suggestion string `json:"suggestion,omitempty"`
 
-	// Resource usage (captured via BudgetMonitor + getrusage snapshots).
+	// Resource usage (captured via BudgetAdapter + getrusage snapshots).
 	PeakMemoryBytes int64    `json:"peak_memory_bytes,omitempty"`
 	MemAllocBytes   int64    `json:"mem_alloc_bytes,omitempty"`
 	SpilledToDisk   bool     `json:"spilled_to_disk,omitempty"`
@@ -176,6 +185,9 @@ type SearchStats struct {
 	ShardsFailed   int  `json:"shards_failed,omitempty"`
 	ShardsTimedOut int  `json:"shards_timed_out,omitempty"`
 	ShardsPartial  bool `json:"shards_partial,omitempty"`
+
+	// ParseErrorCount is the number of events with parse errors encountered during scan.
+	ParseErrorCount int64 `json:"parse_error_count,omitempty"`
 
 	// SlowQuery is true when the query exceeded the slow query threshold.
 	// Set before calling OnQueryComplete so Prometheus can increment the counter.

@@ -9,8 +9,8 @@ import (
 	"github.com/RoaringBitmap/roaring"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
-	"github.com/lynxbase/lynxdb/pkg/stats"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
 )
@@ -140,7 +140,7 @@ type SegmentStreamIterator struct {
 	memEvents []*event.Event
 	hints     *SegmentStreamHints
 	batchSize int
-	acct      stats.MemoryAccount
+	acct      memgov.MemoryAccount
 
 	// Mutable scan state
 	phase    scanPhase
@@ -180,7 +180,7 @@ func NewSegmentStreamIterator(
 	memEvents []*event.Event,
 	hints *SegmentStreamHints,
 	batchSize int,
-	acct stats.MemoryAccount,
+	acct memgov.MemoryAccount,
 ) *SegmentStreamIterator {
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
@@ -230,7 +230,7 @@ func NewSegmentStreamIterator(
 		memEvents: memEvents,
 		hints:     hints,
 		batchSize: batchSize,
-		acct:      stats.EnsureAccount(acct),
+		acct:      memgov.EnsureAccount(acct),
 		phase:     phaseMemtable,
 		segIdx:    -1, // Start at -1 so the first advanceRowGroup() initializes segment 0.
 		needCols:  needCols,
@@ -403,7 +403,7 @@ func (s *SegmentStreamIterator) nextMemtableBatch(_ context.Context) (*Batch, er
 				estimate += event.EstimateEventSize(ev)
 			}
 			if err := s.acct.Grow(estimate); err != nil {
-				if stats.IsMemoryExhausted(err) && batchSize > minAdaptiveBatchSize {
+				if memgov.IsMemoryExhausted(err) && batchSize > minAdaptiveBatchSize {
 					batchSize /= 2
 
 					continue // retry with smaller batch
@@ -510,7 +510,7 @@ func (s *SegmentStreamIterator) yieldFromRGBuffer() (*Batch, error) {
 				estimate += event.EstimateEventSize(ev)
 			}
 			if err := s.acct.Grow(estimate); err != nil {
-				if stats.IsMemoryExhausted(err) && batchSize > minAdaptiveBatchSize {
+				if memgov.IsMemoryExhausted(err) && batchSize > minAdaptiveBatchSize {
 					batchSize /= 2
 
 					continue // retry with smaller batch

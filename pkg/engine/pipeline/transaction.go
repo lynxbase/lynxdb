@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // TransactionIterator groups events by a field with maxspan/startswith/endswith.
@@ -21,7 +21,7 @@ type TransactionIterator struct {
 	emitted    bool
 	offset     int
 	batchSize  int
-	acct       stats.MemoryAccount // per-operator memory tracking (nil *BoundAccount = no tracking)
+	acct       memgov.MemoryAccount // per-operator memory tracking
 }
 
 // NewTransactionIterator creates a transaction grouping operator.
@@ -37,14 +37,14 @@ func NewTransactionIterator(child Iterator, field string, maxSpan time.Duration,
 		startsWith: startsWith,
 		endsWith:   endsWith,
 		batchSize:  batchSize,
-		acct:       stats.NopAccount(),
+		acct:       memgov.NopAccount(),
 	}
 }
 
 // NewTransactionIteratorWithBudget creates a transaction operator with memory budget tracking.
-func NewTransactionIteratorWithBudget(child Iterator, field string, maxSpan time.Duration, startsWith, endsWith string, batchSize int, acct stats.MemoryAccount) *TransactionIterator {
+func NewTransactionIteratorWithBudget(child Iterator, field string, maxSpan time.Duration, startsWith, endsWith string, batchSize int, acct memgov.MemoryAccount) *TransactionIterator {
 	t := NewTransactionIterator(child, field, maxSpan, startsWith, endsWith, batchSize)
-	t.acct = stats.EnsureAccount(acct)
+	t.acct = memgov.EnsureAccount(acct)
 
 	return t
 }

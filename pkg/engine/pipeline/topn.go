@@ -5,7 +5,7 @@ import (
 	"context"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -16,7 +16,7 @@ type TopNIterator struct {
 	fields    []SortField
 	limit     int
 	batchSize int
-	acct      stats.MemoryAccount // per-operator memory tracking
+	acct      memgov.MemoryAccount // per-operator memory tracking
 
 	h      *topNHeap
 	result []map[string]event.Value
@@ -35,15 +35,15 @@ func NewTopNIterator(child Iterator, fields []SortField, limit, batchSize int) *
 		fields:    fields,
 		limit:     limit,
 		batchSize: batchSize,
-		acct:      stats.NopAccount(),
+		acct:      memgov.NopAccount(),
 	}
 }
 
 // NewTopNIteratorWithBudget creates a top-N selection operator with memory
 // budget tracking. Each row pushed into the heap is tracked via the account.
-func NewTopNIteratorWithBudget(child Iterator, fields []SortField, limit, batchSize int, acct stats.MemoryAccount) *TopNIterator {
+func NewTopNIteratorWithBudget(child Iterator, fields []SortField, limit, batchSize int, acct memgov.MemoryAccount) *TopNIterator {
 	t := NewTopNIterator(child, fields, limit, batchSize)
-	t.acct = stats.EnsureAccount(acct)
+	t.acct = memgov.EnsureAccount(acct)
 
 	return t
 }

@@ -14,18 +14,21 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	ingestpipeline "github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/optimizer"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
-// applyBudgetAndCPUStats populates resource stats from a BudgetMonitor and CPU snapshots.
-// The monitor provides accurate per-query memory tracking (high-water mark from
-// operator-level BoundAccounts). CPU stats come from getrusage which is acceptable
-// for single-query CLI mode.
-func applyBudgetAndCPUStats(st *stats.QueryStats, monitor *stats.BudgetMonitor, cpuBefore, cpuAfter stats.CPUSnapshot) {
-	st.PeakMemoryBytes = monitor.MaxAllocated()
-	st.MemAllocBytes = monitor.MaxAllocated()
+// applyBudgetAndCPUStats populates resource stats from a governor BudgetAdapter
+// and CPU snapshots. The adapter provides accurate per-query memory tracking
+// (high-water mark). CPU stats come from getrusage which is acceptable for
+// single-query CLI mode.
+func applyBudgetAndCPUStats(st *stats.QueryStats, budget *memgov.BudgetAdapter, cpuBefore, cpuAfter stats.CPUSnapshot) {
+	if budget != nil {
+		st.PeakMemoryBytes = budget.MaxAllocated()
+		st.MemAllocBytes = budget.MaxAllocated()
+	}
 	stats.ApplyCPUStats(st, cpuBefore, cpuAfter)
 }
 
@@ -285,7 +288,7 @@ func (e *Engine) Query(ctx context.Context, spl2Query string, opts QueryOpts) (*
 	if limit == 0 {
 		limit = stats.EphemeralMemoryLimit()
 	}
-	monitor := stats.NewBudgetMonitor("ephemeral", limit)
+	gov := memgov.NewGovernor(memgov.GovernorConfig{TotalLimit: limit})
 	cpuBefore := stats.TakeCPUSnapshot()
 	execStart := time.Now()
 
@@ -301,7 +304,7 @@ func (e *Engine) Query(ctx context.Context, spl2Query string, opts QueryOpts) (*
 		}
 	}()
 
-	buildResult, err := pipeline.BuildProgramWithBudget(ctx, prog, store, nil, nil, 0, "", monitor, spillMgr, false, nil)
+	buildResult, err := pipeline.BuildProgramWithGovernor(ctx, prog, store, nil, nil, 0, "", gov, limit, spillMgr, false, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build pipeline: %w", err)
 	}
@@ -313,7 +316,10 @@ func (e *Engine) Query(ctx context.Context, spl2Query string, opts QueryOpts) (*
 	}
 
 	st.ExecDuration = time.Since(execStart)
-	applyBudgetAndCPUStats(st, monitor, cpuBefore, stats.TakeCPUSnapshot())
+	applyBudgetAndCPUStats(st, buildResult.GovBudget, cpuBefore, stats.TakeCPUSnapshot())
+	if buildResult.GovBudget != nil {
+		buildResult.GovBudget.Close()
+	}
 
 	// Extract per-stage stats and warnings from instrumented pipeline.
 	st.Stages = pipeline.CollectStageStats(iter)
@@ -634,7 +640,7 @@ func (e *Engine) QueryReader(ctx context.Context, r io.Reader, spl2Query string,
 	if ephLimit == 0 {
 		ephLimit = stats.EphemeralMemoryLimit()
 	}
-	monitor := stats.NewBudgetMonitor("ephemeral", ephLimit)
+	qrGov := memgov.NewGovernor(memgov.GovernorConfig{TotalLimit: ephLimit})
 	cpuBefore := stats.TakeCPUSnapshot()
 	execStart := time.Now()
 
@@ -650,7 +656,7 @@ func (e *Engine) QueryReader(ctx context.Context, r io.Reader, spl2Query string,
 		}
 	}()
 
-	buildResult, err := pipeline.BuildProgramWithBudget(ctx, prog, store, nil, nil, 0, "", monitor, qrSpillMgr, false, nil)
+	buildResult, err := pipeline.BuildProgramWithGovernor(ctx, prog, store, nil, nil, 0, "", qrGov, ephLimit, qrSpillMgr, false, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build pipeline: %w", err)
 	}
@@ -662,7 +668,10 @@ func (e *Engine) QueryReader(ctx context.Context, r io.Reader, spl2Query string,
 	}
 
 	st.ExecDuration = time.Since(execStart)
-	applyBudgetAndCPUStats(st, monitor, cpuBefore, stats.TakeCPUSnapshot())
+	applyBudgetAndCPUStats(st, buildResult.GovBudget, cpuBefore, stats.TakeCPUSnapshot())
+	if buildResult.GovBudget != nil {
+		buildResult.GovBudget.Close()
+	}
 
 	// Extract per-stage stats and warnings from instrumented pipeline.
 	st.Stages = pipeline.CollectStageStats(qrIter)

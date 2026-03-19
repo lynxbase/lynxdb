@@ -13,7 +13,8 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/internal/objstore"
-	"github.com/lynxbase/lynxdb/pkg/buffer"
+	"github.com/lynxbase/lynxdb/pkg/bufmgr"
+	"github.com/lynxbase/lynxdb/pkg/bufmgr/consumers"
 	"github.com/lynxbase/lynxdb/pkg/cache"
 	ingestcluster "github.com/lynxbase/lynxdb/pkg/cluster/ingest"
 	querycluster "github.com/lynxbase/lynxdb/pkg/cluster/query"
@@ -21,6 +22,7 @@ import (
 	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	ingestpipeline "github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/stats"
@@ -39,7 +41,7 @@ var ErrShuttingDown = errors.New("engine: shutting down")
 // Engine owns all storage state, background goroutines, and query execution.
 type Engine struct {
 	indexes      map[string]model.IndexConfig
-	currentEpoch *segmentEpoch // immutable segment snapshot; see epoch.go
+	currentEpoch atomic.Pointer[segmentEpoch] // immutable segment snapshot; see epoch.go
 	dataDir      string
 	retention    time.Duration // data retention period for partition-based retention
 	storageCfg   config.StorageConfig
@@ -65,6 +67,10 @@ type Engine struct {
 
 	// Query result cache.
 	cache *cache.Store
+
+	// Decoded column projection cache (C4): caches decoded column data to
+	// avoid repeated LZ4 decompression across queries hitting the same segments.
+	projectionCache *cache.ProjectionCache
 
 	// Event bus for live query subscriptions.
 	eventBus *storage.EventBus
@@ -96,24 +102,28 @@ type Engine struct {
 	// Source registry for multi-source/wildcard query resolution.
 	sourceRegistry *sources.Registry
 
-	// Global query memory pool (coordinates across concurrent queries).
-	rootMonitor *stats.RootMonitor
-
-	// Unified memory pool for elastic sharing between queries and cache.
-	// Nil when server.total_memory_pool_bytes is not set (legacy mode).
-	unifiedPool *stats.UnifiedPool
-
 	// Spill file lifecycle manager for sort/aggregate disk spill.
 	spillMgr *enginepipeline.SpillManager
 
-	// Unified buffer manager. Nil when buffer_manager.enabled is false.
-	bufferPool *buffer.Pool
+	// Memory management v2: Governor + BufferManager.
+	governor         memgov.Governor                  // process-wide memory budget with class-based accounting
+	bufMgr           bufmgr.Manager                   // frame-based buffer manager with state machine
+	bufMgrCancel     context.CancelFunc               // cancels the bufMgr scheduler goroutine on shutdown
+	segCacheConsumer *consumers.SegmentCacheConsumer   // segment cache backed by bufMgr (nil when bufMgr is nil)
 
 	// Ingest dedup stage (nil when ingest.dedup_enabled is false).
 	ingestDedup *ingestpipeline.DedupStage
 
 	// Compaction consecutive failure tracker (per-index).
 	compactionFailures *compactionFailureTracker
+
+	// Deletion pacer: rate-limits file deletion to avoid SSD TRIM spikes (nil when dataDir=="").
+	deletionPacer       *compaction.DeletionPacer
+	deletionPacerCancel context.CancelFunc
+
+	// Compaction scheduler: priority queue + worker pool + rate limiter (nil when dataDir=="").
+	compactionSched *compaction.Scheduler
+	adaptiveCtrl    *compaction.AdaptiveController
 
 	// Server, ingest, views, and cluster config.
 	serverCfg  config.ServerConfig
@@ -174,23 +184,6 @@ func NewEngine(cfg Config) *Engine {
 		queryCfg = config.DefaultConfig().Query
 	}
 
-	// Resolve global query pool size: explicit config > auto-detect (25% system RAM).
-	poolBytes := int64(queryCfg.GlobalQueryPoolBytes)
-	if poolBytes == 0 {
-		if sysMem := stats.TotalSystemMemory(); sysMem > 0 {
-			poolBytes = sysMem / 4
-			// Clamp: min 256MB, max 64GB.
-			const minPool = 256 << 20
-			const maxPool = 64 << 30
-			if poolBytes < minPool {
-				poolBytes = minPool
-			}
-			if poolBytes > maxPool {
-				poolBytes = maxPool
-			}
-		}
-	}
-
 	// Create spill manager for sort/aggregate disk spill with quota enforcement.
 	spillMgr, spillErr := enginepipeline.NewSpillManagerWithQuota(
 		queryCfg.SpillDir, int64(queryCfg.MaxTempDirSizeBytes), cfg.Logger,
@@ -203,8 +196,14 @@ func NewEngine(cfg Config) *Engine {
 	// Build the cache first — we may need its EvictBytes as the evictor callback.
 	queryCache := cache.NewStore(cacheDir, 256<<20, 30*time.Second)
 
+	// Projection cache (C4): caches decoded column data to avoid repeated
+	// LZ4 decompression across queries hitting the same segments.
+	// Size: 256MB or 10% of total memory pool, whichever is smaller.
+	projCacheBytes := int64(256 << 20) // 256MB default
+	projCache := cache.NewProjectionCache(projCacheBytes)
+
 	// Resolve unified memory pool: when server.total_memory_pool_bytes is set
-	// (or auto-detected), create a UnifiedPool for elastic sharing between
+	// (or auto-detected), create a Governor for elastic sharing between
 	// query execution and segment cache. Otherwise, fall back to the legacy
 	// separate-pool model.
 	totalPoolBytes := int64(cfg.Server.TotalMemoryPoolBytes)
@@ -225,45 +224,59 @@ func NewEngine(cfg Config) *Engine {
 		}
 	}
 
-	cacheReservePercent := cfg.Server.CacheReservePercent
-	if cacheReservePercent == 0 {
-		cacheReservePercent = 20 // Default: 20% cache floor.
-	}
-
-	var unifiedPool *stats.UnifiedPool
-	var rootMonitor *stats.RootMonitor
-
-	if totalPoolBytes > 0 {
-		// Elastic sharing: UnifiedPool manages queries + cache as one pool.
-		unifiedPool = stats.NewUnifiedPool(totalPoolBytes, cacheReservePercent, queryCache.EvictBytes)
-		rootMonitor = stats.NewRootMonitorWithPool("query-pool", poolBytes, unifiedPool)
-		queryCache.SetPool(unifiedPool)
-	} else {
-		// Legacy mode: separate pools for queries and cache.
-		rootMonitor = stats.NewRootMonitor("query-pool", poolBytes)
-	}
-
-	// Initialize buffer manager when enabled.
-	var bufPool *buffer.Pool
+	// Initialize memory governance v2: Governor + BufferManager.
 	bmCfg := cfg.BufferManager
+	// The governor provides class-based memory accounting with pressure callbacks.
+	// The buffer manager provides frame-level state machine with batched eviction.
+	gov := memgov.NewGovernor(memgov.GovernorConfig{
+		TotalLimit: totalPoolBytes,
+	})
+
+	// Register pressure callbacks so the governor can reclaim memory under pressure.
+	// PageCache: evict query cache entries to free memory for higher-priority classes.
+	gov.OnPressure(memgov.ClassPageCache, func(target int64) int64 {
+		return queryCache.EvictBytes(target)
+	})
+
+	var bufMgr bufmgr.Manager
 	if bmCfg.Enabled {
-		poolCfg := buffer.PoolConfig{
-			MaxMemoryBytes:         int64(bmCfg.MaxMemoryBytes),
-			PageSize:               bmCfg.PageSize,
-			EnableOffHeap:          bmCfg.EnableOffHeap,
-			CacheTargetPercent:     bmCfg.CacheTargetPercent,
-			QueryTargetPercent:     bmCfg.QueryTargetPercent,
-			BatcherTargetPercent:   bmCfg.BatcherTargetPercent,
-			MaxPinnedPagesPerQuery: bmCfg.MaxPinnedPagesPerQuery,
-			Logger:                 cfg.Logger,
+		var bmErr error
+		bufMgr, bmErr = bufmgr.NewManager(bufmgr.ManagerConfig{
+			MaxMemoryBytes: int64(bmCfg.MaxMemoryBytes),
+			FrameSize:      bmCfg.PageSize,
+			EnableOffHeap:  bmCfg.EnableOffHeap,
+			Governor:       gov,
+			Logger:         cfg.Logger,
+		})
+		if bmErr != nil {
+			cfg.Logger.Warn("failed to create buffer manager v2, running without",
+				"error", bmErr)
+			bufMgr = nil
 		}
-		var bufErr error
-		bufPool, bufErr = buffer.NewPool(poolCfg)
-		if bufErr != nil {
-			cfg.Logger.Warn("failed to create buffer pool, running without buffer manager",
-				"error", bufErr)
-			bufPool = nil
+	}
+
+	// Register page cache pressure callback: evict segment cache frames from
+	// the buffer manager to free memory for higher-priority allocations.
+	if bufMgr != nil {
+		bm := bufMgr // capture for closure
+		frameSize := int64(bmCfg.PageSize)
+		if frameSize <= 0 {
+			frameSize = int64(bufmgr.FrameSize64KB)
 		}
+		gov.OnPressure(memgov.ClassPageCache, func(target int64) int64 {
+			framesToEvict := int((target + frameSize - 1) / frameSize)
+			if framesToEvict < 1 {
+				framesToEvict = 1
+			}
+			evicted := bm.EvictBatch(framesToEvict, bufmgr.OwnerSegCache)
+			return int64(evicted) * frameSize
+		})
+	}
+
+	// Create segment cache consumer when buffer manager v2 is available.
+	var segCacheConsumer *consumers.SegmentCacheConsumer
+	if bufMgr != nil {
+		segCacheConsumer = consumers.NewSegmentCacheConsumer(bufMgr)
 	}
 
 	// Initialize ingest dedup stage when enabled.
@@ -286,15 +299,16 @@ func NewEngine(cfg Config) *Engine {
 		logger:             cfg.Logger,
 		eventBus:           storage.NewEventBus(0),
 		cache:              queryCache,
+		projectionCache:    projCache,
 		startTime:          time.Now(),
 		metrics:            storage.NewMetrics(),
 		queryCfg:           queryCfg,
-		rootMonitor:        rootMonitor,
-		unifiedPool:        unifiedPool,
 		spillMgr:           spillMgr,
-		bufferPool:         bufPool,
 		ingestDedup:        dedupStage,
 		compactionFailures: newCompactionFailureTracker(),
+		governor:           gov,
+		bufMgr:             bufMgr,
+		segCacheConsumer:   segCacheConsumer,
 		serverCfg:          cfg.Server,
 		ingestCfg:          cfg.Ingest,
 		viewsCfg:           cfg.Views,
@@ -302,31 +316,19 @@ func NewEngine(cfg Config) *Engine {
 		clusterCfg:         cfg.Cluster,
 		sourceRegistry:     sources.NewRegistry(),
 	}
-	e.currentEpoch = &segmentEpoch{
+	e.currentEpoch.Store(&segmentEpoch{
 		done: make(chan struct{}),
-	}
+	})
 
 	e.maxConcur.Store(int32(queryCfg.MaxConcurrent))
+
+	// Wire cache memory into the governor so inserts/evictions are tracked.
+	e.cache.SetPool(cache.NewGovernorPoolAdapter(gov))
 
 	// Create default index.
 	e.indexes[DefaultIndexName] = model.DefaultIndexConfig(DefaultIndexName)
 
 	return e
-}
-
-// UnifiedPool returns the unified memory pool, or nil if running in legacy mode.
-func (e *Engine) UnifiedPool() *stats.UnifiedPool {
-	return e.unifiedPool
-}
-
-// BufferPool returns the unified buffer manager pool, or nil if buffer_manager.enabled is false.
-func (e *Engine) BufferPool() *buffer.Pool {
-	return e.bufferPool
-}
-
-// BufferManagerEnabled reports whether the unified buffer manager is active.
-func (e *Engine) BufferManagerEnabled() bool {
-	return e.bufferPool != nil
 }
 
 // Start initializes persistence and starts background goroutines.
@@ -355,34 +357,26 @@ func (e *Engine) Start(ctx context.Context) error {
 		e.logger.Info("running in-memory mode (no data directory configured)")
 	}
 
-	if e.bufferPool != nil {
-		ps := e.bufferPool.Stats()
-		e.logger.Info("unified buffer manager initialized",
-			"pages", ps.TotalPages,
-			"page_size", ps.PageSizeBytes,
-			"total_bytes", ps.TotalBytes,
-			"total_mb", ps.TotalBytes/(1<<20),
-			"off_heap", ps.OffHeap,
-			"cache_target_pct", e.bufMgrCfg.CacheTargetPercent,
-			"query_target_pct", e.bufMgrCfg.QueryTargetPercent,
-			"batcher_target_pct", e.bufMgrCfg.BatcherTargetPercent)
-	}
-
-	if e.unifiedPool != nil {
-		ps := e.unifiedPool.Stats()
-		e.logger.Info("unified memory pool initialized",
-			"total_bytes", ps.TotalLimitBytes,
-			"total_mb", ps.TotalLimitBytes/(1<<20),
-			"cache_reserve_floor_bytes", ps.CacheReserveFloorBytes)
-	} else if poolLimit := e.rootMonitor.Limit(); poolLimit > 0 {
-		e.logger.Info("query memory pool initialized",
-			"pool_bytes", poolLimit,
-			"pool_mb", poolLimit/(1<<20))
+	if e.bufMgr != nil {
+		bmCtx, bmCancel := context.WithCancel(ctx)
+		e.bufMgrCancel = bmCancel
+		e.bufMgr.Start(bmCtx)
+		ms := e.bufMgr.Stats()
+		e.logger.Info("buffer manager v2 initialized",
+			"frames", ms.TotalFrames,
+			"frame_size", e.bufMgr.FrameSize(),
+		)
 	}
 
 	go e.startJobGC(ctx)
 
 	if e.dataDir != "" {
+		// Start deletion pacer for rate-limited file removal.
+		e.deletionPacer = compaction.NewDeletionPacer(0)
+		dpCtx, dpCancel := context.WithCancel(ctx)
+		e.deletionPacerCancel = dpCancel
+		go e.deletionPacer.DrainLoop(dpCtx)
+
 		e.startCompaction(ctx)
 		e.startTiering(ctx)
 	}
@@ -420,7 +414,7 @@ func (e *Engine) Shutdown(_ time.Duration) error {
 
 	// Retire all segments via epoch advance so background readers can drain.
 	e.mu.Lock()
-	old := e.currentEpoch
+	old := e.currentEpoch.Load()
 	retired := make([]*segmentHandle, len(old.segments))
 	copy(retired, old.segments)
 	e.advanceEpoch(make([]*segmentHandle, 0), retired)
@@ -440,14 +434,23 @@ func (e *Engine) Shutdown(_ time.Duration) error {
 		}
 	}
 
+	// Stop deletion pacer (flushes remaining deletions synchronously).
+	if e.deletionPacerCancel != nil {
+		e.deletionPacerCancel()
+	}
+
 	// Clean up any remaining spill files.
 	e.spillMgr.CleanupAll()
 
-	// Close buffer pool (releases mmap'd pages).
-	if e.bufferPool != nil {
-		if err := e.bufferPool.Close(); err != nil {
-			e.logger.Error("shutdown buffer pool close failed", "error", err)
-			errs = append(errs, fmt.Errorf("close buffer pool: %w", err))
+	// Close buffer manager v2: cancel the scheduler context first so the
+	// background goroutine exits, then close the manager itself.
+	if e.bufMgr != nil {
+		if e.bufMgrCancel != nil {
+			e.bufMgrCancel()
+		}
+		if err := e.bufMgr.Close(); err != nil {
+			e.logger.Error("shutdown buffer manager v2 close failed", "error", err)
+			errs = append(errs, fmt.Errorf("close buffer manager v2: %w", err))
 		}
 	}
 
@@ -601,21 +604,40 @@ func (e *Engine) ActiveJobs() int64 {
 	return e.activeJobs.Load()
 }
 
-// RootMonitor returns the global query memory pool monitor.
-func (e *Engine) RootMonitor() *stats.RootMonitor {
-	return e.rootMonitor
+// Governor returns the memory governor v2 for process-wide memory management.
+func (e *Engine) Governor() memgov.Governor {
+	return e.governor
+}
+
+// BufMgr returns the buffer manager v2, or nil if not enabled.
+func (e *Engine) BufMgr() bufmgr.Manager {
+	return e.bufMgr
+}
+
+// SegCacheConsumer returns the segment cache consumer backed by the buffer
+// manager v2, or nil if the buffer manager is not enabled.
+func (e *Engine) SegCacheConsumer() *consumers.SegmentCacheConsumer {
+	return e.segCacheConsumer
 }
 
 // pinEpoch returns the current epoch with its reader count incremented.
 // The caller MUST call ep.unpin() when done reading segment data.
-// Pin is O(1) — a single atomic increment.
+// Pin is O(1) — a single atomic load + atomic increment.
+//
+// Lock-free: uses atomic.Pointer.Load() with a load-pin-verify-retry pattern
+// instead of acquiring e.mu.RLock(). This reduces contention under high QPS
+// from ~25ns (RLock) to ~1ns (atomic Load) per query.
 func (e *Engine) pinEpoch() *segmentEpoch {
-	e.mu.RLock()
-	ep := e.currentEpoch
-	ep.pin()
-	e.mu.RUnlock()
-
-	return ep
+	for {
+		ep := e.currentEpoch.Load()
+		ep.pin()
+		// Verify the epoch hasn't been swapped between Load and pin.
+		// If it was, our pin is on a stale epoch — undo and retry.
+		if e.currentEpoch.Load() == ep {
+			return ep
+		}
+		ep.unpin()
+	}
 }
 
 // advanceEpoch atomically creates a new epoch with the given segment list,
@@ -630,7 +652,7 @@ func (e *Engine) pinEpoch() *segmentEpoch {
 // drain immediately and close mmaps still in use by a long-running query
 // pinned to an earlier epoch.
 func (e *Engine) advanceEpoch(newSegments, retired []*segmentHandle) {
-	old := e.currentEpoch
+	old := e.currentEpoch.Load()
 	old.retired = retired
 
 	// incRef all segments in the NEW epoch before making it current.
@@ -640,11 +662,11 @@ func (e *Engine) advanceEpoch(newSegments, retired []*segmentHandle) {
 		sh.incRef()
 	}
 
-	e.currentEpoch = &segmentEpoch{
+	e.currentEpoch.Store(&segmentEpoch{
 		id:       old.id + 1,
 		segments: newSegments,
 		done:     make(chan struct{}),
-	}
+	})
 
 	// If no readers are pinning the old epoch, signal immediately.
 	if old.readers.Load() == 0 {
@@ -668,17 +690,14 @@ func (e *Engine) BufferedEventCount() int64 {
 func (e *Engine) BuildEventStoreFromHints(hints *spl2.QueryHints) map[string][]*event.Event {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	store, _, _ := e.buildEventStore(ctx, hints, nil, nil)
+	store, _, _ := e.buildEventStore(ctx, hints, nil)
 
 	return store
 }
 
 // SegmentCount returns the number of segments.
 func (e *Engine) SegmentCount() int {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-
-	return len(e.currentEpoch.segments)
+	return len(e.currentEpoch.Load().segments)
 }
 
 // Segments returns segment metadata for inspection (test helper).
@@ -709,9 +728,7 @@ func (e *Engine) PartLayout() *part.Layout {
 
 // HasBloomFilter returns true if any segment has a cached bloom filter (test helper).
 func (e *Engine) HasBloomFilter() bool {
-	e.mu.RLock()
-	defer e.mu.RUnlock()
-	for _, sh := range e.currentEpoch.segments {
+	for _, sh := range e.currentEpoch.Load().segments {
 		if sh.bloom != nil {
 			return true
 		}

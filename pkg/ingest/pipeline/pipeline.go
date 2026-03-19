@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -40,7 +41,9 @@ func (p *Pipeline) Process(events []*event.Event) ([]*event.Event, error) {
 }
 
 // JSONParser parses events with JSON raw data and extracts fields.
-type JSONParser struct{}
+type JSONParser struct {
+	ParseErrors atomic.Int64 // events where JSON unmarshal failed
+}
 
 func (p *JSONParser) Process(events []*event.Event) ([]*event.Event, error) {
 	for _, e := range events {
@@ -49,6 +52,8 @@ func (p *JSONParser) Process(events []*event.Event) ([]*event.Event, error) {
 		}
 		var fields map[string]interface{}
 		if err := json.Unmarshal([]byte(e.Raw), &fields); err != nil {
+			p.ParseErrors.Add(1)
+			e.ParseError = true
 			continue // Not JSON, skip.
 		}
 		for k, v := range fields {
@@ -280,12 +285,96 @@ func (p *SyslogParser) Process(events []*event.Event) ([]*event.Event, error) {
 	return events, nil
 }
 
+// SelectiveJSONParser extracts only the requested top-level JSON keys from
+// event raw data, skipping all others. When a query needs 2 of 20 fields,
+// this avoids 90% of the unmarshal work compared to the full JSONParser.
+//
+// Uses json.Decoder.Token() for streaming key scanning and Decoder.Decode()
+// only for matching key values. Non-matching keys are skipped via
+// json.RawMessage consumption (cheaper than full Decode + discard).
+type SelectiveJSONParser struct {
+	RequiredFields map[string]bool
+	ParseErrors    *atomic.Int64 // shared counter with JSONParser
+}
+
+func (p *SelectiveJSONParser) Process(events []*event.Event) ([]*event.Event, error) {
+	for _, e := range events {
+		if e.Raw == "" {
+			continue
+		}
+		dec := json.NewDecoder(strings.NewReader(e.Raw))
+
+		// Expect opening '{'.
+		tok, err := dec.Token()
+		if err != nil {
+			p.ParseErrors.Add(1)
+			e.ParseError = true
+			continue
+		}
+		if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+			p.ParseErrors.Add(1)
+			e.ParseError = true
+			continue
+		}
+
+		for dec.More() {
+			// Read key token.
+			keyTok, err := dec.Token()
+			if err != nil {
+				break
+			}
+			key, ok := keyTok.(string)
+			if !ok {
+				break
+			}
+
+			if !p.RequiredFields[key] {
+				// Skip the value — consume it as RawMessage.
+				var skip json.RawMessage
+				if err := dec.Decode(&skip); err != nil {
+					break
+				}
+				continue
+			}
+
+			// Decode the value for a required key.
+			var v interface{}
+			if err := dec.Decode(&v); err != nil {
+				break
+			}
+			switch val := v.(type) {
+			case string:
+				e.SetField(key, event.StringValue(val))
+			case float64:
+				if val == float64(int64(val)) {
+					e.SetField(key, event.IntValue(int64(val)))
+				} else {
+					e.SetField(key, event.FloatValue(val))
+				}
+			case bool:
+				e.SetField(key, event.BoolValue(val))
+			}
+		}
+	}
+	return events, nil
+}
+
+// sharedJSONParser is used by DefaultPipeline and SelectivePipeline to accumulate
+// parse failure counts across all pipelines into a single counter.
+var sharedJSONParser = &JSONParser{}
+
+// ParseFailureCount returns the total number of JSON parse failures across all
+// default and selective ingest pipelines. Use this to wire into metrics.
+func ParseFailureCount() int64 {
+	return sharedJSONParser.ParseErrors.Load()
+}
+
 // defaultPipeline is a shared instance returned by DefaultPipeline().
 // All stages are stateless (they only read their own config and mutate
 // the events passed in, not internal state), so sharing is safe.
 var defaultPipeline = New(
 	DefaultTimestampNormalizer(),
-	&JSONParser{},
+	sharedJSONParser,
 	&KeyValueParser{},
 	&Router{DefaultIndex: "main", PartitionCount: 4},
 )
@@ -343,7 +432,18 @@ func SelectivePipeline(requiredFields map[string]bool) *Pipeline {
 	var stages []Stage
 	if needParsing {
 		// Full timestamp normalization needed since JSON parser may extract timestamps.
-		stages = append(stages, DefaultTimestampNormalizer(), &JSONParser{}, &KeyValueParser{})
+		stages = append(stages, DefaultTimestampNormalizer())
+		// Use selective JSON parser when a bounded set of fields is requested.
+		// This avoids full unmarshal when only a few fields are needed.
+		if requiredFields != nil {
+			stages = append(stages, &SelectiveJSONParser{
+				RequiredFields: requiredFields,
+				ParseErrors:    &sharedJSONParser.ParseErrors,
+			})
+		} else {
+			stages = append(stages, sharedJSONParser)
+		}
+		stages = append(stages, &KeyValueParser{})
 	} else {
 		// Fast path: no JSON/KV parsing, so timestamp normalization from raw text
 		// will fail on JSON lines anyway. Use fast assigner to avoid wasted work.

@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
-	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
 func TestCTEDAG_Independent(t *testing.T) {
@@ -167,13 +167,16 @@ func TestCTE_ParallelMaterialization(t *testing.T) {
 		Main: &spl2.Query{Source: &spl2.SourceClause{Index: "a", IsVariable: true}},
 	}
 
-	monitor := stats.NewBudgetMonitor("test", 1<<30) // 1GB — plenty of room
+	gov := memgov.NewGovernor(memgov.GovernorConfig{TotalLimit: 1 << 30})
 	parallelCfg := &ParallelConfig{Enabled: true, MaxBranchParallelism: 4, ChannelBufferSize: 2}
 
 	ctx := context.Background()
-	result, err := BuildProgramWithBudget(ctx, prog, store, nil, nil, DefaultBatchSize, "", monitor, nil, false, parallelCfg)
+	result, err := BuildProgramWithGovernor(ctx, prog, store, nil, nil, DefaultBatchSize, "", gov, 1<<30, nil, false, parallelCfg)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if result.GovBudget != nil {
+		defer result.GovBudget.Close()
 	}
 
 	rows, err := CollectAll(ctx, result.Iterator)
@@ -203,13 +206,16 @@ func TestCTE_BudgetSplit(t *testing.T) {
 		Main: &spl2.Query{Source: &spl2.SourceClause{Index: "a", IsVariable: true}},
 	}
 
-	monitor := stats.NewBudgetMonitor("test", 1<<30) // 1GB — plenty of room
+	gov := memgov.NewGovernor(memgov.GovernorConfig{TotalLimit: 1 << 30})
 	parallelCfg := &ParallelConfig{Enabled: true, MaxBranchParallelism: 4, ChannelBufferSize: 2}
 
 	ctx := context.Background()
-	result, err := BuildProgramWithBudget(ctx, prog, store, nil, nil, DefaultBatchSize, "", monitor, nil, false, parallelCfg)
+	result, err := BuildProgramWithGovernor(ctx, prog, store, nil, nil, DefaultBatchSize, "", gov, 1<<30, nil, false, parallelCfg)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if result.GovBudget != nil {
+		defer result.GovBudget.Close()
 	}
 
 	rows, err := CollectAll(ctx, result.Iterator)

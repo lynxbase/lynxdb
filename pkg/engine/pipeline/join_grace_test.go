@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // makeJoinRows creates n rows with a "key" field (mod numKeys for key diversity)
@@ -39,7 +39,7 @@ func TestJoinInMemoryFastPath(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Large budget — no spill needed.
-	acct := stats.NewBudgetMonitor("test", 1<<30).NewAccount("join")
+	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "inner", acct, mgr)
 
 	ctx := context.Background()
@@ -83,7 +83,7 @@ func TestJoinGraceHashJoinFallback(t *testing.T) {
 	// Budget: 8KB fits ~32 rows at 256 bytes/row, so 100 right rows will
 	// trigger grace fallback during build. After partitioning into 64 buckets,
 	// each partition has ~1-2 rows which fits within 8KB easily.
-	acct := stats.NewBudgetMonitor("test", 8*1024).NewAccount("join")
+	acct := memgov.NewTestBudget("test", 8*1024).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "inner", acct, mgr)
 
 	ctx := context.Background()
@@ -132,7 +132,7 @@ func TestJoinGraceHashJoinLeftOuter(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Budget: small enough to trigger grace on 25 right rows, large enough per partition.
-	acct := stats.NewBudgetMonitor("test", 4*1024).NewAccount("join")
+	acct := memgov.NewTestBudget("test", 4*1024).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "left", acct, mgr)
 
 	ctx := context.Background()
@@ -168,7 +168,7 @@ func TestJoinGraceHashJoinInner(t *testing.T) {
 	}
 	defer mgr.CleanupAll()
 
-	acct := stats.NewBudgetMonitor("test", 4*1024).NewAccount("join")
+	acct := memgov.NewTestBudget("test", 4*1024).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "inner", acct, mgr)
 
 	ctx := context.Background()
@@ -202,7 +202,7 @@ func TestJoinSpillFileCleanup(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Budget small enough to force grace, large enough per partition.
-	acct := stats.NewBudgetMonitor("test", 8*1024).NewAccount("join")
+	acct := memgov.NewTestBudget("test", 8*1024).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "inner", acct, mgr)
 
 	ctx := context.Background()
@@ -230,7 +230,7 @@ func TestJoinEmptyRightSide(t *testing.T) {
 	left := NewRowScanIterator(leftRows, DefaultBatchSize)
 	right := NewRowScanIterator(rightRows, DefaultBatchSize)
 
-	acct := stats.NewBudgetMonitor("test", 1<<30).NewAccount("join")
+	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "inner", acct, nil)
 
 	ctx := context.Background()
@@ -256,7 +256,7 @@ func TestJoinEmptyRightSideLeftJoin(t *testing.T) {
 	left := NewRowScanIterator(leftRows, DefaultBatchSize)
 	right := NewRowScanIterator(rightRows, DefaultBatchSize)
 
-	acct := stats.NewBudgetMonitor("test", 1<<30).NewAccount("join")
+	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "left", acct, nil)
 
 	ctx := context.Background()
@@ -282,7 +282,7 @@ func TestJoinEmptyLeftSide(t *testing.T) {
 	left := NewRowScanIterator(leftRows, DefaultBatchSize)
 	right := NewRowScanIterator(rightRows, DefaultBatchSize)
 
-	acct := stats.NewBudgetMonitor("test", 1<<30).NewAccount("join")
+	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("join")
 	iter := NewJoinIteratorWithSpill(left, right, "key", "inner", acct, nil)
 
 	ctx := context.Background()

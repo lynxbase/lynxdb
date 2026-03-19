@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // defaultGracePartitions is the number of partitions used in grace hash join.
@@ -39,7 +39,7 @@ type JoinIterator struct {
 	hashMap   map[string][]map[string]event.Value
 	bloomKeys map[uint64]bool // for bloom_semi pre-filter
 	built     bool
-	acct      stats.MemoryAccount // per-operator memory tracking (nil *BoundAccount = no tracking)
+	acct      memgov.MemoryAccount // per-operator memory tracking
 
 	// Grace hash join state (populated only when in-memory build exceeds budget).
 	spillMgr         *SpillManager
@@ -70,7 +70,7 @@ func NewJoinIterator(left, right Iterator, field, joinType string) *JoinIterator
 		joinType: joinType,
 		strategy: "hash",
 		hashMap:  make(map[string][]map[string]event.Value),
-		acct:     stats.NopAccount(),
+		acct:     memgov.NopAccount(),
 	}
 }
 
@@ -85,7 +85,7 @@ func (j *JoinIterator) SetPrefetch(enabled bool) {
 // NewJoinIteratorWithStrategy creates a hash join with a specific strategy,
 // memory budget tracking, and optional grace hash join fallback via SpillManager.
 func NewJoinIteratorWithStrategy(left, right Iterator, field, joinType, strategy string,
-	acct stats.MemoryAccount, mgr *SpillManager) *JoinIterator {
+	acct memgov.MemoryAccount, mgr *SpillManager) *JoinIterator {
 	j := NewJoinIteratorWithSpill(left, right, field, joinType, acct, mgr)
 	j.strategy = strategy
 
@@ -93,9 +93,9 @@ func NewJoinIteratorWithStrategy(left, right Iterator, field, joinType, strategy
 }
 
 // NewJoinIteratorWithBudget creates a hash join with memory budget tracking.
-func NewJoinIteratorWithBudget(left, right Iterator, field, joinType string, acct stats.MemoryAccount) *JoinIterator {
+func NewJoinIteratorWithBudget(left, right Iterator, field, joinType string, acct memgov.MemoryAccount) *JoinIterator {
 	j := NewJoinIterator(left, right, field, joinType)
-	j.acct = stats.EnsureAccount(acct)
+	j.acct = memgov.EnsureAccount(acct)
 
 	return j
 }
@@ -104,7 +104,7 @@ func NewJoinIteratorWithBudget(left, right Iterator, field, joinType string, acc
 // and grace hash join fallback. When the in-memory build side exceeds the
 // budget, both sides are partitioned to disk and joined one partition at a time.
 func NewJoinIteratorWithSpill(left, right Iterator, field, joinType string,
-	acct stats.MemoryAccount, mgr *SpillManager) *JoinIterator {
+	acct memgov.MemoryAccount, mgr *SpillManager) *JoinIterator {
 	j := NewJoinIteratorWithBudget(left, right, field, joinType, acct)
 	j.spillMgr = mgr
 

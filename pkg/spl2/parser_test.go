@@ -838,6 +838,84 @@ func TestParse_JsonCmd_SingularPathNoAS(t *testing.T) {
 	}
 }
 
+func TestParse_JsonCmd_BarePathsWithAS(t *testing.T) {
+	q, err := Parse(`| json items[*].price AS price, items[*].product AS product`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*JsonCommand)
+	if len(cmd.Paths) != 2 {
+		t.Fatalf("paths count: got %d, want 2", len(cmd.Paths))
+	}
+	if cmd.Paths[0].Path != "items[*].price" || cmd.Paths[0].Alias != "price" {
+		t.Errorf("paths[0]: got {%q, %q}, want {items[*].price, price}", cmd.Paths[0].Path, cmd.Paths[0].Alias)
+	}
+	if cmd.Paths[1].Path != "items[*].product" || cmd.Paths[1].Alias != "product" {
+		t.Errorf("paths[1]: got {%q, %q}, want {items[*].product, product}", cmd.Paths[1].Path, cmd.Paths[1].Alias)
+	}
+}
+
+func TestParse_JsonCmd_BareSimplePath(t *testing.T) {
+	q, err := Parse(`| json user.name AS name`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*JsonCommand)
+	if len(cmd.Paths) != 1 {
+		t.Fatalf("paths count: got %d, want 1", len(cmd.Paths))
+	}
+	if cmd.Paths[0].Path != "user.name" || cmd.Paths[0].Alias != "name" {
+		t.Errorf("paths[0]: got {%q, %q}, want {user.name, name}", cmd.Paths[0].Path, cmd.Paths[0].Alias)
+	}
+}
+
+func TestParse_JsonCmd_BarePathNoBracket(t *testing.T) {
+	q, err := Parse(`| json action`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*JsonCommand)
+	if len(cmd.Paths) != 1 {
+		t.Fatalf("paths count: got %d, want 1", len(cmd.Paths))
+	}
+	if cmd.Paths[0].Path != "action" || cmd.Paths[0].Alias != "" {
+		t.Errorf("paths[0]: got {%q, %q}, want {action, \"\"}", cmd.Paths[0].Path, cmd.Paths[0].Alias)
+	}
+}
+
+func TestParse_JsonCmd_BarePaths_PipelineContinues(t *testing.T) {
+	q, err := Parse(`| json items[*].price AS price | explode price`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Commands) != 2 {
+		t.Fatalf("commands: got %d, want 2", len(q.Commands))
+	}
+	if _, ok := q.Commands[0].(*JsonCommand); !ok {
+		t.Errorf("cmd[0]: got %T, want *JsonCommand", q.Commands[0])
+	}
+	if _, ok := q.Commands[1].(*UnrollCommand); !ok {
+		t.Errorf("cmd[1]: got %T, want *UnrollCommand", q.Commands[1])
+	}
+}
+
+func TestParse_JsonCmd_BareAndKeywordMixed(t *testing.T) {
+	q, err := Parse(`| json field=payload items[*].id AS id`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd := q.Commands[0].(*JsonCommand)
+	if cmd.SourceField != "payload" {
+		t.Errorf("sourceField: got %q, want %q", cmd.SourceField, "payload")
+	}
+	if len(cmd.Paths) != 1 {
+		t.Fatalf("paths count: got %d, want 1", len(cmd.Paths))
+	}
+	if cmd.Paths[0].Path != "items[*].id" || cmd.Paths[0].Alias != "id" {
+		t.Errorf("paths[0]: got {%q, %q}, want {items[*].id, id}", cmd.Paths[0].Path, cmd.Paths[0].Alias)
+	}
+}
+
 func TestParse_UnpackInPipeline(t *testing.T) {
 	q, err := Parse(`| unpack_json | where level="error" | stats count by service`)
 	if err != nil {

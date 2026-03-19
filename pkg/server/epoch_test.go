@@ -142,8 +142,8 @@ func TestEpochImmutability(t *testing.T) {
 	sh5 := makeTestSegmentHandle("seg-5")
 
 	e.mu.Lock()
-	combined := make([]*segmentHandle, len(e.currentEpoch.segments)+2)
-	copy(combined, e.currentEpoch.segments)
+	combined := make([]*segmentHandle, len(e.currentEpoch.Load().segments)+2)
+	copy(combined, e.currentEpoch.Load().segments)
 	combined[len(combined)-2] = sh4
 	combined[len(combined)-1] = sh5
 	e.advanceEpoch(combined, nil)
@@ -151,7 +151,7 @@ func TestEpochImmutability(t *testing.T) {
 
 	// Verify: the current epoch should have 5 segments.
 	e.mu.RLock()
-	currentCount := len(e.currentEpoch.segments)
+	currentCount := len(e.currentEpoch.Load().segments)
 	e.mu.RUnlock()
 	if currentCount != 5 {
 		t.Fatalf("current epoch segments = %d, want 5", currentCount)
@@ -332,7 +332,7 @@ func TestEpochConcurrentPinUnpin(t *testing.T) {
 
 	// After all goroutines finish, reader count should be 0.
 	e.mu.RLock()
-	readers := e.currentEpoch.readers.Load()
+	readers := e.currentEpoch.Load().readers.Load()
 	e.mu.RUnlock()
 
 	if readers != 0 {
@@ -378,7 +378,7 @@ func TestEpochAdvanceDuringConcurrentPins(t *testing.T) {
 	// Now advance the epoch with an additional segment.
 	sh4 := makeTestSegmentHandle("seg-new")
 	e.mu.Lock()
-	oldEpoch := e.currentEpoch
+	oldEpoch := e.currentEpoch.Load()
 	combined := append(make([]*segmentHandle, 0, 4), oldEpoch.segments...)
 	combined = append(combined, sh4)
 	e.advanceEpoch(combined, nil)
@@ -436,7 +436,7 @@ func TestAdvanceEpochNoReadersSignalsImmediately(t *testing.T) {
 	sh := makeTestSegmentHandle("seg-1")
 	e.mu.Lock()
 	e.advanceEpoch([]*segmentHandle{sh}, nil)
-	oldEpoch := e.currentEpoch
+	oldEpoch := e.currentEpoch.Load()
 	e.mu.Unlock()
 
 	// advanceEpoch with retirement, old epoch has 0 readers.
@@ -607,8 +607,8 @@ func TestEngineIngestAdvancesEpoch(t *testing.T) {
 	e := newTestEngine(t)
 
 	e.mu.RLock()
-	epochBefore := e.currentEpoch.id
-	segsBefore := len(e.currentEpoch.segments)
+	epochBefore := e.currentEpoch.Load().id
+	segsBefore := len(e.currentEpoch.Load().segments)
 	e.mu.RUnlock()
 
 	if segsBefore != 0 {
@@ -631,8 +631,8 @@ func TestEngineIngestAdvancesEpoch(t *testing.T) {
 	}
 
 	e.mu.RLock()
-	epochAfter := e.currentEpoch.id
-	segsAfter := len(e.currentEpoch.segments)
+	epochAfter := e.currentEpoch.Load().id
+	segsAfter := len(e.currentEpoch.Load().segments)
 	e.mu.RUnlock()
 
 	if epochAfter <= epochBefore {
@@ -652,11 +652,11 @@ func TestEpochMultipleAdvances(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		sh := makeTestSegmentHandle(fmt.Sprintf("seg-%d", i))
 		e.mu.Lock()
-		combined := make([]*segmentHandle, len(e.currentEpoch.segments)+1)
-		copy(combined, e.currentEpoch.segments)
+		combined := make([]*segmentHandle, len(e.currentEpoch.Load().segments)+1)
+		copy(combined, e.currentEpoch.Load().segments)
 		combined[len(combined)-1] = sh
 		e.advanceEpoch(combined, nil)
-		currentID := e.currentEpoch.id
+		currentID := e.currentEpoch.Load().id
 		e.mu.Unlock()
 
 		if currentID <= lastID {
@@ -667,7 +667,7 @@ func TestEpochMultipleAdvances(t *testing.T) {
 
 	// Should have 10 segments.
 	e.mu.RLock()
-	count := len(e.currentEpoch.segments)
+	count := len(e.currentEpoch.Load().segments)
 	e.mu.RUnlock()
 	if count != 10 {
 		t.Fatalf("segment count = %d, want 10", count)
@@ -722,8 +722,8 @@ func TestPinEpochRaceWithAdvance(t *testing.T) {
 				counter++
 				newSH := makeTestSegmentHandle(fmt.Sprintf("dyn-%d", counter))
 				e.mu.Lock()
-				combined := make([]*segmentHandle, len(e.currentEpoch.segments)+1)
-				copy(combined, e.currentEpoch.segments)
+				combined := make([]*segmentHandle, len(e.currentEpoch.Load().segments)+1)
+				copy(combined, e.currentEpoch.Load().segments)
 				combined[len(combined)-1] = newSH
 				e.advanceEpoch(combined, nil)
 				e.mu.Unlock()

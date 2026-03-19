@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 func TestEventStatsSpillTransition(t *testing.T) {
@@ -30,7 +30,7 @@ func TestEventStatsSpillTransition(t *testing.T) {
 
 	// Small budget: 256 bytes per row * ~100 rows = ~25KB before spill.
 	// With 2000 rows, spill should be triggered.
-	acct := stats.NewBudgetMonitor("test", 25*1024).NewAccount("eventstats")
+	acct := memgov.NewTestBudget("test", 25*1024).NewAccount("eventstats")
 	aggs := []AggFunc{
 		{Name: "count", Alias: "cnt"},
 		{Name: "avg", Field: "val", Alias: "avg_val"},
@@ -103,7 +103,7 @@ func TestEventStatsNoSpillSmallDataset(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Large budget — no spill expected.
-	acct := stats.NewBudgetMonitor("test", 1*1024*1024).NewAccount("eventstats")
+	acct := memgov.NewTestBudget("test", 1*1024*1024).NewAccount("eventstats")
 	aggs := []AggFunc{
 		{Name: "count", Alias: "cnt"},
 	}
@@ -153,7 +153,7 @@ func TestEventStatsSpillWithoutSpillManager(t *testing.T) {
 
 	child := NewRowScanIterator(rows, 64)
 	// Tiny budget, no spill manager.
-	acct := stats.NewBudgetMonitor("test", 2*1024).NewAccount("eventstats")
+	acct := memgov.NewTestBudget("test", 2*1024).NewAccount("eventstats")
 	aggs := []AggFunc{
 		{Name: "count", Alias: "cnt"},
 	}
@@ -188,7 +188,7 @@ func TestEventStatsSpillNoGroupBy(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Small budget to force spill.
-	acct := stats.NewBudgetMonitor("test", 25*1024).NewAccount("eventstats")
+	acct := memgov.NewTestBudget("test", 25*1024).NewAccount("eventstats")
 	aggs := []AggFunc{
 		{Name: "count", Alias: "cnt"},
 		{Name: "sum", Field: "val", Alias: "total"},
@@ -248,7 +248,7 @@ func TestEventStatsSpillPreservesRowOrder(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Small budget to force spill.
-	acct := stats.NewBudgetMonitor("test", 15*1024).NewAccount("eventstats")
+	acct := memgov.NewTestBudget("test", 15*1024).NewAccount("eventstats")
 	aggs := []AggFunc{
 		{Name: "count", Alias: "cnt"},
 	}

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // mockSource is a test implementation of EventSource.
@@ -178,8 +178,8 @@ func TestBackfiller_WithBudget(t *testing.T) {
 		},
 	}
 
-	// Create a RootMonitor with 1GB limit to back the backfill.
-	rootMon := stats.NewRootMonitor("test-pool", 1<<30)
+	// Create a Governor with 1GB limit to back the backfill.
+	gov := memgov.NewGovernor(memgov.GovernorConfig{TotalLimit: 1 << 30})
 
 	var dispatched int
 	dispatch := func(events []*event.Event) error {
@@ -193,7 +193,7 @@ func TestBackfiller_WithBudget(t *testing.T) {
 		BackpressureWait: 10 * time.Millisecond,
 		MaxRetries:       3,
 	}
-	backfiller := NewBackfillerWithBudget(reg, rootMon, cfg, logger)
+	backfiller := NewBackfillerWithBudget(reg, gov, cfg, logger)
 	err := backfiller.Run(context.Background(), "mv_budget", source, dispatch)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -220,7 +220,7 @@ type poolExhaustedSource struct {
 func (p *poolExhaustedSource) ScanEvents(cursor string, limit int) ([]*event.Event, string, bool, error) {
 	p.callsMade++
 	if p.callsMade <= p.failCount {
-		return nil, "", false, &stats.PoolExhaustedError{
+		return nil, "", false, &memgov.PoolExhaustedError{
 			Pool:      "test-pool",
 			Requested: 1024,
 			Current:   1 << 30,
@@ -319,32 +319,32 @@ func TestBackfiller_BackpressureMaxRetries(t *testing.T) {
 		t.Fatal("expected error after max retries")
 	}
 
-	if !stats.IsPoolExhausted(err) {
+	if !memgov.IsPoolExhausted(err) {
 		t.Errorf("expected PoolExhaustedError in chain, got: %v", err)
 	}
 }
 
-func TestBackfiller_CreateBudgetMonitor_AutoCompute(t *testing.T) {
+func TestBackfiller_CreateBudgetAdapter_AutoCompute(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	// RootMonitor with 10GB limit -> backfill should get 10% = 1GB.
-	rootMon := stats.NewRootMonitor("test-pool", 10<<30)
+	// Governor with 10GB limit -> backfill should get 10% = 1GB.
+	gov := memgov.NewGovernor(memgov.GovernorConfig{TotalLimit: 10 << 30})
 
-	backfiller := NewBackfillerWithBudget(nil, rootMon, BackfillConfig{}, logger)
-	mon := backfiller.createBudgetMonitor("mv_test")
-	if mon == nil {
-		t.Fatal("expected non-nil monitor")
+	backfiller := NewBackfillerWithBudget(nil, gov, BackfillConfig{}, logger)
+	adapter := backfiller.createBudgetAdapter("mv_test")
+	if adapter == nil {
+		t.Fatal("expected non-nil adapter")
 	}
-	mon.Close()
+	adapter.Close()
 }
 
-func TestBackfiller_CreateBudgetMonitor_NilRoot(t *testing.T) {
+func TestBackfiller_CreateBudgetAdapter_NilRoot(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
 
-	// Without a RootMonitor, budget monitor should be nil.
+	// Without a Governor, budget adapter should be nil.
 	backfiller := NewBackfiller(nil, logger)
-	mon := backfiller.createBudgetMonitor("mv_test")
-	if mon != nil {
-		t.Error("expected nil monitor when no RootMonitor")
+	adapter := backfiller.createBudgetAdapter("mv_test")
+	if adapter != nil {
+		t.Error("expected nil adapter when no Governor")
 	}
 }

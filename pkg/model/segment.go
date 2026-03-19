@@ -6,6 +6,7 @@ import "time"
 type SegmentMeta struct {
 	ID           string    `json:"id" msgpack:"id"`
 	Index        string    `json:"index" msgpack:"idx"`
+	Partition    string    `json:"partition,omitempty" msgpack:"part,omitempty"`
 	MinTime      time.Time `json:"min_time" msgpack:"tmin"`
 	MaxTime      time.Time `json:"max_time" msgpack:"tmax"`
 	EventCount   int64     `json:"event_count" msgpack:"cnt"`

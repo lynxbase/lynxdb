@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // ColumnarScanIterator serves pre-built Batch objects from the direct columnar
@@ -19,20 +19,20 @@ import (
 type ColumnarScanIterator struct {
 	batches           []*Batch
 	idx               int
-	acct              stats.MemoryAccount
+	acct              memgov.MemoryAccount
 	lastBatchEstimate int64 // tracks previous batch size for Shrink
 }
 
 // NewColumnarScanIterator creates a scan iterator over pre-built columnar batches.
 func NewColumnarScanIterator(batches []*Batch) *ColumnarScanIterator {
-	return &ColumnarScanIterator{batches: batches, acct: stats.NopAccount()}
+	return &ColumnarScanIterator{batches: batches, acct: memgov.NopAccount()}
 }
 
 // NewColumnarScanIteratorWithBudget creates a columnar scan iterator with memory
 // budget tracking. When the budget is genuinely exceeded (real pressure from
 // downstream operators), the scan returns an explicit error.
-func NewColumnarScanIteratorWithBudget(batches []*Batch, acct stats.MemoryAccount) *ColumnarScanIterator {
-	return &ColumnarScanIterator{batches: batches, acct: stats.EnsureAccount(acct)}
+func NewColumnarScanIteratorWithBudget(batches []*Batch, acct memgov.MemoryAccount) *ColumnarScanIterator {
+	return &ColumnarScanIterator{batches: batches, acct: memgov.EnsureAccount(acct)}
 }
 
 // Init prepares the iterator. No-op for ColumnarScanIterator.

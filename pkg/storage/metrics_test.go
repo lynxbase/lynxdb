@@ -70,7 +70,7 @@ func TestStorageMetrics_JSON(t *testing.T) {
 	}
 
 	// Check top-level keys exist.
-	for _, key := range []string{"uptime_seconds", "flush", "segment", "compaction", "cache", "tiering"} {
+	for _, key := range []string{"uptime_seconds", "flush", "segment", "compaction", "compaction_levels", "cache", "tiering", "pruning", "ingest", "query"} {
 		if _, ok := result[key]; !ok {
 			t.Errorf("missing top-level key: %s", key)
 		}
@@ -126,6 +126,109 @@ func TestStorageMetrics_QuerySlowTotal(t *testing.T) {
 
 	if snap.Query.CacheHits != 5 {
 		t.Errorf("Query.CacheHits: %d", snap.Query.CacheHits)
+	}
+}
+
+func TestStorageMetrics_WriteAmplification(t *testing.T) {
+	m := NewMetrics()
+
+	m.CompactionInputBytes.Add(100 << 20)  // 100 MiB in
+	m.CompactionOutputBytes.Add(120 << 20) // 120 MiB out
+
+	snap := m.Snapshot()
+
+	// 120/100 = 1.2
+	if snap.Compaction.WriteAmplification < 1.19 || snap.Compaction.WriteAmplification > 1.21 {
+		t.Errorf("WriteAmplification: expected ~1.2, got %f", snap.Compaction.WriteAmplification)
+	}
+}
+
+func TestStorageMetrics_WriteAmplificationZeroInput(t *testing.T) {
+	m := NewMetrics()
+	snap := m.Snapshot()
+	if snap.Compaction.WriteAmplification != 0 {
+		t.Errorf("WriteAmplification with zero input should be 0, got %f", snap.Compaction.WriteAmplification)
+	}
+}
+
+func TestStorageMetrics_CompactionLevels(t *testing.T) {
+	m := NewMetrics()
+
+	m.CompactionL0ToL1Runs.Add(5)
+	m.CompactionL0ToL1Bytes.Add(50 << 20)
+	m.CompactionL1ToL2Runs.Add(2)
+	m.CompactionL1ToL2Bytes.Add(200 << 20)
+
+	snap := m.Snapshot()
+
+	if snap.CompactionLevels.L0ToL1.Runs != 5 {
+		t.Errorf("L0ToL1.Runs: expected 5, got %d", snap.CompactionLevels.L0ToL1.Runs)
+	}
+	if snap.CompactionLevels.L0ToL1.BytesOut != 50<<20 {
+		t.Errorf("L0ToL1.BytesOut: expected %d, got %d", 50<<20, snap.CompactionLevels.L0ToL1.BytesOut)
+	}
+	if snap.CompactionLevels.L1ToL2.Runs != 2 {
+		t.Errorf("L1ToL2.Runs: expected 2, got %d", snap.CompactionLevels.L1ToL2.Runs)
+	}
+	if snap.CompactionLevels.L1ToL2.BytesOut != 200<<20 {
+		t.Errorf("L1ToL2.BytesOut: expected %d, got %d", 200<<20, snap.CompactionLevels.L1ToL2.BytesOut)
+	}
+}
+
+func TestStorageMetrics_CompactionQueueDepth(t *testing.T) {
+	m := NewMetrics()
+
+	m.CompactionQueueDepth.Store(7)
+
+	snap := m.Snapshot()
+	if snap.Compaction.QueueDepth != 7 {
+		t.Errorf("Compaction.QueueDepth: expected 7, got %d", snap.Compaction.QueueDepth)
+	}
+}
+
+func TestStorageMetrics_Pruning(t *testing.T) {
+	m := NewMetrics()
+
+	m.PruningBloomSkips.Add(10)
+	m.PruningTimeSkips.Add(20)
+	m.PruningStatSkips.Add(5)
+	m.PruningRangeSkips.Add(3)
+	m.PruningIndexSkips.Add(8)
+
+	snap := m.Snapshot()
+
+	if snap.Pruning.BloomSkips != 10 {
+		t.Errorf("Pruning.BloomSkips: expected 10, got %d", snap.Pruning.BloomSkips)
+	}
+	if snap.Pruning.TimeSkips != 20 {
+		t.Errorf("Pruning.TimeSkips: expected 20, got %d", snap.Pruning.TimeSkips)
+	}
+	if snap.Pruning.StatSkips != 5 {
+		t.Errorf("Pruning.StatSkips: expected 5, got %d", snap.Pruning.StatSkips)
+	}
+	if snap.Pruning.RangeSkips != 3 {
+		t.Errorf("Pruning.RangeSkips: expected 3, got %d", snap.Pruning.RangeSkips)
+	}
+	if snap.Pruning.IndexSkips != 8 {
+		t.Errorf("Pruning.IndexSkips: expected 8, got %d", snap.Pruning.IndexSkips)
+	}
+	if snap.Pruning.TotalSkips != 46 {
+		t.Errorf("Pruning.TotalSkips: expected 46, got %d", snap.Pruning.TotalSkips)
+	}
+}
+
+func TestStorageMetrics_IngestParseErrors(t *testing.T) {
+	m := NewMetrics()
+
+	m.IngestEvents.Add(1000)
+	m.IngestParseErrors.Add(12)
+
+	snap := m.Snapshot()
+	if snap.Ingest.ParseErrors != 12 {
+		t.Errorf("Ingest.ParseErrors: expected 12, got %d", snap.Ingest.ParseErrors)
+	}
+	if snap.Ingest.Events != 1000 {
+		t.Errorf("Ingest.Events: expected 1000, got %d", snap.Ingest.Events)
 	}
 }
 

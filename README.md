@@ -58,10 +58,10 @@ docker logs api-server 2>&1 | lynxdb query '
 # Wildcard array extraction - like jq, but with aggregation:
 cat orders.json | lynxdb query '
       | json items[*].price AS price, items[*].product AS product
-      | explode product
-      | let revenue = price * qty
-      | group by product compute sum(revenue) as total_revenue
-      | order by total_revenue desc'
+      | explode product, price                     
+      | let revenue = price * qty                          
+      | group by product compute sum(revenue) as total_revenue          
+      | order by total_revenue desc''
 ```
 
 Or run as a persistent server:
@@ -96,7 +96,7 @@ lynxdb tail 'level=ERROR'
 ## Features
 
 - **Pipe mode** - reads from stdin or files, works like `grep`. No server, no config.
-- **Lynx Flow** - `group`, `let`, `parse`, `order by`, `join`, CTEs, domain sugar, and [more](https://docs.lynxdb.org/docs/lynx-flow/overview). Full SPL2 compatibility.
+- **Lynx Flow** - `group`, `let`, `parse`, `order by`, `join`, CTEs, domain sugar, and [more](https://docs.lynxdb.org/docs/lynx-flow/overview). Partial SPL2 compatibility.
 - **Full-text search** - FST inverted index + roaring bitmaps, bloom filters for segment skipping
 - **Columnar storage** - custom `.lsg` format, delta-varint timestamps, dictionary encoding, Gorilla XOR, LZ4
 - **Materialized views** - precomputed aggregations with automatic query rewrite, up to ~400x speedup

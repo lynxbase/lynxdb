@@ -8,16 +8,21 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
-// UnrollIterator explodes a JSON array field into multiple rows.
+// UnrollIterator explodes JSON array fields into multiple rows.
 // For each input row, if the target field contains a JSON array:
 //   - Each array element becomes a separate output row
 //   - Object elements are flattened with dot-notation (field.key)
 //   - Scalar elements replace the field value directly
 //
+// When multiple fields are specified, they are zip-expanded: all fields must
+// contain JSON arrays of the same length, and element i from each field is
+// placed into the same output row. If any field is not an array or lengths
+// differ, the row passes through unchanged.
+//
 // Non-array values pass through unchanged.
 type UnrollIterator struct {
 	child     Iterator
-	field     string
+	fields    []string
 	batchSize int
 
 	// Buffer for expanded rows from the current batch.
@@ -25,15 +30,16 @@ type UnrollIterator struct {
 	offset int
 }
 
-// NewUnrollIterator creates an unroll operator that explodes the given field.
-func NewUnrollIterator(child Iterator, field string, batchSize int) *UnrollIterator {
+// NewUnrollIterator creates an unroll operator that explodes the given fields.
+// When len(fields) == 1, behavior is identical to the original single-field unroll.
+func NewUnrollIterator(child Iterator, fields []string, batchSize int) *UnrollIterator {
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
 	}
 
 	return &UnrollIterator{
 		child:     child,
-		field:     field,
+		fields:    fields,
 		batchSize: batchSize,
 	}
 }
@@ -69,63 +75,141 @@ func (u *UnrollIterator) Next(ctx context.Context) (*Batch, error) {
 
 		for i := 0; i < childBatch.Len; i++ {
 			row := childBatch.Row(i)
-			fieldVal, ok := row[u.field]
-			if !ok || fieldVal.IsNull() {
-				// No field or null — pass through.
-				u.buffer = append(u.buffer, row)
 
-				continue
-			}
-
-			s := strings.TrimSpace(fieldVal.String())
-			if len(s) == 0 || s[0] != '[' {
-				// Not a JSON array — pass through.
-				u.buffer = append(u.buffer, row)
-
-				continue
-			}
-
-			// Try to parse as JSON array.
-			var arr []json.RawMessage
-			if err := json.Unmarshal([]byte(s), &arr); err != nil {
-				// Not valid JSON array — pass through.
-				u.buffer = append(u.buffer, row)
-
-				continue
-			}
-
-			if len(arr) == 0 {
-				// Empty array — pass through (preserves the row with empty array).
-				u.buffer = append(u.buffer, row)
-
-				continue
-			}
-
-			// Explode: one output row per array element.
-			for _, elem := range arr {
-				newRow := cloneRow(row)
-				elemStr := strings.TrimSpace(string(elem))
-
-				if len(elemStr) > 0 && elemStr[0] == '{' {
-					// Object element: flatten keys with dot-notation prefix.
-					var obj map[string]json.RawMessage
-					if err := json.Unmarshal(elem, &obj); err == nil {
-						newRow[u.field] = event.StringValue(elemStr)
-						for k, v := range obj {
-							dotKey := u.field + "." + k
-							newRow[dotKey] = jsonRawToValue(v)
-						}
-					} else {
-						newRow[u.field] = event.StringValue(elemStr)
-					}
-				} else {
-					// Scalar or array element: replace the field value.
-					newRow[u.field] = jsonRawToValue(elem)
-				}
-
-				u.buffer = append(u.buffer, newRow)
+			if len(u.fields) == 1 {
+				u.unrollSingle(row, u.fields[0])
+			} else {
+				u.unrollMulti(row)
 			}
 		}
+	}
+}
+
+// unrollSingle is the original single-field expansion logic.
+func (u *UnrollIterator) unrollSingle(row map[string]event.Value, field string) {
+	fieldVal, ok := row[field]
+	if !ok || fieldVal.IsNull() {
+		u.buffer = append(u.buffer, row)
+
+		return
+	}
+
+	s := strings.TrimSpace(fieldVal.String())
+	if len(s) == 0 || s[0] != '[' {
+		u.buffer = append(u.buffer, row)
+
+		return
+	}
+
+	var arr []json.RawMessage
+	if err := json.Unmarshal([]byte(s), &arr); err != nil {
+		u.buffer = append(u.buffer, row)
+
+		return
+	}
+
+	if len(arr) == 0 {
+		u.buffer = append(u.buffer, row)
+
+		return
+	}
+
+	for _, elem := range arr {
+		newRow := cloneRow(row)
+		elemStr := strings.TrimSpace(string(elem))
+
+		if len(elemStr) > 0 && elemStr[0] == '{' {
+			var obj map[string]json.RawMessage
+			if err := json.Unmarshal(elem, &obj); err == nil {
+				newRow[field] = event.StringValue(elemStr)
+				for k, v := range obj {
+					dotKey := field + "." + k
+					newRow[dotKey] = jsonRawToValue(v)
+				}
+			} else {
+				newRow[field] = event.StringValue(elemStr)
+			}
+		} else {
+			newRow[field] = jsonRawToValue(elem)
+		}
+
+		u.buffer = append(u.buffer, newRow)
+	}
+}
+
+// unrollMulti does zip-expansion across multiple fields.
+// All fields must contain JSON arrays of the same length; otherwise the row
+// passes through unchanged.
+func (u *UnrollIterator) unrollMulti(row map[string]event.Value) {
+	// Parse all fields as JSON arrays.
+	arrays := make([][]json.RawMessage, len(u.fields))
+	arrLen := -1
+
+	for i, field := range u.fields {
+		fieldVal, ok := row[field]
+		if !ok || fieldVal.IsNull() {
+			u.buffer = append(u.buffer, row)
+
+			return
+		}
+
+		s := strings.TrimSpace(fieldVal.String())
+		if len(s) == 0 || s[0] != '[' {
+			u.buffer = append(u.buffer, row)
+
+			return
+		}
+
+		var arr []json.RawMessage
+		if err := json.Unmarshal([]byte(s), &arr); err != nil {
+			u.buffer = append(u.buffer, row)
+
+			return
+		}
+
+		if arrLen == -1 {
+			arrLen = len(arr)
+		} else if len(arr) != arrLen {
+			// Mismatched lengths — pass through.
+			u.buffer = append(u.buffer, row)
+
+			return
+		}
+
+		arrays[i] = arr
+	}
+
+	if arrLen <= 0 {
+		u.buffer = append(u.buffer, row)
+
+		return
+	}
+
+	// Zip-expand: for each index, create a row with element[i] from each field.
+	for idx := 0; idx < arrLen; idx++ {
+		newRow := cloneRow(row)
+
+		for fi, field := range u.fields {
+			elem := arrays[fi][idx]
+			elemStr := strings.TrimSpace(string(elem))
+
+			if len(elemStr) > 0 && elemStr[0] == '{' {
+				var obj map[string]json.RawMessage
+				if err := json.Unmarshal(elem, &obj); err == nil {
+					newRow[field] = event.StringValue(elemStr)
+					for k, v := range obj {
+						dotKey := field + "." + k
+						newRow[dotKey] = jsonRawToValue(v)
+					}
+				} else {
+					newRow[field] = event.StringValue(elemStr)
+				}
+			} else {
+				newRow[field] = jsonRawToValue(elem)
+			}
+		}
+
+		u.buffer = append(u.buffer, newRow)
 	}
 }
 

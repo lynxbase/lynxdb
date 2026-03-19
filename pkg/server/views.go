@@ -91,8 +91,8 @@ func (e *Engine) DeleteMV(name string) error {
 }
 
 // NewBackfiller creates a Backfiller with the engine's memory budget configuration.
-// When a UnifiedPool is active, the backfiller gets a dedicated BudgetMonitor as a
-// child of the RootMonitor with backpressure on pool exhaustion.
+// When a Governor is active, the backfiller gets a dedicated BudgetAdapter as a
+// child of the Governor with backpressure on pool exhaustion.
 func (e *Engine) NewBackfiller() *views.Backfiller {
 	cfg := views.BackfillConfig{
 		MaxMemoryBytes:   int64(e.viewsCfg.MaxBackfillMemoryBytes),
@@ -100,7 +100,7 @@ func (e *Engine) NewBackfiller() *views.Backfiller {
 		MaxRetries:       e.viewsCfg.BackfillMaxRetries,
 	}
 
-	return views.NewBackfillerWithBudget(e.viewRegistry, e.rootMonitor, cfg, e.logger)
+	return views.NewBackfillerWithBudget(e.viewRegistry, e.governor, cfg, e.logger)
 }
 
 // ResolveView implements pipeline.ViewResolver for the engine.

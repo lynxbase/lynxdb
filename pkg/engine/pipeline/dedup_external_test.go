@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 func TestDedupSpillTransition(t *testing.T) {
@@ -30,7 +30,7 @@ func TestDedupSpillTransition(t *testing.T) {
 
 	// Budget is small enough to force a spill after ~50 entries.
 	// estimatedDedupHashEntryBytes = 56, so 56*50 = 2800 bytes.
-	acct := stats.NewBudgetMonitor("test", 3*1024).NewAccount("dedup")
+	acct := memgov.NewTestBudget("test", 3*1024).NewAccount("dedup")
 	iter := newDedupIteratorWithSpill(child, []string{"key"}, 1, acct, mgr)
 
 	ctx := context.Background()
@@ -98,7 +98,7 @@ func TestDedupSpillWithLimit(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Small budget to force spill.
-	acct := stats.NewBudgetMonitor("test", 2*1024).NewAccount("dedup")
+	acct := memgov.NewTestBudget("test", 2*1024).NewAccount("dedup")
 	iter := newDedupIteratorWithSpill(child, []string{"key"}, 3, acct, mgr)
 
 	ctx := context.Background()
@@ -147,7 +147,7 @@ func TestDedupSpillExactMode(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Small budget.
-	acct := stats.NewBudgetMonitor("test", 4*1024).NewAccount("dedup")
+	acct := memgov.NewTestBudget("test", 4*1024).NewAccount("dedup")
 	iter := newDedupIteratorExactWithSpill(child, []string{"key"}, 1, acct, mgr)
 
 	ctx := context.Background()
@@ -183,7 +183,7 @@ func TestDedupNoSpillSmallDataset(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Large budget — no spill expected.
-	acct := stats.NewBudgetMonitor("test", 1*1024*1024).NewAccount("dedup")
+	acct := memgov.NewTestBudget("test", 1*1024*1024).NewAccount("dedup")
 	iter := newDedupIteratorWithSpill(child, []string{"key"}, 1, acct, mgr)
 
 	ctx := context.Background()
@@ -231,7 +231,7 @@ func TestDedupSpillMultiField(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Small budget to force spill.
-	acct := stats.NewBudgetMonitor("test", 2*1024).NewAccount("dedup")
+	acct := memgov.NewTestBudget("test", 2*1024).NewAccount("dedup")
 	iter := newDedupIteratorWithSpill(child, []string{"host", "source"}, 1, acct, mgr)
 
 	ctx := context.Background()
@@ -262,7 +262,7 @@ func TestDedupSpillWithoutSpillManager(t *testing.T) {
 
 	child := NewRowScanIterator(rows, 64)
 	// Tiny budget, no spill manager.
-	acct := stats.NewBudgetMonitor("test", 1*1024).NewAccount("dedup")
+	acct := memgov.NewTestBudget("test", 1*1024).NewAccount("dedup")
 	iter := NewDedupIteratorWithBudget(child, []string{"key"}, 1, acct)
 
 	ctx := context.Background()
@@ -274,7 +274,7 @@ func TestDedupSpillWithoutSpillManager(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected budget exceeded error, got nil")
 	}
-	if !stats.IsBudgetExceeded(err) {
+	if !memgov.IsBudgetExceeded(err) {
 		t.Fatalf("expected BudgetExceededError, got: %v", err)
 	}
 }

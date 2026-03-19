@@ -12,6 +12,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/cache"
 	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/optimizer"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/stats"
@@ -337,17 +338,11 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 
 	ann := extractAnnotations(prog)
 
-	// Per-query memory tracking via BudgetMonitor backed by the global pool.
-	// Operators call monitor.NewAccount to track their buffer allocations.
-	// PeakMemoryBytes = monitor.MaxAllocated(). The per-query limit is set
-	// from queryCfg.MaxQueryMemory; 0 means tracking only (no enforcement).
-	// The parent rootMonitor coordinates across concurrent queries.
-	monitor := stats.NewBudgetMonitorWithParent("query", int64(e.queryCfg.MaxQueryMemory), e.rootMonitor)
-	defer monitor.Close()
+	// Governor handles memory enforcement. No per-query budget monitor needed.
 	cpuBefore := stats.TakeCPUSnapshot()
 	scanStart := time.Now()
 
-	qr, err := e.runQueryPipeline(ctx, prog, hints, params, aggSpec, ann, onProgress, scanStart, monitor, job.ID)
+	qr, err := e.runQueryPipeline(ctx, prog, hints, params, aggSpec, ann, onProgress, scanStart)
 	if err != nil {
 		errCode := classifyQueryError(err)
 		job.mu.Lock()
@@ -474,10 +469,10 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 	}
 
 	// ProcessedBytes: segment bytes + buffered event byte estimate.
-	// Buffered events don't have segment metadata, so we estimate using the same
-	// constant used for scan memory accounting (estimatedEventBytes ≈ 208 B/event).
-	const estimatedEventBytes int64 = 208
-	job.Stats.ProcessedBytes = qr.ss.TotalBytesRead + int64(qr.ss.BufferedEvents)*estimatedEventBytes
+	// Buffered events don't have segment metadata, so we use a conservative
+	// estimate (256 B/event) that accounts for struct overhead + avg field payload.
+	const bufferedEventEstimate int64 = 256
+	job.Stats.ProcessedBytes = qr.ss.TotalBytesRead + int64(qr.ss.BufferedEvents)*bufferedEventEstimate
 
 	// Aggregate bytes read by source from segment details.
 	for _, sd := range qr.ss.SegmentDetails {
@@ -491,8 +486,14 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		}
 	}
 
-	applyBudgetAndCPUDelta(&job.Stats, monitor, cpuBefore, cpuAfter)
-	applySpillAndPoolStats(&job.Stats, qr.pipelineStages, e.rootMonitor)
+	applyBudgetAndCPUDelta(&job.Stats, qr.govBudget, cpuBefore, cpuAfter)
+	// Close the governor budget adapter after stats are collected.
+	// Operator accounts are already closed by iterator.Close(); this releases
+	// any remaining QueryBudget leases.
+	if qr.govBudget != nil {
+		qr.govBudget.Close()
+	}
+	applySpillAndPoolStats(&job.Stats, qr.pipelineStages)
 	computeSearchSelectivity(&job.Stats)
 	computeQueryFunnel(&job.Stats, qr.pipelineStages)
 
@@ -594,6 +595,7 @@ type queryPipelineResult struct {
 	vmCalls              int64
 	vmTimeNS             int64
 	operatorBudgets      []stats.OperatorBudgetStats
+	govBudget            *memgov.BudgetAdapter // non-nil when governor v2 path was used
 }
 
 // runQueryPipeline executes either the partial-agg or standard pipeline path.
@@ -606,8 +608,6 @@ func (e *Engine) runQueryPipeline(
 	ann queryAnnotations,
 	onProgress func(*SearchProgress),
 	scanStart time.Time,
-	monitor *stats.BudgetMonitor,
-	queryID string,
 ) (*queryPipelineResult, error) {
 	// Distributed query path: if a cluster coordinator is configured,
 	// delegate to scatter-gather execution across the cluster.
@@ -628,7 +628,7 @@ func (e *Engine) runQueryPipeline(
 		}
 	}
 
-	return e.runStandardPipeline(ctx, prog, hints, params, onProgress, scanStart, monitor, queryID)
+	return e.runStandardPipeline(ctx, prog, hints, params, onProgress, scanStart)
 }
 
 // runDistributedPipeline delegates query execution to the cluster coordinator
@@ -817,8 +817,6 @@ func (e *Engine) runStandardPipeline(
 	params QueryParams,
 	onProgress func(*SearchProgress),
 	scanStart time.Time,
-	monitor *stats.BudgetMonitor,
-	queryID string,
 ) (*queryPipelineResult, error) {
 	// Resolve glob patterns against the source registry before segment filtering.
 	var scopeWarnings []string
@@ -843,7 +841,7 @@ func (e *Engine) runStandardPipeline(
 	}
 
 	if useStreaming {
-		qr, err := e.runStreamingPipeline(ctx, prog, hints, params, onProgress, scanStart, monitor, queryID)
+		qr, err := e.runStreamingPipeline(ctx, prog, hints, params, onProgress, scanStart)
 		if err == nil && len(scopeWarnings) > 0 {
 			qr.warnings = append(scopeWarnings, qr.warnings...)
 		}
@@ -863,7 +861,7 @@ func (e *Engine) runStandardPipeline(
 		hintsCopy.IndexName = ""
 		storeHints = &hintsCopy
 	}
-	batchMap, ess, memErr := e.buildColumnarStore(ctx, storeHints, onProgress, monitor, params.ProfileLevel == "trace")
+	batchMap, ess, memErr := e.buildColumnarStore(ctx, storeHints, onProgress, params.ProfileLevel == "trace")
 	if memErr != nil {
 		return nil, memErr
 	}
@@ -883,7 +881,7 @@ func (e *Engine) runStandardPipeline(
 	}
 
 	pipeStore := &enginepipeline.ColumnarBatchStore{Batches: batchMap}
-	buildResult, pipeErr := e.buildProgramPipeline(ctx, prog, pipeStore, params.ProfileLevel, monitor, queryID)
+	buildResult, pipeErr := e.buildProgramPipeline(ctx, prog, pipeStore, params.ProfileLevel)
 	if pipeErr != nil {
 		return nil, pipeErr
 	}
@@ -925,8 +923,6 @@ func (e *Engine) runStreamingPipeline(
 	params QueryParams,
 	onProgress func(*SearchProgress),
 	scanStart time.Time,
-	monitor *stats.BudgetMonitor,
-	queryID string,
 ) (*queryPipelineResult, error) {
 	qr := &queryPipelineResult{}
 
@@ -985,6 +981,9 @@ func (e *Engine) runStreamingPipeline(
 	ss.BufferedEvents = len(memEvents)
 	sources := e.buildSegmentSources(ctx, segs, segFilterHints, &ss)
 
+	// Propagate segment skip counts to global pruning metrics.
+	e.recordPruningMetrics(&ss)
+
 	// Build streaming hints from query hints.
 	// For multi-index queries, clear IndexName — GetEventIterator sets it per-call.
 	streamHints := buildStreamHints(segFilterHints, e.queryCfg.BitmapSelectivityThreshold)
@@ -997,7 +996,7 @@ func (e *Engine) runStreamingPipeline(
 		allMemEvents: memEvents,
 		baseHints:    streamHints,
 		batchSize:    0, // use default (DefaultBatchSize = 1024)
-		monitor:      monitor,
+		gov:          e.governor,
 	}
 
 	// Wire progress reporting through the aggregator which sums across all
@@ -1019,7 +1018,7 @@ func (e *Engine) runStreamingPipeline(
 	}
 	pipelineStart := time.Now()
 
-	streamBuildResult, pipeErr := e.buildProgramPipeline(ctx, prog, store, params.ProfileLevel, monitor, queryID)
+	streamBuildResult, pipeErr := e.buildProgramPipeline(ctx, prog, store, params.ProfileLevel)
 	if pipeErr != nil {
 		return nil, pipeErr
 	}
@@ -1058,6 +1057,7 @@ func (e *Engine) runStreamingPipeline(
 		qr.vmTimeNS += stage.VMTimeNS
 	}
 	qr.operatorBudgets = enginepipeline.CollectOperatorBudgets(streamBuildResult.Coordinator)
+	qr.govBudget = streamBuildResult.GovBudget
 	qr.rows = pipelineRowsToResultRows(pipeRows)
 	qr.pipelineMS = float64(time.Since(pipelineStart).Milliseconds())
 
@@ -1075,33 +1075,22 @@ func (e *Engine) parallelConfig() *enginepipeline.ParallelConfig {
 	}
 }
 
-// buildProgramPipeline builds the query pipeline with the appropriate memory
-// accounting backend. When the unified buffer pool is enabled, operator memory
-// accounts are backed by pool pages (automatic cross-consumer rebalancing).
-// Otherwise, the standard BudgetMonitor path is used.
+// buildProgramPipeline builds the query pipeline using the governor for memory
+// accounting. Operator accounts are backed by the governor for process-wide
+// enforcement with class-based accounting and pressure callbacks.
 func (e *Engine) buildProgramPipeline(
 	ctx context.Context,
 	prog *spl2.Program,
 	store enginepipeline.IndexStore,
 	profileLevel string,
-	monitor *stats.BudgetMonitor,
-	queryID string,
 ) (*enginepipeline.BuildResult, error) {
 	parallelCfg := e.parallelConfig()
 	sysOpt := enginepipeline.WithSystemTables(&systemTableResolver{engine: e})
 
-	if e.bufferPool != nil {
-		return enginepipeline.BuildProgramWithBufferPool(
-			ctx, prog, store, e, e, 0,
-			profileLevel, monitor, e.spillMgr, e.queryCfg.DedupExact,
-			e.bufferPool, queryID, parallelCfg,
-			sysOpt,
-		)
-	}
-
-	return enginepipeline.BuildProgramWithBudget(
+	return enginepipeline.BuildProgramWithGovernor(
 		ctx, prog, store, e, e, 0,
-		profileLevel, monitor, e.spillMgr, e.queryCfg.DedupExact,
+		profileLevel, e.governor, int64(e.queryCfg.MaxQueryMemory),
+		e.spillMgr, e.queryCfg.DedupExact,
 		parallelCfg,
 		sysOpt,
 	)
@@ -1124,7 +1113,7 @@ func (e *Engine) countStarFromMetadata(hints *spl2.QueryHints) int64 {
 
 	// Sum segment event counts from metadata.
 	var ss storeStats
-	for _, seg := range e.currentEpoch.segments {
+	for _, seg := range e.currentEpoch.Load().segments {
 		if shouldSkipSegment(seg, hints, &ss) {
 			continue
 		}
@@ -1203,12 +1192,13 @@ func estimateMVSpeedup(originalRows, mvRows int64) string {
 	return fmt.Sprintf("~%.0fx", ratio)
 }
 
-// applyBudgetAndCPUDelta populates SearchStats from a BudgetMonitor and CPU
-// snapshots. The monitor provides accurate per-query memory tracking (high-water
-// mark from operator-level BoundAccounts). CPU stats come from getrusage.
-func applyBudgetAndCPUDelta(ss *SearchStats, monitor *stats.BudgetMonitor, cpuBefore, cpuAfter stats.CPUSnapshot) {
-	ss.PeakMemoryBytes = monitor.MaxAllocated()
-	ss.MemAllocBytes = monitor.MaxAllocated()
+// applyBudgetAndCPUDelta populates SearchStats from a governor BudgetAdapter
+// and CPU snapshots. PeakMemoryBytes comes from the BudgetAdapter.
+func applyBudgetAndCPUDelta(ss *SearchStats, govBudget *memgov.BudgetAdapter, cpuBefore, cpuAfter stats.CPUSnapshot) {
+	if govBudget != nil {
+		ss.PeakMemoryBytes = govBudget.MaxAllocated()
+		ss.MemAllocBytes = govBudget.MaxAllocated()
+	}
 
 	// CPU delta: compute user/sys time consumed during this query.
 	var tmp stats.QueryStats
@@ -1248,10 +1238,10 @@ func computeSearchSelectivity(ss *SearchStats) {
 	}
 }
 
-// applySpillAndPoolStats populates spill file statistics and pool utilization
-// on SearchStats from the pipeline stage breakdown and global memory pool.
-// Spill stats are aggregated across all pipeline stages that spilled data.
-func applySpillAndPoolStats(ss *SearchStats, stages []PipelineStage, rootMon *stats.RootMonitor) {
+// applySpillAndPoolStats populates spill file statistics on SearchStats
+// from the pipeline stage breakdown. Spill stats are aggregated across all
+// pipeline stages that spilled data.
+func applySpillAndPoolStats(ss *SearchStats, stages []PipelineStage) {
 	var spillingOperators []string
 	for _, stage := range stages {
 		if stage.SpillBytes > 0 {
@@ -1265,11 +1255,6 @@ func applySpillAndPoolStats(ss *SearchStats, stages []PipelineStage, rootMon *st
 	// Generate a human-readable performance note when spill occurs.
 	if ss.SpilledToDisk {
 		ss.SpillNote = generateSpillNote(spillingOperators)
-	}
-
-	// Pool utilization: fraction of the global query pool currently in use.
-	if limit := rootMon.Limit(); limit > 0 {
-		ss.PoolUtilization = float64(rootMon.CurAllocated()) / float64(limit)
 	}
 }
 
@@ -1319,7 +1304,7 @@ func computeQueryFunnel(ss *SearchStats, stages []PipelineStage) {
 // classifyQueryError maps a pipeline error to a machine-readable error code.
 // Returns "" for errors that don't have a specific code (generic failures).
 func classifyQueryError(err error) string {
-	if stats.IsMemoryExhausted(err) {
+	if memgov.IsMemoryExhausted(err) {
 		return "QUERY_MEMORY_EXCEEDED"
 	}
 
@@ -1336,7 +1321,7 @@ func classifyErrorType(err error) string {
 	if errors.Is(err, context.DeadlineExceeded) {
 		return "timeout"
 	}
-	if stats.IsMemoryExhausted(err) {
+	if memgov.IsMemoryExhausted(err) {
 		return "memory"
 	}
 

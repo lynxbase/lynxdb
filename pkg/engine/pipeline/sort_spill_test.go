@@ -9,9 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lynxbase/lynxdb/pkg/buffer"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // makeRowsWithField creates n rows with field "key" set to sequential integers
@@ -49,7 +48,7 @@ func TestSortInMemoryFastPath(t *testing.T) {
 	}
 	defer mgr.CleanupAll()
 
-	acct := stats.NewBudgetMonitor("test", 1<<30).NewAccount("sort")
+	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("sort")
 	iter := NewSortIteratorWithSpill(child, []SortField{{Name: "key", Desc: false}}, DefaultBatchSize, acct, mgr)
 
 	ctx := context.Background()
@@ -98,7 +97,7 @@ func TestSortSpillsToDisk(t *testing.T) {
 
 	// Budget must fit at least one batch (32 rows × 256 bytes = 8KB) but not all 1000 rows.
 	// 32KB fits ~128 rows, so 1000 rows will need ~8 spill runs.
-	acct := stats.NewBudgetMonitor("test", 32*1024).NewAccount("sort")
+	acct := memgov.NewTestBudget("test", 32*1024).NewAccount("sort")
 	iter := NewSortIteratorWithSpill(child, []SortField{{Name: "key", Desc: false}}, 32, acct, mgr)
 
 	ctx := context.Background()
@@ -142,7 +141,7 @@ func TestSortMultipleSpillRuns(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// 16KB budget — fits ~64 rows at 256 bytes each. 5000 rows → ~78 spill runs.
-	acct := stats.NewBudgetMonitor("test", 16*1024).NewAccount("sort")
+	acct := memgov.NewTestBudget("test", 16*1024).NewAccount("sort")
 	iter := NewSortIteratorWithSpill(child, []SortField{{Name: "key", Desc: false}}, 32, acct, mgr)
 
 	ctx := context.Background()
@@ -177,7 +176,7 @@ func TestSortDescendingWithSpill(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// 16KB fits ~64 rows; 500 rows → several spill runs.
-	acct := stats.NewBudgetMonitor("test", 16*1024).NewAccount("sort")
+	acct := memgov.NewTestBudget("test", 16*1024).NewAccount("sort")
 	iter := NewSortIteratorWithSpill(child, []SortField{{Name: "key", Desc: true}}, 32, acct, mgr)
 
 	ctx := context.Background()
@@ -218,7 +217,7 @@ func TestSortSpillFileCleanup(t *testing.T) {
 	}
 
 	// Budget must fit at least one batch (32 rows × 256 bytes = 8KB) but not all 500 rows.
-	acct := stats.NewBudgetMonitor("test", 16*1024).NewAccount("sort")
+	acct := memgov.NewTestBudget("test", 16*1024).NewAccount("sort")
 	iter := NewSortIteratorWithSpill(child, []SortField{{Name: "key", Desc: false}}, 32, acct, mgr)
 
 	ctx := context.Background()
@@ -263,7 +262,7 @@ func TestSortEmptyInput(t *testing.T) {
 	}
 	defer mgr.CleanupAll()
 
-	acct := stats.NewBudgetMonitor("test", 1<<20).NewAccount("sort")
+	acct := memgov.NewTestBudget("test", 1<<20).NewAccount("sort")
 	iter := NewSortIteratorWithSpill(child, []SortField{{Name: "key", Desc: false}}, DefaultBatchSize, acct, mgr)
 
 	ctx := context.Background()
@@ -291,7 +290,7 @@ func TestSortWithoutSpillManager(t *testing.T) {
 	child := NewRowScanIterator(rows, 64)
 
 	// Tiny budget, no spill manager.
-	acct := stats.NewBudgetMonitor("test", 1024).NewAccount("sort")
+	acct := memgov.NewTestBudget("test", 1024).NewAccount("sort")
 	iter := NewSortIteratorWithBudget(child, []SortField{{Name: "key", Desc: false}}, 64, acct)
 
 	ctx := context.Background()
@@ -303,7 +302,7 @@ func TestSortWithoutSpillManager(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when budget exceeded without SpillManager")
 	}
-	if !stats.IsBudgetExceeded(err) {
+	if !memgov.IsBudgetExceeded(err) {
 		t.Fatalf("expected BudgetExceededError, got: %v", err)
 	}
 }
@@ -598,7 +597,7 @@ func TestAggregateSpillByMemoryPressure(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Small budget: 32KB — will force spill for 10K groups.
-	acct := stats.NewBudgetMonitor("test", 32*1024).NewAccount("agg")
+	acct := memgov.NewTestBudget("test", 32*1024).NewAccount("agg")
 	aggs := []AggFunc{{Name: "count", Alias: "count"}}
 	iter := NewAggregateIteratorWithSpill(child, aggs, []string{"group"}, acct, mgr)
 
@@ -644,7 +643,7 @@ func TestAggregateNoSpillSmallGroups(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// 1MB budget — more than enough for 100 groups.
-	acct := stats.NewBudgetMonitor("test", 1<<20).NewAccount("agg")
+	acct := memgov.NewTestBudget("test", 1<<20).NewAccount("agg")
 	aggs := []AggFunc{{Name: "sum", Field: "val", Alias: "total"}}
 	iter := NewAggregateIteratorWithSpill(child, aggs, []string{"group"}, acct, mgr)
 
@@ -688,7 +687,7 @@ func TestAggregateSpillWithAvg(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Small budget to force spills.
-	acct := stats.NewBudgetMonitor("test", 8*1024).NewAccount("agg")
+	acct := memgov.NewTestBudget("test", 8*1024).NewAccount("agg")
 	aggs := []AggFunc{
 		{Name: "avg", Field: "val", Alias: "avg_val"},
 		{Name: "count", Alias: "cnt"},
@@ -740,7 +739,7 @@ func TestAggregateSpillWithDC(t *testing.T) {
 	}
 	defer mgr.CleanupAll()
 
-	acct := stats.NewBudgetMonitor("test", 8*1024).NewAccount("agg")
+	acct := memgov.NewTestBudget("test", 8*1024).NewAccount("agg")
 	aggs := []AggFunc{
 		{Name: "dc", Field: "item", Alias: "dc_item"},
 		{Name: "count", Alias: "cnt"},
@@ -790,7 +789,7 @@ func TestAggregateSpillWithValues(t *testing.T) {
 	}
 	defer mgr.CleanupAll()
 
-	acct := stats.NewBudgetMonitor("test", 4*1024).NewAccount("agg")
+	acct := memgov.NewTestBudget("test", 4*1024).NewAccount("agg")
 	aggs := []AggFunc{
 		{Name: "values", Field: "item", Alias: "vals"},
 		{Name: "count", Alias: "cnt"},
@@ -851,7 +850,7 @@ func TestAggregateSpillWithStdev(t *testing.T) {
 	}
 	defer mgr.CleanupAll()
 
-	acct := stats.NewBudgetMonitor("test", 8*1024).NewAccount("agg")
+	acct := memgov.NewTestBudget("test", 8*1024).NewAccount("agg")
 	aggs := []AggFunc{
 		{Name: "stdev", Field: "val", Alias: "sd"},
 		{Name: "count", Alias: "cnt"},
@@ -915,7 +914,7 @@ func TestAggregateSpillWithPerc95(t *testing.T) {
 	}
 	defer mgr.CleanupAll()
 
-	acct := stats.NewBudgetMonitor("test", 8*1024).NewAccount("agg")
+	acct := memgov.NewTestBudget("test", 8*1024).NewAccount("agg")
 	aggs := []AggFunc{
 		{Name: "perc95", Field: "val", Alias: "p95"},
 		{Name: "count", Alias: "cnt"},
@@ -1017,14 +1016,14 @@ func abs64(x float64) float64 {
 // Bug fix tests: sort/aggregate spill on child budget pressure
 
 // budgetErrorIterator is a test child that returns BudgetExceededError after
-// producing a configured number of batches. It uses a shared BudgetMonitor
-// so the error is a real *stats.BudgetExceededError (checked via errors.As).
+// producing a configured number of batches. It uses a shared BudgetAdapter
+// so the error is a real *memgov.BudgetExceededError (checked via errors.As).
 type budgetErrorIterator struct {
 	inner       Iterator
 	batchesSeen int
 	failAfter   int // fail on the (failAfter+1)th call to Next
-	monitor     *stats.BudgetMonitor
-	failAccount *stats.BoundAccount
+	adapter     *memgov.BudgetAdapter
+	failAccount memgov.MemoryAccount
 	failAmount  int64
 	hasFailed   bool
 }
@@ -1057,7 +1056,7 @@ func (b *budgetErrorIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func TestSortSpillOnChildBudgetExceeded(t *testing.T) {
-	// Simulate the real bug: scan and sort share a BudgetMonitor. Sort accumulates
+	// Simulate the real bug: scan and sort share a BudgetAdapter. Sort accumulates
 	// rows, then scan's Grow fails because the shared budget is exhausted.
 	// After the fix, sort should spill its buffer, freeing budget capacity,
 	// and the query should complete with correct sorted output.
@@ -1075,7 +1074,7 @@ func TestSortSpillOnChildBudgetExceeded(t *testing.T) {
 
 	// Shared budget monitor — small enough that sort's accumulated rows + scan's
 	// next batch will exceed the limit.
-	monitor := stats.NewBudgetMonitor("test", 200*1024)
+	monitor := memgov.NewTestBudget("test", 200*1024)
 	sortAcct := monitor.NewAccount("sort")
 	scanAcct := monitor.NewAccount("scan")
 
@@ -1087,7 +1086,7 @@ func TestSortSpillOnChildBudgetExceeded(t *testing.T) {
 	budgetChild := &budgetErrorIterator{
 		inner:       child,
 		failAfter:   4,
-		monitor:     monitor,
+		adapter:     monitor,
 		failAccount: scanAcct,
 		failAmount:  200 * 1024, // request the entire budget — guaranteed to fail
 	}
@@ -1130,7 +1129,7 @@ func TestSortSpillOnChildBudgetExceeded_NoSpillManager(t *testing.T) {
 		rows[i], rows[j] = rows[j], rows[i]
 	}
 
-	monitor := stats.NewBudgetMonitor("test", 200*1024)
+	monitor := memgov.NewTestBudget("test", 200*1024)
 	sortAcct := monitor.NewAccount("sort")
 	scanAcct := monitor.NewAccount("scan")
 
@@ -1138,7 +1137,7 @@ func TestSortSpillOnChildBudgetExceeded_NoSpillManager(t *testing.T) {
 	budgetChild := &budgetErrorIterator{
 		inner:       child,
 		failAfter:   4,
-		monitor:     monitor,
+		adapter:     monitor,
 		failAccount: scanAcct,
 		failAmount:  200 * 1024,
 	}
@@ -1155,7 +1154,7 @@ func TestSortSpillOnChildBudgetExceeded_NoSpillManager(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when budget exceeded without SpillManager")
 	}
-	if !stats.IsBudgetExceeded(err) {
+	if !memgov.IsBudgetExceeded(err) {
 		t.Fatalf("expected BudgetExceededError, got: %v", err)
 	}
 }
@@ -1165,7 +1164,7 @@ func TestSortSpillOnChildBudgetExceeded_NoRowsToSpill(t *testing.T) {
 	// Use a very small budget so that the child's Grow always exceeds it even
 	// before sort has accumulated any rows. failAmount exceeds the full budget
 	// by 2x to guarantee the Grow fails regardless of sort's current usage.
-	monitor := stats.NewBudgetMonitor("test", 512)
+	monitor := memgov.NewTestBudget("test", 512)
 	sortAcct := monitor.NewAccount("sort")
 	scanAcct := monitor.NewAccount("scan")
 
@@ -1177,7 +1176,7 @@ func TestSortSpillOnChildBudgetExceeded_NoRowsToSpill(t *testing.T) {
 	budgetChild := &budgetErrorIterator{
 		inner:       child,
 		failAfter:   0,
-		monitor:     monitor,
+		adapter:     monitor,
 		failAccount: scanAcct,
 		failAmount:  1024,
 	}
@@ -1199,7 +1198,7 @@ func TestSortSpillOnChildBudgetExceeded_NoRowsToSpill(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when child fails and sort has no rows to spill")
 	}
-	if !stats.IsBudgetExceeded(err) {
+	if !memgov.IsBudgetExceeded(err) {
 		t.Fatalf("expected BudgetExceededError, got: %v", err)
 	}
 }
@@ -1275,7 +1274,7 @@ func TestAggregateSpillOnChildBudgetExceeded(t *testing.T) {
 		}
 	}
 
-	monitor := stats.NewBudgetMonitor("test", 100*1024)
+	monitor := memgov.NewTestBudget("test", 100*1024)
 	aggAcct := monitor.NewAccount("agg")
 	scanAcct := monitor.NewAccount("scan")
 
@@ -1283,7 +1282,7 @@ func TestAggregateSpillOnChildBudgetExceeded(t *testing.T) {
 	budgetChild := &budgetErrorIterator{
 		inner:       child,
 		failAfter:   3, // fail after 3 batches (192 rows processed)
-		monitor:     monitor,
+		adapter:     monitor,
 		failAccount: scanAcct,
 		failAmount:  100 * 1024,
 	}
@@ -1349,7 +1348,7 @@ func TestSortRowByRowAccumulationWithSpill(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// 50KB budget — each row is ~10KB, so only ~5 rows fit before spill.
-	acct := stats.NewBudgetMonitor("test", 50*1024).NewAccount("sort")
+	acct := memgov.NewTestBudget("test", 50*1024).NewAccount("sort")
 	iter := NewSortIteratorWithSpill(child, []SortField{{Name: "key", Desc: false}}, 32, acct, mgr)
 
 	ctx := context.Background()
@@ -1396,7 +1395,7 @@ func TestSortLargeRowClearError(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// Budget much smaller than a single row.
-	acct := stats.NewBudgetMonitor("test", 256*1024).NewAccount("sort")
+	acct := memgov.NewTestBudget("test", 256*1024).NewAccount("sort")
 	iter := NewSortIteratorWithSpill(child, []SortField{{Name: "key", Desc: false}}, 1, acct, mgr)
 
 	ctx := context.Background()
@@ -1410,7 +1409,7 @@ func TestSortLargeRowClearError(t *testing.T) {
 	}
 
 	// Error should be a wrapped BudgetExceededError.
-	if !stats.IsBudgetExceeded(err) {
+	if !memgov.IsBudgetExceeded(err) {
 		t.Fatalf("expected BudgetExceededError, got: %v", err)
 	}
 }
@@ -1445,7 +1444,7 @@ func TestSortMixedRowSizesCorrectOrder(t *testing.T) {
 	defer mgr.CleanupAll()
 
 	// 100KB budget — forces multiple spill runs with mixed sizes.
-	acct := stats.NewBudgetMonitor("test", 100*1024).NewAccount("sort")
+	acct := memgov.NewTestBudget("test", 100*1024).NewAccount("sort")
 	iter := NewSortIteratorWithSpill(child, []SortField{{Name: "key", Desc: false}}, 64, acct, mgr)
 
 	ctx := context.Background()
@@ -1473,7 +1472,7 @@ func TestSortMixedRowSizesCorrectOrder(t *testing.T) {
 
 func TestSortWithScanSharingBudget_Integration(t *testing.T) {
 	// Integration test: realistic pipeline ScanIteratorWithBudget → SortIterator,
-	// both sharing one BudgetMonitor. Events have large _raw fields (~1KB each).
+	// both sharing one BudgetAdapter. Events have large _raw fields (~1KB each).
 	// The budget is large enough for sort to spill but not large enough to hold
 	// all events simultaneously. Verifies end-to-end correctness.
 	const (
@@ -1486,7 +1485,7 @@ func TestSortWithScanSharingBudget_Integration(t *testing.T) {
 
 	// Budget: ~100KB. Each event is ~1KB raw + overhead ≈ 1.2KB.
 	// 300 events ≈ 360KB total. Budget forces spilling.
-	monitor := stats.NewBudgetMonitor("test", 100*1024)
+	monitor := memgov.NewTestBudget("test", 100*1024)
 	scanAcct := monitor.NewAccount("scan")
 	sortAcct := monitor.NewAccount("sort")
 
@@ -1523,108 +1522,3 @@ func TestSortWithScanSharingBudget_Integration(t *testing.T) {
 	}
 }
 
-// BufferedSortIterator per-row accounting tests
-
-func TestBufferedSort_PerRowAccountingSmallBudget(t *testing.T) {
-	// Validates that BufferedSortIterator correctly handles per-row accounting
-	// with a budget smaller than a single batch but larger than a single row.
-	// Before the per-row fix, the batch-level Grow would fail with:
-	//   "cannot fit batch after spill: memory budget exceeded"
-	// because the total batch size (32 rows × ~10KB = 320KB) exceeded the
-	// post-spill reservation (256KB), even though individual rows (~10KB)
-	// can fit with intermediate spills.
-	const (
-		numRows  = 100
-		dataSize = 10 * 1024 // ~10KB per row
-	)
-
-	rows := makeRowsWithField(numRows, dataSize)
-	// Reverse order so sort has work to do.
-	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
-		rows[i], rows[j] = rows[j], rows[i]
-	}
-
-	child := NewRowScanIterator(rows, 32)
-	mgr, err := NewSpillManager(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mgr.CleanupAll()
-
-	pool := newTestPool(t, 200, buffer.PageSize64KB)
-
-	// Budget: 50KB. Each row is ~10KB. A full batch of 32 rows is ~320KB,
-	// which far exceeds the budget. Per-row accounting allows accumulating
-	// ~5 rows before spilling, then continuing.
-	acct := stats.NewBudgetMonitor("test", 50*1024).NewAccount("sort")
-	iter := NewBufferedSortIterator(
-		child, []SortField{{Name: "key", Desc: false}},
-		32, acct, pool, "q-perrow", mgr,
-	)
-
-	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, iter)
-	if err != nil {
-		t.Fatalf("expected completion with per-row spill, got error: %v", err)
-	}
-
-	if len(result) != numRows {
-		t.Fatalf("expected %d rows, got %d", numRows, len(result))
-	}
-
-	// Verify sorted ascending order.
-	for i := 0; i < len(result); i++ {
-		got := result[i]["key"].AsInt()
-		if got != int64(i) {
-			t.Fatalf("row %d: expected key=%d, got %d", i, i, got)
-		}
-	}
-
-	// Verify spill occurred.
-	rs := iter.ResourceStats()
-	if rs.SpilledRows == 0 {
-		t.Error("expected spilled rows > 0 with 50KB budget for 100×10KB rows")
-	}
-}
-
-func TestBufferedSort_SingleRowExceedsBudget(t *testing.T) {
-	// A single row larger than the entire budget should produce a clear error
-	// since there's nothing to spill (no accumulated rows).
-	const rowSize = 1 << 20 // 1MB per row
-
-	rows := makeRowsWithField(1, rowSize)
-	child := NewRowScanIterator(rows, 1)
-	mgr, err := NewSpillManager(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mgr.CleanupAll()
-
-	pool := newTestPool(t, 200, buffer.PageSize64KB)
-
-	// Budget much smaller than a single row.
-	acct := stats.NewBudgetMonitor("test", 256*1024).NewAccount("sort")
-	iter := NewBufferedSortIterator(
-		child, []SortField{{Name: "key", Desc: false}},
-		1, acct, pool, "q-bigrow", mgr,
-	)
-
-	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = CollectAll(ctx, iter)
-	if err == nil {
-		t.Fatal("expected error for row larger than budget")
-	}
-
-	// Error should be a wrapped BudgetExceededError.
-	if !stats.IsBudgetExceeded(err) {
-		t.Fatalf("expected BudgetExceededError, got: %v", err)
-	}
-}

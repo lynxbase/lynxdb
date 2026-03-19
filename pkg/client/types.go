@@ -62,7 +62,7 @@ type SearchStats struct {
 	S3BytesRead    int64 `json:"s3_bytes_read,omitempty"`
 	CacheBytesRead int64 `json:"cache_bytes_read,omitempty"`
 
-	// Resource usage (server-side, captured via BudgetMonitor + getrusage).
+	// Resource usage (server-side, captured via BudgetAdapter + getrusage).
 	PeakMemoryBytes int64    `json:"peak_memory_bytes,omitempty"`
 	MemAllocBytes   int64    `json:"mem_alloc_bytes,omitempty"`
 	SpilledToDisk   bool     `json:"spilled_to_disk,omitempty"`

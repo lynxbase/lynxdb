@@ -9,7 +9,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
@@ -34,7 +34,7 @@ func TestSegmentStreamIterator_SegmentOnly(t *testing.T) {
 
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src}, nil, nil, 0,
-		stats.NewBudgetMonitor("test", 0).NewAccount("test"),
+		memgov.NewTestBudget("test", 0).NewAccount("test"),
 	)
 	defer iter.Close()
 
@@ -61,7 +61,7 @@ func TestSegmentStreamIterator_MemtablePlusSegment(t *testing.T) {
 
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src}, memEvents, nil, 0,
-		stats.NewBudgetMonitor("test", 0).NewAccount("test"),
+		memgov.NewTestBudget("test", 0).NewAccount("test"),
 	)
 	defer iter.Close()
 
@@ -80,7 +80,7 @@ func TestSegmentStreamIterator_MultipleSegments(t *testing.T) {
 
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src1, src2, src3}, nil, nil, 0,
-		stats.NewBudgetMonitor("test", 0).NewAccount("test"),
+		memgov.NewTestBudget("test", 0).NewAccount("test"),
 	)
 	defer iter.Close()
 
@@ -103,7 +103,7 @@ func TestSegmentStreamIterator_Limit(t *testing.T) {
 	hints := &SegmentStreamHints{Limit: 10}
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src}, nil, hints, 0,
-		stats.NewBudgetMonitor("test", 0).NewAccount("test"),
+		memgov.NewTestBudget("test", 0).NewAccount("test"),
 	)
 	defer iter.Close()
 
@@ -123,7 +123,7 @@ func TestSegmentStreamIterator_LimitWithMemtable(t *testing.T) {
 	hints := &SegmentStreamHints{Limit: 8}
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src}, memEvents, hints, 0,
-		stats.NewBudgetMonitor("test", 0).NewAccount("test"),
+		memgov.NewTestBudget("test", 0).NewAccount("test"),
 	)
 	defer iter.Close()
 
@@ -141,7 +141,7 @@ func TestSegmentStreamIterator_IndexFilter(t *testing.T) {
 	hints := &SegmentStreamHints{IndexName: "web"}
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src1, src2}, nil, hints, 0,
-		stats.NewBudgetMonitor("test", 0).NewAccount("test"),
+		memgov.NewTestBudget("test", 0).NewAccount("test"),
 	)
 	defer iter.Close()
 
@@ -177,7 +177,7 @@ func TestSegmentStreamIterator_TimeBoundsFilter(t *testing.T) {
 	}
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src1, src2}, nil, hints, 0,
-		stats.NewBudgetMonitor("test", 0).NewAccount("test"),
+		memgov.NewTestBudget("test", 0).NewAccount("test"),
 	)
 	defer iter.Close()
 
@@ -195,8 +195,8 @@ func TestSegmentStreamIterator_BudgetReturnsError(t *testing.T) {
 	src := writeSegmentSource(t, events, "main")
 
 	// Tiny budget: ~2KB — should fail with error on first batch.
-	mon := stats.NewBudgetMonitor("test", 2048)
-	acct := mon.NewAccount("test")
+	adapter := memgov.NewTestBudget("test", 2048)
+	acct := adapter.NewAccount("test")
 
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src}, nil, nil, 0, acct,
@@ -229,8 +229,8 @@ func TestSegmentStreamIterator_ShrinkAfterYield(t *testing.T) {
 	src := writeSegmentSource(t, events, "main")
 
 	// Large budget — no pressure. We just want to verify Shrink behavior.
-	mon := stats.NewBudgetMonitor("test", 0)
-	acct := mon.NewAccount("test")
+	adapter := memgov.NewTestBudget("test", 0)
+	acct := adapter.NewAccount("test")
 
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src}, nil, nil, 32, acct,
@@ -291,7 +291,7 @@ func TestSegmentStreamIterator_ProgressCallback(t *testing.T) {
 
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src}, nil, nil, 0,
-		stats.NewBudgetMonitor("test", 0).NewAccount("test"),
+		memgov.NewTestBudget("test", 0).NewAccount("test"),
 	)
 	defer iter.Close()
 
@@ -313,7 +313,7 @@ func TestSegmentStreamIterator_ContextCancellation(t *testing.T) {
 
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src}, nil, nil, 0,
-		stats.NewBudgetMonitor("test", 0).NewAccount("test"),
+		memgov.NewTestBudget("test", 0).NewAccount("test"),
 	)
 	defer iter.Close()
 
@@ -344,7 +344,7 @@ func TestSegmentStreamIterator_StatsAccumulation(t *testing.T) {
 
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src1, src2}, nil, nil, 0,
-		stats.NewBudgetMonitor("test", 0).NewAccount("test"),
+		memgov.NewTestBudget("test", 0).NewAccount("test"),
 	)
 	defer iter.Close()
 
@@ -404,7 +404,7 @@ func TestSegmentStreamIterator_PerTypeSkipCounters(t *testing.T) {
 
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src1, src2, src3}, nil, hints, 0,
-		stats.NewBudgetMonitor("test", 0).NewAccount("test"),
+		memgov.NewTestBudget("test", 0).NewAccount("test"),
 	)
 	defer iter.Close()
 
@@ -463,7 +463,7 @@ func TestSegmentStreamIterator_ProgressReportsSkipTypes(t *testing.T) {
 
 	iter := NewSegmentStreamIterator(
 		[]*SegmentSource{src1, src2}, nil, hints, 0,
-		stats.NewBudgetMonitor("test", 0).NewAccount("test"),
+		memgov.NewTestBudget("test", 0).NewAccount("test"),
 	)
 	defer iter.Close()
 

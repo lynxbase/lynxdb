@@ -26,6 +26,15 @@ type Metrics struct {
 	CompactionInputBytes  atomic.Int64
 	CompactionOutputBytes atomic.Int64
 	CompactionErrors      atomic.Int64
+	CompactionQueueDepth  atomic.Int64 // current number of pending compaction jobs
+
+	// Per-level compaction metrics.
+	CompactionL0ToL1Runs  atomic.Int64
+	CompactionL0ToL1Bytes atomic.Int64
+	CompactionL1ToL2Runs  atomic.Int64
+	CompactionL1ToL2Bytes atomic.Int64
+	CompactionL2ToL3Runs  atomic.Int64
+	CompactionL2ToL3Bytes atomic.Int64
 
 	// Cache metrics.
 	CacheHits      atomic.Int64
@@ -39,12 +48,20 @@ type Metrics struct {
 	TieringDownloads     atomic.Int64
 	TieringDownloadBytes atomic.Int64
 
+	// Pruning observability.
+	PruningBloomSkips atomic.Int64 // segments skipped by bloom filter
+	PruningTimeSkips  atomic.Int64 // segments skipped by time range
+	PruningStatSkips  atomic.Int64 // segments skipped by column stats
+	PruningRangeSkips atomic.Int64 // segments skipped by range predicates
+	PruningIndexSkips atomic.Int64 // segments skipped by index name
+
 	// Ingestion metrics.
-	IngestEvents     atomic.Int64 // total events ingested
-	IngestBatches    atomic.Int64 // total ingest batches processed
-	IngestBytes      atomic.Int64 // total raw bytes ingested
-	IngestErrors     atomic.Int64 // total ingest errors
-	IngestDedupDrops atomic.Int64 // events dropped by ingest dedup
+	IngestEvents      atomic.Int64 // total events ingested
+	IngestBatches     atomic.Int64 // total ingest batches processed
+	IngestBytes       atomic.Int64 // total raw bytes ingested
+	IngestErrors      atomic.Int64 // total ingest errors
+	IngestDedupDrops  atomic.Int64 // events dropped by ingest dedup
+	IngestParseErrors atomic.Int64 // events with parse failures (non-fatal, continued)
 
 	// Query execution metrics (O2: query observability).
 	QueryTotal     atomic.Int64 // total queries submitted
@@ -97,11 +114,28 @@ type MetricsSnapshot struct {
 	} `json:"segment"`
 
 	Compaction struct {
-		Runs        int64 `json:"runs"`
-		InputBytes  int64 `json:"input_bytes"`
-		OutputBytes int64 `json:"output_bytes"`
-		Errors      int64 `json:"errors"`
+		Runs               int64   `json:"runs"`
+		InputBytes         int64   `json:"input_bytes"`
+		OutputBytes        int64   `json:"output_bytes"`
+		Errors             int64   `json:"errors"`
+		QueueDepth         int64   `json:"queue_depth"`
+		WriteAmplification float64 `json:"write_amplification"` // output_bytes / input_bytes (ideal = 1.0)
 	} `json:"compaction"`
+
+	CompactionLevels struct {
+		L0ToL1 struct {
+			Runs     int64 `json:"runs"`
+			BytesOut int64 `json:"bytes_out"`
+		} `json:"l0_to_l1"`
+		L1ToL2 struct {
+			Runs     int64 `json:"runs"`
+			BytesOut int64 `json:"bytes_out"`
+		} `json:"l1_to_l2"`
+		L2ToL3 struct {
+			Runs     int64 `json:"runs"`
+			BytesOut int64 `json:"bytes_out"`
+		} `json:"l2_to_l3"`
+	} `json:"compaction_levels"`
 
 	Cache struct {
 		Hits      int64   `json:"hits"`
@@ -118,12 +152,22 @@ type MetricsSnapshot struct {
 		DownloadBytes int64 `json:"download_bytes"`
 	} `json:"tiering"`
 
+	Pruning struct {
+		BloomSkips int64 `json:"bloom_skips"`
+		TimeSkips  int64 `json:"time_skips"`
+		StatSkips  int64 `json:"stat_skips"`
+		RangeSkips int64 `json:"range_skips"`
+		IndexSkips int64 `json:"index_skips"`
+		TotalSkips int64 `json:"total_skips"`
+	} `json:"pruning"`
+
 	Ingest struct {
-		Events     int64 `json:"events"`
-		Batches    int64 `json:"batches"`
-		Bytes      int64 `json:"bytes"`
-		Errors     int64 `json:"errors"`
-		DedupDrops int64 `json:"dedup_drops"`
+		Events      int64 `json:"events"`
+		Batches     int64 `json:"batches"`
+		Bytes       int64 `json:"bytes"`
+		Errors      int64 `json:"errors"`
+		DedupDrops  int64 `json:"dedup_drops"`
+		ParseErrors int64 `json:"parse_errors"`
 	} `json:"ingest"`
 
 	Query struct {
@@ -177,6 +221,17 @@ func (m *Metrics) Snapshot() *MetricsSnapshot {
 	snap.Compaction.InputBytes = m.CompactionInputBytes.Load()
 	snap.Compaction.OutputBytes = m.CompactionOutputBytes.Load()
 	snap.Compaction.Errors = m.CompactionErrors.Load()
+	snap.Compaction.QueueDepth = m.CompactionQueueDepth.Load()
+	if snap.Compaction.InputBytes > 0 {
+		snap.Compaction.WriteAmplification = float64(snap.Compaction.OutputBytes) / float64(snap.Compaction.InputBytes)
+	}
+
+	snap.CompactionLevels.L0ToL1.Runs = m.CompactionL0ToL1Runs.Load()
+	snap.CompactionLevels.L0ToL1.BytesOut = m.CompactionL0ToL1Bytes.Load()
+	snap.CompactionLevels.L1ToL2.Runs = m.CompactionL1ToL2Runs.Load()
+	snap.CompactionLevels.L1ToL2.BytesOut = m.CompactionL1ToL2Bytes.Load()
+	snap.CompactionLevels.L2ToL3.Runs = m.CompactionL2ToL3Runs.Load()
+	snap.CompactionLevels.L2ToL3.BytesOut = m.CompactionL2ToL3Bytes.Load()
 
 	snap.Cache.Hits = m.CacheHits.Load()
 	snap.Cache.Misses = m.CacheMisses.Load()
@@ -192,11 +247,20 @@ func (m *Metrics) Snapshot() *MetricsSnapshot {
 	snap.Tiering.Downloads = m.TieringDownloads.Load()
 	snap.Tiering.DownloadBytes = m.TieringDownloadBytes.Load()
 
+	snap.Pruning.BloomSkips = m.PruningBloomSkips.Load()
+	snap.Pruning.TimeSkips = m.PruningTimeSkips.Load()
+	snap.Pruning.StatSkips = m.PruningStatSkips.Load()
+	snap.Pruning.RangeSkips = m.PruningRangeSkips.Load()
+	snap.Pruning.IndexSkips = m.PruningIndexSkips.Load()
+	snap.Pruning.TotalSkips = snap.Pruning.BloomSkips + snap.Pruning.TimeSkips +
+		snap.Pruning.StatSkips + snap.Pruning.RangeSkips + snap.Pruning.IndexSkips
+
 	snap.Ingest.Events = m.IngestEvents.Load()
 	snap.Ingest.Batches = m.IngestBatches.Load()
 	snap.Ingest.Bytes = m.IngestBytes.Load()
 	snap.Ingest.Errors = m.IngestErrors.Load()
 	snap.Ingest.DedupDrops = m.IngestDedupDrops.Load()
+	snap.Ingest.ParseErrors = m.IngestParseErrors.Load()
 
 	snap.Query.Total = m.QueryTotal.Load()
 	snap.Query.Errors = m.QueryErrors.Load()

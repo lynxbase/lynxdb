@@ -120,10 +120,10 @@ type QueryStats struct {
 	// during query execution. Includes aggregation hash tables, sort buffers,
 	// join build sides, and scan event buffers. Does NOT include small per-row
 	// allocations in streaming operators (filter, eval, project).
-	// Populated from BudgetMonitor.MaxAllocated().
+	// Populated from BudgetAdapter.MaxAllocated().
 	PeakMemoryBytes int64
 	// MemAllocBytes is the total tracked allocation bytes during query execution.
-	// Equal to PeakMemoryBytes when using BudgetMonitor (high-water mark).
+	// Equal to PeakMemoryBytes when using BudgetAdapter (high-water mark).
 	MemAllocBytes int64
 	// SpilledToDisk is true when at least one operator spilled data to disk
 	// during query execution (sort, aggregate, or join).
@@ -133,7 +133,7 @@ type QueryStats struct {
 	// SpillFiles is the number of spill files created during execution.
 	SpillFiles int
 	// PoolUtilization is the fraction of the global memory pool in use at
-	// query completion (0.0–1.0). Populated from RootMonitor when available.
+	// query completion (0.0–1.0). Populated from Governor when available.
 	PoolUtilization float64
 	// Warnings holds user-visible warning messages generated during execution.
 	// Examples: scan truncation, approximate results from spill merge.
@@ -227,7 +227,7 @@ type StageStats struct {
 	ExclusiveNS int64 // exclusive time in nanoseconds (self only, excludes children)
 	VMCalls     int64 // VM.Execute invocations in this stage (trace only)
 	VMTimeNS    int64 // total nanoseconds in VM.Execute (trace only)
-	MemoryBytes int64 // current tracked memory for this operator (from BoundAccount)
+	MemoryBytes int64 // current tracked memory for this operator (from MemoryAccount)
 	SpilledRows int64 // rows spilled to disk by this operator (0 = no spill)
 	SpillBytes  int64 // bytes written to spill files by this operator
 }

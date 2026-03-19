@@ -4,6 +4,7 @@ import (
 	"container/heap"
 	"context"
 	"log/slog"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -14,19 +15,35 @@ const (
 	defaultWorkerCount     = 2
 )
 
+// ExecutorFn is a custom execution function for compaction jobs. When set via
+// SetExecutor, the scheduler calls this instead of compactor.Execute(), allowing
+// the server to inject its own logic (epoch advance, cache invalidation, etc.).
+type ExecutorFn func(ctx context.Context, job *Job) error
+
+// compactionKey uniquely identifies an (index, partition) pair for concurrency
+// control. Different partitions within the same index can compact in parallel.
+type compactionKey struct {
+	Index     string
+	Partition string
+}
+
 // Scheduler manages a priority queue of compaction jobs, a token bucket
 // rate limiter, and a pool of compaction workers.
 type Scheduler struct {
-	mu       sync.Mutex
-	queue    jobQueue
-	jobReady *sync.Cond
+	mu         sync.Mutex
+	queue      jobQueue
+	jobReady   *sync.Cond
+	activeKeys map[compactionKey]bool // tracks which (index, partition) pairs have in-flight jobs
 
-	compactor  *Compactor
-	limiter    *TokenBucket
-	workers    int
-	logger     *slog.Logger
-	onComplete func(*Job, *SegmentInfo, error) // callback after each job
-	onError    func(*Job, error)               // callback for metrics on failure
+	compactor    *Compactor
+	executor     ExecutorFn // optional: custom execution logic (replaces compactor.Execute)
+	adaptiveCtrl *AdaptiveController
+	limiter      *TokenBucket
+	cpuSem       chan struct{} // CPU semaphore: limits concurrent CPU-heavy merge execution
+	workers      int
+	logger       *slog.Logger
+	onComplete   func(*Job, *SegmentInfo, error) // callback after each job
+	onError      func(*Job, error)               // callback for metrics on failure
 
 	running atomic.Bool
 	wg      sync.WaitGroup
@@ -49,16 +66,43 @@ func NewScheduler(c *Compactor, cfg SchedulerConfig, logger *slog.Logger) *Sched
 		rate = defaultRateBytesPerSec
 	}
 
+	// CPU semaphore: limit concurrent CPU-heavy merge execution to
+	// GOMAXPROCS/2 (minimum 1) to avoid starving query goroutines.
+	cpuSlots := runtime.GOMAXPROCS(0) / 2
+	if cpuSlots < 1 {
+		cpuSlots = 1
+	}
+
 	s := &Scheduler{
-		compactor: c,
-		limiter:   NewTokenBucket(rate),
-		workers:   workers,
-		logger:    logger,
+		compactor:  c,
+		limiter:    NewTokenBucket(rate),
+		cpuSem:     make(chan struct{}, cpuSlots),
+		workers:    workers,
+		logger:     logger,
+		activeKeys: make(map[compactionKey]bool),
 	}
 	s.jobReady = sync.NewCond(&s.mu)
 	heap.Init(&s.queue)
 
 	return s
+}
+
+// SetExecutor sets a custom execution function. When set, the scheduler calls
+// this instead of compactor.Execute(), allowing the server to inject its own
+// logic (epoch advance, cache invalidation, metrics). Must be called before Start.
+func (s *Scheduler) SetExecutor(fn ExecutorFn) {
+	s.mu.Lock()
+	s.executor = fn
+	s.mu.Unlock()
+}
+
+// SetAdaptiveController sets the adaptive controller for pause/resume checks.
+// When set, workers check Paused() before executing and requeue if paused.
+// Must be called before Start.
+func (s *Scheduler) SetAdaptiveController(ac *AdaptiveController) {
+	s.mu.Lock()
+	s.adaptiveCtrl = ac
+	s.mu.Unlock()
 }
 
 // SetOnComplete sets the callback invoked after each compaction job finishes.
@@ -96,6 +140,11 @@ func (s *Scheduler) SubmitAll(jobs []*Job) {
 	s.mu.Unlock()
 }
 
+// Limiter returns the rate limiter so the adaptive controller can update the rate.
+func (s *Scheduler) Limiter() *TokenBucket {
+	return s.limiter
+}
+
 // QueueLen returns the number of pending jobs.
 func (s *Scheduler) QueueLen() int {
 	s.mu.Lock()
@@ -127,6 +176,9 @@ func (s *Scheduler) Stop() {
 }
 
 func (s *Scheduler) worker(ctx context.Context, id int) {
+	// Set idle I/O priority so compaction yields to query I/O on Linux.
+	SetCompactionIOPriority()
+
 	for {
 		s.mu.Lock()
 		for s.queue.Len() == 0 && s.running.Load() {
@@ -142,30 +194,95 @@ func (s *Scheduler) worker(ctx context.Context, id int) {
 
 			continue
 		}
-		job := heap.Pop(&s.queue).(*Job)
+
+		// Find the first job whose (index, partition) is not already being compacted.
+		var job *Job
+		job = s.popAvailableJob()
+		if job == nil {
+			// All queued jobs are for (index, partition) pairs currently being compacted.
+			// Wait for a signal (job completion or new submission).
+			s.jobReady.Wait()
+			s.mu.Unlock()
+
+			continue
+		}
+
+		key := compactionKey{Index: job.Index, Partition: job.Partition}
+		s.activeKeys[key] = true
+		executor := s.executor
+		adaptiveCtrl := s.adaptiveCtrl
 		onComplete := s.onComplete
 		onError := s.onError
 		s.mu.Unlock()
 
-		// Rate limit: wait for tokens equal to total input size.
-		var inputBytes int64
-		for _, seg := range job.Plan.InputSegments {
-			inputBytes += seg.Meta.SizeBytes
-		}
-		s.limiter.Wait(ctx, inputBytes)
+		// Check if compaction is paused by adaptive controller (C2).
+		// Requeue the job and sleep briefly before retrying.
+		if adaptiveCtrl != nil && adaptiveCtrl.Paused() {
+			s.mu.Lock()
+			heap.Push(&s.queue, job)
+			delete(s.activeKeys, key)
+			s.jobReady.Signal()
+			s.mu.Unlock()
 
-		// Execute compaction.
-		output, err := s.compactor.Execute(ctx, job.Plan)
+			select {
+			case <-time.After(time.Second):
+			case <-ctx.Done():
+				return
+			}
+
+			continue
+		}
+
+		// Acquire CPU semaphore (C3): limits concurrent CPU-heavy merge execution
+		// to GOMAXPROCS/2 to avoid starving query goroutines.
+		select {
+		case s.cpuSem <- struct{}{}:
+		case <-ctx.Done():
+			// Context canceled — release the key and exit.
+			s.mu.Lock()
+			delete(s.activeKeys, key)
+			heap.Push(&s.queue, job)
+			s.jobReady.Signal()
+			s.mu.Unlock()
+
+			return
+		}
+
+		// Rate limiting is now applied per-batch inside StreamingMerge
+		// (via the limiter passed through the executor). No upfront token
+		// consumption — this prevents bursty I/O from large jobs.
+
+		// Execute compaction: use custom executor if set, otherwise default.
+		var output *SegmentInfo
+		var err error
+		if executor != nil {
+			err = executor(ctx, job)
+		} else {
+			output, err = s.compactor.Execute(ctx, job.Plan)
+		}
+
+		// Release CPU semaphore.
+		<-s.cpuSem
+
 		if err != nil {
 			s.logger.Error("compaction job failed",
 				"worker", id,
 				"priority", job.Priority,
+				"index", job.Index,
+				"partition", job.Partition,
 				"error", err,
 			)
 			if onError != nil {
 				onError(job, err)
 			}
 		}
+
+		// Release the (index, partition) lock and wake other workers that may
+		// be waiting for this key to become available.
+		s.mu.Lock()
+		delete(s.activeKeys, key)
+		s.jobReady.Broadcast()
+		s.mu.Unlock()
 
 		if onComplete != nil {
 			onComplete(job, output, err)
@@ -175,6 +292,36 @@ func (s *Scheduler) worker(ctx context.Context, id int) {
 			return
 		}
 	}
+}
+
+// popAvailableJob removes and returns the highest-priority job whose (index, partition)
+// is not currently active. If all queued jobs have active keys, it returns nil.
+// Must be called with s.mu held.
+func (s *Scheduler) popAvailableJob() *Job {
+	// Scan the queue for the first job whose (index, partition) is not active.
+	// The queue is a min-heap by priority, so we iterate in priority order
+	// by temporarily removing and re-pushing blocked jobs.
+	var deferred []*Job
+
+	for s.queue.Len() > 0 {
+		candidate := heap.Pop(&s.queue).(*Job)
+		key := compactionKey{Index: candidate.Index, Partition: candidate.Partition}
+		if !s.activeKeys[key] {
+			// Found an available job. Re-push any deferred jobs.
+			for _, d := range deferred {
+				heap.Push(&s.queue, d)
+			}
+			return candidate
+		}
+		deferred = append(deferred, candidate)
+	}
+
+	// All jobs were blocked. Re-push them all.
+	for _, d := range deferred {
+		heap.Push(&s.queue, d)
+	}
+
+	return nil
 }
 
 // Priority queue (min-heap by priority)
@@ -218,6 +365,14 @@ func NewTokenBucket(bytesPerSec int64) *TokenBucket {
 		rate:     bytesPerSec,
 		lastFill: time.Now(),
 	}
+}
+
+// SetRate updates the token refill rate. Thread-safe.
+func (tb *TokenBucket) SetRate(bytesPerSec int64) {
+	tb.mu.Lock()
+	tb.refill() // settle tokens at old rate before changing
+	tb.rate = bytesPerSec
+	tb.mu.Unlock()
 }
 
 // Wait blocks until `n` tokens are available or ctx is canceled.

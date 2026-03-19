@@ -29,6 +29,12 @@ type Reader struct {
 	footer       *Footer
 	columnIndex  map[string]int                        // catalog name → index (built once on open)
 	perColBlooms map[int]map[string]*index.BloomFilter // lazily populated: rgIdx → colName → bloom
+
+	// Optional column cache for decoded column data. When set, column read
+	// methods check the cache before decompressing and store results after.
+	// Set via SetColumnCache; nil means no caching.
+	columnCache ColumnCache
+	segmentID   string
 }
 
 // OpenSegment opens a segment from raw bytes.
@@ -64,6 +70,15 @@ func OpenSegment(data []byte) (*Reader, error) {
 		columnIndex:  colIdx,
 		perColBlooms: make(map[int]map[string]*index.BloomFilter),
 	}, nil
+}
+
+// SetColumnCache enables decoded column caching on this reader.
+// The cache is keyed by (segID, rowGroupIndex, columnName).
+// Must be called before any read operations. Not safe for concurrent use
+// with reads; intended for setup during segment loading.
+func (r *Reader) SetColumnCache(cache ColumnCache, segID string) {
+	r.columnCache = cache
+	r.segmentID = segID
 }
 
 // EventCount returns the number of events in the segment.
@@ -290,7 +305,7 @@ func findConstColumn(rg *RowGroupMeta, name string) *ConstColumnEntry {
 	return nil
 }
 
-// readStringsFromChunk decodes a string column chunk.
+// readStringsFromChunk decodes a string column chunk (uncached).
 func (r *Reader) readStringsFromChunk(cc *ColumnChunkMeta) ([]string, error) {
 	data, err := r.readChunk(cc)
 	if err != nil {
@@ -307,7 +322,7 @@ func (r *Reader) readStringsFromChunk(cc *ColumnChunkMeta) ([]string, error) {
 	}
 }
 
-// readInt64sFromChunk decodes an int64 column chunk.
+// readInt64sFromChunk decodes an int64 column chunk (uncached).
 func (r *Reader) readInt64sFromChunk(cc *ColumnChunkMeta) ([]int64, error) {
 	data, err := r.readChunk(cc)
 	if err != nil {
@@ -320,7 +335,7 @@ func (r *Reader) readInt64sFromChunk(cc *ColumnChunkMeta) ([]int64, error) {
 	return column.NewDeltaEncoder().DecodeInt64s(data)
 }
 
-// readFloat64sFromChunk decodes a float64 column chunk.
+// readFloat64sFromChunk decodes a float64 column chunk (uncached).
 func (r *Reader) readFloat64sFromChunk(cc *ColumnChunkMeta) ([]float64, error) {
 	data, err := r.readChunk(cc)
 	if err != nil {
@@ -331,6 +346,63 @@ func (r *Reader) readFloat64sFromChunk(cc *ColumnChunkMeta) ([]float64, error) {
 	}
 
 	return column.NewGorillaEncoder().DecodeFloat64s(data)
+}
+
+// cachedReadStrings returns decoded string column data, checking the projection
+// cache first (if set) and populating it on miss. rgIdx identifies the row group.
+func (r *Reader) cachedReadStrings(rgIdx int, cc *ColumnChunkMeta) ([]string, error) {
+	if r.columnCache != nil {
+		if cached, ok := r.columnCache.GetStrings(r.segmentID, rgIdx, cc.Name); ok {
+			return cached, nil
+		}
+	}
+	vals, err := r.readStringsFromChunk(cc)
+	if err != nil {
+		return nil, err
+	}
+	if r.columnCache != nil {
+		r.columnCache.PutStrings(r.segmentID, rgIdx, cc.Name, vals)
+	}
+
+	return vals, nil
+}
+
+// cachedReadInt64s returns decoded int64 column data, checking the projection
+// cache first (if set) and populating it on miss. rgIdx identifies the row group.
+func (r *Reader) cachedReadInt64s(rgIdx int, cc *ColumnChunkMeta) ([]int64, error) {
+	if r.columnCache != nil {
+		if cached, ok := r.columnCache.GetInt64s(r.segmentID, rgIdx, cc.Name); ok {
+			return cached, nil
+		}
+	}
+	vals, err := r.readInt64sFromChunk(cc)
+	if err != nil {
+		return nil, err
+	}
+	if r.columnCache != nil {
+		r.columnCache.PutInt64s(r.segmentID, rgIdx, cc.Name, vals)
+	}
+
+	return vals, nil
+}
+
+// cachedReadFloat64s returns decoded float64 column data, checking the projection
+// cache first (if set) and populating it on miss. rgIdx identifies the row group.
+func (r *Reader) cachedReadFloat64s(rgIdx int, cc *ColumnChunkMeta) ([]float64, error) {
+	if r.columnCache != nil {
+		if cached, ok := r.columnCache.GetFloat64s(r.segmentID, rgIdx, cc.Name); ok {
+			return cached, nil
+		}
+	}
+	vals, err := r.readFloat64sFromChunk(cc)
+	if err != nil {
+		return nil, err
+	}
+	if r.columnCache != nil {
+		r.columnCache.PutFloat64s(r.segmentID, rgIdx, cc.Name, vals)
+	}
+
+	return vals, nil
 }
 
 // ReadStrings decodes a string column by name (all row groups concatenated).
@@ -353,7 +425,7 @@ func (r *Reader) ReadStrings(name string) ([]string, error) {
 		if cc == nil {
 			return nil, fmt.Errorf("%w: %q", ErrColumnNotFound, name)
 		}
-		vals, err := r.readStringsFromChunk(cc)
+		vals, err := r.cachedReadStrings(rgi, cc)
 		if err != nil {
 			return nil, err
 		}
@@ -371,7 +443,7 @@ func (r *Reader) ReadInt64s(name string) ([]int64, error) {
 		if cc == nil {
 			return nil, fmt.Errorf("%w: %q", ErrColumnNotFound, name)
 		}
-		vals, err := r.readInt64sFromChunk(cc)
+		vals, err := r.cachedReadInt64s(rgi, cc)
 		if err != nil {
 			return nil, err
 		}
@@ -389,7 +461,7 @@ func (r *Reader) ReadFloat64s(name string) ([]float64, error) {
 		if cc == nil {
 			return nil, fmt.Errorf("%w: %q", ErrColumnNotFound, name)
 		}
-		vals, err := r.readFloat64sFromChunk(cc)
+		vals, err := r.cachedReadFloat64s(rgi, cc)
 		if err != nil {
 			return nil, err
 		}
@@ -420,7 +492,7 @@ func (r *Reader) ReadEvents() ([]*event.Event, error) {
 
 	for rgi := range r.footer.RowGroups {
 		rg := &r.footer.RowGroups[rgi]
-		rgEvents, err := r.readRowGroupEvents(rg)
+		rgEvents, err := r.readRowGroupEvents(rgi, rg)
 		if err != nil {
 			return nil, err
 		}
@@ -442,7 +514,7 @@ func (r *Reader) ReadEventsWithColumns(columns []string) ([]*event.Event, error)
 
 	for rgi := range r.footer.RowGroups {
 		rg := &r.footer.RowGroups[rgi]
-		rgEvents, err := r.readRowGroupEventsProjected(rg, need)
+		rgEvents, err := r.readRowGroupEventsProjected(rgi, rg, need)
 		if err != nil {
 			return nil, err
 		}
@@ -496,9 +568,9 @@ func (r *Reader) ReadEventsWithHints(hints QueryHints) ([]*event.Event, error) {
 		var rgEvents []*event.Event
 		var err error
 		if len(need) > 0 {
-			rgEvents, err = r.readRowGroupEventsProjected(rg, need)
+			rgEvents, err = r.readRowGroupEventsProjected(rgi, rg, need)
 		} else {
-			rgEvents, err = r.readRowGroupEvents(rg)
+			rgEvents, err = r.readRowGroupEvents(rgi, rg)
 		}
 		if err != nil {
 			return nil, err
@@ -521,7 +593,7 @@ func (r *Reader) ReadRowGroup(idx int) ([]*event.Event, error) {
 		return nil, fmt.Errorf("segment: row group index %d out of range [0, %d)", idx, len(r.footer.RowGroups))
 	}
 
-	return r.readRowGroupEvents(&r.footer.RowGroups[idx])
+	return r.readRowGroupEvents(idx, &r.footer.RowGroups[idx])
 }
 
 // CanPruneRowGroupByIndex checks if row group at rgIdx can be skipped by time range.
@@ -566,7 +638,8 @@ func (r *Reader) canPruneRowGroup(rg *RowGroupMeta, minTime, maxTime *time.Time)
 
 // readRowGroupEvents reads all events from a single row group.
 // Handles both chunk columns and const columns.
-func (r *Reader) readRowGroupEvents(rg *RowGroupMeta) ([]*event.Event, error) {
+// rgIdx is the row group index, used for column cache lookups.
+func (r *Reader) readRowGroupEvents(rgIdx int, rg *RowGroupMeta) ([]*event.Event, error) {
 	count := rg.RowCount
 
 	// Read timestamps.
@@ -574,7 +647,7 @@ func (r *Reader) readRowGroupEvents(rg *RowGroupMeta) ([]*event.Event, error) {
 	if timeChunk == nil {
 		return nil, fmt.Errorf("segment: row group missing _time column")
 	}
-	timestamps, err := r.readInt64sFromChunk(timeChunk)
+	timestamps, err := r.cachedReadInt64s(rgIdx, timeChunk)
 	if err != nil {
 		return nil, fmt.Errorf("segment: read _time: %w", err)
 	}
@@ -605,7 +678,7 @@ func (r *Reader) readRowGroupEvents(rg *RowGroupMeta) ([]*event.Event, error) {
 		if cc == nil {
 			continue
 		}
-		vals, err := r.readStringsFromChunk(cc)
+		vals, err := r.cachedReadStrings(rgIdx, cc)
 		if err != nil {
 			return nil, fmt.Errorf("segment: read %s: %w", b.name, err)
 		}
@@ -648,7 +721,7 @@ func (r *Reader) readRowGroupEvents(rg *RowGroupMeta) ([]*event.Event, error) {
 		if builtinCols[cc.Name] {
 			continue
 		}
-		if err := r.readFieldColumn(cc, events); err != nil {
+		if err := r.readFieldColumn(rgIdx, cc, events); err != nil {
 			return nil, err
 		}
 	}
@@ -668,7 +741,8 @@ func (r *Reader) readRowGroupEvents(rg *RowGroupMeta) ([]*event.Event, error) {
 
 // readRowGroupEventsProjected reads events from a row group with column projection.
 // Handles both chunk columns and const columns.
-func (r *Reader) readRowGroupEventsProjected(rg *RowGroupMeta, need map[string]bool) ([]*event.Event, error) {
+// rgIdx is the row group index, used for column cache lookups.
+func (r *Reader) readRowGroupEventsProjected(rgIdx int, rg *RowGroupMeta, need map[string]bool) ([]*event.Event, error) {
 	count := rg.RowCount
 
 	// Always read _time.
@@ -676,7 +750,7 @@ func (r *Reader) readRowGroupEventsProjected(rg *RowGroupMeta, need map[string]b
 	if timeChunk == nil {
 		return nil, fmt.Errorf("segment: row group missing _time column")
 	}
-	timestamps, err := r.readInt64sFromChunk(timeChunk)
+	timestamps, err := r.cachedReadInt64s(rgIdx, timeChunk)
 	if err != nil {
 		return nil, fmt.Errorf("segment: read _time: %w", err)
 	}
@@ -717,7 +791,7 @@ func (r *Reader) readRowGroupEventsProjected(rg *RowGroupMeta, need map[string]b
 		if cc == nil {
 			continue
 		}
-		values, err := r.readStringsFromChunk(cc)
+		values, err := r.cachedReadStrings(rgIdx, cc)
 		if err != nil {
 			return nil, fmt.Errorf("segment: read %s: %w", bs.name, err)
 		}
@@ -737,7 +811,7 @@ func (r *Reader) readRowGroupEventsProjected(rg *RowGroupMeta, need map[string]b
 		if builtinCols[cc.Name] || !need[cc.Name] {
 			continue
 		}
-		if err := r.readFieldColumn(cc, events); err != nil {
+		if err := r.readFieldColumn(rgIdx, cc, events); err != nil {
 			return nil, err
 		}
 	}
@@ -756,11 +830,12 @@ func (r *Reader) readRowGroupEventsProjected(rg *RowGroupMeta, need map[string]b
 }
 
 // readFieldColumn reads a user-defined field column and populates events.
-func (r *Reader) readFieldColumn(cc *ColumnChunkMeta, events []*event.Event) error {
+// rgIdx is the row group index, used for column cache lookups.
+func (r *Reader) readFieldColumn(rgIdx int, cc *ColumnChunkMeta, events []*event.Event) error {
 	encType := column.EncodingType(cc.EncodingType)
 	switch encType {
 	case column.EncodingDict8, column.EncodingDict16, column.EncodingLZ4:
-		values, err := r.readStringsFromChunk(cc)
+		values, err := r.cachedReadStrings(rgIdx, cc)
 		if err != nil {
 			return fmt.Errorf("segment: read field %q: %w", cc.Name, err)
 		}
@@ -770,7 +845,7 @@ func (r *Reader) readFieldColumn(cc *ColumnChunkMeta, events []*event.Event) err
 			}
 		}
 	case column.EncodingDelta:
-		values, err := r.readInt64sFromChunk(cc)
+		values, err := r.cachedReadInt64s(rgIdx, cc)
 		if err != nil {
 			return fmt.Errorf("segment: read field %q: %w", cc.Name, err)
 		}
@@ -778,7 +853,7 @@ func (r *Reader) readFieldColumn(cc *ColumnChunkMeta, events []*event.Event) err
 			events[i].SetField(cc.Name, event.IntValue(v))
 		}
 	case column.EncodingGorilla:
-		values, err := r.readFloat64sFromChunk(cc)
+		values, err := r.cachedReadFloat64s(rgIdx, cc)
 		if err != nil {
 			return fmt.Errorf("segment: read field %q: %w", cc.Name, err)
 		}
@@ -824,10 +899,10 @@ func (r *Reader) ReadRowGroupFiltered(
 				need[c] = true
 			}
 
-			return r.readRowGroupEventsProjected(rg, need)
+			return r.readRowGroupEventsProjected(rgIdx, rg, need)
 		}
 
-		return r.readRowGroupEvents(rg)
+		return r.readRowGroupEvents(rgIdx, rg)
 	}
 
 	// Compute the absolute row offset of this row group.
@@ -847,9 +922,9 @@ func (r *Reader) ReadRowGroupFiltered(
 	var rgEvents []*event.Event
 	var err error
 	if len(need) > 0 {
-		rgEvents, err = r.readRowGroupEventsProjected(rg, need)
+		rgEvents, err = r.readRowGroupEventsProjected(rgIdx, rg, need)
 	} else {
-		rgEvents, err = r.readRowGroupEvents(rg)
+		rgEvents, err = r.readRowGroupEvents(rgIdx, rg)
 	}
 	if err != nil {
 		return nil, err
@@ -985,9 +1060,9 @@ func (r *Reader) ReadEventsByBitmap(bm *roaring.Bitmap, columns []string) ([]*ev
 		var rgEvents []*event.Event
 		var err error
 		if len(need) > 0 {
-			rgEvents, err = r.readRowGroupEventsProjected(rg, need)
+			rgEvents, err = r.readRowGroupEventsProjected(rgi, rg, need)
 		} else {
-			rgEvents, err = r.readRowGroupEvents(rg)
+			rgEvents, err = r.readRowGroupEvents(rgi, rg)
 		}
 		if err != nil {
 			return nil, err

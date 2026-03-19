@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -27,7 +27,7 @@ type EventStatsIterator struct {
 	emitted   bool
 	batchSize int
 	offset    int
-	acct      stats.MemoryAccount // per-operator memory tracking (nil *BoundAccount = no tracking)
+	acct      memgov.MemoryAccount // per-operator memory tracking
 
 	// Spill-to-disk support.
 	spillMgr        *SpillManager        // lifecycle manager for spill files (nil = no spill support)
@@ -51,14 +51,14 @@ func NewEventStatsIterator(child Iterator, aggs []AggFunc, groupBy []string, bat
 		aggs:      aggs,
 		groupBy:   groupBy,
 		batchSize: batchSize,
-		acct:      stats.NopAccount(),
+		acct:      memgov.NopAccount(),
 	}
 }
 
 // NewEventStatsIteratorWithBudget creates an eventstats operator with memory budget tracking.
-func NewEventStatsIteratorWithBudget(child Iterator, aggs []AggFunc, groupBy []string, batchSize int, acct stats.MemoryAccount) *EventStatsIterator {
+func NewEventStatsIteratorWithBudget(child Iterator, aggs []AggFunc, groupBy []string, batchSize int, acct memgov.MemoryAccount) *EventStatsIterator {
 	e := NewEventStatsIterator(child, aggs, groupBy, batchSize)
-	e.acct = stats.EnsureAccount(acct)
+	e.acct = memgov.EnsureAccount(acct)
 
 	return e
 }
@@ -67,7 +67,7 @@ func NewEventStatsIteratorWithBudget(child Iterator, aggs []AggFunc, groupBy []s
 // tracking and disk spill support. When the in-memory row buffer exceeds the
 // budget, rows are written to a spill file while aggregation state stays in
 // memory. During pass 2, rows are read back from disk and enriched.
-func newEventStatsIteratorWithSpill(child Iterator, aggs []AggFunc, groupBy []string, batchSize int, acct stats.MemoryAccount, mgr *SpillManager) *EventStatsIterator {
+func newEventStatsIteratorWithSpill(child Iterator, aggs []AggFunc, groupBy []string, batchSize int, acct memgov.MemoryAccount, mgr *SpillManager) *EventStatsIterator {
 	e := NewEventStatsIteratorWithBudget(child, aggs, groupBy, batchSize, acct)
 	e.spillMgr = mgr
 

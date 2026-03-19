@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"runtime"
 	"sort"
 	"sync"
 	"time"
@@ -15,11 +16,18 @@ import (
 	segment "github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
+// batchPool reuses merge batch buffers to reduce allocation churn during
+// frequent small compactions. Each buffer is pre-allocated to StreamingBatchSize.
+var batchPool = sync.Pool{
+	New: func() any { return make([]*event.Event, 0, StreamingBatchSize) },
+}
+
 // Level constants for compaction tiers.
 const (
 	L0 = 0 // Flush segments (overlapping time ranges).
 	L1 = 1 // Merged, non-overlapping.
 	L2 = 2 // Fully compacted (~1GB target).
+	L3 = 3 // Archive: single segment per cold partition.
 )
 
 // L0CompactionThreshold is the number of L0 segments that triggers L0→L1 compaction.
@@ -30,6 +38,31 @@ const L1CompactionThreshold = 4
 
 // L2TargetSize is the target size for L2 segments (1GB).
 const L2TargetSize = 1 << 30
+
+// StreamingBatchSize is the number of events accumulated before
+// calling MergeWriter.WriteBatch during streaming merge.
+const StreamingBatchSize = 8192
+
+// MergeWriter receives batches of merged events during streaming merge.
+// WriteBatch is called with time-sorted events. The slice may be reused after return.
+type MergeWriter interface {
+	WriteBatch(events []*event.Event) error
+}
+
+// MergeWriterFunc is an adapter to allow the use of ordinary functions as MergeWriter.
+type MergeWriterFunc func([]*event.Event) error
+
+// WriteBatch implements MergeWriter.
+func (f MergeWriterFunc) WriteBatch(events []*event.Event) error { return f(events) }
+
+// StreamingMergeResult holds metadata from a streaming merge (no events).
+type StreamingMergeResult struct {
+	MinTime    time.Time
+	MaxTime    time.Time
+	Index      string
+	Level      int
+	EventCount int64
+}
 
 // SegmentInfo describes a segment available for compaction.
 // Input segments use Path for mmap-based disk access; Data is optional
@@ -44,16 +77,19 @@ type SegmentInfo struct {
 type Plan struct {
 	InputSegments []*SegmentInfo
 	OutputLevel   int
+	TrivialMove   bool // if true, segment can be promoted without merge
 }
 
 // Compactor performs adaptive compaction of segments using pluggable
-// strategies: SizeTiered for L0→L1 and LevelBased for L1→L2.
+// strategies: SizeTiered for L0→L1, LevelBased for L1→L2, and
+// TimeWindow for L2→L3 (cold partition archive).
 type Compactor struct {
 	mu         sync.Mutex
 	segments   map[string]*SegmentInfo // id -> info
 	logger     *slog.Logger
 	l0Strategy Strategy
 	l1Strategy Strategy
+	l2Strategy Strategy
 }
 
 // NewCompactor creates a new compactor with default strategies.
@@ -63,6 +99,7 @@ func NewCompactor(logger *slog.Logger) *Compactor {
 		logger:     logger,
 		l0Strategy: &SizeTiered{Threshold: L0CompactionThreshold},
 		l1Strategy: &LevelBased{Threshold: L1CompactionThreshold, TargetSize: L2TargetSize},
+		l2Strategy: &TimeWindow{ColdThreshold: 48 * time.Hour},
 	}
 }
 
@@ -123,47 +160,122 @@ func (c *Compactor) segmentsForIndex(index string) []*SegmentInfo {
 	return result
 }
 
-// PlanCompaction checks if compaction is needed and returns a single plan
-// (highest priority first). Returns nil if no compaction is needed.
-func (c *Compactor) PlanCompaction(index string) *Plan {
-	segs := c.segmentsForIndex(index)
+// partitionsForIndex returns all distinct partition keys for an index.
+func (c *Compactor) partitionsForIndex(index string) []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	seen := make(map[string]bool)
+	for _, s := range c.segments {
+		if s.Meta.Index == index {
+			seen[s.Meta.Partition] = true
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for p := range seen {
+		result = append(result, p)
+	}
+	sort.Strings(result)
 
-	// L0→L1 has highest priority.
-	if plans := c.l0Strategy.Plan(segs); len(plans) > 0 {
-		return plans[0]
+	return result
+}
+
+// segmentsForIndexPartition returns segments for a specific (index, partition) pair.
+func (c *Compactor) segmentsForIndexPartition(index, partition string) []*SegmentInfo {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var result []*SegmentInfo
+	for _, s := range c.segments {
+		if s.Meta.Index == index && s.Meta.Partition == partition {
+			result = append(result, s)
+		}
 	}
 
-	// L1→L2 next.
-	if plans := c.l1Strategy.Plan(segs); len(plans) > 0 {
-		return plans[0]
+	return result
+}
+
+// SegmentsByLevelPartition returns segments at the given compaction level for a specific
+// (index, partition) pair. Used by the reactive flush trigger to check L0 counts per-partition.
+func (c *Compactor) SegmentsByLevelPartition(index, partition string, level int) []*SegmentInfo {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var result []*SegmentInfo
+	for _, s := range c.segments {
+		if s.Meta.Index == index && s.Meta.Partition == partition && s.Meta.Level == level {
+			result = append(result, s)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Meta.MinTime.Before(result[j].Meta.MinTime)
+	})
+
+	return result
+}
+
+// PlanCompaction checks if compaction is needed and returns a single plan
+// (highest priority first). Returns nil if no compaction is needed.
+// Plans are partition-scoped: segments from different partitions are never mixed.
+func (c *Compactor) PlanCompaction(index string) *Plan {
+	for _, partition := range c.partitionsForIndex(index) {
+		segs := c.segmentsForIndexPartition(index, partition)
+
+		// L0→L1 has highest priority.
+		if plans := c.l0Strategy.Plan(segs); len(plans) > 0 {
+			return plans[0]
+		}
+
+		// L1→L2 next.
+		if plans := c.l1Strategy.Plan(segs); len(plans) > 0 {
+			return plans[0]
+		}
+
+		// L2→L3 (cold partition archive) lowest compaction priority.
+		if plans := c.l2Strategy.Plan(segs); len(plans) > 0 {
+			return plans[0]
+		}
 	}
 
 	return nil
 }
 
 // PlanAllCompactions returns all available compaction plans for an index,
-// ordered by priority (L0→L1 first, then L1→L2).
+// ordered by priority (L0→L1 first, then L1→L2, then L2→L3).
+// Plans are partition-scoped: segments from different partitions are never mixed.
+// Each Job carries the Partition field for partition-level scheduler concurrency.
 func (c *Compactor) PlanAllCompactions(index string) []*Job {
-	segs := c.segmentsForIndex(index)
-
 	var jobs []*Job
 
-	// L0→L1 plans (highest priority).
-	for _, plan := range c.l0Strategy.Plan(segs) {
-		jobs = append(jobs, &Job{
-			Plan:     plan,
-			Priority: PriorityL0ToL1,
-			Index:    index,
-		})
-	}
+	for _, partition := range c.partitionsForIndex(index) {
+		segs := c.segmentsForIndexPartition(index, partition)
 
-	// L1→L2 plans.
-	for _, plan := range c.l1Strategy.Plan(segs) {
-		jobs = append(jobs, &Job{
-			Plan:     plan,
-			Priority: PriorityL1ToL2,
-			Index:    index,
-		})
+		// L0→L1 plans (highest priority).
+		for _, plan := range c.l0Strategy.Plan(segs) {
+			jobs = append(jobs, &Job{
+				Plan:      plan,
+				Priority:  PriorityL0ToL1,
+				Index:     index,
+				Partition: partition,
+			})
+		}
+
+		// L1→L2 plans.
+		for _, plan := range c.l1Strategy.Plan(segs) {
+			jobs = append(jobs, &Job{
+				Plan:      plan,
+				Priority:  PriorityL1ToL2,
+				Index:     index,
+				Partition: partition,
+			})
+		}
+
+		// L2→L3 plans (cold partition archive).
+		for _, plan := range c.l2Strategy.Plan(segs) {
+			jobs = append(jobs, &Job{
+				Plan:      plan,
+				Priority:  PriorityL2ToL3,
+				Index:     index,
+				Partition: partition,
+			})
+		}
 	}
 
 	return jobs
@@ -179,16 +291,60 @@ type MergeResult struct {
 	Level   int
 }
 
-// Merge performs a streaming k-way merge of input segments by timestamp.
-// Cursors read one row group at a time to limit peak memory.
-// Segments are opened from disk (Path) when available, falling back to
-// in-memory Data for tests. Mmap handles are closed after merge completes.
+// Merge performs a k-way merge of input segments by timestamp and returns all
+// merged events in memory. For large compactions (1GB+), prefer StreamingMerge
+// to avoid OOM risk.
 //
-// The caller receives the merged events and is responsible for writing them
-// to disk (e.g., via part.Writer for atomic rename into partition directories).
+// This method delegates to StreamingMerge internally with a collecting writer.
 func (c *Compactor) Merge(ctx context.Context, plan *Plan) (*MergeResult, error) {
+	// Estimate total event count for pre-allocation.
+	var estimatedTotal int64
+	for _, seg := range plan.InputSegments {
+		estimatedTotal += seg.Meta.EventCount
+	}
+
+	allEvents := make([]*event.Event, 0, estimatedTotal)
+
+	result, err := c.StreamingMerge(ctx, plan, MergeWriterFunc(func(batch []*event.Event) error {
+		allEvents = append(allEvents, batch...)
+		return nil
+	}))
+	if err != nil {
+		return nil, err
+	}
+
+	return &MergeResult{
+		Events:  allEvents,
+		MinTime: result.MinTime,
+		MaxTime: result.MaxTime,
+		Index:   result.Index,
+		Level:   result.Level,
+	}, nil
+}
+
+// StreamingMerge performs a streaming k-way merge of input segments by timestamp.
+// Instead of collecting all events in memory, it emits bounded batches to the
+// provided MergeWriter. This bounds peak memory to ~StreamingBatchSize events
+// plus one row group per input cursor.
+//
+// Cursors read one row group at a time. Segments are opened from disk (Path)
+// when available, falling back to in-memory Data for tests. Mmap handles are
+// closed after merge completes.
+//
+// The method yields the CPU via runtime.Gosched() every 10000 events to avoid
+// starving concurrent query goroutines.
+//
+// When limiter is non-nil, rate limiting is applied per-batch after each flush,
+// spreading I/O evenly across the merge instead of consuming all tokens upfront.
+func (c *Compactor) StreamingMerge(ctx context.Context, plan *Plan, writer MergeWriter, limiter ...*TokenBucket) (*StreamingMergeResult, error) {
 	if len(plan.InputSegments) == 0 {
 		return nil, ErrNoInputSegments
+	}
+
+	// Extract optional rate limiter from variadic arg.
+	var rateLimiter *TokenBucket
+	if len(limiter) > 0 {
+		rateLimiter = limiter[0]
 	}
 
 	c.logger.Info("starting compaction merge",
@@ -202,6 +358,10 @@ func (c *Compactor) Merge(ctx context.Context, plan *Plan) (*MergeResult, error)
 	var mmapHandles []*segment.MmapSegment
 	defer func() {
 		for _, ms := range mmapHandles {
+			// Hint OS to drop compaction pages from cache (prevents polluting query cache).
+			if fd := ms.Fd(); fd != 0 {
+				AdviseDontNeed(fd)
+			}
 			ms.Close()
 		}
 	}()
@@ -234,26 +394,30 @@ func (c *Compactor) Merge(ctx context.Context, plan *Plan) (*MergeResult, error)
 
 	heap.Init(&cursors)
 
-	// Estimate total event count for pre-allocation to avoid slice growth.
-	var estimatedTotal int64
-	for _, seg := range plan.InputSegments {
-		estimatedTotal += seg.Meta.EventCount
-	}
-
-	// Stream-merge: k-way merge into a pre-allocated slice.
-	// Cursors release consumed row groups (via advance) to allow GC to
-	// reclaim memory, bounding peak usage to ~(allEvents + 1 row group per cursor).
-	allEvents := make([]*event.Event, 0, estimatedTotal)
+	// Batch buffer for streaming writes. Events are copied into the batch
+	// because the cursor may reuse the underlying slice after advance().
+	batch := batchPool.Get().([]*event.Event)
+	batch = batch[:0]
+	defer func() {
+		// Clear references to allow GC of event objects before returning to pool.
+		for i := range batch {
+			batch[i] = nil
+		}
+		batchPool.Put(batch[:0]) //nolint:staticcheck // reset len for next consumer
+	}()
 	var totalEvents int64
 	var minTime, maxTime time.Time
 
 	for cursors.Len() > 0 {
-		// Check context cancellation periodically.
+		// Check context cancellation and yield CPU periodically.
 		if totalEvents%10000 == 0 {
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			default:
+			}
+			if totalEvents > 0 {
+				runtime.Gosched()
 			}
 		}
 
@@ -273,8 +437,21 @@ func (c *Compactor) Merge(ctx context.Context, plan *Plan) (*MergeResult, error)
 			}
 		}
 
-		allEvents = append(allEvents, ev)
+		batch = append(batch, ev)
 		totalEvents++
+
+		// Flush batch when full.
+		if len(batch) >= StreamingBatchSize {
+			if err := writer.WriteBatch(batch); err != nil {
+				return nil, fmt.Errorf("compaction: write batch: %w", err)
+			}
+			// Per-batch rate limiting: spread I/O evenly across the merge
+			// instead of consuming all tokens upfront. Estimate ~200 bytes/event.
+			if rateLimiter != nil {
+				rateLimiter.Wait(ctx, int64(len(batch))*200)
+			}
+			batch = batch[:0]
+		}
 
 		cur.pos++
 
@@ -293,7 +470,14 @@ func (c *Compactor) Merge(ctx context.Context, plan *Plan) (*MergeResult, error)
 		}
 	}
 
-	if len(allEvents) == 0 {
+	// Flush remaining events.
+	if len(batch) > 0 {
+		if err := writer.WriteBatch(batch); err != nil {
+			return nil, fmt.Errorf("compaction: write final batch: %w", err)
+		}
+	}
+
+	if totalEvents == 0 {
 		return nil, ErrEmptyMerge
 	}
 
@@ -302,12 +486,12 @@ func (c *Compactor) Merge(ctx context.Context, plan *Plan) (*MergeResult, error)
 		"output_level", plan.OutputLevel,
 	)
 
-	return &MergeResult{
-		Events:  allEvents,
-		MinTime: minTime,
-		MaxTime: maxTime,
-		Index:   index,
-		Level:   plan.OutputLevel,
+	return &StreamingMergeResult{
+		MinTime:    minTime,
+		MaxTime:    maxTime,
+		Index:      index,
+		Level:      plan.OutputLevel,
+		EventCount: totalEvents,
 	}, nil
 }
 
@@ -319,6 +503,11 @@ func (c *Compactor) openSegmentReader(seg *SegmentInfo) (*segment.Reader, *segme
 		ms, err := segment.OpenSegmentFile(seg.Path)
 		if err != nil {
 			return nil, nil, err
+		}
+
+		// Hint OS for sequential read-ahead during compaction merge.
+		if fd := ms.Fd(); fd != 0 {
+			AdviseSequential(fd)
 		}
 
 		reader := ms.Reader()

@@ -602,6 +602,9 @@ func collectGeneratedFields(q *spl2.Query) *generatedFieldsInfo {
 			// The exact generated field names are unknown at optimization time,
 			// so the source field is marked as generated (it's replaced with element values).
 			info.names[c.Field] = true
+			for _, f := range c.ExtraFields {
+				info.names[f] = true
+			}
 		}
 	}
 	return info

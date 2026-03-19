@@ -15,9 +15,9 @@ import (
 
 	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/optimizer"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
-	"github.com/lynxbase/lynxdb/pkg/stats"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
@@ -105,7 +105,7 @@ type StreamingServerStore struct {
 	allMemEvents []*event.Event
 	baseHints    *enginepipeline.SegmentStreamHints // hints WITHOUT IndexName pre-set for multi-index
 	batchSize    int
-	monitor      *stats.BudgetMonitor
+	gov          memgov.Governor // engine-wide governor for per-iterator scan accounts
 
 	// aggregator sums progress across all iterators (replaces per-iterator onProgress).
 	// Set before calling BuildProgramWithBudget.
@@ -154,7 +154,12 @@ func (s *StreamingServerStore) GetEventIterator(index string) enginepipeline.Ite
 		}
 	}
 
-	acct := s.monitor.NewAccount("stream-scan")
+	var acct memgov.MemoryAccount
+	if s.gov != nil {
+		acct = memgov.NewAccountAdapter(memgov.NewOperatorMemory(s.gov, "stream-scan"))
+	} else {
+		acct = memgov.NopAccount()
+	}
 	iter := enginepipeline.NewSegmentStreamIterator(
 		s.segments, filteredMem, &perCallHints, s.batchSize, acct,
 	)
@@ -359,13 +364,22 @@ func (e *Engine) buildSegmentSources(
 	return sources
 }
 
+// recordPruningMetrics propagates segment skip counts from a completed query
+// scan to the global pruning metrics. Called after the segment dispatch loop
+// completes in each build*Store method.
+func (e *Engine) recordPruningMetrics(ss *storeStats) {
+	e.metrics.PruningBloomSkips.Add(int64(ss.SegmentsSkippedBF))
+	e.metrics.PruningTimeSkips.Add(int64(ss.SegmentsSkippedTime))
+	e.metrics.PruningStatSkips.Add(int64(ss.SegmentsSkippedStat))
+	e.metrics.PruningRangeSkips.Add(int64(ss.SegmentsSkippedRange))
+	e.metrics.PruningIndexSkips.Add(int64(ss.SegmentsSkippedIdx))
+}
+
 // buildEventStore builds an event store from the engine's internal data.
 // This avoids the EventsToRows conversion (1 map alloc/event) and copyRows overhead,
 // enabling the pipeline engine to work directly with event.Event pointers.
 //
-// When monitor is non-nil, a BoundAccount is created to track scan memory against
-// the shared per-query budget. When nil, standalone enforcement uses queryCfg.MaxQueryMemory.
-func (e *Engine) buildEventStore(ctx context.Context, hints *spl2.QueryHints, onProgress func(*SearchProgress), monitor *stats.BudgetMonitor, traceSegments ...bool) (map[string][]*event.Event, storeStats, error) {
+func (e *Engine) buildEventStore(ctx context.Context, hints *spl2.QueryHints, onProgress func(*SearchProgress), traceSegments ...bool) (map[string][]*event.Event, storeStats, error) {
 	trace := len(traceSegments) > 0 && traceSegments[0]
 
 	// Flush buffered events so they are visible to the query scan.
@@ -543,23 +557,32 @@ func (e *Engine) buildEventStore(ctx context.Context, hints *spl2.QueryHints, on
 		})
 	}
 
+	// Propagate segment skip counts to global pruning metrics.
+	e.recordPruningMetrics(&ss)
+
 	go func() {
 		wg.Wait()
 		close(resultCh)
 	}()
 
-	// Approximate per-event memory overhead: pointer (8) + Event struct (~200 bytes avg).
-	const estimatedEventBytes int64 = 208
+	// estimateEventBatchBytes computes the total memory held by a batch of events
+	// using the per-event estimator from pkg/event. This replaces the old constant
+	// (208 bytes/event) with field-aware sizing that accounts for _raw, source,
+	// field keys/values, and struct overhead.
+	estimateEventBatchBytes := func(events []*event.Event) int64 {
+		var total int64
+		for _, ev := range events {
+			total += event.EstimateEventSize(ev)
+		}
+		return total
+	}
 
-	// Create scan account from the shared monitor, or fall back to standalone enforcement.
-	// When monitor is non-nil the scan shares a budget with pipeline operators.
-	// When nil, a local monitor enforces queryCfg.MaxQueryMemory for backward compat.
-	var scanAcct *stats.BoundAccount
-	if monitor != nil {
-		scanAcct = monitor.NewAccount("scan")
-	} else if e.queryCfg.MaxQueryMemory > 0 {
-		localMon := stats.NewBudgetMonitor("scan", int64(e.queryCfg.MaxQueryMemory))
-		scanAcct = localMon.NewAccount("scan")
+	// Create scan account for memory enforcement during event collection.
+	var scanAcct memgov.MemoryAccount
+	if e.governor != nil {
+		scanAcct = memgov.NewAccountAdapter(memgov.NewOperatorMemory(e.governor, "scan"))
+	} else {
+		scanAcct = memgov.NopAccount()
 	}
 	defer scanAcct.Close()
 
@@ -599,7 +622,7 @@ func (e *Engine) buildEventStore(ctx context.Context, hints *spl2.QueryHints, on
 				ColumnsProjected: res.readStats.columnsProjected,
 			})
 		}
-		if err := scanAcct.Grow(int64(len(res.events)) * estimatedEventBytes); err != nil {
+		if err := scanAcct.Grow(estimateEventBatchBytes(res.events)); err != nil {
 			wg.Wait()
 			ep.unpin()
 			ss.SegmentsErrored = int(segErrors.Load())
@@ -1208,6 +1231,10 @@ func (e *Engine) buildPartialAggStore(
 		})
 	}
 
+
+	// Propagate segment skip counts to global pruning metrics.
+	e.recordPruningMetrics(&ss)
+
 	go func() {
 		wg.Wait()
 		close(resultCh)
@@ -1378,6 +1405,9 @@ func (e *Engine) buildTransformPartialAggStore(
 			BufferedEvents:       ss.BufferedEvents,
 		})
 	}
+
+	// Propagate segment skip counts to global pruning metrics.
+	e.recordPruningMetrics(&ss)
 
 	go func() {
 		wg.Wait()
@@ -1630,7 +1660,7 @@ func readSegmentColumnar(
 // It is only used when an external IndexStore is injected (test path); all
 // production server-mode queries use the streaming path (runStreamingPipeline)
 // which reads row groups on-demand and allows operators to spill to disk.
-func (e *Engine) buildColumnarStore(ctx context.Context, hints *spl2.QueryHints, onProgress func(*SearchProgress), monitor *stats.BudgetMonitor, traceSegments ...bool) (map[string][]*enginepipeline.Batch, storeStats, error) {
+func (e *Engine) buildColumnarStore(ctx context.Context, hints *spl2.QueryHints, onProgress func(*SearchProgress), traceSegments ...bool) (map[string][]*enginepipeline.Batch, storeStats, error) {
 	trace := len(traceSegments) > 0 && traceSegments[0]
 
 	// Flush buffered events so they are visible to the query scan.
@@ -1811,6 +1841,9 @@ func (e *Engine) buildColumnarStore(ctx context.Context, hints *spl2.QueryHints,
 		})
 	}
 
+	// Propagate segment skip counts to global pruning metrics.
+	e.recordPruningMetrics(&ss)
+
 	go func() {
 		wg.Wait()
 		close(resultCh)
@@ -1819,12 +1852,11 @@ func (e *Engine) buildColumnarStore(ctx context.Context, hints *spl2.QueryHints,
 	// Per-row memory estimate for columnar batches (Value structs + string data).
 	const estimatedColumnarRowBytes int64 = 200
 
-	var scanAcct *stats.BoundAccount
-	if monitor != nil {
-		scanAcct = monitor.NewAccount("scan")
-	} else if e.queryCfg.MaxQueryMemory > 0 {
-		localMon := stats.NewBudgetMonitor("scan", int64(e.queryCfg.MaxQueryMemory))
-		scanAcct = localMon.NewAccount("scan")
+	var scanAcct memgov.MemoryAccount
+	if e.governor != nil {
+		scanAcct = memgov.NewAccountAdapter(memgov.NewOperatorMemory(e.governor, "columnar-scan"))
+	} else {
+		scanAcct = memgov.NopAccount()
 	}
 	defer scanAcct.Close()
 

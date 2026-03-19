@@ -1756,8 +1756,73 @@ func (p *Parser) parseJsonCmd() (*JsonCommand, error) {
 		}
 	}
 done:
+	// Bare path syntax: | json items[*].price AS price, user.name
+	// When no keyword args matched and the next token is an ident,
+	// parse comma-separated dot-bracket paths with optional AS aliases.
+	for p.peek().Type == TokenIdent {
+		path := p.parseBareDotPath()
+		if path == "" {
+			break
+		}
+		jp := JsonPath{Path: path}
+		if p.peek().Type == TokenAs {
+			p.advance()
+			aliasTok := p.peek()
+			if aliasTok.Type != TokenIdent && aliasTok.Type != TokenString {
+				return nil, fmt.Errorf("spl2: json: expected alias after AS")
+			}
+			p.advance()
+			jp.Alias = aliasTok.Literal
+		}
+		cmd.Paths = append(cmd.Paths, jp)
+		if p.peek().Type == TokenComma {
+			p.advance()
+			continue
+		}
+		break
+	}
 
 	return cmd, nil
+}
+
+// parseBareDotPath consumes tokens to build a dotted-bracket path like
+// "items[*].price" or "user.name". Returns "" if the current token is
+// not an identifier. The lexer handles simple dot-paths as single ident
+// tokens (e.g., "user.name"); this helper stitches bracket-separated
+// segments back together (e.g., items + [*] + .price → "items[*].price").
+func (p *Parser) parseBareDotPath() string {
+	if p.peek().Type != TokenIdent {
+		return ""
+	}
+	tok := p.advance()
+	var b strings.Builder
+	b.WriteString(tok.Literal)
+
+	for {
+		switch p.peek().Type {
+		case TokenLBracket:
+			p.advance() // consume [
+			b.WriteByte('[')
+			for p.peek().Type != TokenRBracket && p.peek().Type != TokenEOF {
+				b.WriteString(p.advance().Literal)
+			}
+			if p.peek().Type == TokenRBracket {
+				p.advance()
+				b.WriteByte(']')
+			}
+		case TokenIdent:
+			// Continuation like ".price" (ident starting with dot, produced by lexer)
+			lit := p.peek().Literal
+			if len(lit) > 0 && lit[0] == '.' {
+				p.advance()
+				b.WriteString(lit)
+			} else {
+				return b.String()
+			}
+		default:
+			return b.String()
+		}
+	}
 }
 
 // parsePackJson parses: pack_json [<f1>, <f2>, ...] into <target>.
@@ -3080,7 +3145,8 @@ func (p *Parser) parseLynxParse() (Command, error) {
 	return cmd, nil
 }
 
-// parseExplode parses: explode <field> [as <alias>].
+// parseExplode parses: explode <field>[, <field2>, ...] [as <alias>].
+// Multi-field form zip-expands parallel arrays. Alias only allowed for single-field.
 // Desugars to UnrollCommand.
 func (p *Parser) parseExplode() (*UnrollCommand, error) {
 	p.advance() // consume "explode"
@@ -3092,7 +3158,17 @@ func (p *Parser) parseExplode() (*UnrollCommand, error) {
 
 	cmd := &UnrollCommand{Field: field.Literal}
 
-	if p.peek().Type == TokenAs {
+	for p.peek().Type == TokenComma {
+		p.advance() // consume comma
+		extra, err := p.expectIdent()
+		if err != nil {
+			return nil, fmt.Errorf("spl2: explode: expected field name after comma")
+		}
+		cmd.ExtraFields = append(cmd.ExtraFields, extra.Literal)
+	}
+
+	// Alias only allowed for single-field explode.
+	if len(cmd.ExtraFields) == 0 && p.peek().Type == TokenAs {
 		p.advance()
 		alias, err := p.expectIdent()
 		if err != nil {

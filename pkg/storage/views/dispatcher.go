@@ -15,7 +15,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/storage"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
@@ -370,7 +370,7 @@ func (d *Dispatcher) processInsertBatch(av *activeView, events []*event.Event) (
 		// Run streaming commands through the pipeline engine with a bounded context.
 		ctx, cancel := context.WithTimeout(context.Background(), processInsertTimeout)
 		defer cancel()
-		source := pipeline.NewScanIteratorWithBudget(events, pipeline.DefaultBatchSize, stats.NopAccount())
+		source := pipeline.NewScanIteratorWithBudget(events, pipeline.DefaultBatchSize, memgov.NopAccount())
 		iter, err := pipeline.BuildFromSource(ctx, source, av.analysis.StreamingCmds, pipeline.DefaultBatchSize)
 		if err != nil {
 			return nil, fmt.Errorf("views.processInsertBatch: build pipeline: %w", err)

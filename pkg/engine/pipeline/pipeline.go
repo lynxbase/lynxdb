@@ -6,11 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lynxbase/lynxdb/pkg/buffer"
 	"github.com/lynxbase/lynxdb/pkg/engine/unpack"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
-	"github.com/lynxbase/lynxdb/pkg/stats"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -81,30 +80,24 @@ type queryContext struct {
 	appendOrdering      string // "interleaved" when optimizer determines downstream is order-insensitive
 	instrument          bool
 	profileLevel        string
-	monitor             *stats.BudgetMonitor
 	spillMgr            *SpillManager      // lifecycle manager for spill files (nil = no spill support)
 	dedupExact          bool               // use exact string keys in dedup instead of xxhash64
-	bufferPool          *buffer.Pool       // unified buffer pool (nil = use BoundAccount from monitor)
-	queryID             string             // unique query ID for buffer pool pin tracking
 	parallelCfg         ParallelConfig     // branch-level parallelism configuration
 	coordinator         *MemoryCoordinator // nil when no coordination needed
+
+	// Memory governance v2: when set, operator accounts are backed by the
+	// Governor via a BudgetAdapter. The govBudget provides per-query
+	// tracking (CurAllocated, MaxAllocated) and the Governor provides
+	// process-wide enforcement and pressure callbacks.
+	govBudget *memgov.BudgetAdapter // nil = use old system (monitor)
 }
 
-// newAccount creates a MemoryAccount for an operator. When the unified buffer
-// pool is enabled (bufferPool != nil), accounts are backed by pool pages which
-// coordinate memory across cache, queries, and memtable. Otherwise, accounts
-// are backed by the per-query BudgetMonitor.
-func (qc *queryContext) newAccount(label string) stats.MemoryAccount {
-	if qc.bufferPool != nil {
-		acct := buffer.NewPoolAccount(qc.bufferPool, qc.queryID, qc.monitor)
-		if acct != nil {
-			return acct
-		}
+// newAccount creates a MemoryAccount for an operator.
+func (qc *queryContext) newAccount(label string) memgov.MemoryAccount {
+	if qc.govBudget != nil {
+		return qc.govBudget.NewAccount(label)
 	}
-	// Fallback: BoundAccount from monitor. A nil monitor returns nil
-	// *BoundAccount, which becomes a typed-nil MemoryAccount that
-	// dispatches to nil-safe no-op methods.
-	return qc.monitor.NewAccount(label)
+	return memgov.NopAccount()
 }
 
 // newCoordinatedAccount creates a MemoryAccount for a spillable operator.
@@ -112,7 +105,7 @@ func (qc *queryContext) newAccount(label string) stats.MemoryAccount {
 // sub-limit that enables budget redistribution after spill. When no coordinator
 // is active (single spillable operator, no budget, no spill support), the
 // returned account is a plain account — zero overhead.
-func (qc *queryContext) newCoordinatedAccount(label string, reservation int64) stats.MemoryAccount {
+func (qc *queryContext) newCoordinatedAccount(label string, reservation int64) memgov.MemoryAccount {
 	inner := qc.newAccount(label)
 	if qc.coordinator != nil {
 		return qc.coordinator.RegisterOperator(label, inner, reservation)
@@ -152,6 +145,7 @@ func BuildProgram(ctx context.Context, prog *spl2.Program, store IndexStore, bat
 type BuildResult struct {
 	Iterator    Iterator
 	Coordinator *MemoryCoordinator
+	GovBudget   *memgov.BudgetAdapter // non-nil when built via BuildProgramWithGovernor
 }
 
 // Option configures optional components of the pipeline build.
@@ -164,33 +158,22 @@ func WithSystemTables(resolver SystemTableResolver) Option {
 	}
 }
 
-// BuildProgramWithBudget is like BuildProgramWithViewsStatsAndProfile but also
-// attaches a BudgetMonitor for per-query memory tracking and enforcement.
-// Operators that buffer data (aggregate, sort, join, etc.) will call
-// monitor.NewAccount to track their allocations against the shared budget.
-// The spillMgr parameter enables disk spill for sort and aggregate operators;
-// pass nil to disable spill support (operators will fail on budget exceeded).
-// When dedupExact is true, the dedup operator uses exact string keys instead
-// of xxhash64 hashing, eliminating collision risk at the cost of higher memory.
-// The parallelCfg parameter controls branch-level parallelism for APPEND,
-// MULTISEARCH, and multi-source FROM; pass nil to use sequential execution.
-func BuildProgramWithBudget(ctx context.Context, prog *spl2.Program, store IndexStore, resolver ViewResolver, mgr ViewManager, batchSize int, profileLevel string, monitor *stats.BudgetMonitor, spillMgr *SpillManager, dedupExact bool, parallelCfg *ParallelConfig, opts ...Option) (*BuildResult, error) {
-	return buildProgramWithViewsAndBudget(ctx, prog, store, resolver, mgr, batchSize, true, profileLevel, monitor, spillMgr, dedupExact, nil, "", parallelCfg, opts...)
-}
-
-// BuildProgramWithBufferPool is like BuildProgramWithBudget but uses the unified
-// buffer pool for operator memory accounting instead of the per-query BudgetMonitor.
-// When pool is non-nil, operators allocate memory credits as buffer pool pages,
-// enabling automatic cross-consumer rebalancing (cache ↔ queries ↔ memtable).
-// The monitor is still used for high-water mark tracking and PeakMemoryBytes reporting.
-func BuildProgramWithBufferPool(ctx context.Context, prog *spl2.Program, store IndexStore, resolver ViewResolver, mgr ViewManager, batchSize int, profileLevel string, monitor *stats.BudgetMonitor, spillMgr *SpillManager, dedupExact bool, pool *buffer.Pool, queryID string, parallelCfg *ParallelConfig, opts ...Option) (*BuildResult, error) {
-	return buildProgramWithViewsAndBudget(ctx, prog, store, resolver, mgr, batchSize, true, profileLevel, monitor, spillMgr, dedupExact, pool, queryID, parallelCfg, opts...)
-}
-
-func buildProgramWithViewsAndBudget(ctx context.Context, prog *spl2.Program, store IndexStore, resolver ViewResolver, mgr ViewManager, batchSize int, instrument bool, profileLevel string, monitor *stats.BudgetMonitor, spillMgr *SpillManager, dedupExact bool, pool *buffer.Pool, queryID string, parallelCfg *ParallelConfig, opts ...Option) (*BuildResult, error) {
+// BuildProgramWithGovernor uses the memory governance v2 system for operator
+// memory accounting. Operator accounts are backed by the Governor via a
+// BudgetAdapter. The monitor parameter is optional — when non-nil it is
+// retained for backward-compatible PeakMemoryBytes reporting (tracking only,
+// not enforcement). The Governor provides process-wide enforcement with
+// class-based accounting and pressure callbacks.
+//
+// The returned BuildResult.GovBudget holds the per-query BudgetAdapter so
+// callers can read MaxAllocated() for stats reporting after the pipeline closes.
+func BuildProgramWithGovernor(ctx context.Context, prog *spl2.Program, store IndexStore, resolver ViewResolver, mgr ViewManager, batchSize int, profileLevel string, gov memgov.Governor, budgetLimit int64, spillMgr *SpillManager, dedupExact bool, parallelCfg *ParallelConfig, opts ...Option) (*BuildResult, error) {
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
 	}
+
+	budget := memgov.NewQueryBudget(gov, "query")
+	adapter := memgov.NewBudgetAdapterWithLimit(budget, gov, budgetLimit)
 
 	qc := &queryContext{
 		ctx:          ctx,
@@ -200,13 +183,11 @@ func buildProgramWithViewsAndBudget(ctx context.Context, prog *spl2.Program, sto
 		viewResolver: resolver,
 		viewManager:  mgr,
 		progCache:    vm.NewProgramCache(),
-		instrument:   instrument,
+		instrument:   true,
 		profileLevel: profileLevel,
-		monitor:      monitor,
 		spillMgr:     spillMgr,
 		dedupExact:   dedupExact,
-		bufferPool:   pool,
-		queryID:      queryID,
+		govBudget:    adapter,
 	}
 	if parallelCfg != nil {
 		qc.parallelCfg = *parallelCfg
@@ -217,12 +198,6 @@ func buildProgramWithViewsAndBudget(ctx context.Context, prog *spl2.Program, sto
 	}
 
 	// Create coordinator when 2+ spillable operators share a budget.
-	// The coordinator partitions the per-query budget among spillable operators
-	// with dynamic redistribution after spill.
-	budgetLimit := int64(0)
-	if monitor != nil {
-		budgetLimit = monitor.Limit()
-	}
 	if countSpillableOps(prog) >= 2 && budgetLimit > 0 && spillMgr != nil {
 		qc.coordinator = NewMemoryCoordinator(budgetLimit, 0.10)
 	}
@@ -241,23 +216,28 @@ func buildProgramWithViewsAndBudget(ctx context.Context, prog *spl2.Program, sto
 		}
 	}
 
-	// Materialize CTEs using DAG-based execution plan. Independent CTEs
-	// at the same dependency level are materialized in parallel when enabled.
+	// Materialize CTEs.
 	if err := qc.materializeCTEs(ctx, prog.Datasets); err != nil {
+		adapter.Close()
 		return nil, err
 	}
 
 	iter, err := qc.buildQuery(ctx, prog.Main)
 	if err != nil {
+		adapter.Close()
 		return nil, err
 	}
 
-	// Finalize coordinator sub-limits after all operators have registered.
 	if qc.coordinator != nil {
 		qc.coordinator.Finalize()
+		gov.OnPressure(memgov.ClassSpillable, qc.coordinator.HandleRevocation)
 	}
 
-	return &BuildResult{Iterator: iter, Coordinator: qc.coordinator}, nil
+	return &BuildResult{
+		Iterator:    iter,
+		Coordinator: qc.coordinator,
+		GovBudget:   adapter,
+	}, nil
 }
 
 // BuildProgramWithStats is like BuildProgram but wraps each pipeline operator
@@ -675,8 +655,8 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 	case *spl2.StatsCommand:
 		aggs := qc.convertAggs(c.Aggregations)
 		iter := NewAggregateIteratorWithSpill(child, aggs, c.GroupBy, qc.newCoordinatedAccount("aggregate", reservationAggregate), qc.spillMgr)
-		if qc.monitor != nil {
-			iter.budgetLimit = qc.monitor.Limit()
+		if qc.govBudget != nil {
+			iter.budgetLimit = qc.govBudget.Limit()
 		}
 
 		return iter, nil
@@ -745,13 +725,6 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 			fields[i] = SortField{Name: f.Name, Desc: f.Desc}
 		}
 		acct := qc.newCoordinatedAccount("sort", reservationSort)
-		if qc.bufferPool != nil && qc.spillMgr != nil {
-			return NewBufferedSortIterator(
-				child, fields, qc.batchSize, acct,
-				qc.bufferPool, qc.queryID, qc.spillMgr,
-			), nil
-		}
-
 		return NewSortIteratorWithSpill(child, fields, qc.batchSize, acct, qc.spillMgr), nil
 
 	case *spl2.TopNCommand:
@@ -884,8 +857,8 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		aggs := qc.convertAggs(c.Aggregations)
 		groupBy := append([]string{"_time"}, c.GroupBy...)
 		tcIter := NewAggregateIteratorWithSpill(binIter, aggs, groupBy, qc.newCoordinatedAccount("timechart", reservationAggregate), qc.spillMgr)
-		if qc.monitor != nil {
-			tcIter.budgetLimit = qc.monitor.Limit()
+		if qc.govBudget != nil {
+			tcIter.budgetLimit = qc.govBudget.Limit()
 		}
 
 		return tcIter, nil
@@ -969,7 +942,7 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		return NewJsonCmdIterator(child, field, c.Paths), nil
 
 	case *spl2.UnrollCommand:
-		return NewUnrollIterator(child, c.Field, qc.batchSize), nil
+		return NewUnrollIterator(child, c.AllFields(), qc.batchSize), nil
 
 	case *spl2.PackJsonCommand:
 		return NewPackJsonIterator(child, c.Fields, c.Target), nil
@@ -1002,7 +975,7 @@ type TailIterator struct {
 	result    []map[string]event.Value // linearized output after accumulation
 	offset    int
 	batchSize int
-	acct      stats.MemoryAccount // per-operator memory tracking
+	acct      memgov.MemoryAccount // per-operator memory tracking
 }
 
 // NewTailIterator creates a tail operator that keeps the last count rows.
@@ -1016,16 +989,16 @@ func NewTailIterator(child Iterator, count, batchSize int) *TailIterator {
 		count:     count,
 		ring:      make([]map[string]event.Value, count),
 		batchSize: batchSize,
-		acct:      stats.NopAccount(),
+		acct:      memgov.NopAccount(),
 	}
 }
 
 // NewTailIteratorWithBudget creates a tail operator with memory budget tracking.
 // The ring buffer is bounded to O(count) rows; the account provides accounting
 // visibility rather than enforcement.
-func NewTailIteratorWithBudget(child Iterator, count, batchSize int, acct stats.MemoryAccount) *TailIterator {
+func NewTailIteratorWithBudget(child Iterator, count, batchSize int, acct memgov.MemoryAccount) *TailIterator {
 	t := NewTailIterator(child, count, batchSize)
-	t.acct = stats.EnsureAccount(acct)
+	t.acct = memgov.EnsureAccount(acct)
 
 	return t
 }

@@ -5,8 +5,9 @@ import (
 	"sort"
 
 	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
-	"github.com/lynxbase/lynxdb/pkg/stats"
 	"github.com/lynxbase/lynxdb/pkg/storage"
 )
 
@@ -24,9 +25,9 @@ type StreamingStats struct {
 
 // BuildStreamingPipeline builds the query pipeline and returns the raw Iterator
 // instead of collecting all results. The caller MUST call iter.Close().
-// The returned iterator holds a reference to a per-query BudgetMonitor backed
-// by the global query pool. The monitor is released when the caller closes the
-// iterator; callers that abandon the iterator will leak pool reservations.
+// The returned iterator holds a reference to a per-query memory budget (either
+// BudgetAdapter). The budget is released when the
+// caller closes the iterator; callers that abandon the iterator will leak.
 func (e *Engine) BuildStreamingPipeline(ctx context.Context, prog *spl2.Program,
 	externalTimeBounds *spl2.TimeBounds) (enginepipeline.Iterator, StreamingStats, error) {
 	hints := spl2.ExtractQueryHints(prog)
@@ -45,56 +46,75 @@ func (e *Engine) BuildStreamingPipeline(ctx context.Context, prog *spl2.Program,
 		}
 	}
 
-	monitor := stats.NewBudgetMonitorWithParent("stream", int64(e.queryCfg.MaxQueryMemory), e.rootMonitor)
+	return e.buildStreamingPipelineWithGovernor(ctx, prog, hints)
+}
 
-	eventStore, ss, memErr := e.buildEventStore(ctx, hints, nil, monitor)
+// buildStreamingPipelineWithGovernor uses the governor v2 for memory accounting.
+func (e *Engine) buildStreamingPipelineWithGovernor(ctx context.Context, prog *spl2.Program,
+	hints *spl2.QueryHints) (enginepipeline.Iterator, StreamingStats, error) {
+
+	eventStore, ss, memErr := e.buildEventStore(ctx, hints, nil)
 	if memErr != nil {
-		monitor.Close()
-
 		return nil, StreamingStats{}, memErr
 	}
-	var stats StreamingStats
-	for name, idxEvents := range eventStore {
-		stats.RowsScanned += int64(len(idxEvents))
-		stats.IndexesUsed = append(stats.IndexesUsed, name)
-	}
-	sort.Strings(stats.IndexesUsed)
-	stats.SegmentsTotal = ss.SegmentsTotal
-	stats.SegmentsScanned = ss.SegmentsScanned
-	stats.SegmentsSkippedTime = ss.SegmentsSkippedTime
-	stats.SegmentsSkippedBF = ss.SegmentsSkippedBF
-	stats.BufferedEvents = ss.BufferedEvents
-	stats.ProcessedBytes = ss.TotalBytesRead
+	streamStats := buildStreamingStats(eventStore, ss)
 
 	pipeStore := &enginepipeline.ServerIndexStore{Events: eventStore}
-	iter, err := enginepipeline.BuildProgramWithViews(ctx, prog, pipeStore, e, e, 0)
+	parallelCfg := e.parallelConfig()
+	buildResult, err := enginepipeline.BuildProgramWithGovernor(
+		ctx, prog, pipeStore, e, e, 0,
+		"", e.governor, int64(e.queryCfg.MaxQueryMemory),
+		e.spillMgr, e.queryCfg.DedupExact,
+		parallelCfg,
+	)
 	if err != nil {
-		monitor.Close()
-		return nil, stats, err
+		return nil, streamStats, err
 	}
+	iter := buildResult.Iterator
 
 	if err := iter.Init(ctx); err != nil {
 		iter.Close()
-		monitor.Close()
-		return nil, stats, err
+		if buildResult.GovBudget != nil {
+			buildResult.GovBudget.Close()
+		}
+		return nil, streamStats, err
 	}
 
-	return &monitorClosingIterator{Iterator: iter, monitor: monitor}, stats, nil
+	return &govClosingIterator{Iterator: iter, budget: buildResult.GovBudget}, streamStats, nil
 }
 
-// monitorClosingIterator wraps an Iterator and closes the BudgetMonitor when
-// the iterator is closed, ensuring pool bytes are returned to the parent.
-type monitorClosingIterator struct {
+// buildStreamingStats constructs StreamingStats from an event store and scan stats.
+func buildStreamingStats(eventStore map[string][]*event.Event, ss storeStats) StreamingStats {
+	var streamStats StreamingStats
+	for name, idxEvents := range eventStore {
+		streamStats.RowsScanned += int64(len(idxEvents))
+		streamStats.IndexesUsed = append(streamStats.IndexesUsed, name)
+	}
+	sort.Strings(streamStats.IndexesUsed)
+	streamStats.SegmentsTotal = ss.SegmentsTotal
+	streamStats.SegmentsScanned = ss.SegmentsScanned
+	streamStats.SegmentsSkippedTime = ss.SegmentsSkippedTime
+	streamStats.SegmentsSkippedBF = ss.SegmentsSkippedBF
+	streamStats.BufferedEvents = ss.BufferedEvents
+	streamStats.ProcessedBytes = ss.TotalBytesRead
+	return streamStats
+}
+
+// govClosingIterator wraps an Iterator and closes the governor BudgetAdapter
+// when the iterator is closed, ensuring governor reservations are released.
+type govClosingIterator struct {
 	enginepipeline.Iterator
-	monitor *stats.BudgetMonitor
-	closed  bool
+	budget *memgov.BudgetAdapter
+	closed bool
 }
 
-func (m *monitorClosingIterator) Close() error {
-	err := m.Iterator.Close()
-	if !m.closed {
-		m.monitor.Close()
-		m.closed = true
+func (g *govClosingIterator) Close() error {
+	err := g.Iterator.Close()
+	if !g.closed {
+		if g.budget != nil {
+			g.budget.Close()
+		}
+		g.closed = true
 	}
 	return err
 }

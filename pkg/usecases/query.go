@@ -594,6 +594,9 @@ func annotatePipelineFields(query *spl2.Query, catalogFields []string) []Pipelin
 				added = append(added, outField)
 			}
 			setAdd(fields, outField)
+			for _, f := range c.ExtraFields {
+				setAdd(fields, f)
+			}
 			stage.Description = truncateDesc(c.String(), 80)
 
 		case *spl2.PackJsonCommand:

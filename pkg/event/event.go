@@ -21,6 +21,9 @@ type Event struct {
 	Index string
 	// Fields holds extracted key-value fields.
 	Fields map[string]Value
+	// ParseError is true when JSON/KV parsing failed for this event.
+	// The event still carries _raw and metadata; only field extraction is missing.
+	ParseError bool
 }
 
 // NewEvent creates a new Event with the given timestamp and raw text.

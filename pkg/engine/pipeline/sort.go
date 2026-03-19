@@ -7,7 +7,7 @@ import (
 	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -74,7 +74,7 @@ type SortIterator struct {
 	offset      int
 	batchSize   int
 	maxSortRows int
-	acct        stats.MemoryAccount // per-operator memory tracking (nil *BoundAccount = no tracking)
+	acct        memgov.MemoryAccount // per-operator memory tracking
 
 	// External merge sort state (populated only when spill occurs).
 	spillFiles  []string      // paths of sorted spill run files
@@ -100,14 +100,14 @@ func NewSortIterator(child Iterator, fields []SortField, batchSize int) *SortIte
 		fields:      fields,
 		batchSize:   batchSize,
 		maxSortRows: DefaultMaxSortRows,
-		acct:        stats.NopAccount(),
+		acct:        memgov.NopAccount(),
 	}
 }
 
 // NewSortIteratorWithBudget creates a sort operator with memory budget tracking.
-func NewSortIteratorWithBudget(child Iterator, fields []SortField, batchSize int, acct stats.MemoryAccount) *SortIterator {
+func NewSortIteratorWithBudget(child Iterator, fields []SortField, batchSize int, acct memgov.MemoryAccount) *SortIterator {
 	s := NewSortIterator(child, fields, batchSize)
-	s.acct = stats.EnsureAccount(acct)
+	s.acct = memgov.EnsureAccount(acct)
 
 	return s
 }
@@ -115,7 +115,7 @@ func NewSortIteratorWithBudget(child Iterator, fields []SortField, batchSize int
 // NewSortIteratorWithSpill creates a sort operator with memory budget tracking
 // and disk spill support. When the budget is exceeded, sorted runs are written
 // to disk via the SpillManager and merged on output using a k-way merge.
-func NewSortIteratorWithSpill(child Iterator, fields []SortField, batchSize int, acct stats.MemoryAccount, mgr *SpillManager) *SortIterator {
+func NewSortIteratorWithSpill(child Iterator, fields []SortField, batchSize int, acct memgov.MemoryAccount, mgr *SpillManager) *SortIterator {
 	s := NewSortIteratorWithBudget(child, fields, batchSize, acct)
 	s.spillMgr = mgr
 
@@ -239,7 +239,7 @@ func (s *SortIterator) materialize(ctx context.Context) error {
 			// Bug fix: when scan (or another child) fails because the shared
 			// budget is exhausted, sort may hold a large spillable buffer.
 			// Spill that buffer to free shared budget capacity, then retry.
-			if stats.IsMemoryExhausted(err) && s.spillMgr != nil {
+			if memgov.IsMemoryExhausted(err) && s.spillMgr != nil {
 				if columnarMode && columnarRows > 0 {
 					// Degrade to row path: convert columnar data to rows before spilling.
 					s.degradeToRowPath()
@@ -446,7 +446,7 @@ func (s *SortIterator) ResourceStats() OperatorResourceStats {
 // is exceeded, it spills accumulated rows to free capacity and retries. If the
 // row still cannot fit after spilling (e.g., a single row exceeds the entire
 // reservation), the underlying budget error is propagated (preserving the
-// *stats.BudgetExceededError type for callers that inspect it).
+// *memgov.BudgetExceededError type for callers that inspect it).
 func (s *SortIterator) growOrSpill(rowBytes int64) error {
 	growErr := s.acct.Grow(rowBytes)
 	if growErr == nil {

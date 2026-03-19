@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // makeSizedEvents creates n events with a _raw field of the given size.
@@ -31,7 +31,7 @@ func TestScanReturnsErrorOnGenuineBudgetPressure(t *testing.T) {
 	events := makeSizedEvents(1000, 200)
 
 	// Very small budget: 2KB — too small even for a single batch of 32 events.
-	acct := stats.NewBudgetMonitor("test", 2*1024).NewAccount("scan")
+	acct := memgov.NewTestBudget("test", 2*1024).NewAccount("scan")
 	iter := NewScanIteratorWithBudget(events, 32, acct)
 
 	ctx := context.Background()
@@ -61,7 +61,7 @@ func TestScanCompletesWithBudgetTracking(t *testing.T) {
 	events := makeSizedEvents(100, 50)
 
 	// Large budget — no pressure.
-	acct := stats.NewBudgetMonitor("test", 0).NewAccount("scan")
+	acct := memgov.NewTestBudget("test", 0).NewAccount("scan")
 	iter := NewScanIteratorWithBudget(events, 32, acct)
 
 	ctx := context.Background()
@@ -119,7 +119,7 @@ func TestEstimateEventSize(t *testing.T) {
 }
 
 func TestScanTightBudgetWithSortSpill(t *testing.T) {
-	// Integration test: scan and sort share a tight BudgetMonitor.
+	// Integration test: scan and sort share a tight BudgetAdapter.
 	// The budget is large enough for the sort to spill and reclaim capacity,
 	// but small enough that scan batches cause pressure. Verifies the
 	// sort-spill-on-child-budget-exceeded path handles real budget sharing.
@@ -134,7 +134,7 @@ func TestScanTightBudgetWithSortSpill(t *testing.T) {
 	// Budget: 30KB. Each event is ~512B + overhead ≈ 700B.
 	// A batch of 32 events is ~22KB. Sort accumulates rows and eventually
 	// hits the limit, triggering spill. After spill, scan can continue.
-	monitor := stats.NewBudgetMonitor("test", 30*1024)
+	monitor := memgov.NewTestBudget("test", 30*1024)
 	scanAcct := monitor.NewAccount("scan")
 	sortAcct := monitor.NewAccount("sort")
 
@@ -176,7 +176,7 @@ func TestScanMinBatchBudgetError(t *testing.T) {
 	events := makeSizedEvents(10, 1024)
 
 	// Budget: 100 bytes — far too small for any event (~1.2KB each).
-	acct := stats.NewBudgetMonitor("test", 100).NewAccount("scan")
+	acct := memgov.NewTestBudget("test", 100).NewAccount("scan")
 	iter := NewScanIteratorWithBudget(events, 32, acct)
 
 	ctx := context.Background()
@@ -190,7 +190,7 @@ func TestScanMinBatchBudgetError(t *testing.T) {
 	}
 
 	// Verify the error is budget-related.
-	if !stats.IsBudgetExceeded(err) {
+	if !memgov.IsBudgetExceeded(err) {
 		t.Fatalf("expected BudgetExceededError, got: %v", err)
 	}
 

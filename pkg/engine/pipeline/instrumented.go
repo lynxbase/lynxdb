@@ -68,7 +68,7 @@ func (ii *InstrumentedIterator) Schema() []FieldInfo {
 	return ii.inner.Schema()
 }
 
-// MemoryAccounter is implemented by operators that track memory via BoundAccount.
+// MemoryAccounter is implemented by operators that track memory via MemoryAccount.
 type MemoryAccounter interface {
 	MemoryUsed() int64
 }
@@ -338,8 +338,6 @@ func iteratorChild(iter Iterator) Iterator {
 	case *TailIterator:
 		return it.child
 	case *SortIterator:
-		return it.child
-	case *BufferedSortIterator:
 		return it.child
 	case *TopNIterator:
 		return it.child

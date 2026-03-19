@@ -71,6 +71,15 @@ func (ms *MmapSegment) Bytes() []byte {
 	return []byte(ms.mapped)
 }
 
+// Fd returns the underlying file descriptor for use with fadvise hints.
+// Returns 0 if the file has been closed.
+func (ms *MmapSegment) Fd() uintptr {
+	if ms.file == nil {
+		return 0
+	}
+	return ms.file.Fd()
+}
+
 // Close unmaps the file and closes the file handle. Safe to call multiple times.
 func (ms *MmapSegment) Close() error {
 	if !ms.closed.CompareAndSwap(false, true) {

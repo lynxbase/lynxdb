@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // mockIterator yields a fixed number of batches, each with batchLen rows.
@@ -308,7 +308,7 @@ func TestResourceReporterSort(t *testing.T) {
 	}
 	defer mgr.CleanupAll()
 
-	acct := stats.NewBudgetMonitor("test", 16*1024).NewAccount("sort")
+	acct := memgov.NewTestBudget("test", 16*1024).NewAccount("sort")
 	sortIter := NewSortIteratorWithSpill(child, []SortField{{Name: "key", Desc: false}}, 32, acct, mgr)
 
 	// Wrap with instrumentation.
@@ -354,7 +354,7 @@ func TestResourceReporterAggregate(t *testing.T) {
 	}
 	defer mgr.CleanupAll()
 
-	acct := stats.NewBudgetMonitor("test", 8*1024).NewAccount("agg")
+	acct := memgov.NewTestBudget("test", 8*1024).NewAccount("agg")
 	aggIter := NewAggregateIteratorWithSpill(
 		child,
 		[]AggFunc{{Name: "count", Alias: "cnt"}},
@@ -403,7 +403,7 @@ func TestCollectStageStatsIncludesSpill(t *testing.T) {
 	}
 	defer mgr.CleanupAll()
 
-	acct := stats.NewBudgetMonitor("test", 16*1024).NewAccount("sort")
+	acct := memgov.NewTestBudget("test", 16*1024).NewAccount("sort")
 	sortIter := NewSortIteratorWithSpill(scanII, []SortField{{Name: "key", Desc: false}}, 32, acct, mgr)
 	sortII := WrapInstrumented(sortIter, "Sort")
 

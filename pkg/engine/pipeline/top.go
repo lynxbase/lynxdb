@@ -6,7 +6,7 @@ import (
 	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/stats"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // TopIterator implements the top/rare command.
@@ -22,7 +22,7 @@ type TopIterator struct {
 	rows      []map[string]event.Value
 	emitted   bool
 	offset    int
-	acct      stats.MemoryAccount // per-operator memory tracking (nil *BoundAccount = no tracking)
+	acct      memgov.MemoryAccount // per-operator memory tracking
 }
 
 // NewTopIterator creates a top/rare iterator.
@@ -38,14 +38,14 @@ func NewTopIterator(child Iterator, field, byField string, n int, ascending bool
 		n:         n,
 		ascending: ascending,
 		batchSize: batchSize,
-		acct:      stats.NopAccount(),
+		acct:      memgov.NopAccount(),
 	}
 }
 
 // NewTopIteratorWithBudget creates a top/rare iterator with memory budget tracking.
-func NewTopIteratorWithBudget(child Iterator, field, byField string, n int, ascending bool, batchSize int, acct stats.MemoryAccount) *TopIterator {
+func NewTopIteratorWithBudget(child Iterator, field, byField string, n int, ascending bool, batchSize int, acct memgov.MemoryAccount) *TopIterator {
 	t := NewTopIterator(child, field, byField, n, ascending, batchSize)
-	t.acct = stats.EnsureAccount(acct)
+	t.acct = memgov.EnsureAccount(acct)
 
 	return t
 }

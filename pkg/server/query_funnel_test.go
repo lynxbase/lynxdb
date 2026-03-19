@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
@@ -80,9 +81,7 @@ func TestApplySpillAndPoolStats_SpillingStages(t *testing.T) {
 		{Name: "Aggregate", SpillBytes: 2048},
 		{Name: "Filter", SpillBytes: 0},
 	}
-	rootMon := stats.NewRootMonitor("test", 100_000)
-
-	applySpillAndPoolStats(ss, stages, rootMon)
+	applySpillAndPoolStats(ss, stages)
 
 	if !ss.SpilledToDisk {
 		t.Error("expected SpilledToDisk=true")
@@ -101,9 +100,8 @@ func TestApplySpillAndPoolStats_NoSpill(t *testing.T) {
 		{Name: "Filter", SpillBytes: 0},
 		{Name: "Scan", SpillBytes: 0},
 	}
-	rootMon := stats.NewRootMonitor("test", 100_000)
 
-	applySpillAndPoolStats(ss, stages, rootMon)
+	applySpillAndPoolStats(ss, stages)
 
 	if ss.SpilledToDisk {
 		t.Error("expected SpilledToDisk=false")
@@ -113,31 +111,6 @@ func TestApplySpillAndPoolStats_NoSpill(t *testing.T) {
 	}
 	if ss.SpillFiles != 0 {
 		t.Errorf("expected SpillFiles=0, got %d", ss.SpillFiles)
-	}
-}
-
-func TestApplySpillAndPoolStats_PoolUtilization(t *testing.T) {
-	ss := &SearchStats{}
-	rootMon := stats.NewRootMonitor("test", 100_000)
-	// Reserve some bytes to create non-zero utilization.
-	_ = rootMon.Reserve(25_000)
-
-	applySpillAndPoolStats(ss, nil, rootMon)
-
-	expected := 0.25
-	if ss.PoolUtilization < expected-0.001 || ss.PoolUtilization > expected+0.001 {
-		t.Errorf("expected PoolUtilization=~%f, got %f", expected, ss.PoolUtilization)
-	}
-}
-
-func TestApplySpillAndPoolStats_PoolUtilizationZeroLimit(t *testing.T) {
-	ss := &SearchStats{}
-	rootMon := stats.NewRootMonitor("test", 0) // 0 = unlimited
-
-	applySpillAndPoolStats(ss, nil, rootMon)
-
-	if ss.PoolUtilization != 0 {
-		t.Errorf("expected PoolUtilization=0 for unlimited pool, got %f", ss.PoolUtilization)
 	}
 }
 
@@ -166,7 +139,7 @@ func TestClassifyErrorType_WrappedTimeout(t *testing.T) {
 }
 
 func TestClassifyErrorType_BudgetExceeded(t *testing.T) {
-	err := &stats.BudgetExceededError{
+	err := &memgov.BudgetExceededError{
 		Monitor:   "query",
 		Requested: 1024,
 		Current:   999,
@@ -179,7 +152,7 @@ func TestClassifyErrorType_BudgetExceeded(t *testing.T) {
 }
 
 func TestClassifyErrorType_PoolExhausted(t *testing.T) {
-	err := &stats.PoolExhaustedError{
+	err := &memgov.PoolExhaustedError{
 		Pool:      "global",
 		Requested: 1024,
 		Current:   999,

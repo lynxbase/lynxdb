@@ -78,7 +78,7 @@ func (r *Reader) ReadColumnar(columns []string, bitmap *roaring.Bitmap) (*Column
 			}
 		}
 
-		rgResult, err := r.readRowGroupColumnar(rg, need, localBitmap)
+		rgResult, err := r.readRowGroupColumnar(rgi, rg, need, localBitmap)
 		if err != nil {
 			return nil, fmt.Errorf("segment.Reader.ReadColumnar: row group %d: %w", rgi, err)
 		}
@@ -139,7 +139,7 @@ func (r *Reader) ReadColumnarWithHints(hints QueryHints) (*ColumnarResult, error
 			continue
 		}
 
-		rgResult, err := r.readRowGroupColumnar(rg, need, nil)
+		rgResult, err := r.readRowGroupColumnar(rgi, rg, need, nil)
 		if err != nil {
 			return nil, fmt.Errorf("segment.Reader.ReadColumnarWithHints: row group %d: %w", rgi, err)
 		}
@@ -303,7 +303,8 @@ func (r *Reader) evaluatePredicateBitmap(preds []Predicate, searchBitmap *roarin
 // readRowGroupColumnar reads columns from a single row group into a ColumnarResult.
 // The need map specifies which columns to read; nil or empty means all columns.
 // The localBitmap, when non-nil, filters rows within this row group using local offsets.
-func (r *Reader) readRowGroupColumnar(rg *RowGroupMeta, need map[string]bool, localBitmap *roaring.Bitmap) (*ColumnarResult, error) {
+// rgIdx is the row group index, used for column cache lookups.
+func (r *Reader) readRowGroupColumnar(rgIdx int, rg *RowGroupMeta, need map[string]bool, localBitmap *roaring.Bitmap) (*ColumnarResult, error) {
 	res := &ColumnarResult{
 		Builtins: make(map[string][]string),
 		Fields:   make(map[string][]event.Value),
@@ -314,7 +315,7 @@ func (r *Reader) readRowGroupColumnar(rg *RowGroupMeta, need map[string]bool, lo
 	if timeChunk == nil {
 		return nil, fmt.Errorf("segment: row group missing _time column")
 	}
-	timestamps, err := r.readInt64sFromChunk(timeChunk)
+	timestamps, err := r.cachedReadInt64s(rgIdx, timeChunk)
 	if err != nil {
 		return nil, fmt.Errorf("decode _time: %w", err)
 	}
@@ -330,7 +331,7 @@ func (r *Reader) readRowGroupColumnar(rg *RowGroupMeta, need map[string]bool, lo
 	if len(need) == 0 || need["_raw"] {
 		rawChunk := findChunk(rg, "_raw")
 		if rawChunk != nil {
-			raws, err := r.readStringsFromChunk(rawChunk)
+			raws, err := r.cachedReadStrings(rgIdx, rawChunk)
 			if err != nil {
 				return nil, fmt.Errorf("decode _raw: %w", err)
 			}
@@ -364,7 +365,7 @@ func (r *Reader) readRowGroupColumnar(rg *RowGroupMeta, need map[string]bool, lo
 		if cc == nil {
 			continue
 		}
-		vals, err := r.readStringsFromChunk(cc)
+		vals, err := r.cachedReadStrings(rgIdx, cc)
 		if err != nil {
 			return nil, fmt.Errorf("decode builtin %s: %w", name, err)
 		}
@@ -383,7 +384,7 @@ func (r *Reader) readRowGroupColumnar(rg *RowGroupMeta, need map[string]bool, lo
 		if len(need) > 0 && !need[cc.Name] {
 			continue
 		}
-		vals, err := r.readFieldColumnValues(cc)
+		vals, err := r.readFieldColumnValues(rgIdx, cc)
 		if err != nil {
 			return nil, fmt.Errorf("decode field %s: %w", cc.Name, err)
 		}
@@ -421,11 +422,11 @@ func (r *Reader) readRowGroupColumnar(rg *RowGroupMeta, need map[string]bool, lo
 //   - Dict8/Dict16/LZ4 (string) to StringValue (empty string becomes NullValue, matching readFieldColumn).
 //   - Delta (int64) to IntValue.
 //   - Gorilla (float64) to FloatValue.
-func (r *Reader) readFieldColumnValues(cc *ColumnChunkMeta) ([]event.Value, error) {
+func (r *Reader) readFieldColumnValues(rgIdx int, cc *ColumnChunkMeta) ([]event.Value, error) {
 	encType := column.EncodingType(cc.EncodingType)
 	switch encType {
 	case column.EncodingDict8, column.EncodingDict16, column.EncodingLZ4:
-		values, err := r.readStringsFromChunk(cc)
+		values, err := r.cachedReadStrings(rgIdx, cc)
 		if err != nil {
 			return nil, fmt.Errorf("segment: read field %q: %w", cc.Name, err)
 		}
@@ -440,7 +441,7 @@ func (r *Reader) readFieldColumnValues(cc *ColumnChunkMeta) ([]event.Value, erro
 
 		return result, nil
 	case column.EncodingDelta:
-		values, err := r.readInt64sFromChunk(cc)
+		values, err := r.cachedReadInt64s(rgIdx, cc)
 		if err != nil {
 			return nil, fmt.Errorf("segment: read field %q: %w", cc.Name, err)
 		}
@@ -451,7 +452,7 @@ func (r *Reader) readFieldColumnValues(cc *ColumnChunkMeta) ([]event.Value, erro
 
 		return result, nil
 	case column.EncodingGorilla:
-		values, err := r.readFloat64sFromChunk(cc)
+		values, err := r.cachedReadFloat64s(rgIdx, cc)
 		if err != nil {
 			return nil, fmt.Errorf("segment: read field %q: %w", cc.Name, err)
 		}
