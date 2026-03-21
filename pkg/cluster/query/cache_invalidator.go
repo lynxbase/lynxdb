@@ -25,21 +25,15 @@ func NewCacheInvalidator(c *cache.Store, logger *slog.Logger) *CacheInvalidator 
 }
 
 // HandlePartCommitted processes a part commit notification by evicting
-// overlapping cache entries. Currently uses time-based eviction as a
-// conservative strategy — any cached results that might be affected by
-// the newly committed data are evicted.
+// cache entries for the committed part. Uses targeted invalidation via
+// OnFlush to evict only entries referencing the committed segment and
+// memtable-sourced entries, preserving unrelated cached results.
 func (ci *CacheInvalidator) HandlePartCommitted(n *clusterpb.PartCommittedNotification) {
 	if ci.cache == nil {
 		return
 	}
 
-	if err := ci.cache.Clear(); err != nil {
-		ci.logger.Warn("cache invalidation failed after part commit",
-			"shard_id", n.ShardId,
-			"part_id", n.PartId,
-			"error", err)
-		return
-	}
+	ci.cache.OnFlush([]string{n.PartId})
 
 	ci.logger.Debug("cache invalidated after part commit",
 		"shard_id", n.ShardId,

@@ -91,10 +91,11 @@ func (e *Engine) Profile() Profile {
 
 // IngestOpts controls how raw data is parsed during ingestion.
 type IngestOpts struct {
-	Source      string
-	SourceType  string
-	Index       string
-	MaxFileSize int64 // Maximum allowed file size in bytes. 0 = unlimited.
+	Source       string
+	SourceType   string
+	Index        string
+	MaxFileSize  int64 // Maximum allowed file size in bytes. 0 = unlimited.
+	MaxLineBytes int   // Maximum line length for scanner buffer. 0 = 1MB default.
 }
 
 // QueryOpts controls query execution.
@@ -140,8 +141,12 @@ func (e *Engine) IngestFile(ctx context.Context, path string, opts IngestOpts) (
 
 // IngestReader reads from r and ingests all lines as events.
 func (e *Engine) IngestReader(ctx context.Context, r io.Reader, opts IngestOpts) (int, error) {
+	maxLine := opts.MaxLineBytes
+	if maxLine <= 0 {
+		maxLine = 1024 * 1024 // 1MB default
+	}
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	scanner.Buffer(make([]byte, 64*1024), maxLine)
 
 	idx := defaultIndex
 	if opts.Index != "" {
@@ -312,6 +317,7 @@ func (e *Engine) Query(ctx context.Context, spl2Query string, opts QueryOpts) (*
 	// when the memory budget is exceeded, instead of returning a hard OOM error.
 	spillMgr, spillErr := pipeline.NewSpillManager("", nil)
 	if spillErr != nil {
+		slog.Warn("spill manager unavailable, large queries may OOM", "err", spillErr)
 		spillMgr = nil // Non-fatal: proceed without spill support
 	}
 	defer func() {
@@ -662,6 +668,7 @@ func (e *Engine) QueryReader(ctx context.Context, r io.Reader, spl2Query string,
 	// when the memory budget is exceeded, instead of returning a hard OOM error.
 	qrSpillMgr, qrSpillErr := pipeline.NewSpillManager("", nil)
 	if qrSpillErr != nil {
+		slog.Warn("spill manager unavailable, large queries may OOM", "err", qrSpillErr)
 		qrSpillMgr = nil // Non-fatal: proceed without spill support
 	}
 	defer func() {

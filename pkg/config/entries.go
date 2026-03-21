@@ -177,6 +177,7 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("views.backfill_max_retries", strconv.Itoa(cfg.Views.BackfillMaxRetries), strconv.Itoa(dflt.Views.BackfillMaxRetries), strconv.Itoa(fileCfg.Views.BackfillMaxRetries), "LYNXDB_VIEWS_BACKFILL_MAX_RETRIES")
 	add("views.dispatch_batch_size", strconv.Itoa(cfg.Views.DispatchBatchSize), strconv.Itoa(dflt.Views.DispatchBatchSize), strconv.Itoa(fileCfg.Views.DispatchBatchSize), "LYNXDB_VIEWS_DISPATCH_BATCH_SIZE")
 	add("views.dispatch_batch_delay", cfg.Views.DispatchBatchDelay.String(), dflt.Views.DispatchBatchDelay.String(), fileCfg.Views.DispatchBatchDelay.String(), "LYNXDB_VIEWS_DISPATCH_BATCH_DELAY")
+	add("views.backfill_timeout", cfg.Views.BackfillTimeout.String(), dflt.Views.BackfillTimeout.String(), fileCfg.Views.BackfillTimeout.String(), "LYNXDB_VIEWS_BACKFILL_TIMEOUT")
 
 	// Buffer Manager.
 	add("buffer_manager.enabled", strconv.FormatBool(cfg.BufferManager.Enabled), strconv.FormatBool(dflt.BufferManager.Enabled), strconv.FormatBool(fileCfg.BufferManager.Enabled), "LYNXDB_BUFFER_MANAGER_ENABLED")

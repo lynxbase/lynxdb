@@ -332,6 +332,11 @@ func NewEngine(cfg Config) *Engine {
 	// Create default index.
 	e.indexes[DefaultIndexName] = model.DefaultIndexConfig(DefaultIndexName)
 
+	// Wire cluster config to pipeline globals.
+	if cfg.Cluster.DCHLLThreshold > 0 {
+		enginepipeline.SetDCHLLThreshold(cfg.Cluster.DCHLLThreshold)
+	}
+
 	return e
 }
 

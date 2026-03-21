@@ -44,10 +44,9 @@ func (e *UnsupportedCommandError) Error() string {
 // CheckUnsupportedCommands returns an UnsupportedCommandError if the query
 // contains any unsupported Splunk commands, or nil if all commands are supported.
 func CheckUnsupportedCommands(query string) *UnsupportedCommandError {
-	lower := strings.ToLower(query)
-	for cmd, hint := range unsupportedCommands {
-		pattern := "| " + cmd
-		if strings.Contains(lower, pattern) || strings.Contains(lower, "|"+cmd) {
+	for _, seg := range pipeSegments(query) {
+		cmd := strings.ToLower(seg)
+		if hint, ok := unsupportedCommands[cmd]; ok {
 			return &UnsupportedCommandError{
 				Command: cmd,
 				Hint:    hint,
@@ -55,6 +54,45 @@ func CheckUnsupportedCommands(query string) *UnsupportedCommandError {
 		}
 	}
 	return nil
+}
+
+// pipeSegments splits a query by pipe delimiters and returns the first token
+// (command name) of each segment. Pipes inside quoted strings are ignored.
+func pipeSegments(query string) []string {
+	var segments []string
+	var inSingle, inDouble bool
+	start := 0
+	for i := 0; i < len(query); i++ {
+		switch {
+		case query[i] == '\'' && !inDouble:
+			inSingle = !inSingle
+		case query[i] == '"' && !inSingle:
+			inDouble = !inDouble
+		case query[i] == '|' && !inSingle && !inDouble:
+			seg := extractFirstToken(query[start:i])
+			if seg != "" {
+				segments = append(segments, seg)
+			}
+			start = i + 1
+		}
+	}
+	// Last segment after final pipe.
+	if seg := extractFirstToken(query[start:]); seg != "" {
+		segments = append(segments, seg)
+	}
+	return segments
+}
+
+// extractFirstToken returns the first whitespace-delimited token from s.
+func extractFirstToken(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if idx := strings.IndexAny(s, " \t\r\n"); idx >= 0 {
+		return s[:idx]
+	}
+	return s
 }
 
 // translationHints maps Splunk patterns to LynxDB suggestions.
@@ -72,9 +110,9 @@ func DetectCompatHints(query string) []CompatHint {
 	lower := strings.ToLower(query)
 	seen := make(map[string]bool)
 
-	for cmd, msg := range unsupportedCommands {
-		pattern := "| " + cmd
-		if strings.Contains(lower, pattern) || strings.Contains(lower, "|"+cmd) {
+	for _, seg := range pipeSegments(query) {
+		cmd := strings.ToLower(seg)
+		if msg, ok := unsupportedCommands[cmd]; ok {
 			if !seen[cmd] {
 				seen[cmd] = true
 				hints = append(hints, CompatHint{
@@ -84,11 +122,8 @@ func DetectCompatHints(query string) []CompatHint {
 				})
 			}
 		}
-	}
-
-	// Check for "| chart" (without "timechart").
-	if strings.Contains(lower, "| chart") && !strings.Contains(lower, "| timechart") {
-		if !seen["chart"] {
+		// Check for "chart" (without "timechart").
+		if cmd == "chart" && !seen["chart"] {
 			seen["chart"] = true
 			hints = append(hints, CompatHint{
 				Pattern:    "chart",

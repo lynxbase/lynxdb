@@ -735,6 +735,18 @@ var envBindings = []envBinding{
 		},
 		func(c *Config) string { return strconv.Itoa(c.Views.BackfillMaxRetries) }},
 
+	{"LYNXDB_VIEWS_BACKFILL_TIMEOUT", "views.backfill_timeout",
+		func(c *Config, v string) error {
+			d, err := time.ParseDuration(v)
+			if err != nil {
+				return err
+			}
+			c.Views.BackfillTimeout = Duration(d)
+
+			return nil
+		},
+		func(c *Config) string { return c.Views.BackfillTimeout.String() }},
+
 	// Buffer Manager
 	{"LYNXDB_BUFFER_MANAGER_ENABLED", "buffer_manager.enabled",
 		func(c *Config, v string) error {

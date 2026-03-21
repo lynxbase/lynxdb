@@ -37,7 +37,18 @@ type PartialAggGroup struct {
 // an exact map[string]bool. Above it, the set is converted to HLL (~0.8%
 // error) to bound memory usage for high-cardinality fields in distributed
 // partial aggregation.
-const dcHLLThreshold = 10_000
+//
+// Configurable via config.ClusterConfig.DCHLLThreshold; call
+// SetDCHLLThreshold at startup to override the default.
+var dcHLLThreshold = 10_000
+
+// SetDCHLLThreshold overrides the default dc() HLL promotion threshold.
+// Must be called before any queries execute (typically at server startup).
+func SetDCHLLThreshold(n int) {
+	if n > 0 {
+		dcHLLThreshold = n
+	}
+}
 
 // PartialAggState holds running state for one group's one function.
 // Fields are exported for serialization/deserialization by the MV subsystem.

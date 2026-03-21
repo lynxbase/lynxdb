@@ -196,17 +196,15 @@ func (cs *Store) SetPool(pool PoolReserver) {
 // Get retrieves a cached result by key. Returns nil on miss.
 func (cs *Store) Get(ctx context.Context, key Key) (*CachedResult, error) {
 	hex := key.Hex()
-	cs.mu.RLock()
+	cs.mu.Lock()
 	entry, ok := cs.entries[hex]
-	cs.mu.RUnlock()
-
 	if !ok {
+		cs.mu.Unlock()
 		cs.misses.Add(1)
 
 		return nil, nil
 	}
 	if time.Since(entry.result.CreatedAt) > cs.ttl {
-		cs.mu.Lock()
 		cs.removeEntryLocked(hex, entry)
 		cs.mu.Unlock()
 		cs.misses.Add(1)
@@ -214,7 +212,6 @@ func (cs *Store) Get(ctx context.Context, key Key) (*CachedResult, error) {
 		return nil, nil
 	}
 	// Mark as recently accessed in CLOCK.
-	cs.mu.Lock()
 	cs.clock.access(hex)
 	entry.result.AccessedAt = time.Now()
 	cs.mu.Unlock()

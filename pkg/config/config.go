@@ -288,6 +288,10 @@ type ViewsConfig struct {
 	// DispatchBatchDelay is the maximum time to buffer events before flushing.
 	// Default: 100ms.
 	DispatchBatchDelay Duration `yaml:"dispatch_batch_delay" json:"dispatch_batch_delay"`
+
+	// BackfillTimeout is the maximum duration for a single backfill run.
+	// Default: 4h.
+	BackfillTimeout Duration `yaml:"backfill_timeout" json:"backfill_timeout"`
 }
 
 // BufferManagerConfig configures the unified buffer manager.
@@ -405,6 +409,7 @@ func DefaultConfig() *Config {
 			BackfillMaxRetries:       60,
 			DispatchBatchSize:        1000,
 			DispatchBatchDelay:       Duration(100 * time.Millisecond),
+			BackfillTimeout:          Duration(4 * time.Hour),
 		},
 
 		Cluster: ClusterConfig{

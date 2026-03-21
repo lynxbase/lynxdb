@@ -13,8 +13,8 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/storage/views"
 )
 
-// backfillTimeout is the maximum duration for a single backfill run.
-const backfillTimeout = 30 * time.Minute
+// defaultBackfillTimeout is the fallback when config is zero.
+const defaultBackfillTimeout = 4 * time.Hour
 
 // CreateMV creates a materialized view definition and launches async backfill.
 func (e *Engine) CreateMV(def views.ViewDefinition) error {
@@ -158,8 +158,12 @@ func (e *Engine) CreateView(name, query, retention string) error {
 // The goroutine executes the view's SPL2 query through the full query engine,
 // converts result rows to events, and injects them into the view's storage.
 func (e *Engine) launchBackfill(viewName string) {
+	timeout := time.Duration(e.viewsCfg.BackfillTimeout)
+	if timeout <= 0 {
+		timeout = defaultBackfillTimeout
+	}
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), backfillTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
 		if err := e.RunQueryBackfill(ctx, viewName); err != nil {
 			e.logger.Error("MV backfill failed", "view", viewName, "error", err)

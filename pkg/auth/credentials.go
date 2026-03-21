@@ -269,6 +269,7 @@ func loadCredentialsFile(path string) *credentialsFile {
 }
 
 // writeCredentials writes the credentials file with secure permissions.
+// Uses atomic tmp+rename to avoid corruption on crash.
 func writeCredentials(path string, f *credentialsFile) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -284,8 +285,28 @@ func writeCredentials(path string, f *credentialsFile) error {
 	header := []byte("# Managed by 'lynxdb login'. Do not edit manually.\n")
 	content := append(header, data...)
 
-	if err := os.WriteFile(path, content, 0o600); err != nil {
-		return fmt.Errorf("auth: write credentials: %w", err)
+	tmp, err := os.CreateTemp(dir, ".credentials-*.tmp")
+	if err != nil {
+		return fmt.Errorf("auth: create temp: %w", err)
+	}
+	tmpName := tmp.Name()
+
+	if _, err := tmp.Write(content); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return fmt.Errorf("auth: write temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("auth: close temp: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0o600); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("auth: chmod temp: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		os.Remove(tmpName)
+		return fmt.Errorf("auth: rename temp: %w", err)
 	}
 
 	return nil

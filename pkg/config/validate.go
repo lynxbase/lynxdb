@@ -162,6 +162,13 @@ func (s *StorageConfig) validate() error {
 		return validationErr("storage", "compression", s.Compression, "must be lz4 or zstd")
 	}
 
+	switch s.PartitionBy {
+	case "", "daily", "hourly", "weekly", "monthly", "none":
+		// ok ("" uses default)
+	default:
+		return validationErr("storage", "partition_by", s.PartitionBy, "must be daily, hourly, weekly, monthly, or none")
+	}
+
 	if s.RowGroupSize < 1 {
 		return validationErr("storage", "row_group_size", fmt.Sprintf("%d", s.RowGroupSize), "must be at least 1")
 	}
@@ -261,6 +268,17 @@ func (i *IngestConfig) validate() error {
 		return validationErr("ingest", "max_line_bytes", fmt.Sprintf("%d", i.MaxLineBytes), "must be at least 1024 bytes")
 	}
 
+	switch i.Mode {
+	case "", "full", "lightweight":
+		// ok ("" uses default)
+	default:
+		return validationErr("ingest", "mode", i.Mode, "must be full or lightweight")
+	}
+
+	if i.DedupEnabled && i.DedupCapacity < 1 {
+		return validationErr("ingest", "dedup_capacity", fmt.Sprintf("%d", i.DedupCapacity), "must be at least 1 when dedup_enabled is true")
+	}
+
 	return nil
 }
 
@@ -305,6 +323,9 @@ func (v *ViewsConfig) validate() error {
 	}
 	if v.DispatchBatchDelay.Duration() < 0 {
 		return validationErr("views", "dispatch_batch_delay", v.DispatchBatchDelay.String(), "must not be negative")
+	}
+	if v.BackfillTimeout.Duration() < 0 {
+		return validationErr("views", "backfill_timeout", v.BackfillTimeout.String(), "must not be negative")
 	}
 
 	return nil

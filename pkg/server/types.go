@@ -317,9 +317,10 @@ type SearchJob struct {
 	Error     string           `json:"error,omitempty"`
 	ErrorCode string           `json:"-"` // machine-readable error code (e.g., QUERY_MEMORY_EXCEEDED)
 
-	cancel context.CancelFunc // cancels the job's context
-	detach func()             // stops parent context propagation (sync→async promotion)
-	doneCh chan struct{}      // closed when job completes
+	cancel   context.CancelFunc // cancels the job's context
+	detach   func()             // stops parent context propagation (sync→async promotion)
+	doneCh   chan struct{}      // closed when job completes
+	doneOnce sync.Once          // ensures doneCh is closed exactly once
 }
 
 func newSearchJob(query string, rt ResultType) *SearchJob {
@@ -342,7 +343,7 @@ func newSearchJob(query string, rt ResultType) *SearchJob {
 func (j *SearchJob) complete(status string) {
 	j.DoneAt = time.Now()
 	j.Status = status
-	close(j.doneCh)
+	j.doneOnce.Do(func() { close(j.doneCh) })
 }
 
 // Done returns a channel that is closed when the job completes.
