@@ -31,10 +31,22 @@ func HighlightSPL2(input string, theme *ShellTheme) string {
 			b.WriteString(input[lastEnd:tok.Pos])
 		}
 
-		style := tokenStyle(tok.Type, theme)
-		b.WriteString(style.Render(tok.Literal))
+		// For string tokens the Literal is the unquoted/unescaped content
+		// (e.g. postgres for "postgres"), but the raw input span includes
+		// the quotes and escape sequences. Use the raw span so the
+		// highlighted output matches the input exactly.
+		literal := tok.Literal
+		endPos := tok.Pos + len(tok.Literal)
 
-		lastEnd = tok.Pos + len(tok.Literal)
+		if tok.Type == spl2.TokenString {
+			endPos = stringRawEnd(input, tok.Pos)
+			literal = input[tok.Pos:endPos]
+		}
+
+		style := tokenStyle(tok.Type, theme)
+		b.WriteString(style.Render(literal))
+
+		lastEnd = endPos
 	}
 
 	// Append any trailing text.
@@ -43,6 +55,29 @@ func HighlightSPL2(input string, theme *ShellTheme) string {
 	}
 
 	return b.String()
+}
+
+// stringRawEnd returns the byte offset just past the closing quote of a
+// quoted string that starts at pos in input. It handles backslash escapes
+// so that \" does not terminate the scan early.
+func stringRawEnd(input string, pos int) int {
+	i := pos + 1 // skip opening quote
+
+	for i < len(input) {
+		if input[i] == '\\' && i+1 < len(input) {
+			i += 2 // skip escape sequence
+
+			continue
+		}
+
+		if input[i] == '"' {
+			return i + 1 // past closing quote
+		}
+
+		i++
+	}
+
+	return i // unterminated string — consume to end
 }
 
 func tokenStyle(tt spl2.TokenType, t *ShellTheme) *styleWrapper {

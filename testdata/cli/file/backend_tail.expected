@@ -1,0 +1,3 @@
+{"duration_ms":30,"level":"INFO","service":"user-service"}
+{"duration_ms":42,"level":"INFO","service":"notification-service"}
+{"duration_ms":5300,"level":"ERROR","service":"payment-service"}

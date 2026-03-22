@@ -235,6 +235,9 @@ func (r *Results) appendStyledError(errText string) {
 
 // formatElapsedShell returns a human-readable elapsed duration.
 func formatElapsedShell(d time.Duration) string {
+	if d < time.Millisecond {
+		return "<1ms"
+	}
 	if d < time.Second {
 		return fmt.Sprintf("%dms", d.Milliseconds())
 	}

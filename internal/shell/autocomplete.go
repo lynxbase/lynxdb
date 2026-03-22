@@ -2,29 +2,43 @@ package shell
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/client"
 )
+
+// builtinFields are always present in the completion list regardless of
+// whether the server has reported any fields yet.
+var builtinFields = []string{"_timestamp", "_raw", "_source", "_time"}
 
 // Completer provides context-aware SPL2 completions for the textinput.
 type Completer struct {
 	commands    []string
 	aggFuncs    []string
 	evalFuncs   []string
+	keywords    []string
 	slashCmds   []string
 	fields      []string
+	sources     []string
 	fieldValues map[string][]string // field name → top value strings
 }
 
 // NewCompleter creates a completer with static SPL2 vocabulary.
 func NewCompleter() *Completer {
+	fields := make([]string, len(builtinFields))
+	copy(fields, builtinFields)
+
 	return &Completer{
 		commands: []string{
 			"FROM", "SEARCH", "WHERE", "EVAL", "STATS", "SORT", "TABLE", "FIELDS",
 			"RENAME", "HEAD", "TAIL", "DEDUP", "REX", "BIN", "TIMECHART", "TOP",
 			"RARE", "STREAMSTATS", "EVENTSTATS", "JOIN", "APPEND", "MULTISEARCH",
 			"TRANSACTION", "XYSERIES", "FILLNULL", "LIMIT",
+			"UNPACK_JSON", "UNPACK_LOGFMT", "UNPACK_SYSLOG", "UNPACK_COMBINED",
+			"UNPACK_CLF", "UNPACK_KV",
+			"JSON", "UNROLL", "PACK_JSON",
+			"PARSE", "LOOKUP", "EXPLODE",
 		},
 		aggFuncs: []string{
 			"count", "sum", "avg", "min", "max", "dc", "values",
@@ -36,18 +50,39 @@ func NewCompleter() *Completer {
 			"round", "substr", "lower", "upper", "len", "ln",
 			"mvjoin", "mvappend", "mvdedup", "isnotnull", "isnull", "strftime",
 		},
+		keywords: []string{
+			"BY", "AS", "AND", "OR", "NOT", "IN", "SPAN",
+			"ASC", "DESC", "TRUE", "FALSE", "NULL",
+		},
 		slashCmds: []string{
 			"/help", "/quit", "/exit", "/clear", "/history",
 			"/fields", "/sources", "/explain", "/set",
 			"/format", "/server", "/timing", "/since",
 			"/save", "/run", "/queries", "/tail",
 		},
+		fields: fields,
 	}
 }
 
-// SetFields updates the dynamic field names for completion.
+// SetFields updates the dynamic field names for completion, preserving
+// built-in fields that are always available.
 func (c *Completer) SetFields(fields []string) {
-	c.fields = fields
+	seen := make(map[string]struct{}, len(fields)+len(builtinFields))
+	merged := make([]string, 0, len(fields)+len(builtinFields))
+
+	for _, f := range builtinFields {
+		merged = append(merged, f)
+		seen[f] = struct{}{}
+	}
+
+	for _, f := range fields {
+		if _, ok := seen[f]; !ok {
+			merged = append(merged, f)
+			seen[f] = struct{}{}
+		}
+	}
+
+	c.fields = merged
 }
 
 // SetFieldValues populates known field values from the /fields API response.
@@ -68,6 +103,27 @@ func (c *Completer) SetFieldValues(infos []client.FieldInfo) {
 
 		if len(vals) > 0 {
 			c.fieldValues[fi.Name] = vals
+		}
+	}
+}
+
+// SetSources updates the source names for completion (used after FROM).
+func (c *Completer) SetSources(sources []string) {
+	c.sources = sources
+}
+
+// MergeResultFields adds field names discovered from query results,
+// deduplicating against the existing fields list.
+func (c *Completer) MergeResultFields(newFields []string) {
+	existing := make(map[string]struct{}, len(c.fields))
+	for _, f := range c.fields {
+		existing[f] = struct{}{}
+	}
+
+	for _, f := range newFields {
+		if _, ok := existing[f]; !ok {
+			c.fields = append(c.fields, f)
+			existing[f] = struct{}{}
 		}
 	}
 }
@@ -123,20 +179,32 @@ func (c *Completer) Suggest(value string) []string {
 	default:
 		lastCmd := lastCommandWord(beforeLower)
 
-		switch {
-		// After stats/timechart/etc → suggest aggregation functions + fields.
-		case lastCmd == "stats" || lastCmd == "timechart" || lastCmd == "eventstats" || lastCmd == "streamstats":
+		switch lastCmd {
+		// Aggregation contexts: suggest agg functions + fields.
+		case "stats", "timechart", "eventstats", "streamstats":
 			candidates = c.matchPrefixCI(word, c.aggFuncs)
 			candidates = append(candidates, c.matchPrefixCI(word, c.fields)...)
 
-		// After by/where/eval → suggest field names.
-		case lastCmd == "by" || lastCmd == "where" || lastCmd == "eval":
+		// Field-selection contexts: suggest field names.
+		case "by", "where", "eval", "sort", "table", "fields", "keep", "omit",
+			"dedup", "rename", "top", "rare", "join", "on":
 			candidates = c.matchPrefixCI(word, c.fields)
 
-		// Default: match all candidates.
+		// FROM context: suggest sources first, then fields as fallback.
+		case "from":
+			candidates = c.matchPrefixCI(word, c.sources)
+			if len(candidates) == 0 {
+				candidates = c.matchPrefixCI(word, c.fields)
+			}
+
+		// After AS: user is typing an alias name — no suggestions.
+		case "as":
+			candidates = nil
+
+		// Default: match across all candidate pools including keywords.
 		default:
 			lowerWord := strings.ToLower(word)
-			for _, list := range [][]string{c.commands, c.aggFuncs, c.evalFuncs, c.fields} {
+			for _, list := range [][]string{c.commands, c.aggFuncs, c.evalFuncs, c.fields, c.keywords} {
 				for _, s := range list {
 					if strings.HasPrefix(strings.ToLower(s), lowerWord) && strings.ToLower(s) != lowerWord {
 						candidates = append(candidates, s)
@@ -271,4 +339,30 @@ func lastCommandWord(s string) string {
 	}
 
 	return ""
+}
+
+// extractFieldNames collects unique field names from result rows.
+// It samples up to the first 10 rows to avoid scanning large result sets.
+func extractFieldNames(rows []map[string]interface{}) []string {
+	seen := make(map[string]struct{})
+
+	limit := 10
+	if len(rows) < limit {
+		limit = len(rows)
+	}
+
+	for i := 0; i < limit; i++ {
+		for k := range rows[i] {
+			seen[k] = struct{}{}
+		}
+	}
+
+	names := make([]string, 0, len(seen))
+	for k := range seen {
+		names = append(names, k)
+	}
+
+	sort.Strings(names)
+
+	return names
 }

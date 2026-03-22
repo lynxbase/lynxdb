@@ -1,0 +1,10 @@
+{"hits":7,"pct":26.9,"service":"payment-service"}
+{"hits":5,"pct":19.2,"service":"gateway-service"}
+{"hits":4,"pct":15.4,"service":"user-service"}
+{"hits":3,"pct":11.5,"service":"project-service"}
+{"hits":2,"pct":7.7,"service":"deploy-service"}
+{"hits":1,"pct":3.8,"service":"analytics-service"}
+{"hits":1,"pct":3.8,"service":"auth-service"}
+{"hits":1,"pct":3.8,"service":"import-service"}
+{"hits":1,"pct":3.8,"service":"notification-service"}
+{"hits":1,"pct":3.8,"service":"report-service"}

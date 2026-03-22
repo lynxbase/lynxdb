@@ -1,0 +1,10 @@
+{"n":7,"pct":26.9,"service":"payment-service","total":26}
+{"n":5,"pct":19.2,"service":"gateway-service","total":26}
+{"n":4,"pct":15.4,"service":"user-service","total":26}
+{"n":3,"pct":11.5,"service":"project-service","total":26}
+{"n":2,"pct":7.7,"service":"deploy-service","total":26}
+{"n":1,"pct":3.8,"service":"analytics-service","total":26}
+{"n":1,"pct":3.8,"service":"auth-service","total":26}
+{"n":1,"pct":3.8,"service":"import-service","total":26}
+{"n":1,"pct":3.8,"service":"notification-service","total":26}
+{"n":1,"pct":3.8,"service":"report-service","total":26}

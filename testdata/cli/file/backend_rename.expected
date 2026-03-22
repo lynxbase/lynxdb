@@ -1,0 +1,5 @@
+{"count":5,"severity":"ERROR","svc":"payment-service"}
+{"count":1,"severity":"INFO","svc":"analytics-service"}
+{"count":1,"severity":"INFO","svc":"auth-service"}
+{"count":1,"severity":"INFO","svc":"deploy-service"}
+{"count":1,"severity":"INFO","svc":"import-service"}

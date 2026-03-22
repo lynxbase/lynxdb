@@ -228,6 +228,12 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("GET /api/v1/debug/pprof/profile", pprof.Profile)
 	mux.HandleFunc("GET /api/v1/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("GET /api/v1/debug/pprof/trace", pprof.Trace)
+	mux.HandleFunc("GET /api/v1/debug/pprof/heap", pprof.Handler("heap").ServeHTTP)
+	mux.HandleFunc("GET /api/v1/debug/pprof/allocs", pprof.Handler("allocs").ServeHTTP)
+	mux.HandleFunc("GET /api/v1/debug/pprof/goroutine", pprof.Handler("goroutine").ServeHTTP)
+	mux.HandleFunc("GET /api/v1/debug/pprof/mutex", pprof.Handler("mutex").ServeHTTP)
+	mux.HandleFunc("GET /api/v1/debug/pprof/block", pprof.Handler("block").ServeHTTP)
+	mux.HandleFunc("GET /api/v1/debug/pprof/threadcreate", pprof.Handler("threadcreate").ServeHTTP)
 
 	// Query endpoint (three-mode: sync/hybrid/async).
 	mux.HandleFunc("POST /api/v1/query", s.handleQuery)

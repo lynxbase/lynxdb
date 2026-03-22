@@ -1,0 +1,5 @@
+{"deviation":1556.1428571428573,"duration_ms":5300,"service":"payment-service","svc_avg":3743.8571428571427}
+{"deviation":1486.1428571428573,"duration_ms":5230,"service":"payment-service","svc_avg":3743.8571428571427}
+{"deviation":1456.1428571428573,"duration_ms":5200,"service":"payment-service","svc_avg":3743.8571428571427}
+{"deviation":1366.1428571428573,"duration_ms":5110,"service":"payment-service","svc_avg":3743.8571428571427}
+{"deviation":1356.1428571428573,"duration_ms":5100,"service":"payment-service","svc_avg":3743.8571428571427}

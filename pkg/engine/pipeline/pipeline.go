@@ -85,6 +85,11 @@ type queryContext struct {
 	parallelCfg         ParallelConfig     // branch-level parallelism configuration
 	coordinator         *MemoryCoordinator // nil when no coordination needed
 
+	// defaultSource records the Source from the outermost query so that
+	// sub-queries without an explicit FROM (e.g., inside MULTISEARCH) can
+	// inherit the parent's data source instead of scanning nothing.
+	defaultSource *spl2.SourceClause
+
 	// Memory governance v2: when set, operator accounts are backed by the
 	// Governor via a BudgetAdapter. The govBudget provides per-query
 	// tracking (CurAllocated, MaxAllocated) and the Governor provides
@@ -279,6 +284,11 @@ func (qc *queryContext) buildQuery(ctx context.Context, query *spl2.Query) (Iter
 			iter = NewRowScanIterator(rows, qc.batchSize)
 		} else {
 			iter = qc.buildSourceIterator(query.Source)
+			// Record the first non-variable source so MULTISEARCH sub-queries
+			// without an explicit FROM can inherit the parent's data source.
+			if qc.defaultSource == nil {
+				qc.defaultSource = query.Source
+			}
 		}
 	} else {
 		iter = NewScanIteratorWithBudget(nil, qc.batchSize, qc.newAccount("scan"))
@@ -443,6 +453,8 @@ func commandStageName(cmd spl2.Command) string {
 		return "Unpack"
 	case *spl2.JsonCommand:
 		return "Json"
+	case *spl2.SelectCommand:
+		return "Select"
 	case *spl2.UnrollCommand:
 		return "Unroll"
 	case *spl2.PackJsonCommand:
@@ -711,6 +723,26 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 	case *spl2.TableCommand:
 		return NewProjectIterator(child, c.Fields, false), nil
 
+	case *spl2.SelectCommand:
+		// SelectCommand is LynxFlow syntax: | select field1, field2 AS alias, ...
+		// Semantics: project + optional rename — identical to TABLE + RENAME.
+		fields := make([]string, len(c.Columns))
+		var renames map[string]string
+		for i, col := range c.Columns {
+			fields[i] = col.Name
+			if col.Alias != "" {
+				if renames == nil {
+					renames = make(map[string]string, len(c.Columns))
+				}
+				renames[col.Name] = col.Alias
+			}
+		}
+		result := NewProjectIterator(child, fields, false)
+		if len(renames) > 0 {
+			return NewRenameIterator(result, renames), nil
+		}
+		return result, nil
+
 	case *spl2.RenameCommand:
 		renames := make(map[string]string, len(c.Renames))
 		for _, r := range c.Renames {
@@ -817,17 +849,30 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 	case *spl2.MultisearchCommand:
 		children := make([]Iterator, 0, len(c.Searches))
 		for _, search := range c.Searches {
-			subIter, err := qc.buildQuery(qc.ctx, search)
+			// Sub-queries without an explicit FROM inherit the parent's source.
+			// Without this, Source==nil → empty scan iterator → 0 rows.
+			subQuery := search
+			if subQuery.Source == nil && qc.defaultSource != nil {
+				subQuery = &spl2.Query{
+					Source:      qc.defaultSource,
+					Commands:    search.Commands,
+					Annotations: search.Annotations,
+				}
+			}
+			subIter, err := qc.buildQuery(qc.ctx, subQuery)
 			if err != nil {
 				return nil, fmt.Errorf("build MULTISEARCH branch: %w", err)
 			}
 			children = append(children, subIter)
 		}
 		if qc.parallelCfg.Enabled && len(children) > 1 {
-			// Parallel MULTISEARCH: all branches run concurrently with
-			// interleaved output (no ordering guarantee across branches).
+			// Parallel MULTISEARCH: all branches run concurrently but
+			// output is emitted in child index order (deterministic).
+			// OrderConcurrent eagerly starts all goroutines (unlike
+			// OrderPreserved which is lazy) while preserving declaration
+			// order of the sub-searches.
 			return NewConcurrentUnionIterator(
-				children, OrderInterleaved, &qc.parallelCfg,
+				children, OrderConcurrent, &qc.parallelCfg,
 			), nil
 		}
 
@@ -851,7 +896,9 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		return NewFillnullIteratorWithBudget(child, c.Value, c.Fields, qc.newAccount("fillnull")), nil
 
 	case *spl2.TimechartCommand:
-		// Timechart = BIN + STATS.
+		// Timechart = BIN + STATS + SORT by _time.
+		// Sorting by _time is Splunk convention: timechart always returns
+		// rows in chronological order.
 		dur := parseDuration(c.Span)
 		binIter := NewBinIterator(child, "_time", "_time", dur)
 		aggs := qc.convertAggs(c.Aggregations)
@@ -861,7 +908,14 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 			tcIter.budgetLimit = qc.govBudget.Limit()
 		}
 
-		return tcIter, nil
+		// Timechart results are always sorted by _time ascending, then by
+		// any group-by fields for deterministic output order.
+		sortFields := make([]SortField, 0, 1+len(c.GroupBy))
+		sortFields = append(sortFields, SortField{Name: "_time", Desc: false})
+		for _, g := range c.GroupBy {
+			sortFields = append(sortFields, SortField{Name: g, Desc: false})
+		}
+		return NewSortIteratorWithSpill(tcIter, sortFields, qc.batchSize, qc.newCoordinatedAccount("timechart-sort", reservationSort), qc.spillMgr), nil
 
 	case *spl2.FromCommand:
 		// System tables: FROM system.parts, system.merges, system.columns.
@@ -1096,11 +1150,17 @@ func (qc *queryContext) convertAggs(aggs []spl2.AggExpr) []AggFunc {
 		var prog *vm.Program
 		if len(a.Args) > 0 {
 			// Check if arg is a nested eval (FuncCallExpr)
-			if _, ok := a.Args[0].(*spl2.FuncCallExpr); ok {
-				key := a.Args[0].String()
+			if fc, ok := a.Args[0].(*spl2.FuncCallExpr); ok {
+				// Unwrap eval() wrapper — compile the inner condition directly.
+				// count(eval(status>=500)) → compile "status>=500", not "eval(status>=500)".
+				expr := a.Args[0].(spl2.Expr)
+				if strings.EqualFold(fc.Name, "eval") && len(fc.Args) == 1 {
+					expr = fc.Args[0]
+				}
+				key := expr.String()
 				prog = qc.progCache.Get(key)
 				if prog == nil {
-					compiled, err := vm.CompileExpr(a.Args[0])
+					compiled, err := vm.CompileExpr(expr)
 					if err == nil {
 						prog = compiled
 						qc.progCache.Put(key, prog)

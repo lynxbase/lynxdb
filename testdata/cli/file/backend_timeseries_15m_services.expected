@@ -1,0 +1,12 @@
+{"bucket":"2026-02-10T09:00:00+01:00","count":1,"services":1}
+{"bucket":"2026-02-10T09:15:00+01:00","count":4,"services":2}
+{"bucket":"2026-02-10T09:30:00+01:00","count":2,"services":1}
+{"bucket":"2026-02-10T09:45:00+01:00","count":4,"services":2}
+{"bucket":"2026-02-10T10:00:00+01:00","count":7,"services":3}
+{"bucket":"2026-02-10T10:15:00+01:00","count":1,"services":1}
+{"bucket":"2026-02-10T10:30:00+01:00","count":1,"services":1}
+{"bucket":"2026-02-10T10:45:00+01:00","count":1,"services":1}
+{"bucket":"2026-02-10T11:00:00+01:00","count":1,"services":1}
+{"bucket":"2026-02-10T11:15:00+01:00","count":2,"services":2}
+{"bucket":"2026-02-10T11:30:00+01:00","count":1,"services":1}
+{"bucket":"2026-02-10T11:45:00+01:00","count":1,"services":1}

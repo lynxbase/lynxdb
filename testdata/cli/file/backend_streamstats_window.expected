@@ -1,0 +1,6 @@
+{"duration_ms":28,"rolling_avg":28,"service":"user-service"}
+{"duration_ms":45,"rolling_avg":36.5,"service":"user-service"}
+{"duration_ms":5230,"rolling_avg":1767.6666666666667,"service":"payment-service"}
+{"duration_ms":5110,"rolling_avg":3461.6666666666665,"service":"payment-service"}
+{"duration_ms":87,"rolling_avg":3475.6666666666665,"service":"payment-service"}
+{"duration_ms":52,"rolling_avg":1749.6666666666667,"service":"project-service"}

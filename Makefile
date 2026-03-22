@@ -20,7 +20,7 @@ test-e2e:
 	go test -tags e2e -count=1 -timeout 180s ./test/e2e/
 
 test-cli: build
-	go test -tags clitest -count=1 -timeout 120s ./test/cli/
+	go test -tags clitest -count=1 -timeout 300s ./test/cli/
 
 vet:
 	go vet ./...
@@ -36,6 +36,23 @@ $(CUSTOM_GCL): .custom-gcl.yml
 
 clean:
 	rm -f lynxdb custom-gcl
+
+.PHONY: bench-micro bench-fixtures bench-macro
+
+bench-micro:
+	@mkdir -p artifacts
+	go test -bench=. -benchmem -count=5 -timeout 300s \
+		./pkg/engine/pipeline/... \
+		./pkg/spl2/... \
+		./pkg/ingest/pipeline/... \
+		| tee artifacts/bench-micro.txt
+
+bench-fixtures:
+	go run scripts/genbench/main.go
+
+bench-macro: build
+	@mkdir -p artifacts
+	./lynxdb bench --events 1000000 | tee artifacts/bench-macro.txt
 
 .PHONY: webui-install webui webui-dev
 

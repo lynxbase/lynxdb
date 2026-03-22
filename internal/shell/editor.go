@@ -1,12 +1,15 @@
 package shell
 
 import (
+	"fmt"
 	"strings"
 
 	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+
+	"github.com/lynxbase/lynxdb/internal/ui"
 )
 
 const editorMaxLines = 6
@@ -14,13 +17,15 @@ const editorMaxLines = 6
 // Editor wraps textarea.Model with history navigation, ghost-text autocomplete,
 // and dynamic height.
 type Editor struct {
-	input      textarea.Model
-	history    *History
-	completer  *Completer
-	prompt     string
-	contPrompt string
-	keys       keyMap
-	ghostText  string // autocomplete ghost suffix (dimmed in View)
+	input       textarea.Model
+	history     *History
+	completer   *Completer
+	prompt      string
+	contPrompt  string
+	keys        keyMap
+	ghostText   string // autocomplete ghost suffix
+	multiLine   bool   // tracks multi-line state for prompt switching
+	promptWidth int    // cached display width of the prompt
 }
 
 // NewEditor creates an editor with the given prompt strings.
@@ -59,12 +64,13 @@ func NewEditor(prompt, contPrompt string, history *History, completer *Completer
 	ta.Focus()
 
 	return Editor{
-		input:      ta,
-		history:    history,
-		completer:  completer,
-		prompt:     prompt,
-		contPrompt: contPrompt,
-		keys:       defaultKeyMap(),
+		input:       ta,
+		history:     history,
+		completer:   completer,
+		prompt:      prompt,
+		contPrompt:  contPrompt,
+		keys:        defaultKeyMap(),
+		promptWidth: promptWidth,
 	}
 }
 
@@ -184,6 +190,8 @@ func (e *Editor) refreshSuggestions() {
 }
 
 // updateHeight adjusts textarea height to match content, clamped to [1, editorMaxLines].
+// When the editor transitions between single-line and multi-line, the prompt
+// is updated to show/hide line numbers.
 func (e *Editor) updateHeight() {
 	h := e.input.LineCount()
 	if h > editorMaxLines {
@@ -193,6 +201,44 @@ func (e *Editor) updateHeight() {
 		h = 1
 	}
 	e.input.SetHeight(h)
+
+	isMulti := h > 1
+	if isMulti != e.multiLine {
+		e.multiLine = isMulti
+		e.updatePrompt()
+	}
+}
+
+// updatePrompt switches the textarea prompt between the normal prompt
+// (single-line) and line-numbered prompt (multi-line).
+func (e *Editor) updatePrompt() {
+	pw := e.promptWidth
+
+	if !e.multiLine {
+		// Restore original prompt.
+		prompt := e.prompt
+		contPrompt := e.contPrompt
+		e.input.SetPromptFunc(pw, func(info textarea.PromptInfo) string {
+			if info.LineNumber == 0 {
+				return prompt
+			}
+			return contPrompt
+		})
+		return
+	}
+
+	// Multi-line: show dimmed line numbers.
+	dimStyle := lipgloss.NewStyle().Foreground(ui.ColorDim())
+	e.input.SetPromptFunc(pw, func(info textarea.PromptInfo) string {
+		num := fmt.Sprintf("%d", info.LineNumber+1)
+		suffix := " │ "
+		suffixWidth := lipgloss.Width(suffix)
+		padWidth := pw - len(num) - suffixWidth
+		if padWidth < 0 {
+			padWidth = 0
+		}
+		return dimStyle.Render(strings.Repeat(" ", padWidth) + num + suffix)
+	})
 }
 
 func (e *Editor) handleSubmit() (tea.Cmd, *querySubmitMsg, *slashCommandMsg) {
@@ -238,21 +284,81 @@ func (e *Editor) handleCancel() (tea.Cmd, *querySubmitMsg, *slashCommandMsg) {
 }
 
 // View renders the editor with ghost text overlay.
+//
+// Without ghost text, this delegates to the textarea's own View which manages
+// the virtual cursor and all ANSI rendering.
+//
+// With ghost text, we post-process the rendered output to append dimmed ghost
+// text after the cursor. We never mutate textarea state in View() — calling
+// SetValue() triggers Reset() internally which destroys cursor position,
+// viewport scroll, and the value slice, corrupting state for the next Update().
 func (e *Editor) View() string {
 	v := e.input.View()
 	if e.ghostText == "" {
 		return v
 	}
 
-	// Append dimmed ghost text to the last non-empty line.
+	// Append dimmed ghost text to the last content line of the rendered output.
+	// The textarea pads each line with trailing plain spaces to fill the width;
+	// we strip that padding, insert styled ghost text, then re-pad.
+	ghostStyle := lipgloss.NewStyle().Foreground(ui.ColorDim())
+	styledGhost := ghostStyle.Render(e.ghostText)
+	ghostWidth := lipgloss.Width(e.ghostText)
+
 	lines := strings.Split(v, "\n")
-	for i := len(lines) - 1; i >= 0; i-- {
-		if strings.TrimSpace(lines[i]) != "" {
-			ghost := lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render(e.ghostText)
-			lines[i] += ghost
-			break
-		}
+
+	// Find the last non-empty line — textarea.View() ends with \n producing
+	// a trailing empty string, and end-of-buffer lines may be blank.
+	lastIdx := len(lines) - 1
+	for lastIdx > 0 && strings.TrimRight(lines[lastIdx], " ") == "" {
+		lastIdx--
+	}
+	if lastIdx < 0 {
+		return v
 	}
 
+	line := lines[lastIdx]
+	trimmed := strings.TrimRight(line, " ")
+	fullWidth := lipgloss.Width(line)
+	trimmedWidth := lipgloss.Width(trimmed)
+	available := fullWidth - trimmedWidth
+
+	if available <= 0 {
+		return v
+	}
+
+	// Truncate ghost text if it exceeds the available padding space.
+	ghost := e.ghostText
+	if ghostWidth > available {
+		ghost = truncateToWidth(ghost, available)
+		styledGhost = ghostStyle.Render(ghost)
+		ghostWidth = lipgloss.Width(ghost)
+	}
+
+	remaining := available - ghostWidth
+	if remaining < 0 {
+		remaining = 0
+	}
+
+	lines[lastIdx] = trimmed + styledGhost + strings.Repeat(" ", remaining)
+
 	return strings.Join(lines, "\n")
+}
+
+// truncateToWidth returns a prefix of s whose display width does not exceed maxWidth.
+func truncateToWidth(s string, maxWidth int) string {
+	if maxWidth <= 0 {
+		return ""
+	}
+
+	w := 0
+	for i, r := range s {
+		rw := lipgloss.Width(string(r))
+		if w+rw > maxWidth {
+			return s[:i]
+		}
+		w += rw
+	}
+
+	return s
 }

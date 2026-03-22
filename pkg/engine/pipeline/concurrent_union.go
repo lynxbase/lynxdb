@@ -21,8 +21,15 @@ const (
 
 	// OrderInterleaved fans in batches from all children into a single
 	// merged channel. Whichever child produces a batch first gets emitted.
-	// Used by MULTISEARCH and APPEND when downstream is commutative (stats, sort).
+	// Used by APPEND when downstream is commutative (stats, sort).
 	OrderInterleaved
+
+	// OrderConcurrent eagerly starts ALL child goroutines concurrently
+	// (like OrderInterleaved) but reads from per-child channels in index
+	// order (like OrderPreserved). This gives concurrent execution with
+	// deterministic output ordering. Used by MULTISEARCH where branch
+	// order must match the query declaration order.
+	OrderConcurrent
 )
 
 // batchResult is the unit of communication between child goroutines and
@@ -36,7 +43,7 @@ type batchResult struct {
 // with branch-level parallelism. Each child runs in its own goroutine,
 // producing batches into channels that the consumer reads from.
 //
-// Two modes are supported:
+// Three modes are supported:
 //   - OrderInterleaved: children run concurrently via a worker pool limited
 //     to maxParallel goroutines, batches arrive in arbitrary order (fan-in
 //     via single merged channel). Each worker drains one child entirely
@@ -46,6 +53,9 @@ type batchResult struct {
 //     child's iteration is off-loaded to a goroutine with a buffered channel
 //     for decoupled producer/consumer pacing. Child[i+1] only starts when
 //     child[i] is exhausted (lazy start).
+//   - OrderConcurrent: all children start concurrently (eager start) but
+//     batches are emitted in child index order. Combines the parallelism
+//     of OrderInterleaved with the deterministic output of OrderPreserved.
 //
 // Error handling: if any child returns an error, the master context is
 // canceled (fail-fast), and the error is propagated to the consumer.
@@ -116,6 +126,8 @@ func (c *ConcurrentUnionIterator) Next(ctx context.Context) (*Batch, error) {
 		return c.nextInterleaved(ctx)
 	case OrderPreserved:
 		return c.nextPreserved(ctx)
+	case OrderConcurrent:
+		return c.nextConcurrent(ctx)
 	default:
 		return c.nextInterleaved(ctx)
 	}
@@ -185,6 +197,8 @@ func (c *ConcurrentUnionIterator) start(ctx context.Context) {
 		c.childChs = make([]chan batchResult, len(c.children))
 		c.childCancel = make([]context.CancelFunc, len(c.children))
 		// Lazy start: don't spawn goroutines yet. nextPreserved does it.
+	case OrderConcurrent:
+		c.startConcurrent(c.masterCtx)
 	}
 }
 
@@ -359,6 +373,53 @@ func (c *ConcurrentUnionIterator) nextPreserved(_ context.Context) (*Batch, erro
 			return res.batch, nil
 		case <-c.masterCtx.Done():
 			// Prefer the original error over context.Canceled.
+			if err := c.getError(); err != nil {
+				return nil, err
+			}
+
+			return nil, c.masterCtx.Err()
+		}
+	}
+
+	return nil, nil // all children exhausted
+}
+
+// startConcurrent eagerly spawns goroutines for ALL children at once.
+// Unlike OrderPreserved (lazy start), every child begins producing batches
+// immediately. Output is still consumed in index order by nextConcurrent.
+func (c *ConcurrentUnionIterator) startConcurrent(ctx context.Context) {
+	c.childChs = make([]chan batchResult, len(c.children))
+	c.childCancel = make([]context.CancelFunc, len(c.children))
+	for i := range c.children {
+		c.startPreservedChild(i) // reuse per-child goroutine logic
+	}
+}
+
+// nextConcurrent reads children in index order (deterministic), but all
+// goroutines are already running concurrently (started by startConcurrent).
+func (c *ConcurrentUnionIterator) nextConcurrent(_ context.Context) (*Batch, error) {
+	for c.current < len(c.children) {
+		// No lazy-start check — all goroutines already running.
+
+		// Fail-fast error check.
+		if err := c.getError(); err != nil {
+			return nil, err
+		}
+
+		select {
+		case res, ok := <-c.childChs[c.current]:
+			if !ok {
+				// Current child exhausted — advance to next.
+				c.current++
+
+				continue
+			}
+			if res.err != nil {
+				return nil, res.err
+			}
+
+			return res.batch, nil
+		case <-c.masterCtx.Done():
 			if err := c.getError(); err != nil {
 				return nil, err
 			}

@@ -1,0 +1,2 @@
+{"count":3,"error":"DB connection pool exhausted"}
+{"count":2,"error":"Webhook handler timeout"}

@@ -140,24 +140,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.completer.SetFields(msg.fields)
 		m.completer.SetFieldValues(msg.fieldInfo)
 
+		if len(msg.sources) > 0 {
+			m.completer.SetSources(msg.sources)
+		}
+
 		return m, nil
 
 	case jobCreatedMsg:
 		m.jobID = msg.jobID
+		m.startTime = time.Now()
 		m.pollCount = 0
 
-		return m, pollJobCmd(m.session.Client, msg.jobID, m.jobQuery, m.jobHints, 0)
+		return m, pollJobCmd(m.session.Client, msg.jobID, m.jobQuery, m.jobHints, 0, m.startTime)
 
 	case progressMsg:
 		m.progress = &msg
 		m.pollCount++
 
-		return m, pollJobCmd(m.session.Client, m.jobID, m.jobQuery, m.jobHints, m.pollCount)
+		return m, pollJobCmd(m.session.Client, m.jobID, m.jobQuery, m.jobHints, m.pollCount, m.startTime)
 
 	case pollTickMsg:
 		m.pollCount++
 
-		return m, pollJobCmd(m.session.Client, m.jobID, m.jobQuery, m.jobHints, m.pollCount)
+		return m, pollJobCmd(m.session.Client, m.jobID, m.jobQuery, m.jobHints, m.pollCount, m.startTime)
 
 	case tailStartMsg:
 		if m.tailActive {
@@ -242,6 +247,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.jobID = ""
 		m.progress = nil
 		m.session.LastQuery = msg.query
+
+		// Extract field names from results and add to autocomplete.
+		if len(msg.rows) > 0 {
+			m.completer.MergeResultFields(extractFieldNames(msg.rows))
+		}
 
 		var zeroCtx *ZeroResultContext
 		if len(msg.rows) == 0 && msg.err == nil && m.session.Mode == "server" {
@@ -518,13 +528,15 @@ func (m Model) executeServerQueryCmd(query string) tea.Cmd {
 	c := m.session.Client
 	since := m.session.Since
 	hintText := m.jobHints // pre-computed in querySubmitMsg handler
+	start := time.Now()
 
 	return func() tea.Msg {
 		if ucErr := spl2.CheckUnsupportedCommands(query); ucErr != nil {
 			return queryResultMsg{
-				query: query,
-				err:   ucErr,
-				hints: hintText,
+				query:   query,
+				elapsed: time.Since(start),
+				err:     ucErr,
+				hints:   hintText,
 			}
 		}
 
@@ -573,7 +585,7 @@ func (m Model) executeServerQueryCmd(query string) tea.Cmd {
 	}
 }
 
-func pollJobCmd(c *client.Client, jobID, query, hints string, pollCount int) tea.Cmd {
+func pollJobCmd(c *client.Client, jobID, query, hints string, pollCount int, start time.Time) tea.Cmd {
 	return func() tea.Msg {
 		// Progressive backoff: start fast, cap at 80ms.
 		switch {
@@ -590,20 +602,25 @@ func pollJobCmd(c *client.Client, jobID, query, hints string, pollCount int) tea
 		job, err := c.GetJob(ctx, jobID)
 		if err != nil {
 			return queryResultMsg{
-				query: query,
-				err:   err,
-				hints: hints,
+				query:   query,
+				elapsed: time.Since(start),
+				err:     err,
+				hints:   hints,
 			}
 		}
 
 		switch strings.ToLower(job.Status) {
 		case "done", "complete":
 			rows := jobResultToRows(job)
+			elapsed := jobElapsed(job)
+			if elapsed == 0 {
+				elapsed = time.Since(start)
+			}
 
 			return queryResultMsg{
 				query:   query,
 				rows:    rows,
-				elapsed: jobElapsed(job),
+				elapsed: elapsed,
 				meta:    &job.Meta,
 				hints:   hints,
 			}
@@ -614,20 +631,25 @@ func pollJobCmd(c *client.Client, jobID, query, hints string, pollCount int) tea
 			}
 
 			return queryResultMsg{
-				query: query,
-				err:   fmt.Errorf("%s", errMsg),
-				hints: hints,
+				query:   query,
+				elapsed: time.Since(start),
+				err:     fmt.Errorf("%s", errMsg),
+				hints:   hints,
 			}
 		default:
 			// Still running — extract progress if available.
 			if job.Results != nil {
 				// Server returned results even though status isn't "done".
 				rows := jobResultToRows(job)
+				elapsed := jobElapsed(job)
+				if elapsed == 0 {
+					elapsed = time.Since(start)
+				}
 
 				return queryResultMsg{
 					query:   query,
 					rows:    rows,
-					elapsed: jobElapsed(job),
+					elapsed: elapsed,
 					meta:    &job.Meta,
 					hints:   hints,
 				}
@@ -672,7 +694,20 @@ func fetchFieldsCmd(c *client.Client) tea.Cmd {
 			}
 		}
 
-		return fieldsLoadedMsg{fields: names, fieldInfo: fields}
+		// Also fetch sources for autocomplete (e.g. after FROM).
+		var sourceNames []string
+
+		sources, srcErr := c.Sources(context.Background())
+		if srcErr == nil {
+			sourceNames = make([]string, 0, len(sources))
+			for _, s := range sources {
+				if s.Name != "" {
+					sourceNames = append(sourceNames, s.Name)
+				}
+			}
+		}
+
+		return fieldsLoadedMsg{fields: names, fieldInfo: fields, sources: sourceNames}
 	}
 }
 

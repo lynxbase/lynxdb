@@ -1,0 +1,3 @@
+{"avg_sev":2.4285714285714284,"n":7,"service":"payment-service"}
+{"avg_sev":2,"n":5,"service":"gateway-service"}
+{"avg_sev":1.5,"n":2,"service":"deploy-service"}

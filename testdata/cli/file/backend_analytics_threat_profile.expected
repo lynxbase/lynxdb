@@ -1,0 +1,4 @@
+{"client_ip":"198.51.100.22","count":1,"threat_type":"path_traversal"}
+{"client_ip":"198.51.100.22","count":1,"threat_type":"sqli"}
+{"client_ip":"203.0.113.77","count":1,"threat_type":"path_traversal"}
+{"client_ip":"203.0.113.77","count":2,"threat_type":"sqli"}

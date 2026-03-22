@@ -1,0 +1,4 @@
+{"avg_ms":5188,"bucket":"critical","count":5}
+{"avg_ms":21.90909090909091,"bucket":"fast","count":11}
+{"avg_ms":167.11111111111111,"bucket":"normal","count":9}
+{"avg_ms":1540,"bucket":"slow","count":1}

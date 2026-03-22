@@ -86,6 +86,11 @@ type SortIterator struct {
 	mergedBatch   *Batch // accumulated columnar data from child batches
 	sortedIndices []int  // permutation index after sort
 	useColumnar   bool   // true when columnar path is active
+
+	// tiebreakCols is the sorted list of column names NOT in the sort fields.
+	// Used as a deterministic tiebreaker when all explicit sort keys are equal.
+	// Computed lazily on first use.
+	tiebreakCols []string
 }
 
 // NewSortIterator creates a full-materialization sort operator.
@@ -422,7 +427,8 @@ func (s *SortIterator) sortColumnar(ctx context.Context) error {
 			return cmp < 0
 		}
 
-		return false
+		// Tiebreaker: all explicit sort keys are equal.
+		return s.tiebreakColumnarLess(s.sortedIndices[i], s.sortedIndices[j])
 	})
 	if canceled {
 		return ctx.Err()
@@ -541,7 +547,8 @@ func (s *SortIterator) sortInPlace() {
 			return cmp < 0
 		}
 
-		return false
+		// Tiebreaker: all explicit sort keys are equal.
+		return s.tiebreakRowLess(s.rows[i], s.rows[j])
 	})
 }
 
@@ -579,11 +586,108 @@ func (s *SortIterator) sortInPlaceCtx(ctx context.Context) error {
 			return cmp < 0
 		}
 
-		return false
+		// Tiebreaker: all explicit sort keys are equal.
+		return s.tiebreakRowLess(s.rows[i], s.rows[j])
 	})
 	if canceled {
 		return ctx.Err()
 	}
 
 	return nil
+}
+
+// buildTiebreakCols computes the sorted list of column names not already
+// in the explicit sort fields. Called lazily on the first tiebreaker
+// comparison — the cost is O(C log C) where C is the number of columns,
+// which is negligible compared to the sort itself.
+func (s *SortIterator) buildTiebreakColsFromRow(row map[string]event.Value) {
+	sortSet := make(map[string]bool, len(s.fields))
+	for _, sf := range s.fields {
+		sortSet[sf.Name] = true
+	}
+	s.tiebreakCols = make([]string, 0, len(row))
+	for k := range row {
+		if !sortSet[k] {
+			s.tiebreakCols = append(s.tiebreakCols, k)
+		}
+	}
+	sort.Strings(s.tiebreakCols)
+}
+
+func (s *SortIterator) buildTiebreakColsFromBatch() {
+	sortSet := make(map[string]bool, len(s.fields))
+	for _, sf := range s.fields {
+		sortSet[sf.Name] = true
+	}
+	s.tiebreakCols = make([]string, 0, len(s.mergedBatch.Columns))
+	for k := range s.mergedBatch.Columns {
+		if !sortSet[k] {
+			s.tiebreakCols = append(s.tiebreakCols, k)
+		}
+	}
+	sort.Strings(s.tiebreakCols)
+}
+
+// tiebreakRowLess compares two rows by non-sort columns in alphabetical
+// order. Returns true if a < b. Used as a deterministic tiebreaker when
+// all explicit sort keys are equal — ensures query output is identical
+// across runs regardless of Go map iteration randomness.
+func (s *SortIterator) tiebreakRowLess(a, b map[string]event.Value) bool {
+	if s.tiebreakCols == nil {
+		s.buildTiebreakColsFromRow(a)
+	}
+	for _, col := range s.tiebreakCols {
+		cmp := vm.CompareValues(a[col], b[col])
+		if cmp != 0 {
+			return cmp < 0
+		}
+	}
+
+	return false
+}
+
+// tiebreakMapLess is a standalone tiebreaker for row maps used by both
+// SortIterator and TopNIterator. It compares all columns NOT in sortFields,
+// in alphabetical column-name order, ascending by value.
+func tiebreakMapLess(a, b map[string]event.Value, sortFields []SortField) bool {
+	// Build sorted list of non-sort column names from the row.
+	sortSet := make(map[string]bool, len(sortFields))
+	for _, sf := range sortFields {
+		sortSet[sf.Name] = true
+	}
+	cols := make([]string, 0, len(a))
+	for k := range a {
+		if !sortSet[k] {
+			cols = append(cols, k)
+		}
+	}
+	sort.Strings(cols)
+
+	for _, col := range cols {
+		cmp := vm.CompareValues(a[col], b[col])
+		if cmp != 0 {
+			return cmp < 0
+		}
+	}
+
+	return false
+}
+
+// tiebreakColumnarLess compares two rows (by index) in the columnar
+// batch using non-sort columns. Same logic as tiebreakRowLess but
+// operates on the columnar fast path.
+func (s *SortIterator) tiebreakColumnarLess(i, j int) bool {
+	if s.tiebreakCols == nil {
+		s.buildTiebreakColsFromBatch()
+	}
+	for _, col := range s.tiebreakCols {
+		a := s.mergedBatch.Value(col, i)
+		b := s.mergedBatch.Value(col, j)
+		cmp := vm.CompareValues(a, b)
+		if cmp != 0 {
+			return cmp < 0
+		}
+	}
+
+	return false
 }

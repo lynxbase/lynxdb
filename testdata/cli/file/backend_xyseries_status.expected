@@ -1,0 +1,3 @@
+{"analytics-service":null,"auth-service":null,"deploy-service":null,"gateway-service":null,"import-service":null,"level":"ERROR","notification-service":null,"payment-service":5,"project-service":null,"report-service":null,"user-service":null}
+{"analytics-service":1,"auth-service":1,"deploy-service":1,"gateway-service":null,"import-service":1,"level":"INFO","notification-service":1,"payment-service":2,"project-service":3,"report-service":1,"user-service":4}
+{"analytics-service":null,"auth-service":null,"deploy-service":1,"gateway-service":5,"import-service":null,"level":"WARN","notification-service":null,"payment-service":null,"project-service":null,"report-service":null,"user-service":null}

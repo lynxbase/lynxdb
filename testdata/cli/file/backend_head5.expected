@@ -1,0 +1,5 @@
+{"level":"INFO","service":"project-service","status":200}
+{"level":"INFO","service":"project-service","status":201}
+{"level":"INFO","service":"user-service","status":200}
+{"level":"INFO","service":"user-service","status":200}
+{"level":"WARN","service":"gateway-service","status":400}

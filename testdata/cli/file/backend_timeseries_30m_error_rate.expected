@@ -1,0 +1,6 @@
+{"bucket":"2026-02-10T09:00:00+01:00","error_pct":0,"errors":2,"total":5}
+{"bucket":"2026-02-10T09:30:00+01:00","error_pct":0,"errors":0,"total":6}
+{"bucket":"2026-02-10T10:00:00+01:00","error_pct":0,"errors":3,"total":8}
+{"bucket":"2026-02-10T10:30:00+01:00","error_pct":0,"errors":0,"total":2}
+{"bucket":"2026-02-10T11:00:00+01:00","error_pct":0,"errors":0,"total":3}
+{"bucket":"2026-02-10T11:30:00+01:00","error_pct":0,"errors":0,"total":2}

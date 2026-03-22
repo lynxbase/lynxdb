@@ -1,0 +1,3 @@
+{"duration_ms":28,"level":"INFO","message":"Profile fetched successfully","method":"GET","path":"/api/v2/users/profile","service":"user-service","status":200,"timestamp":"2026-02-10T08:12:03.045Z"}
+{"duration_ms":45,"level":"INFO","message":"Settings updated","method":"POST","path":"/api/v2/users/settings","service":"user-service","status":200,"timestamp":"2026-02-10T08:15:22.100Z"}
+{"duration_ms":52,"level":"INFO","message":"Projects listed","method":"GET","path":"/api/v2/projects","service":"project-service","status":200,"timestamp":"2026-02-10T08:30:05.200Z"}

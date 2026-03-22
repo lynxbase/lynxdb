@@ -681,6 +681,25 @@ func GetRequiredColumns(q *Query) []string {
 		case *TransactionCommand:
 			cols[c.Field] = true
 			cols["_raw"] = true
+		case *TopCommand:
+			cols[normalizeFieldName(c.Field)] = true
+			if c.ByField != "" {
+				cols[normalizeFieldName(c.ByField)] = true
+			}
+		case *RareCommand:
+			cols[normalizeFieldName(c.Field)] = true
+			if c.ByField != "" {
+				cols[normalizeFieldName(c.ByField)] = true
+			}
+		case *TimechartCommand:
+			for _, agg := range c.Aggregations {
+				for _, arg := range agg.Args {
+					collectExprFields(arg, cols)
+				}
+			}
+			for _, f := range c.GroupBy {
+				cols[normalizeFieldName(f)] = true
+			}
 		case *UnpackCommand:
 			if c.SourceField != "" {
 				cols[c.SourceField] = true

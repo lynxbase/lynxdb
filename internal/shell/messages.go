@@ -26,10 +26,11 @@ type slashCommandMsg struct {
 	quit   bool
 }
 
-// fieldsLoadedMsg carries dynamically fetched field names and info for autocomplete.
+// fieldsLoadedMsg carries dynamically fetched field names, info, and sources for autocomplete.
 type fieldsLoadedMsg struct {
 	fields    []string
 	fieldInfo []client.FieldInfo
+	sources   []string
 }
 
 // jobCreatedMsg is sent when an async query job is successfully submitted.

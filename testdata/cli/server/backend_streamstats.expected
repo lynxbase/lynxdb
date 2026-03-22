@@ -1,0 +1,5 @@
+{"level":"INFO","row_num":1,"service":"user-service"}
+{"level":"INFO","row_num":2,"service":"user-service"}
+{"level":"ERROR","row_num":3,"service":"payment-service"}
+{"level":"ERROR","row_num":4,"service":"payment-service"}
+{"level":"INFO","row_num":5,"service":"payment-service"}

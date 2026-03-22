@@ -1,0 +1,5 @@
+{"cumulative_dur":27565,"duration_ms":180,"service":"analytics-service","timestamp":"2026-02-10T10:00:00.100Z"}
+{"cumulative_dur":27613,"duration_ms":48,"service":"project-service","timestamp":"2026-02-10T10:15:00.200Z"}
+{"cumulative_dur":29153,"duration_ms":1540,"service":"import-service","timestamp":"2026-02-10T10:20:00.300Z"}
+{"cumulative_dur":29195,"duration_ms":42,"service":"notification-service","timestamp":"2026-02-10T10:30:00.400Z"}
+{"cumulative_dur":29225,"duration_ms":30,"service":"user-service","timestamp":"2026-02-10T10:45:00.500Z"}

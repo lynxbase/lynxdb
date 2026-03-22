@@ -1,0 +1,10 @@
+{"count":1,"service":"analytics-service"}
+{"count":1,"service":"auth-service"}
+{"count":2,"service":"deploy-service"}
+{"count":5,"service":"gateway-service"}
+{"count":1,"service":"import-service"}
+{"count":1,"service":"notification-service"}
+{"count":7,"service":"payment-service"}
+{"count":3,"service":"project-service"}
+{"count":1,"service":"report-service"}
+{"count":4,"service":"user-service"}

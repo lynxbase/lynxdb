@@ -1,0 +1,10 @@
+{"svc":"analytics-service"}
+{"svc":"auth-service"}
+{"svc":"deploy-service"}
+{"svc":"gateway-service"}
+{"svc":"import-service"}
+{"svc":"notification-service"}
+{"svc":"payment-service"}
+{"svc":"project-service"}
+{"svc":"report-service"}
+{"svc":"user-service"}

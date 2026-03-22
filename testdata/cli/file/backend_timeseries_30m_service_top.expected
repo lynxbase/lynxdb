@@ -1,0 +1,10 @@
+{"bucket":"2026-02-10T09:00:00+01:00","count":3,"service":"payment-service"}
+{"bucket":"2026-02-10T09:00:00+01:00","count":2,"service":"user-service"}
+{"bucket":"2026-02-10T09:30:00+01:00","count":3,"service":"gateway-service"}
+{"bucket":"2026-02-10T09:30:00+01:00","count":2,"service":"project-service"}
+{"bucket":"2026-02-10T09:30:00+01:00","count":1,"service":"deploy-service"}
+{"bucket":"2026-02-10T10:00:00+01:00","count":4,"service":"payment-service"}
+{"bucket":"2026-02-10T10:00:00+01:00","count":2,"service":"gateway-service"}
+{"bucket":"2026-02-10T10:00:00+01:00","count":1,"service":"deploy-service"}
+{"bucket":"2026-02-10T10:00:00+01:00","count":1,"service":"user-service"}
+{"bucket":"2026-02-10T10:30:00+01:00","count":1,"service":"auth-service"}

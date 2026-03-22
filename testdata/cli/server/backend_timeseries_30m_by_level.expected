@@ -1,0 +1,10 @@
+{"bucket":"2026-02-10T09:00:00+01:00","count":2,"level":"ERROR"}
+{"bucket":"2026-02-10T09:00:00+01:00","count":3,"level":"INFO"}
+{"bucket":"2026-02-10T09:30:00+01:00","count":3,"level":"INFO"}
+{"bucket":"2026-02-10T09:30:00+01:00","count":3,"level":"WARN"}
+{"bucket":"2026-02-10T10:00:00+01:00","count":3,"level":"ERROR"}
+{"bucket":"2026-02-10T10:00:00+01:00","count":2,"level":"INFO"}
+{"bucket":"2026-02-10T10:00:00+01:00","count":3,"level":"WARN"}
+{"bucket":"2026-02-10T10:30:00+01:00","count":2,"level":"INFO"}
+{"bucket":"2026-02-10T11:00:00+01:00","count":3,"level":"INFO"}
+{"bucket":"2026-02-10T11:30:00+01:00","count":2,"level":"INFO"}

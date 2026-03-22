@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,14 +25,15 @@ import (
 )
 
 var (
-	flagAuthEnabled  bool
-	flagTLSEnabled   bool
-	flagTLSCert      string
-	flagTLSKey       string
-	flagMaxQueryPool string
-	flagSpillDir     string
-	flagNoUI         bool
-	flagOpenUI       bool
+	flagAuthEnabled    bool
+	flagTLSEnabled     bool
+	flagTLSCert        string
+	flagTLSKey         string
+	flagMaxQueryPool   string
+	flagSpillDir       string
+	flagNoUI           bool
+	flagOpenUI         bool
+	flagProfileRuntime bool
 
 	// Cluster flags.
 	flagClusterEnabled  bool
@@ -65,6 +67,7 @@ func init() {
 	serverCmd.Flags().StringVar(&flagSpillDir, "spill-dir", "", "Directory for temporary spill files (default: OS temp dir)")
 	serverCmd.Flags().BoolVar(&flagNoUI, "no-ui", false, "Disable embedded Web UI")
 	serverCmd.Flags().BoolVar(&flagOpenUI, "ui", false, "Auto-open Web UI in browser after startup")
+	serverCmd.Flags().BoolVar(&flagProfileRuntime, "profile-runtime", false, "Enable mutex and block profiling (~2-5% overhead)")
 
 	// Cluster flags.
 	serverCmd.Flags().BoolVar(&flagClusterEnabled, "cluster.enabled", false, "Enable cluster mode")
@@ -163,6 +166,12 @@ func runServer(cmd *cobra.Command, args []string) error {
 	var levelVar slog.LevelVar
 	levelVar.Set(parseLogLevel(cfg.LogLevel))
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: &levelVar}))
+
+	if flagProfileRuntime {
+		runtime.SetMutexProfileFraction(5)
+		runtime.SetBlockProfileRate(1000)
+		logger.Info("runtime profiling enabled", "mutex_fraction", 5, "block_rate_ns", 1000)
+	}
 
 	srv, err := rest.NewServer(rest.Config{
 		Addr:          cfg.Listen,

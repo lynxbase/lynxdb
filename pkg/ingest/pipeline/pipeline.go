@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"regexp"
@@ -127,9 +128,18 @@ func parseKeyValuePairs(s string) map[string]string {
 	return result
 }
 
+// Sentinel errors for tryParseTime — avoid fmt.Errorf allocations on hot path.
+var (
+	errTSTooShort = errors.New("input too short")
+	errTSNoMatch  = errors.New("no match")
+)
+
 // TimestampNormalizer extracts and normalizes timestamps from events.
 type TimestampNormalizer struct {
-	Formats []string // time formats to try
+	Formats    []string // time formats to try
+	lastFmtIdx int      // hint: index of last successful format
+	lastPos    int      // hint: position in raw where timestamp was found
+	lastLen    int      // hint: substring length that matched
 }
 
 // DefaultTimestampNormalizer creates a normalizer with common formats.
@@ -145,74 +155,119 @@ func DefaultTimestampNormalizer() *TimestampNormalizer {
 			"2006-01-02 15:04:05.000",
 			"Jan 02 15:04:05",
 		},
+		lastFmtIdx: -1,
 	}
 }
 
 func (t *TimestampNormalizer) Process(events []*event.Event) ([]*event.Event, error) {
 	for _, e := range events {
+		if !e.Time.IsZero() {
+			continue
+		}
+		// Fast path: try the cached (format, position, length) hint first.
+		if t.lastFmtIdx >= 0 {
+			if ts, ok := tryParseExact(e.Raw, t.lastPos, t.lastLen, t.Formats[t.lastFmtIdx]); ok {
+				e.Time = ts
+				continue
+			}
+		}
+		// Slow path: scan all formats and positions.
+		for fi, format := range t.Formats {
+			if ts, pos, length, err := tryParseTime(e.Raw, format); err == nil {
+				e.Time = ts
+				t.lastFmtIdx = fi
+				t.lastPos = pos
+				t.lastLen = length
+				break
+			}
+		}
 		if e.Time.IsZero() {
-			for _, format := range t.Formats {
-				if ts, err := tryParseTime(e.Raw, format); err == nil {
-					e.Time = ts
-
-					break
-				}
-			}
-			if e.Time.IsZero() {
-				e.Time = time.Now()
-			}
+			e.Time = time.Now()
 		}
 	}
 
 	return events, nil
 }
 
-func tryParseTime(raw, format string) (time.Time, error) {
-	// Trim leading quote and whitespace (common in CSV fields).
-	raw = strings.TrimLeft(raw, "\" ")
+// tryParseExact tries a single time.Parse at an exact (position, length) — the cached hint path.
+func tryParseExact(raw string, pos, length int, format string) (time.Time, bool) {
+	end := pos + length
+	if pos < 0 || end > len(raw) {
+		return time.Time{}, false
+	}
+	t, err := time.Parse(format, raw[pos:end])
+	if err != nil {
+		return time.Time{}, false
+	}
+	if t.Year() == 0 {
+		t = t.AddDate(time.Now().Year(), 0, 0)
+	}
+	return t, true
+}
+
+// looksLikeTimestamp does a cheap single-byte check to avoid calling time.Parse
+// on positions that clearly aren't timestamps.
+func looksLikeTimestamp(raw string, start int, format string) bool {
+	if start >= len(raw) {
+		return false
+	}
+	c := raw[start]
+	switch format[0] {
+	case '2': // "2006-..." ISO formats — must start with digit
+		return c >= '0' && c <= '9'
+	case 'J': // "Jan 02..." — must start with uppercase letter
+		return c >= 'A' && c <= 'Z'
+	}
+	return true
+}
+
+func tryParseTime(raw, format string) (time.Time, int, int, error) {
 	fmtLen := len(format)
 	if len(raw) < fmtLen {
-		return time.Time{}, fmt.Errorf("tryParseTime: input too short for format %q (len=%d < %d)", format, len(raw), fmtLen)
+		return time.Time{}, 0, 0, errTSTooShort
 	}
 	// Try at position 0 first (fast path).
-	if t, ok := tryParseAt(raw, 0, format, fmtLen); ok {
-		return t, nil
+	if looksLikeTimestamp(raw, 0, format) {
+		if t, length, ok := tryParseAt(raw, 0, format, fmtLen); ok {
+			return t, 0, length, nil
+		}
 	}
-	// Try at each word boundary (space-delimited) within the first 100 chars.
+	// Try at each word boundary (space/quote delimited) within the first 100 chars.
 	limit := len(raw) - fmtLen
 	if limit > 100 {
 		limit = 100
 	}
 	for i := 0; i < limit; i++ {
-		if raw[i] == ' ' {
-			if t, ok := tryParseAt(raw, i+1, format, fmtLen); ok {
-				return t, nil
+		if raw[i] == ' ' || raw[i] == '"' {
+			pos := i + 1
+			if looksLikeTimestamp(raw, pos, format) {
+				if t, length, ok := tryParseAt(raw, pos, format, fmtLen); ok {
+					return t, pos, length, nil
+				}
 			}
 		}
 	}
 
-	return time.Time{}, fmt.Errorf("tryParseTime: no match for format %q in first %d chars", format, limit)
+	return time.Time{}, 0, 0, errTSNoMatch
 }
 
-func tryParseAt(raw string, start int, format string, fmtLen int) (time.Time, bool) {
+func tryParseAt(raw string, start int, format string, fmtLen int) (time.Time, int, bool) {
 	maxEnd := start + fmtLen + 10
 	if maxEnd > len(raw) {
 		maxEnd = len(raw)
 	}
-	for end := maxEnd; end >= start+fmtLen; end-- {
+	// Try exact format length first (most common case), then expand.
+	for end := start + fmtLen; end <= maxEnd; end++ {
 		t, err := time.Parse(format, raw[start:end])
 		if err == nil {
-			// If the format has no year component, Go defaults to year 0.
-			// Set to the current year instead.
 			if t.Year() == 0 {
 				t = t.AddDate(time.Now().Year(), 0, 0)
 			}
-
-			return t, true
+			return t, end - start, true
 		}
 	}
 
-	return time.Time{}, false
+	return time.Time{}, 0, false
 }
 
 // Router determines the target index and partition for each event.
@@ -462,8 +517,10 @@ func ParseFailureCount() int64 {
 }
 
 // defaultPipeline is a shared instance returned by DefaultPipeline().
-// All stages are stateless (they only read their own config and mutate
-// the events passed in, not internal state), so sharing is safe.
+// The TimestampNormalizer caches hints (lastFmtIdx/lastPos/lastLen) for
+// performance, but these are advisory — wrong hints fall back to full scan.
+// Pipeline.Process is called sequentially per batch, so concurrent mutation
+// of hints does not occur.
 var defaultPipeline = New(
 	DefaultTimestampNormalizer(),
 	sharedJSONParser,
@@ -537,9 +594,12 @@ func SelectivePipeline(requiredFields map[string]bool) *Pipeline {
 		}
 		stages = append(stages, &KeyValueParser{})
 	} else {
-		// Fast path: no JSON/KV parsing, so timestamp normalization from raw text
-		// will fail on JSON lines anyway. Use fast assigner to avoid wasted work.
-		stages = append(stages, &FastTimestampAssigner{})
+		// Fast path: no JSON/KV parsing needed, but we still need proper
+		// timestamp extraction from _raw. The TimestampNormalizer scans raw
+		// text (including JSON) for embedded timestamps at word/quote
+		// boundaries, which is essential for correct _time values in
+		// timechart and transaction commands.
+		stages = append(stages, DefaultTimestampNormalizer())
 	}
 
 	stages = append(stages, &Router{DefaultIndex: "main", PartitionCount: 4})
@@ -552,8 +612,9 @@ func SplitRawLines(raw, source, sourceType string) []*event.Event {
 	lines := strings.Split(raw, "\n")
 	var events []*event.Event
 	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+		// Trim trailing \r (Windows line endings) but avoid full TrimSpace scan.
+		line = strings.TrimRight(line, "\r")
+		if isBlankLine(line) {
 			continue
 		}
 		e := event.NewEvent(time.Time{}, line)
@@ -563,4 +624,17 @@ func SplitRawLines(raw, source, sourceType string) []*event.Event {
 	}
 
 	return events
+}
+
+// isBlankLine checks if a string contains only whitespace without scanning
+// the full string when non-whitespace is found early (unlike strings.TrimSpace).
+func isBlankLine(s string) bool {
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case ' ', '\t', '\r', '\n':
+		default:
+			return false
+		}
+	}
+	return true
 }

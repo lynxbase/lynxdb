@@ -709,6 +709,8 @@ func (p *Parser) parseTimechart() (*TimechartCommand, error) {
 	p.advance() // consume "timechart"
 	cmd := &TimechartCommand{}
 
+	// span= can appear before or after the aggregation list.
+	// E.g., "timechart span=1h count" or "timechart count span=1h".
 	if p.peek().Type == TokenSpan || (p.peek().Type == TokenIdent && strings.ToLower(p.peek().Literal) == "span") {
 		p.advance()
 		if _, err := p.expect(TokenEq); err != nil {
@@ -722,6 +724,17 @@ func (p *Parser) parseTimechart() (*TimechartCommand, error) {
 		return nil, err
 	}
 	cmd.Aggregations = aggs
+
+	// Handle span= after aggregations: "timechart count span=1h".
+	if cmd.Span == "" {
+		if p.peek().Type == TokenSpan || (p.peek().Type == TokenIdent && strings.ToLower(p.peek().Literal) == "span") {
+			p.advance()
+			if _, err := p.expect(TokenEq); err != nil {
+				return nil, err
+			}
+			cmd.Span = p.readSpanValue()
+		}
+	}
 
 	if p.peek().Type == TokenBy {
 		p.advance()
@@ -2264,11 +2277,14 @@ func (p *Parser) parseAggList() ([]AggExpr, error) {
 
 		if !hasParens {
 			// Check if this looks like an agg without parens (e.g., "count AS alias").
-			// It's an agg if the next token is AS or BY or comma or pipe/EOF.
+			// It's an agg if the next token is AS or BY or comma or pipe/EOF,
+			// or span (for timechart: "count span=1h").
 			next := p.peekAt(1)
 			isAgg := next.Type == TokenAs || next.Type == TokenComma ||
 				next.Type == TokenPipe || next.Type == TokenEOF ||
-				next.Type == TokenBy || next.Type == TokenRBracket
+				next.Type == TokenBy || next.Type == TokenRBracket ||
+				next.Type == TokenSpan ||
+				(isIdentLike(next.Type) && strings.ToLower(next.Literal) == "span")
 			if !isAgg {
 				break
 			}
@@ -2676,25 +2692,36 @@ func (p *Parser) parseOrderBy() (*SortCommand, error) {
 	return p.parseOrderByFields()
 }
 
-// parseOrderByFields parses: <field> [asc|desc] [, <field> [asc|desc] ...].
+// parseOrderByFields parses: [-]<field> [asc|desc] [, [-]<field> [asc|desc] ...].
+// The "-field" shorthand sets descending sort (same as SPL2 sort convention).
 func (p *Parser) parseOrderByFields() (*SortCommand, error) {
 	var fields []SortField
 
 	for {
+		desc := false
 		tok := p.peek()
+		// Handle "-field" shorthand for descending sort.
+		if tok.Type == TokenMinus {
+			desc = true
+			p.advance()
+			tok = p.peek()
+		}
 		if !isIdentLike(tok.Type) {
+			if desc {
+				return nil, fmt.Errorf("spl2: expected field name after '-' in order by at position %d", tok.Pos)
+			}
 			break
 		}
 		p.advance()
-		sf := SortField{Name: tok.Literal}
+		sf := SortField{Name: tok.Literal, Desc: desc}
 
-		// Check for asc/desc.
+		// Check for explicit asc/desc (overrides prefix).
 		if p.peek().Type == TokenDesc {
 			p.advance()
 			sf.Desc = true
 		} else if p.peek().Type == TokenAsc {
 			p.advance()
-			// sf.Desc = false (default)
+			sf.Desc = false
 		}
 
 		fields = append(fields, sf)

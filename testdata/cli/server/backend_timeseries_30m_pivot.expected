@@ -1,0 +1,6 @@
+{"ERROR":2,"INFO":3,"WARN":null,"bucket":"2026-02-10T08:00:00Z"}
+{"ERROR":null,"INFO":3,"WARN":3,"bucket":"2026-02-10T08:30:00Z"}
+{"ERROR":3,"INFO":2,"WARN":3,"bucket":"2026-02-10T09:00:00Z"}
+{"ERROR":null,"INFO":2,"WARN":null,"bucket":"2026-02-10T09:30:00Z"}
+{"ERROR":null,"INFO":3,"WARN":null,"bucket":"2026-02-10T10:00:00Z"}
+{"ERROR":null,"INFO":2,"WARN":null,"bucket":"2026-02-10T10:30:00Z"}

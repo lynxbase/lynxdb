@@ -954,6 +954,12 @@ func (e *Engine) runStreamingPipeline(
 	if isMultiIndex {
 		hintsCopy := *hints
 		hintsCopy.IndexName = ""
+		// Clear source scope so buildSegmentSources doesn't skip segments
+		// belonging to sub-query indexes (e.g., MULTISEARCH [FROM backend ...]).
+		// Each SegmentStreamIterator applies its own per-call IndexName filter.
+		hintsCopy.SourceScopeType = ""
+		hintsCopy.SourceScopeSources = nil
+		hintsCopy.SourceScopePattern = ""
 		segFilterHints = &hintsCopy
 	}
 
@@ -985,10 +991,19 @@ func (e *Engine) runStreamingPipeline(
 	e.recordPruningMetrics(&ss)
 
 	// Build streaming hints from query hints.
-	// For multi-index queries, clear IndexName — GetEventIterator sets it per-call.
+	// For multi-index queries, clear IndexName and SourceScope* — each
+	// GetEventIterator call sets its own IndexName for per-index filtering.
+	// If we leave SourceScopeType="single" with the main query's source,
+	// sub-query iterators (e.g., FROM backend inside MULTISEARCH) would be
+	// rejected by matchesStreamSourceScope before IndexName is checked.
 	streamHints := buildStreamHints(segFilterHints, e.queryCfg.BitmapSelectivityThreshold)
 	if isMultiIndex {
 		streamHints.IndexName = ""
+		streamHints.SourceScopeType = ""
+		streamHints.SourceScopeSources = nil
+		streamHints.SourceScopePattern = ""
+		streamHints.SourceIndices = nil
+		streamHints.SourceGlob = ""
 	}
 
 	store := &StreamingServerStore{

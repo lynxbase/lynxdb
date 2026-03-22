@@ -1,0 +1,5 @@
+{"duration_ms":3,"level":"WARN","service":"gateway-service","status":400}
+{"duration_ms":52,"level":"INFO","service":"project-service","status":200}
+{"duration_ms":120,"level":"INFO","service":"project-service","status":201}
+{"duration_ms":28,"level":"INFO","service":"user-service","status":200}
+{"duration_ms":45,"level":"INFO","service":"user-service","status":200}

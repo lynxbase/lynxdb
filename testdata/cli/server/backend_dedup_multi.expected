@@ -1,0 +1,6 @@
+{"level":"ERROR","service":"payment-service"}
+{"level":"ERROR","service":"payment-service"}
+{"level":"INFO","service":"user-service"}
+{"level":"INFO","service":"user-service"}
+{"level":"WARN","service":"gateway-service"}
+{"level":"WARN","service":"gateway-service"}

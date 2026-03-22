@@ -1,0 +1,10 @@
+{"ERROR":null,"INFO":1,"WARN":null,"service":"analytics-service"}
+{"ERROR":null,"INFO":1,"WARN":null,"service":"auth-service"}
+{"ERROR":null,"INFO":1,"WARN":1,"service":"deploy-service"}
+{"ERROR":null,"INFO":null,"WARN":5,"service":"gateway-service"}
+{"ERROR":null,"INFO":1,"WARN":null,"service":"import-service"}
+{"ERROR":null,"INFO":1,"WARN":null,"service":"notification-service"}
+{"ERROR":5,"INFO":2,"WARN":null,"service":"payment-service"}
+{"ERROR":null,"INFO":3,"WARN":null,"service":"project-service"}
+{"ERROR":null,"INFO":1,"WARN":null,"service":"report-service"}
+{"ERROR":null,"INFO":4,"WARN":null,"service":"user-service"}

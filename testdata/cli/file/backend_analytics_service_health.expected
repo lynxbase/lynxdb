@@ -1,0 +1,5 @@
+{"avg_dur":3743.8571428571427,"errors":5,"health":"unhealthy","max_dur":5300,"requests":7,"service":"payment-service"}
+{"avg_dur":180,"errors":0,"health":"healthy","max_dur":180,"requests":1,"service":"analytics-service"}
+{"avg_dur":85,"errors":0,"health":"healthy","max_dur":85,"requests":1,"service":"auth-service"}
+{"avg_dur":275,"errors":0,"health":"healthy","max_dur":340,"requests":2,"service":"deploy-service"}
+{"avg_dur":2.6,"errors":0,"health":"healthy","max_dur":3,"requests":5,"service":"gateway-service"}

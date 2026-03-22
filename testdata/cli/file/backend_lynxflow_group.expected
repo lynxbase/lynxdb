@@ -1,0 +1,5 @@
+{"avg_dur":3743.8571428571427,"service":"payment-service","total":7}
+{"avg_dur":2.6,"service":"gateway-service","total":5}
+{"avg_dur":34.5,"service":"user-service","total":4}
+{"avg_dur":73.33333333333333,"service":"project-service","total":3}
+{"avg_dur":275,"service":"deploy-service","total":2}

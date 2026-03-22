@@ -136,6 +136,9 @@ func (t *TopNIterator) buildTopN(ctx context.Context) error {
 }
 
 // isBetter returns true if row a should appear before row b in the final output.
+// When all sort fields are equal, a deterministic tiebreaker on remaining
+// columns (alphabetical by name, ascending by value) ensures stable output
+// regardless of Go map iteration order.
 func (t *TopNIterator) isBetter(a, b map[string]event.Value) bool {
 	for _, sf := range t.fields {
 		av := a[sf.Name]
@@ -151,7 +154,7 @@ func (t *TopNIterator) isBetter(a, b map[string]event.Value) bool {
 		return cmp < 0
 	}
 
-	return false
+	return tiebreakMapLess(a, b, t.fields)
 }
 
 // topNHeap is a min-heap that keeps the "worst" element at the root.
@@ -167,6 +170,7 @@ func (h *topNHeap) Len() int { return len(h.rows) }
 
 // Less returns true if rows[i] should be closer to the heap root (i.e., is "worse").
 // Since we want to keep the best N and evict the worst, the worst should be at root.
+// The tiebreaker (reversed) ensures deterministic heap ordering for equal sort keys.
 func (h *topNHeap) Less(i, j int) bool {
 	for _, sf := range h.fields {
 		av := h.rows[i][sf.Name]
@@ -183,7 +187,8 @@ func (h *topNHeap) Less(i, j int) bool {
 		return cmp > 0 // for asc sort, larger value is worse
 	}
 
-	return false
+	// Tiebreaker (reversed): "worse" = would appear later in final output.
+	return tiebreakMapLess(h.rows[j], h.rows[i], h.fields)
 }
 
 func (h *topNHeap) Swap(i, j int) { h.rows[i], h.rows[j] = h.rows[j], h.rows[i] }

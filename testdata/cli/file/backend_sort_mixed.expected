@@ -1,0 +1,10 @@
+{"count":5,"level":"ERROR","service":"payment-service"}
+{"count":4,"level":"INFO","service":"user-service"}
+{"count":3,"level":"INFO","service":"project-service"}
+{"count":2,"level":"INFO","service":"payment-service"}
+{"count":1,"level":"INFO","service":"analytics-service"}
+{"count":1,"level":"INFO","service":"auth-service"}
+{"count":1,"level":"INFO","service":"deploy-service"}
+{"count":1,"level":"INFO","service":"import-service"}
+{"count":1,"level":"INFO","service":"notification-service"}
+{"count":1,"level":"INFO","service":"report-service"}

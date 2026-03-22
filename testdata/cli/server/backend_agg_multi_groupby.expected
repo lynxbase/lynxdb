@@ -1,0 +1,6 @@
+{"count":5,"level":"ERROR","method":"POST"}
+{"count":8,"level":"INFO","method":"GET"}
+{"count":6,"level":"INFO","method":"POST"}
+{"count":1,"level":"INFO","method":"PUT"}
+{"count":5,"level":"WARN","method":"GET"}
+{"count":1,"level":"WARN","method":"POST"}

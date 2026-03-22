@@ -3,41 +3,62 @@ package index
 import (
 	"strings"
 	"unicode"
+	"unicode/utf8"
 )
 
 // Tokenize splits text into lowercase tokens suitable for full-text search.
-// It handles whitespace + punctuation splitting while preserving IPs, URLs, and UUIDs.
+// It handles whitespace + punctuation splitting. Tokens are substrings of the
+// lowercased input — no Builder or rune-slice allocations on the hot path.
 func Tokenize(text string) []string {
 	text = strings.ToLower(text)
 	tokens := make([]string, 0, 16)
-	var current strings.Builder
+	start := -1 // start index of current token in text, -1 = no active token
 
-	flush := func() {
-		if current.Len() > 0 {
-			tokens = append(tokens, current.String())
-			current.Reset()
+	for i := 0; i < len(text); {
+		b := text[i]
+		if b < utf8.RuneSelf {
+			// ASCII fast path (covers >99% of log data).
+			if isAlnum(b) {
+				if start < 0 {
+					start = i
+				}
+				i++
+			} else {
+				// Any non-alnum ASCII char is a token boundary
+				// (includes ':', '-', '_', whitespace, punctuation).
+				if start >= 0 {
+					tokens = append(tokens, text[start:i])
+					start = -1
+				}
+				i++
+			}
+		} else {
+			// Non-ASCII: decode rune and classify.
+			r, size := utf8.DecodeRuneInString(text[i:])
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				if start < 0 {
+					start = i
+				}
+				i += size
+			} else {
+				if start >= 0 {
+					tokens = append(tokens, text[start:i])
+					start = -1
+				}
+				i += size
+			}
 		}
 	}
-
-	runes := []rune(text)
-	for i := 0; i < len(runes); i++ {
-		r := runes[i]
-
-		switch {
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			current.WriteRune(r)
-
-		case r == ':' || r == '-' || r == '_':
-			// Minor breakers: always split on these characters.
-			flush()
-
-		default:
-			flush()
-		}
+	if start >= 0 {
+		tokens = append(tokens, text[start:])
 	}
-	flush()
 
 	return tokens
+}
+
+// isAlnum returns true for ASCII letters and digits.
+func isAlnum(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= '0' && b <= '9')
 }
 
 // TokenizeUnique returns deduplicated tokens in stable order.

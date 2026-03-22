@@ -1,0 +1,5 @@
+{"count":7,"svc":"payment-service"}
+{"count":5,"svc":"gateway-service"}
+{"count":4,"svc":"user-service"}
+{"count":3,"svc":"project-service"}
+{"count":2,"svc":"deploy-service"}

@@ -523,7 +523,11 @@ func (a *AggregateIterator) extractValue(agg AggFunc, row map[string]event.Value
 		if err != nil {
 			return event.NullValue()
 		}
-
+		// Conditional aggregation: eval(boolean_condition) returns true/false.
+		// Splunk convention: false means "no match" → null → count() skips it.
+		if result.Type() == event.FieldTypeBool && !result.AsBool() {
+			return event.NullValue()
+		}
 		return result
 	}
 	if agg.Field == "" {
