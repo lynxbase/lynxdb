@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 func startAuthServer(t *testing.T) (*Server, *auth.KeyStore, string, func()) {
@@ -39,6 +40,7 @@ func startAuthServer(t *testing.T) (*Server, *auth.KeyStore, string, func()) {
 		DataDir:  dir,
 		KeyStore: ks,
 		Logger:   logger,
+		Query:    config.QueryConfig{SpillDir: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

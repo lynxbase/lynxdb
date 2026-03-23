@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
@@ -22,6 +23,7 @@ func startTestServer(t *testing.T) (*Server, func()) {
 	srv, err := NewServer(Config{
 		Addr:   "127.0.0.1:0",
 		Logger: logger,
+		Query:  config.QueryConfig{SpillDir: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -253,6 +255,7 @@ func TestServer_AutoFlush(t *testing.T) {
 	srv, err := NewServer(Config{
 		Addr:   "127.0.0.1:0",
 		Logger: logger,
+		Query:  config.QueryConfig{SpillDir: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

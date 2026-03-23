@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 // startTLSServer starts a server with a self-signed TLS certificate.
@@ -49,6 +50,7 @@ func startTLSServer(t *testing.T) (*Server, *x509.Certificate, func()) {
 		DataDir:   dir,
 		TLSConfig: tlsCfg,
 		Logger:    logger,
+		Query:     config.QueryConfig{SpillDir: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -220,6 +222,7 @@ func TestTLS_WithAuth(t *testing.T) {
 		TLSConfig: tlsCfg,
 		KeyStore:  ks,
 		Logger:    logger,
+		Query:     config.QueryConfig{SpillDir: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

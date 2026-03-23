@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"os"
 	"sort"
 	"testing"
 
@@ -731,11 +730,19 @@ func TestOptimization_15_ApproximateAggregations(t *testing.T) {
 // Test 16: AdaptiveExecution
 func TestOptimization_16_AdaptiveExecution(t *testing.T) {
 	t.Run("SpillWriterReader", func(t *testing.T) {
-		sw, err := pipeline.NewSpillWriter()
+		// Use a managed SpillManager backed by t.TempDir() to avoid
+		// cross-package interference: other packages' CleanupOrphans
+		// calls can delete unmanaged spill files in the global /tmp.
+		mgr, err := pipeline.NewSpillManager(t.TempDir(), nil)
 		if err != nil {
-			t.Fatalf("NewSpillWriter failed: %v", err)
+			t.Fatalf("NewSpillManager: %v", err)
 		}
-		path := sw.Path()
+		defer mgr.CleanupAll()
+
+		sw, err := pipeline.NewManagedSpillWriter(mgr, "test")
+		if err != nil {
+			t.Fatalf("NewManagedSpillWriter: %v", err)
+		}
 
 		for i := 0; i < 100; i++ {
 			row := map[string]event.Value{
@@ -751,35 +758,14 @@ func TestOptimization_16_AdaptiveExecution(t *testing.T) {
 			t.Errorf("expected 100 rows written, got %d", sw.Rows())
 		}
 
-		// Close the file handle but keep the file for reading.
-		// Close() also removes the file, so grab the path first.
-		sw.Close() // This removes the file, so we need a different approach.
+		path := sw.Path()
 
-		// Re-do: write, sync, read from same path before close removes it.
-		sw2, err := pipeline.NewSpillWriter()
-		if err != nil {
-			t.Fatalf("NewSpillWriter failed: %v", err)
+		// Close the file handle (without deleting — managed mode preserves files).
+		if err := sw.CloseFile(); err != nil {
+			t.Fatalf("CloseFile: %v", err)
 		}
-		path2 := sw2.Path()
-		defer os.Remove(path2)
 
-		for i := 0; i < 100; i++ {
-			row := map[string]event.Value{
-				"host":  event.StringValue(fmt.Sprintf("host-%d", i)),
-				"count": event.IntValue(int64(i)),
-			}
-			if err := sw2.WriteRow(row); err != nil {
-				t.Fatalf("WriteRow failed: %v", err)
-			}
-		}
-		// Flush by getting the path and creating a reader before Close removes the file.
-		// SpillWriter.Close() calls file.Close() then os.Remove, so we need to
-		// close the writer's file handle and open reader before removal.
-		// Let's just copy the path and close the underlying file without removing.
-
-		// Actually, just read back the path before the writer's Close.
-		// We'll read with NewSpillReader then close the writer manually.
-		sr, err := pipeline.NewSpillReader(path2)
+		sr, err := pipeline.NewSpillReader(path)
 		if err != nil {
 			t.Fatalf("could not open spill file for reading: %v", err)
 		}
@@ -801,7 +787,7 @@ func TestOptimization_16_AdaptiveExecution(t *testing.T) {
 			t.Errorf("expected 100 rows read back, got %d", count)
 		}
 
-		_ = path // suppress unused
+		mgr.Release(path)
 	})
 }
 

@@ -21,6 +21,12 @@ import (
 func startTestServerWithQueryConfig(t *testing.T, qcfg config.QueryConfig) (*Server, func()) {
 	t.Helper()
 
+	// Ensure SpillDir is set to a test-local directory so that
+	// CleanupOrphans does not walk the global /tmp.
+	if qcfg.SpillDir == "" {
+		qcfg.SpillDir = t.TempDir()
+	}
+
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	srv, err := NewServer(Config{
 		Addr:   "127.0.0.1:0",

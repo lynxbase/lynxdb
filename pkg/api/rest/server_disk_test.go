@@ -26,6 +26,7 @@ func startDiskTestServer(t *testing.T) (*Server, string, func()) {
 		DataDir: dir,
 		Storage: config.DefaultConfig().Storage,
 		Logger:  logger,
+		Query:   config.QueryConfig{SpillDir: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -51,6 +52,7 @@ func TestServer_DiskFlushAndRecover(t *testing.T) {
 		DataDir: dir,
 		Storage: config.DefaultConfig().Storage,
 		Logger:  logger,
+		Query:   config.QueryConfig{SpillDir: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -110,6 +112,7 @@ func TestServer_DiskFlushAndRecover(t *testing.T) {
 		DataDir: dir,
 		Storage: config.DefaultConfig().Storage,
 		Logger:  logger,
+		Query:   config.QueryConfig{SpillDir: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -245,6 +248,7 @@ func TestServer_BatcherPersistence(t *testing.T) {
 		DataDir: dir,
 		Storage: config.DefaultConfig().Storage,
 		Logger:  logger,
+		Query:   config.QueryConfig{SpillDir: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -290,6 +294,7 @@ func TestServer_BatcherPersistence(t *testing.T) {
 		DataDir: dir,
 		Storage: config.DefaultConfig().Storage,
 		Logger:  logger,
+		Query:   config.QueryConfig{SpillDir: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

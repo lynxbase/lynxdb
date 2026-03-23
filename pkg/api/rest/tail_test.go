@@ -573,6 +573,7 @@ func TestTail_SSE_SessionLimit(t *testing.T) {
 		Addr:   "127.0.0.1:0",
 		Logger: logger,
 		Tail:   config.TailConfig{MaxConcurrentSessions: 1, MaxSessionDuration: 10 * time.Second},
+		Query:  config.QueryConfig{SpillDir: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
@@ -635,6 +636,7 @@ func TestTail_SSE_MaxDuration(t *testing.T) {
 		Addr:   "127.0.0.1:0",
 		Logger: logger,
 		Tail:   config.TailConfig{MaxSessionDuration: 2 * time.Second},
+		Query:  config.QueryConfig{SpillDir: t.TempDir()},
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
