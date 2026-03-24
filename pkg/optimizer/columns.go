@@ -440,6 +440,22 @@ func commandAccessedFields(cmd spl2.Command, cols map[string]bool) {
 		for _, f := range c.Fields {
 			cols[f] = true
 		}
+	case *spl2.TraceCommand:
+		cols["_time"] = true
+		cols[c.TraceIDField] = true
+		cols[c.SpanIDField] = true
+		cols[c.ParentIDField] = true
+		// Trace output needs service, operation, duration_ms for display.
+		cols["service"] = true
+		cols["service_name"] = true
+		cols["component"] = true
+		cols["operation"] = true
+		cols["operation_name"] = true
+		cols["name"] = true
+		cols["handler"] = true
+		cols["duration_ms"] = true
+		cols["duration"] = true
+		cols["elapsed_ms"] = true
 	}
 }
 

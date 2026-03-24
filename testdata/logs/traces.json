@@ -1,0 +1,25 @@
+{"_time":"2026-03-23T10:00:01.000Z","trace_id":"trace-001","span_id":"s1","parent_span_id":"","service":"api-gateway","operation":"POST /orders","duration_ms":234,"method":"POST","path":"/orders","status":200}
+{"_time":"2026-03-23T10:00:01.020Z","trace_id":"trace-001","span_id":"s2","parent_span_id":"s1","service":"auth","operation":"validate_token","duration_ms":45,"token_type":"bearer","result":"valid"}
+{"_time":"2026-03-23T10:00:01.030Z","trace_id":"trace-001","span_id":"s3","parent_span_id":"s2","service":"redis","operation":"GET session","duration_ms":3,"key":"sess:u42","hit":true}
+{"_time":"2026-03-23T10:00:01.050Z","trace_id":"trace-001","span_id":"s4","parent_span_id":"s1","service":"user-svc","operation":"get_profile","duration_ms":180,"user_id":42}
+{"_time":"2026-03-23T10:00:01.080Z","trace_id":"trace-001","span_id":"s5","parent_span_id":"s4","service":"postgres","operation":"SELECT users","duration_ms":60,"query":"SELECT * FROM users WHERE id=$1","rows":1}
+{"_time":"2026-03-23T10:00:01.100Z","trace_id":"trace-001","span_id":"s6","parent_span_id":"s4","service":"cache","operation":"GET profile","duration_ms":12,"key":"profile:42","hit":true}
+{"_time":"2026-03-23T10:00:02.000Z","trace_id":"trace-002","span_id":"s10","parent_span_id":"","service":"api-gateway","operation":"GET /products","duration_ms":120,"method":"GET","path":"/products","status":200}
+{"_time":"2026-03-23T10:00:02.010Z","trace_id":"trace-002","span_id":"s11","parent_span_id":"s10","service":"catalog-svc","operation":"list_products","duration_ms":95,"limit":20,"offset":0}
+{"_time":"2026-03-23T10:00:02.030Z","trace_id":"trace-002","span_id":"s12","parent_span_id":"s11","service":"postgres","operation":"SELECT products","duration_ms":70,"query":"SELECT * FROM products LIMIT 20","rows":20}
+{"_time":"2026-03-23T10:00:02.040Z","trace_id":"trace-002","span_id":"s13","parent_span_id":"s11","service":"redis","operation":"MGET prices","duration_ms":5,"keys_count":20,"hit":true}
+{"_time":"2026-03-23T10:00:03.000Z","trace_id":"trace-003","span_id":"s20","parent_span_id":"","service":"api-gateway","operation":"DELETE /cart/item","duration_ms":350,"method":"DELETE","path":"/cart/item","status":200}
+{"_time":"2026-03-23T10:00:03.015Z","trace_id":"trace-003","span_id":"s21","parent_span_id":"s20","service":"auth","operation":"validate_token","duration_ms":30,"token_type":"bearer","result":"valid"}
+{"_time":"2026-03-23T10:00:03.020Z","trace_id":"trace-003","span_id":"s22","parent_span_id":"s20","service":"cart-svc","operation":"remove_item","duration_ms":280,"item_id":"prod-881","user_id":7}
+{"_time":"2026-03-23T10:00:03.050Z","trace_id":"trace-003","span_id":"s23","parent_span_id":"s22","service":"redis","operation":"HDEL cart","duration_ms":2,"key":"cart:u7","field":"prod-881"}
+{"_time":"2026-03-23T10:00:03.060Z","trace_id":"trace-003","span_id":"s24","parent_span_id":"s22","service":"inventory-svc","operation":"release_stock","duration_ms":150,"item_id":"prod-881","qty":1}
+{"_time":"2026-03-23T10:00:03.090Z","trace_id":"trace-003","span_id":"s25","parent_span_id":"s24","service":"postgres","operation":"UPDATE inventory","duration_ms":40,"query":"UPDATE inventory SET stock=stock+1 WHERE product_id=$1","rows":1}
+{"_time":"2026-03-23T10:00:03.100Z","trace_id":"trace-003","span_id":"s26","parent_span_id":"s22","service":"kafka","operation":"publish cart.updated","duration_ms":8,"topic":"cart-events","partition":3}
+{"_time":"2026-03-23T10:00:04.000Z","trace_id":"trace-004","span_id":"s30","parent_span_id":"","service":"api-gateway","operation":"POST /login","duration_ms":520,"method":"POST","path":"/login","status":200}
+{"_time":"2026-03-23T10:00:04.010Z","trace_id":"trace-004","span_id":"s31","parent_span_id":"s30","service":"auth","operation":"authenticate","duration_ms":310,"method":"password","user":"alice@example.com"}
+{"_time":"2026-03-23T10:00:04.040Z","trace_id":"trace-004","span_id":"s32","parent_span_id":"s31","service":"postgres","operation":"SELECT credentials","duration_ms":25,"query":"SELECT hash FROM credentials WHERE email=$1","rows":1}
+{"_time":"2026-03-23T10:00:04.050Z","trace_id":"trace-004","span_id":"s33","parent_span_id":"s31","service":"bcrypt","operation":"verify_hash","duration_ms":280,"algorithm":"bcrypt","cost":12}
+{"_time":"2026-03-23T10:00:04.060Z","trace_id":"trace-004","span_id":"s34","parent_span_id":"s31","service":"redis","operation":"SET session","duration_ms":4,"ttl":"3600s"}
+{"_time":"2026-03-23T10:00:04.070Z","trace_id":"trace-004","span_id":"s35","parent_span_id":"s30","service":"audit","operation":"log_login","duration_ms":15,"event":"USER_LOGIN","result":"success"}
+{"_time":"2026-03-23T10:00:04.080Z","trace_id":"trace-004","span_id":"s36","parent_span_id":"s35","service":"kafka","operation":"publish audit.login","duration_ms":6,"topic":"audit-events","partition":7}
+{"_time":"2026-03-23T10:00:05.000Z","trace_id":"trace-005","span_id":"s40","parent_span_id":"","service":"api-gateway","operation":"GET /health","duration_ms":5,"method":"GET","path":"/health","status":200}

@@ -1,0 +1,239 @@
+{"nl": "Show all error events", "query": "level=error", "category": "filter"}
+{"nl": "Find errors from nginx", "query": "level=error source=nginx", "category": "filter"}
+{"nl": "Show HTTP 500 errors", "query": "status=500", "category": "filter"}
+{"nl": "Find server errors (status >= 500)", "query": "status>=500", "category": "filter"}
+{"nl": "Find client errors (status 400-499)", "query": "status>=400 status<500", "category": "filter"}
+{"nl": "Find slow requests over 1 second", "query": "duration_ms>1000", "category": "filter"}
+{"nl": "Search for connection refused messages", "query": "search \"connection refused\"", "category": "filter"}
+{"nl": "Find OOM kills", "query": "search \"OOM\" OR \"out of memory\"", "category": "filter"}
+{"nl": "Find timeout errors", "query": "search \"timeout\" OR \"timed out\"", "category": "filter"}
+{"nl": "Filter by source and level", "query": "source=nginx level=error", "category": "filter"}
+{"nl": "Find events with specific host", "query": "host=\"web-01\"", "category": "filter"}
+{"nl": "Show events NOT from health checks", "query": "search NOT \"healthcheck\"", "category": "filter"}
+{"nl": "Find events matching a glob pattern", "query": "source=api*", "category": "filter"}
+{"nl": "Find login failures", "query": "type=login result=failed", "category": "filter"}
+{"nl": "Filter by multiple status codes", "query": "status in (500, 502, 503, 504)", "category": "filter"}
+{"nl": "Find events with a field present", "query": "error=*", "category": "filter"}
+{"nl": "Filter by time range using WHERE", "query": "where _time >= \"2026-01-01T00:00:00Z\" and _time < \"2026-01-02T00:00:00Z\"", "category": "filter"}
+{"nl": "Case-sensitive search for ERROR", "query": "search case(\"ERROR\")", "category": "filter"}
+{"nl": "Search for exact term bounded by delimiters", "query": "search term(\"api\")", "category": "filter"}
+{"nl": "Find WARN and ERROR events", "query": "level in (\"warn\", \"error\")", "category": "filter"}
+{"nl": "Exclude debug events", "query": "level!=debug", "category": "filter"}
+{"nl": "Count all events", "query": "| stats count", "category": "aggregate"}
+{"nl": "Count errors by source", "query": "level=error | stats count by source", "category": "aggregate"}
+{"nl": "Average response time by endpoint", "query": "| stats avg(duration_ms) by endpoint", "category": "aggregate"}
+{"nl": "Min and max latency", "query": "| stats min(duration_ms), max(duration_ms)", "category": "aggregate"}
+{"nl": "Sum of bytes transferred", "query": "| stats sum(bytes) by source", "category": "aggregate"}
+{"nl": "Distinct count of users", "query": "| stats dc(user_id) as unique_users", "category": "aggregate"}
+{"nl": "Standard deviation of duration", "query": "| stats stdev(duration_ms) by endpoint", "category": "aggregate"}
+{"nl": "95th percentile latency", "query": "| stats perc95(duration_ms) by endpoint", "category": "aggregate"}
+{"nl": "99th percentile latency", "query": "| stats p99(duration_ms) by service", "category": "aggregate"}
+{"nl": "Count and average by source", "query": "| stats count, avg(duration_ms) by source", "category": "aggregate"}
+{"nl": "List distinct values of a field", "query": "| stats values(status) by endpoint", "category": "aggregate"}
+{"nl": "First and last event per group", "query": "| stats earliest(_time), latest(_time) by source", "category": "aggregate"}
+{"nl": "Errors per source per level", "query": "level=error | stats count by source, level", "category": "aggregate"}
+{"nl": "Aggregate with alias", "query": "| stats count as event_count by source", "category": "aggregate"}
+{"nl": "Multi-field aggregation", "query": "| stats avg(duration_ms) as avg_dur, max(duration_ms) as max_dur by endpoint", "category": "aggregate"}
+{"nl": "Count events per 5 minutes", "query": "| timechart count span=5m", "category": "timeseries"}
+{"nl": "Hourly error rate", "query": "level=error | timechart count span=1h", "category": "timeseries"}
+{"nl": "Average latency per hour by service", "query": "| timechart avg(duration_ms) by service span=1h", "category": "timeseries"}
+{"nl": "Per-minute request rate by source", "query": "| timechart count by source span=1m", "category": "timeseries"}
+{"nl": "Daily error count with bin", "query": "level=error | bin _time span=1d | stats count by _time", "category": "timeseries"}
+{"nl": "Bucket timestamps into 1-hour intervals", "query": "| bin _time span=1h | stats count by _time, level", "category": "timeseries"}
+{"nl": "Per-second rate", "query": "| timechart count span=1s", "category": "timeseries"}
+{"nl": "30-second intervals", "query": "| timechart avg(duration_ms) span=30s", "category": "timeseries"}
+{"nl": "Weekly aggregation", "query": "| timechart count span=1w", "category": "timeseries"}
+{"nl": "Timechart with multiple aggregations", "query": "| timechart count, avg(duration_ms) span=5m", "category": "timeseries"}
+{"nl": "Add a computed field is_slow", "query": "| eval is_slow=if(duration_ms>1000, \"yes\", \"no\")", "category": "transform"}
+{"nl": "Convert bytes to megabytes", "query": "| eval mb=bytes/1048576", "category": "transform"}
+{"nl": "Concatenate fields", "query": "| eval full_path=source+\":\"+endpoint", "category": "transform"}
+{"nl": "Extract field with regex", "query": "| rex field=_raw \"user=(?P<user>\\w+)\"", "category": "transform"}
+{"nl": "Extract IP address from raw log", "query": "| rex field=_raw \"(?P<ip>\\d+\\.\\d+\\.\\d+\\.\\d+)\"", "category": "transform"}
+{"nl": "Rename a field", "query": "| rename status as http_status", "category": "transform"}
+{"nl": "Rename multiple fields", "query": "| rename duration_ms as latency_ms, bytes as response_bytes", "category": "transform"}
+{"nl": "Select specific columns", "query": "| table _time, source, level, message", "category": "transform"}
+{"nl": "Keep only specific fields", "query": "| keep _time, source, level, duration_ms", "category": "transform"}
+{"nl": "Remove specific fields", "query": "| omit _raw, _index", "category": "transform"}
+{"nl": "Round a number", "query": "| eval rounded=round(duration_ms, 2)", "category": "transform"}
+{"nl": "Lowercase a field", "query": "| eval lower_source=lower(source)", "category": "transform"}
+{"nl": "Uppercase a field", "query": "| eval upper_level=upper(level)", "category": "transform"}
+{"nl": "Substring extraction", "query": "| eval prefix=substr(source, 1, 3)", "category": "transform"}
+{"nl": "String length", "query": "| eval msg_len=len(message)", "category": "transform"}
+{"nl": "Coalesce multiple fields", "query": "| eval host=coalesce(hostname, server, machine)", "category": "transform"}
+{"nl": "Conditional field with CASE", "query": "| eval severity=case(status>=500, \"critical\", status>=400, \"warning\", true, \"ok\")", "category": "transform"}
+{"nl": "Null check", "query": "| eval has_error=isnotnull(error)", "category": "transform"}
+{"nl": "Convert string to number", "query": "| eval port=tonumber(port_str)", "category": "transform"}
+{"nl": "Format timestamp", "query": "| eval readable_time=strftime(_time, \"%Y-%m-%d %H:%M:%S\")", "category": "transform"}
+{"nl": "Log of a value", "query": "| eval log_dur=ln(duration_ms)", "category": "transform"}
+{"nl": "Top 10 URIs by count", "query": "status>=500 | top 10 uri", "category": "aggregate"}
+{"nl": "Top 5 sources by error count", "query": "level=error | top 5 source", "category": "aggregate"}
+{"nl": "Top values with grouping", "query": "| top 10 uri by status", "category": "aggregate"}
+{"nl": "Rare values", "query": "| rare 5 user_agent", "category": "aggregate"}
+{"nl": "Sort by duration descending", "query": "| sort -duration_ms", "category": "ordering"}
+{"nl": "Sort by multiple fields", "query": "| sort -count, +source", "category": "ordering"}
+{"nl": "Sort ascending explicitly", "query": "| sort +duration_ms", "category": "ordering"}
+{"nl": "First 10 events", "query": "| head 10", "category": "limit"}
+{"nl": "First 50 events", "query": "| head 50", "category": "limit"}
+{"nl": "Last 10 events", "query": "| tail 10", "category": "limit"}
+{"nl": "Take 25 results", "query": "| take 25", "category": "limit"}
+{"nl": "Deduplicate by source", "query": "| dedup source", "category": "transform"}
+{"nl": "Deduplicate keeping 3 per group", "query": "| dedup 3 endpoint", "category": "transform"}
+{"nl": "Deduplicate by multiple fields", "query": "| dedup source, level", "category": "transform"}
+{"nl": "Fill null values with zero", "query": "| fillnull value=0 duration_ms", "category": "transform"}
+{"nl": "Fill all nulls with N/A", "query": "| fillnull value=\"N/A\"", "category": "transform"}
+{"nl": "Streaming cumulative count", "query": "| streamstats count as running_total", "category": "window"}
+{"nl": "Streaming average with window", "query": "| streamstats window=10 avg(duration_ms) as rolling_avg", "category": "window"}
+{"nl": "Streaming stats by group", "query": "| streamstats count by source as source_count", "category": "window"}
+{"nl": "Event-level stats (add to each row)", "query": "| eventstats avg(duration_ms) as global_avg", "category": "window"}
+{"nl": "Event stats by group", "query": "| eventstats count, avg(duration_ms) by source", "category": "window"}
+{"nl": "Join two queries by field", "query": "| join type=inner client_ip [$threats]", "category": "join"}
+{"nl": "Left join with subsearch", "query": "| join type=left user_id [user_roles]", "category": "join"}
+{"nl": "Append another query", "query": "| append [| from other_index | where level=error]", "category": "join"}
+{"nl": "Transaction grouping by field", "query": "| transaction session_id maxspan=30m", "category": "transaction"}
+{"nl": "Transaction with start/end conditions", "query": "| transaction session_id startswith=\"login\" endswith=\"logout\"", "category": "transaction"}
+{"nl": "Transaction by time span", "query": "| transaction user_id maxspan=1h", "category": "transaction"}
+{"nl": "XY series pivot", "query": "| xyseries source level count", "category": "transform"}
+{"nl": "Create a materialized view", "query": "level=error | stats count, avg(duration) by source, time_bucket(timestamp, \"5m\") as bucket | materialize \"mv_errors_5m\" retention=90d", "category": "materialized_view"}
+{"nl": "Query a materialized view", "query": "| from mv_errors_5m", "category": "materialized_view"}
+{"nl": "List all materialized views", "query": "| views", "category": "materialized_view"}
+{"nl": "List a specific view", "query": "| views \"mv_errors_5m\"", "category": "materialized_view"}
+{"nl": "Drop a materialized view", "query": "| dropview \"mv_errors_5m\"", "category": "materialized_view"}
+{"nl": "CTE: define and use a variable", "query": "$errors = level=error | stats count by source; | from $errors | sort -count", "category": "cte"}
+{"nl": "CTE: reuse in join", "query": "$threats = search \"threat\" | stats count by client_ip; $logins = type=login result=failed | stats count as failures by src_ip; | from $threats | join type=inner client_ip [$logins]", "category": "cte"}
+{"nl": "Complex multi-step analysis", "query": "source=nginx status>=500 | stats count by uri | sort -count | head 10", "category": "pipeline"}
+{"nl": "Error rate analysis", "query": "| eval is_error=if(status>=500, 1, 0) | stats sum(is_error) as errors, count as total | eval error_rate=errors/total*100", "category": "pipeline"}
+{"nl": "Latency percentiles by endpoint", "query": "| stats perc50(duration_ms), perc90(duration_ms), perc95(duration_ms), perc99(duration_ms) by endpoint", "category": "aggregate"}
+{"nl": "Bucket and aggregate", "query": "| bucket duration_ms span=100 | stats count by duration_ms | sort +duration_ms", "category": "pipeline"}
+{"nl": "Filter, transform, aggregate", "query": "source=api | eval is_slow=if(duration_ms>500, 1, 0) | stats sum(is_slow) as slow_count, count as total by endpoint", "category": "pipeline"}
+{"nl": "Search then filter then sort", "query": "search \"error\" | where status>=500 | sort -duration_ms | head 20", "category": "pipeline"}
+{"nl": "Extract and aggregate", "query": "| rex field=_raw \"host=(?P<host>\\S+)\" | stats count by host | sort -count", "category": "pipeline"}
+{"nl": "Time-based filtering with stats", "query": "where _time >= \"2026-03-01\" | stats count by source, level", "category": "pipeline"}
+{"nl": "Multi-stage CTE pipeline", "query": "$top_errors = level=error | stats count as err_count by source | sort -err_count | head 5; | from $top_errors | eval severity=\"high\"", "category": "cte"}
+{"nl": "Percentage calculation", "query": "| stats count as total | eval pct=round(total*100/1000000, 2)", "category": "transform"}
+{"nl": "Filter by regex match", "query": "| where match(message, \"timeout.*exceeded\")", "category": "filter"}
+{"nl": "Filter by like pattern", "query": "| where source like \"api-*\"", "category": "filter"}
+{"nl": "Replace in string", "query": "| eval clean=replace(source, \"old-\", \"new-\")", "category": "transform"}
+{"nl": "Split string field", "query": "| eval parts=split(endpoint, \"/\")", "category": "transform"}
+{"nl": "Join multivalue fields", "query": "| eval combined=mvjoin(tags, \",\")", "category": "transform"}
+{"nl": "Append to multivalue", "query": "| eval tags=mvappend(tags, \"processed\")", "category": "transform"}
+{"nl": "Deduplicate multivalue", "query": "| eval unique_tags=mvdedup(tags)", "category": "transform"}
+{"nl": "Count multivalue elements", "query": "| eval tag_count=mvcount(tags)", "category": "transform"}
+{"nl": "Natural language: find all 500 errors from nginx today", "query": "source=nginx status=500 | where _time >= relative_time(now(), \"-1d\")", "category": "nl_example"}
+{"nl": "Natural language: what are the slowest endpoints?", "query": "| stats avg(duration_ms) as avg_dur by endpoint | sort -avg_dur | head 10", "category": "nl_example"}
+{"nl": "Natural language: how many errors per hour?", "query": "level=error | timechart count span=1h", "category": "nl_example"}
+{"nl": "Natural language: show me unique error messages", "query": "level=error | stats values(message) by source", "category": "nl_example"}
+{"nl": "Natural language: which hosts have the most failures?", "query": "status>=500 | stats count as failures by host | sort -failures | head 10", "category": "nl_example"}
+{"nl": "Natural language: compare error rates between services", "query": "level=error | stats count by source | sort -count", "category": "nl_example"}
+{"nl": "Natural language: find spikes in error rate", "query": "level=error | timechart count span=5m | where count > avg(count)*3", "category": "nl_example"}
+{"nl": "Natural language: what IPs are hitting me most?", "query": "| stats count by client_ip | sort -count | head 20", "category": "nl_example"}
+{"nl": "Natural language: show me last 100 log entries", "query": "| head 100", "category": "nl_example"}
+{"nl": "Natural language: summarize errors by type", "query": "level=error | stats count by error_type | sort -count", "category": "nl_example"}
+{"nl": "Glimpse at data structure", "query": "| glimpse", "category": "explore"}
+{"nl": "Glimpse with sample size", "query": "| glimpse 5", "category": "explore"}
+{"nl": "Describe a field", "query": "| describe status", "category": "explore"}
+{"nl": "Describe all fields", "query": "| describe", "category": "explore"}
+{"nl": "Unpack JSON field", "query": "| unpack_json field=data", "category": "structured"}
+{"nl": "Unpack logfmt", "query": "| unpack_logfmt field=_raw", "category": "structured"}
+{"nl": "Unroll array field", "query": "| unroll tags", "category": "structured"}
+{"nl": "Pack fields into JSON", "query": "| pack_json _time, source, level as event", "category": "structured"}
+{"nl": "Sessionize events", "query": "| sessionize maxspan=30m by user_id", "category": "session"}
+{"nl": "Sessionize with max pause", "query": "| sessionize maxspan=1h maxpause=5m by session_id", "category": "session"}
+{"nl": "Correlate fields", "query": "| correlate source by level", "category": "analytics"}
+{"nl": "Build topology from connections", "query": "| topology src_ip dst_ip maxdepth=3", "category": "analytics"}
+{"nl": "Rollup to coarser time buckets", "query": "| rollup _time span=1h stats count by source", "category": "aggregate"}
+{"nl": "Write results to file", "query": "level=error | tee \"/tmp/errors.json\" | stats count", "category": "export"}
+{"nl": "Enrich with lookup data", "query": "| enrich geo_ip on client_ip", "category": "enrichment"}
+{"nl": "Lookup field from table", "query": "| lookup services service_name as svc_name as team", "category": "enrichment"}
+{"nl": "Parse structured log line", "query": "| parse _raw \"method=%s path=%s status=%d\" as method, path, status", "category": "structured"}
+{"nl": "Explode array to rows", "query": "| explode endpoints delim=\",\"", "category": "structured"}
+{"nl": "Pack fields into one", "query": "| pack source, level as summary", "category": "structured"}
+{"nl": "Latency analysis shortcut", "query": "| latency duration_ms by endpoint", "category": "analytics"}
+{"nl": "Error analysis shortcut", "query": "| errors by source", "category": "analytics"}
+{"nl": "Rate calculation", "query": "| rate count span=5m by source", "category": "analytics"}
+{"nl": "Percentiles shortcut", "query": "| percentiles duration_ms by endpoint", "category": "analytics"}
+{"nl": "Find slowest requests", "query": "| slowest 10 duration_ms by endpoint", "category": "analytics"}
+{"nl": "Running total", "query": "| running count by source", "category": "window"}
+{"nl": "Group and aggregate", "query": "| group source, level | stats count", "category": "aggregate"}
+{"nl": "Every time window", "query": "| every 5m count by source", "category": "timeseries"}
+{"nl": "Let variable assignment", "query": "| let threshold=1000 | where duration_ms > threshold", "category": "transform"}
+{"nl": "Order by field", "query": "| order -duration_ms, +source", "category": "ordering"}
+{"nl": "Rank values", "query": "| rank 10 endpoint", "category": "aggregate"}
+{"nl": "Top by with limit", "query": "| topby 5 endpoint by source", "category": "aggregate"}
+{"nl": "Bottom values", "query": "| bottom 5 endpoint", "category": "aggregate"}
+{"nl": "Bottom by field", "query": "| bottomby 5 duration_ms by source", "category": "aggregate"}
+{"nl": "Select specific fields only", "query": "| select _time, source, level, message", "category": "transform"}
+{"nl": "JSON extraction from nested field", "query": "| json field=event.data", "category": "structured"}
+{"nl": "From a CTE variable", "query": "$filtered = source=nginx status>=500; | from $filtered | stats count by uri", "category": "cte"}
+{"nl": "Complex search with parentheses", "query": "search (status=500 OR status=502) AND source=nginx", "category": "filter"}
+{"nl": "Negation in search", "query": "search source=nginx NOT status=200", "category": "filter"}
+{"nl": "Wildcard search", "query": "search \"error*\"", "category": "filter"}
+{"nl": "Field existence check", "query": "| where isnotnull(duration_ms)", "category": "filter"}
+{"nl": "In expression in WHERE", "query": "| where source in (\"nginx\", \"api-gw\", \"redis\")", "category": "filter"}
+{"nl": "Complex arithmetic expression", "query": "| eval ratio=round(errors*100.0/total, 2)", "category": "transform"}
+{"nl": "Nested function calls", "query": "| eval label=upper(substr(source, 1, 3))+\"-\"+tostring(status)", "category": "transform"}
+{"nl": "Natural language: top error types in last hour", "query": "level=error | where _time >= relative_time(now(), \"-1h@h\") | stats count by error_type | sort -count | head 10", "category": "nl_example"}
+{"nl": "Natural language: average response time over time", "query": "| timechart avg(duration_ms) span=5m", "category": "nl_example"}
+{"nl": "Natural language: count by status code", "query": "| stats count by status | sort -count", "category": "nl_example"}
+{"nl": "Natural language: find duplicate events", "query": "| dedup _raw | stats count", "category": "nl_example"}
+{"nl": "Natural language: group errors by hour", "query": "level=error | bin _time span=1h | stats count by _time", "category": "nl_example"}
+{"nl": "Natural language: show field distribution", "query": "| stats count by level | sort -count", "category": "nl_example"}
+{"nl": "Natural language: extract user agent and count", "query": "| rex field=_raw \"\\\"user_agent\\\":\\s*\\\"(?P<ua>[^\\\"]+)\\\"\" | stats count by ua | sort -count | head 10", "category": "nl_example"}
+{"nl": "Natural language: p50 and p99 latency per service", "query": "| stats perc50(duration_ms) as p50, perc99(duration_ms) as p99 by service | sort -p99", "category": "nl_example"}
+{"nl": "Natural language: which endpoints have errors?", "query": "status>=400 | stats count as error_count by endpoint | sort -error_count | head 20", "category": "nl_example"}
+{"nl": "Natural language: events per second", "query": "| timechart count span=1s | stats avg(count) as eps", "category": "nl_example"}
+{"nl": "Fillnull with specific fields", "query": "| fillnull value=0 duration_ms, bytes, count", "category": "transform"}
+{"nl": "Stats with no group by", "query": "| stats count, avg(duration_ms), max(duration_ms)", "category": "aggregate"}
+{"nl": "Head with implicit 10", "query": "| head", "category": "limit"}
+{"nl": "Tail with implicit 10", "query": "| tail", "category": "limit"}
+{"nl": "Sort descending by default", "query": "| sort duration_ms", "category": "ordering"}
+{"nl": "Multiple rename pairs", "query": "| rename host as hostname, ip as client_ip, dur as duration_ms", "category": "transform"}
+{"nl": "Rex with default field (_raw)", "query": "| rex \"(?P<method>\\w+) (?P<path>\\S+)\"", "category": "transform"}
+{"nl": "Bin with alias", "query": "| bin duration_ms span=100 as latency_bucket", "category": "transform"}
+{"nl": "Timechart with by clause", "query": "| timechart count by level span=1h", "category": "timeseries"}
+{"nl": "Top 20 with custom count", "query": "| top 20 uri", "category": "aggregate"}
+{"nl": "Rare 3 by source", "query": "| rare 3 error_type by source", "category": "aggregate"}
+{"nl": "Dedup with limit 1", "query": "| dedup 1 source", "category": "transform"}
+{"nl": "Streamstats current=false", "query": "| streamstats current=false window=5 avg(duration_ms) as avg5", "category": "window"}
+{"nl": "Eventstats with multiple aggs", "query": "| eventstats count, avg(duration_ms) as avg_dur, max(duration_ms) as max_dur", "category": "window"}
+{"nl": "Left join type", "query": "| join type=left service_name [| from service_meta]", "category": "join"}
+{"nl": "Outer join", "query": "| join type=outer user_id [$user_data]", "category": "join"}
+{"nl": "Transaction with maxspan only", "query": "| transaction request_id maxspan=5m", "category": "transaction"}
+{"nl": "Materialize with partition", "query": "| materialize \"mv_daily_errors\" retention=365d partition_by=source", "category": "materialized_view"}
+{"nl": "Views with retention", "query": "| views \"mv_errors_5m\" retention=30d", "category": "materialized_view"}
+{"nl": "Implicit FROM (main index)", "query": "level=error | stats count by source", "category": "filter"}
+{"nl": "Explicit FROM a view", "query": "from mv_errors_5m | where source=nginx | sort -count", "category": "materialized_view"}
+{"nl": "Search with IN and NOT", "query": "search NOT status in (200, 201, 204)", "category": "filter"}
+{"nl": "Complex WHERE with LIKE", "query": "| where source like \"web-*\" AND level != \"debug\"", "category": "filter"}
+{"nl": "Eval with boolean logic", "query": "| eval category=if(status>=500, \"server_error\", if(status>=400, \"client_error\", \"success\"))", "category": "transform"}
+{"nl": "Abs and sqrt", "query": "| eval abs_val=abs(delta), sq=sqrt(variance)", "category": "transform"}
+{"nl": "Ceil and floor", "query": "| eval rounded_up=ceil(duration_ms), rounded_down=floor(duration_ms)", "category": "transform"}
+{"nl": "Natural language: breakdown of request types", "query": "| rex field=_raw \"(?P<method>GET|POST|PUT|DELETE)\" | stats count by method | sort -count", "category": "nl_example"}
+{"nl": "Natural language: error trend this week", "query": "level=error | timechart count span=1d", "category": "nl_example"}
+{"nl": "Natural language: most active users", "query": "| stats count as requests by user_id | sort -requests | head 10", "category": "nl_example"}
+{"nl": "Natural language: memory usage over time", "query": "metric=memory | timechart avg(used_bytes) by host span=5m", "category": "nl_example"}
+{"nl": "Natural language: compare today vs yesterday errors", "query": "level=error | where _time >= relative_time(now(), \"-1d@d\") | stats count by source", "category": "nl_example"}
+{"nl": "Natural language: longest running queries", "query": "| sort -duration_ms | head 10 | table _time, source, query, duration_ms", "category": "nl_example"}
+{"nl": "Natural language: distribution of response times", "query": "| stats perc25(duration_ms), perc50(duration_ms), perc75(duration_ms), perc90(duration_ms), perc99(duration_ms)", "category": "nl_example"}
+{"nl": "Natural language: find all requests from a specific IP", "query": "client_ip=\"192.168.1.100\"", "category": "nl_example"}
+{"nl": "Natural language: show me today's logs from the api service", "query": "source=api | where _time >= relative_time(now(), \"-1d@h\")", "category": "nl_example"}
+{"nl": "Natural language: count events by log level per source", "query": "| stats count by source, level", "category": "nl_example"}
+{"nl": "Natural language: what changed in the last hour?", "query": "| where _time >= relative_time(now(), \"-1h@h\") | stats count by source, level | sort source, -count", "category": "nl_example"}
+{"nl": "Natural language: find repeated error messages", "query": "level=error | stats count as occurrences by message | where occurrences > 1 | sort -occurrences", "category": "nl_example"}
+{"nl": "Natural language: most common status codes", "query": "| stats count by status | sort -count | head 10", "category": "nl_example"}
+{"nl": "Natural language: track a specific user's activity", "query": "user_id=42 | sort _time | table _time, action, endpoint, status", "category": "nl_example"}
+{"nl": "Natural language: hour-over-hour comparison", "query": "| bin _time span=1h | stats count by _time | streamstats avg(count) as hourly_avg", "category": "nl_example"}
+{"nl": "Where with complex boolean", "query": "| where (status >= 500 AND source == \"nginx\") OR (level == \"error\" AND duration_ms > 5000)", "category": "filter"}
+{"nl": "Stats with percentile alias", "query": "| stats perc95(duration_ms) as p95_latency by endpoint", "category": "aggregate"}
+{"nl": "Eval with nested if", "query": "| eval bucket=if(duration_ms<100, \"fast\", if(duration_ms<1000, \"medium\", if(duration_ms<5000, \"slow\", \"very_slow\")))", "category": "transform"}
+{"nl": "Multiple eval assignments", "query": "| eval is_error=if(status>=500, 1, 0), is_warn=if(status>=400 AND status<500, 1, 0)", "category": "transform"}
+{"nl": "Stats and sort pipeline", "query": "| stats count, avg(duration_ms) as avg_dur by endpoint | sort -avg_dur | head 5", "category": "pipeline"}
+{"nl": "Extract JSON and aggregate", "query": "| unpack_json | stats count by level, service", "category": "pipeline"}
+{"nl": "Logfmt parsing and filtering", "query": "| unpack_logfmt | where level=error | stats count by component", "category": "pipeline"}
+{"nl": "Full pipeline: filter, eval, aggregate, sort", "query": "source=nginx | eval is_error=if(status>=500, true, false) | stats count by is_error | sort -count", "category": "pipeline"}
+{"nl": "Cross-source correlation", "query": "search \"timeout\" | stats count by source, host | where count > 10 | sort -count", "category": "pipeline"}
+{"nl": "Trend detection", "query": "level=error | timechart count span=5m | streamstats window=12 avg(count) as trend | where count > trend * 2", "category": "pipeline"}
+{"nl": "Anomaly detection with streamstats", "query": "| timechart count span=1m | streamstats window=60 avg(count) as avg, stdev(count) as std | where count > avg + 3*std", "category": "pipeline"}
+{"nl": "Bucket and top", "query": "| bucket duration_ms span=100 | top 5 duration_ms", "category": "pipeline"}
+{"nl": "Multi-source error dashboard query", "query": "level=error | stats count by source | sort -count", "category": "pipeline"}
+{"nl": "Service health summary", "query": "| stats count, perc95(duration_ms) as p95, avg(duration_ms) as avg by source | eval healthy=if(p95 < 1000, \"yes\", \"no\")", "category": "pipeline"}
+{"nl": "Latency histogram", "query": "| bucket duration_ms span=50 | stats count by duration_ms | sort +duration_ms", "category": "pipeline"}

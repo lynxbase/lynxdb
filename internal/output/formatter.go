@@ -17,13 +17,14 @@ import (
 type Format string
 
 const (
-	FormatAuto   Format = "auto"
-	FormatTable  Format = "table"
-	FormatJSON   Format = "json"
-	FormatNDJSON Format = "ndjson" // Alias for JSON — JSONFormatter already outputs NDJSON.
-	FormatCSV    Format = "csv"
-	FormatTSV    Format = "tsv"
-	FormatRaw    Format = "raw"
+	FormatAuto     Format = "auto"
+	FormatTable    Format = "table"
+	FormatJSON     Format = "json"
+	FormatNDJSON   Format = "ndjson" // Alias for JSON — JSONFormatter already outputs NDJSON.
+	FormatCSV      Format = "csv"
+	FormatTSV      Format = "tsv"
+	FormatRaw      Format = "raw"
+	FormatVertical Format = "vertical"
 )
 
 // Formatter writes query results to an output writer.
@@ -51,6 +52,12 @@ func DetectFormat(format Format, rows []map[string]interface{}, theme ...*ui.The
 
 	switch format {
 	case FormatTable:
+		if len(rows) == 1 && len(rows[0]) == 1 {
+			if _, ok := rows[0]["_raw"]; ok {
+				return &SingleValueFormatter{}
+			}
+		}
+
 		return &TableFormatter{Theme: t}
 	case FormatJSON, FormatNDJSON:
 		return &JSONFormatter{}
@@ -60,12 +67,26 @@ func DetectFormat(format Format, rows []map[string]interface{}, theme ...*ui.The
 		return &TSVFormatter{}
 	case FormatRaw:
 		return &RawFormatter{}
+	case FormatVertical:
+		return &VerticalFormatter{}
 	default: // auto
 		if !isTTY(os.Stdout) {
 			return &JSONFormatter{}
 		}
 		if len(rows) == 1 && len(rows[0]) == 1 {
 			return &SingleValueFormatter{}
+		}
+		// Auto-detect vertical format for wide tables.
+		if len(rows) > 0 {
+			cols := collectColumns(rows)
+			estimatedWidth := 0
+			for _, col := range cols {
+				estimatedWidth += len(col) + 2 // column name + separator
+			}
+			// If estimated table width exceeds typical terminal width, use vertical.
+			if estimatedWidth > 120 && len(rows) <= 10 {
+				return &VerticalFormatter{}
+			}
 		}
 
 		return &TableFormatter{Theme: t}
@@ -225,6 +246,39 @@ func (f *SingleValueFormatter) Format(w io.Writer, rows []map[string]interface{}
 	}
 	for _, v := range rows[0] {
 		fmt.Fprintln(w, formatValue(v))
+	}
+
+	return nil
+}
+
+// VerticalFormatter outputs results in vertical format (one field per line).
+// Best for wide tables with few rows.
+type VerticalFormatter struct{}
+
+func (f *VerticalFormatter) Format(w io.Writer, rows []map[string]interface{}) error {
+	if len(rows) == 0 {
+		fmt.Fprintln(w, "No results.")
+
+		return nil
+	}
+
+	allKeys := collectColumns(rows)
+	maxLen := 0
+	for _, k := range allKeys {
+		if len(k) > maxLen {
+			maxLen = len(k)
+		}
+	}
+
+	for i, row := range rows {
+		fmt.Fprintf(w, "  ─── Row %d ───\n", i+1)
+		keys := collectColumns([]map[string]interface{}{row})
+		for _, k := range keys {
+			fmt.Fprintf(w, "  %*s: %s\n", maxLen, k, formatValue(row[k]))
+		}
+		if i < len(rows)-1 {
+			fmt.Fprintln(w)
+		}
 	}
 
 	return nil

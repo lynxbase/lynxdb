@@ -342,6 +342,28 @@ func iteratorChild(iter Iterator) Iterator {
 		return it.child
 	case *TransactionIterator:
 		return it.child
+	// New Phase 3 P2 operators.
+	case *DescribeIterator:
+		return it.child
+	case *TeeIterator:
+		return it.child
+	case *RollupIterator:
+		return it.child
+	case *SessionizeIterator:
+		return it.child
+	case *CorrelateIterator:
+		return it.child
+	case *TopologyIterator:
+		return it.child
+	// Existing analysis operators.
+	case *GlimpseIterator:
+		return it.child
+	case *PatternsIterator:
+		return it.child
+	case *OutliersIterator:
+		return it.child
+	case *TraceIterator:
+		return it.child
 	// Union operators (no single child — returns nil).
 	case *ConcurrentUnionIterator:
 		return nil

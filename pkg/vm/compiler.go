@@ -60,6 +60,8 @@ func (c *compiler) compileExpr(expr spl2.Expr) error {
 		return c.compileFuncCall(e)
 	case *spl2.InExpr:
 		return c.compileIn(e)
+	case *spl2.FStringExpr:
+		return c.compileFString(e)
 	case *spl2.GlobExpr:
 		// Glob used as standalone expression = boolean match on _raw
 		idx := c.prog.AddFieldName("_raw")
@@ -923,6 +925,33 @@ func (c *compiler) compileIn(e *spl2.InExpr) error {
 	c.prog.EmitOp(OpInList, len(e.Values))
 	if e.Negated {
 		c.prog.EmitOp(OpNot)
+	}
+
+	return nil
+}
+
+func (c *compiler) compileFString(e *spl2.FStringExpr) error {
+	if len(e.Parts) == 0 {
+		idx := c.prog.AddConstant(event.StringValue(""))
+		c.prog.EmitOp(OpConstStr, idx)
+
+		return nil
+	}
+
+	for i, part := range e.Parts {
+		if part.ParsedExpr != nil {
+			if err := c.compileExpr(part.ParsedExpr); err != nil {
+				return err
+			}
+			c.prog.EmitOp(OpToString)
+		} else {
+			idx := c.prog.AddConstant(event.StringValue(part.Literal))
+			c.prog.EmitOp(OpConstStr, idx)
+		}
+
+		if i > 0 {
+			c.prog.EmitOp(OpConcat)
+		}
 	}
 
 	return nil

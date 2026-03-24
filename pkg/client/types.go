@@ -302,6 +302,41 @@ type ExplainParsed struct {
 	FieldsRead    []string       `json:"fields_read"`
 	SearchTerms   []string       `json:"search_terms,omitempty"`
 	HasTimeBounds bool           `json:"has_time_bounds,omitempty"`
+
+	// Optimizer details (rich explain output).
+	OptimizerStats    map[string]int       `json:"optimizer_stats,omitempty"`
+	OptimizerMessages []string             `json:"optimizer_messages,omitempty"`
+	OptimizerWarnings []string             `json:"optimizer_warnings,omitempty"`
+	PhysicalPlan      *ExplainPhysicalPlan `json:"physical_plan,omitempty"`
+	ParseMS           float64              `json:"parse_ms,omitempty"`
+	OptimizeMS        float64              `json:"optimize_ms,omitempty"`
+	TotalRules        int                  `json:"total_rules,omitempty"`
+	OptimizerRules    []ExplainRuleDetail  `json:"optimizer_rules,omitempty"`
+	SourceScope       *ExplainSourceScope  `json:"source_scope,omitempty"`
+}
+
+// ExplainPhysicalPlan describes the runtime execution strategy.
+type ExplainPhysicalPlan struct {
+	CountStarOnly bool   `json:"count_star_only,omitempty"`
+	PartialAgg    bool   `json:"partial_agg,omitempty"`
+	TopKAgg       bool   `json:"topk_agg,omitempty"`
+	TopK          int    `json:"topk,omitempty"`
+	JoinStrategy  string `json:"join_strategy,omitempty"`
+}
+
+// ExplainRuleDetail describes a single optimizer rule.
+type ExplainRuleDetail struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Count       int    `json:"count"`
+}
+
+// ExplainSourceScope describes the resolved source scope.
+type ExplainSourceScope struct {
+	Type                  string   `json:"type"`
+	Sources               []string `json:"resolved_sources,omitempty"`
+	Pattern               string   `json:"pattern,omitempty"`
+	TotalSourcesAvailable int      `json:"total_sources_available,omitempty"`
 }
 
 // ExplainStage is a single pipeline stage.

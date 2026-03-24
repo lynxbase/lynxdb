@@ -27,10 +27,11 @@ const (
 	TokenSlash
 
 	// Literals.
-	TokenIdent  // identifier (may contain dots, hyphens, underscores)
-	TokenString // "quoted string"
-	TokenNumber // integer or float
-	TokenGlob   // wildcard pattern like web-*
+	TokenIdent   // identifier (may contain dots, hyphens, underscores)
+	TokenString  // "quoted string"
+	TokenNumber  // integer or float
+	TokenGlob    // wildcard pattern like web-*
+	TokenFString // f"..." interpolated string
 
 	// Keywords.
 	TokenFrom
@@ -97,6 +98,7 @@ const (
 	TokenJson
 	TokenUnroll
 	TokenPackJson
+	TokenTee
 
 	// Regex operators.
 	TokenRegexMatch    // =~
@@ -148,10 +150,45 @@ const (
 	TokenRate
 	TokenPercentiles
 	TokenSlowest
+	TokenRollup
+
+	// Schema exploration.
+	TokenGlimpse
+	TokenDescribe
+
+	// Named pipeline fragments.
+	TokenUse
+
+	// Outlier detection.
+	TokenOutliers
+
+	// Time comparison.
+	TokenCompare
+
+	// Log pattern extraction.
+	TokenPatterns
+
+	// Distributed trace analysis.
+	TokenTrace
+
+	// Session analysis.
+	TokenSessionize
+
+	// Correlation analysis.
+	TokenCorrelate
+
+	// Topology analysis.
+	TokenTopology
+
+	// Time literals.
+	TokenAt       // @
+	TokenDuration // relative time like -1h, -7d, -1h@h
+	TokenDot      // . (used for range syntax -7d..-1d)
 
 	// Lynx Flow punctuation (NOT in keywords map — lexed directly).
 	TokenQuestionMark   // ?
 	TokenDoubleQuestion // ??
+	TokenDotQuestion    // ?. (optional chaining)
 	TokenPercent        // %
 )
 
@@ -179,6 +216,7 @@ var tokenNames = map[TokenType]string{
 	TokenString:            "STRING",
 	TokenNumber:            "NUMBER",
 	TokenGlob:              "GLOB",
+	TokenFString:           "FSTRING",
 	TokenFrom:              "FROM",
 	TokenWhere:             "WHERE",
 	TokenSearch:            "SEARCH",
@@ -237,6 +275,7 @@ var tokenNames = map[TokenType]string{
 	TokenJson:              "JSON",
 	TokenUnroll:            "UNROLL",
 	TokenPackJson:          "PACK_JSON",
+	TokenTee:               "TEE",
 	TokenRegexMatch:        "REGEX_MATCH",
 	TokenRegexNotMatch:     "REGEX_NOT_MATCH",
 	TokenIndex:             "INDEX",
@@ -276,9 +315,19 @@ var tokenNames = map[TokenType]string{
 	TokenRate:              "RATE",
 	TokenPercentiles:       "PERCENTILES",
 	TokenSlowest:           "SLOWEST",
+	TokenRollup:            "ROLLUP",
+	TokenGlimpse:           "GLIMPSE",
+	TokenDescribe:          "DESCRIBE",
+	TokenAt:                "AT",
+	TokenDuration:          "DURATION",
+	TokenDot:               "DOT",
 	TokenQuestionMark:      "QUESTION",
 	TokenDoubleQuestion:    "DOUBLE_QUESTION",
+	TokenDotQuestion:       "DOT_QUESTION",
 	TokenPercent:           "PERCENT",
+	TokenCorrelate:         "CORRELATE",
+	TokenSessionize:        "SESSIONIZE",
+	TokenTopology:          "TOPOLOGY",
 }
 
 func (t TokenType) String() string {
@@ -289,11 +338,19 @@ func (t TokenType) String() string {
 	return fmt.Sprintf("TOKEN(%d)", t)
 }
 
+// FStringPart represents a single part of an f-string literal.
+// At Literal or Expr is non-empty.
+type FStringPart struct {
+	Literal string // literal text (non-empty for literal parts)
+	Expr    string // expression text (non-empty for interpolated parts)
+}
+
 // Token represents a single lexer token.
 type Token struct {
 	Type    TokenType
 	Literal string
-	Pos     int // byte offset in input
+	Pos     int           // byte offset in input
+	Parts   []FStringPart // populated for TokenFString
 }
 
 // String implements fmt.Stringer for debug/error output.
@@ -361,6 +418,7 @@ var keywords = map[string]TokenType{
 	"json":                TokenJson,
 	"unroll":              TokenUnroll,
 	"pack_json":           TokenPackJson,
+	"tee":                 TokenTee,
 	"between":             TokenBetween,
 	"is":                  TokenIs,
 	"null":                TokenNull,
@@ -397,6 +455,17 @@ var keywords = map[string]TokenType{
 	"rate":                TokenRate,
 	"percentiles":         TokenPercentiles,
 	"slowest":             TokenSlowest,
+	"rollup":              TokenRollup,
+	"glimpse":             TokenGlimpse,
+	"describe":            TokenDescribe,
+	"use":                 TokenUse,
+	"outliers":            TokenOutliers,
+	"compare":             TokenCompare,
+	"patterns":            TokenPatterns,
+	"trace":               TokenTrace,
+	"correlate":           TokenCorrelate,
+	"sessionize":          TokenSessionize,
+	"topology":            TokenTopology,
 }
 
 func lookupKeyword(ident string) TokenType {

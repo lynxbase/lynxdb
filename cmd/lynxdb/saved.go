@@ -11,6 +11,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 func init() {
@@ -41,6 +42,7 @@ func newSavedCmd() *cobra.Command {
 	}
 
 	var since, from, to string
+	var queryParams []string
 
 	runCmd := &cobra.Command{
 		Use:               "run <name>",
@@ -48,12 +50,13 @@ func newSavedCmd() *cobra.Command {
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeSavedQueryNames,
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runSavedRun(args[0], since, from, to)
+			return runSavedRun(args[0], since, from, to, queryParams)
 		},
 	}
 	runCmd.Flags().StringVarP(&since, "since", "s", "", "Relative time range (e.g., 15m, 1h)")
 	runCmd.Flags().StringVar(&from, "from", "", "Absolute start time (ISO 8601)")
 	runCmd.Flags().StringVar(&to, "to", "", "Absolute end time (ISO 8601)")
+	runCmd.Flags().StringArrayVarP(&queryParams, "param", "D", nil, "Set query parameter: --param name=value")
 
 	var forceFlag bool
 
@@ -87,9 +90,10 @@ func newSaveCmd() *cobra.Command {
 
 func newRunCmd() *cobra.Command {
 	var (
-		since string
-		from  string
-		to    string
+		since       string
+		from        string
+		to          string
+		queryParams []string
 	)
 
 	cmd := &cobra.Command{
@@ -101,13 +105,14 @@ func newRunCmd() *cobra.Command {
   lynxdb run 5xx-rate --format csv > report.csv`,
 		ValidArgsFunction: completeSavedQueryNames,
 		RunE: func(_ *cobra.Command, args []string) error {
-			return runSavedRun(args[0], since, from, to)
+			return runSavedRun(args[0], since, from, to, queryParams)
 		},
 	}
 
 	cmd.Flags().StringVarP(&since, "since", "s", "", "Relative time range (e.g., 15m, 1h)")
 	cmd.Flags().StringVar(&from, "from", "", "Absolute start time (ISO 8601)")
 	cmd.Flags().StringVar(&to, "to", "", "Absolute end time (ISO 8601)")
+	cmd.Flags().StringArrayVarP(&queryParams, "param", "D", nil, "Set query parameter: --param name=value")
 
 	return cmd
 }
@@ -172,13 +177,16 @@ func runSavedCreate(name, query string) error {
 	return nil
 }
 
-func runSavedRun(name, since, from, to string) error {
+func runSavedRun(name, since, from, to string, queryParams []string) error {
 	sq, err := findSavedQueryByName(name)
 	if err != nil {
 		return err
 	}
 
 	query := sq.Q
+	if len(queryParams) > 0 {
+		query = spl2.SubstituteParams(query, spl2.ParseParamFlags(queryParams))
+	}
 	SaveLastQuery(query, since, from, to)
 
 	return runQueryServer(query, since, from, to, "", false, "")

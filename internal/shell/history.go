@@ -101,6 +101,21 @@ func (h *History) Entries(n int) []string {
 	return h.entries[start:]
 }
 
+// SuggestFromPrefix returns the most recent history entry that starts with
+// the given prefix (but is not identical to it). Returns empty if no match.
+func (h *History) SuggestFromPrefix(prefix string) string {
+	if prefix == "" {
+		return ""
+	}
+	for i := len(h.entries) - 1; i >= 0; i-- {
+		if strings.HasPrefix(h.entries[i], prefix) && h.entries[i] != prefix {
+			return h.entries[i]
+		}
+	}
+
+	return ""
+}
+
 // Save persists history to disk.
 func (h *History) Save() error {
 	if h.path == "" {

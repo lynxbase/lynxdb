@@ -1617,3 +1617,212 @@ func TestParse_TableGlobPattern(t *testing.T) {
 		t.Errorf("fields[1]: got %q, want %q", tc.Fields[1], "http.*")
 	}
 }
+
+func TestParse_OptionalChaining(t *testing.T) {
+	t.Run("where with optional chaining", func(t *testing.T) {
+		q, err := Parse(`FROM main | where event?.user = "admin"`)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		where, ok := q.Commands[0].(*WhereCommand)
+		if !ok {
+			t.Fatalf("expected WhereCommand, got %T", q.Commands[0])
+		}
+		cmp, ok := where.Expr.(*CompareExpr)
+		if !ok {
+			t.Fatalf("expected CompareExpr, got %T", where.Expr)
+		}
+		fe, ok := cmp.Left.(*FieldExpr)
+		if !ok {
+			t.Fatalf("expected FieldExpr, got %T", cmp.Left)
+		}
+		if fe.Name != "event.user" {
+			t.Errorf("field name: got %q, want %q", fe.Name, "event.user")
+		}
+		if !fe.Optional {
+			t.Error("expected Optional=true")
+		}
+	})
+
+	t.Run("eval with optional chaining", func(t *testing.T) {
+		q, err := Parse(`FROM main | eval name = user?.profile?.name`)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		eval, ok := q.Commands[0].(*EvalCommand)
+		if !ok {
+			t.Fatalf("expected EvalCommand, got %T", q.Commands[0])
+		}
+		fe, ok := eval.Expr.(*FieldExpr)
+		if !ok {
+			t.Fatalf("expected FieldExpr for eval expr, got %T", eval.Expr)
+		}
+		if fe.Name != "user.profile" {
+			t.Errorf("field name: got %q, want %q", fe.Name, "user.profile")
+		}
+		if !fe.Optional {
+			t.Error("expected Optional=true")
+		}
+	})
+
+	t.Run("bare question mark is isnotnull", func(t *testing.T) {
+		q, err := Parse(`FROM main | where event?`)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		where, ok := q.Commands[0].(*WhereCommand)
+		if !ok {
+			t.Fatalf("expected WhereCommand, got %T", q.Commands[0])
+		}
+		fn, ok := where.Expr.(*FuncCallExpr)
+		if !ok {
+			t.Fatalf("expected FuncCallExpr, got %T", where.Expr)
+		}
+		if fn.Name != "isnotnull" {
+			t.Errorf("function name: got %q, want %q", fn.Name, "isnotnull")
+		}
+	})
+}
+
+func TestParse_Trace(t *testing.T) {
+	t.Run("default fields", func(t *testing.T) {
+		q, err := Parse(`FROM main | trace`)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		cmd, ok := q.Commands[0].(*TraceCommand)
+		if !ok {
+			t.Fatalf("expected TraceCommand, got %T", q.Commands[0])
+		}
+		if cmd.TraceIDField != "trace_id" {
+			t.Errorf("TraceIDField: got %q, want %q", cmd.TraceIDField, "trace_id")
+		}
+		if cmd.SpanIDField != "span_id" {
+			t.Errorf("SpanIDField: got %q, want %q", cmd.SpanIDField, "span_id")
+		}
+		if cmd.ParentIDField != "parent_span_id" {
+			t.Errorf("ParentIDField: got %q, want %q", cmd.ParentIDField, "parent_span_id")
+		}
+	})
+
+	t.Run("custom fields", func(t *testing.T) {
+		q, err := Parse(`FROM main | trace trace_id=tid span_id=sid parent_id=pid`)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		cmd, ok := q.Commands[0].(*TraceCommand)
+		if !ok {
+			t.Fatalf("expected TraceCommand, got %T", q.Commands[0])
+		}
+		if cmd.TraceIDField != "tid" {
+			t.Errorf("TraceIDField: got %q, want %q", cmd.TraceIDField, "tid")
+		}
+		if cmd.SpanIDField != "sid" {
+			t.Errorf("SpanIDField: got %q, want %q", cmd.SpanIDField, "sid")
+		}
+		if cmd.ParentIDField != "pid" {
+			t.Errorf("ParentIDField: got %q, want %q", cmd.ParentIDField, "pid")
+		}
+	})
+}
+
+func TestParse_FString(t *testing.T) {
+	t.Run("simple interpolation", func(t *testing.T) {
+		q, err := Parse(`| eval msg = f"{status}: {uri}"`)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		eval, ok := q.Commands[0].(*EvalCommand)
+		if !ok {
+			t.Fatalf("expected EvalCommand, got %T", q.Commands[0])
+		}
+		fstr, ok := eval.Expr.(*FStringExpr)
+		if !ok {
+			t.Fatalf("expected FStringExpr, got %T", eval.Expr)
+		}
+		if len(fstr.Parts) != 3 {
+			t.Fatalf("parts count: got %d, want 3", len(fstr.Parts))
+		}
+		if fstr.Parts[0].Literal != "" || fstr.Parts[0].Expr != "status" {
+			t.Errorf("part 0: got %+v, want field=status", fstr.Parts[0])
+		}
+		if fstr.Parts[1].Literal != ": " {
+			t.Errorf("part 1: got %q, want \": \"", fstr.Parts[1].Literal)
+		}
+		if fstr.Parts[2].Literal != "" || fstr.Parts[2].Expr != "uri" {
+			t.Errorf("part 2: got %+v, want field=uri", fstr.Parts[2])
+		}
+	})
+
+	t.Run("literal only", func(t *testing.T) {
+		q, err := Parse(`| eval msg = f"hello world"`)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		eval := q.Commands[0].(*EvalCommand)
+		fstr := eval.Expr.(*FStringExpr)
+		if len(fstr.Parts) != 1 {
+			t.Fatalf("parts count: got %d, want 1", len(fstr.Parts))
+		}
+		if fstr.Parts[0].Literal != "hello world" {
+			t.Errorf("literal: got %q", fstr.Parts[0].Literal)
+		}
+	})
+
+	t.Run("empty f-string", func(t *testing.T) {
+		q, err := Parse(`| eval msg = f""`)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		eval := q.Commands[0].(*EvalCommand)
+		fstr := eval.Expr.(*FStringExpr)
+		if len(fstr.Parts) != 0 {
+			t.Fatalf("parts count: got %d, want 0", len(fstr.Parts))
+		}
+	})
+
+	t.Run("escaped braces", func(t *testing.T) {
+		q, err := Parse(`| eval msg = f"{{literal}}"`)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		eval := q.Commands[0].(*EvalCommand)
+		fstr := eval.Expr.(*FStringExpr)
+		if len(fstr.Parts) != 1 {
+			t.Fatalf("parts count: got %d, want 1", len(fstr.Parts))
+		}
+		if fstr.Parts[0].Literal != "{literal}" {
+			t.Errorf("literal: got %q, want \"{literal}\"", fstr.Parts[0].Literal)
+		}
+	})
+
+	t.Run("f-string not confused with ident", func(t *testing.T) {
+		// "from" is a keyword, not an f-string prefix
+		q, err := Parse(`| eval msg = f"test"`)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		eval := q.Commands[0].(*EvalCommand)
+		if _, ok := eval.Expr.(*FStringExpr); !ok {
+			t.Fatalf("expected FStringExpr, got %T", eval.Expr)
+		}
+	})
+
+	t.Run("field is keyword", func(t *testing.T) {
+		q, err := Parse(`| eval msg = f"from={from}"`)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		eval := q.Commands[0].(*EvalCommand)
+		fstr := eval.Expr.(*FStringExpr)
+		if len(fstr.Parts) != 2 {
+			t.Fatalf("parts count: got %d, want 2", len(fstr.Parts))
+		}
+		if fstr.Parts[0].Literal != "from=" {
+			t.Errorf("part 0: got %q, want \"from=\"", fstr.Parts[0].Literal)
+		}
+		if fstr.Parts[1].Expr != "from" {
+			t.Errorf("part 1 expr: got %q, want \"from\"", fstr.Parts[1].Expr)
+		}
+	})
+}

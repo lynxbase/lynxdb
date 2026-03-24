@@ -301,13 +301,15 @@ func renderQueryError(query string, position, length int, message, suggestion st
 }
 
 // renderQueryParseError renders an INVALID_QUERY API error with caret display
-// by extracting position information from the error message.
+// by extracting position information from the error message and classifying
+// the error code.
 func renderQueryParseError(ae *client.APIError, query string) {
 	pos, length := extractPositionFromError(ae.Message)
 
 	suggestion := ae.Suggestion
 	if suggestion == "" {
-		suggestion = spl2.SuggestFix(ae.Message, nil)
+		fieldNames := fetchFieldNames()
+		suggestion = spl2.SuggestFix(ae.Message, fieldNames)
 	}
 
 	if suggestion == "" {
@@ -316,7 +318,11 @@ func renderQueryParseError(ae *client.APIError, query string) {
 		}
 	}
 
-	ui.Stderr.RenderQueryError(query, pos, length, ae.Message, suggestion)
+	code := string(spl2.ClassifyError(ae.Message))
+	ui.Stderr.RenderQueryErrorWithCode(query, pos, length, ae.Message, suggestion, code)
+	if code != "" {
+		printHint("Run: lynxdb explain-error %s", code)
+	}
 }
 
 // isRequiredFlagError reports whether err is a cobra "required flag(s) not set" error.

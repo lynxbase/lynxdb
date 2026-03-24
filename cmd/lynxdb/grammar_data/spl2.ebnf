@@ -1,0 +1,285 @@
+(* SPL2 Grammar for LynxDB — Machine-readable specification *)
+(* Version: 1.0 — covers all implemented and planned commands *)
+(* Reference: pkg/spl2/parser.go, pkg/spl2/search_parser.go *)
+
+(* ─── Top-level structure ─── *)
+
+program          = { dataset_def } query ;
+dataset_def      = "$" ident "=" query [ ";" ] ;
+query            = [ "from" source ] [ "where" expr ] { "|" command } ;
+source           = cte_ref | ident ;
+cte_ref          = "$" ident ;
+
+(* ─── Commands ─── *)
+
+command          = search_cmd | where_cmd | stats_cmd | eval_cmd | sort_cmd
+                 | head_cmd | tail_cmd | table_cmd | fields_cmd | rename_cmd
+                 | dedup_cmd | rex_cmd | bin_cmd | timechart_cmd
+                 | top_cmd | rare_cmd | fillnull_cmd | streamstats_cmd
+                 | eventstats_cmd | join_cmd | append_cmd | transaction_cmd
+                 | xyseries_cmd | materialize_cmd | from_cmd | views_cmd
+                 | dropview_cmd | glimpse_cmd | describe_cmd | tee_cmd
+                 | rollup_cmd | sessionize_cmd | correlate_cmd | topology_cmd
+                 | unpack_json_cmd | unpack_logfmt_cmd | json_cmd | unroll_cmd
+                 | pack_json_cmd | select_cmd | take_cmd | keep_cmd | omit_cmd
+                 | let_cmd | group_cmd | every_cmd | bucket_cmd | order_cmd
+                 | rank_cmd | topby_cmd | bottomby_cmd | bottom_cmd
+                 | running_cmd | enrich_cmd | parse_cmd | explode_cmd
+                 | pack_cmd | lookup_cmd | latency_cmd | errors_cmd
+                 | rate_cmd | percentiles_cmd | slowest_cmd ;
+
+(* ─── Search command (implicit or explicit) ─── *)
+
+search_cmd       = "search" search_expr
+                 | field_comp { field_comp } ;
+(* Implicit search: bare field=value pairs at start of pipeline *)
+(* Example: level=error source=nginx *)
+
+search_expr      = search_or ;
+search_or        = search_and { "or" search_and } ;
+search_and       = search_not { ["and"] search_not } ;
+search_not       = [ "not" ] search_primary ;
+search_primary   = "(" search_expr ")" | search_term | search_compare | search_in ;
+search_term      = quoted_string | case_directive | term_directive | word ;
+search_compare   = field comp_op search_value ;
+search_in        = field "in" "(" search_value { "," search_value } ")" ;
+search_value     = quoted_string | word | number | glob ;
+
+case_directive   = "case" "(" search_term ")" ;
+term_directive   = "term" "(" search_term ")" ;
+
+field_comp       = field comp_op value ;
+
+(* ─── WHERE command ─── *)
+
+where_cmd        = "where" expr ;
+
+(* ─── STATS command ─── *)
+
+stats_cmd        = "stats" agg_list [ "by" ident_list ] ;
+agg_list         = agg_expr { [ "," ] agg_expr } ;
+agg_expr         = agg_func "(" [ expr_list ] ")" [ "as" ident ]
+                 | agg_func [ "(" ")" ] [ "as" ident ] ;
+agg_func         = "count" | "sum" | "avg" | "min" | "max" | "dc"
+                 | "values" | "first" | "last" | "stdev"
+                 | "percentile" | "perc50" | "perc75" | "perc90"
+                 | "perc95" | "perc99" | "earliest" | "latest" ;
+
+(* ─── EVAL command ─── *)
+
+eval_cmd         = "eval" assignment { "," assignment } ;
+assignment       = ident "=" expr ;
+
+(* ─── SORT command ─── *)
+
+sort_cmd         = "sort" sort_field { [ "," ] sort_field } ;
+sort_field       = [ "+" | "-" ] field ;
+
+(* ─── HEAD / TAIL / TAKE / SELECT ─── *)
+
+head_cmd         = "head" [ number ] ;
+tail_cmd         = "tail" [ number ] ;
+take_cmd         = "take" number ;
+select_cmd       = "select" ident_list ;
+
+(* ─── TABLE / FIELDS / KEEP / OMIT ─── *)
+
+table_cmd        = "table" ident_list ;
+fields_cmd       = "fields" [ "+" | "-" ] ident_list ;
+keep_cmd         = "keep" ident_list ;
+omit_cmd         = "omit" ident_list ;
+
+(* ─── RENAME command ─── *)
+
+rename_cmd       = "rename" rename_pair { "," rename_pair } ;
+rename_pair      = field "as" field ;
+
+(* ─── DEDUP command ─── *)
+
+dedup_cmd        = "dedup" [ number ] ident_list ;
+
+(* ─── REX command (regex extraction) ─── *)
+
+rex_cmd          = "rex" [ "field" "=" field ] quoted_string ;
+
+(* ─── BIN command (bucketing) ─── *)
+
+bin_cmd          = "bin" field [ "span" "=" span_value ] [ "as" ident ] ;
+
+(* ─── TIMECHART command ─── *)
+
+timechart_cmd    = "timechart" [ "span" "=" span_value ] agg_list
+                   [ "by" ident_list ] ;
+
+(* ─── TOP / RARE / RANK ─── *)
+
+top_cmd          = "top" [ number ] field [ "by" field ] ;
+rare_cmd         = "rare" [ number ] field [ "by" field ] ;
+rank_cmd         = "rank" [ number ] field [ "by" field ] ;
+
+(* ─── FILLNULL command ─── *)
+
+fillnull_cmd     = "fillnull" [ "value" "=" value ] [ ident_list ] ;
+
+(* ─── STREAMSTATS command ─── *)
+
+streamstats_cmd  = "streamstats" [ streamstats_opts ] agg_list
+                   [ "by" ident_list ] [ streamstats_opts ] ;
+streamstats_opts = streamstats_opt { streamstats_opt } ;
+streamstats_opt  = "current" "=" bool_value | "window" "=" number ;
+
+(* ─── EVENTSTATS command ─── *)
+
+eventstats_cmd   = "eventstats" agg_list [ "by" ident_list ] ;
+
+(* ─── JOIN command ─── *)
+
+join_cmd         = "join" [ "type" "=" join_type ] field subsearch ;
+join_type        = "inner" | "left" | "outer" ;
+subsearch        = "[" ( query | cte_ref ) "]" ;
+
+(* ─── APPEND command ─── *)
+
+append_cmd       = "append" subsearch ;
+
+(* ─── TRANSACTION command ─── *)
+
+transaction_cmd  = "transaction" field
+                   [ "maxspan" "=" span_value ]
+                   [ "startswith" "=" value ]
+                   [ "endswith" "=" value ] ;
+
+(* ─── XYSERIES command ─── *)
+
+xyseries_cmd     = "xyseries" field field field ;
+
+(* ─── Materialized views ─── *)
+
+materialize_cmd  = "materialize" quoted_string
+                   [ "retention" "=" duration_value ]
+                   [ "partition_by" "=" ident_list ] ;
+from_cmd         = "from" ident ;
+views_cmd        = "views" [ quoted_string ] [ "retention" "=" duration_value ] ;
+dropview_cmd     = "dropview" quoted_string ;
+
+(* ─── Exploration commands ─── *)
+
+glimpse_cmd      = "glimpse" [ number ] ;
+describe_cmd     = "describe" [ field ] ;
+
+(* ─── Data transformation commands ─── *)
+
+tee_cmd          = "tee" quoted_string query ;
+rollup_cmd       = "rollup" field [ "span" "=" span_value ] agg_list
+                   [ "by" ident_list ] ;
+sessionize_cmd   = "sessionize" [ "maxspan" "=" span_value ]
+                   [ "maxpause" "=" span_value ] [ "by" ident_list ] ;
+
+(* ─── Correlation / topology ─── *)
+
+correlate_cmd    = "correlate" field [ "by" ident_list ] ;
+topology_cmd     = "topology" field field [ "maxdepth" "=" number ] ;
+
+(* ─── Structured data commands ─── *)
+
+unpack_json_cmd  = "unpack_json" [ "field" "=" field ] [ "prefix" "=" ident ] ;
+unpack_logfmt_cmd = "unpack_logfmt" [ "field" "=" field ] [ "prefix" "=" ident ] ;
+json_cmd         = "json" [ "field" "=" field ] ;
+unroll_cmd       = "unroll" field ;
+pack_json_cmd    = "pack_json" ident_list [ "as" ident ] ;
+
+(* ─── Grouping / bucketing ─── *)
+
+let_cmd          = "let" ident "=" expr ;
+group_cmd        = "group" ident_list [ "by" ident_list ] ;
+every_cmd        = "every" span_value agg_list [ "by" ident_list ] ;
+bucket_cmd       = "bucket" field "span" "=" span_value [ "as" ident ] ;
+
+(* ─── Ordering variants ─── *)
+
+order_cmd        = "order" sort_field { [ "," ] sort_field } ;
+topby_cmd        = "topby" number field [ "by" field ] ;
+bottomby_cmd     = "bottomby" number field [ "by" field ] ;
+bottom_cmd       = "bottom" [ number ] field [ "by" field ] ;
+
+(* ─── Running / cumulative ─── *)
+
+running_cmd      = "running" agg_list [ "by" ident_list ] ;
+
+(* ─── Enrichment / lookup ─── *)
+
+enrich_cmd       = "enrich" ident "on" field ;
+lookup_cmd       = "lookup" ident field [ "as" ident ] ;
+
+(* ─── Parsing ─── *)
+
+parse_cmd        = "parse" field quoted_string "as" ident_list ;
+explode_cmd      = "explode" field [ "delim" "=" quoted_string ] ;
+pack_cmd         = "pack" ident_list [ "as" ident ] ;
+
+(* ─── Analytics shortcuts ─── *)
+
+latency_cmd      = "latency" [ field ] [ "by" ident_list ]
+                   [ "percentiles" "=" number_list ] ;
+errors_cmd       = "errors" [ field ] [ "by" ident_list ] ;
+rate_cmd         = "rate" [ field ] [ "span" "=" span_value ]
+                   [ "by" ident_list ] ;
+percentiles_cmd  = "percentiles" field { "," field } [ "by" ident_list ]
+                   [ "p" "=" number_list ] ;
+slowest_cmd      = "slowest" [ number ] [ field ] [ "by" ident_list ] ;
+
+(* ─── Expressions ─── *)
+(* Operator precedence (low → high): OR, AND, NOT, comparison, +/-, *, unary *)
+
+expr             = or_expr ;
+or_expr          = and_expr { "or" and_expr } ;
+and_expr         = not_expr { "and" not_expr } ;
+not_expr         = [ "not" ] comparison ;
+comparison       = additive [ comp_op additive
+                   | "like" additive
+                   | "in" "(" expr_list ")" ] ;
+additive         = multiplicative { ("+" | "-") multiplicative } ;
+multiplicative   = unary { ("*" | "/" | "%") unary } ;
+unary            = [ "-" | "+" ] primary ;
+primary          = "(" expr ")" | literal | field | func_call | fstring ;
+func_call        = ident "(" [ expr_list ] ")" ;
+fstring          = "f" quoted_string ;
+
+(* ─── Comparison operators ─── *)
+
+comp_op          = "=" | "==" | "!=" | "<" | "<=" | ">" | ">=" ;
+
+(* ─── Literals ─── *)
+
+literal          = quoted_string | number | bool_value | null_value ;
+bool_value       = "true" | "false" ;
+null_value       = "null" ;
+number           = [ "-" ] digit { digit } [ "." digit { digit } ] ;
+quoted_string    = '"' { char | escape_seq } '"' ;
+escape_seq       = "\" ( '"' | "\" | "n" | "t" | "r" ) ;
+
+(* ─── Identifiers ─── *)
+
+ident            = ( letter | "_" ) { letter | digit | "_" | "-" | "." | ":" } ;
+field            = ident ;
+glob             = ident_with_star ;
+ident_with_star  = ( letter | "_" | "*" ) { letter | digit | "_" | "-" | "." | "*" | "?" } ;
+
+(* ─── Lists ─── *)
+
+ident_list       = ident { "," ident } ;
+expr_list        = expr { "," expr } ;
+number_list      = number { "," number } ;
+
+(* ─── Span / duration values ─── *)
+
+span_value       = number span_unit ;
+span_unit        = "s" | "sec" | "m" | "min" | "h" | "hr" | "d" | "w" | "mon" ;
+duration_value   = number span_unit ;
+
+(* ─── Character classes ─── *)
+
+digit            = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" ;
+letter           = "A" | "B" | ... | "Z" | "a" | "b" | ... | "z" ;
+char             = (* any character except '"' and '\' *) ;
+word             = { letter | digit | "_" | "-" | "." | "/" | ":" | "*" | "?" } ;

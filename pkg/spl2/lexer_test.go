@@ -114,6 +114,38 @@ func TestLexer_Numbers(t *testing.T) {
 	}
 }
 
+func TestLexer_NumericUnderscores(t *testing.T) {
+	tests := []struct {
+		input    string
+		tokType  TokenType
+		expected string
+	}{
+		{"1_000", TokenNumber, "1000"},
+		{"1_000_000", TokenNumber, "1000000"},
+		{"3.14_15", TokenNumber, "3.1415"},
+		{"1_000.50_0", TokenNumber, "1000.500"},
+		{"-1_000", TokenNumber, "-1000"},
+		{"_100", TokenIdent, "_100"}, // underscore at start is identifier
+		{"100_", TokenNumber, "100"}, // trailing underscore stops number, then _ starts ident
+	}
+
+	for _, tt := range tests {
+		lexer := NewLexer(tt.input)
+		tokens, err := lexer.Tokenize()
+		if err != nil {
+			t.Errorf("Tokenize(%q): %v", tt.input, err)
+
+			continue
+		}
+		if tokens[0].Type != tt.tokType {
+			t.Errorf("%q: got %s, want %s", tt.input, tokens[0].Type, tt.tokType)
+		}
+		if tokens[0].Literal != tt.expected {
+			t.Errorf("%q: got literal %q, want %q", tt.input, tokens[0].Literal, tt.expected)
+		}
+	}
+}
+
 func TestLexer_Identifiers(t *testing.T) {
 	tests := []struct {
 		input   string

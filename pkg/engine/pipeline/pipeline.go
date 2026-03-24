@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -258,6 +259,10 @@ func (qc *queryContext) buildQuery(ctx context.Context, query *spl2.Query) (Iter
 			iter = NewRowScanIterator(rows, qc.batchSize)
 		} else {
 			iter = qc.buildSourceIterator(query.Source)
+			// Apply inline time range from FROM source[-1h] syntax.
+			if query.Source.TimeRange != nil {
+				iter = qc.applySourceTimeRange(iter, query.Source.TimeRange)
+			}
 			// Record the first non-variable source so MULTISEARCH sub-queries
 			// without an explicit FROM can inherit the parent's data source.
 			if qc.defaultSource == nil {
@@ -272,15 +277,36 @@ func (qc *queryContext) buildQuery(ctx context.Context, query *spl2.Query) (Iter
 		iter = WrapInstrumented(iter, "Scan")
 	}
 
-	for _, cmd := range query.Commands {
-		var err error
-		iter, err = qc.buildCommand(iter, cmd)
-		if err != nil {
-			return nil, fmt.Errorf("build pipeline: %w", err)
-		}
-
-		if qc.instrument {
-			iter = WrapInstrumented(iter, commandStageName(cmd))
+	for i, cmd := range query.Commands {
+		switch c := cmd.(type) {
+		case *spl2.CompareCommand:
+			shift, err := time.ParseDuration(c.Shift)
+			if err != nil {
+				return nil, fmt.Errorf("build pipeline: invalid compare duration %q: %w", c.Shift, err)
+			}
+			prefixCmds := query.Commands[:i]
+			reExec := func(ctx context.Context) (Iterator, error) {
+				shiftedSrc := shiftSourceClause(query.Source, shift)
+				shiftedQuery := &spl2.Query{
+					Source:   shiftedSrc,
+					Commands: prefixCmds,
+				}
+				shiftedQC := qc.cloneForReExec()
+				return shiftedQC.buildQuery(ctx, shiftedQuery)
+			}
+			iter = NewCompareIterator(iter, shift, reExec, qc.batchSize)
+			if qc.instrument {
+				iter = WrapInstrumented(iter, commandStageName(cmd))
+			}
+		default:
+			var err error
+			iter, err = qc.buildCommand(iter, cmd)
+			if err != nil {
+				return nil, fmt.Errorf("build pipeline: %w", err)
+			}
+			if qc.instrument {
+				iter = WrapInstrumented(iter, commandStageName(cmd))
+			}
 		}
 	}
 
@@ -362,6 +388,125 @@ func (qc *queryContext) buildSourceIterator(source *spl2.SourceClause) Iterator 
 	}
 }
 
+// applySourceTimeRange wraps the iterator with a time filter based on
+// inline time range syntax: FROM source[-1h], FROM source[-7d..-1d].
+// Durations are resolved relative to time.Now().
+func (qc *queryContext) applySourceTimeRange(child Iterator, tr *spl2.SourceTimeRange) Iterator {
+	now := time.Now()
+	earliest, latest := resolveTimeRange(tr, now)
+
+	if earliest.IsZero() && latest.IsZero() {
+		return child
+	}
+
+	return NewTimeFilterIterator(child, earliest, latest)
+}
+
+// resolveTimeRange converts a SourceTimeRange into absolute time bounds.
+func resolveTimeRange(tr *spl2.SourceTimeRange, now time.Time) (earliest, latest time.Time) {
+	if tr.Relative == "" && tr.SnapTo == "" {
+		return time.Time{}, time.Time{}
+	}
+
+	// Handle snap-to: [@d] means "from start of today"
+	if tr.SnapTo != "" && tr.Relative == "" {
+		earliest = snapTime(now, tr.SnapTo)
+		latest = now
+
+		return earliest, latest
+	}
+
+	// Parse the relative duration.
+	dur := parseRelativeDuration(tr.Relative)
+	earliest = now.Add(-dur)
+
+	// Apply snap-to on the earliest bound.
+	if tr.SnapTo != "" {
+		earliest = snapTime(now.Add(-dur), tr.SnapTo)
+	}
+
+	// End bound: either explicit range end or "now".
+	if tr.End != "" {
+		if strings.HasPrefix(tr.End, "@") {
+			latest = snapTime(now, tr.End[1:])
+		} else {
+			endDur := parseRelativeDuration(tr.End)
+			latest = now.Add(-endDur)
+		}
+	} else {
+		latest = now
+	}
+
+	return earliest, latest
+}
+
+// parseRelativeDuration parses a duration string like "-1h", "-7d", "-30m".
+func parseRelativeDuration(s string) time.Duration {
+	if s == "" {
+		return 0
+	}
+
+	// Strip leading minus.
+	if s[0] == '-' {
+		s = s[1:]
+	}
+
+	// Handle snap suffix: "1h@h" → just use "1h"
+	if idx := strings.IndexByte(s, '@'); idx > 0 {
+		s = s[:idx]
+	}
+
+	if len(s) < 2 {
+		return 0
+	}
+
+	unit := s[len(s)-1]
+	numStr := s[:len(s)-1]
+	n, err := strconv.Atoi(numStr)
+	if err != nil {
+		return 0
+	}
+
+	switch unit {
+	case 's':
+		return time.Duration(n) * time.Second
+	case 'm':
+		return time.Duration(n) * time.Minute
+	case 'h':
+		return time.Duration(n) * time.Hour
+	case 'd':
+		return time.Duration(n) * 24 * time.Hour
+	case 'w':
+		return time.Duration(n) * 7 * 24 * time.Hour
+	default:
+		return 0
+	}
+}
+
+// snapTime snaps a time to the start of the given unit.
+func snapTime(t time.Time, unit string) time.Time {
+	switch unit {
+	case "s":
+		return t.Truncate(time.Second)
+	case "m":
+		return t.Truncate(time.Minute)
+	case "h":
+		return t.Truncate(time.Hour)
+	case "d":
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	case "w":
+		weekday := int(t.Weekday())
+		if weekday == 0 {
+			weekday = 7 // Treat Sunday as day 7
+		}
+		startOfDay := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+
+		return startOfDay.AddDate(0, 0, -(weekday - 1))
+	default:
+		return t
+	}
+}
+
 // commandStageName returns a human-readable stage name for a command type.
 func commandStageName(cmd spl2.Command) string {
 	switch cmd.(type) {
@@ -423,6 +568,16 @@ func commandStageName(cmd spl2.Command) string {
 		return "Views"
 	case *spl2.DropviewCommand:
 		return "Dropview"
+	case *spl2.TraceCommand:
+		return "Trace"
+	case *spl2.RollupCommand:
+		return "Rollup"
+	case *spl2.CorrelateCommand:
+		return "Correlate"
+	case *spl2.SessionizeCommand:
+		return "Sessionize"
+	case *spl2.TopologyCommand:
+		return "Topology"
 	case *spl2.UnpackCommand:
 		return "Unpack"
 	case *spl2.JsonCommand:
@@ -433,6 +588,18 @@ func commandStageName(cmd spl2.Command) string {
 		return "Unroll"
 	case *spl2.PackJsonCommand:
 		return "PackJson"
+	case *spl2.TeeCommand:
+		return "Tee"
+	case *spl2.DescribeCommand:
+		return "Describe"
+	case *spl2.GlimpseCommand:
+		return "Glimpse"
+	case *spl2.OutliersCommand:
+		return "Outliers"
+	case *spl2.CompareCommand:
+		return "Compare"
+	case *spl2.PatternsCommand:
+		return "Patterns"
 	default:
 		return "Unknown"
 	}
@@ -801,6 +968,39 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 	case *spl2.RareCommand:
 		return NewTopIteratorWithBudget(child, c.Field, c.ByField, c.N, true, qc.batchSize, qc.newAccount("rare")), nil
 
+	case *spl2.GlimpseCommand:
+		return NewGlimpseIterator(child), nil
+
+	case *spl2.DescribeCommand:
+		return NewDescribeIterator(child), nil
+
+	case *spl2.UseCommand:
+		return nil, fmt.Errorf("unresolved use command %q — fragment expansion failed", c.Name)
+
+	case *spl2.OutliersCommand:
+		return NewOutliersIterator(child, c.Field, c.Method, c.Threshold), nil
+
+	case *spl2.CompareCommand:
+		return nil, fmt.Errorf("build pipeline: compare must be intercepted at query level")
+
+	case *spl2.PatternsCommand:
+		return NewPatternsIterator(child, c.Field, c.MaxTemplates, c.Similarity), nil
+
+	case *spl2.TraceCommand:
+		return NewTraceIterator(child, c.TraceIDField, c.SpanIDField, c.ParentIDField), nil
+
+	case *spl2.RollupCommand:
+		return NewRollupIterator(child, c.Spans, c.GroupBy, qc.batchSize), nil
+
+	case *spl2.CorrelateCommand:
+		return NewCorrelateIterator(child, c.Field1, c.Field2, c.Method), nil
+
+	case *spl2.SessionizeCommand:
+		return NewSessionizeIterator(child, c.MaxPause, c.GroupBy, qc.batchSize), nil
+
+	case *spl2.TopologyCommand:
+		return NewTopologyIterator(child, c.SourceField, c.DestField, c.WeightField, c.MaxNodes, qc.batchSize), nil
+
 	case *spl2.FillnullCommand:
 		return NewFillnullIteratorWithBudget(child, c.Value, c.Fields, qc.newAccount("fillnull")), nil
 
@@ -909,6 +1109,9 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 
 	case *spl2.PackJsonCommand:
 		return NewPackJsonIterator(child, c.Fields, c.Target), nil
+
+	case *spl2.TeeCommand:
+		return NewTeeIterator(child, c.Destination, c.Format), nil
 
 	default:
 		return nil, fmt.Errorf("unsupported command type: %T", cmd)
@@ -1172,4 +1375,65 @@ func CollectAll(ctx context.Context, iter Iterator, opts ...CollectOptions) ([]m
 	}
 
 	return rows, nil
+}
+
+// cloneForReExec creates a lightweight clone of the queryContext for
+// re-executing a shifted pipeline (used by compare).
+func (qc *queryContext) cloneForReExec() *queryContext {
+	clone := *qc
+	// Reset defaultSource so the shifted query records its own.
+	clone.defaultSource = nil
+	// Share datasets (CTEs are read-only during re-execution).
+	// share viewResolver, viewManager, store, etc. (already copied by *qc)
+	return &clone
+}
+
+// shiftSourceClause returns a copy of the SourceClause with its time range
+// shifted backward by the given duration. If the source has no time range,
+// one is created covering the shifted window.
+func shiftSourceClause(src *spl2.SourceClause, shift time.Duration) *spl2.SourceClause {
+	if src == nil {
+		return nil
+	}
+	clone := *src
+	if clone.TimeRange != nil {
+		tr := *clone.TimeRange
+		tr.Relative = shiftRelative(tr.Relative, shift)
+		if tr.End != "" {
+			tr.End = shiftRelative(tr.End, shift)
+		}
+		clone.TimeRange = &tr
+	} else {
+		// No inline time range — create one for the shifted window.
+		clone.TimeRange = &spl2.SourceTimeRange{
+			Relative: "-" + durationToCompact(shift),
+		}
+	}
+
+	return &clone
+}
+
+// shiftRelative adjusts a relative time string by subtracting a duration.
+// "-1h" shifted by 1h → "-2h". "-7d" shifted by 1d → "-8d".
+func shiftRelative(rel string, shift time.Duration) string {
+	if rel == "" {
+		return "-" + durationToCompact(shift)
+	}
+	d := parseRelativeDuration(rel)
+
+	return "-" + durationToCompact(d+shift)
+}
+
+// durationToCompact converts a duration to the most compact unit string.
+// 3600s → "1h", 86400s → "24h" (Go durations don't support "d" natively,
+// so we keep hours for anything ≥ 1h).
+func durationToCompact(d time.Duration) string {
+	if d.Hours() >= 1 && d == time.Duration(d.Hours())*time.Hour {
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	}
+	if d.Minutes() >= 1 && d == time.Duration(d.Minutes())*time.Minute {
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	}
+
+	return d.String()
 }

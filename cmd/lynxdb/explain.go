@@ -152,13 +152,21 @@ func runExplain(query string) error {
 			fmt.Printf("%s %s\n\n", t.Bold.Render("Fields read:"),
 				strings.Join(result.Parsed.FieldsRead, ", "))
 		}
+
+		// Render optimizer narration.
+		narration := narrateExplain(result.Parsed)
+		if narration != "" {
+			fmt.Print(narration)
+		}
 	}
 
 	if result.Acceleration != nil && result.Acceleration.Available {
-		fmt.Printf("%s view=%s speedup=%s\n\n",
-			t.Bold.Render("MV acceleration:"),
-			result.Acceleration.View,
-			result.Acceleration.EstimatedSpeedup)
+		accelLine := fmt.Sprintf("  view=%s", result.Acceleration.View)
+		if result.Acceleration.EstimatedSpeedup != "" {
+			accelLine += fmt.Sprintf(" speedup=%s", result.Acceleration.EstimatedSpeedup)
+		}
+
+		fmt.Printf("%s%s\n\n", t.Bold.Render("MV acceleration:"), accelLine)
 	}
 
 	if len(result.Errors) > 0 {
@@ -174,4 +182,113 @@ func runExplain(query string) error {
 	}
 
 	return nil
+}
+
+// narrateExplain renders optimizer details, rule applications, physical plan
+// decisions, and warnings as human-readable prose.
+func narrateExplain(parsed *client.ExplainParsed) string {
+	if parsed == nil {
+		return ""
+	}
+
+	var b strings.Builder
+	t := ui.Stdout
+
+	// Optimizer messages — what the optimizer did.
+	if len(parsed.OptimizerMessages) > 0 {
+		fmt.Fprintf(&b, "%s\n", t.Bold.Render("Optimizer notes:"))
+		for _, msg := range parsed.OptimizerMessages {
+			fmt.Fprintf(&b, "  %s %s\n", t.Dim.Render("✓"), msg)
+		}
+		b.WriteByte('\n')
+	}
+
+	// Rules applied — which optimizer rules fired.
+	if len(parsed.OptimizerRules) > 0 {
+		totalFirings := 0
+		for _, rd := range parsed.OptimizerRules {
+			totalFirings += rd.Count
+		}
+		fmt.Fprintf(&b, "%s (%d rules, %d firings)\n",
+			t.Bold.Render("Rules applied"), len(parsed.OptimizerRules), totalFirings)
+
+		var parts []string
+		for _, rd := range parsed.OptimizerRules {
+			if rd.Count > 1 {
+				parts = append(parts, fmt.Sprintf("%s ×%d", rd.Name, rd.Count))
+			} else {
+				parts = append(parts, rd.Name)
+			}
+		}
+		fmt.Fprintf(&b, "  %s\n\n", strings.Join(parts, ", "))
+	}
+
+	// Physical plan narration.
+	if parsed.PhysicalPlan != nil {
+		var planLines []string
+		pp := parsed.PhysicalPlan
+		if pp.PartialAgg {
+			planLines = append(planLines, "Partial aggregation enabled — per-segment results merged at coordinator")
+		}
+		if pp.CountStarOnly {
+			planLines = append(planLines, "Count(*) optimization — reading row count from metadata (no event scan)")
+		}
+		if pp.TopKAgg {
+			planLines = append(planLines, fmt.Sprintf("TopK heap optimization — tracking top %d during aggregation (avoids full sort)", pp.TopK))
+		}
+		if pp.JoinStrategy != "" {
+			planLines = append(planLines, fmt.Sprintf("Join strategy: %s", pp.JoinStrategy))
+		}
+
+		if len(planLines) > 0 {
+			fmt.Fprintf(&b, "%s\n", t.Bold.Render("Execution strategy:"))
+			for _, line := range planLines {
+				fmt.Fprintf(&b, "  • %s\n", line)
+			}
+			b.WriteByte('\n')
+		}
+	}
+
+	// Cost explanation with time bounds and scan info.
+	if parsed.HasTimeBounds || parsed.UsesFullScan || parsed.SourceScope != nil {
+		fmt.Fprintf(&b, "%s\n", t.Bold.Render("Scan details:"))
+		if parsed.HasTimeBounds {
+			fmt.Fprintf(&b, "  Time range: bounded (query uses time filters)\n")
+		} else if parsed.UsesFullScan {
+			fmt.Fprintf(&b, "  Time range: unbounded (full scan — consider adding time filters)\n")
+		}
+		if parsed.SourceScope != nil {
+			scope := parsed.SourceScope
+			if scope.Type == "single" && len(scope.Sources) > 0 {
+				fmt.Fprintf(&b, "  Source: %s\n", scope.Sources[0])
+			} else if scope.Type == "multi" && len(scope.Sources) > 0 {
+				fmt.Fprintf(&b, "  Sources: %s (%d)\n", strings.Join(scope.Sources, ", "), len(scope.Sources))
+			} else if scope.Type == "glob" && scope.Pattern != "" {
+				fmt.Fprintf(&b, "  Source pattern: %s", scope.Pattern)
+				if scope.TotalSourcesAvailable > 0 {
+					fmt.Fprintf(&b, " (%d sources available)", scope.TotalSourcesAvailable)
+				}
+				b.WriteByte('\n')
+			}
+		}
+		b.WriteByte('\n')
+	}
+
+	// Optimizer warnings.
+	if len(parsed.OptimizerWarnings) > 0 {
+		fmt.Fprintf(&b, "%s\n", t.Bold.Render("Warnings:"))
+		for _, w := range parsed.OptimizerWarnings {
+			fmt.Fprintf(&b, "  %s %s\n", t.Warning.Render("!"), w)
+		}
+		b.WriteByte('\n')
+	}
+
+	// Timing.
+	if parsed.ParseMS > 0 || parsed.OptimizeMS > 0 {
+		fmt.Fprintf(&b, "  %s\n", t.Dim.Render(
+			fmt.Sprintf("parse: %.2fms  optimize: %.2fms", parsed.ParseMS, parsed.OptimizeMS)))
+		b.WriteByte('\n')
+	}
+
+	return b.String()
 }

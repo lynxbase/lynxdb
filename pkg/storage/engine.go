@@ -303,6 +303,11 @@ func (e *Engine) Query(ctx context.Context, spl2Query string, opts QueryOpts) (*
 		return nil, nil, fmt.Errorf("parse: %w", err)
 	}
 
+	// Expand pipeline fragments (use command) before optimization.
+	if err := spl2.ExpandFragments(prog, spl2.NewFileFragmentResolver("")); err != nil {
+		return nil, nil, fmt.Errorf("fragment expansion: %w", err)
+	}
+
 	st.ParseDuration = time.Since(parseStart)
 
 	optStart := time.Now()
@@ -749,6 +754,12 @@ func (e *Engine) QueryReader(ctx context.Context, r io.Reader, spl2Query string,
 // GetEvents implements pipeline.IndexStore so Engine can be used directly.
 func (e *Engine) GetEvents(index string) []*event.Event {
 	return e.events[index]
+}
+
+// SetEvents replaces the events for a given index. Used for ephemeral
+// re-execution (e.g., underscore queries against last results).
+func (e *Engine) SetEvents(index string, events []*event.Event) {
+	e.events[index] = events
 }
 
 // Close releases all resources held by the engine.

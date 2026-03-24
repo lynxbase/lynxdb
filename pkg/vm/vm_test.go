@@ -2064,3 +2064,161 @@ func TestCompileILike(t *testing.T) {
 		t.Error("expected false for non-matching ilike")
 	}
 }
+
+func TestVMOptionalChaining_MissingField(t *testing.T) {
+	// When a nested field like event.user is accessed on a row where
+	// "event" doesn't exist, the VM should return null without error.
+	expr := &spl2.FieldExpr{Name: "event.user", Optional: true}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	fields := map[string]event.Value{}
+
+	result, err := vm.Execute(prog, fields)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !result.IsNull() {
+		t.Errorf("expected null for missing nested field with optional chaining, got %v", result)
+	}
+}
+
+func TestVMOptionalChaining_PresentField(t *testing.T) {
+	// When the field exists, optional chaining should return the value.
+	expr := &spl2.FieldExpr{Name: "status", Optional: true}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	fields := map[string]event.Value{
+		"status": event.IntValue(200),
+	}
+
+	result, err := vm.Execute(prog, fields)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.AsInt() != 200 {
+		t.Errorf("expected 200, got %v", result)
+	}
+}
+
+func TestVMFStringCompilation(t *testing.T) {
+	t.Run("literal only", func(t *testing.T) {
+		expr := &spl2.FStringExpr{
+			Parts: []spl2.FStringPartAST{
+				{Literal: "hello world"},
+			},
+		}
+		prog, err := CompileExpr(expr)
+		if err != nil {
+			t.Fatalf("CompileExpr: %v", err)
+		}
+		result := runProgram(t, prog, nil)
+		if result.AsString() != "hello world" {
+			t.Errorf("got %q, want \"hello world\"", result.AsString())
+		}
+	})
+
+	t.Run("empty f-string", func(t *testing.T) {
+		expr := &spl2.FStringExpr{Parts: []spl2.FStringPartAST{}}
+		prog, err := CompileExpr(expr)
+		if err != nil {
+			t.Fatalf("CompileExpr: %v", err)
+		}
+		result := runProgram(t, prog, nil)
+		if result.AsString() != "" {
+			t.Errorf("got %q, want \"\"", result.AsString())
+		}
+	})
+
+	t.Run("field interpolation", func(t *testing.T) {
+		expr := &spl2.FStringExpr{
+			Parts: []spl2.FStringPartAST{
+				{Expr: "status", ParsedExpr: &spl2.FieldExpr{Name: "status"}},
+				{Literal: ": "},
+				{Expr: "uri", ParsedExpr: &spl2.FieldExpr{Name: "uri"}},
+			},
+		}
+		prog, err := CompileExpr(expr)
+		if err != nil {
+			t.Fatalf("CompileExpr: %v", err)
+		}
+		fields := map[string]event.Value{
+			"status": event.StringValue("404"),
+			"uri":    event.StringValue("/api/users"),
+		}
+		result := runProgram(t, prog, fields)
+		want := "404: /api/users"
+		if result.AsString() != want {
+			t.Errorf("got %q, want %q", result.AsString(), want)
+		}
+	})
+
+	t.Run("numeric field converted to string", func(t *testing.T) {
+		expr := &spl2.FStringExpr{
+			Parts: []spl2.FStringPartAST{
+				{Literal: "code="},
+				{Expr: "status", ParsedExpr: &spl2.FieldExpr{Name: "status"}},
+			},
+		}
+		prog, err := CompileExpr(expr)
+		if err != nil {
+			t.Fatalf("CompileExpr: %v", err)
+		}
+		fields := map[string]event.Value{
+			"status": event.IntValue(500),
+		}
+		result := runProgram(t, prog, fields)
+		if result.AsString() != "code=500" {
+			t.Errorf("got %q, want \"code=500\"", result.AsString())
+		}
+	})
+
+	t.Run("arithmetic in interpolation", func(t *testing.T) {
+		expr := &spl2.FStringExpr{
+			Parts: []spl2.FStringPartAST{
+				{Literal: "total="},
+				{Expr: "a+b", ParsedExpr: &spl2.ArithExpr{
+					Left:  &spl2.LiteralExpr{Value: "3"},
+					Op:    "+",
+					Right: &spl2.LiteralExpr{Value: "4"},
+				}},
+			},
+		}
+		prog, err := CompileExpr(expr)
+		if err != nil {
+			t.Fatalf("CompileExpr: %v", err)
+		}
+		result := runProgram(t, prog, nil)
+		if result.AsString() != "total=7" {
+			t.Errorf("got %q, want \"total=7\"", result.AsString())
+		}
+	})
+
+	t.Run("full pipeline with f-string eval", func(t *testing.T) {
+		q, err := spl2.Parse(`| eval msg = f"{status}: {uri}"`)
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		evalCmd := q.Commands[0].(*spl2.EvalCommand)
+		prog, err := CompileExpr(evalCmd.Expr)
+		if err != nil {
+			t.Fatalf("CompileExpr: %v", err)
+		}
+		fields := map[string]event.Value{
+			"status": event.IntValue(200),
+			"uri":    event.StringValue("/health"),
+		}
+		result := runProgram(t, prog, fields)
+		want := "200: /health"
+		if result.AsString() != want {
+			t.Errorf("got %q, want %q", result.AsString(), want)
+		}
+	})
+}

@@ -99,6 +99,12 @@ func (p *Parser) parseProgram() (*Program, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Check for unconsumed tokens — stray tokens after the query are an error.
+	if tok := p.peek(); tok.Type != TokenEOF && tok.Type != TokenSemicolon {
+		return nil, fmt.Errorf("spl2: unexpected %s %q at position %d", tok.Type, tok.Literal, tok.Pos)
+	}
+
 	prog.Main = main
 
 	return prog, nil
@@ -412,6 +418,8 @@ func (p *Parser) parseCommand() ([]Command, error) {
 		return singleCmd(p.parseUnroll())
 	case TokenPackJson:
 		return singleCmd(p.parsePackJson())
+	case TokenTee:
+		return singleCmd(p.parseTee())
 
 	// Lynx Flow commands.
 	case TokenLet:
@@ -452,6 +460,28 @@ func (p *Parser) parseCommand() ([]Command, error) {
 		return singleCmd(p.parseLynxPack())
 	case TokenLookup:
 		return singleCmd(p.parseLookupCmd())
+	case TokenGlimpse:
+		return singleCmd(p.parseGlimpse())
+	case TokenDescribe:
+		return singleCmd(p.parseDescribe())
+	case TokenUse:
+		return singleCmd(p.parseUse())
+	case TokenOutliers:
+		return singleCmd(p.parseOutliers())
+	case TokenCompare:
+		return singleCmd(p.parseCompare())
+	case TokenPatterns:
+		return singleCmd(p.parsePatterns())
+	case TokenTrace:
+		return singleCmd(p.parseTrace())
+	case TokenRollup:
+		return singleCmd(p.parseRollup())
+	case TokenCorrelate:
+		return singleCmd(p.parseCorrelate())
+	case TokenSessionize:
+		return singleCmd(p.parseSessionize())
+	case TokenTopology:
+		return singleCmd(p.parseTopology())
 	case TokenLatency:
 		return singleCmd(p.parseLatency())
 	case TokenErrors:
@@ -533,11 +563,12 @@ func (p *Parser) parseSearch() (Command, error) {
 
 	startPos := startTok.Pos
 
-	// Find end position by scanning to next pipe, EOF, or bracket.
+	// Find end position by scanning to next pipe, EOF, bracket, or @ (not valid in search expressions).
 	endPos := len(p.input)
 	savedPos := p.pos
 	for p.peek().Type != TokenPipe && p.peek().Type != TokenEOF &&
-		p.peek().Type != TokenRBracket && p.peek().Type != TokenSemicolon {
+		p.peek().Type != TokenRBracket && p.peek().Type != TokenSemicolon &&
+		p.peek().Type != TokenAt {
 		p.advance()
 	}
 	if p.peek().Type != TokenEOF {
@@ -687,6 +718,391 @@ func (p *Parser) parseHead() (*HeadCommand, error) {
 	}
 
 	return &HeadCommand{Count: count}, nil
+}
+
+func (p *Parser) parseGlimpse() (*GlimpseCommand, error) {
+	p.advance() // consume "glimpse"
+
+	return &GlimpseCommand{}, nil
+}
+
+func (p *Parser) parseDescribe() (*DescribeCommand, error) {
+	p.advance() // consume "describe"
+
+	return &DescribeCommand{Output: "stderr"}, nil
+}
+
+func (p *Parser) parseUse() (*UseCommand, error) {
+	p.advance() // consume "use"
+
+	name := p.peek()
+	if name.Type == TokenIdent {
+		p.advance()
+		return &UseCommand{Name: name.Literal}, nil
+	}
+	// Also accept @namespace/name syntax (e.g., @stdlib/parse_combined).
+	if name.Type == TokenAt {
+		p.advance()
+		next := p.peek()
+		if next.Type == TokenIdent {
+			p.advance()
+			fullName := "@" + next.Literal
+			// Check for /name suffix.
+			if p.peek().Type == TokenSlash {
+				p.advance()
+				slashName := p.peek()
+				if slashName.Type == TokenIdent {
+					p.advance()
+					fullName += "/" + slashName.Literal
+				}
+			}
+			return &UseCommand{Name: fullName}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("spl2: use requires a pipeline name, e.g., 'use parse_nginx' or 'use @stdlib/parse_combined'")
+}
+
+func (p *Parser) parseOutliers() (*OutliersCommand, error) {
+	p.advance() // consume "outliers"
+
+	cmd := &OutliersCommand{
+		Method:    "iqr",
+		Threshold: 1.5,
+	}
+
+	// Parse field=<name> (required).
+	if p.peek().Type == TokenIdent && strings.ToLower(p.peek().Literal) == "field" {
+		p.advance()
+		if _, err := p.expect(TokenEq); err != nil {
+			return nil, err
+		}
+		tok := p.peek()
+		if tok.Type == TokenIdent {
+			p.advance()
+			cmd.Field = tok.Literal
+		} else {
+			return nil, fmt.Errorf("spl2: outliers requires field=<name>")
+		}
+	} else {
+		return nil, fmt.Errorf("spl2: outliers requires field=<name>, e.g., 'outliers field=duration_ms'")
+	}
+
+	// Parse optional method=<iqr|zscore|mad>.
+	if p.peek().Type == TokenIdent && strings.ToLower(p.peek().Literal) == "method" {
+		p.advance()
+		if _, err := p.expect(TokenEq); err != nil {
+			return nil, err
+		}
+		tok := p.peek()
+		if tok.Type == TokenIdent {
+			p.advance()
+			switch strings.ToLower(tok.Literal) {
+			case "iqr", "zscore", "mad":
+				cmd.Method = tok.Literal
+			default:
+				return nil, fmt.Errorf("spl2: outliers method must be iqr, zscore, or mad, got %q", tok.Literal)
+			}
+			// Update default threshold based on method.
+			if cmd.Method == "zscore" {
+				cmd.Threshold = 3.0
+			}
+		}
+	}
+
+	// Parse optional threshold=<N>.
+	if p.peek().Type == TokenIdent && strings.ToLower(p.peek().Literal) == "threshold" {
+		p.advance()
+		if _, err := p.expect(TokenEq); err != nil {
+			return nil, err
+		}
+		tok := p.peek()
+		if tok.Type == TokenNumber {
+			p.advance()
+			val, err := strconv.ParseFloat(tok.Literal, 64)
+			if err != nil {
+				return nil, fmt.Errorf("spl2: invalid threshold %q: %w", tok.Literal, err)
+			}
+			cmd.Threshold = val
+		}
+	}
+
+	return cmd, nil
+}
+
+func (p *Parser) parseCompare() (*CompareCommand, error) {
+	p.advance() // consume "compare"
+
+	// Accept "previous" keyword (optional but conventional).
+	if p.peek().Type == TokenIdent && strings.ToLower(p.peek().Literal) == "previous" {
+		p.advance()
+	}
+
+	// Read duration (required).
+	if p.peek().Type == TokenDuration {
+		tok := p.advance()
+		return &CompareCommand{Shift: tok.Literal}, nil
+	}
+
+	return nil, fmt.Errorf("spl2: compare requires a duration, e.g., 'compare previous 1h' or 'compare 7d'")
+}
+
+func (p *Parser) parsePatterns() (*PatternsCommand, error) {
+	p.advance() // consume "patterns"
+
+	cmd := &PatternsCommand{
+		Field:        "_raw",
+		MaxTemplates: 50,
+		Similarity:   0.4,
+	}
+
+	for p.peek().Type == TokenIdent {
+		switch strings.ToLower(p.peek().Literal) {
+		case "field":
+			p.advance()
+			if _, err := p.expect(TokenEq); err != nil {
+				return nil, err
+			}
+			tok := p.peek()
+			if tok.Type == TokenIdent {
+				p.advance()
+				cmd.Field = tok.Literal
+			}
+		case "max_templates":
+			p.advance()
+			if _, err := p.expect(TokenEq); err != nil {
+				return nil, err
+			}
+			tok := p.peek()
+			if tok.Type == TokenNumber {
+				p.advance()
+				n, err := strconv.Atoi(tok.Literal)
+				if err != nil {
+					return nil, fmt.Errorf("spl2: invalid max_templates %q", tok.Literal)
+				}
+				cmd.MaxTemplates = n
+			}
+		case "similarity":
+			p.advance()
+			if _, err := p.expect(TokenEq); err != nil {
+				return nil, err
+			}
+			tok := p.peek()
+			if tok.Type == TokenNumber {
+				p.advance()
+				f, err := strconv.ParseFloat(tok.Literal, 64)
+				if err != nil {
+					return nil, fmt.Errorf("spl2: invalid similarity %q", tok.Literal)
+				}
+				if f < 0 || f > 1 {
+					return nil, fmt.Errorf("spl2: similarity must be between 0.0 and 1.0, got %v", f)
+				}
+				cmd.Similarity = f
+			}
+		default:
+			return cmd, nil
+		}
+	}
+
+	return cmd, nil
+}
+
+func (p *Parser) parseTrace() (*TraceCommand, error) {
+	p.advance() // consume "trace"
+
+	cmd := &TraceCommand{
+		TraceIDField:  "trace_id",
+		SpanIDField:   "span_id",
+		ParentIDField: "parent_span_id",
+	}
+
+	// Parse optional named parameters: trace_id=<field>, span_id=<field>, parent_id=<field>.
+	for p.peek().Type == TokenIdent {
+		switch strings.ToLower(p.peek().Literal) {
+		case "trace_id":
+			p.advance()
+			if _, err := p.expect(TokenEq); err != nil {
+				return nil, err
+			}
+			tok := p.peek()
+			if tok.Type == TokenIdent {
+				p.advance()
+				cmd.TraceIDField = tok.Literal
+			}
+		case "span_id":
+			p.advance()
+			if _, err := p.expect(TokenEq); err != nil {
+				return nil, err
+			}
+			tok := p.peek()
+			if tok.Type == TokenIdent {
+				p.advance()
+				cmd.SpanIDField = tok.Literal
+			}
+		case "parent_id":
+			p.advance()
+			if _, err := p.expect(TokenEq); err != nil {
+				return nil, err
+			}
+			tok := p.peek()
+			if tok.Type == TokenIdent {
+				p.advance()
+				cmd.ParentIDField = tok.Literal
+			}
+		default:
+			return cmd, nil
+		}
+	}
+
+	return cmd, nil
+}
+
+func (p *Parser) parseRollup() (*RollupCommand, error) {
+	p.advance() // consume "rollup"
+	cmd := &RollupCommand{}
+
+	// Parse span list: 5m, 1h, 1d
+	for {
+		tok := p.peek()
+		if tok.Type == TokenDuration {
+			p.advance()
+			cmd.Spans = append(cmd.Spans, tok.Literal)
+		} else if tok.Type == TokenIdent {
+			p.advance()
+			cmd.Spans = append(cmd.Spans, tok.Literal)
+		} else if tok.Type == TokenNumber {
+			p.advance()
+			span := tok.Literal
+			if p.peek().Type == TokenIdent {
+				span += p.advance().Literal
+			}
+			cmd.Spans = append(cmd.Spans, span)
+		} else {
+			break
+		}
+		if p.peek().Type != TokenComma {
+			break
+		}
+		p.advance() // skip comma
+	}
+
+	if len(cmd.Spans) == 0 {
+		return nil, fmt.Errorf("spl2: rollup requires at least one time span (e.g., 5m, 1h)")
+	}
+
+	// Parse optional "by <group>"
+	if p.peek().Type == TokenBy {
+		p.advance()
+		var err error
+		cmd.GroupBy, err = p.parseIdentListLF()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return cmd, nil
+}
+
+func (p *Parser) parseCorrelate() (*CorrelateCommand, error) {
+	p.advance() // consume "correlate"
+	cmd := &CorrelateCommand{Method: "pearson"}
+
+	f1, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	cmd.Field1 = f1.Literal
+
+	f2, err := p.expectIdent()
+	if err != nil {
+		return nil, err
+	}
+	cmd.Field2 = f2.Literal
+
+	if p.peek().Type == TokenIdent && strings.ToLower(p.peek().Literal) == "method" {
+		p.advance()
+		if _, err := p.expect(TokenEq); err != nil {
+			return nil, err
+		}
+		m := p.advance()
+		cmd.Method = strings.ToLower(m.Literal)
+	}
+
+	return cmd, nil
+}
+
+func (p *Parser) parseSessionize() (*SessionizeCommand, error) {
+	p.advance() // consume "sessionize"
+	cmd := &SessionizeCommand{MaxPause: "30m"}
+
+	// Parse maxpause=<duration>.
+	if p.peek().Type == TokenIdent && strings.ToLower(p.peek().Literal) == "maxpause" {
+		p.advance()
+		if _, err := p.expect(TokenEq); err != nil {
+			return nil, err
+		}
+		dur := p.advance()
+		cmd.MaxPause = dur.Literal
+	}
+
+	// Parse "by <group>".
+	if p.peek().Type == TokenBy {
+		p.advance()
+		groupBy, err := p.parseIdentList()
+		if err != nil {
+			return nil, err
+		}
+		cmd.GroupBy = groupBy
+	}
+
+	return cmd, nil
+}
+
+func (p *Parser) parseTopology() (*TopologyCommand, error) {
+	p.advance() // consume "topology"
+	cmd := &TopologyCommand{
+		SourceField: "source",
+		DestField:   "dest",
+		MaxNodes:    100,
+	}
+
+	for p.peek().Type == TokenIdent {
+		switch strings.ToLower(p.peek().Literal) {
+		case "source_field":
+			p.advance()
+			if _, err := p.expect(TokenEq); err != nil {
+				return nil, err
+			}
+			v := p.advance()
+			cmd.SourceField = v.Literal
+		case "dest_field":
+			p.advance()
+			if _, err := p.expect(TokenEq); err != nil {
+				return nil, err
+			}
+			v := p.advance()
+			cmd.DestField = v.Literal
+		case "weight_field":
+			p.advance()
+			if _, err := p.expect(TokenEq); err != nil {
+				return nil, err
+			}
+			v := p.advance()
+			cmd.WeightField = v.Literal
+		case "max_nodes":
+			p.advance()
+			if _, err := p.expect(TokenEq); err != nil {
+				return nil, err
+			}
+			v := p.advance()
+			n, _ := strconv.Atoi(v.Literal)
+			cmd.MaxNodes = n
+		default:
+			return cmd, nil
+		}
+	}
+
+	return cmd, nil
 }
 
 func (p *Parser) parseTail() (*TailCommand, error) {
@@ -1265,8 +1681,76 @@ func (p *Parser) parseSourceClause() (*SourceClause, error) {
 		return &SourceClause{Index: indices[0], Indices: indices}, nil
 	}
 
+	// Check for inline time range: FROM name[-1h], FROM name[-7d..-1d], FROM name[@d]
+	if p.peek().Type == TokenLBracket {
+		timeRange, err := p.parseSourceTimeRange()
+		if err != nil {
+			return nil, err
+		}
+
+		return &SourceClause{Index: name, TimeRange: timeRange}, nil
+	}
+
 	// Single source name.
 	return &SourceClause{Index: name}, nil
+}
+
+// parseSourceTimeRange parses the contents of [...] after a source name:
+//   - [-1h]         → relative time "1 hour ago"
+//   - [-7d..-1d]    → range from 7 days ago to 1 day ago
+//   - [@d]          → snap-to (start of today)
+//   - [-1h@h]       → 1 hour ago, snapped to hour start
+func (p *Parser) parseSourceTimeRange() (*SourceTimeRange, error) {
+	p.advance() // consume [
+
+	tr := &SourceTimeRange{}
+
+	// Handle @snap syntax: [@d], [@h], [@w]
+	if p.peek().Type == TokenAt {
+		p.advance() // consume @
+		tok := p.peek()
+		if tok.Type == TokenIdent && isSnapUnit(tok.Literal) {
+			p.advance()
+			tr.SnapTo = tok.Literal
+		} else {
+			return nil, fmt.Errorf("spl2: expected snap unit (d/h/w/m/s) after @ at position %d", tok.Pos)
+		}
+	} else if p.peek().Type == TokenDuration {
+		tok := p.advance()
+		tr.Relative = tok.Literal
+
+		// Check for range: -7d..-1d
+		if p.peek().Type == TokenDot && p.peekAt(1).Type == TokenDot {
+			p.advance() // consume first .
+			p.advance() // consume second .
+			if p.peek().Type == TokenDuration {
+				endTok := p.advance()
+				tr.End = endTok.Literal
+			} else if p.peek().Type == TokenAt {
+				// End is snap: -7d.@d
+				p.advance()
+				endUnit := p.peek()
+				if endUnit.Type == TokenIdent && isSnapUnit(endUnit.Literal) {
+					p.advance()
+					tr.End = "@" + endUnit.Literal
+				}
+			}
+		}
+	} else {
+		tok := p.peek()
+		return nil, fmt.Errorf("spl2: expected duration (e.g., -1h, -7d) or snap (@d) after [ at position %d", tok.Pos)
+	}
+
+	if p.peek().Type != TokenRBracket {
+		return nil, fmt.Errorf("spl2: expected ']' after time range at position %d", p.peek().Pos)
+	}
+	p.advance() // consume ]
+
+	return tr, nil
+}
+
+func isSnapUnit(s string) bool {
+	return s == "s" || s == "m" || s == "h" || s == "d" || s == "w"
 }
 
 // parseSourceName parses a source/index/view name which may start with a digit
@@ -1892,6 +2376,18 @@ func (p *Parser) parsePackJson() (*PackJsonCommand, error) {
 	return cmd, nil
 }
 
+func (p *Parser) parseTee() (*TeeCommand, error) {
+	p.advance() // consume "tee"
+
+	tok := p.peek()
+	if tok.Type != TokenString {
+		return nil, fmt.Errorf("spl2: tee requires a destination path (string literal)")
+	}
+	p.advance()
+
+	return &TeeCommand{Destination: tok.Literal, Format: "json"}, nil
+}
+
 // parseExpr parses a boolean expression with ?? (null coalesce) as lowest precedence.
 func (p *Parser) parseExpr() (Expr, error) {
 	p.depth++
@@ -2170,7 +2666,15 @@ func (p *Parser) parsePrimary() (Expr, error) {
 
 		return &LiteralExpr{Value: tok.Literal}, nil
 
+	case TokenFString:
+		return p.parseFString()
+
 	case TokenNumber:
+		p.advance()
+
+		return &LiteralExpr{Value: tok.Literal}, nil
+
+	case TokenDuration:
 		p.advance()
 
 		return &LiteralExpr{Value: tok.Literal}, nil
@@ -2202,8 +2706,17 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		}
 		p.advance()
 		expr := &FieldExpr{Name: tok.Literal}
-		// Lynx Flow: field? → isnotnull(field).
-		if p.peek().Type == TokenQuestionMark {
+		// Optional chaining: field?.subfield.
+		if p.peek().Type == TokenDotQuestion {
+			p.advance()
+			rest := p.peek()
+			if rest.Type == TokenIdent || isIdentLike(rest.Type) {
+				p.advance()
+				expr.Name = tok.Literal + "." + rest.Literal
+				expr.Optional = true
+			}
+			// field? → isnotnull(field) — but only for bare field? (not field?.x).
+		} else if p.peek().Type == TokenQuestionMark {
 			p.advance()
 
 			return &FuncCallExpr{Name: "isnotnull", Args: []Expr{expr}}, nil
@@ -2219,7 +2732,15 @@ func (p *Parser) parsePrimary() (Expr, error) {
 			}
 			p.advance()
 			expr := &FieldExpr{Name: tok.Literal}
-			if p.peek().Type == TokenQuestionMark {
+			if p.peek().Type == TokenDotQuestion {
+				p.advance()
+				rest := p.peek()
+				if rest.Type == TokenIdent || isIdentLike(rest.Type) {
+					p.advance()
+					expr.Name = tok.Literal + "." + rest.Literal
+					expr.Optional = true
+				}
+			} else if p.peek().Type == TokenQuestionMark {
 				p.advance()
 
 				return &FuncCallExpr{Name: "isnotnull", Args: []Expr{expr}}, nil
@@ -2229,7 +2750,7 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		}
 		// Also handle SPL2 keywords in expression context.
 		switch tok.Type {
-		case TokenEval, TokenStats, TokenSearch, TokenIn:
+		case TokenEval, TokenStats, TokenSearch, TokenIn, TokenFrom, TokenWhere:
 			if p.peekAt(1).Type == TokenLParen {
 				return p.parseFuncCall()
 			}
@@ -2239,6 +2760,31 @@ func (p *Parser) parsePrimary() (Expr, error) {
 		}
 		return nil, fmt.Errorf("spl2: unexpected token %s %q at position %d in expression", tok.Type, tok.Literal, tok.Pos)
 	}
+}
+
+func (p *Parser) parseFString() (Expr, error) {
+	tok := p.advance() // consume f-string token
+
+	var parts []FStringPartAST
+	for _, part := range tok.Parts {
+		if part.Expr != "" {
+			subLexer := NewLexer(part.Expr)
+			subTokens, err := subLexer.Tokenize()
+			if err != nil {
+				return nil, fmt.Errorf("f-string expression %q: %w", part.Expr, err)
+			}
+			subParser := &Parser{tokens: subTokens, input: part.Expr}
+			expr, err := subParser.parseExpr()
+			if err != nil {
+				return nil, fmt.Errorf("f-string expression %q: %w", part.Expr, err)
+			}
+			parts = append(parts, FStringPartAST{Expr: part.Expr, ParsedExpr: expr})
+		} else {
+			parts = append(parts, FStringPartAST{Literal: part.Literal})
+		}
+	}
+
+	return &FStringExpr{Parts: parts}, nil
 }
 
 func (p *Parser) parseFuncCall() (Expr, error) {

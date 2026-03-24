@@ -712,6 +712,10 @@ func GetRequiredColumns(q *Query) []string {
 			} else {
 				cols["_raw"] = true
 			}
+		case *TraceCommand:
+			// Trace reads arbitrary span fields (service, operation, duration_ms, etc.)
+			// so all columns are needed — force full JSON parsing during ingest.
+			return nil
 		}
 	}
 	result := make([]string, 0, len(cols))

@@ -71,6 +71,7 @@ const (
 	aggValues = "values"
 	aggDC     = "dc"
 	aggStdev  = "stdev"
+	aggPerc25 = "perc25"
 	aggPerc50 = "perc50"
 	aggPerc75 = "perc75"
 	aggPerc90 = "perc90"
@@ -124,7 +125,7 @@ func NewAggregateIterator(child Iterator, aggs []AggFunc, groupBy []string, acct
 	needsValues := make([]bool, len(aggs))
 	for i, a := range aggs {
 		switch strings.ToLower(a.Name) {
-		case aggDC, aggValues, aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99, aggStdev:
+		case aggDC, aggValues, aggPerc25, aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99, aggStdev:
 			needsValues[i] = true
 		}
 	}
@@ -878,7 +879,7 @@ func (a *AggregateIterator) mergeAggStateFromSpillRow(group *aggGroup, row map[s
 			a.mergeValuesFromRow(&group.states[j], row, agg.Alias)
 		case aggStdev:
 			a.mergeStdevFromRow(&group.states[j], row, agg.Alias)
-		case aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99:
+		case aggPerc25, aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99:
 			a.mergePercFromRow(&group.states[j], row, agg.Alias)
 		default:
 			val, ok := row[agg.Alias]
@@ -1120,6 +1121,12 @@ func (a *AggregateIterator) finalizeState(s *aggState, fn string) event.Value {
 		return s.first
 	case "last", "latest":
 		return s.last
+	case aggPerc25:
+		if s.tdigest != nil && (len(s.all) == 0 || len(s.all) > hllPromotionThreshold) {
+			return event.FloatValue(s.tdigest.Quantile(0.25))
+		}
+
+		return percentile(s.all, 25)
 	case aggPerc50:
 		if s.tdigest != nil && (len(s.all) == 0 || len(s.all) > hllPromotionThreshold) {
 			return event.FloatValue(s.tdigest.Quantile(0.50))

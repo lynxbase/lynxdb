@@ -17,13 +17,14 @@ var knownCommands = []string{
 	"unpack_docker", "unpack_redis", "unpack_apache_error",
 	"unpack_postgres", "unpack_mysql_slow", "unpack_haproxy",
 	"unpack_leef", "unpack_w3c", "unpack_pattern",
-	"json", "unroll", "pack_json",
+	"json", "unroll", "pack_json", "tee",
 	// Lynx Flow commands.
 	"let", "keep", "omit", "select", "group", "every", "bucket",
 	"order", "take", "rank", "topby", "bottomby", "bottom",
 	"running", "enrich", "parse", "explode", "pack", "lookup",
 	"latency", "errors", "rate", "percentiles", "slowest",
-	"views", "dropview",
+	"views", "dropview", "glimpse", "describe",
+	"use", "outliers", "compare", "patterns", "trace", "rollup", "correlate", "sessionize", "topology",
 }
 
 // knownFunctions is the list of all supported eval/aggregation functions.
@@ -35,7 +36,7 @@ var knownFunctions = []string{
 	"isnotnull", "isnull", "null", "strftime", "max", "min",
 	// Aggregation functions
 	"count", "sum", "avg", "dc", "values", "stdev",
-	"perc50", "perc75", "perc90", "perc95", "perc99",
+	"perc25", "perc50", "perc75", "perc90", "perc95", "perc99",
 	"earliest", "latest", "first", "last", "percentile",
 	// JSON functions
 	"json_extract", "json_valid", "json_keys", "json_array_length",
@@ -52,6 +53,10 @@ var knownFunctions = []string{
 // FormatParseError already shows a caret at the error position, making the
 // "Syntax error at position N" string redundant and shadowing better hints.
 func SuggestFix(errMsg string, knownFields []string) string {
+	// Check for unresolved ${param} references.
+	if hint := suggestUnresolvedParam(errMsg); hint != "" {
+		return hint
+	}
 	// Try each hint generator in priority order.
 	if hint := suggestClauseAsCommand(errMsg); hint != "" {
 		return hint
@@ -84,6 +89,9 @@ func SuggestFix(errMsg string, knownFields []string) string {
 		return hint
 	}
 	if hint := suggestEmptyPipeline(errMsg); hint != "" {
+		return hint
+	}
+	if hint := suggestUnknownFieldFromError(errMsg, knownFields); hint != "" {
 		return hint
 	}
 
@@ -306,13 +314,14 @@ func SuggestFunction(name string) string {
 	return ""
 }
 
-// FormatParseError wraps a parse error with helpful hints.
+// FormatParseError wraps a parse error with helpful hints and an error code.
 func FormatParseError(err error, query string) string {
 	if err == nil {
 		return ""
 	}
 	msg := err.Error()
 	hint := SuggestFix(msg, nil)
+	code := ClassifyError(msg)
 
 	// Try to show the position in the query.
 	const marker = "at position "
@@ -327,24 +336,41 @@ func FormatParseError(err error, query string) string {
 			}
 		}
 		if pos > 0 && pos <= len(query) {
-			lines := formatCaret(query, pos)
+			tokenLen := extractTokenLength(msg)
+			lines := formatCaretSpan(query, pos, tokenLen)
 			if hint != "" {
-				return fmt.Sprintf("%s\n%s\nHint: %s", msg, lines, hint)
+				return fmt.Sprintf("%s %s\n%s\nHint: %s\nRun: lynxdb explain-error %s", code, msg, lines, hint, code)
 			}
 
-			return fmt.Sprintf("%s\n%s", msg, lines)
+			return fmt.Sprintf("%s %s\n%s\nRun: lynxdb explain-error %s", code, msg, lines, code)
 		}
 	}
 
 	if hint != "" {
-		return fmt.Sprintf("%s\nHint: %s", msg, hint)
+		return fmt.Sprintf("%s %s\nHint: %s\nRun: lynxdb explain-error %s", code, msg, hint, code)
 	}
 
-	return msg
+	return fmt.Sprintf("%s %s\nRun: lynxdb explain-error %s", code, msg, code)
 }
 
-// formatCaret shows the query with a caret pointing to the error position.
-func formatCaret(query string, pos int) string {
+// extractTokenLength tries to extract the token literal length from a
+// quoted token in the error message. Falls back to 1.
+func extractTokenLength(msg string) int {
+	if qIdx := strings.LastIndex(msg, "\""); qIdx > 0 {
+		sub := msg[:qIdx]
+		if oIdx := strings.LastIndex(sub, "\""); oIdx >= 0 {
+			tokenLit := msg[oIdx+1 : qIdx]
+			if tokenLit != "" && len(tokenLit) < 100 {
+				return len(tokenLit)
+			}
+		}
+	}
+
+	return 1
+}
+
+// formatCaretSpan shows the query with a caret span pointing to the error.
+func formatCaretSpan(query string, pos, length int) string {
 	// Find the line containing the position.
 	lineStart := 0
 	for i := 0; i < pos-1 && i < len(query); i++ {
@@ -365,7 +391,17 @@ func formatCaret(query string, pos int) string {
 		col = len(line)
 	}
 
-	return fmt.Sprintf("  %s\n  %s^", line, strings.Repeat(" ", col))
+	if length <= 0 {
+		length = 1
+	}
+
+	return fmt.Sprintf("  %s\n  %s%s", line, strings.Repeat(" ", col), strings.Repeat("^", length))
+}
+
+// formatCaret shows the query with a caret pointing to the error position.
+// Deprecated: use formatCaretSpan for multi-caret rendering.
+func formatCaret(query string, pos int) string {
+	return formatCaretSpan(query, pos, 1)
 }
 
 // ClosestMatch returns the closest string from candidates within maxDist
@@ -502,7 +538,43 @@ func suggestMissingCompute(errMsg string) string {
 	}
 
 	if strings.Contains(lower, "every") && strings.Contains(lower, "expected 'compute'") {
-		return "every requires a 'compute' clause with aggregations. Example: | every 5m compute count()"
+		return "every requires a 'compute' clause with aggregations. Example: | every 5m compute count() as n"
+	}
+
+	return ""
+}
+
+// suggestUnknownFieldFromError extracts a field name from an unknown field error
+// and suggests the closest match from knownFields. Only fires when knownFields
+// is non-empty (requires caller to provide field catalog).
+func suggestUnknownFieldFromError(errMsg string, knownFields []string) string {
+	if len(knownFields) == 0 {
+		return ""
+	}
+
+	lower := strings.ToLower(errMsg)
+
+	// Patterns: "unknown field 'X'", "no field 'X'", "field 'X' not found".
+	var fieldName string
+	for _, pat := range []string{"unknown field '", "no field '", "field '", "no such field '"} {
+		idx := strings.Index(lower, pat)
+		if idx < 0 {
+			continue
+		}
+		start := idx + len(pat)
+		end := strings.IndexByte(errMsg[start:], '\'')
+		if end > 0 {
+			fieldName = errMsg[start : start+end]
+			break
+		}
+	}
+
+	if fieldName == "" {
+		return ""
+	}
+
+	if match := SuggestField(fieldName, knownFields); match != "" {
+		return match
 	}
 
 	return ""
@@ -520,4 +592,13 @@ func extractQuoted(s string) string {
 	}
 
 	return s[start+1 : start+1+end]
+}
+
+// suggestUnresolvedParam detects parse errors caused by unresolved ${name}
+// parameter references and reminds the user to pass --param name=value.
+func suggestUnresolvedParam(errMsg string) string {
+	if strings.Contains(errMsg, "${") {
+		return "Unresolved parameter. Use --param name=value to set it."
+	}
+	return ""
 }

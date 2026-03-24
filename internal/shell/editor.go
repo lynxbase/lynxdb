@@ -160,11 +160,6 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 
 // refreshSuggestions recomputes ghost text when cursor is at the end of input.
 func (e *Editor) refreshSuggestions() {
-	if e.completer == nil {
-		e.ghostText = ""
-		return
-	}
-
 	value := e.input.Value()
 
 	// Only suggest when cursor is at the absolute end of input.
@@ -177,6 +172,20 @@ func (e *Editor) refreshSuggestions() {
 	atLineEnd := e.input.Column() >= len(lastLine)
 
 	if !onLastLine || !atLineEnd {
+		e.ghostText = ""
+		return
+	}
+
+	// Try history-based suggestion first (fish-style).
+	if e.history != nil {
+		if histSuggestion := e.history.SuggestFromPrefix(value); histSuggestion != "" {
+			e.ghostText = histSuggestion[len(value):]
+			return
+		}
+	}
+
+	// Fall back to SPL2 completions.
+	if e.completer == nil {
 		e.ghostText = ""
 		return
 	}

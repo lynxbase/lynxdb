@@ -133,9 +133,23 @@ func (t *Theme) RenderRequiredFlagError(flags []string, usageLine, example strin
 	fmt.Fprintln(t.w)
 }
 
-// RenderQueryError prints a query parse error with caret positioning.
+// RenderQueryError prints a query parse error with caret positioning and error code.
 func (t *Theme) RenderQueryError(query string, position, length int, message, suggestion string) {
-	fmt.Fprintf(t.w, "\n  %s INVALID_QUERY: %s\n\n", t.IconError(), message)
+	t.renderQueryErrorCode(query, position, length, message, suggestion, "")
+}
+
+// RenderQueryErrorWithCode prints a query parse error with an explicit error code prefix.
+func (t *Theme) RenderQueryErrorWithCode(query string, position, length int, message, suggestion, code string) {
+	t.renderQueryErrorCode(query, position, length, message, suggestion, code)
+}
+
+// renderQueryErrorCode prints a query parse error with caret positioning, error code, and suggestion.
+func (t *Theme) renderQueryErrorCode(query string, position, length int, message, suggestion, code string) {
+	prefix := "INVALID_QUERY"
+	if code != "" {
+		prefix = code
+	}
+	fmt.Fprintf(t.w, "\n  %s %s: %s\n\n", t.IconError(), prefix, message)
 	fmt.Fprintf(t.w, "    %s\n", query)
 
 	// Always show at least one caret character when position is valid.

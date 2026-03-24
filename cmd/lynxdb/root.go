@@ -43,7 +43,7 @@ var rootCmd = &cobra.Command{
 	Use:           "lynxdb",
 	Short:         "LynxDB — log analytics in a single binary",
 	Long:          `LynxDB is a columnar log storage and search engine with SPL2 query language.`,
-	RunE:          runWelcome,
+	RunE:          runRootCommand,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -138,6 +138,44 @@ func runWelcome(_ *cobra.Command, _ []string) error {
 `)
 
 	return nil
+}
+
+// runRootCommand handles bare `lynxdb` invocation. When stdin is piped, it
+// defaults to query mode with auto-detection (like `cat file | lynxdb`).
+// Otherwise, it shows the welcome message.
+func runRootCommand(cmd *cobra.Command, args []string) error {
+	if len(args) > 0 && !isKnownSubcommand(cmd, args[0]) {
+		query := strings.Join(args, " ")
+		if isStdinPiped() {
+			return runQueryStdin(query, "", "", "", false, "", "", false)
+		}
+
+		return fmt.Errorf("bare query requires piped stdin. Use: cat file | lynxdb '%s'", query)
+	}
+
+	if isStdinPiped() {
+		// Bare pipe mode: cat file | lynxdb → auto-detect and show first 10 events.
+		return runQueryStdin("| take 10", "", "", "", false, "", "", false)
+	}
+
+	return runWelcome(cmd, args)
+}
+
+// isKnownSubcommand returns true if name matches a registered subcommand name or alias.
+func isKnownSubcommand(cmd *cobra.Command, name string) bool {
+	for _, c := range cmd.Commands() {
+		if c.Name() == name {
+			return true
+		}
+
+		for _, alias := range c.Aliases {
+			if alias == name {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 // Execute runs the root command and exits with an appropriate code.

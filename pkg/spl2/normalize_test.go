@@ -1,6 +1,10 @@
 package spl2
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestNormalizeQuery(t *testing.T) {
 	tests := []struct {
@@ -117,6 +121,198 @@ func TestFirstToken(t *testing.T) {
 		got := firstToken(tt.input)
 		if got != tt.want {
 			t.Errorf("firstToken(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestResolveTimeLiterals_Between(t *testing.T) {
+	now := time.Date(2025, 3, 23, 14, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{name: "between durations", input: "from nginx | where _time between -24h and -1h"},
+		{name: "between with spaces", input: "from nginx | where _time between  -7d  and  -1d"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveTimeLiterals(tt.input, now)
+			// Should NOT contain raw durations anymore.
+			if strings.Contains(got, "between -") {
+				t.Errorf("expected durations to be resolved, got: %s", got)
+			}
+			// Should contain "between" with quoted timestamps.
+			if !strings.Contains(got, "between \"") {
+				t.Errorf("expected quoted timestamps after 'between', got: %s", got)
+			}
+			if !strings.Contains(got, "\" and \"") {
+				t.Errorf("expected 'and' with quoted timestamps, got: %s", got)
+			}
+		})
+	}
+}
+
+func TestResolveTimeLiterals_AtDateLiterals(t *testing.T) {
+	now := time.Date(2025, 3, 23, 14, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name     string
+		input    string
+		contains string
+	}{
+		{
+			name:     "date literal in where",
+			input:    "from nginx | where _time > @2025-01-15",
+			contains: `"2025-01-15T00:00:00Z"`,
+		},
+		{
+			name:     "date literal with time",
+			input:    "from nginx | where _time > @2025-01-15T10:30:00",
+			contains: `"2025-01-15T10:30:00Z"`,
+		},
+		{
+			name:     "between with date literals",
+			input:    "from nginx | where _time between @2025-01-01 and @2025-02-01",
+			contains: `"2025-01-01T00:00:00Z"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := resolveTimeLiterals(tt.input, now)
+			if !strings.Contains(got, tt.contains) {
+				t.Errorf("expected %q in output, got: %s", tt.contains, got)
+			}
+			// Should NOT contain raw @date.
+			if strings.Contains(got, "@2025-") {
+				t.Errorf("expected @date to be resolved, got: %s", got)
+			}
+		})
+	}
+}
+
+func TestSubstituteParams(t *testing.T) {
+	tests := []struct {
+		name   string
+		query  string
+		params map[string]string
+		want   string
+	}{
+		{
+			name:   "no params returns unchanged",
+			query:  "level=error | stats count",
+			params: nil,
+			want:   "level=error | stats count",
+		},
+		{
+			name:   "empty params returns unchanged",
+			query:  "level=${lvl}",
+			params: map[string]string{},
+			want:   "level=${lvl}",
+		},
+		{
+			name:   "string param auto-quoted",
+			query:  "level=${lvl} | stats count",
+			params: map[string]string{"lvl": "error"},
+			want:   `level="error" | stats count`,
+		},
+		{
+			name:   "numeric param not quoted",
+			query:  "status>=${threshold}",
+			params: map[string]string{"threshold": "500"},
+			want:   "status>=500",
+		},
+		{
+			name:   "negative numeric param",
+			query:  "_time > ${offset}",
+			params: map[string]string{"offset": "-3600"},
+			want:   "_time > -3600",
+		},
+		{
+			name:   "float numeric param",
+			query:  "rate>${r}",
+			params: map[string]string{"r": "3.14"},
+			want:   "rate>3.14",
+		},
+		{
+			name:   "multiple params",
+			query:  "source=${src} AND status>=${code}",
+			params: map[string]string{"src": "nginx", "code": "400"},
+			want:   `source="nginx" AND status>=400`,
+		},
+		{
+			name:   "unknown param left as-is",
+			query:  "field=${unknown}",
+			params: map[string]string{"other": "val"},
+			want:   "field=${unknown}",
+		},
+		{
+			name:   "CTE $name not touched",
+			query:  "$threats = FROM idx | where ip=${ip}",
+			params: map[string]string{"ip": "1.2.3.4"},
+			want:   `$threats = FROM idx | where ip="1.2.3.4"`,
+		},
+		{
+			name:   "incomplete ${ at end",
+			query:  "field=${",
+			params: map[string]string{"x": "y"},
+			want:   "field=${",
+		},
+		{
+			name:   "empty braces ${}",
+			query:  "field=${}",
+			params: map[string]string{"": "val"},
+			want:   `field="val"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := SubstituteParams(tt.query, tt.params)
+			if got != tt.want {
+				t.Errorf("SubstituteParams() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestIsNumericParam(t *testing.T) {
+	tests := []struct {
+		val  string
+		want bool
+	}{
+		{"0", true},
+		{"42", true},
+		{"-1", true},
+		{"3.14", true},
+		{"-0.5", true},
+		{"", false},
+		{"abc", false},
+		{"12abc", false},
+		{"1.2.3", false},
+		{"-", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.val, func(t *testing.T) {
+			if got := isNumericParam(tt.val); got != tt.want {
+				t.Errorf("isNumericParam(%q) = %v, want %v", tt.val, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseParamFlags(t *testing.T) {
+	flags := []string{"level=error", "threshold=500", "host=web-01"}
+	got := ParseParamFlags(flags)
+	want := map[string]string{"level": "error", "threshold": "500", "host": "web-01"}
+	if len(got) != len(want) {
+		t.Fatalf("len = %d, want %d", len(got), len(want))
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Errorf("got[%q] = %q, want %q", k, got[k], v)
 		}
 	}
 }

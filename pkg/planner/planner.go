@@ -74,14 +74,32 @@ func (p *plannerImpl) Plan(req PlanRequest) (*Plan, error) {
 		}
 	}
 
+	// Collect known field names for error suggestions (best-effort).
+	var knownFields []string
+	if p.fieldStatsProvider != nil {
+		stats := p.fieldStatsProvider.GetFieldStats()
+		knownFields = make([]string, 0, len(stats))
+		for name := range stats {
+			knownFields = append(knownFields, name)
+		}
+	}
+
 	parseStart := time.Now()
 
 	prog, err := spl2.ParseProgram(query)
 	if err != nil {
 		return nil, &ParseError{
 			Message:    err.Error(),
-			Suggestion: spl2.SuggestFix(err.Error(), nil),
+			Suggestion: spl2.SuggestFix(err.Error(), knownFields),
 			Wrapped:    err,
+		}
+	}
+
+	// Expand pipeline fragments (use command) before optimization.
+	if err := spl2.ExpandFragments(prog, spl2.NewFileFragmentResolver("")); err != nil {
+		return nil, &ParseError{
+			Message: err.Error(),
+			Wrapped: err,
 		}
 	}
 

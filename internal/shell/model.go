@@ -229,24 +229,57 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.running = true
 		m.startTime = time.Now()
 		m.focus = EditorFocus
-		m.jobQuery = msg.query
+
+		// Handle _ as previous result reference.
+		query := msg.query
+		trimmed := strings.TrimSpace(query)
+		if trimmed == "_" || strings.HasPrefix(trimmed, "_ |") || strings.HasPrefix(trimmed, "_|") {
+			if len(m.session.LastRows) == 0 {
+				m.running = false
+				m.results.AppendText("  No previous results — run a query first.")
+				return m, nil
+			}
+			if trimmed == "_" {
+				// Re-display last results.
+				m.running = false
+				m.results.AppendResult(query, m.session.LastRows, 0, nil,
+					m.width, m.session.Format, false, "", nil)
+				return m, nil
+			}
+			// "_ | <pipeline>" — execute pipeline on last results.
+			// Execute against in-memory copy of last results, not the server.
+			pipeline := rewriteUnderscoreQuery(trimmed, m.session.LastRows)
+			return m, func() tea.Msg {
+				start := time.Now()
+				rows, err := executeUnderscoreQuery(pipeline, m.session.LastRows)
+				return queryResultMsg{
+					query:   msg.query,
+					rows:    rows,
+					elapsed: time.Since(start),
+					err:     err,
+				}
+			}
+		}
+
+		m.jobQuery = query
 
 		// Pre-compute compat hints for server mode (needed if async path is taken).
 		if m.session.Mode == "server" {
-			if hints := spl2.DetectCompatHints(msg.query); len(hints) > 0 {
+			if hints := spl2.DetectCompatHints(query); len(hints) > 0 {
 				m.jobHints = spl2.FormatCompatHints(hints)
 			} else {
 				m.jobHints = ""
 			}
 		}
 
-		return m, m.executeQueryCmd(msg.query)
+		return m, m.executeQueryCmd(query)
 
 	case queryResultMsg:
 		m.running = false
 		m.jobID = ""
 		m.progress = nil
 		m.session.LastQuery = msg.query
+		m.session.LastRows = msg.rows
 
 		// Extract field names from results and add to autocomplete.
 		if len(msg.rows) > 0 {
@@ -738,4 +771,21 @@ func welcomeBanner() string {
 		t.Accent.Render("Ctrl+P"),
 		t.Accent.Render("Ctrl+N"),
 		t.Accent.Render("Ctrl+D"))
+}
+
+// rewriteUnderscoreQuery handles "_ | <pipeline>" queries by extracting
+// the pipeline part and wrapping it for execution against the last results.
+// For now, it just strips the "_ |" prefix and returns the pipeline,
+// since the server can re-execute it against the same data source.
+func rewriteUnderscoreQuery(query string, lastRows []map[string]interface{}) string {
+	trimmed := strings.TrimSpace(query)
+	// Strip "_ |" or "_|" prefix.
+	if strings.HasPrefix(trimmed, "_ |") {
+		return strings.TrimSpace(trimmed[3:])
+	}
+	if strings.HasPrefix(trimmed, "_|") {
+		return strings.TrimSpace(trimmed[2:])
+	}
+
+	return trimmed
 }

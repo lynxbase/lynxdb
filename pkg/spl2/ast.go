@@ -45,10 +45,19 @@ func (q *Query) GetAnnotation(key string) (interface{}, bool) {
 // SourceClause represents the FROM clause.
 // It supports single sources, comma-separated lists, and glob patterns.
 type SourceClause struct {
-	Index      string   // primary source name (e.g., "idx_backend")
-	Indices    []string // multiple sources for FROM a, b, c syntax
-	IsVariable bool     // true if $variable reference
-	IsGlob     bool     // true if pattern contains wildcards (* or ?)
+	Index      string           // primary source name (e.g., "idx_backend")
+	Indices    []string         // multiple sources for FROM a, b, c syntax
+	IsVariable bool             // true if $variable reference
+	IsGlob     bool             // true if pattern contains wildcards (* or ?)
+	TimeRange  *SourceTimeRange // inline time range: from nginx[-1h]
+}
+
+// SourceTimeRange represents an inline time range on a FROM clause.
+// Parsed from: from nginx[-1h], from nginx[-7d..-1d], from nginx[@d].
+type SourceTimeRange struct {
+	Relative string // e.g., "-1h", "-7d" (start of range or single bound)
+	End      string // e.g., "-1d" for range syntax "-7d..-1d" (empty for single bound)
+	SnapTo   string // e.g., "d", "h" for @d, @h snap-to syntax
 }
 
 // IsSingleSource returns true if this clause references exactly one source
@@ -382,6 +391,140 @@ func (c *FillnullCommand) String() string {
 	return fmt.Sprintf("fillnull value=%s", c.Value)
 }
 
+// GlimpseCommand represents: glimpse — schema exploration that samples events
+// and outputs field names, types, coverage, cardinality, and top values.
+type GlimpseCommand struct{}
+
+func (*GlimpseCommand) commandNode()     {}
+func (c *GlimpseCommand) String() string { return "glimpse" }
+
+// DescribeCommand represents: describe — logging passthrough that prints
+// schema info to stderr on first batch, then yields batches unchanged.
+type DescribeCommand struct {
+	Output string // "stderr" (default), "json"
+}
+
+func (*DescribeCommand) commandNode()     {}
+func (c *DescribeCommand) String() string { return "describe" }
+
+// UseCommand represents: use <name> — imports a named pipeline fragment.
+// Names can be simple ("parse_nginx"), namespaced ("@stdlib/parse_combined"),
+// or team-scoped ("@myteam/error_classifier").
+type UseCommand struct {
+	Name string // e.g., "parse_nginx", "@stdlib/parse_combined"
+}
+
+func (*UseCommand) commandNode() {}
+func (c *UseCommand) String() string {
+	return fmt.Sprintf("use %s", c.Name)
+}
+
+// OutliersCommand represents: outliers field=<name> [method=iqr|zscore|mad] [threshold=<N>].
+type OutliersCommand struct {
+	Field     string  // numeric field to check (required)
+	Method    string  // "iqr", "zscore", or "mad" (default: "iqr")
+	Threshold float64 // sensitivity (default: 1.5 for IQR, 3.0 for zscore)
+}
+
+func (*OutliersCommand) commandNode() {}
+func (c *OutliersCommand) String() string {
+	return fmt.Sprintf("outliers field=%s method=%s threshold=%.1f", c.Field, c.Method, c.Threshold)
+}
+
+// CompareCommand represents: compare previous <duration> — re-executes the
+// pipeline with a time shift and merges current + previous results.
+type CompareCommand struct {
+	Shift string // e.g., "1h", "24h", "7d"
+}
+
+func (*CompareCommand) commandNode() {}
+func (c *CompareCommand) String() string {
+	return fmt.Sprintf("compare previous %s", c.Shift)
+}
+
+// PatternsCommand represents: patterns [field=<name>] [max_templates=<N>] [similarity=<F>] —
+// extracts log templates using the Drain algorithm.
+type PatternsCommand struct {
+	Field        string  // source field (default: "_raw")
+	MaxTemplates int     // max templates (default: 50)
+	Similarity   float64 // merge threshold 0.0-1.0 (default: 0.4)
+}
+
+func (*PatternsCommand) commandNode() {}
+func (c *PatternsCommand) String() string {
+	return fmt.Sprintf("patterns field=%s max_templates=%d similarity=%.1f", c.Field, c.MaxTemplates, c.Similarity)
+}
+
+// TraceCommand represents: trace [trace_id=<field>] [span_id=<field>] [parent_id=<field>] —
+// groups events by trace_id, builds parent-child span trees, and emits rows
+// enriched with _span_depth and _span_tree columns.
+type TraceCommand struct {
+	TraceIDField  string // default: "trace_id"
+	SpanIDField   string // default: "span_id"
+	ParentIDField string // default: "parent_span_id"
+}
+
+func (*TraceCommand) commandNode() {}
+func (c *TraceCommand) String() string {
+	return fmt.Sprintf("trace trace_id=%s span_id=%s parent_id=%s", c.TraceIDField, c.SpanIDField, c.ParentIDField)
+}
+
+// RollupCommand represents: rollup <span1>, <span2>, ... [by <fields>].
+// Multi-resolution time bucketing: runs the child pipeline once per span
+// resolution, adds a _resolution column, and unions the results.
+type RollupCommand struct {
+	Spans   []string // e.g., ["5m", "1h", "1d"]
+	GroupBy []string
+}
+
+func (*RollupCommand) commandNode() {}
+func (c *RollupCommand) String() string {
+	return fmt.Sprintf("rollup %s", strings.Join(c.Spans, ", "))
+}
+
+// CorrelateCommand represents: correlate <field1> <field2> [method=pearson|spearman].
+// Computes correlation between two numeric fields. Blocking operator.
+type CorrelateCommand struct {
+	Field1 string
+	Field2 string
+	Method string // "pearson" (default) or "spearman"
+}
+
+func (*CorrelateCommand) commandNode() {}
+func (c *CorrelateCommand) String() string {
+	return fmt.Sprintf("correlate %s %s", c.Field1, c.Field2)
+}
+
+// SessionizeCommand represents: sessionize maxpause=<duration> [by <group>].
+// Groups events into sessions based on time gaps. Adds _session_id, _session_start, _session_end fields.
+type SessionizeCommand struct {
+	MaxPause string   // duration, e.g., "30m"
+	GroupBy  []string // optional group-by fields
+}
+
+func (*SessionizeCommand) commandNode() {}
+func (c *SessionizeCommand) String() string {
+	if len(c.GroupBy) > 0 {
+		return fmt.Sprintf("sessionize maxpause=%s by %s", c.MaxPause, joinStrings(c.GroupBy, ", "))
+	}
+
+	return fmt.Sprintf("sessionize maxpause=%s", c.MaxPause)
+}
+
+// TopologyCommand represents: topology [source_field=<f>] [dest_field=<f>] [weight_field=<f>] [max_nodes=<N>].
+// Builds a connection graph from log events by grouping (source, destination) pairs.
+type TopologyCommand struct {
+	SourceField string // default "source"
+	DestField   string // default "dest"
+	WeightField string // optional weight field
+	MaxNodes    int    // limit nodes, default 100
+}
+
+func (*TopologyCommand) commandNode() {}
+func (c *TopologyCommand) String() string {
+	return fmt.Sprintf("topology source_field=%s dest_field=%s", c.SourceField, c.DestField)
+}
+
 // Expr is the interface for all expressions.
 type Expr interface {
 	exprNode()
@@ -390,7 +533,8 @@ type Expr interface {
 
 // FieldExpr references a field by name.
 type FieldExpr struct {
-	Name string
+	Name     string
+	Optional bool // true if accessed via ?. (optional chaining)
 }
 
 func (*FieldExpr) exprNode() {}
@@ -490,6 +634,21 @@ func (e *InExpr) String() string {
 
 	return fmt.Sprintf("%s in (...)", e.Field)
 }
+
+// FStringPartAST is a single part of an f-string expression in the AST.
+type FStringPartAST struct {
+	Literal    string // literal text (non-empty for literal parts)
+	Expr       string // raw expression text (non-empty for interpolated parts)
+	ParsedExpr Expr   // parsed sub-expression (populated by parser for interpolated parts)
+}
+
+// FStringExpr represents f-string interpolation: f"{field}: {expr}".
+type FStringExpr struct {
+	Parts []FStringPartAST
+}
+
+func (*FStringExpr) exprNode()        {}
+func (e *FStringExpr) String() string { return "f\"...\"" }
 
 // MaterializeCommand represents: | materialize "name" [retention=30d] [partition_by=field1,field2].
 type MaterializeCommand struct {
@@ -673,6 +832,16 @@ func (c *UnrollCommand) String() string {
 
 	return fmt.Sprintf("unroll field=%s", c.Field)
 }
+
+// TeeCommand represents: | tee "<destination>" — side-effect passthrough.
+// Writes each batch to a destination file, then yields the batch unchanged.
+type TeeCommand struct {
+	Destination string // file path
+	Format      string // "json" (default)
+}
+
+func (*TeeCommand) commandNode()     {}
+func (c *TeeCommand) String() string { return fmt.Sprintf("tee %q", c.Destination) }
 
 // PackJsonCommand represents: | pack_json [<f1>, <f2>, ...] into <target>.
 // Assembles event fields into a JSON string stored in target field.

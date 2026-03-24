@@ -169,3 +169,35 @@ func TestTSVFormatter_Empty(t *testing.T) {
 		t.Errorf("expected empty output for nil rows, got: %q", buf.String())
 	}
 }
+
+func TestDetectFormat_Table_SingleRawValue(t *testing.T) {
+	rows := []map[string]interface{}{
+		{"_raw": "line1\nline2\nline3"},
+	}
+	f := DetectFormat(FormatTable, rows)
+	if _, ok := f.(*SingleValueFormatter); !ok {
+		t.Errorf("expected SingleValueFormatter for single _raw row with -F table, got %T", f)
+	}
+}
+
+func TestDetectFormat_Auto_SingleRawValue(t *testing.T) {
+	// In non-TTY context (tests), auto mode returns JSON regardless of data shape.
+	// This test verifies auto mode doesn't panic with single _raw rows.
+	rows := []map[string]interface{}{
+		{"_raw": "line1\nline2\nline3"},
+	}
+	f := DetectFormat(FormatAuto, rows)
+	if f == nil {
+		t.Fatal("expected non-nil formatter")
+	}
+}
+
+func TestDetectFormat_Table_MultiColumn_NotSingleRaw(t *testing.T) {
+	rows := []map[string]interface{}{
+		{"_raw": "some text", "_time": "2026-01-01T00:00:00Z"},
+	}
+	f := DetectFormat(FormatTable, rows)
+	if _, ok := f.(*TableFormatter); !ok {
+		t.Errorf("expected TableFormatter for multi-column row, got %T", f)
+	}
+}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -17,6 +18,7 @@ import (
 	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/client"
 	"github.com/lynxbase/lynxdb/pkg/config"
+	ingestpipeline "github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/stats"
 	"github.com/lynxbase/lynxdb/pkg/storage"
@@ -34,19 +36,21 @@ func init() {
 
 func newQueryCmd() *cobra.Command {
 	var (
-		since      string
-		from       string
-		to         string
-		file       string
-		sourcetype string
-		source     string
-		outputFile string
-		timeout    string
-		analyze    string
-		maxMemory  string
-		failEmpty  bool
-		copyFlag   bool
-		explain    bool
+		since       string
+		from        string
+		to          string
+		file        string
+		sourcetype  string
+		source      string
+		outputFile  string
+		timeout     string
+		analyze     string
+		maxMemory   string
+		failEmpty   bool
+		copyFlag    bool
+		explain     bool
+		rawMode     bool
+		queryParams []string
 	)
 
 	cmd := &cobra.Command{
@@ -62,6 +66,9 @@ func newQueryCmd() *cobra.Command {
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			query := strings.Join(args, " ")
+			if len(queryParams) > 0 {
+				query = spl2.SubstituteParams(query, spl2.ParseParamFlags(queryParams))
+			}
 			stdinPiped := isStdinPiped()
 
 			if explain {
@@ -75,10 +82,10 @@ func newQueryCmd() *cobra.Command {
 				return fmt.Errorf("--copy is only supported in server mode")
 			}
 			if file != "" {
-				return runQueryFile(query, file, source, sourcetype, outputFile, failEmpty, analyze, maxMemory)
+				return runQueryFile(query, file, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode)
 			}
 			if stdinPiped {
-				return runQueryStdin(query, source, sourcetype, outputFile, failEmpty, analyze, maxMemory)
+				return runQueryStdin(query, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode)
 			}
 
 			SaveLastQuery(query, since, from, to)
@@ -110,6 +117,8 @@ func newQueryCmd() *cobra.Command {
 	f.BoolVar(&failEmpty, "fail-on-empty", false, "Exit with code 6 if no results")
 	f.BoolVar(&copyFlag, "copy", false, "Copy results to clipboard as TSV")
 	f.BoolVar(&explain, "explain", false, "Show query plan without executing")
+	f.BoolVar(&rawMode, "raw", false, "Disable auto-format detection (treat input as plain text)")
+	f.StringArrayVarP(&queryParams, "param", "D", nil, "Set query parameter: --param name=value")
 
 	// Allow bare --analyze (no value) to default to "basic".
 	cmd.Flags().Lookup("analyze").NoOptDefVal = "basic"
@@ -122,7 +131,7 @@ func newQueryCmd() *cobra.Command {
 	return cmd
 }
 
-func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string) error {
+func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode bool) error {
 	matches, err := filepath.Glob(file)
 	if err != nil {
 		return fmt.Errorf("invalid file pattern: %w", err)
@@ -144,6 +153,15 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 	defer eng.Close()
 	start := time.Now()
 	totalEvents := 0
+
+	// Auto-detect format from first file unless --raw is set.
+	if !rawMode {
+		detectedQuery, detectErr := autoDetectFromFirstFile(query, matches[0])
+		if detectErr == nil && detectedQuery != query {
+			query = detectedQuery
+		}
+	}
+
 	normalizedQuery := ensureFromClause(query)
 
 	if err := spl2.CheckUnsupportedCommands(normalizedQuery); err != nil {
@@ -202,7 +220,7 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 	return printLocalResults(result.Rows, qstats, outputFile, analyze)
 }
 
-func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string) error {
+func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode bool) error {
 	var memLimit int64
 	if maxMemory != "" {
 		b, err := config.ParseByteSize(maxMemory)
@@ -220,6 +238,17 @@ func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool,
 	if src == "" {
 		src = "stdin"
 	}
+
+	// Auto-detect format unless --raw is set.
+	var reader io.Reader = os.Stdin
+	if !rawMode {
+		detectedQuery, combinedReader, detectErr := autoDetectAndRewrite(query, os.Stdin)
+		if detectErr == nil && combinedReader != nil {
+			query = detectedQuery
+			reader = combinedReader
+		}
+	}
+
 	normalizedQuery := ensureFromClause(query)
 
 	if err := spl2.CheckUnsupportedCommands(normalizedQuery); err != nil {
@@ -231,7 +260,7 @@ func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool,
 	}
 
 	ctx := context.Background()
-	result, qstats, err := eng.QueryReader(ctx, os.Stdin, normalizedQuery, storage.IngestOpts{
+	result, qstats, err := eng.QueryReader(ctx, reader, normalizedQuery, storage.IngestOpts{
 		Source:     src,
 		SourceType: sourcetype,
 	}, storage.QueryOpts{MaxMemory: memLimit})
@@ -249,6 +278,7 @@ func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool,
 		}
 
 		printHint("No results. Check your filter or try a broader query.")
+		printHint("%s", suggestGlimpse(normalizedQuery))
 	}
 
 	return printLocalResults(result.Rows, qstats, outputFile, analyze)
@@ -636,4 +666,132 @@ func handleAsyncFallback(ctx context.Context, jobID string, failEmpty bool, anal
 	}
 
 	return nil
+}
+
+// suggestGlimpse returns a hint string suggesting | glimpse for zero-result queries.
+func suggestGlimpse(query string) string {
+	return "Try: " + query + " | glimpse — to see available fields, types, and values"
+}
+
+// autoDetectAndRewrite peeks at the first lines of a reader, detects the log
+// format, and rewrites the query to include a parse command if needed.
+// Returns the rewritten query and a new reader that includes the peeked data.
+// If detection fails or the query already has explicit parse commands, returns
+// the original query and a nil reader (caller should use original stdin).
+func autoDetectAndRewrite(query string, r io.Reader) (string, io.Reader, error) {
+	// If the query already contains a parse command, don't auto-detect.
+	lower := strings.ToLower(query)
+	if strings.Contains(lower, "parse ") || strings.Contains(lower, "unpack_") ||
+		strings.Contains(lower, "rex ") || strings.Contains(lower, "| json") {
+		return query, nil, nil
+	}
+
+	// Peek at the first N lines.
+	const maxPeekLines = 20
+	const maxPeekBytes = 64 * 1024 // 64KB max peek
+
+	bufReader := bufio.NewReaderSize(r, maxPeekBytes)
+	var peekBuf bytes.Buffer
+	var lines []string
+
+	for i := 0; i < maxPeekLines; i++ {
+		line, err := bufReader.ReadBytes('\n')
+		if len(line) > 0 {
+			peekBuf.Write(line)
+			lines = append(lines, strings.TrimRight(string(line), "\n\r"))
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	if len(lines) == 0 {
+		return query, nil, nil
+	}
+
+	// Detect format.
+	format := ingestpipeline.DetectFormat(lines)
+	parseCmd := ingestpipeline.ParseCommandForFormat(format)
+	if parseCmd == "" {
+		// Plain text — no auto-parse needed.
+		combined := io.MultiReader(bytes.NewReader(peekBuf.Bytes()), bufReader)
+
+		return query, combined, nil
+	}
+
+	// Prepend parse command to query.
+	newQuery := prependParseToQuery(query, parseCmd)
+
+	// Print diagnostic with confidence percentage.
+	_, ratio := ingestpipeline.DetectFormatWithRatio(lines)
+	pct := int(ratio*100 + 0.5)
+	fmt.Fprintf(os.Stderr, "  ℹ Auto-detected: %s (%d%% of lines) — use --raw to disable\n",
+		ingestpipeline.FormatDisplayName(format), pct)
+
+	combined := io.MultiReader(bytes.NewReader(peekBuf.Bytes()), bufReader)
+
+	return newQuery, combined, nil
+}
+
+// prependParseToQuery inserts a parse command at the right position in the query.
+// For queries starting with "FROM ...", it inserts after the FROM clause:
+//
+//	"FROM nginx | where ..." → "FROM nginx | parse json(_raw) | where ..."
+//
+// For bare queries, it prepends the parse:
+//
+//	"| where ..." → "| parse json(_raw) | where ..."
+func prependParseToQuery(query, parseCmd string) string {
+	trimmed := strings.TrimSpace(query)
+
+	// Find the first pipe.
+	pipeIdx := strings.Index(trimmed, "|")
+	if pipeIdx < 0 {
+		// No pipe — just append parse.
+		return trimmed + " | " + parseCmd
+	}
+
+	// Insert parse after the first pipe.
+	return trimmed[:pipeIdx+1] + " " + parseCmd + " " + trimmed[pipeIdx+1:]
+}
+
+// autoDetectFromFirstFile peeks at the first file's content and detects format.
+// Returns the rewritten query if auto-parse is needed.
+func autoDetectFromFirstFile(query, filePath string) (string, error) {
+	// If the query already contains a parse command, don't auto-detect.
+	lower := strings.ToLower(query)
+	if strings.Contains(lower, "parse ") || strings.Contains(lower, "unpack_") ||
+		strings.Contains(lower, "rex ") || strings.Contains(lower, "| json") {
+		return query, nil
+	}
+
+	f, err := os.Open(filePath)
+	if err != nil {
+		return query, err
+	}
+	defer f.Close()
+
+	const maxPeekLines = 20
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 0, 64*1024), 64*1024)
+	var lines []string
+
+	for scanner.Scan() && len(lines) < maxPeekLines {
+		lines = append(lines, scanner.Text())
+	}
+
+	if len(lines) == 0 {
+		return query, nil
+	}
+
+	format, ratio := ingestpipeline.DetectFormatWithRatio(lines)
+	parseCmd := ingestpipeline.ParseCommandForFormat(format)
+	if parseCmd == "" {
+		return query, nil
+	}
+
+	fmt.Fprintf(os.Stderr, "  ℹ Auto-detected: %s (%d%% of lines) — use --raw to disable\n",
+		ingestpipeline.FormatDisplayName(format), int(ratio*100+0.5))
+
+	return prependParseToQuery(query, parseCmd), nil
 }

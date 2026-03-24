@@ -21,9 +21,10 @@ type Session struct {
 	Client    *client.Client
 	Engine    *storage.Engine
 	Since     string
-	Format    output.Format // default: output.FormatTable
-	Timing    bool          // default: true (show elapsed after results)
-	LastQuery string        // most recently executed query (for .save without arg)
+	Format    output.Format            // default: output.FormatTable
+	Timing    bool                     // default: true (show elapsed after results)
+	LastQuery string                   // most recently executed query (for .save without arg)
+	LastRows  []map[string]interface{} // result of most recent query (for _ reference)
 }
 
 // ExecuteSlashCommand dispatches a slash command and returns the output text,
