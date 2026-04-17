@@ -1,0 +1,4 @@
+# file: backend_server.log
+# format: json
+# skip: rollup syntax not yet finalized
+| rollup field=duration_ms span=1h | head 10

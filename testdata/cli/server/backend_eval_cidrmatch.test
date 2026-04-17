@@ -1,0 +1,3 @@
+# format: json
+# skip: cidrmatch passes field name as CIDR literal instead of field value
+FROM idx_backend | eval is_internal=if(cidrmatch(client_ip, "10.0.0.0/8"), "yes", "no") | stats count by is_internal

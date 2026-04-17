@@ -1,0 +1,4 @@
+# file: backend_server.log
+# format: json
+# skip: outliers syntax not yet finalized
+| outliers field=duration_ms method=zscore threshold=2.0 | fields service, duration_ms | head 10

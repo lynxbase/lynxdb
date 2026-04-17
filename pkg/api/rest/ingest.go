@@ -2,6 +2,7 @@ package rest
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -85,7 +86,7 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if respondIngestError(w, s.engine.Ingest(processed)) {
+	if respondIngestError(w, s.engine.IngestContext(r.Context(), processed)) {
 		return
 	}
 
@@ -233,7 +234,7 @@ func (s *Server) processBatched(w http.ResponseWriter, r *http.Request, buildEve
 
 				continue // pipeline error: skip this batch, try next
 			}
-			if err := s.engine.Ingest(processed); err != nil {
+			if err := s.engine.IngestContext(r.Context(), processed); err != nil {
 				// Retry on WAL backpressure — the ring buffer may drain within
 				// one flush cycle (100ms). Three retries at 50ms intervals covers
 				// one full flush cycle, turning transient backpressure into a brief
@@ -242,8 +243,10 @@ func (s *Server) processBatched(w http.ResponseWriter, r *http.Request, buildEve
 					retried := false
 					for attempt := 0; attempt < 3; attempt++ {
 						backoff := time.Duration(50<<uint(attempt)) * time.Millisecond // 50ms, 100ms, 200ms
-						time.Sleep(backoff)
-						if retryErr := s.engine.Ingest(processed); retryErr == nil {
+						if sleepErr := sleepWithContext(r.Context(), backoff); sleepErr != nil {
+							return accepted, failed, false, sleepErr
+						}
+						if retryErr := s.engine.IngestContext(r.Context(), processed); retryErr == nil {
 							accepted += len(processed)
 							retried = true
 
@@ -293,14 +296,16 @@ func (s *Server) processBatched(w http.ResponseWriter, r *http.Request, buildEve
 		processed, err := pipe.Process(batch)
 		if err != nil {
 			failed += len(batch)
-		} else if ingestErr := s.engine.Ingest(processed); ingestErr != nil {
+		} else if ingestErr := s.engine.IngestContext(r.Context(), processed); ingestErr != nil {
 			// Retry on WAL backpressure (same logic as main loop).
 			retried := false
 			if errors.Is(ingestErr, part.ErrTooManyParts) {
 				for attempt := 0; attempt < 3; attempt++ {
 					backoff := time.Duration(50<<uint(attempt)) * time.Millisecond
-					time.Sleep(backoff)
-					if retryErr := s.engine.Ingest(processed); retryErr == nil {
+					if sleepErr := sleepWithContext(r.Context(), backoff); sleepErr != nil {
+						return accepted, failed, truncated, sleepErr
+					}
+					if retryErr := s.engine.IngestContext(r.Context(), processed); retryErr == nil {
 						accepted += len(processed)
 						retried = true
 
@@ -322,6 +327,18 @@ func (s *Server) processBatched(w http.ResponseWriter, r *http.Request, buildEve
 	}
 
 	return accepted, failed, truncated, nil
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // sanitizeErrorMessage replaces control characters in error messages to prevent

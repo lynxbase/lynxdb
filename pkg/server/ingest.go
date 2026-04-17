@@ -13,6 +13,11 @@ import (
 // threshold), publishes to event bus, and dispatches to materialized views.
 // Returns ErrShuttingDown if PrepareShutdown has been called.
 func (e *Engine) Ingest(events []*event.Event) error {
+	return e.IngestContext(context.Background(), events)
+}
+
+// IngestContext is the context-aware ingest entry point.
+func (e *Engine) IngestContext(ctx context.Context, events []*event.Event) error {
 	if e.closing.Load() {
 		return ErrShuttingDown
 	}
@@ -43,15 +48,13 @@ func (e *Engine) Ingest(events []*event.Event) error {
 	// Cluster mode: route events to shard primaries via the cluster router.
 	// The router handles local fast path (events for shards owned by this node)
 	// and remote forwarding (events for shards owned by other nodes).
-	// Shutdown is guarded by the closing flag checked above, so context.Background
-	// is safe here — the context is only used for distributed tracing propagation.
 	if e.clusterRouter != nil {
-		return e.clusterRouter.Route(context.Background(), events)
+		return e.clusterRouter.Route(ctx, events)
 	}
 
 	// Buffer in async batcher (flushes to part on threshold).
 	if e.batcher != nil {
-		if err := e.batcher.Add(events); err != nil {
+		if err := e.batcher.AddContext(ctx, events); err != nil {
 			return err
 		}
 	} else {

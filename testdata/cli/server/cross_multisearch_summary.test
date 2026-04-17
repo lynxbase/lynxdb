@@ -1,0 +1,2 @@
+# format: json
+| multisearch [FROM idx_backend | stats count as backend_events] [FROM idx_nginx | stats count as nginx_events] [FROM idx_frontend | stats count as frontend_events]

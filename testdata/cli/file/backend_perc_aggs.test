@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| stats perc50(duration_ms) as p50, perc90(duration_ms) as p90, perc99(duration_ms) as p99, avg(duration_ms) as avg_dur

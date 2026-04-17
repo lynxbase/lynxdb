@@ -47,8 +47,17 @@ func startAuthServer(t *testing.T) (*Server, *auth.KeyStore, string, func()) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go srv.Start(ctx)
-	srv.WaitReady()
+	startErr := make(chan error, 1)
+	go func() {
+		startErr <- srv.Start(ctx)
+	}()
+	select {
+	case err := <-startErr:
+		t.Fatalf("Start: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("server did not become ready")
+	case <-srv.ready:
+	}
 
 	return srv, ks, root.Token, func() {
 		cancel()

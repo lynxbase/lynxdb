@@ -1,0 +1,4 @@
+# file: backend_server.log
+# format: json
+# skip: outliers syntax not yet finalized
+| outliers field=duration_ms method=iqr | fields service, duration_ms | head 10

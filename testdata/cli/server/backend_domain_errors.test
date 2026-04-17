@@ -1,0 +1,2 @@
+# format: json
+FROM idx_backend | errors by service

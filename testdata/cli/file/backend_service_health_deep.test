@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| stats count as events, avg(duration_ms) as avg_dur, max(duration_ms) as max_dur, count(eval(status>=500)) as errors by service | eval error_rate=round(errors*100/events, 1) | eval health=if(errors>0,"unhealthy","healthy") | sort -errors, service

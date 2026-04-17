@@ -3,6 +3,7 @@ package rest
 import (
 	"bufio"
 	"compress/gzip"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -306,7 +307,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 		if len(batch) == 0 {
 			return
 		}
-		if err := processESBatch(pipe, batch, s); err != nil {
+			if err := processESBatch(r.Context(), pipe, batch, s); err != nil {
 			for _, p := range pending {
 				items[p.itemIdx] = makeErrorItem(p.action, p.index, p.docID,
 					http.StatusInternalServerError, "ingest_exception", err.Error())
@@ -416,13 +417,13 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func processESBatch(pipe *pipeline.Pipeline, batch []*event.Event, s *Server) error {
+func processESBatch(ctx context.Context, pipe *pipeline.Pipeline, batch []*event.Event, s *Server) error {
 	processed, err := pipe.Process(batch)
 	if err != nil {
 		return err
 	}
 
-	return s.engine.Ingest(processed)
+	return s.engine.IngestContext(ctx, processed)
 }
 
 func makeSuccessItem(action, index, id string) esBulkItemResult {
@@ -508,7 +509,7 @@ func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if respondIngestError(w, s.engine.Ingest(processed)) {
+	if respondIngestError(w, s.engine.IngestContext(r.Context(), processed)) {
 		return
 	}
 
@@ -539,9 +540,14 @@ func (s *Server) handleESClusterInfo(w http.ResponseWriter, r *http.Request) {
 
 // handleESStub is a catch-all handler for ES management endpoints that Filebeat
 // calls during startup (ILM policies, index templates, ingest pipelines, etc.).
-// Returns 200 with an empty JSON object so Filebeat doesn't fail with 404.
+// LynxDB does not implement these APIs and must not acknowledge them as successful.
 func (s *Server) handleESStub(w http.ResponseWriter, r *http.Request) {
-	slog.Debug("es compat stub hit", "method", r.Method, "path", r.URL.Path)
+	slog.Warn("unsupported elasticsearch management endpoint",
+		"method", r.Method,
+		"path", r.URL.Path)
 	setESHeaders(w)
-	respondJSON(w, http.StatusOK, map[string]interface{}{})
+	respondJSON(w, http.StatusNotImplemented, map[string]interface{}{
+		"error":  "unsupported Elasticsearch management endpoint",
+		"status": http.StatusNotImplemented,
+	})
 }

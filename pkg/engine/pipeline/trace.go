@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
@@ -317,12 +316,6 @@ func (t *TraceIterator) buildTreeForTrace(rows []map[string]event.Value) []*span
 	}
 
 	return result
-}
-
-// isTraceCompatibleField checks if a field name looks like a trace ID field.
-func isTraceCompatibleField(name string) bool {
-	lower := strings.ToLower(name)
-	return strings.Contains(lower, "trace") || strings.Contains(lower, "span")
 }
 
 // fieldString returns the first non-empty string value from the given field names.

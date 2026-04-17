@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+$errs = | where level="ERROR" ; FROM $errs | stats count by service, error | sort service, error

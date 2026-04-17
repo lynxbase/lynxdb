@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -30,6 +31,19 @@ func TestPartCatalog_LoadEmpty(t *testing.T) {
 	}
 	if len(c.Parts) != 0 {
 		t.Errorf("expected 0 parts, got %d", len(c.Parts))
+	}
+}
+
+func TestPartCatalog_Load_PropagatesNonNotFound(t *testing.T) {
+	store := &failingStore{err: errors.New("boom")}
+	cat := NewPartCatalog(store, testLogger())
+
+	_, err := cat.Load(context.Background(), "logs", 0)
+	if err == nil {
+		t.Fatal("expected load error")
+	}
+	if !errors.Is(err, store.err) {
+		t.Fatalf("expected wrapped error %v, got %v", store.err, err)
 	}
 }
 
@@ -262,3 +276,50 @@ func TestPartCatalog_IndependentPartitions(t *testing.T) {
 		t.Error("partition 1 should have only p1-part")
 	}
 }
+
+func TestPartCatalog_ListPartitions(t *testing.T) {
+	store := objstore.NewMemStore()
+	cat := NewPartCatalog(store, testLogger())
+	ctx := context.Background()
+
+	if err := cat.AddPart(ctx, "logs", 0, PartEntry{PartID: "logs-0", Index: "logs"}); err != nil {
+		t.Fatalf("AddPart logs/0: %v", err)
+	}
+	if err := cat.AddPart(ctx, "metrics", 2, PartEntry{PartID: "metrics-2", Index: "metrics"}); err != nil {
+		t.Fatalf("AddPart metrics/2: %v", err)
+	}
+
+	partitions, err := cat.ListPartitions(ctx)
+	if err != nil {
+		t.Fatalf("ListPartitions: %v", err)
+	}
+	if len(partitions) != 2 {
+		t.Fatalf("len(partitions) = %d, want 2", len(partitions))
+	}
+	if partitions[0] != (CatalogPartition{Index: "logs", Partition: 0}) &&
+		partitions[1] != (CatalogPartition{Index: "logs", Partition: 0}) {
+		t.Fatalf("missing logs partition in %#v", partitions)
+	}
+	if partitions[0] != (CatalogPartition{Index: "metrics", Partition: 2}) &&
+		partitions[1] != (CatalogPartition{Index: "metrics", Partition: 2}) {
+		t.Fatalf("missing metrics partition in %#v", partitions)
+	}
+}
+
+type failingStore struct {
+	err error
+}
+
+func (s *failingStore) Put(context.Context, string, []byte) error { return nil }
+func (s *failingStore) Get(context.Context, string) ([]byte, error) {
+	return nil, s.err
+}
+func (s *failingStore) GetRange(context.Context, string, int64, int64) ([]byte, error) {
+	return nil, s.err
+}
+func (s *failingStore) Delete(context.Context, string) error { return nil }
+func (s *failingStore) List(context.Context, string) ([]string, error) {
+	return nil, s.err
+}
+func (s *failingStore) Exists(context.Context, string) (bool, error) { return false, s.err }
+func (s *failingStore) Copy(context.Context, string, string) error   { return s.err }

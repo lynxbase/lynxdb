@@ -1,0 +1,4 @@
+# file: backend_server.log
+# format: json
+# skip: patterns syntax not yet finalized
+| patterns field=message | head 10

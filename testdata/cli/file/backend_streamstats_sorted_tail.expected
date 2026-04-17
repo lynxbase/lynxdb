@@ -1,0 +1,5 @@
+{"cum_dur":8385,"duration_ms":5100,"service":"payment-service","timestamp":"2026-02-10T09:00:30.200Z"}
+{"cum_dur":13495,"duration_ms":5110,"service":"payment-service","timestamp":"2026-02-10T08:20:15.200Z"}
+{"cum_dur":18695,"duration_ms":5200,"service":"payment-service","timestamp":"2026-02-10T09:00:01.100Z"}
+{"cum_dur":23925,"duration_ms":5230,"service":"payment-service","timestamp":"2026-02-10T08:20:01.100Z"}
+{"cum_dur":29225,"duration_ms":5300,"service":"payment-service","timestamp":"2026-02-10T09:01:30.400Z"}

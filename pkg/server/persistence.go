@@ -166,6 +166,14 @@ func (e *Engine) initDiskPersistence(ctx context.Context) error {
 		// within a single compaction tick interval, this ensures compaction
 		// responds immediately instead of waiting up to 30 seconds.
 		e.maybeCompactAfterFlush(ctx, meta.Index, meta.Partition)
+
+		if e.clusterCatalog != nil && e.objStore != nil {
+			go func() {
+				publishCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				e.uploadAndCatalog(publishCtx, meta, e.objStore, e.logger.With("component", "cluster-publish"))
+			}()
+		}
 	})
 	e.batcher.Start(ctx)
 

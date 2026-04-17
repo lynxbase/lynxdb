@@ -112,6 +112,7 @@ type AsyncBatcher struct {
 	// onCommit is called after each part is committed to disk.
 	// Engine uses this to open the mmap'd reader and register for queries.
 	onCommit func(meta *Meta)
+	runCtx   context.Context
 }
 
 // batchShard holds buffered events for a single index.
@@ -145,6 +146,7 @@ func (b *AsyncBatcher) SetOnCommit(fn func(meta *Meta)) {
 // The goroutine exits when ctx is canceled or Close is called.
 func (b *AsyncBatcher) Start(ctx context.Context) {
 	ctx, b.cancel = context.WithCancel(ctx)
+	b.runCtx = ctx
 	b.wg.Add(1)
 	go b.idleFlushLoop(ctx)
 }
@@ -159,13 +161,19 @@ func (b *AsyncBatcher) Start(ctx context.Context) {
 //
 // Add is safe for concurrent use.
 func (b *AsyncBatcher) Add(events []*event.Event) error {
+	return b.AddContext(context.Background(), events)
+}
+
+// AddContext buffers events for later flush while honoring cancellation during
+// pre-admission backpressure delays.
+func (b *AsyncBatcher) AddContext(ctx context.Context, events []*event.Event) error {
 	if len(events) == 0 {
 		return nil
 	}
 
 	// Check backpressure BEFORE buffering to avoid accepting data we can't
 	// compact fast enough.
-	if err := b.checkBackpressure(); err != nil {
+	if err := b.checkBackpressure(ctx); err != nil {
 		return err
 	}
 
@@ -218,7 +226,7 @@ func (b *AsyncBatcher) Add(events []*event.Event) error {
 
 	// Flush threshold-crossing shards outside the lock.
 	for _, ft := range toFlush {
-		if err := b.flushEvents(ft.index, ft.events); err != nil {
+		if err := b.flushEvents(b.writeContext(), ft.index, ft.events); err != nil {
 			return fmt.Errorf("part.AsyncBatcher.Add: flush %s: %w", ft.index, err)
 		}
 	}
@@ -233,7 +241,7 @@ func (b *AsyncBatcher) Add(events []*event.Event) error {
 //     interpolation from 0ms to MaxDelayMs). This gives compaction time to
 //     catch up while still accepting data.
 //   - At or above RejectThreshold: return ErrTooManyParts immediately.
-func (b *AsyncBatcher) checkBackpressure() error {
+func (b *AsyncBatcher) checkBackpressure(ctx context.Context) error {
 	partCount := b.registry.Count()
 
 	b.logger.Debug("backpressure check",
@@ -262,7 +270,13 @@ func (b *AsyncBatcher) checkBackpressure() error {
 				"part_count", partCount,
 				"delay_ms", delayMs,
 			)
-			time.Sleep(time.Duration(delayMs) * time.Millisecond)
+			timer := time.NewTimer(time.Duration(delayMs) * time.Millisecond)
+			defer timer.Stop()
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-timer.C:
+			}
 		}
 	}
 
@@ -271,6 +285,11 @@ func (b *AsyncBatcher) checkBackpressure() error {
 
 // Flush flushes all buffered shards to disk. Called on shutdown.
 func (b *AsyncBatcher) Flush() error {
+	return b.FlushContext(context.Background())
+}
+
+// FlushContext flushes all buffered shards to disk using the provided context.
+func (b *AsyncBatcher) FlushContext(ctx context.Context) error {
 	b.mu.Lock()
 	type flushTarget struct {
 		index  string
@@ -291,7 +310,7 @@ func (b *AsyncBatcher) Flush() error {
 
 	var firstErr error
 	for _, ft := range toFlush {
-		if err := b.flushEvents(ft.index, ft.events); err != nil {
+		if err := b.flushEvents(ctx, ft.index, ft.events); err != nil {
 			b.logger.Error("batcher flush failed", "index", ft.index, "error", err)
 			if firstErr == nil {
 				firstErr = fmt.Errorf("part.AsyncBatcher.Flush: %s: %w", ft.index, err)
@@ -304,6 +323,11 @@ func (b *AsyncBatcher) Flush() error {
 
 // Close flushes remaining events and stops the background goroutine.
 func (b *AsyncBatcher) Close() error {
+	return b.CloseContext(context.Background())
+}
+
+// CloseContext flushes remaining events and stops the background goroutine.
+func (b *AsyncBatcher) CloseContext(ctx context.Context) error {
 	// Stop the idle flush loop.
 	if b.cancel != nil {
 		b.cancel()
@@ -311,7 +335,7 @@ func (b *AsyncBatcher) Close() error {
 	b.wg.Wait()
 
 	// Final flush.
-	return b.Flush()
+	return b.FlushContext(ctx)
 }
 
 // BufferedEvents returns the total number of events currently buffered
@@ -366,6 +390,10 @@ func (b *AsyncBatcher) idleFlushLoop(ctx context.Context) {
 
 // flushIdleShards flushes any shard that has been idle for longer than MaxWait.
 func (b *AsyncBatcher) flushIdleShards() {
+	b.flushIdleShardsWithContext(b.writeContext())
+}
+
+func (b *AsyncBatcher) flushIdleShardsWithContext(ctx context.Context) {
 	now := time.Now()
 
 	b.mu.Lock()
@@ -392,7 +420,7 @@ func (b *AsyncBatcher) flushIdleShards() {
 	}
 
 	for _, ft := range toFlush {
-		if err := b.flushEvents(ft.index, ft.events); err != nil {
+		if err := b.flushEvents(ctx, ft.index, ft.events); err != nil {
 			b.logger.Error("idle flush failed", "index", ft.index,
 				"events", len(ft.events), "error", err)
 		}
@@ -400,7 +428,7 @@ func (b *AsyncBatcher) flushIdleShards() {
 }
 
 // flushEvents sorts events by timestamp and writes them to a part file.
-func (b *AsyncBatcher) flushEvents(index string, events []*event.Event) error {
+func (b *AsyncBatcher) flushEvents(ctx context.Context, index string, events []*event.Event) error {
 	if len(events) == 0 {
 		return nil
 	}
@@ -426,7 +454,7 @@ func (b *AsyncBatcher) flushEvents(index string, events []*event.Event) error {
 		"sort_ms", sortElapsed.Milliseconds(),
 	)
 
-	meta, err := b.writer.Write(context.Background(), index, events, 0)
+	meta, err := b.writer.Write(ctx, index, events, 0)
 	if err != nil {
 		return err
 	}
@@ -445,4 +473,12 @@ func (b *AsyncBatcher) flushEvents(index string, events []*event.Event) error {
 	}
 
 	return nil
+}
+
+func (b *AsyncBatcher) writeContext() context.Context {
+	if b.runCtx != nil {
+		return b.runCtx
+	}
+
+	return context.Background()
 }

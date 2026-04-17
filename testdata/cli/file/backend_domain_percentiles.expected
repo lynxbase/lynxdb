@@ -1,0 +1,10 @@
+{"p50":180,"p75":180,"p90":180,"p95":180,"p99":180,"service":"analytics-service"}
+{"p50":85,"p75":85,"p90":85,"p95":85,"p99":85,"service":"auth-service"}
+{"p50":275,"p75":307.5,"p90":327,"p95":333.5,"p99":338.7,"service":"deploy-service"}
+{"p50":3,"p75":3,"p90":3,"p95":3,"p99":3,"service":"gateway-service"}
+{"p50":1540,"p75":1540,"p90":1540,"p95":1540,"p99":1540,"service":"import-service"}
+{"p50":42,"p75":42,"p90":42,"p95":42,"p99":42,"service":"notification-service"}
+{"p50":5110,"p75":5215,"p90":5258,"p95":5279,"p99":5295.8,"service":"payment-service"}
+{"p50":52,"p75":86,"p90":106.4,"p95":113.2,"p99":118.64,"service":"project-service"}
+{"p50":250,"p75":250,"p90":250,"p95":250,"p99":250,"service":"report-service"}
+{"p50":32.5,"p75":37.5,"p90":42,"p95":43.5,"p99":44.7,"service":"user-service"}

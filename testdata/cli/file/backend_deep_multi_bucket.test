@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| where level!="INFO" | eval bucket=case(duration_ms<50,"fast",duration_ms<500,"normal",1=1,"slow") | stats count, avg(duration_ms) as avg_ms by level, bucket | sort level, bucket

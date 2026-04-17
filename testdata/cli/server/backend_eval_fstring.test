@@ -1,0 +1,2 @@
+# format: json
+FROM idx_backend | eval label=f"{level}:{service}" | stats count by label | sort label

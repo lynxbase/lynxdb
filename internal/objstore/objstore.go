@@ -2,6 +2,7 @@ package objstore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -27,6 +28,18 @@ type ObjectStore interface {
 	// S3 implementations use CopyObject; in-memory implementations
 	// use Get+Put internally.
 	Copy(ctx context.Context, srcKey, dstKey string) error
+}
+
+// ErrNotFound indicates that the requested object key does not exist.
+var ErrNotFound = errors.New("objstore: key not found")
+
+// IsNotFound reports whether err indicates a missing object key.
+func IsNotFound(err error) bool {
+	return errors.Is(err, ErrNotFound)
+}
+
+func notFoundError(key string) error {
+	return fmt.Errorf("%w: %s", ErrNotFound, key)
 }
 
 // MemStore is an in-memory ObjectStore implementation for testing.
@@ -55,7 +68,7 @@ func (m *MemStore) Get(_ context.Context, key string) ([]byte, error) {
 	defer m.mu.RUnlock()
 	data, ok := m.objects[key]
 	if !ok {
-		return nil, fmt.Errorf("objstore: key not found: %s", key)
+		return nil, notFoundError(key)
 	}
 	cp := make([]byte, len(data))
 	copy(cp, data)
@@ -68,7 +81,7 @@ func (m *MemStore) GetRange(_ context.Context, key string, offset, length int64)
 	defer m.mu.RUnlock()
 	data, ok := m.objects[key]
 	if !ok {
-		return nil, fmt.Errorf("objstore: key not found: %s", key)
+		return nil, notFoundError(key)
 	}
 	if offset < 0 || offset >= int64(len(data)) {
 		return nil, fmt.Errorf("objstore: offset %d out of range [0, %d)", offset, len(data))
@@ -118,7 +131,7 @@ func (m *MemStore) Copy(_ context.Context, srcKey, dstKey string) error {
 	defer m.mu.Unlock()
 	data, ok := m.objects[srcKey]
 	if !ok {
-		return fmt.Errorf("objstore: key not found: %s", srcKey)
+		return notFoundError(srcKey)
 	}
 	cp := make([]byte, len(data))
 	copy(cp, data)

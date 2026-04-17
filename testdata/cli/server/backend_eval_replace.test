@@ -1,0 +1,2 @@
+# format: json
+FROM idx_backend | eval clean=replace(message, "[aeiou]", "*") | stats count by level | sort level

@@ -111,9 +111,16 @@ func (m *Manager) SetClock(fn func() time.Time) {
 func (m *Manager) AddSegment(meta model.SegmentMeta) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	tier := TierHot
+	if meta.Tier != "" {
+		tier = Tier(meta.Tier)
+	}
+
 	m.segments[meta.ID] = &TieredSegment{
-		Meta: meta,
-		Tier: TierHot,
+		Meta:      meta,
+		Tier:      tier,
+		ObjectKey: meta.ObjectKey,
 	}
 }
 

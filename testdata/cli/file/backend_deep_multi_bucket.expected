@@ -1,0 +1,3 @@
+{"avg_ms":5188,"bucket":"slow","count":5,"level":"ERROR"}
+{"avg_ms":2.6,"bucket":"fast","count":5,"level":"WARN"}
+{"avg_ms":210,"bucket":"normal","count":1,"level":"WARN"}

@@ -14,9 +14,10 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
-// IndexStore provides events for a given index.
+// IndexStore materializes events for a given index when a pipeline stage
+// cannot stay on the streaming or columnar path.
 type IndexStore interface {
-	GetEvents(index string) []*event.Event
+	MaterializeEvents(ctx context.Context, index string) ([]*event.Event, error)
 }
 
 // ServerIndexStore adapts a pre-built map of events to the IndexStore interface.
@@ -25,9 +26,9 @@ type ServerIndexStore struct {
 	Events map[string][]*event.Event
 }
 
-// GetEvents returns events for the given index.
-func (s *ServerIndexStore) GetEvents(index string) []*event.Event {
-	return s.Events[index]
+// MaterializeEvents returns events for the given index.
+func (s *ServerIndexStore) MaterializeEvents(_ context.Context, index string) ([]*event.Event, error) {
+	return s.Events[index], nil
 }
 
 // StreamingIndexStore provides a streaming iterator for a given index.
@@ -55,10 +56,10 @@ type ColumnarBatchStore struct {
 	Batches map[string][]*Batch
 }
 
-// GetEvents returns nil — the columnar path does not use event-based access.
+// MaterializeEvents returns nil — the columnar path does not use event-based access.
 // Satisfies the IndexStore interface for backward compatibility.
-func (s *ColumnarBatchStore) GetEvents(_ string) []*event.Event {
-	return nil
+func (s *ColumnarBatchStore) MaterializeEvents(_ context.Context, _ string) ([]*event.Event, error) {
+	return nil, nil
 }
 
 // GetBatches returns pre-built columnar batches for the given index.
@@ -249,6 +250,7 @@ func BuildProgramWithGovernor(ctx context.Context, prog *spl2.Program, store Ind
 // buildQuery builds a pipeline for a single Query, resolving variable sources from CTEs.
 func (qc *queryContext) buildQuery(ctx context.Context, query *spl2.Query) (Iterator, error) {
 	var iter Iterator
+	var err error
 
 	if query.Source != nil {
 		if query.Source.IsVariable {
@@ -258,7 +260,10 @@ func (qc *queryContext) buildQuery(ctx context.Context, query *spl2.Query) (Iter
 			}
 			iter = NewRowScanIterator(rows, qc.batchSize)
 		} else {
-			iter = qc.buildSourceIterator(query.Source)
+			iter, err = qc.buildSourceIterator(query.Source)
+			if err != nil {
+				return nil, err
+			}
 			// Apply inline time range from FROM source[-1h] syntax.
 			if query.Source.TimeRange != nil {
 				iter = qc.applySourceTimeRange(iter, query.Source.TimeRange)
@@ -319,17 +324,17 @@ func (qc *queryContext) buildQuery(ctx context.Context, query *spl2.Query) (Iter
 // resolves source scope before calling the pipeline — the pipeline just sees
 // the primary index name. For IndexStore (CLI mode), multi-source lists are
 // resolved by merging events from multiple GetEvents calls.
-func (qc *queryContext) buildSourceIterator(source *spl2.SourceClause) Iterator {
+func (qc *queryContext) buildSourceIterator(source *spl2.SourceClause) (Iterator, error) {
 	// Multi-source list: FROM a, b, c — merge events from all sources.
 	// Only applies to the basic IndexStore path (CLI mode). Streaming/batch
 	// stores handle multi-source at the server layer via source scope.
 	if len(source.Indices) > 0 {
-		if st, isStreaming := qc.store.(StreamingIndexStore); isStreaming {
-			// Server mode: create one iterator per source and union them.
-			// For single-source, return directly (no union overhead).
-			if len(source.Indices) == 1 {
-				return st.GetEventIterator(source.Indices[0])
-			}
+			if st, isStreaming := qc.store.(StreamingIndexStore); isStreaming {
+				// Server mode: create one iterator per source and union them.
+				// For single-source, return directly (no union overhead).
+				if len(source.Indices) == 1 {
+					return st.GetEventIterator(source.Indices[0]), nil
+				}
 			iters := make([]Iterator, 0, len(source.Indices))
 			for _, idx := range source.Indices {
 				iters = append(iters, st.GetEventIterator(idx))
@@ -339,10 +344,10 @@ func (qc *queryContext) buildSourceIterator(source *spl2.SourceClause) Iterator 
 				// segments, so interleaved fan-in gives maximum I/O throughput.
 				return NewConcurrentUnionIterator(
 					iters, OrderInterleaved, &qc.parallelCfg,
-				)
+				), nil
 			}
 
-			return NewUnionIterator(iters)
+			return NewUnionIterator(iters), nil
 		}
 		if bs, isBatch := qc.store.(BatchStore); isBatch {
 			var allBatches []*Batch
@@ -350,17 +355,21 @@ func (qc *queryContext) buildSourceIterator(source *spl2.SourceClause) Iterator 
 				allBatches = append(allBatches, bs.GetBatches(idx)...)
 			}
 
-			return NewColumnarScanIteratorWithBudget(allBatches, qc.newAccount("scan"))
+			return NewColumnarScanIteratorWithBudget(allBatches, qc.newAccount("scan")), nil
 		}
 		// IndexStore fallback: merge events from all source names.
 		var allEvents []*event.Event
 		if qc.store != nil {
 			for _, idx := range source.Indices {
-				allEvents = append(allEvents, qc.store.GetEvents(idx)...)
+				events, err := qc.store.MaterializeEvents(qc.ctx, idx)
+				if err != nil {
+					return nil, fmt.Errorf("materialize source %s: %w", idx, err)
+				}
+				allEvents = append(allEvents, events...)
 			}
 		}
 
-		return NewScanIteratorWithBudget(allEvents, qc.batchSize, qc.newAccount("scan"))
+		return NewScanIteratorWithBudget(allEvents, qc.batchSize, qc.newAccount("scan")), nil
 	}
 
 	// Glob pattern (FROM logs*, FROM *): server resolves to concrete source list
@@ -373,18 +382,22 @@ func (qc *queryContext) buildSourceIterator(source *spl2.SourceClause) Iterator 
 	// batches) > IndexStore.GetEvents (full materialization, fallback).
 	switch st := qc.store.(type) {
 	case StreamingIndexStore:
-		return st.GetEventIterator(source.Index)
+		return st.GetEventIterator(source.Index), nil
 	case BatchStore:
 		batches := st.GetBatches(source.Index)
 
-		return NewColumnarScanIteratorWithBudget(batches, qc.newAccount("scan"))
+		return NewColumnarScanIteratorWithBudget(batches, qc.newAccount("scan")), nil
 	default:
 		var events []*event.Event
 		if qc.store != nil {
-			events = qc.store.GetEvents(source.Index)
+			var err error
+			events, err = qc.store.MaterializeEvents(qc.ctx, source.Index)
+			if err != nil {
+				return nil, fmt.Errorf("materialize source %s: %w", source.Index, err)
+			}
 		}
 
-		return NewScanIteratorWithBudget(events, qc.batchSize, qc.newAccount("scan"))
+		return NewScanIteratorWithBudget(events, qc.batchSize, qc.newAccount("scan")), nil
 	}
 }
 
@@ -698,8 +711,13 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 			if bs, ok := qc.store.(BatchStore); ok {
 				batches := bs.GetBatches(c.Index)
 				iter = NewColumnarScanIteratorWithBudget(batches, qc.newAccount("scan"))
+			} else if st, ok := qc.store.(StreamingIndexStore); ok {
+				iter = st.GetEventIterator(c.Index)
 			} else {
-				events := qc.store.GetEvents(c.Index)
+				events, err := qc.store.MaterializeEvents(qc.ctx, c.Index)
+				if err != nil {
+					return nil, fmt.Errorf("materialize search index %s: %w", c.Index, err)
+				}
 				iter = NewScanIteratorWithBudget(events, qc.batchSize, qc.newAccount("scan"))
 			}
 			// Apply search expression or predicates on top.

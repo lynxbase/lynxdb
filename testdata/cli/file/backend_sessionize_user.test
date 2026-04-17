@@ -1,0 +1,4 @@
+# file: backend_server.log
+# format: json
+# skip: sessionize syntax not yet finalized
+| sessionize user_id maxgap=30m | fields user_id, duration, eventcount | sort -duration | head 5

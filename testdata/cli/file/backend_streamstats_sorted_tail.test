@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| sort duration_ms | streamstats sum(duration_ms) as cum_dur | fields timestamp, service, duration_ms, cum_dur | tail 5

@@ -6,8 +6,10 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/cluster"
+	ingestcluster "github.com/lynxbase/lynxdb/pkg/cluster/ingest"
 	querycluster "github.com/lynxbase/lynxdb/pkg/cluster/query"
 	"github.com/lynxbase/lynxdb/pkg/cluster/rpc"
+	clusterpb "github.com/lynxbase/lynxdb/pkg/cluster/rpc/proto"
 	"github.com/lynxbase/lynxdb/pkg/cluster/sharding"
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -26,6 +28,9 @@ func (e *Engine) InitClusterQuery(node *cluster.Node, clientPool *rpc.ClientPool
 	}
 
 	logger := e.logger.With("component", "cluster-query")
+	if e.objStore != nil && e.clusterCatalog == nil {
+		e.clusterCatalog = ingestcluster.NewPartCatalog(e.objStore, logger)
+	}
 
 	// Node address resolver — reads from the shard map cache which is
 	// populated by WatchShardMap with node gRPC addresses.
@@ -76,6 +81,12 @@ func (e *Engine) InitClusterQuery(node *cluster.Node, clientPool *rpc.ClientPool
 		logger,
 	)
 	node.RegisterQueryService(handler)
+
+	if e.clusterCatalog != nil {
+		if err := e.reconcileClusterCatalogs(context.Background()); err != nil {
+			return fmt.Errorf("InitClusterQuery: reconcile catalogs: %w", err)
+		}
+	}
 
 	logger.Info("cluster query initialized",
 		"max_concurrent_shard_queries", maxShardQueries,
@@ -184,6 +195,10 @@ func (a *engineShardQueryAdapter) SubmitShardPartialAgg(ctx context.Context, par
 // EventBus returns the engine's event bus for live tail subscriptions.
 func (a *engineShardQueryAdapter) EventBus() *storage.EventBus {
 	return a.engine.eventBus
+}
+
+func (a *engineShardQueryAdapter) HandlePartCommitted(ctx context.Context, n *clusterpb.PartCommittedNotification) error {
+	return a.engine.handleClusterPartCommitted(ctx, n)
 }
 
 // interfaceToValue converts an interface{} (from spl2.ResultRow.Fields) to event.Value.

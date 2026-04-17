@@ -1,0 +1,10 @@
+{"first_level":"INFO","last_level":"INFO","service":"analytics-service"}
+{"first_level":"INFO","last_level":"INFO","service":"auth-service"}
+{"first_level":"INFO","last_level":"WARN","service":"deploy-service"}
+{"first_level":"WARN","last_level":"WARN","service":"gateway-service"}
+{"first_level":"INFO","last_level":"INFO","service":"import-service"}
+{"first_level":"INFO","last_level":"INFO","service":"notification-service"}
+{"first_level":"ERROR","last_level":"ERROR","service":"payment-service"}
+{"first_level":"INFO","last_level":"INFO","service":"project-service"}
+{"first_level":"INFO","last_level":"INFO","service":"report-service"}
+{"first_level":"INFO","last_level":"INFO","service":"user-service"}

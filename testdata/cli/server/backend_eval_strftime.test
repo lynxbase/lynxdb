@@ -1,0 +1,2 @@
+# format: json
+FROM idx_backend | eval hour=strftime(_time, "%H") | stats count by hour | sort hour

@@ -106,6 +106,7 @@ func (qb *queryBudget) Borrow(class MemoryClass, n int64) (*Lease, error) {
 		class: class,
 		bytes: n,
 	}
+	trackLease(lease)
 
 	qb.mu.Lock()
 	qb.leases = append(qb.leases, lease)
@@ -132,6 +133,7 @@ func (qb *queryBudget) TryBorrow(class MemoryClass, n int64) (*Lease, bool) {
 		class: class,
 		bytes: n,
 	}
+	trackLease(lease)
 
 	qb.mu.Lock()
 	qb.leases = append(qb.leases, lease)

@@ -1,0 +1,3 @@
+# file: access.log
+# format: json
+$errs = | where level="ERROR"; FROM $errs | eval is_50x=if(status>=500,"yes","no") | stats count by is_50x | sort is_50x

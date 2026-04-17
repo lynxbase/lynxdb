@@ -45,18 +45,6 @@ func (eq *evictionQueue) add(f *Frame) {
 	f.RefBit.Store(true)
 }
 
-// remove takes a frame out of the eviction queue.
-func (eq *evictionQueue) remove(f *Frame) {
-	slot := f.slot
-	if slot < 0 || slot >= eq.capacity {
-		return
-	}
-	if eq.frames[slot] != nil {
-		eq.frames[slot] = nil
-		eq.count--
-	}
-}
-
 // evictOne finds and returns one unpinned frame to evict using the clock algorithm.
 // Returns nil if no evictable frame is found (all frames are pinned).
 func (eq *evictionQueue) evictOne() *Frame {
@@ -167,35 +155,6 @@ func (eq *evictionQueue) evictBatch(n int, preferOwner FrameOwner) []*Frame {
 	}
 
 	return result
-}
-
-// evictByOwner finds and evicts a frame owned by the specified owner.
-// Returns nil if no evictable frame with the given owner exists.
-func (eq *evictionQueue) evictByOwner(owner FrameOwner) *Frame {
-	if eq.count == 0 {
-		return nil
-	}
-
-	for i := 0; i < 2*eq.capacity; i++ {
-		idx := (eq.hand + i) % eq.capacity
-		f := eq.frames[idx]
-		if f == nil || f.IsPinned() || f.Owner != owner {
-			if f != nil && !f.IsPinned() {
-				f.RefBit.Store(false)
-			}
-			continue
-		}
-		if f.RefBit.CompareAndSwap(true, false) {
-			continue
-		}
-		eq.frames[idx] = nil
-		eq.count--
-		eq.hand = (idx + 1) % eq.capacity
-
-		return f
-	}
-
-	return nil
 }
 
 // len returns the number of frames currently in the eviction queue.

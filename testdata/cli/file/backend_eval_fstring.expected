@@ -1,0 +1,12 @@
+{"count":5,"label":"ERROR:payment-service"}
+{"count":1,"label":"INFO:analytics-service"}
+{"count":1,"label":"INFO:auth-service"}
+{"count":1,"label":"INFO:deploy-service"}
+{"count":1,"label":"INFO:import-service"}
+{"count":1,"label":"INFO:notification-service"}
+{"count":2,"label":"INFO:payment-service"}
+{"count":3,"label":"INFO:project-service"}
+{"count":1,"label":"INFO:report-service"}
+{"count":4,"label":"INFO:user-service"}
+{"count":1,"label":"WARN:deploy-service"}
+{"count":5,"label":"WARN:gateway-service"}

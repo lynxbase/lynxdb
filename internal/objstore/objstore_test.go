@@ -2,6 +2,7 @@ package objstore
 
 import (
 	"context"
+	"errors"
 	"testing"
 )
 
@@ -111,6 +112,12 @@ func TestMemStore_GetNotFound(t *testing.T) {
 	_, err := store.Get(ctx, "missing")
 	if err == nil {
 		t.Error("expected error for missing key")
+	}
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("expected ErrNotFound, got %v", err)
+	}
+	if !IsNotFound(err) {
+		t.Fatal("IsNotFound should report true")
 	}
 }
 

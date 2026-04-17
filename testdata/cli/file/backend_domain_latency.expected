@@ -1,0 +1,16 @@
+{"_time":"2026-02-10T08:00:00Z","count":1,"p50":340,"p95":340,"p99":340,"service":"deploy-service"}
+{"_time":"2026-02-10T08:00:00Z","count":3,"p50":3,"p95":3,"p99":3,"service":"gateway-service"}
+{"_time":"2026-02-10T08:00:00Z","count":3,"p50":5110,"p95":5218,"p99":5227.6,"service":"payment-service"}
+{"_time":"2026-02-10T08:00:00Z","count":2,"p50":86,"p95":116.6,"p99":119.32,"service":"project-service"}
+{"_time":"2026-02-10T08:00:00Z","count":2,"p50":36.5,"p95":44.15,"p99":44.83,"service":"user-service"}
+{"_time":"2026-02-10T09:00:00Z","count":1,"p50":85,"p95":85,"p99":85,"service":"auth-service"}
+{"_time":"2026-02-10T09:00:00Z","count":1,"p50":210,"p95":210,"p99":210,"service":"deploy-service"}
+{"_time":"2026-02-10T09:00:00Z","count":2,"p50":2.5,"p95":2.95,"p99":2.99,"service":"gateway-service"}
+{"_time":"2026-02-10T09:00:00Z","count":4,"p50":5150,"p95":5285,"p99":5297,"service":"payment-service"}
+{"_time":"2026-02-10T09:00:00Z","count":1,"p50":250,"p95":250,"p99":250,"service":"report-service"}
+{"_time":"2026-02-10T09:00:00Z","count":1,"p50":35,"p95":35,"p99":35,"service":"user-service"}
+{"_time":"2026-02-10T10:00:00Z","count":1,"p50":180,"p95":180,"p99":180,"service":"analytics-service"}
+{"_time":"2026-02-10T10:00:00Z","count":1,"p50":1540,"p95":1540,"p99":1540,"service":"import-service"}
+{"_time":"2026-02-10T10:00:00Z","count":1,"p50":42,"p95":42,"p99":42,"service":"notification-service"}
+{"_time":"2026-02-10T10:00:00Z","count":1,"p50":48,"p95":48,"p99":48,"service":"project-service"}
+{"_time":"2026-02-10T10:00:00Z","count":1,"p50":30,"p95":30,"p99":30,"service":"user-service"}

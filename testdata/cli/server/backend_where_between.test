@@ -1,0 +1,2 @@
+# format: json
+FROM idx_backend | where duration_ms between 20 and 6000 | stats count, avg(duration_ms) as avg_dur, min(duration_ms) as min_dur, max(duration_ms) as max_dur

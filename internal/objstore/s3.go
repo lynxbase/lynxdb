@@ -80,6 +80,9 @@ func (s *S3Store) Get(ctx context.Context, key string) ([]byte, error) {
 		Key:    aws.String(s.key(key)),
 	})
 	if err != nil {
+		if isS3NotFound(err) {
+			return nil, notFoundError(key)
+		}
 		return nil, fmt.Errorf("objstore: s3 get %s: %w", key, err)
 	}
 	defer out.Body.Close()
@@ -95,6 +98,9 @@ func (s *S3Store) GetRange(ctx context.Context, key string, offset, length int64
 		Range:  aws.String(rangeStr),
 	})
 	if err != nil {
+		if isS3NotFound(err) {
+			return nil, notFoundError(key)
+		}
 		return nil, fmt.Errorf("objstore: s3 get-range %s: %w", key, err)
 	}
 	defer out.Body.Close()
@@ -160,9 +166,7 @@ func (s *S3Store) Exists(ctx context.Context, key string) (bool, error) {
 		Key:    aws.String(s.key(key)),
 	})
 	if err != nil {
-		// If the error indicates NotFound, return false without error.
-		var apiErr smithy.APIError
-		if errors.As(err, &apiErr) && apiErr.ErrorCode() == "NotFound" {
+		if isS3NotFound(err) {
 			return false, nil
 		}
 
@@ -170,4 +174,18 @@ func (s *S3Store) Exists(ctx context.Context, key string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+func isS3NotFound(err error) bool {
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+
+	switch apiErr.ErrorCode() {
+	case "NotFound", "NoSuchKey":
+		return true
+	default:
+		return false
+	}
 }

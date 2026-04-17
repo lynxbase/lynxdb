@@ -1,0 +1,2 @@
+# format: json
+FROM idx_backend | dedup level, service | stats count as unique_pairs

@@ -687,14 +687,14 @@ func TestESStub_ILMPolicy(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		t.Fatalf("status: %d, want 200", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotImplemented)
 	}
 
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
-	if len(result) != 0 {
-		t.Fatalf("expected empty JSON object, got %v", result)
+	if result["error"] == "" {
+		t.Fatalf("expected error payload, got %v", result)
 	}
 
 	// Check X-Elastic-Product header.
@@ -713,8 +713,8 @@ func TestESStub_IndexTemplate(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		t.Fatalf("status: %d, want 200", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotImplemented)
 	}
 }
 
@@ -728,8 +728,8 @@ func TestESStub_IngestPipeline(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		t.Fatalf("status: %d, want 200", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotImplemented)
 	}
 }
 
@@ -747,8 +747,8 @@ func TestESStub_PutIndex(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		t.Fatalf("status: %d, want 200", resp.StatusCode)
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotImplemented)
 	}
 }
 

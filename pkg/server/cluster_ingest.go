@@ -119,9 +119,9 @@ func (e *Engine) InitCluster(node *cluster.Node, clientPool *rpc.ClientPool, obj
 // localClusterIngest is the callback used by the cluster router for events
 // whose shard primary is this node. It follows the same path as single-node
 // ingest (batcher → part → segment) but skips cluster routing (already routed).
-func (e *Engine) localClusterIngest(_ context.Context, events []*event.Event) error {
+func (e *Engine) localClusterIngest(ctx context.Context, events []*event.Event) error {
 	if e.batcher != nil {
-		if err := e.batcher.Add(events); err != nil {
+		if err := e.batcher.AddContext(ctx, events); err != nil {
 			return err
 		}
 	} else {

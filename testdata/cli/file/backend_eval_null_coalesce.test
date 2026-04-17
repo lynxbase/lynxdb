@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| eval err=error ?? "none" | eval amt=amount_cents ?? 0 | stats count by err | sort err

@@ -148,20 +148,6 @@ func (c *Compactor) SegmentsByLevel(index string, level int) []*SegmentInfo {
 	return result
 }
 
-// segmentsForIndex returns all segments for an index (under lock).
-func (c *Compactor) segmentsForIndex(index string) []*SegmentInfo {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	var result []*SegmentInfo
-	for _, s := range c.segments {
-		if s.Meta.Index == index {
-			result = append(result, s)
-		}
-	}
-
-	return result
-}
-
 // partitionsForIndex returns all distinct partition keys for an index.
 func (c *Compactor) partitionsForIndex(index string) []string {
 	c.mu.Lock()

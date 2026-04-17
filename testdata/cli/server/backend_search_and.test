@@ -1,0 +1,2 @@
+# format: json
+FROM idx_backend | search "payment" AND "failed" | stats count

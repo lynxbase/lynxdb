@@ -1,0 +1,3 @@
+# file: backend_server.log
+# format: json
+| where level="ERROR" | stats count as n | append [| where level="WARN" | stats count as n] | sort n

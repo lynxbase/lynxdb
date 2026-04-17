@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"sync"
+	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"google.golang.org/grpc"
@@ -16,7 +18,11 @@ type Server struct {
 	grpc   *grpc.Server
 	addr   string
 	logger *slog.Logger
+	ln     net.Listener
+	stopMu sync.Mutex
 }
+
+const gracefulStopTimeout = 10 * time.Second
 
 // NewServer creates a new gRPC server listening on the given address.
 // The server is created with OTel tracing interceptors and any additional
@@ -50,6 +56,9 @@ func (s *Server) Start(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("rpc.Server.Start: listen %s: %w", s.addr, err)
 	}
+	s.stopMu.Lock()
+	s.ln = ln
+	s.stopMu.Unlock()
 
 	s.logger.Info("gRPC server started", "addr", ln.Addr().String())
 
@@ -57,7 +66,9 @@ func (s *Server) Start(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		s.logger.Info("gRPC server shutting down")
-		s.grpc.GracefulStop()
+		stopCtx, cancel := context.WithTimeout(context.Background(), gracefulStopTimeout)
+		defer cancel()
+		s.stop(stopCtx)
 	}()
 
 	if err := s.grpc.Serve(ln); err != nil {
@@ -69,5 +80,32 @@ func (s *Server) Start(ctx context.Context) error {
 
 // Stop initiates a graceful shutdown of the gRPC server.
 func (s *Server) Stop() {
-	s.grpc.GracefulStop()
+	ctx, cancel := context.WithTimeout(context.Background(), gracefulStopTimeout)
+	defer cancel()
+	s.stop(ctx)
+}
+
+func (s *Server) stop(ctx context.Context) {
+	s.stopMu.Lock()
+	ln := s.ln
+	s.ln = nil
+	s.stopMu.Unlock()
+
+	if ln != nil {
+		_ = ln.Close()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		s.grpc.GracefulStop()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-ctx.Done():
+		s.logger.Warn("gRPC graceful stop deadline exceeded; forcing stop")
+		s.grpc.Stop()
+		<-done
+	}
 }

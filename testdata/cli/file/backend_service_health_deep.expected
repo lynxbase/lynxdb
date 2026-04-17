@@ -1,0 +1,10 @@
+{"avg_dur":3743.85714286,"error_rate":0,"errors":5,"events":7,"health":"unhealthy","max_dur":5300,"service":"payment-service"}
+{"avg_dur":180,"error_rate":0,"errors":0,"events":1,"health":"healthy","max_dur":180,"service":"analytics-service"}
+{"avg_dur":85,"error_rate":0,"errors":0,"events":1,"health":"healthy","max_dur":85,"service":"auth-service"}
+{"avg_dur":275,"error_rate":0,"errors":0,"events":2,"health":"healthy","max_dur":340,"service":"deploy-service"}
+{"avg_dur":2.6,"error_rate":0,"errors":0,"events":5,"health":"healthy","max_dur":3,"service":"gateway-service"}
+{"avg_dur":1540,"error_rate":0,"errors":0,"events":1,"health":"healthy","max_dur":1540,"service":"import-service"}
+{"avg_dur":42,"error_rate":0,"errors":0,"events":1,"health":"healthy","max_dur":42,"service":"notification-service"}
+{"avg_dur":73.3333333333,"error_rate":0,"errors":0,"events":3,"health":"healthy","max_dur":120,"service":"project-service"}
+{"avg_dur":250,"error_rate":0,"errors":0,"events":1,"health":"healthy","max_dur":250,"service":"report-service"}
+{"avg_dur":34.5,"error_rate":0,"errors":0,"events":4,"health":"healthy","max_dur":45,"service":"user-service"}

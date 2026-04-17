@@ -1,0 +1,4 @@
+# file: backend_server.log
+# format: json
+# skip: slowest syntax not yet finalized
+| slowest 5 duration_ms by service

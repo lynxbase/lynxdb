@@ -413,7 +413,9 @@ func (e *Engine) Shutdown(timeout time.Duration) error {
 
 	// Flush remaining buffered events via the async batcher.
 	if e.batcher != nil {
-		if err := e.batcher.Close(); err != nil {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+		if err := e.batcher.CloseContext(shutdownCtx); err != nil {
 			e.logger.Error("shutdown batcher close failed", "error", err)
 			errs = append(errs, fmt.Errorf("close batcher: %w", err))
 		}

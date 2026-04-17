@@ -26,6 +26,9 @@ type ShardQueryEngine interface {
 
 	// EventBus returns the event bus for live tail subscriptions.
 	EventBus() *storage.EventBus
+
+	// HandlePartCommitted reconciles newly committed remote parts into the local query view.
+	HandlePartCommitted(ctx context.Context, n *clusterpb.PartCommittedNotification) error
 }
 
 // ShardQueryParams describes a query scoped to a specific shard.
@@ -141,8 +144,15 @@ func (h *ShardQueryHandler) executeFullScan(
 	return nil
 }
 
-// NotifyPartCommitted handles part commit notifications for cache invalidation.
-func (h *ShardQueryHandler) NotifyPartCommitted(_ context.Context, n *clusterpb.PartCommittedNotification) (*clusterpb.PartCommittedResponse, error) {
+// NotifyPartCommitted handles part commit notifications for remote-part reconciliation
+// and cache invalidation.
+func (h *ShardQueryHandler) NotifyPartCommitted(ctx context.Context, n *clusterpb.PartCommittedNotification) (*clusterpb.PartCommittedResponse, error) {
+	if h.engine != nil {
+		if err := h.engine.HandlePartCommitted(ctx, n); err != nil {
+			return nil, fmt.Errorf("ShardQueryHandler.NotifyPartCommitted: %w", err)
+		}
+	}
+
 	if h.invalidator != nil {
 		h.invalidator.HandlePartCommitted(n)
 	}

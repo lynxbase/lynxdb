@@ -1,0 +1,326 @@
+{
+"elapsed_ms": 0,
+"fields": [
+{
+"cardinality": 26,
+"coverage_pct": 100,
+"name": "_time",
+"null_pct": 0,
+"top_values": [
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T08:46:30.6Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T09:00:01.1Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T09:00:30.2Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T09:01:00.3Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T09:15:00.7Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T09:45:00.9Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T08:20:15.2Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T10:30:00.4Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T08:12:03.045Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T08:30:05.2Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T09:10:45.4Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T09:00:45.5Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T10:00:00.1Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T10:20:00.3Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T08:20:01.1Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T10:45:00.5Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T08:15:22.1Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T08:45:01.4Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T08:45:30.7Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T09:00:50.6Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T09:30:00.8Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T08:32:18.3Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T08:45:30.5Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T10:15:00.2Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T08:21:03.3Z"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "2026-02-10T09:01:30.4Z"
+}
+],
+"type": "timestamp"
+},
+{
+"cardinality": 26,
+"coverage_pct": 100,
+"name": "_raw",
+"null_pct": 0,
+"top_values": [
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T09:15:00.700Z\",\"level\":\"INFO\",\"service\":\"user-service\",\"instance\":\"user-svc-pod-7a3b\",\"trace_id\":\"t-abc015\",\"span_id\":\"s-015\",\"user_id\":\"usr-1005\",\"method\":\"GET\",\"path\":\"/api/v2/users\",\"status\":200,\"duration_ms\":35,\"memory_mb\":250.1,\"cpu_pct\":14.2,\"message\":\"User list fetched\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T10:00:00.100Z\",\"level\":\"INFO\",\"service\":\"analytics-service\",\"instance\":\"ana-svc-pod-6f7g\",\"trace_id\":\"t-abc018\",\"span_id\":\"s-018\",\"user_id\":\"usr-1001\",\"method\":\"GET\",\"path\":\"/api/v2/analytics\",\"status\":200,\"duration_ms\":180,\"memory_mb\":380.2,\"cpu_pct\":28.5,\"message\":\"Analytics dashboard data fetched\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T08:21:03.300Z\",\"level\":\"INFO\",\"service\":\"payment-service\",\"instance\":\"pay-svc-pod-5e6f\",\"trace_id\":\"t-abc023\",\"span_id\":\"s-023\",\"user_id\":\"usr-2006\",\"method\":\"POST\",\"path\":\"/webhooks/stripe\",\"status\":200,\"duration_ms\":87,\"memory_mb\":450.1,\"cpu_pct\":25.3,\"amount_cents\":12000,\"message\":\"Stripe webhook processed successfully\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T09:01:00.300Z\",\"level\":\"INFO\",\"service\":\"payment-service\",\"instance\":\"pay-svc-pod-5e6f\",\"trace_id\":\"t-abc011\",\"span_id\":\"s-011\",\"user_id\":\"usr-2003\",\"method\":\"POST\",\"path\":\"/api/v2/payments\",\"status\":200,\"duration_ms\":180,\"memory_mb\":750.2,\"cpu_pct\":45.3,\"amount_cents\":8900,\"message\":\"Payment processed successfully\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T10:15:00.200Z\",\"level\":\"INFO\",\"service\":\"project-service\",\"instance\":\"proj-svc-pod-2b1c\",\"trace_id\":\"t-abc019\",\"span_id\":\"s-019\",\"user_id\":\"usr-1005\",\"method\":\"GET\",\"path\":\"/api/v2/projects\",\"status\":200,\"duration_ms\":48,\"memory_mb\":310.8,\"cpu_pct\":17.5,\"message\":\"Projects listed\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T08:20:01.100Z\",\"level\":\"ERROR\",\"service\":\"payment-service\",\"instance\":\"pay-svc-pod-5e6f\",\"trace_id\":\"t-abc021\",\"span_id\":\"s-021\",\"user_id\":\"usr-2004\",\"method\":\"POST\",\"path\":\"/webhooks/stripe\",\"status\":500,\"duration_ms\":5230,\"memory_mb\":870.5,\"cpu_pct\":92.1,\"error\":\"Webhook handler timeout\",\"message\":\"Stripe webhook processing failed\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T10:45:00.500Z\",\"level\":\"INFO\",\"service\":\"user-service\",\"instance\":\"user-svc-pod-7a3b\",\"trace_id\":\"t-abc025\",\"span_id\":\"s-025\",\"user_id\":\"usr-1003\",\"method\":\"GET\",\"path\":\"/api/v2/users/profile\",\"status\":200,\"duration_ms\":30,\"memory_mb\":248.5,\"cpu_pct\":13.1,\"message\":\"Profile fetched successfully\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T08:12:03.045Z\",\"level\":\"INFO\",\"service\":\"user-service\",\"instance\":\"user-svc-pod-7a3b\",\"trace_id\":\"t-abc001\",\"span_id\":\"s-001\",\"user_id\":\"usr-1001\",\"method\":\"GET\",\"path\":\"/api/v2/users/profile\",\"status\":200,\"duration_ms\":28,\"memory_mb\":245.3,\"cpu_pct\":12.4,\"message\":\"Profile fetched successfully\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T08:45:30.700Z\",\"level\":\"INFO\",\"service\":\"deploy-service\",\"instance\":\"deploy-svc-pod-3c4d\",\"trace_id\":\"t-abc008\",\"span_id\":\"s-008\",\"user_id\":\"usr-1003\",\"method\":\"POST\",\"path\":\"/api/v2/deployments\",\"status\":201,\"duration_ms\":340,\"memory_mb\":290.1,\"cpu_pct\":35.2,\"message\":\"Deployment initiated: analytics-v2 to production\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T09:00:01.100Z\",\"level\":\"ERROR\",\"service\":\"payment-service\",\"instance\":\"pay-svc-pod-5e6f\",\"trace_id\":\"t-abc009\",\"span_id\":\"s-009\",\"user_id\":\"usr-2001\",\"method\":\"POST\",\"path\":\"/api/v2/payments\",\"status\":500,\"duration_ms\":5200,\"memory_mb\":890.3,\"cpu_pct\":95.2,\"amount_cents\":15000,\"error\":\"DB connection pool exhausted\",\"message\":\"Payment processing failed\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T09:00:30.200Z\",\"level\":\"ERROR\",\"service\":\"payment-service\",\"instance\":\"pay-svc-pod-5e6f\",\"trace_id\":\"t-abc010\",\"span_id\":\"s-010\",\"user_id\":\"usr-2002\",\"method\":\"POST\",\"path\":\"/api/v2/payments\",\"status\":500,\"duration_ms\":5100,\"memory_mb\":895.1,\"cpu_pct\":96.8,\"amount_cents\":24500,\"error\":\"DB connection pool exhausted\",\"message\":\"Payment processing failed\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T09:30:00.800Z\",\"level\":\"INFO\",\"service\":\"auth-service\",\"instance\":\"auth-svc-pod-8g9h\",\"trace_id\":\"t-abc016\",\"span_id\":\"s-016\",\"user_id\":\"usr-1005\",\"method\":\"PUT\",\"path\":\"/api/v2/users/roles\",\"status\":200,\"duration_ms\":85,\"memory_mb\":198.5,\"cpu_pct\":11.3,\"message\":\"Role updated: alex.kim viewer-\u003eadmin\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T10:30:00.400Z\",\"level\":\"INFO\",\"service\":\"notification-service\",\"instance\":\"notif-svc-pod-1j2k\",\"trace_id\":\"t-abc024\",\"span_id\":\"s-024\",\"user_id\":\"usr-1001\",\"method\":\"GET\",\"path\":\"/api/v2/notifications\",\"status\":200,\"duration_ms\":42,\"memory_mb\":195.8,\"cpu_pct\":9.8,\"message\":\"Notifications fetched\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T08:15:22.100Z\",\"level\":\"INFO\",\"service\":\"user-service\",\"instance\":\"user-svc-pod-7a3b\",\"trace_id\":\"t-abc002\",\"span_id\":\"s-002\",\"user_id\":\"usr-1001\",\"method\":\"POST\",\"path\":\"/api/v2/users/settings\",\"status\":200,\"duration_ms\":45,\"memory_mb\":248.1,\"cpu_pct\":15.2,\"message\":\"Settings updated\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T08:30:05.200Z\",\"level\":\"INFO\",\"service\":\"project-service\",\"instance\":\"proj-svc-pod-2b1c\",\"trace_id\":\"t-abc003\",\"span_id\":\"s-003\",\"user_id\":\"usr-1003\",\"method\":\"GET\",\"path\":\"/api/v2/projects\",\"status\":200,\"duration_ms\":52,\"memory_mb\":312.5,\"cpu_pct\":18.7,\"message\":\"Projects listed\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T09:00:45.500Z\",\"level\":\"WARN\",\"service\":\"gateway-service\",\"instance\":\"gw-pod-1a2b\",\"trace_id\":\"t-abc013\",\"span_id\":\"s-013\",\"client_ip\":\"198.51.100.22\",\"method\":\"GET\",\"path\":\"/../../etc/shadow\",\"status\":403,\"duration_ms\":2,\"memory_mb\":181.2,\"cpu_pct\":5.8,\"threat_type\":\"path_traversal\",\"message\":\"Path traversal attempt blocked\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T09:00:50.600Z\",\"level\":\"WARN\",\"service\":\"gateway-service\",\"instance\":\"gw-pod-1a2b\",\"trace_id\":\"t-abc014\",\"span_id\":\"s-014\",\"client_ip\":\"198.51.100.22\",\"method\":\"GET\",\"path\":\"/api/v2/users\",\"status\":400,\"duration_ms\":3,\"memory_mb\":181.5,\"cpu_pct\":6.0,\"threat_type\":\"sqli\",\"message\":\"SQL injection attempt detected\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T09:45:00.900Z\",\"level\":\"INFO\",\"service\":\"report-service\",\"instance\":\"rpt-svc-pod-4d5e\",\"trace_id\":\"t-abc017\",\"span_id\":\"s-017\",\"user_id\":\"usr-1001\",\"method\":\"GET\",\"path\":\"/api/v2/reports/daily\",\"status\":200,\"duration_ms\":250,\"memory_mb\":420.3,\"cpu_pct\":32.1,\"message\":\"Daily report generated\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T10:20:00.300Z\",\"level\":\"INFO\",\"service\":\"import-service\",\"instance\":\"imp-svc-pod-9h0i\",\"trace_id\":\"t-abc020\",\"span_id\":\"s-020\",\"user_id\":\"usr-1005\",\"method\":\"POST\",\"path\":\"/api/v2/imports/bulk\",\"status\":200,\"duration_ms\":1540,\"memory_mb\":520.5,\"cpu_pct\":65.3,\"message\":\"Bulk import completed: 5000 records\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T08:20:15.200Z\",\"level\":\"ERROR\",\"service\":\"payment-service\",\"instance\":\"pay-svc-pod-5e6f\",\"trace_id\":\"t-abc022\",\"span_id\":\"s-022\",\"user_id\":\"usr-2005\",\"method\":\"POST\",\"path\":\"/webhooks/stripe\",\"status\":500,\"duration_ms\":5110,\"memory_mb\":875.2,\"cpu_pct\":93.5,\"error\":\"Webhook handler timeout\",\"message\":\"Stripe webhook processing failed\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T09:01:30.400Z\",\"level\":\"ERROR\",\"service\":\"payment-service\",\"instance\":\"pay-svc-pod-5e6f\",\"trace_id\":\"t-abc026\",\"span_id\":\"s-026\",\"user_id\":\"usr-2007\",\"method\":\"POST\",\"path\":\"/api/v2/payments\",\"status\":500,\"duration_ms\":5300,\"memory_mb\":892.7,\"cpu_pct\":97.1,\"amount_cents\":31000,\"error\":\"DB connection pool exhausted\",\"message\":\"Payment processing failed\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T09:10:45.400Z\",\"level\":\"WARN\",\"service\":\"deploy-service\",\"instance\":\"deploy-svc-pod-3c4d\",\"trace_id\":\"t-abc012\",\"span_id\":\"s-012\",\"user_id\":\"usr-1003\",\"method\":\"POST\",\"path\":\"/api/v2/deployments/rollback\",\"status\":200,\"duration_ms\":210,\"memory_mb\":295.3,\"cpu_pct\":28.4,\"message\":\"Deployment rollback: analytics-v2 rolled back to v3.13.1\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T08:32:18.300Z\",\"level\":\"INFO\",\"service\":\"project-service\",\"instance\":\"proj-svc-pod-2b1c\",\"trace_id\":\"t-abc004\",\"span_id\":\"s-004\",\"user_id\":\"usr-1003\",\"method\":\"POST\",\"path\":\"/api/v2/projects\",\"status\":201,\"duration_ms\":120,\"memory_mb\":315.2,\"cpu_pct\":22.1,\"message\":\"Project created: analytics-v2\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T08:45:01.400Z\",\"level\":\"WARN\",\"service\":\"gateway-service\",\"instance\":\"gw-pod-1a2b\",\"trace_id\":\"t-abc005\",\"span_id\":\"s-005\",\"client_ip\":\"203.0.113.77\",\"method\":\"GET\",\"path\":\"/api/v2/users\",\"status\":400,\"duration_ms\":3,\"memory_mb\":180.2,\"cpu_pct\":5.1,\"threat_type\":\"sqli\",\"message\":\"SQL injection attempt detected\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T08:45:30.500Z\",\"level\":\"WARN\",\"service\":\"gateway-service\",\"instance\":\"gw-pod-1a2b\",\"trace_id\":\"t-abc006\",\"span_id\":\"s-006\",\"client_ip\":\"203.0.113.77\",\"method\":\"GET\",\"path\":\"/../../etc/passwd\",\"status\":403,\"duration_ms\":2,\"memory_mb\":180.5,\"cpu_pct\":5.3,\"threat_type\":\"path_traversal\",\"message\":\"Path traversal attempt blocked\"}"
+},
+{
+"count": 1,
+"pct": 3.8,
+"value": "{\"timestamp\":\"2026-02-10T08:46:30.600Z\",\"level\":\"WARN\",\"service\":\"gateway-service\",\"instance\":\"gw-pod-1a2b\",\"trace_id\":\"t-abc007\",\"span_id\":\"s-007\",\"client_ip\":\"203.0.113.77\",\"method\":\"GET\",\"path\":\"/api/v2/users\",\"status\":400,\"duration_ms\":3,\"memory_mb\":180.8,\"cpu_pct\":5.5,\"threat_type\":\"sqli\",\"message\":\"SQL injection attempt detected\"}"
+}
+],
+"type": "string"
+},
+{
+"cardinality": 1,
+"coverage_pct": 100,
+"name": "index",
+"null_pct": 0,
+"top_values": [
+{
+"count": 26,
+"pct": 100,
+"value": "/Users/eorlov/projects/lynxdb/testdata/logs/backend_server.log"
+}
+],
+"type": "string"
+},
+{
+"cardinality": 1,
+"coverage_pct": 100,
+"name": "source",
+"null_pct": 0,
+"top_values": [
+{
+"count": 26,
+"pct": 100,
+"value": "/Users/eorlov/projects/lynxdb/testdata/logs/backend_server.log"
+}
+],
+"type": "string"
+},
+{
+"cardinality": 1,
+"coverage_pct": 100,
+"name": "_source",
+"null_pct": 0,
+"top_values": [
+{
+"count": 26,
+"pct": 100,
+"value": "/Users/eorlov/projects/lynxdb/testdata/logs/backend_server.log"
+}
+],
+"type": "string"
+}
+],
+"sampled": 26
+}

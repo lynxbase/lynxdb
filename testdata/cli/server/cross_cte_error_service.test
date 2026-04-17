@@ -1,0 +1,2 @@
+# format: json
+$errs = FROM idx_backend | where level="ERROR"; FROM $errs | stats count by service | sort service

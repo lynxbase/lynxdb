@@ -398,12 +398,6 @@ func formatCaretSpan(query string, pos, length int) string {
 	return fmt.Sprintf("  %s\n  %s%s", line, strings.Repeat(" ", col), strings.Repeat("^", length))
 }
 
-// formatCaret shows the query with a caret pointing to the error position.
-// Deprecated: use formatCaretSpan for multi-caret rendering.
-func formatCaret(query string, pos int) string {
-	return formatCaretSpan(query, pos, 1)
-}
-
 // ClosestMatch returns the closest string from candidates within maxDist
 // edit distance, or empty if no close match is found. Exported for use
 // by the server package (fuzzy source name matching in warnings).

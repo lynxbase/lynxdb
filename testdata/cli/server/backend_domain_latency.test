@@ -1,0 +1,2 @@
+# format: json
+FROM idx_backend | latency duration_ms every 1h by service

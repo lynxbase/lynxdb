@@ -1,0 +1,4 @@
+# file: backend_server.log
+# format: json
+# skip: compare syntax not yet finalized
+| compare previous 1h | head 5

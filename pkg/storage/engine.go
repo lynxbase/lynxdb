@@ -751,9 +751,9 @@ func (e *Engine) QueryReader(ctx context.Context, r io.Reader, spl2Query string,
 	return &QueryResult{Rows: rows}, st, nil
 }
 
-// GetEvents implements pipeline.IndexStore so Engine can be used directly.
-func (e *Engine) GetEvents(index string) []*event.Event {
-	return e.events[index]
+// MaterializeEvents implements pipeline.IndexStore so Engine can be used directly.
+func (e *Engine) MaterializeEvents(_ context.Context, index string) ([]*event.Event, error) {
+	return e.events[index], nil
 }
 
 // SetEvents replaces the events for a given index. Used for ephemeral

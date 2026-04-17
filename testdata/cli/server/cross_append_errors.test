@@ -1,0 +1,2 @@
+# format: json
+FROM idx_backend | where level="ERROR" | stats count as n | append [FROM idx_frontend | search "ERROR" | stats count as n]

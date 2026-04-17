@@ -587,26 +587,6 @@ func sectionKey(sec SidebarSection) string {
 	}
 }
 
-// sectionFromKey returns the SidebarSection for a given key string.
-func sectionFromKey(key string) (SidebarSection, bool) {
-	switch key {
-	case "server":
-		return SectionServer, true
-	case "indexes":
-		return SectionIndexes, true
-	case "fields":
-		return SectionFields, true
-	case "plan":
-		return SectionQueryPlan, true
-	case "stats":
-		return SectionQueryStats, true
-	case "history":
-		return SectionHistory, true
-	default:
-		return 0, false
-	}
-}
-
 // formatUptimeShort returns a compact human-readable uptime string.
 func formatUptimeShort(seconds int) string {
 	if seconds < 60 {

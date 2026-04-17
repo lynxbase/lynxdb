@@ -221,24 +221,23 @@ func (s *StreamingServerStore) AggregatedStats() *enginepipeline.SegmentStreamSt
 	return &agg
 }
 
-// GetEvents implements enginepipeline.IndexStore for backward compatibility.
-// Used by subsearches and CTEs that require materialization.
-// This does NOT return nil — it materializes by draining a SegmentStreamIterator
-// to collect events. This is the fallback path: slower but correct.
-func (s *StreamingServerStore) GetEvents(index string) []*event.Event {
+// MaterializeEvents implements enginepipeline.IndexStore for fallback paths
+// that require full event materialization.
+func (s *StreamingServerStore) MaterializeEvents(ctx context.Context, index string) ([]*event.Event, error) {
 	iter := s.GetEventIterator(index)
 	defer iter.Close()
 
-	if err := iter.Init(context.Background()); err != nil {
-		slog.Warn("store: GetEvents iterator init failed, returning empty result set",
-			"index", index, "error", err)
-		return nil
+	if err := iter.Init(ctx); err != nil {
+		return nil, err
 	}
 
 	var events []*event.Event
 	for {
-		batch, err := iter.Next(context.Background())
-		if err != nil || batch == nil {
+		batch, err := iter.Next(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if batch == nil {
 			break
 		}
 		// Convert batch rows back to events.
@@ -281,7 +280,7 @@ func (s *StreamingServerStore) GetEvents(index string) []*event.Event {
 		}
 	}
 
-	return events
+	return events, nil
 }
 
 // buildStreamHints converts spl2.QueryHints to SegmentStreamHints.

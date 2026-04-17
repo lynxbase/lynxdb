@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
+	"sync"
 
 	"github.com/lynxbase/lynxdb/internal/objstore"
 	"github.com/vmihailenco/msgpack/v5"
@@ -28,17 +31,17 @@ type PartEntry struct {
 }
 
 // Catalog is the on-disk representation of all parts for a single partition.
-// Stored as a single msgpack blob in S3. The Version field provides optimistic
-// concurrency control — writers must read the current version before modifying,
-// and a stale version on the next read triggers a retry.
+// Stored as a single msgpack blob in object storage.
 type Catalog struct {
 	Version uint64      `msgpack:"version"`
 	Parts   []PartEntry `msgpack:"parts"`
 }
 
-// maxCatalogRetries is the maximum number of retry attempts for optimistic
-// concurrency conflicts when updating the catalog.
-const maxCatalogRetries = 3
+// CatalogPartition identifies a catalog shard in object storage.
+type CatalogPartition struct {
+	Index     string
+	Partition uint32
+}
 
 // PartCatalog manages the S3-backed part catalog for cluster mode.
 // Each (index, partition) pair has an independent catalog file stored at:
@@ -51,6 +54,7 @@ const maxCatalogRetries = 3
 type PartCatalog struct {
 	objStore objstore.ObjectStore
 	logger   *slog.Logger
+	locks    sync.Map // catalog/<index>/p<partition>/catalog.msgpack -> *sync.Mutex
 }
 
 // NewPartCatalog creates a new PartCatalog backed by the given object store.
@@ -73,10 +77,11 @@ func (c *PartCatalog) Load(ctx context.Context, index string, partition uint32) 
 
 	data, err := c.objStore.Get(ctx, key)
 	if err != nil {
-		// Treat "not found" as empty catalog.
-		// objstore.MemStore returns errors starting with "objstore: key not found".
-		// S3Store will return a similar error for missing keys.
-		return &Catalog{Version: 0}, nil
+		if objstore.IsNotFound(err) {
+			return &Catalog{Version: 0}, nil
+		}
+
+		return nil, fmt.Errorf("ingest.PartCatalog.Load: get %s: %w", key, err)
 	}
 
 	var cat Catalog
@@ -103,49 +108,59 @@ func (c *PartCatalog) save(ctx context.Context, index string, partition uint32, 
 	return nil
 }
 
-// AddPart appends a new part entry to the catalog with optimistic concurrency.
-// It loads the current catalog, appends the entry, increments the version,
-// and writes back. On conflict (stale version), it retries up to 3 times.
-func (c *PartCatalog) AddPart(ctx context.Context, index string, partition uint32, entry PartEntry) error {
-	for attempt := 0; attempt < maxCatalogRetries; attempt++ {
-		cat, err := c.Load(ctx, index, partition)
-		if err != nil {
-			return fmt.Errorf("ingest.PartCatalog.AddPart: %w", err)
-		}
+func (c *PartCatalog) catalogLock(index string, partition uint32) *sync.Mutex {
+	key := catalogKey(index, partition)
+	mu, _ := c.locks.LoadOrStore(key, &sync.Mutex{})
 
-		expectedVersion := cat.Version
-		cat.Parts = append(cat.Parts, entry)
-		cat.Version++
-
-		if err := c.save(ctx, index, partition, cat); err != nil {
-			return fmt.Errorf("ingest.PartCatalog.AddPart: %w", err)
-		}
-
-		// Verify: re-read and check version for optimistic concurrency.
-		// S3 lacks conditional PUT, so we verify after write.
-		verify, err := c.Load(ctx, index, partition)
-		if err != nil {
-			return fmt.Errorf("ingest.PartCatalog.AddPart: verify: %w", err)
-		}
-
-		if verify.Version == expectedVersion+1 {
-			return nil // Success — our write was the latest.
-		}
-
-		// Version mismatch — another writer updated concurrently. Retry.
-		c.logger.Warn("catalog version conflict, retrying",
-			"index", index,
-			"partition", partition,
-			"expected_version", expectedVersion+1,
-			"actual_version", verify.Version,
-			"attempt", attempt+1)
-	}
-
-	return fmt.Errorf("ingest.PartCatalog.AddPart: exhausted %d retries for %s/p%d", maxCatalogRetries, index, partition)
+	return mu.(*sync.Mutex)
 }
 
-// RemoveParts removes parts by ID from the catalog with optimistic concurrency.
-// Used during compaction to replace input parts with compacted output.
+func (c *PartCatalog) mutate(ctx context.Context, index string, partition uint32, fn func(*Catalog) (bool, error)) error {
+	mu := c.catalogLock(index, partition)
+	mu.Lock()
+	defer mu.Unlock()
+
+	cat, err := c.Load(ctx, index, partition)
+	if err != nil {
+		return err
+	}
+
+	changed, err := fn(cat)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+
+	cat.Version++
+	if err := c.save(ctx, index, partition, cat); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// AddPart appends a new part entry to the catalog.
+func (c *PartCatalog) AddPart(ctx context.Context, index string, partition uint32, entry PartEntry) error {
+	return c.mutate(ctx, index, partition, func(cat *Catalog) (bool, error) {
+		for _, part := range cat.Parts {
+			if part.PartID == entry.PartID {
+				c.logger.Debug("catalog already contains part",
+					"index", index,
+					"partition", partition,
+					"part_id", entry.PartID)
+
+				return false, nil
+			}
+		}
+
+		cat.Parts = append(cat.Parts, entry)
+		return true, nil
+	})
+}
+
+// RemoveParts removes parts by ID from the catalog.
 func (c *PartCatalog) RemoveParts(ctx context.Context, index string, partition uint32, partIDs []string) error {
 	if len(partIDs) == 0 {
 		return nil
@@ -156,43 +171,20 @@ func (c *PartCatalog) RemoveParts(ctx context.Context, index string, partition u
 		removeSet[id] = true
 	}
 
-	for attempt := 0; attempt < maxCatalogRetries; attempt++ {
-		cat, err := c.Load(ctx, index, partition)
-		if err != nil {
-			return fmt.Errorf("ingest.PartCatalog.RemoveParts: %w", err)
-		}
-
+	return c.mutate(ctx, index, partition, func(cat *Catalog) (bool, error) {
 		filtered := make([]PartEntry, 0, len(cat.Parts))
 		for _, p := range cat.Parts {
 			if !removeSet[p.PartID] {
 				filtered = append(filtered, p)
 			}
 		}
+		if len(filtered) == len(cat.Parts) {
+			return false, nil
+		}
 
-		expectedVersion := cat.Version
 		cat.Parts = filtered
-		cat.Version++
-
-		if err := c.save(ctx, index, partition, cat); err != nil {
-			return fmt.Errorf("ingest.PartCatalog.RemoveParts: %w", err)
-		}
-
-		verify, err := c.Load(ctx, index, partition)
-		if err != nil {
-			return fmt.Errorf("ingest.PartCatalog.RemoveParts: verify: %w", err)
-		}
-
-		if verify.Version == expectedVersion+1 {
-			return nil
-		}
-
-		c.logger.Warn("catalog version conflict on remove, retrying",
-			"index", index,
-			"partition", partition,
-			"attempt", attempt+1)
-	}
-
-	return fmt.Errorf("ingest.PartCatalog.RemoveParts: exhausted %d retries for %s/p%d", maxCatalogRetries, index, partition)
+		return true, nil
+	})
 }
 
 // LastBatchSeq returns the highest BatchSeq committed in the catalog for
@@ -212,4 +204,45 @@ func (c *PartCatalog) LastBatchSeq(ctx context.Context, index string, partition 
 	}
 
 	return maxSeq, nil
+}
+
+// ListPartitions returns all catalog partitions currently present in object storage.
+func (c *PartCatalog) ListPartitions(ctx context.Context) ([]CatalogPartition, error) {
+	keys, err := c.objStore.List(ctx, "catalog/")
+	if err != nil {
+		return nil, fmt.Errorf("ingest.PartCatalog.ListPartitions: %w", err)
+	}
+
+	partitions := make([]CatalogPartition, 0, len(keys))
+	for _, key := range keys {
+		part, ok := parseCatalogKey(key)
+		if !ok {
+			continue
+		}
+		partitions = append(partitions, part)
+	}
+
+	return partitions, nil
+}
+
+func parseCatalogKey(key string) (CatalogPartition, bool) {
+	if !strings.HasPrefix(key, "catalog/") || !strings.HasSuffix(key, "/catalog.msgpack") {
+		return CatalogPartition{}, false
+	}
+
+	trimmed := strings.TrimSuffix(strings.TrimPrefix(key, "catalog/"), "/catalog.msgpack")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 2 || !strings.HasPrefix(parts[1], "p") || len(parts[1]) == 1 {
+		return CatalogPartition{}, false
+	}
+
+	partition, err := strconv.ParseUint(parts[1][1:], 10, 32)
+	if err != nil {
+		return CatalogPartition{}, false
+	}
+
+	return CatalogPartition{
+		Index:     parts[0],
+		Partition: uint32(partition),
+	}, true
 }

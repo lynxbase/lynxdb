@@ -1,0 +1,2 @@
+# format: json
+FROM idx_backend | eval is_api=if(startswith(path, "/api"), "yes", "no") | stats count by is_api | sort is_api

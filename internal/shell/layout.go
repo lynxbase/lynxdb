@@ -12,7 +12,6 @@ import (
 const (
 	sidebarDefaultWidth = 30 // default sidebar width in characters
 	sidebarMinWidth     = 24 // minimum before auto-collapse
-	mainMinWidth        = 40 // results panel minimum width
 
 	// Three responsive breakpoints:
 	//   < breakpointHideSidebar  → sidebar fully hidden

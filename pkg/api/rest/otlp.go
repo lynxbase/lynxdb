@@ -44,7 +44,7 @@ func (s *Server) handleOTLPLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if respondIngestError(w, s.engine.Ingest(processed)) {
+	if respondIngestError(w, s.engine.IngestContext(r.Context(), processed)) {
 		return
 	}
 

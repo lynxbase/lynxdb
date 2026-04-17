@@ -1,0 +1,2 @@
+# format: json
+FROM idx_backend | percentiles duration_ms by service

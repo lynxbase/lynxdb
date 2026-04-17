@@ -1,0 +1,2 @@
+# format: json
+FROM idx_backend | stats earliest(level) as first_level, latest(level) as last_level by service | sort service
