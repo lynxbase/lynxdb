@@ -17,8 +17,10 @@ import (
 )
 
 func (s *Server) handleTail(w http.ResponseWriter, r *http.Request) {
+	tailCfg := s.currentTailConfig()
+
 	// Enforce concurrent session limit.
-	if maxSessions := s.tailCfg.MaxConcurrentSessions; maxSessions > 0 {
+	if maxSessions := tailCfg.MaxConcurrentSessions; maxSessions > 0 {
 		if s.activeTailSessions.Load() >= int64(maxSessions) {
 			w.Header().Set("Retry-After", "5")
 			httpError(w, "too many active tail sessions", http.StatusTooManyRequests)
@@ -128,7 +130,7 @@ func (s *Server) handleTail(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// Enforce max session duration if configured.
-	if d := s.tailCfg.MaxSessionDuration; d > 0 {
+	if d := tailCfg.MaxSessionDuration; d > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, d)
 		defer cancel()

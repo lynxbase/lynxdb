@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
@@ -109,6 +108,9 @@ func (s *Server) ReloadConfig(updated *config.Config) ([]string, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
+	snapshot := *updated
+	updated = &snapshot
+
 	s.cfgMu.Lock()
 	old := s.runtimeCfg
 	changes := config.ClassifyReloadChanges(old, updated)
@@ -116,24 +118,8 @@ func (s *Server) ReloadConfig(updated *config.Config) ([]string, error) {
 	s.queryCfg = updated.Query
 	s.ingestCfg = updated.Ingest
 	s.tailCfg = updated.Tail
-	s.shutdownTimeout = updated.HTTP.ShutdownTimeout
-	if s.shutdownTimeout == 0 {
-		s.shutdownTimeout = 30 * time.Second
-	}
-	s.alertShutdownTimeout = updated.HTTP.AlertShutdownTimeout
-	if s.alertShutdownTimeout == 0 {
-		s.alertShutdownTimeout = 10 * time.Second
-	}
-	if s.httpServer != nil {
-		s.httpServer.IdleTimeout = updated.HTTP.IdleTimeout
-		if s.httpServer.IdleTimeout == 0 {
-			s.httpServer.IdleTimeout = 120 * time.Second
-		}
-		s.httpServer.ReadHeaderTimeout = updated.HTTP.ReadHeaderTimeout
-		if s.httpServer.ReadHeaderTimeout == 0 {
-			s.httpServer.ReadHeaderTimeout = 10 * time.Second
-		}
-	}
+	s.shutdownTimeout = defaultShutdownTimeout(updated.HTTP.ShutdownTimeout)
+	s.alertShutdownTimeout = defaultAlertShutdownTimeout(updated.HTTP.AlertShutdownTimeout)
 	s.cfgMu.Unlock()
 
 	if s.levelVar != nil && old.LogLevel != updated.LogLevel {

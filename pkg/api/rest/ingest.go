@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver"
@@ -25,7 +26,11 @@ import (
 // When mode is "lightweight", only metadata fields are extracted at ingest time;
 // all other fields stay in _raw for query-time extraction via REX/spath.
 func (s *Server) ingestPipeline() *pipeline.Pipeline {
-	if s.ingestCfg.Mode == "lightweight" {
+	return ingestPipelineForConfig(s.currentIngestConfig())
+}
+
+func ingestPipelineForConfig(cfg config.IngestConfig) *pipeline.Pipeline {
+	if cfg.Mode == "lightweight" {
 		return pipeline.LightweightPipeline()
 	}
 	return pipeline.DefaultPipeline()
@@ -68,11 +73,12 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	}
 
 	decoder := json.NewDecoder(r.Body)
-	batchSize := s.ingestCfg.MaxBatchSize
+	ingestCfg := s.currentIngestConfig()
+	batchSize := ingestCfg.MaxBatchSize
 	if batchSize <= 0 {
 		batchSize = 1000
 	}
-	pipe := s.ingestPipeline()
+	pipe := ingestPipelineForConfig(ingestCfg)
 	batch := make([]*event.Event, 0, batchSize)
 	accepted := 0
 	failed := 0
@@ -311,20 +317,21 @@ func (s *Server) handleIngestHEC(w http.ResponseWriter, r *http.Request) {
 // exceeded MaxBytesReader and was cut short. On a fatal error with 0 accepted, it writes
 // the HTTP response directly and returns a non-nil error.
 func (s *Server) processBatched(w http.ResponseWriter, r *http.Request, buildEvent func(string) *event.Event) (int, int, bool, error) {
-	batchSize := s.ingestCfg.MaxBatchSize
+	ingestCfg := s.currentIngestConfig()
+	batchSize := ingestCfg.MaxBatchSize
 	if batchSize == 0 {
 		batchSize = 1000
 	}
 	scanner := bufio.NewScanner(r.Body)
 	bufp := scannerBufPool.Get().(*[]byte)
-	maxLineBytes := s.ingestCfg.MaxLineBytes
+	maxLineBytes := ingestCfg.MaxLineBytes
 	if maxLineBytes <= 0 {
 		maxLineBytes = 1 << 20 // 1 MB default
 	}
 	scanner.Buffer(*bufp, maxLineBytes)
 	defer scannerBufPool.Put(bufp)
 
-	pipe := s.ingestPipeline()
+	pipe := ingestPipelineForConfig(ingestCfg)
 	batch := make([]*event.Event, 0, batchSize)
 	accepted := 0
 	failed := 0

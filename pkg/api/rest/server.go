@@ -168,14 +168,10 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	shutdownTimeout := cfg.HTTP.ShutdownTimeout
-	if shutdownTimeout == 0 {
-		shutdownTimeout = 30 * time.Second
-	}
+	shutdownTimeout = defaultShutdownTimeout(shutdownTimeout)
 
 	alertShutdownTimeout := cfg.HTTP.AlertShutdownTimeout
-	if alertShutdownTimeout == 0 {
-		alertShutdownTimeout = 10 * time.Second
-	}
+	alertShutdownTimeout = defaultAlertShutdownTimeout(alertShutdownTimeout)
 
 	// Build the runtime config snapshot used by GET/PATCH /config and reload
 	// diffing. Prefer the fully loaded config when the caller has it.
@@ -421,9 +417,7 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	idleTimeout := cfg.HTTP.IdleTimeout
-	if idleTimeout == 0 {
-		idleTimeout = 120 * time.Second
-	}
+	idleTimeout = defaultIdleTimeout(idleTimeout)
 	// Build middleware chain (execution order, outer → inner):
 	// Recovery → RequestID → Logging → Auth → RateLimit → MaxBody → mux.
 	// Auth runs before rate limiting so unauthenticated requests don't consume quota.
@@ -439,9 +433,7 @@ func NewServer(cfg Config) (*Server, error) {
 	handler = RecoveryMiddleware(cfg.Logger, handler)
 
 	readHeaderTimeout := cfg.HTTP.ReadHeaderTimeout
-	if readHeaderTimeout == 0 {
-		readHeaderTimeout = 10 * time.Second
-	}
+	readHeaderTimeout = defaultReadHeaderTimeout(readHeaderTimeout)
 
 	s.httpServer = &http.Server{
 		Addr:              cfg.Addr,
@@ -496,25 +488,27 @@ func (s *Server) Start(ctx context.Context) error {
 				s.alertMgr.Stop()
 				close(alertDone)
 			}()
+			alertShutdownTimeout := s.currentAlertShutdownTimeout()
 			select {
 			case <-alertDone:
-			case <-time.After(s.alertShutdownTimeout):
-				s.engine.Logger().Warn("alert manager stop timed out, proceeding with shutdown", "timeout", s.alertShutdownTimeout)
+			case <-time.After(alertShutdownTimeout):
+				s.engine.Logger().Warn("alert manager stop timed out, proceeding with shutdown", "timeout", alertShutdownTimeout)
 			}
 		}
 
 		// Shutdown ordering: reject ingests → drain HTTP → flush storage.
 		s.engine.PrepareShutdown()
 
-		s.engine.Logger().Info("shutting down: draining in-flight requests", "timeout", s.shutdownTimeout)
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), s.shutdownTimeout)
+		shutdownTimeout := s.currentShutdownTimeout()
+		s.engine.Logger().Info("shutting down: draining in-flight requests", "timeout", shutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
 			s.engine.Logger().Error("HTTP server shutdown error", "error", err)
 		}
 
 		// Safe to flush batcher and close mmaps — no in-flight ingests remain.
-		if err := s.engine.Shutdown(s.shutdownTimeout); err != nil {
+		if err := s.engine.Shutdown(shutdownTimeout); err != nil {
 			s.engine.Logger().Error("engine shutdown error", "error", err)
 		}
 	}()
@@ -561,6 +555,73 @@ func (s *Server) TLSEnabled() bool {
 // Engine returns the underlying Engine (for tests).
 func (s *Server) Engine() *server.Engine {
 	return s.engine
+}
+
+func defaultIdleTimeout(d time.Duration) time.Duration {
+	if d == 0 {
+		return 120 * time.Second
+	}
+
+	return d
+}
+
+func defaultReadHeaderTimeout(d time.Duration) time.Duration {
+	if d == 0 {
+		return 10 * time.Second
+	}
+
+	return d
+}
+
+func defaultShutdownTimeout(d time.Duration) time.Duration {
+	if d == 0 {
+		return 30 * time.Second
+	}
+
+	return d
+}
+
+func defaultAlertShutdownTimeout(d time.Duration) time.Duration {
+	if d == 0 {
+		return 10 * time.Second
+	}
+
+	return d
+}
+
+func (s *Server) currentQueryConfig() config.QueryConfig {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+
+	return s.queryCfg
+}
+
+func (s *Server) currentIngestConfig() config.IngestConfig {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+
+	return s.ingestCfg
+}
+
+func (s *Server) currentTailConfig() config.TailConfig {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+
+	return s.tailCfg
+}
+
+func (s *Server) currentShutdownTimeout() time.Duration {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+
+	return s.shutdownTimeout
+}
+
+func (s *Server) currentAlertShutdownTimeout() time.Duration {
+	s.cfgMu.RLock()
+	defer s.cfgMu.RUnlock()
+
+	return s.alertShutdownTimeout
 }
 
 func httpError(w http.ResponseWriter, msg string, code int) {

@@ -100,7 +100,8 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 	}
 
 	mode, wait := mapQueryMode(req.Wait)
-	limit := clampLimit(req.Limit, s.queryCfg)
+	queryCfg := s.currentQueryConfig()
+	limit := clampLimit(req.Limit, queryCfg)
 
 	result, err := s.queryService.Submit(r.Context(), usecases.SubmitRequest{
 		Query:   query,
@@ -158,7 +159,7 @@ func clampLimit(limit int, cfg config.QueryConfig) int {
 // maximum length. Returns true if the query is within limits. On failure, writes
 // a 400 error response and returns false.
 func (s *Server) checkQueryLength(w http.ResponseWriter, q string) bool {
-	maxLen := s.queryCfg.MaxQueryLength
+	maxLen := s.currentQueryConfig().MaxQueryLength
 	if maxLen > 0 && len(q) > maxLen {
 		respondError(w, ErrCodeQueryTooLarge, http.StatusBadRequest,
 			fmt.Sprintf("query length %d exceeds maximum allowed length of %d bytes", len(q), maxLen))

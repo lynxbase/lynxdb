@@ -81,7 +81,7 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 
 	// status == "done" — wrap results in a job envelope so the client
 	// always sees {type: "job", status: "done", job_id: "...", results: {...}}.
-	defaultLimit := s.queryCfg.DefaultResultLimit
+	defaultLimit := s.currentQueryConfig().DefaultResultLimit
 	if defaultLimit == 0 {
 		defaultLimit = 1000
 	}
@@ -239,7 +239,7 @@ func (s *Server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 			writeSSE("progress", progress)
 
 		case server.JobStatusDone:
-			defaultLimit := s.queryCfg.DefaultResultLimit
+			defaultLimit := s.currentQueryConfig().DefaultResultLimit
 			if defaultLimit == 0 {
 				defaultLimit = 1000
 			}

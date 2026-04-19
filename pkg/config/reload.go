@@ -19,10 +19,8 @@ var hotReloadableExactFields = map[string]struct{}{
 	"ingest.mode":                      {},
 	"ingest.max_batch_size":            {},
 	"ingest.max_line_bytes":            {},
-	"http.idle_timeout":                {},
 	"http.shutdown_timeout":            {},
 	"http.alert_shutdown_timeout":      {},
-	"http.read_header_timeout":         {},
 }
 
 var hotReloadablePrefixes = []string{
@@ -35,6 +33,8 @@ var nonHotReloadablePrefixes = []string{
 }
 
 var nonHotReloadableExactFields = map[string]struct{}{
+	"http.idle_timeout":             {},
+	"http.read_header_timeout":      {},
 	"http.rate_limit":               {},
 	"ingest.max_body_size":          {},
 	"ingest.fsync":                  {},

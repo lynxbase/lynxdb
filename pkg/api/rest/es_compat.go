@@ -264,7 +264,8 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 
 	start := time.Now()
 
-	batchSize := s.ingestCfg.MaxBatchSize
+	ingestCfg := s.currentIngestConfig()
+	batchSize := ingestCfg.MaxBatchSize
 	if batchSize == 0 {
 		batchSize = 1000
 	}
@@ -288,14 +289,14 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 
 	scanner := bufio.NewScanner(body)
 	bufp := scannerBufPool.Get().(*[]byte)
-	maxLineBytes := s.ingestCfg.MaxLineBytes
+	maxLineBytes := ingestCfg.MaxLineBytes
 	if maxLineBytes <= 0 {
 		maxLineBytes = 1 << 20 // 1 MB default
 	}
 	scanner.Buffer(*bufp, maxLineBytes)
 	defer scannerBufPool.Put(bufp)
 
-	pipe := s.ingestPipeline()
+	pipe := ingestPipelineForConfig(ingestCfg)
 	var items []esBulkItemResult
 	batch := make([]*event.Event, 0, batchSize)
 	// H4 fix: track pending items per batch; only mark success AFTER commit.

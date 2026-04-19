@@ -26,8 +26,8 @@ func TestClassifyReloadChanges(t *testing.T) {
 	assertContains(t, changes.HotReloaded, "retention")
 	assertContains(t, changes.HotReloaded, "query.max_query_length")
 	assertContains(t, changes.HotReloaded, "ingest.mode")
-	assertContains(t, changes.HotReloaded, "http.read_header_timeout")
 
+	assertContains(t, changes.RestartRequired, "http.read_header_timeout")
 	assertContains(t, changes.RestartRequired, "query.global_query_pool_bytes")
 	assertContains(t, changes.RestartRequired, "ingest.dedup_enabled")
 	assertContains(t, changes.RestartRequired, "http.rate_limit")
