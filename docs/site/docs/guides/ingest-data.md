@@ -200,8 +200,9 @@ Send logs from an OpenTelemetry Collector using the OTLP/HTTP exporter:
 ```yaml
 # otel-collector-config.yaml
 exporters:
-  otlphttp:
+  otlp_http:
     endpoint: http://lynxdb:3100/api/v1/otlp
+    encoding: json
 ```
 
 ### Splunk HEC (HTTP Event Collector)

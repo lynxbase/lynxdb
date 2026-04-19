@@ -12,37 +12,22 @@ import (
 type ChannelType string
 
 const (
-	ChannelWebhook     ChannelType = "webhook"
-	ChannelTelegram    ChannelType = "telegram"
-	ChannelSlack       ChannelType = "slack"
-	ChannelPagerDuty   ChannelType = "pagerduty"
-	ChannelOpsGenie    ChannelType = "opsgenie"
-	ChannelEmail       ChannelType = "email"
-	ChannelIncidentIO  ChannelType = "incidentio"
-	ChannelGenericHTTP ChannelType = "generic_http"
+	ChannelWebhook  ChannelType = "webhook"
+	ChannelTelegram ChannelType = "telegram"
+	ChannelSlack    ChannelType = "slack"
 )
 
 var knownChannelTypes = map[ChannelType]bool{
-	ChannelWebhook:     true,
-	ChannelTelegram:    true,
-	ChannelSlack:       true,
-	ChannelPagerDuty:   true,
-	ChannelOpsGenie:    true,
-	ChannelEmail:       true,
-	ChannelIncidentIO:  true,
-	ChannelGenericHTTP: true,
+	ChannelWebhook:  true,
+	ChannelTelegram: true,
+	ChannelSlack:    true,
 }
 
 // channelRequiredFields maps each channel type to its required config keys.
 var channelRequiredFields = map[ChannelType][]string{
-	ChannelWebhook:     {"url"},
-	ChannelTelegram:    {"bot_token", "chat_id"},
-	ChannelSlack:       {"webhook_url"},
-	ChannelPagerDuty:   {"routing_key"},
-	ChannelOpsGenie:    {"api_key"},
-	ChannelEmail:       {"to"},
-	ChannelIncidentIO:  {"api_key"},
-	ChannelGenericHTTP: {"url"},
+	ChannelWebhook:  {"url"},
+	ChannelTelegram: {"bot_token", "chat_id"},
+	ChannelSlack:    {"webhook_url"},
 }
 
 // AlertStatus describes the current state of an alert.

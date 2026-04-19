@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
@@ -98,11 +99,8 @@ func (s *Server) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 	respondData(w, http.StatusOK, result)
 }
 
-// ReloadConfig validates the supplied config and applies hot-reloadable fields.
-// It runs validation outside the config mutex, then swaps the snapshot under
-// the write lock, mirroring the SIGHUP reload path. Returns the list of fields
-// that changed but require a restart to take effect (currently listen and
-// data_dir).
+// ReloadConfig validates the supplied config, applies the runtime-safe subset,
+// and returns the fields that changed but still require a restart.
 func (s *Server) ReloadConfig(updated *config.Config) ([]string, error) {
 	if updated == nil {
 		return nil, fmt.Errorf("nil config")
@@ -113,7 +111,29 @@ func (s *Server) ReloadConfig(updated *config.Config) ([]string, error) {
 
 	s.cfgMu.Lock()
 	old := s.runtimeCfg
+	changes := config.ClassifyReloadChanges(old, updated)
 	s.runtimeCfg = updated
+	s.queryCfg = updated.Query
+	s.ingestCfg = updated.Ingest
+	s.tailCfg = updated.Tail
+	s.shutdownTimeout = updated.HTTP.ShutdownTimeout
+	if s.shutdownTimeout == 0 {
+		s.shutdownTimeout = 30 * time.Second
+	}
+	s.alertShutdownTimeout = updated.HTTP.AlertShutdownTimeout
+	if s.alertShutdownTimeout == 0 {
+		s.alertShutdownTimeout = 10 * time.Second
+	}
+	if s.httpServer != nil {
+		s.httpServer.IdleTimeout = updated.HTTP.IdleTimeout
+		if s.httpServer.IdleTimeout == 0 {
+			s.httpServer.IdleTimeout = 120 * time.Second
+		}
+		s.httpServer.ReadHeaderTimeout = updated.HTTP.ReadHeaderTimeout
+		if s.httpServer.ReadHeaderTimeout == 0 {
+			s.httpServer.ReadHeaderTimeout = 10 * time.Second
+		}
+	}
 	s.cfgMu.Unlock()
 
 	if s.levelVar != nil && old.LogLevel != updated.LogLevel {
@@ -126,26 +146,16 @@ func (s *Server) ReloadConfig(updated *config.Config) ([]string, error) {
 	if s.engine != nil {
 		s.engine.ReloadConfig(updated)
 	}
-
-	if s.logger != nil && old.Retention != updated.Retention {
-		s.logger.Info("reloaded retention", "old", old.Retention.String(), "new", updated.Retention.String())
+	if s.queryService != nil {
+		s.queryService.ReloadConfig(updated.Query)
 	}
-
-	var restartRequired []string
-	if old.Listen != updated.Listen {
-		restartRequired = append(restartRequired, "listen")
-		if s.logger != nil {
-			s.logger.Warn("listen changed, restart required", "old", old.Listen, "new", updated.Listen)
-		}
-	}
-	if old.DataDir != updated.DataDir {
-		restartRequired = append(restartRequired, "data_dir")
-		if s.logger != nil {
-			s.logger.Warn("data_dir changed, restart required", "old", old.DataDir, "new", updated.DataDir)
+	if s.logger != nil {
+		for _, field := range changes.RestartRequired {
+			s.logger.Warn("config changed but still requires restart", "field", field)
 		}
 	}
 
-	return restartRequired, nil
+	return changes.RestartRequired, nil
 }
 
 func parseLogLevel(s string) slog.Level {

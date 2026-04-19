@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Compatibility layer**: Elasticsearch `_bulk` API, OpenTelemetry OTLP/HTTP, and Splunk HEC receivers.
 - **Pipe mode**: Query local files and stdin with the full SPL2 engine — no server required.
 - **Materialized views**: Precomputed aggregations with automatic backfill, versioned rebuilds, retention policies, and cascading views.
-- **Alerts**: SPL2-powered alerting with multi-channel notifications (webhook, Slack, Telegram, PagerDuty, OpsGenie, email).
+- **Alerts**: SPL2-powered alerting with multi-channel notifications (webhook, Slack, Telegram).
 - **Dashboards**: Panel-based dashboards with grid layout and template variables.
 - **Live tail**: Real-time SSE streaming with historical catchup and full SPL2 pipeline support.
 - **Field catalog**: Automatic field discovery with types, coverage stats, and top values.

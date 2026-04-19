@@ -1,64 +1,53 @@
 ---
 title: Set Up Alerts
-description: How to create, configure, test, and manage SPL2-powered alerts with multi-channel notifications in LynxDB.
+description: How to define, test, and operate SPL2-powered alerts in LynxDB based on the current server implementation.
 ---
 
 # Set Up Alerts
 
-LynxDB alerts evaluate an SPL2 query on a schedule and send notifications when the query returns results. Use alerts to detect error spikes, latency anomalies, missing heartbeats, or any condition you can express in SPL2.
+LynxDB alerts evaluate an SPL2 query on a schedule and send notifications when the query returns one or more rows.
+
+:::note Current implementation
+The built-in notifier registry and alert validation currently support exactly three channel backends: `webhook`, `slack`, and `telegram`.
+:::
 
 ## How alerts work
 
-1. You define an SPL2 query that returns results when a problem is detected.
-2. LynxDB evaluates the query at a configurable interval (for example, every 5 minutes).
-3. If the query returns one or more results, LynxDB sends notifications to all configured channels.
+1. Define an SPL2 query that returns rows only when the condition is met.
+2. Set an evaluation interval such as `1m` or `5m`.
+3. Attach one or more notification channels.
+4. Use dry-run and channel-test endpoints before relying on the alert in production.
 
-The alert query should produce results only when the alert condition is met. Typically this means aggregating events and filtering with `WHERE`.
+The alert query should usually aggregate first, then filter with `where`.
 
----
+## Create an alert
 
-## Create an alert via the CLI
+Use [`lynxdb alerts create --file alert.json`](/docs/cli/alerts) or [`POST /api/v1/alerts`](/docs/api/alerts).
 
-Use [`lynxdb alerts create`](/docs/cli/alerts):
-
-```bash
-lynxdb alerts create \
-  --name "High error rate" \
-  --query 'level=error | stats count AS errors | where errors > 100' \
-  --interval 5m
+```json title="alert.json"
+{
+  "name": "High error rate",
+  "query": "level=error | stats count as errors | where errors > 100",
+  "interval": "5m",
+  "channels": [
+    {
+      "type": "slack",
+      "config": {
+        "webhook_url": "https://hooks.slack.com/services/T00/B00/xxx"
+      }
+    }
+  ]
+}
 ```
 
-This checks every 5 minutes whether the error count exceeds 100 in the evaluation window.
-
----
-
-## Create an alert via the REST API
-
-Use [`POST /api/v1/alerts`](/docs/api/alerts):
+```bash
+lynxdb alerts create --file alert.json
+```
 
 ```bash
 curl -X POST localhost:3100/api/v1/alerts -d '{
   "name": "High error rate",
-  "q": "level=error | stats count as errors | where errors > 100",
-  "interval": "5m",
-  "channels": [
-    {"type": "slack", "config": {"webhook_url": "https://hooks.slack.com/services/T00/B00/xxx"}}
-  ]
-}'
-```
-
----
-
-## Configure notification channels
-
-Alerts support 8 notification channel types. Each alert can have multiple channels.
-
-### Slack
-
-```bash
-curl -X POST localhost:3100/api/v1/alerts -d '{
-  "name": "5xx spike",
-  "q": "source=nginx status>=500 | stats count AS errors | where errors > 50",
+  "query": "level=error | stats count as errors | where errors > 100",
   "interval": "5m",
   "channels": [
     {
@@ -69,6 +58,21 @@ curl -X POST localhost:3100/api/v1/alerts -d '{
     }
   ]
 }'
+```
+
+## Configure notification channels
+
+Each alert can have multiple channels.
+
+### Slack
+
+```json
+{
+  "type": "slack",
+  "config": {
+    "webhook_url": "https://hooks.slack.com/services/T00/B00/xxx"
+  }
+}
 ```
 
 ### Telegram
@@ -83,122 +87,54 @@ curl -X POST localhost:3100/api/v1/alerts -d '{
 }
 ```
 
-### PagerDuty
-
-```json
-{
-  "type": "pagerduty",
-  "config": {
-    "routing_key": "your-integration-key",
-    "severity": "critical"
-  }
-}
-```
-
-### OpsGenie
-
-```json
-{
-  "type": "opsgenie",
-  "config": {
-    "api_key": "your-opsgenie-api-key",
-    "priority": "P1"
-  }
-}
-```
-
-### Email
-
-```json
-{
-  "type": "email",
-  "config": {
-    "to": "oncall@company.com",
-    "subject": "LynxDB Alert: {{.Name}}"
-  }
-}
-```
-
-### Webhook (generic HTTP)
+### Webhook
 
 ```json
 {
   "type": "webhook",
   "config": {
-    "url": "https://your-service.com/webhook",
+    "url": "https://hooks.example.com/alerts",
     "method": "POST"
-  }
-}
-```
-
-### incident.io
-
-```json
-{
-  "type": "incidentio",
-  "config": {
-    "api_key": "your-incidentio-key"
   }
 }
 ```
 
 ### Multiple channels on one alert
 
-Combine channels for redundancy:
-
 ```bash
 curl -X POST localhost:3100/api/v1/alerts -d '{
   "name": "Critical error rate",
-  "q": "level=error | stats count as errors | where errors > 500",
+  "query": "level=error | stats count as errors | where errors > 500",
   "interval": "5m",
   "channels": [
     {"type": "slack", "config": {"webhook_url": "https://hooks.slack.com/..."}},
-    {"type": "pagerduty", "config": {"routing_key": "...", "severity": "critical"}},
-    {"type": "email", "config": {"to": "oncall@company.com"}}
+    {"type": "telegram", "config": {"bot_token": "123456:ABC-DEF...", "chat_id": "-1001234567890"}},
+    {"type": "webhook", "config": {"url": "https://hooks.example.com/alerts"}}
   ]
 }'
 ```
-
-### CLI shorthand for channels
-
-The CLI supports a shorthand syntax for adding channels:
-
-```bash
-lynxdb alerts create \
-  --name "Error rate spike" \
-  --query 'level=error | stats count as errors | where errors > 100' \
-  --interval 5m \
-  --channel slack:webhook_url=https://hooks.slack.com/... \
-  --channel pagerduty:routing_key=...,severity=critical
-```
-
----
 
 ## Test an alert
 
 ### Dry-run the query
 
-Test alert evaluation without sending any notifications:
-
 ```bash
 lynxdb alerts test <alert_id>
 ```
 
-This runs the alert query and shows what results it would produce. Use this to verify your query logic before enabling the alert.
+This runs the alert query without sending notifications.
 
-### Test notification channels
-
-Send a test notification to all configured channels to verify connectivity:
+### Test notification delivery
 
 ```bash
 lynxdb alerts test-channels <alert_id>
 ```
 
----
+This sends a test notification to every enabled channel on the stored alert.
 
 ## Manage alerts
 
-### List all alerts
+### List alerts
 
 ```bash
 lynxdb alerts
@@ -210,27 +146,33 @@ Or via the API:
 curl -s localhost:3100/api/v1/alerts | jq .
 ```
 
-### View alert details
+### View one alert
 
 ```bash
 lynxdb alerts <alert_id>
 ```
 
-### Enable and disable
+### Disable or re-enable an alert
+
+Use the CLI or `PATCH /api/v1/alerts/{id}`.
 
 ```bash
-lynxdb alerts enable <alert_id>
 lynxdb alerts disable <alert_id>
+lynxdb alerts enable <alert_id>
+```
+
+```bash
+curl -X PATCH localhost:3100/api/v1/alerts/alt_xyz789 -d '{
+  "enabled": false
+}'
 ```
 
 ### Delete an alert
 
 ```bash
 lynxdb alerts delete <alert_id>
-lynxdb alerts delete <alert_id> --force   # skip confirmation
+lynxdb alerts delete <alert_id> --force
 ```
-
----
 
 ## Alert query patterns
 
@@ -240,7 +182,7 @@ lynxdb alerts delete <alert_id> --force   # skip confirmation
 level=error | stats count AS errors | where errors > 100
 ```
 
-### Error rate as a percentage
+### Error percentage
 
 ```spl
 source=nginx
@@ -257,7 +199,7 @@ source=nginx
   | where p99 > 2000
 ```
 
-### Missing heartbeat (no events from a source)
+### Missing heartbeat
 
 ```spl
 source=health-check
@@ -273,7 +215,7 @@ level=error
   | where errors > 50
 ```
 
-### Security: failed login brute force
+### Failed login burst
 
 ```spl
 source=auth type="login_failed"
@@ -281,33 +223,13 @@ source=auth type="login_failed"
   | where failures > 20
 ```
 
----
-
 ## Alerts in cluster mode
 
-In a distributed LynxDB cluster, alerts are automatically distributed across query nodes. This is transparent to users -- you create and manage alerts with the same CLI and API commands regardless of cluster size.
+Alert definitions are stored at the server layer and the docs set includes cluster-mode behavior elsewhere, but large separated-role alerting topologies should still be validated in staging against the version you plan to run.
 
-### How cluster alert assignment works
+## Next Steps
 
-Each alert is assigned to exactly one query node using **rendezvous hashing** (highest random weight). This provides:
-
-- **Exactly-once evaluation**: Each alert runs on exactly one query node, preventing duplicate notifications.
-- **Minimal disruption on topology changes**: When a query node joins or leaves, only ~1/N alerts are reassigned. Other alerts continue on their existing nodes.
-- **Automatic failover**: When a query node is declared dead (~25 seconds after heartbeats stop), its alerts are automatically reassigned to surviving query nodes.
-
-### Dedup during failover
-
-During failover, there is a brief window where the dying node may have just fired an alert that the new node also evaluates. LynxDB prevents duplicate notifications by storing `LastFiredAt` in the Raft FSM. When an alert is reassigned, the new node checks `LastFiredAt` to avoid re-firing within the same evaluation window.
-
-### Viewing alert assignments
-
-The alert assignment is managed internally by the meta FSM. From the user's perspective, alerts simply work -- you do not need to manually assign alerts to nodes.
-
----
-
-## Next steps
-
-- [Create dashboards](/docs/guides/dashboards) -- visualize the same queries your alerts monitor
-- [Materialized views](/docs/guides/materialized-views) -- speed up alert evaluation with precomputed aggregations
-- [REST API: Alerts](/docs/api/alerts) -- full API reference for alert CRUD
-- [CLI: `alerts`](/docs/cli/alerts) -- complete CLI reference for alert management
+- [REST API: Alerts](/docs/api/alerts) for the exact payloads
+- [CLI: `alerts`](/docs/cli/alerts) for current CLI coverage
+- [Materialized views](/docs/guides/materialized-views) to speed up repeated alert queries
+- [Dashboards](/docs/guides/dashboards) to visualize the same conditions your alerts watch

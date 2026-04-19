@@ -78,15 +78,23 @@ lynxdb config reload
 
 - `log_level`
 - `retention`
-- `query.max_concurrent`
-- `query.default_result_limit`
-- `query.max_result_limit`
-- `query.max_query_runtime`
+- most `query.*` execution settings
+- `ingest.mode`, `ingest.max_batch_size`, and `ingest.max_line_bytes`
+- `tail.*`
+- `http.idle_timeout`, `http.shutdown_timeout`, `http.alert_shutdown_timeout`, and `http.read_header_timeout`
+- `storage.compaction_rate_limit_mb`
 
 **Settings that require a restart** (server warns on reload):
 
 - `listen`
 - `data_dir`
+- `tls.*`
+- `auth.*`
+- `no_ui`
+- `http.rate_limit`
+- `ingest.max_body_size` and ingest-engine settings such as dedup/fsync
+- `query.global_query_pool_bytes`, `query.spill_dir`, and `query.max_temp_dir_size_bytes`
+- storage scheduler settings such as `storage.compaction_workers`
 
 ---
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -21,7 +22,7 @@ func newAlertsCmd() *cobra.Command {
 		Short: "Manage alerts",
 		Long:  `List, create, test, enable, disable, and delete alerts.`,
 		Example: `  lynxdb alerts                                List all alerts
-  lynxdb alerts create --name "High errors" --query 'level=error | stats count as errors | where errors > 100' --interval 5m
+  lynxdb alerts create --file alert.json        Create an alert from JSON
   lynxdb alerts <id>                           Show alert details
   lynxdb alerts <id> test                      Test alert without notifying
   lynxdb alerts <id> test-channels             Send test notification
@@ -38,6 +39,7 @@ func newAlertsCmd() *cobra.Command {
 	}
 
 	var (
+		alertFile     string
 		alertName     string
 		alertQuery    string
 		alertInterval string
@@ -46,16 +48,22 @@ func newAlertsCmd() *cobra.Command {
 
 	createCmd := &cobra.Command{
 		Use:   "create",
-		Short: "Create a new alert",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return runAlertCreate(alertName, alertQuery, alertInterval)
-		},
+		Short: "Create a new alert from a JSON file",
 	}
-	createCmd.Flags().StringVar(&alertName, "name", "", "Alert name (required)")
-	createCmd.Flags().StringVar(&alertQuery, "query", "", "SPL2 query (required)")
-	createCmd.Flags().StringVar(&alertInterval, "interval", "5m", "Check interval")
-	_ = createCmd.MarkFlagRequired("name")
-	_ = createCmd.MarkFlagRequired("query")
+	createCmd.RunE = func(_ *cobra.Command, _ []string) error {
+		legacyInlineUsed := createCmd.Flags().Changed("name") ||
+			createCmd.Flags().Changed("query") ||
+			createCmd.Flags().Changed("interval")
+
+		return runAlertCreate(alertFile, legacyInlineUsed, alertName, alertQuery, alertInterval)
+	}
+	createCmd.Flags().StringVar(&alertFile, "file", "", "Path to alert JSON file")
+	createCmd.Flags().StringVar(&alertName, "name", "", "Legacy inline alert name (unsupported; use --file)")
+	createCmd.Flags().StringVar(&alertQuery, "query", "", "Legacy inline alert query (unsupported; use --file)")
+	createCmd.Flags().StringVar(&alertInterval, "interval", "5m", "Legacy inline alert interval (unsupported; use --file)")
+	_ = createCmd.Flags().MarkHidden("name")
+	_ = createCmd.Flags().MarkHidden("query")
+	_ = createCmd.Flags().MarkHidden("interval")
 
 	testCmd := &cobra.Command{
 		Use:   "test <id>",
@@ -128,7 +136,7 @@ func runAlertsList() error {
 	if len(alerts) == 0 {
 		fmt.Println("No alerts configured.")
 		printNextSteps(
-			"lynxdb alerts create --name <name> --query <query>   Create an alert",
+			"lynxdb alerts create --file alert.json               Create an alert",
 		)
 
 		return nil
@@ -191,19 +199,32 @@ func runAlertDetail(id string) error {
 	return nil
 }
 
-func runAlertCreate(name, query, interval string) error {
+func runAlertCreate(filePath string, legacyInlineUsed bool, legacyName, legacyQuery, legacyInterval string) error {
+	if filePath == "" {
+		if legacyInlineUsed || legacyName != "" || legacyQuery != "" || legacyInterval != "5m" {
+			return fmt.Errorf("alerts create now requires --file <alert.json>; inline --name/--query/--interval flags are no longer supported")
+		}
+
+		return fmt.Errorf("missing required flag: --file")
+	}
+
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("read file: %w", err)
+	}
+
+	var input client.AlertInput
+	if err := json.Unmarshal(data, &input); err != nil {
+		return fmt.Errorf("invalid JSON in %s: %w", filePath, err)
+	}
+
 	ctx := context.Background()
 
-	_, err := apiClient().CreateAlert(ctx, client.AlertInput{
-		Name:     name,
-		Q:        query,
-		Interval: interval,
-	})
-	if err != nil {
+	if _, err := apiClient().CreateAlert(ctx, input); err != nil {
 		return err
 	}
 
-	printSuccess("Created alert %q", name)
+	printSuccess("Created alert %q", input.Name)
 	printNextSteps(
 		"lynxdb alerts                  List all alerts",
 	)

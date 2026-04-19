@@ -63,35 +63,38 @@ func (e *Engine) ListJobs(status string) []JobInfo {
 
 // startJobGC removes completed jobs older than the configured job TTL.
 func (e *Engine) startJobGC(ctx context.Context) {
-	cfg := e.queryCfg.Load()
-	gcInterval := cfg.JobGCInterval
-	if gcInterval == 0 {
-		gcInterval = 30 * time.Second
-	}
-	jobTTL := cfg.JobTTL
-	if jobTTL == 0 {
-		jobTTL = 5 * time.Minute
-	}
-	ticker := time.NewTicker(gcInterval)
-	defer ticker.Stop()
 	for {
+		cfg := e.queryCfg.Load()
+		gcInterval := cfg.JobGCInterval
+		if gcInterval == 0 {
+			gcInterval = 30 * time.Second
+		}
+
+		timer := time.NewTimer(gcInterval)
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-ticker.C:
-			now := time.Now()
-			e.jobs.Range(func(key, value interface{}) bool {
-				job := value.(*SearchJob)
-				job.mu.Lock()
-				isDone := job.Status == JobStatusDone || job.Status == JobStatusError || job.Status == JobStatusCanceled
-				doneAt := job.DoneAt
-				job.mu.Unlock()
-				if isDone && now.Sub(doneAt) > jobTTL {
-					e.jobs.Delete(key)
-				}
-
-				return true
-			})
+		case <-timer.C:
 		}
+
+		jobTTL := cfg.JobTTL
+		if jobTTL == 0 {
+			jobTTL = 5 * time.Minute
+		}
+
+		now := time.Now()
+		e.jobs.Range(func(key, value interface{}) bool {
+			job := value.(*SearchJob)
+			job.mu.Lock()
+			isDone := job.Status == JobStatusDone || job.Status == JobStatusError || job.Status == JobStatusCanceled
+			doneAt := job.DoneAt
+			job.mu.Unlock()
+			if isDone && now.Sub(doneAt) > jobTTL {
+				e.jobs.Delete(key)
+			}
+
+			return true
+		})
 	}
 }

@@ -632,7 +632,7 @@ type ViewPatchInput struct {
 type Alert struct {
 	ID            string                `json:"id"`
 	Name          string                `json:"name"`
-	Q             string                `json:"q"`
+	Q             string                `json:"query"`
 	Interval      string                `json:"interval"`
 	Channels      []NotificationChannel `json:"channels"`
 	Enabled       bool                  `json:"enabled"`

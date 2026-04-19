@@ -207,7 +207,7 @@ This path is for export and pipeline use, not job management.
 - `to` or `latest`
 - `variables`
 
-`wait`, `limit`, `offset`, `profile`, and `format` are not silently ignored on this path. If any of them are present, the handler returns `400 VALIDATION_ERROR`.
+`limit`, `offset`, `wait`, `profile`, and `format` are not silently ignored on this path. If any of them are present, the handler returns `400 VALIDATION_ERROR`.
 
 ### Example
 

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/api/apicontracts"
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/planner"
@@ -17,11 +18,11 @@ import (
 )
 
 func validateQueryFormat(format string) error {
-	if format == "" || format == "json" {
+	if format == "" || format == apicontracts.QueryResponseFormatJSON {
 		return nil
 	}
 
-	return fmt.Errorf("unsupported format %q; only %q is supported", format, "json")
+	return errors.New(apicontracts.UnsupportedQueryFormatMessage(format))
 }
 
 // handleQueryGet is the GET variant for simple queries (query params: q, from, to, limit, format).
@@ -42,7 +43,7 @@ func (s *Server) handleQueryGet(w http.ResponseWriter, r *http.Request) {
 	format := r.URL.Query().Get("format")
 	if err := validateQueryFormat(format); err != nil {
 		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error(),
-			WithSuggestion("Use the default JSON response, or POST /api/v1/query/stream for NDJSON exports."))
+			WithSuggestion(apicontracts.QueryFormatSuggestion))
 
 		return
 	}
@@ -71,7 +72,7 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateQueryFormat(req.Format); err != nil {
 		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error(),
-			WithSuggestion("Use the default JSON response, or POST /api/v1/query/stream for NDJSON exports."))
+			WithSuggestion(apicontracts.QueryFormatSuggestion))
 
 		return
 	}

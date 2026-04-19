@@ -1289,13 +1289,13 @@ paths:
                   alerts:
                     - id: alt_xyz789
                       name: "High error rate"
-                      q: "level=error | stats count as errors | where errors > 100"
+                      query: "level=error | stats count as errors | where errors > 100"
                       interval: "5m"
                       channels:
-                        - type: webhook
+                        - type: slack
                           name: "Slack Ops"
                           config:
-                            url: "https://hooks.slack.com/services/T00/B00/xxx"
+                            webhook_url: "https://hooks.slack.com/services/T00/B00/xxx"
                         - type: telegram
                           name: "SRE Chat"
                           config:
@@ -1310,20 +1310,15 @@ paths:
       tags: [Alerts]
       summary: Create an alert with multi-channel notifications
       description: |
-        Each alert can send to **multiple notification channels** simultaneously.
+        Each alert can send to multiple notification channels simultaneously.
 
-        **Supported channel types:**
+        The current server build wires these channel types:
 
         | Type | Required config fields |
         |---|---|
         | `webhook` | `url`, optional `method`, `headers`, `body_template` |
         | `telegram` | `bot_token`, `chat_id`, optional `message_template`, `parse_mode` |
         | `slack` | `webhook_url`, optional `channel`, `username`, `icon_emoji` |
-        | `pagerduty` | `routing_key`, optional `severity` |
-        | `opsgenie` | `api_key`, optional `priority`, `tags` |
-        | `email` | `to` (array), `from`, optional `smtp_host`, `smtp_port` |
-        | `incidentio` | `api_key`, optional `severity`, `mode` |
-        | `generic_http` | `url`, `method`, `headers`, `body_template` |
 
         Each channel has an independent `enabled` flag so you can mute a channel without removing it.
       requestBody:
@@ -1334,55 +1329,32 @@ paths:
               $ref: '#/components/schemas/AlertInput'
             examples:
               multi_channel:
-                summary: Alert with webhook + Telegram + PagerDuty
+                summary: Alert with slack + telegram
                 value:
                   name: "High error rate"
-                  q: "level=error | stats count as errors | where errors > 100"
+                  query: "level=error | stats count as errors | where errors > 100"
                   interval: "5m"
                   channels:
-                    - type: webhook
+                    - type: slack
                       name: "Slack Ops"
                       config:
-                        url: "https://hooks.slack.com/services/T00/B00/xxx"
+                        webhook_url: "https://hooks.slack.com/services/T00/B00/xxx"
                     - type: telegram
                       name: "SRE Chat"
                       config:
                         bot_token: "token"
                         chat_id: "channel"
                         message_template: "🔴 {{.alert.name}}: {{.result.errors}} errors in last {{.alert.interval}}"
-                    - type: pagerduty
-                      name: "P1 Escalation"
-                      config:
-                        routing_key: "R012ABCDEF..."
-                        severity: "critical"
               simple_webhook:
                 summary: Single webhook alert
                 value:
                   name: "5xx spike"
-                  q: "source=nginx status>=500 | stats count as cnt | where cnt > 50"
+                  query: "source=nginx status>=500 | stats count as cnt | where cnt > 50"
                   interval: "1m"
                   channels:
                     - type: webhook
                       config:
                         url: "https://hooks.slack.com/services/T00/B00/xxx"
-              incidentio:
-                summary: Alert with incident.io escalation
-                value:
-                  name: "Database connection failures"
-                  q: "source=api-gateway message=\"connection refused\" | stats count as failures | where failures > 10"
-                  interval: "2m"
-                  channels:
-                    - type: incidentio
-                      name: "DB Incident"
-                      config:
-                        api_key: "inc_live_xxxx"
-                        severity: "major"
-                        mode: "real"
-                    - type: slack
-                      name: "DB Alerts"
-                      config:
-                        webhook_url: "https://hooks.slack.com/services/T00/B00/yyy"
-                        channel: "#db-alerts"
       responses:
         '201':
           description: Alert created
@@ -1416,6 +1388,33 @@ paths:
           application/json:
             schema:
               $ref: '#/components/schemas/AlertInput'
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AlertResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: patchAlert
+      tags: [Alerts]
+      summary: Patch an alert's enabled state
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AlertPatchInput'
+            example:
+              enabled: false
       responses:
         '200':
           description: Updated
@@ -1464,18 +1463,13 @@ paths:
                 data:
                   would_trigger: true
                   result:
-                    errors: 247
+                    rows:
+                      - errors: 247
+                    count: 1
                   channels_that_would_fire:
-                    - type: webhook
-                      name: "Slack Ops"
-                      status: reachable
-                    - type: telegram
-                      name: "SRE Chat"
-                      status: reachable
-                    - type: pagerduty
-                      name: "P1 Escalation"
-                      status: reachable
-                  message: "Condition met: errors (247) > 100. Notifications NOT sent (test mode)."
+                    - "Slack Ops"
+                    - "SRE Chat"
+                  message: "Alert \"High error rate\" would trigger — query returned 1 rows"
 
   /alerts/{id}/test-channels:
     post:
@@ -1499,7 +1493,7 @@ paths:
               example:
                 data:
                   results:
-                    - type: webhook
+                    - type: slack
                       name: "Slack Ops"
                       status: ok
                       latency_ms: 142
@@ -1507,10 +1501,6 @@ paths:
                       name: "SRE Chat"
                       status: ok
                       latency_ms: 310
-                    - type: pagerduty
-                      name: "P1 Escalation"
-                      status: error
-                      error: "HTTP 403: invalid routing_key"
 
   # ════════════════════════════════════════════
   # DASHBOARDS
@@ -2073,21 +2063,21 @@ paths:
       tags: [Compatibility]
       summary: OpenTelemetry OTLP log ingest
       description: |
-        Accepts OTLP HTTP logs in protobuf or JSON format.
+        Accepts OTLP HTTP logs in JSON format.
+
+        Requests with `Content-Type: application/x-protobuf` are rejected with
+        `415 Unsupported Media Type`.
 
         ```yaml
         # OTEL Collector config:
         exporters:
-          otlphttp:
+          otlp_http:
             endpoint: http://lynxdb:3100/api/v1/otlp
+            encoding: json
         ```
       requestBody:
         required: true
         content:
-          application/x-protobuf:
-            schema:
-              type: string
-              format: binary
           application/json:
             schema:
               type: object
@@ -3012,7 +3002,7 @@ components:
       properties:
         type:
           type: string
-          enum: [webhook, telegram, slack, pagerduty, opsgenie, email, incidentio, generic_http]
+          enum: [webhook, telegram, slack]
         name:
           type: string
           description: Human-readable label for this channel
@@ -3090,91 +3080,6 @@ components:
           type: string
           default: ":rotating_light:"
 
-    PagerDutyConfig:
-      type: object
-      required: [routing_key]
-      description: "`type: pagerduty` config"
-      properties:
-        routing_key:
-          type: string
-          description: Events API v2 routing key
-        severity:
-          type: string
-          enum: [critical, error, warning, info]
-          default: error
-
-    OpsgenieConfig:
-      type: object
-      required: [api_key]
-      description: "`type: opsgenie` config"
-      properties:
-        api_key:
-          type: string
-        priority:
-          type: string
-          enum: [P1, P2, P3, P4, P5]
-          default: P3
-        tags:
-          type: array
-          items:
-            type: string
-
-    EmailConfig:
-      type: object
-      required: [to, from]
-      description: "`type: email` config"
-      properties:
-        to:
-          type: array
-          items:
-            type: string
-            format: email
-        from:
-          type: string
-          format: email
-        smtp_host:
-          type: string
-          default: localhost
-        smtp_port:
-          type: integer
-          default: 587
-
-    IncidentIOConfig:
-      type: object
-      required: [api_key]
-      description: "`type: incidentio` config"
-      properties:
-        api_key:
-          type: string
-        severity:
-          type: string
-          enum: [minor, major, critical]
-          default: major
-        mode:
-          type: string
-          enum: [real, test]
-          default: real
-          description: "`test` creates test incidents that don't page"
-
-    GenericHTTPConfig:
-      type: object
-      required: [url, method]
-      description: "`type: generic_http` config — for any HTTP-based integration"
-      properties:
-        url:
-          type: string
-          format: uri
-        method:
-          type: string
-          enum: [POST, PUT, PATCH]
-        headers:
-          type: object
-          additionalProperties:
-            type: string
-        body_template:
-          type: string
-          description: Go template for request body
-
     Alert:
       type: object
       properties:
@@ -3183,7 +3088,7 @@ components:
           example: alt_xyz789
         name:
           type: string
-        q:
+        query:
           type: string
         interval:
           type: string
@@ -3210,14 +3115,14 @@ components:
 
     AlertInput:
       type: object
-      required: [name, q, interval, channels]
+      required: [name, query, interval, channels]
       properties:
         name:
           type: string
           example: "High error rate"
-        q:
+        query:
           type: string
-          description: SPL2 query. Must produce a numeric result to evaluate as condition.
+          description: SPL2 query executed on the schedule.
           example: "level=error | stats count as errors | where errors > 100"
         interval:
           type: string
@@ -3252,6 +3157,13 @@ components:
         data:
           $ref: '#/components/schemas/Alert'
 
+    AlertPatchInput:
+      type: object
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+
     AlertTestResponse:
       type: object
       required: [data]
@@ -3267,15 +3179,7 @@ components:
             channels_that_would_fire:
               type: array
               items:
-                type: object
-                properties:
-                  type:
-                    type: string
-                  name:
-                    type: string
-                  status:
-                    type: string
-                    enum: [reachable, unreachable, error]
+                type: string
             message:
               type: string
 

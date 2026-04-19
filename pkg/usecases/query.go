@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync/atomic"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/config"
@@ -19,16 +20,32 @@ import (
 type QueryService struct {
 	planner  planner.Planner
 	engine   QueryEngine
-	queryCfg config.QueryConfig
+	queryCfg atomic.Pointer[config.QueryConfig]
 }
 
 // NewQueryService creates a QueryService.
 func NewQueryService(p planner.Planner, engine QueryEngine, cfg config.QueryConfig) *QueryService {
-	return &QueryService{
-		planner:  p,
-		engine:   engine,
-		queryCfg: cfg,
+	svc := &QueryService{
+		planner: p,
+		engine:  engine,
 	}
+	svc.ReloadConfig(cfg)
+
+	return svc
+}
+
+// ReloadConfig swaps the live query config snapshot used for new requests.
+func (s *QueryService) ReloadConfig(cfg config.QueryConfig) {
+	cfgCopy := cfg
+	s.queryCfg.Store(&cfgCopy)
+}
+
+func (s *QueryService) currentQueryConfig() config.QueryConfig {
+	if cfg := s.queryCfg.Load(); cfg != nil {
+		return *cfg
+	}
+
+	return config.QueryConfig{}
 }
 
 // Explain parses and analyses a query without executing it.
@@ -765,6 +782,8 @@ func extractPhysicalPlan(prog *spl2.Program) *PhysicalPlan {
 
 // Submit plans and executes a query with sync/hybrid/async dispatch.
 func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitResult, error) {
+	queryCfg := s.currentQueryConfig()
+
 	plan, err := s.planner.Plan(planner.PlanRequest{
 		Query: req.Query,
 		From:  req.From,
@@ -800,10 +819,10 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 
 	limit := req.Limit
 	if limit <= 0 {
-		limit = s.queryCfg.DefaultResultLimit
+		limit = queryCfg.DefaultResultLimit
 	}
-	if s.queryCfg.MaxResultLimit > 0 && limit > s.queryCfg.MaxResultLimit {
-		limit = s.queryCfg.MaxResultLimit
+	if queryCfg.MaxResultLimit > 0 && limit > queryCfg.MaxResultLimit {
+		limit = queryCfg.MaxResultLimit
 	}
 
 	// Collect any user-facing warnings from query hints.
@@ -814,7 +833,7 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 
 	switch req.Mode {
 	case QueryModeSync:
-		syncTimeout := s.queryCfg.SyncTimeout
+		syncTimeout := queryCfg.SyncTimeout
 		if syncTimeout == 0 {
 			syncTimeout = 30 * time.Second
 		}

@@ -2,12 +2,11 @@ package rest
 
 import (
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/api/apicontracts"
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
@@ -42,21 +41,30 @@ func (r queryStreamRequest) toQueryRequest() QueryRequest {
 }
 
 func (r queryStreamRequest) unsupportedFields() []string {
-	fields := make([]string, 0, 5)
-	if r.Wait != nil {
-		fields = append(fields, "wait")
-	}
-	if r.Limit != nil {
-		fields = append(fields, "limit")
-	}
-	if r.Offset != nil {
-		fields = append(fields, "offset")
-	}
-	if r.Profile != nil {
-		fields = append(fields, "profile")
-	}
-	if r.Format != nil {
-		fields = append(fields, "format")
+	fields := make([]string, 0, len(apicontracts.QueryStreamUnsupportedFields))
+	for _, field := range apicontracts.QueryStreamUnsupportedFields {
+		switch field {
+		case "wait":
+			if r.Wait != nil {
+				fields = append(fields, field)
+			}
+		case "limit":
+			if r.Limit != nil {
+				fields = append(fields, field)
+			}
+		case "offset":
+			if r.Offset != nil {
+				fields = append(fields, field)
+			}
+		case "profile":
+			if r.Profile != nil {
+				fields = append(fields, field)
+			}
+		case "format":
+			if r.Format != nil {
+				fields = append(fields, field)
+			}
+		}
 	}
 
 	return fields
@@ -78,8 +86,8 @@ func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {
 			w,
 			ErrCodeValidationError,
 			http.StatusBadRequest,
-			fmt.Sprintf("unsupported fields for /query/stream: %s", strings.Join(unsupported, ", ")),
-			WithSuggestion("Use only q/query, from/to, earliest/latest, and variables with /query/stream."),
+			apicontracts.UnsupportedQueryStreamFieldsMessage(unsupported),
+			WithSuggestion(apicontracts.QueryStreamUnsupportedFieldsSuggestion),
 		)
 
 		return

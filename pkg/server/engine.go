@@ -54,8 +54,8 @@ type Engine struct {
 
 	activeJobs atomic.Int64
 	maxConcur  atomic.Int32
-	jobs       sync.Map                              // jobID (string) -> *SearchJob
-	queryCfg   atomic.Pointer[config.QueryConfig]    // hot-reloadable snapshot; readers Load(), ReloadConfig() Store()
+	jobs       sync.Map                           // jobID (string) -> *SearchJob
+	queryCfg   atomic.Pointer[config.QueryConfig] // hot-reloadable snapshot; readers Load(), ReloadConfig() Store()
 
 	// ingestGen is a monotonically increasing generation counter, bumped on every
 	// ingest and flush. Used as part of the query cache key to ensure queries
@@ -656,8 +656,16 @@ func (e *Engine) checkSourceWarnings(hints *spl2.QueryHints) []string {
 }
 
 // ReloadConfig applies hot-reloadable configuration fields.
-// Fields that require restart are logged as warnings.
 func (e *Engine) ReloadConfig(cfg *config.Config) {
+	if cfg.Retention.Duration() != e.retention {
+		old := e.retention
+		e.retention = cfg.Retention.Duration()
+		if e.retentionMgr != nil {
+			e.retentionMgr.SetMaxAge(e.retention)
+		}
+		e.logger.Info("reloaded retention", "old", old.String(), "new", cfg.Retention.String())
+	}
+
 	if int32(cfg.Query.MaxConcurrent) != e.maxConcur.Load() {
 		old := e.maxConcur.Load()
 		e.maxConcur.Store(int32(cfg.Query.MaxConcurrent))

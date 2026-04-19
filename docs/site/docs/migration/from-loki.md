@@ -153,8 +153,9 @@ LynxDB has a native OTLP/HTTP receiver:
 ```yaml
 # otel-collector-config.yaml
 exporters:
-  otlphttp:
-    endpoint: "http://lynxdb:3100"
+  otlp_http:
+    endpoint: "http://lynxdb:3100/api/v1/otlp"
+    encoding: json
     tls:
       insecure: true
 
@@ -162,7 +163,7 @@ service:
   pipelines:
     logs:
       receivers: [otlp]
-      exporters: [otlphttp]
+      exporters: [otlp_http]
 ```
 
 ### Step 3: Convert Dashboards
@@ -192,7 +193,7 @@ curl -X POST localhost:3100/api/v1/dashboards -d '{
 # LynxDB equivalent:
 curl -X POST localhost:3100/api/v1/alerts -d '{
   "name": "High error rate",
-  "q": "level=error | stats count as errors | where errors > 100",
+  "query": "level=error | stats count as errors | where errors > 100",
   "interval": "5m",
   "channels": [
     {"type": "slack", "config": {"webhook_url": "https://hooks.slack.com/..."}}
@@ -212,7 +213,7 @@ curl -X POST localhost:3100/api/v1/alerts -d '{
 | Object storage | Required in production | Optional (for tiering) |
 | Materialized views | No | Yes (~400x acceleration) |
 | Pipe mode (CLI) | No | Yes |
-| Alerts | Via Grafana | Built-in (8 channels) |
+| Alerts | Via Grafana | Built-in (3 channels) |
 | Dashboards | Via Grafana | Built-in |
 | License | AGPL | Apache 2.0 |
 

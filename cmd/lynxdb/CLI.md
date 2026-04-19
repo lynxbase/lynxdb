@@ -1146,19 +1146,15 @@ lynxdb alerts [id]
 #### `alerts create`
 
 ```
-lynxdb alerts create --name <name> --query <query> [--interval <duration>]
+lynxdb alerts create --file <path>
 ```
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--name` | (required) | Alert name |
-| `--query` | (required) | SPL2 query |
-| `--interval` | `5m` | Check interval |
+| `--file` | (required) | Path to alert JSON file |
 
 ```bash
-lynxdb alerts create --name "High errors" \
-  --query 'level=error | stats count as errors | where errors > 100' \
-  --interval 5m
+lynxdb alerts create --file alert.json
 ```
 
 #### `alerts test`

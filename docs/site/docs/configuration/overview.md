@@ -165,7 +165,10 @@ In the current implementation:
 
 - `log_level` is re-applied
 - `retention` is re-applied
-- query settings are reloaded for future work
+- most query execution settings are reloaded for future work
+- `ingest.mode`, `ingest.max_batch_size`, and `ingest.max_line_bytes` are re-applied
+- `tail.*` limits are re-applied
+- `http.idle_timeout`, `http.shutdown_timeout`, `http.alert_shutdown_timeout`, and `http.read_header_timeout` are re-applied
 - `storage.compaction_rate_limit_mb` is explicitly re-applied
 
 Treat these changes as restart-required:
@@ -174,6 +177,11 @@ Treat these changes as restart-required:
 - `data_dir`
 - `tls.*`
 - `auth.*`
+- `no_ui`
+- `http.rate_limit`
+- `ingest.max_body_size` and ingest-engine settings such as dedup/fsync
+- `query.global_query_pool_bytes`, `query.spill_dir`, and `query.max_temp_dir_size_bytes`
+- storage scheduler settings such as `storage.compaction_workers`
 
 ## Connection Profiles
 

@@ -7,7 +7,7 @@ description: LynxDB is an open-source log analytics database. Single binary, zer
 
 # What is LynxDB?
 
-LynxDB is an open-source log analytics database built from scratch in Go. A single static binary that works as a pipe-mode CLI tool (like `grep` meets `awk`), a standalone server, or a distributed cluster -- same binary, same query language, same API at every scale.
+LynxDB is an open-source log analytics database built from scratch in Go. The same static binary can run as a pipe-mode CLI tool (like `grep` meets `awk`), a standalone server, and a cluster-mode deployment.
 
 ## The Problem
 
@@ -47,9 +47,9 @@ lynxdb server
 lynxdb query '_source=nginx status>=500 | stats count by uri | sort -count | head 10'
 ```
 
-### Cluster Mode (Distributed)
+### Cluster Mode
 
-Scale to 1000+ nodes with S3-backed shared storage, Raft consensus, and distributed query execution:
+Cluster mode is available through the same binary. The codebase includes Raft-backed metadata services, gRPC inter-node communication, and S3-aware storage paths for multi-node deployments. For larger separated-role clusters, validate the exact behavior you need in staging against the version you plan to run.
 
 ```bash
 lynxdb server --cluster.seeds node1:9400,node2:9400,node3:9400
@@ -77,7 +77,7 @@ lynxdb server --cluster.seeds node1:9400,node2:9400,node3:9400
 - **Materialized Views** -- Precomputed aggregations with ~400x query acceleration
 - **Schema-on-Read** -- No upfront schema, fields discovered and indexed automatically
 - **Drop-in Compatibility** -- Elasticsearch `_bulk`, OpenTelemetry OTLP, Splunk HEC
-- **Alerts & Dashboards** -- SPL2-powered alerting with 8 notification channels
+- **Alerts & Dashboards** -- Scheduled SPL2 alerts plus saved dashboards in server mode
 
 ## Next Steps
 

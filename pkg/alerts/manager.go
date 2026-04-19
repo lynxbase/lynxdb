@@ -107,6 +107,24 @@ func (m *Manager) Update(id string, input *AlertInput) (*Alert, error) {
 	return existing, nil
 }
 
+// PatchEnabled updates only the enabled state of an existing alert.
+func (m *Manager) PatchEnabled(id string, enabled bool) (*Alert, error) {
+	existing, err := m.store.Get(id)
+	if err != nil {
+		return nil, err
+	}
+
+	existing.Enabled = enabled
+	if err := m.store.Update(existing); err != nil {
+		return nil, err
+	}
+
+	m.scheduler.UnscheduleAlert(id)
+	m.scheduler.ScheduleAlert(*existing)
+
+	return existing, nil
+}
+
 // Delete removes an alert and stops its scheduler.
 func (m *Manager) Delete(id string) error {
 	m.scheduler.UnscheduleAlert(id)

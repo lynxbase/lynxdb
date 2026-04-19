@@ -157,7 +157,7 @@ lynxdb run 5xx-by-uri --since 24h
 # Splunk alert -> LynxDB alert
 curl -X POST localhost:3100/api/v1/alerts -d '{
   "name": "High Error Rate",
-  "q": "level=error | stats count as errors | where errors > 100",
+  "query": "level=error | stats count as errors | where errors > 100",
   "interval": "5m",
   "channels": [
     {"type": "slack", "config": {"webhook_url": "https://hooks.slack.com/..."}}
@@ -210,7 +210,7 @@ curl -X POST localhost:3100/api/v1/dashboards -d '{
 | Query language | SPL | SPL2 (SPL-compatible) |
 | Full-text search | tsidx | FST + roaring bitmaps |
 | Schema | On-read | On-read |
-| Alerts | Yes | Yes (8 channels) |
+| Alerts | Yes | Yes (3 built-in channels) |
 | Dashboards | Yes (XML) | Yes (JSON) |
 | Materialized views | Data model acceleration | Materialized views (~400x) |
 | Pipe mode | No | Yes |

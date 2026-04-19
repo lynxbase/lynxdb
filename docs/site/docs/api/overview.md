@@ -149,7 +149,7 @@ See [Query API](/docs/api/query) for the exact request and response formats.
 | `GET/POST` | `/queries` | List/create saved queries | [Saved Queries](/docs/api/saved-queries) |
 | `PUT/DELETE` | `/queries/{id}` | Update/delete saved query | [Saved Queries](/docs/api/saved-queries) |
 | `GET/POST` | `/alerts` | List/create alerts | [Alerts](/docs/api/alerts) |
-| `PUT/DELETE` | `/alerts/{id}` | Update/delete alert | [Alerts](/docs/api/alerts) |
+| `PUT/PATCH/DELETE` | `/alerts/{id}` | Update/delete alert | [Alerts](/docs/api/alerts) |
 | `POST` | `/alerts/{id}/test` | Test alert (dry run) | [Alerts](/docs/api/alerts) |
 | `POST` | `/alerts/{id}/test-channels` | Test notification channels | [Alerts](/docs/api/alerts) |
 | `GET/POST` | `/dashboards` | List/create dashboards | [Dashboards](/docs/api/dashboards) |

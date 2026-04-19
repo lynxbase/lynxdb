@@ -1,0 +1,14 @@
+{
+  "name": "CLI file alert",
+  "query": "FROM main | stats count | where count > 0",
+  "interval": "1m",
+  "channels": [
+    {
+      "type": "webhook",
+      "name": "Ops Webhook",
+      "config": {
+        "url": "https://example.com/hooks/alerts"
+      }
+    }
+  ]
+}

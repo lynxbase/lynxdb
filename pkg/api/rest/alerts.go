@@ -87,6 +87,40 @@ func (s *Server) handleUpdateAlert(w http.ResponseWriter, r *http.Request) {
 	respondData(w, http.StatusOK, alert)
 }
 
+func (s *Server) handlePatchAlert(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeAdmin) {
+		return
+	}
+	id := r.PathValue("id")
+
+	var patch struct {
+		Enabled *bool `json:"enabled,omitempty"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
+		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")
+
+		return
+	}
+	if patch.Enabled == nil {
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest, "enabled is required")
+
+		return
+	}
+
+	alert, err := s.alertMgr.PatchEnabled(id, *patch.Enabled)
+	if err != nil {
+		if errors.Is(err, alerts.ErrAlertNotFound) {
+			respondError(w, ErrCodeNotFound, http.StatusNotFound, err.Error())
+		} else {
+			respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error())
+		}
+
+		return
+	}
+
+	respondData(w, http.StatusOK, alert)
+}
+
 func (s *Server) handleDeleteAlert(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeAdmin) {
 		return

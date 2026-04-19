@@ -146,7 +146,7 @@ It only accepts:
 - `to` or `latest`
 - `variables`
 
-If you send `wait`, `limit`, `offset`, `profile`, or `format`, LynxDB rejects the request.
+If you send `limit`, `offset`, `wait`, `profile`, or `format`, LynxDB rejects the request.
 
 ```bash
 # Wrong for /query/stream

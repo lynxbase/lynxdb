@@ -178,6 +178,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		DataDir:       cfg.DataDir,
 		Retention:     time.Duration(cfg.Retention),
 		NoUI:          cfg.NoUI,
+		RuntimeConfig: cfg,
 		KeyStore:      keyStore,
 		TLSConfig:     tlsCfg,
 		Storage:       cfg.Storage,
@@ -210,10 +211,14 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 					continue
 				}
-				if _, reloadErr := srv.ReloadConfig(newCfg); reloadErr != nil {
+				restartRequired, reloadErr := srv.ReloadConfig(newCfg)
+				if reloadErr != nil {
 					logger.Error("config reload failed", "error", reloadErr)
 
 					continue
+				}
+				if len(restartRequired) > 0 {
+					logger.Warn("config reload left restart-required changes unapplied", "fields", restartRequired)
 				}
 				cfg = newCfg
 

@@ -32,6 +32,9 @@ func TestE2E_Alerts_CRUD(t *testing.T) {
 	if alert.Name != "test-alert" {
 		t.Errorf("expected name=test-alert, got %s", alert.Name)
 	}
+	if alert.Q != input.Q {
+		t.Errorf("expected query=%q, got %q", input.Q, alert.Q)
+	}
 	alertID := alert.ID
 
 	// List.
@@ -43,6 +46,9 @@ func TestE2E_Alerts_CRUD(t *testing.T) {
 	for _, a := range alerts {
 		if a.ID == alertID {
 			found = true
+			if a.Q != input.Q {
+				t.Errorf("list query: got %q, want %q", a.Q, input.Q)
+			}
 		}
 	}
 	if !found {
@@ -57,15 +63,31 @@ func TestE2E_Alerts_CRUD(t *testing.T) {
 	if got.ID != alertID {
 		t.Errorf("expected id=%s, got %s", alertID, got.ID)
 	}
+	if got.Q != input.Q {
+		t.Errorf("get query: got %q, want %q", got.Q, input.Q)
+	}
 
 	// Update.
 	input.Name = "test-alert-updated"
+	input.Q = `FROM main | stats count | WHERE count > 200`
 	updated, err := h.Client().UpdateAlert(ctx, alertID, input)
 	if err != nil {
 		t.Fatalf("UpdateAlert: %v", err)
 	}
 	if updated.Name != "test-alert-updated" {
 		t.Errorf("expected updated name=test-alert-updated, got %s", updated.Name)
+	}
+	if updated.Q != input.Q {
+		t.Errorf("update query: got %q, want %q", updated.Q, input.Q)
+	}
+
+	disabled := false
+	patched, err := h.Client().PatchAlert(ctx, alertID, client.AlertPatchInput{Enabled: &disabled})
+	if err != nil {
+		t.Fatalf("PatchAlert: %v", err)
+	}
+	if patched.Enabled {
+		t.Error("expected patched alert to be disabled")
 	}
 
 	// Delete.

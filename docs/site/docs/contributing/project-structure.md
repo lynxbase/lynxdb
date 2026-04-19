@@ -211,7 +211,7 @@ Implementations of all aggregation functions: `count`, `sum`, `avg`, `min`, `max
 
 ### `pkg/alerts/` -- Alert Engine
 
-Alert evaluation loop and notification channel implementations (webhook, Slack, Telegram, PagerDuty, OpsGenie, email, incident.io, generic HTTP).
+Alert evaluation loop plus the currently wired notification channel implementations (`webhook`, `slack`, `telegram`).
 
 ### `pkg/dashboards/` -- Dashboard Definitions
 

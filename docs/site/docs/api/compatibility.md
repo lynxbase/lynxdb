@@ -156,13 +156,14 @@ This response satisfies the Elasticsearch client handshake protocol. The version
 
 ### POST /otlp/v1/logs
 
-Native OTLP/HTTP receiver for logs from OpenTelemetry collectors. Accepts both protobuf and JSON encoding.
+Native OTLP/HTTP receiver for logs from OpenTelemetry collectors.
+
+LynxDB currently accepts **OTLP/HTTP JSON** only. Requests with `Content-Type: application/x-protobuf` are rejected with `415 Unsupported Media Type`.
 
 #### Content Types
 
 | Content-Type | Format |
 |---|---|
-| `application/x-protobuf` | OTLP protobuf encoding (default, most efficient) |
 | `application/json` | OTLP JSON encoding |
 
 #### OpenTelemetry Collector Configuration
@@ -170,16 +171,19 @@ Native OTLP/HTTP receiver for logs from OpenTelemetry collectors. Accepts both p
 ```yaml
 # otel-collector-config.yaml
 exporters:
-  otlphttp:
+  otlp_http:
     endpoint: http://lynxdb:3100/api/v1/otlp
+    encoding: json
 
 service:
   pipelines:
     logs:
       receivers: [filelog, otlp]
       processors: [batch]
-      exporters: [otlphttp]
+      exporters: [otlp_http]
 ```
+
+If your collector still uses the older `otlphttp` exporter alias, set `encoding: json` there as well.
 
 #### Example with JSON Encoding
 
@@ -222,11 +226,14 @@ OTLP fields are mapped to LynxDB fields as follows:
 
 | OTLP Field | LynxDB Field |
 |---|---|
-| `timeUnixNano` | `_timestamp` |
+| `timeUnixNano` | `_time` |
 | `body.stringValue` | `_raw` |
 | `severityText` | `level` |
-| `resource.attributes["service.name"]` | `_source` |
-| Other `attributes` | Flattened as top-level fields |
+| `resource.attributes["service.name"]` | `source` / `_source` |
+| `resource.attributes["host.name"]` | `host` |
+| `resource.attributes["deployment.environment"]` | `index` |
+| Other resource attributes | Prefixed with `resource.` |
+| Log record `attributes` | Flattened as top-level fields |
 
 ---
 

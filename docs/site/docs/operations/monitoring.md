@@ -273,7 +273,7 @@ Set up server-side alerts for infrastructure monitoring:
 # Alert when disk usage is high
 curl -X POST localhost:3100/api/v1/alerts -d '{
   "name": "High disk usage",
-  "q": "| from _internal | where metric=\"storage_bytes\" | where value > 100000000000",
+  "query": "| from _internal | where metric=\"storage_bytes\" | where value > 100000000000",
   "interval": "5m",
   "channels": [
     {"type": "slack", "config": {"webhook_url": "https://hooks.slack.com/..."}}

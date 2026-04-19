@@ -57,10 +57,11 @@ type Server struct {
 
 // Config configures the API server.
 type Config struct {
-	Addr      string
-	DataDir   string        // Root directory for all data (segments, parts, indexes). Empty = in-memory only.
-	Retention time.Duration // Data retention period. 0 = use default (90 days).
-	NoUI      bool          // When true, the embedded Web UI is not served.
+	Addr          string
+	DataDir       string         // Root directory for all data (segments, parts, indexes). Empty = in-memory only.
+	Retention     time.Duration  // Data retention period. 0 = use default (90 days).
+	NoUI          bool           // When true, the embedded Web UI is not served.
+	RuntimeConfig *config.Config // Optional full runtime snapshot used by reload/get-config paths.
 
 	KeyStore      *auth.KeyStore
 	TLSConfig     *tls.Config // If non-nil, server listens with TLS.
@@ -176,20 +177,26 @@ func NewServer(cfg Config) (*Server, error) {
 		alertShutdownTimeout = 10 * time.Second
 	}
 
-	// Build runtime config snapshot. Only override defaults for sub-configs
-	// that the caller explicitly provided (non-zero SyncTimeout indicates
-	// the QueryConfig was set, etc.).
+	// Build the runtime config snapshot used by GET/PATCH /config and reload
+	// diffing. Prefer the fully loaded config when the caller has it.
 	runtimeCfg := config.DefaultConfig()
-	runtimeCfg.Listen = cfg.Addr
-	runtimeCfg.DataDir = cfg.DataDir
-	if cfg.Query.SyncTimeout > 0 {
-		runtimeCfg.Query = cfg.Query
-	}
-	if cfg.Ingest.MaxBodySize > 0 {
-		runtimeCfg.Ingest = cfg.Ingest
-	}
-	if cfg.HTTP.IdleTimeout > 0 {
-		runtimeCfg.HTTP = cfg.HTTP
+	if cfg.RuntimeConfig != nil {
+		snapshot := *cfg.RuntimeConfig
+		runtimeCfg = &snapshot
+	} else {
+		runtimeCfg.Listen = cfg.Addr
+		runtimeCfg.DataDir = cfg.DataDir
+		runtimeCfg.Retention = config.Duration(cfg.Retention)
+		runtimeCfg.NoUI = cfg.NoUI
+		if cfg.Query.SyncTimeout > 0 {
+			runtimeCfg.Query = cfg.Query
+		}
+		if cfg.Ingest.MaxBodySize > 0 {
+			runtimeCfg.Ingest = cfg.Ingest
+		}
+		if cfg.HTTP.IdleTimeout > 0 {
+			runtimeCfg.HTTP = cfg.HTTP
+		}
 	}
 
 	s := &Server{
@@ -333,6 +340,7 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("GET /api/v1/alerts", s.handleListAlerts)
 	mux.HandleFunc("GET /api/v1/alerts/{id}", s.handleGetAlert)
 	mux.HandleFunc("PUT /api/v1/alerts/{id}", s.handleUpdateAlert)
+	mux.HandleFunc("PATCH /api/v1/alerts/{id}", s.handlePatchAlert)
 	mux.HandleFunc("DELETE /api/v1/alerts/{id}", s.handleDeleteAlert)
 	mux.HandleFunc("POST /api/v1/alerts/{id}/test", s.handleTestAlert)
 	mux.HandleFunc("POST /api/v1/alerts/{id}/test-channels", s.handleTestAlertChannels)

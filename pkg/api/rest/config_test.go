@@ -169,3 +169,74 @@ func TestConfig_PatchUnknownKey(t *testing.T) {
 		t.Fatalf("status: %d, want 400", resp.StatusCode)
 	}
 }
+
+func TestReloadConfigReportsStartupTimeFields(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	srv.cfgMu.RLock()
+	updated := *srv.runtimeCfg
+	srv.cfgMu.RUnlock()
+
+	updated.NoUI = !updated.NoUI
+	updated.TLS.Enabled = !updated.TLS.Enabled
+	updated.Auth.Enabled = !updated.Auth.Enabled
+	updated.Storage.CompactionWorkers++
+
+	restartRequired, err := srv.ReloadConfig(&updated)
+	if err != nil {
+		t.Fatalf("ReloadConfig: %v", err)
+	}
+
+	for _, field := range []string{"no_ui", "tls.enabled", "auth.enabled", "storage.compaction_workers"} {
+		found := false
+		for _, got := range restartRequired {
+			if got == field {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("restart_required missing %q in %v", field, restartRequired)
+		}
+	}
+}
+
+func TestReloadConfigAppliesQueryMaxLength(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	srv.cfgMu.RLock()
+	updated := *srv.runtimeCfg
+	srv.cfgMu.RUnlock()
+	updated.Query.MaxQueryLength = 12
+
+	if _, err := srv.ReloadConfig(&updated); err != nil {
+		t.Fatalf("ReloadConfig: %v", err)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"q": "FROM main | head 1",
+	})
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	errObj, ok := result["error"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("expected structured error, got %v", result)
+	}
+	if errObj["code"] != "QUERY_TOO_LARGE" {
+		t.Fatalf("code: got %v, want QUERY_TOO_LARGE", errObj["code"])
+	}
+}

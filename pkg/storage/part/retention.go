@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 )
 
@@ -46,6 +47,7 @@ func (c RetentionConfig) withDefaults() RetentionConfig {
 type RetentionManager struct {
 	layout   *Layout
 	registry *Registry
+	mu       sync.RWMutex
 	cfg      RetentionConfig
 	logger   *slog.Logger
 
@@ -79,6 +81,13 @@ func (rm *RetentionManager) SetOnDelete(fn func(index, partition string, removed
 	rm.onDelete = fn
 }
 
+// SetMaxAge updates the retention window used for future retention passes.
+func (rm *RetentionManager) SetMaxAge(maxAge time.Duration) {
+	rm.mu.Lock()
+	rm.cfg.MaxAge = RetentionConfig{MaxAge: maxAge}.withDefaults().MaxAge
+	rm.mu.Unlock()
+}
+
 // Start runs the retention loop in a background goroutine.
 // The goroutine exits when ctx is canceled.
 func (rm *RetentionManager) Start(ctx context.Context) {
@@ -86,7 +95,11 @@ func (rm *RetentionManager) Start(ctx context.Context) {
 }
 
 func (rm *RetentionManager) loop(ctx context.Context) {
-	ticker := time.NewTicker(rm.cfg.Interval)
+	rm.mu.RLock()
+	interval := rm.cfg.Interval
+	rm.mu.RUnlock()
+
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -135,8 +148,12 @@ func (rm *RetentionManager) retainIndex(index string) (int, error) {
 		return 0, fmt.Errorf("list partitions for %s: %w", index, err)
 	}
 
+	rm.mu.RLock()
+	maxAge := rm.cfg.MaxAge
+	rm.mu.RUnlock()
+
 	now := time.Now().UTC()
-	cutoff := now.Add(-rm.cfg.MaxAge)
+	cutoff := now.Add(-maxAge)
 	var deleted int
 
 	for _, partition := range partitions {
