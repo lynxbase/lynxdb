@@ -5,6 +5,7 @@ package cli_test
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"strings"
 	"syscall"
 	"testing"
@@ -349,21 +350,14 @@ func TestServer_GracefulShutdown(t *testing.T) {
 		t.Fatalf("send SIGTERM: %v", err)
 	}
 
-	// Wait for the process to exit.
-	done := make(chan error, 1)
-	go func() {
-		done <- srv.cmd.Wait()
-	}()
-
-	select {
-	case err := <-done:
-		// Process exited. On graceful shutdown, exit code should be 0.
-		// Some systems report SIGTERM as a non-zero exit, so we accept both.
-		if err != nil {
-			// ExitError from SIGTERM is acceptable.
-			t.Logf("server exited with: %v (expected for SIGTERM)", err)
-		}
-	case <-time.After(15 * time.Second):
+	// Reuse the harness wait path instead of calling Cmd.Wait a second time.
+	err := srv.waitTimeout(15 * time.Second)
+	if errors.Is(err, errServerWaitTimeout) {
 		t.Errorf("server did not exit within 15s after SIGTERM")
+		return
+	}
+	if err != nil {
+		// ExitError from SIGTERM is acceptable.
+		t.Logf("server exited with: %v (expected for SIGTERM)", err)
 	}
 }

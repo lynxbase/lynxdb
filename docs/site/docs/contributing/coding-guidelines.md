@@ -47,14 +47,14 @@ Follow standard Go naming conventions:
 
 - **Exported names**: `PascalCase` -- `SegmentWriter`, `ParseQuery`, `EventCount`.
 - **Unexported names**: `camelCase` -- `segmentHandle`, `parseSearchPredicate`, `eventPool`.
-- **Acronyms**: All caps for short acronyms -- `WAL`, `VM`, `FST`, `AST`, `SSE`, `LRU`. Mixed case for longer ones -- `Http` is wrong, `HTTP` is correct.
+- **Acronyms**: All caps for short acronyms -- `VM`, `FST`, `AST`, `SSE`, `LRU`. Mixed case for longer ones -- `Http` is wrong, `HTTP` is correct.
 - **Interface names**: Do not use `I` prefix. Use the `-er` suffix when the interface has one method -- `Reader`, `Writer`, `Flusher`. For multi-method interfaces, use a descriptive noun -- `ObjectStore`, `Operator`.
 - **Test functions**: `TestParseStatsCommand`, `TestSegmentWriter_FlushV2`, `BenchmarkVMSimplePredicate`.
 
 ### Package Organization
 
 - One package per directory. No multi-file packages sharing a directory with unrelated code.
-- Package names are singular lowercase nouns: `segment`, `memtable`, `pipeline`, `vm`.
+- Package names are singular lowercase nouns: `segment`, `part`, `pipeline`, `vm`.
 - Avoid `util`, `helpers`, `common`, and `misc` packages. Put functions where they belong.
 - Internal types that should not be imported outside the module go in `internal/`.
 

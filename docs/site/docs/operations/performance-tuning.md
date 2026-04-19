@@ -26,37 +26,25 @@ If you are already achieving acceptable performance, there is no need to tune fu
 
 ### Increase Flush Threshold
 
-Larger memtables mean fewer segment flushes and better compaction efficiency:
+Larger flush targets can reduce small-part churn and improve compaction efficiency:
 
 ```yaml
 storage:
   flush_threshold: "1gb"      # Default: 512mb
 ```
 
-Trade-off: Higher memory usage, more data at risk during crash.
+Trade-off: Higher memory usage and more data buffered before a flush completes.
 
-### WAL Sync Mode
+### Part Flush Durability
 
-For maximum throughput, reduce WAL sync overhead:
-
-```yaml
-storage:
-  wal_sync_mode: "none"       # Development only
-  # or
-  wal_sync_mode: "write"      # Production (default)
-  wal_sync_interval: "200ms"  # Increase from default 100ms
-```
-
-### Increase Memtable Shards
-
-More shards reduce lock contention during concurrent ingestion:
+For maximum throughput, reduce synchronous flush cost on non-critical pipelines:
 
 ```yaml
-storage:
-  memtable_shards: 0          # Default: auto (num CPUs)
+ingest:
+  fsync: false                # Lower flush latency, higher power-loss risk
 ```
 
-The default (`0` = auto) is usually optimal. Only increase if profiling shows memtable contention.
+For stricter durability, keep `ingest.fsync: true`.
 
 ### Batch Size
 
@@ -70,7 +58,7 @@ For the HTTP API, send larger request bodies:
 
 ```yaml
 ingest:
-  max_body_size: "50mb"       # Default: 10mb
+  max_body_size: "50mb"       # Default: 100mb
   max_batch_size: 5000        # Default: 1000
 ```
 
@@ -126,7 +114,7 @@ When using S3 tiering, increase the local segment cache to avoid S3 round-trips:
 
 ```yaml
 storage:
-  segment_cache_size: "50gb"  # Default: 1gb
+  segment_cache_size: "50gb"  # Default: 10gb
 ```
 
 Size this to hold 2-4x your most frequently queried warm-tier data.
@@ -176,7 +164,7 @@ If compaction I/O affects query latency, apply a rate limit:
 
 ```yaml
 storage:
-  compaction_rate_limit_mb: 100  # Default: 0 (unlimited)
+  compaction_rate_limit_mb: 100  # Default: 100
 ```
 
 ### Level Thresholds
@@ -186,7 +174,7 @@ Tune when compaction triggers:
 ```yaml
 storage:
   l0_threshold: 4             # Default: 4 (trigger L0->L1 compaction)
-  l1_threshold: 10            # Default: 10 (trigger L1->L2 compaction)
+  l1_threshold: 4             # Default: 4 (trigger L1->L2 compaction)
   l2_target_size: "1gb"       # Default: 1gb (target size for L2 segments)
 ```
 
@@ -228,14 +216,13 @@ storage:
 ```yaml
 storage:
   flush_threshold: "1gb"
-  wal_sync_mode: "write"
-  wal_sync_interval: "200ms"
   compaction_workers: 4
   compaction_interval: "15s"
 
 ingest:
   max_body_size: "50mb"
   max_batch_size: 5000
+  fsync: false
 ```
 
 ### Dashboard-Heavy (Many Concurrent Queries)

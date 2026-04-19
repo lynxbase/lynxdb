@@ -8,6 +8,10 @@ description: LynxDB distributed architecture -- Raft consensus, two-level time+h
 
 LynxDB scales from a single process to a 1000+ node cluster using the same binary. The distributed architecture is based on a shared-storage model where S3 is the source of truth for segment data, making compute nodes effectively stateless.
 
+:::note Current implementation status
+Based on the code under `pkg/cluster/...`, LynxDB already includes Raft-backed metadata services, time+hash sharding, scatter-gather query coordination, shard-map watches, and ISR-style batch replication primitives. This page still describes the broader target architecture as well, so treat large separated-role clusters as advanced deployment territory and validate failover, rebalancing, and ingest-routing behavior in staging before a production rollout.
+:::
+
 ## Cluster Topology
 
 ```
@@ -55,11 +59,10 @@ Ingest nodes handle the write path:
 
 1. Receive ingest requests (via the REST API or compatibility endpoints).
 2. Route events to the correct shard based on the [two-level sharding scheme](#sharding).
-3. Buffer events in the batcher (batch-oriented ingestion pipeline, not WAL-based in cluster mode).
-4. Insert events into the sharded memtable.
-5. When the memtable flush threshold is reached, flush to a `.lsg` segment.
-6. Upload the segment to S3.
-7. Replicate batches to ISR peers via gRPC streaming (see [Replication](#replication)).
+3. Buffer events in the `AsyncBatcher` (the same direct-to-part ingest model used in single-node mode).
+4. When the batcher reaches its size or idle threshold, write a part directly to a temporary `.lsg` file, fsync, and atomically rename it into the shard directory.
+5. Upload the part to S3.
+6. Replicate batches to ISR peers via gRPC streaming (see [Replication](#replication)).
 
 Ingest nodes are **stateless after flush**. If an ingest node fails, its replicated batches can be recovered from ISR peers, and the shard is reassigned to another ingest node within ~25 seconds.
 
@@ -147,7 +150,7 @@ See [Rebalancing and Splitting](/docs/operations/rebalancing) for operational de
 
 ## Replication
 
-LynxDB uses **batcher-based replication** for data durability in cluster mode. Unlike single-node mode (which uses a WAL), cluster mode replicates at the batch level via gRPC streaming.
+LynxDB uses **batcher-based replication** for data durability in cluster mode. Single-node and cluster ingest both use the same batcher-first write path; cluster mode adds replica streaming on top of it.
 
 ### How Batcher Replication Works
 
@@ -454,7 +457,7 @@ See [Cluster Configuration Reference](/docs/configuration/cluster) for all setti
 ## Related
 
 - [Architecture Overview](/docs/architecture/overview) -- high-level system diagram
-- [Storage Engine](/docs/architecture/storage-engine) -- memtable and segment flush (the ingest path)
+- [Storage Engine](/docs/architecture/storage-engine) -- async batcher and direct-to-part writes (the ingest path)
 - [Query Engine](/docs/architecture/query-engine) -- partial aggregation and pipeline splitting
 - [Cluster Configuration](/docs/configuration/cluster) -- all cluster config keys and defaults
 - [Small Cluster Deployment](/docs/deployment/small-cluster) -- practical setup guide

@@ -124,30 +124,30 @@ Create additional keys for different services and team members:
 
 ```bash
 # Create a key for your CI pipeline
-lynxdb auth create-key --name ci-pipeline
+lynxdb auth create --name ci-pipeline
 # Created API key "ci-pipeline":
 #   lxk_9f8e7d6c5b4a...
 # Save this key now. It will NOT be shown again.
 
 # Create a key for Grafana
-lynxdb auth create-key --name grafana-dashboard
+lynxdb auth create --name grafana-dashboard
 
 # Create a key for the ingest pipeline
-lynxdb auth create-key --name filebeat-ingest
+lynxdb auth create --name filebeat-ingest
 ```
 
 ### Managing Keys
 
 ```bash
 # List all keys
-lynxdb auth list-keys
+lynxdb auth list
 # ID          NAME              PREFIX        CREATED              LAST USED
 # key_001     root              lxk_a1b2...   2026-01-15T10:00Z    2026-03-01T14:30Z
 # key_002     ci-pipeline       lxk_9f8e...   2026-02-01T09:00Z    2026-03-01T12:00Z
 # key_003     grafana-dashboard lxk_3c4d...   2026-02-15T11:00Z    2026-03-01T14:25Z
 
 # Revoke a key
-lynxdb auth revoke-key key_002
+lynxdb auth revoke key_002
 
 # Check auth status
 lynxdb auth status

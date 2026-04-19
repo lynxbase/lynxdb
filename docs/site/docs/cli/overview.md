@@ -1,12 +1,17 @@
 ---
 sidebar_position: 1
 title: CLI Overview
-description: LynxDB CLI modes of operation, global flags, TTY behavior, and output format auto-detection.
+description: LynxDB CLI modes, global flags, root-command behavior, and the full command map.
 ---
 
 # CLI Overview
 
-LynxDB ships as a single binary that covers every workflow -- pipe-mode analytics, persistent server, cluster node, interactive shell, and admin tooling. No separate installers, no plugins.
+LynxDB ships as a single binary. The same executable provides:
+
+- ad hoc analytics on local files and stdin
+- a persistent server
+- a Web UI launcher
+- administrative commands for auth, status, cache, config, jobs, and views
 
 ```
 lynxdb [command] [flags]
@@ -14,31 +19,47 @@ lynxdb [command] [flags]
 
 ## Modes of Operation
 
-The CLI works in three distinct modes depending on the command and context:
+The CLI changes behavior depending on the command and on whether stdin is piped.
 
-### 1. Server mode
+### Server mode
 
 ```bash
 lynxdb server
 ```
 
-Starts a persistent HTTP server. Data is stored on disk (or in-memory if `data_dir` is empty). Other commands (`query`, `ingest`, `status`, etc.) connect to this server over HTTP.
+Starts the HTTP server. Commands such as `query`, `ingest`, `status`, `fields`, `jobs`, `alerts`, and `mv` then talk to that server over HTTP.
 
-### 2. Local file mode
+### Local file mode
 
 ```bash
 lynxdb query --file access.log '| stats count by status'
 ```
 
-Queries run directly against local files without a running server. LynxDB creates an ephemeral in-memory engine, ingests the file(s), executes the query, and exits.
+Queries files directly without a running server. LynxDB creates an ephemeral in-memory engine, ingests the matching file set, runs the query, prints results, and exits.
 
-### 3. Stdin pipe mode
+### Stdin pipe mode
 
 ```bash
 cat app.log | lynxdb query '| stats count by level'
 ```
 
-Same as file mode, but reads data from stdin. Detected automatically when stdin is not a terminal. No server required.
+This is the same ephemeral execution path as file mode, but the input comes from stdin.
+
+### Bare stdin mode
+
+If stdin is piped and you run `lynxdb` with no subcommand, LynxDB defaults to a preview query:
+
+```bash
+cat app.log | lynxdb
+```
+
+That runs the equivalent of `| take 10` after format detection.
+
+If stdin is piped and the first argument is not a known subcommand, LynxDB treats the remaining arguments as a query:
+
+```bash
+cat app.log | lynxdb 'level=error | stats count by source'
+```
 
 ## Global Flags
 
@@ -58,103 +79,69 @@ Available on all commands:
 | `--debug` | | `false` | | Enable debug logging to stderr |
 | `--tls-skip-verify` | | `false` | `LYNXDB_TLS_SKIP_VERIFY` | Skip TLS certificate verification |
 
-## TTY Detection and Output Behavior
+## Output Mode
 
-LynxDB adjusts its output based on whether stdout is a terminal (TTY) or a pipe:
-
-**TTY (interactive terminal):**
-
-- `--format auto` renders colorized JSON with numbered results and a stats footer
-- Query commands show a live progress spinner with segment scan stats
-- Commands like `ingest` show progress bars
-
-**Pipe (non-TTY):**
-
-- `--format auto` outputs newline-delimited JSON (one object per line)
-- No colors, no spinners, no progress bars
-- Stats and metadata go to stderr so they do not pollute piped data
+With `--format auto`, LynxDB chooses a human-friendly format for interactive terminals and a machine-friendly format when stdout is piped. Use `--format` to force a stable format for scripts.
 
 ```bash
-# TTY -- colorized JSON with stats
-lynxdb query 'level=error | stats count by source'
+# Stable JSON for scripts
+lynxdb query 'level=error | stats count by source' --format json
 
-# Pipe -- clean NDJSON to jq
-lynxdb query 'level=error | stats count by source' | jq '.source'
+# Stable CSV export
+lynxdb query 'level=error | stats count by source' --format csv
 
-# Force a specific format regardless of TTY
+# Human-readable table output
 lynxdb query 'level=error | stats count by source' --format table
 ```
 
-The `NO_COLOR` environment variable disables colored output when set to any non-empty value.
-
-To disable the TUI and get plain output in a terminal:
-
-```bash
-lynxdb query 'FROM main | stats count' --format json
-# or pipe through cat:
-lynxdb query 'FROM main | stats count' | cat
-```
+`NO_COLOR` disables colored output when set.
 
 ## Exit Codes
 
-| Code | Name | Meaning |
-|------|------|---------|
-| 0 | OK | Command completed successfully |
-| 1 | General | Unspecified failure |
-| 2 | Usage | Invalid flags or missing arguments |
-| 3 | Connection | Cannot reach server |
-| 4 | QueryParse | Bad SPL2 syntax |
-| 5 | QueryTimeout | Server timeout or `--timeout` exceeded |
-| 6 | NoResults | Query returned 0 results (with `--fail-on-empty`) |
-| 7 | Auth | Missing or invalid authentication token |
-| 10 | Aborted | User declined destructive action confirmation |
-| 124 | Timeout | Generic timeout (GNU convention) |
-| 130 | Interrupted | User pressed Ctrl+C (SIGINT) |
+The root command advertises these exit codes:
 
-**Usage in scripts:**
-
-```bash
-lynxdb query 'level=FATAL' --fail-on-empty 2>/dev/null
-case $? in
-  0) echo "Fatal errors found!" ;;
-  6) echo "No fatal errors" ;;
-  3) echo "Server unreachable" ;;
-  *) echo "Unexpected error" ;;
-esac
-```
-
-## Signal Handling
-
-| Context | Signal | Action |
-|---------|--------|--------|
-| `lynxdb server` | `SIGINT` / `SIGTERM` | Graceful shutdown (finish in-flight requests, flush, exit) |
-| `lynxdb server` | `SIGHUP` | Hot-reload configuration from file |
-| `lynxdb demo` | `SIGINT` / `SIGTERM` | Stop generation, print summary, exit |
-| `lynxdb query` / `tail` / `watch` / `top` | `SIGINT` | Cancel current operation, exit |
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error |
+| 2 | Usage error |
+| 3 | Connection error |
+| 4 | Query parse error |
+| 5 | Query timeout |
+| 6 | No results (`--fail-on-empty`) |
+| 7 | Authentication error |
+| 10 | Aborted by user |
+| 130 | Interrupted |
 
 ## Command Map
 
+Some commands have dedicated reference pages in this documentation set. Others are currently discoverable via `lynxdb <command> --help`.
+
 | Category | Commands |
 |----------|----------|
-| Core data | [`query`](/docs/cli/query), [`ingest`](/docs/cli/ingest), [`import`](/docs/cli/ingest#import) |
-| Real-time | [`tail`](/docs/cli/tail), [`top`](/docs/cli/tail#top), [`watch`](/docs/cli/tail#watch), [`diff`](/docs/cli/tail#diff) |
-| Quick access | [`count`](/docs/cli/shortcuts#count), [`sample`](/docs/cli/shortcuts#sample), [`last`](/docs/cli/shortcuts#last), [`fields`](/docs/cli/shortcuts#fields), [`explain`](/docs/cli/shortcuts#explain), [`examples`](/docs/cli/shortcuts#examples) |
-| Server & ops | [`server`](/docs/cli/server), `status`, `health`, `indexes`, `cache` |
-| Materialized views | [`mv`](/docs/cli/mv) |
-| Alerts | [`alerts`](/docs/cli/alerts) |
-| Configuration | [`config`](/docs/cli/config-cmd), [`doctor`](/docs/cli/config-cmd#doctor) |
-| Interactive | [`shell`](/docs/cli/shell) |
-| Performance | [`bench`](/docs/cli/bench-demo), [`demo`](/docs/cli/bench-demo#demo) |
-| Output | [`--format`](/docs/cli/output-formats) |
-| Setup | [`install`](/docs/cli/install), [`uninstall`](/docs/cli/install#uninstall) |
-| Completion | [`completion`](/docs/cli/completion) |
+| Querying and ingest | [`query`](/docs/cli/query), [`ingest`](/docs/cli/ingest), `import`, [`tail`](/docs/cli/tail), `fields`, `count`, `sample`, `watch`, `diff`, `last`, `explain`, `examples` |
+| Server and operations | [`server`](/docs/cli/server), `status`, `health`, `indexes`, `cache`, `jobs`, `doctor` |
+| Saved objects | [`mv`](/docs/cli/mv), [`alerts`](/docs/cli/alerts), `saved`, `save`, `run`, `dashboards` |
+| Authentication and connection | `login`, `logout`, `auth`, [`config`](/docs/cli/config-cmd) |
+| Interactive and UI | [`shell`](/docs/cli/shell), `ui`, `open`, `share`, `top` |
+| Setup and maintenance | `init`, [`install`](/docs/cli/install), `uninstall`, `upgrade`, `version`, [`completion`](/docs/cli/completion) |
+| Diagnostics and misc | [`bench`](/docs/cli/bench-demo), `demo`, `grammar`, `explain-error` |
 
 ## SPL Compatibility Hints
 
-When using file/stdin query mode, LynxDB detects common Splunk SPL1 syntax and prints compatibility hints to stderr:
+When using file or stdin query mode, LynxDB detects several common Splunk-style patterns and prints compatibility hints to stderr.
+
+Example:
 
 ```
 hint: "index=main" is Splunk SPL syntax. In LynxDB SPL2, use "FROM main" instead.
 ```
 
-This helps users transitioning from Splunk. Run `lynxdb examples` for a full SPL2 cookbook.
+Run `lynxdb examples` for a built-in query cookbook.
+
+## Related
+
+- [Query Command](/docs/cli/query)
+- [Server Command](/docs/cli/server)
+- [config & doctor](/docs/cli/config-cmd)
+- [Output Formats](/docs/cli/output-formats)

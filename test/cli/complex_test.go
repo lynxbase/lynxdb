@@ -459,22 +459,25 @@ func TestComplex_EvalNullCoalesce(t *testing.T) {
 // ============================================================================
 
 func TestComplex_Percentiles_Ordered(t *testing.T) {
-	// perc50 < perc75 < perc90 < perc99
-	// NOTE: perc25 is known to return null (BUG) — excluded from ordering check.
+	// p25 <= p50 <= p75 <= p90 <= p99
 	input := generateBackendEvents(100)
 
 	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
-		`| stats perc50(duration_ms) as p50, perc75(duration_ms) as p75, perc90(duration_ms) as p90, perc99(duration_ms) as p99`)
+		`| stats perc25(duration_ms) as p25, perc50(duration_ms) as p50, perc75(duration_ms) as p75, perc90(duration_ms) as p90, perc99(duration_ms) as p99`)
 
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
 
+	p25 := jsonFieldFloat(t, r.Stdout, "p25")
 	p50 := jsonFieldFloat(t, r.Stdout, "p50")
 	p75 := jsonFieldFloat(t, r.Stdout, "p75")
 	p90 := jsonFieldFloat(t, r.Stdout, "p90")
 	p99 := jsonFieldFloat(t, r.Stdout, "p99")
 
+	if p25 > p50 {
+		t.Errorf("p25 (%.1f) > p50 (%.1f)", p25, p50)
+	}
 	if p50 > p75 {
 		t.Errorf("p50 (%.1f) > p75 (%.1f)", p50, p75)
 	}
@@ -1309,11 +1312,6 @@ func TestComplex_Server_WhereBetween(t *testing.T) {
 
 	minV := row["min_dur"]
 	maxV := row["max_dur"]
-
-	// min/max may be null if the aggregation function doesn't support non-integer fields.
-	if minV == nil || maxV == nil {
-		t.Skipf("TODO: min/max aggregation returns null for duration_ms — row: %v", row)
-	}
 
 	minDur, ok1 := toFloat(minV)
 	maxDur, ok2 := toFloat(maxV)

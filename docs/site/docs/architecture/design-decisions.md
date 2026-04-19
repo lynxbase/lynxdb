@@ -110,7 +110,7 @@ The key factors:
 
 2. **Fast compilation**: Go compiles the entire LynxDB codebase in under 5 seconds. This matters for contributor productivity and CI/CD speed. Rust compiles can take minutes for a project this size.
 
-3. **Concurrency**: Go's goroutines and channels are ideal for LynxDB's architecture -- concurrent ingest (sharded memtable), streaming query execution (Volcano iterators pulling from multiple segments), and background operations (compaction, tiering).
+3. **Concurrency**: Go's goroutines and channels are ideal for LynxDB's architecture -- concurrent ingest (async batcher + direct-to-part writes), streaming query execution (Volcano iterators pulling from multiple segments), and background operations (compaction, tiering).
 
 4. **Performance**: Go's performance is sufficient. The bytecode VM achieves 22ns/op with zero allocations through careful design (fixed-size stack, no interfaces on the hot path). Where Go's GC could be a concern (the VM hot loop), we pre-allocate and reuse, eliminating GC pressure entirely.
 
@@ -213,9 +213,9 @@ The trade-off is that the Volcano model has higher per-row overhead than vectori
 
 The result is ~2.1M events/sec pipeline throughput, which is sufficient for single-node query volumes.
 
-## Why Append-Only WAL (Not LSM Tree)
+## Historical Note: WAL vs LSM
 
-**Decision**: Use a simple append-only WAL for durability, not a full LSM tree.
+**Original direction**: Use a simple append-only WAL for durability, not a full LSM tree.
 
 **Alternatives**: LSM tree (RocksDB, LevelDB), B-tree (SQLite, BoltDB).
 
@@ -226,19 +226,18 @@ Log data is **append-only by nature**. Events are never updated or deleted in pl
 1. Append (ingest a new event).
 2. Delete (retention policy removes entire segments).
 
-This means LynxDB does not need the complexity of an LSM tree's merge-on-read or a B-tree's in-place updates. A simple append-only WAL provides durability, and the separate memtable-to-segment flush path provides efficient batch writes.
+This reasoning came from the same append-only workload assumptions that still shape the system today. The current implementation has since moved to direct-to-part writes with `AsyncBatcher` and atomic rename instead of a separate WAL + memtable pipeline.
 
-The WAL + memtable + compaction architecture is simpler to reason about, debug, and tune than a general-purpose LSM tree. Every component serves one purpose:
+The core tradeoff remains the same: prefer a storage path specialized for immutable log segments over a general-purpose LSM or B-tree stack.
 
-- WAL: durability
-- Memtable: fast writes + recent-event queries
+- Async batcher: fast writes + bounded in-memory buffering
 - Segment writer: columnar encoding + indexing
 - Compaction: merge small segments into large ones
 
 ## Related
 
 - [Architecture Overview](/docs/architecture/overview) -- how these decisions manifest in the system
-- [Storage Engine](/docs/architecture/storage-engine) -- WAL and compaction implementation
+- [Storage Engine](/docs/architecture/storage-engine) -- current part-write and compaction implementation
 - [Segment Format](/docs/architecture/segment-format) -- columnar encoding details
 - [Query Engine](/docs/architecture/query-engine) -- Volcano model and bytecode VM
 - [Indexing](/docs/architecture/indexing) -- FST + roaring bitmap implementation

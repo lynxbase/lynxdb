@@ -30,11 +30,11 @@ LynxDB is a columnar log analytics database written from scratch in Go. Every co
 ┌───────────┴───────────────────────────────────────────────┐
 │                    Storage Engine                          │
 │                                                           │
-│  ┌─────────┐  ┌──────────┐  ┌───────────┐  ┌──────────┐ │
-│  │   WAL   │→ │ Memtable │→ │  Segment  │→ │  S3 Tier │ │
-│  │ (append │  │ (sharded │  │  Writer   │  │  (warm/  │ │
-│  │  only)  │  │  btree)  │  │  (.lsg)   │  │   cold)  │ │
-│  └─────────┘  └──────────┘  └─────┬─────┘  └──────────┘ │
+│  ┌──────────────┐  ┌───────────┐  ┌──────────┐          │
+│  │ AsyncBatcher │→ │ Part      │→ │  S3 Tier │          │
+│  │ (per-index   │  │ Writer    │  │  (warm/  │          │
+│  │  buffering)  │  │  (.lsg)   │  │   cold)  │          │
+│  └──────────────┘  └─────┬─────┘  └──────────┘          │
 │                                   │                       │
 │  ┌────────────────────────────────┤                       │
 │  │           Indexes              │                       │
@@ -76,7 +76,7 @@ lynxdb query --file '/var/log/nginx/*.log' '| where status>=500 | top 10 uri'
 
 In pipe mode, LynxDB behaves like `grep` or `awk`. The binary:
 
-1. Creates an ephemeral in-memory storage engine (no data directory, no WAL).
+1. Creates an ephemeral in-memory storage engine (no data directory, no persisted parts).
 2. Ingests all data from stdin or the specified file(s).
 3. Runs the full SPL2 pipeline -- parser, optimizer, Volcano iterator, bytecode VM.
 4. Prints results to stdout and exits.
@@ -91,12 +91,12 @@ lynxdb server --data-dir /var/lib/lynxdb
 
 Server mode starts a long-running process that:
 
-1. Opens (or creates) a data directory with a WAL, segment files, and metadata.
-2. Replays the WAL to recover any uncommitted memtable state.
+1. Opens (or creates) a data directory with part files, caches, and metadata.
+2. Scans the data directory, removes stale temporary files, and rebuilds the in-memory part registry.
 3. Starts the HTTP API on port 3100 (configurable).
-4. Accepts ingest requests, buffers events in the memtable, flushes to `.lsg` segments.
+4. Accepts ingest requests, buffers events in `AsyncBatcher`, and flushes immutable `.lsg` parts.
 5. Runs background compaction (L0 -> L1 -> L2).
-6. Serves queries against both the memtable and on-disk segments.
+6. Serves queries against on-disk and remotely tiered segments.
 
 A single server handles 50-100K events/sec on commodity hardware. Optional S3 tiering offloads older segments to object storage while keeping them queryable through a local segment cache.
 
@@ -111,7 +111,7 @@ Cluster mode uses the same binary with clustering flags. Nodes discover each oth
 | Role | Responsibility | Scales with |
 |------|----------------|-------------|
 | **Meta** (3-5 nodes) | Raft consensus, shard map, node registry, leader leases, field catalog, source registry, alert assignment, view coordination | Cluster size |
-| **Ingest** (N nodes) | Batcher write, memtable, segment flush, S3 upload, batcher replication | Write throughput |
+| **Ingest** (N nodes) | Batcher write, part flush, S3 upload, batcher replication | Write throughput |
 | **Query** (M nodes) | Scatter-gather, partial aggregation merge, segment caching | Query concurrency |
 
 In small clusters (< 10 nodes), every node runs all three roles. At scale, you split roles for independent scaling. The architecture is shared-storage: S3 is the source of truth for segments, making ingest and query nodes effectively stateless. Data is sharded using a two-level scheme (time bucketing + xxhash64 hash partitioning) and replicated via batcher-based replication with configurable ACK levels.
@@ -122,23 +122,22 @@ See [Distributed Architecture](/docs/architecture/distributed) for full details.
 
 ### Storage Engine
 
-The storage engine handles the full data lifecycle: ingest -> WAL -> memtable -> segment flush -> compaction -> tiering.
+The storage engine handles the full data lifecycle: ingest -> async buffering -> part flush -> compaction -> tiering.
 
 ```mermaid
 flowchart LR
-    A[Ingest] --> B[WAL]
-    B --> C[Memtable]
-    C -->|flush threshold| D[Segment Writer]
-    D --> E[".lsg Segments"]
-    E --> F[Compaction]
-    F --> E
-    E -->|age policy| G[S3 Tier]
+    A[Ingest] --> B[AsyncBatcher]
+    B -->|flush thresholds| C[Part Writer]
+    C --> D[".lsg Segments"]
+    D --> E[Compaction]
+    E --> D
+    D -->|age policy| F[S3 Tier]
 ```
 
 Key design choices:
 
-- **WAL**: Append-only with configurable fsync policy (none, write, full). Batch sync every 100ms. 256 MB segment rotation. Replayed on crash recovery.
-- **Memtable**: Sharded by CPU core for lock-free concurrent writes. Flushed to disk when the total size reaches 512 MB (default).
+- **AsyncBatcher**: Per-index in-memory buffering with internal flush thresholds for event count, bytes, and wait time.
+- **Part writer**: Writes to `tmp_*.lsg`, optionally `fsync`s, then atomically renames into place.
 - **Segments**: Columnar `.lsg` V2 format. Per-column encoding: delta-varint for timestamps, dictionary for strings, Gorilla for floats, LZ4 for raw text. Each segment embeds a bloom filter and FST-based inverted index.
 - **Compaction**: Size-tiered with three levels (L0 overlapping -> L1 merged -> L2 fully compacted at ~1 GB). Rate-limited to avoid I/O starvation.
 - **Tiering**: Hot (local SSD, < 7d) -> Warm (S3, < 30d) -> Cold (Glacier, < 90d). Local segment cache for warm-tier queries.
@@ -182,7 +181,7 @@ Together, these indexes enable full-text search that is orders of magnitude fast
 
 The HTTP API layer (`pkg/api/rest`) exposes all functionality over HTTP:
 
-- **Ingest**: JSON, NDJSON, plain text, plus compatibility endpoints for Elasticsearch `_bulk`, OTLP, and Splunk HEC.
+- **Ingest**: Structured event arrays via `/api/v1/ingest`, raw lines via `/api/v1/ingest/raw`, plus compatibility endpoints for Elasticsearch `_bulk`, OTLP, and Splunk HEC.
 - **Query**: Sync, async, and hybrid execution modes. NDJSON streaming for large result sets. SSE for real-time progress.
 - **Management**: Fields catalog, saved queries, alerts, dashboards, materialized views, configuration.
 
@@ -193,15 +192,15 @@ See [REST API Overview](/docs/api/overview) for endpoint documentation.
 ### Write Path
 
 ```
-HTTP POST /api/v1/ingest
-  → Parse (JSON / NDJSON / text / auto-detect)
-  → Extract timestamp (_timestamp, @timestamp, time, ts, ...)
-  → [Single-node mode] Append to WAL (configurable fsync)
+HTTP POST /api/v1/ingest, /api/v1/ingest/raw, /api/v1/es/_bulk, or /api/v1/otlp/v1/logs
+  → Decode request shape (structured event array, raw lines, or compatibility payload)
+  → Convert request payloads into internal events
+  → Buffer in AsyncBatcher
   → [Cluster mode] Route to shard primary, replicate via batcher
-  → Insert into sharded memtable
-  → [When memtable >= 512 MB]
-    → Flush to .lsg segment (columnar encoding + bloom + inverted index)
-    → Register segment in metadata
+  → [Flush thresholds reached]
+    → Write tmp_*.lsg part
+    → Optional fsync + atomic rename
+    → Register part metadata
     → [In cluster mode: upload to S3]
   → [Background]
     → Compaction merges L0 → L1 → L2
@@ -219,8 +218,8 @@ SPL2 query text
     → Check segment time ranges (prune by time)
     → Check bloom filters (prune by term)
     → Check inverted index (resolve full-text search)
-    → Read matching columns from .lsg segments
-    → Read from memtable (in-memory events)
+    → Read matching columns from .lsg parts
+    → Read from batcher buffer (events buffered but not yet flushed)
   → Stream through pipeline operators (Filter, Eval, Aggregate, Sort, ...)
   → Bytecode VM evaluates expressions (0 allocs per row)
   → Output (JSON / table / CSV / NDJSON)
@@ -241,7 +240,7 @@ SPL2 query text
 
 ## Next Steps
 
-- [Storage Engine](/docs/architecture/storage-engine) -- WAL, memtable, flush, compaction, tiering
+- [Storage Engine](/docs/architecture/storage-engine) -- async buffering, part flush, compaction, tiering
 - [Segment Format](/docs/architecture/segment-format) -- columnar `.lsg` V2 format and encoding strategies
 - [Query Engine](/docs/architecture/query-engine) -- parser, optimizer, pipeline, bytecode VM
 - [Indexing](/docs/architecture/indexing) -- bloom filters, FST inverted index, roaring bitmaps

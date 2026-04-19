@@ -68,7 +68,7 @@ lynxdb top --interval 5s
 Shows four panels:
 - **Ingest**: Events/sec, events today, total events
 - **Queries**: Active queries, cache hit rate, materialized view count, tail sessions
-- **Storage**: Total size, segment count, memtable size, index count
+- **Storage**: Total size, part count, batcher-buffered events, index count
 - **Sources**: Bar chart of events by source
 
 Press `q` or `Ctrl+C` to exit.
@@ -82,7 +82,7 @@ Press `q` or `Ctrl+C` to exit.
 | Events ingested/sec | Current ingest rate | Sudden drops indicate pipeline issues |
 | Events today | Events ingested since midnight | Compare to baseline |
 | Total events | All events in storage | Growth rate |
-| WAL size | Current WAL size | Growing WAL means flush is slow |
+| Buffered events | Events waiting in the ingest batcher | Sustained growth means flush or compaction is falling behind |
 
 ### Storage Metrics
 
@@ -90,7 +90,7 @@ Press `q` or `Ctrl+C` to exit.
 |--------|-------------|---------------|
 | Total storage size | Disk usage for all segments | Capacity planning |
 | Segment count | Number of `.lsg` segments | High L0 count = compaction backlog |
-| Memtable size | In-memory buffer size | Should stay below `flush_threshold` |
+| Buffered events | In-memory batcher depth | Should return toward zero after flush cycles |
 | Compaction backlog | Pending compaction work | Growing backlog = increase workers |
 
 ### Query Metrics
@@ -291,7 +291,7 @@ For production deployments, monitor these at minimum:
 - [ ] Query latency (p99) -- performance SLA
 - [ ] Active queries vs `max_concurrent` -- concurrency saturation
 - [ ] Cache hit rate -- query performance optimization
-- [ ] WAL size -- flush health
+- [ ] Buffered events -- flush health
 - [ ] Compaction backlog -- storage health
 
 **Cluster-specific items** (when running in cluster mode):

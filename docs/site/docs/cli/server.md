@@ -31,6 +31,14 @@ lynxdb server [flags]
 | `--tls-key` | | Path to TLS private key PEM file |
 | `--max-query-pool` | | Global query memory pool (e.g., `2gb`, `4gb`) |
 | `--spill-dir` | | Directory for temporary spill files (default: OS temp dir) |
+| `--no-ui` | `false` | Disable the embedded Web UI |
+| `--ui` | `false` | Open the embedded Web UI in a browser after startup |
+| `--profile-runtime` | `false` | Enable Go mutex and block profiling |
+| `--cluster.enabled` | `false` | Enable cluster mode |
+| `--cluster.node-id` | | Unique node identifier in cluster mode |
+| `--cluster.roles` | | Comma-separated node roles: `meta`, `ingest`, `query` |
+| `--cluster.seeds` | | Comma-separated seed node addresses (`host:port`) |
+| `--cluster.grpc-port` | | gRPC port for inter-node communication |
 
 ## Examples
 
@@ -77,7 +85,9 @@ When `--auth` is enabled and no keys exist, a root key is generated and displaye
   Save this key now. It will NOT be shown again.
 ```
 
-Use the root key to create additional keys with `lynxdb auth create-key --name <name>`. See the [config command](/docs/cli/config-cmd) for managing connection profiles that store tokens.
+Use the root key to create additional keys with `lynxdb auth create --name <name>`. See the [config command](/docs/cli/config-cmd) for managing connection profiles that store tokens.
+
+Use a persistent `--data-dir` when enabling auth. LynxDB only bootstraps the API key store when the server has a data directory to store keys in.
 
 ## Signals
 
@@ -87,23 +97,25 @@ Use the root key to create additional keys with `lynxdb auth create-key --name <
 | `SIGTERM` | Graceful shutdown (same as SIGINT) |
 | `SIGHUP` | Hot-reload configuration from file |
 
-Graceful shutdown ensures all in-flight queries complete, the memtable is flushed, and the WAL is synced before the process exits.
+Graceful shutdown ensures all in-flight queries complete and any pending part flushes are finished before the process exits.
 
 ### Hot-Reloadable Settings
 
-These settings take effect immediately on `SIGHUP` or `lynxdb config reload`, without restarting the server:
+These settings are applied to new work when you send `SIGHUP` or run `lynxdb config reload`:
 
 - `log_level`
 - `retention`
-- `query.max_concurrent`
-- `query.default_result_limit`
-- `query.max_result_limit`
-- `query.max_query_runtime`
+- `query.*` execution limits such as `max_concurrent`, `default_result_limit`, `max_result_limit`, `max_query_runtime`, `max_query_length`, and profiling preview settings
+- `storage.compaction_rate_limit_mb`
 
-Settings that require a restart (server warns on reload):
+Restart the server after changing startup-time settings such as:
 
 - `listen`
 - `data_dir`
+- TLS certificate and key settings
+- authentication enablement
+- UI enablement
+- compaction worker counts and similar storage scheduler settings
 
 ## systemd Integration
 

@@ -27,7 +27,7 @@ In a small cluster, every node runs all three roles (meta, ingest, query). This 
 Key properties:
 - **Raft consensus** for metadata (hashicorp/raft) -- needs 3+ nodes for quorum
 - **Batcher replication** for data durability via gRPC streaming with configurable ACK levels
-- **S3 is the source of truth** for segments -- nodes are stateless except for batcher + memtable
+- **S3 is the source of truth** for parts -- ingest nodes are stateless except for the async batcher buffer awaiting flush
 - **Two-level sharding**: time bucketing (default 24h) + `xxhash64(source + "\x00" + host) % 1024` virtual partitions
 - **Node failure** triggers shard reassignment in ~25 seconds with no data loss
 

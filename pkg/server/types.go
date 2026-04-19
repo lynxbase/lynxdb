@@ -365,6 +365,10 @@ func (j *SearchJob) Snapshot() JobSnapshot {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
+	return j.snapshotLocked()
+}
+
+func (j *SearchJob) snapshotLocked() JobSnapshot {
 	return JobSnapshot{
 		ID:         j.ID,
 		Query:      j.Query,
@@ -379,15 +383,21 @@ func (j *SearchJob) Snapshot() JobSnapshot {
 	}
 }
 
-// Cancel cancels the job and marks it as canceled.
-func (j *SearchJob) Cancel() {
+// Cancel cancels the job and returns whether this call transitioned it to the
+// canceled state, plus the post-call snapshot.
+func (j *SearchJob) Cancel() (bool, JobSnapshot) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+
+	canceled := false
 	if j.Status == JobStatusRunning {
 		j.cancel()
 		j.Error = "canceled by user"
 		j.complete(JobStatusCanceled)
+		canceled = true
 	}
+
+	return canceled, j.snapshotLocked()
 }
 
 // Detach re-parents the job's context so it no longer inherits cancellation

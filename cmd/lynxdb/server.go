@@ -182,6 +182,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		TLSConfig:     tlsCfg,
 		Storage:       cfg.Storage,
 		Logger:        logger,
+		LevelVar:      &levelVar,
 		Query:         cfg.Query,
 		Ingest:        cfg.Ingest,
 		HTTP:          cfg.HTTP,
@@ -209,12 +210,11 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 					continue
 				}
-				if reloadErr := newCfg.Validate(); reloadErr != nil {
-					logger.Error("config reload validation failed", "error", reloadErr)
+				if _, reloadErr := srv.ReloadConfig(newCfg); reloadErr != nil {
+					logger.Error("config reload failed", "error", reloadErr)
 
 					continue
 				}
-				applyHotReload(logger, cfg, newCfg, &levelVar, srv)
 				cfg = newCfg
 
 				continue
@@ -304,26 +304,6 @@ func printStartupBanner(cfgPath string, cfg *config.Config, envOverrides []confi
 
 	fmt.Println(t.KeyValue("Listen", cfg.Listen))
 	fmt.Println()
-}
-
-func applyHotReload(logger *slog.Logger, old, updated *config.Config, levelVar *slog.LevelVar, srv *rest.Server) {
-	if old.LogLevel != updated.LogLevel {
-		levelVar.Set(parseLogLevel(updated.LogLevel))
-		logger.Info("reloaded log_level", "old", old.LogLevel, "new", updated.LogLevel)
-	}
-
-	srv.Engine().ReloadConfig(updated)
-
-	if old.Retention != updated.Retention {
-		logger.Info("reloaded retention", "old", old.Retention.String(), "new", updated.Retention.String())
-	}
-
-	if old.Listen != updated.Listen {
-		logger.Warn("listen changed, restart required", "old", old.Listen, "new", updated.Listen)
-	}
-	if old.DataDir != updated.DataDir {
-		logger.Warn("data_dir changed, restart required", "old", old.DataDir, "new", updated.DataDir)
-	}
 }
 
 func parseLogLevel(s string) slog.Level {

@@ -69,20 +69,21 @@ Standard deviation.
 
 ## Percentiles
 
-Compute percentile values: `perc50`, `perc75`, `perc90`, `perc95`, `perc99`.
+Compute percentile values with the fixed percentile aggregations: `perc25`, `perc50`, `perc75`, `perc90`, `perc95`, `perc99`.
 
 ```spl
-| stats perc50(duration_ms) AS median,
+| stats perc25(duration_ms) AS p25,
+        perc50(duration_ms) AS median,
         perc95(duration_ms) AS p95,
         perc99(duration_ms) AS p99
   by endpoint
 ```
 
-`perc50` is the median. Percentiles use the t-digest algorithm for memory-efficient approximate computation.
+`perc50` is the median. Percentiles use the t-digest algorithm for memory-efficient approximate computation. Variable-percentile syntax such as `percentile(duration_ms, 99.9)` is not currently supported.
 
 ## earliest / latest
 
-First and last values by `_time`.
+First and last values by `_time`. `first` is an alias of `earliest`, and `last` is an alias of `latest`.
 
 ```spl
 | stats earliest(status) AS first_status, latest(status) AS last_status by host
@@ -112,10 +113,11 @@ Use `eval()` inside `count` or other functions for conditional aggregation:
 | `dc(f)` | Distinct count | `dc(user_id)` |
 | `values(f)` | Distinct values list | `values(level)` |
 | `stdev(f)` | Standard deviation | `stdev(duration_ms)` |
+| `perc25(f)` | 25th percentile | `perc25(duration_ms)` |
 | `perc50(f)` | Median (50th pct) | `perc50(duration_ms)` |
 | `perc75(f)` | 75th percentile | `perc75(duration_ms)` |
 | `perc90(f)` | 90th percentile | `perc90(duration_ms)` |
 | `perc95(f)` | 95th percentile | `perc95(duration_ms)` |
 | `perc99(f)` | 99th percentile | `perc99(duration_ms)` |
-| `earliest(f)` | First by time | `earliest(status)` |
-| `latest(f)` | Last by time | `latest(status)` |
+| `earliest(f)` / `first(f)` | First by time | `earliest(status)` |
+| `latest(f)` / `last(f)` | Last by time | `latest(status)` |

@@ -124,6 +124,7 @@ const sidebars: SidebarsConfig = {
         'cli/shortcuts',
         'cli/mv',
         'cli/alerts',
+        'cli/auth',
         'cli/config-cmd',
         'cli/shell',
         'cli/bench-demo',

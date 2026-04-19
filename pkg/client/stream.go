@@ -14,10 +14,20 @@ import (
 
 const ndjsonScanBufSize = 1 << 20 // 1MB
 
+type streamQueryRequest struct {
+	Q    string `json:"q,omitempty"`
+	From string `json:"from,omitempty"`
+	To   string `json:"to,omitempty"`
+}
+
 // QueryStream executes a streaming query via POST /query/stream.
 // Each NDJSON line is delivered to fn. Returns the final stream metadata.
 func (c *Client) QueryStream(ctx context.Context, req QueryRequest, fn func(json.RawMessage) error) (*StreamMeta, error) {
-	body, err := marshalReader(c, req)
+	body, err := marshalReader(c, streamQueryRequest{
+		Q:    req.Q,
+		From: req.From,
+		To:   req.To,
+	})
 	if err != nil {
 		return nil, err
 	}

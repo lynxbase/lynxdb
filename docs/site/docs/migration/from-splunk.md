@@ -134,8 +134,8 @@ lynxdb import splunk_export.json --format ndjson
 # Validate before importing
 lynxdb import splunk_export.csv --dry-run
 
-# Filter during import
-lynxdb import splunk_export.csv --transform '| where level!="DEBUG"'
+# Import into a dedicated index
+lynxdb import splunk_export.csv --index splunk
 ```
 
 ### Step 4: Convert Saved Searches

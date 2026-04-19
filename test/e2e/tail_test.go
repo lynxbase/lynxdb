@@ -47,10 +47,14 @@ func TestE2E_Tail_ReceivesEvents(t *testing.T) {
 			t.Logf("tail received %d events", received.Load())
 			return
 		case <-ingestTicker.C:
-			events := []map[string]interface{}{
-				{"host": "tail-test", "message": "tail event"},
+			events := []client.IngestEvent{
+				{
+					Event:  `{"host":"tail-test","message":"tail event"}`,
+					Host:   "tail-test",
+					Fields: map[string]interface{}{"message": "tail event"},
+				},
 			}
-			_, _ = h.Client().Ingest(ctx, events)
+			_, _ = h.Client().IngestEvents(ctx, events)
 		case <-ctx.Done():
 			cancel()
 			<-tailDone

@@ -5,11 +5,33 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/server"
 )
+
+func normalizeJobStatusFilter(raw string) (string, error) {
+	status := strings.ToLower(strings.TrimSpace(raw))
+	switch status {
+	case "":
+		return "", nil
+	case server.JobStatusRunning, server.JobStatusDone, server.JobStatusError, server.JobStatusCanceled:
+		return status, nil
+	case "complete":
+		return server.JobStatusDone, nil
+	case "failed":
+		return server.JobStatusError, nil
+	case "cancelled":
+		return server.JobStatusCanceled, nil
+	default:
+		return "", fmt.Errorf(
+			"invalid job status %q; expected one of running, done, error, canceled, complete, failed, cancelled",
+			raw,
+		)
+	}
+}
 
 // handleGetJob returns the status/results of a job by string ID.
 func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
@@ -94,15 +116,22 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !s.engine.CancelJob(jobID) {
+	result, ok := s.engine.CancelJob(jobID)
+	if !ok {
 		respondError(w, ErrCodeNotFound, http.StatusNotFound, "job not found")
 
 		return
 	}
 
-	respondData(w, http.StatusOK, map[string]interface{}{
-		"job_id": jobID, "status": "canceled",
-	})
+	data := map[string]interface{}{
+		"job_id":   jobID,
+		"status":   result.Snapshot.Status,
+		"canceled": result.Canceled,
+	}
+	if !result.Snapshot.DoneAt.IsZero() {
+		data["completed_at"] = result.Snapshot.DoneAt
+	}
+	respondData(w, http.StatusOK, data)
 }
 
 // handleListJobs returns all active/recent jobs.
@@ -110,7 +139,13 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeQuery) {
 		return
 	}
-	jobs := s.engine.ListJobs()
+	status, err := normalizeJobStatusFilter(r.URL.Query().Get("status"))
+	if err != nil {
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error())
+
+		return
+	}
+	jobs := s.engine.ListJobs(status)
 	entries := make([]map[string]interface{}, len(jobs))
 	for i, j := range jobs {
 		entries[i] = map[string]interface{}{

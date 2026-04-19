@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -268,6 +269,70 @@ func TestServer_IngestJSONArray_PartialSuccessOnMalformedTail(t *testing.T) {
 
 	if got := queryEventCount(t, srv.Addr(), `{"q":"FROM main"}`); got != 2 {
 		t.Fatalf("query count: got %d, want 2", got)
+	}
+}
+
+func TestServer_IngestRejectsSingleObjectWithSuggestion(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/api/v1/ingest", srv.Addr()),
+		"application/json",
+		bytes.NewBufferString(`{"event":"one"}`),
+	)
+	if err != nil {
+		t.Fatalf("POST ingest: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	errObj := result["error"].(map[string]interface{})
+	msg, _ := errObj["message"].(string)
+	if !strings.Contains(msg, "top-level JSON array") {
+		t.Fatalf("message = %q, want array guidance", msg)
+	}
+	suggestion, _ := errObj["suggestion"].(string)
+	if !strings.Contains(suggestion, "/api/v1/ingest/raw") || !strings.Contains(suggestion, "/api/v1/es/_bulk") {
+		t.Fatalf("suggestion = %q, want endpoint guidance", suggestion)
+	}
+}
+
+func TestServer_IngestRejectsNDJSONWithSuggestion(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/api/v1/ingest", srv.Addr()),
+		"application/x-ndjson",
+		bytes.NewBufferString("{\"event\":\"one\"}\n{\"event\":\"two\"}\n"),
+	)
+	if err != nil {
+		t.Fatalf("POST ingest: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	errObj := result["error"].(map[string]interface{})
+	suggestion, _ := errObj["suggestion"].(string)
+	if !strings.Contains(suggestion, "/api/v1/ingest/raw") {
+		t.Fatalf("suggestion = %q, want raw endpoint guidance", suggestion)
 	}
 }
 
@@ -655,9 +720,6 @@ func TestQuery_CancelJob(t *testing.T) {
 	data := result["data"].(map[string]interface{})
 	jobID := data["job_id"].(string)
 
-	// Wait a bit for the job to potentially complete.
-	time.Sleep(200 * time.Millisecond)
-
 	// Cancel.
 	req, _ := http.NewRequest("DELETE", fmt.Sprintf("http://%s/api/v1/query/jobs/%s", srv.Addr(), jobID), http.NoBody)
 	resp2, err := http.DefaultClient.Do(req)
@@ -669,8 +731,22 @@ func TestQuery_CancelJob(t *testing.T) {
 	var cancelResult map[string]interface{}
 	json.NewDecoder(resp2.Body).Decode(&cancelResult)
 	d := cancelResult["data"].(map[string]interface{})
-	if d["status"] != "canceled" {
-		t.Errorf("cancel status: %v", d["status"])
+	status, _ := d["status"].(string)
+	canceled, ok := d["canceled"].(bool)
+	if !ok {
+		t.Fatalf("missing canceled flag: %v", d)
+	}
+	switch status {
+	case "canceled":
+		if !canceled {
+			t.Errorf("canceled flag = false for canceled job: %v", d)
+		}
+	case "done":
+		if canceled {
+			t.Errorf("canceled flag = true for completed job: %v", d)
+		}
+	default:
+		t.Errorf("unexpected cancel status: %v", d["status"])
 	}
 }
 
@@ -709,6 +785,138 @@ func TestQuery_ListJobs(t *testing.T) {
 
 	if len(jobs) < 2 {
 		t.Errorf("jobs: got %d, want >= 2", len(jobs))
+	}
+}
+
+func TestQuery_CancelJob_AlreadyDone(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	ingestTestEvents(t, srv.Addr(), 10, 2)
+
+	wait := float64(0)
+	body, _ := json.Marshal(map[string]interface{}{
+		"q": `FROM main | head 1`, "wait": wait,
+	})
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	resp.Body.Close()
+
+	data := result["data"].(map[string]interface{})
+	jobID := data["job_id"].(string)
+
+	for i := 0; i < 50; i++ {
+		resp, err = http.Get(fmt.Sprintf("http://%s/api/v1/query/jobs/%s", srv.Addr(), jobID))
+		if err != nil {
+			t.Fatalf("GET job: %v", err)
+		}
+		var jr map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&jr)
+		resp.Body.Close()
+
+		d := jr["data"].(map[string]interface{})
+		if d["status"] == "done" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	req, _ := http.NewRequest("DELETE", fmt.Sprintf("http://%s/api/v1/query/jobs/%s", srv.Addr(), jobID), http.NoBody)
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var cancelResult map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&cancelResult)
+	d := cancelResult["data"].(map[string]interface{})
+	if d["status"] != "done" {
+		t.Fatalf("status: got %v, want done", d["status"])
+	}
+	if d["canceled"] != false {
+		t.Fatalf("canceled: got %v, want false", d["canceled"])
+	}
+}
+
+func TestQuery_ListJobs_FilterByStatus(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	ingestTestEvents(t, srv.Addr(), 10, 2)
+
+	wait := float64(0)
+	body, _ := json.Marshal(map[string]interface{}{
+		"q": `FROM main | head 1`, "wait": wait,
+	})
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	var submitted map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&submitted)
+	resp.Body.Close()
+
+	jobID := submitted["data"].(map[string]interface{})["job_id"].(string)
+
+	for i := 0; i < 50; i++ {
+		resp, err = http.Get(fmt.Sprintf("http://%s/api/v1/query/jobs/%s", srv.Addr(), jobID))
+		if err != nil {
+			t.Fatalf("GET job: %v", err)
+		}
+		var jr map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&jr)
+		resp.Body.Close()
+
+		if jr["data"].(map[string]interface{})["status"] == "done" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	resp, err = http.Get(fmt.Sprintf("http://%s/api/v1/query/jobs?status=complete", srv.Addr()))
+	if err != nil {
+		t.Fatalf("GET jobs: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var result map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&result)
+	jobs := result["data"].(map[string]interface{})["jobs"].([]interface{})
+	if len(jobs) == 0 {
+		t.Fatal("expected at least one completed job")
+	}
+	found := false
+	for _, job := range jobs {
+		entry := job.(map[string]interface{})
+		if entry["status"] != "done" {
+			t.Fatalf("status: got %v, want done", entry["status"])
+		}
+		if entry["job_id"] == jobID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("job %s not found in filtered results", jobID)
+	}
+}
+
+func TestQuery_ListJobs_FilterByStatus_Invalid(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query/jobs?status=bogus", srv.Addr()))
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: got %d, want 400", resp.StatusCode)
 	}
 }
 
@@ -949,6 +1157,36 @@ func TestQueryGet_MissingQ(t *testing.T) {
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status: got %d, want 400", resp.StatusCode)
 	}
+}
+
+func TestQuery_FormatValidation(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	t.Run("POST rejects unsupported format", func(t *testing.T) {
+		body := strings.NewReader(`{"q":"FROM main","format":"csv"}`)
+		resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", body)
+		if err != nil {
+			t.Fatalf("POST: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status: got %d, want 400", resp.StatusCode)
+		}
+	})
+
+	t.Run("GET rejects unsupported format", func(t *testing.T) {
+		resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query?q=%s&format=csv", srv.Addr(), "FROM+main"))
+		if err != nil {
+			t.Fatalf("GET: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status: got %d, want 400", resp.StatusCode)
+		}
+	})
 }
 
 func TestIngestBulk_Route(t *testing.T) {

@@ -54,8 +54,8 @@ type Engine struct {
 
 	activeJobs atomic.Int64
 	maxConcur  atomic.Int32
-	jobs       sync.Map // jobID (string) -> *SearchJob
-	queryCfg   config.QueryConfig
+	jobs       sync.Map                              // jobID (string) -> *SearchJob
+	queryCfg   atomic.Pointer[config.QueryConfig]    // hot-reloadable snapshot; readers Load(), ReloadConfig() Store()
 
 	// ingestGen is a monotonically increasing generation counter, bumped on every
 	// ingest and flush. Used as part of the query cache key to ensure queries
@@ -312,7 +312,6 @@ func NewEngine(cfg Config) *Engine {
 		projectionCache:    projCache,
 		startTime:          time.Now(),
 		metrics:            storage.NewMetrics(),
-		queryCfg:           queryCfg,
 		spillMgr:           spillMgr,
 		ingestDedup:        dedupStage,
 		compactionFailures: newCompactionFailureTracker(),
@@ -330,6 +329,8 @@ func NewEngine(cfg Config) *Engine {
 		done: make(chan struct{}),
 	})
 
+	qc := queryCfg
+	e.queryCfg.Store(&qc)
 	e.maxConcur.Store(int32(queryCfg.MaxConcurrent))
 
 	// Wire cache memory into the governor so inserts/evictions are tracked.
@@ -354,7 +355,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	// Clean up orphan spill files from previous crashes.
 	// Must happen BEFORE NewSpillManagerWithQuota() creates the current PID's
 	// directory, to avoid deleting our own freshly-created spill directory.
-	spillDir := e.queryCfg.SpillDir
+	spillDir := e.queryCfg.Load().SpillDir
 	if spillDir == "" {
 		spillDir = os.TempDir()
 	}
@@ -554,7 +555,7 @@ func (e *Engine) SetMaxConcurrent(n int32) {
 
 // QueryCfg returns the engine's query configuration.
 func (e *Engine) QueryCfg() config.QueryConfig {
-	return e.queryCfg
+	return *e.queryCfg.Load()
 }
 
 // SourceRegistry returns the source registry for multi-source query resolution.
@@ -662,7 +663,8 @@ func (e *Engine) ReloadConfig(cfg *config.Config) {
 		e.maxConcur.Store(int32(cfg.Query.MaxConcurrent))
 		e.logger.Info("reloaded query.max_concurrent", "old", old, "new", cfg.Query.MaxConcurrent)
 	}
-	e.queryCfg = cfg.Query
+	qc := cfg.Query
+	e.queryCfg.Store(&qc)
 
 	// Hot-reload compaction rate limit.
 	if cfg.Storage.CompactionRateLimitMB > 0 && e.adaptiveCtrl != nil {

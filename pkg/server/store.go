@@ -509,7 +509,7 @@ func (e *Engine) buildEventStore(ctx context.Context, hints *spl2.QueryHints, on
 					idx = DefaultIndexName
 				}
 
-				events, rs, err := readSegmentEvents(seg, reader, hints, requiredCols, e.logger, e.queryCfg.BitmapSelectivityThreshold)
+				events, rs, err := readSegmentEvents(seg, reader, hints, requiredCols, e.logger, e.queryCfg.Load().BitmapSelectivityThreshold)
 				if err != nil {
 					e.logger.Warn("segment read error",
 						"segment", seg.meta.ID, "error", err)
@@ -1180,7 +1180,7 @@ func (e *Engine) buildPartialAggStore(
 					continue
 				}
 
-				events, rs, err := readSegmentEvents(seg, reader, hints, requiredCols, e.logger, e.queryCfg.BitmapSelectivityThreshold)
+				events, rs, err := readSegmentEvents(seg, reader, hints, requiredCols, e.logger, e.queryCfg.Load().BitmapSelectivityThreshold)
 				if err != nil {
 					e.logger.Warn("segment read error (partial agg)",
 						"segment", seg.meta.ID, "error", err)
@@ -1354,7 +1354,7 @@ func (e *Engine) buildTransformPartialAggStore(
 					continue
 				}
 
-				events, rs, err := readSegmentEvents(seg, reader, hints, requiredCols, e.logger, e.queryCfg.BitmapSelectivityThreshold)
+				events, rs, err := readSegmentEvents(seg, reader, hints, requiredCols, e.logger, e.queryCfg.Load().BitmapSelectivityThreshold)
 				if err != nil {
 					e.logger.Warn("segment read error (transform partial agg)",
 						"segment", seg.meta.ID, "error", err)
@@ -1785,7 +1785,7 @@ func (e *Engine) buildColumnarStore(ctx context.Context, hints *spl2.QueryHints,
 					idx = DefaultIndexName
 				}
 
-				cr, rs, err := readSegmentColumnar(seg, reader, hints, requiredCols, e.logger, e.queryCfg.BitmapSelectivityThreshold)
+				cr, rs, err := readSegmentColumnar(seg, reader, hints, requiredCols, e.logger, e.queryCfg.Load().BitmapSelectivityThreshold)
 				if err != nil {
 					e.logger.Warn("segment columnar read error",
 						"segment", seg.meta.ID, "error", err)

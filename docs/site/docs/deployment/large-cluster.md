@@ -7,6 +7,10 @@ description: Deploy a large LynxDB cluster with separated meta, ingest, and quer
 
 For large-scale deployments, LynxDB supports role splitting. Each node runs one specific role, allowing independent scaling of metadata management, write throughput, and query concurrency.
 
+:::note Current implementation status
+The repo includes the core cluster building blocks for this topology, but the operational surface for large separated-role clusters is still broader than the small-cluster path. Treat this guide as advanced deployment guidance and verify failover, rebalancing, and shard-routing behavior in staging before production use.
+:::
+
 ## Architecture
 
 ```
@@ -33,7 +37,7 @@ For large-scale deployments, LynxDB supports role splitting. Each node runs one 
 | Role | Scales with | Count | Responsibility |
 |------|-------------|-------|----------------|
 | **Meta** | Cluster size | 3-5 (fixed) | Raft consensus, shard map, node registry, leader leases, field catalog, source registry, alert assignment |
-| **Ingest** | Write throughput | N nodes | Batcher, memtable, segment flush, S3 upload, batcher replication |
+| **Ingest** | Write throughput | N nodes | Async batcher, direct-to-part writes, S3 upload, batcher replication |
 | **Query** | Query concurrency | M nodes | Scatter-gather, partial aggregation merge, result caching |
 
 ## Meta Node Configuration
@@ -57,7 +61,7 @@ cluster:
 
 ## Ingest Node Configuration
 
-Ingest nodes receive data, buffer in the batcher, insert into memtable, flush segments to S3, and replicate batches to ISR peers via gRPC streaming. They are stateless after flush -- if an ingest node dies, its shards are reassigned and replicated batches are available on ISR peers.
+Ingest nodes receive data, buffer events in the async batcher, write parts directly to immutable `.lsg` files, upload them to S3, and replicate batches to ISR peers via gRPC streaming. They are stateless after flush -- if an ingest node dies, its shards are reassigned and replicated batches are available on ISR peers.
 
 ```yaml
 # /etc/lynxdb/config.yaml (ingest nodes)

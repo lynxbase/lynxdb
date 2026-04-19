@@ -112,10 +112,11 @@ func TestE2E_QuerySync_CountAlias_Bug(t *testing.T) {
 	h := NewHarness(t)
 
 	ctx := context.Background()
-	events := []map[string]interface{}{
-		{"host": "a"}, {"host": "b"},
+	events := []client.IngestEvent{
+		{Event: `{"host":"a"}`, Host: "a"},
+		{Event: `{"host":"b"}`, Host: "b"},
 	}
-	_, _ = h.Client().Ingest(ctx, events)
+	_, _ = h.Client().IngestEvents(ctx, events)
 
 	result := h.MustQuery(`FROM main | STATS count AS total`)
 	if result.Aggregate == nil {

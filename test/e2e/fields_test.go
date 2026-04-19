@@ -5,6 +5,8 @@ package e2e
 import (
 	"context"
 	"testing"
+
+	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
 func TestE2E_Fields_ReturnsFieldCatalog(t *testing.T) {
@@ -33,13 +35,13 @@ func TestE2E_FieldValues_ReturnsTopValues(t *testing.T) {
 	h := NewHarness(t)
 
 	ctx := context.Background()
-	events := []map[string]interface{}{
-		{"host": "web-01", "status": 200},
-		{"host": "web-02", "status": 404},
-		{"host": "web-01", "status": 200},
-		{"host": "web-03", "status": 500},
+	events := []client.IngestEvent{
+		{Event: `{"host":"web-01","status":200}`, Host: "web-01", Fields: map[string]interface{}{"status": 200}},
+		{Event: `{"host":"web-02","status":404}`, Host: "web-02", Fields: map[string]interface{}{"status": 404}},
+		{Event: `{"host":"web-01","status":200}`, Host: "web-01", Fields: map[string]interface{}{"status": 200}},
+		{Event: `{"host":"web-03","status":500}`, Host: "web-03", Fields: map[string]interface{}{"status": 500}},
 	}
-	_, err := h.Client().Ingest(ctx, events)
+	_, err := h.Client().IngestEvents(ctx, events)
 	if err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}

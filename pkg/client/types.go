@@ -361,7 +361,18 @@ type ExplainAccel struct {
 	EstimatedSpeedup string `json:"estimated_speedup,omitempty"`
 }
 
-// IngestResult is the response from Ingest().
+// IngestEvent is a single structured event payload for POST /api/v1/ingest.
+type IngestEvent struct {
+	Event      string                 `json:"event"`
+	Time       *float64               `json:"time,omitempty"`
+	Source     string                 `json:"source,omitempty"`
+	Sourcetype string                 `json:"sourcetype,omitempty"`
+	Host       string                 `json:"host,omitempty"`
+	Index      string                 `json:"index,omitempty"`
+	Fields     map[string]interface{} `json:"fields,omitempty"`
+}
+
+// IngestResult is the response from structured and raw ingest endpoints.
 type IngestResult struct {
 	Accepted  int    `json:"accepted"`
 	Failed    int    `json:"failed"`
@@ -369,13 +380,12 @@ type IngestResult struct {
 	Warning   string `json:"warning,omitempty"`
 }
 
-// IngestOpts configures IngestRaw() and IngestNDJSON().
+// IngestOpts configures IngestRaw().
 type IngestOpts struct {
 	Source      string
 	Sourcetype  string
 	Index       string
 	ContentType string
-	Transform   string
 }
 
 // FieldInfo describes a field from the field catalog.

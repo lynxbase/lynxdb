@@ -398,7 +398,7 @@ func DefaultConfig() *Config {
 			ShutdownTimeout:      30 * time.Second,
 			AlertShutdownTimeout: 10 * time.Second,
 			ReadHeaderTimeout:    10 * time.Second,
-			RateLimit:            1000, // 1000 req/s per IP
+			RateLimit:            0, // unlimited by default; opt-in per deployment
 		},
 
 		Tail: TailConfig{

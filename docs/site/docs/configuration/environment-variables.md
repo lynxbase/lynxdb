@@ -55,17 +55,8 @@ lynxdb server
 | `LYNXDB_STORAGE_COMPRESSION` | `storage.compression` | `lz4` |
 | `LYNXDB_STORAGE_ROW_GROUP_SIZE` | `storage.row_group_size` | `65536` |
 | `LYNXDB_STORAGE_FLUSH_THRESHOLD` | `storage.flush_threshold` | `512mb` |
-| `LYNXDB_STORAGE_MEMTABLE_SHARDS` | `storage.memtable_shards` | `0` (auto) |
-| `LYNXDB_STORAGE_MAX_IMMUTABLE` | `storage.max_immutable` | `2` |
-
-### WAL Variables
-
-| Variable | Config Key | Default |
-|----------|-----------|---------|
-| `LYNXDB_STORAGE_WAL_SYNC_MODE` | `storage.wal_sync_mode` | `write` |
-| `LYNXDB_STORAGE_WAL_SYNC_INTERVAL` | `storage.wal_sync_interval` | `100ms` |
-| `LYNXDB_STORAGE_WAL_SYNC_BYTES` | `storage.wal_sync_bytes` | `0` |
-| `LYNXDB_STORAGE_WAL_MAX_SEGMENT_SIZE` | `storage.wal_max_segment_size` | `256mb` |
+| `LYNXDB_STORAGE_MAX_COLUMNS_PER_PART` | `storage.max_columns_per_part` | `256` |
+| `LYNXDB_STORAGE_PARTITION_BY` | `storage.partition_by` | `daily` |
 
 ### Compaction Variables
 
@@ -73,9 +64,9 @@ lynxdb server
 |----------|-----------|---------|
 | `LYNXDB_STORAGE_COMPACTION_INTERVAL` | `storage.compaction_interval` | `30s` |
 | `LYNXDB_STORAGE_COMPACTION_WORKERS` | `storage.compaction_workers` | `2` |
-| `LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB` | `storage.compaction_rate_limit_mb` | `0` |
+| `LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB` | `storage.compaction_rate_limit_mb` | `100` |
 | `LYNXDB_STORAGE_L0_THRESHOLD` | `storage.l0_threshold` | `4` |
-| `LYNXDB_STORAGE_L1_THRESHOLD` | `storage.l1_threshold` | `10` |
+| `LYNXDB_STORAGE_L1_THRESHOLD` | `storage.l1_threshold` | `4` |
 | `LYNXDB_STORAGE_L2_TARGET_SIZE` | `storage.l2_target_size` | `1gb` |
 
 ### S3 Tiering Variables
@@ -84,12 +75,13 @@ lynxdb server
 |----------|-----------|---------|
 | `LYNXDB_STORAGE_S3_BUCKET` | `storage.s3_bucket` | `""` |
 | `LYNXDB_STORAGE_S3_REGION` | `storage.s3_region` | `us-east-1` |
-| `LYNXDB_STORAGE_S3_PREFIX` | `storage.s3_prefix` | `""` |
+| `LYNXDB_STORAGE_S3_PREFIX` | `storage.s3_prefix` | `lynxdb/` |
 | `LYNXDB_STORAGE_S3_ENDPOINT` | `storage.s3_endpoint` | `""` |
 | `LYNXDB_STORAGE_S3_FORCE_PATH_STYLE` | `storage.s3_force_path_style` | `false` |
 | `LYNXDB_STORAGE_TIERING_INTERVAL` | `storage.tiering_interval` | `5m` |
-| `LYNXDB_STORAGE_TIERING_PARALLELISM` | `storage.tiering_parallelism` | `2` |
-| `LYNXDB_STORAGE_SEGMENT_CACHE_SIZE` | `storage.segment_cache_size` | `1gb` |
+| `LYNXDB_STORAGE_TIERING_PARALLELISM` | `storage.tiering_parallelism` | `3` |
+| `LYNXDB_STORAGE_SEGMENT_CACHE_SIZE` | `storage.segment_cache_size` | `10gb` |
+| `LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT` | `storage.remote_fetch_timeout` | `30s` |
 
 ### Cache Variables
 
@@ -107,22 +99,36 @@ lynxdb server
 | `LYNXDB_QUERY_MAX_CONCURRENT` | `query.max_concurrent` | `10` |
 | `LYNXDB_QUERY_DEFAULT_RESULT_LIMIT` | `query.default_result_limit` | `1000` |
 | `LYNXDB_QUERY_MAX_RESULT_LIMIT` | `query.max_result_limit` | `50000` |
-| `LYNXDB_QUERY_JOB_TTL` | `query.job_ttl` | `10m` |
-| `LYNXDB_QUERY_JOB_GC_INTERVAL` | `query.job_gc_interval` | `1m` |
+| `LYNXDB_QUERY_MAX_QUERY_MEMORY_BYTES` | `query.max_query_memory_bytes` | `1gb` |
+| `LYNXDB_QUERY_MAX_TEMP_DIR_SIZE_BYTES` | `query.max_temp_dir_size_bytes` | `10gb` |
+| `LYNXDB_QUERY_GLOBAL_QUERY_POOL_BYTES` | `query.global_query_pool_bytes` | `0` (auto: 25% RAM) |
+| `LYNXDB_QUERY_SPILL_DIR` | `query.spill_dir` | (os tempdir) |
+| `LYNXDB_QUERY_SLOW_QUERY_THRESHOLD_MS` | `query.slow_query_threshold_ms` | `1000` |
+| `LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD` | `query.bitmap_selectivity_threshold` | `0.9` |
+| `LYNXDB_QUERY_MAX_BRANCH_PARALLELISM` | `query.max_branch_parallelism` | `0` (GOMAXPROCS) |
+| `LYNXDB_QUERY_DEDUP_EXACT` | `query.dedup_exact` | `false` |
+| `LYNXDB_QUERY_JOB_TTL` | `query.job_ttl` | `5m` |
+| `LYNXDB_QUERY_JOB_GC_INTERVAL` | `query.job_gc_interval` | `30s` |
 
 ## Ingest Variables
 
 | Variable | Config Key | Default |
 |----------|-----------|---------|
-| `LYNXDB_INGEST_MAX_BODY_SIZE` | `ingest.max_body_size` | `10mb` |
+| `LYNXDB_INGEST_MAX_BODY_SIZE` | `ingest.max_body_size` | `100mb` |
 | `LYNXDB_INGEST_MAX_BATCH_SIZE` | `ingest.max_batch_size` | `1000` |
+| `LYNXDB_INGEST_MAX_LINE_BYTES` | `ingest.max_line_bytes` | `1048576` |
+| `LYNXDB_INGEST_MODE` | `ingest.mode` | (auto) |
+
+`ingest.fsync`, `ingest.dedup_enabled`, and `ingest.dedup_capacity` are set via the config file today; see [Ingest Settings](/docs/configuration/ingest) for the direct YAML keys.
 
 ## HTTP Variables
 
 | Variable | Config Key | Default |
 |----------|-----------|---------|
-| `LYNXDB_HTTP_IDLE_TIMEOUT` | `http.idle_timeout` | `2m` |
+| `LYNXDB_HTTP_IDLE_TIMEOUT` | `http.idle_timeout` | `120s` |
 | `LYNXDB_HTTP_SHUTDOWN_TIMEOUT` | `http.shutdown_timeout` | `30s` |
+| `LYNXDB_HTTP_ALERT_SHUTDOWN_TIMEOUT` | `http.alert_shutdown_timeout` | `10s` |
+| `LYNXDB_HTTP_RATE_LIMIT` | `http.rate_limit` | `0` (unlimited) |
 
 ## AWS Credentials
 

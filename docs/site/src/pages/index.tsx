@@ -118,8 +118,8 @@ const differentiators: FeatureItem[] = [
     icon: '📝',
     description: (
       <>
-        No upfront schema definition. Send any JSON, any text, any format.
-        Fields are discovered and indexed automatically.
+        No upfront schema definition. Ingest JSON or text with the endpoint
+        that matches your transport, and fields are discovered automatically.
       </>
     ),
   },

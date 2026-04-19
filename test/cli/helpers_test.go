@@ -5,6 +5,7 @@ package cli_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -87,6 +89,9 @@ func cleanEnv() []string {
 		"LYNXDB_CONFIG=",
 		"LYNXDB_SERVER=",
 		"LYNXDB_TOKEN=",
+		"HOME="+testHomeDir,
+		"XDG_CONFIG_HOME="+filepath.Join(testHomeDir, ".config"),
+		"XDG_DATA_HOME="+filepath.Join(testHomeDir, ".local", "share"),
 	)
 
 	return env
@@ -118,10 +123,13 @@ func buildResult(t *testing.T, stdout, stderr string, err error) Result {
 
 // Server represents a running lynxdb server process for testing.
 type Server struct {
-	BaseURL string
-	DataDir string
-	cmd     *exec.Cmd
-	cancel  context.CancelFunc
+	BaseURL  string
+	DataDir  string
+	cmd      *exec.Cmd
+	cancel   context.CancelFunc
+	waitDone chan struct{}
+	waitErr  error
+	waitOnce sync.Once
 }
 
 // startServer starts a lynxdb server on a random port and returns a Server.
@@ -129,8 +137,15 @@ type Server struct {
 func startServer(t *testing.T) *Server {
 	t.Helper()
 
+	return startServerWithDataDir(t, t.TempDir())
+}
+
+// startServerWithDataDir starts a lynxdb server using a caller-supplied data directory.
+// The server is automatically stopped when the test finishes.
+func startServerWithDataDir(t *testing.T, dataDir string) *Server {
+	t.Helper()
+
 	port := getFreePort(t)
-	dataDir := t.TempDir()
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -151,44 +166,126 @@ func startServer(t *testing.T) *Server {
 	}
 
 	srv := &Server{
-		BaseURL: fmt.Sprintf("http://%s", addr),
-		DataDir: dataDir,
-		cmd:     cmd,
-		cancel:  cancel,
+		BaseURL:  fmt.Sprintf("http://%s", addr),
+		DataDir:  dataDir,
+		cmd:      cmd,
+		cancel:   cancel,
+		waitDone: make(chan struct{}),
 	}
+	go srv.wait()
 
 	// Wait for server to be healthy.
 	waitForHealth(t, srv.BaseURL, 15*time.Second)
 
 	// Register cleanup: graceful SIGTERM, then SIGKILL fallback.
 	t.Cleanup(func() {
-		cancel()
-
-		// Send SIGTERM for graceful shutdown.
-		if cmd.Process != nil {
-			_ = cmd.Process.Signal(syscall.SIGTERM)
-		}
-
-		// Wait with timeout.
-		done := make(chan struct{})
-		go func() {
-			_ = cmd.Wait()
-			close(done)
-		}()
-
-		select {
-		case <-done:
-			// Clean exit.
-		case <-time.After(10 * time.Second):
-			// Force kill.
-			if cmd.Process != nil {
-				_ = cmd.Process.Kill()
-			}
-			<-done
+		if err := srv.stop(10 * time.Second); err != nil {
+			t.Fatalf("stop server %s: %v", srv.BaseURL, err)
 		}
 	})
 
 	return srv
+}
+
+var errServerWaitTimeout = errors.New("server process wait timed out")
+
+func (srv *Server) wait() {
+	srv.waitOnce.Do(func() {
+		if srv.cmd != nil {
+			srv.waitErr = srv.cmd.Wait()
+		}
+		close(srv.waitDone)
+	})
+}
+
+func (srv *Server) waitTimeout(timeout time.Duration) error {
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+
+	select {
+	case <-srv.waitDone:
+		return srv.waitErr
+	case <-timer.C:
+		return errServerWaitTimeout
+	}
+}
+
+func (srv *Server) signal(sig syscall.Signal) error {
+	if srv.cmd == nil || srv.cmd.Process == nil {
+		return nil
+	}
+
+	select {
+	case <-srv.waitDone:
+		return nil
+	default:
+	}
+
+	if err := srv.cmd.Process.Signal(sig); err != nil {
+		select {
+		case <-srv.waitDone:
+			return nil
+		default:
+		}
+
+		return err
+	}
+
+	return nil
+}
+
+func isExpectedServerExit(err error) bool {
+	if err == nil {
+		return true
+	}
+
+	var exitErr *exec.ExitError
+
+	return errors.As(err, &exitErr)
+}
+
+func (srv *Server) stop(timeout time.Duration) error {
+	if srv.cancel != nil {
+		srv.cancel()
+	}
+	if err := srv.signal(syscall.SIGTERM); err != nil {
+		return err
+	}
+
+	err := srv.waitTimeout(timeout)
+	if err == nil || isExpectedServerExit(err) {
+		return nil
+	}
+	if !errors.Is(err, errServerWaitTimeout) {
+		return err
+	}
+
+	if err := srv.signal(syscall.SIGKILL); err != nil {
+		return err
+	}
+	err = srv.waitTimeout(timeout)
+	if err == nil || isExpectedServerExit(err) {
+		return nil
+	}
+
+	return err
+}
+
+func (srv *Server) hardKill(timeout time.Duration) error {
+	if err := srv.signal(syscall.SIGKILL); err != nil {
+		return err
+	}
+
+	err := srv.waitTimeout(timeout)
+	if err == nil || isExpectedServerExit(err) {
+		return nil
+	}
+
+	return err
 }
 
 // getFreePort returns an available TCP port on localhost.

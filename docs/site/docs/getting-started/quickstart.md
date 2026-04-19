@@ -95,15 +95,16 @@ For persistent storage and the full API:
 # Start the server
 lynxdb server &
 
-# Ingest some data
-echo '{"message": "hello from lynxdb", "level": "info"}' | \
-  curl -X POST localhost:3100/api/v1/ingest -d @-
+# Ingest a structured event
+curl -X POST localhost:3100/api/v1/ingest \
+  -H 'Content-Type: application/json' \
+  -d '[{"event":"hello from lynxdb","source":"quickstart","fields":{"level":"info","service":"demo"}}]'
 
-# Or ingest a log file
+# Or ingest a raw log file
 lynxdb ingest access.log --source web-01
 
 # Query it
-lynxdb query 'level=info | stats count'
+lynxdb query 'level=info | stats count by service'
 ```
 
 ## Your First SPL2 Query

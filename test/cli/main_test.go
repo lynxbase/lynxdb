@@ -17,6 +17,9 @@ var lynxdbBin string
 // projectRoot is the absolute path to the LynxDB project root, set in TestMain.
 var projectRoot string
 
+// testHomeDir isolates CLI tests from the user's real home/config/data dirs.
+var testHomeDir string
+
 func TestMain(m *testing.M) {
 	// Resolve project root from this test file's location.
 	// test/cli/main_test.go → project root is 2 levels up.
@@ -41,6 +44,17 @@ func TestMain(m *testing.M) {
 	}
 
 	lynxdbBin = filepath.Join(tmpDir, binName)
+	testHomeDir = filepath.Join(tmpDir, "home")
+	if err := os.MkdirAll(filepath.Join(testHomeDir, ".config"), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "FATAL: create isolated config dir: %v\n", err)
+		os.RemoveAll(tmpDir)
+		os.Exit(1)
+	}
+	if err := os.MkdirAll(filepath.Join(testHomeDir, ".local", "share"), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "FATAL: create isolated data dir: %v\n", err)
+		os.RemoveAll(tmpDir)
+		os.Exit(1)
+	}
 
 	// Build the binary with race detector enabled.
 	fmt.Fprintf(os.Stderr, "Building lynxdb binary at %s ...\n", lynxdbBin)

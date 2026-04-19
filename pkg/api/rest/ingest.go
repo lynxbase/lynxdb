@@ -40,6 +40,8 @@ var scannerBufPool = sync.Pool{
 	},
 }
 
+const structuredIngestSuggestion = "Use POST /api/v1/ingest with a JSON array of objects containing event. Use /api/v1/ingest/raw for newline-delimited logs or NDJSON, and /api/v1/es/_bulk for Elasticsearch bulk payloads."
+
 // respondIngestError maps engine errors to the appropriate HTTP status and error code.
 // Returns true if an error response was written, false if err is nil.
 func respondIngestError(w http.ResponseWriter, err error) bool {
@@ -78,13 +80,16 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	tok, err := decoder.Token()
 	if err != nil {
 		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest,
-			fmt.Sprintf("invalid JSON: %s", sanitizeErrorMessage(err.Error())))
+			fmt.Sprintf("invalid JSON: %s", sanitizeErrorMessage(err.Error())),
+			WithSuggestion(structuredIngestSuggestion))
 
 		return
 	}
 	delim, ok := tok.(json.Delim)
 	if !ok || delim != '[' {
-		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON: expected top-level array")
+		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest,
+			"invalid JSON: /api/v1/ingest expects a top-level JSON array of structured event objects",
+			WithSuggestion(structuredIngestSuggestion))
 		return
 	}
 
@@ -139,7 +144,7 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 		if err := decoder.Decode(&payload); err != nil {
 			msg := fmt.Sprintf("invalid JSON: %s", sanitizeErrorMessage(err.Error()))
 			if accepted == 0 && failed == 0 {
-				respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, msg)
+				respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, msg, WithSuggestion(structuredIngestSuggestion))
 
 				return
 			}
@@ -159,7 +164,7 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		msg := fmt.Sprintf("invalid JSON: %s", sanitizeErrorMessage(err.Error()))
 		if accepted == 0 && failed == 0 {
-			respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, msg)
+			respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, msg, WithSuggestion(structuredIngestSuggestion))
 
 			return
 		}
@@ -172,7 +177,7 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	if !ok || endDelim != ']' {
 		msg := "invalid JSON: expected end of array"
 		if accepted == 0 && failed == 0 {
-			respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, msg)
+			respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, msg, WithSuggestion(structuredIngestSuggestion))
 
 			return
 		}
@@ -193,7 +198,7 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 			msg = fmt.Sprintf("invalid JSON: %s", sanitizeErrorMessage(err.Error()))
 		}
 		if accepted == 0 && failed == 0 {
-			respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, msg)
+			respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, msg, WithSuggestion(structuredIngestSuggestion))
 
 			return
 		}

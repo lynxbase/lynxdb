@@ -69,6 +69,14 @@ func newQueryCmd() *cobra.Command {
 			if len(queryParams) > 0 {
 				query = spl2.SubstituteParams(query, spl2.ParseParamFlags(queryParams))
 			}
+			if projectRC != nil {
+				if projectRC.DefaultSince != "" && !cmd.Flags().Changed("since") {
+					since = projectRC.DefaultSince
+				}
+				if projectRC.DefaultSource != "" && !cmd.Flags().Changed("source") {
+					source = projectRC.DefaultSource
+				}
+			}
 			stdinPiped := isStdinPiped()
 
 			if explain {

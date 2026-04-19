@@ -244,11 +244,17 @@ A `.lynxdbrc` YAML file in the current or any parent directory can set per-proje
 
 ```yaml
 server: https://staging.company.com
-format: table
+default_format: table
+default_since: 6h
+default_source: web
 profile: staging
 ```
 
 These are applied as defaults and are overridden by explicit CLI flags.
+
+- `server`, `default_format`, and `profile` affect root CLI defaults
+- `default_since` is applied to `lynxdb query` when `--since` is omitted
+- `default_source` is applied to `lynxdb query`, `lynxdb ingest`, and `lynxdb import` when `--source` is omitted
 
 ### Example Config File
 
@@ -277,7 +283,7 @@ query:
   max_result_limit: 50000
 
 ingest:
-  max_body_size: "10mb"
+  max_body_size: "100mb"
   max_batch_size: 1000
 
 http:

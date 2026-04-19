@@ -1,285 +1,310 @@
 ---
 sidebar_position: 10
 title: Server
-description: GET /status, /health, /config -- server metrics, health checks, and runtime configuration management.
+description: Health checks, Prometheus metrics, status snapshots, cache endpoints, cluster status, compaction history, and runtime config endpoints.
 ---
 
 # Server API
 
-Server status, health checks, and runtime configuration management. These endpoints are used for monitoring, load balancer integration, and operational management.
+These endpoints expose the server's operational state. Most of them live under `/api/v1`. The main exceptions are the health check and Prometheus endpoint.
 
-## GET /status
+## GET /health
 
-Full server status including version, uptime, storage metrics, event statistics, query workload, materialized view state, and retention info.
+Health checks are served at `/health`, not `/api/v1/health`.
+
+This endpoint is always reachable without authentication, even when API auth is enabled.
+
+```bash
+curl -s localhost:3100/health | jq .
+```
+
+**Response:**
+
+```json
+{
+  "data": {
+    "status": "healthy",
+    "degraded": false,
+    "version": "0.4.0"
+  }
+}
+```
+
+`status` is `healthy` unless the server has fallen back to in-memory state for a persistent subsystem, in which case it becomes `degraded`.
+
+## GET /metrics
+
+Prometheus metrics are served at `/metrics`.
+
+This endpoint is also unauthenticated when auth is enabled.
+
+## GET /api/v1/status
+
+Returns a compact operational snapshot assembled from engine stats, cluster status, materialized views, tail state, and optional memory-governance information.
 
 ```bash
 curl -s localhost:3100/api/v1/status | jq .
 ```
 
-**Response (200):**
+**Response shape:**
 
 ```json
 {
   "data": {
     "version": "0.4.0",
     "uptime_seconds": 1234567,
+    "health": "healthy",
     "storage": {
-      "used_bytes": 13300000000,
-      "total_bytes": 53700000000,
-      "usage_percent": 24.8
+      "used_bytes": 13300000000
     },
     "events": {
       "total": 847000000,
-      "today": 1200000,
-      "ingest_rate": 2340.5
+      "today": 1200000
     },
     "queries": {
-      "active": 12,
-      "avg_duration_ms": 45,
-      "jobs": {
-        "running": 2,
-        "queued": 0,
-        "max_concurrent": 10
-      }
+      "active": 12
     },
     "views": {
       "total": 3,
-      "active": 2,
-      "backfilling": 1,
-      "storage_bytes": 2267789702
+      "active": 2
     },
-    "retention": {
-      "policy": "7d",
-      "oldest_event": "2026-02-07T00:00:01Z"
-    },
-    "health": "healthy"
+    "tail": {
+      "active_sessions": 1,
+      "subscriber_count": 1,
+      "total_dropped_events": 0
+    }
   }
 }
 ```
 
-### Response Fields
+Additional sections such as `retention` and `memory` are present only when the server has that information available.
 
-#### Top Level
+## GET /api/v1/stats
 
-| Field | Type | Description |
-|---|---|---|
-| `version` | string | LynxDB version |
-| `uptime_seconds` | integer | Seconds since server start |
-| `health` | string | Overall health: `healthy`, `degraded`, `unhealthy` |
-
-#### Storage
-
-| Field | Type | Description |
-|---|---|---|
-| `storage.used_bytes` | integer | Disk space used |
-| `storage.total_bytes` | integer | Total available disk space |
-| `storage.usage_percent` | number | Disk usage percentage |
-
-#### Events
-
-| Field | Type | Description |
-|---|---|---|
-| `events.total` | integer | Total events stored |
-| `events.today` | integer | Events ingested today |
-| `events.ingest_rate` | number | Current ingest rate (events per second) |
-
-#### Queries
-
-| Field | Type | Description |
-|---|---|---|
-| `queries.active` | integer | Currently executing queries |
-| `queries.avg_duration_ms` | number | Average query duration |
-| `queries.jobs.running` | integer | Async jobs currently running |
-| `queries.jobs.queued` | integer | Jobs waiting for a slot |
-| `queries.jobs.max_concurrent` | integer | Max concurrent jobs allowed |
-
-#### Materialized Views
-
-| Field | Type | Description |
-|---|---|---|
-| `views.total` | integer | Total materialized views |
-| `views.active` | integer | Views actively serving queries |
-| `views.backfilling` | integer | Views currently backfilling |
-| `views.storage_bytes` | integer | Total storage used by all views |
-
-#### Retention
-
-| Field | Type | Description |
-|---|---|---|
-| `retention.policy` | string | Configured retention period |
-| `retention.oldest_event` | string | Timestamp of oldest event in storage |
-
----
-
-## GET /health
-
-Minimal health check for load balancers. Returns `200` when healthy, `503` when not. No envelope -- trivially parseable.
+Returns storage-oriented counters used by the CLI `status` and `doctor` commands.
 
 ```bash
-curl -s localhost:3100/api/v1/health
+curl -s localhost:3100/api/v1/stats | jq .
 ```
 
-**Response -- healthy (200):**
+Important fields:
 
-```json
-{"status": "ok"}
+- `uptime_seconds`
+- `storage_bytes`
+- `total_events`
+- `events_today`
+- `index_count`
+- `segment_count`
+- `buffered_events`
+- `sources`
+- `oldest_event` when available
+
+## GET /api/v1/metrics
+
+Returns JSON storage metrics, distinct from the Prometheus text endpoint at `/metrics`.
+
+```bash
+curl -s localhost:3100/api/v1/metrics | jq .
 ```
 
-**Response -- unhealthy (503):**
+If adaptive compaction is enabled, the response may also include an `adaptive_compaction` section.
 
-```json
-{"status": "unhealthy"}
+## Cache Endpoints
+
+### GET /api/v1/cache/stats
+
+Returns:
+
+- `hits`
+- `misses`
+- `hit_rate`
+- `entries`
+- `size_bytes`
+- `evictions`
+
+### DELETE /api/v1/cache
+
+Clears the query cache.
+
+This endpoint requires admin scope when auth is enabled.
+
+## GET /api/v1/compaction/history
+
+Returns recorded compaction manifests.
+
+```bash
+curl -s 'localhost:3100/api/v1/compaction/history?since=2026-03-19T00:00:00Z' | jq .
 ```
 
-### Load Balancer Configuration
+Query parameters:
 
-```nginx
-# nginx
-location /health {
-    proxy_pass http://lynxdb:3100/api/v1/health;
-}
-```
+| Parameter | Type | Description |
+|---|---|---|
+| `since` | RFC3339 timestamp | Return compactions at or after the given time |
 
-```yaml
-# Kubernetes liveness probe
-livenessProbe:
-  httpGet:
-    path: /api/v1/health
-    port: 3100
-  initialDelaySeconds: 5
-  periodSeconds: 10
-```
+## GET /api/v1/cluster/status
 
-```yaml
-# AWS ALB target group health check
-health_check:
-  path: /api/v1/health
-  interval: 10
-  healthy_threshold: 2
-  unhealthy_threshold: 3
-```
+Returns a small cluster status summary:
 
-:::tip
-The health endpoint is also available at `/health` (without the `/api/v1` prefix) for convenience.
-:::
+- `status`
+- `node_count`
+- `index_count`
+- `segment_count`
+- `buffered_size`
+- `buffered_events`
+- `data_dir`
 
----
+## GET /api/v1/config
 
-## GET /config
+Returns the server's runtime config snapshot.
 
-Get the current runtime configuration.
+This endpoint requires admin scope when auth is enabled.
 
 ```bash
 curl -s localhost:3100/api/v1/config | jq .
 ```
 
-**Response (200):**
+**Response:**
 
 ```json
 {
   "data": {
     "listen": "localhost:3100",
-    "data_dir": "~/.lynxdb/data",
+    "data_dir": "/var/lib/lynxdb",
     "retention": "7d",
-    "auth_enabled": false,
-    "otlp_enabled": false,
-    "syslog_enabled": false,
-    "max_query_memory_mb": 512
+    "log_level": "info",
+    "storage": {},
+    "query": {},
+    "ingest": {},
+    "http": {},
+    "tail": {},
+    "tls": {},
+    "auth": {},
+    "views": {},
+    "server": {},
+    "buffer_manager": {},
+    "cluster": {},
+    "profiles": {}
   }
 }
 ```
 
-### Configuration Fields
+## PATCH /api/v1/config
 
-| Field | Type | Description |
-|---|---|---|
-| `listen` | string | Server listen address |
-| `data_dir` | string | Data storage directory |
-| `retention` | string | Event retention period |
-| `auth_enabled` | boolean | Whether authentication is enabled |
-| `otlp_enabled` | boolean | Whether OTLP receiver is enabled |
-| `syslog_enabled` | boolean | Whether syslog receiver is enabled |
-| `max_query_memory_mb` | integer | Maximum memory per query |
+Applies a JSON merge-style patch to the in-memory runtime config snapshot and returns the updated config.
 
----
+This endpoint requires a root key when auth is enabled.
 
-## PATCH /config
+It accepts top-level keys only:
 
-Update runtime configuration. Only runtime-adjustable fields can be changed without a restart.
+- `retention`
+- `log_level`
+- `listen`
+- `query`
+- `ingest`
+- `storage`
+- `http`
+
+Unknown top-level keys are rejected.
 
 ```bash
 curl -X PATCH localhost:3100/api/v1/config \
   -d '{
     "retention": "30d",
-    "max_query_memory_mb": 1024
+    "query": {
+      "max_query_runtime": "10m"
+    }
   }'
 ```
 
-**Response (200):**
+**Response:**
 
 ```json
 {
   "data": {
-    "listen": "localhost:3100",
-    "data_dir": "~/.lynxdb/data",
-    "retention": "30d",
-    "auth_enabled": false,
-    "otlp_enabled": false,
-    "syslog_enabled": false,
-    "max_query_memory_mb": 1024
-  },
-  "meta": {
+    "config": {
+      "retention": "30d"
+    },
     "restart_required": []
   }
 }
 ```
 
-### Hot-Reloadable Settings
+### Important caveat
 
-These settings take effect immediately without a server restart:
+`PATCH /api/v1/config` does not persist changes to the YAML config file.
 
-- `retention` -- event retention period
-- `max_query_memory_mb` -- maximum memory per query
-- `log_level` -- server log verbosity
+Unlike editing the YAML config file, this endpoint applies changes only to the running process. It validates the updated config and uses the same in-memory reload path as `SIGHUP`, but the changes are lost on restart unless you also update the config file on disk.
 
-### Settings Requiring Restart
+## Auth Key Management Endpoints
 
-If you change a setting that requires a restart, the response `meta.restart_required` lists them:
+These endpoints are available only when auth is enabled. They all require a root key. When auth is disabled, they return `404`.
 
-```json
-{
-  "meta": {
-    "restart_required": ["listen", "auth_enabled"]
-  }
-}
+### POST /api/v1/auth/keys
+
+Create a new API key.
+
+```bash
+curl -X POST localhost:3100/api/v1/auth/keys \
+  -H 'Authorization: Bearer <root-token>' \
+  -d '{
+    "name": "filebeat",
+    "scope": "ingest",
+    "expires_in": "90d",
+    "description": "edge shipper"
+  }'
 ```
 
----
+Request fields:
+
+- `name` required
+- `scope` optional, one of `ingest`, `query`, `admin`, `full`
+- `expires_in` optional, such as `30d`, `1y`, or `never`
+- `description` optional
+
+### GET /api/v1/auth/keys
+
+List keys without returning their secret token values.
+
+```bash
+curl -s localhost:3100/api/v1/auth/keys \
+  -H 'Authorization: Bearer <root-token>' | jq .
+```
+
+### `DELETE /api/v1/auth/keys/{id}`
+
+Revoke a key by ID.
+
+```bash
+curl -X DELETE localhost:3100/api/v1/auth/keys/key_002 \
+  -H 'Authorization: Bearer <root-token>'
+```
+
+### POST /api/v1/auth/rotate-root
+
+Rotate the calling root key. The response returns the new root token once and identifies the revoked key ID.
+
+```bash
+curl -X POST localhost:3100/api/v1/auth/rotate-root \
+  -H 'Authorization: Bearer <root-token>'
+```
+
+All authenticated requests use `Authorization: Bearer <token>`. For compatibility clients, LynxDB also accepts `ApiKey <base64(id:secret)>` and `Basic <base64(user:token)>`.
 
 ## Monitoring with the CLI
 
-The same information is available from the command line:
+The CLI wraps these endpoints:
 
 ```bash
-# Server status
-lynxdb status
-
-# Health check
 lynxdb health
-
-# View current config
-lynxdb config
-
-# Hot-reload config file
-lynxdb config reload
+lynxdb status
+lynxdb cache stats
+lynxdb indexes
+lynxdb doctor
 ```
-
-See the [CLI Reference](/docs/cli/server) for details.
 
 ## Related
 
-- **[`lynxdb server` CLI command](/docs/cli/server)** -- starting and managing the server
-- **[`lynxdb config` CLI command](/docs/cli/config-cmd)** -- configuration management
-- **[Configuration Reference](/docs/configuration/overview)** -- all configuration options
-- **[Monitoring guide](/docs/operations/monitoring)** -- setting up alerts on server metrics
-- **[Deployment](/docs/deployment/single-node)** -- production deployment guides
+- [API Overview](/docs/api/overview)
+- [Configuration Overview](/docs/configuration/overview)
+- [config & doctor](/docs/cli/config-cmd)

@@ -19,6 +19,8 @@
 #   row_group_size: 65536            # Rows per row group in segments
 #   flush_threshold: 512mb           # Batcher flush threshold
 #   flush_idle_timeout: 30s          # Flush batcher after this idle period (0 = disabled)
+#   max_columns_per_part: 256        # Max columns per written part
+#   partition_by: daily              # Time-based partition granularity (daily, hourly)
 #
 #   compaction_interval: 30s         # Compaction check interval
 #   compaction_workers: 2            # Parallel compaction workers
@@ -51,6 +53,8 @@
 #   default_result_limit: 1000       # Default result row limit
 #   max_result_limit: 50000          # Maximum allowed result row limit
 #   max_query_memory_bytes: 1gb      # Per-query memory budget
+#   max_query_length: 1048576        # Max SPL2 query source length, bytes (1 MiB)
+#   preview_size: 50                 # Rows returned in async-job preview
 #   bitmap_selectivity_threshold: 0.9  # Skip bitmap when >90% of rows match
 #   global_query_pool_bytes: 0       # Total query memory pool (0 = auto: 25% RAM)
 #   spill_dir:                       # Temp dir for spill files (empty = os.TempDir)
@@ -63,12 +67,18 @@
 # ingest:
 #   max_body_size: 100mb             # Max HTTP request body size
 #   max_batch_size: 1000             # Max events per streaming batch
+#   max_line_bytes: 1048576          # Max bytes per single line in streaming ingest (1 MiB)
+#   mode:                            # Ingest mode (empty = auto)
+#   dedup_enabled: false             # Enable dedup of identical consecutive events
+#   dedup_capacity: 100000           # Dedup LRU capacity (per index)
 
 # HTTP server configuration.
 # http:
 #   idle_timeout: 120s               # HTTP keep-alive idle timeout
 #   shutdown_timeout: 30s            # Graceful shutdown timeout
-#   rate_limit: 0                    # Requests per second (0 = unlimited)
+#   alert_shutdown_timeout: 10s      # Grace period for alert manager on shutdown
+#   read_header_timeout: 10s         # Max time allowed to read request headers
+#   rate_limit: 0                    # Requests per second per IP (0 = unlimited)
 
 # Live tail session configuration.
 # tail:
@@ -95,6 +105,9 @@
 #   max_backfill_memory_bytes: 0     # Memory budget per backfill (0 = auto)
 #   backfill_backpressure_wait: 5s   # Wait time when pool is under pressure
 #   backfill_max_retries: 60         # Max backpressure retries before failing
+#   dispatch_batch_size: 1000        # Rows per dispatch batch
+#   dispatch_batch_delay: 100ms      # Delay between dispatch batches
+#   backfill_timeout: 4h             # Max time per backfill before aborting
 
 # Unified buffer manager (Phase 3 — opt-in).
 # buffer_manager:

@@ -1,7 +1,11 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -85,6 +89,58 @@ func TestReadNDJSON_EmptyLines(t *testing.T) {
 	}
 	if meta == nil || meta.Total != 2 {
 		t.Errorf("meta = %+v", meta)
+	}
+}
+
+func TestQueryStream_StripsUnsupportedFields(t *testing.T) {
+	var rawBody map[string]interface{}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/query/stream" {
+			t.Fatalf("path = %q, want /api/v1/query/stream", r.URL.Path)
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read body: %v", err)
+		}
+		if err := json.Unmarshal(body, &rawBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/x-ndjson")
+		_, _ = io.WriteString(w, "{\"message\":\"ok\"}\n{\"__meta\":{\"total\":1,\"scanned\":1,\"took_ms\":1}}\n")
+	}))
+	defer srv.Close()
+
+	c := NewClient(WithBaseURL(srv.URL))
+	meta, err := c.QueryStream(context.Background(), QueryRequest{
+		Q:       "FROM main | HEAD 10",
+		Limit:   10,
+		Offset:  20,
+		Format:  "json",
+		Profile: "trace",
+	}, func(_ json.RawMessage) error {
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("QueryStream: %v", err)
+	}
+	if meta == nil || meta.Total != 1 {
+		t.Fatalf("meta = %+v, want total=1", meta)
+	}
+	if _, ok := rawBody["limit"]; ok {
+		t.Fatalf("request body unexpectedly included limit: %v", rawBody)
+	}
+	if _, ok := rawBody["offset"]; ok {
+		t.Fatalf("request body unexpectedly included offset: %v", rawBody)
+	}
+	if _, ok := rawBody["format"]; ok {
+		t.Fatalf("request body unexpectedly included format: %v", rawBody)
+	}
+	if _, ok := rawBody["profile"]; ok {
+		t.Fatalf("request body unexpectedly included profile: %v", rawBody)
+	}
+	if got := rawBody["q"]; got != "FROM main | HEAD 10" {
+		t.Fatalf("q = %v, want query text", got)
 	}
 }
 

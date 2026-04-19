@@ -90,52 +90,33 @@ paths:
       tags: [Ingest]
       summary: Ingest events
       description: |
-        Primary ingest endpoint. Accepts single events, JSON arrays, NDJSON streams, or plain text.
+        Primary structured ingest endpoint. Accepts only a top-level JSON array of event-envelope objects.
 
-        - No required schema — send any JSON, fields are indexed automatically.
-        - `_timestamp` auto-assigned if absent. Recognized aliases: `timestamp`, `@timestamp`, `time`, `ts`, `datetime`.
-        - `_source` settable via `X-Source` header or `source`/`_source` field in body.
-        - Events > 1 MB rejected with `413`.
-        - Server assigns `_id` (ULID) to each event.
+        - Each item must contain `event` plus optional `time`, `source`, `sourcetype`, `host`, `index`, and `fields`.
+        - Use `/ingest/raw` for newline-delimited text or NDJSON.
+        - Use `/es/_bulk` for Elasticsearch bulk payloads.
       parameters:
-        - $ref: '#/components/parameters/XSource'
-        - $ref: '#/components/parameters/XFormat'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              oneOf:
-                - $ref: '#/components/schemas/LogEvent'
-                - type: array
-                  items:
-                    $ref: '#/components/schemas/LogEvent'
+              type: array
+              items:
+                $ref: '#/components/schemas/StructuredIngestEvent'
             examples:
-              single:
-                summary: Single event
-                value:
-                  message: "user login"
-                  user_id: 42
               batch:
                 summary: Batch of events
                 value:
-                  - message: "request started"
-                    trace_id: "abc123"
-                  - message: "request completed"
-                    trace_id: "abc123"
-                    duration_ms: 45
-          application/x-ndjson:
-            schema:
-              type: string
-            example: |
-              {"message": "event 1", "level": "info"}
-              {"message": "event 2", "level": "error"}
-          text/plain:
-            schema:
-              type: string
-            example: |
-              192.168.1.1 - - [14/Feb/2026:14:23:01 +0000] "GET /api/users HTTP/1.1" 200 1234
-              192.168.1.2 - - [14/Feb/2026:14:23:02 +0000] "POST /api/orders HTTP/1.1" 500 89
+                  - event: "request started"
+                    source: "api"
+                    fields:
+                      trace_id: "abc123"
+                  - event: "request completed"
+                    source: "api"
+                    fields:
+                      trace_id: "abc123"
+                      duration_ms: 45
       responses:
         '200':
           description: All events accepted
@@ -175,6 +156,7 @@ paths:
       summary: Elasticsearch-compatible bulk ingest
       description: |
         Accepts Elasticsearch `_bulk` API format for zero-config migration from Filebeat, Logstash, Vector, Fluentd.
+        Prefer `/es/_bulk`; `/ingest/bulk` is an alias to the same handler.
 
         - `_index` is accepted but mapped to `_source` tag (LynxDB is single-index by design).
         - `_type` is ignored.
@@ -228,7 +210,7 @@ paths:
 
         | `wait` value | Behavior | Response |
         |---|---|---|
-        | `null` (default) | **Sync.** Block until complete or server timeout. | `200` with results, or `408` timeout |
+        | `null` (default) | **Sync.** Block until complete. | `200` with results |
         | `0` | **Async.** Return immediately. | `202` with job handle |
         | `N` (seconds) | **Hybrid.** Wait up to N seconds. | `200` if done in time, `202` + job otherwise |
 
@@ -297,7 +279,7 @@ paths:
         '200':
           description: |
             Query completed synchronously. Returned when:
-            - `wait` is `null` (default sync mode) and query completes before server timeout
+            - `wait` is `null` (default sync mode) and query completes in-request
             - `wait` is `N > 0` (hybrid mode) and query completes within N seconds
           content:
             application/json:
@@ -432,17 +414,9 @@ paths:
                       type: job
                       job_id: "qry_9c1d4e"
                       status: running
-                      query: "* | stats dc(user_id) by source"
-                      from: "-90d"
-                      to: "now"
                       progress:
-                        phase: scanning
-                        scanned: 0
-                        total_estimate: 84700000000
-                        percent: 0
-                        events_matched: 0
+                        phase: parsing
                         elapsed_ms: 0
-                        eta_ms: null
                 hybrid_fallback:
                   summary: Hybrid — timed out after 5s, shows progress so far
                   value:
@@ -450,28 +424,14 @@ paths:
                       type: job
                       job_id: "qry_7f3a2b"
                       status: running
-                      query: "* | stats count by source"
-                      from: "-30d"
-                      to: "now"
                       progress:
-                        phase: scanning
-                        scanned: 2100000000
-                        total_estimate: 10400000000
-                        percent: 20.2
-                        events_matched: 847291
+                        phase: scanning_segments
+                        segments_total: 128
+                        segments_scanned: 24
+                        rows_read_so_far: 847291
                         elapsed_ms: 5000
-                        eta_ms: 19700
-                      partial_results:
-                        type: aggregate
-                        columns: ["source", "count"]
-                        rows:
-                          - ["nginx", 142000]
-                          - ["api-gw", 71000]
-                        note: "Based on 20% of data. Final values will change."
         '400':
           $ref: '#/components/responses/InvalidQuery'
-        '408':
-          $ref: '#/components/responses/QueryTimeout'
         '429':
           $ref: '#/components/responses/RateLimited'
     get:
@@ -507,8 +467,9 @@ paths:
           in: query
           schema:
             type: string
-            enum: [json, csv, raw]
+            enum: [json]
             default: json
+          description: Optional response format selector. Only `json` is accepted.
       responses:
         '200':
           description: Query result
@@ -528,7 +489,7 @@ paths:
       tags: [Query]
       summary: Execute query with NDJSON streaming
       description: |
-        Same input as `POST /query`, returns NDJSON stream. For large result sets, exports, piping.
+        Returns an NDJSON stream for large result sets, exports, and piping.
 
         **This is different from job SSE** (`GET /query/jobs/{id}/stream`):
         - `/query/stream` — NDJSON export of results. One event per line. For `curl | jq`, data pipelines.
@@ -536,14 +497,15 @@ paths:
 
         - Response: `Transfer-Encoding: chunked`, one JSON object per line.
         - Last line is always `{"__meta": {...}}` — stream summary.
-        - No default `limit` (streaming is for export). Client disconnect = cancellation.
-        - `wait` parameter is ignored — streaming always blocks until complete.
+        - Supported request fields: `q`/`query`, `from`/`earliest`, `to`/`latest`, and `variables`.
+        - `limit`, `offset`, `wait`, `profile`, and `format` are rejected with `400`.
+        - Client disconnect = cancellation.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/QueryRequest'
+              $ref: '#/components/schemas/QueryStreamRequest'
             example:
               q: "level=error"
               from: "-24h"
@@ -628,13 +590,15 @@ paths:
       summary: List active and recent query jobs
       description: |
         Returns all running jobs and recently completed jobs (kept for `job_ttl`, default 5 minutes).
-        Useful for Web UI job manager and debugging.
+        Useful for Web UI job manager and debugging. The optional `status` filter accepts
+        canonical values (`running`, `done`, `error`, `canceled`) and the aliases
+        `complete`, `failed`, and `cancelled`.
       parameters:
         - name: status
           in: query
           schema:
             type: string
-            enum: [running, complete, failed, cancelled]
+            enum: [running, done, error, canceled, complete, failed, cancelled]
           description: Filter by job status
       responses:
         '200':
@@ -649,29 +613,11 @@ paths:
                     - job_id: "qry_9c1d4e"
                       status: running
                       query: "* | stats dc(user_id) by source"
-                      from: "-90d"
-                      to: "now"
                       created_at: "2026-02-14T14:50:00Z"
-                      progress:
-                        phase: scanning
-                        percent: 45.2
-                        elapsed_ms: 18000
-                        eta_ms: 21800
                     - job_id: "qry_7f3a2b"
-                      status: complete
+                      status: done
                       query: "level=error | stats count by source"
-                      from: "-7d"
-                      to: "now"
                       created_at: "2026-02-14T14:48:12Z"
-                      completed_at: "2026-02-14T14:48:49Z"
-                      expires_at: "2026-02-14T14:53:49Z"
-                      progress:
-                        phase: complete
-                        percent: 100
-                        elapsed_ms: 37200
-                  meta:
-                    max_concurrent: 10
-                    active: 1
 
   /query/jobs/{jobId}:
     get:
@@ -681,14 +627,10 @@ paths:
       description: |
         Poll this endpoint to track query progress. Response shape depends on `status`:
 
-        - `running` → `progress` + optional `partial_results` (intermediate data, will change)
-        - `complete` → `progress` + `results` (final data)
-        - `failed` → `progress` + `error`
-        - `cancelled` → `progress` at time of cancellation
-
-        **Partial results** are available for both event queries (first N matched events) and
-        aggregations (intermediate values based on data scanned so far). The `partial_results.note`
-        field always warns the client that values are not final.
+        - `running` → `progress`
+        - `done` → `results`
+        - `error` → `error`
+        - `canceled` → cancellation error payload
       parameters:
         - name: jobId
           in: path
@@ -704,88 +646,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/QueryJobResponse'
               examples:
-                running_with_partial:
-                  summary: Running — 50% scanned, partial results available
+                running:
+                  summary: Running
                   value:
                     data:
                       type: job
                       job_id: "qry_9c1d4e"
                       status: running
                       query: "* | stats dc(user_id) by source, status"
-                      from: "-90d"
-                      to: "now"
-                      created_at: "2026-02-14T14:50:00Z"
                       progress:
-                        phase: scanning
-                        scanned: 42350000000
-                        total_estimate: 84700000000
-                        percent: 50.0
-                        events_matched: 423000000
+                        phase: scanning_segments
+                        segments_total: 128
+                        segments_scanned: 64
+                        rows_read_so_far: 423000000
                         elapsed_ms: 18400
-                        eta_ms: 18400
-                      partial_results:
-                        type: aggregate
-                        columns: ["source", "status", "dc(user_id)"]
-                        rows:
-                          - ["nginx", 200, 892341]
-                          - ["nginx", 404, 42891]
-                          - ["api-gw", 200, 612044]
-                        note: "Based on 50% of data. Final values will change."
-                running_events:
-                  summary: Running event search — first matches available
-                  value:
-                    data:
-                      type: job
-                      job_id: "qry_a1b2c3"
-                      status: running
-                      query: "message=\"connection refused\" source=api-gateway"
-                      from: "-30d"
-                      to: "now"
-                      created_at: "2026-02-14T14:50:00Z"
-                      progress:
-                        phase: scanning
-                        scanned: 5200000000
-                        total_estimate: 31200000000
-                        percent: 16.7
-                        events_matched: 1247
-                        elapsed_ms: 4100
-                        eta_ms: 20500
-                      partial_results:
-                        type: events
-                        events:
-                          - _id: "01JKNM3VXQP..."
-                            _timestamp: "2026-02-14T14:52:01.234Z"
-                            _source: api-gateway
-                            message: "connection refused"
-                            host: "db-primary-01"
-                          - _id: "01JKNM2ABCD..."
-                            _timestamp: "2026-02-14T14:51:58.112Z"
-                            _source: api-gateway
-                            message: "connection refused"
-                            host: "db-replica-03"
-                        total_so_far: 1247
-                        note: "First 100 matches shown. More results still scanning."
-                complete:
+                done:
                   summary: Completed — final results
                   value:
                     data:
                       type: job
                       job_id: "qry_9c1d4e"
-                      status: complete
+                      status: done
                       query: "* | stats dc(user_id) by source, status"
-                      from: "-90d"
-                      to: "now"
                       created_at: "2026-02-14T14:50:00Z"
                       completed_at: "2026-02-14T14:50:37Z"
-                      expires_at: "2026-02-14T14:55:37Z"
-                      progress:
-                        phase: complete
-                        scanned: 84700000000
-                        total_estimate: 84700000000
-                        percent: 100
-                        events_matched: 847000000
-                        elapsed_ms: 37200
-                        eta_ms: 0
                       results:
                         type: aggregate
                         columns: ["source", "status", "dc(user_id)"]
@@ -798,47 +682,27 @@ paths:
                     meta:
                       took_ms: 37200
                       scanned: 84700000000
-                failed:
+                error:
                   summary: Failed — error details
                   value:
                     data:
                       type: job
                       job_id: "qry_d4e1f2"
-                      status: failed
+                      status: error
                       query: "* | stats count by uri"
-                      from: "-365d"
-                      to: "now"
-                      created_at: "2026-02-14T14:50:00Z"
-                      failed_at: "2026-02-14T14:50:42Z"
-                      progress:
-                        phase: scanning
-                        scanned: 62100000000
-                        total_estimate: 310000000000
-                        percent: 20.0
-                        events_matched: 62100000
-                        elapsed_ms: 42000
-                        eta_ms: null
                       error:
                         code: QUERY_MEMORY_EXCEEDED
                         message: "Query exceeded 512 MB memory limit at 20% scan. Too many unique 'uri' values (>2M) for GROUP BY."
                         suggestion: "Add a filter to reduce cardinality, or increase max_query_memory_mb in /config."
         '404':
           $ref: '#/components/responses/NotFound'
-        '410':
-          description: Job results expired (past TTL)
-          content:
-            application/json:
-              example:
-                error:
-                  code: JOB_EXPIRED
-                  message: "Job 'qry_9c1d4e' completed but results have expired (TTL: 5m). Re-run the query."
     delete:
       operationId: cancelJob
       tags: [Query]
       summary: Cancel a running query job
       description: |
-        Cancels a running job. If the job is already complete, returns the completed status.
-        Partial results scanned up to cancellation point are preserved in the response.
+        Cancels a running job. The response always returns the current terminal status plus
+        a `canceled` flag that tells you whether this request changed the job state.
       parameters:
         - name: jobId
           in: path
@@ -848,7 +712,7 @@ paths:
           example: "qry_9c1d4e"
       responses:
         '200':
-          description: Job cancelled (or already finished)
+          description: Current job state after the cancel attempt
           content:
             application/json:
               examples:
@@ -856,32 +720,18 @@ paths:
                   summary: Successfully cancelled
                   value:
                     data:
-                      type: job
                       job_id: "qry_9c1d4e"
-                      status: cancelled
-                      progress:
-                        phase: scanning
-                        scanned: 42350000000
-                        total_estimate: 84700000000
-                        percent: 50.0
-                        elapsed_ms: 18400
-                      partial_results:
-                        type: aggregate
-                        columns: ["source", "count"]
-                        rows:
-                          - ["nginx", 284000]
-                          - ["api-gw", 139000]
-                        note: "Partial results at cancellation (50% scanned)."
-                already_complete:
+                      status: canceled
+                      canceled: true
+                      completed_at: "2026-02-14T14:50:18Z"
+                already_done:
                   summary: Job already finished
                   value:
                     data:
-                      type: job
                       job_id: "qry_9c1d4e"
-                      status: complete
-                      progress:
-                        phase: complete
-                        percent: 100
+                      status: done
+                      canceled: false
+                      completed_at: "2026-02-14T14:50:37Z"
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -889,7 +739,7 @@ paths:
     get:
       operationId: streamJob
       tags: [Query]
-      summary: SSE stream of job progress and partial results
+      summary: SSE stream of job progress and final results
       description: |
         Server-Sent Events stream for real-time job tracking. Preferred over polling for Web UI.
 
@@ -897,11 +747,10 @@ paths:
 
         | Event | When | Data |
         |---|---|---|
-        | `progress` | Every ~1s while running | `{phase, percent, scanned, events_matched, eta_ms}` |
-        | `partial` | Periodically (every ~10% progress) | Intermediate results (same shape as final `data.type`) |
+        | `progress` | Every ~1s while running | Progress snapshot plus optional preview rows |
         | `complete` | Query finished | Final results |
         | `failed` | Query errored | Error object |
-        | `cancelled` | Job was cancelled | Progress at cancellation |
+        | `canceled` | Job was cancelled | Progress at cancellation |
 
         SSE (not WebSocket) because this is a unidirectional server→client stream. SSE auto-reconnects,
         passes through proxies, and works with the native `EventSource` browser API.
@@ -909,7 +758,6 @@ paths:
         ```javascript
         const es = new EventSource("/api/v1/query/jobs/qry_xxx/stream");
         es.addEventListener("progress", (e) => updateProgressBar(JSON.parse(e.data)));
-        es.addEventListener("partial",  (e) => updateTable(JSON.parse(e.data)));
         es.addEventListener("complete", (e) => { showFinalResults(JSON.parse(e.data)); es.close(); });
         es.addEventListener("failed",   (e) => { showError(JSON.parse(e.data)); es.close(); });
         ```
@@ -929,27 +777,13 @@ paths:
                 type: string
               example: |
                 event: progress
-                data: {"phase":"scanning","scanned":2100000000,"total_estimate":10400000000,"percent":20.2,"events_matched":847291,"elapsed_ms":5000,"eta_ms":19700}
-
-                event: partial
-                data: {"type":"aggregate","columns":["source","count"],"rows":[["nginx",142000],["api-gw",71000]],"note":"Based on 20% of data. Final values will change."}
-
-                event: progress
-                data: {"phase":"scanning","scanned":5200000000,"total_estimate":10400000000,"percent":50.0,"events_matched":2100000,"elapsed_ms":12500,"eta_ms":12500}
-
-                event: partial
-                data: {"type":"aggregate","columns":["source","count"],"rows":[["nginx",355000],["api-gw",178000]],"note":"Based on 50% of data. Final values will change."}
-
-                event: progress
-                data: {"phase":"aggregating","scanned":10400000000,"total_estimate":10400000000,"percent":92.0,"events_matched":4200000,"elapsed_ms":23100,"eta_ms":2000}
+                data: {"phase":"scanning_segments","scanned":24,"segments_total":128,"percent":18.75,"events_matched":847291,"elapsed_ms":5000,"eta_ms":21666}
 
                 event: complete
-                data: {"type":"aggregate","columns":["source","count"],"rows":[["nginx",712345],["api-gw",356789]],"total_rows":5}
+                data: {"data":{"type":"aggregate","columns":["source","count"],"rows":[["nginx",712345],["api-gw",356789]],"total_rows":5},"meta":{"took_ms":23100,"scanned":10400000000}}
 
         '404':
           $ref: '#/components/responses/NotFound'
-        '410':
-          description: Job expired
 
   # ════════════════════════════════════════════
   # LIVE
@@ -2406,6 +2240,36 @@ components:
         source: nginx
         status: 200
 
+    StructuredIngestEvent:
+      type: object
+      required: [event]
+      properties:
+        event:
+          type: string
+          description: Raw event text stored in `_raw`
+        time:
+          type: number
+          description: Unix timestamp in seconds
+        source:
+          type: string
+        sourcetype:
+          type: string
+        host:
+          type: string
+        index:
+          type: string
+        fields:
+          type: object
+          additionalProperties: true
+          description: Additional scalar fields copied onto the event
+      example:
+        event: "request completed"
+        source: "api"
+        host: "web-01"
+        fields:
+          level: "info"
+          duration_ms: 45
+
     IngestResponse:
       type: object
       required: [data]
@@ -2467,12 +2331,20 @@ components:
 
     QueryRequest:
       type: object
-      required: [q]
       properties:
         q:
           type: string
           description: SPL2 query string
           example: "source=nginx status>=500 | stats count by uri"
+        query:
+          type: string
+          description: Alias for `q`
+        earliest:
+          type: string
+          description: Legacy alias for `from`
+        latest:
+          type: string
+          description: Legacy alias for `to`
         from:
           type: string
           description: "Start time: relative (`-1h`, `-7d`) or ISO 8601. Default: `-15m`"
@@ -2493,18 +2365,55 @@ components:
           description: Offset for pagination (tabular results only)
         format:
           type: string
-          enum: [json, csv, raw]
+          enum: [json]
           default: json
+          description: Optional response format selector. Only `json` is accepted on `/query`.
         wait:
           type: number
           nullable: true
           default: null
           description: |
             Controls sync/async behavior:
-            - `null` (default) — **Sync.** Block until query completes or server timeout (30s). Returns `200` with results or `408` on timeout.
+            - `null` (default) — **Sync.** Block until query completes. Returns `200` with results.
             - `0` — **Async.** Return `202` immediately with a job handle. Client polls or subscribes to SSE for progress.
             - `N` (seconds) — **Hybrid.** Wait up to N seconds. If query completes in time → `200` with results. If not → `202` with job handle and current progress. Best for UI: short queries feel instant, long queries degrade gracefully.
           example: 5
+        profile:
+          type: string
+          enum: [basic, full, trace]
+          description: Include richer execution statistics in the response `meta.stats`.
+        variables:
+          type: object
+          additionalProperties:
+            type: string
+          description: Template variables substituted into the query before planning.
+
+    QueryStreamRequest:
+      type: object
+      properties:
+        q:
+          type: string
+          description: SPL2 query string
+        query:
+          type: string
+          description: Alias for `q`
+        earliest:
+          type: string
+          description: Legacy alias for `from`
+        latest:
+          type: string
+          description: Legacy alias for `to`
+        from:
+          type: string
+          description: "Start time: relative (`-1h`, `-7d`) or ISO 8601."
+        to:
+          type: string
+          description: "End time: relative (`now`, `-5m`) or ISO 8601."
+        variables:
+          type: object
+          additionalProperties:
+            type: string
+          description: Template variables substituted into the query before planning.
 
     AcceleratedBy:
       type: object
@@ -2631,93 +2540,51 @@ components:
 
     JobProgress:
       type: object
-      required: [phase, percent]
+      required: [phase]
       properties:
         phase:
           type: string
-          enum: [scanning, aggregating, sorting, complete]
-          description: |
-            Current execution phase:
-            - `scanning` — reading raw segments, matching filters
-            - `aggregating` — computing stats/group-by after scan
-            - `sorting` — sorting results (for `| sort`)
-            - `complete` — done
-        scanned:
+          enum: [parsing, scanning_buffer, filtering_segments, scanning_segments, executing_pipeline]
+          description: Current execution phase
+        segments_total:
+          type: integer
+          description: Total segments considered for the query
+        segments_scanned:
+          type: integer
+          description: Segments scanned so far
+        segments_dispatched:
+          type: integer
+          description: Segments dispatched to workers
+        segments_skipped_index:
+          type: integer
+        segments_skipped_time:
+          type: integer
+        segments_skipped_stats:
+          type: integer
+        segments_skipped_bloom:
+          type: integer
+        segments_skipped_range:
+          type: integer
+        buffered_events:
+          type: integer
+        rows_read_so_far:
           type: integer
           format: int64
-          description: Events scanned so far
-          example: 42350000000
-        total_estimate:
-          type: integer
-          format: int64
-          description: Estimated total events to scan (may refine as scan progresses)
-          example: 84700000000
-        percent:
-          type: number
-          minimum: 0
-          maximum: 100
-          example: 50.0
-        events_matched:
-          type: integer
-          format: int64
-          description: Events that passed the filter so far
-          example: 423000000
+          description: Rows read so far
         elapsed_ms:
-          type: integer
+          type: number
           description: Wall-clock time since job started
-          example: 18400
-        eta_ms:
-          type: integer
-          nullable: true
-          description: Estimated time remaining. `null` when not enough data to estimate.
-          example: 18400
-
-    PartialResults:
-      type: object
-      description: |
-        Intermediate results based on data scanned so far. Same shape as final results
-        (`events`, `aggregate`, or `timechart`) plus a `note` field warning that values are not final.
-
-        For aggregation queries: intermediate values that will change as more data is scanned.
-        For event queries: first N matched events found so far.
-      properties:
-        type:
-          type: string
-          enum: [events, aggregate, timechart]
-        columns:
-          type: array
-          items:
-            type: string
-        rows:
-          type: array
-          items:
-            type: array
-        events:
-          type: array
-          items:
-            $ref: '#/components/schemas/LogEvent'
-        total_so_far:
-          type: integer
-          description: Total matches found so far (for event queries)
-        note:
-          type: string
-          description: Always present — warns client that data is not final
-          example: "Based on 50% of data. Final values will change."
 
     QueryJobResponse:
       type: object
       required: [data]
       description: |
-        Returned as `202` from `POST /query` (async/hybrid) and `200` from `GET /query/jobs/{id}`.
-        The `status` field determines which result fields are present:
-        - `running` → `progress`, optional `partial_results`
-        - `complete` → `progress`, `results`
-        - `failed` → `progress`, `error`
-        - `cancelled` → `progress`, optional `partial_results`
+        Returned as `202` from `POST /query` when the query continues asynchronously,
+        and as `200` from `GET /query/jobs/{id}`.
       properties:
         data:
           type: object
-          required: [type, job_id, status, progress]
+          required: [type, job_id, status]
           properties:
             type:
               type: string
@@ -2727,35 +2594,21 @@ components:
               example: "qry_9c1d4e"
             status:
               type: string
-              enum: [running, complete, failed, cancelled]
+              enum: [running, done, error, canceled]
             query:
               type: string
               description: The original SPL2 query
-            from:
-              type: string
-            to:
-              type: string
             created_at:
               type: string
               format: date-time
             completed_at:
               type: string
               format: date-time
-              description: Present when `status` is `complete`
-            failed_at:
-              type: string
-              format: date-time
-              description: Present when `status` is `failed`
-            expires_at:
-              type: string
-              format: date-time
-              description: When results will be garbage-collected (present for `complete` jobs)
+              description: Present when `status` is `done`
             progress:
               $ref: '#/components/schemas/JobProgress'
-            partial_results:
-              $ref: '#/components/schemas/PartialResults'
             results:
-              description: Final query results. Present only when `status` is `complete`. Same shape as sync `200` response `data`.
+              description: Final query results. Present only when `status` is `done`. Same shape as sync `200` response `data`.
               oneOf:
                 - type: object
                   properties:
@@ -2801,7 +2654,7 @@ components:
                       items:
                         type: array
             error:
-              description: Present only when `status` is `failed`
+              description: Present when `status` is `error` or `canceled`
               type: object
               properties:
                 code:
@@ -2831,35 +2684,12 @@ components:
                     type: string
                   status:
                     type: string
-                    enum: [running, complete, failed, cancelled]
+                    enum: [running, done, error, canceled]
                   query:
-                    type: string
-                  from:
-                    type: string
-                  to:
                     type: string
                   created_at:
                     type: string
                     format: date-time
-                  completed_at:
-                    type: string
-                    format: date-time
-                  expires_at:
-                    type: string
-                    format: date-time
-                  progress:
-                    $ref: '#/components/schemas/JobProgress'
-            meta:
-              type: object
-              properties:
-                max_concurrent:
-                  type: integer
-                  description: Max concurrent jobs allowed
-                  example: 10
-                active:
-                  type: integer
-                  description: Currently running jobs
-                  example: 3
 
     QueryExplainResponse:
       type: object

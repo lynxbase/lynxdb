@@ -37,6 +37,10 @@ var (
 	globalNoColor       bool
 	globalDebug         bool
 	globalTLSSkipVerify bool
+
+	// projectRC holds the nearest .lynxdbrc (if any) loaded during initTheme.
+	// Subcommands consult it for flag-specific defaults like --since and --source.
+	projectRC *config.ProjectRC
 )
 
 var rootCmd = &cobra.Command{
@@ -78,11 +82,16 @@ func initTheme() {
 
 // applyProjectRC loads the nearest .lynxdbrc and applies its values
 // as defaults — only if the corresponding CLI flag was not explicitly set.
+// The loaded rc is also stashed in projectRC so subcommands can apply
+// flag-specific defaults (--since, --source) for flags that are not
+// persistent on the root command.
 func applyProjectRC() {
 	rc, _, err := config.LoadProjectRC()
 	if err != nil || rc == nil {
 		return
 	}
+
+	projectRC = rc
 
 	pf := rootCmd.PersistentFlags()
 

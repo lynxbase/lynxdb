@@ -43,7 +43,7 @@ lynxdb ingest app.log --source api-server --index production
 Pipe any output directly into LynxDB:
 
 ```bash
-cat events.json | lynxdb ingest
+cat access.log | lynxdb ingest --source web-01
 kubectl logs deploy/api --since=1h | lynxdb ingest --source k8s-api
 docker logs myapp 2>&1 | lynxdb ingest --source docker-myapp
 ```
@@ -62,27 +62,46 @@ The default batch size is 5000 lines per request.
 
 ## Ingest via the REST API
 
-The [`POST /api/v1/ingest`](/docs/api/ingest) endpoint accepts JSON, NDJSON, or plain text. No `Content-Type` header is required (defaults to `application/json`).
+Use the structured ingest endpoint for event payload arrays, and the raw ingest endpoint for newline-delimited logs:
 
-### Send a single JSON event
+- [`POST /api/v1/ingest`](/docs/api/ingest) for structured JSON event arrays
+- [`POST /api/v1/ingest/raw`](/docs/api/ingest) for raw text lines
+
+### Send structured events
 
 ```bash
 curl -X POST localhost:3100/api/v1/ingest \
-  -d '{"message": "user login", "user_id": 42, "ip": "10.0.1.5"}'
+  -H "Content-Type: application/json" \
+  -d '[
+    {
+      "event": "user login",
+      "source": "auth-api",
+      "fields": {
+        "user_id": 42,
+        "ip": "10.0.1.5",
+        "level": "info"
+      }
+    }
+  ]'
 ```
 
-### Send multiple events as NDJSON
-
-Newline-delimited JSON is the most efficient format for batch ingestion:
+### Send a structured batch
 
 ```bash
 curl -X POST localhost:3100/api/v1/ingest \
-  -H "Content-Type: application/x-ndjson" \
-  --data-binary @- <<'EOF'
-{"level": "info", "message": "request started", "path": "/api/users"}
-{"level": "error", "message": "connection refused", "service": "redis"}
-{"level": "info", "message": "request completed", "duration_ms": 45}
-EOF
+  -H "Content-Type: application/json" \
+  -d '[
+    {
+      "event": "request started",
+      "source": "api",
+      "fields": {"path": "/api/users", "level": "info"}
+    },
+    {
+      "event": "connection refused",
+      "source": "api",
+      "fields": {"service": "redis", "level": "error"}
+    }
+  ]'
 ```
 
 ### Send raw text
@@ -91,13 +110,13 @@ For unstructured log lines, post the raw text:
 
 ```bash
 echo '192.168.1.1 - - [14/Feb/2026:14:23:01 +0000] "GET /api HTTP/1.1" 200 1234' \
-  | curl -X POST localhost:3100/api/v1/ingest --data-binary @-
+  | curl -X POST localhost:3100/api/v1/ingest/raw --data-binary @-
 ```
 
 Or send an entire file:
 
 ```bash
-curl -X POST localhost:3100/api/v1/ingest \
+curl -X POST localhost:3100/api/v1/ingest/raw \
   -H "Content-Type: text/plain" \
   --data-binary @access.log
 ```
@@ -106,7 +125,7 @@ curl -X POST localhost:3100/api/v1/ingest \
 
 ## Structured import
 
-The [`lynxdb import`](/docs/cli/ingest) command handles structured formats (NDJSON, CSV, Elasticsearch bulk exports) and preserves field types and timestamps.
+The [`lynxdb import`](/docs/cli/ingest) command handles structured formats (NDJSON, CSV, Elasticsearch bulk exports) and preserves field types and timestamps. `ndjson` and `csv` are normalized into LynxDB's structured event envelope; `esbulk` uses the Elasticsearch-compatible bulk API.
 
 ### Import NDJSON
 
@@ -135,16 +154,6 @@ Use `--dry-run` to check the file without writing any data:
 ```bash
 lynxdb import events.json --dry-run
 ```
-
-### Transform during import
-
-Apply an SPL2 pipeline to filter or reshape data as it is imported:
-
-```bash
-lynxdb import events.json --transform '| where level!="DEBUG"'
-```
-
----
 
 ## Timestamp auto-detection
 
@@ -182,7 +191,7 @@ type = "elasticsearch"
 endpoints = ["http://lynxdb:3100/api/v1/es"]
 ```
 
-The `_index` field from the bulk request is mapped to the `_source` tag in LynxDB. No other configuration is needed. See the [compatibility API reference](/docs/api/compatibility) for details.
+The `_index` field from the bulk request is mapped to the `_source` tag in LynxDB. No other configuration is needed. Prefer `/api/v1/es/_bulk`; `/api/v1/ingest/bulk` is an alias. See the [compatibility API reference](/docs/api/compatibility) for details.
 
 ### OpenTelemetry Collector (OTLP)
 
@@ -200,7 +209,7 @@ exporters:
 If you have existing Splunk forwarders, point them at the HEC-compatible endpoint:
 
 ```
-http://lynxdb:3100/api/v1/hec
+http://lynxdb:3100/api/v1/ingest/hec
 ```
 
 ---

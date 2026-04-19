@@ -289,7 +289,6 @@ Unlike `ingest` which handles raw log lines, `import` understands structured for
 | `--index` | | Target index name |
 | `--batch-size` | `5000` | Number of events per batch |
 | `--dry-run` | `false` | Validate and count events without importing |
-| `--transform` | | SPL2 pipeline to apply during import |
 | `--delimiter` | `,` | Field delimiter for CSV format |
 
 Format is auto-detected from file extension and content. Use `-` as the file argument to read from stdin (requires `--format`).
@@ -310,9 +309,6 @@ lynxdb import es_dump.json --format esbulk
 
 # Validate without importing
 lynxdb import events.json --dry-run
-
-# Apply SPL2 transform during import
-lynxdb import events.json --transform '| where level!="DEBUG"'
 
 # Import from stdin
 cat events.ndjson | lynxdb import - --format ndjson
@@ -556,7 +552,7 @@ lynxdb top [flags]
 |------|---------|-------------|
 | `--interval` | `2s` | Refresh interval (e.g., `2s`, `5s`) |
 
-Shows four panels: Ingest (rate, today, total), Queries (active, cache hit rate, views, tail sessions), Storage (size, segments, memtable, indexes), and Sources (bar chart of events by source).
+Shows four panels: Ingest (rate, today, total), Queries (active, cache hit rate, views, tail sessions), Storage (size, parts, batcher-buffered events, indexes), and Sources (bar chart of events by source).
 
 Press `q` or `Ctrl+C` to quit.
 
@@ -1840,13 +1836,10 @@ Every config key can be overridden with an environment variable. Prefix: `LYNXDB
 |---------|------------|
 | `LYNXDB_STORAGE_COMPRESSION` | `storage.compression` |
 | `LYNXDB_STORAGE_ROW_GROUP_SIZE` | `storage.row_group_size` |
-| `LYNXDB_STORAGE_WAL_SYNC_INTERVAL` | `storage.wal_sync_interval` |
-| `LYNXDB_STORAGE_WAL_SYNC_BYTES` | `storage.wal_sync_bytes` |
-| `LYNXDB_STORAGE_WAL_MAX_SEGMENT_SIZE` | `storage.wal_max_segment_size` |
-| `LYNXDB_STORAGE_WAL_SYNC_MODE` | `storage.wal_sync_mode` |
 | `LYNXDB_STORAGE_FLUSH_THRESHOLD` | `storage.flush_threshold` |
-| `LYNXDB_STORAGE_MEMTABLE_SHARDS` | `storage.memtable_shards` |
-| `LYNXDB_STORAGE_MAX_IMMUTABLE` | `storage.max_immutable` |
+| `LYNXDB_STORAGE_FLUSH_IDLE_TIMEOUT` | `storage.flush_idle_timeout` |
+| `LYNXDB_STORAGE_MAX_COLUMNS_PER_PART` | `storage.max_columns_per_part` |
+| `LYNXDB_STORAGE_PARTITION_BY` | `storage.partition_by` |
 | `LYNXDB_STORAGE_COMPACTION_INTERVAL` | `storage.compaction_interval` |
 | `LYNXDB_STORAGE_COMPACTION_WORKERS` | `storage.compaction_workers` |
 | `LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB` | `storage.compaction_rate_limit_mb` |
@@ -1907,7 +1900,7 @@ When `lynxdb query` runs against a server (not file/stdin) and stdout is a termi
 - Live progress reporting (phase, segment scan progress, rows read, skip stats)
 - Colorized JSON output with syntax highlighting
 - Numbered results (`#1`, `#2`, ...)
-- Detailed stats footer (results, scanned events, filter ratio, segments, memtable, timing)
+- Detailed stats footer (results, scanned events, filter ratio, parts, buffered events, timing)
 - `Ctrl+C` to cancel
 
 **Query execution flow in TUI mode:**

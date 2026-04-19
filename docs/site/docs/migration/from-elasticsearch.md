@@ -9,10 +9,10 @@ LynxDB provides a drop-in compatible `_bulk` API endpoint, making migration from
 
 ## _bulk API Compatibility
 
-LynxDB's `POST /api/v1/ingest/bulk` endpoint accepts the Elasticsearch `_bulk` format:
+LynxDB's Elasticsearch compatibility layer accepts the Elasticsearch `_bulk` format:
 
 ```bash
-curl -X POST localhost:3100/api/v1/ingest/bulk -H 'Content-Type: application/x-ndjson' -d '
+curl -X POST localhost:3100/api/v1/es/_bulk -H 'Content-Type: application/x-ndjson' -d '
 {"index": {"_index": "nginx"}}
 {"@timestamp": "2026-01-15T14:23:01Z", "level": "error", "message": "connection refused"}
 {"index": {"_index": "nginx"}}
@@ -49,7 +49,7 @@ Change the output in `filebeat.yml`:
 # After (LynxDB)
 output.elasticsearch:
   hosts: ["localhost:3100"]
-  path: "/api/v1/ingest"
+  path: "/api/v1/es"
   index: "filebeat"
   # No template or ILM configuration needed
 ```
@@ -73,7 +73,7 @@ Change the output in your Logstash pipeline:
 output {
   elasticsearch {
     hosts => ["localhost:3100"]
-    path => "/api/v1/ingest"
+    path => "/api/v1/es"
     index => "logstash"
     # Disable template management (not needed)
     manage_template => false
@@ -97,7 +97,7 @@ output {
   @type elasticsearch
   host localhost
   port 3100
-  path /api/v1/ingest
+  path /api/v1/es
   type_name _doc
   logstash_format false
 </match>
@@ -114,7 +114,7 @@ output {
 # After (LynxDB)
 [sinks.lynxdb]
 type = "elasticsearch"
-endpoints = ["http://localhost:3100"]
+endpoints = ["http://localhost:3100/api/v1/es"]
 api_version = "v7"
 bulk.index = "vector"
 ```
@@ -133,7 +133,7 @@ bulk.index = "vector"
     Name  es
     Host  localhost
     Port  3100
-    Path  /api/v1/ingest
+    Path  /api/v1/es
     Suppress_Type_Name On
 ```
 

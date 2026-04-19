@@ -11,7 +11,7 @@ LynxDB stores all data in the `data_dir` directory. Backups are straightforward 
 
 | Component | Location | Contains |
 |-----------|----------|----------|
-| Data directory | `data_dir` (e.g., `/var/lib/lynxdb`) | WAL, segments, indexes, metadata |
+| Data directory | `data_dir` (e.g., `/var/lib/lynxdb`) | Part files, indexes, caches, manifests, and metadata |
 | Config file | `/etc/lynxdb/config.yaml` or `~/.config/lynxdb/config.yaml` | Server configuration |
 | Credentials | `~/.config/lynxdb/credentials` | API keys (if auth is enabled) |
 
@@ -66,7 +66,7 @@ aws ec2 create-snapshot --volume-id $VOLUME_ID --description "lynxdb-backup-$(da
 
 ### Method 3: rsync (Incremental)
 
-For incremental backups of a running server. Note: this may capture the WAL mid-write, so a WAL replay is needed on restore:
+For incremental backups of a running server. Note: this may capture temporary files or a part write mid-flight, so stop-and-copy or a filesystem snapshot is still safer:
 
 ```bash
 rsync -avz --delete \
@@ -88,7 +88,7 @@ When S3 tiering is enabled, S3 already contains all compacted segments. For a co
 ### Segments (Already in S3)
 
 If you use S3 tiering, compacted segments are already in S3. Your backup strategy only needs to cover:
-- In-flight data (WAL + memtable) on ingest nodes
+- Local in-flight buffering and recent hot-tier parts on ingest nodes
 - Metadata (config, API keys, materialized view definitions)
 
 ### Full S3 Backup
@@ -165,7 +165,7 @@ sudo tar xzf /backups/lynxdb-20260301-020000.tar.gz -C /
 # Fix ownership
 sudo chown -R lynxdb:lynxdb /var/lib/lynxdb
 
-# Start the server (WAL replay happens automatically)
+# Start the server
 sudo systemctl start lynxdb
 
 # Verify

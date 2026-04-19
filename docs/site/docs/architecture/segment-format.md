@@ -221,7 +221,7 @@ At every stage, the segment is immutable -- compaction and tiering create new se
 
 ## Related
 
-- [Storage Engine](/docs/architecture/storage-engine) -- WAL, memtable, compaction overview
+- [Storage Engine](/docs/architecture/storage-engine) -- async buffering, part flush, compaction overview
 - [Indexing](/docs/architecture/indexing) -- how bloom filters and inverted indexes are used during queries
 - [Query Engine](/docs/architecture/query-engine) -- how the scan operator reads columnar segments
 - [Design Decisions](/docs/architecture/design-decisions) -- why columnar format, why these encodings

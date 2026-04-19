@@ -51,6 +51,8 @@ type Server struct {
 	activeTailSessions   atomic.Int64 // current number of active tail SSE sessions
 	degraded             atomic.Bool  // true when a persistent store fell back to in-memory
 	tlsConfig            *tls.Config  // non-nil when TLS is enabled
+	levelVar             *slog.LevelVar
+	logger               *slog.Logger
 }
 
 // Config configures the API server.
@@ -64,6 +66,7 @@ type Config struct {
 	TLSConfig     *tls.Config // If non-nil, server listens with TLS.
 	Storage       config.StorageConfig
 	Logger        *slog.Logger
+	LevelVar      *slog.LevelVar // Optional. When set, ReloadConfig adjusts the log level through it.
 	Query         config.QueryConfig
 	Ingest        config.IngestConfig
 	HTTP          config.HTTPConfig
@@ -206,6 +209,8 @@ func NewServer(cfg Config) (*Server, error) {
 		alertShutdownTimeout: alertShutdownTimeout,
 		tailCfg:              cfg.Tail,
 		tlsConfig:            cfg.TLSConfig,
+		levelVar:             cfg.LevelVar,
+		logger:               cfg.Logger,
 	}
 	if storeDegraded {
 		s.degraded.Store(true)

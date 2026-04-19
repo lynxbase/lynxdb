@@ -14,6 +14,8 @@ Drop-in compatibility endpoints for migrating from existing log pipelines. No co
 
 Elasticsearch `_bulk` API compatible endpoint. Works out of the box with Filebeat, Logstash, Vector, Fluentd, and any Elasticsearch client library.
 
+This is the preferred bulk path. `POST /api/v1/ingest/bulk` is an alias to the same handler.
+
 #### Mapping
 
 - `_index` is accepted but mapped to `_source` tag (LynxDB is single-index by design).
@@ -233,7 +235,7 @@ OTLP fields are mapped to LynxDB fields as follows:
 LynxDB also supports the Splunk HTTP Event Collector (HEC) protocol for existing Splunk forwarders. Configure your Splunk forwarders to send to:
 
 ```
-http://lynxdb:3100/api/v1/hec
+http://lynxdb:3100/api/v1/ingest/hec
 ```
 
 ### Splunk Universal Forwarder Configuration
@@ -242,13 +244,13 @@ http://lynxdb:3100/api/v1/hec
 # outputs.conf
 [httpout]
 httpEventCollectorToken = any-token-here
-uri = http://lynxdb:3100/api/v1/hec
+uri = http://lynxdb:3100/api/v1/ingest/hec
 ```
 
 ### HEC Event Format
 
 ```bash
-curl -X POST localhost:3100/api/v1/hec \
+curl -X POST localhost:3100/api/v1/ingest/hec \
   -H "Authorization: Splunk any-token-here" \
   -d '{
     "event": "user login succeeded",
@@ -280,8 +282,8 @@ curl -X POST localhost:3100/api/v1/hec \
 | Vector | ES bulk | `/api/v1/es` | Change `endpoints` to LynxDB |
 | Fluentd | ES bulk | `/api/v1/es` | Change `host`/`port`/`path` |
 | OTEL Collector | OTLP/HTTP | `/api/v1/otlp` | Change `endpoint` to LynxDB |
-| Splunk Forwarder | HEC | `/api/v1/hec` | Change `uri` to LynxDB |
-| Splunk HEC client | HEC | `/api/v1/hec` | Change URL to LynxDB |
+| Splunk Forwarder | HEC | `/api/v1/ingest/hec` | Change `uri` to LynxDB |
+| Splunk HEC client | HEC | `/api/v1/ingest/hec` | Change URL to LynxDB |
 | Any ES client | ES API | `/api/v1/es` | Change base URL |
 
 ## Related

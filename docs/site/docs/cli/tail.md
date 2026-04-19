@@ -76,7 +76,7 @@ Shows four panels:
 |-------|---------|
 | **Ingest** | Rate, today count, total count |
 | **Queries** | Active, cache hit rate, views, tail sessions |
-| **Storage** | Size, segments, memtable, indexes |
+| **Storage** | Size, parts, batcher-buffered events, indexes |
 | **Sources** | Bar chart of events by source |
 
 Press `q` or `Ctrl+C` to quit.

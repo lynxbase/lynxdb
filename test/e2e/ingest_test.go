@@ -35,13 +35,25 @@ func TestE2E_IngestJSON_StructuredEvents(t *testing.T) {
 	h := NewHarness(t)
 	ctx := context.Background()
 
-	events := []map[string]interface{}{
-		{"host": "web-01", "status": 200, "path": "/api/v1/users"},
-		{"host": "web-02", "status": 404, "path": "/api/v1/missing"},
-		{"host": "web-01", "status": 500, "path": "/api/v1/error"},
+	events := []client.IngestEvent{
+		{
+			Event:  `{"host":"web-01","status":200,"path":"/api/v1/users"}`,
+			Host:   "web-01",
+			Fields: map[string]interface{}{"status": 200, "path": "/api/v1/users"},
+		},
+		{
+			Event:  `{"host":"web-02","status":404,"path":"/api/v1/missing"}`,
+			Host:   "web-02",
+			Fields: map[string]interface{}{"status": 404, "path": "/api/v1/missing"},
+		},
+		{
+			Event:  `{"host":"web-01","status":500,"path":"/api/v1/error"}`,
+			Host:   "web-01",
+			Fields: map[string]interface{}{"status": 500, "path": "/api/v1/error"},
+		},
 	}
 
-	result, err := h.Client().Ingest(ctx, events)
+	result, err := h.Client().IngestEvents(ctx, events)
 	if err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}

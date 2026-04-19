@@ -1,212 +1,151 @@
 ---
 sidebar_position: 2
 title: Storage Engine
-description: Deep dive into the LynxDB storage engine -- WAL, sharded memtable, segment flush, size-tiered compaction, and S3 tiering.
+description: Deep dive into the LynxDB storage engine -- AsyncBatcher buffering, immutable part files, compaction, and S3-backed tiering.
 ---
 
 # Storage Engine
 
-The LynxDB storage engine manages the full lifecycle of log data: ingest, durability (WAL), in-memory buffering (memtable), persistent columnar storage (segments), background maintenance (compaction), and long-term archival (tiered storage). Every component is purpose-built for log analytics -- there is no embedded RocksDB, SQLite, or other general-purpose store underneath.
+The LynxDB storage engine manages the full lifecycle of log data: ingest buffering, immutable `.lsg` part writes, background compaction, and optional remote tiering. The current write path is a direct-to-part model built around `AsyncBatcher` and atomic file renames rather than a WAL replay pipeline.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    A[Ingest Request] --> B[Write-Ahead Log]
-    B --> C[Sharded Memtable]
-    C -->|"size >= 512 MB"| D[Segment Writer]
-    D --> E["L0 Segments (.lsg)"]
-    E --> F[Compaction]
-    F --> G["L1 Segments (merged)"]
-    G --> H[Compaction]
-    H --> I["L2 Segments (~1 GB)"]
-    I -->|"age > 7d"| J[S3 Warm Tier]
-    J -->|"age > 30d"| K[Glacier Cold Tier]
+    A[Ingest Request] --> B[AsyncBatcher]
+    B -->|"50K events, 64 MB, or 200 ms"| C[Part Writer]
+    C --> D["L0 Parts (.lsg)"]
+    D --> E[Compaction]
+    E --> F["L1 Parts"]
+    F --> G[Compaction]
+    G --> H["L2 Parts (~1 GB target)"]
+    H --> I["Optional S3 / object-store tiering"]
 ```
 
-## Write-Ahead Log (WAL)
+## AsyncBatcher and Part Writer
 
-Every event is appended to the WAL before it enters the memtable. The WAL provides crash durability: if the process terminates unexpectedly, all committed WAL entries are replayed on startup to rebuild the memtable.
+Incoming events are buffered per index inside `AsyncBatcher`. A shard flushes when any of these internal thresholds is crossed:
 
-### Design
+- `50,000` buffered events
+- `64 MB` of raw event bytes
+- `200 ms` maximum wait time
 
-- **Append-only**: Events are serialized and appended sequentially. No in-place updates, no random I/O.
-- **Segment rotation**: WAL files rotate at 256 MB. Old segments are deleted after the corresponding memtable data has been flushed to `.lsg` segments.
-- **Batch sync**: Rather than calling `fsync` on every write, the WAL batches syncs every 100 ms. This gives near-fsync durability with significantly higher throughput.
+The batcher writes directly to immutable part files. There is no separate WAL directory and no replay step that rebuilds a memtable on startup.
 
-### Sync Policies
+## Commit Path
 
-The WAL supports three fsync policies, configurable via `storage.wal_sync`:
+When a batch flushes, the part writer follows this sequence:
 
-| Policy | Behavior | Durability | Throughput |
-|--------|----------|------------|------------|
-| `none` | No explicit sync. Relies on OS page cache flush. | Data loss possible on power failure. | Highest |
-| `write` | `write()` system call completes, but no `fsync`. | Durable against process crash, not power failure. | High |
-| `fsync` | `fsync()` after every batch (100 ms). | Durable against power failure. | Moderate |
+1. Serialize the batch into a temporary `tmp_*.lsg` file in the target partition directory.
+2. `fsync` the file when `ingest.fsync` is enabled.
+3. Close the file.
+4. Atomically rename it into place as the final `.lsg` part.
+5. Sync the directory entry so the rename itself is durable.
+6. Register the new part in the in-memory part registry and expose it to queries.
 
-The default is `write`, which protects against process crashes (the most common failure mode). For workloads that require power-failure durability, use `fsync`.
+Because the rename happens only after the write completes, queries never observe a partially written segment.
 
-### Crash Recovery
+## Crash Recovery and Durability
 
-On startup, the storage engine:
+Startup recovery is filesystem-driven:
 
-1. Scans the WAL directory for segment files.
-2. Reads each WAL segment sequentially, deserializing events.
-3. Inserts recovered events into the memtable.
-4. Skips events whose timestamps fall within already-flushed `.lsg` segments (deduplication via the segment registry).
+1. Scan index partition directories.
+2. Delete stale `tmp_*` and `.deleted` files left behind by interrupted writes or compactions.
+3. Read the footers of surviving `.lsg` files.
+4. Rebuild the in-memory part registry from those on-disk parts.
 
-Recovery is fast because the WAL is sequential and the memtable insertion is lock-free.
+This model has an important durability tradeoff: events accepted into the in-memory batcher are not durable until the part write commits. If the process or host fails before the flush completes, those buffered events can be lost. Clients that need at-least-once delivery should retry on connection loss or other uncertain outcomes.
 
-## Memtable
+## Part Files (`.lsg`)
 
-The memtable is an in-memory buffer that holds recently ingested events before they are flushed to columnar segments on disk.
+Parts are the primary storage unit. Each part is a self-contained columnar `.lsg` file with:
 
-### Sharded Design
+- per-column encoded data blocks
+- bloom filters and inverted indexes for pruning
+- metadata such as time range, event count, level, and tier
+- footer data that lets the registry reconstruct part metadata on startup
 
-The memtable is sharded by CPU core to enable lock-free concurrent ingestion:
-
-```
-┌──────────────────────────────────────┐
-│              Memtable                │
-│                                      │
-│  ┌────────┐ ┌────────┐ ┌────────┐   │
-│  │ Shard 0│ │ Shard 1│ │ Shard N│   │
-│  │ (CPU 0)│ │ (CPU 1)│ │ (CPU N)│   │
-│  │        │ │        │ │        │   │
-│  │  B-tree│ │  B-tree│ │  B-tree│   │
-│  └────────┘ └────────┘ └────────┘   │
-│                                      │
-│  Shard assignment: hash(goroutine)   │
-└──────────────────────────────────────┘
-```
-
-Each shard is an ordered B-tree indexed by timestamp. Ingest goroutines are mapped to shards by hashing, so concurrent writers rarely contend on the same lock. On an 8-core machine with 8 shards, contention is effectively eliminated.
-
-### Flush Trigger
-
-The memtable is flushed when its total size across all shards reaches the configured threshold (default 512 MB). The flush process:
-
-1. Freezes the current memtable (new writes go to a fresh memtable).
-2. Merges all shards into a single sorted stream.
-3. Writes a new `.lsg` segment via the segment writer.
-4. Registers the segment in the metadata registry.
-5. Truncates the WAL (removes segments that are now covered by the flushed `.lsg`).
-
-### Two Flush Paths
-
-The storage engine has two flush paths depending on configuration:
-
-- **`flushToDisk`**: Writes the segment to the configured data directory. Used in server mode with `data-dir` set.
-- **`flushInMemory`**: Writes the segment to an in-memory buffer. Used in pipe mode where no data directory exists.
-
-Both paths produce identical `.lsg` segments -- the only difference is the backing store.
-
-## Segment Files (`.lsg`)
-
-Segments are the primary on-disk storage unit. Each segment is a self-contained columnar file in the `.lsg` V2 format containing:
-
-- A header with metadata (version, event count, time range, column descriptors).
-- Per-column data blocks with type-specific encoding.
-- A bloom filter for term-level segment skipping.
-- An FST-based inverted index with roaring bitmap posting lists.
-- A footer with offsets to all sections.
-
-See [Segment Format](/docs/architecture/segment-format) for a detailed breakdown of the binary format and encoding strategies.
+See [Segment Format](/docs/architecture/segment-format) for the detailed on-disk layout.
 
 ## Compaction
 
-Compaction merges smaller segments into larger ones to improve query performance (fewer segments to scan) and reclaim space (removing duplicate or deleted events).
+Compaction merges smaller parts into larger ones to reduce scan fan-out and reclaim space from superseded files.
 
-### Size-Tiered Levels
-
-LynxDB uses a three-level size-tiered compaction strategy:
+LynxDB uses a three-level size-tiered strategy:
 
 ```
-L0 (overlapping)  →  L1 (merged, non-overlapping)  →  L2 (fully compacted, ~1 GB)
+L0 (fresh flushes)  →  L1 (merged)  →  L2 (larger compacted parts)
 ```
 
-| Level | Segment Size | Time Ranges | Description |
-|-------|-------------|-------------|-------------|
-| **L0** | Small (flush-sized) | May overlap | Fresh segments from memtable flush. Many small files. |
-| **L1** | Medium | Non-overlapping | L0 segments merged into larger, sorted segments. |
-| **L2** | ~1 GB | Non-overlapping | Fully compacted. Optimal for scanning. |
+| Level | Description |
+|---|---|
+| `L0` | Freshly flushed parts; time ranges may overlap |
+| `L1` | Merged parts with less fan-out |
+| `L2` | Larger compacted parts near the configured target size |
 
-### Compaction Process
+The compaction scheduler runs periodically, writes replacement parts, swaps them into the registry, and retires the old files.
 
-1. **Trigger**: The compaction scheduler runs periodically (default every 30 seconds) and checks for eligible segments.
-2. **Selection**: Selects L0 segments with overlapping time ranges for L0 -> L1 compaction. Selects adjacent L1 segments that together approach the L2 target size for L1 -> L2 compaction.
-3. **Merge**: Opens selected segments as readers, merges events in timestamp order, writes a new segment at the target level.
-4. **Swap**: Atomically registers the new segment and deregisters the old segments in the metadata registry.
-5. **Cleanup**: Deletes the old segment files.
+## Part Registry
 
-### Rate Limiting
+The filesystem is the source of truth. LynxDB does not keep a separate `meta.json` registry for parts.
 
-Compaction is rate-limited to avoid starving ingest and query I/O. The `storage.compaction_workers` setting controls how many concurrent compaction jobs can run (default: 2). Compaction I/O is performed with low scheduling priority to yield to foreground operations.
+The in-memory registry is rebuilt from disk on startup and tracks:
 
-## Segment Registry
+- part ID
+- index and partition
+- time range
+- size and event count
+- compaction level
+- tier and object-store key
 
-The segment registry (`meta.json`) tracks all known segments, their levels, time ranges, and file paths. It is persisted atomically using a write-to-temp-then-rename pattern:
-
-1. Write the updated registry to a temporary file.
-2. Call `fsync` on the temporary file.
-3. Rename (atomic on POSIX) the temporary file over `meta.json`.
-
-This ensures the registry is never corrupted, even on power failure.
-
-The `segmentHandle` struct wraps each segment with its reader, mmap handle, metadata, and cached bloom filter for query-time access.
+This keeps crash recovery simple: if the part is present on disk and readable, it can be re-registered.
 
 ## Tiered Storage
 
-LynxDB supports automatic tiering of segments to object storage based on age:
+When object storage is configured, the background tiering loop evaluates segment age on `storage.tiering_interval` and promotes data across storage tiers:
 
 ```
-Hot (local SSD, < 7d)  →  Warm (S3, < 30d)  →  Cold (Glacier, < 90d)
+Hot (local disk)  →  Warm (object store)  →  Cold (object store / archive policy)
 ```
 
-### How It Works
+What is automated:
 
-1. **Age policy**: The tiering scheduler checks segment ages against configured thresholds.
-2. **Upload**: When a segment ages past the warm threshold, it is uploaded to S3 (or any S3-compatible store like MinIO).
-3. **Eviction**: The local copy is removed after successful upload (with a configurable grace period).
-4. **Query**: When a query needs a warm-tier segment, the local segment cache downloads it on demand and caches it for future queries.
+- age-based evaluation of eligible segments
+- upload from hot to warm object storage
+- warm-to-cold key migration in the object store
+- lazy fetch into the local segment cache for remote reads
 
-### Segment Cache
+What remains operator-controlled:
 
-The segment cache is a filesystem-based LRU cache that stores recently accessed warm-tier segments locally:
-
-- **Max size**: Configurable via `storage.cache_max_bytes` (default 4 GB).
-- **Eviction**: LRU -- least recently accessed segments are evicted when the cache is full.
-- **Persistence**: The cache survives restarts. Cached segments are not re-downloaded.
-- **Hit rate**: In practice, most queries hit recent data, so the cache hit rate is typically > 95%.
-
-### ObjectStore Interface
-
-The tiering layer uses the `ObjectStore` interface (`internal/objstore`), which has two implementations:
-
-- **`MemStore`**: In-memory implementation for testing.
-- **`S3Store`**: Production implementation backed by AWS S3 (or any S3-compatible API).
+- the object-store backend itself
+- optional bucket lifecycle rules if you want S3 Glacier or Deep Archive underneath the cold tier
 
 ## Configuration Reference
 
-Key storage configuration parameters:
+Common settings for the current storage path:
 
 ```yaml
 storage:
-  compression: lz4              # Segment compression algorithm
-  flush_threshold: 512mb        # Memtable flush threshold
-  wal_sync: write               # WAL sync policy: none, write, fsync
-  compaction_interval: 30s      # How often the compaction scheduler runs
-  compaction_workers: 2         # Max concurrent compaction jobs
-  cache_max_bytes: 4gb          # Warm-tier segment cache size
-  s3_bucket: my-logs-bucket     # S3 bucket for warm/cold tiering
-  s3_region: us-east-1          # S3 region
+  compression: lz4
+  compaction_interval: 30s
+  compaction_workers: 2
+  l0_threshold: 4
+  l1_threshold: 4
+  l2_target_size: 1gb
+  s3_bucket: my-logs-bucket
+  s3_region: us-east-1
+
+ingest:
+  fsync: true
+  max_body_size: 100mb
+  max_batch_size: 1000
 ```
 
-See [Storage Configuration](/docs/configuration/storage) for the complete reference.
+See [Storage Settings](/docs/configuration/storage), [Ingest Settings](/docs/configuration/ingest), and [S3 Tiering](/docs/configuration/s3-tiering) for the full operator-facing configuration surface.
 
 ## Related
 
-- [Segment Format](/docs/architecture/segment-format) -- binary layout of `.lsg` V2 files
-- [Indexing](/docs/architecture/indexing) -- bloom filters and inverted indexes embedded in segments
-- [Query Engine](/docs/architecture/query-engine) -- how the query engine reads segments
-- [S3 Tiering Configuration](/docs/configuration/s3-tiering) -- setup guide for object storage
+- [Segment Format](/docs/architecture/segment-format)
+- [Indexing](/docs/architecture/indexing)
+- [Query Engine](/docs/architecture/query-engine)
+- [S3 Tiering](/docs/configuration/s3-tiering)

@@ -40,7 +40,7 @@ When a primary must change, the shard goes through a drain cycle:
 ```
 ShardActive (old primary)
   → ShardMigrating (PendingPrimary set)
-  → old primary drains (flushes memtable, uploads segments)
+  → old primary drains (flushes batcher, uploads parts)
   → ShardDraining
   → drain completes
   → ShardActive (new primary)

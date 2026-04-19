@@ -24,6 +24,10 @@ lynxdb server --addr 0.0.0.0:3100
 lynxdb server --data-dir ""
 ```
 
+:::caution
+Use a persistent `data_dir` when enabling `--auth`. LynxDB only bootstraps and stores API keys when the server has a data directory.
+:::
+
 On startup, you'll see:
 
 ```
@@ -46,28 +50,37 @@ lynxdb ingest access.log --source web-01
 lynxdb ingest access.log --source web-01 --sourcetype nginx
 
 # Pipe data
-cat events.json | lynxdb ingest
+kubectl logs deploy/api --since=1h | lynxdb ingest --source k8s-api
 ```
 
 ### From the API
 
 ```bash
-# Single JSON event
+# Structured event payload array
 curl -X POST localhost:3100/api/v1/ingest \
-  -d '{"message": "user login", "user_id": 42, "level": "info"}'
+  -H 'Content-Type: application/json' \
+  -d '[{
+    "event": "user login",
+    "source": "auth-api",
+    "fields": {"user_id": 42, "level": "info"}
+  }]'
 
-# NDJSON batch
+# Structured batch
 curl -X POST localhost:3100/api/v1/ingest \
-  -H 'Content-Type: application/x-ndjson' \
-  -d '{"level":"info","msg":"event 1"}
-{"level":"error","msg":"event 2"}'
+  -H 'Content-Type: application/json' \
+  -d '[
+    {"event":"event 1","source":"demo","fields":{"level":"info"}},
+    {"event":"event 2","source":"demo","fields":{"level":"error"}}
+  ]'
 
-# Raw text
+# Raw text lines
 echo '192.168.1.1 - - [14/Feb/2026:14:23:01] "GET /api HTTP/1.1" 200' | \
-  curl -X POST localhost:3100/api/v1/ingest/raw --data-binary @-
+  curl -X POST localhost:3100/api/v1/ingest/raw \
+    -H 'X-Source: nginx' \
+    --data-binary @-
 ```
 
-No schema needed. Fields are discovered and indexed automatically.
+Use `/api/v1/es` for Elasticsearch-style NDJSON shippers. `/api/v1/ingest/bulk` is an alias to the same handler, and `/api/v1/ingest/hec` is for Splunk HEC senders.
 
 ## Query Data
 

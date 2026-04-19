@@ -19,6 +19,8 @@ func TestGolden_File(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.Name, func(t *testing.T) {
+			t.Parallel()
+
 			if tc.Skip != "" {
 				t.Skip(tc.Skip)
 			}
@@ -70,6 +72,8 @@ func TestGolden_Server(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.Name, func(t *testing.T) {
+			t.Parallel()
+
 			if tc.Skip != "" {
 				t.Skip(tc.Skip)
 			}

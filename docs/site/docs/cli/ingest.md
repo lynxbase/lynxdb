@@ -42,7 +42,7 @@ lynxdb ingest access.log --source web-01 --sourcetype nginx
 lynxdb ingest data.log --index production
 
 # From stdin
-cat events.json | lynxdb ingest
+cat access.log | lynxdb ingest --source web-01
 
 # Tune batch size for large files
 lynxdb ingest huge.log --batch-size 10000
@@ -67,7 +67,6 @@ Unlike `ingest` which handles raw log lines, `import` understands structured for
 | `--index` | | Target index name |
 | `--batch-size` | `5000` | Number of events per batch |
 | `--dry-run` | `false` | Validate and count events without importing |
-| `--transform` | | SPL2 pipeline to apply during import |
 | `--delimiter` | `,` | Field delimiter for CSV format |
 
 Format is auto-detected from file extension and content. Use `-` as the file argument to read from stdin (requires `--format`).
@@ -96,9 +95,6 @@ lynxdb import es_dump.json --format esbulk
 
 # Validate without importing
 lynxdb import events.json --dry-run
-
-# Apply SPL2 transform during import
-lynxdb import events.json --transform '| where level!="DEBUG"'
 
 # Import from stdin
 cat events.ndjson | lynxdb import - --format ndjson

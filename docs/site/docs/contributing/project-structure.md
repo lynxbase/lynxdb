@@ -87,7 +87,7 @@ The streaming query execution engine. Implements the Volcano iterator model with
 ```
 pkg/engine/pipeline/
 ├── pipeline.go           # Pipeline builder (AST → operator tree)
-├── scan.go               # Scan operator (reads segments + memtable)
+├── scan.go               # Scan operator (reads .lsg parts + batcher buffer)
 ├── filter.go             # Filter operator (WHERE)
 ├── project.go            # Project operator (FIELDS, TABLE)
 ├── eval.go               # Eval operator (EVAL)
@@ -136,15 +136,12 @@ See [Query Engine -- Bytecode VM](/docs/architecture/query-engine#bytecode-vm) f
 
 ### `pkg/storage/` -- Storage Engine
 
-The core storage engine package. Contains the top-level `Engine` type that coordinates WAL, memtable, segment management, compaction, and tiering.
+The core storage engine package. Contains the top-level `Engine` type that coordinates async ingest buffering, immutable part files, segment management, compaction, and tiering.
 
 ```
 pkg/storage/
-├── engine.go             # Core engine (ingest, query, flush, lifecycle)
-├── registry.go           # Segment registry (meta.json, atomic writes)
+├── part/                 # Async batcher, part writer, and filesystem registry
 ├── segment/              # Columnar .lsg format
-├── memtable/             # Sharded in-memory buffer
-├── wal/                  # Write-ahead log
 ├── compaction/           # Size-tiered compaction
 ├── tiering/              # Hot/warm/cold with S3 offload
 └── views/                # Materialized views
@@ -165,15 +162,9 @@ Key files:
 
 See [Segment Format](/docs/architecture/segment-format) for the binary format specification.
 
-#### `pkg/storage/memtable/` -- Sharded Memtable
+#### `pkg/storage/part/` -- Direct-to-Part Writes
 
-The in-memory buffer for recently ingested events. Sharded by CPU core for lock-free concurrent writes. Events are stored in B-trees ordered by timestamp.
-
-#### `pkg/storage/wal/` -- Write-Ahead Log
-
-Append-only durability log. Configurable fsync policy. 256 MB segment rotation. Replayed on crash recovery.
-
-See [Storage Engine -- WAL](/docs/architecture/storage-engine#write-ahead-log-wal) for details.
+Implements the async batcher, immutable part writer, and filesystem-scanned registry used by the current ingest path.
 
 #### `pkg/storage/compaction/` -- Compaction
 
@@ -284,9 +275,8 @@ flowchart TD
 
     OPTIMIZER --> SPL2
 
+    ENGINE --> PART["pkg/storage/part"]
     ENGINE --> SEGMENT["pkg/storage/segment"]
-    ENGINE --> MEMTABLE["pkg/storage/memtable"]
-    ENGINE --> WAL["pkg/storage/wal"]
     ENGINE --> COMPACTION["pkg/storage/compaction"]
     ENGINE --> TIERING["pkg/storage/tiering"]
     ENGINE --> VIEWS["pkg/storage/views"]

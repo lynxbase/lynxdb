@@ -208,7 +208,7 @@ LynxDB supports the Elasticsearch `_bulk` API:
 
 ```bash
 # Point your pipeline to LynxDB's _bulk endpoint
-# https://lynxdb-server:3100/api/v1/ingest/bulk
+# https://lynxdb-server:3100/api/v1/es/_bulk
 ```
 
 ### From Splunk to LynxDB (data export)

@@ -5,7 +5,7 @@ description: How to extract fields from unstructured logs at query time using RE
 
 # Extract Fields at Query Time
 
-LynxDB follows a schema-on-read philosophy: you do not need to define a schema before ingesting data. Send any JSON, any text, any format. Fields from JSON events are indexed automatically. For unstructured text logs, use [`REX`](/docs/lynx-flow/commands/rex) and [`EVAL`](/docs/lynx-flow/commands/eval) to extract and compute fields at query time.
+LynxDB follows a schema-on-read philosophy: you do not need to define a schema before ingesting data. JSON and text logs remain queryable without an upfront schema, but each ingest transport has its own endpoint contract. Fields from JSON events are indexed automatically. For unstructured text logs, use [`REX`](/docs/lynx-flow/commands/rex) and [`EVAL`](/docs/lynx-flow/commands/eval) to extract and compute fields at query time.
 
 ## How schema-on-read works
 

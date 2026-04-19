@@ -7,6 +7,10 @@ description: Complete reference for LynxDB cluster configuration -- enabling clu
 
 This page documents all `cluster:` configuration keys for distributed LynxDB deployments. For an overview of the distributed architecture, see [Distributed Architecture](/docs/architecture/distributed).
 
+:::note Current implementation status
+These settings describe the distributed cluster surface present in the codebase. Single-node and co-located small-cluster deployments are the safest path today. For larger separated-role clusters, validate the exact behavior of failover, replication, and rebalancing in staging against the version you plan to run.
+:::
+
 ## Enabling Cluster Mode
 
 Set `cluster.enabled: true` and provide `node_id`, `roles`, and `seeds`:

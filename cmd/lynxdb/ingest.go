@@ -37,6 +37,9 @@ func newIngestCmd() *cobra.Command {
   cat events.json | lynxdb ingest
   lynxdb ingest data.log --batch-size 10000`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if projectRC != nil && projectRC.DefaultSource != "" && !cmd.Flags().Changed("source") {
+				source = projectRC.DefaultSource
+			}
 			return runIngest(args, source, sourcetype, index, batchSize)
 		},
 	}

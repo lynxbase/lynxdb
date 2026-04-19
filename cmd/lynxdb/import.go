@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,33 @@ const (
 	importFormatESBulk = "esbulk"
 )
 
+var importTimestampAliases = []string{
+	"time",
+	"_time",
+	"timestamp",
+	"_timestamp",
+	"@timestamp",
+	"ts",
+	"datetime",
+}
+
+var structuredImportKeys = map[string]bool{
+	"event":      true,
+	"time":       true,
+	"source":     true,
+	"sourcetype": true,
+	"host":       true,
+	"index":      true,
+	"fields":     true,
+}
+
+var importMetadataKeys = map[string]bool{
+	"source":     true,
+	"sourcetype": true,
+	"host":       true,
+	"index":      true,
+}
+
 func newImportCmd() *cobra.Command {
 	var (
 		format    string
@@ -39,7 +67,6 @@ func newImportCmd() *cobra.Command {
 		index     string
 		batchSize int
 		dryRun    bool
-		transform string
 		delimiter string
 	)
 
@@ -66,23 +93,22 @@ formats and preserves field types, timestamps, and metadata from the source syst
   # Validate without importing (dry run)
   lynxdb import events.json --dry-run
 
-  # Apply SPL2 transform during import
-  lynxdb import events.json --transform '| where level!="DEBUG"'
-
   # Import from stdin
   cat events.ndjson | lynxdb import - --format ndjson
 
   # Import with custom CSV delimiter
   lynxdb import data.tsv --format csv --delimiter '\t'`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if projectRC != nil && projectRC.DefaultSource != "" && !cmd.Flags().Changed("source") {
+				source = projectRC.DefaultSource
+			}
 			return runImport(args[0], importOptions{
 				format:    format,
 				source:    source,
 				index:     index,
 				batchSize: batchSize,
 				dryRun:    dryRun,
-				transform: transform,
 				delimiter: delimiter,
 			})
 		},
@@ -94,7 +120,6 @@ formats and preserves field types, timestamps, and metadata from the source syst
 	f.StringVar(&index, "index", "", "Target index name")
 	f.IntVar(&batchSize, "batch-size", 5000, "Number of events per batch")
 	f.BoolVar(&dryRun, "dry-run", false, "Validate and count events without importing")
-	f.StringVar(&transform, "transform", "", "SPL2 pipeline to apply during import (e.g., '| where level!=\"DEBUG\"')")
 	f.StringVar(&delimiter, "delimiter", ",", "Field delimiter for CSV format")
 
 	return cmd
@@ -106,7 +131,6 @@ type importOptions struct {
 	index     string
 	batchSize int
 	dryRun    bool
-	transform string
 	delimiter string
 }
 
@@ -258,7 +282,7 @@ func importNDJSON(input *os.File, fileSize int64, opts importOptions) (importSta
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
-	var batch []string
+	var batch []client.IngestEvent
 	var stats importStats
 	start := time.Now()
 
@@ -271,21 +295,19 @@ func importNDJSON(input *os.File, fileSize int64, opts importOptions) (importSta
 			continue
 		}
 
-		// Validate JSON.
-		if !json.Valid([]byte(trimmed)) {
+		ev, err := normalizeImportJSONLine(trimmed, opts)
+		if err != nil {
 			stats.failedLines++
 
 			continue
 		}
 
-		// Apply source/index metadata if specified.
-		enriched := enrichNDJSONLine(trimmed, opts.source, opts.index)
-		batch = append(batch, enriched)
+		batch = append(batch, ev)
 		stats.totalEvents++
 
 		if len(batch) >= opts.batchSize {
 			if !opts.dryRun {
-				if err := sendImportBatch(batch, opts); err != nil {
+				if err := sendStructuredImportBatch(batch); err != nil {
 					return stats, fmt.Errorf("send batch %d: %w", stats.batches+1, err)
 				}
 			}
@@ -303,7 +325,7 @@ func importNDJSON(input *os.File, fileSize int64, opts importOptions) (importSta
 	// Flush remaining batch.
 	if len(batch) > 0 {
 		if !opts.dryRun {
-			if err := sendImportBatch(batch, opts); err != nil {
+			if err := sendStructuredImportBatch(batch); err != nil {
 				return stats, fmt.Errorf("send final batch: %w", err)
 			}
 		}
@@ -312,36 +334,6 @@ func importNDJSON(input *os.File, fileSize int64, opts importOptions) (importSta
 	}
 
 	return stats, nil
-}
-
-func enrichNDJSONLine(line, source, index string) string {
-	if source == "" && index == "" {
-		return line
-	}
-
-	var obj map[string]interface{}
-	if json.Unmarshal([]byte(line), &obj) != nil {
-		return line
-	}
-
-	if source != "" {
-		if _, exists := obj["source"]; !exists {
-			obj["source"] = source
-		}
-	}
-
-	if index != "" {
-		if _, exists := obj["index"]; !exists {
-			obj["index"] = index
-		}
-	}
-
-	enriched, err := json.Marshal(obj)
-	if err != nil {
-		return line
-	}
-
-	return string(enriched)
 }
 
 // CSV Import
@@ -370,7 +362,7 @@ func importCSV(input *os.File, fileSize int64, opts importOptions) (importStats,
 		headers[0] = strings.TrimPrefix(headers[0], "\xef\xbb\xbf")
 	}
 
-	var batch []string
+	var batch []client.IngestEvent
 	var stats importStats
 	start := time.Now()
 
@@ -388,19 +380,19 @@ func importCSV(input *os.File, fileSize int64, opts importOptions) (importStats,
 
 		obj := csvRecordToJSON(headers, record, opts.source, opts.index)
 
-		jsonLine, err := json.Marshal(obj)
+		ev, err := normalizeImportJSONObject(obj, "", opts)
 		if err != nil {
 			stats.failedLines++
 
 			continue
 		}
 
-		batch = append(batch, string(jsonLine))
+		batch = append(batch, ev)
 		stats.totalEvents++
 
 		if len(batch) >= opts.batchSize {
 			if !opts.dryRun {
-				if err := sendImportBatch(batch, opts); err != nil {
+				if err := sendStructuredImportBatch(batch); err != nil {
 					return stats, fmt.Errorf("send batch %d: %w", stats.batches+1, err)
 				}
 			}
@@ -417,7 +409,7 @@ func importCSV(input *os.File, fileSize int64, opts importOptions) (importStats,
 	// Flush remaining batch.
 	if len(batch) > 0 {
 		if !opts.dryRun {
-			if err := sendImportBatch(batch, opts); err != nil {
+			if err := sendStructuredImportBatch(batch); err != nil {
 				return stats, fmt.Errorf("send final batch: %w", err)
 			}
 		}
@@ -515,10 +507,15 @@ type esBulkImportMeta struct {
 }
 
 func importESBulk(input *os.File, fileSize int64, opts importOptions) (importStats, error) {
+	if opts.index != "" {
+		return importStats{}, fmt.Errorf("--index is not supported with --format esbulk; use ndjson/csv import for custom index routing")
+	}
+
 	scanner := bufio.NewScanner(input)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 
 	var batch []string
+	batchEvents := 0
 	var stats importStats
 	start := time.Now()
 
@@ -530,29 +527,10 @@ func importESBulk(input *os.File, fileSize int64, opts importOptions) (importSta
 			continue
 		}
 
-		// Parse action line.
-		var action esBulkImportAction
-		if json.Unmarshal([]byte(actionLine), &action) != nil {
+		actionLine, err := normalizeESBulkActionLine(actionLine, opts.source)
+		if err != nil {
 			stats.failedLines++
 			// Try to consume data line.
-			if scanner.Scan() {
-				stats.totalBytes += int64(len(scanner.Text())) + 1
-			}
-
-			continue
-		}
-
-		// Determine index from action.
-		var esIndex string
-
-		switch {
-		case action.Index != nil:
-			esIndex = action.Index.Index
-		case action.Create != nil:
-			esIndex = action.Create.Index
-		default:
-			// Unknown action type (delete, update) — skip.
-			stats.failedLines++
 			if scanner.Scan() {
 				stats.totalBytes += int64(len(scanner.Text())) + 1
 			}
@@ -576,14 +554,13 @@ func importESBulk(input *os.File, fileSize int64, opts importOptions) (importSta
 			continue
 		}
 
-		// Enrich with source from _index.
-		enriched := enrichESBulkLine(dataLine, esIndex, opts.source, opts.index)
-		batch = append(batch, enriched)
+		batch = append(batch, actionLine, dataLine)
+		batchEvents++
 		stats.totalEvents++
 
-		if len(batch) >= opts.batchSize {
+		if batchEvents >= opts.batchSize {
 			if !opts.dryRun {
-				if err := sendImportBatch(batch, opts); err != nil {
+				if err := sendESBulkImportBatch(batch); err != nil {
 					return stats, fmt.Errorf("send batch %d: %w", stats.batches+1, err)
 				}
 			}
@@ -591,6 +568,7 @@ func importESBulk(input *os.File, fileSize int64, opts importOptions) (importSta
 			stats.batches++
 			printImportProgress(stats.totalEvents, stats.totalBytes, fileSize, stats.failedLines, start)
 			batch = batch[:0]
+			batchEvents = 0
 		}
 	}
 
@@ -601,7 +579,7 @@ func importESBulk(input *os.File, fileSize int64, opts importOptions) (importSta
 	// Flush remaining batch.
 	if len(batch) > 0 {
 		if !opts.dryRun {
-			if err := sendImportBatch(batch, opts); err != nil {
+			if err := sendESBulkImportBatch(batch); err != nil {
 				return stats, fmt.Errorf("send final batch: %w", err)
 			}
 		}
@@ -612,55 +590,283 @@ func importESBulk(input *os.File, fileSize int64, opts importOptions) (importSta
 	return stats, nil
 }
 
-func enrichESBulkLine(line, esIndex, source, index string) string {
-	var obj map[string]interface{}
-	if json.Unmarshal([]byte(line), &obj) != nil {
-		return line
-	}
-
-	// Map ES @timestamp to LynxDB timestamp.
-	if ts, ok := obj["@timestamp"]; ok {
-		obj["timestamp"] = ts
-		delete(obj, "@timestamp")
-	}
-
-	// Set source from ES _index if not explicitly overridden.
-	if source != "" {
-		obj["source"] = source
-	} else if esIndex != "" {
-		if _, exists := obj["source"]; !exists {
-			obj["source"] = esIndex
-		}
-	}
-
-	if index != "" {
-		obj["index"] = index
-	}
-
-	enriched, err := json.Marshal(obj)
-	if err != nil {
-		return line
-	}
-
-	return string(enriched)
-}
-
 // Batch Sending
 
-func sendImportBatch(lines []string, opts importOptions) error {
-	body := strings.Join(lines, "\n")
+func sendStructuredImportBatch(events []client.IngestEvent) error {
 	ctx := context.Background()
 
-	_, err := apiClient().IngestNDJSON(ctx, strings.NewReader(body), client.IngestOpts{
-		Source:    opts.source,
-		Index:     opts.index,
-		Transform: opts.transform,
-	})
+	_, err := apiClient().IngestEvents(ctx, events)
 	if err != nil {
 		return fmt.Errorf("send batch: %w", err)
 	}
 
 	return nil
+}
+
+func sendESBulkImportBatch(lines []string) error {
+	body := strings.Join(lines, "\n")
+	if body != "" {
+		body += "\n"
+	}
+
+	ctx := context.Background()
+	result, err := apiClient().ESBulk(ctx, strings.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("send batch: %w", err)
+	}
+	if result.Errors {
+		return fmt.Errorf("Elasticsearch bulk response reported item errors")
+	}
+
+	return nil
+}
+
+func normalizeImportJSONLine(line string, opts importOptions) (client.IngestEvent, error) {
+	dec := json.NewDecoder(strings.NewReader(line))
+	dec.UseNumber()
+
+	var obj map[string]interface{}
+	if err := dec.Decode(&obj); err != nil {
+		return client.IngestEvent{}, err
+	}
+
+	return normalizeImportJSONObject(obj, line, opts)
+}
+
+func normalizeImportJSONObject(obj map[string]interface{}, rawLine string, opts importOptions) (client.IngestEvent, error) {
+	if isStructuredImportEnvelope(obj) {
+		ev, err := toStructuredImportEvent(obj)
+		if err != nil {
+			return client.IngestEvent{}, err
+		}
+		applyImportDefaults(&ev, opts)
+
+		return ev, nil
+	}
+
+	rawText := extractImportRawValue(obj)
+	if rawText == "" {
+		rawText = rawLine
+	}
+	if rawText == "" {
+		encoded, err := json.Marshal(obj)
+		if err != nil {
+			return client.IngestEvent{}, err
+		}
+		rawText = string(encoded)
+	}
+
+	ev := client.IngestEvent{
+		Event: rawText,
+	}
+	if ts, ok := extractImportEventTime(obj); ok {
+		ev.Time = &ts
+	}
+	if v, ok := obj["source"].(string); ok {
+		ev.Source = v
+	}
+	if v, ok := obj["sourcetype"].(string); ok {
+		ev.Sourcetype = v
+	}
+	if v, ok := obj["host"].(string); ok {
+		ev.Host = v
+	}
+	if v, ok := obj["index"].(string); ok {
+		ev.Index = v
+	}
+
+	fields := make(map[string]interface{})
+	for key, value := range obj {
+		if key == "_raw" || key == "event" || importMetadataKeys[key] || isImportTimestampAlias(key) {
+			continue
+		}
+		if scalar, ok := normalizeImportScalar(value); ok {
+			fields[key] = scalar
+		}
+	}
+	if len(fields) > 0 {
+		ev.Fields = fields
+	}
+
+	applyImportDefaults(&ev, opts)
+
+	return ev, nil
+}
+
+func isStructuredImportEnvelope(obj map[string]interface{}) bool {
+	if _, ok := obj["event"].(string); !ok {
+		return false
+	}
+	for key := range obj {
+		if !structuredImportKeys[key] {
+			return false
+		}
+	}
+
+	return true
+}
+
+func toStructuredImportEvent(obj map[string]interface{}) (client.IngestEvent, error) {
+	msg, _ := obj["event"].(string)
+	if msg == "" {
+		return client.IngestEvent{}, fmt.Errorf("structured event is missing required %q", "event")
+	}
+
+	ev := client.IngestEvent{Event: msg}
+	if v, ok := obj["time"]; ok {
+		ts, ok := parseImportTimestampValue(v)
+		if !ok {
+			return client.IngestEvent{}, fmt.Errorf("structured event field %q must be a recognized timestamp", "time")
+		}
+		ev.Time = &ts
+	}
+	if v, ok := obj["source"].(string); ok {
+		ev.Source = v
+	}
+	if v, ok := obj["sourcetype"].(string); ok {
+		ev.Sourcetype = v
+	}
+	if v, ok := obj["host"].(string); ok {
+		ev.Host = v
+	}
+	if v, ok := obj["index"].(string); ok {
+		ev.Index = v
+	}
+	if v, ok := obj["fields"]; ok {
+		fields, ok := v.(map[string]interface{})
+		if !ok {
+			return client.IngestEvent{}, fmt.Errorf("structured event field %q must be an object", "fields")
+		}
+		ev.Fields = make(map[string]interface{}, len(fields))
+		for key, value := range fields {
+			if scalar, ok := normalizeImportScalar(value); ok {
+				ev.Fields[key] = scalar
+			}
+		}
+		if len(ev.Fields) == 0 {
+			ev.Fields = nil
+		}
+	}
+
+	return ev, nil
+}
+
+func applyImportDefaults(ev *client.IngestEvent, opts importOptions) {
+	if ev.Source == "" && opts.source != "" {
+		ev.Source = opts.source
+	}
+	if ev.Index == "" && opts.index != "" {
+		ev.Index = opts.index
+	}
+}
+
+func extractImportRawValue(obj map[string]interface{}) string {
+	if raw, ok := obj["_raw"].(string); ok && raw != "" {
+		return raw
+	}
+
+	return ""
+}
+
+func extractImportEventTime(obj map[string]interface{}) (float64, bool) {
+	for _, key := range importTimestampAliases {
+		value, ok := obj[key]
+		if !ok {
+			continue
+		}
+		if ts, ok := parseImportTimestampValue(value); ok {
+			return ts, true
+		}
+	}
+
+	return 0, false
+}
+
+func isImportTimestampAlias(key string) bool {
+	for _, alias := range importTimestampAliases {
+		if key == alias {
+			return true
+		}
+	}
+
+	return false
+}
+
+func parseImportTimestampValue(v interface{}) (float64, bool) {
+	switch tv := v.(type) {
+	case float64:
+		return tv, true
+	case int:
+		return float64(tv), true
+	case int64:
+		return float64(tv), true
+	case json.Number:
+		if i, err := tv.Int64(); err == nil {
+			return float64(i), true
+		}
+		if f, err := tv.Float64(); err == nil {
+			return f, true
+		}
+	case string:
+		if tv == "" {
+			return 0, false
+		}
+		if f, err := strconv.ParseFloat(tv, 64); err == nil {
+			return f, true
+		}
+		for _, layout := range []string{time.RFC3339Nano, time.RFC3339, "2006-01-02 15:04:05"} {
+			if parsed, err := time.Parse(layout, tv); err == nil {
+				return float64(parsed.UnixNano()) / float64(time.Second), true
+			}
+		}
+	}
+
+	return 0, false
+}
+
+func normalizeImportScalar(v interface{}) (interface{}, bool) {
+	switch tv := v.(type) {
+	case string, bool, float64, int, int64:
+		return tv, true
+	case json.Number:
+		if i, err := tv.Int64(); err == nil {
+			return i, true
+		}
+		if f, err := tv.Float64(); err == nil {
+			return f, true
+		}
+	}
+
+	return nil, false
+}
+
+func normalizeESBulkActionLine(line, source string) (string, error) {
+	var action esBulkImportAction
+	if err := json.Unmarshal([]byte(line), &action); err != nil {
+		return "", err
+	}
+
+	var meta *esBulkImportMeta
+	switch {
+	case action.Index != nil:
+		meta = action.Index
+	case action.Create != nil:
+		meta = action.Create
+	default:
+		return "", fmt.Errorf("unsupported bulk action")
+	}
+
+	if source == "" {
+		return line, nil
+	}
+
+	meta.Index = source
+	encoded, err := json.Marshal(action)
+	if err != nil {
+		return "", err
+	}
+
+	return string(encoded), nil
 }
 
 // Progress & Summary

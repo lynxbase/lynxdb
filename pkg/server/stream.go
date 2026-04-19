@@ -61,10 +61,11 @@ func (e *Engine) buildStreamingPipelineWithGovernor(ctx context.Context, prog *s
 
 	pipeStore := &enginepipeline.ServerIndexStore{Events: eventStore}
 	parallelCfg := e.parallelConfig()
+	qc := e.queryCfg.Load()
 	buildResult, err := enginepipeline.BuildProgramWithGovernor(
 		ctx, prog, pipeStore, e, e, 0,
-		"", e.governor, int64(e.queryCfg.MaxQueryMemory),
-		e.spillMgr, e.queryCfg.DedupExact,
+		"", e.governor, int64(qc.MaxQueryMemory),
+		e.spillMgr, qc.DedupExact,
 		parallelCfg,
 	)
 	if err != nil {

@@ -16,6 +16,14 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
+func validateQueryFormat(format string) error {
+	if format == "" || format == "json" {
+		return nil
+	}
+
+	return fmt.Errorf("unsupported format %q; only %q is supported", format, "json")
+}
+
 // handleQueryGet is the GET variant for simple queries (query params: q, from, to, limit, format).
 func (s *Server) handleQueryGet(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeQuery) {
@@ -31,13 +39,20 @@ func (s *Server) handleQueryGet(w http.ResponseWriter, r *http.Request) {
 	if !s.checkQueryLength(w, q) {
 		return
 	}
+	format := r.URL.Query().Get("format")
+	if err := validateQueryFormat(format); err != nil {
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error(),
+			WithSuggestion("Use the default JSON response, or POST /api/v1/query/stream for NDJSON exports."))
+
+		return
+	}
 	limit := parseIntParam(r, "limit", 0)
 	req := QueryRequest{
 		Q:      q,
 		From:   r.URL.Query().Get("from"),
 		To:     r.URL.Query().Get("to"),
 		Limit:  limit,
-		Format: r.URL.Query().Get("format"),
+		Format: format,
 	}
 	s.executeQuery(w, r, req)
 }
@@ -51,6 +66,12 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	var req QueryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")
+
+		return
+	}
+	if err := validateQueryFormat(req.Format); err != nil {
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error(),
+			WithSuggestion("Use the default JSON response, or POST /api/v1/query/stream for NDJSON exports."))
 
 		return
 	}

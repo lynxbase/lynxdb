@@ -1,23 +1,27 @@
 ---
 title: S3 Tiering
-description: Configure LynxDB S3 storage tiering -- S3 bucket, region, tiering intervals, endpoint overrides, and segment cache.
+description: Configure LynxDB object-store tiering -- S3 bucket, region, tiering interval, endpoint overrides, and the local segment cache.
 ---
 
 # S3 Tiering
 
-LynxDB supports automatic tiered storage with S3-compatible object stores. Segments are promoted from hot (local SSD) to warm (S3) to cold (Glacier) based on age policies. S3 acts as the source of truth for segments in cluster deployments.
+LynxDB can offload older segments to S3-compatible object storage while keeping them queryable through a local cache.
+
+:::note Status
+The built-in tiering loop evaluates segment age on `storage.tiering_interval`, uploads eligible hot segments to object storage, and later moves warm segments into the cold namespace. If you want the cold tier to use Glacier or Deep Archive underneath, add bucket lifecycle rules at the S3 layer.
+:::
 
 ## How Tiering Works
 
 ```
-Hot (local SSD)  -->  Warm (S3)  -->  Cold (Glacier)
-  < 7 days            < 30 days       < 90 days
+Hot (local disk)  -->  Warm (object store)  -->  Cold (object store / archive policy)
 ```
 
-1. Fresh data lives on local SSD for fast query access
-2. Segments older than the hot tier threshold are uploaded to S3
-3. Segments older than the warm tier threshold are transitioned to Glacier (via S3 lifecycle rules)
-4. A local segment cache keeps frequently queried warm-tier segments on disk for performance
+1. Fresh parts stay on local disk for fast reads.
+2. The background tiering loop checks segment age against the index config.
+3. Eligible hot segments are uploaded to object storage and marked warm.
+4. Warm segments can later be promoted to cold object keys.
+5. Queries fetch remote segments into the local segment cache on demand.
 
 ## S3 Bucket Configuration
 
@@ -34,8 +38,6 @@ storage:
   s3_bucket: "my-lynxdb-logs"
 ```
 
-When `s3_bucket` is empty, tiering is disabled and all data stays on local disk.
-
 ### Region
 
 | Config Key | `storage.s3_region` |
@@ -51,27 +53,25 @@ storage:
 
 ### Key Prefix
 
-Optional prefix for all keys in the S3 bucket. Useful for sharing a bucket across environments.
-
 | Config Key | `storage.s3_prefix` |
 |---|---|
 | **CLI Flag** | `--s3-prefix` |
 | **Env Var** | `LYNXDB_STORAGE_S3_PREFIX` |
-| **Default** | `""` |
+| **Default** | `lynxdb/` |
 
 ```yaml
 storage:
   s3_prefix: "production/"
 ```
 
-### Custom Endpoint (MinIO)
+### Custom Endpoint
 
-Override the S3 endpoint URL for S3-compatible stores like MinIO, Ceph, or R2.
+Use this for MinIO, Ceph, or other S3-compatible stores.
 
 | Config Key | `storage.s3_endpoint` |
 |---|---|
 | **Env Var** | `LYNXDB_STORAGE_S3_ENDPOINT` |
-| **Default** | `""` (AWS S3) |
+| **Default** | `""` |
 
 ```yaml
 storage:
@@ -81,21 +81,14 @@ storage:
 
 ### Force Path Style
 
-Use path-style S3 URLs (`http://host/bucket/key`) instead of virtual-hosted style (`http://bucket.host/key`). Required for MinIO and some S3-compatible stores.
-
 | Config Key | `storage.s3_force_path_style` |
 |---|---|
 | **Env Var** | `LYNXDB_STORAGE_S3_FORCE_PATH_STYLE` |
 | **Default** | `false` |
 
-```yaml
-storage:
-  s3_force_path_style: true
-```
-
 ## Tiering Interval
 
-How often LynxDB checks for segments eligible for tier promotion.
+How often LynxDB evaluates segments for hot-to-warm or warm-to-cold movement.
 
 | Config Key | `storage.tiering_interval` |
 |---|---|
@@ -110,58 +103,56 @@ storage:
 
 ## Tiering Parallelism
 
-Number of concurrent segment uploads to S3.
+Maximum concurrent tier-upload workers.
 
 | Config Key | `storage.tiering_parallelism` |
 |---|---|
 | **Env Var** | `LYNXDB_STORAGE_TIERING_PARALLELISM` |
-| **Default** | `2` |
+| **Default** | `3` |
 
 ```yaml
 storage:
-  tiering_parallelism: 4
+  tiering_parallelism: 3
 ```
-
-Increase for faster uploads when moving large volumes of data to S3. Be aware this increases network bandwidth usage.
 
 ## Segment Cache
 
-Local disk cache for warm-tier segments fetched from S3. This avoids repeated S3 downloads for frequently queried data.
+Local cache for remote segments fetched from object storage.
 
 | Config Key | `storage.segment_cache_size` |
 |---|---|
 | **Env Var** | `LYNXDB_STORAGE_SEGMENT_CACHE_SIZE` |
-| **Default** | `1gb` |
+| **Default** | `10gb` |
 
 ```yaml
 storage:
-  segment_cache_size: "10gb"
+  segment_cache_size: "20gb"
 ```
 
-The cache uses LRU eviction. Set this to a size that fits your most frequently queried warm-tier data.
+The cache survives restarts and reduces repeated object-store downloads for commonly queried warm or cold segments.
+
+## Remote Fetch Timeout
+
+| Config Key | `storage.remote_fetch_timeout` |
+|---|---|
+| **Env Var** | `LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT` |
+| **Default** | `30s` |
+
+```yaml
+storage:
+  remote_fetch_timeout: "30s"
+```
 
 ## AWS Credentials
 
 LynxDB uses the standard AWS SDK credential chain:
 
-1. Environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`)
-2. Shared credentials file (`~/.aws/credentials`)
-3. IAM instance profile (EC2, ECS, EKS)
-4. IAM role via STS (IRSA for EKS)
+1. Environment variables
+2. Shared credentials file
+3. Instance profile or task role
+4. Web identity / IRSA
 
-```bash
-# Option 1: Environment variables
-export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
-export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-lynxdb server --s3-bucket my-logs --s3-region us-east-1
-
-# Option 2: IAM instance profile (no credentials needed on EC2)
-lynxdb server --s3-bucket my-logs --s3-region us-east-1
-```
-
-## MinIO Setup
-
-For self-hosted S3-compatible storage:
+## MinIO Example
 
 ```yaml
 storage:
@@ -169,20 +160,9 @@ storage:
   s3_region: "us-east-1"
   s3_endpoint: "http://minio.local:9000"
   s3_force_path_style: true
+  tiering_interval: "5m"
+  segment_cache_size: "20gb"
 ```
-
-```bash
-# MinIO credentials via environment
-export AWS_ACCESS_KEY_ID=minioadmin
-export AWS_SECRET_ACCESS_KEY=minioadmin
-
-lynxdb server \
-  --s3-bucket lynxdb \
-  --s3-region us-east-1 \
-  --data-dir /var/lib/lynxdb
-```
-
-See [S3/MinIO Storage Backend Setup](/docs/deployment/s3-setup) for a detailed setup guide.
 
 ## Complete Example
 
@@ -192,22 +172,14 @@ storage:
   s3_region: "us-west-2"
   s3_prefix: "production/"
   tiering_interval: "5m"
-  tiering_parallelism: 4
+  tiering_parallelism: 3
   segment_cache_size: "20gb"
-  cache_max_bytes: "4gb"
-```
-
-```bash
-lynxdb server \
-  --data-dir /var/lib/lynxdb \
-  --s3-bucket company-lynxdb-logs \
-  --s3-region us-west-2 \
-  --cache-max-mb 4gb
+  remote_fetch_timeout: "30s"
 ```
 
 ## Next Steps
 
-- [S3/MinIO Storage Backend Setup](/docs/deployment/s3-setup) -- complete setup guide with IAM policies
-- [Small Cluster](/docs/deployment/small-cluster) -- S3 as shared storage for cluster deployments
-- [Large Cluster](/docs/deployment/large-cluster) -- role splitting with S3 source of truth
-- [Storage Settings](/docs/configuration/storage) -- compression and compaction
+- [Storage Engine](/docs/architecture/storage-engine)
+- [Storage Settings](/docs/configuration/storage)
+- [S3/MinIO Storage Backend Setup](/docs/deployment/s3-setup)
+- [Large Cluster](/docs/deployment/large-cluster)

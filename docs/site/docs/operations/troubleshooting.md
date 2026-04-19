@@ -135,6 +135,31 @@ lynxdb config reload
 - Create a materialized view for expensive aggregations
 - Use `--analyze` to identify bottlenecks
 
+### "`/api/v1/query/stream` returns VALIDATION_ERROR"
+
+`POST /api/v1/query/stream` is an NDJSON export path, not a drop-in replacement for `POST /api/v1/query`.
+
+It only accepts:
+
+- `q` or `query`
+- `from` or `earliest`
+- `to` or `latest`
+- `variables`
+
+If you send `wait`, `limit`, `offset`, `profile`, or `format`, LynxDB rejects the request.
+
+```bash
+# Wrong for /query/stream
+curl -X POST localhost:3100/api/v1/query/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"q":"FROM main | head 10","limit":10}'
+
+# Right: use /query for bounded JSON responses
+curl -X POST localhost:3100/api/v1/query \
+  -H 'Content-Type: application/json' \
+  -d '{"q":"FROM main | head 10","limit":10}'
+```
+
 ### Slow Queries
 
 ```bash
@@ -198,22 +223,22 @@ lynxdb cache clear --force
 - Reduce retention period
 - Increase compression (switch to `zstd`)
 
-### WAL Growing
+### Buffered Events Keep Growing
 
-If the WAL grows continuously, the memtable is not flushing:
+If buffered events keep growing, flushes or compaction are not keeping up:
 
 ```bash
-# Check WAL size in the data directory
-du -sh /var/lib/lynxdb/wal/
+# Check buffered events and segment counts
+lynxdb status --format json | jq '{buffered_events, segment_count}'
 
 # Check server logs for flush errors
 sudo journalctl -u lynxdb | grep -i flush
 ```
 
 **Common causes:**
-- Disk is full -- free space for segment writes
+- Disk is full -- free space for part writes
 - Compaction is stuck -- check `compaction_workers` and logs
-- High `flush_threshold` with moderate ingest -- lower the threshold
+- Sustained ingest exceeds the available disk bandwidth
 
 ### Compaction Backlog
 
@@ -223,10 +248,12 @@ If L0 segment count is growing:
 # Check segment count
 lynxdb status --format json | jq .segments
 
-# Increase compaction workers
+# Increase compaction workers, then restart the server
 lynxdb config set storage.compaction_workers 4
-lynxdb config reload
+sudo systemctl restart lynxdb
 ```
+
+`storage.compaction_workers` is a startup-time setting. `config reload` updates hot-reloadable settings, but it does not re-create the compaction scheduler with a new worker count.
 
 ## Server Issues
 
@@ -239,8 +266,9 @@ lynxdb jobs --status running
 # Cancel expensive queries
 lynxdb jobs qry_xxx --cancel
 
-# Set memory limits
-lynxdb server --max-query-pool 4gb
+# Set a lower query pool and restart with it
+lynxdb config set query.global_query_pool_bytes 4gb
+sudo systemctl restart lynxdb
 ```
 
 ### Server Won't Start
@@ -258,13 +286,13 @@ lynxdb server --log-level debug
 
 ### Crash Recovery
 
-If the server crashes, it automatically replays the WAL on the next startup:
+If the server crashes, LynxDB scans the data directory, removes stale temporary files, and rebuilds its in-memory part registry on the next startup:
 
 ```bash
-# Just start the server -- WAL replay is automatic
+# Just start the server again
 sudo systemctl start lynxdb
 
-# Watch the logs for replay progress
+# Watch the logs for recovery and part scan progress
 sudo journalctl -u lynxdb -f
 ```
 

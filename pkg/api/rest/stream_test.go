@@ -190,3 +190,34 @@ func TestQueryStream_MissingQuery(t *testing.T) {
 		t.Fatalf("status: %d, want 400", resp.StatusCode)
 	}
 }
+
+func TestQueryStream_RejectsUnsupportedFields(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/api/v1/query/stream", srv.Addr()),
+		"application/json",
+		strings.NewReader(`{"q":"FROM main","limit":10,"offset":0,"wait":0,"profile":"trace","format":"ndjson"}`),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status: %d, want 400", resp.StatusCode)
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	errObj := result["error"].(map[string]interface{})
+	msg := errObj["message"].(string)
+	for _, field := range []string{"limit", "offset", "wait", "profile", "format"} {
+		if !strings.Contains(msg, field) {
+			t.Fatalf("message %q missing field %q", msg, field)
+		}
+	}
+}

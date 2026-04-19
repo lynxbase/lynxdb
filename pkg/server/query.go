@@ -143,7 +143,7 @@ func (e *Engine) SubmitQuery(ctx context.Context, params QueryParams) (*SearchJo
 	const defaultMaxQueryRuntime = 10 * time.Minute
 	var jobCtx context.Context
 	var jobCancel context.CancelFunc
-	if maxRT := e.queryCfg.MaxQueryRuntime; maxRT > 0 {
+	if maxRT := e.queryCfg.Load().MaxQueryRuntime; maxRT > 0 {
 		jobCtx, jobCancel = context.WithTimeout(context.Background(), maxRT)
 	} else {
 		jobCtx, jobCancel = context.WithTimeout(context.Background(), defaultMaxQueryRuntime)
@@ -347,7 +347,7 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 
 	// Preview callback: stores a sample of materialized rows on the job for
 	// progressive SSE delivery while the pipeline is still running.
-	previewSize := e.queryCfg.PreviewSize
+	previewSize := e.queryCfg.Load().PreviewSize
 	if previewSize == 0 {
 		previewSize = 50
 	}
@@ -539,7 +539,7 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 
 	// Determine slow query flag BEFORE calling onQueryComplete so Prometheus
 	// can increment the slow query counter in RecordQuery.
-	threshold := e.queryCfg.SlowQueryThresholdMs
+	threshold := e.queryCfg.Load().SlowQueryThresholdMs
 	if threshold > 0 && elapsed.Milliseconds() > threshold {
 		job.Stats.SlowQuery = true
 	}
@@ -1046,7 +1046,7 @@ func (e *Engine) runStreamingPipeline(
 	// If we leave SourceScopeType="single" with the main query's source,
 	// sub-query iterators (e.g., FROM backend inside MULTISEARCH) would be
 	// rejected by matchesStreamSourceScope before IndexName is checked.
-	streamHints := buildStreamHints(segFilterHints, e.queryCfg.BitmapSelectivityThreshold)
+	streamHints := buildStreamHints(segFilterHints, e.queryCfg.Load().BitmapSelectivityThreshold)
 	if isMultiIndex {
 		streamHints.IndexName = ""
 		streamHints.SourceScopeType = ""
@@ -1145,7 +1145,7 @@ func (e *Engine) runStreamingPipeline(
 // (currently never, but the nil check in the pipeline is defensive).
 func (e *Engine) parallelConfig() *enginepipeline.ParallelConfig {
 	return &enginepipeline.ParallelConfig{
-		MaxBranchParallelism: e.queryCfg.MaxBranchParallelism,
+		MaxBranchParallelism: e.queryCfg.Load().MaxBranchParallelism,
 		Enabled:              true,
 	}
 }
@@ -1161,11 +1161,12 @@ func (e *Engine) buildProgramPipeline(
 ) (*enginepipeline.BuildResult, error) {
 	parallelCfg := e.parallelConfig()
 	sysOpt := enginepipeline.WithSystemTables(&systemTableResolver{engine: e})
+	qc := e.queryCfg.Load()
 
 	return enginepipeline.BuildProgramWithGovernor(
 		ctx, prog, store, e, e, 0,
-		profileLevel, e.governor, int64(e.queryCfg.MaxQueryMemory),
-		e.spillMgr, e.queryCfg.DedupExact,
+		profileLevel, e.governor, int64(qc.MaxQueryMemory),
+		e.spillMgr, qc.DedupExact,
 		parallelCfg,
 		sysOpt,
 	)

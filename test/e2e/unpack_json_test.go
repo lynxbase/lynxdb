@@ -138,11 +138,19 @@ func TestE2E_PackJson_RoundTrip(t *testing.T) {
 	h := NewHarness(t)
 
 	ctx := context.Background()
-	events := []map[string]interface{}{
-		{"level": "error", "service": "auth", "host": "web-01"},
-		{"level": "info", "service": "api", "host": "web-02"},
+	events := []client.IngestEvent{
+		{
+			Event:  `{"level":"error","service":"auth","host":"web-01"}`,
+			Host:   "web-01",
+			Fields: map[string]interface{}{"level": "error", "service": "auth"},
+		},
+		{
+			Event:  `{"level":"info","service":"api","host":"web-02"}`,
+			Host:   "web-02",
+			Fields: map[string]interface{}{"level": "info", "service": "api"},
+		},
 	}
-	result, err := h.Client().Ingest(ctx, events)
+	result, err := h.Client().IngestEvents(ctx, events)
 	if err != nil {
 		t.Fatalf("Ingest: %v", err)
 	}

@@ -183,6 +183,24 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Storage.FlushIdleTimeout.String() }},
+	{"LYNXDB_STORAGE_MAX_COLUMNS_PER_PART", "storage.max_columns_per_part",
+		func(c *Config, v string) error {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return err
+			}
+			c.Storage.MaxColumnsPerPart = n
+
+			return nil
+		},
+		func(c *Config) string { return strconv.Itoa(c.Storage.MaxColumnsPerPart) }},
+	{"LYNXDB_STORAGE_PARTITION_BY", "storage.partition_by",
+		func(c *Config, v string) error {
+			c.Storage.PartitionBy = v
+
+			return nil
+		},
+		func(c *Config) string { return c.Storage.PartitionBy }},
 	{"LYNXDB_STORAGE_COMPACTION_INTERVAL", "storage.compaction_interval",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)

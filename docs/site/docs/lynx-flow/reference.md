@@ -1117,7 +1117,7 @@ Used in `group compute`, `every compute`, `running`, `enrich`, `stats`, `timecha
 | `dc(<field>)` | Distinct count | `dc(client_ip) as unique_clients` |
 | `values(<field>)` | List of distinct values | `values(level) as seen_levels` |
 | `stdev(<field>)` | Standard deviation | `stdev(duration_ms) as stdev_latency` |
-| `percentile(<field>, <pct>)` | Any percentile (0-100) | `percentile(duration_ms, 99.9) as p999` |
+| `perc25(<field>)` | 25th percentile | `perc25(duration_ms) as p25` |
 | `perc50(<field>)` | Median (50th pct) | `perc50(duration_ms) as median` |
 | `perc75(<field>)` | 75th percentile | `perc75(duration_ms) as p75` |
 | `perc90(<field>)` | 90th percentile | `perc90(duration_ms) as p90` |
@@ -1125,6 +1125,8 @@ Used in `group compute`, `every compute`, `running`, `enrich`, `stats`, `timecha
 | `perc99(<field>)` | 99th percentile | `perc99(duration_ms) as p99` |
 | `earliest(<field>)` / `first(<field>)` | First value by time | `earliest(status) as first_status` |
 | `latest(<field>)` / `last(<field>)` | Last value by time | `latest(status) as last_status` |
+
+Only the fixed percentile aggregations above are supported. Variable-percentile syntax such as `percentile(field, 99.9)` is not currently implemented.
 
 All aggregation functions skip null values except `count()` (no argument).
 

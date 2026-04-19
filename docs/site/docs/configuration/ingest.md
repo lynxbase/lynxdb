@@ -1,11 +1,13 @@
 ---
 title: Ingest Settings
-description: Configure LynxDB ingest pipeline -- max body size, batch size, and WAL fsync settings.
+description: Configure LynxDB ingest limits, batching behavior, request parsing, and part-write durability.
 ---
 
 # Ingest Settings
 
-The `ingest` section controls how the HTTP ingest endpoint accepts and processes incoming data.
+The `ingest` section controls how the HTTP ingest endpoints accept data before it is flushed to immutable part files.
+
+Accepted events first enter an in-memory batcher. They become durable only after LynxDB finishes writing and publishing the corresponding `.lsg` part.
 
 ## Max Body Size
 
@@ -14,26 +16,18 @@ The maximum size of a single HTTP request body for ingest endpoints.
 | Config Key | `ingest.max_body_size` |
 |---|---|
 | **Env Var** | `LYNXDB_INGEST_MAX_BODY_SIZE` |
-| **Default** | `10mb` |
+| **Default** | `100mb` |
 
 ```yaml
 ingest:
-  max_body_size: "10mb"
+  max_body_size: "100mb"
 ```
 
-Requests exceeding this limit receive a `413 Payload Too Large` response. Increase for bulk imports or if your log lines are very large:
-
-```bash
-LYNXDB_INGEST_MAX_BODY_SIZE=50mb lynxdb server
-```
-
-:::tip
-For large bulk imports, use the CLI `lynxdb ingest` or `lynxdb import` commands which automatically chunk data into batches, rather than sending one huge HTTP request.
-:::
+Requests exceeding this limit receive `413 Payload Too Large`.
 
 ## Max Batch Size
 
-The maximum number of events in a single ingest batch.
+The maximum number of events accepted in one ingest request.
 
 | Config Key | `ingest.max_batch_size` |
 |---|---|
@@ -45,123 +39,114 @@ ingest:
   max_batch_size: 1000
 ```
 
-This limits the number of events accepted in a single HTTP request. The CLI `--batch-size` flag controls the client-side batch size:
+## Max Line Size
 
-```bash
-# Client-side batching (default: 5000 lines per batch)
-lynxdb ingest access.log --batch-size 10000
-```
+The maximum size of a single raw log line.
 
-## WAL Settings
-
-The WAL (Write-Ahead Log) ensures data durability. Every event is written to the WAL before entering the memtable.
-
-WAL settings are in the `storage` section but directly affect ingest behavior:
+| Config Key | `ingest.max_line_bytes` |
+|---|---|
+| **Env Var** | `LYNXDB_INGEST_MAX_LINE_BYTES` |
+| **Default** | `1mb` |
 
 ```yaml
-storage:
-  wal_sync_mode: "write"         # none, write, or fsync
-  wal_sync_interval: "100ms"     # Batch sync interval
-  wal_sync_bytes: "0"            # Sync after N bytes (0 = interval-only)
-  wal_max_segment_size: "256mb"  # WAL segment rotation size
+ingest:
+  max_line_bytes: 1048576
 ```
 
-### Choosing a Sync Mode
+## Parse Mode
 
-| Mode | Data at Risk | Throughput | Use Case |
-|------|-------------|------------|----------|
-| `none` | All data since last OS flush | Highest | Development, ephemeral data |
-| `write` | Up to `wal_sync_interval` (100ms default) | High | Production (default) |
-| `fsync` | None | Lowest | Mission-critical compliance workloads |
+Choose how much work LynxDB does during ingest.
 
-For most production workloads, `write` mode with the default 100ms interval provides a good balance between durability and performance. At worst, you lose 100ms of data on a crash.
+| Config Key | `ingest.mode` |
+|---|---|
+| **Env Var** | `LYNXDB_INGEST_MODE` |
+| **Default** | `full` |
 
-```bash
-# Maximum durability
-LYNXDB_STORAGE_WAL_SYNC_MODE=fsync lynxdb server
-
-# Maximum throughput (development)
-LYNXDB_STORAGE_WAL_SYNC_MODE=none lynxdb server
+```yaml
+ingest:
+  mode: "full"
 ```
+
+Valid values:
+
+| Value | Description |
+|---|---|
+| `full` | Extract JSON fields into columns during ingest. Default. |
+| `lightweight` | Keep most data in `_raw` and defer extraction to query time. |
+
+## Durability and Part Flushes
+
+The current ingest path does not write to a WAL. Instead:
+
+1. events are buffered in memory by `AsyncBatcher`
+2. a batch is serialized to a temporary part file
+3. the part is optionally `fsync`'d
+4. the file is atomically renamed into place
+
+Events that have been accepted but not yet flushed are not durable.
+
+### `ingest.fsync`
+
+Control whether LynxDB `fsync`s each part file before the atomic rename.
+
+| Config Key | `ingest.fsync` |
+|---|---|
+| **Env Var** | `LYNXDB_INGEST_FSYNC` |
+| **Default** | `true` |
+
+```yaml
+ingest:
+  fsync: true
+```
+
+| Value | Behavior | Tradeoff |
+|---|---|---|
+| `true` | Sync the part file before rename | Higher durability, more flush latency |
+| `false` | Leave durability to the OS page cache | Faster flushes, higher power-loss risk |
+
+## Deduplication
+
+Optional ingest deduplication helps with at-least-once delivery pipelines.
+
+| Config Key | Env Var | Default | Description |
+|---|---|---|---|
+| `ingest.dedup_enabled` | `LYNXDB_INGEST_DEDUP_ENABLED` | `false` | Enable xxhash64-based ingest dedup |
+| `ingest.dedup_capacity` | `LYNXDB_INGEST_DEDUP_CAPACITY` | `100000` | Number of recent hashes to retain |
 
 ## Ingest Endpoints
 
-LynxDB accepts data through multiple HTTP endpoints:
-
 | Endpoint | Format | Description |
-|----------|--------|-------------|
-| `POST /api/v1/ingest` | JSON, NDJSON, plain text | Primary ingest endpoint |
-| `POST /api/v1/ingest/bulk` | Elasticsearch `_bulk` format | Drop-in Elasticsearch compatibility |
-| OTLP/HTTP | OpenTelemetry protobuf | Native OTLP receiver |
-| Splunk HEC | Splunk HEC JSON | Splunk forwarder compatibility |
-
-### Timestamp Auto-Detection
-
-LynxDB automatically detects timestamps from these fields (in order): `_timestamp`, `timestamp`, `@timestamp`, `time`, `ts`, `datetime`. If no timestamp field is found, the current server time is used.
-
-## Ingest via CLI
-
-The CLI provides two commands for sending data to a running server:
-
-### `lynxdb ingest` -- Raw Log Lines
-
-```bash
-# From file
-lynxdb ingest access.log
-lynxdb ingest access.log --source web-01 --sourcetype nginx
-
-# From stdin
-cat events.json | lynxdb ingest
-
-# Custom batch size
-lynxdb ingest huge.log --batch-size 10000
-```
-
-### `lynxdb import` -- Structured Data
-
-```bash
-# NDJSON
-lynxdb import events.ndjson
-
-# CSV with headers
-lynxdb import splunk_export.csv
-
-# Elasticsearch _bulk export
-lynxdb import es_dump.json --format esbulk
-
-# Dry run (validate without importing)
-lynxdb import events.json --dry-run
-
-# Apply transform during import
-lynxdb import events.json --transform '| where level!="DEBUG"'
-```
+|---|---|---|
+| `POST /api/v1/ingest` | JSON event arrays | Primary structured ingest path |
+| `POST /api/v1/ingest/raw` | Newline-delimited raw text | Raw log ingest |
+| `POST /api/v1/ingest/hec` | Splunk HEC JSON | Splunk forwarder compatibility |
+| `POST /api/v1/ingest/bulk` | Elasticsearch bulk format | Alias for the Elasticsearch compatibility bulk handler |
 
 ## Complete Example
 
 ```yaml
 ingest:
-  max_body_size: "50mb"
+  max_body_size: "100mb"
   max_batch_size: 5000
-
-storage:
-  wal_sync_mode: "write"
-  wal_sync_interval: "100ms"
-  wal_max_segment_size: "256mb"
+  max_line_bytes: 1048576
+  mode: "full"
+  fsync: true
+  dedup_enabled: false
+  dedup_capacity: 100000
 ```
 
 ## Tuning Guidelines
 
 | Scenario | Recommendation |
 |---|---|
-| High-throughput ingest (>100K events/sec) | Increase `max_body_size` to `50mb`, use `wal_sync_mode: write` |
-| Bulk import from files | Use `lynxdb import` with `--batch-size 10000` |
-| Mission-critical audit logs | Use `wal_sync_mode: fsync` |
-| Development/testing | Use `wal_sync_mode: none` for maximum speed |
-| Large log lines (>100KB each) | Increase `max_body_size` accordingly |
+| High-throughput ingest | Increase `max_body_size` and consider `lightweight` mode |
+| Large raw log lines | Increase `max_line_bytes` |
+| Stricter flush durability | Keep `fsync: true` |
+| Replay-heavy pipelines | Enable deduplication |
 
 ## Next Steps
 
-- [Storage Settings](/docs/configuration/storage) -- memtable and compaction tuning
-- [Migration from Elasticsearch](/docs/migration/from-elasticsearch) -- `_bulk` API compatibility
-- [Migration from Splunk](/docs/migration/from-splunk) -- HEC endpoint setup
-- [Performance Tuning](/docs/operations/performance-tuning) -- optimize ingest throughput
+- [Storage Settings](/docs/configuration/storage)
+- [Compatibility API](/docs/api/compatibility)
+- [Migration from Splunk](/docs/migration/from-splunk)
+- [Performance Tuning](/docs/operations/performance-tuning)
