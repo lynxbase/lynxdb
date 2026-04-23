@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/lynxbase/lynxdb/pkg/engine/unpack"
 )
 
 // maxExprDepth is the maximum recursion depth for expression parsing.
@@ -413,6 +415,11 @@ func (p *Parser) parseCommand() ([]Command, error) {
 	case TokenUnpackPattern:
 		return singleCmd(p.parseUnpackPattern())
 	case TokenJson:
+		// `| json(...)` is the parse-shortcut for `| parse json(...)`.
+		// `| json [field=...] [paths=...]` remains the existing JsonCommand.
+		if p.peekAt(1).Type == TokenLParen {
+			return singleCmd(p.parseLynxParseBody())
+		}
 		return singleCmd(p.parseJsonCmd())
 	case TokenUnroll:
 		return singleCmd(p.parseUnroll())
@@ -513,6 +520,13 @@ func (p *Parser) parseCommand() ([]Command, error) {
 
 			return []Command{&WhereCommand{Expr: expr}}, nil
 		case TokenIdent:
+			// `| <format>(...)` shortcut: when the identifier names a registered
+			// unpack format and is immediately followed by '(', desugar to
+			// `| parse <format>(...)`. Must run before the implicit-where
+			// fallback, which would otherwise parse this as a function call.
+			if p.peekAt(1).Type == TokenLParen && unpack.IsFormat(tok.Literal) {
+				return singleCmd(p.parseLynxParseBody())
+			}
 			if isBareExprContinuation(p.peekAt(1).Type) || p.peekAt(1).Type == TokenLParen {
 				expr, err := p.parseExpr()
 				if err != nil {
@@ -3634,7 +3648,13 @@ func (p *Parser) parseEnrichCmd() (*EventstatsCommand, error) {
 // parseLynxParse parses: parse <format>(<field>[, <pattern>]) [as <ns>] [extract (<f1>,<f2>)] [if_missing].
 func (p *Parser) parseLynxParse() (Command, error) {
 	p.advance() // consume "parse"
+	return p.parseLynxParseBody()
+}
 
+// parseLynxParseBody parses the parse-command tail starting at the format name.
+// Shared between the explicit `parse <format>(...)` form and the `| <format>(...)`
+// shortcut. The caller is responsible for positioning p at the format-name token.
+func (p *Parser) parseLynxParseBody() (Command, error) {
 	// Read format name. Accept ident-like tokens AND SPL2 command keywords
 	// like "json" (TokenJson) that are also valid format names.
 	formatTok := p.peek()

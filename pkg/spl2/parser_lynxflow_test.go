@@ -3048,3 +3048,162 @@ func TestLynxFlow_ExplodeMultiFieldString(t *testing.T) {
 		t.Errorf("String() = %q, should contain all fields", s)
 	}
 }
+
+// =============================================================================
+// Parse-less format shortcut: `| <format>(field)` === `| parse <format>(field)`
+// =============================================================================
+
+func TestLynxFlow_ParseShortcut_Combined(t *testing.T) {
+	q, err := Parse(`from nginx | combined(_raw)`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Commands) != 1 {
+		t.Fatalf("Commands: got %d, want 1", len(q.Commands))
+	}
+	u, ok := q.Commands[0].(*UnpackCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected UnpackCommand, got %T", q.Commands[0])
+	}
+	if u.Format != "combined" {
+		t.Errorf("Format: got %q, want combined", u.Format)
+	}
+	if u.SourceField != "_raw" {
+		t.Errorf("SourceField: got %q, want _raw", u.SourceField)
+	}
+}
+
+func TestLynxFlow_ParseShortcut_Json(t *testing.T) {
+	q, err := Parse(`from nginx | json(_raw)`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	u, ok := q.Commands[0].(*UnpackCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected UnpackCommand, got %T", q.Commands[0])
+	}
+	if u.Format != "json" || u.SourceField != "_raw" {
+		t.Errorf("got Format=%q SourceField=%q, want json/_raw", u.Format, u.SourceField)
+	}
+
+	// `| json field=...` must still produce JsonCommand.
+	q2, err := Parse(`from nginx | json field=msg`)
+	if err != nil {
+		t.Fatalf("Parse(json field=msg): %v", err)
+	}
+	if _, ok := q2.Commands[0].(*JsonCommand); !ok {
+		t.Errorf("`json field=msg`: expected JsonCommand, got %T", q2.Commands[0])
+	}
+}
+
+func TestLynxFlow_ParseShortcut_WithModifiers(t *testing.T) {
+	q, err := Parse(`from nginx | combined(_raw) as req extract (status, uri) if_missing`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	u, ok := q.Commands[0].(*UnpackCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected UnpackCommand, got %T", q.Commands[0])
+	}
+	if u.Format != "combined" || u.Prefix != "req." {
+		t.Errorf("Format=%q Prefix=%q, want combined/req.", u.Format, u.Prefix)
+	}
+	if len(u.Fields) != 2 || u.Fields[0] != "status" || u.Fields[1] != "uri" {
+		t.Errorf("Fields: got %v, want [status uri]", u.Fields)
+	}
+	if !u.KeepOriginal {
+		t.Errorf("KeepOriginal: got false, want true")
+	}
+}
+
+func TestLynxFlow_ParseShortcut_Regex(t *testing.T) {
+	q, err := Parse(`from app | regex(_raw, "host=(?P<host>\\S+)")`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	rex, ok := q.Commands[0].(*RexCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected RexCommand, got %T", q.Commands[0])
+	}
+	if rex.Field != "_raw" {
+		t.Errorf("Field: got %q, want _raw", rex.Field)
+	}
+	if rex.Pattern == "" {
+		t.Errorf("Pattern: got empty, want non-empty")
+	}
+}
+
+func TestLynxFlow_ParseShortcut_Pattern(t *testing.T) {
+	q, err := Parse(`from app | pattern(_raw, "%{IP:ip} %{NUM:n}")`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	u, ok := q.Commands[0].(*UnpackCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected UnpackCommand, got %T", q.Commands[0])
+	}
+	if u.Format != "pattern" {
+		t.Errorf("Format: got %q, want pattern", u.Format)
+	}
+	if u.Pattern == "" {
+		t.Errorf("Pattern: got empty, want non-empty")
+	}
+}
+
+func TestLynxFlow_ParseShortcut_AllFormats(t *testing.T) {
+	formats := []string{
+		"json", "logfmt", "syslog", "combined", "clf", "nginx_error",
+		"cef", "kv", "docker", "redis", "apache_error", "postgres",
+		"mysql_slow", "haproxy", "leef", "w3c",
+	}
+	for _, format := range formats {
+		t.Run(format, func(t *testing.T) {
+			qShort, err := Parse("from app | " + format + "(_raw)")
+			if err != nil {
+				t.Fatalf("Parse(shortcut %s): %v", format, err)
+			}
+			qFull, err := Parse("from app | parse " + format + "(_raw)")
+			if err != nil {
+				t.Fatalf("Parse(full %s): %v", format, err)
+			}
+			us, ok := qShort.Commands[0].(*UnpackCommand)
+			if !ok {
+				t.Fatalf("shortcut %s: expected UnpackCommand, got %T", format, qShort.Commands[0])
+			}
+			uf, ok := qFull.Commands[0].(*UnpackCommand)
+			if !ok {
+				t.Fatalf("full %s: expected UnpackCommand, got %T", format, qFull.Commands[0])
+			}
+			if us.Format != uf.Format || us.SourceField != uf.SourceField {
+				t.Errorf("mismatch: shortcut=%+v full=%+v", us, uf)
+			}
+		})
+	}
+}
+
+func TestLynxFlow_ParseShortcut_DoesNotHijackWhere(t *testing.T) {
+	// Format name as a field in implicit-where must still work: next token is
+	// `=`, not `(`, so the shortcut does not trigger.
+	q, err := Parse(`from app | combined = 5`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if _, ok := q.Commands[0].(*WhereCommand); !ok {
+		t.Fatalf("cmd[0]: expected WhereCommand, got %T", q.Commands[0])
+	}
+}
+
+func TestLynxFlow_ParseShortcut_UnknownFormatErrors(t *testing.T) {
+	// Unknown identifier followed by `(` must not silently become an implicit-where
+	// function call that succeeds — the format vocabulary is closed.
+	// Current behavior: parseExpr will try to treat `notaformat(_raw)` as a function
+	// call and fail validation downstream. We assert the parse itself does not
+	// produce an UnpackCommand (the shortcut did not fire).
+	q, err := Parse(`from app | notaformat(_raw)`)
+	if err != nil {
+		return // acceptable: parser rejects unknown function
+	}
+	if _, ok := q.Commands[0].(*UnpackCommand); ok {
+		t.Fatalf("cmd[0]: shortcut should not fire for unknown format, got UnpackCommand")
+	}
+}
