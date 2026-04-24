@@ -288,7 +288,7 @@ See the [environment variables reference](/docs/configuration/environment-variab
 
 ## Practical script examples
 
-### Monitor error rate and alert via external tool
+### Monitor error rate and notify via external tool
 
 ```bash
 #!/bin/bash

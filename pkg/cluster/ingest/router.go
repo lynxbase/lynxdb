@@ -91,7 +91,7 @@ func (r *Router) Route(ctx context.Context, events []*event.Event) error {
 		))
 	defer span.End()
 
-	// Step 1: Group events by ShardID.
+	// Group events by ShardID.
 	shardGroups := make(map[string][]*event.Event)
 	shardIDs := make(map[string]sharding.ShardID)
 
@@ -111,7 +111,7 @@ func (r *Router) Route(ctx context.Context, events []*event.Event) error {
 		attribute.Int(tracing.AttrShardsCount, len(shardGroups)),
 	)
 
-	// Step 2: Resolve shard -> primary node.
+	// Resolve shard -> primary node.
 	sm := r.shardMapCache.Get()
 	nodeGroups := make(map[sharding.NodeID][]*event.Event)
 	shardsByNode := make(map[sharding.NodeID][]string) // node -> shard IDs for sequencer
@@ -124,7 +124,7 @@ func (r *Router) Route(ctx context.Context, events []*event.Event) error {
 		shardsByNode[primary] = append(shardsByNode[primary], shardKey)
 	}
 
-	// Step 3: Dispatch to each primary.
+	// Dispatch to each primary.
 	addrs := r.nodeAddrs()
 
 	// Local fast path.

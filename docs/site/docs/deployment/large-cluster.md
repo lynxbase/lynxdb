@@ -36,7 +36,7 @@ The repo includes the core cluster building blocks for this topology, but the op
 
 | Role | Scales with | Count | Responsibility |
 |------|-------------|-------|----------------|
-| **Meta** | Cluster size | 3-5 (fixed) | Raft consensus, shard map, node registry, leader leases, field catalog, source registry, alert assignment |
+| **Meta** | Cluster size | 3-5 (fixed) | Raft consensus, shard map, node registry, leader leases, field catalog, source registry |
 | **Ingest** | Write throughput | N nodes | Async batcher, direct-to-part writes, S3 upload, batcher replication |
 | **Query** | Query concurrency | M nodes | Scatter-gather, partial aggregation merge, result caching |
 
@@ -209,7 +209,7 @@ Meta nodes are lightweight. 3 nodes handle clusters up to ~500 nodes. Use 5 for 
 | Scenario | Impact | Recovery Time |
 |----------|--------|---------------|
 | Ingest node failure | Shards reassigned to surviving ingest nodes | ~25 seconds |
-| Query node failure | Load balancer routes to surviving query nodes; alerts reassigned | Immediate (health check) |
+| Query node failure | Load balancer routes to surviving query nodes | Immediate (health check) |
 | Meta node failure (1 of 3) | Raft quorum maintained, cluster operates normally | Automatic |
 | Meta node failure (2 of 3) | Raft quorum lost, no new shard assignments | Bring 1 meta node back |
 | Meta quorum loss (all) | Ingest continues in degraded mode for `meta_loss_timeout` (30s) | Restore meta quorum |

@@ -62,7 +62,7 @@ func (p *PatternsIterator) Init(ctx context.Context) error {
 }
 
 func (p *PatternsIterator) Next(ctx context.Context) (*Batch, error) {
-	// Phase 1: Accumulate and cluster all rows.
+	// Accumulate and cluster all rows.
 	if !p.done {
 		p.done = true
 
@@ -84,11 +84,11 @@ func (p *PatternsIterator) Next(ctx context.Context) (*Batch, error) {
 			}
 		}
 
-		// Phase 2: Collect templates sorted by count descending.
+		// Collect templates sorted by count descending.
 		p.output = p.buildOutput()
 	}
 
-	// Phase 3: Emit.
+	// Emit results.
 	if p.output == nil || p.offset >= p.output.Len {
 		return nil, nil
 	}

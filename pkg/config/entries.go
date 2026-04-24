@@ -151,7 +151,6 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	// HTTP.
 	durationEntry("http.idle_timeout", cfg.HTTP.IdleTimeout, dflt.HTTP.IdleTimeout, fileCfg.HTTP.IdleTimeout, "LYNXDB_HTTP_IDLE_TIMEOUT")
 	durationEntry("http.shutdown_timeout", cfg.HTTP.ShutdownTimeout, dflt.HTTP.ShutdownTimeout, fileCfg.HTTP.ShutdownTimeout, "LYNXDB_HTTP_SHUTDOWN_TIMEOUT")
-	durationEntry("http.alert_shutdown_timeout", cfg.HTTP.AlertShutdownTimeout, dflt.HTTP.AlertShutdownTimeout, fileCfg.HTTP.AlertShutdownTimeout, "LYNXDB_HTTP_ALERT_SHUTDOWN_TIMEOUT")
 	durationEntry("http.read_header_timeout", cfg.HTTP.ReadHeaderTimeout, dflt.HTTP.ReadHeaderTimeout, fileCfg.HTTP.ReadHeaderTimeout, "LYNXDB_HTTP_READ_HEADER_TIMEOUT")
 	add("http.rate_limit", fmt.Sprintf("%.2f", cfg.HTTP.RateLimit), fmt.Sprintf("%.2f", dflt.HTTP.RateLimit), fmt.Sprintf("%.2f", fileCfg.HTTP.RateLimit), "LYNXDB_HTTP_RATE_LIMIT")
 

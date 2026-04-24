@@ -45,7 +45,7 @@ func (c *CompareIterator) Init(ctx context.Context) error {
 }
 
 func (c *CompareIterator) Next(ctx context.Context) (*Batch, error) {
-	// Phase 1: Accumulate current rows.
+	// Accumulate current rows.
 	if !c.currentDone {
 		c.currentDone = true
 		for {
@@ -62,7 +62,7 @@ func (c *CompareIterator) Next(ctx context.Context) (*Batch, error) {
 		}
 	}
 
-	// Phase 2: Re-execute with time shift (if reExec is available).
+	// Re-execute with time shift (if reExec is available).
 	if !c.previousDone && c.reExec != nil {
 		c.previousDone = true
 
@@ -86,7 +86,7 @@ func (c *CompareIterator) Next(ctx context.Context) (*Batch, error) {
 		}
 	}
 
-	// Phase 3: Merge and emit.
+	// Merge and emit.
 	if c.output == nil {
 		c.output = c.mergeRows()
 	}

@@ -127,7 +127,6 @@ lynxdb server
 |----------|-----------|---------|
 | `LYNXDB_HTTP_IDLE_TIMEOUT` | `http.idle_timeout` | `120s` |
 | `LYNXDB_HTTP_SHUTDOWN_TIMEOUT` | `http.shutdown_timeout` | `30s` |
-| `LYNXDB_HTTP_ALERT_SHUTDOWN_TIMEOUT` | `http.alert_shutdown_timeout` | `10s` |
 | `LYNXDB_HTTP_RATE_LIMIT` | `http.rate_limit` | `0` (unlimited) |
 
 ## AWS Credentials

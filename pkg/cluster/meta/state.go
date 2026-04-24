@@ -18,13 +18,12 @@ type MetaState struct {
 	Ring       *sharding.HashRing             `msgpack:"-"`          // rebuilt from Nodes, not serialized
 	Version    uint64                         `msgpack:"version"`
 
-	// Distributed subsystem state (Phase 5).
+	// Distributed subsystem state.
 	FieldCatalog map[string]*GlobalFieldInfo  `msgpack:"field_catalog"` // key: field name
 	Sources      map[string]*GlobalSourceInfo `msgpack:"sources"`       // key: source name
-	AlertAssign  map[string]*AlertAssignment  `msgpack:"alert_assign"`  // key: alert ID
 	Views        map[string]*GlobalViewInfo   `msgpack:"views"`         // key: view name
 
-	// Rebalancing and splitting state (Phase 6).
+	// Rebalancing and splitting state.
 	Splits map[uint32]*SplitInfo `msgpack:"splits"` // key: parent partition
 }
 
@@ -46,7 +45,6 @@ func NewMetaState() *MetaState {
 		Ring:         sharding.NewHashRing(128),
 		FieldCatalog: make(map[string]*GlobalFieldInfo),
 		Sources:      make(map[string]*GlobalSourceInfo),
-		AlertAssign:  make(map[string]*AlertAssignment),
 		Views:        make(map[string]*GlobalViewInfo),
 		Splits:       make(map[uint32]*SplitInfo),
 	}

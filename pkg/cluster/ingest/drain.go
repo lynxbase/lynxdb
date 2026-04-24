@@ -69,7 +69,7 @@ func (d *DrainController) StartDrain(
 ) []DrainResult {
 	results := make([]DrainResult, len(shardIDs))
 
-	// Step 1: Propose drain for all shards.
+	// Propose drain for all shards.
 	for i, shardID := range shardIDs {
 		results[i].ShardID = shardID
 
@@ -91,7 +91,7 @@ func (d *DrainController) StartDrain(
 		d.logger.Info("drain proposed", "shard_id", shardID)
 	}
 
-	// Step 2: Flush batcher for affected shards.
+	// Flush batcher for affected shards.
 	if flushFn != nil {
 		activeShards := make([]string, 0, len(shardIDs))
 		for i, shardID := range shardIDs {
@@ -115,7 +115,7 @@ func (d *DrainController) StartDrain(
 		}
 	}
 
-	// Step 3: Wait for ISR catchup and complete drain.
+	// Wait for ISR catchup and complete drain.
 	for i, shardID := range shardIDs {
 		if results[i].Err != nil {
 			continue

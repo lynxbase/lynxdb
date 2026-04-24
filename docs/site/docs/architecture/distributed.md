@@ -24,7 +24,6 @@ Based on the code under `pkg/cluster/...`, LynxDB already includes Raft-backed m
 │ - Leases         │    │ - Flush→S3   │    │ - Partial    │
 │ - Field catalog  │    │ - Replicate  │    │   merge      │
 │ - Source registry│    │              │    │              │
-│ - Alert assign   │    │              │    │              │
 │ - View registry  │    │              │    │              │
 └──────┬───────────┘    └──────┬───────┘    └──────┬───────┘
        │                       │                   │
@@ -49,7 +48,7 @@ Meta nodes manage cluster coordination and metadata:
 - **Node registry**: Tracks the set of live nodes, their roles, health state (`alive`/`suspect`/`dead`), and resource utilization (CPU, memory, disk, ingest rate, active queries).
 - **Leader leases**: Shard primaries hold renewable leases to prevent split-brain writes. The meta leader grants leases via Raft; an expired lease means the primary must stop writing.
 - **Failure detection**: Detects unresponsive nodes using heartbeat timeouts and transitions them through `Alive → Suspect → Dead`.
-- **Distributed subsystems**: The Raft FSM also stores the global field catalog, source registry, alert assignments, and materialized view definitions (see [Distributed Subsystems](#distributed-subsystems) below).
+- **Distributed subsystems**: The Raft FSM also stores the global field catalog, source registry, and materialized view definitions (see [Distributed Subsystems](#distributed-subsystems) below).
 
 Meta nodes are lightweight. 3 nodes provide fault tolerance for 1 failure; 5 nodes tolerate 2 failures. Meta nodes do not store or query log data.
 
@@ -325,7 +324,6 @@ Query nodes are stateless (their segment cache is a performance optimization, no
 1. The load balancer routes new queries to surviving query nodes.
 2. Any in-flight queries on the failed node are lost and must be retried by the client.
 3. No data loss occurs.
-4. Alerts assigned to the dead query node are automatically reassigned to surviving query nodes via rendezvous hashing.
 
 ### Meta Node Failure
 
@@ -352,16 +350,6 @@ Query nodes receive the merged catalog via piggybacked updates on the shard map 
 ### Source Registry
 
 Similar to the field catalog, ingest nodes report source metadata (name, event count, last seen) via `ReportSources`. The FSM maintains a global source registry with per-node counts, first/last seen timestamps, and total event counts.
-
-### Alert Assignment
-
-Alerts are assigned to query nodes using **rendezvous hashing** (highest random weight). This provides:
-
-- Exactly-once evaluation: each alert runs on exactly one query node
-- Minimal disruption on topology changes: only ~1/N alerts move when a node joins or leaves
-- Automatic reassignment when a query node dies
-
-The meta FSM stores `AlertAssignment` records with the assigned node, last-fired timestamp (for dedup during failover), and a version counter. See [Alerts in cluster mode](/docs/guides/alerts#alerts-in-cluster-mode).
 
 ### Materialized View Coordination
 

@@ -531,11 +531,6 @@ type IndexInfo struct {
 	ReplicationFactor int    `json:"replication_factor,omitempty"`
 }
 
-// AlertPatchInput is the request body for partially updating an alert.
-type AlertPatchInput struct {
-	Enabled *bool `json:"enabled,omitempty"`
-}
-
 // CacheStatsResult is the response from CacheStats().
 type CacheStatsResult map[string]interface{}
 
@@ -626,44 +621,6 @@ type ViewInput struct {
 type ViewPatchInput struct {
 	Retention *string `json:"retention,omitempty"`
 	Paused    *bool   `json:"paused,omitempty"`
-}
-
-// Alert is an alert definition.
-type Alert struct {
-	ID            string                `json:"id"`
-	Name          string                `json:"name"`
-	Q             string                `json:"query"`
-	Interval      string                `json:"interval"`
-	Channels      []NotificationChannel `json:"channels"`
-	Enabled       bool                  `json:"enabled"`
-	LastTriggered *string               `json:"last_triggered,omitempty"`
-	LastChecked   *string               `json:"last_checked,omitempty"`
-	Status        string                `json:"status,omitempty"`
-}
-
-// NotificationChannel is a notification destination.
-type NotificationChannel struct {
-	Type    string                 `json:"type"`
-	Name    string                 `json:"name,omitempty"`
-	Enabled *bool                  `json:"enabled,omitempty"`
-	Config  map[string]interface{} `json:"config"`
-}
-
-// AlertInput is the request body for creating/updating an alert.
-type AlertInput struct {
-	Name     string                `json:"name"`
-	Q        string                `json:"query"`
-	Interval string                `json:"interval"`
-	Channels []NotificationChannel `json:"channels"`
-	Enabled  *bool                 `json:"enabled,omitempty"`
-}
-
-// AlertTestResult is the response from TestAlert().
-type AlertTestResult struct {
-	WouldTrigger          bool                   `json:"would_trigger"`
-	Result                map[string]interface{} `json:"result,omitempty"`
-	ChannelsThatWouldFire []string               `json:"channels_that_would_fire,omitempty"`
-	Message               string                 `json:"message,omitempty"`
 }
 
 // SavedQuery is a saved query definition.

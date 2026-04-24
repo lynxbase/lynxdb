@@ -508,17 +508,6 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.HTTP.ShutdownTimeout.String() }},
-	{"LYNXDB_HTTP_ALERT_SHUTDOWN_TIMEOUT", "http.alert_shutdown_timeout",
-		func(c *Config, v string) error {
-			d, err := time.ParseDuration(v)
-			if err != nil {
-				return err
-			}
-			c.HTTP.AlertShutdownTimeout = d
-
-			return nil
-		},
-		func(c *Config) string { return c.HTTP.AlertShutdownTimeout.String() }},
 	{"LYNXDB_HTTP_RATE_LIMIT", "http.rate_limit",
 		func(c *Config, v string) error {
 			f, err := strconv.ParseFloat(v, 64)

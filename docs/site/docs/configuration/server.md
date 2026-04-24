@@ -150,7 +150,6 @@ Supported scopes are `ingest`, `query`, `admin`, and `full`.
 http:
   idle_timeout: "120s"
   shutdown_timeout: "30s"
-  alert_shutdown_timeout: "10s"
   read_header_timeout: "10s"
   rate_limit: 1000
 ```
@@ -159,7 +158,6 @@ http:
 |---|---|---|---|
 | `http.idle_timeout` | `LYNXDB_HTTP_IDLE_TIMEOUT` | `120s` | Idle keep-alive timeout |
 | `http.shutdown_timeout` | `LYNXDB_HTTP_SHUTDOWN_TIMEOUT` | `30s` | Graceful shutdown deadline |
-| `http.alert_shutdown_timeout` | `LYNXDB_HTTP_ALERT_SHUTDOWN_TIMEOUT` | `10s` | Alert-manager shutdown deadline |
 | `http.read_header_timeout` | `LYNXDB_HTTP_READ_HEADER_TIMEOUT` | `10s` | Header read deadline |
 | `http.rate_limit` | `LYNXDB_HTTP_RATE_LIMIT` | `1000` | Per-IP request rate limit in requests per second (`0` disables it) |
 

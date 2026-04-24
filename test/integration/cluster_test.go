@@ -15,7 +15,7 @@ import (
 	"github.com/lynxbase/lynxdb/test/simulation"
 )
 
-// --- Scenario 2: Node join triggers rebalance ---
+// Node join triggers rebalance
 
 func TestScenario02_NodeJoinTriggersRebalance(t *testing.T) {
 	cluster := simulation.NewSimCluster(simulation.SimClusterConfig{
@@ -67,7 +67,7 @@ func TestScenario02_NodeJoinTriggersRebalance(t *testing.T) {
 	t.Logf("rebalance: %d moves out of 32 partitions", moves)
 }
 
-// --- Scenario 3: Graceful node leave + drain ---
+// Graceful node leave + drain
 
 func TestScenario03_GracefulNodeLeave(t *testing.T) {
 	cluster := simulation.NewSimCluster(simulation.SimClusterConfig{
@@ -122,7 +122,7 @@ func TestScenario03_GracefulNodeLeave(t *testing.T) {
 	}
 }
 
-// --- Scenario 4: Node failure + automatic failover ---
+// Node failure + automatic failover
 
 func TestScenario04_NodeFailureFailover(t *testing.T) {
 	cluster := simulation.NewSimCluster(simulation.SimClusterConfig{
@@ -177,7 +177,7 @@ func TestScenario04_NodeFailureFailover(t *testing.T) {
 	}
 }
 
-// --- Scenario 6: Shard split on hot partition ---
+// Shard split on hot partition
 
 func TestScenario06_ShardSplit(t *testing.T) {
 	cluster := simulation.NewSimCluster(simulation.SimClusterConfig{
@@ -263,7 +263,7 @@ func TestScenario06_ShardSplit(t *testing.T) {
 	}
 }
 
-// --- Scenario 7: Split routing correctness ---
+// Split routing correctness
 
 func TestScenario07_SplitRoutingCorrectness(t *testing.T) {
 	sr := sharding.NewSplitRegistry()
@@ -298,7 +298,7 @@ func TestScenario07_SplitRoutingCorrectness(t *testing.T) {
 	}
 }
 
-// --- Scenario 9: ISR shrink + expand ---
+// ISR shrink + expand
 
 func TestScenario09_ISRShrinkExpand(t *testing.T) {
 	cluster := simulation.NewSimCluster(simulation.SimClusterConfig{
@@ -341,48 +341,7 @@ func TestScenario09_ISRShrinkExpand(t *testing.T) {
 	}
 }
 
-// --- Scenario 11: Alert reassignment on node death ---
-
-func TestScenario11_AlertReassignmentOnNodeDeath(t *testing.T) {
-	cluster := simulation.NewSimCluster(simulation.SimClusterConfig{
-		VirtualPartitionCount: 4,
-		ReplicationFactor:     1,
-	})
-
-	cluster.AddNode("node-1", []string{"query"})
-	cluster.AddNode("node-2", []string{"query"})
-	cluster.AddNode("node-3", []string{"query"})
-
-	state := cluster.State()
-
-	// Assign some alerts.
-	queryNodes := []sharding.NodeID{"node-1", "node-2", "node-3"}
-	for i := 0; i < 10; i++ {
-		alertID := fmt.Sprintf("alert-%d", i)
-		assigned := meta.RendezvousAssign(alertID, queryNodes)
-		state.AlertAssign[alertID] = &meta.AlertAssignment{
-			AlertID:      alertID,
-			AssignedNode: assigned,
-			Version:      1,
-		}
-	}
-
-	// Kill node-2.
-	cluster.KillNode("node-2")
-
-	// Reassign alerts from dead node.
-	reassigned := state.ReassignAlertsFromDeadNode("node-2")
-	t.Logf("reassigned %d alerts from dead node-2", len(reassigned))
-
-	// Verify no alerts assigned to dead node.
-	for alertID, aa := range state.AlertAssign {
-		if aa.AssignedNode == "node-2" {
-			t.Errorf("alert %s still assigned to dead node-2", alertID)
-		}
-	}
-}
-
-// --- Scenario 17: Rapid node join/leave churn ---
+// Rapid node join/leave churn
 
 func TestScenario17_RapidNodeChurn(t *testing.T) {
 	cluster := simulation.NewSimCluster(simulation.SimClusterConfig{

@@ -226,7 +226,7 @@ lynxdb status
 curl http://node-1:3100/health
 ```
 
-See [Monitoring](/docs/operations/monitoring) for Prometheus and alerting setup.
+See [Monitoring](/docs/operations/monitoring) for Prometheus setup.
 
 ## When to Upgrade to a Large Cluster
 

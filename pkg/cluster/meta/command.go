@@ -36,10 +36,6 @@ const (
 	CmdUpdateFieldCatalog
 	// CmdUpdateSourceRegistry merges a source set delta from an ingest node.
 	CmdUpdateSourceRegistry
-	// CmdAssignAlert assigns an alert to an evaluator node via rendezvous hash.
-	CmdAssignAlert
-	// CmdUpdateAlertFired records an alert fire timestamp.
-	CmdUpdateAlertFired
 	// CmdRegisterView registers or updates a materialized view definition in the cluster.
 	CmdRegisterView
 	// CmdUnregisterView removes a materialized view definition from the cluster.
@@ -79,10 +75,6 @@ func (ct CommandType) String() string {
 		return "UpdateFieldCatalog"
 	case CmdUpdateSourceRegistry:
 		return "UpdateSourceRegistry"
-	case CmdAssignAlert:
-		return "AssignAlert"
-	case CmdUpdateAlertFired:
-		return "UpdateAlertFired"
 	case CmdRegisterView:
 		return "RegisterView"
 	case CmdUnregisterView:

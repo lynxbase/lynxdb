@@ -166,7 +166,7 @@ func TestRenderRequiredFlagError_MultipleFlags(t *testing.T) {
 	var buf bytes.Buffer
 	theme := NewTheme(&buf, true)
 
-	theme.RenderRequiredFlagError([]string{"name", "query"}, "lynxdb alerts create [flags]", "")
+	theme.RenderRequiredFlagError([]string{"name", "query"}, "lynxdb mv create [flags]", "")
 	got := buf.String()
 
 	if !strings.Contains(got, "missing required flags: --name, --query") {

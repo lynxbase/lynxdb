@@ -89,8 +89,6 @@ func (s *MetaState) ProcessHeartbeat(nodeID sharding.NodeID, resources NodeResou
 //   - Suspect -> Dead after deadTimeout without a heartbeat
 //
 // Returns the list of nodes that transitioned to Dead.
-// When a node transitions to Dead, any alerts assigned to it are reassigned
-// via rendezvous hashing to surviving query nodes.
 func (s *MetaState) DetectFailures(clock ClockProvider, suspectTimeout, deadTimeout time.Duration) []sharding.NodeID {
 	now := clock.Now()
 	var dead []sharding.NodeID
@@ -109,11 +107,6 @@ func (s *MetaState) DetectFailures(clock ClockProvider, suspectTimeout, deadTime
 				dead = append(dead, id)
 			}
 		}
-	}
-
-	// Reassign alerts from dead nodes to surviving query nodes.
-	for _, deadNodeID := range dead {
-		s.ReassignAlertsFromDeadNode(deadNodeID)
 	}
 
 	return dead

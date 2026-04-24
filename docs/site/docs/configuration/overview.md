@@ -168,7 +168,7 @@ In the current implementation:
 - most query execution settings are reloaded for future work
 - `ingest.mode`, `ingest.max_batch_size`, and `ingest.max_line_bytes` are re-applied
 - `tail.*` limits are re-applied
-- `http.idle_timeout`, `http.shutdown_timeout`, `http.alert_shutdown_timeout`, and `http.read_header_timeout` are re-applied
+- `http.idle_timeout`, `http.shutdown_timeout`, and `http.read_header_timeout` are re-applied
 - `storage.compaction_rate_limit_mb` is explicitly re-applied
 
 Treat these changes as restart-required:

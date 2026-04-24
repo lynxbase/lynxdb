@@ -110,7 +110,7 @@ Cluster mode uses the same binary with clustering flags. Nodes discover each oth
 
 | Role | Responsibility | Scales with |
 |------|----------------|-------------|
-| **Meta** (3-5 nodes) | Raft consensus, shard map, node registry, leader leases, field catalog, source registry, alert assignment, view coordination | Cluster size |
+| **Meta** (3-5 nodes) | Raft consensus, shard map, node registry, leader leases, field catalog, source registry, view coordination | Cluster size |
 | **Ingest** (N nodes) | Batcher write, part flush, S3 upload, batcher replication | Write throughput |
 | **Query** (M nodes) | Scatter-gather, partial aggregation merge, segment caching | Query concurrency |
 
@@ -183,7 +183,7 @@ The HTTP API layer (`pkg/api/rest`) exposes all functionality over HTTP:
 
 - **Ingest**: Structured event arrays via `/api/v1/ingest`, raw lines via `/api/v1/ingest/raw`, plus compatibility endpoints for Elasticsearch `_bulk`, OTLP, and Splunk HEC.
 - **Query**: Sync, async, and hybrid execution modes. NDJSON streaming for large result sets. SSE for real-time progress.
-- **Management**: Fields catalog, saved queries, alerts, materialized views, configuration.
+- **Management**: Fields catalog, saved queries, materialized views, configuration.
 
 See [REST API Overview](/docs/api/overview) for endpoint documentation.
 
