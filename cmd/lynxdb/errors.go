@@ -239,7 +239,7 @@ func renderAPIError(ae *client.APIError) {
 
 	suggestion := ae.Suggestion
 
-	// Enhance field-related query errors with fuzzy suggestions.
+	// Fuzzy-match field names when the server returns an invalid-query error without a suggestion.
 	if suggestion == "" && ae.Code == client.ErrCodeInvalidQuery {
 		if fieldSuggestion := tryFieldNameSuggestion(ae.Message); fieldSuggestion != "" {
 			suggestion = fieldSuggestion

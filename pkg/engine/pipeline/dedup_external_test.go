@@ -286,7 +286,6 @@ func TestExternalDedupSetBasics(t *testing.T) {
 	}
 	defer mgr.CleanupAll()
 
-	// Create a set from existing hashes.
 	seenHash := map[uint64]int{
 		100: 1,
 		200: 1,

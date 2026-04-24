@@ -47,7 +47,6 @@ func (s *MetaState) applyRegisterView(payload []byte) error {
 
 	existing, ok := s.Views[p.ViewInfo.Name]
 	if ok {
-		// Update: preserve version continuity.
 		p.ViewInfo.Version = existing.Version + 1
 	} else {
 		p.ViewInfo.Version = 1

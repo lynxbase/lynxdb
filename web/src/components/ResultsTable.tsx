@@ -83,7 +83,6 @@ function truncate(value: unknown, maxLen = 200): string {
   return str.length > maxLen ? str.slice(0, maxLen) + "\u2026" : str;
 }
 
-/** Check if a value is numeric */
 function isNumeric(value: unknown): boolean {
   return typeof value === "number" || (typeof value === "string" && value !== "" && !isNaN(Number(value)));
 }
@@ -178,7 +177,6 @@ export function ResultsTable({
 
   const effectiveIsAgg = isAggregation ?? isAgg;
 
-  // Parse current sort state from query
   const currentSort = currentQuery ? parseSortFromQuery(currentQuery) : null;
 
   // Close accordion on Escape

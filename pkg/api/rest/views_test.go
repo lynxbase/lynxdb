@@ -13,7 +13,6 @@ func TestViews_PatchRetention(t *testing.T) {
 	srv, _, cleanup := startDiskTestServer(t)
 	defer cleanup()
 
-	// Create a view first.
 	createBody, _ := json.Marshal(map[string]interface{}{
 		"name":  "test_view",
 		"query": "FROM main | stats count by host",

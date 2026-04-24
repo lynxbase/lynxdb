@@ -29,7 +29,6 @@ type UninstallResult struct {
 // Checks for system-mode artifacts (systemd unit, launchd daemon) first, then
 // falls back to user-mode artifacts (launchd agent).
 func DetectInstallMode() (Mode, Paths) {
-	// Check for system install.
 	sysPaths := resolveSystemPaths(Options{})
 	if _, err := os.Stat(sysPaths.ServiceFile); err == nil {
 		return ModeSystem, sysPaths
@@ -39,7 +38,6 @@ func DetectInstallMode() (Mode, Paths) {
 		return ModeSystem, sysPaths
 	}
 
-	// Check for user install.
 	userPaths := resolveUserPaths(Options{})
 	if userPaths.ServiceFile != "" {
 		if _, err := os.Stat(userPaths.ServiceFile); err == nil {

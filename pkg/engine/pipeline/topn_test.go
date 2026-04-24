@@ -88,7 +88,7 @@ func TestTopN_MultiField(t *testing.T) {
 	if len(result) != 3 {
 		t.Fatalf("expected 3 rows, got %d", len(result))
 	}
-	// Expected: (1,20), (1,15), (1,10) — a=1 first (asc), then b desc within.
+	// Expected: (1,20), (1,15), (1,10). a=1 first (asc), then b desc within.
 	expected := []struct{ a, b int64 }{
 		{1, 20}, {1, 15}, {1, 10},
 	}

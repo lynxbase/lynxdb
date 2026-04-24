@@ -29,7 +29,6 @@ func TestEnforceRetention_RemovesExpired(t *testing.T) {
 	oldEvent.Index = "mv_ret"
 	writeTestSegment(t, segDir, []*event.Event{oldEvent})
 
-	// Create a recent segment.
 	newEvent := event.NewEvent(time.Now(), "new event")
 	newEvent.Index = "mv_ret"
 	time.Sleep(time.Millisecond) // ensure different filename

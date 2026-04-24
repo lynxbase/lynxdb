@@ -363,7 +363,6 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 			items = append(items, makeErrorItem("index", meta.Index, meta.ID, http.StatusBadRequest,
 				"action_request_validation_exception", "delete action is not supported"))
 			hasErrors = true
-			// delete has no data line
 			continue
 		}
 

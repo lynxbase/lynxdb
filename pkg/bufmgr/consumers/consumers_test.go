@@ -89,7 +89,6 @@ func TestUnit_SegmentCacheConsumer_PutGet_MultiFrame_SplitsCorrectly(t *testing.
 	sc := NewSegmentCacheConsumer(mgr)
 	frameSize := mgr.FrameSize() // 4096
 
-	// Create data that spans exactly 3 frames.
 	dataSize := frameSize*2 + 500
 	data := make([]byte, dataSize)
 	for i := range data {

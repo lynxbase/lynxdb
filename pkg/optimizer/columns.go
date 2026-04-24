@@ -581,7 +581,6 @@ func (r *projectionPushdownRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 		commandAccessedFields(q.Commands[i], needed)
 	}
 
-	// Build the early fields list.
 	earlyFields := make([]string, 0, len(needed))
 	for f := range needed {
 		earlyFields = append(earlyFields, f)

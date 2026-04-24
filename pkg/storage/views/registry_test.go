@@ -139,7 +139,6 @@ func TestViewRegistry_DropNotFound(t *testing.T) {
 func TestViewRegistry_Persistence(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create registry and add view.
 	r1, err := Open(dir)
 	if err != nil {
 		t.Fatalf("Open: %v", err)

@@ -278,7 +278,6 @@ func (s *SortIterator) materialize(ctx context.Context) error {
 
 				// Now handle the current batch in row mode (below).
 			} else {
-				// Check row count safety valve.
 				if columnarRows+batch.Len > s.maxSortRows {
 					if s.spillMgr == nil {
 						return ErrSortLimitExceeded
@@ -404,7 +403,7 @@ func (s *SortIterator) sortColumnar(ctx context.Context) error {
 			return false
 		}
 		comparisons++
-		if comparisons&0x3FF == 0 { // check every 1024 comparisons
+		if comparisons&0x3FF == 0 {
 			select {
 			case <-ctx.Done():
 				canceled = true
@@ -563,7 +562,7 @@ func (s *SortIterator) sortInPlaceCtx(ctx context.Context) error {
 			return false
 		}
 		comparisons++
-		if comparisons&0x3FF == 0 { // check every 1024 comparisons
+		if comparisons&0x3FF == 0 {
 			select {
 			case <-ctx.Done():
 				canceled = true

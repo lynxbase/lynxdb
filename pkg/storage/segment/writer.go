@@ -204,7 +204,6 @@ func (sw *Writer) Write(events []*event.Event) (int64, error) {
 		rowGroups = append(rowGroups, rgMeta)
 	}
 
-	// Build per-column bloom filters.
 	//
 	// Which columns get blooms:
 	//   - _raw: always (full-text search)

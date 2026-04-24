@@ -86,7 +86,6 @@ func StartRebuild(registry *ViewRegistry, newDef ViewDefinition) (ViewDefinition
 		return ViewDefinition{}, err
 	}
 
-	// Create v2 with incremented version.
 	newDef.Version = old.Version + 1
 	newDef.Status = ViewStatusBackfill
 	newDef.CreatedAt = old.CreatedAt

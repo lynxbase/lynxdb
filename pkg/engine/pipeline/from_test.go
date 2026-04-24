@@ -115,7 +115,6 @@ func TestFromIterator_Schema(t *testing.T) {
 
 func TestFromIterator_Pipeline_WithWhere(t *testing.T) {
 	events := makeFromTestEvents(10)
-	// Set different sources on some events.
 	for i := 0; i < 5; i++ {
 		events[i].Source = "nginx"
 	}

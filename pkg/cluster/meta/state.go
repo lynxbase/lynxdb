@@ -226,7 +226,6 @@ func (s *MetaState) applyProposeSplit(payload []byte) error {
 		return fmt.Errorf("meta.applyProposeSplit: parent %q is %s, expected active", parentKey, parent.State)
 	}
 
-	// Check for existing split.
 	if _, exists := s.Splits[p.ParentPartition]; exists {
 		return fmt.Errorf("meta.applyProposeSplit: partition %d already splitting", p.ParentPartition)
 	}

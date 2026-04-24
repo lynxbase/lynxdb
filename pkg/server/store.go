@@ -1369,7 +1369,6 @@ func (e *Engine) buildTransformPartialAggStore(
 				events = filterEventsByTime(events, job.timeBounds)
 				e.metrics.SegmentReads.Add(1)
 
-				// Run transform mini-pipeline then partial agg.
 				partial := e.runTransformAndAgg(ctx, events, tSpec)
 				resultCh <- segPartialResult{partials: partial, bytesRead: rs.bytesRead}
 			}

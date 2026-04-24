@@ -47,7 +47,6 @@ func (s *Server) handleExplainAnalyze(w http.ResponseWriter, r *http.Request, q 
 	from := r.URL.Query().Get("from")
 	to := r.URL.Query().Get("to")
 
-	// Get the logical plan.
 	explainResult, err := s.queryService.Explain(r.Context(), usecases.ExplainRequest{
 		Query: q, From: from, To: to,
 	})

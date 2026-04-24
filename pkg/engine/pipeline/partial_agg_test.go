@@ -665,7 +665,6 @@ func TestIsPushableAgg_Percentiles(t *testing.T) {
 }
 
 func TestPartialAgg_Perc99(t *testing.T) {
-	// Create 100 events with values 1..100.
 	var fieldSets []map[string]event.Value
 	for i := 1; i <= 100; i++ {
 		fieldSets = append(fieldSets, map[string]event.Value{

@@ -9,7 +9,6 @@ import (
 )
 
 func TestPackJson_SpecificFields(t *testing.T) {
-	// Build a batch with several columns.
 	batch := NewBatch(0)
 	batch.Len = 2
 	batch.Columns["level"] = []event.Value{

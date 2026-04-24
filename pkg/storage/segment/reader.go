@@ -415,7 +415,6 @@ func (r *Reader) ReadStrings(name string) ([]string, error) {
 	var result []string
 	for rgi := range r.footer.RowGroups {
 		rg := &r.footer.RowGroups[rgi]
-		// Check const columns first.
 		if cc := findConstColumn(rg, name); cc != nil {
 			vals := make([]string, rg.RowCount)
 			for i := range vals {

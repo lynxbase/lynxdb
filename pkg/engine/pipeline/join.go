@@ -366,7 +366,6 @@ func hashPartition(key string, numPartitions int) int {
 func (j *JoinIterator) graceHashJoin(ctx context.Context, overflowBatch *Batch) error {
 	numParts := defaultGracePartitions
 
-	// Create partition writers for right side.
 	rightWriters := make([]*SpillWriter, numParts)
 	for i := range rightWriters {
 		sw, err := NewManagedSpillWriter(j.spillMgr, fmt.Sprintf("join-R-%02d", i))
@@ -446,7 +445,6 @@ func (j *JoinIterator) graceHashJoin(ctx context.Context, overflowBatch *Batch) 
 		}
 	}
 
-	// Create partition writers for left side.
 	leftWriters := make([]*SpillWriter, numParts)
 	for i := range leftWriters {
 		sw, err := NewManagedSpillWriter(j.spillMgr, fmt.Sprintf("join-L-%02d", i))

@@ -132,7 +132,7 @@ type QueryStats struct {
 	// SpillFiles is the number of spill files created during execution.
 	SpillFiles int
 	// PoolUtilization is the fraction of the global memory pool in use at
-	// query completion (0.0–1.0). Populated from Governor when available.
+	// query completion (0.0 to 1.0). Populated from Governor when available.
 	PoolUtilization float64
 	// Warnings holds user-visible warning messages generated during execution.
 	// Examples: scan truncation, approximate results from spill merge.

@@ -238,7 +238,6 @@ func TestUploadPipeline_Upload(t *testing.T) {
 	})
 	ctx := context.Background()
 
-	// Create a 1000-byte segment.
 	data := make([]byte, 1000)
 	for i := range data {
 		data[i] = byte(i % 256)
@@ -449,7 +448,6 @@ func TestSegmentCache_ChunkDeletedExternally(t *testing.T) {
 	data := []byte("chunk data")
 	sc.PutChunk("seg-ext", 0, "_raw", data)
 
-	// Delete the file externally.
 	path := sc.chunkPath("seg-ext", 0, "_raw")
 	os.Remove(path)
 

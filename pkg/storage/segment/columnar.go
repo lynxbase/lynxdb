@@ -348,7 +348,6 @@ func (r *Reader) readRowGroupColumnar(rgIdx int, rg *RowGroupMeta, need map[stri
 		if len(need) > 0 && !need[name] {
 			continue
 		}
-		// Check const column first.
 		if cc := findConstColumn(rg, name); cc != nil {
 			vals := make([]string, rg.RowCount)
 			for i := range vals {

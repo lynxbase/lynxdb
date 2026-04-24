@@ -165,7 +165,6 @@ func (sw *StreamWriter) WriteRowGroup(events []*event.Event) error {
 	}
 	sw.rgFieldPresence = append(sw.rgFieldPresence, presence)
 
-	// Build per-RG bloom section.
 	constInRG := make(map[string]bool, len(rgMeta.ConstColumns))
 	for _, cc := range rgMeta.ConstColumns {
 		constInRG[cc.Name] = true

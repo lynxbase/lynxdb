@@ -47,7 +47,6 @@ func (r *predicatePushdownRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 
 		case *spl2.RenameCommand:
 			// Push WHERE through RENAME by adjusting field references.
-			// Build reverse rename map: new → old.
 			reverseMap := make(map[string]string)
 			for _, r := range p.Renames {
 				reverseMap[r.New] = r.Old

@@ -99,7 +99,6 @@ func (s *SimS3) Get(_ context.Context, key string) (io.ReadCloser, error) {
 	return io.NopCloser(strings.NewReader(string(data))), nil
 }
 
-// Delete removes an object.
 func (s *SimS3) Delete(_ context.Context, key string) error {
 	s.DelCount.Add(1)
 

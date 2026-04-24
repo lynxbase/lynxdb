@@ -361,7 +361,6 @@ func (rl *RateLimiter) Allow(ip string) bool {
 		b.tokens = float64(rl.burst)
 	}
 	b.lastTime = now
-	// Update heap position since lastTime changed.
 	if b.heapIdx >= 0 {
 		heap.Fix(&rl.heap, b.heapIdx)
 	}

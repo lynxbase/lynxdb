@@ -186,7 +186,6 @@ export function Timeline({
 
       const barWidthFactor = groupedBuckets!.length > 1 ? 0.85 : 0.5;
 
-      // Build series: one per level
       const series: uPlot.Series[] = [{}]; // x-axis placeholder
       for (let s = 0; s < levels.length; s++) {
         const color = levelColor(levels[s]);
@@ -399,7 +398,6 @@ export function Timeline({
 
   if (!visible) return null;
 
-  // Build legend items for grouped mode
   const legendLevels = isGrouped
     ? toStackedUPlotData(groupedBuckets!).levels
     : [];

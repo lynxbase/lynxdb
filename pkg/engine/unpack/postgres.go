@@ -180,7 +180,6 @@ func emitDuration(message string, emit func(key string, val event.Value) bool) {
 	}
 
 	numStr := rest[:numEnd]
-	// Check for " ms" suffix.
 	after := rest[numEnd:]
 	if !strings.HasPrefix(after, " ms") {
 		return

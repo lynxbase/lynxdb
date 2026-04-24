@@ -93,7 +93,6 @@ func (p *KVParser) Parse(input string, emit func(key string, val event.Value) bo
 			break
 		}
 
-		// Parse value — may be quoted
 		var val string
 		if s[i] == quote {
 			i++ // skip opening quote

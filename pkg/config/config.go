@@ -74,7 +74,6 @@ type ClusterConfig struct {
 	// required to return results. Below this, the query fails. Default: 0.5.
 	PartialFailureThreshold float64 `yaml:"partial_failure_threshold" json:"partial_failure_threshold"`
 	// DCHLLThreshold is the cardinality at which dc() promotes from exact
-	// set tracking to HyperLogLog approximation. Default: 10000.
 	DCHLLThreshold int `yaml:"dc_hll_threshold" json:"dc_hll_threshold"`
 }
 

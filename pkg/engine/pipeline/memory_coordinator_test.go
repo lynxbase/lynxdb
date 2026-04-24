@@ -458,7 +458,6 @@ func TestSortAndAggregateCoordinated(t *testing.T) {
 	}
 	defer spillMgr.CleanupAll()
 
-	// Build events: 100 events across 10 hosts.
 	events := make([]*event.Event, 100)
 	for i := range events {
 		host := "host-" + string(rune('A'+i%10))

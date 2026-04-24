@@ -154,7 +154,7 @@ func newExternalDedupSet(
 
 // writeHashesToDisk writes sorted hashes to the disk file and builds the sparse index.
 func (eds *externalDedupSet) writeHashesToDisk(hashes []uint64) error {
-	const sparseInterval = 1024 // build sparse index entry every 1024 hashes
+	const sparseInterval = 1024
 	buf := make([]byte, 8)
 
 	for i, h := range hashes {
@@ -217,7 +217,6 @@ func (eds *externalDedupSet) flushBuffer() error {
 	// Sort buffer.
 	sort.Slice(eds.buffer, func(i, j int) bool { return eds.buffer[i] < eds.buffer[j] })
 
-	// Create a new merged file.
 	newFile, err := eds.spillMgr.NewSpillFile("dedup-hashes-merged")
 	if err != nil {
 		return fmt.Errorf("dedup_external: create merged file: %w", err)

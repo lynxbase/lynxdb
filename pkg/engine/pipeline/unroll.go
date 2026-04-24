@@ -141,7 +141,6 @@ func (u *UnrollIterator) unrollSingle(row map[string]event.Value, field string) 
 // All fields must contain JSON arrays of the same length; otherwise the row
 // passes through unchanged.
 func (u *UnrollIterator) unrollMulti(row map[string]event.Value) {
-	// Parse all fields as JSON arrays.
 	arrays := make([][]json.RawMessage, len(u.fields))
 	arrLen := -1
 

@@ -220,7 +220,6 @@ func TestRenderSystemdUnit(t *testing.T) {
 
 	s := string(content)
 
-	// Check key template substitutions.
 	if !strings.Contains(s, "ExecStart=/usr/local/bin/lynxdb server --config /etc/lynxdb/config.yaml") {
 		t.Error("ExecStart not rendered correctly")
 	}
@@ -237,7 +236,6 @@ func TestRenderSystemdUnit(t *testing.T) {
 		t.Error("ReadWritePaths not rendered correctly")
 	}
 
-	// Check security hardening directives are present.
 	for _, directive := range []string{
 		"NoNewPrivileges=yes",
 		"PrivateTmp=yes",

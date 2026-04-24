@@ -2525,7 +2525,6 @@ func TestLynxFlow_ViewsRetention(t *testing.T) {
 // Additional Parse Modifier Tests
 
 func TestLynxFlow_ParseRegexWithModifiers(t *testing.T) {
-	// parse regex with as namespace modifier
 	q, err := Parse(`from app | parse regex(_raw, "host=(?P<host>\\S+)") as net`)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)

@@ -480,7 +480,6 @@ func resolveTimeRange(tr *spl2.SourceTimeRange, now time.Time) (earliest, latest
 		return earliest, latest
 	}
 
-	// Parse the relative duration.
 	dur := parseRelativeDuration(tr.Relative)
 	earliest = now.Add(-dur)
 

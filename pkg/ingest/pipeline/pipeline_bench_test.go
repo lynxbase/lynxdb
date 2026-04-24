@@ -110,7 +110,6 @@ func BenchmarkKVParse(b *testing.B) {
 
 // BenchmarkSplitRawLines benchmarks line splitting.
 func BenchmarkSplitRawLines(b *testing.B) {
-	// Build a blob of 100 lines
 	lines := ""
 	for i := 0; i < 100; i++ {
 		lines += benchJSONLine + "\n"

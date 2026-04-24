@@ -127,7 +127,6 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// Update handles all messages.
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -596,7 +595,6 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 // handleMouseClick processes mouse click events for sidebar zones.
 func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
-	// Check sidebar field clicks.
 	for _, f := range m.sidebar.fields {
 		if z := zone.Get(zoneFieldPrefix + f.Name); z != nil && z.InBounds(msg) {
 			m.editor.InsertAtCursor(f.Name)
@@ -606,7 +604,6 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// Check sidebar history clicks.
 	for i, h := range m.sidebar.history {
 		if z := zone.Get(fmt.Sprintf("%s%d", zoneHistPrefix, i)); z != nil && z.InBounds(msg) {
 			m.editor.SetValue(h.Query)

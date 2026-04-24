@@ -60,7 +60,6 @@ func SetupRaft(cfg config.ClusterConfig, fsm raft.FSM, dataDir string, logger *s
 		return nil, fmt.Errorf("meta.SetupRaft: create snapshot store: %w", err)
 	}
 
-	// Create the Raft instance.
 	r, err := raft.NewRaft(raftConfig, fsm, boltStore, boltStore, snapshotStore, transport)
 	if err != nil {
 		return nil, fmt.Errorf("meta.SetupRaft: create raft: %w", err)

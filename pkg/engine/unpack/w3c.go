@@ -69,7 +69,6 @@ func (p *W3CParser) Parse(input string, emit func(key string, val event.Value) b
 	// Handle directive lines.
 	if s[0] == '#' {
 		if strings.HasPrefix(s, "#Fields:") {
-			// Update field names from embedded directive.
 			header := strings.TrimSpace(s[8:])
 			p.fields = nil
 			for _, f := range strings.Fields(header) {

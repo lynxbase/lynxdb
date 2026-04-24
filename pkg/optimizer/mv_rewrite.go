@@ -450,7 +450,6 @@ func inListContains(query, mv spl2.Expr) bool {
 		return false
 	}
 
-	// Build set from MV values.
 	mvSet := make(map[string]bool, len(mIn.Values))
 	for _, v := range mIn.Values {
 		mvSet[v.String()] = true

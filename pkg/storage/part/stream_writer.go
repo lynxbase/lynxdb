@@ -257,7 +257,6 @@ func (psw *PartStreamWriter) Finalize(ctx context.Context) (*Meta, error) {
 		)
 	}
 
-	// Build column names list.
 	columns := make([]string, 0, len(psw.columns))
 	for name := range psw.columns {
 		columns = append(columns, name)

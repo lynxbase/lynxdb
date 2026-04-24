@@ -152,7 +152,6 @@ func TestCTEDAG_AppendSubqueryDep(t *testing.T) {
 // Uses BuildProgramWithBudget with parallel config enabled to exercise the
 // materializeCTEsParallel code path (not the sequential fallback).
 func TestCTE_ParallelMaterialization(t *testing.T) {
-	// Build a simple store with events.
 	store := &ServerIndexStore{
 		Events: map[string][]*event.Event{
 			"main": makeCTEEvents(10),

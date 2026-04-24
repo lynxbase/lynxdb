@@ -265,7 +265,6 @@ func TestProjectionCache_UpdateExistingEntry(t *testing.T) {
 	// Insert original.
 	pc.PutStrings("seg1", 0, "_raw", []string{"old"})
 
-	// Update with new data.
 	pc.PutStrings("seg1", 0, "_raw", []string{"new", "data"})
 
 	got, ok := pc.GetStrings("seg1", 0, "_raw")

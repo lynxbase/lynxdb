@@ -63,13 +63,11 @@ func TestStorageMetrics_JSON(t *testing.T) {
 		t.Fatalf("MarshalJSON: %v", err)
 	}
 
-	// Parse it back to verify structure.
 	var result map[string]interface{}
 	if err := json.Unmarshal(data, &result); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 
-	// Check top-level keys exist.
 	for _, key := range []string{"uptime_seconds", "flush", "segment", "compaction", "compaction_levels", "cache", "tiering", "pruning", "ingest", "query"} {
 		if _, ok := result[key]; !ok {
 			t.Errorf("missing top-level key: %s", key)

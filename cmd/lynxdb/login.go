@@ -101,7 +101,6 @@ func runLogin(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("save credentials: %w", saveErr)
 	}
 
-	// Check credentials file permissions.
 	if warning := auth.CheckPermissions(); warning != "" {
 		printWarning("%s", warning)
 	}

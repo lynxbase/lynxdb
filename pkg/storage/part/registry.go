@@ -389,7 +389,6 @@ func parseLevelFromFilename(name string) int {
 	// Find "L" followed by a digit.
 	for i := 0; i < len(name)-1; i++ {
 		if name[i] == 'L' && name[i+1] >= '0' && name[i+1] <= '9' {
-			// Check that 'L' is preceded by '-'.
 			if i > 0 && name[i-1] == '-' {
 				level := 0
 				for j := i + 1; j < len(name) && name[j] >= '0' && name[j] <= '9'; j++ {

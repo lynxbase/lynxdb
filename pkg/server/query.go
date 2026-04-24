@@ -330,7 +330,6 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		}
 	}
 
-	// Check for aggregation pushdown annotation.
 	var aggSpec *enginepipeline.PartialAggSpec
 	if prog.Main != nil {
 		if ann, ok := prog.Main.GetAnnotation("partialAgg"); ok {
@@ -1039,7 +1038,6 @@ func (e *Engine) runStreamingPipeline(
 	// Propagate segment skip counts to global pruning metrics.
 	e.recordPruningMetrics(&ss)
 
-	// Build streaming hints from query hints.
 	// For multi-index queries, clear IndexName and SourceScope* — each
 	// GetEventIterator call sets its own IndexName for per-index filtering.
 	// If we leave SourceScopeType="single" with the main query's source,

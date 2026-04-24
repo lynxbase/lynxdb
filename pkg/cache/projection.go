@@ -95,7 +95,7 @@ func (pc *ProjectionCache) GetStrings(segID string, rgIdx int, col string) ([]st
 	entry, ok := pc.entries[key]
 	var result []string
 	if ok {
-		entry.refBit.Store(1) // set second-chance bit
+		entry.refBit.Store(1)
 		result = entry.strings
 	}
 	pc.mu.RUnlock()

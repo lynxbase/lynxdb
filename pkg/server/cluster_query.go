@@ -104,7 +104,6 @@ type engineShardQueryAdapter struct {
 
 // SubmitShardQuery runs a query scoped to local shard data.
 func (a *engineShardQueryAdapter) SubmitShardQuery(ctx context.Context, params querycluster.ShardQueryParams) ([]map[string]event.Value, error) {
-	// Parse the shard query.
 	prog, err := spl2.ParseProgram(params.Query)
 	if err != nil {
 		return nil, fmt.Errorf("engineShardQueryAdapter.SubmitShardQuery: parse: %w", err)
@@ -124,7 +123,6 @@ func (a *engineShardQueryAdapter) SubmitShardQuery(ctx context.Context, params q
 		hints.TimeBounds = tb
 	}
 
-	// Run standard pipeline against local data.
 	qp := QueryParams{}
 	noop := func(*SearchProgress) {}
 	result, err := a.engine.runQueryPipeline(
@@ -167,7 +165,6 @@ func (a *engineShardQueryAdapter) SubmitShardPartialAgg(ctx context.Context, par
 		hints.TimeBounds = tb
 	}
 
-	// Build event store filtered by hints.
 	store, _, storeErr := a.engine.buildEventStore(ctx, hints, nil)
 	if storeErr != nil {
 		return nil, fmt.Errorf("engineShardQueryAdapter.SubmitShardPartialAgg: build event store: %w", storeErr)

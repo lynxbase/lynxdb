@@ -42,7 +42,6 @@ func (r *Results) SetSize(width, height int) {
 	r.viewport.SetHeight(height)
 }
 
-// Update passes messages to the viewport.
 func (r *Results) Update(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	r.viewport, cmd = r.viewport.Update(msg)

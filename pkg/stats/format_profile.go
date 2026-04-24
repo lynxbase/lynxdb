@@ -8,7 +8,7 @@ import (
 	"time"
 )
 
-// FormatProfile writes a comprehensive execution profile to w for terminal display.
+// FormatProfile writes an execution profile to w for terminal display.
 // Shown when --analyze is used.
 func FormatProfile(w io.Writer, s *QueryStats) {
 	fmt.Fprintln(w)

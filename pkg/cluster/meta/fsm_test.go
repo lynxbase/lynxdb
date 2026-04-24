@@ -414,7 +414,6 @@ func TestFSM_ApplyUpdateISR(t *testing.T) {
 	}
 	applyCommand(t, fsm, CmdUpdateShardMap, sm, 1)
 
-	// Update ISR to only node-2.
 	resp := applyCommand(t, fsm, CmdUpdateISR, UpdateISRPayload{
 		ShardID: "test-shard",
 		Members: []sharding.NodeID{"node-2"},

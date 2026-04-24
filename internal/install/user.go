@@ -27,7 +27,6 @@ func ensureSystemUserLinux(userName, groupName, homeDir string) (string, error) 
 		return fmt.Sprintf("%s:%s (already exists)", userName, groupName), nil
 	}
 
-	// Create group if needed.
 	if !groupExists {
 		cmd := exec.Command("groupadd", "--system", groupName) //nolint:gosec
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -35,7 +34,6 @@ func ensureSystemUserLinux(userName, groupName, homeDir string) (string, error) 
 		}
 	}
 
-	// Create user if needed.
 	if !userExists {
 		args := []string{
 			"--system",

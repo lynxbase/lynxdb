@@ -218,7 +218,6 @@ func TestLoadWithOverrides(t *testing.T) {
 		t.Errorf("Listen: got %q", cfg.Listen)
 	}
 
-	// Check overrides are tracked.
 	if len(overrides) != 2 {
 		t.Fatalf("expected 2 overrides, got %d: %v", len(overrides), overrides)
 	}
@@ -473,7 +472,6 @@ func TestKnownKeyNames(t *testing.T) {
 		t.Fatal("expected non-empty list of known keys")
 	}
 
-	// Check some expected keys are present.
 	expectedKeys := []string{"listen", "data_dir", "retention", "storage.compression", "query.max_concurrent"}
 	for _, ek := range expectedKeys {
 		found := false

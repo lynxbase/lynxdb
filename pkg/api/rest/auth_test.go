@@ -474,7 +474,6 @@ func TestAuth_ApiKeyFormat(t *testing.T) {
 	srv, ks, _, cleanup := startAuthServer(t)
 	defer cleanup()
 
-	// Create a regular key.
 	regular, err := ks.CreateKey("apikey-test", false)
 	if err != nil {
 		t.Fatal(err)
@@ -559,7 +558,6 @@ func TestAuth_ExpiredKey(t *testing.T) {
 	srv, ks, _, cleanup := startAuthServer(t)
 	defer cleanup()
 
-	// Create a key that already expired.
 	expired, err := ks.CreateKeyWithOpts(auth.CreateKeyOpts{
 		Name:      "expired-test",
 		Scope:     auth.ScopeFull,

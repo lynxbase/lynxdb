@@ -38,7 +38,6 @@ func TestMVList_EmptyServer(t *testing.T) {
 func TestMVCreateAndList(t *testing.T) {
 	baseURL := setupDiskServerWithData(t)
 
-	// Create a materialized view.
 	_, _, err := runCmd(t, "--server", baseURL, "mv", "create",
 		"mv_test_levels",
 		"level=error | stats count by level")

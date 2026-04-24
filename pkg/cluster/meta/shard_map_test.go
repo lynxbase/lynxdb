@@ -131,7 +131,6 @@ func TestIncrementalRebalance_NoChangeNoPlan(t *testing.T) {
 	state.Ring.AddNode("node-2")
 	state.Ring.AddNode("node-3")
 
-	// Build initial shard map.
 	state.RecomputeShardMap(16, 2)
 
 	// With the same ring, incremental rebalance should produce no moves.
@@ -146,7 +145,6 @@ func TestIncrementalRebalance_NodeAddMovesPartialPartitions(t *testing.T) {
 	state.Ring.AddNode("node-1")
 	state.Ring.AddNode("node-2")
 
-	// Build initial shard map with 2 nodes.
 	state.RecomputeShardMap(64, 1)
 	initialMap := make(map[string]sharding.NodeID)
 	for key, a := range state.ShardMap.Assignments {

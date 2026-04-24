@@ -748,7 +748,6 @@ func TestDispatcher_AggregationView_Timechart(t *testing.T) {
 	def := createAggView(t, reg, "mv_timechart", `FROM main | timechart span=1h count`)
 	d.ActivateView(def)
 
-	// Create events spread across 2 hours.
 	base := time.Date(2026, 1, 1, 10, 0, 0, 0, time.UTC)
 	events := []*event.Event{
 		makeTestEventAtTime("main", base.Add(5*time.Minute)),

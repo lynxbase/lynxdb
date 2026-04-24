@@ -80,7 +80,6 @@ func (p *CombinedParser) Parse(input string, emit func(key string, val event.Val
 	}
 	i = next
 
-	// Parse request into method, uri, protocol.
 	parts := strings.SplitN(request, " ", 3)
 	if len(parts) >= 1 {
 		if !emit("method", event.StringValue(parts[0])) {

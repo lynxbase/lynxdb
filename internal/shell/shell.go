@@ -20,7 +20,6 @@ type RunOpts struct {
 	Events int // event count for file mode header
 }
 
-// Run starts the interactive shell TUI.
 func Run(mode string, opts RunOpts) error {
 	zone.NewGlobal()
 

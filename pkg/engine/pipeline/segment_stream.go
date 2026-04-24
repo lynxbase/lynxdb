@@ -216,7 +216,6 @@ func NewSegmentStreamIterator(
 		}
 	}
 
-	// Build column projection set.
 	var needCols map[string]bool
 	if len(hints.RequiredCols) > 0 {
 		needCols = make(map[string]bool, len(hints.RequiredCols))
@@ -282,7 +281,6 @@ func (s *SegmentStreamIterator) Next(ctx context.Context) (*Batch, error) {
 			return nil, nil
 		}
 
-		// Check early termination via limit.
 		if s.hints.Limit > 0 && s.totalYielded >= s.hints.Limit {
 			s.phase = phaseDone
 
@@ -620,7 +618,6 @@ func (s *SegmentStreamIterator) advanceRowGroup() bool {
 			}
 		}
 
-		// Create per-segment RG filter evaluator.
 		if s.rgFilterNode != nil {
 			s.rgFilter = segment.NewRGFilterEvaluator(s.rgFilterNode, seg.Reader)
 		} else {

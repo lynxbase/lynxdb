@@ -51,7 +51,6 @@ func TestExtractSearchTermTree_OR(t *testing.T) {
 		t.Fatalf("expected 2 children, got %d", len(tree.Children))
 	}
 
-	// Check both children are leaves.
 	for i, child := range tree.Children {
 		if child.Op != SearchTermLeaf {
 			t.Errorf("child[%d]: expected Leaf, got op=%d", i, child.Op)

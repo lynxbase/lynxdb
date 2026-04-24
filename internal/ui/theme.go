@@ -60,7 +60,6 @@ func InitEnv(noColor bool) {
 		lightDark: lipgloss.LightDark(hasDark),
 	}
 
-	// Build backward-compatible Theme instances.
 	// When the profile is Ascii (NO_COLOR, TERM=dumb, --no-color), use the
 	// no-color theme to guarantee zero ANSI escape sequences in output.
 	if profile == colorprofile.Ascii {

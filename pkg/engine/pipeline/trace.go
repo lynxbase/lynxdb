@@ -147,7 +147,6 @@ func (t *TraceIterator) buildSpanTree(rows []map[string]event.Value) *Batch {
 		g.rows = append(g.rows, row)
 	}
 
-	// Build output — compact 7-column format.
 	b := NewBatch(len(rows))
 	for _, traceID := range traceOrder {
 		g := traces[traceID]
@@ -183,7 +182,6 @@ func (t *TraceIterator) buildTreeForTrace(rows []map[string]event.Value) []*span
 		}
 	}
 
-	// Build parent → children adjacency.
 	children := make(map[string][]int) // parent_span_id → []row index
 	var roots []int
 
@@ -202,7 +200,6 @@ func (t *TraceIterator) buildTreeForTrace(rows []map[string]event.Value) []*span
 		}
 	}
 
-	// Build display name for a row.
 	displayName := func(row map[string]event.Value) string {
 		// Try common span fields: service, operation, name.
 		service := ""
@@ -261,7 +258,6 @@ func (t *TraceIterator) buildTreeForTrace(rows []map[string]event.Value) []*span
 	dfs = func(rowIndex int, depth int, prefix string, isLast bool) {
 		row := rows[rowIndex]
 
-		// Build tree display string.
 		connector := "├── "
 		if isLast {
 			connector = "└── "

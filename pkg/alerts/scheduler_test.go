@@ -66,7 +66,6 @@ func TestSchedulerTriggersNotification(t *testing.T) {
 		t.Fatalf("expected at least 1 dispatch, got %d", c)
 	}
 
-	// Check status was updated.
 	got, _ := store.Get(a.ID)
 	if got.Status != StatusTriggered {
 		t.Errorf("status = %v, want %v", got.Status, StatusTriggered)

@@ -66,7 +66,6 @@ func (n *Node) Start(ctx context.Context) error {
 		return fmt.Errorf("cluster.Node.Start: %w", err)
 	}
 
-	// Create and start gRPC server.
 	grpcAddr := fmt.Sprintf("0.0.0.0:%d", n.cfg.GRPCPort)
 	n.grpcServer = rpc.NewServer(grpcAddr, n.logger)
 

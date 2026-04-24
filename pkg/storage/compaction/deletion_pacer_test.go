@@ -30,7 +30,6 @@ func TestDeletionPacer_EnqueueAndDrain(t *testing.T) {
 		t.Fatalf("expected 5 pending, got %d", pacer.Pending())
 	}
 
-	// Run drain loop briefly.
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
 

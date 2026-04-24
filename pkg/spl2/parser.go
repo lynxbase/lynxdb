@@ -186,7 +186,6 @@ func (p *Parser) parseQuery() (*Query, error) {
 		q.Commands = append(q.Commands, cmd)
 	}
 
-	// Parse pipeline commands separated by pipes.
 	for {
 		tok := p.peek()
 		if tok.Type == TokenEOF || tok.Type == TokenSemicolon ||
@@ -825,8 +824,7 @@ func (p *Parser) parseOutliers() (*OutliersCommand, error) {
 			default:
 				return nil, fmt.Errorf("spl2: outliers method must be iqr, zscore, or mad, got %q", tok.Literal)
 			}
-			// Update default threshold based on method.
-			if cmd.Method == "zscore" {
+				if cmd.Method == "zscore" {
 				cmd.Threshold = 3.0
 			}
 		}
@@ -983,7 +981,6 @@ func (p *Parser) parseRollup() (*RollupCommand, error) {
 	p.advance() // consume "rollup"
 	cmd := &RollupCommand{}
 
-	// Parse span list: 5m, 1h, 1d
 	for {
 		tok := p.peek()
 		if tok.Type == TokenDuration {
@@ -1012,7 +1009,6 @@ func (p *Parser) parseRollup() (*RollupCommand, error) {
 		return nil, fmt.Errorf("spl2: rollup requires at least one time span (e.g., 5m, 1h)")
 	}
 
-	// Parse optional "by <group>"
 	if p.peek().Type == TokenBy {
 		p.advance()
 		var err error
@@ -1325,7 +1321,6 @@ func (p *Parser) parseBin() (*BinCommand, error) {
 		cmd.Span = p.readSpanValue()
 	}
 
-	// Parse optional AS <alias>.
 	if p.peek().Type == TokenAs {
 		p.advance()
 		alias, err := p.expectIdent()
@@ -1425,7 +1420,6 @@ func (p *Parser) parseJoin() (*JoinCommand, error) {
 	}
 	cmd.Field = field.Literal
 
-	// Parse subsearch in brackets.
 	sub, err := p.parseSubsearch()
 	if err != nil {
 		return nil, err
@@ -1471,7 +1465,6 @@ func (p *Parser) parseTransaction() (*TransactionCommand, error) {
 	}
 	cmd.Field = field.Literal
 
-	// Parse optional maxspan, startswith, endswith.
 	for p.peek().Type == TokenIdent {
 		name := strings.ToLower(p.peek().Literal)
 		if name == "maxspan" && p.peekAt(1).Type == TokenEq {
@@ -1663,7 +1656,6 @@ func (p *Parser) parseSourceClause() (*SourceClause, error) {
 		return &SourceClause{Index: tok.Literal, IsGlob: true}, nil
 	}
 
-	// Parse first source name.
 	name, err := p.parseSourceName()
 	if err != nil {
 		return nil, err
@@ -1736,7 +1728,6 @@ func (p *Parser) parseSourceTimeRange() (*SourceTimeRange, error) {
 		tok := p.advance()
 		tr.Relative = tok.Literal
 
-		// Check for range: -7d..-1d
 		if p.peek().Type == TokenDot && p.peekAt(1).Type == TokenDot {
 			p.advance() // consume first .
 			p.advance() // consume second .
@@ -1909,7 +1900,6 @@ func (p *Parser) readSpanValue() string {
 	case TokenNumber:
 		p.advance()
 		span := tok.Literal
-		// Check for unit suffix.
 		if p.peek().Type == TokenIdent {
 			unit := p.advance()
 			span += unit.Literal
@@ -1931,7 +1921,6 @@ func (p *Parser) parseUnpack(format string) (*UnpackCommand, error) {
 	p.advance() // consume the keyword (unpack_json, unpack_logfmt, etc.)
 	cmd := &UnpackCommand{Format: format, SourceField: "_raw"}
 
-	// Parse options in any order.
 	for {
 		tok := p.peek()
 
@@ -2358,7 +2347,6 @@ func (p *Parser) parsePackJson() (*PackJsonCommand, error) {
 		return cmd, nil
 	}
 
-	// Parse comma-separated field list until "into".
 	for {
 		tok := p.peek()
 		if tok.Type == TokenInto {
@@ -3791,7 +3779,6 @@ func (p *Parser) parseLynxPack() (*PackJsonCommand, error) {
 		return cmd, nil
 	}
 
-	// Parse comma-separated field list until "into".
 	for {
 		tok := p.peek()
 		if tok.Type == TokenInto {

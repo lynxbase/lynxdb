@@ -707,7 +707,7 @@ func (e *Engine) SegCacheConsumer() *consumers.SegmentCacheConsumer {
 
 // pinEpoch returns the current epoch with its reader count incremented.
 // The caller MUST call ep.unpin() when done reading segment data.
-// Pin is O(1) — a single atomic load + atomic increment.
+// Pin is O(1): a single atomic load + atomic increment.
 //
 // Lock-free: uses atomic.Pointer.Load() with a load-pin-verify-retry pattern
 // instead of acquiring e.mu.RLock(). This reduces contention under high QPS

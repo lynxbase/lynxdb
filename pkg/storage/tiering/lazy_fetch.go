@@ -135,7 +135,6 @@ func (lf *LazyFetcher) fetchWithRetry(ctx context.Context, key string, fn func()
 // FetchFooter retrieves the segment footer from the remote store.
 // The footer is cached in-memory for future use.
 func (lf *LazyFetcher) FetchFooter(ctx context.Context, key string, totalSize int64) (*segment.Footer, error) {
-	// Check in-memory cache first.
 	if cached := lf.cache.GetFooter(key); cached != nil {
 		return cached, nil
 	}

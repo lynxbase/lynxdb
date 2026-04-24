@@ -147,7 +147,6 @@ func TestCompactor_Execute_MergesAndSorts(t *testing.T) {
 
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	// Create overlapping segments with interleaved timestamps.
 	seg1 := makeSegment(t, "s1", "main", L0, makeEvents(base, 50, "web-01"))
 	seg2 := makeSegment(t, "s2", "main", L0, makeEvents(base.Add(25*time.Second), 50, "web-02"))
 

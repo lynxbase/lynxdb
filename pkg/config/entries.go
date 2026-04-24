@@ -44,7 +44,6 @@ func Entries(configPath string) []Entry {
 func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	dflt := DefaultConfig()
 
-	// Build CLI lookup map.
 	cliMap := make(map[string]CLIOverride, len(cli))
 	for _, o := range cli {
 		cliMap[o.Key] = o

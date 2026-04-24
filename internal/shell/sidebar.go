@@ -58,7 +58,7 @@ const (
 	planEmpty   planDisplayState = iota // editor is empty
 	planTyping                          // debounce pending
 	planValid                           // valid plan received
-	planInvalid                         // parse error
+	planInvalid
 )
 
 // QueryStatsSnapshot holds post-query statistics for sidebar display.

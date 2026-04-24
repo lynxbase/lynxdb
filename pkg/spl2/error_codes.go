@@ -37,7 +37,7 @@ const (
 	ErrCodeQueryTooComplex ErrorCode = "LF-E501" // Expression nesting depth exceeded
 
 	// Format errors (E6xx).
-	ErrParseFormat    ErrorCode = "LF-E601" // parse command format error
+	ErrParseFormat    ErrorCode = "LF-E601"
 	ErrMissingCompute ErrorCode = "LF-E602" // group/every without compute clause
 )
 

@@ -53,7 +53,6 @@ func (f *FillnullIterator) Next(ctx context.Context) (*Batch, error) {
 		for _, field := range f.fields {
 			col, exists := batch.Columns[field]
 			if !exists {
-				// Create the column with fill values.
 				col = make([]event.Value, batch.Len)
 				for i := range col {
 					col[i] = fillVal

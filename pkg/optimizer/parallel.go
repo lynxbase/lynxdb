@@ -64,7 +64,6 @@ func (r *flattenNestedAppendRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 	allBranches = append(allBranches, mainQuery)
 	allBranches = append(allBranches, branches...)
 
-	// Build the replacement MultisearchCommand.
 	multiCmd := &spl2.MultisearchCommand{
 		Searches: allBranches,
 	}

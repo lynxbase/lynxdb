@@ -166,7 +166,6 @@ func (fc *FieldCatalog) addTopValue(a *fieldAccum, str string) {
 	}
 }
 
-// Build returns the sorted field catalog.
 func (fc *FieldCatalog) Build() []FieldInfo {
 	var result []FieldInfo
 	for name, a := range fc.fields {

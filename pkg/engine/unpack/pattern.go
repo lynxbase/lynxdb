@@ -73,7 +73,6 @@ func NewPatternParser(pattern string) (*PatternParser, error) {
 		spec := pattern[i : i+closeIdx]
 		i += closeIdx + 1 // skip "}"
 
-		// Parse "name" or "name:type".
 		name := spec
 		coercion := ""
 		if colonIdx := strings.IndexByte(spec, ':'); colonIdx >= 0 {

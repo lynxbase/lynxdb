@@ -134,7 +134,6 @@ func collectVariableRefsRecurse(q *spl2.Query, seen map[string]bool) {
 		return
 	}
 
-	// Check source clause for $variable references.
 	if q.Source != nil && q.Source.IsVariable {
 		if !seen[q.Source.Index] {
 			seen[q.Source.Index] = true
@@ -164,7 +163,6 @@ func (qc *queryContext) materializeCTEs(ctx context.Context, datasets []spl2.Dat
 		return nil
 	}
 
-	// Build execution plan with dependency analysis.
 	plan, err := BuildCTEExecutionPlan(datasets)
 	if err != nil {
 		return err

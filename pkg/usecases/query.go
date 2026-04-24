@@ -100,7 +100,6 @@ func (s *QueryService) Explain(_ context.Context, req ExplainRequest) (*ExplainR
 		})
 	}
 
-	// Build source scope from hints.
 	var sourceScope *ExplainSourceScope
 	if plan.Hints.SourceScopeType != "" {
 		var totalAvailable int

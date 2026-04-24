@@ -114,7 +114,6 @@ func TestLayout_ListPartitions(t *testing.T) {
 	dir := t.TempDir()
 	l := NewLayout(dir)
 
-	// Create partition directories for different dates.
 	dates := []time.Time{
 		time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
 		time.Date(2026, 3, 2, 0, 0, 0, 0, time.UTC),
@@ -144,7 +143,6 @@ func TestLayout_ListParts(t *testing.T) {
 		t.Fatalf("EnsurePartitionDir: %v", err)
 	}
 
-	// Create some fake .lsg files.
 	partDir := l.PartitionDir("main", ts)
 	for i := 0; i < 3; i++ {
 		f, err := os.Create(filepath.Join(partDir, Filename("main", 0, ts.Add(time.Duration(i)*time.Second))))

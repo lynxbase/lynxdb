@@ -147,7 +147,6 @@ func TestProjectionPushdown_InsertEarlyBeforeSort(t *testing.T) {
 	foundFieldsBeforeSort := false
 	for i, cmd := range result.Commands {
 		if _, ok := cmd.(*spl2.FieldsCommand); ok {
-			// Check if next command is sort.
 			if i+1 < len(result.Commands) {
 				if _, ok := result.Commands[i+1].(*spl2.SortCommand); ok {
 					foundFieldsBeforeSort = true

@@ -106,7 +106,6 @@ func TestKeyStoreCreateAndVerify(t *testing.T) {
 		t.Fatal("new store should be empty")
 	}
 
-	// Create a root key.
 	created, err := ks.CreateKey("root", true)
 	if err != nil {
 		t.Fatal(err)
@@ -215,7 +214,6 @@ func TestKeyStorePersistence(t *testing.T) {
 
 	dir := t.TempDir()
 
-	// Create a key and close.
 	ks1, err := auth.OpenKeyStore(dir)
 	if err != nil {
 		t.Fatal(err)

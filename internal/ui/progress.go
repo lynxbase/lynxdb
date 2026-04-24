@@ -56,7 +56,6 @@ func (m ProgressModel) Init() tea.Cmd {
 	return nil
 }
 
-// Update implements tea.Model.
 func (m ProgressModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:

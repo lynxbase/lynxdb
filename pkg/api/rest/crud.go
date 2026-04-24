@@ -52,7 +52,6 @@ func registerCRUD[T any, Input interface{ Validate() error }](
 	}
 	requireAuth := opts.ServerRef != nil
 
-	// GET basePath — list all
 	mux.HandleFunc("GET "+basePath, func(w http.ResponseWriter, r *http.Request) {
 		respondData(w, http.StatusOK, opts.Store.List())
 	})

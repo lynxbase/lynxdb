@@ -203,7 +203,6 @@ func (t *drainTree) insert(line string) {
 			// Try wildcard branch.
 			child, ok = node.children["<*>"]
 			if !ok {
-				// Create new literal child.
 				child = &drainNode{children: make(map[string]*drainNode)}
 				node.children[token] = child
 			}

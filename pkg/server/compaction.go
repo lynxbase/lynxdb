@@ -54,7 +54,6 @@ func (e *Engine) startCompaction(ctx context.Context) {
 		interval = 15 * time.Second
 	}
 
-	// Create adaptive controller for latency-based throttling.
 	acCfg := compaction.AdaptiveConfig{
 		Logger: e.logger,
 	}
@@ -142,7 +141,6 @@ func (e *Engine) submitCompactionJobs() {
 		"queue_depth", e.compactionSched.QueueLen(),
 	)
 
-	// Update queue depth metric.
 	e.metrics.CompactionQueueDepth.Store(int64(e.compactionSched.QueueLen()))
 }
 
@@ -364,7 +362,6 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 		e.partRegistry.Remove(old.meta.ID)
 	}
 
-	// Update compaction IO metrics.
 	var inputBytes int64
 	for _, seg := range plan.InputSegments {
 		inputBytes += seg.Meta.SizeBytes

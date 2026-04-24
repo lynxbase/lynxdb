@@ -146,7 +146,6 @@ func (c *CompareIterator) mergeRows() *Batch {
 		}
 	}
 
-	// Build previous lookup by group key.
 	prevLookup := make(map[string]map[string]event.Value, len(c.previousRows))
 	for _, row := range c.previousRows {
 		key := buildGroupKey(row, groupCols)

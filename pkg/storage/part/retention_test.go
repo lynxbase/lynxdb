@@ -40,7 +40,6 @@ func TestRetentionManager_DeletesOldPartitions(t *testing.T) {
 	layout := NewLayout(dir)
 	registry := NewRegistry(testLogger())
 
-	// Create parts in different date partitions.
 	now := time.Now().UTC()
 	old := now.Add(-100 * 24 * time.Hour)
 	recent := now.Add(-1 * time.Hour)
@@ -55,7 +54,6 @@ func TestRetentionManager_DeletesOldPartitions(t *testing.T) {
 		t.Fatalf("expected 2 parts, got %d", registry.Count())
 	}
 
-	// Run retention with 90-day max age.
 	rm := NewRetentionManager(layout, registry, RetentionConfig{
 		MaxAge:   90 * 24 * time.Hour,
 		Interval: 1 * time.Hour,
@@ -99,7 +97,6 @@ func TestRetentionManager_MultipleIndexes(t *testing.T) {
 	now := time.Now().UTC()
 	old := now.Add(-100 * 24 * time.Hour)
 
-	// Create old parts in different indexes.
 	meta1 := writeTestPart(t, layout, "nginx", old)
 	registry.Add(meta1)
 

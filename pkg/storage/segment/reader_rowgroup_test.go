@@ -129,7 +129,6 @@ func TestReadRowGroupFiltered_WithColumnProjection(t *testing.T) {
 		t.Fatal("expected non-empty result")
 	}
 
-	// Check that level is populated.
 	for i, ev := range got {
 		if v := ev.GetField("level"); v.IsNull() {
 			t.Errorf("event[%d]: level field is missing", i)

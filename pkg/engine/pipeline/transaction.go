@@ -137,7 +137,6 @@ func (t *TransactionIterator) materialize(ctx context.Context) error {
 			}
 		}
 
-		// Build merged transaction row.
 		txRow := make(map[string]event.Value)
 		txRow[t.field] = event.StringValue(key)
 		txRow["eventcount"] = event.IntValue(int64(len(events)))

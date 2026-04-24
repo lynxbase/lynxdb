@@ -32,7 +32,6 @@ func TestBufferPoolChunkAdapter_PutGet(t *testing.T) {
 	data := []byte("hello, buffer pool chunk adapter")
 	adapter.PutChunk("seg-1", 0, "_raw", data)
 
-	// Get should return the data.
 	got, ok := adapter.GetChunk("seg-1", 0, "_raw")
 	if !ok {
 		t.Fatal("expected cache hit")

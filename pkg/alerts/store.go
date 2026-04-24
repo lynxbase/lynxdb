@@ -73,7 +73,6 @@ func (s *AlertStore) List() []Alert {
 	return out
 }
 
-// Get returns an alert by ID.
 func (s *AlertStore) Get(id string) (*Alert, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -137,7 +136,6 @@ func (s *AlertStore) Update(alert *Alert) error {
 	return s.persist(data)
 }
 
-// Delete removes an alert by ID.
 func (s *AlertStore) Delete(id string) error {
 	s.mu.Lock()
 

@@ -42,7 +42,6 @@ type ShardConfig struct {
 func AssignShard(source, host, index string, ts time.Time, cfg ShardConfig) ShardID {
 	bucket := ts.Truncate(cfg.TimeBucketSize).UTC()
 
-	// Build hash key: source + separator + host.
 	// The null byte separator prevents collisions like ("ab","c") vs ("a","bc").
 	key := source + "\x00" + host
 	h := xxhash.Sum64String(key)

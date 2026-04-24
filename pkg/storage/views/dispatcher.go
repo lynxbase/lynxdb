@@ -44,7 +44,7 @@ type activeView struct {
 	filter    *Filter
 	extractor *Extractor
 	mu        sync.RWMutex
-	closed    atomic.Bool // set by DeactivateView, checked by Dispatch
+	closed    atomic.Bool
 
 	// analysis holds the pipeline splitting result from AnalyzeQuery.
 	// Non-nil when def.Query is non-empty. For aggregation views, contains
@@ -178,7 +178,7 @@ func (d *Dispatcher) Start(ctx context.Context) error {
 
 // batchFlushLoop periodically flushes expired view batches.
 func (d *Dispatcher) batchFlushLoop() {
-	ticker := time.NewTicker(d.batchMaxDelay / 2) // check at half the max delay
+	ticker := time.NewTicker(d.batchMaxDelay / 2)
 	defer ticker.Stop()
 
 	for {

@@ -53,7 +53,6 @@ func TestBackfiller_Run(t *testing.T) {
 	}
 	reg.Create(def)
 
-	// Create source with mixed events.
 	source := &mockSource{
 		events: []*event.Event{
 			makeTestEvent("nginx", "/a", "200"),
@@ -105,7 +104,6 @@ func TestBackfiller_CancelledContext(t *testing.T) {
 	}
 	reg.Create(def)
 
-	// Create a large source.
 	var events []*event.Event
 	for i := 0; i < 5000; i++ {
 		events = append(events, makeTestEvent("nginx", fmt.Sprintf("/%d", i), "200"))

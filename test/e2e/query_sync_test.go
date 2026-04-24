@@ -123,7 +123,6 @@ func TestE2E_QuerySync_CountAlias_Bug(t *testing.T) {
 		t.Fatal("expected aggregate result")
 	}
 
-	// Check if the alias was applied.
 	hasTotal := false
 	hasCount := false
 	for _, col := range result.Aggregate.Columns {

@@ -45,7 +45,6 @@ func (r *predicateReorderingRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 		for _, p := range preds[1:] {
 			newExpr = &spl2.BinaryExpr{Left: newExpr, Op: "and", Right: p}
 		}
-		// Check if order actually changed.
 		if newExpr.String() != w.Expr.String() {
 			q.Commands[i] = &spl2.WhereCommand{Expr: newExpr}
 			changed = true

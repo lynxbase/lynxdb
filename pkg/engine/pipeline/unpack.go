@@ -27,7 +27,7 @@ type UnpackIterator struct {
 
 	// Pre-allocated per-call state used by emitField to avoid closure allocation.
 	curBatch  *Batch // set at start of Next(), used by emitField
-	curRowIdx int    // set per row, used by emitField
+	curRowIdx int
 }
 
 // NewUnpackIterator creates a format-specific field extraction operator.

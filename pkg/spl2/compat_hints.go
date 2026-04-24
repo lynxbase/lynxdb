@@ -169,7 +169,6 @@ func DetectCompatHints(query string) []CompatHint {
 		}
 	}
 
-	// Check for Splunk-specific sourcetype values.
 	for _, st := range []string{"access_combined_wcookie", "access_combined"} {
 		if strings.Contains(lower, "sourcetype="+st) || strings.Contains(lower, "sourcetype=\""+st+"\"") {
 			if !seen[st] {

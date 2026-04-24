@@ -51,7 +51,6 @@ func (p *SyslogParser) Parse(input string, emit func(key string, val event.Value
 
 	i := 0
 
-	// Parse PRI header: <NNN>
 	var priority int
 	if s[i] == '<' {
 		i++
@@ -200,7 +199,6 @@ func (p *SyslogParser) parseRFC5424(s string, emit func(string, event.Value) boo
 	fields := make([]string, 0, 7)
 	rest := s
 
-	// Parse first 6 simple space-delimited fields.
 	for i := 0; i < 6; i++ {
 		idx := strings.IndexByte(rest, ' ')
 		if idx < 0 {

@@ -21,7 +21,6 @@ func TestGenerateSelfSignedCert(t *testing.T) {
 		t.Fatal("expected at least one certificate in chain")
 	}
 
-	// Parse the leaf to inspect fields.
 	leaf, err := x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
 		t.Fatalf("parse leaf: %v", err)
@@ -31,7 +30,6 @@ func TestGenerateSelfSignedCert(t *testing.T) {
 		t.Errorf("CN = %q, want lynxdb", leaf.Subject.CommonName)
 	}
 
-	// Check SANs include localhost and 127.0.0.1.
 	hasLocalhost := false
 	for _, dns := range leaf.DNSNames {
 		if dns == "localhost" {
@@ -56,7 +54,6 @@ func TestGenerateSelfSignedCert(t *testing.T) {
 		t.Error("missing DigitalSignature key usage")
 	}
 
-	// Check files were written.
 	certPath := filepath.Join(dir, certFileName)
 	keyPath := filepath.Join(dir, keyFileName)
 

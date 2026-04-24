@@ -56,7 +56,6 @@ func (m *Manager) List() []Alert {
 	return m.store.List()
 }
 
-// Get returns an alert by ID.
 func (m *Manager) Get(id string) (*Alert, error) {
 	return m.store.Get(id)
 }

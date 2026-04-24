@@ -62,7 +62,6 @@ func TestJoin_Prefetch_SameResults(t *testing.T) {
 // TestJoin_Prefetch_ContextCancel verifies that the prefetch goroutine
 // exits cleanly when the context is canceled.
 func TestJoin_Prefetch_ContextCancel(t *testing.T) {
-	// Create a slow left side.
 	slowLeft := newCUMockIterator(100, 10)
 	slowLeft.delay = 50 * time.Millisecond
 

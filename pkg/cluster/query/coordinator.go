@@ -262,7 +262,6 @@ func (c *Coordinator) executePartialAgg(
 		return nil, fmt.Errorf("Coordinator.executePartialAgg: %w", err)
 	}
 
-	// Check partial failure threshold.
 	if err := c.checkPartialFailure(meta); err != nil {
 		return nil, err
 	}
@@ -373,7 +372,6 @@ func (c *Coordinator) queryShardPartialAgg(
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			// Check for clean stream end.
 			if ctx.Err() != nil {
 				return groups, ctx.Err()
 			}

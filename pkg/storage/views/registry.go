@@ -108,7 +108,6 @@ func (r *ViewRegistry) List() []ViewDefinition {
 	return defs
 }
 
-// Update replaces an existing view definition.
 func (r *ViewRegistry) Update(def ViewDefinition) error {
 	r.mu.Lock()
 

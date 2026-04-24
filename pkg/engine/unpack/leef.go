@@ -47,8 +47,6 @@ func (p *LEEFParser) Parse(input string, emit func(key string, val event.Value) 
 	}
 	s = s[5:]
 
-	// Parse 5 pipe-delimited header fields:
-	// version | vendor | product | version | event_id
 	headerNames := []string{
 		"leef_version", "device_vendor", "device_product", "device_version", "event_id",
 	}

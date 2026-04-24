@@ -164,7 +164,6 @@ func (e *Engine) Stats() StatsInfo {
 		}
 	}
 
-	// Build source distribution as sorted list.
 	sources := make([]SourceEntry, 0, len(sourceCounts))
 	for name, count := range sourceCounts {
 		sources = append(sources, SourceEntry{Name: name, Count: count})

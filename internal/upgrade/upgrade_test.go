@@ -427,7 +427,6 @@ func TestExtractArchiveDispatch(t *testing.T) {
 func TestAtomicSwap(t *testing.T) {
 	dir := t.TempDir()
 
-	// Create a fake "current binary".
 	currentPath := filepath.Join(dir, "lynxdb")
 	if err := os.WriteFile(currentPath, []byte("old-binary-v0.4.0"), 0o755); err != nil {
 		t.Fatal(err)
