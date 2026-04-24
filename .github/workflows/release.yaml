@@ -21,6 +21,10 @@ permissions:
   contents: write
   packages: write       # Required for pushing to ghcr.io
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 env:
   GO_VERSION: "1.25.4"
 
@@ -63,6 +67,13 @@ jobs:
           VERSION="${GITHUB_REF#refs/tags/}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Releasing version: $VERSION"
+
+      - name: Validate GoReleaser config
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
 
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6

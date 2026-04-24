@@ -128,17 +128,21 @@ brews:
     repository:
       owner: lynxbase
       name: homebrew-tap
+      branch: main
       token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
     commit_author:
       name: lynxdb-bot
       email: bot@lynxdb.org
+    commit_msg_template: "brew(lynxdb): update to {{ .Tag }}"
+    skip_upload: auto
     homepage: "https://lynxdb.org"
-    description: "Open-source log analytics database. Single binary. SPL2 query language."
+    description: "Open-source log analytics database with a single binary and SPL2 query language"
     license: "Apache-2.0"
     install: |
       bin.install "lynxdb"
     test: |
-      system "#{bin}/lynxdb", "version"
+      system bin/"lynxdb", "version"
 
 # ── Docker images (GitHub Container Registry) ────────────────────────────
 dockers:
