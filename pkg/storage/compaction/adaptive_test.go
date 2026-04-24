@@ -7,11 +7,13 @@ import (
 )
 
 func TestAdaptiveController_ReducesRateOnHighLatency(t *testing.T) {
+	disableGC := false
 	ac := NewAdaptiveController(AdaptiveConfig{
-		MaxRate:    200 << 20,
-		MinRate:    10 << 20,
-		TargetP99:  500 * time.Millisecond,
-		WindowSize: 10,
+		MaxRate:         200 << 20,
+		MinRate:         10 << 20,
+		TargetP99:       500 * time.Millisecond,
+		WindowSize:      10,
+		EnableGCMonitor: &disableGC,
 	})
 
 	initialRate := ac.Rate()
@@ -34,11 +36,13 @@ func TestAdaptiveController_ReducesRateOnHighLatency(t *testing.T) {
 }
 
 func TestAdaptiveController_IncreasesRateOnLowLatency(t *testing.T) {
+	disableGC := false
 	ac := NewAdaptiveController(AdaptiveConfig{
-		MaxRate:    200 << 20,
-		MinRate:    10 << 20,
-		TargetP99:  500 * time.Millisecond,
-		WindowSize: 10,
+		MaxRate:         200 << 20,
+		MinRate:         10 << 20,
+		TargetP99:       500 * time.Millisecond,
+		WindowSize:      10,
+		EnableGCMonitor: &disableGC,
 	})
 
 	// First reduce the rate so there is room to increase.
@@ -66,11 +70,18 @@ func TestAdaptiveController_IncreasesRateOnLowLatency(t *testing.T) {
 }
 
 func TestAdaptiveController_StaysStableInRange(t *testing.T) {
+	// Disable the GC monitor: this test asserts that the rate stays stable
+	// when latency is in the holding range. With the monitor enabled,
+	// real-process GC pressure (e.g., from -race) can push gcFrac above
+	// targetGCFraction (0.15) and trigger a 25% rate cut, making the test
+	// flaky on busy hosts.
+	disableGC := false
 	ac := NewAdaptiveController(AdaptiveConfig{
-		MaxRate:    200 << 20,
-		MinRate:    10 << 20,
-		TargetP99:  500 * time.Millisecond,
-		WindowSize: 10,
+		MaxRate:         200 << 20,
+		MinRate:         10 << 20,
+		TargetP99:       500 * time.Millisecond,
+		WindowSize:      10,
+		EnableGCMonitor: &disableGC,
 	})
 
 	// Record latencies between target/2 (250ms) and target (500ms).
@@ -115,11 +126,13 @@ func TestAdaptiveController_MinRateFloor(t *testing.T) {
 
 func TestAdaptiveController_MaxRateCap(t *testing.T) {
 	maxRate := int64(200 << 20)
+	disableGC := false
 	ac := NewAdaptiveController(AdaptiveConfig{
-		MaxRate:    maxRate,
-		MinRate:    10 << 20,
-		TargetP99:  500 * time.Millisecond,
-		WindowSize: 10,
+		MaxRate:         maxRate,
+		MinRate:         10 << 20,
+		TargetP99:       500 * time.Millisecond,
+		WindowSize:      10,
+		EnableGCMonitor: &disableGC,
 	})
 
 	// Record latencies well below target to push rate up.

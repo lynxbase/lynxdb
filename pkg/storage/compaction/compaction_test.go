@@ -862,9 +862,14 @@ func TestTimeWindow_ColdPartitionIsolation(t *testing.T) {
 // --- Adaptive pause tests (C2) ---
 
 func TestAdaptiveController_AutoPauseOnHighLatency(t *testing.T) {
+	// Disable the GC monitor so the resume condition (p99 < target AND
+	// gcFrac < targetGCFraction) doesn't fail when real-process GC pressure
+	// keeps the controller paused.
+	disableGC := false
 	ac := NewAdaptiveController(AdaptiveConfig{
-		TargetP99:  500 * time.Millisecond,
-		WindowSize: 10,
+		TargetP99:       500 * time.Millisecond,
+		WindowSize:      10,
+		EnableGCMonitor: &disableGC,
 	})
 
 	if ac.Paused() {

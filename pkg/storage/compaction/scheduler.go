@@ -181,9 +181,16 @@ func (s *Scheduler) Start(ctx context.Context) {
 
 // Stop signals workers to shut down, wakes blocked waiters, and waits
 // for all workers to finish their current job before returning.
+//
+// Hold s.mu while flipping running and broadcasting: a worker that has
+// already evaluated the cond predicate (queue empty && running=true) but
+// has not yet entered jobReady.Wait() would otherwise miss the broadcast
+// and block forever, deadlocking wg.Wait().
 func (s *Scheduler) Stop() {
+	s.mu.Lock()
 	s.running.Store(false)
 	s.jobReady.Broadcast()
+	s.mu.Unlock()
 	s.wg.Wait()
 }
 
