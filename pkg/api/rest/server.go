@@ -19,7 +19,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/alerts/channels"
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
-	"github.com/lynxbase/lynxdb/pkg/dashboards"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/server"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
@@ -36,7 +35,6 @@ type Server struct {
 	tailService          *usecases.TailService
 	alertMgr             *alerts.Manager
 	queryStore           *savedqueries.Store
-	dashboardStore       *dashboards.DashboardStore
 	runtimeCfg           *config.Config
 	cfgMu                sync.RWMutex
 	httpServer           *http.Server
@@ -154,18 +152,6 @@ func NewServer(cfg Config) (*Server, error) {
 		qStore = savedqueries.OpenInMemory()
 	}
 
-	var dStore *dashboards.DashboardStore
-	if cfg.DataDir != "" {
-		dStore, err = dashboards.OpenStore(cfg.DataDir)
-		if err != nil {
-			cfg.Logger.Warn("[DATA LOSS RISK] failed to open dashboards store, falling back to in-memory", "error", err)
-			dStore = dashboards.OpenInMemory()
-			storeDegraded = true
-		}
-	} else {
-		dStore = dashboards.OpenInMemory()
-	}
-
 	shutdownTimeout := cfg.HTTP.ShutdownTimeout
 	shutdownTimeout = defaultShutdownTimeout(shutdownTimeout)
 
@@ -202,7 +188,6 @@ func NewServer(cfg Config) (*Server, error) {
 		tailService:          tailService,
 		alertMgr:             alertMgr,
 		queryStore:           qStore,
-		dashboardStore:       dStore,
 		runtimeCfg:           runtimeCfg,
 		ready:                make(chan struct{}),
 		queryCfg:             cfg.Query,
@@ -306,24 +291,6 @@ func NewServer(cfg Config) (*Server, error) {
 				existing.Q = input.Query
 			}
 			existing.From = input.From
-			existing.UpdatedAt = time.Now()
-
-			return existing
-		},
-	})
-
-	// Dashboards (generic CRUD).
-	registerCRUD(mux, "/api/v1/dashboards", CRUDOpts[dashboards.Dashboard, dashboards.DashboardInput]{
-		Store:       s.dashboardStore,
-		ConflictErr: dashboards.ErrDashboardAlreadyExists,
-		ServerRef:   s,
-		NewEntity: func(input dashboards.DashboardInput) *dashboards.Dashboard {
-			return input.ToDashboard()
-		},
-		MergeEntity: func(existing *dashboards.Dashboard, input dashboards.DashboardInput) *dashboards.Dashboard {
-			existing.Name = input.Name
-			existing.Panels = input.Panels
-			existing.Variables = input.Variables
 			existing.UpdatedAt = time.Now()
 
 			return existing

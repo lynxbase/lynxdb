@@ -1,7 +1,6 @@
 import { useRouter } from "preact-router";
 import {
   Search,
-  LayoutDashboard,
   Bell,
   BookmarkCheck,
   Settings,
@@ -17,7 +16,6 @@ import styles from "./Sidebar.module.css";
 
 const NAV_ITEMS = [
   { path: "/", icon: Search, label: "Search" },
-  { path: "/dashboards", icon: LayoutDashboard, label: "Dashboards" },
   { path: "/alerts", icon: Bell, label: "Alerts" },
   { path: "/queries", icon: BookmarkCheck, label: "Saved Queries" },
   { path: "/settings", icon: Settings, label: "Settings" },

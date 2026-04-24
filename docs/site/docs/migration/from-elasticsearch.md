@@ -199,25 +199,6 @@ lynxdb query '_source=nginx status>=500 | stats count by uri | sort -count | hea
 lynxdb query 'search "connection refused"'
 ```
 
-### Step 5: Update Dashboards and Alerts
-
-If you use Kibana dashboards, recreate them in LynxDB:
-
-```bash
-# Create a dashboard
-curl -X POST localhost:3100/api/v1/dashboards -d '{
-  "name": "Nginx Overview",
-  "panels": [
-    {"id": "p1", "title": "Status Codes", "type": "timechart",
-     "q": "source=nginx | timechart count by status span=5m", "from": "-6h",
-     "position": {"x": 0, "y": 0, "w": 12, "h": 4}},
-    {"id": "p2", "title": "Top URIs", "type": "table",
-     "q": "source=nginx | stats count by uri | sort -count | head 20", "from": "-1h",
-     "position": {"x": 0, "y": 4, "w": 6, "h": 4}}
-  ]
-}'
-```
-
 ## Feature Comparison
 
 | Feature | Elasticsearch | LynxDB |

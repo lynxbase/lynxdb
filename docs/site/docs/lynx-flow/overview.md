@@ -8,7 +8,7 @@ description: Introduction to LynxDB's query language -- Lynx Flow syntax with fu
 
 Lynx Flow is LynxDB's query language. It is a **pipeline language** -- data flows left-to-right through a series of commands separated by `|` (pipe). Both the Lynx Flow surface syntax and SPL2 syntax are first-class citizens -- the parser accepts either, and they compile to the same AST and execution plan.
 
-Lynx Flow is used everywhere in LynxDB -- CLI queries, REST API, alerts, dashboards, materialized views, and saved queries. Learn it once, use it everywhere.
+Lynx Flow is used everywhere in LynxDB -- CLI queries, REST API, alerts, materialized views, and saved queries. Learn it once, use it everywhere.
 
 ## Pipeline Concept
 

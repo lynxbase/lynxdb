@@ -237,10 +237,10 @@ storage:
   cache_ttl: "10m"
 ```
 
-Create materialized views for all dashboard panels:
+Create materialized views for your hot aggregation queries:
 
 ```bash
-lynxdb mv create mv_dashboard_errors \
+lynxdb mv create mv_errors_5m \
   'level=error | stats count by source, time_bucket(timestamp, "5m") AS bucket' \
   --retention 90d
 ```

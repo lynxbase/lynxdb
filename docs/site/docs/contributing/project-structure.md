@@ -213,10 +213,6 @@ Implementations of all aggregation functions: `count`, `sum`, `avg`, `min`, `max
 
 Alert evaluation loop plus the currently wired notification channel implementations (`webhook`, `slack`, `telegram`).
 
-### `pkg/dashboards/` -- Dashboard Definitions
-
-Dashboard data model (panels, grid positions, template variables) and CRUD operations.
-
 ### `pkg/client/` -- Go Client Library
 
 A Go HTTP client for the LynxDB REST API. Used by the CLI in server mode and available for external integrations.

@@ -232,4 +232,3 @@ Alert definitions are stored at the server layer and the docs set includes clust
 - [REST API: Alerts](/docs/api/alerts) for the exact payloads
 - [CLI: `alerts`](/docs/cli/alerts) for current CLI coverage
 - [Materialized views](/docs/guides/materialized-views) to speed up repeated alert queries
-- [Dashboards](/docs/guides/dashboards) to visualize the same conditions your alerts watch

@@ -223,7 +223,7 @@ This means you can update views without any query downtime.
 
 | Use case | Suggested bucket | Retention |
 |----------|-----------------|-----------|
-| Real-time dashboards | `5m` | 30-90 days |
+| Real-time monitoring | `5m` | 30-90 days |
 | Hourly reports | `1h` | 90-365 days |
 | Daily trend analysis | `1d` | 1-2 years |
 
@@ -262,7 +262,7 @@ lynxdb mv create mv_errors_1h \
   '| from mv_errors_5m | stats sum(count) AS count by source, time_bucket(bucket, "1h") AS hour' \
   --retention 365d
 
-# 4. Now your dashboard queries are instant:
+# 4. Now your repeat queries are instant:
 lynxdb query 'level=error | stats count by source' --since 7d
 lynxdb query '_source=nginx | stats avg(duration_ms), p99(duration_ms) by uri' --since 24h
 ```
@@ -289,7 +289,6 @@ All view operations (create, list, status, drop, pause, resume) work identically
 
 ## Next steps
 
-- [Create dashboards](/docs/guides/dashboards) -- build dashboards that benefit from MV acceleration
 - [Set up alerts](/docs/guides/alerts) -- alerts also benefit from materialized view acceleration
 - [Time series analysis](/docs/guides/time-series) -- understand time bucketing patterns
 - [CLI: `mv`](/docs/cli/mv) -- complete CLI reference for materialized view commands

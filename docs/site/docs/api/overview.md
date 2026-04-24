@@ -152,8 +152,6 @@ See [Query API](/docs/api/query) for the exact request and response formats.
 | `PUT/PATCH/DELETE` | `/alerts/{id}` | Update/delete alert | [Alerts](/docs/api/alerts) |
 | `POST` | `/alerts/{id}/test` | Test alert (dry run) | [Alerts](/docs/api/alerts) |
 | `POST` | `/alerts/{id}/test-channels` | Test notification channels | [Alerts](/docs/api/alerts) |
-| `GET/POST` | `/dashboards` | List/create dashboards | [Dashboards](/docs/api/dashboards) |
-| `GET/PUT/DELETE` | `/dashboards/{id}` | Get/update/delete dashboard | [Dashboards](/docs/api/dashboards) |
 | `GET/POST` | `/views` | List/create materialized views | [Views](/docs/api/views) |
 | `GET/PATCH/DELETE` | `/views/{name}` | Get/update/delete view | [Views](/docs/api/views) |
 | `GET/POST` | `/views/{name}/backfill` | Inspect or start backfill | [Views](/docs/api/views) |

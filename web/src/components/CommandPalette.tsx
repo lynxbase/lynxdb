@@ -4,7 +4,6 @@ import { route } from "preact-router";
 import type { ComponentType } from "preact";
 import {
   Search,
-  LayoutDashboard,
   Bell,
   BookmarkCheck,
   Settings,
@@ -79,13 +78,6 @@ export function CommandPalette() {
       icon: Search,
       shortcut: SHORTCUTS.focusSearch,
       action: () => route("/"),
-    },
-    {
-      id: "nav-dashboards",
-      label: "Dashboards",
-      section: "navigation",
-      icon: LayoutDashboard,
-      action: () => route("/dashboards"),
     },
     {
       id: "nav-alerts",

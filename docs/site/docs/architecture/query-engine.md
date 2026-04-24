@@ -260,7 +260,7 @@ Segment seg_002:
 Global merge: merge partial aggs from all segments → final result
 ```
 
-For repeated queries (dashboards, alerts), the cache turns segment scans into sub-microsecond lookups.
+For repeated queries (alerts, scheduled reports), the cache turns segment scans into sub-microsecond lookups.
 
 ## Partial Aggregation
 

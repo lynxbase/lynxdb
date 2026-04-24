@@ -37,7 +37,7 @@ lynxdb mv create errors_by_host \
 lynxdb mv create daily_summary \
   'FROM main | stats count by source' --retention 90d
 
-# Time-bucketed view for dashboards
+# Time-bucketed view for repeated aggregations
 lynxdb mv create errors_5m \
   'FROM main | where level="ERROR" | stats count, avg(duration) by source, time_bucket(timestamp, "5m") AS bucket' \
   --retention 90d

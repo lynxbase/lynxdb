@@ -666,50 +666,6 @@ type AlertTestResult struct {
 	Message               string                 `json:"message,omitempty"`
 }
 
-// Dashboard is a dashboard definition.
-type Dashboard struct {
-	ID        string              `json:"id"`
-	Name      string              `json:"name"`
-	Panels    []Panel             `json:"panels"`
-	Variables []DashboardVariable `json:"variables,omitempty"`
-	CreatedAt string              `json:"created_at,omitempty"`
-	UpdatedAt string              `json:"updated_at,omitempty"`
-}
-
-// Panel is a single dashboard panel.
-type Panel struct {
-	ID       string        `json:"id"`
-	Title    string        `json:"title"`
-	Type     string        `json:"type"`
-	Q        string        `json:"q"`
-	From     string        `json:"from,omitempty"`
-	Position PanelPosition `json:"position"`
-}
-
-// PanelPosition defines panel layout on a 12-column grid.
-type PanelPosition struct {
-	X int `json:"x"`
-	Y int `json:"y"`
-	W int `json:"w"`
-	H int `json:"h"`
-}
-
-// DashboardVariable is a template variable for dashboards.
-type DashboardVariable struct {
-	Name    string `json:"name"`
-	Type    string `json:"type"`
-	Field   string `json:"field"`
-	Default string `json:"default,omitempty"`
-	Label   string `json:"label,omitempty"`
-}
-
-// DashboardInput is the request body for creating/updating a dashboard.
-type DashboardInput struct {
-	Name      string              `json:"name"`
-	Panels    []Panel             `json:"panels"`
-	Variables []DashboardVariable `json:"variables,omitempty"`
-}
-
 // SavedQuery is a saved query definition.
 type SavedQuery struct {
 	ID        string `json:"id"`

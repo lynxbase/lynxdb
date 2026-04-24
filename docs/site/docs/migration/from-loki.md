@@ -166,25 +166,7 @@ service:
       exporters: [otlp_http]
 ```
 
-### Step 3: Convert Dashboards
-
-Replace Grafana dashboards that use Loki data sources with LynxDB dashboards:
-
-```bash
-curl -X POST localhost:3100/api/v1/dashboards -d '{
-  "name": "Application Logs",
-  "panels": [
-    {"id": "p1", "title": "Error Rate", "type": "timechart",
-     "q": "level=error | timechart count span=5m", "from": "-6h",
-     "position": {"x": 0, "y": 0, "w": 12, "h": 4}},
-    {"id": "p2", "title": "Errors by Service", "type": "table",
-     "q": "level=error | stats count by source | sort -count", "from": "-1h",
-     "position": {"x": 0, "y": 4, "w": 6, "h": 4}}
-  ]
-}'
-```
-
-### Step 4: Convert Alerting Rules
+### Step 3: Convert Alerting Rules
 
 ```bash
 # Loki alert rule:

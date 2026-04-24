@@ -165,35 +165,6 @@ curl -X POST localhost:3100/api/v1/alerts -d '{
 }'
 ```
 
-### Step 6: Migrate Dashboards
-
-Export your Splunk dashboards and recreate them in LynxDB:
-
-```bash
-# Create a LynxDB dashboard
-curl -X POST localhost:3100/api/v1/dashboards -d '{
-  "name": "Production Overview",
-  "panels": [
-    {
-      "id": "p1",
-      "title": "Error Rate",
-      "type": "timechart",
-      "q": "level=error | timechart count span=5m",
-      "from": "-6h",
-      "position": {"x": 0, "y": 0, "w": 6, "h": 4}
-    },
-    {
-      "id": "p2",
-      "title": "Top Error Sources",
-      "type": "table",
-      "q": "level=error | stats count by source | sort -count | head 10",
-      "from": "-1h",
-      "position": {"x": 6, "y": 0, "w": 6, "h": 4}
-    }
-  ]
-}'
-```
-
 ## Cost Comparison
 
 | | Splunk Enterprise | LynxDB |

@@ -6,7 +6,7 @@ description: Run LynxDB as a persistent server with storage, API, and web UI.
 
 # Server Mode
 
-Server mode runs LynxDB as a persistent HTTP server with on-disk storage, full REST API, materialized views, alerts, and dashboards.
+Server mode runs LynxDB as a persistent HTTP server with on-disk storage, full REST API, materialized views, and alerts.
 
 ## Start the Server
 

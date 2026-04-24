@@ -6,7 +6,7 @@ description: CRUD operations for persisting and reusing SPL2 queries via the RES
 
 # Saved Queries API
 
-Persist and reuse SPL2 queries. Saved queries can be referenced from dashboards, shared across teams, and serve as a library of common searches.
+Persist and reuse SPL2 queries. Saved queries can be shared across teams and serve as a library of common searches.
 
 ## GET /queries
 
@@ -177,5 +177,4 @@ curl -s localhost:3100/api/v1/query \
 
 - **[Saved Queries guide](/docs/guides/saved-queries)** -- patterns for organizing and sharing queries
 - **[Query API](/docs/api/query)** -- executing SPL2 queries
-- **[Dashboards API](/docs/api/dashboards)** -- using queries in dashboard panels
 - **[Lynx Flow Reference](/docs/lynx-flow/overview)** -- query language reference

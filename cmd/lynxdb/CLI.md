@@ -61,8 +61,6 @@ Available on all commands:
   - [mv](#mv)
 - [Alerts](#alerts)
   - [alerts](#alerts-1)
-- [Dashboards](#dashboards)
-  - [dashboards](#dashboards-1)
 - [Authentication](#authentication)
   - [login](#login)
   - [logout](#logout)
@@ -1189,58 +1187,6 @@ lynxdb alerts disable <id>
 
 ```
 lynxdb alerts delete <id> [--force]
-```
-
----
-
-## Dashboards
-
-### `dashboards`
-
-Manage dashboards (subcommand group). Without a subcommand, lists all dashboards. With an ID argument, shows dashboard details.
-
-```
-lynxdb dashboards [id]
-```
-
-**Alias:** `dash`
-
-#### `dashboards create`
-
-Create a dashboard from a JSON file.
-
-```
-lynxdb dashboards create --file <path>
-```
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--file` | (required) | Path to dashboard JSON file |
-
-#### `dashboards open`
-
-Open a dashboard in the Web UI.
-
-```
-lynxdb dashboards open <id>
-```
-
-#### `dashboards export`
-
-Export a dashboard as JSON to stdout.
-
-```
-lynxdb dashboards export <id>
-```
-
-```bash
-lynxdb dashboards export dash_abc123 > dashboard-backup.json
-```
-
-#### `dashboards delete`
-
-```
-lynxdb dashboards delete <id> [--force]
 ```
 
 ---

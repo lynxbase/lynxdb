@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **Dashboards**: Entire dashboards feature removed — REST API (`/api/v1/dashboards`), CLI (`lynxdb dashboards`), Go client library, persistent store, and Web UI views/components.
+
 ### Added
 
 - **Storage engine**: Columnar segment format (`.lsg` V2) with delta-varint timestamps, LZ4 compression, dictionary-encoded strings, Gorilla-encoded floats.
@@ -21,7 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Pipe mode**: Query local files and stdin with the full SPL2 engine — no server required.
 - **Materialized views**: Precomputed aggregations with automatic backfill, versioned rebuilds, retention policies, and cascading views.
 - **Alerts**: SPL2-powered alerting with multi-channel notifications (webhook, Slack, Telegram).
-- **Dashboards**: Panel-based dashboards with grid layout and template variables.
 - **Live tail**: Real-time SSE streaming with historical catchup and full SPL2 pipeline support.
 - **Field catalog**: Automatic field discovery with types, coverage stats, and top values.
 - **CLI**: `server`, `query`, `ingest`, `status`, `mv`, `config`, `bench`, `demo`, and shell completion.

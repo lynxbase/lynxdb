@@ -40,7 +40,7 @@ No daemon, no config file, no data directory. The binary creates an ephemeral in
 
 ### Server Mode (Single Node)
 
-Persistent storage with a full REST API, materialized views, alerts, and dashboards:
+Persistent storage with a full REST API, materialized views, and alerts:
 
 ```bash
 lynxdb server
@@ -70,14 +70,14 @@ lynxdb server --cluster.seeds node1:9400,node2:9400,node3:9400
 
 ## Key Features
 
-- **SPL2 Query Language** -- Splunk-inspired, works everywhere (CLI, API, alerts, dashboards)
+- **SPL2 Query Language** -- Splunk-inspired, works everywhere (CLI, API, alerts)
 - **Columnar Storage** -- Custom `.lsg` segment format with delta-varint timestamps, dictionary encoding, LZ4 compression
 - **Full-Text Search** -- FST-based inverted index with roaring bitmap posting lists and bloom filters
 - **Zero-Allocation VM** -- 22ns/op bytecode evaluation, 2.1M events/sec pipeline throughput
 - **Materialized Views** -- Precomputed aggregations with ~400x query acceleration
 - **Schema-on-Read** -- No upfront schema, fields discovered and indexed automatically
 - **Drop-in Compatibility** -- Elasticsearch `_bulk`, OpenTelemetry OTLP, Splunk HEC
-- **Alerts & Dashboards** -- Scheduled SPL2 alerts plus saved dashboards in server mode
+- **Alerts** -- Scheduled SPL2 alerts with multi-channel notifications in server mode
 
 ## Next Steps
 

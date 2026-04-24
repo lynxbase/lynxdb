@@ -185,7 +185,7 @@ query:
 
 | Workload | Recommendation |
 |---|---|
-| High query concurrency (dashboards) | Increase `max_concurrent` to 30-50, ensure enough CPU cores |
+| High query concurrency | Increase `max_concurrent` to 30-50, ensure enough CPU cores |
 | Large time-range scans | Increase `max_query_runtime` to `30m`, set `--max-query-pool` |
 | API integrations with strict latency | Decrease `sync_timeout` to `10s`, use async mode for slow queries |
 | Exporting large datasets | Use `/api/v1/query/stream`, not the result limit settings |
