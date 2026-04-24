@@ -241,7 +241,7 @@ func TestComplex_Append_TotalIsSum(t *testing.T) {
 
 func TestComplex_DeepPipeline_CountsAddUp(t *testing.T) {
 	// 7-command pipeline: where → eval → stats → sort → head → eval → stats
-	// Phase 1 groups should sum to total events.
+	// Groups from the first stats should sum to total events.
 	input := generateBackendEvents(100)
 
 	r := runLynxDBWithStdin(t, input, "query", "--format", "json",

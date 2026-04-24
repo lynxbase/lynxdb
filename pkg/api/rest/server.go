@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -15,8 +14,6 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/internal/webui"
-	"github.com/lynxbase/lynxdb/pkg/alerts"
-	"github.com/lynxbase/lynxdb/pkg/alerts/channels"
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/planner"
@@ -28,29 +25,27 @@ import (
 
 // Server is the main LynxDB API server.
 type Server struct {
-	engine               *server.Engine
-	keyStore             *auth.KeyStore // Nil when auth is disabled.
-	queryService         *usecases.QueryService
-	viewService          *usecases.ViewService
-	tailService          *usecases.TailService
-	alertMgr             *alerts.Manager
-	queryStore           *savedqueries.Store
-	runtimeCfg           *config.Config
-	cfgMu                sync.RWMutex
-	httpServer           *http.Server
-	listenAddr           atomic.Value  // stores resolved listen address (string)
-	ready                chan struct{} // closed when server is ready to accept requests
-	queryCfg             config.QueryConfig
-	ingestCfg            config.IngestConfig
-	shutdownTimeout      time.Duration
-	alertShutdownTimeout time.Duration
-	rateLimiter          *RateLimiter // nil if rate limiting is disabled
-	tailCfg              config.TailConfig
-	activeTailSessions   atomic.Int64 // current number of active tail SSE sessions
-	degraded             atomic.Bool  // true when a persistent store fell back to in-memory
-	tlsConfig            *tls.Config  // non-nil when TLS is enabled
-	levelVar             *slog.LevelVar
-	logger               *slog.Logger
+	engine             *server.Engine
+	keyStore           *auth.KeyStore // Nil when auth is disabled.
+	queryService       *usecases.QueryService
+	viewService        *usecases.ViewService
+	tailService        *usecases.TailService
+	queryStore         *savedqueries.Store
+	runtimeCfg         *config.Config
+	cfgMu              sync.RWMutex
+	httpServer         *http.Server
+	listenAddr         atomic.Value  // stores resolved listen address (string)
+	ready              chan struct{} // closed when server is ready to accept requests
+	queryCfg           config.QueryConfig
+	ingestCfg          config.IngestConfig
+	shutdownTimeout    time.Duration
+	rateLimiter        *RateLimiter // nil if rate limiting is disabled
+	tailCfg            config.TailConfig
+	activeTailSessions atomic.Int64 // current number of active tail SSE sessions
+	degraded           atomic.Bool  // true when a persistent store fell back to in-memory
+	tlsConfig          *tls.Config  // non-nil when TLS is enabled
+	levelVar           *slog.LevelVar
+	logger             *slog.Logger
 }
 
 // Config configures the API server.
@@ -96,51 +91,10 @@ func NewServer(cfg Config) (*Server, error) {
 	viewService := usecases.NewViewService(engine)
 	tailService := usecases.NewTailService(p, engine)
 
-	// Build alert query function that wraps the engine's query pipeline.
-	alertQueryFn := func(ctx context.Context, query string) ([]map[string]interface{}, error) {
-		plan, err := p.Plan(planner.PlanRequest{Query: query})
-		if err != nil {
-			return nil, err
-		}
-		job, err := engine.SubmitQuery(ctx, server.QueryParams{
-			Query:      plan.RawQuery,
-			Program:    plan.Program,
-			ResultType: plan.ResultType,
-		})
-		if err != nil {
-			return nil, err
-		}
-		select {
-		case <-job.Done():
-		case <-ctx.Done():
-			job.Cancel()
-
-			return nil, ctx.Err()
-		}
-		snap := job.Snapshot()
-		if snap.Status == server.JobStatusError {
-			return nil, errors.New(snap.Error)
-		}
-		rows := make([]map[string]interface{}, len(snap.Results))
-		for i, r := range snap.Results {
-			rows[i] = r.Fields
-		}
-
-		return rows, nil
-	}
-
-	registry := channels.NewRegistry()
-	alertMgr, err := alerts.NewManager(cfg.DataDir, registry.Factory(), alertQueryFn, cfg.Logger)
-	if err != nil {
-		if cfg.DataDir != "" {
-			return nil, fmt.Errorf("alert manager init: %w", err)
-		}
-		cfg.Logger.Error("failed to initialize alert manager", "error", err)
-	}
-
 	// Initialize saved queries store.
 	var qStore *savedqueries.Store
 	var storeDegraded bool
+	var err error
 	if cfg.DataDir != "" {
 		qStore, err = savedqueries.OpenStore(cfg.DataDir)
 		if err != nil {
@@ -154,9 +108,6 @@ func NewServer(cfg Config) (*Server, error) {
 
 	shutdownTimeout := cfg.HTTP.ShutdownTimeout
 	shutdownTimeout = defaultShutdownTimeout(shutdownTimeout)
-
-	alertShutdownTimeout := cfg.HTTP.AlertShutdownTimeout
-	alertShutdownTimeout = defaultAlertShutdownTimeout(alertShutdownTimeout)
 
 	// Build the runtime config snapshot used by GET/PATCH /config and reload
 	// diffing. Prefer the fully loaded config when the caller has it.
@@ -181,23 +132,21 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		engine:               engine,
-		keyStore:             cfg.KeyStore,
-		queryService:         queryService,
-		viewService:          viewService,
-		tailService:          tailService,
-		alertMgr:             alertMgr,
-		queryStore:           qStore,
-		runtimeCfg:           runtimeCfg,
-		ready:                make(chan struct{}),
-		queryCfg:             cfg.Query,
-		ingestCfg:            cfg.Ingest,
-		shutdownTimeout:      shutdownTimeout,
-		alertShutdownTimeout: alertShutdownTimeout,
-		tailCfg:              cfg.Tail,
-		tlsConfig:            cfg.TLSConfig,
-		levelVar:             cfg.LevelVar,
-		logger:               cfg.Logger,
+		engine:          engine,
+		keyStore:        cfg.KeyStore,
+		queryService:    queryService,
+		viewService:     viewService,
+		tailService:     tailService,
+		queryStore:      qStore,
+		runtimeCfg:      runtimeCfg,
+		ready:           make(chan struct{}),
+		queryCfg:        cfg.Query,
+		ingestCfg:       cfg.Ingest,
+		shutdownTimeout: shutdownTimeout,
+		tailCfg:         cfg.Tail,
+		tlsConfig:       cfg.TLSConfig,
+		levelVar:        cfg.LevelVar,
+		logger:          cfg.Logger,
 	}
 	if storeDegraded {
 		s.degraded.Store(true)
@@ -296,16 +245,6 @@ func NewServer(cfg Config) (*Server, error) {
 			return existing
 		},
 	})
-
-	// Alerts.
-	mux.HandleFunc("POST /api/v1/alerts", s.handleCreateAlert)
-	mux.HandleFunc("GET /api/v1/alerts", s.handleListAlerts)
-	mux.HandleFunc("GET /api/v1/alerts/{id}", s.handleGetAlert)
-	mux.HandleFunc("PUT /api/v1/alerts/{id}", s.handleUpdateAlert)
-	mux.HandleFunc("PATCH /api/v1/alerts/{id}", s.handlePatchAlert)
-	mux.HandleFunc("DELETE /api/v1/alerts/{id}", s.handleDeleteAlert)
-	mux.HandleFunc("POST /api/v1/alerts/{id}/test", s.handleTestAlert)
-	mux.HandleFunc("POST /api/v1/alerts/{id}/test-channels", s.handleTestAlertChannels)
 
 	// Config API.
 	mux.HandleFunc("GET /api/v1/config", s.handleGetConfig)
@@ -417,10 +356,6 @@ func (s *Server) Start(ctx context.Context) error {
 		return err
 	}
 
-	if s.alertMgr != nil {
-		s.alertMgr.Start(ctx)
-	}
-
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", s.httpServer.Addr)
 	if err != nil {
@@ -447,19 +382,6 @@ func (s *Server) Start(ctx context.Context) error {
 		<-ctx.Done()
 		if s.rateLimiter != nil {
 			s.rateLimiter.Stop()
-		}
-		if s.alertMgr != nil {
-			alertDone := make(chan struct{})
-			go func() {
-				s.alertMgr.Stop()
-				close(alertDone)
-			}()
-			alertShutdownTimeout := s.currentAlertShutdownTimeout()
-			select {
-			case <-alertDone:
-			case <-time.After(alertShutdownTimeout):
-				s.engine.Logger().Warn("alert manager stop timed out, proceeding with shutdown", "timeout", alertShutdownTimeout)
-			}
 		}
 
 		// Shutdown ordering: reject ingests → drain HTTP → flush storage.
@@ -547,14 +469,6 @@ func defaultShutdownTimeout(d time.Duration) time.Duration {
 	return d
 }
 
-func defaultAlertShutdownTimeout(d time.Duration) time.Duration {
-	if d == 0 {
-		return 10 * time.Second
-	}
-
-	return d
-}
-
 func (s *Server) currentQueryConfig() config.QueryConfig {
 	s.cfgMu.RLock()
 	defer s.cfgMu.RUnlock()
@@ -581,13 +495,6 @@ func (s *Server) currentShutdownTimeout() time.Duration {
 	defer s.cfgMu.RUnlock()
 
 	return s.shutdownTimeout
-}
-
-func (s *Server) currentAlertShutdownTimeout() time.Duration {
-	s.cfgMu.RLock()
-	defer s.cfgMu.RUnlock()
-
-	return s.alertShutdownTimeout
 }
 
 func httpError(w http.ResponseWriter, msg string, code int) {

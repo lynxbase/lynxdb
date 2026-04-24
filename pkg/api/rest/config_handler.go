@@ -119,7 +119,6 @@ func (s *Server) ReloadConfig(updated *config.Config) ([]string, error) {
 	s.ingestCfg = updated.Ingest
 	s.tailCfg = updated.Tail
 	s.shutdownTimeout = defaultShutdownTimeout(updated.HTTP.ShutdownTimeout)
-	s.alertShutdownTimeout = defaultAlertShutdownTimeout(updated.HTTP.AlertShutdownTimeout)
 	s.cfgMu.Unlock()
 
 	if s.levelVar != nil && old.LogLevel != updated.LogLevel {

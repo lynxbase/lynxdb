@@ -109,11 +109,11 @@ const tailCatchupDone = signal(false);
 /** True when the SSE tail connection is in reconnecting state */
 const tailReconnecting = signal(false);
 
-/* --- Phase 6: Explain inspector toggle --- */
+/* Explain inspector toggle */
 /** Controls whether the explain inspector panel is open (consumed by Plan 02) */
 const explainOpen = signal(false);
 
-/* --- Phase 5: Streaming & Progress signals --- */
+/* Streaming & Progress signals */
 /** True while any query execution mode is active (sync wait, streaming, progress) */
 const queryActive = signal(false);
 /** True while NDJSON streaming is in progress */

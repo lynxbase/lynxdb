@@ -13,7 +13,7 @@ interface QueryStatsProps {
   tailEventCount?: number;
   tailCatchupDone?: boolean;
 
-  // Phase 5: Streaming & Progress
+  // Streaming & Progress
   /** True while NDJSON search stream is active */
   streaming?: boolean;
   /** Row count ticking up during streaming */
@@ -27,7 +27,7 @@ interface QueryStatsProps {
   /** True when result is showing preview rows (not final) */
   isPreview?: boolean;
 
-  // Phase 6: Detailed stats & explain
+  // Detailed stats & explain
   /** Callback when user clicks the Explain button */
   onExplainToggle?: () => void;
   /** Whether explain data is available */

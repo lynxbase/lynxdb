@@ -289,7 +289,6 @@ All view operations (create, list, status, drop, pause, resume) work identically
 
 ## Next steps
 
-- [Set up alerts](/docs/guides/alerts) -- alerts also benefit from materialized view acceleration
 - [Time series analysis](/docs/guides/time-series) -- understand time bucketing patterns
 - [CLI: `mv`](/docs/cli/mv) -- complete CLI reference for materialized view commands
 - [REST API: Views](/docs/api/views) -- full API reference for view CRUD

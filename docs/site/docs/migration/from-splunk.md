@@ -151,20 +151,6 @@ lynxdb save "5xx-by-uri" '_source=nginx status>=500 | stats count by uri | sort 
 lynxdb run 5xx-by-uri --since 24h
 ```
 
-### Step 5: Migrate Alerts
-
-```bash
-# Splunk alert -> LynxDB alert
-curl -X POST localhost:3100/api/v1/alerts -d '{
-  "name": "High Error Rate",
-  "query": "level=error | stats count as errors | where errors > 100",
-  "interval": "5m",
-  "channels": [
-    {"type": "slack", "config": {"webhook_url": "https://hooks.slack.com/..."}}
-  ]
-}'
-```
-
 ## Cost Comparison
 
 | | Splunk Enterprise | LynxDB |
@@ -181,7 +167,6 @@ curl -X POST localhost:3100/api/v1/alerts -d '{
 | Query language | SPL | SPL2 (SPL-compatible) |
 | Full-text search | tsidx | FST + roaring bitmaps |
 | Schema | On-read | On-read |
-| Alerts | Yes | Yes (3 built-in channels) |
 | Dashboards | Yes (XML) | Yes (JSON) |
 | Materialized views | Data model acceleration | Materialized views (~400x) |
 | Pipe mode | No | Yes |
@@ -193,4 +178,3 @@ curl -X POST localhost:3100/api/v1/alerts -d '{
 - [Lynx Flow Reference](/docs/lynx-flow/overview) -- learn the full SPL2 query language
 - [SPL to SPL2 Migration Guide](/docs/lynx-flow/splunk-migration) -- detailed syntax comparison
 - [Quick Start](/docs/getting-started/quickstart) -- get started with LynxDB
-- [Alerts](/docs/guides/alerts) -- set up alerting

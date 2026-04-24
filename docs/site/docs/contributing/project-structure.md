@@ -19,8 +19,7 @@ lynxdb/
 ├── docs/                 # Documentation site (Docusaurus)
 ├── go.mod                # Go module definition
 ├── go.sum                # Dependency checksums
-├── Makefile              # Build and test targets
-└── CLAUDE.md             # Project overview and architecture reference
+└── Makefile              # Build and test targets
 ```
 
 ## `cmd/lynxdb/` -- CLI Entry Point
@@ -208,10 +207,6 @@ Handles the ingest path from raw bytes to structured events ready for the storag
 ### `pkg/aggregation/` -- Aggregation Functions
 
 Implementations of all aggregation functions: `count`, `sum`, `avg`, `min`, `max`, `dc` (distinct count), `values`, `stdev`, `perc50/75/90/95/99`, `earliest`, `latest`. Each function implements the `Partial` + `Merge` interface for distributed execution.
-
-### `pkg/alerts/` -- Alert Engine
-
-Alert evaluation loop plus the currently wired notification channel implementations (`webhook`, `slack`, `telegram`).
 
 ### `pkg/client/` -- Go Client Library
 

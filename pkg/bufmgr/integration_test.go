@@ -749,7 +749,7 @@ func TestIntegration_GovernorBufferManager_PeakTracking(t *testing.T) {
 	})
 	mgr := newTestManagerWithGovernor(t, maxFrames, frameSize, gov)
 
-	// Phase 1: Allocate 6 frames.
+	// Allocate 6 frames.
 	for i := 0; i < 6; i++ {
 		if err := gov.Reserve(memgov.ClassPageCache, int64(frameSize)); err != nil {
 			t.Fatalf("Reserve %d: %v", i, err)
@@ -766,7 +766,7 @@ func TestIntegration_GovernorBufferManager_PeakTracking(t *testing.T) {
 		t.Fatalf("peak after 6 allocs = %d; want %d", peak6, 6*frameSize)
 	}
 
-	// Phase 2: Evict 4 frames. Peak should stay at 6.
+	// Evict 4 frames. Peak should stay at 6.
 	mgr.EvictBatch(4, OwnerFree)
 
 	peakAfterEvict := gov.ClassUsage(memgov.ClassPageCache).Peak
@@ -779,7 +779,7 @@ func TestIntegration_GovernorBufferManager_PeakTracking(t *testing.T) {
 		t.Fatalf("current after eviction = %d; want %d", current, 2*frameSize)
 	}
 
-	// Phase 3: Reserve more to set a new peak.
+	// Reserve more to set a new peak.
 	for i := 0; i < 7; i++ {
 		if err := gov.Reserve(memgov.ClassPageCache, int64(frameSize)); err != nil {
 			t.Fatalf("Reserve %d: %v", i, err)

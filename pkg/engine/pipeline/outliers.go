@@ -42,7 +42,7 @@ func (o *OutliersIterator) Init(ctx context.Context) error {
 }
 
 func (o *OutliersIterator) Next(ctx context.Context) (*Batch, error) {
-	// Phase 1: Accumulate all rows from the child.
+	// Accumulate all rows from the child.
 	if !o.done {
 		o.done = true
 
@@ -60,11 +60,11 @@ func (o *OutliersIterator) Next(ctx context.Context) (*Batch, error) {
 			}
 		}
 
-		// Phase 2: Compute outlier scores and build output batch.
+		// Compute outlier scores and build output batch.
 		o.output = o.computeOutliers(allRows)
 	}
 
-	// Phase 3: Emit in batches (the full output is already computed).
+	// Emit in batches (the full output is already computed).
 	if o.output == nil || o.offset >= o.output.Len {
 		return nil, nil
 	}

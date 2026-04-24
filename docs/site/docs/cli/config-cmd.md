@@ -81,7 +81,7 @@ lynxdb config reload
 - most `query.*` execution settings
 - `ingest.mode`, `ingest.max_batch_size`, and `ingest.max_line_bytes`
 - `tail.*`
-- `http.idle_timeout`, `http.shutdown_timeout`, `http.alert_shutdown_timeout`, and `http.read_header_timeout`
+- `http.idle_timeout`, `http.shutdown_timeout`, and `http.read_header_timeout`
 - `storage.compaction_rate_limit_mb`
 
 **Settings that require a restart** (server warns on reload):

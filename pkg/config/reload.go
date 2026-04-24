@@ -20,7 +20,6 @@ var hotReloadableExactFields = map[string]struct{}{
 	"ingest.max_batch_size":            {},
 	"ingest.max_line_bytes":            {},
 	"http.shutdown_timeout":            {},
-	"http.alert_shutdown_timeout":      {},
 }
 
 var hotReloadablePrefixes = []string{

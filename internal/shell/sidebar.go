@@ -315,7 +315,6 @@ func sectionTitle(sec SidebarSection, s Sidebar) string {
 }
 
 // renderSectionContent renders the body of a section.
-// Phase 1: placeholder text. Phase 2 will wire real data.
 func (s Sidebar) renderSectionContent(sec SidebarSection, w int) []string {
 	dim := lipgloss.NewStyle().Foreground(ui.ColorDim())
 

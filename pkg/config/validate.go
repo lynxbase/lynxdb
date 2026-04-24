@@ -385,9 +385,6 @@ func (h *HTTPConfig) validate() error {
 	if h.ShutdownTimeout < time.Second {
 		return validationErr("http", "shutdown_timeout", h.ShutdownTimeout.String(), "must be at least 1s")
 	}
-	if h.AlertShutdownTimeout < time.Second {
-		return validationErr("http", "alert_shutdown_timeout", h.AlertShutdownTimeout.String(), "must be at least 1s")
-	}
 	if h.ReadHeaderTimeout < 0 {
 		return validationErr("http", "read_header_timeout", h.ReadHeaderTimeout.String(), "must not be negative")
 	}

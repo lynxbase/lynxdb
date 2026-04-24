@@ -30,27 +30,26 @@ echo "  LynxDB Profiling Run — $TIMESTAMP"
 echo "========================================="
 echo ""
 
-# --- Step 0: Kill any stale server on the same port ---
+# Kill any stale server on the same port
 if curl -sf "$BASE/health" >/dev/null 2>&1; then
     echo "WARNING: Server already running on $ADDR. Killing it..."
     pkill -f "lynxdb server" 2>/dev/null || true
     sleep 2
 fi
 
-# --- Step 1: Build ---
-echo "=== Step 1: Build ==="
+echo "=== Build ==="
 make build
 echo ""
 
-# --- Step 2: Generate fixtures if missing ---
+# Generate fixtures if missing
 if [ ! -f testdata/bench/json_100k.log ]; then
-    echo "=== Step 2: Generate bench fixtures ==="
+    echo "=== Generate bench fixtures ==="
     make bench-fixtures
     echo ""
 fi
 
-# --- Step 3: Start server ---
-echo "=== Step 3: Start server (profile-runtime, no-ui) ==="
+# Start server
+echo "=== Start server (profile-runtime, no-ui) ==="
 GODEBUG=gctrace=1 ./lynxdb server \
     --addr "$ADDR" \
     --no-ui \
@@ -77,8 +76,8 @@ for i in $(seq 1 30); do
 done
 echo ""
 
-# --- Step 4: Seed 2M events ---
-echo "=== Step 4: Seed 2M events (20 x 100K) ==="
+# Seed 2M events
+echo "=== Seed 2M events (20 x 100K) ==="
 for i in $(seq 1 20); do
     curl -sf -X POST "$BASE/api/v1/ingest/raw" \
         -H "X-Source: bench" -H "X-Source-Type: json" \
@@ -88,8 +87,8 @@ done
 echo "  Seed complete: 2M events ingested."
 echo ""
 
-# --- Step 5: Wait for compaction ---
-echo "=== Step 5: Wait for segments + compaction ==="
+# Wait for compaction
+echo "=== Wait for segments + compaction ==="
 for i in $(seq 1 60); do
     SEGMENTS=$(curl -sf "$BASE/api/v1/stats" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['segment_count'])" 2>/dev/null || echo "0")
     if [ "$SEGMENTS" -gt 3 ] 2>/dev/null; then
@@ -103,14 +102,14 @@ for i in $(seq 1 60); do
 done
 echo ""
 
-# --- Step 6: Heap baseline ---
-echo "=== Step 6: Heap baseline (before load) ==="
+# Heap baseline
+echo "=== Heap baseline (before load) ==="
 curl -sf -o "$OUTDIR/heap_before.pb.gz" "$BASE/api/v1/debug/pprof/heap"
 echo "  Saved heap_before.pb.gz"
 echo ""
 
-# --- Step 7: Start mixed load ---
-echo "=== Step 7: Start mixed load (60s) ==="
+# Start mixed load
+echo "=== Start mixed load (60s) ==="
 echo "  Ingest: hey -c 4 -z 60s (or curl fallback)"
 echo "  Query:  sequential, 1 per 500ms"
 
@@ -120,10 +119,10 @@ INGEST_PID=$!
 bash "$SCRIPT_DIR/load-query.sh" 60 >"$OUTDIR/load-query.log" 2>&1 &
 QUERY_PID=$!
 
-# --- Step 8: Collect profiles (after 5s stabilization) ---
+# Collect profiles (after 5s stabilization)
 sleep 5
 echo ""
-echo "=== Step 8: Collect profiles ==="
+echo "=== Collect profiles ==="
 bash "$SCRIPT_DIR/collect-profiles.sh" "$OUTDIR"
 echo ""
 
@@ -134,14 +133,14 @@ wait $QUERY_PID 2>/dev/null || true
 echo "  Load complete."
 echo ""
 
-# --- Step 9: Heap after load ---
-echo "=== Step 9: Heap snapshot (after load) ==="
+# Heap snapshot after load
+echo "=== Heap snapshot (after load) ==="
 curl -sf -o "$OUTDIR/heap_after.pb.gz" "$BASE/api/v1/debug/pprof/heap"
 echo "  Saved heap_after.pb.gz"
 echo ""
 
-# --- Step 10: Analyze ---
-echo "=== Step 10: Analyze profiles ==="
+# Analyze profiles
+echo "=== Analyze profiles ==="
 bash "$SCRIPT_DIR/analyze.sh" "$OUTDIR"
 echo ""
 

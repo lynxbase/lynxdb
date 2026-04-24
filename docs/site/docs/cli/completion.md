@@ -65,7 +65,7 @@ lynxdb completion powershell >> $PROFILE
 The completion script provides tab-completion for:
 
 - All top-level commands (`query`, `ingest`, `server`, `tail`, `mv`, etc.)
-- Subcommands (`mv create`, `mv list`, `config get`, `alerts test`, etc.)
+- Subcommands (`mv create`, `mv list`, `config get`, etc.)
 - Flags and their values (e.g., `--format` completes to `json`, `table`, `csv`, etc.)
 - Config keys for `config get` and `config set`
 - Saved query names for `saved run` and `saved delete`

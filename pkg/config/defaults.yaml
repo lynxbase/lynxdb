@@ -76,7 +76,6 @@
 # http:
 #   idle_timeout: 120s               # HTTP keep-alive idle timeout
 #   shutdown_timeout: 30s            # Graceful shutdown timeout
-#   alert_shutdown_timeout: 10s      # Grace period for alert manager on shutdown
 #   read_header_timeout: 10s         # Max time allowed to read request headers
 #   rate_limit: 0                    # Requests per second per IP (0 = unlimited)
 

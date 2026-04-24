@@ -166,23 +166,6 @@ service:
       exporters: [otlp_http]
 ```
 
-### Step 3: Convert Alerting Rules
-
-```bash
-# Loki alert rule:
-# expr: sum(rate({job="nginx"} |= "error" [5m])) > 100
-
-# LynxDB equivalent:
-curl -X POST localhost:3100/api/v1/alerts -d '{
-  "name": "High error rate",
-  "query": "level=error | stats count as errors | where errors > 100",
-  "interval": "5m",
-  "channels": [
-    {"type": "slack", "config": {"webhook_url": "https://hooks.slack.com/..."}}
-  ]
-}'
-```
-
 ## Feature Comparison
 
 | Feature | Grafana Loki | LynxDB |
@@ -195,7 +178,6 @@ curl -X POST localhost:3100/api/v1/alerts -d '{
 | Object storage | Required in production | Optional (for tiering) |
 | Materialized views | No | Yes (~400x acceleration) |
 | Pipe mode (CLI) | No | Yes |
-| Alerts | Via Grafana | Built-in (3 channels) |
 | Dashboards | Via Grafana | Built-in |
 | License | AGPL | Apache 2.0 |
 

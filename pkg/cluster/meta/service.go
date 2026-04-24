@@ -496,67 +496,6 @@ func (s *Service) ReportSources(_ context.Context, req *clusterpb.ReportSourcesR
 	return &clusterpb.ReportSourcesResponse{Ok: true}, nil
 }
 
-// AssignAlert assigns an alert to a query node via rendezvous hashing.
-func (s *Service) AssignAlert(_ context.Context, req *clusterpb.AssignAlertRequest) (*clusterpb.AssignAlertResponse, error) {
-	queryNodes := make([]sharding.NodeID, len(req.QueryNodeIds))
-	for i, id := range req.QueryNodeIds {
-		queryNodes[i] = sharding.NodeID(id)
-	}
-
-	payload, err := MarshalPayload(AssignAlertPayload{
-		AlertID:    req.AlertId,
-		QueryNodes: queryNodes,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("meta.Service.AssignAlert: marshal: %w", err)
-	}
-
-	cmdData, err := EncodeCommand(&Command{Type: CmdAssignAlert, Data: payload})
-	if err != nil {
-		return nil, fmt.Errorf("meta.Service.AssignAlert: encode: %w", err)
-	}
-
-	future := s.raft.Apply(cmdData, 5*time.Second)
-	if err := future.Error(); err != nil {
-		return nil, fmt.Errorf("meta.Service.AssignAlert: raft apply: %w", err)
-	}
-
-	// Read back the assignment.
-	state := s.fsm.State()
-	assignedNode := ""
-	if aa, ok := state.AlertAssign[req.AlertId]; ok {
-		assignedNode = string(aa.AssignedNode)
-	}
-
-	return &clusterpb.AssignAlertResponse{
-		Ok:             true,
-		AssignedNodeId: assignedNode,
-	}, nil
-}
-
-// ReportAlertFired records the timestamp of an alert trigger.
-func (s *Service) ReportAlertFired(_ context.Context, req *clusterpb.ReportAlertFiredRequest) (*clusterpb.ReportAlertFiredResponse, error) {
-	payload, err := MarshalPayload(UpdateAlertFiredPayload{
-		AlertID: req.AlertId,
-		FiredAt: time.Unix(0, req.FiredAtUnixNs),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("meta.Service.ReportAlertFired: marshal: %w", err)
-	}
-
-	cmdData, err := EncodeCommand(&Command{Type: CmdUpdateAlertFired, Data: payload})
-	if err != nil {
-		return nil, fmt.Errorf("meta.Service.ReportAlertFired: encode: %w", err)
-	}
-
-	future := s.raft.Apply(cmdData, 5*time.Second)
-	if err := future.Error(); err != nil {
-		return nil, fmt.Errorf("meta.Service.ReportAlertFired: raft apply: %w", err)
-	}
-
-	return &clusterpb.ReportAlertFiredResponse{Ok: true}, nil
-}
-
 // RegisterView registers or updates a materialized view definition in the cluster FSM.
 func (s *Service) RegisterView(_ context.Context, req *clusterpb.RegisterViewRequest) (*clusterpb.RegisterViewResponse, error) {
 	payload, err := MarshalPayload(RegisterViewPayload{

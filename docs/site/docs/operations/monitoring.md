@@ -5,7 +5,7 @@ description: Monitor LynxDB health and performance -- /stats endpoint, status co
 
 # Monitoring LynxDB
 
-LynxDB exposes comprehensive health and performance metrics through its REST API and CLI commands. This guide covers what to monitor, how to access metrics, and how to set up alerts.
+LynxDB exposes comprehensive health and performance metrics through its REST API and CLI commands. This guide covers what to monitor and how to access metrics.
 
 ## Health Check
 
@@ -258,27 +258,13 @@ spec:
       interval: 30s
 ```
 
-### Alerting on Metrics
+### Watching Metrics
 
 Use the `lynxdb watch` command for quick metric monitoring:
 
 ```bash
 # Watch error rate every 30 seconds
 lynxdb watch 'level=error | stats count' --interval 30s --diff
-```
-
-Set up server-side alerts for infrastructure monitoring:
-
-```bash
-# Alert when disk usage is high
-curl -X POST localhost:3100/api/v1/alerts -d '{
-  "name": "High disk usage",
-  "query": "| from _internal | where metric=\"storage_bytes\" | where value > 100000000000",
-  "interval": "5m",
-  "channels": [
-    {"type": "slack", "config": {"webhook_url": "https://hooks.slack.com/..."}}
-  ]
-}'
 ```
 
 ## Recommended Monitoring Checklist

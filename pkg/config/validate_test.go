@@ -150,7 +150,6 @@ func TestValidateHTTP(t *testing.T) {
 	}{
 		{"zero idle timeout", func(h *HTTPConfig) { h.IdleTimeout = 0 }, "http.idle_timeout"},
 		{"zero shutdown timeout", func(h *HTTPConfig) { h.ShutdownTimeout = 0 }, "http.shutdown_timeout"},
-		{"zero alert shutdown timeout", func(h *HTTPConfig) { h.AlertShutdownTimeout = 0 }, "http.alert_shutdown_timeout"},
 		{"negative read_header_timeout", func(h *HTTPConfig) { h.ReadHeaderTimeout = -time.Second }, "http.read_header_timeout"},
 		// F9: RateLimit validation
 		{"negative rate_limit", func(h *HTTPConfig) { h.RateLimit = -1.0 }, "http.rate_limit"},
