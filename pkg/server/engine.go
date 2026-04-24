@@ -55,6 +55,7 @@ type Engine struct {
 	activeJobs atomic.Int64
 	maxConcur  atomic.Int32
 	jobs       sync.Map                           // jobID (string) -> *SearchJob
+	jobsWG     sync.WaitGroup                     // tracks in-flight executeQuery goroutines so Shutdown can drain them before tearing down disk state
 	queryCfg   atomic.Pointer[config.QueryConfig] // hot-reloadable snapshot; readers Load(), ReloadConfig() Store()
 
 	// ingestGen is a monotonically increasing generation counter, bumped on every
@@ -96,9 +97,12 @@ type Engine struct {
 	retentionMgr *part.RetentionManager
 
 	// Materialized views.
-	viewRegistry *views.ViewRegistry
-	mvDispatcher *views.Dispatcher
-	backfillJobs sync.Map // viewName (string) → *SearchJob — tracks active backfill jobs for progress reporting
+	viewRegistry   *views.ViewRegistry
+	mvDispatcher   *views.Dispatcher
+	backfillJobs   sync.Map // viewName (string) → *SearchJob — tracks active backfill jobs for progress reporting
+	backfillCtx    context.Context
+	backfillCancel context.CancelFunc
+	backfillWG     sync.WaitGroup
 
 	// Source registry for multi-source/wildcard query resolution.
 	sourceRegistry *sources.Registry
@@ -387,6 +391,11 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.jobGCCancel = jobGCCancel
 	go e.startJobGC(jobGCCtx)
 
+	// Backfill goroutines inherit a cancellable context tied to the engine
+	// lifecycle so Shutdown can stop in-flight MV backfills before tearing
+	// down disk state.
+	e.backfillCtx, e.backfillCancel = context.WithCancel(ctx)
+
 	if e.dataDir != "" {
 		// Start deletion pacer for rate-limited file removal.
 		e.deletionPacer = compaction.NewDeletionPacer(0)
@@ -431,6 +440,48 @@ func (e *Engine) Shutdown(timeout time.Duration) error {
 	if err := waitForBackgroundLoop("tiering", e.tieringCancel, &e.tieringWG, timeout); err != nil {
 		e.logger.Error("shutdown tiering stop failed", "error", err)
 		errs = append(errs, err)
+	}
+
+	// Cancel and drain in-flight MV backfills BEFORE flushing the batcher.
+	// Backfills submit queries that call e.batcher.Flush(), then write directly
+	// to disk via the dispatcher and registry — leaving them running across
+	// shutdown races with the data directory being torn down by callers.
+	if e.backfillCancel != nil {
+		e.backfillCancel()
+	}
+	backfillDone := make(chan struct{})
+	go func() {
+		e.backfillWG.Wait()
+		close(backfillDone)
+	}()
+	select {
+	case <-backfillDone:
+	case <-time.After(timeout):
+		e.logger.Warn("shutdown: MV backfill drain timeout")
+	}
+
+	// Cancel any in-flight query goroutines (executeQuery) and wait for them
+	// to fully unwind. job.Cancel() closes the job's done channel but the
+	// underlying executeQuery goroutine may still be touching disk via
+	// pre-query batcher flushes; draining it here keeps those writes inside
+	// the engine's lifetime so they don't race with data-directory cleanup.
+	e.jobs.Range(func(_, v any) bool {
+		if job, ok := v.(*SearchJob); ok {
+			job.Cancel()
+		}
+
+		return true
+	})
+	jobsDone := make(chan struct{})
+	go func() {
+		e.jobsWG.Wait()
+		close(jobsDone)
+	}()
+	select {
+	case <-jobsDone:
+	case <-time.After(timeout):
+		e.logger.Warn("shutdown: query drain timeout",
+			"active_jobs", e.activeJobs.Load())
 	}
 
 	// Flush remaining buffered events via the async batcher.

@@ -161,16 +161,39 @@ func (e *Engine) CreateView(name, query, retention string) error {
 // launchBackfill starts an asynchronous backfill goroutine for the named view.
 // The goroutine executes the view's SPL2 query through the full query engine,
 // converts result rows to events, and injects them into the view's storage.
+//
+// The goroutine is tracked by e.backfillWG and rooted in e.backfillCtx so that
+// engine.Shutdown can cancel and drain in-flight backfills before tearing down
+// disk state (otherwise the backfill's pre-query batcher flush, segment write,
+// and registry update race with data-directory cleanup).
 func (e *Engine) launchBackfill(viewName string) {
+	if e.closing.Load() {
+		return
+	}
+
 	timeout := time.Duration(e.viewsCfg.BackfillTimeout)
 	if timeout <= 0 {
 		timeout = defaultBackfillTimeout
 	}
+
+	parent := e.backfillCtx
+	if parent == nil {
+		parent = context.Background()
+	}
+
+	e.backfillWG.Add(1)
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer e.backfillWG.Done()
+		ctx, cancel := context.WithTimeout(parent, timeout)
 		defer cancel()
 		if err := e.RunQueryBackfill(ctx, viewName); err != nil {
-			e.logger.Error("MV backfill failed", "view", viewName, "error", err)
+			// Cancellation from engine shutdown is expected — don't surface
+			// it as an error.
+			if errors.Is(err, context.Canceled) {
+				e.logger.Info("MV backfill canceled", "view", viewName)
+			} else {
+				e.logger.Error("MV backfill failed", "view", viewName, "error", err)
+			}
 		}
 	}()
 }
@@ -249,6 +272,11 @@ func (e *Engine) RunQueryBackfill(ctx context.Context, viewName string) error {
 
 		return fmt.Errorf("backfill: context canceled for %s: %w", viewName, ctx.Err())
 	case <-job.Done():
+	}
+
+	// Bail before any disk writes if shutdown raced with job completion.
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("backfill: context canceled for %s: %w", viewName, err)
 	}
 
 	snap := job.Snapshot()

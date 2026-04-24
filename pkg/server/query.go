@@ -167,7 +167,11 @@ func (e *Engine) SubmitQuery(ctx context.Context, params QueryParams) (*SearchJo
 	e.jobs.Store(job.ID, job)
 	e.metrics.QueryTotal.Add(1)
 
-	go e.executeQuery(jobCtx, job, params)
+	e.jobsWG.Add(1)
+	go func() {
+		defer e.jobsWG.Done()
+		e.executeQuery(jobCtx, job, params)
+	}()
 
 	return job, nil
 }
