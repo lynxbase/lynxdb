@@ -198,6 +198,17 @@ LynxDB wouldn't exist without the projects that inspired it:
 
 This project started in early 2025 out of a deep appreciation for these tools and a desire to bring Splunk-level analytics to everyone in a single, lightweight binary.
 
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=lynxbase%2Flynxdb&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=lynxbase/lynxdb&type=date&theme=dark&legend=top-left" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=lynxbase/lynxdb&type=date&legend=top-left" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=lynxbase/lynxdb&type=date&legend=top-left" />
+ </picture>
+</a>
+
 ## License
 
 [Apache 2.0](LICENSE)
