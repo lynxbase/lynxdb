@@ -154,6 +154,7 @@ const sidebars: SidebarsConfig = {
         'configuration/storage',
         'configuration/query',
         'configuration/ingest',
+        'configuration/syslog',
         'configuration/s3-tiering',
         'configuration/cluster',
         'configuration/environment-variables',

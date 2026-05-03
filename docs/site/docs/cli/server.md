@@ -39,6 +39,12 @@ lynxdb server [flags]
 | `--cluster.roles` | | Comma-separated node roles: `meta`, `ingest`, `query` |
 | `--cluster.seeds` | | Comma-separated seed node addresses (`host:port`) |
 | `--cluster.grpc-port` | | gRPC port for inter-node communication |
+| `--syslog <addr>` | | Enable UDP and TCP syslog on address (default port `5514`) |
+| `--syslog-udp <addr>` | | Enable UDP syslog only |
+| `--syslog-tcp <addr>` | | Enable TCP syslog only (default port `6514` with `--syslog-tls`) |
+| `--syslog-tls` | `false` | Wrap TCP syslog with server TLS |
+| `--syslog-parser <dialect>` | | Parser: `auto`, `rfc5424`, `rfc3164`, `raw` |
+| `--syslog-index <name>` | | Target index for syslog events |
 
 ## Examples
 
@@ -57,6 +63,12 @@ lynxdb server --s3-bucket my-logs --s3-region eu-west-1
 
 # With TLS and auth
 lynxdb server --tls --auth --data-dir /var/lib/lynxdb
+
+# With syslog receiver on port 514
+lynxdb server --syslog :514 --data-dir /var/lib/lynxdb
+
+# With syslog over TLS
+lynxdb server --tls --syslog-tcp :6514 --syslog-tls --data-dir /var/lib/lynxdb
 
 # With your own certificates
 lynxdb server --tls-cert /etc/ssl/lynxdb.crt --tls-key /etc/ssl/lynxdb.key
@@ -107,6 +119,7 @@ These settings are applied to new work when you send `SIGHUP` or run `lynxdb con
 - `retention`
 - `query.*` execution limits such as `max_concurrent`, `default_result_limit`, `max_result_limit`, `max_query_runtime`, `max_query_length`, and profiling preview settings
 - `storage.compaction_rate_limit_mb`
+- `syslog.index`, `syslog.sourcetype`, `syslog.default_timezone`, `syslog.default_hostname`, `syslog.batch_size`, `syslog.batch_timeout`
 
 Restart the server after changing startup-time settings such as:
 

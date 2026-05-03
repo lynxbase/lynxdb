@@ -117,6 +117,10 @@ http:
   idle_timeout: "120s"
   shutdown_timeout: "30s"
 
+# syslog:
+#   udp: ":514"
+#   tcp: ":514"
+
 tls:
   enabled: false
 
@@ -170,6 +174,7 @@ In the current implementation:
 - `tail.*` limits are re-applied
 - `http.idle_timeout`, `http.shutdown_timeout`, and `http.read_header_timeout` are re-applied
 - `storage.compaction_rate_limit_mb` is explicitly re-applied
+- `syslog.index`, `syslog.sourcetype`, `syslog.default_timezone`, `syslog.default_hostname`, `syslog.batch_size`, and `syslog.batch_timeout` are re-applied
 
 Treat these changes as restart-required:
 
@@ -180,6 +185,7 @@ Treat these changes as restart-required:
 - `no_ui`
 - `http.rate_limit`
 - `ingest.max_body_size` and ingest-engine settings such as dedup/fsync
+- `syslog.udp`, `syslog.tcp`, `syslog.tls`, `syslog.parser`, `syslog.framing`, `syslog.trailer`, and connection limits
 - `query.global_query_pool_bytes`, `query.spill_dir`, and `query.max_temp_dir_size_bytes`
 - storage scheduler settings such as `storage.compaction_workers`
 
@@ -203,5 +209,6 @@ lynxdb query 'level=error | stats count' -p staging
 - [Storage Settings](/docs/configuration/storage)
 - [Query Settings](/docs/configuration/query)
 - [Ingest Settings](/docs/configuration/ingest)
+- [Syslog Receiver](/docs/configuration/syslog)
 - [Cluster Settings](/docs/configuration/cluster)
 - [config & doctor](/docs/cli/config-cmd)

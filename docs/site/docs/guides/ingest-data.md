@@ -215,6 +215,70 @@ http://lynxdb:3100/api/v1/ingest/hec
 
 ---
 
+## Native syslog receiver
+
+LynxDB can receive logs directly over syslog (UDP and TCP) without any intermediary. This is useful for network devices, servers running `rsyslog` or `syslog-ng`, and any system that speaks the syslog protocol.
+
+### Enable the syslog receiver
+
+```bash
+# Enable on the standard syslog port (requires root or CAP_NET_BIND_SERVICE)
+lynxdb server --syslog :514
+
+# Or use a non-privileged port
+lynxdb server --syslog :5514
+```
+
+Or in your config file:
+
+```yaml
+syslog:
+  udp: ":514"
+  tcp: ":514"
+```
+
+### Configure rsyslog
+
+```bash
+# /etc/rsyslog.d/50-lynxdb.conf
+# Forward everything over TCP
+*.* @@lynxdb-host:514
+
+# Or over UDP
+*.* @lynxdb-host:514
+```
+
+### Configure syslog-ng
+
+```
+destination d_lynxdb {
+  tcp("lynxdb-host" port(514));
+};
+log { source(s_src); destination(d_lynxdb); };
+```
+
+### With TLS
+
+For secure transport, enable TLS on the syslog TCP listener:
+
+```bash
+lynxdb server --tls --syslog-tcp :6514 --syslog-tls
+```
+
+### Configure rsyslog with TLS
+
+```
+# /etc/rsyslog.d/50-lynxdb-tls.conf
+$ActionSendStreamDriver gtls
+$ActionSendStreamDriverMode 1
+$ActionSendStreamDriverAuthMode anon
+*.* @@lynxdb-host:6514
+```
+
+The syslog receiver supports RFC 5424, RFC 3164, and raw messages with automatic dialect detection. See the [syslog configuration reference](/docs/configuration/syslog) for all available options including framing, batch tuning, and connection limits.
+
+---
+
 ## Pipe mode (no server)
 
 You do not need a running server to analyze logs. LynxDB can ingest data into an ephemeral in-memory engine and query it in one step:
