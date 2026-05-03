@@ -84,6 +84,51 @@ func TestESBulk_BasicIndex(t *testing.T) {
 	}
 }
 
+func TestESBulk_UnprefixedRoute(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/_bulk", srv.Addr()),
+		"application/x-ndjson",
+		strings.NewReader("{\"index\":{\"_index\":\"logs\"}}\n{\"message\":\"drop in\"}\n"),
+	)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	result := decodeESBulkResponse(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	if result.Errors || len(result.Items) != 1 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if result.Items[0].Index.Index != "logs" {
+		t.Fatalf("_index = %q, want logs", result.Items[0].Index.Index)
+	}
+}
+
+func TestESBulk_PathIndexFallback(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/path-index/_bulk", srv.Addr()),
+		"application/x-ndjson",
+		strings.NewReader("{\"index\":{}}\n{\"message\":\"from path\"}\n"),
+	)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	result := decodeESBulkResponse(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	if result.Items[0].Index.Index != "path-index" {
+		t.Fatalf("_index = %q, want path-index", result.Items[0].Index.Index)
+	}
+}
+
 func TestESBulk_CreateAction(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

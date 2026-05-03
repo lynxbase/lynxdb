@@ -338,6 +338,8 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// Elasticsearch compatibility.
 	mux.Handle("GET /{$}", esHandshake)
+	mux.HandleFunc("POST /_bulk", s.handleESBulk)
+	mux.HandleFunc("POST /{index}/_bulk", s.handleESBulk)
 	mux.HandleFunc("POST /api/v1/es/_bulk", s.handleESBulk)
 	mux.HandleFunc("POST /api/v1/es/{index}/_doc", s.handleESIndexDoc)
 	mux.HandleFunc("GET /api/v1/es/", s.handleESClusterInfo)

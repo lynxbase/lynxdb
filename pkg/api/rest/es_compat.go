@@ -266,14 +266,22 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeIngest) {
 		return
 	}
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
+	if contentType != "" && contentType != "application/x-ndjson" && contentType != "application/json" {
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":   "content_type_exception",
+				"reason": "bulk endpoint requires application/x-ndjson or application/json",
+			},
+			"status": http.StatusBadRequest,
+		})
+		return
+	}
 
 	start := time.Now()
 
 	ingestCfg := s.currentIngestConfig()
-	batchSize := ingestCfg.MaxBatchSize
-	if batchSize == 0 {
-		batchSize = 1000
-	}
+	pathIndex := r.PathValue("index")
 
 	// Decompress gzip body if Content-Encoding: gzip (Filebeat default).
 	body, err := decompressBody(r)
@@ -303,18 +311,21 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 
 	pipe := ingestPipelineForConfig(ingestCfg)
 	var items []esBulkItemResult
-	batch := make([]*event.Event, 0, batchSize)
+	batch := make([]*event.Event, 0)
 	// H4 fix: track pending items per batch; only mark success AFTER commit.
 	// Each pending item holds its slot index in items to preserve request ordering.
-	pending := make([]esPendingItem, 0, batchSize)
+	pending := make([]esPendingItem, 0)
 	hasErrors := false
 
-	// commitBatch processes the current batch and fills in pending item slots.
-	commitBatch := func() {
+	// commitBatch processes the full request batch and fills pending item slots.
+	commitBatch := func() bool {
 		if len(batch) == 0 {
-			return
+			return true
 		}
 		if err := processESBatch(r.Context(), pipe, batch, s); err != nil {
+			if respondIngestError(w, err) {
+				return false
+			}
 			for _, p := range pending {
 				items[p.itemIdx] = makeErrorItem(p.action, p.index, p.docID,
 					http.StatusInternalServerError, "ingest_exception", err.Error())
@@ -327,6 +338,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 		}
 		batch = batch[:0]
 		pending = pending[:0]
+		return true
 	}
 
 	for scanner.Scan() {
@@ -390,7 +402,14 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		ev := esDocToEventWithMapping(doc, meta.Index, fm)
+		indexName := meta.Index
+		if indexName == "" {
+			indexName = pathIndex
+		}
+		if indexName == "" {
+			indexName = "default"
+		}
+		ev := esDocToEventWithMapping(doc, indexName, fm)
 		batch = append(batch, ev)
 
 		docID := meta.ID
@@ -400,12 +419,8 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 		// H4 fix: reserve a slot in items now (preserves request order),
 		// but fill it in only after commit succeeds/fails.
 		slotIdx := len(items)
-		items = append(items, esBulkItemResult{}) // placeholder
-		pending = append(pending, esPendingItem{action: actionName, index: meta.Index, docID: docID, itemIdx: slotIdx})
-
-		if len(batch) >= batchSize {
-			commitBatch()
-		}
+		items = append(items, esBulkItemResult{})
+		pending = append(pending, esPendingItem{action: actionName, index: indexName, docID: docID, itemIdx: slotIdx})
 	}
 	if err := scanner.Err(); err != nil {
 		if limits.IsTooLarge(err) {
@@ -429,7 +444,9 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Flush remaining batch.
-	commitBatch()
+	if !commitBatch() {
+		return
+	}
 
 	took := time.Since(start).Milliseconds()
 	if items == nil {
