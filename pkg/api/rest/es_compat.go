@@ -466,7 +466,7 @@ func processESBatch(ctx context.Context, pipe *pipeline.Pipeline, batch []*event
 		return err
 	}
 
-	return s.engine.IngestContext(ctx, processed)
+	return s.submitShipperEvents(ctx, processed)
 }
 
 func makeSuccessItem(action, index, id string) esBulkItemResult {

@@ -21,6 +21,8 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/eshttp"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/otlphttp"
 	syslogrecv "github.com/lynxbase/lynxdb/pkg/ingest/receiver/syslog"
+	"github.com/lynxbase/lynxdb/pkg/ingest/staging"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/server"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
@@ -51,6 +53,7 @@ type Server struct {
 	tlsConfig          *tls.Config  // non-nil when TLS is enabled
 	syslogReceiver     *syslogrecv.Receiver
 	otlpHTTPReceiver   *otlphttp.Receiver
+	stagingBuffer      *staging.Buffer
 	esHandshake        *eshttp.Handshake
 	esStubs            *eshttp.Stubs
 	promMetrics        *PrometheusMetrics
@@ -204,7 +207,7 @@ func NewServer(cfg Config) (*Server, error) {
 				if err != nil {
 					return err
 				}
-				return s.engine.IngestContext(ctx, processed)
+				return s.submitShipperEvents(ctx, processed)
 			},
 			cfg.Logger,
 			promMetrics,
@@ -464,11 +467,24 @@ func normalizedESCompatConfig(ingest config.IngestConfig) config.ESCompatConfig 
 	return out
 }
 
+func stagingConfigFromIngest(ingest config.IngestConfig) staging.Config {
+	cfg := ingest.Staging
+	return staging.Config{
+		Enabled:           cfg.Enabled,
+		MaxBytes:          int64(cfg.MaxBytes),
+		MaxAge:            cfg.MaxAge.Duration(),
+		MaxInflightEvents: cfg.MaxInflightEvents,
+		FlushRetries:      cfg.FlushRetries,
+		FlushBackoffMax:   cfg.FlushBackoffMax.Duration(),
+	}
+}
+
 // Start starts the API server. Blocks until context is canceled.
 func (s *Server) Start(ctx context.Context) error {
 	if err := s.engine.Start(ctx); err != nil {
 		return err
 	}
+	s.startStagingBuffer()
 
 	if s.syslogReceiver != nil {
 		go func() {
@@ -481,6 +497,7 @@ func (s *Server) Start(ctx context.Context) error {
 			if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
 				slog.Error("engine shutdown failed after syslog listen error", "error", shutErr)
 			}
+			s.closeStagingBuffer(context.Background())
 			return fmt.Errorf("syslog: %w", err)
 		}
 	}
@@ -501,6 +518,7 @@ func (s *Server) Start(ctx context.Context) error {
 			if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
 				slog.Error("engine shutdown failed after OTLP listen error", "error", shutErr)
 			}
+			s.closeStagingBuffer(context.Background())
 			return fmt.Errorf("otlp http: %w", err)
 		}
 	}
@@ -518,6 +536,7 @@ func (s *Server) Start(ctx context.Context) error {
 		if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
 			slog.Error("engine shutdown failed after listen error", "error", shutErr)
 		}
+		s.closeStagingBuffer(context.Background())
 		return fmt.Errorf("api: listen: %w", err)
 	}
 
@@ -539,12 +558,16 @@ func (s *Server) Start(ctx context.Context) error {
 			s.rateLimiter.Stop()
 		}
 
-		// Shutdown ordering: reject ingests → drain HTTP → flush storage.
-		s.engine.PrepareShutdown()
 		if s.syslogReceiver != nil {
 			s.syslogReceiver.Stop()
 		}
+		if s.otlpHTTPReceiver != nil {
+			_ = s.otlpHTTPReceiver.Stop(context.Background())
+		}
+		s.closeStagingBuffer(context.Background())
 
+		// Shutdown ordering: reject ingests → drain HTTP → flush storage.
+		s.engine.PrepareShutdown()
 		shutdownTimeout := s.currentShutdownTimeout()
 		s.engine.Logger().Info("shutting down: draining in-flight requests", "timeout", shutdownTimeout)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -580,6 +603,38 @@ type engineSink struct {
 
 func (s engineSink) Write(events []*event.Event) error {
 	return s.engine.IngestContext(context.Background(), events)
+}
+
+func (s *Server) submitShipperEvents(ctx context.Context, events []*event.Event) error {
+	if s.stagingBuffer != nil {
+		return s.stagingBuffer.Add(ctx, events)
+	}
+	return s.engine.IngestContext(ctx, events)
+}
+
+func (s *Server) startStagingBuffer() {
+	if s.stagingBuffer != nil {
+		return
+	}
+	s.stagingBuffer = staging.NewBuffer(
+		stagingConfigFromIngest(s.currentIngestConfig()),
+		func(ctx context.Context, events []*event.Event) error {
+			return s.engine.IngestContext(ctx, events)
+		},
+		memgov.NewClassAccount(s.engine.Governor(), memgov.ClassTempIO),
+		s.promMetrics,
+	)
+}
+
+func (s *Server) closeStagingBuffer(ctx context.Context) {
+	if s.stagingBuffer == nil {
+		return
+	}
+	stagingCtx, cancel := context.WithTimeout(ctx, s.currentShutdownTimeout())
+	defer cancel()
+	if err := s.stagingBuffer.Close(stagingCtx); err != nil {
+		s.engine.Logger().Error("staging buffer shutdown error", "error", err)
+	}
 }
 
 // WaitReady blocks until the server has completed initialization and is ready.

@@ -18,6 +18,8 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver"
+	"github.com/lynxbase/lynxdb/pkg/ingest/staging"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/server"
 	"github.com/lynxbase/lynxdb/pkg/storage/part"
 )
@@ -55,7 +57,11 @@ func respondIngestError(w http.ResponseWriter, err error) bool {
 	}
 	switch {
 	case errors.Is(err, server.ErrShuttingDown):
+		w.Header().Set("Retry-After", "5")
 		respondError(w, ErrCodeShuttingDown, http.StatusServiceUnavailable, "server is shutting down")
+	case errors.Is(err, staging.ErrBufferOverflow), errors.Is(err, staging.ErrClosed), memgov.IsMemoryExhausted(err):
+		w.Header().Set("Retry-After", "5")
+		respondError(w, ErrCodeBackpressure, http.StatusServiceUnavailable, "ingest staging backpressure")
 	case errors.Is(err, part.ErrTooManyParts):
 		w.Header().Set("Retry-After", "1")
 		respondError(w, ErrCodeBackpressure, http.StatusServiceUnavailable, "ingest backpressure: compaction falling behind")

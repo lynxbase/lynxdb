@@ -141,7 +141,15 @@ func containerLogs(t *testing.T, ctr testcontainers.Container) string {
 func assertNoShipperErrors(t *testing.T, logs string) {
 	t.Helper()
 	lower := strings.ToLower(logs)
-	for _, needle := range []string{" 4", " 5", " error", " fail", "panic"} {
+	for _, needle := range []string{
+		`"log.level":"error"`,
+		`"log.level":"warn"`,
+		`"status":4`,
+		`"status":5`,
+		`"status_code":4`,
+		`"status_code":5`,
+		"panic",
+	} {
 		if strings.Contains(lower, needle) {
 			t.Fatalf("shipper logs contain %q:\n%s", needle, logs)
 		}
