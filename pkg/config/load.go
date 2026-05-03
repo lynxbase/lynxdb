@@ -524,6 +524,72 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.Limits.MaxDecompressedBodyBytes.String() }},
+	{"LYNXDB_INGEST_STAGING_ENABLED", "ingest.staging.enabled",
+		func(c *Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Staging.Enabled = b
+
+			return nil
+		},
+		func(c *Config) string { return strconv.FormatBool(c.Ingest.Staging.Enabled) }},
+	{"LYNXDB_INGEST_STAGING_MAX_BYTES", "ingest.staging.max_bytes",
+		func(c *Config, v string) error {
+			b, err := ParseByteSize(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Staging.MaxBytes = b
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.Staging.MaxBytes.String() }},
+	{"LYNXDB_INGEST_STAGING_MAX_AGE", "ingest.staging.max_age",
+		func(c *Config, v string) error {
+			d, err := ParseDuration(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Staging.MaxAge = d
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.Staging.MaxAge.String() }},
+	{"LYNXDB_INGEST_STAGING_MAX_INFLIGHT_EVENTS", "ingest.staging.max_inflight_events",
+		func(c *Config, v string) error {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Staging.MaxInflightEvents = n
+
+			return nil
+		},
+		func(c *Config) string { return strconv.Itoa(c.Ingest.Staging.MaxInflightEvents) }},
+	{"LYNXDB_INGEST_STAGING_FLUSH_RETRIES", "ingest.staging.flush_retries",
+		func(c *Config, v string) error {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Staging.FlushRetries = n
+
+			return nil
+		},
+		func(c *Config) string { return strconv.Itoa(c.Ingest.Staging.FlushRetries) }},
+	{"LYNXDB_INGEST_STAGING_FLUSH_BACKOFF_MAX", "ingest.staging.flush_backoff_max",
+		func(c *Config, v string) error {
+			d, err := ParseDuration(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Staging.FlushBackoffMax = d
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.Staging.FlushBackoffMax.String() }},
 	{"LYNXDB_INGEST_MODE", "ingest.mode",
 		func(c *Config, v string) error {
 			c.Ingest.Mode = v

@@ -122,6 +122,24 @@ func TestPrometheusMetrics_DecompressionRejectCounter(t *testing.T) {
 	assertCounterVecLabelValue(t, families, "lynxdb_ingest_decompression_rejected_total", "encoding", "gzip", 1)
 }
 
+func TestPrometheusMetrics_StagingMetrics(t *testing.T) {
+	pm := NewPrometheusMetrics()
+
+	pm.SetState(2048, 3, 1.5)
+	pm.RecordFlush("sync", 2048)
+	pm.RecordOverflow()
+	pm.RecordDropped("sink_error", 2)
+
+	families := gatherMetrics(t, pm)
+	assertGaugeValue(t, families, "lynxdb_ingest_staging_bytes", 2048)
+	assertGaugeValue(t, families, "lynxdb_ingest_staging_events", 3)
+	assertGaugeValue(t, families, "lynxdb_ingest_staging_age_seconds", 1.5)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_staging_flushes_total", "trigger", "sync", 1)
+	assertCounterValue(t, families, "lynxdb_ingest_staging_overflows_total", 1)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_staging_dropped_total", "reason", "sink_error", 2)
+	assertHistogramCount(t, families, "lynxdb_ingest_staging_flush_size_bytes", 1)
+}
+
 func TestPrometheusMetrics_ZeroSkipsNotRecorded(t *testing.T) {
 	pm := NewPrometheusMetrics()
 

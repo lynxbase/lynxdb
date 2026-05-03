@@ -43,6 +43,15 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Ingest.Limits.MaxDecompressedBodyBytes != 256*MB {
 		t.Errorf("expected decompressed body limit 256mb, got %s", cfg.Ingest.Limits.MaxDecompressedBodyBytes)
 	}
+	if !cfg.Ingest.Staging.Enabled {
+		t.Error("expected staging enabled by default")
+	}
+	if cfg.Ingest.Staging.MaxBytes != 64*MB {
+		t.Errorf("expected staging max_bytes 64mb, got %s", cfg.Ingest.Staging.MaxBytes)
+	}
+	if cfg.Ingest.Staging.MaxAge != Duration(5*time.Second) {
+		t.Errorf("expected staging max_age 5s, got %s", cfg.Ingest.Staging.MaxAge)
+	}
 	if cfg.HTTP.IdleTimeout != 120*time.Second {
 		t.Errorf("expected 120s, got %v", cfg.HTTP.IdleTimeout)
 	}

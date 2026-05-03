@@ -48,6 +48,16 @@ func newTrackedClassAccountAdapter(gov Governor, class MemoryClass, tracker *Bud
 	return &AccountAdapter{gov: gov, class: class, tracker: tracker}
 }
 
+// NewClassAccount creates a MemoryAccount that reserves directly against one
+// process-wide memory class. It is intended for non-query subsystems that need
+// governor visibility without a per-query BudgetAdapter.
+func NewClassAccount(gov Governor, class MemoryClass) MemoryAccount {
+	if gov == nil {
+		return NopAccount()
+	}
+	return &AccountAdapter{gov: gov, class: class}
+}
+
 // Grow requests n bytes via the underlying OperatorMemory.
 func (a *AccountAdapter) Grow(n int64) error {
 	if n <= 0 {

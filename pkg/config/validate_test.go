@@ -139,6 +139,12 @@ func TestValidateIngest(t *testing.T) {
 			i.Limits.MaxCompressedBodyBytes = 2 * MB
 			i.Limits.MaxDecompressedBodyBytes = 1 * MB
 		}, "must be >= limits.max_compressed_body_bytes"},
+		{"staging zero age", func(i *IngestConfig) {
+			i.Staging.MaxAge = 0
+		}, "ingest.staging.max_age"},
+		{"staging zero events", func(i *IngestConfig) {
+			i.Staging.MaxInflightEvents = 0
+		}, "ingest.staging.max_inflight_events"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

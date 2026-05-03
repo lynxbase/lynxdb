@@ -75,6 +75,13 @@
 #   limits:
 #     max_compressed_body_bytes: 32mb   # Max compressed shipper request body
 #     max_decompressed_body_bytes: 256mb # Max decoded shipper request body
+#   staging:
+#     enabled: true                  # Coalesce small shipper batches before ingest
+#     max_bytes: 64mb                # Flush or reject when pending bytes exceed this
+#     max_age: 5s                    # Flush oldest pending batch after this age
+#     max_inflight_events: 1000000   # Max pending events in staging
+#     flush_retries: 3               # Sink retries before dropping staged events
+#     flush_backoff_max: 5s          # Max retry backoff
 #   mode:                            # Ingest mode (empty = auto)
 #   dedup_enabled: false             # Enable dedup of identical consecutive events
 #   dedup_capacity: 100000           # Dedup LRU capacity (per index)

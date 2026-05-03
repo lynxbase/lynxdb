@@ -100,6 +100,8 @@ func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME", "logs")
 	t.Setenv("LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES", "16mb")
 	t.Setenv("LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES", "64mb")
+	t.Setenv("LYNXDB_INGEST_STAGING_MAX_BYTES", "8mb")
+	t.Setenv("LYNXDB_INGEST_STAGING_MAX_AGE", "2s")
 
 	cfg, _, err := Load("")
 	if err != nil {
@@ -128,6 +130,12 @@ func TestLoadEnvOverrides(t *testing.T) {
 	}
 	if cfg.Ingest.Limits.MaxDecompressedBodyBytes != 64*MB {
 		t.Errorf("MaxDecompressedBodyBytes: got %s", cfg.Ingest.Limits.MaxDecompressedBodyBytes)
+	}
+	if cfg.Ingest.Staging.MaxBytes != 8*MB {
+		t.Errorf("Staging.MaxBytes: got %s", cfg.Ingest.Staging.MaxBytes)
+	}
+	if cfg.Ingest.Staging.MaxAge != Duration(2*time.Second) {
+		t.Errorf("Staging.MaxAge: got %s", cfg.Ingest.Staging.MaxAge)
 	}
 }
 
