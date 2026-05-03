@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -280,6 +281,12 @@ func (i *IngestConfig) validate() error {
 		return validationErr("ingest", "limits.max_decompressed_body_bytes", i.Limits.MaxDecompressedBodyBytes.String(),
 			fmt.Sprintf("must be >= limits.max_compressed_body_bytes (%s)", i.Limits.MaxCompressedBodyBytes.String()))
 	}
+	if i.ESCompat.AdvertisedVersion != "" && !esVersionRE.MatchString(i.ESCompat.AdvertisedVersion) {
+		return validationErr("ingest", "es_compat.advertised_version", i.ESCompat.AdvertisedVersion, "must match X.Y.Z")
+	}
+	if i.ESCompat.Enabled && i.ESCompat.ClusterName == "" {
+		return validationErr("ingest", "es_compat.cluster_name", "", "must not be empty when es_compat is enabled")
+	}
 
 	switch i.Mode {
 	case "", "full", "lightweight":
@@ -294,6 +301,8 @@ func (i *IngestConfig) validate() error {
 
 	return nil
 }
+
+var esVersionRE = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
 func (s *SyslogConfig) validate() error {
 	if s.UDP != "" {

@@ -18,6 +18,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/limits"
+	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/eshttp"
 	syslogrecv "github.com/lynxbase/lynxdb/pkg/ingest/receiver/syslog"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/server"
@@ -48,6 +49,7 @@ type Server struct {
 	degraded           atomic.Bool  // true when a persistent store fell back to in-memory
 	tlsConfig          *tls.Config  // non-nil when TLS is enabled
 	syslogReceiver     *syslogrecv.Receiver
+	esHandshake        *eshttp.Handshake
 	levelVar           *slog.LevelVar
 	logger             *slog.Logger
 }
@@ -183,6 +185,18 @@ func NewServer(cfg Config) (*Server, error) {
 		s.syslogReceiver = syslogReceiver
 	}
 
+	esCfg := normalizedESCompatConfig(cfg.Ingest)
+	esHandshake, err := eshttp.NewHandshake(eshttp.Config{
+		AdvertisedVersion: esCfg.AdvertisedVersion,
+		ClusterName:       esCfg.ClusterName,
+		DataDir:           cfg.DataDir,
+		S3Bucket:          cfg.Storage.S3Bucket,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.esHandshake = esHandshake
+
 	mux := http.NewServeMux()
 
 	// Prometheus metrics endpoint (standard /metrics path).
@@ -296,6 +310,7 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /api/v1/views/{name}/backfill", s.handleViewBackfill)
 
 	// Elasticsearch compatibility.
+	mux.Handle("GET /{$}", esHandshake)
 	mux.HandleFunc("POST /api/v1/es/_bulk", s.handleESBulk)
 	mux.HandleFunc("POST /api/v1/es/{index}/_doc", s.handleESIndexDoc)
 	mux.HandleFunc("GET /api/v1/es/", s.handleESClusterInfo)
@@ -381,6 +396,18 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	return s, nil
+}
+
+func normalizedESCompatConfig(ingest config.IngestConfig) config.ESCompatConfig {
+	defaults := config.DefaultConfig().Ingest.ESCompat
+	out := ingest.ESCompat
+	if out.AdvertisedVersion == "" {
+		out.AdvertisedVersion = defaults.AdvertisedVersion
+	}
+	if out.ClusterName == "" {
+		out.ClusterName = defaults.ClusterName
+	}
+	return out
 }
 
 // Start starts the API server. Blocks until context is canceled.

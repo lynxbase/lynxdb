@@ -68,6 +68,10 @@
 #   max_body_size: 100mb             # Max HTTP request body size
 #   max_batch_size: 1000             # Max events per streaming batch
 #   max_line_bytes: 1048576          # Max bytes per single line in streaming ingest (1 MiB)
+#   es_compat:
+#     enabled: true                  # Enable drop-in Elasticsearch shipper endpoints
+#     advertised_version: 8.15.0     # Version shown to Filebeat/Fluent Bit/Vector
+#     cluster_name: lynxdb           # Cluster name in Elasticsearch handshake
 #   limits:
 #     max_compressed_body_bytes: 32mb   # Max compressed shipper request body
 #     max_decompressed_body_bytes: 256mb # Max decoded shipper request body

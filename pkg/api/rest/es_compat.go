@@ -129,11 +129,15 @@ type esClusterInfoResponse struct {
 }
 
 type esVersionInfo struct {
-	Number        string `json:"number"`
-	BuildFlavor   string `json:"build_flavor"`
-	BuildType     string `json:"build_type"`
-	BuildHash     string `json:"build_hash"`
-	LuceneVersion string `json:"lucene_version"`
+	Number                           string `json:"number"`
+	BuildFlavor                      string `json:"build_flavor"`
+	BuildType                        string `json:"build_type"`
+	BuildHash                        string `json:"build_hash"`
+	BuildDate                        string `json:"build_date"`
+	BuildSnapshot                    bool   `json:"build_snapshot"`
+	LuceneVersion                    string `json:"lucene_version"`
+	MinimumWireCompatibilityVersion  string `json:"minimum_wire_compatibility_version"`
+	MinimumIndexCompatibilityVersion string `json:"minimum_index_compatibility_version"`
 }
 
 func generateESDocID() string {
@@ -545,20 +549,11 @@ func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleESClusterInfo(w http.ResponseWriter, r *http.Request) {
-	setESHeaders(w)
-	respondJSON(w, http.StatusOK, esClusterInfoResponse{
-		Name:        "lynxdb",
-		ClusterName: "lynxdb",
-		ClusterUUID: "lynxdb-single-node",
-		Version: esVersionInfo{
-			Number:        "8.11.0",
-			BuildFlavor:   "default",
-			BuildType:     "tar",
-			BuildHash:     "000000",
-			LuceneVersion: "9.8.0",
-		},
-		Tagline: "LynxDB — Splunk-power log analytics in a single binary",
-	})
+	if s.esHandshake == nil {
+		respondInternalError(w, "elasticsearch compatibility handshake is not initialized")
+		return
+	}
+	s.esHandshake.ServeHTTP(w, r)
 }
 
 // handleESStub is a catch-all handler for ES management endpoints that Filebeat

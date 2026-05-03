@@ -477,6 +477,31 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Ingest.MaxLineBytes) }},
+	{"LYNXDB_INGEST_ES_COMPAT_ENABLED", "ingest.es_compat.enabled",
+		func(c *Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.ESCompat.Enabled = b
+
+			return nil
+		},
+		func(c *Config) string { return strconv.FormatBool(c.Ingest.ESCompat.Enabled) }},
+	{"LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION", "ingest.es_compat.advertised_version",
+		func(c *Config, v string) error {
+			c.Ingest.ESCompat.AdvertisedVersion = v
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.ESCompat.AdvertisedVersion }},
+	{"LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME", "ingest.es_compat.cluster_name",
+		func(c *Config, v string) error {
+			c.Ingest.ESCompat.ClusterName = v
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.ESCompat.ClusterName }},
 	{"LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES", "ingest.limits.max_compressed_body_bytes",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)

@@ -126,6 +126,12 @@ func TestValidateIngest(t *testing.T) {
 	}{
 		{"small body size", func(i *IngestConfig) { i.MaxBodySize = 100 }, "ingest.max_body_size"},
 		{"zero batch size", func(i *IngestConfig) { i.MaxBatchSize = 0 }, "ingest.max_batch_size"},
+		{"bad advertised version", func(i *IngestConfig) {
+			i.ESCompat.AdvertisedVersion = "8.x"
+		}, "ingest.es_compat.advertised_version"},
+		{"empty enabled cluster name", func(i *IngestConfig) {
+			i.ESCompat.ClusterName = ""
+		}, "ingest.es_compat.cluster_name"},
 		{"small compressed body limit", func(i *IngestConfig) {
 			i.Limits.MaxCompressedBodyBytes = 100
 		}, "ingest.limits.max_compressed_body_bytes"},

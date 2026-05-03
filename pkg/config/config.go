@@ -211,6 +211,7 @@ type IngestConfig struct {
 	MaxBodySize  ByteSize           `yaml:"max_body_size"  json:"max_body_size"`
 	MaxBatchSize int                `yaml:"max_batch_size" json:"max_batch_size"`
 	MaxLineBytes int                `yaml:"max_line_bytes" json:"max_line_bytes"`
+	ESCompat     ESCompatConfig     `yaml:"es_compat" json:"es_compat"`
 	Limits       IngestLimitsConfig `yaml:"limits" json:"limits"`
 
 	// Mode controls how much parsing happens at ingest time.
@@ -243,6 +244,12 @@ type IngestConfig struct {
 type IngestLimitsConfig struct {
 	MaxCompressedBodyBytes   ByteSize `yaml:"max_compressed_body_bytes" json:"max_compressed_body_bytes"`
 	MaxDecompressedBodyBytes ByteSize `yaml:"max_decompressed_body_bytes" json:"max_decompressed_body_bytes"`
+}
+
+type ESCompatConfig struct {
+	Enabled           bool   `yaml:"enabled" json:"enabled"`
+	AdvertisedVersion string `yaml:"advertised_version" json:"advertised_version"`
+	ClusterName       string `yaml:"cluster_name" json:"cluster_name"`
 }
 
 // SyslogConfig configures the native syslog TCP/UDP receiver.
@@ -426,6 +433,11 @@ func DefaultConfig() *Config {
 			MaxBatchSize:  1000,
 			MaxLineBytes:  1 << 20, // 1 MB
 			DedupCapacity: 100_000,
+			ESCompat: ESCompatConfig{
+				Enabled:           true,
+				AdvertisedVersion: "8.15.0",
+				ClusterName:       "lynxdb",
+			},
 			Limits: IngestLimitsConfig{
 				MaxCompressedBodyBytes:   32 * MB,
 				MaxDecompressedBodyBytes: 256 * MB,

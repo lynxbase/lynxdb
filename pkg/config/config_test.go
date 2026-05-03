@@ -28,6 +28,15 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Ingest.MaxBatchSize != 1000 {
 		t.Errorf("expected 1000, got %d", cfg.Ingest.MaxBatchSize)
 	}
+	if !cfg.Ingest.ESCompat.Enabled {
+		t.Error("expected ES compatibility enabled by default")
+	}
+	if cfg.Ingest.ESCompat.AdvertisedVersion != "8.15.0" {
+		t.Errorf("expected advertised ES version 8.15.0, got %q", cfg.Ingest.ESCompat.AdvertisedVersion)
+	}
+	if cfg.Ingest.ESCompat.ClusterName != "lynxdb" {
+		t.Errorf("expected ES cluster name lynxdb, got %q", cfg.Ingest.ESCompat.ClusterName)
+	}
 	if cfg.Ingest.Limits.MaxCompressedBodyBytes != 32*MB {
 		t.Errorf("expected compressed body limit 32mb, got %s", cfg.Ingest.Limits.MaxCompressedBodyBytes)
 	}

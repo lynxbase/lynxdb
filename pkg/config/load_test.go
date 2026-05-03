@@ -96,6 +96,8 @@ func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("LYNXDB_LOG_LEVEL", "debug")
 	t.Setenv("LYNXDB_QUERY_MAX_CONCURRENT", "50")
 	t.Setenv("LYNXDB_STORAGE_COMPRESSION", "zstd")
+	t.Setenv("LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION", "9.0.1")
+	t.Setenv("LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME", "logs")
 	t.Setenv("LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES", "16mb")
 	t.Setenv("LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES", "64mb")
 
@@ -114,6 +116,12 @@ func TestLoadEnvOverrides(t *testing.T) {
 	}
 	if cfg.Storage.Compression != "zstd" {
 		t.Errorf("Compression: got %q", cfg.Storage.Compression)
+	}
+	if cfg.Ingest.ESCompat.AdvertisedVersion != "9.0.1" {
+		t.Errorf("AdvertisedVersion: got %q", cfg.Ingest.ESCompat.AdvertisedVersion)
+	}
+	if cfg.Ingest.ESCompat.ClusterName != "logs" {
+		t.Errorf("ClusterName: got %q", cfg.Ingest.ESCompat.ClusterName)
 	}
 	if cfg.Ingest.Limits.MaxCompressedBodyBytes != 16*MB {
 		t.Errorf("MaxCompressedBodyBytes: got %s", cfg.Ingest.Limits.MaxCompressedBodyBytes)

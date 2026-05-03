@@ -550,14 +550,17 @@ func TestESClusterInfo_Basic(t *testing.T) {
 
 	var result esClusterInfoResponse
 	json.NewDecoder(resp.Body).Decode(&result)
-	if result.Name != "lynxdb" {
+	if !strings.HasPrefix(result.Name, "lynxdb-") {
 		t.Fatalf("name: %q", result.Name)
 	}
 	if result.ClusterName != "lynxdb" {
 		t.Fatalf("cluster_name: %q", result.ClusterName)
 	}
-	if result.Version.Number != "8.11.0" {
+	if result.Version.Number != "8.15.0" {
 		t.Fatalf("version.number: %q", result.Version.Number)
+	}
+	if result.Version.MinimumWireCompatibilityVersion != "7.17.0" {
+		t.Fatalf("minimum_wire_compatibility_version: %q", result.Version.MinimumWireCompatibilityVersion)
 	}
 }
 
@@ -577,8 +580,58 @@ func TestESClusterInfo_NoTrailingSlash(t *testing.T) {
 
 	var result esClusterInfoResponse
 	json.NewDecoder(resp.Body).Decode(&result)
-	if result.Name != "lynxdb" {
+	if !strings.HasPrefix(result.Name, "lynxdb-") {
 		t.Fatalf("name: %q", result.Name)
+	}
+}
+
+func TestESClusterInfo_UnprefixedRoot(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/", srv.Addr()))
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("X-Elastic-Product"); got != "Elasticsearch" {
+		t.Fatalf("X-Elastic-Product: got %q, want Elasticsearch", got)
+	}
+	var result esClusterInfoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result.Version.Number != "8.15.0" {
+		t.Fatalf("version.number: %q", result.Version.Number)
+	}
+}
+
+func TestESClusterInfo_UnprefixedHead(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	req, err := http.NewRequest(http.MethodHead, fmt.Sprintf("http://%s/", srv.Addr()), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("HEAD: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	if resp.ContentLength > 0 {
+		t.Fatalf("content length = %d, want no body", resp.ContentLength)
+	}
+	if got := resp.Header.Get("X-Elastic-Product"); got != "Elasticsearch" {
+		t.Fatalf("X-Elastic-Product: got %q, want Elasticsearch", got)
 	}
 }
 

@@ -19,6 +19,8 @@ var hotReloadableExactFields = map[string]struct{}{
 	"ingest.mode":                               {},
 	"ingest.max_batch_size":                     {},
 	"ingest.max_line_bytes":                     {},
+	"ingest.es_compat.enabled":                  {},
+	"ingest.es_compat.advertised_version":       {},
 	"ingest.limits.max_compressed_body_bytes":   {},
 	"ingest.limits.max_decompressed_body_bytes": {},
 	"http.shutdown_timeout":                     {},
