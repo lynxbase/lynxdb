@@ -98,6 +98,7 @@ func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("LYNXDB_STORAGE_COMPRESSION", "zstd")
 	t.Setenv("LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION", "9.0.1")
 	t.Setenv("LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME", "logs")
+	t.Setenv("LYNXDB_INGEST_OTLP_HTTP_LISTEN", "127.0.0.1:18318")
 	t.Setenv("LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES", "16mb")
 	t.Setenv("LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES", "64mb")
 	t.Setenv("LYNXDB_INGEST_STAGING_MAX_BYTES", "8mb")
@@ -124,6 +125,9 @@ func TestLoadEnvOverrides(t *testing.T) {
 	}
 	if cfg.Ingest.ESCompat.ClusterName != "logs" {
 		t.Errorf("ClusterName: got %q", cfg.Ingest.ESCompat.ClusterName)
+	}
+	if cfg.Ingest.OTLP.HTTPListen != "127.0.0.1:18318" {
+		t.Errorf("OTLP.HTTPListen: got %q", cfg.Ingest.OTLP.HTTPListen)
 	}
 	if cfg.Ingest.Limits.MaxCompressedBodyBytes != 16*MB {
 		t.Errorf("MaxCompressedBodyBytes: got %s", cfg.Ingest.Limits.MaxCompressedBodyBytes)

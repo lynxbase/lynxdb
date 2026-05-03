@@ -19,6 +19,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/limits"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/eshttp"
+	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/otlphttp"
 	syslogrecv "github.com/lynxbase/lynxdb/pkg/ingest/receiver/syslog"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/server"
@@ -49,6 +50,7 @@ type Server struct {
 	degraded           atomic.Bool  // true when a persistent store fell back to in-memory
 	tlsConfig          *tls.Config  // non-nil when TLS is enabled
 	syslogReceiver     *syslogrecv.Receiver
+	otlpHTTPReceiver   *otlphttp.Receiver
 	esHandshake        *eshttp.Handshake
 	levelVar           *slog.LevelVar
 	logger             *slog.Logger
@@ -183,6 +185,31 @@ func NewServer(cfg Config) (*Server, error) {
 			return nil, fmt.Errorf("syslog receiver: %w", err)
 		}
 		s.syslogReceiver = syslogReceiver
+	}
+
+	if cfg.Ingest.OTLP.HTTPListen != "" {
+		otlpReceiver, err := otlphttp.New(
+			otlphttp.Config{
+				Listen: cfg.Ingest.OTLP.HTTPListen,
+				Limits: limits.Config{
+					MaxCompressedBytes:   int64(cfg.Ingest.Limits.MaxCompressedBodyBytes),
+					MaxDecompressedBytes: int64(cfg.Ingest.Limits.MaxDecompressedBodyBytes),
+				},
+			},
+			func(ctx context.Context, events []*event.Event) error {
+				processed, err := ingestPipelineForConfig(s.currentIngestConfig()).Process(events)
+				if err != nil {
+					return err
+				}
+				return s.engine.IngestContext(ctx, processed)
+			},
+			cfg.Logger,
+			promMetrics,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("otlp http receiver: %w", err)
+		}
+		s.otlpHTTPReceiver = otlpReceiver
 	}
 
 	esCfg := normalizedESCompatConfig(cfg.Ingest)
@@ -430,6 +457,26 @@ func (s *Server) Start(ctx context.Context) error {
 			return fmt.Errorf("syslog: %w", err)
 		}
 	}
+	if s.otlpHTTPReceiver != nil {
+		go func() {
+			if err := s.otlpHTTPReceiver.Start(ctx); err != nil {
+				s.engine.Logger().Error("OTLP HTTP receiver stopped with error", "error", err)
+			}
+		}()
+		s.otlpHTTPReceiver.WaitReady()
+		if err := s.otlpHTTPReceiver.ReadyError(); err != nil {
+			if s.syslogReceiver != nil {
+				s.syslogReceiver.Stop()
+			}
+			if s.otlpHTTPReceiver != nil {
+				_ = s.otlpHTTPReceiver.Stop(context.Background())
+			}
+			if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
+				slog.Error("engine shutdown failed after OTLP listen error", "error", shutErr)
+			}
+			return fmt.Errorf("otlp http: %w", err)
+		}
+	}
 
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", s.httpServer.Addr)
@@ -437,6 +484,9 @@ func (s *Server) Start(ctx context.Context) error {
 		// Engine was started but we can't listen — shut it down.
 		if s.syslogReceiver != nil {
 			s.syslogReceiver.Stop()
+		}
+		if s.otlpHTTPReceiver != nil {
+			_ = s.otlpHTTPReceiver.Stop(context.Background())
 		}
 		if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
 			slog.Error("engine shutdown failed after listen error", "error", shutErr)

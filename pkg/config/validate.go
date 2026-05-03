@@ -287,6 +287,16 @@ func (i *IngestConfig) validate() error {
 	if i.ESCompat.Enabled && i.ESCompat.ClusterName == "" {
 		return validationErr("ingest", "es_compat.cluster_name", "", "must not be empty when es_compat is enabled")
 	}
+	if i.OTLP.HTTPListen != "" {
+		if _, _, err := net.SplitHostPort(i.OTLP.HTTPListen); err != nil {
+			return validationErr("ingest", "otlp.http_listen", i.OTLP.HTTPListen, "must be a valid host:port address")
+		}
+	}
+	if i.OTLP.GRPCListen != "" {
+		if _, _, err := net.SplitHostPort(i.OTLP.GRPCListen); err != nil {
+			return validationErr("ingest", "otlp.grpc_listen", i.OTLP.GRPCListen, "must be a valid host:port address")
+		}
+	}
 	if i.Staging.Enabled {
 		if i.Staging.MaxBytes < 1*KB {
 			return validationErr("ingest", "staging.max_bytes", i.Staging.MaxBytes.String(), "must be at least 1kb")

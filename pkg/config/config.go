@@ -212,6 +212,7 @@ type IngestConfig struct {
 	MaxBatchSize int                 `yaml:"max_batch_size" json:"max_batch_size"`
 	MaxLineBytes int                 `yaml:"max_line_bytes" json:"max_line_bytes"`
 	ESCompat     ESCompatConfig      `yaml:"es_compat" json:"es_compat"`
+	OTLP         OTLPConfig          `yaml:"otlp" json:"otlp"`
 	Limits       IngestLimitsConfig  `yaml:"limits" json:"limits"`
 	Staging      IngestStagingConfig `yaml:"staging" json:"staging"`
 
@@ -251,6 +252,11 @@ type ESCompatConfig struct {
 	Enabled           bool   `yaml:"enabled" json:"enabled"`
 	AdvertisedVersion string `yaml:"advertised_version" json:"advertised_version"`
 	ClusterName       string `yaml:"cluster_name" json:"cluster_name"`
+}
+
+type OTLPConfig struct {
+	HTTPListen string `yaml:"http_listen" json:"http_listen"`
+	GRPCListen string `yaml:"grpc_listen" json:"grpc_listen"`
 }
 
 type IngestStagingConfig struct {
@@ -447,6 +453,10 @@ func DefaultConfig() *Config {
 				Enabled:           true,
 				AdvertisedVersion: "8.15.0",
 				ClusterName:       "lynxdb",
+			},
+			OTLP: OTLPConfig{
+				HTTPListen: "0.0.0.0:4318",
+				GRPCListen: "",
 			},
 			Limits: IngestLimitsConfig{
 				MaxCompressedBodyBytes:   32 * MB,

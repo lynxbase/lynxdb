@@ -146,6 +146,8 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("ingest.es_compat.enabled", strconv.FormatBool(cfg.Ingest.ESCompat.Enabled), strconv.FormatBool(dflt.Ingest.ESCompat.Enabled), strconv.FormatBool(fileCfg.Ingest.ESCompat.Enabled), "LYNXDB_INGEST_ES_COMPAT_ENABLED")
 	add("ingest.es_compat.advertised_version", cfg.Ingest.ESCompat.AdvertisedVersion, dflt.Ingest.ESCompat.AdvertisedVersion, fileCfg.Ingest.ESCompat.AdvertisedVersion, "LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION")
 	add("ingest.es_compat.cluster_name", cfg.Ingest.ESCompat.ClusterName, dflt.Ingest.ESCompat.ClusterName, fileCfg.Ingest.ESCompat.ClusterName, "LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME")
+	add("ingest.otlp.http_listen", cfg.Ingest.OTLP.HTTPListen, dflt.Ingest.OTLP.HTTPListen, fileCfg.Ingest.OTLP.HTTPListen, "LYNXDB_INGEST_OTLP_HTTP_LISTEN")
+	add("ingest.otlp.grpc_listen", cfg.Ingest.OTLP.GRPCListen, dflt.Ingest.OTLP.GRPCListen, fileCfg.Ingest.OTLP.GRPCListen, "LYNXDB_INGEST_OTLP_GRPC_LISTEN")
 	add("ingest.limits.max_compressed_body_bytes", cfg.Ingest.Limits.MaxCompressedBodyBytes.String(), dflt.Ingest.Limits.MaxCompressedBodyBytes.String(), fileCfg.Ingest.Limits.MaxCompressedBodyBytes.String(), "LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES")
 	add("ingest.limits.max_decompressed_body_bytes", cfg.Ingest.Limits.MaxDecompressedBodyBytes.String(), dflt.Ingest.Limits.MaxDecompressedBodyBytes.String(), fileCfg.Ingest.Limits.MaxDecompressedBodyBytes.String(), "LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES")
 	add("ingest.staging.enabled", strconv.FormatBool(cfg.Ingest.Staging.Enabled), strconv.FormatBool(dflt.Ingest.Staging.Enabled), strconv.FormatBool(fileCfg.Ingest.Staging.Enabled), "LYNXDB_INGEST_STAGING_ENABLED")

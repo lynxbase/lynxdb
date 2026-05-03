@@ -132,6 +132,9 @@ func TestValidateIngest(t *testing.T) {
 		{"empty enabled cluster name", func(i *IngestConfig) {
 			i.ESCompat.ClusterName = ""
 		}, "ingest.es_compat.cluster_name"},
+		{"bad otlp http listen", func(i *IngestConfig) {
+			i.OTLP.HTTPListen = "not-an-addr"
+		}, "ingest.otlp.http_listen"},
 		{"small compressed body limit", func(i *IngestConfig) {
 			i.Limits.MaxCompressedBodyBytes = 100
 		}, "ingest.limits.max_compressed_body_bytes"},

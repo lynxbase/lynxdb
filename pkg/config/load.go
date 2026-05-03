@@ -502,6 +502,20 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.ESCompat.ClusterName }},
+	{"LYNXDB_INGEST_OTLP_HTTP_LISTEN", "ingest.otlp.http_listen",
+		func(c *Config, v string) error {
+			c.Ingest.OTLP.HTTPListen = v
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.OTLP.HTTPListen }},
+	{"LYNXDB_INGEST_OTLP_GRPC_LISTEN", "ingest.otlp.grpc_listen",
+		func(c *Config, v string) error {
+			c.Ingest.OTLP.GRPCListen = v
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.OTLP.GRPCListen }},
 	{"LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES", "ingest.limits.max_compressed_body_bytes",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)

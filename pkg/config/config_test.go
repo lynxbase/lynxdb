@@ -37,6 +37,9 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Ingest.ESCompat.ClusterName != "lynxdb" {
 		t.Errorf("expected ES cluster name lynxdb, got %q", cfg.Ingest.ESCompat.ClusterName)
 	}
+	if cfg.Ingest.OTLP.HTTPListen != "0.0.0.0:4318" {
+		t.Errorf("expected OTLP HTTP listen 0.0.0.0:4318, got %q", cfg.Ingest.OTLP.HTTPListen)
+	}
 	if cfg.Ingest.Limits.MaxCompressedBodyBytes != 32*MB {
 		t.Errorf("expected compressed body limit 32mb, got %s", cfg.Ingest.Limits.MaxCompressedBodyBytes)
 	}

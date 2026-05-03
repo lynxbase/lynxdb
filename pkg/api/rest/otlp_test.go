@@ -11,6 +11,10 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/config"
+	logscollector "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	commonpb "go.opentelemetry.io/proto/otlp/common/v1"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 func TestServer_OTLPIngest(t *testing.T) {
@@ -50,6 +54,40 @@ func TestServer_OTLPIngest(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status: got %d, want 200, body: %s", resp.StatusCode, string(body))
+	}
+}
+
+func TestServer_OTLPHTTPReceiver_Protobuf(t *testing.T) {
+	ingestCfg := config.DefaultConfig().Ingest
+	ingestCfg.OTLP.HTTPListen = "127.0.0.1:0"
+	srv, cleanup := startTestServerWithConfig(t, Config{Ingest: ingestCfg})
+	defer cleanup()
+
+	body, err := proto.Marshal(&logscollector.ExportLogsServiceRequest{
+		ResourceLogs: []*logspb.ResourceLogs{{
+			ScopeLogs: []*logspb.ScopeLogs{{
+				LogRecords: []*logspb.LogRecord{{
+					Body: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "canonical otlp"}},
+				}},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/v1/logs", srv.otlpHTTPReceiver.Addr()),
+		"application/x-protobuf",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: got %d, want 200, body: %s", resp.StatusCode, body)
 	}
 }
 

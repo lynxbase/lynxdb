@@ -49,6 +49,8 @@ var nonHotReloadableExactFields = map[string]struct{}{
 	"http.idle_timeout":             {},
 	"http.read_header_timeout":      {},
 	"http.rate_limit":               {},
+	"ingest.otlp.http_listen":       {},
+	"ingest.otlp.grpc_listen":       {},
 	"ingest.max_body_size":          {},
 	"ingest.fsync":                  {},
 	"ingest.dedup_enabled":          {},
