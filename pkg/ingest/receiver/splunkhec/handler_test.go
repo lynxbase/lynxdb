@@ -74,7 +74,15 @@ func TestHandler_EventSubmitError_UsesConfiguredResponder(t *testing.T) {
 
 func TestHandler_AckRoundTrip(t *testing.T) {
 	store := NewAckStore(10)
-	h := NewHandler(Config{Auth: AuthConfig{Enabled: true}, AckStore: store}, func(context.Context, []*event.Event) error { return nil })
+	var flushed bool
+	h := NewHandler(Config{
+		Auth:     AuthConfig{Enabled: true},
+		AckStore: store,
+		AckFlush: func(context.Context) error {
+			flushed = true
+			return nil
+		},
+	}, func(context.Context, []*event.Event) error { return nil })
 	eventRR := httptest.NewRecorder()
 	eventReq := httptest.NewRequest(http.MethodPost, "/services/collector/event", strings.NewReader(`{"event":"hello"}`))
 	eventReq.Header.Set("Authorization", "Splunk token")
@@ -92,6 +100,9 @@ func TestHandler_AckRoundTrip(t *testing.T) {
 	ackID, ok := eventBody["ackId"].(float64)
 	if !ok || ackID == 0 {
 		t.Fatalf("ackId = %#v, want positive number", eventBody["ackId"])
+	}
+	if !flushed {
+		t.Fatal("AckFlush was not called before ackId response")
 	}
 
 	ackRR := httptest.NewRecorder()
@@ -112,6 +123,36 @@ func TestHandler_AckRoundTrip(t *testing.T) {
 	}
 	if !ackBody.Acks["1"] {
 		t.Fatalf("acks[1] = false, want true")
+	}
+}
+
+func TestHandler_AckFlushError_UsesConfiguredResponder(t *testing.T) {
+	flushErr := errors.New("flush failed")
+	h := NewHandler(Config{
+		Auth:     AuthConfig{Enabled: true},
+		AckStore: NewAckStore(10),
+		AckFlush: func(context.Context) error {
+			return flushErr
+		},
+		RespondIngestError: func(w http.ResponseWriter, err error) {
+			if !errors.Is(err, flushErr) {
+				t.Fatalf("err = %v, want flushErr", err)
+			}
+			respond(w, http.StatusServiceUnavailable, "custom", 9)
+		},
+	}, func(context.Context, []*event.Event) error { return nil })
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/services/collector/event", strings.NewReader(`{"event":"hello"}`))
+	req.Header.Set("Authorization", "Splunk token")
+	req.Header.Set("X-Splunk-Request-Channel", "channel-a")
+
+	h.HandleEvent(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", rr.Code)
+	}
+	if acks := h.cfg.AckStore.Check("channel-a", []int{1}); acks[1] {
+		t.Fatal("ack was recorded after flush failure")
 	}
 }
 

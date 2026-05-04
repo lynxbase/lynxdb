@@ -176,6 +176,9 @@ func TestIntegration_HEC_AckMode_RoundTrip(t *testing.T) {
 	if !ok || ackID == 0 {
 		t.Fatalf("ackId = %#v, want positive number", eventBody["ackId"])
 	}
+	if srv.engine.SegmentCount() == 0 {
+		t.Fatal("expected HEC ack response after staging flush")
+	}
 
 	ackReq, _ := http.NewRequest(http.MethodPost,
 		fmt.Sprintf("http://%s/services/collector/ack", srv.Addr()),

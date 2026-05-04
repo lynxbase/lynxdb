@@ -785,8 +785,16 @@ func (s *Server) splunkHECHandler(requireSplunkAuth bool) *splunkhec.Handler {
 		MaxBatchSize:       ingestCfg.MaxBatchSize,
 		MaxLineBytes:       ingestCfg.MaxLineBytes,
 		AckStore:           s.splunkAckStore,
+		AckFlush:           s.flushStagedShipperEvents,
 		RespondIngestError: func(w http.ResponseWriter, err error) { respondIngestError(w, err) },
 	}, s.submitPipelineEvents)
+}
+
+func (s *Server) flushStagedShipperEvents(ctx context.Context) error {
+	if s.stagingBuffer == nil {
+		return nil
+	}
+	return s.stagingBuffer.Flush(ctx)
 }
 
 func (s *Server) handleSplunkHECEvent(w http.ResponseWriter, r *http.Request) {
