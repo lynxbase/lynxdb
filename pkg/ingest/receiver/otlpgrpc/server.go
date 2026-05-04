@@ -20,6 +20,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	_ "google.golang.org/grpc/encoding/gzip"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
 
@@ -34,8 +36,9 @@ type Metrics interface {
 }
 
 type Config struct {
-	Listen       string
-	MaxRecvBytes int
+	Listen         string
+	MaxRecvBytes   int
+	ObserveShipper func(ctx context.Context, userAgent, endpoint, remote string, eventCount int)
 }
 
 type Receiver struct {
@@ -157,9 +160,32 @@ func (s *logsService) Export(ctx context.Context, req *logscollector.ExportLogsS
 			}
 			return nil, status.Error(codes.Internal, err.Error())
 		}
+		if s.receiver.cfg.ObserveShipper != nil {
+			s.receiver.cfg.ObserveShipper(ctx, grpcUserAgent(ctx), "/v1/logs", grpcRemoteAddr(ctx), len(events))
+		}
 	}
 	s.receiver.recordRequest("logs", "protobuf", "success", 0)
 	return &logscollector.ExportLogsServiceResponse{}, nil
+}
+
+func grpcUserAgent(ctx context.Context) string {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return ""
+	}
+	values := md.Get("user-agent")
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func grpcRemoteAddr(ctx context.Context) string {
+	p, ok := peer.FromContext(ctx)
+	if !ok || p.Addr == nil {
+		return ""
+	}
+	return p.Addr.String()
 }
 
 type traceService struct {

@@ -27,6 +27,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/server"
+	shipperstats "github.com/lynxbase/lynxdb/pkg/server/shippers"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/storage/savedqueries"
 	"github.com/lynxbase/lynxdb/pkg/usecases"
@@ -60,6 +61,7 @@ type Server struct {
 	esHandshake        *eshttp.Handshake
 	esStubs            *eshttp.Stubs
 	promMetrics        *PrometheusMetrics
+	shipperRegistry    *shipperstats.Registry
 	levelVar           *slog.LevelVar
 	logger             *slog.Logger
 }
@@ -163,6 +165,7 @@ func NewServer(cfg Config) (*Server, error) {
 		shutdownTimeout: shutdownTimeout,
 		tailCfg:         cfg.Tail,
 		tlsConfig:       cfg.TLSConfig,
+		shipperRegistry: shipperstats.NewRegistry(shipperstats.DefaultRegistrySize),
 		levelVar:        cfg.LevelVar,
 		logger:          cfg.Logger,
 	}
@@ -207,6 +210,7 @@ func NewServer(cfg Config) (*Server, error) {
 					MaxCompressedBytes:   int64(cfg.Ingest.Limits.MaxCompressedBodyBytes),
 					MaxDecompressedBytes: int64(cfg.Ingest.Limits.MaxDecompressedBodyBytes),
 				},
+				ObserveShipper: s.observeShipperRequest,
 			},
 			func(ctx context.Context, events []*event.Event) error {
 				processed, err := ingestPipelineForConfig(s.currentIngestConfig()).Process(events)
@@ -226,8 +230,9 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.Ingest.OTLP.GRPCListen != "" {
 		otlpReceiver, err := otlpgrpc.New(
 			otlpgrpc.Config{
-				Listen:       cfg.Ingest.OTLP.GRPCListen,
-				MaxRecvBytes: int(cfg.Ingest.OTLP.GRPCMaxRecvBytes),
+				Listen:         cfg.Ingest.OTLP.GRPCListen,
+				MaxRecvBytes:   int(cfg.Ingest.OTLP.GRPCMaxRecvBytes),
+				ObserveShipper: s.observeShipperRequest,
 			},
 			func(ctx context.Context, events []*event.Event) error {
 				processed, err := ingestPipelineForConfig(s.currentIngestConfig()).Process(events)
@@ -430,6 +435,7 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// Unified status.
 	mux.HandleFunc("GET /api/v1/status", s.handleStatus)
+	mux.HandleFunc("GET /api/v1/shippers", s.handleListShippers)
 
 	// Auth management — only registered when auth is enabled, 404 otherwise.
 	if cfg.KeyStore != nil {
@@ -456,9 +462,10 @@ func NewServer(cfg Config) (*Server, error) {
 	idleTimeout := cfg.HTTP.IdleTimeout
 	idleTimeout = defaultIdleTimeout(idleTimeout)
 	// Build middleware chain (execution order, outer → inner):
-	// Recovery → RequestID → Logging → Auth → RateLimit → MaxBody → DualLimit → mux.
+	// Recovery → RequestID → Logging → Auth → RateLimit → MaxBody → DualLimit → ShipperFingerprint → mux.
 	// Auth runs before rate limiting so unauthenticated requests don't consume quota.
 	var handler http.Handler = mux
+	handler = ShipperFingerprintMiddleware(s.shipperRegistry, handler)
 	handler = limits.DualLimitMiddleware(limits.Config{
 		MaxCompressedBytes:   int64(cfg.Ingest.Limits.MaxCompressedBodyBytes),
 		MaxDecompressedBytes: int64(cfg.Ingest.Limits.MaxDecompressedBodyBytes),
@@ -674,12 +681,51 @@ func (s engineSink) Write(events []*event.Event) error {
 
 func (s *Server) submitShipperEvents(ctx context.Context, events []*event.Event) error {
 	if !s.currentIngestConfig().Staging.Enabled {
-		return s.engine.IngestContext(ctx, events)
+		if err := s.engine.IngestContext(ctx, events); err != nil {
+			return err
+		}
+		s.recordShipperEvents(ctx, len(events))
+		return nil
 	}
 	if s.stagingBuffer != nil {
-		return s.stagingBuffer.Add(ctx, events)
+		if err := s.stagingBuffer.Add(ctx, events); err != nil {
+			return err
+		}
+		s.recordShipperEvents(ctx, len(events))
+		return nil
 	}
-	return s.engine.IngestContext(ctx, events)
+	if err := s.engine.IngestContext(ctx, events); err != nil {
+		return err
+	}
+	s.recordShipperEvents(ctx, len(events))
+	return nil
+}
+
+func (s *Server) recordShipperEvents(ctx context.Context, count int) {
+	if s.shipperRegistry == nil {
+		return
+	}
+	if info, ok := shipperRequestInfo(ctx); ok {
+		s.shipperRegistry.Observe(info, count)
+	}
+}
+
+func (s *Server) observeShipperRequest(_ context.Context, userAgent, endpoint, remote string, count int) {
+	if s.shipperRegistry == nil || count <= 0 {
+		return
+	}
+	if endpoint == "/v1/logs" && shipperstats.DetectUserAgent(userAgent).Tool == "unknown" {
+		userAgent = "otelcol"
+	}
+	host, _, err := net.SplitHostPort(remote)
+	if err == nil {
+		remote = host
+	}
+	s.shipperRegistry.Observe(shipperstats.RequestInfo{
+		UserAgent: userAgent,
+		RemoteIP:  remote,
+		Endpoint:  endpoint,
+	}, count)
 }
 
 func (s *Server) submitPipelineEvents(ctx context.Context, events []*event.Event) error {

@@ -30,8 +30,9 @@ type Metrics interface {
 }
 
 type Config struct {
-	Listen string
-	Limits limits.Config
+	Listen         string
+	Limits         limits.Config
+	ObserveShipper func(ctx context.Context, userAgent, endpoint, remote string, eventCount int)
 }
 
 type Receiver struct {
@@ -140,6 +141,9 @@ func (r *Receiver) handleLogs(w http.ResponseWriter, req *http.Request) {
 			http.Error(w, err.Error(), http.StatusServiceUnavailable)
 			r.recordRequest("logs", encoding, "error", bytes)
 			return
+		}
+		if r.cfg.ObserveShipper != nil {
+			r.cfg.ObserveShipper(req.Context(), req.UserAgent(), req.URL.Path, req.RemoteAddr, len(events))
 		}
 	}
 	r.recordRequest("logs", encoding, "success", bytes)

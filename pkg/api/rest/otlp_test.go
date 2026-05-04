@@ -146,7 +146,13 @@ func TestServer_OTLPGRPCReceiver_Protobuf(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	conn, err := grpc.DialContext(ctx, srv.OTLPGRPCAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	conn, err := grpc.DialContext(
+		ctx,
+		srv.OTLPGRPCAddr(),
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithUserAgent("opentelemetry-collector-contrib/0.105.0"),
+		grpc.WithBlock(),
+	)
 	if err != nil {
 		t.Fatalf("DialContext: %v", err)
 	}
@@ -200,6 +206,7 @@ func TestServer_OTLPGRPCReceiver_GzipProtobuf(t *testing.T) {
 	if srv.engine.SegmentCount() == 0 {
 		t.Fatal("expected segments after gzip OTLP gRPC ingest")
 	}
+	assertShipperListed(t, srv, "otelcol", "", "/v1/logs", 1)
 }
 
 func TestServer_OTLPIngest_InvalidJSON(t *testing.T) {
