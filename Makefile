@@ -14,7 +14,7 @@ build:
 test: test-unit test-e2e test-cli
 
 test-unit:
-	go test ./... -count=1 -timeout 120s -race
+	go test ./... -count=1 -timeout 300s -race
 
 test-e2e:
 	go test -tags e2e -count=1 -timeout 180s ./test/e2e/

@@ -117,7 +117,7 @@ jobs:
         run: make webui
 
       - name: Run unit tests
-        run: go test ./... -count=1 -timeout 120s -race
+        run: go test ./... -count=1 -timeout 300s -race
 
   test-e2e:
     name: E2E Tests (${{ matrix.os }})

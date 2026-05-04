@@ -37,10 +37,11 @@ func StartLynxDB(t *testing.T) *TestRig {
 	t.Helper()
 
 	cfg := config.DefaultConfig()
-	cfg.Listen = "127.0.0.1:0"
+	listenHost := shipperListenHost()
+	cfg.Listen = listenHost + ":0"
 	cfg.DataDir = t.TempDir()
-	cfg.Ingest.OTLP.HTTPListen = "127.0.0.1:0"
-	cfg.Ingest.OTLP.GRPCListen = "127.0.0.1:0"
+	cfg.Ingest.OTLP.HTTPListen = listenHost + ":0"
+	cfg.Ingest.OTLP.GRPCListen = listenHost + ":0"
 	cfg.Storage.CompactionInterval = time.Hour
 	cfg.Storage.TieringInterval = time.Hour
 
@@ -87,7 +88,7 @@ func StartLynxDB(t *testing.T) *TestRig {
 	rig.OTLPPort = otlpPort
 	rig.OTLPGRPC = otlpGRPCPort
 	rig.Client = client.NewClient(
-		client.WithBaseURL("http://"+srv.Addr()),
+		client.WithBaseURL("http://127.0.0.1:"+fmt.Sprint(esPort)),
 		client.WithTimeout(60*time.Second),
 	)
 
@@ -100,6 +101,13 @@ func StartLynxDB(t *testing.T) *TestRig {
 		}
 	})
 	return rig
+}
+
+func shipperListenHost() string {
+	if runtime.GOOS == "linux" {
+		return "0.0.0.0"
+	}
+	return "127.0.0.1"
 }
 
 func ConfigureContainerNetworking(req *testcontainers.ContainerRequest) {
