@@ -94,6 +94,40 @@ func TestIntegration_HEC_CanonicalIngestsWithSplunkToken(t *testing.T) {
 	}
 }
 
+func TestIntegration_HEC_CompressedBodies_Decoded(t *testing.T) {
+	for _, encoding := range []string{"gzip", "zstd"} {
+		t.Run(encoding, func(t *testing.T) {
+			srv, cleanup := startHECTestServer(t)
+			defer cleanup()
+
+			body := []byte(`{"event":"hello compressed","index":"splunk-main"}`)
+			req, _ := http.NewRequest(http.MethodPost,
+				fmt.Sprintf("http://%s/services/collector/event", srv.Addr()),
+				encodeTestBody(t, encoding, body),
+			)
+			req.Header.Set("Authorization", "Splunk token")
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Content-Encoding", encoding)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				t.Fatalf("status = %d, want 200, body=%s", resp.StatusCode, body)
+			}
+			if err := srv.stagingBuffer.Flush(context.Background()); err != nil {
+				t.Fatalf("flush staging: %v", err)
+			}
+			if srv.engine.SegmentCount() == 0 {
+				t.Fatal("expected segment after compressed HEC ingest")
+			}
+		})
+	}
+}
+
 func TestIntegration_HEC_LegacyAlias_StillWorksWithoutSplunkToken(t *testing.T) {
 	srv, cleanup := startHECTestServer(t)
 	defer cleanup()

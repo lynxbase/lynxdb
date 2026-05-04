@@ -762,6 +762,46 @@ func TestESBulk_GzipCompressed(t *testing.T) {
 	}
 }
 
+func TestESBulk_ZstdCompressed(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	body := []byte(`{"index":{"_index":"logs"}}
+{"@timestamp":"2026-03-05T10:00:00Z","message":"zstd hello"}
+{"index":{"_index":"logs"}}
+{"@timestamp":"2026-03-05T10:01:00Z","message":"zstd world"}
+`)
+	req, err := http.NewRequest("POST",
+		fmt.Sprintf("http://%s/_bulk", srv.Addr()),
+		encodeTestBody(t, "zstd", body),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-ndjson")
+	req.Header.Set("Content-Encoding", "zstd")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d, body: %s", resp.StatusCode, b)
+	}
+
+	var result esBulkResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result.Errors {
+		t.Fatal("expected errors=false")
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("items: got %d, want 2", len(result.Items))
+	}
+}
+
 func TestESBulk_InvalidGzip(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

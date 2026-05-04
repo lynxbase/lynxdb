@@ -17,6 +17,7 @@ import (
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	grpcgzip "google.golang.org/grpc/encoding/gzip"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -94,6 +95,47 @@ func TestServer_OTLPHTTPReceiver_Protobuf(t *testing.T) {
 	}
 }
 
+func TestServer_OTLPHTTPReceiver_SnappyProtobuf(t *testing.T) {
+	ingestCfg := config.DefaultConfig().Ingest
+	ingestCfg.OTLP.HTTPListen = "127.0.0.1:0"
+	ingestCfg.OTLP.GRPCListen = ""
+	ingestCfg.Staging.Enabled = false
+	srv, cleanup := startTestServerWithConfig(t, Config{Ingest: ingestCfg})
+	defer cleanup()
+
+	body, err := proto.Marshal(&logscollector.ExportLogsServiceRequest{
+		ResourceLogs: []*logspb.ResourceLogs{{
+			ScopeLogs: []*logspb.ScopeLogs{{
+				LogRecords: []*logspb.LogRecord{{
+					Body: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "canonical otlp snappy"}},
+				}},
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	req, _ := http.NewRequest(http.MethodPost,
+		fmt.Sprintf("http://%s/v1/logs", srv.otlpHTTPReceiver.Addr()),
+		encodeTestBody(t, "snappy", body),
+	)
+	req.Header.Set("Content-Type", "application/x-protobuf")
+	req.Header.Set("Content-Encoding", "snappy")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: got %d, want 200, body: %s", resp.StatusCode, body)
+	}
+	if srv.engine.SegmentCount() == 0 {
+		t.Fatal("expected segments after snappy OTLP HTTP ingest")
+	}
+}
+
 func TestServer_OTLPGRPCReceiver_Protobuf(t *testing.T) {
 	ingestCfg := config.DefaultConfig().Ingest
 	ingestCfg.OTLP.HTTPListen = ""
@@ -124,6 +166,39 @@ func TestServer_OTLPGRPCReceiver_Protobuf(t *testing.T) {
 	}
 	if srv.engine.SegmentCount() == 0 {
 		t.Fatal("expected segments after OTLP gRPC ingest")
+	}
+}
+
+func TestServer_OTLPGRPCReceiver_GzipProtobuf(t *testing.T) {
+	ingestCfg := config.DefaultConfig().Ingest
+	ingestCfg.OTLP.HTTPListen = ""
+	ingestCfg.OTLP.GRPCListen = "127.0.0.1:0"
+	ingestCfg.Staging.Enabled = false
+	srv, cleanup := startTestServerWithConfig(t, Config{Ingest: ingestCfg})
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	conn, err := grpc.DialContext(ctx, srv.OTLPGRPCAddr(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithBlock())
+	if err != nil {
+		t.Fatalf("DialContext: %v", err)
+	}
+	defer conn.Close()
+
+	_, err = logscollector.NewLogsServiceClient(conn).Export(ctx, &logscollector.ExportLogsServiceRequest{
+		ResourceLogs: []*logspb.ResourceLogs{{
+			ScopeLogs: []*logspb.ScopeLogs{{
+				LogRecords: []*logspb.LogRecord{{
+					Body: &commonpb.AnyValue{Value: &commonpb.AnyValue_StringValue{StringValue: "canonical otlp grpc gzip"}},
+				}},
+			}},
+		}},
+	}, grpc.UseCompressor(grpcgzip.Name))
+	if err != nil {
+		t.Fatalf("Export: %v", err)
+	}
+	if srv.engine.SegmentCount() == 0 {
+		t.Fatal("expected segments after gzip OTLP gRPC ingest")
 	}
 }
 
