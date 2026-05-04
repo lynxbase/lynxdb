@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
 func TestDoctorShippers_AllHealthy(t *testing.T) {
@@ -33,5 +36,36 @@ func TestDoctorShippers_AllHealthy(t *testing.T) {
 		if !strings.Contains(stdout, want) {
 			t.Fatalf("doctor output missing %q:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestDoctorShippers_FilebeatVersionMismatchWarning(t *testing.T) {
+	report := buildShipperDoctorReport(nil, []client.ShipperObservation{
+		{Tool: "filebeat", Version: "8.15.0", Endpoint: "/_bulk", LastSeenAt: time.Now()},
+	}, shipperDoctorContext{ESAdvertisedVersion: "7.17.0"})
+
+	if len(report.Warnings) == 0 || !strings.Contains(strings.Join(report.Warnings, "\n"), "Filebeat 8.x") {
+		t.Fatalf("warnings = %#v, want Filebeat mismatch warning", report.Warnings)
+	}
+}
+
+func TestDoctorShippers_StagingPressureWarning(t *testing.T) {
+	report := buildShipperDoctorReport(nil, []client.ShipperObservation{
+		{Tool: "splunk-hec", Endpoint: "/services/collector/event", LastSeenAt: time.Now()},
+	}, shipperDoctorContext{
+		Metrics:         map[string]float64{"lynxdb_ingest_staging_bytes": 90},
+		StagingMaxBytes: 100,
+	})
+
+	if len(report.Warnings) == 0 || !strings.Contains(strings.Join(report.Warnings, "\n"), "staging buffer 90% full") {
+		t.Fatalf("warnings = %#v, want staging pressure warning", report.Warnings)
+	}
+}
+
+func TestDoctorShippers_TLSPlainHTTPDiagnosis(t *testing.T) {
+	err := formatShipperDoctorConnectError(fmt.Errorf("Get \"https://127.0.0.1:3100/metrics\": http: server gave HTTP response to HTTPS client"))
+
+	if !strings.Contains(err.Error(), "serving plain HTTP") {
+		t.Fatalf("error = %q, want plain HTTP diagnosis", err.Error())
 	}
 }
