@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -270,6 +271,52 @@ func (i *IngestConfig) validate() error {
 	if i.MaxLineBytes < 1024 {
 		return validationErr("ingest", "max_line_bytes", fmt.Sprintf("%d", i.MaxLineBytes), "must be at least 1024 bytes")
 	}
+	if i.Limits.MaxCompressedBodyBytes < 1*KB {
+		return validationErr("ingest", "limits.max_compressed_body_bytes", i.Limits.MaxCompressedBodyBytes.String(), "must be at least 1kb")
+	}
+	if i.Limits.MaxDecompressedBodyBytes < 1*KB {
+		return validationErr("ingest", "limits.max_decompressed_body_bytes", i.Limits.MaxDecompressedBodyBytes.String(), "must be at least 1kb")
+	}
+	if i.Limits.MaxDecompressedBodyBytes < i.Limits.MaxCompressedBodyBytes {
+		return validationErr("ingest", "limits.max_decompressed_body_bytes", i.Limits.MaxDecompressedBodyBytes.String(),
+			fmt.Sprintf("must be >= limits.max_compressed_body_bytes (%s)", i.Limits.MaxCompressedBodyBytes.String()))
+	}
+	if i.ESCompat.AdvertisedVersion != "" && !esVersionRE.MatchString(i.ESCompat.AdvertisedVersion) {
+		return validationErr("ingest", "es_compat.advertised_version", i.ESCompat.AdvertisedVersion, "must match X.Y.Z")
+	}
+	if i.ESCompat.Enabled && i.ESCompat.ClusterName == "" {
+		return validationErr("ingest", "es_compat.cluster_name", "", "must not be empty when es_compat is enabled")
+	}
+	if i.OTLP.HTTPListen != "" {
+		if _, _, err := net.SplitHostPort(i.OTLP.HTTPListen); err != nil {
+			return validationErr("ingest", "otlp.http_listen", i.OTLP.HTTPListen, "must be a valid host:port address")
+		}
+	}
+	if i.OTLP.GRPCListen != "" {
+		if _, _, err := net.SplitHostPort(i.OTLP.GRPCListen); err != nil {
+			return validationErr("ingest", "otlp.grpc_listen", i.OTLP.GRPCListen, "must be a valid host:port address")
+		}
+	}
+	if i.OTLP.GRPCMaxRecvBytes < 1*MB {
+		return validationErr("ingest", "otlp.grpc_max_recv_bytes", i.OTLP.GRPCMaxRecvBytes.String(), "must be at least 1mb")
+	}
+	if i.Staging.Enabled {
+		if i.Staging.MaxBytes < 1*KB {
+			return validationErr("ingest", "staging.max_bytes", i.Staging.MaxBytes.String(), "must be at least 1kb")
+		}
+		if i.Staging.MaxAge.Duration() <= 0 {
+			return validationErr("ingest", "staging.max_age", i.Staging.MaxAge.String(), "must be positive when staging is enabled")
+		}
+		if i.Staging.MaxInflightEvents < 1 {
+			return validationErr("ingest", "staging.max_inflight_events", fmt.Sprintf("%d", i.Staging.MaxInflightEvents), "must be at least 1")
+		}
+		if i.Staging.FlushRetries < 0 {
+			return validationErr("ingest", "staging.flush_retries", fmt.Sprintf("%d", i.Staging.FlushRetries), "must not be negative")
+		}
+		if i.Staging.FlushBackoffMax.Duration() < 0 {
+			return validationErr("ingest", "staging.flush_backoff_max", i.Staging.FlushBackoffMax.String(), "must not be negative")
+		}
+	}
 
 	switch i.Mode {
 	case "", "full", "lightweight":
@@ -284,6 +331,8 @@ func (i *IngestConfig) validate() error {
 
 	return nil
 }
+
+var esVersionRE = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
 
 func (s *SyslogConfig) validate() error {
 	if s.UDP != "" {

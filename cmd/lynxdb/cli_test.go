@@ -42,6 +42,7 @@ func resetAllFlags(t *testing.T) {
 	flagInitDataDir = ""
 	flagInitRetention = ""
 	flagInitNoInteractive = false
+	shipperConfigRemote = ""
 
 	// Reset root persistent flags.
 	rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
@@ -221,7 +222,15 @@ func newTestServer(t *testing.T) string {
 func newTestServerWithDisk(t *testing.T) string {
 	t.Helper()
 
-	dataDir := t.TempDir()
+	dataDir, err := os.MkdirTemp("", "lynxdb-test-*")
+	if err != nil {
+		t.Fatalf("create temp data dir: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := removeAllWithRetry(dataDir, 2*time.Second); err != nil {
+			t.Fatalf("remove temp data dir %s: %v", dataDir, err)
+		}
+	})
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	storageCfg := config.DefaultConfig().Storage
@@ -284,6 +293,28 @@ func newTestServerWithDisk(t *testing.T) string {
 	})
 
 	return baseURL
+}
+
+func removeAllWithRetry(path string, maxWait time.Duration) error {
+	deadline := time.Now().Add(maxWait)
+	var lastErr error
+
+	for {
+		if err := os.RemoveAll(path); err != nil {
+			lastErr = err
+		} else if _, err := os.Stat(path); os.IsNotExist(err) {
+			return nil
+		} else if err != nil {
+			lastErr = err
+		} else {
+			lastErr = fmt.Errorf("path still exists")
+		}
+
+		if time.Now().After(deadline) {
+			return lastErr
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
 }
 
 // ingestTestData reads a file and POSTs its content to the server's raw ingest

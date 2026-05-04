@@ -32,8 +32,9 @@ func startTestServer(t *testing.T) (*Server, func()) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go srv.Start(ctx)
-	srv.WaitReady()
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+	waitTestServerReady(t, srv, errCh)
 
 	return srv, func() {
 		cancel()
@@ -54,26 +55,39 @@ func startTestServerWithConfig(t *testing.T, cfg Config) (*Server, func()) {
 	}
 
 	srv, err := NewServer(Config{
-		Addr:    "127.0.0.1:0",
-		DataDir: cfg.DataDir,
-		Storage: cfg.Storage,
-		Logger:  logger,
-		Query:   queryCfg,
-		Ingest:  cfg.Ingest,
-		Server:  cfg.Server,
-		Views:   cfg.Views,
+		Addr:          "127.0.0.1:0",
+		DataDir:       cfg.DataDir,
+		RuntimeConfig: cfg.RuntimeConfig,
+		Storage:       cfg.Storage,
+		Logger:        logger,
+		Query:         queryCfg,
+		Ingest:        cfg.Ingest,
+		Server:        cfg.Server,
+		Views:         cfg.Views,
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go srv.Start(ctx)
-	srv.WaitReady()
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+	waitTestServerReady(t, srv, errCh)
 
 	return srv, func() {
 		cancel()
 		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+func waitTestServerReady(t *testing.T, srv *Server, errCh <-chan error) {
+	t.Helper()
+	select {
+	case <-srv.ready:
+	case err := <-errCh:
+		t.Fatalf("server failed before ready: %v", err)
+	case <-time.After(30 * time.Second):
+		t.Fatal("server did not become ready within 30s")
 	}
 }
 

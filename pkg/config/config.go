@@ -208,9 +208,14 @@ type QueryConfig struct {
 
 // IngestConfig holds ingestion parameters.
 type IngestConfig struct {
-	MaxBodySize  ByteSize `yaml:"max_body_size"  json:"max_body_size"`
-	MaxBatchSize int      `yaml:"max_batch_size" json:"max_batch_size"`
-	MaxLineBytes int      `yaml:"max_line_bytes" json:"max_line_bytes"`
+	MaxBodySize  ByteSize            `yaml:"max_body_size"  json:"max_body_size"`
+	MaxBatchSize int                 `yaml:"max_batch_size" json:"max_batch_size"`
+	MaxLineBytes int                 `yaml:"max_line_bytes" json:"max_line_bytes"`
+	ESCompat     ESCompatConfig      `yaml:"es_compat" json:"es_compat"`
+	OTLP         OTLPConfig          `yaml:"otlp" json:"otlp"`
+	SplunkHEC    SplunkHECConfig     `yaml:"splunk_hec" json:"splunk_hec"`
+	Limits       IngestLimitsConfig  `yaml:"limits" json:"limits"`
+	Staging      IngestStagingConfig `yaml:"staging" json:"staging"`
 
 	// Mode controls how much parsing happens at ingest time.
 	// "full" (default): extract all JSON fields into columns.
@@ -237,6 +242,38 @@ type IngestConfig struct {
 	// longer window but use more memory (~16 bytes per entry).
 	// Default: 100,000.
 	DedupCapacity int `yaml:"dedup_capacity" json:"dedup_capacity"`
+}
+
+type IngestLimitsConfig struct {
+	MaxCompressedBodyBytes   ByteSize `yaml:"max_compressed_body_bytes" json:"max_compressed_body_bytes"`
+	MaxDecompressedBodyBytes ByteSize `yaml:"max_decompressed_body_bytes" json:"max_decompressed_body_bytes"`
+}
+
+type ESCompatConfig struct {
+	Enabled                 bool   `yaml:"enabled" json:"enabled"`
+	AdvertisedVersion       string `yaml:"advertised_version" json:"advertised_version"`
+	ClusterName             string `yaml:"cluster_name" json:"cluster_name"`
+	StripLogstashDateSuffix bool   `yaml:"strip_logstash_date_suffix" json:"strip_logstash_date_suffix"`
+}
+
+type OTLPConfig struct {
+	HTTPListen       string   `yaml:"http_listen" json:"http_listen"`
+	GRPCListen       string   `yaml:"grpc_listen" json:"grpc_listen"`
+	GRPCMaxRecvBytes ByteSize `yaml:"grpc_max_recv_bytes" json:"grpc_max_recv_bytes"`
+}
+
+type SplunkHECConfig struct {
+	Enabled      bool `yaml:"enabled" json:"enabled"`
+	RequireToken bool `yaml:"require_token" json:"require_token"`
+}
+
+type IngestStagingConfig struct {
+	Enabled           bool     `yaml:"enabled" json:"enabled"`
+	MaxBytes          ByteSize `yaml:"max_bytes" json:"max_bytes"`
+	MaxAge            Duration `yaml:"max_age" json:"max_age"`
+	MaxInflightEvents int      `yaml:"max_inflight_events" json:"max_inflight_events"`
+	FlushRetries      int      `yaml:"flush_retries" json:"flush_retries"`
+	FlushBackoffMax   Duration `yaml:"flush_backoff_max" json:"flush_backoff_max"`
 }
 
 // SyslogConfig configures the native syslog TCP/UDP receiver.
@@ -420,6 +457,33 @@ func DefaultConfig() *Config {
 			MaxBatchSize:  1000,
 			MaxLineBytes:  1 << 20, // 1 MB
 			DedupCapacity: 100_000,
+			ESCompat: ESCompatConfig{
+				Enabled:                 true,
+				AdvertisedVersion:       "8.15.0",
+				ClusterName:             "lynxdb",
+				StripLogstashDateSuffix: true,
+			},
+			OTLP: OTLPConfig{
+				HTTPListen:       "0.0.0.0:4318",
+				GRPCListen:       "",
+				GRPCMaxRecvBytes: 16 * MB,
+			},
+			SplunkHEC: SplunkHECConfig{
+				Enabled:      true,
+				RequireToken: false,
+			},
+			Limits: IngestLimitsConfig{
+				MaxCompressedBodyBytes:   32 * MB,
+				MaxDecompressedBodyBytes: 256 * MB,
+			},
+			Staging: IngestStagingConfig{
+				Enabled:           true,
+				MaxBytes:          64 * MB,
+				MaxAge:            Duration(5 * time.Second),
+				MaxInflightEvents: 1_000_000,
+				FlushRetries:      3,
+				FlushBackoffMax:   Duration(5 * time.Second),
+			},
 		},
 
 		HTTP: HTTPConfig{

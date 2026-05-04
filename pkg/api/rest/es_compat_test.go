@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 func postESBulk(t *testing.T, addr, body string) *http.Response {
@@ -81,6 +83,75 @@ func TestESBulk_BasicIndex(t *testing.T) {
 	n := queryEventCount(t, srv.Addr(), `{"q":"FROM main"}`)
 	if n < 2 {
 		t.Fatalf("expected at least 2 events, got %d", n)
+	}
+}
+
+func TestESBulk_UnprefixedRoute(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/_bulk", srv.Addr()),
+		"application/x-ndjson",
+		strings.NewReader("{\"index\":{\"_index\":\"logs\"}}\n{\"message\":\"drop in\"}\n"),
+	)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	result := decodeESBulkResponse(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	if result.Errors || len(result.Items) != 1 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if result.Items[0].Index.Index != "logs" {
+		t.Fatalf("_index = %q, want logs", result.Items[0].Index.Index)
+	}
+}
+
+func TestESBulk_PathIndexFallback(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/path-index/_bulk", srv.Addr()),
+		"application/x-ndjson",
+		strings.NewReader("{\"index\":{}}\n{\"message\":\"from path\"}\n"),
+	)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	result := decodeESBulkResponse(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	if result.Items[0].Index.Index != "path-index" {
+		t.Fatalf("_index = %q, want path-index", result.Items[0].Index.Index)
+	}
+}
+
+func TestESBulk_DataStreamRouteUsesPathName(t *testing.T) {
+	ingestCfg := config.DefaultConfig().Ingest
+	ingestCfg.OTLP.HTTPListen = ""
+	ingestCfg.OTLP.GRPCListen = ""
+	srv, cleanup := startTestServerWithConfig(t, Config{Ingest: ingestCfg})
+	defer cleanup()
+
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/_data_stream/logs-generic-default/_bulk", srv.Addr()),
+		"application/x-ndjson",
+		strings.NewReader("{\"index\":{\"_index\":\"ignored-meta\"}}\n{\"message\":\"from data stream\"}\n"),
+	)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	result := decodeESBulkResponse(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	if result.Items[0].Index.Index != "logs-generic-default" {
+		t.Fatalf("_index = %q, want logs-generic-default", result.Items[0].Index.Index)
 	}
 }
 
@@ -313,6 +384,35 @@ func TestESBulk_IndexMapping(t *testing.T) {
 	n := queryEventCount(t, srv.Addr(), `{"q":"FROM main"}`)
 	if n < 1 {
 		t.Fatal("expected at least 1 event")
+	}
+}
+
+func TestESBulk_LogstashFormat_DateStripped(t *testing.T) {
+	ev := esDocToEventWithMapping(
+		map[string]interface{}{"message": "logstash format"},
+		"fluent-bit-2026.05.04",
+		esFieldMapping{TimeField: "@timestamp", StripLogstashDateSuffix: true},
+	)
+	if ev.Source != "fluent-bit" {
+		t.Fatalf("Source = %q, want fluent-bit", ev.Source)
+	}
+}
+
+func TestESBulk_LogstashFormat_NoStripWhenDisabled(t *testing.T) {
+	ev := esDocToEventWithMapping(
+		map[string]interface{}{"message": "logstash format"},
+		"fluent-bit-2026.05.04",
+		esFieldMapping{TimeField: "@timestamp"},
+	)
+	if ev.Source != "fluent-bit-2026.05.04" {
+		t.Fatalf("Source = %q, want fluent-bit-2026.05.04", ev.Source)
+	}
+}
+
+func TestESBulk_LogstashFormat_NonDateSuffixUnchanged(t *testing.T) {
+	got := stripLogstashDateSuffix("fluent-bit-2026.99")
+	if got != "fluent-bit-2026.99" {
+		t.Fatalf("stripLogstashDateSuffix = %q, want original", got)
 	}
 }
 
@@ -550,14 +650,17 @@ func TestESClusterInfo_Basic(t *testing.T) {
 
 	var result esClusterInfoResponse
 	json.NewDecoder(resp.Body).Decode(&result)
-	if result.Name != "lynxdb" {
+	if !strings.HasPrefix(result.Name, "lynxdb-") {
 		t.Fatalf("name: %q", result.Name)
 	}
 	if result.ClusterName != "lynxdb" {
 		t.Fatalf("cluster_name: %q", result.ClusterName)
 	}
-	if result.Version.Number != "8.11.0" {
+	if result.Version.Number != "8.15.0" {
 		t.Fatalf("version.number: %q", result.Version.Number)
+	}
+	if result.Version.MinimumWireCompatibilityVersion != "7.17.0" {
+		t.Fatalf("minimum_wire_compatibility_version: %q", result.Version.MinimumWireCompatibilityVersion)
 	}
 }
 
@@ -577,8 +680,58 @@ func TestESClusterInfo_NoTrailingSlash(t *testing.T) {
 
 	var result esClusterInfoResponse
 	json.NewDecoder(resp.Body).Decode(&result)
-	if result.Name != "lynxdb" {
+	if !strings.HasPrefix(result.Name, "lynxdb-") {
 		t.Fatalf("name: %q", result.Name)
+	}
+}
+
+func TestESClusterInfo_UnprefixedRoot(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/", srv.Addr()))
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("X-Elastic-Product"); got != "Elasticsearch" {
+		t.Fatalf("X-Elastic-Product: got %q, want Elasticsearch", got)
+	}
+	var result esClusterInfoResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result.Version.Number != "8.15.0" {
+		t.Fatalf("version.number: %q", result.Version.Number)
+	}
+}
+
+func TestESClusterInfo_UnprefixedHead(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	req, err := http.NewRequest(http.MethodHead, fmt.Sprintf("http://%s/", srv.Addr()), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("HEAD: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	if resp.ContentLength > 0 {
+		t.Fatalf("content length = %d, want no body", resp.ContentLength)
+	}
+	if got := resp.Header.Get("X-Elastic-Product"); got != "Elasticsearch" {
+		t.Fatalf("X-Elastic-Product: got %q, want Elasticsearch", got)
 	}
 }
 
@@ -662,6 +815,46 @@ func TestESBulk_GzipCompressed(t *testing.T) {
 	}
 }
 
+func TestESBulk_ZstdCompressed(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	body := []byte(`{"index":{"_index":"logs"}}
+{"@timestamp":"2026-03-05T10:00:00Z","message":"zstd hello"}
+{"index":{"_index":"logs"}}
+{"@timestamp":"2026-03-05T10:01:00Z","message":"zstd world"}
+`)
+	req, err := http.NewRequest("POST",
+		fmt.Sprintf("http://%s/_bulk", srv.Addr()),
+		encodeTestBody(t, "zstd", body),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-ndjson")
+	req.Header.Set("Content-Encoding", "zstd")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d, body: %s", resp.StatusCode, b)
+	}
+
+	var result esBulkResponse
+	json.NewDecoder(resp.Body).Decode(&result)
+	if result.Errors {
+		t.Fatal("expected errors=false")
+	}
+	if len(result.Items) != 2 {
+		t.Fatalf("items: got %d, want 2", len(result.Items))
+	}
+}
+
 func TestESBulk_InvalidGzip(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
@@ -693,14 +886,14 @@ func TestESStub_ILMPolicy(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotImplemented)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotFound)
 	}
 
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
-	if result["error"] == "" {
-		t.Fatalf("expected error payload, got %v", result)
+	if len(result) != 0 {
+		t.Fatalf("expected empty object, got %v", result)
 	}
 
 	if h := resp.Header.Get("X-Elastic-Product"); h != "Elasticsearch" {
@@ -718,8 +911,74 @@ func TestESStub_IndexTemplate(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotImplemented)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if templates, ok := result["index_templates"].([]interface{}); !ok || len(templates) != 0 {
+		t.Fatalf("index_templates = %#v, want empty array", result["index_templates"])
+	}
+}
+
+func TestESStub_ExpandedProbeRoutes(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	tests := []struct {
+		method string
+		path   string
+		status int
+	}{
+		{http.MethodGet, "/_cluster/health", http.StatusOK},
+		{http.MethodGet, "/_search", http.StatusOK},
+		{http.MethodGet, "/_cat/indices", http.StatusOK},
+		{http.MethodPut, "/_data_stream/logs-generic-default", http.StatusOK},
+		{http.MethodHead, "/logs-generic-default", http.StatusOK},
+		{http.MethodPost, "/_security/user/_authenticate", http.StatusOK},
+		{http.MethodGet, "/api/v1/es/_cluster/health", http.StatusOK},
+		{http.MethodHead, "/api/v1/es/logs-generic-default", http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			req, _ := http.NewRequest(tt.method, fmt.Sprintf("http://%s%s", srv.Addr(), tt.path), nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tt.status {
+				t.Fatalf("status = %d, want %d", resp.StatusCode, tt.status)
+			}
+			if got := resp.Header.Get("X-Elastic-Product"); got != "Elasticsearch" {
+				t.Fatalf("X-Elastic-Product = %q", got)
+			}
+		})
+	}
+}
+
+func TestESStub_IndexHeadProbe_DoesNotShadowTopLevelRoutes(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	for _, path := range []string{"/health", "/metrics"} {
+		t.Run(path, func(t *testing.T) {
+			req, _ := http.NewRequest(http.MethodHead, fmt.Sprintf("http://%s%s", srv.Addr(), path), nil)
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want 200", resp.StatusCode)
+			}
+			if got := resp.Header.Get("X-Elastic-Product"); got != "" {
+				t.Fatalf("X-Elastic-Product = %q, want empty", got)
+			}
+		})
 	}
 }
 
@@ -733,8 +992,93 @@ func TestESStub_IngestPipeline(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotImplemented)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
+func TestESStub_License(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/_license", srv.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	license := result["license"].(map[string]interface{})
+	if license["status"] != "active" || license["type"] != "basic" {
+		t.Fatalf("license = %#v, want active basic", license)
+	}
+}
+
+func TestESStub_IndexTemplatePut(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	req, _ := http.NewRequest(http.MethodPut,
+		fmt.Sprintf("http://%s/_index_template/filebeat", srv.Addr()),
+		strings.NewReader(`{"index_patterns":["filebeat-*"]}`),
+	)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if result["acknowledged"] != true {
+		t.Fatalf("acknowledged = %#v, want true", result["acknowledged"])
+	}
+}
+
+func TestESBulk_DisabledByReload_Returns503(t *testing.T) {
+	runtimeCfg := config.DefaultConfig()
+	srv, cleanup := startTestServerWithConfig(t, Config{
+		RuntimeConfig: runtimeCfg,
+		Ingest:        runtimeCfg.Ingest,
+	})
+	defer cleanup()
+
+	updated := *runtimeCfg
+	updated.Ingest.ESCompat.Enabled = false
+	if restart, err := srv.ReloadConfig(&updated); err != nil {
+		t.Fatalf("ReloadConfig: %v", err)
+	} else if len(restart) != 0 {
+		t.Fatalf("restartRequired = %v, want none", restart)
+	}
+
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s/_bulk", srv.Addr()),
+		"application/x-ndjson",
+		strings.NewReader(`{"index":{"_index":"logs"}}
+{"message":"hello"}
+`),
+	)
+	if err != nil {
+		t.Fatalf("POST _bulk: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Retry-After"); got != "5" {
+		t.Fatalf("Retry-After = %q, want 5", got)
 	}
 }
 

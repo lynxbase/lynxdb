@@ -126,6 +126,34 @@ func TestValidateIngest(t *testing.T) {
 	}{
 		{"small body size", func(i *IngestConfig) { i.MaxBodySize = 100 }, "ingest.max_body_size"},
 		{"zero batch size", func(i *IngestConfig) { i.MaxBatchSize = 0 }, "ingest.max_batch_size"},
+		{"bad advertised version", func(i *IngestConfig) {
+			i.ESCompat.AdvertisedVersion = "8.x"
+		}, "ingest.es_compat.advertised_version"},
+		{"empty enabled cluster name", func(i *IngestConfig) {
+			i.ESCompat.ClusterName = ""
+		}, "ingest.es_compat.cluster_name"},
+		{"bad otlp http listen", func(i *IngestConfig) {
+			i.OTLP.HTTPListen = "not-an-addr"
+		}, "ingest.otlp.http_listen"},
+		{"bad otlp grpc listen", func(i *IngestConfig) {
+			i.OTLP.GRPCListen = "not-an-addr"
+		}, "ingest.otlp.grpc_listen"},
+		{"small otlp grpc max recv", func(i *IngestConfig) {
+			i.OTLP.GRPCMaxRecvBytes = 512 * KB
+		}, "ingest.otlp.grpc_max_recv_bytes"},
+		{"small compressed body limit", func(i *IngestConfig) {
+			i.Limits.MaxCompressedBodyBytes = 100
+		}, "ingest.limits.max_compressed_body_bytes"},
+		{"decompressed below compressed", func(i *IngestConfig) {
+			i.Limits.MaxCompressedBodyBytes = 2 * MB
+			i.Limits.MaxDecompressedBodyBytes = 1 * MB
+		}, "must be >= limits.max_compressed_body_bytes"},
+		{"staging zero age", func(i *IngestConfig) {
+			i.Staging.MaxAge = 0
+		}, "ingest.staging.max_age"},
+		{"staging zero events", func(i *IngestConfig) {
+			i.Staging.MaxInflightEvents = 0
+		}, "ingest.staging.max_inflight_events"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

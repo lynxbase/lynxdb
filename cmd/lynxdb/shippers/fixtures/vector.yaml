@@ -1,0 +1,15 @@
+# Vector configuration for LynxDB.
+sources:
+  files:
+    type: file
+    include:
+      - /var/log/*.log
+
+sinks:
+  lynxdb:
+    type: elasticsearch
+    inputs: [files]
+    endpoints: ["{{ .Remote }}"]
+    compression: zstd
+    mode: bulk
+# Vector zstd compression is accepted by LynxDB's ES bulk endpoint.

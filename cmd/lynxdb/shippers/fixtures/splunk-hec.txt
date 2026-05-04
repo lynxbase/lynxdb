@@ -1,0 +1,6 @@
+# Splunk HEC payload example for LynxDB.
+# LynxDB P1 accepts any non-empty Splunk token by default.
+curl -sS "{{ .Remote }}/services/collector/event" \
+  -H "Authorization: Splunk changeme" \
+  -H "Content-Type: application/json" \
+  --data-binary '{"event":"hello from splunk hec","source":"manual","sourcetype":"text"}'

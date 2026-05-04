@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/ingest/limits"
 	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 )
 
@@ -28,8 +30,9 @@ func setESHeaders(w http.ResponseWriter) {
 // esFieldMapping controls how ES document fields map to LynxDB event fields.
 // Parsed once per request from URL query parameters.
 type esFieldMapping struct {
-	MsgField  string // If non-empty, extract this doc field as _raw instead of full JSON.
-	TimeField string // Which doc field to use for _time (default: "@timestamp").
+	MsgField                string // If non-empty, extract this doc field as _raw instead of full JSON.
+	TimeField               string // Which doc field to use for _time (default: "@timestamp").
+	StripLogstashDateSuffix bool
 }
 
 // parseFieldMapping parses optional VL-style query parameters from the request URL.
@@ -128,11 +131,15 @@ type esClusterInfoResponse struct {
 }
 
 type esVersionInfo struct {
-	Number        string `json:"number"`
-	BuildFlavor   string `json:"build_flavor"`
-	BuildType     string `json:"build_type"`
-	BuildHash     string `json:"build_hash"`
-	LuceneVersion string `json:"lucene_version"`
+	Number                           string `json:"number"`
+	BuildFlavor                      string `json:"build_flavor"`
+	BuildType                        string `json:"build_type"`
+	BuildHash                        string `json:"build_hash"`
+	BuildDate                        string `json:"build_date"`
+	BuildSnapshot                    bool   `json:"build_snapshot"`
+	LuceneVersion                    string `json:"lucene_version"`
+	MinimumWireCompatibilityVersion  string `json:"minimum_wire_compatibility_version"`
+	MinimumIndexCompatibilityVersion string `json:"minimum_index_compatibility_version"`
 }
 
 func generateESDocID() string {
@@ -195,6 +202,9 @@ func esDocToEventWithMapping(doc map[string]interface{}, indexName string, fm es
 
 	// Map _index to source.
 	if indexName != "" {
+		if fm.StripLogstashDateSuffix {
+			indexName = stripLogstashDateSuffix(indexName)
+		}
 		e.Source = indexName
 	}
 
@@ -245,6 +255,29 @@ func esDocToEventWithMapping(doc map[string]interface{}, indexName string, fm es
 	return e
 }
 
+func stripLogstashDateSuffix(indexName string) string {
+	if len(indexName) < len("-2006.01.02")+1 {
+		return indexName
+	}
+	suffixStart := len(indexName) - len("-2006.01.02")
+	if indexName[suffixStart] != '-' {
+		return indexName
+	}
+	for i, ch := range indexName[suffixStart+1:] {
+		switch i {
+		case 4, 7:
+			if ch != '.' {
+				return indexName
+			}
+		default:
+			if ch < '0' || ch > '9' {
+				return indexName
+			}
+		}
+	}
+	return indexName[:suffixStart]
+}
+
 // esPendingItem tracks a parsed bulk item awaiting commit confirmation (H4 fix).
 // ItemIdx is the pre-allocated slot in the items slice, preserving request ordering
 // even when error items and success items are interleaved.
@@ -257,18 +290,44 @@ type esPendingItem struct {
 
 func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 	setESHeaders(w)
+	if !esCompatEnabled(s.currentIngestConfig()) {
+		w.Header().Set("Retry-After", "5")
+		respondJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":   "unavailable",
+				"reason": "Elasticsearch compatibility ingest is disabled",
+			},
+			"status": http.StatusServiceUnavailable,
+		})
+		return
+	}
 
 	if !s.requireScope(w, r, auth.ScopeIngest) {
 		return
 	}
+	contentType := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
+	if contentType != "" && contentType != "application/x-ndjson" && contentType != "application/json" {
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":   "content_type_exception",
+				"reason": "bulk endpoint requires application/x-ndjson or application/json",
+			},
+			"status": http.StatusBadRequest,
+		})
+		return
+	}
 
 	start := time.Now()
+	metricResult := "error"
+	defer func() {
+		if s.promMetrics != nil {
+			s.promMetrics.RecordESBulkRequest(metricResult, time.Since(start).Seconds())
+		}
+	}()
 
 	ingestCfg := s.currentIngestConfig()
-	batchSize := ingestCfg.MaxBatchSize
-	if batchSize == 0 {
-		batchSize = 1000
-	}
+	pathIndex := r.PathValue("index")
+	dataStreamName := r.PathValue("data_stream")
 
 	// Decompress gzip body if Content-Encoding: gzip (Filebeat default).
 	body, err := decompressBody(r)
@@ -286,6 +345,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 
 	// Parse optional field mapping from query parameters.
 	fm := parseFieldMapping(r)
+	fm.StripLogstashDateSuffix = ingestCfg.ESCompat.StripLogstashDateSuffix || ingestCfg.MaxBodySize == 0
 
 	scanner := bufio.NewScanner(body)
 	bufp := scannerBufPool.Get().(*[]byte)
@@ -298,30 +358,39 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 
 	pipe := ingestPipelineForConfig(ingestCfg)
 	var items []esBulkItemResult
-	batch := make([]*event.Event, 0, batchSize)
+	batch := make([]*event.Event, 0)
 	// H4 fix: track pending items per batch; only mark success AFTER commit.
 	// Each pending item holds its slot index in items to preserve request ordering.
-	pending := make([]esPendingItem, 0, batchSize)
+	pending := make([]esPendingItem, 0)
 	hasErrors := false
 
-	// commitBatch processes the current batch and fills in pending item slots.
-	commitBatch := func() {
+	// commitBatch processes the full request batch and fills pending item slots.
+	commitBatch := func() bool {
 		if len(batch) == 0 {
-			return
+			return true
 		}
 		if err := processESBatch(r.Context(), pipe, batch, s); err != nil {
+			if respondIngestError(w, err) {
+				for _, p := range pending {
+					s.recordESBulkItem(p.action, "rejected")
+				}
+				return false
+			}
 			for _, p := range pending {
 				items[p.itemIdx] = makeErrorItem(p.action, p.index, p.docID,
 					http.StatusInternalServerError, "ingest_exception", err.Error())
+				s.recordESBulkItem(p.action, "rejected")
 			}
 			hasErrors = true
 		} else {
 			for _, p := range pending {
 				items[p.itemIdx] = makeSuccessItem(p.action, p.index, p.docID)
+				s.recordESBulkItem(p.action, "ok")
 			}
 		}
 		batch = batch[:0]
 		pending = pending[:0]
+		return true
 	}
 
 	for scanner.Scan() {
@@ -334,6 +403,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal([]byte(actionLine), &action); err != nil {
 			items = append(items, makeErrorItem("index", "", "", http.StatusBadRequest,
 				"mapper_parsing_exception", fmt.Sprintf("malformed action line: %v", err)))
+			s.recordESBulkItem("index", "rejected")
 			hasErrors = true
 			// Try to consume data line.
 			scanner.Scan()
@@ -345,6 +415,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 		if meta == nil {
 			items = append(items, makeErrorItem("index", "", "", http.StatusBadRequest,
 				"mapper_parsing_exception", "no recognized action"))
+			s.recordESBulkItem("index", "rejected")
 			hasErrors = true
 			scanner.Scan()
 
@@ -355,6 +426,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 		case "update":
 			items = append(items, makeErrorItem("index", meta.Index, meta.ID, http.StatusBadRequest,
 				"action_request_validation_exception", "update action is not supported"))
+			s.recordESBulkItem("update", "rejected")
 			hasErrors = true
 			scanner.Scan() // consume data line
 
@@ -362,6 +434,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 		case "delete":
 			items = append(items, makeErrorItem("index", meta.Index, meta.ID, http.StatusBadRequest,
 				"action_request_validation_exception", "delete action is not supported"))
+			s.recordESBulkItem("delete", "rejected")
 			hasErrors = true
 			continue
 		}
@@ -370,6 +443,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 		if !scanner.Scan() {
 			items = append(items, makeErrorItem(actionName, meta.Index, meta.ID, http.StatusBadRequest,
 				"mapper_parsing_exception", "missing data line after action"))
+			s.recordESBulkItem(actionName, "rejected")
 			hasErrors = true
 
 			continue
@@ -380,12 +454,23 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 		if err := json.Unmarshal([]byte(dataLine), &doc); err != nil {
 			items = append(items, makeErrorItem(actionName, meta.Index, meta.ID, http.StatusBadRequest,
 				"mapper_parsing_exception", fmt.Sprintf("invalid data JSON: %v", err)))
+			s.recordESBulkItem(actionName, "rejected")
 			hasErrors = true
 
 			continue
 		}
 
-		ev := esDocToEventWithMapping(doc, meta.Index, fm)
+		indexName := dataStreamName
+		if indexName == "" {
+			indexName = meta.Index
+		}
+		if indexName == "" {
+			indexName = pathIndex
+		}
+		if indexName == "" {
+			indexName = "default"
+		}
+		ev := esDocToEventWithMapping(doc, indexName, fm)
 		batch = append(batch, ev)
 
 		docID := meta.ID
@@ -395,20 +480,43 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 		// H4 fix: reserve a slot in items now (preserves request order),
 		// but fill it in only after commit succeeds/fails.
 		slotIdx := len(items)
-		items = append(items, esBulkItemResult{}) // placeholder
-		pending = append(pending, esPendingItem{action: actionName, index: meta.Index, docID: docID, itemIdx: slotIdx})
-
-		if len(batch) >= batchSize {
-			commitBatch()
+		items = append(items, esBulkItemResult{})
+		pending = append(pending, esPendingItem{action: actionName, index: indexName, docID: docID, itemIdx: slotIdx})
+	}
+	if err := scanner.Err(); err != nil {
+		if limits.IsTooLarge(err) {
+			respondJSON(w, http.StatusRequestEntityTooLarge, map[string]interface{}{
+				"error": map[string]interface{}{
+					"type":   "request_entity_too_large",
+					"reason": err.Error(),
+				},
+				"status": http.StatusRequestEntityTooLarge,
+			})
+			return
 		}
+		respondJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":   "mapper_parsing_exception",
+				"reason": err.Error(),
+			},
+			"status": http.StatusBadRequest,
+		})
+		return
 	}
 
 	// Flush remaining batch.
-	commitBatch()
+	if !commitBatch() {
+		return
+	}
 
 	took := time.Since(start).Milliseconds()
 	if items == nil {
 		items = []esBulkItemResult{}
+	}
+	if hasErrors {
+		metricResult = "partial"
+	} else {
+		metricResult = "success"
 	}
 
 	respondJSON(w, http.StatusOK, esBulkResponse{
@@ -418,13 +526,26 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (s *Server) recordESBulkItem(action, result string) {
+	if s.promMetrics != nil {
+		s.promMetrics.RecordESBulkItem(action, result)
+	}
+}
+
+func esCompatEnabled(ingest config.IngestConfig) bool {
+	if ingest.ESCompat.AdvertisedVersion == "" && ingest.ESCompat.ClusterName == "" {
+		return true
+	}
+	return ingest.ESCompat.Enabled
+}
+
 func processESBatch(ctx context.Context, pipe *pipeline.Pipeline, batch []*event.Event, s *Server) error {
 	processed, err := pipe.Process(batch)
 	if err != nil {
 		return err
 	}
 
-	return s.engine.IngestContext(ctx, processed)
+	return s.submitShipperEvents(ctx, processed)
 }
 
 func makeSuccessItem(action, index, id string) esBulkItemResult {
@@ -459,6 +580,17 @@ func makeErrorItem(action, index, id string, httpStatus int, errType, reason str
 
 func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 	setESHeaders(w)
+	if !esCompatEnabled(s.currentIngestConfig()) {
+		w.Header().Set("Retry-After", "5")
+		respondJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+			"error": map[string]interface{}{
+				"type":   "unavailable",
+				"reason": "Elasticsearch compatibility ingest is disabled",
+			},
+			"status": http.StatusServiceUnavailable,
+		})
+		return
+	}
 
 	if !s.requireScope(w, r, auth.ScopeIngest) {
 		return
@@ -511,7 +643,7 @@ func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if respondIngestError(w, s.engine.IngestContext(r.Context(), processed)) {
+	if respondIngestError(w, s.submitShipperEvents(r.Context(), processed)) {
 		return
 	}
 
@@ -524,19 +656,22 @@ func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleESClusterInfo(w http.ResponseWriter, r *http.Request) {
-	setESHeaders(w)
-	respondJSON(w, http.StatusOK, esClusterInfoResponse{
-		Name:        "lynxdb",
-		ClusterName: "lynxdb",
-		ClusterUUID: "lynxdb-single-node",
-		Version: esVersionInfo{
-			Number:        "8.11.0",
-			BuildFlavor:   "default",
-			BuildType:     "tar",
-			BuildHash:     "000000",
-			LuceneVersion: "9.8.0",
-		},
-		Tagline: "LynxDB — Splunk-power log analytics in a single binary",
+	if s.promMetrics != nil {
+		s.promMetrics.RecordESHandshake("cluster")
+	}
+	if s.esHandshake == nil {
+		respondInternalError(w, "elasticsearch compatibility handshake is not initialized")
+		return
+	}
+	s.esHandshake.ServeHTTP(w, r)
+}
+
+func (s *Server) esCompatibilityHandler(kind string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if s.promMetrics != nil {
+			s.promMetrics.RecordESHandshake(kind)
+		}
+		next.ServeHTTP(w, r)
 	})
 }
 

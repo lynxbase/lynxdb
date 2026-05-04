@@ -1,0 +1,15 @@
+# Filebeat configuration for LynxDB.
+# Change only hosts if LynxDB is not reachable at this address.
+filebeat.inputs:
+  - type: filestream
+    id: lynxdb-files
+    paths:
+      - /var/log/*.log
+
+output.elasticsearch:
+  hosts: ["{{ .Remote }}"]
+  allow_older_versions: true
+
+setup.template.enabled: false
+setup.ilm.enabled: false
+# LynxDB accepts Filebeat's ES bulk protocol but stores logs append-only.

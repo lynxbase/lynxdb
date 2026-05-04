@@ -112,6 +112,67 @@ func TestPrometheusMetrics_Handler(t *testing.T) {
 	}
 }
 
+func TestPrometheusMetrics_DecompressionRejectCounter(t *testing.T) {
+	pm := NewPrometheusMetrics()
+
+	pm.OnReject("decompressed", "gzip")
+
+	families := gatherMetrics(t, pm)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_decompression_rejected_total", "stage", "decompressed", 1)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_decompression_rejected_total", "encoding", "gzip", 1)
+}
+
+func TestPrometheusMetrics_StagingMetrics(t *testing.T) {
+	pm := NewPrometheusMetrics()
+
+	pm.SetState(2048, 3, 1.5)
+	pm.RecordFlush("sync", 2048)
+	pm.RecordOverflow()
+	pm.RecordDropped("sink_error", 2)
+
+	families := gatherMetrics(t, pm)
+	assertGaugeValue(t, families, "lynxdb_ingest_staging_bytes", 2048)
+	assertGaugeValue(t, families, "lynxdb_ingest_staging_events", 3)
+	assertGaugeValue(t, families, "lynxdb_ingest_staging_age_seconds", 1.5)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_staging_flushes_total", "trigger", "sync", 1)
+	assertCounterValue(t, families, "lynxdb_ingest_staging_overflows_total", 1)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_staging_dropped_total", "reason", "sink_error", 2)
+	assertHistogramCount(t, families, "lynxdb_ingest_staging_flush_size_bytes", 1)
+}
+
+func TestPrometheusMetrics_ESHandshakeCounter(t *testing.T) {
+	pm := NewPrometheusMetrics()
+
+	pm.RecordESHandshake("license")
+	pm.RecordESHandshake("license")
+	pm.RecordESHandshake("template")
+
+	families := gatherMetrics(t, pm)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_es_handshake_total", "kind", "license", 2)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_es_handshake_total", "kind", "template", 1)
+}
+
+func TestPrometheusMetrics_IngestCompatibilityMetrics(t *testing.T) {
+	pm := NewPrometheusMetrics()
+
+	pm.RecordESBulkRequest("success", 0.02)
+	pm.RecordESBulkItem("index", "ok")
+	pm.RecordOTLPRequest("logs", "json", "success", 2048)
+	pm.RecordOTLPRecords("logs", "accepted", 3)
+	pm.RecordDroppedRecords("otlp", "empty_body", 1)
+	pm.SetListenerUp("es", true)
+
+	families := gatherMetrics(t, pm)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_es_bulk_requests_total", "result", "success", 1)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_es_bulk_items_total", "action", "index", 1)
+	assertHistogramCount(t, families, "lynxdb_ingest_es_bulk_duration_seconds", 1)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_otlp_requests_total", "signal", "logs", 1)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_otlp_records_total", "result", "accepted", 3)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_dropped_records_total", "source", "otlp", 1)
+	assertHistogramCount(t, families, "lynxdb_ingest_otlp_request_bytes", 1)
+	assertGaugeVecValue(t, families, "lynxdb_ingest_listener_up", "listener", "es", 1)
+}
+
 func TestPrometheusMetrics_ZeroSkipsNotRecorded(t *testing.T) {
 	pm := NewPrometheusMetrics()
 

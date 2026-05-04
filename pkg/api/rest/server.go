@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,9 +18,17 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/ingest/limits"
+	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/eshttp"
+	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/otlpgrpc"
+	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/otlphttp"
+	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/splunkhec"
 	syslogrecv "github.com/lynxbase/lynxdb/pkg/ingest/receiver/syslog"
+	"github.com/lynxbase/lynxdb/pkg/ingest/staging"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/server"
+	shipperstats "github.com/lynxbase/lynxdb/pkg/server/shippers"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/storage/savedqueries"
 	"github.com/lynxbase/lynxdb/pkg/usecases"
@@ -47,6 +56,14 @@ type Server struct {
 	degraded           atomic.Bool  // true when a persistent store fell back to in-memory
 	tlsConfig          *tls.Config  // non-nil when TLS is enabled
 	syslogReceiver     *syslogrecv.Receiver
+	otlpHTTPReceiver   *otlphttp.Receiver
+	otlpGRPCReceiver   *otlpgrpc.Receiver
+	stagingBuffer      *staging.Buffer
+	esHandshake        *eshttp.Handshake
+	esStubs            *eshttp.Stubs
+	promMetrics        *PrometheusMetrics
+	shipperRegistry    *shipperstats.Registry
+	splunkAckStore     *splunkhec.AckStore
 	levelVar           *slog.LevelVar
 	logger             *slog.Logger
 }
@@ -150,6 +167,8 @@ func NewServer(cfg Config) (*Server, error) {
 		shutdownTimeout: shutdownTimeout,
 		tailCfg:         cfg.Tail,
 		tlsConfig:       cfg.TLSConfig,
+		shipperRegistry: shipperstats.NewRegistry(shipperstats.DefaultRegistrySize),
+		splunkAckStore:  splunkhec.NewAckStore(10000),
 		levelVar:        cfg.LevelVar,
 		logger:          cfg.Logger,
 	}
@@ -161,6 +180,10 @@ func NewServer(cfg Config) (*Server, error) {
 	// every completed query records histogram observations (duration, scan,
 	// pipeline, memory, rows) and increments segment-skip counters.
 	promMetrics := NewPrometheusMetrics()
+	s.promMetrics = promMetrics
+	promMetrics.SetListenerUp("es", false)
+	promMetrics.SetListenerUp("otlp_http", false)
+	promMetrics.SetListenerUp("otlp_grpc", false)
 	engine.SetOnQueryComplete(promMetrics.RecordQuery)
 
 	if cfg.Syslog.Enabled() {
@@ -181,6 +204,76 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 		s.syslogReceiver = syslogReceiver
 	}
+
+	if cfg.Ingest.OTLP.HTTPListen != "" {
+		otlpReceiver, err := otlphttp.New(
+			otlphttp.Config{
+				Listen: cfg.Ingest.OTLP.HTTPListen,
+				Limits: limits.Config{
+					MaxCompressedBytes:   int64(cfg.Ingest.Limits.MaxCompressedBodyBytes),
+					MaxDecompressedBytes: int64(cfg.Ingest.Limits.MaxDecompressedBodyBytes),
+				},
+				ObserveShipper: s.observeShipperRequest,
+			},
+			func(ctx context.Context, events []*event.Event) error {
+				processed, err := ingestPipelineForConfig(s.currentIngestConfig()).Process(events)
+				if err != nil {
+					return err
+				}
+				return s.submitShipperEvents(ctx, processed)
+			},
+			cfg.Logger,
+			promMetrics,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("otlp http receiver: %w", err)
+		}
+		s.otlpHTTPReceiver = otlpReceiver
+	}
+	if cfg.Ingest.OTLP.GRPCListen != "" {
+		otlpReceiver, err := otlpgrpc.New(
+			otlpgrpc.Config{
+				Listen:         cfg.Ingest.OTLP.GRPCListen,
+				MaxRecvBytes:   int(cfg.Ingest.OTLP.GRPCMaxRecvBytes),
+				ObserveShipper: s.observeShipperRequest,
+			},
+			func(ctx context.Context, events []*event.Event) error {
+				processed, err := ingestPipelineForConfig(s.currentIngestConfig()).Process(events)
+				if err != nil {
+					return err
+				}
+				return s.submitShipperEvents(ctx, processed)
+			},
+			cfg.Logger,
+			promMetrics,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("otlp grpc receiver: %w", err)
+		}
+		s.otlpGRPCReceiver = otlpReceiver
+	}
+
+	esCfg := normalizedESCompatConfig(cfg.Ingest)
+	esHandshake, err := eshttp.NewHandshake(eshttp.Config{
+		AdvertisedVersion: esCfg.AdvertisedVersion,
+		ClusterName:       esCfg.ClusterName,
+		DataDir:           cfg.DataDir,
+		S3Bucket:          cfg.Storage.S3Bucket,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.esHandshake = esHandshake
+	esStubs, err := eshttp.NewStubs(eshttp.Config{
+		AdvertisedVersion: esCfg.AdvertisedVersion,
+		ClusterName:       esCfg.ClusterName,
+		DataDir:           cfg.DataDir,
+		S3Bucket:          cfg.Storage.S3Bucket,
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.esStubs = esStubs
 
 	mux := http.NewServeMux()
 
@@ -236,6 +329,11 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /api/v1/ingest/raw", s.handleIngestRaw)
 	mux.HandleFunc("POST /api/v1/ingest/hec", s.handleIngestHEC)
 	mux.HandleFunc("POST /api/v1/ingest/bulk", s.handleESBulk)
+	mux.HandleFunc("POST /services/collector/event", s.handleSplunkHECEvent)
+	mux.HandleFunc("POST /services/collector", s.handleSplunkHECEvent)
+	mux.HandleFunc("POST /services/collector/raw", s.handleSplunkHECRaw)
+	mux.HandleFunc("POST /services/collector/ack", s.handleSplunkHECAck)
+	mux.HandleFunc("GET /services/collector/health", s.handleSplunkHECHealth)
 	// Field catalog.
 	mux.HandleFunc("GET /api/v1/fields", s.handleListFields)
 
@@ -295,26 +393,53 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /api/v1/views/{name}/backfill", s.handleViewBackfill)
 
 	// Elasticsearch compatibility.
+	mux.Handle("GET /{$}", s.esCompatibilityHandler("root", esHandshake))
+	mux.Handle("GET /_xpack", s.esCompatibilityHandler("xpack", http.HandlerFunc(esStubs.XPackInfo)))
+	mux.Handle("GET /_xpack/license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
+	mux.Handle("GET /_license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
+	mux.Handle("GET /_cat/templates", s.esCompatibilityHandler("templates", http.HandlerFunc(esStubs.EmptyArray)))
+	mux.Handle("GET /_cat/indices", s.esCompatibilityHandler("cat_indices", http.HandlerFunc(esStubs.EmptyArray)))
+	mux.Handle("GET /_cluster/health", s.esCompatibilityHandler("cluster_health", http.HandlerFunc(esStubs.ClusterHealth)))
+	mux.Handle("PUT /_index_template/{name...}", s.esCompatibilityHandler("template", http.HandlerFunc(esStubs.Acknowledged)))
+	mux.Handle("GET /_index_template/{name...}", s.esCompatibilityHandler("template", http.HandlerFunc(esStubs.IndexTemplates)))
+	mux.Handle("GET /_ilm/policy/{name...}", s.esCompatibilityHandler("ilm", http.HandlerFunc(esStubs.NotFound)))
+	mux.Handle("GET /_ingest/pipeline/{name...}", s.esCompatibilityHandler("pipeline", http.HandlerFunc(esStubs.NotFound)))
+	mux.Handle("GET /_nodes/{path...}", s.esCompatibilityHandler("nodes", http.HandlerFunc(esStubs.NodesHTTP)))
+	mux.Handle("GET /_alias", s.esCompatibilityHandler("alias", http.HandlerFunc(esStubs.EmptyAliases)))
+	mux.Handle("GET /_data_stream/{name...}", s.esCompatibilityHandler("datastream", http.HandlerFunc(esStubs.EmptyDataStreams)))
+	mux.Handle("PUT /_data_stream/{name...}", s.esCompatibilityHandler("datastream", http.HandlerFunc(esStubs.Acknowledged)))
+	mux.Handle("GET /_search", s.esCompatibilityHandler("search", http.HandlerFunc(esStubs.EmptySearch)))
+	mux.Handle("POST /_security/user/_authenticate", s.esCompatibilityHandler("security", http.HandlerFunc(esStubs.Authenticated)))
+	mux.HandleFunc("POST /_bulk", s.handleESBulk)
+	mux.HandleFunc("POST /_data_stream/{data_stream}/_bulk", s.handleESBulk)
+	mux.HandleFunc("POST /{index}/_bulk", s.handleESBulk)
 	mux.HandleFunc("POST /api/v1/es/_bulk", s.handleESBulk)
+	mux.HandleFunc("POST /api/v1/es/_data_stream/{data_stream}/_bulk", s.handleESBulk)
 	mux.HandleFunc("POST /api/v1/es/{index}/_doc", s.handleESIndexDoc)
 	mux.HandleFunc("GET /api/v1/es/", s.handleESClusterInfo)
 	mux.HandleFunc("GET /api/v1/es", s.handleESClusterInfo)
 
-	// ES stub endpoints — Filebeat calls these during startup.
-	// Return 200 + {} to prevent 404 errors when setup.ilm.enabled/setup.template.enabled
-	// are not explicitly set to false in filebeat.yml.
+	// Backward-compatible ES stub aliases under the legacy API prefix.
 	esStub := s.handleESStub
-	mux.HandleFunc("GET /api/v1/es/_ilm/policy/{name...}", esStub)
+	mux.Handle("GET /api/v1/es/_xpack", s.esCompatibilityHandler("xpack", http.HandlerFunc(esStubs.XPackInfo)))
+	mux.Handle("GET /api/v1/es/_xpack/license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
+	mux.Handle("GET /api/v1/es/_license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
+	mux.Handle("GET /api/v1/es/_cat/templates", s.esCompatibilityHandler("templates", http.HandlerFunc(esStubs.EmptyArray)))
+	mux.Handle("GET /api/v1/es/_cat/indices", s.esCompatibilityHandler("cat_indices", http.HandlerFunc(esStubs.EmptyArray)))
+	mux.Handle("GET /api/v1/es/_cluster/health", s.esCompatibilityHandler("cluster_health", http.HandlerFunc(esStubs.ClusterHealth)))
+	mux.Handle("GET /api/v1/es/_ilm/policy/{name...}", s.esCompatibilityHandler("ilm", http.HandlerFunc(esStubs.NotFound)))
 	mux.HandleFunc("PUT /api/v1/es/_ilm/policy/{name...}", esStub)
-	mux.HandleFunc("GET /api/v1/es/_index_template/{name...}", esStub)
-	mux.HandleFunc("PUT /api/v1/es/_index_template/{name...}", esStub)
-	mux.HandleFunc("GET /api/v1/es/_ingest/pipeline/{name...}", esStub)
+	mux.Handle("GET /api/v1/es/_index_template/{name...}", s.esCompatibilityHandler("template", http.HandlerFunc(esStubs.IndexTemplates)))
+	mux.Handle("PUT /api/v1/es/_index_template/{name...}", s.esCompatibilityHandler("template", http.HandlerFunc(esStubs.Acknowledged)))
+	mux.Handle("GET /api/v1/es/_ingest/pipeline/{name...}", s.esCompatibilityHandler("pipeline", http.HandlerFunc(esStubs.NotFound)))
 	mux.HandleFunc("PUT /api/v1/es/_ingest/pipeline/{name...}", esStub)
-	mux.HandleFunc("GET /api/v1/es/_nodes/{path...}", esStub)
-	mux.HandleFunc("GET /api/v1/es/_license", esStub)
-	mux.HandleFunc("GET /api/v1/es/_data_stream/{name...}", esStub)
-	mux.HandleFunc("GET /api/v1/es/_alias", esStub)
-	// PUT/HEAD /{index} must be registered after underscore-prefixed paths
+	mux.Handle("GET /api/v1/es/_nodes/{path...}", s.esCompatibilityHandler("nodes", http.HandlerFunc(esStubs.NodesHTTP)))
+	mux.Handle("GET /api/v1/es/_data_stream/{name...}", s.esCompatibilityHandler("datastream", http.HandlerFunc(esStubs.EmptyDataStreams)))
+	mux.Handle("PUT /api/v1/es/_data_stream/{name...}", s.esCompatibilityHandler("datastream", http.HandlerFunc(esStubs.Acknowledged)))
+	mux.Handle("GET /api/v1/es/_alias", s.esCompatibilityHandler("alias", http.HandlerFunc(esStubs.EmptyAliases)))
+	mux.Handle("GET /api/v1/es/_search", s.esCompatibilityHandler("search", http.HandlerFunc(esStubs.EmptySearch)))
+	mux.Handle("POST /api/v1/es/_security/user/_authenticate", s.esCompatibilityHandler("security", http.HandlerFunc(esStubs.Authenticated)))
+	// PUT /{index} must be registered after underscore-prefixed paths
 	// to avoid Go 1.22+ ServeMux wildcard-vs-specific conflicts.
 	mux.HandleFunc("PUT /api/v1/es/{index}", esStub)
 
@@ -326,6 +451,7 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// Unified status.
 	mux.HandleFunc("GET /api/v1/status", s.handleStatus)
+	mux.HandleFunc("GET /api/v1/shippers", s.handleListShippers)
 
 	// Auth management — only registered when auth is enabled, 404 otherwise.
 	if cfg.KeyStore != nil {
@@ -352,9 +478,15 @@ func NewServer(cfg Config) (*Server, error) {
 	idleTimeout := cfg.HTTP.IdleTimeout
 	idleTimeout = defaultIdleTimeout(idleTimeout)
 	// Build middleware chain (execution order, outer → inner):
-	// Recovery → RequestID → Logging → Auth → RateLimit → MaxBody → mux.
+	// Recovery → RequestID → Logging → Auth → RateLimit → MaxBody → DualLimit → ShipperFingerprint → mux.
 	// Auth runs before rate limiting so unauthenticated requests don't consume quota.
 	var handler http.Handler = mux
+	handler = s.esIndexHeadMiddleware(handler)
+	handler = ShipperFingerprintMiddleware(s.shipperRegistry, handler)
+	handler = limits.DualLimitMiddleware(limits.Config{
+		MaxCompressedBytes:   int64(cfg.Ingest.Limits.MaxCompressedBodyBytes),
+		MaxDecompressedBytes: int64(cfg.Ingest.Limits.MaxDecompressedBodyBytes),
+	}, promMetrics)(handler)
 	handler = MaxBodyMiddleware(int64(cfg.Ingest.MaxBodySize), handler)
 	if cfg.HTTP.RateLimit > 0 {
 		s.rateLimiter = NewRateLimiter(cfg.HTTP.RateLimit, int(cfg.HTTP.RateLimit)*2)
@@ -378,11 +510,57 @@ func NewServer(cfg Config) (*Server, error) {
 	return s, nil
 }
 
+func (s *Server) esIndexHeadMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodHead && isESIndexHeadProbe(r.URL.Path) {
+			s.esCompatibilityHandler("index_head", http.HandlerFunc(s.esStubs.HeadOK)).ServeHTTP(w, r)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func isESIndexHeadProbe(path string) bool {
+	if rest, ok := strings.CutPrefix(path, "/api/v1/es/"); ok {
+		return rest != "" && !strings.Contains(rest, "/") && !strings.HasPrefix(rest, "_")
+	}
+	trimmed := strings.Trim(path, "/")
+	if trimmed == "health" || trimmed == "metrics" {
+		return false
+	}
+	return trimmed != "" && !strings.Contains(trimmed, "/") && !strings.HasPrefix(trimmed, "_")
+}
+
+func normalizedESCompatConfig(ingest config.IngestConfig) config.ESCompatConfig {
+	defaults := config.DefaultConfig().Ingest.ESCompat
+	out := ingest.ESCompat
+	if out.AdvertisedVersion == "" {
+		out.AdvertisedVersion = defaults.AdvertisedVersion
+	}
+	if out.ClusterName == "" {
+		out.ClusterName = defaults.ClusterName
+	}
+	return out
+}
+
+func stagingConfigFromIngest(ingest config.IngestConfig) staging.Config {
+	cfg := ingest.Staging
+	return staging.Config{
+		Enabled:           cfg.Enabled,
+		MaxBytes:          int64(cfg.MaxBytes),
+		MaxAge:            cfg.MaxAge.Duration(),
+		MaxInflightEvents: cfg.MaxInflightEvents,
+		FlushRetries:      cfg.FlushRetries,
+		FlushBackoffMax:   cfg.FlushBackoffMax.Duration(),
+	}
+}
+
 // Start starts the API server. Blocks until context is canceled.
 func (s *Server) Start(ctx context.Context) error {
 	if err := s.engine.Start(ctx); err != nil {
 		return err
 	}
+	s.startStagingBuffer()
 
 	if s.syslogReceiver != nil {
 		go func() {
@@ -395,8 +573,56 @@ func (s *Server) Start(ctx context.Context) error {
 			if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
 				slog.Error("engine shutdown failed after syslog listen error", "error", shutErr)
 			}
+			s.closeStagingBuffer(context.Background())
 			return fmt.Errorf("syslog: %w", err)
 		}
+	}
+	if s.otlpHTTPReceiver != nil {
+		go func() {
+			if err := s.otlpHTTPReceiver.Start(ctx); err != nil {
+				s.engine.Logger().Error("OTLP HTTP receiver stopped with error", "error", err)
+			}
+		}()
+		s.otlpHTTPReceiver.WaitReady()
+		if err := s.otlpHTTPReceiver.ReadyError(); err != nil {
+			if s.syslogReceiver != nil {
+				s.syslogReceiver.Stop()
+			}
+			if s.otlpHTTPReceiver != nil {
+				_ = s.otlpHTTPReceiver.Stop(context.Background())
+			}
+			if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
+				slog.Error("engine shutdown failed after OTLP listen error", "error", shutErr)
+			}
+			s.closeStagingBuffer(context.Background())
+			return fmt.Errorf("otlp http: %w", err)
+		}
+		s.promMetrics.SetListenerUp("otlp_http", true)
+	}
+	if s.otlpGRPCReceiver != nil {
+		go func() {
+			if err := s.otlpGRPCReceiver.Start(ctx); err != nil {
+				s.engine.Logger().Error("OTLP gRPC receiver stopped with error", "error", err)
+			}
+		}()
+		s.otlpGRPCReceiver.WaitReady()
+		if err := s.otlpGRPCReceiver.ReadyError(); err != nil {
+			if s.syslogReceiver != nil {
+				s.syslogReceiver.Stop()
+			}
+			if s.otlpHTTPReceiver != nil {
+				_ = s.otlpHTTPReceiver.Stop(context.Background())
+			}
+			if s.otlpGRPCReceiver != nil {
+				_ = s.otlpGRPCReceiver.Stop(context.Background())
+			}
+			if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
+				slog.Error("engine shutdown failed after OTLP gRPC listen error", "error", shutErr)
+			}
+			s.closeStagingBuffer(context.Background())
+			return fmt.Errorf("otlp grpc: %w", err)
+		}
+		s.promMetrics.SetListenerUp("otlp_grpc", true)
 	}
 
 	var lc net.ListenConfig
@@ -406,9 +632,16 @@ func (s *Server) Start(ctx context.Context) error {
 		if s.syslogReceiver != nil {
 			s.syslogReceiver.Stop()
 		}
+		if s.otlpHTTPReceiver != nil {
+			_ = s.otlpHTTPReceiver.Stop(context.Background())
+		}
+		if s.otlpGRPCReceiver != nil {
+			_ = s.otlpGRPCReceiver.Stop(context.Background())
+		}
 		if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
 			slog.Error("engine shutdown failed after listen error", "error", shutErr)
 		}
+		s.closeStagingBuffer(context.Background())
 		return fmt.Errorf("api: listen: %w", err)
 	}
 
@@ -418,6 +651,7 @@ func (s *Server) Start(ctx context.Context) error {
 	}
 
 	s.listenAddr.Store(ln.Addr().String())
+	s.promMetrics.SetListenerUp("es", true)
 
 	// shutdownDone is closed after the engine has fully shut down (batcher
 	// flushed, mmaps closed). Start() waits on this channel before returning
@@ -430,12 +664,21 @@ func (s *Server) Start(ctx context.Context) error {
 			s.rateLimiter.Stop()
 		}
 
-		// Shutdown ordering: reject ingests → drain HTTP → flush storage.
-		s.engine.PrepareShutdown()
 		if s.syslogReceiver != nil {
 			s.syslogReceiver.Stop()
 		}
+		if s.otlpHTTPReceiver != nil {
+			_ = s.otlpHTTPReceiver.Stop(context.Background())
+			s.promMetrics.SetListenerUp("otlp_http", false)
+		}
+		if s.otlpGRPCReceiver != nil {
+			_ = s.otlpGRPCReceiver.Stop(context.Background())
+			s.promMetrics.SetListenerUp("otlp_grpc", false)
+		}
+		s.closeStagingBuffer(context.Background())
 
+		// Shutdown ordering: reject ingests → drain HTTP → flush storage.
+		s.engine.PrepareShutdown()
 		shutdownTimeout := s.currentShutdownTimeout()
 		s.engine.Logger().Info("shutting down: draining in-flight requests", "timeout", shutdownTimeout)
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -443,6 +686,7 @@ func (s *Server) Start(ctx context.Context) error {
 		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
 			s.engine.Logger().Error("HTTP server shutdown error", "error", err)
 		}
+		s.promMetrics.SetListenerUp("es", false)
 
 		// Safe to flush batcher and close mmaps — no in-flight ingests remain.
 		if err := s.engine.Shutdown(shutdownTimeout); err != nil {
@@ -473,6 +717,143 @@ func (s engineSink) Write(events []*event.Event) error {
 	return s.engine.IngestContext(context.Background(), events)
 }
 
+func (s *Server) submitShipperEvents(ctx context.Context, events []*event.Event) error {
+	if !s.currentIngestConfig().Staging.Enabled {
+		if err := s.engine.IngestContext(ctx, events); err != nil {
+			return err
+		}
+		s.recordShipperEvents(ctx, len(events))
+		return nil
+	}
+	if s.stagingBuffer != nil {
+		if err := s.stagingBuffer.Add(ctx, events); err != nil {
+			return err
+		}
+		s.recordShipperEvents(ctx, len(events))
+		return nil
+	}
+	if err := s.engine.IngestContext(ctx, events); err != nil {
+		return err
+	}
+	s.recordShipperEvents(ctx, len(events))
+	return nil
+}
+
+func (s *Server) recordShipperEvents(ctx context.Context, count int) {
+	if s.shipperRegistry == nil {
+		return
+	}
+	if info, ok := shipperRequestInfo(ctx); ok {
+		s.shipperRegistry.Observe(info, count)
+	}
+}
+
+func (s *Server) observeShipperRequest(_ context.Context, userAgent, endpoint, remote string, count int) {
+	if s.shipperRegistry == nil || count <= 0 {
+		return
+	}
+	if endpoint == "/v1/logs" && shipperstats.DetectUserAgent(userAgent).Tool == "unknown" {
+		userAgent = "otelcol"
+	}
+	host, _, err := net.SplitHostPort(remote)
+	if err == nil {
+		remote = host
+	}
+	s.shipperRegistry.Observe(shipperstats.RequestInfo{
+		UserAgent: userAgent,
+		RemoteIP:  remote,
+		Endpoint:  endpoint,
+	}, count)
+}
+
+func (s *Server) submitPipelineEvents(ctx context.Context, events []*event.Event) error {
+	processed, err := ingestPipelineForConfig(s.currentIngestConfig()).Process(events)
+	if err != nil {
+		return err
+	}
+	return s.submitShipperEvents(ctx, processed)
+}
+
+func (s *Server) splunkHECHandler(requireSplunkAuth bool) *splunkhec.Handler {
+	ingestCfg := s.currentIngestConfig()
+	authCfg := splunkhec.AuthConfig{
+		Enabled:      requireSplunkAuth,
+		RequireToken: ingestCfg.SplunkHEC.RequireToken,
+	}
+	return splunkhec.NewHandler(splunkhec.Config{
+		Auth:               authCfg,
+		MaxBatchSize:       ingestCfg.MaxBatchSize,
+		MaxLineBytes:       ingestCfg.MaxLineBytes,
+		AckStore:           s.splunkAckStore,
+		AckFlush:           s.flushStagedShipperEvents,
+		RespondIngestError: func(w http.ResponseWriter, err error) { respondIngestError(w, err) },
+	}, s.submitPipelineEvents)
+}
+
+func (s *Server) flushStagedShipperEvents(ctx context.Context) error {
+	if s.stagingBuffer == nil {
+		return nil
+	}
+	return s.stagingBuffer.Flush(ctx)
+}
+
+func (s *Server) handleSplunkHECEvent(w http.ResponseWriter, r *http.Request) {
+	if !s.currentIngestConfig().SplunkHEC.Enabled {
+		respondJSON(w, http.StatusNotFound, map[string]interface{}{"text": "HEC is disabled", "code": 4})
+		return
+	}
+	s.splunkHECHandler(true).HandleEvent(w, r)
+}
+
+func (s *Server) handleSplunkHECRaw(w http.ResponseWriter, r *http.Request) {
+	if !s.currentIngestConfig().SplunkHEC.Enabled {
+		respondJSON(w, http.StatusNotFound, map[string]interface{}{"text": "HEC is disabled", "code": 4})
+		return
+	}
+	s.splunkHECHandler(true).HandleRaw(w, r)
+}
+
+func (s *Server) handleSplunkHECHealth(w http.ResponseWriter, r *http.Request) {
+	if !s.currentIngestConfig().SplunkHEC.Enabled {
+		respondJSON(w, http.StatusNotFound, map[string]interface{}{"text": "HEC is disabled", "code": 4})
+		return
+	}
+	s.splunkHECHandler(false).HandleHealth(w, r)
+}
+
+func (s *Server) handleSplunkHECAck(w http.ResponseWriter, r *http.Request) {
+	if !s.currentIngestConfig().SplunkHEC.Enabled {
+		respondJSON(w, http.StatusNotFound, map[string]interface{}{"text": "HEC is disabled", "code": 4})
+		return
+	}
+	s.splunkHECHandler(true).HandleAck(w, r)
+}
+
+func (s *Server) startStagingBuffer() {
+	if s.stagingBuffer != nil {
+		return
+	}
+	s.stagingBuffer = staging.NewBuffer(
+		stagingConfigFromIngest(s.currentIngestConfig()),
+		func(ctx context.Context, events []*event.Event) error {
+			return s.engine.IngestContext(ctx, events)
+		},
+		memgov.NewClassAccount(s.engine.Governor(), memgov.ClassTempIO),
+		s.promMetrics,
+	)
+}
+
+func (s *Server) closeStagingBuffer(ctx context.Context) {
+	if s.stagingBuffer == nil {
+		return
+	}
+	stagingCtx, cancel := context.WithTimeout(ctx, s.currentShutdownTimeout())
+	defer cancel()
+	if err := s.stagingBuffer.Close(stagingCtx); err != nil {
+		s.engine.Logger().Error("staging buffer shutdown error", "error", err)
+	}
+}
+
 // WaitReady blocks until the server has completed initialization and is ready.
 func (s *Server) WaitReady() {
 	<-s.ready
@@ -485,6 +866,24 @@ func (s *Server) Addr() string {
 	}
 
 	return s.httpServer.Addr
+}
+
+// OTLPHTTPAddr returns the resolved canonical OTLP/HTTP listener address.
+// It is empty when the listener is disabled.
+func (s *Server) OTLPHTTPAddr() string {
+	if s.otlpHTTPReceiver == nil {
+		return ""
+	}
+	return s.otlpHTTPReceiver.Addr()
+}
+
+// OTLPGRPCAddr returns the resolved canonical OTLP/gRPC listener address.
+// It is empty when the listener is disabled.
+func (s *Server) OTLPGRPCAddr() string {
+	if s.otlpGRPCReceiver == nil {
+		return ""
+	}
+	return s.otlpGRPCReceiver.Addr()
 }
 
 // SetIndexStore sets an external IndexStore for full SPL2 queries.

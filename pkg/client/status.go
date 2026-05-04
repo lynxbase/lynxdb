@@ -58,6 +58,15 @@ func (c *Client) Stats(ctx context.Context) (*StatsResult, error) {
 	return &s, nil
 }
 
+// Shippers returns recently observed log shippers.
+func (c *Client) Shippers(ctx context.Context) ([]ShipperObservation, error) {
+	var out []ShipperObservation
+	if _, err := c.doJSON(ctx, http.MethodGet, "/shippers", nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // CacheStats returns cache statistics.
 func (c *Client) CacheStats(ctx context.Context) (CacheStatsResult, error) {
 	var s CacheStatsResult

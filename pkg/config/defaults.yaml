@@ -68,6 +68,28 @@
 #   max_body_size: 100mb             # Max HTTP request body size
 #   max_batch_size: 1000             # Max events per streaming batch
 #   max_line_bytes: 1048576          # Max bytes per single line in streaming ingest (1 MiB)
+#   es_compat:
+#     enabled: true                  # Enable drop-in Elasticsearch shipper endpoints
+#     advertised_version: 8.15.0     # Version shown to Filebeat/Fluent Bit/Vector
+#     cluster_name: lynxdb           # Cluster name in Elasticsearch handshake
+#     strip_logstash_date_suffix: true # Map Fluent Bit Logstash_Format indexes to one source
+#   otlp:
+#     http_listen: 0.0.0.0:4318      # Canonical OTLP/HTTP listen address (empty = disabled)
+#     grpc_listen:                   # OTLP/gRPC listen address (empty = disabled)
+#     grpc_max_recv_bytes: 16mb      # OTLP/gRPC max receive message size
+#   splunk_hec:
+#     enabled: true                  # Enable Splunk HEC-compatible routes
+#     require_token: false           # P1 accepts any non-empty Splunk token
+#   limits:
+#     max_compressed_body_bytes: 32mb   # Max compressed shipper request body
+#     max_decompressed_body_bytes: 256mb # Max decoded shipper request body
+#   staging:
+#     enabled: true                  # Coalesce small shipper batches before ingest
+#     max_bytes: 64mb                # Flush or reject when pending bytes exceed this
+#     max_age: 5s                    # Flush oldest pending batch after this age
+#     max_inflight_events: 1000000   # Max pending events in staging
+#     flush_retries: 3               # Sink retries before dropping staged events
+#     flush_backoff_max: 5s          # Max retry backoff
 #   mode:                            # Ingest mode (empty = auto)
 #   dedup_enabled: false             # Enable dedup of identical consecutive events
 #   dedup_capacity: 100000           # Dedup LRU capacity (per index)

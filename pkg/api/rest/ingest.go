@@ -18,6 +18,8 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver"
+	"github.com/lynxbase/lynxdb/pkg/ingest/staging"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/server"
 	"github.com/lynxbase/lynxdb/pkg/storage/part"
 )
@@ -55,7 +57,11 @@ func respondIngestError(w http.ResponseWriter, err error) bool {
 	}
 	switch {
 	case errors.Is(err, server.ErrShuttingDown):
+		w.Header().Set("Retry-After", "5")
 		respondError(w, ErrCodeShuttingDown, http.StatusServiceUnavailable, "server is shutting down")
+	case errors.Is(err, staging.ErrBufferOverflow), errors.Is(err, staging.ErrClosed), memgov.IsMemoryExhausted(err):
+		w.Header().Set("Retry-After", "5")
+		respondError(w, ErrCodeBackpressure, http.StatusServiceUnavailable, "ingest staging backpressure")
 	case errors.Is(err, part.ErrTooManyParts):
 		w.Header().Set("Retry-After", "1")
 		respondError(w, ErrCodeBackpressure, http.StatusServiceUnavailable, "ingest backpressure: compaction falling behind")
@@ -277,35 +283,7 @@ func (s *Server) handleIngestHEC(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeIngest) {
 		return
 	}
-
-	var skippedLines int64
-
-	buildEvent := func(line string) *event.Event {
-		var hec receiver.HECEvent
-		if err := json.Unmarshal([]byte(line), &hec); err != nil {
-			skippedLines++
-
-			return nil // skip unparseable lines (Splunk HEC behavior)
-		}
-
-		return hec.ToEvent()
-	}
-
-	_, _, _, err := s.processBatched(w, r, buildEvent)
-	if err != nil {
-		return // response already written
-	}
-
-	// HEC: Splunk-compatible response format (no envelope).
-	// Include skipped_lines count so clients know if parsing failures occurred.
-	resp := map[string]interface{}{
-		"text": "Success",
-		"code": 0,
-	}
-	if skippedLines > 0 {
-		resp["skipped_lines"] = skippedLines
-	}
-	respondJSON(w, http.StatusOK, resp)
+	s.splunkHECHandler(false).HandleEvent(w, r)
 }
 
 // processBatched reads lines from the request body, builds events using buildEvent,

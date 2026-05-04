@@ -17,6 +17,8 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    - cron: "17 3 * * *"
 
 permissions:
   contents: read
@@ -58,12 +60,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: docs/site/package-lock.json
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
       - name: Install docs dependencies
         working-directory: docs/site
@@ -73,10 +85,20 @@ jobs:
         working-directory: docs/site
         run: npm run build
 
+      - name: Build Web UI
+        run: make webui
+
+      - name: Check shipper docs
+        run: make docs-check-shippers
+
   test-unit:
-    name: Unit Tests
+    name: Unit Tests (${{ matrix.os }})
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -95,12 +117,16 @@ jobs:
         run: make webui
 
       - name: Run unit tests
-        run: go test ./... -count=1 -timeout 120s -race
+        run: go test ./... -count=1 -timeout 300s -race
 
   test-e2e:
-    name: E2E Tests
+    name: E2E Tests (${{ matrix.os }})
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -120,6 +146,31 @@ jobs:
 
       - name: Run E2E tests
         run: go test -tags e2e -count=1 -timeout 180s ./test/e2e/
+
+  test-compat:
+    name: Shipper Compatibility
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Build Web UI
+        run: make webui
+
+      - name: Run shipper compatibility tests
+        run: make test-compat
 
   test-cli:
     name: CLI Tests

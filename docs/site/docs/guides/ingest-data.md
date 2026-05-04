@@ -1,6 +1,6 @@
 ---
 title: Ingest Data
-description: How to get logs into LynxDB using the CLI, REST API, NDJSON, bulk import, and compatibility endpoints for Filebeat and OpenTelemetry.
+description: How to get logs into LynxDB using the CLI, REST API, NDJSON, bulk import, and drop-in log shipper compatibility endpoints.
 ---
 
 # Ingest Data
@@ -170,7 +170,36 @@ If none of these fields are present, LynxDB assigns the server receive time. You
 
 ---
 
-## Drop-in compatibility endpoints
+## Drop-in log shipper compatibility
+
+LynxDB accepts traffic from common production log shippers with native protocols:
+
+| Tool | Protocol | Default LynxDB endpoint |
+|---|---|---|
+| [Filebeat](/docs/guides/ingest-data/filebeat) | Elasticsearch bulk | `http://lynxdb:3100` |
+| [Fluent Bit](/docs/guides/ingest-data/fluent-bit) | Elasticsearch bulk | `http://lynxdb:3100` |
+| [Vector](/docs/guides/ingest-data/vector) | Elasticsearch bulk | `http://lynxdb:3100` |
+| [OpenTelemetry Collector](/docs/guides/ingest-data/opentelemetry) | OTLP HTTP/gRPC | `http://lynxdb:4318`, `lynxdb:4317` |
+| [Splunk HEC](/docs/guides/ingest-data/splunk-hec) | HTTP Event Collector | `http://lynxdb:3100/services/collector/event` |
+
+The fastest way to get a known-good config is:
+
+```bash
+lynxdb shippers config filebeat --remote http://lynxdb:3100
+lynxdb shippers config fluent-bit --remote http://lynxdb:3100
+lynxdb shippers config vector --remote http://lynxdb:3100
+lynxdb shippers config otelcol --remote http://lynxdb:4318
+lynxdb shippers config splunk-hec --remote http://lynxdb:3100
+```
+
+After traffic starts, use:
+
+```bash
+lynxdb shippers
+lynxdb doctor shippers
+```
+
+## Compatibility endpoints
 
 LynxDB provides compatibility endpoints so you can migrate existing log pipelines without changing your shipper configuration.
 
@@ -181,17 +210,17 @@ Point any tool that speaks the Elasticsearch `_bulk` protocol at LynxDB:
 ```yaml
 # filebeat.yml
 output.elasticsearch:
-  hosts: ["http://lynxdb:3100/api/v1/es"]
+  hosts: ["http://lynxdb:3100"]
 ```
 
 ```yaml
 # vector.toml
 [sinks.lynxdb]
 type = "elasticsearch"
-endpoints = ["http://lynxdb:3100/api/v1/es"]
+endpoints = ["http://lynxdb:3100"]
 ```
 
-The `_index` field from the bulk request is mapped to the `_source` tag in LynxDB. No other configuration is needed. Prefer `/api/v1/es/_bulk`; `/api/v1/ingest/bulk` is an alias. See the [compatibility API reference](/docs/api/compatibility) for details.
+The `_index` field from the bulk request is mapped to the `_source` tag in LynxDB. Prefer the unprefixed ES-compatible endpoint for drop-in shippers; `/api/v1/es/_bulk` and `/api/v1/ingest/bulk` remain aliases. See the [compatibility API reference](/docs/api/compatibility) for details.
 
 ### OpenTelemetry Collector (OTLP)
 
@@ -201,7 +230,7 @@ Send logs from an OpenTelemetry Collector using the OTLP/HTTP exporter:
 # otel-collector-config.yaml
 exporters:
   otlp_http:
-    endpoint: http://lynxdb:3100/api/v1/otlp
+    endpoint: http://lynxdb:4318
     encoding: json
 ```
 
@@ -210,7 +239,7 @@ exporters:
 If you have existing Splunk forwarders, point them at the HEC-compatible endpoint:
 
 ```
-http://lynxdb:3100/api/v1/ingest/hec
+http://lynxdb:3100/services/collector/event
 ```
 
 ---

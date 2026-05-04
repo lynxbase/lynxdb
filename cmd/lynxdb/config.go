@@ -239,6 +239,67 @@ func applyCLIOverrides(cmd *cobra.Command, cfg *config.Config) ([]config.CLIOver
 
 	checkStr("spill-dir", "query.spill_dir", flagSpillDir, func() { cfg.Query.SpillDir = flagSpillDir })
 
+	if cmd.Flags().Changed("ingest-es-enabled") {
+		cfg.Ingest.ESCompat.Enabled = flagIngestESEnabled
+		cli = append(cli, config.CLIOverride{Key: "ingest.es_compat.enabled", Value: strconv.FormatBool(flagIngestESEnabled), Flag: "--ingest-es-enabled"})
+		flags = append(flags, "--ingest-es-enabled")
+	}
+	checkStr("ingest-es-version", "ingest.es_compat.advertised_version", flagIngestESVersion, func() {
+		cfg.Ingest.ESCompat.AdvertisedVersion = flagIngestESVersion
+	})
+	checkStr("otlp-http-listen", "ingest.otlp.http_listen", flagOTLPHTTPListen, func() {
+		cfg.Ingest.OTLP.HTTPListen = flagOTLPHTTPListen
+	})
+	checkStr("otlp-grpc-listen", "ingest.otlp.grpc_listen", flagOTLPGRPCListen, func() {
+		cfg.Ingest.OTLP.GRPCListen = flagOTLPGRPCListen
+	})
+	if cmd.Flags().Changed("otlp-grpc-max-recv-bytes") {
+		b, err := config.ParseByteSize(flagOTLPGRPCMaxRecvBytes)
+		if err != nil {
+			return nil, nil, err
+		}
+		cfg.Ingest.OTLP.GRPCMaxRecvBytes = b
+		cli = append(cli, config.CLIOverride{Key: "ingest.otlp.grpc_max_recv_bytes", Value: b.String(), Flag: "--otlp-grpc-max-recv-bytes"})
+		flags = append(flags, "--otlp-grpc-max-recv-bytes")
+	}
+	if cmd.Flags().Changed("ingest-max-compressed-body-bytes") {
+		b, err := config.ParseByteSize(flagIngestMaxCompressedBodyBytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid --ingest-max-compressed-body-bytes: %w", err)
+		}
+		cfg.Ingest.Limits.MaxCompressedBodyBytes = b
+		cli = append(cli, config.CLIOverride{Key: "ingest.limits.max_compressed_body_bytes", Value: b.String(), Flag: "--ingest-max-compressed-body-bytes"})
+		flags = append(flags, "--ingest-max-compressed-body-bytes")
+	}
+	if cmd.Flags().Changed("ingest-max-decompressed-body-bytes") {
+		b, err := config.ParseByteSize(flagIngestMaxDecompressedBodyBytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid --ingest-max-decompressed-body-bytes: %w", err)
+		}
+		cfg.Ingest.Limits.MaxDecompressedBodyBytes = b
+		cli = append(cli, config.CLIOverride{Key: "ingest.limits.max_decompressed_body_bytes", Value: b.String(), Flag: "--ingest-max-decompressed-body-bytes"})
+		flags = append(flags, "--ingest-max-decompressed-body-bytes")
+	}
+	if cmd.Flags().Changed("ingest-staging-enabled") {
+		cfg.Ingest.Staging.Enabled = flagIngestStagingEnabled
+		cli = append(cli, config.CLIOverride{Key: "ingest.staging.enabled", Value: strconv.FormatBool(flagIngestStagingEnabled), Flag: "--ingest-staging-enabled"})
+		flags = append(flags, "--ingest-staging-enabled")
+	}
+	if cmd.Flags().Changed("ingest-staging-max-bytes") {
+		b, err := config.ParseByteSize(flagIngestStagingMaxBytes)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid --ingest-staging-max-bytes: %w", err)
+		}
+		cfg.Ingest.Staging.MaxBytes = b
+		cli = append(cli, config.CLIOverride{Key: "ingest.staging.max_bytes", Value: b.String(), Flag: "--ingest-staging-max-bytes"})
+		flags = append(flags, "--ingest-staging-max-bytes")
+	}
+	if cmd.Flags().Changed("ingest-staging-max-age") {
+		cfg.Ingest.Staging.MaxAge = config.Duration(flagIngestStagingMaxAge)
+		cli = append(cli, config.CLIOverride{Key: "ingest.staging.max_age", Value: flagIngestStagingMaxAge.String(), Flag: "--ingest-staging-max-age"})
+		flags = append(flags, "--ingest-staging-max-age")
+	}
+
 	return cli, flags, nil
 }
 

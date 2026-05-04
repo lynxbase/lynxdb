@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/pflag"
 
@@ -23,6 +24,10 @@ func resetConfigFlags(t *testing.T) {
 	})
 	// Also reset root persistent flags.
 	rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
+		f.Changed = false
+		f.Value.Set(f.DefValue)
+	})
+	serverCmd.Flags().VisitAll(func(f *pflag.Flag) {
 		f.Changed = false
 		f.Value.Set(f.DefValue)
 	})
@@ -130,6 +135,52 @@ func TestConfigShow_CLIOverridesEnv(t *testing.T) {
 	}
 	if !strings.Contains(output, "(--addr)") {
 		t.Errorf("expected '(--addr)' source, not env var, got:\n%s", output)
+	}
+}
+
+func TestApplyCLIOverrides_ShipperFlagsOverrideEnv(t *testing.T) {
+	resetConfigFlags(t)
+	t.Setenv("LYNXDB_INGEST_OTLP_HTTP_LISTEN", "127.0.0.1:18318")
+
+	cfg := config.DefaultConfig()
+	if err := serverCmd.Flags().Set("ingest-es-version", "9.0.1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := serverCmd.Flags().Set("otlp-http-listen", "127.0.0.1:28318"); err != nil {
+		t.Fatal(err)
+	}
+	if err := serverCmd.Flags().Set("otlp-grpc-max-recv-bytes", "32mb"); err != nil {
+		t.Fatal(err)
+	}
+	if err := serverCmd.Flags().Set("ingest-max-compressed-body-bytes", "16mb"); err != nil {
+		t.Fatal(err)
+	}
+	if err := serverCmd.Flags().Set("ingest-staging-max-age", "2s"); err != nil {
+		t.Fatal(err)
+	}
+
+	cli, _, err := applyCLIOverrides(serverCmd, cfg)
+	if err != nil {
+		t.Fatalf("applyCLIOverrides: %v", err)
+	}
+
+	if cfg.Ingest.ESCompat.AdvertisedVersion != "9.0.1" {
+		t.Fatalf("AdvertisedVersion = %q", cfg.Ingest.ESCompat.AdvertisedVersion)
+	}
+	if cfg.Ingest.OTLP.HTTPListen != "127.0.0.1:28318" {
+		t.Fatalf("OTLP.HTTPListen = %q", cfg.Ingest.OTLP.HTTPListen)
+	}
+	if cfg.Ingest.OTLP.GRPCMaxRecvBytes != 32*config.MB {
+		t.Fatalf("OTLP.GRPCMaxRecvBytes = %s", cfg.Ingest.OTLP.GRPCMaxRecvBytes)
+	}
+	if cfg.Ingest.Limits.MaxCompressedBodyBytes != 16*config.MB {
+		t.Fatalf("MaxCompressedBodyBytes = %s", cfg.Ingest.Limits.MaxCompressedBodyBytes)
+	}
+	if cfg.Ingest.Staging.MaxAge != config.Duration(2*time.Second) {
+		t.Fatalf("Staging.MaxAge = %s", cfg.Ingest.Staging.MaxAge)
+	}
+	if len(cli) != 5 {
+		t.Fatalf("cli overrides = %d, want 5", len(cli))
 	}
 }
 

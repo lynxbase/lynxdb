@@ -1,0 +1,12 @@
+# OpenTelemetry Collector logs exporter for LynxDB.
+exporters:
+  otlphttp/lynxdb:
+    endpoint: "{{ .Remote }}"
+    compression: gzip
+
+service:
+  pipelines:
+    logs:
+      receivers: [filelog]
+      exporters: [otlphttp/lynxdb]
+# Point endpoint at LynxDB's OTLP HTTP listener, usually http://host:4318.

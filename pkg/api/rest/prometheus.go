@@ -34,10 +34,27 @@ type PrometheusMetrics struct {
 	spillBytesTotal         prometheus.Counter
 
 	// Ingestion metrics.
-	ingestEventsTotal  prometheus.Counter
-	ingestBatchesTotal prometheus.Counter
-	ingestBytesTotal   prometheus.Counter
-	ingestErrorsTotal  prometheus.Counter
+	ingestEventsTotal          prometheus.Counter
+	ingestBatchesTotal         prometheus.Counter
+	ingestBytesTotal           prometheus.Counter
+	ingestErrorsTotal          prometheus.Counter
+	ingestESBulkRequestsTotal  *prometheus.CounterVec
+	ingestESBulkItemsTotal     *prometheus.CounterVec
+	ingestESHandshakeTotal     *prometheus.CounterVec
+	ingestESBulkDuration       prometheus.Histogram
+	ingestOTLPRequestsTotal    *prometheus.CounterVec
+	ingestOTLPRecordsTotal     *prometheus.CounterVec
+	ingestDroppedRecordsTotal  *prometheus.CounterVec
+	ingestOTLPRequestBytes     prometheus.Histogram
+	ingestListenerUp           *prometheus.GaugeVec
+	decompressionRejectedTotal *prometheus.CounterVec
+	stagingFlushesTotal        *prometheus.CounterVec
+	stagingOverflowsTotal      prometheus.Counter
+	stagingDroppedTotal        *prometheus.CounterVec
+	stagingBytes               prometheus.Gauge
+	stagingEvents              prometheus.Gauge
+	stagingAgeSeconds          prometheus.Gauge
+	stagingFlushSizeBytes      prometheus.Histogram
 
 	// Compaction metrics.
 	compactionRunsTotal     prometheus.Counter
@@ -168,6 +185,77 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		Name: "lynxdb_ingest_errors_total",
 		Help: "Total ingest errors.",
 	})
+	ingestESBulkRequests := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_es_bulk_requests_total",
+		Help: "Total Elasticsearch bulk requests by result.",
+	}, []string{"result"})
+	ingestESBulkItems := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_es_bulk_items_total",
+		Help: "Total Elasticsearch bulk action items by action and result.",
+	}, []string{"action", "result"})
+	ingestESHandshake := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_es_handshake_total",
+		Help: "Total Elasticsearch compatibility handshake and management probe requests.",
+	}, []string{"kind"})
+	ingestESBulkDuration := prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lynxdb_ingest_es_bulk_duration_seconds",
+		Help:    "Wall time per Elasticsearch bulk request.",
+		Buckets: prometheus.DefBuckets,
+	})
+	ingestOTLPRequests := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_otlp_requests_total",
+		Help: "Total OTLP HTTP requests by signal, encoding, and result.",
+	}, []string{"signal", "encoding", "result"})
+	ingestOTLPRecords := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_otlp_records_total",
+		Help: "Total OTLP records by signal and result.",
+	}, []string{"signal", "result"})
+	ingestDroppedRecords := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_dropped_records_total",
+		Help: "Total ingest records dropped by source and reason.",
+	}, []string{"source", "reason"})
+	ingestOTLPRequestBytes := prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lynxdb_ingest_otlp_request_bytes",
+		Help:    "Decompressed OTLP HTTP request body size in bytes.",
+		Buckets: prometheus.ExponentialBuckets(1024, 2, 19),
+	})
+	ingestListenerUp := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "lynxdb_ingest_listener_up",
+		Help: "Whether an ingest listener is bound.",
+	}, []string{"listener"})
+	decompressionRejected := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_decompression_rejected_total",
+		Help: "Total shipper ingest requests rejected by compressed or decompressed body limits.",
+	}, []string{"stage", "encoding"})
+	stagingFlushes := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_staging_flushes_total",
+		Help: "Total staging-buffer flushes by trigger.",
+	}, []string{"trigger"})
+	stagingOverflows := prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_staging_overflows_total",
+		Help: "Total staging-buffer overflows.",
+	})
+	stagingDropped := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_staging_dropped_total",
+		Help: "Total staged events dropped after retry exhaustion.",
+	}, []string{"reason"})
+	stagingBytes := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "lynxdb_ingest_staging_bytes",
+		Help: "Current pending bytes in the shipper staging buffer.",
+	})
+	stagingEvents := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "lynxdb_ingest_staging_events",
+		Help: "Current pending event count in the shipper staging buffer.",
+	})
+	stagingAge := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "lynxdb_ingest_staging_age_seconds",
+		Help: "Age of the oldest pending staged event in seconds.",
+	})
+	stagingFlushSize := prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "lynxdb_ingest_staging_flush_size_bytes",
+		Help:    "Bytes flushed from the shipper staging buffer.",
+		Buckets: prometheus.ExponentialBuckets(1024, 2, 19),
+	})
 
 	// Compaction metrics.
 	compactionRuns := prometheus.NewCounter(prometheus.CounterOpts{
@@ -274,6 +362,23 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		ingestBatches,
 		ingestBytes,
 		ingestErrors,
+		ingestESBulkRequests,
+		ingestESBulkItems,
+		ingestESHandshake,
+		ingestESBulkDuration,
+		ingestOTLPRequests,
+		ingestOTLPRecords,
+		ingestDroppedRecords,
+		ingestOTLPRequestBytes,
+		ingestListenerUp,
+		decompressionRejected,
+		stagingFlushes,
+		stagingOverflows,
+		stagingDropped,
+		stagingBytes,
+		stagingEvents,
+		stagingAge,
+		stagingFlushSize,
 		compactionRuns,
 		compactionDuration,
 		compactionInput,
@@ -297,45 +402,131 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 	)
 
 	return &PrometheusMetrics{
-		registry:                  reg,
-		queryDuration:             queryDuration,
-		queryScanDuration:         &scanDur,
-		queryPipelineDuration:     &pipelineDur,
-		queryPeakMemory:           &peakMem,
-		queryRowsScanned:          &rowsScanned,
-		segmentsSkippedBloom:      skippedBloom,
-		segmentsSkippedColStats:   skippedColStats,
-		segmentsSkippedTime:       skippedTime,
-		segmentsScannedTotal:      scannedTotal,
-		querySlowTotal:            slowTotal,
-		queryErrorsTotal:          errorsTotal,
-		querySpilledTotal:         querySpilled,
-		spillBytesTotal:           spillBytes,
-		ingestEventsTotal:         ingestEvents,
-		ingestBatchesTotal:        ingestBatches,
-		ingestBytesTotal:          ingestBytes,
-		ingestErrorsTotal:         ingestErrors,
-		compactionRunsTotal:       compactionRuns,
-		compactionDurationTotal:   compactionDuration,
-		compactionInputBytes:      compactionInput,
-		compactionOutputBytes:     compactionOutput,
-		compactionErrorsTotal:     compactionErrors,
-		compactionQueueDepth:      compactionQueue,
-		tieringUploadsTotal:       tieringUploads,
-		tieringUploadBytesTotal:   tieringUploadBytes,
-		tieringDownloadsTotal:     tieringDownloads,
-		tieringDownloadBytesTotal: tieringDownloadBytes,
-		cacheHitsTotal:            cacheHits,
-		cacheMissesTotal:          cacheMisses,
-		cacheEvictionsTotal:       cacheEvictions,
-		cacheSizeBytes:            cacheSize,
-		memgovClassBytes:          memgovClassBytes,
-		memgovClassPeakBytes:      memgovClassPeakBytes,
-		memgovPressureEvents:      memgovPressureEvents,
-		memgovRevocationFreed:     memgovRevocationFreed,
-		spillFilesActive:          spillFilesActive,
-		spillBytesActive:          spillBytesActive,
+		registry:                   reg,
+		queryDuration:              queryDuration,
+		queryScanDuration:          &scanDur,
+		queryPipelineDuration:      &pipelineDur,
+		queryPeakMemory:            &peakMem,
+		queryRowsScanned:           &rowsScanned,
+		segmentsSkippedBloom:       skippedBloom,
+		segmentsSkippedColStats:    skippedColStats,
+		segmentsSkippedTime:        skippedTime,
+		segmentsScannedTotal:       scannedTotal,
+		querySlowTotal:             slowTotal,
+		queryErrorsTotal:           errorsTotal,
+		querySpilledTotal:          querySpilled,
+		spillBytesTotal:            spillBytes,
+		ingestEventsTotal:          ingestEvents,
+		ingestBatchesTotal:         ingestBatches,
+		ingestBytesTotal:           ingestBytes,
+		ingestErrorsTotal:          ingestErrors,
+		ingestESBulkRequestsTotal:  ingestESBulkRequests,
+		ingestESBulkItemsTotal:     ingestESBulkItems,
+		ingestESHandshakeTotal:     ingestESHandshake,
+		ingestESBulkDuration:       ingestESBulkDuration,
+		ingestOTLPRequestsTotal:    ingestOTLPRequests,
+		ingestOTLPRecordsTotal:     ingestOTLPRecords,
+		ingestDroppedRecordsTotal:  ingestDroppedRecords,
+		ingestOTLPRequestBytes:     ingestOTLPRequestBytes,
+		ingestListenerUp:           ingestListenerUp,
+		decompressionRejectedTotal: decompressionRejected,
+		stagingFlushesTotal:        stagingFlushes,
+		stagingOverflowsTotal:      stagingOverflows,
+		stagingDroppedTotal:        stagingDropped,
+		stagingBytes:               stagingBytes,
+		stagingEvents:              stagingEvents,
+		stagingAgeSeconds:          stagingAge,
+		stagingFlushSizeBytes:      stagingFlushSize,
+		compactionRunsTotal:        compactionRuns,
+		compactionDurationTotal:    compactionDuration,
+		compactionInputBytes:       compactionInput,
+		compactionOutputBytes:      compactionOutput,
+		compactionErrorsTotal:      compactionErrors,
+		compactionQueueDepth:       compactionQueue,
+		tieringUploadsTotal:        tieringUploads,
+		tieringUploadBytesTotal:    tieringUploadBytes,
+		tieringDownloadsTotal:      tieringDownloads,
+		tieringDownloadBytesTotal:  tieringDownloadBytes,
+		cacheHitsTotal:             cacheHits,
+		cacheMissesTotal:           cacheMisses,
+		cacheEvictionsTotal:        cacheEvictions,
+		cacheSizeBytes:             cacheSize,
+		memgovClassBytes:           memgovClassBytes,
+		memgovClassPeakBytes:       memgovClassPeakBytes,
+		memgovPressureEvents:       memgovPressureEvents,
+		memgovRevocationFreed:      memgovRevocationFreed,
+		spillFilesActive:           spillFilesActive,
+		spillBytesActive:           spillBytesActive,
 	}
+}
+
+func (pm *PrometheusMetrics) RecordESHandshake(kind string) {
+	if kind == "" {
+		kind = "unknown"
+	}
+	pm.ingestESHandshakeTotal.WithLabelValues(kind).Inc()
+}
+
+func (pm *PrometheusMetrics) RecordESBulkRequest(result string, durationSeconds float64) {
+	pm.ingestESBulkRequestsTotal.WithLabelValues(result).Inc()
+	pm.ingestESBulkDuration.Observe(durationSeconds)
+}
+
+func (pm *PrometheusMetrics) RecordESBulkItem(action, result string) {
+	pm.ingestESBulkItemsTotal.WithLabelValues(action, result).Inc()
+}
+
+func (pm *PrometheusMetrics) RecordOTLPRequest(signal, encoding, result string, bytes int) {
+	pm.ingestOTLPRequestsTotal.WithLabelValues(signal, encoding, result).Inc()
+	pm.ingestOTLPRequestBytes.Observe(float64(bytes))
+}
+
+func (pm *PrometheusMetrics) RecordOTLPRecords(signal, result string, count int) {
+	if count <= 0 {
+		return
+	}
+	pm.ingestOTLPRecordsTotal.WithLabelValues(signal, result).Add(float64(count))
+}
+
+func (pm *PrometheusMetrics) RecordDroppedRecords(source, reason string, count int) {
+	if count <= 0 {
+		return
+	}
+	pm.ingestDroppedRecordsTotal.WithLabelValues(source, reason).Add(float64(count))
+}
+
+func (pm *PrometheusMetrics) SetListenerUp(listener string, up bool) {
+	value := 0.0
+	if up {
+		value = 1
+	}
+	pm.ingestListenerUp.WithLabelValues(listener).Set(value)
+}
+
+func (pm *PrometheusMetrics) OnReject(stage, encoding string) {
+	if encoding == "" {
+		encoding = "identity"
+	}
+	pm.decompressionRejectedTotal.WithLabelValues(stage, encoding).Inc()
+}
+
+func (pm *PrometheusMetrics) SetState(bytes int64, events int, ageSeconds float64) {
+	pm.stagingBytes.Set(float64(bytes))
+	pm.stagingEvents.Set(float64(events))
+	pm.stagingAgeSeconds.Set(ageSeconds)
+}
+
+func (pm *PrometheusMetrics) RecordFlush(trigger string, bytes int64) {
+	pm.stagingFlushesTotal.WithLabelValues(trigger).Inc()
+	pm.stagingFlushSizeBytes.Observe(float64(bytes))
+}
+
+func (pm *PrometheusMetrics) RecordOverflow() {
+	pm.stagingOverflowsTotal.Inc()
+}
+
+func (pm *PrometheusMetrics) RecordDropped(reason string, events int) {
+	pm.stagingDroppedTotal.WithLabelValues(reason).Add(float64(events))
 }
 
 // Handler returns the HTTP handler that serves the Prometheus metrics endpoint.

@@ -477,6 +477,177 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Ingest.MaxLineBytes) }},
+	{"LYNXDB_INGEST_ES_COMPAT_ENABLED", "ingest.es_compat.enabled",
+		func(c *Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.ESCompat.Enabled = b
+
+			return nil
+		},
+		func(c *Config) string { return strconv.FormatBool(c.Ingest.ESCompat.Enabled) }},
+	{"LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION", "ingest.es_compat.advertised_version",
+		func(c *Config, v string) error {
+			c.Ingest.ESCompat.AdvertisedVersion = v
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.ESCompat.AdvertisedVersion }},
+	{"LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME", "ingest.es_compat.cluster_name",
+		func(c *Config, v string) error {
+			c.Ingest.ESCompat.ClusterName = v
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.ESCompat.ClusterName }},
+	{"LYNXDB_INGEST_ES_COMPAT_STRIP_LOGSTASH_DATE_SUFFIX", "ingest.es_compat.strip_logstash_date_suffix",
+		func(c *Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.ESCompat.StripLogstashDateSuffix = b
+
+			return nil
+		},
+		func(c *Config) string { return strconv.FormatBool(c.Ingest.ESCompat.StripLogstashDateSuffix) }},
+	{"LYNXDB_INGEST_OTLP_HTTP_LISTEN", "ingest.otlp.http_listen",
+		func(c *Config, v string) error {
+			c.Ingest.OTLP.HTTPListen = v
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.OTLP.HTTPListen }},
+	{"LYNXDB_INGEST_OTLP_GRPC_LISTEN", "ingest.otlp.grpc_listen",
+		func(c *Config, v string) error {
+			c.Ingest.OTLP.GRPCListen = v
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.OTLP.GRPCListen }},
+	{"LYNXDB_INGEST_OTLP_GRPC_MAX_RECV_BYTES", "ingest.otlp.grpc_max_recv_bytes",
+		func(c *Config, v string) error {
+			b, err := ParseByteSize(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.OTLP.GRPCMaxRecvBytes = b
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.OTLP.GRPCMaxRecvBytes.String() }},
+	{"LYNXDB_INGEST_SPLUNK_HEC_ENABLED", "ingest.splunk_hec.enabled",
+		func(c *Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.SplunkHEC.Enabled = b
+
+			return nil
+		},
+		func(c *Config) string { return strconv.FormatBool(c.Ingest.SplunkHEC.Enabled) }},
+	{"LYNXDB_INGEST_SPLUNK_HEC_REQUIRE_TOKEN", "ingest.splunk_hec.require_token",
+		func(c *Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.SplunkHEC.RequireToken = b
+
+			return nil
+		},
+		func(c *Config) string { return strconv.FormatBool(c.Ingest.SplunkHEC.RequireToken) }},
+	{"LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES", "ingest.limits.max_compressed_body_bytes",
+		func(c *Config, v string) error {
+			b, err := ParseByteSize(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Limits.MaxCompressedBodyBytes = b
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.Limits.MaxCompressedBodyBytes.String() }},
+	{"LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES", "ingest.limits.max_decompressed_body_bytes",
+		func(c *Config, v string) error {
+			b, err := ParseByteSize(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Limits.MaxDecompressedBodyBytes = b
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.Limits.MaxDecompressedBodyBytes.String() }},
+	{"LYNXDB_INGEST_STAGING_ENABLED", "ingest.staging.enabled",
+		func(c *Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Staging.Enabled = b
+
+			return nil
+		},
+		func(c *Config) string { return strconv.FormatBool(c.Ingest.Staging.Enabled) }},
+	{"LYNXDB_INGEST_STAGING_MAX_BYTES", "ingest.staging.max_bytes",
+		func(c *Config, v string) error {
+			b, err := ParseByteSize(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Staging.MaxBytes = b
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.Staging.MaxBytes.String() }},
+	{"LYNXDB_INGEST_STAGING_MAX_AGE", "ingest.staging.max_age",
+		func(c *Config, v string) error {
+			d, err := ParseDuration(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Staging.MaxAge = d
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.Staging.MaxAge.String() }},
+	{"LYNXDB_INGEST_STAGING_MAX_INFLIGHT_EVENTS", "ingest.staging.max_inflight_events",
+		func(c *Config, v string) error {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Staging.MaxInflightEvents = n
+
+			return nil
+		},
+		func(c *Config) string { return strconv.Itoa(c.Ingest.Staging.MaxInflightEvents) }},
+	{"LYNXDB_INGEST_STAGING_FLUSH_RETRIES", "ingest.staging.flush_retries",
+		func(c *Config, v string) error {
+			n, err := strconv.Atoi(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Staging.FlushRetries = n
+
+			return nil
+		},
+		func(c *Config) string { return strconv.Itoa(c.Ingest.Staging.FlushRetries) }},
+	{"LYNXDB_INGEST_STAGING_FLUSH_BACKOFF_MAX", "ingest.staging.flush_backoff_max",
+		func(c *Config, v string) error {
+			d, err := ParseDuration(v)
+			if err != nil {
+				return err
+			}
+			c.Ingest.Staging.FlushBackoffMax = d
+
+			return nil
+		},
+		func(c *Config) string { return c.Ingest.Staging.FlushBackoffMax.String() }},
 	{"LYNXDB_INGEST_MODE", "ingest.mode",
 		func(c *Config, v string) error {
 			c.Ingest.Mode = v

@@ -23,7 +23,7 @@ func init() {
 }
 
 func newDoctorCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "doctor",
 		Short: "Check environment and diagnose issues",
 		Long:  `Runs a series of checks on the binary, config, data directory, server connectivity, and shell completion to help diagnose problems.`,
@@ -31,6 +31,8 @@ func newDoctorCmd() *cobra.Command {
   lynxdb doctor --server http://logs:3100`,
 		RunE: runDoctor,
 	}
+	cmd.AddCommand(newDoctorShippersCmd())
+	return cmd
 }
 
 type checkResult struct {

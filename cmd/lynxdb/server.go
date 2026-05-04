@@ -26,21 +26,31 @@ import (
 )
 
 var (
-	flagAuthEnabled    bool
-	flagTLSEnabled     bool
-	flagTLSCert        string
-	flagTLSKey         string
-	flagMaxQueryPool   string
-	flagSpillDir       string
-	flagNoUI           bool
-	flagOpenUI         bool
-	flagProfileRuntime bool
-	flagSyslog         string
-	flagSyslogUDP      string
-	flagSyslogTCP      string
-	flagSyslogTLS      bool
-	flagSyslogParser   string
-	flagSyslogIndex    string
+	flagAuthEnabled                    bool
+	flagTLSEnabled                     bool
+	flagTLSCert                        string
+	flagTLSKey                         string
+	flagMaxQueryPool                   string
+	flagSpillDir                       string
+	flagNoUI                           bool
+	flagOpenUI                         bool
+	flagProfileRuntime                 bool
+	flagSyslog                         string
+	flagSyslogUDP                      string
+	flagSyslogTCP                      string
+	flagSyslogTLS                      bool
+	flagSyslogParser                   string
+	flagSyslogIndex                    string
+	flagIngestESEnabled                bool
+	flagIngestESVersion                string
+	flagOTLPHTTPListen                 string
+	flagOTLPGRPCListen                 string
+	flagOTLPGRPCMaxRecvBytes           string
+	flagIngestMaxCompressedBodyBytes   string
+	flagIngestMaxDecompressedBodyBytes string
+	flagIngestStagingEnabled           bool
+	flagIngestStagingMaxBytes          string
+	flagIngestStagingMaxAge            time.Duration
 
 	// Cluster flags.
 	flagClusterEnabled  bool
@@ -81,6 +91,16 @@ func init() {
 	serverCmd.Flags().BoolVar(&flagSyslogTLS, "syslog-tls", false, "Wrap TCP syslog with server TLS (default port 6514 when omitted)")
 	serverCmd.Flags().StringVar(&flagSyslogParser, "syslog-parser", "", "Syslog parser dialect: auto, rfc5424, rfc3164, raw")
 	serverCmd.Flags().StringVar(&flagSyslogIndex, "syslog-index", "", "Target index for syslog events")
+	serverCmd.Flags().BoolVar(&flagIngestESEnabled, "ingest-es-enabled", true, "Enable Elasticsearch-compatible bulk endpoint")
+	serverCmd.Flags().StringVar(&flagIngestESVersion, "ingest-es-version", "", "ES version advertised in handshake")
+	serverCmd.Flags().StringVar(&flagOTLPHTTPListen, "otlp-http-listen", "", "OTLP HTTP listen address (empty disables)")
+	serverCmd.Flags().StringVar(&flagOTLPGRPCListen, "otlp-grpc-listen", "", "OTLP gRPC listen address (empty disables)")
+	serverCmd.Flags().StringVar(&flagOTLPGRPCMaxRecvBytes, "otlp-grpc-max-recv-bytes", "", "OTLP gRPC max receive message size")
+	serverCmd.Flags().StringVar(&flagIngestMaxCompressedBodyBytes, "ingest-max-compressed-body-bytes", "", "Max compressed shipper body size")
+	serverCmd.Flags().StringVar(&flagIngestMaxDecompressedBodyBytes, "ingest-max-decompressed-body-bytes", "", "Max decompressed shipper body size")
+	serverCmd.Flags().BoolVar(&flagIngestStagingEnabled, "ingest-staging-enabled", true, "Enable server-side shipper staging buffer")
+	serverCmd.Flags().StringVar(&flagIngestStagingMaxBytes, "ingest-staging-max-bytes", "", "Staging buffer byte ceiling")
+	serverCmd.Flags().DurationVar(&flagIngestStagingMaxAge, "ingest-staging-max-age", 0, "Staging buffer max age")
 
 	// Cluster flags.
 	serverCmd.Flags().BoolVar(&flagClusterEnabled, "cluster.enabled", false, "Enable cluster mode")

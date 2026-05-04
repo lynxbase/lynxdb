@@ -524,6 +524,18 @@ type StatsSource struct {
 	Count int64  `json:"count"`
 }
 
+// ShipperObservation describes one recently observed log shipper.
+type ShipperObservation struct {
+	Tool         string    `json:"tool"`
+	Version      string    `json:"version,omitempty"`
+	Status       string    `json:"status"`
+	LastSeenAt   time.Time `json:"last_seen_at"`
+	EventsPerMin int64     `json:"events_per_min"`
+	Endpoint     string    `json:"endpoint"`
+	RemoteIP     string    `json:"remote_ip,omitempty"`
+	UserAgent    string    `json:"user_agent,omitempty"`
+}
+
 // IndexInfo describes an index from the server.
 type IndexInfo struct {
 	Name              string `json:"name"`
