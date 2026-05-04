@@ -21,7 +21,7 @@ var DefaultsTemplate []byte
 // Override describes a single env var or config file override that was applied.
 type Override struct {
 	Key    string // e.g. "listen", "storage.compression"
-	Source string // "LYNXDB_LISTEN" or "config file"
+	Source string // e.g. "LYNXDB_LISTEN" or "config file"
 	Value  string
 }
 
@@ -71,7 +71,7 @@ func resolveConfigPath(explicit string) (string, bool) {
 		return explicit, true
 	}
 
-	if p := os.Getenv("LYNXDB_CONFIG"); p != "" {
+	if p := os.Getenv(LYNXDB_CONFIG); p != "" {
 		return p, true
 	}
 
@@ -109,21 +109,21 @@ type envBinding struct {
 }
 
 var envBindings = []envBinding{
-	{"LYNXDB_LISTEN", "listen",
+	{LYNXDB_LISTEN, "listen",
 		func(c *Config, v string) error {
 			c.Listen = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Listen }},
-	{"LYNXDB_DATA_DIR", "data_dir",
+	{LYNXDB_DATA_DIR, "data_dir",
 		func(c *Config, v string) error {
 			c.DataDir = v
 
 			return nil
 		},
 		func(c *Config) string { return c.DataDir }},
-	{"LYNXDB_RETENTION", "retention",
+	{LYNXDB_RETENTION, "retention",
 		func(c *Config, v string) error {
 			d, err := ParseDuration(v)
 			if err != nil {
@@ -134,7 +134,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Retention.String() }},
-	{"LYNXDB_LOG_LEVEL", "log_level",
+	{LYNXDB_LOG_LEVEL, "log_level",
 		func(c *Config, v string) error {
 			c.LogLevel = v
 
@@ -143,14 +143,14 @@ var envBindings = []envBinding{
 		func(c *Config) string { return c.LogLevel }},
 
 	// Storage
-	{"LYNXDB_STORAGE_COMPRESSION", "storage.compression",
+	{LYNXDB_STORAGE_COMPRESSION, "storage.compression",
 		func(c *Config, v string) error {
 			c.Storage.Compression = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Storage.Compression }},
-	{"LYNXDB_STORAGE_ROW_GROUP_SIZE", "storage.row_group_size",
+	{LYNXDB_STORAGE_ROW_GROUP_SIZE, "storage.row_group_size",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -161,7 +161,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Storage.RowGroupSize) }},
-	{"LYNXDB_STORAGE_FLUSH_THRESHOLD", "storage.flush_threshold",
+	{LYNXDB_STORAGE_FLUSH_THRESHOLD, "storage.flush_threshold",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -172,7 +172,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Storage.FlushThreshold.String() }},
-	{"LYNXDB_STORAGE_FLUSH_IDLE_TIMEOUT", "storage.flush_idle_timeout",
+	{LYNXDB_STORAGE_FLUSH_IDLE_TIMEOUT, "storage.flush_idle_timeout",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -183,7 +183,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Storage.FlushIdleTimeout.String() }},
-	{"LYNXDB_STORAGE_MAX_COLUMNS_PER_PART", "storage.max_columns_per_part",
+	{LYNXDB_STORAGE_MAX_COLUMNS_PER_PART, "storage.max_columns_per_part",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -194,14 +194,14 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Storage.MaxColumnsPerPart) }},
-	{"LYNXDB_STORAGE_PARTITION_BY", "storage.partition_by",
+	{LYNXDB_STORAGE_PARTITION_BY, "storage.partition_by",
 		func(c *Config, v string) error {
 			c.Storage.PartitionBy = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Storage.PartitionBy }},
-	{"LYNXDB_STORAGE_COMPACTION_INTERVAL", "storage.compaction_interval",
+	{LYNXDB_STORAGE_COMPACTION_INTERVAL, "storage.compaction_interval",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -212,7 +212,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Storage.CompactionInterval.String() }},
-	{"LYNXDB_STORAGE_COMPACTION_WORKERS", "storage.compaction_workers",
+	{LYNXDB_STORAGE_COMPACTION_WORKERS, "storage.compaction_workers",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -223,7 +223,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Storage.CompactionWorkers) }},
-	{"LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB", "storage.compaction_rate_limit_mb",
+	{LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB, "storage.compaction_rate_limit_mb",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -234,7 +234,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Storage.CompactionRateLimitMB) }},
-	{"LYNXDB_STORAGE_L0_THRESHOLD", "storage.l0_threshold",
+	{LYNXDB_STORAGE_L0_THRESHOLD, "storage.l0_threshold",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -245,7 +245,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Storage.L0Threshold) }},
-	{"LYNXDB_STORAGE_L1_THRESHOLD", "storage.l1_threshold",
+	{LYNXDB_STORAGE_L1_THRESHOLD, "storage.l1_threshold",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -256,7 +256,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Storage.L1Threshold) }},
-	{"LYNXDB_STORAGE_L2_TARGET_SIZE", "storage.l2_target_size",
+	{LYNXDB_STORAGE_L2_TARGET_SIZE, "storage.l2_target_size",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -267,35 +267,35 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Storage.L2TargetSize.String() }},
-	{"LYNXDB_STORAGE_S3_BUCKET", "storage.s3_bucket",
+	{LYNXDB_STORAGE_S3_BUCKET, "storage.s3_bucket",
 		func(c *Config, v string) error {
 			c.Storage.S3Bucket = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Storage.S3Bucket }},
-	{"LYNXDB_STORAGE_S3_REGION", "storage.s3_region",
+	{LYNXDB_STORAGE_S3_REGION, "storage.s3_region",
 		func(c *Config, v string) error {
 			c.Storage.S3Region = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Storage.S3Region }},
-	{"LYNXDB_STORAGE_S3_PREFIX", "storage.s3_prefix",
+	{LYNXDB_STORAGE_S3_PREFIX, "storage.s3_prefix",
 		func(c *Config, v string) error {
 			c.Storage.S3Prefix = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Storage.S3Prefix }},
-	{"LYNXDB_STORAGE_S3_ENDPOINT", "storage.s3_endpoint",
+	{LYNXDB_STORAGE_S3_ENDPOINT, "storage.s3_endpoint",
 		func(c *Config, v string) error {
 			c.Storage.S3Endpoint = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Storage.S3Endpoint }},
-	{"LYNXDB_STORAGE_S3_FORCE_PATH_STYLE", "storage.s3_force_path_style",
+	{LYNXDB_STORAGE_S3_FORCE_PATH_STYLE, "storage.s3_force_path_style",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -306,7 +306,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.Storage.S3ForcePathStyle) }},
-	{"LYNXDB_STORAGE_TIERING_INTERVAL", "storage.tiering_interval",
+	{LYNXDB_STORAGE_TIERING_INTERVAL, "storage.tiering_interval",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -317,7 +317,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Storage.TieringInterval.String() }},
-	{"LYNXDB_STORAGE_TIERING_PARALLELISM", "storage.tiering_parallelism",
+	{LYNXDB_STORAGE_TIERING_PARALLELISM, "storage.tiering_parallelism",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -328,7 +328,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Storage.TieringParallelism) }},
-	{"LYNXDB_STORAGE_SEGMENT_CACHE_SIZE", "storage.segment_cache_size",
+	{LYNXDB_STORAGE_SEGMENT_CACHE_SIZE, "storage.segment_cache_size",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -339,7 +339,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Storage.SegmentCacheSize.String() }},
-	{"LYNXDB_STORAGE_CACHE_MAX_BYTES", "storage.cache_max_bytes",
+	{LYNXDB_STORAGE_CACHE_MAX_BYTES, "storage.cache_max_bytes",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -350,7 +350,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Storage.CacheMaxBytes.String() }},
-	{"LYNXDB_STORAGE_CACHE_TTL", "storage.cache_ttl",
+	{LYNXDB_STORAGE_CACHE_TTL, "storage.cache_ttl",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -363,7 +363,7 @@ var envBindings = []envBinding{
 		func(c *Config) string { return c.Storage.CacheTTL.String() }},
 
 	// Query
-	{"LYNXDB_QUERY_SYNC_TIMEOUT", "query.sync_timeout",
+	{LYNXDB_QUERY_SYNC_TIMEOUT, "query.sync_timeout",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -374,7 +374,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Query.SyncTimeout.String() }},
-	{"LYNXDB_QUERY_JOB_TTL", "query.job_ttl",
+	{LYNXDB_QUERY_JOB_TTL, "query.job_ttl",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -385,7 +385,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Query.JobTTL.String() }},
-	{"LYNXDB_QUERY_JOB_GC_INTERVAL", "query.job_gc_interval",
+	{LYNXDB_QUERY_JOB_GC_INTERVAL, "query.job_gc_interval",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -396,7 +396,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Query.JobGCInterval.String() }},
-	{"LYNXDB_QUERY_MAX_CONCURRENT", "query.max_concurrent",
+	{LYNXDB_QUERY_MAX_CONCURRENT, "query.max_concurrent",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -407,7 +407,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Query.MaxConcurrent) }},
-	{"LYNXDB_QUERY_DEFAULT_RESULT_LIMIT", "query.default_result_limit",
+	{LYNXDB_QUERY_DEFAULT_RESULT_LIMIT, "query.default_result_limit",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -418,7 +418,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Query.DefaultResultLimit) }},
-	{"LYNXDB_QUERY_MAX_RESULT_LIMIT", "query.max_result_limit",
+	{LYNXDB_QUERY_MAX_RESULT_LIMIT, "query.max_result_limit",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -429,7 +429,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Query.MaxResultLimit) }},
-	{"LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD", "query.bitmap_selectivity_threshold",
+	{LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD, "query.bitmap_selectivity_threshold",
 		func(c *Config, v string) error {
 			f, err := strconv.ParseFloat(v, 64)
 			if err != nil {
@@ -444,7 +444,7 @@ var envBindings = []envBinding{
 		}},
 
 	// Ingest
-	{"LYNXDB_INGEST_MAX_BODY_SIZE", "ingest.max_body_size",
+	{LYNXDB_INGEST_MAX_BODY_SIZE, "ingest.max_body_size",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -455,7 +455,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.MaxBodySize.String() }},
-	{"LYNXDB_INGEST_MAX_BATCH_SIZE", "ingest.max_batch_size",
+	{LYNXDB_INGEST_MAX_BATCH_SIZE, "ingest.max_batch_size",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -466,7 +466,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Ingest.MaxBatchSize) }},
-	{"LYNXDB_INGEST_MAX_LINE_BYTES", "ingest.max_line_bytes",
+	{LYNXDB_INGEST_MAX_LINE_BYTES, "ingest.max_line_bytes",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -477,7 +477,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Ingest.MaxLineBytes) }},
-	{"LYNXDB_INGEST_ES_COMPAT_ENABLED", "ingest.es_compat.enabled",
+	{LYNXDB_INGEST_ES_COMPAT_ENABLED, "ingest.es_compat.enabled",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -488,21 +488,21 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.Ingest.ESCompat.Enabled) }},
-	{"LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION", "ingest.es_compat.advertised_version",
+	{LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION, "ingest.es_compat.advertised_version",
 		func(c *Config, v string) error {
 			c.Ingest.ESCompat.AdvertisedVersion = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.ESCompat.AdvertisedVersion }},
-	{"LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME", "ingest.es_compat.cluster_name",
+	{LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME, "ingest.es_compat.cluster_name",
 		func(c *Config, v string) error {
 			c.Ingest.ESCompat.ClusterName = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.ESCompat.ClusterName }},
-	{"LYNXDB_INGEST_ES_COMPAT_STRIP_LOGSTASH_DATE_SUFFIX", "ingest.es_compat.strip_logstash_date_suffix",
+	{LYNXDB_INGEST_ES_COMPAT_STRIP_LOGSTASH_DATE_SUFFIX, "ingest.es_compat.strip_logstash_date_suffix",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -513,21 +513,21 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.Ingest.ESCompat.StripLogstashDateSuffix) }},
-	{"LYNXDB_INGEST_OTLP_HTTP_LISTEN", "ingest.otlp.http_listen",
+	{LYNXDB_INGEST_OTLP_HTTP_LISTEN, "ingest.otlp.http_listen",
 		func(c *Config, v string) error {
 			c.Ingest.OTLP.HTTPListen = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.OTLP.HTTPListen }},
-	{"LYNXDB_INGEST_OTLP_GRPC_LISTEN", "ingest.otlp.grpc_listen",
+	{LYNXDB_INGEST_OTLP_GRPC_LISTEN, "ingest.otlp.grpc_listen",
 		func(c *Config, v string) error {
 			c.Ingest.OTLP.GRPCListen = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.OTLP.GRPCListen }},
-	{"LYNXDB_INGEST_OTLP_GRPC_MAX_RECV_BYTES", "ingest.otlp.grpc_max_recv_bytes",
+	{LYNXDB_INGEST_OTLP_GRPC_MAX_RECV_BYTES, "ingest.otlp.grpc_max_recv_bytes",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -538,7 +538,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.OTLP.GRPCMaxRecvBytes.String() }},
-	{"LYNXDB_INGEST_SPLUNK_HEC_ENABLED", "ingest.splunk_hec.enabled",
+	{LYNXDB_INGEST_SPLUNK_HEC_ENABLED, "ingest.splunk_hec.enabled",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -549,7 +549,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.Ingest.SplunkHEC.Enabled) }},
-	{"LYNXDB_INGEST_SPLUNK_HEC_REQUIRE_TOKEN", "ingest.splunk_hec.require_token",
+	{LYNXDB_INGEST_SPLUNK_HEC_REQUIRE_TOKEN, "ingest.splunk_hec.require_token",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -560,7 +560,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.Ingest.SplunkHEC.RequireToken) }},
-	{"LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES", "ingest.limits.max_compressed_body_bytes",
+	{LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES, "ingest.limits.max_compressed_body_bytes",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -571,7 +571,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.Limits.MaxCompressedBodyBytes.String() }},
-	{"LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES", "ingest.limits.max_decompressed_body_bytes",
+	{LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES, "ingest.limits.max_decompressed_body_bytes",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -582,7 +582,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.Limits.MaxDecompressedBodyBytes.String() }},
-	{"LYNXDB_INGEST_STAGING_ENABLED", "ingest.staging.enabled",
+	{LYNXDB_INGEST_STAGING_ENABLED, "ingest.staging.enabled",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -593,7 +593,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.Ingest.Staging.Enabled) }},
-	{"LYNXDB_INGEST_STAGING_MAX_BYTES", "ingest.staging.max_bytes",
+	{LYNXDB_INGEST_STAGING_MAX_BYTES, "ingest.staging.max_bytes",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -604,7 +604,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.Staging.MaxBytes.String() }},
-	{"LYNXDB_INGEST_STAGING_MAX_AGE", "ingest.staging.max_age",
+	{LYNXDB_INGEST_STAGING_MAX_AGE, "ingest.staging.max_age",
 		func(c *Config, v string) error {
 			d, err := ParseDuration(v)
 			if err != nil {
@@ -615,7 +615,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.Staging.MaxAge.String() }},
-	{"LYNXDB_INGEST_STAGING_MAX_INFLIGHT_EVENTS", "ingest.staging.max_inflight_events",
+	{LYNXDB_INGEST_STAGING_MAX_INFLIGHT_EVENTS, "ingest.staging.max_inflight_events",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -626,7 +626,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Ingest.Staging.MaxInflightEvents) }},
-	{"LYNXDB_INGEST_STAGING_FLUSH_RETRIES", "ingest.staging.flush_retries",
+	{LYNXDB_INGEST_STAGING_FLUSH_RETRIES, "ingest.staging.flush_retries",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -637,7 +637,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Ingest.Staging.FlushRetries) }},
-	{"LYNXDB_INGEST_STAGING_FLUSH_BACKOFF_MAX", "ingest.staging.flush_backoff_max",
+	{LYNXDB_INGEST_STAGING_FLUSH_BACKOFF_MAX, "ingest.staging.flush_backoff_max",
 		func(c *Config, v string) error {
 			d, err := ParseDuration(v)
 			if err != nil {
@@ -648,7 +648,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.Staging.FlushBackoffMax.String() }},
-	{"LYNXDB_INGEST_MODE", "ingest.mode",
+	{LYNXDB_INGEST_MODE, "ingest.mode",
 		func(c *Config, v string) error {
 			c.Ingest.Mode = v
 
@@ -657,7 +657,7 @@ var envBindings = []envBinding{
 		func(c *Config) string { return c.Ingest.Mode }},
 
 	// HTTP
-	{"LYNXDB_HTTP_IDLE_TIMEOUT", "http.idle_timeout",
+	{LYNXDB_HTTP_IDLE_TIMEOUT, "http.idle_timeout",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -668,7 +668,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.HTTP.IdleTimeout.String() }},
-	{"LYNXDB_HTTP_SHUTDOWN_TIMEOUT", "http.shutdown_timeout",
+	{LYNXDB_HTTP_SHUTDOWN_TIMEOUT, "http.shutdown_timeout",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -679,7 +679,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.HTTP.ShutdownTimeout.String() }},
-	{"LYNXDB_HTTP_RATE_LIMIT", "http.rate_limit",
+	{LYNXDB_HTTP_RATE_LIMIT, "http.rate_limit",
 		func(c *Config, v string) error {
 			f, err := strconv.ParseFloat(v, 64)
 			if err != nil {
@@ -692,21 +692,21 @@ var envBindings = []envBinding{
 		func(c *Config) string { return fmt.Sprintf("%.2f", c.HTTP.RateLimit) }},
 
 	// Syslog
-	{"LYNXDB_SYSLOG_UDP", "syslog.udp",
+	{LYNXDB_SYSLOG_UDP, "syslog.udp",
 		func(c *Config, v string) error {
 			c.Syslog.UDP = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Syslog.UDP }},
-	{"LYNXDB_SYSLOG_TCP", "syslog.tcp",
+	{LYNXDB_SYSLOG_TCP, "syslog.tcp",
 		func(c *Config, v string) error {
 			c.Syslog.TCP = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Syslog.TCP }},
-	{"LYNXDB_SYSLOG_TLS", "syslog.tls",
+	{LYNXDB_SYSLOG_TLS, "syslog.tls",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -717,56 +717,56 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.Syslog.TLS) }},
-	{"LYNXDB_SYSLOG_PARSER", "syslog.parser",
+	{LYNXDB_SYSLOG_PARSER, "syslog.parser",
 		func(c *Config, v string) error {
 			c.Syslog.Parser = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Syslog.Parser }},
-	{"LYNXDB_SYSLOG_FRAMING", "syslog.framing",
+	{LYNXDB_SYSLOG_FRAMING, "syslog.framing",
 		func(c *Config, v string) error {
 			c.Syslog.Framing = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Syslog.Framing }},
-	{"LYNXDB_SYSLOG_TRAILER", "syslog.trailer",
+	{LYNXDB_SYSLOG_TRAILER, "syslog.trailer",
 		func(c *Config, v string) error {
 			c.Syslog.Trailer = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Syslog.Trailer }},
-	{"LYNXDB_SYSLOG_DEFAULT_TIMEZONE", "syslog.default_timezone",
+	{LYNXDB_SYSLOG_DEFAULT_TIMEZONE, "syslog.default_timezone",
 		func(c *Config, v string) error {
 			c.Syslog.DefaultTimezone = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Syslog.DefaultTimezone }},
-	{"LYNXDB_SYSLOG_DEFAULT_HOSTNAME", "syslog.default_hostname",
+	{LYNXDB_SYSLOG_DEFAULT_HOSTNAME, "syslog.default_hostname",
 		func(c *Config, v string) error {
 			c.Syslog.DefaultHostname = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Syslog.DefaultHostname }},
-	{"LYNXDB_SYSLOG_INDEX", "syslog.index",
+	{LYNXDB_SYSLOG_INDEX, "syslog.index",
 		func(c *Config, v string) error {
 			c.Syslog.Index = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Syslog.Index }},
-	{"LYNXDB_SYSLOG_SOURCETYPE", "syslog.sourcetype",
+	{LYNXDB_SYSLOG_SOURCETYPE, "syslog.sourcetype",
 		func(c *Config, v string) error {
 			c.Syslog.SourceType = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Syslog.SourceType }},
-	{"LYNXDB_SYSLOG_USE_PEER_AS_SOURCE", "syslog.use_peer_as_source",
+	{LYNXDB_SYSLOG_USE_PEER_AS_SOURCE, "syslog.use_peer_as_source",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -777,7 +777,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.Syslog.UsePeerAsSource) }},
-	{"LYNXDB_SYSLOG_MAX_MESSAGE_BYTES", "syslog.max_message_bytes",
+	{LYNXDB_SYSLOG_MAX_MESSAGE_BYTES, "syslog.max_message_bytes",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -788,7 +788,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Syslog.MaxMessageBytes) }},
-	{"LYNXDB_SYSLOG_UDP_READ_BUFFER", "syslog.udp_read_buffer",
+	{LYNXDB_SYSLOG_UDP_READ_BUFFER, "syslog.udp_read_buffer",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -799,7 +799,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Syslog.UDPReadBuffer.String() }},
-	{"LYNXDB_SYSLOG_TCP_IDLE_TIMEOUT", "syslog.tcp_idle_timeout",
+	{LYNXDB_SYSLOG_TCP_IDLE_TIMEOUT, "syslog.tcp_idle_timeout",
 		func(c *Config, v string) error {
 			d, err := ParseDuration(v)
 			if err != nil {
@@ -810,7 +810,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Syslog.TCPIdleTimeout.String() }},
-	{"LYNXDB_SYSLOG_TCP_MAX_CONNECTIONS", "syslog.tcp_max_connections",
+	{LYNXDB_SYSLOG_TCP_MAX_CONNECTIONS, "syslog.tcp_max_connections",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -821,7 +821,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Syslog.TCPMaxConns) }},
-	{"LYNXDB_SYSLOG_BATCH_SIZE", "syslog.batch_size",
+	{LYNXDB_SYSLOG_BATCH_SIZE, "syslog.batch_size",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -832,7 +832,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Syslog.BatchSize) }},
-	{"LYNXDB_SYSLOG_BATCH_TIMEOUT", "syslog.batch_timeout",
+	{LYNXDB_SYSLOG_BATCH_TIMEOUT, "syslog.batch_timeout",
 		func(c *Config, v string) error {
 			d, err := ParseDuration(v)
 			if err != nil {
@@ -845,7 +845,7 @@ var envBindings = []envBinding{
 		func(c *Config) string { return c.Syslog.BatchTimeout.String() }},
 
 	// Query — additional bindings
-	{"LYNXDB_QUERY_MAX_QUERY_RUNTIME", "query.max_query_runtime",
+	{LYNXDB_QUERY_MAX_QUERY_RUNTIME, "query.max_query_runtime",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -856,7 +856,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Query.MaxQueryRuntime.String() }},
-	{"LYNXDB_QUERY_MAX_QUERY_MEMORY_BYTES", "query.max_query_memory_bytes",
+	{LYNXDB_QUERY_MAX_QUERY_MEMORY_BYTES, "query.max_query_memory_bytes",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -867,7 +867,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Query.MaxQueryMemory.String() }},
-	{"LYNXDB_QUERY_GLOBAL_QUERY_POOL_BYTES", "query.global_query_pool_bytes",
+	{LYNXDB_QUERY_GLOBAL_QUERY_POOL_BYTES, "query.global_query_pool_bytes",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -878,14 +878,14 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Query.GlobalQueryPoolBytes.String() }},
-	{"LYNXDB_QUERY_SPILL_DIR", "query.spill_dir",
+	{LYNXDB_QUERY_SPILL_DIR, "query.spill_dir",
 		func(c *Config, v string) error {
 			c.Query.SpillDir = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Query.SpillDir }},
-	{"LYNXDB_QUERY_MAX_TEMP_DIR_SIZE_BYTES", "query.max_temp_dir_size_bytes",
+	{LYNXDB_QUERY_MAX_TEMP_DIR_SIZE_BYTES, "query.max_temp_dir_size_bytes",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -896,7 +896,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Query.MaxTempDirSizeBytes.String() }},
-	{"LYNXDB_QUERY_DEDUP_EXACT", "query.dedup_exact",
+	{LYNXDB_QUERY_DEDUP_EXACT, "query.dedup_exact",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -907,7 +907,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.Query.DedupExact) }},
-	{"LYNXDB_QUERY_SLOW_QUERY_THRESHOLD_MS", "query.slow_query_threshold_ms",
+	{LYNXDB_QUERY_SLOW_QUERY_THRESHOLD_MS, "query.slow_query_threshold_ms",
 		func(c *Config, v string) error {
 			n, err := strconv.ParseInt(v, 10, 64)
 			if err != nil {
@@ -918,7 +918,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatInt(c.Query.SlowQueryThresholdMs, 10) }},
-	{"LYNXDB_QUERY_MAX_BRANCH_PARALLELISM", "query.max_branch_parallelism",
+	{LYNXDB_QUERY_MAX_BRANCH_PARALLELISM, "query.max_branch_parallelism",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -931,7 +931,7 @@ var envBindings = []envBinding{
 		func(c *Config) string { return strconv.Itoa(c.Query.MaxBranchParallelism) }},
 
 	// Storage — additional bindings
-	{"LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT", "storage.remote_fetch_timeout",
+	{LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT, "storage.remote_fetch_timeout",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -944,7 +944,7 @@ var envBindings = []envBinding{
 		func(c *Config) string { return c.Storage.RemoteFetchTimeout.String() }},
 
 	// Tail
-	{"LYNXDB_TAIL_MAX_CONCURRENT_SESSIONS", "tail.max_concurrent_sessions",
+	{LYNXDB_TAIL_MAX_CONCURRENT_SESSIONS, "tail.max_concurrent_sessions",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -955,7 +955,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Tail.MaxConcurrentSessions) }},
-	{"LYNXDB_TAIL_MAX_SESSION_DURATION", "tail.max_session_duration",
+	{LYNXDB_TAIL_MAX_SESSION_DURATION, "tail.max_session_duration",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -968,7 +968,7 @@ var envBindings = []envBinding{
 		func(c *Config) string { return c.Tail.MaxSessionDuration.String() }},
 
 	// TLS
-	{"LYNXDB_TLS_ENABLED", "tls.enabled",
+	{LYNXDB_TLS_ENABLED, "tls.enabled",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -979,14 +979,14 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.TLS.Enabled) }},
-	{"LYNXDB_TLS_CERT_FILE", "tls.cert_file",
+	{LYNXDB_TLS_CERT_FILE, "tls.cert_file",
 		func(c *Config, v string) error {
 			c.TLS.CertFile = v
 
 			return nil
 		},
 		func(c *Config) string { return c.TLS.CertFile }},
-	{"LYNXDB_TLS_KEY_FILE", "tls.key_file",
+	{LYNXDB_TLS_KEY_FILE, "tls.key_file",
 		func(c *Config, v string) error {
 			c.TLS.KeyFile = v
 
@@ -995,7 +995,7 @@ var envBindings = []envBinding{
 		func(c *Config) string { return c.TLS.KeyFile }},
 
 	// Auth
-	{"LYNXDB_AUTH_ENABLED", "auth.enabled",
+	{LYNXDB_AUTH_ENABLED, "auth.enabled",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -1008,7 +1008,7 @@ var envBindings = []envBinding{
 		func(c *Config) string { return strconv.FormatBool(c.Auth.Enabled) }},
 
 	// Server
-	{"LYNXDB_SERVER_TOTAL_MEMORY_POOL_BYTES", "server.total_memory_pool_bytes",
+	{LYNXDB_SERVER_TOTAL_MEMORY_POOL_BYTES, "server.total_memory_pool_bytes",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -1019,7 +1019,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Server.TotalMemoryPoolBytes.String() }},
-	{"LYNXDB_SERVER_CACHE_RESERVE_PERCENT", "server.cache_reserve_percent",
+	{LYNXDB_SERVER_CACHE_RESERVE_PERCENT, "server.cache_reserve_percent",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -1032,7 +1032,7 @@ var envBindings = []envBinding{
 		func(c *Config) string { return strconv.Itoa(c.Server.CacheReservePercent) }},
 
 	// Views
-	{"LYNXDB_VIEWS_MAX_BACKFILL_MEMORY_BYTES", "views.max_backfill_memory_bytes",
+	{LYNXDB_VIEWS_MAX_BACKFILL_MEMORY_BYTES, "views.max_backfill_memory_bytes",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -1043,7 +1043,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Views.MaxBackfillMemoryBytes.String() }},
-	{"LYNXDB_VIEWS_BACKFILL_BACKPRESSURE_WAIT", "views.backfill_backpressure_wait",
+	{LYNXDB_VIEWS_BACKFILL_BACKPRESSURE_WAIT, "views.backfill_backpressure_wait",
 		func(c *Config, v string) error {
 			d, err := ParseDuration(v)
 			if err != nil {
@@ -1054,7 +1054,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Views.BackfillBackpressureWait.String() }},
-	{"LYNXDB_VIEWS_BACKFILL_MAX_RETRIES", "views.backfill_max_retries",
+	{LYNXDB_VIEWS_BACKFILL_MAX_RETRIES, "views.backfill_max_retries",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -1066,7 +1066,7 @@ var envBindings = []envBinding{
 		},
 		func(c *Config) string { return strconv.Itoa(c.Views.BackfillMaxRetries) }},
 
-	{"LYNXDB_VIEWS_BACKFILL_TIMEOUT", "views.backfill_timeout",
+	{LYNXDB_VIEWS_BACKFILL_TIMEOUT, "views.backfill_timeout",
 		func(c *Config, v string) error {
 			d, err := time.ParseDuration(v)
 			if err != nil {
@@ -1079,7 +1079,7 @@ var envBindings = []envBinding{
 		func(c *Config) string { return c.Views.BackfillTimeout.String() }},
 
 	// Buffer Manager
-	{"LYNXDB_BUFFER_MANAGER_ENABLED", "buffer_manager.enabled",
+	{LYNXDB_BUFFER_MANAGER_ENABLED, "buffer_manager.enabled",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -1090,7 +1090,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.BufferManager.Enabled) }},
-	{"LYNXDB_BUFFER_MANAGER_MAX_MEMORY_BYTES", "buffer_manager.max_memory_bytes",
+	{LYNXDB_BUFFER_MANAGER_MAX_MEMORY_BYTES, "buffer_manager.max_memory_bytes",
 		func(c *Config, v string) error {
 			b, err := ParseByteSize(v)
 			if err != nil {
@@ -1101,7 +1101,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.BufferManager.MaxMemoryBytes.String() }},
-	{"LYNXDB_BUFFER_MANAGER_PAGE_SIZE", "buffer_manager.page_size",
+	{LYNXDB_BUFFER_MANAGER_PAGE_SIZE, "buffer_manager.page_size",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -1112,7 +1112,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.BufferManager.PageSize) }},
-	{"LYNXDB_BUFFER_MANAGER_CACHE_TARGET_PERCENT", "buffer_manager.cache_target_percent",
+	{LYNXDB_BUFFER_MANAGER_CACHE_TARGET_PERCENT, "buffer_manager.cache_target_percent",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -1123,7 +1123,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.BufferManager.CacheTargetPercent) }},
-	{"LYNXDB_BUFFER_MANAGER_QUERY_TARGET_PERCENT", "buffer_manager.query_target_percent",
+	{LYNXDB_BUFFER_MANAGER_QUERY_TARGET_PERCENT, "buffer_manager.query_target_percent",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -1134,7 +1134,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.BufferManager.QueryTargetPercent) }},
-	{"LYNXDB_BUFFER_MANAGER_BATCHER_TARGET_PERCENT", "buffer_manager.batcher_target_percent",
+	{LYNXDB_BUFFER_MANAGER_BATCHER_TARGET_PERCENT, "buffer_manager.batcher_target_percent",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -1145,7 +1145,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.BufferManager.BatcherTargetPercent) }},
-	{"LYNXDB_BUFFER_MANAGER_ENABLE_OFF_HEAP", "buffer_manager.enable_off_heap",
+	{LYNXDB_BUFFER_MANAGER_ENABLE_OFF_HEAP, "buffer_manager.enable_off_heap",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -1156,7 +1156,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.BufferManager.EnableOffHeap) }},
-	{"LYNXDB_BUFFER_MANAGER_MAX_PINNED_PAGES_PER_QUERY", "buffer_manager.max_pinned_pages_per_query",
+	{LYNXDB_BUFFER_MANAGER_MAX_PINNED_PAGES_PER_QUERY, "buffer_manager.max_pinned_pages_per_query",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -1169,7 +1169,7 @@ var envBindings = []envBinding{
 		func(c *Config) string { return strconv.Itoa(c.BufferManager.MaxPinnedPagesPerQuery) }},
 
 	// Cluster
-	{"LYNXDB_CLUSTER_ENABLED", "cluster.enabled",
+	{LYNXDB_CLUSTER_ENABLED, "cluster.enabled",
 		func(c *Config, v string) error {
 			b, err := strconv.ParseBool(v)
 			if err != nil {
@@ -1180,28 +1180,28 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.Cluster.Enabled) }},
-	{"LYNXDB_CLUSTER_NODE_ID", "cluster.node_id",
+	{LYNXDB_CLUSTER_NODE_ID, "cluster.node_id",
 		func(c *Config, v string) error {
 			c.Cluster.NodeID = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Cluster.NodeID }},
-	{"LYNXDB_CLUSTER_ROLES", "cluster.roles",
+	{LYNXDB_CLUSTER_ROLES, "cluster.roles",
 		func(c *Config, v string) error {
 			c.Cluster.Roles = strings.Split(v, ",")
 
 			return nil
 		},
 		func(c *Config) string { return strings.Join(c.Cluster.Roles, ",") }},
-	{"LYNXDB_CLUSTER_SEEDS", "cluster.seeds",
+	{LYNXDB_CLUSTER_SEEDS, "cluster.seeds",
 		func(c *Config, v string) error {
 			c.Cluster.Seeds = strings.Split(v, ",")
 
 			return nil
 		},
 		func(c *Config) string { return strings.Join(c.Cluster.Seeds, ",") }},
-	{"LYNXDB_CLUSTER_GRPC_PORT", "cluster.grpc_port",
+	{LYNXDB_CLUSTER_GRPC_PORT, "cluster.grpc_port",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -1212,7 +1212,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Cluster.GRPCPort) }},
-	{"LYNXDB_CLUSTER_VIRTUAL_PARTITION_COUNT", "cluster.virtual_partition_count",
+	{LYNXDB_CLUSTER_VIRTUAL_PARTITION_COUNT, "cluster.virtual_partition_count",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -1223,14 +1223,14 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Cluster.VirtualPartitionCount) }},
-	{"LYNXDB_CLUSTER_ACK_LEVEL", "cluster.ack_level",
+	{LYNXDB_CLUSTER_ACK_LEVEL, "cluster.ack_level",
 		func(c *Config, v string) error {
 			c.Cluster.AckLevel = v
 
 			return nil
 		},
 		func(c *Config) string { return c.Cluster.AckLevel }},
-	{"LYNXDB_CLUSTER_REPLICATION_FACTOR", "cluster.replication_factor",
+	{LYNXDB_CLUSTER_REPLICATION_FACTOR, "cluster.replication_factor",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
 			if err != nil {
@@ -1241,7 +1241,7 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Cluster.ReplicationFactor) }},
-	{"LYNXDB_CLUSTER_META_LOSS_TIMEOUT", "cluster.meta_loss_timeout",
+	{LYNXDB_CLUSTER_META_LOSS_TIMEOUT, "cluster.meta_loss_timeout",
 		func(c *Config, v string) error {
 			d, err := ParseDuration(v)
 			if err != nil {
