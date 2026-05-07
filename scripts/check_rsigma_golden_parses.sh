@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-golden_dir="$repo_root/pkg/sigmaqueries/testdata/golden"
+golden_dir="${1:-$repo_root/pkg/sigmaqueries/testdata/golden}"
 
 if ! command -v go >/dev/null 2>&1; then
   echo "go is required to parse-check rsigma golden fixtures" >&2

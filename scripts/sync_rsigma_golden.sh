@@ -12,6 +12,7 @@ set -euo pipefail
 
 rsigma_ref="v0.9.0"
 with_matches=false
+output_dir=""
 
 while (($# > 0)); do
   case "$1" in
@@ -27,8 +28,16 @@ while (($# > 0)); do
       rsigma_ref="$2"
       shift 2
       ;;
+    --output-dir)
+      if (($# < 2)); then
+        echo "--output-dir requires a directory" >&2
+        exit 2
+      fi
+      output_dir="$2"
+      shift 2
+      ;;
     -h|--help)
-      echo "usage: scripts/sync_rsigma_golden.sh [--with-matches] [--rsigma-ref <tag-or-sha>]"
+      echo "usage: scripts/sync_rsigma_golden.sh [--with-matches] [--rsigma-ref <tag-or-sha>] [--output-dir <dir>]"
       exit 0
       ;;
     *)
@@ -44,7 +53,7 @@ if ! command -v cargo >/dev/null 2>&1; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-golden_dir="$repo_root/pkg/sigmaqueries/testdata/golden"
+golden_dir="${output_dir:-$repo_root/pkg/sigmaqueries/testdata/golden}"
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
@@ -117,7 +126,7 @@ done
 
 printf '  }\n}\n' >>"$golden_dir/manifest.json"
 
-"$repo_root/scripts/check_rsigma_golden_parses.sh"
+"$repo_root/scripts/check_rsigma_golden_parses.sh" "$golden_dir"
 
 if [[ "$with_matches" == true ]]; then
   cat >"$tmpdir/write_rsigma_matches.go" <<'GO'
@@ -162,4 +171,4 @@ GO
   (cd "$repo_root" && go run "$tmpdir/write_rsigma_matches.go" "$golden_dir")
 fi
 
-git -C "$repo_root" status --short pkg/sigmaqueries/testdata/golden/
+git -C "$repo_root" status --short "$golden_dir"
