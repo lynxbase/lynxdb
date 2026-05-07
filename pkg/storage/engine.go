@@ -178,6 +178,9 @@ func (e *Engine) IngestReader(ctx context.Context, r io.Reader, opts IngestOpts)
 
 		e.totalRawBytes += int64(len(line))
 		ev := event.NewEvent(time.Time{}, line)
+		if opts.Index != "" {
+			ev.Index = idx
+		}
 		ev.Source = opts.Source
 		ev.SourceType = opts.SourceType
 		batch = append(batch, ev)
@@ -266,6 +269,9 @@ func (e *Engine) IngestLines(ctx context.Context, lines []string, opts IngestOpt
 			continue
 		}
 		ev := event.NewEvent(time.Time{}, line)
+		if opts.Index != "" {
+			ev.Index = idx
+		}
 		ev.Source = opts.Source
 		ev.SourceType = opts.SourceType
 		events = append(events, ev)
@@ -452,6 +458,9 @@ func (e *Engine) IngestReaderFiltered(ctx context.Context, r io.Reader, spl2Quer
 		}
 
 		ev := event.NewEvent(time.Time{}, line)
+		if opts.Index != "" {
+			ev.Index = idx
+		}
 		ev.Source = opts.Source
 		ev.SourceType = opts.SourceType
 		batch = append(batch, ev)
@@ -574,6 +583,9 @@ func (e *Engine) QueryReader(ctx context.Context, r io.Reader, spl2Query string,
 		}
 
 		ev := event.NewEvent(time.Time{}, line)
+		if opts.Index != "" {
+			ev.Index = idx
+		}
 		ev.Source = opts.Source
 		ev.SourceType = opts.SourceType
 		batch = append(batch, ev)
