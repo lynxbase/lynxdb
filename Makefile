@@ -6,7 +6,7 @@ LDFLAGS  = -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).Dat
 
 CUSTOM_GCL = ./custom-gcl
 
-.PHONY: build test test-unit test-e2e test-cli test-compat test-conformance test-compat-filebeat test-compat-fluentbit test-compat-vector test-compat-otelcol test-compat-splunk-hec docs-check-shippers vet clean lint lint-build
+.PHONY: build test test-unit test-e2e test-cli test-compat test-conformance test-compat-filebeat test-compat-fluentbit test-compat-vector test-compat-otelcol test-compat-splunk-hec docs-check-shippers vet clean lint lint-build sync-rsigma-golden compat-manifest
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o lynxdb ./cmd/lynxdb/
@@ -48,6 +48,12 @@ test-cli: build
 
 vet:
 	go vet ./...
+
+sync-rsigma-golden:
+	scripts/sync_rsigma_golden.sh
+
+compat-manifest:
+	go run ./cmd/lynxdb-compat-manifest --lynxdb-version "$(VERSION)"
 
 lint-build:
 	$(shell go env GOPATH)/bin/golangci-lint custom

@@ -1,0 +1,1 @@
+search (CommandLine=*"whoami"* AND Image=*".exe" AND ParentImage="C:\\Windows"*)

@@ -1,0 +1,1 @@
+FROM main | search (EventID=4625 AND NOT SubStatus="0xC0000064")

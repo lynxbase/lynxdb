@@ -61,6 +61,9 @@ func registerCRUD[T any, Input interface{ Validate() error }](
 		if requireAuth && !opts.ServerRef.requireScope(w, r, mutateScope) {
 			return
 		}
+		if opts.ServerRef != nil {
+			opts.ServerRef.logSigmaSource(r, "saved query request")
+		}
 		var input Input
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")

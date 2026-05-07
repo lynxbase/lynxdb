@@ -2,6 +2,7 @@ package spl2
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -57,16 +58,12 @@ type SearchKeywordExpr struct {
 func (*SearchKeywordExpr) searchExpr() {}
 func (e *SearchKeywordExpr) String() string {
 	if e.IsTermMatch {
-		return fmt.Sprintf("TERM(%s)", e.Value)
+		return fmt.Sprintf("TERM(%s)", formatSearchValue(e.Value))
 	}
 	if e.CaseSensitive {
-		return fmt.Sprintf("CASE(%s)", e.Value)
+		return fmt.Sprintf("CASE(%s)", formatSearchValue(e.Value))
 	}
-	if strings.Contains(e.Value, " ") {
-		return fmt.Sprintf("%q", e.Value)
-	}
-
-	return e.Value
+	return formatSearchValue(e.Value)
 }
 
 // CompareOp represents comparison operators in search expressions.
@@ -114,7 +111,7 @@ type SearchCompareExpr struct {
 
 func (*SearchCompareExpr) searchExpr() {}
 func (e *SearchCompareExpr) String() string {
-	val := e.Value
+	val := formatSearchValue(e.Value)
 	if e.CaseSensitive {
 		val = fmt.Sprintf("CASE(%s)", val)
 	}
@@ -138,8 +135,29 @@ func (*SearchInExpr) searchExpr() {}
 func (e *SearchInExpr) String() string {
 	vals := make([]string, len(e.Values))
 	for i, v := range e.Values {
-		vals[i] = v.Value
+		vals[i] = formatSearchValue(v.Value)
 	}
 
 	return fmt.Sprintf("%s IN (%s)", e.Field, strings.Join(vals, ", "))
+}
+
+func formatSearchValue(value string) string {
+	if value == "" || needsQuotedSearchValue(value) {
+		return strconv.Quote(value)
+	}
+
+	return value
+}
+
+func needsQuotedSearchValue(value string) bool {
+	if strings.ContainsAny(value, " \t\n\r=!<>()\",\\") {
+		return true
+	}
+
+	switch strings.ToUpper(value) {
+	case "AND", "OR", "NOT", "IN", "LIKE":
+		return true
+	}
+
+	return false
 }

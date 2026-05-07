@@ -1,0 +1,1 @@
+search (FieldA=* AND NOT FieldB=* AND Enabled=true)

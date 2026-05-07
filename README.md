@@ -103,6 +103,7 @@ lynxdb tail 'level=ERROR'
 - **Materialized views** - precomputed aggregations with automatic query rewrite, up to ~400x speedup
 - **Cluster mode** - add `--cluster.seeds` to go distributed; S3-backed shared storage
 - **Drop-in ingestion** - Elasticsearch `_bulk`, OpenTelemetry OTLP, Splunk HEC
+- **Sigma rule support** - run [rsigma-generated](https://github.com/timescale/rsigma) SPL2, for example `lynxdb query "$(rsigma convert -t lynxdb rule.yml)"`; see [docs/site/docs/sigma](docs/site/docs/sigma/index.md)
 
 ## Comparison
 

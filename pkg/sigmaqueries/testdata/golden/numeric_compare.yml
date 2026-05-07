@@ -1,0 +1,9 @@
+title: Numeric Comparison Test
+logsource:
+    category: test
+detection:
+    sel_gte:
+        status|gte: 400
+    sel_lt:
+        status|lt: 500
+    condition: sel_gte and sel_lt

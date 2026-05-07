@@ -1,0 +1,9 @@
+title: Keywords Test
+logsource:
+    category: test
+detection:
+    keywords:
+        - error
+        - timeout
+        - refused
+    condition: keywords

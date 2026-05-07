@@ -2,6 +2,7 @@ package spl2
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -557,7 +558,38 @@ type LiteralExpr struct {
 
 func (*LiteralExpr) exprNode() {}
 func (e *LiteralExpr) String() string {
-	return e.Value
+	return formatLiteralValue(e.Value)
+}
+
+func formatLiteralValue(value string) string {
+	if value == "" {
+		return strconv.Quote(value)
+	}
+	if isDelimitedLiteral(value) || isBareLiteral(value) {
+		return value
+	}
+
+	return strconv.Quote(value)
+}
+
+func isDelimitedLiteral(value string) bool {
+	if len(value) < 2 {
+		return false
+	}
+	return (value[0] == '"' && value[len(value)-1] == '"') ||
+		(value[0] == '\'' && value[len(value)-1] == '\'')
+}
+
+func isBareLiteral(value string) bool {
+	switch strings.ToLower(value) {
+	case "true", "false", "null":
+		return true
+	}
+	if _, err := strconv.ParseFloat(value, 64); err == nil {
+		return true
+	}
+
+	return false
 }
 
 // GlobExpr represents a glob/wildcard pattern.
@@ -624,7 +656,12 @@ type FuncCallExpr struct {
 
 func (*FuncCallExpr) exprNode() {}
 func (e *FuncCallExpr) String() string {
-	return fmt.Sprintf("%s(%v)", e.Name, e.Args)
+	args := make([]string, len(e.Args))
+	for i, arg := range e.Args {
+		args[i] = arg.String()
+	}
+
+	return fmt.Sprintf("%s(%s)", e.Name, strings.Join(args, ", "))
 }
 
 // InExpr represents: field IN (val1, val2, ...) or field NOT IN (val1, val2, ...)

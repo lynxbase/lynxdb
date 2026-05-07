@@ -1,0 +1,11 @@
+title: Boolean Logic Test
+logsource:
+    category: test
+detection:
+    selection:
+        FieldA: val1
+    filter:
+        FieldB: val2
+    extra:
+        FieldC: val3
+    condition: (selection and not filter) or extra

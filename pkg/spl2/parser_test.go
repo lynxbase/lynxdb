@@ -1115,6 +1115,28 @@ func TestParse_WhereIsNotNull(t *testing.T) {
 	}
 }
 
+func TestFuncCallExprStringFormatsArguments(t *testing.T) {
+	expr := &FuncCallExpr{
+		Name: "cidrmatch",
+		Args: []Expr{
+			&LiteralExpr{Value: `"10.0.0.0/8"`},
+			&FieldExpr{Name: "SourceIP"},
+		},
+	}
+	if got, want := expr.String(), `cidrmatch("10.0.0.0/8", SourceIP)`; got != want {
+		t.Fatalf("String(): got %q, want %q", got, want)
+	}
+
+	q, err := Parse(`FROM main | search * | where ` + expr.String())
+	if err != nil {
+		t.Fatalf("Parse rendered function call: %v", err)
+	}
+	where := q.Commands[1].(*WhereCommand)
+	if got := where.String(); got != `where cidrmatch("10.0.0.0/8", SourceIP)` {
+		t.Fatalf("where String(): got %q", got)
+	}
+}
+
 func TestParse_BetweenWithExpressions(t *testing.T) {
 	// BETWEEN should work with arithmetic expressions
 	q, err := Parse(`| where duration BETWEEN 1.5 AND 10.0`)

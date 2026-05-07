@@ -1,0 +1,11 @@
+title: Brute Force Detection
+description: Detects multiple failed login attempts indicating a brute force attack
+logsource:
+    product: windows
+    service: security
+detection:
+    selection:
+        EventID: 4625
+    filter:
+        SubStatus: '0xC0000064'
+    condition: selection and not filter

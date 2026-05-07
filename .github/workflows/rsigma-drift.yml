@@ -1,0 +1,152 @@
+# .github/workflows/rsigma-drift.yml
+#
+# Nightly rsigma output drift check for LynxDB.
+# Optional Slack notifications use secrets.SLACK_RSIGMA_DRIFT_WEBHOOK.
+
+name: rsigma Drift
+
+on:
+  schedule:
+    - cron: "15 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+env:
+  GO_VERSION: "1.25.4"
+  RSIGMA_REF: main
+  DRIFT_OUTPUT_DIR: /tmp/rsigma-drift-out
+  CARGO_TARGET_DIR: /tmp/rsigma-cargo-target
+
+jobs:
+  drift:
+    name: rsigma drift
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            /tmp/rsigma-cargo-target
+          key: rsigma-drift-${{ runner.os }}-${{ env.RSIGMA_REF }}
+
+      - name: Generate rsigma main corpus
+        run: scripts/sync_rsigma_golden.sh --rsigma-ref "$RSIGMA_REF" --output-dir "$DRIFT_OUTPUT_DIR"
+
+      - name: Diff generated corpus
+        id: diff
+        shell: bash
+        run: |
+          set -euo pipefail
+          committed_dir="$(mktemp -d)"
+          generated_dir="$(mktemp -d)"
+          cp pkg/sigmaqueries/testdata/golden/*.spl2 "$committed_dir/"
+          cp "$DRIFT_OUTPUT_DIR"/*.spl2 "$generated_dir/"
+          if diff -ruN "$committed_dir" "$generated_dir" > drift.patch; then
+            echo "has_drift=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_drift=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload drift patch
+        if: steps.diff.outputs.has_drift == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift.patch
+          path: drift.patch
+
+      - name: Report drift
+        if: steps.diff.outputs.has_drift == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require("fs");
+            const patch = fs.readFileSync("drift.patch", "utf8");
+            const today = new Date().toISOString().slice(0, 10);
+            const title = `rsigma drift detected against main as of ${today}`;
+            const prefix = "rsigma drift detected against main as of ";
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const fencedPatch = patch.length > 50000
+              ? `${patch.slice(0, 50000)}\n\n[patch truncated; see drift.patch artifact]`
+              : patch;
+            const body = [
+              "Nightly rsigma drift check detected output changes.",
+              "",
+              `Run: ${runUrl}`,
+              "",
+              "Triage: docs/sigma/drift-runbook.md",
+              "",
+              "```diff",
+              fencedPatch,
+              "```",
+              "",
+            ].join("\n");
+
+            core.warning("rsigma drift detected against main; see drift.patch artifact");
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: "open",
+              per_page: 100,
+            });
+            const existing = issues.find((issue) => issue.title.startsWith(prefix));
+            if (existing) {
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                title,
+                body,
+              });
+              return;
+            }
+
+            try {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ["area/sigma-compat"],
+              });
+            } catch (error) {
+              if (error.status !== 422) {
+                throw error;
+              }
+              core.warning("area/sigma-compat label was not found; creating drift issue without labels");
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+              });
+            }
+
+      - name: Notify Slack
+        if: steps.diff.outputs.has_drift == 'true'
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_RSIGMA_DRIFT_WEBHOOK }}
+        run: |
+          if [ -z "$SLACK_WEBHOOK" ]; then
+            exit 0
+          fi
+          curl -fsS -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\"rsigma drift detected for ${GITHUB_REPOSITORY}. See ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}\"}" \
+            "$SLACK_WEBHOOK"

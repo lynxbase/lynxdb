@@ -1,0 +1,9 @@
+title: Wildcard Patterns Test
+logsource:
+    category: test
+detection:
+    selection:
+        CommandLine|contains: whoami
+        Image|endswith: '.exe'
+        ParentImage|startswith: 'C:\Windows'
+    condition: selection

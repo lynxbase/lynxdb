@@ -55,6 +55,7 @@ Available on all commands:
   - [doctor](#doctor)
 - [Saved Queries](#saved-queries)
   - [saved](#saved)
+  - [saved import](#saved-import)
   - [save](#save)
   - [run](#run)
 - [Materialized Views](#materialized-views)
@@ -134,11 +135,12 @@ lynxdb query [SPL2 query] [flags]
 | `--timeout` | | | Query timeout (e.g., `10s`, `5m`) |
 | `--analyze` | | | Profile query execution (`basic`, `full`, `trace`) |
 | `--max-memory` | | | Max memory for ephemeral query (e.g., `512mb`, `1gb`) |
+| `--queries-file` | | | Run one SPL2 query per non-empty line from a file, or `-` for stdin |
 | `--fail-on-empty` | | `false` | Exit with code 6 if no results |
 | `--copy` | | `false` | Copy results to clipboard as TSV |
 | `--explain` | | `false` | Show query plan without executing |
 
-The query argument is required. `FROM main` is automatically prepended if the query starts with `|` or a command name.
+The query argument is required unless `--queries-file` is set. `FROM main` is automatically prepended if the query starts with `|` or a command name.
 
 `--analyze` accepts an optional value; bare `--analyze` defaults to `basic`.
 
@@ -183,6 +185,10 @@ lynxdb query 'level=error | stats count' --timeout 30s
 # Force output format
 lynxdb query 'FROM main | stats count by host' --format csv
 lynxdb query 'FROM main | stats count by host' --format table
+
+# Run rsigma-generated query files
+rsigma convert -t lynxdb -r sigma/rules > rules.spl2
+lynxdb query --queries-file rules.spl2 --since 24h --format ndjson
 
 # Write results to file
 lynxdb query 'level=error' --output errors.json
@@ -1023,6 +1029,21 @@ Tab-completes saved query names.
 
 ```
 lynxdb saved delete <name> [--force]
+```
+
+#### `saved import`
+
+Import one SPL2 query per non-empty line as saved queries. With an rsigma
+manifest, the `rule_id` becomes the saved query name and rule metadata is
+attached to the saved query.
+
+```
+lynxdb saved import <file> [--manifest <file>] [--dry-run] [--update-existing]
+```
+
+```bash
+rsigma convert -t lynxdb -r sigma/rules > all.spl2
+lynxdb saved import all.spl2 --manifest manifest.json --update-existing
 ```
 
 ### `save`

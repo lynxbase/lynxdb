@@ -1,0 +1,1 @@
+FROM main | search (FieldA="val1" AND NOT FieldB="val2") OR FieldC="val3"

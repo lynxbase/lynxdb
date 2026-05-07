@@ -1,0 +1,7 @@
+title: CIDR Test
+logsource:
+    category: test
+detection:
+    selection:
+        SourceIP|cidr: '10.0.0.0/8'
+    condition: selection

@@ -65,6 +65,7 @@ type SearchToken struct {
 	Type    SearchTokenType
 	Literal string
 	Pos     int
+	End     int
 }
 
 // SearchLexer tokenizes search expressions with rules specific to the
@@ -100,7 +101,7 @@ func (l *SearchLexer) next() (SearchToken, error) {
 	l.skipWhitespace()
 
 	if l.pos >= len(l.input) {
-		return SearchToken{Type: STokEOF, Pos: l.pos}, nil
+		return SearchToken{Type: STokEOF, Pos: l.pos, End: l.pos}, nil
 	}
 
 	ch := l.input[l.pos]
@@ -110,45 +111,45 @@ func (l *SearchLexer) next() (SearchToken, error) {
 	case ch == '(':
 		l.pos++
 
-		return SearchToken{Type: STokLParen, Literal: "(", Pos: startPos}, nil
+		return SearchToken{Type: STokLParen, Literal: "(", Pos: startPos, End: l.pos}, nil
 	case ch == ')':
 		l.pos++
 
-		return SearchToken{Type: STokRParen, Literal: ")", Pos: startPos}, nil
+		return SearchToken{Type: STokRParen, Literal: ")", Pos: startPos, End: l.pos}, nil
 	case ch == ',':
 		l.pos++
 
-		return SearchToken{Type: STokComma, Literal: ",", Pos: startPos}, nil
+		return SearchToken{Type: STokComma, Literal: ",", Pos: startPos, End: l.pos}, nil
 	case ch == '=' && l.pos+1 < len(l.input) && l.input[l.pos+1] == '=':
 		l.pos += 2
 
-		return SearchToken{Type: STokEq, Literal: "==", Pos: startPos}, nil
+		return SearchToken{Type: STokEq, Literal: "==", Pos: startPos, End: l.pos}, nil
 	case ch == '=':
 		l.pos++
 
-		return SearchToken{Type: STokEq, Literal: "=", Pos: startPos}, nil
+		return SearchToken{Type: STokEq, Literal: "=", Pos: startPos, End: l.pos}, nil
 	case ch == '!' && l.pos+1 < len(l.input) && l.input[l.pos+1] == '=':
 		l.pos += 2
 
-		return SearchToken{Type: STokNeq, Literal: "!=", Pos: startPos}, nil
+		return SearchToken{Type: STokNeq, Literal: "!=", Pos: startPos, End: l.pos}, nil
 	case ch == '<':
 		l.pos++
 		if l.pos < len(l.input) && l.input[l.pos] == '=' {
 			l.pos++
 
-			return SearchToken{Type: STokLte, Literal: "<=", Pos: startPos}, nil
+			return SearchToken{Type: STokLte, Literal: "<=", Pos: startPos, End: l.pos}, nil
 		}
 
-		return SearchToken{Type: STokLt, Literal: "<", Pos: startPos}, nil
+		return SearchToken{Type: STokLt, Literal: "<", Pos: startPos, End: l.pos}, nil
 	case ch == '>':
 		l.pos++
 		if l.pos < len(l.input) && l.input[l.pos] == '=' {
 			l.pos++
 
-			return SearchToken{Type: STokGte, Literal: ">=", Pos: startPos}, nil
+			return SearchToken{Type: STokGte, Literal: ">=", Pos: startPos, End: l.pos}, nil
 		}
 
-		return SearchToken{Type: STokGt, Literal: ">", Pos: startPos}, nil
+		return SearchToken{Type: STokGt, Literal: ">", Pos: startPos, End: l.pos}, nil
 	case ch == '"':
 		return l.readQuotedString()
 	default:
@@ -185,7 +186,7 @@ func (l *SearchLexer) readQuotedString() (SearchToken, error) {
 		if ch == '"' {
 			l.pos++ // skip closing quote
 
-			return SearchToken{Type: STokQuoted, Literal: sb.String(), Pos: startPos}, nil
+			return SearchToken{Type: STokQuoted, Literal: sb.String(), Pos: startPos, End: l.pos}, nil
 		}
 		sb.WriteByte(ch)
 		l.pos++
@@ -220,18 +221,18 @@ func (l *SearchLexer) readWord() (SearchToken, error) {
 	// Keywords (case-insensitive)
 	switch upper {
 	case "AND":
-		return SearchToken{Type: STokAND, Literal: literal, Pos: startPos}, nil
+		return SearchToken{Type: STokAND, Literal: literal, Pos: startPos, End: l.pos}, nil
 	case "OR":
-		return SearchToken{Type: STokOR, Literal: literal, Pos: startPos}, nil
+		return SearchToken{Type: STokOR, Literal: literal, Pos: startPos, End: l.pos}, nil
 	case "NOT":
-		return SearchToken{Type: STokNOT, Literal: literal, Pos: startPos}, nil
+		return SearchToken{Type: STokNOT, Literal: literal, Pos: startPos, End: l.pos}, nil
 	case "IN":
-		return SearchToken{Type: STokIN, Literal: literal, Pos: startPos}, nil
+		return SearchToken{Type: STokIN, Literal: literal, Pos: startPos, End: l.pos}, nil
 	case "LIKE":
-		return SearchToken{Type: STokLike, Literal: literal, Pos: startPos}, nil
+		return SearchToken{Type: STokLike, Literal: literal, Pos: startPos, End: l.pos}, nil
 	}
 
-	return SearchToken{Type: STokWord, Literal: literal, Pos: startPos}, nil
+	return SearchToken{Type: STokWord, Literal: literal, Pos: startPos, End: l.pos}, nil
 }
 
 func (l *SearchLexer) readDirective(startPos int, directive string) (SearchToken, error) {
@@ -264,7 +265,7 @@ func (l *SearchLexer) readDirective(startPos int, directive string) (SearchToken
 		tokType = STokTERM
 	}
 
-	return SearchToken{Type: tokType, Literal: content, Pos: startPos}, nil
+	return SearchToken{Type: tokType, Literal: content, Pos: startPos, End: l.pos}, nil
 }
 
 // isSearchWordBreaker returns true if the character breaks a word token.

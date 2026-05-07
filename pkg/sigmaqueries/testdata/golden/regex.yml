@@ -1,0 +1,7 @@
+title: Regex Test
+logsource:
+    category: test
+detection:
+    selection:
+        CommandLine|re: '.*whoami.*'
+    condition: selection

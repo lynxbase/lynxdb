@@ -256,6 +256,38 @@ func TestSearchParserFieldComparison(t *testing.T) {
 	}
 }
 
+func TestSearchParserCompositeQuotedWildcardComparison(t *testing.T) {
+	tests := []struct {
+		input      string
+		wantValue  string
+		wantString string
+	}{
+		{`CommandLine=*"whoami"*`, `*whoami*`, `CommandLine=*whoami*`},
+		{`ParentImage="C:\\Windows"*`, `C:\Windows*`, `ParentImage="C:\\Windows*"`},
+	}
+
+	for _, tt := range tests {
+		expr, err := ParseSearchExpression(tt.input)
+		if err != nil {
+			t.Fatalf("ParseSearchExpression(%q): %v", tt.input, err)
+		}
+		cmp, ok := expr.(*SearchCompareExpr)
+		if !ok {
+			t.Fatalf("ParseSearchExpression(%q): got %T, want SearchCompareExpr", tt.input, expr)
+		}
+		if cmp.Value != tt.wantValue || !cmp.HasWildcard {
+			t.Fatalf("ParseSearchExpression(%q): value=%q wildcard=%v, want value=%q wildcard=true",
+				tt.input, cmp.Value, cmp.HasWildcard, tt.wantValue)
+		}
+		if got := cmp.String(); got != tt.wantString {
+			t.Fatalf("String(%q): got %q, want %q", tt.input, got, tt.wantString)
+		}
+		if _, err := ParseSearchExpression(cmp.String()); err != nil {
+			t.Fatalf("reparse String(%q): %v", tt.input, err)
+		}
+	}
+}
+
 func TestSearchParserIN(t *testing.T) {
 	expr, err := ParseSearchExpression(`status IN (400, 404, 500)`)
 	if err != nil {

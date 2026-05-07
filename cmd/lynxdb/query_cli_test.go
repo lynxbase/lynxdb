@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/csv"
 	"encoding/json"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -23,6 +24,90 @@ func TestQueryFile_StatsCount_JSON(t *testing.T) {
 	got := jsonCount(t, stdout)
 	if got != 1000 {
 		t.Errorf("expected count=1000, got %d", got)
+	}
+}
+
+func TestQueryQueriesFile_FileMode_NDJSONEnvelopes(t *testing.T) {
+	queryFile := t.TempDir() + "/queries.spl2"
+	if err := os.WriteFile(queryFile, []byte("# generated\n| stats count\n\n| where level=\""+testLevelError+"\" | stats count\n"), 0o600); err != nil {
+		t.Fatalf("write queries: %v", err)
+	}
+
+	stdout, _, err := runCmd(t, "query", "--file", testdataPath("logs/access.log"), "--queries-file", queryFile)
+	if err != nil {
+		t.Fatalf("query --queries-file failed: %v", err)
+	}
+
+	rows := mustParseJSON(t, stdout)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 envelopes, got %d", len(rows))
+	}
+	if rows[0]["line_number"].(float64) != 2 {
+		t.Fatalf("first line_number = %v, want 2", rows[0]["line_number"])
+	}
+	if rows[1]["line_number"].(float64) != 4 {
+		t.Fatalf("second line_number = %v, want 4", rows[1]["line_number"])
+	}
+	if rows[0]["error"] != "" || rows[1]["error"] != "" {
+		t.Fatalf("unexpected envelope errors: %#v %#v", rows[0]["error"], rows[1]["error"])
+	}
+	results := rows[0]["results"].([]interface{})
+	firstResult := results[0].(map[string]interface{})
+	if int(firstResult["count"].(float64)) != 1000 {
+		t.Fatalf("first query count = %v, want 1000", firstResult["count"])
+	}
+}
+
+func TestQueryQueriesFile_MutuallyExclusiveWithQueryArg(t *testing.T) {
+	queryFile := t.TempDir() + "/queries.spl2"
+	if err := os.WriteFile(queryFile, []byte("| stats count\n"), 0o600); err != nil {
+		t.Fatalf("write queries: %v", err)
+	}
+
+	_, _, err := runCmd(t, "query", "--queries-file", queryFile, "| stats count")
+	if err == nil {
+		t.Fatal("expected mutual exclusion error")
+	}
+	if !strings.Contains(err.Error(), "--queries-file cannot be used with a positional query") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestQueryQueriesFile_ReadsQueriesFromStdin(t *testing.T) {
+	resetAllFlags(t)
+	t.Setenv("LYNXDB_CONFIG", "")
+	t.Setenv("LYNXDB_SERVER", "")
+	t.Setenv("LYNXDB_TOKEN", "")
+
+	oldStdin := os.Stdin
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	if _, err := w.WriteString("| stats count\n"); err != nil {
+		t.Fatalf("write stdin: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("close stdin writer: %v", err)
+	}
+	os.Stdin = r
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+		r.Close()
+	})
+
+	rootCmd.SetArgs([]string{"query", "--file", testdataPath("logs/access.log"), "--queries-file", "-"})
+	stdout, _, err := captureOutput(t, rootCmd.Execute)
+	if err != nil {
+		t.Fatalf("query --queries-file - failed: %v", err)
+	}
+
+	rows := mustParseJSON(t, stdout)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 envelope, got %d", len(rows))
+	}
+	if rows[0]["source_file"] != "stdin" {
+		t.Fatalf("source_file = %v, want stdin", rows[0]["source_file"])
 	}
 }
 

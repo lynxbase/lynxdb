@@ -240,10 +240,12 @@ func (p *searchParser) parseFieldComparison() (SearchExpr, error) {
 		p.advance()
 		value = valTok.Literal
 		hasWildcard = strings.Contains(value, "*")
+		value, hasWildcard = p.consumeAdjacentSearchValueParts(value, hasWildcard, valTok.End)
 	case STokQuoted:
 		p.advance()
 		value = valTok.Literal
 		hasWildcard = strings.Contains(value, "*")
+		value, hasWildcard = p.consumeAdjacentSearchValueParts(value, hasWildcard, valTok.End)
 	case STokCASE:
 		p.advance()
 		value = valTok.Literal
@@ -261,6 +263,23 @@ func (p *searchParser) parseFieldComparison() (SearchExpr, error) {
 		HasWildcard:   hasWildcard,
 		CaseSensitive: caseSensitive,
 	}, nil
+}
+
+func (p *searchParser) consumeAdjacentSearchValueParts(value string, hasWildcard bool, end int) (string, bool) {
+	for {
+		next := p.peek()
+		if next.Pos != end {
+			return value, hasWildcard
+		}
+		if next.Type != STokWord && next.Type != STokQuoted {
+			return value, hasWildcard
+		}
+
+		p.advance()
+		value += next.Literal
+		hasWildcard = hasWildcard || strings.Contains(next.Literal, "*")
+		end = next.End
+	}
 }
 
 func (p *searchParser) parseFieldIn() (SearchExpr, error) {

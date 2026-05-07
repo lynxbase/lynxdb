@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/client"
 	"github.com/lynxbase/lynxdb/pkg/config"
 	ingestpipeline "github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/sigmaqueries"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/stats"
 	"github.com/lynxbase/lynxdb/pkg/storage"
@@ -50,6 +52,7 @@ func newQueryCmd() *cobra.Command {
 		copyFlag    bool
 		explain     bool
 		rawMode     bool
+		queriesFile string
 		queryParams []string
 	)
 
@@ -63,8 +66,17 @@ func newQueryCmd() *cobra.Command {
   lynxdb query 'status>=500 | top 10 uri' --since 1h   Top failing URIs
   lynxdb query --file app.log '| stats count by level'  Query local file
   cat app.log | lynxdb query '| where dur > 1000'       Pipe from stdin`,
-		Args: cobra.MinimumNArgs(1),
+		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if queriesFile == "" && len(args) == 0 {
+				return fmt.Errorf("requires an SPL2 query or --queries-file")
+			}
+			if queriesFile != "" && len(args) > 0 {
+				return fmt.Errorf("--queries-file cannot be used with a positional query")
+			}
+			if queriesFile != "" && explain {
+				return fmt.Errorf("--queries-file cannot be used with --explain")
+			}
 			query := strings.Join(args, " ")
 			if len(queryParams) > 0 {
 				query = spl2.SubstituteParams(query, spl2.ParseParamFlags(queryParams))
@@ -78,6 +90,10 @@ func newQueryCmd() *cobra.Command {
 				}
 			}
 			stdinPiped := isStdinPiped()
+
+			if queriesFile != "" {
+				return runQueriesFile(queriesFile, stdinPiped, file, source, sourcetype, outputFile, since, from, to, timeout, failEmpty, analyze, maxMemory, rawMode)
+			}
 
 			if explain {
 				return runExplain(query)
@@ -122,6 +138,7 @@ func newQueryCmd() *cobra.Command {
 	f.StringVar(&timeout, "timeout", "", "Query timeout (e.g., 10s, 5m)")
 	f.StringVar(&analyze, "analyze", "", "Profile query execution (basic, full, trace)")
 	f.StringVar(&maxMemory, "max-memory", "", "Max memory for ephemeral query (e.g., 512mb, 1gb)")
+	f.StringVar(&queriesFile, "queries-file", "", "Run one SPL2 query per non-empty line from a file, or '-' for stdin")
 	f.BoolVar(&failEmpty, "fail-on-empty", false, "Exit with code 6 if no results")
 	f.BoolVar(&copyFlag, "copy", false, "Copy results to clipboard as TSV")
 	f.BoolVar(&explain, "explain", false, "Show query plan without executing")
@@ -137,6 +154,241 @@ func newQueryCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("profile-query")
 
 	return cmd
+}
+
+type queriesFileEnvelope struct {
+	Query      string                   `json:"query"`
+	LineNumber int                      `json:"line_number"`
+	SourceFile string                   `json:"source_file"`
+	Results    []map[string]interface{} `json:"results"`
+	Error      string                   `json:"error"`
+}
+
+func runQueriesFile(path string, stdinPiped bool, file, source, sourcetype, outputFile, since, from, to, timeout string, failEmpty bool, analyze, maxMemory string, rawMode bool) error {
+	queries, err := readQueriesFile(path)
+	if err != nil {
+		return err
+	}
+	if len(queries) == 0 {
+		return fmt.Errorf("no queries found in %s", path)
+	}
+
+	var stdinData []byte
+	useStdinData := stdinPiped && path != "-" && file == ""
+	switch {
+	case path != "-" && file != "" && stdinPiped:
+		return fmt.Errorf("cannot use --file and stdin simultaneously")
+	case useStdinData:
+		stdinData, err = io.ReadAll(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read stdin: %w", err)
+		}
+	}
+
+	var w io.Writer = os.Stdout
+	if outputFile != "" {
+		f, err := os.Create(outputFile)
+		if err != nil {
+			return fmt.Errorf("create output file: %w", err)
+		}
+		defer f.Close()
+		w = f
+	}
+
+	enc := json.NewEncoder(w)
+	for _, q := range queries {
+		rows, runErr := runSingleQueryFromFileInput(q.Line, file, source, sourcetype, since, from, to, timeout, analyze, maxMemory, rawMode, stdinData)
+		env := queriesFileEnvelope{
+			Query:      q.Line,
+			LineNumber: q.LineNumber,
+			SourceFile: q.Source,
+			Results:    rows,
+		}
+		if runErr != nil {
+			env.Error = runErr.Error()
+		} else if failEmpty && len(rows) == 0 {
+			env.Error = noResultsError{}.Error()
+		}
+		if err := enc.Encode(env); err != nil {
+			return fmt.Errorf("encode query envelope: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func readQueriesFile(path string) ([]sigmaqueries.Query, error) {
+	if path == "-" {
+		return sigmaqueries.ReadReader(os.Stdin, "stdin")
+	}
+
+	return sigmaqueries.ReadFile(path)
+}
+
+func runSingleQueryFromFileInput(query, file, source, sourcetype, since, from, to, timeout, analyze, maxMemory string, rawMode bool, stdinData []byte) ([]map[string]interface{}, error) {
+	switch {
+	case file != "":
+		return queryRowsFromFile(query, file, source, sourcetype, maxMemory, rawMode)
+	case stdinData != nil:
+		return queryRowsFromReader(query, bytes.NewReader(stdinData), "stdin", source, sourcetype, maxMemory, rawMode)
+	default:
+		return queryRowsFromServer(query, since, from, to, timeout, analyze)
+	}
+}
+
+func queryRowsFromFile(query, file, source, sourcetype, maxMemory string, rawMode bool) ([]map[string]interface{}, error) {
+	matches, err := filepath.Glob(file)
+	if err != nil {
+		return nil, fmt.Errorf("invalid file pattern: %w", err)
+	}
+	if len(matches) == 0 {
+		return nil, fmt.Errorf("no files matching: %s", file)
+	}
+
+	if !rawMode {
+		detectedQuery, detectErr := autoDetectFromFirstFile(query, matches[0])
+		if detectErr == nil && detectedQuery != query {
+			query = detectedQuery
+		}
+	}
+	normalizedQuery := ensureFromClause(query)
+	if err := spl2.CheckUnsupportedCommands(normalizedQuery); err != nil {
+		return nil, err
+	}
+
+	memLimit, err := parseMaxMemory(maxMemory)
+	if err != nil {
+		return nil, err
+	}
+
+	eng := storage.NewEphemeralEngine()
+	defer eng.Close()
+
+	ctx := context.Background()
+	for _, path := range matches {
+		src := source
+		if src == "" {
+			src = path
+		}
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("open %s: %w", path, err)
+		}
+		_, ingestErr := eng.IngestReaderFiltered(ctx, f, normalizedQuery, storage.IngestOpts{
+			Source:     src,
+			SourceType: sourcetype,
+		})
+		closeErr := f.Close()
+		if ingestErr != nil {
+			return nil, fmt.Errorf("ingest %s: %w", path, ingestErr)
+		}
+		if closeErr != nil {
+			return nil, fmt.Errorf("close %s: %w", path, closeErr)
+		}
+	}
+
+	result, _, err := eng.Query(ctx, normalizedQuery, storage.QueryOpts{MaxMemory: memLimit})
+	if err != nil {
+		return nil, fmt.Errorf("%s", spl2.FormatParseError(err, normalizedQuery))
+	}
+
+	return result.Rows, nil
+}
+
+func queryRowsFromReader(query string, reader io.Reader, defaultSource, source, sourcetype, maxMemory string, rawMode bool) ([]map[string]interface{}, error) {
+	memLimit, err := parseMaxMemory(maxMemory)
+	if err != nil {
+		return nil, err
+	}
+	eng := storage.NewEphemeralEngine()
+	defer eng.Close()
+
+	src := source
+	if src == "" {
+		src = defaultSource
+	}
+
+	if !rawMode {
+		detectedQuery, combinedReader, detectErr := autoDetectAndRewrite(query, reader)
+		if detectErr == nil && combinedReader != nil {
+			query = detectedQuery
+			reader = combinedReader
+		}
+	}
+
+	normalizedQuery := ensureFromClause(query)
+	if err := spl2.CheckUnsupportedCommands(normalizedQuery); err != nil {
+		return nil, err
+	}
+
+	result, _, err := eng.QueryReader(context.Background(), reader, normalizedQuery, storage.IngestOpts{
+		Source:     src,
+		SourceType: sourcetype,
+	}, storage.QueryOpts{MaxMemory: memLimit})
+	if err != nil {
+		return nil, fmt.Errorf("%s", spl2.FormatParseError(err, normalizedQuery))
+	}
+
+	return result.Rows, nil
+}
+
+func queryRowsFromServer(query, since, from, to, timeout, analyze string) ([]map[string]interface{}, error) {
+	var earliest, latest string
+	if since != "" {
+		tr, err := timerange.FromSince(since, time.Now())
+		if err != nil {
+			return nil, fmt.Errorf("invalid --since: %w", err)
+		}
+		earliest = tr.Earliest.Format(time.RFC3339Nano)
+		latest = tr.Latest.Format(time.RFC3339Nano)
+	} else if from != "" && to != "" {
+		tr, err := timerange.FromAbsoluteRange(from, to)
+		if err != nil {
+			return nil, fmt.Errorf("invalid time range: %w", err)
+		}
+		earliest = tr.Earliest.Format(time.RFC3339Nano)
+		latest = tr.Latest.Format(time.RFC3339Nano)
+	} else if from != "" || to != "" {
+		return nil, fmt.Errorf("--from and --to must both be specified")
+	}
+
+	ctx := context.Background()
+	if timeout != "" {
+		dur, err := time.ParseDuration(timeout)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --timeout: %w", err)
+		}
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, dur)
+		defer cancel()
+	}
+
+	result, err := apiClient().Query(ctx, client.QueryRequest{
+		Q:       query,
+		From:    earliest,
+		To:      latest,
+		Profile: analyze,
+	})
+	if err != nil {
+		return nil, &queryError{inner: err, query: query}
+	}
+	if result.Type == client.ResultTypeJob && result.Job != nil {
+		return nil, fmt.Errorf("query returned async job %s", result.Job.JobID)
+	}
+
+	return queryResultToRows(result), nil
+}
+
+func parseMaxMemory(maxMemory string) (int64, error) {
+	if maxMemory == "" {
+		return 0, nil
+	}
+	b, err := config.ParseByteSize(maxMemory)
+	if err != nil {
+		return 0, fmt.Errorf("invalid --max-memory: %w", err)
+	}
+
+	return int64(b), nil
 }
 
 func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode bool) error {

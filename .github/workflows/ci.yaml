@@ -222,3 +222,63 @@ jobs:
 
       - name: Run golden tests
         run: go test -tags clitest -count=1 -timeout 300s -run '^TestGolden' -v ./test/cli/
+
+  test-sigmaqueries:
+    name: Sigma Query Contracts
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run sigma query contracts
+        run: go test -run . -count=1 -race ./pkg/sigmaqueries/...
+
+      - name: Fuzz emitted SPL2 parser
+        run: go test -run Fuzz -fuzz=FuzzParseEmittedSPL2 -fuzztime=30s ./pkg/sigmaqueries/...
+
+      - name: Fuzz emitted SPL2 planner
+        run: go test -run Fuzz -fuzz=FuzzPlanEmittedSPL2 -fuzztime=30s ./pkg/sigmaqueries/...
+
+  test-sigma-compat:
+    name: Sigma Compatibility
+    needs: build
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run sigma compatibility tests
+        run: go test -tags integration -race ./test/integration/... -run TestSigmaCompat
+
+  test-sigma-compat-nightly:
+    name: Sigma Compatibility Nightly (${{ matrix.os }})
+    needs: build
+    if: github.event_name == 'schedule'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-14, windows-latest]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run sigma compatibility tests
+        run: go test -tags integration -race ./test/integration/... -run TestSigmaCompat

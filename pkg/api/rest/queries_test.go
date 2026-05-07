@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -177,6 +179,57 @@ func TestQueries_DuplicateName(t *testing.T) {
 	resp2.Body.Close()
 	if resp2.StatusCode != 409 {
 		t.Fatalf("duplicate: %d, want 409", resp2.StatusCode)
+	}
+}
+
+func TestSigmaSourceHeaderLoggedForQueryAndSavedQuery(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	srv, cleanup := startTestServerWithConfig(t, Config{Logger: logger})
+	defer cleanup()
+
+	queryBody, _ := json.Marshal(map[string]interface{}{
+		"q": "FROM main | stats count",
+	})
+	req, _ := http.NewRequest(
+		http.MethodPost,
+		fmt.Sprintf("http://%s/api/v1/query", srv.Addr()),
+		bytes.NewReader(queryBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sigma-Source", "rsigma/0.9.0")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("query status: %d", resp.StatusCode)
+	}
+
+	savedBody, _ := json.Marshal(map[string]interface{}{
+		"name": "sigma-rule",
+		"q":    "FROM main | search whoami",
+	})
+	req, _ = http.NewRequest(
+		http.MethodPost,
+		fmt.Sprintf("http://%s/api/v1/queries", srv.Addr()),
+		bytes.NewReader(savedBody),
+	)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Sigma-Source", "rsigma/0.9.0")
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("saved query status: %d", resp.StatusCode)
+	}
+
+	logs := logBuf.String()
+	if strings.Count(logs, "sigma_source=rsigma/0.9.0") != 2 {
+		t.Fatalf("expected two sigma_source log entries, got logs:\n%s", logs)
 	}
 }
 

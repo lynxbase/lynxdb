@@ -1,0 +1,1 @@
+FROM security_logs | search CommandLine="whoami"

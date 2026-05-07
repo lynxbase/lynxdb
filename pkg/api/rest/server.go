@@ -366,6 +366,8 @@ func NewServer(cfg Config) (*Server, error) {
 				existing.Q = input.Query
 			}
 			existing.From = input.From
+			existing.Source = input.Source
+			existing.Metadata = input.Metadata
 			existing.UpdatedAt = time.Now()
 
 			return existing

@@ -112,7 +112,14 @@ func TestStore_Persistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	sq := (&SavedQueryInput{Name: "persist", Q: "FROM main"}).ToSavedQuery()
+	sq := (&SavedQueryInput{
+		Name:   "persist",
+		Q:      "FROM main",
+		Source: "rsigma",
+		Metadata: map[string]interface{}{
+			"rule_id": "rule-1",
+		},
+	}).ToSavedQuery()
 	s1.Create(sq)
 
 	s2, err := OpenStore(dir)
@@ -125,6 +132,12 @@ func TestStore_Persistence(t *testing.T) {
 	}
 	if got.Name != "persist" {
 		t.Fatalf("name: %q", got.Name)
+	}
+	if got.Source != "rsigma" {
+		t.Fatalf("source: %q", got.Source)
+	}
+	if got.Metadata["rule_id"] != "rule-1" {
+		t.Fatalf("metadata: %#v", got.Metadata)
 	}
 }
 

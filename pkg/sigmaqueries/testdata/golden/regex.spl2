@@ -1,0 +1,1 @@
+FROM main | search * | where CommandLine =~ ".*whoami.*"

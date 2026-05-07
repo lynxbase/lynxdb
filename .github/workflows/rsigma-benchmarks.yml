@@ -1,0 +1,79 @@
+name: rsigma Benchmarks
+
+on:
+  schedule:
+    - cron: "42 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION: "1.25.4"
+
+jobs:
+  benchmarks:
+    name: rsigma compatibility benchmarks
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run benchmarks
+        run: go test -run '^$' -bench='Benchmark(ParseGoldenCorpus|PlanGoldenCorpus|ExecuteRegexShape)$' -benchmem -count=5 ./pkg/sigmaqueries/... | tee rsigma-benchmarks.txt
+
+      - name: Check regression budget
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import re
+          import statistics
+          import sys
+
+          baseline = {}
+          row = re.compile(r"^\|\s+(Benchmark\S+)\s+\|\s+([0-9]+)\s+\|")
+          with open("BENCHMARKS.md", encoding="utf-8") as f:
+              for line in f:
+                  match = row.match(line)
+                  if match:
+                      baseline[match.group(1)] = int(match.group(2))
+
+          samples = {}
+          bench = re.compile(r"^(Benchmark\S+?)(?:-\d+)?\s+\d+\s+([0-9.]+)\s+ns/op")
+          with open("rsigma-benchmarks.txt", encoding="utf-8") as f:
+              for line in f:
+                  match = bench.match(line)
+                  if match:
+                      samples.setdefault(match.group(1), []).append(float(match.group(2)))
+
+          failed = False
+          for name, base in sorted(baseline.items()):
+              values = samples.get(name)
+              if not values:
+                  print(f"missing benchmark output for {name}", file=sys.stderr)
+                  failed = True
+                  continue
+              current = statistics.median(values)
+              limit = base * 1.20
+              if current > limit:
+                  print(
+                      f"regression: {name} current_p50={current:.0f}ns/op "
+                      f"baseline={base}ns/op limit={limit:.0f}ns/op",
+                      file=sys.stderr,
+                  )
+                  failed = True
+
+          sys.exit(1 if failed else 0)
+          PY
+
+      - name: Upload benchmark output
+        uses: actions/upload-artifact@v4
+        with:
+          name: rsigma-benchmarks
+          path: rsigma-benchmarks.txt

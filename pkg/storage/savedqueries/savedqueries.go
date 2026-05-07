@@ -21,19 +21,23 @@ var (
 )
 
 type SavedQuery struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Q         string    `json:"q"`
-	From      string    `json:"from,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string                 `json:"id"`
+	Name      string                 `json:"name"`
+	Q         string                 `json:"q"`
+	From      string                 `json:"from,omitempty"`
+	Source    string                 `json:"source,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	CreatedAt time.Time              `json:"created_at"`
+	UpdatedAt time.Time              `json:"updated_at"`
 }
 
 type SavedQueryInput struct {
-	Name  string `json:"name"`
-	Q     string `json:"q"`
-	Query string `json:"query"` // alias for Q
-	From  string `json:"from,omitempty"`
+	Name     string                 `json:"name"`
+	Q        string                 `json:"q"`
+	Query    string                 `json:"query"` // alias for Q
+	From     string                 `json:"from,omitempty"`
+	Source   string                 `json:"source,omitempty"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 func (i *SavedQueryInput) Validate() error {
@@ -67,6 +71,8 @@ func (i *SavedQueryInput) ToSavedQuery() *SavedQuery {
 		Name:      i.Name,
 		Q:         i.effectiveQuery(),
 		From:      i.From,
+		Source:    i.Source,
+		Metadata:  i.Metadata,
 		CreatedAt: now,
 		UpdatedAt: now,
 	}

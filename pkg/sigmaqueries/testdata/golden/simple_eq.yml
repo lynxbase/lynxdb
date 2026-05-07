@@ -1,0 +1,7 @@
+title: Simple Equality Test
+logsource:
+    category: test
+detection:
+    selection:
+        CommandLine: whoami
+    condition: selection

@@ -1,0 +1,11 @@
+title: Exists Null Bool Test
+logsource:
+    category: test
+detection:
+    sel_exists:
+        FieldA|exists: true
+    sel_null:
+        FieldB: null
+    sel_bool:
+        Enabled: true
+    condition: sel_exists and sel_null and sel_bool

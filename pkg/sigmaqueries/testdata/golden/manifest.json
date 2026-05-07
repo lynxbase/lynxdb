@@ -1,0 +1,142 @@
+{
+  "rsigma_version": "0.9.0",
+  "queries": [
+    {
+      "fixture": "and_or_not",
+      "line": 1,
+      "rule_id": "",
+      "title": "Boolean Logic Test",
+      "level": "",
+      "tags": []
+    },
+    {
+      "fixture": "brute_force",
+      "line": 1,
+      "rule_id": "",
+      "title": "Brute Force Detection",
+      "level": "",
+      "tags": []
+    },
+    {
+      "fixture": "cidr",
+      "line": 1,
+      "rule_id": "",
+      "title": "CIDR Test",
+      "level": "",
+      "tags": []
+    },
+    {
+      "fixture": "exists_null_bool",
+      "line": 1,
+      "rule_id": "",
+      "title": "Exists Null Bool Test",
+      "level": "",
+      "tags": []
+    },
+    {
+      "fixture": "keywords",
+      "line": 1,
+      "rule_id": "",
+      "title": "Keywords Test",
+      "level": "",
+      "tags": []
+    },
+    {
+      "fixture": "numeric_compare",
+      "line": 1,
+      "rule_id": "",
+      "title": "Numeric Comparison Test",
+      "level": "",
+      "tags": []
+    },
+    {
+      "fixture": "regex",
+      "line": 1,
+      "rule_id": "",
+      "title": "Regex Test",
+      "level": "",
+      "tags": []
+    },
+    {
+      "fixture": "simple_eq",
+      "line": 1,
+      "rule_id": "",
+      "title": "Simple Equality Test",
+      "level": "",
+      "tags": []
+    },
+    {
+      "fixture": "wildcards",
+      "line": 1,
+      "rule_id": "",
+      "title": "Wildcard Patterns Test",
+      "level": "",
+      "tags": []
+    }
+  ],
+  "fixtures": {
+    "and_or_not": {
+      "line": 1,
+      "rule_id": "",
+      "title": "Boolean Logic Test",
+      "level": "",
+      "tags": []
+    },
+    "brute_force": {
+      "line": 1,
+      "rule_id": "",
+      "title": "Brute Force Detection",
+      "level": "",
+      "tags": []
+    },
+    "cidr": {
+      "line": 1,
+      "rule_id": "",
+      "title": "CIDR Test",
+      "level": "",
+      "tags": []
+    },
+    "exists_null_bool": {
+      "line": 1,
+      "rule_id": "",
+      "title": "Exists Null Bool Test",
+      "level": "",
+      "tags": []
+    },
+    "keywords": {
+      "line": 1,
+      "rule_id": "",
+      "title": "Keywords Test",
+      "level": "",
+      "tags": []
+    },
+    "numeric_compare": {
+      "line": 1,
+      "rule_id": "",
+      "title": "Numeric Comparison Test",
+      "level": "",
+      "tags": []
+    },
+    "regex": {
+      "line": 1,
+      "rule_id": "",
+      "title": "Regex Test",
+      "level": "",
+      "tags": []
+    },
+    "simple_eq": {
+      "line": 1,
+      "rule_id": "",
+      "title": "Simple Equality Test",
+      "level": "",
+      "tags": []
+    },
+    "wildcards": {
+      "line": 1,
+      "rule_id": "",
+      "title": "Wildcard Patterns Test",
+      "level": "",
+      "tags": []
+    }
+  }
+}
