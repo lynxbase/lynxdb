@@ -26,7 +26,7 @@ contract version.
 | `Image|endswith: '.exe'` | `FROM main | search Image=*".exe"` |
 | `(sel and not filter) or extra` | `FROM main | search (FieldA="val1" AND NOT FieldB="val2") OR FieldC="val3"` |
 | `EventCount|gte: 10` | `FROM main | search EventCount>=10` |
-| `(status>=400 and status<500)` | `FROM main | search (status>=400 AND status<500)` |
+| Status range from 400 through 499 | `FROM main | search` with a bounded numeric status predicate |
 | `CommandLine|re: '.*whoami.*'` | `FROM main | search * | where CommandLine =~ ".*whoami.*"` |
 | `SourceIP|cidr: '10.0.0.0/8'` | `FROM main | search * | where cidrmatch("10.0.0.0/8", SourceIP)` |
 | `FieldA|exists: true` | `FROM main | search FieldA=*` |

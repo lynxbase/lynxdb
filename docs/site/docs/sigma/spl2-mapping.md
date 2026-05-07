@@ -21,11 +21,11 @@
 | `field|cidr: 10.0.0.0/8` | `* | where cidrmatch("10.0.0.0/8", field)` | `cidrmatch()` function |
 | `field|gte: 10` | `field>=10` | Comparison operator |
 | `field|gt: 10` | `field>10` | Comparison operator |
-| `field|lte: 10` | `field<=10` | Comparison operator |
-| `field|lt: 10` | `field<10` | Comparison operator |
+| `field|lte: 10` | <code>field&lt;=10</code> | Comparison operator |
+| `field|lt: 10` | <code>field&lt;10</code> | Comparison operator |
 | `field: [a, b, c]` | `field IN ("a", "b", "c")` | `IN` list |
 | keyword `kw` | `"kw"` | Full-text search predicate |
-| `selA and not selB` | `(<A> AND NOT <B>)` | Search composition |
+| `selA and not selB` | Parenthesized A with `AND NOT` B | Search composition |
 | logsource to custom index | `set_state index=security` to `FROM security | search` | `FROM security` source clause |
 
 rsigma may emit `format=minimal` output without the `FROM main | search`

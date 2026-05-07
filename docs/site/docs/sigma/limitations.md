@@ -10,8 +10,8 @@ LynxDB query compatibility failures.
 
 | Area | Limit | Where to track |
 |---|---|---|
-| Unsupported rsigma rules | Some Sigma constructs may not convert for the LynxDB backend. | <https://github.com/timescale/rsigma/issues> |
-| Rare correlation forms | Correlation rules only work when rsigma lowers them to LynxDB SPL2. | <https://github.com/timescale/rsigma/issues> |
+| Unsupported rsigma rules | Some Sigma constructs may not convert for the LynxDB backend. | [rsigma issues](https://github.com/timescale/rsigma/issues) |
+| Rare correlation forms | Correlation rules only work when rsigma lowers them to LynxDB SPL2. | [rsigma issues](https://github.com/timescale/rsigma/issues) |
 | IPv6 CIDR edge cases | IPv4 CIDR is covered by `cidrmatch`; IPv6 edge cases need rule-specific validation before being called supported. | LynxDB issue tracker and rsigma issue tracker |
 | Field naming | Sigma packs assume a schema such as ECS, OCSF, or Windows event fields. LynxDB does not rename fields unless the query tells it to. | [Pipelines](pipelines.md) |
 | Helper commands | `lynxdb query --queries-file` and `lynxdb saved import` consume SPL2 files only; they do not convert Sigma YAML. | Use rsigma before calling LynxDB helpers. |
