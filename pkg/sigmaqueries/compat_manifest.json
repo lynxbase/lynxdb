@@ -1,0 +1,247 @@
+{
+  "rsigma_version": "0.9.0",
+  "lynxdb_version": "0.7.0",
+  "fixtures": [
+    {
+      "name": "and_or_not",
+      "rule_id": "",
+      "title": "Boolean Logic Test",
+      "spl2": "FROM main | search (FieldA=\"val1\" AND NOT FieldB=\"val2\") OR FieldC=\"val3\"",
+      "format": "default",
+      "shapes": [
+        "search.predicate",
+        "search.boolean.and",
+        "search.boolean.or",
+        "search.boolean.not"
+      ],
+      "expected_match_count": 40
+    },
+    {
+      "name": "and_or_not_minimal",
+      "rule_id": "",
+      "title": "Boolean Logic Test",
+      "spl2": "search (FieldA=\"val1\" AND NOT FieldB=\"val2\") OR FieldC=\"val3\"",
+      "format": "minimal",
+      "shapes": [
+        "search.predicate",
+        "search.boolean.and",
+        "search.boolean.or",
+        "search.boolean.not"
+      ],
+      "expected_match_count": 40
+    },
+    {
+      "name": "brute_force",
+      "rule_id": "",
+      "title": "Brute Force Detection",
+      "spl2": "FROM main | search (EventID=4625 AND NOT SubStatus=\"0xC0000064\")",
+      "format": "default",
+      "shapes": [
+        "search.predicate",
+        "search.boolean.and",
+        "search.boolean.not"
+      ],
+      "expected_match_count": 45
+    },
+    {
+      "name": "brute_force_minimal",
+      "rule_id": "",
+      "title": "Brute Force Detection",
+      "spl2": "search (EventID=4625 AND NOT SubStatus=\"0xC0000064\")",
+      "format": "minimal",
+      "shapes": [
+        "search.predicate",
+        "search.boolean.and",
+        "search.boolean.not"
+      ],
+      "expected_match_count": 45
+    },
+    {
+      "name": "cidr",
+      "rule_id": "",
+      "title": "CIDR Test",
+      "spl2": "FROM main | search * | where cidrmatch(\"10.0.0.0/8\", SourceIP)",
+      "format": "default",
+      "shapes": [
+        "search.predicate",
+        "where.cidrmatch"
+      ],
+      "expected_match_count": 25
+    },
+    {
+      "name": "cidr_minimal",
+      "rule_id": "",
+      "title": "CIDR Test",
+      "spl2": "search * | where cidrmatch(\"10.0.0.0/8\", SourceIP)",
+      "format": "minimal",
+      "shapes": [
+        "search.predicate",
+        "where.cidrmatch"
+      ],
+      "expected_match_count": 25
+    },
+    {
+      "name": "exists_null_bool",
+      "rule_id": "",
+      "title": "Exists Null Bool Test",
+      "spl2": "FROM main | search (FieldA=* AND NOT FieldB=* AND Enabled=true)",
+      "format": "default",
+      "shapes": [
+        "search.predicate",
+        "search.boolean.and",
+        "search.boolean.not",
+        "search.wildcard"
+      ],
+      "expected_match_count": 20
+    },
+    {
+      "name": "exists_null_bool_minimal",
+      "rule_id": "",
+      "title": "Exists Null Bool Test",
+      "spl2": "search (FieldA=* AND NOT FieldB=* AND Enabled=true)",
+      "format": "minimal",
+      "shapes": [
+        "search.predicate",
+        "search.boolean.and",
+        "search.boolean.not",
+        "search.wildcard"
+      ],
+      "expected_match_count": 20
+    },
+    {
+      "name": "keywords",
+      "rule_id": "",
+      "title": "Keywords Test",
+      "spl2": "FROM main | search \"error\" OR \"timeout\" OR \"refused\"",
+      "format": "default",
+      "shapes": [
+        "search.predicate",
+        "search.boolean.or"
+      ],
+      "expected_match_count": 30
+    },
+    {
+      "name": "keywords_minimal",
+      "rule_id": "",
+      "title": "Keywords Test",
+      "spl2": "search \"error\" OR \"timeout\" OR \"refused\"",
+      "format": "minimal",
+      "shapes": [
+        "search.predicate",
+        "search.boolean.or"
+      ],
+      "expected_match_count": 30
+    },
+    {
+      "name": "numeric_compare",
+      "rule_id": "",
+      "title": "Numeric Comparison Test",
+      "spl2": "FROM main | search (status\u003e=400 AND status\u003c500)",
+      "format": "default",
+      "shapes": [
+        "search.predicate",
+        "search.boolean.and",
+        "search.comparison"
+      ],
+      "expected_match_count": 50
+    },
+    {
+      "name": "numeric_compare_minimal",
+      "rule_id": "",
+      "title": "Numeric Comparison Test",
+      "spl2": "search (status\u003e=400 AND status\u003c500)",
+      "format": "minimal",
+      "shapes": [
+        "search.predicate",
+        "search.boolean.and",
+        "search.comparison"
+      ],
+      "expected_match_count": 50
+    },
+    {
+      "name": "regex",
+      "rule_id": "",
+      "title": "Regex Test",
+      "spl2": "FROM main | search * | where CommandLine =~ \".*whoami.*\"",
+      "format": "default",
+      "shapes": [
+        "search.predicate",
+        "where.regex",
+        "search.wildcard"
+      ],
+      "expected_match_count": 35
+    },
+    {
+      "name": "regex_minimal",
+      "rule_id": "",
+      "title": "Regex Test",
+      "spl2": "search * | where CommandLine =~ \".*whoami.*\"",
+      "format": "minimal",
+      "shapes": [
+        "search.predicate",
+        "where.regex",
+        "search.wildcard"
+      ],
+      "expected_match_count": 35
+    },
+    {
+      "name": "simple_eq",
+      "rule_id": "",
+      "title": "Simple Equality Test",
+      "spl2": "FROM main | search CommandLine=\"whoami\"",
+      "format": "default",
+      "shapes": [
+        "search.predicate"
+      ],
+      "expected_match_count": 50
+    },
+    {
+      "name": "simple_eq_index",
+      "rule_id": "",
+      "title": "Simple Equality Test",
+      "spl2": "FROM security_logs | search CommandLine=\"whoami\"",
+      "format": "default",
+      "shapes": [
+        "search.predicate"
+      ],
+      "expected_match_count": 50
+    },
+    {
+      "name": "simple_eq_minimal",
+      "rule_id": "",
+      "title": "Simple Equality Test",
+      "spl2": "search CommandLine=\"whoami\"",
+      "format": "minimal",
+      "shapes": [
+        "search.predicate"
+      ],
+      "expected_match_count": 50
+    },
+    {
+      "name": "wildcards",
+      "rule_id": "",
+      "title": "Wildcard Patterns Test",
+      "spl2": "FROM main | search (CommandLine=*\"whoami\"* AND Image=*\".exe\" AND ParentImage=\"C:\\\\Windows\"*)",
+      "format": "default",
+      "shapes": [
+        "search.predicate",
+        "search.boolean.and",
+        "search.wildcard"
+      ],
+      "expected_match_count": 30
+    },
+    {
+      "name": "wildcards_minimal",
+      "rule_id": "",
+      "title": "Wildcard Patterns Test",
+      "spl2": "search (CommandLine=*\"whoami\"* AND Image=*\".exe\" AND ParentImage=\"C:\\\\Windows\"*)",
+      "format": "minimal",
+      "shapes": [
+        "search.predicate",
+        "search.boolean.and",
+        "search.wildcard"
+      ],
+      "expected_match_count": 30
+    }
+  ]
+}
