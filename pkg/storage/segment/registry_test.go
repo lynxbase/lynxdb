@@ -14,8 +14,11 @@ func TestCapabilityRegistryStatic(t *testing.T) {
 	if LSG_REQUIRED_CAPS_KNOWN != CapBit_ColumnZSTD {
 		t.Fatalf("LSG_REQUIRED_CAPS_KNOWN = %#x, want %#x", LSG_REQUIRED_CAPS_KNOWN, CapBit_ColumnZSTD)
 	}
-	if LSG_OPTIONAL_CAPS_KNOWN != 0 {
-		t.Fatalf("LSG_OPTIONAL_CAPS_KNOWN = %#x, want 0", LSG_OPTIONAL_CAPS_KNOWN)
+	if CapBit_RangeBSI != 1<<1 {
+		t.Fatalf("CapBit_RangeBSI = %#x, want 0x2", CapBit_RangeBSI)
+	}
+	if LSG_OPTIONAL_CAPS_KNOWN != CapBit_RangeBSI {
+		t.Fatalf("LSG_OPTIONAL_CAPS_KNOWN = %#x, want %#x", LSG_OPTIONAL_CAPS_KNOWN, CapBit_RangeBSI)
 	}
 
 	data, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "storage-format.yaml"))
