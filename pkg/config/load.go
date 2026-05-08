@@ -234,6 +234,17 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Storage.CompactionRateLimitMB) }},
+	{LYNXDB_STORAGE_COMPACTION_DISABLE_BSI_ON_OUTPUT, "storage.compaction_disable_bsi_on_output",
+		func(c *Config, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return err
+			}
+			c.Storage.CompactionDisableBSIOnOutput = b
+
+			return nil
+		},
+		func(c *Config) string { return strconv.FormatBool(c.Storage.CompactionDisableBSIOnOutput) }},
 	{LYNXDB_STORAGE_L0_THRESHOLD, "storage.l0_threshold",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)

@@ -121,12 +121,13 @@ type StorageConfig struct {
 	// more targeted time-range queries. Coarser reduces directory count.
 	PartitionBy string `yaml:"partition_by" json:"partition_by"`
 
-	CompactionInterval    time.Duration `yaml:"compaction_interval"      json:"compaction_interval"`
-	CompactionWorkers     int           `yaml:"compaction_workers"       json:"compaction_workers"`
-	CompactionRateLimitMB int           `yaml:"compaction_rate_limit_mb" json:"compaction_rate_limit_mb"`
-	L0Threshold           int           `yaml:"l0_threshold"             json:"l0_threshold"`
-	L1Threshold           int           `yaml:"l1_threshold"             json:"l1_threshold"`
-	L2TargetSize          ByteSize      `yaml:"l2_target_size"           json:"l2_target_size"`
+	CompactionInterval           time.Duration `yaml:"compaction_interval"      json:"compaction_interval"`
+	CompactionWorkers            int           `yaml:"compaction_workers"       json:"compaction_workers"`
+	CompactionRateLimitMB        int           `yaml:"compaction_rate_limit_mb" json:"compaction_rate_limit_mb"`
+	CompactionDisableBSIOnOutput bool          `yaml:"compaction_disable_bsi_on_output" json:"compaction_disable_bsi_on_output"`
+	L0Threshold                  int           `yaml:"l0_threshold"             json:"l0_threshold"`
+	L1Threshold                  int           `yaml:"l1_threshold"             json:"l1_threshold"`
+	L2TargetSize                 ByteSize      `yaml:"l2_target_size"           json:"l2_target_size"`
 
 	S3Bucket         string `yaml:"s3_bucket"           json:"s3_bucket"`
 	S3Region         string `yaml:"s3_region"           json:"s3_region"`

@@ -25,6 +25,7 @@
 #   compaction_interval: 30s         # Compaction check interval
 #   compaction_workers: 2            # Parallel compaction workers
 #   compaction_rate_limit_mb: 100    # Compaction disk bandwidth limit (MB/s)
+#   compaction_disable_bsi_on_output: false  # Disable BSI emission from compaction output
 #   l0_threshold: 4                  # L0->L1 compaction trigger
 #   l1_threshold: 4                  # L1->L2 compaction trigger
 #   l2_target_size: 1gb              # Target size for L2 segments

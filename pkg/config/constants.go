@@ -254,6 +254,9 @@ const (
 	// LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB is the compaction disk bandwidth limit in MB/s.
 	// YAML key: storage.compaction_rate_limit_mb. Default: 100.
 	LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB = "LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB"
+	// LYNXDB_STORAGE_COMPACTION_DISABLE_BSI_ON_OUTPUT disables range BSI emission from compaction output.
+	// YAML key: storage.compaction_disable_bsi_on_output. Default: false.
+	LYNXDB_STORAGE_COMPACTION_DISABLE_BSI_ON_OUTPUT = "LYNXDB_STORAGE_COMPACTION_DISABLE_BSI_ON_OUTPUT"
 	// LYNXDB_STORAGE_COMPACTION_WORKERS is the parallel compaction workers.
 	// YAML key: storage.compaction_workers. Default: 2.
 	LYNXDB_STORAGE_COMPACTION_WORKERS = "LYNXDB_STORAGE_COMPACTION_WORKERS"
@@ -399,4 +402,3 @@ const (
 	// YAML key: views.max_backfill_memory_bytes. Default: 0.
 	LYNXDB_VIEWS_MAX_BACKFILL_MEMORY_BYTES = "LYNXDB_VIEWS_MAX_BACKFILL_MEMORY_BYTES"
 )
-
