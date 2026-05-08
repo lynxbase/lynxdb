@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestIntegration_Writer_V2Default_EmitsLSG2WithEmptyRangeMetadata(t *testing.T) {
+func TestIntegration_Writer_V2BSIDisabled_EmitsLSG2WithEmptyRangeMetadata(t *testing.T) {
 	data := writeTinyV2Segment(t)
 
 	assertV2SegmentMetadataDefaults(t, data)
@@ -79,6 +79,7 @@ func writeTinyV2Segment(t *testing.T) []byte {
 	var buf bytes.Buffer
 	w := NewWriter(&buf)
 	w.SetRowGroupSize(6)
+	w.SetIndexConfig(IndexConfig{DisableBSI: true})
 	if _, err := w.Write(events); err != nil {
 		t.Fatalf("Write: %v", err)
 	}

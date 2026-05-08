@@ -1,6 +1,10 @@
 package segment
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
+)
 
 func TestUnit_FooterV2_EmptyRangeFields_RoundTrips(t *testing.T) {
 	want := makeFooterV2Fixture(3, 4)
@@ -41,7 +45,7 @@ func TestUnit_FooterV2_RangeFieldsAndIndexProfile_RoundTrips(t *testing.T) {
 	assertFooterEqual(t, want, got)
 }
 
-func TestUnit_AggregateCapabilities_RangeLengthSetsOptionalRangeBSI(t *testing.T) {
+func TestUnit_AggregateCapabilities_RealRangeSectionSetsOptionalRangeBSI(t *testing.T) {
 	rowGroups := []RowGroupMeta{
 		{RequiredCapabilities: CapBit_ColumnZSTD},
 		{PerColumnRangeOffset: 4096, PerColumnRangeLength: 128},
@@ -53,6 +57,20 @@ func TestUnit_AggregateCapabilities_RangeLengthSetsOptionalRangeBSI(t *testing.T
 	}
 	if optional != CapBit_RangeBSI {
 		t.Fatalf("optional = %#x, want %#x", optional, CapBit_RangeBSI)
+	}
+}
+
+func TestUnit_AggregateCapabilities_HeaderOnlyRangeSectionDoesNotSetOptionalRangeBSI(t *testing.T) {
+	rowGroups := []RowGroupMeta{
+		{PerColumnRangeOffset: 4096, PerColumnRangeLength: index.RangeSectionHeaderSize},
+	}
+
+	required, optional := aggregateCapabilities(rowGroups)
+	if required != 0 {
+		t.Fatalf("required = %#x, want 0", required)
+	}
+	if optional != 0 {
+		t.Fatalf("optional = %#x, want 0", optional)
 	}
 }
 
