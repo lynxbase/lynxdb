@@ -142,7 +142,7 @@ func (sw *StreamWriter) WriteRowGroup(events []*event.Event) error {
 
 	// Write header on first call; caps are patched at Finalize.
 	if !sw.headerWritten {
-		header := makeHeader(LSG_FORMAT_MAJOR_V1, 0, 0)
+		header := makeHeader(defaultFormatMajor, 0, 0)
 		if _, err := sw.w.w.Write(header); err != nil {
 			return fmt.Errorf("segment: write header: %w", err)
 		}
@@ -348,12 +348,13 @@ func (sw *StreamWriter) Finalize() (int64, error) {
 		Catalog:        finalCatalog,
 	}
 	footer.RequiredCaps, footer.OptionalCaps = aggregateCapabilities(sw.rowGroups)
-	footerBytes := encodeFooter(footer)
+	formatMajor := defaultFormatMajor
+	footerBytes := encodeFooterForMajor(footer, formatMajor)
 	if _, err := sw.w.w.Write(footerBytes); err != nil {
 		return sw.w.w.written, fmt.Errorf("segment: write footer: %w", err)
 	}
 
-	header := makeHeader(LSG_FORMAT_MAJOR_V1, footer.RequiredCaps, footer.OptionalCaps)
+	header := makeHeader(formatMajor, footer.RequiredCaps, footer.OptionalCaps)
 	if sw.w.direct {
 		n, err := sw.w.writerAt.WriteAt(header, 0)
 		if err != nil {
@@ -365,7 +366,7 @@ func (sw *StreamWriter) Finalize() (int64, error) {
 		return sw.w.w.written, nil
 	}
 
-	patchHeader(sw.w.buf.Bytes(), LSG_FORMAT_MAJOR_V1, footer.RequiredCaps, footer.OptionalCaps)
+	patchHeader(sw.w.buf.Bytes(), formatMajor, footer.RequiredCaps, footer.OptionalCaps)
 	n, err := sw.w.out.Write(sw.w.buf.Bytes())
 	if err != nil {
 		return int64(n), err

@@ -52,6 +52,8 @@ func OpenSegment(data []byte) (*Reader, error) {
 	switch header.major {
 	case LSG_FORMAT_MAJOR_V1:
 		return openV1(data, header)
+	case LSG_FORMAT_MAJOR_V2:
+		return openV2(data, header)
 	default:
 		return nil, fmt.Errorf("%w: unsupported format major version %d (this binary supports %d..%d)",
 			ErrUnsupportedMajor, header.major, LSG_BINARY_MIN_MAJOR, LSG_BINARY_MAX_MAJOR)
@@ -85,8 +87,8 @@ type headerV1 struct {
 func validateHeader(data []byte) (headerV1, error) {
 	magicMajor, ok := magicMajor(data[0:4])
 	if !ok {
-		return headerV1{}, fmt.Errorf("%w: invalid magic bytes (got %q, expected one of: LSG1)",
-			ErrInvalidMagic, string(data[0:4]))
+		return headerV1{}, fmt.Errorf("%w: invalid magic bytes (got %q, expected one of: LSG1..LSG%d)",
+			ErrInvalidMagic, string(data[0:4]), LSG_BINARY_MAX_MAJOR)
 	}
 
 	version := binary.LittleEndian.Uint16(data[4:6])
@@ -111,12 +113,24 @@ func validateHeader(data []byte) (headerV1, error) {
 		return headerV1{}, fmt.Errorf("%w: required capability bit %d not supported by this binary",
 			ErrUnsupportedCapability, lowestSetBit(unsupported))
 	}
+	if unsupported := optionalCaps &^ LSG_OPTIONAL_CAPS_KNOWN; unsupported != 0 {
+		return headerV1{}, fmt.Errorf("%w: optional capability bit %d not supported by this binary",
+			ErrUnsupportedCapability, lowestSetBit(unsupported))
+	}
 
 	return headerV1{major: version, requiredCaps: requiredCaps, optionalCaps: optionalCaps}, nil
 }
 
 func openV1(data []byte, header headerV1) (*Reader, error) {
-	footer, err := decodeFooter(data)
+	return openWithFooterMajor(data, header, LSG_FORMAT_MAJOR_V1)
+}
+
+func openV2(data []byte, header headerV1) (*Reader, error) {
+	return openWithFooterMajor(data, header, LSG_FORMAT_MAJOR_V2)
+}
+
+func openWithFooterMajor(data []byte, header headerV1, major uint16) (*Reader, error) {
+	footer, err := decodeFooterForMajor(data, major)
 	if err != nil {
 		return nil, fmt.Errorf("segment: parse footer: %w", err)
 	}

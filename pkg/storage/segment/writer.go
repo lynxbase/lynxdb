@@ -144,7 +144,7 @@ func newStreamBackingWriter(w io.Writer, compression CompressionType) *Writer {
 // Used to compute catalog indices for presence bitmap.
 var builtinColumns = []string{"_time", "_raw", "_source", "_sourcetype", "host", "index"}
 
-// Write encodes the given events into .lsg format-major v1 and writes to the underlying writer.
+// Write encodes the given events into .lsg format-major v2 and writes to the underlying writer.
 // Events should be sorted by timestamp. Returns total bytes written.
 func (sw *Writer) Write(events []*event.Event) (int64, error) {
 	if len(events) == 0 {
@@ -159,7 +159,8 @@ func (sw *Writer) Write(events []*event.Event) (int64, error) {
 	}
 	rgCount := (len(events) + rgSize - 1) / rgSize
 
-	header := makeHeader(LSG_FORMAT_MAJOR_V1, 0, 0)
+	formatMajor := defaultFormatMajor
+	header := makeHeader(formatMajor, 0, 0)
 	if _, err := sw.w.Write(header); err != nil {
 		return sw.w.written, fmt.Errorf("segment: write header: %w", err)
 	}
@@ -387,12 +388,12 @@ func (sw *Writer) Write(events []*event.Event) (int64, error) {
 		Catalog:            catalog,
 	}
 	footer.RequiredCaps, footer.OptionalCaps = aggregateCapabilities(rowGroups)
-	footerBytes := encodeFooter(footer)
+	footerBytes := encodeFooterForMajor(footer, formatMajor)
 	if _, err := sw.w.Write(footerBytes); err != nil {
 		return sw.w.written, fmt.Errorf("segment: write footer: %w", err)
 	}
 
-	patchHeader(sw.buf.Bytes(), LSG_FORMAT_MAJOR_V1, footer.RequiredCaps, footer.OptionalCaps)
+	patchHeader(sw.buf.Bytes(), formatMajor, footer.RequiredCaps, footer.OptionalCaps)
 	n, err := sw.out.Write(sw.buf.Bytes())
 	if err != nil {
 		return int64(n), err
