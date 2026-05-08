@@ -1,6 +1,16 @@
 package segment
 
-import "strconv"
+import (
+	"log/slog"
+	"math"
+	"strconv"
+	"time"
+
+	"github.com/RoaringBitmap/roaring"
+	bsi "github.com/RoaringBitmap/roaring/BitSliceIndexing"
+
+	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
+)
 
 // RGFilterOp identifies the type of a row-group filter node.
 type RGFilterOp uint8
@@ -53,13 +63,16 @@ type RGFilterNode struct {
 // by an RGFilterEvaluator. Counters are additive — callers may sum across
 // multiple segments.
 type RGFilterStats struct {
-	ConstSkips    int // row groups skipped by const column mismatch
-	PresenceSkips int // row groups skipped by column absence
-	ZoneMapSkips  int // row groups skipped by zone map range exclusion
-	BloomSkips    int // row groups skipped by per-column bloom filter
-	TotalChecked  int // total row groups evaluated
-	TotalSkipped  int // total row groups skipped (sum of above)
-	BloomsChecked int // total bloom filter consultations (VictoriaLogs-style)
+	ConstSkips        int   // row groups skipped by const column mismatch
+	PresenceSkips     int   // row groups skipped by column absence
+	ZoneMapSkips      int   // row groups skipped by zone map range exclusion
+	BloomSkips        int   // row groups skipped by per-column bloom filter
+	RangeBSIChecks    int   // total range BSI filter attempts
+	RangeBSISkips     int   // row groups skipped because range BSI proved no matches
+	RangeBSIMaskBytes int64 // approximate serialized bytes of attached BSI row masks
+	TotalChecked      int   // total row groups evaluated
+	TotalSkipped      int   // total row groups skipped (sum of above)
+	BloomsChecked     int   // total bloom filter consultations (VictoriaLogs-style)
 }
 
 // RGFilterEvaluator evaluates an RGFilterNode tree against a specific segment
@@ -68,8 +81,9 @@ type RGFilterStats struct {
 //
 // NOT thread-safe. Designed for single-goroutine Volcano pipeline.
 type RGFilterEvaluator struct {
-	root   *RGFilterNode
-	reader *Reader
+	root     *RGFilterNode
+	reader   *Reader
+	rowMasks map[int]*roaring.Bitmap // RG-local row masks accumulated per row group
 }
 
 // NewRGFilterEvaluator creates an evaluator for the given filter tree and segment reader.
@@ -82,6 +96,25 @@ func NewRGFilterEvaluator(root *RGFilterNode, reader *Reader) *RGFilterEvaluator
 	return &RGFilterEvaluator{root: root, reader: reader}
 }
 
+// RowMaskFor returns the accumulated BSI row mask for a row group, or nil when
+// no mask was produced. The returned bitmap is owned by the evaluator; callers
+// must clone it before mutating.
+func (e *RGFilterEvaluator) RowMaskFor(rgIdx int) *roaring.Bitmap {
+	if e == nil || e.rowMasks == nil {
+		return nil
+	}
+
+	return e.rowMasks[rgIdx]
+}
+
+// ResetRowMasks clears BSI row masks accumulated for the current segment.
+func (e *RGFilterEvaluator) ResetRowMasks() {
+	if e == nil {
+		return
+	}
+	clear(e.rowMasks)
+}
+
 // EvaluateRowGroup evaluates the filter tree against row group at rgIdx.
 // Returns RGSkip if the row group can be definitively excluded, RGMaybe otherwise.
 // Updates stats counters (caller-owned) with the reason for the skip.
@@ -89,7 +122,7 @@ func (e *RGFilterEvaluator) EvaluateRowGroup(rgIdx int, stats *RGFilterStats) RG
 	if stats != nil {
 		stats.TotalChecked++
 	}
-	verdict := e.eval(e.root, rgIdx, stats)
+	verdict := e.eval(e.root, rgIdx, stats, true)
 	if verdict == RGSkip && stats != nil {
 		stats.TotalSkipped++
 	}
@@ -98,10 +131,10 @@ func (e *RGFilterEvaluator) EvaluateRowGroup(rgIdx int, stats *RGFilterStats) RG
 }
 
 // eval recursively evaluates a filter node against a row group.
-func (e *RGFilterEvaluator) eval(node *RGFilterNode, rgIdx int, stats *RGFilterStats) RGVerdict {
+func (e *RGFilterEvaluator) eval(node *RGFilterNode, rgIdx int, stats *RGFilterStats, allowRowMasks bool) RGVerdict {
 	switch node.Op {
 	case RGFilterAnd:
-		return e.evalAnd(node, rgIdx, stats)
+		return e.evalAnd(node, rgIdx, stats, allowRowMasks)
 	case RGFilterOr:
 		return e.evalOr(node, rgIdx, stats)
 	case RGFilterNot:
@@ -116,7 +149,7 @@ func (e *RGFilterEvaluator) eval(node *RGFilterNode, rgIdx int, stats *RGFilterS
 	case RGFilterFieldNeq:
 		return e.evalFieldNeq(node, rgIdx, stats)
 	case RGFilterFieldRange:
-		return e.evalFieldRange(node, rgIdx, stats)
+		return e.evalFieldRange(node, rgIdx, stats, allowRowMasks)
 	case RGFilterFieldIn:
 		return e.evalFieldIn(node, rgIdx, stats)
 	default:
@@ -125,9 +158,9 @@ func (e *RGFilterEvaluator) eval(node *RGFilterNode, rgIdx int, stats *RGFilterS
 }
 
 // evalAnd: first child that returns RGSkip → short-circuit RGSkip.
-func (e *RGFilterEvaluator) evalAnd(node *RGFilterNode, rgIdx int, stats *RGFilterStats) RGVerdict {
+func (e *RGFilterEvaluator) evalAnd(node *RGFilterNode, rgIdx int, stats *RGFilterStats, allowRowMasks bool) RGVerdict {
 	for i := range node.Children {
-		if e.eval(&node.Children[i], rgIdx, stats) == RGSkip {
+		if e.eval(&node.Children[i], rgIdx, stats, allowRowMasks) == RGSkip {
 			return RGSkip
 		}
 	}
@@ -139,7 +172,7 @@ func (e *RGFilterEvaluator) evalAnd(node *RGFilterNode, rgIdx int, stats *RGFilt
 // All children must be RGSkip for the OR to skip.
 func (e *RGFilterEvaluator) evalOr(node *RGFilterNode, rgIdx int, stats *RGFilterStats) RGVerdict {
 	for i := range node.Children {
-		if e.eval(&node.Children[i], rgIdx, stats) == RGMaybe {
+		if e.eval(&node.Children[i], rgIdx, stats, false) == RGMaybe {
 			return RGMaybe
 		}
 	}
@@ -259,7 +292,7 @@ func (e *RGFilterEvaluator) evalFieldNeq(node *RGFilterNode, rgIdx int, stats *R
 // Zone map comparison uses string ordering (matching how min/max are stored).
 // For numeric fields, the values are stored as their string representation,
 // so we attempt numeric comparison when both values parse as numbers.
-func (e *RGFilterEvaluator) evalFieldRange(node *RGFilterNode, rgIdx int, stats *RGFilterStats) RGVerdict {
+func (e *RGFilterEvaluator) evalFieldRange(node *RGFilterNode, rgIdx int, stats *RGFilterStats, allowRowMasks bool) RGVerdict {
 	// Const column check.
 	if constVal, ok := e.reader.GetConstValue(rgIdx, node.Field); ok {
 		if !evalRangeCheck(constVal, node.RangeOp, node.RangeVal) {
@@ -293,7 +326,216 @@ func (e *RGFilterEvaluator) evalFieldRange(node *RGFilterNode, rgIdx int, stats 
 		}
 	}
 
+	if stats != nil {
+		stats.RangeBSIChecks++
+	}
+	mask, ok, err := e.tryBSIFilter(rgIdx, node)
+	if err != nil {
+		slog.Default().Warn("range BSI consultation failed", "err", err, "rg", rgIdx, "field", node.Field)
+
+		return RGMaybe
+	}
+	if ok {
+		if mask == nil || mask.IsEmpty() {
+			if stats != nil {
+				stats.RangeBSISkips++
+			}
+
+			return RGSkip
+		}
+		if allowRowMasks {
+			e.attachRowMask(rgIdx, mask, stats)
+		}
+	}
+
 	return RGMaybe
+}
+
+// tryBSIFilter loads the range BSI for the field and evaluates the range
+// predicate. It returns ok=false when the column has no usable range BSI.
+func (e *RGFilterEvaluator) tryBSIFilter(rgIdx int, node *RGFilterNode) (*roaring.Bitmap, bool, error) {
+	if e.reader == nil || !e.reader.HasRangeBSI() {
+		return nil, false, nil
+	}
+
+	meta, hasMeta, err := e.reader.LoadRangeMeta(rgIdx, node.Field)
+	if err != nil {
+		return nil, false, err
+	}
+	if !hasMeta {
+		return nil, false, nil
+	}
+
+	idx, err := e.reader.LoadRangeBSI(rgIdx, node.Field)
+	if err != nil {
+		return nil, false, err
+	}
+	if idx == nil {
+		return nil, false, nil
+	}
+
+	op, valueOrStart, end, direct, ok, err := lowerBSIPredicate(node, meta, idx)
+	if err != nil || !ok {
+		return nil, false, err
+	}
+	if direct != nil {
+		return direct, true, nil
+	}
+
+	return idx.CompareValue(0, op, valueOrStart, end, nil), true, nil
+}
+
+func (e *RGFilterEvaluator) attachRowMask(rgIdx int, mask *roaring.Bitmap, stats *RGFilterStats) {
+	if mask == nil {
+		return
+	}
+	if e.rowMasks == nil {
+		e.rowMasks = make(map[int]*roaring.Bitmap)
+	}
+	if stats != nil {
+		stats.RangeBSIMaskBytes += int64(mask.GetSerializedSizeInBytes())
+	}
+	cur, ok := e.rowMasks[rgIdx]
+	if !ok {
+		e.rowMasks[rgIdx] = mask.Clone()
+
+		return
+	}
+
+	cur.And(mask)
+}
+
+func lowerBSIPredicate(
+	node *RGFilterNode,
+	meta rangeMeta,
+	idx *bsi.BSI,
+) (bsi.Operation, int64, int64, *roaring.Bitmap, bool, error) {
+	raw, ok, err := parseRangeBSIValue(meta.ValueKind, node.RangeVal, node.RangeOp)
+	if err != nil {
+		return 0, 0, 0, nil, false, err
+	}
+	if !ok {
+		return 0, 0, 0, nil, false, nil
+	}
+
+	empty := func() *roaring.Bitmap { return roaring.New() }
+	all := func() *roaring.Bitmap { return idx.GetExistenceBitmap().Clone() }
+
+	switch node.RangeOp {
+	case ">":
+		if raw >= meta.MaxValue {
+			return 0, 0, 0, empty(), true, nil
+		}
+		if raw < meta.MinValue {
+			return 0, 0, 0, all(), true, nil
+		}
+
+		return bsi.GT, rangeBSIOffset(raw, meta.MinValue), 0, nil, true, nil
+	case ">=":
+		if raw > meta.MaxValue {
+			return 0, 0, 0, empty(), true, nil
+		}
+		if raw <= meta.MinValue {
+			return 0, 0, 0, all(), true, nil
+		}
+
+		return bsi.GE, rangeBSIOffset(raw, meta.MinValue), 0, nil, true, nil
+	case "<":
+		if raw <= meta.MinValue {
+			return 0, 0, 0, empty(), true, nil
+		}
+		if raw > meta.MaxValue {
+			return 0, 0, 0, all(), true, nil
+		}
+
+		return bsi.LT, rangeBSIOffset(raw, meta.MinValue), 0, nil, true, nil
+	case "<=":
+		if raw < meta.MinValue {
+			return 0, 0, 0, empty(), true, nil
+		}
+		if raw >= meta.MaxValue {
+			return 0, 0, 0, all(), true, nil
+		}
+
+		return bsi.LE, rangeBSIOffset(raw, meta.MinValue), 0, nil, true, nil
+	default:
+		return 0, 0, 0, nil, false, nil
+	}
+}
+
+func parseRangeBSIValue(valueKind uint8, value, op string) (int64, bool, error) {
+	switch valueKind {
+	case index.RangeBSIValueInt:
+		return parseIntRangeValue(value, op)
+	case index.RangeBSIValueFloat64Bits:
+		f, err := strconv.ParseFloat(value, 64)
+		if err != nil || math.IsNaN(f) {
+			return 0, false, nil
+		}
+		if math.IsInf(f, 0) {
+			return 0, false, nil
+		}
+
+		return index.FloatToOrderedInt64(f), true, nil
+	case index.RangeBSIValueTimestampNS:
+		n, err := strconv.ParseInt(value, 10, 64)
+		if err == nil {
+			return n, true, nil
+		}
+		ts, err := time.Parse(time.RFC3339Nano, value)
+		if err != nil {
+			return 0, false, nil
+		}
+
+		return ts.UnixNano(), true, nil
+	case index.RangeBSIValueBool:
+		v, err := strconv.ParseBool(value)
+		if err != nil {
+			return 0, false, nil
+		}
+
+		return index.BoolToInt64(v), true, nil
+	default:
+		return 0, false, nil
+	}
+}
+
+func parseIntRangeValue(value, op string) (int64, bool, error) {
+	if n, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return n, true, nil
+	}
+
+	f, err := strconv.ParseFloat(value, 64)
+	if err != nil || math.IsNaN(f) {
+		return 0, false, nil
+	}
+	if math.IsInf(f, 0) {
+		return 0, false, nil
+	}
+
+	switch op {
+	case ">":
+		f = math.Floor(f)
+	case ">=":
+		f = math.Ceil(f)
+	case "<":
+		f = math.Ceil(f)
+	case "<=":
+		f = math.Floor(f)
+	}
+	const (
+		minInt64Float = -9223372036854775808.0
+		maxInt64Float = 9223372036854775808.0
+	)
+	if f < minInt64Float || f >= maxInt64Float {
+		return 0, false, nil
+	}
+
+	return int64(f), true, nil
+}
+
+func rangeBSIOffset(raw, minValue int64) int64 {
+	return int64(uint64(raw) - uint64(minValue))
 }
 
 // EvalFieldIn checks field IN (values) using const column, presence, zone map, and bloom.
