@@ -106,10 +106,11 @@ run_test "T6.7 correctness predicates" "./pkg/storage/segment" '^TestAcceptance_
 run_bench "bench query fixtures" "./pkg/storage/segment" '^BenchmarkRangeBSI_Query_'
 run_bench "bench storage overhead" "./pkg/storage/segment" '^BenchmarkRangeBSI_StorageOverhead$'
 run_bench "bench writer overhead" "./pkg/storage/segment" '^BenchmarkRangeBSI_Writer_'
+run_bench "bench pipeline fixtures" "./pkg/engine/pipeline" '^BenchmarkRangeBSI_Pipeline_'
 
-blocker "T6.3 ingest regression" "missing LYNXDB_DEFAULT_FORMAT_MAJOR hook in cmd/lynxdb bench"
-blocker "T6.5 full pipeline e2e speedup" "pipeline tests cannot build equivalent V1 fixture through public test API"
-blocker "T6.6 mixed-format pipeline speedup" "pipeline tests cannot build mixed V1/V2 registry through public test API"
+run_test "T6.3 ingest regression" "./cmd/lynxdb" '^TestAcceptance_RangeBSIIngestRegression_DefaultV2WithinTenPercentOfV1$'
+run_test "T6.5 full pipeline e2e speedup" "./pkg/engine/pipeline" '^TestAcceptance_RangeBSIFullPipelineSpeedup_EquivalentV1V2Fixtures$'
+run_test "T6.6 mixed-format pipeline speedup" "./pkg/engine/pipeline" '^TestAcceptance_RangeBSIMixedFormatPipelineSpeedup_MixedV1V2Fixtures$'
 
 printf "\n"
 if [[ "$FAILURES" -ne 0 ]]; then
