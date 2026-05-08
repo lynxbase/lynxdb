@@ -3,7 +3,6 @@ package compaction
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"os"
@@ -170,11 +169,13 @@ func TestCompactor_Execute_MergesAndSorts(t *testing.T) {
 	if output.Meta.Index != "main" {
 		t.Errorf("index: got %q, want %q", output.Meta.Index, "main")
 	}
-	if string(output.Data[:4]) != segment.LSG_MAGIC_V1 {
-		t.Fatalf("output magic = %q, want %q", output.Data[:4], segment.LSG_MAGIC_V1)
+	if string(output.Data[:4]) != segment.MagicForMajor(segment.LSG_FORMAT_MAJOR_V2) {
+		t.Fatalf("output magic = %q, want %q", output.Data[:4], segment.MagicForMajor(segment.LSG_FORMAT_MAJOR_V2))
 	}
-	if got := binary.LittleEndian.Uint16(output.Data[4:6]); got != segment.LSG_FORMAT_MAJOR_V1 {
-		t.Fatalf("output major = %d, want %d", got, segment.LSG_FORMAT_MAJOR_V1)
+	if got, err := segment.SegmentHeaderMajor(output.Data, int64(len(output.Data))); err != nil {
+		t.Fatalf("SegmentHeaderMajor: %v", err)
+	} else if got != segment.LSG_FORMAT_MAJOR_V2 {
+		t.Fatalf("output major = %d, want %d", got, segment.LSG_FORMAT_MAJOR_V2)
 	}
 
 	// Verify events are sorted by timestamp.
