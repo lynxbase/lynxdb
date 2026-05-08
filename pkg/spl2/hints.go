@@ -91,9 +91,10 @@ type InvertedIndexPredicate struct {
 
 // RangePredicate holds a field range for pushdown.
 type RangePredicate struct {
-	Field string
-	Min   string
-	Max   string
+	Field        string
+	Min          string
+	Max          string
+	LoweredToBSI bool
 }
 
 // InPredicate represents a field IN (val1, val2, ...) predicate extracted

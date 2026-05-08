@@ -61,6 +61,28 @@ func WithFieldStats(stats map[string]FieldStatInfo) OptOption {
 	}
 }
 
+// WithSegmentSet enables scan-set-aware optimizer rules.
+func WithSegmentSet(segs SegmentSet) OptOption {
+	return func(o *Optimizer) {
+		if segs == nil {
+			return
+		}
+		insertAfter := -1
+		for i, r := range o.rules {
+			if r.Name() == "RangeMerge" {
+				insertAfter = i
+				break
+			}
+		}
+		rule := &rangeToBSIRule{segs: segs}
+		if insertAfter < 0 || insertAfter == len(o.rules)-1 {
+			o.rules = append(o.rules, rule)
+			return
+		}
+		o.rules = append(o.rules[:insertAfter+1], append([]Rule{rule}, o.rules[insertAfter+1:]...)...)
+	}
+}
+
 // New creates an optimizer with all built-in rules and optional configuration.
 func New(opts ...OptOption) *Optimizer {
 	o := &Optimizer{

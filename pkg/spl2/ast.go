@@ -604,9 +604,10 @@ func (e *GlobExpr) String() string {
 
 // CompareExpr represents a comparison: field op value.
 type CompareExpr struct {
-	Left  Expr
-	Op    string // "=", "!=", "<", "<=", ">", ">="
-	Right Expr
+	Left         Expr
+	Op           string // "=", "!=", "<", "<=", ">", ">="
+	Right        Expr
+	LoweredToBSI bool
 }
 
 func (*CompareExpr) exprNode() {}

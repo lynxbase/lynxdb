@@ -128,6 +128,8 @@ func (p *Plan) Clone() *Plan {
 		h.SearchTerms = append([]string(nil), p.Hints.SearchTerms...)
 		h.RequiredCols = append([]string(nil), p.Hints.RequiredCols...)
 		h.FieldPredicates = append([]spl2.FieldPredicate(nil), p.Hints.FieldPredicates...)
+		h.RangePredicates = append([]spl2.RangePredicate(nil), p.Hints.RangePredicates...)
+		h.InvertedIndexPredicates = append([]spl2.InvertedIndexPredicate(nil), p.Hints.InvertedIndexPredicates...)
 		h.InPredicates = append([]spl2.InPredicate(nil), p.Hints.InPredicates...)
 		clone.Hints = &h
 	}

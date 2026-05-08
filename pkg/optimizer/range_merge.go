@@ -67,7 +67,7 @@ func extractRanges(expr spl2.Expr, ranges *[]spl2.RangePredicate) {
 		}
 	}
 	for _, rp := range fieldBounds {
-		if rp.Min != "" && rp.Max != "" {
+		if rp.Min != "" || rp.Max != "" {
 			*ranges = append(*ranges, *rp)
 		}
 	}
