@@ -8,7 +8,7 @@ import (
 )
 
 type footerV2RoundTripCase struct {
-	Footer Footer
+	Footer *Footer
 }
 
 func (footerV2RoundTripCase) Generate(r *rand.Rand, _ int) reflect.Value {
@@ -76,19 +76,19 @@ func (footerV2RoundTripCase) Generate(r *rand.Rand, _ int) reflect.Value {
 	}
 	f.RequiredCaps, f.OptionalCaps = aggregateCapabilities(f.RowGroups)
 
-	return reflect.ValueOf(footerV2RoundTripCase{Footer: f})
+	return reflect.ValueOf(footerV2RoundTripCase{Footer: &f})
 }
 
 func TestProperty_FooterV2_RandomCatalogAndRowGroups_RoundTrip(t *testing.T) {
 	cfg := &quick.Config{MaxCount: 200}
 
 	err := quick.Check(func(tc footerV2RoundTripCase) bool {
-		got, err := decodeFooterV2(encodeFooterV2(&tc.Footer))
+		got, err := decodeFooterV2(encodeFooterV2(tc.Footer))
 		if err != nil {
 			t.Logf("decodeFooterV2: %v", err)
 			return false
 		}
-		assertFooterEqual(t, &tc.Footer, got)
+		assertFooterEqual(t, tc.Footer, got)
 		return true
 	}, cfg)
 	if err != nil {
