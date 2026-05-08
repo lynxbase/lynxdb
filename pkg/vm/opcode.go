@@ -74,6 +74,9 @@ const (
 	OpGte    Opcode = 0x55
 	OpInList Opcode = 0x56
 	OpLike   Opcode = 0x58
+	// OpBSIHandledCompare jumps to a true branch when runtime metadata proves
+	// the current row already survived this field's range-BSI mask.
+	OpBSIHandledCompare Opcode = 0x5C
 
 	// Logic.
 	OpAnd Opcode = 0x60
@@ -198,6 +201,7 @@ var definitions = map[Opcode]*Definition{
 	OpGte:    {"OpGte", nil},
 	OpInList: {"OpInList", []int{2}},
 	OpLike:   {"OpLike", nil},
+	OpBSIHandledCompare: {"OpBSIHandledCompare", []int{2, 2}},
 
 	OpAnd: {"OpAnd", nil},
 	OpOr:  {"OpOr", nil},

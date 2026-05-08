@@ -118,6 +118,33 @@ func (c *compiler) compileLiteral(lit *spl2.LiteralExpr) error {
 }
 
 func (c *compiler) compileCompare(e *spl2.CompareExpr) error {
+	if e.LoweredToBSI {
+		if field, ok := e.Left.(*spl2.FieldExpr); ok && isRangeCompareOp(e.Op) {
+			name := field.Name
+			if name == "source" {
+				name = "_source"
+			}
+			fieldIdx := c.prog.AddFieldName(name)
+			jumpHandled := c.prog.EmitOp(OpBSIHandledCompare, fieldIdx, 0)
+			if err := c.compileCompareWithoutBSI(e); err != nil {
+				return err
+			}
+			jumpEnd := c.prog.EmitOp(OpJump, 0)
+			handledLabel := c.prog.Len()
+			c.prog.EmitOp(OpConstTrue)
+			endLabel := c.prog.Len()
+			c.prog.PatchUint16(jumpHandled+3, uint16(handledLabel))
+			c.prog.PatchUint16(jumpEnd+1, uint16(endLabel))
+			c.prog.BSIHandledComparisons++
+
+			return nil
+		}
+	}
+
+	return c.compileCompareWithoutBSI(e)
+}
+
+func (c *compiler) compileCompareWithoutBSI(e *spl2.CompareExpr) error {
 	// Detect glob wildcard pattern in = / != comparisons.
 	// When the right operand contains * or ?, convert the glob to an anchored
 	// regex and emit OpStrMatch instead of OpEq/OpNeq. This reuses the VM's
@@ -181,6 +208,15 @@ func (c *compiler) compileCompare(e *spl2.CompareExpr) error {
 	}
 
 	return nil
+}
+
+func isRangeCompareOp(op string) bool {
+	switch op {
+	case ">", ">=", "<", "<=":
+		return true
+	default:
+		return false
+	}
 }
 
 // extractWildcardPattern extracts the raw pattern string from a LiteralExpr

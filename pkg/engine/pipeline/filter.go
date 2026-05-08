@@ -40,6 +40,9 @@ func NewFilterIterator(child Iterator, predicate *vm.Program) *FilterIterator {
 // for simple CompareExpr(FieldExpr, op, LiteralExpr) patterns.
 func NewFilterIteratorWithExpr(child Iterator, predicate *vm.Program, expr spl2.Expr) *FilterIterator {
 	fi := &FilterIterator{child: child, predicate: predicate}
+	if predicate != nil && predicate.BSIHandledComparisons > 0 {
+		return fi
+	}
 
 	// Try compound vectorized plan first (handles AND/OR, IN, NULL, LIKE, BETWEEN).
 	if plan := analyzeVecExpr(expr); plan != nil {
@@ -111,7 +114,7 @@ func (f *FilterIterator) Next(ctx context.Context) (*Batch, error) {
 					row[k] = col[i]
 				}
 			}
-			if f.matchesRow(row) {
+			if f.matchesRow(row, batch, i) {
 				matches[i] = true
 				matchCount++
 			}
@@ -138,6 +141,7 @@ func (f *FilterIterator) Next(ctx context.Context) (*Batch, error) {
 			}
 			result.Columns[k] = out
 		}
+		copyBSIMetadataFilter(result, batch, matches)
 
 		return result, nil
 	}
@@ -302,7 +306,7 @@ func (f *FilterIterator) WasVectorized() bool {
 	return f.vecUsed
 }
 
-func (f *FilterIterator) matchesRow(row map[string]event.Value) bool {
+func (f *FilterIterator) matchesRow(row map[string]event.Value, batch *Batch, rowIndex int) bool {
 	// Text search — searchTerm is already lowered at construction time.
 	if f.searchTerm != "" {
 		raw, ok := row["_raw"]
@@ -314,9 +318,10 @@ func (f *FilterIterator) matchesRow(row map[string]event.Value) bool {
 		}
 	}
 	if f.predicate != nil {
+		predCtx := predicateContextForBatch(batch, rowIndex)
 		if f.profileVM {
 			start := time.Now()
-			result, err := f.vmInst.Execute(f.predicate, row)
+			result, err := f.vmInst.ExecuteWithContext(f.predicate, row, predCtx)
 			f.vmTimeNS += time.Since(start).Nanoseconds()
 			f.vmCalls++
 			if err != nil {
@@ -325,7 +330,7 @@ func (f *FilterIterator) matchesRow(row map[string]event.Value) bool {
 
 			return vm.IsTruthy(result)
 		}
-		result, err := f.vmInst.Execute(f.predicate, row)
+		result, err := f.vmInst.ExecuteWithContext(f.predicate, row, predCtx)
 		if err != nil {
 			return false
 		}
@@ -334,6 +339,38 @@ func (f *FilterIterator) matchesRow(row map[string]event.Value) bool {
 	}
 
 	return true
+}
+
+func predicateContextForBatch(batch *Batch, rowIndex int) *vm.PredicateContext {
+	if batch == nil || rowIndex < 0 {
+		return nil
+	}
+	if batch.BSIHandledRows == nil && len(batch.BSIHandledFields) == 0 {
+		return nil
+	}
+	fields := make(map[string]interface{ Contains(uint32) bool }, len(batch.BSIHandledFields))
+	for field, bm := range batch.BSIHandledFields {
+		fields[field] = bm
+	}
+
+	return &vm.PredicateContext{
+		RowIndex:         uint32(rowIndex),
+		BSIHandledRows:   batch.BSIHandledRows,
+		BSIHandledFields: fields,
+	}
+}
+
+func copyBSIMetadataFilter(dst, src *Batch, mask []bool) {
+	if dst == nil || src == nil || len(mask) == 0 {
+		return
+	}
+	var indices []int
+	for i, keep := range mask {
+		if keep {
+			indices = append(indices, i)
+		}
+	}
+	copyBSIMetadataPermutation(dst, src, indices)
 }
 
 // SetProfileVM enables per-call VM timing collection (trace level).
@@ -729,6 +766,7 @@ func compactBatch(batch *Batch, mask []bool, matchCount int) *Batch {
 		}
 		result.Columns[k] = out
 	}
+	copyBSIMetadataFilter(result, batch, mask)
 
 	return result
 }

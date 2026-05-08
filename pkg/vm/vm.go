@@ -56,6 +56,32 @@ type VM struct {
 	// string value — a new event naturally invalidates it because the
 	// string value differs.
 	jsonCache jsonParseCache
+
+	predicateCtx *PredicateContext
+}
+
+// PredicateContext carries per-row scan metadata used by predicate opcodes.
+type PredicateContext struct {
+	RowIndex         uint32
+	BSIHandledRows   interface{ Contains(uint32) bool }
+	BSIHandledFields map[string]interface{ Contains(uint32) bool }
+}
+
+func (ctx *PredicateContext) bsiHandled(field string) bool {
+	if ctx == nil {
+		return false
+	}
+	if len(ctx.BSIHandledFields) > 0 {
+		if bm := ctx.BSIHandledFields[field]; bm != nil {
+			return bm.Contains(ctx.RowIndex)
+		}
+		return false
+	}
+	if ctx.BSIHandledRows == nil {
+		return false
+	}
+
+	return ctx.BSIHandledRows.Contains(ctx.RowIndex)
 }
 
 // jsonParseCache caches the result of unmarshaling a JSON string so that
@@ -380,13 +406,20 @@ func (vm *VM) execReplace(ins []byte, ip int) (int, error) {
 // Execute runs a compiled program against a set of event fields.
 // Returns the top-of-stack value. The VM instance can be reused.
 func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (result event.Value, err error) {
+	return vm.ExecuteWithContext(prog, fields, nil)
+}
+
+// ExecuteWithContext runs a compiled program with optional per-row predicate metadata.
+func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, predicateCtx *PredicateContext) (result event.Value, err error) {
 	defer func() {
+		vm.predicateCtx = nil
 		if r := recover(); r != nil {
 			err = fmt.Errorf("%w: %v", ErrVMTypeMismatch, r)
 		}
 	}()
 
 	vm.sp = 0
+	vm.predicateCtx = predicateCtx
 	vm.ensureRegexCache(prog)
 	vm.ensureCIDRCache(prog)
 
@@ -702,6 +735,21 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (result even
 				return event.NullValue(), err
 			}
 			ip = newIP
+
+		case OpBSIHandledCompare:
+			fieldIdx, err := readIndexSafe(ins, ip, len(prog.FieldNames), "field")
+			if err != nil {
+				return event.NullValue(), err
+			}
+			target, err := readOperandSafe(ins, ip+2)
+			if err != nil {
+				return event.NullValue(), err
+			}
+			if vm.predicateCtx.bsiHandled(prog.FieldNames[fieldIdx]) {
+				ip = int(target)
+			} else {
+				ip += 4
+			}
 
 		case OpAnd:
 			b := vm.stack[vm.sp-1]

@@ -3,6 +3,8 @@ package pipeline
 import (
 	"sort"
 
+	"github.com/RoaringBitmap/roaring"
+
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
@@ -29,6 +31,11 @@ const DefaultBatchSize = 1024
 type Batch struct {
 	Columns map[string][]event.Value
 	Len     int
+
+	// BSIHandledRows marks batch rows that survived a range-BSI row mask.
+	// BSIHandledFields narrows that proof to a specific field when available.
+	BSIHandledRows   *roaring.Bitmap
+	BSIHandledFields map[string]*roaring.Bitmap
 }
 
 // NewBatch creates an empty batch with pre-allocated column maps.
@@ -149,6 +156,7 @@ func (b *Batch) Slice(start, end int) *Batch {
 		}
 		nb.Columns[k] = col[colStart:colEnd]
 	}
+	copyBSIMetadataSlice(nb, b, start, end)
 
 	return nb
 }
@@ -281,6 +289,7 @@ func (b *Batch) AppendBatch(other *Batch) {
 		return
 	}
 
+	offset := b.Len
 	newLen := b.Len + other.Len
 
 	// Extend existing columns that are NOT in other with trailing nulls.
@@ -307,6 +316,7 @@ func (b *Batch) AppendBatch(other *Batch) {
 	}
 
 	b.Len = newLen
+	appendBSIMetadata(b, other, offset)
 }
 
 // PermuteSlice creates a new batch from a subset of rows reordered by indices.
@@ -325,6 +335,7 @@ func (b *Batch) PermuteSlice(indices []int) *Batch {
 		}
 		result.Columns[k] = newCol
 	}
+	copyBSIMetadataPermutation(result, b, indices)
 
 	return result
 }
@@ -337,4 +348,117 @@ func BatchFromRows(rows []map[string]event.Value) *Batch {
 	}
 
 	return b
+}
+
+func copyBSIMetadataSlice(dst, src *Batch, start, end int) {
+	if src == nil || dst == nil || start >= end {
+		return
+	}
+	dst.BSIHandledRows = sliceBitmap(src.BSIHandledRows, start, end)
+	if len(src.BSIHandledFields) == 0 {
+		return
+	}
+	dst.BSIHandledFields = make(map[string]*roaring.Bitmap, len(src.BSIHandledFields))
+	for field, bm := range src.BSIHandledFields {
+		if sliced := sliceBitmap(bm, start, end); sliced != nil && !sliced.IsEmpty() {
+			dst.BSIHandledFields[field] = sliced
+		}
+	}
+}
+
+func appendBSIMetadata(dst, src *Batch, offset int) {
+	if dst == nil || src == nil {
+		return
+	}
+	if src.BSIHandledRows != nil && !src.BSIHandledRows.IsEmpty() {
+		if dst.BSIHandledRows == nil {
+			dst.BSIHandledRows = roaring.New()
+		}
+		shifted := translateBatchBitmap(src.BSIHandledRows, uint32(offset))
+		dst.BSIHandledRows.Or(shifted)
+	}
+	if len(src.BSIHandledFields) == 0 {
+		return
+	}
+	if dst.BSIHandledFields == nil {
+		dst.BSIHandledFields = make(map[string]*roaring.Bitmap, len(src.BSIHandledFields))
+	}
+	for field, bm := range src.BSIHandledFields {
+		if bm == nil || bm.IsEmpty() {
+			continue
+		}
+		shifted := translateBatchBitmap(bm, uint32(offset))
+		if dst.BSIHandledFields[field] == nil {
+			dst.BSIHandledFields[field] = shifted
+			continue
+		}
+		dst.BSIHandledFields[field].Or(shifted)
+	}
+}
+
+func copyBSIMetadataPermutation(dst, src *Batch, indices []int) {
+	if src == nil || dst == nil || len(indices) == 0 {
+		return
+	}
+	dst.BSIHandledRows = permuteBitmap(src.BSIHandledRows, indices)
+	if len(src.BSIHandledFields) == 0 {
+		return
+	}
+	dst.BSIHandledFields = make(map[string]*roaring.Bitmap, len(src.BSIHandledFields))
+	for field, bm := range src.BSIHandledFields {
+		if permuted := permuteBitmap(bm, indices); permuted != nil && !permuted.IsEmpty() {
+			dst.BSIHandledFields[field] = permuted
+		}
+	}
+}
+
+func sliceBitmap(src *roaring.Bitmap, start, end int) *roaring.Bitmap {
+	if src == nil || src.IsEmpty() || start >= end {
+		return nil
+	}
+	out := roaring.New()
+	for it := src.Iterator(); it.HasNext(); {
+		row := int(it.Next())
+		if row < start {
+			continue
+		}
+		if row >= end {
+			break
+		}
+		out.Add(uint32(row - start))
+	}
+	if out.IsEmpty() {
+		return nil
+	}
+
+	return out
+}
+
+func permuteBitmap(src *roaring.Bitmap, indices []int) *roaring.Bitmap {
+	if src == nil || src.IsEmpty() {
+		return nil
+	}
+	out := roaring.New()
+	for newRow, oldRow := range indices {
+		if oldRow >= 0 && src.Contains(uint32(oldRow)) {
+			out.Add(uint32(newRow))
+		}
+	}
+	if out.IsEmpty() {
+		return nil
+	}
+
+	return out
+}
+
+func translateBatchBitmap(src *roaring.Bitmap, offset uint32) *roaring.Bitmap {
+	if src == nil || src.IsEmpty() {
+		return nil
+	}
+	out := roaring.New()
+	for it := src.Iterator(); it.HasNext(); {
+		out.Add(it.Next() + offset)
+	}
+
+	return out
 }

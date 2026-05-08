@@ -81,9 +81,10 @@ type RGFilterStats struct {
 //
 // NOT thread-safe. Designed for single-goroutine Volcano pipeline.
 type RGFilterEvaluator struct {
-	root     *RGFilterNode
-	reader   *Reader
-	rowMasks map[int]*roaring.Bitmap // RG-local row masks accumulated per row group
+	root          *RGFilterNode
+	reader        *Reader
+	rowMasks      map[int]*roaring.Bitmap            // RG-local row masks accumulated per row group
+	fieldRowMasks map[int]map[string]*roaring.Bitmap // RG-local row masks by range-BSI field
 }
 
 // NewRGFilterEvaluator creates an evaluator for the given filter tree and segment reader.
@@ -107,12 +108,26 @@ func (e *RGFilterEvaluator) RowMaskFor(rgIdx int) *roaring.Bitmap {
 	return e.rowMasks[rgIdx]
 }
 
+// RowMaskForField returns the accumulated BSI row mask for one field in a row group.
+func (e *RGFilterEvaluator) RowMaskForField(rgIdx int, field string) *roaring.Bitmap {
+	if e == nil || e.fieldRowMasks == nil {
+		return nil
+	}
+	fields := e.fieldRowMasks[rgIdx]
+	if fields == nil {
+		return nil
+	}
+
+	return fields[field]
+}
+
 // ResetRowMasks clears BSI row masks accumulated for the current segment.
 func (e *RGFilterEvaluator) ResetRowMasks() {
 	if e == nil {
 		return
 	}
 	clear(e.rowMasks)
+	clear(e.fieldRowMasks)
 }
 
 // EvaluateRowGroup evaluates the filter tree against row group at rgIdx.
@@ -344,7 +359,7 @@ func (e *RGFilterEvaluator) evalFieldRange(node *RGFilterNode, rgIdx int, stats 
 			return RGSkip
 		}
 		if allowRowMasks {
-			e.attachRowMask(rgIdx, mask, stats)
+			e.attachRowMask(rgIdx, node.Field, mask, stats)
 		}
 	}
 
@@ -385,7 +400,7 @@ func (e *RGFilterEvaluator) tryBSIFilter(rgIdx int, node *RGFilterNode) (*roarin
 	return idx.CompareValue(0, op, valueOrStart, end, nil), true, nil
 }
 
-func (e *RGFilterEvaluator) attachRowMask(rgIdx int, mask *roaring.Bitmap, stats *RGFilterStats) {
+func (e *RGFilterEvaluator) attachRowMask(rgIdx int, field string, mask *roaring.Bitmap, stats *RGFilterStats) {
 	if mask == nil {
 		return
 	}
@@ -398,11 +413,22 @@ func (e *RGFilterEvaluator) attachRowMask(rgIdx int, mask *roaring.Bitmap, stats
 	cur, ok := e.rowMasks[rgIdx]
 	if !ok {
 		e.rowMasks[rgIdx] = mask.Clone()
+	} else {
+		cur.And(mask)
+	}
+	if e.fieldRowMasks == nil {
+		e.fieldRowMasks = make(map[int]map[string]*roaring.Bitmap)
+	}
+	if e.fieldRowMasks[rgIdx] == nil {
+		e.fieldRowMasks[rgIdx] = make(map[string]*roaring.Bitmap)
+	}
+	fieldMask, ok := e.fieldRowMasks[rgIdx][field]
+	if !ok {
+		e.fieldRowMasks[rgIdx][field] = mask.Clone()
 
 		return
 	}
-
-	cur.And(mask)
+	fieldMask.And(mask)
 }
 
 func lowerBSIPredicate(

@@ -151,6 +151,7 @@ type SegmentStreamIterator struct {
 	rgIdx       int                 // current row group within segment
 	rgEvents    []*event.Event      // buffered events from current row group
 	rgOff       int                 // position within rgEvents
+	rgBSIFields []string            // lowered range-BSI fields applied to current row group buffer
 	bitmap      *roaring.Bitmap     // search bitmap for current segment (nil = no filter)
 	rgTotal     int                 // total row groups in current segment
 	rgStartRows []uint32            // segment-global row offset for each row group in current segment
@@ -423,6 +424,7 @@ func (s *SegmentStreamIterator) nextMemtableBatch(_ context.Context) (*Batch, er
 		s.memOff = end
 
 		batch := BatchFromEvents(slice)
+		markBatchBSIHandled(batch, nil)
 		s.totalYielded += batch.Len
 		s.streamStats.EventsMatched += int64(batch.Len)
 
@@ -530,6 +532,7 @@ func (s *SegmentStreamIterator) yieldFromRGBuffer() (*Batch, error) {
 		s.rgOff = end
 
 		batch := BatchFromEvents(slice)
+		markBatchBSIHandled(batch, s.rgBSIFields)
 		s.totalYielded += batch.Len
 		s.streamStats.EventsMatched += int64(batch.Len)
 
@@ -541,6 +544,19 @@ func (s *SegmentStreamIterator) yieldFromRGBuffer() (*Batch, error) {
 		"cannot fit minimum batch (%d events) in memory budget; "+
 		"consider increasing --memory or adding filters to reduce data volume",
 		s.totalYielded, minAdaptiveBatchSize)
+}
+
+func markBatchBSIHandled(batch *Batch, fields []string) {
+	if batch == nil || batch.Len == 0 || len(fields) == 0 {
+		return
+	}
+	rows := roaring.New()
+	rows.AddRange(0, uint64(batch.Len))
+	batch.BSIHandledRows = rows
+	batch.BSIHandledFields = make(map[string]*roaring.Bitmap, len(fields))
+	for _, field := range fields {
+		batch.BSIHandledFields[field] = rows.Clone()
+	}
 }
 
 // advanceRowGroup advances to the next available row group, potentially
@@ -559,6 +575,7 @@ func (s *SegmentStreamIterator) advanceRowGroup() bool {
 		s.bitmap = nil
 		s.rgEvents = nil
 		s.rgOff = 0
+		s.rgBSIFields = s.rgBSIFields[:0]
 		s.rgStartRows = s.rgStartRows[:0]
 		s.rgRowCounts = s.rgRowCounts[:0]
 		if s.rgFilter != nil {
@@ -656,6 +673,7 @@ func (s *SegmentStreamIterator) loadCurrentRowGroup() error {
 	if s.canPruneRowGroupByTime(reader, s.rgIdx) {
 		s.rgEvents = nil
 		s.rgOff = 0
+		s.rgBSIFields = s.rgBSIFields[:0]
 		s.streamStats.RowGroupsSkipped++
 		s.streamStats.TimeSkips++
 		s.reportRowGroupDone()
@@ -669,6 +687,7 @@ func (s *SegmentStreamIterator) loadCurrentRowGroup() error {
 		if s.rgFilter.EvaluateRowGroup(s.rgIdx, &s.rgFilterStats) == segment.RGSkip {
 			s.rgEvents = nil
 			s.rgOff = 0
+			s.rgBSIFields = s.rgBSIFields[:0]
 			s.streamStats.RowGroupsSkipped++
 			s.streamStats.BloomSkips++ // backward compat counter
 			s.reportRowGroupDone()
@@ -679,6 +698,7 @@ func (s *SegmentStreamIterator) loadCurrentRowGroup() error {
 		// Fallback: flat _raw bloom check when no RG filter tree exists.
 		s.rgEvents = nil
 		s.rgOff = 0
+		s.rgBSIFields = s.rgBSIFields[:0]
 		s.streamStats.RowGroupsSkipped++
 		s.streamStats.BloomSkips++
 		s.reportRowGroupDone()
@@ -686,7 +706,7 @@ func (s *SegmentStreamIterator) loadCurrentRowGroup() error {
 		return nil
 	}
 
-	rowBitmap := s.bitmapForCurrentRowGroup()
+	rowBitmap, bsiFields := s.bitmapForCurrentRowGroup()
 
 	// Read the row group with bitmap and predicate filtering.
 	events, err := reader.ReadRowGroupFiltered(
@@ -704,6 +724,7 @@ func (s *SegmentStreamIterator) loadCurrentRowGroup() error {
 
 	s.rgEvents = events
 	s.rgOff = 0
+	s.rgBSIFields = append(s.rgBSIFields[:0], bsiFields...)
 	s.streamStats.RowGroupsScanned++
 	s.streamStats.EventsScanned += int64(len(events))
 	s.streamStats.BytesRead += seg.Meta.SizeBytes / int64(max(s.rgTotal, 1))
@@ -712,40 +733,64 @@ func (s *SegmentStreamIterator) loadCurrentRowGroup() error {
 	return nil
 }
 
-func (s *SegmentStreamIterator) bitmapForCurrentRowGroup() *roaring.Bitmap {
+func (s *SegmentStreamIterator) bitmapForCurrentRowGroup() (*roaring.Bitmap, []string) {
 	if s.rgFilter == nil {
-		return s.bitmap
+		return s.bitmap, nil
 	}
 
 	mask := s.rgFilter.RowMaskFor(s.rgIdx)
 	if mask == nil || mask.IsEmpty() {
-		return s.bitmap
+		return s.bitmap, nil
 	}
 	if s.rgIdx < 0 || s.rgIdx >= len(s.rgRowCounts) {
-		return s.bitmap
+		return s.bitmap, nil
 	}
 
 	rowCount := s.rgRowCounts[s.rgIdx]
 	if rowCount == 0 {
-		return s.bitmap
+		return s.bitmap, nil
 	}
 
 	if s.hints.BitmapSelectivityThreshold > 0 {
 		selectivity := float64(mask.GetCardinality()) / float64(rowCount)
 		if selectivity > s.hints.BitmapSelectivityThreshold {
-			return s.bitmap
+			return s.bitmap, nil
 		}
 	}
 
 	shifted := translateBitmap(mask, s.rgStartRows[s.rgIdx])
+	bsiFields := s.loweredBSIFieldsForCurrentRowGroup()
 	if s.bitmap == nil {
-		return shifted
+		return shifted, bsiFields
 	}
 
 	combined := s.bitmap.Clone()
 	combined.And(shifted)
 
-	return combined
+	return combined, bsiFields
+}
+
+func (s *SegmentStreamIterator) loweredBSIFieldsForCurrentRowGroup() []string {
+	if s.rgFilter == nil || s.hints == nil {
+		return nil
+	}
+	fields := make([]string, 0, len(s.hints.RangePreds))
+	seen := make(map[string]struct{}, len(s.hints.RangePreds))
+	for _, rp := range s.hints.RangePreds {
+		if !rp.LoweredToBSI {
+			continue
+		}
+		field := normalizeField(rp.Field)
+		if _, ok := seen[field]; ok {
+			continue
+		}
+		if mask := s.rgFilter.RowMaskForField(s.rgIdx, field); mask != nil && !mask.IsEmpty() {
+			fields = append(fields, field)
+			seen[field] = struct{}{}
+		}
+	}
+
+	return fields
 }
 
 func buildRowGroupOffsets(reader *segment.Reader, starts, counts []uint32) ([]uint32, []uint32) {

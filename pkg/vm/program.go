@@ -14,6 +14,8 @@ type Program struct {
 	FieldNames    []string
 	RegexPatterns []string
 	CIDRNets      []*net.IPNet // compiled CIDR networks for cidrmatch()
+
+	BSIHandledComparisons int
 }
 
 // AddConstant appends a constant and returns its index.
