@@ -66,11 +66,12 @@ filebeat.inputs:
 output.elasticsearch:
   hosts: ["http://host.docker.internal:%d"]
   allow_older_versions: true
+setup.template.enabled: false
+setup.ilm.enabled: false
 `, rig.ESPort)
 		ctr := runContainer(t, testcontainers.ContainerRequest{
-			Image:      image,
-			Cmd:        []string{"-e", "-strict.perms=false", "-c", "/usr/share/filebeat/filebeat.yml"},
-			WaitingFor: wait.ForLog("Connection to backoff").WithStartupTimeout(60 * time.Second),
+			Image: image,
+			Cmd:   []string{"-e", "-strict.perms=false", "-c", "/usr/share/filebeat/filebeat.yml"},
 			Files: []testcontainers.ContainerFile{
 				containerFile(fixture, "/var/log/fixture.log"),
 				{Reader: strings.NewReader(config), ContainerFilePath: "/usr/share/filebeat/filebeat.yml", FileMode: 0o644},
