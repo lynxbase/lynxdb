@@ -67,6 +67,10 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Build Web UI
+        if: steps.existing_tag.outputs.exists != 'true'
+        run: make webui
+
       - name: Run preflight tests
         if: steps.existing_tag.outputs.exists != 'true'
         run: go test ./...
