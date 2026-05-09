@@ -32,6 +32,7 @@ jobs:
   goreleaser:
     name: Build & Publish
     runs-on: ubuntu-latest
+    if: ${{ !contains(github.ref_name, '-') }}
     outputs:
       version: ${{ steps.meta.outputs.version }}
     steps:
@@ -66,6 +67,13 @@ jobs:
           VERSION="${GITHUB_REF#refs/tags/}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Releasing version: $VERSION"
+
+      - name: Validate stable release tag
+        run: |
+          if [[ ! "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Stable release workflow only accepts vX.Y.Z tags"
+            exit 1
+          fi
 
       - name: Validate GoReleaser config
         uses: goreleaser/goreleaser-action@v6
