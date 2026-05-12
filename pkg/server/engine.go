@@ -627,6 +627,17 @@ func (e *Engine) SourceCount() int {
 func (e *Engine) resolveSourceScope(hints *spl2.QueryHints) (*spl2.QueryHints, []string) {
 	var warnings []string
 
+	if len(hints.SourceIncludeGlobs) > 0 || len(hints.SourceExcludeGlobs) > 0 {
+		matched := e.resolveSourceList(hints)
+		if len(matched) > 0 {
+			h := *hints
+			h.SourceScopeType = spl2.SourceScopeList
+			h.SourceScopeSources = matched
+
+			return &h, warnings
+		}
+	}
+
 	// Resolve optimizer-set glob patterns against the source registry.
 	if hints.SourceScopeType == spl2.SourceScopeGlob && hints.SourceScopePattern != "" {
 		matched := e.sourceRegistry.Match(hints.SourceScopePattern)
@@ -670,6 +681,51 @@ func (e *Engine) resolveSourceScope(hints *spl2.QueryHints) (*spl2.QueryHints, [
 	}
 
 	return hints, warnings
+}
+
+func (e *Engine) resolveSourceList(hints *spl2.QueryHints) []string {
+	seen := make(map[string]struct{})
+	var matched []string
+	add := func(source string) {
+		if _, ok := seen[source]; ok {
+			return
+		}
+		seen[source] = struct{}{}
+		matched = append(matched, source)
+	}
+
+	for _, source := range hints.SourceIndices {
+		add(source)
+	}
+	for _, pattern := range hints.SourceIncludeGlobs {
+		for _, source := range e.sourceRegistry.Match(pattern) {
+			add(source)
+		}
+	}
+
+	if len(hints.SourceExcludeGlobs) == 0 {
+		return matched
+	}
+
+	filtered := matched[:0]
+	for _, source := range matched {
+		if sourceMatchesAnyGlob(source, hints.SourceExcludeGlobs) {
+			continue
+		}
+		filtered = append(filtered, source)
+	}
+
+	return filtered
+}
+
+func sourceMatchesAnyGlob(source string, patterns []string) bool {
+	for _, pattern := range patterns {
+		if spl2.MatchGlob(pattern, source, false) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // checkSourceWarnings generates warnings when queries reference non-existent

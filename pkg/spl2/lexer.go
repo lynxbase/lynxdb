@@ -120,7 +120,7 @@ func (l *Lexer) next() (Token, error) {
 			return Token{Type: TokenRegexNotMatch, Literal: "!~", Pos: startPos}, nil
 		}
 
-		return Token{}, fmt.Errorf("unexpected character '!' at position %d (expected '=' or '~' after '!')", startPos)
+		return Token{Type: TokenNot, Literal: "!", Pos: startPos}, nil
 	case ch == '<':
 		l.pos++
 		if l.pos < len(l.input) && l.input[l.pos] == '=' {

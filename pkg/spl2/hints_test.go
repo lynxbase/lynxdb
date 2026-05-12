@@ -1,6 +1,7 @@
 package spl2
 
 import (
+	"reflect"
 	"testing"
 )
 
@@ -28,6 +29,27 @@ func TestExtractQueryHints_SearchTerms(t *testing.T) {
 	}
 	if !found["timeout"] {
 		t.Error("missing search term 'timeout'")
+	}
+}
+
+func TestExtractQueryHints_SourceExcludeGlobs(t *testing.T) {
+	prog, err := ParseProgram(`FROM nginx,logs*,!logs-debug* | stats count`)
+	if err != nil {
+		t.Fatalf("ParseProgram: %v", err)
+	}
+
+	hints := ExtractQueryHints(prog)
+	if got, want := hints.SourceIndices, []string{"nginx"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("SourceIndices: got %v, want %v", got, want)
+	}
+	if got, want := hints.SourceIncludeGlobs, []string{"logs*"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("SourceIncludeGlobs: got %v, want %v", got, want)
+	}
+	if got, want := hints.SourceExcludeGlobs, []string{"logs-debug*"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("SourceExcludeGlobs: got %v, want %v", got, want)
+	}
+	if hints.SourceGlob != "" {
+		t.Fatalf("SourceGlob: got %q, want empty", hints.SourceGlob)
 	}
 }
 

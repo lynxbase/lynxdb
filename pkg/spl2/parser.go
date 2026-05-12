@@ -2157,54 +2157,47 @@ func (p *Parser) parseFromCommand() (*FromCommand, error) {
 //   - FROM *                (all sources)
 //   - FROM logs*            (glob pattern)
 //   - FROM a, b, c          (comma-separated list)
+//   - FROM logs*,!debug*    (include and exclude glob list)
 //   - FROM "my-logs", web   (quoted names in list)
 func (p *Parser) parseSourceClause() (*SourceClause, error) {
-	// Handle FROM * (all sources).
-	if p.peek().Type == TokenStar {
-		p.advance()
-
-		return &SourceClause{Index: "*", IsGlob: true}, nil
-	}
-
-	// Handle FROM glob_pattern (e.g., logs*).
-	if p.peek().Type == TokenGlob {
-		tok := p.advance()
-
-		return &SourceClause{Index: tok.Literal, IsGlob: true}, nil
-	}
-
-	name, err := p.parseSourceName()
+	first, err := p.parseSourceSelector()
 	if err != nil {
 		return nil, err
 	}
 
-	// Check if the name contains wildcard characters (from a quoted string like "logs*").
-	if strings.Contains(name, "*") || strings.Contains(name, "?") {
-		return &SourceClause{Index: name, IsGlob: true}, nil
+	includes := []sourceSelector{}
+	excludes := []string{}
+	if first.exclude {
+		excludes = append(excludes, first.name)
+	} else {
+		includes = append(includes, first)
 	}
 
-	// Check for comma-separated list: FROM a, b, c
+	hasList := false
 	if p.peek().Type == TokenComma {
-		indices := []string{name}
 		for p.peek().Type == TokenComma {
+			hasList = true
 			p.advance() // consume comma
 
-			// Handle glob or star tokens in comma list.
-			if p.peek().Type == TokenGlob || p.peek().Type == TokenStar {
-				tok := p.advance()
-				indices = append(indices, tok.Literal)
-
-				continue
-			}
-
-			nextName, err := p.parseSourceName()
+			next, err := p.parseSourceSelector()
 			if err != nil {
 				return nil, fmt.Errorf("spl2: expected source name after comma in FROM: %w", err)
 			}
-			indices = append(indices, nextName)
+			if next.exclude {
+				excludes = append(excludes, next.name)
+			} else {
+				includes = append(includes, next)
+			}
 		}
+	}
+	if len(includes) == 0 {
+		return nil, fmt.Errorf("spl2: FROM source list must include at least one positive source")
+	}
 
-		return &SourceClause{Index: indices[0], Indices: indices}, nil
+	sc := sourceClauseFromSelectors(includes, excludes, hasList)
+
+	if hasList || len(excludes) > 0 || len(sc.IncludeGlobs) > 0 {
+		return sc, nil
 	}
 
 	// Check for inline time range: FROM name[-1h], FROM name[-7d..-1d], FROM name[@d]
@@ -2214,11 +2207,67 @@ func (p *Parser) parseSourceClause() (*SourceClause, error) {
 			return nil, err
 		}
 
-		return &SourceClause{Index: name, TimeRange: timeRange}, nil
+		sc.TimeRange = timeRange
+
+		return sc, nil
 	}
 
-	// Single source name.
-	return &SourceClause{Index: name}, nil
+	return sc, nil
+}
+
+type sourceSelector struct {
+	name    string
+	glob    bool
+	exclude bool
+}
+
+func (p *Parser) parseSourceSelector() (sourceSelector, error) {
+	exclude := false
+	if p.peek().Type == TokenNot && p.peek().Literal == "!" {
+		exclude = true
+		p.advance()
+	}
+
+	if p.peek().Type == TokenStar {
+		p.advance()
+
+		return sourceSelector{name: "*", glob: true, exclude: exclude}, nil
+	}
+	if p.peek().Type == TokenGlob {
+		tok := p.advance()
+
+		return sourceSelector{name: tok.Literal, glob: true, exclude: exclude}, nil
+	}
+
+	name, err := p.parseSourceName()
+	if err != nil {
+		return sourceSelector{}, err
+	}
+
+	return sourceSelector{name: name, glob: ContainsGlobWildcard(name), exclude: exclude}, nil
+}
+
+func sourceClauseFromSelectors(includes []sourceSelector, excludes []string, hasList bool) *SourceClause {
+	sc := &SourceClause{
+		Index:        includes[0].name,
+		ExcludeGlobs: excludes,
+	}
+
+	var concrete []string
+	for _, include := range includes {
+		if include.glob {
+			sc.IsGlob = true
+			sc.IncludeGlobs = append(sc.IncludeGlobs, include.name)
+		} else {
+			concrete = append(concrete, include.name)
+		}
+	}
+
+	if hasList || len(concrete) > 1 || (len(concrete) > 0 && len(sc.IncludeGlobs) > 0) || len(excludes) > 0 {
+		sc.Indices = concrete
+	}
+
+	return sc
 }
 
 // parseSourceTimeRange parses the contents of [...] after a source name:

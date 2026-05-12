@@ -320,9 +320,12 @@ func TestLexer_NewKeywords(t *testing.T) {
 
 func TestLexer_BangAlone(t *testing.T) {
 	lexer := NewLexer(`!`)
-	_, err := lexer.Tokenize()
-	if err == nil {
-		t.Error("expected error for bare '!'")
+	tokens, err := lexer.Tokenize()
+	if err != nil {
+		t.Fatalf("Tokenize: %v", err)
+	}
+	if tokens[0].Type != TokenNot {
+		t.Fatalf("token: got %s, want %s", tokens[0].Type, TokenNot)
 	}
 }
 

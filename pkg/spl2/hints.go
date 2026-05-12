@@ -50,6 +50,8 @@ type QueryHints struct {
 	IndexName               string                   // from Source.Index or SearchCommand.Index
 	SourceIndices           []string                 // multiple source names from FROM a, b, c
 	SourceGlob              string                   // glob pattern from FROM logs* (empty = not a glob)
+	SourceIncludeGlobs      []string                 // include globs from source lists
+	SourceExcludeGlobs      []string                 // exclude globs from source lists
 	SourceScopeType         string                   // "all", "single", "list", "glob" — from optimizer
 	SourceScopeSources      []string                 // resolved source names for scope (single/list)
 	SourceScopePattern      string                   // glob pattern for scope
@@ -185,7 +187,13 @@ func extractQueryHintsFromQuery(q *Query) *QueryHints {
 		if len(q.Source.Indices) > 0 {
 			h.SourceIndices = q.Source.Indices
 		}
-		if q.Source.IsGlob {
+		if len(q.Source.IncludeGlobs) > 0 {
+			h.SourceIncludeGlobs = q.Source.IncludeGlobs
+		}
+		if len(q.Source.ExcludeGlobs) > 0 {
+			h.SourceExcludeGlobs = q.Source.ExcludeGlobs
+		}
+		if q.Source.IsGlob && (q.Source.Index == "*" || ContainsGlobWildcard(q.Source.Index)) {
 			h.SourceGlob = q.Source.Index
 		}
 	}
@@ -898,6 +906,7 @@ func (h *QueryHints) IsMultiSource() bool {
 	}
 
 	return len(h.SourceIndices) > 0 || h.SourceGlob != "" ||
+		len(h.SourceIncludeGlobs) > 0 || len(h.SourceExcludeGlobs) > 0 ||
 		h.SourceScopeType == "list" || h.SourceScopeType == "glob" || h.SourceScopeType == "all"
 }
 

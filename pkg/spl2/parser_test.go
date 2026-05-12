@@ -1,6 +1,7 @@
 package spl2
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -617,6 +618,32 @@ func TestParse_FromGlob(t *testing.T) {
 	}
 	if q.Source.Index != "logs*" {
 		t.Errorf("Index: got %q, want logs*", q.Source.Index)
+	}
+}
+
+func TestParse_FromExcludeGlob(t *testing.T) {
+	input := `FROM nginx,logs*,!logs-debug* | stats count by source`
+	q, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if q.Source == nil {
+		t.Fatal("expected source clause")
+	}
+	if !q.Source.IsGlob {
+		t.Fatal("expected IsGlob=true")
+	}
+	if q.Source.Index != "nginx" {
+		t.Fatalf("Index: got %q, want nginx", q.Source.Index)
+	}
+	if got, want := q.Source.Indices, []string{"nginx"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Indices: got %v, want %v", got, want)
+	}
+	if got, want := q.Source.IncludeGlobs, []string{"logs*"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("IncludeGlobs: got %v, want %v", got, want)
+	}
+	if got, want := q.Source.ExcludeGlobs, []string{"logs-debug*"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("ExcludeGlobs: got %v, want %v", got, want)
 	}
 }
 

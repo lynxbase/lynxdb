@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -180,6 +181,23 @@ func TestMultiSource_MatchesSourceScope_SourceGlob(t *testing.T) {
 	}
 }
 
+func TestMultiSource_MatchesSourceScope_SourceExcludeGlob(t *testing.T) {
+	hints := &spl2.QueryHints{
+		SourceIndices:      []string{"nginx"},
+		SourceIncludeGlobs: []string{"logs*"},
+		SourceExcludeGlobs: []string{"logs-debug*"},
+	}
+	if !matchesSourceScope("nginx", hints) {
+		t.Error("expected nginx to match exact include")
+	}
+	if !matchesSourceScope("logs-web", hints) {
+		t.Error("expected logs-web to match include glob")
+	}
+	if matchesSourceScope("logs-debug-api", hints) {
+		t.Error("expected logs-debug-api to be excluded")
+	}
+}
+
 func TestMultiSource_MatchesSourceScope_SourceGlobStar(t *testing.T) {
 	// FROM * — match everything.
 	hints := &spl2.QueryHints{
@@ -223,6 +241,19 @@ func TestMultiSource_ResolveSourceScope(t *testing.T) {
 	}
 	if len(resolvedGlob.SourceScopeSources) != 3 {
 		t.Fatalf("expected 3 matched sources, got %d", len(resolvedGlob.SourceScopeSources))
+	}
+
+	e.sourceRegistry.Register("logs-debug-api")
+	hintsExclude := &spl2.QueryHints{
+		SourceIncludeGlobs: []string{"logs*"},
+		SourceExcludeGlobs: []string{"logs-debug*"},
+	}
+	resolvedExclude, _ := e.resolveSourceScope(hintsExclude)
+	if resolvedExclude.SourceScopeType != spl2.SourceScopeList {
+		t.Fatalf("expected resolved exclude type to be list, got %s", resolvedExclude.SourceScopeType)
+	}
+	if got, want := resolvedExclude.SourceScopeSources, []string{"logs-api", "logs-db", "logs-web"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolved exclude sources: got %v, want %v", got, want)
 	}
 
 	// Test no-match glob: should return original hints with warning.

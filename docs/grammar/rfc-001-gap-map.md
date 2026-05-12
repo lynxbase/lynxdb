@@ -84,7 +84,7 @@ Official Splunk compatibility checked:
 
 | RFC requirement | Status | Reason |
 |---|---|---|
-| Full glob syntax including `**`, character classes, alternatives, and quoted glob escapes | Deferred | Requires selector AST and matcher updates beyond the current token-level glob detection. |
+| Bare source glob lexing for character classes and alternatives | Deferred | Search and source matching now support `*`, `?`, `**`, character classes, alternatives, escapes, and source exclude globs; unquoted `FROM logs-[ab]*` and `{api,web}` still need source lexer support beyond token-level `*`/`?` detection. |
 | Full duration grammar including calendar `M`/`y` units | Deferred | Current parser and runtime cover signed `s`/`m`/`h`/`d`/`w` relative ranges, snap suffixes, and week-start snap variants; calendar-aware units need a time arithmetic model beyond `time.Duration`. |
 | Broad-search lints and explain blocks `L032`, `L037`, source counts, skipped segments | Deferred | Requires planner and API metadata integration. |
 | Regex engine selection, PCRE2 diagnostics, and `L038`/`L039` | Deferred | Requires runtime regex engine configuration and planner literal-extraction diagnostics. |

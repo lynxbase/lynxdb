@@ -46,11 +46,13 @@ func (q *Query) GetAnnotation(key string) (interface{}, bool) {
 // SourceClause represents the FROM clause.
 // It supports single sources, comma-separated lists, and glob patterns.
 type SourceClause struct {
-	Index      string           // primary source name (e.g., "idx_backend")
-	Indices    []string         // multiple sources for FROM a, b, c syntax
-	IsVariable bool             // true if $variable reference
-	IsGlob     bool             // true if pattern contains wildcards (* or ?)
-	TimeRange  *SourceTimeRange // inline time range: from nginx[-1h]
+	Index        string           // primary source name (e.g., "idx_backend")
+	Indices      []string         // multiple concrete sources for FROM a, b, c syntax
+	IncludeGlobs []string         // source include globs from FROM logs*, api/**
+	ExcludeGlobs []string         // source exclude globs from FROM logs*,!logs-debug*
+	IsVariable   bool             // true if $variable reference
+	IsGlob       bool             // true if pattern contains wildcards (* or ?)
+	TimeRange    *SourceTimeRange // inline time range: from nginx[-1h]
 }
 
 // SourceTimeRange represents an inline time range on a FROM clause.
@@ -64,7 +66,7 @@ type SourceTimeRange struct {
 // IsSingleSource returns true if this clause references exactly one source
 // (not a glob, not a multi-source list, not a variable).
 func (sc *SourceClause) IsSingleSource() bool {
-	return !sc.IsVariable && !sc.IsGlob && len(sc.Indices) == 0
+	return !sc.IsVariable && !sc.IsGlob && len(sc.Indices) == 0 && len(sc.ExcludeGlobs) == 0
 }
 
 // IsAllSources returns true if this clause means "scan all sources" (FROM *).
@@ -77,10 +79,13 @@ func (sc *SourceClause) IsAllSources() bool {
 // For multi-source (FROM a, b, c), returns the Indices slice.
 // For globs, returns nil (must be resolved against a source registry).
 func (sc *SourceClause) SourceNames() []string {
+	if sc.IsGlob || len(sc.IncludeGlobs) > 0 || len(sc.ExcludeGlobs) > 0 {
+		return nil
+	}
 	if len(sc.Indices) > 0 {
 		return sc.Indices
 	}
-	if sc.Index != "" && !sc.IsGlob {
+	if sc.Index != "" {
 		return []string{sc.Index}
 	}
 

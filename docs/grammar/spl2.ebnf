@@ -8,7 +8,8 @@ program          = { dataset_def } query ;
 dataset_def      = "$" ident "=" query [ ";" ] ;
 query            = [ ( "from" | "index" ) source_list [ time_range ] ] [ "where" expr ] { "|" command } ;
 source_list      = source { "," source } ;
-source           = cte_ref | ident | quoted_ident | glob | "*" ;
+source           = cte_ref | ident | quoted_ident | glob | negated_glob | "*" ;
+negated_glob     = "!" glob ;
 cte_ref          = "$" ident ;
 time_range       = "[" duration_literal [ ".." duration_literal ] "]" ;
 
