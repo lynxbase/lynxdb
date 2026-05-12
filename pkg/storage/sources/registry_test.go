@@ -88,18 +88,25 @@ func TestRegistry_MatchGlob(t *testing.T) {
 	r.Register("logs-web")
 	r.Register("logs-api")
 	r.Register("logs-db")
+	r.Register("api/v1")
+	r.Register("api/v1/users")
+	r.Register("api/v2/orders")
 
 	tests := []struct {
 		pattern string
 		want    []string
 	}{
+		{"api/*", []string{"api/v1"}},
+		{"api/**", []string{"api/v1", "api/v1/users", "api/v2/orders"}},
+		{"{nginx,postgres}", []string{"nginx", "postgres"}},
+		{"logs-[ad]*", []string{"logs-api", "logs-db"}},
 		{"logs*", []string{"logs-api", "logs-db", "logs-web"}},
 		{"logs-*", []string{"logs-api", "logs-db", "logs-web"}},
 		{"nginx", []string{"nginx"}},
 		{"*gateway*", []string{"api-gateway"}},
 		{"nonexistent*", nil},
 		{"logs-?b", []string{"logs-db"}},
-		{"*", []string{"api-gateway", "logs-api", "logs-db", "logs-web", "nginx", "postgres"}},
+		{"*", []string{"api-gateway", "api/v1", "api/v1/users", "api/v2/orders", "logs-api", "logs-db", "logs-web", "nginx", "postgres"}},
 	}
 
 	for _, tt := range tests {

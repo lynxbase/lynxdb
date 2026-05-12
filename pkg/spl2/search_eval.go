@@ -331,6 +331,11 @@ func GlobToRegex(pattern string, caseInsensitive bool) *regexp.Regexp {
 	return globToRegex(pattern, caseInsensitive, true)
 }
 
+// MatchGlob reports whether text matches an RFC glob pattern.
+func MatchGlob(pattern, text string, caseInsensitive bool) bool {
+	return GlobToRegex(pattern, caseInsensitive).MatchString(text)
+}
+
 // matchGlob checks if text matches a glob pattern with caching.
 func (e *SearchEvaluator) matchGlob(text, pattern string, caseInsensitive bool) bool {
 	if !strings.Contains(text, "/") {

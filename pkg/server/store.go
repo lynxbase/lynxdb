@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"log/slog"
-	"path"
 	"runtime"
 	"sort"
 	"strconv"
@@ -864,9 +863,7 @@ func matchesSourceScope(segIndex string, hints *spl2.QueryHints) bool {
 		return false
 	case "glob":
 		if hints.SourceScopePattern != "" {
-			matched, _ := path.Match(hints.SourceScopePattern, segIndex)
-
-			return matched
+			return spl2.MatchGlob(hints.SourceScopePattern, segIndex, false)
 		}
 	}
 
@@ -886,9 +883,7 @@ func matchesSourceScope(segIndex string, hints *spl2.QueryHints) bool {
 		if hints.SourceGlob == "*" {
 			return true
 		}
-		matched, _ := path.Match(hints.SourceGlob, segIndex)
-
-		return matched
+		return spl2.MatchGlob(hints.SourceGlob, segIndex, false)
 	}
 
 	// Fallback: single IndexName exact match (existing behavior).

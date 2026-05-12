@@ -3,9 +3,10 @@
 package sources
 
 import (
-	"path"
 	"sort"
 	"sync"
+
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 // Registry provides fast lookups of known source names.
@@ -36,7 +37,7 @@ func (r *Registry) List() []string {
 }
 
 // Match returns source names matching the glob pattern.
-// Supports '*' (any sequence) and '?' (any single char) via path.Match.
+// Supports the RFC glob syntax shared with SPL search matching.
 // Pattern "*" returns all sources.
 func (r *Registry) Match(pattern string) []string {
 	r.mu.RLock()
@@ -51,8 +52,7 @@ func (r *Registry) Match(pattern string) []string {
 
 	var matched []string
 	for _, name := range r.names {
-		ok, _ := path.Match(pattern, name)
-		if ok {
+		if spl2.MatchGlob(pattern, name, false) {
 			matched = append(matched, name)
 		}
 	}

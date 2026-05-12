@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 	"fmt"
-	"path"
 	"time"
 
 	"github.com/RoaringBitmap/roaring"
@@ -864,9 +863,7 @@ func (s *SegmentStreamIterator) matchesStreamSourceScope(segIndex string) bool {
 		return false
 	case "glob":
 		if h.SourceScopePattern != "" {
-			matched, _ := path.Match(h.SourceScopePattern, segIndex)
-
-			return matched
+			return spl2.MatchGlob(h.SourceScopePattern, segIndex, false)
 		}
 	}
 
@@ -884,9 +881,7 @@ func (s *SegmentStreamIterator) matchesStreamSourceScope(segIndex string) bool {
 		if h.SourceGlob == "*" {
 			return true
 		}
-		matched, _ := path.Match(h.SourceGlob, segIndex)
-
-		return matched
+		return spl2.MatchGlob(h.SourceGlob, segIndex, false)
 	}
 
 	// Single IndexName exact match.
