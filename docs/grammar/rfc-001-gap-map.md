@@ -17,6 +17,7 @@ Source contract: `docs/grammar/RFC.md`.
 | Aggregate `sumsq(field)` executes for numeric fields | `pkg/engine/pipeline/aggregate.go`, `pkg/engine/pipeline/partial_agg.go`, `pkg/api/rest/server_test.go` |
 | Aggregate `stdevp(field)`, `var(field)`, and `varp(field)` execute for numeric fields | `pkg/engine/pipeline/aggregate.go`, `pkg/engine/pipeline/partial_agg.go`, `pkg/api/rest/server_test.go` |
 | Aggregate `list(field)` executes and preserves duplicate values separately from `values(field)` | `pkg/engine/pipeline/aggregate.go`, `pkg/engine/pipeline/eventstats.go`, `pkg/engine/pipeline/streamstats.go`, `pkg/api/rest/server_test.go` |
+| Aggregate `estdc_error(field)` executes with exact-path zero and HLL standard error reporting | `pkg/engine/pipeline/aggregate.go`, `pkg/engine/pipeline/partial_agg.go`, `pkg/engine/pipeline/streamstats.go`, `pkg/api/rest/server_test.go` |
 | Unsupported Splunk commands in the RFC profile reject with `L021` and compatibility hints | `pkg/spl2/parser.go`, `pkg/spl2/compat_hints.go`, `pkg/spl2/parser_test.go`, `pkg/spl2/compat_hints_test.go` |
 | LynxFlow `proportion`, `impact`, `baseline`, `changes`, and `exemplars` deterministic desugaring | `pkg/spl2/parser.go`, `pkg/spl2/parser_lynxflow_test.go` |
 | Web autocomplete and highlighting share one editor catalog | `web/src/editor/lynxflow-catalog.ts`, `web/src/editor/autocomplete.ts`, `web/src/editor/lynxflow-lang.ts` |

@@ -23,6 +23,15 @@ func NewHyperLogLog() *HyperLogLog {
 	}
 }
 
+// StandardError returns the theoretical HLL relative error.
+func (h *HyperLogLog) StandardError() float64 {
+	if h == nil || h.m == 0 {
+		return 0
+	}
+
+	return 1.04 / math.Sqrt(float64(h.m))
+}
+
 // hllHash computes a well-distributed 64-bit hash for HLL.
 // FNV-64a has poor avalanche for sequential inputs ("user-0", "user-1", ...),
 // so we apply a splitmix64 finalizer to improve bit distribution.

@@ -141,7 +141,7 @@ The previous query had an error:
   Error: unknown function "percent" at position 42
   Hint: did you mean "percentile"?
 
-Available aggregation functions: count, sum, sumsq, avg, min, max, dc, estdc, values, stdev, stdevp, var, varp,
+Available aggregation functions: count, sum, sumsq, avg, min, max, dc, estdc, estdc_error, values, stdev, stdevp, var, varp,
 perc, percentile, perc25, perc50, perc75, perc90, perc95, perc99, earliest, latest
 
 Please correct the query.

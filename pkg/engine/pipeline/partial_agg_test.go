@@ -682,6 +682,54 @@ func TestPartialAgg_DC_BelowThreshold_Exact(t *testing.T) {
 	assertIntField(t, rows[0], "dc_user", 25)
 }
 
+func TestPartialAgg_EstDCError_BelowThreshold_Exact(t *testing.T) {
+	var fieldSets []map[string]event.Value
+	for i := 0; i < 50; i++ {
+		fieldSets = append(fieldSets, map[string]event.Value{
+			"user": event.StringValue(fmt.Sprintf("user-%d", i%25)),
+		})
+	}
+	events := makePartialAggEvents(fieldSets...)
+
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: aggEstDCE, Field: "user", Alias: "user_error"}},
+	}
+	partials := ComputePartialAgg(events, spec)
+	if len(partials) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(partials))
+	}
+	if partials[0].States[0].DistinctHLL != nil {
+		t.Fatal("expected exact mode below threshold")
+	}
+
+	rows := MergePartialAggs([][]*PartialAggGroup{partials}, spec)
+	assertFloatField(t, rows[0], "user_error", 0)
+}
+
+func TestPartialAgg_EstDCError_HLLPromotion(t *testing.T) {
+	var fieldSets []map[string]event.Value
+	for i := 0; i < dcHLLThreshold+100; i++ {
+		fieldSets = append(fieldSets, map[string]event.Value{
+			"user": event.StringValue(fmt.Sprintf("user-%d", i)),
+		})
+	}
+	events := makePartialAggEvents(fieldSets...)
+
+	spec := &PartialAggSpec{
+		Funcs: []PartialAggFunc{{Name: aggEstDCE, Field: "user", Alias: "user_error"}},
+	}
+	partials := ComputePartialAgg(events, spec)
+	if len(partials) != 1 {
+		t.Fatalf("expected 1 group, got %d", len(partials))
+	}
+	if partials[0].States[0].DistinctHLL == nil {
+		t.Fatal("expected HLL mode above threshold")
+	}
+
+	rows := MergePartialAggs([][]*PartialAggGroup{partials}, spec)
+	assertFloatFieldApprox(t, rows[0], "user_error", NewHyperLogLog().StandardError())
+}
+
 // --- Percentile partial aggregation tests ---
 
 func TestIsPushableAgg_Percentiles(t *testing.T) {

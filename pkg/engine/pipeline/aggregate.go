@@ -73,6 +73,7 @@ const (
 	aggValues = "values"
 	aggList   = "list"
 	aggDC     = "dc"
+	aggEstDCE = "estdc_error"
 	aggStdev  = "stdev"
 	aggStdevP = "stdevp"
 	aggVar    = "var"
@@ -131,7 +132,7 @@ func NewAggregateIterator(child Iterator, aggs []AggFunc, groupBy []string, acct
 	needsValues := make([]bool, len(aggs))
 	for i, a := range aggs {
 		switch strings.ToLower(a.Name) {
-		case aggDC, aggValues, aggList, aggPerc25, aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99, aggStdev, aggStdevP, aggVar, aggVarP:
+		case aggDC, aggEstDCE, aggValues, aggList, aggPerc25, aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99, aggStdev, aggStdevP, aggVar, aggVarP:
 			needsValues[i] = true
 		}
 	}
@@ -609,7 +610,7 @@ func (a *AggregateIterator) updateState(s *aggState, fn string, val event.Value)
 			}
 			s.count++
 		}
-	case aggDC:
+	case aggDC, aggEstDCE:
 		if !val.IsNull() {
 			str := val.String()
 			s.values[str] = true
@@ -919,7 +920,7 @@ func (a *AggregateIterator) mergeAggStateFromSpillRow(group *aggGroup, row map[s
 			a.mergeSpilledValue(&group.states[j], agg.Name, sumVal)
 		case aggRange:
 			a.mergeRangeFromRow(&group.states[j], row, agg.Alias)
-		case aggDC:
+		case aggDC, aggEstDCE:
 			a.mergeDCFromRow(&group.states[j], row, agg.Alias)
 		case aggValues:
 			a.mergeValuesFromRow(&group.states[j], row, agg.Alias)
@@ -1220,6 +1221,12 @@ func (a *AggregateIterator) finalizeState(s *aggState, fn string) event.Value {
 		}
 
 		return event.IntValue(int64(len(s.values)))
+	case aggEstDCE:
+		if s.hll != nil {
+			return event.FloatValue(s.hll.StandardError())
+		}
+
+		return event.FloatValue(0)
 	case aggValues:
 		var strs []string
 		for _, v := range s.all {

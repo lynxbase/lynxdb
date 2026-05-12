@@ -461,7 +461,7 @@ func updateAggState(s *aggState, fn string, val event.Value) {
 		if !val.IsNull() && (s.max.IsNull() || vm.CompareValues(val, s.max) > 0) {
 			s.max = val
 		}
-	case "dc":
+	case "dc", aggEstDCE:
 		if !val.IsNull() {
 			s.values[val.String()] = true
 		}
@@ -500,6 +500,8 @@ func finalizeAggState(s *aggState, fn string) event.Value {
 		return s.max
 	case "dc":
 		return event.IntValue(int64(len(s.values)))
+	case aggEstDCE:
+		return event.FloatValue(0)
 	case aggValues, aggList:
 		var strs []string
 		for _, v := range s.all {

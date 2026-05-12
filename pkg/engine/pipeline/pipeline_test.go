@@ -550,6 +550,33 @@ func TestStreamStatsIterator(t *testing.T) {
 	}
 }
 
+func TestStreamStatsIterator_EstDCError(t *testing.T) {
+	events := makeEvents(4)
+	users := []string{"alice", "bob", "alice", "carol"}
+	for i := range events {
+		events[i].SetField("user", event.StringValue(users[i]))
+	}
+	scan := NewScanIterator(events, 1024)
+	aggs := []AggFunc{{Name: aggEstDCE, Field: "user", Alias: "user_error"}}
+	ss := NewStreamStatsIterator(scan, aggs, nil, 3, true)
+
+	ctx := context.Background()
+	ss.Init(ctx)
+	rows, err := CollectAll(ctx, ss)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 rows, got %d", len(rows))
+	}
+	for i, row := range rows {
+		got := row["user_error"]
+		if got.Type() != event.FieldTypeFloat || got.AsFloat() != 0 {
+			t.Errorf("row %d: user_error got %v, want 0.0", i, got)
+		}
+	}
+}
+
 // Benchmark: head 10 on 100K events (streaming vs batch).
 func BenchmarkStreamingHead10(b *testing.B) {
 	events := makeEvents(100000)

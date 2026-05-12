@@ -80,7 +80,7 @@ type PartialAggState struct {
 // into partial aggregation + merge.
 func IsPushableAgg(name string) bool {
 	switch strings.ToLower(name) {
-	case aggCount, aggSum, aggSumSq, aggAvg, aggMin, aggMax, aggRange, "dc",
+	case aggCount, aggSum, aggSumSq, aggAvg, aggMin, aggMax, aggRange, aggDC, aggEstDCE,
 		aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99,
 		aggStdev, aggStdevP, aggVar, aggVarP:
 		return true
@@ -690,7 +690,7 @@ func updatePartialState(s *PartialAggState, fn string, val event.Value) {
 			}
 			s.Count++
 		}
-	case "dc":
+	case aggDC, aggEstDCE:
 		if !val.IsNull() {
 			str := val.String()
 			if s.DistinctHLL != nil {
@@ -764,7 +764,7 @@ func mergePartialState(dst, src *PartialAggState, fn string) {
 			dst.Max = src.Max
 		}
 		dst.Count += src.Count
-	case "dc":
+	case aggDC, aggEstDCE:
 		// If either side uses HLL, promote both to HLL and merge.
 		if src.DistinctHLL != nil || dst.DistinctHLL != nil {
 			// Ensure dst has an HLL.
@@ -860,7 +860,7 @@ func finalizePartialState(s *PartialAggState, fn string) event.Value {
 		}
 
 		return event.FloatValue(max - min)
-	case "dc":
+	case aggDC:
 		if s.DistinctHLL != nil {
 			return event.IntValue(s.DistinctHLL.Count())
 		}
@@ -874,6 +874,12 @@ func finalizePartialState(s *PartialAggState, fn string) event.Value {
 		}
 
 		return event.IntValue(0)
+	case aggEstDCE:
+		if s.DistinctHLL != nil {
+			return event.FloatValue(s.DistinctHLL.StandardError())
+		}
+
+		return event.FloatValue(0)
 	case aggPerc50:
 		return finalizeTDigest(s, 0.50)
 	case aggPerc75:

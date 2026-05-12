@@ -299,7 +299,7 @@ func (r *ringBuffer) nextEvictedBytes() int64 {
 // newRunningAggState creates an initialized running state for the given aggregate.
 func newRunningAggState(aggName string) *runningAggState {
 	st := &runningAggState{}
-	if strings.EqualFold(aggName, "dc") {
+	if strings.EqualFold(aggName, aggDC) || strings.EqualFold(aggName, aggEstDCE) {
 		st.freq = make(map[string]int64)
 	}
 
@@ -350,7 +350,7 @@ func addValueToRunning(st *runningAggState, agg AggFunc, row map[string]event.Va
 			}
 			st.count++
 		}
-	case "dc":
+	case aggDC, aggEstDCE:
 		if v, ok := row[agg.Field]; ok && !v.IsNull() {
 			st.freq[v.String()]++
 			st.count++
@@ -407,7 +407,7 @@ func removeValueFromRunning(st *runningAggState, agg AggFunc, row map[string]eve
 				st.maxVal = event.Value{} // invalidate
 			}
 		}
-	case "dc":
+	case aggDC, aggEstDCE:
 		if v, ok := row[agg.Field]; ok && !v.IsNull() {
 			key := v.String()
 			st.freq[key]--
@@ -464,8 +464,10 @@ func readRunningAgg(st *runningAggState, agg AggFunc, rb *ringBuffer) event.Valu
 		}
 
 		return st.maxVal
-	case "dc":
+	case aggDC:
 		return event.IntValue(int64(len(st.freq)))
+	case aggEstDCE:
+		return event.FloatValue(0)
 	}
 
 	return event.NullValue()
@@ -572,12 +574,15 @@ func (s *StreamStatsIterator) computeAgg(agg AggFunc, items []map[string]event.V
 		}
 
 		return maxVal
-	case "dc":
+	case aggDC, aggEstDCE:
 		seen := make(map[string]bool)
 		for _, item := range items {
 			if v, ok := item[agg.Field]; ok && !v.IsNull() {
 				seen[v.String()] = true
 			}
+		}
+		if strings.EqualFold(agg.Name, aggEstDCE) {
+			return event.FloatValue(0)
 		}
 
 		return event.IntValue(int64(len(seen)))

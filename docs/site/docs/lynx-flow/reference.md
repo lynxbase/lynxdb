@@ -1117,6 +1117,7 @@ Used in `group compute`, `every compute`, `running`, `enrich`, `stats`, `timecha
 | `max(<field>)` | Maximum | `max(duration_ms) as slowest` |
 | `dc(<field>)` | Distinct count | `dc(client_ip) as unique_clients` |
 | `estdc(<field>)` | Estimated distinct count | `estdc(client_ip) as estimated_clients` |
+| `estdc_error(<field>)` | Estimated distinct-count error ratio | `estdc_error(client_ip) as estimated_client_error` |
 | `values(<field>)` | List of distinct values | `values(level) as seen_levels` |
 | `stdev(<field>)` | Standard deviation | `stdev(duration_ms) as stdev_latency` |
 | `stdevp(<field>)` | Population standard deviation | `stdevp(duration_ms) as stdevp_latency` |

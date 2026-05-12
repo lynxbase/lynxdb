@@ -315,7 +315,7 @@ func (a *AggregateIterator) serializeGroup(group *aggGroup, aggs []AggFunc) map[
 			row[agg.Alias+"__min"] = s.min
 			row[agg.Alias+"__max"] = s.max
 			row[agg.Alias+"__count"] = event.IntValue(s.count)
-		case aggDC:
+		case aggDC, aggEstDCE:
 			if s.hll != nil {
 				row[agg.Alias+"__hll"] = event.StringValue(
 					encodeBase64(s.hll.MarshalBinary()))
@@ -385,7 +385,7 @@ func (a *AggregateIterator) mergeAggStateFromRow(group *aggGroup, row map[string
 			a.mergeSpilledValue(&group.states[j], agg.Name, sumVal)
 		case aggRange:
 			a.mergeRangeFromRow(&group.states[j], row, agg.Alias)
-		case aggDC:
+		case aggDC, aggEstDCE:
 			a.mergeDCFromRow(&group.states[j], row, agg.Alias)
 		case aggValues:
 			a.mergeValuesFromRow(&group.states[j], row, agg.Alias)
