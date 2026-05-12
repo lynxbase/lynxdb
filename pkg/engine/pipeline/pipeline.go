@@ -526,6 +526,9 @@ func resolveTimeRange(tr *spl2.SourceTimeRange, now time.Time) (earliest, latest
 			latest = snapTime(now, tr.End[1:])
 		} else {
 			latest = resolveRelativeTime(tr.End, now)
+			if snap := durationSnapUnit(tr.End); snap != "" {
+				latest = snapTime(latest, snap)
+			}
 		}
 	} else {
 		latest = now
@@ -589,6 +592,15 @@ func parseRelativeDuration(s string) time.Duration {
 	}
 }
 
+func durationSnapUnit(s string) string {
+	idx := strings.IndexByte(s, '@')
+	if idx < 0 || idx == len(s)-1 {
+		return ""
+	}
+
+	return s[idx+1:]
+}
+
 // snapTime snaps a time to the start of the given unit.
 func snapTime(t time.Time, unit string) time.Time {
 	switch unit {
@@ -609,6 +621,14 @@ func snapTime(t time.Time, unit string) time.Time {
 
 		return startOfDay.AddDate(0, 0, -(weekday - 1))
 	default:
+		if len(unit) == 2 && unit[0] == 'w' && unit[1] >= '0' && unit[1] <= '6' {
+			targetWeekday := int(unit[1] - '0')
+			startOfDay := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+			daysSinceTarget := (int(t.Weekday()) - targetWeekday + 7) % 7
+
+			return startOfDay.AddDate(0, 0, -daysSinceTarget)
+		}
+
 		return t
 	}
 }

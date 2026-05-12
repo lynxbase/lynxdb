@@ -2224,14 +2224,14 @@ func (p *Parser) parseSourceClause() (*SourceClause, error) {
 // parseSourceTimeRange parses the contents of [...] after a source name:
 //   - [-1h]         → relative time "1 hour ago"
 //   - [-7d..-1d]    → range from 7 days ago to 1 day ago
-//   - [@d]          → snap-to (start of today)
-//   - [-1h@h]       → 1 hour ago, snapped to hour start
+//   - [@d]          -> snap-to (start of today)
+//   - [-1h@h]       -> 1 hour ago, snapped to hour start
 func (p *Parser) parseSourceTimeRange() (*SourceTimeRange, error) {
 	p.advance() // consume [
 
 	tr := &SourceTimeRange{}
 
-	// Handle @snap syntax: [@d], [@h], [@w]
+	// Handle @snap syntax: [@d], [@h], [@w], [@w0]
 	if p.peek().Type == TokenAt {
 		p.advance() // consume @
 		tok := p.peek()
@@ -2239,11 +2239,12 @@ func (p *Parser) parseSourceTimeRange() (*SourceTimeRange, error) {
 			p.advance()
 			tr.SnapTo = tok.Literal
 		} else {
-			return nil, fmt.Errorf("spl2: expected snap unit (d/h/w/m/s) after @ at position %d", tok.Pos)
+			return nil, fmt.Errorf("spl2: expected snap unit (d/h/w/w0-w6/m/s) after @ at position %d", tok.Pos)
 		}
 	} else if p.peek().Type == TokenDuration {
 		tok := p.advance()
 		tr.Relative = tok.Literal
+		tr.SnapTo = durationSnapUnit(tok.Literal)
 
 		if p.peek().Type == TokenDot {
 			dot := p.advance()
@@ -2280,7 +2281,24 @@ func (p *Parser) parseSourceTimeRange() (*SourceTimeRange, error) {
 }
 
 func isSnapUnit(s string) bool {
-	return s == "s" || s == "m" || s == "h" || s == "d" || s == "w"
+	if s == "s" || s == "m" || s == "h" || s == "d" || s == "w" {
+		return true
+	}
+
+	return len(s) == 2 && s[0] == 'w' && s[1] >= '0' && s[1] <= '6'
+}
+
+func durationSnapUnit(s string) string {
+	idx := strings.IndexByte(s, '@')
+	if idx < 0 || idx == len(s)-1 {
+		return ""
+	}
+	snap := s[idx+1:]
+	if !isSnapUnit(snap) {
+		return ""
+	}
+
+	return snap
 }
 
 // parseSourceName parses a source/index/view name which may start with a digit

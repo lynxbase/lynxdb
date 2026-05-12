@@ -519,6 +519,7 @@ func TestParse_SourceTimeRangeSignedDurations(t *testing.T) {
 		input        string
 		wantRelative string
 		wantEnd      string
+		wantSnapTo   string
 	}{
 		{
 			name:         "positive duration",
@@ -530,6 +531,17 @@ func TestParse_SourceTimeRangeSignedDurations(t *testing.T) {
 			input:        "FROM jobs[-1h..+30m] | head 1",
 			wantRelative: "-1h",
 			wantEnd:      "+30m",
+		},
+		{
+			name:         "duration snap suffix",
+			input:        "FROM jobs[-1d@d] | head 1",
+			wantRelative: "-1d@d",
+			wantSnapTo:   "d",
+		},
+		{
+			name:       "week snap variant",
+			input:      "FROM jobs[@w1] | head 1",
+			wantSnapTo: "w1",
 		},
 	}
 
@@ -547,6 +559,9 @@ func TestParse_SourceTimeRangeSignedDurations(t *testing.T) {
 			}
 			if q.Source.TimeRange.End != tt.wantEnd {
 				t.Fatalf("End: got %q, want %q", q.Source.TimeRange.End, tt.wantEnd)
+			}
+			if q.Source.TimeRange.SnapTo != tt.wantSnapTo {
+				t.Fatalf("SnapTo: got %q, want %q", q.Source.TimeRange.SnapTo, tt.wantSnapTo)
 			}
 		})
 	}

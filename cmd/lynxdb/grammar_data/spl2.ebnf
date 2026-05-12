@@ -340,7 +340,7 @@ span_value       = number span_unit ;
 span_unit        = "s" | "sec" | "m" | "min" | "h" | "hr" | "d" | "w" | "mon" ;
 duration_value   = number span_unit ;
 duration_literal = [ "+" | "-" ] digit { digit } span_unit [ "@" snap_unit ] ;
-snap_unit        = "s" | "m" | "h" | "d" | "w" ;
+snap_unit        = "s" | "m" | "h" | "d" | "w" | "w0" | "w1" | "w2" | "w3" | "w4" | "w5" | "w6" ;
 
 (* ─── Character classes ─── *)
 

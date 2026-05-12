@@ -481,15 +481,26 @@ func (l *Lexer) tryReadDuration() (Token, bool) {
 	}
 	i++
 
-	// Optional snap-to: @h, @d, @w, @m (e.g., -1h@h means "1 hour ago, snapped to hour start").
+	// Optional snap-to: @h, @d, @w, @w0, @w1, @m.
 	lit := l.input[startPos:i]
 	if i < len(l.input) && l.input[i] == '@' {
-		i++
-		if i < len(l.input) {
-			snap := l.input[i]
-			if snap == 'h' || snap == 'd' || snap == 'w' || snap == 'm' || snap == 's' {
-				i++
+		snapStart := i
+		j := i + 1
+		if j < len(l.input) {
+			switch snap := l.input[j]; snap {
+			case 'h', 'd', 'm', 's':
+				j++
+				i = j
 				lit = l.input[startPos:i]
+			case 'w':
+				j++
+				if j < len(l.input) && l.input[j] >= '0' && l.input[j] <= '6' {
+					j++
+				}
+				i = j
+				lit = l.input[startPos:i]
+			default:
+				i = snapStart
 			}
 		}
 	}
