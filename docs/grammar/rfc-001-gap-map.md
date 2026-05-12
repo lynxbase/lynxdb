@@ -85,6 +85,7 @@ Official Splunk compatibility checked:
 | RFC requirement | Status | Reason |
 |---|---|---|
 | Full glob syntax including `**`, character classes, alternatives, and quoted glob escapes | Deferred | Requires selector AST and matcher updates beyond the current token-level glob detection. |
+| Full duration grammar including `+` offsets, calendar `M`/`y` units, and `@w0`/`@w1` snap variants | Deferred | Current parser and runtime cover common `s`/`m`/`h`/`d`/`w` relative ranges; calendar-aware units and week-start snap variants need a time arithmetic model beyond `time.Duration`. |
 | Broad-search lints and explain blocks `L032`, `L037`, source counts, skipped segments | Deferred | Requires planner and API metadata integration. |
 | Regex engine selection, PCRE2 diagnostics, and `L038`/`L039` | Deferred | Requires runtime regex engine configuration and planner literal-extraction diagnostics. |
 | `chart` advanced options and multi-aggregate split pivots | Deferred | Current execution covers grouped aggregation and one-aggregate row/column pivots; Splunk options such as `limit`, `format`, `sep`, `cont`, and split-series filtering need chart metadata and option parsing. |
