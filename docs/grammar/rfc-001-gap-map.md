@@ -78,7 +78,7 @@ Official Splunk compatibility checked:
 | Command catalog | Native SPL2/LynxFlow commands, several helpers, and optional capability command syntax parse; profile-excluded Splunk commands reject with `L021` | Optional capability command execution semantics remain deferred. |
 | Editor assistance | Autocomplete covers commands, fields, values, regex snippets, time values, and templates | Ranking reasons and disable switches are not surfaced as RFC `meta.suggestions` behavior. |
 | REST lint metadata | Sync, completed hybrid, async handles, and job completion responses expose `meta.lints` for implemented lints; `lint: false` disables them | Full lint output controls are not wired yet. |
-| CLI/TUI assistance | Shell autocomplete exists; `lynxdb query --no-lint` passes `lint:false`; server-mode CLI/TUI results render returned lints on stderr | Query-context autocomplete and rewrite preview are not aligned with the web catalog yet. |
+| CLI/TUI assistance | Shell autocomplete command vocabulary matches the parser-supported command catalog; `lynxdb query --no-lint` passes `lint:false`; server-mode CLI/TUI results render returned lints on stderr | Query-context autocomplete and rewrite preview are not fully aligned with the web catalog yet. |
 
 ## Missing Or Deferred
 
