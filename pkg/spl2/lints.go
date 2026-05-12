@@ -13,6 +13,7 @@ const (
 	LintLeadingWildcard    = "L001"
 	LintDefaultSource      = "L002"
 	LintIndexRewrite       = "L003"
+	LintStatsCountWide     = "L004"
 	LintRawExactCompare    = "L005"
 	LintOptionAfterArg     = "L010"
 	LintDoubleQuotedName   = "L012"
@@ -74,6 +75,7 @@ func LintProgram(input string, prog *Program) ([]QueryLint, error) {
 	lints := lintDefaultSource(prog, tokens)
 	lints = append(lints, lintLeadingWildcards(prog)...)
 	lints = append(lints, lintRawExactCompare(prog)...)
+	lints = append(lints, lintStatsCountWideRange(prog)...)
 	lints = append(lints, lintIndexRewrite(tokens)...)
 	lints = append(lints, lintOptionAfterArg(tokens)...)
 	lints = append(lints, lintDoubleQuotedNames(tokens)...)
@@ -223,6 +225,135 @@ func lintRawExactCompare(prog *Program) []QueryLint {
 	lints = append(lints, lintRawExactCompareInQuery(prog.Main)...)
 
 	return lints
+}
+
+func lintStatsCountWideRange(prog *Program) []QueryLint {
+	if prog == nil {
+		return nil
+	}
+
+	var lints []QueryLint
+	for _, ds := range prog.Datasets {
+		lints = append(lints, lintStatsCountWideRangeInQuery(ds.Query)...)
+	}
+	lints = append(lints, lintStatsCountWideRangeInQuery(prog.Main)...)
+
+	return lints
+}
+
+func lintStatsCountWideRangeInQuery(q *Query) []QueryLint {
+	if q == nil {
+		return nil
+	}
+
+	hasTimeBounds := q.Source != nil && q.Source.TimeRange != nil
+	var lints []QueryLint
+	for _, cmd := range q.Commands {
+		switch c := cmd.(type) {
+		case *SearchCommand:
+			if searchExprHasField(c.Expression, "_time") {
+				hasTimeBounds = true
+			}
+		case *WhereCommand:
+			if exprHasField(c.Expr, "_time") {
+				hasTimeBounds = true
+			}
+		case *StatsCommand:
+			if !hasTimeBounds && len(c.GroupBy) == 0 && statsHasCount(c) {
+				lints = append(lints, QueryLint{
+					Code:     LintStatsCountWide,
+					Message:  "Without `BY` returns a single value; maybe you want `BY <field>`",
+					Position: 0,
+				})
+			}
+		case *JoinCommand:
+			lints = append(lints, lintStatsCountWideRangeInQuery(c.Subquery)...)
+		case *AppendCommand:
+			lints = append(lints, lintStatsCountWideRangeInQuery(c.Subquery)...)
+		case *AppendcolsCommand:
+			lints = append(lints, lintStatsCountWideRangeInQuery(c.Subquery)...)
+		case *AppendpipeCommand:
+			lints = append(lints, lintStatsCountWideRangeInQuery(c.Subquery)...)
+		case *MultisearchCommand:
+			for _, sub := range c.Searches {
+				lints = append(lints, lintStatsCountWideRangeInQuery(sub)...)
+			}
+		case *UnionCommand:
+			for _, sub := range c.Branches {
+				lints = append(lints, lintStatsCountWideRangeInQuery(sub)...)
+			}
+		}
+	}
+
+	return lints
+}
+
+func statsHasCount(cmd *StatsCommand) bool {
+	if cmd == nil {
+		return false
+	}
+	for _, agg := range cmd.Aggregations {
+		if strings.EqualFold(agg.Func, "count") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func exprHasField(expr Expr, field string) bool {
+	switch e := expr.(type) {
+	case *FieldExpr:
+		return strings.EqualFold(e.Name, field)
+	case *CompareExpr:
+		return exprHasField(e.Left, field) || exprHasField(e.Right, field)
+	case *BinaryExpr:
+		return exprHasField(e.Left, field) || exprHasField(e.Right, field)
+	case *ArithExpr:
+		return exprHasField(e.Left, field) || exprHasField(e.Right, field)
+	case *NotExpr:
+		return exprHasField(e.Expr, field)
+	case *FuncCallExpr:
+		for _, arg := range e.Args {
+			if exprHasField(arg, field) {
+				return true
+			}
+		}
+	case *InExpr:
+		if exprHasField(e.Field, field) {
+			return true
+		}
+		for _, value := range e.Values {
+			if exprHasField(value, field) {
+				return true
+			}
+		}
+	case *FStringExpr:
+		for _, part := range e.Parts {
+			if exprHasField(part.ParsedExpr, field) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+func searchExprHasField(expr SearchExpr, field string) bool {
+	switch e := expr.(type) {
+	case *SearchAndExpr:
+		return searchExprHasField(e.Left, field) || searchExprHasField(e.Right, field)
+	case *SearchOrExpr:
+		return searchExprHasField(e.Left, field) || searchExprHasField(e.Right, field)
+	case *SearchNotExpr:
+		return searchExprHasField(e.Operand, field)
+	case *SearchCompareExpr:
+		return strings.EqualFold(e.Field, field)
+	case *SearchInExpr:
+		return strings.EqualFold(e.Field, field)
+	}
+
+	return false
 }
 
 func lintDefaultMetricField(tokens []Token) []QueryLint {

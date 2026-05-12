@@ -377,7 +377,7 @@ func TestServer_IngestAndQuery(t *testing.T) {
 	}
 
 	lintBody, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | stats count`,
+		"q": `FROM main | stats count by host`,
 	})
 	lintResp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(lintBody))
 	if err != nil {
@@ -407,7 +407,7 @@ func TestServer_IngestAndQuery(t *testing.T) {
 
 	disabled := false
 	noLintBody, _ := json.Marshal(map[string]interface{}{
-		"q":    `FROM main | stats count`,
+		"q":    `FROM main | stats count by host`,
 		"lint": disabled,
 	})
 	noLintResp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(noLintBody))
@@ -1091,7 +1091,7 @@ func TestQuery_AsyncMode(t *testing.T) {
 	ingestTestEvents(t, srv.Addr(), 20, 2)
 
 	wait := float64(0)
-	query := `stats count`
+	query := `stats count by host`
 	body, _ := json.Marshal(map[string]interface{}{
 		"q": query, "wait": wait,
 	})

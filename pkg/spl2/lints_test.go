@@ -74,17 +74,17 @@ func TestLintQuery_DefaultSource(t *testing.T) {
 	}{
 		{
 			name:      "leading pipeline",
-			query:     `| stats count()`,
+			query:     `| head 1`,
 			wantCodes: []string{LintDefaultSource},
 		},
 		{
 			name:      "bare command",
-			query:     `stats count()`,
+			query:     `head 1`,
 			wantCodes: []string{LintDefaultSource},
 		},
 		{
 			name:      "explicit source",
-			query:     `from app | stats count()`,
+			query:     `from app | head 1`,
 			wantCodes: nil,
 		},
 	}
@@ -250,6 +250,62 @@ func TestLintQuery_RawExactCompare(t *testing.T) {
 	}
 }
 
+func TestLintQuery_StatsCountWideRange(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantCodes []string
+	}{
+		{
+			name:      "count without by and no time bounds",
+			query:     `from app | stats count()`,
+			wantCodes: []string{LintStatsCountWide},
+		},
+		{
+			name:      "count without parens also warns about wide count",
+			query:     `from app | stats count`,
+			wantCodes: []string{LintStatsCountWide, LintCountWithoutParens},
+		},
+		{
+			name:      "grouped count",
+			query:     `from app | stats count() by service`,
+			wantCodes: nil,
+		},
+		{
+			name:      "source time range",
+			query:     `from app[-1h] | stats count()`,
+			wantCodes: nil,
+		},
+		{
+			name:      "where time range before stats",
+			query:     `from app | where _time >= "2025-01-01T00:00:00Z" | stats count()`,
+			wantCodes: nil,
+		},
+		{
+			name:      "search time range before stats",
+			query:     `from app | search _time>=2025-01-01T00:00:00Z | stats count()`,
+			wantCodes: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lints, err := LintQuery(tt.query)
+			if err != nil {
+				t.Fatalf("LintQuery: %v", err)
+			}
+			if len(lints) != len(tt.wantCodes) {
+				t.Fatalf("lints: got %+v, want codes %v", lints, tt.wantCodes)
+			}
+			for i, want := range tt.wantCodes {
+				if lints[i].Code != want {
+					t.Fatalf("lints[%d].Code: got %q, want %q", i, lints[i].Code, want)
+				}
+			}
+		})
+	}
+}
+
 func TestLintQuery_DoubleQuotedNames(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -258,12 +314,12 @@ func TestLintQuery_DoubleQuotedNames(t *testing.T) {
 	}{
 		{
 			name:      "quoted source",
-			query:     `from "my logs" | stats count()`,
+			query:     `from "my logs" | head 1`,
 			wantCodes: []string{LintDoubleQuotedName},
 		},
 		{
 			name:      "quoted index equals",
-			query:     `index="my logs" | stats count()`,
+			query:     `index="my logs" | head 1`,
 			wantCodes: []string{LintIndexRewrite, LintDoubleQuotedName},
 		},
 		{
@@ -283,7 +339,7 @@ func TestLintQuery_DoubleQuotedNames(t *testing.T) {
 		},
 		{
 			name:      "single quoted source",
-			query:     `from 'my logs' | stats count()`,
+			query:     `from 'my logs' | head 1`,
 			wantCodes: nil,
 		},
 	}
