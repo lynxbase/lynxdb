@@ -457,16 +457,25 @@ func buildFromWithRest(indexName, rest string, now time.Time) string {
 type searchTimeModifiers struct {
 	earliest      string
 	latest        string
+	latestOp      string
 	indexEarliest string
 	indexLatest   string
+	timeformat    string
 }
 
 func extractTimeModifierPrefix(rest string) (searchTimeModifiers, string) {
-	var mods searchTimeModifiers
+	mods := searchTimeModifiers{timeformat: "%m/%d/%Y:%H:%M:%S"}
 	remaining := strings.TrimSpace(rest)
 	for {
 		lower := strings.ToLower(remaining)
 		switch {
+		case strings.HasPrefix(lower, "timeformat="):
+			value, next := extractValue(remaining[len("timeformat="):])
+			if value == "" {
+				return mods, remaining
+			}
+			mods.timeformat = value
+			remaining = strings.TrimSpace(next)
 		case strings.HasPrefix(lower, "earliest="):
 			value, next := extractValue(remaining[len("earliest="):])
 			if value == "" {
@@ -480,6 +489,23 @@ func extractTimeModifierPrefix(rest string) (searchTimeModifiers, string) {
 				return mods, remaining
 			}
 			mods.latest = normalizeTimeModifierValue(value)
+			remaining = strings.TrimSpace(next)
+		case strings.HasPrefix(lower, "starttime="):
+			value, next := extractValue(remaining[len("starttime="):])
+			ts, ok := normalizeFormattedTimeModifier(value, mods.timeformat)
+			if !ok {
+				return mods, remaining
+			}
+			mods.earliest = ts
+			remaining = strings.TrimSpace(next)
+		case strings.HasPrefix(lower, "endtime="):
+			value, next := extractValue(remaining[len("endtime="):])
+			ts, ok := normalizeFormattedTimeModifier(value, mods.timeformat)
+			if !ok {
+				return mods, remaining
+			}
+			mods.latest = ts
+			mods.latestOp = "<"
 			remaining = strings.TrimSpace(next)
 		case strings.HasPrefix(lower, "_index_earliest="):
 			value, next := extractValue(remaining[len("_index_earliest="):])
@@ -557,9 +583,40 @@ func normalizeTimeModifierValue(value string) string {
 	return value
 }
 
+func normalizeFormattedTimeModifier(value, splunkFormat string) (string, bool) {
+	layout, ok := splunkTimeLayout(splunkFormat)
+	if !ok {
+		return "", false
+	}
+	t, err := time.ParseInLocation(layout, value, time.UTC)
+	if err != nil {
+		return "", false
+	}
+
+	return t.Format(time.RFC3339), true
+}
+
+func splunkTimeLayout(format string) (string, bool) {
+	replacer := strings.NewReplacer(
+		"%Y", "2006",
+		"%m", "01",
+		"%d", "02",
+		"%H", "15",
+		"%M", "04",
+		"%S", "05",
+	)
+	layout := replacer.Replace(format)
+	if strings.Contains(layout, "%") {
+		return "", false
+	}
+
+	return layout, true
+}
+
 func canUseCompactTimeRange(mods searchTimeModifiers) bool {
 	return mods.earliest != "" &&
 		isCompactTimeRangeStart(mods.earliest) &&
+		mods.latestOp == "" &&
 		(mods.latest == "" || isCompactTimeRangeEnd(mods.latest))
 }
 
@@ -593,12 +650,20 @@ func buildEventTimeWhere(mods searchTimeModifiers, now time.Time) string {
 	earliest := resolveTimeModifierForPredicate(mods.earliest, now)
 	latest := resolveTimeModifierForPredicate(mods.latest, now)
 	if earliest != "" && latest != "" {
+		if mods.latestOp == "<" {
+			return `_time >= "` + earliest + `" AND _time < "` + latest + `"`
+		}
+
 		return `_time BETWEEN "` + earliest + `" AND "` + latest + `"`
 	}
 	if earliest != "" {
 		return `_time >= "` + earliest + `"`
 	}
 	if latest != "" {
+		if mods.latestOp == "<" {
+			return `_time < "` + latest + `"`
+		}
+
 		return `_time <= "` + latest + `"`
 	}
 
