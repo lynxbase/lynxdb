@@ -59,7 +59,11 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		if p := job.Progress.Load(); p != nil {
 			data["progress"] = p
 		}
-		respondData(w, http.StatusOK, data)
+		respondData(w, http.StatusOK, data,
+			WithQueryID(snap.ID),
+			WithWarnings(snap.Warnings),
+			WithLints(snap.Lints),
+			WithRewrites(snap.Rewrites))
 
 		return
 	}
@@ -74,7 +78,11 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 				"code":    errCode,
 				"message": snap.Error,
 			},
-		})
+		},
+			WithQueryID(snap.ID),
+			WithWarnings(snap.Warnings),
+			WithLints(snap.Lints),
+			WithRewrites(snap.Rewrites))
 
 		return
 	}
@@ -106,7 +114,8 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		WithQueryID(snap.ID),
 		WithSearchStats(searchStatsToMeta(&snap.Stats)),
 		WithWarnings(snap.Warnings),
-		WithLints(snap.Lints))
+		WithLints(snap.Lints),
+		WithRewrites(snap.Rewrites))
 }
 
 // handleCancelJob cancels a running job.

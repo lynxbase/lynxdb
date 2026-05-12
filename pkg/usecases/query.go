@@ -943,7 +943,7 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 			lints, _ = spl2.LintProgram(plan.RawQuery, plan.Program)
 		}
 	}
-	job.SetAdvisoryMetadata(warnings, lints)
+	job.SetAdvisoryMetadata(warnings, lints, req.Rewrites)
 
 	switch req.Mode {
 	case QueryModeSync:
@@ -958,6 +958,7 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 			r := buildSyncResult(job, limit, req.Offset)
 			r.Warnings = warnings
 			r.Lints = lints
+			r.Rewrites = req.Rewrites
 			return r, nil
 		case <-timer.C:
 			// Promoted to async — detach from HTTP context so job survives disconnect.
@@ -976,6 +977,7 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 			r := buildSyncResult(job, limit, req.Offset)
 			r.Warnings = warnings
 			r.Lints = lints
+			r.Rewrites = req.Rewrites
 			return r, nil
 		case <-timer.C:
 			// Promoted to async — detach from HTTP context so job survives disconnect.
@@ -1214,6 +1216,7 @@ func buildJobHandle(job *server.SearchJob) *SubmitResult {
 		Status:   "running",
 		Warnings: snap.Warnings,
 		Lints:    snap.Lints,
+		Rewrites: snap.Rewrites,
 	}
 	if p := job.Progress.Load(); p != nil {
 		r.Progress = p

@@ -96,6 +96,24 @@ func startTestServerWithConfig(t *testing.T, cfg Config) (*Server, func()) {
 	}
 }
 
+func assertRewriteMeta(t *testing.T, meta map[string]interface{}, wantAfter, wantReason string) {
+	t.Helper()
+	if meta == nil {
+		t.Fatal("missing meta")
+	}
+	rewrites, _ := meta["rewrites"].([]interface{})
+	if len(rewrites) != 1 {
+		t.Fatalf("meta.rewrites: got %#v, want one rewrite", meta["rewrites"])
+	}
+	firstRewrite, _ := rewrites[0].(map[string]interface{})
+	if firstRewrite["after"] != wantAfter {
+		t.Fatalf("meta.rewrites[0].after: got %v, want %s", firstRewrite["after"], wantAfter)
+	}
+	if firstRewrite["reason"] != wantReason {
+		t.Fatalf("meta.rewrites[0].reason: got %v, want %s", firstRewrite["reason"], wantReason)
+	}
+}
+
 func waitTestServerReady(t *testing.T, srv *Server, errCh <-chan error) {
 	t.Helper()
 	select {
@@ -1073,8 +1091,9 @@ func TestQuery_AsyncMode(t *testing.T) {
 	ingestTestEvents(t, srv.Addr(), 20, 2)
 
 	wait := float64(0)
+	query := `stats count`
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | stats count`, "wait": wait,
+		"q": query, "wait": wait,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -1100,6 +1119,7 @@ func TestQuery_AsyncMode(t *testing.T) {
 	}
 	meta := result["meta"].(map[string]interface{})
 	assertLintMeta(t, meta, spl2.LintCountWithoutParens)
+	assertRewriteMeta(t, meta, spl2.NormalizeQuery(query), "default-source")
 
 	// Poll until done.
 	for i := 0; i < 50; i++ {
@@ -1118,6 +1138,7 @@ func TestQuery_AsyncMode(t *testing.T) {
 		if dstatus == "done" || (dtype != "" && dtype != "job") {
 			meta := jr["meta"].(map[string]interface{})
 			assertLintMeta(t, meta, spl2.LintCountWithoutParens)
+			assertRewriteMeta(t, meta, spl2.NormalizeQuery(query), "default-source")
 
 			return
 		}

@@ -326,14 +326,15 @@ type SearchJob struct {
 	Progress   atomic.Pointer[SearchProgress]  `json:"-"`
 	Preview    atomic.Pointer[PreviewSnapshot] `json:"-"`
 
-	mu        sync.Mutex       // protects Status, Results, Stats, Error, ErrorCode, Warnings, Lints
-	Status    string           `json:"status"` // JobStatusRunning, JobStatusDone, JobStatusError, JobStatusCanceled
-	Results   []spl2.ResultRow `json:"-"`
-	Stats     SearchStats      `json:"-"`
-	Error     string           `json:"error,omitempty"`
-	ErrorCode string           `json:"-"` // machine-readable error code (e.g., QUERY_MEMORY_EXCEEDED)
-	Warnings  []string         `json:"-"`
-	Lints     []spl2.QueryLint `json:"-"`
+	mu        sync.Mutex          // protects Status, Results, Stats, Error, ErrorCode, Warnings, Lints, Rewrites
+	Status    string              `json:"status"` // JobStatusRunning, JobStatusDone, JobStatusError, JobStatusCanceled
+	Results   []spl2.ResultRow    `json:"-"`
+	Stats     SearchStats         `json:"-"`
+	Error     string              `json:"error,omitempty"`
+	ErrorCode string              `json:"-"` // machine-readable error code (e.g., QUERY_MEMORY_EXCEEDED)
+	Warnings  []string            `json:"-"`
+	Lints     []spl2.QueryLint    `json:"-"`
+	Rewrites  []spl2.QueryRewrite `json:"-"`
 
 	cancel   context.CancelFunc // cancels the job's context
 	detach   func()             // stops parent context propagation (sync→async promotion)
@@ -388,20 +389,22 @@ func (j *SearchJob) snapshotLocked() JobSnapshot {
 		ErrorCode:  j.ErrorCode,
 		Warnings:   append([]string(nil), j.Warnings...),
 		Lints:      append([]spl2.QueryLint(nil), j.Lints...),
+		Rewrites:   append([]spl2.QueryRewrite(nil), j.Rewrites...),
 		ResultType: j.ResultType,
 		CreatedAt:  j.CreatedAt,
 		DoneAt:     j.DoneAt,
 	}
 }
 
-// SetAdvisoryMetadata stores query warnings and lints that are known before the
+// SetAdvisoryMetadata stores query warnings, lints, and rewrites known before the
 // job finishes so async job handles and completion responses can expose them.
-func (j *SearchJob) SetAdvisoryMetadata(warnings []string, lints []spl2.QueryLint) {
+func (j *SearchJob) SetAdvisoryMetadata(warnings []string, lints []spl2.QueryLint, rewrites []spl2.QueryRewrite) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 
 	j.Warnings = append([]string(nil), warnings...)
 	j.Lints = append([]spl2.QueryLint(nil), lints...)
+	j.Rewrites = append([]spl2.QueryRewrite(nil), rewrites...)
 }
 
 // Cancel cancels the job and returns whether this call transitioned it to the
@@ -444,6 +447,7 @@ type JobSnapshot struct {
 	ErrorCode  string // machine-readable error code (e.g., QUERY_MEMORY_EXCEEDED)
 	Warnings   []string
 	Lints      []spl2.QueryLint
+	Rewrites   []spl2.QueryRewrite
 	ResultType ResultType
 	CreatedAt  time.Time
 	DoneAt     time.Time
