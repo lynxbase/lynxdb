@@ -28,7 +28,8 @@ Append subsearch fields to the current result rows by row position.
 - The first subsearch row is merged with the first current row, the second with the second, and so on.
 - Internal fields from the subsearch, such as `_time`, are not appended.
 - `override=false` is the default; main row values win field-name conflicts.
-- `maxout`, `maxtime`, and `timeout` parse for compatibility but are not enforced yet.
+- `maxout` limits the number of subsearch rows appended.
+- `maxtime` and `timeout` parse for compatibility but are not enforced yet.
 
 ## See Also
 

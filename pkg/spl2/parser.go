@@ -1756,7 +1756,7 @@ func (p *Parser) parseAppend() (*AppendCommand, error) {
 
 func (p *Parser) parseAppendcols() (*AppendcolsCommand, error) {
 	p.advance() // consume "appendcols"
-	cmd := &AppendcolsCommand{}
+	cmd := &AppendcolsCommand{Maxout: -1, Maxtime: -1, Timeout: -1}
 
 	for p.peek().Type != TokenLBracket {
 		if p.peek().Type == TokenPipe || p.peek().Type == TokenEOF || p.peek().Type == TokenRBracket {
@@ -1775,11 +1775,36 @@ func (p *Parser) parseAppendcols() (*AppendcolsCommand, error) {
 			}
 			cmd.Override = value == "true"
 			p.advance()
-		case "maxout", "maxtime", "timeout":
-			if p.peek().Type != TokenNumber && !isIdentLike(p.peek().Type) {
-				return nil, fmt.Errorf("spl2: appendcols option %s requires a value", name)
+		case "maxout":
+			tok, err := p.expect(TokenNumber)
+			if err != nil {
+				return nil, fmt.Errorf("spl2: appendcols maxout requires a number: %w", err)
 			}
-			p.advance()
+			value, err := parseNonNegativeInt(tok.Literal, "appendcols maxout")
+			if err != nil {
+				return nil, err
+			}
+			cmd.Maxout = value
+		case "maxtime":
+			tok, err := p.expect(TokenNumber)
+			if err != nil {
+				return nil, fmt.Errorf("spl2: appendcols maxtime requires a number: %w", err)
+			}
+			value, err := parseNonNegativeInt(tok.Literal, "appendcols maxtime")
+			if err != nil {
+				return nil, err
+			}
+			cmd.Maxtime = value
+		case "timeout":
+			tok, err := p.expect(TokenNumber)
+			if err != nil {
+				return nil, fmt.Errorf("spl2: appendcols timeout requires a number: %w", err)
+			}
+			value, err := parseNonNegativeInt(tok.Literal, "appendcols timeout")
+			if err != nil {
+				return nil, err
+			}
+			cmd.Timeout = value
 		default:
 			return nil, fmt.Errorf("spl2: unsupported appendcols option %q", name)
 		}

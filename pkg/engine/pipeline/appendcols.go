@@ -12,16 +12,17 @@ type AppendcolsIterator struct {
 	child    Iterator
 	sub      Iterator
 	override bool
+	maxout   int
 	batch    int
 	output   Iterator
 }
 
 // NewAppendcolsIterator creates a row-wise appendcols operator.
-func NewAppendcolsIterator(child, sub Iterator, override bool, batchSize int) *AppendcolsIterator {
+func NewAppendcolsIterator(child, sub Iterator, override bool, maxout int, batchSize int) *AppendcolsIterator {
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
 	}
-	return &AppendcolsIterator{child: child, sub: sub, override: override, batch: batchSize}
+	return &AppendcolsIterator{child: child, sub: sub, override: override, maxout: maxout, batch: batchSize}
 }
 
 func (a *AppendcolsIterator) Init(ctx context.Context) error {
@@ -48,6 +49,9 @@ func (a *AppendcolsIterator) materialize(ctx context.Context) error {
 	subRows, err := CollectAll(ctx, a.sub)
 	if err != nil {
 		return err
+	}
+	if a.maxout >= 0 && len(subRows) > a.maxout {
+		subRows = subRows[:a.maxout]
 	}
 
 	out := cloneAppendcolsRows(mainRows)

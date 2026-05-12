@@ -1112,7 +1112,7 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 			return nil, fmt.Errorf("build APPENDCOLS subquery: %w", err)
 		}
 
-		return NewAppendcolsIterator(child, subIter, c.Override, qc.batchSize), nil
+		return NewAppendcolsIterator(child, subIter, c.Override, c.Maxout, qc.batchSize), nil
 
 	case *spl2.AppendpipeCommand:
 		if c.Subquery == nil {

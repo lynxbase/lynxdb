@@ -825,6 +825,38 @@ func TestBuildFromSourceAppendcols(t *testing.T) {
 	}
 }
 
+func TestBuildFromSourceAppendcolsMaxout(t *testing.T) {
+	query, err := spl2.Parse(`FROM main | appendcols maxout=1 [makeresults count=2 | streamstats count as row_num | eval extra=row_num]`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	rows := []map[string]event.Value{
+		{"host": event.StringValue("web")},
+		{"host": event.StringValue("api")},
+	}
+	iter, err := BuildFromSource(context.Background(), NewRowScanIterator(rows, 2), query.Commands, 2)
+	if err != nil {
+		t.Fatalf("BuildFromSource: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer iter.Close()
+
+	results, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := results[0]["extra"].AsInt(); got != 1 {
+		t.Errorf("first extra: got %d, want 1", got)
+	}
+	if got := results[1]["extra"]; !got.IsNull() {
+		t.Errorf("second extra: got %v, want null", got)
+	}
+}
+
 func TestBuildFromSourceAppendcolsOverride(t *testing.T) {
 	query, err := spl2.Parse(`FROM main | appendcols override=true [makeresults | eval host="sub"]`)
 	if err != nil {

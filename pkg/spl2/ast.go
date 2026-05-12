@@ -394,6 +394,9 @@ func (c *AppendCommand) String() string {
 type AppendcolsCommand struct {
 	Subquery *Query
 	Override bool
+	Maxout   int
+	Maxtime  int
+	Timeout  int
 }
 
 func (*AppendcolsCommand) commandNode() {}

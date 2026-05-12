@@ -2212,7 +2212,7 @@ func TestParse_AppendpipeDefaultRunInPreview(t *testing.T) {
 }
 
 func TestParse_AppendcolsCommand(t *testing.T) {
-	q, err := Parse(`FROM main | appendcols override=true maxout=100 [stats count as total]`)
+	q, err := Parse(`FROM main | appendcols override=true maxout=100 maxtime=30 timeout=45 [stats count as total]`)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -2222,6 +2222,15 @@ func TestParse_AppendcolsCommand(t *testing.T) {
 	}
 	if !cmd.Override {
 		t.Fatal("override: got false, want true")
+	}
+	if cmd.Maxout != 100 {
+		t.Fatalf("maxout: got %d, want 100", cmd.Maxout)
+	}
+	if cmd.Maxtime != 30 {
+		t.Fatalf("maxtime: got %d, want 30", cmd.Maxtime)
+	}
+	if cmd.Timeout != 45 {
+		t.Fatalf("timeout: got %d, want 45", cmd.Timeout)
 	}
 	if cmd.Subquery == nil || len(cmd.Subquery.Commands) != 1 {
 		t.Fatalf("subquery commands: got %+v, want one command", cmd.Subquery)
