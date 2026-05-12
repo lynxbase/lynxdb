@@ -524,6 +524,22 @@ func TestCountStarOptimization_NotWithUntable(t *testing.T) {
 	}
 }
 
+func TestCountStarOptimization_NotWithMvcombine(t *testing.T) {
+	q := &spl2.Query{
+		Commands: []spl2.Command{
+			&spl2.MvcombineCommand{Field: "host"},
+			&spl2.StatsCommand{
+				Aggregations: []spl2.AggExpr{{Func: "count", Alias: "count"}},
+			},
+		},
+	}
+	rule := &countStarOptimizationRule{}
+	_, changed := rule.Apply(q)
+	if changed {
+		t.Error("countStarOnly should NOT fire when MvcombineCommand precedes STATS count")
+	}
+}
+
 func TestCountStarOptimization_NotWithGroupBy(t *testing.T) {
 	q := &spl2.Query{
 		Commands: []spl2.Command{

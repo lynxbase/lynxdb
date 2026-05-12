@@ -446,6 +446,45 @@ func TestBuildFromSourceMakemvInvalidTokenizer(t *testing.T) {
 	}
 }
 
+func TestBuildFromSourceMvcombineCommand(t *testing.T) {
+	query, err := spl2.Parse(`FROM main | mvcombine host | nomv host`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	rows := []map[string]event.Value{
+		{"host": event.StringValue("www1"), "max": event.IntValue(4000), "min": event.IntValue(200)},
+		{"host": event.StringValue("www2"), "max": event.IntValue(4000), "min": event.IntValue(200)},
+		{"host": event.StringValue("api1"), "max": event.IntValue(9000), "min": event.IntValue(100)},
+	}
+	iter, err := BuildFromSource(context.Background(), NewRowScanIterator(rows, 2), query.Commands, 2)
+	if err != nil {
+		t.Fatalf("BuildFromSource: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer iter.Close()
+
+	results, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d rows, want 2", len(results))
+	}
+	if got := results[0]["host"].AsString(); got != "www1\nwww2" {
+		t.Errorf("first host: got %q, want %q", got, "www1\nwww2")
+	}
+	if got := results[0]["max"].AsInt(); got != 4000 {
+		t.Errorf("first max: got %d, want 4000", got)
+	}
+	if got := results[1]["host"].AsString(); got != "api1" {
+		t.Errorf("second host: got %q, want api1", got)
+	}
+}
+
 func TestPipelineEndToEnd(t *testing.T) {
 	// FROM idx | WHERE status >= 500 | stats count
 	events := makeEvents(100)

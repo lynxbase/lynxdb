@@ -269,6 +269,7 @@ func orderingBehavior(cmd spl2.Command) OrderingBehavior {
 		*spl2.TransactionCommand,
 		*spl2.XYSeriesCommand,
 		*spl2.UntableCommand,
+		*spl2.MvcombineCommand,
 		*spl2.UnrollCommand,
 		*spl2.TraceCommand:
 		return OrderDestroying

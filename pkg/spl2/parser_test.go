@@ -1966,6 +1966,38 @@ func TestParse_MakemvCommand(t *testing.T) {
 	}
 }
 
+func TestParse_MvcombineCommand(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantField string
+		wantDelim string
+	}{
+		{name: "default", query: `FROM main | mvcombine host`, wantField: "host", wantDelim: " "},
+		{name: "delim", query: `FROM main | mvcombine delim="," host`, wantField: "host", wantDelim: ","},
+		{name: "delim after field", query: `FROM main | mvcombine host delim=":"`, wantField: "host", wantDelim: ":"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := Parse(tc.query)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			cmd, ok := q.Commands[0].(*MvcombineCommand)
+			if !ok {
+				t.Fatalf("expected MvcombineCommand, got %T", q.Commands[0])
+			}
+			if cmd.Field != tc.wantField {
+				t.Errorf("field: got %q, want %q", cmd.Field, tc.wantField)
+			}
+			if cmd.Delim != tc.wantDelim {
+				t.Errorf("delim: got %q, want %q", cmd.Delim, tc.wantDelim)
+			}
+		})
+	}
+}
+
 func TestParse_FieldsRemoveGlobPattern(t *testing.T) {
 	q, err := Parse(`FROM main | fields - pg.*`)
 	if err != nil {

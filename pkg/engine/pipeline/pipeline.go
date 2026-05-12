@@ -688,6 +688,8 @@ func commandStageName(cmd spl2.Command) string {
 		return "Makeresults"
 	case *spl2.MakemvCommand:
 		return "Makemv"
+	case *spl2.MvcombineCommand:
+		return "Mvcombine"
 	case *spl2.NomvCommand:
 		return "Nomv"
 	case *spl2.PackJsonCommand:
@@ -1295,6 +1297,9 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		}
 
 		return iter, nil
+
+	case *spl2.MvcombineCommand:
+		return NewMvcombineIterator(child, c.Field, qc.batchSize), nil
 
 	case *spl2.NomvCommand:
 		return NewNomvIterator(child, c.Field), nil

@@ -440,6 +440,8 @@ func commandAccessedFields(cmd spl2.Command, cols map[string]bool) {
 		cols["*"] = true
 	case *spl2.MakemvCommand:
 		cols[c.Field] = true
+	case *spl2.MvcombineCommand:
+		cols["*"] = true
 	case *spl2.NomvCommand:
 		cols[c.Field] = true
 	case *spl2.PackJsonCommand:

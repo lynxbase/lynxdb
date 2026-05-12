@@ -1275,6 +1275,7 @@ Every SPL2 command has a Lynx Flow counterpart. Both syntaxes are first-class.
 | `MVEXPAND` | `mvexpand` / `expand` | Identical |
 | `MAKERESULTS` | `makeresults` | Generate temporary rows |
 | `MAKEMV` | `makemv` | Split single value into multivalue |
+| `MVCOMBINE` | `mvcombine` | Combine rows into multivalue |
 | `NOMV` | `nomv` | Convert multivalue to single value |
 | `PACK_JSON` | `pack ... into` | Clearer syntax |
 | `STREAMSTATS` | `running` | Clearer name |

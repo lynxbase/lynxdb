@@ -961,6 +961,17 @@ func (c *MakemvCommand) String() string {
 	return fmt.Sprintf("makemv %s", c.Field)
 }
 
+// MvcombineCommand represents: | mvcombine [delim=<s>] <field>.
+type MvcombineCommand struct {
+	Field string
+	Delim string
+}
+
+func (*MvcombineCommand) commandNode() {}
+func (c *MvcombineCommand) String() string {
+	return fmt.Sprintf("mvcombine %s", c.Field)
+}
+
 // TeeCommand represents: | tee "<destination>" — side-effect passthrough.
 // Writes each batch to a destination file, then yields the batch unchanged.
 type TeeCommand struct {

@@ -236,6 +236,7 @@
 {"nl": "Generate three test rows", "query": "| makeresults count=3", "category": "generate"}
 {"nl": "Convert wide metric columns into name value rows", "query": "| untable host metric value", "category": "transform"}
 {"nl": "Split a comma separated field into multivalue values", "query": "| makemv delim=\",\" tags", "category": "transform"}
+{"nl": "Combine duplicate metric rows into one multivalue host row", "query": "| mvcombine host", "category": "transform"}
 {"nl": "Convert multivalue senders to one newline separated value", "query": "| nomv senders", "category": "transform"}
 {"nl": "Logfmt parsing and filtering", "query": "| unpack_logfmt | where level=error | stats count by component", "category": "pipeline"}
 {"nl": "Full pipeline: filter, eval, aggregate, sort", "query": "source=nginx | eval is_error=if(status>=500, true, false) | stats count by is_error | sort -count", "category": "pipeline"}

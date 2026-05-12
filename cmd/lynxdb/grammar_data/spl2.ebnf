@@ -21,7 +21,7 @@ command          = search_cmd | where_cmd | stats_cmd | eval_cmd | sort_cmd
                  | dropview_cmd | glimpse_cmd | describe_cmd | tee_cmd
                  | rollup_cmd | sessionize_cmd | correlate_cmd | topology_cmd
                  | unpack_json_cmd | unpack_logfmt_cmd | json_cmd | unroll_cmd
-                 | mvexpand_cmd | makeresults_cmd | makemv_cmd | nomv_cmd | pack_json_cmd
+                 | mvexpand_cmd | makeresults_cmd | makemv_cmd | mvcombine_cmd | nomv_cmd | pack_json_cmd
                  | select_cmd | take_cmd | keep_cmd | omit_cmd
                  | let_cmd | group_cmd | every_cmd | bucket_cmd | order_cmd
                  | rank_cmd | topby_cmd | bottomby_cmd | bottom_cmd
@@ -200,6 +200,7 @@ mvexpand_cmd     = ( "mvexpand" | "expand" ) [ "limit" "=" number ] field [ "lim
 makeresults_cmd  = "makeresults" [ number | "count" "=" number ] ;
 makemv_cmd       = "makemv" [ ( "delim" | "tokenizer" ) "=" quoted_string ]
                    [ "allowempty" "=" ( "true" | "false" ) ] [ "setsv" "=" ( "true" | "false" ) ] field ;
+mvcombine_cmd    = "mvcombine" [ "delim" "=" quoted_string ] field ;
 nomv_cmd         = "nomv" field ;
 pack_json_cmd    = "pack_json" ident_list [ "as" ident ] ;
 

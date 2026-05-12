@@ -63,6 +63,8 @@ func (r *countStarOptimizationRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 			return q, false // unroll changes cardinality (1→N rows)
 		case *spl2.UntableCommand:
 			return q, false // untable changes cardinality (1→N rows)
+		case *spl2.MvcombineCommand:
+			return q, false // mvcombine changes cardinality (N→1 rows)
 		case *spl2.SearchCommand:
 			if cmd.Term != "" || cmd.Expression != nil {
 				return q, false // has a search filter

@@ -27,6 +27,7 @@ Source contract: `docs/grammar/RFC.md`.
 | SPL/SPL2 `makeresults` generates temporary rows with `_time` and supports default, positional, and `count=<n>` counts | `pkg/spl2/parser.go`, `pkg/engine/pipeline/pipeline.go`, `pkg/engine/pipeline/pipeline_test.go` |
 | SPL/SPL2 `untable` converts wide rows into name/value rows for every field except the x-field | `pkg/spl2/parser.go`, `pkg/engine/pipeline/untable.go`, `pkg/engine/pipeline/pipeline_test.go` |
 | SPL/SPL2 `makemv` converts single-value fields into multivalue fields with delimiter or tokenizer splitting | `pkg/spl2/parser.go`, `pkg/engine/pipeline/makemv.go`, `pkg/engine/pipeline/pipeline_test.go` |
+| SPL/SPL2 `mvcombine` merges rows that differ only by one field into a single row with multivalue field values | `pkg/spl2/parser.go`, `pkg/engine/pipeline/mvcombine.go`, `pkg/engine/pipeline/pipeline_test.go` |
 | SPL/SPL2 `nomv` converts multivalue fields into one newline-delimited value | `pkg/spl2/parser.go`, `pkg/engine/pipeline/nomv.go`, `pkg/engine/pipeline/pipeline_test.go` |
 | Unsupported Splunk commands in the RFC profile reject with `L021` and compatibility hints | `pkg/spl2/parser.go`, `pkg/spl2/compat_hints.go`, `pkg/spl2/parser_test.go`, `pkg/spl2/compat_hints_test.go` |
 | LynxFlow `proportion`, `impact`, `baseline`, `changes`, and `exemplars` deterministic desugaring | `pkg/spl2/parser.go`, `pkg/spl2/parser_lynxflow_test.go` |
@@ -45,6 +46,7 @@ Official Splunk compatibility checked:
 | Makeresults command | Splunk docs define `makeresults` default row generation and `count=<num>`; SPL2 examples also use positional counts. LynxDB implements generated rows with `_time`; `annotate`, `format`, and `data` options are deferred. |
 | Untable command | Splunk docs define `untable <x-field> <y-name-field> <y-data-field>` as the inverse of `xyseries`, emitting field names other than the x-field into the y-name field and their values into the y-data field. |
 | Makemv command | Splunk docs define `makemv [delim=<string> | tokenizer=<string>] [allowempty=<bool>] [setsv=<bool>] <field>` as splitting a single-value field into multivalue values. LynxDB supports delimiter, tokenizer, and `allowempty`; `setsv` is parsed but not separately observable in the current value model. |
+| Mvcombine command | Splunk docs define `mvcombine [delim=<string>] <field>` as merging rows where all fields except the specified field match, turning the specified field into a multivalue field. LynxDB implements grouping and multivalue output; delimiter-specific single-value display metadata is deferred. |
 | Nomv command | Splunk docs define `nomv <field>` as converting multivalue field values into one single value separated with a newline delimiter. |
 
 ## Partial
@@ -72,6 +74,7 @@ Official Splunk compatibility checked:
 | Regex engine selection, PCRE2 diagnostics, and `L038`/`L039` | Deferred | Requires runtime regex engine configuration and planner literal-extraction diagnostics. |
 | `makeresults` `annotate`, `format`, and `data` options | Deferred | Current implementation covers generated row counts and `_time`; inline dataset formats require a richer generator parser. |
 | `makemv` `setsv` dual representation | Deferred | Current `event.Value` has one representation per field; delimiter and tokenizer multivalue splitting are implemented, but parallel single-value display metadata is not represented. |
+| `mvcombine` delimiter display metadata | Deferred | Current `event.Value` has one representation per field; row grouping and multivalue values are implemented, but delimiter-specific alternate display strings are not represented. |
 | `facets` fan-out normalization | Deferred | Requires prefix-aware normalizer support for command suffixes that expand the prior pipeline into `multisearch`. |
 | `compare previous <dur>` previous-window replay | Partial | Command parses, but RFC replay semantics need verification and tests. |
 | `use <fragment>` expansion | Partial | Command parses, but fragment resolution and missing-fragment diagnostics need full RFC tests. |

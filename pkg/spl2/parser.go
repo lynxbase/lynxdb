@@ -458,6 +458,8 @@ func (p *Parser) parseCommand() ([]Command, error) {
 		return singleCmd(p.parseMakeresults())
 	case TokenMakemv:
 		return singleCmd(p.parseMakemv())
+	case TokenMvcombine:
+		return singleCmd(p.parseMvcombine())
 	case TokenNomv:
 		return singleCmd(p.parseNomv())
 	case TokenPackJson:
@@ -4144,6 +4146,38 @@ func (p *Parser) readBoolOption(name string) (bool, error) {
 	default:
 		return false, fmt.Errorf("spl2: %s requires a boolean value", name)
 	}
+}
+
+func (p *Parser) parseMvcombine() (*MvcombineCommand, error) {
+	p.advance() // consume "mvcombine"
+
+	cmd := &MvcombineCommand{Delim: " "}
+	for p.peek().Type != TokenPipe && p.peek().Type != TokenEOF && p.peek().Type != TokenRBracket {
+		if p.peekAt(1).Type == TokenEq && isNamedOption(p.peek(), "delim") {
+			p.advance()
+			p.advance()
+			delim, err := p.readStringOption("mvcombine delim")
+			if err != nil {
+				return nil, err
+			}
+			cmd.Delim = delim
+
+			continue
+		}
+		if cmd.Field != "" {
+			return nil, fmt.Errorf("spl2: mvcombine accepts one field")
+		}
+		field, err := p.expectIdent()
+		if err != nil {
+			return nil, fmt.Errorf("spl2: mvcombine requires a field name")
+		}
+		cmd.Field = field.Literal
+	}
+	if cmd.Field == "" {
+		return nil, fmt.Errorf("spl2: mvcombine requires a field name")
+	}
+
+	return cmd, nil
 }
 
 // parseExplode parses: explode <field>[, <field2>, ...] [as <alias>].
