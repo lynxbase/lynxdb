@@ -1,29 +1,11 @@
 import { StreamLanguage, StringStream } from "@codemirror/language";
 import { tags, Tag } from "@lezer/highlight";
+import { CLAUSES, COMMANDS, FUNCTIONS, OPERATORS } from "./lynxflow-catalog";
 
-const COMMANDS = new Set([
-  "from", "search", "where", "group", "order", "take", "let", "parse",
-  "keep", "omit", "rename", "dedup", "join", "append", "fillnull", "table",
-  "top", "bottom", "rare", "sort", "head", "tail", "explode", "pack",
-  "materialize", "every", "bucket", "running", "enrich", "rank", "select",
-  "stats", "eval", "rex", "bin", "timechart", "streamstats", "eventstats",
-  "transaction", "xyseries", "multisearch", "fields", "limit",
-]);
-
-const CLAUSES = new Set([
-  "by", "as", "compute", "using", "extract", "if_missing",
-  "desc", "asc", "span", "inner", "outer", "left", "right",
-]);
-
-const FUNCTIONS = new Set([
-  "count", "sum", "avg", "min", "max", "dc", "values", "stdev",
-  "perc50", "perc75", "perc90", "perc95", "perc99", "earliest", "latest",
-  "if", "case", "match", "coalesce", "tonumber", "tostring", "round",
-  "substr", "lower", "upper", "len", "ln", "isnotnull", "isnull",
-  "strftime", "mvjoin", "mvappend", "mvdedup",
-]);
-
-const OPERATORS = new Set(["AND", "OR", "NOT", "IN", "LIKE"]);
+const COMMAND_SET = new Set(COMMANDS);
+const CLAUSE_SET = new Set(CLAUSES);
+const FUNCTION_SET = new Set(FUNCTIONS);
+const OPERATOR_SET = new Set(OPERATORS.map((op) => op.toLowerCase()));
 const BOOLEANS = new Set(["true", "false"]);
 
 /**
@@ -37,25 +19,57 @@ export const lynxflowLanguage = StreamLanguage.define({
     // Skip whitespace
     if (stream.eatSpace()) return null;
 
-    // Comments: -- or //
-    if (stream.match("--") || stream.match("//")) {
+    // Comments: --
+    if (stream.match("--")) {
       stream.skipToEnd();
       return "comment";
     }
 
     // Multi-char operators first
-    if (stream.match(">=") || stream.match("<=") || stream.match("!=")) {
+    if (
+      stream.match(">=") ||
+      stream.match("<=") ||
+      stream.match("!=") ||
+      stream.match("==") ||
+      stream.match("=~") ||
+      stream.match("!~") ||
+      stream.match("??") ||
+      stream.match("?.") ||
+      stream.match("..")
+    ) {
       return "operator";
     }
 
     // Single-char operators
-    if (stream.match("=") || stream.match(">") || stream.match("<")) {
+    if (
+      stream.match("=") ||
+      stream.match(">") ||
+      stream.match("<") ||
+      stream.match("+") ||
+      stream.match("-") ||
+      stream.match("/") ||
+      stream.match("%") ||
+      stream.match("@")
+    ) {
       return "operator";
     }
 
     // Pipe
     if (stream.eat("|")) {
       return "punctuation";
+    }
+
+    // F-strings
+    if (stream.match("f\"")) {
+      while (!stream.eol()) {
+        const ch = stream.next();
+        if (ch === "\\") {
+          stream.next();
+        } else if (ch === '"') {
+          break;
+        }
+      }
+      return "string";
     }
 
     // Double-quoted strings
@@ -84,21 +98,24 @@ export const lynxflowLanguage = StreamLanguage.define({
       return "string";
     }
 
-    // Numbers
-    if (stream.match(/^-?\d+(\.\d+)?/)) {
+    // Relative durations and numbers
+    if (stream.match(/^[+-]?\d+[smhdwMy](@[smhdwMy]|@w[0-6])?/)) {
+      return "number";
+    }
+    if (stream.match(/^-?\d+(\.\d+)?([eE][+-]?\d+)?/)) {
       return "number";
     }
 
     // Words: identifiers, keywords, functions, etc.
-    if (stream.match(/^[a-zA-Z_]\w*/)) {
+    if (stream.match(/^[a-zA-Z_][a-zA-Z0-9_.:-]*/)) {
       const word = stream.current();
       const lower = word.toLowerCase();
 
-      if (OPERATORS.has(word)) return "operator";
+      if (OPERATOR_SET.has(lower)) return "operator";
       if (BOOLEANS.has(lower)) return "atom";
-      if (COMMANDS.has(lower)) return "keyword";
-      if (CLAUSES.has(lower)) return "definitionKeyword";
-      if (FUNCTIONS.has(lower)) return "function(variableName)";
+      if (COMMAND_SET.has(lower)) return "keyword";
+      if (CLAUSE_SET.has(lower)) return "definitionKeyword";
+      if (FUNCTION_SET.has(lower)) return "function(variableName)";
 
       return "variableName";
     }
