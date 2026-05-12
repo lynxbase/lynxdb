@@ -223,7 +223,8 @@ func writeSyncResultFromUsecase(w http.ResponseWriter, result *usecases.SubmitRe
 		WithQueryID(result.QueryID),
 		WithSegmentsErrored(result.Stats.SegmentsErrored),
 		WithSearchStats(searchStatsToMeta(&result.Stats)),
-		WithWarnings(result.Warnings))
+		WithWarnings(result.Warnings),
+		WithLints(result.Lints))
 }
 
 // searchStatsToMeta converts a server.SearchStats to the REST meta stats struct.

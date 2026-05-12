@@ -49,6 +49,9 @@ type SubmitResult struct {
 
 	// Warnings holds user-facing warnings about the query (e.g., blocking operators).
 	Warnings []string
+
+	// Lints holds post-parse query warnings with stable RFC lint codes.
+	Lints []spl2.QueryLint
 }
 
 // StreamRequest is the domain input for streaming queries.

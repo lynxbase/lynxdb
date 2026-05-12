@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
@@ -92,12 +93,13 @@ func respondQueryError(w http.ResponseWriter, msg, code string) {
 
 // metaFields holds optional metadata for success responses.
 type metaFields struct {
-	TookMS          *float64   `json:"took_ms,omitempty"`
-	Scanned         *int64     `json:"scanned,omitempty"`
-	QueryID         string     `json:"query_id,omitempty"`
-	SegmentsErrored *int       `json:"segments_errored,omitempty"` // E7: surface segment read errors
-	SearchStats     *metaStats `json:"stats,omitempty"`            // rich query stats for CLI display
-	Warnings        []string   `json:"warnings,omitempty"`         // user-facing warnings about the query
+	TookMS          *float64         `json:"took_ms,omitempty"`
+	Scanned         *int64           `json:"scanned,omitempty"`
+	QueryID         string           `json:"query_id,omitempty"`
+	SegmentsErrored *int             `json:"segments_errored,omitempty"` // E7: surface segment read errors
+	SearchStats     *metaStats       `json:"stats,omitempty"`            // rich query stats for CLI display
+	Warnings        []string         `json:"warnings,omitempty"`         // user-facing warnings about the query
+	Lints           []spl2.QueryLint `json:"lints,omitempty"`            // stable post-parse query lint warnings
 }
 
 // metaStats holds detailed query execution statistics returned in the
@@ -282,6 +284,15 @@ func WithWarnings(warnings []string) MetaOpt {
 	}
 }
 
+// WithLints adds stable post-parse query lints to the response meta.
+func WithLints(lints []spl2.QueryLint) MetaOpt {
+	return func(m *metaFields) {
+		if len(lints) > 0 {
+			m.Lints = lints
+		}
+	}
+}
+
 // respondData writes {"data": payload, "meta": {...}}.
 // When a query_id is present, it is also set as an X-Query-ID response header
 // so the logging middleware can correlate HTTP requests with query execution (O1).
@@ -292,7 +303,7 @@ func respondData(w http.ResponseWriter, httpStatus int, data interface{}, opts .
 	}
 	envelope := map[string]interface{}{"data": data}
 	// Only include meta if it has content.
-	if meta.TookMS != nil || meta.Scanned != nil || meta.QueryID != "" || meta.SegmentsErrored != nil || meta.SearchStats != nil || len(meta.Warnings) > 0 {
+	if meta.TookMS != nil || meta.Scanned != nil || meta.QueryID != "" || meta.SegmentsErrored != nil || meta.SearchStats != nil || len(meta.Warnings) > 0 || len(meta.Lints) > 0 {
 		envelope["meta"] = meta
 	}
 	// Expose query_id as a response header for logging middleware correlation.

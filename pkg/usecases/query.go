@@ -855,6 +855,10 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 	if plan.Hints != nil && len(plan.Hints.Warnings) > 0 {
 		warnings = plan.Hints.Warnings
 	}
+	lints, err := spl2.LintProgram(plan.RawQuery, plan.Program)
+	if err != nil {
+		return nil, err
+	}
 
 	switch req.Mode {
 	case QueryModeSync:
@@ -868,6 +872,7 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 		case <-job.Done():
 			r := buildSyncResult(job, limit, req.Offset)
 			r.Warnings = warnings
+			r.Lints = lints
 			return r, nil
 		case <-timer.C:
 			// Promoted to async — detach from HTTP context so job survives disconnect.
@@ -885,6 +890,7 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 		case <-job.Done():
 			r := buildSyncResult(job, limit, req.Offset)
 			r.Warnings = warnings
+			r.Lints = lints
 			return r, nil
 		case <-timer.C:
 			// Promoted to async — detach from HTTP context so job survives disconnect.

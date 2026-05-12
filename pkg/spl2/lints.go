@@ -4,9 +4,9 @@ import "strings"
 
 // QueryLint is a post-parse warning for syntactically valid queries.
 type QueryLint struct {
-	Code     string
-	Message  string
-	Position int
+	Code     string `json:"code"`
+	Message  string `json:"message"`
+	Position int    `json:"position"`
 }
 
 const (

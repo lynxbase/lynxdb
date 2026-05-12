@@ -10,6 +10,7 @@ interface APIResponse<T> {
     scanned?: number;
     query_id?: string;
     stats?: Record<string, unknown>;
+    lints?: QueryLint[];
   };
 }
 
@@ -86,6 +87,13 @@ export interface QueryStats {
   scanned: number;
   query_id?: string;
   stats?: DetailedStats & { [key: string]: unknown };
+  lints?: QueryLint[];
+}
+
+export interface QueryLint {
+  code: string;
+  message: string;
+  position: number;
 }
 
 export interface QueryResponse {
@@ -130,6 +138,7 @@ export async function executeQuery(
       scanned: json.meta?.scanned ?? 0,
       query_id: json.meta?.query_id,
       stats: json.meta?.stats,
+      lints: json.meta?.lints,
     },
   };
 }

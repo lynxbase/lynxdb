@@ -15,6 +15,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 func startTestServer(t *testing.T) (*Server, func()) {
@@ -304,6 +305,35 @@ func TestServer_IngestAndQuery(t *testing.T) {
 	}
 	if _, ok := meta["query_id"]; !ok {
 		t.Error("missing query_id in meta")
+	}
+
+	lintBody, _ := json.Marshal(map[string]interface{}{
+		"q": `FROM main | stats count`,
+	})
+	lintResp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(lintBody))
+	if err != nil {
+		t.Fatalf("POST lint query: %v", err)
+	}
+	defer lintResp.Body.Close()
+
+	if lintResp.StatusCode != 200 {
+		b, _ := io.ReadAll(lintResp.Body)
+		t.Fatalf("lint query status: %d, body: %s", lintResp.StatusCode, string(b))
+	}
+
+	var lintResult map[string]interface{}
+	json.NewDecoder(lintResp.Body).Decode(&lintResult)
+	lintMeta, _ := lintResult["meta"].(map[string]interface{})
+	if lintMeta == nil {
+		t.Fatal("missing meta in lint query response")
+	}
+	lints, _ := lintMeta["lints"].([]interface{})
+	if len(lints) != 1 {
+		t.Fatalf("meta.lints: got %#v, want one lint", lintMeta["lints"])
+	}
+	firstLint, _ := lints[0].(map[string]interface{})
+	if firstLint["code"] != spl2.LintCountWithoutParens {
+		t.Fatalf("meta.lints[0].code: got %v, want %s", firstLint["code"], spl2.LintCountWithoutParens)
 	}
 }
 
