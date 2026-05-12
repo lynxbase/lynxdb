@@ -1793,6 +1793,54 @@ func TestQuery_MissingQuery(t *testing.T) {
 	}
 }
 
+func TestQuery_LintOutputControls(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	query := `FROM main | search NOT NOT NOT NOT NOT NOT *error OR timeout AND fatal | where _raw = "panic" | fields order | sort status asc, duration_ms desc`
+	post := func(body map[string]interface{}) map[string]interface{} {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("POST: %v", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status: got %d, want 200, body: %s", resp.StatusCode, string(b))
+		}
+
+		var result map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&result)
+		meta, _ := result["meta"].(map[string]interface{})
+		if meta == nil {
+			t.Fatal("missing meta")
+		}
+
+		return meta
+	}
+
+	defaultMeta := post(map[string]interface{}{"q": query})
+	defaultLints, _ := defaultMeta["lints"].([]interface{})
+	if len(defaultLints) != 5 {
+		t.Fatalf("default meta.lints: got %d, want 5 (%#v)", len(defaultLints), defaultMeta["lints"])
+	}
+
+	limitedMeta := post(map[string]interface{}{"q": query, "lint_limit": 2})
+	limitedLints, _ := limitedMeta["lints"].([]interface{})
+	if len(limitedLints) != 2 {
+		t.Fatalf("limited meta.lints: got %d, want 2 (%#v)", len(limitedLints), limitedMeta["lints"])
+	}
+
+	fullMeta := post(map[string]interface{}{"q": query, "lint_full": true})
+	fullLints, _ := fullMeta["lints"].([]interface{})
+	if len(fullLints) <= len(defaultLints) {
+		t.Fatalf("full meta.lints: got %d, want more than default %d", len(fullLints), len(defaultLints))
+	}
+}
+
 func TestErrorFormat(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

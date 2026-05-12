@@ -153,15 +153,17 @@ const (
 
 // QueryRequest is the request body for POST /api/v1/query.
 type QueryRequest struct {
-	Q       string   `json:"q"`
-	From    string   `json:"from,omitempty"`
-	To      string   `json:"to,omitempty"`
-	Limit   int      `json:"limit,omitempty"`
-	Offset  int      `json:"offset,omitempty"`
-	Format  string   `json:"format,omitempty"`
-	Wait    *float64 `json:"wait,omitempty"`
-	Profile string   `json:"profile,omitempty"` // "basic", "full", "trace"
-	Lint    *bool    `json:"lint,omitempty"`    // false disables advisory query lints
+	Q         string   `json:"q"`
+	From      string   `json:"from,omitempty"`
+	To        string   `json:"to,omitempty"`
+	Limit     int      `json:"limit,omitempty"`
+	Offset    int      `json:"offset,omitempty"`
+	Format    string   `json:"format,omitempty"`
+	Wait      *float64 `json:"wait,omitempty"`
+	Profile   string   `json:"profile,omitempty"`    // "basic", "full", "trace"
+	Lint      *bool    `json:"lint,omitempty"`       // false disables advisory query lints
+	LintLimit int      `json:"lint_limit,omitempty"` // max lints to return; default 5
+	LintFull  bool     `json:"lint_full,omitempty"`  // true returns all advisory lints
 }
 
 // QueryResult is the polymorphic response from Query().

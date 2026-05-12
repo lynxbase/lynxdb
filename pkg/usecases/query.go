@@ -945,6 +945,7 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 		if lintErr != nil {
 			lints, _ = spl2.LintProgram(plan.RawQuery, plan.Program)
 		}
+		lints = applyLintOutputLimit(lints, req.LintLimit, req.LintFull)
 	}
 	job.SetAdvisoryMetadata(warnings, lints, req.Rewrites)
 
@@ -1209,6 +1210,22 @@ func buildSyncResult(job *server.SearchJob, limit, offset int) *SubmitResult {
 		Stats:      snap.Stats,
 		QueryID:    snap.ID,
 	}
+}
+
+const defaultLintOutputLimit = 5
+
+func applyLintOutputLimit(lints []spl2.QueryLint, limit int, full bool) []spl2.QueryLint {
+	if full || len(lints) == 0 {
+		return lints
+	}
+	if limit <= 0 {
+		limit = defaultLintOutputLimit
+	}
+	if len(lints) <= limit {
+		return lints
+	}
+
+	return append([]spl2.QueryLint(nil), lints[:limit]...)
 }
 
 func buildJobHandle(job *server.SearchJob) *SubmitResult {

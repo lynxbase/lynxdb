@@ -10,11 +10,13 @@ type QueryRequest struct {
 	Latest    string            `json:"latest"`   // legacy alias for to
 	Limit     int               `json:"limit"`
 	Offset    int               `json:"offset"`
-	Format    string            `json:"format"`              // json (default)
-	Wait      *float64          `json:"wait"`                // nil=sync, 0=async, N=hybrid
-	Profile   string            `json:"profile"`             // "basic", "full", "trace" — enables profiling in response
-	Lint      *bool             `json:"lint,omitempty"`      // false disables advisory query lints
-	Variables map[string]string `json:"variables,omitempty"` // template variable substitution
+	Format    string            `json:"format"`               // json (default)
+	Wait      *float64          `json:"wait"`                 // nil=sync, 0=async, N=hybrid
+	Profile   string            `json:"profile"`              // "basic", "full", "trace" — enables profiling in response
+	Lint      *bool             `json:"lint,omitempty"`       // false disables advisory query lints
+	LintLimit int               `json:"lint_limit,omitempty"` // max lints to return; default 5
+	LintFull  bool              `json:"lint_full,omitempty"`  // true returns all advisory lints
+	Variables map[string]string `json:"variables,omitempty"`  // template variable substitution
 }
 
 func (r *QueryRequest) effectiveQuery() string {

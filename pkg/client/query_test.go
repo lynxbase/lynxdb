@@ -66,6 +66,12 @@ func TestQuery_LintOptionAndMetadata(t *testing.T) {
 		if req.Lint == nil || *req.Lint {
 			t.Fatalf("Lint = %v, want pointer to false", req.Lint)
 		}
+		if req.LintLimit != 2 {
+			t.Fatalf("LintLimit = %d, want 2", req.LintLimit)
+		}
+		if !req.LintFull {
+			t.Fatal("LintFull = false, want true")
+		}
 
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"data": map[string]interface{}{
@@ -85,7 +91,7 @@ func TestQuery_LintOptionAndMetadata(t *testing.T) {
 
 	lint := false
 	c := NewClient(WithBaseURL(srv.URL))
-	result, err := c.Query(context.Background(), QueryRequest{Q: "error", Lint: &lint})
+	result, err := c.Query(context.Background(), QueryRequest{Q: "error", Lint: &lint, LintLimit: 2, LintFull: true})
 	if err != nil {
 		t.Fatal(err)
 	}

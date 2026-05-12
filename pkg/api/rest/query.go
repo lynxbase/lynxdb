@@ -118,16 +118,18 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 	limit := clampLimit(req.Limit, queryCfg)
 
 	result, err := s.queryService.Submit(r.Context(), usecases.SubmitRequest{
-		Query:    normalizedQuery,
-		From:     req.effectiveFrom(),
-		To:       req.effectiveTo(),
-		Limit:    limit,
-		Offset:   req.Offset,
-		Mode:     mode,
-		Wait:     wait,
-		Profile:  req.Profile,
-		NoLint:   req.Lint != nil && !*req.Lint,
-		Rewrites: rewrites,
+		Query:     normalizedQuery,
+		From:      req.effectiveFrom(),
+		To:        req.effectiveTo(),
+		Limit:     limit,
+		Offset:    req.Offset,
+		Mode:      mode,
+		Wait:      wait,
+		Profile:   req.Profile,
+		NoLint:    req.Lint != nil && !*req.Lint,
+		LintLimit: req.LintLimit,
+		LintFull:  req.LintFull,
+		Rewrites:  rewrites,
 	})
 	if err != nil {
 		handlePlanError(w, err)
