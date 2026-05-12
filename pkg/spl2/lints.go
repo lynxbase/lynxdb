@@ -12,6 +12,7 @@ type QueryLint struct {
 const (
 	LintLeadingWildcard    = "L001"
 	LintDefaultSource      = "L002"
+	LintIndexRewrite       = "L003"
 	LintCountWithoutParens = "L013"
 	LintMixedSearchAndOr   = "L030"
 )
@@ -40,6 +41,7 @@ func LintProgram(input string, prog *Program) ([]QueryLint, error) {
 
 	lints := lintDefaultSource(prog, tokens)
 	lints = append(lints, lintLeadingWildcards(prog)...)
+	lints = append(lints, lintIndexRewrite(tokens)...)
 	lints = append(lints, lintCountWithoutParens(tokens)...)
 	lints = append(lints, lintMixedSearchAndOr(input, tokens)...)
 
@@ -61,6 +63,20 @@ func lintDefaultSource(prog *Program, tokens []Token) []QueryLint {
 		Message:  "Default source `main` is used; add `FROM` for clarity",
 		Position: pos,
 	}}
+}
+
+func lintIndexRewrite(tokens []Token) []QueryLint {
+	for i := 0; i+1 < len(tokens); i++ {
+		if tokens[i].Type == TokenIndex && tokens[i+1].Type == TokenEq {
+			return []QueryLint{{
+				Code:     LintIndexRewrite,
+				Message:  "`index=X` -> `FROM X`; explicit form recommended",
+				Position: tokens[i].Pos,
+			}}
+		}
+	}
+
+	return nil
 }
 
 func lintLeadingWildcards(prog *Program) []QueryLint {
