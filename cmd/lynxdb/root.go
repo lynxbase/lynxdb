@@ -158,7 +158,7 @@ func runRootCommand(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 && !isKnownSubcommand(cmd, args[0]) {
 		query := strings.Join(args, " ")
 		if isStdinPiped() {
-			return runQueryStdin(query, "", "", "", false, "", "", false)
+			return runQueryStdin(query, "", "", "", false, "", "", false, false)
 		}
 
 		return fmt.Errorf("bare query requires piped stdin. Use: cat file | lynxdb '%s'", query)
@@ -166,7 +166,7 @@ func runRootCommand(cmd *cobra.Command, args []string) error {
 
 	if isStdinPiped() {
 		// Bare pipe mode: cat file | lynxdb → auto-detect and show first 10 events.
-		return runQueryStdin("| take 10", "", "", "", false, "", "", false)
+		return runQueryStdin("| take 10", "", "", "", false, "", "", false, false)
 	}
 
 	return runWelcome(cmd, args)

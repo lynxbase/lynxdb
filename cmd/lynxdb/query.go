@@ -38,23 +38,24 @@ func init() {
 
 func newQueryCmd() *cobra.Command {
 	var (
-		since       string
-		from        string
-		to          string
-		file        string
-		sourcetype  string
-		source      string
-		outputFile  string
-		timeout     string
-		analyze     string
-		maxMemory   string
-		failEmpty   bool
-		copyFlag    bool
-		explain     bool
-		rawMode     bool
-		noLint      bool
-		queriesFile string
-		queryParams []string
+		since         string
+		from          string
+		to            string
+		file          string
+		sourcetype    string
+		source        string
+		outputFile    string
+		timeout       string
+		analyze       string
+		maxMemory     string
+		failEmpty     bool
+		copyFlag      bool
+		explain       bool
+		rawMode       bool
+		noLint        bool
+		showRewritten bool
+		queriesFile   string
+		queryParams   []string
 	)
 
 	cmd := &cobra.Command{
@@ -77,6 +78,9 @@ func newQueryCmd() *cobra.Command {
 			}
 			if queriesFile != "" && explain {
 				return fmt.Errorf("--queries-file cannot be used with --explain")
+			}
+			if queriesFile != "" && showRewritten {
+				return fmt.Errorf("--queries-file cannot be used with --show-rewritten")
 			}
 			query := strings.Join(args, " ")
 			if len(queryParams) > 0 {
@@ -107,15 +111,15 @@ func newQueryCmd() *cobra.Command {
 				return fmt.Errorf("--copy is only supported in server mode")
 			}
 			if file != "" {
-				return runQueryFile(query, file, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode)
+				return runQueryFile(query, file, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode, showRewritten)
 			}
 			if stdinPiped {
-				return runQueryStdin(query, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode)
+				return runQueryStdin(query, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode, showRewritten)
 			}
 
 			SaveLastQuery(query, since, from, to)
 
-			err := runQueryServer(query, since, from, to, timeout, failEmpty, analyze, noLint)
+			err := runQueryServer(query, since, from, to, timeout, failEmpty, analyze, noLint, showRewritten)
 			if err != nil {
 				return err
 			}
@@ -145,6 +149,7 @@ func newQueryCmd() *cobra.Command {
 	f.BoolVar(&explain, "explain", false, "Show query plan without executing")
 	f.BoolVar(&rawMode, "raw", false, "Disable auto-format detection (treat input as plain text)")
 	f.BoolVar(&noLint, "no-lint", false, "Disable advisory query lints in server mode")
+	f.BoolVar(&showRewritten, "show-rewritten", false, "Show normalized query rewrites")
 	f.StringArrayVarP(&queryParams, "param", "D", nil, "Set query parameter: --param name=value")
 
 	// Allow bare --analyze (no value) to default to "basic".
@@ -404,7 +409,7 @@ func parseMaxMemory(maxMemory string) (int64, error) {
 	return int64(b), nil
 }
 
-func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode bool) error {
+func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode, showRewritten bool) error {
 	matches, err := filepath.Glob(file)
 	if err != nil {
 		return fmt.Errorf("invalid file pattern: %w", err)
@@ -435,7 +440,8 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 		}
 	}
 
-	normalizedQuery := ensureFromClause(query)
+	normalizedQuery, rewrites := spl2.NormalizeQueryWithRewrites(query)
+	printSPL2QueryRewrites(showRewritten, rewrites)
 
 	if err := spl2.CheckUnsupportedCommands(normalizedQuery); err != nil {
 		return err
@@ -493,7 +499,7 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 	return printLocalResults(result.Rows, qstats, outputFile, analyze)
 }
 
-func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode bool) error {
+func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode, showRewritten bool) error {
 	var memLimit int64
 	if maxMemory != "" {
 		b, err := config.ParseByteSize(maxMemory)
@@ -522,7 +528,8 @@ func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool,
 		}
 	}
 
-	normalizedQuery := ensureFromClause(query)
+	normalizedQuery, rewrites := spl2.NormalizeQueryWithRewrites(query)
+	printSPL2QueryRewrites(showRewritten, rewrites)
 
 	if err := spl2.CheckUnsupportedCommands(normalizedQuery); err != nil {
 		return err
@@ -606,7 +613,7 @@ func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outp
 	return nil
 }
 
-func runQueryServer(query, since, from, to, timeout string, failEmpty bool, analyze string, noLint bool) error {
+func runQueryServer(query, since, from, to, timeout string, failEmpty bool, analyze string, noLint, showRewritten bool) error {
 	var earliest, latest string
 	if since != "" {
 		tr, err := timerange.FromSince(since, time.Now())
@@ -638,13 +645,13 @@ func runQueryServer(query, since, from, to, timeout string, failEmpty bool, anal
 	}
 
 	if isTTY() {
-		return doQueryTUI(ctx, query, since, earliest, latest, failEmpty, analyze, noLint)
+		return doQueryTUI(ctx, query, since, earliest, latest, failEmpty, analyze, noLint, showRewritten)
 	}
 
-	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze, noLint)
+	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze, noLint, showRewritten)
 }
 
-func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty bool, analyze string, noLint bool) error {
+func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty bool, analyze string, noLint, showRewritten bool) error {
 	start := time.Now()
 
 	result, err := apiClient().Query(ctx, client.QueryRequest{
@@ -660,11 +667,13 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 
 	// Handle async fallback (HTTP 202 → job).
 	if result.Type == client.ResultTypeJob && result.Job != nil {
+		printQueryRewrites(showRewritten, result.Meta.Rewrites)
 		return handleAsyncFallback(ctx, result.Job.JobID, failEmpty, analyze)
 	}
 
 	rows := queryResultToRows(result)
 	printQueryLints(result.Meta.Lints)
+	printQueryRewrites(showRewritten, result.Meta.Rewrites)
 	if len(rows) == 0 {
 		printEmptyResultGuidance(query, since)
 
@@ -957,6 +966,34 @@ func printQueryLints(lints []client.QueryLint) {
 		}
 		ui.Stderr.PrintWarning(false, "%s%s: %s", lint.Code, location, lint.Message)
 	}
+}
+
+func printQueryRewrites(show bool, rewrites []client.QueryRewrite) {
+	if globalQuiet || !show || len(rewrites) == 0 {
+		return
+	}
+
+	fmt.Fprintln(os.Stderr)
+	for _, rewrite := range rewrites {
+		printQueryRewrite(rewrite.Before, rewrite.After, rewrite.Reason)
+	}
+}
+
+func printSPL2QueryRewrites(show bool, rewrites []spl2.QueryRewrite) {
+	if globalQuiet || !show || len(rewrites) == 0 {
+		return
+	}
+
+	fmt.Fprintln(os.Stderr)
+	for _, rewrite := range rewrites {
+		printQueryRewrite(rewrite.Before, rewrite.After, rewrite.Reason)
+	}
+}
+
+func printQueryRewrite(before, after, reason string) {
+	fmt.Fprintf(os.Stderr, "rewrite (%s):\n", reason)
+	fmt.Fprintf(os.Stderr, "  before: %s\n", before)
+	fmt.Fprintf(os.Stderr, "  after:  %s\n", after)
 }
 
 // suggestGlimpse returns a hint string suggesting | glimpse for zero-result queries.

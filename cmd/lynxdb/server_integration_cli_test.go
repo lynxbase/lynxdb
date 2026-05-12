@@ -77,6 +77,27 @@ func TestServerQuery_MultiIndex_DefaultIndex_IsMain(t *testing.T) {
 	}
 }
 
+func TestServerQuery_ShowRewritten_PrintsRewriteMetadata(t *testing.T) {
+	baseURL := newTestServer(t)
+	ingestTestData(t, baseURL, "main", "testdata/logs/access.log")
+
+	stdout, stderr, err := runCmd(t, "--server", baseURL, "query", "--format", "json", "--show-rewritten",
+		"level=ERROR | stats count")
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+
+	if got := jsonCount(t, stdout); got != 294 {
+		t.Fatalf("count = %d, want 294", got)
+	}
+	if !strings.Contains(stderr, "rewrite (freehand-search):") {
+		t.Fatalf("stderr missing rewrite reason: %s", stderr)
+	}
+	if !strings.Contains(stderr, "after:  FROM main | search level=ERROR | stats count") {
+		t.Fatalf("stderr missing rewritten query: %s", stderr)
+	}
+}
+
 func TestServerQuery_WHERE_FilterByLevel_CorrectCount(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 

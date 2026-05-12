@@ -17,7 +17,10 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
-type jobCreatedMsg string
+type jobCreatedMsg struct {
+	jobID string
+	meta  client.Meta
+}
 type pollTickMsg struct{}
 
 type progressMsg struct {
@@ -42,15 +45,16 @@ type searchDoneMsg struct {
 type searchErrMsg struct{ err error }
 
 type searchModel struct {
-	spinner   spinner.Model
-	client    *client.Client
-	query     string
-	earliest  string
-	latest    string
-	noLint    bool
-	jobID     string
-	startTime time.Time
-	width     int
+	spinner       spinner.Model
+	client        *client.Client
+	query         string
+	earliest      string
+	latest        string
+	noLint        bool
+	showRewritten bool
+	jobID         string
+	startTime     time.Time
+	width         int
 
 	rows         []map[string]interface{}
 	rowsReturned int64
@@ -76,20 +80,21 @@ type searchModel struct {
 	err      error // original error for type-aware rendering in Execute()
 }
 
-func newSearchModel(c *client.Client, query, earliest, latest string, noLint bool) searchModel {
+func newSearchModel(c *client.Client, query, earliest, latest string, noLint, showRewritten bool) searchModel {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = ui.Stdout.Accent
 
 	return searchModel{
-		spinner:   s,
-		client:    c,
-		query:     query,
-		earliest:  earliest,
-		latest:    latest,
-		noLint:    noLint,
-		startTime: time.Now(),
-		width:     120,
+		spinner:       s,
+		client:        c,
+		query:         query,
+		earliest:      earliest,
+		latest:        latest,
+		noLint:        noLint,
+		showRewritten: showRewritten,
+		startTime:     time.Now(),
+		width:         120,
 	}
 }
 
@@ -118,7 +123,7 @@ func submitJobCmd(c *client.Client, query, earliest, latest string, noLint bool)
 			return searchErrMsg{fmt.Errorf("missing job_id in response")}
 		}
 
-		return jobCreatedMsg(result.Job.JobID)
+		return jobCreatedMsg{jobID: result.Job.JobID, meta: result.Meta}
 	}
 }
 
@@ -230,7 +235,8 @@ func (m searchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, cmd
 	case jobCreatedMsg:
-		m.jobID = string(msg)
+		m.jobID = msg.jobID
+		m.serverMeta = msg.meta
 		m.pollCount = 0
 
 		return m, pollJobCmd(m.client, m.jobID, m.pollCount)
@@ -270,6 +276,9 @@ func (m searchModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *searchModel) parseResults(rows []map[string]interface{}, meta client.Meta) {
+	if len(meta.Rewrites) == 0 && len(m.serverMeta.Rewrites) > 0 {
+		meta.Rewrites = m.serverMeta.Rewrites
+	}
 	m.rows = rows
 	m.rowsReturned = int64(len(rows))
 	m.serverMeta = meta
@@ -378,9 +387,9 @@ func (m searchModel) renderProgress() string {
 // doQueryTUI runs a TUI-mode query with a progress spinner on stderr and
 // formatted results on stdout. This allows all --format values (json, csv,
 // table, etc.) to work correctly while still showing interactive progress.
-func doQueryTUI(_ context.Context, query, since, earliest, latest string, failEmpty bool, analyze string, noLint bool) error {
+func doQueryTUI(_ context.Context, query, since, earliest, latest string, failEmpty bool, analyze string, noLint, showRewritten bool) error {
 	c := apiClient()
-	m := newSearchModel(c, query, earliest, latest, noLint)
+	m := newSearchModel(c, query, earliest, latest, noLint, showRewritten)
 
 	p := tea.NewProgram(m, tea.WithOutput(os.Stderr))
 
@@ -408,6 +417,7 @@ func doQueryTUI(_ context.Context, query, since, earliest, latest string, failEm
 	rows := fm.rows
 	elapsed := time.Since(fm.startTime).Round(time.Millisecond)
 	printQueryLints(fm.serverMeta.Lints)
+	printQueryRewrites(fm.showRewritten, fm.serverMeta.Rewrites)
 
 	if len(rows) == 0 {
 		printEmptyResultGuidance(query, since)
