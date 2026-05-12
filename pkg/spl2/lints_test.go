@@ -107,6 +107,57 @@ func TestLintQuery_DefaultSource(t *testing.T) {
 	}
 }
 
+func TestLintQuery_LeadingWildcard(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantCodes []string
+	}{
+		{
+			name:      "search keyword",
+			query:     `from app | search "*error"`,
+			wantCodes: []string{LintLeadingWildcard},
+		},
+		{
+			name:      "search comparison",
+			query:     `from app | search host=*web`,
+			wantCodes: []string{LintLeadingWildcard},
+		},
+		{
+			name:      "search in list",
+			query:     `from app | search host IN (api, *web)`,
+			wantCodes: []string{LintLeadingWildcard},
+		},
+		{
+			name:      "where like",
+			query:     `from app | where host like "*web"`,
+			wantCodes: []string{LintLeadingWildcard},
+		},
+		{
+			name:      "anchored wildcard",
+			query:     `from app | search host=web* | where path like "api*"`,
+			wantCodes: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lints, err := LintQuery(tt.query)
+			if err != nil {
+				t.Fatalf("LintQuery: %v", err)
+			}
+			if len(lints) != len(tt.wantCodes) {
+				t.Fatalf("lints: got %+v, want codes %v", lints, tt.wantCodes)
+			}
+			for i, want := range tt.wantCodes {
+				if lints[i].Code != want {
+					t.Fatalf("lints[%d].Code: got %q, want %q", i, lints[i].Code, want)
+				}
+			}
+		})
+	}
+}
+
 func TestLintProgram_RequiresSuccessfulParse(t *testing.T) {
 	_, err := LintQuery(`from app | stats count(`)
 	if err == nil {

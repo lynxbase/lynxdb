@@ -29,7 +29,7 @@ Official Splunk compatibility checked:
 | Source selectors | `FROM`, `INDEX`, lists, globs, `*`, CTE refs, and compact time ranges parse | Negated source globs such as `FROM logs*,!logs-debug*` are not represented in `SourceClause` or planner selectors. |
 | Time modifiers | `earliest`, `latest`, `_index_earliest`, `_index_latest` compatibility is partly normalized | `_index_*` planning and diagnostics need coverage against the RFC rewrite contract. |
 | Rewrite transparency | `NormalizeQuery` rewrites source-less and Splunk-style forms | Rewrites are not yet recorded as structured `Rewrite{Before, After, Reason}` through CLI/TUI/REST metadata. |
-| Lints | Compatibility hints, parse suggestions, and post-parse `L002`/`L013`/`L030` exist | Most RFC lint catalog entries `L001` through `L039` are not implemented yet. |
+| Lints | Compatibility hints, parse suggestions, and post-parse `L001`/`L002`/`L013`/`L030` exist | Most RFC lint catalog entries `L001` through `L039` are not implemented yet. |
 | Quoted identifier canon | Single-quoted identifiers now parse as canonical names and double-quoted names remain accepted in legacy positions | Compatibility lint `L012` for double-quoted field names is not implemented yet. |
 | Function catalog | Many eval and aggregate functions parse and execute | RFC aggregate/eval catalog needs a parser, VM, and editor cross-check for missing functions and aliases. |
 | Command catalog | Native SPL2/LynxFlow commands plus several helpers parse | SPL compatibility commands such as `chart`, `fieldformat`, `regex`, `replace`, `reverse`, `mvexpand`, `makeresults`, `union`, and optional capability commands remain incomplete. |

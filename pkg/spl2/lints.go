@@ -10,6 +10,7 @@ type QueryLint struct {
 }
 
 const (
+	LintLeadingWildcard    = "L001"
 	LintDefaultSource      = "L002"
 	LintCountWithoutParens = "L013"
 	LintMixedSearchAndOr   = "L030"
@@ -38,6 +39,7 @@ func LintProgram(input string, prog *Program) ([]QueryLint, error) {
 	}
 
 	lints := lintDefaultSource(prog, tokens)
+	lints = append(lints, lintLeadingWildcards(prog)...)
 	lints = append(lints, lintCountWithoutParens(tokens)...)
 	lints = append(lints, lintMixedSearchAndOr(input, tokens)...)
 
@@ -59,6 +61,134 @@ func lintDefaultSource(prog *Program, tokens []Token) []QueryLint {
 		Message:  "Default source `main` is used; add `FROM` for clarity",
 		Position: pos,
 	}}
+}
+
+func lintLeadingWildcards(prog *Program) []QueryLint {
+	if prog == nil {
+		return nil
+	}
+
+	var lints []QueryLint
+	for _, ds := range prog.Datasets {
+		lints = append(lints, lintLeadingWildcardsInQuery(ds.Query)...)
+	}
+	lints = append(lints, lintLeadingWildcardsInQuery(prog.Main)...)
+
+	return lints
+}
+
+func lintLeadingWildcardsInQuery(q *Query) []QueryLint {
+	if q == nil {
+		return nil
+	}
+
+	var lints []QueryLint
+	for _, cmd := range q.Commands {
+		switch c := cmd.(type) {
+		case *SearchCommand:
+			if c.Expression != nil {
+				lints = append(lints, lintLeadingWildcardsInSearch(c.Expression)...)
+			}
+		case *WhereCommand:
+			lints = append(lints, lintLeadingWildcardsInExpr(c.Expr)...)
+		case *JoinCommand:
+			lints = append(lints, lintLeadingWildcardsInQuery(c.Subquery)...)
+		case *AppendCommand:
+			lints = append(lints, lintLeadingWildcardsInQuery(c.Subquery)...)
+		case *MultisearchCommand:
+			for _, sub := range c.Searches {
+				lints = append(lints, lintLeadingWildcardsInQuery(sub)...)
+			}
+		}
+	}
+
+	return lints
+}
+
+func lintLeadingWildcardsInSearch(expr SearchExpr) []QueryLint {
+	switch e := expr.(type) {
+	case *SearchAndExpr:
+		lints := lintLeadingWildcardsInSearch(e.Left)
+		return append(lints, lintLeadingWildcardsInSearch(e.Right)...)
+	case *SearchOrExpr:
+		lints := lintLeadingWildcardsInSearch(e.Left)
+		return append(lints, lintLeadingWildcardsInSearch(e.Right)...)
+	case *SearchNotExpr:
+		return lintLeadingWildcardsInSearch(e.Operand)
+	case *SearchKeywordExpr:
+		if strings.HasPrefix(e.Value, "*") {
+			return []QueryLint{leadingWildcardLint()}
+		}
+	case *SearchCompareExpr:
+		if strings.HasPrefix(e.Value, "*") {
+			return []QueryLint{leadingWildcardLint()}
+		}
+	case *SearchInExpr:
+		var lints []QueryLint
+		for _, value := range e.Values {
+			if strings.HasPrefix(value.Value, "*") {
+				lints = append(lints, leadingWildcardLint())
+			}
+		}
+		return lints
+	}
+
+	return nil
+}
+
+func lintLeadingWildcardsInExpr(expr Expr) []QueryLint {
+	switch e := expr.(type) {
+	case *BinaryExpr:
+		lints := lintLeadingWildcardsInExpr(e.Left)
+		return append(lints, lintLeadingWildcardsInExpr(e.Right)...)
+	case *NotExpr:
+		return lintLeadingWildcardsInExpr(e.Expr)
+	case *CompareExpr:
+		var lints []QueryLint
+		lints = append(lints, lintLeadingWildcardsInExpr(e.Left)...)
+		lints = append(lints, lintLeadingWildcardsInExpr(e.Right)...)
+		if strings.EqualFold(e.Op, "like") && exprHasLeadingWildcard(e.Right) {
+			lints = append(lints, leadingWildcardLint())
+		}
+		return lints
+	case *InExpr:
+		var lints []QueryLint
+		lints = append(lints, lintLeadingWildcardsInExpr(e.Field)...)
+		for _, value := range e.Values {
+			lints = append(lints, lintLeadingWildcardsInExpr(value)...)
+		}
+		return lints
+	case *ArithExpr:
+		lints := lintLeadingWildcardsInExpr(e.Left)
+		return append(lints, lintLeadingWildcardsInExpr(e.Right)...)
+	case *FuncCallExpr:
+		var lints []QueryLint
+		for _, arg := range e.Args {
+			lints = append(lints, lintLeadingWildcardsInExpr(arg)...)
+		}
+		return lints
+	}
+
+	return nil
+}
+
+func exprHasLeadingWildcard(expr Expr) bool {
+	switch e := expr.(type) {
+	case *LiteralExpr:
+		return strings.HasPrefix(e.Value, "*")
+	case *GlobExpr:
+		return strings.HasPrefix(e.Pattern, "*")
+	default:
+		return false
+	}
+}
+
+func leadingWildcardLint() QueryLint {
+	return QueryLint{
+		Code:     LintLeadingWildcard,
+		Message:  "Leading wildcard slows the query; consider an anchor",
+		Position: 0,
+	}
 }
 
 func lintCountWithoutParens(tokens []Token) []QueryLint {
