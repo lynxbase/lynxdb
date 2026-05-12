@@ -1372,6 +1372,9 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		return NewUnrollIteratorWithLimit(child, c.AllFields(), qc.batchSize, c.Limit), nil
 
 	case *spl2.MakeresultsCommand:
+		if c.Format != "" || c.Data != "" {
+			return nil, fmt.Errorf("makeresults format/data is not implemented")
+		}
 		count := c.Count
 		if count < 0 {
 			count = 0
@@ -1380,6 +1383,18 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		rows := make([]map[string]event.Value, count)
 		for i := range rows {
 			rows[i] = map[string]event.Value{"_time": event.TimestampValue(now)}
+			if c.Annotate {
+				server := c.SplunkServer
+				if server == "" {
+					server = "local"
+				}
+				rows[i]["_raw"] = event.NullValue()
+				rows[i]["host"] = event.NullValue()
+				rows[i]["source"] = event.NullValue()
+				rows[i]["sourcetype"] = event.NullValue()
+				rows[i]["splunk_server"] = event.StringValue(server)
+				rows[i]["splunk_server_group"] = event.NullValue()
+			}
 		}
 
 		return NewRowScanIterator(rows, qc.batchSize), nil

@@ -1002,18 +1002,29 @@ func (c *UnrollCommand) String() string {
 	return fmt.Sprintf("unroll field=%s", c.Field)
 }
 
-// MakeresultsCommand represents: | makeresults [count=<n>].
+// MakeresultsCommand represents: | makeresults [count=<n>] [annotate=<bool>].
 type MakeresultsCommand struct {
-	Count int
+	Count              int
+	Annotate           bool
+	SplunkServer       string
+	SplunkServerGroups []string
+	Format             string
+	Data               string
 }
 
 func (*MakeresultsCommand) commandNode() {}
 func (c *MakeresultsCommand) String() string {
-	if c.Count == 1 {
-		return "makeresults"
+	parts := []string{"makeresults"}
+	if c.Count != 1 {
+		parts = append(parts, fmt.Sprintf("count=%d", c.Count))
 	}
-
-	return fmt.Sprintf("makeresults count=%d", c.Count)
+	if c.Annotate {
+		parts = append(parts, "annotate=true")
+	}
+	if c.Format != "" {
+		parts = append(parts, fmt.Sprintf("format=%s", c.Format))
+	}
+	return joinStrings(parts, " ")
 }
 
 // NomvCommand represents: | nomv <field>.

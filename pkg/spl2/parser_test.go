@@ -1861,13 +1861,19 @@ func TestParse_ExpandCommand(t *testing.T) {
 
 func TestParse_MakeresultsCommand(t *testing.T) {
 	tests := []struct {
-		name  string
-		query string
-		want  int
+		name         string
+		query        string
+		want         int
+		wantAnnotate bool
+		wantServer   string
+		wantFormat   string
+		wantData     string
 	}{
 		{name: "default", query: `| makeresults`, want: 1},
 		{name: "count option", query: `| makeresults count=3`, want: 3},
 		{name: "positional count", query: `| makeresults 4`, want: 4},
+		{name: "annotate option", query: `| makeresults count=2 annotate=true splunk_server=local`, want: 2, wantAnnotate: true, wantServer: "local"},
+		{name: "inline data options", query: `| makeresults format=json data="[{\"name\":\"Ada\"}]"`, want: 1, wantFormat: "json", wantData: `[{"name":"Ada"}]`},
 	}
 
 	for _, tc := range tests {
@@ -1882,6 +1888,18 @@ func TestParse_MakeresultsCommand(t *testing.T) {
 			}
 			if cmd.Count != tc.want {
 				t.Errorf("count: got %d, want %d", cmd.Count, tc.want)
+			}
+			if cmd.Annotate != tc.wantAnnotate {
+				t.Errorf("annotate: got %v, want %v", cmd.Annotate, tc.wantAnnotate)
+			}
+			if cmd.SplunkServer != tc.wantServer {
+				t.Errorf("splunk_server: got %q, want %q", cmd.SplunkServer, tc.wantServer)
+			}
+			if cmd.Format != tc.wantFormat {
+				t.Errorf("format: got %q, want %q", cmd.Format, tc.wantFormat)
+			}
+			if cmd.Data != tc.wantData {
+				t.Errorf("data: got %q, want %q", cmd.Data, tc.wantData)
 			}
 		})
 	}

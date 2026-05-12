@@ -4308,7 +4308,8 @@ func (p *Parser) parseLimitOption(command string) (int, error) {
 }
 
 // parseMakeresults parses SPL/SPL2 compatibility forms:
-// makeresults, makeresults count=<n>, and SPL2 positional makeresults <n>.
+// makeresults, makeresults count=<n>, SPL2 positional makeresults <n>, and
+// supported Splunk options such as annotate=<bool>.
 func (p *Parser) parseMakeresults() (*MakeresultsCommand, error) {
 	p.advance() // consume "makeresults"
 
@@ -4320,24 +4321,87 @@ func (p *Parser) parseMakeresults() (*MakeresultsCommand, error) {
 		}
 		cmd.Count = count
 
-		return cmd, nil
 	}
 
-	if p.peek().Type == TokenIdent && strings.EqualFold(p.peek().Literal, "count") && p.peekAt(1).Type == TokenEq {
-		p.advance() // consume "count"
+	for p.peek().Type != TokenPipe && p.peek().Type != TokenEOF && p.peek().Type != TokenRBracket {
+		if !isIdentLike(p.peek().Type) || p.peekAt(1).Type != TokenEq {
+			return nil, fmt.Errorf("spl2: makeresults expects option=value, got %q", p.peek().Literal)
+		}
+		name := strings.ToLower(p.advance().Literal)
 		p.advance() // consume "="
-		tok, err := p.expect(TokenNumber)
-		if err != nil {
-			return nil, fmt.Errorf("spl2: makeresults count requires a number: %w", err)
+		switch name {
+		case "count":
+			tok, err := p.expect(TokenNumber)
+			if err != nil {
+				return nil, fmt.Errorf("spl2: makeresults count requires a number: %w", err)
+			}
+			count, err := parseNonNegativeInt(tok.Literal, "makeresults count")
+			if err != nil {
+				return nil, err
+			}
+			cmd.Count = count
+		case "annotate":
+			value, err := p.parseBoolOption("makeresults annotate")
+			if err != nil {
+				return nil, err
+			}
+			cmd.Annotate = value
+		case "splunk_server":
+			value, err := p.parseMakeresultsOptionValue(name)
+			if err != nil {
+				return nil, err
+			}
+			cmd.SplunkServer = value
+		case "splunk_server_group":
+			value, err := p.parseMakeresultsOptionValue(name)
+			if err != nil {
+				return nil, err
+			}
+			cmd.SplunkServerGroups = append(cmd.SplunkServerGroups, value)
+		case "format":
+			value, err := p.parseMakeresultsOptionValue(name)
+			if err != nil {
+				return nil, err
+			}
+			switch strings.ToLower(value) {
+			case "csv", "json":
+				cmd.Format = strings.ToLower(value)
+			default:
+				return nil, fmt.Errorf("spl2: makeresults format must be csv or json")
+			}
+		case "data":
+			value, err := p.parseMakeresultsOptionValue(name)
+			if err != nil {
+				return nil, err
+			}
+			cmd.Data = value
+		default:
+			return nil, fmt.Errorf("spl2: unsupported makeresults option %q", name)
 		}
-		count, err := parseNonNegativeInt(tok.Literal, "makeresults count")
-		if err != nil {
-			return nil, err
-		}
-		cmd.Count = count
 	}
 
 	return cmd, nil
+}
+
+func (p *Parser) parseBoolOption(name string) (bool, error) {
+	tok := p.advance()
+	switch {
+	case tok.Type == TokenTrue || strings.EqualFold(tok.Literal, "true"):
+		return true, nil
+	case tok.Type == TokenFalse || strings.EqualFold(tok.Literal, "false"):
+		return false, nil
+	default:
+		return false, fmt.Errorf("spl2: %s requires a boolean value", name)
+	}
+}
+
+func (p *Parser) parseMakeresultsOptionValue(name string) (string, error) {
+	tok := p.advance()
+	if tok.Type == TokenString || tok.Type == TokenNumber || tok.Type == TokenTrue || tok.Type == TokenFalse ||
+		isIdentLike(tok.Type) || isFormatKeyword(tok.Type) {
+		return tok.Literal, nil
+	}
+	return "", fmt.Errorf("spl2: makeresults %s requires a value", name)
 }
 
 func parseNonNegativeInt(raw, name string) (int, error) {

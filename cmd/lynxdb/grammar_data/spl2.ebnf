@@ -211,7 +211,13 @@ unpack_logfmt_cmd = "unpack_logfmt" [ "field" "=" field ] [ "prefix" "=" ident ]
 json_cmd         = "json" [ "field" "=" field ] ;
 unroll_cmd       = "unroll" [ "field" "=" ] field ;
 mvexpand_cmd     = ( "mvexpand" | "expand" ) [ "limit" "=" number ] field [ "limit" "=" number ] ;
-makeresults_cmd  = "makeresults" [ number | "count" "=" number ] ;
+makeresults_cmd  = "makeresults" [ number ]
+                   { "count" "=" number
+                   | "annotate" "=" ( "true" | "false" )
+                   | "splunk_server" "=" value
+                   | "splunk_server_group" "=" value
+                   | "format" "=" ( "csv" | "json" )
+                   | "data" "=" quoted_string } ;
 makemv_cmd       = "makemv" [ ( "delim" | "tokenizer" ) "=" quoted_string ]
                    [ "allowempty" "=" ( "true" | "false" ) ] [ "setsv" "=" ( "true" | "false" ) ] field ;
 mvcombine_cmd    = "mvcombine" [ "delim" "=" quoted_string ] field ;

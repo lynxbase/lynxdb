@@ -296,6 +296,54 @@ func TestBuildPipelineMakeresultsCommand(t *testing.T) {
 	}
 }
 
+func TestBuildPipelineMakeresultsAnnotate(t *testing.T) {
+	query, err := spl2.Parse(`| makeresults count=2 annotate=true splunk_server=local`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	iter, err := BuildPipeline(context.Background(), query, nil, 2)
+	if err != nil {
+		t.Fatalf("BuildPipeline: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer iter.Close()
+
+	rows, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("got %d rows, want 2", len(rows))
+	}
+	row := rows[0]
+	for _, field := range []string{"_raw", "host", "source", "sourcetype", "splunk_server_group"} {
+		if v, ok := row[field]; !ok || !v.IsNull() {
+			t.Fatalf("%s: got %+v, want null field", field, v)
+		}
+	}
+	if got := row["splunk_server"].AsString(); got != "local" {
+		t.Fatalf("splunk_server: got %q, want local", got)
+	}
+}
+
+func TestBuildPipelineMakeresultsFormatDataDeferred(t *testing.T) {
+	query, err := spl2.Parse(`| makeresults format=json data="[{\"name\":\"Ada\"}]"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	_, err = BuildPipeline(context.Background(), query, nil, 2)
+	if err == nil {
+		t.Fatal("expected deferred format/data error")
+	}
+	if !strings.Contains(err.Error(), "makeresults format/data is not implemented") {
+		t.Fatalf("error: got %q", err.Error())
+	}
+}
+
 func TestBuildFromSourceUntableCommand(t *testing.T) {
 	query, err := spl2.Parse(`FROM main | untable host metric value`)
 	if err != nil {

@@ -12,10 +12,12 @@ Generate temporary rows for examples, tests, and ad hoc query construction. Each
 ```spl
 | makeresults
 | makeresults count=<N>
+| makeresults count=<N> annotate=<bool>
 | makeresults <N>
+| makeresults format=<csv|json> data="<inline-data>"
 ```
 
-Omitting `count` creates one row. `count=0` creates no rows.
+Omitting `count` creates one row. `count=0` creates no rows. `annotate=true` adds Splunk-compatible metadata fields. `format` and `data` parse for compatibility but execution is deferred.
 
 ## Examples
 
@@ -28,12 +30,15 @@ Omitting `count` creates one row. `count=0` creates no rows.
 
 -- SPL2 positional count spelling
 | makeresults 3
+
+-- Add Splunk-compatible metadata fields
+| makeresults count=2 annotate=true
 ```
 
 ## Notes
 
-- LynxDB currently supports row generation and `_time` annotation.
-- Splunk `annotate`, `format`, and `data` options are not implemented yet.
+- LynxDB supports row generation, `_time`, and `annotate=true` metadata fields.
+- Splunk `format` and `data` inline datasets parse but are not implemented yet.
 
 ## See Also
 
