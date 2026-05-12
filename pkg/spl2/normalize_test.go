@@ -198,6 +198,16 @@ func TestNormalizeQuery_IndexTimeModifiers(t *testing.T) {
 			input: `_index_earliest=-1h _index_latest=now level=error`,
 			want:  `FROM main | where _indextime BETWEEN "2025-03-23T13:00:00Z" AND "2025-03-23T14:00:00Z" | search level=error`,
 		},
+		{
+			name:  "epoch earliest uses where predicate",
+			input: `index=nginx earliest=1 latest=now`,
+			want:  `FROM nginx | where _time BETWEEN "1" AND "2025-03-23T14:00:00Z"`,
+		},
+		{
+			name:  "latest only uses where predicate",
+			input: `index=nginx latest=now level=error`,
+			want:  `FROM nginx | where _time <= "2025-03-23T14:00:00Z" | search level=error`,
+		},
 	}
 
 	for _, tt := range tests {

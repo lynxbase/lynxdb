@@ -407,18 +407,21 @@ func extractValue(s string) (value, rest string) {
 func buildFromWithRest(indexName, rest string, now time.Time) string {
 	mods, rest := extractTimeModifierPrefix(rest)
 	source := "FROM " + indexName
-	if mods.earliest != "" {
+	eventTimeWhere := ""
+	if canUseCompactTimeRange(mods) {
 		source += "[" + mods.earliest
 		if mods.latest != "" {
 			source += ".." + mods.latest
 		}
 		source += "]"
+	} else {
+		eventTimeWhere = buildEventTimeWhere(mods, now)
 	}
 
-	indextimeWhere := buildIndexTimeWhere(mods, now)
+	timeWhere := combinePredicates(eventTimeWhere, buildIndexTimeWhere(mods, now))
 	if rest == "" {
-		if indextimeWhere != "" {
-			return source + " | where " + indextimeWhere
+		if timeWhere != "" {
+			return source + " | where " + timeWhere
 		}
 
 		return source
@@ -426,8 +429,8 @@ func buildFromWithRest(indexName, rest string, now time.Time) string {
 
 	// Already a pipe — attach directly: FROM idx | stats ...
 	if strings.HasPrefix(rest, "|") {
-		if indextimeWhere != "" {
-			return source + " | where " + indextimeWhere + " " + rest
+		if timeWhere != "" {
+			return source + " | where " + timeWhere + " " + rest
 		}
 
 		return source + " " + rest
@@ -436,16 +439,16 @@ func buildFromWithRest(indexName, rest string, now time.Time) string {
 	// Remaining text starts with a known command — insert pipe.
 	word := firstToken(rest)
 	if isKnownCommand(strings.ToLower(word)) {
-		if indextimeWhere != "" {
-			return source + " | where " + indextimeWhere + " | " + rest
+		if timeWhere != "" {
+			return source + " | where " + timeWhere + " | " + rest
 		}
 
 		return source + " | " + rest
 	}
 
 	// Otherwise treat remainder as implicit search terms.
-	if indextimeWhere != "" {
-		return source + " | where " + indextimeWhere + " | search " + rest
+	if timeWhere != "" {
+		return source + " | where " + timeWhere + " | search " + rest
 	}
 
 	return source + " | search " + rest
@@ -554,6 +557,20 @@ func normalizeTimeModifierValue(value string) string {
 	return value
 }
 
+func canUseCompactTimeRange(mods searchTimeModifiers) bool {
+	return mods.earliest != "" &&
+		isCompactTimeRangeStart(mods.earliest) &&
+		(mods.latest == "" || isCompactTimeRangeEnd(mods.latest))
+}
+
+func isCompactTimeRangeStart(value string) bool {
+	return strings.HasPrefix(value, "-") || strings.HasPrefix(value, "+")
+}
+
+func isCompactTimeRangeEnd(value string) bool {
+	return isCompactTimeRangeStart(value) || strings.EqualFold(value, "now") || strings.HasPrefix(value, "@")
+}
+
 func hasSearchTimeModifier(mods searchTimeModifiers) bool {
 	return mods.earliest != "" || mods.latest != "" ||
 		mods.indexEarliest != "" || mods.indexLatest != ""
@@ -572,6 +589,22 @@ func deprecatedAgoDuration(value, unit string) string {
 	return "-" + value + unit
 }
 
+func buildEventTimeWhere(mods searchTimeModifiers, now time.Time) string {
+	earliest := resolveTimeModifierForPredicate(mods.earliest, now)
+	latest := resolveTimeModifierForPredicate(mods.latest, now)
+	if earliest != "" && latest != "" {
+		return `_time BETWEEN "` + earliest + `" AND "` + latest + `"`
+	}
+	if earliest != "" {
+		return `_time >= "` + earliest + `"`
+	}
+	if latest != "" {
+		return `_time <= "` + latest + `"`
+	}
+
+	return ""
+}
+
 func buildIndexTimeWhere(mods searchTimeModifiers, now time.Time) string {
 	earliest := resolveTimeModifierForPredicate(mods.indexEarliest, now)
 	latest := resolveTimeModifierForPredicate(mods.indexLatest, now)
@@ -586,6 +619,17 @@ func buildIndexTimeWhere(mods searchTimeModifiers, now time.Time) string {
 	}
 
 	return ""
+}
+
+func combinePredicates(left, right string) string {
+	if left == "" {
+		return right
+	}
+	if right == "" {
+		return left
+	}
+
+	return left + " AND " + right
 }
 
 func resolveTimeModifierForPredicate(value string, now time.Time) string {
