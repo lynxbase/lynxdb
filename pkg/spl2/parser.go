@@ -358,6 +358,8 @@ func (p *Parser) parseCommand() ([]Command, error) {
 		return singleCmd(p.parseHead())
 	case TokenTail:
 		return singleCmd(p.parseTail())
+	case TokenReverse:
+		return singleCmd(p.parseReverse())
 	case TokenTimechart:
 		return singleCmd(p.parseTimechart())
 	case TokenRex:
@@ -1187,6 +1189,12 @@ func (p *Parser) parseTail() (*TailCommand, error) {
 	}
 
 	return &TailCommand{Count: count}, nil
+}
+
+func (p *Parser) parseReverse() (*ReverseCommand, error) {
+	p.advance()
+
+	return &ReverseCommand{}, nil
 }
 
 func (p *Parser) parseTimechart() (*TimechartCommand, error) {

@@ -186,6 +186,14 @@ func (c *TailCommand) String() string {
 	return fmt.Sprintf("tail %d", c.Count)
 }
 
+// ReverseCommand represents: reverse.
+type ReverseCommand struct{}
+
+func (*ReverseCommand) commandNode() {}
+func (c *ReverseCommand) String() string {
+	return "reverse"
+}
+
 // TimechartCommand represents: timechart span=<interval> <agg_funcs> [by <field>].
 type TimechartCommand struct {
 	Span         string // e.g., "5m", "1h"

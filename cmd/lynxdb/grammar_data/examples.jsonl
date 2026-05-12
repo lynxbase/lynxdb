@@ -75,6 +75,7 @@
 {"nl": "First 10 events", "query": "| head 10", "category": "limit"}
 {"nl": "First 50 events", "query": "| head 50", "category": "limit"}
 {"nl": "Last 10 events", "query": "| tail 10", "category": "limit"}
+{"nl": "Reverse result order", "query": "| reverse", "category": "ordering"}
 {"nl": "Take 25 results", "query": "| take 25", "category": "limit"}
 {"nl": "Deduplicate by source", "query": "| dedup source", "category": "transform"}
 {"nl": "Deduplicate keeping 3 per group", "query": "| dedup 3 endpoint", "category": "transform"}

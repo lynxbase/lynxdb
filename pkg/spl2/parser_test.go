@@ -291,6 +291,18 @@ func TestParse_TailCommand(t *testing.T) {
 	}
 }
 
+func TestParse_ReverseCommand(t *testing.T) {
+	input := `FROM main | reverse`
+	q, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+
+	if _, ok := q.Commands[0].(*ReverseCommand); !ok {
+		t.Fatalf("expected ReverseCommand, got %T", q.Commands[0])
+	}
+}
+
 func TestParse_HeadDefault(t *testing.T) {
 	input := `FROM main | head`
 	q, err := Parse(input)

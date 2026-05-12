@@ -393,6 +393,7 @@ Canonical form: command after the pipe, options (`key=value`) before positional 
 | `sort` | `sort [-\|+]<field> [, ...]` or `sort by <field> [ASC\|DESC] [, ...]` | Canon — prefix form `-field` (DESC), `+field` (ASC, default). |
 | `head` | `head [<n>]` | First N (default 10). |
 | `tail` | `tail [<n>]` | Last N. |
+| `reverse` | `reverse` | Reverse current row order without sorting. |
 | `dedup` | `dedup [N] <field_list>` | Keep one row per key by default; optional `N` keeps up to N rows per key. |
 
 #### Joins

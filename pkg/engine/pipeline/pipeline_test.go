@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -100,6 +101,61 @@ func TestLimitEarlyTermination(t *testing.T) {
 	// Verify early termination: scan should only have been called 1 time
 	if scan.ScanCalls() > 1 {
 		t.Errorf("scan called %d times, want 1 (early termination)", scan.ScanCalls())
+	}
+}
+
+func TestReverseIterator(t *testing.T) {
+	events := makeEvents(5)
+	scan := NewScanIterator(events, 2)
+	reverse := NewReverseIterator(scan, 2)
+
+	ctx := context.Background()
+	if err := reverse.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := CollectAll(ctx, reverse)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 5 {
+		t.Fatalf("got %d rows, want 5", len(rows))
+	}
+
+	for i, row := range rows {
+		got := row["x"].AsInt()
+		want := int64(4 - i)
+		if got != want {
+			t.Errorf("row[%d].x: got %d, want %d", i, got, want)
+		}
+	}
+}
+
+func TestBuildFromSourceReverseCommand(t *testing.T) {
+	query, err := spl2.Parse(`FROM main | reverse`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	source := NewScanIterator(makeEvents(4), 2)
+	iter, err := BuildFromSource(context.Background(), source, query.Commands, 2)
+	if err != nil {
+		t.Fatalf("BuildFromSource: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer iter.Close()
+
+	rows, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 4 {
+		t.Fatalf("got %d rows, want 4", len(rows))
+	}
+	if got := rows[0]["x"].AsInt(); got != 3 {
+		t.Errorf("first row x: got %d, want 3", got)
 	}
 }
 

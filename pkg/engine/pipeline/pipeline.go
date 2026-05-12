@@ -614,6 +614,8 @@ func commandStageName(cmd spl2.Command) string {
 		return "Head"
 	case *spl2.TailCommand:
 		return "Tail"
+	case *spl2.ReverseCommand:
+		return "Reverse"
 	case *spl2.FieldsCommand:
 		return "Fields"
 	case *spl2.TableCommand:
@@ -900,6 +902,9 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 	case *spl2.TailCommand:
 		// Tail requires materialization — use sort-like approach
 		return NewTailIteratorWithBudget(child, c.Count, qc.batchSize, qc.newAccount("tail")), nil
+
+	case *spl2.ReverseCommand:
+		return NewReverseIteratorWithBudget(child, qc.batchSize, qc.newAccount("reverse")), nil
 
 	case *spl2.FieldsCommand:
 		return NewProjectIterator(child, c.Fields, c.Remove), nil
@@ -1389,6 +1394,80 @@ func (t *TailIterator) Close() error {
 	return t.child.Close()
 }
 func (t *TailIterator) Schema() []FieldInfo { return t.child.Schema() }
+
+// ReverseIterator materializes input rows and emits them in reverse order.
+type ReverseIterator struct {
+	child     Iterator
+	rows      []map[string]event.Value
+	emitted   bool
+	offset    int
+	batchSize int
+	acct      memgov.MemoryAccount
+}
+
+func NewReverseIterator(child Iterator, batchSize int) *ReverseIterator {
+	if batchSize <= 0 {
+		batchSize = DefaultBatchSize
+	}
+	return &ReverseIterator{
+		child:     child,
+		batchSize: batchSize,
+		acct:      memgov.NopAccount(),
+	}
+}
+
+func NewReverseIteratorWithBudget(child Iterator, batchSize int, acct memgov.MemoryAccount) *ReverseIterator {
+	r := NewReverseIterator(child, batchSize)
+	r.acct = memgov.EnsureAccount(acct)
+
+	return r
+}
+
+func (r *ReverseIterator) Init(ctx context.Context) error { return r.child.Init(ctx) }
+
+func (r *ReverseIterator) Next(ctx context.Context) (*Batch, error) {
+	if !r.emitted {
+		for {
+			batch, err := r.child.Next(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if batch == nil {
+				break
+			}
+			for i := 0; i < batch.Len; i++ {
+				row := batch.Row(i)
+				if err := r.acct.Grow(EstimateRowBytes(row)); err != nil {
+					return nil, fmt.Errorf("reverse: memory budget exceeded: %w", err)
+				}
+				r.rows = append(r.rows, row)
+			}
+		}
+		for i, j := 0, len(r.rows)-1; i < j; i, j = i+1, j-1 {
+			r.rows[i], r.rows[j] = r.rows[j], r.rows[i]
+		}
+		r.emitted = true
+	}
+
+	if r.offset >= len(r.rows) {
+		return nil, nil
+	}
+	end := r.offset + r.batchSize
+	if end > len(r.rows) {
+		end = len(r.rows)
+	}
+	batch := BatchFromRows(r.rows[r.offset:end])
+	r.offset = end
+
+	return batch, nil
+}
+
+func (r *ReverseIterator) Close() error {
+	r.acct.Close()
+
+	return r.child.Close()
+}
+func (r *ReverseIterator) Schema() []FieldInfo { return r.child.Schema() }
 
 func (qc *queryContext) convertAggs(aggs []spl2.AggExpr) []AggFunc {
 	result := make([]AggFunc, len(aggs))

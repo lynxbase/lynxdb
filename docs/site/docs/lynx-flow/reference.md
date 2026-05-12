@@ -495,11 +495,12 @@ from nginx | order by status desc, uri asc, duration_ms desc
 take <N>           -- primary limit command
 head <N>           -- alias for take
 tail <N>           -- last N rows (blocking)
+reverse           -- reverse current row order (blocking)
 ```
 
-**SPL2:** `head <N>`, `tail <N>`
+**SPL2:** `head <N>`, `tail <N>`, `reverse`
 
-`take` and `head` are streaming (stop after N rows). `tail` is blocking (must buffer all input).
+`take` and `head` are streaming (stop after N rows). `tail` and `reverse` are blocking (must buffer all input).
 
 ### rank
 
@@ -1257,6 +1258,7 @@ Every SPL2 command has a Lynx Flow counterpart. Both syntaxes are first-class.
 | `SORT -field` | `order by field desc` | Explicit direction |
 | `HEAD N` | `take N` | Identical |
 | `TAIL N` | `tail N` | Identical |
+| `REVERSE` | `reverse` | Identical |
 | `TOP N field` | `top N field` | Identical |
 | `RARE N field` | `rare N field` / `bottom N field` | `rare` is alias for `bottom` |
 | `DEDUP` | `dedup` | Identical |

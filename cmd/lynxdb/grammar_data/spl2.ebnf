@@ -13,7 +13,7 @@ cte_ref          = "$" ident ;
 (* ─── Commands ─── *)
 
 command          = search_cmd | where_cmd | stats_cmd | eval_cmd | sort_cmd
-                 | head_cmd | tail_cmd | table_cmd | fields_cmd | rename_cmd
+                 | head_cmd | tail_cmd | reverse_cmd | table_cmd | fields_cmd | rename_cmd
                  | dedup_cmd | rex_cmd | bin_cmd | timechart_cmd
                  | top_cmd | rare_cmd | fillnull_cmd | streamstats_cmd
                  | eventstats_cmd | join_cmd | append_cmd | transaction_cmd
@@ -85,6 +85,7 @@ sort_field       = [ "+" | "-" ] field ;
 
 head_cmd         = "head" [ number ] ;
 tail_cmd         = "tail" [ number ] ;
+reverse_cmd      = "reverse" ;
 take_cmd         = "take" number ;
 select_cmd       = "select" ident_list ;
 

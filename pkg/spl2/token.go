@@ -42,6 +42,7 @@ const (
 	TokenSort
 	TokenHead
 	TokenTail
+	TokenReverse
 	TokenTimechart
 	TokenRex
 	TokenFields
@@ -231,6 +232,7 @@ var tokenNames = map[TokenType]string{
 	TokenSort:              "SORT",
 	TokenHead:              "HEAD",
 	TokenTail:              "TAIL",
+	TokenReverse:           "REVERSE",
 	TokenTimechart:         "TIMECHART",
 	TokenRex:               "REX",
 	TokenFields:            "FIELDS",
@@ -380,6 +382,7 @@ var keywords = map[string]TokenType{
 	"sort":                TokenSort,
 	"head":                TokenHead,
 	"tail":                TokenTail,
+	"reverse":             TokenReverse,
 	"timechart":           TokenTimechart,
 	"rex":                 TokenRex,
 	"fields":              TokenFields,
