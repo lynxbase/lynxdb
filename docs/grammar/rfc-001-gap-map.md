@@ -30,6 +30,7 @@ Official Splunk compatibility checked:
 | Topic | Result |
 |---|---|
 | Boolean operator precedence and `XOR` support | Splunk docs say `search` evaluates `OR` before `AND` and does not support `XOR`; `where` and `eval` evaluate `AND`, then `OR`, then `XOR`. |
+| Time aggregate functions | Splunk docs limit `per_second`, `per_minute`, `per_hour`, and `per_day` to `timechart`; `rate` uses `latest`, `earliest`, `latest_time`, and `earliest_time` semantics. |
 
 ## Partial
 
