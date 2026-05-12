@@ -1860,7 +1860,7 @@ func (p *Parser) parseMultisearch() (*MultisearchCommand, error) {
 
 func (p *Parser) parseUnion() (*UnionCommand, error) {
 	p.advance() // consume "union"
-	cmd := &UnionCommand{}
+	cmd := &UnionCommand{Maxout: -1, Maxtime: -1, Timeout: -1}
 
 	for p.peek().Type != TokenPipe && p.peek().Type != TokenEOF && p.peek().Type != TokenRBracket {
 		if p.peek().Type == TokenComma {
@@ -1868,14 +1868,26 @@ func (p *Parser) parseUnion() (*UnionCommand, error) {
 			continue
 		}
 		if p.isUnionOption() {
-			p.advance()
+			name := strings.ToLower(p.advance().Literal)
 			if _, err := p.expect(TokenEq); err != nil {
 				return nil, err
 			}
-			if p.peek().Type != TokenNumber && p.peek().Type != TokenString && !isIdentLike(p.peek().Type) {
-				return nil, fmt.Errorf("spl2: union option requires a value")
+			tok, err := p.expect(TokenNumber)
+			if err != nil {
+				return nil, fmt.Errorf("spl2: union option %s requires a number: %w", name, err)
 			}
-			p.advance()
+			value, err := parseNonNegativeInt(tok.Literal, "union "+name)
+			if err != nil {
+				return nil, err
+			}
+			switch name {
+			case "maxout":
+				cmd.Maxout = value
+			case "maxtime":
+				cmd.Maxtime = value
+			case "timeout":
+				cmd.Timeout = value
+			}
 			continue
 		}
 		if p.peek().Type == TokenLBracket {

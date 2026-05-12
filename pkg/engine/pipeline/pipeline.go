@@ -1178,6 +1178,9 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 			if err != nil {
 				return nil, fmt.Errorf("build UNION branch: %w", err)
 			}
+			if c.Maxout >= 0 {
+				subIter = NewLimitIterator(subIter, c.Maxout)
+			}
 			children = append(children, subIter)
 		}
 		if qc.parallelCfg.Enabled && len(children) > 1 {

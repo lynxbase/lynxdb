@@ -2155,7 +2155,7 @@ func TestParse_ChartCommandByTwoFields(t *testing.T) {
 }
 
 func TestParse_UnionCommand(t *testing.T) {
-	q, err := Parse(`FROM main | union maxout=1000 customers, orders [search error | stats count by source]`)
+	q, err := Parse(`FROM main | union maxout=1000 maxtime=120 timeout=600 customers, orders [search error | stats count by source]`)
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -2165,6 +2165,15 @@ func TestParse_UnionCommand(t *testing.T) {
 	}
 	if len(cmd.Branches) != 3 {
 		t.Fatalf("branches: got %d, want 3", len(cmd.Branches))
+	}
+	if cmd.Maxout != 1000 {
+		t.Fatalf("maxout: got %d, want 1000", cmd.Maxout)
+	}
+	if cmd.Maxtime != 120 {
+		t.Fatalf("maxtime: got %d, want 120", cmd.Maxtime)
+	}
+	if cmd.Timeout != 600 {
+		t.Fatalf("timeout: got %d, want 600", cmd.Timeout)
 	}
 	if cmd.Branches[0].Source == nil || cmd.Branches[0].Source.Index != "customers" {
 		t.Fatalf("branch[0] source: got %+v, want customers", cmd.Branches[0].Source)

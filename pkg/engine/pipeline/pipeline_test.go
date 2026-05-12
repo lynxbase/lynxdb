@@ -752,6 +752,38 @@ func TestBuildFromSourceUnionSubsearch(t *testing.T) {
 	}
 }
 
+func TestBuildFromSourceUnionMaxout(t *testing.T) {
+	query, err := spl2.Parse(`FROM main | union maxout=1 [makeresults count=3 | eval branch="sub"]`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	rows := []map[string]event.Value{
+		{"branch": event.StringValue("main")},
+	}
+	iter, err := BuildFromSource(context.Background(), NewRowScanIterator(rows, 2), query.Commands, 2)
+	if err != nil {
+		t.Fatalf("BuildFromSource: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer iter.Close()
+
+	results, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]int{}
+	for _, row := range results {
+		counts[row["branch"].AsString()]++
+	}
+	if counts["main"] != 1 || counts["sub"] != 1 {
+		t.Errorf("counts: got %v, want main=1 sub=1", counts)
+	}
+}
+
 func TestBuildFromSourceAppendpipe(t *testing.T) {
 	query, err := spl2.Parse(`FROM main | appendpipe [stats count as total]`)
 	if err != nil {

@@ -431,6 +431,9 @@ func (c *MultisearchCommand) String() string {
 // UnionCommand represents: UNION <dataset-or-subsearch>...
 type UnionCommand struct {
 	Branches []*Query
+	Maxout   int
+	Maxtime  int
+	Timeout  int
 }
 
 func (*UnionCommand) commandNode() {}

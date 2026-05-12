@@ -32,7 +32,8 @@ Merge the current result set with one or more datasets or subsearch results.
 
 - When used after an existing pipeline, `union` includes the incoming rows and appends branch rows.
 - Dataset operands are parsed as source names. Subsearch operands run as independent pipelines.
-- `maxout`, `maxtime`, and `timeout` parse for compatibility but are not enforced yet.
+- `maxout` limits rows emitted by each union branch.
+- `maxtime` and `timeout` parse for compatibility but are not enforced yet.
 - Splunk's `_time` interleaving behavior is not implemented; output order follows the union iterator mode.
 
 ## See Also
