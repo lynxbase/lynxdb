@@ -85,7 +85,7 @@ export const lynxflowLanguage = StreamLanguage.define({
       return "string";
     }
 
-    // Single-quoted strings
+    // Single-quoted identifiers
     if (stream.eat("'")) {
       while (!stream.eol()) {
         const ch = stream.next();
@@ -95,7 +95,7 @@ export const lynxflowLanguage = StreamLanguage.define({
           break;
         }
       }
-      return "string";
+      return "variableName";
     }
 
     // Relative durations and numbers

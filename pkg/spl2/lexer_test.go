@@ -175,6 +175,32 @@ func TestLexer_Identifiers(t *testing.T) {
 	}
 }
 
+func TestLexer_SingleQuotedIdentifiers(t *testing.T) {
+	tests := []struct {
+		input   string
+		literal string
+	}{
+		{`'user-id'`, "user-id"},
+		{`'user id'`, "user id"},
+		{`'sort'`, "sort"},
+		{`'can\'t'`, "can't"},
+	}
+
+	for _, tt := range tests {
+		lexer := NewLexer(tt.input)
+		tokens, err := lexer.Tokenize()
+		if err != nil {
+			t.Fatalf("Tokenize(%q): %v", tt.input, err)
+		}
+		if tokens[0].Type != TokenIdent {
+			t.Errorf("%q: got %s, want IDENT", tt.input, tokens[0].Type)
+		}
+		if tokens[0].Literal != tt.literal {
+			t.Errorf("%q: got literal %q, want %q", tt.input, tokens[0].Literal, tt.literal)
+		}
+	}
+}
+
 func TestLexer_FullQuery(t *testing.T) {
 	input := `FROM main WHERE host="web-*" | search "error" | stats count() by host | sort -count | head 20`
 	lexer := NewLexer(input)

@@ -7,7 +7,7 @@
 program          = { dataset_def } query ;
 dataset_def      = "$" ident "=" query [ ";" ] ;
 query            = [ "from" source ] [ "where" expr ] { "|" command } ;
-source           = cte_ref | ident ;
+source           = cte_ref | ident | quoted_ident ;
 cte_ref          = "$" ident ;
 
 (* ─── Commands ─── *)
@@ -265,18 +265,20 @@ bool_value       = "true" | "false" ;
 null_value       = "null" ;
 number           = [ "-" ] digit { digit } [ "." digit { digit } ] ;
 quoted_string    = '"' { char | escape_seq } '"' ;
+quoted_ident     = "'" { char | ident_escape_seq } "'" ;
 escape_seq       = "\" ( '"' | "\" | "n" | "t" | "r" ) ;
+ident_escape_seq = "\" ( "'" | "\" ) ;
 
 (* ─── Identifiers ─── *)
 
 ident            = ( letter | "_" ) { letter | digit | "_" | "-" | "." | ":" } ;
-field            = ident ;
+field            = ident | quoted_ident ;
 glob             = ident_with_star ;
 ident_with_star  = ( letter | "_" | "*" ) { letter | digit | "_" | "-" | "." | "*" | "?" } ;
 
 (* ─── Lists ─── *)
 
-ident_list       = ident { "," ident } ;
+ident_list       = field { "," field } ;
 expr_list        = expr { "," expr } ;
 number_list      = number { "," number } ;
 

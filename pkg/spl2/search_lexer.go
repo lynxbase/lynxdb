@@ -152,6 +152,8 @@ func (l *SearchLexer) next() (SearchToken, error) {
 		return SearchToken{Type: STokGt, Literal: ">", Pos: startPos, End: l.pos}, nil
 	case ch == '"':
 		return l.readQuotedString()
+	case ch == '\'':
+		return l.readQuotedIdentifier()
 	default:
 		return l.readWord()
 	}
@@ -193,6 +195,38 @@ func (l *SearchLexer) readQuotedString() (SearchToken, error) {
 	}
 
 	return SearchToken{}, fmt.Errorf("unterminated string at position %d", startPos)
+}
+
+func (l *SearchLexer) readQuotedIdentifier() (SearchToken, error) {
+	startPos := l.pos
+	l.pos++ // skip opening quote
+
+	var sb strings.Builder
+	for l.pos < len(l.input) {
+		ch := l.input[l.pos]
+		if ch == '\\' && l.pos+1 < len(l.input) {
+			l.pos++
+			switch l.input[l.pos] {
+			case '\'', '\\':
+				sb.WriteByte(l.input[l.pos])
+			default:
+				sb.WriteByte('\\')
+				sb.WriteByte(l.input[l.pos])
+			}
+			l.pos++
+
+			continue
+		}
+		if ch == '\'' {
+			l.pos++ // skip closing quote
+
+			return SearchToken{Type: STokWord, Literal: sb.String(), Pos: startPos, End: l.pos}, nil
+		}
+		sb.WriteByte(ch)
+		l.pos++
+	}
+
+	return SearchToken{}, fmt.Errorf("unterminated quoted identifier at position %d", startPos)
 }
 
 func (l *SearchLexer) readWord() (SearchToken, error) {

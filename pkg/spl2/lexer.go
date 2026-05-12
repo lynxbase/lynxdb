@@ -137,6 +137,8 @@ func (l *Lexer) next() (Token, error) {
 		return Token{Type: TokenGt, Literal: ">", Pos: startPos}, nil
 	case ch == '"':
 		return l.readString()
+	case ch == '\'':
+		return l.readQuotedIdent()
 	case ch == '?':
 		l.pos++
 		if l.pos < len(l.input) && l.input[l.pos] == '?' {
@@ -273,6 +275,38 @@ func (l *Lexer) readString() (Token, error) {
 	}
 
 	return Token{}, fmt.Errorf("unterminated string at position %d", startPos)
+}
+
+func (l *Lexer) readQuotedIdent() (Token, error) {
+	startPos := l.pos
+	l.pos++ // skip opening quote
+
+	var sb strings.Builder
+	for l.pos < len(l.input) {
+		ch := l.input[l.pos]
+		if ch == '\\' && l.pos+1 < len(l.input) {
+			l.pos++
+			switch l.input[l.pos] {
+			case '\'', '\\':
+				sb.WriteByte(l.input[l.pos])
+			default:
+				sb.WriteByte('\\')
+				sb.WriteByte(l.input[l.pos])
+			}
+			l.pos++
+
+			continue
+		}
+		if ch == '\'' {
+			l.pos++ // skip closing quote
+
+			return Token{Type: TokenIdent, Literal: sb.String(), Pos: startPos}, nil
+		}
+		sb.WriteByte(ch)
+		l.pos++
+	}
+
+	return Token{}, fmt.Errorf("unterminated quoted identifier at position %d", startPos)
 }
 
 func (l *Lexer) readFString() (Token, error) {

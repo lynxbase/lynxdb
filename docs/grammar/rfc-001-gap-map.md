@@ -10,6 +10,7 @@ Source contract: `tmp/researches/opus_ux_syntax/RFC.md`.
 |---|---|
 | SEARCH precedence uses Splunk-compatible `OR` before `AND` and rejects SEARCH `XOR` | `pkg/spl2/search_parser.go`, `pkg/spl2/search_lexer.go`, `pkg/spl2/search_test.go` |
 | WHERE/EVAL `XOR` parses and executes with lower precedence than `OR` | `pkg/spl2/parser.go`, `pkg/vm/compiler.go`, `pkg/vm/vm.go`, `pkg/spl2/parser_test.go`, `pkg/vm/compiler_test.go` |
+| Single-quoted identifiers parse for sources, fields, aliases, and SEARCH field comparisons | `pkg/spl2/lexer.go`, `pkg/spl2/search_lexer.go`, `pkg/spl2/parser_test.go`, `pkg/spl2/parser_lynxflow_test.go`, `pkg/spl2/search_test.go` |
 | Core LynxFlow projection/filter/aggregation/output sugar | `pkg/spl2/parser_lynxflow_test.go` |
 | LynxFlow `proportion`, `impact`, `baseline`, `changes`, and `exemplars` deterministic desugaring | `pkg/spl2/parser.go`, `pkg/spl2/parser_lynxflow_test.go` |
 | Web autocomplete and highlighting share one editor catalog | `web/src/editor/lynxflow-catalog.ts`, `web/src/editor/autocomplete.ts`, `web/src/editor/lynxflow-lang.ts` |
@@ -29,6 +30,7 @@ Official Splunk compatibility checked:
 | Time modifiers | `earliest`, `latest`, `_index_earliest`, `_index_latest` compatibility is partly normalized | `_index_*` planning and diagnostics need coverage against the RFC rewrite contract. |
 | Rewrite transparency | `NormalizeQuery` rewrites source-less and Splunk-style forms | Rewrites are not yet recorded as structured `Rewrite{Before, After, Reason}` through CLI/TUI/REST metadata. |
 | Lints | Compatibility hints and parse suggestions exist | RFC lint catalog `L001` through `L039` is not implemented as a post-parse lint stage. |
+| Quoted identifier canon | Single-quoted identifiers now parse as canonical names and double-quoted names remain accepted in legacy positions | Compatibility lint `L012` for double-quoted field names is not implemented yet. |
 | Function catalog | Many eval and aggregate functions parse and execute | RFC aggregate/eval catalog needs a parser, VM, and editor cross-check for missing functions and aliases. |
 | Command catalog | Native SPL2/LynxFlow commands plus several helpers parse | SPL compatibility commands such as `chart`, `fieldformat`, `regex`, `replace`, `reverse`, `mvexpand`, `makeresults`, `union`, and optional capability commands remain incomplete. |
 | Editor assistance | Autocomplete covers commands, fields, values, regex snippets, time values, and templates | Ranking reasons and disable switches are not surfaced as RFC `meta.suggestions` behavior. |
@@ -38,7 +40,6 @@ Official Splunk compatibility checked:
 
 | RFC requirement | Status | Reason |
 |---|---|---|
-| Single-quoted identifiers as canonical field/source names | Deferred | Requires lexer/parser changes across source, search, where, eval, docs, and compatibility lint `L012`. |
 | Full glob syntax including `**`, character classes, alternatives, and quoted glob escapes | Deferred | Requires selector AST and matcher updates beyond the current token-level glob detection. |
 | SEARCH `L030` mixed `AND`/`OR` lint with parsed shape | Deferred | Needs post-parse lint framework and stable diagnostic metadata. |
 | Broad-search lints and explain blocks `L032`, `L037`, source counts, skipped segments | Deferred | Requires planner and API metadata integration. |

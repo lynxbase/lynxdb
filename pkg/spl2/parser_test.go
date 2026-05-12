@@ -404,6 +404,7 @@ func TestParse_DigitPrefixedSourceName(t *testing.T) {
 		{"FROM bare number", "FROM 42 | stats count", "42"},
 		{"FROM normal ident", "FROM main | stats count", "main"},
 		{"FROM quoted name", `FROM "my-logs" | stats count`, "my-logs"},
+		{"FROM single quoted name", `FROM 'my logs' | stats count`, "my logs"},
 	}
 
 	for _, tt := range tests {

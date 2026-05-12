@@ -3323,6 +3323,42 @@ func TestLynxFlow_ParseShortcut_WithModifiers(t *testing.T) {
 	}
 }
 
+func TestLynxFlow_SingleQuotedIdentifiers(t *testing.T) {
+	q, err := Parse(`from 'app logs' | where 'user-id' = 42 | stats count() by 'user-id' | eval 'sort' = 'user-id' + 1`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if q.Source == nil || q.Source.Index != "app logs" {
+		t.Fatalf("Source.Index: got %v, want app logs", q.Source)
+	}
+	where, ok := q.Commands[0].(*WhereCommand)
+	if !ok {
+		t.Fatalf("cmd[0]: expected WhereCommand, got %T", q.Commands[0])
+	}
+	cmp, ok := where.Expr.(*CompareExpr)
+	if !ok {
+		t.Fatalf("where expr: expected CompareExpr, got %T", where.Expr)
+	}
+	left, ok := cmp.Left.(*FieldExpr)
+	if !ok || left.Name != "user-id" {
+		t.Fatalf("where field: got %#v, want user-id", cmp.Left)
+	}
+	stats, ok := q.Commands[1].(*StatsCommand)
+	if !ok {
+		t.Fatalf("cmd[1]: expected StatsCommand, got %T", q.Commands[1])
+	}
+	if len(stats.GroupBy) != 1 || stats.GroupBy[0] != "user-id" {
+		t.Fatalf("GroupBy: got %v, want [user-id]", stats.GroupBy)
+	}
+	eval, ok := q.Commands[2].(*EvalCommand)
+	if !ok {
+		t.Fatalf("cmd[2]: expected EvalCommand, got %T", q.Commands[2])
+	}
+	if eval.Field != "sort" {
+		t.Fatalf("Eval field: got %q, want sort", eval.Field)
+	}
+}
+
 func TestLynxFlow_ParseShortcut_Regex(t *testing.T) {
 	q, err := Parse(`from app | regex(_raw, "host=(?P<host>\\S+)")`)
 	if err != nil {

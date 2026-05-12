@@ -93,6 +93,7 @@ func TestSearchLexer(t *testing.T) {
 		{`CASE(Error)`, []SearchTokenType{STokCASE, STokEOF}},
 		{`TERM(127.0.0.1)`, []SearchTokenType{STokTERM, STokEOF}},
 		{`host=web*`, []SearchTokenType{STokWord, STokEq, STokWord, STokEOF}},
+		{`'user-id'=alice`, []SearchTokenType{STokWord, STokEq, STokWord, STokEOF}},
 		{`"*-25-*"`, []SearchTokenType{STokQuoted, STokEOF}},
 		{`src="10.9.165.*" OR dst="10.9.165.8"`, []SearchTokenType{
 			STokWord, STokEq, STokQuoted, STokOR, STokWord, STokEq, STokQuoted, STokEOF,
@@ -263,6 +264,20 @@ func TestSearchParserFieldComparison(t *testing.T) {
 		t.Fatalf("expected SearchCompareExpr, got %T", expr)
 	}
 	if cmp.Field != "host" || cmp.Op != OpEq || cmp.Value != "web*" || !cmp.HasWildcard {
+		t.Errorf("unexpected compare: %+v", cmp)
+	}
+}
+
+func TestSearchParserSingleQuotedFieldComparison(t *testing.T) {
+	expr, err := ParseSearchExpression(`'user-id'=alice`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmp, ok := expr.(*SearchCompareExpr)
+	if !ok {
+		t.Fatalf("expected SearchCompareExpr, got %T", expr)
+	}
+	if cmp.Field != "user-id" || cmp.Op != OpEq || cmp.Value != "alice" {
 		t.Errorf("unexpected compare: %+v", cmp)
 	}
 }
