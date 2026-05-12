@@ -1217,6 +1217,8 @@ func TestQuery_TimechartPerMinuteAggregate(t *testing.T) {
 	for _, ev := range events {
 		ev.Index = "main"
 		ev.Host = "web-00"
+		ev.Source = "/var/log/app.log"
+		ev.SourceType = "json"
 	}
 	events[0].SetField("bytes", event.IntValue(60))
 	events[1].SetField("bytes", event.IntValue(120))
@@ -1261,6 +1263,92 @@ func TestQuery_TimechartPerMinuteAggregate(t *testing.T) {
 	got := rows[0].([]interface{})[colIndex].(float64)
 	if got != 3 {
 		t.Errorf("bytes_per_minute: got %v, want 3", got)
+	}
+}
+
+func TestQuery_StatsTimeAggregates(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	events := []map[string]interface{}{
+		{
+			"time":       float64(base.Add(10 * time.Second).Unix()),
+			"event":      `host=web-00 level=INFO counter=25 status=late msg="late"`,
+			"host":       "web-00",
+			"source":     "/var/log/app.log",
+			"sourcetype": "json",
+			"index":      "main",
+		},
+		{
+			"time":       float64(base.Unix()),
+			"event":      `host=web-00 level=INFO counter=10 status=early msg="early"`,
+			"host":       "web-00",
+			"source":     "/var/log/app.log",
+			"sourcetype": "json",
+			"index":      "main",
+		},
+	}
+	ingestBody, _ := json.Marshal(events)
+	ingestResp, err := http.Post(fmt.Sprintf("http://%s/api/v1/ingest", srv.Addr()), "application/json", bytes.NewReader(ingestBody))
+	if err != nil {
+		t.Fatalf("POST ingest: %v", err)
+	}
+	ingestResp.Body.Close()
+	if ingestResp.StatusCode != 200 {
+		t.Fatalf("ingest status: %d", ingestResp.StatusCode)
+	}
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"q": `FROM main | stats earliest(status) as first_status, latest(status) as last_status, earliest_time(counter) as first_ts, latest_time(counter) as last_ts, rate(counter) as counter_rate`,
+	})
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d, body: %s", resp.StatusCode, string(b))
+	}
+
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	data := result["data"].(map[string]interface{})
+	cols := data["columns"].([]interface{})
+	rows := data["rows"].([]interface{})
+	if len(rows) != 1 {
+		t.Fatalf("rows: got %d, want 1", len(rows))
+	}
+	row := rows[0].([]interface{})
+	colIndex := func(name string) int {
+		t.Helper()
+		for i, col := range cols {
+			if fmt.Sprint(col) == name {
+				return i
+			}
+		}
+		t.Fatalf("missing column %q in %v", name, cols)
+		return -1
+	}
+
+	if got := row[colIndex("first_status")].(string); got != "early" {
+		t.Errorf("first_status: got %q, want early", got)
+	}
+	if got := row[colIndex("last_status")].(string); got != "late" {
+		t.Errorf("last_status: got %q, want late", got)
+	}
+	if got := row[colIndex("first_ts")].(float64); got != float64(base.Unix()) {
+		t.Errorf("first_ts: got %v, want %v", got, base.Unix())
+	}
+	if got := row[colIndex("last_ts")].(float64); got != float64(base.Add(10*time.Second).Unix()) {
+		t.Errorf("last_ts: got %v, want %v", got, base.Add(10*time.Second).Unix())
+	}
+	if got := row[colIndex("counter_rate")].(float64); got != 1.5 {
+		t.Errorf("counter_rate: got %v, want 1.5", got)
 	}
 }
 

@@ -1120,6 +1120,8 @@ Used in `group compute`, `every compute`, `running`, `enrich`, `stats`, `timecha
 | `estdc_error(<field>)` | Estimated distinct-count error ratio | `estdc_error(client_ip) as estimated_client_error` |
 | `values(<field>)` | List of distinct values | `values(level) as seen_levels` |
 | `mode(<field>)` | Most frequent value | `mode(status) as common_status` |
+| `earliest_time(<field>)` / `latest_time(<field>)` | UNIX time of first or last field value by event time | `earliest_time(status) as first_seen` |
+| `rate(<field>)` | Per-second numeric counter change | `rate(counter) as counter_rate` |
 | `per_second(<field>)` / `per_minute(<field>)` / `per_hour(<field>)` / `per_day(<field>)` | Timechart rate scaling | `per_minute(bytes) as bytes_per_minute` |
 | `stdev(<field>)` | Standard deviation | `stdev(duration_ms) as stdev_latency` |
 | `stdevp(<field>)` | Population standard deviation | `stdevp(duration_ms) as stdevp_latency` |

@@ -757,7 +757,7 @@ func TestIsPushableAgg_Percentiles(t *testing.T) {
 		}
 	}
 	// Non-pushable should still return false.
-	for _, name := range []string{"values", "first", "last"} {
+	for _, name := range []string{"values", "first", "last", "earliest_time", "latest_time", "rate", "per_second"} {
 		if IsPushableAgg(name) {
 			t.Errorf("IsPushableAgg(%q) = true, want false", name)
 		}

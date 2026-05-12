@@ -142,7 +142,7 @@ The previous query had an error:
   Hint: did you mean "percentile"?
 
 Available aggregation functions: count, sum, sumsq, avg, min, max, dc, estdc, estdc_error, values, list, mode, stdev, stdevp, var, varp,
-per_second, per_minute, per_hour, per_day,
+earliest_time, latest_time, per_second, per_minute, per_hour, per_day, rate,
 perc, percentile, perc25, perc50, perc75, perc90, perc95, perc99, earliest, latest
 
 Please correct the query.

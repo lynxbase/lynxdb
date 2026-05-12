@@ -85,6 +85,17 @@ Scale numeric bucket totals to a fixed time period in `timechart`.
 | timechart span=5m per_minute(bytes) AS bytes_per_minute
 ```
 
+## earliest_time / latest_time / rate
+
+Return timestamp bounds or per-second counter change by event time.
+
+```spl
+| stats earliest_time(counter) AS first_seen,
+        latest_time(counter) AS last_seen,
+        rate(counter) AS counter_rate
+  by host
+```
+
 ## stdev
 
 Standard deviation.

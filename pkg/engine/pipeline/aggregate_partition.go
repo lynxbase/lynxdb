@@ -338,6 +338,37 @@ func (a *AggregateIterator) serializeGroup(group *aggGroup, aggs []AggFunc) map[
 				row[agg.Alias+"__modecounts"] = event.StringValue(
 					encodeModeCounts(s.mode))
 			}
+		case "earliest":
+			if !s.first.IsNull() {
+				row[agg.Alias+"__first_value"] = s.first
+				if !s.firstTS.IsZero() {
+					row[agg.Alias+"__first_time"] = event.FloatValue(float64(s.firstTS.UnixNano()) / 1e9)
+				}
+			}
+		case "latest":
+			if !s.last.IsNull() {
+				row[agg.Alias+"__last_value"] = s.last
+				if !s.lastTS.IsZero() {
+					row[agg.Alias+"__last_time"] = event.FloatValue(float64(s.lastTS.UnixNano()) / 1e9)
+				}
+			}
+		case aggEarT:
+			if !s.firstTS.IsZero() {
+				row[agg.Alias+"__earliest_time"] = event.FloatValue(float64(s.firstTS.UnixNano()) / 1e9)
+			}
+		case aggLatT:
+			if !s.lastTS.IsZero() {
+				row[agg.Alias+"__latest_time"] = event.FloatValue(float64(s.lastTS.UnixNano()) / 1e9)
+			}
+		case aggRate:
+			if !s.firstTS.IsZero() {
+				row[agg.Alias+"__first_time"] = event.FloatValue(float64(s.firstTS.UnixNano()) / 1e9)
+				row[agg.Alias+"__first_value"] = s.first
+			}
+			if !s.lastTS.IsZero() {
+				row[agg.Alias+"__last_time"] = event.FloatValue(float64(s.lastTS.UnixNano()) / 1e9)
+				row[agg.Alias+"__last_value"] = s.last
+			}
 		case aggStdev, aggStdevP, aggVar, aggVarP:
 			row[agg.Alias+"__sum"] = event.FloatValue(s.sum)
 			row[agg.Alias+"__count"] = event.IntValue(s.count)
@@ -398,6 +429,16 @@ func (a *AggregateIterator) mergeAggStateFromRow(group *aggGroup, row map[string
 			a.mergeListFromRow(&group.states[j], row, agg.Alias)
 		case aggMode:
 			a.mergeModeFromRow(&group.states[j], row, agg.Alias)
+		case "earliest":
+			a.mergeEarliestValueFromRow(&group.states[j], row, agg.Alias)
+		case "latest":
+			a.mergeLatestValueFromRow(&group.states[j], row, agg.Alias)
+		case aggEarT:
+			a.mergeEarliestTimeFromRow(&group.states[j], row, agg.Alias)
+		case aggLatT:
+			a.mergeLatestTimeFromRow(&group.states[j], row, agg.Alias)
+		case aggRate:
+			a.mergeRateFromRow(&group.states[j], row, agg.Alias)
 		case aggStdev, aggStdevP, aggVar, aggVarP:
 			a.mergeStdevFromRow(&group.states[j], row, agg.Alias)
 		case aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99:

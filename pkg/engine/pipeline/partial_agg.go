@@ -82,7 +82,6 @@ type PartialAggState struct {
 func IsPushableAgg(name string) bool {
 	switch strings.ToLower(name) {
 	case aggCount, aggSum, aggSumSq, aggAvg, aggMin, aggMax, aggRange, aggDC, aggEstDCE, aggMode,
-		aggPerSec, aggPerMin, aggPerHr, aggPerDay,
 		aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99,
 		aggStdev, aggStdevP, aggVar, aggVarP:
 		return true

@@ -39,7 +39,7 @@ var knownFunctions = []string{
 	"stdev", "stdevp", "var", "varp", "range",
 	"per_second", "per_minute", "per_hour", "per_day",
 	"perc", "perc25", "perc50", "perc75", "perc90", "perc95", "perc99",
-	"earliest", "latest", "first", "last", "median", "percentile",
+	"earliest", "earliest_time", "latest", "latest_time", "first", "last", "median", "percentile", "rate",
 	"percentile95", "exactperc", "exactperc95", "upperperc", "upperperc95",
 	// JSON functions
 	"json_extract", "json_valid", "json_keys", "json_array_length",

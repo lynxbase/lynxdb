@@ -64,12 +64,12 @@ agg_expr         = agg_func "(" [ expr_list ] ")" [ "as" ident ]
                  | agg_func [ "(" ")" ] [ "as" ident ] ;
 agg_func         = "count" | "sum" | "sumsq" | "avg" | "min" | "max" | "dc" | "estdc" | "estdc_error"
                  | "values" | "list" | "mode" | "first" | "last" | "stdev" | "stdevp" | "var" | "varp"
-                 | "per_second" | "per_minute" | "per_hour" | "per_day"
+                 | "earliest_time" | "latest_time" | "per_second" | "per_minute" | "per_hour" | "per_day" | "rate"
                  | "perc" | "percentile" | "exactperc" | "upperperc"
                  | "perc25" | "perc50" | "perc75" | "perc90"
                  | "perc95" | "perc99"
                  | "percentile95" | "exactperc95" | "upperperc95"
-                 | "earliest" | "latest" ;
+                 | "earliest" | "latest" | "earliest_time" | "latest_time" | "rate" ;
 
 (* ─── EVAL command ─── *)
 
