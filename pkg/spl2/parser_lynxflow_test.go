@@ -3481,3 +3481,38 @@ func TestLynxFlow_ParseShortcut_UnknownFormatErrors(t *testing.T) {
 		t.Fatalf("cmd[0]: shortcut should not fire for unknown format, got UnpackCommand")
 	}
 }
+
+func TestLynxFlow_CompareParsesPositiveDuration(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{
+			name:  "previous keyword",
+			query: `from nginx[-1h] | compare previous 1h`,
+			want:  "1h",
+		},
+		{
+			name:  "optional previous",
+			query: `from nginx[-7d] | compare 7d`,
+			want:  "7d",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.query)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			cmd, ok := q.Commands[0].(*CompareCommand)
+			if !ok {
+				t.Fatalf("cmd[0]: expected CompareCommand, got %T", q.Commands[0])
+			}
+			if cmd.Shift != tt.want {
+				t.Fatalf("Shift: got %q, want %q", cmd.Shift, tt.want)
+			}
+		})
+	}
+}

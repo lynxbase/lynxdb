@@ -1037,10 +1037,26 @@ func (p *Parser) parseCompare() (*CompareCommand, error) {
 	// Read duration (required).
 	if p.peek().Type == TokenDuration {
 		tok := p.advance()
-		return &CompareCommand{Shift: tok.Literal}, nil
+		return &CompareCommand{Shift: strings.TrimPrefix(tok.Literal, "-")}, nil
+	}
+	if p.peek().Type == TokenNumber {
+		tok := p.advance()
+		if p.peek().Type == TokenIdent && isDurationUnit(p.peek().Literal) {
+			unit := p.advance()
+			return &CompareCommand{Shift: tok.Literal + unit.Literal}, nil
+		}
 	}
 
 	return nil, fmt.Errorf("spl2: compare requires a duration, e.g., 'compare previous 1h' or 'compare 7d'")
+}
+
+func isDurationUnit(s string) bool {
+	switch s {
+	case "s", "m", "h", "d", "w":
+		return true
+	default:
+		return false
+	}
 }
 
 func (p *Parser) parsePatterns() (*PatternsCommand, error) {

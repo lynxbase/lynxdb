@@ -365,13 +365,17 @@ func (qc *queryContext) buildQuery(ctx context.Context, query *spl2.Query) (Iter
 	for i, cmd := range query.Commands {
 		switch c := cmd.(type) {
 		case *spl2.CompareCommand:
-			shift, err := time.ParseDuration(c.Shift)
+			shift, err := parseCompareShiftDuration(c.Shift)
 			if err != nil {
 				return nil, fmt.Errorf("build pipeline: invalid compare duration %q: %w", c.Shift, err)
 			}
 			prefixCmds := query.Commands[:i]
 			reExec := func(ctx context.Context) (Iterator, error) {
-				shiftedSrc := shiftSourceClause(query.Source, shift)
+				source := query.Source
+				if source == nil && qc.defaultSource != nil {
+					source = qc.defaultSource
+				}
+				shiftedSrc := shiftSourceClause(source, shift)
 				shiftedQuery := &spl2.Query{
 					Source:   shiftedSrc,
 					Commands: prefixCmds,
@@ -1825,9 +1829,12 @@ func shiftSourceClause(src *spl2.SourceClause, shift time.Duration) *spl2.Source
 	clone := *src
 	if clone.TimeRange != nil {
 		tr := *clone.TimeRange
+		originalRelative := tr.Relative
 		tr.Relative = shiftRelative(tr.Relative, shift)
 		if tr.End != "" {
 			tr.End = shiftRelative(tr.End, shift)
+		} else if originalRelative != "" {
+			tr.End = originalRelative
 		}
 		clone.TimeRange = &tr
 	} else {
@@ -1838,6 +1845,17 @@ func shiftSourceClause(src *spl2.SourceClause, shift time.Duration) *spl2.Source
 	}
 
 	return &clone
+}
+
+func parseCompareShiftDuration(s string) (time.Duration, error) {
+	if d, err := time.ParseDuration(s); err == nil {
+		return d, nil
+	}
+	if d := parseRelativeDuration(s); d > 0 {
+		return d, nil
+	}
+
+	return 0, fmt.Errorf("invalid duration")
 }
 
 // shiftRelative adjusts a relative time string by subtracting a duration.

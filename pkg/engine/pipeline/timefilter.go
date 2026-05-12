@@ -50,7 +50,10 @@ func (t *TimeFilterIterator) Next(ctx context.Context) (*Batch, error) {
 			if v.IsNull() {
 				continue
 			}
-			ts := time.Unix(0, v.AsInt()).In(t.earliest.Location())
+			ts, ok := timeFilterValueTime(v, t.earliest.Location())
+			if !ok {
+				continue
+			}
 			if (t.earliest.IsZero() || !ts.Before(t.earliest)) &&
 				(t.latest.IsZero() || !ts.After(t.latest)) {
 				keep = append(keep, i)
@@ -83,6 +86,17 @@ func filterBatchRows(src *Batch, indices []int) *Batch {
 	dst.Len = len(indices)
 
 	return dst
+}
+
+func timeFilterValueTime(v event.Value, loc *time.Location) (time.Time, bool) {
+	switch v.Type() {
+	case event.FieldTypeTimestamp:
+		return v.AsTimestamp().In(loc), true
+	case event.FieldTypeInt:
+		return time.Unix(0, v.AsInt()).In(loc), true
+	default:
+		return time.Time{}, false
+	}
 }
 
 func (t *TimeFilterIterator) Close() error {
