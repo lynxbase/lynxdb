@@ -267,6 +267,8 @@ func commandName(cmd spl2.Command) string {
 		return "mvcombine"
 	case *spl2.NomvCommand:
 		return "nomv"
+	case *spl2.CapabilityCommand:
+		return cmd.(*spl2.CapabilityCommand).Name
 	case *spl2.SelectCommand:
 		return "select"
 	case *spl2.PackJsonCommand:
@@ -713,6 +715,10 @@ func annotatePipelineFields(query *spl2.Query, catalogFields []string) []Pipelin
 			stage.Description = truncateDesc(c.String(), 80)
 
 		case *spl2.MvcombineCommand:
+			stage.Description = truncateDesc(c.String(), 80)
+
+		case *spl2.CapabilityCommand:
+			fieldsUnknown = true
 			stage.Description = truncateDesc(c.String(), 80)
 
 		case *spl2.PackJsonCommand:

@@ -1280,6 +1280,17 @@ Every SPL2 command has a Lynx Flow counterpart. Both syntaxes are first-class.
 | `MAKEMV` | `makemv` | Split single value into multivalue |
 | `MVCOMBINE` | `mvcombine` | Combine rows into multivalue |
 | `NOMV` | `nomv` | Convert multivalue to single value |
+| `ADDINFO` | `addinfo` | Parse-compatible; requires search metadata capability |
+| `CONVERT` | `convert` | Parse-compatible; requires conversion capability |
+| `FIELDSUMMARY` | `fieldsummary` | Parse-compatible; requires field profiling capability |
+| `FLATTEN` | `flatten` | Parse-compatible; requires object flattening capability |
+| `IPLOCATION` | `iplocation` | Parse-compatible; requires GeoIP capability |
+| `TAGS` | `tags` | Parse-compatible; requires tags capability |
+| `TYPER` | `typer` | Parse-compatible; requires field typing capability |
+| `THRU` | `thru` | Parse-compatible; requires pass-through capability |
+| `TIMEWRAP` | `timewrap` | Parse-compatible; requires time comparison capability |
+| `TSTATS` | `tstats` | Parse-compatible; requires accelerated stats capability |
+| `MSTATS` | `mstats` | Parse-compatible; requires metrics stats capability |
 | `PACK_JSON` | `pack ... into` | Clearer syntax |
 | `STREAMSTATS` | `running` | Clearer name |
 | `EVENTSTATS` | `enrich` | Clearer name |

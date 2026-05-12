@@ -28,9 +28,7 @@ var unsupportedCommands = map[string]string{
 	"savedsearch":  "savedsearch is outside the query language profile.",
 	"spl1":         "spl1 embedded SPL is not executed; rewrite as native SPL2 or LynxFlow.",
 	"map":          "map is not yet supported.",
-	"tstats":       "tstats is not yet supported. Use stats with time-filtered queries.",
 	"datamodel":    "datamodel is not yet supported.",
-	"addinfo":      "addinfo is not yet supported.",
 	"return":       "return is not yet supported. Use head or fields to limit output.",
 	"format":       "format is not yet supported.",
 	// Note: "bucket" is NOT listed here — it is a valid Lynx Flow command (desugars to bin).

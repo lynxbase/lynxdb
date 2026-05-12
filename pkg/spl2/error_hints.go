@@ -18,6 +18,7 @@ var knownCommands = []string{
 	"unpack_postgres", "unpack_mysql_slow", "unpack_haproxy",
 	"unpack_leef", "unpack_w3c", "unpack_pattern",
 	"json", "unroll", "mvexpand", "expand", "makeresults", "makemv", "mvcombine", "nomv", "pack_json", "tee",
+	"addinfo", "convert", "fieldsummary", "flatten", "iplocation", "tags", "typer", "thru", "timewrap", "tstats", "mstats",
 	// Lynx Flow commands.
 	"let", "keep", "omit", "select", "group", "every", "bucket",
 	"order", "take", "rank", "topby", "bottomby", "bottom",

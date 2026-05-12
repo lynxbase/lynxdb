@@ -582,6 +582,21 @@ func TestBuildFromSourceFieldformatKeepsUnderlyingValue(t *testing.T) {
 	}
 }
 
+func TestBuildFromSourceCapabilityCommandRequiresEnablement(t *testing.T) {
+	query, err := spl2.Parse(`FROM main | addinfo`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	rows := []map[string]event.Value{{"host": event.StringValue("web")}}
+	_, err = BuildFromSource(context.Background(), NewRowScanIterator(rows, 2), query.Commands, 2)
+	if err == nil {
+		t.Fatal("expected capability error")
+	}
+	if !strings.Contains(err.Error(), `capability command "addinfo" is not enabled`) {
+		t.Fatalf("error: got %q", err.Error())
+	}
+}
+
 func TestBuildFromSourceChartByField(t *testing.T) {
 	query, err := spl2.Parse(`FROM main | chart count by host`)
 	if err != nil {

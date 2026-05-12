@@ -34,6 +34,7 @@ Session:   transaction, sessionize
 Explore:   glimpse, describe
 Advanced:  materialize, from (views), correlate, topology, tee
 Structured: unpack_json, unpack_logfmt, json, unroll, pack_json, parse, explode, pack
+Capability: addinfo, convert, fieldsummary, flatten, iplocation, tags, typer, thru, timewrap, tstats, mstats parse, then require deployment enablement at execution
 
 ## Key syntax
 - Implicit search:  field=value field2=value2

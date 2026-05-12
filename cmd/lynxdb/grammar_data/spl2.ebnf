@@ -23,6 +23,7 @@ command          = search_cmd | where_cmd | stats_cmd | eval_cmd | sort_cmd
                  | rollup_cmd | sessionize_cmd | correlate_cmd | topology_cmd
                  | unpack_json_cmd | unpack_logfmt_cmd | json_cmd | unroll_cmd
                  | mvexpand_cmd | makeresults_cmd | makemv_cmd | mvcombine_cmd | nomv_cmd | pack_json_cmd
+                 | capability_cmd
                  | select_cmd | take_cmd | keep_cmd | omit_cmd
                  | let_cmd | group_cmd | every_cmd | bucket_cmd | order_cmd
                  | rank_cmd | topby_cmd | bottomby_cmd | bottom_cmd
@@ -216,6 +217,9 @@ makemv_cmd       = "makemv" [ ( "delim" | "tokenizer" ) "=" quoted_string ]
 mvcombine_cmd    = "mvcombine" [ "delim" "=" quoted_string ] field ;
 nomv_cmd         = "nomv" field ;
 fieldformat_cmd  = "fieldformat" field "=" expr ;
+capability_cmd   = ( "addinfo" | "convert" | "fieldsummary" | "flatten" | "iplocation"
+                 | "tags" | "typer" | "thru" | "timewrap" | "tstats" | "mstats" )
+                    { ident | quoted_string | number | "=" | "," | "*" | "(" | ")" } ;
 pack_json_cmd    = "pack_json" ident_list [ "as" ident ] ;
 
 (* ─── Grouping / bucketing ─── *)

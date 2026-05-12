@@ -704,6 +704,8 @@ func commandStageName(cmd spl2.Command) string {
 		return "Mvcombine"
 	case *spl2.NomvCommand:
 		return "Nomv"
+	case *spl2.CapabilityCommand:
+		return "Capability"
 	case *spl2.PackJsonCommand:
 		return "PackJson"
 	case *spl2.TeeCommand:
@@ -1034,6 +1036,9 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 
 	case *spl2.FieldformatCommand:
 		return NewFieldformatIterator(child), nil
+
+	case *spl2.CapabilityCommand:
+		return nil, fmt.Errorf("capability command %q is not enabled", c.Name)
 
 	case *spl2.BinCommand:
 		dur := parseDuration(c.Span)

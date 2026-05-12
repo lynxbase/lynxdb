@@ -368,6 +368,8 @@ func commandAccessedFields(cmd spl2.Command, cols map[string]bool) {
 		for _, r := range c.Renames {
 			cols[r.Old] = true
 		}
+	case *spl2.CapabilityCommand:
+		cols["*"] = true
 	case *spl2.StreamstatsCommand:
 		for _, agg := range c.Aggregations {
 			for _, arg := range agg.Args {

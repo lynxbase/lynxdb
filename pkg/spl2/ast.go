@@ -1051,6 +1051,18 @@ func (c *MvcombineCommand) String() string {
 	return fmt.Sprintf("mvcombine %s", c.Field)
 }
 
+// CapabilityCommand represents a parsed command that requires an optional
+// deployment capability before it can execute.
+type CapabilityCommand struct {
+	Name string
+	Args []string
+}
+
+func (*CapabilityCommand) commandNode() {}
+func (c *CapabilityCommand) String() string {
+	return fmt.Sprintf("%s <%d args>", c.Name, len(c.Args))
+}
+
 // TeeCommand represents: | tee "<destination>" — side-effect passthrough.
 // Writes each batch to a destination file, then yields the batch unchanged.
 type TeeCommand struct {

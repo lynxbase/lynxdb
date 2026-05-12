@@ -596,6 +596,9 @@ func (p *Parser) parseCommand() ([]Command, error) {
 
 				return []Command{&WhereCommand{Expr: expr}}, nil
 			}
+			if isCapabilityCommandName(tok.Literal) {
+				return singleCmd(p.parseCapabilityCommand())
+			}
 			if hint, ok := unsupportedCommandHint(tok.Literal); ok {
 				return nil, fmt.Errorf("spl2: %s unsupported command %q at position %d: %s", LintUnsupportedCommand, tok.Literal, tok.Pos, hint)
 			}
@@ -611,6 +614,27 @@ func (p *Parser) parseCommand() ([]Command, error) {
 
 		return nil, fmt.Errorf("spl2: unexpected command %s %q at position %d", tok.Type, tok.Literal, tok.Pos)
 	}
+}
+
+func isCapabilityCommandName(name string) bool {
+	switch strings.ToLower(name) {
+	case "addinfo", "convert", "fieldsummary", "flatten", "iplocation",
+		"tags", "typer", "thru", "timewrap", "tstats", "mstats":
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) parseCapabilityCommand() (Command, error) {
+	name := strings.ToLower(p.advance().Literal)
+	cmd := &CapabilityCommand{Name: name}
+	for p.peek().Type != TokenPipe && p.peek().Type != TokenEOF && p.peek().Type != TokenRBracket {
+		tok := p.advance()
+		cmd.Args = append(cmd.Args, tok.Literal)
+	}
+
+	return cmd, nil
 }
 
 func (p *Parser) parseSearch() (Command, error) {

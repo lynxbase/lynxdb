@@ -39,6 +39,21 @@ func TestSplunkCompat_RFCUnsupportedCommands(t *testing.T) {
 	}
 }
 
+func TestSplunkCompat_CapabilityCommandsNotUnsupported(t *testing.T) {
+	for _, cmd := range []string{"addinfo", "tstats", "mstats"} {
+		t.Run(cmd, func(t *testing.T) {
+			if err := CheckUnsupportedCommands(`FROM main | ` + cmd); err != nil {
+				t.Fatalf("%s should parse as a capability command, got %v", cmd, err)
+			}
+			for _, hint := range DetectCompatHints(`FROM main | ` + cmd) {
+				if hint.Pattern == cmd && hint.Unsupported {
+					t.Fatalf("%s should not be unsupported, got %+v", cmd, hint)
+				}
+			}
+		})
+	}
+}
+
 func TestSplunkCompat_ChartSupported(t *testing.T) {
 	hints := DetectCompatHints(`index=main | chart count by host`)
 	for _, h := range hints {

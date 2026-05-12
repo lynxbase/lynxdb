@@ -2056,6 +2056,55 @@ func TestParse_FieldformatQuotedField(t *testing.T) {
 	}
 }
 
+func TestParse_CapabilityCommands(t *testing.T) {
+	tests := []struct {
+		query string
+		name  string
+		args  int
+	}{
+		{`FROM main | addinfo`, "addinfo", 0},
+		{`FROM main | convert timeformat="%Y-%m-%d" ctime(_time)`, "convert", 7},
+		{`FROM main | fieldsummary maxvals=10`, "fieldsummary", 3},
+		{`FROM main | flatten payload`, "flatten", 1},
+		{`FROM main | iplocation ip`, "iplocation", 1},
+		{`FROM main | tags host`, "tags", 1},
+		{`FROM main | typer`, "typer", 0},
+		{`FROM main | thru audit`, "thru", 1},
+		{`FROM main | timewrap 1w`, "timewrap", 2},
+		{`FROM main | tstats count where index=main by host`, "tstats", 7},
+		{`FROM main | mstats avg(cpu) where index=metrics by host`, "mstats", 10},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			q, err := Parse(tc.query)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			cmd, ok := q.Commands[0].(*CapabilityCommand)
+			if !ok {
+				t.Fatalf("expected CapabilityCommand, got %T", q.Commands[0])
+			}
+			if cmd.Name != tc.name {
+				t.Errorf("name: got %q, want %q", cmd.Name, tc.name)
+			}
+			if len(cmd.Args) != tc.args {
+				t.Errorf("args: got %d (%v), want %d", len(cmd.Args), cmd.Args, tc.args)
+			}
+		})
+	}
+}
+
+func TestParse_CapabilityCommandNameCanBeBareFilterField(t *testing.T) {
+	q, err := Parse(`FROM main | tags="prod"`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if _, ok := q.Commands[0].(*WhereCommand); !ok {
+		t.Fatalf("expected WhereCommand, got %T", q.Commands[0])
+	}
+}
+
 func TestParse_ChartCommand(t *testing.T) {
 	q, err := Parse(`FROM main | chart count over host by status`)
 	if err != nil {
