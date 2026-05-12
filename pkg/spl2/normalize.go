@@ -80,7 +80,7 @@ func NormalizeQueryWithNow(q string, now time.Time) string {
 	// Must come before known-command check since "index" is a known command
 	// but "index=foo" and "index foo" are source-selection patterns.
 	if indexName, rest, ok := extractIndexPrefix(trimmed); ok {
-		return buildFromWithRest(indexName, rest)
+		return buildFromWithRest(indexName, rest, now)
 	}
 
 	// Splunk-style source selection: source=<name>.
@@ -400,57 +400,96 @@ func extractValue(s string) (value, rest string) {
 
 // buildFromWithRest constructs a normalized query from an extracted index name
 // and the remaining query text.
-func buildFromWithRest(indexName, rest string) string {
-	earliest, latest, rest := extractTimeModifierPrefix(rest)
+func buildFromWithRest(indexName, rest string, now time.Time) string {
+	mods, rest := extractTimeModifierPrefix(rest)
 	source := "FROM " + indexName
-	if earliest != "" {
-		source += "[" + earliest
-		if latest != "" {
-			source += ".." + latest
+	if mods.earliest != "" {
+		source += "[" + mods.earliest
+		if mods.latest != "" {
+			source += ".." + mods.latest
 		}
 		source += "]"
 	}
 
+	indextimeWhere := buildIndexTimeWhere(mods, now)
 	if rest == "" {
+		if indextimeWhere != "" {
+			return source + " | where " + indextimeWhere
+		}
+
 		return source
 	}
 
 	// Already a pipe — attach directly: FROM idx | stats ...
 	if strings.HasPrefix(rest, "|") {
+		if indextimeWhere != "" {
+			return source + " | where " + indextimeWhere + " " + rest
+		}
+
 		return source + " " + rest
 	}
 
 	// Remaining text starts with a known command — insert pipe.
 	word := firstToken(rest)
 	if isKnownCommand(strings.ToLower(word)) {
+		if indextimeWhere != "" {
+			return source + " | where " + indextimeWhere + " | " + rest
+		}
+
 		return source + " | " + rest
 	}
 
 	// Otherwise treat remainder as implicit search terms.
+	if indextimeWhere != "" {
+		return source + " | where " + indextimeWhere + " | search " + rest
+	}
+
 	return source + " | search " + rest
 }
 
-func extractTimeModifierPrefix(rest string) (earliest, latest, remaining string) {
-	remaining = strings.TrimSpace(rest)
+type searchTimeModifiers struct {
+	earliest      string
+	latest        string
+	indexEarliest string
+	indexLatest   string
+}
+
+func extractTimeModifierPrefix(rest string) (searchTimeModifiers, string) {
+	var mods searchTimeModifiers
+	remaining := strings.TrimSpace(rest)
 	for {
 		lower := strings.ToLower(remaining)
 		switch {
 		case strings.HasPrefix(lower, "earliest="):
 			value, next := extractValue(remaining[len("earliest="):])
 			if value == "" {
-				return earliest, latest, remaining
+				return mods, remaining
 			}
-			earliest = normalizeTimeModifierValue(value)
+			mods.earliest = normalizeTimeModifierValue(value)
 			remaining = strings.TrimSpace(next)
 		case strings.HasPrefix(lower, "latest="):
 			value, next := extractValue(remaining[len("latest="):])
 			if value == "" {
-				return earliest, latest, remaining
+				return mods, remaining
 			}
-			latest = normalizeTimeModifierValue(value)
+			mods.latest = normalizeTimeModifierValue(value)
+			remaining = strings.TrimSpace(next)
+		case strings.HasPrefix(lower, "_index_earliest="):
+			value, next := extractValue(remaining[len("_index_earliest="):])
+			if value == "" {
+				return mods, remaining
+			}
+			mods.indexEarliest = normalizeTimeModifierValue(value)
+			remaining = strings.TrimSpace(next)
+		case strings.HasPrefix(lower, "_index_latest="):
+			value, next := extractValue(remaining[len("_index_latest="):])
+			if value == "" {
+				return mods, remaining
+			}
+			mods.indexLatest = normalizeTimeModifierValue(value)
 			remaining = strings.TrimSpace(next)
 		default:
-			return earliest, latest, remaining
+			return mods, remaining
 		}
 	}
 }
@@ -458,6 +497,36 @@ func extractTimeModifierPrefix(rest string) (earliest, latest, remaining string)
 func normalizeTimeModifierValue(value string) string {
 	if strings.EqualFold(value, "now()") {
 		return "now"
+	}
+
+	return value
+}
+
+func buildIndexTimeWhere(mods searchTimeModifiers, now time.Time) string {
+	earliest := resolveTimeModifierForPredicate(mods.indexEarliest, now)
+	latest := resolveTimeModifierForPredicate(mods.indexLatest, now)
+	if earliest != "" && latest != "" {
+		return `_indextime BETWEEN "` + earliest + `" AND "` + latest + `"`
+	}
+	if earliest != "" {
+		return `_indextime >= "` + earliest + `"`
+	}
+	if latest != "" {
+		return `_indextime <= "` + latest + `"`
+	}
+
+	return ""
+}
+
+func resolveTimeModifierForPredicate(value string, now time.Time) string {
+	if value == "" {
+		return ""
+	}
+	if strings.EqualFold(value, "now") {
+		return now.Format(time.RFC3339)
+	}
+	if strings.HasPrefix(value, "-") {
+		return resolveDurationToTime(value, now)
 	}
 
 	return value

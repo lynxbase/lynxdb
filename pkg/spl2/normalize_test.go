@@ -158,6 +158,46 @@ func TestResolveTimeLiterals_Between(t *testing.T) {
 	}
 }
 
+func TestNormalizeQuery_IndexTimeModifiers(t *testing.T) {
+	now := time.Date(2025, 3, 23, 14, 0, 0, 0, time.UTC)
+
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "index time range",
+			input: `index=nginx _index_earliest=-1h _index_latest=now`,
+			want:  `FROM nginx | where _indextime BETWEEN "2025-03-23T13:00:00Z" AND "2025-03-23T14:00:00Z"`,
+		},
+		{
+			name:  "index time range with event range and search",
+			input: `index=nginx earliest=-4h latest=-2h _index_earliest=-1h _index_latest=now status=500`,
+			want:  `FROM nginx[-4h..-2h] | where _indextime BETWEEN "2025-03-23T13:00:00Z" AND "2025-03-23T14:00:00Z" | search status=500`,
+		},
+		{
+			name:  "index earliest only",
+			input: `index=nginx _index_earliest=-30m | stats count`,
+			want:  `FROM nginx | where _indextime >= "2025-03-23T13:30:00Z" | stats count`,
+		},
+		{
+			name:  "index latest only",
+			input: `index=nginx _index_latest=now() | stats count`,
+			want:  `FROM nginx | where _indextime <= "2025-03-23T14:00:00Z" | stats count`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := NormalizeQueryWithNow(tt.input, now)
+			if got != tt.want {
+				t.Fatalf("NormalizeQueryWithNow(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveTimeLiterals_AtDateLiterals(t *testing.T) {
 	now := time.Date(2025, 3, 23, 14, 0, 0, 0, time.UTC)
 

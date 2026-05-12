@@ -69,8 +69,8 @@ Official Splunk compatibility checked:
 
 | RFC area | Current state | Gap |
 |---|---|---|
-| Source selectors | `FROM`, `INDEX`, lists, RFC glob matching, source exclude globs, `*`, CTE refs, and compact time ranges parse | `_index_*` source-time planning and some source-scope diagnostics still need coverage against the RFC rewrite contract. |
-| Time modifiers | `index=... earliest=... latest=...` normalizes to compact source time ranges, including `now`/`now()` latest values; `_index_earliest` and `_index_latest` compatibility is partly detected | `_index_*` planning and diagnostics need coverage against the RFC rewrite contract. |
+| Source selectors | `FROM`, `INDEX`, lists, RFC glob matching, source exclude globs, `*`, CTE refs, and compact time ranges parse | Some source-scope diagnostics still need coverage against the RFC rewrite contract. |
+| Time modifiers | `index=... earliest=... latest=...` normalizes to compact source time ranges, including `now`/`now()` latest values; `index=... _index_earliest=... _index_latest=...` normalizes to explicit `_indextime` predicates | Deprecated SPL time modifiers such as `daysago`, `hoursago`, `starttime`, `endtime`, and `timeformat` are still compatibility hints only. |
 | Rewrite transparency | `NormalizeQuery` rewrites source-less and Splunk-style forms | Rewrites are not yet recorded as structured `Rewrite{Before, After, Reason}` through CLI/TUI/REST metadata. |
 | Lints | Compatibility hints, parse suggestions, and post-parse `L001`/`L002`/`L003`/`L005`/`L010`/`L012`/`L013`/`L022`/`L030`/`L031`/`L034`/`L036` exist | Most RFC lint catalog entries `L001` through `L039` are not implemented yet. |
 | Quoted identifier canon | Single-quoted identifiers now parse as canonical names and double-quoted names remain accepted in legacy positions with `L012` | Some less-common double-quoted legacy name positions may still need coverage. |
