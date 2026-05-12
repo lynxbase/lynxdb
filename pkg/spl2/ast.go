@@ -937,6 +937,16 @@ func (c *MakeresultsCommand) String() string {
 	return fmt.Sprintf("makeresults count=%d", c.Count)
 }
 
+// NomvCommand represents: | nomv <field>.
+type NomvCommand struct {
+	Field string
+}
+
+func (*NomvCommand) commandNode() {}
+func (c *NomvCommand) String() string {
+	return fmt.Sprintf("nomv %s", c.Field)
+}
+
 // TeeCommand represents: | tee "<destination>" — side-effect passthrough.
 // Writes each batch to a destination file, then yields the batch unchanged.
 type TeeCommand struct {

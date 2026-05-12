@@ -249,6 +249,8 @@ func commandName(cmd spl2.Command) string {
 		return "json"
 	case *spl2.UnrollCommand:
 		return "explode"
+	case *spl2.NomvCommand:
+		return "nomv"
 	case *spl2.SelectCommand:
 		return "select"
 	case *spl2.PackJsonCommand:
@@ -650,6 +652,9 @@ func annotatePipelineFields(query *spl2.Query, catalogFields []string) []Pipelin
 			for _, f := range c.ExtraFields {
 				setAdd(fields, f)
 			}
+			stage.Description = truncateDesc(c.String(), 80)
+
+		case *spl2.NomvCommand:
 			stage.Description = truncateDesc(c.String(), 80)
 
 		case *spl2.PackJsonCommand:

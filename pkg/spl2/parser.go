@@ -456,6 +456,8 @@ func (p *Parser) parseCommand() ([]Command, error) {
 		return singleCmd(p.parseMvexpand())
 	case TokenMakeresults:
 		return singleCmd(p.parseMakeresults())
+	case TokenNomv:
+		return singleCmd(p.parseNomv())
 	case TokenPackJson:
 		return singleCmd(p.parsePackJson())
 	case TokenTee:
@@ -4023,6 +4025,17 @@ func parseNonNegativeInt(raw, name string) (int, error) {
 	}
 
 	return value, nil
+}
+
+func (p *Parser) parseNomv() (*NomvCommand, error) {
+	p.advance() // consume "nomv"
+
+	field, err := p.expectIdent()
+	if err != nil {
+		return nil, fmt.Errorf("spl2: nomv requires a field name")
+	}
+
+	return &NomvCommand{Field: field.Literal}, nil
 }
 
 // parseExplode parses: explode <field>[, <field2>, ...] [as <alias>].

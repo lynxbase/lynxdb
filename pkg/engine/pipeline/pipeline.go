@@ -686,6 +686,8 @@ func commandStageName(cmd spl2.Command) string {
 		return "Unroll"
 	case *spl2.MakeresultsCommand:
 		return "Makeresults"
+	case *spl2.NomvCommand:
+		return "Nomv"
 	case *spl2.PackJsonCommand:
 		return "PackJson"
 	case *spl2.TeeCommand:
@@ -1283,6 +1285,9 @@ func (qc *queryContext) buildCommand(child Iterator, cmd spl2.Command) (Iterator
 		}
 
 		return NewRowScanIterator(rows, qc.batchSize), nil
+
+	case *spl2.NomvCommand:
+		return NewNomvIterator(child, c.Field), nil
 
 	case *spl2.PackJsonCommand:
 		return NewPackJsonIterator(child, c.Fields, c.Target), nil

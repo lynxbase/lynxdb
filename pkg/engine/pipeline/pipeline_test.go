@@ -339,6 +339,42 @@ func TestBuildFromSourceUntableCommand(t *testing.T) {
 	}
 }
 
+func TestBuildFromSourceNomvCommand(t *testing.T) {
+	query, err := spl2.Parse(`FROM main | nomv senders`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	rows := []map[string]event.Value{
+		{"senders": event.StringValue(`["alice","bob"]`)},
+		{"senders": event.StringValue("carol|||dave")},
+		{"senders": event.StringValue("erin")},
+	}
+	iter, err := BuildFromSource(context.Background(), NewRowScanIterator(rows, 2), query.Commands, 2)
+	if err != nil {
+		t.Fatalf("BuildFromSource: %v", err)
+	}
+
+	ctx := context.Background()
+	if err := iter.Init(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer iter.Close()
+
+	results, err := CollectAll(ctx, iter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := results[0]["senders"].AsString(); got != "alice\nbob" {
+		t.Errorf("json array senders: got %q, want %q", got, "alice\nbob")
+	}
+	if got := results[1]["senders"].AsString(); got != "carol\ndave" {
+		t.Errorf("internal mv senders: got %q, want %q", got, "carol\ndave")
+	}
+	if got := results[2]["senders"].AsString(); got != "erin" {
+		t.Errorf("scalar senders: got %q, want erin", got)
+	}
+}
+
 func TestPipelineEndToEnd(t *testing.T) {
 	// FROM idx | WHERE status >= 500 | stats count
 	events := makeEvents(100)

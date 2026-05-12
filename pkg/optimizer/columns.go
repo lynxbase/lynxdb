@@ -438,6 +438,8 @@ func commandAccessedFields(cmd spl2.Command, cols map[string]bool) {
 		}
 	case *spl2.UntableCommand:
 		cols["*"] = true
+	case *spl2.NomvCommand:
+		cols[c.Field] = true
 	case *spl2.PackJsonCommand:
 		for _, f := range c.Fields {
 			cols[f] = true

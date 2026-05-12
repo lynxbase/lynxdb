@@ -1907,6 +1907,20 @@ func TestParse_UntableCommand(t *testing.T) {
 	}
 }
 
+func TestParse_NomvCommand(t *testing.T) {
+	q, err := Parse(`FROM main | nomv senders`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	cmd, ok := q.Commands[0].(*NomvCommand)
+	if !ok {
+		t.Fatalf("expected NomvCommand, got %T", q.Commands[0])
+	}
+	if cmd.Field != "senders" {
+		t.Errorf("field: got %q, want senders", cmd.Field)
+	}
+}
+
 func TestParse_FieldsRemoveGlobPattern(t *testing.T) {
 	q, err := Parse(`FROM main | fields - pg.*`)
 	if err != nil {

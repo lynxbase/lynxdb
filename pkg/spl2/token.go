@@ -104,6 +104,7 @@ const (
 	TokenMvexpand
 	TokenExpand
 	TokenMakeresults
+	TokenNomv
 	TokenPackJson
 	TokenTee
 
@@ -293,6 +294,7 @@ var tokenNames = map[TokenType]string{
 	TokenMvexpand:          "MVEXPAND",
 	TokenExpand:            "EXPAND",
 	TokenMakeresults:       "MAKERESULTS",
+	TokenNomv:              "NOMV",
 	TokenPackJson:          "PACK_JSON",
 	TokenTee:               "TEE",
 	TokenRegexMatch:        "REGEX_MATCH",
@@ -454,6 +456,7 @@ var keywords = map[string]TokenType{
 	"mvexpand":            TokenMvexpand,
 	"expand":              TokenExpand,
 	"makeresults":         TokenMakeresults,
+	"nomv":                TokenNomv,
 	"pack_json":           TokenPackJson,
 	"tee":                 TokenTee,
 	"between":             TokenBetween,

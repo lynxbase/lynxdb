@@ -26,6 +26,7 @@ Source contract: `docs/grammar/RFC.md`.
 | SPL/SPL2 `mvexpand` and SPL2 `expand` expand one multivalue/array field into separate rows, including `limit` | `pkg/spl2/parser.go`, `pkg/engine/pipeline/unroll.go`, `pkg/engine/pipeline/unroll_test.go` |
 | SPL/SPL2 `makeresults` generates temporary rows with `_time` and supports default, positional, and `count=<n>` counts | `pkg/spl2/parser.go`, `pkg/engine/pipeline/pipeline.go`, `pkg/engine/pipeline/pipeline_test.go` |
 | SPL/SPL2 `untable` converts wide rows into name/value rows for every field except the x-field | `pkg/spl2/parser.go`, `pkg/engine/pipeline/untable.go`, `pkg/engine/pipeline/pipeline_test.go` |
+| SPL/SPL2 `nomv` converts multivalue fields into one newline-delimited value | `pkg/spl2/parser.go`, `pkg/engine/pipeline/nomv.go`, `pkg/engine/pipeline/pipeline_test.go` |
 | Unsupported Splunk commands in the RFC profile reject with `L021` and compatibility hints | `pkg/spl2/parser.go`, `pkg/spl2/compat_hints.go`, `pkg/spl2/parser_test.go`, `pkg/spl2/compat_hints_test.go` |
 | LynxFlow `proportion`, `impact`, `baseline`, `changes`, and `exemplars` deterministic desugaring | `pkg/spl2/parser.go`, `pkg/spl2/parser_lynxflow_test.go` |
 | Web autocomplete and highlighting share one editor catalog | `web/src/editor/lynxflow-catalog.ts`, `web/src/editor/autocomplete.ts`, `web/src/editor/lynxflow-lang.ts` |
@@ -42,6 +43,7 @@ Official Splunk compatibility checked:
 | Multivalue expansion | Splunk docs define `mvexpand` as expanding one multivalue field into separate rows while keeping other fields unchanged; SPL2 also defines `expand` for arrays. SPL2 places `limit=<int>` before the field, while SPL allows it after the field. |
 | Makeresults command | Splunk docs define `makeresults` default row generation and `count=<num>`; SPL2 examples also use positional counts. LynxDB implements generated rows with `_time`; `annotate`, `format`, and `data` options are deferred. |
 | Untable command | Splunk docs define `untable <x-field> <y-name-field> <y-data-field>` as the inverse of `xyseries`, emitting field names other than the x-field into the y-name field and their values into the y-data field. |
+| Nomv command | Splunk docs define `nomv <field>` as converting multivalue field values into one single value separated with a newline delimiter. |
 
 ## Partial
 
