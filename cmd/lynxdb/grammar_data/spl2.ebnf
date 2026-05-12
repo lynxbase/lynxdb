@@ -19,7 +19,8 @@ command          = search_cmd | where_cmd | stats_cmd | eval_cmd | sort_cmd
                  | top_cmd | rare_cmd | fillnull_cmd | streamstats_cmd
                  | eventstats_cmd | join_cmd | append_cmd | appendcols_cmd | appendpipe_cmd | union_cmd | transaction_cmd
                  | xyseries_cmd | untable_cmd | materialize_cmd | from_cmd | views_cmd
-                 | dropview_cmd | glimpse_cmd | describe_cmd | tee_cmd
+                 | dropview_cmd | glimpse_cmd | describe_cmd | use_cmd | outliers_cmd
+                 | compare_cmd | patterns_cmd | trace_cmd | tee_cmd
                  | rollup_cmd | sessionize_cmd | correlate_cmd | topology_cmd
                  | unpack_json_cmd | unpack_logfmt_cmd | json_cmd | unroll_cmd
                  | mvexpand_cmd | makeresults_cmd | makemv_cmd | mvcombine_cmd | nomv_cmd | pack_json_cmd
@@ -190,6 +191,17 @@ dropview_cmd     = "dropview" quoted_string ;
 
 glimpse_cmd      = "glimpse" [ number ] ;
 describe_cmd     = "describe" [ field ] ;
+use_cmd          = "use" ( ident | "@" ident [ "/" ident ] ) ;
+outliers_cmd     = "outliers" "field" "=" field
+                   [ "method" "=" ( "iqr" | "zscore" | "mad" ) ]
+                   [ "threshold" "=" number ] ;
+compare_cmd      = "compare" [ "previous" ] span_value ;
+patterns_cmd     = "patterns" [ "field" "=" field ]
+                   [ "max_templates" "=" number ]
+                   [ "similarity" "=" number ] ;
+trace_cmd        = "trace" [ "trace_id" "=" field ]
+                   [ "span_id" "=" field ]
+                   [ "parent_id" "=" field ] ;
 
 (* ─── Data transformation commands ─── *)
 
