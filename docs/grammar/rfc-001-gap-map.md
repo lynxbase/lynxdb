@@ -36,6 +36,7 @@ Source contract: `docs/grammar/RFC.md`.
 | SPL/SPL2 `mvcombine` merges rows that differ only by one field into a single row with multivalue field values | `pkg/spl2/parser.go`, `pkg/engine/pipeline/mvcombine.go`, `pkg/engine/pipeline/pipeline_test.go` |
 | SPL/SPL2 `nomv` converts multivalue fields into one newline-delimited value | `pkg/spl2/parser.go`, `pkg/engine/pipeline/nomv.go`, `pkg/engine/pipeline/pipeline_test.go` |
 | Optional capability commands parse and report capability-required execution errors | `pkg/spl2/parser.go`, `pkg/engine/pipeline/pipeline.go`, `pkg/spl2/parser_test.go`, `pkg/engine/pipeline/pipeline_test.go` |
+| SEARCH `L030` mixed `AND`/`OR` lint covers explicit `search` and normalized free-hand search inputs | `pkg/spl2/lints.go`, `pkg/spl2/lints_test.go` |
 | Unsupported Splunk commands in the RFC profile reject with `L021` and compatibility hints | `pkg/spl2/parser.go`, `pkg/spl2/compat_hints.go`, `pkg/spl2/parser_test.go`, `pkg/spl2/compat_hints_test.go` |
 | LynxFlow `proportion`, `impact`, `baseline`, `changes`, and `exemplars` deterministic desugaring | `pkg/spl2/parser.go`, `pkg/spl2/parser_lynxflow_test.go` |
 | Web autocomplete and highlighting share one editor catalog | `web/src/editor/lynxflow-catalog.ts`, `web/src/editor/autocomplete.ts`, `web/src/editor/lynxflow-lang.ts` |
@@ -82,7 +83,6 @@ Official Splunk compatibility checked:
 | RFC requirement | Status | Reason |
 |---|---|---|
 | Full glob syntax including `**`, character classes, alternatives, and quoted glob escapes | Deferred | Requires selector AST and matcher updates beyond the current token-level glob detection. |
-| SEARCH `L030` mixed `AND`/`OR` lint with parsed shape | Partial | The lint is implemented for explicit SEARCH commands and surfaces through REST metadata plus CLI/TUI stderr; bare-search normalization paths still need coverage. |
 | Broad-search lints and explain blocks `L032`, `L037`, source counts, skipped segments | Deferred | Requires planner and API metadata integration. |
 | Regex engine selection, PCRE2 diagnostics, and `L038`/`L039` | Deferred | Requires runtime regex engine configuration and planner literal-extraction diagnostics. |
 | `chart` advanced options and multi-aggregate split pivots | Deferred | Current execution covers grouped aggregation and one-aggregate row/column pivots; Splunk options such as `limit`, `format`, `sep`, `cont`, and split-series filtering need chart metadata and option parsing. |

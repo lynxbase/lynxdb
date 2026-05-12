@@ -29,10 +29,34 @@ const (
 func LintQuery(input string) ([]QueryLint, error) {
 	prog, err := ParseProgram(input)
 	if err != nil {
-		return nil, err
+		normalized := NormalizeQuery(input)
+		if normalized == input {
+			return nil, err
+		}
+		prog, err = ParseProgram(normalized)
+		if err != nil {
+			return nil, err
+		}
+		return LintProgram(normalized, prog)
 	}
 
-	return LintProgram(input, prog)
+	lints, err := LintProgram(input, prog)
+	if err != nil {
+		return nil, err
+	}
+	normalized := NormalizeQuery(input)
+	if normalized == input {
+		return lints, nil
+	}
+	normalizedProg, err := ParseProgram(normalized)
+	if err != nil {
+		return lints, nil
+	}
+	normalizedLints, err := LintProgram(normalized, normalizedProg)
+	if err != nil {
+		return lints, nil
+	}
+	return appendNewLintCodes(lints, normalizedLints), nil
 }
 
 // LintProgram returns RFC lint warnings for an already parsed program.
@@ -61,6 +85,21 @@ func LintProgram(input string, prog *Program) ([]QueryLint, error) {
 	lints = append(lints, lintDefaultMetricField(tokens)...)
 
 	return lints, nil
+}
+
+func appendNewLintCodes(base, extra []QueryLint) []QueryLint {
+	seen := make(map[string]bool, len(base))
+	for _, lint := range base {
+		seen[lint.Code] = true
+	}
+	for _, lint := range extra {
+		if seen[lint.Code] {
+			continue
+		}
+		base = append(base, lint)
+		seen[lint.Code] = true
+	}
+	return base
 }
 
 func lintDefaultSource(prog *Program, tokens []Token) []QueryLint {

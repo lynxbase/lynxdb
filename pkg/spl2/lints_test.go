@@ -509,6 +509,11 @@ func TestLintQuery_MixedSearchAndOr(t *testing.T) {
 			wantCodes: []string{LintMixedSearchAndOr},
 		},
 		{
+			name:      "freehand normalized search",
+			query:     `error OR timeout AND fatal`,
+			wantCodes: []string{LintDefaultSource, LintMixedSearchAndOr},
+		},
+		{
 			name:      "parenthesized or",
 			query:     `from app | search (error OR timeout) AND fatal`,
 			wantCodes: nil,
