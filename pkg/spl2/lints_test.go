@@ -66,6 +66,47 @@ func TestLintQuery_CountWithoutParens(t *testing.T) {
 	}
 }
 
+func TestLintQuery_DefaultSource(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantCodes []string
+	}{
+		{
+			name:      "leading pipeline",
+			query:     `| stats count()`,
+			wantCodes: []string{LintDefaultSource},
+		},
+		{
+			name:      "bare command",
+			query:     `stats count()`,
+			wantCodes: []string{LintDefaultSource},
+		},
+		{
+			name:      "explicit source",
+			query:     `from app | stats count()`,
+			wantCodes: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lints, err := LintQuery(tt.query)
+			if err != nil {
+				t.Fatalf("LintQuery: %v", err)
+			}
+			if len(lints) != len(tt.wantCodes) {
+				t.Fatalf("lints: got %+v, want codes %v", lints, tt.wantCodes)
+			}
+			for i, want := range tt.wantCodes {
+				if lints[i].Code != want {
+					t.Fatalf("lints[%d].Code: got %q, want %q", i, lints[i].Code, want)
+				}
+			}
+		})
+	}
+}
+
 func TestLintProgram_RequiresSuccessfulParse(t *testing.T) {
 	_, err := LintQuery(`from app | stats count(`)
 	if err == nil {

@@ -10,6 +10,7 @@ type QueryLint struct {
 }
 
 const (
+	LintDefaultSource      = "L002"
 	LintCountWithoutParens = "L013"
 	LintMixedSearchAndOr   = "L030"
 )
@@ -36,10 +37,28 @@ func LintProgram(input string, prog *Program) ([]QueryLint, error) {
 		return nil, err
 	}
 
-	lints := lintCountWithoutParens(tokens)
+	lints := lintDefaultSource(prog, tokens)
+	lints = append(lints, lintCountWithoutParens(tokens)...)
 	lints = append(lints, lintMixedSearchAndOr(input, tokens)...)
 
 	return lints, nil
+}
+
+func lintDefaultSource(prog *Program, tokens []Token) []QueryLint {
+	if prog == nil || prog.Main == nil || prog.Main.Source != nil {
+		return nil
+	}
+
+	pos := 0
+	if len(tokens) > 0 {
+		pos = tokens[0].Pos
+	}
+
+	return []QueryLint{{
+		Code:     LintDefaultSource,
+		Message:  "Default source `main` is used; add `FROM` for clarity",
+		Position: pos,
+	}}
 }
 
 func lintCountWithoutParens(tokens []Token) []QueryLint {

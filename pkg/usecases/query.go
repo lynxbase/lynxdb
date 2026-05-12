@@ -855,9 +855,9 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 	if plan.Hints != nil && len(plan.Hints.Warnings) > 0 {
 		warnings = plan.Hints.Warnings
 	}
-	lints, err := spl2.LintProgram(plan.RawQuery, plan.Program)
-	if err != nil {
-		return nil, err
+	lints, lintErr := spl2.LintQuery(req.Query)
+	if lintErr != nil {
+		lints, _ = spl2.LintProgram(plan.RawQuery, plan.Program)
 	}
 
 	switch req.Mode {
