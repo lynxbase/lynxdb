@@ -1364,6 +1364,37 @@ func TestLynxFlow_Baseline(t *testing.T) {
 	}
 }
 
+func TestLynxFlow_Changes(t *testing.T) {
+	q, err := Parse(`from app | changes version by service`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Commands) != 3 {
+		t.Fatalf("Commands: got %d, want 3", len(q.Commands))
+	}
+	sort := q.Commands[0].(*SortCommand)
+	if len(sort.Fields) != 1 || sort.Fields[0].Name != "_time" || sort.Fields[0].Desc {
+		t.Errorf("Sort fields: got %+v, want +_time", sort.Fields)
+	}
+	streamstats := q.Commands[1].(*StreamstatsCommand)
+	if streamstats.Current {
+		t.Error("Current: got true, want false")
+	}
+	if len(streamstats.Aggregations) != 1 || streamstats.Aggregations[0].Func != "last" || streamstats.Aggregations[0].Alias != "previous_version" {
+		t.Errorf("Aggregations: got %+v", streamstats.Aggregations)
+	}
+	if len(streamstats.GroupBy) != 1 || streamstats.GroupBy[0] != "service" {
+		t.Errorf("GroupBy: got %v, want [service]", streamstats.GroupBy)
+	}
+	where, ok := q.Commands[2].(*WhereCommand)
+	if !ok {
+		t.Fatalf("command[2]: got %T, want WhereCommand", q.Commands[2])
+	}
+	if _, ok := where.Expr.(*BinaryExpr); !ok {
+		t.Fatalf("where expr: got %T, want BinaryExpr", where.Expr)
+	}
+}
+
 func TestLynxFlow_Percentiles(t *testing.T) {
 	q, err := Parse(`from app | percentiles dur by service`)
 	if err != nil {
@@ -1769,6 +1800,7 @@ func TestLynxFlow_LexerKeywordsAsTokens(t *testing.T) {
 		{"proportion", TokenProportion},
 		{"impact", TokenImpact},
 		{"baseline", TokenBaseline},
+		{"changes", TokenChanges},
 		{"percentiles", TokenPercentiles},
 		{"slowest", TokenSlowest},
 	}
@@ -2133,7 +2165,7 @@ func TestLynxFlow_NormalizeKnownCommands(t *testing.T) {
 		"let", "keep", "omit", "select", "group", "every", "bucket",
 		"order", "take", "rank", "topby", "bottomby", "bottom",
 		"running", "enrich", "parse", "explode", "pack", "lookup",
-		"latency", "errors", "rate", "proportion", "impact", "baseline", "percentiles", "slowest",
+		"latency", "errors", "rate", "proportion", "impact", "baseline", "changes", "percentiles", "slowest",
 		"views", "dropview",
 	}
 	for _, cmd := range lfCommands {
@@ -2958,6 +2990,7 @@ func TestLynxFlow_NormalizerAllLynxFlowCommands(t *testing.T) {
 		{"proportion status >= 500 AS error_rate", "FROM main | proportion status >= 500 AS error_rate"},
 		{"impact by service", "FROM main | impact by service"},
 		{"baseline error_rate window=12", "FROM main | baseline error_rate window=12"},
+		{"changes version", "FROM main | changes version"},
 		{"views", "FROM main | views"},
 	}
 	for _, tt := range tests {

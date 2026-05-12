@@ -525,6 +525,8 @@ func (p *Parser) parseCommand() ([]Command, error) {
 		return p.parseImpactCmd()
 	case TokenBaseline:
 		return p.parseBaselineCmd()
+	case TokenChanges:
+		return p.parseChangesCmd()
 
 	case TokenEOF:
 		return nil, nil
@@ -3018,7 +3020,7 @@ func isIdentLike(t TokenType) bool {
 		TokenInto, TokenAsc, TokenDesc,
 		// Lynx Flow domain sugar keywords.
 		TokenLatency, TokenErrors, TokenRate, TokenProportion, TokenPercentiles, TokenSlowest,
-		TokenImpact, TokenBaseline,
+		TokenImpact, TokenBaseline, TokenChanges,
 		// SPL2 keywords that can be field names in expression context.
 		TokenTypeKeyword, TokenCurrent, TokenWindow, TokenMaxspan,
 		TokenStartswith, TokenEndswith:
@@ -4361,6 +4363,47 @@ func (p *Parser) parseBaselineCmd() ([]Command, error) {
 				{Field: zAlias, Expr: zExpr},
 			},
 		},
+	}, nil
+}
+
+// parseChangesCmd parses: changes <field> [by <fields>].
+// Desugars to sort +_time, streamstats previous value, then where changed.
+func (p *Parser) parseChangesCmd() ([]Command, error) {
+	p.advance() // consume "changes"
+
+	field, err := p.expectIdent()
+	if err != nil {
+		return nil, fmt.Errorf("spl2: changes requires a field name")
+	}
+
+	var groupBy []string
+	if p.peek().Type == TokenBy {
+		p.advance()
+		groupBy, err = p.parseIdentListLF()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	name := strings.ReplaceAll(field.Literal, ".", "_")
+	previousAlias := "previous_" + name
+	fieldExpr := &FieldExpr{Name: field.Literal}
+	previousExpr := &FieldExpr{Name: previousAlias}
+
+	return []Command{
+		&SortCommand{Fields: []SortField{{Name: "_time"}}},
+		&StreamstatsCommand{
+			Current: false,
+			Aggregations: []AggExpr{
+				{Func: "last", Args: []Expr{fieldExpr}, Alias: previousAlias},
+			},
+			GroupBy: groupBy,
+		},
+		&WhereCommand{Expr: &BinaryExpr{
+			Left:  &FuncCallExpr{Name: "isnotnull", Args: []Expr{previousExpr}},
+			Op:    "and",
+			Right: &CompareExpr{Left: fieldExpr, Op: "!=", Right: previousExpr},
+		}},
 	}, nil
 }
 
