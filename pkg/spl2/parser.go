@@ -1596,9 +1596,34 @@ func (p *Parser) parseDedup() (*DedupCommand, error) {
 		limit = n
 	}
 
-	fields, err := p.parseIdentList()
-	if err != nil {
-		return nil, err
+	fields := []string{}
+	for {
+		tok := p.peek()
+		if tok.Type == TokenNumber && len(fields) > 0 {
+			tok = p.advance()
+			n, err := strconv.Atoi(tok.Literal)
+			if err != nil {
+				return nil, fmt.Errorf("invalid dedup limit: %s", tok.Literal)
+			}
+			limit = n
+			break
+		}
+		if !isIdentLike(tok.Type) && tok.Type != TokenGlob {
+			break
+		}
+		p.advance()
+		fields = append(fields, tok.Literal)
+		if p.peek().Type == TokenComma {
+			p.advance()
+			continue
+		}
+		if p.peek().Type == TokenNumber || isIdentLike(p.peek().Type) || p.peek().Type == TokenGlob {
+			continue
+		}
+		break
+	}
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("spl2: expected at least one identifier at position %d", p.peek().Pos)
 	}
 
 	return &DedupCommand{Fields: fields, Limit: limit}, nil

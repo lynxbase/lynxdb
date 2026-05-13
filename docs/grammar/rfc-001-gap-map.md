@@ -66,13 +66,14 @@ Official Splunk compatibility checked:
 | Makemv command | Splunk docs define `makemv [delim=<string> | tokenizer=<string>] [allowempty=<bool>] [setsv=<bool>] <field>` as splitting a single-value field into multivalue values. LynxDB supports delimiter, tokenizer, and `allowempty`; `setsv` is parsed but not separately observable in the current value model. |
 | Mvcombine command | Splunk docs define `mvcombine [delim=<string>] <field>` as merging rows where all fields except the specified field match, turning the specified field into a multivalue field. LynxDB implements grouping and multivalue output; delimiter-specific single-value display metadata is deferred. |
 | Nomv command | Splunk docs define `nomv <field>` as converting multivalue field values into one single value separated with a newline delimiter. |
+| Dedup command | Splunk SPL permits space-separated field lists and trailing counts, while SPL2 uses leading count/options and comma-separated field lists. LynxDB parses legacy forms and emits `L011` for canonical SPL2 spelling. |
 
 ## Partial
 
 | RFC area | Current state | Gap |
 |---|---|---|
 | Source selectors | `FROM`, `INDEX`, lists, RFC glob matching, source exclude globs, `*`, CTE refs, and compact time ranges parse | Some source-scope diagnostics still need coverage against the RFC rewrite contract. |
-| Lints | Compatibility hints, parse suggestions, and post-parse `L001`/`L002`/`L003`/`L004`/`L005`/`L010`/`L012`/`L013`/`L022`/`L030`/`L031`/`L034`/`L036` exist | Most RFC lint catalog entries `L001` through `L039` are not implemented yet. |
+| Lints | Compatibility hints, parse suggestions, and post-parse `L001`/`L002`/`L003`/`L004`/`L005`/`L010`/`L011`/`L012`/`L013`/`L022`/`L030`/`L031`/`L034`/`L036` exist | Most RFC lint catalog entries `L001` through `L039` are not implemented yet. |
 | Quoted identifier canon | Single-quoted identifiers now parse as canonical names and double-quoted names remain accepted in legacy positions with `L012` | Some less-common double-quoted legacy name positions may still need coverage. |
 | Function catalog | Many eval and aggregate functions parse and execute; common aggregate aliases and time aggregates now normalize before planning | RFC aggregate/eval catalog needs a full parser, VM, and editor cross-check for missing functions and aliases. |
 | Command catalog | Native SPL2/LynxFlow commands, several helpers, and optional capability command syntax parse; profile-excluded Splunk commands reject with `L021` | Optional capability command execution semantics remain deferred. |

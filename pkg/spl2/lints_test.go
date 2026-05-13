@@ -485,6 +485,57 @@ func TestLintQuery_OptionAfterArg(t *testing.T) {
 	}
 }
 
+func TestLintQuery_AmbiguousDedupArgs(t *testing.T) {
+	tests := []struct {
+		name      string
+		query     string
+		wantCodes []string
+	}{
+		{
+			name:      "space separated fields",
+			query:     `from app | dedup host source`,
+			wantCodes: []string{LintAmbiguousDedupArgs},
+		},
+		{
+			name:      "trailing limit",
+			query:     `from app | dedup host source 2`,
+			wantCodes: []string{LintAmbiguousDedupArgs},
+		},
+		{
+			name:      "leading limit with space separated fields",
+			query:     `from app | dedup 2 host source`,
+			wantCodes: []string{LintAmbiguousDedupArgs},
+		},
+		{
+			name:      "canonical comma fields",
+			query:     `from app | dedup 2 host, source`,
+			wantCodes: nil,
+		},
+		{
+			name:      "single field",
+			query:     `from app | dedup host`,
+			wantCodes: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lints, err := LintQuery(tt.query)
+			if err != nil {
+				t.Fatalf("LintQuery: %v", err)
+			}
+			if len(lints) != len(tt.wantCodes) {
+				t.Fatalf("lints: got %+v, want codes %v", lints, tt.wantCodes)
+			}
+			for i, want := range tt.wantCodes {
+				if lints[i].Code != want {
+					t.Fatalf("lints[%d].Code: got %q, want %q", i, lints[i].Code, want)
+				}
+			}
+		})
+	}
+}
+
 func TestLintQuery_ReservedFieldNames(t *testing.T) {
 	tests := []struct {
 		name      string

@@ -276,6 +276,63 @@ func TestParse_DedupCommand(t *testing.T) {
 	}
 }
 
+func TestParse_DedupCompatibilityForms(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		fields []string
+		limit  int
+	}{
+		{
+			name:   "space separated fields",
+			input:  `FROM main | dedup host source`,
+			fields: []string{"host", "source"},
+		},
+		{
+			name:   "leading limit with space separated fields",
+			input:  `FROM main | dedup 2 host source`,
+			fields: []string{"host", "source"},
+			limit:  2,
+		},
+		{
+			name:   "trailing limit",
+			input:  `FROM main | dedup host source 2`,
+			fields: []string{"host", "source"},
+			limit:  2,
+		},
+		{
+			name:   "canonical comma fields",
+			input:  `FROM main | dedup 2 host, source`,
+			fields: []string{"host", "source"},
+			limit:  2,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.input)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			dedup, ok := q.Commands[0].(*DedupCommand)
+			if !ok {
+				t.Fatalf("expected DedupCommand, got %T", q.Commands[0])
+			}
+			if dedup.Limit != tt.limit {
+				t.Fatalf("Limit: got %d, want %d", dedup.Limit, tt.limit)
+			}
+			if len(dedup.Fields) != len(tt.fields) {
+				t.Fatalf("fields: got %v, want %v", dedup.Fields, tt.fields)
+			}
+			for i, want := range tt.fields {
+				if dedup.Fields[i] != want {
+					t.Fatalf("fields[%d]: got %q, want %q", i, dedup.Fields[i], want)
+				}
+			}
+		})
+	}
+}
+
 func TestParse_TailCommand(t *testing.T) {
 	input := `FROM main | tail 50`
 	q, err := Parse(input)

@@ -16,6 +16,7 @@ const (
 	LintStatsCountWide     = "L004"
 	LintRawExactCompare    = "L005"
 	LintOptionAfterArg     = "L010"
+	LintAmbiguousDedupArgs = "L011"
 	LintDoubleQuotedName   = "L012"
 	LintCountWithoutParens = "L013"
 	LintUnsupportedCommand = "L021"
@@ -78,6 +79,7 @@ func LintProgram(input string, prog *Program) ([]QueryLint, error) {
 	lints = append(lints, lintStatsCountWideRange(prog)...)
 	lints = append(lints, lintIndexRewrite(tokens)...)
 	lints = append(lints, lintOptionAfterArg(tokens)...)
+	lints = append(lints, lintAmbiguousDedupArgs(tokens)...)
 	lints = append(lints, lintDoubleQuotedNames(tokens)...)
 	lints = append(lints, lintCountWithoutParens(tokens)...)
 	lints = append(lints, lintDeprecatedSortSyntax(tokens)...)
@@ -211,6 +213,59 @@ func lintOptionAfterArg(tokens []Token) []QueryLint {
 	}
 
 	return lints
+}
+
+func lintAmbiguousDedupArgs(tokens []Token) []QueryLint {
+	var lints []QueryLint
+
+	for i, tok := range tokens {
+		if tok.Type != TokenDedup {
+			continue
+		}
+
+		sawField := false
+		prevField := false
+		for j := i + 1; j < len(tokens); j++ {
+			t := tokens[j]
+			switch t.Type {
+			case TokenPipe, TokenRBracket, TokenSemicolon, TokenEOF:
+				goto nextDedup
+			case TokenComma:
+				prevField = false
+				continue
+			case TokenNumber:
+				if sawField {
+					lints = append(lints, ambiguousDedupLint(t.Pos))
+					goto nextDedup
+				}
+				prevField = false
+				continue
+			}
+
+			if isIdentLike(t.Type) || t.Type == TokenGlob {
+				if prevField {
+					lints = append(lints, ambiguousDedupLint(t.Pos))
+					goto nextDedup
+				}
+				sawField = true
+				prevField = true
+				continue
+			}
+
+			prevField = false
+		}
+	nextDedup:
+	}
+
+	return lints
+}
+
+func ambiguousDedupLint(pos int) QueryLint {
+	return QueryLint{
+		Code:     LintAmbiguousDedupArgs,
+		Message:  "Canon: `dedup [N] <field>[, <field>...]`",
+		Position: pos,
+	}
 }
 
 func lintRawExactCompare(prog *Program) []QueryLint {
