@@ -442,6 +442,10 @@ func (l *Lexer) readIdentOrGlob() (Token, error) {
 	}
 
 done:
+	if l.pos == startPos {
+		return Token{}, fmt.Errorf("unexpected character %q at position %d", l.input[startPos], startPos)
+	}
+
 	literal := l.input[startPos:l.pos]
 
 	// Wildcard characters -> glob token.

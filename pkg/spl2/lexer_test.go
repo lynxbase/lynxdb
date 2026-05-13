@@ -29,6 +29,16 @@ func TestLexer_SimpleTokens(t *testing.T) {
 	}
 }
 
+func TestLexer_InvalidLeadingGlobBraceReturnsError(t *testing.T) {
+	input := "{eareh (EventID=4625 \xfa\x00\x00\xfaNOT SubStatus=\"0xC0000064\")"
+	lexer := NewLexer(input)
+
+	_, err := lexer.Tokenize()
+	if err == nil {
+		t.Fatal("expected invalid leading glob brace to return an error")
+	}
+}
+
 func TestLexer_Keywords(t *testing.T) {
 	input := `FROM where SEARCH stats eval sort head tail reverse timechart chart rex regex replace fieldformat fields table dedup xyseries untable mvexpand expand makeresults makemv mvcombine nomv union appendcols appendpipe by over as and or xor not`
 	lexer := NewLexer(input)
