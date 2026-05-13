@@ -897,6 +897,26 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 			vm.sp--
 			vm.stack[vm.sp-1] = logValue(value, base)
 
+		case OpMathUnary:
+			operand, opErr := readOperandSafe(ins, ip)
+			if opErr != nil {
+				return event.NullValue(), opErr
+			}
+			ip += 2
+			a := vm.stack[vm.sp-1]
+			vm.stack[vm.sp-1] = unaryMathValue(a, int(operand))
+
+		case OpMathBinary:
+			operand, opErr := readOperandSafe(ins, ip)
+			if opErr != nil {
+				return event.NullValue(), opErr
+			}
+			ip += 2
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = binaryMathValue(a, b, int(operand))
+
 		case OpMax:
 			operand, opErr := readOperandSafe(ins, ip)
 			if opErr != nil {
@@ -1933,6 +1953,66 @@ func logValue(value, base event.Value) event.Value {
 	}
 
 	return event.FloatValue(math.Log(v) / math.Log(b))
+}
+
+func unaryMathValue(v event.Value, fn int) event.Value {
+	if v.IsNull() {
+		return event.NullValue()
+	}
+	f, ok := ValueToFloat(v)
+	if !ok {
+		return event.NullValue()
+	}
+	switch fn {
+	case mathFnAcos:
+		return event.FloatValue(math.Acos(f))
+	case mathFnAcosh:
+		return event.FloatValue(math.Acosh(f))
+	case mathFnAsin:
+		return event.FloatValue(math.Asin(f))
+	case mathFnAsinh:
+		return event.FloatValue(math.Asinh(f))
+	case mathFnAtan:
+		return event.FloatValue(math.Atan(f))
+	case mathFnAtanh:
+		return event.FloatValue(math.Atanh(f))
+	case mathFnCos:
+		return event.FloatValue(math.Cos(f))
+	case mathFnCosh:
+		return event.FloatValue(math.Cosh(f))
+	case mathFnSin:
+		return event.FloatValue(math.Sin(f))
+	case mathFnSinh:
+		return event.FloatValue(math.Sinh(f))
+	case mathFnTan:
+		return event.FloatValue(math.Tan(f))
+	case mathFnTanh:
+		return event.FloatValue(math.Tanh(f))
+	default:
+		return event.NullValue()
+	}
+}
+
+func binaryMathValue(a, b event.Value, fn int) event.Value {
+	if a.IsNull() || b.IsNull() {
+		return event.NullValue()
+	}
+	af, ok := ValueToFloat(a)
+	if !ok {
+		return event.NullValue()
+	}
+	bf, ok := ValueToFloat(b)
+	if !ok {
+		return event.NullValue()
+	}
+	switch fn {
+	case mathFnAtan2:
+		return event.FloatValue(math.Atan2(af, bf))
+	case mathFnHypot:
+		return event.FloatValue(math.Hypot(af, bf))
+	default:
+		return event.NullValue()
+	}
 }
 
 func maxMinValue(values []event.Value, isMax bool) (event.Value, error) {

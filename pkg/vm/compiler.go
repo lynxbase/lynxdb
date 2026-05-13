@@ -577,6 +577,34 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 			return err
 		}
 		c.prog.EmitOp(OpPow)
+	case "acos":
+		return c.compileUnaryMath(e, mathFnAcos)
+	case "acosh":
+		return c.compileUnaryMath(e, mathFnAcosh)
+	case "asin":
+		return c.compileUnaryMath(e, mathFnAsin)
+	case "asinh":
+		return c.compileUnaryMath(e, mathFnAsinh)
+	case "atan":
+		return c.compileUnaryMath(e, mathFnAtan)
+	case "atanh":
+		return c.compileUnaryMath(e, mathFnAtanh)
+	case "cos":
+		return c.compileUnaryMath(e, mathFnCos)
+	case "cosh":
+		return c.compileUnaryMath(e, mathFnCosh)
+	case "sin":
+		return c.compileUnaryMath(e, mathFnSin)
+	case "sinh":
+		return c.compileUnaryMath(e, mathFnSinh)
+	case "tan":
+		return c.compileUnaryMath(e, mathFnTan)
+	case "tanh":
+		return c.compileUnaryMath(e, mathFnTanh)
+	case "atan2":
+		return c.compileBinaryMath(e, mathFnAtan2)
+	case "hypot":
+		return c.compileBinaryMath(e, mathFnHypot)
 	case "pi":
 		if len(e.Args) != 0 {
 			return fmt.Errorf("pi expects 0 arguments, got %d", len(e.Args))
@@ -1162,6 +1190,33 @@ func (c *compiler) compileHash(e *spl2.FuncCallExpr, op Opcode) error {
 		return err
 	}
 	c.prog.EmitOp(op)
+
+	return nil
+}
+
+func (c *compiler) compileUnaryMath(e *spl2.FuncCallExpr, fn int) error {
+	if len(e.Args) != 1 {
+		return fmt.Errorf("%s expects 1 argument, got %d", strings.ToLower(e.Name), len(e.Args))
+	}
+	if err := c.compileExpr(e.Args[0]); err != nil {
+		return err
+	}
+	c.prog.EmitOp(OpMathUnary, fn)
+
+	return nil
+}
+
+func (c *compiler) compileBinaryMath(e *spl2.FuncCallExpr, fn int) error {
+	if len(e.Args) != 2 {
+		return fmt.Errorf("%s expects 2 arguments, got %d", strings.ToLower(e.Name), len(e.Args))
+	}
+	if err := c.compileExpr(e.Args[0]); err != nil {
+		return err
+	}
+	if err := c.compileExpr(e.Args[1]); err != nil {
+		return err
+	}
+	c.prog.EmitOp(OpMathBinary, fn)
 
 	return nil
 }

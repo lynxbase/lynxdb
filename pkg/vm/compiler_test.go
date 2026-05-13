@@ -754,6 +754,34 @@ func TestCompileRFCMathFunctions(t *testing.T) {
 			},
 			want: 2,
 		},
+		{name: "acos", expr: &spl2.FuncCallExpr{Name: "acos", Args: []spl2.Expr{&spl2.LiteralExpr{Value: "1"}}}, want: 0},
+		{name: "acosh", expr: &spl2.FuncCallExpr{Name: "acosh", Args: []spl2.Expr{&spl2.LiteralExpr{Value: "1"}}}, want: 0},
+		{name: "asin", expr: &spl2.FuncCallExpr{Name: "asin", Args: []spl2.Expr{&spl2.LiteralExpr{Value: "1"}}}, want: math.Pi / 2},
+		{name: "asinh", expr: &spl2.FuncCallExpr{Name: "asinh", Args: []spl2.Expr{&spl2.LiteralExpr{Value: "0"}}}, want: 0},
+		{name: "atan", expr: &spl2.FuncCallExpr{Name: "atan", Args: []spl2.Expr{&spl2.LiteralExpr{Value: "1"}}}, want: math.Pi / 4},
+		{name: "atanh", expr: &spl2.FuncCallExpr{Name: "atanh", Args: []spl2.Expr{&spl2.LiteralExpr{Value: "0"}}}, want: 0},
+		{name: "cos", expr: &spl2.FuncCallExpr{Name: "cos", Args: []spl2.Expr{&spl2.LiteralExpr{Value: "0"}}}, want: 1},
+		{name: "cosh", expr: &spl2.FuncCallExpr{Name: "cosh", Args: []spl2.Expr{&spl2.LiteralExpr{Value: "0"}}}, want: 1},
+		{name: "sin", expr: &spl2.FuncCallExpr{Name: "sin", Args: []spl2.Expr{&spl2.LiteralExpr{Value: "0"}}}, want: 0},
+		{name: "sinh", expr: &spl2.FuncCallExpr{Name: "sinh", Args: []spl2.Expr{&spl2.LiteralExpr{Value: "0"}}}, want: 0},
+		{name: "tan", expr: &spl2.FuncCallExpr{Name: "tan", Args: []spl2.Expr{&spl2.LiteralExpr{Value: "0"}}}, want: 0},
+		{name: "tanh", expr: &spl2.FuncCallExpr{Name: "tanh", Args: []spl2.Expr{&spl2.LiteralExpr{Value: "0"}}}, want: 0},
+		{
+			name: "atan2",
+			expr: &spl2.FuncCallExpr{
+				Name: "atan2",
+				Args: []spl2.Expr{&spl2.LiteralExpr{Value: "1"}, &spl2.LiteralExpr{Value: "1"}},
+			},
+			want: math.Pi / 4,
+		},
+		{
+			name: "hypot",
+			expr: &spl2.FuncCallExpr{
+				Name: "hypot",
+				Args: []spl2.Expr{&spl2.LiteralExpr{Value: "3"}, &spl2.LiteralExpr{Value: "4"}},
+			},
+			want: 5,
+		},
 	}
 
 	vm := &VM{}
