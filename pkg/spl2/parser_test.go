@@ -584,6 +584,19 @@ func TestParse_DoubleQuotedLegacyFieldLists(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:  "lookup fields",
+			input: `FROM main | lookup "geo dataset" on "client ip"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*JoinCommand)
+				if cmd.Subquery == nil || cmd.Subquery.Source == nil || cmd.Subquery.Source.Index != "geo dataset" {
+					t.Fatalf("lookup dataset: got %+v", cmd.Subquery)
+				}
+				if cmd.Field != "client ip" {
+					t.Fatalf("lookup field: got %q, want client ip", cmd.Field)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

@@ -479,6 +479,11 @@ func TestLintQuery_DoubleQuotedNames(t *testing.T) {
 			wantCodes: []string{LintDoubleQuotedName},
 		},
 		{
+			name:      "lookup command",
+			query:     `from app | lookup "geo dataset" on "client ip"`,
+			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
+		},
+		{
 			name:      "transaction command",
 			query:     `from app | transaction startswith="login event" "session id" endswith="logout event"`,
 			wantCodes: []string{LintDoubleQuotedName},
