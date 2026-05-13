@@ -184,7 +184,12 @@ func LintQuery(input string) ([]QueryLint, error) {
 		if err != nil {
 			return nil, err
 		}
-		return LintProgram(normalized, prog)
+		lints := lintOriginalSourceRewrites(input)
+		normalizedLints, err := LintProgram(normalized, prog)
+		if err != nil {
+			return lints, nil
+		}
+		return appendNewLintCodes(lints, normalizedLints), nil
 	}
 
 	lints, err := LintProgram(input, prog)
@@ -204,6 +209,16 @@ func LintQuery(input string) ([]QueryLint, error) {
 		return lints, nil
 	}
 	return appendNewLintCodes(lints, normalizedLints), nil
+}
+
+func lintOriginalSourceRewrites(input string) []QueryLint {
+	lexer := NewLexer(input)
+	tokens, err := lexer.Tokenize()
+	if err != nil {
+		return nil
+	}
+
+	return lintIndexRewrite(tokens)
 }
 
 // LintProgram returns RFC lint warnings for an already parsed program.
@@ -1822,17 +1837,37 @@ func pcre2RegexFeatureLint() QueryLint {
 }
 
 func lintIndexRewrite(tokens []Token) []QueryLint {
-	for i := 0; i+1 < len(tokens); i++ {
-		if tokens[i].Type == TokenIndex && tokens[i+1].Type == TokenEq {
-			return []QueryLint{{
-				Code:     LintIndexRewrite,
-				Message:  "`index=X` -> `FROM X`; explicit form recommended",
-				Position: tokens[i].Pos,
-			}}
+	for i, tok := range tokens {
+		if tok.Type == TokenEOF {
+			return nil
 		}
+		if tok.Type != TokenIndex {
+			continue
+		}
+		if !isIndexSourceShortcut(tokens, i) {
+			return nil
+		}
+		return []QueryLint{{
+			Code:     LintIndexRewrite,
+			Message:  "`index=X` -> `FROM X`; explicit form recommended",
+			Position: tok.Pos,
+		}}
 	}
 
 	return nil
+}
+
+func isIndexSourceShortcut(tokens []Token, i int) bool {
+	if i != 0 && tokens[i-1].Type != TokenSemicolon {
+		return false
+	}
+	next := peekTokenType(tokens, i+1)
+	switch next {
+	case TokenEq, TokenNeq, TokenIn, TokenNot, TokenIdent, TokenString, TokenGlob, TokenStar, TokenNumber:
+		return true
+	default:
+		return false
+	}
 }
 
 func lintLeadingWildcards(prog *Program) []QueryLint {

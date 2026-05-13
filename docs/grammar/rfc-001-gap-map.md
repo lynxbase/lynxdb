@@ -46,6 +46,7 @@ Source contract: `docs/grammar/RFC.md`.
 | Execution-backed `L032`/`L037` lints flag high-count `FROM *` and broad all-source search responses from resolved source and segment stats with configurable source and segment thresholds | `pkg/api/rest/query.go`, `pkg/api/rest/jobs.go`, `pkg/api/rest/server_test.go`, `pkg/config/config.go`, `pkg/server/types.go` |
 | Static `L039` flags PCRE2-only regex constructs such as lookaround, backreferences, atomic groups, and possessive quantifiers | `pkg/spl2/lints.go`, `pkg/spl2/lints_test.go` |
 | Unsupported Splunk commands in the RFC profile reject with `L021` and compatibility hints | `pkg/spl2/parser.go`, `pkg/spl2/compat_hints.go`, `pkg/spl2/parser_test.go`, `pkg/spl2/compat_hints_test.go` |
+| `L003` source-prefix diagnostics cover rewritten `index=`, `index <name>`, `index IN`, `index NOT IN`, and `index!=` forms without flagging SEARCH-context `index=` predicates | `pkg/spl2/lints.go`, `pkg/spl2/lints_test.go` |
 | LynxFlow `proportion`, `impact`, `baseline`, `changes`, and `exemplars` deterministic desugaring | `pkg/spl2/parser.go`, `pkg/spl2/parser_lynxflow_test.go` |
 | Web autocomplete and highlighting share one editor catalog | `web/src/editor/lynxflow-catalog.ts`, `web/src/editor/autocomplete.ts`, `web/src/editor/lynxflow-lang.ts` |
 | EBNF includes currently implemented LynxFlow sugar | `docs/grammar/spl2.ebnf`, `cmd/lynxdb/grammar_data/spl2.ebnf` |
@@ -76,7 +77,7 @@ Official Splunk compatibility checked:
 
 | RFC area | Current state | Gap |
 |---|---|---|
-| Source selectors | `FROM`, `INDEX`, lists, RFC glob matching, source exclude globs, `*`, CTE refs, and compact time ranges parse | Some source-scope diagnostics still need coverage against the RFC rewrite contract. |
+| Source selectors | `FROM`, `INDEX`, lists, RFC glob matching, source exclude globs, `*`, CTE refs, compact time ranges, and source-prefix rewrite diagnostics parse or lint according to the RFC rewrite contract | Some less-common source selector diagnostics may still need coverage during the full RFC cross-check. |
 | Lints | Compatibility hints, parse suggestions, and post-parse `L001`/`L002`/`L003`/`L004`/`L005`/`L010`/`L011`/`L012`/`L013`/`L020`/`L022`/`L030`/`L031`/`L032`/`L033`/`L034`/`L035`/`L036`/`L037`/`L038`/`L039` exist | Coverage still needs a full RFC cross-check across source diagnostics, quoted identifiers, and function/command catalogs. |
 | Quoted identifier canon | Single-quoted identifiers now parse as canonical names and double-quoted names parse with `L012` in source and common field-name list positions | Full double-quoted legacy compatibility for expression and less-common command-specific field positions still needs an explicit RFC-vs-parser scope decision. |
 | Function catalog | Many eval and aggregate functions parse and execute; common aggregate aliases and time aggregates now normalize before planning | RFC aggregate/eval catalog needs a full parser, VM, and editor cross-check for missing functions and aliases. |

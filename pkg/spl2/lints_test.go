@@ -256,13 +256,33 @@ func TestLintQuery_IndexRewrite(t *testing.T) {
 			wantCodes: []string{LintIndexRewrite, LintDoubleQuotedName},
 		},
 		{
+			name:      "index space source",
+			query:     `index main | search error`,
+			wantCodes: []string{LintIndexRewrite},
+		},
+		{
+			name:      "index in source list",
+			query:     `index IN ("main", "audit") | head 1`,
+			wantCodes: []string{LintIndexRewrite},
+		},
+		{
+			name:      "index not in source list",
+			query:     `index NOT IN ("internal") | head 1`,
+			wantCodes: []string{LintIndexRewrite},
+		},
+		{
+			name:      "index not equals",
+			query:     `index!=internal level=error`,
+			wantCodes: []string{LintIndexRewrite},
+		},
+		{
 			name:      "canonical from",
 			query:     `from main | search error`,
 			wantCodes: nil,
 		},
 		{
-			name:      "index command without equals",
-			query:     `index main | search error`,
+			name:      "search index predicate",
+			query:     `from main | search index=security error`,
 			wantCodes: nil,
 		},
 	}
