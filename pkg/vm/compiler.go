@@ -2,6 +2,7 @@ package vm
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 
@@ -491,6 +492,48 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 			return err
 		}
 		c.prog.EmitOp(OpLn)
+	case "log":
+		if len(e.Args) < 1 || len(e.Args) > 2 {
+			return fmt.Errorf("log expects 1-2 arguments, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		if len(e.Args) == 1 {
+			idx := c.prog.AddConstant(event.FloatValue(10))
+			c.prog.EmitOp(OpConstFloat, idx)
+			c.prog.EmitOp(OpLog)
+		} else {
+			if err := c.compileExpr(e.Args[1]); err != nil {
+				return err
+			}
+			c.prog.EmitOp(OpLog)
+		}
+	case "exp":
+		if len(e.Args) != 1 {
+			return fmt.Errorf("exp expects 1 argument, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpExp)
+	case "pow":
+		if len(e.Args) != 2 {
+			return fmt.Errorf("pow expects 2 arguments, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		if err := c.compileExpr(e.Args[1]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpPow)
+	case "pi":
+		if len(e.Args) != 0 {
+			return fmt.Errorf("pi expects 0 arguments, got %d", len(e.Args))
+		}
+		idx := c.prog.AddConstant(event.FloatValue(math.Pi))
+		c.prog.EmitOp(OpConstFloat, idx)
 	case "abs":
 		if len(e.Args) != 1 {
 			return fmt.Errorf("abs expects 1 argument, got %d", len(e.Args))

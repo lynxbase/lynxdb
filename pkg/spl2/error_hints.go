@@ -33,8 +33,8 @@ var knownFunctions = []string{
 	// Eval functions
 	"if", "case", "match", "like", "ilike", "cidrmatch", "coalesce",
 	"tonumber", "toint", "todouble", "tostring", "tobool",
-	"round", "substr", "lower", "upper", "len", "ln", "abs", "ceil",
-	"floor", "sqrt", "mvjoin", "mvappend", "mvdedup", "mvcount",
+	"round", "substr", "lower", "upper", "len", "ln", "log", "exp", "pow", "pi",
+	"abs", "ceil", "floor", "sqrt", "mvjoin", "mvappend", "mvdedup", "mvcount",
 	"isnotnull", "isnull", "isnum", "isnumeric", "isint", "isstr", "isbool", "typeof",
 	"null", "strftime", "startswith", "endswith", "contains", "max", "min",
 	// Aggregation functions

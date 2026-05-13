@@ -102,6 +102,9 @@ const (
 	OpCeil  Opcode = 0x93
 	OpFloor Opcode = 0x94
 	OpSqrt  Opcode = 0x95
+	OpExp   Opcode = 0x96
+	OpPow   Opcode = 0x97
+	OpLog   Opcode = 0x98
 
 	// Multivalue Operations.
 	OpMvAppend Opcode = 0xA0
@@ -226,6 +229,9 @@ var definitions = map[Opcode]*Definition{
 	OpCeil:  {"OpCeil", nil},
 	OpFloor: {"OpFloor", nil},
 	OpSqrt:  {"OpSqrt", nil},
+	OpExp:   {"OpExp", nil},
+	OpPow:   {"OpPow", nil},
+	OpLog:   {"OpLog", nil},
 
 	OpMvAppend: {"OpMvAppend", []int{2}},
 	OpMvJoin:   {"OpMvJoin", nil},

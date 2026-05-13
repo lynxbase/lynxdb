@@ -852,6 +852,22 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = sqrtValue(a)
 
+		case OpExp:
+			a := vm.stack[vm.sp-1]
+			vm.stack[vm.sp-1] = expValue(a)
+
+		case OpPow:
+			b := vm.stack[vm.sp-1]
+			a := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = powValue(a, b)
+
+		case OpLog:
+			base := vm.stack[vm.sp-1]
+			value := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = logValue(value, base)
+
 		case OpMvAppend:
 			operand, opErr := readOperandSafe(ins, ip)
 			if opErr != nil {
@@ -1725,6 +1741,50 @@ func sqrtValue(v event.Value) event.Value {
 	}
 
 	return event.FloatValue(math.Sqrt(f))
+}
+
+func expValue(v event.Value) event.Value {
+	if v.IsNull() {
+		return event.NullValue()
+	}
+	f, ok := ValueToFloat(v)
+	if !ok {
+		return event.NullValue()
+	}
+
+	return event.FloatValue(math.Exp(f))
+}
+
+func powValue(base, exponent event.Value) event.Value {
+	if base.IsNull() || exponent.IsNull() {
+		return event.NullValue()
+	}
+	b, ok := ValueToFloat(base)
+	if !ok {
+		return event.NullValue()
+	}
+	e, ok := ValueToFloat(exponent)
+	if !ok {
+		return event.NullValue()
+	}
+
+	return event.FloatValue(math.Pow(b, e))
+}
+
+func logValue(value, base event.Value) event.Value {
+	if value.IsNull() || base.IsNull() {
+		return event.NullValue()
+	}
+	v, ok := ValueToFloat(value)
+	if !ok || v <= 0 {
+		return event.NullValue()
+	}
+	b, ok := ValueToFloat(base)
+	if !ok || b <= 0 || b == 1 {
+		return event.NullValue()
+	}
+
+	return event.FloatValue(math.Log(v) / math.Log(b))
 }
 
 func strftimeValue(ts, format event.Value) event.Value {

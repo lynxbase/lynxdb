@@ -698,6 +698,64 @@ func TestVMMathFunctions(t *testing.T) {
 			t.Errorf("got %v, want 5.0", result)
 		}
 	})
+
+	t.Run("exp(1)=e", func(t *testing.T) {
+		p := &Program{}
+		p.AddConstant(event.FloatValue(1))
+		p.EmitOp(OpConstFloat, 0)
+		p.EmitOp(OpExp)
+		p.EmitOp(OpReturn)
+
+		result := runProgram(t, p, nil)
+		if math.Abs(result.AsFloat()-math.E) > 1e-10 {
+			t.Errorf("got %v, want %v", result.AsFloat(), math.E)
+		}
+	})
+
+	t.Run("pow(2,3)=8", func(t *testing.T) {
+		p := &Program{}
+		p.AddConstant(event.FloatValue(2))
+		p.AddConstant(event.FloatValue(3))
+		p.EmitOp(OpConstFloat, 0)
+		p.EmitOp(OpConstFloat, 1)
+		p.EmitOp(OpPow)
+		p.EmitOp(OpReturn)
+
+		result := runProgram(t, p, nil)
+		if math.Abs(result.AsFloat()-8) > 1e-10 {
+			t.Errorf("got %v, want 8.0", result.AsFloat())
+		}
+	})
+
+	t.Run("log(8,2)=3", func(t *testing.T) {
+		p := &Program{}
+		p.AddConstant(event.FloatValue(8))
+		p.AddConstant(event.FloatValue(2))
+		p.EmitOp(OpConstFloat, 0)
+		p.EmitOp(OpConstFloat, 1)
+		p.EmitOp(OpLog)
+		p.EmitOp(OpReturn)
+
+		result := runProgram(t, p, nil)
+		if math.Abs(result.AsFloat()-3) > 1e-10 {
+			t.Errorf("got %v, want 3.0", result.AsFloat())
+		}
+	})
+
+	t.Run("log invalid domain is null", func(t *testing.T) {
+		p := &Program{}
+		p.AddConstant(event.FloatValue(8))
+		p.AddConstant(event.FloatValue(1))
+		p.EmitOp(OpConstFloat, 0)
+		p.EmitOp(OpConstFloat, 1)
+		p.EmitOp(OpLog)
+		p.EmitOp(OpReturn)
+
+		result := runProgram(t, p, nil)
+		if !result.IsNull() {
+			t.Errorf("got %v, want null", result)
+		}
+	})
 }
 
 func TestVMMvAppend(t *testing.T) {

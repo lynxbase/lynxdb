@@ -307,6 +307,8 @@ func TestCompileMathFunctions(t *testing.T) {
 		want float64
 	}{
 		{"ln(1)", "ln", &spl2.LiteralExpr{Value: "1"}, 0},
+		{"log(100)", "log", &spl2.LiteralExpr{Value: "100"}, 2},
+		{"exp(1)", "exp", &spl2.LiteralExpr{Value: "1"}, math.E},
 		{"abs(-5)", "abs", &spl2.LiteralExpr{Value: "-5"}, 5},
 		{"sqrt(16)", "sqrt", &spl2.LiteralExpr{Value: "16"}, 4},
 		{"ceil(2.3)", "ceil", &spl2.LiteralExpr{Value: "2.3"}, 3},
@@ -331,6 +333,63 @@ func TestCompileMathFunctions(t *testing.T) {
 			}
 			if math.Abs(f-tt.want) > 1e-10 {
 				t.Errorf("got %v, want %v", f, tt.want)
+			}
+		})
+	}
+}
+
+func TestCompileRFCMathFunctions(t *testing.T) {
+	tests := []struct {
+		name string
+		expr *spl2.FuncCallExpr
+		want float64
+	}{
+		{
+			name: "pow",
+			expr: &spl2.FuncCallExpr{
+				Name: "pow",
+				Args: []spl2.Expr{
+					&spl2.LiteralExpr{Value: "2"},
+					&spl2.LiteralExpr{Value: "3"},
+				},
+			},
+			want: 8,
+		},
+		{
+			name: "log base",
+			expr: &spl2.FuncCallExpr{
+				Name: "log",
+				Args: []spl2.Expr{
+					&spl2.LiteralExpr{Value: "8"},
+					&spl2.LiteralExpr{Value: "2"},
+				},
+			},
+			want: 3,
+		},
+		{
+			name: "pi",
+			expr: &spl2.FuncCallExpr{Name: "pi"},
+			want: math.Pi,
+		},
+	}
+
+	vm := &VM{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prog, err := CompileExpr(tt.expr)
+			if err != nil {
+				t.Fatalf("CompileExpr: %v", err)
+			}
+			result, err := vm.Execute(prog, nil)
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			f, ok := ValueToFloat(result)
+			if !ok {
+				t.Fatalf("not numeric: %v", result)
+			}
+			if math.Abs(f-tt.want) > 1e-10 {
+				t.Fatalf("got %v, want %v", f, tt.want)
 			}
 		})
 	}
