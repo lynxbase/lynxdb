@@ -673,13 +673,17 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 		}
 		c.prog.EmitOp(OpToUpper)
 	case "substr":
-		if len(e.Args) != 3 {
-			return fmt.Errorf("substr expects 3 arguments, got %d", len(e.Args))
+		if len(e.Args) < 2 || len(e.Args) > 3 {
+			return fmt.Errorf("substr expects 2-3 arguments, got %d", len(e.Args))
 		}
 		for _, arg := range e.Args {
 			if err := c.compileExpr(arg); err != nil {
 				return err
 			}
+		}
+		if len(e.Args) == 2 {
+			idx := c.prog.AddConstant(event.IntValue(math.MaxInt32))
+			c.prog.EmitOp(OpConstInt, idx)
 		}
 		c.prog.EmitOp(OpSubstr)
 	case "match":

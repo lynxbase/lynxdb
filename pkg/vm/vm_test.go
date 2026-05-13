@@ -600,6 +600,24 @@ func TestVMSubstring(t *testing.T) {
 	}
 }
 
+func TestCompileSubstrOptionalLength(t *testing.T) {
+	expr := &spl2.FuncCallExpr{
+		Name: "substr",
+		Args: []spl2.Expr{
+			&spl2.LiteralExpr{Value: `"hello"`},
+			&spl2.LiteralExpr{Value: "2"},
+		},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatalf("CompileExpr: %v", err)
+	}
+	result := runProgram(t, prog, nil)
+	if result.AsString() != "ello" {
+		t.Errorf("got %q, want %q", result.AsString(), "ello")
+	}
+}
+
 func TestVMRound(t *testing.T) {
 	// round(3.14159, 2) → 3.14
 	p := &Program{}
