@@ -125,7 +125,7 @@
 {"nl": "Append to multivalue", "query": "| eval tags=mvappend(tags, \"processed\")", "category": "transform"}
 {"nl": "Deduplicate multivalue", "query": "| eval unique_tags=mvdedup(tags)", "category": "transform"}
 {"nl": "Count multivalue elements", "query": "| eval tag_count=mvcount(tags)", "category": "transform"}
-{"nl": "Natural language: find all 500 errors from nginx today", "query": "source=nginx status=500 | where _time >= relative_time(now(), \"-1d\")", "category": "nl_example"}
+{"nl": "Natural language: find all 500 errors from nginx today", "query": "FROM nginx[-1d] | search status=500", "category": "nl_example"}
 {"nl": "Natural language: what are the slowest endpoints?", "query": "| stats avg(duration_ms) as avg_dur by endpoint | sort -avg_dur | head 10", "category": "nl_example"}
 {"nl": "Natural language: how many errors per hour?", "query": "level=error | timechart count span=1h", "category": "nl_example"}
 {"nl": "Natural language: show me unique error messages", "query": "level=error | stats values(message) by source", "category": "nl_example"}
@@ -143,7 +143,7 @@
 {"nl": "Unpack logfmt", "query": "| unpack_logfmt from _raw", "category": "structured"}
 {"nl": "Unroll array field", "query": "| unroll tags", "category": "structured"}
 {"nl": "Replace numeric severity values with names", "query": "| replace 0 WITH Critical, 1 WITH Error IN msg_level", "category": "transform"}
-{"nl": "Format a count for display without changing its value", "query": "| fieldformat totalCount=tostring(totalCount, \"commas\")", "category": "transform"}
+{"nl": "Format a count for display without changing its value", "query": "| fieldformat totalCount=tostring(totalCount)", "category": "transform"}
 {"nl": "Expand multivalue field", "query": "| mvexpand tags", "category": "structured"}
 {"nl": "Expand first two multivalue values", "query": "| mvexpand limit=2 tags", "category": "structured"}
 {"nl": "Pack fields into JSON", "query": "| pack_json _time, source, level into event", "category": "structured"}
@@ -182,7 +182,7 @@
 {"nl": "In expression in WHERE", "query": "| where source in (\"nginx\", \"api-gw\", \"redis\")", "category": "filter"}
 {"nl": "Complex arithmetic expression", "query": "| eval ratio=round(errors*100.0/total, 2)", "category": "transform"}
 {"nl": "Nested function calls", "query": "| eval label=upper(substr(source, 1, 3))+\"-\"+tostring(status)", "category": "transform"}
-{"nl": "Natural language: top error types in last hour", "query": "level=error | where _time >= relative_time(now(), \"-1h@h\") | stats count by error_type | sort -count | head 10", "category": "nl_example"}
+{"nl": "Natural language: top error types in last hour", "query": "FROM main[-1h] | search level=error | stats count by error_type | sort -count | head 10", "category": "nl_example"}
 {"nl": "Natural language: average response time over time", "query": "| timechart avg(duration_ms) span=5m", "category": "nl_example"}
 {"nl": "Natural language: count by status code", "query": "| stats count by status | sort -count", "category": "nl_example"}
 {"nl": "Natural language: find duplicate events", "query": "| dedup _raw | stats count", "category": "nl_example"}
@@ -222,13 +222,13 @@
 {"nl": "Natural language: error trend this week", "query": "level=error | timechart count span=1d", "category": "nl_example"}
 {"nl": "Natural language: most active users", "query": "| stats count as requests by user_id | sort -requests | head 10", "category": "nl_example"}
 {"nl": "Natural language: memory usage over time", "query": "metric=memory | timechart span=5m avg(used_bytes) by host", "category": "nl_example"}
-{"nl": "Natural language: compare today vs yesterday errors", "query": "level=error | where _time >= relative_time(now(), \"-1d@d\") | stats count by source", "category": "nl_example"}
+{"nl": "Natural language: compare today vs yesterday errors", "query": "level=error | compare previous 1d | stats count by source", "category": "nl_example"}
 {"nl": "Natural language: longest running queries", "query": "| sort -duration_ms | head 10 | table _time, source, query, duration_ms", "category": "nl_example"}
 {"nl": "Natural language: distribution of response times", "query": "| stats perc25(duration_ms), perc50(duration_ms), perc75(duration_ms), perc90(duration_ms), perc99(duration_ms)", "category": "nl_example"}
 {"nl": "Natural language: find all requests from a specific IP", "query": "client_ip=\"192.168.1.100\"", "category": "nl_example"}
-{"nl": "Natural language: show me today's logs from the api service", "query": "source=api | where _time >= relative_time(now(), \"-1d@h\")", "category": "nl_example"}
+{"nl": "Natural language: show me today's logs from the api service", "query": "FROM api[-1d]", "category": "nl_example"}
 {"nl": "Natural language: count events by log level per source", "query": "| stats count by source, level", "category": "nl_example"}
-{"nl": "Natural language: what changed in the last hour?", "query": "| where _time >= relative_time(now(), \"-1h@h\") | stats count by source, level | sort source, -count", "category": "nl_example"}
+{"nl": "Natural language: what changed in the last hour?", "query": "FROM main[-1h] | stats count by source, level | sort source, -count", "category": "nl_example"}
 {"nl": "Natural language: find repeated error messages", "query": "level=error | stats count as occurrences by message | where occurrences > 1 | sort -occurrences", "category": "nl_example"}
 {"nl": "Natural language: most common status codes", "query": "| stats count by status | sort -count | head 10", "category": "nl_example"}
 {"nl": "Natural language: track a specific user's activity", "query": "user_id=42 | sort _time | table _time, action, endpoint, status", "category": "nl_example"}
