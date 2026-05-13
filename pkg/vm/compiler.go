@@ -496,6 +496,17 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 			}
 		}
 		c.prog.EmitOp(OpPrintf, len(e.Args))
+	case "ipmask":
+		if len(e.Args) != 2 {
+			return fmt.Errorf("ipmask expects 2 arguments, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		if err := c.compileExpr(e.Args[1]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpIPMask)
 	case "round":
 		if len(e.Args) < 1 || len(e.Args) > 2 {
 			return fmt.Errorf("round expects 1-2 arguments, got %d", len(e.Args))

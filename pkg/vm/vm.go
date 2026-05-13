@@ -1049,6 +1049,12 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 			vm.stack[vm.sp] = result
 			vm.sp++
 
+		case OpIPMask:
+			ip := vm.stack[vm.sp-1]
+			mask := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = ipMaskValue(mask, ip)
+
 		case OpJsonExtract:
 			// Stack: [..., field, path] → [..., result]
 			path := vm.stack[vm.sp-1]
@@ -2006,6 +2012,25 @@ func valueToInterface(v event.Value) any {
 	default:
 		return valueToString(v)
 	}
+}
+
+func ipMaskValue(mask, ip event.Value) event.Value {
+	if mask.IsNull() || ip.IsNull() {
+		return event.NullValue()
+	}
+	maskIP := net.ParseIP(valueToString(mask)).To4()
+	targetIP := net.ParseIP(valueToString(ip)).To4()
+	if maskIP == nil || targetIP == nil {
+		return event.NullValue()
+	}
+	masked := net.IPv4(
+		targetIP[0]&maskIP[0],
+		targetIP[1]&maskIP[1],
+		targetIP[2]&maskIP[2],
+		targetIP[3]&maskIP[3],
+	)
+
+	return event.StringValue(masked.String())
 }
 
 // splTimeReplacer converts SPL2 strftime format tokens to Go time layout tokens.

@@ -163,7 +163,7 @@ export const EVAL_FUNCTIONS: readonly string[] = [
   "if()", "case()", "validate()", "coalesce()", "null()", "nullif()", "in()",
   "match()", "like()", "cidrmatch()", "isnull()", "isnotnull()", "isnum()",
   "isnumeric()", "isint()", "isstr()", "isbool()", "typeof()", "tonumber()",
-  "tostring()", "toint()", "todouble()", "tobool()", "printf()", "abs()", "ceil()",
+  "tostring()", "toint()", "todouble()", "tobool()", "printf()", "ipmask()", "abs()", "ceil()",
   "ceiling()", "floor()", "round()", "sqrt()", "pow()", "log()", "ln()", "exp()", "pi()",
   "max()", "min()",
   "startswith()", "endswith()", "contains()", "ilike()",

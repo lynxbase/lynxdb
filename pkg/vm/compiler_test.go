@@ -478,6 +478,65 @@ func TestCompilePrintf(t *testing.T) {
 	}
 }
 
+func TestCompileIPMask(t *testing.T) {
+	tests := []struct {
+		name string
+		expr *spl2.FuncCallExpr
+		want event.Value
+	}{
+		{
+			name: "default subnet mask",
+			expr: &spl2.FuncCallExpr{
+				Name: "ipmask",
+				Args: []spl2.Expr{
+					&spl2.LiteralExpr{Value: `"255.255.255.0"`},
+					&spl2.LiteralExpr{Value: `"10.20.30.120"`},
+				},
+			},
+			want: event.StringValue("10.20.30.0"),
+		},
+		{
+			name: "arbitrary octet mask",
+			expr: &spl2.FuncCallExpr{
+				Name: "ipmask",
+				Args: []spl2.Expr{
+					&spl2.LiteralExpr{Value: `"0.255.0.224"`},
+					&spl2.LiteralExpr{Value: `"10.20.30.120"`},
+				},
+			},
+			want: event.StringValue("0.20.0.96"),
+		},
+		{
+			name: "invalid ip is null",
+			expr: &spl2.FuncCallExpr{
+				Name: "ipmask",
+				Args: []spl2.Expr{
+					&spl2.LiteralExpr{Value: `"255.255.255.0"`},
+					&spl2.LiteralExpr{Value: `"not-an-ip"`},
+				},
+			},
+			want: event.NullValue(),
+		},
+	}
+
+	vm := &VM{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prog, err := CompileExpr(tt.expr)
+			if err != nil {
+				t.Fatalf("CompileExpr: %v", err)
+			}
+			result, err := vm.Execute(prog, nil)
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if !valuesEqual(result, tt.want) {
+				t.Fatalf("got %v, want %v", result, tt.want)
+			}
+		})
+	}
+}
+
 func TestCompileIsNull(t *testing.T) {
 	expr := &spl2.FuncCallExpr{
 		Name: "isnull",
