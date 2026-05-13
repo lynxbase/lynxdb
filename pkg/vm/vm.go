@@ -1034,6 +1034,21 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = hashValue(a, "sha512")
 
+		case OpPrintf:
+			operand, opErr := readOperandSafe(ins, ip)
+			if opErr != nil {
+				return event.NullValue(), opErr
+			}
+			count := int(operand)
+			ip += 2
+			if count <= 0 || count > vm.sp {
+				return event.NullValue(), fmt.Errorf("%w: printf count %d exceeds stack depth %d", ErrInvalidBytecode, count, vm.sp)
+			}
+			result := printfValue(vm.stack[vm.sp-count : vm.sp])
+			vm.sp -= count
+			vm.stack[vm.sp] = result
+			vm.sp++
+
 		case OpJsonExtract:
 			// Stack: [..., field, path] → [..., result]
 			path := vm.stack[vm.sp-1]
@@ -1958,6 +1973,38 @@ func hashValue(v event.Value, algorithm string) event.Value {
 		return event.StringValue(hex.EncodeToString(sum[:]))
 	default:
 		return event.NullValue()
+	}
+}
+
+func printfValue(values []event.Value) event.Value {
+	if len(values) == 0 || values[0].IsNull() {
+		return event.NullValue()
+	}
+	format := valueToString(values[0])
+	args := make([]any, 0, len(values)-1)
+	for _, value := range values[1:] {
+		args = append(args, valueToInterface(value))
+	}
+
+	return event.StringValue(fmt.Sprintf(format, args...))
+}
+
+func valueToInterface(v event.Value) any {
+	switch v.Type() {
+	case event.FieldTypeNull:
+		return nil
+	case event.FieldTypeString:
+		return v.AsString()
+	case event.FieldTypeInt:
+		return v.AsInt()
+	case event.FieldTypeFloat:
+		return v.AsFloat()
+	case event.FieldTypeBool:
+		return v.AsBool()
+	case event.FieldTypeTimestamp:
+		return v.AsTimestamp()
+	default:
+		return valueToString(v)
 	}
 }
 

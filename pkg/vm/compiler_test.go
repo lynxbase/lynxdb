@@ -429,6 +429,55 @@ func TestCompileEncodingCryptoFunctions(t *testing.T) {
 	}
 }
 
+func TestCompilePrintf(t *testing.T) {
+	tests := []struct {
+		name string
+		expr *spl2.FuncCallExpr
+		want string
+	}{
+		{
+			name: "string and int",
+			expr: &spl2.FuncCallExpr{
+				Name: "printf",
+				Args: []spl2.Expr{
+					&spl2.LiteralExpr{Value: `"%s-%03d"`},
+					&spl2.LiteralExpr{Value: `"svc"`},
+					&spl2.LiteralExpr{Value: "7"},
+				},
+			},
+			want: "svc-007",
+		},
+		{
+			name: "float precision",
+			expr: &spl2.FuncCallExpr{
+				Name: "printf",
+				Args: []spl2.Expr{
+					&spl2.LiteralExpr{Value: `"%.1f"`},
+					&spl2.LiteralExpr{Value: "3.14"},
+				},
+			},
+			want: "3.1",
+		},
+	}
+
+	vm := &VM{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prog, err := CompileExpr(tt.expr)
+			if err != nil {
+				t.Fatalf("CompileExpr: %v", err)
+			}
+			result, err := vm.Execute(prog, nil)
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if result.AsString() != tt.want {
+				t.Fatalf("got %q, want %q", result.AsString(), tt.want)
+			}
+		})
+	}
+}
+
 func TestCompileIsNull(t *testing.T) {
 	expr := &spl2.FuncCallExpr{
 		Name: "isnull",

@@ -486,6 +486,16 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 			return err
 		}
 		c.prog.EmitOp(OpToBool)
+	case "printf":
+		if len(e.Args) < 1 {
+			return fmt.Errorf("printf expects at least 1 argument, got %d", len(e.Args))
+		}
+		for _, arg := range e.Args {
+			if err := c.compileExpr(arg); err != nil {
+				return err
+			}
+		}
+		c.prog.EmitOp(OpPrintf, len(e.Args))
 	case "round":
 		if len(e.Args) < 1 || len(e.Args) > 2 {
 			return fmt.Errorf("round expects 1-2 arguments, got %d", len(e.Args))
