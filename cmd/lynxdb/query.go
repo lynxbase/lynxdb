@@ -990,10 +990,21 @@ func printSPL2QueryRewrites(show bool, rewrites []spl2.QueryRewrite) {
 	}
 }
 
+const maxRewritePreviewBytes = 4 * 1024
+
 func printQueryRewrite(before, after, reason string) {
 	fmt.Fprintf(os.Stderr, "rewrite (%s):\n", reason)
-	fmt.Fprintf(os.Stderr, "  before: %s\n", before)
-	fmt.Fprintf(os.Stderr, "  after:  %s\n", after)
+	fmt.Fprintf(os.Stderr, "  before: %s\n", rewritePreview(before))
+	fmt.Fprintf(os.Stderr, "  after:  %s\n", rewritePreview(after))
+}
+
+func rewritePreview(value string) string {
+	if len(value) <= maxRewritePreviewBytes {
+		return value
+	}
+
+	const suffix = "... [truncated]"
+	return value[:maxRewritePreviewBytes-len(suffix)] + suffix
 }
 
 // suggestGlimpse returns a hint string suggesting | glimpse for zero-result queries.

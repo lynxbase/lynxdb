@@ -73,6 +73,18 @@ func TestQueryQueriesFile_MutuallyExclusiveWithQueryArg(t *testing.T) {
 	}
 }
 
+func TestRewritePreview_TruncatesLongValues(t *testing.T) {
+	value := strings.Repeat("x", maxRewritePreviewBytes+100)
+
+	got := rewritePreview(value)
+	if len(got) != maxRewritePreviewBytes {
+		t.Fatalf("len(rewritePreview) = %d, want %d", len(got), maxRewritePreviewBytes)
+	}
+	if !strings.HasSuffix(got, "... [truncated]") {
+		t.Fatalf("rewritePreview missing truncation suffix: %q", got[len(got)-20:])
+	}
+}
+
 func TestQueryQueriesFile_ReadsQueriesFromStdin(t *testing.T) {
 	resetAllFlags(t)
 	t.Setenv("LYNXDB_CONFIG", "")
