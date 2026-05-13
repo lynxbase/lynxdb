@@ -276,6 +276,37 @@ func TestCompileCoalesce(t *testing.T) {
 	}
 }
 
+func TestCompileNullIf(t *testing.T) {
+	expr := &spl2.FuncCallExpr{
+		Name: "nullif",
+		Args: []spl2.Expr{
+			&spl2.FieldExpr{Name: "status"},
+			&spl2.LiteralExpr{Value: `"ok"`},
+		},
+	}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	result, err := vm.Execute(prog, map[string]event.Value{"status": event.StringValue("ok")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.IsNull() {
+		t.Fatalf("equal value: got %v, want null", result)
+	}
+
+	result, err = vm.Execute(prog, map[string]event.Value{"status": event.StringValue("warn")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.AsString() != "warn" {
+		t.Fatalf("different value: got %q, want warn", result.AsString())
+	}
+}
+
 func TestCompileIsNull(t *testing.T) {
 	expr := &spl2.FuncCallExpr{
 		Name: "isnull",

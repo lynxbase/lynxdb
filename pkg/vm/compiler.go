@@ -420,6 +420,11 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 			return fmt.Errorf("null expects 0 arguments, got %d", len(e.Args))
 		}
 		c.prog.EmitOp(OpConstNull)
+	case "nullif":
+		if len(e.Args) != 2 {
+			return fmt.Errorf("nullif expects 2 arguments, got %d", len(e.Args))
+		}
+		return c.compileNullIf(e.Args[0], e.Args[1])
 	case "isnull":
 		if len(e.Args) != 1 {
 			return fmt.Errorf("isnull expects 1 argument, got %d", len(e.Args))
@@ -998,6 +1003,28 @@ func (c *compiler) compileCoalesce(e *spl2.FuncCallExpr) error {
 		}
 	}
 	c.prog.EmitOp(OpCoalesce, len(e.Args))
+
+	return nil
+}
+
+func (c *compiler) compileNullIf(a, b spl2.Expr) error {
+	if err := c.compileExpr(a); err != nil {
+		return err
+	}
+	if err := c.compileExpr(b); err != nil {
+		return err
+	}
+	c.prog.EmitOp(OpEq)
+	jumpFalse := c.prog.EmitOp(OpJumpIfFalse, 0)
+	c.prog.EmitOp(OpConstNull)
+	jumpEnd := c.prog.EmitOp(OpJump, 0)
+	elsePos := c.prog.Len()
+	if err := c.compileExpr(a); err != nil {
+		return err
+	}
+	endPos := c.prog.Len()
+	c.prog.PatchUint16(jumpFalse+1, uint16(elsePos))
+	c.prog.PatchUint16(jumpEnd+1, uint16(endPos))
 
 	return nil
 }
