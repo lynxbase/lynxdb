@@ -838,12 +838,13 @@ func lintLynxFlowShortcuts(prog *Program, tokens []Token) []QueryLint {
 	skipErrors := hasCommandToken(tokens, TokenErrors)
 	skipRate := hasCommandToken(tokens, TokenRate)
 	skipEvery := hasCommandToken(tokens, TokenEvery)
+	skipLatency := hasCommandToken(tokens, TokenLatency)
 
 	var lints []QueryLint
 	for _, ds := range prog.Datasets {
-		lints = append(lints, lintLynxFlowShortcutsInQuery(ds.Query, skipErrors, skipRate, skipEvery)...)
+		lints = append(lints, lintLynxFlowShortcutsInQuery(ds.Query, skipErrors, skipRate, skipEvery, skipLatency)...)
 	}
-	lints = append(lints, lintLynxFlowShortcutsInQuery(prog.Main, skipErrors, skipRate, skipEvery)...)
+	lints = append(lints, lintLynxFlowShortcutsInQuery(prog.Main, skipErrors, skipRate, skipEvery, skipLatency)...)
 
 	return lints
 }
@@ -857,7 +858,7 @@ func hasCommandToken(tokens []Token, typ TokenType) bool {
 	return false
 }
 
-func lintLynxFlowShortcutsInQuery(q *Query, skipErrors bool, skipRate bool, skipEvery bool) []QueryLint {
+func lintLynxFlowShortcutsInQuery(q *Query, skipErrors bool, skipRate bool, skipEvery bool, skipLatency bool) []QueryLint {
 	if q == nil {
 		return nil
 	}
@@ -896,16 +897,27 @@ func lintLynxFlowShortcutsInQuery(q *Query, skipErrors bool, skipRate bool, skip
 			}
 		}
 	}
+	if !skipLatency {
+		for _, cmd := range q.Commands {
+			timechart, ok := cmd.(*TimechartCommand)
+			if !ok {
+				continue
+			}
+			if field, ok := latencyDefaultField(timechart); ok {
+				lints = append(lints, latencyShortcutLint(timechart, field))
+			}
+		}
+	}
 
 	for _, cmd := range q.Commands {
 		switch c := cmd.(type) {
 		case *JoinCommand:
-			lints = append(lints, lintLynxFlowShortcutsInQuery(c.Subquery, skipErrors, skipRate, skipEvery)...)
+			lints = append(lints, lintLynxFlowShortcutsInQuery(c.Subquery, skipErrors, skipRate, skipEvery, skipLatency)...)
 		case *AppendCommand:
-			lints = append(lints, lintLynxFlowShortcutsInQuery(c.Subquery, skipErrors, skipRate, skipEvery)...)
+			lints = append(lints, lintLynxFlowShortcutsInQuery(c.Subquery, skipErrors, skipRate, skipEvery, skipLatency)...)
 		case *MultisearchCommand:
 			for _, sub := range c.Searches {
-				lints = append(lints, lintLynxFlowShortcutsInQuery(sub, skipErrors, skipRate, skipEvery)...)
+				lints = append(lints, lintLynxFlowShortcutsInQuery(sub, skipErrors, skipRate, skipEvery, skipLatency)...)
 			}
 		}
 	}
@@ -1027,6 +1039,68 @@ func everyShortcutLint(bin *BinCommand, stats *StatsCommand) QueryLint {
 	savings := 4
 	if len(groupBy) > 0 {
 		savings += len(groupBy)
+	}
+
+	return QueryLint{
+		Code:     LintShortcutAvailable,
+		Message:  fmt.Sprintf("Equivalent: `%s` (shorter by %d tokens)", form, savings),
+		Position: 0,
+	}
+}
+
+func latencyDefaultField(cmd *TimechartCommand) (string, bool) {
+	if cmd == nil || cmd.Span == "" || len(cmd.Aggregations) != 4 {
+		return "", false
+	}
+
+	expected := []struct {
+		fn    string
+		alias string
+	}{
+		{fn: "perc50", alias: "p50"},
+		{fn: "perc95", alias: "p95"},
+		{fn: "perc99", alias: "p99"},
+		{fn: "count", alias: "count"},
+	}
+
+	var field string
+	for i, want := range expected {
+		agg := cmd.Aggregations[i]
+		if !strings.EqualFold(agg.Func, want.fn) || !strings.EqualFold(agg.Alias, want.alias) {
+			return "", false
+		}
+		if want.fn == "count" {
+			if len(agg.Args) != 0 {
+				return "", false
+			}
+			continue
+		}
+		if len(agg.Args) != 1 {
+			return "", false
+		}
+		argField, ok := agg.Args[0].(*FieldExpr)
+		if !ok || argField.Name == "" {
+			return "", false
+		}
+		if field == "" {
+			field = argField.Name
+		} else if field != argField.Name {
+			return "", false
+		}
+	}
+
+	return field, field != ""
+}
+
+func latencyShortcutLint(cmd *TimechartCommand, field string) QueryLint {
+	form := "latency " + field + " every " + cmd.Span
+	if len(cmd.GroupBy) > 0 {
+		form += " by " + strings.Join(cmd.GroupBy, ", ")
+	}
+
+	savings := 8
+	if len(cmd.GroupBy) > 0 {
+		savings += len(cmd.GroupBy)
 	}
 
 	return QueryLint{
@@ -1647,7 +1721,7 @@ func lintCountWithoutParens(tokens []Token) []QueryLint {
 			continue
 		}
 
-		if strings.EqualFold(tok.Literal, "count") && peekTokenType(tokens, i+1) != TokenLParen {
+		if strings.EqualFold(tok.Literal, "count") && peekTokenType(tokens, i-1) != TokenAs && peekTokenType(tokens, i+1) != TokenLParen {
 			lints = append(lints, QueryLint{
 				Code:     LintCountWithoutParens,
 				Message:  "`count` is a function; use `count()`",

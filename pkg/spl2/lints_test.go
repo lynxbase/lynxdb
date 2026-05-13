@@ -74,6 +74,11 @@ func TestLintQuery_CountWithoutParens(t *testing.T) {
 			wantCodes: nil,
 		},
 		{
+			name:      "count alias",
+			query:     `from app | timechart span=1m count() as count`,
+			wantCodes: nil,
+		},
+		{
 			name:      "group by count field",
 			query:     `from app | stats avg(duration_ms) by count`,
 			wantCodes: nil,
@@ -815,6 +820,28 @@ func TestLintQuery_LynxFlowShortcutAvailable(t *testing.T) {
 		{
 			name:      "bin alias keeps explicit form",
 			query:     `from app | bin _time span=5m as minute | stats count() by minute`,
+			wantCodes: nil,
+		},
+		{
+			name:        "latency default aggs",
+			query:       `from app | timechart span=1m perc50(duration_ms) as p50, perc95(duration_ms) as p95, perc99(duration_ms) as p99, count() as count`,
+			wantCodes:   []string{LintShortcutAvailable},
+			wantMessage: "Equivalent: `latency duration_ms every 1m`",
+		},
+		{
+			name:        "latency default aggs by field",
+			query:       `from app | timechart span=5m perc50(dur) as p50, perc95(dur) as p95, perc99(dur) as p99, count() as count by service`,
+			wantCodes:   []string{LintShortcutAvailable},
+			wantMessage: "Equivalent: `latency dur every 5m by service`",
+		},
+		{
+			name:      "already latency",
+			query:     `from app | latency dur every 5m by service`,
+			wantCodes: nil,
+		},
+		{
+			name:      "latency custom aggs stay explicit",
+			query:     `from app | timechart span=5m perc50(dur) as p50, perc99(dur) as p99, count() as count by service`,
 			wantCodes: nil,
 		},
 	}
