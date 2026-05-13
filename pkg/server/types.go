@@ -326,16 +326,19 @@ type SearchJob struct {
 	Progress   atomic.Pointer[SearchProgress]  `json:"-"`
 	Preview    atomic.Pointer[PreviewSnapshot] `json:"-"`
 
-	mu          sync.Mutex             // protects Status, Results, Stats, Error, ErrorCode, Warnings, Lints, Suggestions, Rewrites
-	Status      string                 `json:"status"` // JobStatusRunning, JobStatusDone, JobStatusError, JobStatusCanceled
-	Results     []spl2.ResultRow       `json:"-"`
-	Stats       SearchStats            `json:"-"`
-	Error       string                 `json:"error,omitempty"`
-	ErrorCode   string                 `json:"-"` // machine-readable error code (e.g., QUERY_MEMORY_EXCEEDED)
-	Warnings    []string               `json:"-"`
-	Lints       []spl2.QueryLint       `json:"-"`
-	Suggestions []spl2.QuerySuggestion `json:"-"`
-	Rewrites    []spl2.QueryRewrite    `json:"-"`
+	mu           sync.Mutex             // protects Status, Results, Stats, Error, ErrorCode, Warnings, Lints, Suggestions, Rewrites, lint options
+	Status       string                 `json:"status"` // JobStatusRunning, JobStatusDone, JobStatusError, JobStatusCanceled
+	Results      []spl2.ResultRow       `json:"-"`
+	Stats        SearchStats            `json:"-"`
+	Error        string                 `json:"error,omitempty"`
+	ErrorCode    string                 `json:"-"` // machine-readable error code (e.g., QUERY_MEMORY_EXCEEDED)
+	Warnings     []string               `json:"-"`
+	Lints        []spl2.QueryLint       `json:"-"`
+	LintsEnabled bool                   `json:"-"`
+	LintLimit    int                    `json:"-"`
+	LintFull     bool                   `json:"-"`
+	Suggestions  []spl2.QuerySuggestion `json:"-"`
+	Rewrites     []spl2.QueryRewrite    `json:"-"`
 
 	cancel   context.CancelFunc // cancels the job's context
 	detach   func()             // stops parent context propagation (sync→async promotion)
@@ -351,12 +354,13 @@ func newSearchJob(query string, rt ResultType) *SearchJob {
 	}
 
 	return &SearchJob{
-		ID:         "qry_" + hex.EncodeToString(b),
-		Query:      query,
-		Status:     JobStatusRunning,
-		ResultType: rt,
-		CreatedAt:  time.Now(),
-		doneCh:     make(chan struct{}),
+		ID:           "qry_" + hex.EncodeToString(b),
+		Query:        query,
+		Status:       JobStatusRunning,
+		ResultType:   rt,
+		CreatedAt:    time.Now(),
+		doneCh:       make(chan struct{}),
+		LintsEnabled: true,
 	}
 }
 
@@ -381,20 +385,23 @@ func (j *SearchJob) Snapshot() JobSnapshot {
 
 func (j *SearchJob) snapshotLocked() JobSnapshot {
 	return JobSnapshot{
-		ID:          j.ID,
-		Query:       j.Query,
-		Status:      j.Status,
-		Results:     j.Results,
-		Stats:       j.Stats,
-		Error:       j.Error,
-		ErrorCode:   j.ErrorCode,
-		Warnings:    append([]string(nil), j.Warnings...),
-		Lints:       append([]spl2.QueryLint(nil), j.Lints...),
-		Suggestions: append([]spl2.QuerySuggestion(nil), j.Suggestions...),
-		Rewrites:    append([]spl2.QueryRewrite(nil), j.Rewrites...),
-		ResultType:  j.ResultType,
-		CreatedAt:   j.CreatedAt,
-		DoneAt:      j.DoneAt,
+		ID:           j.ID,
+		Query:        j.Query,
+		Status:       j.Status,
+		Results:      j.Results,
+		Stats:        j.Stats,
+		Error:        j.Error,
+		ErrorCode:    j.ErrorCode,
+		Warnings:     append([]string(nil), j.Warnings...),
+		Lints:        append([]spl2.QueryLint(nil), j.Lints...),
+		LintsEnabled: j.LintsEnabled,
+		LintLimit:    j.LintLimit,
+		LintFull:     j.LintFull,
+		Suggestions:  append([]spl2.QuerySuggestion(nil), j.Suggestions...),
+		Rewrites:     append([]spl2.QueryRewrite(nil), j.Rewrites...),
+		ResultType:   j.ResultType,
+		CreatedAt:    j.CreatedAt,
+		DoneAt:       j.DoneAt,
 	}
 }
 
@@ -408,6 +415,16 @@ func (j *SearchJob) SetAdvisoryMetadata(warnings []string, lints []spl2.QueryLin
 	j.Lints = append([]spl2.QueryLint(nil), lints...)
 	j.Suggestions = append([]spl2.QuerySuggestion(nil), suggestions...)
 	j.Rewrites = append([]spl2.QueryRewrite(nil), rewrites...)
+}
+
+// SetLintOptions records whether and how response lint metadata should be emitted.
+func (j *SearchJob) SetLintOptions(enabled bool, limit int, full bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+
+	j.LintsEnabled = enabled
+	j.LintLimit = limit
+	j.LintFull = full
 }
 
 // Cancel cancels the job and returns whether this call transitioned it to the
@@ -441,20 +458,23 @@ func (j *SearchJob) Detach() {
 
 // JobSnapshot is a point-in-time snapshot of a SearchJob's state.
 type JobSnapshot struct {
-	ID          string
-	Query       string
-	Status      string
-	Results     []spl2.ResultRow
-	Stats       SearchStats
-	Error       string
-	ErrorCode   string // machine-readable error code (e.g., QUERY_MEMORY_EXCEEDED)
-	Warnings    []string
-	Lints       []spl2.QueryLint
-	Suggestions []spl2.QuerySuggestion
-	Rewrites    []spl2.QueryRewrite
-	ResultType  ResultType
-	CreatedAt   time.Time
-	DoneAt      time.Time
+	ID           string
+	Query        string
+	Status       string
+	Results      []spl2.ResultRow
+	Stats        SearchStats
+	Error        string
+	ErrorCode    string // machine-readable error code (e.g., QUERY_MEMORY_EXCEEDED)
+	Warnings     []string
+	Lints        []spl2.QueryLint
+	LintsEnabled bool
+	LintLimit    int
+	LintFull     bool
+	Suggestions  []spl2.QuerySuggestion
+	Rewrites     []spl2.QueryRewrite
+	ResultType   ResultType
+	CreatedAt    time.Time
+	DoneAt       time.Time
 }
 
 // JobInfo is a lightweight summary of a job for listing.

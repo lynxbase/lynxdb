@@ -42,6 +42,7 @@ Source contract: `docs/grammar/RFC.md`.
 | Optional capability commands parse and report capability-required execution errors | `pkg/spl2/parser.go`, `pkg/engine/pipeline/pipeline.go`, `pkg/spl2/parser_test.go`, `pkg/engine/pipeline/pipeline_test.go` |
 | `use <fragment>` parses and expands named pipeline fragments with missing-fragment and cycle diagnostics | `pkg/spl2/parser.go`, `pkg/spl2/fragment.go`, `pkg/spl2/fragment_test.go` |
 | SEARCH `L030` mixed `AND`/`OR` lint covers explicit `search` and normalized free-hand search inputs | `pkg/spl2/lints.go`, `pkg/spl2/lints_test.go` |
+| Execution-backed `L032`/`L037` lints flag high-count `FROM *` and broad all-source search responses from resolved source and segment stats | `pkg/api/rest/query.go`, `pkg/api/rest/jobs.go`, `pkg/api/rest/server_test.go`, `pkg/server/types.go` |
 | Static `L039` flags PCRE2-only regex constructs such as lookaround, backreferences, atomic groups, and possessive quantifiers | `pkg/spl2/lints.go`, `pkg/spl2/lints_test.go` |
 | Unsupported Splunk commands in the RFC profile reject with `L021` and compatibility hints | `pkg/spl2/parser.go`, `pkg/spl2/compat_hints.go`, `pkg/spl2/parser_test.go`, `pkg/spl2/compat_hints_test.go` |
 | LynxFlow `proportion`, `impact`, `baseline`, `changes`, and `exemplars` deterministic desugaring | `pkg/spl2/parser.go`, `pkg/spl2/parser_lynxflow_test.go` |
@@ -75,7 +76,7 @@ Official Splunk compatibility checked:
 | RFC area | Current state | Gap |
 |---|---|---|
 | Source selectors | `FROM`, `INDEX`, lists, RFC glob matching, source exclude globs, `*`, CTE refs, and compact time ranges parse | Some source-scope diagnostics still need coverage against the RFC rewrite contract. |
-| Lints | Compatibility hints, parse suggestions, and post-parse `L001`/`L002`/`L003`/`L004`/`L005`/`L010`/`L011`/`L012`/`L013`/`L020`/`L022`/`L030`/`L031`/`L033`/`L034`/`L035`/`L036`/`L038`/`L039` exist | Planner-backed broad-source lints `L032`/`L037` are not implemented yet. |
+| Lints | Compatibility hints, parse suggestions, and post-parse `L001`/`L002`/`L003`/`L004`/`L005`/`L010`/`L011`/`L012`/`L013`/`L020`/`L022`/`L030`/`L031`/`L032`/`L033`/`L034`/`L035`/`L036`/`L037`/`L038`/`L039` exist | Broad-source lint thresholds are fixed defaults rather than config fields. |
 | Quoted identifier canon | Single-quoted identifiers now parse as canonical names and double-quoted names remain accepted in legacy positions with `L012` | Some less-common double-quoted legacy name positions may still need coverage. |
 | Function catalog | Many eval and aggregate functions parse and execute; common aggregate aliases and time aggregates now normalize before planning | RFC aggregate/eval catalog needs a full parser, VM, and editor cross-check for missing functions and aliases. |
 | Command catalog | Native SPL2/LynxFlow commands, several helpers, and optional capability command syntax parse; profile-excluded Splunk commands reject with `L021` | Optional capability command execution semantics remain deferred. |
@@ -88,7 +89,7 @@ Official Splunk compatibility checked:
 | RFC requirement | Status | Reason |
 |---|---|---|
 | Full duration grammar including calendar `M`/`y` units | Deferred | Current parser and runtime cover signed `s`/`m`/`h`/`d`/`w` relative ranges, snap suffixes, and week-start snap variants; calendar-aware units need a time arithmetic model beyond `time.Duration`. |
-| Broad-search lints and explain blocks `L032`, `L037`, source counts, skipped segments | Deferred | Requires planner and API metadata integration. |
+| Configurable broad-search lint thresholds | Deferred | `L032`/`L037` use fixed source and segment thresholds today; exposing those thresholds through config needs config schema, reload, and docs updates. |
 | Regex engine selection and PCRE2 execution | Deferred | Static `L038` and `L039` diagnostics exist; runtime PCRE2 engine selection and planner literal-extraction metadata still require execution planning integration. |
 | `chart` advanced options and multi-aggregate split pivots | Deferred | Current execution covers grouped aggregation and one-aggregate row/column pivots; Splunk options such as `limit`, `format`, `sep`, `cont`, and split-series filtering need chart metadata and option parsing. |
 | `union` time limits and `_time` interleaving | Deferred | Branch `maxout` is implemented; `maxtime` and `timeout` parse for compatibility but need branch execution cancellation. Splunk-style time interleaving needs a merge iterator keyed by `_time`. |

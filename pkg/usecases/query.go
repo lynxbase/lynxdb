@@ -924,6 +924,7 @@ func (s *QueryService) Submit(ctx context.Context, req SubmitRequest) (*SubmitRe
 	if err != nil {
 		return nil, err
 	}
+	job.SetLintOptions(!req.NoLint, req.LintLimit, req.LintFull)
 
 	limit := req.Limit
 	if limit <= 0 {

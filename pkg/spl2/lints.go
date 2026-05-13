@@ -39,10 +39,12 @@ const (
 	LintDeprecatedSort       = "L022"
 	LintMixedSearchAndOr     = "L030"
 	LintDeepSearchNesting    = "L031"
+	LintAllSourcesHigh       = "L032"
 	LintUnquotedOpValue      = "L033"
 	LintReservedFieldName    = "L034"
 	LintTautologicalSearch   = "L035"
 	LintDefaultMetricField   = "L036"
+	LintBroadSearch          = "L037"
 	LintNoExtractablePattern = "L038"
 	LintPCRE2RegexFeature    = "L039"
 )
@@ -128,7 +130,7 @@ func equivalentText(message string) string {
 
 func lintReason(code string) string {
 	switch code {
-	case LintLeadingWildcard, LintTautologicalSearch, LintNoExtractablePattern, LintPCRE2RegexFeature:
+	case LintLeadingWildcard, LintAllSourcesHigh, LintTautologicalSearch, LintBroadSearch, LintNoExtractablePattern, LintPCRE2RegexFeature:
 		return "slow"
 	case LintDefaultSource, LintIndexRewrite, LintUnsupportedCommand, LintMixedSearchAndOr, LintDefaultMetricField:
 		return "compat"
@@ -145,7 +147,7 @@ func lintReason(code string) string {
 
 func lintSeverity(code string) string {
 	switch code {
-	case LintLeadingWildcard, LintStatsCountWide, LintRawExactCompare, LintMixedSearchAndOr, LintDeepSearchNesting, LintTautologicalSearch, LintNoExtractablePattern, LintPCRE2RegexFeature:
+	case LintLeadingWildcard, LintStatsCountWide, LintRawExactCompare, LintMixedSearchAndOr, LintDeepSearchNesting, LintAllSourcesHigh, LintTautologicalSearch, LintBroadSearch, LintNoExtractablePattern, LintPCRE2RegexFeature:
 		return LintSeverityWarning
 	default:
 		return LintSeverityNotice

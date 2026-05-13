@@ -145,7 +145,8 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 
 			return
 		}
-		writeSyncResultFromUsecase(w, result, limit, req.Offset, normalizedQuery)
+		writeSyncResultFromUsecase(w, result, limit, req.Offset, normalizedQuery,
+			!(req.Lint != nil && !*req.Lint), req.LintLimit, req.LintFull)
 	} else {
 		writeJobHandleFromUsecase(w, result)
 	}
@@ -213,7 +214,7 @@ func handlePlanError(w http.ResponseWriter, err error) {
 }
 
 // writeSyncResultFromUsecase writes 200 with full results from a SubmitResult.
-func writeSyncResultFromUsecase(w http.ResponseWriter, result *usecases.SubmitResult, limit, offset int, query string) {
+func writeSyncResultFromUsecase(w http.ResponseWriter, result *usecases.SubmitResult, limit, offset int, query string, lintsEnabled bool, lintLimit int, lintFull bool) {
 	var data interface{}
 	switch result.ResultType {
 	case server.ResultTypeAggregate, server.ResultTypeTimechart:
@@ -224,6 +225,7 @@ func writeSyncResultFromUsecase(w http.ResponseWriter, result *usecases.SubmitRe
 		data = buildEventsResponse(result.Results, limit, offset)
 	}
 
+	lints := lintsWithBroadScope(result.Lints, query, &result.Stats, lintsEnabled, lintLimit, lintFull)
 	respondData(w, http.StatusOK, data,
 		WithTookMS(result.Stats.ElapsedMS),
 		WithScanned(result.Stats.RowsScanned),
@@ -231,10 +233,125 @@ func writeSyncResultFromUsecase(w http.ResponseWriter, result *usecases.SubmitRe
 		WithSegmentsErrored(result.Stats.SegmentsErrored),
 		WithSearchStats(searchStatsToMeta(&result.Stats)),
 		WithWarnings(result.Warnings),
-		WithLints(result.Lints),
+		WithLints(lints),
 		WithSuggestions(result.Suggestions),
 		WithRewrites(result.Rewrites),
 		WithExplain(explainFromSearchStats(&result.Stats, query)))
+}
+
+const (
+	broadSourceLintThreshold  = 10
+	broadSegmentLintThreshold = 1000
+	restDefaultLintLimit      = 5
+)
+
+func lintsWithBroadScope(lints []spl2.QueryLint, query string, stats *server.SearchStats, enabled bool, limit int, full bool) []spl2.QueryLint {
+	if !enabled || stats == nil {
+		return lints
+	}
+	extra := broadScopeLints(query, stats)
+	if len(extra) == 0 {
+		return lints
+	}
+
+	combined := append([]spl2.QueryLint(nil), lints...)
+	for _, lint := range extra {
+		if !hasLintCode(combined, lint.Code) {
+			combined = append(combined, lint)
+		}
+	}
+	combined = spl2.PrepareQueryLints(combined)
+	if full {
+		return combined
+	}
+	if limit <= 0 {
+		limit = restDefaultLintLimit
+	}
+	if len(combined) <= limit {
+		return combined
+	}
+
+	return append([]spl2.QueryLint(nil), combined[:limit]...)
+}
+
+func broadScopeLints(query string, stats *server.SearchStats) []spl2.QueryLint {
+	allSources, hasSearch := broadScopeQueryShape(query)
+	if !allSources {
+		return nil
+	}
+	sourceCount := sourceScopeCount(stats)
+	segmentCount := stats.SegmentsTotal
+	if hasSearch && (sourceCount >= broadSourceLintThreshold || segmentCount >= broadSegmentLintThreshold) {
+		return []spl2.QueryLint{{
+			Code:     spl2.LintBroadSearch,
+			Message:  fmt.Sprintf("Broad search over %d sources; narrow with `FROM`, `source=`, or a time range", sourceCount),
+			Position: 0,
+		}}
+	}
+	if sourceCount >= broadSourceLintThreshold {
+		return []spl2.QueryLint{{
+			Code:     spl2.LintAllSourcesHigh,
+			Message:  "Narrow the source with `FROM <source>` or `source=<name>`",
+			Position: 0,
+		}}
+	}
+
+	return nil
+}
+
+func broadScopeQueryShape(query string) (allSources bool, hasSearch bool) {
+	prog, err := spl2.ParseProgram(query)
+	if err != nil || prog == nil {
+		return strings.Contains(strings.ToUpper(query), "FROM *"), queryUsesRegex(query) || strings.Contains(strings.ToLower(query), "| search")
+	}
+
+	var checkQuery func(q *spl2.Query)
+	checkQuery = func(q *spl2.Query) {
+		if q == nil {
+			return
+		}
+		if q.Source != nil && q.Source.IsAllSources() {
+			allSources = true
+		}
+		for _, cmd := range q.Commands {
+			switch c := cmd.(type) {
+			case *spl2.SearchCommand, *spl2.RegexCommand:
+				hasSearch = true
+			case *spl2.JoinCommand:
+				checkQuery(c.Subquery)
+			case *spl2.AppendCommand:
+				checkQuery(c.Subquery)
+			case *spl2.MultisearchCommand:
+				for _, sub := range c.Searches {
+					checkQuery(sub)
+				}
+			}
+		}
+	}
+	checkQuery(prog.Main)
+	for _, ds := range prog.Datasets {
+		checkQuery(ds.Query)
+	}
+
+	return allSources, hasSearch
+}
+
+func sourceScopeCount(stats *server.SearchStats) int {
+	if len(stats.SourcesScanned) > 0 {
+		return len(stats.SourcesScanned)
+	}
+
+	return len(stats.IndexesUsed)
+}
+
+func hasLintCode(lints []spl2.QueryLint, code string) bool {
+	for _, lint := range lints {
+		if lint.Code == code {
+			return true
+		}
+	}
+
+	return false
 }
 
 func explainFromSearchStats(ss *server.SearchStats, query string) *metaExplain {

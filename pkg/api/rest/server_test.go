@@ -152,6 +152,53 @@ func ingestTestEvents(t *testing.T, addr string, n, hostCount int) {
 	}
 }
 
+func ingestIndexedTestEvents(t *testing.T, addr string, indexCount int) {
+	t.Helper()
+	for i := 0; i < indexCount; i++ {
+		index := fmt.Sprintf("idx-%02d", i)
+		req, err := http.NewRequest(http.MethodPost,
+			fmt.Sprintf("http://%s/api/v1/ingest/raw", addr),
+			strings.NewReader(fmt.Sprintf("source=%s msg=\"request %d\"\n", index, i)))
+		if err != nil {
+			t.Fatalf("new indexed ingest request: %v", err)
+		}
+		req.Header.Set("Content-Type", "text/plain")
+		req.Header.Set("X-Index", index)
+		req.Header.Set("X-Source", index)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("POST indexed raw events: %v", err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != 200 {
+			t.Fatalf("indexed raw ingest status: %d", resp.StatusCode)
+		}
+	}
+}
+
+func metaLintCodes(meta map[string]interface{}) []string {
+	lints, _ := meta["lints"].([]interface{})
+	codes := make([]string, 0, len(lints))
+	for _, raw := range lints {
+		lint, _ := raw.(map[string]interface{})
+		if code, _ := lint["code"].(string); code != "" {
+			codes = append(codes, code)
+		}
+	}
+
+	return codes
+}
+
+func lintCodesContain(codes []string, want string) bool {
+	for _, code := range codes {
+		if code == want {
+			return true
+		}
+	}
+
+	return false
+}
+
 func TestServer_Health(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
@@ -1955,6 +2002,88 @@ func TestQuery_ExplainMetadata(t *testing.T) {
 	if explain["regex_engine"] != "linear" {
 		t.Fatalf("meta.explain.regex_engine: got %#v, want linear", explain["regex_engine"])
 	}
+}
+
+func TestQuery_BroadScopeLints(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	ingestIndexedTestEvents(t, srv.Addr(), broadSourceLintThreshold+1)
+
+	post := func(body map[string]interface{}) map[string]interface{} {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(raw))
+		if err != nil {
+			t.Fatalf("POST: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
+			b, _ := io.ReadAll(resp.Body)
+			t.Fatalf("status: got %d, body: %s", resp.StatusCode, string(b))
+		}
+		var result map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&result)
+		meta, _ := result["meta"].(map[string]interface{})
+		if meta == nil {
+			t.Fatal("missing meta")
+		}
+
+		return meta
+	}
+
+	allSourceMeta := post(map[string]interface{}{"q": `FROM * | head 1`})
+	if codes := metaLintCodes(allSourceMeta); !lintCodesContain(codes, spl2.LintAllSourcesHigh) {
+		t.Fatalf("all-source lint codes: got %v, want %s", codes, spl2.LintAllSourcesHigh)
+	}
+
+	broadSearchMeta := post(map[string]interface{}{"q": `FROM * | search request | head 1`})
+	if codes := metaLintCodes(broadSearchMeta); !lintCodesContain(codes, spl2.LintBroadSearch) {
+		t.Fatalf("broad-search lint codes: got %v, want %s", codes, spl2.LintBroadSearch)
+	}
+
+	noLintMeta := post(map[string]interface{}{"q": `FROM * | search request | head 1`, "lint": false})
+	if _, ok := noLintMeta["lints"]; ok {
+		t.Fatalf("meta.lints present despite lint=false: %#v", noLintMeta["lints"])
+	}
+
+	wait := float64(0)
+	raw, _ := json.Marshal(map[string]interface{}{
+		"q":    `FROM * | search "request 1" | head 1`,
+		"wait": wait,
+	})
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(raw))
+	if err != nil {
+		t.Fatalf("POST async: %v", err)
+	}
+	var submitted map[string]interface{}
+	json.NewDecoder(resp.Body).Decode(&submitted)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("async status: got %d, want 202", resp.StatusCode)
+	}
+	jobID := submitted["data"].(map[string]interface{})["job_id"].(string)
+	for i := 0; i < 50; i++ {
+		time.Sleep(50 * time.Millisecond)
+		resp, err = http.Get(fmt.Sprintf("http://%s/api/v1/query/jobs/%s", srv.Addr(), jobID))
+		if err != nil {
+			t.Fatalf("GET job: %v", err)
+		}
+		var jobResult map[string]interface{}
+		json.NewDecoder(resp.Body).Decode(&jobResult)
+		resp.Body.Close()
+
+		data := jobResult["data"].(map[string]interface{})
+		if status, _ := data["status"].(string); status == "done" {
+			meta := jobResult["meta"].(map[string]interface{})
+			if codes := metaLintCodes(meta); !lintCodesContain(codes, spl2.LintBroadSearch) {
+				t.Fatalf("async broad-search lint codes: got %v, want %s", codes, spl2.LintBroadSearch)
+			}
+
+			return
+		}
+	}
+	t.Fatal("timeout waiting for broad-search async job")
 }
 
 func TestErrorFormat(t *testing.T) {
