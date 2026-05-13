@@ -402,6 +402,16 @@ func TestParse_DoubleQuotedLegacyFieldLists(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:  "rename pair",
+			input: `FROM main | rename "old name" as "new name"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*RenameCommand)
+				if len(cmd.Renames) != 1 || cmd.Renames[0].Old != "old name" || cmd.Renames[0].New != "new name" {
+					t.Fatalf("rename pairs: got %+v", cmd.Renames)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
