@@ -489,6 +489,26 @@ func TestLintQuery_DoubleQuotedNames(t *testing.T) {
 			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
 		},
 		{
+			name:      "latency command",
+			query:     `from app | latency "duration ms" every 1m by "service name"`,
+			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
+		},
+		{
+			name:      "percentiles command",
+			query:     `from app | percentiles "duration ms" by "service name"`,
+			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
+		},
+		{
+			name:      "baseline command",
+			query:     `from app | baseline "error rate" window=12 by "service name"`,
+			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
+		},
+		{
+			name:      "changes command",
+			query:     `from app | changes "version name" by "service name"`,
+			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
+		},
+		{
 			name:      "transaction command",
 			query:     `from app | transaction startswith="login event" "session id" endswith="logout event"`,
 			wantCodes: []string{LintDoubleQuotedName},

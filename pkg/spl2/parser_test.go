@@ -607,6 +607,74 @@ func TestParse_DoubleQuotedLegacyFieldLists(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:  "latency field",
+			input: `FROM main | latency "duration ms" every 1m by "service name"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*TimechartCommand)
+				if len(cmd.Aggregations) == 0 || len(cmd.Aggregations[0].Args) != 1 {
+					t.Fatalf("latency aggregations: got %+v", cmd.Aggregations)
+				}
+				field, ok := cmd.Aggregations[0].Args[0].(*FieldExpr)
+				if !ok || field.Name != "duration ms" {
+					t.Fatalf("latency field: got %#v", cmd.Aggregations[0].Args[0])
+				}
+				if got, want := cmd.GroupBy, []string{"service name"}; !reflect.DeepEqual(got, want) {
+					t.Fatalf("latency group by: got %v, want %v", got, want)
+				}
+			},
+		},
+		{
+			name:  "percentiles field",
+			input: `FROM main | percentiles "duration ms" by "service name"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*StatsCommand)
+				if len(cmd.Aggregations) == 0 || len(cmd.Aggregations[0].Args) != 1 {
+					t.Fatalf("percentiles aggregations: got %+v", cmd.Aggregations)
+				}
+				field, ok := cmd.Aggregations[0].Args[0].(*FieldExpr)
+				if !ok || field.Name != "duration ms" {
+					t.Fatalf("percentiles field: got %#v", cmd.Aggregations[0].Args[0])
+				}
+				if got, want := cmd.GroupBy, []string{"service name"}; !reflect.DeepEqual(got, want) {
+					t.Fatalf("percentiles group by: got %v, want %v", got, want)
+				}
+			},
+		},
+		{
+			name:  "baseline field",
+			input: `FROM main | baseline "error rate" window=12 by "service name"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*StreamstatsCommand)
+				if len(cmd.Aggregations) == 0 || len(cmd.Aggregations[0].Args) != 1 {
+					t.Fatalf("baseline aggregations: got %+v", cmd.Aggregations)
+				}
+				field, ok := cmd.Aggregations[0].Args[0].(*FieldExpr)
+				if !ok || field.Name != "error rate" {
+					t.Fatalf("baseline field: got %#v", cmd.Aggregations[0].Args[0])
+				}
+				if got, want := cmd.GroupBy, []string{"service name"}; !reflect.DeepEqual(got, want) {
+					t.Fatalf("baseline group by: got %v, want %v", got, want)
+				}
+			},
+		},
+		{
+			name:  "changes field",
+			input: `FROM main | changes "version name" by "service name"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[1].(*StreamstatsCommand)
+				if len(cmd.Aggregations) != 1 || len(cmd.Aggregations[0].Args) != 1 {
+					t.Fatalf("changes aggregations: got %+v", cmd.Aggregations)
+				}
+				field, ok := cmd.Aggregations[0].Args[0].(*FieldExpr)
+				if !ok || field.Name != "version name" {
+					t.Fatalf("changes field: got %#v", cmd.Aggregations[0].Args[0])
+				}
+				if got, want := cmd.GroupBy, []string{"service name"}; !reflect.DeepEqual(got, want) {
+					t.Fatalf("changes group by: got %v, want %v", got, want)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
