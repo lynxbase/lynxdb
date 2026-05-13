@@ -2134,6 +2134,57 @@ func TestCompileIsBoolAndTypeOf(t *testing.T) {
 	}
 }
 
+func TestCompileIsArrayAndIsObject(t *testing.T) {
+	tests := []struct {
+		name string
+		expr *spl2.FuncCallExpr
+		row  map[string]event.Value
+		want bool
+	}{
+		{
+			name: "array",
+			expr: &spl2.FuncCallExpr{Name: "isarray", Args: []spl2.Expr{&spl2.FieldExpr{Name: "value"}}},
+			row:  map[string]event.Value{"value": event.StringValue(`[1,2,3]`)},
+			want: true,
+		},
+		{
+			name: "array rejects object",
+			expr: &spl2.FuncCallExpr{Name: "isarray", Args: []spl2.Expr{&spl2.FieldExpr{Name: "value"}}},
+			row:  map[string]event.Value{"value": event.StringValue(`{"a":1}`)},
+			want: false,
+		},
+		{
+			name: "object",
+			expr: &spl2.FuncCallExpr{Name: "isobject", Args: []spl2.Expr{&spl2.FieldExpr{Name: "value"}}},
+			row:  map[string]event.Value{"value": event.StringValue(`{"a":1}`)},
+			want: true,
+		},
+		{
+			name: "object rejects invalid json",
+			expr: &spl2.FuncCallExpr{Name: "isobject", Args: []spl2.Expr{&spl2.FieldExpr{Name: "value"}}},
+			row:  map[string]event.Value{"value": event.StringValue(`{bad`)},
+			want: false,
+		},
+	}
+
+	vm := &VM{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prog, err := CompileExpr(tt.expr)
+			if err != nil {
+				t.Fatalf("CompileExpr: %v", err)
+			}
+			result, err := vm.Execute(prog, tt.row)
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if result.AsBool() != tt.want {
+				t.Fatalf("got %v, want %v", result.AsBool(), tt.want)
+			}
+		})
+	}
+}
+
 func TestCompileILike(t *testing.T) {
 	expr := &spl2.FuncCallExpr{
 		Name: "ilike",

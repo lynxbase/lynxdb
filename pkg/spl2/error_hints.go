@@ -36,7 +36,7 @@ var knownFunctions = []string{
 	"round", "substr", "trim", "ltrim", "rtrim", "urldecode", "lower", "upper", "len", "ln", "log", "exp", "pow", "pi", "random",
 	"acos", "acosh", "asin", "asinh", "atan", "atan2", "atanh", "cos", "cosh", "hypot", "sin", "sinh", "tan", "tanh",
 	"abs", "ceil", "ceiling", "floor", "sqrt", "mvjoin", "mvappend", "mvdedup", "mvcount",
-	"isnotnull", "isnull", "nullif", "isnum", "isnumeric", "isint", "isstr", "isbool", "typeof",
+	"isnotnull", "isnull", "nullif", "isnum", "isnumeric", "isint", "isstr", "isbool", "isarray", "isobject", "typeof",
 	"null", "strftime", "strptime", "startswith", "endswith", "contains", "max", "min",
 	"md5", "sha1", "sha256", "sha512",
 	// Aggregation functions

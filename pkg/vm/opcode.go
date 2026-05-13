@@ -126,10 +126,12 @@ const (
 	OpIsNotNull Opcode = 0xB2
 
 	// Type Checks (pop 1, push bool).
-	OpIsNum  Opcode = 0xB3
-	OpIsInt  Opcode = 0xB4
-	OpIsBool Opcode = 0xB5
-	OpTypeOf Opcode = 0xB6
+	OpIsNum    Opcode = 0xB3
+	OpIsInt    Opcode = 0xB4
+	OpIsBool   Opcode = 0xB5
+	OpTypeOf   Opcode = 0xB6
+	OpIsArray  Opcode = 0xB7
+	OpIsObject Opcode = 0xB8
 
 	// Time Functions.
 	OpStrftime    Opcode = 0xC0
@@ -287,6 +289,8 @@ var definitions = map[Opcode]*Definition{
 	OpIsInt:     {"OpIsInt", nil},
 	OpIsBool:    {"OpIsBool", nil},
 	OpTypeOf:    {"OpTypeOf", nil},
+	OpIsArray:   {"OpIsArray", nil},
+	OpIsObject:  {"OpIsObject", nil},
 
 	OpStrftime:    {"OpStrftime", nil},
 	OpURLDecode:   {"OpURLDecode", nil},

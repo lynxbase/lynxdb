@@ -1246,6 +1246,14 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = event.BoolValue(a.Type() == event.FieldTypeBool)
 
+		case OpIsArray:
+			a := vm.stack[vm.sp-1]
+			vm.stack[vm.sp-1] = event.BoolValue(isJSONKind(a, '['))
+
+		case OpIsObject:
+			a := vm.stack[vm.sp-1]
+			vm.stack[vm.sp-1] = event.BoolValue(isJSONKind(a, '{'))
+
 		case OpTypeOf:
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = event.StringValue(a.Type().String())
@@ -2121,6 +2129,18 @@ func valueToInterface(v event.Value) any {
 	default:
 		return valueToString(v)
 	}
+}
+
+func isJSONKind(v event.Value, prefix byte) bool {
+	if v.IsNull() || v.Type() != event.FieldTypeString {
+		return false
+	}
+	s := strings.TrimSpace(v.AsString())
+	if len(s) == 0 || s[0] != prefix {
+		return false
+	}
+
+	return json.Valid([]byte(s))
 }
 
 func ipMaskValue(mask, ip event.Value) event.Value {

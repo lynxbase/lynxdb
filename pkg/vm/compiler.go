@@ -1004,6 +1004,22 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 			return err
 		}
 		c.prog.EmitOp(OpIsBool)
+	case "isarray":
+		if len(e.Args) != 1 {
+			return fmt.Errorf("isarray expects 1 argument, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpIsArray)
+	case "isobject":
+		if len(e.Args) != 1 {
+			return fmt.Errorf("isobject expects 1 argument, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpIsObject)
 	case "isstr":
 		// In schema-on-read, all non-null values are strings.
 		if len(e.Args) != 1 {
