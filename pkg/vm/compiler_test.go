@@ -806,6 +806,26 @@ func TestCompileRFCMathFunctions(t *testing.T) {
 	}
 }
 
+func TestCompileRandom(t *testing.T) {
+	expr := &spl2.FuncCallExpr{Name: "random"}
+	prog, err := CompileExpr(expr)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vm := &VM{}
+	result, err := vm.Execute(prog, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Type() != event.FieldTypeInt {
+		t.Fatalf("got type %s, want int", result.Type())
+	}
+	if result.AsInt() < 0 || result.AsInt() >= 1<<31 {
+		t.Fatalf("random out of range: %d", result.AsInt())
+	}
+}
+
 func TestCompileInExpr(t *testing.T) {
 	expr := &spl2.InExpr{
 		Field: &spl2.FieldExpr{Name: "status"},

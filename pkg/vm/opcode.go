@@ -112,6 +112,7 @@ const (
 	OpMin        Opcode = 0x9A
 	OpMathUnary  Opcode = 0x9B
 	OpMathBinary Opcode = 0x9C
+	OpRandom     Opcode = 0x9D
 
 	// Multivalue Operations.
 	OpMvAppend Opcode = 0xA0
@@ -272,6 +273,7 @@ var definitions = map[Opcode]*Definition{
 	OpMin:        {"OpMin", []int{2}},
 	OpMathUnary:  {"OpMathUnary", []int{2}},
 	OpMathBinary: {"OpMathBinary", []int{2}},
+	OpRandom:     {"OpRandom", nil},
 
 	OpMvAppend: {"OpMvAppend", []int{2}},
 	OpMvJoin:   {"OpMvJoin", nil},

@@ -33,7 +33,7 @@ var knownFunctions = []string{
 	// Eval functions
 	"if", "case", "validate", "match", "searchmatch", "like", "ilike", "cidrmatch", "coalesce", "in", "printf", "ipmask",
 	"tonumber", "toint", "todouble", "tostring", "tobool",
-	"round", "substr", "trim", "ltrim", "rtrim", "urldecode", "lower", "upper", "len", "ln", "log", "exp", "pow", "pi",
+	"round", "substr", "trim", "ltrim", "rtrim", "urldecode", "lower", "upper", "len", "ln", "log", "exp", "pow", "pi", "random",
 	"acos", "acosh", "asin", "asinh", "atan", "atan2", "atanh", "cos", "cosh", "hypot", "sin", "sinh", "tan", "tanh",
 	"abs", "ceil", "ceiling", "floor", "sqrt", "mvjoin", "mvappend", "mvdedup", "mvcount",
 	"isnotnull", "isnull", "nullif", "isnum", "isnumeric", "isint", "isstr", "isbool", "typeof",

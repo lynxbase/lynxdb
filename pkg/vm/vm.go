@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"math/rand"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -916,6 +917,10 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 			a := vm.stack[vm.sp-2]
 			vm.sp--
 			vm.stack[vm.sp-1] = binaryMathValue(a, b, int(operand))
+
+		case OpRandom:
+			vm.stack[vm.sp] = event.IntValue(int64(rand.Int31()))
+			vm.sp++
 
 		case OpMax:
 			operand, opErr := readOperandSafe(ins, ip)

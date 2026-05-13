@@ -611,6 +611,11 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 		}
 		idx := c.prog.AddConstant(event.FloatValue(math.Pi))
 		c.prog.EmitOp(OpConstFloat, idx)
+	case "random":
+		if len(e.Args) != 0 {
+			return fmt.Errorf("random expects 0 arguments, got %d", len(e.Args))
+		}
+		c.prog.EmitOp(OpRandom)
 	case "abs":
 		if len(e.Args) != 1 {
 			return fmt.Errorf("abs expects 1 argument, got %d", len(e.Args))
