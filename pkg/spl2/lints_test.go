@@ -1,6 +1,9 @@
 package spl2
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestPrepareQueryLints_AnnotatesAndSorts(t *testing.T) {
 	lints := []QueryLint{
@@ -730,6 +733,63 @@ func TestLintQuery_UnquotedOperatorValues(t *testing.T) {
 			for i, want := range tt.wantCodes {
 				if lints[i].Code != want {
 					t.Fatalf("lints[%d].Code: got %q, want %q", i, lints[i].Code, want)
+				}
+			}
+		})
+	}
+}
+
+func TestLintQuery_LynxFlowShortcutAvailable(t *testing.T) {
+	tests := []struct {
+		name        string
+		query       string
+		wantCodes   []string
+		wantMessage string
+	}{
+		{
+			name:        "errors by field",
+			query:       `from app | where level IN ("error", "fatal") | stats count() by service`,
+			wantCodes:   []string{LintShortcutAvailable},
+			wantMessage: "Equivalent: `errors by service`",
+		},
+		{
+			name:        "errors lower level",
+			query:       `from app[-1h] | where lower(level) IN ("fatal", "error") | stats count()`,
+			wantCodes:   []string{LintShortcutAvailable},
+			wantMessage: "Equivalent: `errors`",
+		},
+		{
+			name:      "already lynxflow",
+			query:     `from app | errors by service`,
+			wantCodes: nil,
+		},
+		{
+			name:      "custom aggregate remains explicit",
+			query:     `from app | where level IN ("error", "fatal") | stats dc(user_id) by service`,
+			wantCodes: nil,
+		},
+		{
+			name:      "custom error definition remains explicit",
+			query:     `from app | where status >= 500 | stats count() by service`,
+			wantCodes: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lints, err := LintQuery(tt.query)
+			if err != nil {
+				t.Fatalf("LintQuery: %v", err)
+			}
+			if len(lints) != len(tt.wantCodes) {
+				t.Fatalf("lints: got %+v, want codes %v", lints, tt.wantCodes)
+			}
+			for i, want := range tt.wantCodes {
+				if lints[i].Code != want {
+					t.Fatalf("lints[%d].Code: got %q, want %q", i, lints[i].Code, want)
+				}
+				if tt.wantMessage != "" && !strings.Contains(lints[i].Message, tt.wantMessage) {
+					t.Fatalf("lints[%d].Message = %q, want to contain %q", i, lints[i].Message, tt.wantMessage)
 				}
 			}
 		})

@@ -1,6 +1,7 @@
 package spl2
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 )
@@ -24,6 +25,7 @@ const (
 	LintAmbiguousDedupArgs   = "L011"
 	LintDoubleQuotedName     = "L012"
 	LintCountWithoutParens   = "L013"
+	LintShortcutAvailable    = "L020"
 	LintUnsupportedCommand   = "L021"
 	LintDeprecatedSort       = "L022"
 	LintMixedSearchAndOr     = "L030"
@@ -81,6 +83,8 @@ func lintReason(code string) string {
 		return "slow"
 	case LintDefaultSource, LintIndexRewrite, LintUnsupportedCommand, LintMixedSearchAndOr, LintDefaultMetricField:
 		return "compat"
+	case LintShortcutAvailable:
+		return "shortcut"
 	case LintStatsCountWide:
 		return "schema"
 	case LintOptionAfterArg, LintAmbiguousDedupArgs, LintDoubleQuotedName, LintCountWithoutParens, LintDeprecatedSort, LintUnquotedOpValue, LintReservedFieldName, LintRawExactCompare:
@@ -172,6 +176,7 @@ func LintProgram(input string, prog *Program) ([]QueryLint, error) {
 	lints = append(lints, lintAmbiguousDedupArgs(tokens)...)
 	lints = append(lints, lintDoubleQuotedNames(tokens)...)
 	lints = append(lints, lintCountWithoutParens(tokens)...)
+	lints = append(lints, lintLynxFlowShortcuts(prog, tokens)...)
 	lints = append(lints, lintDeprecatedSortSyntax(tokens)...)
 	lints = append(lints, lintMixedSearchAndOr(input, tokens)...)
 	lints = append(lints, lintDeepSearchNesting(prog)...)
@@ -823,6 +828,122 @@ func unquotedOperatorValueLint(pos int) QueryLint {
 		Code:     LintUnquotedOpValue,
 		Message:  "Use double quotes for literal values containing spaces or operators",
 		Position: pos,
+	}
+}
+
+func lintLynxFlowShortcuts(prog *Program, tokens []Token) []QueryLint {
+	if prog == nil || hasTokenType(tokens, TokenErrors) {
+		return nil
+	}
+
+	var lints []QueryLint
+	for _, ds := range prog.Datasets {
+		lints = append(lints, lintLynxFlowShortcutsInQuery(ds.Query)...)
+	}
+	lints = append(lints, lintLynxFlowShortcutsInQuery(prog.Main)...)
+
+	return lints
+}
+
+func hasTokenType(tokens []Token, typ TokenType) bool {
+	for _, tok := range tokens {
+		if tok.Type == typ {
+			return true
+		}
+	}
+	return false
+}
+
+func lintLynxFlowShortcutsInQuery(q *Query) []QueryLint {
+	if q == nil {
+		return nil
+	}
+
+	var lints []QueryLint
+	for i := 0; i+1 < len(q.Commands); i++ {
+		where, ok := q.Commands[i].(*WhereCommand)
+		if !ok || !isErrorsWhereExpr(where.Expr) {
+			continue
+		}
+		stats, ok := q.Commands[i+1].(*StatsCommand)
+		if !ok || !isDefaultCountStats(stats) {
+			continue
+		}
+		lints = append(lints, errorsShortcutLint(stats.GroupBy))
+	}
+
+	for _, cmd := range q.Commands {
+		switch c := cmd.(type) {
+		case *JoinCommand:
+			lints = append(lints, lintLynxFlowShortcutsInQuery(c.Subquery)...)
+		case *AppendCommand:
+			lints = append(lints, lintLynxFlowShortcutsInQuery(c.Subquery)...)
+		case *MultisearchCommand:
+			for _, sub := range c.Searches {
+				lints = append(lints, lintLynxFlowShortcutsInQuery(sub)...)
+			}
+		}
+	}
+
+	return lints
+}
+
+func isErrorsWhereExpr(expr Expr) bool {
+	in, ok := expr.(*InExpr)
+	if !ok || in.Negated || len(in.Values) != 2 || !isErrorsLevelField(in.Field) {
+		return false
+	}
+
+	values := map[string]bool{}
+	for _, value := range in.Values {
+		lit, ok := value.(*LiteralExpr)
+		if !ok {
+			return false
+		}
+		values[strings.ToLower(lit.Value)] = true
+	}
+
+	return values["error"] && values["fatal"]
+}
+
+func isErrorsLevelField(expr Expr) bool {
+	switch e := expr.(type) {
+	case *FieldExpr:
+		return strings.EqualFold(e.Name, "level")
+	case *FuncCallExpr:
+		if !strings.EqualFold(e.Name, "lower") || len(e.Args) != 1 {
+			return false
+		}
+		field, ok := e.Args[0].(*FieldExpr)
+		return ok && strings.EqualFold(field.Name, "level")
+	default:
+		return false
+	}
+}
+
+func isDefaultCountStats(stats *StatsCommand) bool {
+	if len(stats.Aggregations) != 1 {
+		return false
+	}
+	agg := stats.Aggregations[0]
+	return strings.EqualFold(agg.Func, "count") && len(agg.Args) == 0 && agg.Alias == ""
+}
+
+func errorsShortcutLint(groupBy []string) QueryLint {
+	form := "errors"
+	if len(groupBy) > 0 {
+		form += " by " + strings.Join(groupBy, ", ")
+	}
+
+	savings := 7
+	if len(groupBy) > 0 {
+		savings += len(groupBy)
+	}
+
+	return QueryLint{
+		Code:     LintShortcutAvailable,
+		Message:  fmt.Sprintf("Equivalent: `%s` (shorter by %d tokens)", form, savings),
+		Position: 0,
 	}
 }
 
