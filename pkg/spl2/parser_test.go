@@ -488,6 +488,26 @@ func TestParse_DoubleQuotedLegacyFieldLists(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:  "top fields",
+			input: `FROM main | top 5 "uri path" by "service name"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*TopCommand)
+				if cmd.Field != "uri path" || cmd.ByField != "service name" {
+					t.Fatalf("top: got %+v", cmd)
+				}
+			},
+		},
+		{
+			name:  "rare fields",
+			input: `FROM main | rare 5 "uri path" by "service name"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*RareCommand)
+				if cmd.Field != "uri path" || cmd.ByField != "service name" {
+					t.Fatalf("rare: got %+v", cmd)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

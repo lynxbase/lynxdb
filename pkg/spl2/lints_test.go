@@ -504,6 +504,16 @@ func TestLintQuery_DoubleQuotedNames(t *testing.T) {
 			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName, LintDoubleQuotedName},
 		},
 		{
+			name:      "top command",
+			query:     `from app | top 5 "uri path" by "service name"`,
+			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
+		},
+		{
+			name:      "rare command",
+			query:     `from app | rare 5 "uri path" by "service name"`,
+			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
+		},
+		{
 			name:      "stats group by",
 			query:     `from app | stats count() by "user id", host`,
 			wantCodes: []string{LintDoubleQuotedName},
