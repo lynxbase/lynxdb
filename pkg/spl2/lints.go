@@ -329,7 +329,7 @@ func lintDoubleQuotedNames(tokens []Token) []QueryLint {
 					add(tokens[j+1].Pos)
 				}
 			}
-		case TokenTable, TokenDedup:
+		case TokenTable, TokenDedup, TokenSelect:
 			for j := i + 1; j < len(tokens) && !isSegmentBoundary(tokens[j].Type); j++ {
 				if tokens[j].Type == TokenString {
 					add(tokens[j].Pos)

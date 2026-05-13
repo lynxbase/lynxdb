@@ -529,6 +529,11 @@ func TestLintQuery_DoubleQuotedNames(t *testing.T) {
 			wantCodes: []string{LintDoubleQuotedName},
 		},
 		{
+			name:      "select command",
+			query:     `from app | select "user id" as "display name"`,
+			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
+		},
+		{
 			name:      "stats group by",
 			query:     `from app | stats count() by "user id", host`,
 			wantCodes: []string{LintDoubleQuotedName},

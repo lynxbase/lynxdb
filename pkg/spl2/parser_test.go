@@ -538,6 +538,16 @@ func TestParse_DoubleQuotedLegacyFieldLists(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:  "select field",
+			input: `FROM main | select "user id" as "display name"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*SelectCommand)
+				if len(cmd.Columns) != 1 || cmd.Columns[0].Name != "user id" || cmd.Columns[0].Alias != "display name" {
+					t.Fatalf("select columns: got %+v", cmd.Columns)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

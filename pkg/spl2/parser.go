@@ -3789,7 +3789,7 @@ func (p *Parser) parseSelectCmd() (*SelectCommand, error) {
 		if tok.Type == TokenStar {
 			p.advance()
 			cmd.Columns = append(cmd.Columns, SelectColumn{Name: "*"})
-		} else if isIdentLike(tok.Type) {
+		} else if isIdentLike(tok.Type) || tok.Type == TokenString {
 			p.advance()
 			col := SelectColumn{Name: tok.Literal}
 			if p.peek().Type == TokenAs {
