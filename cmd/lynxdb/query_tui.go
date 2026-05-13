@@ -51,6 +51,7 @@ type searchModel struct {
 	earliest      string
 	latest        string
 	noLint        bool
+	noSuggestions bool
 	showRewritten bool
 	jobID         string
 	startTime     time.Time
@@ -80,7 +81,7 @@ type searchModel struct {
 	err      error // original error for type-aware rendering in Execute()
 }
 
-func newSearchModel(c *client.Client, query, earliest, latest string, noLint, showRewritten bool) searchModel {
+func newSearchModel(c *client.Client, query, earliest, latest string, noLint, noSuggestions, showRewritten bool) searchModel {
 	s := spinner.New()
 	s.Spinner = spinner.Dot
 	s.Style = ui.Stdout.Accent
@@ -92,6 +93,7 @@ func newSearchModel(c *client.Client, query, earliest, latest string, noLint, sh
 		earliest:      earliest,
 		latest:        latest,
 		noLint:        noLint,
+		noSuggestions: noSuggestions,
 		showRewritten: showRewritten,
 		startTime:     time.Now(),
 		width:         120,
@@ -99,18 +101,19 @@ func newSearchModel(c *client.Client, query, earliest, latest string, noLint, sh
 }
 
 func (m searchModel) Init() tea.Cmd {
-	return tea.Batch(m.spinner.Tick, submitJobCmd(m.client, m.query, m.earliest, m.latest, m.noLint))
+	return tea.Batch(m.spinner.Tick, submitJobCmd(m.client, m.query, m.earliest, m.latest, m.noLint, m.noSuggestions))
 }
 
-func submitJobCmd(c *client.Client, query, earliest, latest string, noLint bool) tea.Cmd {
+func submitJobCmd(c *client.Client, query, earliest, latest string, noLint, noSuggestions bool) tea.Cmd {
 	return func() tea.Msg {
 		wait := float64(0)
 		result, err := c.Query(context.Background(), client.QueryRequest{
-			Q:    query,
-			From: earliest,
-			To:   latest,
-			Wait: &wait,
-			Lint: lintRequestValue(noLint),
+			Q:           query,
+			From:        earliest,
+			To:          latest,
+			Wait:        &wait,
+			Lint:        lintRequestValue(noLint),
+			Suggestions: suggestionsRequestValue(noSuggestions),
 		})
 		if err != nil {
 			return searchErrMsg{err}
@@ -387,9 +390,9 @@ func (m searchModel) renderProgress() string {
 // doQueryTUI runs a TUI-mode query with a progress spinner on stderr and
 // formatted results on stdout. This allows all --format values (json, csv,
 // table, etc.) to work correctly while still showing interactive progress.
-func doQueryTUI(_ context.Context, query, since, earliest, latest string, failEmpty bool, analyze string, noLint, showRewritten bool) error {
+func doQueryTUI(_ context.Context, query, since, earliest, latest string, failEmpty bool, analyze string, noLint, noSuggestions, showRewritten bool) error {
 	c := apiClient()
-	m := newSearchModel(c, query, earliest, latest, noLint, showRewritten)
+	m := newSearchModel(c, query, earliest, latest, noLint, noSuggestions, showRewritten)
 
 	p := tea.NewProgram(m, tea.WithOutput(os.Stderr))
 

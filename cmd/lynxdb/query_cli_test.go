@@ -3,6 +3,8 @@ package main
 import (
 	"encoding/csv"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"sort"
 	"strings"
@@ -82,6 +84,93 @@ func TestRewritePreview_TruncatesLongValues(t *testing.T) {
 	}
 	if !strings.HasSuffix(got, "... [truncated]") {
 		t.Fatalf("rewritePreview missing truncation suffix: %q", got[len(got)-20:])
+	}
+}
+
+func TestQueryNoSuggestions_SendsServerFlag(t *testing.T) {
+	reqCh := make(chan struct {
+		Lint        *bool `json:"lint"`
+		Suggestions *bool `json:"suggestions"`
+	}, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v1/query" {
+			t.Errorf("path = %s, want /api/v1/query", r.URL.Path)
+		}
+
+		var req struct {
+			Lint        *bool `json:"lint"`
+			Suggestions *bool `json:"suggestions"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		reqCh <- req
+
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"type":     "events",
+				"events":   []map[string]interface{}{},
+				"total":    0,
+				"has_more": false,
+			},
+			"meta": map[string]interface{}{},
+		})
+	}))
+	defer srv.Close()
+
+	_, _, err := runCmd(t, "--server", srv.URL, "--quiet", "query", "--format", "json", "--no-suggestions", "error")
+	if err != nil {
+		t.Fatalf("query failed: %v", err)
+	}
+
+	req := <-reqCh
+	if req.Suggestions == nil || *req.Suggestions {
+		t.Fatalf("suggestions = %v, want pointer to false", req.Suggestions)
+	}
+	if req.Lint != nil {
+		t.Fatalf("lint = %v, want omitted", req.Lint)
+	}
+}
+
+func TestQueryQueriesFileNoSuggestions_SendsServerFlag(t *testing.T) {
+	reqCh := make(chan *bool, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Suggestions *bool `json:"suggestions"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		reqCh <- req.Suggestions
+
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"type":     "events",
+				"events":   []map[string]interface{}{},
+				"total":    0,
+				"has_more": false,
+			},
+			"meta": map[string]interface{}{},
+		})
+	}))
+	defer srv.Close()
+
+	queryFile := t.TempDir() + "/queries.spl2"
+	if err := os.WriteFile(queryFile, []byte("error\n"), 0o600); err != nil {
+		t.Fatalf("write queries: %v", err)
+	}
+
+	_, _, err := runCmd(t, "--server", srv.URL, "--quiet", "query", "--queries-file", queryFile, "--no-suggestions")
+	if err != nil {
+		t.Fatalf("query --queries-file failed: %v", err)
+	}
+
+	suggestions := <-reqCh
+	if suggestions == nil || *suggestions {
+		t.Fatalf("suggestions = %v, want pointer to false", suggestions)
 	}
 }
 

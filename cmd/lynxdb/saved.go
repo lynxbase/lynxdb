@@ -370,7 +370,7 @@ func runSavedRun(name, since, from, to string, queryParams []string) error {
 	}
 	SaveLastQuery(query, since, from, to)
 
-	return runQueryServer(query, since, from, to, "", false, "", false, false)
+	return runQueryServer(query, since, from, to, "", false, "", false, false, false)
 }
 
 func runSavedDelete(name string, force bool) error {
