@@ -683,6 +683,24 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 				vm.stack[vm.sp-1] = event.StringValue(strings.Join(parts, "|||"))
 			}
 
+		case OpTrim:
+			chars := vm.stack[vm.sp-1]
+			str := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = trimValue(str, chars, trimBoth)
+
+		case OpLTrim:
+			chars := vm.stack[vm.sp-1]
+			str := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = trimValue(str, chars, trimLeft)
+
+		case OpRTrim:
+			chars := vm.stack[vm.sp-1]
+			str := vm.stack[vm.sp-2]
+			vm.sp--
+			vm.stack[vm.sp-1] = trimValue(str, chars, trimRight)
+
 		case OpEq:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
@@ -1689,6 +1707,30 @@ func substrValue(str, start, length event.Value) event.Value {
 	}
 
 	return event.StringValue(s[si:end])
+}
+
+type trimMode int
+
+const (
+	trimBoth trimMode = iota
+	trimLeft
+	trimRight
+)
+
+func trimValue(str, chars event.Value, mode trimMode) event.Value {
+	if str.IsNull() || chars.IsNull() {
+		return event.NullValue()
+	}
+	s := valueToString(str)
+	cutset := valueToString(chars)
+	switch mode {
+	case trimLeft:
+		return event.StringValue(strings.TrimLeft(s, cutset))
+	case trimRight:
+		return event.StringValue(strings.TrimRight(s, cutset))
+	default:
+		return event.StringValue(strings.Trim(s, cutset))
+	}
 }
 
 func roundValue(num, decimals event.Value) event.Value {

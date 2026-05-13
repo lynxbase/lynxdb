@@ -677,6 +677,12 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 			return err
 		}
 		c.prog.EmitOp(OpReplace, regIdx)
+	case "trim":
+		return c.compileTrim(e, OpTrim)
+	case "ltrim":
+		return c.compileTrim(e, OpLTrim)
+	case "rtrim":
+		return c.compileTrim(e, OpRTrim)
 	case "split":
 		if len(e.Args) != 2 {
 			return fmt.Errorf("split expects 2 arguments, got %d", len(e.Args))
@@ -1038,6 +1044,26 @@ func (c *compiler) compileNullIf(a, b spl2.Expr) error {
 	endPos := c.prog.Len()
 	c.prog.PatchUint16(jumpFalse+1, uint16(elsePos))
 	c.prog.PatchUint16(jumpEnd+1, uint16(endPos))
+
+	return nil
+}
+
+func (c *compiler) compileTrim(e *spl2.FuncCallExpr, op Opcode) error {
+	if len(e.Args) < 1 || len(e.Args) > 2 {
+		return fmt.Errorf("%s expects 1-2 arguments, got %d", strings.ToLower(e.Name), len(e.Args))
+	}
+	if err := c.compileExpr(e.Args[0]); err != nil {
+		return err
+	}
+	if len(e.Args) == 2 {
+		if err := c.compileExpr(e.Args[1]); err != nil {
+			return err
+		}
+	} else {
+		idx := c.prog.AddConstant(event.StringValue(" \t\r\n"))
+		c.prog.EmitOp(OpConstStr, idx)
+	}
+	c.prog.EmitOp(op)
 
 	return nil
 }

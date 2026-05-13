@@ -64,6 +64,9 @@ const (
 	OpStartsWith Opcode = 0x59
 	OpEndsWith   Opcode = 0x5A
 	OpContains   Opcode = 0x5B
+	OpTrim       Opcode = 0x5D
+	OpLTrim      Opcode = 0x5E
+	OpRTrim      Opcode = 0x5F
 
 	// Comparison (pop 2, push bool).
 	OpEq     Opcode = 0x50
@@ -200,6 +203,9 @@ var definitions = map[Opcode]*Definition{
 	OpStartsWith: {"OpStartsWith", nil},
 	OpEndsWith:   {"OpEndsWith", nil},
 	OpContains:   {"OpContains", nil},
+	OpTrim:       {"OpTrim", nil},
+	OpLTrim:      {"OpLTrim", nil},
+	OpRTrim:      {"OpRTrim", nil},
 
 	OpEq:                {"OpEq", nil},
 	OpNeq:               {"OpNeq", nil},

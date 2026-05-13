@@ -307,6 +307,62 @@ func TestCompileNullIf(t *testing.T) {
 	}
 }
 
+func TestCompileTrimFunctions(t *testing.T) {
+	tests := []struct {
+		name string
+		expr *spl2.FuncCallExpr
+		want string
+	}{
+		{
+			name: "trim default whitespace",
+			expr: &spl2.FuncCallExpr{
+				Name: "trim",
+				Args: []spl2.Expr{&spl2.LiteralExpr{Value: `"  ok  "`}},
+			},
+			want: "ok",
+		},
+		{
+			name: "ltrim chars",
+			expr: &spl2.FuncCallExpr{
+				Name: "ltrim",
+				Args: []spl2.Expr{
+					&spl2.LiteralExpr{Value: `"xxok"`},
+					&spl2.LiteralExpr{Value: `"x"`},
+				},
+			},
+			want: "ok",
+		},
+		{
+			name: "rtrim chars",
+			expr: &spl2.FuncCallExpr{
+				Name: "rtrim",
+				Args: []spl2.Expr{
+					&spl2.LiteralExpr{Value: `"okxx"`},
+					&spl2.LiteralExpr{Value: `"x"`},
+				},
+			},
+			want: "ok",
+		},
+	}
+
+	vm := &VM{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			prog, err := CompileExpr(tt.expr)
+			if err != nil {
+				t.Fatalf("CompileExpr: %v", err)
+			}
+			result, err := vm.Execute(prog, nil)
+			if err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if result.AsString() != tt.want {
+				t.Fatalf("got %q, want %q", result.AsString(), tt.want)
+			}
+		})
+	}
+}
+
 func TestCompileIsNull(t *testing.T) {
 	expr := &spl2.FuncCallExpr{
 		Name: "isnull",
