@@ -508,6 +508,36 @@ func TestParse_DoubleQuotedLegacyFieldLists(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:  "rank field",
+			input: `FROM main | rank top 5 by "risk score"`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*SortCommand)
+				if len(cmd.Fields) != 1 || cmd.Fields[0].Name != "risk score" || !cmd.Fields[0].Desc {
+					t.Fatalf("rank sort fields: got %+v", cmd.Fields)
+				}
+			},
+		},
+		{
+			name:  "topby field",
+			input: `FROM main | topby 5 "sku id" using avg(duration_ms)`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*StatsCommand)
+				if got, want := cmd.GroupBy, []string{"sku id"}; !reflect.DeepEqual(got, want) {
+					t.Fatalf("topby group by: got %v, want %v", got, want)
+				}
+			},
+		},
+		{
+			name:  "bottomby field",
+			input: `FROM main | bottomby 5 "sku id" using avg(duration_ms)`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*StatsCommand)
+				if got, want := cmd.GroupBy, []string{"sku id"}; !reflect.DeepEqual(got, want) {
+					t.Fatalf("bottomby group by: got %v, want %v", got, want)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {

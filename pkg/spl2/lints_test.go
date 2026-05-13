@@ -514,6 +514,21 @@ func TestLintQuery_DoubleQuotedNames(t *testing.T) {
 			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
 		},
 		{
+			name:      "rank command",
+			query:     `from app | rank top 5 by "risk score"`,
+			wantCodes: []string{LintDoubleQuotedName},
+		},
+		{
+			name:      "topby command",
+			query:     `from app | topby 5 "sku id" using avg(duration_ms)`,
+			wantCodes: []string{LintDoubleQuotedName},
+		},
+		{
+			name:      "bottomby command",
+			query:     `from app | bottomby 5 "sku id" using avg(duration_ms)`,
+			wantCodes: []string{LintDoubleQuotedName},
+		},
+		{
 			name:      "stats group by",
 			query:     `from app | stats count() by "user id", host`,
 			wantCodes: []string{LintDoubleQuotedName},
