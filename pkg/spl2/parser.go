@@ -5388,7 +5388,7 @@ func (p *Parser) parseIdentListLF() ([]string, error) {
 
 	for {
 		tok := p.peek()
-		if !isIdentLike(tok.Type) && tok.Type != TokenGlob {
+		if !isIdentLike(tok.Type) && tok.Type != TokenGlob && tok.Type != TokenString {
 			break
 		}
 		p.advance()

@@ -329,7 +329,7 @@ func lintDoubleQuotedNames(tokens []Token) []QueryLint {
 					add(tokens[j+1].Pos)
 				}
 			}
-		case TokenTable, TokenDedup, TokenSelect:
+		case TokenTable, TokenDedup, TokenSelect, TokenKeep, TokenOmit:
 			for j := i + 1; j < len(tokens) && !isSegmentBoundary(tokens[j].Type); j++ {
 				if tokens[j].Type == TokenString {
 					add(tokens[j].Pos)
@@ -465,7 +465,10 @@ func isUnpackCommandType(t TokenType) bool {
 func isGroupByCommandType(t TokenType) bool {
 	switch t {
 	case TokenStats, TokenTimechart, TokenStreamstats, TokenEventstats,
-		TokenRare, TokenSessionize, TokenTrace:
+		TokenRare, TokenSessionize, TokenTrace, TokenGroup, TokenEvery,
+		TokenRunning, TokenEnrich, TokenRollup, TokenLatency, TokenErrors,
+		TokenRate, TokenProportion, TokenPercentiles, TokenImpact,
+		TokenBaseline, TokenChanges, TokenExemplars:
 		return true
 	default:
 		return false

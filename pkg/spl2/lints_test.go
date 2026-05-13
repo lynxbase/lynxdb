@@ -534,6 +534,21 @@ func TestLintQuery_DoubleQuotedNames(t *testing.T) {
 			wantCodes: []string{LintDoubleQuotedName, LintDoubleQuotedName},
 		},
 		{
+			name:      "keep command",
+			query:     `from app | keep "user id", status`,
+			wantCodes: []string{LintDoubleQuotedName},
+		},
+		{
+			name:      "omit command",
+			query:     `from app | omit "debug field", trace_id`,
+			wantCodes: []string{LintDoubleQuotedName},
+		},
+		{
+			name:      "lynxflow by field list",
+			query:     `from app | rate by "service name", host`,
+			wantCodes: []string{LintDoubleQuotedName},
+		},
+		{
 			name:      "stats group by",
 			query:     `from app | stats count() by "user id", host`,
 			wantCodes: []string{LintDoubleQuotedName},

@@ -548,6 +548,42 @@ func TestParse_DoubleQuotedLegacyFieldLists(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:  "keep fields",
+			input: `FROM main | keep "user id", status`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*FieldsCommand)
+				if cmd.Remove {
+					t.Fatal("keep remove: got true, want false")
+				}
+				if got, want := cmd.Fields, []string{"user id", "status"}; !reflect.DeepEqual(got, want) {
+					t.Fatalf("keep fields: got %v, want %v", got, want)
+				}
+			},
+		},
+		{
+			name:  "omit fields",
+			input: `FROM main | omit "debug field", trace_id`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*FieldsCommand)
+				if !cmd.Remove {
+					t.Fatal("omit remove: got false, want true")
+				}
+				if got, want := cmd.Fields, []string{"debug field", "trace_id"}; !reflect.DeepEqual(got, want) {
+					t.Fatalf("omit fields: got %v, want %v", got, want)
+				}
+			},
+		},
+		{
+			name:  "lynxflow by field list",
+			input: `FROM main | rate by "service name", host`,
+			check: func(t *testing.T, q *Query) {
+				cmd := q.Commands[0].(*TimechartCommand)
+				if got, want := cmd.GroupBy, []string{"service name", "host"}; !reflect.DeepEqual(got, want) {
+					t.Fatalf("rate group by: got %v, want %v", got, want)
+				}
+			},
+		},
 	}
 
 	for _, tt := range tests {
