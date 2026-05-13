@@ -115,8 +115,10 @@ const (
 	OpIsNotNull Opcode = 0xB2
 
 	// Type Checks (pop 1, push bool).
-	OpIsNum Opcode = 0xB3
-	OpIsInt Opcode = 0xB4
+	OpIsNum  Opcode = 0xB3
+	OpIsInt  Opcode = 0xB4
+	OpIsBool Opcode = 0xB5
+	OpTypeOf Opcode = 0xB6
 
 	// Time Functions.
 	OpStrftime Opcode = 0xC0
@@ -235,6 +237,8 @@ var definitions = map[Opcode]*Definition{
 	OpIsNotNull: {"OpIsNotNull", nil},
 	OpIsNum:     {"OpIsNum", nil},
 	OpIsInt:     {"OpIsInt", nil},
+	OpIsBool:    {"OpIsBool", nil},
+	OpTypeOf:    {"OpTypeOf", nil},
 
 	OpStrftime: {"OpStrftime", nil},
 

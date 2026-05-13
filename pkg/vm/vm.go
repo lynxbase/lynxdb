@@ -1089,6 +1089,14 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 				}
 			}
 
+		case OpIsBool:
+			a := vm.stack[vm.sp-1]
+			vm.stack[vm.sp-1] = event.BoolValue(a.Type() == event.FieldTypeBool)
+
+		case OpTypeOf:
+			a := vm.stack[vm.sp-1]
+			vm.stack[vm.sp-1] = event.StringValue(a.Type().String())
+
 		case OpCIDRMatch:
 			operand, opErr := readOperandSafe(ins, ip)
 			if opErr != nil {

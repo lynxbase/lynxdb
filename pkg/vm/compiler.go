@@ -840,6 +840,14 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 			return err
 		}
 		c.prog.EmitOp(OpIsInt)
+	case "isbool":
+		if len(e.Args) != 1 {
+			return fmt.Errorf("isbool expects 1 argument, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpIsBool)
 	case "isstr":
 		// In schema-on-read, all non-null values are strings.
 		if len(e.Args) != 1 {
@@ -849,6 +857,14 @@ func (c *compiler) compileFuncCall(e *spl2.FuncCallExpr) error {
 			return err
 		}
 		c.prog.EmitOp(OpIsNotNull)
+	case "typeof":
+		if len(e.Args) != 1 {
+			return fmt.Errorf("typeof expects 1 argument, got %d", len(e.Args))
+		}
+		if err := c.compileExpr(e.Args[0]); err != nil {
+			return err
+		}
+		c.prog.EmitOp(OpTypeOf)
 
 	// LIKE as eval function (already case-insensitive).
 	case "like", "ilike":

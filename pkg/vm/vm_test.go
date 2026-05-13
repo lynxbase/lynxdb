@@ -2032,6 +2032,50 @@ func TestCompileIsStr(t *testing.T) {
 	}
 }
 
+func TestCompileIsBoolAndTypeOf(t *testing.T) {
+	isBoolExpr := &spl2.FuncCallExpr{
+		Name: "isbool",
+		Args: []spl2.Expr{&spl2.FieldExpr{Name: "flag"}},
+	}
+	isBoolProg, err := CompileExpr(isBoolExpr)
+	if err != nil {
+		t.Fatalf("CompileExpr isbool: %v", err)
+	}
+
+	vm := &VM{}
+	result, err := vm.Execute(isBoolProg, map[string]event.Value{"flag": event.BoolValue(false)})
+	if err != nil {
+		t.Fatalf("Execute isbool bool: %v", err)
+	}
+	if !result.AsBool() {
+		t.Fatal("expected isbool(false) to be true")
+	}
+
+	result, err = vm.Execute(isBoolProg, map[string]event.Value{"flag": event.StringValue("false")})
+	if err != nil {
+		t.Fatalf("Execute isbool string: %v", err)
+	}
+	if result.AsBool() {
+		t.Fatal("expected isbool(string) to be false")
+	}
+
+	typeOfExpr := &spl2.FuncCallExpr{
+		Name: "typeof",
+		Args: []spl2.Expr{&spl2.FieldExpr{Name: "flag"}},
+	}
+	typeOfProg, err := CompileExpr(typeOfExpr)
+	if err != nil {
+		t.Fatalf("CompileExpr typeof: %v", err)
+	}
+	result, err = vm.Execute(typeOfProg, map[string]event.Value{"flag": event.BoolValue(true)})
+	if err != nil {
+		t.Fatalf("Execute typeof: %v", err)
+	}
+	if result.AsString() != "bool" {
+		t.Fatalf("typeof: got %q, want bool", result.AsString())
+	}
+}
+
 func TestCompileILike(t *testing.T) {
 	expr := &spl2.FuncCallExpr{
 		Name: "ilike",

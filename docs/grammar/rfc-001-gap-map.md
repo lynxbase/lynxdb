@@ -47,7 +47,7 @@ Source contract: `docs/grammar/RFC.md`.
 | Static `L039` flags PCRE2-only regex constructs such as lookaround, backreferences, atomic groups, and possessive quantifiers | `pkg/spl2/lints.go`, `pkg/spl2/lints_test.go` |
 | Unsupported Splunk commands in the RFC profile reject with `L021` and compatibility hints | `pkg/spl2/parser.go`, `pkg/spl2/compat_hints.go`, `pkg/spl2/parser_test.go`, `pkg/spl2/compat_hints_test.go` |
 | `L003` source-prefix diagnostics cover rewritten `index=`, `index <name>`, `index IN`, `index NOT IN`, and `index!=` forms without flagging SEARCH-context `index=` predicates | `pkg/spl2/lints.go`, `pkg/spl2/lints_test.go` |
-| Eval functions `like`, `toint`, `todouble`, and `tobool` compile and execute through existing VM opcodes and are present in hint/editor catalogs | `pkg/vm/compiler.go`, `pkg/vm/vm_test.go`, `pkg/spl2/error_hints.go`, `web/src/editor/lynxflow-catalog.ts` |
+| Eval functions `like`, `toint`, `todouble`, `tobool`, `isbool`, and `typeof` compile and execute through VM opcodes and are present in hint/editor catalogs | `pkg/vm/compiler.go`, `pkg/vm/vm.go`, `pkg/vm/vm_test.go`, `pkg/spl2/error_hints.go`, `web/src/editor/lynxflow-catalog.ts` |
 | LynxFlow `proportion`, `impact`, `baseline`, `changes`, and `exemplars` deterministic desugaring | `pkg/spl2/parser.go`, `pkg/spl2/parser_lynxflow_test.go` |
 | Web autocomplete and highlighting share one editor catalog | `web/src/editor/lynxflow-catalog.ts`, `web/src/editor/autocomplete.ts`, `web/src/editor/lynxflow-lang.ts` |
 | EBNF includes currently implemented LynxFlow sugar | `docs/grammar/spl2.ebnf`, `cmd/lynxdb/grammar_data/spl2.ebnf` |

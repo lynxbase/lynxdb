@@ -35,7 +35,7 @@ var knownFunctions = []string{
 	"tonumber", "toint", "todouble", "tostring", "tobool",
 	"round", "substr", "lower", "upper", "len", "ln", "abs", "ceil",
 	"floor", "sqrt", "mvjoin", "mvappend", "mvdedup", "mvcount",
-	"isnotnull", "isnull", "isnum", "isnumeric", "isint", "isstr",
+	"isnotnull", "isnull", "isnum", "isnumeric", "isint", "isstr", "isbool", "typeof",
 	"null", "strftime", "startswith", "endswith", "contains", "max", "min",
 	// Aggregation functions
 	"count", "sum", "sumsq", "avg", "mean", "dc", "distinct_count", "estdc", "estdc_error", "values", "list", "mode",
