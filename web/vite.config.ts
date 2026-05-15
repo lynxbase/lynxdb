@@ -12,6 +12,26 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
+    sourcemap: "hidden",
+    target: "es2022",
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          codemirror: [
+            "@codemirror/autocomplete",
+            "@codemirror/commands",
+            "@codemirror/language",
+            "@codemirror/lint",
+            "@codemirror/state",
+            "@codemirror/view",
+            "@lezer/highlight",
+          ],
+          uplot: ["uplot"],
+          icons: ["lucide-react"],
+          "react-vendor": ["react", "react-dom", "react-router"],
+        },
+      },
+    },
   },
   server: {
     port: 5173,

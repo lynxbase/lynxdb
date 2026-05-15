@@ -300,3 +300,6 @@ export function QueryEditor({
     </div>
   );
 }
+
+// Default export so the heavy CodeMirror bundle can be lazy-loaded.
+export default QueryEditor;
