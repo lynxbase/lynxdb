@@ -1,11 +1,12 @@
-import { useLocation, useNavigate } from "react-router";
+import { Link, useLocation } from "react-router";
 import {
   Search,
   BookmarkCheck,
+  Activity,
   Settings,
-  LogOut,
   Sun,
   Moon,
+  LogOut,
   HelpCircle,
 } from "lucide-react";
 import { useThemeStore, toggleTheme } from "../stores/ui";
@@ -15,106 +16,131 @@ import {
   setPaletteOpen,
   setHelpOverlayOpen,
 } from "../utils/keyboard";
-import styles from "./Sidebar.module.css";
+import {
+  Sidebar as SidebarPrimitive,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarSeparator,
+} from "./ui/sidebar";
 
 const NAV_ITEMS = [
   { path: "/", icon: Search, label: "Search" },
-  { path: "/queries", icon: BookmarkCheck, label: "Saved Queries" },
+  { path: "/queries", icon: BookmarkCheck, label: "Queries" },
+  { path: "/status", icon: Activity, label: "Status" },
   { path: "/settings", icon: Settings, label: "Settings" },
 ] as const;
 
-function isActive(url: string, path: string): boolean {
-  // Exact match for leaf routes
-  if (NAV_ITEMS.some((item) => item.path === path)) {
-    return url === path;
-  }
-  // Prefix match for routes with sub-paths
-  return url === path || url.startsWith(path + "/");
-}
-
 export function Sidebar() {
   const location = useLocation();
-  const navigate = useNavigate();
   const url = location.pathname;
   const theme = useThemeStore((s) => s.theme);
   const token = useAuthStore((s) => s.token);
-  // Suppress unused variable warning — we subscribe to force re-renders on overlay changes
+  // Subscribe to re-render on overlay changes
   useOverlayStore();
 
   return (
-    <nav className={styles.sidebar}>
-      <div className={styles.top}>
-        <a
-          href="/"
-          className={styles.logo}
-          onClick={(e) => {
-            e.preventDefault();
-            navigate("/");
-          }}
-        >
-          <img
-            src={`${import.meta.env.BASE_URL || "/"}lynxdb-icon.png`}
-            alt="LynxDB"
-            className={styles.logoIcon}
-          />
-          <span className={styles.logoText}>LynxDB</span>
-        </a>
-        {NAV_ITEMS.map(({ path, icon: Icon, label }) => (
-          <a
-            key={path}
-            href={path}
-            className={`${styles.navItem} ${isActive(url, path) ? styles.active : ""}`}
-            title={label}
-            onClick={(e) => {
-              e.preventDefault();
-              navigate(path);
-            }}
-          >
-            <Icon size={20} />
-            <span className={styles.navLabel}>{label}</span>
-          </a>
-        ))}
-      </div>
-      <div className={styles.bottom}>
-        <button
-          type="button"
-          className={styles.navItem}
-          onClick={toggleTheme}
-          title={
-            theme === "dark"
-              ? "Switch to light mode"
-              : "Switch to dark mode"
-          }
-        >
-          {theme === "dark" ? <Sun size={20} /> : <Moon size={20} />}
-          <span className={styles.navLabel}>
-            {theme === "dark" ? "Light mode" : "Dark mode"}
-          </span>
-        </button>
-        <button
-          type="button"
-          className={styles.navItem}
-          onClick={() => {
-            setPaletteOpen(false);
-            setHelpOverlayOpen(true);
-          }}
-          title="Keyboard shortcuts (?)"
-        >
-          <HelpCircle size={20} />
-          <span className={styles.navLabel}>Shortcuts</span>
-        </button>
-        {token && (
-          <button
-            type="button"
-            className={styles.navItem}
-            onClick={clearToken}
-            title="Sign out"
-          >
-            <LogOut size={20} />
-            <span className={styles.navLabel}>Sign out</span>
-          </button>
-        )}
-      </div>
-    </nav>
+    <SidebarPrimitive
+      collapsible="icon"
+      className="border-sidebar-border"
+    >
+      <SidebarHeader>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton size="lg" asChild tooltip="LynxDB">
+              <Link to="/">
+                <img
+                  src={`${import.meta.env.BASE_URL || "/"}lynxdb-icon.png`}
+                  alt="LynxDB"
+                  className="size-5 shrink-0 object-contain"
+                />
+                <span className="truncate font-semibold tracking-tight">
+                  LynxDB
+                </span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarHeader>
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {NAV_ITEMS.map(({ path, icon: Icon, label }) => (
+                <SidebarMenuItem key={path}>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={url === path}
+                    tooltip={label}
+                  >
+                    <Link to={path}>
+                      <Icon className="size-4" />
+                      <span>{label}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+      <SidebarFooter>
+        <SidebarSeparator />
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              onClick={toggleTheme}
+              tooltip={
+                theme === "dark"
+                  ? "Switch to light mode"
+                  : "Switch to dark mode"
+              }
+              title={
+                theme === "dark"
+                  ? "Switch to light mode"
+                  : "Switch to dark mode"
+              }
+            >
+              {theme === "dark" ? (
+                <Sun className="size-4" />
+              ) : (
+                <Moon className="size-4" />
+              )}
+              <span>
+                {theme === "dark" ? "Light mode" : "Dark mode"}
+              </span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              onClick={() => {
+                setPaletteOpen(false);
+                setHelpOverlayOpen(true);
+              }}
+              tooltip="Keyboard shortcuts (?)"
+            >
+              <HelpCircle className="size-4" />
+              <span>Shortcuts</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+          {token && (
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                onClick={clearToken}
+                tooltip="Sign out"
+              >
+                <LogOut className="size-4" />
+                <span>Sign out</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+          )}
+        </SidebarMenu>
+      </SidebarFooter>
+    </SidebarPrimitive>
   );
 }

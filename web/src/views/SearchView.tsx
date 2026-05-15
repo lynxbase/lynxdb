@@ -14,12 +14,7 @@ import {
   fetchFields,
 } from "../api/client";
 import { useSearchStore } from "../stores/search";
-import {
-  useOverlayStore,
-  setPaletteOpen,
-  setHelpOverlayOpen,
-  setPaletteQuery,
-} from "../utils/keyboard";
+import { useOverlayStore, setPaletteQuery } from "../utils/keyboard";
 import { readQueryFromHash } from "../stores/queryUrl";
 import { appendFilter } from "../utils/filterQuery";
 import type { QueryResult, EventsResult } from "../api/client";
@@ -233,16 +228,8 @@ export function SearchView(_props: Props) {
       }
       editorHandleRef.current?.getView()?.contentDOM.blur();
     },
-    onOpenPalette: () => {
-      setHelpOverlayOpen(false);
-      const current = useOverlayStore.getState().paletteOpen;
-      setPaletteOpen(!current);
-    },
-    onOpenHelp: () => {
-      setPaletteOpen(false);
-      const current = useOverlayStore.getState().helpOverlayOpen;
-      setHelpOverlayOpen(!current);
-    },
+    // Palette/help are app-shell shortcuts registered in App so they work
+    // regardless of which route (or lazy chunk) is mounted.
   });
 
   // Watch for queries loaded from the command palette
