@@ -346,6 +346,111 @@ export async function fetchViewDetail(name: string): Promise<ViewDetail> {
   return json.data;
 }
 
+// Saved queries
+
+export interface SavedQuery {
+  id: string;
+  name: string;
+  q: string;
+  from?: string;
+  source?: string;
+  metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface SavedQueryInput {
+  name: string;
+  q: string;
+  from?: string;
+  source?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export async function listSavedQueries(): Promise<SavedQuery[]> {
+  const resp = await apiFetch(`${BASE}/api/v1/queries`);
+  if (!resp.ok) throw new Error("Failed to fetch saved queries");
+  const json = await resp.json();
+  // The CRUD handler returns { data: [...] }
+  const data = json.data;
+  return Array.isArray(data) ? data : [];
+}
+
+export async function createSavedQuery(
+  input: SavedQueryInput,
+): Promise<SavedQuery> {
+  const resp = await apiFetch(`${BASE}/api/v1/queries`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+  if (!resp.ok) {
+    const err: APIErrorResponse = await resp.json().catch(() => ({}));
+    throw new Error(apiErrorMessage(err, resp.statusText));
+  }
+  const json = await resp.json();
+  return json.data;
+}
+
+export async function deleteSavedQuery(id: string): Promise<void> {
+  const resp = await apiFetch(
+    `${BASE}/api/v1/queries/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
+  if (!resp.ok) {
+    const err: APIErrorResponse = await resp.json().catch(() => ({}));
+    throw new Error(apiErrorMessage(err, resp.statusText));
+  }
+}
+
+// Server config
+
+export interface ServerConfig {
+  listen?: string;
+  data_dir?: string;
+  retention?: string;
+  log_level?: string;
+  query?: {
+    max_concurrent?: number;
+    default_result_limit?: number;
+    max_result_limit?: number;
+    max_query_runtime?: string;
+    sync_timeout?: string;
+    [key: string]: unknown;
+  };
+  ingest?: {
+    max_body_size?: string;
+    [key: string]: unknown;
+  };
+  storage?: {
+    compression?: string;
+    flush_threshold?: string;
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
+export async function fetchConfig(): Promise<ServerConfig> {
+  const resp = await apiFetch(`${BASE}/api/v1/config`);
+  if (!resp.ok) throw new Error("Failed to fetch config");
+  const json = await resp.json();
+  return json.data;
+}
+
+export async function patchConfig(
+  patch: Record<string, unknown>,
+): Promise<{ config: ServerConfig; restart_required?: string[] }> {
+  const resp = await apiFetch(`${BASE}/api/v1/config`, {
+    method: "PATCH",
+    body: JSON.stringify(patch),
+  });
+  if (!resp.ok) {
+    const err: APIErrorResponse = await resp.json().catch(() => ({}));
+    throw new Error(apiErrorMessage(err, resp.statusText));
+  }
+  const json = await resp.json();
+  return json.data;
+}
+
 // Re-export streaming types for convenience
 
 export type { HybridResult, StreamCallbacks, ProgressData } from "./streaming";
