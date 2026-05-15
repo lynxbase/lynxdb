@@ -49,3 +49,4 @@ internal/webui/dist/*
 /web/playwright-report/
 /web/test-results/
 /.e2e-lynxdb
+/web/screens/
