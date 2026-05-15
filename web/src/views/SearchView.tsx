@@ -182,12 +182,6 @@ function cleanupActiveQuery() {
   activeAbortController = null;
 }
 
-/** Regex heuristic for detecting aggregation queries (Pitfall 7). */
-const AGG_PATTERN = /\|\s*(stats|timechart|top|rare|chart|eventstats|streamstats)\b/i;
-function detectResultType(q: string): "events" | "aggregate" {
-  return AGG_PATTERN.test(q) ? "aggregate" : "events";
-}
-
 function resultCount(r: QueryResult | null): number {
   if (!r) return 0;
   if (r.type === "events") return r.events.length;
