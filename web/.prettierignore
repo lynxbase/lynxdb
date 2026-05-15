@@ -1,0 +1,8 @@
+dist
+node_modules
+.vite
+coverage
+playwright-report
+test-results
+bun.lock
+*.module.css
