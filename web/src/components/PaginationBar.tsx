@@ -1,5 +1,20 @@
 import { useMemo } from "react";
-import styles from "./PaginationBar.module.css";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationItem,
+  PaginationLink,
+  PaginationPrevious,
+  PaginationNext,
+  PaginationEllipsis,
+} from "./ui/pagination";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "./ui/select";
 
 interface PaginationBarProps {
   page: number;
@@ -65,67 +80,78 @@ export function PaginationBar({
   );
 
   return (
-    <div className={styles.bar}>
-      <div className={styles.left}>
-        <span className={styles.totalCount}>{fmtNum(total)} results</span>
+    <div className="flex h-9 shrink-0 items-center justify-between border-t border-border bg-secondary px-3 text-xs font-sans">
+      <div className="flex items-center min-w-[6.25rem]">
+        <span className="whitespace-nowrap text-muted-foreground">{fmtNum(total)} results</span>
       </div>
 
-      <div className={styles.center}>
-        <button
-          type="button"
-          className={styles.navBtn}
-          disabled={page <= 1}
-          onClick={() => onPageChange(page - 1)}
-          aria-label="Previous page"
-        >
-          &lsaquo; Prev
-        </button>
+      <Pagination className="mx-0 w-auto">
+        <PaginationContent className="gap-0.5">
+          <PaginationItem>
+            <PaginationPrevious
+              href="#"
+              className={`h-6 text-xs px-2 ${page <= 1 ? "pointer-events-none opacity-40" : ""}`}
+              onClick={(e) => {
+                e.preventDefault();
+                if (page > 1) onPageChange(page - 1);
+              }}
+              aria-label="Previous page"
+            />
+          </PaginationItem>
 
-        {pageNumbers.map((item, idx) =>
-          item === "..." ? (
-            <span key={`ellipsis-${idx}`} className={styles.ellipsis}>
-              ...
-            </span>
-          ) : (
-            <button
-              key={item}
-              type="button"
-              className={`${styles.pageBtn} ${item === page ? styles.pageBtnActive : ""}`}
-              onClick={() => onPageChange(item)}
-              aria-label={`Page ${item}`}
-              aria-current={item === page ? "page" : undefined}
-            >
-              {item}
-            </button>
-          ),
-        )}
+          {pageNumbers.map((item, idx) =>
+            item === "..." ? (
+              <PaginationItem key={`ellipsis-${idx}`}>
+                <PaginationEllipsis className="size-6" />
+              </PaginationItem>
+            ) : (
+              <PaginationItem key={item}>
+                <PaginationLink
+                  href="#"
+                  isActive={item === page}
+                  className="size-6 text-xs"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    onPageChange(item);
+                  }}
+                  aria-label={`Page ${item}`}
+                >
+                  {item}
+                </PaginationLink>
+              </PaginationItem>
+            ),
+          )}
 
-        <button
-          type="button"
-          className={styles.navBtn}
-          disabled={page >= totalPages}
-          onClick={() => onPageChange(page + 1)}
-          aria-label="Next page"
-        >
-          Next &rsaquo;
-        </button>
-      </div>
+          <PaginationItem>
+            <PaginationNext
+              href="#"
+              className={`h-6 text-xs px-2 ${page >= totalPages ? "pointer-events-none opacity-40" : ""}`}
+              onClick={(e) => {
+                e.preventDefault();
+                if (page < totalPages) onPageChange(page + 1);
+              }}
+              aria-label="Next page"
+            />
+          </PaginationItem>
+        </PaginationContent>
+      </Pagination>
 
-      <div className={styles.right}>
-        <select
-          className={styles.sizeSelect}
-          value={pageSize}
-          onChange={(e) =>
-            onPageSizeChange(Number((e.target as HTMLSelectElement).value))
-          }
-          aria-label="Page size"
+      <div className="flex items-center justify-end min-w-[6.25rem]">
+        <Select
+          value={String(pageSize)}
+          onValueChange={(val) => onPageSizeChange(Number(val))}
         >
-          {PAGE_SIZES.map((size) => (
-            <option key={size} value={size}>
-              {size} / page
-            </option>
-          ))}
-        </select>
+          <SelectTrigger size="sm" className="h-6 text-xs px-2 min-w-[5.5rem]" aria-label="Page size">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PAGE_SIZES.map((size) => (
+              <SelectItem key={size} value={String(size)}>
+                {size} / page
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
     </div>
   );

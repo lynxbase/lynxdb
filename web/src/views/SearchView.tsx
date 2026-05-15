@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef } from "react";
 import type { QueryEditorHandle } from "../editor/QueryEditor";
 import { FlowSidebar } from "../components/FlowSidebar";
 import { TableToolbar } from "../components/TableToolbar";
-import { CopyTooltip } from "../components/CopyTooltip";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useQueryExecution } from "../hooks/useQueryExecution";
 import { useLiveTail } from "../hooks/useLiveTail";
@@ -25,7 +24,6 @@ import {
   ResultsContainer,
   Pagination,
 } from "./search";
-import styles from "./SearchView.module.css";
 
 function resultCount(r: QueryResult | null): number {
   if (!r) return 0;
@@ -69,7 +67,6 @@ export function SearchView(_props: Props) {
   const tailActive = useSearchStore((s) => s.tailActive);
   const tailEvents = useSearchStore((s) => s.tailEvents);
   const viewMode = useSearchStore((s) => s.viewMode);
-  const copyTooltip = useSearchStore((s) => s.copyTooltip);
 
   // Build activeResult for FlowSidebar selectedFields and TableToolbar
   const activeResult: QueryResult | null = tailActive
@@ -293,7 +290,7 @@ export function SearchView(_props: Props) {
   }, []);
 
   return (
-    <div className={styles.view}>
+    <div className="flex flex-col h-dvh overflow-hidden">
       <QueryBar
         onQueryChange={handleQueryChange}
         onExecute={handleExecute}
@@ -302,7 +299,7 @@ export function SearchView(_props: Props) {
         editorRef={handleEditorRef}
       />
 
-      <div className={styles.body}>
+      <div className="flex flex-row flex-1 overflow-hidden relative">
         <FlowSidebar
           visible={sidebarVisible}
           indexes={sidebarIndexes}
@@ -317,7 +314,7 @@ export function SearchView(_props: Props) {
           onInsertCommand={handleInsertCommand}
         />
 
-        <div className={styles.mainContent}>
+        <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
           <Histogram
             onBrush={handleTimelineBrush}
             onReset={handleHistogramReset}
@@ -348,13 +345,6 @@ export function SearchView(_props: Props) {
           <Pagination onRunQuery={runQueryAndRefresh} />
         </div>
       </div>
-
-      {/* Copy tooltip */}
-      <CopyTooltip
-        visible={copyTooltip.visible}
-        x={copyTooltip.x}
-        y={copyTooltip.y}
-      />
     </div>
   );
 }

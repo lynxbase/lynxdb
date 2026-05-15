@@ -2,9 +2,9 @@ import { useCallback, lazy, Suspense } from "react";
 import type { QueryEditorHandle } from "../../editor/QueryEditor";
 import { TimeRangePicker } from "../../components/TimeRangePicker";
 import { LiveTailButton } from "../../components/LiveTailButton";
+import { Button } from "../../components/ui/button";
 import { useSearchStore } from "../../stores/search";
 import { formatShortcut, SHORTCUTS } from "../../utils/keyboard";
-import styles from "../SearchView.module.css";
 
 // CodeMirror is the largest dependency; load it off the initial bundle.
 const QueryEditor = lazy(() => import("../../editor/QueryEditor"));
@@ -41,9 +41,9 @@ export function QueryBar({
   }, []);
 
   return (
-    <div className={styles.queryBar}>
+    <div className="flex flex-row items-center gap-2 px-3 py-2 bg-background border-b border-border shrink-0 max-md:flex-wrap">
       <Suspense
-        fallback={<div className={styles.editorContainer} aria-busy="true" />}
+        fallback={<div className="flex-1 h-8" aria-busy="true" />}
       >
         <QueryEditor
           value={query}
@@ -52,9 +52,11 @@ export function QueryBar({
           editorRef={editorRef}
         />
       </Suspense>
-      <button
+      <Button
         type="button"
-        className={`${styles.runBtn}${queryActive ? ` ${styles.cancelBtn}` : ""}`}
+        variant={queryActive ? "destructive" : "default"}
+        size="icon-sm"
+        className="shrink-0"
         onClick={onExecute}
         disabled={tailActive}
         aria-label={queryActive ? "Cancel query" : "Run query"}
@@ -65,7 +67,7 @@ export function QueryBar({
         }
       >
         {queryActive ? "■" : "▶"}
-      </button>
+      </Button>
       <LiveTailButton active={tailActive} onToggle={onTailToggle} />
       <TimeRangePicker
         from={from}

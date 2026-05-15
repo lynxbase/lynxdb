@@ -6,6 +6,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { HelpOverlay } from "./components/HelpOverlay";
 import { uiBase } from "./utils/base";
 import { SidebarProvider, SidebarInset } from "./components/ui/sidebar";
+import { Toaster } from "./components/ui/sonner";
 import { useKeyboardShortcuts } from "./hooks/useKeyboardShortcuts";
 import {
   useOverlayStore,
@@ -59,6 +60,7 @@ export function App() {
           </SidebarInset>
           <CommandPalette />
           <HelpOverlay />
+          <Toaster position="bottom-right" richColors closeButton />
         </SidebarProvider>
       </BrowserRouter>
     </AuthGate>

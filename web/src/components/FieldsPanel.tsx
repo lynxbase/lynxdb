@@ -8,28 +8,34 @@ import React, {
 import type { FieldInfo } from "../api/client";
 import { FieldValuePopover } from "./FieldValuePopover";
 import { typeAbbrev } from "../utils/fieldType";
-import styles from "./FieldsPanel.module.css";
+import { Input } from "./ui/input";
+import { Badge } from "./ui/badge";
+import { Skeleton } from "./ui/skeleton";
 
 interface FieldsPanelProps {
   selectedFields: string[];
   catalogFields: FieldInfo[];
   onFilter?: (field: string, value: string, exclude: boolean) => void;
+  /** When true, show skeleton loading state */
+  isLoading?: boolean;
 }
 
-function typeBadgeClass(abbrev: string): string {
-  switch (abbrev) {
+type TypeAbbrev = "str" | "int" | "flt" | "ts" | "bool";
+
+function typeBadgeVariant(abbrev: string): string {
+  switch (abbrev as TypeAbbrev) {
     case "str":
-      return styles.typeBadgeStr ?? "";
+      return "bg-[#5794f2]/10 text-[#5794f2]";
     case "int":
-      return styles.typeBadgeInt ?? "";
+      return "bg-[#73bf69]/10 text-[#73bf69]";
     case "flt":
-      return styles.typeBadgeFlt ?? "";
+      return "bg-[#ff9830]/10 text-[#ff9830]";
     case "ts":
-      return styles.typeBadgeTs ?? "";
+      return "bg-[#b877d9]/10 text-[#b877d9]";
     case "bool":
-      return styles.typeBadgeBool ?? "";
+      return "bg-[#f2495c]/10 text-[#f2495c]";
     default:
-      return styles.typeBadgeStr ?? "";
+      return "bg-[#5794f2]/10 text-[#5794f2]";
   }
 }
 
@@ -37,6 +43,7 @@ export function FieldsPanel({
   selectedFields,
   catalogFields,
   onFilter,
+  isLoading,
 }: FieldsPanelProps) {
   const [search, setSearch] = useState("");
   const [popoverField, setPopoverField] = useState<string | null>(null);
@@ -126,32 +133,58 @@ export function FieldsPanel({
     const abbrev = typeAbbrev(catalog?.type);
 
     return (
-      <div className={styles.fieldRow} key={fieldName}>
+      <div className="flex items-center gap-1.5 py-0.5 px-0 rounded-sm hover:bg-accent cursor-pointer" key={fieldName}>
         <button
           type="button"
-          className={styles.fieldName}
+          className="flex-1 min-w-0 truncate bg-transparent border-none cursor-pointer text-left p-0 font-mono text-xs text-foreground hover:text-primary"
           onClick={(e: React.MouseEvent) => handleFieldClick(fieldName, e)}
           title={fieldName}
         >
           {fieldName}
         </button>
         {abbrev && (
-          <span className={`${styles.typeBadge} ${typeBadgeClass(abbrev)}`}>
+          <Badge
+            variant="ghost"
+            className={`text-[0.625rem] px-1 py-0 h-auto rounded-sm font-mono ${typeBadgeVariant(abbrev)}`}
+          >
             {abbrev}
-          </span>
+          </Badge>
         )}
         {catalog && catalog.coverage > 0 && (
-          <span className={styles.coverage}>{catalog.coverage}%</span>
+          <span className="text-[0.625rem] text-muted-foreground whitespace-nowrap">{catalog.coverage}%</span>
         )}
       </div>
     );
   }
 
+  // Loading skeleton state
+  if (isLoading) {
+    return (
+      <div className="px-2.5 py-1 text-[0.8125rem]">
+        <Skeleton className="h-6 w-full mb-2" />
+        <div className="flex flex-col gap-1.5">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-4 w-full" />
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // Empty placeholder
+  if (catalogFields.length === 0 && selectedFields.length === 0) {
+    return (
+      <div className="px-2.5 py-4 text-center text-xs text-muted-foreground">
+        Run a query to populate fields
+      </div>
+    );
+  }
+
   return (
-    <div className={styles.fieldsPanel}>
-      <input
+    <div className="px-2.5 py-1 text-[0.8125rem]">
+      <Input
         type="text"
-        className={styles.searchInput}
+        className="h-6 text-xs mb-1"
         placeholder="Filter fields..."
         value={search}
         onInput={handleSearchChange}
@@ -159,27 +192,27 @@ export function FieldsPanel({
 
       {/* Selected Fields */}
       <div>
-        <div className={styles.sectionHeader}>
+        <div className="flex items-center gap-1 py-1 font-medium text-xs text-muted-foreground select-none">
           Selected Fields ({filteredSelected.length})
         </div>
         {filteredSelected.length > 0 ? (
           filteredSelected.map((name) => renderFieldRow(name))
         ) : (
-          <div className={styles.emptyFields}>No selected fields</div>
+          <div className="text-xs text-muted-foreground py-2 text-center">No selected fields</div>
         )}
       </div>
 
-      <div className={styles.divider} />
+      <div className="h-px bg-border my-1.5" />
 
       {/* Available Fields */}
       <div>
-        <div className={styles.sectionHeader}>
+        <div className="flex items-center gap-1 py-1 font-medium text-xs text-muted-foreground select-none">
           Available Fields ({filteredAvailable.length})
         </div>
         {filteredAvailable.length > 0 ? (
           filteredAvailable.map((f) => renderFieldRow(f.name))
         ) : (
-          <div className={styles.emptyFields}>No available fields</div>
+          <div className="text-xs text-muted-foreground py-2 text-center">No available fields</div>
         )}
       </div>
 

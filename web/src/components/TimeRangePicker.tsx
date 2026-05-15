@@ -1,11 +1,15 @@
-import { useRef, useEffect, useCallback, useState } from "react";
+import { useEffect, useCallback, useState } from "react";
+import { Clock } from "lucide-react";
 import {
   PRESETS,
   getTimeRangeLabel,
   toNowExpr,
   parseNowExpression,
 } from "../utils/timeFormat";
-import styles from "./TimeRangePicker.module.css";
+import { Button } from "./ui/button";
+import { Input } from "./ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
 
 interface TimeRangePickerProps {
   from: string;
@@ -22,7 +26,6 @@ export function TimeRangePicker({
   onToChange,
   onApply,
 }: TimeRangePickerProps) {
-  const wrapperRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [fromInput, setFromInput] = useState("");
   const [toInput, setToInput] = useState("");
@@ -92,32 +95,6 @@ export function TimeRangePicker({
     [onFromChange, onToChange, onApply],
   );
 
-  // Close on outside click
-  useEffect(() => {
-    function onPointerDown(e: PointerEvent) {
-      if (
-        wrapperRef.current &&
-        !wrapperRef.current.contains(e.target as Node)
-      ) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("pointerdown", onPointerDown, true);
-    return () =>
-      document.removeEventListener("pointerdown", onPointerDown, true);
-  }, []);
-
-  // Close on Escape
-  useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && open) {
-        setOpen(false);
-      }
-    }
-    document.addEventListener("keydown", onKeyDown);
-    return () => document.removeEventListener("keydown", onKeyDown);
-  }, [open]);
-
   // Filter presets by search
   const filteredPresets = quickSearch
     ? PRESETS.filter((p) =>
@@ -132,116 +109,122 @@ export function TimeRangePicker({
       : null;
 
   return (
-    <div className={styles.wrapper} ref={wrapperRef}>
-      <button
-        type="button"
-        className={styles.trigger}
-        onClick={() => {
-          setOpen(!open);
-        }}
-        aria-haspopup="dialog"
-        aria-expanded={open}
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5 shrink-0 whitespace-nowrap text-muted-foreground"
+          aria-haspopup="dialog"
+        >
+          <Clock className="size-3.5" />
+          {getTimeRangeLabel(from, to)}
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="w-[480px] p-0"
+        aria-label="Time range picker"
       >
-        <svg
-          className={styles.triggerIcon}
-          viewBox="0 0 14 14"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <circle cx="7" cy="7" r="5.5" />
-          <path d="M7 4.5V7l2 1.5" />
-        </svg>
-        {getTimeRangeLabel(from, to)}
-      </button>
+        <Tabs defaultValue="relative" className="gap-0">
+          <TabsList className="w-full rounded-none border-b border-border">
+            <TabsTrigger value="relative" className="text-xs">
+              Relative
+            </TabsTrigger>
+            <TabsTrigger value="absolute" className="text-xs">
+              Absolute
+            </TabsTrigger>
+          </TabsList>
 
-      {open && (
-        <div
-          className={styles.dropdown}
-          role="dialog"
-          aria-label="Time range picker"
-        >
-          {/* Left panel: absolute time range */}
-          <div className={styles.leftPanel}>
-            <div className={styles.panelTitle}>Absolute time range</div>
-
-            <div className={styles.inputGroup}>
-              <label className={styles.inputLabel}>From</label>
-              <input
-                type="text"
-                className={styles.textInput}
-                value={fromInput}
-                placeholder="now-1h"
-                onInput={(e) => {
-                  setFromInput((e.target as HTMLInputElement).value);
-                  setValidationError(null);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleApply();
+          {/* Relative presets */}
+          <TabsContent value="relative" className="mt-0">
+            <div className="flex flex-col py-2">
+              <div className="px-3 pb-2">
+                <Input
+                  type="text"
+                  className="h-7 text-xs"
+                  placeholder="Search quick ranges"
+                  value={quickSearch}
+                  onInput={(e) =>
+                    setQuickSearch((e.target as HTMLInputElement).value)
                   }
-                }}
-              />
+                />
+              </div>
+              <div className="max-h-[340px] overflow-y-auto">
+                {filteredPresets.map((preset) => (
+                  <button
+                    key={preset.value}
+                    type="button"
+                    className={`flex w-full items-center px-3 py-1.5 text-left text-[0.8125rem] transition-colors cursor-pointer border-l-[3px] ${
+                      activePreset === preset.value
+                        ? "border-l-primary text-foreground"
+                        : "border-l-transparent text-muted-foreground hover:bg-accent hover:text-foreground"
+                    }`}
+                    onClick={() => handlePreset(preset.value)}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
             </div>
+          </TabsContent>
 
-            <div className={styles.inputGroup}>
-              <label className={styles.inputLabel}>To</label>
-              <input
-                type="text"
-                className={styles.textInput}
-                value={toInput}
-                placeholder="now"
-                onInput={(e) => {
-                  setToInput((e.target as HTMLInputElement).value);
-                  setValidationError(null);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.preventDefault();
-                    handleApply();
-                  }
-                }}
-              />
+          {/* Absolute time range */}
+          <TabsContent value="absolute" className="mt-0">
+            <div className="flex flex-col gap-3 p-4">
+              <div className="flex flex-col gap-1">
+                <label htmlFor="trp-from" className="text-[0.6875rem] font-medium text-muted-foreground">From</label>
+                <Input
+                  id="trp-from"
+                  type="text"
+                  className="h-8 text-xs font-mono"
+                  value={fromInput}
+                  placeholder="now-1h"
+                  onInput={(e) => {
+                    setFromInput((e.target as HTMLInputElement).value);
+                    setValidationError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleApply();
+                    }
+                  }}
+                />
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label htmlFor="trp-to" className="text-[0.6875rem] font-medium text-muted-foreground">To</label>
+                <Input
+                  id="trp-to"
+                  type="text"
+                  className="h-8 text-xs font-mono"
+                  value={toInput}
+                  placeholder="now"
+                  onInput={(e) => {
+                    setToInput((e.target as HTMLInputElement).value);
+                    setValidationError(null);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      handleApply();
+                    }
+                  }}
+                />
+              </div>
+
+              {validationError && (
+                <p className="text-xs text-destructive -mt-1">{validationError}</p>
+              )}
+
+              <Button type="button" size="sm" onClick={handleApply} className="w-full">
+                Apply time range
+              </Button>
             </div>
-
-            {validationError && (
-              <div className={styles.validationError}>{validationError}</div>
-            )}
-
-            <button type="button" className={styles.applyBtn} onClick={handleApply}>
-              Apply time range
-            </button>
-          </div>
-
-          {/* Right panel: quick ranges */}
-          <div className={styles.rightPanel}>
-            <input
-              type="text"
-              className={styles.searchInput}
-              placeholder="Search quick ranges"
-              value={quickSearch}
-              onInput={(e) =>
-                setQuickSearch((e.target as HTMLInputElement).value)
-              }
-            />
-            <div className={styles.presetList}>
-              {filteredPresets.map((preset) => (
-                <button
-                  key={preset.value}
-                  type="button"
-                  className={`${styles.presetItem} ${activePreset === preset.value ? styles.presetItemActive : ""}`}
-                  onClick={() => handlePreset(preset.value)}
-                >
-                  {preset.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
+          </TabsContent>
+        </Tabs>
+      </PopoverContent>
+    </Popover>
   );
 }

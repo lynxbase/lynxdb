@@ -8,6 +8,7 @@
  */
 
 import { useCallback, useEffect, useRef } from "react";
+import { toast } from "sonner";
 import type { QueryEditorHandle } from "../editor/QueryEditor";
 import {
   fetchHistogram,
@@ -67,7 +68,7 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
   const queryGenerationRef = useRef(0);
   const explainDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const postQueryEffectsTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const copyTooltipTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // copyTooltip replaced by sonner toast – no timer ref needed
   /** Tracks the async job ID for server-side cancel (BUG-05) */
   const activeJobIdRef = useRef<string | null>(null);
 
@@ -517,13 +518,9 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
   // --- Cell copy handler ---
 
   const handleCellCopy = useCallback(
-    (value: string, x: number, y: number) => {
+    (value: string, _x: number, _y: number) => {
       navigator.clipboard.writeText(value).then(() => {
-        clearTimeout(copyTooltipTimerRef.current);
-        ss.setState({ copyTooltip: { visible: true, x, y } });
-        copyTooltipTimerRef.current = setTimeout(() => {
-          ss.setState({ copyTooltip: { visible: false, x: 0, y: 0 } });
-        }, 1500);
+        toast.success("Copied to clipboard");
       });
     },
     [],
@@ -551,8 +548,7 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
       explainDebounceTimerRef.current = undefined;
       clearTimeout(postQueryEffectsTimerRef.current);
       postQueryEffectsTimerRef.current = undefined;
-      clearTimeout(copyTooltipTimerRef.current);
-      copyTooltipTimerRef.current = undefined;
+      // copyTooltip timer was removed (replaced by sonner toast)
       // Null the controller ref
       activeAbortControllerRef.current = null;
       activeJobIdRef.current = null;
