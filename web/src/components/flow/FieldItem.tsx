@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef } from "react";
 import { FieldCommandMenu } from "./FieldCommandMenu";
 import { typeAbbrev } from "../../utils/fieldType";
-import styles from "./flow.module.css";
+import { cn } from "@/lib/utils";
 
 export interface FieldValue {
   value: string;
@@ -42,21 +42,30 @@ export function FieldItem({
   const abbrev = typeAbbrev(type);
 
   return (
-    <div className={`${styles.fieldItem} ${isAdded ? styles.fieldItemAdded : ""}`}>
-      <div className={styles.fieldItemRow}>
+    <div
+      className={cn(
+        "flex flex-col relative",
+        isAdded && "border-l-2 border-chart-4",
+      )}
+    >
+      <div className="group flex flex-row items-center gap-1 py-0.5 px-2 transition-colors duration-75 motion-reduce:transition-none hover:bg-muted/50">
         <button
           type="button"
-          className={styles.fieldItemName}
+          className="flex-1 text-[0.8125rem] text-foreground overflow-hidden text-ellipsis whitespace-nowrap font-mono border-none bg-transparent cursor-pointer p-0 text-left hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
           onClick={handleNameClick}
           title={`Filter: ${name}!=""`}
         >
           {name}
         </button>
-        {abbrev && <span className={styles.fieldTypeLabel}>{abbrev}</span>}
+        {abbrev && (
+          <span className="shrink-0 text-[0.625rem] text-muted-foreground font-mono">
+            {abbrev}
+          </span>
+        )}
         <button
           ref={moreBtnRef}
           type="button"
-          className={styles.fieldMoreBtn}
+          className="shrink-0 flex items-center justify-center size-5 border-none rounded-sm bg-transparent text-muted-foreground text-sm cursor-pointer opacity-0 group-hover:opacity-100 transition-opacity duration-100 motion-reduce:transition-none hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-ring"
           onClick={handleMoreClick}
           aria-label={`Commands for ${name}`}
           title="Insert command"

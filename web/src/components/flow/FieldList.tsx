@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import { FieldItem } from "./FieldItem";
-import styles from "./flow.module.css";
+import { cn } from "@/lib/utils";
 
 interface FieldListProps {
   fields: string[];
@@ -32,10 +32,12 @@ export function FieldList({
   }
 
   return (
-    <div className={styles.fieldList}>
+    <div className="flex flex-col">
       {newFields.length > 0 && (
         <>
-          <div className={styles.fieldsSectionHeader}>New Fields</div>
+          <div className="flex flex-row items-center justify-between gap-1 py-1 px-2.5 border-none bg-transparent cursor-default w-full text-left font-sans text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground">
+            New Fields
+          </div>
           {newFields.map((name) => (
             <FieldItem
               key={name}
@@ -52,12 +54,15 @@ export function FieldList({
         <>
           <button
             type="button"
-            className={styles.fieldsSectionHeader}
+            className="flex flex-row items-center justify-between gap-1 py-1 px-2.5 border-none bg-transparent cursor-pointer w-full text-left font-sans text-[0.625rem] font-semibold uppercase tracking-wider text-muted-foreground hover:text-muted-foreground/80 focus-visible:outline-2 focus-visible:outline-ring"
             onClick={handleToggleAll}
           >
             <span>All Fields ({defaultFields.length})</span>
             <span
-              className={`${styles.sectionChevron} ${allExpanded ? styles.sectionChevronExpanded : ""}`}
+              className={cn(
+                "shrink-0 size-3 flex items-center justify-center text-[0.5rem] text-muted-foreground transition-transform duration-150 motion-reduce:transition-none",
+                allExpanded && "rotate-90",
+              )}
               aria-hidden="true"
             >
               &#9656;

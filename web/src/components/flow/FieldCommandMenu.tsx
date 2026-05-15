@@ -1,5 +1,4 @@
 import { useEffect, useRef, useCallback } from "react";
-import styles from "./flow.module.css";
 
 interface FieldCommandMenuProps {
   field: string;
@@ -96,13 +95,19 @@ export function FieldCommandMenu({
   );
 
   return (
-    <div ref={menuRef} className={styles.commandMenu} style={style}>
+    <div
+      ref={menuRef}
+      className="flex flex-col min-w-[180px] max-w-[260px] bg-popover border border-border rounded-sm shadow-lg py-1 z-[100]"
+      style={style}
+      role="menu"
+    >
       {commands.map((cmd) => (
         <button
           key={cmd.template}
           type="button"
-          className={styles.commandMenuItem}
+          className="flex items-center py-1.5 px-3 border-none bg-transparent cursor-pointer w-full text-left font-mono text-xs text-popover-foreground transition-colors duration-75 motion-reduce:transition-none hover:bg-muted hover:text-primary focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]"
           onClick={() => handleItemClick(cmd.template)}
+          role="menuitem"
         >
           {cmd.label}
         </button>
