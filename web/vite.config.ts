@@ -14,6 +14,7 @@ export default defineConfig({
     emptyOutDir: true,
     sourcemap: "hidden",
     target: "es2022",
+    manifest: true,
     rollupOptions: {
       output: {
         manualChunks: {

@@ -123,6 +123,10 @@ jobs:
         working-directory: web
         run: bun run build
 
+      - name: Bundle budget
+        working-directory: web
+        run: bun run bundle:check
+
   web-smoke:
     name: Web UI Smoke
     runs-on: ubuntu-latest

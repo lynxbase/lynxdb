@@ -23,10 +23,16 @@ import {
 import { pushHistory } from "../stores/queryHistory";
 import { useSearchStore } from "../stores/search";
 import { writeQueryToHash } from "../stores/queryUrl";
-import {
-  dispatchDiagnostics,
-  clearEditorDiagnostics,
-} from "../editor/diagnostics";
+// Diagnostics module is loaded lazily to avoid pulling @codemirror/lint
+// into the entry chunk's static import graph (codemirror is a dynamic chunk).
+type DiagnosticsModule = typeof import("../editor/diagnostics");
+let _diagnostics: DiagnosticsModule | null = null;
+async function getDiagnostics(): Promise<DiagnosticsModule> {
+  if (!_diagnostics) {
+    _diagnostics = await import("../editor/diagnostics");
+  }
+  return _diagnostics;
+}
 import type {
   QueryResult,
   EventsResult,
@@ -113,7 +119,7 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
       writeQueryToHash(q, fromVal, toVal, pg, sz);
 
       const view = getEditorView();
-      if (view) clearEditorDiagnostics(view);
+      if (view) getDiagnostics().then((d) => d.clearEditorDiagnostics(view));
 
       fetchHistogramGrouped(fromVal, toVal, 60, "level")
         .then((histResult) => {
@@ -413,9 +419,10 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
           const view = getEditorView();
           if (view) {
             fetchExplain(q, fromVal, toVal)
-              .then((explain) => {
+              .then(async (explain) => {
                 if (!explain.is_valid) {
-                  dispatchDiagnostics(view, q, explain);
+                  const d = await getDiagnostics();
+                  d.dispatchDiagnostics(view, q, explain);
                 }
               })
               .catch(() => {
@@ -465,11 +472,12 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
           if (!view) return;
           const { from: f, to: t } = ss.getState();
           fetchExplain(value, f, t)
-            .then((explain) => {
+            .then(async (explain) => {
+              const d = await getDiagnostics();
               if (!explain.is_valid) {
-                dispatchDiagnostics(view, value, explain);
+                d.dispatchDiagnostics(view, value, explain);
               } else {
-                clearEditorDiagnostics(view);
+                d.clearEditorDiagnostics(view);
               }
             })
             .catch(() => {
@@ -479,7 +487,7 @@ export function useQueryExecution({ editorHandleRef }: UseQueryExecutionOptions)
       } else {
         // Clear diagnostics when query is empty
         const view = getEditorView();
-        if (view) clearEditorDiagnostics(view);
+        if (view) getDiagnostics().then((d) => d.clearEditorDiagnostics(view));
       }
     },
     [getEditorView],
