@@ -136,10 +136,14 @@ var (
 
 // TimestampNormalizer extracts and normalizes timestamps from events.
 type TimestampNormalizer struct {
-	Formats    []string // time formats to try
-	lastFmtIdx int      // hint: index of last successful format
-	lastPos    int      // hint: position in raw where timestamp was found
-	lastLen    int      // hint: substring length that matched
+	Formats []string // time formats to try
+	hint    atomic.Value
+}
+
+type timestampHint struct {
+	fmtIdx int
+	pos    int
+	length int
 }
 
 // DefaultTimestampNormalizer creates a normalizer with common formats.
@@ -155,7 +159,6 @@ func DefaultTimestampNormalizer() *TimestampNormalizer {
 			"2006-01-02 15:04:05.000",
 			"Jan 02 15:04:05",
 		},
-		lastFmtIdx: -1,
 	}
 }
 
@@ -165,19 +168,20 @@ func (t *TimestampNormalizer) Process(events []*event.Event) ([]*event.Event, er
 			continue
 		}
 		// Fast path: try the cached (format, position, length) hint first.
-		if t.lastFmtIdx >= 0 {
-			if ts, ok := tryParseExact(e.Raw, t.lastPos, t.lastLen, t.Formats[t.lastFmtIdx]); ok {
-				e.Time = ts
-				continue
+		if v := t.hint.Load(); v != nil {
+			h := v.(timestampHint)
+			if h.fmtIdx >= 0 && h.fmtIdx < len(t.Formats) {
+				if ts, ok := tryParseExact(e.Raw, h.pos, h.length, t.Formats[h.fmtIdx]); ok {
+					e.Time = ts
+					continue
+				}
 			}
 		}
 		// Slow path: scan all formats and positions.
 		for fi, format := range t.Formats {
 			if ts, pos, length, err := tryParseTime(e.Raw, format); err == nil {
 				e.Time = ts
-				t.lastFmtIdx = fi
-				t.lastPos = pos
-				t.lastLen = length
+				t.hint.Store(timestampHint{fmtIdx: fi, pos: pos, length: length})
 				break
 			}
 		}
@@ -518,22 +522,16 @@ func ParseFailureCount() int64 {
 	return sharedJSONParser.ParseErrors.Load()
 }
 
-// defaultPipeline is a shared instance returned by DefaultPipeline().
-// The TimestampNormalizer caches hints (lastFmtIdx/lastPos/lastLen) for
-// performance, but these are advisory — wrong hints fall back to full scan.
-// Pipeline.Process is called sequentially per batch, so concurrent mutation
-// of hints does not occur.
-var defaultPipeline = New(
-	DefaultTimestampNormalizer(),
-	sharedJSONParser,
-	&KeyValueParser{},
-	&Router{DefaultIndex: "main", PartitionCount: 4},
-)
-
 // DefaultPipeline returns a standard ingestion pipeline.
-// The returned instance is shared; callers must not modify it.
+// Each call gets its own TimestampNormalizer because it keeps advisory parse
+// hints that are mutated while events are processed.
 func DefaultPipeline() *Pipeline {
-	return defaultPipeline
+	return New(
+		DefaultTimestampNormalizer(),
+		sharedJSONParser,
+		&KeyValueParser{},
+		&Router{DefaultIndex: "main", PartitionCount: 4},
+	)
 }
 
 // isInternalField returns true for fields that are always available without parsing.
