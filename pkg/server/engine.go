@@ -550,6 +550,10 @@ func (e *Engine) Shutdown(timeout time.Duration) error {
 		}
 	}
 
+	if e.cache != nil {
+		e.cache.Close()
+	}
+
 	return errors.Join(errs...)
 }
 

@@ -144,8 +144,9 @@ type Store struct {
 	removeErrors  atomic.Int64 // os.Remove failures during eviction
 	writeErrors   atomic.Int64 // os.WriteFile failures during disk persistence
 
-	diskOps chan diskOp    // async disk write/remove queue
-	diskWg  sync.WaitGroup // tracks background disk goroutine
+	diskOps   chan diskOp    // async disk write/remove queue
+	diskWg    sync.WaitGroup // tracks background disk goroutine
+	closeOnce sync.Once
 
 	// pool is the optional memory pool. When non-nil, cache
 	// insertions call ReserveForCache and evictions call ReleaseCache.
@@ -175,10 +176,10 @@ func NewStore(dir string, maxBytes int64, ttl time.Duration) *Store {
 		maxBytes: maxBytes,
 		ttl:      ttl,
 	}
-	cs.diskOps = make(chan diskOp, 4096)
-	cs.diskWg.Add(1)
-	go cs.diskWorker()
 	if dir != "" {
+		cs.diskOps = make(chan diskOp, 4096)
+		cs.diskWg.Add(1)
+		go cs.diskWorker()
 		cs.loadFromDisk()
 	}
 
@@ -537,10 +538,12 @@ func (cs *Store) diskWorker() {
 
 // Close shuts down the background disk worker and waits for pending ops.
 func (cs *Store) Close() {
-	if cs.diskOps != nil {
-		close(cs.diskOps)
-		cs.diskWg.Wait()
-	}
+	cs.closeOnce.Do(func() {
+		if cs.diskOps != nil {
+			close(cs.diskOps)
+			cs.diskWg.Wait()
+		}
+	})
 }
 
 func (cs *Store) loadFromDisk() {

@@ -427,6 +427,16 @@ func TestCacheSizeAccountsStringPayload(t *testing.T) {
 	}
 }
 
+func TestMemoryOnlyCacheDoesNotStartDiskWorker(t *testing.T) {
+	cs := NewStore("", 1<<20, time.Hour)
+	if cs.diskOps != nil {
+		t.Fatalf("memory-only cache diskOps = %p, want nil", cs.diskOps)
+	}
+
+	cs.Close()
+	cs.Close()
+}
+
 func BenchmarkCacheEviction(b *testing.B) {
 	cs := NewStore("", 1<<30, time.Hour)
 	cs.clock = newClockBuffer(1024)
