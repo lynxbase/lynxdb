@@ -216,7 +216,6 @@ func (cs *Store) Get(ctx context.Context, key Key) (*CachedResult, error) {
 	}
 	// Mark as recently accessed in CLOCK.
 	cs.clock.access(hex)
-	entry.result.AccessedAt = time.Now()
 	cs.mu.Unlock()
 
 	cs.hits.Add(1)

@@ -1270,6 +1270,10 @@ func (r *Reader) ReadEventsFiltered(preds []Predicate, searchBitmap *roaring.Bit
 }
 
 func (r *Reader) predicateBitmap(pred Predicate, matchBitmap *roaring.Bitmap) (*roaring.Bitmap, error) {
+	if !r.HasColumn(pred.Field) {
+		return matchBitmap.Clone(), nil
+	}
+
 	predBitmap := roaring.New()
 	rowOffset := uint32(0)
 

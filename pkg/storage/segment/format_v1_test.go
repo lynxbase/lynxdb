@@ -313,6 +313,33 @@ func TestV1_ReadEventsFiltered_WithSearchBitmap(t *testing.T) {
 	}
 }
 
+func TestV1_ReadEventsFiltered_SkipsUnknownPredicateColumn(t *testing.T) {
+	events := generateTestEvents(10)
+
+	var buf bytes.Buffer
+	sw := NewWriter(&buf)
+	if _, err := sw.Write(events); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+
+	r, err := OpenSegment(buf.Bytes())
+	if err != nil {
+		t.Fatalf("OpenSegment: %v", err)
+	}
+
+	filtered, err := r.ReadEventsFiltered(
+		[]Predicate{{Field: "extracted_status", Op: "=", Value: "500"}},
+		nil,
+		[]string{"_raw"},
+	)
+	if err != nil {
+		t.Fatalf("ReadEventsFiltered: %v", err)
+	}
+	if len(filtered) != len(events) {
+		t.Fatalf("unknown predicate column filtered %d events, want %d", len(filtered), len(events))
+	}
+}
+
 func TestV1_StatsByName(t *testing.T) {
 	events := generateTestEvents(100)
 
