@@ -1,9 +1,26 @@
-import { useRef, useState, useCallback, useLayoutEffect, useEffect, useMemo } from "preact/hooks";
-import { ChevronRight, ChevronDown } from "lucide-preact";
+import React, {
+  useRef,
+  useState,
+  useCallback,
+  useLayoutEffect,
+  useEffect,
+  useMemo,
+} from "react";
+import {
+  useReactTable,
+  getCoreRowModel,
+  flexRender,
+  createColumnHelper,
+  type ColumnDef,
+  type SortingState,
+} from "@tanstack/react-table";
+import { ChevronRight, ChevronDown } from "lucide-react";
 import type { QueryResult, EventsResult, AggregateResult } from "../api/client";
+import { rowKey } from "../utils/rowKey";
 import { updateSortInQuery, parseSortFromQuery } from "../utils/sortQuery";
+import { deriveColumnsFromEvents } from "../utils/deriveColumns";
 import { EventDetailInline } from "./EventDetail";
-import styles from "./ResultsTable.module.css";
+import { cn } from "@/lib/utils";
 
 // Types
 
@@ -80,34 +97,14 @@ function formatTime(value: unknown): string {
 /** Truncate a string to maxLen characters */
 function truncate(value: unknown, maxLen = 200): string {
   const str = value == null ? "" : String(value);
-  return str.length > maxLen ? str.slice(0, maxLen) + "\u2026" : str;
+  return str.length > maxLen ? str.slice(0, maxLen) + "…" : str;
 }
 
 function isNumeric(value: unknown): boolean {
-  return typeof value === "number" || (typeof value === "string" && value !== "" && !isNaN(Number(value)));
-}
-
-/** Derive columns from events: _time first, then _raw, _source, source, then alphabetical */
-function deriveColumnsFromEvents(events: Record<string, unknown>[]): string[] {
-  const keySet = new Set<string>();
-  const limit = Math.min(events.length, 100);
-  for (let i = 0; i < limit; i++) {
-    for (const key of Object.keys(events[i])) {
-      keySet.add(key);
-    }
-  }
-
-  const priority = ["_time", "_raw", "_source", "source"];
-  const ordered: string[] = [];
-  for (const p of priority) {
-    if (keySet.has(p)) {
-      ordered.push(p);
-      keySet.delete(p);
-    }
-  }
-
-  const rest = Array.from(keySet).sort();
-  return ordered.concat(rest);
+  return (
+    typeof value === "number" ||
+    (typeof value === "string" && value !== "" && !isNaN(Number(value)))
+  );
 }
 
 /** Normalize result data into a uniform shape for rendering */
@@ -143,7 +140,10 @@ function useTableData(result: QueryResult | null): {
       const data = agg.rows[i];
       if (data) {
         for (let c = 0; c < columns.length; c++) {
-          row[columns[c]] = data[c];
+          const colName = columns[c];
+          if (colName !== undefined) {
+            row[colName] = data[c];
+          }
         }
       }
       return row;
@@ -151,6 +151,9 @@ function useTableData(result: QueryResult | null): {
     isAgg: true,
   };
 }
+
+// Column helper for @tanstack/react-table
+const columnHelper = createColumnHelper<Record<string, unknown>>();
 
 // Component
 
@@ -172,12 +175,52 @@ export function ResultsTable({
 
   const defaultWidths = useMemo(
     () => computeDefaultWidths(columns, getRow, rowCount),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- recompute when result changes
     [result],
   );
 
   const effectiveIsAgg = isAggregation ?? isAgg;
 
   const currentSort = currentQuery ? parseSortFromQuery(currentQuery) : null;
+
+  // Build @tanstack/react-table sorting state from currentSort
+  const sorting: SortingState = useMemo(() => {
+    if (!currentSort) return [];
+    return [{ id: currentSort.field, desc: currentSort.direction === "desc" }];
+  }, [currentSort]);
+
+  // Build column defs for @tanstack/react-table
+  const columnDefs = useMemo((): ColumnDef<Record<string, unknown>, unknown>[] => {
+    return columns.map((col) =>
+      columnHelper.accessor((row) => row[col], {
+        id: col,
+        header: col,
+        size: columnWidths[col] ?? defaultWidths[col] ?? 120,
+        minSize: MIN_COL_WIDTH,
+        maxSize: 1200,
+      }),
+    );
+  }, [columns, columnWidths, defaultWidths]);
+
+  // Build data array for table (array of row objects)
+  const data = useMemo(() => {
+    const rows: Record<string, unknown>[] = [];
+    for (let i = 0; i < rowCount; i++) {
+      rows.push(getRow(i));
+    }
+    return rows;
+  }, [rowCount, getRow]);
+
+  // Create the table instance
+  const table = useReactTable({
+    data,
+    columns: columnDefs,
+    state: { sorting },
+    getCoreRowModel: getCoreRowModel(),
+    manualSorting: true,
+    enableColumnResizing: true,
+    columnResizeMode: "onChange",
+  });
 
   // Close accordion on Escape
   useEffect(() => {
@@ -212,26 +255,40 @@ export function ResultsTable({
     return () => obs.disconnect();
   }, []);
 
+  // PERF-06: rAF-throttle the scroll handler to coalesce scrollTop updates
+  const rafRef = useRef(0);
   const handleScroll = useCallback(() => {
-    if (scrollContainerRef.current) {
-      setScrollTop(scrollContainerRef.current.scrollTop);
-    }
+    if (rafRef.current) return; // rAF already scheduled
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = 0;
+      if (scrollContainerRef.current) {
+        setScrollTop(scrollContainerRef.current.scrollTop);
+      }
+    });
+  }, []);
+
+  // Cleanup pending rAF on unmount
+  useEffect(() => {
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+    };
   }, []);
 
   // ---- Column resize handlers ----
 
   const handleResizeStart = useCallback(
-    (e: PointerEvent, colName: string) => {
+    (e: React.PointerEvent<HTMLDivElement>, colName: string) => {
       e.preventDefault();
       e.stopPropagation();
 
-      const target = e.currentTarget as HTMLElement;
+      const target = e.currentTarget;
       target.setPointerCapture(e.pointerId);
 
       const startX = e.clientX;
       // Get the actual rendered width of the column header cell
       const headerCell = target.parentElement;
-      const startWidth = columnWidths[colName] || headerCell?.offsetWidth || 180;
+      const startWidth =
+        columnWidths[colName] || headerCell?.offsetWidth || 180;
 
       setResizingCol(colName);
 
@@ -253,19 +310,16 @@ export function ResultsTable({
     [columnWidths],
   );
 
-  const handleResizeDblClick = useCallback(
-    (e: MouseEvent, colName: string) => {
-      e.preventDefault();
-      e.stopPropagation();
-      // Remove stored width to reset to auto-fit (max-content)
-      setColumnWidths((prev) => {
-        const next = { ...prev };
-        delete next[colName];
-        return next;
-      });
-    },
-    [],
-  );
+  const handleResizeDblClick = useCallback((e: React.MouseEvent<HTMLDivElement>, colName: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Remove stored width to reset to auto-fit (max-content)
+    setColumnWidths((prev) => {
+      const next = { ...prev };
+      delete next[colName];
+      return next;
+    });
+  }, []);
 
   // ---- Sort handler ----
 
@@ -297,14 +351,24 @@ export function ResultsTable({
   // ---- Early returns ----
 
   if (!result) {
-    return <div class={styles.empty}>No results</div>;
+    return (
+      <div className="flex flex-1 items-center justify-center text-muted-foreground font-sans text-sm p-12">
+        No results
+      </div>
+    );
   }
 
   if (rowCount === 0) {
-    return <div class={styles.empty}>Query returned no results</div>;
+    return (
+      <div className="flex flex-1 items-center justify-center text-muted-foreground font-sans text-sm p-12">
+        Query returned no results
+      </div>
+    );
   }
 
   // ---- Grid template ----
+
+  const headerGroups = table.getHeaderGroups();
 
   // Build grid-template-columns: gutter + data columns (fixed pixel widths for alignment)
   const dataColTemplate = columns
@@ -322,9 +386,10 @@ export function ResultsTable({
   const hasTimeCol = !effectiveIsAgg && columns.includes("_time");
 
   // ---- Virtual scroll calculations (with accordion offset) ----
-  const accordionHeight = expandedRowIndex !== null
-    ? getAccordionHeight(getRow(expandedRowIndex))
-    : 0;
+  const accordionHeight =
+    expandedRowIndex !== null
+      ? getAccordionHeight(getRow(expandedRowIndex))
+      : 0;
   const totalHeight = rowCount * ROW_HEIGHT + accordionHeight;
 
   let startIndex: number;
@@ -356,52 +421,63 @@ export function ResultsTable({
       yOffset += accordionHeight;
     }
 
-    const rowClasses = [
-      styles.row,
-      isExpanded ? styles.rowSelected : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
-
     const rowStyle = { ...gridStyle, transform: `translateY(${yOffset}px)` };
 
     visibleRows.push(
       <div
-        key={i}
-        class={rowClasses}
+        key={rowKey(row)}
+        className={cn(
+          "grid absolute w-full h-7 items-center cursor-pointer transition-colors duration-75 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]",
+          isExpanded
+            ? "bg-accent hover:bg-accent/80"
+            : "hover:bg-muted/50",
+        )}
         style={rowStyle}
         role="row"
+        tabIndex={0}
         aria-rowindex={i + 1}
         onClick={() => handleRowToggle(i)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            handleRowToggle(i);
+          }
+        }}
       >
-        <div
-          class={`${styles.gutter} ${isExpanded ? styles.gutterExpanded : ""}`}
-          onClick={(e: MouseEvent) => { e.stopPropagation(); handleRowToggle(i); }}
+        <button
+          type="button"
+          className={cn(
+            "flex items-center justify-center text-muted-foreground cursor-pointer transition-colors duration-100 motion-reduce:transition-none bg-transparent border-none p-0",
+            isExpanded ? "text-primary" : "hover:text-primary",
+          )}
+          onClick={(e: React.MouseEvent) => {
+            e.stopPropagation();
+            handleRowToggle(i);
+          }}
+          tabIndex={-1}
+          aria-label={isExpanded ? "Collapse event" : "Expand event"}
           title={isExpanded ? "Collapse event" : "Expand event"}
         >
           {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        </div>
+        </button>
         {columns.map((col) => {
           const raw = row[col];
           const isTime = col === "_time";
           const display = isTime ? formatTime(raw) : truncate(raw);
           const fullValue = raw == null ? "" : String(raw);
 
-          const cellClasses = [
-            styles.cell,
-            isTime ? styles.cellTime : "",
-            hasTimeCol && isTime ? styles.cellSticky : "",
-            effectiveIsAgg && isNumeric(raw) ? styles.cellNumber : "",
-          ]
-            .filter(Boolean)
-            .join(" ");
-
           return (
             <div
               key={col}
-              class={cellClasses}
+              className={cn(
+                "px-3 overflow-hidden text-ellipsis whitespace-nowrap text-foreground leading-7",
+                isTime && "text-muted-foreground",
+                hasTimeCol && isTime && "sticky left-6 z-[1] bg-background",
+                isExpanded && hasTimeCol && isTime && "bg-accent",
+                effectiveIsAgg && isNumeric(raw) && "text-right",
+              )}
               title={fullValue}
-              role="cell"
+              role="gridcell"
             >
               {display}
             </div>
@@ -415,9 +491,12 @@ export function ResultsTable({
       const accordionY = (i + 1) * ROW_HEIGHT;
       visibleRows.push(
         <div
-          key={`accordion-${i}`}
-          class={styles.accordionRow}
-          style={{ transform: `translateY(${accordionY}px)`, height: accordionHeight }}
+          key={`acc-${rowKey(row)}`}
+          className="absolute w-full overflow-hidden"
+          style={{
+            transform: `translateY(${accordionY}px)`,
+            height: accordionHeight,
+          }}
         >
           <EventDetailInline event={row} onFilter={onFilter} />
         </div>,
@@ -428,37 +507,69 @@ export function ResultsTable({
   // ---- Render ----
 
   return (
-    <div class={styles.wrapper} role="table" aria-label="Query results">
-      <div class={styles.scrollContainer} ref={scrollContainerRef} onScroll={handleScroll}>
+    <div
+      className="flex flex-1 flex-col overflow-hidden font-mono text-[0.8125rem]"
+      role="grid"
+      aria-label="Query results"
+    >
+      <div
+        className="flex-1 overflow-auto relative"
+        ref={scrollContainerRef}
+        onScroll={handleScroll}
+      >
         {/* Header row inside scroll container for sticky top:0 */}
-        <div class={styles.headerRow} style={gridStyle} role="row">
-          <div class={styles.gutterHeader} />
-          {columns.map((col) => {
+        <div
+          className="grid sticky top-0 z-[3] bg-card border-b border-border min-w-max"
+          style={gridStyle}
+          role="row"
+        >
+          <div />
+          {headerGroups[0]?.headers.map((header) => {
+            const col = header.id;
             const isSorted = currentSort?.field === col;
-            const cellClasses = [
-              styles.headerCell,
-              hasTimeCol && col === "_time" ? styles.headerCellSticky : "",
-            ]
-              .filter(Boolean)
-              .join(" ");
+            const sortDir = isSorted ? currentSort!.direction : undefined;
 
             return (
               <div
                 key={col}
-                class={cellClasses}
+                className={cn(
+                  "relative px-3 py-1.5 text-muted-foreground font-semibold text-xs uppercase tracking-wide overflow-hidden text-ellipsis whitespace-nowrap select-none cursor-pointer flex items-center gap-1 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-[-2px]",
+                  hasTimeCol && col === "_time" && "sticky left-6 z-[4] bg-card",
+                )}
                 role="columnheader"
+                aria-sort={
+                  isSorted
+                    ? sortDir === "asc"
+                      ? "ascending"
+                      : "descending"
+                    : "none"
+                }
+                tabIndex={0}
                 onClick={() => handleHeaderClick(col)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    handleHeaderClick(col);
+                  }
+                }}
               >
-                <span>{col}</span>
+                <span>
+                  {flexRender(header.column.columnDef.header, header.getContext())}
+                </span>
                 {isSorted && (
-                  <span class={styles.sortIndicator}>
-                    {currentSort!.direction === "asc" ? "\u25B2" : "\u25BC"}
+                  <span className="text-primary text-[0.5625rem] leading-none shrink-0">
+                    {sortDir === "asc" ? "▲" : "▼"}
                   </span>
                 )}
                 <div
-                  class={`${styles.resizeHandle} ${resizingCol === col ? styles.resizeActive : ""}`}
-                  onPointerDown={(e: PointerEvent) => handleResizeStart(e, col)}
-                  onDblClick={(e: MouseEvent) => handleResizeDblClick(e, col)}
+                  className={cn(
+                    "absolute right-0 top-0 bottom-0 w-1 cursor-col-resize z-[5] select-none touch-none",
+                    resizingCol === col
+                      ? "border-r-2 border-primary"
+                      : "hover:border-r-2 hover:border-primary",
+                  )}
+                  onPointerDown={(e: React.PointerEvent<HTMLDivElement>) => handleResizeStart(e, col)}
+                  onDoubleClick={(e: React.MouseEvent<HTMLDivElement>) => handleResizeDblClick(e, col)}
                 />
               </div>
             );
@@ -466,10 +577,7 @@ export function ResultsTable({
         </div>
 
         {/* Scroll content area */}
-        <div
-          class={styles.scrollContent}
-          style={{ height: totalHeight }}
-        >
+        <div className="relative min-w-max" style={{ height: totalHeight }}>
           {visibleRows}
         </div>
       </div>

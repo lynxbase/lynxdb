@@ -1,26 +1,31 @@
-import { signal } from "@preact/signals";
+import { create } from "zustand";
 
 const STORAGE_KEY = "lynxdb_token";
 
-/** Reactive token signal. Empty string = not authenticated. */
-export const token = signal(localStorage.getItem(STORAGE_KEY) ?? "");
+interface AuthState {
+  /** API token. Empty string = not authenticated. */
+  token: string;
+  /** Whether a 401 was received (triggers login prompt even with a token). */
+  authRequired: boolean;
+}
 
-/** Whether a 401 was received (triggers login prompt even with a stored token). */
-export const authRequired = signal(false);
+export const useAuthStore = create<AuthState>(() => ({
+  token: localStorage.getItem(STORAGE_KEY) ?? "",
+  authRequired: false,
+}));
 
 export function setToken(value: string): void {
-  token.value = value;
-  authRequired.value = false;
   if (value) {
     localStorage.setItem(STORAGE_KEY, value);
   } else {
     localStorage.removeItem(STORAGE_KEY);
   }
+  useAuthStore.setState({ token: value, authRequired: false });
 }
 
 export function clearToken(): void {
-  setToken("");
-  authRequired.value = true;
+  localStorage.removeItem(STORAGE_KEY);
+  useAuthStore.setState({ token: "", authRequired: true });
 }
 
 /** Build headers object with auth token if available. */
@@ -28,8 +33,9 @@ export function authHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (token.value) {
-    headers["Authorization"] = `Bearer ${token.value}`;
+  const { token } = useAuthStore.getState();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
   }
   return headers;
 }
@@ -40,7 +46,7 @@ export function authHeaders(): Record<string, string> {
  */
 export function handleAuthError(resp: Response): boolean {
   if (resp.status === 401) {
-    authRequired.value = true;
+    useAuthStore.setState({ authRequired: true });
     return true;
   }
   return false;

@@ -23,7 +23,12 @@ export function generateFilename(ext: string): string {
  */
 function escapeCSVField(value: unknown): string {
   const str = value == null ? "" : String(value);
-  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+  if (
+    str.includes(",") ||
+    str.includes('"') ||
+    str.includes("\n") ||
+    str.includes("\r")
+  ) {
     return `"${str.replace(/"/g, '""')}"`;
   }
   return str;
@@ -33,7 +38,10 @@ function escapeCSVField(value: unknown): string {
  * Generate CSV content from columns and rows.
  * Header row from column names, body rows from row data.
  */
-export function generateCSV(columns: string[], rows: Record<string, unknown>[]): string {
+export function generateCSV(
+  columns: string[],
+  rows: Record<string, unknown>[],
+): string {
   const header = columns.map(escapeCSVField).join(",");
   const body = rows.map((row) =>
     columns.map((col) => escapeCSVField(row[col])).join(","),
@@ -51,7 +59,11 @@ export function generateJSON(rows: Record<string, unknown>[]): string {
 /**
  * Trigger a file download in the browser using a Blob and temporary anchor element.
  */
-export function downloadFile(content: string, filename: string, mimeType: string): void {
+export function downloadFile(
+  content: string,
+  filename: string,
+  mimeType: string,
+): void {
   const blob = new Blob([content], { type: mimeType });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");

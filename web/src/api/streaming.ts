@@ -9,7 +9,7 @@
  */
 
 import type { QueryResult, QueryStats } from "./client";
-import { authHeaders, handleAuthError, token } from "./auth";
+import { authHeaders, handleAuthError, useAuthStore } from "./auth";
 
 // Types
 
@@ -23,7 +23,11 @@ export interface HybridResult {
 
 export interface StreamCallbacks {
   onRow: (row: Record<string, unknown>) => void;
-  onMeta: (meta: { total?: number; scanned?: number; took_ms?: number }) => void;
+  onMeta: (meta: {
+    total?: number;
+    scanned?: number;
+    took_ms?: number;
+  }) => void;
   onError: (message: string) => void;
 }
 
@@ -79,9 +83,7 @@ export async function submitHybridQuery(
     const err = await resp
       .json()
       .catch(() => ({ error: { message: resp.statusText } }));
-    throw new Error(
-      err.error?.message || err.data?.error || resp.statusText,
-    );
+    throw new Error(err.error?.message || err.data?.error || resp.statusText);
   }
 
   const json = await resp.json();
@@ -140,9 +142,7 @@ export async function streamQuery(
     const err = await resp
       .json()
       .catch(() => ({ error: { message: resp.statusText } }));
-    callbacks.onError(
-      err.error?.message || err.data?.error || resp.statusText,
-    );
+    callbacks.onError(err.error?.message || err.data?.error || resp.statusText);
     return;
   }
 
@@ -194,8 +194,14 @@ export async function streamQuery(
 /**
  * Parse and dispatch a single NDJSON line.
  * Returns true if the line was a __meta or __error control line.
+ *
+ * Exported for unit testing: this control-line classification is the
+ * regression oracle the framework migration is verified against.
  */
-function processLine(line: string, callbacks: StreamCallbacks): boolean {
+export function processLine(
+  line: string,
+  callbacks: StreamCallbacks,
+): boolean {
   try {
     const parsed = JSON.parse(line);
     if (parsed.__meta) {
@@ -232,8 +238,9 @@ export function subscribeJobProgress(
   onCanceled: () => void,
 ): () => void {
   const params = new URLSearchParams();
-  if (token.value) {
-    params.set("_token", token.value);
+  const tokenValue = useAuthStore.getState().token;
+  if (tokenValue) {
+    params.set("_token", tokenValue);
   }
 
   const qs = params.toString();
@@ -299,8 +306,6 @@ export async function cancelJob(jobId: string): Promise<void> {
     const err = await resp
       .json()
       .catch(() => ({ error: { message: resp.statusText } }));
-    throw new Error(
-      err.error?.message || err.data?.error || resp.statusText,
-    );
+    throw new Error(err.error?.message || err.data?.error || resp.statusText);
   }
 }

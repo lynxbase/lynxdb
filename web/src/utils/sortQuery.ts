@@ -36,8 +36,8 @@ export function parseSortFromQuery(
   const match = query.match(SORT_EXTRACT_RE);
   if (!match) return null;
 
-  const sign = match[1];
-  const field = match[2];
+  const sign = match[1] ?? "";
+  const field = match[2] ?? "";
   const direction: "asc" | "desc" = sign === "-" ? "desc" : "asc";
 
   return { field, direction };

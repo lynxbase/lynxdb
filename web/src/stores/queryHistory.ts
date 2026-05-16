@@ -1,4 +1,4 @@
-import { signal } from "@preact/signals";
+import { create } from "zustand";
 
 const STORAGE_KEY = "lynxdb_query_history";
 const MAX_HISTORY = 100;
@@ -12,8 +12,14 @@ function loadHistory(): string[] {
   }
 }
 
-/** Signal-backed query history list, most recent first. */
-export const queryHistory = signal<string[]>(loadHistory());
+interface HistoryState {
+  /** Query history list, most recent first. */
+  queryHistory: string[];
+}
+
+export const useQueryHistoryStore = create<HistoryState>(() => ({
+  queryHistory: loadHistory(),
+}));
 
 /** Current navigation index: -1 = not navigating, 0+ = position in history */
 let historyIndex = -1;
@@ -28,11 +34,11 @@ export function pushHistory(query: string): void {
   const trimmed = query.trim();
   if (!trimmed) return;
 
-  // Deduplicate: remove existing occurrence, add to front
-  const next = [trimmed, ...queryHistory.value.filter((q) => q !== trimmed)];
+  const current = useQueryHistoryStore.getState().queryHistory;
+  const next = [trimmed, ...current.filter((q) => q !== trimmed)];
   if (next.length > MAX_HISTORY) next.length = MAX_HISTORY;
 
-  queryHistory.value = next;
+  useQueryHistoryStore.setState({ queryHistory: next });
   localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
   historyIndex = -1;
 }
@@ -46,24 +52,22 @@ export function navigateHistory(
   direction: "up" | "down",
   currentQuery: string,
 ): string | null {
-  const history = queryHistory.value;
+  const history = useQueryHistoryStore.getState().queryHistory;
   if (history.length === 0) return null;
 
   if (direction === "up") {
     if (historyIndex === -1) {
-      // Entering history navigation -- save current draft
       draft = currentQuery;
     }
     if (historyIndex < history.length - 1) {
       historyIndex++;
-      return history[historyIndex];
+      return history[historyIndex] ?? null;
     }
     return null; // already at oldest entry
   } else {
-    // direction === "down"
     if (historyIndex > 0) {
       historyIndex--;
-      return history[historyIndex];
+      return history[historyIndex] ?? null;
     } else if (historyIndex === 0) {
       historyIndex = -1;
       return draft; // restore saved draft

@@ -1,11 +1,15 @@
-import { useState, useCallback } from "preact/hooks";
-import type { ComponentChildren } from "preact";
-import { token, authRequired, setToken } from "../stores/auth";
+import { useState, useCallback } from "react";
+import type { ReactNode, FormEvent } from "react";
+import { AlertCircle } from "lucide-react";
+import { useAuthStore, setToken } from "../stores/auth";
 import { uiPath } from "../utils/base";
-import styles from "./AuthGate.module.css";
+import { Card, CardContent } from "./ui/card";
+import { Input } from "./ui/input";
+import { Button } from "./ui/button";
+import { Alert, AlertDescription } from "./ui/alert";
 
 interface Props {
-  children: ComponentChildren;
+  children: ReactNode;
 }
 
 /**
@@ -19,15 +23,18 @@ interface Props {
  * a token and this gate is never shown.
  */
 export function AuthGate({ children }: Props) {
+  const token = useAuthStore((s) => s.token);
+  const authRequired = useAuthStore((s) => s.authRequired);
+
   // If we have a token and auth hasn't been flagged as required, pass through
-  if (token.value && !authRequired.value) {
+  if (token && !authRequired) {
     return <>{children}</>;
   }
 
   // On first load with no token, try to render the app -- if the server
   // has auth disabled, everything will work. If 401 comes back,
-  // authRequired signal flips to true and we re-render with the login form.
-  if (!token.value && !authRequired.value) {
+  // authRequired flips to true and we re-render with the login form.
+  if (!token && !authRequired) {
     return <>{children}</>;
   }
 
@@ -40,7 +47,7 @@ function LoginForm() {
   const [checking, setChecking] = useState(false);
 
   const handleSubmit = useCallback(
-    async (e: Event) => {
+    async (e: FormEvent) => {
       e.preventDefault();
       const val = inputValue.trim();
       if (!val) return;
@@ -75,54 +82,78 @@ function LoginForm() {
   }, []);
 
   return (
-    <div class={styles.backdrop}>
-      <form class={styles.card} onSubmit={handleSubmit}>
-        <div class={styles.logo}>
-          <img src={uiPath("/favicon.svg")} alt="LynxDB" class={styles.logoIcon} />
-          LynxDB
-        </div>
-        <div class={styles.subtitle}>Enter your API key to continue</div>
+    <div className="flex min-h-dvh items-center justify-center bg-background">
+      <Card className="w-full max-w-[360px] gap-3 rounded-md border bg-card px-8 py-10 shadow-none">
+        <CardContent className="flex flex-col items-center gap-3 px-0">
+          <form
+            className="flex w-full flex-col items-center gap-3"
+            onSubmit={handleSubmit}
+          >
+            <div className="mb-1 flex items-center gap-2 text-xl font-semibold tracking-tight text-foreground">
+              <img
+                src={uiPath("/favicon.svg")}
+                alt="LynxDB"
+                className="size-7 rounded"
+              />
+              LynxDB
+            </div>
+            <p className="mb-2 text-[0.8125rem] text-muted-foreground">
+              Enter your API key to continue
+            </p>
 
-        <input
-          type="password"
-          class={styles.input}
-          placeholder="lynx_..."
-          value={inputValue}
-          onInput={(e) => setInputValue((e.target as HTMLInputElement).value)}
-          autoFocus
-          spellcheck={false}
-          autocomplete="off"
-        />
+            <Input
+              type="password"
+              className="w-full font-mono text-sm"
+              placeholder="lynx_..."
+              value={inputValue}
+              onInput={(e) =>
+                setInputValue((e.target as HTMLInputElement).value)
+              }
+              autoFocus
+              spellCheck={false}
+              autoComplete="off"
+            />
 
-        {error && error !== "connection_error" && (
-          <div class={styles.error}>{error}</div>
-        )}
+            {error && error !== "connection_error" && (
+              <Alert variant="destructive" className="rounded-md py-2">
+                <AlertCircle className="size-4" />
+                <AlertDescription>{error}</AlertDescription>
+              </Alert>
+            )}
 
-        {error === "connection_error" && (
-          <div class={styles.error}>
-            Cannot connect to server -- is LynxDB running?{" "}
-            <button
-              type="button"
-              class={styles.retryLink}
-              onClick={handleRetry}
+            {error === "connection_error" && (
+              <Alert variant="destructive" className="rounded-md py-2">
+                <AlertCircle className="size-4" />
+                <AlertDescription>
+                  Cannot connect to server -- is LynxDB running?{" "}
+                  <button
+                    type="button"
+                    className="text-destructive underline underline-offset-2 hover:opacity-80"
+                    onClick={handleRetry}
+                  >
+                    Retry
+                  </button>
+                </AlertDescription>
+              </Alert>
+            )}
+
+            <Button
+              type="submit"
+              className="w-full"
+              disabled={checking || !inputValue.trim()}
             >
-              Retry
-            </button>
-          </div>
-        )}
+              {checking ? "Verifying..." : "Connect"}
+            </Button>
 
-        <button
-          type="submit"
-          class={styles.submitBtn}
-          disabled={checking || !inputValue.trim()}
-        >
-          {checking ? "Verifying..." : "Connect"}
-        </button>
-
-        <div class={styles.hint}>
-          Generate a key with <code>lynxdb auth create-key</code>
-        </div>
-      </form>
+            <p className="mt-1 text-center text-xs text-muted-foreground">
+              Generate a key with{" "}
+              <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[0.7rem] text-secondary-foreground">
+                lynxdb auth create-key
+              </code>
+            </p>
+          </form>
+        </CardContent>
+      </Card>
     </div>
   );
 }

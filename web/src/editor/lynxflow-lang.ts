@@ -60,7 +60,7 @@ export const lynxflowLanguage = StreamLanguage.define({
     }
 
     // F-strings
-    if (stream.match("f\"")) {
+    if (stream.match('f"')) {
       while (!stream.eol()) {
         const ch = stream.next();
         if (ch === "\\") {

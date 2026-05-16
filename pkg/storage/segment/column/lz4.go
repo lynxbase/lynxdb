@@ -45,12 +45,20 @@ func (e *LZ4Encoder) EncodeStrings(values []string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("column: lz4 compress: %w", err)
 	}
-	// If lz4 returns 0, data is incompressible; store uncompressed.
-	if n == 0 {
-		n = len(uncompressed)
-		compressed = uncompressed
+
+	// The decoder uses compSize == uncompSize as the unambiguous "stored
+	// raw" marker. lz4.CompressBlock can legitimately return a compressed
+	// size that is equal to (or, since dst is bound-sized so it never
+	// returns 0, larger than) the uncompressed size for small or
+	// incompressible inputs. If we stored that as "compressed", the marker
+	// would collide and the decoder would parse compressed bytes as raw.
+	// So whenever LZ4 did not actually shrink the data, store it raw —
+	// guaranteeing compressed payloads always have compSize < uncompSize.
+	var payload []byte
+	if n == 0 || n >= len(uncompressed) {
+		payload = uncompressed
 	} else {
-		compressed = compressed[:n]
+		payload = compressed[:n]
 	}
 
 	// Header: type + count + uncompressed size + compressed size.
@@ -58,11 +66,11 @@ func (e *LZ4Encoder) EncodeStrings(values []string) ([]byte, error) {
 	header = append(header, byte(EncodingLZ4))
 	header = binary.LittleEndian.AppendUint32(header, uint32(len(values)))
 	header = binary.LittleEndian.AppendUint32(header, uint32(len(uncompressed)))
-	header = binary.LittleEndian.AppendUint32(header, uint32(n))
+	header = binary.LittleEndian.AppendUint32(header, uint32(len(payload)))
 
-	result := make([]byte, 0, len(header)+n)
+	result := make([]byte, 0, len(header)+len(payload))
 	result = append(result, header...)
-	result = append(result, compressed[:n]...)
+	result = append(result, payload...)
 
 	return result, nil
 }

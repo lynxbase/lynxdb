@@ -35,7 +35,10 @@ const CACHE_TTL_MS = 60_000;
 
 async function ensureCache(): Promise<void> {
   const now = Date.now();
-  if (now - lastFetchTime < CACHE_TTL_MS && (cachedFields.length > 0 || cachedIndexes.length > 0)) {
+  if (
+    now - lastFetchTime < CACHE_TTL_MS &&
+    (cachedFields.length > 0 || cachedIndexes.length > 0)
+  ) {
     return;
   }
 
@@ -56,7 +59,10 @@ async function ensureCache(): Promise<void> {
 }
 
 // Per-field value cache so we don't spam the API
-const fieldValueCache = new Map<string, { values: Completion[]; fetched: number }>();
+const fieldValueCache = new Map<
+  string,
+  { values: Completion[]; fetched: number }
+>();
 const VALUE_CACHE_TTL_MS = 30_000;
 
 // Context detection helpers
@@ -109,7 +115,10 @@ function commandCompletions(lowerWord: string): Completion[] {
   return [...commands, ...QUERY_TEMPLATES];
 }
 
-function functionCompletions(fns: readonly string[], lowerWord: string): Completion[] {
+function functionCompletions(
+  fns: readonly string[],
+  lowerWord: string,
+): Completion[] {
   return fns.map((fn) => ({
     label: fn,
     type: "function",
@@ -120,7 +129,7 @@ function functionCompletions(fns: readonly string[], lowerWord: string): Complet
 }
 
 function escapeValue(value: string): string {
-  return value.replace(/\\/g, "\\\\").replace(/"/g, "\\\"");
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function valueCompletion(value: string, count: number): Completion {
@@ -155,7 +164,7 @@ async function lynxflowCompletion(
   // --- After regex operators -> regex snippets ---
   const regexMatch = beforeCursor.match(/(?:=~|!~)(\s*["']?[^"'\s|()]*)$/);
   if (regexMatch) {
-    const typedPattern = regexMatch[1].trimStart();
+    const typedPattern = (regexMatch[1] ?? "").trimStart();
     return {
       from: context.pos - typedPattern.length,
       options: REGEX_TEMPLATES,
@@ -165,19 +174,24 @@ async function lynxflowCompletion(
 
   // --- After "field=" or "field!=" -> field values ---
   // Match patterns like: level=err, level="err, status!=2
-  const fieldValueMatch = beforeCursor.match(/([A-Za-z_][A-Za-z0-9_.:-]*)\s*(?:==|!=|=|<=|>=|<|>)(\s*["']?([^"'\s|()]*))$/);
+  const fieldValueMatch = beforeCursor.match(
+    /([A-Za-z_][A-Za-z0-9_.:-]*)\s*(?:==|!=|=|<=|>=|<|>)(\s*["']?([^"'\s|()]*))$/,
+  );
   if (fieldValueMatch) {
-    const fieldName = fieldValueMatch[1];
-    const typedValue = fieldValueMatch[2].trimStart();
-    const partialValue = fieldValueMatch[3];
+    const fieldName = fieldValueMatch[1] ?? "";
+    const typedValue = (fieldValueMatch[2] ?? "").trimStart();
+    const partialValue = fieldValueMatch[3] ?? "";
     // Verify it's a known field
-    const isKnownField = BUILTIN_FIELDS.includes(fieldName) || cachedFields.some((f) => f.name === fieldName);
+    const isKnownField =
+      BUILTIN_FIELDS.includes(fieldName) ||
+      cachedFields.some((f) => f.name === fieldName);
     if (isKnownField) {
       const values = await getFieldValues(fieldName);
       if (values.length > 0) {
-        const options = typedValue.startsWith("\"") || typedValue.startsWith("'")
-          ? values.map((v) => ({ ...v, apply: `"${escapeValue(v.label)}"` }))
-          : values;
+        const options =
+          typedValue.startsWith('"') || typedValue.startsWith("'")
+            ? values.map((v) => ({ ...v, apply: `"${escapeValue(v.label)}"` }))
+            : values;
         return {
           from: context.pos - Math.max(typedValue.length, partialValue.length),
           options,
@@ -188,10 +202,12 @@ async function lynxflowCompletion(
   }
 
   // --- After time modifiers -> relative time values ---
-  const timeMatch = beforeCursor.match(/\b(?:earliest|latest|_index_earliest|_index_latest)\s*=\s*([A-Za-z0-9@+-]*)$/i);
+  const timeMatch = beforeCursor.match(
+    /\b(?:earliest|latest|_index_earliest|_index_latest)\s*=\s*([A-Za-z0-9@+-]*)$/i,
+  );
   if (timeMatch) {
     return {
-      from: context.pos - timeMatch[1].length,
+      from: context.pos - (timeMatch[1] ?? "").length,
       options: TIME_VALUES,
       filter: true,
     };
@@ -232,7 +248,8 @@ async function lynxflowCompletion(
           label: idx.name,
           type: "variable",
           detail: "source",
-          boost: lowerWord && idx.name.toLowerCase().startsWith(lowerWord) ? 3 : 0,
+          boost:
+            lowerWord && idx.name.toLowerCase().startsWith(lowerWord) ? 3 : 0,
         })),
         ...SOURCE_TEMPLATES,
       ],
@@ -241,7 +258,11 @@ async function lynxflowCompletion(
   }
 
   // --- After "by ", "where ", "group ", "order ", "keep ", "omit " -> field names ---
-  if (/\b(?:by|where|group|order|keep|omit|on|table|fields|dedup|rename|using)\s+[A-Za-z0-9_.:-]*$/i.test(beforeCursor)) {
+  if (
+    /\b(?:by|where|group|order|keep|omit|on|table|fields|dedup|rename|using)\s+[A-Za-z0-9_.:-]*$/i.test(
+      beforeCursor,
+    )
+  ) {
     return {
       from: absFrom,
       options: allFieldCompletions(lowerWord),
@@ -250,7 +271,11 @@ async function lynxflowCompletion(
   }
 
   // --- After comma in a field list (by field1, field2) -> field names ---
-  if (/\b(?:by|keep|omit|table|fields|dedup)\s+[\w.:-]+(?:\s*,\s*[\w.:-]+)*,\s*[A-Za-z0-9_.:-]*$/i.test(beforeCursor)) {
+  if (
+    /\b(?:by|keep|omit|table|fields|dedup)\s+[\w.:-]+(?:\s*,\s*[\w.:-]+)*,\s*[A-Za-z0-9_.:-]*$/i.test(
+      beforeCursor,
+    )
+  ) {
     return {
       from: absFrom,
       options: allFieldCompletions(lowerWord),
@@ -259,7 +284,11 @@ async function lynxflowCompletion(
   }
 
   // --- Latency compute uses shorthand aggregations such as p50, p99, avg ---
-  if (/\blatency\s+[A-Za-z0-9_.:-]+\s+every\s+[0-9smhdw]+\s+(?:by\s+[A-Za-z0-9_.:-]+\s+)?compute\s+\w*$/i.test(beforeCursor)) {
+  if (
+    /\blatency\s+[A-Za-z0-9_.:-]+\s+every\s+[0-9smhdw]+\s+(?:by\s+[A-Za-z0-9_.:-]+\s+)?compute\s+\w*$/i.test(
+      beforeCursor,
+    )
+  ) {
     return {
       from: absFrom,
       options: functionCompletions(LATENCY_AGG_SHORTHANDS, lowerWord),
@@ -268,7 +297,11 @@ async function lynxflowCompletion(
   }
 
   // --- After "compute ", "stats ", "timechart " -> aggregation functions ---
-  if (/\b(?:compute|stats|timechart|eventstats|streamstats|enrich|running)\s+\w*$/i.test(beforeCursor)) {
+  if (
+    /\b(?:compute|stats|timechart|eventstats|streamstats|enrich|running)\s+\w*$/i.test(
+      beforeCursor,
+    )
+  ) {
     return {
       from: absFrom,
       options: functionCompletions(AGG_FUNCTIONS, lowerWord),
@@ -277,7 +310,11 @@ async function lynxflowCompletion(
   }
 
   // --- After comma in compute/stats list -> aggregation functions ---
-  if (/\b(?:compute|stats|timechart|eventstats|streamstats|enrich|running)\s+[\w().,\s]+,\s*\w*$/i.test(beforeCursor)) {
+  if (
+    /\b(?:compute|stats|timechart|eventstats|streamstats|enrich|running)\s+[\w().,\s]+,\s*\w*$/i.test(
+      beforeCursor,
+    )
+  ) {
     return {
       from: absFrom,
       options: functionCompletions(AGG_FUNCTIONS, lowerWord),
@@ -319,8 +356,13 @@ async function getFieldValues(fieldName: string): Promise<Completion[]> {
 
   try {
     const raw = await fetchFieldValues(fieldName, 20);
-    const completions: Completion[] = raw.map((v) => valueCompletion(String(v.value), v.count));
-    fieldValueCache.set(fieldName, { values: completions, fetched: Date.now() });
+    const completions: Completion[] = raw.map((v) =>
+      valueCompletion(String(v.value), v.count),
+    );
+    fieldValueCache.set(fieldName, {
+      values: completions,
+      fetched: Date.now(),
+    });
     return completions;
   } catch {
     return cached?.values ?? [];

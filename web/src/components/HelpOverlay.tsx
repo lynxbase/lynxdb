@@ -1,10 +1,18 @@
 import {
   SHORTCUTS,
   formatShortcut,
-  helpOverlayOpen,
+  useOverlayStore,
+  setHelpOverlayOpen,
 } from "../utils/keyboard";
 import type { ShortcutDef } from "../utils/keyboard";
-import styles from "./HelpOverlay.module.css";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "./ui/dialog";
+import { Kbd } from "./ui/kbd";
 
 type ShortcutRow = {
   def: ShortcutDef;
@@ -43,40 +51,48 @@ const GROUPS: ShortcutGroup[] = [
   },
   {
     title: "Panels",
-    items: [
-      { def: SHORTCUTS.closePanel, label: "Close topmost panel" },
-    ],
+    items: [{ def: SHORTCUTS.closePanel, label: "Close topmost panel" }],
   },
 ];
 
 export function HelpOverlay() {
-  if (!helpOverlayOpen.value) return null;
-
-  const handleBackdropClick = () => {
-    helpOverlayOpen.value = false;
-  };
+  const helpOverlayOpen = useOverlayStore((s) => s.helpOverlayOpen);
 
   return (
-    <div class={styles.backdrop} onClick={handleBackdropClick}>
-      <div
-        class={styles.modal}
-        onClick={(e: Event) => e.stopPropagation()}
-      >
-        <div class={styles.title}>Keyboard Shortcuts</div>
-        <div class={styles.grid}>
+    <Dialog
+      open={helpOverlayOpen}
+      onOpenChange={(open) => {
+        if (!open) setHelpOverlayOpen(false);
+      }}
+    >
+      <DialogContent className="max-w-[600px] rounded-md sm:max-w-[600px]">
+        <DialogHeader>
+          <DialogTitle>Keyboard Shortcuts</DialogTitle>
+          <DialogDescription className="sr-only">
+            A list of all available keyboard shortcuts.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
           {GROUPS.map((group) => (
-            <div key={group.title} class={styles.group}>
-              <div class={styles.groupTitle}>{group.title}</div>
+            <div key={group.title} className="flex flex-col gap-1">
+              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {group.title}
+              </div>
               {group.items.map((item) => (
-                <div key={item.label} class={styles.row}>
-                  <span class={styles.label}>{item.label}</span>
-                  <kbd class={styles.kbd}>{formatShortcut(item.def)}</kbd>
+                <div
+                  key={item.label}
+                  className="flex items-center justify-between py-1"
+                >
+                  <span className="text-[0.8125rem] text-foreground">
+                    {item.label}
+                  </span>
+                  <Kbd>{formatShortcut(item.def)}</Kbd>
                 </div>
               ))}
             </div>
           ))}
         </div>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   );
 }

@@ -9,7 +9,7 @@
  * is passed as the `_token` query parameter when available.
  */
 
-import { token } from "./auth";
+import { useAuthStore } from "./auth";
 
 export interface TailEvent {
   _time: string;
@@ -45,8 +45,9 @@ export function startTail(
   });
 
   // EventSource cannot set Authorization headers; pass token as query param.
-  if (token.value) {
-    params.set("_token", token.value);
+  const tokenValue = useAuthStore.getState().token;
+  if (tokenValue) {
+    params.set("_token", tokenValue);
   }
 
   const source = new EventSource(`/api/v1/tail?${params}`);

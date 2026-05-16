@@ -1,6 +1,6 @@
-import { useState } from "preact/hooks";
+import { useState } from "react";
 import type { PipelineStage, OptimizerRule } from "../api/client";
-import styles from "./PipelineFlow.module.css";
+import { cn } from "@/lib/utils";
 
 interface PipelineFlowProps {
   stages: PipelineStage[];
@@ -38,7 +38,9 @@ function mapRulesToStages(
     if (!targets) continue;
 
     for (let i = 0; i < stages.length; i++) {
-      const cmd = stages[i].command.toUpperCase();
+      const stage = stages[i];
+      if (!stage) continue;
+      const cmd = stage.command.toUpperCase();
       if (targets.includes(cmd)) {
         const existing = result.get(i) ?? [];
         existing.push(rule);
@@ -53,26 +55,38 @@ function mapRulesToStages(
 export function PipelineFlow({ stages, optimizerRules }: PipelineFlowProps) {
   const [expandedStage, setExpandedStage] = useState<number | null>(null);
 
-  const ruleMap = optimizerRules ? mapRulesToStages(optimizerRules, stages) : new Map();
+  const ruleMap = optimizerRules
+    ? mapRulesToStages(optimizerRules, stages)
+    : new Map();
 
   const handleStageClick = (index: number) => {
     setExpandedStage(expandedStage === index ? null : index);
   };
 
   return (
-    <div>
-      <div class={styles.pipelineRow}>
+    <div aria-label="Pipeline stages">
+      <div
+        className="flex flex-row items-center overflow-x-auto py-3 px-2 relative after:content-[''] after:sticky after:right-0 after:shrink-0 after:w-6 after:h-full after:pointer-events-none after:bg-gradient-to-r after:from-transparent after:to-card"
+        role="list"
+      >
         {stages.map((stage, i) => {
           const stageRules = ruleMap.get(i);
           const isSelected = expandedStage === i;
 
           return (
-            <>
+            <div key={i} className="contents" role="listitem">
               {i > 0 && (
-                <span class={styles.arrow} aria-hidden="true">{"\u2192"}</span>
+                <span className="shrink-0 px-1.5 text-muted-foreground text-sm select-none" aria-hidden="true">
+                  {"→"}
+                </span>
               )}
               <div
-                class={`${styles.stageCard}${isSelected ? ` ${styles.stageCardActive}` : ""}`}
+                className={cn(
+                  "shrink-0 relative flex flex-col py-1.5 px-2.5 border rounded-sm bg-background cursor-pointer min-w-[80px] transition-colors duration-150 motion-reduce:transition-none focus-visible:outline-2 focus-visible:outline-ring focus-visible:outline-offset-1",
+                  isSelected
+                    ? "border-primary bg-accent"
+                    : "border-border hover:border-primary",
+                )}
                 onClick={() => handleStageClick(i)}
                 role="button"
                 tabIndex={0}
@@ -85,46 +99,53 @@ export function PipelineFlow({ stages, optimizerRules }: PipelineFlowProps) {
                 aria-expanded={isSelected}
                 aria-label={`Pipeline stage: ${stage.command}`}
               >
-                <span class={styles.stageName}>{stage.command}</span>
+                <span className="font-semibold text-xs font-mono uppercase text-foreground">
+                  {stage.command}
+                </span>
                 {stage.description && (
-                  <span class={styles.stageDesc} title={stage.description}>
+                  <span
+                    className="text-[0.6875rem] text-muted-foreground max-w-[150px] overflow-hidden text-ellipsis whitespace-nowrap"
+                    title={stage.description}
+                  >
                     {stage.description}
                   </span>
                 )}
                 {stageRules && stageRules.length > 0 && (
                   <span
-                    class={styles.optimizerBadge}
-                    title={stageRules.map((r: OptimizerRule) => r.name).join(", ")}
+                    className="absolute -top-1 -right-1 size-2 rounded-full bg-primary border border-background"
+                    title={stageRules
+                      .map((r: OptimizerRule) => r.name)
+                      .join(", ")}
                     aria-label={`Optimizer: ${stageRules.map((r: OptimizerRule) => r.name).join(", ")}`}
                   />
                 )}
               </div>
-            </>
+            </div>
           );
         })}
       </div>
 
       {expandedStage !== null && stages[expandedStage] && (
-        <div class={styles.stageDetail}>
+        <div className="py-2 px-3 border border-border rounded-sm bg-card mt-1 text-xs text-muted-foreground">
           <div>
-            <span class={styles.fieldLabel}>Fields added:</span>
-            <span class={styles.fieldList}>
+            <span className="font-semibold text-muted-foreground mr-1">Fields added:</span>
+            <span className="font-mono text-[0.6875rem]">
               {stages[expandedStage].fields_added?.length
                 ? stages[expandedStage].fields_added!.join(", ")
                 : "none"}
             </span>
           </div>
           <div>
-            <span class={styles.fieldLabel}>Fields removed:</span>
-            <span class={styles.fieldList}>
+            <span className="font-semibold text-muted-foreground mr-1">Fields removed:</span>
+            <span className="font-mono text-[0.6875rem]">
               {stages[expandedStage].fields_removed?.length
                 ? stages[expandedStage].fields_removed!.join(", ")
                 : "none"}
             </span>
           </div>
           <div>
-            <span class={styles.fieldLabel}>Fields out:</span>
-            <span class={styles.fieldList}>
+            <span className="font-semibold text-muted-foreground mr-1">Fields out:</span>
+            <span className="font-mono text-[0.6875rem]">
               {stages[expandedStage].fields_out?.length
                 ? stages[expandedStage].fields_out!.join(", ")
                 : "all"}

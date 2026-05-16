@@ -1,14 +1,17 @@
-import { useRef, useEffect, useCallback } from "preact/hooks";
+import React, { useRef, useEffect, useCallback } from "react";
 import { Compartment, EditorState } from "@codemirror/state";
 import { EditorView, keymap, placeholder, lineNumbers } from "@codemirror/view";
 import { defaultKeymap } from "@codemirror/commands";
 import { acceptCompletion, completionStatus } from "@codemirror/autocomplete";
 import { linter } from "@codemirror/lint";
 import { lynxflowLanguage } from "./lynxflow-lang";
-import { lynxTheme, lynxHighlighting } from "./theme";
+import { lynxThemeFor, lynxHighlighting } from "./theme";
 import { lynxflowAutocompletion } from "./autocomplete";
-import { navigateHistory, resetHistoryNavigation } from "../stores/queryHistory";
-import styles from "./QueryEditor.module.css";
+import {
+  navigateHistory,
+  resetHistoryNavigation,
+} from "../stores/queryHistory";
+import { useThemeStore } from "../stores/ui";
 
 interface QueryEditorProps {
   value: string;
@@ -25,8 +28,15 @@ export interface QueryEditorHandle {
 
 // Compartment for dynamically toggling line numbers based on line count
 const lineNumberCompartment = new Compartment();
+// Compartment for swapping the light/dark editor theme on theme change
+const themeCompartment = new Compartment();
 
-export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEditorProps) {
+export function QueryEditor({
+  value,
+  onChange,
+  onExecute,
+  editorRef,
+}: QueryEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -49,13 +59,15 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
   useEffect(() => {
     if (!containerRef.current) return;
 
-    const runQuery = keymap.of([{
-      key: "Mod-Enter",
-      run: () => {
-        onExecuteRef.current();
-        return true;
+    const runQuery = keymap.of([
+      {
+        key: "Mod-Enter",
+        run: () => {
+          onExecuteRef.current();
+          return true;
+        },
       },
-    }]);
+    ]);
 
     const state = EditorState.create({
       doc: value,
@@ -63,17 +75,21 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
         runQuery,
         keymap.of(defaultKeymap),
         lynxflowLanguage,
-        lynxTheme,
+        themeCompartment.of(
+          lynxThemeFor(useThemeStore.getState().theme === "dark"),
+        ),
         lynxHighlighting,
         lynxflowAutocompletion(),
         // Shift+Enter for newline: placed AFTER autocomplete to avoid Pitfall 5
-        keymap.of([{
-          key: "Shift-Enter",
-          run: (view) => {
-            view.dispatch(view.state.replaceSelection("\n"));
-            return true;
+        keymap.of([
+          {
+            key: "Shift-Enter",
+            run: (view) => {
+              view.dispatch(view.state.replaceSelection("\n"));
+              return true;
+            },
           },
-        }]),
+        ]),
         // Ctrl+Up/Down for query history navigation
         keymap.of([
           {
@@ -83,7 +99,11 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
               if (result !== null) {
                 isHistoryNavigationRef.current = true;
                 view.dispatch({
-                  changes: { from: 0, to: view.state.doc.length, insert: result },
+                  changes: {
+                    from: 0,
+                    to: view.state.doc.length,
+                    insert: result,
+                  },
                 });
                 isHistoryNavigationRef.current = false;
               }
@@ -97,7 +117,11 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
               if (result !== null) {
                 isHistoryNavigationRef.current = true;
                 view.dispatch({
-                  changes: { from: 0, to: view.state.doc.length, insert: result },
+                  changes: {
+                    from: 0,
+                    to: view.state.doc.length,
+                    insert: result,
+                  },
                 });
                 isHistoryNavigationRef.current = false;
               }
@@ -108,7 +132,9 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
         // No-op linter sets up diagnostic display infrastructure (Pitfall 6).
         // Actual diagnostics are dispatched via setDiagnostics from the parent.
         linter(() => [], { delay: 0 }),
-        placeholder('from main | where level="error" | group by _source compute count()'),
+        placeholder(
+          'from main | where level="error" | group by _source compute count()',
+        ),
         // Dynamic line numbers via Compartment: starts with no line numbers (single line)
         lineNumberCompartment.of([]),
         EditorView.updateListener.of((update) => {
@@ -128,33 +154,37 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
               hasLineNumbersRef.current = shouldHaveNumbers;
               update.view.dispatch({
                 effects: lineNumberCompartment.reconfigure(
-                  shouldHaveNumbers ? lineNumbers() : []
+                  shouldHaveNumbers ? lineNumbers() : [],
                 ),
               });
             }
           }
         }),
         // Enter: accept completion if open, otherwise run query
-        keymap.of([{
-          key: "Enter",
-          run: (view) => {
-            if (completionStatus(view.state) === "active") {
-              return acceptCompletion(view);
-            }
-            onExecuteRef.current();
-            return true;
+        keymap.of([
+          {
+            key: "Enter",
+            run: (view) => {
+              if (completionStatus(view.state) === "active") {
+                return acceptCompletion(view);
+              }
+              onExecuteRef.current();
+              return true;
+            },
           },
-        }]),
+        ]),
         // Tab accepts the current completion when the panel is open
-        keymap.of([{
-          key: "Tab",
-          run: (view) => {
-            if (completionStatus(view.state) === "active") {
-              return acceptCompletion(view);
-            }
-            return false;
+        keymap.of([
+          {
+            key: "Tab",
+            run: (view) => {
+              if (completionStatus(view.state) === "active") {
+                return acceptCompletion(view);
+              }
+              return false;
+            },
           },
-        }]),
+        ]),
         EditorView.contentAttributes.of({ "aria-label": "Query editor" }),
       ],
     });
@@ -200,17 +230,30 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
         hasLineNumbersRef.current = shouldHaveNumbers;
         view.dispatch({
           effects: lineNumberCompartment.reconfigure(
-            shouldHaveNumbers ? lineNumbers() : []
+            shouldHaveNumbers ? lineNumbers() : [],
           ),
         });
       }
     }
   }, [value]);
 
+  // Swap the editor theme when the app theme changes, preserving editor
+  // state (scroll/selection) by reconfiguring the compartment.
+  useEffect(() => {
+    const sync = (dark: boolean) => {
+      viewRef.current?.dispatch({
+        effects: themeCompartment.reconfigure(lynxThemeFor(dark)),
+      });
+    };
+    return useThemeStore.subscribe((state, prev) => {
+      if (state.theme !== prev.theme) sync(state.theme === "dark");
+    });
+  }, []);
+
   // Drag handle pointer event handlers
-  const handlePointerDown = useCallback((e: PointerEvent) => {
+  const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
-    const target = e.currentTarget as HTMLElement;
+    const target = e.currentTarget;
     target.setPointerCapture(e.pointerId);
 
     // Capture the current height of the wrap element at drag start
@@ -222,7 +265,10 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
     const onMove = (moveEvent: PointerEvent) => {
       const deltaY = moveEvent.clientY - startY;
       const maxHeight = window.innerHeight * 0.5; // 50vh cap
-      const newHeight = Math.max(32, Math.min(dragStartHeightRef.current + deltaY, maxHeight));
+      const newHeight = Math.max(
+        32,
+        Math.min(dragStartHeightRef.current + deltaY, maxHeight),
+      );
       manualHeightRef.current = newHeight;
       if (wrapRef.current) {
         wrapRef.current.style.height = `${newHeight}px`;
@@ -239,12 +285,15 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
   }, []);
 
   return (
-    <div class={styles.editorContainer}>
-      <div ref={wrapRef} class={styles.editorWrap}>
+    <div className="flex flex-1 flex-col relative min-w-0">
+      <div
+        ref={wrapRef}
+        className="min-h-8 border border-border rounded-sm overflow-hidden transition-colors duration-150 focus-within:border-primary motion-reduce:transition-none"
+      >
         <div ref={containerRef} />
       </div>
       <div
-        class={styles.dragHandle}
+        className="absolute bottom-0 inset-x-0 h-1 cursor-ns-resize bg-transparent z-[2] transition-colors duration-150 hover:bg-accent motion-reduce:transition-none"
         onPointerDown={handlePointerDown}
         role="separator"
         aria-orientation="horizontal"
@@ -253,3 +302,6 @@ export function QueryEditor({ value, onChange, onExecute, editorRef }: QueryEdit
     </div>
   );
 }
+
+// Default export so the heavy CodeMirror bundle can be lazy-loaded.
+export default QueryEditor;

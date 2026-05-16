@@ -1,9 +1,10 @@
-import { useState } from "preact/hooks";
+import { useState } from "react";
 import { PipelineFlow } from "./PipelineFlow";
 import type { ExplainResult, QueryStats } from "../api/client";
 import type { DetailedStats } from "../api/client";
 import { formatMs } from "../utils/format";
-import styles from "./ExplainInspector.module.css";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "./ui/tabs";
+import { Badge } from "./ui/badge";
 
 interface ExplainInspectorProps {
   explain: ExplainResult;
@@ -14,9 +15,7 @@ type TabId = "pipeline" | "optimizer" | "scan" | "timing";
 
 /** Format a rule name: replace underscores with spaces, title case. */
 function formatRuleName(name: string): string {
-  return name
-    .replace(/_/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  return name.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
 export function ExplainInspector({ explain, stats }: ExplainInspectorProps) {
@@ -27,69 +26,62 @@ export function ExplainInspector({ explain, stats }: ExplainInspectorProps) {
 
   const ds = stats?.stats as DetailedStats | undefined;
 
-  const tabs: { id: TabId; label: string }[] = [
-    { id: "pipeline", label: "Pipeline" },
-    { id: "optimizer", label: "Optimizer Rules" },
-    { id: "scan", label: "Scan Plan" },
-    { id: "timing", label: "Timing" },
-  ];
-
   return (
-    <div class={styles.inspector}>
-      <div class={styles.tabBar}>
-        {tabs.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            class={`${styles.tab}${activeTab === tab.id ? ` ${styles.tabActive}` : ""}`}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+    <div className="mb-1 max-h-[300px] overflow-y-auto rounded-md border border-border bg-secondary animate-in slide-in-from-top-2 duration-150">
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as TabId)} className="gap-0">
+        <TabsList variant="line" className="sticky top-0 z-[1] bg-secondary h-8 rounded-none border-b border-border px-1">
+          <TabsTrigger value="pipeline" className="text-xs h-7 px-2">Pipeline</TabsTrigger>
+          <TabsTrigger value="optimizer" className="text-xs h-7 px-2">Optimizer Rules</TabsTrigger>
+          <TabsTrigger value="scan" className="text-xs h-7 px-2">Scan Plan</TabsTrigger>
+          <TabsTrigger value="timing" className="text-xs h-7 px-2">Timing</TabsTrigger>
+        </TabsList>
 
-      <div class={styles.tabContent}>
-        {activeTab === "pipeline" && (
+        <TabsContent value="pipeline" className="p-2 m-0">
           <PipelineFlow
             stages={parsed.pipeline}
             optimizerRules={parsed.optimizer_rules}
           />
-        )}
+        </TabsContent>
 
-        {activeTab === "optimizer" && (
+        <TabsContent value="optimizer" className="p-2 m-0">
           <OptimizerRulesTab rules={parsed.optimizer_rules} />
-        )}
+        </TabsContent>
 
-        {activeTab === "scan" && (
+        <TabsContent value="scan" className="p-2 m-0">
           <ScanPlanTab parsed={parsed} />
-        )}
+        </TabsContent>
 
-        {activeTab === "timing" && (
+        <TabsContent value="timing" className="p-2 m-0">
           <TimingTab parsed={parsed} ds={ds} />
-        )}
-      </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }
 
 // Optimizer Rules tab
 
-function OptimizerRulesTab({ rules }: { rules?: { name: string; description?: string; count: number }[] }) {
+function OptimizerRulesTab({
+  rules,
+}: {
+  rules?: { name: string; description?: string; count: number }[];
+}) {
   if (!rules || rules.length === 0) {
-    return <div class={styles.emptyState}>No optimizer rules applied</div>;
+    return <div className="text-xs text-muted-foreground py-2">No optimizer rules applied</div>;
   }
 
   return (
     <div>
       {rules.map((rule) => (
-        <div key={rule.name} class={styles.ruleItem}>
-          <span class={styles.ruleName}>{formatRuleName(rule.name)}</span>
+        <div key={rule.name} className="flex items-baseline gap-2 py-1 border-b border-border last:border-0">
+          <span className="font-semibold text-xs font-mono text-foreground">{formatRuleName(rule.name)}</span>
           {rule.description && (
-            <span class={styles.ruleDesc}>{rule.description}</span>
+            <span className="text-[0.6875rem] text-muted-foreground flex-1">{rule.description}</span>
           )}
           {rule.count > 1 && (
-            <span class={styles.ruleCount}>x{rule.count}</span>
+            <Badge variant="secondary" className="text-[0.625rem] px-1 py-0 h-auto text-primary">
+              x{rule.count}
+            </Badge>
           )}
         </div>
       ))}
@@ -99,7 +91,11 @@ function OptimizerRulesTab({ rules }: { rules?: { name: string; description?: st
 
 // Scan Plan tab
 
-function ScanPlanTab({ parsed }: { parsed: NonNullable<ExplainResult["parsed"]> }) {
+function ScanPlanTab({
+  parsed,
+}: {
+  parsed: NonNullable<ExplainResult["parsed"]>;
+}) {
   const rows: { label: string; value: string }[] = [];
 
   if (parsed.source_scope) {
@@ -114,7 +110,9 @@ function ScanPlanTab({ parsed }: { parsed: NonNullable<ExplainResult["parsed"]> 
 
   rows.push({
     label: "Search terms",
-    value: parsed.search_terms?.length ? parsed.search_terms.join(", ") : "none",
+    value: parsed.search_terms?.length
+      ? parsed.search_terms.join(", ")
+      : "none",
   });
 
   rows.push({
@@ -147,9 +145,9 @@ function ScanPlanTab({ parsed }: { parsed: NonNullable<ExplainResult["parsed"]> 
   return (
     <div>
       {rows.map((row) => (
-        <div key={row.label} class={styles.scanRow}>
-          <span class={styles.scanLabel}>{row.label}</span>
-          <span class={styles.scanValue}>{row.value}</span>
+        <div key={row.label} className="flex gap-2 py-1 text-xs">
+          <span className="font-semibold text-muted-foreground min-w-[6.25rem] shrink-0">{row.label}</span>
+          <span className="text-muted-foreground font-mono text-[0.6875rem]">{row.value}</span>
         </div>
       ))}
     </div>
@@ -167,13 +165,16 @@ function TimingTab({
 }) {
   const entries: { label: string; ms: number }[] = [];
 
-  if (parsed.parse_ms != null) entries.push({ label: "Parse", ms: parsed.parse_ms });
-  if (parsed.optimize_ms != null) entries.push({ label: "Optimize", ms: parsed.optimize_ms });
+  if (parsed.parse_ms != null)
+    entries.push({ label: "Parse", ms: parsed.parse_ms });
+  if (parsed.optimize_ms != null)
+    entries.push({ label: "Optimize", ms: parsed.optimize_ms });
   if (ds?.scan_ms != null) entries.push({ label: "Scan", ms: ds.scan_ms });
-  if (ds?.pipeline_ms != null) entries.push({ label: "Pipeline", ms: ds.pipeline_ms });
+  if (ds?.pipeline_ms != null)
+    entries.push({ label: "Pipeline", ms: ds.pipeline_ms });
 
   if (entries.length === 0) {
-    return <div class={styles.emptyState}>Timing data not available</div>;
+    return <div className="text-xs text-muted-foreground py-2">Timing data not available</div>;
   }
 
   const maxMs = Math.max(...entries.map((e) => e.ms), 1);
@@ -183,13 +184,13 @@ function TimingTab({
       {entries.map((entry) => {
         const widthPercent = Math.max((entry.ms / maxMs) * 100, 2);
         return (
-          <div key={entry.label} class={styles.timingRow}>
-            <span class={styles.timingLabel}>{entry.label}</span>
+          <div key={entry.label} className="flex items-center gap-2 py-1">
+            <span className="text-xs text-muted-foreground min-w-[4.375rem]">{entry.label}</span>
             <div
-              class={styles.timingBar}
+              className="h-1.5 rounded-full bg-primary transition-[width] duration-300"
               style={{ width: `${widthPercent}%` }}
             />
-            <span class={styles.timingValue}>{formatMs(entry.ms)}</span>
+            <span className="text-[0.6875rem] text-muted-foreground font-mono">{formatMs(entry.ms)}</span>
           </div>
         );
       })}

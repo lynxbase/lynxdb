@@ -91,6 +91,73 @@ jobs:
       - name: Check shipper docs
         run: make docs-check-shippers
 
+  web:
+    name: Web UI Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install web dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        working-directory: web
+        run: bun run typecheck
+
+      - name: Lint
+        working-directory: web
+        run: bun run lint
+
+      - name: Unit tests
+        working-directory: web
+        run: bun run test
+
+      - name: Build
+        working-directory: web
+        run: bun run build
+
+      - name: Bundle budget
+        working-directory: web
+        run: bun run bundle:check
+
+  web-smoke:
+    name: Web UI Smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install web dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+
+      - name: Install Playwright browser
+        working-directory: web
+        run: bunx playwright install --with-deps chromium
+
+      - name: Run smoke suite
+        working-directory: web
+        run: bun run e2e
+        env:
+          CI: "true"
+
   test-unit:
     name: Unit Tests (${{ matrix.os }})
     needs: build

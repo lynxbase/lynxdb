@@ -1,6 +1,13 @@
-import { useState, useEffect, useCallback, useRef } from "preact/hooks";
-import { Table2, List, Download } from "lucide-preact";
-import styles from "./TableToolbar.module.css";
+import { useCallback } from "react";
+import { Table2, List, Download } from "lucide-react";
+import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
+import { Button } from "./ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from "./ui/dropdown-menu";
 
 interface TableToolbarProps {
   viewMode: "table" | "list";
@@ -19,105 +26,57 @@ export function TableToolbar({
   totalCount,
   pageCount,
 }: TableToolbarProps) {
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  // Close dropdown on outside click
-  useEffect(() => {
-    if (!dropdownOpen) return;
-    function onPointerDown(e: PointerEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setDropdownOpen(false);
-      }
-    }
-    document.addEventListener("pointerdown", onPointerDown, true);
-    return () => document.removeEventListener("pointerdown", onPointerDown, true);
-  }, [dropdownOpen]);
-
   const handleExportClick = useCallback(
     (format: "csv" | "json", scope: "page" | "all") => {
-      setDropdownOpen(false);
       onExport(format, scope);
     },
     [onExport],
   );
 
   return (
-    <div class={styles.toolbar}>
-      <div class={styles.left}>
-        {/* View mode segmented control */}
-        <div class={styles.segmented}>
-          <button
-            type="button"
-            class={`${styles.segBtn} ${viewMode === "table" ? styles.segBtnActive : ""}`}
-            onClick={() => onViewModeChange("table")}
-            title="Table view"
-            aria-label="Table view"
-          >
-            <Table2 size={14} />
-          </button>
-          <button
-            type="button"
-            class={`${styles.segBtn} ${viewMode === "list" ? styles.segBtnActive : ""}`}
-            onClick={() => onViewModeChange("list")}
-            title="List view"
-            aria-label="List view"
-          >
-            <List size={14} />
-          </button>
-        </div>
+    <div className="flex h-8 shrink-0 items-center justify-between gap-2 border-b border-border bg-secondary px-3">
+      <div className="flex items-center gap-2">
+        <ToggleGroup
+          type="single"
+          variant="outline"
+          size="sm"
+          value={viewMode}
+          onValueChange={(val) => {
+            if (val === "table" || val === "list") onViewModeChange(val);
+          }}
+        >
+          <ToggleGroupItem value="table" aria-label="Table view" className="h-6 w-7 px-0">
+            <Table2 className="size-3.5" />
+          </ToggleGroupItem>
+          <ToggleGroupItem value="list" aria-label="List view" className="h-6 w-7 px-0">
+            <List className="size-3.5" />
+          </ToggleGroupItem>
+        </ToggleGroup>
       </div>
 
-      <div class={styles.right}>
-        {/* Export dropdown */}
-        <div class={styles.exportWrapper} ref={dropdownRef}>
-          <button
-            type="button"
-            class={styles.exportBtn}
-            onClick={() => setDropdownOpen(!dropdownOpen)}
-            aria-haspopup="menu"
-            aria-expanded={dropdownOpen}
-          >
-            <Download size={14} />
-            Export
-          </button>
-          {dropdownOpen && (
-            <div class={styles.exportDropdown} role="menu">
-              <button
-                type="button"
-                class={styles.exportOption}
-                role="menuitem"
-                onClick={() => handleExportClick("csv", "page")}
-              >
-                CSV - Current page ({fmtNum(pageCount)} rows)
-              </button>
-              <button
-                type="button"
-                class={styles.exportOption}
-                role="menuitem"
-                onClick={() => handleExportClick("csv", "all")}
-              >
-                CSV - All results ({fmtNum(totalCount)} rows)
-              </button>
-              <button
-                type="button"
-                class={styles.exportOption}
-                role="menuitem"
-                onClick={() => handleExportClick("json", "page")}
-              >
-                JSON - Current page ({fmtNum(pageCount)} rows)
-              </button>
-              <button
-                type="button"
-                class={styles.exportOption}
-                role="menuitem"
-                onClick={() => handleExportClick("json", "all")}
-              >
-                JSON - All results ({fmtNum(totalCount)} rows)
-              </button>
-            </div>
-          )}
-        </div>
+      <div className="flex items-center gap-2">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="xs" className="gap-1 text-muted-foreground">
+              <Download className="size-3.5" />
+              Export
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => handleExportClick("csv", "page")}>
+              CSV - Current page ({fmtNum(pageCount)} rows)
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleExportClick("csv", "all")}>
+              CSV - All results ({fmtNum(totalCount)} rows)
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleExportClick("json", "page")}>
+              JSON - Current page ({fmtNum(pageCount)} rows)
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleExportClick("json", "all")}>
+              JSON - All results ({fmtNum(totalCount)} rows)
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );

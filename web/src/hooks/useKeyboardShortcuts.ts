@@ -1,5 +1,9 @@
-import { useEffect, useRef } from "preact/hooks";
-import { paletteOpen, helpOverlayOpen } from "../utils/keyboard";
+import { useLayoutEffect, useRef } from "react";
+import {
+  useOverlayStore,
+  setPaletteOpen,
+  setHelpOverlayOpen,
+} from "../utils/keyboard";
 
 interface Shortcuts {
   onFocusEditor?: () => void;
@@ -38,7 +42,7 @@ export function useKeyboardShortcuts(shortcuts: Shortcuts): void {
   const ref = useRef(shortcuts);
   ref.current = shortcuts;
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     function handler(e: KeyboardEvent) {
       const s = ref.current;
       const modKey = e.ctrlKey || e.metaKey;
@@ -88,12 +92,12 @@ export function useKeyboardShortcuts(shortcuts: Shortcuts): void {
 
       // Escape -> layered close: palette > help overlay > app panels
       if (e.key === "Escape") {
-        if (paletteOpen.value) {
-          paletteOpen.value = false;
+        if (useOverlayStore.getState().paletteOpen) {
+          setPaletteOpen(false);
           return;
         }
-        if (helpOverlayOpen.value) {
-          helpOverlayOpen.value = false;
+        if (useOverlayStore.getState().helpOverlayOpen) {
+          setHelpOverlayOpen(false);
           return;
         }
         s.onClosePanel?.();

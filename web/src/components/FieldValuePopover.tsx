@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "preact/hooks";
+import { useState, useEffect, useCallback } from "react";
 import { fetchFieldValues } from "../api/client";
 import type { FieldValue } from "../api/client";
-import styles from "./FieldValuePopover.module.css";
+import { Skeleton } from "./ui/skeleton";
 
 interface FieldValuePopoverProps {
   fieldName: string;
@@ -45,7 +45,6 @@ export function FieldValuePopover({
   const [values, setValues] = useState<FieldValue[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
-  const popoverRef = useRef<HTMLDivElement>(null);
 
   // Fetch top 10 values on mount
   useEffect(() => {
@@ -65,7 +64,9 @@ export function FieldValuePopover({
   // Click-outside detection
   useEffect(() => {
     function handleClick(e: MouseEvent) {
-      if (popoverRef.current && !popoverRef.current.contains(e.target as Node)) {
+      const target = e.target as Node;
+      const el = document.querySelector("[data-field-popover]");
+      if (el && !el.contains(target)) {
         onClose();
       }
     }
@@ -105,54 +106,64 @@ export function FieldValuePopover({
   );
 
   const pos = computePosition(anchorRect);
-  const maxCount = values.length > 0 ? Math.max(...values.map((v) => v.count)) : 1;
+  const maxCount =
+    values.length > 0 ? Math.max(...values.map((v) => v.count)) : 1;
 
   return (
     <div
-      ref={popoverRef}
-      class={styles.popover}
+      data-field-popover
+      className="fixed z-50 w-[280px] max-h-[360px] overflow-y-auto rounded-md border border-border bg-popover py-2 text-popover-foreground"
       style={{
         top: `${pos.top}px`,
         left: `${pos.left}px`,
       }}
     >
-      <div class={styles.popoverHeader}>
-        {fieldName}
-        <div class={styles.popoverSubtitle}>Top 10 values</div>
+      <div className="px-3 pb-2 border-b border-border">
+        <div className="text-[0.8125rem] font-medium text-foreground">{fieldName}</div>
+        <div className="text-[0.6875rem] text-muted-foreground">Top 10 values</div>
       </div>
 
       {loading && (
-        <div class={styles.loadingState}>Loading...</div>
+        <div className="flex flex-col gap-2 p-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <Skeleton key={i} className="h-4 w-full" />
+          ))}
+        </div>
       )}
 
       {fetchError && (
-        <div class={styles.emptyState}>Failed to load values</div>
+        <div className="p-4 text-center text-xs text-muted-foreground">Failed to load values</div>
       )}
 
       {!loading && !fetchError && values.length === 0 && (
-        <div class={styles.emptyState}>No values found</div>
+        <div className="p-4 text-center text-xs text-muted-foreground">No values found</div>
       )}
 
       {!loading && !fetchError && values.length > 0 && (
-        <div class={styles.valuesList}>
+        <div className="py-1">
           {values.map((v) => {
             const pct = maxCount > 0 ? (v.count / maxCount) * 100 : 0;
             return (
-              <div class={styles.valueRow} key={v.value}>
-                <span class={styles.valueName} title={v.value}>
+              <div className="flex items-center gap-1.5 px-3 py-0.5 hover:bg-accent" key={v.value}>
+                <span
+                  className="shrink-0 max-w-[7.5rem] truncate font-mono text-xs text-foreground"
+                  title={v.value}
+                >
                   {v.value}
                 </span>
-                <div class={styles.valueBarContainer}>
+                <div className="flex-1 h-1.5 rounded-full bg-muted overflow-hidden">
                   <div
-                    class={styles.valueBar}
+                    className="h-full rounded-full bg-primary/40"
                     style={{ width: `${pct}%` }}
                   />
                 </div>
-                <span class={styles.valueCount}>{v.count}</span>
-                <div class={styles.filterBtns}>
+                <span className="min-w-[1.875rem] text-right text-[0.6875rem] text-muted-foreground whitespace-nowrap">
+                  {v.count}
+                </span>
+                <div className="flex gap-0.5 shrink-0">
                   <button
                     type="button"
-                    class={styles.addBtn}
+                    className="inline-flex size-5 items-center justify-center rounded-sm text-xs font-semibold text-primary hover:bg-primary/10 cursor-pointer"
                     onClick={() => handleInclude(v.value)}
                     title={`Add filter: ${fieldName}="${v.value}"`}
                     aria-label={`Include ${v.value}`}
@@ -161,7 +172,7 @@ export function FieldValuePopover({
                   </button>
                   <button
                     type="button"
-                    class={styles.excludeBtn}
+                    className="inline-flex size-5 items-center justify-center rounded-sm text-xs font-semibold text-destructive hover:bg-destructive/10 cursor-pointer"
                     onClick={() => handleExclude(v.value)}
                     title={`Exclude: ${fieldName}!="${v.value}"`}
                     aria-label={`Exclude ${v.value}`}

@@ -1,10 +1,10 @@
-import { useRef, useEffect, useState } from "preact/hooks";
-import { batch } from "@preact/signals";
-import { route } from "preact-router";
-import type { ComponentType } from "preact";
+import { useCallback } from "react";
+import { useNavigate } from "react-router";
+import type { ComponentType } from "react";
 import {
   Search,
   BookmarkCheck,
+  Activity,
   Settings,
   Play,
   Repeat,
@@ -13,62 +13,49 @@ import {
   PanelLeftClose,
   Keyboard,
   Clock,
-} from "lucide-preact";
-import { toggleTheme, theme } from "../stores/ui";
-import { queryHistory } from "../stores/queryHistory";
+} from "lucide-react";
+import { useThemeStore, toggleTheme } from "../stores/ui";
+import { useQueryHistoryStore } from "../stores/queryHistory";
 import {
   SHORTCUTS,
   formatShortcut,
-  paletteOpen,
-  helpOverlayOpen,
-  paletteQuery,
+  useOverlayStore,
+  setPaletteOpen,
+  setHelpOverlayOpen,
+  setPaletteQuery,
 } from "../utils/keyboard";
-import { uiPath } from "../utils/base";
 import type { ShortcutDef } from "../utils/keyboard";
-import styles from "./CommandPalette.module.css";
+import {
+  CommandDialog,
+  CommandInput,
+  CommandList,
+  CommandEmpty,
+  CommandGroup,
+  CommandItem,
+  CommandShortcut,
+} from "./ui/command";
 
 type PaletteItem = {
   id: string;
   label: string;
   section: "navigation" | "commands" | "recent";
-  icon: ComponentType<{ size?: string | number }>;
+  icon: ComponentType<{ size?: string | number; className?: string }>;
   shortcut?: ShortcutDef;
   action: () => void;
 };
 
-const SECTION_LABELS: Record<PaletteItem["section"], string> = {
-  navigation: "Navigation",
-  commands: "Commands",
-  recent: "Recent Queries",
-};
-
-const SECTION_ORDER: PaletteItem["section"][] = ["navigation", "commands", "recent"];
-
-function filterItems(items: PaletteItem[], q: string): PaletteItem[] {
-  if (!q.trim()) return items;
-  const lower = q.toLowerCase();
-  return items
-    .map((item) => {
-      const label = item.label.toLowerCase();
-      if (label.startsWith(lower)) return { item, score: 3 };
-      if (label.split(/\s+/).some((w) => w.startsWith(lower)))
-        return { item, score: 2 };
-      if (label.includes(lower)) return { item, score: 1 };
-      return null;
-    })
-    .filter((x): x is { item: PaletteItem; score: number } => x !== null)
-    .sort((a, b) => b.score - a.score)
-    .map((x) => x.item);
-}
-
 function truncate(text: string, max: number): string {
-  return text.length > max ? text.slice(0, max) + "\u2026" : text;
+  return text.length > max ? text.slice(0, max) + "…" : text;
 }
 
 export function CommandPalette() {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [search, setSearch] = useState("");
-  const [selected, setSelected] = useState(0);
+  const navigate = useNavigate();
+
+  const paletteOpen = useOverlayStore((s) => s.paletteOpen);
+  const theme = useThemeStore((s) => s.theme);
+  const queryHistory = useQueryHistoryStore((s) => s.queryHistory);
+
+  const close = useCallback(() => setPaletteOpen(false), []);
 
   const navigationItems: PaletteItem[] = [
     {
@@ -77,21 +64,28 @@ export function CommandPalette() {
       section: "navigation",
       icon: Search,
       shortcut: SHORTCUTS.focusSearch,
-      action: () => route(uiPath("/")),
+      action: () => navigate("/"),
     },
     {
       id: "nav-queries",
       label: "Saved Queries",
       section: "navigation",
       icon: BookmarkCheck,
-      action: () => route(uiPath("/queries")),
+      action: () => navigate("/queries"),
+    },
+    {
+      id: "nav-status",
+      label: "Status",
+      section: "navigation",
+      icon: Activity,
+      action: () => navigate("/status"),
     },
     {
       id: "nav-settings",
       label: "Settings",
       section: "navigation",
       icon: Settings,
-      action: () => route(uiPath("/settings")),
+      action: () => navigate("/settings"),
     },
   ];
 
@@ -102,7 +96,7 @@ export function CommandPalette() {
       section: "commands",
       icon: Play,
       shortcut: SHORTCUTS.runQuery,
-      action: () => route(uiPath("/")),
+      action: () => navigate("/"),
     },
     {
       id: "cmd-tail",
@@ -110,13 +104,13 @@ export function CommandPalette() {
       section: "commands",
       icon: Repeat,
       shortcut: SHORTCUTS.toggleTail,
-      action: () => route(uiPath("/")),
+      action: () => navigate("/"),
     },
     {
       id: "cmd-theme",
-      label: `Toggle theme (${theme.value === "light" ? "dark" : "light"})`,
+      label: `Toggle theme (${theme === "light" ? "dark" : "light"})`,
       section: "commands",
-      icon: theme.value === "light" ? Moon : Sun,
+      icon: theme === "light" ? Moon : Sun,
       action: () => toggleTheme(),
     },
     {
@@ -125,7 +119,7 @@ export function CommandPalette() {
       section: "commands",
       icon: PanelLeftClose,
       shortcut: SHORTCUTS.toggleSidebar,
-      action: () => route(uiPath("/")),
+      action: () => navigate("/"),
     },
     {
       id: "cmd-help",
@@ -134,140 +128,103 @@ export function CommandPalette() {
       icon: Keyboard,
       shortcut: SHORTCUTS.openHelp,
       action: () => {
-        batch(() => {
-          paletteOpen.value = false;
-          helpOverlayOpen.value = true;
-        });
+        setPaletteOpen(false);
+        setHelpOverlayOpen(true);
       },
     },
   ];
 
-  const recentItems: PaletteItem[] = queryHistory.value.slice(0, 10).map(
-    (q, i) => ({
+  const recentItems: PaletteItem[] = queryHistory
+    .slice(0, 10)
+    .map((q: string, i: number) => ({
       id: `recent-${i}`,
       label: truncate(q, 60),
       section: "recent" as const,
       icon: Clock,
       action: () => {
-        paletteQuery.value = q;
-        route(uiPath("/"));
+        setPaletteQuery(q);
+        navigate("/");
       },
-    }),
+    }));
+
+  const handleSelect = useCallback(
+    (id: string) => {
+      const allItems = [...navigationItems, ...commandItems, ...recentItems];
+      const item = allItems.find((i) => i.id === id);
+      if (item) {
+        item.action();
+        close();
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [theme, queryHistory, close],
   );
 
-  const allItems = [...navigationItems, ...commandItems, ...recentItems];
-  const filtered = filterItems(allItems, search);
-
-  // Reset state on open
-  useEffect(() => {
-    if (paletteOpen.value) {
-      setSearch("");
-      setSelected(0);
-      // Auto-focus the input after rendering
-      requestAnimationFrame(() => {
-        inputRef.current?.focus();
-      });
-    }
-  }, [paletteOpen.value]);
-
-  // Clamp selected index when filtered list changes
-  useEffect(() => {
-    if (selected >= filtered.length) {
-      setSelected(Math.max(0, filtered.length - 1));
-    }
-  }, [filtered.length, selected]);
-
-  if (!paletteOpen.value) return null;
-
-  const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "ArrowDown") {
-      e.preventDefault();
-      setSelected((prev) => (prev + 1) % filtered.length);
-    } else if (e.key === "ArrowUp") {
-      e.preventDefault();
-      setSelected((prev) => (prev - 1 + filtered.length) % filtered.length);
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (filtered[selected]) {
-        filtered[selected].action();
-        paletteOpen.value = false;
-      }
-    } else if (e.key === "Escape") {
-      e.preventDefault();
-      paletteOpen.value = false;
-    }
-  };
-
-  const handleBackdropClick = () => {
-    paletteOpen.value = false;
-  };
-
-  // Group filtered items by section (preserving section order)
-  const grouped = SECTION_ORDER.map((section) => ({
-    section,
-    label: SECTION_LABELS[section],
-    items: filtered.filter((item) => item.section === section),
-  })).filter((g) => g.items.length > 0);
-
-  // Compute flat index offset for each group
-  let flatIndex = 0;
-
   return (
-    <div class={styles.backdrop} onClick={handleBackdropClick}>
-      <div
-        class={styles.palette}
-        onClick={(e: Event) => e.stopPropagation()}
-        onKeyDown={handleKeyDown}
-      >
-        <input
-          ref={inputRef}
-          type="text"
-          class={styles.searchInput}
-          placeholder="Type a command..."
-          value={search}
-          onInput={(e: Event) => {
-            setSearch((e.target as HTMLInputElement).value);
-            setSelected(0);
-          }}
-        />
-        <div class={styles.results}>
-          {filtered.length === 0 && (
-            <div class={styles.empty}>No matches</div>
-          )}
-          {grouped.map((group) => {
-            const groupStartIndex = flatIndex;
-            const groupItems = group.items.map((item, i) => {
-              const itemIndex = groupStartIndex + i;
-              return (
-                <div
-                  key={item.id}
-                  class={`${styles.item}${itemIndex === selected ? ` ${styles.selected}` : ""}`}
-                  onClick={() => {
-                    item.action();
-                    paletteOpen.value = false;
-                  }}
-                  onMouseEnter={() => setSelected(itemIndex)}
-                >
-                  <item.icon size={16} />
-                  <span class={styles.itemLabel}>{item.label}</span>
-                  {item.shortcut && (
-                    <span class={styles.itemShortcut}>
-                      {formatShortcut(item.shortcut)}
-                    </span>
-                  )}
-                </div>
-              );
-            });
-            flatIndex += group.items.length;
-            return (
-              <div key={group.section}>
-                <div class={styles.sectionHeader}>{group.label}</div>
-                {groupItems}
-              </div>
-            );
-          })}
-        </div>
-      </div>
-    </div>
+    <CommandDialog
+      open={paletteOpen}
+      onOpenChange={(open) => {
+        if (!open) close();
+      }}
+      title="Command Palette"
+      description="Search for a command to run..."
+      showCloseButton={false}
+    >
+      <CommandInput placeholder="Type a command..." />
+      <CommandList>
+        <CommandEmpty>No matches</CommandEmpty>
+
+        <CommandGroup heading="Navigation">
+          {navigationItems.map((item) => (
+            <CommandItem
+              key={item.id}
+              value={item.id + " " + item.label}
+              onSelect={() => handleSelect(item.id)}
+            >
+              <item.icon className="size-4" />
+              <span>{item.label}</span>
+              {item.shortcut && (
+                <CommandShortcut>
+                  {formatShortcut(item.shortcut)}
+                </CommandShortcut>
+              )}
+            </CommandItem>
+          ))}
+        </CommandGroup>
+
+        <CommandGroup heading="Commands">
+          {commandItems.map((item) => (
+            <CommandItem
+              key={item.id}
+              value={item.id + " " + item.label}
+              onSelect={() => handleSelect(item.id)}
+            >
+              <item.icon className="size-4" />
+              <span>{item.label}</span>
+              {item.shortcut && (
+                <CommandShortcut>
+                  {formatShortcut(item.shortcut)}
+                </CommandShortcut>
+              )}
+            </CommandItem>
+          ))}
+        </CommandGroup>
+
+        {recentItems.length > 0 && (
+          <CommandGroup heading="Recent Queries">
+            {recentItems.map((item) => (
+              <CommandItem
+                key={item.id}
+                value={item.id + " " + item.label}
+                onSelect={() => handleSelect(item.id)}
+              >
+                <item.icon className="size-4" />
+                <span className="truncate">{item.label}</span>
+              </CommandItem>
+            ))}
+          </CommandGroup>
+        )}
+      </CommandList>
+    </CommandDialog>
   );
 }

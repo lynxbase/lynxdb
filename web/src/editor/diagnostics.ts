@@ -17,15 +17,23 @@ export function extractDiagnostics(
   const diagnostics: Diagnostic[] = [];
   for (const err of explainResult.errors) {
     const match = err.message.match(POSITION_REGEX);
-    const pos = match ? parseInt(match[1], 10) : 0;
+    const pos = match ? parseInt(match[1] ?? "0", 10) : 0;
 
-    // Clamp to valid range
-    const from = Math.min(pos, query.length);
-    const to = Math.min(from + 1, query.length);
+    // Keep the marker inside the document. When the reported position is at
+    // or past the end, anchor it on the last character so CodeMirror never
+    // receives an out-of-range diagnostic.
+    const len = query.length;
+    let from = Math.min(Math.max(pos, 0), len);
+    let to = from + 1;
+    if (from >= len) {
+      from = Math.max(0, len - 1);
+      to = len;
+    }
+    to = Math.min(to, len);
 
     diagnostics.push({
       from,
-      to: Math.max(to, from + 1), // at least 1 char wide
+      to,
       severity: "error",
       message: err.suggestion || err.message,
     });

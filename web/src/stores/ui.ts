@@ -1,4 +1,4 @@
-import { signal, effect } from "@preact/signals";
+import { create } from "zustand";
 
 type Theme = "light" | "dark";
 
@@ -7,20 +7,32 @@ const STORAGE_KEY = "lynxdb_theme";
 function getInitialTheme(): Theme {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (stored === "light" || stored === "dark") return stored;
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return window.matchMedia("(prefers-color-scheme: dark)").matches
+    ? "dark"
+    : "light";
 }
 
-export const theme = signal<Theme>(getInitialTheme());
+interface ThemeState {
+  theme: Theme;
+}
 
-/** Apply theme class to <html> and persist to localStorage whenever signal changes. */
-effect(() => {
-  const t = theme.value;
+export const useThemeStore = create<ThemeState>(() => ({
+  theme: getInitialTheme(),
+}));
+
+/** Apply theme class to <html> and persist to localStorage. */
+function applyTheme(t: Theme): void {
   document.documentElement.classList.toggle("dark", t === "dark");
   localStorage.setItem(STORAGE_KEY, t);
-});
+}
+
+applyTheme(useThemeStore.getState().theme);
+useThemeStore.subscribe((state) => applyTheme(state.theme));
 
 export function toggleTheme(): void {
-  theme.value = theme.value === "light" ? "dark" : "light";
+  useThemeStore.setState((s) => ({
+    theme: s.theme === "light" ? "dark" : "light",
+  }));
 }
 
 /**
@@ -29,9 +41,8 @@ export function toggleTheme(): void {
  */
 const mq = window.matchMedia("(prefers-color-scheme: dark)");
 mq.addEventListener("change", (e) => {
-  // Only auto-follow if no explicit user preference is stored
   const stored = localStorage.getItem(STORAGE_KEY);
   if (!stored) {
-    theme.value = e.matches ? "dark" : "light";
+    useThemeStore.setState({ theme: e.matches ? "dark" : "light" });
   }
 });

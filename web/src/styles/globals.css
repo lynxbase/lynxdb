@@ -1,0 +1,206 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-grid: var(--chart-grid);
+  --color-chart-axis: var(--chart-axis);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-syntax-string: var(--syntax-string);
+  --color-syntax-number: var(--syntax-number);
+  --color-syntax-bool: var(--syntax-bool);
+  --color-syntax-keyword: var(--syntax-keyword);
+  --color-syntax-function: var(--syntax-function);
+  --color-syntax-operator: var(--syntax-operator);
+  --font-sans: "Inter", "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --radius-sm: 1px;
+  --radius-md: 2px;
+  --radius-lg: 4px;
+}
+
+:root {
+  --radius: 0.125rem; /* keep tight 2px data-dense identity */
+  --background: #f4f5f5;
+  --foreground: #1f1f1f;
+  --card: #ffffff;
+  --card-foreground: #1f1f1f;
+  --popover: #ffffff;
+  --popover-foreground: #1f1f1f;
+  --primary: #3274d9;
+  --primary-foreground: #ffffff;
+  --secondary: #f0f0f0;
+  --secondary-foreground: #1f1f1f;
+  --muted: #f0f0f0;
+  --muted-foreground: #6e6e6e;
+  --accent: #e8effb;
+  --accent-foreground: #1f1f1f;
+  --destructive: #f2495c;
+  --destructive-foreground: #ffffff;
+  --border: #e0e0e0;
+  --input: #cccccc;
+  --ring: #3274d9;
+  --chart-1: #f2495c; /* error */
+  --chart-2: #ff9830; /* warn */
+  --chart-3: #3274d9; /* info */
+  --chart-4: #73bf69; /* debug */
+  --chart-5: #b877d9; /* trace */
+  --chart-grid: #e0e0e0;
+  --chart-axis: #6e6e6e;
+  --syntax-string: #3274d9;
+  --syntax-number: #73bf69;
+  --syntax-bool: #f2495c;
+  --syntax-keyword: #3274d9;
+  --syntax-function: #b877d9;
+  --syntax-operator: #f2495c;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #1f1f1f;
+  --sidebar-primary: #3274d9;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f0f0f0;
+  --sidebar-accent-foreground: #1f1f1f;
+  --sidebar-border: #e0e0e0;
+  --sidebar-ring: #3274d9;
+
+  /* Legacy token aliases (editor/chart wrappers). Reference shadcn tokens
+     so they stay theme-correct without duplicating dark values. */
+  --bg-primary: var(--background);
+  --bg-secondary: var(--card);
+  --bg-hover: var(--accent);
+  --text-primary: var(--foreground);
+  --text-secondary: var(--muted-foreground);
+  --text-muted: var(--muted-foreground);
+  --success: var(--chart-4);
+}
+
+.dark {
+  --background: #111217;
+  --foreground: #d8d9da;
+  --card: #181b1f;
+  --card-foreground: #d8d9da;
+  --popover: #181b1f;
+  --popover-foreground: #d8d9da;
+  --primary: #6e9fff;
+  --primary-foreground: #0b0c0e;
+  --secondary: #1a1d21;
+  --secondary-foreground: #d8d9da;
+  --muted: #1a1d21;
+  --muted-foreground: #8e8e8e;
+  --accent: #1f2b3d;
+  --accent-foreground: #d8d9da;
+  --destructive: #f2495c;
+  --destructive-foreground: #ffffff;
+  --border: #2c3235;
+  --input: #2c3235;
+  --ring: #6e9fff;
+  --chart-1: #f2495c;
+  --chart-2: #ff9830;
+  --chart-3: #6e9fff;
+  --chart-4: #73bf69;
+  --chart-5: #b877d9;
+  --chart-grid: #2c3235;
+  --chart-axis: #8e8e8e;
+  --syntax-string: #6e9fff;
+  --syntax-number: #73bf69;
+  --syntax-bool: #f2495c;
+  --syntax-keyword: #6e9fff;
+  --syntax-function: #b877d9;
+  --syntax-operator: #f2495c;
+  --sidebar: #181b1f;
+  --sidebar-foreground: #d8d9da;
+  --sidebar-primary: #6e9fff;
+  --sidebar-primary-foreground: #0b0c0e;
+  --sidebar-accent: #1a1d21;
+  --sidebar-accent-foreground: #d8d9da;
+  --sidebar-border: #2c3235;
+  --sidebar-ring: #6e9fff;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html,
+  body,
+  #app {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: var(--font-sans);
+    font-size: 13px;
+    line-height: 1.4;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 22%, transparent);
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--border);
+    border-radius: 4px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--muted-foreground);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
