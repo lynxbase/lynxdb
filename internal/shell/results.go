@@ -212,6 +212,8 @@ func (r *Results) appendStyledError(errText string) {
 	t := ui.Stdout
 	lines := strings.Split(errText, "\n")
 
+	r.entries = append(r.entries, strings.TrimRight(ui.RenderLynxFrame(t, ui.LynxFrame(ui.LynxSad)), "\n"))
+
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" {
