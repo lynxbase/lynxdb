@@ -16,7 +16,7 @@
 
 Log analytics in a single binary. No dependencies. Lynx Flow query language.
 
-> LynxDB is in active development and **not yet production-ready**. APIs, storage format, and query behavior may change without notice between releases. Feedback and contributions are welcome
+> LynxDB is in active development. APIs, storage format, and query behavior may change without notice between releases. Feedback and contributions are welcome
 
 <p align="center">
   <img src="docs/assets/pg_demo.gif" alt="LynxDB demo">
