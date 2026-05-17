@@ -138,7 +138,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.header.SetWidth(msg.Width)
 		m.statusBar.SetWidth(msg.Width)
-		m.editor.SetWidth(msg.Width) // editor spans full width
 
 		m.recalcLayout()
 
@@ -675,8 +674,14 @@ func (m Model) View() tea.View {
 
 	b.WriteByte('\n')
 
-	// Editor (full width).
-	b.WriteString(fixedHeight(m.editor.View(), m.editor.EditorHeight()))
+	// Editor stays aligned with the results pane when the sidebar is open.
+	editorView := fixedHeight(m.editor.View(), m.editor.EditorHeight())
+	if m.sidebarOpen && m.sidebarLay.sidebarW > 0 {
+		separator := renderVerticalSeparator(m.editor.EditorHeight())
+		sidebarBlank := lipgloss.NewStyle().Width(m.sidebarLay.sidebarW).Render("")
+		editorView = lipgloss.JoinHorizontal(lipgloss.Top, editorView, separator, fixedHeight(sidebarBlank, m.editor.EditorHeight()))
+	}
+	b.WriteString(editorView)
 	b.WriteByte('\n')
 
 	// Status bar (full width).
@@ -803,9 +808,12 @@ func (m *Model) recalcLayout() {
 	// If sidebar can't fit, force it closed.
 	if m.sidebarOpen && lay.sidebarW == 0 {
 		m.sidebarOpen = false
+		lay = computeSidebarLayout(m.width, m.sidebarOpen)
+		m.sidebarLay = lay
 	}
 
 	mainH := m.mainHeight()
+	m.editor.SetWidth(lay.mainW)
 	m.results.SetSize(lay.mainW, mainH)
 	m.sidebar.SetSize(lay.sidebarW, mainH)
 	m.sidebar.SetCompact(lay.compactMode)

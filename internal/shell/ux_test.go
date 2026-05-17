@@ -157,6 +157,34 @@ func TestModelViewKeepsEditorInsideScreen(t *testing.T) {
 	}
 }
 
+func TestModelEditorStopsBeforeSidebar(t *testing.T) {
+	zone.NewGlobal()
+	defer zone.Close()
+
+	model := NewModel("server", RunOpts{Server: "http://localhost:3100"})
+	model.width = 120
+	model.height = 20
+	model.recalcLayout()
+
+	got := model.View().Content
+	lines := strings.Split(got, "\n")
+	editorTop := 1 + model.mainHeight()
+	if editorTop >= len(lines) {
+		t.Fatalf("editor top line %d outside rendered view", editorTop)
+	}
+	if w := lipgloss.Width(lines[editorTop]); w != model.width {
+		t.Fatalf("editor row width = %d, want %d in %q", w, model.width, plain(lines[editorTop]))
+	}
+	if !strings.Contains(plain(lines[editorTop]), "│") {
+		t.Fatalf("editor row should include sidebar separator in %q", plain(lines[editorTop]))
+	}
+	if firstSep := strings.Index(plain(lines[editorTop]), "│"); firstSep < 0 {
+		t.Fatalf("editor row should include sidebar separator in %q", plain(lines[editorTop]))
+	} else if col := lipgloss.Width(plain(lines[editorTop])[:firstSep]); col != model.sidebarLay.mainW {
+		t.Fatalf("editor separator column = %d, want %d in %q", col, model.sidebarLay.mainW, plain(lines[editorTop]))
+	}
+}
+
 func TestEditorRendersFramedInputBlock(t *testing.T) {
 	editor := NewEditor("lynxdb> ", "   ...> ", NewHistory(), NewCompleter())
 	editor.SetWidth(40)
