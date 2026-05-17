@@ -434,6 +434,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouseClick(msg)
 
 	case tea.MouseWheelMsg:
+		if !m.mouseInResults(msg.X, msg.Y) {
+			return m, nil
+		}
+
+		m.focus = ResultsFocus
 		cmd := m.results.Update(msg)
 
 		return m, cmd
@@ -707,8 +712,23 @@ func (m Model) View() tea.View {
 
 	v := tea.NewView(zone.Scan(output))
 	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
 
 	return v
+}
+
+func (m Model) mouseInResults(x, y int) bool {
+	if x < 0 || y < 1 {
+		return false
+	}
+	if y >= 1+m.mainHeight() {
+		return false
+	}
+	if m.sidebarOpen && m.sidebarLay.sidebarW > 0 && x >= m.sidebarLay.mainW {
+		return false
+	}
+
+	return x < m.sidebarLay.mainW || m.sidebarLay.mainW == 0
 }
 
 func oneLine(s string) string {

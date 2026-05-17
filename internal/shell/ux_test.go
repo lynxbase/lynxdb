@@ -88,7 +88,7 @@ func TestResultsRenderConnectionDiagnostic(t *testing.T) {
 	}
 }
 
-func TestModelViewDoesNotCaptureMouse(t *testing.T) {
+func TestModelViewCapturesMouseForResultsWheel(t *testing.T) {
 	zone.NewGlobal()
 	defer zone.Close()
 
@@ -98,8 +98,39 @@ func TestModelViewDoesNotCaptureMouse(t *testing.T) {
 	model.recalcLayout()
 
 	view := model.View()
-	if view.MouseMode != tea.MouseModeNone {
-		t.Fatalf("shell view captures mouse with mode %v", view.MouseMode)
+	if view.MouseMode != tea.MouseModeCellMotion {
+		t.Fatalf("shell view mouse mode = %v, want %v", view.MouseMode, tea.MouseModeCellMotion)
+	}
+}
+
+func TestMouseWheelOnlyScrollsResultsPane(t *testing.T) {
+	model := NewModel("server", RunOpts{Server: "http://localhost:3100"})
+	model.width = 80
+	model.height = 12
+	model.recalcLayout()
+	for i := 0; i < 20; i++ {
+		model.results.AppendText("result line")
+	}
+
+	before := model.results.viewport.YOffset()
+	next, _ := model.Update(tea.MouseWheelMsg{X: 2, Y: 2, Button: tea.MouseWheelUp})
+	model = next.(Model)
+	if model.focus != ResultsFocus {
+		t.Fatal("mouse wheel over results should focus results")
+	}
+	if got := model.results.viewport.YOffset(); got >= before {
+		t.Fatalf("results y offset = %d, want less than %d", got, before)
+	}
+
+	model.focus = EditorFocus
+	before = model.results.viewport.YOffset()
+	next, _ = model.Update(tea.MouseWheelMsg{X: 2, Y: model.height - 1, Button: tea.MouseWheelUp})
+	model = next.(Model)
+	if model.focus != EditorFocus {
+		t.Fatal("mouse wheel outside results should keep editor focus")
+	}
+	if got := model.results.viewport.YOffset(); got != before {
+		t.Fatalf("results y offset changed outside results: %d != %d", got, before)
 	}
 }
 
