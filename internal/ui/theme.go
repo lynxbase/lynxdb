@@ -167,6 +167,11 @@ func ColorDark() color.Color {
 	return Term.lightDark(lipgloss.Color("#d1d5db"), lipgloss.Color("#4b5563"))
 }
 
+// ColorInputBackground returns the shell editor panel background.
+func ColorInputBackground() color.Color {
+	return Term.lightDark(lipgloss.Color("#f3f4f6"), lipgloss.Color("#262626"))
+}
+
 // ColorJSONStr returns green for JSON string values.
 func ColorJSONStr() color.Color {
 	return Term.lightDark(lipgloss.Color("#15803d"), lipgloss.Color("#86efac"))

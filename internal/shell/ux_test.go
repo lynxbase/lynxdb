@@ -125,6 +125,23 @@ func TestModelViewKeepsEditorInsideScreen(t *testing.T) {
 	}
 }
 
+func TestEditorRendersFramedInputBlock(t *testing.T) {
+	editor := NewEditor("lynxdb> ", "   ...> ", NewHistory(), NewCompleter())
+	editor.SetWidth(40)
+
+	got := plain(editor.View())
+	lines := strings.Split(got, "\n")
+	if editor.EditorHeight() != 3 {
+		t.Fatalf("editor height = %d, want 3", editor.EditorHeight())
+	}
+	if len(lines) != 3 {
+		t.Fatalf("rendered editor lines = %d, want 3 in %q", len(lines), got)
+	}
+	if !strings.Contains(got, "lynxdb>") || !strings.Contains(got, "─") {
+		t.Fatalf("editor input block missing prompt or frame in %q", got)
+	}
+}
+
 func TestPlaceOverlayUsesDisplayWidth(t *testing.T) {
 	base := "\x1b[31mabcdef\x1b[0m"
 	got := placeOverlay(base, "ZZ", 2, 0, 10, 1)

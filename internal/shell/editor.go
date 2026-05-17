@@ -22,6 +22,7 @@ type Editor struct {
 	completer   *Completer
 	prompt      string
 	contPrompt  string
+	width       int
 	keys        keyMap
 	ghostText   string // autocomplete ghost suffix
 	multiLine   bool   // tracks multi-line state for prompt switching
@@ -82,12 +83,17 @@ func (e *Editor) Value() string {
 
 // SetWidth updates the input width.
 func (e *Editor) SetWidth(w int) {
-	e.input.SetWidth(w)
+	e.width = w
+	innerW := w - e.inputBlockStyle().GetHorizontalFrameSize()
+	if innerW < 1 {
+		innerW = 1
+	}
+	e.input.SetWidth(innerW)
 }
 
 // EditorHeight returns the current height of the textarea.
 func (e *Editor) EditorHeight() int {
-	return e.input.Height()
+	return e.input.Height() + e.inputBlockStyle().GetVerticalFrameSize()
 }
 
 // InMultiLine reports whether the editor content spans multiple lines.
@@ -233,7 +239,8 @@ func (e *Editor) triggerPopup(explicit bool) {
 	}
 
 	// Anchor column = prompt width + cursor column position.
-	anchorCol := e.promptWidth + e.input.Column()
+	blockStyle := e.inputBlockStyle()
+	anchorCol := blockStyle.GetBorderLeftSize() + blockStyle.GetPaddingLeft() + e.promptWidth + e.input.Column()
 	e.popup.Show(items, anchorCol)
 }
 
@@ -428,7 +435,7 @@ func (e *Editor) handleCancel() (tea.Cmd, *querySubmitMsg, *slashCommandMsg) {
 func (e *Editor) View() string {
 	v := e.input.View()
 	if e.ghostText == "" {
-		return v
+		return e.renderInputBlock(v)
 	}
 
 	// Append dimmed ghost text to the last content line of the rendered output.
@@ -475,7 +482,25 @@ func (e *Editor) View() string {
 
 	lines[lastIdx] = trimmed + styledGhost + strings.Repeat(" ", remaining)
 
-	return strings.Join(lines, "\n")
+	return e.renderInputBlock(strings.Join(lines, "\n"))
+}
+
+func (e Editor) inputBlockStyle() lipgloss.Style {
+	return lipgloss.NewStyle().
+		Width(e.width).
+		Border(lipgloss.NormalBorder()).
+		BorderForeground(ui.ColorDark()).
+		Background(ui.ColorInputBackground()).
+		Padding(0, 1)
+}
+
+func (e Editor) renderInputBlock(s string) string {
+	if e.width <= 0 {
+		return s
+	}
+
+	body := fixedHeight(s, e.input.Height())
+	return e.inputBlockStyle().Render(body)
 }
 
 // truncateToWidth returns a prefix of s whose display width does not exceed maxWidth.
