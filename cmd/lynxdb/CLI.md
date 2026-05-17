@@ -16,11 +16,13 @@ Available on all commands:
 | `--server` | | `http://localhost:3100` | `LYNXDB_SERVER` | LynxDB server address |
 | `--token` | | | `LYNXDB_TOKEN` | API key for authentication |
 | `--profile` | `-p` | | `LYNXDB_PROFILE` | Connection profile name |
-| `--format` | `-F` | `auto` | | Output format: auto, json, ndjson, table, csv, tsv, raw |
+| `--format` | `-F` | `auto` | | Output format: auto, json, ndjson, table, vertical, csv, tsv, raw |
 | `--quiet` | `-q` | `false` | | Suppress non-data output |
 | `--verbose` | `-v` | `false` | | Show extra detail |
 | `--no-stats` | | `false` | | Suppress query statistics |
 | `--no-color` | | `false` | | Disable colored output |
+| `--theme` | | `auto` | | Human output theme: auto, dark, light, plain |
+| `--compact` | | `false` | | Use compact human output |
 | `--debug` | | `false` | | Enable debug logging to stderr |
 | `--tls-skip-verify` | | `false` | `LYNXDB_TLS_SKIP_VERIFY` | Skip TLS certificate verification |
 
