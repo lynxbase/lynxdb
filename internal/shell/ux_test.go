@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/lynxbase/lynxdb/internal/ui"
@@ -99,5 +100,18 @@ func TestModelViewDoesNotCaptureMouse(t *testing.T) {
 	view := model.View()
 	if view.MouseMode != tea.MouseModeNone {
 		t.Fatalf("shell view captures mouse with mode %v", view.MouseMode)
+	}
+}
+
+func TestPlaceOverlayUsesDisplayWidth(t *testing.T) {
+	base := "\x1b[31mabcdef\x1b[0m"
+	got := placeOverlay(base, "ZZ", 2, 0, 10, 1)
+	line := strings.Split(got, "\n")[0]
+
+	if lipgloss.Width(line) != 10 {
+		t.Fatalf("overlay line width = %d, want 10 in %q", lipgloss.Width(line), line)
+	}
+	if !strings.HasPrefix(plain(line), "abZZef") {
+		t.Fatalf("overlay used byte offsets, got %q", plain(line))
 	}
 }

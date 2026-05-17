@@ -14,6 +14,7 @@ import (
 	"charm.land/bubbles/v2/spinner"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 	zone "github.com/lrstanley/bubblezone/v2"
 
 	"github.com/lynxbase/lynxdb/internal/output"
@@ -718,6 +719,12 @@ func (m Model) View() tea.View {
 func placeOverlay(baseStr, overlayStr string, x, y, totalW, totalH int) string {
 	baseLines := strings.Split(baseStr, "\n")
 	overlayLines := strings.Split(overlayStr, "\n")
+	if totalW <= 0 {
+		totalW = lipgloss.Width(baseStr)
+	}
+	for len(baseLines) < totalH {
+		baseLines = append(baseLines, "")
+	}
 
 	for i, oLine := range overlayLines {
 		row := y + i
@@ -726,26 +733,23 @@ func placeOverlay(baseStr, overlayStr string, x, y, totalW, totalH int) string {
 		}
 
 		baseLine := baseLines[row]
-		baseRunes := []rune(baseLine)
-
-		// Ensure base line is wide enough.
-		for len(baseRunes) < x {
-			baseRunes = append(baseRunes, ' ')
+		overlayW := ansi.StringWidth(oLine)
+		left := ansi.Cut(baseLine, 0, x)
+		if leftW := ansi.StringWidth(left); leftW < x {
+			left += strings.Repeat(" ", x-leftW)
 		}
 
-		// Replace characters at position x with overlay content.
-		oRunes := []rune(oLine)
-		oLen := len(oRunes)
-
-		var result []rune
-		result = append(result, baseRunes[:x]...)
-		result = append(result, oRunes...)
-
-		if x+oLen < len(baseRunes) {
-			result = append(result, baseRunes[x+oLen:]...)
+		rightStart := x + overlayW
+		right := ""
+		if rightStart < ansi.StringWidth(baseLine) {
+			right = ansi.Cut(baseLine, rightStart, totalW)
 		}
 
-		baseLines[row] = string(result)
+		line := left + oLine + right
+		if lineW := ansi.StringWidth(line); lineW < totalW {
+			line += strings.Repeat(" ", totalW-lineW)
+		}
+		baseLines[row] = line
 	}
 
 	return strings.Join(baseLines, "\n")
