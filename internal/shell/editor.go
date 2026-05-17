@@ -167,7 +167,7 @@ func (e *Editor) Update(msg tea.Msg) (tea.Cmd, *querySubmitMsg, *slashCommandMsg
 			}
 			// Non-empty: fall through to textarea (ctrl+d = delete forward).
 
-		case msg.String() == "ctrl+space", msg.String() == "ctrl+ ":
+		case key.Matches(msg, e.keys.CompletePopup):
 			// Explicit popup trigger.
 			e.triggerPopup()
 			return nil, nil, nil

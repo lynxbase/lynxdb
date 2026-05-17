@@ -2,9 +2,10 @@ package shell
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/help"
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/spinner"
 	"charm.land/lipgloss/v2"
 
@@ -22,6 +23,7 @@ const (
 // StatusBar renders the bottom shortcut bar with context-dependent hints.
 type StatusBar struct {
 	spinner spinner.Model
+	help    help.Model
 	width   int
 	mode    string
 
@@ -36,8 +38,17 @@ func NewStatusBar(mode string) StatusBar {
 	s.Spinner = spinner.Dot
 	s.Style = ui.Stdout.Accent
 
+	h := help.New()
+	h.ShowAll = false
+	styles := h.Styles
+	styles.ShortKey = lipgloss.NewStyle().Foreground(ui.ColorGray()).Bold(true)
+	styles.ShortDesc = lipgloss.NewStyle().Foreground(ui.ColorDim())
+	styles.ShortSeparator = lipgloss.NewStyle().Foreground(ui.ColorDim())
+	h.Styles = styles
+
 	return StatusBar{
 		spinner: s,
+		help:    h,
 		width:   80,
 		mode:    mode,
 	}
@@ -46,6 +57,7 @@ func NewStatusBar(mode string) StatusBar {
 // SetWidth updates the status bar width.
 func (sb *StatusBar) SetWidth(w int) {
 	sb.width = w
+	sb.help.SetWidth(w - 2)
 }
 
 // SetFlash sets a transient message that displays for the given duration.
@@ -55,7 +67,7 @@ func (sb *StatusBar) SetFlash(msg string, d time.Duration) {
 }
 
 // View renders the status bar based on current state.
-func (sb StatusBar) View(focus Focus, running bool, inMulti bool, elapsed time.Duration, progress *progressMsg, tailActive bool, sidebarOpen bool) string {
+func (sb StatusBar) View(focus Focus, running bool, inMulti bool, popupOpen bool, elapsed time.Duration, progress *progressMsg, tailActive bool, sidebarOpen bool, keys keyMap) string {
 	style := lipgloss.NewStyle().
 		Width(sb.width).
 		Foreground(ui.ColorDim()).
@@ -72,7 +84,7 @@ func (sb StatusBar) View(focus Focus, running bool, inMulti bool, elapsed time.D
 	case tailActive:
 		content = fmt.Sprintf("%s Live tail active    %s",
 			sb.spinner.View(),
-			shortcut("Ctrl+C", "stop"))
+			sb.help.View(statusHelp{keys.Cancel}))
 
 	case running && progress != nil && progress.segmentsTotal > 0:
 		el := elapsed.Round(10 * time.Millisecond)
@@ -82,54 +94,60 @@ func (sb StatusBar) View(focus Focus, running bool, inMulti bool, elapsed time.D
 			formatCountShell(int64(progress.segmentsScanned)),
 			formatCountShell(int64(progress.segmentsTotal)),
 			ui.Stdout.Value.Render(el.String()),
-			shortcut("Ctrl+C", "cancel"))
+			sb.help.View(statusHelp{keys.Cancel}))
 
 	case running:
 		el := elapsed.Round(10 * time.Millisecond)
 		content = fmt.Sprintf("%s Executing... %s    %s",
 			sb.spinner.View(),
 			ui.Stdout.Value.Render(el.String()),
-			shortcut("Ctrl+C", "cancel"))
+			sb.help.View(statusHelp{keys.Cancel}))
+
+	case popupOpen:
+		content = sb.help.View(statusHelp{
+			keys.AcceptSugg,
+			key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("up/down", "move")),
+			keys.FocusBack,
+		})
 
 	case focus == ResultsFocus:
-		content = shortcutBar(
-			shortcut("j/k", "scroll"),
-			shortcut("Esc", "back"),
-			shortcut("F2", "sidebar"),
-			shortcut("F1", "help"),
-		)
+		content = sb.help.View(statusHelp{
+			key.NewBinding(key.WithKeys("j", "k"), key.WithHelp("j/k", "scroll")),
+			keys.FocusBack,
+			keys.ToggleSidebar,
+			keys.CopyResults,
+			keys.CopyResultsMD,
+		})
 
 	case inMulti:
-		content = shortcutBar(
-			shortcut("Enter", "run"),
-			shortcut("Shift+Enter", "newline"),
-			shortcut("Ctrl+C", "clear"),
-			shortcut("F2", "sidebar"),
-		)
+		content = sb.help.View(statusHelp{
+			keys.Submit,
+			keys.InsertNewline,
+			keys.Cancel,
+			keys.ToggleSidebar,
+		})
 
 	default:
-		content = shortcutBar(
-			shortcut("Enter", "run"),
-			shortcut("↑↓", "history"),
-			shortcut("Tab", "complete"),
-			shortcut("Ctrl+E", "editor"),
-			shortcut("F2", "sidebar"),
-			shortcut("F1", "help"),
-		)
+		content = sb.help.View(statusHelp{
+			keys.Submit,
+			key.NewBinding(key.WithKeys("up", "down"), key.WithHelp("up/down", "history")),
+			keys.AcceptSugg,
+			keys.CompletePopup,
+			keys.ToggleSidebar,
+		})
 	}
 
 	return style.Render(content)
 }
 
-// shortcut renders a single key:action pair with styled key.
-func shortcut(key, action string) string {
-	keyStyle := lipgloss.NewStyle().Foreground(ui.ColorGray()).Bold(true)
-	return keyStyle.Render(key) + ":" + action
+type statusHelp []key.Binding
+
+func (h statusHelp) ShortHelp() []key.Binding {
+	return []key.Binding(h)
 }
 
-// shortcutBar joins shortcut pairs with consistent spacing.
-func shortcutBar(items ...string) string {
-	return strings.Join(items, "  ")
+func (h statusHelp) FullHelp() [][]key.Binding {
+	return [][]key.Binding{h.ShortHelp()}
 }
 
 // phaseDisplayName maps a query execution phase to a user-friendly label.

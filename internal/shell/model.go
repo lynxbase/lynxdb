@@ -671,7 +671,7 @@ func (m Model) View() tea.View {
 	if m.running {
 		elapsed = time.Since(m.startTime)
 	}
-	b.WriteString(m.statusBar.View(m.focus, m.running, m.editor.InMultiLine(), elapsed, m.progress, m.tailActive, m.sidebarOpen))
+	b.WriteString(m.statusBar.View(m.focus, m.running, m.editor.InMultiLine(), m.editor.PopupVisible(), elapsed, m.progress, m.tailActive, m.sidebarOpen, m.keys))
 
 	output := b.String()
 
