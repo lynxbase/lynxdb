@@ -390,12 +390,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.results.AppendResult(msg.query, msg.rows, msg.elapsed, msg.err, resultW,
 			m.session.Format, m.session.Timing, msg.hints, zeroCtx)
 
-		// Update sidebar with query stats and history.
+		// Update sidebar with query stats.
 		if msg.err == nil {
 			m.sidebar.SetQueryStats(buildQueryStats(msg.query, msg.rows, msg.elapsed, msg.meta))
 		}
 		m.history.SetLastDuration(msg.elapsed)
-		m.sidebar.SetHistory(m.history.RecentEntries(10))
 
 		return m, nil
 
@@ -635,19 +634,10 @@ func (m Model) handleMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	for i, h := range m.sidebar.history {
-		if z := zone.Get(fmt.Sprintf("%s%d", zoneHistPrefix, i)); z != nil && z.InBounds(msg) {
-			m.editor.SetValue(h.Query)
-			m.focus = EditorFocus
-
-			return m, nil
-		}
-	}
-
 	// Check sidebar section header clicks (toggle collapse).
 	for _, sec := range []SidebarSection{
 		SectionServer, SectionIndexes, SectionFields,
-		SectionQueryPlan, SectionQueryStats, SectionHistory,
+		SectionQueryPlan, SectionQueryStats,
 	} {
 		if z := zone.Get(zoneSectionPrefix + sectionKey(sec)); z != nil && z.InBounds(msg) {
 			m.sidebar.ToggleSection(sec)

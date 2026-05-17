@@ -14,7 +14,6 @@ import (
 // Zone ID prefixes for mouse click detection.
 const (
 	zoneFieldPrefix   = "sidebar-field:"
-	zoneHistPrefix    = "sidebar-hist:"
 	zoneSectionPrefix = "sidebar-sec:"
 )
 
@@ -27,7 +26,6 @@ const (
 	SectionFields
 	SectionQueryPlan
 	SectionQueryStats
-	SectionHistory
 )
 
 // Sidebar renders the right-side information panel.
@@ -48,16 +46,15 @@ type Sidebar struct {
 	queryPlan  *client.ExplainResult // live query plan from debounced explain
 	planState  planDisplayState      // typing, valid, invalid, empty
 	queryStats *QueryStatsSnapshot
-	history    []SidebarHistoryEntry
 }
 
 // planDisplayState tracks the query plan section's display state.
 type planDisplayState int
 
 const (
-	planEmpty   planDisplayState = iota // editor is empty
-	planTyping                          // debounce pending
-	planValid                           // valid plan received
+	planEmpty  planDisplayState = iota // editor is empty
+	planTyping                         // debounce pending
+	planValid                          // valid plan received
 	planInvalid
 )
 
@@ -72,13 +69,6 @@ type QueryStatsSnapshot struct {
 	Accelerated  string // MV name or ""
 }
 
-// SidebarHistoryEntry holds a single history item for sidebar display.
-type SidebarHistoryEntry struct {
-	Query    string
-	Time     string // formatted HH:MM (empty until Phase 6 JSONL)
-	Duration string // formatted duration (empty until Phase 6 JSONL)
-}
-
 // NewSidebar creates a sidebar for the given mode.
 func NewSidebar(mode string) Sidebar {
 	// Default collapsed state depends on context (before first query).
@@ -88,7 +78,6 @@ func NewSidebar(mode string) Sidebar {
 		SectionFields:     false, // expanded
 		SectionQueryPlan:  true,  // auto-expands when plan data arrives
 		SectionQueryStats: true,  // collapsed until first query
-		SectionHistory:    true,  // collapsed until first query
 	}
 
 	return Sidebar{
@@ -171,13 +160,7 @@ func (s *Sidebar) SetQueryStats(stats *QueryStatsSnapshot) {
 	if !s.hasQueried {
 		s.hasQueried = true
 		s.collapsed[SectionQueryStats] = false
-		s.collapsed[SectionHistory] = false
 	}
-}
-
-// SetHistory updates the history section entries.
-func (s *Sidebar) SetHistory(entries []SidebarHistoryEntry) {
-	s.history = entries
 }
 
 // View renders the sidebar panel.
@@ -237,7 +220,7 @@ func (s Sidebar) renderPreQuerySections(w int) []string {
 }
 
 // renderPostQuerySections renders sections after the first query.
-// Priority: QueryStats, QueryPlan, Fields, History, Indexes, Server.
+// Priority: QueryStats, QueryPlan, Fields, Indexes, Server.
 func (s Sidebar) renderPostQuerySections(w int) []string {
 	var out []string
 
@@ -248,7 +231,6 @@ func (s Sidebar) renderPostQuerySections(w int) []string {
 	}
 
 	out = append(out, s.renderSection(SectionFields, w)...)
-	out = append(out, s.renderSection(SectionHistory, w)...)
 
 	if s.mode == "server" {
 		out = append(out, s.renderSection(SectionIndexes, w)...)
@@ -304,11 +286,6 @@ func sectionTitle(sec SidebarSection, s Sidebar) string {
 		return "Query Plan"
 	case SectionQueryStats:
 		return "Last Query"
-	case SectionHistory:
-		if len(s.history) > 0 {
-			return fmt.Sprintf("Recent (%d)", len(s.history))
-		}
-		return "Recent"
 	default:
 		return ""
 	}
@@ -329,8 +306,6 @@ func (s Sidebar) renderSectionContent(sec SidebarSection, w int) []string {
 		return s.renderQueryPlanContent(w)
 	case SectionQueryStats:
 		return s.renderQueryStatsContent(w)
-	case SectionHistory:
-		return s.renderHistoryContent(w)
 	default:
 		return []string{dim.Render("  (no data)")}
 	}
@@ -506,49 +481,6 @@ func (s Sidebar) renderQueryStatsContent(w int) []string {
 	return lines
 }
 
-func (s Sidebar) renderHistoryContent(w int) []string {
-	dim := lipgloss.NewStyle().Foreground(ui.ColorDim())
-
-	if len(s.history) == 0 {
-		return []string{dim.Render("  (empty)")}
-	}
-
-	lines := make([]string, 0, len(s.history))
-
-	for i, h := range s.history {
-		var line string
-
-		if h.Time != "" || h.Duration != "" {
-			// Rich format with time and duration (Phase 6+).
-			queryW := w - 14 // "  HH:MM  123ms  " prefix
-			if queryW < 10 {
-				queryW = 10
-			}
-
-			q := truncateStr(h.Query, queryW)
-			timeStyle := lipgloss.NewStyle().Foreground(ui.ColorDim())
-			line = fmt.Sprintf("  %s  %s  %s",
-				timeStyle.Render(h.Time),
-				timeStyle.Render(fmt.Sprintf("%5s", h.Duration)),
-				q)
-		} else {
-			// Simple format — query text only.
-			queryW := w - 4 // "  " prefix + margin
-			if queryW < 10 {
-				queryW = 10
-			}
-
-			q := truncateStr(h.Query, queryW)
-			line = dim.Render(fmt.Sprintf("  %s", q))
-		}
-
-		line = zone.Mark(fmt.Sprintf("%s%d", zoneHistPrefix, i), line)
-		lines = append(lines, line)
-	}
-
-	return lines
-}
-
 // truncateStr truncates a string to maxLen, adding "…" if truncated.
 func truncateStr(s string, maxLen int) string {
 	if maxLen <= 0 {
@@ -579,8 +511,6 @@ func sectionKey(sec SidebarSection) string {
 		return "plan"
 	case SectionQueryStats:
 		return "stats"
-	case SectionHistory:
-		return "history"
 	default:
 		return "unknown"
 	}

@@ -184,35 +184,6 @@ func (h *History) Entries(n int) []string {
 	return h.entries[start:]
 }
 
-// RecentEntries returns the last n entries as SidebarHistoryEntry with metadata.
-func (h *History) RecentEntries(n int) []SidebarHistoryEntry {
-	start := 0
-	if len(h.records) > n {
-		start = len(h.records) - n
-	}
-
-	recs := h.records[start:]
-	result := make([]SidebarHistoryEntry, 0, len(recs))
-
-	for _, rec := range recs {
-		entry := SidebarHistoryEntry{Query: rec.Query}
-
-		if rec.Timestamp != "" {
-			if t, err := time.Parse(time.RFC3339, rec.Timestamp); err == nil {
-				entry.Time = t.Local().Format("15:04")
-			}
-		}
-
-		if rec.DurationMS > 0 {
-			entry.Duration = formatElapsedShell(time.Duration(rec.DurationMS) * time.Millisecond)
-		}
-
-		result = append(result, entry)
-	}
-
-	return result
-}
-
 // SuggestFromPrefix returns the most recent history entry that starts with
 // the given prefix (but is not identical to it). Returns empty if no match.
 func (h *History) SuggestFromPrefix(prefix string) string {
