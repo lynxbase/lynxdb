@@ -136,7 +136,10 @@ func TestShellExitSummaryIncludesSessionStats(t *testing.T) {
 	model.session.LastElapsed = 120 * time.Millisecond
 
 	got := shellExitSummary(model)
-	for _, want := range []string{"summary: file", "access.log", "queries 2", "events 1000", "last 2 rows", "120ms"} {
+	if strings.Contains(got, "summary") {
+		t.Fatalf("summary label should not be rendered in %q", got)
+	}
+	for _, want := range []string{"file", "access.log", "queries 2", "events 1000", "last 2 rows", "120ms"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("summary missing %q in %q", want, got)
 		}

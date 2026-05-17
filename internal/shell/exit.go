@@ -15,6 +15,7 @@ func renderShellExit(w io.Writer, m Model) {
 
 	ui.WriteLynxMark(w, ui.Stdout, ui.LynxAlert, true)
 	fmt.Fprintln(w, "bye-bye")
+	fmt.Fprintln(w)
 	fmt.Fprintln(w, shellExitSummary(m))
 }
 
@@ -51,5 +52,5 @@ func shellExitSummary(m Model) string {
 		}
 	}
 
-	return "summary: " + strings.Join(parts, " | ")
+	return strings.Join(parts, " | ")
 }
