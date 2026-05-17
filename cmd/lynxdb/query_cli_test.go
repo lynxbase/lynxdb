@@ -569,6 +569,19 @@ func TestQueryFile_ParseError(t *testing.T) {
 	}
 }
 
+func TestValidateQueryBeforeTUI_ParseError(t *testing.T) {
+	err := validateQueryBeforeTUI(`search login | not_a_command`)
+	if err == nil {
+		t.Fatal("expected parse error, got nil")
+	}
+	if _, ok := err.(*queryError); !ok {
+		t.Fatalf("expected queryError, got %T", err)
+	}
+	if !strings.Contains(err.Error(), "INVALID_QUERY") {
+		t.Fatalf("expected INVALID_QUERY error, got %q", err.Error())
+	}
+}
+
 func TestQueryFile_JSONValidNDJSON(t *testing.T) {
 	stdout, _, err := runCmd(t, "query", "--file", testdataPath("logs/access.log"), "--format", "json",
 		"| head 10")

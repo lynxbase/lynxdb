@@ -650,6 +650,10 @@ func runQueryServer(query, since, from, to, timeout string, failEmpty bool, anal
 		return fmt.Errorf("--from and --to must both be specified")
 	}
 
+	if err := validateQueryBeforeTUI(query); err != nil {
+		return err
+	}
+
 	ctx := context.Background()
 	if timeout != "" {
 		dur, err := time.ParseDuration(timeout)
@@ -666,6 +670,26 @@ func runQueryServer(query, since, from, to, timeout string, failEmpty bool, anal
 	}
 
 	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze, noLint, noSuggestions, showRewritten)
+}
+
+func validateQueryBeforeTUI(query string) error {
+	if err := spl2.CheckUnsupportedCommands(query); err != nil {
+		return err
+	}
+
+	if _, err := spl2.ParseProgram(query); err != nil {
+		return &queryError{
+			inner: &client.APIError{
+				HTTPStatus: 400,
+				Code:       client.ErrCodeInvalidQuery,
+				Message:    "parse error: " + err.Error(),
+				Suggestion: spl2.SuggestFix(err.Error(), nil),
+			},
+			query: query,
+		}
+	}
+
+	return nil
 }
 
 func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty bool, analyze string, noLint, noSuggestions, showRewritten bool) error {
