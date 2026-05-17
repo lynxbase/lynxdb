@@ -34,6 +34,8 @@ func resetAllFlags(t *testing.T) {
 	globalQuiet = false
 	globalVerbose = false
 	globalNoColor = true // Always disable color in tests to simplify assertions.
+	globalTheme = "auto"
+	globalCompact = false
 	globalDebug = false
 	globalTLSSkipVerify = false
 	globalHTTPClient = nil
