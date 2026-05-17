@@ -30,22 +30,25 @@ func DetectResultType(prog *spl2.Program) ResultType {
 	for i := len(prog.Main.Commands) - 1; i >= 0; i-- {
 		cmd := prog.Main.Commands[i]
 		switch cmd.(type) {
-		case *spl2.HeadCommand, *spl2.TailCommand, *spl2.SortCommand,
-			*spl2.FieldsCommand, *spl2.TableCommand, *spl2.RenameCommand,
-			*spl2.FillnullCommand, *spl2.TopNCommand:
+		case *spl2.SearchCommand, *spl2.WhereCommand, *spl2.EvalCommand,
+			*spl2.SortCommand, *spl2.HeadCommand, *spl2.OffsetCommand,
+			*spl2.TailCommand, *spl2.ReverseCommand, *spl2.RexCommand,
+			*spl2.RegexCommand, *spl2.ReplaceCommand, *spl2.FieldformatCommand,
+			*spl2.FieldsCommand, *spl2.TableCommand, *spl2.DedupCommand,
+			*spl2.RenameCommand, *spl2.BinCommand, *spl2.StreamstatsCommand,
+			*spl2.EventstatsCommand, *spl2.FillnullCommand, *spl2.TopNCommand,
+			*spl2.SelectCommand, *spl2.UnpackCommand, *spl2.JsonCommand,
+			*spl2.NomvCommand, *spl2.MakemvCommand, *spl2.MvcombineCommand,
+			*spl2.PackJsonCommand, *spl2.TeeCommand:
 			continue // transparent — check previous command
 		case *spl2.TimechartCommand:
 			return ResultTypeTimechart
 		case *spl2.StatsCommand, *spl2.ChartCommand, *spl2.TopCommand, *spl2.RareCommand,
-			*spl2.XYSeriesCommand:
+			*spl2.XYSeriesCommand, *spl2.RollupCommand, *spl2.CorrelateCommand,
+			*spl2.SessionizeCommand, *spl2.PatternsCommand,
+			*spl2.TransactionCommand, *spl2.TopologyCommand, *spl2.UntableCommand,
+			*spl2.DescribeCommand:
 			return ResultTypeAggregate
-		case *spl2.EventstatsCommand:
-			// EVENTSTATS is an enrichment command — it adds computed fields
-			// to every input event while preserving the original row count.
-			// When it's the terminal command, the result is still Events format,
-			// not Aggregate. Treating it as Aggregate would misclassify queries
-			// like "FROM idx | EVENTSTATS count BY group".
-			return ResultTypeEvents
 		case *spl2.MaterializeCommand:
 			return ResultTypeViewCreated
 		case *spl2.GlimpseCommand:
@@ -293,8 +296,8 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 	} else if cached != nil {
 		e.metrics.QueryCacheHits.Add(1)
 		rows := cachedResultToResultRows(cached)
-		if params.ResultType == ResultTypeEvents && queryAllowsDefaultEventMetadata(params.Program) {
-			ensureDefaultEventMetadataFields(rows)
+		if params.ResultType == ResultTypeEvents {
+			canonicalizeEventMetadataFields(rows, queryAllowsDefaultEventMetadata(params.Program))
 		}
 		elapsed := time.Since(start)
 		job.mu.Lock()
@@ -551,8 +554,8 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 			job.Stats.Warnings = append(job.Stats.Warnings, suggestions...)
 		}
 	}
-	if params.ResultType == ResultTypeEvents && queryAllowsDefaultEventMetadata(params.Program) {
-		ensureDefaultEventMetadataFields(qr.rows)
+	if params.ResultType == ResultTypeEvents {
+		canonicalizeEventMetadataFields(qr.rows, queryAllowsDefaultEventMetadata(params.Program))
 	}
 
 	// Determine slow query flag BEFORE calling onQueryComplete so Prometheus

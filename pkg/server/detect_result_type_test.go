@@ -79,6 +79,31 @@ func TestDetectResultType(t *testing.T) {
 			want: ResultTypeAggregate,
 		},
 		{
+			name: "stats_with_trailing_eval_returns_aggregate",
+			commands: []spl2.Command{
+				&spl2.StatsCommand{
+					Aggregations: []spl2.AggExpr{{Func: "count", Alias: "count"}},
+				},
+				&spl2.EvalCommand{Field: "rate"},
+			},
+			want: ResultTypeAggregate,
+		},
+		{
+			name:     "rollup_returns_aggregate",
+			commands: []spl2.Command{&spl2.RollupCommand{}},
+			want:     ResultTypeAggregate,
+		},
+		{
+			name:     "sessionize_returns_aggregate",
+			commands: []spl2.Command{&spl2.SessionizeCommand{}},
+			want:     ResultTypeAggregate,
+		},
+		{
+			name:     "compare_returns_events",
+			commands: []spl2.Command{&spl2.CompareCommand{}},
+			want:     ResultTypeEvents,
+		},
+		{
 			name: "where_returns_events",
 			commands: []spl2.Command{
 				&spl2.WhereCommand{},

@@ -756,32 +756,43 @@ func pipelineRowsToInterfaceRows(pipeRows []map[string]event.Value, addDefaultEv
 		for k, v := range row {
 			fields[k] = v.Interface()
 		}
-		if addDefaultEventMetadata {
-			ensureDefaultEventMetadata(fields)
-		}
+		canonicalizeDefaultEventMetadata(fields, addDefaultEventMetadata)
 		rows[i] = fields
 	}
 
 	return rows
 }
 
-func ensureDefaultEventMetadata(fields map[string]interface{}) {
-	if _, ok := fields["_source"]; !ok {
-		if source, ok := fields["source"]; ok {
-			fields["_source"] = source
-		} else {
-			fields["_source"] = ""
+func canonicalizeDefaultEventMetadata(fields map[string]interface{}, addDefaults bool) {
+	if addDefaults && interfaceRowHasEventBuiltins(fields) {
+		if _, ok := fields["_source"]; !ok {
+			if source, ok := fields["source"]; ok {
+				fields["_source"] = source
+			} else {
+				fields["_source"] = ""
+			}
 		}
-	}
-	if _, ok := fields["_sourcetype"]; !ok {
-		if sourceType, ok := fields["sourcetype"]; ok {
-			fields["_sourcetype"] = sourceType
-		} else {
-			fields["_sourcetype"] = ""
+		if _, ok := fields["_sourcetype"]; !ok {
+			if sourceType, ok := fields["sourcetype"]; ok {
+				fields["_sourcetype"] = sourceType
+			} else {
+				fields["_sourcetype"] = ""
+			}
 		}
 	}
 	delete(fields, "source")
 	delete(fields, "sourcetype")
+}
+
+func interfaceRowHasEventBuiltins(fields map[string]interface{}) bool {
+	if _, ok := fields["_raw"]; ok {
+		return true
+	}
+	if _, ok := fields["_time"]; ok {
+		return true
+	}
+
+	return false
 }
 
 func queryProducesEventRows(q *spl2.Query) bool {
@@ -790,12 +801,22 @@ func queryProducesEventRows(q *spl2.Query) bool {
 	}
 	for i := len(q.Commands) - 1; i >= 0; i-- {
 		switch q.Commands[i].(type) {
-		case *spl2.HeadCommand, *spl2.TailCommand, *spl2.SortCommand,
-			*spl2.FieldsCommand, *spl2.TableCommand, *spl2.RenameCommand,
-			*spl2.FillnullCommand, *spl2.TopNCommand:
+		case *spl2.SearchCommand, *spl2.WhereCommand, *spl2.EvalCommand,
+			*spl2.SortCommand, *spl2.HeadCommand, *spl2.OffsetCommand,
+			*spl2.TailCommand, *spl2.ReverseCommand, *spl2.RexCommand,
+			*spl2.RegexCommand, *spl2.ReplaceCommand, *spl2.FieldformatCommand,
+			*spl2.FieldsCommand, *spl2.TableCommand, *spl2.DedupCommand,
+			*spl2.RenameCommand, *spl2.BinCommand, *spl2.StreamstatsCommand,
+			*spl2.EventstatsCommand, *spl2.FillnullCommand, *spl2.TopNCommand,
+			*spl2.SelectCommand, *spl2.UnpackCommand, *spl2.JsonCommand,
+			*spl2.NomvCommand, *spl2.MakemvCommand, *spl2.MvcombineCommand,
+			*spl2.PackJsonCommand, *spl2.TeeCommand:
 			continue
 		case *spl2.StatsCommand, *spl2.ChartCommand, *spl2.TopCommand, *spl2.RareCommand,
-			*spl2.TimechartCommand, *spl2.XYSeriesCommand:
+			*spl2.TimechartCommand, *spl2.XYSeriesCommand, *spl2.RollupCommand,
+			*spl2.CorrelateCommand, *spl2.SessionizeCommand, *spl2.PatternsCommand,
+			*spl2.TransactionCommand, *spl2.TopologyCommand,
+			*spl2.UntableCommand, *spl2.GlimpseCommand, *spl2.DescribeCommand:
 			return false
 		default:
 			return true

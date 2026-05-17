@@ -24,29 +24,47 @@ func pipelineRowsToResultRows(rows []map[string]event.Value) []spl2.ResultRow {
 }
 
 func ensureDefaultEventMetadataFields(rows []spl2.ResultRow) {
+	canonicalizeEventMetadataFields(rows, true)
+}
+
+func canonicalizeEventMetadataFields(rows []spl2.ResultRow, addDefaults bool) {
 	for i := range rows {
 		fields := rows[i].Fields
 		if fields == nil {
 			fields = make(map[string]interface{}, 2)
 			rows[i].Fields = fields
 		}
-		if _, ok := fields["_source"]; !ok {
-			if source, ok := fields["source"]; ok {
-				fields["_source"] = source
-			} else {
-				fields["_source"] = ""
+		shouldAdd := addDefaults && resultRowHasEventBuiltins(fields)
+		if shouldAdd {
+			if _, ok := fields["_source"]; !ok {
+				if source, ok := fields["source"]; ok {
+					fields["_source"] = source
+				} else {
+					fields["_source"] = ""
+				}
 			}
-		}
-		if _, ok := fields["_sourcetype"]; !ok {
-			if sourceType, ok := fields["sourcetype"]; ok {
-				fields["_sourcetype"] = sourceType
-			} else {
-				fields["_sourcetype"] = ""
+			if _, ok := fields["_sourcetype"]; !ok {
+				if sourceType, ok := fields["sourcetype"]; ok {
+					fields["_sourcetype"] = sourceType
+				} else {
+					fields["_sourcetype"] = ""
+				}
 			}
 		}
 		delete(fields, "source")
 		delete(fields, "sourcetype")
 	}
+}
+
+func resultRowHasEventBuiltins(fields map[string]interface{}) bool {
+	if _, ok := fields["_raw"]; ok {
+		return true
+	}
+	if _, ok := fields["_time"]; ok {
+		return true
+	}
+
+	return false
 }
 
 func queryAllowsDefaultEventMetadata(prog *spl2.Program) bool {
