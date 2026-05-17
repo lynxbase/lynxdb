@@ -119,8 +119,16 @@ func isQueryParseError(err error) bool {
 
 // renderError prints a formatted error to stderr.
 func renderError(err error) {
+	renderErrorWithLynx(err, true)
+}
+
+func renderErrorWithLynx(err error, showLynx bool) {
 	if err == nil {
 		return
+	}
+
+	if showLynx {
+		renderSadLynxForError()
 	}
 
 	var qe *queryError
@@ -134,7 +142,7 @@ func renderError(err error) {
 
 		// Not a parse error — fall through to standard rendering
 		// with the inner error (unwrap the queryError wrapper).
-		renderError(qe.inner)
+		renderErrorWithLynx(qe.inner, false)
 
 		return
 	}
@@ -184,6 +192,14 @@ func renderError(err error) {
 	}
 
 	ui.Stderr.RenderError(err)
+}
+
+func renderSadLynxForError() {
+	if globalQuiet || !isTTY() {
+		return
+	}
+
+	ui.WriteLynxMark(os.Stderr, ui.Stderr, ui.LynxSad, shouldAnimateLynx())
 }
 
 func renderNoFilesMatchingError(err noFilesMatchingError) {
