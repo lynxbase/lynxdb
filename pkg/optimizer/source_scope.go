@@ -15,26 +15,21 @@ const (
 	scopeGlob   = "glob"
 )
 
-// isSourceField returns true if the field name refers to the _source dimension.
-// "index" and "source" are virtual aliases for "_source" in LynxDB.
+// isSourceField returns true if the field name refers to the physical index
+// dimension used for segment/source scope pruning.
 func isSourceField(name string) bool {
-	switch name {
-	case "_source", "source", "index":
-		return true
-	default:
-		return false
-	}
+	return name == "index"
 }
 
-// sourceORtoINRule rewrites source=A OR source=B (2+ OR'd equalities on
-// _source/source/index) into a single InExpr. This is a specialization of
+// sourceORtoINRule rewrites index=A OR index=B (2+ OR'd equalities on
+// index) into a single InExpr. This is a specialization of
 // the general inListRewriteRule that uses a threshold of 2 instead of 3
-// for source fields, since multi-source queries commonly use just 2 sources.
+// for index scope fields, since multi-source queries commonly use just 2 sources.
 type sourceORtoINRule struct{}
 
 func (r *sourceORtoINRule) Name() string { return "SourceORtoIN" }
 func (r *sourceORtoINRule) Description() string {
-	return "Folds source=A OR source=B into _source IN (A,B) for source scope pushdown"
+	return "Folds index=A OR index=B into index IN (A,B) for source scope pushdown"
 }
 
 func (r *sourceORtoINRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
@@ -54,8 +49,8 @@ func (r *sourceORtoINRule) Apply(q *spl2.Query) (*spl2.Query, bool) {
 	return q, changed
 }
 
-// rewriteSourceORtoIN detects source=A OR source=B patterns (2+ leaves) on
-// source fields and rewrites to InExpr. Falls through to the general
+// rewriteSourceORtoIN detects index=A OR index=B patterns (2+ leaves) on
+// physical index scope fields and rewrites to InExpr. Falls through to the general
 // inListRewriteRule for non-source fields.
 func rewriteSourceORtoIN(expr spl2.Expr) (spl2.Expr, bool) {
 	orLeaves := flattenOR(expr)
@@ -63,7 +58,7 @@ func rewriteSourceORtoIN(expr spl2.Expr) (spl2.Expr, bool) {
 		return expr, false
 	}
 
-	// Check if all OR leaves are field=literal on the same source field.
+	// Check if all OR leaves are field=literal on the same index scope field.
 	var fieldName string
 	var values []spl2.Expr
 	for _, leaf := range orLeaves {
@@ -88,15 +83,13 @@ func rewriteSourceORtoIN(expr spl2.Expr) (spl2.Expr, bool) {
 		if fieldName == "" {
 			fieldName = field.Name
 		} else if field.Name != fieldName {
-			// Different source-aliased fields in the same OR — normalize to _source.
-			// source=A OR index=B → _source IN (A, B)
-			fieldName = "_source"
+			fieldName = "index"
 		}
 		values = append(values, lit)
 	}
 
-	// Normalize field name to _source for consistency.
-	normalizedField := "_source"
+	// Normalize field name to index for consistency.
+	normalizedField := "index"
 	if fieldName != "" {
 		normalizedField = fieldName
 	}

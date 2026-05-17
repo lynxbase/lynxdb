@@ -11,6 +11,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/spl2"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
+	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // TestSegmentStreamIterator_MemtableOnly verifies that the iterator yields
@@ -23,6 +24,61 @@ func TestSegmentStreamIterator_MemtableOnly(t *testing.T) {
 	got := drainIterator(t, iter)
 	if got != 50 {
 		t.Errorf("memtable-only: got %d events, want 50", got)
+	}
+}
+
+func TestSegmentStreamIterator_WhereSourcePath(t *testing.T) {
+	const sourcePath = "/var/log/app/nginx_error.log"
+	events := makeStreamTestEvents(2)
+	for _, ev := range events {
+		ev.Index = "nginx-error"
+		ev.Source = sourcePath
+		ev.SourceType = "json"
+		ev.SetField("target_index", event.StringValue("nginx-error"))
+	}
+	src := writeSegmentSource(t, events, "nginx-error")
+
+	stream := NewSegmentStreamIterator(
+		[]*SegmentSource{src},
+		nil,
+		&SegmentStreamHints{
+			IndexName:    "nginx-error",
+			RequiredCols: []string{"_time", "_raw", "index", "_source", "_sourcetype", "target_index"},
+		},
+		0,
+		nil,
+	)
+	defer stream.Close()
+
+	prog, err := spl2.ParseProgram(`FROM nginx-error | where _source="/var/log/app/nginx_error.log"`)
+	if err != nil {
+		t.Fatalf("ParseProgram: %v", err)
+	}
+	where := prog.Main.Commands[0].(*spl2.WhereCommand)
+	predicate, err := vm.CompilePredicate(where.Expr)
+	if err != nil {
+		t.Fatalf("CompilePredicate: %v", err)
+	}
+	filter := NewFilterIteratorWithExpr(stream, predicate, where.Expr)
+	defer filter.Close()
+
+	ctx := context.Background()
+	if err := filter.Init(ctx); err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	var total int
+	for {
+		batch, err := filter.Next(ctx)
+		if err != nil {
+			t.Fatalf("Next: %v", err)
+		}
+		if batch == nil {
+			break
+		}
+		total += batch.Len
+	}
+	if total != 2 {
+		t.Fatalf("filtered rows: got %d, want 2", total)
 	}
 }
 

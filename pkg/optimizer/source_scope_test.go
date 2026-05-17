@@ -7,18 +7,18 @@ import (
 )
 
 func TestSourceORtoIN_TwoSources(t *testing.T) {
-	// WHERE source="nginx" OR source="postgres" → WHERE source IN ("nginx","postgres")
+	// WHERE index="nginx" OR index="postgres" → WHERE index IN ("nginx","postgres")
 	q := &spl2.Query{
 		Commands: []spl2.Command{
 			&spl2.WhereCommand{
 				Expr: &spl2.BinaryExpr{
 					Left: &spl2.CompareExpr{
-						Left: &spl2.FieldExpr{Name: "source"}, Op: "=",
+						Left: &spl2.FieldExpr{Name: "index"}, Op: "=",
 						Right: &spl2.LiteralExpr{Value: "nginx"},
 					},
 					Op: "or",
 					Right: &spl2.CompareExpr{
-						Left: &spl2.FieldExpr{Name: "source"}, Op: "=",
+						Left: &spl2.FieldExpr{Name: "index"}, Op: "=",
 						Right: &spl2.LiteralExpr{Value: "postgres"},
 					},
 				},
@@ -226,7 +226,8 @@ func TestSourceScopeAnnotation_SearchExpr(t *testing.T) {
 }
 
 func TestSourceScopeAnnotation_WhereExpr(t *testing.T) {
-	// WHERE _source="nginx" → scope should be single "nginx"
+	// WHERE _source="nginx" filters file/source metadata and must not narrow
+	// physical index scope.
 	q := &spl2.Query{
 		Commands: []spl2.Command{
 			&spl2.WhereCommand{
@@ -240,13 +241,8 @@ func TestSourceScopeAnnotation_WhereExpr(t *testing.T) {
 	}
 	opt := New()
 	result := opt.Optimize(q)
-	anno, ok := result.Annotations["sourceScope"]
-	if !ok {
-		t.Fatal("expected sourceScope annotation from WHERE")
-	}
-	m := anno.(map[string]interface{})
-	if m["type"] != "single" {
-		t.Fatalf("expected scope type 'single', got %v", m["type"])
+	if _, ok := result.Annotations["sourceScope"]; ok {
+		t.Fatal("did not expect sourceScope annotation from _source WHERE")
 	}
 }
 

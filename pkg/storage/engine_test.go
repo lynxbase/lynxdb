@@ -112,6 +112,41 @@ func TestEngine_EphemeralIngestAndQuery(t *testing.T) {
 	}
 }
 
+func TestEngine_WhereSourcePathBeforeParseCombined(t *testing.T) {
+	eng := NewEphemeralEngine()
+	defer eng.Close()
+
+	const sourcePath = "/var/log/app/nginx_access.log"
+	lines := []string{
+		`192.168.1.203 - - [17/May/2026:21:45:56 +0000] "OPTIONS /static/style.css HTTP/1.1" 404 109 "https://google.com/search?q=test" "kube-probe/1.30" 0.752 0.747`,
+		`192.168.1.204 - - [17/May/2026:21:45:57 +0000] "GET /health HTTP/1.1" 200 2 "-" "curl/8.0" 0.001 0.001`,
+	}
+	if _, err := eng.IngestLines(context.Background(), lines, IngestOpts{
+		Index:      "nginx-access",
+		Source:     sourcePath,
+		SourceType: "json",
+	}); err != nil {
+		t.Fatalf("IngestLines: %v", err)
+	}
+
+	res, _, err := eng.Query(context.Background(), `FROM nginx-access | where _source="/var/log/app/nginx_access.log" | parse combined(message) | limit 1`, QueryOpts{})
+	if err != nil {
+		t.Fatalf("Query: %v", err)
+	}
+	if len(res.Rows) != 1 {
+		t.Fatalf("rows: got %d, want 1", len(res.Rows))
+	}
+	if got := res.Rows[0]["index"]; got != "nginx-access" {
+		t.Fatalf("index: got %v, want nginx-access", got)
+	}
+	if got := res.Rows[0]["_source"]; got != sourcePath {
+		t.Fatalf("_source: got %v, want %s", got, sourcePath)
+	}
+	if _, ok := res.Rows[0]["source"]; ok {
+		t.Fatal("event row should not include source alias")
+	}
+}
+
 // toInt converts an interface{} (typically int64 or float64 from query results) to int64.
 func toInt(v interface{}) int64 {
 	switch n := v.(type) {

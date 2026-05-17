@@ -345,7 +345,7 @@ func extractBloomTermsFromExpr(expr spl2.Expr, bloomFields map[string]bool, term
 			if field, ok := e.Left.(*spl2.FieldExpr); ok {
 				if bloomFields[field.Name] {
 					if lit, ok := e.Right.(*spl2.LiteralExpr); ok {
-						*terms = append(*terms, strings.ToLower(lit.Value))
+						appendBloomTokens(terms, lit.Value)
 					}
 				}
 			}
@@ -384,7 +384,7 @@ func extractBloomTermsFromExpr(expr spl2.Expr, bloomFields map[string]bool, term
 			if field, ok := e.Field.(*spl2.FieldExpr); ok && bloomFields[field.Name] {
 				for _, v := range e.Values {
 					if lit, ok := v.(*spl2.LiteralExpr); ok {
-						*terms = append(*terms, strings.ToLower(lit.Value))
+						appendBloomTokens(terms, lit.Value)
 					}
 				}
 			}
@@ -447,7 +447,15 @@ func extractBloomTermsFromSearch(expr spl2.SearchExpr, bloomFields map[string]bo
 		extractBloomTermsFromSearch(e.Right, bloomFields, terms)
 	case *spl2.SearchCompareExpr:
 		if e.Op == spl2.OpEq && !e.HasWildcard && bloomFields[e.Field] {
-			*terms = append(*terms, strings.ToLower(e.Value))
+			appendBloomTokens(terms, e.Value)
+		}
+	}
+}
+
+func appendBloomTokens(terms *[]string, value string) {
+	for _, tok := range index.Tokenize(value) {
+		if len(tok) >= 3 {
+			*terms = append(*terms, tok)
 		}
 	}
 }

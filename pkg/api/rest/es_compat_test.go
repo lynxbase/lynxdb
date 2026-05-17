@@ -637,6 +637,13 @@ func TestESBulk_FilebeatTargetIndexRoutesDocuments(t *testing.T) {
 	if nginx[0]["_source"] != "/var/log/app/nginx_error.log" {
 		t.Fatalf("nginx _source = %v, want /var/log/app/nginx_error.log", nginx[0]["_source"])
 	}
+	bySource := queryEvents(t, srv.Addr(), `{"q":"FROM nginx-error | where _source=\"/var/log/app/nginx_error.log\" | table index, target_index, _source | head 10"}`)
+	if len(bySource) != 1 {
+		t.Fatalf("nginx-error _source filter events: got %d, want 1", len(bySource))
+	}
+	if bySource[0]["index"] != "nginx-error" {
+		t.Fatalf("filtered index = %v, want nginx-error", bySource[0]["index"])
+	}
 	if n := queryEventCount(t, srv.Addr(), `{"q":"FROM main"}`); n != 0 {
 		t.Fatalf("main events: got %d, want 0", n)
 	}
@@ -679,6 +686,41 @@ func TestESBulk_OtelCollectorElasticsearchTemplateIndex(t *testing.T) {
 	}
 	if n := queryEventCount(t, srv.Addr(), `{"q":"FROM prefix-postgres"}`); n != 1 {
 		t.Fatalf("prefix-postgres events: got %d, want 1", n)
+	}
+}
+
+func TestESBulk_SourcePathFilterBeforeParseCombined(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	body := `{"index":{"_index":"nginx-access"}}
+{"@timestamp":"2026-05-17T21:45:56Z","message":"192.168.1.203 - - [17/May/2026:21:45:56 +0000] \"OPTIONS /static/style.css HTTP/1.1\" 404 109 \"https://google.com/search?q=test\" \"kube-probe/1.30\" 0.752 0.747","target_index":"nginx-access","log":{"file":{"path":"/var/log/app/nginx_access.log"}}}
+`
+	resp := postESBulk(t, srv.Addr(), body)
+	result := decodeESBulkResponse(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	if result.Errors {
+		t.Fatal("expected errors=false")
+	}
+
+	time.Sleep(200 * time.Millisecond)
+	events := queryEvents(t, srv.Addr(), `{"q":"FROM nginx-access | where _source=\"/var/log/app/nginx_access.log\" | parse combined(message) | limit 1"}`)
+	if len(events) != 1 {
+		t.Fatalf("events: got %d, want 1", len(events))
+	}
+	if events[0]["index"] != "nginx-access" {
+		t.Fatalf("index = %v, want nginx-access", events[0]["index"])
+	}
+	if events[0]["_source"] != "/var/log/app/nginx_access.log" {
+		t.Fatalf("_source = %v, want /var/log/app/nginx_access.log", events[0]["_source"])
+	}
+	if events[0]["method"] != "OPTIONS" {
+		t.Fatalf("method = %v, want OPTIONS", events[0]["method"])
+	}
+	if fmt.Sprint(events[0]["status"]) != "404" {
+		t.Fatalf("status = %v, want 404", events[0]["status"])
 	}
 }
 
