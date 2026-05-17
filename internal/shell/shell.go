@@ -3,6 +3,8 @@
 package shell
 
 import (
+	"errors"
+
 	tea "charm.land/bubbletea/v2"
 	zone "github.com/lrstanley/bubblezone/v2"
 
@@ -21,6 +23,16 @@ type RunOpts struct {
 }
 
 func Run(mode string, opts RunOpts) error {
+	if mode == "server" && opts.Client != nil {
+		if err := runServerPreflight(opts.Client, opts.Server); err != nil {
+			if errors.Is(err, errPreflightQuit) {
+				return nil
+			}
+
+			return err
+		}
+	}
+
 	zone.NewGlobal()
 
 	m := NewModel(mode, opts)

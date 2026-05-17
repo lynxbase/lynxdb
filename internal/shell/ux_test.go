@@ -115,3 +115,43 @@ func TestPlaceOverlayUsesDisplayWidth(t *testing.T) {
 		t.Fatalf("overlay used byte offsets, got %q", plain(line))
 	}
 }
+
+func TestPreflightViewRendersConnectionState(t *testing.T) {
+	model := preflightModel{
+		server: "http://localhost:3100",
+		width:  80,
+		height: 24,
+		state:  preflightConnecting,
+	}
+
+	view := model.View()
+	got := plain(view.Content)
+	if !view.AltScreen {
+		t.Fatal("preflight should render in alt screen")
+	}
+	for _, want := range []string{"Connecting to LynxDB server", "http://localhost:3100"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("preflight missing %q in %q", want, got)
+		}
+	}
+	if strings.Contains(got, "Try:") {
+		t.Fatalf("preflight should not render main shell welcome, got %q", got)
+	}
+}
+
+func TestPreflightViewRendersFailureState(t *testing.T) {
+	model := preflightModel{
+		server: "http://localhost:3100",
+		width:  80,
+		height: 24,
+		state:  preflightFailed,
+		err:    errors.New("connection refused"),
+	}
+
+	got := plain(model.View().Content)
+	for _, want := range []string{"Cannot connect to LynxDB server", "connection refused", "Press r to retry or q to quit"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("preflight failure missing %q in %q", want, got)
+		}
+	}
+}
