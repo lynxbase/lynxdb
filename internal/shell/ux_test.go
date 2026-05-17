@@ -149,9 +149,30 @@ func TestPreflightViewRendersFailureState(t *testing.T) {
 	}
 
 	got := plain(model.View().Content)
-	for _, want := range []string{"Cannot connect to LynxDB server", "connection refused", "Press r to retry or q to quit"} {
+	for _, want := range []string{
+		"LynxDB server is not reachable",
+		"connection refused - no LynxDB server appears to be listening there",
+		"Hint: start the server with lynxdb server",
+		"Press r to retry or q to quit",
+	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("preflight failure missing %q in %q", want, got)
 		}
+	}
+}
+
+func TestPreflightQQuits(t *testing.T) {
+	model := preflightModel{
+		state: preflightFailed,
+		err:   errors.New("connection refused"),
+		keys:  defaultKeyMap(),
+	}
+
+	next, cmd := model.Update(tea.KeyPressMsg{Code: 'q'})
+	if _, ok := next.(preflightModel); !ok {
+		t.Fatalf("unexpected model type %T", next)
+	}
+	if cmd == nil {
+		t.Fatal("q should quit preflight")
 	}
 }

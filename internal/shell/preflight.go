@@ -2,8 +2,11 @@ package shell
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net"
 	"strings"
+	"syscall"
 	"time"
 
 	"charm.land/bubbles/v2/key"
@@ -95,7 +98,7 @@ func (m preflightModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyPressMsg:
 		switch {
-		case key.Matches(msg, m.keys.Quit), key.Matches(msg, m.keys.FocusBack):
+		case key.Matches(msg, m.keys.Quit), key.Matches(msg, m.keys.FocusBack), msg.String() == "q":
 			return m, tea.Quit
 		case m.state == preflightFailed && msg.String() == "r":
 			m.err = nil
@@ -128,9 +131,10 @@ func (m preflightModel) View() tea.View {
 	switch m.state {
 	case preflightFailed:
 		lines = append(lines,
-			t.Error.Render("Cannot connect to LynxDB server"),
+			t.Error.Render("LynxDB server is not reachable"),
 			t.Dim.Render("Endpoint: ")+t.Accent.Render(m.server),
-			t.Dim.Render("Cause: ")+m.err.Error(),
+			t.Dim.Render("Reason: ")+friendlyPreflightError(m.err),
+			t.Info.Render("Hint: start the server with lynxdb server, or pass --server with the right URL."),
 			"",
 			t.Info.Render("Press r to retry or q to quit."),
 		)
@@ -198,4 +202,45 @@ func preflightTickCmd() tea.Cmd {
 	return tea.Tick(preflightAnimationInterval, func(time.Time) tea.Msg {
 		return preflightTickMsg{}
 	})
+}
+
+func friendlyPreflightError(err error) string {
+	if err == nil {
+		return "unknown connection error"
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return "server did not respond before the connection check timed out"
+	}
+	if errors.Is(err, syscall.ECONNREFUSED) {
+		return "connection refused - no LynxDB server appears to be listening there"
+	}
+
+	var netErr *net.OpError
+	if errors.As(err, &netErr) {
+		if netErr.Op == "dial" {
+			if netErr.Err != nil {
+				msg := netErr.Err.Error()
+				if strings.Contains(msg, "connection refused") {
+					return "connection refused - no LynxDB server appears to be listening there"
+				}
+				if strings.Contains(msg, "no such host") {
+					return "host not found - check the server hostname"
+				}
+			}
+
+			return "could not open a network connection to the server"
+		}
+	}
+
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "connection refused"):
+		return "connection refused - no LynxDB server appears to be listening there"
+	case strings.Contains(msg, "no such host"):
+		return "host not found - check the server hostname"
+	case strings.Contains(msg, "context deadline exceeded"):
+		return "server did not respond before the connection check timed out"
+	default:
+		return msg
+	}
 }
