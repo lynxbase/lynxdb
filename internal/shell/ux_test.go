@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+	zone "github.com/lrstanley/bubblezone/v2"
+
 	"github.com/lynxbase/lynxdb/internal/ui"
 )
 
@@ -81,5 +84,20 @@ func TestResultsRenderConnectionDiagnostic(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("connection diagnostic missing %q in %q", want, got)
 		}
+	}
+}
+
+func TestModelViewDoesNotCaptureMouse(t *testing.T) {
+	zone.NewGlobal()
+	defer zone.Close()
+
+	model := NewModel("server", RunOpts{Server: "http://localhost:3100"})
+	model.width = 100
+	model.height = 30
+	model.recalcLayout()
+
+	view := model.View()
+	if view.MouseMode != tea.MouseModeNone {
+		t.Fatalf("shell view captures mouse with mode %v", view.MouseMode)
 	}
 }
