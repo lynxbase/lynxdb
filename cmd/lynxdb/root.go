@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -158,42 +157,15 @@ func runWelcome(_ *cobra.Command, _ []string) error {
 }
 
 func renderWelcomeLogo() {
-	if !isTTY() || globalNoColor || globalTheme == string(ui.ThemePlain) ||
-		os.Getenv("NO_COLOR") != "" || os.Getenv("TERM") == "dumb" {
-		fmt.Fprintln(os.Stdout, ui.Stdout.Success.Render("  /\\_/\\"))
-		fmt.Fprintln(os.Stdout, ui.Stdout.Info.Render(" ( o.o )"))
-		fmt.Fprintln(os.Stdout, ui.Stdout.Accent.Render("  > ^ <"))
-
-		return
-	}
-
-	frames := []string{
-		"  /\\_/\\\n ( -.- )\n  > ^ <",
-		"  /\\_/\\\n ( o.- )\n  > ^ <",
-		"  /\\_/\\\n ( o.o )\n  > ^ <",
-		"  /\\_/\\\n ( o.o )\n  > v <",
-		"  /\\_/\\\n ( o.o )\n  > ^ <",
-	}
-
-	fmt.Fprintln(os.Stdout)
-	for i, frame := range frames {
-		if i > 0 {
-			fmt.Fprint(os.Stdout, "\033[3A")
-		}
-		fmt.Fprint(os.Stdout, styleWelcomeLogoFrame(frame))
-		time.Sleep(65 * time.Millisecond)
-	}
+	ui.WriteLynxMark(os.Stdout, ui.Stdout, ui.LynxAlert, shouldAnimateLynx())
 }
 
-func styleWelcomeLogoFrame(frame string) string {
-	lines := strings.Split(frame, "\n")
-	if len(lines) != 3 {
-		return frame + "\n"
-	}
-
-	return "  " + ui.Stdout.Success.Render(lines[0]) + "\n" +
-		"  " + ui.Stdout.Info.Render(lines[1]) + "\n" +
-		"  " + ui.Stdout.Accent.Render(lines[2]) + "\n"
+func shouldAnimateLynx() bool {
+	return isTTY() &&
+		!globalNoColor &&
+		globalTheme != string(ui.ThemePlain) &&
+		os.Getenv("NO_COLOR") == "" &&
+		os.Getenv("TERM") != "dumb"
 }
 
 // runRootCommand handles bare `lynxdb` invocation. When stdin is piped, it
