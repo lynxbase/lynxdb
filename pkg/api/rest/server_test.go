@@ -1134,6 +1134,12 @@ func TestQuery_SyncMode(t *testing.T) {
 		if _, ok := first["_sourcetype"]; !ok {
 			t.Error("event row missing _sourcetype")
 		}
+		if _, ok := first["source"]; ok {
+			t.Error("event row should not include source alias")
+		}
+		if _, ok := first["sourcetype"]; ok {
+			t.Error("event row should not include sourcetype alias")
+		}
 	}
 	if _, ok := meta["took_ms"]; !ok {
 		t.Error("missing took_ms")

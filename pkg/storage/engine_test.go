@@ -55,6 +55,12 @@ func TestEngine_EphemeralIngestAndQuery(t *testing.T) {
 	if _, ok := res.Rows[0]["_sourcetype"]; !ok {
 		t.Fatal("event row missing _sourcetype")
 	}
+	if _, ok := res.Rows[0]["source"]; ok {
+		t.Fatal("event row should not include source alias when _source exists")
+	}
+	if _, ok := res.Rows[0]["sourcetype"]; ok {
+		t.Fatal("event row should not include sourcetype alias when _sourcetype exists")
+	}
 
 	res, _, err = eng.Query(ctx, `FROM main | stats count`, QueryOpts{})
 	if err != nil {

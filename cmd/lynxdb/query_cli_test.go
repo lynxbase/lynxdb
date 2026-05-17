@@ -523,6 +523,9 @@ func TestQueryFile_TableFormat_EventMetadata(t *testing.T) {
 	if !strings.Contains(stdout, "level") {
 		t.Error("table output missing 'level' column header")
 	}
+	if strings.Contains(stdout, " sourcetype ") || strings.Contains(stdout, " source ") {
+		t.Error("table output should not include source/sourcetype aliases")
+	}
 }
 
 func TestQueryFile_RawFormat(t *testing.T) {

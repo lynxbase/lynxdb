@@ -780,6 +780,8 @@ func ensureDefaultEventMetadata(fields map[string]interface{}) {
 			fields["_sourcetype"] = ""
 		}
 	}
+	delete(fields, "source")
+	delete(fields, "sourcetype")
 }
 
 func queryProducesEventRows(q *spl2.Query) bool {

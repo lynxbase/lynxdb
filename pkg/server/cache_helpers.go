@@ -44,6 +44,8 @@ func ensureDefaultEventMetadataFields(rows []spl2.ResultRow) {
 				fields["_sourcetype"] = ""
 			}
 		}
+		delete(fields, "source")
+		delete(fields, "sourcetype")
 	}
 }
 
