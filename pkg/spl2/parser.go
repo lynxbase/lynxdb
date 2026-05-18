@@ -660,6 +660,9 @@ func (p *Parser) parseCommand() ([]Command, error) {
 
 			return []Command{&WhereCommand{Expr: expr}}, nil
 		case TokenIdent:
+			if isCountCommandStart(tok, p.peekAt(1)) {
+				return singleCmd(p.parseCountCommand())
+			}
 			// `| <format>(...)` shortcut: when the identifier names a registered
 			// unpack format and is immediately followed by '(', desugar to
 			// `| parse <format>(...)`. Must run before the implicit-where
@@ -693,6 +696,51 @@ func (p *Parser) parseCommand() ([]Command, error) {
 
 		return nil, fmt.Errorf("spl2: unexpected command %s %q at position %d", tok.Type, tok.Literal, tok.Pos)
 	}
+}
+
+func isCountCommandStart(tok, next Token) bool {
+	if !strings.EqualFold(tok.Literal, "count") {
+		return false
+	}
+	switch next.Type {
+	case TokenLParen, TokenPipe, TokenEOF, TokenSemicolon, TokenRBracket, TokenAs, TokenBy:
+		return true
+	default:
+		return false
+	}
+}
+
+func (p *Parser) parseCountCommand() (*StatsCommand, error) {
+	p.advance() // consume "count"
+
+	if p.peek().Type == TokenLParen {
+		p.advance()
+		if _, err := p.expect(TokenRParen); err != nil {
+			return nil, fmt.Errorf("spl2: count command takes no arguments")
+		}
+	}
+
+	agg := AggExpr{Func: "count", Alias: "count"}
+	if p.peek().Type == TokenAs {
+		p.advance()
+		alias, err := p.expectIdent()
+		if err != nil {
+			return nil, err
+		}
+		agg.Alias = alias.Literal
+	}
+
+	var groupBy []string
+	if p.peek().Type == TokenBy {
+		p.advance()
+		fields, err := p.parseIdentList()
+		if err != nil {
+			return nil, err
+		}
+		groupBy = fields
+	}
+
+	return &StatsCommand{Aggregations: []AggExpr{agg}, GroupBy: groupBy}, nil
 }
 
 func isCapabilityCommandName(name string) bool {

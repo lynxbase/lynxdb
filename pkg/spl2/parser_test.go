@@ -2131,6 +2131,59 @@ func TestParse_IndexEqualsThenPipe(t *testing.T) {
 	}
 }
 
+func TestParse_CountCommandShorthand(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantAlias string
+		wantBy    []string
+	}{
+		{name: "bare", input: `FROM main | count`, wantAlias: "count"},
+		{name: "call", input: `FROM main | count()`, wantAlias: "count"},
+		{name: "alias", input: `FROM main | count AS total`, wantAlias: "total"},
+		{name: "by", input: `FROM main | count BY status, host`, wantAlias: "count", wantBy: []string{"status", "host"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q, err := Parse(tt.input)
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if len(q.Commands) != 1 {
+				t.Fatalf("Commands: got %d, want 1", len(q.Commands))
+			}
+			stats, ok := q.Commands[0].(*StatsCommand)
+			if !ok {
+				t.Fatalf("cmd[0]: expected StatsCommand, got %T", q.Commands[0])
+			}
+			if len(stats.Aggregations) != 1 {
+				t.Fatalf("aggs: got %d, want 1", len(stats.Aggregations))
+			}
+			agg := stats.Aggregations[0]
+			if agg.Func != "count" || len(agg.Args) != 0 || agg.Alias != tt.wantAlias {
+				t.Fatalf("agg: got %+v, want count alias %q", agg, tt.wantAlias)
+			}
+			if !reflect.DeepEqual(stats.GroupBy, tt.wantBy) {
+				t.Fatalf("GroupBy: got %v, want %v", stats.GroupBy, tt.wantBy)
+			}
+		})
+	}
+}
+
+func TestParse_CountFieldComparisonStillImplicitWhere(t *testing.T) {
+	q, err := Parse(`FROM main | count = 1`)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(q.Commands) != 1 {
+		t.Fatalf("Commands: got %d, want 1", len(q.Commands))
+	}
+	if _, ok := q.Commands[0].(*WhereCommand); !ok {
+		t.Fatalf("cmd[0]: expected WhereCommand, got %T", q.Commands[0])
+	}
+}
+
 func TestParse_IndexEqualsNoSearch(t *testing.T) {
 	// index=nginx alone — just source, no commands
 	q, err := Parse(`index=nginx`)
