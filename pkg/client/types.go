@@ -357,13 +357,14 @@ type ExplainResult struct {
 
 // ExplainParsed contains the parsed query analysis.
 type ExplainParsed struct {
-	Pipeline      []ExplainStage `json:"pipeline"`
-	ResultType    string         `json:"result_type"`
-	EstimatedCost string         `json:"estimated_cost"`
-	UsesFullScan  bool           `json:"uses_full_scan"`
-	FieldsRead    []string       `json:"fields_read"`
-	SearchTerms   []string       `json:"search_terms,omitempty"`
-	HasTimeBounds bool           `json:"has_time_bounds,omitempty"`
+	Pipeline        []ExplainStage          `json:"pipeline"`
+	ResultType      string                  `json:"result_type"`
+	EstimatedCost   string                  `json:"estimated_cost"`
+	UsesFullScan    bool                    `json:"uses_full_scan"`
+	FieldsRead      []string                `json:"fields_read"`
+	SearchTerms     []string                `json:"search_terms,omitempty"`
+	HasTimeBounds   bool                    `json:"has_time_bounds,omitempty"`
+	RangePredicates []ExplainRangePredicate `json:"range_predicates,omitempty"`
 
 	// Optimizer details (rich explain output).
 	OptimizerStats    map[string]int       `json:"optimizer_stats,omitempty"`
@@ -401,9 +402,25 @@ type ExplainSourceScope struct {
 	TotalSourcesAvailable int      `json:"total_sources_available,omitempty"`
 }
 
+// ExplainRangePredicate describes how a range predicate is executed.
+type ExplainRangePredicate struct {
+	Field            string `json:"field"`
+	Min              string `json:"min,omitempty"`
+	Max              string `json:"max,omitempty"`
+	LoweredToBSI     bool   `json:"lowered_to_bsi,omitempty"`
+	RGFilterStrategy string `json:"rg_filter_strategy"`
+	RowVMStrategy    string `json:"row_vm_strategy"`
+}
+
 // ExplainStage is a single pipeline stage.
 type ExplainStage struct {
-	Command string `json:"command"`
+	Command        string   `json:"command"`
+	Description    string   `json:"description,omitempty"`
+	FieldsAdded    []string `json:"fields_added,omitempty"`
+	FieldsRemoved  []string `json:"fields_removed,omitempty"`
+	FieldsOut      []string `json:"fields_out,omitempty"`
+	FieldsOptional []string `json:"fields_optional,omitempty"`
+	FieldsUnknown  bool     `json:"fields_unknown,omitempty"`
 }
 
 // ExplainError is a parse error returned by Explain().

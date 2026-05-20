@@ -616,6 +616,9 @@ func runConfigListProfiles(_ *cobra.Command, _ []string) error {
 	}
 
 	if len(profiles) == 0 {
+		if !humanOutputActive() {
+			return renderTabular(os.Stdout, []string{"NAME", "URL", "AUTH"}, nil, ui.Stdout)
+		}
 		fmt.Println("No profiles configured.")
 		printNextSteps(
 			"lynxdb config add-profile <name> --url <url>   Add a profile",
@@ -640,7 +643,7 @@ func runConfigListProfiles(_ *cobra.Command, _ []string) error {
 	sort.Strings(names)
 
 	t := ui.Stdout
-	tbl := ui.NewTable(t).SetColumns("NAME", "URL", "AUTH")
+	rows := make([][]any, 0, len(names))
 	for _, name := range names {
 		p := profiles[name]
 		authHint := ""
@@ -648,11 +651,11 @@ func runConfigListProfiles(_ *cobra.Command, _ []string) error {
 			authHint = "****"
 		}
 
-		tbl.AddRow(name, p.URL, authHint)
+		rows = append(rows, []any{name, p.URL, authHint})
 	}
-	fmt.Print(tbl.String())
 
-	return nil
+	return renderTabular(os.Stdout, []string{"NAME", "URL", "AUTH"}, rows, t)
+
 }
 
 func runConfigRemoveProfile(_ *cobra.Command, args []string) error {

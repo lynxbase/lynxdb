@@ -803,7 +803,7 @@ func processESBatch(ctx context.Context, pipe *pipeline.Pipeline, batch []*event
 		return err
 	}
 
-	return s.submitShipperEvents(ctx, processed)
+	return s.submitDurableShipperEvents(ctx, processed)
 }
 
 func makeSuccessItem(action, index, id string) esBulkItemResult {

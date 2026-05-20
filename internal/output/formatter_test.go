@@ -201,3 +201,101 @@ func TestDetectFormat_Table_MultiColumn_NotSingleRaw(t *testing.T) {
 		t.Errorf("expected TableFormatter for multi-column row, got %T", f)
 	}
 }
+
+func TestDetectFormat_TableAliases(t *testing.T) {
+	tests := []struct {
+		format Format
+		style  int
+	}{
+		{FormatBox, 0},
+		{FormatMarkdown, 2},
+		{FormatASCII, 1},
+	}
+	for _, tt := range tests {
+		f := DetectFormatWithOptions(tt.format, []map[string]interface{}{{"a": 1}}, HumanTableOptions{})
+		tf, ok := f.(*TableFormatter)
+		if !ok {
+			t.Fatalf("%s: expected TableFormatter, got %T", tt.format, f)
+		}
+		if int(tf.Style) != tt.style {
+			t.Fatalf("%s: style = %d, want %d", tt.format, tf.Style, tt.style)
+		}
+	}
+}
+
+func TestDetectFormat_VerticalAliases(t *testing.T) {
+	for _, format := range []Format{FormatVertical, FormatLine, FormatG, Format("g")} {
+		f := DetectFormatWithOptions(format, []map[string]interface{}{{"a": 1}}, HumanTableOptions{})
+		if _, ok := f.(*VerticalFormatter); !ok {
+			t.Fatalf("%s: expected VerticalFormatter, got %T", format, f)
+		}
+	}
+}
+
+func TestDetectFormat_AutoDoesNotUseWideVerticalHeuristic(t *testing.T) {
+	rows := []map[string]interface{}{{}}
+	for i := 0; i < 40; i++ {
+		rows[0][strings.Repeat("x", i+1)] = i
+	}
+
+	f := DetectFormatWithOptions(FormatTable, rows, HumanTableOptions{})
+	if _, ok := f.(*VerticalFormatter); ok {
+		t.Fatalf("table format should not route wide rows to vertical")
+	}
+}
+
+func TestRenderTabular_PreservesColumnOrder(t *testing.T) {
+	var buf bytes.Buffer
+	err := RenderTabular(&buf,
+		[]string{"zeta", "alpha", "middle"},
+		[][]any{{1, 2, 3}},
+		FormatCSV,
+		HumanTableOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if got, want := lines[0], "zeta,alpha,middle"; got != want {
+		t.Fatalf("header = %q, want %q", got, want)
+	}
+}
+
+func TestRenderTabular_AutoNonTTYUsesJSON(t *testing.T) {
+	var buf bytes.Buffer
+	err := RenderTabular(&buf,
+		[]string{"zeta", "alpha"},
+		[][]any{{1, 2}},
+		FormatAuto,
+		HumanTableOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := strings.TrimSpace(buf.String())
+	if want := `{"zeta":1,"alpha":2}`; got != want {
+		t.Fatalf("auto non-TTY output = %q, want %q", got, want)
+	}
+}
+
+func TestRenderKeyValue_CSV(t *testing.T) {
+	var buf bytes.Buffer
+	err := RenderKeyValue(&buf,
+		map[string]any{"zeta": 1, "alpha": 2},
+		FormatCSV,
+		HumanTableOptions{},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if got, want := lines[0], "KEY,VALUE"; got != want {
+		t.Fatalf("header = %q, want %q", got, want)
+	}
+	if got, want := lines[1], "alpha,2"; got != want {
+		t.Fatalf("first row = %q, want %q", got, want)
+	}
+}

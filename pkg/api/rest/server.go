@@ -745,6 +745,17 @@ func (s *Server) submitShipperEvents(ctx context.Context, events []*event.Event)
 	return nil
 }
 
+func (s *Server) submitDurableShipperEvents(ctx context.Context, events []*event.Event) error {
+	if err := s.engine.IngestContext(ctx, events); err != nil {
+		return err
+	}
+	if err := s.engine.FlushBatcherContext(ctx); err != nil {
+		return err
+	}
+	s.recordShipperEvents(ctx, len(events))
+	return nil
+}
+
 func (s *Server) recordShipperEvents(ctx context.Context, count int) {
 	if s.shipperRegistry == nil {
 		return

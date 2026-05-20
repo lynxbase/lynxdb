@@ -5,18 +5,15 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/table"
 	"github.com/charmbracelet/x/ansi"
 )
 
 // cellPaddingRight is the right-padding (in chars) applied to each table cell.
 const cellPaddingRight = 2
 
-// Table is a styled table renderer built on lipgloss/table.
-// It automatically adapts to terminal width: when all columns fit, it renders
-// a normal table with cell wrapping. When columns would be too narrow
-// (< MinColumnWidth each), it falls back to a vertical record layout that
-// preserves every value without truncation.
+// Table is a styled table renderer for CLI output. It stays tabular by default
+// and truncates over-wide cells to fit the terminal; callers can explicitly set
+// StyleVertical for record-oriented output.
 //
 // For interactive scrolling tables, use bubbles/table instead.
 type Table struct {
@@ -26,7 +23,20 @@ type Table struct {
 	kinds     []ColumnKind
 	termWidth int
 	compact   bool
+	style     TableStyle
+	maxRows   int
+	nullValue string
 }
+
+// TableStyle controls the human-readable table layout.
+type TableStyle int
+
+const (
+	StyleBox TableStyle = iota
+	StyleASCII
+	StyleMarkdown
+	StyleVertical
+)
 
 // ColumnKind controls per-column styling and alignment.
 type ColumnKind int
@@ -45,6 +55,7 @@ func NewTable(theme *Theme) *Table {
 	return &Table{
 		theme:     theme,
 		termWidth: TerminalWidth(),
+		style:     StyleBox,
 	}
 }
 
@@ -69,6 +80,27 @@ func (t *Table) SetCompact(compact bool) *Table {
 	return t
 }
 
+// SetStyle sets the table layout style.
+func (t *Table) SetStyle(style TableStyle) *Table {
+	t.style = style
+
+	return t
+}
+
+// SetMaxRows limits rendered rows. Zero means no limit.
+func (t *Table) SetMaxRows(maxRows int) *Table {
+	t.maxRows = maxRows
+
+	return t
+}
+
+// SetNullValue sets the placeholder used for empty cells.
+func (t *Table) SetNullValue(nullValue string) *Table {
+	t.nullValue = nullValue
+
+	return t
+}
+
 // SetTerminalWidth overrides the auto-detected terminal width.
 // Useful for tests or when rendering to a non-stdout destination.
 func (t *Table) SetTerminalWidth(w int) *Table {
@@ -84,95 +116,45 @@ func (t *Table) AddRow(values ...string) *Table {
 	return t
 }
 
-// String renders the table, choosing between table layout and record layout
-// based on the terminal width and number of columns.
+// String renders the table.
 func (t *Table) String() string {
 	if len(t.columns) == 0 {
 		return ""
 	}
 
-	numCols := len(t.columns)
-	// Each column needs at least MinColumnWidth + cellPaddingRight.
-	availablePerCol := t.termWidth / numCols
-	minColumnWidth := MinColumnWidth
-	padding := cellPaddingRight
-	if t.compact {
-		minColumnWidth = 6
-		padding = 1
-	}
-
-	if availablePerCol < minColumnWidth+padding {
+	if t.style == StyleVertical {
 		return t.renderRecords()
 	}
 
 	return t.renderTable()
 }
 
-// renderTable renders a standard horizontal table using lipgloss/table,
-// constrained to the terminal width with cell wrapping (no truncation).
+// renderTable renders a horizontal table constrained to terminal width.
 func (t *Table) renderTable() string {
-	// Normalize rows: ensure each row has exactly len(t.columns) cells.
-	rows := make([][]string, len(t.rows))
-	for i, row := range t.rows {
-		r := make([]string, len(t.columns))
-		for j := range t.columns {
-			if j < len(row) {
-				r[j] = row[j]
-			}
-		}
+	rows := t.visibleRows()
+	widths := t.columnWidths(rows)
+	chars := tableCharsForStyle(t.style)
 
-		rows[i] = r
+	var b strings.Builder
+	if t.style != StyleMarkdown {
+		b.WriteString(t.ruleLine(chars.topLeft, chars.topSep, chars.topRight, chars.horizontal, widths))
+		b.WriteByte('\n')
 	}
-
-	// Border with only a header separator line using "─".
-	border := lipgloss.Border{
-		Top: "\u2500",
+	b.WriteString(t.rowLine(chars.vertical, widths, t.columns, true))
+	b.WriteByte('\n')
+	b.WriteString(t.ruleLine(chars.midLeft, chars.midSep, chars.midRight, chars.horizontal, widths))
+	b.WriteByte('\n')
+	for _, row := range rows {
+		b.WriteString(t.rowLine(chars.vertical, widths, row, false))
+		b.WriteByte('\n')
 	}
-
-	headerStyle := t.theme.TableHeader
-	ruleStyle := t.theme.Rule
-	padding := cellPaddingRight
-	if t.compact {
-		padding = 1
+	if t.style != StyleMarkdown {
+		b.WriteString(t.ruleLine(chars.bottomLeft, chars.bottomSep, chars.bottomRight, chars.horizontal, widths))
+		b.WriteByte('\n')
 	}
+	b.WriteString(t.rowCountFooter(len(t.rows), len(rows)))
 
-	tbl := table.New().
-		Border(border).
-		BorderStyle(ruleStyle).
-		BorderTop(false).
-		BorderBottom(false).
-		BorderLeft(false).
-		BorderRight(false).
-		BorderColumn(false).
-		BorderRow(false).
-		BorderHeader(true).
-		Width(t.termWidth).
-		Wrap(true).
-		StyleFunc(func(row, col int) lipgloss.Style {
-			style := lipgloss.NewStyle().PaddingRight(padding)
-			if row == table.HeaderRow {
-				style = headerStyle.PaddingRight(padding)
-			}
-			if t.columnKind(col) == ColumnNumber || t.columnKind(col) == ColumnBytes || t.columnKind(col) == ColumnDuration {
-				style = style.Align(lipgloss.Right)
-			}
-			if row != table.HeaderRow {
-				switch t.columnKind(col) {
-				case ColumnNumber:
-					style = style.Foreground(ColorJSONNum())
-				case ColumnDuration:
-					style = style.Foreground(ColorInfo())
-				case ColumnBytes:
-					style = style.Foreground(ColorAccent())
-				}
-			}
-
-			return style
-		}).
-		Headers(t.columns...).
-		Rows(rows...)
-
-	return tbl.String()
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func (t *Table) columnKind(col int) ColumnKind {
@@ -181,6 +163,219 @@ func (t *Table) columnKind(col int) ColumnKind {
 	}
 
 	return ColumnText
+}
+
+func (t *Table) visibleRows() [][]string {
+	limit := len(t.rows)
+	if t.maxRows > 0 && t.maxRows < limit {
+		limit = t.maxRows
+	}
+	rows := make([][]string, limit)
+	for i := 0; i < limit; i++ {
+		r := make([]string, len(t.columns))
+		for j := range t.columns {
+			if j < len(t.rows[i]) {
+				r[j] = t.rows[i][j]
+			}
+			if r[j] == "" && t.nullValue != "" {
+				r[j] = t.nullValue
+			}
+		}
+		rows[i] = r
+	}
+
+	return rows
+}
+
+func (t *Table) columnWidths(rows [][]string) []int {
+	widths := make([]int, len(t.columns))
+	for i, col := range t.columns {
+		widths[i] = maxInt(1, ansi.StringWidth(col))
+	}
+	for _, row := range rows {
+		for i, cell := range row {
+			widths[i] = maxInt(widths[i], ansi.StringWidth(cell))
+		}
+	}
+
+	target := t.termWidth
+	if target <= 0 {
+		target = TerminalWidth()
+	}
+	chrome := len(t.columns) + 1 + 2*len(t.columns)
+	available := target - chrome
+	if available < len(t.columns) {
+		available = len(t.columns)
+	}
+	for sumInts(widths) > available {
+		idx := widestColumn(widths)
+		if widths[idx] <= 1 {
+			break
+		}
+		widths[idx]--
+	}
+
+	return widths
+}
+
+func (t *Table) rowLine(sep string, widths []int, values []string, header bool) string {
+	var b strings.Builder
+	b.WriteString(sep)
+	for i, width := range widths {
+		value := ""
+		if i < len(values) {
+			value = values[i]
+		}
+		if value == "" && t.nullValue != "" {
+			value = t.nullValue
+		}
+		value = truncateCell(value, width)
+		cellWidth := ansi.StringWidth(value)
+		pad := strings.Repeat(" ", maxInt(0, width-cellWidth))
+
+		style := t.cellStyle(i, header)
+		if t.isRightAligned(i) && !header {
+			b.WriteByte(' ')
+			b.WriteString(style.Render(pad + value))
+			b.WriteByte(' ')
+		} else {
+			b.WriteByte(' ')
+			b.WriteString(style.Render(value + pad))
+			b.WriteByte(' ')
+		}
+		b.WriteString(sep)
+	}
+
+	return b.String()
+}
+
+func (t *Table) ruleLine(left, sep, right, fill string, widths []int) string {
+	var b strings.Builder
+	b.WriteString(left)
+	for i, width := range widths {
+		b.WriteString(strings.Repeat(fill, width+2))
+		if i == len(widths)-1 {
+			b.WriteString(right)
+		} else {
+			b.WriteString(sep)
+		}
+	}
+
+	if t.style == StyleMarkdown {
+		return b.String()
+	}
+
+	return t.theme.Rule.Render(b.String())
+}
+
+func (t *Table) cellStyle(col int, header bool) lipgloss.Style {
+	if header {
+		return t.theme.TableHeader
+	}
+	switch t.columnKind(col) {
+	case ColumnNumber:
+		return t.theme.JSONNum
+	case ColumnDuration:
+		return t.theme.Info
+	case ColumnBytes:
+		return t.theme.Accent
+	default:
+		return lipgloss.NewStyle()
+	}
+}
+
+func (t *Table) isRightAligned(col int) bool {
+	switch t.columnKind(col) {
+	case ColumnNumber, ColumnDuration, ColumnBytes:
+		return true
+	default:
+		return false
+	}
+}
+
+func (t *Table) rowCountFooter(total, shown int) string {
+	word := "rows"
+	if total == 1 {
+		word = "row"
+	}
+	if t.maxRows > 0 && shown < total {
+		return fmt.Sprintf("(%d %s, %d shown — use --max-rows to see more)", total, word, shown)
+	}
+
+	return fmt.Sprintf("(%d %s)", total, word)
+}
+
+type tableChars struct {
+	topLeft, topSep, topRight          string
+	midLeft, midSep, midRight          string
+	bottomLeft, bottomSep, bottomRight string
+	horizontal, vertical               string
+}
+
+func tableCharsForStyle(style TableStyle) tableChars {
+	switch style {
+	case StyleASCII:
+		return tableChars{
+			topLeft: "+", topSep: "+", topRight: "+",
+			midLeft: "+", midSep: "+", midRight: "+",
+			bottomLeft: "+", bottomSep: "+", bottomRight: "+",
+			horizontal: "-", vertical: "|",
+		}
+	case StyleMarkdown:
+		return tableChars{
+			midLeft: "|", midSep: "|", midRight: "|",
+			horizontal: "-", vertical: "|",
+		}
+	default:
+		return tableChars{
+			topLeft: "┌", topSep: "┬", topRight: "┐",
+			midLeft: "├", midSep: "┼", midRight: "┤",
+			bottomLeft: "└", bottomSep: "┴", bottomRight: "┘",
+			horizontal: "─", vertical: "│",
+		}
+	}
+}
+
+func truncateCell(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	if ansi.StringWidth(s) <= width {
+		return s
+	}
+	if width == 1 {
+		return "…"
+	}
+
+	return ansi.Truncate(s, width, "…")
+}
+
+func sumInts(values []int) int {
+	sum := 0
+	for _, v := range values {
+		sum += v
+	}
+
+	return sum
+}
+
+func widestColumn(widths []int) int {
+	idx := 0
+	for i := 1; i < len(widths); i++ {
+		if widths[i] > widths[idx] {
+			idx = i
+		}
+	}
+
+	return idx
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+
+	return b
 }
 
 // renderRecords renders rows as vertical key-value records. This layout is used

@@ -126,9 +126,10 @@ type AsyncBatcher struct {
 	pendingFlushes int
 	asyncFlushErr  error
 
-	// onCommit is called after each part is committed to disk.
+	// onCommit is called after each part is committed to disk and registered
+	// for admission/backpressure accounting.
 	// Engine uses this to open the mmap'd reader and register for queries.
-	onCommit func(meta *Meta)
+	onCommit func(meta *Meta) error
 	runCtx   context.Context
 }
 
@@ -163,7 +164,7 @@ func NewAsyncBatcher(writer *Writer, registry *Registry, cfg BatcherConfig, logg
 
 // SetOnCommit sets the callback invoked after each part is committed to disk.
 // Must be called before Start.
-func (b *AsyncBatcher) SetOnCommit(fn func(meta *Meta)) {
+func (b *AsyncBatcher) SetOnCommit(fn func(meta *Meta) error) {
 	b.onCommit = fn
 }
 
@@ -302,8 +303,8 @@ func (b *AsyncBatcher) finishThresholdFlush(err error) {
 	b.pendingCond.Broadcast()
 }
 
-// checkBackpressure applies ClickHouse-style backpressure based on total part
-// count. When parts accumulate faster than compaction can merge them:
+// checkBackpressure applies ClickHouse-style backpressure based on active flush
+// pressure. When L0 parts accumulate faster than compaction can merge them:
 //   - Below DelayThreshold: no delay (fast path).
 //   - Between DelayThreshold and RejectThreshold: progressive sleep (linear
 //     interpolation from 0ms to MaxDelayMs). This gives compaction time to
@@ -313,17 +314,17 @@ func (b *AsyncBatcher) checkBackpressure(ctx context.Context) error {
 	b.pendingMu.Lock()
 	pendingFlushes := b.pendingFlushes
 	b.pendingMu.Unlock()
-	partCount := b.registry.Count() + pendingFlushes
+	partCount := b.registry.CountByLevel(0) + pendingFlushes
 
 	b.logger.Debug("backpressure check",
-		"part_count", partCount,
+		"l0_part_count", partCount,
 		"delay_threshold", b.cfg.DelayThreshold,
 		"reject_threshold", b.cfg.RejectThreshold,
 	)
 
 	if partCount >= b.cfg.RejectThreshold {
 		b.logger.Warn("backpressure: rejecting ingest",
-			"part_count", partCount,
+			"l0_part_count", partCount,
 			"reject_threshold", b.cfg.RejectThreshold,
 		)
 
@@ -338,7 +339,7 @@ func (b *AsyncBatcher) checkBackpressure(ctx context.Context) error {
 
 		if delayMs > 0 {
 			b.logger.Debug("backpressure: delaying ingest",
-				"part_count", partCount,
+				"l0_part_count", partCount,
 				"delay_ms", delayMs,
 			)
 			timer := time.NewTimer(time.Duration(delayMs) * time.Millisecond)
@@ -549,16 +550,19 @@ func (b *AsyncBatcher) flushEvents(ctx context.Context, index string, events []*
 
 	b.registry.Add(meta)
 
+	if b.onCommit != nil {
+		if err := b.onCommit(meta); err != nil {
+			b.registry.Remove(meta.ID)
+			return fmt.Errorf("part.AsyncBatcher.flushEvents: on commit %s: %w", meta.ID, err)
+		}
+	}
+
 	b.logger.Info("part committed",
 		"index", index,
 		"events", meta.EventCount,
 		"size_bytes", meta.SizeBytes,
 		"id", meta.ID,
 	)
-
-	if b.onCommit != nil {
-		b.onCommit(meta)
-	}
 
 	return nil
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -157,6 +158,9 @@ func runMVList(_ *cobra.Command, _ []string) error {
 	}
 
 	if len(views) == 0 {
+		if !humanOutputActive() {
+			return renderTabular(os.Stdout, []string{"NAME", "STATUS", "QUERY"}, nil, ui.Stdout)
+		}
 		fmt.Println("No materialized views.")
 		printNextSteps(
 			"lynxdb mv create <name> <query>   Create a new view",
@@ -166,16 +170,21 @@ func runMVList(_ *cobra.Command, _ []string) error {
 	}
 
 	t := ui.Stdout
-	tbl := ui.NewTable(t).
-		SetColumns("NAME", "STATUS", "QUERY")
-
+	rows := make([][]any, 0, len(views))
 	for _, v := range views {
-		displayStatus := mvStatusColored(t, v.Status)
-		tbl.AddRow(v.Name, displayStatus, v.Query)
+		status := v.Status
+		if humanOutputActive() {
+			status = mvStatusColored(t, v.Status)
+		}
+		rows = append(rows, []any{v.Name, status, v.Query})
 	}
 
-	fmt.Print(tbl.String())
-	fmt.Printf("\n%s\n", t.Dim.Render(fmt.Sprintf("%d views total", len(views))))
+	if err := renderTabular(os.Stdout, []string{"NAME", "STATUS", "QUERY"}, rows, t); err != nil {
+		return err
+	}
+	if humanOutputActive() {
+		fmt.Printf("\n%s\n", t.Dim.Render(fmt.Sprintf("%d views total", len(views))))
+	}
 
 	return nil
 }
@@ -193,6 +202,26 @@ func runMVStatus(name string) error {
 		fmt.Println(string(b))
 
 		return nil
+	}
+
+	if !humanOutputActive() {
+		rows := [][2]any{
+			{"name", view.Name},
+			{"status", view.Status},
+			{"query", view.Query},
+			{"retention", view.Retention},
+			{"created", view.CreatedAt},
+		}
+		if view.Backfill != nil {
+			rows = append(rows,
+				[2]any{"backfill_phase", view.Backfill.Phase},
+				[2]any{"backfill_segments_scanned", view.Backfill.SegmentsScanned},
+				[2]any{"backfill_segments_total", view.Backfill.SegmentsTotal},
+				[2]any{"backfill_rows_scanned", view.Backfill.RowsScanned},
+				[2]any{"backfill_elapsed_ms", view.Backfill.ElapsedMS},
+			)
+		}
+		return renderKeyValues(os.Stdout, rows, ui.Stdout)
 	}
 
 	t := ui.Stdout

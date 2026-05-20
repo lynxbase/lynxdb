@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"os"
 	"strings"
 	"time"
 
@@ -96,10 +97,15 @@ func printDiffJSON(curRows, prevRows []map[string]interface{}, period string) er
 
 func printDiffTable(curRows, prevRows []map[string]interface{}, period string) error {
 	t := ui.Stdout
-	fmt.Printf("\n  %s last %s vs previous %s\n\n",
-		t.Bold.Render("Comparing:"), period, period)
+	if humanOutputActive() {
+		fmt.Printf("\n  %s last %s vs previous %s\n\n",
+			t.Bold.Render("Comparing:"), period, period)
+	}
 
 	if len(curRows) == 0 && len(prevRows) == 0 {
+		if !humanOutputActive() {
+			return renderTabular(os.Stdout, []string{"NOW", "PREV", "CHANGE"}, nil, t)
+		}
 		fmt.Println("  No results in either period.")
 		printNextSteps(
 			fmt.Sprintf("lynxdb diff '...' --period %s   Widen the comparison period", suggestWiderDiffPeriod(period)),
@@ -143,28 +149,33 @@ func printDiffTable(curRows, prevRows []map[string]interface{}, period string) e
 	}
 
 	headers := append(groupCols, "NOW", "PREV", "CHANGE")
-	tbl := ui.NewTable(t).
-		SetColumns(headers...)
-
+	tableRows := make([][]any, 0, len(dRows))
 	for _, dr := range dRows {
-		row := make([]string, 0, len(headers))
-		row = append(row, append(dr.group,
+		row := make([]any, 0, len(headers))
+		for _, v := range dr.group {
+			row = append(row, v)
+		}
+		row = append(row,
 			strings.Join(dr.now, ", "),
 			strings.Join(dr.prev, ", "),
 			strings.Join(dr.change, ", "),
-		)...)
-		tbl.AddRow(row...)
+		)
+		tableRows = append(tableRows, row)
 	}
 
-	fmt.Print(tbl.String())
+	if err := renderTabular(os.Stdout, headers, tableRows, t); err != nil {
+		return err
+	}
 
 	curTotal, prevTotal := sumNumericColumns(curRows, numericCols), sumNumericColumns(prevRows, numericCols)
-	if curTotal > 0 || prevTotal > 0 {
+	if humanOutputActive() && (curTotal > 0 || prevTotal > 0) {
 		change := formatDiffPct(curTotal, prevTotal)
 		fmt.Printf("\n  Total: %.0f vs %.0f (%s)\n", curTotal, prevTotal, change)
 	}
 
-	fmt.Println()
+	if humanOutputActive() {
+		fmt.Println()
+	}
 
 	return nil
 }

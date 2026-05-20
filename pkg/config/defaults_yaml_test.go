@@ -27,10 +27,10 @@ func TestDefaultsYAMLMatchesCompiledDefaults(t *testing.T) {
 	// curated subset (no profiles block, no cluster block, no TLS/Auth blocks)
 	// so we can't deep-equal the whole Config. Compare each documented subtree.
 	cases := []struct {
-		name         string
-		fromYAMLPtr  interface{}
-		compiledPtr  interface{}
-		skipIfZero   bool // true = skip subtree if YAML didn't populate it
+		name        string
+		fromYAMLPtr interface{}
+		compiledPtr interface{}
+		skipIfZero  bool // true = skip subtree if YAML didn't populate it
 	}{
 		{"Storage", fromYAML.Storage, compiled.Storage, true},
 		{"Query", fromYAML.Query, compiled.Query, true},

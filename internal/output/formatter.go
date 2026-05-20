@@ -27,7 +27,12 @@ const (
 	FormatCSV      Format = "csv"
 	FormatTSV      Format = "tsv"
 	FormatRaw      Format = "raw"
+	FormatBox      Format = "box"
+	FormatMarkdown Format = "markdown"
+	FormatASCII    Format = "ascii"
 	FormatVertical Format = "vertical"
+	FormatLine     Format = "line"
+	FormatG        Format = "G"
 )
 
 // Formatter writes query results to an output writer.
@@ -37,9 +42,13 @@ type Formatter interface {
 
 // HumanTableOptions controls TTY-only table rendering. Machine formats ignore it.
 type HumanTableOptions struct {
-	Theme   *ui.Theme
-	Compact bool
-	Width   int
+	Theme     *ui.Theme
+	Compact   bool
+	Width     int
+	MaxWidth  int
+	Style     ui.TableStyle
+	MaxRows   int
+	NullValue string
 }
 
 // isTTY returns true if f is a terminal.
@@ -67,6 +76,7 @@ func DetectFormat(format Format, rows []map[string]interface{}, theme ...*ui.The
 // rendering controls. JSON/CSV/TSV/raw remain byte-compatible.
 func DetectFormatWithOptions(format Format, rows []map[string]interface{}, opts HumanTableOptions) Formatter {
 	t := opts.Theme
+	format = normalizeFormat(format)
 
 	// Detect glimpse output (has __glimpse_result column).
 	if isGlimpseResult(rows) {
@@ -85,14 +95,21 @@ func DetectFormatWithOptions(format Format, rows []map[string]interface{}, opts 
 	}
 
 	switch format {
-	case FormatTable:
+	case FormatTable, FormatBox, FormatASCII, FormatMarkdown:
 		if len(rows) == 1 && len(rows[0]) == 1 {
 			if _, ok := rows[0]["_raw"]; ok {
 				return &SingleValueFormatter{}
 			}
 		}
 
-		return &TableFormatter{Theme: t, Compact: opts.Compact, Width: opts.Width}
+		return &TableFormatter{
+			Theme:     t,
+			Compact:   opts.Compact,
+			Width:     opts.effectiveWidth(),
+			Style:     tableStyleForFormat(format, opts.Style),
+			MaxRows:   opts.MaxRows,
+			NullValue: opts.NullValue,
+		}
 	case FormatJSON, FormatNDJSON:
 		return &JSONFormatter{}
 	case FormatCSV:
@@ -101,8 +118,8 @@ func DetectFormatWithOptions(format Format, rows []map[string]interface{}, opts 
 		return &TSVFormatter{}
 	case FormatRaw:
 		return &RawFormatter{}
-	case FormatVertical:
-		return &VerticalFormatter{Theme: t, Compact: opts.Compact}
+	case FormatVertical, FormatLine, FormatG:
+		return &VerticalFormatter{Theme: t, Compact: opts.Compact, MaxRows: opts.MaxRows, NullValue: opts.NullValue}
 	default: // auto
 		if !isTTY(os.Stdout) {
 			return &JSONFormatter{}
@@ -110,21 +127,72 @@ func DetectFormatWithOptions(format Format, rows []map[string]interface{}, opts 
 		if len(rows) == 1 && len(rows[0]) == 1 {
 			return &SingleValueFormatter{}
 		}
-		// Auto-detect vertical format for wide tables.
-		if len(rows) > 0 {
-			cols := collectColumns(rows)
-			estimatedWidth := 0
-			for _, col := range cols {
-				estimatedWidth += len(col) + 2 // column name + separator
-			}
-			// If estimated table width exceeds typical terminal width, use vertical.
-			if estimatedWidth > 120 && len(rows) <= 10 {
-				return &VerticalFormatter{Theme: t, Compact: opts.Compact}
-			}
+
+		return &TableFormatter{
+			Theme:     t,
+			Compact:   opts.Compact,
+			Width:     opts.effectiveWidth(),
+			Style:     tableStyleForFormat(format, opts.Style),
+			MaxRows:   opts.MaxRows,
+			NullValue: opts.NullValue,
+		}
+	}
+}
+
+func normalizeFormat(format Format) Format {
+	switch strings.ToLower(string(format)) {
+	case "", string(FormatAuto):
+		return FormatAuto
+	case string(FormatTable):
+		return FormatTable
+	case string(FormatBox):
+		return FormatBox
+	case string(FormatMarkdown):
+		return FormatMarkdown
+	case string(FormatASCII):
+		return FormatASCII
+	case string(FormatJSON):
+		return FormatJSON
+	case string(FormatNDJSON):
+		return FormatNDJSON
+	case string(FormatCSV):
+		return FormatCSV
+	case string(FormatTSV):
+		return FormatTSV
+	case string(FormatRaw):
+		return FormatRaw
+	case string(FormatVertical):
+		return FormatVertical
+	case string(FormatLine):
+		return FormatLine
+	case "g":
+		return FormatG
+	default:
+		return format
+	}
+}
+
+func tableStyleForFormat(format Format, fallback ui.TableStyle) ui.TableStyle {
+	switch format {
+	case FormatASCII:
+		return ui.StyleASCII
+	case FormatMarkdown:
+		return ui.StyleMarkdown
+	default:
+		if fallback != ui.StyleBox {
+			return fallback
 		}
 
-		return &TableFormatter{Theme: t, Compact: opts.Compact, Width: opts.Width}
+		return ui.StyleBox
 	}
+}
+
+func (opts HumanTableOptions) effectiveWidth() int {
+	if opts.MaxWidth > 0 {
+		return opts.MaxWidth
+	}
+
+	return opts.Width
 }
 
 // isGlimpseResult checks if rows contain glimpse output.
@@ -140,9 +208,12 @@ func isGlimpseResult(rows []map[string]interface{}) bool {
 // TableFormatter outputs aligned table format using lipgloss/table.
 // When Theme is set, headers are styled bold and separators use "─" characters.
 type TableFormatter struct {
-	Theme   *ui.Theme
-	Compact bool
-	Width   int
+	Theme     *ui.Theme
+	Compact   bool
+	Width     int
+	Style     ui.TableStyle
+	MaxRows   int
+	NullValue string
 }
 
 func (f *TableFormatter) Format(w io.Writer, rows []map[string]interface{}) error {
@@ -165,7 +236,10 @@ func (f *TableFormatter) Format(w io.Writer, rows []map[string]interface{}) erro
 	tbl := ui.NewTable(theme).
 		SetColumns(cols...).
 		SetColumnKinds(kinds...).
-		SetCompact(f.Compact)
+		SetCompact(f.Compact).
+		SetStyle(f.Style).
+		SetMaxRows(f.MaxRows).
+		SetNullValue(f.NullValue)
 	if f.Width > 0 {
 		tbl.SetTerminalWidth(f.Width)
 	}
@@ -173,7 +247,7 @@ func (f *TableFormatter) Format(w io.Writer, rows []map[string]interface{}) erro
 	for _, row := range rows {
 		vals := make([]string, len(cols))
 		for i, col := range cols {
-			vals[i] = formatHumanValue(row[col], kinds[i], theme)
+			vals[i] = formatHumanValue(row[col], kinds[i], theme, f.NullValue)
 		}
 		tbl.AddRow(vals...)
 	}
@@ -307,8 +381,10 @@ func (f *SingleValueFormatter) Format(w io.Writer, rows []map[string]interface{}
 // VerticalFormatter outputs results in vertical format (one field per line).
 // Best for wide tables with few rows.
 type VerticalFormatter struct {
-	Theme   *ui.Theme
-	Compact bool
+	Theme     *ui.Theme
+	Compact   bool
+	MaxRows   int
+	NullValue string
 }
 
 func (f *VerticalFormatter) Format(w io.Writer, rows []map[string]interface{}) error {
@@ -334,15 +410,19 @@ func (f *VerticalFormatter) Format(w io.Writer, rows []map[string]interface{}) e
 		}
 	}
 
-	for i, row := range rows {
+	shownRows := rows
+	if f.MaxRows > 0 && f.MaxRows < len(shownRows) {
+		shownRows = shownRows[:f.MaxRows]
+	}
+	for i, row := range shownRows {
 		fmt.Fprintf(w, "  %s\n", theme.Rule.Render(fmt.Sprintf("record %d", i+1)))
 		keys := collectColumns([]map[string]interface{}{row})
 		for _, k := range keys {
 			label := theme.Label.Render(fmt.Sprintf("%*s", maxLen, k))
-			value := formatHumanValue(row[k], kindByKey[k], theme)
+			value := formatHumanValue(row[k], kindByKey[k], theme, f.NullValue)
 			fmt.Fprintf(w, "  %s  %s\n", label, value)
 		}
-		if i < len(rows)-1 {
+		if i < len(shownRows)-1 {
 			if f.Compact {
 				fmt.Fprintln(w)
 			} else {
@@ -350,6 +430,13 @@ func (f *VerticalFormatter) Format(w io.Writer, rows []map[string]interface{}) e
 				fmt.Fprintln(w)
 			}
 		}
+	}
+	if f.MaxRows > 0 && len(shownRows) < len(rows) {
+		word := "rows"
+		if len(rows) == 1 {
+			word = "row"
+		}
+		fmt.Fprintf(w, "\n(%d %s, %d shown — use --max-rows to see more)\n", len(rows), word, len(shownRows))
 	}
 
 	return nil
@@ -472,7 +559,10 @@ func isNumericValue(v interface{}) bool {
 	}
 }
 
-func formatHumanValue(v interface{}, kind ui.ColumnKind, theme *ui.Theme) string {
+func formatHumanValue(v interface{}, kind ui.ColumnKind, theme *ui.Theme, nullValue string) string {
+	if (v == nil || formatValue(v) == "") && nullValue != "" {
+		return nullValue
+	}
 	s := formatValue(v)
 	if s == "" || theme == nil {
 		return s

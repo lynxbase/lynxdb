@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"time"
 
@@ -14,12 +15,16 @@ import (
 // DefaultIndexName is the index name used when an event has no explicit index.
 const DefaultIndexName = "main"
 
-// FlushBatcher flushes buffered events to segments (in-memory mode only).
-// In disk mode, the AsyncBatcher handles flushing directly to parts.
-// Retained for the ephemeral in-memory engine (CLI pipe mode) and tests.
+// FlushBatcher flushes buffered events and waits for queued flushes.
 func (e *Engine) FlushBatcher() error {
+	return e.FlushBatcherContext(context.Background())
+}
+
+// FlushBatcherContext flushes buffered events and waits for any queued
+// threshold flushes to become query-visible.
+func (e *Engine) FlushBatcherContext(ctx context.Context) error {
 	if e.batcher != nil {
-		return e.batcher.Flush()
+		return e.batcher.FlushContext(ctx)
 	}
 
 	return nil

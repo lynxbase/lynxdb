@@ -189,13 +189,16 @@ func runAuthListKeys(_ *cobra.Command, _ []string) error {
 	}
 
 	if len(keys) == 0 {
+		if !humanOutputActive() {
+			return renderTabular(os.Stdout, []string{"ID", "NAME", "SCOPE", "EXPIRES", "LAST USED", "CREATED"}, nil, ui.Stdout)
+		}
 		printMeta("No API keys configured.")
 
 		return nil
 	}
 
 	t := ui.Stdout
-	tbl := ui.NewTable(t).SetColumns("ID", "NAME", "SCOPE", "EXPIRES", "LAST USED", "CREATED")
+	rows := make([][]any, 0, len(keys))
 
 	expiresSoon := 0
 	for _, k := range keys {
@@ -224,22 +227,33 @@ func runAuthListKeys(_ *cobra.Command, _ []string) error {
 			}
 		}
 
-		tbl.AddRow(
-			truncateStr(k.ID, 18),
-			truncateStr(name, 18),
+		idValue := k.ID
+		nameValue := name
+		if humanOutputActive() {
+			idValue = truncateStr(k.ID, 18)
+			nameValue = truncateStr(name, 18)
+		}
+
+		rows = append(rows, []any{
+			idValue,
+			nameValue,
 			scope,
 			expires,
 			lastUsed,
 			age,
-		)
+		})
 	}
-	fmt.Print(tbl.String())
+	if err := renderTabular(os.Stdout, []string{"ID", "NAME", "SCOPE", "EXPIRES", "LAST USED", "CREATED"}, rows, t); err != nil {
+		return err
+	}
 
-	summary := fmt.Sprintf("  %d keys", len(keys))
-	if expiresSoon > 0 {
-		summary += fmt.Sprintf("  •  %d expires soon (< 30d)", expiresSoon)
+	if humanOutputActive() {
+		summary := fmt.Sprintf("  %d keys", len(keys))
+		if expiresSoon > 0 {
+			summary += fmt.Sprintf("  •  %d expires soon (< 30d)", expiresSoon)
+		}
+		fmt.Fprintf(os.Stderr, "\n%s\n", summary)
 	}
-	fmt.Fprintf(os.Stderr, "\n%s\n", summary)
 
 	return nil
 }

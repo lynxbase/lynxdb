@@ -69,14 +69,15 @@ func runJobsList(statusFilter string) error {
 	}
 
 	if len(result.Jobs) == 0 {
+		if !humanOutputActive() {
+			return renderTabular(os.Stdout, []string{"ID", "STATUS", "PROGRESS", "QUERY"}, nil, ui.Stdout)
+		}
 		fmt.Println("No jobs found.")
 
 		return nil
 	}
 
-	tbl := ui.NewTable(ui.Stdout).
-		SetColumns("ID", "STATUS", "PROGRESS", "QUERY")
-
+	rows := make([][]any, 0, len(result.Jobs))
 	for _, j := range result.Jobs {
 		progress := ""
 		if j.Progress != nil {
@@ -87,12 +88,11 @@ func runJobsList(statusFilter string) error {
 			progress = "100%"
 		}
 
-		tbl.AddRow(j.JobID, j.Status, progress, j.Query)
+		rows = append(rows, []any{j.JobID, j.Status, progress, j.Query})
 	}
 
-	fmt.Fprintln(os.Stdout, tbl.String())
+	return renderTabular(os.Stdout, []string{"ID", "STATUS", "PROGRESS", "QUERY"}, rows, ui.Stdout)
 
-	return nil
 }
 
 func runJobDetail(jobID string) error {
@@ -108,6 +108,26 @@ func runJobDetail(jobID string) error {
 		fmt.Println(string(b))
 
 		return nil
+	}
+
+	if !humanOutputActive() {
+		rows := [][2]any{
+			{"job", job.JobID},
+			{"status", job.Status},
+			{"query", job.Query},
+		}
+		if job.Progress != nil {
+			rows = append(rows,
+				[2]any{"progress_percent", job.Progress.Percent},
+				[2]any{"segments_scanned", job.Progress.Scanned},
+				[2]any{"segments_total", job.Progress.TotalEstimate},
+				[2]any{"elapsed_ms", job.Progress.ElapsedMS},
+			)
+		}
+		if job.Error != nil && job.Error.Message != "" {
+			rows = append(rows, [2]any{"error", job.Error.Message})
+		}
+		return renderKeyValues(os.Stdout, rows, ui.Stdout)
 	}
 
 	t := ui.Stdout

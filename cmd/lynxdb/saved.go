@@ -158,6 +158,9 @@ func runSavedList(_ *cobra.Command, _ []string) error {
 	}
 
 	if len(queries) == 0 {
+		if !humanOutputActive() {
+			return renderTabular(os.Stdout, []string{"NAME", "QUERY", "CREATED"}, nil, ui.Stdout)
+		}
 		fmt.Println(ui.Stdout.EmptyState("No saved queries.",
 			"lynxdb save <name> <query>   Save a query",
 		))
@@ -166,17 +169,18 @@ func runSavedList(_ *cobra.Command, _ []string) error {
 	}
 
 	t := ui.Stdout
-	tbl := ui.NewTable(t).
-		SetColumns("NAME", "QUERY", "CREATED").
-		SetCompact(globalCompact)
-
+	rows := make([][]any, 0, len(queries))
 	for _, q := range queries {
 		created := formatRelativeTime(q.CreatedAt)
-		tbl.AddRow(q.Name, q.Q, created)
+		rows = append(rows, []any{q.Name, q.Q, created})
 	}
 
-	fmt.Print(tbl.String())
-	fmt.Printf("\n%s\n", t.Dim.Render(fmt.Sprintf("%d saved queries", len(queries))))
+	if err := renderTabular(os.Stdout, []string{"NAME", "QUERY", "CREATED"}, rows, t); err != nil {
+		return err
+	}
+	if humanOutputActive() {
+		fmt.Printf("\n%s\n", t.Dim.Render(fmt.Sprintf("%d saved queries", len(queries))))
+	}
 
 	return nil
 }

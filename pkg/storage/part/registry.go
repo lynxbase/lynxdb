@@ -146,6 +146,14 @@ func (r *Registry) CountByIndex(index string) int {
 	return len(r.byIndex[index])
 }
 
+// CountByLevel returns the number of registered parts at a compaction level.
+func (r *Registry) CountByLevel(level int) int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	return len(r.byLevel[level])
+}
+
 // Indexes returns all index names that have parts.
 func (r *Registry) Indexes() []string {
 	r.mu.RLock()

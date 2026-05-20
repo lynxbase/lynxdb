@@ -87,6 +87,16 @@ func newQueryCmd() *cobra.Command {
 			if len(queryParams) > 0 {
 				query = spl2.SubstituteParams(query, spl2.ParseParamFlags(queryParams))
 			}
+			if stripped, ok := stripVerticalQuerySuffix(query); ok {
+				query = stripped
+				if output.Format(globalFormat) == output.FormatAuto {
+					previousFormat := globalFormat
+					globalFormat = string(output.FormatVertical)
+					defer func() {
+						globalFormat = previousFormat
+					}()
+				}
+			}
 			if projectRC != nil {
 				if projectRC.DefaultSince != "" && !cmd.Flags().Changed("since") {
 					since = projectRC.DefaultSince
@@ -593,8 +603,11 @@ func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outp
 		tableTheme = nil
 	}
 	f := output.DetectFormatWithOptions(output.Format(globalFormat), rows, output.HumanTableOptions{
-		Theme:   tableTheme,
-		Compact: globalCompact,
+		Theme:     tableTheme,
+		Compact:   globalCompact,
+		MaxRows:   globalMaxRows,
+		NullValue: globalNullValue,
+		MaxWidth:  globalMaxWidth,
 	})
 
 	serStart := time.Now()
@@ -666,6 +679,17 @@ func runQueryServer(query, since, from, to, timeout string, failEmpty bool, anal
 	}
 
 	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze, noLint, noSuggestions, showRewritten)
+}
+
+func stripVerticalQuerySuffix(query string) (string, bool) {
+	trimmed := strings.TrimRight(query, " \t\r\n;")
+	trimmed = strings.TrimRight(trimmed, " \t\r\n")
+	if !strings.HasSuffix(trimmed, `\G`) {
+		return query, false
+	}
+
+	stripped := strings.TrimRight(strings.TrimSuffix(trimmed, `\G`), " \t\r\n;")
+	return stripped, true
 }
 
 func validateQueryBeforeTUI(query string) error {
@@ -766,10 +790,7 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 // printFormattedRows formats rows using the global --format flag and writes to stdout.
 // Single point of output formatting for all commands that produce row data.
 func printFormattedRows(rows []map[string]interface{}) error {
-	f := output.DetectFormatWithOptions(output.Format(globalFormat), rows, output.HumanTableOptions{
-		Theme:   ui.Stdout,
-		Compact: globalCompact,
-	})
+	f := output.DetectFormatWithOptions(output.Format(globalFormat), rows, humanOutputOptions(ui.Stdout))
 
 	return f.Format(os.Stdout, rows)
 }

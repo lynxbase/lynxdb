@@ -10,12 +10,12 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"text/tabwriter"
 	"text/template"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
@@ -79,23 +79,26 @@ func runShippersList(_ *cobra.Command, _ []string) error {
 	}
 
 	if len(shippers) == 0 {
+		if !humanOutputActive() {
+			return renderTabular(os.Stdout, []string{"TOOL", "VERSION", "STATUS", "LAST SEEN", "EVENTS/MIN", "ENDPOINT"}, nil, ui.Stdout)
+		}
 		fmt.Fprintln(os.Stdout, "No shippers observed yet.")
 		return nil
 	}
 
-	tw := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "TOOL\tVERSION\tSTATUS\tLAST SEEN\tEVENTS/MIN\tENDPOINT")
+	rows := make([][]any, 0, len(shippers))
 	for _, s := range shippers {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
+		rows = append(rows, []any{
 			s.Tool,
 			emptyDash(s.Version),
 			s.Status,
 			formatShipperLastSeen(s.LastSeenAt),
-			formatCountHuman(s.EventsPerMin),
+			s.EventsPerMin,
 			s.Endpoint,
-		)
+		})
 	}
-	return tw.Flush()
+
+	return renderTabular(os.Stdout, []string{"TOOL", "VERSION", "STATUS", "LAST SEEN", "EVENTS/MIN", "ENDPOINT"}, rows, ui.Stdout)
 }
 
 func runShippersConfig(_ *cobra.Command, args []string) error {

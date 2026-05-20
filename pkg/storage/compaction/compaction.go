@@ -84,8 +84,8 @@ type Plan struct {
 }
 
 // Compactor performs adaptive compaction of segments using pluggable
-// strategies: SizeTiered for L0→L1, LevelBased for L1→L2, and
-// TimeWindow for L2→L3 (cold partition archive).
+// strategies: SizeTiered for L0→L1, LevelBased for L1→L2, IntraL2 for
+// consolidating small L2 segments, and TimeWindow for L2→L3 (cold archive).
 type Compactor struct {
 	mu         sync.Mutex
 	segments   map[string]*SegmentInfo // id -> info
@@ -94,6 +94,7 @@ type Compactor struct {
 	l1Strategy Strategy
 	l2Strategy Strategy
 	intraL0    *IntraL0
+	intraL2    *IntraL2
 }
 
 // NewCompactor creates a new compactor with default strategies.
@@ -105,6 +106,7 @@ func NewCompactor(logger *slog.Logger) *Compactor {
 		l1Strategy: &LevelBased{Threshold: L1CompactionThreshold, TargetSize: L2TargetSize, Logger: logger},
 		l2Strategy: &TimeWindow{ColdThreshold: 48 * time.Hour, Logger: logger},
 		intraL0:    &IntraL0{Threshold: 2 * L0CompactionThreshold},
+		intraL2:    &IntraL2{Threshold: L1CompactionThreshold, TargetSize: L2TargetSize, Logger: logger},
 	}
 }
 
@@ -219,6 +221,11 @@ func (c *Compactor) PlanCompaction(index string) *Plan {
 			return plans[0]
 		}
 
+		// Intra-L2 consolidation of small L2 parts.
+		if plans := c.intraL2.Plan(segs); len(plans) > 0 {
+			return plans[0]
+		}
+
 		// L2→L3 (cold partition archive) lowest compaction priority.
 		if plans := c.l2Strategy.Plan(segs); len(plans) > 0 {
 			return plans[0]
@@ -281,6 +288,16 @@ func (c *Compactor) PlanAllCompactions(index string) []*Job {
 			})
 		}
 
+		// Intra-L2 plans: consolidate small L2 parts up to TargetSize.
+		for _, plan := range c.intraL2.Plan(segs) {
+			jobs = append(jobs, &Job{
+				Plan:      plan,
+				Priority:  PriorityIntraL2,
+				Index:     index,
+				Partition: partition,
+			})
+		}
+
 		// L2→L3 plans (cold partition archive).
 		for _, plan := range c.l2Strategy.Plan(segs) {
 			jobs = append(jobs, &Job{
@@ -293,13 +310,15 @@ func (c *Compactor) PlanAllCompactions(index string) []*Job {
 	}
 
 	if len(jobs) > 0 {
-		var l0, l1, l2 int
+		var l0, l1, il2, l2 int
 		for _, j := range jobs {
 			switch j.Priority {
 			case PriorityL0ToL1:
 				l0++
 			case PriorityL1ToL2, PriorityL1ToL2Hot:
 				l1++
+			case PriorityIntraL2:
+				il2++
 			case PriorityL2ToL3:
 				l2++
 			}
@@ -308,6 +327,7 @@ func (c *Compactor) PlanAllCompactions(index string) []*Job {
 			"index", index,
 			"l0_plans", l0,
 			"l1_plans", l1,
+			"intra_l2_plans", il2,
 			"l2_plans", l2,
 			"total_jobs", len(jobs),
 		)

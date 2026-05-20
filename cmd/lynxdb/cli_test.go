@@ -36,6 +36,9 @@ func resetAllFlags(t *testing.T) {
 	globalNoColor = true // Always disable color in tests to simplify assertions.
 	globalTheme = "auto"
 	globalCompact = false
+	globalMaxRows = 0
+	globalNullValue = ""
+	globalMaxWidth = 0
 	globalDebug = false
 	globalTLSSkipVerify = false
 	globalHTTPClient = nil

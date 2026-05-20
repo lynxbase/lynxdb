@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -80,6 +83,9 @@ func newCacheStatsCmd() *cobra.Command {
 }
 
 func runStatus(_ *cobra.Command, _ []string) error {
+	stopAnimation := startStatusLynxAnimation()
+	defer stopAnimation()
+
 	ctx := context.Background()
 	c := apiClient()
 
@@ -92,6 +98,8 @@ func runStatus(_ *cobra.Command, _ []string) error {
 	if h, err := c.Health(ctx); err == nil {
 		healthStatus = h.Status
 	}
+
+	stopAnimation()
 
 	if isJSONFormat() {
 		out := map[string]interface{}{
@@ -113,6 +121,21 @@ func runStatus(_ *cobra.Command, _ []string) error {
 		fmt.Println(string(b))
 
 		return nil
+	}
+
+	if !humanOutputActive() {
+		rows := [][2]any{
+			{"uptime_seconds", stats.UptimeSeconds},
+			{"storage_bytes", stats.StorageBytes},
+			{"total_events", stats.TotalEvents},
+			{"events_today", stats.EventsToday},
+			{"index_count", stats.IndexCount},
+			{"segment_count", stats.SegmentCount},
+			{"buffered_events", stats.BufferedEvents},
+			{"oldest_event", stats.OldestEvent},
+			{"health", healthStatus},
+		}
+		return renderKeyValues(os.Stdout, rows, ui.Stdout)
 	}
 
 	t := ui.Stdout
@@ -196,6 +219,93 @@ func runStatus(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+var statusLynxFrames = []string{
+	"  .        \n /\\_/\\     \n( o.o )    \n > ^ <     ",
+	"    .      \n /\\_/\\     \n( o.- )    \n > ^ <     ",
+	"      .    \n /\\_/\\     \n( o.o )    \n > v <     ",
+	"    .      \n /\\_/\\     \n( -.o )    \n > ^ <     ",
+}
+
+func startStatusLynxAnimation() func() {
+	if globalQuiet || !isTTY() || !humanOutputActive() {
+		return func() {}
+	}
+
+	done := make(chan struct{})
+	started := make(chan struct{})
+	var wg sync.WaitGroup
+	var once sync.Once
+	start := time.Now()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+
+		t := ui.Stdout
+		frameLines := strings.Count(statusLynxFrames[0], "\n") + 2
+		ticker := time.NewTicker(140 * time.Millisecond)
+		defer ticker.Stop()
+
+		render := func(frame string) {
+			lines := strings.Split(frame, "\n")
+			for i, line := range lines {
+				switch i {
+				case 1:
+					lines[i] = t.Success.Render(line)
+				case 2:
+					lines[i] = t.Info.Render(line)
+				case 3:
+					lines[i] = t.Accent.Render(line)
+				default:
+					lines[i] = t.Dim.Render(line)
+				}
+			}
+
+			fmt.Fprint(os.Stdout, strings.Join(lines, "\n"))
+			fmt.Fprintf(os.Stdout, "\n%s\n", t.Dim.Render("Checking LynxDB status..."))
+		}
+
+		clear := func() {
+			fmt.Fprintf(os.Stdout, "\x1b[%dA", frameLines)
+			for i := 0; i < frameLines; i++ {
+				fmt.Fprint(os.Stdout, "\x1b[2K\r")
+				if i < frameLines-1 {
+					fmt.Fprint(os.Stdout, "\n")
+				}
+			}
+			fmt.Fprintf(os.Stdout, "\x1b[%dA", frameLines-1)
+		}
+
+		render(statusLynxFrames[0])
+		close(started)
+		frame := 1
+
+		for {
+			select {
+			case <-done:
+				clear()
+
+				return
+			case <-ticker.C:
+				clear()
+				render(statusLynxFrames[frame%len(statusLynxFrames)])
+				frame++
+			}
+		}
+	}()
+
+	return func() {
+		once.Do(func() {
+			<-started
+			if remaining := 700*time.Millisecond - time.Since(start); remaining > 0 {
+				time.Sleep(remaining)
+			}
+			close(done)
+			wg.Wait()
+		})
+	}
+}
+
 // colorizeHealthStatus applies color to the health status string.
 func colorizeHealthStatus(t *ui.Theme, status string) string {
 	switch status {
@@ -225,6 +335,10 @@ func runHealth(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	if !humanOutputActive() {
+		return renderKeyValues(os.Stdout, [][2]any{{"status", result.Status}}, ui.Stdout)
+	}
+
 	if result.Status == "healthy" {
 		printSuccess("Server is healthy")
 	} else {
@@ -244,6 +358,9 @@ func runIndexes(_ *cobra.Command, _ []string) error {
 	}
 
 	if len(indexes) == 0 {
+		if !humanOutputActive() {
+			return renderTabular(os.Stdout, []string{"NAME", "RETENTION", "REPLICATION"}, nil, ui.Stdout)
+		}
 		fmt.Println("No indexes found.")
 		printNextSteps(
 			"lynxdb ingest <file>                     Ingest data to create an index",
@@ -254,12 +371,16 @@ func runIndexes(_ *cobra.Command, _ []string) error {
 	}
 
 	t := ui.Stdout
-	tbl := ui.NewTable(t).SetColumns("NAME", "RETENTION", "REPLICATION")
+	rows := make([][]any, 0, len(indexes))
 	for _, idx := range indexes {
-		tbl.AddRow(idx.Name, idx.RetentionPeriod, fmt.Sprintf("%d", idx.ReplicationFactor))
+		rows = append(rows, []any{idx.Name, idx.RetentionPeriod, idx.ReplicationFactor})
 	}
-	fmt.Print(tbl.String())
-	fmt.Printf("\n%s\n", t.Dim.Render(fmt.Sprintf("%d indexes", len(indexes))))
+	if err := renderTabular(os.Stdout, []string{"NAME", "RETENTION", "REPLICATION"}, rows, t); err != nil {
+		return err
+	}
+	if humanOutputActive() {
+		fmt.Printf("\n%s\n", t.Dim.Render(fmt.Sprintf("%d indexes", len(indexes))))
+	}
 
 	return nil
 }
@@ -298,6 +419,16 @@ func runCacheStats(_ *cobra.Command, _ []string) error {
 		return nil
 	}
 
+	if !humanOutputActive() {
+		rows := [][2]any{}
+		for _, key := range []string{"hits", "misses", "hit_rate", "entries", "size_bytes", "evictions"} {
+			if value, ok := stats[key]; ok {
+				rows = append(rows, [2]any{key, value})
+			}
+		}
+		return renderKeyValues(os.Stdout, rows, ui.Stdout)
+	}
+
 	t := ui.Stdout
 	fmt.Printf("\n  %s\n\n", t.Bold.Render("Cache Statistics"))
 
@@ -328,10 +459,8 @@ func runCacheStats(_ *cobra.Command, _ []string) error {
 }
 
 // isJSONFormat reports whether the current output format is JSON or NDJSON.
-// Use this for commands with structured (non-row) output where the only sensible
-// machine-readable format is JSON (e.g., status, health, cache stats). For commands
-// that produce tabular row data, use printFormattedRows instead — it honors all
-// format values including table, csv, tsv, and raw.
+// Commands keep their richer structured JSON paths for these formats; row-like
+// machine formats are handled by renderTabular/renderKeyValues.
 func isJSONFormat() bool {
 	return globalFormat == formatJSON || globalFormat == formatNDJSON
 }

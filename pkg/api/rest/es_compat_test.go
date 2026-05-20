@@ -89,6 +89,41 @@ func TestESBulk_BasicIndex(t *testing.T) {
 	}
 }
 
+func TestESBulk_DurableBeforeSuccessWithStagingEnabled(t *testing.T) {
+	ingestCfg := config.DefaultConfig().Ingest
+	ingestCfg.OTLP.HTTPListen = ""
+	ingestCfg.OTLP.GRPCListen = ""
+	ingestCfg.Staging.Enabled = true
+
+	srv, cleanup := startTestServerWithConfig(t, Config{
+		DataDir: t.TempDir(),
+		Storage: config.DefaultConfig().Storage,
+		Ingest:  ingestCfg,
+	})
+	defer cleanup()
+
+	body := `{"index":{"_index":"logs"}}
+{"message":"durable","level":"info"}
+`
+	resp := postESBulk(t, srv.Addr(), body)
+	result := decodeESBulkResponse(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	if result.Errors {
+		t.Fatal("expected errors=false")
+	}
+	if got := srv.engine.BufferedEventCount(); got != 0 {
+		t.Fatalf("buffered events after successful bulk: got %d, want 0", got)
+	}
+	if got := srv.engine.SegmentCount(); got != 1 {
+		t.Fatalf("segment count after successful bulk: got %d, want 1", got)
+	}
+	if n := queryEventCount(t, srv.Addr(), `{"q":"FROM logs"}`); n != 1 {
+		t.Fatalf("logs events immediately after bulk: got %d, want 1", n)
+	}
+}
+
 func TestESBulk_UnprefixedRoute(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

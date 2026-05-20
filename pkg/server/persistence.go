@@ -147,19 +147,15 @@ func (e *Engine) initDiskPersistence(ctx context.Context) error {
 	}
 	e.partWriter = part.NewWriter(e.partLayout, compression, part.DefaultRowGroupSize, writerOpts...)
 
-	batcherCfg := part.BatcherConfig{
-		MaxEvents: 50_000,
-		MaxBytes:  64 * 1024 * 1024,
-		MaxWait:   200 * time.Millisecond,
-	}
+	batcherCfg := batcherConfigFromStorageConfig(e.storageCfg)
 
 	e.batcher = part.NewAsyncBatcher(e.partWriter, e.partRegistry, batcherCfg, e.logger)
-	e.batcher.SetOnCommit(func(meta *part.Meta) {
+	e.batcher.SetOnCommit(func(meta *part.Meta) error {
 		// Open mmap'd reader and add to query-visible segments.
 		if loadErr := e.loadPartAsSegment(meta); loadErr != nil {
 			e.logger.Error("failed to load committed part", "id", meta.ID, "error", loadErr)
 
-			return
+			return loadErr
 		}
 
 		// Bump ingest generation for cache invalidation.
@@ -181,6 +177,8 @@ func (e *Engine) initDiskPersistence(ctx context.Context) error {
 				e.uploadAndCatalog(publishCtx, meta, e.objStore, e.logger.With("component", "cluster-publish"))
 			}()
 		}
+
+		return nil
 	})
 	e.batcher.Start(ctx)
 

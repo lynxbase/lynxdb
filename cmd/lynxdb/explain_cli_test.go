@@ -36,9 +36,10 @@ func TestExplain_ValidQuery_Table(t *testing.T) {
 		t.Fatalf("explain failed: %v", err)
 	}
 
-	// Human-readable output should contain "Plan:" label.
-	if !strings.Contains(stdout, "Plan:") {
-		t.Errorf("expected 'Plan:' in explain output, got: %q", stdout)
+	for _, section := range []string{"Query plan", "Pipeline", "Optimizer", "Hints"} {
+		if !strings.Contains(stdout, section) {
+			t.Errorf("expected %q in explain output, got: %q", section, stdout)
+		}
 	}
 }
 
@@ -62,5 +63,20 @@ func TestExplain_InvalidQuery_ShowsErrors(t *testing.T) {
 
 	if isValid {
 		t.Errorf("expected is_valid=false for incomplete WHERE, got true")
+	}
+}
+
+func TestExplain_InvalidQuery_TableShowsDiagnostics(t *testing.T) {
+	baseURL := newTestServer(t)
+
+	stdout, _, _ := runCmd(t, "--server", baseURL, "explain", "--format", "table", "| where")
+
+	for _, section := range []string{"Query plan", "Diagnostics", "Hints"} {
+		if !strings.Contains(stdout, section) {
+			t.Errorf("expected %q in invalid explain output, got: %q", section, stdout)
+		}
+	}
+	if !strings.Contains(strings.ToLower(stdout), "suggest") {
+		t.Errorf("expected suggestion in invalid explain output, got: %q", stdout)
 	}
 }

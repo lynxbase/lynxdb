@@ -13,8 +13,9 @@ const (
 	PriorityL0ToL1    JobPriority = 0 // highest — flush pressure
 	PriorityL1ToL2Hot JobPriority = 1 // hot data, recent queries
 	PriorityL1ToL2    JobPriority = 2 // warm data
-	PriorityL2ToL3    JobPriority = 3 // cold partition archive
-	PriorityMaint     JobPriority = 4 // lowest — maintenance
+	PriorityIntraL2   JobPriority = 3 // L2 self-merge: consolidate small L2 parts
+	PriorityL2ToL3    JobPriority = 4 // cold partition archive
+	PriorityMaint     JobPriority = 5 // lowest — maintenance
 )
 
 // Job wraps a Plan with scheduling metadata.

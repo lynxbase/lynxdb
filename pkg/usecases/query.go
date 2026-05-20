@@ -284,7 +284,7 @@ func commandName(cmd spl2.Command) string {
 // annotatePipelineFields walks a query's commands sequentially, maintaining a
 // running ordered field set, and computes field additions/removals per command.
 // The result drives the Lynx Flow sidebar's per-stage field tracking.
-func annotatePipelineFields(query *spl2.Query, catalogFields []string) []PipelineStage {
+func annotatePipelineFields(query *spl2.Query, _ []string) []PipelineStage {
 	if query == nil {
 		return nil
 	}
@@ -354,9 +354,6 @@ func annotatePipelineFields(query *spl2.Query, catalogFields []string) []Pipelin
 	}
 	baseFields := []string{"_time", "_raw", "_source", "_sourcetype"}
 	setAdd(fields, baseFields...)
-	for _, f := range catalogFields {
-		setAdd(fields, f)
-	}
 	fieldsUnknown = true
 
 	stages := make([]PipelineStage, 0, len(query.Commands)+1)

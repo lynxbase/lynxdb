@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -111,6 +112,9 @@ func runFieldsList(since, from, to, source, prefix string) error {
 	}
 
 	if len(fields) == 0 {
+		if !humanOutputActive() {
+			return renderTabular(os.Stdout, []string{"FIELD", "TYPE", "COVERAGE", "TOP VALUES"}, nil, ui.Stdout)
+		}
 		fmt.Println(ui.Stdout.EmptyState("No fields found.",
 			"lynxdb ingest <file>           Ingest a log file",
 			"lynxdb demo                    Run demo with sample data",
@@ -120,27 +124,27 @@ func runFieldsList(since, from, to, source, prefix string) error {
 	}
 
 	t := ui.Stdout
-	tbl := ui.NewTable(t).
-		SetColumns("FIELD", "TYPE", "COVERAGE", "TOP VALUES").
-		SetColumnKinds(ui.ColumnText, ui.ColumnText, ui.ColumnNumber, ui.ColumnText).
-		SetCompact(globalCompact)
-
+	rows := make([][]any, 0, len(fields))
 	for _, f := range fields {
 		topStr := formatTopValues(f.TopValues, f.TotalCount)
-		tbl.AddRow(f.Name, f.Type, fmt.Sprintf("%.0f%%", f.Coverage), topStr)
+		rows = append(rows, []any{f.Name, f.Type, f.Coverage, topStr})
 	}
 
-	fmt.Print(tbl.String())
-
-	summary := fmt.Sprintf("%s fields total", formatCount(int64(len(fields))))
-	if source != "" {
-		summary += fmt.Sprintf(" (source=%s)", source)
-	}
-	if since != "" {
-		summary += fmt.Sprintf(" (last %s)", since)
+	if err := renderTabular(os.Stdout, []string{"FIELD", "TYPE", "COVERAGE", "TOP VALUES"}, rows, t); err != nil {
+		return err
 	}
 
-	fmt.Printf("\n%s\n", t.Dim.Render(summary))
+	if humanOutputActive() {
+		summary := fmt.Sprintf("%s fields total", formatCount(int64(len(fields))))
+		if source != "" {
+			summary += fmt.Sprintf(" (source=%s)", source)
+		}
+		if since != "" {
+			summary += fmt.Sprintf(" (last %s)", since)
+		}
+
+		fmt.Printf("\n%s\n", t.Dim.Render(summary))
+	}
 
 	return nil
 }
@@ -188,6 +192,15 @@ func runFieldDetail(name, since, from, to, source string) error {
 		return nil
 	}
 
+	if !humanOutputActive() {
+		return renderKeyValues(os.Stdout, [][2]any{
+			{"name", field.Name},
+			{"type", field.Type},
+			{"coverage", field.Coverage},
+			{"total_count", field.TotalCount},
+		}, ui.Stdout)
+	}
+
 	topValues := fetchFieldTopValuesDetailed(name)
 
 	t := ui.Stdout
@@ -200,34 +213,30 @@ func runFieldDetail(name, since, from, to, source string) error {
 	if len(topValues) > 0 {
 		fmt.Printf("\n  %s\n", t.Bold.Render("Top Values:"))
 
-		tbl := ui.NewTable(t).
-			SetColumns("VALUE", "COUNT", "%%").
-			SetColumnKinds(ui.ColumnText, ui.ColumnNumber, ui.ColumnNumber).
-			SetCompact(globalCompact)
-
+		rows := make([][]any, 0, len(topValues))
 		for _, v := range topValues {
-			tbl.AddRow(v.Value, formatCount(int64(v.Count)), fmt.Sprintf("%.1f%%", v.Percent))
+			rows = append(rows, []any{v.Value, v.Count, v.Percent})
 		}
 
-		fmt.Print(tbl.String())
+		if err := renderTabular(os.Stdout, []string{"VALUE", "COUNT", "%"}, rows, t); err != nil {
+			return err
+		}
 	} else if len(field.TopValues) > 0 {
 		fmt.Printf("\n  %s\n", t.Bold.Render("Top Values:"))
 
-		tbl := ui.NewTable(t).
-			SetColumns("VALUE", "COUNT", "%%").
-			SetColumnKinds(ui.ColumnText, ui.ColumnNumber, ui.ColumnNumber).
-			SetCompact(globalCompact)
-
+		rows := make([][]any, 0, len(field.TopValues))
 		for _, v := range field.TopValues {
 			pct := float64(0)
 			if field.TotalCount > 0 {
 				pct = float64(v.Count) / float64(field.TotalCount) * 100
 			}
 
-			tbl.AddRow(v.Value, formatCount(v.Count), fmt.Sprintf("%.1f%%", pct))
+			rows = append(rows, []any{v.Value, v.Count, pct})
 		}
 
-		fmt.Print(tbl.String())
+		if err := renderTabular(os.Stdout, []string{"VALUE", "COUNT", "%"}, rows, t); err != nil {
+			return err
+		}
 	}
 
 	fmt.Println()
@@ -291,6 +300,9 @@ func runFieldValues(name, since, from, to string) error {
 	}
 
 	if len(result.Values) == 0 {
+		if !humanOutputActive() {
+			return renderTabular(os.Stdout, []string{"VALUE", "COUNT", "%"}, nil, ui.Stdout)
+		}
 		fmt.Printf("No values found for field %q.\n", name)
 
 		return nil
@@ -300,21 +312,21 @@ func runFieldValues(name, since, from, to string) error {
 	fmt.Println()
 	fmt.Printf("  %s — top values\n\n", t.Bold.Render(name))
 
-	tbl := ui.NewTable(t).
-		SetColumns("VALUE", "COUNT", "%%").
-		SetColumnKinds(ui.ColumnText, ui.ColumnNumber, ui.ColumnNumber).
-		SetCompact(globalCompact)
-
+	rows := make([][]any, 0, len(result.Values))
 	for _, v := range result.Values {
-		tbl.AddRow(fmt.Sprint(v.Value), formatCount(v.Count), fmt.Sprintf("%.1f%%", v.Percent))
+		rows = append(rows, []any{fmt.Sprint(v.Value), v.Count, v.Percent})
 	}
 
-	fmt.Print(tbl.String())
+	if err := renderTabular(os.Stdout, []string{"VALUE", "COUNT", "%"}, rows, t); err != nil {
+		return err
+	}
 
-	summary := fmt.Sprintf("%s unique values, %s total occurrences",
-		formatCount(int64(result.UniqueCount)),
-		formatCount(int64(result.TotalCount)))
-	fmt.Printf("\n%s\n", t.Dim.Render(summary))
+	if humanOutputActive() {
+		summary := fmt.Sprintf("%s unique values, %s total occurrences",
+			formatCount(int64(result.UniqueCount)),
+			formatCount(int64(result.TotalCount)))
+		fmt.Printf("\n%s\n", t.Dim.Render(summary))
+	}
 
 	return nil
 }

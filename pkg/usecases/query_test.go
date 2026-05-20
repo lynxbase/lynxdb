@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/planner"
+	"github.com/lynxbase/lynxdb/pkg/spl2"
 )
 
 func TestExplain_ValidQuery(t *testing.T) {
@@ -252,6 +254,34 @@ func TestExplain_FieldTracking_SourceStage(t *testing.T) {
 	}
 	if !reflect.DeepEqual(source.FieldsOut, []string{"_time", "_raw", "_source", "_sourcetype"}) {
 		t.Errorf("expected source FieldsOut=[_time, _raw, _source, _sourcetype], got %v", source.FieldsOut)
+	}
+}
+
+func TestExplain_FieldTracking_SourceStageDoesNotExpandCatalog(t *testing.T) {
+	prog, err := spl2.Parse(`FROM app-json | parse json(message) | stats count() by level | sort -count | head 5`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+
+	stages := annotatePipelineFields(prog, []string{"message", "level", "114Z", "115Z"})
+	if len(stages) < 2 {
+		t.Fatalf("expected source plus pipeline stages, got %d", len(stages))
+	}
+
+	source := stages[0]
+	if !reflect.DeepEqual(source.FieldsAdded, []string{"_time", "_raw", "_source", "_sourcetype"}) {
+		t.Fatalf("source FieldsAdded = %v, want only built-ins", source.FieldsAdded)
+	}
+	if slices.Contains(source.FieldsOut, "114Z") {
+		t.Fatalf("source FieldsOut leaked catalog field 114Z: %v", source.FieldsOut)
+	}
+
+	for _, stage := range stages {
+		if slices.Contains(stage.FieldsAdded, "114Z") ||
+			slices.Contains(stage.FieldsOut, "114Z") ||
+			slices.Contains(stage.FieldsRemoved, "114Z") {
+			t.Fatalf("stage %s leaked catalog field 114Z: %+v", stage.Command, stage)
+		}
 	}
 }
 

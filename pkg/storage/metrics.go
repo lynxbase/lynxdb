@@ -34,6 +34,9 @@ type Metrics struct {
 	CompactionTrivialMoveCount  atomic.Int64 // trivial move promotions (no merge)
 	CompactionTrivialMoveBytes  atomic.Int64 // bytes promoted via trivial move
 	CompactionIntraL0Runs       atomic.Int64 // intra-L0 merge runs (L0→L0)
+	CompactionIntraL2Runs       atomic.Int64 // intra-L2 merge runs (L2→L2)
+	CompactionIntraL2Bytes      atomic.Int64 // intra-L2 output bytes
+	CompactionIntraL2InputBytes atomic.Int64 // intra-L2 input bytes
 	CompactionDurationNs        atomic.Int64 // cumulative compaction nanoseconds
 	CompactionSegmentsMergedV1  atomic.Int64 // input segments merged with LSG format major 1
 	CompactionSegmentsMergedV2  atomic.Int64 // input segments merged with LSG format major 2
@@ -171,6 +174,11 @@ type MetricsSnapshot struct {
 		IntraL0 struct {
 			Runs int64 `json:"runs"`
 		} `json:"intra_l0"`
+		IntraL2 struct {
+			Runs     int64 `json:"runs"`
+			BytesIn  int64 `json:"bytes_in"`
+			BytesOut int64 `json:"bytes_out"`
+		} `json:"intra_l2"`
 	} `json:"compaction_levels"`
 
 	Cache struct {
@@ -289,6 +297,9 @@ func (m *Metrics) Snapshot() *MetricsSnapshot {
 	snap.CompactionLevels.L2ToL3.BytesIn = m.CompactionL2ToL3InputBytes.Load()
 	snap.CompactionLevels.L2ToL3.BytesOut = m.CompactionL2ToL3Bytes.Load()
 	snap.CompactionLevels.IntraL0.Runs = m.CompactionIntraL0Runs.Load()
+	snap.CompactionLevels.IntraL2.Runs = m.CompactionIntraL2Runs.Load()
+	snap.CompactionLevels.IntraL2.BytesIn = m.CompactionIntraL2InputBytes.Load()
+	snap.CompactionLevels.IntraL2.BytesOut = m.CompactionIntraL2Bytes.Load()
 
 	snap.Cache.Hits = m.CacheHits.Load()
 	snap.Cache.Misses = m.CacheMisses.Load()

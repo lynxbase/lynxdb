@@ -54,6 +54,7 @@ func (e *Engine) startCompaction(ctx context.Context) {
 	if interval == 0 {
 		interval = 15 * time.Second
 	}
+	workers := compactionWorkersFromStorageConfig(e.storageCfg)
 
 	acCfg := compaction.AdaptiveConfig{
 		Logger: e.logger,
@@ -77,7 +78,7 @@ func (e *Engine) startCompaction(ctx context.Context) {
 	// Create scheduler with custom executor that uses the existing
 	// executeCompactionPlan path (epoch advance, cache invalidation, etc.).
 	e.compactionSched = compaction.NewScheduler(e.compactor, compaction.SchedulerConfig{
-		Workers:         2,
+		Workers:         workers,
 		RateBytesPerSec: e.adaptiveCtrl.Rate(),
 	}, e.logger)
 
@@ -93,7 +94,7 @@ func (e *Engine) startCompaction(ctx context.Context) {
 
 	e.logger.Debug("compaction scheduler started",
 		"interval", interval,
-		"workers", 2,
+		"workers", workers,
 		"rate_bytes_per_sec", e.adaptiveCtrl.Rate(),
 	)
 
@@ -272,7 +273,21 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 	// Compaction succeeded — reset failure counter.
 	e.compactionFailures.reset(idx, partition)
 
-	// Register the new part in the part registry.
+	// Load the new part as a query-visible segment handle.
+	if err := e.loadPartAsSegment(outputMeta); err != nil {
+		e.logger.Error("compaction load failed", "id", outputMeta.ID, "error", err)
+		if outputMeta.Path != "" {
+			if removeErr := os.Remove(outputMeta.Path); removeErr != nil {
+				e.logger.Warn("compaction: failed to remove invisible output",
+					"path", outputMeta.Path, "error", removeErr)
+			}
+		}
+
+		return
+	}
+
+	// Register the new part only after it is query-visible. If mmap/open fails,
+	// the old inputs remain active and restart must not load both old and output.
 	e.partRegistry.Add(outputMeta)
 
 	e.logger.Debug("compaction output registered",
@@ -280,13 +295,6 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 		"level", outputMeta.Level,
 		"size", outputMeta.SizeBytes,
 	)
-
-	// Load the new part as a query-visible segment handle.
-	if err := e.loadPartAsSegment(outputMeta); err != nil {
-		e.logger.Error("compaction load failed", "id", outputMeta.ID, "error", err)
-
-		return
-	}
 
 	// Atomic epoch advance under write lock — remove input handles,
 	// wire up tiering for the new segment. Retired handles are cleaned up
@@ -381,7 +389,12 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 	e.metrics.CompactionBSIColumnsTotal.Add(int64(outputMeta.BSIColumns))
 	e.metrics.CompactionBSISectionBytes.Add(outputMeta.BSISectionBytes)
 
-	// Per-level compaction metrics.
+	// Per-level compaction metrics. Distinguish intra-level merges (input
+	// level == output level) from cross-level promotions.
+	inputLevel := -1
+	if len(plan.InputSegments) > 0 {
+		inputLevel = plan.InputSegments[0].Meta.Level
+	}
 	switch plan.OutputLevel {
 	case compaction.L0:
 		e.metrics.CompactionIntraL0Runs.Add(1)
@@ -390,9 +403,15 @@ func (e *Engine) executeCompactionPlan(ctx context.Context, idx, partition strin
 		e.metrics.CompactionL0ToL1Bytes.Add(outputMeta.SizeBytes)
 		e.metrics.CompactionL0ToL1InputBytes.Add(inputBytes)
 	case compaction.L2:
-		e.metrics.CompactionL1ToL2Runs.Add(1)
-		e.metrics.CompactionL1ToL2Bytes.Add(outputMeta.SizeBytes)
-		e.metrics.CompactionL1ToL2InputBytes.Add(inputBytes)
+		if inputLevel == compaction.L2 {
+			e.metrics.CompactionIntraL2Runs.Add(1)
+			e.metrics.CompactionIntraL2Bytes.Add(outputMeta.SizeBytes)
+			e.metrics.CompactionIntraL2InputBytes.Add(inputBytes)
+		} else {
+			e.metrics.CompactionL1ToL2Runs.Add(1)
+			e.metrics.CompactionL1ToL2Bytes.Add(outputMeta.SizeBytes)
+			e.metrics.CompactionL1ToL2InputBytes.Add(inputBytes)
+		}
 	case compaction.L3:
 		e.metrics.CompactionL2ToL3Runs.Add(1)
 		e.metrics.CompactionL2ToL3Bytes.Add(outputMeta.SizeBytes)

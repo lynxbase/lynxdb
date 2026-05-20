@@ -3,6 +3,7 @@ package part
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -53,8 +54,9 @@ func TestAsyncBatcher_ThresholdFlush_Events(t *testing.T) {
 	defer batcher.Close()
 
 	var committed atomic.Int32
-	batcher.SetOnCommit(func(_ *Meta) {
+	batcher.SetOnCommit(func(_ *Meta) error {
 		committed.Add(1)
+		return nil
 	})
 	batcher.Start(context.Background())
 
@@ -200,10 +202,11 @@ func TestAsyncBatcher_OnCommitCallback(t *testing.T) {
 
 	var receivedMetas []*Meta
 	var mu sync.Mutex
-	batcher.SetOnCommit(func(meta *Meta) {
+	batcher.SetOnCommit(func(meta *Meta) error {
 		mu.Lock()
 		receivedMetas = append(receivedMetas, meta)
 		mu.Unlock()
+		return nil
 	})
 
 	batcher.Start(context.Background())
@@ -238,6 +241,32 @@ func TestAsyncBatcher_OnCommitCallback(t *testing.T) {
 	}
 	if !indexes["idx-a"] || !indexes["idx-b"] {
 		t.Errorf("expected commits for idx-a and idx-b, got %v", indexes)
+	}
+}
+
+func TestAsyncBatcher_OnCommitErrorDoesNotRegisterPart(t *testing.T) {
+	cfg := BatcherConfig{
+		MaxEvents: 50,
+		MaxBytes:  1 << 30,
+		MaxWait:   10 * time.Second,
+	}
+	batcher, registry, _ := testBatcher(t, cfg)
+	defer batcher.Close()
+
+	wantErr := errors.New("load failed")
+	batcher.SetOnCommit(func(_ *Meta) error {
+		return wantErr
+	})
+	batcher.Start(context.Background())
+
+	if err := batcher.Add(makeEvents(50, "main")); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if err := batcher.Flush(); !errors.Is(err, wantErr) {
+		t.Fatalf("Flush: got %v, want %v", err, wantErr)
+	}
+	if got := registry.Count(); got != 0 {
+		t.Fatalf("registry count after failed commit: got %d, want 0", got)
 	}
 }
 
@@ -409,6 +438,55 @@ func TestAsyncBatcher_Backpressure_Reject(t *testing.T) {
 		if !errors.Is(err, ErrTooManyParts) {
 			t.Fatalf("expected ErrTooManyParts at %d parts, got %v", registry.Count(), err)
 		}
+	}
+}
+
+func TestAsyncBatcher_Backpressure_IgnoresCompactedParts(t *testing.T) {
+	cfg := BatcherConfig{
+		MaxEvents:       1_000_000,
+		MaxBytes:        1 << 30,
+		MaxWait:         10 * time.Second,
+		DelayThreshold:  1,
+		RejectThreshold: 2,
+		MaxDelayMs:      10,
+	}
+	batcher, registry, _ := testBatcher(t, cfg)
+	defer batcher.Close()
+
+	batcher.Start(context.Background())
+
+	for i := 0; i < 10; i++ {
+		registry.Add(&Meta{
+			ID:    fmt.Sprintf("l1-part-%d", i),
+			Index: "main",
+			Level: 1,
+		})
+	}
+
+	if err := batcher.Add(makeEvents(1, "main")); err != nil {
+		t.Fatalf("Add with only compacted parts: %v", err)
+	}
+}
+
+func TestAsyncBatcher_Backpressure_CountsL0Parts(t *testing.T) {
+	cfg := BatcherConfig{
+		MaxEvents:       1_000_000,
+		MaxBytes:        1 << 30,
+		MaxWait:         10 * time.Second,
+		DelayThreshold:  1,
+		RejectThreshold: 2,
+		MaxDelayMs:      10,
+	}
+	batcher, registry, _ := testBatcher(t, cfg)
+	defer batcher.Close()
+
+	batcher.Start(context.Background())
+
+	registry.Add(&Meta{ID: "l0-part-a", Index: "main", Level: 0})
+	registry.Add(&Meta{ID: "l0-part-b", Index: "main", Level: 0})
+
+	if err := batcher.Add(makeEvents(1, "main")); !errors.Is(err, ErrTooManyParts) {
+		t.Fatalf("Add with L0 pressure: got %v, want ErrTooManyParts", err)
 	}
 }
 

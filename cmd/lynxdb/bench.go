@@ -84,24 +84,23 @@ func runBench(cmd *cobra.Command, args []string) error {
 		{"Time bucketed", `FROM main | timechart count span=5m`},
 	}
 
-	tbl := ui.NewTable(t).
-		SetColumns("QUERY", "RESULTS", "TIME")
-
 	ctx := context.Background()
+	rows := make([][]any, 0, len(queries))
 	for _, q := range queries {
 		start := time.Now()
 		result, _, err := eng.Query(ctx, q.query, storage.QueryOpts{})
 		dur := time.Since(start)
 		if err != nil {
-			tbl.AddRow(q.name, "ERROR", formatElapsed(dur))
+			rows = append(rows, []any{q.name, "ERROR", dur.Milliseconds()})
 
 			continue
 		}
-		tbl.AddRow(q.name, formatCount(int64(len(result.Rows))), formatElapsed(dur))
+		rows = append(rows, []any{q.name, len(result.Rows), dur.Milliseconds()})
 	}
 
-	fmt.Print("  ")
-	fmt.Println(tbl.String())
+	if err := renderTabular(os.Stdout, []string{"QUERY", "RESULTS", "TIME_MS"}, rows, t); err != nil {
+		return err
+	}
 	printSuccess("Done.")
 
 	return nil
