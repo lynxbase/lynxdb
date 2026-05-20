@@ -191,6 +191,66 @@ func TestAsyncBatcher_EmptyFlush(t *testing.T) {
 	}
 }
 
+func TestAsyncBatcher_ConcurrentFlushWaitsForCommit(t *testing.T) {
+	cfg := BatcherConfig{
+		MaxEvents: 1_000_000,
+		MaxBytes:  1 << 30,
+		MaxWait:   10 * time.Second,
+	}
+	batcher, registry, _ := testBatcher(t, cfg)
+	defer batcher.Close()
+
+	commitStarted := make(chan struct{})
+	releaseCommit := make(chan struct{})
+	var once sync.Once
+	batcher.SetOnCommit(func(_ *Meta) error {
+		once.Do(func() {
+			close(commitStarted)
+		})
+		<-releaseCommit
+		return nil
+	})
+	batcher.Start(context.Background())
+
+	if err := batcher.Add(makeEvents(10, "main")); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- batcher.Flush()
+	}()
+
+	select {
+	case <-commitStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first flush did not start commit")
+	}
+
+	secondDone := make(chan error, 1)
+	go func() {
+		secondDone <- batcher.Flush()
+	}()
+
+	select {
+	case err := <-secondDone:
+		t.Fatalf("second flush returned before first commit finished: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseCommit)
+
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first Flush: %v", err)
+	}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second Flush: %v", err)
+	}
+	if got := registry.Count(); got != 1 {
+		t.Fatalf("registry count: got %d, want 1", got)
+	}
+}
+
 func TestAsyncBatcher_OnCommitCallback(t *testing.T) {
 	cfg := BatcherConfig{
 		MaxEvents: 50,

@@ -110,6 +110,7 @@ func (c BatcherConfig) withDefaults() BatcherConfig {
 // AsyncBatcher is safe for concurrent use from multiple goroutines.
 type AsyncBatcher struct {
 	mu       sync.Mutex
+	flushMu  sync.Mutex
 	shards   map[string]*batchShard // index -> shard
 	writer   *Writer
 	registry *Registry
@@ -362,6 +363,9 @@ func (b *AsyncBatcher) Flush() error {
 
 // FlushContext flushes all buffered shards to disk using the provided context.
 func (b *AsyncBatcher) FlushContext(ctx context.Context) error {
+	b.flushMu.Lock()
+	defer b.flushMu.Unlock()
+
 	b.mu.Lock()
 	var toFlush []flushTarget
 	for idx, shard := range b.shards {
@@ -487,6 +491,9 @@ func (b *AsyncBatcher) flushIdleShards() {
 }
 
 func (b *AsyncBatcher) flushIdleShardsWithContext(ctx context.Context) {
+	b.flushMu.Lock()
+	defer b.flushMu.Unlock()
+
 	now := time.Now()
 
 	b.mu.Lock()
