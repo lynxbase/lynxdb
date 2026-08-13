@@ -35,6 +35,7 @@ const sidebars: SidebarsConfig = {
         'guides/aggregations',
         'guides/field-extraction',
         'guides/json-processing',
+        'guides/kubernetes-audit-logs',
         'guides/time-series',
         'guides/materialized-views',
         'guides/saved-queries',
