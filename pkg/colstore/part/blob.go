@@ -14,9 +14,9 @@ import (
 // ErrCorrupt reports part bytes that do not decode.
 var ErrCorrupt = errors.New("part: corrupt data")
 
-// minCompressSize is the payload size below which compression cannot pay
-// for its frame header.
-const minCompressSize = 64
+// minCompressSize is the payload size below which setting up a decoder
+// costs more time than the few bytes compression saves are worth.
+const minCompressSize = 512
 
 var (
 	codecOnce sync.Once
