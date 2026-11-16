@@ -111,3 +111,66 @@ func (c *Column) AppendByteRun(row int, data []byte, offsets []uint32) {
 		c.Ends = append(c.Ends, end+shift)
 	}
 }
+
+// CopyRows appends rows from to to-1 of b to dst.
+func (b *Batch) CopyRows(dst *Batch, from, to int) {
+	base := dst.Rows
+	for _, c := range b.cols {
+		if c.Count == 0 {
+			continue
+		}
+		// first and end bound the values whose rows fall in the range.
+		first, end := min(from, c.Count), min(to, c.Count)
+		if c.Sparse {
+			first = lowerBound(c.RowIDs, uint32(from))
+			end = lowerBound(c.RowIDs, uint32(to))
+		}
+		if first == end {
+			continue
+		}
+		out := dst.Col(c.Path, c.Kind)
+		if c.Sparse {
+			for _, row := range c.RowIDs[first:end] {
+				out.placeRun(base+int(row)-from, 1)
+			}
+		} else {
+			out.placeRun(base+first-from, end-first)
+		}
+		switch c.Kind {
+		case vec.KindBool:
+			out.Bools = append(out.Bools, c.Bools[first:end]...)
+		case vec.KindInt:
+			out.Ints = append(out.Ints, c.Ints[first:end]...)
+		case vec.KindFloat:
+			out.Floats = append(out.Floats, c.Floats[first:end]...)
+		case vec.KindString, vec.KindVariant:
+			start := c.start(first)
+			shift := uint32(len(out.Data)) - start
+			out.Data = append(out.Data, c.Data[start:c.Ends[end-1]]...)
+			for _, e := range c.Ends[first:end] {
+				out.Ends = append(out.Ends, e+shift)
+			}
+		}
+	}
+	size := 0
+	if b.Rows > 0 {
+		size = int(int64(b.Bytes) * int64(to-from) / int64(b.Rows))
+	}
+	dst.AppendRows(b.Times[from:to], size)
+}
+
+// lowerBound returns the position of the first element not below v in an
+// ascending slice.
+func lowerBound(s []uint32, v uint32) int {
+	lo, hi := 0, len(s)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if s[mid] < v {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+
+	return lo
+}
