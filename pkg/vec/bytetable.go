@@ -22,6 +22,12 @@ func NewByteTable(a *mem.Arena) *ByteTable {
 	return &ByteTable{arena: a, slots: mem.Slice[uint32](a, 256, 256)}
 }
 
+// Clear removes every key and keeps the table's memory.
+func (t *ByteTable) Clear() {
+	clear(t.slots)
+	t.hashes, t.ends, t.data = t.hashes[:0], t.ends[:0], t.data[:0]
+}
+
 // Hash returns the hash ByteTable uses for key.
 func Hash(key []byte) uint64 { return xxhash.Sum64(key) }
 

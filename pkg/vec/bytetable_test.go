@@ -35,6 +35,27 @@ func TestByteTableAssignsStableDenseIDs(t *testing.T) {
 	}
 }
 
+func TestByteTableClearStartsOver(t *testing.T) {
+	a := mem.NewArena()
+	defer a.Free()
+	tbl := NewByteTable(a)
+	for round := 0; round < 3; round++ {
+		for i := 0; i < 3000; i++ {
+			key := []byte(fmt.Sprintf("round%d-%d", round, i))
+			if id := tbl.ID(key); id != i {
+				t.Fatalf("round %d: ID(%s) = %d, want %d", round, key, id, i)
+			}
+		}
+		if tbl.Len() != 3000 || string(tbl.Key(2999)) != fmt.Sprintf("round%d-2999", round) {
+			t.Fatalf("round %d: Len = %d, last key %q", round, tbl.Len(), tbl.Key(2999))
+		}
+		tbl.Clear()
+		if tbl.Len() != 0 {
+			t.Fatalf("Len after Clear = %d", tbl.Len())
+		}
+	}
+}
+
 func BenchmarkByteTableID(b *testing.B) {
 	keys := make([][]byte, 1<<16)
 	for i := range keys {
