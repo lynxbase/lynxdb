@@ -36,6 +36,7 @@ type Writer struct {
 	paths []string
 	ids   map[string]uint32
 	index []byte
+	keys  []byte // first sort key of each block, length-prefixed
 	rows  uint64
 	raw   uint64
 	minT  int64
@@ -157,6 +158,11 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	binary.LittleEndian.PutUint32(entry[44:], uint32(len(w.block)-dirOff))
 	binary.LittleEndian.PutUint32(entry[48:], crc32.Checksum(w.block[filterOff:], castagnoli))
 	w.index = append(w.index, entry[:]...)
+	if w.opts.Ordered {
+		w.e.tmp = appendFirstKey(w.e.tmp[:0], b, w.opts.SortKey)
+		w.keys = binary.AppendUvarint(w.keys, uint64(len(w.e.tmp)))
+		w.keys = append(w.keys, w.e.tmp...)
+	}
 
 	if w.rows == 0 || minT < w.minT {
 		w.minT = minT
@@ -395,6 +401,7 @@ func (w *Writer) Close() error {
 	}
 	footer = binary.AppendUvarint(footer, uint64(len(w.index)/indexEntrySize))
 	footer = append(footer, w.index...)
+	footer = append(footer, w.keys...)
 	footer = binary.AppendUvarint(footer, w.rows)
 	footer = binary.AppendUvarint(footer, w.raw)
 	footer = binary.AppendUvarint(footer, zigzag(w.minT))

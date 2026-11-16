@@ -6,7 +6,7 @@ import "hash/crc32"
 //
 //	header   magic, version
 //	blocks   each: column chunks, token filter, column directory
-//	footer   path names, sort key, block index, totals
+//	footer   path names, sort key, block index, first keys, totals
 //	trailer  footer offset, footer length, footer checksum, version, magic
 const (
 	fileMagic     = 0x5450584c // "LXPT"

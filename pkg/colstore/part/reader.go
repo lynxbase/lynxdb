@@ -20,6 +20,8 @@ type Part struct {
 
 	ordered bool
 	sortKey []string
+	// firstKeys holds the encoded sort key of each block's first row.
+	firstKeys [][]byte
 
 	// Rows is the number of rows in the part.
 	Rows uint64
@@ -80,6 +82,12 @@ func Open(data []byte) (*Part, error) {
 		return nil, ErrCorrupt
 	}
 	p.index = r.bytes(nBlocks * indexEntrySize)
+	if p.ordered {
+		p.firstKeys = make([][]byte, 0, nBlocks)
+		for i := uint64(0); i < nBlocks; i++ {
+			p.firstKeys = append(p.firstKeys, r.bytes(r.uvarint()))
+		}
+	}
 	p.Rows = r.uvarint()
 	p.RawBytes = r.uvarint()
 	p.MinTime = unzigzag(r.uvarint())
