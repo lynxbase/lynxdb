@@ -1,7 +1,7 @@
 package colstore
 
 import (
-	"bytes"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -14,86 +14,61 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 )
 
-// loadToDir shreds data on every core into part files of d, one per worker,
-// and commits them in one change; a non-empty key orders each part by it. It
-// returns the number of lines that are not JSON objects.
-func loadToDir(t testing.TB, d *Dir, data []byte, workers, blockRows int, key []string) int64 {
+// loadToDir shreds data on every core into part files of d and commits them
+// in one change: one arrival-ordered part per worker, or, with a key, parts
+// with disjoint key ranges merged from sorted runs. It returns the number of
+// lines that are not JSON objects.
+func loadToDir(t testing.TB, d *Dir, data []byte, parts, blockRows int, key []string) int64 {
 	t.Helper()
-	opts := part.Options{Ordered: len(key) > 0, SortKey: key}
-	chunks := make([][]byte, 0, workers)
-	for rest := data; len(rest) > 0; {
-		n := min(len(data)/workers+1, len(rest))
-		if n < len(rest) {
-			if nl := bytes.IndexByte(rest[n:], '\n'); nl >= 0 {
-				n += nl + 1
-			} else {
-				n = len(rest)
-			}
-		}
-		chunks = append(chunks, rest[:n])
-		rest = rest[n:]
-	}
-	files := make([]*PartFile, len(chunks))
-	var rejected atomic.Int64
-	var wg sync.WaitGroup
-	for i, chunk := range chunks {
-		wg.Add(1)
-		go func(i int, chunk []byte) {
-			defer wg.Done()
-			pf, err := d.Create()
-			if err != nil {
-				t.Error(err)
+	files := make([]*PartFile, parts)
+	create := func(i int) io.Writer {
+		pf, err := d.Create()
+		if err != nil {
+			t.Error(err)
 
-				return
-			}
-			files[i] = pf
-			out := part.NewWriter(pf, opts)
-			batch := shred.Get(shred.Options{TimeField: "time_us"})
-			defer shred.Put(batch)
-			var blocks []*part.Part
-			var errs []shred.LineError
-			for len(chunk) > 0 {
-				var lines []byte
-				lines, chunk = shred.SplitLines(chunk, blockRows)
-				errs = batch.AddNDJSON(lines, 0, errs[:0])
-				rejected.Add(int64(len(errs)))
-				if !opts.Ordered {
+			return io.Discard
+		}
+		files[i] = pf
+
+		return pf
+	}
+	var rejected int64
+	if len(key) > 0 {
+		cores := runtime.GOMAXPROCS(0)
+		var runs []*part.Part
+		runs, rejected = orderedRuns(t, data, cores, max(cores, parts), blockRows, key)
+		files = files[:mergeRanges(t, runs, parts, blockRows, key, create)]
+	} else {
+		chunks := splitAtLines(data, parts)
+		files = files[:len(chunks)]
+		var count atomic.Int64
+		var wg sync.WaitGroup
+		for i, chunk := range chunks {
+			wg.Add(1)
+			out := part.NewWriter(create(i), part.Options{})
+			go func(chunk []byte) {
+				defer wg.Done()
+				batch := shred.Get(shred.Options{TimeField: "time_us"})
+				defer shred.Put(batch)
+				var errs []shred.LineError
+				for len(chunk) > 0 {
+					var lines []byte
+					lines, chunk = shred.SplitLines(chunk, blockRows)
+					errs = batch.AddNDJSON(lines, 0, errs[:0])
+					count.Add(int64(len(errs)))
 					if err := out.WriteBatch(batch); err != nil {
 						t.Error(err)
 					}
 					batch.Reset()
-
-					continue
 				}
-				// An ordered part is the merge of its sorted blocks.
-				batch.SortBy(key)
-				var buf bytes.Buffer
-				w := part.NewWriter(&buf, opts)
-				if err := w.WriteBatch(batch); err != nil || w.Close() != nil {
-					t.Error("block write failed")
-
-					return
-				}
-				batch.Reset()
-				p, err := part.Open(buf.Bytes())
-				if err != nil {
-					t.Error(err)
-
-					return
-				}
-				blocks = append(blocks, p)
-			}
-			if opts.Ordered {
-				if err := part.Merge(out, blocks, blockRows); err != nil {
+				if err := out.Close(); err != nil {
 					t.Error(err)
 				}
-			}
-			if err := out.Close(); err != nil {
-				t.Error(err)
-			}
-		}(i, chunk)
+			}(chunk)
+		}
+		wg.Wait()
+		rejected = count.Load()
 	}
-	wg.Wait()
 	if t.Failed() {
 		t.FailNow()
 	}
@@ -101,7 +76,7 @@ func loadToDir(t testing.TB, d *Dir, data []byte, workers, blockRows int, key []
 		t.Fatal(err)
 	}
 
-	return rejected.Load()
+	return rejected
 }
 
 // TestJSONBenchDisk times loading to disk and the queries over the table in

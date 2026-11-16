@@ -2,106 +2,42 @@ package colstore
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
-	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 )
 
-// loadOrdered shreds data on every core into one ordered part per worker:
-// every batch is sorted and written as a one-block part, and the worker
-// then merges its blocks.
-func loadOrdered(t testing.TB, data []byte, workers int, key []string) (*Table, int64) {
+// loadOrdered shreds data into sorted runs and merges them into at most
+// parts parts with disjoint key ranges, so the table is one ordered run.
+func loadOrdered(t testing.TB, data []byte, parts int, key []string) (*Table, int64) {
 	t.Helper()
-	opts := part.Options{Ordered: true, SortKey: key}
-	chunks := make([][]byte, 0, workers)
-	for rest := data; len(rest) > 0; {
-		n := min(len(data)/workers+1, len(rest))
-		if n < len(rest) {
-			if nl := bytes.IndexByte(rest[n:], '\n'); nl >= 0 {
-				n += nl + 1
-			} else {
-				n = len(rest)
-			}
-		}
-		chunks = append(chunks, rest[:n])
-		rest = rest[n:]
-	}
-	handles := make([]*Handle, len(chunks))
-	var rejected int64
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	for i, chunk := range chunks {
-		wg.Add(1)
-		go func(i int, chunk []byte) {
-			defer wg.Done()
-			batch := shred.Get(shred.Options{TimeField: "time_us"})
-			defer shred.Put(batch)
-			var blocks []*part.Part
-			var errs []shred.LineError
-			for len(chunk) > 0 {
-				var lines []byte
-				lines, chunk = shred.SplitLines(chunk, 16384)
-				errs = batch.AddNDJSON(lines, 0, errs[:0])
-				mu.Lock()
-				rejected += int64(len(errs))
-				mu.Unlock()
-				batch.SortBy(key)
-				var buf bytes.Buffer
-				w := part.NewWriter(&buf, opts)
-				if err := w.WriteBatch(batch); err != nil || w.Close() != nil {
-					t.Error("block write failed")
-
-					return
-				}
-				batch.Reset()
-				p, err := part.Open(buf.Bytes())
-				if err != nil {
-					t.Error(err)
-
-					return
-				}
-				blocks = append(blocks, p)
-			}
-			var buf bytes.Buffer
-			w := part.NewWriter(&buf, opts)
-			if err := part.Merge(w, blocks, 16384); err != nil {
-				t.Error(err)
-
-				return
-			}
-			if err := w.Close(); err != nil {
-				t.Error(err)
-
-				return
-			}
-			p, err := part.Open(buf.Bytes())
-			if err != nil {
-				t.Error(err)
-
-				return
-			}
-			handles[i] = NewHandle(p, nil)
-		}(i, chunk)
-	}
-	wg.Wait()
+	cores := runtime.GOMAXPROCS(0)
+	runs, rejected := orderedRuns(t, data, cores, max(cores, parts), 16384, key)
 	if rejected > 0 {
 		t.Logf("%d lines rejected as invalid JSON", rejected)
+	}
+	bufs := make([]bytes.Buffer, parts)
+	n := mergeRanges(t, runs, parts, 16384, key, func(i int) io.Writer { return &bufs[i] })
+	handles := make([]*Handle, 0, n)
+	var size int64
+	for i := 0; i < n; i++ {
+		p, err := part.Open(bufs[i].Bytes())
+		if err != nil {
+			t.Fatal(err)
+		}
+		handles = append(handles, NewHandle(p, nil))
+		size += int64(p.Size())
 	}
 	tbl := NewTable()
 	if err := tbl.Apply(handles, nil); err != nil {
 		t.Fatal(err)
-	}
-	var size int64
-	for _, h := range handles {
-		size += int64(h.Size())
 	}
 
 	return tbl, size
