@@ -125,7 +125,7 @@ func sampleDocs(n int) []string {
 
 func TestPartRoundTripsDocuments(t *testing.T) {
 	docs := sampleDocs(3000)
-	for _, opts := range []Options{{}, {Level: LevelCompact}, {NoTokenFilter: true}} {
+	for _, opts := range []Options{{}, {Level: LevelCompact}, {NoTokenFilter: true}, {Codec: CodecLZ4}, {Codec: CodecNone}} {
 		for _, blockRows := range []int{1, 7, 1000, 1 << 16} {
 			if blockRows == 1 && opts.Level != LevelFast {
 				continue
@@ -342,8 +342,15 @@ func stringsIn(v any, dst []string) []string {
 }
 
 func TestCorruptPartsFailWithoutPanicking(t *testing.T) {
+	for _, codec := range []Codec{CodecZstd, CodecLZ4, CodecNone} {
+		corruptPartsFail(t, Options{Codec: codec})
+	}
+}
+
+func corruptPartsFail(t *testing.T, opts Options) {
+	t.Helper()
 	var buf bytes.Buffer
-	w := NewWriter(&buf, Options{})
+	w := NewWriter(&buf, opts)
 	batch := shred.NewBatch(shred.Options{})
 	for _, d := range sampleDocs(400) {
 		if err := batch.AddJSON([]byte(d), 5); err != nil {
@@ -394,5 +401,25 @@ func TestCorruptPartsFailWithoutPanicking(t *testing.T) {
 		if !decodeAll(bad) {
 			t.Fatalf("flipping byte %d of %d went unnoticed", at, len(bad))
 		}
+	}
+}
+
+func TestCodecChoiceChangesOnlyTheSize(t *testing.T) {
+	docs := sampleDocs(3000)
+	sizes := map[Codec]int{}
+	var want []string
+	for _, codec := range []Codec{CodecZstd, CodecLZ4, CodecNone} {
+		p := buildPart(t, docs, 1000, Options{Codec: codec})
+		got, _ := readAll(t, p)
+		if want == nil {
+			want = got
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("codec %d reads back different rows", codec)
+		}
+		sizes[codec] = p.Size()
+	}
+	if sizes[CodecZstd] >= sizes[CodecLZ4] || sizes[CodecLZ4] >= sizes[CodecNone] {
+		t.Fatalf("part sizes %v do not grow from zstd over lz4 to none", sizes)
 	}
 }

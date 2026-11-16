@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"github.com/klauspost/compress/zstd"
+	"github.com/pierrec/lz4/v4"
 )
 
 // ErrCorrupt reports part bytes that do not decode.
@@ -42,20 +43,60 @@ func codecs() {
 	})
 }
 
+// Codec selects how the bytes of string and variant values are compressed.
+type Codec uint8
+
+const (
+	// CodecZstd gives the smallest parts.
+	CodecZstd Codec = iota
+	// CodecLZ4 decodes several times faster and compresses less.
+	CodecLZ4
+	// CodecNone stores the bytes as they are.
+	CodecNone
+)
+
+// How the payload of a section is stored, kept in the low bits of its head.
+const (
+	blobStored = 0
+	blobZstd   = 1
+	blobLZ4    = 2
+)
+
+// blobCodec compresses sections with one codec and reuses its buffers.
+type blobCodec struct {
+	codec Codec
+	level Level
+	lz    lz4.Compressor
+}
+
 // appendBlob appends payload as a length-prefixed section, compressed through
 // scratch when that makes it smaller.
-func appendBlob(dst, payload []byte, level Level, compress bool, scratch *[]byte) []byte {
-	if compress && len(payload) >= minCompressSize {
-		codecs()
-		*scratch = encoders[level].EncodeAll(payload, (*scratch)[:0])
-		if c := *scratch; len(c)+binary.MaxVarintLen32 < len(payload) {
-			dst = binary.AppendUvarint(dst, uint64(len(c))<<1|1)
+func (bc *blobCodec) appendBlob(dst, payload []byte, scratch *[]byte) []byte {
+	if bc.codec != CodecNone && len(payload) >= minCompressSize {
+		kind := uint64(blobZstd)
+		if bc.codec == CodecLZ4 {
+			kind = blobLZ4
+			if n := lz4.CompressBlockBound(len(payload)); cap(*scratch) < n {
+				*scratch = make([]byte, n)
+			}
+			// An incompressible payload reports zero bytes written.
+			n, err := bc.lz.CompressBlock(payload, (*scratch)[:cap(*scratch)])
+			if err != nil {
+				n = 0
+			}
+			*scratch = (*scratch)[:n]
+		} else {
+			codecs()
+			*scratch = encoders[bc.level].EncodeAll(payload, (*scratch)[:0])
+		}
+		if c := *scratch; len(c) != 0 && len(c)+binary.MaxVarintLen32 < len(payload) {
+			dst = binary.AppendUvarint(dst, uint64(len(c))<<2|kind)
 			dst = binary.AppendUvarint(dst, uint64(len(payload)))
 
 			return append(dst, c...)
 		}
 	}
-	dst = binary.AppendUvarint(dst, uint64(len(payload))<<1)
+	dst = binary.AppendUvarint(dst, uint64(len(payload))<<2|blobStored)
 
 	return append(dst, payload...)
 }
@@ -69,8 +110,8 @@ func readBlob(src []byte, buf *[]byte) (payload, rest []byte, stored bool, err e
 		return nil, nil, false, ErrCorrupt
 	}
 	src = src[n:]
-	size := head >> 1
-	if head&1 == 0 {
+	size, kind := head>>2, head&3
+	if kind == blobStored {
 		if size > uint64(len(src)) {
 			return nil, nil, false, ErrCorrupt
 		}
@@ -82,12 +123,27 @@ func readBlob(src []byte, buf *[]byte) (payload, rest []byte, stored bool, err e
 		return nil, nil, false, ErrCorrupt
 	}
 	src = src[n:]
-	codecs()
 	if cap(*buf) < int(rawLen) {
 		*buf = make([]byte, 0, rawLen)
 	}
-	out, derr := decoder.DecodeAll(src[:size], (*buf)[:0])
-	if derr != nil || uint64(len(out)) != rawLen {
+	var out []byte
+	switch kind {
+	case blobZstd:
+		codecs()
+		var derr error
+		if out, derr = decoder.DecodeAll(src[:size], (*buf)[:0]); derr != nil {
+			return nil, nil, false, ErrCorrupt
+		}
+	case blobLZ4:
+		got, derr := lz4.UncompressBlock(src[:size], (*buf)[:rawLen])
+		if derr != nil {
+			return nil, nil, false, ErrCorrupt
+		}
+		out = (*buf)[:got]
+	default:
+		return nil, nil, false, ErrCorrupt
+	}
+	if uint64(len(out)) != rawLen {
 		return nil, nil, false, ErrCorrupt
 	}
 	*buf = out

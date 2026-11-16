@@ -63,7 +63,7 @@ func framesSize(vals []int64, delta bool) int {
 }
 
 // appendInts appends the integer section for vals.
-func appendInts(dst []byte, vals []int64, level Level, e *encodeScratch) []byte {
+func appendInts(dst []byte, vals []int64, bc *blobCodec, e *encodeScratch) []byte {
 	if len(vals) == 0 {
 		return append(dst, intFrames)
 	}
@@ -96,7 +96,7 @@ func appendInts(dst []byte, vals []int64, level Level, e *encodeScratch) []byte 
 		mark := len(dst)
 		dst = append(dst, byte(intBytes8+width-1))
 		dst = binary.AppendUvarint(dst, zigzag(lo))
-		dst = appendBlob(dst, e.tmp, level, true, &e.zbuf)
+		dst = bc.appendBlob(dst, e.tmp, &e.zbuf)
 		if len(dst)-mark <= best {
 			return dst
 		}

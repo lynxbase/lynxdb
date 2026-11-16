@@ -11,7 +11,7 @@ func roundTripInts(t *testing.T, name string, vals []int64) int {
 	var e encodeScratch
 	var d decodeScratch
 	for _, level := range []Level{LevelFast, LevelCompact} {
-		enc := appendInts([]byte{0xAA}, vals, level, &e)
+		enc := appendInts([]byte{0xAA}, vals, &blobCodec{level: level}, &e)
 		enc = append(enc, 0xBB)
 		got, rest, err := readInts(nil, enc[1:], len(vals), &d)
 		if err != nil {
@@ -96,7 +96,7 @@ func TestReadIntsRejectsTruncatedSections(t *testing.T) {
 		vals[i] = int64(i*i) - 9000
 	}
 	for _, src := range [][]int64{vals, {5, 5, 5, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5}} {
-		enc := appendInts(nil, src, LevelFast, &e)
+		enc := appendInts(nil, src, &blobCodec{}, &e)
 		for cut := 0; cut < len(enc); cut++ {
 			if _, _, err := readInts(nil, enc[:cut], len(src), &d); err == nil {
 				t.Fatalf("mode %d: prefix of %d/%d bytes decoded without error", enc[0], cut, len(enc))
@@ -115,7 +115,7 @@ func BenchmarkReadInts(b *testing.B) {
 	}
 	var e encodeScratch
 	var d decodeScratch
-	enc := appendInts(nil, vals, LevelFast, &e)
+	enc := appendInts(nil, vals, &blobCodec{}, &e)
 	dst := make([]int64, len(vals))
 	b.SetBytes(int64(len(vals) * 8))
 	b.ReportAllocs()

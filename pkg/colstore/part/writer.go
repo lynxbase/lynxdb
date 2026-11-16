@@ -19,6 +19,9 @@ import (
 // Options configures a Writer.
 type Options struct {
 	Level Level
+	// Codec compresses the bytes of string and variant values that are not
+	// dictionary encoded; everything else is small and stays on zstd.
+	Codec Codec
 	// NoTokenFilter leaves blocks without a token filter.
 	NoTokenFilter bool
 	// Ordered declares that the rows arrive ordered by their values at the
@@ -43,16 +46,18 @@ type Writer struct {
 	minT  int64
 	maxT  int64
 
-	block  []byte
-	stats  []byte
-	ents   []dirEntry
-	e      encodeScratch
-	ints   []int64
-	values []byte // dictionary bytes; the integer codec owns e.tmp
-	dict   dictBuilder
-	tokens tokenfilter.Set
-	hashes []uint64
-	addStr func(s []byte)
+	block     []byte
+	stats     []byte
+	ents      []dirEntry
+	blobs     blobCodec // every section but the values of flat columns
+	values    blobCodec
+	e         encodeScratch
+	ints      []int64
+	dictBytes []byte // the integer codec owns e.tmp
+	dict      dictBuilder
+	tokens    tokenfilter.Set
+	hashes    []uint64
+	addStr    func(s []byte)
 }
 
 type dirEntry struct {
@@ -76,6 +81,8 @@ type dirEntry struct {
 // NewWriter starts a part on w.
 func NewWriter(w io.Writer, opts Options) *Writer {
 	pw := &Writer{w: w, opts: opts, ids: make(map[string]uint32, 64)}
+	pw.blobs = blobCodec{codec: CodecZstd, level: opts.Level}
+	pw.values = blobCodec{codec: opts.Codec, level: opts.Level}
 	pw.addStr = func(s []byte) {
 		pw.hashes = tokenfilter.AppendHashes(pw.hashes[:0], s)
 		pw.tokens.Add(pw.hashes)
@@ -239,7 +246,7 @@ func (w *Writer) appendPresence(c *shred.Column, rows int) {
 		}
 		w.block = append(w.block, presenceBitmap)
 	}
-	w.block = appendBlob(w.block, w.e.tmp, w.opts.Level, true, &w.e.zbuf)
+	w.block = w.blobs.appendBlob(w.block, w.e.tmp, &w.e.zbuf)
 }
 
 func (w *Writer) encodeBools(ent *dirEntry, vals []uint8) {
@@ -262,7 +269,7 @@ func (w *Writer) encodeBools(ent *dirEntry, vals []uint8) {
 	for i, v := range vals {
 		w.e.tmp[i>>3] |= v << (uint(i) & 7)
 	}
-	w.block = appendBlob(w.block, w.e.tmp, w.opts.Level, true, &w.e.zbuf)
+	w.block = w.blobs.appendBlob(w.block, w.e.tmp, &w.e.zbuf)
 }
 
 func (w *Writer) encodeInts(ent *dirEntry, vals []int64) {
@@ -273,7 +280,7 @@ func (w *Writer) encodeInts(ent *dirEntry, vals []int64) {
 		return
 	}
 	ent.enc = encFlat
-	w.block = appendInts(w.block, vals, w.opts.Level, &w.e)
+	w.block = appendInts(w.block, vals, &w.blobs, &w.e)
 }
 
 func (w *Writer) encodeFloats(ent *dirEntry, vals []float64) {
@@ -303,7 +310,7 @@ func (w *Writer) encodeFloats(ent *dirEntry, vals []float64) {
 	for _, v := range vals {
 		w.e.tmp = binary.LittleEndian.AppendUint64(w.e.tmp, math.Float64bits(v))
 	}
-	w.block = appendBlob(w.block, w.e.tmp, w.opts.Level, true, &w.e.zbuf)
+	w.block = w.blobs.appendBlob(w.block, w.e.tmp, &w.e.zbuf)
 }
 
 func (w *Writer) tokenize(kind vec.Kind, val []byte) {
@@ -336,8 +343,8 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 			w.ints = append(w.ints, int64(len(val)))
 			w.tokenize(c.Kind, val)
 		}
-		w.block = appendInts(w.block, w.ints, w.opts.Level, &w.e)
-		w.block = appendBlob(w.block, c.Data[:c.Ends[c.Count-1]], w.opts.Level, true, &w.e.zbuf)
+		w.block = appendInts(w.block, w.ints, &w.blobs, &w.e)
+		w.block = w.values.appendBlob(w.block, c.Data[:c.Ends[c.Count-1]], &w.e.zbuf)
 
 		return
 	}
@@ -346,15 +353,15 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 	d := &w.dict
 	w.block = binary.AppendUvarint(w.block, uint64(distinct))
 	w.ints = w.ints[:0]
-	w.values = w.values[:0]
+	w.dictBytes = w.dictBytes[:0]
 	for _, entry := range d.order {
 		val := c.Bytes(int(d.first[entry]))
 		w.ints = append(w.ints, int64(len(val)))
-		w.values = append(w.values, val...)
+		w.dictBytes = append(w.dictBytes, val...)
 		w.tokenize(c.Kind, val)
 	}
-	w.block = appendInts(w.block, w.ints, w.opts.Level, &w.e)
-	w.block = appendBlob(w.block, w.values, w.opts.Level, true, &w.e.zbuf)
+	w.block = appendInts(w.block, w.ints, &w.blobs, &w.e)
+	w.block = w.blobs.appendBlob(w.block, w.dictBytes, &w.e.zbuf)
 
 	// Codes stay out of the general codec so that reading them costs a few
 	// shifts per row; runs take over when they halve the packed size.
