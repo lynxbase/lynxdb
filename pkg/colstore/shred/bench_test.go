@@ -55,3 +55,37 @@ func BenchmarkAddJSON(b *testing.B) {
 	}
 	b.ReportMetric(float64(len(lines))*float64(b.N)/b.Elapsed().Seconds(), "docs/s")
 }
+
+func benchNDJSON(b *testing.B, add func(batch *Batch, chunk []byte)) {
+	path := os.Getenv("LYNXDB_BENCH_NDJSON")
+	if path == "" {
+		b.Skip("set LYNXDB_BENCH_NDJSON to an NDJSON file")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		b.Fatal(err)
+	}
+	if len(data) > 64<<20 {
+		data = data[:bytes.LastIndexByte(data[:64<<20], '\n')+1]
+	}
+	batch := NewBatch(Options{TimeField: "time_us"})
+	docs := 0
+	b.SetBytes(int64(len(data)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		rest := data
+		for len(rest) > 0 {
+			var chunk []byte
+			chunk, rest = SplitLines(rest, 8192)
+			add(batch, chunk)
+			docs += batch.Rows
+			batch.Reset()
+		}
+	}
+	b.ReportMetric(float64(docs)/b.Elapsed().Seconds(), "docs/s")
+}
+
+func BenchmarkAddNDJSON(b *testing.B) {
+	benchNDJSON(b, func(batch *Batch, chunk []byte) { batch.AddNDJSON(chunk, 0, nil) })
+}

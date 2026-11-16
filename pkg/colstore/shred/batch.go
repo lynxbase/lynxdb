@@ -252,6 +252,13 @@ func (b *Batch) AddJSON(doc []byte, ts int64) error {
 
 		return err
 	}
+	b.endRow(ts, len(doc))
+
+	return nil
+}
+
+// endRow completes the row whose values were just appended.
+func (b *Batch) endRow(ts int64, size int) {
 	if b.restMark != 0 {
 		b.rest = variant.End(b.rest, b.restMark)
 		c := b.put(b.pathCols(RestPath), RestPath, vec.KindVariant)
@@ -265,10 +272,8 @@ func (b *Batch) AddJSON(doc []byte, ts int64) error {
 		}
 	}
 	b.Times = append(b.Times, ts)
-	b.Bytes += len(doc)
+	b.Bytes += size
 	b.Rows++
-
-	return nil
 }
 
 func (b *Batch) rollback() {
