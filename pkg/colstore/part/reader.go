@@ -22,6 +22,8 @@ type Part struct {
 	sortKey []string
 	// firstKeys holds the encoded sort key of each block's first row.
 	firstKeys [][]byte
+	// lastKey holds the encoded sort key of the last row.
+	lastKey []byte
 
 	// Rows is the number of rows in the part.
 	Rows uint64
@@ -87,6 +89,7 @@ func Open(data []byte) (*Part, error) {
 		for i := uint64(0); i < nBlocks; i++ {
 			p.firstKeys = append(p.firstKeys, r.bytes(r.uvarint()))
 		}
+		p.lastKey = r.bytes(r.uvarint())
 	}
 	p.Rows = r.uvarint()
 	p.RawBytes = r.uvarint()

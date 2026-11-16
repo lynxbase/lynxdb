@@ -40,6 +40,10 @@ func MergeRange(w *Writer, srcs []*Part, blockRows int, lo, hi []byte) error {
 			return ErrSortKey
 		}
 		size += p.RawBytes
+		// A part whose keys all lie outside the range is not read at all.
+		if first, last := p.KeyRange(); (hi != nil && bytes.Compare(first, hi) >= 0) || (lo != nil && bytes.Compare(last, lo) < 0) {
+			continue
+		}
 		c := &mergeCursor{src: i, part: p, out: make([]*shred.Column, len(p.paths)*kindSlots)}
 		for _, path := range m.keys {
 			id, ok := p.PathID(path)

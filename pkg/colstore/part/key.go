@@ -130,13 +130,22 @@ func SplitKeys(srcs []*Part, n int) [][]byte {
 	return cuts
 }
 
-// appendFirstKey appends the encoded sort key of the first row of b.
-func appendFirstKey(dst []byte, b *shred.Batch, key []string) []byte {
+// appendEdgeKey appends the encoded sort key of the first row of b, or of
+// its last row.
+func appendEdgeKey(dst []byte, b *shred.Batch, key []string, last bool) []byte {
 	for _, path := range key {
 		found := false
 		for kind := vec.KindNull; kind <= vec.KindVariant && !found; kind++ {
-			if c := b.Lookup(path, kind); c != nil && c.Count > 0 && c.Row(0) == 0 {
-				dst = appendKeyValue(dst, c, 0)
+			c := b.Lookup(path, kind)
+			if c == nil || c.Count == 0 {
+				continue
+			}
+			value, row := 0, 0
+			if last {
+				value, row = c.Count-1, b.Rows-1
+			}
+			if c.Row(value) == row {
+				dst = appendKeyValue(dst, c, value)
 				found = true
 			}
 		}
@@ -146,6 +155,16 @@ func appendFirstKey(dst []byte, b *shred.Batch, key []string) []byte {
 	}
 
 	return dst
+}
+
+// KeyRange returns the encoded sort keys of the first and the last row of
+// an ordered part, and nil for a part that is unordered or empty.
+func (p *Part) KeyRange() (first, last []byte) {
+	if len(p.firstKeys) == 0 {
+		return nil, nil
+	}
+
+	return p.firstKeys[0], p.lastKey
 }
 
 // BlocksWithKeyPrefix returns the range of blocks, first to end, that can

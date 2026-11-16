@@ -41,10 +41,12 @@ type Writer struct {
 	ids   map[string]uint32
 	index []byte
 	keys  []byte // first sort key of each block, length-prefixed
-	rows  uint64
-	raw   uint64
-	minT  int64
-	maxT  int64
+	// lastKey is the sort key of the last row written.
+	lastKey []byte
+	rows    uint64
+	raw     uint64
+	minT    int64
+	maxT    int64
 
 	block     []byte
 	stats     []byte
@@ -172,9 +174,10 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	binary.LittleEndian.PutUint32(entry[48:], crc32.Checksum(w.block[dirOff:], castagnoli))
 	w.index = append(w.index, entry[:]...)
 	if w.opts.Ordered {
-		w.e.tmp = appendFirstKey(w.e.tmp[:0], b, w.opts.SortKey)
+		w.e.tmp = appendEdgeKey(w.e.tmp[:0], b, w.opts.SortKey, false)
 		w.keys = binary.AppendUvarint(w.keys, uint64(len(w.e.tmp)))
 		w.keys = append(w.keys, w.e.tmp...)
+		w.lastKey = appendEdgeKey(w.lastKey[:0], b, w.opts.SortKey, true)
 	}
 
 	if w.rows == 0 || minT < w.minT {
@@ -442,6 +445,10 @@ func (w *Writer) Close() error {
 	footer = binary.AppendUvarint(footer, uint64(len(w.index)/indexEntrySize))
 	footer = append(footer, w.index...)
 	footer = append(footer, w.keys...)
+	if w.opts.Ordered {
+		footer = binary.AppendUvarint(footer, uint64(len(w.lastKey)))
+		footer = append(footer, w.lastKey...)
+	}
 	footer = binary.AppendUvarint(footer, w.rows)
 	footer = binary.AppendUvarint(footer, w.raw)
 	footer = binary.AppendUvarint(footer, zigzag(w.minT))

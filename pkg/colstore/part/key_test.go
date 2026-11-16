@@ -1,6 +1,7 @@
 package part
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -77,5 +78,47 @@ func TestBlocksWithKeyPrefixCoversEveryMatchingRow(t *testing.T) {
 	unordered := buildPart(t, []string{`{"svc":"api"}`, `{"svc":"zeta"}`}, 1, Options{})
 	if first, end := unordered.BlocksWithKeyPrefix(AppendKeyString(nil, []byte("zeta"))); first != 0 || end != 2 {
 		t.Errorf("unordered part pruned to %d..%d", first, end)
+	}
+}
+
+func TestKeyRangeBoundsEveryRowOfAnOrderedPart(t *testing.T) {
+	r := rand.New(rand.NewSource(3))
+	var docs []string
+	var times []int64
+	for i := 0; i < 3000; i++ {
+		doc := fmt.Sprintf(`{"seq":%d`, i)
+		if r.Intn(10) != 0 {
+			doc += fmt.Sprintf(`,"svc":"s%02d"`, r.Intn(30))
+		}
+		if r.Intn(4) != 0 {
+			doc += fmt.Sprintf(`,"level":%d`, r.Intn(9))
+		}
+		docs = append(docs, doc+"}")
+		times = append(times, int64(i))
+	}
+	p := mergeParts(t, []*Part{orderedPart(t, docs, times)}, 256)
+	first, last := p.KeyRange()
+	if first == nil || last == nil || bytes.Compare(first, last) >= 0 {
+		t.Fatalf("key range %x .. %x", first, last)
+	}
+	if !bytes.Equal(first, p.firstKeys[0]) || bytes.Compare(last, p.firstKeys[len(p.firstKeys)-1]) < 0 {
+		t.Fatalf("key range %x .. %x does not span the blocks' first keys", first, last)
+	}
+	// Everything at or below the last key is the whole part; nothing lies
+	// above it.
+	above := append(append([]byte(nil), last...), 0)
+	if rows := decodeRows(t, mergeRange(t, []*Part{p}, 256, nil, above)); len(rows) != len(docs) {
+		t.Fatalf("%d of %d rows are at or below the last key", len(rows), len(docs))
+	}
+	if rows := decodeRows(t, mergeRange(t, []*Part{p}, 256, above, nil)); len(rows) != 0 {
+		t.Fatalf("%d rows lie above the last key", len(rows))
+	}
+	if rows := decodeRows(t, mergeRange(t, []*Part{p}, 256, last, nil)); len(rows) == 0 {
+		t.Fatal("no row holds the last key")
+	}
+
+	unordered := buildPart(t, docs, 500, Options{})
+	if first, last := unordered.KeyRange(); first != nil || last != nil {
+		t.Fatal("an unordered part reported a key range")
 	}
 }
