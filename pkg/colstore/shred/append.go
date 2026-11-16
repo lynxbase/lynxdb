@@ -16,6 +16,15 @@ func (b *Batch) Col(path string, kind vec.Kind) *Column {
 	return c
 }
 
+// Lookup returns the column holding values of kind at path, or nil.
+func (b *Batch) Lookup(path string, kind vec.Kind) *Column {
+	if pc := b.paths[path]; pc != nil {
+		return pc.byKind[kind]
+	}
+
+	return nil
+}
+
 // AppendRows completes the rows whose values were appended through columns,
 // one per timestamp, and accounts size bytes of input to them.
 func (b *Batch) AppendRows(times []int64, size int) {
