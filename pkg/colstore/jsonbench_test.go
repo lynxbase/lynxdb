@@ -739,7 +739,7 @@ func queryPostTimes(snap *Snapshot, workers, limit int) (first, longest []userSp
 // loadNDJSON shreds data on every core, one part per worker and one block
 // per blockRows lines, and returns the table, its size in bytes and the
 // number of lines that are not JSON objects.
-func loadNDJSON(t testing.TB, data []byte, workers, blockRows int) (*Table, int64, int64) {
+func loadNDJSON(t testing.TB, data []byte, workers, blockRows int, opts part.Options) (*Table, int64, int64) {
 	t.Helper()
 	chunks := make([][]byte, 0, workers)
 	for rest := data; len(rest) > 0; {
@@ -763,7 +763,7 @@ func loadNDJSON(t testing.TB, data []byte, workers, blockRows int) (*Table, int6
 			defer wg.Done()
 			var buf bytes.Buffer
 			buf.Grow(len(chunk) / 3)
-			w := part.NewWriter(&buf, part.Options{})
+			w := part.NewWriter(&buf, opts)
 			batch := shred.Get(shred.Options{TimeField: "time_us"})
 			defer shred.Put(batch)
 			var errs []shred.LineError
@@ -878,8 +878,10 @@ func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1e3 }
 // TestJSONBench times the queries over the file named by LYNXDB_BENCH_NDJSON.
 // LYNXDB_BENCH_QUERY keeps the queries whose name contains it,
 // LYNXDB_BENCH_RUNS sets the timed runs per query, LYNXDB_BENCH_BLOCK_ROWS
-// the rows per block, and LYNXDB_BENCH_PROFILE names a directory that
-// receives one CPU profile per query and worker count.
+// the rows per block, LYNXDB_BENCH_CODEC the codec of string values (zstd,
+// lz4 or none), LYNXDB_BENCH_LEVEL the compression effort (fast or compact),
+// and LYNXDB_BENCH_PROFILE names a directory that receives one CPU profile
+// per query and worker count.
 func TestJSONBench(t *testing.T) {
 	path := os.Getenv("LYNXDB_BENCH_NDJSON")
 	if path == "" {
@@ -894,9 +896,26 @@ func TestJSONBench(t *testing.T) {
 	blockRows := envInt(t, "LYNXDB_BENCH_BLOCK_ROWS", 16384)
 	only := os.Getenv("LYNXDB_BENCH_QUERY")
 	profileDir := os.Getenv("LYNXDB_BENCH_PROFILE")
+	var opts part.Options
+	switch v := os.Getenv("LYNXDB_BENCH_CODEC"); v {
+	case "", "zstd":
+	case "lz4":
+		opts.Codec = part.CodecLZ4
+	case "none":
+		opts.Codec = part.CodecNone
+	default:
+		t.Fatalf("LYNXDB_BENCH_CODEC=%q is not zstd, lz4 or none", v)
+	}
+	switch v := os.Getenv("LYNXDB_BENCH_LEVEL"); v {
+	case "", "fast":
+	case "compact":
+		opts.Level = part.LevelCompact
+	default:
+		t.Fatalf("LYNXDB_BENCH_LEVEL=%q is not fast or compact", v)
+	}
 
 	start := time.Now()
-	tbl, size, rejected := loadNDJSON(t, data, cores, blockRows)
+	tbl, size, rejected := loadNDJSON(t, data, cores, blockRows, opts)
 	loadTime := time.Since(start)
 	defer tbl.Close()
 	snap := tbl.Snapshot()

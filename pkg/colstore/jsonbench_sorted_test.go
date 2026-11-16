@@ -125,7 +125,7 @@ func TestJSONBenchOrdered(t *testing.T) {
 	cores := runtime.GOMAXPROCS(0)
 
 	start := time.Now()
-	plain, plainSize, _ := loadNDJSON(t, data, cores, 16384)
+	plain, plainSize, _ := loadNDJSON(t, data, cores, 16384, part.Options{})
 	plainLoad := time.Since(start)
 	defer plain.Close()
 	parts := cores
