@@ -146,4 +146,18 @@ var benchSearches = []benchSearch{
 	}},
 	{"S6 field equals", func(s *Snapshot, n int) (int64, error) { return queryCountEquals(s, n, "did", rareDID) }},
 	{"S7 unique id", func(s *Snapshot, n int) (int64, error) { return queryCountEquals(s, n, "commit.cid", rareCID) }},
+	// The same text searches without regard to case, which is what the
+	// query language's has and contains mean.
+	{"S2 any case", func(s *Snapshot, n int) (int64, error) {
+		return queryCountPattern(s, n, textPath, tokenfilter.Word("love").IgnoreCase())
+	}},
+	{"S3 any case", func(s *Snapshot, n int) (int64, error) {
+		return queryCountPattern(s, n, textPath, tokenfilter.Word("good morning").IgnoreCase())
+	}},
+	{"S4 any case", func(s *Snapshot, n int) (int64, error) {
+		return queryCountPattern(s, n, textPath, tokenfilter.Prefix("crypto").IgnoreCase())
+	}},
+	{"S5 any case", func(s *Snapshot, n int) (int64, error) {
+		return queryCountPattern(s, n, textPath, tokenfilter.Substring("ware").IgnoreCase())
+	}},
 }
