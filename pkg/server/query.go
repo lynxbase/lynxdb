@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sort"
 	"sync/atomic"
 	"time"
@@ -164,6 +165,30 @@ func (e *Engine) ActiveJobCount() int64 {
 	return e.activeJobs.Load()
 }
 
+// failJobOnPanic turns a panic in the query goroutine into a failed job so one
+// bad query cannot terminate the server process. It must be deferred directly.
+func (e *Engine) failJobOnPanic(job *SearchJob) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	e.logger.Error("panic recovered in query execution",
+		"query_id", job.ID,
+		"panic", fmt.Sprint(r),
+		"stack", string(debug.Stack()),
+	)
+	job.mu.Lock()
+	defer job.mu.Unlock()
+	if job.Status != JobStatusRunning {
+		return
+	}
+	job.Error = fmt.Sprintf("internal error: query execution panicked: %v", r)
+	job.ErrorCode = "QUERY_INTERNAL_ERROR"
+	job.Stats.ErrorType = "execution"
+	job.Stats.ResultTypeLabel = string(job.ResultType)
+	job.complete(JobStatusError)
+}
+
 // executeQuery runs the query pipeline for a SearchJob. Called in a goroutine.
 //
 //nolint:maintidx // large orchestration function; splitting would lose readability of the query execution flow
@@ -201,6 +226,7 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 			e.metrics.QueryErrors.Add(1)
 		}
 	}()
+	defer e.failJobOnPanic(job)
 
 	logger := e.logger.With("query_id", job.ID)
 	prog := params.Program
