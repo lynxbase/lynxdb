@@ -340,6 +340,12 @@ func isNumericType(t event.FieldType) bool {
 
 // OpLoadPath: flat-column first, then object walk, no _raw fallback (D25)
 
+// LoadPath resolves a dotted path against fields: the flat column named by the
+// full path first, then an object walk from the root member.
+func LoadPath(fields map[string]event.Value, path string) event.Value {
+	return execLoadPath(fields, path)
+}
+
 func execLoadPath(fields map[string]event.Value, path string) event.Value {
 	// 1. Flat column lookup (the full dotted path as a literal column name)
 	if val, ok := fields[path]; ok {

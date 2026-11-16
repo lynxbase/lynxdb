@@ -146,6 +146,7 @@ type AggregateIterator struct {
 	child       Iterator
 	aggs        []AggFunc
 	groupBy     []string
+	groupPaths  []string               // dotted group-by names resolved through object members
 	groups      map[uint64][]*aggGroup // FNV hash → collision chain
 	emitted     bool
 	vmInst      vm.VM
@@ -211,10 +212,18 @@ func NewAggregateIterator(child Iterator, aggs []AggFunc, groupBy []string, acct
 		}
 	}
 
+	var groupPaths []string
+	for _, g := range groupBy {
+		if strings.Contains(g, ".") {
+			groupPaths = append(groupPaths, g)
+		}
+	}
+
 	return &AggregateIterator{
 		child:       child,
 		aggs:        aggs,
 		groupBy:     groupBy,
+		groupPaths:  groupPaths,
 		groups:      make(map[uint64][]*aggGroup),
 		needsValues: needsValues,
 		hasher:      fnv.New64a(),
@@ -388,6 +397,13 @@ func (a *AggregateIterator) processBatch(batch *Batch) error {
 	row := make(map[string]event.Value, len(batch.Columns))
 	for i := 0; i < batch.Len; i++ {
 		batch.RowInto(i, row)
+		for _, g := range a.groupPaths {
+			if _, ok := row[g]; !ok {
+				if v := vm.LoadPath(row, g); !v.IsNull() {
+					row[g] = v
+				}
+			}
+		}
 
 		h := a.groupKeyHash(row)
 		group, err := a.findOrCreateGroup(h, row)
