@@ -130,7 +130,16 @@ func (t *Table) Close() {
 
 // Snapshot is a stable view of the table that must be released when done.
 type Snapshot struct {
-	v *version
+	v   *version
+	key KeyFilter
+}
+
+// Narrow returns a snapshot of the same state whose scans apply k; it is
+// released on its own.
+func (s *Snapshot) Narrow(k KeyFilter) *Snapshot {
+	s.v.refs.Add(1)
+
+	return &Snapshot{v: s.v, key: k}
 }
 
 // Snapshot returns the current state of the table.

@@ -23,6 +23,40 @@ type ScanOptions struct {
 	MaxTime int64
 	// Tokens holds token hashes that a block must all possibly contain.
 	Tokens []uint64
+	// Key prunes blocks by sort key; the snapshot's own filter applies when
+	// it is empty.
+	Key KeyFilter
+}
+
+// KeyFilter names string values that rows must hold at the leading sort key
+// paths; it prunes blocks of parts ordered by those paths and nothing else,
+// so callers still filter rows.
+type KeyFilter struct {
+	Paths  []string
+	Values [][]byte
+}
+
+func (k KeyFilter) prefix() []byte {
+	var out []byte
+	for _, v := range k.Values {
+		out = part.AppendKeyString(out, v)
+	}
+
+	return out
+}
+
+// covers reports whether a part ordered by key can be pruned with k.
+func (k KeyFilter) covers(key []string) bool {
+	if len(k.Paths) == 0 || len(k.Paths) > len(key) || len(k.Paths) != len(k.Values) {
+		return false
+	}
+	for i, p := range k.Paths {
+		if key[i] != p {
+			return false
+		}
+	}
+
+	return true
 }
 
 // BlockFunc handles one block, valid only during the call; worker numbers the
@@ -35,6 +69,7 @@ type ScanStats struct {
 	Blocks         int64
 	SkippedByTime  int64
 	SkippedByToken int64
+	SkippedByKey   int64
 }
 
 // blockPool keeps the decode buffers of scan workers across scans.
@@ -53,6 +88,11 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 	if minT == 0 && maxT == 0 {
 		minT, maxT = math.MinInt64, math.MaxInt64
 	}
+	key := opts.Key
+	if len(key.Paths) == 0 {
+		key = s.key
+	}
+	keyPrefix := key.prefix()
 	var stats ScanStats
 	var units []scanUnit
 	for _, h := range s.v.parts {
@@ -61,7 +101,12 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 
 			continue
 		}
-		for i := 0; i < h.NumBlocks(); i++ {
+		first, end := 0, h.NumBlocks()
+		if h.Ordered() && key.covers(h.SortKey()) {
+			first, end = h.BlocksWithKeyPrefix(keyPrefix)
+			stats.SkippedByKey += int64(h.NumBlocks() - (end - first))
+		}
+		for i := first; i < end; i++ {
 			if _, lo, hi := h.BlockStats(i); hi < minT || lo > maxT {
 				stats.SkippedByTime++
 
