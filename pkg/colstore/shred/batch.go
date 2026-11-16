@@ -16,7 +16,8 @@ const (
 	// RestPath holds the members that did not get a column of their own.
 	RestPath = "_rest"
 
-	// MaxRows keeps row numbers inside a batch addressable with 16 bits.
+	// MaxRows is the most rows a block of a part takes, which keeps row
+	// numbers inside it addressable with 16 bits.
 	MaxRows = 1 << 16
 
 	defaultMaxColumns = 2048
@@ -33,7 +34,8 @@ type Options struct {
 	MaxColumns int
 }
 
-// Batch is an append-only columnar buffer of up to MaxRows rows.
+// Batch is an append-only columnar buffer; one written as a block of a part
+// holds at most MaxRows rows.
 type Batch struct {
 	Rows  int
 	Times []int64 // unix nanoseconds per row
