@@ -48,6 +48,7 @@ type Batch struct {
 	pos int
 
 	timeCols *pathCols
+	sort     sortScratch
 	seq      uint64
 	rest     []byte
 	restMark int
