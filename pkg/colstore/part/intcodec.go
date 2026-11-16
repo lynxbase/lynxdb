@@ -11,6 +11,7 @@ const (
 	intDeltaFrames = 1 // the same over consecutive differences
 	intBytes8      = 2 // one byte per value above the minimum, then a blob
 	intBytes16     = 3 // two bytes per value above the minimum, then a blob
+	intConst       = 4 // one value shared by all
 )
 
 const frameLen = 128
@@ -70,6 +71,9 @@ func appendInts(dst []byte, vals []int64, level Level, e *encodeScratch) []byte 
 		lo, hi = min(lo, v), max(hi, v)
 	}
 	span := uint64(hi) - uint64(lo)
+	if span == 0 {
+		return binary.AppendUvarint(append(dst, intConst), zigzag(lo))
+	}
 	plain, delta := framesSize(vals, false), framesSize(vals, true)
 	best := min(plain, delta)
 
@@ -173,6 +177,17 @@ func readInts(dst []int64, src []byte, count int, d *decodeScratch) ([]int64, []
 	}
 	dst = dst[:count]
 	switch mode {
+	case intConst:
+		base, n := binary.Uvarint(src)
+		if n <= 0 {
+			return nil, nil, ErrCorrupt
+		}
+		v := unzigzag(base)
+		for i := range dst {
+			dst[i] = v
+		}
+
+		return dst, src[n:], nil
 	case intBytes8, intBytes16:
 		base, n := binary.Uvarint(src)
 		if n <= 0 {
