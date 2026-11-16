@@ -17,23 +17,29 @@ import (
 )
 
 // loadOrdered shreds data into sorted runs and merges them into at most
-// parts parts with disjoint key ranges, so the table is one ordered run.
+// parts parts with disjoint key ranges, so the table is one ordered run;
+// with LYNXDB_BENCH_LAYOUT=runs the table is parts separate sorted runs.
 func loadOrdered(t testing.TB, data []byte, parts int, key []string) (*Table, int64) {
 	t.Helper()
 	cores := runtime.GOMAXPROCS(0)
-	runs, rejected := orderedRuns(t, data, cores, max(cores, parts), 16384, key)
-	if rejected > 0 {
-		t.Logf("%d lines rejected as invalid JSON", rejected)
-	}
-	bufs := make([]bytes.Buffer, parts)
-	n := mergeRanges(t, runs, parts, 16384, key, func(i int) io.Writer { return &bufs[i] })
-	handles := make([]*Handle, 0, n)
-	var size int64
-	for i := 0; i < n; i++ {
-		p, err := part.Open(bufs[i].Bytes())
-		if err != nil {
-			t.Fatal(err)
+	var sorted []*part.Part
+	if separateRuns(t) {
+		sorted, _ = orderedRuns(t, data, cores, parts, 16384, key)
+	} else {
+		runs, _ := orderedRuns(t, data, cores, max(cores, parts), 16384, key)
+		bufs := make([]bytes.Buffer, parts)
+		n := mergeRanges(t, runs, parts, 16384, key, func(i int) io.Writer { return &bufs[i] })
+		for i := 0; i < n; i++ {
+			p, err := part.Open(bufs[i].Bytes())
+			if err != nil {
+				t.Fatal(err)
+			}
+			sorted = append(sorted, p)
 		}
+	}
+	handles := make([]*Handle, 0, len(sorted))
+	var size int64
+	for _, p := range sorted {
 		handles = append(handles, NewHandle(p, nil))
 		size += int64(p.Size())
 	}

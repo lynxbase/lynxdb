@@ -33,12 +33,17 @@ func loadToDir(t testing.TB, d *Dir, data []byte, parts, blockRows int, key []st
 		return pf
 	}
 	var rejected int64
-	if len(key) > 0 {
-		cores := runtime.GOMAXPROCS(0)
+	cores := runtime.GOMAXPROCS(0)
+	switch {
+	case len(key) > 0 && separateRuns(t):
+		var n int
+		n, rejected = writeOrderedRuns(t, data, cores, parts, blockRows, key, create)
+		files = files[:n]
+	case len(key) > 0:
 		var runs []*part.Part
 		runs, rejected = orderedRuns(t, data, cores, max(cores, parts), blockRows, key)
 		files = files[:mergeRanges(t, runs, parts, blockRows, key, create)]
-	} else {
+	default:
 		chunks := splitAtLines(data, parts)
 		files = files[:len(chunks)]
 		var count atomic.Int64
@@ -85,7 +90,8 @@ func loadToDir(t testing.TB, d *Dir, data []byte, parts, blockRows int, key []st
 // a directory that already holds the table is only reopened, so dropping the
 // page cache before the run makes each query's first run a cold one.
 // LYNXDB_BENCH_SORT orders the parts by a comma-separated key ("default"
-// for the benchmark's own), LYNXDB_BENCH_PARTS sets their number.
+// for the benchmark's own), LYNXDB_BENCH_PARTS sets their number, and
+// LYNXDB_BENCH_LAYOUT=runs keeps the ordered parts as separate sorted runs.
 func TestJSONBenchDisk(t *testing.T) {
 	dir := os.Getenv("LYNXDB_BENCH_DIR")
 	if dir == "" {

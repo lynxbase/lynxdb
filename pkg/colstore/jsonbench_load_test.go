@@ -3,6 +3,7 @@ package colstore
 import (
 	"bytes"
 	"io"
+	"os"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -31,14 +32,13 @@ func splitAtLines(data []byte, n int) [][]byte {
 	return chunks
 }
 
-// orderedRuns shreds data into runs ordered by key, working on workers cores:
-// each run is sorted as a whole and kept as a part in memory. It returns the
-// runs and the number of lines that are not JSON objects.
-func orderedRuns(t testing.TB, data []byte, workers, runs, blockRows int, key []string) ([]*part.Part, int64) {
+// writeOrderedRuns shreds data into runs ordered by key, working on workers
+// cores: each run is sorted as a whole and written as a part to sink(i). It
+// returns the number of runs and of lines that are not JSON objects.
+func writeOrderedRuns(t testing.TB, data []byte, workers, runs, blockRows int, key []string, sink func(i int) io.Writer) (int, int64) {
 	t.Helper()
 	opts := part.Options{Ordered: true, SortKey: key}
 	chunks := splitAtLines(data, runs)
-	out := make([]*part.Part, len(chunks))
 	var rejected atomic.Int64
 	var wg sync.WaitGroup
 	slots := make(chan struct{}, workers)
@@ -51,9 +51,7 @@ func orderedRuns(t testing.TB, data []byte, workers, runs, blockRows int, key []
 			all := shred.NewBatch(shred.Options{TimeField: "time_us"})
 			rejected.Add(int64(len(all.AddNDJSON(chunk, 0, nil))))
 			all.SortBy(key)
-			var buf bytes.Buffer
-			buf.Grow(len(chunk) / 3)
-			w := part.NewWriter(&buf, opts)
+			w := part.NewWriter(sink(i), opts)
 			block := shred.Get(shred.Options{})
 			defer shred.Put(block)
 			for from := 0; from < all.Rows; from += blockRows {
@@ -67,16 +65,7 @@ func orderedRuns(t testing.TB, data []byte, workers, runs, blockRows int, key []
 			}
 			if err := w.Close(); err != nil {
 				t.Error(err)
-
-				return
 			}
-			p, err := part.Open(buf.Bytes())
-			if err != nil {
-				t.Error(err)
-
-				return
-			}
-			out[i] = p
 		}(i, chunk)
 	}
 	wg.Wait()
@@ -84,7 +73,45 @@ func orderedRuns(t testing.TB, data []byte, workers, runs, blockRows int, key []
 		t.FailNow()
 	}
 
-	return out, rejected.Load()
+	return len(chunks), rejected.Load()
+}
+
+// orderedRuns is writeOrderedRuns with the runs kept in memory.
+func orderedRuns(t testing.TB, data []byte, workers, runs, blockRows int, key []string) ([]*part.Part, int64) {
+	t.Helper()
+	bufs := make([]bytes.Buffer, runs)
+	n, rejected := writeOrderedRuns(t, data, workers, runs, blockRows, key, func(i int) io.Writer {
+		bufs[i].Grow(len(data) / runs / 3)
+
+		return &bufs[i]
+	})
+	out := make([]*part.Part, n)
+	for i := range out {
+		p, err := part.Open(bufs[i].Bytes())
+		if err != nil {
+			t.Fatal(err)
+		}
+		out[i] = p
+	}
+
+	return out, rejected
+}
+
+// separateRuns reports whether LYNXDB_BENCH_LAYOUT asks for an ordered table
+// as it is right after ingest, every part a sorted run over the whole key
+// space, instead of one sorted run cut into parts with disjoint key ranges.
+func separateRuns(t testing.TB) bool {
+	t.Helper()
+	switch v := os.Getenv("LYNXDB_BENCH_LAYOUT"); v {
+	case "", "merged":
+		return false
+	case "runs":
+		return true
+	default:
+		t.Fatalf("LYNXDB_BENCH_LAYOUT=%q is neither merged nor runs", v)
+
+		return false
+	}
 }
 
 // mergeRanges merges ordered runs into at most n parts with disjoint key
