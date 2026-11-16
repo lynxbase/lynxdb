@@ -329,9 +329,19 @@ type distinctMerger struct {
 }
 
 // queryEventsWithUsers is Q2: count() and the number of distinct did by
-// commit.collection, over created commits. The distinct count compares whole
-// keys, or only their 128-bit hashes when hashed is set.
+// commit.collection, over created commits. Parts ordered by those paths are
+// merged in key order; otherwise the distinct count compares whole keys in a
+// table, or only their 128-bit hashes when hashed is set.
 func queryEventsWithUsers(snap *Snapshot, workers int, hashed bool) ([]eventCount, error) {
+	if plan, ok := snap.PlanKeyRanges(createdKey, []string{"commit.collection", "did"}); ok {
+		return eventsWithUsersOrdered(snap, plan, workers)
+	}
+
+	return eventsWithUsersHashed(snap, workers, hashed)
+}
+
+// eventsWithUsersHashed is Q2 over parts in any order.
+func eventsWithUsersHashed(snap *Snapshot, workers int, hashed bool) ([]eventCount, error) {
 	ws := newBenchWorkers(workers)
 	defer freeBenchWorkers(ws)
 	shared := newSharedGroups()
@@ -672,8 +682,18 @@ type spanMerger struct {
 
 // queryPostTimes answers Q4 and Q5 in one pass: the limit users with the
 // earliest first created post, and the limit users with the longest time
-// between their first and last one.
+// between their first and last one. Parts ordered by the filter paths and
+// the did are merged in key order.
 func queryPostTimes(snap *Snapshot, workers, limit int) (first, longest []userSpan, err error) {
+	if plan, ok := snap.PlanKeyRanges(postsKey, []string{"did"}); ok {
+		return postTimesOrdered(snap, plan, workers, limit)
+	}
+
+	return postTimesHashed(snap, workers, limit)
+}
+
+// postTimesHashed is Q4 and Q5 over parts in any order.
+func postTimesHashed(snap *Snapshot, workers, limit int) (first, longest []userSpan, err error) {
 	ws := newBenchWorkers(workers)
 	defer freeBenchWorkers(ws)
 	for _, w := range ws {
