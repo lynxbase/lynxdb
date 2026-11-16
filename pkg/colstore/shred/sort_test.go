@@ -148,3 +148,72 @@ func TestSortByKeepsVariantAndSparseValuesWithTheirRows(t *testing.T) {
 		}
 	}
 }
+
+func TestSortByTimeBucketsGroupsRowsByBucketThenKey(t *testing.T) {
+	const hour = int64(3600e9)
+	r := rand.New(rand.NewSource(41))
+	b := NewBatch(Options{})
+	type row struct {
+		bucket int64
+		svc    string
+		ts     int64
+		seq    int
+	}
+	var want []row
+	for i := 0; i < 5000; i++ {
+		// Timestamps on both sides of zero, so that rounding down matters.
+		ts := int64(r.Intn(6)-3)*hour + int64(r.Intn(int(hour)))
+		svc := fmt.Sprintf("s%02d", r.Intn(17))
+		if err := b.AddJSON([]byte(fmt.Sprintf(`{"svc":"%s","seq":%d}`, svc, i)), ts); err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, row{floorDiv(ts, hour), svc, ts, i})
+	}
+	sort.SliceStable(want, func(i, j int) bool {
+		a, c := want[i], want[j]
+		if a.bucket != c.bucket {
+			return a.bucket < c.bucket
+		}
+		if a.svc != c.svc {
+			return a.svc < c.svc
+		}
+
+		return a.ts < c.ts
+	})
+	buckets := b.SortByTimeBuckets(nil, hour, []string{"svc"})
+	if len(buckets) != 6 {
+		t.Fatalf("%d buckets: %v", len(buckets), buckets)
+	}
+	rows := rowsOf(t, b)
+	at := 0
+	for i, bucket := range buckets {
+		if i > 0 && buckets[i-1].ID >= bucket.ID {
+			t.Fatalf("buckets out of order: %v", buckets)
+		}
+		for n := 0; n < bucket.Rows; n, at = n+1, at+1 {
+			w := want[at]
+			if w.bucket != bucket.ID || b.Times[at] != w.ts || rows[at]["seq"] != int64(w.seq) || rows[at]["svc"] != w.svc {
+				t.Fatalf("row %d in bucket %d: %v @%d, want %+v", at, bucket.ID, rows[at], b.Times[at], w)
+			}
+		}
+	}
+	if at != len(want) {
+		t.Fatalf("buckets cover %d of %d rows", at, len(want))
+	}
+
+	one := NewBatch(Options{})
+	for i := 0; i < 10; i++ {
+		if err := one.AddJSON([]byte(fmt.Sprintf(`{"svc":"s%d"}`, 9-i)), -5); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if got := one.SortByTimeBuckets(nil, hour, []string{"svc"}); len(got) != 1 || got[0] != (TimeBucket{ID: -1, Rows: 10}) {
+		t.Fatalf("one bucket: %v", got)
+	}
+	if first := rowsOf(t, one)[0]["svc"]; first != "s0" {
+		t.Fatalf("rows of a single bucket are not sorted: first is %v", first)
+	}
+	if got := NewBatch(Options{}).SortByTimeBuckets(nil, hour, nil); got != nil {
+		t.Fatalf("an empty batch has buckets %v", got)
+	}
+}

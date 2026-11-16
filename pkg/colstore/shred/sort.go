@@ -10,6 +10,8 @@ import (
 
 // sortScratch holds the buffers SortBy reuses between batches.
 type sortScratch struct {
+	buckets []int64
+
 	perm   []uint32
 	inv    []uint32
 	ranks  [][]uint32
@@ -30,7 +32,60 @@ type sortScratch struct {
 //
 // At one path a missing value sorts first, then values in kind order (null,
 // bool, int, float, string, variant) and by value within a kind.
-func (b *Batch) SortBy(keys []string) {
+func (b *Batch) SortBy(keys []string) { b.sortBy(nil, keys) }
+
+// TimeBucket is a run of adjacent rows whose timestamps share one bucket.
+type TimeBucket struct {
+	ID   int64 // timestamp divided by the bucket width, rounded down
+	Rows int
+}
+
+// SortByTimeBuckets reorders the rows by the bucket of width nanoseconds
+// that their timestamp falls in and, inside a bucket, as SortBy does; it
+// appends the buckets, in row order, to dst.
+func (b *Batch) SortByTimeBuckets(dst []TimeBucket, width int64, keys []string) []TimeBucket {
+	if b.Rows == 0 {
+		return dst
+	}
+	s := &b.sort
+	s.buckets = s.buckets[:0]
+	lo, hi := floorDiv(b.Times[0], width), floorDiv(b.Times[0], width)
+	for _, t := range b.Times {
+		id := floorDiv(t, width)
+		lo, hi = min(lo, id), max(hi, id)
+		s.buckets = append(s.buckets, id)
+	}
+	if lo == hi {
+		b.sortBy(nil, keys)
+
+		return append(dst, TimeBucket{ID: lo, Rows: b.Rows})
+	}
+	b.sortBy(s.buckets, keys)
+	// The sort moved the timestamps, so the buckets are read from them.
+	for from := 0; from < b.Rows; {
+		id := floorDiv(b.Times[from], width)
+		to := from + 1
+		for to < b.Rows && floorDiv(b.Times[to], width) == id {
+			to++
+		}
+		dst = append(dst, TimeBucket{ID: id, Rows: to - from})
+		from = to
+	}
+
+	return dst
+}
+
+func floorDiv(a, b int64) int64 {
+	q := a / b
+	if a%b != 0 && (a < 0) != (b < 0) {
+		q--
+	}
+
+	return q
+}
+
+// sortBy orders the rows by buckets, when given, then keys, then time.
+func (b *Batch) sortBy(buckets []int64, keys []string) {
 	n := b.Rows
 	if n < 2 {
 		return
@@ -49,6 +104,9 @@ func (b *Batch) SortBy(keys []string) {
 	}
 	times := b.Times
 	slices.SortFunc(s.perm, func(x, y uint32) int {
+		if buckets != nil && buckets[x] != buckets[y] {
+			return cmp.Compare(buckets[x], buckets[y])
+		}
 		for _, r := range ranks {
 			if r[x] != r[y] {
 				return cmp.Compare(r[x], r[y])
