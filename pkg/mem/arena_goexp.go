@@ -24,6 +24,11 @@ func Slice[T Scalar](a *Arena, length, capacity int) []T {
 	return arena.MakeSlice[T](a.a, length, capacity)
 }
 
+// Raw returns a slice owned by a whose elements hold unspecified values.
+func Raw[T Scalar](a *Arena, length, capacity int) []T {
+	return Slice[T](a, length, capacity)
+}
+
 // Free releases every allocation; using them afterwards faults.
 func (a *Arena) Free() {
 	if a.a != nil {

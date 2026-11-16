@@ -32,18 +32,27 @@ func NewArena() *Arena {
 
 // Slice returns a zeroed slice owned by a.
 func Slice[T Scalar](a *Arena, length, capacity int) []T {
-	var zero T
-	n := capacity * sizeOf(zero)
+	return carve[T](a, length, capacity, true)
+}
+
+// Raw returns a slice owned by a whose elements hold unspecified values.
+func Raw[T Scalar](a *Arena, length, capacity int) []T {
+	return carve[T](a, length, capacity, false)
+}
+
+func carve[T Scalar](a *Arena, length, capacity int, zero bool) []T {
+	var elem T
+	n := capacity * sizeOf(elem)
 	if n == 0 {
 		return nil
 	}
 	a.size += n
-	p := a.alloc(n)
+	p := a.alloc(n, zero)
 
 	return unsafe.Slice((*T)(p), capacity)[:length]
 }
 
-func (a *Arena) alloc(n int) unsafe.Pointer {
+func (a *Arena) alloc(n int, zero bool) unsafe.Pointer {
 	n = (n + 7) &^ 7
 	if n > slabSize/4 {
 		buf := make([]uint64, n/8)
@@ -57,7 +66,9 @@ func (a *Arena) alloc(n int) unsafe.Pointer {
 	}
 	slab := *a.slabs[len(a.slabs)-1]
 	words := slab[a.off/8 : (a.off+n)/8]
-	clear(words)
+	if zero {
+		clear(words)
+	}
 	a.off += n
 
 	return unsafe.Pointer(unsafe.SliceData(words))

@@ -63,6 +63,32 @@ func TestGrowKeepsContents(t *testing.T) {
 	}
 }
 
+func TestRawSlicesAreIndependent(t *testing.T) {
+	a := NewArena()
+	defer a.Free()
+
+	for round := 0; round < 3; round++ {
+		x := Raw[uint64](a, 512, 512)
+		y := Raw[byte](a, 0, 100)
+		for i := range x {
+			x[i] = uint64(round)
+		}
+		y = append(y, "tail"...)
+		for i, v := range x {
+			if v != uint64(round) {
+				t.Fatalf("round %d: x[%d] = %d", round, i, v)
+			}
+		}
+		if string(y) != "tail" || cap(y) != 100 {
+			t.Fatalf("y = %q, cap %d", y, cap(y))
+		}
+		a.Reset()
+	}
+	if got := Raw[int32](a, 0, 0); len(got) != 0 {
+		t.Fatalf("empty Raw has %d elements", len(got))
+	}
+}
+
 func TestPoolResetControlsRetention(t *testing.T) {
 	type buf struct{ b []byte }
 	p := Pool[buf]{Reset: func(v *buf) bool {

@@ -24,7 +24,7 @@ func Grow[T Scalar](a *Arena, s []T, need int) []T {
 	if newCap < 16 {
 		newCap = 16
 	}
-	out := Slice[T](a, len(s), newCap)
+	out := Raw[T](a, len(s), newCap)
 	copy(out, s)
 
 	return out
@@ -32,7 +32,7 @@ func Grow[T Scalar](a *Arena, s []T, need int) []T {
 
 // CopyBytes stores a copy of b in a.
 func (a *Arena) CopyBytes(b []byte) []byte {
-	out := Slice[byte](a, len(b), len(b))
+	out := Raw[byte](a, len(b), len(b))
 	copy(out, b)
 
 	return out
