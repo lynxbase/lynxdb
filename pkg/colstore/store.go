@@ -1,6 +1,7 @@
 package colstore
 
 import (
+	"bytes"
 	"errors"
 	"runtime"
 	"sort"
@@ -35,7 +36,7 @@ const (
 	defaultMergeFanIn     = 8
 	// mergedPartRows is the least a part of a merged run holds, which keeps
 	// small merges from scattering their rows over many files.
-	mergedPartRows = 1 << 18
+	mergedPartRows = 1 << 16
 	// mergeBlockBudget bounds the decoded blocks the range merges of one
 	// merge hold together, each several megabytes of column values.
 	mergeBlockBudget = 1024
@@ -51,6 +52,8 @@ type Store struct {
 	wake    chan struct{}
 	done    chan struct{}
 	stopped chan struct{}
+	// cores bounds the range merges that run at once, over all merges.
+	cores chan struct{}
 
 	mu   sync.Mutex
 	idle *sync.Cond
@@ -80,6 +83,7 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	s := &Store{
 		dir: dir, opts: opts,
 		wake: make(chan struct{}, 1), done: make(chan struct{}), stopped: make(chan struct{}),
+		cores: make(chan struct{}, runtime.GOMAXPROCS(0)),
 	}
 	s.idle = sync.NewCond(&s.mu)
 	go s.mergeLoop()
@@ -181,19 +185,20 @@ type sortedRun struct {
 	parts []*Handle
 }
 
-// pickRuns chooses the runs to merge next: every run when compacting,
-// otherwise the oldest fanIn runs of the lowest tier that has that many.
-func pickRuns(parts []*Handle, fanIn int, compact bool) []sortedRun {
-	byID := map[uint64]*sortedRun{}
-	var runs []*sortedRun
+// pickMerges chooses the sets of runs to merge next: all runs as one set
+// when compacting, otherwise the runs of each tier in sets of fanIn, oldest
+// first, leaving out what does not fill a set.
+func pickMerges(parts []*Handle, fanIn int, compact bool) [][]sortedRun {
+	index := map[uint64]int{}
+	var runs []sortedRun
 	for _, h := range parts {
-		r := byID[h.Run]
-		if r == nil {
-			r = &sortedRun{id: h.Run, tier: h.Tier}
-			byID[h.Run] = r
-			runs = append(runs, r)
+		i, ok := index[h.Run]
+		if !ok {
+			i = len(runs)
+			index[h.Run] = i
+			runs = append(runs, sortedRun{id: h.Run, tier: h.Tier})
 		}
-		r.parts = append(r.parts, h)
+		runs[i].parts = append(runs[i].parts, h)
 	}
 	sort.Slice(runs, func(i, j int) bool {
 		if runs[i].tier != runs[j].tier {
@@ -202,44 +207,57 @@ func pickRuns(parts []*Handle, fanIn int, compact bool) []sortedRun {
 
 		return runs[i].id < runs[j].id
 	})
-	var picked []sortedRun
-	switch {
-	case compact && len(runs) > 1:
-		for _, r := range runs {
-			picked = append(picked, *r)
+	if compact {
+		if len(runs) < 2 {
+			return nil
 		}
-	case fanIn > 1:
-		for first := 0; first < len(runs); {
-			end := first
-			for end < len(runs) && runs[end].tier == runs[first].tier {
-				end++
-			}
-			if end-first >= fanIn {
-				for _, r := range runs[first : first+fanIn] {
-					picked = append(picked, *r)
-				}
 
-				break
-			}
-			first = end
+		return [][]sortedRun{runs}
+	}
+	if fanIn < 2 {
+		return nil
+	}
+	var sets [][]sortedRun
+	for first := 0; first < len(runs); {
+		end := first
+		for end < len(runs) && runs[end].tier == runs[first].tier {
+			end++
 		}
+		for ; end-first >= fanIn; first += fanIn {
+			sets = append(sets, runs[first:first+fanIn])
+		}
+		first = end
 	}
 
-	return picked
+	return sets
 }
 
-// mergeOnce merges one set of runs when one is due and reports whether it
-// did.
+// mergeOnce runs the merges that are due, side by side, and reports whether
+// there were any.
 func (s *Store) mergeOnce(compact bool) (bool, error) {
 	if !s.opts.Part.Ordered {
 		return false, nil
 	}
 	snap := s.Table().Snapshot()
 	defer snap.Release()
-	runs := pickRuns(snap.Parts(), s.opts.MergeFanIn, compact)
-	if len(runs) == 0 {
-		return false, nil
+	sets := pickMerges(snap.Parts(), s.opts.MergeFanIn, compact)
+	errs := make([]error, len(sets))
+	var wg sync.WaitGroup
+	for i, runs := range sets {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errs[i] = s.mergeRuns(runs)
+		}()
 	}
+	wg.Wait()
+
+	return len(sets) > 0, errors.Join(errs...)
+}
+
+// mergeRuns replaces runs by one run of the tier above the highest of them,
+// cut into parts by key range that are merged side by side.
+func (s *Store) mergeRuns(runs []sortedRun) error {
 	var inputs []*Handle
 	var srcs []*part.Part
 	var rows uint64
@@ -258,14 +276,15 @@ func (s *Store) mergeOnce(compact bool) (bool, error) {
 	files := make([]*PartFile, len(cuts)+1)
 	errs := make([]error, len(files))
 	// Each range merge holds one decoded block per run.
-	slots := make(chan struct{}, max(1, min(cores, mergeBlockBudget/len(runs))))
+	held := make(chan struct{}, max(1, mergeBlockBudget/len(runs)))
 	var wg sync.WaitGroup
 	for i := range files {
 		wg.Add(1)
-		slots <- struct{}{}
+		held <- struct{}{}
+		s.cores <- struct{}{}
 		go func() {
 			defer wg.Done()
-			defer func() { <-slots }()
+			defer func() { <-s.cores; <-held }()
 			var lo, hi []byte
 			if i > 0 {
 				lo = cuts[i-1]
@@ -298,13 +317,11 @@ func (s *Store) mergeOnce(compact bool) (bool, error) {
 			}
 		}
 
-		return false, err
+		return err
 	}
-	if _, err := s.dir.Commit(files, inputs); err != nil {
-		return false, err
-	}
+	_, err := s.dir.Commit(files, inputs)
 
-	return true, nil
+	return err
 }
 
 // Writer buffers documents and writes them to the store as sorted runs. It
@@ -313,10 +330,11 @@ type Writer struct {
 	// Rejected counts the lines that were not JSON objects.
 	Rejected int64
 
-	s     *Store
-	batch *shred.Batch
-	block *shred.Batch
-	errs  []shred.LineError
+	s        *Store
+	batch    *shred.Batch
+	block    *shred.Batch
+	buffered int // input bytes in batch
+	errs     []shred.LineError
 }
 
 // NewWriter returns a writer with an empty buffer.
@@ -329,15 +347,27 @@ func (s *Store) NewWriter() *Writer {
 }
 
 // AddNDJSON buffers the documents of lines, one per line, and writes a run
-// when the buffer has grown to the store's flush size.
+// each time the buffer has grown to the store's flush size.
 func (w *Writer) AddNDJSON(lines []byte) error {
-	w.errs = w.batch.AddNDJSON(lines, 0, w.errs[:0])
-	w.Rejected += int64(len(w.errs))
-	if w.batch.Bytes < w.s.opts.FlushBytes {
-		return nil
+	for len(lines) > 0 {
+		chunk := lines
+		if room := w.s.opts.FlushBytes - w.buffered; room < len(chunk) {
+			// The buffer takes whole lines, so the cut moves to a line end.
+			if nl := bytes.IndexByte(chunk[max(room, 0):], '\n'); nl >= 0 {
+				chunk = chunk[:max(room, 0)+nl+1]
+			}
+		}
+		lines = lines[len(chunk):]
+		w.errs = w.batch.AddNDJSON(chunk, 0, w.errs[:0])
+		w.Rejected += int64(len(w.errs))
+		if w.buffered += len(chunk); w.buffered >= w.s.opts.FlushBytes {
+			if err := w.Flush(); err != nil {
+				return err
+			}
+		}
 	}
 
-	return w.Flush()
+	return nil
 }
 
 // Flush writes the buffered rows as one run; when it returns nil they are
@@ -372,6 +402,7 @@ func (w *Writer) Flush() error {
 		return err
 	}
 	w.batch.Reset()
+	w.buffered = 0
 	s.kick()
 
 	return nil

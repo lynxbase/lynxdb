@@ -297,3 +297,77 @@ func TestStoreWithoutSortKeyKeepsArrivalOrderAndNeverMerges(t *testing.T) {
 		t.Fatalf("%d rows, sum %d", rows, sum)
 	}
 }
+
+func TestWriterCutsALargeRequestIntoRunsOfTheFlushSize(t *testing.T) {
+	s, err := OpenStore(filepath.Join(t.TempDir(), "store"), StoreOptions{
+		SortKey: []string{"svc"}, FlushBytes: 8 << 10, MergeFanIn: -1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	docs := storeDocs(0, 2000)
+	w := s.NewWriter()
+	if err := w.AddNDJSON(docs); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	snap := s.Table().Snapshot()
+	defer snap.Release()
+	want := (len(docs) + 8<<10 - 1) / (8 << 10)
+	if got := len(snap.Parts()); got < want-1 || got > want+1 {
+		t.Fatalf("%d bytes became %d runs, want about %d", len(docs), got, want)
+	}
+	for _, h := range snap.Parts() {
+		// A run exceeds the flush size by less than one line.
+		if h.RawBytes > 8<<10+128 {
+			t.Fatalf("a run holds %d input bytes", h.RawBytes)
+		}
+	}
+	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 2000 || sum != 1999*2000/2 {
+		t.Fatalf("%d rows, sum %d", rows, sum)
+	}
+}
+
+func TestPickMergesGroupsRunsByTier(t *testing.T) {
+	var parts []*Handle
+	add := func(run uint64, tier, n int) {
+		for i := 0; i < n; i++ {
+			parts = append(parts, &Handle{PartMeta: PartMeta{Run: run, Tier: tier}})
+		}
+	}
+	// Seven runs at tier 0, one of them in two parts, and two at tier 1.
+	for run := uint64(1); run <= 7; run++ {
+		add(run, 0, 1+int(run)/7)
+	}
+	add(20, 1, 3)
+	add(21, 1, 1)
+	ids := func(set []sortedRun) (out []uint64) {
+		for _, r := range set {
+			out = append(out, r.id)
+		}
+
+		return out
+	}
+	sets := pickMerges(parts, 3, false)
+	if len(sets) != 2 || fmt.Sprint(ids(sets[0]), ids(sets[1])) != "[1 2 3] [4 5 6]" {
+		t.Fatalf("picked %v", sets)
+	}
+	// With pairs, tier 0 gives three sets and tier 1 one.
+	pairs := pickMerges(parts, 2, false)
+	if len(pairs) != 4 || fmt.Sprint(ids(pairs[3])) != "[20 21]" || len(pairs[3][0].parts) != 3 {
+		t.Fatalf("picked %v", pairs)
+	}
+	if sets := pickMerges(parts, 8, false); sets != nil {
+		t.Fatalf("picked %v with too few runs per tier", sets)
+	}
+	all := pickMerges(parts, -1, true)
+	if len(all) != 1 || len(all[0]) != 9 {
+		t.Fatalf("compaction picked %v", all)
+	}
+	if sets := pickMerges(parts[:1], 2, true); sets != nil {
+		t.Fatalf("compaction of one run picked %v", sets)
+	}
+}
