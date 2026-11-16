@@ -6,9 +6,14 @@ import (
 	"encoding/binary"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"sort"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -473,8 +478,10 @@ func queryPostTimes(snap *Snapshot, workers int) ([]userSpan, error) {
 	return spans, nil
 }
 
-// loadNDJSON shreds data on every core, one part per worker.
-func loadNDJSON(t testing.TB, data []byte, workers int) (*Table, int64) {
+// loadNDJSON shreds data on every core, one part per worker and one block
+// per blockRows lines, and returns the table, its size in bytes and the
+// number of lines that are not JSON objects.
+func loadNDJSON(t testing.TB, data []byte, workers, blockRows int) (*Table, int64, int64) {
 	t.Helper()
 	chunks := make([][]byte, 0, workers)
 	for rest := data; len(rest) > 0; {
@@ -490,6 +497,7 @@ func loadNDJSON(t testing.TB, data []byte, workers int) (*Table, int64) {
 		rest = rest[n:]
 	}
 	handles := make([]*Handle, len(chunks))
+	var rejected atomic.Int64
 	var wg sync.WaitGroup
 	for i, chunk := range chunks {
 		wg.Add(1)
@@ -500,12 +508,12 @@ func loadNDJSON(t testing.TB, data []byte, workers int) (*Table, int64) {
 			w := part.NewWriter(&buf, part.Options{})
 			batch := shred.Get(shred.Options{TimeField: "time_us"})
 			defer shred.Put(batch)
+			var errs []shred.LineError
 			for len(chunk) > 0 {
 				var lines []byte
-				lines, chunk = shred.SplitLines(chunk, 16384)
-				if errs := batch.AddNDJSON(lines, 0, nil); len(errs) != 0 {
-					t.Errorf("line %d: %v", errs[0].Line, errs[0].Err)
-				}
+				lines, chunk = shred.SplitLines(chunk, blockRows)
+				errs = batch.AddNDJSON(lines, 0, errs[:0])
+				rejected.Add(int64(len(errs)))
 				if err := w.WriteBatch(batch); err != nil {
 					t.Error(err)
 				}
@@ -533,9 +541,58 @@ func loadNDJSON(t testing.TB, data []byte, workers int) (*Table, int64) {
 		size += int64(h.Size())
 	}
 
-	return tbl, size
+	return tbl, size, rejected.Load()
 }
 
+// envInt reads a positive integer setting of the benchmark.
+func envInt(t testing.TB, name string, def int) int {
+	t.Helper()
+	v := os.Getenv(name)
+	if v == "" {
+		return def
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		t.Fatalf("%s=%q is not a positive integer", name, v)
+	}
+
+	return n
+}
+
+// timeRuns runs fn n times and returns the durations in ascending order,
+// writing a CPU profile of the runs to profile when it is not empty.
+func timeRuns(n int, profile string, fn func() error) ([]time.Duration, error) {
+	if profile != "" {
+		f, err := os.Create(profile)
+		if err != nil {
+			return nil, err
+		}
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			return nil, err
+		}
+		defer pprof.StopCPUProfile()
+	}
+	took := make([]time.Duration, n)
+	for i := range took {
+		begin := time.Now()
+		if err := fn(); err != nil {
+			return nil, err
+		}
+		took[i] = time.Since(begin)
+	}
+	sort.Slice(took, func(i, j int) bool { return took[i] < took[j] })
+
+	return took, nil
+}
+
+func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1e3 }
+
+// TestJSONBench times the queries over the file named by LYNXDB_BENCH_NDJSON.
+// LYNXDB_BENCH_QUERY keeps the queries whose name contains it,
+// LYNXDB_BENCH_RUNS sets the timed runs per query, LYNXDB_BENCH_BLOCK_ROWS
+// the rows per block, and LYNXDB_BENCH_PROFILE names a directory that
+// receives one CPU profile per query and worker count.
 func TestJSONBench(t *testing.T) {
 	path := os.Getenv("LYNXDB_BENCH_NDJSON")
 	if path == "" {
@@ -546,9 +603,13 @@ func TestJSONBench(t *testing.T) {
 		t.Fatal(err)
 	}
 	cores := runtime.GOMAXPROCS(0)
+	runs := envInt(t, "LYNXDB_BENCH_RUNS", 7)
+	blockRows := envInt(t, "LYNXDB_BENCH_BLOCK_ROWS", 16384)
+	only := os.Getenv("LYNXDB_BENCH_QUERY")
+	profileDir := os.Getenv("LYNXDB_BENCH_PROFILE")
 
 	start := time.Now()
-	tbl, size := loadNDJSON(t, data, cores)
+	tbl, size, rejected := loadNDJSON(t, data, cores, blockRows)
 	loadTime := time.Since(start)
 	defer tbl.Close()
 	snap := tbl.Snapshot()
@@ -559,8 +620,8 @@ func TestJSONBench(t *testing.T) {
 		rows += h.Rows
 		blocks += h.NumBlocks()
 	}
-	t.Logf("load: %d rows, %.1f MB of JSON -> %.1f MB in %d parts / %d blocks, %.2fs on %d cores (%.0fk docs/s, %.0f MB/s)",
-		rows, float64(len(data))/1e6, float64(size)/1e6, len(snap.Parts()), blocks, loadTime.Seconds(), cores,
+	t.Logf("load: %d rows and %d rejected lines, %.1f MB of JSON -> %.1f MB in %d parts / %d blocks, %.2fs on %d cores (%.0fk docs/s, %.0f MB/s)",
+		rows, rejected, float64(len(data))/1e6, float64(size)/1e6, len(snap.Parts()), blocks, loadTime.Seconds(), cores,
 		float64(rows)/loadTime.Seconds()/1e3, float64(len(data))/loadTime.Seconds()/1e6)
 
 	var q1, q2 []eventCount
@@ -575,17 +636,22 @@ func TestJSONBench(t *testing.T) {
 		{"Q3 events by hour", func(n int) (err error) { q3, err = queryEventsByHour(snap, n); return }},
 		{"Q4/Q5 post times per user", func(n int) (err error) { spans, err = queryPostTimes(snap, n); return }},
 	}
+	ran := map[string]bool{}
 	for _, q := range queries {
-		var best [2]time.Duration
+		if !strings.Contains(q.name, only) {
+			continue
+		}
+		id := q.name[:2]
+		ran[id] = true
+		var took [2][]time.Duration
 		for i, workers := range []int{cores, 1} {
-			for run := 0; run < 7; run++ {
-				begin := time.Now()
-				if err := q.run(workers); err != nil {
-					t.Fatalf("%s: %v", q.name, err)
-				}
-				if took := time.Since(begin); run == 0 || took < best[i] {
-					best[i] = took
-				}
+			profile := ""
+			if profileDir != "" {
+				profile = filepath.Join(profileDir, fmt.Sprintf("%s_%dw.prof", strings.ToLower(id), workers))
+			}
+			took[i], err = timeRuns(runs, profile, func() error { return q.run(workers) })
+			if err != nil {
+				t.Fatalf("%s: %v", q.name, err)
 			}
 		}
 		var before, after runtime.MemStats
@@ -594,8 +660,9 @@ func TestJSONBench(t *testing.T) {
 			t.Fatal(err)
 		}
 		runtime.ReadMemStats(&after)
-		t.Logf("%-30s %7.2f ms on %d cores, %7.2f ms on 1 core, %d heap allocations (%.1f MB)", q.name,
-			float64(best[0].Microseconds())/1e3, cores, float64(best[1].Microseconds())/1e3,
+		all, one := took[0], took[1]
+		t.Logf("%-30s %7.2f ms on %d cores (median %.2f, max %.2f), %7.2f ms on 1 core (median %.2f, max %.2f), %d heap allocations (%.1f MB)",
+			q.name, ms(all[0]), cores, ms(all[runs/2]), ms(all[runs-1]), ms(one[0]), ms(one[runs/2]), ms(one[runs-1]),
 			after.Mallocs-before.Mallocs, float64(after.TotalAlloc-before.TotalAlloc)/1e6)
 	}
 
@@ -605,34 +672,43 @@ func TestJSONBench(t *testing.T) {
 		return
 	}
 	// Reference results produced by ClickHouse on the same file.
-	wantQ1 := "app.bsky.feed.like=448944 app.bsky.graph.follow=360374 app.bsky.feed.post=90816 app.bsky.feed.repost=58540 " +
-		"app.bsky.graph.block=14040 app.bsky.actor.profile=11762 app.bsky.graph.listitem=8103 =5328 " +
-		"app.bsky.graph.listblock=895 app.bsky.graph.starterpack=405 app.bsky.graph.list=356 app.bsky.feed.threadgate=255 " +
-		"app.bsky.feed.postgate=104 app.bsky.feed.generator=74 app.bsky.labeler.service=4"
-	gotQ1 := ""
-	for i, e := range q1 {
-		gotQ1 += fmt.Sprintf("%s%s=%d", sep(i), e.event, e.count)
+	if ran["Q1"] {
+		want := "app.bsky.feed.like=448944 app.bsky.graph.follow=360374 app.bsky.feed.post=90816 app.bsky.feed.repost=58540 " +
+			"app.bsky.graph.block=14040 app.bsky.actor.profile=11762 app.bsky.graph.listitem=8103 =5328 " +
+			"app.bsky.graph.listblock=895 app.bsky.graph.starterpack=405 app.bsky.graph.list=356 app.bsky.feed.threadgate=255 " +
+			"app.bsky.feed.postgate=104 app.bsky.feed.generator=74 app.bsky.labeler.service=4"
+		got := ""
+		for i, e := range q1 {
+			got += fmt.Sprintf("%s%s=%d", sep(i), e.event, e.count)
+		}
+		if got != want {
+			t.Errorf("Q1\n got  %s\n want %s", got, want)
+		}
 	}
-	if gotQ1 != wantQ1 {
-		t.Errorf("Q1\n got  %s\n want %s", gotQ1, wantQ1)
+	if ran["Q2"] {
+		want := "app.bsky.feed.like=444523/117617 app.bsky.graph.follow=337978/63957 app.bsky.feed.post=86812/50464 " +
+			"app.bsky.feed.repost=56993/26581 app.bsky.graph.block=13838/5785 app.bsky.graph.listitem=7568/1078 " +
+			"app.bsky.actor.profile=5337/5337 app.bsky.graph.listblock=860/449 app.bsky.graph.list=259/218 " +
+			"app.bsky.feed.threadgate=228/196 app.bsky.graph.starterpack=104/101 app.bsky.feed.postgate=101/82 app.bsky.feed.generator=10/9"
+		got := ""
+		for i, e := range q2 {
+			got += fmt.Sprintf("%s%s=%d/%d", sep(i), e.event, e.count, e.users)
+		}
+		if got != want {
+			t.Errorf("Q2\n got  %s\n want %s", got, want)
+		}
 	}
-	wantQ2 := "app.bsky.feed.like=444523/117617 app.bsky.graph.follow=337978/63957 app.bsky.feed.post=86812/50464 " +
-		"app.bsky.feed.repost=56993/26581 app.bsky.graph.block=13838/5785 app.bsky.graph.listitem=7568/1078 " +
-		"app.bsky.actor.profile=5337/5337 app.bsky.graph.listblock=860/449 app.bsky.graph.list=259/218 " +
-		"app.bsky.feed.threadgate=228/196 app.bsky.graph.starterpack=104/101 app.bsky.feed.postgate=101/82 app.bsky.feed.generator=10/9"
-	gotQ2 := ""
-	for i, e := range q2 {
-		gotQ2 += fmt.Sprintf("%s%s=%d/%d", sep(i), e.event, e.count, e.users)
+	if ran["Q3"] {
+		got := ""
+		for i, e := range q3 {
+			got += fmt.Sprintf("%s%s@%d=%d", sep(i), e.event, e.hour, e.count)
+		}
+		if want := "app.bsky.feed.like@16=444523 app.bsky.feed.post@16=86812 app.bsky.feed.repost@16=56993"; got != want {
+			t.Errorf("Q3\n got  %s\n want %s", got, want)
+		}
 	}
-	if gotQ2 != wantQ2 {
-		t.Errorf("Q2\n got  %s\n want %s", gotQ2, wantQ2)
-	}
-	gotQ3 := ""
-	for i, e := range q3 {
-		gotQ3 += fmt.Sprintf("%s%s@%d=%d", sep(i), e.event, e.hour, e.count)
-	}
-	if want := "app.bsky.feed.like@16=444523 app.bsky.feed.post@16=86812 app.bsky.feed.repost@16=56993"; gotQ3 != want {
-		t.Errorf("Q3\n got  %s\n want %s", gotQ3, want)
+	if !ran["Q4"] {
+		return
 	}
 	sort.Slice(spans, func(i, j int) bool { return spans[i].min < spans[j].min })
 	gotQ4 := fmt.Sprintf("%s@%d %s@%d %s@%d", spans[0].did, spans[0].min, spans[1].did, spans[1].min, spans[2].did, spans[2].min)
