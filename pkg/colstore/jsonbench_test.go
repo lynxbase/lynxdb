@@ -808,31 +808,36 @@ func envInt(t testing.TB, name string, def int) int {
 	return n
 }
 
-// timeRuns runs fn n times and returns the durations in ascending order,
-// writing a CPU profile of the runs to profile when it is not empty.
-func timeRuns(n int, profile string, fn func() error) ([]time.Duration, error) {
+// timeRuns runs fn n times and returns the durations in ascending order and
+// the process CPU time of the shortest run, writing a CPU profile of the runs
+// to profile when it is not empty.
+func timeRuns(n int, profile string, fn func() error) (took []time.Duration, cpu time.Duration, err error) {
 	if profile != "" {
 		f, err := os.Create(profile)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		defer f.Close()
 		if err := pprof.StartCPUProfile(f); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		defer pprof.StopCPUProfile()
 	}
-	took := make([]time.Duration, n)
+	took = make([]time.Duration, n)
+	best := time.Duration(-1)
 	for i := range took {
-		begin := time.Now()
+		cpuBefore, begin := cpuTime(), time.Now()
 		if err := fn(); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		took[i] = time.Since(begin)
+		if used := cpuTime() - cpuBefore; best < 0 || took[i] < best {
+			best, cpu = took[i], used
+		}
 	}
 	sort.Slice(took, func(i, j int) bool { return took[i] < took[j] })
 
-	return took, nil
+	return took, cpu, nil
 }
 
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1e3 }
@@ -901,12 +906,13 @@ func TestJSONBench(t *testing.T) {
 		id := q.id
 		ran[id] = true
 		var took [2][]time.Duration
+		var cpu [2]time.Duration
 		for i, workers := range []int{cores, 1} {
 			profile := ""
 			if profileDir != "" {
 				profile = filepath.Join(profileDir, fmt.Sprintf("%s_%dw.prof", id, workers))
 			}
-			took[i], err = timeRuns(runs, profile, func() error { return q.run(workers) })
+			took[i], cpu[i], err = timeRuns(runs, profile, func() error { return q.run(workers) })
 			if err != nil {
 				t.Fatalf("%s: %v", q.name, err)
 			}
@@ -918,8 +924,9 @@ func TestJSONBench(t *testing.T) {
 		}
 		runtime.ReadMemStats(&after)
 		all, one := took[0], took[1]
-		t.Logf("%-30s %7.2f ms on %d cores (median %.2f, max %.2f), %7.2f ms on 1 core (median %.2f, max %.2f), %d heap allocations (%.1f MB)",
-			q.name, ms(all[0]), cores, ms(all[runs/2]), ms(all[runs-1]), ms(one[0]), ms(one[runs/2]), ms(one[runs-1]),
+		t.Logf("%-30s %7.2f ms on %d cores (median %.2f, max %.2f, cpu %.1f), %7.2f ms on 1 core (median %.2f, max %.2f, cpu %.1f), %d heap allocations (%.1f MB)",
+			q.name, ms(all[0]), cores, ms(all[runs/2]), ms(all[runs-1]), ms(cpu[0]),
+			ms(one[0]), ms(one[runs/2]), ms(one[runs-1]), ms(cpu[1]),
 			after.Mallocs-before.Mallocs, float64(after.TotalAlloc-before.TotalAlloc)/1e6)
 	}
 
