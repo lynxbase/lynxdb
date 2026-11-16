@@ -17,8 +17,23 @@ type Column struct {
 
 	Offsets []uint32
 	Data    []byte
-	Codes8  []uint8  // Dict with at most 256 entries
-	Codes16 []uint16 // Dict with more entries
+	Codes8  []uint8  // Dict with at most 256 entries; empty otherwise
+	Codes16 []uint16 // Dict with more entries; empty otherwise
+
+	validBuf Bitmap
+}
+
+// UseValid makes Valid a cleared bitmap of rows bits, reusing its memory.
+func (c *Column) UseValid(rows int) Bitmap {
+	n := BitmapWords(rows)
+	if cap(c.validBuf) < n {
+		c.validBuf = make(Bitmap, n)
+	}
+	c.validBuf = c.validBuf[:n]
+	clear(c.validBuf)
+	c.Valid = c.validBuf
+
+	return c.Valid
 }
 
 // IsValid reports whether row i holds a value.
@@ -40,7 +55,7 @@ func (c *Column) DictValue(code int) []byte {
 
 // Code returns the dictionary code of row i of a Dict column.
 func (c *Column) Code(i int) int {
-	if c.Codes8 != nil {
+	if len(c.Codes8) != 0 {
 		return int(c.Codes8[i])
 	}
 
