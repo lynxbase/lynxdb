@@ -389,9 +389,7 @@ func (b *Block) Decode(ref *ColumnRef, dst *vec.Column) error {
 		b.d.ints = vals
 		dst.Ints = grow(dst.Ints, rows)
 		clear(dst.Ints)
-		for i, r := range b.pos {
-			dst.Ints[r] = vals[i]
-		}
+		spread(dst.Ints, vals, dst.Valid)
 
 		return nil
 	case vec.KindFloat:
@@ -401,6 +399,8 @@ func (b *Block) Decode(ref *ColumnRef, dst *vec.Column) error {
 	return b.decodeBytes(ref, chunk, sparse, dst)
 }
 
+// readPresence fills dst.Valid from the presence section at the start of
+// chunk, which must mark count rows, and returns what follows the section.
 func (b *Block) readPresence(chunk []byte, count int, dst *vec.Column) ([]byte, error) {
 	if len(chunk) == 0 {
 		return nil, ErrCorrupt
@@ -412,21 +412,24 @@ func (b *Block) readPresence(chunk []byte, count int, dst *vec.Column) ([]byte, 
 	}
 	rows := b.Rows
 	valid := dst.UseValid(rows)
-	b.pos = b.pos[:0]
 	switch mode {
-	case presenceList:
-		if len(payload) != 2*count {
+	case presenceList, presenceHoles:
+		listed := count
+		if mode == presenceHoles {
+			listed = rows - count
+			valid.SetAll(rows)
+		}
+		if len(payload) != 2*listed {
 			return nil, ErrCorrupt
 		}
 		prev := -1
-		for i := 0; i < count; i++ {
+		for i := 0; i < listed; i++ {
 			r := int(binary.LittleEndian.Uint16(payload[2*i:]))
 			if r <= prev || r >= rows {
 				return nil, ErrCorrupt
 			}
 			prev = r
-			valid.Set(r)
-			b.pos = append(b.pos, uint32(r))
+			valid[r>>6] ^= 1 << (uint(r) & 63)
 		}
 	case presenceBitmap:
 		if len(payload) != (rows+7)/8 {
@@ -438,8 +441,7 @@ func (b *Block) readPresence(chunk []byte, count int, dst *vec.Column) ([]byte, 
 		if tail := uint(rows) & 63; tail != 0 && valid[len(valid)-1]>>tail != 0 {
 			return nil, ErrCorrupt
 		}
-		b.pos = valid.AppendSet(b.pos)
-		if len(b.pos) != count {
+		if valid.Count() != count {
 			return nil, ErrCorrupt
 		}
 	default:
@@ -447,6 +449,13 @@ func (b *Block) readPresence(chunk []byte, count int, dst *vec.Column) ([]byte, 
 	}
 
 	return rest, nil
+}
+
+// positions returns the rows of valid in order.
+func (b *Block) positions(valid vec.Bitmap) []uint32 {
+	b.pos = valid.AppendSet(b.pos[:0])
+
+	return b.pos
 }
 
 func (b *Block) decodeBools(ref *ColumnRef, chunk []byte, sparse bool, dst *vec.Column) error {
@@ -466,12 +475,16 @@ func (b *Block) decodeBools(ref *ColumnRef, chunk []byte, sparse bool, dst *vec.
 	}
 	dst.Bools = grow(dst.Bools, vec.BitmapWords(rows))
 	clear(dst.Bools)
+	var pos []uint32
+	if sparse {
+		pos = b.positions(dst.Valid)
+	}
 	for i := 0; i < count; i++ {
 		if payload[i>>3]&(1<<(uint(i)&7)) == 0 {
 			continue
 		}
 		if sparse {
-			dst.Bools.Set(int(b.pos[i]))
+			dst.Bools.Set(int(pos[i]))
 		} else {
 			dst.Bools.Set(i)
 		}
@@ -496,13 +509,15 @@ func (b *Block) decodeFloats(ref *ColumnRef, chunk []byte, sparse bool, dst *vec
 		return ErrCorrupt
 	}
 	dst.Floats = grow(dst.Floats, rows)
+	var pos []uint32
 	if sparse {
 		clear(dst.Floats)
+		pos = b.positions(dst.Valid)
 	}
 	for i := 0; i < count; i++ {
 		v := math.Float64frombits(binary.LittleEndian.Uint64(payload[8*i:]))
 		if sparse {
-			dst.Floats[b.pos[i]] = v
+			dst.Floats[pos[i]] = v
 		} else {
 			dst.Floats[i] = v
 		}
@@ -540,7 +555,7 @@ func (b *Block) decodeBytes(ref *ColumnRef, chunk []byte, sparse bool, dst *vec.
 			next := 0
 			for r := 0; r < rows; r++ {
 				dst.Offsets[r] = uint32(off)
-				if next < count && b.pos[next] == uint32(r) {
+				if dst.Valid.Get(r) {
 					off += uint64(lens[next])
 					next++
 				}
@@ -625,9 +640,7 @@ func (b *Block) decodeDict(chunk []byte, count int, sparse bool, dst *vec.Column
 			copy(dst.Codes8, codes)
 		} else {
 			clear(dst.Codes8)
-			for i, r := range b.pos {
-				dst.Codes8[r] = codes[i]
-			}
+			spread(dst.Codes8, codes, dst.Valid)
 		}
 		for _, c := range codes {
 			if uint64(c) >= size {
@@ -641,8 +654,10 @@ func (b *Block) decodeDict(chunk []byte, count int, sparse bool, dst *vec.Column
 		return ErrCorrupt
 	}
 	dst.Codes16 = grow(dst.Codes16, rows)
+	var pos []uint32
 	if sparse {
 		clear(dst.Codes16)
+		pos = b.positions(dst.Valid)
 	}
 	for i := 0; i < count; i++ {
 		c := binary.LittleEndian.Uint16(codes[2*i:])
@@ -650,7 +665,7 @@ func (b *Block) decodeDict(chunk []byte, count int, sparse bool, dst *vec.Column
 			return ErrCorrupt
 		}
 		if sparse {
-			dst.Codes16[b.pos[i]] = c
+			dst.Codes16[pos[i]] = c
 		} else {
 			dst.Codes16[i] = c
 		}

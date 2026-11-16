@@ -39,6 +39,7 @@ const flagSparse = 1
 const (
 	presenceBitmap = 0 // one bit per row
 	presenceList   = 1 // 16-bit row numbers of the present rows
+	presenceHoles  = 2 // 16-bit row numbers of the absent rows
 )
 
 // TimePath names the column holding each row's timestamp in nanoseconds.

@@ -210,13 +210,27 @@ func (w *Writer) encodeColumn(c *shred.Column, rows int) {
 
 func (w *Writer) appendPresence(c *shred.Column, rows int) {
 	w.e.tmp = w.e.tmp[:0]
-	if 2*c.Count < (rows+7)/8 {
+	switch absent := rows - c.Count; {
+	case 2*c.Count < (rows+7)/8:
 		for i := 0; i < c.Count; i++ {
 			r := c.Row(i)
 			w.e.tmp = append(w.e.tmp, byte(r), byte(r>>8))
 		}
 		w.block = append(w.block, presenceList)
-	} else {
+	case 2*absent < (rows+7)/8:
+		next := 0
+		for i := 0; i <= c.Count; i++ {
+			r := rows
+			if i < c.Count {
+				r = c.Row(i)
+			}
+			for ; next < r; next++ {
+				w.e.tmp = append(w.e.tmp, byte(next), byte(next>>8))
+			}
+			next = r + 1
+		}
+		w.block = append(w.block, presenceHoles)
+	default:
 		w.e.tmp = append(w.e.tmp, make([]byte, (rows+7)/8)...)
 		for i := 0; i < c.Count; i++ {
 			r := c.Row(i)
