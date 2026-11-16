@@ -585,6 +585,13 @@ func forEachPartition(partitions, workers int, fn func(slot, partition int)) {
 	wg.Wait()
 }
 
+// addSpan logs the first and last post time of a run of rows with one did.
+func (w *benchWorker) addSpan(did []byte, lo, hi int64) {
+	w.key = binary.LittleEndian.AppendUint64(append(w.key[:0], did...), uint64(lo))
+	w.key = binary.LittleEndian.AppendUint64(w.key, uint64(hi))
+	w.log.Add(vec.Hash(did), w.key)
+}
+
 // spanMerger is the state one goroutine owns while it merges partitions.
 type spanMerger struct {
 	arena          *mem.Arena
@@ -620,15 +627,28 @@ func queryPostTimes(snap *Snapshot, workers, limit int) (first, longest []userSp
 		if ref, err := column(p, b, "time_us", vec.KindInt, &w.c); err != nil || ref == nil {
 			return err
 		}
+		// A run of rows with one did adds one record.
+		var did []byte
+		var lo, hi int64
+		open := false
 		for _, r := range w.idx {
 			row := int(r)
 			if !w.b.IsValid(row) || !w.c.IsValid(row) {
 				continue
 			}
-			// The record is the did followed by the post time.
-			did := w.b.Bytes(row)
-			w.key = binary.LittleEndian.AppendUint64(append(w.key[:0], did...), uint64(w.c.Int(row)))
-			w.log.Add(vec.Hash(did), w.key)
+			ts := w.c.Int(row)
+			if cur := w.b.Bytes(row); !open || string(cur) != string(did) {
+				if open {
+					w.addSpan(did, lo, hi)
+				}
+				did, lo, hi, open = cur, ts, ts, true
+
+				continue
+			}
+			lo, hi = min(lo, ts), max(hi, ts)
+		}
+		if open {
+			w.addSpan(did, lo, hi)
 		}
 
 		return nil
@@ -653,15 +673,15 @@ func queryPostTimes(snap *Snapshot, workers, limit int) (first, longest []userSp
 		m.mins, m.maxs = m.mins[:0], m.maxs[:0]
 		for _, w := range ws {
 			w.log.Each(partition, func(h uint64, rec []byte) {
-				n := len(rec) - 8
-				ts := int64(binary.LittleEndian.Uint64(rec[n:]))
+				n := len(rec) - 16
+				lo, hi := int64(binary.LittleEndian.Uint64(rec[n:])), int64(binary.LittleEndian.Uint64(rec[n+8:]))
 				g := m.groups.IDHashed(rec[:n], h)
 				if g == len(m.mins) {
-					m.mins, m.maxs = append(m.mins, ts), append(m.maxs, ts)
+					m.mins, m.maxs = append(m.mins, lo), append(m.maxs, hi)
 
 					return
 				}
-				m.mins[g], m.maxs[g] = min(m.mins[g], ts), max(m.maxs[g], ts)
+				m.mins[g], m.maxs[g] = min(m.mins[g], lo), max(m.maxs[g], hi)
 			})
 		}
 		for g := range m.mins {
