@@ -782,17 +782,19 @@ func (a *AggregateIterator) updateState(s *aggState, fn string, val, orderVal, w
 	case aggDC, aggEstDCE:
 		if !val.IsNull() {
 			str := val.String()
+			if s.hll != nil {
+				s.hll.Add(str)
+
+				break
+			}
 			s.values[str] = true
 			// Switch to HLL when cardinality exceeds threshold.
-			if len(s.values) > hllPromotionThreshold && s.hll == nil {
+			if len(s.values) > hllPromotionThreshold {
 				s.hll = NewHyperLogLog()
 				for k := range s.values {
 					s.hll.Add(k)
 				}
 				s.values = nil // free exact set
-			}
-			if s.hll != nil {
-				s.hll.Add(str)
 			}
 		}
 	case aggValues:
