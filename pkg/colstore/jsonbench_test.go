@@ -680,6 +680,30 @@ func loadNDJSON(t testing.TB, data []byte, workers, blockRows int) (*Table, int6
 	return tbl, size, rejected.Load()
 }
 
+// constantBlocks counts the blocks in which the string column of path holds
+// one value, and the blocks that do not have the column.
+func constantBlocks(t testing.TB, snap *Snapshot, path string) (constant, absent int) {
+	t.Helper()
+	var b part.Block
+	for _, h := range snap.Parts() {
+		id, known := h.PathID(path)
+		for i := 0; i < h.NumBlocks(); i++ {
+			if err := h.OpenBlock(i, &b); err != nil {
+				t.Fatal(err)
+			}
+			ref, ok := b.Column(id, vec.KindString)
+			switch {
+			case !known || !ok:
+				absent++
+			case ref.Const():
+				constant++
+			}
+		}
+	}
+
+	return constant, absent
+}
+
 // envInt reads a positive integer setting of the benchmark.
 func envInt(t testing.TB, name string, def int) int {
 	t.Helper()
@@ -759,6 +783,13 @@ func TestJSONBench(t *testing.T) {
 	t.Logf("load: %d rows and %d rejected lines, %.1f MB of JSON -> %.1f MB in %d parts / %d blocks, %.2fs on %d cores (%.0fk docs/s, %.0f MB/s)",
 		rows, rejected, float64(len(data))/1e6, float64(size)/1e6, len(snap.Parts()), blocks, loadTime.Seconds(), cores,
 		float64(rows)/loadTime.Seconds()/1e3, float64(len(data))/loadTime.Seconds()/1e6)
+
+	layout := ""
+	for _, path := range []string{"kind", "commit.operation", "commit.collection"} {
+		constant, absent := constantBlocks(t, snap, path)
+		layout += fmt.Sprintf(" %s %d constant and %d absent,", path, constant, absent)
+	}
+	t.Logf("of %d blocks:%s", blocks, strings.TrimSuffix(layout, ","))
 
 	var q1, q2 []eventCount
 	var q3 []hourCount
