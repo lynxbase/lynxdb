@@ -20,7 +20,7 @@ import (
 // lines that are not JSON objects.
 func loadToDir(t testing.TB, d *Dir, data []byte, parts, blockRows int, key []string) int64 {
 	t.Helper()
-	files := make([]*PartFile, parts)
+	files := make([]*PartFile, runCount(t, data, parts))
 	create := func(i int) io.Writer {
 		pf, err := d.Create()
 		if err != nil {
@@ -37,11 +37,11 @@ func loadToDir(t testing.TB, d *Dir, data []byte, parts, blockRows int, key []st
 	switch {
 	case len(key) > 0 && separateRuns(t):
 		var n int
-		n, rejected = writeOrderedRuns(t, data, cores, parts, blockRows, key, create)
+		n, rejected = writeOrderedRuns(t, data, cores, len(files), blockRows, key, create)
 		files = files[:n]
 	case len(key) > 0:
 		var runs []*part.Part
-		runs, rejected = orderedRuns(t, data, cores, max(cores, parts), blockRows, key)
+		runs, rejected = orderedRuns(t, data, cores, runCount(t, data, max(cores, parts)), blockRows, key)
 		files = files[:mergeRanges(t, runs, parts, blockRows, key, create)]
 	default:
 		chunks := splitAtLines(data, parts)
@@ -125,10 +125,7 @@ func TestJSONBenchDisk(t *testing.T) {
 		if path == "" {
 			t.Fatal("the directory is empty; set LYNXDB_BENCH_NDJSON to the file to load")
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		data := mapFile(t, path)
 		cpuBefore, begin := cpuTime(), time.Now()
 		rejected := loadToDir(t, d, data, envInt(t, "LYNXDB_BENCH_PARTS", cores), blockRows, key)
 		took, cpu := time.Since(begin), cpuTime()-cpuBefore

@@ -24,9 +24,9 @@ func loadOrdered(t testing.TB, data []byte, parts int, key []string) (*Table, in
 	cores := runtime.GOMAXPROCS(0)
 	var sorted []*part.Part
 	if separateRuns(t) {
-		sorted, _ = orderedRuns(t, data, cores, parts, 16384, key)
+		sorted, _ = orderedRuns(t, data, cores, runCount(t, data, parts), 16384, key)
 	} else {
-		runs, _ := orderedRuns(t, data, cores, max(cores, parts), 16384, key)
+		runs, _ := orderedRuns(t, data, cores, runCount(t, data, max(cores, parts)), 16384, key)
 		bufs := make([]bytes.Buffer, parts)
 		n := mergeRanges(t, runs, parts, 16384, key, func(i int) io.Writer { return &bufs[i] })
 		for i := 0; i < n; i++ {

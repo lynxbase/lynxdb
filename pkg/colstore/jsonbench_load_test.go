@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
+
+	"github.com/blevesearch/mmap-go"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
@@ -76,6 +79,34 @@ func writeOrderedRuns(t testing.TB, data []byte, workers, runs, blockRows int, k
 	return len(chunks), rejected.Load()
 }
 
+// runCount returns how many sorted runs to cut data into: at least want, and
+// enough to keep each under LYNXDB_BENCH_RUN_MB megabytes of JSON (256 by
+// default), which bounds what the workers hold while they sort.
+func runCount(t testing.TB, data []byte, want int) int {
+	t.Helper()
+	limit := envInt(t, "LYNXDB_BENCH_RUN_MB", 256) << 20
+
+	return max(want, (len(data)+limit-1)/limit)
+}
+
+// mapFile maps the file at path for reading, so that a large input is held
+// by the page cache alone, and unmaps it when the test ends.
+func mapFile(t testing.TB, path string) []byte {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	data, err := mmap.Map(f, mmap.RDONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = data.Unmap() })
+
+	return data
+}
+
 // orderedRuns is writeOrderedRuns with the runs kept in memory.
 func orderedRuns(t testing.TB, data []byte, workers, runs, blockRows int, key []string) ([]*part.Part, int64) {
 	t.Helper()
@@ -114,6 +145,10 @@ func separateRuns(t testing.TB) bool {
 	}
 }
 
+// mergeBlocksHeld caps the decoded blocks that concurrent merges hold, each
+// several megabytes of column values.
+const mergeBlocksHeld = 2048
+
 // mergeRanges merges ordered runs into at most n parts with disjoint key
 // ranges, one core per range, writing range i to sink(i). It returns the
 // number of parts written.
@@ -121,11 +156,16 @@ func mergeRanges(t testing.TB, runs []*part.Part, n, blockRows int, key []string
 	t.Helper()
 	opts := part.Options{Ordered: true, SortKey: key}
 	cuts := part.SplitKeys(runs, n)
+	// A merge holds one decoded block per run, so the merges that run at
+	// once are bounded by the blocks they hold together.
+	slots := make(chan struct{}, max(1, min(runtime.GOMAXPROCS(0), mergeBlocksHeld/len(runs))))
 	var wg sync.WaitGroup
 	for i := 0; i <= len(cuts); i++ {
 		wg.Add(1)
+		slots <- struct{}{}
 		go func(i int) {
 			defer wg.Done()
+			defer func() { <-slots }()
 			var lo, hi []byte
 			if i > 0 {
 				lo = cuts[i-1]
