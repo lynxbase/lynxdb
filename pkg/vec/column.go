@@ -35,6 +35,12 @@ func (c *Column) UseValid(rows int) Bitmap {
 	return c.Valid
 }
 
+// Retained returns the bytes of the buffers the column keeps for reuse.
+func (c *Column) Retained() int {
+	return 8*(cap(c.Ints)+cap(c.Floats)+cap(c.Bools)+cap(c.validBuf)) +
+		4*cap(c.Offsets) + cap(c.Data) + cap(c.Codes8) + 2*cap(c.Codes16)
+}
+
 // IsValid reports whether row i holds a value.
 func (c *Column) IsValid(i int) bool { return c.Valid == nil || c.Valid.Get(i) }
 

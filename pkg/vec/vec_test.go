@@ -223,3 +223,18 @@ func TestMaskEqBytesAcrossLayouts(t *testing.T) {
 		t.Fatal("DictFind matched a prefix")
 	}
 }
+
+func TestColumnRetainedCountsItsBuffers(t *testing.T) {
+	var c Column
+	if c.Retained() != 0 {
+		t.Fatalf("empty column retains %d bytes", c.Retained())
+	}
+	c.Ints = make([]int64, 3, 10)
+	c.Offsets = make([]uint32, 5)
+	c.Data = make([]byte, 0, 7)
+	c.Codes16 = make([]uint16, 4)
+	c.UseValid(100)
+	if want := 80 + 20 + 7 + 8 + 16; c.Retained() != want {
+		t.Fatalf("Retained = %d, want %d", c.Retained(), want)
+	}
+}
