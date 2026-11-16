@@ -271,18 +271,20 @@ var _ io.Writer = (*PartFile)(nil)
 // ones in one manifest record, so a crash leaves either all of the change
 // or none of it. It returns the handles of the added parts.
 func (d *Dir) Commit(add []*PartFile, remove []*Handle) ([]*Handle, error) {
-	names := make([]string, 0, len(add))
-	for _, pf := range add {
-		if err := pf.f.Sync(); err != nil {
-			return nil, err
-		}
-		if err := pf.f.Close(); err != nil {
-			return nil, err
-		}
-		if err := os.Rename(pf.tmp, filepath.Join(d.path, pf.name)); err != nil {
-			return nil, err
-		}
-		names = append(names, pf.name)
+	names := make([]string, len(add))
+	sealed := make([]error, len(add))
+	var wg sync.WaitGroup
+	for i, pf := range add {
+		names[i] = pf.name
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sealed[i] = pf.seal(filepath.Join(d.path, pf.name))
+		}()
+	}
+	wg.Wait()
+	if err := errors.Join(sealed...); err != nil {
+		return nil, err
 	}
 	if err := syncDir(d.path); err != nil {
 		return nil, err
@@ -327,6 +329,18 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) ([]*Handle, error) {
 	}
 
 	return handles, nil
+}
+
+// seal makes the file durable under its final name.
+func (pf *PartFile) seal(name string) error {
+	if err := pf.f.Sync(); err != nil {
+		return err
+	}
+	if err := pf.f.Close(); err != nil {
+		return err
+	}
+
+	return os.Rename(pf.tmp, name)
 }
 
 // rewrite replaces the manifest by one record listing the live parts.
