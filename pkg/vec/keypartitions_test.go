@@ -28,6 +28,9 @@ func TestKeyPartitionsKeepRecordsInOrderPerPartition(t *testing.T) {
 		switch i {
 		case 0, 7000:
 			size = 0
+		case 300, 9000:
+			// Long enough for a length of more than one byte.
+			size = 20000
 		case 5000:
 			// Larger than any chunk the log allocates by itself.
 			size = 3 * maxKeyChunk

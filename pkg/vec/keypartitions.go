@@ -9,8 +9,9 @@ import (
 const (
 	minKeyChunk = 1 << 10
 	maxKeyChunk = 1 << 16
-	// A record is its hash, the length of its payload and the payload.
-	keyRecordHead = 12
+	// A record is its hash, the length of its payload as a varint and the
+	// payload.
+	keyHashSize = 8
 )
 
 // KeyPartitions is an append-only log of hashed byte records split by the top
@@ -26,6 +27,7 @@ type keyPartition struct {
 	cur  []byte
 	full [][]byte
 	n    int
+	held int // bytes of every chunk
 }
 
 // NewKeyPartitions returns a log with 1<<bits partitions that allocates
@@ -43,24 +45,28 @@ func (p *KeyPartitions) Len(i int) int { return p.parts[i].n }
 // Add appends rec to the partition that the top bits of h select.
 func (p *KeyPartitions) Add(h uint64, rec []byte) {
 	kp := &p.parts[h>>p.shift]
-	need := keyRecordHead + len(rec)
+	need := keyHashSize + binary.MaxVarintLen64 + len(rec)
 	if cap(kp.cur)-len(kp.cur) < need {
 		p.grow(kp, need)
 	}
 	n := len(kp.cur)
-	kp.cur = kp.cur[:n+need]
-	binary.LittleEndian.PutUint64(kp.cur[n:], h)
-	binary.LittleEndian.PutUint32(kp.cur[n+8:], uint32(len(rec)))
-	copy(kp.cur[n+keyRecordHead:], rec)
+	cur := kp.cur[:n+need]
+	binary.LittleEndian.PutUint64(cur[n:], h)
+	n += keyHashSize
+	n += binary.PutUvarint(cur[n:], uint64(len(rec)))
+	kp.cur = cur[:n+copy(cur[n:], rec)]
 	kp.n++
 }
 
+// grow starts a chunk half the size of what the partition already holds, so
+// that the unused tail stays a fraction of the partition.
 func (p *KeyPartitions) grow(kp *keyPartition, need int) {
-	size := min(max(2*cap(kp.cur), minKeyChunk), maxKeyChunk)
+	size := max(min(max(kp.held/2, minKeyChunk), maxKeyChunk), need)
 	if len(kp.cur) != 0 {
 		kp.full = append(kp.full, kp.cur)
 	}
-	kp.cur = mem.Raw[byte](p.arena, 0, max(size, need))
+	kp.cur = mem.Raw[byte](p.arena, 0, size)
+	kp.held += size
 }
 
 // Each calls fn with the hash and payload of every record of partition i in
@@ -74,9 +80,11 @@ func (p *KeyPartitions) Each(i int, fn func(h uint64, rec []byte)) {
 }
 
 func eachKeyRecord(chunk []byte, fn func(h uint64, rec []byte)) {
-	for len(chunk) >= keyRecordHead {
-		end := keyRecordHead + int(binary.LittleEndian.Uint32(chunk[8:]))
-		fn(binary.LittleEndian.Uint64(chunk), chunk[keyRecordHead:end:end])
+	for len(chunk) > keyHashSize {
+		size, n := binary.Uvarint(chunk[keyHashSize:])
+		start := keyHashSize + n
+		end := start + int(size)
+		fn(binary.LittleEndian.Uint64(chunk), chunk[start:end:end])
 		chunk = chunk[end:]
 	}
 }
