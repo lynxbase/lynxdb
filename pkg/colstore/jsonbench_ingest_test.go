@@ -25,7 +25,8 @@ import (
 // default), LYNXDB_BENCH_FANIN the runs merged at once (8 by default), and
 // LYNXDB_BENCH_FLUSH_LEVEL and LYNXDB_BENCH_LEVEL the compression effort of
 // flushed runs (fastest by default) and of merged parts (fast by default);
-// compact is the third choice.
+// compact is the third choice. LYNXDB_BENCH_PARTITION, a duration such as
+// 1h, partitions the table by time.
 func TestJSONBenchIngest(t *testing.T) {
 	dir, path := os.Getenv("LYNXDB_BENCH_DIR"), os.Getenv("LYNXDB_BENCH_NDJSON")
 	if dir == "" || path == "" || os.Getenv("LYNXDB_BENCH_INGEST") == "" {
@@ -36,6 +37,13 @@ func TestJSONBenchIngest(t *testing.T) {
 		BlockRows:  envInt(t, "LYNXDB_BENCH_BLOCK_ROWS", 16384),
 		FlushBytes: envInt(t, "LYNXDB_BENCH_RUN_MB", 128) << 20,
 		MergeFanIn: envInt(t, "LYNXDB_BENCH_FANIN", 8),
+	}
+	if v := os.Getenv("LYNXDB_BENCH_PARTITION"); v != "" {
+		width, err := time.ParseDuration(v)
+		if err != nil || width <= 0 {
+			t.Fatalf("LYNXDB_BENCH_PARTITION=%q is not a positive duration", v)
+		}
+		opts.Partition = width
 	}
 	opts.FlushLevel = benchLevel(t, "LYNXDB_BENCH_FLUSH_LEVEL", part.LevelFastest)
 	opts.Part.Level = benchLevel(t, "LYNXDB_BENCH_LEVEL", part.LevelFast)
@@ -142,9 +150,11 @@ func logStoreShape(t testing.TB, s *Store, when string) {
 	var rows uint64
 	var size int64
 	runs := map[int]map[uint64]struct{}{}
+	partitions := map[int64]struct{}{}
 	for _, h := range snap.Parts() {
 		rows += h.Rows
 		size += int64(h.Size())
+		partitions[h.Partition] = struct{}{}
 		if runs[h.Tier] == nil {
 			runs[h.Tier] = map[uint64]struct{}{}
 		}
@@ -159,5 +169,5 @@ func logStoreShape(t testing.TB, s *Store, when string) {
 	for _, tier := range tiers {
 		fmt.Fprintf(&shape, " tier %d: %d runs;", tier, len(runs[tier]))
 	}
-	t.Logf("%s: %d rows, %.1f MB in %d parts;%s", when, rows, float64(size)/1e6, len(snap.Parts()), shape.String())
+	t.Logf("%s: %d rows, %.1f MB in %d parts of %d partitions;%s", when, rows, float64(size)/1e6, len(snap.Parts()), len(partitions), shape.String())
 }
