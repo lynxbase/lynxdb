@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 )
 
@@ -21,7 +22,10 @@ import (
 // default) each take requests of LYNXDB_BENCH_REQUEST_DOCS lines (100000 by
 // default); LYNXDB_BENCH_SORT orders the table ("default" for the benchmark's
 // key), LYNXDB_BENCH_RUN_MB sets the input a writer buffers per run (128 by
-// default) and LYNXDB_BENCH_FANIN the runs merged at once (8 by default).
+// default), LYNXDB_BENCH_FANIN the runs merged at once (8 by default), and
+// LYNXDB_BENCH_FLUSH_LEVEL and LYNXDB_BENCH_LEVEL the compression effort of
+// flushed runs (fastest by default) and of merged parts (fast by default);
+// compact is the third choice.
 func TestJSONBenchIngest(t *testing.T) {
 	dir, path := os.Getenv("LYNXDB_BENCH_DIR"), os.Getenv("LYNXDB_BENCH_NDJSON")
 	if dir == "" || path == "" || os.Getenv("LYNXDB_BENCH_INGEST") == "" {
@@ -33,6 +37,8 @@ func TestJSONBenchIngest(t *testing.T) {
 		FlushBytes: envInt(t, "LYNXDB_BENCH_RUN_MB", 128) << 20,
 		MergeFanIn: envInt(t, "LYNXDB_BENCH_FANIN", 8),
 	}
+	opts.FlushLevel = benchLevel(t, "LYNXDB_BENCH_FLUSH_LEVEL", part.LevelFastest)
+	opts.Part.Level = benchLevel(t, "LYNXDB_BENCH_LEVEL", part.LevelFast)
 	switch s := os.Getenv("LYNXDB_BENCH_SORT"); s {
 	case "":
 	case "default":
@@ -107,6 +113,25 @@ func TestJSONBenchIngest(t *testing.T) {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	t.Logf("the Go runtime obtained %.0f MB from the system", float64(mem.Sys)/1e6)
+}
+
+// benchLevel reads a compression effort setting: fastest, fast or compact.
+func benchLevel(t testing.TB, name string, def part.Level) part.Level {
+	t.Helper()
+	switch v := os.Getenv(name); v {
+	case "":
+		return def
+	case "fast":
+		return part.LevelFast
+	case "fastest":
+		return part.LevelFastest
+	case "compact":
+		return part.LevelCompact
+	default:
+		t.Fatalf("%s=%q is not fastest, fast or compact", name, v)
+
+		return 0
+	}
 }
 
 // logStoreShape reports the rows, bytes and runs per tier of a store.

@@ -20,7 +20,7 @@ const minCompressSize = 512
 
 var (
 	codecOnce sync.Once
-	encoders  [2]*zstd.Encoder
+	encoders  [3]*zstd.Encoder
 	decoder   *zstd.Decoder
 )
 
@@ -32,6 +32,9 @@ const (
 	LevelFast Level = iota
 	// LevelCompact favors size; it suits merged parts that live long.
 	LevelCompact
+	// LevelFastest costs the least time; it suits parts that a merge
+	// replaces soon.
+	LevelFastest
 )
 
 func codecs() {
@@ -39,6 +42,7 @@ func codecs() {
 		// EncodeAll and DecodeAll are stateless and safe for concurrent use.
 		encoders[LevelFast], _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault), zstd.WithEncoderCRC(false))
 		encoders[LevelCompact], _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBetterCompression), zstd.WithEncoderCRC(false))
+		encoders[LevelFastest], _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderCRC(false))
 		decoder, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
 	})
 }

@@ -28,6 +28,9 @@ type StoreOptions struct {
 	MergeFanIn int
 	// Part sets how parts are encoded; its ordering fields are overridden.
 	Part part.Options
+	// FlushLevel is the compression effort of the runs writers flush, which
+	// merges replace by parts of Part.Level.
+	FlushLevel part.Level
 }
 
 const (
@@ -384,7 +387,9 @@ func (w *Writer) Flush() error {
 	if err != nil {
 		return err
 	}
-	pw := part.NewWriter(pf, s.opts.Part)
+	flushed := s.opts.Part
+	flushed.Level = s.opts.FlushLevel
+	pw := part.NewWriter(pf, flushed)
 	for from := 0; from < w.batch.Rows && err == nil; from += s.opts.BlockRows {
 		w.block.Reset()
 		w.batch.CopyRows(w.block, from, min(from+s.opts.BlockRows, w.batch.Rows))
