@@ -3,6 +3,7 @@ package colstore
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"fmt"
 	"math/rand"
 	"reflect"
@@ -45,6 +46,9 @@ type rangeCursor struct {
 	col *vec.Column
 	cur []byte
 	gid int
+	// h0 and h1 hold the first sixteen bytes of cur, so that most
+	// comparisons of two cursors read nothing else.
+	h0, h1 uint64
 	// The values left in the block are col's entries i to end, or, with
 	// indexed set, its entries idx[i:end], of the groups gids[i:end] if any.
 	i, end  int
@@ -80,7 +84,20 @@ func (c *rangeCursor) set() {
 			c.gid = int(c.gids[c.i])
 		}
 	}
-	c.cur = c.col.Data[c.col.Offsets[k]:c.col.Offsets[k+1]]
+	c.head(c.col.Data[c.col.Offsets[k]:c.col.Offsets[k+1]])
+}
+
+// head makes v the current value.
+func (c *rangeCursor) head(v []byte) {
+	c.cur = v
+	if len(v) >= 16 {
+		c.h0, c.h1 = binary.BigEndian.Uint64(v), binary.BigEndian.Uint64(v[8:])
+
+		return
+	}
+	var pad [16]byte
+	copy(pad[:], v)
+	c.h0, c.h1 = binary.BigEndian.Uint64(pad[:]), binary.BigEndian.Uint64(pad[8:])
 }
 
 // nextSpan moves to the next run of rows i to end that share a did and have
@@ -97,7 +114,7 @@ func (c *rangeCursor) nextSpan() bool {
 		return false
 	}
 	k := entry(did, row)
-	c.cur = did.Data[did.Offsets[k]:did.Offsets[k+1]]
+	c.head(did.Data[did.Offsets[k]:did.Offsets[k+1]])
 	lo := ts.Int(row)
 	hi := lo
 	flat := did.Layout == vec.Flat
@@ -176,6 +193,13 @@ func (w *rangeWorker) start(kr *KeyRange) []*rangeCursor {
 func (w *rangeWorker) less(a, b *rangeCursor) bool {
 	if a.gid != b.gid {
 		return bytes.Compare(w.groups.Key(a.gid), w.groups.Key(b.gid)) < 0
+	}
+
+	if a.h0 != b.h0 {
+		return a.h0 < b.h0
+	}
+	if a.h1 != b.h1 {
+		return a.h1 < b.h1
 	}
 
 	return bytes.Compare(a.cur, b.cur) < 0
