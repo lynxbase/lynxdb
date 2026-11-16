@@ -63,6 +63,8 @@ type benchWorker struct {
 	// shared, when set, assigns global[id] to each group of this worker.
 	shared *sharedGroups
 	global []uint32
+	// blocks and rows count what passed the query's filters.
+	blocks, rows int64
 	// log holds one record per selected row for the merge to aggregate.
 	log *vec.KeyPartitions
 
@@ -87,6 +89,23 @@ func newBenchWorkers(n int) []*benchWorker {
 // benchMemory is what the structures of the latest query held at their
 // largest: the bytes its arenas handed out and its decode buffers.
 var benchMemory struct{ arenas, buffers atomic.Int64 }
+
+// benchScan is what the latest query read: the blocks its scan opened and
+// skipped by sort key, and the blocks and rows that passed its filters.
+var benchScan struct{ opened, skippedByKey, blocks, rows atomic.Int64 }
+
+// recordScan stores in benchScan what a query's scan and workers counted.
+func recordScan(stats ScanStats, ws []*benchWorker) {
+	var blocks, rows int64
+	for _, w := range ws {
+		blocks += w.blocks
+		rows += w.rows
+	}
+	benchScan.opened.Store(stats.Blocks)
+	benchScan.skippedByKey.Store(stats.SkippedByKey)
+	benchScan.blocks.Store(blocks)
+	benchScan.rows.Store(rows)
+}
 
 // recordMemory stores in benchMemory what the workers and the other arenas
 // of a query hold, and is called when nothing has been released yet.
@@ -218,8 +237,10 @@ func sortedCounts(m map[string]*eventCount) []eventCount {
 func queryTopEvents(snap *Snapshot, workers int) ([]eventCount, error) {
 	ws := newBenchWorkers(workers)
 	defer freeBenchWorkers(ws)
-	_, err := snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
+	stats, err := snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
 		w := ws[n]
+		w.blocks++
+		w.rows += int64(b.Rows)
 		ref, err := column(p, b, "commit.collection", vec.KindString, &w.a)
 		if err != nil || ref == nil {
 			w.nulls += int64(b.Rows)
@@ -259,6 +280,7 @@ func queryTopEvents(snap *Snapshot, workers int) ([]eventCount, error) {
 		merged[""] = &eventCount{count: nulls}
 	}
 	recordMemory(ws)
+	recordScan(stats, ws)
 
 	return sortedCounts(merged), nil
 }
@@ -310,7 +332,7 @@ func queryEventsWithUsers(snap *Snapshot, workers int, hashed bool) ([]eventCoun
 		w.shared = shared
 		w.log = vec.NewKeyPartitions(w.arena, partitionBits)
 	}
-	_, err := snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
+	stats, err := snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
 		w := ws[n]
 		if ok, err := w.created(p, b); !ok || err != nil {
 			return err
@@ -318,6 +340,8 @@ func queryEventsWithUsers(snap *Snapshot, workers int, hashed bool) ([]eventCoun
 		if w.idx = vec.MaskIndexes(w.idx[:0], w.mask); len(w.idx) == 0 {
 			return nil
 		}
+		w.blocks++
+		w.rows += int64(len(w.idx))
 		if ref, err := column(p, b, "commit.collection", vec.KindString, &w.a); err != nil || ref == nil {
 			return err
 		}
@@ -404,6 +428,7 @@ func queryEventsWithUsers(snap *Snapshot, workers int, hashed bool) ([]eventCoun
 		held = append(held, mergers[i].arena)
 	}
 	recordMemory(ws, held...)
+	recordScan(stats, ws)
 
 	out := make([]eventCount, groups)
 	for g := range out {
@@ -441,7 +466,7 @@ var feedEvents = []string{"app.bsky.feed.like", "app.bsky.feed.post", "app.bsky.
 func queryEventsByHour(snap *Snapshot, workers int) ([]hourCount, error) {
 	ws := newBenchWorkers(workers)
 	defer freeBenchWorkers(ws)
-	_, err := snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
+	stats, err := snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
 		w := ws[n]
 		if ok, err := w.created(p, b); !ok || err != nil {
 			return err
@@ -449,6 +474,8 @@ func queryEventsByHour(snap *Snapshot, workers int) ([]hourCount, error) {
 		if w.idx = vec.MaskIndexes(w.idx[:0], w.mask); len(w.idx) == 0 {
 			return nil
 		}
+		w.blocks++
+		w.rows += int64(len(w.idx))
 		if ref, err := column(p, b, "commit.collection", vec.KindString, &w.a); err != nil || ref == nil {
 			return err
 		}
@@ -490,6 +517,7 @@ func queryEventsByHour(snap *Snapshot, workers int) ([]hourCount, error) {
 		return nil, err
 	}
 	recordMemory(ws)
+	recordScan(stats, ws)
 	var out []hourCount
 	for hour := 0; hour < 24; hour++ {
 		for slot, name := range feedEvents {
@@ -637,7 +665,7 @@ func queryPostTimes(snap *Snapshot, workers, limit int) (first, longest []userSp
 	for _, w := range ws {
 		w.log = vec.NewKeyPartitions(w.arena, partitionBits)
 	}
-	_, err = snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
+	stats, err := snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
 		w := ws[n]
 		if ok, err := w.created(p, b); !ok || err != nil {
 			return err
@@ -649,6 +677,8 @@ func queryPostTimes(snap *Snapshot, workers, limit int) (first, longest []userSp
 		if w.idx = vec.MaskIndexes(w.idx[:0], w.mask); len(w.idx) == 0 {
 			return nil
 		}
+		w.blocks++
+		w.rows += int64(len(w.idx))
 		if ref, err := column(p, b, "did", vec.KindString, &w.b); err != nil || ref == nil {
 			return err
 		}
@@ -723,6 +753,7 @@ func queryPostTimes(snap *Snapshot, workers, limit int) (first, longest []userSp
 		held[i] = mergers[i].arena
 	}
 	recordMemory(ws, held...)
+	recordScan(stats, ws)
 	all := spanMerger{first: topSpans{n: limit}, longest: topSpans{byLength: true, n: limit}}
 	for i := range mergers {
 		for _, e := range mergers[i].first.best {
@@ -982,6 +1013,8 @@ func TestJSONBench(t *testing.T) {
 			q.name, ms(all[0]), cores, ms(all[runs/2]), ms(all[runs-1]), ms(cpu[0]), held[0],
 			ms(one[0]), ms(one[runs/2]), ms(one[runs-1]), ms(cpu[1]), held[1],
 			after.Mallocs-before.Mallocs, float64(after.TotalAlloc-before.TotalAlloc)/1e6)
+		t.Logf("%-30s opens %d blocks, %d pass the filters with %d rows", q.name,
+			benchScan.opened.Load(), benchScan.blocks.Load(), benchScan.rows.Load())
 	}
 
 	if rows != 1_000_000 {

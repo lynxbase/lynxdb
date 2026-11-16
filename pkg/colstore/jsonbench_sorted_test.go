@@ -180,8 +180,10 @@ func TestJSONBenchOrdered(t *testing.T) {
 					}
 				}
 			}
-			t.Logf("%-14s %-6s %8.2f ms on %d cores, %8.2f ms on 1 core", label, q.name,
-				float64(best[0].Microseconds())/1e3, cores, float64(best[1].Microseconds())/1e3)
+			t.Logf("%-14s %-6s %8.2f ms on %d cores, %8.2f ms on 1 core; %d blocks opened, %d skipped by key, %d pass the filters with %d rows; holds %.1f MB",
+				label, q.name, float64(best[0].Microseconds())/1e3, cores, float64(best[1].Microseconds())/1e3,
+				benchScan.opened.Load(), benchScan.skippedByKey.Load(), benchScan.blocks.Load(), benchScan.rows.Load(),
+				float64(benchMemory.arenas.Load()+benchMemory.buffers.Load())/1e6)
 		}
 
 		return res
