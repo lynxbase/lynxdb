@@ -78,13 +78,20 @@ func (p *JSONParser) Process(events []*event.Event) ([]*event.Event, error) {
 }
 
 // KeyValueParser parses key=value pairs from event raw data.
+// JSON events are skipped and existing fields are never overwritten.
 type KeyValueParser struct{}
 
 func (p *KeyValueParser) Process(events []*event.Event) ([]*event.Event, error) {
 	for _, e := range events {
+		if isJSONObjectRaw(e) {
+			continue
+		}
 		pairs := parseKeyValuePairs(e.Raw)
 		for k, v := range pairs {
 			if setBuiltinTagField(e, k, v) {
+				continue
+			}
+			if _, exists := e.Fields[k]; exists {
 				continue
 			}
 			e.SetField(k, kvTypedValue(v))
@@ -92,6 +99,15 @@ func (p *KeyValueParser) Process(events []*event.Event) ([]*event.Event, error) 
 	}
 
 	return events, nil
+}
+
+// isJSONObjectRaw reports whether _raw is a JSON object that no parser rejected.
+func isJSONObjectRaw(e *event.Event) bool {
+	if e.ParseError {
+		return false
+	}
+
+	return strings.HasPrefix(strings.TrimLeft(e.Raw, " \t\r\n"), "{")
 }
 
 // kvTypedValue attempts to interpret a KV string value as a typed event.Value.
