@@ -70,6 +70,10 @@ func TestJSONBenchIngest(t *testing.T) {
 		snap.Release()
 	}
 
+	// With LYNXDB_BENCH_APPEND the streams share the store's buffers through
+	// Append, as request handlers of a server do; otherwise each stream has
+	// a writer of its own.
+	shared := os.Getenv("LYNXDB_BENCH_APPEND") != ""
 	megabytes := float64(len(data)) / 1e6
 	cpuStart, start := cpuTime(), time.Now()
 	var rejected atomic.Int64
@@ -78,15 +82,32 @@ func TestJSONBenchIngest(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			w := s.NewWriter()
+			var w *Writer
+			if !shared {
+				w = s.NewWriter()
+			}
 			for len(region) > 0 {
 				var request []byte
 				request, region = shred.SplitLines(region, requestDocs)
+				if shared {
+					n, err := s.Append(request)
+					if err != nil {
+						t.Error(err)
+
+						return
+					}
+					rejected.Add(n)
+
+					continue
+				}
 				if err := w.AddNDJSON(request); err != nil {
 					t.Error(err)
 
 					return
 				}
+			}
+			if shared {
+				return
 			}
 			if err := w.Close(); err != nil {
 				t.Error(err)
@@ -95,6 +116,11 @@ func TestJSONBenchIngest(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+	if shared {
+		if err := s.Sync(); err != nil {
+			t.Error(err)
+		}
+	}
 	if t.Failed() {
 		t.FailNow()
 	}
