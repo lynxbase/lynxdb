@@ -151,7 +151,7 @@ func TestDirRecoversFromInterruptedWrites(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	torn := appendRecord(nil, []string{unlisted.name}, nil)
+	torn := appendRecord(nil, []string{unlisted.name}, []PartMeta{{}}, nil)
 	if err := os.WriteFile(manifest, append(append([]byte(nil), whole...), torn[:len(torn)-3]...), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -270,4 +270,71 @@ func TestDirServesReadersDuringCommits(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
+}
+
+func TestDirKeepsRunAndTierOfParts(t *testing.T) {
+	defer func(n int) { manifestRewriteAfter = n }(manifestRewriteAfter)
+	manifestRewriteAfter = 3
+	path := filepath.Join(t.TempDir(), "table")
+	d, err := OpenDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alone := writePartFile(t, d, 0, 10, "a")
+	if alone.Meta.Run == 0 || alone.Meta.Tier != 0 {
+		t.Fatalf("a created part file has meta %+v", alone.Meta)
+	}
+	// Two parts of one merged run.
+	run := d.NewRun()
+	left, right := writePartFile(t, d, 10, 10, "b"), writePartFile(t, d, 20, 10, "c")
+	left.Meta, right.Meta = PartMeta{Run: run, Tier: 2}, PartMeta{Run: run, Tier: 2}
+	hs, err := d.Commit([]*PartFile{alone, left, right}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[PartMeta]int{alone.Meta: 1, {Run: run, Tier: 2}: 2}
+	check := func(d *Dir, when string) {
+		t.Helper()
+		snap := d.Table().Snapshot()
+		defer snap.Release()
+		got := map[PartMeta]int{}
+		for _, h := range snap.Parts() {
+			got[h.PartMeta]++
+		}
+		if len(got) != len(want) {
+			t.Fatalf("%s: runs %v, want %v", when, got, want)
+		}
+		for meta, n := range want {
+			if got[meta] != n {
+				t.Fatalf("%s: runs %v, want %v", when, got, want)
+			}
+		}
+	}
+	check(d, "after commit")
+	if hs[1].Run != run || hs[1].Tier != 2 {
+		t.Fatalf("handle meta %+v", hs[1].PartMeta)
+	}
+	// Enough further records to have the manifest rewritten.
+	for i := 0; i < 5; i++ {
+		pf := writePartFile(t, d, 1000, 1, "x")
+		added, err := d.Commit([]*PartFile{pf}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Commit(nil, added); err != nil {
+			t.Fatal(err)
+		}
+	}
+	check(d, "after a manifest rewrite")
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if d, err = OpenDir(path); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	check(d, "after reopen")
+	if next := d.NewRun(); next <= run {
+		t.Fatalf("run %d was handed out again after reopen as %d", run, next)
+	}
 }

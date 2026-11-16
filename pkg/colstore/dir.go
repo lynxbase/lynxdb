@@ -39,9 +39,10 @@ var ErrManifest = errors.New("colstore: manifest names a missing or damaged part
 // append-only log of part set changes, names the live files; a change is
 // visible to readers only after its record is on disk.
 type Dir struct {
-	path   string
-	table  *Table
-	nextID atomic.Uint64
+	path    string
+	table   *Table
+	nextID  atomic.Uint64
+	nextRun atomic.Uint64
 
 	mu      sync.Mutex
 	log     *os.File
@@ -53,7 +54,16 @@ type Dir struct {
 // longer names, whose file goes away with its last reader.
 type partFileRef struct {
 	name string
+	meta PartMeta
 	dead atomic.Bool
+}
+
+// PartMeta is what the manifest records about a part besides its name. Parts
+// that share a Run hold one sorted sequence of rows cut by key range; Tier
+// counts the merges that produced it.
+type PartMeta struct {
+	Run  uint64
+	Tier int
 }
 
 // OpenDir opens the table stored in path, creating the directory when it
@@ -63,6 +73,8 @@ func OpenDir(path string) (*Dir, error) {
 		return nil, err
 	}
 	d := &Dir{path: path, table: NewTable(), live: map[*Handle]*partFileRef{}}
+	// Run 0 is left to parts without a run.
+	d.nextRun.Store(1)
 	names, records, err := d.replay()
 	if err != nil {
 		return nil, err
@@ -89,8 +101,11 @@ func OpenDir(path string) (*Dir, error) {
 	}
 
 	handles := make([]*Handle, 0, len(names))
-	for name := range names {
-		h, err := d.open(name)
+	for name, meta := range names {
+		if meta.Run >= d.nextRun.Load() {
+			d.nextRun.Store(meta.Run + 1)
+		}
+		h, err := d.open(name, meta)
 		if err != nil {
 			for _, opened := range handles {
 				opened.release()
@@ -124,8 +139,8 @@ func partID(name string) (uint64, bool) {
 
 // replay returns the live part names the manifest describes and the number
 // of records it holds, cutting off a record torn by a crash.
-func (d *Dir) replay() (names map[string]struct{}, records int, err error) {
-	names = map[string]struct{}{}
+func (d *Dir) replay() (names map[string]PartMeta, records int, err error) {
+	names = map[string]PartMeta{}
 	file := filepath.Join(d.path, manifestName)
 	data, err := os.ReadFile(file)
 	if errors.Is(err, os.ErrNotExist) {
@@ -156,7 +171,9 @@ func (d *Dir) replay() (names map[string]struct{}, records int, err error) {
 	return names, records, nil
 }
 
-func applyRecord(names map[string]struct{}, payload []byte) bool {
+// A manifest record lists the parts a change adds, each with its run and
+// tier, and then the parts it removes.
+func applyRecord(names map[string]PartMeta, payload []byte) bool {
 	for pass := 0; pass < 2; pass++ {
 		n, used := binary.Uvarint(payload)
 		if used <= 0 {
@@ -170,26 +187,41 @@ func applyRecord(names map[string]struct{}, payload []byte) bool {
 			}
 			name := string(payload[used : used+int(size)])
 			payload = payload[used+int(size):]
-			if pass == 0 {
-				names[name] = struct{}{}
-			} else {
+			if pass == 1 {
 				delete(names, name)
+
+				continue
 			}
+			run, used := binary.Uvarint(payload)
+			if used <= 0 {
+				return false
+			}
+			tier, used2 := binary.Uvarint(payload[used:])
+			if used2 <= 0 {
+				return false
+			}
+			payload = payload[used+used2:]
+			names[name] = PartMeta{Run: run, Tier: int(tier)}
 		}
 	}
 
 	return len(payload) == 0
 }
 
-func appendRecord(dst []byte, add, remove []string) []byte {
+func appendRecord(dst []byte, add []string, meta []PartMeta, remove []string) []byte {
 	start := len(dst)
 	dst = append(dst, 0, 0, 0, 0, 0, 0, 0, 0)
-	for _, list := range [][]string{add, remove} {
-		dst = binary.AppendUvarint(dst, uint64(len(list)))
-		for _, name := range list {
-			dst = binary.AppendUvarint(dst, uint64(len(name)))
-			dst = append(dst, name...)
-		}
+	dst = binary.AppendUvarint(dst, uint64(len(add)))
+	for i, name := range add {
+		dst = binary.AppendUvarint(dst, uint64(len(name)))
+		dst = append(dst, name...)
+		dst = binary.AppendUvarint(dst, meta[i].Run)
+		dst = binary.AppendUvarint(dst, uint64(meta[i].Tier))
+	}
+	dst = binary.AppendUvarint(dst, uint64(len(remove)))
+	for _, name := range remove {
+		dst = binary.AppendUvarint(dst, uint64(len(name)))
+		dst = append(dst, name...)
 	}
 	payload := dst[start+8:]
 	binary.LittleEndian.PutUint32(dst[start:], uint32(len(payload)))
@@ -200,7 +232,7 @@ func appendRecord(dst []byte, add, remove []string) []byte {
 
 // open maps a part file and wraps it in a handle that unmaps it, and
 // deletes it once dead, when its last reader is gone.
-func (d *Dir) open(name string) (*Handle, error) {
+func (d *Dir) open(name string, meta PartMeta) (*Handle, error) {
 	file := filepath.Join(d.path, name)
 	f, err := os.Open(file)
 	if err != nil {
@@ -219,7 +251,7 @@ func (d *Dir) open(name string) (*Handle, error) {
 
 		return nil, err
 	}
-	ref := &partFileRef{name: name}
+	ref := &partFileRef{name: name, meta: meta}
 	h := NewHandle(p, func() {
 		_ = data.Unmap()
 		f.Close()
@@ -227,6 +259,7 @@ func (d *Dir) open(name string) (*Handle, error) {
 			os.Remove(file)
 		}
 	})
+	h.PartMeta = meta
 	d.mu.Lock()
 	d.live[h] = ref
 	d.mu.Unlock()
@@ -234,17 +267,24 @@ func (d *Dir) open(name string) (*Handle, error) {
 	return h, nil
 }
 
+// NewRun returns a run number no part of the table has.
+func (d *Dir) NewRun() uint64 { return d.nextRun.Add(1) - 1 }
+
 // Table returns the table of live parts.
 func (d *Dir) Table() *Table { return d.table }
 
-// PartFile is a part being written; it becomes visible through Commit.
+// PartFile is a part being written; it becomes visible through Commit, which
+// records Meta with it.
 type PartFile struct {
+	Meta PartMeta
+
 	f    *os.File
 	name string
 	tmp  string
 }
 
-// Create starts a part file. Any number of them can be written at once.
+// Create starts a part file that is a run of its own. Any number of them can
+// be written at once.
 func (d *Dir) Create() (*PartFile, error) {
 	name := fmt.Sprintf("%016x%s", d.nextID.Add(1)-1, partSuffix)
 	tmp := filepath.Join(d.path, name+tmpSuffix)
@@ -253,7 +293,7 @@ func (d *Dir) Create() (*PartFile, error) {
 		return nil, err
 	}
 
-	return &PartFile{f: f, name: name, tmp: tmp}, nil
+	return &PartFile{Meta: PartMeta{Run: d.NewRun()}, f: f, name: name, tmp: tmp}, nil
 }
 
 // Write appends part bytes to the file.
@@ -272,10 +312,11 @@ var _ io.Writer = (*PartFile)(nil)
 // or none of it. It returns the handles of the added parts.
 func (d *Dir) Commit(add []*PartFile, remove []*Handle) ([]*Handle, error) {
 	names := make([]string, len(add))
+	metas := make([]PartMeta, len(add))
 	sealed := make([]error, len(add))
 	var wg sync.WaitGroup
 	for i, pf := range add {
-		names[i] = pf.name
+		names[i], metas[i] = pf.name, pf.Meta
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -290,8 +331,8 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) ([]*Handle, error) {
 		return nil, err
 	}
 	handles := make([]*Handle, 0, len(add))
-	for _, name := range names {
-		h, err := d.open(name)
+	for i, name := range names {
+		h, err := d.open(name, metas[i])
 		if err != nil {
 			return nil, err
 		}
@@ -308,7 +349,7 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) ([]*Handle, error) {
 		}
 		gone = append(gone, ref.name)
 	}
-	if _, err := d.log.Write(appendRecord(nil, names, gone)); err != nil {
+	if _, err := d.log.Write(appendRecord(nil, names, metas, gone)); err != nil {
 		return nil, err
 	}
 	if err := d.log.Sync(); err != nil {
@@ -346,8 +387,10 @@ func (pf *PartFile) seal(name string) error {
 // rewrite replaces the manifest by one record listing the live parts.
 func (d *Dir) rewrite() error {
 	names := make([]string, 0, len(d.live))
+	metas := make([]PartMeta, 0, len(d.live))
 	for _, ref := range d.live {
 		names = append(names, ref.name)
+		metas = append(metas, ref.meta)
 	}
 	file := filepath.Join(d.path, manifestName)
 	tmp := file + tmpSuffix
@@ -355,7 +398,7 @@ func (d *Dir) rewrite() error {
 	if err != nil {
 		return err
 	}
-	if _, err = f.Write(appendRecord(nil, names, nil)); err == nil {
+	if _, err = f.Write(appendRecord(nil, names, metas, nil)); err == nil {
 		err = f.Sync()
 	}
 	if cerr := f.Close(); err == nil {

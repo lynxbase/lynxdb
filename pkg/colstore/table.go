@@ -13,6 +13,8 @@ import (
 // Handle is a part that belongs to a table.
 type Handle struct {
 	*part.Part
+	// PartMeta is zero for a part that no directory manages.
+	PartMeta
 
 	refs    atomic.Int64
 	release func()
