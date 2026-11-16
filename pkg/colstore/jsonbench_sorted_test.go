@@ -150,15 +150,22 @@ func TestJSONBenchOrdered(t *testing.T) {
 	run := func(tbl *Table, label string) result {
 		snap := tbl.Snapshot()
 		defer snap.Release()
+		// The queries' own filters, stated as sort key prefixes so that
+		// ordered parts skip the blocks outside them.
+		paths := []string{"kind", "commit.operation", "commit.collection"}
+		created := snap.Narrow(KeyFilter{Paths: paths[:2], Values: [][]byte{[]byte("commit"), []byte("create")}})
+		defer created.Release()
+		posts := snap.Narrow(KeyFilter{Paths: paths, Values: [][]byte{[]byte("commit"), []byte("create"), []byte("app.bsky.feed.post")}})
+		defer posts.Release()
 		var res result
 		queries := []struct {
 			name string
 			run  func(workers int) error
 		}{
 			{"Q1", func(n int) (err error) { res.q1, err = queryTopEvents(snap, n); return }},
-			{"Q2", func(n int) (err error) { res.q2, err = queryEventsWithUsers(snap, n); return }},
-			{"Q3", func(n int) (err error) { res.q3, err = queryEventsByHour(snap, n); return }},
-			{"Q4/Q5", func(n int) (err error) { res.spans, err = queryPostTimes(snap, n); return }},
+			{"Q2", func(n int) (err error) { res.q2, err = queryEventsWithUsers(created, n); return }},
+			{"Q3", func(n int) (err error) { res.q3, err = queryEventsByHour(created, n); return }},
+			{"Q4/Q5", func(n int) (err error) { res.spans, err = queryPostTimes(posts, n); return }},
 		}
 		for _, q := range queries {
 			var best [2]time.Duration
