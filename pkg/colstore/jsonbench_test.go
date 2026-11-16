@@ -30,6 +30,11 @@ import (
 // for one partition's table to stay in a core's cache.
 const partitionBits = 8
 
+// recentBits sizes the window a scan worker uses to drop repeated keys before
+// they reach its log; 1<<recentBits values of 16 bytes stay in the core's
+// cache.
+const recentBits = 15
+
 // sharedGroups gives every scan worker the same id for a group key, so the
 // ids can be part of the keys that workers hand to the merge.
 type sharedGroups struct {
@@ -65,8 +70,10 @@ type benchWorker struct {
 	global []uint32
 	// blocks and rows count what passed the query's filters.
 	blocks, rows int64
-	// log holds one record per selected row for the merge to aggregate.
-	log *vec.KeyPartitions
+	// log holds one record per selected row for the merge to aggregate, and
+	// recent the keys that went into it last.
+	log    *vec.KeyPartitions
+	recent *vec.RecentHashes
 
 	a, b, c, tmp vec.Column
 	mask, mask2  []uint8
@@ -331,6 +338,9 @@ func queryEventsWithUsers(snap *Snapshot, workers int, hashed bool) ([]eventCoun
 	for _, w := range ws {
 		w.shared = shared
 		w.log = vec.NewKeyPartitions(w.arena, partitionBits)
+		if hashed {
+			w.recent = vec.NewRecentHashes(w.arena, recentBits)
+		}
 	}
 	stats, err := snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
 		w := ws[n]
@@ -367,8 +377,14 @@ func queryEventsWithUsers(snap *Snapshot, workers int, hashed bool) ([]eventCoun
 			}
 			lastGroup, lastDID = g, did
 			if hashed {
-				// The record is the high hash word and the group.
+				// Mixing the group into one word keeps equal dids of
+				// different groups apart without widening the value.
 				lo, hi := vec.Hash128(did)
+				lo ^= vec.Mix64(uint64(w.global[g]) + 1)
+				if w.recent.Seen(lo, hi) {
+					continue
+				}
+				// The record is the high hash word and the group.
 				w.key = binary.LittleEndian.AppendUint32(binary.LittleEndian.AppendUint64(w.key[:0], hi), w.global[g])
 				w.log.Add(lo, w.key)
 
@@ -402,11 +418,8 @@ func queryEventsWithUsers(snap *Snapshot, workers int, hashed bool) ([]eventCoun
 			m.set.Clear()
 			for _, w := range ws {
 				w.log.Each(partition, func(lo uint64, rec []byte) {
-					g := binary.LittleEndian.Uint32(rec[8:])
-					// Mixing the group into one word keeps equal dids of
-					// different groups apart without widening the value.
-					if m.set.Add(lo^vec.Mix64(uint64(g)+1), binary.LittleEndian.Uint64(rec)) {
-						m.users[g]++
+					if m.set.Add(lo, binary.LittleEndian.Uint64(rec)) {
+						m.users[binary.LittleEndian.Uint32(rec[8:])]++
 					}
 				})
 			}
