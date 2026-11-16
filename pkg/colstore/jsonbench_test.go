@@ -84,6 +84,26 @@ func newBenchWorkers(n int) []*benchWorker {
 	return ws
 }
 
+// benchMemory is what the structures of the latest query held at their
+// largest: the bytes its arenas handed out and its decode buffers.
+var benchMemory struct{ arenas, buffers atomic.Int64 }
+
+// recordMemory stores in benchMemory what the workers and the other arenas
+// of a query hold, and is called when nothing has been released yet.
+func recordMemory(ws []*benchWorker, others ...*mem.Arena) {
+	var arenas, buffers int
+	for _, w := range ws {
+		arenas += w.arena.Size()
+		buffers += w.a.Retained() + w.b.Retained() + w.c.Retained() + w.tmp.Retained() +
+			cap(w.mask) + cap(w.mask2) + 4*cap(w.idx) + 4*cap(w.codeGroup) + cap(w.key)
+	}
+	for _, a := range others {
+		arenas += a.Size()
+	}
+	benchMemory.arenas.Store(int64(arenas))
+	benchMemory.buffers.Store(int64(buffers))
+}
+
 func freeBenchWorkers(ws []*benchWorker) {
 	for _, w := range ws {
 		w.arena.Free()
@@ -238,6 +258,7 @@ func queryTopEvents(snap *Snapshot, workers int) ([]eventCount, error) {
 	if nulls > 0 {
 		merged[""] = &eventCount{count: nulls}
 	}
+	recordMemory(ws)
 
 	return sortedCounts(merged), nil
 }
@@ -378,6 +399,12 @@ func queryEventsWithUsers(snap *Snapshot, workers int, hashed bool) ([]eventCoun
 		}
 	})
 
+	held := []*mem.Arena{shared.arena}
+	for i := range mergers {
+		held = append(held, mergers[i].arena)
+	}
+	recordMemory(ws, held...)
+
 	out := make([]eventCount, groups)
 	for g := range out {
 		out[g].event = string(shared.table.Key(g))
@@ -462,6 +489,7 @@ func queryEventsByHour(snap *Snapshot, workers int) ([]hourCount, error) {
 	if err != nil {
 		return nil, err
 	}
+	recordMemory(ws)
 	var out []hourCount
 	for hour := 0; hour < 24; hour++ {
 		for slot, name := range feedEvents {
@@ -690,6 +718,11 @@ func queryPostTimes(snap *Snapshot, workers, limit int) (first, longest []userSp
 			m.longest.offer(e)
 		}
 	})
+	held := make([]*mem.Arena, len(mergers))
+	for i := range mergers {
+		held[i] = mergers[i].arena
+	}
+	recordMemory(ws, held...)
 	all := spanMerger{first: topSpans{n: limit}, longest: topSpans{byLength: true, n: limit}}
 	for i := range mergers {
 		for _, e := range mergers[i].first.best {
@@ -907,6 +940,7 @@ func TestJSONBench(t *testing.T) {
 		ran[id] = true
 		var took [2][]time.Duration
 		var cpu [2]time.Duration
+		var held [2]float64
 		for i, workers := range []int{cores, 1} {
 			profile := ""
 			if profileDir != "" {
@@ -916,6 +950,7 @@ func TestJSONBench(t *testing.T) {
 			if err != nil {
 				t.Fatalf("%s: %v", q.name, err)
 			}
+			held[i] = float64(benchMemory.arenas.Load()+benchMemory.buffers.Load()) / 1e6
 		}
 		var before, after runtime.MemStats
 		runtime.ReadMemStats(&before)
@@ -924,9 +959,9 @@ func TestJSONBench(t *testing.T) {
 		}
 		runtime.ReadMemStats(&after)
 		all, one := took[0], took[1]
-		t.Logf("%-30s %7.2f ms on %d cores (median %.2f, max %.2f, cpu %.1f), %7.2f ms on 1 core (median %.2f, max %.2f, cpu %.1f), %d heap allocations (%.1f MB)",
-			q.name, ms(all[0]), cores, ms(all[runs/2]), ms(all[runs-1]), ms(cpu[0]),
-			ms(one[0]), ms(one[runs/2]), ms(one[runs-1]), ms(cpu[1]),
+		t.Logf("%-30s %7.2f ms on %d cores (median %.2f, max %.2f, cpu %.1f, holds %.1f MB), %7.2f ms on 1 core (median %.2f, max %.2f, cpu %.1f, holds %.1f MB), %d heap allocations (%.1f MB)",
+			q.name, ms(all[0]), cores, ms(all[runs/2]), ms(all[runs-1]), ms(cpu[0]), held[0],
+			ms(one[0]), ms(one[runs/2]), ms(one[runs-1]), ms(cpu[1]), held[1],
 			after.Mallocs-before.Mallocs, float64(after.TotalAlloc-before.TotalAlloc)/1e6)
 	}
 
