@@ -31,9 +31,10 @@ import (
 const partitionBits = 8
 
 // recentBits sizes the window a scan worker uses to drop repeated keys before
-// they reach its log; 1<<recentBits values of 16 bytes stay in the core's
-// cache. LYNXDB_BENCH_RECENT_BITS overrides it, and 0 turns the window off.
-var recentBits = 15
+// they reach its log, 1<<recentBits values of 16 bytes; LYNXDB_BENCH_RECENT_BITS
+// sets it. The window is off by default: it halves the log of a single
+// worker, but with a worker per core it saves little and costs cache.
+var recentBits = 0
 
 // sharedGroups gives every scan worker the same id for a group key, so the
 // ids can be part of the keys that workers hand to the merge.
