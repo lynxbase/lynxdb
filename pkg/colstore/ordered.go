@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
+	"github.com/lynxbase/lynxdb/pkg/mem"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
@@ -183,7 +184,12 @@ type RangeScan struct {
 	open map[blockID]*SharedBlock
 	free []*SharedBlock
 	all  []*SharedBlock
+	// retained is the size of the decode buffers when Run ended.
+	retained int
 }
+
+// sharedBlockPool keeps the decode buffers of range scans across scans.
+var sharedBlockPool mem.Pool[SharedBlock]
 
 var errBlockNotDecoded = errors.New("colstore: block was not decoded")
 
@@ -197,7 +203,10 @@ func (s *RangeScan) acquire(id blockID, b *part.Block) (*SharedBlock, error) {
 		if n := len(s.free); n > 0 {
 			sb, s.free = s.free[n-1], s.free[:n-1]
 		} else {
-			sb = &SharedBlock{columns: make([]vec.Column, len(s.columns)), present: make([]bool, len(s.columns))}
+			sb = sharedBlockPool.Get()
+			for len(sb.columns) < len(s.columns) {
+				sb.columns, sb.present = append(sb.columns, vec.Column{}), append(sb.present, false)
+			}
 			s.all = append(s.all, sb)
 		}
 		// Waiting readers see this error when the decode panics.
@@ -255,24 +264,26 @@ func (s *RangeScan) release(id blockID, sb *SharedBlock) {
 	s.mu.Unlock()
 }
 
-// Retained returns the bytes of the decode buffers the scan holds.
-func (s *RangeScan) Retained() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	n := 0
-	for _, sb := range s.all {
-		n += sb.Keys.Retained()
-		for i := range sb.columns {
-			n += sb.columns[i].Retained()
-		}
-	}
+// Retained returns the bytes of the decode buffers the scan held when Run
+// ended.
+func (s *RangeScan) Retained() int { return s.retained }
 
-	return n
+// recycle hands the decode buffers to later scans.
+func (s *RangeScan) recycle() {
+	for _, sb := range s.all {
+		s.retained += sb.Keys.Retained()
+		for i := range sb.columns {
+			s.retained += sb.columns[i].Retained()
+		}
+		sharedBlockPool.Put(sb)
+	}
+	s.all, s.free = nil, nil
 }
 
-// Run calls fn for every range from up to workers goroutines, zero meaning
-// one per CPU, each with a block buffer of its own; a panic or memory fault
-// in a worker fails the scan instead of the process.
+// Run calls fn once for every range from up to workers goroutines, zero
+// meaning one per CPU, each with a block buffer of its own; a panic or memory
+// fault in a worker fails the scan instead of the process. Blocks handed to
+// readers are invalid once Run returns.
 func (s *RangeScan) Run(ctx context.Context, workers int, fn func(worker int, r *KeyRange, b *part.Block) error) error {
 	if workers <= 0 {
 		workers = runtime.GOMAXPROCS(0)
@@ -310,6 +321,7 @@ func (s *RangeScan) Run(ctx context.Context, workers int, fn func(worker int, r 
 		}(w)
 	}
 	wg.Wait()
+	s.recycle()
 
 	return context.Cause(ctx)
 }
