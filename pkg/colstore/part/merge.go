@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math/bits"
 	"slices"
+	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -20,13 +21,19 @@ const defaultBlockRows = 16384
 // Merge appends every row of srcs to w in the order of w's sort key, then
 // timestamp, then source position, cutting blocks of blockRows rows.
 func Merge(w *Writer, srcs []*Part, blockRows int) error {
+	return MergeRange(w, srcs, blockRows, nil, nil)
+}
+
+// MergeRange is Merge restricted to the rows whose encoded sort key is at
+// least lo and below hi; a nil bound is open.
+func MergeRange(w *Writer, srcs []*Part, blockRows int, lo, hi []byte) error {
 	if blockRows <= 0 || blockRows > shred.MaxRows {
 		blockRows = defaultBlockRows
 	}
 	if !w.opts.Ordered {
 		return ErrSortKey
 	}
-	m := merger{keys: w.opts.SortKey}
+	m := merger{keys: w.opts.SortKey, lo: lo, hi: hi}
 	var size uint64
 	for i, p := range srcs {
 		if !p.Ordered() || !slices.Equal(p.SortKey(), m.keys) {
@@ -41,7 +48,12 @@ func Merge(w *Writer, srcs []*Part, blockRows int) error {
 			}
 			c.keyIDs = append(c.keyIDs, id)
 		}
-		ok, err := c.load()
+		if lo != nil {
+			// The block before the first one starting at or after lo can
+			// end with rows of the range.
+			c.next = max(0, sort.Search(len(p.firstKeys), func(b int) bool { return bytes.Compare(p.firstKeys[b], lo) >= 0 })-1)
+		}
+		ok, err := c.load(&m)
 		if err != nil {
 			return err
 		}
@@ -57,7 +69,7 @@ func Merge(w *Writer, srcs []*Part, blockRows int) error {
 	defer shred.Put(out)
 	for len(m.heap) > 0 {
 		c := m.heap[0]
-		n := min(c.blk.Rows-c.pos, blockRows-out.Rows)
+		n := min(c.end-c.pos, blockRows-out.Rows)
 		if len(m.heap) > 1 {
 			// The smallest of the other cursors is a child of the root.
 			other := m.heap[1]
@@ -79,8 +91,8 @@ func Merge(w *Writer, srcs []*Part, blockRows int) error {
 			}
 			out.Reset()
 		}
-		if c.pos == c.blk.Rows {
-			ok, err := c.load()
+		if c.pos == c.end {
+			ok, err := c.load(&m)
 			if err != nil {
 				return err
 			}
@@ -100,10 +112,12 @@ func Merge(w *Writer, srcs []*Part, blockRows int) error {
 const kindSlots = 8
 
 type merger struct {
-	keys  []string
-	heap  []*mergeCursor
-	times []int64
-	valid []uint32
+	keys   []string
+	lo, hi []byte
+	heap   []*mergeCursor
+	times  []int64
+	valid  []uint32
+	keyBuf []byte
 }
 
 // mergeCursor walks the rows of one source in order.
@@ -115,22 +129,58 @@ type mergeCursor struct {
 	cols   []vec.Column
 	time   *vec.Column
 	pos    int
+	end    int // rows of the block inside the merged range
+	seeked bool
 	keyIDs []uint32
 	// keyCols lists, for each key path, the block's columns holding it.
 	keyCols [][]int
 	out     []*shred.Column
 }
 
-// load decodes the next block and reports whether there was one.
-func (c *mergeCursor) load() (bool, error) {
-	if c.next >= c.part.NumBlocks() {
-		return false, nil
+// load decodes the next block that has rows inside the merged range and
+// reports whether there was one.
+func (c *mergeCursor) load(m *merger) (bool, error) {
+	for {
+		if c.next >= c.part.NumBlocks() ||
+			(m.hi != nil && bytes.Compare(c.part.firstKeys[c.next], m.hi) >= 0) {
+			return false, nil
+		}
+		if err := c.decode(); err != nil {
+			return false, err
+		}
+		c.pos, c.end = 0, c.blk.Rows
+		if m.lo != nil && !c.seeked {
+			c.pos = c.search(m, m.lo)
+		}
+		if m.hi != nil {
+			c.end = c.search(m, m.hi)
+		}
+		c.seeked = true
+		if c.pos < c.end {
+			return true, nil
+		}
 	}
+}
+
+// search returns the first row of the block whose sort key is not below
+// bound.
+func (c *mergeCursor) search(m *merger, bound []byte) int {
+	return sort.Search(c.blk.Rows, func(row int) bool {
+		m.keyBuf = m.keyBuf[:0]
+		for k := range c.keyIDs {
+			m.keyBuf = appendDecodedKey(m.keyBuf, c.key(k, row), row)
+		}
+
+		return bytes.Compare(m.keyBuf, bound) >= 0
+	})
+}
+
+// decode reads every column of the next block.
+func (c *mergeCursor) decode() error {
 	if err := c.part.OpenBlock(c.next, &c.blk); err != nil {
-		return false, err
+		return err
 	}
 	c.next++
-	c.pos = 0
 	refs := c.blk.Columns()
 	for len(c.cols) < len(refs) {
 		c.cols = append(c.cols, vec.Column{})
@@ -144,7 +194,7 @@ func (c *mergeCursor) load() (bool, error) {
 	c.time = nil
 	for j := range refs {
 		if err := c.blk.Decode(&refs[j], &c.cols[j]); err != nil {
-			return false, err
+			return err
 		}
 		if refs[j].PathID == 0 && refs[j].Kind == vec.KindInt {
 			c.time = &c.cols[j]
@@ -156,10 +206,10 @@ func (c *mergeCursor) load() (bool, error) {
 		}
 	}
 	if c.time == nil {
-		return false, ErrCorrupt
+		return ErrCorrupt
 	}
 
-	return true, nil
+	return nil
 }
 
 // key returns the column holding key k at row, or nil when the row has no

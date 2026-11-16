@@ -211,3 +211,108 @@ func TestMergeRejectsDifferentlyOrderedSources(t *testing.T) {
 		t.Errorf("unordered destination: %v", err)
 	}
 }
+
+func mergeRange(t testing.TB, srcs []*Part, blockRows int, lo, hi []byte) *Part {
+	t.Helper()
+	var buf bytes.Buffer
+	w := NewWriter(&buf, Options{Ordered: true, SortKey: mergeKey})
+	if err := MergeRange(w, srcs, blockRows, lo, hi); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Open(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return p
+}
+
+func TestMergeRangesCutOneOrderedRunIntoDisjointParts(t *testing.T) {
+	r := rand.New(rand.NewSource(17))
+	services := []string{"api", "billing", "cache", "db", "edge", "front", "gateway", "ingest"}
+	var srcs []*Part
+	for src := 0; src < 4; src++ {
+		var docs []string
+		var times []int64
+		for seq := 0; seq < 4000; seq++ {
+			doc := fmt.Sprintf(`{"src":%d,"seq":%d`, src, seq)
+			if r.Intn(12) != 0 {
+				doc += fmt.Sprintf(`,"svc":"%s"`, services[r.Intn(len(services))])
+			}
+			if r.Intn(6) != 0 {
+				doc += fmt.Sprintf(`,"level":%d`, r.Intn(40))
+			}
+			docs = append(docs, doc+"}")
+			times = append(times, int64(r.Intn(100)))
+		}
+		// Sources with several blocks, as runs cut from a large sorted batch.
+		srcs = append(srcs, mergeParts(t, []*Part{orderedPart(t, docs, times)}, 256))
+	}
+	whole := decodeRows(t, mergeParts(t, srcs, 512))
+
+	for _, n := range []int{1, 2, 5, 16} {
+		cuts := SplitKeys(srcs, n)
+		if len(cuts) > n-1 {
+			t.Fatalf("SplitKeys(%d) returned %d keys", n, len(cuts))
+		}
+		for i := 1; i < len(cuts); i++ {
+			if bytes.Compare(cuts[i-1], cuts[i]) >= 0 {
+				t.Fatalf("SplitKeys(%d) is not ascending", n)
+			}
+		}
+		var joined []mergedRow
+		sizes := make([]int, 0, len(cuts)+1)
+		for i := 0; i <= len(cuts); i++ {
+			var lo, hi []byte
+			if i > 0 {
+				lo = cuts[i-1]
+			}
+			if i < len(cuts) {
+				hi = cuts[i]
+			}
+			rows := decodeRows(t, mergeRange(t, srcs, 512, lo, hi))
+			sizes = append(sizes, len(rows))
+			joined = append(joined, rows...)
+		}
+		if len(joined) != len(whole) {
+			t.Fatalf("%d ranges hold %d rows, the whole merge %d", n, len(joined), len(whole))
+		}
+		for i := range whole {
+			if joined[i].text != whole[i].text || joined[i].time != whole[i].time {
+				t.Fatalf("%d ranges: row %d differs from the whole merge:\n%s\n%s", n, i, joined[i].text, whole[i].text)
+			}
+		}
+		if n == 16 {
+			for i, size := range sizes {
+				if size > 3*len(whole)/len(sizes) {
+					t.Errorf("range %d of %d holds %d of %d rows", i, len(sizes), size, len(whole))
+				}
+			}
+		}
+	}
+
+	// Explicit bounds: every row of one service and nothing else.
+	lo := AppendKeyString(nil, []byte("cache"))
+	hi := AppendKeyString(nil, []byte("cachf"))
+	got := decodeRows(t, mergeRange(t, srcs, 512, lo, hi))
+	want := 0
+	for _, row := range whole {
+		if row.Svc != nil && *row.Svc == "cache" {
+			want++
+		}
+	}
+	if len(got) != want || want == 0 {
+		t.Fatalf("range of one service: %d rows, want %d", len(got), want)
+	}
+	for _, row := range got {
+		if row.Svc == nil || *row.Svc != "cache" {
+			t.Fatalf("range of one service holds %s", row.text)
+		}
+	}
+	if rows := decodeRows(t, mergeRange(t, srcs, 512, hi, lo)); len(rows) != 0 {
+		t.Fatalf("an empty range produced %d rows", len(rows))
+	}
+}
