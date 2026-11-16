@@ -2,8 +2,10 @@ package colstore
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"reflect"
 	"runtime"
 	"strconv"
@@ -59,11 +61,18 @@ func TestJSONBenchOrdered(t *testing.T) {
 		key = strings.Split(s, ",")
 	}
 	cores := runtime.GOMAXPROCS(0)
+	// The arrival-ordered table doubles the memory the test needs.
+	orderedOnly := os.Getenv("LYNXDB_BENCH_ORDERED_ONLY") != ""
+	profileDir := os.Getenv("LYNXDB_BENCH_PROFILE")
 
+	var plain *Table
+	var plainSize int64
 	start := time.Now()
-	plain, plainSize, _ := loadNDJSON(t, data, cores, 16384, part.Options{})
+	if !orderedOnly {
+		plain, plainSize, _ = loadNDJSON(t, data, cores, 16384, part.Options{})
+		defer plain.Close()
+	}
 	plainLoad := time.Since(start)
-	defer plain.Close()
 	parts := cores
 	if s := os.Getenv("LYNXDB_BENCH_PARTS"); s != "" {
 		if parts, err = strconv.Atoi(s); err != nil || parts < 1 {
@@ -94,35 +103,43 @@ func TestJSONBenchOrdered(t *testing.T) {
 		defer posts.Release()
 		var res result
 		queries := []struct {
-			name string
-			run  func(workers int) error
+			id, name string
+			run      func(workers int) error
 		}{
-			{"Q1", func(n int) (err error) { res.q1, err = queryTopEvents(snap, n); return }},
-			{"Q2", func(n int) (err error) { res.q2, err = queryEventsWithUsers(created, n, false); return }},
-			{"Q2 hash", func(n int) (err error) { res.q2h, err = queryEventsWithUsers(created, n, true); return }},
-			{"Q3", func(n int) (err error) { res.q3, err = queryEventsByHour(created, n); return }},
-			{"Q4/Q5", func(n int) (err error) { res.first, res.longest, err = queryPostTimes(posts, n, 3); return }},
+			{"q1", "Q1", func(n int) (err error) { res.q1, err = queryTopEvents(snap, n); return }},
+			{"q2", "Q2", func(n int) (err error) { res.q2, err = queryEventsWithUsers(created, n, false); return }},
+			{"q2h", "Q2 hash", func(n int) (err error) { res.q2h, err = queryEventsWithUsers(created, n, true); return }},
+			{"q3", "Q3", func(n int) (err error) { res.q3, err = queryEventsByHour(created, n); return }},
+			{"q4", "Q4/Q5", func(n int) (err error) { res.first, res.longest, err = queryPostTimes(posts, n, 3); return }},
 		}
 		for _, q := range queries {
-			var best [2]time.Duration
+			var took [2][]time.Duration
+			var cpu [2]time.Duration
+			var held [2]float64
 			for i, workers := range []int{cores, 1} {
-				for r := 0; r < 7; r++ {
-					begin := time.Now()
-					if err := q.run(workers); err != nil {
-						t.Fatalf("%s: %v", q.name, err)
-					}
-					if took := time.Since(begin); r == 0 || took < best[i] {
-						best[i] = took
-					}
+				profile := ""
+				if profileDir != "" {
+					profile = filepath.Join(profileDir, fmt.Sprintf("%s_%s_%dw.prof", strings.Fields(label)[0], q.id, workers))
 				}
+				var err error
+				took[i], cpu[i], err = timeRuns(7, profile, func() error { return q.run(workers) })
+				if err != nil {
+					t.Fatalf("%s: %v", q.name, err)
+				}
+				held[i] = float64(benchMemory.arenas.Load()+benchMemory.buffers.Load()) / 1e6
 			}
-			t.Logf("%-14s %-6s %8.2f ms on %d cores, %8.2f ms on 1 core; %d blocks opened, %d skipped by key, %d pass the filters with %d rows; holds %.1f MB",
-				label, q.name, float64(best[0].Microseconds())/1e3, cores, float64(best[1].Microseconds())/1e3,
-				benchScan.opened.Load(), benchScan.skippedByKey.Load(), benchScan.blocks.Load(), benchScan.rows.Load(),
-				float64(benchMemory.arenas.Load()+benchMemory.buffers.Load())/1e6)
+			all, one := took[0], took[1]
+			t.Logf("%-14s %-8s %8.2f ms on %d cores (median %.2f, cpu %.1f, holds %.1f MB), %8.2f ms on 1 core (median %.2f, cpu %.1f, holds %.1f MB); %d blocks opened, %d skipped by key, %d pass the filters with %d rows",
+				label, q.name, ms(all[0]), cores, ms(all[3]), ms(cpu[0]), held[0], ms(one[0]), ms(one[3]), ms(cpu[1]), held[1],
+				benchScan.opened.Load(), benchScan.skippedByKey.Load(), benchScan.blocks.Load(), benchScan.rows.Load())
 		}
 
 		return res
+	}
+	if orderedOnly {
+		run(ordered, "ordered")
+
+		return
 	}
 	want := run(plain, "arrival order")
 	got := run(ordered, "ordered")

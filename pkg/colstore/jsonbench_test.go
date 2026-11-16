@@ -32,8 +32,8 @@ const partitionBits = 8
 
 // recentBits sizes the window a scan worker uses to drop repeated keys before
 // they reach its log; 1<<recentBits values of 16 bytes stay in the core's
-// cache.
-const recentBits = 15
+// cache. LYNXDB_BENCH_RECENT_BITS overrides it, and 0 turns the window off.
+var recentBits = 15
 
 // sharedGroups gives every scan worker the same id for a group key, so the
 // ids can be part of the keys that workers hand to the merge.
@@ -338,7 +338,7 @@ func queryEventsWithUsers(snap *Snapshot, workers int, hashed bool) ([]eventCoun
 	for _, w := range ws {
 		w.shared = shared
 		w.log = vec.NewKeyPartitions(w.arena, partitionBits)
-		if hashed {
+		if hashed && recentBits > 0 {
 			w.recent = vec.NewRecentHashes(w.arena, recentBits)
 		}
 	}
@@ -381,7 +381,7 @@ func queryEventsWithUsers(snap *Snapshot, workers int, hashed bool) ([]eventCoun
 				// different groups apart without widening the value.
 				lo, hi := vec.Hash128(did)
 				lo ^= vec.Mix64(uint64(w.global[g]) + 1)
-				if w.recent.Seen(lo, hi) {
+				if w.recent != nil && w.recent.Seen(lo, hi) {
 					continue
 				}
 				// The record is the high hash word and the group.
@@ -940,6 +940,13 @@ func TestJSONBench(t *testing.T) {
 	blockRows := envInt(t, "LYNXDB_BENCH_BLOCK_ROWS", 16384)
 	only := os.Getenv("LYNXDB_BENCH_QUERY")
 	profileDir := os.Getenv("LYNXDB_BENCH_PROFILE")
+	if v := os.Getenv("LYNXDB_BENCH_RECENT_BITS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 || n > 24 {
+			t.Fatalf("LYNXDB_BENCH_RECENT_BITS=%q is not between 0 and 24", v)
+		}
+		recentBits = n
+	}
 	var opts part.Options
 	switch v := os.Getenv("LYNXDB_BENCH_CODEC"); v {
 	case "", "zstd":
