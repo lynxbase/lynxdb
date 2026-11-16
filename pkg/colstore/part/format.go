@@ -10,15 +10,18 @@ import "hash/crc32"
 //	trailer  footer offset, footer length, footer checksum, version, magic
 const (
 	fileMagic     = 0x5450584c // "LXPT"
-	formatVersion = 1
+	formatVersion = 2
 
 	headerSize  = 8
 	trailerSize = 28
 	// rows, min time, max time, block offset, block length, filter offset,
-	// filter length, directory offset, directory length, the checksum of
-	// the directory and the checksum of the filter; column chunks carry
-	// their own checksums.
-	indexEntrySize = 56
+	// filter length, directory offset, directory length and the checksum of
+	// the directory; column chunks and filter pages carry their own
+	// checksums.
+	indexEntrySize = 52
+	// A filter is followed by one checksum per filterPage of its bytes, so
+	// a probe verifies the page it reads and not the whole filter.
+	filterPage = 4096
 	// path id, kind, encoding, flags, a zero byte, value count, chunk
 	// offset, chunk length, chunk checksum, and the offset of the entry's
 	// statistics and constant value among those that follow the entries.

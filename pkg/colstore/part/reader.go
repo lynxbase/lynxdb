@@ -181,10 +181,8 @@ type Block struct {
 	part   *Part
 	data   []byte
 	chunks uint32 // size of the column chunks at the start of data
+	// filter is the token filter followed by its page checksums.
 	filter []byte
-	// The filter is checked against filterCRC when a token is first probed.
-	filterCRC     uint32
-	filterChecked bool
 	// dir holds one entry per column, ordered by path id and kind, and stats
 	// the statistics and constant values the entries point to.
 	dir   []byte
@@ -206,7 +204,6 @@ func (p *Part) OpenBlock(i int, b *Block) error {
 	filterOff, dirOff := binary.LittleEndian.Uint32(e[32:]), binary.LittleEndian.Uint32(e[40:])
 	b.chunks = filterOff
 	b.filter = b.data[filterOff:dirOff]
-	b.filterCRC, b.filterChecked = binary.LittleEndian.Uint32(e[52:]), false
 	dir := b.data[dirOff:]
 	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
 		return ErrCorrupt
@@ -326,14 +323,36 @@ func (b *Block) Column(pathID uint32, kind vec.Kind) (*ColumnRef, bool) {
 // token with this hash, which is always true for a block written without a
 // filter, and fails when the filter is damaged.
 func (b *Block) MayContainToken(hash uint64) (bool, error) {
-	if !b.filterChecked {
-		if crc32.Checksum(b.filter, castagnoli) != b.filterCRC {
-			return false, ErrCorrupt
-		}
-		b.filterChecked = true
+	return filterMayContain(b.filter, hash)
+}
+
+// MayContainToken is Block.MayContainToken for block i, without opening it.
+func (p *Part) MayContainToken(i int, hash uint64) (bool, error) {
+	e := p.index[i*indexEntrySize:]
+	start := binary.LittleEndian.Uint64(e[20:]) + uint64(binary.LittleEndian.Uint32(e[32:]))
+
+	return filterMayContain(p.data[start:start+uint64(binary.LittleEndian.Uint32(e[36:]))], hash)
+}
+
+// filterMayContain probes a filter stored with its page checksums, verifying
+// the one page the probe reads.
+func filterMayContain(region []byte, hash uint64) (bool, error) {
+	if len(region) == 0 {
+		return true, nil
+	}
+	pages := (len(region) + filterPage + 3) / (filterPage + 4)
+	size := len(region) - 4*pages
+	if size <= 0 || (size+filterPage-1)/filterPage != pages {
+		return false, ErrCorrupt
+	}
+	filter, sums := region[:size], region[size:]
+	page := tokenfilter.ProbeOffset(size, hash) / filterPage
+	read := filter[page*filterPage : min((page+1)*filterPage, size)]
+	if crc32.Checksum(read, castagnoli) != binary.LittleEndian.Uint32(sums[4*page:]) {
+		return false, ErrCorrupt
 	}
 
-	return tokenfilter.MayContain(b.filter, hash), nil
+	return tokenfilter.MayContain(filter, hash), nil
 }
 
 func grow[T any](s []T, n int) []T {

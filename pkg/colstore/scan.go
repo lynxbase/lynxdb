@@ -146,12 +146,7 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 					return
 				}
 				u := units[i]
-				if err := u.p.OpenBlock(u.block, b); err != nil {
-					cancel(err)
-
-					return
-				}
-				may, err := mayContainAll(b, opts.Tokens)
+				may, err := mayContainAll(u.p, u.block, opts.Tokens)
 				if err != nil {
 					cancel(err)
 
@@ -161,6 +156,11 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 					skipped.Add(1)
 
 					continue
+				}
+				if err := u.p.OpenBlock(u.block, b); err != nil {
+					cancel(err)
+
+					return
 				}
 				read.Add(1)
 				if err := fn(worker, u.p, b); err != nil {
@@ -180,9 +180,9 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 	return stats, nil
 }
 
-func mayContainAll(b *part.Block, tokens []uint64) (bool, error) {
+func mayContainAll(p *part.Part, block int, tokens []uint64) (bool, error) {
 	for _, h := range tokens {
-		if may, err := b.MayContainToken(h); !may || err != nil {
+		if may, err := p.MayContainToken(block, h); !may || err != nil {
 			return false, err
 		}
 	}

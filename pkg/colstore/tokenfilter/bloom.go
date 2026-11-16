@@ -42,6 +42,17 @@ func blockOf(h uint64, blocks int) int {
 	return int((h>>32)*uint64(blocks)>>32) * blockBytes
 }
 
+// ProbeOffset returns where in a filter of size bytes the 32 bytes lie that
+// MayContain reads for h.
+func ProbeOffset(size int, h uint64) int {
+	blocks := size / blockBytes
+	if blocks == 0 {
+		return 0
+	}
+
+	return blockOf(h, blocks)
+}
+
 // MayContain reports whether filter may hold h. It never reports false for
 // a hash that was added.
 func MayContain(filter []byte, h uint64) bool {

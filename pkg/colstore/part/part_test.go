@@ -267,7 +267,12 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 	var buf bytes.Buffer
 	w := NewWriter(&buf, Options{})
 	batch := shred.NewBatch(shred.Options{})
-	for _, d := range sampleDocs(400) {
+	docs := sampleDocs(400)
+	// Enough distinct tokens for a filter of several pages.
+	for i := 0; i < 8000; i++ {
+		docs = append(docs, fmt.Sprintf(`{"id":"request%dx"}`, i))
+	}
+	for _, d := range docs {
 		if err := batch.AddJSON([]byte(d), 5); err != nil {
 			t.Fatal(err)
 		}
@@ -284,13 +289,26 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 	if err := p.OpenBlock(0, &b); err != nil {
 		t.Fatal(err)
 	}
-	if len(b.filter) == 0 {
-		t.Fatal("block has no filter")
+	pages := (len(b.filter) + filterPage + 3) / (filterPage + 4)
+	size := len(b.filter) - 4*pages
+	if pages < 2 {
+		t.Fatalf("the filter must span several pages to test them apart, has %d bytes", size)
 	}
-	if _, err := b.MayContainToken(7); err != nil {
-		t.Fatal(err)
+	// One token per page, found by trying hashes.
+	probe := make([]uint64, pages)
+	for h, found := uint64(1), 0; found < pages; h += 0x9e3779b97f4a7c15 {
+		if page := tokenfilter.ProbeOffset(size, h) / filterPage; probe[page] == 0 {
+			probe[page] = h
+			found++
+		}
 	}
-	b.filter[len(b.filter)/2] ^= 0x10
+	for page, h := range probe {
+		if _, err := p.MayContainToken(0, h); err != nil {
+			t.Fatalf("page %d of an intact filter: %v", page, err)
+		}
+	}
+	damaged := pages / 2
+	b.filter[damaged*filterPage+100] ^= 0x10
 	if err := p.OpenBlock(0, &b); err != nil {
 		t.Fatalf("OpenBlock read the filter: %v", err)
 	}
@@ -300,8 +318,22 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 			t.Fatalf("column %d: %v", j, err)
 		}
 	}
-	if _, err := b.MayContainToken(7); err != ErrCorrupt {
-		t.Fatalf("MayContainToken on a damaged filter: %v", err)
+	for page, h := range probe {
+		_, err := b.MayContainToken(h)
+		if _, perr := p.MayContainToken(0, h); perr != err {
+			t.Fatalf("page %d: the part and the block disagree: %v, %v", page, perr, err)
+		}
+		if want := page == damaged; (err == ErrCorrupt) != want || (err != nil && err != ErrCorrupt) {
+			t.Fatalf("page %d, damaged page %d: %v", page, damaged, err)
+		}
+	}
+	// A damaged checksum fails the probes of its own page only.
+	b.filter[damaged*filterPage+100] ^= 0x10
+	b.filter[size+4*(pages-1)] ^= 1
+	for page, h := range probe {
+		if _, err := b.MayContainToken(h); (err == ErrCorrupt) != (page == pages-1) {
+			t.Fatalf("page %d with the last checksum damaged: %v", page, err)
+		}
 	}
 }
 

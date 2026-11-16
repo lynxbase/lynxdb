@@ -151,6 +151,10 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	filterOff := len(w.block)
 	if !w.opts.NoTokenFilter {
 		w.block = tokenfilter.Append(w.block, w.tokens.Keys())
+		for at, end := filterOff, len(w.block); at < end; at += filterPage {
+			sum := crc32.Checksum(w.block[at:min(at+filterPage, end)], castagnoli)
+			w.block = binary.LittleEndian.AppendUint32(w.block, sum)
+		}
 	}
 	dirOff := len(w.block)
 	w.appendDirectory()
@@ -166,7 +170,6 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	binary.LittleEndian.PutUint32(entry[40:], uint32(dirOff))
 	binary.LittleEndian.PutUint32(entry[44:], uint32(len(w.block)-dirOff))
 	binary.LittleEndian.PutUint32(entry[48:], crc32.Checksum(w.block[dirOff:], castagnoli))
-	binary.LittleEndian.PutUint32(entry[52:], crc32.Checksum(w.block[filterOff:dirOff], castagnoli))
 	w.index = append(w.index, entry[:]...)
 	if w.opts.Ordered {
 		w.e.tmp = appendFirstKey(w.e.tmp[:0], b, w.opts.SortKey)
