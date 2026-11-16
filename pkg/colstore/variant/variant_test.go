@@ -106,3 +106,27 @@ func TestForEachStringVisitsValuesOnly(t *testing.T) {
 		ForEachString(b[:n], func([]byte) {})
 	}
 }
+
+func TestNumberKeepsEveryDigit(t *testing.T) {
+	var b []byte
+	b, arr := BeginArray(b)
+	b = AppendNumber(b, []byte("18446744073709551615"))
+	b = AppendNumber(b, []byte("-123456789012345678901234567890"))
+	b = AppendString(b, []byte("s"))
+	b = End(b, arr)
+
+	text, err := AppendJSON(nil, b)
+	if err != nil || string(text) != `[18446744073709551615,-123456789012345678901234567890,"s"]` {
+		t.Fatalf("AppendJSON = %s, %v", text, err)
+	}
+	var got []string
+	ForEachString(b, func(s []byte) { got = append(got, string(s)) })
+	if !reflect.DeepEqual(got, []string{"s"}) {
+		t.Fatalf("ForEachString visited %v", got)
+	}
+	for _, bad := range []string{"", "-", "12a", "007", "1.5", "+1"} {
+		if _, err := AppendJSON(nil, AppendNumber(nil, []byte(bad))); err == nil {
+			t.Errorf("digits %q rendered without error", bad)
+		}
+	}
+}

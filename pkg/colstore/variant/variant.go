@@ -21,6 +21,7 @@ const (
 	tagString = 0x05 // uvarint length, bytes
 	tagArray  = 0x06 // uint32 byte length, elements
 	tagObject = 0x07 // uint32 byte length, then (uvarint key length, key, value) pairs
+	tagNumber = 0x08 // uvarint length, decimal digits of an integer outside int64
 )
 
 // ErrCorrupt reports an encoding that cannot be decoded.
@@ -58,6 +59,31 @@ func AppendString(dst, s []byte) []byte {
 	dst = binary.AppendUvarint(dst, uint64(len(s)))
 
 	return append(dst, s...)
+}
+
+// AppendNumber appends an integer too large for int64 as its decimal digits,
+// with an optional leading minus sign.
+func AppendNumber(dst, digits []byte) []byte {
+	dst = append(dst, tagNumber)
+	dst = binary.AppendUvarint(dst, uint64(len(digits)))
+
+	return append(dst, digits...)
+}
+
+func isIntegerText(s []byte) bool {
+	if len(s) > 0 && s[0] == '-' {
+		s = s[1:]
+	}
+	if len(s) == 0 || (s[0] == '0' && len(s) > 1) {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+
+	return true
 }
 
 // BeginArray opens an array and returns the mark to pass to End.
@@ -130,6 +156,14 @@ func appendJSON(dst, v []byte, depth int) (out, rest []byte, err error) {
 		end := n + int(u)
 
 		return AppendJSONString(dst, v[n:end]), v[end:], nil
+	case tagNumber:
+		u, n := binary.Uvarint(v)
+		if n <= 0 || u > uint64(len(v)-n) || !isIntegerText(v[n:n+int(u)]) {
+			return dst, nil, ErrCorrupt
+		}
+		end := n + int(u)
+
+		return append(dst, v[n:end]...), v[end:], nil
 	case tagArray, tagObject:
 		if len(v) < 4 {
 			return dst, nil, ErrCorrupt
@@ -270,6 +304,13 @@ func forEachString(v []byte, fn func(s []byte), depth int) []byte {
 			return nil
 		}
 		fn(v[n : n+int(u)])
+
+		return v[n+int(u):]
+	case tagNumber:
+		u, n := binary.Uvarint(v)
+		if n <= 0 || u > uint64(len(v)-n) {
+			return nil
+		}
 
 		return v[n+int(u):]
 	case tagArray, tagObject:
