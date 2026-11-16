@@ -89,6 +89,7 @@ func loadToDir(t testing.TB, d *Dir, data []byte, parts, blockRows int, key []st
 // LYNXDB_BENCH_NDJSON first, with every part fsynced before it is visible;
 // a directory that already holds the table is only reopened, so dropping the
 // page cache before the run makes each query's first run a cold one.
+// LYNXDB_BENCH_QUERY keeps the queries and searches whose name contains it.
 // LYNXDB_BENCH_SORT orders the parts by a comma-separated key ("default"
 // for the benchmark's own), LYNXDB_BENCH_PARTS sets their number, and
 // LYNXDB_BENCH_LAYOUT=runs keeps the ordered parts as separate sorted runs.
@@ -98,6 +99,7 @@ func TestJSONBenchDisk(t *testing.T) {
 		t.Skip("set LYNXDB_BENCH_DIR to a directory for the table")
 	}
 	cores := runtime.GOMAXPROCS(0)
+	only := os.Getenv("LYNXDB_BENCH_QUERY")
 	runs := envInt(t, "LYNXDB_BENCH_RUNS", 7)
 	blockRows := envInt(t, "LYNXDB_BENCH_BLOCK_ROWS", 16384)
 	var key []string
@@ -155,26 +157,47 @@ func TestJSONBenchDisk(t *testing.T) {
 	defer posts.Release()
 	queries := []struct {
 		name string
-		run  func() error
+		run  func() (string, error)
 	}{
-		{"Q1", func() error { _, err := queryTopEvents(snap, cores); return err }},
-		{"Q2", func() error { _, err := queryEventsWithUsers(created, cores, false); return err }},
-		{"Q2 hash", func() error { _, err := queryEventsWithUsers(created, cores, true); return err }},
-		{"Q3", func() error { _, err := queryEventsByHour(created, cores); return err }},
-		{"Q4/Q5", func() error { _, _, err := queryPostTimes(posts, cores, 3); return err }},
+		{"Q1", func() (string, error) { _, err := queryTopEvents(snap, cores); return "", err }},
+		{"Q2", func() (string, error) { _, err := queryEventsWithUsers(created, cores, false); return "", err }},
+		{"Q2 hash", func() (string, error) { _, err := queryEventsWithUsers(created, cores, true); return "", err }},
+		{"Q3", func() (string, error) { _, err := queryEventsByHour(created, cores); return "", err }},
+		{"Q4/Q5", func() (string, error) { _, _, err := queryPostTimes(posts, cores, 3); return "", err }},
 	}
 	for _, q := range queries {
+		if !strings.Contains(q.name, only) {
+			continue
+		}
 		begin := time.Now()
-		if err := q.run(); err != nil {
+		if _, err := q.run(); err != nil {
 			t.Fatalf("%s: %v", q.name, err)
 		}
 		first := time.Since(begin)
-		took, cpu, err := timeRuns(runs, "", q.run)
+		took, cpu, err := timeRuns(runs, "", func() error { _, err := q.run(); return err })
 		if err != nil {
 			t.Fatalf("%s: %v", q.name, err)
 		}
 		t.Logf("%-8s first run %9.2f ms, best of %d %9.2f ms on %d cores, CPU %9.2f ms, holds %.1f MB",
 			q.name, ms(first), runs, ms(took[0]), cores, ms(cpu),
 			float64(benchMemory.arenas.Load()+benchMemory.buffers.Load())/1e6)
+	}
+	for _, q := range benchSearches {
+		if !strings.Contains(q.name, only) {
+			continue
+		}
+		begin := time.Now()
+		hits, err := q.run(snap, cores)
+		if err != nil {
+			t.Fatalf("%s: %v", q.name, err)
+		}
+		first := time.Since(begin)
+		took, cpu, err := timeRuns(runs, "", func() error { _, err := q.run(snap, cores); return err })
+		if err != nil {
+			t.Fatalf("%s: %v", q.name, err)
+		}
+		t.Logf("%-16s first run %9.2f ms, best of %d %9.2f ms on %d cores, CPU %9.2f ms; %d hits, %d blocks read, %d ruled out by tokens",
+			q.name, ms(first), runs, ms(took[0]), cores, ms(cpu), hits,
+			searchScan.opened.Load(), searchScan.skippedByToken.Load())
 	}
 }
