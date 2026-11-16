@@ -66,7 +66,11 @@ func decodeOracle(t testing.TB, doc []byte) any {
 	return normalize(v)
 }
 
-// normalize maps json.Number to the int64 or float64 the shredder stores.
+// bigInt is the text of an integer that does not fit int64.
+type bigInt string
+
+// normalize maps json.Number to what the shredder stores: an int64, a
+// float64, or the exact digits of a larger integer.
 func normalize(v any) any {
 	switch x := v.(type) {
 	case json.Number:
@@ -75,6 +79,8 @@ func normalize(v any) any {
 			if i, err := strconv.ParseInt(s, 10, 64); err == nil {
 				return i
 			}
+
+			return bigInt(s)
 		}
 		f, _ := strconv.ParseFloat(s, 64)
 
@@ -145,6 +151,36 @@ func TestShredMatchesReferenceDecoder(t *testing.T) {
 		`{"a":{"nested":true}}`,
 		`{"unicode":"привет мир ✓","empty":""}`,
 	)
+}
+
+func TestShredKeepsLargeIntegersExact(t *testing.T) {
+	b := NewBatch(Options{})
+	docs := []string{
+		`{"u":18446744073709551615,"max":9223372036854775807,"min":-9223372036854775808}`,
+		`{"u":-9223372036854775809,"list":[18446744073709551616,1,-99999999999999999999999999]}`,
+		`{"u":0000000000000000000000018446744073709551615,"nested":{"big":123456789012345678901234567890}}`,
+		`{"u":-0000000000000000000009223372036854775809}`,
+	}
+	for _, d := range docs {
+		if err := b.AddJSON([]byte(d), 0); err != nil {
+			t.Fatalf("%s: %v", d, err)
+		}
+	}
+	got := rowsOf(t, b)
+	want := []map[string]any{
+		{"u": bigInt("18446744073709551615"), "max": int64(9223372036854775807), "min": int64(-9223372036854775808)},
+		{"u": bigInt("-9223372036854775809"), "list": []any{bigInt("18446744073709551616"), int64(1), bigInt("-99999999999999999999999999")}},
+		{"u": bigInt("18446744073709551615"), "nested.big": bigInt("123456789012345678901234567890")},
+		{"u": bigInt("-9223372036854775809")},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got  %#v\nwant %#v", got, want)
+	}
+	for _, c := range b.Columns() {
+		if c.Kind == vec.KindFloat && c.Count > 0 {
+			t.Fatalf("%s holds a float; a large integer lost its digits", c.Path)
+		}
+	}
 }
 
 func TestShredSparseAndDenseColumns(t *testing.T) {

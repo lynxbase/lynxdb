@@ -177,18 +177,22 @@ func (b *Batch) value(n *node, depth int) error {
 
 		return nil
 	default:
-		i, f, isInt, err := b.number()
+		num, err := b.number()
 		if err != nil {
 			return err
 		}
-		if isInt {
+		switch {
+		case num.digits != nil:
+			col := b.put(n.cols, n.path, vec.KindVariant)
+			col.Data = variant.AppendNumber(col.Data, num.digits)
+			col.Ends = append(col.Ends, uint32(len(col.Data)))
+		case num.isInt:
 			col := b.put(n.cols, n.path, vec.KindInt)
-			col.Ints = append(col.Ints, i)
-
-			return nil
+			col.Ints = append(col.Ints, num.i)
+		default:
+			col := b.put(n.cols, n.path, vec.KindFloat)
+			col.Floats = append(col.Floats, num.f)
 		}
-		col := b.put(n.cols, n.path, vec.KindFloat)
-		col.Floats = append(col.Floats, f)
 
 		return nil
 	}
@@ -313,15 +317,17 @@ func (b *Batch) variantValue(dst []byte, depth int) ([]byte, error) {
 	case 'n':
 		return variant.AppendNull(dst), b.literal("null")
 	default:
-		i, f, isInt, err := b.number()
-		if err != nil {
+		num, err := b.number()
+		switch {
+		case err != nil:
 			return dst, err
-		}
-		if isInt {
-			return variant.AppendInt(dst, i), nil
+		case num.digits != nil:
+			return variant.AppendNumber(dst, num.digits), nil
+		case num.isInt:
+			return variant.AppendInt(dst, num.i), nil
 		}
 
-		return variant.AppendFloat(dst, f), nil
+		return variant.AppendFloat(dst, num.f), nil
 	}
 }
 
@@ -465,9 +471,17 @@ func hex4(s []byte) (rune, bool) {
 	return r, true
 }
 
-// number parses the JSON number at the cursor as an int64 when it is an
-// integer that fits, and as a float64 otherwise.
-func (b *Batch) number() (i int64, f float64, isInt bool, err error) {
+// number is a parsed JSON number: an int64, a float64, or the digits of an
+// integer that fits neither exactly.
+type number struct {
+	i      int64
+	f      float64
+	digits []byte
+	isInt  bool
+}
+
+// number parses the JSON number at the cursor.
+func (b *Batch) number() (number, error) {
 	src, start := b.src, b.pos
 	p := start
 	neg := false
@@ -487,16 +501,16 @@ func (b *Batch) number() (i int64, f float64, isInt bool, err error) {
 	}
 	digits = p - digits
 	if digits == 0 {
-		return 0, 0, false, b.syntax("invalid value")
+		return number{}, b.syntax("invalid value")
 	}
 	fractional := p < len(src) && (src[p] == '.' || src[p] == 'e' || src[p] == 'E')
 	if !fractional && digits <= 18 {
 		b.pos = p
 		if neg {
-			return -int64(u), 0, true, nil
+			return number{i: -int64(u), isInt: true}, nil
 		}
 
-		return int64(u), 0, true, nil
+		return number{i: int64(u), isInt: true}, nil
 	}
 	for p < len(src) {
 		c := src[p]
@@ -508,18 +522,42 @@ func (b *Batch) number() (i int64, f float64, isInt bool, err error) {
 	tok := unsafe.String(unsafe.SliceData(src[start:p]), p-start)
 	b.pos = p
 	if !fractional {
-		if v, perr := strconv.ParseInt(tok, 10, 64); perr == nil {
-			return v, 0, true, nil
+		v, perr := strconv.ParseInt(tok, 10, 64)
+		if perr == nil {
+			return number{i: v, isInt: true}, nil
+		}
+		if isRange(perr) {
+			// A float64 would drop the low digits of an integer this large.
+			return number{digits: b.integerText(src[start:p])}, nil
 		}
 	}
 	f, perr := strconv.ParseFloat(tok, 64)
 	if perr != nil && !isRange(perr) {
 		b.pos = start
 
-		return 0, 0, false, b.syntax("invalid number")
+		return number{}, b.syntax("invalid number")
 	}
 
-	return 0, f, false, nil
+	return number{f: f}, nil
+}
+
+// integerText returns an integer literal without the leading zeros that
+// JSON does not allow.
+func (b *Batch) integerText(lit []byte) []byte {
+	sign := 0
+	if lit[0] == '-' {
+		sign = 1
+	}
+	zeros := 0
+	for sign+zeros < len(lit)-1 && lit[sign+zeros] == '0' {
+		zeros++
+	}
+	if zeros == 0 {
+		return lit
+	}
+	b.scratch = append(append(b.scratch[:0], lit[:sign]...), lit[sign+zeros:]...)
+
+	return b.scratch
 }
 
 func isRange(err error) bool {

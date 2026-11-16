@@ -150,6 +150,21 @@ func TestPartRoundTripsDocuments(t *testing.T) {
 	}
 }
 
+func TestPartKeepsLargeIntegersExact(t *testing.T) {
+	docs := []string{
+		`{"u":18446744073709551615,"ok":9223372036854775807}`,
+		`{"u":-9223372036854775809,"list":[18446744073709551616,2]}`,
+	}
+	got, _ := readAll(t, buildPart(t, docs, 10, Options{}))
+	want := []string{
+		`{"ok":9223372036854775807,"u":18446744073709551615}`,
+		`{"list":[18446744073709551616,2],"u":-9223372036854775809}`,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got  %s\nwant %s", got, want)
+	}
+}
+
 func TestBlockPicksEncodingsAndStatistics(t *testing.T) {
 	p := buildPart(t, sampleDocs(3000)[3:], 1<<16, Options{})
 	var b Block
