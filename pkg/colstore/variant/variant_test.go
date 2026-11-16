@@ -78,3 +78,31 @@ func TestFloatFormatting(t *testing.T) {
 		}
 	}
 }
+
+func TestForEachStringVisitsValuesOnly(t *testing.T) {
+	var b []byte
+	b, obj := BeginObject(b)
+	b = AppendKey(b, []byte("key1"))
+	b, arr := BeginArray(b)
+	b = AppendString(b, []byte("one"))
+	b = AppendInt(b, 5)
+	b = AppendFloat(b, 1.5)
+	b = AppendNull(b)
+	b, inner := BeginObject(b)
+	b = AppendKey(b, []byte("key2"))
+	b = AppendString(b, []byte("two"))
+	b = End(b, inner)
+	b = End(b, arr)
+	b = AppendKey(b, []byte("key3"))
+	b = AppendString(b, []byte("three"))
+	b = End(b, obj)
+
+	var got []string
+	ForEachString(b, func(s []byte) { got = append(got, string(s)) })
+	if !reflect.DeepEqual(got, []string{"one", "two", "three"}) {
+		t.Fatalf("got %v", got)
+	}
+	for n := 0; n < len(b); n++ {
+		ForEachString(b[:n], func([]byte) {})
+	}
+}

@@ -237,3 +237,64 @@ func AppendJSONString(dst, s []byte) []byte {
 
 	return append(dst, '"')
 }
+
+// ForEachString calls fn with every string inside the value at the start of
+// v, including object keys' values but not the keys themselves.
+func ForEachString(v []byte, fn func(s []byte)) {
+	forEachString(v, fn, 0)
+}
+
+func forEachString(v []byte, fn func(s []byte), depth int) []byte {
+	if len(v) == 0 || depth > maxDepth {
+		return nil
+	}
+	tag, v := v[0], v[1:]
+	switch tag {
+	case tagNull, tagFalse, tagTrue:
+		return v
+	case tagInt:
+		_, n := binary.Uvarint(v)
+		if n <= 0 {
+			return nil
+		}
+
+		return v[n:]
+	case tagFloat:
+		if len(v) < 8 {
+			return nil
+		}
+
+		return v[8:]
+	case tagString:
+		u, n := binary.Uvarint(v)
+		if n <= 0 || u > uint64(len(v)-n) {
+			return nil
+		}
+		fn(v[n : n+int(u)])
+
+		return v[n+int(u):]
+	case tagArray, tagObject:
+		if len(v) < 4 {
+			return nil
+		}
+		size := int(binary.LittleEndian.Uint32(v))
+		if size > len(v)-4 {
+			return nil
+		}
+		body, rest := v[4:4+size], v[4+size:]
+		for len(body) > 0 {
+			if tag == tagObject {
+				u, n := binary.Uvarint(body)
+				if n <= 0 || u > uint64(len(body)-n) {
+					return rest
+				}
+				body = body[n+int(u):]
+			}
+			body = forEachString(body, fn, depth+1)
+		}
+
+		return rest
+	}
+
+	return nil
+}
