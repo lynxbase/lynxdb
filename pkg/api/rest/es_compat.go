@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"regexp"
 	"strings"
@@ -202,13 +203,32 @@ func parseESTimestamp(v interface{}) time.Time {
 			}
 		}
 	case float64:
-		sec := int64(ts)
-		nsec := int64((ts - float64(sec)) * 1e9)
-
-		return time.Unix(sec, nsec)
+		return parseESEpoch(ts)
 	}
 
 	return time.Time{}
+}
+
+// parseESEpoch infers the unit of a numeric epoch from its magnitude:
+// seconds below 1e11, milliseconds below 1e14, microseconds below 1e17,
+// nanoseconds above that.
+func parseESEpoch(v float64) time.Time {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return time.Time{}
+	}
+	perSec := 1.0
+	switch abs := math.Abs(v); {
+	case abs >= 1e17:
+		perSec = 1e9
+	case abs >= 1e14:
+		perSec = 1e6
+	case abs >= 1e11:
+		perSec = 1e3
+	}
+	sec := math.Floor(v / perSec)
+	nsec := int64((v - sec*perSec) * (1e9 / perSec))
+
+	return time.Unix(int64(sec), nsec)
 }
 
 func esDocToEvent(doc map[string]interface{}, indexName string) *event.Event {
@@ -227,12 +247,17 @@ func esDocToEventWithMapping(doc map[string]interface{}, indexName string, fm es
 	}
 	if ts, ok := doc[timeField]; ok {
 		e.Time = parseESTimestamp(ts)
-		delete(doc, timeField)
+		// Conventional timestamp fields are consumed into _time; a custom
+		// _time_field keeps its original value queryable.
+		if !e.Time.IsZero() && (timeField == "@timestamp" || timeField == "timestamp") {
+			delete(doc, timeField)
+		}
 	} else if timeField != "timestamp" {
 		// Fallback to "timestamp" if configured field not found.
 		if ts, ok := doc["timestamp"]; ok {
-			e.Time = parseESTimestamp(ts)
-			delete(doc, "timestamp")
+			if e.Time = parseESTimestamp(ts); !e.Time.IsZero() {
+				delete(doc, "timestamp")
+			}
 		}
 	}
 

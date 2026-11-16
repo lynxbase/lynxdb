@@ -1711,3 +1711,61 @@ func queryEventCount(t *testing.T, addr, body string) int {
 
 	return len(events)
 }
+
+func TestESBulk_TimeFieldEpochUnitInferredFromMagnitude(t *testing.T) {
+	want := time.Date(2024, 11, 21, 16, 25, 49, 0, time.UTC)
+	cases := []struct {
+		name  string
+		value float64
+		want  time.Time
+	}{
+		{"seconds", 1732206349, want},
+		{"fractional seconds", 1732206349.5, want.Add(500 * time.Millisecond)},
+		{"milliseconds", 1732206349123, want.Add(123 * time.Millisecond)},
+		{"microseconds", 1732206349000167, want.Add(167 * time.Microsecond)},
+		{"nanoseconds", 1732206349000000000, want},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ev := esDocToEventWithMapping(
+				map[string]interface{}{"time_us": tc.value, "x": float64(1)},
+				"tf",
+				esFieldMapping{TimeField: "time_us"},
+			)
+			if !ev.Time.Equal(tc.want) {
+				t.Fatalf("Time = %s, want %s", ev.Time.UTC().Format(time.RFC3339Nano), tc.want.Format(time.RFC3339Nano))
+			}
+			if got := ev.Fields["time_us"]; got.IsNull() {
+				t.Fatal("custom time field should stay queryable")
+			}
+		})
+	}
+}
+
+func TestESBulk_ConventionalTimestampFieldIsConsumed(t *testing.T) {
+	ev := esDocToEventWithMapping(
+		map[string]interface{}{"@timestamp": "2024-11-21T16:25:49Z", "x": float64(1)},
+		"tf",
+		esFieldMapping{TimeField: "@timestamp"},
+	)
+	if ev.Time.IsZero() {
+		t.Fatal("Time not parsed")
+	}
+	if _, ok := ev.Fields["@timestamp"]; ok {
+		t.Fatal("@timestamp should be consumed into _time")
+	}
+}
+
+func TestESBulk_UnparsableTimeFieldIsKept(t *testing.T) {
+	ev := esDocToEventWithMapping(
+		map[string]interface{}{"ts": "not a time", "x": float64(1)},
+		"tf",
+		esFieldMapping{TimeField: "ts"},
+	)
+	if got := ev.Fields["ts"].AsString(); got != "not a time" {
+		t.Fatalf("ts field = %q, want it preserved", got)
+	}
+	if !strings.Contains(ev.Raw, `"ts":"not a time"`) {
+		t.Fatalf("Raw = %q, want ts preserved", ev.Raw)
+	}
+}
