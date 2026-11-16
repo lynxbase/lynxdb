@@ -285,7 +285,8 @@ func (w *Writer) tokenize(kind vec.Kind, val []byte) {
 
 		return
 	}
-	w.addStr(val)
+	w.hashes = tokenfilter.AppendHashes(w.hashes[:0], val)
+	w.tokens.Add(w.hashes)
 }
 
 func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
