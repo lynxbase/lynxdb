@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
+	"github.com/lynxbase/lynxdb/pkg/mem"
 )
 
 // ScanOptions narrows a scan and sets its parallelism.
@@ -35,6 +36,9 @@ type ScanStats struct {
 	SkippedByTime  int64
 	SkippedByToken int64
 }
+
+// blockPool keeps the decode buffers of scan workers across scans.
+var blockPool mem.Pool[part.Block]
 
 type scanUnit struct {
 	p     *part.Part
@@ -89,25 +93,26 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 					cancel(fmt.Errorf("colstore: scan worker failed: %v", r))
 				}
 			}()
-			var b part.Block
+			b := blockPool.Get()
+			defer blockPool.Put(b)
 			for ctx.Err() == nil {
 				i := next.Add(1) - 1
 				if i >= int64(len(units)) {
 					return
 				}
 				u := units[i]
-				if err := u.p.OpenBlock(u.block, &b); err != nil {
+				if err := u.p.OpenBlock(u.block, b); err != nil {
 					cancel(err)
 
 					return
 				}
-				if !mayContainAll(&b, opts.Tokens) {
+				if !mayContainAll(b, opts.Tokens) {
 					skipped.Add(1)
 
 					continue
 				}
 				read.Add(1)
-				if err := fn(worker, u.p, &b); err != nil {
+				if err := fn(worker, u.p, b); err != nil {
 					cancel(err)
 
 					return
