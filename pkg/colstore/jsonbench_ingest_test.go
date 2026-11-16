@@ -3,6 +3,7 @@ package colstore
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"runtime"
 	"sort"
 	"strings"
@@ -196,4 +197,106 @@ func logStoreShape(t testing.TB, s *Store, when string) {
 		fmt.Fprintf(&shape, " tier %d: %d runs;", tier, len(runs[tier]))
 	}
 	t.Logf("%s: %d rows, %.1f MB in %d parts of %d partitions;%s", when, rows, float64(size)/1e6, len(snap.Parts()), len(partitions), shape.String())
+}
+
+// TestJSONBenchStoreLayouts requires the benchmark queries to give one
+// answer over stores that hold LYNXDB_BENCH_NDJSON in arrival order, as
+// sorted runs left by ingest, as one merged run, and partitioned by time.
+func TestJSONBenchStoreLayouts(t *testing.T) {
+	path := os.Getenv("LYNXDB_BENCH_NDJSON")
+	if path == "" || os.Getenv("LYNXDB_BENCH_LAYOUTS") == "" {
+		t.Skip("set LYNXDB_BENCH_LAYOUTS and LYNXDB_BENCH_NDJSON")
+	}
+	data := mapFile(t, path)
+	key := []string{"kind", "commit.operation", "commit.collection", "did"}
+	cores := runtime.GOMAXPROCS(0)
+	type answers struct {
+		q1, q2         []eventCount
+		q3             []hourCount
+		first, longest []userSpan
+		searches       []int64
+	}
+	layouts := []struct {
+		name    string
+		opts    StoreOptions
+		compact bool
+	}{
+		{"arrival order", StoreOptions{}, false},
+		{"runs after ingest", StoreOptions{SortKey: key, FlushBytes: 16 << 20, MergeFanIn: 4}, false},
+		{"one merged run", StoreOptions{SortKey: key, FlushBytes: 16 << 20, MergeFanIn: 4}, true},
+		{"partitions of 5m, settled", StoreOptions{SortKey: key, FlushBytes: 16 << 20, MergeFanIn: 4, Partition: 5 * time.Minute}, false},
+		{"partitions of 5m, merged", StoreOptions{SortKey: key, FlushBytes: 16 << 20, MergeFanIn: 4, Partition: 5 * time.Minute}, true},
+	}
+	var want answers
+	for i, layout := range layouts {
+		layout.opts.TimeField = "time_us"
+		s, err := OpenStore(t.TempDir(), layout.opts)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var wg sync.WaitGroup
+		for _, region := range splitAtLines(data, cores) {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				if _, err := s.Append(region); err != nil {
+					t.Error(err)
+				}
+			}()
+		}
+		wg.Wait()
+		if err := s.Sync(); err != nil {
+			t.Fatal(err)
+		}
+		if layout.compact {
+			err = s.Compact()
+		} else {
+			err = s.Settle()
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		logStoreShape(t, s, layout.name)
+		snap := s.Table().Snapshot()
+		paths := []string{"kind", "commit.operation", "commit.collection"}
+		created := snap.Narrow(KeyFilter{Paths: paths[:2], Values: [][]byte{[]byte("commit"), []byte("create")}})
+		posts := snap.Narrow(KeyFilter{Paths: paths, Values: [][]byte{[]byte("commit"), []byte("create"), []byte("app.bsky.feed.post")}})
+		var got answers
+		if got.q1, err = queryTopEvents(snap, cores); err != nil {
+			t.Fatal(err)
+		}
+		if got.q2, err = queryEventsWithUsers(created, cores, false); err != nil {
+			t.Fatal(err)
+		}
+		if got.q3, err = queryEventsByHour(created, cores); err != nil {
+			t.Fatal(err)
+		}
+		if got.first, got.longest, err = queryPostTimes(posts, cores, 3); err != nil {
+			t.Fatal(err)
+		}
+		for _, q := range benchSearches {
+			hits, err := q.run(snap, cores)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got.searches = append(got.searches, hits)
+		}
+		posts.Release()
+		created.Release()
+		snap.Release()
+		if err := s.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			want = got
+			t.Logf("search hits: %v", got.searches)
+
+			continue
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s gives different answers than arrival order:\nQ1 equal %v, Q2 equal %v, Q3 equal %v, Q4 equal %v, Q5 equal %v, searches %v",
+				layout.name, reflect.DeepEqual(got.q1, want.q1), reflect.DeepEqual(got.q2, want.q2), reflect.DeepEqual(got.q3, want.q3),
+				reflect.DeepEqual(got.first, want.first), reflect.DeepEqual(got.longest, want.longest), got.searches)
+		}
+	}
 }
