@@ -159,10 +159,7 @@ func TestScanTurnsWorkerPanicsIntoErrors(t *testing.T) {
 	defer snap.Release()
 
 	_, err := snap.Scan(context.Background(), ScanOptions{Workers: 4}, func(int, *part.Part, *part.Block) error {
-		var m map[string]int
-		m["boom"] = 1
-
-		return nil
+		panic("boom")
 	})
 	if err == nil {
 		t.Fatal("a panicking worker did not fail the scan")
