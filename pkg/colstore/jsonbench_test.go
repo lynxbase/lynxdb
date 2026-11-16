@@ -26,11 +26,30 @@ import (
 // The five JSONBench queries over the Bluesky event stream, written directly
 // against the scan interface: per-worker partial aggregation, then a merge.
 
-const distinctPartitions = 64
-
 // partitionBits splits high-cardinality keys into partitions small enough
 // for one partition's table to stay in a core's cache.
 const partitionBits = 8
+
+// sharedGroups gives every scan worker the same id for a group key, so the
+// ids can be part of the keys that workers hand to the merge.
+type sharedGroups struct {
+	mu    sync.Mutex
+	arena *mem.Arena
+	table *vec.ByteTable
+}
+
+func newSharedGroups() *sharedGroups {
+	a := mem.NewArena()
+
+	return &sharedGroups{arena: a, table: vec.NewByteTable(a)}
+}
+
+func (s *sharedGroups) id(key []byte, h uint64) uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return uint32(s.table.IDHashed(key, h))
+}
 
 // benchWorker is the state one scan goroutine owns for one query.
 type benchWorker struct {
@@ -40,10 +59,10 @@ type benchWorker struct {
 	mins   []int64
 	maxs   []int64
 	nulls  int64
-	// distinct holds (group hash, value) keys, split by hash so that the
-	// merge of each partition can run on its own core.
-	distinct [distinctPartitions]*vec.ByteTable
-	hours    [3 * 24]int64
+	hours  [3 * 24]int64
+	// shared, when set, assigns global[id] to each group of this worker.
+	shared *sharedGroups
+	global []uint32
 	// log holds one record per selected row for the merge to aggregate.
 	log *vec.KeyPartitions
 
@@ -77,6 +96,9 @@ func (w *benchWorker) group(key []byte) int {
 		w.counts = append(w.counts, 0)
 		w.mins = append(w.mins, 1<<62)
 		w.maxs = append(w.maxs, -1<<62)
+		if w.shared != nil {
+			w.global = append(w.global, w.shared.id(key, w.groups.KeyHash(id)))
+		}
 	}
 
 	return id
@@ -246,15 +268,26 @@ func (w *benchWorker) resetCodeGroups(c *vec.Column) {
 	}
 }
 
-// queryEventsWithUsers is Q2: count() and the exact number of distinct did
-// by commit.collection, over created commits.
-func queryEventsWithUsers(snap *Snapshot, workers int) ([]eventCount, error) {
+// distinctMerger is the state one goroutine owns while it counts the
+// distinct keys of partitions.
+type distinctMerger struct {
+	arena *mem.Arena
+	keys  *vec.ByteTable
+	set   *vec.HashSet128
+	users []int64
+}
+
+// queryEventsWithUsers is Q2: count() and the number of distinct did by
+// commit.collection, over created commits. The distinct count compares whole
+// keys, or only their 128-bit hashes when hashed is set.
+func queryEventsWithUsers(snap *Snapshot, workers int, hashed bool) ([]eventCount, error) {
 	ws := newBenchWorkers(workers)
 	defer freeBenchWorkers(ws)
+	shared := newSharedGroups()
+	defer shared.arena.Free()
 	for _, w := range ws {
-		for i := range w.distinct {
-			w.distinct[i] = vec.NewByteTable(w.arena)
-		}
+		w.shared = shared
+		w.log = vec.NewKeyPartitions(w.arena, partitionBits)
 	}
 	_, err := snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
 		w := ws[n]
@@ -271,6 +304,8 @@ func queryEventsWithUsers(snap *Snapshot, workers int) ([]eventCount, error) {
 			return err
 		}
 		w.resetCodeGroups(&w.a)
+		// A run of rows with one group and did adds its key once.
+		lastGroup, lastDID := -1, []byte(nil)
 		for _, r := range w.idx {
 			row := int(r)
 			if !w.a.IsValid(row) {
@@ -281,10 +316,22 @@ func queryEventsWithUsers(snap *Snapshot, workers int) ([]eventCount, error) {
 			if !w.b.IsValid(row) {
 				continue
 			}
-			w.key = binary.LittleEndian.AppendUint64(w.key[:0], w.groups.KeyHash(g))
-			w.key = append(w.key, w.b.Bytes(row)...)
-			h := vec.Hash(w.key)
-			w.distinct[h>>58].IDHashed(w.key, h)
+			did := w.b.Bytes(row)
+			if g == lastGroup && string(did) == string(lastDID) {
+				continue
+			}
+			lastGroup, lastDID = g, did
+			if hashed {
+				// The record is the high hash word and the group.
+				lo, hi := vec.Hash128(did)
+				w.key = binary.LittleEndian.AppendUint32(binary.LittleEndian.AppendUint64(w.key[:0], hi), w.global[g])
+				w.log.Add(lo, w.key)
+
+				continue
+			}
+			// The record is the key: the group followed by the did.
+			w.key = append(binary.LittleEndian.AppendUint32(w.key[:0], w.global[g]), did...)
+			w.log.Add(vec.Hash(w.key), w.key)
 		}
 
 		return nil
@@ -293,43 +340,65 @@ func queryEventsWithUsers(snap *Snapshot, workers int) ([]eventCount, error) {
 		return nil, err
 	}
 
-	merged, _ := mergeCounts(ws)
-	byHash := map[uint64]*eventCount{}
-	for name, e := range merged {
-		byHash[vec.Hash([]byte(name))] = e
+	groups := shared.table.Len()
+	mergers := make([]distinctMerger, workers)
+	for i := range mergers {
+		m := &mergers[i]
+		m.arena = mem.NewArena()
+		defer m.arena.Free()
+		m.keys, m.set = vec.NewByteTable(m.arena), vec.NewHashSet128(m.arena)
+		m.users = make([]int64, groups)
 	}
-	// Equal keys always land in the same partition, so partitions merge
+	// Equal keys always land in the same partition, so partitions count
 	// independently and their distinct counts add up.
-	users := make([]map[uint64]int64, distinctPartitions)
-	var wg sync.WaitGroup
-	for part := 0; part < distinctPartitions; part++ {
-		wg.Add(1)
-		go func(part int) {
-			defer wg.Done()
-			arena := mem.NewArena()
-			defer arena.Free()
-			all := vec.NewByteTable(arena)
+	forEachPartition(1<<partitionBits, workers, func(slot, partition int) {
+		m := &mergers[slot]
+		if hashed {
+			m.set.Clear()
 			for _, w := range ws {
-				t := w.distinct[part]
-				for id := 0; id < t.Len(); id++ {
-					all.IDHashed(t.Key(id), t.KeyHash(id))
+				w.log.Each(partition, func(lo uint64, rec []byte) {
+					g := binary.LittleEndian.Uint32(rec[8:])
+					// Mixing the group into one word keeps equal dids of
+					// different groups apart without widening the value.
+					if m.set.Add(lo^vec.Mix64(uint64(g)+1), binary.LittleEndian.Uint64(rec)) {
+						m.users[g]++
+					}
+				})
+			}
+
+			return
+		}
+		m.keys.Clear()
+		for _, w := range ws {
+			w.log.Each(partition, func(h uint64, key []byte) {
+				if n := m.keys.Len(); m.keys.IDHashed(key, h) == n {
+					m.users[binary.LittleEndian.Uint32(key)]++
 				}
-			}
-			counts := map[uint64]int64{}
-			for id := 0; id < all.Len(); id++ {
-				counts[binary.LittleEndian.Uint64(all.Key(id))]++
-			}
-			users[part] = counts
-		}(part)
-	}
-	wg.Wait()
-	for _, counts := range users {
-		for h, n := range counts {
-			byHash[h].users += n
+			})
+		}
+	})
+
+	out := make([]eventCount, groups)
+	for g := range out {
+		out[g].event = string(shared.table.Key(g))
+		for i := range mergers {
+			out[g].users += mergers[i].users[g]
 		}
 	}
+	for _, w := range ws {
+		for local, g := range w.global {
+			out[g].count += w.counts[local]
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].count != out[j].count {
+			return out[i].count > out[j].count
+		}
 
-	return sortedCounts(merged), nil
+		return out[i].event < out[j].event
+	})
+
+	return out, nil
 }
 
 type hourCount struct {
@@ -791,30 +860,31 @@ func TestJSONBench(t *testing.T) {
 	}
 	t.Logf("of %d blocks:%s", blocks, strings.TrimSuffix(layout, ","))
 
-	var q1, q2 []eventCount
+	var q1, q2, q2h []eventCount
 	var q3 []hourCount
 	var first, longest []userSpan
 	queries := []struct {
-		name string
-		run  func(workers int) error
+		id, name string
+		run      func(workers int) error
 	}{
-		{"Q1 top events", func(n int) (err error) { q1, err = queryTopEvents(snap, n); return }},
-		{"Q2 events with distinct users", func(n int) (err error) { q2, err = queryEventsWithUsers(snap, n); return }},
-		{"Q3 events by hour", func(n int) (err error) { q3, err = queryEventsByHour(snap, n); return }},
-		{"Q4/Q5 post times per user", func(n int) (err error) { first, longest, err = queryPostTimes(snap, n, 3); return }},
+		{"q1", "Q1 top events", func(n int) (err error) { q1, err = queryTopEvents(snap, n); return }},
+		{"q2", "Q2 events with distinct users", func(n int) (err error) { q2, err = queryEventsWithUsers(snap, n, false); return }},
+		{"q2h", "Q2 with users by 128-bit hash", func(n int) (err error) { q2h, err = queryEventsWithUsers(snap, n, true); return }},
+		{"q3", "Q3 events by hour", func(n int) (err error) { q3, err = queryEventsByHour(snap, n); return }},
+		{"q4", "Q4/Q5 post times per user", func(n int) (err error) { first, longest, err = queryPostTimes(snap, n, 3); return }},
 	}
 	ran := map[string]bool{}
 	for _, q := range queries {
 		if !strings.Contains(q.name, only) {
 			continue
 		}
-		id := q.name[:2]
+		id := q.id
 		ran[id] = true
 		var took [2][]time.Duration
 		for i, workers := range []int{cores, 1} {
 			profile := ""
 			if profileDir != "" {
-				profile = filepath.Join(profileDir, fmt.Sprintf("%s_%dw.prof", strings.ToLower(id), workers))
+				profile = filepath.Join(profileDir, fmt.Sprintf("%s_%dw.prof", id, workers))
 			}
 			took[i], err = timeRuns(runs, profile, func() error { return q.run(workers) })
 			if err != nil {
@@ -839,7 +909,7 @@ func TestJSONBench(t *testing.T) {
 		return
 	}
 	// Reference results produced by ClickHouse on the same file.
-	if ran["Q1"] {
+	if ran["q1"] {
 		want := "app.bsky.feed.like=448944 app.bsky.graph.follow=360374 app.bsky.feed.post=90816 app.bsky.feed.repost=58540 " +
 			"app.bsky.graph.block=14040 app.bsky.actor.profile=11762 app.bsky.graph.listitem=8103 =5328 " +
 			"app.bsky.graph.listblock=895 app.bsky.graph.starterpack=405 app.bsky.graph.list=356 app.bsky.feed.threadgate=255 " +
@@ -852,20 +922,26 @@ func TestJSONBench(t *testing.T) {
 			t.Errorf("Q1\n got  %s\n want %s", got, want)
 		}
 	}
-	if ran["Q2"] {
+	for _, q := range []struct {
+		id  string
+		got []eventCount
+	}{{"q2", q2}, {"q2h", q2h}} {
+		if !ran[q.id] {
+			continue
+		}
 		want := "app.bsky.feed.like=444523/117617 app.bsky.graph.follow=337978/63957 app.bsky.feed.post=86812/50464 " +
 			"app.bsky.feed.repost=56993/26581 app.bsky.graph.block=13838/5785 app.bsky.graph.listitem=7568/1078 " +
 			"app.bsky.actor.profile=5337/5337 app.bsky.graph.listblock=860/449 app.bsky.graph.list=259/218 " +
 			"app.bsky.feed.threadgate=228/196 app.bsky.graph.starterpack=104/101 app.bsky.feed.postgate=101/82 app.bsky.feed.generator=10/9"
 		got := ""
-		for i, e := range q2 {
+		for i, e := range q.got {
 			got += fmt.Sprintf("%s%s=%d/%d", sep(i), e.event, e.count, e.users)
 		}
 		if got != want {
-			t.Errorf("Q2\n got  %s\n want %s", got, want)
+			t.Errorf("%s\n got  %s\n want %s", q.id, got, want)
 		}
 	}
-	if ran["Q3"] {
+	if ran["q3"] {
 		got := ""
 		for i, e := range q3 {
 			got += fmt.Sprintf("%s%s@%d=%d", sep(i), e.event, e.hour, e.count)
@@ -874,7 +950,7 @@ func TestJSONBench(t *testing.T) {
 			t.Errorf("Q3\n got  %s\n want %s", got, want)
 		}
 	}
-	if !ran["Q4"] {
+	if !ran["q4"] {
 		return
 	}
 	gotQ4 := ""

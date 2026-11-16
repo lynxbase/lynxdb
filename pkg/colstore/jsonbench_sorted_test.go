@@ -142,7 +142,7 @@ func TestJSONBenchOrdered(t *testing.T) {
 		float64(plainSize)/1e6, plainLoad.Seconds(), key, parts, float64(orderedSize)/1e6, orderedLoad.Seconds())
 
 	type result struct {
-		q1, q2         []eventCount
+		q1, q2, q2h    []eventCount
 		q3             []hourCount
 		first, longest []userSpan
 	}
@@ -162,7 +162,8 @@ func TestJSONBenchOrdered(t *testing.T) {
 			run  func(workers int) error
 		}{
 			{"Q1", func(n int) (err error) { res.q1, err = queryTopEvents(snap, n); return }},
-			{"Q2", func(n int) (err error) { res.q2, err = queryEventsWithUsers(created, n); return }},
+			{"Q2", func(n int) (err error) { res.q2, err = queryEventsWithUsers(created, n, false); return }},
+			{"Q2 hash", func(n int) (err error) { res.q2h, err = queryEventsWithUsers(created, n, true); return }},
 			{"Q3", func(n int) (err error) { res.q3, err = queryEventsByHour(created, n); return }},
 			{"Q4/Q5", func(n int) (err error) { res.first, res.longest, err = queryPostTimes(posts, n, 3); return }},
 		}
