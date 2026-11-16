@@ -41,6 +41,7 @@ type Writer struct {
 	ents   []dirEntry
 	e      encodeScratch
 	ints   []int64
+	values []byte // dictionary bytes; the integer codec owns e.tmp
 	dict   dictBuilder
 	tokens tokenfilter.Set
 	hashes []uint64
@@ -314,15 +315,15 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 	d := &w.dict
 	w.block = binary.AppendUvarint(w.block, uint64(distinct))
 	w.ints = w.ints[:0]
-	w.e.tmp = w.e.tmp[:0]
+	w.values = w.values[:0]
 	for _, entry := range d.order {
 		val := c.Bytes(int(d.first[entry]))
 		w.ints = append(w.ints, int64(len(val)))
-		w.e.tmp = append(w.e.tmp, val...)
+		w.values = append(w.values, val...)
 		w.tokenize(c.Kind, val)
 	}
 	w.block = appendInts(w.block, w.ints, w.opts.Level, &w.e)
-	w.block = appendBlob(w.block, w.e.tmp, w.opts.Level, true, &w.e.zbuf)
+	w.block = appendBlob(w.block, w.values, w.opts.Level, true, &w.e.zbuf)
 
 	w.e.tmp = w.e.tmp[:0]
 	if distinct <= 256 {

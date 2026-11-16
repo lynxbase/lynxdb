@@ -102,6 +102,8 @@ func sampleDocs(n int) []string {
 	for i := 0; i < n; i++ {
 		var sb strings.Builder
 		fmt.Fprintf(&sb, `{"did":"did:plc:%016x","seq":%d,"kind":"%s","region":"eu"`, r.Uint64(), 1_000_000+i*3, kinds[r.Intn(len(kinds))])
+		// A few hundred values of varying length exercise wide dictionaries.
+		fmt.Fprintf(&sb, `,"host":"node-%s","shard":"s%d"`, strings.Repeat("x", r.Intn(40)), r.Intn(400)*r.Intn(400))
 		if r.Intn(4) != 0 {
 			fmt.Fprintf(&sb, `,"commit":{"collection":"app.bsky.feed.%s","rev":"%x","size":%d,"ok":%v}`,
 				[]string{"post", "like", "repost"}[r.Intn(3)], r.Uint32(), r.Intn(900), r.Intn(10) != 0)
