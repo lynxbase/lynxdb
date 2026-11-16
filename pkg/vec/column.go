@@ -100,3 +100,58 @@ func (c *Column) Bool(i int) bool {
 
 	return c.Bools.Get(i)
 }
+
+// DictFind returns the code of want in the sorted dictionary of a Dict or
+// Const column.
+func (c *Column) DictFind(want []byte) (code int, ok bool) {
+	lo, hi := 0, c.DictLen()
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if string(c.DictValue(mid)) < string(want) {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+
+	return lo, lo < c.DictLen() && string(c.DictValue(lo)) == string(want)
+}
+
+// MaskEqBytes writes into mask which rows of a string column equal want.
+// Rows without a value are never selected.
+func MaskEqBytes(mask []uint8, c *Column, want []byte) {
+	mask = mask[:c.Rows]
+	switch c.Layout {
+	case Const:
+		fill := uint8(0)
+		if string(c.DictValue(0)) == string(want) {
+			fill = 0xFF
+		}
+		for i := range mask {
+			mask[i] = fill
+		}
+	case Dict:
+		code, ok := c.DictFind(want)
+		switch {
+		case !ok:
+			clear(mask)
+
+			return
+		case len(c.Codes8) != 0:
+			MaskEq8(mask, c.Codes8, uint8(code))
+		default:
+			MaskEq16(mask, c.Codes16, uint16(code))
+		}
+	default:
+		for i := range mask {
+			var m uint8
+			if string(c.Data[c.Offsets[i]:c.Offsets[i+1]]) == string(want) {
+				m = 0xFF
+			}
+			mask[i] = m
+		}
+	}
+	if c.Valid != nil {
+		MaskAndBitmap(mask, c.Valid)
+	}
+}

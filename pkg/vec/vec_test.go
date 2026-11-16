@@ -174,3 +174,52 @@ func BenchmarkHistogram8(b *testing.B) {
 		Histogram8(&counts, benchCodes)
 	}
 }
+
+func TestMaskEqBytesAcrossLayouts(t *testing.T) {
+	values := []string{"post", "", "like", "post", "repost", "like", "post"}
+	absent := 1
+	valid := make(Bitmap, 1)
+	for i := range values {
+		if i != absent {
+			valid.Set(i)
+		}
+	}
+
+	flat := Column{Kind: KindString, Rows: len(values), Valid: valid, Offsets: []uint32{0}}
+	for _, v := range values {
+		flat.Data = append(flat.Data, v...)
+		flat.Offsets = append(flat.Offsets, uint32(len(flat.Data)))
+	}
+	dict := Column{
+		Kind: KindString, Layout: Dict, Rows: len(values), Valid: valid,
+		Data: []byte("likepostrepost"), Offsets: []uint32{0, 4, 8, 14},
+		Codes8: []uint8{1, 0, 0, 1, 2, 0, 1},
+	}
+	wide := dict
+	wide.Codes8, wide.Codes16 = nil, []uint16{1, 0, 0, 1, 2, 0, 1}
+	constant := Column{Kind: KindString, Layout: Const, Rows: len(values), Valid: valid, Data: []byte("post"), Offsets: []uint32{0, 4}}
+
+	for _, want := range []string{"post", "like", "repost", "", "missing", "zzz"} {
+		mask := make([]uint8, len(values))
+		for name, c := range map[string]*Column{"flat": &flat, "dict": &dict, "wide dict": &wide} {
+			MaskEqBytes(mask, c, []byte(want))
+			for i, v := range values {
+				if sel := mask[i] == 0xFF; sel != (v == want && i != absent) {
+					t.Fatalf("%s: row %d selected=%v for %q", name, i, sel, want)
+				}
+			}
+		}
+		MaskEqBytes(mask, &constant, []byte(want))
+		for i := range values {
+			if sel := mask[i] == 0xFF; sel != (want == "post" && i != absent) {
+				t.Fatalf("const: row %d selected=%v for %q", i, sel, want)
+			}
+		}
+	}
+	if code, ok := dict.DictFind([]byte("post")); !ok || code != 1 {
+		t.Fatalf("DictFind(post) = %d, %v", code, ok)
+	}
+	if _, ok := dict.DictFind([]byte("pos")); ok {
+		t.Fatal("DictFind matched a prefix")
+	}
+}
