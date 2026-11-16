@@ -20,6 +20,10 @@ type Options struct {
 	Level Level
 	// NoTokenFilter leaves blocks without a token filter.
 	NoTokenFilter bool
+	// Ordered declares that the rows arrive ordered by their values at the
+	// SortKey paths and then by timestamp; the writer records it unchecked.
+	Ordered bool
+	SortKey []string
 }
 
 // Writer encodes batches into a part, one block per batch.
@@ -74,6 +78,9 @@ func NewWriter(w io.Writer, opts Options) *Writer {
 		pw.tokens.Add(pw.hashes)
 	}
 	pw.pathID(TimePath)
+	for _, path := range opts.SortKey {
+		pw.pathID(path)
+	}
 	var head [headerSize]byte
 	binary.LittleEndian.PutUint32(head[0:], fileMagic)
 	binary.LittleEndian.PutUint32(head[4:], formatVersion)
@@ -377,7 +384,15 @@ func (w *Writer) Close() error {
 		footer = binary.AppendUvarint(footer, uint64(len(p)))
 		footer = append(footer, p...)
 	}
-	footer = binary.AppendUvarint(footer, 0) // sort key length
+	// 0 marks an unordered part; otherwise the count of key paths plus one.
+	if !w.opts.Ordered {
+		footer = binary.AppendUvarint(footer, 0)
+	} else {
+		footer = binary.AppendUvarint(footer, uint64(len(w.opts.SortKey))+1)
+		for _, path := range w.opts.SortKey {
+			footer = binary.AppendUvarint(footer, uint64(w.ids[path]))
+		}
+	}
 	footer = binary.AppendUvarint(footer, uint64(len(w.index)/indexEntrySize))
 	footer = append(footer, w.index...)
 	footer = binary.AppendUvarint(footer, w.rows)

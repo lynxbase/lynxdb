@@ -18,6 +18,9 @@ type Part struct {
 	ids   map[string]uint32
 	index []byte
 
+	ordered bool
+	sortKey []string
+
 	// Rows is the number of rows in the part.
 	Rows uint64
 	// RawBytes is the size of the ingested input the part was built from.
@@ -62,8 +65,15 @@ func Open(data []byte) (*Part, error) {
 		p.ids[name] = uint32(len(p.paths))
 		p.paths = append(p.paths, name)
 	}
-	for n := r.uvarint(); n > 0 && !r.bad; n-- {
-		r.uvarint()
+	if n := r.uvarint(); n > 0 {
+		p.ordered = true
+		for ; n > 1 && !r.bad; n-- {
+			id := r.uvarint()
+			if id >= uint64(len(p.paths)) {
+				return nil, ErrCorrupt
+			}
+			p.sortKey = append(p.sortKey, p.paths[id])
+		}
 	}
 	nBlocks := r.uvarint()
 	if nBlocks > uint64(len(footer))/indexEntrySize {
@@ -90,6 +100,13 @@ func Open(data []byte) (*Part, error) {
 
 	return p, nil
 }
+
+// Ordered reports whether the rows are ordered by SortKey and then by
+// timestamp.
+func (p *Part) Ordered() bool { return p.ordered }
+
+// SortKey returns the paths an ordered part is ordered by.
+func (p *Part) SortKey() []string { return p.sortKey }
 
 // Size returns the part's size in bytes.
 func (p *Part) Size() int { return len(p.data) }
