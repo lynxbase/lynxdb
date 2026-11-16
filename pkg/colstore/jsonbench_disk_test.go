@@ -89,7 +89,9 @@ func loadToDir(t testing.TB, d *Dir, data []byte, parts, blockRows int, key []st
 // LYNXDB_BENCH_NDJSON first, with every part fsynced before it is visible;
 // a directory that already holds the table is only reopened, so dropping the
 // page cache before the run makes each query's first run a cold one.
-// LYNXDB_BENCH_QUERY keeps the queries and searches whose name contains it.
+// LYNXDB_BENCH_QUERY keeps the queries and searches whose name contains it;
+// LYNXDB_BENCH_T10_US and LYNXDB_BENCH_T60_US set the windows of the
+// time-bounded queries as "lo,hi" in microseconds.
 // LYNXDB_BENCH_SORT orders the parts by a comma-separated key ("default"
 // for the benchmark's own), LYNXDB_BENCH_PARTS sets their number, and
 // LYNXDB_BENCH_LAYOUT=runs keeps the ordered parts as separate sorted runs.
@@ -196,5 +198,29 @@ func TestJSONBenchDisk(t *testing.T) {
 		t.Logf("%-16s first run %9.2f ms, best of %d %9.2f ms on %d cores, CPU %9.2f ms; %d hits, %d blocks read, %d ruled out by tokens",
 			q.name, ms(first), runs, ms(took[0]), cores, ms(cpu), hits,
 			searchScan.opened.Load(), searchScan.skippedByToken.Load())
+	}
+	windows, bounds := benchWindows(t, snap)
+	for _, q := range windows {
+		if !strings.Contains(q.name, only) {
+			continue
+		}
+		if bounds != "" {
+			t.Log(bounds)
+			bounds = ""
+		}
+		windowNote = ""
+		begin := time.Now()
+		hits, err := q.run(snap, cores)
+		if err != nil {
+			t.Fatalf("%s: %v", q.name, err)
+		}
+		first := time.Since(begin)
+		took, cpu, err := timeRuns(runs, "", func() error { _, err := q.run(snap, cores); return err })
+		if err != nil {
+			t.Fatalf("%s: %v", q.name, err)
+		}
+		t.Logf("%-24s first run %9.2f ms, best of %d %9.2f ms on %d cores, CPU %9.2f ms; %d rows, %d blocks read, %d skipped by time, %d ruled out by tokens%s",
+			q.name, ms(first), runs, ms(took[0]), cores, ms(cpu), hits,
+			windowStats.Blocks, windowStats.SkippedByTime, windowStats.SkippedByToken, windowNote)
 	}
 }
