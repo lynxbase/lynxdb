@@ -5,6 +5,7 @@ import (
 	"hash/crc32"
 	"io"
 	"math"
+	"math/bits"
 	"sort"
 
 	"github.com/cespare/xxhash/v2"
@@ -355,18 +356,26 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 	w.block = appendInts(w.block, w.ints, w.opts.Level, &w.e)
 	w.block = appendBlob(w.block, w.values, w.opts.Level, true, &w.e.zbuf)
 
+	// Codes stay out of the general codec so that reading them costs a few
+	// shifts per row; runs take over when they halve the packed size.
+	width := uint(bits.Len(uint(distinct - 1)))
+	limit := packedSize(len(d.codes), width) / 2
 	w.e.tmp = w.e.tmp[:0]
-	if distinct <= 256 {
-		for _, code := range d.codes {
-			w.e.tmp = append(w.e.tmp, byte(d.rank[code]))
+	for i := 0; i < len(d.codes) && len(w.e.tmp) < limit; {
+		run := 1
+		for i+run < len(d.codes) && d.codes[i+run] == d.codes[i] {
+			run++
 		}
-	} else {
-		for _, code := range d.codes {
-			r := d.rank[code]
-			w.e.tmp = append(w.e.tmp, byte(r), byte(r>>8))
-		}
+		w.e.tmp = binary.AppendUvarint(w.e.tmp, uint64(d.rank[d.codes[i]]))
+		w.e.tmp = binary.AppendUvarint(w.e.tmp, uint64(run))
+		i += run
 	}
-	w.block = appendBlob(w.block, w.e.tmp, w.opts.Level, true, &w.e.zbuf)
+	if len(w.e.tmp) < limit {
+		w.block = append(append(w.block, codesRuns), w.e.tmp...)
+
+		return
+	}
+	w.block = appendPacked(append(w.block, codesPacked), d.codes, d.rank, width)
 }
 
 // appendDirectory writes the entries at a fixed size so that a reader can

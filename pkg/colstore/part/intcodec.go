@@ -25,9 +25,10 @@ type encodeScratch struct {
 
 // decodeScratch holds the buffers reused while decoding one column.
 type decodeScratch struct {
-	zbuf  []byte
-	zbuf2 []byte
-	ints  []int64
+	zbuf    []byte
+	ints    []int64
+	codes8  []uint8
+	codes16 []uint16
 }
 
 func zigzag(v int64) uint64   { return uint64(v<<1) ^ uint64(v>>63) }

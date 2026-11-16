@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"hash/crc32"
 	"math"
+	"math/bits"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -626,52 +627,75 @@ func (b *Block) decodeDict(chunk []byte, count int, sparse bool, dst *vec.Column
 		return ErrCorrupt
 	}
 
-	codes, _, _, err := readBlob(rest, &b.d.zbuf2)
-	if err != nil {
-		return err
-	}
 	dst.Layout = vec.Dict
+	if len(rest) == 0 {
+		return ErrCorrupt
+	}
+	mode, codes := rest[0], rest[1:]
+	width := uint(bits.Len64(size - 1))
+	if mode == codesPacked && len(codes) != packedSize(count, width) || mode > codesRuns {
+		return ErrCorrupt
+	}
 	if size <= 256 {
-		if len(codes) != count {
+		dst.Codes8 = grow(dst.Codes8, rows)
+		out := dst.Codes8
+		if sparse {
+			b.d.codes8 = grow(b.d.codes8, count)
+			out = b.d.codes8
+		}
+		if !readCodes(out, codes, mode, width, int(size), unpack8) {
 			return ErrCorrupt
 		}
-		dst.Codes8 = grow(dst.Codes8, rows)
-		if !sparse {
-			copy(dst.Codes8, codes)
-		} else {
+		if sparse {
 			clear(dst.Codes8)
-			spread(dst.Codes8, codes, dst.Valid)
-		}
-		for _, c := range codes {
-			if uint64(c) >= size {
-				return ErrCorrupt
-			}
+			spread(dst.Codes8, out, dst.Valid)
 		}
 
 		return nil
 	}
-	if len(codes) != 2*count {
+	dst.Codes16 = grow(dst.Codes16, rows)
+	out := dst.Codes16
+	if sparse {
+		b.d.codes16 = grow(b.d.codes16, count)
+		out = b.d.codes16
+	}
+	if !readCodes(out, codes, mode, width, int(size), unpack16) {
 		return ErrCorrupt
 	}
-	dst.Codes16 = grow(dst.Codes16, rows)
-	var pos []uint32
 	if sparse {
 		clear(dst.Codes16)
-		pos = b.positions(dst.Valid)
-	}
-	for i := 0; i < count; i++ {
-		c := binary.LittleEndian.Uint16(codes[2*i:])
-		if uint64(c) >= size {
-			return ErrCorrupt
-		}
-		if sparse {
-			dst.Codes16[pos[i]] = c
-		} else {
-			dst.Codes16[i] = c
-		}
+		spread(dst.Codes16, out, dst.Valid)
 	}
 
 	return nil
+}
+
+// readCodes fills dst from a codes section and reports whether the section
+// holds exactly len(dst) codes, all below size.
+func readCodes[T uint8 | uint16](dst []T, src []byte, mode uint8, width uint, size int,
+	unpack func(dst []T, src []byte, width uint, size int) bool) bool {
+	if mode == codesPacked {
+		return unpack(dst, src, width, size)
+	}
+	n := 0
+	for len(src) > 0 {
+		code, a := binary.Uvarint(src)
+		if a <= 0 {
+			return false
+		}
+		run, c := binary.Uvarint(src[a:])
+		if c <= 0 || code >= uint64(size) || run == 0 || run > uint64(len(dst)-n) {
+			return false
+		}
+		src = src[a+c:]
+		fill := dst[n : n+int(run)]
+		for i := range fill {
+			fill[i] = T(code)
+		}
+		n += int(run)
+	}
+
+	return n == len(dst)
 }
 
 // reader consumes a byte slice and remembers whether it ran short.

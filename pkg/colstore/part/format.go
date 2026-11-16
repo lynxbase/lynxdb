@@ -42,6 +42,12 @@ const (
 	presenceHoles  = 2 // 16-bit row numbers of the absent rows
 )
 
+// Layouts of the codes of a dictionary column.
+const (
+	codesPacked = 0 // every code in the bits that the largest code needs
+	codesRuns   = 1 // the code and the length of every run of equal codes
+)
+
 // TimePath names the column holding each row's timestamp in nanoseconds.
 const TimePath = "_time"
 
