@@ -33,28 +33,7 @@ func TestJSONBenchIngest(t *testing.T) {
 	if dir == "" || path == "" || os.Getenv("LYNXDB_BENCH_INGEST") == "" {
 		t.Skip("set LYNXDB_BENCH_INGEST, LYNXDB_BENCH_DIR and LYNXDB_BENCH_NDJSON")
 	}
-	opts := StoreOptions{
-		TimeField:  "time_us",
-		BlockRows:  envInt(t, "LYNXDB_BENCH_BLOCK_ROWS", 16384),
-		FlushBytes: envInt(t, "LYNXDB_BENCH_RUN_MB", 128) << 20,
-		MergeFanIn: envInt(t, "LYNXDB_BENCH_FANIN", 8),
-	}
-	if v := os.Getenv("LYNXDB_BENCH_PARTITION"); v != "" {
-		width, err := time.ParseDuration(v)
-		if err != nil || width <= 0 {
-			t.Fatalf("LYNXDB_BENCH_PARTITION=%q is not a positive duration", v)
-		}
-		opts.Partition = width
-	}
-	opts.FlushLevel = benchLevel(t, "LYNXDB_BENCH_FLUSH_LEVEL", part.LevelFastest)
-	opts.Part.Level = benchLevel(t, "LYNXDB_BENCH_LEVEL", part.LevelFast)
-	switch s := os.Getenv("LYNXDB_BENCH_SORT"); s {
-	case "":
-	case "default":
-		opts.SortKey = []string{"kind", "commit.operation", "commit.collection", "did"}
-	default:
-		opts.SortKey = strings.Split(s, ",")
-	}
+	opts := ingestOptions(t)
 	streams := envInt(t, "LYNXDB_BENCH_STREAMS", runtime.GOMAXPROCS(0))
 	requestDocs := envInt(t, "LYNXDB_BENCH_REQUEST_DOCS", 100000)
 	data := mapFile(t, path)
@@ -148,6 +127,36 @@ func TestJSONBenchIngest(t *testing.T) {
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
 	t.Logf("the Go runtime obtained %.0f MB from the system", float64(mem.Sys)/1e6)
+}
+
+// ingestOptions reads the store settings of the ingest benchmark from the
+// environment.
+func ingestOptions(t testing.TB) StoreOptions {
+	t.Helper()
+	opts := StoreOptions{
+		TimeField:  "time_us",
+		BlockRows:  envInt(t, "LYNXDB_BENCH_BLOCK_ROWS", 16384),
+		FlushBytes: envInt(t, "LYNXDB_BENCH_RUN_MB", 128) << 20,
+		MergeFanIn: envInt(t, "LYNXDB_BENCH_FANIN", 8),
+	}
+	if v := os.Getenv("LYNXDB_BENCH_PARTITION"); v != "" {
+		width, err := time.ParseDuration(v)
+		if err != nil || width <= 0 {
+			t.Fatalf("LYNXDB_BENCH_PARTITION=%q is not a positive duration", v)
+		}
+		opts.Partition = width
+	}
+	opts.FlushLevel = benchLevel(t, "LYNXDB_BENCH_FLUSH_LEVEL", part.LevelFastest)
+	opts.Part.Level = benchLevel(t, "LYNXDB_BENCH_LEVEL", part.LevelFast)
+	switch s := os.Getenv("LYNXDB_BENCH_SORT"); s {
+	case "":
+	case "default":
+		opts.SortKey = []string{"kind", "commit.operation", "commit.collection", "did"}
+	default:
+		opts.SortKey = strings.Split(s, ",")
+	}
+
+	return opts
 }
 
 // benchLevel reads a compression effort setting: fastest, fast or compact.
