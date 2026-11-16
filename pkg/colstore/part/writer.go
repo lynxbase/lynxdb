@@ -43,6 +43,7 @@ type Writer struct {
 	maxT  int64
 
 	block  []byte
+	stats  []byte
 	ents   []dirEntry
 	e      encodeScratch
 	ints   []int64
@@ -156,7 +157,8 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	binary.LittleEndian.PutUint32(entry[36:], uint32(dirOff-filterOff))
 	binary.LittleEndian.PutUint32(entry[40:], uint32(dirOff))
 	binary.LittleEndian.PutUint32(entry[44:], uint32(len(w.block)-dirOff))
-	binary.LittleEndian.PutUint32(entry[48:], crc32.Checksum(w.block[filterOff:], castagnoli))
+	binary.LittleEndian.PutUint32(entry[48:], crc32.Checksum(w.block[dirOff:], castagnoli))
+	binary.LittleEndian.PutUint32(entry[52:], crc32.Checksum(w.block[filterOff:dirOff], castagnoli))
 	w.index = append(w.index, entry[:]...)
 	if w.opts.Ordered {
 		w.e.tmp = appendFirstKey(w.e.tmp[:0], b, w.opts.SortKey)
@@ -353,34 +355,39 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 	w.block = appendBlob(w.block, w.e.tmp, w.opts.Level, true, &w.e.zbuf)
 }
 
+// appendDirectory writes the entries at a fixed size so that a reader can
+// find one column without decoding the others, then what varies in size.
 func (w *Writer) appendDirectory() {
 	w.block = binary.AppendUvarint(w.block, uint64(len(w.ents)))
+	w.stats = w.stats[:0]
 	for i := range w.ents {
 		e := &w.ents[i]
-		w.block = binary.AppendUvarint(w.block, uint64(e.pathID))
-		w.block = append(w.block, byte(e.kind), e.enc, e.flags)
-		w.block = binary.AppendUvarint(w.block, uint64(e.count))
-		w.block = binary.AppendUvarint(w.block, uint64(e.off))
-		w.block = binary.AppendUvarint(w.block, uint64(e.length))
+		w.block = binary.LittleEndian.AppendUint32(w.block, e.pathID)
+		w.block = append(w.block, byte(e.kind), e.enc, e.flags, 0)
+		w.block = binary.LittleEndian.AppendUint32(w.block, uint32(e.count))
+		w.block = binary.LittleEndian.AppendUint32(w.block, e.off)
+		w.block = binary.LittleEndian.AppendUint32(w.block, e.length)
 		w.block = binary.LittleEndian.AppendUint32(w.block, e.crc)
+		w.block = binary.LittleEndian.AppendUint32(w.block, uint32(len(w.stats)))
 		switch e.kind {
 		case vec.KindInt:
-			w.block = binary.AppendUvarint(w.block, zigzag(e.minI))
-			w.block = binary.AppendUvarint(w.block, zigzag(e.maxI))
+			w.stats = binary.AppendUvarint(w.stats, zigzag(e.minI))
+			w.stats = binary.AppendUvarint(w.stats, zigzag(e.maxI))
 		case vec.KindFloat:
-			w.block = binary.LittleEndian.AppendUint64(w.block, math.Float64bits(e.minF))
-			w.block = binary.LittleEndian.AppendUint64(w.block, math.Float64bits(e.maxF))
+			w.stats = binary.LittleEndian.AppendUint64(w.stats, math.Float64bits(e.minF))
+			w.stats = binary.LittleEndian.AppendUint64(w.stats, math.Float64bits(e.maxF))
 		}
 		switch {
 		case e.enc != encConst || e.kind == vec.KindInt:
 		case e.kind == vec.KindFloat:
-			w.block = binary.AppendUvarint(w.block, 8)
-			w.block = binary.LittleEndian.AppendUint64(w.block, e.constBits)
+			w.stats = binary.AppendUvarint(w.stats, 8)
+			w.stats = binary.LittleEndian.AppendUint64(w.stats, e.constBits)
 		default:
-			w.block = binary.AppendUvarint(w.block, uint64(len(e.constVal)))
-			w.block = append(w.block, e.constVal...)
+			w.stats = binary.AppendUvarint(w.stats, uint64(len(e.constVal)))
+			w.stats = append(w.stats, e.constVal...)
 		}
 	}
+	w.block = append(w.block, w.stats...)
 }
 
 // Close writes the footer; the part is complete once it returns nil.

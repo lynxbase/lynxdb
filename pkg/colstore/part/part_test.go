@@ -199,6 +199,97 @@ func TestBlockPicksEncodingsAndStatistics(t *testing.T) {
 	}
 }
 
+func TestBlockFindsEachColumnWithoutReadingTheOthers(t *testing.T) {
+	p := buildPart(t, sampleDocs(3000), 1000, Options{})
+	var b, all Block
+	for i := 0; i < p.NumBlocks(); i++ {
+		if err := p.OpenBlock(i, &all); err != nil {
+			t.Fatal(err)
+		}
+		refs := all.Columns()
+		if len(refs) < 10 {
+			t.Fatalf("block %d has %d columns", i, len(refs))
+		}
+		for j := range refs {
+			// A fresh open leaves every other directory entry undecoded.
+			if err := p.OpenBlock(i, &b); err != nil {
+				t.Fatal(err)
+			}
+			want := &refs[j]
+			got, ok := b.Column(want.PathID, want.Kind)
+			if !ok || !reflect.DeepEqual(got, want) {
+				t.Fatalf("block %d: Column(%d, %s) = %+v, %v, want %+v", i, want.PathID, want.Kind, got, ok, want)
+			}
+			a, c := new(vec.Column), new(vec.Column)
+			if err := b.Decode(got, a); err != nil {
+				t.Fatal(err)
+			}
+			if err := all.Decode(want, c); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(a, c) {
+				t.Fatalf("block %d column %d decodes differently when looked up alone", i, j)
+			}
+			if _, ok := b.Column(want.PathID, vec.Kind(0)); ok {
+				t.Fatalf("block %d: found a column of an unknown kind", i)
+			}
+			path := b.Path(want.PathID)
+			found := false
+			for k := range path {
+				found = found || reflect.DeepEqual(&path[k], want)
+			}
+			if !found || len(path) == 0 || len(path) > 2 {
+				t.Fatalf("block %d: Path(%d) returned %d columns", i, want.PathID, len(path))
+			}
+		}
+		if _, ok := b.Column(uint32(len(p.Paths())), vec.KindString); ok {
+			t.Fatal("found a column of a path the part does not have")
+		}
+	}
+}
+
+func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
+	var buf bytes.Buffer
+	w := NewWriter(&buf, Options{})
+	batch := shred.NewBatch(shred.Options{})
+	for _, d := range sampleDocs(400) {
+		if err := batch.AddJSON([]byte(d), 5); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.WriteBatch(batch); err != nil || w.Close() != nil {
+		t.Fatal("write failed")
+	}
+	data := buf.Bytes()
+	p, err := Open(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b Block
+	if err := p.OpenBlock(0, &b); err != nil {
+		t.Fatal(err)
+	}
+	if len(b.filter) == 0 {
+		t.Fatal("block has no filter")
+	}
+	if _, err := b.MayContainToken(7); err != nil {
+		t.Fatal(err)
+	}
+	b.filter[len(b.filter)/2] ^= 0x10
+	if err := p.OpenBlock(0, &b); err != nil {
+		t.Fatalf("OpenBlock read the filter: %v", err)
+	}
+	refs := b.Columns()
+	for j := range refs {
+		if err := b.Decode(&refs[j], new(vec.Column)); err != nil {
+			t.Fatalf("column %d: %v", j, err)
+		}
+	}
+	if _, err := b.MayContainToken(7); err != ErrCorrupt {
+		t.Fatalf("MayContainToken on a damaged filter: %v", err)
+	}
+}
+
 func TestTokenFilterCoversEveryStringToken(t *testing.T) {
 	docs := sampleDocs(2000)
 	p := buildPart(t, docs, 500, Options{})
@@ -215,15 +306,15 @@ func TestTokenFilterCoversEveryStringToken(t *testing.T) {
 			}
 			for _, s := range stringsIn(v, nil) {
 				for _, h := range tokenfilter.AppendHashes(nil, []byte(s)) {
-					if !b.MayContainToken(h) {
-						t.Fatalf("block %d misses a token of %q", i, s)
+					if may, err := b.MayContainToken(h); !may || err != nil {
+						t.Fatalf("block %d misses a token of %q: %v", i, s, err)
 					}
 				}
 			}
 		}
 		misses := 0
 		for k := 0; k < 1000; k++ {
-			if !b.MayContainToken(tokenfilter.AppendHashes(nil, []byte(fmt.Sprintf("absent%dtoken", k)))[0]) {
+			if may, _ := b.MayContainToken(tokenfilter.AppendHashes(nil, []byte(fmt.Sprintf("absent%dtoken", k)))[0]); !may {
 				misses++
 			}
 		}
@@ -273,6 +364,9 @@ func TestCorruptPartsFailWithoutPanicking(t *testing.T) {
 		for i := 0; i < p.NumBlocks(); i++ {
 			if err := p.OpenBlock(i, &b); err != nil {
 				return true
+			}
+			if _, err := b.MayContainToken(1); err != nil {
+				failed = true
 			}
 			refs := b.Columns()
 			for j := range refs {

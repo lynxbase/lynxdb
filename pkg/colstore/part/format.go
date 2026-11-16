@@ -15,9 +15,14 @@ const (
 	headerSize  = 8
 	trailerSize = 28
 	// rows, min time, max time, block offset, block length, filter offset,
-	// filter length, directory offset, directory length, and the checksum
-	// of filter and directory; column chunks carry their own checksums.
-	indexEntrySize = 52
+	// filter length, directory offset, directory length, the checksum of
+	// the directory and the checksum of the filter; column chunks carry
+	// their own checksums.
+	indexEntrySize = 56
+	// path id, kind, encoding, flags, a zero byte, value count, chunk
+	// offset, chunk length, chunk checksum, and the offset of the entry's
+	// statistics and constant value among those that follow the entries.
+	dirEntrySize = 28
 )
 
 // Column encodings.

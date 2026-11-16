@@ -151,7 +151,13 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 
 					return
 				}
-				if !mayContainAll(b, opts.Tokens) {
+				may, err := mayContainAll(b, opts.Tokens)
+				if err != nil {
+					cancel(err)
+
+					return
+				}
+				if !may {
 					skipped.Add(1)
 
 					continue
@@ -174,12 +180,12 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 	return stats, nil
 }
 
-func mayContainAll(b *part.Block, tokens []uint64) bool {
+func mayContainAll(b *part.Block, tokens []uint64) (bool, error) {
 	for _, h := range tokens {
-		if !b.MayContainToken(h) {
-			return false
+		if may, err := b.MayContainToken(h); !may || err != nil {
+			return false, err
 		}
 	}
 
-	return true
+	return true, nil
 }

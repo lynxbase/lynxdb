@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"hash/crc32"
 	"math"
-	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -155,8 +154,10 @@ type ColumnRef struct {
 	MinFloat float64
 	MaxFloat float64
 
-	enc      uint8
-	flags    uint8
+	enc   uint8
+	flags uint8
+	// bad marks a directory entry that does not describe a column.
+	bad      bool
 	off      uint32
 	length   uint32
 	crc      uint32
@@ -178,8 +179,18 @@ type Block struct {
 
 	part   *Part
 	data   []byte
+	chunks uint32 // size of the column chunks at the start of data
 	filter []byte
+	// The filter is checked against filterCRC when a token is first probed.
+	filterCRC     uint32
+	filterChecked bool
+	// dir holds one entry per column, ordered by path id and kind, and stats
+	// the statistics and constant values the entries point to.
+	dir   []byte
+	stats []byte
+	// cols[i] is decoded from entry i once bit i of parsed is set.
 	cols   []ColumnRef
+	parsed vec.Bitmap
 	d      decodeScratch
 	pos    []uint32
 }
@@ -192,59 +203,107 @@ func (p *Part) OpenBlock(i int, b *Block) error {
 	b.part = p
 	b.data = p.data[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
 	filterOff, dirOff := binary.LittleEndian.Uint32(e[32:]), binary.LittleEndian.Uint32(e[40:])
+	b.chunks = filterOff
 	b.filter = b.data[filterOff:dirOff]
-	if crc32.Checksum(b.data[filterOff:], castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
+	b.filterCRC, b.filterChecked = binary.LittleEndian.Uint32(e[52:]), false
+	dir := b.data[dirOff:]
+	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
 		return ErrCorrupt
 	}
-
-	r := reader{buf: b.data[dirOff:]}
-	n := r.uvarint()
-	if n > uint64(len(r.buf)) || b.Rows == 0 || b.Rows > 1<<16 {
+	n, size := binary.Uvarint(dir)
+	if size <= 0 || n > uint64(len(dir)-size)/dirEntrySize || b.Rows == 0 || b.Rows > 1<<16 {
 		return ErrCorrupt
 	}
-	b.cols = b.cols[:0]
-	for ; n > 0; n-- {
-		var c ColumnRef
-		c.PathID = uint32(r.uvarint())
-		head := r.bytes(3)
-		if r.bad {
-			return ErrCorrupt
-		}
-		c.Kind, c.enc, c.flags = vec.Kind(head[0]), head[1], head[2]
-		c.Count = int(r.uvarint())
-		c.off = uint32(r.uvarint())
-		c.length = uint32(r.uvarint())
-		c.crc = r.uint32()
-		switch c.Kind {
-		case vec.KindInt:
-			c.MinInt, c.MaxInt = unzigzag(r.uvarint()), unzigzag(r.uvarint())
-		case vec.KindFloat:
-			c.MinFloat, c.MaxFloat = math.Float64frombits(r.uint64()), math.Float64frombits(r.uint64())
-		case vec.KindNull, vec.KindBool, vec.KindString, vec.KindVariant:
-		default:
-			return ErrCorrupt
-		}
-		if c.enc == encConst && c.Kind != vec.KindInt {
-			c.constVal = r.bytes(r.uvarint())
-		}
-		if r.bad || c.Count <= 0 || c.Count > b.Rows || uint64(c.off)+uint64(c.length) > uint64(filterOff) ||
-			int(c.PathID) >= len(p.paths) || (c.flags&flagSparse == 0) != (c.Count == b.Rows) {
-			return ErrCorrupt
-		}
-		b.cols = append(b.cols, c)
-	}
+	entries := size + int(n)*dirEntrySize
+	b.dir, b.stats = dir[size:entries], dir[entries:]
+	b.cols = grow(b.cols, int(n))
+	b.parsed = grow(b.parsed, vec.BitmapWords(int(n)))
+	clear(b.parsed)
 
 	return nil
 }
 
+// dirKey orders directory entry i by path id, then kind.
+func (b *Block) dirKey(i int) uint64 {
+	e := b.dir[i*dirEntrySize:]
+
+	return uint64(binary.LittleEndian.Uint32(e))<<8 | uint64(e[4])
+}
+
+// seek returns the first directory entry whose key is not below key.
+func (b *Block) seek(key uint64) int {
+	lo, hi := 0, len(b.cols)
+	for lo < hi {
+		mid := int(uint(lo+hi) >> 1)
+		if b.dirKey(mid) < key {
+			lo = mid + 1
+		} else {
+			hi = mid
+		}
+	}
+
+	return lo
+}
+
+// col returns column i, decoding its directory entry on first use.
+func (b *Block) col(i int) *ColumnRef {
+	c := &b.cols[i]
+	if b.parsed.Get(i) {
+		return c
+	}
+	b.parsed.Set(i)
+	e := b.dir[i*dirEntrySize:]
+	*c = ColumnRef{
+		PathID: binary.LittleEndian.Uint32(e),
+		Kind:   vec.Kind(e[4]),
+		Count:  int(binary.LittleEndian.Uint32(e[8:])),
+		enc:    e[5],
+		flags:  e[6],
+		off:    binary.LittleEndian.Uint32(e[12:]),
+		length: binary.LittleEndian.Uint32(e[16:]),
+		crc:    binary.LittleEndian.Uint32(e[20:]),
+	}
+	r := reader{}
+	if at := binary.LittleEndian.Uint32(e[24:]); uint64(at) <= uint64(len(b.stats)) {
+		r.buf = b.stats[at:]
+	} else {
+		r.bad = true
+	}
+	switch c.Kind {
+	case vec.KindInt:
+		c.MinInt, c.MaxInt = unzigzag(r.uvarint()), unzigzag(r.uvarint())
+	case vec.KindFloat:
+		c.MinFloat, c.MaxFloat = math.Float64frombits(r.uint64()), math.Float64frombits(r.uint64())
+	case vec.KindNull, vec.KindBool, vec.KindString, vec.KindVariant:
+	default:
+		r.bad = true
+	}
+	if c.enc == encConst && c.Kind != vec.KindInt {
+		c.constVal = r.bytes(r.uvarint())
+	}
+	if r.bad || c.Count <= 0 || c.Count > b.Rows || uint64(c.off)+uint64(c.length) > uint64(b.chunks) ||
+		int(c.PathID) >= len(b.part.paths) || (c.flags&flagSparse == 0) != (c.Count == b.Rows) {
+		*c = ColumnRef{PathID: c.PathID, Kind: c.Kind, bad: true}
+	}
+
+	return c
+}
+
 // Columns returns every column of the block, ordered by path id and kind.
-func (b *Block) Columns() []ColumnRef { return b.cols }
+func (b *Block) Columns() []ColumnRef {
+	for i := range b.cols {
+		b.col(i)
+	}
+
+	return b.cols
+}
 
 // Path returns the columns stored for a path, one per value kind.
 func (b *Block) Path(pathID uint32) []ColumnRef {
-	lo := sort.Search(len(b.cols), func(i int) bool { return b.cols[i].PathID >= pathID })
+	lo := b.seek(uint64(pathID) << 8)
 	hi := lo
-	for hi < len(b.cols) && b.cols[hi].PathID == pathID {
+	for hi < len(b.cols) && b.dirKey(hi)>>8 == uint64(pathID) {
+		b.col(hi)
 		hi++
 	}
 
@@ -253,21 +312,27 @@ func (b *Block) Path(pathID uint32) []ColumnRef {
 
 // Column returns the column of a path that holds values of kind.
 func (b *Block) Column(pathID uint32, kind vec.Kind) (*ColumnRef, bool) {
-	cols := b.Path(pathID)
-	for i := range cols {
-		if cols[i].Kind == kind {
-			return &cols[i], true
-		}
+	key := uint64(pathID)<<8 | uint64(kind)
+	i := b.seek(key)
+	if i == len(b.cols) || b.dirKey(i) != key {
+		return nil, false
 	}
 
-	return nil, false
+	return b.col(i), true
 }
 
 // MayContainToken reports whether any string of the block may contain the
 // token with this hash, which is always true for a block written without a
-// filter.
-func (b *Block) MayContainToken(hash uint64) bool {
-	return tokenfilter.MayContain(b.filter, hash)
+// filter, and fails when the filter is damaged.
+func (b *Block) MayContainToken(hash uint64) (bool, error) {
+	if !b.filterChecked {
+		if crc32.Checksum(b.filter, castagnoli) != b.filterCRC {
+			return false, ErrCorrupt
+		}
+		b.filterChecked = true
+	}
+
+	return tokenfilter.MayContain(b.filter, hash), nil
 }
 
 func grow[T any](s []T, n int) []T {
@@ -281,6 +346,9 @@ func grow[T any](s []T, n int) []T {
 // Decode materializes a column into dst, one slot per row, leaving dst with
 // no reference to the part's bytes.
 func (b *Block) Decode(ref *ColumnRef, dst *vec.Column) error {
+	if ref.bad {
+		return ErrCorrupt
+	}
 	chunk := b.data[ref.off : ref.off+ref.length]
 	if crc32.Checksum(chunk, castagnoli) != ref.crc {
 		return ErrCorrupt
@@ -621,14 +689,6 @@ func (r *reader) bytes(n uint64) []byte {
 	r.buf = r.buf[n:]
 
 	return out
-}
-
-func (r *reader) uint32() uint32 {
-	if b := r.bytes(4); b != nil {
-		return binary.LittleEndian.Uint32(b)
-	}
-
-	return 0
 }
 
 func (r *reader) uint64() uint64 {
