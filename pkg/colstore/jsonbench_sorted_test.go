@@ -5,7 +5,6 @@ import (
 	"os"
 	"reflect"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -143,9 +142,9 @@ func TestJSONBenchOrdered(t *testing.T) {
 		float64(plainSize)/1e6, plainLoad.Seconds(), key, parts, float64(orderedSize)/1e6, orderedLoad.Seconds())
 
 	type result struct {
-		q1, q2 []eventCount
-		q3     []hourCount
-		spans  []userSpan
+		q1, q2         []eventCount
+		q3             []hourCount
+		first, longest []userSpan
 	}
 	run := func(tbl *Table, label string) result {
 		snap := tbl.Snapshot()
@@ -165,7 +164,7 @@ func TestJSONBenchOrdered(t *testing.T) {
 			{"Q1", func(n int) (err error) { res.q1, err = queryTopEvents(snap, n); return }},
 			{"Q2", func(n int) (err error) { res.q2, err = queryEventsWithUsers(created, n); return }},
 			{"Q3", func(n int) (err error) { res.q3, err = queryEventsByHour(created, n); return }},
-			{"Q4/Q5", func(n int) (err error) { res.spans, err = queryPostTimes(posts, n); return }},
+			{"Q4/Q5", func(n int) (err error) { res.first, res.longest, err = queryPostTimes(posts, n, 3); return }},
 		}
 		for _, q := range queries {
 			var best [2]time.Duration
@@ -183,7 +182,6 @@ func TestJSONBenchOrdered(t *testing.T) {
 			t.Logf("%-14s %-6s %8.2f ms on %d cores, %8.2f ms on 1 core", label, q.name,
 				float64(best[0].Microseconds())/1e3, cores, float64(best[1].Microseconds())/1e3)
 		}
-		sort.Slice(res.spans, func(i, j int) bool { return res.spans[i].did < res.spans[j].did })
 
 		return res
 	}

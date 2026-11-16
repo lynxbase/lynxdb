@@ -28,6 +28,10 @@ import (
 
 const distinctPartitions = 64
 
+// partitionBits splits high-cardinality keys into partitions small enough
+// for one partition's table to stay in a core's cache.
+const partitionBits = 8
+
 // benchWorker is the state one scan goroutine owns for one query.
 type benchWorker struct {
 	arena  *mem.Arena
@@ -40,6 +44,8 @@ type benchWorker struct {
 	// merge of each partition can run on its own core.
 	distinct [distinctPartitions]*vec.ByteTable
 	hours    [3 * 24]int64
+	// log holds one record per selected row for the merge to aggregate.
+	log *vec.KeyPartitions
 
 	a, b, c, tmp vec.Column
 	mask, mask2  []uint8
@@ -418,12 +424,116 @@ type userSpan struct {
 	min, max int64
 }
 
-// queryPostTimes feeds Q4 and Q5: the first and last time_us of created
-// posts per did.
-func queryPostTimes(snap *Snapshot, workers int) ([]userSpan, error) {
+// spanMillis is the time between a user's first and last post.
+func spanMillis(lo, hi int64) int64 { return hi/1000 - lo/1000 }
+
+type spanEntry struct {
+	did      []byte
+	min, max int64
+}
+
+// earlier orders by first post, then by did.
+func earlier(a, b *spanEntry) bool {
+	if a.min != b.min {
+		return a.min < b.min
+	}
+
+	return bytes.Compare(a.did, b.did) < 0
+}
+
+// longer orders by the longest time between first and last post, then by did.
+func longer(a, b *spanEntry) bool {
+	if sa, sb := spanMillis(a.min, a.max), spanMillis(b.min, b.max); sa != sb {
+		return sa > sb
+	}
+
+	return bytes.Compare(a.did, b.did) < 0
+}
+
+// topSpans keeps the n best entries seen, best first, ordered by longer when
+// byLength is set and by earlier otherwise; it copies the did only of an
+// entry it keeps.
+type topSpans struct {
+	byLength bool
+	best     []spanEntry
+	n        int
+}
+
+func (t *topSpans) less(a, b *spanEntry) bool {
+	if t.byLength {
+		return longer(a, b)
+	}
+
+	return earlier(a, b)
+}
+
+func (t *topSpans) offer(e spanEntry) {
+	if len(t.best) == t.n && !t.less(&e, &t.best[t.n-1]) {
+		return
+	}
+	var did []byte
+	if len(t.best) < t.n {
+		t.best = append(t.best, spanEntry{})
+	} else {
+		did = t.best[t.n-1].did
+	}
+	i := len(t.best) - 1
+	for ; i > 0 && t.less(&e, &t.best[i-1]); i-- {
+		t.best[i] = t.best[i-1]
+	}
+	e.did = append(did[:0], e.did...)
+	t.best[i] = e
+}
+
+func (t *topSpans) spans() []userSpan {
+	out := make([]userSpan, len(t.best))
+	for i, e := range t.best {
+		out[i] = userSpan{did: string(e.did), min: e.min, max: e.max}
+	}
+
+	return out
+}
+
+// forEachPartition calls fn for every partition from up to workers
+// goroutines, passing each goroutine's number so it can own a merge state.
+func forEachPartition(partitions, workers int, fn func(slot, partition int)) {
+	workers = min(workers, partitions)
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for slot := 0; slot < workers; slot++ {
+		wg.Add(1)
+		go func(slot int) {
+			defer wg.Done()
+			for {
+				i := int(next.Add(1)) - 1
+				if i >= partitions {
+					return
+				}
+				fn(slot, i)
+			}
+		}(slot)
+	}
+	wg.Wait()
+}
+
+// spanMerger is the state one goroutine owns while it merges partitions.
+type spanMerger struct {
+	arena          *mem.Arena
+	groups         *vec.ByteTable
+	mins, maxs     []int64
+	first, longest topSpans
+}
+
+// queryPostTimes answers Q4 and Q5 in one pass: the limit users with the
+// earliest first created post, and the limit users with the longest time
+// between their first and last one.
+func queryPostTimes(snap *Snapshot, workers, limit int) (first, longest []userSpan, err error) {
 	ws := newBenchWorkers(workers)
 	defer freeBenchWorkers(ws)
-	_, err := snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
+	for _, w := range ws {
+		w.log = vec.NewKeyPartitions(w.arena, partitionBits)
+	}
+	_, err = snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
 		w := ws[n]
 		if ok, err := w.created(p, b); !ok || err != nil {
 			return err
@@ -446,36 +556,62 @@ func queryPostTimes(snap *Snapshot, workers int) ([]userSpan, error) {
 			if !w.b.IsValid(row) || !w.c.IsValid(row) {
 				continue
 			}
-			g := w.group(w.b.Bytes(row))
-			ts := w.c.Int(row)
-			w.mins[g] = min(w.mins[g], ts)
-			w.maxs[g] = max(w.maxs[g], ts)
+			// The record is the did followed by the post time.
+			did := w.b.Bytes(row)
+			w.key = binary.LittleEndian.AppendUint64(append(w.key[:0], did...), uint64(w.c.Int(row)))
+			w.log.Add(vec.Hash(did), w.key)
 		}
 
 		return nil
 	})
 	if err != nil {
-		return nil, err
-	}
-	arena := mem.NewArena()
-	defer arena.Free()
-	all := vec.NewByteTable(arena)
-	var spans []userSpan
-	for _, w := range ws {
-		for id := 0; id < w.groups.Len(); id++ {
-			g := all.IDHashed(w.groups.Key(id), w.groups.KeyHash(id))
-			if g == len(spans) {
-				spans = append(spans, userSpan{min: 1 << 62, max: -1 << 62})
-			}
-			spans[g].min = min(spans[g].min, w.mins[id])
-			spans[g].max = max(spans[g].max, w.maxs[id])
-		}
-	}
-	for g := range spans {
-		spans[g].did = string(all.Key(g))
+		return nil, nil, err
 	}
 
-	return spans, nil
+	mergers := make([]spanMerger, workers)
+	for i := range mergers {
+		m := &mergers[i]
+		m.arena = mem.NewArena()
+		defer m.arena.Free()
+		m.groups = vec.NewByteTable(m.arena)
+		m.first = topSpans{n: limit}
+		m.longest = topSpans{byLength: true, n: limit}
+	}
+	// A did lives in one partition, so partitions aggregate independently.
+	forEachPartition(1<<partitionBits, workers, func(slot, partition int) {
+		m := &mergers[slot]
+		m.groups.Clear()
+		m.mins, m.maxs = m.mins[:0], m.maxs[:0]
+		for _, w := range ws {
+			w.log.Each(partition, func(h uint64, rec []byte) {
+				n := len(rec) - 8
+				ts := int64(binary.LittleEndian.Uint64(rec[n:]))
+				g := m.groups.IDHashed(rec[:n], h)
+				if g == len(m.mins) {
+					m.mins, m.maxs = append(m.mins, ts), append(m.maxs, ts)
+
+					return
+				}
+				m.mins[g], m.maxs[g] = min(m.mins[g], ts), max(m.maxs[g], ts)
+			})
+		}
+		for g := range m.mins {
+			e := spanEntry{did: m.groups.Key(g), min: m.mins[g], max: m.maxs[g]}
+			m.first.offer(e)
+			m.longest.offer(e)
+		}
+	})
+	all := spanMerger{first: topSpans{n: limit}, longest: topSpans{byLength: true, n: limit}}
+	for i := range mergers {
+		for _, e := range mergers[i].first.best {
+			all.first.offer(e)
+		}
+		for _, e := range mergers[i].longest.best {
+			all.longest.offer(e)
+		}
+	}
+
+	return all.first.spans(), all.longest.spans(), nil
 }
 
 // loadNDJSON shreds data on every core, one part per worker and one block
@@ -626,7 +762,7 @@ func TestJSONBench(t *testing.T) {
 
 	var q1, q2 []eventCount
 	var q3 []hourCount
-	var spans []userSpan
+	var first, longest []userSpan
 	queries := []struct {
 		name string
 		run  func(workers int) error
@@ -634,7 +770,7 @@ func TestJSONBench(t *testing.T) {
 		{"Q1 top events", func(n int) (err error) { q1, err = queryTopEvents(snap, n); return }},
 		{"Q2 events with distinct users", func(n int) (err error) { q2, err = queryEventsWithUsers(snap, n); return }},
 		{"Q3 events by hour", func(n int) (err error) { q3, err = queryEventsByHour(snap, n); return }},
-		{"Q4/Q5 post times per user", func(n int) (err error) { spans, err = queryPostTimes(snap, n); return }},
+		{"Q4/Q5 post times per user", func(n int) (err error) { first, longest, err = queryPostTimes(snap, n, 3); return }},
 	}
 	ran := map[string]bool{}
 	for _, q := range queries {
@@ -710,14 +846,17 @@ func TestJSONBench(t *testing.T) {
 	if !ran["Q4"] {
 		return
 	}
-	sort.Slice(spans, func(i, j int) bool { return spans[i].min < spans[j].min })
-	gotQ4 := fmt.Sprintf("%s@%d %s@%d %s@%d", spans[0].did, spans[0].min, spans[1].did, spans[1].min, spans[2].did, spans[2].min)
+	gotQ4 := ""
+	for i, s := range first {
+		gotQ4 += fmt.Sprintf("%s%s@%d", sep(i), s.did, s.min)
+	}
 	if want := "did:plc:yj3sjq3blzpynh27cumnp5ks@1732206349000167 did:plc:l5o3qjrmfztir54cpwlv2eme@1732206349001905 did:plc:s4bwqchfzm6gjqfeb6mexgbu@1732206349003907"; gotQ4 != want {
 		t.Errorf("Q4\n got  %s\n want %s", gotQ4, want)
 	}
-	span := func(s userSpan) int64 { return s.max/1000 - s.min/1000 }
-	sort.Slice(spans, func(i, j int) bool { return span(spans[i]) > span(spans[j]) })
-	gotQ5 := fmt.Sprintf("%s=%d %s=%d %s=%d", spans[0].did, span(spans[0]), spans[1].did, span(spans[1]), spans[2].did, span(spans[2]))
+	gotQ5 := ""
+	for i, s := range longest {
+		gotQ5 += fmt.Sprintf("%s%s=%d", sep(i), s.did, spanMillis(s.min, s.max))
+	}
 	if want := "did:plc:tsyymlun4eqjuw7hqrhmwagd=813007 did:plc:3ug235sfy2pz7cawmpsftb65=811602 did:plc:doxhhgtxqiv47tmcovpbcqai=811404"; gotQ5 != want {
 		t.Errorf("Q5\n got  %s\n want %s", gotQ5, want)
 	}
