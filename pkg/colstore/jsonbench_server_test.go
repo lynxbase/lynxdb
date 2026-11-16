@@ -146,9 +146,14 @@ func (s *benchServer) query(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(name, "T") {
 			searches, _ = benchWindows(s.t, snap)
 		}
+		// S2i names the search "S2 any case".
+		want := name + " "
+		if short, ok := strings.CutSuffix(name, "i"); ok {
+			want = short + " any case"
+		}
 		found := false
 		for _, q := range searches {
-			if strings.HasPrefix(q.name, name+" ") {
+			if strings.HasPrefix(q.name, want) && (want != name+" " || !strings.HasSuffix(q.name, "any case")) {
 				answer, err = q.run(snap, cores)
 				found = true
 
@@ -219,7 +224,8 @@ func newBenchServer(t testing.TB, store *Store) *benchServer {
 // LYNXDB_BENCH_LISTEN until POST /shutdown: POST /insert takes NDJSON
 // (?sync=1 answers once it is durable), POST /sync, /settle and /compact
 // wait for those states, GET /stats describes the table, and GET /query?q=
-// runs a benchmark query by its short name (Q1 to Q5, S1 to S7, T1 to T4).
+// runs a benchmark query by its short name (Q1 to Q5, S1 to S7, S2i to S5i
+// for the searches without regard to case, T1 to T4).
 // The store is configured by the settings of TestJSONBenchIngest.
 func TestJSONBenchServer(t *testing.T) {
 	addr, dir := os.Getenv("LYNXDB_BENCH_LISTEN"), os.Getenv("LYNXDB_BENCH_DIR")
@@ -320,6 +326,12 @@ func TestBenchServerTakesInsertsAndAnswersQueries(t *testing.T) {
 		t.Fatalf("query: %v %v", err, resp)
 	}
 	resp.Body.Close()
+	for _, name := range []string{"S2", "S2i", "S7", "T1", "Q1"} {
+		if resp, err = http.Get(base + "/query?q=" + name); err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("query %s: %v %v", name, err, resp)
+		}
+		resp.Body.Close()
+	}
 	if resp, err = http.Get(base + "/query?q=nope"); err != nil || resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown query: %v %v", err, resp)
 	}
