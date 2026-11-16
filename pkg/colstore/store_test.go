@@ -516,3 +516,83 @@ func TestPickMergesNeverMixesPartitions(t *testing.T) {
 		}
 	}
 }
+
+func TestAppendFromManyGoroutinesLosesNothing(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "store")
+	opts := StoreOptions{SortKey: []string{"svc"}, FlushBytes: 8 << 10, MergeFanIn: 4, FlushInterval: -1}
+	s, err := OpenStore(path, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const callers, perCaller = 16, 1500
+	var rejected atomic.Int64
+	var wg sync.WaitGroup
+	for c := 0; c < callers; c++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perCaller; i += 30 {
+				n, err := s.Append(append(storeDocs(c*perCaller+i, 30), "not json\n"...))
+				if err != nil {
+					t.Error(err)
+				}
+				rejected.Add(n)
+			}
+		}()
+	}
+	wg.Wait()
+	if err := s.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	total := int64(callers * perCaller)
+	if rows, sum := rowsAndSumOf(t, s.Table()); rows != total || sum != (total-1)*total/2 {
+		t.Fatalf("after Sync: %d rows, sum %d", rows, sum)
+	}
+	if got := rejected.Load(); got != callers*perCaller/30 {
+		t.Fatalf("%d lines rejected, want %d", got, callers*perCaller/30)
+	}
+	// Rows that are still in a buffer at Close are written by it.
+	if _, err := s.Append(storeDocs(int(total), 10)); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if s, err = OpenStore(path, opts); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if rows, _ := rowsAndSumOf(t, s.Table()); rows != total+10 {
+		t.Fatalf("after reopen: %d rows, want %d", rows, total+10)
+	}
+}
+
+func TestAppendedRowsBecomeVisibleWithinTheFlushInterval(t *testing.T) {
+	s, err := OpenStore(filepath.Join(t.TempDir(), "store"), StoreOptions{FlushInterval: 20 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	// One caller at a time fills one buffer, so the rows become one part.
+	for i := 0; i < 500; i += 100 {
+		if _, err := s.Append(storeDocs(i, 100)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		rows, _ := rowsAndSumOf(t, s.Table())
+		if rows == 500 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d of 500 rows visible without Sync", rows)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	snap := s.Table().Snapshot()
+	defer snap.Release()
+	if n := len(snap.Parts()); n > 5 {
+		t.Fatalf("a light load was spread over %d parts", n)
+	}
+}

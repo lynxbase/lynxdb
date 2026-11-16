@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
@@ -27,6 +28,10 @@ type StoreOptions struct {
 	// MergeFanIn is the number of runs of one tier that are merged into a
 	// run of the next tier; zero means 8, a negative value never merges.
 	MergeFanIn int
+	// FlushInterval is the longest that rows taken by Append stay in
+	// memory before they are written; zero means one second, a negative
+	// value writes them only when a buffer is full or on Sync.
+	FlushInterval time.Duration
 	// Partition is the span of time whose rows are kept and merged apart
 	// from all others, so that a time range reads only the spans it meets
 	// and old spans can be dropped whole; zero keeps one partition.
@@ -42,6 +47,7 @@ const (
 	defaultStoreBlockRows = 16384
 	defaultFlushBytes     = 128 << 20
 	defaultMergeFanIn     = 8
+	defaultFlushInterval  = time.Second
 	// mergedPartRows is the least a part of a merged run holds, which keeps
 	// small merges from scattering their rows over many files.
 	mergedPartRows = 1 << 16
@@ -67,6 +73,11 @@ type Store struct {
 	// so that neither removes a part the other reads.
 	merging sync.Mutex
 
+	// shards are the buffers Append fills, each behind its own lock.
+	shards   []appendShard
+	next     atomic.Uint32
+	flushing chan struct{}
+
 	mu   sync.Mutex
 	idle *sync.Cond
 	// kicks counts requests to look for merges and seen the requests the
@@ -87,6 +98,9 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	if opts.MergeFanIn == 0 {
 		opts.MergeFanIn = defaultMergeFanIn
 	}
+	if opts.FlushInterval == 0 {
+		opts.FlushInterval = defaultFlushInterval
+	}
 	opts.Part.Ordered, opts.Part.SortKey = len(opts.SortKey) > 0, opts.SortKey
 	dir, err := OpenDir(path)
 	if err != nil {
@@ -98,7 +112,10 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 		cores: make(chan struct{}, runtime.GOMAXPROCS(0)),
 	}
 	s.idle = sync.NewCond(&s.mu)
+	s.shards = make([]appendShard, runtime.GOMAXPROCS(0))
+	s.flushing = make(chan struct{})
 	go s.mergeLoop()
+	go s.flushLoop()
 	s.kick()
 
 	return s, nil
@@ -107,16 +124,115 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 // Table returns the table of live parts.
 func (s *Store) Table() *Table { return s.dir.Table() }
 
-// Close stops the merger and closes the directory; writers must be closed
-// first.
+// Close writes what Append buffered, stops the merger and closes the
+// directory; writers must be closed first.
 func (s *Store) Close() error {
 	close(s.done)
+	<-s.flushing
+	syncErr := s.Sync()
 	<-s.stopped
 	s.mu.Lock()
 	err := s.err
 	s.mu.Unlock()
 
-	return errors.Join(err, s.dir.Close())
+	return errors.Join(syncErr, err, s.dir.Close())
+}
+
+// appendShard is one buffer of Append; since is when its oldest unwritten
+// row arrived.
+type appendShard struct {
+	mu    sync.Mutex
+	w     *Writer
+	since time.Time
+}
+
+// Append buffers the documents of lines, one per line, and returns the
+// number of lines that are not JSON objects. It is safe for concurrent use;
+// the rows become durable and visible within the flush interval, or as soon
+// as a buffer is full, or on Sync.
+func (s *Store) Append(lines []byte) (rejected int64, err error) {
+	var sh *appendShard
+	// The first free buffer in a fixed order, so that a light load fills
+	// one buffer and not all of them.
+	for i := range s.shards {
+		if s.shards[i].mu.TryLock() {
+			sh = &s.shards[i]
+
+			break
+		}
+	}
+	if sh == nil {
+		sh = &s.shards[int(s.next.Add(1))%len(s.shards)]
+		sh.mu.Lock()
+	}
+	defer sh.mu.Unlock()
+	if sh.w == nil {
+		sh.w = s.NewWriter()
+	}
+	before := sh.w.Rejected
+	err = sh.w.AddNDJSON(lines)
+	switch {
+	case sh.w.buffered == 0:
+		sh.since = time.Time{}
+	case sh.since.IsZero():
+		sh.since = time.Now()
+	}
+
+	return sh.w.Rejected - before, err
+}
+
+// Sync writes everything Append has buffered and returns once it is durable.
+func (s *Store) Sync() error { return s.flushShards(0) }
+
+// flushShards writes the buffers whose oldest row is at least age old.
+func (s *Store) flushShards(age time.Duration) error {
+	errs := make([]error, len(s.shards))
+	var wg sync.WaitGroup
+	for i := range s.shards {
+		sh := &s.shards[i]
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			sh.mu.Lock()
+			defer sh.mu.Unlock()
+			if sh.w == nil || sh.w.buffered == 0 || time.Since(sh.since) < age {
+				return
+			}
+			errs[i] = sh.w.Flush()
+			sh.since = time.Time{}
+		}()
+	}
+	wg.Wait()
+
+	return errors.Join(errs...)
+}
+
+// flushLoop writes buffers that have waited for the flush interval.
+func (s *Store) flushLoop() {
+	defer close(s.flushing)
+	interval := s.opts.FlushInterval
+	if interval < 0 {
+		<-s.done
+
+		return
+	}
+	tick := time.NewTicker(max(interval/4, time.Millisecond))
+	defer tick.Stop()
+	for {
+		select {
+		case <-s.done:
+			return
+		case <-tick.C:
+			if err := s.flushShards(interval); err != nil {
+				s.mu.Lock()
+				if s.err == nil {
+					s.err = err
+				}
+				s.idle.Broadcast()
+				s.mu.Unlock()
+			}
+		}
+	}
 }
 
 // kick asks the merger to look for work.
