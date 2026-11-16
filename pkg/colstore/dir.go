@@ -60,10 +60,12 @@ type partFileRef struct {
 
 // PartMeta is what the manifest records about a part besides its name. Parts
 // that share a Run hold one sorted sequence of rows cut by key range; Tier
-// counts the merges that produced it.
+// counts the merges that produced it; Partition numbers the span of time the
+// rows belong to, zero for a table that is not partitioned.
 type PartMeta struct {
-	Run  uint64
-	Tier int
+	Run       uint64
+	Tier      int
+	Partition int64
 }
 
 // OpenDir opens the table stored in path, creating the directory when it
@@ -171,8 +173,8 @@ func (d *Dir) replay() (names map[string]PartMeta, records int, err error) {
 	return names, records, nil
 }
 
-// A manifest record lists the parts a change adds, each with its run and
-// tier, and then the parts it removes.
+// A manifest record lists the parts a change adds, each with its run, tier
+// and partition, and then the parts it removes.
 func applyRecord(names map[string]PartMeta, payload []byte) bool {
 	for pass := 0; pass < 2; pass++ {
 		n, used := binary.Uvarint(payload)
@@ -200,8 +202,12 @@ func applyRecord(names map[string]PartMeta, payload []byte) bool {
 			if used2 <= 0 {
 				return false
 			}
-			payload = payload[used+used2:]
-			names[name] = PartMeta{Run: run, Tier: int(tier)}
+			partition, used3 := binary.Varint(payload[used+used2:])
+			if used3 <= 0 {
+				return false
+			}
+			payload = payload[used+used2+used3:]
+			names[name] = PartMeta{Run: run, Tier: int(tier), Partition: partition}
 		}
 	}
 
@@ -217,6 +223,7 @@ func appendRecord(dst []byte, add []string, meta []PartMeta, remove []string) []
 		dst = append(dst, name...)
 		dst = binary.AppendUvarint(dst, meta[i].Run)
 		dst = binary.AppendUvarint(dst, uint64(meta[i].Tier))
+		dst = binary.AppendVarint(dst, meta[i].Partition)
 	}
 	dst = binary.AppendUvarint(dst, uint64(len(remove)))
 	for _, name := range remove {

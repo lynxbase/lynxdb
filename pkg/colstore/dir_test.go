@@ -287,12 +287,13 @@ func TestDirKeepsRunAndTierOfParts(t *testing.T) {
 	// Two parts of one merged run.
 	run := d.NewRun()
 	left, right := writePartFile(t, d, 10, 10, "b"), writePartFile(t, d, 20, 10, "c")
-	left.Meta, right.Meta = PartMeta{Run: run, Tier: 2}, PartMeta{Run: run, Tier: 2}
+	merged := PartMeta{Run: run, Tier: 2, Partition: -7}
+	left.Meta, right.Meta = merged, merged
 	hs, err := d.Commit([]*PartFile{alone, left, right}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[PartMeta]int{alone.Meta: 1, {Run: run, Tier: 2}: 2}
+	want := map[PartMeta]int{alone.Meta: 1, merged: 2}
 	check := func(d *Dir, when string) {
 		t.Helper()
 		snap := d.Table().Snapshot()
@@ -311,7 +312,7 @@ func TestDirKeepsRunAndTierOfParts(t *testing.T) {
 		}
 	}
 	check(d, "after commit")
-	if hs[1].Run != run || hs[1].Tier != 2 {
+	if hs[1].PartMeta != merged {
 		t.Fatalf("handle meta %+v", hs[1].PartMeta)
 	}
 	// Enough further records to have the manifest rewritten.

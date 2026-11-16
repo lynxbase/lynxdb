@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -369,5 +370,149 @@ func TestPickMergesGroupsRunsByTier(t *testing.T) {
 	}
 	if sets := pickMerges(parts[:1], 2, true); sets != nil {
 		t.Fatalf("compaction of one run picked %v", sets)
+	}
+}
+
+// firstTimedHour is the hour, counted from the epoch, at which timedDocs
+// starts.
+const firstTimedHour = 277778
+
+// timedDocs returns NDJSON documents {"n": first+i, "svc": ..., "ts": ...}
+// whose timestamps, in microseconds, are spread over the given number of
+// hours from firstTimedHour on, in an order that mixes the hours.
+func timedDocs(first, count, hours int) []byte {
+	var buf bytes.Buffer
+	for i := first; i < first+count; i++ {
+		ts := int64(firstTimedHour+(i*7)%hours)*3600e6 + int64(i%3600)*1e6
+		fmt.Fprintf(&buf, `{"n":%d,"svc":"s%02d","ts":%d}`+"\n", i, (i*5)%11, ts)
+	}
+
+	return buf.Bytes()
+}
+
+func TestStoreKeepsPartitionsApartAndDropsOldOnes(t *testing.T) {
+	const hours = 5
+	hour, base := int64(time.Hour), int64(firstTimedHour)
+	opts := StoreOptions{
+		SortKey: []string{"svc"}, TimeField: "ts", BlockRows: 64, FlushBytes: 16 << 10, MergeFanIn: 2, Partition: time.Hour,
+	}
+	path := filepath.Join(t.TempDir(), "store")
+	s, err := OpenStore(path, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const total = 6000
+	w := s.NewWriter()
+	if err := w.AddNDJSON(timedDocs(0, total, hours)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Settle(); err != nil {
+		t.Fatal(err)
+	}
+	check := func(when string, wantPartitions int, wantRows int64) {
+		t.Helper()
+		snap := s.Table().Snapshot()
+		defer snap.Release()
+		runShapes(t, snap)
+		seen := map[int64]map[uint64]struct{}{}
+		for _, h := range snap.Parts() {
+			if h.Partition < base || h.Partition >= base+hours {
+				t.Fatalf("%s: partition %d is outside %d..%d", when, h.Partition, base, base+hours-1)
+			}
+			if lo, hi := h.Partition*hour, (h.Partition+1)*hour; h.MinTime < lo || h.MaxTime >= hi {
+				t.Fatalf("%s: a part of partition %d holds times %d..%d", when, h.Partition, h.MinTime, h.MaxTime)
+			}
+			if seen[h.Partition] == nil {
+				seen[h.Partition] = map[uint64]struct{}{}
+			}
+			seen[h.Partition][h.Run] = struct{}{}
+		}
+		if len(seen) != wantPartitions {
+			t.Fatalf("%s: %d partitions, want %d", when, len(seen), wantPartitions)
+		}
+		if rows, _ := rowsAndSumOf(t, s.Table()); rows != wantRows {
+			t.Fatalf("%s: %d rows, want %d", when, rows, wantRows)
+		}
+	}
+	check("after merges", hours, total)
+	if err := s.Compact(); err != nil {
+		t.Fatal(err)
+	}
+	check("after compaction", hours, total)
+	snap := s.Table().Snapshot()
+	runs := map[int64]map[uint64]struct{}{}
+	for _, h := range snap.Parts() {
+		if runs[h.Partition] == nil {
+			runs[h.Partition] = map[uint64]struct{}{}
+		}
+		runs[h.Partition][h.Run] = struct{}{}
+	}
+	for partition, ids := range runs {
+		if len(ids) != 1 {
+			t.Fatalf("partition %d has %d runs after compaction", partition, len(ids))
+		}
+	}
+	// A time range of one hour reads the blocks of that partition only.
+	oneHour := ScanOptions{MinTime: (base + 2) * hour, MaxTime: (base+3)*hour - 1}
+	rows, _, stats := sumN(t, snap, oneHour)
+	var inHour, blocks int64
+	for _, h := range snap.Parts() {
+		if h.Partition == base+2 {
+			inHour += int64(h.Rows)
+			blocks += int64(h.NumBlocks())
+		}
+	}
+	snap.Release()
+	if rows != inHour || stats.Blocks != blocks || stats.SkippedByTime == 0 {
+		t.Fatalf("one hour: %d rows in %d blocks, %d skipped by time; the partition has %d rows in %d blocks",
+			rows, stats.Blocks, stats.SkippedByTime, inHour, blocks)
+	}
+
+	dropped, err := s.DropBefore((base + 2) * hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := rowsAndSumOf(t, s.Table()); dropped == 0 || left != total-int64(dropped) {
+		t.Fatalf("dropped %d rows, %d left of %d", dropped, left, total)
+	}
+	check("after dropping two partitions", hours-2, total-int64(dropped))
+	if again, err := s.DropBefore((base + 2) * hour); err != nil || again != 0 {
+		t.Fatalf("dropping again removed %d rows: %v", again, err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if s, err = OpenStore(path, opts); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	check("after reopen", hours-2, total-int64(dropped))
+}
+
+func TestPickMergesNeverMixesPartitions(t *testing.T) {
+	var parts []*Handle
+	for run := uint64(1); run <= 6; run++ {
+		parts = append(parts, &Handle{PartMeta: PartMeta{Run: run, Partition: int64(run % 2)}})
+	}
+	parts = append(parts, &Handle{PartMeta: PartMeta{Run: 9, Tier: 3, Partition: 1}})
+	for _, compact := range []bool{false, true} {
+		sets := pickMerges(parts, 3, compact)
+		if len(sets) != 2 {
+			t.Fatalf("compact=%v: %d sets", compact, len(sets))
+		}
+		for _, set := range sets {
+			for _, r := range set {
+				if r.partition != set[0].partition {
+					t.Fatalf("compact=%v: a set mixes partitions %d and %d", compact, r.partition, set[0].partition)
+				}
+			}
+		}
+		// Compaction also takes the run of the higher tier.
+		if want := map[bool]int{false: 3, true: 4}[compact]; len(sets[1]) != want {
+			t.Fatalf("compact=%v: partition 1 gives a set of %d runs, want %d", compact, len(sets[1]), want)
+		}
 	}
 }

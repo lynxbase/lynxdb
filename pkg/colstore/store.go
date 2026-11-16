@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
@@ -26,6 +27,10 @@ type StoreOptions struct {
 	// MergeFanIn is the number of runs of one tier that are merged into a
 	// run of the next tier; zero means 8, a negative value never merges.
 	MergeFanIn int
+	// Partition is the span of time whose rows are kept and merged apart
+	// from all others, so that a time range reads only the spans it meets
+	// and old spans can be dropped whole; zero keeps one partition.
+	Partition time.Duration
 	// Part sets how parts are encoded; its ordering fields are overridden.
 	Part part.Options
 	// FlushLevel is the compression effort of the runs writers flush, which
@@ -57,6 +62,10 @@ type Store struct {
 	stopped chan struct{}
 	// cores bounds the range merges that run at once, over all merges.
 	cores chan struct{}
+
+	// merging is held while merges run and while partitions are dropped,
+	// so that neither removes a part the other reads.
+	merging sync.Mutex
 
 	mu   sync.Mutex
 	idle *sync.Cond
@@ -133,7 +142,38 @@ func (s *Store) Settle() error {
 	return s.err
 }
 
-// Compact merges all runs into one and waits for it.
+// DropBefore removes every partition that ends at or before the time t, in
+// unix nanoseconds, and returns the number of rows removed. A store that is
+// not partitioned keeps everything.
+func (s *Store) DropBefore(t int64) (uint64, error) {
+	width := int64(s.opts.Partition)
+	if width <= 0 {
+		return 0, nil
+	}
+	s.merging.Lock()
+	defer s.merging.Unlock()
+	snap := s.Table().Snapshot()
+	defer snap.Release()
+	var old []*Handle
+	var rows uint64
+	for _, h := range snap.Parts() {
+		// A partition near the end of the time range has no end to compare.
+		if end := (h.Partition + 1) * width; end/width == h.Partition+1 && end <= t {
+			old = append(old, h)
+			rows += h.Rows
+		}
+	}
+	if len(old) == 0 {
+		return 0, nil
+	}
+	if _, err := s.dir.Commit(nil, old); err != nil {
+		return 0, err
+	}
+
+	return rows, nil
+}
+
+// Compact merges the runs of every partition into one and waits for it.
 func (s *Store) Compact() error {
 	s.mu.Lock()
 	s.compact = true
@@ -183,14 +223,16 @@ func (s *Store) mergeLoop() {
 
 // sortedRun is the parts of one run.
 type sortedRun struct {
-	id    uint64
-	tier  int
-	parts []*Handle
+	id        uint64
+	tier      int
+	partition int64
+	parts     []*Handle
 }
 
-// pickMerges chooses the sets of runs to merge next: all runs as one set
-// when compacting, otherwise the runs of each tier in sets of fanIn, oldest
-// first, leaving out what does not fill a set.
+// pickMerges chooses the sets of runs to merge next, never mixing
+// partitions: all runs of a partition as one set when compacting, otherwise
+// the runs of each tier in sets of fanIn, oldest first, leaving out what
+// does not fill a set.
 func pickMerges(parts []*Handle, fanIn int, compact bool) [][]sortedRun {
 	index := map[uint64]int{}
 	var runs []sortedRun
@@ -199,35 +241,39 @@ func pickMerges(parts []*Handle, fanIn int, compact bool) [][]sortedRun {
 		if !ok {
 			i = len(runs)
 			index[h.Run] = i
-			runs = append(runs, sortedRun{id: h.Run, tier: h.Tier})
+			runs = append(runs, sortedRun{id: h.Run, tier: h.Tier, partition: h.Partition})
 		}
 		runs[i].parts = append(runs[i].parts, h)
 	}
 	sort.Slice(runs, func(i, j int) bool {
-		if runs[i].tier != runs[j].tier {
-			return runs[i].tier < runs[j].tier
+		a, b := &runs[i], &runs[j]
+		if a.partition != b.partition {
+			return a.partition < b.partition
+		}
+		// Compaction takes a partition whatever the tiers of its runs.
+		if a.tier != b.tier && !compact {
+			return a.tier < b.tier
 		}
 
-		return runs[i].id < runs[j].id
+		return a.id < b.id
 	})
-	if compact {
-		if len(runs) < 2 {
-			return nil
-		}
-
-		return [][]sortedRun{runs}
-	}
-	if fanIn < 2 {
+	if !compact && fanIn < 2 {
 		return nil
 	}
 	var sets [][]sortedRun
 	for first := 0; first < len(runs); {
 		end := first
-		for end < len(runs) && runs[end].tier == runs[first].tier {
+		for end < len(runs) && runs[end].partition == runs[first].partition && (compact || runs[end].tier == runs[first].tier) {
 			end++
 		}
-		for ; end-first >= fanIn; first += fanIn {
-			sets = append(sets, runs[first:first+fanIn])
+		if compact {
+			if end-first > 1 {
+				sets = append(sets, runs[first:end])
+			}
+		} else {
+			for ; end-first >= fanIn; first += fanIn {
+				sets = append(sets, runs[first:first+fanIn])
+			}
 		}
 		first = end
 	}
@@ -241,6 +287,8 @@ func (s *Store) mergeOnce(compact bool) (bool, error) {
 	if !s.opts.Part.Ordered {
 		return false, nil
 	}
+	s.merging.Lock()
+	defer s.merging.Unlock()
 	snap := s.Table().Snapshot()
 	defer snap.Release()
 	sets := pickMerges(snap.Parts(), s.opts.MergeFanIn, compact)
@@ -275,7 +323,7 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 	}
 	cores := runtime.GOMAXPROCS(0)
 	cuts := part.SplitKeys(srcs, int(min(uint64(cores), max(1, rows/mergedPartRows))))
-	meta := PartMeta{Run: s.dir.NewRun(), Tier: tier + 1}
+	meta := PartMeta{Run: s.dir.NewRun(), Tier: tier + 1, Partition: runs[0].partition}
 	files := make([]*PartFile, len(cuts)+1)
 	errs := make([]error, len(files))
 	// Each range merge holds one decoded block per run.
@@ -337,6 +385,7 @@ type Writer struct {
 	batch    *shred.Batch
 	block    *shred.Batch
 	buffered int // input bytes in batch
+	buckets  []shred.TimeBucket
 	errs     []shred.LineError
 }
 
@@ -373,37 +422,54 @@ func (w *Writer) AddNDJSON(lines []byte) error {
 	return nil
 }
 
-// Flush writes the buffered rows as one run; when it returns nil they are
-// durable and visible to new snapshots.
+// Flush writes the buffered rows as one run per partition they fall in;
+// when it returns nil they are durable and visible to new snapshots.
 func (w *Writer) Flush() error {
 	if w.batch.Rows == 0 {
 		return nil
 	}
 	s := w.s
-	if s.opts.Part.Ordered {
+	w.buckets = w.buckets[:0]
+	switch {
+	case s.opts.Partition > 0:
+		w.buckets = w.batch.SortByTimeBuckets(w.buckets, int64(s.opts.Partition), s.opts.SortKey)
+	case s.opts.Part.Ordered:
 		w.batch.SortBy(s.opts.SortKey)
 	}
-	pf, err := s.dir.Create()
-	if err != nil {
-		return err
+	if len(w.buckets) == 0 {
+		w.buckets = append(w.buckets, shred.TimeBucket{Rows: w.batch.Rows})
 	}
 	flushed := s.opts.Part
 	flushed.Level = s.opts.FlushLevel
-	pw := part.NewWriter(pf, flushed)
-	for from := 0; from < w.batch.Rows && err == nil; from += s.opts.BlockRows {
-		w.block.Reset()
-		w.batch.CopyRows(w.block, from, min(from+s.opts.BlockRows, w.batch.Rows))
-		err = pw.WriteBatch(w.block)
-	}
-	if err == nil {
-		err = pw.Close()
-	}
-	if err != nil {
-		pf.Abort()
+	files := make([]*PartFile, 0, len(w.buckets))
+	abort := func(err error) error {
+		for _, pf := range files {
+			pf.Abort()
+		}
 
 		return err
 	}
-	if _, err := s.dir.Commit([]*PartFile{pf}, nil); err != nil {
+	from := 0
+	for _, bucket := range w.buckets {
+		pf, err := s.dir.Create()
+		if err != nil {
+			return abort(err)
+		}
+		pf.Meta.Partition = bucket.ID
+		files = append(files, pf)
+		pw := part.NewWriter(pf, flushed)
+		for end := from + bucket.Rows; from < end; from += min(s.opts.BlockRows, end-from) {
+			w.block.Reset()
+			w.batch.CopyRows(w.block, from, min(from+s.opts.BlockRows, end))
+			if err := pw.WriteBatch(w.block); err != nil {
+				return abort(err)
+			}
+		}
+		if err := pw.Close(); err != nil {
+			return abort(err)
+		}
+	}
+	if _, err := s.dir.Commit(files, nil); err != nil {
 		return err
 	}
 	w.batch.Reset()
