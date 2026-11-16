@@ -44,7 +44,7 @@ func maskCountWide(mask []uint8) (count, consumed int) {
 	var lanes [64]int8
 	i := 0
 	for i+width <= len(in) {
-		// A lane holds 0 or -1 per step, so 127 steps cannot overflow it.
+		// Each vector adds at most 1 to a lane, so 127 of them cannot overflow it.
 		steps := (len(in) - i) / width
 		if steps > 127 {
 			steps = 127

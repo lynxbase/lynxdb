@@ -6,11 +6,9 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/mem"
 )
 
-// ByteTable assigns dense ids, in insertion order, to distinct byte keys.
-// It is the grouping structure of hash aggregation: per-group state lives
-// in caller-owned slices indexed by id. All of its memory comes from an
-// arena, so it holds no pointers for the garbage collector to trace and is
-// freed in one step with the arena.
+// ByteTable assigns dense ids, in insertion order, to distinct byte keys, so
+// per-group state can live in caller-owned slices indexed by id; all of its
+// memory comes from an arena and holds no pointers.
 type ByteTable struct {
 	arena  *mem.Arena
 	slots  []uint32 // id + 1, 0 when empty

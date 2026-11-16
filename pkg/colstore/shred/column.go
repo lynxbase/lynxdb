@@ -4,10 +4,9 @@ package shred
 
 import "github.com/lynxbase/lynxdb/pkg/vec"
 
-// Column accumulates the values of one path that share a kind.
-//
-// Value i belongs to row i unless Sparse is set, in which case it belongs to
-// row RowIDs[i]. Strings and variants live in Data, value i ending at Ends[i].
+// Column accumulates the values of one path that share a kind: value i
+// belongs to row i, or to row RowIDs[i] when Sparse is set, and string and
+// variant payloads live in Data with value i ending at Ends[i].
 type Column struct {
 	Path   string
 	Kind   vec.Kind

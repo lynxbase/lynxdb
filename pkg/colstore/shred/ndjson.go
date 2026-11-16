@@ -23,9 +23,9 @@ func SplitLines(data []byte, maxLines int) (chunk, rest []byte) {
 	return data[:pos], data[pos:]
 }
 
-// AddNDJSON appends one row per non-empty line of data, each a JSON object.
-// Rejected lines are skipped and reported in errs. The caller keeps the
-// chunk within the batch's remaining row capacity with SplitLines.
+// AddNDJSON appends one row per non-empty line of data, skipping lines that
+// are not JSON objects and reporting them in errs; SplitLines keeps a chunk
+// within the batch's remaining rows.
 func (b *Batch) AddNDJSON(data []byte, ts int64, errs []LineError) []LineError {
 	for line := 0; len(data) > 0; {
 		end := bytes.IndexByte(data, '\n')

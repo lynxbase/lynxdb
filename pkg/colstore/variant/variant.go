@@ -1,8 +1,7 @@
 // Package variant is a compact binary encoding for JSON values that have no
-// column of their own, such as arrays.
-//
-// A value starts with a tag byte. Containers carry their byte length, so a
-// reader can step over one without decoding it.
+// column of their own, such as arrays; a value starts with a tag byte and
+// containers carry their byte length, so a reader can skip one without
+// decoding it.
 package variant
 
 import (

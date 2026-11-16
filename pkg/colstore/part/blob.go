@@ -42,8 +42,8 @@ func codecs() {
 	})
 }
 
-// appendBlob appends payload as a length-prefixed section, compressed when
-// that makes it smaller. scratch is reused for the compressed form.
+// appendBlob appends payload as a length-prefixed section, compressed through
+// scratch when that makes it smaller.
 func appendBlob(dst, payload []byte, level Level, compress bool, scratch *[]byte) []byte {
 	if compress && len(payload) >= minCompressSize {
 		codecs()
@@ -61,8 +61,8 @@ func appendBlob(dst, payload []byte, level Level, compress bool, scratch *[]byte
 }
 
 // readBlob returns the payload of the section at the start of src and the
-// bytes after it. A compressed payload is decoded into buf; a stored one
-// aliases src, which stored reports.
+// bytes after it; stored reports a payload that aliases src instead of living
+// in buf.
 func readBlob(src []byte, buf *[]byte) (payload, rest []byte, stored bool, err error) {
 	head, n := binary.Uvarint(src)
 	if n <= 0 {

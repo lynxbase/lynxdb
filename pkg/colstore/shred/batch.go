@@ -138,7 +138,7 @@ func Get(opts Options) *Batch {
 func Put(b *Batch) { batchPool.Put(b) }
 
 // put returns the column for a value of kind at path, placed on the current
-// row. A path repeated inside one document keeps only its last value.
+// row, dropping an earlier value of the same path in this document.
 func (b *Batch) put(pc *pathCols, path string, kind vec.Kind) *Column {
 	c := pc.byKind[kind]
 	if c == nil {
@@ -230,8 +230,9 @@ func (b *Batch) AddText(text []byte, ts int64) {
 // ErrNotObject reports a document whose top-level value is not an object.
 var ErrNotObject = errors.New("shred: document is not a JSON object")
 
-// AddJSON appends one JSON object as a row. ts is the row timestamp unless
-// the document carries Options.TimeField. On error the batch is unchanged.
+// AddJSON appends one JSON object as a row timestamped ts, or by
+// Options.TimeField when the document carries it, and leaves the batch
+// unchanged on error.
 func (b *Batch) AddJSON(doc []byte, ts int64) error {
 	b.src, b.pos = doc, 0
 	b.seq++

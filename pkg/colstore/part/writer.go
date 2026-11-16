@@ -369,7 +369,7 @@ func (w *Writer) appendDirectory() {
 	}
 }
 
-// Close writes the footer. The part is complete once it returns nil.
+// Close writes the footer; the part is complete once it returns nil.
 func (w *Writer) Close() error {
 	footer := binary.AppendUvarint(nil, uint64(len(w.paths)))
 	for _, p := range w.paths {

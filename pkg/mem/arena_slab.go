@@ -16,8 +16,8 @@ var slabPool = sync.Pool{New: func() any {
 	return &s
 }}
 
-// Arena releases everything allocated from it in one call.
-// It must not be shared between goroutines.
+// Arena releases everything allocated from it in one call and must not be
+// shared between goroutines.
 type Arena struct {
 	slabs []*[]uint64
 	large [][]uint64

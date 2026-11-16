@@ -18,9 +18,9 @@ type Handle struct {
 	release func()
 }
 
-// NewHandle wraps p. release runs once, after the last version and snapshot
-// that reference the part are gone; it is where a mapping is unmapped or a
-// file is deleted.
+// NewHandle wraps p; release runs once, after the last version and snapshot
+// referencing the part are gone, and is where a mapping is unmapped or a file
+// deleted.
 func NewHandle(p *part.Part, release func()) *Handle {
 	return &Handle{Part: p, release: release}
 }
@@ -31,8 +31,8 @@ func (h *Handle) unref() {
 	}
 }
 
-// version is one immutable state of the part set. Its reference count
-// covers the table's own pointer and every snapshot taken from it.
+// version is one immutable state of the part set, kept alive by the table's
+// own pointer and by every snapshot taken from it.
 type version struct {
 	refs  atomic.Int64
 	parts []*Handle
@@ -59,8 +59,8 @@ func (v *version) unref() {
 	}
 }
 
-// Table is the current set of parts. Readers never block writers and
-// writers never block readers; writers are serialized among themselves.
+// Table is the current set of parts; readers and writers never block each
+// other, and writers are serialized among themselves.
 type Table struct {
 	mu      sync.Mutex
 	current atomic.Pointer[version]
@@ -79,7 +79,7 @@ func NewTable() *Table {
 // ErrUnknownPart reports an attempt to remove a part the table does not hold.
 var ErrUnknownPart = errors.New("colstore: part is not in the table")
 
-// Apply removes and adds parts in one step: every snapshot sees either all
+// Apply removes and adds parts atomically: every snapshot sees either all
 // of the change or none of it.
 func (t *Table) Apply(add, remove []*Handle) error {
 	t.mu.Lock()
@@ -118,7 +118,7 @@ func (t *Table) Apply(add, remove []*Handle) error {
 	return nil
 }
 
-// Close drops every part. Parts stay usable by snapshots taken earlier.
+// Close drops every part, which stays usable by snapshots taken earlier.
 func (t *Table) Close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -128,7 +128,7 @@ func (t *Table) Close() {
 	t.current.Swap(empty).unref()
 }
 
-// Snapshot is a stable view of the table. Release it when done.
+// Snapshot is a stable view of the table that must be released when done.
 type Snapshot struct {
 	v *version
 }
@@ -147,7 +147,7 @@ func (t *Table) Snapshot() *Snapshot {
 // Parts returns the parts visible to the snapshot.
 func (s *Snapshot) Parts() []*Handle { return s.v.parts }
 
-// Release ends the snapshot. Its parts must not be used afterwards.
+// Release ends the snapshot, after which its parts must not be used.
 func (s *Snapshot) Release() {
 	if s.v != nil {
 		s.v.unref()

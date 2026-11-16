@@ -1,10 +1,9 @@
 package vec
 
-// Column is one decoded column of one block.
-//
-// Flat strings use Offsets[i]..Offsets[i+1] into Data for row i. Dict and
-// Const strings use the same pair as the dictionary, addressed by code.
-// Rows whose Valid bit is clear hold an unspecified value.
+// Column is one decoded column of one block: Flat strings use
+// Offsets[i]..Offsets[i+1] into Data for row i, Dict and Const strings use
+// the same pair as a dictionary addressed by code, and rows whose Valid bit
+// is clear hold an unspecified value.
 type Column struct {
 	Kind   Kind
 	Layout Layout
@@ -117,8 +116,8 @@ func (c *Column) DictFind(want []byte) (code int, ok bool) {
 	return lo, lo < c.DictLen() && string(c.DictValue(lo)) == string(want)
 }
 
-// MaskEqBytes writes into mask which rows of a string column equal want.
-// Rows without a value are never selected.
+// MaskEqBytes writes into mask which rows of a string column equal want,
+// never selecting a row without a value.
 func MaskEqBytes(mask []uint8, c *Column, want []byte) {
 	mask = mask[:c.Rows]
 	switch c.Layout {

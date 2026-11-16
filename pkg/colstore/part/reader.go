@@ -10,8 +10,8 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
-// Part is an opened, immutable part. It only reads the bytes it was opened
-// on, which must stay valid and unchanged while the Part is in use.
+// Part is an opened, immutable part that reads only the bytes it was opened
+// on, which must stay valid and unchanged while it is in use.
 type Part struct {
 	data  []byte
 	paths []string
@@ -144,8 +144,8 @@ func (c *ColumnRef) Const() bool { return c.enc == encConst }
 // ConstBytes returns the single value of a const string or variant column.
 func (c *ColumnRef) ConstBytes() []byte { return c.constVal }
 
-// Block reads the columns of one block. Its buffers are reused when it is
-// pointed at another block, so a Block serves one goroutine at a time.
+// Block reads the columns of one block and reuses its buffers between blocks,
+// so it serves one goroutine at a time.
 type Block struct {
 	Rows    int
 	MinTime int64
@@ -239,7 +239,8 @@ func (b *Block) Column(pathID uint32, kind vec.Kind) (*ColumnRef, bool) {
 }
 
 // MayContainToken reports whether any string of the block may contain the
-// token with this hash. Blocks written without a filter always report true.
+// token with this hash, which is always true for a block written without a
+// filter.
 func (b *Block) MayContainToken(hash uint64) bool {
 	return tokenfilter.MayContain(b.filter, hash)
 }
@@ -252,8 +253,8 @@ func grow[T any](s []T, n int) []T {
 	return s[:n]
 }
 
-// Decode materializes a column into dst, one slot per row of the block.
-// dst owns the result and keeps no reference to the part's bytes.
+// Decode materializes a column into dst, one slot per row, leaving dst with
+// no reference to the part's bytes.
 func (b *Block) Decode(ref *ColumnRef, dst *vec.Column) error {
 	chunk := b.data[ref.off : ref.off+ref.length]
 	if crc32.Checksum(chunk, castagnoli) != ref.crc {

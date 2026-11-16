@@ -17,17 +17,17 @@ import (
 type ScanOptions struct {
 	// Workers is the number of goroutines; zero means one per CPU.
 	Workers int
-	// MinTime and MaxTime bound row timestamps, inclusive. Both zero means
-	// no bound.
+	// MinTime and MaxTime bound row timestamps, inclusive; both zero means no
+	// bound.
 	MinTime int64
 	MaxTime int64
 	// Tokens holds token hashes that a block must all possibly contain.
 	Tokens []uint64
 }
 
-// BlockFunc handles one block. worker identifies the calling goroutine,
-// counting from zero, so callers can keep per-worker state without locks.
-// The block is only valid during the call.
+// BlockFunc handles one block, valid only during the call; worker numbers the
+// calling goroutine from zero so callers can keep per-worker state without
+// locks.
 type BlockFunc func(worker int, p *part.Part, b *part.Block) error
 
 // ScanStats counts what a scan skipped and read.
@@ -45,9 +45,9 @@ type scanUnit struct {
 	block int
 }
 
-// Scan calls fn for every block of the snapshot that may hold matching
-// rows. Blocks are handed to workers in no particular order. A panic or a
-// memory fault inside a worker fails the scan instead of the process.
+// Scan calls fn from several goroutines, in no particular order, for every
+// block that may hold matching rows; a panic or memory fault in a worker
+// fails the scan instead of the process.
 func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (ScanStats, error) {
 	minT, maxT := opts.MinTime, opts.MaxTime
 	if minT == 0 && maxT == 0 {

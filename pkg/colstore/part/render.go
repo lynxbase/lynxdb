@@ -9,8 +9,8 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
-// Renderer rebuilds JSON documents from the decoded columns of a block.
-// Members come out ordered by path, not in their original order.
+// Renderer rebuilds JSON documents from the decoded columns of a block, with
+// members ordered by path rather than as ingested.
 type Renderer struct {
 	items []renderItem
 	open  [][]byte
@@ -22,8 +22,8 @@ type renderItem struct {
 	col  *vec.Column
 }
 
-// Reset prepares to render rows whose path paths[i] is held by cols[i].
-// A path may appear once per value kind.
+// Reset prepares to render rows whose path paths[i] is held by cols[i], where
+// a path may appear once per value kind.
 func (r *Renderer) Reset(paths []string, cols []*vec.Column) {
 	r.items = r.items[:0]
 	for i, p := range paths {
