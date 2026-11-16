@@ -3,6 +3,7 @@ package colstore
 import (
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -89,9 +90,10 @@ func loadToDir(t testing.TB, d *Dir, data []byte, parts, blockRows int, key []st
 // LYNXDB_BENCH_NDJSON first, with every part fsynced before it is visible;
 // a directory that already holds the table is only reopened, so dropping the
 // page cache before the run makes each query's first run a cold one.
-// LYNXDB_BENCH_QUERY keeps the queries and searches whose name contains it;
-// LYNXDB_BENCH_T10_US and LYNXDB_BENCH_T60_US set the windows of the
-// time-bounded queries as "lo,hi" in microseconds.
+// LYNXDB_BENCH_QUERY keeps the queries and searches whose name contains it,
+// LYNXDB_BENCH_PROFILE names a directory that receives one CPU profile per
+// query, and LYNXDB_BENCH_T10_US and LYNXDB_BENCH_T60_US set the windows of
+// the time-bounded queries as "lo,hi" in microseconds.
 // LYNXDB_BENCH_SORT orders the parts by a comma-separated key ("default"
 // for the benchmark's own), LYNXDB_BENCH_PARTS sets their number, and
 // LYNXDB_BENCH_LAYOUT=runs keeps the ordered parts as separate sorted runs.
@@ -102,6 +104,7 @@ func TestJSONBenchDisk(t *testing.T) {
 	}
 	cores := runtime.GOMAXPROCS(0)
 	only := os.Getenv("LYNXDB_BENCH_QUERY")
+	profileDir := os.Getenv("LYNXDB_BENCH_PROFILE")
 	runs := envInt(t, "LYNXDB_BENCH_RUNS", 7)
 	blockRows := envInt(t, "LYNXDB_BENCH_BLOCK_ROWS", 16384)
 	var key []string
@@ -173,13 +176,18 @@ func TestJSONBenchDisk(t *testing.T) {
 			t.Fatalf("%s: %v", q.name, err)
 		}
 		first := time.Since(begin)
-		took, cpu, err := timeRuns(runs, "", func() error { _, err := q.run(); return err })
+		profile := ""
+		if profileDir != "" {
+			profile = filepath.Join(profileDir, strings.ToLower(strings.NewReplacer(" ", "", "/", "").Replace(q.name))+".prof")
+		}
+		took, cpu, err := timeRuns(runs, profile, func() error { _, err := q.run(); return err })
 		if err != nil {
 			t.Fatalf("%s: %v", q.name, err)
 		}
-		t.Logf("%-8s first run %9.2f ms, best of %d %9.2f ms on %d cores, CPU %9.2f ms, holds %.1f MB",
+		t.Logf("%-8s first run %9.2f ms, best of %d %9.2f ms on %d cores, CPU %9.2f ms, holds %.1f MB; %d blocks read, %d skipped by key",
 			q.name, ms(first), runs, ms(took[0]), cores, ms(cpu),
-			float64(benchMemory.arenas.Load()+benchMemory.buffers.Load())/1e6)
+			float64(benchMemory.arenas.Load()+benchMemory.buffers.Load())/1e6,
+			benchScan.opened.Load(), benchScan.skippedByKey.Load())
 	}
 	for _, q := range benchSearches {
 		if !strings.Contains(q.name, only) {
