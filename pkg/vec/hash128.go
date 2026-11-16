@@ -139,3 +139,32 @@ func (s *HashSet128) grow() {
 		s.slots[2*i], s.slots[2*i+1] = lo, hi
 	}
 }
+
+// RecentHashes remembers the 128-bit values it saw last, one per slot, so a
+// stream can drop repeats that arrive close together; a value is forgotten
+// when another one takes its slot.
+type RecentHashes struct {
+	slots []uint64 // lo, hi pairs
+	mask  uint64
+}
+
+// NewRecentHashes returns a window of 1<<bits slots that allocates from a.
+func NewRecentHashes(a *mem.Arena, bits int) *RecentHashes {
+	return &RecentHashes{slots: mem.Slice[uint64](a, 2<<bits, 2<<bits), mask: 1<<bits - 1}
+}
+
+// Seen reports whether the value is remembered, and remembers it.
+func (r *RecentHashes) Seen(lo, hi uint64) bool {
+	// An empty slot holds zeros, so the zero value is never remembered.
+	if lo|hi == 0 {
+		return false
+	}
+	i := 2 * (slot128(lo, hi) & r.mask)
+	slot := r.slots[i : i+2 : i+2]
+	if slot[0] == lo && slot[1] == hi {
+		return true
+	}
+	slot[0], slot[1] = lo, hi
+
+	return false
+}

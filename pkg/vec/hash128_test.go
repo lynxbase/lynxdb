@@ -75,6 +75,41 @@ func TestHashSet128CountsDistinctValues(t *testing.T) {
 	}
 }
 
+func TestRecentHashesDropOnlyValuesSeenBefore(t *testing.T) {
+	a := mem.NewArena()
+	defer a.Free()
+	w := NewRecentHashes(a, 6)
+	r := rand.New(rand.NewSource(12))
+	seen := map[[2]uint64]bool{}
+	repeats, dropped := 0, 0
+	for i := 0; i < 20000; i++ {
+		v := [2]uint64{uint64(r.Intn(300)), uint64(r.Intn(3))}
+		got := w.Seen(v[0], v[1])
+		if got && !seen[v] {
+			t.Fatalf("Seen(%v) reported a value that never came", v)
+		}
+		if seen[v] {
+			repeats++
+		}
+		if got {
+			dropped++
+		}
+		seen[v] = true
+	}
+	for i := 0; i < 2; i++ {
+		if w.Seen(0, 0) {
+			t.Fatal("the zero value was reported as seen")
+		}
+	}
+	w.Seen(7, 7)
+	if !w.Seen(7, 7) {
+		t.Fatal("a value repeated at once was not reported")
+	}
+	if dropped == 0 || dropped > repeats {
+		t.Fatalf("dropped %d of %d repeats", dropped, repeats)
+	}
+}
+
 func BenchmarkHash128(b *testing.B) {
 	key := []byte("did:plc:yj3sjq3blzpynh27cumnp5ks")
 	b.SetBytes(int64(len(key)))
