@@ -115,8 +115,8 @@ func Parse(src string) (q *ast.Query, err error) {
 	return q, nil
 }
 
-// ParsePipeline parses a pipeline without the explain prefix; it is used for
-// fragments such as saved searches.
+// ParsePipeline parses one statement and returns its pipeline; a statement
+// with the explain prefix is a syntax error.
 func ParsePipeline(src string) (*ast.Pipeline, error) {
 	q, err := Parse(src)
 	if err != nil {
