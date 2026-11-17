@@ -10,7 +10,7 @@ import (
 // secondsTime is the instant f seconds after the epoch.
 func secondsTime(f float64) time.Time {
 	sec, frac := math.Modf(f)
-	return time.Unix(int64(sec), int64(frac*1e9)).UTC()
+	return time.Unix(toInt(sec), toInt(frac*1e9)).UTC()
 }
 
 // appendPadN writes n as fmt's %0<width>d does.

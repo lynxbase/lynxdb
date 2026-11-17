@@ -62,7 +62,7 @@ func init() {
 			if !ok || math.IsNaN(x) || math.IsInf(x, 0) {
 				return null
 			}
-			return intVal(int64(f(x)))
+			return intVal(toInt(f(x)))
 		})
 	}
 	fixed("ceil", roundTo(math.Ceil))
@@ -80,7 +80,7 @@ func init() {
 				return a[0]
 			}
 			p := math.Pow(10, float64(-d))
-			return intVal(int64(roundHalfAway(float64(a[0].n)/p) * p))
+			return intVal(toInt(roundHalfAway(float64(a[0].n)/p) * p))
 		}
 		x, ok := numFloat(a[0])
 		if !ok {

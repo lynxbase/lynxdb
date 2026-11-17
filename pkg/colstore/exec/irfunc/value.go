@@ -192,20 +192,35 @@ func numInt(v val) (int64, bool) {
 		if math.IsNaN(v.f) || math.IsInf(v.f, 0) {
 			return 0, false
 		}
-		return int64(v.f), true
+		return toInt(v.f), true
 	case kStr:
 		s := strings.TrimSpace(v.s)
 		if n, ok := parseIntText(s); ok {
 			return n, true
 		}
 		if f, err := strconv.ParseFloat(s, 64); err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) {
-			return int64(f), true
+			return toInt(f), true
 		}
 	case kBool:
 		return v.n, true
 	}
 
 	return 0, false
+}
+
+// toInt converts a float to an integer, saturating beyond int64 and giving
+// 0 for NaN, so that the result does not depend on the processor.
+func toInt(f float64) int64 {
+	switch {
+	case f != f:
+		return 0
+	case f >= 1<<63:
+		return math.MaxInt64
+	case f < -(1 << 63):
+		return math.MinInt64
+	}
+
+	return int64(f)
 }
 
 // parseIntText is strconv.ParseInt in base 10 without allocating an error

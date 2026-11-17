@@ -539,7 +539,7 @@ func init() {
 		if !ok || !ok2 || doy < 1 {
 			return null
 		}
-		return timeVal(time.Date(int(math.Round(y)), 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(math.Round(doy))-1))
+		return timeVal(time.Date(int(toInt(math.Round(y))), 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(toInt(math.Round(doy)))-1))
 	}))
 	fixed("maketime", strict(func(_ *ctx, a []val) val {
 		h, ok := numFloat(a[0])
@@ -548,7 +548,7 @@ func init() {
 		if !ok || !ok2 || !ok3 || m < 0 || m >= 60 || s < 0 || s >= 60 {
 			return null
 		}
-		return durVal(time.Duration(math.Round(h))*time.Hour + time.Duration(math.Round(m))*time.Minute + time.Duration(s*float64(time.Second)))
+		return durVal(time.Duration(toInt(math.Round(h)))*time.Hour + time.Duration(toInt(math.Round(m)))*time.Minute + time.Duration(toInt(s*float64(time.Second))))
 	}))
 	fixed("period_add", strict(func(_ *ctx, a []val) val {
 		p, ok := numInt(a[0])
@@ -572,7 +572,7 @@ func init() {
 		if !ok {
 			return null
 		}
-		return durVal(time.Duration(f * float64(time.Second)))
+		return durVal(time.Duration(toInt(f * float64(time.Second))))
 	}))
 	def("time_bucket", func(call *ir.Call) (func() impl, error) {
 		count, ok := constInt(call, 1)

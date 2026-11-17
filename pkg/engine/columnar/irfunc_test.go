@@ -7,7 +7,9 @@ import (
 	"math"
 	"math/rand/v2"
 	"reflect"
+	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -468,6 +470,57 @@ func tuples(s shape, limit int, r *rand.Rand) [][]exec.Value {
 	return out
 }
 
+// rowEngineBugs lists where the row engine departs from the IR's
+// documentation and whether the native functions do the same.
+var rowEngineBugs = []struct {
+	function, input, rowEngine, documented, native string
+}{
+	{"parse_json", "an array or object argument holding integers", "every integer inside becomes null",
+		"the value the JSON denotes, with objects and arrays as nested values", "the same, for the conformance test"},
+	{"substring", "a length that overflows int64 when added to the start", "fails, so the bridge gives null",
+		"at most length characters: the rest of the string", "the same, for the conformance test"},
+	{"regexp_extract", "a negative group", "fails, so the bridge gives null", "the text of the group, or NULL",
+		"the same: NULL"},
+	{"every conversion of a float to an integer", "a float beyond int64 or NaN, also inside ceil, floor, round, " +
+		"sec_to_time, makedate, maketime, from_unixtime, strftime, ctime and casts",
+		"the processor's conversion: saturated on arm64, MinInt64 on amd64", "not stated",
+		"saturates to MaxInt64 or MinInt64 by sign and gives 0 for NaN, as arm64 does; " +
+			"the conformance test compares these inputs only on arm64"},
+	{"wildcard_replace", "a constant pattern with invalid UTF-8", "the compiler panics",
+		"the pattern replaced in the text", "the builder refuses it"},
+}
+
+// convertsByProcessor reports arguments of no declared type that may reach
+// a conversion of a float beyond int64, which the row engine leaves to the
+// processor.
+func convertsByProcessor(s shape, args []exec.Value) bool {
+	for i, v := range args {
+		if !s.isLit[i] && s.types[i].Kind != ir.KindAny {
+			continue
+		}
+		var f float64
+		switch v.Kind {
+		case vec.KindInt:
+			f = float64(v.Int)
+		case vec.KindFloat:
+			f = v.Float
+		case vec.KindString:
+			parsed, err := strconv.ParseFloat(strings.TrimSpace(string(v.Bytes)), 64)
+			if err != nil {
+				continue
+			}
+			f = parsed
+		default:
+			continue
+		}
+		if f != f || math.Abs(f) >= 300 {
+			return true
+		}
+	}
+
+	return false
+}
+
 // against compares the native function of a call with the row engine's
 // value of the call over argument tuples and returns the first difference.
 func against(t testing.TB, call *ir.Call, b irfunc.Builder, s shape, rows [][]exec.Value) (string, bool) {
@@ -485,6 +538,9 @@ func against(t testing.TB, call *ir.Call, b irfunc.Builder, s shape, rows [][]ex
 	row := map[string]event.Value{}
 	var buf []byte
 	for _, args := range rows {
+		if runtime.GOARCH != "arm64" && convertsByProcessor(s, args) {
+			continue
+		}
 		clear(row)
 		for i, v := range args {
 			if s.isLit[i] {
@@ -571,6 +627,10 @@ func TestNativeCasts(t *testing.T) {
 				native := newFunc()
 				var machine vm.VM
 				for _, v := range valuesFor(from) {
+					arg := shape{types: []ir.Type{from}, consts: []any{nil}, isLit: []bool{false}}
+					if runtime.GOARCH != "arm64" && convertsByProcessor(arg, []exec.Value{v}) {
+						continue
+					}
 					row := map[string]event.Value{}
 					if ev, ok := rowValue(v, from); ok {
 						row["a0"] = ev

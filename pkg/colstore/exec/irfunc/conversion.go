@@ -136,9 +136,8 @@ func init() {
 		if !ok || !ok2 {
 			return null
 		}
-		sec, frac := math.Modf(f)
 		start := len(c.out)
-		c.out = posixFormat(c.out, time.Unix(int64(sec), int64(frac*1e9)).UTC(), format)
+		c.out = posixFormat(c.out, secondsTime(f), format)
 		return c.result(start)
 	}))
 	fixed("mktime", strict(func(c *ctx, a []val) val {
@@ -219,7 +218,7 @@ func castTo(to ir.Type) (impl, bool) {
 				return durVal(d)
 			}
 			if f, ok := numFloat(a[0]); ok {
-				return durVal(time.Duration(f * float64(time.Second)))
+				return durVal(time.Duration(toInt(f * float64(time.Second))))
 			}
 			return null
 		}, true
@@ -325,7 +324,7 @@ func appendCommas(dst []byte, f float64, isInt bool) []byte {
 	var digits [64]byte
 	var intPart, frac []byte
 	if isInt {
-		intPart = strconv.AppendInt(digits[:0], int64(f), 10)
+		intPart = strconv.AppendInt(digits[:0], toInt(f), 10)
 	} else {
 		s := strconv.AppendFloat(digits[:0], f, 'f', 2, 64)
 		intPart = s
