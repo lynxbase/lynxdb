@@ -2,6 +2,7 @@ package part
 
 import (
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
 	"io"
 	"math"
@@ -13,6 +14,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 	"github.com/lynxbase/lynxdb/pkg/colstore/variant"
+	"github.com/lynxbase/lynxdb/pkg/mem"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
@@ -51,19 +53,39 @@ type Writer struct {
 	minT    int64
 	maxT    int64
 
+	blobs  blobCodec // every section but the values of flat columns
+	values blobCodec
+	addStr func(s []byte)
+	// Close hands the buffers on to the next writer.
+	*writerBuffers
+}
+
+// writerBuffers holds what a writer reuses from block to block.
+type writerBuffers struct {
 	block     []byte
 	stats     []byte
 	ents      []dirEntry
-	blobs     blobCodec // every section but the values of flat columns
-	values    blobCodec
 	e         encodeScratch
 	ints      []int64
 	dictBytes []byte // the integer codec owns e.tmp
 	dict      dictBuilder
 	tokens    tokenfilter.Set
 	hashes    []uint64
-	addStr    func(s []byte)
 }
+
+// maxWriterBytes bounds the block and compression buffers a pooled
+// writerBuffers keeps.
+const maxWriterBytes = 64 << 20
+
+var writerPool = mem.Pool[writerBuffers]{Reset: func(b *writerBuffers) bool {
+	// Directory entries alias the values of the last batch.
+	clear(b.ents[:cap(b.ents)])
+
+	return cap(b.block)+cap(b.e.tmp)+cap(b.e.zbuf)+cap(b.dictBytes) <= maxWriterBytes
+}}
+
+// errClosed reports a write to a writer after Close.
+var errClosed = errors.New("part: writer is closed")
 
 type dirEntry struct {
 	pathID uint32
@@ -95,8 +117,11 @@ func NewWriter(w io.Writer, opts Options) *Writer {
 	return pw
 }
 
-// Reset starts another part on w, keeping the writer's buffers.
+// Reset starts another part on w.
 func (w *Writer) Reset(out io.Writer, opts Options) {
+	if w.writerBuffers == nil {
+		w.writerBuffers = writerPool.Get()
+	}
 	w.w, w.opts, w.off, w.err = out, opts, 0, nil
 	w.paths = w.paths[:0]
 	clear(w.ids)
@@ -471,6 +496,9 @@ func (w *Writer) appendDirectory() {
 
 // Close writes the footer; the part is complete once it returns nil.
 func (w *Writer) Close() error {
+	if w.writerBuffers == nil {
+		return w.err
+	}
 	footer := binary.AppendUvarint(nil, uint64(len(w.paths)))
 	for _, p := range w.paths {
 		footer = binary.AppendUvarint(footer, uint64(len(p)))
@@ -506,8 +534,14 @@ func (w *Writer) Close() error {
 	binary.LittleEndian.PutUint32(trailer[20:], formatVersion)
 	binary.LittleEndian.PutUint32(trailer[24:], fileMagic)
 	w.write(trailer[:])
+	writerPool.Put(w.writerBuffers)
+	w.writerBuffers = nil
+	err := w.err
+	if err == nil {
+		w.err = errClosed
+	}
 
-	return w.err
+	return err
 }
 
 // dictBuilder finds the distinct values of a byte column.
