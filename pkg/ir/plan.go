@@ -280,35 +280,70 @@ func (p *Project) Schema() Schema { return p.schemaFrom(p.Input.Schema()) }
 
 func (p *Project) schemaFrom(in Schema) Schema {
 	if p.Drop {
-		var drop []string
-		for _, n := range p.Names {
-			drop = append(drop, in.MatchNames(n)...)
+		cols := make([]Column, 0, len(in.Columns))
+		for _, c := range in.Columns {
+			if !p.drops(c.Name) {
+				cols = append(cols, c)
+			}
 		}
-		return in.Without(drop...)
+		return Schema{Columns: cols, Open: in.Open}
 	}
 	out := Schema{}
-	seen := map[string]bool{}
+	var seen map[string]bool
+	add := func(c Column) {
+		if seen != nil {
+			if seen[c.Name] {
+				return
+			}
+			seen[c.Name] = true
+		} else {
+			for i := range out.Columns {
+				if out.Columns[i].Name == c.Name {
+					return
+				}
+			}
+			if len(out.Columns) >= 16 {
+				seen = make(map[string]bool, 2*len(out.Columns))
+				for i := range out.Columns {
+					seen[out.Columns[i].Name] = true
+				}
+				seen[c.Name] = true
+			}
+		}
+		if out.Columns == nil {
+			out.Columns = make([]Column, 0, len(p.Names))
+		}
+		out.Columns = append(out.Columns, c)
+	}
 	for _, n := range p.Names {
-		matches := in.MatchNames(n)
-		if IsNamePattern(n) && in.Open {
+		if !IsNamePattern(n) {
+			if c, ok := in.Lookup(n); ok {
+				add(c)
+			} else if in.Open {
+				add(Column{Name: n, Type: Any, Nullable: true})
+			}
+			continue
+		}
+		if in.Open {
 			out.Open = true
 		}
-		if len(matches) == 0 && !IsNamePattern(n) && in.Open {
-			matches = []string{n}
-		}
-		for _, m := range matches {
-			if seen[m] {
-				continue
-			}
-			seen[m] = true
-			if c, ok := in.Lookup(m); ok {
-				out.Columns = append(out.Columns, c)
-			} else {
-				out.Columns = append(out.Columns, Column{Name: m, Type: Any, Nullable: true})
+		for _, c := range in.Columns {
+			if MatchName(n, c.Name) {
+				add(c)
 			}
 		}
 	}
 	return out
+}
+
+// drops reports whether a dropping projection removes the column name.
+func (p *Project) drops(name string) bool {
+	for _, n := range p.Names {
+		if n == name || IsNamePattern(n) && MatchName(n, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // Rename is one column rename. From and To may both contain '*'; the text a
