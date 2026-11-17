@@ -97,9 +97,12 @@ type Store struct {
 	cores  chan struct{}
 	blocks blockBudget
 
-	// merging is held while merges run and while partitions are dropped,
-	// so that neither removes a part the other reads.
-	merging sync.Mutex
+	// merging is held shared by the merges under way and whole while
+	// partitions are dropped and the directory closes, so that neither
+	// removes a part that a merge reads. merges counts the merges under
+	// way for the merger to wait for when it stops.
+	merging sync.RWMutex
+	merges  sync.WaitGroup
 
 	// shards are the buffers Append fills, each behind its own lock.
 	shards   []appendShard
@@ -142,6 +145,10 @@ type Store struct {
 	err         error
 	// over is set when the merger has stopped for good.
 	over bool
+	// busy holds the runs that the merges under way read, and running is
+	// the number of those merges.
+	busy    map[uint64]struct{}
+	running int
 }
 
 // OpenStore opens the table stored in path and starts its merger.
@@ -179,6 +186,7 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	}
 	s.blocks.init(opts.MergeBlocks)
 	s.idle = sync.NewCond(&s.mu)
+	s.busy = map[uint64]struct{}{}
 	s.shards = make([]appendShard, runtime.GOMAXPROCS(0))
 	s.countRuns()
 	s.synced = sync.NewCond(&s.syncMu)
@@ -538,6 +546,7 @@ func (s *Store) Compact() error {
 func (s *Store) mergeLoop() {
 	defer close(s.stopped)
 	defer func() {
+		s.merges.Wait()
 		s.mu.Lock()
 		s.over = true
 		s.idle.Broadcast()
@@ -553,21 +562,20 @@ func (s *Store) mergeLoop() {
 			s.mu.Lock()
 			kicks, compact := s.kicks, s.compact
 			s.mu.Unlock()
-			merged, err := s.mergeOnce(compact)
+			started := s.startMerges(compact)
 			s.mu.Lock()
-			if err != nil && s.err == nil {
-				s.err = err
-			}
-			if !merged || err != nil {
+			// A merge that ends asks for another look, so the merger is
+			// idle only when it found nothing to start and none runs.
+			if (!started && s.running == 0) || s.err != nil {
 				s.seen = kicks
 				if s.kicks == kicks {
 					s.compact = false
 				}
 				s.idle.Broadcast()
 			}
-			again := s.kicks != kicks && err == nil
+			again := s.kicks != kicks && s.err == nil
 			s.mu.Unlock()
-			if !merged && !again || err != nil {
+			if !again {
 				break
 			}
 			select {
@@ -671,26 +679,80 @@ func pickMerges(parts []*Handle, fanIn int, compact bool) [][]sortedRun {
 	return sets
 }
 
-// mergeOnce runs the merges that are due, side by side, and reports whether
-// there were any.
-func (s *Store) mergeOnce(compact bool) (bool, error) {
-	s.merging.Lock()
-	defer s.merging.Unlock()
+// beforeMergeCommit, when set, runs before a merge commits its run.
+var beforeMergeCommit func(meta PartMeta)
+
+// startMerges starts the merges that are due among the runs that no merge
+// under way reads, each on its own, and reports whether there were any. A
+// merge that ends asks the merger to look again.
+func (s *Store) startMerges(compact bool) bool {
+	s.merging.RLock()
+	s.mu.Lock()
+	// A merge lets go of its runs once it has committed, so the table as it
+	// is under the lock holds no part that a merge has replaced and that
+	// counts as free.
 	snap := s.Table().Snapshot()
 	defer snap.Release()
-	sets := pickMerges(snap.Parts(), s.opts.MergeFanIn, compact)
-	errs := make([]error, len(sets))
-	var wg sync.WaitGroup
-	for i, runs := range sets {
-		wg.Add(1)
+	// Compaction takes a partition whole, so it leaves a partition alone
+	// while a merge reads one of its runs.
+	held := map[int64]bool{}
+	for _, h := range snap.Parts() {
+		if _, busy := s.busy[h.Run]; busy && compact {
+			held[h.Partition] = true
+		}
+	}
+	free := make([]*Handle, 0, len(snap.Parts()))
+	for _, h := range snap.Parts() {
+		if _, busy := s.busy[h.Run]; !busy && !held[h.Partition] {
+			free = append(free, h)
+		}
+	}
+	sets := pickMerges(free, s.opts.MergeFanIn, compact)
+	for _, runs := range sets {
+		for _, r := range runs {
+			s.busy[r.id] = struct{}{}
+		}
+	}
+	s.running += len(sets)
+	s.mu.Unlock()
+	if len(sets) == 0 {
+		s.merging.RUnlock()
+
+		return false
+	}
+	// The merges share the lock taken above, which the last to end lets go.
+	var left atomic.Int32
+	left.Store(int32(len(sets)))
+	for _, runs := range sets {
+		// A merge keeps the parts it reads; the others go as soon as the
+		// merges that replace them commit.
+		var parts []*Handle
+		for _, r := range runs {
+			parts = append(parts, r.parts...)
+		}
+		kept := keep(parts)
+		s.merges.Add(1)
 		go func() {
-			defer wg.Done()
-			errs[i] = s.mergeRuns(runs)
+			defer s.merges.Done()
+			err := s.mergeRuns(runs)
+			kept.Release()
+			if left.Add(-1) == 0 {
+				s.merging.RUnlock()
+			}
+			s.mu.Lock()
+			for _, r := range runs {
+				delete(s.busy, r.id)
+			}
+			s.running--
+			if err != nil && s.err == nil {
+				s.err = err
+			}
+			s.mu.Unlock()
+			s.kick()
 		}()
 	}
-	wg.Wait()
 
-	return len(sets) > 0, errors.Join(errs...)
+	return true
 }
 
 // mergeRuns replaces runs by one run of the tier above the highest of them,
@@ -758,6 +820,9 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 		}
 
 		return err
+	}
+	if beforeMergeCommit != nil {
+		beforeMergeCommit(meta)
 	}
 	_, err := s.dir.Commit(files, inputs)
 	s.countRuns()

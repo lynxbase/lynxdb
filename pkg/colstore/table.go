@@ -170,6 +170,18 @@ func Union(snaps ...*Snapshot) *Snapshot {
 	return &Snapshot{v: v}
 }
 
+// keep returns a snapshot of parts alone, which the caller holds through
+// another snapshot; it is released on its own.
+func keep(parts []*Handle) *Snapshot {
+	v := &version{parts: parts}
+	for _, h := range parts {
+		h.refs.Add(1)
+	}
+	v.refs.Store(1)
+
+	return &Snapshot{v: v}
+}
+
 // Parts returns the parts visible to the snapshot.
 func (s *Snapshot) Parts() []*Handle { return s.v.parts }
 

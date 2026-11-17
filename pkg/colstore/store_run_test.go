@@ -300,3 +300,80 @@ func TestMergesGiveWayToFlushesBelowTheBacklog(t *testing.T) {
 		}
 	}
 }
+
+// TestMergesDoNotWaitForEachOther requires that the runs of rows that
+// arrive while a merge is under way are merged without waiting for it, and
+// that the store settles on one run once it ends.
+func TestMergesDoNotWaitForEachOther(t *testing.T) {
+	skipSyncs(t)
+	held, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	beforeMergeCommit = func(PartMeta) {
+		// The first merge to finish waits where it is about to commit.
+		wait := false
+		once.Do(func() { wait = true })
+		if wait {
+			close(held)
+			<-release
+		}
+	}
+	defer func() { beforeMergeCommit = nil }()
+	s, err := OpenStore(t.TempDir(), StoreOptions{SortKey: []string{"svc"}, MergeFanIn: 2, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	write := func(first int) {
+		t.Helper()
+		w := s.NewWriter()
+		if err := w.AddNDJSON(storeDocs(first, 500)); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runs := func() map[int]int {
+		snap := s.Table().Snapshot()
+		defer snap.Release()
+		tiers, seen := map[int]int{}, map[uint64]bool{}
+		for _, h := range snap.Parts() {
+			if !seen[h.Run] {
+				seen[h.Run] = true
+				tiers[h.Tier]++
+			}
+		}
+
+		return tiers
+	}
+	write(0)
+	write(500)
+	<-held
+	// Two more runs: their merge commits while the first one waits.
+	write(1000)
+	write(1500)
+	deadline := time.Now().Add(5 * time.Second)
+	for runs()[1] != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := runs(); got[0] != 2 || got[1] != 1 {
+		t.Fatalf("runs by tier %v while a merge waits, want two unmerged and one merged", got)
+	}
+	settled := make(chan error, 1)
+	go func() { settled <- s.Settle() }()
+	select {
+	case err := <-settled:
+		t.Fatalf("the store settled while a merge was under way: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-settled; err != nil {
+		t.Fatal(err)
+	}
+	if got := runs(); len(got) != 1 || got[2] != 1 {
+		t.Fatalf("runs by tier %v once settled, want one of the third tier", got)
+	}
+	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 2000 || sum != 1999*2000/2 {
+		t.Fatalf("%d rows, sum %d", rows, sum)
+	}
+}
