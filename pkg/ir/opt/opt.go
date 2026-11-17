@@ -191,8 +191,9 @@ func pruneScan(n ir.Node, _ *Options) (ir.Node, bool) {
 	}
 	var add []ir.Expr
 	var buf [8]ir.Expr
+	known := pruneSet{list: scan.Prune}
 	for _, c := range ir.AppendConjuncts(buf[:0], f.Cond) {
-		if indexable(c) && !containsExpr(scan.Prune, c) {
+		if indexable(c) && !known.contains(c) {
 			add = append(add, c)
 		}
 	}
@@ -204,14 +205,44 @@ func pruneScan(n ir.Node, _ *Options) (ir.Node, bool) {
 	return &ir.Filter{Input: &cp, Cond: f.Cond}, true
 }
 
-func containsExpr(list []ir.Expr, e ir.Expr) bool {
-	s := e.String()
-	for _, x := range list {
-		if x.String() == s {
+// pruneSet answers whether a predicate is already among a scan's pruning
+// predicates, comparing rendered expressions. Predicates the rule added
+// earlier are the same values, so identity settles most lookups without
+// rendering.
+type pruneSet struct {
+	list    []ir.Expr
+	ptrs    map[ir.Expr]bool
+	strings map[string]bool
+}
+
+func (s *pruneSet) contains(e ir.Expr) bool {
+	if len(s.list) == 0 {
+		return false
+	}
+	if len(s.list) <= 8 {
+		for _, x := range s.list {
+			if x == e {
+				return true
+			}
+		}
+	} else {
+		if s.ptrs == nil {
+			s.ptrs = make(map[ir.Expr]bool, len(s.list))
+			for _, x := range s.list {
+				s.ptrs[x] = true
+			}
+		}
+		if s.ptrs[e] {
 			return true
 		}
 	}
-	return false
+	if s.strings == nil {
+		s.strings = make(map[string]bool, len(s.list))
+		for _, x := range s.list {
+			s.strings[x.String()] = true
+		}
+	}
+	return s.strings[e.String()]
 }
 
 // indexable reports whether a predicate can be answered or narrowed by the
@@ -231,7 +262,9 @@ func indexable(e ir.Expr) bool {
 				return isStr
 			}
 		case ir.OpOr:
-			return indexable(x.L) && indexable(x.R) && isWord(x.L) && isWord(x.R)
+			// A disjunction of raw-text words is indexable exactly when
+			// both sides are words, which makes them indexable too.
+			return isWord(x)
 		}
 	}
 	return false
