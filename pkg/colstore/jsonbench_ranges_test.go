@@ -8,6 +8,7 @@ import (
 	"math/rand"
 	"os"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
@@ -152,6 +153,10 @@ type rangeWorker struct {
 	turn               int
 	// byIndex counts the blocks answered from the index of their part.
 	byIndex int64
+	// seen holds the keys of one range over too many streams to merge, and
+	// spanMins and spanMaxs the first and last time of each.
+	seen               *vec.ByteTable
+	spanMins, spanMaxs []int64
 	// lastGroup and last are the latest key the merge has seen, and lo and
 	// hi the first and last time of its rows.
 	lastGroup      int
@@ -403,6 +408,83 @@ func (w *rangeWorker) countStream(c *rangeCursor, b *part.Block) error {
 	}
 }
 
+// mergeStreams is the largest number of streams that a range is merged from;
+// a range over more streams is aggregated in a table, which stays small
+// because the range is. LYNXDB_BENCH_MERGE_STREAMS sets it.
+var mergeStreams = func() int {
+	if n, err := strconv.Atoi(os.Getenv("LYNXDB_BENCH_MERGE_STREAMS")); err == nil && n > 0 {
+		return n
+	}
+
+	return 16
+}()
+
+// table returns the worker's table of the keys of one range, emptied.
+func (w *rangeWorker) table() *vec.ByteTable {
+	if w.seen == nil {
+		w.seen = vec.NewByteTable(w.arena)
+	}
+	w.seen.Clear()
+
+	return w.seen
+}
+
+// hashUsers is countUsers for a range over too many streams to merge.
+func (w *rangeWorker) hashUsers(cursors []*rangeCursor, b *part.Block) error {
+	seen := w.table()
+	for _, c := range cursors {
+		for {
+			ok, err := w.loadDids(c, b)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				break
+			}
+			for ; c.i < c.end; c.i++ {
+				c.set()
+				w.key = append(binary.LittleEndian.AppendUint32(w.key[:0], uint32(c.gid)), c.cur...)
+				if n := seen.Len(); seen.ID(w.key) == n {
+					w.users[c.gid]++
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// hashSpans is mergeSpans for a range over too many streams to merge.
+func (w *rangeWorker) hashSpans(cursors []*rangeCursor, b *part.Block) error {
+	seen := w.table()
+	w.spanMins, w.spanMaxs = w.spanMins[:0], w.spanMaxs[:0]
+	for _, c := range cursors {
+		for {
+			ok, err := w.loadSpans(c, b)
+			if err != nil {
+				return err
+			}
+			if !ok {
+				break
+			}
+			for more := true; more; more = c.nextSpan() {
+				if g := seen.ID(c.cur); g == len(w.spanMins) {
+					w.spanMins, w.spanMaxs = append(w.spanMins, c.lo), append(w.spanMaxs, c.hi)
+				} else {
+					w.spanMins[g], w.spanMaxs[g] = min(w.spanMins[g], c.lo), max(w.spanMaxs[g], c.hi)
+				}
+			}
+		}
+	}
+	for g := range w.spanMins {
+		e := spanEntry{did: seen.Key(g), min: w.spanMins[g], max: w.spanMaxs[g]}
+		w.first.offer(e)
+		w.longest.offer(e)
+	}
+
+	return nil
+}
+
 // countUsers adds to the worker's groups the rows of kr and the distinct
 // dids among them.
 func (w *rangeWorker) countUsers(kr *KeyRange, b *part.Block) error {
@@ -412,6 +494,9 @@ func (w *rangeWorker) countUsers(kr *KeyRange, b *part.Block) error {
 	}
 	for _, c := range cursors {
 		c.r.Prepare(b)
+	}
+	if len(cursors) > mergeStreams {
+		return w.hashUsers(cursors, b)
 	}
 	for _, c := range cursors {
 		ok, err := w.loadDids(c, b)
@@ -536,6 +621,9 @@ func (w *rangeWorker) mergeSpans(kr *KeyRange, b *part.Block) error {
 		for _, c := range cursors {
 			c.r.Prepare(b)
 		}
+	}
+	if len(cursors) > mergeStreams {
+		return w.hashSpans(cursors, b)
 	}
 	for _, c := range cursors {
 		ok, err := w.loadSpans(c, b)
@@ -707,7 +795,8 @@ func TestOrderedQueriesMatchHashed(t *testing.T) {
 	}
 	key := []string{"kind", "commit.operation", "commit.collection", "did"}
 	for _, merged := range []bool{true, false} {
-		for _, runs := range []int{1, 6} {
+		// Twenty separate runs are more streams than a range is merged from.
+		for _, runs := range []int{1, 6, 20} {
 			tbl := orderedTable(t, data.Bytes(), runs, 256, key, merged)
 			snap := tbl.Snapshot()
 			users, ok := snap.PlanKeyRanges(createdKey, key[2:])
