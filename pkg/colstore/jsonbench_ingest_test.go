@@ -5,6 +5,7 @@ import (
 	"os"
 	"reflect"
 	"runtime"
+	"runtime/metrics"
 	"sort"
 	"strings"
 	"sync"
@@ -27,7 +28,8 @@ import (
 // LYNXDB_BENCH_FLUSH_LEVEL and LYNXDB_BENCH_LEVEL the compression effort of
 // flushed runs (fastest by default) and of merged parts (fast by default);
 // compact is the third choice. LYNXDB_BENCH_PARTITION, a duration such as
-// 1h, partitions the table by time.
+// 1h, partitions the table by time, and LYNXDB_BENCH_MERGE_BLOCKS bounds the
+// decoded blocks that merges hold at once.
 func TestJSONBenchIngest(t *testing.T) {
 	dir, path := os.Getenv("LYNXDB_BENCH_DIR"), os.Getenv("LYNXDB_BENCH_NDJSON")
 	if dir == "" || path == "" || os.Getenv("LYNXDB_BENCH_INGEST") == "" {
@@ -54,6 +56,25 @@ func TestJSONBenchIngest(t *testing.T) {
 	// Append, as request handlers of a server do; otherwise each stream has
 	// a writer of its own.
 	shared := os.Getenv("LYNXDB_BENCH_APPEND") != ""
+	// The heap that survives a collection is what the store really holds;
+	// the rest of what the runtime obtains is garbage awaiting collection.
+	var liveMax atomic.Uint64
+	sampling := make(chan struct{})
+	defer close(sampling)
+	go func() {
+		sample := []metrics.Sample{{Name: "/gc/heap/live:bytes"}}
+		for {
+			select {
+			case <-sampling:
+				return
+			case <-time.After(10 * time.Millisecond):
+				metrics.Read(sample)
+				if v := sample[0].Value.Uint64(); v > liveMax.Load() {
+					liveMax.Store(v)
+				}
+			}
+		}
+	}()
 	megabytes := float64(len(data)) / 1e6
 	cpuStart, start := cpuTime(), time.Now()
 	var rejected atomic.Int64
@@ -126,7 +147,7 @@ func TestJSONBenchIngest(t *testing.T) {
 	}
 	var mem runtime.MemStats
 	runtime.ReadMemStats(&mem)
-	t.Logf("the Go runtime obtained %.0f MB from the system", float64(mem.Sys)/1e6)
+	t.Logf("the Go runtime obtained %.0f MB from the system; the live heap peaked at %.0f MB", float64(mem.Sys)/1e6, float64(liveMax.Load())/1e6)
 }
 
 // ingestOptions reads the store settings of the ingest benchmark from the
@@ -138,6 +159,9 @@ func ingestOptions(t testing.TB) StoreOptions {
 		BlockRows:  envInt(t, "LYNXDB_BENCH_BLOCK_ROWS", 16384),
 		FlushBytes: envInt(t, "LYNXDB_BENCH_RUN_MB", 128) << 20,
 		MergeFanIn: envInt(t, "LYNXDB_BENCH_FANIN", 8),
+	}
+	if os.Getenv("LYNXDB_BENCH_MERGE_BLOCKS") != "" {
+		opts.MergeBlocks = envInt(t, "LYNXDB_BENCH_MERGE_BLOCKS", 0)
 	}
 	if v := os.Getenv("LYNXDB_BENCH_PARTITION"); v != "" {
 		width, err := time.ParseDuration(v)
