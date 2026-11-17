@@ -25,7 +25,8 @@ OpenSearch Piped Processing Language (PPL).
 ## Why LynxDB
 
 - **No server needed:** run PPL over stdin or local files with no daemon.
-- **Server mode:** ingest logs once, query indexed columnar storage repeatedly.
+- **Server mode:** ingest logs once into columnar storage, one store per
+  index partitioned by time, and query them repeatedly.
 - **OpenSearch PPL:** search terms, `where`, `eval`, `stats`, `timechart`,
   `rex`, `spath`, `join`, `lookup` and the PPL function library, compiled
   to a language-independent IR and optimized before it runs.
@@ -50,15 +51,16 @@ docker run -p 3100:3100 ghcr.io/lynxbase/lynxdb server
 
 ## Query without a server
 
-Pipe logs into `lynxdb query`. The input is loaded into an in-memory index
-named `main`; `key=value` pairs and the fields of combined, syslog and docker
-lines are extracted while loading.
+Pipe logs into `lynxdb query`. The input is loaded into an index named `main`
+in a temporary directory, deleted on exit. JSON lines keep their fields; text
+lines get their timestamp, `key=value` pairs and the fields of combined and
+syslog lines extracted while loading.
 
 ```bash
 kubectl logs deploy/api | lynxdb query '
   source=main
   | where status >= 500
-  | stats count() as errors, p95(duration_ms) as p95_ms by endpoint
+  | stats count() as errors, p95(duration_ms) as p95_ms by service
   | sort - errors
   | head 10'
 ```
@@ -83,16 +85,17 @@ lynxdb query --file app.log 'describe main'
 
 ```bash
 lynxdb server
-lynxdb ingest nginx_access.log --index nginx
+lynxdb ingest access.log --index web
 
 lynxdb query '
-  source=nginx status>=500 earliest=-1h
-  | timechart span=5m count() by uri'
+  source=web status>=500 earliest=-1h
+  | timechart span=5m count() by path'
 ```
 
 Search terms after `source=` filter events: free-text words and quoted
-phrases match tokens of the raw event through the term index, and
-`field=value` terms compare extracted fields.
+phrases match the words of the event's text, and `field=value` terms compare
+fields. Every block of stored events carries token filters, so a search reads
+only the blocks that can hold its words.
 
 ## PPL in 60 seconds
 
@@ -142,10 +145,13 @@ Write spaces around `-` and `*` in arithmetic: as in the official PPL grammar,
   `UNSUPPORTED_FUNCTION`, `UNSUPPORTED_FEATURE`, ...) that carry a line,
   a column and a suggestion.
 - **Canonical IR** between the language and the engine, with a rule-based
-  optimizer and storage hints: time ranges, term-index lookups, column
-  pruning and row limits reach the storage layer.
-- **Operational modes:** stdin/file mode, local server, REST API, live tail,
-  syslog, and shipper-compatible ingest.
+  optimizer whose time ranges, search terms, column pruning and row limits
+  reach the scans.
+- **Columnar execution:** filters, computed columns, aggregates, sorts and
+  limits run over the column blocks of the store on every core; row
+  operators run the rest of PPL.
+- **Operational modes:** stdin/file mode, local server, REST API, syslog,
+  and shipper-compatible ingest.
 
 ## Comparison
 
@@ -155,20 +161,19 @@ Write spaces around `-` and `*` in arithmetic: as in the official PPL grammar,
 | Dependencies | None | JVM | Object storage in production | Keeper for replication |
 | Query files without a server | Yes | No | No | Yes |
 | Schema | Schema-on-read | Schema-on-write | Labels + line | Schema-on-write |
-| Full-text index | FST + bitmaps | Lucene | Label index only | Token bloom filters |
+| Full-text index | Token filters per block | Lucene | Label index only | Data-skipping indexes |
 | License | Apache 2.0 | ELv2 / AGPL | AGPL | Apache 2.0 |
 
 ## CLI map
 
 ```text
 lynxdb query <query>         run a PPL query (server, --file, or stdin)
-lynxdb explain <query>       show the logical and optimized plans and scan hints
-lynxdb tail <query>          live tail matching events
+lynxdb explain <query>       show the logical and optimized plans
 lynxdb fields [name]         inspect the field catalog
 lynxdb ingest <file>         ingest local files into a server
 lynxdb import <file>         import NDJSON, CSV or Elasticsearch bulk files
 lynxdb server                start the server
-lynxdb status | health | indexes | cache | jobs
+lynxdb status | health | indexes | jobs
 lynxdb config                inspect and edit configuration
 lynxdb auth | login | logout manage API keys and credentials
 ```
