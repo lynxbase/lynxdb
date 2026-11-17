@@ -83,15 +83,3 @@ bench-macro: build
 	@mkdir -p artifacts
 	./lynxdb bench --events 1000000 | tee artifacts/bench-macro.txt
 
-.PHONY: webui-install webui webui-dev
-
-webui-install:
-	cd web && bun install
-
-webui: webui-install
-	cd web && bun run build
-	rm -rf internal/webui/dist
-	cp -r web/dist internal/webui/dist
-
-webui-dev:
-	cd web && bun run dev

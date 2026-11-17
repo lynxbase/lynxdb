@@ -86,7 +86,6 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("data_dir", cfg.DataDir, dflt.DataDir, fileCfg.DataDir, LYNXDB_DATA_DIR)
 	add("retention", cfg.Retention.String(), dflt.Retention.String(), fileCfg.Retention.String(), LYNXDB_RETENTION)
 	add("log_level", cfg.LogLevel, dflt.LogLevel, fileCfg.LogLevel, LYNXDB_LOG_LEVEL)
-	add("no_ui", strconv.FormatBool(cfg.NoUI), strconv.FormatBool(dflt.NoUI), strconv.FormatBool(fileCfg.NoUI), LYNXDB_NO_UI)
 
 	// Storage.
 	add("storage.compression", cfg.Storage.Compression, dflt.Storage.Compression, fileCfg.Storage.Compression, LYNXDB_STORAGE_COMPRESSION)

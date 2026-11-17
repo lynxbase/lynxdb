@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lynxbase/lynxdb/internal/webui"
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -70,7 +69,6 @@ type Config struct {
 	Addr          string
 	DataDir       string         // Root directory for all data (segments, parts, indexes). Empty = in-memory only.
 	Retention     time.Duration  // Data retention period. 0 = use default (90 days).
-	NoUI          bool           // When true, the embedded Web UI is not served.
 	RuntimeConfig *config.Config // Optional full runtime snapshot used by reload/get-config paths.
 
 	KeyStore      *auth.KeyStore
@@ -118,7 +116,6 @@ func NewServer(cfg Config) (*Server, error) {
 		runtimeCfg.Listen = cfg.Addr
 		runtimeCfg.DataDir = cfg.DataDir
 		runtimeCfg.Retention = config.Duration(cfg.Retention)
-		runtimeCfg.NoUI = cfg.NoUI
 		if cfg.Query.SyncTimeout > 0 {
 			runtimeCfg.Query = cfg.Query
 		}
@@ -414,15 +411,6 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// Health.
 	mux.HandleFunc("GET /health", s.handleHealth)
-
-	// Embedded Web UI. Keep / reserved for Elasticsearch-compatible clients;
-	// the browser UI lives under /ui/.
-	if !cfg.NoUI && webui.Enabled() {
-		mux.HandleFunc("GET "+webui.Path, func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, webui.Path+"/", http.StatusMovedPermanently)
-		})
-		mux.Handle("GET "+webui.Path+"/", webui.Handler())
-	}
 
 	idleTimeout := cfg.HTTP.IdleTimeout
 	idleTimeout = defaultIdleTimeout(idleTimeout)

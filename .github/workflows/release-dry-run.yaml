@@ -19,7 +19,6 @@ on:
       - "scripts/render-homebrew-nightly.py"
       - "cmd/**"
       - "internal/**"
-      - "web/**"
       - "go.mod"
       - "go.sum"
       - "Dockerfile.release"

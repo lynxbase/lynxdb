@@ -21,7 +21,6 @@ type Config struct {
 	DataDir   string   `yaml:"data_dir"  json:"data_dir"`
 	Retention Duration `yaml:"retention" json:"retention"`
 	LogLevel  string   `yaml:"log_level" json:"log_level"`
-	NoUI      bool     `yaml:"no_ui"     json:"no_ui"`
 
 	Storage       StorageConfig       `yaml:"storage"        json:"storage"`
 	Query         QueryConfig         `yaml:"query"          json:"query"`

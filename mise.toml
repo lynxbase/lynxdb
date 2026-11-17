@@ -9,8 +9,6 @@
 go     = "1.26.3"
 node   = "20.19.0"
 python = "3.13.7"
-rust   = "1.85.0"
-bun    = "1.2.8"
 
 # Release and distribution tooling.
 "aqua:goreleaser/goreleaser"  = "2.15.2"
@@ -28,10 +26,6 @@ run = "make build"
 [tasks.test]
 description = "Run all tests (unit + e2e + cli)"
 run = "make test"
-
-[tasks.web]
-description = "Build the embedded Web UI"
-run = "make webui"
 
 [tasks.lint]
 description = "Build the custom golangci-lint and run it"

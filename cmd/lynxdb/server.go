@@ -32,8 +32,6 @@ var (
 	flagTLSKey                         string
 	flagMaxQueryPool                   string
 	flagSpillDir                       string
-	flagNoUI                           bool
-	flagOpenUI                         bool
 	flagProfileRuntime                 bool
 	flagSyslog                         string
 	flagSyslogUDP                      string
@@ -82,8 +80,6 @@ func init() {
 	serverCmd.Flags().StringVar(&flagTLSKey, "tls-key", "", "Path to TLS private key PEM file")
 	serverCmd.Flags().StringVar(&flagMaxQueryPool, "max-query-pool", "", "Global query memory pool (e.g., 2gb, 4gb)")
 	serverCmd.Flags().StringVar(&flagSpillDir, "spill-dir", "", "Directory for temporary spill files (default: OS temp dir)")
-	serverCmd.Flags().BoolVar(&flagNoUI, "no-ui", false, "Disable embedded Web UI")
-	serverCmd.Flags().BoolVar(&flagOpenUI, "ui", false, "Auto-open Web UI in browser after startup")
 	serverCmd.Flags().BoolVar(&flagProfileRuntime, "profile-runtime", false, "Enable mutex and block profiling (~2-5% overhead)")
 	serverCmd.Flags().StringVar(&flagSyslog, "syslog", "", "Enable UDP and TCP syslog on address (default port 5514 when omitted)")
 	serverCmd.Flags().StringVar(&flagSyslogUDP, "syslog-udp", "", "Enable UDP syslog on address")
@@ -181,11 +177,6 @@ func runServer(cmd *cobra.Command, args []string) error {
 		cliOverrides = append(cliOverrides, "--cluster.grpc-port")
 	}
 
-	if cmd.Flags().Changed("no-ui") {
-		cfg.NoUI = flagNoUI
-		cliOverrides = append(cliOverrides, "--no-ui")
-	}
-
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
@@ -242,7 +233,6 @@ func runServer(cmd *cobra.Command, args []string) error {
 		Addr:          cfg.Listen,
 		DataDir:       cfg.DataDir,
 		Retention:     time.Duration(cfg.Retention),
-		NoUI:          cfg.NoUI,
 		RuntimeConfig: cfg,
 		KeyStore:      keyStore,
 		TLSConfig:     tlsCfg,
@@ -296,27 +286,10 @@ func runServer(cmd *cobra.Command, args []string) error {
 		}
 	}()
 
-	scheme := "http"
-	if tlsCfg != nil {
-		scheme = "https"
-	}
-
 	printNextSteps(
 		"lynxdb demo                      Generate sample data",
 		"lynxdb ingest access.log         Ingest a log file",
-		fmt.Sprintf("open %s://%s/ui/\t   Web UI", scheme, cfg.Listen),
 	)
-
-	if flagOpenUI {
-		openUIAddr := fmt.Sprintf("%s://%s/ui/", scheme, cfg.Listen)
-		go func() {
-			// Brief delay to ensure server is accepting connections.
-			time.Sleep(300 * time.Millisecond)
-			if err := openBrowser(openUIAddr); err != nil {
-				logger.Warn("failed to open browser", "error", err)
-			}
-		}()
-	}
 
 	logAttrs := []any{"version", buildinfo.Version, "addr", cfg.Listen}
 	if cfgPath != "" {

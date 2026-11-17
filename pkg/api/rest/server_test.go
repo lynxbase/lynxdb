@@ -211,7 +211,7 @@ func TestServer_Health(t *testing.T) {
 	}
 }
 
-func TestServer_UIIsMountedUnderUIAndRootStaysESCompat(t *testing.T) {
+func TestServer_RootIsESCompatible(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
@@ -225,48 +225,6 @@ func TestServer_UIIsMountedUnderUIAndRootStaysESCompat(t *testing.T) {
 	}
 	if got := rootResp.Header.Get("X-Elastic-Product"); got != "Elasticsearch" {
 		t.Fatalf("GET / X-Elastic-Product = %q, want Elasticsearch", got)
-	}
-
-	noFollow := &http.Client{
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-	uiResp, err := noFollow.Get(fmt.Sprintf("http://%s/ui", srv.Addr()))
-	if err != nil {
-		t.Fatalf("GET /ui: %v", err)
-	}
-	defer uiResp.Body.Close()
-	if uiResp.StatusCode != http.StatusMovedPermanently {
-		t.Fatalf("GET /ui status: %d", uiResp.StatusCode)
-	}
-	if got := uiResp.Header.Get("Location"); got != "/ui/" {
-		t.Fatalf("GET /ui Location = %q, want /ui/", got)
-	}
-
-	indexResp, err := http.Get(fmt.Sprintf("http://%s/ui/", srv.Addr()))
-	if err != nil {
-		t.Fatalf("GET /ui/: %v", err)
-	}
-	defer indexResp.Body.Close()
-	if indexResp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /ui/ status: %d", indexResp.StatusCode)
-	}
-	body, err := io.ReadAll(indexResp.Body)
-	if err != nil {
-		t.Fatalf("read /ui/: %v", err)
-	}
-	if !strings.Contains(string(body), `<div id="app"></div>`) {
-		t.Fatalf("GET /ui/ did not return SPA index.html")
-	}
-
-	iconResp, err := http.Get(fmt.Sprintf("http://%s/ui/lynxdb-icon.png", srv.Addr()))
-	if err != nil {
-		t.Fatalf("GET /ui/lynxdb-icon.png: %v", err)
-	}
-	defer iconResp.Body.Close()
-	if iconResp.StatusCode != http.StatusOK {
-		t.Fatalf("GET /ui/lynxdb-icon.png status: %d", iconResp.StatusCode)
 	}
 }
 

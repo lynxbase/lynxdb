@@ -38,9 +38,6 @@ jobs:
           install: true
           cache: true
 
-      - name: Build Web UI
-        run: make webui
-
       - name: Build
         run: go build ./...
 
@@ -69,77 +66,8 @@ jobs:
         working-directory: docs/site
         run: npm run build
 
-      - name: Build Web UI
-        run: make webui
-
       - name: Check shipper docs
         run: make docs-check-shippers
-
-  web:
-    name: Web UI Quality
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up mise
-        uses: jdx/mise-action@v3
-        with:
-          version: 2026.5.7
-          install: true
-          cache: true
-
-      - name: Install web dependencies
-        working-directory: web
-        run: bun install --frozen-lockfile
-
-      - name: Typecheck
-        working-directory: web
-        run: bun run typecheck
-
-      - name: Lint
-        working-directory: web
-        run: bun run lint
-
-      - name: Unit tests
-        working-directory: web
-        run: bun run test
-
-      - name: Build
-        working-directory: web
-        run: bun run build
-
-      - name: Bundle budget
-        working-directory: web
-        run: bun run bundle:check
-
-  web-smoke:
-    name: Web UI Smoke
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up mise
-        uses: jdx/mise-action@v3
-        with:
-          version: 2026.5.7
-          install: true
-          cache: true
-
-      - name: Install web dependencies
-        working-directory: web
-        run: bun install --frozen-lockfile
-
-      - name: Install Playwright browser
-        working-directory: web
-        run: bunx playwright install --with-deps chromium
-
-      - name: Run smoke suite
-        working-directory: web
-        run: bun run e2e
-        env:
-          CI: "true"
 
   test-unit:
     name: Unit Tests (${{ matrix.os }})
@@ -159,9 +87,6 @@ jobs:
           version: 2026.5.7
           install: true
           cache: true
-
-      - name: Build Web UI
-        run: make webui
 
       - name: Run unit tests
         run: go test ./... -count=1 -timeout 300s -race
@@ -185,9 +110,6 @@ jobs:
           install: true
           cache: true
 
-      - name: Build Web UI
-        run: make webui
-
       - name: Run E2E tests
         run: go test -tags e2e -count=1 -timeout 180s ./test/e2e/
 
@@ -207,9 +129,6 @@ jobs:
           install: true
           cache: true
 
-      - name: Build Web UI
-        run: make webui
-
       - name: Run shipper compatibility tests
         run: make test-compat
 
@@ -227,9 +146,6 @@ jobs:
           version: 2026.5.7
           install: true
           cache: true
-
-      - name: Build Web UI
-        run: make webui
 
       - name: Build binary
         run: go build -o lynxdb ./cmd/lynxdb/
@@ -251,9 +167,6 @@ jobs:
           version: 2026.5.7
           install: true
           cache: true
-
-      - name: Build Web UI
-        run: make webui
 
       - name: Run golden tests
         run: go test -tags clitest -count=1 -timeout 300s -run '^TestGolden' -v ./test/cli/

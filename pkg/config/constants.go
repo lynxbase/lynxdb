@@ -179,9 +179,6 @@ const (
 	// LYNXDB_LOG_LEVEL is the log level: debug, info, warn, error.
 	// YAML key: log_level. Default: info.
 	LYNXDB_LOG_LEVEL = "LYNXDB_LOG_LEVEL"
-	// LYNXDB_NO_UI is the disable the built-in web UI.
-	// YAML key: no_ui. Default: false.
-	LYNXDB_NO_UI = "LYNXDB_NO_UI"
 	// LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD is the skip bitmap when this fraction of rows match.
 	// YAML key: query.bitmap_selectivity_threshold. Default: 0.9.
 	LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD = "LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD"
