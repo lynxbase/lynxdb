@@ -15,12 +15,17 @@ var salts = [8]uint32{
 	0x705495c7, 0x2df1424b, 0x9efc4947, 0x5c6bfb31,
 }
 
+// Blocks returns the number of bloom blocks of a filter for tokens distinct
+// hashes before it is rounded to a unit.
+func Blocks(tokens int) int {
+	return max((tokens*bitsPerToken+255)/256, 1)
+}
+
 // Append appends a filter holding the distinct hashes to dst, sized to a
 // multiple of unit bloom blocks. Each hash sets one bit in each of the eight
 // words of a single 256-bit block.
 func Append(dst []byte, hashes []uint64, unit int) []byte {
-	blocks := max((len(hashes)*bitsPerToken+255)/256, 1)
-	blocks = (blocks + unit - 1) / unit * unit
+	blocks := (Blocks(len(hashes)) + unit - 1) / unit * unit
 	start := len(dst)
 	dst = append(dst, make([]byte, blocks*BlockBytes)...)
 	filter := dst[start:]

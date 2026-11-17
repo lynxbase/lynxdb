@@ -22,10 +22,11 @@ import (
 // has stripes and stores stripe after stripe, stripe k being piece k of
 // every filter in block order, so that one token's probes of the whole group
 // read one stripe. The bloom blocks fill pages of filterPage bytes, each
-// behind the checksum of its page, and a group of more than one page starts
-// on a page of the file, so that a probe reads one page of the file. A block
-// has one filter or several, each for a column of its own or for all the
-// columns that have none.
+// behind the checksum of its page, and a group of filterAligned bytes or
+// more starts on a page of the file, so that a probe reads one page of the
+// file. A block has one filter or several, each for a column of its own or
+// for all the columns that have none. A group has as many stripes as suit
+// the filters of its blocks, so that rounding a filter to them costs little.
 const (
 	fileMagic     = 0x5450584c // "LXPT"
 	formatVersion = 6
@@ -48,14 +49,24 @@ const (
 	// and nothing else.
 	filterPage = 4096
 	pageBlocks = filterPage/tokenfilter.BlockBytes - 1
-	// A group takes blocks until their filters reach filterGroupBytes, the
-	// most a writer holds, and at most filterGroupBlocks. A page fault on a
-	// mapped file reads 64 KiB to either side by default, which a stripe is
-	// to fit in: filterGroupBytes over filterStripes is 48 KiB. Rounding to
-	// filterStripes bloom blocks adds 2 KiB to a filter on average.
+	// A group of filterStripes stripes takes blocks until their filters
+	// reach filterGroupBytes, the most a writer holds, one of fewer stripes
+	// until they reach the same share of it, and any at most
+	// filterGroupBlocks. A page fault on a mapped file reads 64 KiB to
+	// either side by default, which a stripe is to fit in: filterGroupBytes
+	// over filterStripes is 48 KiB.
 	filterGroupBlocks = 128
 	filterGroupBytes  = 6 << 20
 	filterStripes     = 128
+	// A block asks for the largest power of two of stripes that is at most
+	// one in filterRounding of the bloom blocks of its filters, and at most
+	// filterStripes: rounding a filter to them then adds less than that
+	// share of the block's filters, and 2 KiB on average to a filter of a
+	// block that gets filterStripes.
+	filterRounding = 16
+	// Padding a smaller group to a page of the file would cost more than
+	// the page that a probe of it may read beyond its own.
+	filterAligned = 16 * filterPage
 	// filterColumnBytes is the encoded size from which a column of a block
 	// gets a filter of its own, so that a search can tell which columns to
 	// read; the filter of the other columns holds their tokens. Measured on

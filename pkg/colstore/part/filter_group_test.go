@@ -21,7 +21,7 @@ import (
 // their filters, and have stripes stripes.
 func stripedWriter(buf *bytes.Buffer, opts Options, group, stripes int) *Writer {
 	w := NewWriter(buf, opts)
-	w.groupBlocks, w.groupBytes, w.stripes, w.columnBytes = group, 1<<40, stripes, math.MaxInt
+	w.groupBlocks, w.groupBytes, w.fixedStripes, w.columnBytes = group, 1<<40, stripes, math.MaxInt
 
 	return w
 }
@@ -91,7 +91,11 @@ func sameAnswers(t testing.TB, p *Part, r *rand.Rand, units ...int) {
 	for g, run := range groupRuns(p) {
 		e := p.index[run[1]*indexEntrySize:]
 		end := binary.LittleEndian.Uint64(e[20:]) + uint64(binary.LittleEndian.Uint32(e[28:]))
-		if want := (end + filterPage - 1) &^ (filterPage - 1); p.groups[g].off != want && (p.groups[g].size > filterPage || p.groups[g].off != end) {
+		want := end
+		if p.groups[g].size >= filterAligned {
+			want = (end + filterPage - 1) &^ (filterPage - 1)
+		}
+		if p.groups[g].off != want {
 			t.Fatalf("group %d of %d bytes starts at %d, its blocks end at %d", g, p.groups[g].size, p.groups[g].off, end)
 		}
 	}
@@ -237,9 +241,52 @@ func TestStripedFiltersAnswerAsEachBlocksOwnFilter(t *testing.T) {
 	}
 }
 
-// A filter is copied only into a group whose stripes cut it at bloom block
-// boundaries; the other blocks are encoded again.
-func TestMergeCopiesFiltersThatTheStripesOfTheDestinationDivide(t *testing.T) {
+// groupStripes requires the stripes of every group of p to cut each filter
+// of its blocks at bloom block boundaries, into pieces at most twice as
+// large as the most stripes that want allows the block would give, and
+// returns how many groups have each number of stripes.
+func groupStripes(t testing.TB, p *Part, want func(common int) int) map[int]int {
+	t.Helper()
+	counts := map[int]int{}
+	for g := range p.groups {
+		counts[int(p.groups[g].stripes)]++
+	}
+	for i := 0; i < p.NumBlocks(); i++ {
+		g, f, end := p.blockFilters(i)
+		common := 0
+		for ; f < end; f++ {
+			size := p.filterBlocks(g, f)
+			if size%int(g.stripes) != 0 {
+				t.Fatalf("block %d: %d stripes cut a filter of %d bloom blocks", i, g.stripes, size)
+			}
+			for common != 0 {
+				size, common = common, size%common
+			}
+			common = size
+		}
+		if most := want(common); most > 2*int(g.stripes) {
+			t.Fatalf("block %d: filters that %d stripes divide lie in %d stripes", i, most, g.stripes)
+		}
+	}
+
+	return counts
+}
+
+// largestDivisor returns the largest divisor of n that is at most the
+// number of stripes of a large block.
+func largestDivisor(n int) int {
+	d := min(n, filterStripes)
+	for n%d != 0 {
+		d--
+	}
+
+	return d
+}
+
+// A filter is copied into a group whose stripes cut it at bloom block
+// boundaries: the group being built when its stripes do, and another
+// otherwise.
+func TestMergeCopiesFiltersIntoGroupsWhoseStripesDivideThem(t *testing.T) {
 	r := rand.New(rand.NewSource(4))
 	const blockRows = 60
 	srcs := []*Part{wordySource(t, r, 0, 12*blockRows, blockRows, 3, 3, 6), wordySource(t, r, 1, 12*blockRows, blockRows, 3, 5, 6)}
@@ -254,11 +301,23 @@ func TestMergeCopiesFiltersThatTheStripesOfTheDestinationDivide(t *testing.T) {
 	if fits == 0 || fits == 24 {
 		t.Fatalf("%d of 24 filters fit four stripes; the test needs both kinds", fits)
 	}
+	// Four stripes take the filters they divide; the others get the most
+	// stripes that divide them.
 	got, copied := mergeStriped(t, srcs, blockRows, Options{}, 4, 4)
-	if copied != fits {
-		t.Fatalf("%d blocks copied, %d have filters that four stripes divide", copied, fits)
+	if copied != 24 {
+		t.Fatalf("%d of 24 blocks copied into a part of four stripes", copied)
 	}
-	sameAnswers(t, got, r, 4, 6)
+	sameAnswers(t, got, r, 6)
+	counts := groupStripes(t, got, func(common int) int {
+		if common%4 == 0 {
+			return 4
+		}
+
+		return largestDivisor(common)
+	})
+	if counts[4] == 0 || len(counts) < 2 {
+		t.Fatalf("groups by their stripes: %v; the test needs four stripes and others", counts)
+	}
 
 	// Every filter that 6 stripes divide, 3 do.
 	got, copied = mergeStriped(t, srcs, blockRows, Options{}, 4, 3)
@@ -266,6 +325,17 @@ func TestMergeCopiesFiltersThatTheStripesOfTheDestinationDivide(t *testing.T) {
 		t.Fatalf("%d of 24 blocks copied into a part of three stripes", copied)
 	}
 	sameAnswers(t, got, r, 6)
+	if counts = groupStripes(t, got, func(int) int { return 3 }); counts[3] != 6 || len(counts) != 1 {
+		t.Fatalf("groups by their stripes: %v, want 6 of three", counts)
+	}
+
+	// A writer that is free to choose gives every block the most stripes.
+	got, copied = mergeStriped(t, srcs, blockRows, Options{}, 4, 0)
+	if copied != 24 {
+		t.Fatalf("%d of 24 blocks copied", copied)
+	}
+	sameAnswers(t, got, r, 6)
+	groupStripes(t, got, largestDivisor)
 }
 
 // A copied filter gets checksums of its own in the destination, so damage
@@ -314,7 +384,9 @@ func TestFilterGroupsCloseAtTheirSizeBound(t *testing.T) {
 	src := wordySource(t, r, 0, 40*blockRows, blockRows, 3, 2, stripes)
 	var buf bytes.Buffer
 	w := stripedWriter(&buf, Options{Ordered: true, SortKey: mergeKey}, 8, stripes)
-	w.groupBytes = bound
+	// The bound of a group is the share of groupBytes that its stripes are
+	// of those of a large block.
+	w.groupBytes = bound * filterStripes / stripes
 	if err := Merge(w, []*Part{src}, blockRows); err != nil {
 		t.Fatal(err)
 	}

@@ -272,7 +272,7 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 	const group, stripes, blocks = 3, 4, 8
 	var buf bytes.Buffer
 	w := NewWriter(&buf, Options{})
-	w.groupBlocks, w.stripes, w.columnBytes = group, stripes, math.MaxInt
+	w.groupBlocks, w.fixedStripes, w.columnBytes = group, stripes, math.MaxInt
 	batch := shred.NewBatch(shred.Options{})
 	var pieces [blocks]int
 	for i := 0; i < blocks; i++ {
@@ -301,9 +301,9 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 	}
 
 	// Where every lookup reads, worked out from the layout: the stripes of
-	// a group follow its last block from the next page of the file on,
-	// each the pieces of its blocks in order, in pages of a checksum and
-	// pageBlocks bloom blocks.
+	// a group follow its last block, from the next page of the file on when
+	// the group is large, each the pieces of its blocks in order, in pages
+	// of a checksum and pageBlocks bloom blocks.
 	type place struct{ group, page int }
 	type section struct{ off, size, stripe int }
 	var sections []section
@@ -321,8 +321,11 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 		if stripe < 3*pageBlocks {
 			t.Fatalf("a stripe of %d bloom blocks is too short to tell its pages apart", stripe)
 		}
-		off = (off + filterPage - 1) &^ (filterPage - 1)
-		sections = append(sections, section{off, (stripes*stripe + pages) * tokenfilter.BlockBytes, stripe})
+		size := (stripes*stripe + pages) * tokenfilter.BlockBytes
+		if size >= filterAligned {
+			off = (off + filterPage - 1) &^ (filterPage - 1)
+		}
+		sections = append(sections, section{off, size, stripe})
 	}
 	r := rand.New(rand.NewSource(6))
 	hashes := make([]uint64, 400)
@@ -464,7 +467,7 @@ func corruptPartsFail(t *testing.T, opts Options) {
 	var buf bytes.Buffer
 	w := NewWriter(&buf, opts)
 	// Two filter groups, the second short.
-	w.groupBlocks, w.stripes = 2, 8
+	w.groupBlocks, w.fixedStripes = 2, 8
 	batch := shred.NewBatch(shred.Options{})
 	for i, d := range sampleDocs(400) {
 		if err := batch.AddJSON([]byte(d), 5); err != nil {
