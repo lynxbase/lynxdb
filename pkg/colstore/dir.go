@@ -45,9 +45,10 @@ var syncFile = (*os.File).Sync
 // directory cannot provide.
 var ErrManifest = errors.New("colstore: manifest is damaged or names a missing or damaged part")
 
-// ErrFailed reports a directory that takes no further changes because a
-// manifest record could be neither made durable nor taken back.
-var ErrFailed = errors.New("colstore: manifest could not be written")
+// ErrFailed reports a directory that takes no further changes because its
+// table and its manifest may have come apart: a record could be neither
+// made durable nor taken back.
+var ErrFailed = errors.New("colstore: directory takes no changes after a failed manifest write")
 
 // Dir keeps a table's parts as files in one directory. A manifest, an
 // append-only log of part set changes, names the live files; a change is
@@ -163,13 +164,7 @@ func OpenDir(path string) (*Dir, error) {
 
 		return nil, err
 	}
-	if d.records > manifestRewriteAfter {
-		if err := d.rewrite(); err != nil {
-			d.table.Close()
-
-			return nil, err
-		}
-	}
+	d.trim()
 
 	return d, nil
 }
@@ -483,6 +478,7 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) (handles []*Handle, err 
 		}
 		gone = append(gone, ref.name)
 	}
+	recorded = true
 	if err := d.appendLog(appendRecord(nil, names, metas, gone)); err != nil {
 		recorded = d.failed != nil
 
@@ -496,13 +492,12 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) (handles []*Handle, err 
 		delete(d.live, h)
 	}
 	if err := d.table.Apply(handles, remove); err != nil {
-		return nil, err
+		// The record stands, so the table must follow it or stop.
+		d.failed = fmt.Errorf("%w: %w", ErrFailed, err)
+
+		return nil, d.failed
 	}
-	if d.records > manifestRewriteAfter {
-		if err := d.rewrite(); err != nil {
-			return nil, err
-		}
-	}
+	d.trim()
 
 	return handles, nil
 }
@@ -545,6 +540,14 @@ func (pf *PartFile) seal(name string) error {
 	return os.Rename(pf.tmp, name)
 }
 
+// trim rewrites a manifest that has grown long. A rewrite that fails leaves
+// a log that works, and the next change tries again.
+func (d *Dir) trim() {
+	if d.records > manifestRewriteAfter {
+		_ = d.rewrite()
+	}
+}
+
 // rewrite replaces the manifest by one record listing the live parts.
 func (d *Dir) rewrite() error {
 	names := make([]string, 0, len(d.live))
@@ -555,7 +558,7 @@ func (d *Dir) rewrite() error {
 	}
 	file := filepath.Join(d.path, manifestName)
 	tmp := file + tmpSuffix
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_APPEND|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
 		return err
 	}
@@ -563,25 +566,27 @@ func (d *Dir) rewrite() error {
 	if _, err = f.Write(record); err == nil {
 		err = syncFile(f)
 	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
+	if err == nil {
+		err = os.Rename(tmp, file)
 	}
 	if err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, file); err != nil {
-		return err
-	}
-	if err := syncDir(d.path); err != nil {
-		return err
-	}
-	if d.log != nil {
-		d.log.Close()
-	}
-	d.log, err = os.OpenFile(file, os.O_WRONLY|os.O_APPEND, 0o644)
-	d.records, d.size = 1, int64(len(record))
+		f.Close()
+		os.Remove(tmp)
 
-	return err
+		return err
+	}
+	// The renamed file is the log from here on, also when the directory
+	// cannot be synced: records appended to the file it replaced would be
+	// lost. The next change syncs the directory before it adds a record.
+	d.log.Close()
+	d.log, d.records, d.size = f, 1, int64(len(record))
+	// Errors of the log then carry its name and not the temporary one.
+	if named, err := os.OpenFile(file, os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
+		f.Close()
+		d.log = named
+	}
+
+	return syncDir(d.path)
 }
 
 // Close releases the table's parts and the manifest; parts held by

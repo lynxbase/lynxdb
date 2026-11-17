@@ -336,6 +336,103 @@ func TestDirTakesNoChangeOnceARecordCanBeNeitherWrittenNorTakenBack(t *testing.T
 	}
 }
 
+func TestCommitStandsWhenTheManifestRewriteFails(t *testing.T) {
+	cases := []struct {
+		name string
+		// arrange makes rewrites fail while failing is set.
+		arrange func(d *Dir, failing *atomic.Bool) (disarm func())
+	}{
+		{"the rewritten manifest cannot be created", func(d *Dir, failing *atomic.Bool) func() {
+			blocker := filepath.Join(d.path, manifestName+tmpSuffix)
+			if err := os.Mkdir(blocker, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			return func() { os.Remove(blocker) }
+		}},
+		{"the rewritten manifest cannot be made durable", func(d *Dir, failing *atomic.Bool) func() {
+			replaceSyncFile(t, func(f *os.File) error {
+				if failing.Load() && f.Name() == filepath.Join(d.path, manifestName+tmpSuffix) {
+					return errInjected
+				}
+
+				return f.Sync()
+			})
+
+			return func() {}
+		}},
+		{"the directory cannot be made durable behind the rename", func(d *Dir, failing *atomic.Bool) func() {
+			renamed := false
+			replaceSyncFile(t, func(f *os.File) error {
+				switch f.Name() {
+				case filepath.Join(d.path, manifestName+tmpSuffix):
+					renamed = true
+				case d.path:
+					if renamed && failing.Load() {
+						renamed = false
+
+						return errInjected
+					}
+				}
+
+				return f.Sync()
+			})
+
+			return func() {}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			defer func(n int) { manifestRewriteAfter = n }(manifestRewriteAfter)
+			manifestRewriteAfter = 2
+			path := filepath.Join(t.TempDir(), "table")
+			d, err := OpenDir(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows := 0
+			commit := func(when string) {
+				t.Helper()
+				hs, err := d.Commit([]*PartFile{writePartFile(t, d, rows, 100, "x")}, nil)
+				if err != nil || len(hs) != 1 {
+					t.Fatalf("%s: a commit returned %d handles and %v", when, len(hs), err)
+				}
+				rows += 100
+				if got, sum := rowsAndSum(t, d); got != int64(rows) || sum != int64(rows-1)*int64(rows)/2 {
+					t.Fatalf("%s: %d rows, sum %d; want %d rows", when, got, sum, rows)
+				}
+			}
+			commit("first")
+			commit("second")
+			var failing atomic.Bool
+			failing.Store(true)
+			disarm := c.arrange(d, &failing)
+			// Each of these is durable before the rewrite it sets off fails.
+			commit("with a failing rewrite")
+			commit("with a failing rewrite again")
+			failing.Store(false)
+			disarm()
+			commit("with a working rewrite")
+			if d.records != 1 {
+				t.Fatalf("the manifest holds %d records after a rewrite that worked", d.records)
+			}
+			commit("behind the rewrite")
+			checkDirMatchesManifest(t, d, "before reopen")
+			if err := d.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if d, err = OpenDir(path); err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			if got, sum := rowsAndSum(t, d); got != int64(rows) || sum != int64(rows-1)*int64(rows)/2 {
+				t.Fatalf("after reopen: %d rows, sum %d; want %d rows", got, sum, rows)
+			}
+			checkDirMatchesManifest(t, d, "after reopen")
+		})
+	}
+}
+
 func TestCommitInAReadOnlyDirectoryLeavesFilesForTheNextOpen(t *testing.T) {
 	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
 		t.Skip("the directory cannot be made read-only for this user")
