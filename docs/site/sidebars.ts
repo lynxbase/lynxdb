@@ -131,7 +131,6 @@ const sidebars: SidebarsConfig = {
         'cli/bench-demo',
         'cli/output-formats',
         'cli/completion',
-        'cli/install',
       ],
     },
     {

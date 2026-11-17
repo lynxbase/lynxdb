@@ -44,9 +44,6 @@ func resetAllFlags(t *testing.T) {
 	globalHTTPClient = nil
 	flagConfigPath = ""
 	flagBenchEvents = 100000
-	flagInitDataDir = ""
-	flagInitRetention = ""
-	flagInitNoInteractive = false
 
 	// Reset root persistent flags.
 	rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {
