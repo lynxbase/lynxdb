@@ -41,7 +41,7 @@ const (
 // and returns the files, which the caller commits. It sorts the batches.
 func (s *Store) writeRuns(batches []*shred.Batch) ([]*PartFile, error) {
 	buckets := make([][]shred.TimeBucket, len(batches))
-	sideBySide(len(batches), func(i int) {
+	sideBySide(len(batches), runtime.GOMAXPROCS(0), func(i int) {
 		b := batches[i]
 		if s.opts.Partition > 0 {
 			buckets[i] = b.SortByTimeBuckets(nil, int64(s.opts.Partition), s.opts.SortKey)
@@ -72,7 +72,10 @@ func (s *Store) writeRuns(batches []*shred.Batch) ([]*PartFile, error) {
 	}
 	files := make([]*PartFile, len(parts))
 	errs := make([]error, len(parts))
-	sideBySide(len(parts), func(i int) { files[i], errs[i] = s.writeRunPart(&parts[i]) })
+	// Every part in the making holds a copy of its rows, so a quarter of
+	// the CPUs write at a time and the copies stay a fraction of the run.
+	writers := max(2, runtime.GOMAXPROCS(0)/4)
+	sideBySide(len(parts), writers, func(i int) { files[i], errs[i] = s.writeRunPart(&parts[i]) })
 	if err := errors.Join(errs...); err != nil {
 		for _, pf := range files {
 			if pf != nil {
@@ -102,7 +105,7 @@ func (s *Store) cutRun(parts []runPart, partition int64, segs []segment) []runPa
 		return parts
 	}
 	run := s.dir.NewRun()
-	n := min(runtime.GOMAXPROCS(0), rows/(runPartBlocks*s.opts.BlockRows))
+	n := min(4*runtime.GOMAXPROCS(0), rows/(runPartBlocks*s.opts.BlockRows))
 	if n <= 1 {
 		return append(parts, runPart{partition, run, segs, rows})
 	}
@@ -205,10 +208,9 @@ func (s *Store) writeRunPart(p *runPart) (*PartFile, error) {
 	return pf, nil
 }
 
-// sideBySide calls fn for every i below n, on as many goroutines as there
-// are CPUs at most.
-func sideBySide(n int, fn func(i int)) {
-	workers := min(n, runtime.GOMAXPROCS(0))
+// sideBySide calls fn for every i below n on workers goroutines at most.
+func sideBySide(n, workers int, fn func(i int)) {
+	workers = min(n, workers)
 	if workers <= 1 {
 		for i := 0; i < n; i++ {
 			fn(i)
