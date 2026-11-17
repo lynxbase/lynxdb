@@ -168,10 +168,19 @@ func TestKeyStatsMatchDecodedKeys(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if continued := checkKeyStats(t, p, key); p.NumBlocks() < 100 || continued < 10 {
+		t.Fatalf("%d blocks, %d of them start with the key of the row before", p.NumBlocks(), continued)
+	}
+}
+
+// checkKeyStats compares the key statistics of every block of p with the
+// keys of its rows and returns the number of blocks whose first row has the
+// key of the row before it.
+func checkKeyStats(t *testing.T, p *Part, key []string) (continued int) {
+	t.Helper()
 	var b Block
 	var keys BlockKeys
 	var prev, cur []byte
-	continued := 0
 	for i := 0; i < p.NumBlocks(); i++ {
 		if err := p.OpenBlock(i, &b); err != nil {
 			t.Fatal(err)
@@ -195,7 +204,7 @@ func TestKeyStatsMatchDecodedKeys(t *testing.T) {
 			for d := shared + 1; d <= len(key); d++ {
 				runs[d]++
 			}
-			if len(KeyPrefix(cur, 3)) != len(cur) || SharedKeyColumns(cur, KeyPrefix(cur, 2)) != 2 || len(KeyPrefix(cur, 0)) != 0 {
+			if len(KeyPrefix(cur, len(key))) != len(cur) || SharedKeyColumns(cur, KeyPrefix(cur, len(key)-1)) != len(key)-1 || len(KeyPrefix(cur, 0)) != 0 {
 				t.Fatalf("key prefixes of %x are wrong", cur)
 			}
 			prev = append(prev[:0], cur...)
@@ -206,8 +215,83 @@ func TestKeyStatsMatchDecodedKeys(t *testing.T) {
 			}
 		}
 	}
-	if p.NumBlocks() < 100 || continued < 10 {
-		t.Fatalf("%d blocks, %d of them start with the key of the row before", p.NumBlocks(), continued)
+
+	return continued
+}
+
+func TestKeyStatsSurviveMergesThatCopyBlocks(t *testing.T) {
+	rng := rand.New(rand.NewSource(19))
+	key := []string{"a", "b"}
+	// Sources that are apart by key in places and interleave in others, with
+	// keys that run across block and source borders.
+	build := func(lo, hi, rows int) *Part {
+		all := shred.NewBatch(shred.Options{})
+		for i := 0; i < rows; i++ {
+			doc := fmt.Sprintf(`{"a":"g%02d","b":"u%03d","n":%d}`, lo+rng.Intn(hi-lo), rng.Intn(40), i)
+			if err := all.AddJSON([]byte(doc), int64(rng.Intn(1000))); err != nil {
+				t.Fatal(err)
+			}
+		}
+		all.SortBy(key)
+		var buf bytes.Buffer
+		w := NewWriter(&buf, Options{Ordered: true, SortKey: key})
+		block := shred.NewBatch(shred.Options{})
+		for from := 0; from < all.Rows; from += 64 {
+			block.Reset()
+			all.CopyRows(block, from, min(from+64, all.Rows))
+			if err := w.WriteBatch(block); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		p, err := Open(buf.Bytes())
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return p
+	}
+	srcs := []*Part{build(0, 10, 3000), build(10, 20, 3000), build(15, 30, 3000), build(40, 41, 2000), build(40, 41, 2000), build(50, 60, 1000)}
+	rows := 0
+	for _, p := range srcs {
+		rows += int(p.Rows)
+	}
+	for _, blockRows := range []int{64, 100} {
+		var buf bytes.Buffer
+		w := NewWriter(&buf, Options{Ordered: true, SortKey: key})
+		if err := Merge(w, srcs, blockRows); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if blockRows == 64 && w.copied == 0 {
+			t.Fatal("no block was copied, so the test checks nothing")
+		}
+		merged, err := Open(buf.Bytes())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if int(merged.Rows) != rows {
+			t.Fatalf("the merge holds %d of %d rows", merged.Rows, rows)
+		}
+		checkKeyStats(t, merged, key)
+		// A second merge takes the first one's blocks, copied ones included.
+		var again bytes.Buffer
+		w = NewWriter(&again, Options{Ordered: true, SortKey: key})
+		if err := Merge(w, []*Part{merged, build(100, 101, 500)}, blockRows); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		second, err := Open(again.Bytes())
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkKeyStats(t, second, key)
 	}
 }
 
