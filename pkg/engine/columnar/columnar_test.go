@@ -225,3 +225,38 @@ func TestFieldsTakenOutOfText(t *testing.T) {
 		}
 	}
 }
+
+// TestNullsFilledInNamedColumns requires the executor to fill the nulls of
+// named columns as the row operators do: where an event holds a null and
+// where it does not hold the field.
+func TestNullsFilledInNamedColumns(t *testing.T) {
+	tables := testData(t)
+	for _, fill := range []string{
+		`fillnull with 0 in dur, nope`,
+		`fillnull with 'none' in host, http.path`,
+		`fillnull using dur = 9, level = 'unknown', missing = false`,
+		`fillnull with 0 in dur | eval twice = dur * 2`,
+	} {
+		run := func(text string, columnar bool) string {
+			t.Helper()
+			compiled, err := query.Compile(text)
+			if err != nil {
+				t.Fatalf("%s: %v", text, err)
+			}
+			res, err := Run(context.Background(), compiled.Plan, tables, Options{Now: testNow})
+			if err != nil {
+				t.Fatalf("%s: %v", text, err)
+			}
+			if res.Columnar != columnar {
+				t.Fatalf("%s: columnar %v", text, res.Columnar)
+			}
+
+			return render(res.Maps(), "ts", "_time", "tags")
+		}
+		got := run("source=logs, logs-old | "+fill+" | sort host, status, dur", true)
+		want := run("source=logs, logs-old | eval r = rand() | where r >= 0 | fields - r | "+fill+" | sort host, status, dur", false)
+		if got != want {
+			t.Errorf("%s\n in the executor      %s\n in the row operators %s", fill, got, want)
+		}
+	}
+}
