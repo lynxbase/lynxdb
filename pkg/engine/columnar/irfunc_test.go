@@ -38,9 +38,7 @@ var notNative = map[string]string{
 
 // pendingNative lists the categories whose functions may still lack a
 // native implementation; those run through the bridge to the row engine.
-var pendingNative = map[string]bool{
-	"json": true, "collection": true,
-}
+var pendingNative = map[string]bool{"collection": true}
 
 func strValue(s string) exec.Value { return exec.Value{Kind: vec.KindString, Bytes: []byte(s)} }
 func intValue(n int64) exec.Value  { return exec.Value{Kind: vec.KindInt, Int: n} }
@@ -488,6 +486,62 @@ var rowEngineBugs = []struct {
 			"the conformance test compares these inputs only on arm64"},
 	{"wildcard_replace", "a constant pattern with invalid UTF-8", "the compiler panics",
 		"the pattern replaced in the text", "the builder refuses it"},
+	{"json_extract", "a path with a wildcard over an object", "the members in random order",
+		"the values at the path", "the members in key order; the conformance test compares them in any order"},
+	{"json_extract", "an array or object argument and a path to an integer", "null",
+		"the value at the path", "the same, for the conformance test"},
+}
+
+// sameInAnyOrder compares JSON texts with the elements of every array in
+// any order.
+func sameInAnyOrder(a, b exec.Value) bool {
+	if a.Kind != vec.KindString || b.Kind != vec.KindString {
+		return false
+	}
+	var x, y any
+	if json.Unmarshal(a.Bytes, &x) != nil || json.Unmarshal(b.Bytes, &y) != nil {
+		return false
+	}
+
+	return reflect.DeepEqual(sortedArrays(x), sortedArrays(y))
+}
+
+func sortedArrays(x any) any {
+	switch t := x.(type) {
+	case []any:
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = sortedArrays(e)
+		}
+		slices.SortFunc(out, func(a, b any) int {
+			ta, _ := json.Marshal(a)
+			tb, _ := json.Marshal(b)
+			return strings.Compare(string(ta), string(tb))
+		})
+		return out
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = sortedArrays(e)
+		}
+		return out
+	}
+
+	return x
+}
+
+// wildcard reports a call of json_extract with a wildcard in a path.
+func wildcard(call *ir.Call, args []exec.Value) bool {
+	if call.Func.Name != "json_extract" {
+		return false
+	}
+	for _, v := range args[1:] {
+		if v.Kind == vec.KindString && bytes.Contains(v.Bytes, []byte("*")) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // convertsByProcessor reports arguments of no declared type that may reach
@@ -556,7 +610,7 @@ func against(t testing.TB, call *ir.Call, b irfunc.Builder, s shape, rows [][]ex
 		}
 		var got exec.Value
 		got, buf = native(args, buf[:0])
-		if !sameValue(got, want) {
+		if !sameValue(got, want) && !(wildcard(call, args) && sameInAnyOrder(got, want)) {
 			in := make([]string, len(args))
 			for i, v := range args {
 				in[i] = show(v)
