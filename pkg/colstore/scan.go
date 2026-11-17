@@ -245,66 +245,116 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
 	var next, read, skipped, late atomic.Int64
-	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func(worker int) {
-			defer wg.Done()
-			// A fault while reading mapped part bytes becomes a panic,
-			// which the recover below turns into a scan error.
-			debug.SetPanicOnFault(true)
-			defer func() {
-				if r := recover(); r != nil {
-					cancel(fmt.Errorf("colstore: scan worker failed: %v", r))
-				}
-			}()
-			b := blockPool.Get()
-			defer blockPool.Put(b)
-			for ctx.Err() == nil {
-				i := next.Add(1) - 1
-				if i >= int64(len(units)) {
-					return
-				}
-				u := units[i]
-				if opts.Bound != nil {
-					if bound := opts.Bound.Load(); (opts.ByTime < 0 && u.last < bound) || (opts.ByTime > 0 && u.first > bound) {
-						late.Add(1)
+	// one scans a unit and reports whether the scan goes on.
+	one := func(worker int, b *part.Block, u scanUnit) bool {
+		if opts.Bound != nil {
+			if bound := opts.Bound.Load(); (opts.ByTime < 0 && u.last < bound) || (opts.ByTime > 0 && u.first > bound) {
+				late.Add(1)
 
-						continue
-					}
-				}
-				may, err := mayContainAll(u.p, int(u.block), opts.Tokens)
-				for k := 0; k < len(sets) && may && err == nil; k++ {
-					may, err = mayContainSet(u.p, int(u.block), ids[int(u.ids)+k], sets[k].Hashes)
-				}
-				if err != nil {
-					cancel(err)
-
-					return
-				}
-				if !may {
-					skipped.Add(1)
-					if u.empty != nil {
-						u.empty.Add(int(u.block))
-					}
-
-					continue
-				}
-				if err := u.p.OpenBlock(int(u.block), b); err != nil {
-					cancel(err)
-
-					return
-				}
-				read.Add(1)
-				if err := fn(worker, u.p, b); err != nil {
-					cancel(err)
-
-					return
-				}
+				return true
 			}
-		}(w)
+		}
+		may, err := mayContainAll(u.p, int(u.block), opts.Tokens)
+		for k := 0; k < len(sets) && may && err == nil; k++ {
+			may, err = mayContainSet(u.p, int(u.block), ids[int(u.ids)+k], sets[k].Hashes)
+		}
+		if err != nil {
+			cancel(err)
+
+			return false
+		}
+		if !may {
+			skipped.Add(1)
+			if u.empty != nil {
+				u.empty.Add(int(u.block))
+			}
+
+			return true
+		}
+		if err := u.p.OpenBlock(int(u.block), b); err != nil {
+			cancel(err)
+
+			return false
+		}
+		read.Add(1)
+		if err := fn(worker, u.p, b); err != nil {
+			cancel(err)
+
+			return false
+		}
+
+		return true
 	}
-	wg.Wait()
+	// run scans the units from next on with the goroutines numbered below
+	// workers, up to the unit numbered end.
+	run := func(workers int, end int64) {
+		var wg sync.WaitGroup
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func(worker int) {
+				defer wg.Done()
+				// A fault while reading mapped part bytes becomes a panic,
+				// which the recover below turns into a scan error.
+				debug.SetPanicOnFault(true)
+				defer func() {
+					if r := recover(); r != nil {
+						cancel(fmt.Errorf("colstore: scan worker failed: %v", r))
+					}
+				}()
+				b := blockPool.Get()
+				defer blockPool.Put(b)
+				for ctx.Err() == nil {
+					i := next.Add(1) - 1
+					if i >= end {
+						next.Add(-1)
+
+						return
+					}
+					if !one(worker, b, units[i]) {
+						return
+					}
+				}
+			}(w)
+		}
+		wg.Wait()
+	}
+	// The first blocks in the order of time often hold every row that the
+	// caller keeps, and it then moves the bound past the others. Where some
+	// block lies wholly beyond the first one, a single block is scanned
+	// first and twice as many each time, until the bound moves; the blocks
+	// that the bound then leaves are scanned at once.
+	ruledOut := func(u scanUnit, bound int64) bool {
+		return (opts.ByTime < 0 && u.last < bound) || (opts.ByTime > 0 && u.first > bound)
+	}
+	beyond := false
+	if n := len(units); opts.Bound != nil && n > 1 {
+		beyond = (opts.ByTime < 0 && units[n-1].last < units[0].first) || (opts.ByTime > 0 && units[n-1].first > units[0].last)
+	}
+	if n := len(units); beyond {
+		unmoved := opts.Bound.Load()
+		for wave := 1; wave < workers && ctx.Err() == nil; {
+			at := next.Load()
+			if at >= int64(n) {
+				break
+			}
+			bound := opts.Bound.Load()
+			if bound == unmoved {
+				run(wave, min(at+int64(wave), int64(n)))
+				wave *= 2
+
+				continue
+			}
+			end := at
+			for end < int64(n) && !ruledOut(units[end], bound) {
+				end++
+			}
+			if end == at {
+				break
+			}
+			run(workers, end)
+		}
+	}
+	run(workers, int64(len(units)))
 	stats.Blocks, stats.SkippedByToken = read.Load(), stats.SkippedByToken+skipped.Load()
 	stats.SkippedByTime += late.Load()
 	if err := context.Cause(ctx); err != nil {

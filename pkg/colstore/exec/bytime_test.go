@@ -54,6 +54,11 @@ func TestFirstRowsByTimeLeaveBlocksOut(t *testing.T) {
 					case c.skips && l.sortKey == nil && left < int64(blocks)/2:
 						t.Errorf("%d of %d blocks left out by time, want most", left, blocks)
 					}
+					// One part in the order of time keeps what the plan asks
+					// for in its first blocks, however many goroutines scan.
+					if c.skips && l.parts == 1 && res.Stats.Blocks > 2 {
+						t.Errorf("%d blocks opened of a part in the order of time, want at most 2", res.Stats.Blocks)
+					}
 				})
 			}
 		}
