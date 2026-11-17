@@ -229,3 +229,58 @@ func TestCloseWritesTheRowsOfEveryAppendThatReturnedNil(t *testing.T) {
 		}
 	}
 }
+
+func TestDropBeforeThatMeetsACloseDropsOrReturnsErrClosed(t *testing.T) {
+	const hours, total = 3, 600
+	path := filepath.Join(t.TempDir(), "store")
+	opts := StoreOptions{
+		SortKey: []string{"svc"}, TimeField: "ts", Partition: time.Hour, MergeFanIn: -1, FlushInterval: -1,
+	}
+	s, err := OpenStore(path, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := s.NewWriter()
+	if err := w.AddNDJSON(timedDocs(0, total, hours)); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The drop is held where it waits for merges to end, and the store is
+	// closed in the meantime.
+	s.merging.Lock()
+	type result struct {
+		rows uint64
+		err  error
+	}
+	dropped := make(chan result, 1)
+	go func() {
+		rows, err := s.DropBefore((firstTimedHour + 2) * int64(time.Hour))
+		dropped <- result{rows, err}
+	}()
+	time.Sleep(20 * time.Millisecond)
+	closed := make(chan error, 1)
+	go func() { closed <- s.Close() }()
+	time.Sleep(20 * time.Millisecond)
+	s.merging.Unlock()
+	drop := <-dropped
+	if err := <-closed; err != nil {
+		t.Fatal(err)
+	}
+	if s, err = OpenStore(path, opts); err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	rows, _ := rowsAndSumOf(t, s.Table())
+	switch {
+	case errors.Is(drop.err, ErrClosed):
+		if rows != total {
+			t.Fatalf("a drop that returned ErrClosed left %d of %d rows", rows, total)
+		}
+	case drop.err != nil:
+		t.Fatal(drop.err)
+	case drop.rows == 0 || rows != total-int64(drop.rows):
+		t.Fatalf("a drop that returned nil reports %d rows dropped and left %d of %d", drop.rows, rows, total)
+	}
+}

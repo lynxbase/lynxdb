@@ -169,7 +169,9 @@ func (s *Store) Close() error {
 		s.mu.Lock()
 		err := s.err
 		s.mu.Unlock()
+		s.merging.Lock()
 		s.closeErr = errors.Join(syncErr, err, s.dir.Close())
+		s.merging.Unlock()
 	})
 
 	return s.closeErr
@@ -313,6 +315,10 @@ func (s *Store) Settle() error {
 // unix nanoseconds, and returns the number of rows removed. A store that is
 // not partitioned keeps everything.
 func (s *Store) DropBefore(t int64) (uint64, error) {
+	s.merging.Lock()
+	defer s.merging.Unlock()
+	// Close empties the table under the same lock, so a store found open
+	// here stays open until the partitions are dropped.
 	if s.closed.Load() {
 		return 0, ErrClosed
 	}
@@ -320,8 +326,6 @@ func (s *Store) DropBefore(t int64) (uint64, error) {
 	if width <= 0 {
 		return 0, nil
 	}
-	s.merging.Lock()
-	defer s.merging.Unlock()
 	snap := s.Table().Snapshot()
 	defer snap.Release()
 	var old []*Handle
