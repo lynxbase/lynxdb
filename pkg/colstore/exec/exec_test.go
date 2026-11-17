@@ -70,6 +70,8 @@ func TestFilters(t *testing.T) {
 		"int eq":         exec.Eq(num("n"), exec.Int(7)),
 		"int ne":         exec.Ne(num("n"), exec.Int(7)),
 		"int range":      exec.And(exec.Ge(num("n"), exec.Int(10)), exec.Lt(num("n"), exec.Int(20))),
+		"int no range":   exec.And(exec.Gt(num("n"), exec.Int(50)), exec.Lt(num("n"), exec.Int(10))),
+		"int point":      exec.And(exec.Ge(num("n"), exec.Int(5)), exec.Eq(num("n"), exec.Int(7)), exec.Ne(num("n"), exec.Int(8))),
 		"int any":        exec.Gt(anyOf("n"), exec.Int(50)),
 		"int vs float":   exec.Le(num("n"), exec.Float(10.5)),
 		"float lit any":  exec.Eq(anyOf("n"), exec.Float(3.5)),

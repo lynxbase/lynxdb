@@ -260,6 +260,7 @@ func (q *query) pred(e *Expr, depth int) (*pred, error) {
 			p.cost += arg.cost
 		}
 		if kind == predAnd {
+			p.args = mergeRanges(p.args)
 			sort.SliceStable(p.args, func(i, j int) bool { return p.args[i].cost < p.args[j].cost })
 		}
 
@@ -305,6 +306,31 @@ func (q *query) pred(e *Expr, depth int) (*pred, error) {
 	}
 
 	return nil, unsupported("expression is not a filter")
+}
+
+// mergeRanges folds the integer range comparisons of one column among the
+// arguments of an And into one, so that a block is read once for them.
+func mergeRanges(args []*pred) []*pred {
+	out := args[:0]
+	for _, a := range args {
+		ranged := a.kind == predNum && a.onInt && !a.onFloat && !a.ne
+		merged := false
+		for _, b := range out {
+			if !ranged || b.kind != predNum || b.path != a.path || !b.onInt || b.onFloat || b.ne {
+				continue
+			}
+			b.lo, b.hi, b.none = max(b.lo, a.lo), min(b.hi, a.hi), b.none || a.none
+			b.none = b.none || b.lo > b.hi
+			merged = true
+
+			break
+		}
+		if !merged {
+			out = append(out, a)
+		}
+	}
+
+	return out
 }
 
 // flip returns the comparison that holds for (b, a) when op holds for (a, b).
