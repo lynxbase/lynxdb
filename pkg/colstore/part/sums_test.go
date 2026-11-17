@@ -188,3 +188,48 @@ func TestMergedPartCountsTheRowsOfTheValuesOfAPath(t *testing.T) {
 		})
 	}
 }
+
+// TestPartCountsValuesThatABlockStoresOneByOne requires a part to count the
+// values of a path through a block too short for a dictionary, which stores
+// them one by one, and a merge that copies such a block to count them too.
+func TestPartCountsValuesThatABlockStoresOneByOne(t *testing.T) {
+	const blockRows = 700
+	docs := countedDocs(rand.New(rand.NewPCG(45, 46)), 2*blockRows)
+	for i, level := range []string{"debug", "info", "warn"} {
+		docs = append(docs, fmt.Sprintf(`{"n":%d,"level":%q,"zone":"tail-%d"}`, i, level, i))
+	}
+	flat := func(p *Part) {
+		t.Helper()
+		var b Block
+		if err := p.OpenBlock(p.NumBlocks()-1, &b); err != nil {
+			t.Fatal(err)
+		}
+		id, _ := p.PathID("level")
+		for _, ref := range b.Columns() {
+			if ref.PathID == id && ref.enc != encFlat {
+				t.Fatalf("the last block stores level with encoding %d; the test needs it value by value", ref.enc)
+			}
+		}
+	}
+	first := timedPart(t, docs, 0, 10, blockRows)
+	flat(first)
+	requireCounts(t, first, []string{"level", "zone", "svc"}, []string{"id"})
+
+	after := timedPart(t, docs, int64(20*len(docs)), 10, blockRows)
+	var buf bytes.Buffer
+	w := NewWriter(&buf, Options{Ordered: true})
+	if err := Merge(w, []*Part{first, after}, blockRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if w.copied == 0 {
+		t.Fatal("the merge copied no block")
+	}
+	merged, err := Open(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireCounts(t, merged, []string{"level", "zone", "svc"}, []string{"id"})
+}

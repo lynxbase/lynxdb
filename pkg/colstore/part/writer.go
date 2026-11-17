@@ -922,7 +922,7 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 					w.asDict(ent, c)
 				} else {
 					ent.enc, w.block = encFlat, w.block[:start+copy(w.block[start:], w.block[dict:])]
-					w.noSum(ent.pathID)
+					w.sumEach(ent.pathID, c)
 				}
 				// The entries are all the values there are.
 				w.tokenizeEntries(c)
@@ -938,7 +938,7 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 			}
 		}
 	}
-	w.noSum(ent.pathID)
+	w.sumEach(ent.pathID, c)
 	ent.enc = encFlat
 	for i := 0; i < c.Count; i++ {
 		w.tokenize(c.Kind, c.Bytes(i))
@@ -1032,12 +1032,35 @@ func (w *Writer) sumCopied(src *Part, i int, pathMap []uint32) error {
 			for entry, n := range rows {
 				w.sum(id, w.copiedDict.DictValue(entry), uint64(n))
 			}
+		case ref.enc == encFlat && !w.pathSum(id).off:
+			col := &w.copiedDict
+			if err := b.Decode(ref, col); err != nil {
+				return err
+			}
+			for row := 0; row < col.Rows && !w.sums[id].off; row++ {
+				if col.IsValid(row) {
+					w.sum(id, col.Bytes(row), 1)
+				}
+			}
 		default:
 			w.noSum(id)
 		}
 	}
 
 	return nil
+}
+
+// sumEach adds the values of a column that stores each of them.
+func (w *Writer) sumEach(pathID uint32, c *shred.Column) {
+	if c.Kind != vec.KindString {
+		w.noSum(pathID)
+
+		return
+	}
+	w.pathSum(pathID)
+	for i := 0; i < c.Count && !w.sums[pathID].off; i++ {
+		w.sum(pathID, c.Bytes(i), 1)
+	}
 }
 
 // sum adds rows that hold value at a path.
