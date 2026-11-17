@@ -22,6 +22,8 @@ func TestOrderedAggregation(t *testing.T) {
 		{Name: "sum_n", Func: exec.Sum, Arg: num("n")},
 		{Name: "count_msg", Func: exec.Count, Arg: anyOf("msg")},
 		{Name: "max_expr", Func: exec.Max, Arg: exec.Mul(num("n"), num("nested.x"))},
+		{Name: "spread", Func: exec.Stdev, Arg: num("n")},
+		{Name: "var_time", Func: exec.Var, Arg: exec.ToFloat(exec.HourOfDay(exec.Time()))},
 	}
 	users := exec.Agg{Name: "users", Func: exec.CountDistinct, Arg: str("user")}
 	byUser := &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: times}

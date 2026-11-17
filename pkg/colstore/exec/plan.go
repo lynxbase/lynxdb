@@ -28,6 +28,10 @@ const (
 	Min
 	Max
 	Avg
+	// Var is the sample variance and Stdev its square root; both are null
+	// for fewer than two values.
+	Var
+	Stdev
 )
 
 // Agg is one aggregate; Arg is nil for a Count of rows.

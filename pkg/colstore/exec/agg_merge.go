@@ -210,6 +210,10 @@ func (ap *aggPlan) mergeRecord(dst []int64, state []byte) {
 			dst[i] = floatWord(max(wordFloat(dst[i]), wordFloat(v)))
 		case wordGroup:
 			dst[i] = v
+		case wordVarN:
+			src := [3]int64{v, int64(binary.LittleEndian.Uint64(state[8*i+8:])), int64(binary.LittleEndian.Uint64(state[8*i+16:]))}
+			mergeSpread(dst[i:i+3], src[:])
+		case wordVarMean, wordVarM2:
 		default:
 			dst[i] += v
 		}

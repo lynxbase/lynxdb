@@ -24,6 +24,12 @@ const (
 	wordMaxFloat
 	// wordGroup holds the id that every worker shares for the group.
 	wordGroup
+	// wordVarN, wordVarMean and wordVarM2 are three words in a row: the
+	// number of values, their mean and the sum of their squared distances
+	// from it, fed and merged together at the first.
+	wordVarN
+	wordVarMean
+	wordVarM2
 )
 
 type wordSpec struct {
@@ -60,6 +66,8 @@ type aggOut struct {
 	ints       int
 	floats     int
 	distinct   int
+	// spread is the first of the three words of a variance.
+	spread int
 }
 
 // aggPlan is an aggregation bound to the table: a group's state is a row of
@@ -144,7 +152,7 @@ func (q *query) aggregate(a *Aggregate) error {
 		ap.names = append(ap.names, k.Name)
 	}
 	for _, g := range a.Aggs {
-		out := aggOut{fn: g.Func, arg: -1, rows: -1, count: -1, countInt: -1, countFloat: -1, ints: -1, floats: -1, distinct: -1}
+		out := aggOut{fn: g.Func, arg: -1, rows: -1, count: -1, countInt: -1, countFloat: -1, ints: -1, floats: -1, distinct: -1, spread: -1}
 		if g.Arg == nil {
 			if g.Func != Count {
 				return unsupported("aggregate %q needs an argument", g.Name)
@@ -178,6 +186,13 @@ func (q *query) aggregate(a *Aggregate) error {
 			ints, floats = wordMinInt, wordMinFloat
 		case Max:
 			ints, floats = wordMaxInt, wordMaxFloat
+		case Var, Stdev:
+			if kinds&numericKinds == 0 {
+				return unsupported("aggregate %q takes numbers", g.Name)
+			}
+			out.spread = ap.word(wordVarN, out.arg)
+			ap.word(wordVarMean, out.arg)
+			ap.word(wordVarM2, out.arg)
 		default:
 			return unsupported("unknown aggregate function")
 		}
@@ -229,6 +244,32 @@ func (q *query) aggregate(a *Aggregate) error {
 
 func wordFloat(w int64) float64 { return math.Float64frombits(uint64(w)) }
 
+// addSpread adds the value x to the three words of a variance.
+func addSpread(w []int64, x float64) {
+	n := w[0] + 1
+	mean := wordFloat(w[1])
+	d := x - mean
+	mean += d / float64(n)
+	w[0], w[1], w[2] = n, floatWord(mean), floatWord(wordFloat(w[2])+d*(x-mean))
+}
+
+// mergeSpread folds the three words src of a variance into dst.
+func mergeSpread(dst, src []int64) {
+	na, nb := float64(dst[0]), float64(src[0])
+	switch {
+	case nb == 0:
+		return
+	case na == 0:
+		copy(dst[:3], src[:3])
+
+		return
+	}
+	d := wordFloat(src[1]) - wordFloat(dst[1])
+	dst[2] = floatWord(wordFloat(dst[2]) + wordFloat(src[2]) + d*d*na*nb/(na+nb))
+	dst[1] = floatWord(wordFloat(dst[1]) + d*nb/(na+nb))
+	dst[0] += src[0]
+}
+
 func floatWord(f float64) int64 { return int64(math.Float64bits(f)) }
 
 // mergeWords folds the state src into dst.
@@ -247,6 +288,9 @@ func (ap *aggPlan) mergeWords(dst, src []int64) {
 			dst[i] = floatWord(max(wordFloat(dst[i]), wordFloat(src[i])))
 		case wordGroup:
 			dst[i] = src[i]
+		case wordVarN:
+			mergeSpread(dst[i:i+3], src[i:i+3])
+		case wordVarMean, wordVarM2:
 		default:
 			dst[i] += src[i]
 		}
@@ -286,6 +330,21 @@ func (ap *aggPlan) column(o *aggOut, words []int64, n int, floats []bool, distin
 				id = int(words[g*stride+ap.group])
 			}
 			out[g] = counts[id]
+		}
+
+		return
+	case Var, Stdev:
+		out := dst.bulkFloats(n)
+		for g := range out {
+			w := words[g*stride+o.spread:]
+			if out[g] = 0; w[0] < 2 {
+				dst.setNull(g)
+
+				continue
+			}
+			if out[g] = wordFloat(w[2]) / float64(w[0]-1); o.fn == Stdev {
+				out[g] = math.Sqrt(out[g])
+			}
 		}
 
 		return

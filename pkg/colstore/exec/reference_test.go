@@ -567,6 +567,7 @@ type refAgg struct {
 	sumInt, minInt, maxInt     int64
 	sumFloat, minFloat, maxFlt float64
 	distinct                   map[string]struct{}
+	numbers                    []float64
 }
 
 // refRun evaluates a plan over rows and returns its output rows and column
@@ -820,10 +821,12 @@ func refAggregate(rows []refRow, agg *exec.Aggregate) ([][]exec.Value, []string)
 			st.distinct[refKey(v)] = struct{}{}
 			switch v.Kind {
 			case vec.KindInt:
+				st.numbers = append(st.numbers, float64(v.Int))
 				st.ints++
 				st.sumInt += v.Int
 				st.minInt, st.maxInt = min(st.minInt, v.Int), max(st.maxInt, v.Int)
 			case vec.KindFloat:
+				st.numbers = append(st.numbers, v.Float)
 				floats[i] = true
 				st.floats++
 				st.sumFloat += v.Float
@@ -867,6 +870,23 @@ func refFinish(a exec.Agg, st *refAgg, float bool) exec.Value {
 	switch a.Func {
 	case exec.Avg:
 		return floatValue((float64(st.sumInt) + st.sumFloat) / float64(n))
+	case exec.Var, exec.Stdev:
+		if n < 2 {
+			return exec.Value{}
+		}
+		mean, spread := 0.0, 0.0
+		for _, x := range st.numbers {
+			mean += x
+		}
+		mean /= float64(n)
+		for _, x := range st.numbers {
+			spread += (x - mean) * (x - mean)
+		}
+		if a.Func == exec.Var {
+			return floatValue(spread / float64(n-1))
+		}
+
+		return floatValue(math.Sqrt(spread / float64(n-1)))
 	case exec.Sum:
 		if !float {
 			return intValue(st.sumInt)

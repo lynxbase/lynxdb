@@ -433,6 +433,9 @@ func TestMixedKinds(t *testing.T) {
 		{Name: "avg", Func: exec.Avg, Arg: anyOf("v")},
 		{Name: "distinct", Func: exec.CountDistinct, Arg: anyOf("v")},
 		{Name: "distinct_str", Func: exec.CountDistinct, Arg: str("v")},
+		{Name: "var", Func: exec.Var, Arg: anyOf("v")},
+		{Name: "stdev_int", Func: exec.Stdev, Arg: num("v")},
+		{Name: "stdev_expr", Func: exec.Stdev, Arg: exec.Mul(anyOf("v"), exec.Float(2.5))},
 	}
 	for name, plan := range map[string]exec.Node{
 		"global":       &exec.Aggregate{Input: &exec.Scan{}, Aggs: aggs},

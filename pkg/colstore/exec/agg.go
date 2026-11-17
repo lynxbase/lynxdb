@@ -1115,11 +1115,27 @@ func (a *aggWorker) feedInts(arg *aggArg, t *target, gid []uint32, vals []int64,
 			case wordMaxInt:
 				_, hi := minMaxInts(vals, rows, n)
 				*word = max(*word, hi)
+			case wordVarN:
+				for j := 0; j < n; j++ {
+					r := j
+					if rows != nil {
+						r = int(rows[j])
+					}
+					addSpread(t.words[t.one*stride+i:], float64(vals[r]))
+				}
 			}
 
 			continue
 		}
 		switch op {
+		case wordVarN:
+			for j, g := range gid[:n] {
+				r := j
+				if rows != nil {
+					r = int(rows[j])
+				}
+				addSpread(t.words[int(g)*stride+i:], float64(vals[r]))
+			}
 		case wordCount, wordCountInt:
 			addRows(t.words, stride, i, gid[:n])
 		case wordSumInt:
@@ -1152,6 +1168,8 @@ func (a *aggWorker) feedFloats(arg *aggArg, t *target, gid []uint32, vals []floa
 			}
 			word := &t.words[g*stride+i]
 			switch op {
+			case wordVarN:
+				addSpread(t.words[g*stride+i:], v)
 			case wordCount, wordCountFloat:
 				*word++
 			case wordSumFloat:

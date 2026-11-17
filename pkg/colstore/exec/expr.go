@@ -25,10 +25,10 @@
 // Aggregates: Count without an argument counts rows; with one it counts the
 // rows where the argument has a value. CountDistinct counts the distinct
 // values of the argument, telling kinds apart and identifying a value by its
-// 128-bit hash. Sum, Min, Max and Avg read integers and floats and skip
-// values of every other kind; their result is an integer when every value
-// read was one, a float otherwise, and Avg is always a float. An aggregate
-// that read no value is null.
+// 128-bit hash. Sum, Min, Max, Avg, Var and Stdev read integers and floats
+// and skip values of every other kind; the result of the first three is an
+// integer when every value read was one, a float otherwise, and the others
+// are always floats. An aggregate that read no value is null.
 package exec
 
 import (
