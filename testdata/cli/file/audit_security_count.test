@@ -1,4 +1,4 @@
 # file: audit_security.log
 # format: json
-from main
+source=main
 | stats count()

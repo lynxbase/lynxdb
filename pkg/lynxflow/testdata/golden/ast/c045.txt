@@ -1,8 +1,0 @@
-Query
-  Pipeline
-    Stage compare
-      Previous
-      Shift
-        Duration 1h
-    Stage head
-      N 5

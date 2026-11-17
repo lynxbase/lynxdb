@@ -12,7 +12,7 @@ const (
 	EncodingDelta   EncodingType = 4 // Delta + zigzag varint for monotonic int64s
 	EncodingGorilla EncodingType = 5 // Gorilla XOR encoding for float64s
 
-	// RFC-002 new column types — tags are append-only, never renumber.
+	// Typed column encodings; tags are append-only, never renumber.
 	// An old binary that encounters these tags returns ErrUnsupportedCapability
 	// from readFieldColumn, which is the safe "I cannot decode this column"
 	// path. No format version bump needed; the encoding byte in each column

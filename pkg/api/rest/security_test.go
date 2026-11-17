@@ -207,7 +207,7 @@ func TestQueryLength_UnderLimit_Succeeds(t *testing.T) {
 
 	// Query under the limit should succeed (or at least not be rejected for length).
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": "FROM main | head 5",
+		"q": "source=main | head 5",
 	})
 	resp, err := http.Post(
 		fmt.Sprintf("http://%s/api/v1/query", srv.Addr()),
@@ -233,7 +233,7 @@ func TestQueryLength_Unlimited_WhenZero(t *testing.T) {
 	defer cleanup()
 
 	// A very long query should not be rejected when MaxQueryLength is 0.
-	longQuery := "FROM main | head 5" + strings.Repeat(" ", 2_000_000)
+	longQuery := "source=main | head 5" + strings.Repeat(" ", 2_000_000)
 	body, _ := json.Marshal(map[string]interface{}{"q": longQuery})
 	resp, err := http.Post(
 		fmt.Sprintf("http://%s/api/v1/query", srv.Addr()),

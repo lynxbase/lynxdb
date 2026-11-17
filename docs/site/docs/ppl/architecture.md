@@ -9,8 +9,8 @@ description: How a PPL query becomes canonical IR, an optimized plan and a pipel
 LynxDB executes OpenSearch Piped Processing Language (PPL). The query
 language and the database engine meet at one boundary: the canonical
 intermediate representation (IR) in `pkg/ir`. The PPL frontend produces IR;
-the optimizer, the physical planner and the execution engine consume IR and
-know nothing about PPL syntax.
+the optimizer, the planners and the execution engine consume IR and know
+nothing about PPL syntax.
 
 ```
 query text
@@ -24,15 +24,19 @@ pkg/ppl/parser       syntax tree (pkg/ppl/ast) with source spans
     v
 pkg/ppl              semantic analysis: field resolution against each
                      command's output schema, function resolution through
-                     the PPL catalog, static type checks, command lowering
+                     the PPL catalogs, static type checks, command lowering
     |
     v
 pkg/ir               canonical IR plan, validated by ir.Validate
     |
     v
 pkg/ir/opt           rule-based optimizer: constant folding, filter merging,
-                     scan pruning hints, time ranges, TopN, limit and
-                     column pushdown
+                     scan pruning predicates, time ranges, TopN, scan
+                     limits, column pruning
+    |
+    v
+pkg/planner          (server) storage hints from the plan's scans,
+                     via pkg/engine/physical/hints.go
     |
     v
 pkg/engine/physical  physical planner: IR operators to pipeline iterators,
@@ -48,9 +52,12 @@ results
 
 `pkg/query` ties the stages together. `query.Compile` runs the frontend and
 the optimizer; `query.Run` builds and drains the physical plan over an
-in-memory event store, which is what the CLI's file and pipe modes use. The
-server compiles with the same `query.Compile` and differs only in the scan
-source it hands to the physical planner.
+in-memory event store, which is what the CLI's file and pipe modes use;
+`query.Explain` renders the plans. The server compiles with the same
+`query.Compile` (through `pkg/planner`), derives storage hints from the
+plan, and differs only in the scan source it hands to the physical planner.
+In a cluster, `pkg/cluster/query` splits the optimized plan between shards
+and the coordinator.
 
 ## Packages
 
@@ -65,7 +72,10 @@ source it hands to the physical planner.
 | `pkg/ir/opt` | Optimizer rules over IR. |
 | `pkg/vm` | Bytecode VM; `vm.CompileExpr` compiles IR expressions, with native implementations of every registry function. |
 | `pkg/engine/physical` | Physical planner from IR to pipeline iterators; storage hints derived from scans. |
-| `pkg/query` | Compile, optimize, explain and run. |
+| `pkg/query` | Compile (with a cache of recent plans), optimize, explain and run. |
+| `pkg/planner` | Server planning: compile, storage hints, request time bounds, live-tail validation. |
+| `pkg/cluster/query` | Distributed split of a plan into a shard prefix and coordinator operators. |
+| `internal/docgen` | Generates the command, function and aggregation tables from the catalogs. |
 
 ## Semantic analysis
 
@@ -85,11 +95,13 @@ column `_time`.
 
 Functions resolve through the PPL scalar catalog, which maps each PPL name
 either onto a function of the IR registry (often under the same name), onto
-IR operators (for example `if` becomes `CASE`, `isnull` becomes `is_null`),
-or onto an explicit unsupported error. Aggregations resolve through the
-aggregation catalog. Static types are checked against the registry's
-parameter types; values whose types are only known per row are converted at
-run time by the rules in the [IR specification](./ir.md).
+IR operators (for example `if` becomes `CASE`, `isnull` becomes `is_null`,
+`match` becomes a field search), or onto an explicit unsupported error.
+Aggregations resolve through the aggregation catalog. Static types are
+checked against the registry's parameter types; values whose types are only
+known per row are converted at run time by the rules in the
+[IR specification](./ir.md). [PPL-to-IR compilation](./compilation.md)
+shows how each command lowers.
 
 ## Errors
 
@@ -106,6 +118,7 @@ Compilation errors carry a kind, a position and an optional hint:
 
 The physical planner reports constructs the engine cannot run with
 `physical.UnsupportedError`; nothing unsupported is silently approximated.
+[Error handling](./errors.md) maps the kinds to API codes.
 
 ## Limits and plan reuse
 
@@ -120,24 +133,7 @@ until execution and source columns are discovered at read time. `query.Compile`
 therefore keeps the plans of the 1024 most recently used queries of up to
 2 KiB and returns a copy of the cached result for a repeated text.
 
-## Adding a command
+## Extending
 
-1. Add the syntax to `pkg/ppl/ast` and a parse function to
-   `pkg/ppl/parser/commands.go`, dispatched from `parser.command`.
-2. Lower it in `pkg/ppl/commands*.go` to existing IR operators. Only when no
-   composition of operators expresses its semantics add an IR operator to
-   `pkg/ir/plan.go` (with its schema, label, validation in
-   `pkg/ir/validate.go` and expression listing in `pkg/ir/walk.go`) and its
-   physical mapping to `pkg/engine/physical`.
-3. Record its support level in the command catalog, `pkg/ppl/catalog.go`.
-4. Add a compile golden under `pkg/ppl/testdata/compile` and an execution
-   case in `pkg/query/query_test.go`.
-
-## Adding a function
-
-1. Register the function in the IR registry (`pkg/ir/funcs_catalog.go`) with
-   its parameters, result rule, NULL behaviour and flags.
-2. Implement it in `pkg/vm/ir_funcs*.go`; `TestIRRegistryHasImplementations`
-   fails until every registered scalar function has an implementation.
-3. Map the PPL name in `pkg/ppl/functions.go`, directly or with a lowering.
-4. Add evaluation cases to `pkg/vm/ir_compiler_test.go`.
+See [Adding commands](./adding-commands.md) and
+[Adding functions](./adding-functions.md).

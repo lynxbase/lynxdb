@@ -112,8 +112,9 @@ func isQueryParseError(err error) bool {
 	return strings.Contains(msg, "parse error") ||
 		strings.Contains(msg, "unknown command") ||
 		strings.Contains(msg, "syntax error") ||
-		strings.Contains(msg, "spl2: ") ||
-		strings.Contains(msg, "search: unexpected token")
+		strings.Contains(msg, "semantic error") ||
+		strings.Contains(msg, "type error") ||
+		strings.Contains(msg, "unsupported_")
 }
 
 // renderError prints a formatted error to stderr.
@@ -133,7 +134,7 @@ func renderErrorWithLynx(err error, showLynx bool) {
 	var qe *queryError
 	if errors.As(err, &qe) {
 		var apiErr *client.APIError
-		if errors.As(qe.inner, &apiErr) && apiErr.Code == client.ErrCodeInvalidQuery {
+		if errors.As(qe.inner, &apiErr) && client.IsInvalidQuery(apiErr) {
 			renderQueryParseError(apiErr, qe.query)
 
 			return
@@ -214,8 +215,8 @@ func renderNoFilesMatchingError(err noFilesMatchingError) {
 	fmt.Fprintf(os.Stderr, "    Directory: %s\n", t.Dim.Render(cwd))
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintf(os.Stderr, "    %s\n", t.Dim.Render("Try:"))
-	fmt.Fprintf(os.Stderr, "      %s\n", t.Info.Render("lynxdb query --file './*.log' 'level=error'"))
-	fmt.Fprintf(os.Stderr, "      %s\n", t.Info.Render("cat app.log | lynxdb query 'level=error'"))
+	fmt.Fprintf(os.Stderr, "      %s\n", t.Info.Render("lynxdb query --file './*.log' 'search source=main error'"))
+	fmt.Fprintf(os.Stderr, "      %s\n", t.Info.Render("cat app.log | lynxdb query 'search source=main error'"))
 	fmt.Fprintf(os.Stderr, "      %s\n", t.Info.Render("ls -la"))
 	fmt.Fprintln(os.Stderr)
 }
@@ -257,7 +258,6 @@ func renderTimeoutError() {
 		"lynxdb query '...' --timeout 10m     Increase timeout",
 		"lynxdb query '... | head 1000'       Limit result count",
 		"lynxdb explain '...'                 Check query cost first",
-		"lynxdb mv create <name> '...'        Materialize for repeated queries",
 	)
 }
 
@@ -289,7 +289,7 @@ func renderAPIError(ae *client.APIError) {
 	suggestion := ae.Suggestion
 
 	// Fuzzy-match field names when the server returns an invalid-query error without a suggestion.
-	if suggestion == "" && ae.Code == client.ErrCodeInvalidQuery {
+	if suggestion == "" && client.IsInvalidQuery(ae) {
 		if fieldSuggestion := tryFieldNameSuggestion(ae.Message); fieldSuggestion != "" {
 			suggestion = fieldSuggestion
 		}
@@ -349,29 +349,17 @@ func renderQueryError(query string, position, length int, message, suggestion st
 	ui.Stderr.RenderQueryError(query, position, length, message, suggestion)
 }
 
-// renderQueryParseError renders an INVALID_QUERY API error with caret display
-// by extracting position information from the error message and classifying
-// the error code.
+// renderQueryParseError renders a query compile error from the server with
+// a caret under the position named in its message.
 func renderQueryParseError(ae *client.APIError, query string) {
 	pos, length := extractPositionFromError(ae.Message)
 
 	suggestion := ae.Suggestion
 	if suggestion == "" {
-		fieldNames := fetchFieldNames()
-		suggestion = func(_ string, _ interface{}) string { return "" }(ae.Message, fieldNames)
+		suggestion = tryFieldNameSuggestion(ae.Message)
 	}
 
-	if suggestion == "" {
-		if fieldSuggestion := tryFieldNameSuggestion(ae.Message); fieldSuggestion != "" {
-			suggestion = fieldSuggestion
-		}
-	}
-
-	code := string("" /* RFC-002 */)
-	ui.Stderr.RenderQueryErrorWithCode(query, pos, length, ae.Message, suggestion, code)
-	if code != "" {
-		printHint("Run: lynxdb explain-error %s", code)
-	}
+	ui.Stderr.RenderQueryErrorWithCode(query, pos, length, ae.Message, suggestion, string(ae.Code))
 }
 
 // isRequiredFlagError reports whether err is a cobra "required flag(s) not set" error.
@@ -444,6 +432,18 @@ func renderRequiredFlagError(err error) {
 // extracts the token literal length for the caret span.
 // Returns (position, length) where position is -1 if not found.
 func extractPositionFromError(msg string) (int, int) {
+	if _, rest, ok := strings.Cut(msg, "at line 1, column "); ok {
+		col := 0
+		for _, c := range rest {
+			if c < '0' || c > '9' {
+				break
+			}
+			col = col*10 + int(c-'0')
+		}
+		if col > 0 {
+			return col - 1, 1
+		}
+	}
 	const marker = "at position "
 	idx := strings.Index(msg, marker)
 	if idx < 0 {

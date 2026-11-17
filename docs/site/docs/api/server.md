@@ -1,310 +1,197 @@
 ---
 sidebar_position: 10
 title: Server
-description: Health checks, Prometheus metrics, status snapshots, cache endpoints, cluster status, compaction history, and runtime config endpoints.
+description: Health checks, Prometheus and JSON metrics, status snapshots, cache, compaction history, cluster status, runtime configuration, API keys and profiling endpoints.
 ---
 
 # Server API
 
-These endpoints expose the server's operational state. Most of them live under `/api/v1`. The main exceptions are the health check and Prometheus endpoint.
-
 ## GET /health
 
-Health checks are served at `/health`, not `/api/v1/health`.
-
-This endpoint is always reachable without authentication, even when API auth is enabled.
+The health check lives at `/health`, outside `/api/v1`. It never requires authentication and is not rate limited.
 
 ```bash
-curl -s localhost:3100/health | jq .
+curl -s localhost:3100/health
 ```
-
-**Response:**
 
 ```json
-{
-  "data": {
-    "status": "healthy",
-    "degraded": false,
-    "version": "0.4.0"
-  }
-}
+{"data": {"status": "healthy", "degraded": false, "version": "0.4.0"}}
 ```
 
-`status` is `healthy` unless the server has fallen back to in-memory state for a persistent subsystem, in which case it becomes `degraded`.
+`status` is `degraded` and `degraded` is `true` when a persistent store fell back to memory.
 
 ## GET /metrics
 
-Prometheus metrics are served at `/metrics`.
-
-This endpoint is also unauthenticated when auth is enabled.
+Prometheus text metrics, outside `/api/v1` and without authentication. Metric names start with `lynxdb_`: ingest counters and staging gauges, query duration, scan and memory histograms, segment skip counters, cache, compaction, spill and memory-governor metrics. See [Monitoring](../operations/monitoring.md).
 
 ## GET /api/v1/status
 
-Returns a compact operational snapshot assembled from engine stats, cluster status, materialized views, tail state, and optional memory-governance information.
-
-```bash
-curl -s localhost:3100/api/v1/status | jq .
-```
-
-**Response shape:**
+A compact snapshot of the server:
 
 ```json
 {
   "data": {
     "version": "0.4.0",
-    "uptime_seconds": 1234567,
+    "uptime_seconds": 485,
     "health": "healthy",
-    "storage": {
-      "used_bytes": 13300000000
-    },
-    "events": {
-      "total": 847000000,
-      "today": 1200000
-    },
-    "queries": {
-      "active": 12
-    },
-    "views": {
-      "total": 3,
-      "active": 2
-    },
-    "tail": {
-      "active_sessions": 1,
-      "subscriber_count": 1,
-      "total_dropped_events": 0
+    "storage": {"used_bytes": 246702},
+    "events": {"total": 1007, "today": 116},
+    "queries": {"active": 0},
+    "tail": {"active_sessions": 0, "subscriber_count": 0, "total_dropped_events": 0},
+    "retention": {"oldest_event": "2025-01-15T08:00:00Z"},
+    "memory": {
+      "governor": {
+        "allocated_bytes": 1110668,
+        "peak_bytes": 1508024,
+        "limit_bytes": 10307921510,
+        "by_class": {
+          "page-cache": {"allocated_bytes": 1110668, "peak_bytes": 1110668, "peak_60s_bytes": 1110668, "peak_24h_bytes": 1110668, "limit_bytes": 0}
+        }
+      }
     }
   }
 }
 ```
 
-Additional sections such as `retention` and `memory` are present only when the server has that information available.
+`retention` appears when the oldest event is known. `memory.governor` and `memory.buffer_manager` appear when those components are active.
 
 ## GET /api/v1/stats
 
-Returns storage-oriented counters used by the CLI `status` and `doctor` commands.
+Storage and event counters, as used by `lynxdb status`:
 
-```bash
-curl -s localhost:3100/api/v1/stats | jq .
+```json
+{
+  "data": {
+    "uptime_seconds": 485,
+    "storage_bytes": 246702,
+    "total_events": 1007,
+    "events_today": 116,
+    "index_count": 2,
+    "segment_count": 7,
+    "buffered_events": 0,
+    "sources": [],
+    "oldest_event": "2025-01-15T08:00:00Z"
+  }
+}
 ```
-
-Important fields:
-
-- `uptime_seconds`
-- `storage_bytes`
-- `total_events`
-- `events_today`
-- `index_count`
-- `segment_count`
-- `buffered_events`
-- `sources`
-- `oldest_event` when available
 
 ## GET /api/v1/metrics
 
-Returns JSON storage metrics, distinct from the Prometheus text endpoint at `/metrics`.
-
-```bash
-curl -s localhost:3100/api/v1/metrics | jq .
-```
-
-If adaptive compaction is enabled, the response may also include an `adaptive_compaction` section.
-
-## Cache Endpoints
-
-### GET /api/v1/cache/stats
-
-Returns:
-
-- `hits`
-- `misses`
-- `hit_rate`
-- `entries`
-- `size_bytes`
-- `evictions`
-
-### DELETE /api/v1/cache
-
-Clears the query cache.
-
-This endpoint requires admin scope when auth is enabled.
-
-## GET /api/v1/compaction/history
-
-Returns recorded compaction manifests.
-
-```bash
-curl -s 'localhost:3100/api/v1/compaction/history?since=2026-03-19T00:00:00Z' | jq .
-```
-
-Query parameters:
-
-| Parameter | Type | Description |
-|---|---|---|
-| `since` | RFC3339 timestamp | Return compactions at or after the given time |
+Storage metrics as JSON, separate from the Prometheus endpoint. The top-level keys are `uptime_seconds`, `ingest`, `flush`, `segment`, `compaction`, `compaction_levels`, `tiering`, `cache`, `query`, `pruning` and `system_write_amplification`, plus `adaptive_compaction` when adaptive compaction is on.
 
 ## GET /api/v1/cluster/status
 
-Returns a small cluster status summary:
+```json
+{
+  "data": {
+    "status": "healthy",
+    "node_count": 1,
+    "index_count": 2,
+    "segment_count": 7,
+    "buffered_size": 0,
+    "buffered_events": 0,
+    "data_dir": "/var/lib/lynxdb"
+  }
+}
+```
 
-- `status`
-- `node_count`
-- `index_count`
-- `segment_count`
-- `buffered_size`
-- `buffered_events`
-- `data_dir`
+## GET /api/v1/compaction/history
+
+Recorded compactions.
+
+| Parameter | Description |
+|---|---|
+| `since` | Only compactions at or after this RFC 3339 time. Any other format answers `400 INVALID_REQUEST` |
+
+```json
+{"data": {"compactions": [], "count": 0}}
+```
+
+## Cache
+
+`GET /api/v1/cache/stats` returns the query result cache counters:
+
+```json
+{"data": {"hits": 2, "misses": 26, "hit_rate": 0.0714, "entries": 25, "size_bytes": 1110668, "evictions": 0}}
+```
+
+`DELETE /api/v1/cache` empties the cache and answers `{"data": {"status": "cleared"}}`. It needs `admin` scope when authentication is on.
+
+Queries sent with a `from` or `to` request field skip the result cache.
 
 ## GET /api/v1/config
 
-Returns the server's runtime config snapshot.
-
-This endpoint requires admin scope when auth is enabled.
+Returns the running configuration. Needs `admin` scope when authentication is on.
 
 ```bash
-curl -s localhost:3100/api/v1/config | jq .
+curl -s localhost:3100/api/v1/config
 ```
 
-**Response:**
-
-```json
-{
-  "data": {
-    "listen": "localhost:3100",
-    "data_dir": "/var/lib/lynxdb",
-    "retention": "7d",
-    "log_level": "info",
-    "storage": {},
-    "query": {},
-    "ingest": {},
-    "http": {},
-    "tail": {},
-    "tls": {},
-    "auth": {},
-    "views": {},
-    "server": {},
-    "buffer_manager": {},
-    "cluster": {},
-    "profiles": {}
-  }
-}
-```
+The top-level keys of `data` are `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tail`, `tls`, `auth`, `server`, `buffer_manager`, `cluster` and `profiles`. See [Configuration](../configuration/overview.md) for each section.
 
 ## PATCH /api/v1/config
 
-Applies a JSON merge-style patch to the in-memory runtime config snapshot and returns the updated config.
+Merges a JSON patch into the running configuration, validates it and applies it the same way a `SIGHUP` reload does. Needs a root key when authentication is on.
 
-This endpoint requires a root key when auth is enabled.
-
-It accepts top-level keys only:
-
-- `retention`
-- `log_level`
-- `listen`
-- `query`
-- `ingest`
-- `storage`
-- `http`
-
-Unknown top-level keys are rejected.
+Accepted top-level keys: `retention`, `log_level`, `listen`, `query`, `ingest`, `storage`, `http`, `syslog`. Any other key, an empty patch, or a config that fails validation answers `400 VALIDATION_ERROR`.
 
 ```bash
-curl -X PATCH localhost:3100/api/v1/config \
-  -d '{
-    "retention": "30d",
-    "query": {
-      "max_query_runtime": "10m"
-    }
-  }'
+curl -s -X PATCH localhost:3100/api/v1/config \
+  -H 'Content-Type: application/json' \
+  -d '{"log_level": "debug", "query": {"max_query_runtime": "10m"}}'
 ```
 
-**Response:**
+The response holds the resulting configuration in `data.config` and, when some changed settings take effect only after a restart (such as `listen`), lists them in `data.restart_required`.
 
-```json
-{
-  "data": {
-    "config": {
-      "retention": "30d"
-    },
-    "restart_required": []
-  }
-}
-```
+The change lives only in the running process. Edit the config file as well to keep it after a restart.
 
-### Important caveat
+## API keys
 
-`PATCH /api/v1/config` does not persist changes to the YAML config file.
-
-Unlike editing the YAML config file, this endpoint applies changes only to the running process. It validates the updated config and uses the same in-memory reload path as `SIGHUP`, but the changes are lost on restart unless you also update the config file on disk.
-
-## Auth Key Management Endpoints
-
-These endpoints are available only when auth is enabled. They all require a root key. When auth is disabled, they return `404`.
+These endpoints exist only when authentication is on; otherwise they answer `404 NOT_FOUND`. They all need a root key.
 
 ### POST /api/v1/auth/keys
 
-Create a new API key.
-
 ```bash
-curl -X POST localhost:3100/api/v1/auth/keys \
+curl -s -X POST localhost:3100/api/v1/auth/keys \
   -H 'Authorization: Bearer <root-token>' \
-  -d '{
-    "name": "filebeat",
-    "scope": "ingest",
-    "expires_in": "90d",
-    "description": "edge shipper"
-  }'
+  -H 'Content-Type: application/json' \
+  -d '{"name": "filebeat", "scope": "ingest", "expires_in": "90d", "description": "edge shipper"}'
 ```
 
-Request fields:
+| Field | Description |
+|---|---|
+| `name` | Key name (required) |
+| `scope` | `ingest`, `query`, `admin` or `full` (default `full`) |
+| `expires_in` | A Go duration (`720h`) or a count of days, weeks or years (`30d`, `4w`, `1y`); `never` or empty for no expiry |
+| `description` | Free text |
 
-- `name` required
-- `scope` optional, one of `ingest`, `query`, `admin`, `full`
-- `expires_in` optional, such as `30d`, `1y`, or `never`
-- `description` optional
+The response (`201`) holds `id`, `name`, `prefix`, `scope`, `description`, `expires_at`, `is_root`, `created_at`, the plaintext `token`, and `api_key` (`id:token`, for the `ApiKey` scheme). The token is shown only once.
 
 ### GET /api/v1/auth/keys
 
-List keys without returning their secret token values.
+Lists keys as `{"data": {"keys": [...]}}` with the same fields minus `token` and `api_key`, plus `last_used_at`.
 
-```bash
-curl -s localhost:3100/api/v1/auth/keys \
-  -H 'Authorization: Bearer <root-token>' | jq .
-```
+### DELETE /api/v1/auth/keys/\{id\}
 
-### `DELETE /api/v1/auth/keys/{id}`
-
-Revoke a key by ID.
-
-```bash
-curl -X DELETE localhost:3100/api/v1/auth/keys/key_002 \
-  -H 'Authorization: Bearer <root-token>'
-```
+Revokes a key and answers `204`. An unknown ID answers `404 NOT_FOUND`; revoking the last root key answers `409 LAST_ROOT_KEY`.
 
 ### POST /api/v1/auth/rotate-root
 
-Rotate the calling root key. The response returns the new root token once and identifies the revoked key ID.
+Replaces the root key used to call it. The response holds the replacement key's `id`, `name`, `prefix`, `token`, `is_root` and `created_at`, and `revoked_key_id`.
+
+See [`lynxdb auth`](../cli/auth.md) for the CLI and [TLS & Authentication](../deployment/tls-auth.md) for setup.
+
+## Profiling
+
+The Go runtime profiles are served under `/api/v1/debug/pprof/`: `profile`, `trace`, `heap`, `allocs`, `goroutine`, `mutex`, `block`, `threadcreate`, `cmdline` and `symbol`. They follow API authentication like other `/api/v1` routes.
 
 ```bash
-curl -X POST localhost:3100/api/v1/auth/rotate-root \
-  -H 'Authorization: Bearer <root-token>'
-```
-
-All authenticated requests use `Authorization: Bearer <token>`. For compatibility clients, LynxDB also accepts `ApiKey <base64(id:secret)>` and `Basic <base64(user:token)>`.
-
-## Monitoring with the CLI
-
-The CLI wraps these endpoints:
-
-```bash
-lynxdb health
-lynxdb status
-lynxdb cache stats
-lynxdb indexes
-lynxdb doctor
+go tool pprof http://localhost:3100/api/v1/debug/pprof/profile?seconds=30
 ```
 
 ## Related
 
-- [API Overview](/docs/api/overview)
-- [Configuration Overview](/docs/configuration/overview)
-- [config & doctor](/docs/cli/config-cmd)
+- [API overview](./overview.md)
+- [Configuration overview](../configuration/overview.md)
+- [`lynxdb config`](../cli/config-cmd.md)
+- [Monitoring](../operations/monitoring.md)

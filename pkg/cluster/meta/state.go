@@ -21,7 +21,6 @@ type MetaState struct {
 	// Distributed subsystem state.
 	FieldCatalog map[string]*GlobalFieldInfo  `msgpack:"field_catalog"` // key: field name
 	Sources      map[string]*GlobalSourceInfo `msgpack:"sources"`       // key: source name
-	Views        map[string]*GlobalViewInfo   `msgpack:"views"`         // key: view name
 
 	// Rebalancing and splitting state.
 	Splits map[uint32]*SplitInfo `msgpack:"splits"` // key: parent partition
@@ -45,7 +44,6 @@ func NewMetaState() *MetaState {
 		Ring:         sharding.NewHashRing(128),
 		FieldCatalog: make(map[string]*GlobalFieldInfo),
 		Sources:      make(map[string]*GlobalSourceInfo),
-		Views:        make(map[string]*GlobalViewInfo),
 		Splits:       make(map[uint32]*SplitInfo),
 	}
 }

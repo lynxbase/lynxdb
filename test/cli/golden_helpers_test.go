@@ -27,9 +27,8 @@ type goldenTest struct {
 	ExitCode       string // expected exit code: "0", "nonzero", or a specific number (default: "0")
 	Skip           string // skip reason (empty = don't skip)
 	StderrContains string // substring that must appear in stderr
-	Language       string // query language override: "lynxflow", "spl2", or "" (auto-detect)
 	Unordered      bool   // sort output lines before comparing (hash-ordered aggregate output)
-	Query          string // SPL2 query (everything after headers)
+	Query          string // PPL query (everything after headers)
 }
 
 // parseTestFile reads a .test file and returns a goldenTest.
@@ -79,8 +78,6 @@ func parseTestFile(t *testing.T, path string) goldenTest {
 					tc.Skip = v
 				case "stderr-contains":
 					tc.StderrContains = v
-				case "language":
-					tc.Language = v
 				}
 
 				continue

@@ -1,5 +1,5 @@
 # file: backend_server.log
 # format: json
-from main
+source=main
 | dedup service
 | stats count() as unique_services

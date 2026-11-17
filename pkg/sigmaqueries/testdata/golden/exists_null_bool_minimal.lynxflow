@@ -1,1 +1,0 @@
-from main | where exists(FieldA) and not exists(FieldB) and Enabled == true

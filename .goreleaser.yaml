@@ -13,7 +13,6 @@ project_name: lynxdb
 before:
   hooks:
     - go mod tidy
-    - bash -c "cd web && bun install && bun run build && rm -rf ../internal/webui/dist && cp -r dist ../internal/webui/dist"
 
 builds:
   - id: lynxdb-gnu
@@ -134,7 +133,7 @@ brews:
     commit_msg_template: "brew(lynxdb): update to {{ .Tag }}"
     skip_upload: auto
     homepage: "https://lynxdb.org"
-    description: "Open-source log analytics database with a single binary and SPL2 query language"
+    description: "Open-source log analytics database in a single binary, queried with PPL"
     license: "Apache-2.0"
     install: |
       bin.install "lynxdb"

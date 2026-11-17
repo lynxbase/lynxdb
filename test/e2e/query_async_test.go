@@ -15,7 +15,7 @@ func TestE2E_QueryAsync_ReturnsJobHandle(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	jh, err := h.Client().QueryAsync(ctx, `from idx_ssh | stats count() as total`, "", "")
+	jh, err := h.Client().QueryAsync(ctx, `source=idx_ssh | stats count() as total`, "", "")
 	if err != nil {
 		t.Fatalf("QueryAsync: %v", err)
 	}
@@ -32,7 +32,7 @@ func TestE2E_QueryAsync_PollJob_ReturnsResult(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	jh, err := h.Client().QueryAsync(ctx, `from idx_ssh | stats count() as total`, "", "")
+	jh, err := h.Client().QueryAsync(ctx, `source=idx_ssh | stats count() as total`, "", "")
 	if err != nil {
 		t.Fatalf("QueryAsync: %v", err)
 	}
@@ -51,7 +51,7 @@ func TestE2E_QueryAsync_GetJob_CompletedJob_HasStatus(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	jh, err := h.Client().QueryAsync(ctx, `from idx_ssh | stats count() as total`, "", "")
+	jh, err := h.Client().QueryAsync(ctx, `source=idx_ssh | stats count() as total`, "", "")
 	if err != nil {
 		t.Fatalf("QueryAsync: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestE2E_QueryAsync_ListJobs_ContainsSubmittedJob(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	jh, err := h.Client().QueryAsync(ctx, `from idx_ssh | stats count() as total`, "", "")
+	jh, err := h.Client().QueryAsync(ctx, `source=idx_ssh | stats count() as total`, "", "")
 	if err != nil {
 		t.Fatalf("QueryAsync: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestE2E_QueryAsync_CancelJob(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	jh, err := h.Client().QueryAsync(ctx, `from idx_ssh | stats count() as total`, "", "")
+	jh, err := h.Client().QueryAsync(ctx, `source=idx_ssh | stats count() as total`, "", "")
 	if err != nil {
 		t.Fatalf("QueryAsync: %v", err)
 	}

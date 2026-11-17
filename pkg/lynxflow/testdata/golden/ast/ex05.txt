@@ -1,7 +1,0 @@
-Query
-  Pipeline
-    Stage parse
-      Format regex
-        RawString "user=(?<user>\\w+) ip=(?<ip>[\\d.]+)"
-      Into
-        ip as string

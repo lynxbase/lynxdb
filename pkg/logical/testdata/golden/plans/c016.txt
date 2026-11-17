@@ -1,4 +1,0 @@
-Sort(+service)
-  Aggregate(earliest(level) as first_level, latest(level) as last_level by service [partial])
-    Scan(main)
-      pushdown.columns: [_raw, _source, _time, level, service]

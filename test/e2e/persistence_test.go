@@ -25,21 +25,21 @@ func TestE2E_Persistence_DataSurvivesRestart(t *testing.T) {
 		query string
 	}
 	queries := []queryCase{
-		{"SSH_Count", `from idx_ssh | stats count() as count`},
-		{"OpenStack_Count", `from idx_openstack | stats count() as count`},
-		{"SSH_TopIPs", `from idx_ssh | parse regex r"(?<ip>\d+\.\d+\.\d+\.\d+)" | where exists(ip) | stats count() as count by ip | sort -count | head 3`},
-		{"OpenStack_StatusCounts", `from idx_openstack | parse regex r"status: (?<status>\d+)" | where exists(status) | stats count() as count by status | sort status`},
-		{"SSH_HourlyBuckets", `from idx_ssh | extend hour = bin(_time, 1h) | stats count() as count by hour | sort hour`},
-		{"SSH_FailedCount", `from idx_ssh | extend has_failed = if(matches(_raw, r"Failed password"), 1, 0) | stats sum(has_failed) as failed_count`},
-		// count AS attempts in compound STATS (with BY) uses single-agg path where alias is broken.
-		// We use count BY user directly.
-		{"SSH_TopAttackers", `from idx_ssh | parse regex r"Failed password for (?:invalid user )?(?<user>\w+) from (?<ip>\d+\.\d+\.\d+\.\d+)" | where exists(user) | stats count() as count by user | sort -count, user | head 3`},
-		{"SSH_UniqueIPs", `from idx_ssh | parse regex r"(?<ip>\d+\.\d+\.\d+\.\d+)" | where exists(ip) | dedup ip | stats count() as count`},
-		{"OpenStack_APILatency", `from idx_openstack | parse regex r"(?<method>GET|POST|DELETE) (?<url_path>/[^\s]+) HTTP" | parse regex r"status: (?<status>\d+) len: (?<resp_len>\d+) time: (?<resp_time>[0-9.]+)" | where exists(method) | extend resp_ms = round(float(resp_time) * 1000, 2) | stats count() as requests, avg(resp_ms) as avg_latency by method | sort method`},
-		// Wildcard persistence — validates bloom filter tokenization after flush.
-		{"Wildcard_InvalidUserFrom", `from idx_ssh | where matches(_raw, r"Invalid user.*from") | stats count() as count`},
-		{"Wildcard_Password", `from idx_ssh | where contains(_raw, "password") | stats count() as count`},
-		{"Wildcard_FailedFromPort", `from idx_ssh | where matches(_raw, r"Failed.*from.*port") | stats count() as count`},
+		{"SSH_Count", `source=idx_ssh | stats count() as count`},
+		{"OpenStack_Count", `source=idx_openstack | stats count() as count`},
+		{"SSH_TopIPs", `source=idx_ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | stats count() as count by ip | sort -count, ip | head 3`},
+		{"OpenStack_StatusCounts", `source=idx_openstack | rex field=_raw "status: (?<status>\d+)" | where isnotnull(status) | stats count() as count by status | sort status`},
+		{"SSH_HourlyBuckets", `source=idx_ssh | bin _time span=1h as hour | stats count() as count by hour | sort hour`},
+		{"SSH_FailedCount", `source=idx_ssh | eval has_failed = if(regexp_match(_raw, "Failed password"), 1, 0) | stats sum(has_failed) as failed_count`},
+		{"SSH_TopAttackers", `source=idx_ssh | rex field=_raw "Failed password for (?:invalid user )?(?<user>\w+) from (?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(user) | stats count() as count by user | sort -count, user | head 3`},
+		{"SSH_UniqueIPs", `source=idx_ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | dedup ip | stats count() as count`},
+		{"OpenStack_APILatency", `source=idx_openstack | rex field=_raw "(?<method>GET|POST|DELETE) (?<url_path>/[^\s]+) HTTP" | rex field=_raw "status: (?<status>\d+) len: (?<resp_len>\d+) time: (?<resp_time>[0-9.]+)" | where isnotnull(method) | eval resp_ms = round(cast(resp_time as double) * 1000, 2) | stats count() as requests, avg(resp_ms) as avg_latency by method | sort method`},
+		// Term-index lookups after the flush exercise the persisted tokenization.
+		{"Search_FailedPassword", `search source=idx_ssh "Failed password" | stats count() as count`},
+		{"Search_FailedPrefixRoot", `search source=idx_ssh Failed* root | stats count() as count`},
+		{"Wildcard_InvalidUserFrom", `source=idx_ssh | where regexp_match(_raw, "Invalid user.*from") | stats count() as count`},
+		{"Wildcard_Password", `source=idx_ssh | where _raw contains "password" | stats count() as count`},
+		{"Wildcard_FailedFromPort", `source=idx_ssh | where regexp_match(_raw, "Failed.*from.*port") | stats count() as count`},
 	}
 
 	preResults := make(map[string]*client.QueryResult, len(queries))
@@ -60,7 +60,7 @@ func TestE2E_Persistence_DataSurvivesRestart(t *testing.T) {
 
 	// Additional: verify both indexes are still queryable.
 	t.Run("BothIndexes_Queryable", func(t *testing.T) {
-		requireAggValue(t, h.MustQuery(`from idx_ssh | stats count() as count`), "count", 2000)
-		requireAggValue(t, h.MustQuery(`from idx_openstack | stats count() as count`), "count", 2000)
+		requireAggValue(t, h.MustQuery(`source=idx_ssh | stats count() as count`), "count", 2000)
+		requireAggValue(t, h.MustQuery(`source=idx_openstack | stats count() as count`), "count", 2000)
 	})
 }

@@ -8,7 +8,6 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 )
 
@@ -48,7 +47,7 @@ func TestQueryCacheUsesGenerationAfterPreQueryFlush(t *testing.T) {
 		t.Fatalf("ingest: %v", err)
 	}
 
-	query := "from main | stats count() as count"
+	query := "source=main | stats count() as count"
 	first := submitAndWait(t, e, query)
 	if first.Stats.CacheHit {
 		t.Fatalf("first query unexpectedly hit cache")
@@ -103,7 +102,7 @@ func TestQueryCacheSkippedWhenRequested(t *testing.T) {
 	}
 
 	for i := 0; i < 2; i++ {
-		got := submitAndWaitWithSkipResultCache(t, e, "from main | stats count() as count", true)
+		got := submitAndWaitWithSkipResultCache(t, e, "source=main | stats count() as count", true)
 		if got.Status != JobStatusDone {
 			t.Fatalf("query[%d] status = %s, error=%s", i, got.Status, got.Error)
 		}
@@ -160,7 +159,7 @@ func TestQueryReadsBufferedEventsWithoutCreatingParts(t *testing.T) {
 	}
 
 	for i := 0; i < 3; i++ {
-		result := submitAndWait(t, e, "from main | stats count() as count")
+		result := submitAndWait(t, e, "source=main | stats count() as count")
 		if result.Status != JobStatusDone {
 			t.Fatalf("query[%d] status = %s, error=%s", i, result.Status, result.Error)
 		}
@@ -182,12 +181,12 @@ func submitAndWaitWithSkipResultCache(t *testing.T, e *Engine, query string, ski
 	if err != nil {
 		t.Fatalf("plan query: %v", err)
 	}
-	prog := result.Program
+	prog := result.Plan
 
 	job, err := e.SubmitQuery(context.Background(), QueryParams{
 		Query:           query,
-		Program:         prog,
-		Hints:           &model.QueryHints{},
+		Plan:            prog,
+		Hints:           result.Hints,
 		SkipResultCache: skipResultCache,
 		ResultType:      DetectResultType(prog),
 	})

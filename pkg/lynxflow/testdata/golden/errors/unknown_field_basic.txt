@@ -1,2 +1,0 @@
-query: | where nonexistent == 42
-error S001 [8:19] unknown field 'nonexistent'

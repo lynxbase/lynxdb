@@ -1,4 +1,0 @@
-Sort(+user_id)
-  Project(user_id, duration, eventcount)
-    Helper(transaction)
-      Scan(main)

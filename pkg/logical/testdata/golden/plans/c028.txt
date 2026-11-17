@@ -1,5 +1,0 @@
-TopK(5, +severity, +svc)
-  Aggregate(count() by severity, svc [partial] [topk=5])
-    Project(service->svc, level->severity)
-      Scan(main)
-        pushdown.columns: [_raw, _source, _time, level, service, severity, svc]

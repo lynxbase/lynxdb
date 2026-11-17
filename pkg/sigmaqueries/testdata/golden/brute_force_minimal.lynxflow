@@ -1,1 +1,0 @@
-from main | where EventID == 4625 and not SubStatus == "0xC0000064"

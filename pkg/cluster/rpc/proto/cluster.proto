@@ -35,9 +35,6 @@ service MetaService {
 
   // ReportSources reports local source registry deltas from an ingest node.
   rpc ReportSources(ReportSourcesRequest) returns (ReportSourcesResponse);
-
-  // RegisterView registers or updates a materialized view definition.
-  rpc RegisterView(RegisterViewRequest) returns (RegisterViewResponse);
 }
 
 // IngestService handles distributed event ingestion.
@@ -205,17 +202,6 @@ message ReportSourcesRequest {
 }
 
 message ReportSourcesResponse {
-  bool ok = 1;
-}
-
-message RegisterViewRequest {
-  string name = 1;
-  string query = 2;
-  string status = 3;
-  string coordinator_node_id = 4;
-}
-
-message RegisterViewResponse {
   bool ok = 1;
 }
 

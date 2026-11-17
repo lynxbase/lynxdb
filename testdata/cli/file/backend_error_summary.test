@@ -1,0 +1,6 @@
+# file: backend_server.log
+# format: json
+source=main
+| where level = "ERROR"
+| stats count() by service, error
+| sort service, error

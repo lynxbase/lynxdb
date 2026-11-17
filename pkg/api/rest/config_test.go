@@ -178,7 +178,6 @@ func TestReloadConfigReportsStartupTimeFields(t *testing.T) {
 	updated := *srv.runtimeCfg
 	srv.cfgMu.RUnlock()
 
-	updated.NoUI = !updated.NoUI
 	updated.TLS.Enabled = !updated.TLS.Enabled
 	updated.Auth.Enabled = !updated.Auth.Enabled
 	updated.Storage.CompactionWorkers++
@@ -188,7 +187,7 @@ func TestReloadConfigReportsStartupTimeFields(t *testing.T) {
 		t.Fatalf("ReloadConfig: %v", err)
 	}
 
-	for _, field := range []string{"no_ui", "tls.enabled", "auth.enabled", "storage.compaction_workers"} {
+	for _, field := range []string{"tls.enabled", "auth.enabled", "storage.compaction_workers"} {
 		found := false
 		for _, got := range restartRequired {
 			if got == field {
@@ -216,7 +215,7 @@ func TestReloadConfigAppliesQueryMaxLength(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": "FROM main | head 1",
+		"q": "source=main | head 1",
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {

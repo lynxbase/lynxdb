@@ -1,0 +1,5 @@
+# file: nginx_access.log
+# format: json
+source=main
+| stats count() by status
+| sort status

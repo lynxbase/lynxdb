@@ -668,8 +668,7 @@ func TestParseIterator_Logfmt(t *testing.T) {
 	assertIntVal(t, rows[0], "duration", 1234)
 }
 
-// Test: RFC-002 §13 ex.15 debugging workflow
-// parse json | where exists(_error) | keep _error, _raw | head 20
+// Rows that fail to parse keep _error next to _raw for debugging.
 
 func TestParseIterator_RFC002_Ex15_ErrorDebugging(t *testing.T) {
 	// Build a batch that mixes valid JSON with garbage.

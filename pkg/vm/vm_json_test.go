@@ -97,10 +97,6 @@ func TestVM_JsonExtract_MissingPath(t *testing.T) {
 	}
 }
 
-// TestCompileSpathAlias was deleted in RFC-002 P10: it used spl2 AST types
-// (FuncCallExpr, FieldExpr, LiteralExpr) and CompileExpr which no longer exist.
-// The spath function is covered by lynxflow_conformance_test.go.
-
 func TestVM_JsonValid_True(t *testing.T) {
 	prog := &Program{}
 	fieldIdx := prog.AddFieldName("_raw")

@@ -59,23 +59,13 @@ func (s *Server) handleTail(w http.ResponseWriter, r *http.Request) {
 		From:  from,
 	})
 	if err != nil {
-		var pe *planner.ParseError
 		var tve *planner.TailValidationError
 		switch {
-		case errors.As(err, &pe):
-			resp := map[string]string{"error": pe.Message}
-			if pe.Suggestion != "" {
-				resp["suggestion"] = pe.Suggestion
-			}
-			w.WriteHeader(http.StatusBadRequest)
-			if encErr := json.NewEncoder(w).Encode(resp); encErr != nil {
-				slog.Warn("rest: tail json encode failed", "error", encErr)
-			}
+		case respondQueryCompileError(w, err):
 		case errors.As(err, &tve):
 			w.WriteHeader(http.StatusUnprocessableEntity)
 			if encErr := json.NewEncoder(w).Encode(map[string]interface{}{
-				"error":       tve.Error(),
-				"unsupported": "", /* RFC-002 */
+				"error": tve.Error(),
 			}); encErr != nil {
 				slog.Warn("rest: tail json encode failed", "error", encErr)
 			}
@@ -155,7 +145,7 @@ func (s *Server) handleTail(w http.ResponseWriter, r *http.Request) {
 	writeSSE(w, "catchup_done", map[string]int{"count": len(rows)})
 	flusher.Flush()
 
-	// Live — stream new events through the SPL2 pipeline.
+	// Live: stream new events through the query's streaming operators.
 	heartbeat := time.NewTicker(15 * time.Second)
 	defer heartbeat.Stop()
 

@@ -1,0 +1,5 @@
+# format: json
+source=backend
+| eval label = concat(level, ":", service)
+| stats count() by label
+| sort label

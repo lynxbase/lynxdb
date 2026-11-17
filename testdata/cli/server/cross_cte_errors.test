@@ -1,7 +1,0 @@
-# format: json
-let $errs = from idx_backend
-| where level == "ERROR"
-| stats count() by service;
-from $errs
-| sort -count
-| head 3

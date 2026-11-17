@@ -8,7 +8,7 @@ import (
 const (
 	QueryResponseFormatJSON                = "json"
 	QueryFormatSuggestion                  = "Use the default JSON response, or POST /api/v1/query/stream for NDJSON exports."
-	QueryStreamUnsupportedFieldsSuggestion = "Use only q/query, from/to, earliest/latest, and variables with /query/stream."
+	QueryStreamUnsupportedFieldsSuggestion = "Use only q/query, from/to and earliest/latest with /query/stream."
 )
 
 var QueryStreamUnsupportedFields = []string{

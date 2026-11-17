@@ -2,89 +2,97 @@
 sidebar_position: 0
 slug: /
 title: What is LynxDB?
-description: LynxDB is an open-source log analytics database. Single binary, zero dependencies, LynxFlow query language.
+description: LynxDB is an open-source log analytics database in a single binary, queried with OpenSearch PPL.
 ---
 
 # What is LynxDB?
 
-LynxDB is an open-source log analytics database built from scratch in Go. The same static binary can run as a pipe-mode CLI tool (like `grep` meets `awk`), a standalone server, and a cluster-mode deployment.
+LynxDB is an open-source log analytics database written in Go. One static
+binary works as a command-line tool over files and pipes and as a standalone
+server. Queries are written in OpenSearch Piped Processing Language (PPL).
 
-## The Problem
-
-The log analytics market is broken:
-
-- **On one end:** `grep` and `jq` -- fast, scriptable, but no persistence, no indexing, no aggregation across time ranges.
-- **On the other end:** Splunk ($2,000+/GB/day), Elasticsearch (cluster of 6+ nodes), Datadog (opaque pricing and vendor lock-in).
-
-There is nothing in between. **LynxDB fills the gap.**
-
-## Three Modes, One Binary
+## One binary, two ways to run it
 
 ```
-Developer laptop  →  cat app.log | lynxdb query 'stats count() by level'
+Developer laptop  →  cat app.log | lynxdb query 'source=main | stats count() by level'
 Single server     →  lynxdb server --data-dir /var/lib/lynxdb
-3-node HA         →  lynxdb server --cluster.seeds node1:9400,node2:9400
-1000-node fleet   →  lynxdb server --cluster.role query --cluster.seeds meta1:9400
 ```
 
-### Pipe Mode (No Server)
+### Files and pipes
 
-Query local files and stdin using the full LynxFlow engine with zero network overhead:
+Query local files and standard input without a server:
 
 ```bash
-cat /var/log/syslog | lynxdb query 'where level == "ERROR" | stats count() by service'
-kubectl logs deploy/api | lynxdb query 'stats avg(duration_ms), p99(duration_ms) by endpoint'
+cat /var/log/app.log | lynxdb query 'source=main | where level = "ERROR" | stats count() by service'
+kubectl logs deploy/api | lynxdb query 'source=main | stats avg(duration_ms), p99(duration_ms) by endpoint'
+lynxdb query --file access.log 'source=main status>=500 | top 10 path'
 ```
 
-No daemon, no config file, no data directory. The binary creates an ephemeral in-memory engine, ingests input, runs the LynxFlow pipeline, prints results, and exits.
+The CLI loads the input into an in-memory index named `main`, extracts
+`key=value` pairs and the fields of common log formats, runs the query and
+exits. No daemon, configuration file or data directory is involved.
 
-### Server Mode (Single Node)
+### Server
 
-Persistent storage with a full REST API and materialized views:
+Persistent storage, ingest endpoints and a REST API:
 
 ```bash
 lynxdb server
-lynxdb query 'from main _source=nginx status>=500 | stats count() as count by uri | sort -count | head 10'
+lynxdb ingest access.log
+lynxdb query 'source=main status>=500 | stats count() as errors by path | sort - errors | head 10' --since 1h
 ```
 
-### Cluster Mode
+### Cluster components
 
-Cluster mode is available through the same binary. The codebase includes Raft-backed metadata services, gRPC inter-node communication, and S3-aware storage paths for multi-node deployments. For larger separated-role clusters, validate the exact behavior you need in staging against the version you plan to run.
+`pkg/cluster` holds Raft-backed metadata, gRPC communication between nodes
+and a distributed query planner. `lynxdb server` runs as a single node and
+does not start them; see [Distributed architecture](./architecture/distributed.md)
+and [Cluster configuration](./configuration/cluster.md).
 
-```bash
-lynxdb server --cluster.seeds node1:9400,node2:9400,node3:9400
+## The query language
+
+```
+source=main level=ERROR earliest=-1h
+| stats count() as errors, p95(response_time) as p95 by host
+| sort - errors
 ```
 
-## How LynxDB Compares
+LynxDB implements OpenSearch PPL: search terms, `where`, `eval`, `stats`,
+`timechart`, `top`, `rex`, `spath`, `join`, `lookup` and the rest of the
+command set, with the PPL function library. Queries compile to a
+language-independent intermediate representation, are optimized, and run on
+LynxDB's columnar engine. The [PPL documentation](./ppl/overview.md) lists
+what is supported, how LynxDB's behavior differs from OpenSearch, and which
+features it does not implement.
 
-| | LynxDB | Splunk | Elasticsearch | Loki | ClickHouse |
-|---|---|---|---|---|---|
-| **Deployment** | Single binary | Standalone or distributed | Single node or cluster | Single binary or microservices | Single binary or cluster |
-| **Dependencies** | None | - | Bundled JVM | Object storage (prod) | Keeper (for replication) |
-| **Query language** | LynxFlow (Splunk-inspired) | SPL | Lucene DSL / ES\|QL | LogQL | SQL |
-| **Pipe mode** | Yes | No | No | No | Yes (`clickhouse-local`) |
-| **Schema** | On-read | On-read | On-write | Labels + line | On-write |
-| **Full-text index** | FST + roaring bitmaps | tsidx | Lucene | Label index only | Token bloom filter |
-| **Memory (idle)** | ~50 MB | ~12 GB (min spec) | ~1 GB+ | ~256 MB | ~1 GB |
-| **License** | Apache 2.0 | Commercial | ELv2 / AGPL | AGPL | Apache 2.0 |
+## Features
 
-## Key Features
+- **OpenSearch PPL** in the CLI, the REST API and live tail, with structured
+  errors that carry a position, the expected tokens and a suggestion.
+- **Columnar storage** in its own `.lsg` segment format: delta-encoded
+  timestamps, dictionary encoding, LZ4 compression.
+- **Full-text search** through an FST-based term index with roaring bitmap
+  posting lists and per-segment bloom filters.
+- **Schema-on-read**: no upfront schema; fields are discovered at ingest and
+  query time.
+- **Ingest compatibility**: Elasticsearch `_bulk`, OpenTelemetry OTLP,
+  Splunk HEC, syslog, and a native JSON API.
+- **Tiered storage** on S3-compatible object stores.
 
-- **LynxFlow Query Language** -- Splunk-inspired pipeline language, works everywhere (CLI, API)
-- **Columnar Storage** -- Custom `.lsg` segment format with delta-varint timestamps, dictionary encoding, LZ4 compression
-- **Full-Text Search** -- FST-based inverted index with roaring bitmap posting lists and bloom filters
-- **Zero-Allocation VM** -- 22ns/op bytecode evaluation, 2.1M events/sec pipeline throughput
-- **Materialized Views** -- Precomputed aggregations with ~400x query acceleration
-- **Schema-on-Read** -- No upfront schema, fields discovered and indexed automatically
-- **Drop-in Compatibility** -- Elasticsearch `_bulk`, OpenTelemetry OTLP, Splunk HEC
+## How LynxDB compares
 
-:::note Migrating from SPL2?
-SPL2 was removed in the LynxFlow v2 release. Key renames: `eval` → `extend`, `rex` → `parse regex`, `table` → `keep`, `timechart` → `every` / `bin()`, `==` for comparison (`=` binds), and `count()` now requires parentheses. The full mapping lives in the [RFC-002 capability disposition table (§15)](https://github.com/lynxbase/lynxdb/blob/main/docs/grammar/RFC-002.md) and the [CHANGELOG "Breaking Changes (LynxFlow vs SPL2)"](https://github.com/lynxbase/lynxdb/blob/main/CHANGELOG.md).
-:::
+| | LynxDB | Elasticsearch | Loki | ClickHouse |
+|---|---|---|---|---|
+| **Deployment** | Single binary, single node | Single node or cluster | Single binary or microservices | Single binary or cluster |
+| **Dependencies** | None | Bundled JVM | Object storage (production) | Keeper (for replication) |
+| **Query files without a server** | Yes | No | No | Yes (`clickhouse-local`) |
+| **Schema** | On read | On write | Labels + line | On write |
+| **Full-text index** | FST + roaring bitmaps | Lucene | Label index only | Token bloom filter |
+| **License** | Apache 2.0 | ELv2 / AGPL | AGPL | Apache 2.0 |
 
-## Next Steps
+## Next steps
 
-- **[Quick Start](/docs/getting-started/quickstart)** -- Install and run your first query in 5 minutes
-- **[LynxFlow v2 Reference](/docs/lynxflow/operators/from)** -- Learn the query language
-- **[CLI Reference](/docs/cli/overview)** -- Explore all commands
-- **[REST API](/docs/api/overview)** -- Integrate with your stack
+- **[Quick Start](/docs/getting-started/quickstart)**: install LynxDB and run a first query
+- **[PPL](/docs/ppl/overview)**: the query language
+- **[CLI Reference](/docs/cli/overview)**: every command
+- **[REST API](/docs/api/overview)**: integrate with your stack

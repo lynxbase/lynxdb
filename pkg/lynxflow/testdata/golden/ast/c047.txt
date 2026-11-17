@@ -1,9 +1,0 @@
-Query
-  Pipeline
-    Stage latency
-      Field
-        Ident duration_ms
-      Every
-        Duration 1h
-      By
-        Ident service

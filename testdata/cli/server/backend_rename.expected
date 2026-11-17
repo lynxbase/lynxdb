@@ -1,5 +1,5 @@
-{"count()":1,"svc":"analytics-service"}
-{"count()":1,"svc":"auth-service"}
-{"count()":1,"svc":"import-service"}
-{"count()":1,"svc":"notification-service"}
-{"count()":1,"svc":"report-service"}
+{"count()":7,"svc":"payment-service"}
+{"count()":5,"svc":"gateway-service"}
+{"count()":4,"svc":"user-service"}
+{"count()":3,"svc":"project-service"}
+{"count()":2,"svc":"deploy-service"}

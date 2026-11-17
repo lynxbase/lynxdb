@@ -150,11 +150,15 @@ func startServerWithDataDir(t *testing.T, dataDir string) *Server {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	// The OTLP receivers listen on fixed ports; a second server on the machine
+	// would fail to bind them and never become healthy.
 	cmd := exec.CommandContext(ctx, lynxdbBin,
 		"server",
 		"--addr", addr,
 		"--data-dir", dataDir,
 		"--log-level", "error",
+		"--otlp-http-listen=",
+		"--otlp-grpc-listen=",
 	)
 	cmd.Env = cleanEnv()
 	cmd.Stdout = os.Stderr // pipe server logs to test stderr for debugging

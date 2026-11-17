@@ -1,15 +1,15 @@
 ---
 title: Retention and Data Lifecycle
-description: Configure LynxDB data retention policies -- automatic expiration, tiered storage lifecycle, and materialized view retention.
+description: Configure LynxDB data retention -- partition-based expiration, tiered storage lifecycle, and storage estimates.
 ---
 
 # Retention and Data Lifecycle
 
-LynxDB automatically manages data lifecycle through retention policies, tiered storage, and materialized view retention. Older data is deleted or moved to cheaper storage without manual intervention.
+LynxDB deletes old data on a schedule and, with S3 tiering, moves older segments to cheaper storage. Both run in the background.
 
 ## Retention Policy
 
-The global `retention` setting controls how long data is kept before automatic deletion.
+The global `retention` setting controls how long data is kept.
 
 | Config Key | `retention` |
 |---|---|
@@ -22,7 +22,7 @@ retention: "30d"
 ```
 
 ```bash
-# Set via CLI flag
+# Set through the environment
 LYNXDB_RETENTION=30d lynxdb server
 
 # Change at runtime (no restart)
@@ -31,6 +31,7 @@ lynxdb config reload
 ```
 
 Accepted duration formats:
+
 - `7d` -- 7 days
 - `4w` -- 4 weeks (28 days)
 - `6h` -- 6 hours (for testing)
@@ -39,30 +40,30 @@ Accepted duration formats:
 
 ## How Retention Works
 
-Segments older than the retention period are deleted during compaction:
+Retention deletes whole time partitions. Parts are stored in one directory per partition, sized by `storage.partition_by` (`daily` by default; also `hourly`, `weekly`, `monthly`, or `none`).
 
-1. The compaction scheduler runs at `storage.compaction_interval` (default: every 30 seconds)
-2. It checks each segment's time range
-3. Segments where **all** events are older than the retention period are deleted
-4. Segments that partially overlap the retention boundary are compacted -- old events are dropped, recent events are kept
+1. A retention pass runs every hour.
+2. For each index, it lists the partition directories and parses the start time from each name (`2026-03-01` for daily partitions).
+3. A partition whose start time is older than `now - retention` is removed from the part registry; its files are deleted once no running query holds them open.
 
 This means:
-- Deletion is not exact to the second -- it depends on segment boundaries
-- A segment spanning the retention boundary is not deleted until compaction splits it
-- Compaction must be running for retention to take effect
+
+- Deletion happens at partition granularity. With daily partitions and `retention: 7d`, the partition of a day is deleted once the day started more than 7 days ago.
+- Retention does not depend on compaction.
+- With `partition_by: none`, all parts of an index live in one partition without a time, and retention never deletes them.
 
 ## Tiered Storage Lifecycle
 
-When S3 tiering is enabled, data moves through three tiers based on age:
+When S3 tiering is configured, segments move through tiers by age:
 
 ```
-Hot (local SSD)  -->  Warm (S3 Standard)  -->  Cold (S3 Glacier)
-  Recent data          Older data               Archive data
+Hot (local disk)  -->  Warm (object store)  -->  Cold (object store / archive policy)
+  Recent data           Older data                 Archive data
 ```
 
 ### Configuration
 
-LynxDB handles hot-to-warm transitions automatically. Warm-to-cold transitions use S3 Lifecycle rules:
+LynxDB moves segments from hot to warm on its own. Archive storage classes underneath the cold tier are set with S3 Lifecycle rules:
 
 ```yaml
 # LynxDB config -- hot to warm
@@ -72,7 +73,7 @@ storage:
 ```
 
 ```bash
-# AWS S3 Lifecycle -- warm to cold (Glacier after 90 days)
+# AWS S3 Lifecycle -- Glacier after 90 days, delete after 365 days
 aws s3api put-bucket-lifecycle-configuration \
   --bucket my-lynxdb-logs \
   --lifecycle-configuration '{
@@ -95,9 +96,11 @@ aws s3api put-bucket-lifecycle-configuration \
   }'
 ```
 
-### Example Lifecycle Policies
+Segments in Glacier storage classes must be restored before LynxDB can read them. Keep the S3 expiration at least as long as `retention`, or queries over the retention window lose data.
 
-**Startup (cost-sensitive):**
+### Example Policies
+
+**Cost-sensitive:**
 
 ```yaml
 retention: "30d"
@@ -106,7 +109,7 @@ storage:
   # S3 Lifecycle: delete after 30 days
 ```
 
-**Mid-size company (compliance):**
+**Compliance:**
 
 ```yaml
 retention: "365d"
@@ -115,7 +118,7 @@ storage:
   # S3 Lifecycle: Glacier after 90 days, delete after 365 days
 ```
 
-**Enterprise (long-term archive):**
+**Long-term archive:**
 
 ```yaml
 retention: "2555d"  # 7 years
@@ -124,59 +127,33 @@ storage:
   # S3 Lifecycle: IA after 30 days, Glacier after 90 days, Deep Archive after 365 days
 ```
 
-## Materialized View Retention
-
-Materialized views have their own retention policy, independent of the raw data retention:
-
-```bash
-# Create a view with 90-day retention
-lynxdb mv create mv_errors_5m \
-  'from main level=error | stats count(), avg(duration) by source, bin(_time, 5m) as bucket' \
-  --retention 90d
-
-# Create a cascading view with longer retention
-lynxdb mv create mv_errors_1h \
-  'from mv_errors_5m | stats sum(count) as count by source, bin(bucket, 1h)' \
-  --retention 365d
-```
-
-This pattern lets you keep detailed data for a short period and pre-aggregated summaries for much longer:
-
-| Data | Retention | Query Speed |
-|------|-----------|-------------|
-| Raw events | 7d | Normal |
-| 5-minute aggregates (MV) | 90d | ~400x faster |
-| 1-hour aggregates (cascading MV) | 365d | ~400x faster |
-
 ## Monitoring Retention
 
-Check current data age and storage usage:
+Check the oldest event and storage use:
 
 ```bash
-# View data age range
 lynxdb status
-# Oldest: 2026-02-01T10:30:00Z
+#   Oldest    2026-02-01T10:30:00Z
 
-# Check storage breakdown
 lynxdb status --format json | jq '{total_events, storage_bytes, oldest_event}'
 ```
 
 ## Changing Retention
 
-Retention is hot-reloadable. Changing it takes effect at the next compaction cycle:
+Retention is hot-reloadable. A new value applies from the next retention pass:
 
 ```bash
 # Increase retention
 lynxdb config set retention 90d
 lynxdb config reload
 
-# Decrease retention (data will be deleted at next compaction)
+# Decrease retention (expired partitions are deleted at the next pass)
 lynxdb config set retention 7d
 lynxdb config reload
 ```
 
 :::caution
-Decreasing retention causes immediate data deletion at the next compaction cycle. This cannot be undone. Ensure you have backups if needed.
+Decreasing retention deletes every partition outside the new window at the next pass. This cannot be undone. Take a backup first if you may need the data.
 :::
 
 ## Estimating Storage Needs
@@ -192,12 +169,13 @@ Rule of thumb for storage estimation:
 **Example**: 10 GB/day raw logs with 30-day retention = ~60-120 GB total disk usage.
 
 With S3 tiering:
-- Hot tier (7 days on SSD): ~14-28 GB
+
+- Hot tier (7 days on local disk): ~14-28 GB
 - Warm tier (remaining 23 days in S3): ~46-92 GB at S3 Standard pricing
 
 ## Next Steps
 
 - [S3 Tiering Configuration](/docs/configuration/s3-tiering) -- configure tiered storage
-- [Materialized Views](/docs/guides/materialized-views) -- pre-aggregate for long-term retention
+- [Storage Settings](/docs/configuration/storage) -- `partition_by` and compaction settings
 - [Backup and Restore](/docs/operations/backup-restore) -- protect against data loss
-- [Performance Tuning](/docs/operations/performance-tuning) -- optimize compaction
+- [Performance Tuning](/docs/operations/performance-tuning) -- tune compaction

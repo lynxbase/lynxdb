@@ -29,13 +29,7 @@ func FormatTTY(w io.Writer, s *QueryStats, verbose, quiet bool) {
 		formatResultCount(s.ResultRows),
 		formatDur(s.TotalDuration))
 
-	if s.AcceleratedBy != "" && s.MVSpeedup != "" {
-		// MV-accelerated: show MV row count and speedup in headline.
-		if s.ScannedRows > 0 {
-			headline += fmt.Sprintf("  %s rows from MV", formatHumanInt64(s.ScannedRows))
-		}
-		headline += fmt.Sprintf("  ⚡ %s speedup", s.MVSpeedup)
-	} else if s.ScannedRows > 0 {
+	if s.ScannedRows > 0 {
 		// Volume: "37K scanned  7.4 MB read"
 		headline += fmt.Sprintf("  %s scanned", formatHumanInt64(s.ScannedRows))
 		if s.ProcessedBytes > 0 {
@@ -50,27 +44,6 @@ func FormatTTY(w io.Writer, s *QueryStats, verbose, quiet bool) {
 		}
 	}
 	fmt.Fprintln(w, headline)
-
-	// MV acceleration (if applicable).
-	if s.AcceleratedBy != "" {
-		fmt.Fprintln(w)
-		fmt.Fprintf(w, "  %-15s %s", "accelerated", s.AcceleratedBy)
-		if s.MVStatus != "" {
-			fmt.Fprintf(w, " (%s)", s.MVStatus)
-		}
-		if s.MVSpeedup != "" && s.MVStatus == "" {
-			fmt.Fprintf(w, " (%s speedup)", s.MVSpeedup)
-		}
-		fmt.Fprintln(w)
-		if s.MVOriginalScan > 0 {
-			fmt.Fprintf(w, "    original scan: %s events  MV: %s rows",
-				formatHumanInt64(s.MVOriginalScan), formatHumanInt64(s.ScannedRows))
-			fmt.Fprintln(w)
-		}
-		if s.MVCoveragePercent > 0 && s.MVCoveragePercent < 100 {
-			fmt.Fprintf(w, "    coverage: %.0f%%\n", s.MVCoveragePercent)
-		}
-	}
 
 	// Segments (only when there are segments).
 	if s.TotalSegments > 0 {
@@ -271,12 +244,6 @@ func FormatJSON(w io.Writer, s *QueryStats) error {
 	if s.BufferedRowsScanned > 0 {
 		js.BufferedEvents = &s.BufferedRowsScanned
 	}
-	if s.AcceleratedBy != "" {
-		js.AcceleratedBy = &s.AcceleratedBy
-	}
-	if s.MVSpeedup != "" {
-		js.MVSpeedup = &s.MVSpeedup
-	}
 	if s.ProcessedBytes > 0 {
 		js.ProcessedBytes = &s.ProcessedBytes
 	}
@@ -329,16 +296,6 @@ func FormatJSON(w io.Writer, s *QueryStats) error {
 		v := float64(s.PipelineDuration.Microseconds()) / 1000
 		js.PipelineMS = &v
 	}
-	if s.MVStatus != "" {
-		js.MVStatus = &s.MVStatus
-	}
-	if s.MVOriginalScan > 0 {
-		js.MVOriginalScan = &s.MVOriginalScan
-	}
-	if s.MVCoveragePercent > 0 {
-		js.MVCoveragePercent = &s.MVCoveragePercent
-	}
-
 	enc := json.NewEncoder(w)
 	enc.SetEscapeHTML(false)
 
@@ -347,43 +304,38 @@ func FormatJSON(w io.Writer, s *QueryStats) error {
 
 // jsonStats is the machine-readable stats format written to stderr when piped.
 type jsonStats struct {
-	TotalMS           int64    `json:"total_ms"`
-	ParseMS           *float64 `json:"parse_ms,omitempty"`
-	OptimizeMS        *float64 `json:"optimize_ms,omitempty"`
-	ExecMS            *float64 `json:"exec_ms,omitempty"`
-	ScannedRows       int64    `json:"scanned_rows"`
-	MatchedRows       int64    `json:"matched_rows"`
-	ResultRows        int64    `json:"result_rows"`
-	ScannedSegments   int      `json:"scanned_segments"`
-	TotalSegments     int      `json:"total_segments"`
-	BloomSkipped      *int     `json:"bloom_skipped,omitempty"`
-	TimeSkipped       *int     `json:"time_skipped,omitempty"`
-	ScanType          string   `json:"scan_type,omitempty"`
-	Selectivity       *float64 `json:"selectivity,omitempty"`
-	SkipRatio         *float64 `json:"skip_ratio,omitempty"`
-	PeakMemoryBytes   *int64   `json:"peak_memory_bytes,omitempty"`
-	SpilledToDisk     *bool    `json:"spilled_to_disk,omitempty"`
-	SpillBytesJSON    *int64   `json:"spill_bytes,omitempty"`
-	SpillFilesJSON    *int     `json:"spill_files,omitempty"`
-	WarningsJSON      []string `json:"warnings,omitempty"`
-	BufferedEvents    *int64   `json:"buffered_events,omitempty"`
-	AcceleratedBy     *string  `json:"accelerated_by,omitempty"`
-	MVSpeedup         *string  `json:"mv_speedup,omitempty"`
-	MVStatus          *string  `json:"mv_status,omitempty"`
-	MVOriginalScan    *int64   `json:"mv_original_scan,omitempty"`
-	MVCoveragePercent *float64 `json:"mv_coverage_percent,omitempty"`
-	ProcessedBytes    *int64   `json:"processed_bytes,omitempty"`
-	BytesPerSec       *float64 `json:"bytes_per_sec,omitempty"`
-	ScanRatePerSec    *int64   `json:"scan_rate_per_sec,omitempty"`
-	SegmentsErrored   *int     `json:"segments_errored,omitempty"`
-	CacheHit          *bool    `json:"cache_hit,omitempty"`
-	DiskBytesRead     *int64   `json:"disk_bytes_read,omitempty"`
-	S3BytesRead       *int64   `json:"s3_bytes_read,omitempty"`
-	CacheBytesRead    *int64   `json:"cache_bytes_read,omitempty"`
-	CPUUserMS         *float64 `json:"cpu_user_ms,omitempty"`
-	CPUSysMS          *float64 `json:"cpu_sys_ms,omitempty"`
-	ScanMS            *float64 `json:"scan_ms,omitempty"`
-	PipelineMS        *float64 `json:"pipeline_ms,omitempty"`
+	TotalMS         int64    `json:"total_ms"`
+	ParseMS         *float64 `json:"parse_ms,omitempty"`
+	OptimizeMS      *float64 `json:"optimize_ms,omitempty"`
+	ExecMS          *float64 `json:"exec_ms,omitempty"`
+	ScannedRows     int64    `json:"scanned_rows"`
+	MatchedRows     int64    `json:"matched_rows"`
+	ResultRows      int64    `json:"result_rows"`
+	ScannedSegments int      `json:"scanned_segments"`
+	TotalSegments   int      `json:"total_segments"`
+	BloomSkipped    *int     `json:"bloom_skipped,omitempty"`
+	TimeSkipped     *int     `json:"time_skipped,omitempty"`
+	ScanType        string   `json:"scan_type,omitempty"`
+	Selectivity     *float64 `json:"selectivity,omitempty"`
+	SkipRatio       *float64 `json:"skip_ratio,omitempty"`
+	PeakMemoryBytes *int64   `json:"peak_memory_bytes,omitempty"`
+	SpilledToDisk   *bool    `json:"spilled_to_disk,omitempty"`
+	SpillBytesJSON  *int64   `json:"spill_bytes,omitempty"`
+	SpillFilesJSON  *int     `json:"spill_files,omitempty"`
+	WarningsJSON    []string `json:"warnings,omitempty"`
+	BufferedEvents  *int64   `json:"buffered_events,omitempty"`
+	ProcessedBytes  *int64   `json:"processed_bytes,omitempty"`
+	BytesPerSec     *float64 `json:"bytes_per_sec,omitempty"`
+	ScanRatePerSec  *int64   `json:"scan_rate_per_sec,omitempty"`
+	SegmentsErrored *int     `json:"segments_errored,omitempty"`
+	CacheHit        *bool    `json:"cache_hit,omitempty"`
+	DiskBytesRead   *int64   `json:"disk_bytes_read,omitempty"`
+	S3BytesRead     *int64   `json:"s3_bytes_read,omitempty"`
+	CacheBytesRead  *int64   `json:"cache_bytes_read,omitempty"`
+	CPUUserMS       *float64 `json:"cpu_user_ms,omitempty"`
+	CPUSysMS        *float64 `json:"cpu_sys_ms,omitempty"`
+	ScanMS          *float64 `json:"scan_ms,omitempty"`
+	PipelineMS      *float64 `json:"pipeline_ms,omitempty"`
 }
 
 func writeIOLine(w io.Writer, s *QueryStats) {

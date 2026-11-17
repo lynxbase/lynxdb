@@ -37,7 +37,7 @@ func (r *Registry) List() []string {
 }
 
 // Match returns source names matching the glob pattern.
-// Supports the RFC glob syntax shared with SPL search matching.
+// Patterns use the glob syntax of internal/glob.
 // Pattern "*" returns all sources.
 func (r *Registry) Match(pattern string) []string {
 	r.mu.RLock()

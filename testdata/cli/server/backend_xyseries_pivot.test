@@ -1,5 +1,5 @@
 # format: json
-from backend
-| stats count() by service, level
-| xyseries service level count
+source=backend
+| stats count() as c by service, level
+| xyseries format="$VAL$" service level in ("ERROR", "INFO", "WARN") c
 | sort service

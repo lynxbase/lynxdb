@@ -7,6 +7,9 @@ import Heading from '@theme/Heading';
 
 import styles from './index.module.css';
 
+const subtitle =
+  'Log analytics in a single binary. Zero dependencies. Queried with OpenSearch PPL.';
+
 function TerminalMockup() {
   return (
     <div className="terminal">
@@ -16,15 +19,19 @@ function TerminalMockup() {
         <span className="terminal-dot terminal-dot--green" />
       </div>
       <div className="terminal-body">
-        <div><span className="prompt">$</span> cat app.log | lynxdb query '| stats count by level'</div>
+        <div>
+          <span className="prompt">$</span> cat app.log | lynxdb query 'source=main | stats count() as n by level | sort - n'
+        </div>
         <br />
-        <div className="output">  LEVEL    COUNT</div>
-        <div className="output">  ─────────────────</div>
-        <div className="output">  INFO     42,847</div>
-        <div className="output">  ERROR     3,291</div>
-        <div className="output">  WARN      1,104</div>
+        <div className="output">┌───────┬────────┐</div>
+        <div className="output">│ level │ n      │</div>
+        <div className="output">├───────┼────────┤</div>
+        <div className="output">│ INFO  │ 42847  │</div>
+        <div className="output">│ ERROR │ 3291   │</div>
+        <div className="output">│ WARN  │ 1104   │</div>
+        <div className="output">└───────┴────────┘</div>
         <br />
-        <div className="success">  ✔ 12ms — scanned 47,242 events</div>
+        <div className="success">  Rows 3 · Took 12ms · Scanned 47,242</div>
       </div>
     </div>
   );
@@ -43,7 +50,7 @@ function HomepageHeader() {
         <Heading as="h1" className="hero__title">
           {siteConfig.title}
         </Heading>
-        <p className="hero__subtitle">{siteConfig.tagline}</p>
+        <p className="hero__subtitle">{subtitle}</p>
         <div className={styles.buttons}>
           <Link
             className="button button--secondary button--lg"
@@ -65,38 +72,39 @@ function HomepageHeader() {
 
 type FeatureItem = {
   title: string;
-  icon: string;
   description: ReactNode;
 };
 
 const pillars: FeatureItem[] = [
   {
-    title: 'One Binary, Every Scale',
-    icon: '📦',
+    title: 'One Binary',
     description: (
       <>
-        From a developer's laptop to a 1000-node cluster. Same binary, same query
-        language, same API. No JVM, no Elasticsearch, no Kafka, no Zookeeper.
+        Query files from the command line, run a server with on-disk storage
+        and a REST API, or join servers into a cluster. One statically linked
+        binary, no JVM and no external services.
       </>
     ),
   },
   {
-    title: 'SPL2 Query Language',
-    icon: '🔍',
+    title: 'OpenSearch PPL',
     description: (
       <>
-        Splunk-inspired pipeline query language with 25+ commands, 15+ aggregation
-        functions, CTEs, joins, and materialized views. One language everywhere.
+        Query with OpenSearch Piped Processing Language: search terms,{' '}
+        <code>where</code>, <code>stats</code>, <code>timechart</code>,{' '}
+        <code>parse</code>, <code>rex</code>, <code>grok</code>,{' '}
+        <code>spath</code>, joins and subsearches. Each query compiles to one
+        plan that runs the same way on a file and on a server.
       </>
     ),
   },
   {
-    title: 'Pipe Mode to Cluster',
-    icon: '⚡',
+    title: 'Pipe Mode',
     description: (
       <>
-        Query local files and stdin without a server. Start a single-node server.
-        Scale to a distributed cluster. The binary adapts to your needs.
+        Pipe <code>kubectl logs</code>, <code>docker logs</code> or any file
+        into <code>lynxdb query</code>. No daemon, no config, no data
+        directory: load, query, print, exit.
       </>
     ),
   },
@@ -104,32 +112,31 @@ const pillars: FeatureItem[] = [
 
 const differentiators: FeatureItem[] = [
   {
-    title: 'Zero Dependencies',
-    icon: '🎯',
-    description: (
-      <>
-        Static binary, zero runtime dependencies. Install with a single <code>curl</code>.
-        No JVM, no package managers, no shared libraries.
-      </>
-    ),
-  },
-  {
     title: 'Schema-on-Read',
-    icon: '📝',
     description: (
       <>
-        No upfront schema definition. Ingest JSON or text with the endpoint
-        that matches your transport, and fields are discovered automatically.
+        No schema to declare. JSON keys and <code>key=value</code> pairs become
+        typed fields on ingest; <code>parse</code>, <code>grok</code> and{' '}
+        <code>spath</code> extract the rest at query time.
       </>
     ),
   },
   {
-    title: '~50 MB Memory',
-    icon: '💾',
+    title: 'Indexed Columnar Storage',
     description: (
       <>
-        Idle memory footprint of ~50 MB vs ~12 GB for Splunk. Runs on a $5/month
-        VPS or a Raspberry Pi.
+        Events are stored in compressed columnar segments with a term index
+        and bloom filters, so searches skip the segments that cannot match.
+      </>
+    ),
+  },
+  {
+    title: 'Drop-in Ingest',
+    description: (
+      <>
+        Point Filebeat, Fluent Bit, Vector, the OpenTelemetry Collector,
+        Splunk HEC senders or syslog at LynxDB without changing their
+        protocols.
       </>
     ),
   },
@@ -138,10 +145,9 @@ const differentiators: FeatureItem[] = [
 function FeatureCards({features}: {features: FeatureItem[]}) {
   return (
     <div className="row">
-      {features.map(({title, icon, description}, idx) => (
+      {features.map(({title, description}, idx) => (
         <div key={idx} className={clsx('col col--4')} style={{marginBottom: '1.5rem'}}>
           <div className="feature-card">
-            <div style={{fontSize: '2rem', marginBottom: '0.5rem'}}>{icon}</div>
             <Heading as="h3">{title}</Heading>
             <p>{description}</p>
           </div>
@@ -183,14 +189,6 @@ function ComparisonTable() {
             <td>Keeper (replication)</td>
           </tr>
           <tr>
-            <td><strong>Query language</strong></td>
-            <td><strong>SPL2</strong></td>
-            <td>SPL</td>
-            <td>Lucene DSL / ES|QL</td>
-            <td>LogQL</td>
-            <td>SQL</td>
-          </tr>
-          <tr>
             <td><strong>Pipe mode</strong></td>
             <td><strong>Yes</strong></td>
             <td>No</td>
@@ -205,14 +203,6 @@ function ComparisonTable() {
             <td>On-write</td>
             <td>Labels + line</td>
             <td>On-write</td>
-          </tr>
-          <tr>
-            <td><strong>Memory (idle)</strong></td>
-            <td><strong>~50 MB</strong></td>
-            <td>~12 GB</td>
-            <td>~1 GB+</td>
-            <td>~256 MB</td>
-            <td>~1 GB</td>
           </tr>
           <tr>
             <td><strong>License</strong></td>
@@ -250,7 +240,7 @@ export default function Home(): ReactNode {
   return (
     <Layout
       title="Log Analytics in a Single Binary"
-      description="LynxDB is an open-source log analytics database. Single binary, zero dependencies, SPL2 query language. From pipe mode to 1000-node clusters.">
+      description="LynxDB is an open-source log analytics database in a single binary with zero dependencies, queried with OpenSearch PPL on local files or a server.">
       <HomepageHeader />
       <main>
         <section style={{padding: '3rem 0'}}>

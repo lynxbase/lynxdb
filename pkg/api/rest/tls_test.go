@@ -321,7 +321,7 @@ func TestTLS_IngestAndQuery(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Query over TLS.
-	queryBody := `{"q": "from main | where level == \"error\""}`
+	queryBody := `{"q": "source=main | where level = \"error\""}`
 	resp, err = httpClient.Post(
 		fmt.Sprintf("https://%s/api/v1/query", srv.Addr()),
 		"application/json",

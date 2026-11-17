@@ -1,7 +1,7 @@
 # file: backend_server.log
 # format: json
-from main
-| extend path_prefix = substr(path, 0, 7)
+source=main
+| eval path_prefix = substring(path, 1, 7)
 | dedup path_prefix
-| keep path_prefix
+| fields path_prefix
 | sort path_prefix

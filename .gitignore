@@ -44,17 +44,6 @@ lynxdb
 # Profiling artifacts
 /artifacts/
 
-# Web UI
-web/node_modules/
-web/dist/
-internal/webui/dist/*
-!internal/webui/dist/.gitkeep
-/web/.vite/
-/web/coverage/
-/web/playwright-report/
-/web/test-results/
-/.e2e-lynxdb
-/web/screens/
 
 # mise local overrides
 mise.local.toml

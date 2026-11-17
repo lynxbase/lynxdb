@@ -89,14 +89,14 @@ func openstackEngine(t *testing.T) *storage.Engine {
 
 // Query helper
 
-// mustQuery executes an SPL2 query against the engine and fatals on error.
-func mustQuery(t *testing.T, eng *storage.Engine, spl2 string) []map[string]interface{} {
+// mustQuery executes a PPL query against the engine and fatals on error.
+func mustQuery(t *testing.T, eng *storage.Engine, q string) []map[string]interface{} {
 	t.Helper()
 
 	ctx := context.Background()
-	res, _, err := eng.Query(ctx, spl2, storage.QueryOpts{})
+	res, _, err := eng.Query(ctx, q, storage.QueryOpts{})
 	if err != nil {
-		t.Fatalf("query %q: %v", spl2, err)
+		t.Fatalf("query %q: %v", q, err)
 	}
 
 	return res.Rows

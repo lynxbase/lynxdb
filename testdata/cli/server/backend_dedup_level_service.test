@@ -1,4 +1,4 @@
 # format: json
-from idx_backend
+source=backend
 | dedup level, service
 | stats count() as unique_pairs

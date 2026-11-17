@@ -47,7 +47,7 @@ func assertServerCount(t *testing.T, srv *Server, want int) {
 	t.Helper()
 
 	r := runLynxDB(t, "--server", srv.BaseURL, "query", "--format", "json",
-		`FROM main | stats count() as count`)
+		`source=main | stats count() as count`)
 	if r.ExitCode != 0 {
 		t.Fatalf("query exit %d, stderr: %s", r.ExitCode, r.Stderr)
 	}

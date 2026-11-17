@@ -98,7 +98,7 @@ func TestTail_SSE_Catchup(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/api/v1/tail?q=from+main&count=3&from=-1h", srv.Addr()), http.NoBody)
+	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/api/v1/tail?q=source%%3Dmain&count=3&from=-1h", srv.Addr()), http.NoBody)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +143,7 @@ func TestTail_SSE_Live(t *testing.T) {
 	defer cancel()
 
 	// Connect to tail first (no historical data).
-	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/api/v1/tail?q=from+%%2A&count=0&from=-1s", srv.Addr()), http.NoBody)
+	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/api/v1/tail?q=source%%3D%%2A&count=0&from=-1s", srv.Addr()), http.NoBody)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -200,20 +200,23 @@ done:
 	}
 }
 
-func TestTail_SSE_SPL2Filter(t *testing.T) {
+func TestTail_SSE_SearchFilter(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// Connect with a filter query.
-	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/api/v1/tail?q=%s&count=0&from=-1s", srv.Addr(), url.QueryEscape(`from * | where has(_raw, "ERROR")`)), http.NoBody)
+	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/api/v1/tail?q=%s&count=0&from=-1s", srv.Addr(), url.QueryEscape(`search source=* ERROR`)), http.NoBody)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
 
 	ch := readSSEEvents(ctx, resp)
 
@@ -228,6 +231,7 @@ func TestTail_SSE_SPL2Filter(t *testing.T) {
 
 	// Read events — should only get the ERROR one.
 	evts := collectSSE(t, ch, 2, 3*time.Second)
+	matched := 0
 	for _, ev := range evts {
 		if ev.Type == "result" {
 			var data map[string]interface{}
@@ -236,7 +240,11 @@ func TestTail_SSE_SPL2Filter(t *testing.T) {
 			if !strings.Contains(raw, "ERROR") {
 				t.Errorf("expected only ERROR events, got: %s", raw)
 			}
+			matched++
 		}
+	}
+	if matched != 1 {
+		t.Errorf("matched events: got %d, want 1", matched)
 	}
 }
 
@@ -248,13 +256,17 @@ func TestTail_SSE_EvalFields(t *testing.T) {
 	defer cancel()
 
 	// Query with eval + fields projection.
-	q := "from * | extend msg=upper(_raw) | keep _time, msg"
+	q := "source=* | eval msg = upper(_raw) | fields _time, msg"
 	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/api/v1/tail?q=%s&count=0&from=-1s", srv.Addr(), url.QueryEscape(q)), http.NoBody)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		t.Fatalf("status: %d", resp.StatusCode)
+	}
 
 	ch := readSSEEvents(ctx, resp)
 	collectSSE(t, ch, 1, 2*time.Second) // catchup_done
@@ -264,20 +276,23 @@ func TestTail_SSE_EvalFields(t *testing.T) {
 	})
 
 	evts := collectSSE(t, ch, 1, 3*time.Second)
+	results := 0
 	for _, ev := range evts {
 		if ev.Type == "result" {
+			results++
 			var data map[string]interface{}
 			json.Unmarshal(ev.Data, &data)
-			if msg, ok := data["msg"].(string); ok {
-				if msg != "HELLO WORLD" {
-					t.Errorf("expected HELLO WORLD, got %s", msg)
-				}
+			if msg, _ := data["msg"].(string); msg != "HELLO WORLD" {
+				t.Errorf("expected HELLO WORLD, got %v", data["msg"])
 			}
 			// _raw should not be present due to fields projection.
 			if _, ok := data["_raw"]; ok {
 				t.Error("_raw should not be present after fields projection")
 			}
 		}
+	}
+	if results != 1 {
+		t.Errorf("result events: got %d, want 1", results)
 	}
 }
 
@@ -288,7 +303,7 @@ func TestTail_SSE_UnsupportedCommand(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 
-	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/api/v1/tail?q=%s", srv.Addr(), url.QueryEscape("from * | stats count() as count")), http.NoBody)
+	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/api/v1/tail?q=%s", srv.Addr(), url.QueryEscape("source=* | stats count() as count")), http.NoBody)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -301,8 +316,8 @@ func TestTail_SSE_UnsupportedCommand(t *testing.T) {
 
 	var body map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&body)
-	if _, ok := body["unsupported"]; !ok {
-		t.Error("expected unsupported field in error response")
+	if msg, _ := body["error"].(string); msg == "" {
+		t.Errorf("expected error message in response, got %v", body)
 	}
 }
 
@@ -333,7 +348,7 @@ func TestTail_SSE_EmptyCatchup(t *testing.T) {
 	defer cancel()
 
 	// No events ingested — catchup should be empty.
-	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/api/v1/tail?q=from+%%2A&count=10&from=-1s", srv.Addr()), http.NoBody)
+	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/api/v1/tail?q=source%%3D%%2A&count=10&from=-1s", srv.Addr()), http.NoBody)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -411,7 +426,7 @@ func TestTail_SSE_NoGapBetweenCatchupAndLive(t *testing.T) {
 	// Connect to the tail endpoint with a catchup window that covers
 	// the historical events. count=3 means only the last 3 historicals appear.
 	req, _ := http.NewRequestWithContext(ctx, "GET",
-		fmt.Sprintf("http://%s/api/v1/tail?q=from+%%2A&count=3&from=-1h", srv.Addr()),
+		fmt.Sprintf("http://%s/api/v1/tail?q=source%%3D%%2A&count=3&from=-1h", srv.Addr()),
 		http.NoBody)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -522,7 +537,7 @@ func TestTail_SSE_NoDuplicatesAfterCatchup(t *testing.T) {
 	defer cancel()
 
 	req, _ := http.NewRequestWithContext(ctx, "GET",
-		fmt.Sprintf("http://%s/api/v1/tail?q=from+%%2A&count=10&from=-1h", srv.Addr()),
+		fmt.Sprintf("http://%s/api/v1/tail?q=source%%3D%%2A&count=10&from=-1h", srv.Addr()),
 		http.NoBody)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -593,7 +608,7 @@ func TestTail_SSE_SessionLimit(t *testing.T) {
 	reqCtx, reqCancel := context.WithTimeout(ctx, 5*time.Second)
 	defer reqCancel()
 	req1, _ := http.NewRequestWithContext(reqCtx, "GET",
-		fmt.Sprintf("http://%s/api/v1/tail?q=from+%%2A&count=0&from=-1s", srv.Addr()),
+		fmt.Sprintf("http://%s/api/v1/tail?q=source%%3D%%2A&count=0&from=-1s", srv.Addr()),
 		http.NoBody)
 	resp1, err := http.DefaultClient.Do(req1)
 	if err != nil {
@@ -613,7 +628,7 @@ func TestTail_SSE_SessionLimit(t *testing.T) {
 	req2Ctx, req2Cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer req2Cancel()
 	req2, _ := http.NewRequestWithContext(req2Ctx, "GET",
-		fmt.Sprintf("http://%s/api/v1/tail?q=from+%%2A&count=0&from=-1s", srv.Addr()),
+		fmt.Sprintf("http://%s/api/v1/tail?q=source%%3D%%2A&count=0&from=-1s", srv.Addr()),
 		http.NoBody)
 	resp2, err := http.DefaultClient.Do(req2)
 	if err != nil {
@@ -655,7 +670,7 @@ func TestTail_SSE_MaxDuration(t *testing.T) {
 	reqCtx, reqCancel := context.WithTimeout(ctx, 10*time.Second)
 	defer reqCancel()
 	req, _ := http.NewRequestWithContext(reqCtx, "GET",
-		fmt.Sprintf("http://%s/api/v1/tail?q=from+%%2A&count=0&from=-1s", srv.Addr()),
+		fmt.Sprintf("http://%s/api/v1/tail?q=source%%3D%%2A&count=0&from=-1s", srv.Addr()),
 		http.NoBody)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -695,7 +710,7 @@ func TestTail_SSE_ClientDisconnect(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/api/v1/tail?q=from+%%2A&count=0&from=-1s", srv.Addr()), http.NoBody)
+	req, _ := http.NewRequestWithContext(ctx, "GET", fmt.Sprintf("http://%s/api/v1/tail?q=source%%3D%%2A&count=0&from=-1s", srv.Addr()), http.NoBody)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
+source=main
 | dedup 2 level
-| keep level, service
+| fields level, service
 | sort level, service

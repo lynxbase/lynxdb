@@ -6,7 +6,7 @@ description: Deep dive into the LynxDB storage engine -- AsyncBatcher buffering,
 
 # Storage Engine
 
-The LynxDB storage engine manages the full lifecycle of log data: ingest buffering, immutable `.lsg` part writes, background compaction, and optional remote tiering. The current write path is a direct-to-part model built around `AsyncBatcher` and atomic file renames rather than a WAL replay pipeline.
+The LynxDB storage engine manages the lifecycle of log data: ingest buffering, immutable `.lsg` part writes, background compaction, retention, and optional remote tiering. Writes go directly to parts through the `AsyncBatcher` and atomic file renames; there is no write-ahead log.
 
 ## Architecture
 
@@ -122,9 +122,13 @@ What remains operator-controlled:
 - the object-store backend itself
 - optional bucket lifecycle rules if you want S3 Glacier or Deep Archive underneath the cold tier
 
+## Partitions and Retention
+
+Parts are stored in one directory per index and time partition (`storage.partition_by`: `daily` by default, or `hourly`, `weekly`, `monthly`, `none`). Compaction merges parts within a partition. An hourly retention pass deletes whole partitions whose start time is older than the `retention` setting; the files are removed once no running query holds them open. See [Retention](/docs/operations/retention).
+
 ## Configuration Reference
 
-Common settings for the current storage path:
+Common storage settings:
 
 ```yaml
 storage:

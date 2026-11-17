@@ -259,32 +259,6 @@ func TestValidateServer(t *testing.T) {
 	}
 }
 
-func TestValidateViews(t *testing.T) {
-	tests := []struct {
-		name    string
-		modify  func(*ViewsConfig)
-		wantErr string
-	}{
-		{"negative max_backfill_memory", func(v *ViewsConfig) { v.MaxBackfillMemoryBytes = -1 }, "views.max_backfill_memory_bytes"},
-		{"negative insert_max_memory", func(v *ViewsConfig) { v.InsertMaxMemoryBytes = -1 }, "views.insert_max_memory_bytes"},
-		{"negative backfill_backpressure_wait", func(v *ViewsConfig) { v.BackfillBackpressureWait = Duration(-time.Second) }, "views.backfill_backpressure_wait"},
-		{"negative backfill_max_retries", func(v *ViewsConfig) { v.BackfillMaxRetries = -1 }, "views.backfill_max_retries"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
-			tt.modify(&cfg.Views)
-			err := cfg.Validate()
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
-			}
-		})
-	}
-}
-
 func TestValidateTLS(t *testing.T) {
 	tests := []struct {
 		name    string

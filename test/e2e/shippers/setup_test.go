@@ -56,7 +56,6 @@ func StartLynxDB(t *testing.T) *TestRig {
 		Query:         cfg.Query,
 		HTTP:          cfg.HTTP,
 		Server:        cfg.Server,
-		Views:         cfg.Views,
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

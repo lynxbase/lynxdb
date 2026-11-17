@@ -369,7 +369,3 @@ func TestMultiSource_SourceIndexSet(t *testing.T) {
 		t.Error("expected cached set on second call")
 	}
 }
-
-// TestMultiSource_IsMultiSource was deleted in RFC-002 P10: IsMultiSource()
-// was a method on model.QueryHints tied to spl2 SourceScope* constants.
-// Multi-source detection is now handled by the logical plan's Scan node.

@@ -1,69 +1,95 @@
 # Benchmarks
 
-Benchmark numbers are checked in as regression baselines. Refresh them when a
-change intentionally moves performance.
+LynxDB has three kinds of benchmarks: Go micro benchmarks of the hot paths,
+and two dataset suites, JSONBench and a generated logs suite, that time whole
+queries over the columnar store (`pkg/colstore`). Results are not checked in;
+record the commit, the machine, the data size and the store layout with every
+number you publish.
 
-The `p50 ns/op` / `allocs/op` columns are reference numbers measured on an
-Apple M4 Pro. CI runs on GitHub-hosted runners that are ~2-3x slower and far
-noisier, so the CI gate does **not** compare against those p50 numbers. Instead
-it enforces the architecture-independent `budget` column — generous absolute
-ceilings sized to catch catastrophic regressions (algorithmic blowups,
-pathological backtracking) without flaking on shared CI hardware.
-
-## rsigma compatibility surface
-
-Measured on Apple M4 Pro with:
+## Micro Benchmarks
 
 ```bash
-go test -run '^$' -bench='Benchmark(ParseGoldenCorpus|PlanGoldenCorpus|ExecuteRegexShape)$' -benchmem ./pkg/sigmaqueries
+make bench-micro   # pipeline, VM and ingest; writes artifacts/bench-micro.txt
+go test -run '^$' -bench . -benchmem ./pkg/vm/...
+go test -run '^$' -bench . -benchmem ./pkg/storage/segment/...
 ```
 
-| bench name | p50 ns/op | allocs/op | budget |
-|---|---:|---:|---|
-| BenchmarkParseGoldenCorpus/and_or_not.spl2 | 1811 | 39 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/and_or_not_minimal.spl2 | 1565 | 36 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/brute_force.spl2 | 1375 | 31 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/brute_force_minimal.spl2 | 1245 | 29 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/cidr.spl2 | 1019 | 26 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/cidr_minimal.spl2 | 893 | 24 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/exists_null_bool.spl2 | 1812 | 34 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/exists_null_bool_minimal.spl2 | 1580 | 31 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/keywords.spl2 | 1182 | 29 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/keywords_minimal.spl2 | 844 | 26 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/numeric_compare.spl2 | 1268 | 23 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/numeric_compare_minimal.spl2 | 1158 | 21 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/regex.spl2 | 984 | 24 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/regex_minimal.spl2 | 693 | 21 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/simple_eq.spl2 | 823 | 20 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/simple_eq_index.spl2 | 850 | 20 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/simple_eq_minimal.spl2 | 664 | 18 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/wildcards.spl2 | 2581 | 44 | < 20000 ns/op |
-| BenchmarkParseGoldenCorpus/wildcards_minimal.spl2 | 2413 | 42 | < 20000 ns/op |
-| BenchmarkPlanGoldenCorpus/and_or_not.spl2 | 237 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/and_or_not_minimal.spl2 | 229 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/brute_force.spl2 | 247 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/brute_force_minimal.spl2 | 234 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/cidr.spl2 | 1541 | 34 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/cidr_minimal.spl2 | 1532 | 34 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/exists_null_bool.spl2 | 237 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/exists_null_bool_minimal.spl2 | 225 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/keywords.spl2 | 212 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/keywords_minimal.spl2 | 208 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/numeric_compare.spl2 | 221 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/numeric_compare_minimal.spl2 | 227 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/regex.spl2 | 1312 | 28 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/regex_minimal.spl2 | 1308 | 28 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/simple_eq.spl2 | 214 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/simple_eq_index.spl2 | 215 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/simple_eq_minimal.spl2 | 212 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/wildcards.spl2 | 219 | 12 | < 50000 ns/op |
-| BenchmarkPlanGoldenCorpus/wildcards_minimal.spl2 | 215 | 12 | < 50000 ns/op |
-| BenchmarkExecuteRegexShape | 152633792 | 1154090 | <= 600000000 ns/op |
+Compare runs with `benchstat`, and use `-count` of 5 or more.
 
-Summary budgets:
+## JSONBench
 
-| group | p50 ns/op | budget |
-|---|---:|---|
-| parse golden corpus | 1182 | < 20000 |
-| plan golden corpus | 227 | < 50000 |
-| execute regex shape | 152633792 | <= 600000000 |
+The [JSONBench](https://github.com/ClickHouse/JSONBench) dataset is a stream
+of Bluesky events as NDJSON. The harnesses are environment-gated tests: they
+skip unless the variables are set.
+
+```bash
+# Queries over one file, loaded in arrival order and by the sort key
+LYNXDB_BENCH_NDJSON=/data/file_0001.json go test ./pkg/colstore/exec -run '^TestJSONBenchPlans$' -v
+
+# Ingest, disk layouts, merges and small durable writes
+LYNXDB_BENCH_NDJSON=/data/file_0001.json go test ./pkg/colstore -run '^TestJSONBenchIngest$' -v
+LYNXDB_BENCH_NDJSON=/data/file_0001.json go test ./pkg/colstore -run '^TestJSONBenchDisk$' -v
+LYNXDB_BENCH_NDJSON=/data/file_0001.json LYNXDB_BENCH_SMALL_WRITES=1 go test ./pkg/colstore -run '^TestJSONBenchSmallWrites$' -v
+
+# An HTTP server over a stored table, for cold and concurrent runs
+LYNXDB_BENCH_DIR=/data/bluesky LYNXDB_BENCH_LISTEN=127.0.0.1:9000 go test ./pkg/colstore/exec -run '^TestJSONBenchServer$' -v -timeout 0
+curl -s 'http://127.0.0.1:9000/query?q=Q1'
+curl -s --get 'http://127.0.0.1:9000/query' --data-urlencode 'ppl=source=bluesky | stats count()'
+```
+
+Useful variables: `LYNXDB_BENCH_RUNS` (timed runs, best reported),
+`LYNXDB_BENCH_QUERY` (keep queries whose name contains it),
+`LYNXDB_BENCH_PROFILE` (a directory for CPU profiles), and
+`LYNXDB_BENCH_T10_US` / `LYNXDB_BENCH_T60_US` (the time windows as
+`lo,hi` in microseconds). `TestJSONBenchStoreLayouts` and
+`TestJSONBenchPlansAgree` check that every layout and plan returns the same
+answer.
+
+The queries, as PPL (`benchTexts` in `pkg/colstore/exec/jsonbench_test.go`):
+
+| Name | Query |
+|---|---|
+| Q1 | `source=bluesky \| stats count() as count by commit.collection \| fields commit.collection, count \| sort - count, commit.collection` |
+| Q2 | `source=bluesky \| where kind = 'commit' and commit.operation = 'create' \| stats count() as count, distinct_count(did) as users by commit.collection \| fields commit.collection, count, users \| sort - count, commit.collection` |
+| Q3 | `source=bluesky \| where kind = 'commit' and commit.operation = 'create' and commit.collection in ('app.bsky.feed.like', 'app.bsky.feed.post', 'app.bsky.feed.repost') \| eval hour = hour(_time) \| stats count() as count by commit.collection, hour \| fields commit.collection, hour, count \| sort hour, commit.collection` |
+| Q4 | `source=bluesky \| where kind = 'commit' and commit.operation = 'create' and commit.collection = 'app.bsky.feed.post' \| stats min(_time) as first by did \| fields did, first \| sort first, did \| head 3` |
+| S2 | `source=bluesky \| where match(commit.record.text, 'love') \| stats count()` |
+| S3 | `source=bluesky \| where match_phrase(commit.record.text, 'good morning') \| stats count()` |
+| S5 | `source=bluesky \| where like(commit.record.text, '%ware%') \| stats count()` |
+| S6 | `source=bluesky \| where did = 'did:plc:yj3sjq3blzpynh27cumnp5ks' \| stats count()` |
+| S7 | `source=bluesky \| where commit.cid = 'bafyreicsj6qpl6dreic6ekdjxvdjltncngl52x3jddf6dxhg2gwo35iqhi' \| stats count()` |
+| R1 | `source=bluesky \| where regexp_match(commit.record.text, '[Gg]ood (morning\|night)') \| stats count()` |
+| A1 | `source=bluesky sc7btuzqdaepksx43mr74pma \| stats count()` |
+| A3 | `source=bluesky love \| stats count()` |
+| T1 | `source=bluesky \| where _time >= '<lo>' and _time <= '<hi>' \| stats count()` over a 10-minute window |
+| K1 | `source=bluesky \| stats count() as count by did \| fields did, count \| sort - count, did \| head 10` |
+| K2 | `source=bluesky \| stats count() as count by did \| eventstats sum(count) as total \| eval percent = round(count * 100.0 / total, 2) \| fields did, count, percent \| sort - count, did \| head 10` |
+| T4 | `source=bluesky \| where did = 'did:plc:yj3sjq3blzpynh27cumnp5ks' \| eval event = commit.collection \| fields _time, event \| sort - _time, event \| head 20` |
+
+Plans that PPL cannot state with the same semantics (case-sensitive word
+searches, for example) run as executor plans only and have no text.
+
+## Logs Suite
+
+`pkg/colstore/exec/logsbench_*_test.go` generates a log stream (JSON events
+with nested HTTP, error and user fields, mixed-type fields, and plain text
+lines) and times grouping, search, regex, time-window and missing-field
+queries over it:
+
+```bash
+LYNXDB_LOGSBENCH=1 go test ./pkg/colstore/exec -run '^TestLogsBench$' -v
+```
+
+`LYNXDB_LOGSBENCH_QUERY`, `LYNXDB_LOGSBENCH_LAYOUT`, `LYNXDB_LOGSBENCH_RUNS`
+and `LYNXDB_LOGSBENCH_PROFILE` work like their JSONBench counterparts.
+`TestLogsBenchReference` checks every answer against a reference evaluator.
+Example queries (`logQueries` in `logsbench_queries_test.go`):
+
+| Name | Query |
+|---|---|
+| G1 | `source=logs \| stats count() as n by level \| sort - n, level` |
+| G5 | `source=logs \| stats p50(http.latency_ms) as p50, p95(http.latency_ms) as p95, p99(http.latency_ms) as p99 by service \| sort service` |
+| G12 | `source=logs \| stats count(http.status) as n, count(eval(http.status >= 500)) as failed by service \| sort - failed, service` |
+| S2 | `source=logs deadlock \| stats count() as n` |
+| S3 | `source=logs \| where regexp_match(message, 'timeout after \d+ms waiting') \| stats count() as n` |
+| E2 | `source=logs \| where isnull(user_id) \| stats count() as n` |

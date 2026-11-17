@@ -1,5 +1,5 @@
 # file: backend_server.log
 # format: json
-from main
+source=main
 | stats earliest(level) as first_level, latest(level) as last_level by service
 | sort service

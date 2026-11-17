@@ -24,9 +24,8 @@ const (
 	FieldTypeFloat
 	FieldTypeBool
 	FieldTypeTimestamp
-	// The constants below were added by RFC-002; the tag value is persisted
-	// in spill and segment encodings, so existing constants must never be
-	// renumbered and new ones are append-only.
+	// The tag value is persisted in spill and segment encodings: constants
+	// are never renumbered and new ones are appended.
 	FieldTypeDuration
 	FieldTypeArray
 	FieldTypeObject
@@ -62,7 +61,7 @@ func (ft FieldType) String() string {
 // num holds ints, bools (0/1), timestamps (UnixNano), durations (nanoseconds),
 // and float bits (math.Float64bits) - one shared 8-byte slot keyed by typ.
 // Arrays and objects live behind the single ref pointer. The struct is 40
-// bytes, the same size it had before RFC-002 added duration/array/object.
+// bytes.
 type Value struct {
 	typ FieldType
 	str string

@@ -1,3 +1,0 @@
-query: | where hots == "web-01"
-error S001 [8:12] unknown field 'hots'
-  suggestion: did you mean 'host'?

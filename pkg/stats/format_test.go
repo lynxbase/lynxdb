@@ -152,27 +152,6 @@ func TestFormatTTY_Optimizations(t *testing.T) {
 	}
 }
 
-func TestFormatTTY_MVAcceleration(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-	s := &QueryStats{
-		ResultRows:    5,
-		TotalDuration: 3 * time.Millisecond,
-		AcceleratedBy: "mv_errors_5m",
-		MVSpeedup:     "~400x",
-	}
-	FormatTTY(&buf, s, false, false)
-	out := buf.String()
-
-	if !strings.Contains(out, "mv_errors_5m") {
-		t.Errorf("should show MV name: %q", out)
-	}
-	if !strings.Contains(out, "~400x") {
-		t.Errorf("should show speedup: %q", out)
-	}
-}
-
 func TestFormatTTY_Verbose_TimingBreakdown(t *testing.T) {
 	t.Parallel()
 
@@ -526,57 +505,6 @@ func TestFormatJSON_OmitsProcessedBytesWhenZero(t *testing.T) {
 	}
 }
 
-func TestFormatTTY_MVAcceleration_WithDetails(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-	s := &QueryStats{
-		ResultRows:        5,
-		TotalDuration:     3 * time.Millisecond,
-		ScannedRows:       142_000,
-		AcceleratedBy:     "mv_errors_5m",
-		MVSpeedup:         "~400x",
-		MVStatus:          "active",
-		MVOriginalScan:    12_400_000,
-		MVCoveragePercent: 100,
-	}
-	FormatTTY(&buf, s, false, false)
-	out := buf.String()
-
-	if !strings.Contains(out, "mv_errors_5m") {
-		t.Errorf("should show MV name: %q", out)
-	}
-	if !strings.Contains(out, "active") {
-		t.Errorf("should show MV status: %q", out)
-	}
-	if !strings.Contains(out, "12.4M events") {
-		t.Errorf("should show original scan estimate: %q", out)
-	}
-	if !strings.Contains(out, "~400x speedup") {
-		t.Errorf("should show speedup in headline or detail: %q", out)
-	}
-}
-
-func TestFormatTTY_MVAcceleration_PartialCoverage(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-	s := &QueryStats{
-		ResultRows:        5,
-		TotalDuration:     10 * time.Millisecond,
-		ScannedRows:       1000,
-		AcceleratedBy:     "mv_hourly",
-		MVStatus:          "backfilling",
-		MVCoveragePercent: 73,
-	}
-	FormatTTY(&buf, s, false, false)
-	out := buf.String()
-
-	if !strings.Contains(out, "73%") {
-		t.Errorf("should show coverage percent: %q", out)
-	}
-}
-
 func TestFormatTTY_IOLine(t *testing.T) {
 	t.Parallel()
 
@@ -670,15 +598,12 @@ func TestFormatJSON_NewFields(t *testing.T) {
 
 	var buf bytes.Buffer
 	s := &QueryStats{
-		ResultRows:     5,
-		TotalDuration:  10 * time.Millisecond,
-		ScannedRows:    1000,
-		AcceleratedBy:  "mv_test",
-		MVStatus:       "active",
-		MVOriginalScan: 500_000,
-		DiskBytesRead:  1_048_576,
-		S3BytesRead:    2_097_152,
-		CPUTimeUser:    25 * time.Millisecond,
+		ResultRows:    5,
+		TotalDuration: 10 * time.Millisecond,
+		ScannedRows:   1000,
+		DiskBytesRead: 1_048_576,
+		S3BytesRead:   2_097_152,
+		CPUTimeUser:   25 * time.Millisecond,
 	}
 	if err := FormatJSON(&buf, s); err != nil {
 		t.Fatalf("FormatJSON error: %v", err)
@@ -693,12 +618,6 @@ func TestFormatJSON_NewFields(t *testing.T) {
 		t.Fatalf("invalid stats JSON: %v", err)
 	}
 
-	if v, ok := js["mv_status"].(string); !ok || v != "active" {
-		t.Errorf("mv_status = %v, want active", js["mv_status"])
-	}
-	if v, ok := js["mv_original_scan"].(float64); !ok || v != 500_000 {
-		t.Errorf("mv_original_scan = %v, want 500000", js["mv_original_scan"])
-	}
 	if v, ok := js["disk_bytes_read"].(float64); !ok || v != 1_048_576 {
 		t.Errorf("disk_bytes_read = %v, want 1048576", js["disk_bytes_read"])
 	}

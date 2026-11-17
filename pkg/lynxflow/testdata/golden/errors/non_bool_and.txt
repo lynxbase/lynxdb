@@ -1,2 +1,0 @@
-query: | where status and true
-warning S004 [8:14] operand of 'and' has type int, expected bool

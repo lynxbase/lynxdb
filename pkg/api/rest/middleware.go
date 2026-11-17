@@ -2,7 +2,6 @@ package rest
 
 import (
 	"container/heap"
-	"context"
 	"encoding/base64"
 	"fmt"
 	"log/slog"
@@ -15,7 +14,6 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
-	shipperstats "github.com/lynxbase/lynxdb/pkg/server/shippers"
 )
 
 // statusWriter wraps http.ResponseWriter to capture the status code.
@@ -93,42 +91,6 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-type shipperRequestContextKey struct{}
-
-func ShipperFingerprintMiddleware(reg *shipperstats.Registry, next http.Handler) http.Handler {
-	if reg == nil {
-		return next
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !isShipperIngestRequest(r) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		info := shipperstats.NewRequestInfo(r)
-		ctx := context.WithValue(r.Context(), shipperRequestContextKey{}, info)
-		next.ServeHTTP(w, r.WithContext(ctx))
-	})
-}
-
-func shipperRequestInfo(ctx context.Context) (shipperstats.RequestInfo, bool) {
-	info, ok := ctx.Value(shipperRequestContextKey{}).(shipperstats.RequestInfo)
-	return info, ok
-}
-
-func isShipperIngestRequest(r *http.Request) bool {
-	if r.Method != http.MethodPost {
-		return false
-	}
-	path := r.URL.Path
-	return path == "/_bulk" ||
-		strings.HasSuffix(path, "/_bulk") ||
-		path == "/services/collector" ||
-		strings.HasPrefix(path, "/services/collector/") ||
-		path == "/api/v1/es/_bulk" ||
-		strings.HasPrefix(path, "/api/v1/es/") ||
-		path == "/api/v1/otlp/v1/logs"
-}
-
 // KeyAuthMiddleware checks for authentication on all routes (except /health)
 // when a KeyStore is provided. Supports three auth schemes:
 //
@@ -146,9 +108,7 @@ func KeyAuthMiddleware(ks *auth.KeyStore, next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /health, /metrics, and non-API paths (static UI assets) are exempt
-		// from auth. The web UI handles authentication by sending tokens
-		// with API requests.
+		// /health, /metrics and non-API paths are exempt from auth.
 		if r.URL.Path == "/health" || r.URL.Path == "/metrics" || !strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 

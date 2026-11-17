@@ -1,44 +1,22 @@
 ---
 title: Troubleshooting
-description: Troubleshoot common LynxDB issues -- lynxdb doctor, connectivity problems, query errors, storage issues, and performance problems.
+description: Troubleshoot common LynxDB issues -- connectivity, query errors, storage, memory, and cluster problems.
 ---
 
 # Troubleshooting
 
-This guide covers common issues and how to resolve them. Start with `lynxdb doctor` for an automated diagnostic.
-
-## lynxdb doctor
-
-The `doctor` command runs a comprehensive health check:
+This page covers common issues and how to resolve them. Start with `lynxdb health` and `lynxdb status`: they show whether the server is reachable, healthy, and holding the data you expect.
 
 ```bash
-lynxdb doctor
-```
-
-```
-ok Binary        v0.1.0 (linux/amd64, go1.26.3)
-ok Config        /home/user/.config/lynxdb/config.yaml (valid)
-ok Data dir      /var/lib/lynxdb (42 GB free)
-ok Server        localhost:3100 (healthy, uptime 2d 5h)
-ok Events        3.4M total
-ok Storage       1.2 GB
-ok Retention     7d
-ok Completion    zsh detected
-
-All checks passed.
-```
-
-For machine-readable output:
-
-```bash
-lynxdb doctor --format json
+lynxdb health
+lynxdb status
 ```
 
 ## Connection Issues
 
 ### "Cannot reach server"
 
-**Symptoms:** `lynxdb query` returns exit code 3 (Connection).
+**Symptoms:** `lynxdb query` exits with code 3 (connection).
 
 **Checks:**
 
@@ -59,15 +37,16 @@ sudo journalctl -u lynxdb --since "10 minutes ago"
 ```
 
 **Common causes:**
-- Server is not running -- start it with `lynxdb server` or `systemctl start lynxdb`
-- Server is listening on a different address -- check `lynxdb config get listen`
-- Firewall is blocking the port -- open port 3100 in your firewall
-- TLS is enabled but client is using `http://` -- switch to `https://`
-- Wrong server address -- check `LYNXDB_SERVER` env var or `--server` flag
+
+- The server is not running -- start it with `lynxdb server` or `systemctl start lynxdb`
+- The server listens on a different address -- check `lynxdb config get listen`
+- A firewall blocks the port -- open port 3100
+- TLS is enabled but the client uses `http://` -- switch to `https://`
+- Wrong server address -- check the `LYNXDB_SERVER` environment variable or the `--server` flag
 
 ### "Missing or invalid authentication token"
 
-**Symptoms:** Exit code 7 (Auth).
+**Symptoms:** Exit code 7 (auth).
 
 ```bash
 # Check auth status
@@ -84,7 +63,7 @@ export LYNXDB_TOKEN=lxk_your_token_here
 
 ```bash
 # Skip verification (development only)
-lynxdb query 'from main level=error' --tls-skip-verify
+lynxdb query 'source=main level=ERROR | head 10' --tls-skip-verify
 
 # Or re-trust the certificate
 lynxdb login --server https://localhost:3100
@@ -92,120 +71,129 @@ lynxdb login --server https://localhost:3100
 
 ## Query Issues
 
-### "Bad LynxFlow syntax"
+### Query Does Not Compile
 
-**Symptoms:** Exit code 4 (QueryParse).
+**Symptoms:** Exit code 4. The server answers `400` with `SYNTAX_ERROR`, `SEMANTIC_ERROR`, `TYPE_ERROR` or `PLANNING_ERROR`, or `422` with `UNSUPPORTED_COMMAND`, `UNSUPPORTED_FUNCTION` or `UNSUPPORTED_FEATURE`.
+
+The error names the position and, where it can, the fix:
+
+```
+✖ SEMANTIC_ERROR: semantic error at line 1, column 56: field avg_rt not found (available fields: avg(response_time), host)
+
+  source=main | stats avg(response_time) by host | where avg_rt > 100
+                                                         ^
+  Hint: available fields: avg(response_time), host
+```
+
+Common mistakes:
+
+| Wrong | Right | Why |
+|-------|-------|-----|
+| `main \| head 10` | `source=main \| head 10` | A query starts with a source |
+| `source=main \| search error` | `source=main error` or `source=main \| where match(_raw, 'error')` | `search` is only the first command; filter later stages with `where` |
+| `stats avg(response_time) by host \| where avg_rt > 100` | `stats avg(response_time) as avg_rt by host \| where avg_rt > 100` | An unaliased aggregate is named `avg(response_time)` |
+| `eval d = response_time-100` | `eval d = response_time - 100` | `a-b` is one identifier; put spaces around `-` and `*` |
+| `bin _time bins=10` | `bin _time span=5m` | `bins=` is not supported |
+
+Check a query without running it:
 
 ```bash
-# Check your query syntax
-lynxdb explain 'your query here'
-
-# Common mistakes:
-# Wrong: index=main sourcetype=nginx     (Splunk SPL)
-# Right: from main sourcetype=nginx
-
-# Wrong: stats count by host             (count needs parentheses)
-# Right: stats count() by host
-
-# Wrong: where level = "error"           (= binds, == compares)
-# Right: where level == "error"
+lynxdb query --explain 'source=main level=ERROR | stats count() by host'
 ```
 
-Parse errors carry stable error codes, caret spans, and suggestions:
+See [PPL errors](../ppl/errors.md) for every error code and [PPL syntax](../ppl/syntax.md) for the grammar.
 
-```
-error[E013] at 1:7: count requires parentheses: count()
-  stats count by host
-        ^~~~~
-  suggestion: count()
+### No Results
+
+A field that does not exist is not an error: LynxDB is schema-on-read, so `where lvl = "ERROR"` returns no rows when the field is `level`. Check the data and field names:
+
+```bash
+# How many events are there?
+lynxdb query 'source=main | stats count()'
+lynxdb query 'source=main | stats count()' --since 1h
+
+# Which fields exist?
+lynxdb fields
+lynxdb fields --prefix lev   # "level", "Level" or "log_level"?
+
+# What does an event look like?
+lynxdb query 'source=main | head 5'
+
+# Which indexes exist?
+lynxdb indexes
 ```
 
-See the [LynxFlow Reference](/docs/lynxflow/overview) for the full query language reference.
+Field comparisons are exact and case-sensitive (`level=ERROR` does not match `error`); free-text terms are case-insensitive.
 
 ### "Query timeout"
 
-**Symptoms:** Exit code 5 (QueryTimeout).
+**Symptoms:** Exit code 5 (timeout).
 
 ```bash
-# Increase client-side timeout
-lynxdb query 'your expensive query' --timeout 5m
+# Raise the client-side timeout
+lynxdb query 'source=main | stats count() by host' --timeout 5m
 
-# Increase server-side limits
+# Raise the server-side limit
 lynxdb config set query.max_query_runtime 30m
 lynxdb config reload
 ```
 
-**Optimization tips:**
-- Add time range constraints: `--since 1h` instead of scanning all data
-- Use `head` to limit results: `... | head 100`
-- Create a materialized view for expensive aggregations
-- Use `--analyze` to identify bottlenecks
+**Fixes:**
 
-### "`/api/v1/query/stream` returns VALIDATION_ERROR"
+- Bound the time range: `--since 1h` or `earliest=-1h` in the source
+- End event searches with `head`: `... | head 100`
+- Profile the query with `--analyze` to find the slow stage
 
-`POST /api/v1/query/stream` is an NDJSON export path, not a drop-in replacement for `POST /api/v1/query`.
+### `/api/v1/query/stream` returns VALIDATION_ERROR
 
-It only accepts:
+`POST /api/v1/query/stream` is an NDJSON export path, not a drop-in replacement for `POST /api/v1/query`. It accepts only:
 
 - `q` or `query`
 - `from` or `earliest`
 - `to` or `latest`
-- `variables`
 
-If you send `limit`, `offset`, `wait`, `profile`, or `format`, LynxDB rejects the request.
+A request that also sends `limit`, `offset`, `wait`, `profile`, or `format` is rejected.
 
 ```bash
 # Wrong for /query/stream
 curl -X POST localhost:3100/api/v1/query/stream \
   -H 'Content-Type: application/json' \
-  -d '{"q":"from main | head 10","limit":10}'
+  -d '{"q":"source=main | head 10","limit":10}'
 
-# Right: use /query for bounded JSON responses
+# Right: bound the rows in the query
+curl -X POST localhost:3100/api/v1/query/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"q":"source=main | head 10"}'
+
+# Or use /query for bounded JSON responses
 curl -X POST localhost:3100/api/v1/query \
   -H 'Content-Type: application/json' \
-  -d '{"q":"from main | head 10","limit":10}'
+  -d '{"q":"source=main | head 10","limit":10}'
 ```
 
 ### Slow Queries
 
 ```bash
-# Profile the query
-lynxdb query 'your query' --analyze full
+lynxdb query 'source=main level=ERROR | stats count() by host' --analyze=full
 ```
 
-Check the output for:
-- **Segments scanned vs skipped**: If most segments are scanned, the query lacks selective predicates
-- **Bloom filter effectiveness**: Low skip rate means your search terms are very common
-- **High filter ratio**: Consider materialized views
+Check the profile for:
 
-**Common fixes:**
-- Add time range to narrow the scan: `--since 1h`
-- Use more selective filters: `from main _source=nginx status>=500` instead of just `from main _source=nginx`
-- Create materialized views for repeated queries
-- Increase cache size if hit rate is low
+- **Segments scanned vs skipped**: if most segments are scanned, the query has no time range or selective term
+- **Rows scanned vs returned**: many rows read for few results means the filter does not reach the scan
+- **Per-operator time**: which stage dominates
 
-### No Results
+**Fixes:**
 
-```bash
-# Check if data exists
-lynxdb count
-lynxdb count --since 1h
-
-# Check available fields
-lynxdb fields
-
-# Check available sources
-lynxdb sample 5
-
-# Common issue: field name mismatch
-lynxdb fields --prefix lev  # Check if it's "level" or "Level" or "log_level"
-```
+- Add a time range: `--since 1h`
+- Put selective terms and field comparisons in the source command: `source=main host=web-01 status>=500` instead of filtering later with `where`
+- See [Performance Tuning](/docs/operations/performance-tuning#query-shape)
 
 ## Storage Issues
 
 ### Disk Full
 
-**Symptoms:** Server stops accepting writes, compaction fails.
+**Symptoms:** The server stops accepting writes; compaction fails.
 
 ```bash
 # Check disk usage
@@ -214,24 +202,24 @@ df -h /var/lib/lynxdb
 # Check LynxDB storage size
 lynxdb status
 
-# Immediate relief: reduce retention
+# Immediate relief: reduce retention (expired partitions go at the next hourly pass)
 lynxdb config set retention 3d
 lynxdb config reload
-# Wait for compaction to delete old segments
 
-# Clear query cache
+# Clear the query result cache
 lynxdb cache clear --force
 ```
 
 **Long-term fixes:**
+
 - Increase disk size
-- Enable S3 tiering to move old data off local disk
-- Reduce retention period
-- Increase compression (switch to `zstd`)
+- Configure S3 tiering to move old data off local disk
+- Reduce the retention period
+- Switch compression to `zstd`
 
 ### Buffered Events Keep Growing
 
-If buffered events keep growing, flushes or compaction are not keeping up:
+If buffered events keep growing, flushes are not keeping up:
 
 ```bash
 # Check buffered events and segment counts
@@ -242,40 +230,52 @@ sudo journalctl -u lynxdb | grep -i flush
 ```
 
 **Common causes:**
-- Disk is full -- free space for part writes
-- Compaction is stuck -- check `compaction_workers` and logs
+
+- The disk is full -- free space for part writes
 - Sustained ingest exceeds the available disk bandwidth
 
 ### Compaction Backlog
 
-If L0 segment count is growing:
+If the segment count keeps growing, compaction falls behind. `lynxdb_compaction_queue_depth` on `/metrics` shows pending jobs.
 
 ```bash
-# Check segment count
-lynxdb status --format json | jq .segments
+# Check the segment count
+lynxdb status --format json | jq .segment_count
 
 # Increase compaction workers, then restart the server
 lynxdb config set storage.compaction_workers 4
 sudo systemctl restart lynxdb
 ```
 
-`storage.compaction_workers` is a startup-time setting. `config reload` updates hot-reloadable settings, but it does not re-create the compaction scheduler with a new worker count.
+`storage.compaction_workers` is read at startup. `config reload` updates hot-reloadable settings but does not re-create the compaction scheduler with a new worker count.
+
+### Server Refuses to Start: Format Errors
+
+LynxDB checks the `FORMAT` marker and every segment header at startup. It refuses to start, with exit code 78, when:
+
+- the data directory holds segments but no `FORMAT` marker
+- the marker names a format newer than the binary supports (the data directory was written by a newer LynxDB)
+- a segment uses an unknown format version or required capability
+
+Run a LynxDB release that supports the data directory's format. See [Upgrading](/docs/operations/upgrading#storage-format). A segment with a checksum failure is logged as a warning and does not block startup.
 
 ## Server Issues
 
 ### High Memory Usage
 
 ```bash
-# Check active queries
+# Check running queries
 lynxdb jobs --status running
 
-# Cancel expensive queries
-lynxdb jobs qry_xxx --cancel
+# Cancel an expensive query
+lynxdb jobs qry_9c1d4e --cancel
 
-# Set a lower query pool and restart with it
+# Lower the query memory pool, then restart
 lynxdb config set query.global_query_pool_bytes 4gb
 sudo systemctl restart lynxdb
 ```
+
+`lynxdb status --format json` and `GET /api/v1/status` show memory per governor class.
 
 ### Server Won't Start
 
@@ -283,7 +283,7 @@ sudo systemctl restart lynxdb
 # Check for port conflicts
 ss -tlnp | grep 3100
 
-# Check for data directory permissions
+# Check data directory permissions
 ls -la /var/lib/lynxdb
 
 # Run with debug logging
@@ -292,71 +292,43 @@ lynxdb server --log-level debug
 
 ### Crash Recovery
 
-If the server crashes, LynxDB scans the data directory, removes stale temporary files, and rebuilds its in-memory part registry on the next startup:
+After a crash, LynxDB scans the data directory, removes stale temporary files, and rebuilds its in-memory part registry on the next startup. Events that were buffered but not yet flushed to a part are lost; shippers that retry on failure resend them.
 
 ```bash
-# Just start the server again
+# Start the server again
 sudo systemctl start lynxdb
 
-# Watch the logs for recovery and part scan progress
+# Watch the logs for the part scan
 sudo journalctl -u lynxdb -f
 ```
 
-## Cluster Issues
+## Cluster Settings Have No Effect
 
-### Node Not Joining
-
-```bash
-# Check that seed addresses are reachable
-telnet meta-1.example.com 9400
-
-# Check that the node_id is unique
-grep node_id /etc/lynxdb/config.yaml
-
-# Check cluster port is open
-ss -tlnp | grep 9400
-```
-
-### Raft Quorum Lost
-
-If 2 of 3 meta nodes are down:
-
-- Writes will fail (no quorum for Raft consensus)
-- Reads may still work from cached data
-- Bring at least 1 meta node back to restore quorum
-
-```bash
-# Check which meta nodes are available
-for host in meta-1 meta-2 meta-3; do
-  echo -n "$host: "
-  curl -s "http://$host:3100/health" && echo " OK" || echo " UNREACHABLE"
-done
-```
+`lynxdb server` validates the `cluster` section of the configuration, but it does not start the cluster runtime: it opens no gRPC listener on `cluster.grpc_port`, joins no Raft group, and routes no shards. Each server runs as a single node with its own data directory. See [Distributed Architecture](/docs/architecture/distributed) for the cluster components in `pkg/cluster`.
 
 ## CLI Issues
 
 ### Shell Completion Not Working
 
 ```bash
-# Regenerate completions
-lynxdb completion bash >> ~/.bashrc  # Bash
-lynxdb completion zsh >> ~/.zshrc    # Zsh
+lynxdb completion bash >> ~/.bashrc                              # Bash
+lynxdb completion zsh >> ~/.zshrc                                # Zsh
 lynxdb completion fish > ~/.config/fish/completions/lynxdb.fish  # Fish
 
-# Reload shell
+# Reload the shell
 source ~/.bashrc  # or ~/.zshrc
 ```
 
 ### Config File Not Found
 
 ```bash
-# Check where LynxDB is looking
+# Where LynxDB looks
 lynxdb config path
 
-# Create a default config
+# Write a default config
 lynxdb config init
 
-# Validate existing config
+# Validate an existing config
 lynxdb config validate
 ```
 
@@ -368,30 +340,24 @@ lynxdb config validate
 | 1 | General | Unspecified failure |
 | 2 | Usage | Invalid flags or missing arguments |
 | 3 | Connection | Cannot reach server |
-| 4 | QueryParse | Bad LynxFlow syntax |
-| 5 | QueryTimeout | Query timed out |
+| 4 | Query | The query does not compile |
+| 5 | Timeout | Server timeout or `--timeout` exceeded |
 | 6 | NoResults | No results (with `--fail-on-empty`) |
-| 7 | Auth | Authentication failure |
-| 10 | Aborted | User declined confirmation |
+| 7 | Auth | Missing or invalid authentication token |
+| 10 | Aborted | User declined a confirmation |
+| 78 | Config | Configuration error or incompatible on-disk format |
 | 130 | Interrupted | Ctrl+C |
 
 ## Getting Help
 
 ```bash
-# Built-in help
 lynxdb --help
 lynxdb query --help
-
-# Show examples
-lynxdb examples
-
-# Interactive shell with tab completion
-lynxdb shell
 ```
 
 ## Next Steps
 
 - [Monitoring](/docs/operations/monitoring) -- track server health
-- [Performance Tuning](/docs/operations/performance-tuning) -- optimize performance
+- [Performance Tuning](/docs/operations/performance-tuning) -- tune for your workload
 - [Configuration Overview](/docs/configuration/overview) -- configuration reference
-- [LynxFlow Reference](/docs/lynxflow/overview) -- query language reference
+- [PPL overview](../ppl/overview.md) -- query language reference

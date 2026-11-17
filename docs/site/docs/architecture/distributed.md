@@ -1,15 +1,15 @@
 ---
 sidebar_position: 6
 title: Distributed Architecture
-description: LynxDB distributed architecture -- Raft consensus, two-level time+hash sharding with xxhash64, batcher replication, leader leases, scatter-gather queries, and shared-storage with S3.
+description: LynxDB distributed architecture -- Raft metadata, two-level time+hash sharding with xxhash64, batcher replication, leader leases, scatter-gather queries, and shared storage on S3.
 ---
 
 # Distributed Architecture
 
-LynxDB scales from a single process to a 1000+ node cluster using the same binary. The distributed architecture is based on a shared-storage model where S3 is the source of truth for segment data, making compute nodes effectively stateless.
+`pkg/cluster` holds the components of a multi-node LynxDB built on shared storage: S3 is the source of truth for segment data, so compute nodes hold no data that cannot be recovered. The packages contain Raft-backed metadata services, time+hash sharding, batch replication, rebalancing, and a distributed query planner and coordinator.
 
-:::note Current implementation status
-Based on the code under `pkg/cluster/...`, LynxDB already includes Raft-backed metadata services, time+hash sharding, scatter-gather query coordination, shard-map watches, and ISR-style batch replication primitives. This page still describes the broader target architecture as well, so treat large separated-role clusters as advanced deployment territory and validate failover, rebalancing, and ingest-routing behavior in staging before a production rollout.
+:::caution Cluster runtime
+`lynxdb server` validates the `cluster` section of the configuration, but it does not start the cluster runtime: it opens no gRPC listener, joins no Raft group, and routes no shards. Every server runs as a single node. The sections below describe the cluster components in `pkg/cluster`.
 :::
 
 ## Cluster Topology
@@ -17,14 +17,13 @@ Based on the code under `pkg/cluster/...`, LynxDB already includes Raft-backed m
 ```
 ┌──────────────────┐    ┌──────────────┐    ┌──────────────┐
 │   Meta Nodes     │    │ Ingest Nodes │    │ Query Nodes  │
-│   (3-5, Raft)    │    │ (N, stateless│    │ (M, stateless│
-│                  │    │  + batcher)  │    │  + cache)    │
+│   (3-5, Raft)    │    │ (N)          │    │ (M)          │
+│                  │    │              │    │              │
 │ - Shard map      │    │ - Batcher    │    │ - Scatter-   │
-│ - Node registry  │    │ - Memtable   │    │   gather     │
-│ - Leases         │    │ - Flush→S3   │    │ - Partial    │
+│ - Node registry  │    │ - Part flush │    │   gather     │
+│ - Leases         │    │ - Upload S3  │    │ - Partial    │
 │ - Field catalog  │    │ - Replicate  │    │   merge      │
-│ - Source registry│    │              │    │              │
-│ - View registry  │    │              │    │              │
+│ - Source registry│    │              │    │ - Seg. cache │
 └──────┬───────────┘    └──────┬───────┘    └──────┬───────┘
        │                       │                   │
        └───────────────────────┼───────────────────┘
@@ -37,50 +36,50 @@ Based on the code under `pkg/cluster/...`, LynxDB already includes Raft-backed m
 
 ## Node Roles
 
-The cluster has three roles. In small clusters (< 10 nodes), every node runs all three roles. At scale, you split them for independent scaling.
+The cluster has three roles. In small clusters (fewer than 10 nodes), every node runs all three. At scale, the roles run on separate nodes so each scales on its own.
 
 ### Meta Nodes (3-5)
 
 Meta nodes manage cluster coordination and metadata:
 
-- **Raft consensus**: Meta nodes form a Raft group (using `hashicorp/raft`) to maintain a consistent, replicated state machine.
-- **Shard map**: The shard map records which ingest node owns which shard (partition). Updated atomically via Raft. Each assignment carries a primary, replicas, lifecycle state (`active`/`draining`/`migrating`/`splitting`), and an epoch counter.
-- **Node registry**: Tracks the set of live nodes, their roles, health state (`alive`/`suspect`/`dead`), and resource utilization (CPU, memory, disk, ingest rate, active queries).
-- **Leader leases**: Shard primaries hold renewable leases to prevent split-brain writes. The meta leader grants leases via Raft; an expired lease means the primary must stop writing.
-- **Failure detection**: Detects unresponsive nodes using heartbeat timeouts and transitions them through `Alive → Suspect → Dead`.
-- **Distributed subsystems**: The Raft FSM also stores the global field catalog, source registry, and materialized view definitions (see [Distributed Subsystems](#distributed-subsystems) below).
+- **Raft consensus**: Meta nodes form a Raft group (`hashicorp/raft`) that maintains a replicated state machine.
+- **Shard map**: Records which ingest node owns which shard (partition). Each assignment carries a primary, replicas, a lifecycle state (`active`/`draining`/`migrating`/`splitting`), and an epoch counter. Changes go through Raft.
+- **Node registry**: Tracks live nodes, their roles, health state (`alive`/`suspect`/`dead`), and resource use (CPU, memory, disk, ingest rate, active queries).
+- **Leader leases**: Shard primaries hold renewable leases that prevent split-brain writes. The meta leader grants leases through Raft; a primary whose lease expired stops writing.
+- **Failure detection**: Moves unresponsive nodes through `Alive → Suspect → Dead` on heartbeat timeouts.
+- **Catalogs**: The state machine also stores the global field catalog and source registry (see [Distributed Subsystems](#distributed-subsystems)).
 
-Meta nodes are lightweight. 3 nodes provide fault tolerance for 1 failure; 5 nodes tolerate 2 failures. Meta nodes do not store or query log data.
+Meta nodes are lightweight. Three nodes tolerate one failure; five tolerate two. Meta nodes neither store nor query log data.
 
 ### Ingest Nodes (N)
 
 Ingest nodes handle the write path:
 
-1. Receive ingest requests (via the REST API or compatibility endpoints).
-2. Route events to the correct shard based on the [two-level sharding scheme](#sharding).
-3. Buffer events in the `AsyncBatcher` (the same direct-to-part ingest model used in single-node mode).
-4. When the batcher reaches its size or idle threshold, write a part directly to a temporary `.lsg` file, fsync, and atomically rename it into the shard directory.
+1. Receive ingest requests (REST API and compatibility endpoints).
+2. Route events to their shard with the [two-level sharding scheme](#sharding).
+3. Buffer events in the `AsyncBatcher`, the same direct-to-part model as single-node mode.
+4. When the batcher reaches its size or idle threshold, write a temporary `.lsg` file, fsync it, and rename it into the shard directory.
 5. Upload the part to S3.
-6. Replicate batches to ISR peers via gRPC streaming (see [Replication](#replication)).
+6. Replicate batches to ISR peers over gRPC streams (see [Replication](#replication)).
 
-Ingest nodes are **stateless after flush**. If an ingest node fails, its replicated batches can be recovered from ISR peers, and the shard is reassigned to another ingest node within ~25 seconds.
+After a flush, an ingest node holds nothing that S3 does not. If an ingest node fails, its replicated batches are recovered from ISR peers and its shards move to another ingest node within about 25 seconds.
 
 ### Query Nodes (M)
 
 Query nodes handle the read path:
 
-1. Receive query requests via the REST API.
-2. Parse and optimize the LynxFlow query.
-3. Determine which shards (and therefore which segments) are relevant using time range pruning and shard key matching.
-4. Scatter the query to the appropriate nodes via gRPC (or read segments directly from S3/cache).
-5. Merge partial results from all shards.
-6. Return the final result to the client (with partial result metadata when some shards fail).
+1. Receive query requests through the REST API.
+2. Compile the PPL query to an optimized IR plan and derive its storage hints (see [Query Engine](/docs/architecture/query-engine)).
+3. Select the relevant shards from the time range and source scope of the hints.
+4. Split the plan and send the query to the shard owners over gRPC.
+5. Merge the shard results and run the rest of the plan.
+6. Return the result, with partial-result metadata when some shards fail.
 
-Query nodes maintain a **local segment cache** to avoid repeatedly downloading segments from S3. The cache uses LRU eviction with a configurable size limit. Query nodes also receive piggybacked field catalog and source registry updates via the shard map watch stream.
+Query nodes keep a **local segment cache** so they do not download the same segments from S3 repeatedly. They also receive field catalog and source registry updates piggybacked on the shard map watch stream.
 
 ## Sharding
 
-Data is partitioned across ingest nodes using a **two-level sharding scheme**: time bucketing followed by hash partitioning.
+Data is partitioned across ingest nodes with a **two-level scheme**: time bucketing, then hash partitioning.
 
 ### Two-Level Scheme
 
@@ -98,19 +97,19 @@ Data is partitioned across ingest nodes using a **two-level sharding scheme**: t
 └─────────────────────────────────────────────────────────┘
 ```
 
-**Level 1 (Time bucketing)**: The event timestamp is truncated to the nearest `TimeBucketSize` boundary (configurable: 1h, 6h, or 24h; default 24h). This ensures that time-range queries can skip entire time buckets that fall outside the query window.
+**Level 1 (time bucketing)**: The event timestamp is truncated to a `TimeBucketSize` boundary (1h, 6h, or 24h; default 24h), so a time-bounded query skips whole buckets outside its window.
 
-**Level 2 (Hash partitioning)**: Within each time bucket, `xxhash64(source + "\x00" + host)` is computed and mapped to one of `VirtualPartitionCount` partitions (default 1024). Using xxhash64 provides excellent distribution and is already used in bloom filters and dedup. The null byte separator prevents collisions between key boundaries.
+**Level 2 (hash partitioning)**: Within each bucket, `xxhash64(source + "\x00" + host)` selects one of `VirtualPartitionCount` partitions (default 1024). The null byte separator keeps different `source`/`host` pairs from hashing the same concatenated key.
 
-**Why two levels?** Time-based bucketing allows efficient time-range pruning at the shard level — a query for "last 1 hour" only touches today's time bucket. Hash partitioning distributes load evenly across ingest nodes within each time bucket.
+Time buckets prune shards for time-range queries; hash partitions spread the write load inside a bucket.
 
 ### Consistent Hash Ring
 
-Partitions are assigned to ingest nodes using a consistent hash ring with **128 virtual nodes (vnodes) per physical node**. This provides:
+Partitions are assigned to ingest nodes with a consistent hash ring of **128 virtual nodes per physical node**. This gives:
 
-- Even load distribution across heterogeneous clusters
-- Minimal partition movement when nodes join or leave (only ~1/N partitions move)
-- Deterministic assignment across all cluster members
+- even load across nodes
+- few partition moves when nodes join or leave (about 1/N of the partitions)
+- the same assignment on every cluster member
 
 ```mermaid
 flowchart LR
@@ -136,12 +135,12 @@ flowchart LR
 
 ### Partition Splitting
 
-When a single partition becomes a hot spot (ingest rate exceeds the configurable threshold, default 50,000 events/sec), LynxDB can split it into two child partitions using **hash-bit subdivision**:
+When a partition becomes a hot spot (ingest rate above a threshold, default 50,000 events/sec), LynxDB splits it into two children by **hash-bit subdivision**:
 
-1. The splitter examines one additional bit of the original hash value.
-2. Events where bit N is 0 go to child A; events where bit N is 1 go to child B.
-3. No rehashing of existing data is required — old segments remain readable under the parent prefix.
-4. The split is tracked in a `SplitRegistry` that the router consults during event assignment.
+1. The splitter examines one more bit of the original hash value.
+2. Events whose bit is 0 go to child A; events whose bit is 1 go to child B.
+3. Existing data is not rehashed: old segments stay readable under the parent prefix.
+4. A `SplitRegistry` records the split, and the router consults it when assigning events.
 
 Split lifecycle: `ShardActive → ShardSplitting → children ShardMigrating → children ShardActive → parent removed`.
 
@@ -149,7 +148,7 @@ See [Rebalancing and Splitting](/docs/operations/rebalancing) for operational de
 
 ## Replication
 
-LynxDB uses **batcher-based replication** for data durability in cluster mode. Single-node and cluster ingest both use the same batcher-first write path; cluster mode adds replica streaming on top of it.
+Cluster mode replicates the batcher: single-node and cluster ingest share the batcher-first write path, and the cluster streams batches to replicas on top of it.
 
 ### How Batcher Replication Works
 
@@ -170,27 +169,27 @@ sequenceDiagram
     Primary->>Client: ACK (committed)
 ```
 
-1. The **primary** for each shard buffers events in its batcher and replicates batch data to all ISR replicas via gRPC streaming.
-2. Each batch carries a **sequence number** from the `BatchSequencer`, enabling replicas to detect and discard duplicates (idempotent replay).
-3. Commitment depends on the configured **ACK level**:
-   - `none`: Fire-and-forget — the primary ACKs to the client immediately (fastest, least durable).
-   - `one` (default): After the primary commits the batch locally.
-   - `all`: After all ISR replicas have acknowledged (strongest durability).
-4. If a replica falls behind, it is removed from the ISR set via a Raft command.
-5. If the primary fails, the meta leader promotes an ISR replica to primary.
+1. The **primary** of each shard buffers events in its batcher and streams batches to every ISR replica.
+2. Each batch carries a **sequence number** from the `BatchSequencer`, so replicas detect and discard duplicates on replay.
+3. When the client gets its acknowledgement depends on the **ACK level**:
+   - `none`: immediately (fastest, least durable).
+   - `one` (default): after the primary commits the batch locally.
+   - `all`: after every ISR replica acknowledged (most durable).
+4. A replica that falls behind is removed from the ISR set by a Raft command.
+5. When the primary fails, the meta leader promotes an ISR replica.
 
 ### Leader Leases
 
-To prevent split-brain writes (two nodes both believing they are the primary for the same shard), LynxDB uses **leader leases**:
+Leader leases keep two nodes from both acting as primary for the same shard:
 
-- The shard primary periodically renews its lease with the meta leader via the `RenewLease` RPC.
-- The lease has a configurable duration (default 10 seconds).
-- If the primary cannot renew its lease (network partition, meta unavailability), it must stop accepting writes.
-- The meta leader will not assign the shard to a new primary until the old lease expires.
+- The shard primary renews its lease with the meta leader through the `RenewLease` RPC.
+- The lease lasts `lease_duration` (default 10 seconds).
+- A primary that cannot renew its lease (network partition, meta unavailable) stops accepting writes, except in meta-loss mode (see [Meta Node Failure](#meta-node-failure)).
+- The meta leader does not assign the shard to a new primary until the old lease expires.
 
 ### Replication Factor
 
-The replication factor (default 1 — no replication for development, increase to 3 for production) determines the ISR size:
+The replication factor (default 1, no replication; use 3 in production) sets the ISR size:
 
 | Replication Factor | Minimum Nodes | Tolerated Failures |
 |-------------------|--------------|--------------------|
@@ -200,99 +199,83 @@ The replication factor (default 1 — no replication for development, increase t
 
 ## Distributed Query Execution
 
-Distributed queries use the same partial aggregation engine described in [Query Engine](/docs/architecture/query-engine), extended to run across nodes.
+In the design in `pkg/cluster/query`, a query node compiles the query into one optimized IR plan, exactly as a single node does, and `ir_planner.go` splits that plan between the shards and the coordinator. Shards receive only the query text: each one compiles it, derives the same split, and runs its part over local data.
 
-### Scatter-Gather Pattern
+### What the Planner Distributes
 
-```
-Client query: "from main _source=nginx status>=500 | stats count() by uri | sort -count | head 10"
+The planner accepts only a plan that is **one chain of operators over one scan**. It walks the chain from the scan upward:
 
-                      ┌──────────────────────┐
-                      │   Query Coordinator   │
-                      │   (query node)        │
-                      └──────────┬───────────┘
-                                 │
-                    ┌────────────┼────────────┐
-                    │            │            │
-              ┌─────┴─────┐ ┌───┴───┐ ┌─────┴─────┐
-              │  Shard 1  │ │Shard 2│ │  Shard 3  │
-              │           │ │       │ │           │
-              │ WHERE     │ │ WHERE │ │ WHERE     │
-              │ status≥500│ │ ...   │ │ status≥500│
-              │ stats cnt │ │       │ │ stats cnt │
-              │ by uri    │ │       │ │ by uri    │
-              │ (partial) │ │       │ │ (partial) │
-              └─────┬─────┘ └───┬───┘ └─────┬─────┘
-                    │           │           │
-                    └────────┬──┘───────────┘
-                             │
-                    ┌────────┴────────┐
-                    │  Global Merge   │
-                    │  sort -count    │
-                    │  head 10        │
-                    └─────────────────┘
-```
+1. **Shard prefix**: the longest run of row-local operators directly above the scan. Row-local operators map each row on its own, so they give the same result on each shard's rows as on all rows: `Filter` (search terms, `where`, `regex`), `Compute` (`eval`, `spath`), `Project` (`fields`), `RenameColumns` (`rename`), `Extract` (`parse`, `grok`, `rex`), `Unnest` (`expand`, `mvexpand`) and `FlattenObject` (`flatten`). Every shard runs this prefix and its scan with the plan's storage hints.
+2. **Partial aggregation**: when the first operator after the prefix is a `stats` whose group keys are plain fields and whose aggregations are `count`, `sum`, `avg`, `min` or `max` over plain fields, shards compute mergeable partial states (for `avg`, a sum and a count per group) and the coordinator merges them.
+3. **Top-K merge**: when that aggregation is followed by a `TopN` (from `sort ... | head N`, optionally with a `fields` between them that keeps the sort columns), the coordinator merges the partial states and keeps only the top N groups.
+4. **Coordinator**: every remaining operator runs on the coordinator over the merged rows. Aggregations without a partial form, such as `dc`, percentiles, `count(eval(...))` or `stats ... by span(_time, 5m)`, run entirely on the coordinator over the rows the shards return.
 
-### Pipeline Splitting
-
-The optimizer determines where to split the pipeline between shard-level (pushed) and coordinator-level (merged) execution:
-
-**Pushable operators** (execute on shards):
-- Scan, Filter (`where`), Eval (`extend`), partial `stats`, partial TopK
-
-**Coordinator operators** (execute after merge):
-- Sort, Head, Tail, Join, Dedup, StreamStats, global `stats` merge
-
-The split point is the **last pushable operator** in the pipeline. Everything before it runs on shards; everything after runs on the coordinator.
+The planner rejects plans that are not a single chain: `join`, `lookup`, `append`, `appendcol`, `union`, `multisearch`, and subsearches (`where x in [ ... ]`, `exists`, scalar subsearches) return `ErrNotDistributable` (`only a single pipeline over one scan runs distributed; joins, unions and subqueries do not`).
 
 ### Example Split
 
 ```
-from main _source=nginx | where status >= 500 | stats count() by uri | sort -count | head 10
+source=main status>=500
+| stats count() as n, avg(response_time) as avg_ms by path
+| sort - n
+| head 10
 ```
 
-| Location | Pipeline |
-|----------|----------|
-| **Shard** | `scan(_source=nginx) → filter(status >= 500) → partial_stats(count() by uri)` |
-| **Coordinator** | `merge_stats → sort(-count) → head(10)` |
+Optimized plan:
 
-### TopK Optimization
+```
+TopN(10, n DESC NULLS LAST)
+└─ Project(n, avg_ms, path)
+   └─ Aggregate(n = count(), avg_ms = avg(response_time) BY path)
+      └─ Filter(status >= 500)
+         └─ Scan(main) columns=[_time, path, response_time, status]
+```
 
-When the query ends with `stats ... | sort -field | head N`, the optimizer applies TopK pushdown. Instead of computing the full aggregation and sorting, each shard maintains a min-heap of size N and streams only the top N partial results to the coordinator. This dramatically reduces network transfer for "top 10" queries on high-cardinality fields.
+| Location | Work |
+|----------|------|
+| **Shard** | `Scan → Filter(status >= 500)`, then partial states of `count()` and `avg(response_time)` per `path` |
+| **Coordinator** | merge partial states per `path`, keep the top 10 by `n`, apply `Project` |
+
+```
+                      ┌──────────────────────┐
+                      │   Query Coordinator  │
+                      │   (query node)       │
+                      └──────────┬───────────┘
+                                 │ query text
+                    ┌────────────┼────────────┐
+                    │            │            │
+              ┌─────┴─────┐ ┌────┴────┐ ┌─────┴─────┐
+              │  Shard 1  │ │ Shard 2 │ │  Shard 3  │
+              │ scan      │ │  ...    │ │ scan      │
+              │ filter    │ │         │ │ filter    │
+              │ partial   │ │         │ │ partial   │
+              │ count/avg │ │         │ │ count/avg │
+              └─────┬─────┘ └────┬────┘ └─────┬─────┘
+                    └────────────┼────────────┘
+                        ┌────────┴────────┐
+                        │ merge states    │
+                        │ top 10 by n     │
+                        │ project         │
+                        └─────────────────┘
+```
+
+### Shard Selection
+
+Before fanning out, the coordinator lists the candidate shards as the cross product of the queried indexes, the time buckets inside the plan's time range, and the partitions, and keeps those the shard map assigns. A query without a time range covers the last 365 time buckets.
 
 ### Partial Results
 
-When `partial_results` is enabled (default: true), the coordinator returns results even if some shards fail. The response metadata includes:
-
-- `shards_total`, `shards_success`, `shards_failed`, `shards_timed_out`
-- `partial: true` when at least one shard failed but enough succeeded
-- `warnings` listing which shards failed and why
-
-The query fails entirely only when the success rate falls below `partial_failure_threshold` (default: 50%).
-
-### Distributed Join Strategies
-
-The join planner selects the optimal strategy for distributed joins:
-
-| Strategy | When Used | Description |
-|----------|-----------|-------------|
-| **Broadcast** | Right side has `head N` with N ≤ 10,000 | Small right side is sent to all shards |
-| **Co-located** | Both sides share same index and join field is a shard key (`source`, `host`) | Each shard joins independently — no data movement |
-| **Coordinator** | Default fallback | Both sides materialized on coordinator |
-
-### HyperLogLog for Distinct Counts
-
-The `dc()` (distinct count) aggregation function uses exact set tracking for small cardinalities and automatically promotes to HyperLogLog approximation when cardinality exceeds `dc_hll_threshold` (default: 10,000). This allows distributed `dc()` to merge efficiently across shards without transferring full value sets.
+With `partial_results` enabled (default: true), the coordinator returns results even when some shards fail. The response carries a warning such as `partial results: 2/3 shards succeeded` plus the failure details. The query fails as a whole only when the share of successful shards falls below `partial_failure_threshold` (default 0.5).
 
 ### Flow Control
 
-The query coordinator limits the number of concurrent shard RPCs to prevent overwhelming the cluster. The `max_concurrent_shard_queries` setting (default: 50) acts as a semaphore — shards beyond this limit queue until a slot opens.
+The coordinator limits concurrent shard RPCs with a semaphore of `max_concurrent_shard_queries` slots (default 50); further shard queries wait for a free slot. Each shard query times out after `shard_query_timeout` (default 30s).
 
 ## Failure Handling
 
 ### Node Health States
 
-Nodes transition through three health states based on heartbeat monitoring:
+Nodes move through three health states based on heartbeats:
 
 ```
 Alive ──(miss heartbeats)──→ Suspect ──(exceed dead timeout)──→ Dead
@@ -302,83 +285,77 @@ Alive ──(miss heartbeats)──→ Suspect ──(exceed dead timeout)──
 
 | State | Meaning | Timing |
 |-------|---------|--------|
-| **Alive** | Heartbeats arriving normally | — |
-| **Suspect** | Missed recent heartbeats | After `heartbeat_interval` × 3 (default 15s) |
-| **Dead** | Unresponsive beyond recovery | After `heartbeat_interval` × 5 (default 25s) |
+| **Alive** | Heartbeats arrive normally | — |
+| **Suspect** | Recent heartbeats missed | After `heartbeat_interval` × 3 (default 15s) |
+| **Dead** | Unresponsive | After `heartbeat_interval` × 5 (default 25s) |
 
 ### Ingest Node Failure
 
-1. The meta leader detects the failure (heartbeat timeout, default 5-second interval).
-2. Node transitions: Alive → Suspect → Dead.
-3. Removes the dead node from the node registry.
-4. Reassigns its partitions to surviving ingest nodes via incremental rebalance.
-5. Promotes an ISR replica to primary for each affected shard.
-6. Total failover time: **~25 seconds** (5 heartbeat intervals for detection + reassignment).
+1. The meta leader notices missing heartbeats (default interval 5 seconds).
+2. The node moves from Alive to Suspect to Dead.
+3. The dead node is removed from the node registry.
+4. Its partitions are reassigned to surviving ingest nodes by an incremental rebalance.
+5. An ISR replica is promoted to primary for each affected shard.
+6. Total failover time: **about 25 seconds**.
 
-**Data safety**: All committed batches are replicated to ISR replicas. Uncommitted batches (buffered in the batcher but not yet replicated) may be lost — this is the trade-off of asynchronous replication. For most log workloads, losing a few seconds of data on node failure is acceptable.
+**Data safety**: Committed batches are on the ISR replicas. Batches buffered in the batcher but not yet replicated can be lost; this is the cost of asynchronous replication. Shippers that retry on failure resend them.
 
 ### Query Node Failure
 
-Query nodes are stateless (their segment cache is a performance optimization, not a durability requirement). If a query node fails:
+A query node's segment cache only speeds up reads. If a query node fails:
 
-1. The load balancer routes new queries to surviving query nodes.
-2. Any in-flight queries on the failed node are lost and must be retried by the client.
-3. No data loss occurs.
+1. The load balancer routes new queries to the surviving query nodes.
+2. In-flight queries on the failed node are lost; clients retry them.
+3. No data is lost.
 
 ### Meta Node Failure
 
-The Raft group tolerates `(N-1)/2` failures. With 3 meta nodes, 1 failure is tolerated. With 5 meta nodes, 2 failures are tolerated. If a majority of meta nodes are lost, the cluster cannot make coordination decisions (shard reassignment, new node joins) but existing operations degrade gracefully:
+The Raft group tolerates `(N-1)/2` failures: one with three meta nodes, two with five. Without a majority, the cluster makes no coordination decisions (shard reassignment, node joins), and the other nodes degrade as follows:
 
-- **Ingest nodes**: Continue accepting writes under the meta-loss timeout (`meta_loss_timeout`, default 30s). During meta loss, shard leases cannot be renewed, so primaries continue based on their last valid lease. Duplicate partition detection flags potential conflicts.
-- **Query nodes**: Continue serving queries using cached shard maps and segment metadata. Results may become stale.
-- **Recovery**: Once a Raft quorum is restored, the meta leader reconciles state and resumes normal coordination.
+- **Ingest nodes**: After `meta_loss_timeout` (default 30s) without a lease renewal, they enter meta-loss mode: writes are accepted without lease validation, parts are flagged as written without a validated owner, and compaction coordination is skipped. Duplicate partitions found later are flagged.
+- **Query nodes**: Keep serving queries from their cached shard map and segment metadata. Results may be stale.
+- **Recovery**: When a Raft quorum is back, nodes re-acquire leases and re-validate ownership, and the meta leader resumes normal coordination.
 
 ## Distributed Subsystems
 
-The Raft FSM manages several distributed subsystems beyond shard assignments:
+Besides shard assignments, the Raft state machine holds:
 
 ### Field Catalog
 
-Ingest nodes periodically report field metadata deltas (field name, type, count, top values) to the meta leader via the `ReportFieldCatalog` RPC. The FSM merges per-node counts into a global field catalog with:
+Ingest nodes report field metadata deltas (name, type, count, top values) to the meta leader through the `ReportFieldCatalog` RPC. The state machine merges per-node counts into a global field catalog with:
 
-- Per-field total count across all nodes
-- Dominant type (last-writer-wins currently; type voting planned)
-- Top 10 values by merged count
+- the total count of each field across nodes
+- the dominant type (last writer wins)
+- the top 10 values by merged count
 
-Query nodes receive the merged catalog via piggybacked updates on the shard map watch stream, enabling the `/api/v1/fields` endpoint and autocomplete to reflect cluster-wide field information.
+Query nodes receive the merged catalog piggybacked on the shard map watch stream, so `/api/v1/fields` reflects the whole cluster.
 
 ### Source Registry
 
-Similar to the field catalog, ingest nodes report source metadata (name, event count, last seen) via `ReportSources`. The FSM maintains a global source registry with per-node counts, first/last seen timestamps, and total event counts.
-
-### Materialized View Coordination
-
-Materialized view definitions are stored in the Raft FSM. The FSM tracks each view's name, query, status (`pending`/`running`/`complete`), backfill state, coordinator node, and version. Views are registered and updated via the `RegisterView` RPC. See [Materialized views in cluster mode](/docs/guides/materialized-views#materialized-views-in-cluster-mode).
+Ingest nodes report source metadata (name, event count, last seen) through `ReportSources`. The state machine keeps a global source registry with per-node counts, first and last seen timestamps, and total event counts.
 
 ## Observability
 
 ### OpenTelemetry Tracing
 
-All cluster RPCs are instrumented with OpenTelemetry tracing. Key spans include:
+Cluster RPCs are traced with OpenTelemetry. The spans are:
 
-- `lynxdb.ingest.route` — event routing with shard count and event count attributes
-- `lynxdb.ingest.route.local` / `lynxdb.ingest.route.remote` — local vs remote ingest paths
-- `lynxdb.query.distributed` — full scatter-gather lifecycle
-- `lynxdb.query.shard` — per-shard query execution with shard ID and node address
-- `lynxdb.query.merge` — coordinator-side merge
-- `lynxdb.meta.Handshake` / `lynxdb.meta.RenewLease` / `lynxdb.meta.WatchShardMap` — meta service RPCs
+- `lynxdb.ingest.route` -- event routing, with shard and event counts
+- `lynxdb.ingest.route.local` / `lynxdb.ingest.route.remote` -- local and remote ingest paths
+- `lynxdb.query.distributed.ir` -- the whole scatter-gather query, with the merge strategy and shard counts
+- `lynxdb.query.shard` -- one shard query, with the shard ID and node address
+- `lynxdb.query.merge` -- coordinator operators over the merged rows
+- `lynxdb.meta.Handshake` / `lynxdb.meta.RenewLease` / `lynxdb.meta.WatchShardMap` -- meta service RPCs
 
-Each span carries business attributes (`lynxdb.shard_id`, `lynxdb.node_id`, `lynxdb.events_count`, `lynxdb.is_leader`, etc.) for correlation.
+Spans carry attributes such as `lynxdb.shard_id`, `lynxdb.node_id`, `lynxdb.events_count` and `lynxdb.is_leader`.
 
 ### Protocol Versioning
 
-The cluster uses a protocol version (`ProtocolVersion`, currently 1) to ensure compatibility between nodes during rolling upgrades. The `Handshake` RPC checks version compatibility and rejects connections from incompatible nodes.
-
-### Cluster Metrics
-
-All cluster components expose atomic counters and gauges via the `cluster.Metrics` struct, accessible through `/api/v1/stats`. See [Monitoring: Cluster Metrics](/docs/operations/monitoring#cluster-metrics).
+Nodes exchange a protocol version (`ProtocolVersion`, 1) in the `Handshake` RPC and reject nodes with a different version, so a release that changes it cannot be mixed with older nodes.
 
 ## Cluster Configuration
+
+`lynxdb server` validates these settings but does not start the cluster runtime (see the caution at the top of this page).
 
 ### Small Cluster (3-10 Nodes)
 
@@ -401,9 +378,7 @@ storage:
   s3_bucket: "my-logs-bucket"
 ```
 
-### Large Cluster (10-1000+ Nodes)
-
-Roles are split for independent scaling:
+### Large Cluster (Separate Roles)
 
 ```yaml
 # Meta node
@@ -438,17 +413,17 @@ See [Cluster Configuration Reference](/docs/configuration/cluster) for all setti
 
 | Role | Scale when | Typical ratio |
 |------|-----------|---------------|
-| Meta | Rarely (3 or 5 is sufficient for most clusters) | 3-5 fixed |
-| Ingest | Write throughput exceeds single-node capacity (~300K events/sec/node) | 1 per 200-300K events/sec |
-| Query | Query concurrency or latency exceeds acceptable thresholds | 1 per 20-50 concurrent queries |
+| Meta | Rarely (3 or 5 suffice for most clusters) | 3-5 fixed |
+| Ingest | Write throughput exceeds what the current nodes sustain | Measure per node |
+| Query | Query concurrency or latency exceeds your targets | Measure per node |
 
 ## Related
 
-- [Architecture Overview](/docs/architecture/overview) -- high-level system diagram
-- [Storage Engine](/docs/architecture/storage-engine) -- async batcher and direct-to-part writes (the ingest path)
-- [Query Engine](/docs/architecture/query-engine) -- partial aggregation and pipeline splitting
-- [Cluster Configuration](/docs/configuration/cluster) -- all cluster config keys and defaults
-- [Small Cluster Deployment](/docs/deployment/small-cluster) -- practical setup guide
+- [Architecture Overview](/docs/architecture/overview) -- system diagram
+- [Storage Engine](/docs/architecture/storage-engine) -- the batcher and direct-to-part writes
+- [Query Engine](/docs/architecture/query-engine) -- compilation, hints and execution on one node
+- [Cluster Configuration](/docs/configuration/cluster) -- cluster config keys and defaults
+- [Small Cluster Deployment](/docs/deployment/small-cluster) -- setup guide
 - [Large Cluster Deployment](/docs/deployment/large-cluster) -- production cluster guide
 - [Rebalancing and Splitting](/docs/operations/rebalancing) -- partition management
-- [S3 Setup](/docs/deployment/s3-setup) -- configuring the shared storage layer
+- [S3 Setup](/docs/deployment/s3-setup) -- the shared storage layer

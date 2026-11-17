@@ -12,11 +12,8 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/api/apicontracts"
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
-	"github.com/lynxbase/lynxdb/pkg/logical/physical"
 	"github.com/lynxbase/lynxdb/pkg/model"
-	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/server"
-	"github.com/lynxbase/lynxdb/pkg/storage/views"
 	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
@@ -52,12 +49,11 @@ func (s *Server) handleQueryGet(w http.ResponseWriter, r *http.Request) {
 	}
 	limit := parseIntParam(r, "limit", 0)
 	req := QueryRequest{
-		Q:        q,
-		From:     r.URL.Query().Get("from"),
-		To:       r.URL.Query().Get("to"),
-		Limit:    limit,
-		Format:   format,
-		Language: r.URL.Query().Get("language"),
+		Q:      q,
+		From:   r.URL.Query().Get("from"),
+		To:     r.URL.Query().Get("to"),
+		Limit:  limit,
+		Format: format,
 	}
 	s.executeQuery(w, r, req)
 }
@@ -67,8 +63,6 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeQuery) {
 		return
 	}
-	s.logSigmaSource(r, "query request")
-
 	var req QueryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")
@@ -84,18 +78,6 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	s.executeQuery(w, r, req)
 }
 
-func (s *Server) logSigmaSource(r *http.Request, message string) {
-	source := r.Header.Get("Sigma-Source")
-	if source == "" || s.logger == nil {
-		return
-	}
-	s.logger.Info(message,
-		"sigma_source", source,
-		"method", r.Method,
-		"path", r.URL.Path,
-	)
-}
-
 // executeQuery is the shared execution logic for POST and GET /query.
 func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryRequest) {
 	query := req.effectiveQuery()
@@ -104,26 +86,12 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 
 		return
 	}
-	query = substituteVariables(query, req.Variables)
 	if !s.checkQueryLength(w, query) {
 		return
 	}
 
-	if msg := validateExplicitLanguage(req.Language); msg != "" {
-		respondError(w, ErrCodeValidationError, http.StatusBadRequest, msg,
-			WithSuggestion(`set language="lynxflow" or omit it; SPL2 was removed — see https://lynxdb.dev/docs/migration`))
-		return
-	}
-
-	// Language routing: post-RFC-002, always LynxFlow.
-	lang := detectQueryLanguage(query, req.Language)
-
-	s.executeLynxFlowQuery(w, r, req, lang)
+	s.runQuery(w, r, req)
 }
-
-// executeSPL2Query is removed (RFC-002 Phase 10). All queries now execute
-// through the LynxFlow path. Callers requesting language=spl2 receive a 400
-// error with migration guidance.
 
 // mapQueryMode converts the HTTP Wait parameter to a QueryMode + duration.
 func mapQueryMode(wait *float64) (usecases.QueryMode, time.Duration) {
@@ -164,14 +132,7 @@ func (s *Server) checkQueryLength(w http.ResponseWriter, q string) bool {
 
 // handlePlanError maps domain errors to HTTP responses.
 func handlePlanError(w http.ResponseWriter, err error) {
-	var pe *planner.ParseError
-	if errors.As(err, &pe) {
-		if pe.Diag != nil {
-			respondLynxFlowParseError(w, *pe.Diag)
-		} else {
-			respondError(w, ErrCodeInvalidQuery, http.StatusBadRequest, "parse error: "+pe.Message,
-				WithSuggestion(pe.Suggestion))
-		}
+	if respondQueryCompileError(w, err) {
 		return
 	}
 	if errors.Is(err, usecases.ErrTooManyQueries) {
@@ -185,27 +146,6 @@ func handlePlanError(w http.ResponseWriter, err error) {
 	if errors.Is(err, server.ErrInvalidTimeBounds) {
 		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error())
 
-		return
-	}
-
-	// NotYetImplementedError: a logical node has no physical mapping yet.
-	// Return 422 UNSUPPORTED_COMMAND so clients get a clear, non-500 signal.
-	var nie *physical.NotYetImplementedError
-	if errors.As(err, &nie) {
-		respondError(w, ErrCodeUnsupportedCommand, http.StatusUnprocessableEntity, nie.Error(),
-			WithSuggestion("This feature is not yet available. Check the docs for the current command set."))
-		return
-	}
-
-	// ErrMaterializeNoViewService: server misconfiguration.
-	if errors.Is(err, usecases.ErrMaterializeNoViewService) {
-		respondInternalError(w, err.Error())
-		return
-	}
-
-	// View already exists: from inline | materialize on a duplicate name.
-	if errors.Is(err, views.ErrViewAlreadyExists) {
-		respondError(w, ErrCodeAlreadyExists, http.StatusConflict, err.Error())
 		return
 	}
 
@@ -283,14 +223,14 @@ func broadScopeLints(query string, stats *server.SearchStats, queryCfg config.Qu
 	if hasSearch && ((sourceThreshold > 0 && sourceCount >= sourceThreshold) || (segmentThreshold > 0 && segmentCount >= segmentThreshold)) {
 		return []model.QueryLint{{
 			Code:     model.LintBroadSearch,
-			Message:  fmt.Sprintf("Broad search over %d sources; narrow with `FROM`, `source=`, or a time range", sourceCount),
+			Message:  fmt.Sprintf("Broad search over %d sources; narrow with `source=<name>` or a time range", sourceCount),
 			Position: 0,
 		}}
 	}
 	if sourceThreshold > 0 && sourceCount >= sourceThreshold {
 		return []model.QueryLint{{
 			Code:     model.LintAllSourcesHigh,
-			Message:  "Narrow the source with `FROM <source>` or `source=<name>`",
+			Message:  "Narrow the source with `source=<name>`",
 			Position: 0,
 		}}
 	}
@@ -312,14 +252,12 @@ func broadLintThresholds(queryCfg config.QueryConfig) (sourceThreshold, segmentT
 	return sourceThreshold, segmentThreshold
 }
 
+// broadScopeQueryShape reports whether a query reads every source and
+// whether it filters with free-text search or regular expressions.
 func broadScopeQueryShape(query string) (allSources bool, hasSearch bool) {
-	// Heuristic string-based detection after spl2 removal (RFC-002 Phase 10).
-	// The lynxflow path produces lints via lint.Run; this function only provides
-	// a fallback for the broad-scope warning on the response envelope.
-	upper := strings.ToUpper(query)
-	lower := strings.ToLower(query)
-	allSources = strings.Contains(upper, "FROM *")
-	hasSearch = queryUsesRegex(query) || strings.Contains(lower, "| search")
+	compact := strings.ToLower(strings.Join(strings.Fields(query), ""))
+	allSources = strings.Contains(compact, "source=*") || strings.Contains(compact, "index=*")
+	hasSearch = queryUsesRegex(query) || strings.HasPrefix(compact, "search") || strings.Contains(compact, "|search")
 	return allSources, hasSearch
 }
 
@@ -397,11 +335,10 @@ func queryUsesRegex(query string) bool {
 	lower := strings.ToLower(query)
 
 	return strings.Contains(lower, "| regex ") ||
-		strings.Contains(lower, " regex ") ||
-		strings.Contains(query, "=~") ||
-		strings.Contains(query, "!~") ||
-		strings.Contains(lower, "matches(") ||
-		strings.Contains(lower, "extract(")
+		strings.Contains(lower, "| rex ") ||
+		strings.Contains(lower, "regexp(") ||
+		strings.Contains(lower, "regexp_match(") ||
+		strings.Contains(lower, "regexp_extract(")
 }
 
 // searchStatsToMeta converts a server.SearchStats to the REST meta stats struct.
@@ -436,10 +373,6 @@ func searchStatsToMeta(ss *server.SearchStats) *metaStats {
 		JoinStrategy:         ss.JoinStrategy,
 		ScanMS:               ss.ScanMS,
 		PipelineMS:           ss.PipelineMS,
-		AcceleratedBy:        ss.AcceleratedBy,
-		MVStatus:             ss.MVStatus,
-		MVSpeedup:            ss.MVSpeedup,
-		MVOriginalScan:       ss.MVOriginalScan,
 		CacheHit:             ss.CacheHit,
 		PeakMemoryBytes:      ss.PeakMemoryBytes,
 		MemAllocBytes:        ss.MemAllocBytes,

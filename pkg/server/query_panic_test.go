@@ -8,7 +8,7 @@ import (
 
 func TestFailJobOnPanicMarksJobFailed(t *testing.T) {
 	e := &Engine{logger: slog.Default()}
-	job := newSearchJob("from x | stats dc(y)", ResultTypeAggregate)
+	job := newSearchJob("source=x | stats dc(y)", ResultTypeAggregate)
 
 	func() {
 		defer e.failJobOnPanic(job)
@@ -31,7 +31,7 @@ func TestFailJobOnPanicMarksJobFailed(t *testing.T) {
 
 func TestFailJobOnPanicWithoutPanicLeavesJobRunning(t *testing.T) {
 	e := &Engine{logger: slog.Default()}
-	job := newSearchJob("from x", ResultTypeEvents)
+	job := newSearchJob("source=x", ResultTypeEvents)
 
 	func() {
 		defer e.failJobOnPanic(job)

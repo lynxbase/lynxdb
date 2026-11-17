@@ -11,7 +11,7 @@ func TestE2E_Explain_ValidQuery_IsValid(t *testing.T) {
 	h := NewHarness(t)
 	ctx := context.Background()
 
-	result, err := h.Client().Explain(ctx, `from main | stats count()`)
+	result, err := h.Client().Explain(ctx, `source=main | stats count()`)
 	if err != nil {
 		t.Fatalf("Explain: %v", err)
 	}
@@ -39,11 +39,11 @@ func TestE2E_Explain_InvalidQuery_HasErrors(t *testing.T) {
 	}
 }
 
-func TestE2E_Explain_ComplexQuery_HasPipeline(t *testing.T) {
+func TestE2E_Explain_ComplexQuery_HasPlans(t *testing.T) {
 	h := NewHarness(t)
 	ctx := context.Background()
 
-	result, err := h.Client().Explain(ctx, `from main | where host == "web-01" | stats count() by host | sort -count | head 3`)
+	result, err := h.Client().Explain(ctx, `source=main | where host = "web-01" | stats count() as count by host | sort -count | head 3`)
 	if err != nil {
 		t.Fatalf("Explain: %v", err)
 	}
@@ -53,8 +53,11 @@ func TestE2E_Explain_ComplexQuery_HasPipeline(t *testing.T) {
 	if result.Parsed == nil {
 		t.Fatal("expected non-nil Parsed")
 	}
-	if len(result.Parsed.Pipeline) == 0 {
-		t.Error("expected non-empty pipeline stages")
+	if result.Parsed.LogicalPlan == "" {
+		t.Error("expected a non-empty logical plan")
 	}
-	t.Logf("pipeline stages: %d, result_type: %s", len(result.Parsed.Pipeline), result.Parsed.ResultType)
+	if result.Parsed.OptimizedPlan == "" {
+		t.Error("expected a non-empty optimized plan")
+	}
+	t.Logf("result_type: %s\noptimized plan:\n%s", result.Parsed.ResultType, result.Parsed.OptimizedPlan)
 }

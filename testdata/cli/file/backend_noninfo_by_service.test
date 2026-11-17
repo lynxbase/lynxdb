@@ -1,0 +1,7 @@
+# file: backend_server.log
+# format: json
+source=main
+| where level != "INFO"
+| stats count() as n by level, service
+| sort level, - n
+| head 5

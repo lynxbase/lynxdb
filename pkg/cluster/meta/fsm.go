@@ -68,10 +68,6 @@ func (f *MetaFSM) Apply(log *raft.Log) interface{} {
 		err = f.state.applyUpdateFieldCatalog(cmd.Data)
 	case CmdUpdateSourceRegistry:
 		err = f.state.applyUpdateSourceRegistry(cmd.Data)
-	case CmdRegisterView:
-		err = f.state.applyRegisterView(cmd.Data)
-	case CmdUnregisterView:
-		err = f.state.applyUnregisterView(cmd.Data)
 	case CmdApplyRebalance:
 		err = f.state.applyRebalance(cmd.Data)
 	case CmdProposeSplit:
@@ -132,16 +128,12 @@ func (f *MetaFSM) Restore(rc io.ReadCloser) error {
 	// Rebuild the hash ring from the node list (not serialized).
 	state.Ring = rebuildRing(&state)
 
-	// Ensure new maps are initialized when restoring from older snapshots
-	// that predate Phase 5 distributed subsystems.
+	// Snapshots may lack these maps; restore them empty.
 	if state.FieldCatalog == nil {
 		state.FieldCatalog = make(map[string]*GlobalFieldInfo)
 	}
 	if state.Sources == nil {
 		state.Sources = make(map[string]*GlobalSourceInfo)
-	}
-	if state.Views == nil {
-		state.Views = make(map[string]*GlobalViewInfo)
 	}
 	if state.Splits == nil {
 		state.Splits = make(map[uint32]*SplitInfo)

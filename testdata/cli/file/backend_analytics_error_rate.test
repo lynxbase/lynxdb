@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| stats count() as total, count(where level == "ERROR") as errors
-| extend error_pct = round((float("errors*100") / total), 1)
-| keep total, errors, error_pct
+source=main
+| stats count() as total, count(eval(level = "ERROR")) as errors
+| eval error_pct = round(errors * 100.0 / total, 1)
+| fields total, errors, error_pct

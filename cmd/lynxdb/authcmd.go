@@ -29,11 +29,10 @@ var authCmd = &cobra.Command{
 }
 
 var authCreateKeyCmd = &cobra.Command{
-	Use:     "create",
-	Aliases: []string{"create-key"}, // backward compat
-	Short:   "Create a new API key",
+	Use:   "create",
+	Short: "Create a new API key",
 	Example: `  lynxdb auth create --name web-01 --scope ingest
-  lynxdb auth create --name grafana-dash --scope query --expires 90d
+  lynxdb auth create --name dashboards --scope query --expires 90d
   lynxdb auth create --name ci-pipeline
   lynxdb auth create --name web-01 --scope ingest --format json | jq -r .api_key`,
 	RunE: runAuthCreateKey,
@@ -173,7 +172,7 @@ func printQuerySnippet(t *ui.Theme, created *client.AuthCreatedKey) {
 	fmt.Fprintf(os.Stderr, "  %s Usage %s\n",
 		t.Dim.Render("───"),
 		t.Dim.Render("───────────────────────────────────────────"))
-	fmt.Fprintf(os.Stderr, "  CLI:      lynxdb query 'level=error' --token %s\n", truncateStr(created.Token, 20)+"...")
+	fmt.Fprintf(os.Stderr, "  CLI:      lynxdb query 'search source=main error' --token %s\n", truncateStr(created.Token, 20)+"...")
 	fmt.Fprintf(os.Stderr, "  Header:   Authorization: Bearer %s\n", truncateStr(created.Token, 20)+"...")
 	fmt.Fprintf(os.Stderr, "  %s\n",
 		t.Dim.Render("─────────────────────────────────────────────────────────────"))
@@ -363,4 +362,30 @@ func runAuthStatus(_ *cobra.Command, _ []string) error {
 	fmt.Fprintln(os.Stderr, t.KeyValue("Status", t.Success.Render("authenticated")))
 
 	return nil
+}
+
+// formatRelativeTime renders an RFC 3339 timestamp as an age such as "5m ago".
+func formatRelativeTime(iso string) string {
+	t, err := time.Parse(time.RFC3339Nano, iso)
+	if err != nil {
+		t, err = time.Parse(time.RFC3339, iso)
+		if err != nil {
+			return iso
+		}
+	}
+
+	d := time.Since(t)
+
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 30*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	default:
+		return fmt.Sprintf("%dmo ago", int(d.Hours()/(24*30)))
+	}
 }

@@ -1,5 +1,0 @@
-Sort(+is_api, +is_v2)
-  Aggregate(count() by is_api, is_v2 [partial])
-    Extend(is_api=if(starts_with(path, "/api"), "yes", "no"), is_v2=if(contains(path, "/v2/"), "yes", "no"))
-      Scan(main)
-        pushdown.columns: [_raw, _source, _time, path]

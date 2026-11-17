@@ -5,25 +5,26 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/engine/physical"
 	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/logical"
-	"github.com/lynxbase/lynxdb/pkg/logical/physical"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/planner"
+	"github.com/lynxbase/lynxdb/pkg/server"
 	"github.com/lynxbase/lynxdb/pkg/storage"
 )
 
 // TailRequest describes a live tail request.
 type TailRequest struct {
-	Query string // SPL2 query
+	Query string // PPL query
 	Count int    // Historical catchup count (default 100)
 	From  string // Catchup lookback (default "-1h")
 }
 
 // TailPlan is a validated plan for tail streaming.
 type TailPlan struct {
-	Program    *logical.Plan
+	Plan       *ir.Plan
 	Hints      *model.QueryHints
 	ExternalTB *model.TimeBounds
 	Count      int
@@ -40,7 +41,7 @@ type TailSession struct {
 	Cleanup func()
 }
 
-// TailService provides live event streaming with full SPL2 pipeline support.
+// TailService streams live events through a query's streaming operators.
 type TailService struct {
 	planner planner.Planner
 	engine  TailEngine
@@ -71,12 +72,12 @@ func (s *TailService) Plan(req TailRequest) (*TailPlan, error) {
 		return nil, err
 	}
 
-	if err := planner.ValidateForTail(plan.Program); err != nil {
+	if err := planner.ValidateForTail(plan.Plan); err != nil {
 		return nil, err
 	}
 
 	return &TailPlan{
-		Program:    plan.Program,
+		Plan:       plan.Plan,
 		Hints:      plan.Hints,
 		ExternalTB: plan.ExternalTimeBounds,
 		Count:      count,
@@ -125,19 +126,19 @@ func (s *TailService) SubscribeAndCatchup(ctx context.Context, plan *TailPlan) (
 		}
 	}
 
-	// Build the live pipeline with the dedup cursor.
-	// The LiveScanIterator is plugged in as the Source for every Scan node in
-	// the logical plan, replacing the storage-backed scan with live events.
+	// The live event stream replaces the storage scan; the dedup cursor skips
+	// events the catchup already returned.
 	source := enginepipeline.NewLiveScanIterator(ch, 64, 100*time.Millisecond)
 	if !latestCatchup.IsZero() {
 		source.SetSkipBefore(latestCatchup)
 	}
 
-	iter, err := physical.Build(plan.Program, physical.BuildOptions{
-		Source: func(_ *logical.Scan) (enginepipeline.Iterator, error) {
-			return source, nil
+	iter, err := physical.Build(plan.Plan, physical.Options{
+		Source: func(scan *ir.Scan) (enginepipeline.Iterator, error) {
+			return server.FilterScanIndexes(scan, source), nil
 		},
-		Now: time.Now(),
+		Now:     time.Now(),
+		Context: ctx,
 	})
 	if err != nil {
 		bus.Unsubscribe(subID)
@@ -168,7 +169,7 @@ func (s *TailService) SubscribeAndCatchup(ctx context.Context, plan *TailPlan) (
 // keeps only the last N rows in memory, bounding peak allocation to O(count)
 // instead of O(total_matching_events).
 func (s *TailService) catchupRing(ctx context.Context, plan *TailPlan) ([]map[string]event.Value, error) {
-	iter, _, err := s.engine.BuildStreamingPipeline(ctx, plan.Program, plan.Hints, plan.ExternalTB)
+	iter, _, err := s.engine.BuildStreamingPipeline(ctx, plan.Plan, plan.Hints, plan.ExternalTB)
 	if err != nil {
 		return nil, err
 	}

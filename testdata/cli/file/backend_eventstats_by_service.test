@@ -1,9 +1,9 @@
 # file: backend_server.log
 # format: json
-from main
+source=main
 | eventstats avg(duration_ms) as svc_avg by service
-| extend deviation = (duration_ms - svc_avg)
+| eval deviation = duration_ms - svc_avg
 | where deviation > 0
-| keep service, duration_ms, svc_avg, deviation
-| sort -deviation
+| fields service, duration_ms, svc_avg, deviation
+| sort - deviation
 | head 5

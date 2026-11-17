@@ -13,7 +13,7 @@ import (
 
 func TestExit0_QueryFile(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("access.log"),
-		"--format", "json", "| stats count() as count")
+		"--format", "json", "source=main | stats count() as count")
 
 	if r.ExitCode != 0 {
 		t.Errorf("expected exit code 0, got %d\nstderr: %s", r.ExitCode, r.Stderr)
@@ -56,7 +56,7 @@ func TestExit3_ConnectionRefused(t *testing.T) {
 }
 
 func TestExit4_ParseError_FileMode(t *testing.T) {
-	r := runLynxDB(t, "query", "--file", testdataLog("access.log"), "| where")
+	r := runLynxDB(t, "query", "--file", testdataLog("access.log"), "source=main | where")
 
 	if r.ExitCode != 4 {
 		t.Errorf("expected exit code 4 (parse error), got %d\nstderr: %s", r.ExitCode, r.Stderr)
@@ -66,7 +66,7 @@ func TestExit4_ParseError_FileMode(t *testing.T) {
 func TestExit4_ParseError_ServerMode(t *testing.T) {
 	srv := startServer(t)
 
-	r := runLynxDB(t, "--server", srv.BaseURL, "query", "--format", "json", "| where")
+	r := runLynxDB(t, "--server", srv.BaseURL, "query", "--format", "json", "source=main | where")
 
 	if r.ExitCode != 4 {
 		t.Errorf("expected exit code 4 (parse error), got %d\nstderr: %s", r.ExitCode, r.Stderr)
@@ -76,7 +76,7 @@ func TestExit4_ParseError_ServerMode(t *testing.T) {
 func TestExit6_FailOnEmpty(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("access.log"),
 		"--format", "json", "--fail-on-empty",
-		`| where level=="NONEXISTENT_LEVEL_XYZ"`)
+		`source=main | where level = "NONEXISTENT_LEVEL_XYZ"`)
 
 	if r.ExitCode != 6 {
 		t.Errorf("expected exit code 6 (no results), got %d\nstderr: %s", r.ExitCode, r.Stderr)
@@ -92,7 +92,7 @@ func TestExit_ConnectionRefused_NonZero(t *testing.T) {
 }
 
 func TestExit_ParseError_StderrHasMessage(t *testing.T) {
-	r := runLynxDB(t, "query", "--file", testdataLog("access.log"), "| where")
+	r := runLynxDB(t, "query", "--file", testdataLog("access.log"), "source=main | where")
 
 	if r.ExitCode != 4 {
 		t.Errorf("expected exit code 4, got %d", r.ExitCode)

@@ -71,7 +71,7 @@ func TestTailCatchupOverFlushedSegments(t *testing.T) {
 	// Plan a query with hints (mirrors TailService.Plan + catchupRing).
 	p := planner.New()
 	plan, err := p.Plan(planner.PlanRequest{
-		Query: "from main",
+		Query: "source=main",
 	})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
@@ -79,7 +79,7 @@ func TestTailCatchupOverFlushedSegments(t *testing.T) {
 
 	// BuildStreamingPipeline with hints — the new signature.
 	// No external time bounds: we want to test that ALL flushed events are read.
-	iter, stats, err := e.BuildStreamingPipeline(ctx, plan.Program, plan.Hints, nil)
+	iter, stats, err := e.BuildStreamingPipeline(ctx, plan.Plan, plan.Hints, nil)
 	if err != nil {
 		t.Fatalf("BuildStreamingPipeline: %v", err)
 	}
@@ -136,13 +136,13 @@ func TestBuildStreamingPipelineWithNilHints(t *testing.T) {
 	}()
 
 	p := planner.New()
-	plan, err := p.Plan(planner.PlanRequest{Query: "from main"})
+	plan, err := p.Plan(planner.PlanRequest{Query: "source=main"})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 
 	// nil hints — should default to empty hints.
-	iter, _, err := e.BuildStreamingPipeline(ctx, plan.Program, nil, nil)
+	iter, _, err := e.BuildStreamingPipeline(ctx, plan.Plan, nil, nil)
 	if err != nil {
 		t.Fatalf("BuildStreamingPipeline with nil hints: %v", err)
 	}
@@ -189,13 +189,13 @@ func TestBuildStreamingPipelineEpochUnpin(t *testing.T) {
 	}()
 
 	p := planner.New()
-	plan, err := p.Plan(planner.PlanRequest{Query: "from main"})
+	plan, err := p.Plan(planner.PlanRequest{Query: "source=main"})
 	if err != nil {
 		t.Fatalf("plan: %v", err)
 	}
 
 	hints := &model.QueryHints{}
-	iter, _, err := e.BuildStreamingPipeline(ctx, plan.Program, hints, nil)
+	iter, _, err := e.BuildStreamingPipeline(ctx, plan.Plan, hints, nil)
 	if err != nil {
 		t.Fatalf("BuildStreamingPipeline: %v", err)
 	}

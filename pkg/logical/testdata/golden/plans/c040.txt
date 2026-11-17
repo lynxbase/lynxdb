@@ -1,6 +1,0 @@
-Limit(tail 5)
-  Project(timestamp, service, duration_ms, cumulative_dur)
-    Aggregate(sum(duration_ms) as cumulative_dur [streamstats])
-      Sort(+timestamp)
-        Scan(main)
-          pushdown.columns: [_raw, _source, _time, duration_ms, service, timestamp]

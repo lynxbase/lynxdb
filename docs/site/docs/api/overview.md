@@ -1,177 +1,175 @@
 ---
 sidebar_position: 1
 title: API Overview
-description: LynxDB HTTP API entry points, authentication rules, response envelopes, and the core endpoint map.
+description: LynxDB HTTP API base paths, authentication and scopes, response and error envelopes, common headers, and the full endpoint map.
 ---
 
 # REST API Overview
 
-Most HTTP endpoints live under `http://localhost:3100/api/v1`. The main exceptions are:
+The HTTP API listens on `http://localhost:3100` by default. Most endpoints live under `/api/v1`; the exceptions are:
 
-- `GET /health` for health checks
-- `GET /metrics` for Prometheus scraping
+- `GET /health` and `GET /metrics`
+- the Elasticsearch compatibility routes at the root (`/`, `/_bulk`, `/{index}/_bulk`, ...)
+- the Splunk HEC routes under `/services/collector`
 
-The same API powers the Web UI, the server-mode CLI, and external integrations.
+The CLI in server mode and every integration use this API. Queries are written in [PPL](../ppl/overview.md).
 
-:::tip Base path
-Unless a path in this page starts with `/health` or `/metrics`, it is relative to `/api/v1`.
-:::
+## Response envelope
 
-## Response Envelope
-
-Successful JSON responses use a `data` envelope and optionally a `meta` object:
+Successful JSON responses wrap the payload in `data`, with an optional `meta` object:
 
 ```json
 {
-  "data": {},
-  "meta": {
-    "took_ms": 12
-  }
+  "data": {"columns": ["n"], "rows": [[1000]], "total_rows": 1, "has_more": false, "type": "aggregate"},
+  "meta": {"took_ms": 1, "scanned": 1000, "query_id": "qry_78ad6ed9aaaef105"}
 }
 ```
 
-Errors use an `error` envelope:
+Errors use an `error` envelope with a machine-readable `code`, a `message` and, when there is one, a `suggestion`. Query compile errors add `position` and `expected`:
 
 ```json
 {
   "error": {
-    "code": "INVALID_QUERY",
-    "message": "parse error: unknown stage \"staats\"",
-    "suggestion": "stats"
+    "code": "SYNTAX_ERROR",
+    "message": "syntax error at line 1, column 29: expected an expression",
+    "position": {"line": 1, "column": 29},
+    "expected": ["expression"]
   }
 }
 ```
 
-## Authentication and Scopes
+Compatibility endpoints answer in the format of the protocol they implement (Elasticsearch, Splunk HEC, OTLP), and a few endpoints answer with a bare `{"error": "..."}` object; their pages say so.
 
-Authentication is off by default.
+## Error codes
 
-When enabled, the middleware protects all `/api/...` routes except for:
+| Code | HTTP | Meaning |
+|---|---|---|
+| `SYNTAX_ERROR`, `SEMANTIC_ERROR`, `TYPE_ERROR`, `PLANNING_ERROR` | 400 | The query does not compile. See [Query errors](./query.md#errors) |
+| `UNSUPPORTED_COMMAND`, `UNSUPPORTED_FUNCTION`, `UNSUPPORTED_FEATURE` | 422 | The query uses PPL that LynxDB does not run |
+| `EXECUTION_ERROR` | 500 | The query failed while running |
+| `QUERY_TOO_LARGE`, `QUERY_MEMORY_EXCEEDED` | 400 | The query is too long, or used more memory than its budget |
+| `QUERY_POOL_EXHAUSTED` | 503 | The server-wide query memory pool is full |
+| `TOO_MANY_REQUESTS` | 429 | Concurrency or rate limit reached; see `Retry-After` |
+| `VALIDATION_ERROR` | 400 | A required parameter is missing or a value is invalid |
+| `INVALID_JSON`, `INVALID_REQUEST` | 400 | The body is not valid JSON, or could not be read |
+| `AUTH_REQUIRED`, `INVALID_TOKEN` | 401 | No credentials, or credentials that do not match a key |
+| `FORBIDDEN` | 403 | The key lacks the scope the endpoint needs |
+| `NOT_FOUND` | 404 | No such job, key or resource |
+| `LAST_ROOT_KEY` | 409 | Revoking the only root key; rotate it instead |
+| `BACKPRESSURE`, `SHUTTING_DOWN` | 503 | Ingest is saturated or the server is stopping; see `Retry-After` |
+| `INTERNAL_ERROR` | 500 | An unexpected server failure |
 
-- `GET /health`
-- `GET /metrics`
-- non-API Web UI and static asset paths
+## Authentication and scopes
+
+Authentication is off by default. When it is on, every `/api/...` route needs credentials. `GET /health`, `GET /metrics` and routes outside `/api/` are not checked by the API key middleware.
 
 Accepted `Authorization` schemes:
 
 - `Bearer <token>`
-- `ApiKey <base64(id:secret)>`
-- `Basic <base64(user:token)>`
+- `ApiKey <base64(id:secret)>`, the format Filebeat and other Elasticsearch clients send
+- `Basic <base64(user:token)>`; the user name is ignored
 
-For browser SSE clients that cannot set headers, LynxDB also accepts `_token` as a query parameter and then redacts it from the request URL before downstream handling.
+Clients that cannot set headers, such as a browser `EventSource` for live tail, can pass the token as the `_token` query parameter. The server removes it from the URL before logging.
 
-Some endpoints add scope requirements on top of authentication:
+Keys have one of four scopes: `ingest`, `query`, `admin`, `full`. Root keys and `full` keys pass every check.
 
-- query endpoints require query scope
-- ingest endpoints require ingest scope
-- `GET /api/v1/config` requires admin scope
-- `PATCH /api/v1/config` requires a root key
-- auth key management endpoints require a root key
-
-See [TLS & Authentication](/docs/deployment/tls-auth) for setup.
-
-## Common HTTP Status Codes
-
-| Code | Meaning |
+| Endpoints | Required |
 |---|---|
-| `200` | Success |
-| `201` | Resource created |
-| `202` | Accepted (async job started) |
-| `204` | Deleted (no content) |
-| `400` | Bad request |
-| `401` | Authentication required |
-| `403` | Authenticated but insufficient scope |
-| `404` | Resource not found |
-| `413` | Payload too large |
-| `422` | Validation error |
-| `429` | Rate limited |
-| `503` | Backpressure or shutting down |
+| Ingest, Elasticsearch bulk and single-document ingest | `ingest` |
+| `POST`/`GET /query`, `/query/stream`, `GET /query/jobs...` | `query` |
+| `DELETE /query/jobs/{id}`, `DELETE /cache`, `GET /config` | `admin` |
+| `PATCH /config`, `POST /indexes`, `/auth/...` | a root key |
+| Everything else under `/api/v1` | any valid key |
 
-## Common Headers
+See [TLS & Authentication](../deployment/tls-auth.md) for setup and [`lynxdb auth`](../cli/auth.md) for key management from the CLI.
 
-### Request Headers
+## Headers
 
-| Header | Description | Default |
-|---|---|---|
-| `Content-Type` | Request body format | `application/json` |
-| `Accept` | Response format (`application/json` or `application/x-ndjson`) | `application/json` |
-| `Authorization` | `Bearer`, `ApiKey`, or `Basic` auth | -- |
-| `X-Source` | Source label for raw ingest | -- |
-| `X-Source-Type` | Source type label for raw ingest | -- |
-| `X-Index` | Target index for raw ingest | `main` |
-
-### Response Headers
+### Request
 
 | Header | Description |
 |---|---|
-| `Content-Type` | JSON, NDJSON, or SSE |
-| `Retry-After` | Retry hint on rate limiting or backpressure |
-| `X-Request-ID` | Request correlation ID |
-| `X-Query-ID` | Query correlation ID |
+| `Content-Type` | Body format; JSON endpoints accept `application/json` |
+| `Content-Encoding` | `gzip`, `zstd` or `snappy` bodies are decoded on every route |
+| `Authorization` | `Bearer`, `ApiKey` or `Basic` credentials |
+| `X-Request-ID` | Correlation ID; echoed back, generated when absent |
+| `X-Source`, `X-Source-Type`, `X-Index` | Labels for [`POST /ingest/raw`](./ingest.md#post-ingestraw) |
 
-## Query Execution Modes
+### Response
 
-`POST /api/v1/query` supports three execution modes through the `wait` field:
+| Header | Description |
+|---|---|
+| `X-Request-ID` | Correlation ID of the request |
+| `X-Query-ID` | ID of the query job, on query responses |
+| `Retry-After` | Seconds to wait, on `429` and `503` |
+| `ETag`, `Cache-Control` | On `GET /api/v1/catalog` |
 
-| `wait` value | Mode | Behavior |
+## Request size limits
+
+| Setting | Default | Applies to |
 |---|---|---|
-| omitted / `null` | Sync window | Wait until completion. If the query misses `query.sync_timeout` (default `30s`), LynxDB detaches it and returns `202 Accepted` with a job handle |
-| `0` | Async | Return a job handle immediately |
-| positive number | Hybrid | Wait up to N seconds, then fall back to a job handle |
+| `ingest.max_body_size` | 100 MB | Every request body |
+| `ingest.limits.max_compressed_body_bytes` | 32 MB | Body as sent |
+| `ingest.limits.max_decompressed_body_bytes` | 256 MB | Body after `Content-Encoding` decoding |
+| `ingest.max_line_bytes` | 1 MiB | One line of a line-oriented ingest body |
+| `query.max_query_length` | 1 MiB | Query text |
 
-`POST /api/v1/query` always returns the JSON response envelope. For NDJSON export, use `POST /api/v1/query/stream`.
+Bodies over the compressed or decompressed limit get `413` with `{"error": {"type": "request_body_too_large", "reason": "..."}, "status": 413}`.
 
-See [Query API](/docs/api/query) for the exact request and response formats.
+## Endpoint map
 
-## Endpoint Summary
+Paths below are relative to `/api/v1` unless they start with `/health`, `/metrics`, `/_`, `/{index}` or `/services`.
 
-| Method | Endpoint | Description | Docs |
+| Method | Path | Description | Page |
 |---|---|---|---|
-| `GET` | `/health` | Health check outside `/api/v1` | [Server](/docs/api/server) |
-| `GET` | `/metrics` | Prometheus metrics outside `/api/v1` | [Server](/docs/api/server) |
-| `POST` | `/ingest` | Ingest JSON event arrays | [Ingest](/docs/api/ingest) |
-| `POST` | `/ingest/raw` | Ingest newline-delimited raw text | [Ingest](/docs/api/ingest) |
-| `POST` | `/ingest/hec` | Splunk HEC-compatible ingest | [Ingest](/docs/api/ingest) |
-| `POST` | `/ingest/bulk` | Elasticsearch bulk ingest alias (prefer `/es/_bulk`) | [Ingest](/docs/api/ingest) |
-| `POST` | `/query` | Execute LynxFlow query | [Query](/docs/api/query) |
-| `GET` | `/query` | Execute query (GET convenience) | [Query](/docs/api/query) |
-| `POST` | `/query/stream` | NDJSON streaming export | [Query](/docs/api/query) |
-| `GET` | `/query/explain` | Parse and explain query | [Query](/docs/api/query) |
-| `GET` | `/query/jobs` | List query jobs | [Query](/docs/api/query) |
-| `GET` | `/query/jobs/{id}` | Get job status and results | [Query](/docs/api/query) |
-| `GET` | `/query/jobs/{id}/stream` | SSE job progress stream | [Query](/docs/api/query) |
-| `DELETE` | `/query/jobs/{id}` | Cancel a running job | [Query](/docs/api/query) |
-| `GET` | `/tail` | SSE live tail | [Live Tail & Histogram](/docs/api/tail-histogram) |
-| `GET` | `/histogram` | Time-bucketed event counts | [Live Tail & Histogram](/docs/api/tail-histogram) |
-| `GET` | `/fields` | Field catalog | [Fields](/docs/api/fields) |
-| `GET` | `/fields/{name}/values` | Top values for a field | [Fields](/docs/api/fields) |
-| `GET` | `/sources` | Source catalog | [Fields](/docs/api/fields) |
-| `GET/POST` | `/queries` | List/create saved queries | [Saved Queries](/docs/api/saved-queries) |
-| `PUT/DELETE` | `/queries/{id}` | Update/delete saved query | [Saved Queries](/docs/api/saved-queries) |
-| `GET/POST` | `/views` | List/create materialized views | [Views](/docs/api/views) |
-| `GET/PATCH/DELETE` | `/views/{name}` | Get/update/delete view | [Views](/docs/api/views) |
-| `GET/POST` | `/views/{name}/backfill` | Inspect or start backfill | [Views](/docs/api/views) |
-| `GET` | `/status` | Operational status snapshot | [Server](/docs/api/server) |
-| `GET` | `/stats` | Storage and ingest statistics | [Server](/docs/api/server) |
-| `GET` | `/metrics` | JSON storage metrics | [Server](/docs/api/server) |
-| `GET` | `/config` | Runtime configuration | [Server](/docs/api/server) |
-| `PATCH` | `/config` | Update runtime configuration snapshot | [Server](/docs/api/server) |
-| `GET` | `/cluster/status` | Cluster status summary | [Server](/docs/api/server) |
-| `GET` | `/compaction/history` | Recent compaction manifests | [Server](/docs/api/server) |
-| `GET` | `/cache/stats` | Query cache statistics | [Server](/docs/api/server) |
-| `DELETE` | `/cache` | Clear query cache | [Server](/docs/api/server) |
-| `GET/POST/DELETE` | `/auth/...` | Auth key management, only when auth is enabled | [Server](/docs/api/server) |
-| `GET` | `/indexes` | List indexes | [Ingest](/docs/api/ingest) |
-| `POST` | `/indexes` | Create an index | [Ingest](/docs/api/ingest) |
-| `GET` | `/shippers` | List registered shippers | [Server](/docs/api/server) |
-| `POST` | `/es/_bulk` | Preferred Elasticsearch bulk API | [Compatibility](/docs/api/compatibility) |
-| `POST` | `/es/{index}/_doc` | ES single-doc ingest | [Compatibility](/docs/api/compatibility) |
-| `GET` | `/es/` | ES cluster info handshake | [Compatibility](/docs/api/compatibility) |
-| `POST` | `/otlp/v1/logs` | OpenTelemetry OTLP logs | [Compatibility](/docs/api/compatibility) |
+| `POST` | `/query` | Run a PPL query: sync, async or hybrid | [Query](./query.md) |
+| `GET` | `/query` | Run a PPL query from query-string parameters | [Query](./query.md#get-query) |
+| `POST` | `/query/stream` | Run a query and stream NDJSON rows | [Query](./query.md#post-querystream) |
+| `GET` | `/query/explain` | Compile a query and return its plans | [Query](./query.md#get-queryexplain) |
+| `GET` | `/catalog` | PPL commands and functions with support levels | [Query](./query.md#get-catalog) |
+| `GET` | `/query/jobs` | List jobs | [Query](./query.md#get-queryjobs) |
+| `GET` | `/query/jobs/{id}` | Job status and result | [Query](./query.md#get-queryjobsid) |
+| `DELETE` | `/query/jobs/{id}` | Cancel a job | [Query](./query.md#delete-queryjobsid) |
+| `GET` | `/query/jobs/{id}/stream` | Job progress over SSE | [Query](./query.md#get-queryjobsidstream) |
+| `GET` | `/tail` | Live tail over SSE | [Live Tail & Histogram](./tail-histogram.md) |
+| `GET` | `/histogram` | Event counts per time bucket | [Live Tail & Histogram](./tail-histogram.md#get-histogram) |
+| `GET` | `/fields` | Field catalog | [Fields & Sources](./fields.md) |
+| `GET` | `/fields/{name}/values` | Top values of a field | [Fields & Sources](./fields.md#get-fieldsnamevalues) |
+| `GET` | `/sources` | Sources with event counts | [Fields & Sources](./fields.md#get-sources) |
+| `POST` | `/ingest` | Ingest a JSON array of events | [Ingest](./ingest.md) |
+| `POST` | `/ingest/raw` | Ingest newline-delimited text | [Ingest](./ingest.md#post-ingestraw) |
+| `POST` | `/ingest/hec` | Ingest Splunk HEC events | [Ingest](./ingest.md#post-ingesthec) |
+| `POST` | `/ingest/bulk` | Ingest an Elasticsearch bulk body | [Ingest](./ingest.md#post-ingestbulk) |
+| `GET` | `/indexes` | List indexes | [Ingest](./ingest.md#indexes) |
+| `POST` | `/indexes` | Create an index | [Ingest](./ingest.md#indexes) |
+| `POST` | `/es/_bulk`, `/_bulk`, `/{index}/_bulk` | Elasticsearch bulk ingest | [Compatibility](./compatibility.md) |
+| `POST` | `/es/{index}/_doc` | Elasticsearch single-document ingest | [Compatibility](./compatibility.md#post-apiv1esindex_doc) |
+| `GET` | `/`, `/es/` | Elasticsearch handshake | [Compatibility](./compatibility.md#handshake-and-setup-probes) |
+| `POST` | `/services/collector`, `/services/collector/event`, `/services/collector/raw` | Splunk HEC ingest | [Compatibility](./compatibility.md#splunk-hec) |
+| `POST` | `/services/collector/ack` | Splunk HEC acknowledgements | [Compatibility](./compatibility.md#splunk-hec) |
+| `GET` | `/services/collector/health` | Splunk HEC health | [Compatibility](./compatibility.md#splunk-hec) |
+| `POST` | `/otlp/v1/logs` | OTLP/HTTP JSON logs | [Compatibility](./compatibility.md#opentelemetry-otlp) |
+| `GET` | `/health` | Health check | [Server](./server.md) |
+| `GET` | `/metrics` | Prometheus metrics | [Server](./server.md#get-metrics) |
+| `GET` | `/status` | Operational snapshot | [Server](./server.md#get-apiv1status) |
+| `GET` | `/stats` | Storage and event counters | [Server](./server.md#get-apiv1stats) |
+| `GET` | `/metrics` (under `/api/v1`) | Storage metrics as JSON | [Server](./server.md#get-apiv1metrics) |
+| `GET` | `/cluster/status` | Cluster summary | [Server](./server.md#get-apiv1clusterstatus) |
+| `GET` | `/compaction/history` | Recent compactions | [Server](./server.md#get-apiv1compactionhistory) |
+| `GET` | `/cache/stats` | Query cache statistics | [Server](./server.md#cache) |
+| `DELETE` | `/cache` | Clear the query cache | [Server](./server.md#cache) |
+| `GET` | `/config` | Runtime configuration | [Server](./server.md#get-apiv1config) |
+| `PATCH` | `/config` | Change runtime configuration | [Server](./server.md#patch-apiv1config) |
+| `POST`, `GET` | `/auth/keys` | Create or list API keys | [Server](./server.md#api-keys) |
+| `DELETE` | `/auth/keys/{id}` | Revoke an API key | [Server](./server.md#api-keys) |
+| `POST` | `/auth/rotate-root` | Rotate the root key | [Server](./server.md#api-keys) |
+| `GET` | `/debug/pprof/...` | Go runtime profiles | [Server](./server.md#profiling) |
+
+The OpenAPI description of these endpoints is at [`/api/swagger.yaml`](pathname:///api/swagger.yaml).
 
 ## Related
 
-- [Query API](/docs/api/query)
-- [Server API](/docs/api/server)
-- [CLI Overview](/docs/cli/overview)
-- [Configuration Overview](/docs/configuration/overview)
+- [Query API](./query.md)
+- [Ingest API](./ingest.md)
+- [CLI overview](../cli/overview.md)
+- [Configuration overview](../configuration/overview.md)

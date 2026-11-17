@@ -1,1 +1,0 @@
-from main | where (FieldA == "val1" and not FieldB == "val2") or FieldC == "val3"

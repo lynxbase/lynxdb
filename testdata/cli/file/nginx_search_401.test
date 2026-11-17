@@ -1,5 +1,4 @@
 # file: nginx_access.log
 # format: json
-from main
-| where has(_raw, "401")
+search source=main 401
 | stats count()

@@ -1,3 +1,0 @@
-Aggregate(dc(service) as unique_services [partial])
-  Scan(main)
-    pushdown.columns: [_raw, _source, _time, service]

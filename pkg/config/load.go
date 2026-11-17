@@ -1064,53 +1064,6 @@ var envBindings = []envBinding{
 		},
 		func(c *Config) string { return strconv.Itoa(c.Server.CacheReservePercent) }},
 
-	// Views
-	{LYNXDB_VIEWS_MAX_BACKFILL_MEMORY_BYTES, "views.max_backfill_memory_bytes",
-		func(c *Config, v string) error {
-			b, err := ParseByteSize(v)
-			if err != nil {
-				return err
-			}
-			c.Views.MaxBackfillMemoryBytes = b
-
-			return nil
-		},
-		func(c *Config) string { return c.Views.MaxBackfillMemoryBytes.String() }},
-	{LYNXDB_VIEWS_BACKFILL_BACKPRESSURE_WAIT, "views.backfill_backpressure_wait",
-		func(c *Config, v string) error {
-			d, err := ParseDuration(v)
-			if err != nil {
-				return err
-			}
-			c.Views.BackfillBackpressureWait = d
-
-			return nil
-		},
-		func(c *Config) string { return c.Views.BackfillBackpressureWait.String() }},
-	{LYNXDB_VIEWS_BACKFILL_MAX_RETRIES, "views.backfill_max_retries",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.Views.BackfillMaxRetries = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.Views.BackfillMaxRetries) }},
-
-	{LYNXDB_VIEWS_BACKFILL_TIMEOUT, "views.backfill_timeout",
-		func(c *Config, v string) error {
-			d, err := time.ParseDuration(v)
-			if err != nil {
-				return err
-			}
-			c.Views.BackfillTimeout = Duration(d)
-
-			return nil
-		},
-		func(c *Config) string { return c.Views.BackfillTimeout.String() }},
-
 	// Buffer Manager
 	{LYNXDB_BUFFER_MANAGER_ENABLED, "buffer_manager.enabled",
 		func(c *Config, v string) error {

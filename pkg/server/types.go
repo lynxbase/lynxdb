@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lynxbase/lynxdb/pkg/logical"
-	"github.com/lynxbase/lynxdb/pkg/logical/opt"
+	"github.com/lynxbase/lynxdb/pkg/ir"
+	"github.com/lynxbase/lynxdb/pkg/ir/opt"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
@@ -124,10 +124,6 @@ type SearchStats struct {
 	VectorizedFilterUsed bool                   `json:"vectorized_filter_used"`
 	DictFilterUsed       bool                   `json:"dict_filter_used"`
 	JoinStrategy         string                 `json:"join_strategy,omitempty"`
-	AcceleratedBy        string                 `json:"accelerated_by,omitempty"`
-	MVStatus             string                 `json:"mv_status,omitempty"`
-	MVSpeedup            string                 `json:"mv_speedup,omitempty"`
-	MVOriginalScan       int64                  `json:"mv_original_scan,omitempty"`
 	CacheHit             bool                   `json:"cache_hit,omitempty"`
 	PipelineStages       []PipelineStage        `json:"pipeline_stages,omitempty"`
 
@@ -546,17 +542,16 @@ type SourcesResult struct {
 type ResultType string
 
 const (
-	ResultTypeEvents      ResultType = "events"
-	ResultTypeAggregate   ResultType = "aggregate"
-	ResultTypeTimechart   ResultType = "timechart"
-	ResultTypeGlimpse     ResultType = "schema"
-	ResultTypeViewCreated ResultType = "view_created"
+	ResultTypeEvents    ResultType = "events"
+	ResultTypeAggregate ResultType = "aggregate"
+	ResultTypeTimechart ResultType = "timechart"
+	ResultTypeGlimpse   ResultType = "schema"
 )
 
 // QueryParams holds the parameters needed to submit a query.
 type QueryParams struct {
 	Query              string
-	Program            *logical.Plan
+	Plan               *ir.Plan
 	Hints              *model.QueryHints // pre-extracted by planner; avoids duplicate extraction
 	ExternalTimeBounds *model.TimeBounds
 	SkipResultCache    bool
@@ -568,9 +563,4 @@ type QueryParams struct {
 	OptimizeDuration time.Duration
 	RuleDetails      []opt.Applied
 	TotalRules       int
-
-	// AcceleratedBy is set when the optimizer rewrote the query to scan a
-	// materialized view. Propagated to SearchStats for REST response metadata.
-	AcceleratedBy string
-	MVStatus      string
 }

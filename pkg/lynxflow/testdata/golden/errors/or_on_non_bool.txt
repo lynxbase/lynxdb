@@ -1,3 +1,0 @@
-query: | where level or status
-warning S004 [8:13] operand of 'or' has type string, expected bool
-warning S004 [17:23] operand of 'or' has type int, expected bool

@@ -1,3 +1,0 @@
-query: | extend x = lowre("ABC")
-error S006 [13:25] unknown function 'lowre'
-  suggestion: did you mean 'lower'?

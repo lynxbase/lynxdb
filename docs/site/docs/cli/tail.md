@@ -1,169 +1,93 @@
 ---
 sidebar_position: 4
-title: "Real-Time: tail, top, watch, diff"
-description: Real-time CLI commands for live log tailing, server monitoring, query watching, and period comparison.
+title: tail
+description: Stream matching events from a LynxDB server as they arrive, with a PPL query as the filter.
 ---
 
-# Real-Time Commands
+# tail
 
-Commands for live monitoring and time-based comparison: `tail`, `top`, `watch`, and `diff`.
-
-## tail
-
-Live tail logs from server via Server-Sent Events (SSE).
+Stream events from the server as they are ingested.
 
 ```
-lynxdb tail [filter] [flags]
+lynxdb tail ['<PPL query>'] [flags]
 ```
 
 **Alias:** `t`
 
-### Flags
+The argument is a full [PPL](../ppl/overview.md) query that starts with a source, like any other query. Without an argument the CLI tails `source=*`, every index.
+
+```bash
+lynxdb tail 'source=main | where level = "ERROR"'
+```
+
+The CLI first compiles the query on the server, so a query that does not compile fails at once with a caret under the error. Then it opens `GET /api/v1/tail` (Server-Sent Events): the server sends up to `--count` matching events from the `--from` window, a marker, and then each new matching event as it is ingested. Press `Ctrl+C` to stop.
+
+## Flags
 
 | Flag | Short | Default | Description |
 |------|-------|---------|-------------|
-| `--count` | `-n` | `100` | Number of historical events to fetch before live streaming |
-| `--from` | | `-1h` | Historical lookback period |
+| `--count` | `-n` | `100` | Historical events to send before live streaming (the server caps it at 10000) |
+| `--from` | | `-1h` | How far back the historical events reach |
 
-### Examples
+## What a tail query can contain
+
+A live tail produces each output row from one input event. Commands that work row by row are allowed:
+
+- search terms and field comparisons in the source command: `source=main level=ERROR status>=500`
+- `where`, `eval`, `fields`, `rename`
+- `parse`, `rex`, `grok`, `spath`
+- `dedup`, `head`
+
+Commands that need every input row before they can produce output are rejected with HTTP 422: `stats`, `timechart`, `chart`, `top`, `rare`, `sort`, `reverse`, `eventstats`, `streamstats`, `trendline`, `join`, `lookup`, `append`, `union`, `multisearch`, `appendcol`, `transpose`, `addtotals`, `addcoltotals`, `mvcombine`, `patterns` and `describe`.
+
+```
+  ✖ HTTP_422: Aggregate is not supported in live tail: it needs all input rows before producing output
+```
+
+Use [`lynxdb query`](./query.md) with `--since` for aggregations over recent data.
+
+## Examples
 
 ```bash
-# Stream all events
+# Every new event, after the last 100 from the past hour
 lynxdb tail
 
-# Stream errors only
-lynxdb tail 'from main level=error'
+# Errors from one index
+lynxdb tail 'source=main level=ERROR'
 
-# Stream 5xx from nginx
-lynxdb tail 'from main _source=nginx status>=500'
+# Server errors from web hosts, selected fields
+lynxdb tail 'source=main host=web-* status>=500 | fields _time, host, path, status'
 
-# Last 50 events + live
-lynxdb tail --count 50 --from -1h
+# Slow requests, with a computed field
+lynxdb tail 'source=main | where response_time > 500 | eval seconds = response_time / 1000.0'
+
+# Pull a value out of the message
+lynxdb tail 'source=main | rex field=msg "(?<verb>[A-Z]+) (?<route>\S+)" | fields _time, verb, route'
+
+# Last 50 events of the past 15 minutes, then live
+lynxdb tail 'source=main' --count 50 --from -15m
+
+# One JSON object per event, for jq
+lynxdb tail 'source=main level=ERROR' --format json | jq -r .path
 ```
 
-### Console Output
+## Output
 
-Events are colorized by level with timestamp, source, and message:
-
-```
-2026-01-15T14:23:01Z [ERROR] nginx: connection refused to upstream
-2026-01-15T14:23:02Z [INFO] api-gateway: request handled in 45ms
---- historical catchup complete (47 events, 312ms) — streaming live ---
-2026-01-15T14:23:03Z [ERROR] nginx: timeout exceeded
-```
-
-Press `Ctrl+C` to stop.
-
----
-
-## top
-
-Full-screen live TUI dashboard of server metrics.
+On a terminal, each event prints as one line: the event time, the `level` field (colored by severity), the `source` field and the `message` field, or `_raw` when the event has no `message`:
 
 ```
-lynxdb top [flags]
+2026-01-15T14:23:01.105Z [ERROR] app: 2026-01-15T14:23:01.105Z host=web-03 level=ERROR method=GET path=/api/v1/users status=502
+2026-01-15T14:23:02.543Z [ERROR] app: 2026-01-15T14:23:02.543Z host=api-02 level=ERROR method=DELETE path=/api/v1/search status=502
+--- historical catchup complete (2 events, 41ms) — streaming live ---
+2026-01-15T14:23:07.587Z [ERROR] app: 2026-01-15T14:23:07.587Z host=api-02 level=ERROR method=POST path=/api/v1/auth/login status=503
 ```
 
-### Flags
+A query that drops `level`, `source` or `_raw` with `fields` prints those parts empty; use `--format json` to see exactly the fields the query keeps.
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--interval` | `2s` | Refresh interval (e.g., `2s`, `5s`) |
+With `--format json` or `ndjson`, each event prints as one JSON object per line.
 
-Shows four panels:
+## See also
 
-| Panel | Metrics |
-|-------|---------|
-| **Ingest** | Rate, today count, total count |
-| **Queries** | Active, cache hit rate, views, tail sessions |
-| **Storage** | Size, parts, batcher-buffered events, indexes |
-| **Sources** | Bar chart of events by source |
-
-Press `q` or `Ctrl+C` to quit.
-
-### Examples
-
-```bash
-lynxdb top
-lynxdb top --interval 5s
-```
-
----
-
-## watch
-
-Re-run a query at regular intervals with a live-updating TUI display.
-
-```
-lynxdb watch [LynxFlow query] [flags]
-```
-
-### Flags
-
-| Flag | Short | Default | Description |
-|------|-------|---------|-------------|
-| `--interval` | | `5s` | Refresh interval (e.g., `5s`, `30s`, `1m`) |
-| `--since` | `-s` | `-15m` | Time range for each execution |
-| `--diff` | | `false` | Show delta from previous run |
-
-Press `q` or `Ctrl+C` to quit.
-
-### Examples
-
-```bash
-# Watch error counts by source, refresh every 5s
-lynxdb watch 'from main level=error | stats count() by source'
-
-# Custom interval
-lynxdb watch 'from main level=error | stats count()' --interval 10s
-
-# Show changes between refreshes
-lynxdb watch '| stats count() by level' --since 1h --diff
-```
-
----
-
-## diff
-
-Compare query results across two consecutive time periods. Useful for spotting trends and anomalies.
-
-```
-lynxdb diff [LynxFlow query] [flags]
-```
-
-### Flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--period` | `1h` | Compare last N vs previous N (e.g., `1h`, `6h`, `24h`) |
-
-### Examples
-
-```bash
-# Compare error counts: last hour vs previous hour
-lynxdb diff 'from main level=error | stats count() by source'
-
-# Explicit period
-lynxdb diff 'from main level=error | stats count() by source' --period 1h
-
-# Compare 5xx over 24h
-lynxdb diff 'from main status>=500 | stats count() by uri' --period 24h
-```
-
-### Console Output
-
-```
-  Comparing: last 1h vs previous 1h
-
-  source          NOW     PREV    CHANGE
-  nginx           340     280     +21.4%
-  api-gateway     120     150     -20.0%
-
-  Total: 460 vs 430 (+7.0%)
-```
-
-## See Also
-
-- [query](/docs/cli/query) for one-shot queries
-- [Shortcuts](/docs/cli/shortcuts) for quick access commands like `count` and `sample`
-- [Interactive Shell](/docs/cli/shell) for an interactive REPL
+- [Live tail API](../api/tail-histogram.md)
+- [Pipeline execution](../ppl/pipeline-execution.md) for which operators stream
+- [query](./query.md)

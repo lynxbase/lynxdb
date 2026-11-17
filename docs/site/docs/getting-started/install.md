@@ -6,12 +6,13 @@ description: Install LynxDB on Linux, macOS, Windows, or Docker.
 
 # Installation
 
-LynxDB ships as a single static binary with zero runtime dependencies. Choose your preferred installation method.
+LynxDB ships as one statically linked binary (`CGO_ENABLED=0`) with no
+runtime dependencies.
 
 import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
-## Pre-built Binary
+## Pre-built binary
 
 <Tabs>
 <TabItem value="linux" label="Linux" default>
@@ -20,90 +21,105 @@ import TabItem from '@theme/TabItem';
 curl -fsSL https://lynxdb.org/install.sh | sh
 ```
 
-The install script auto-detects your architecture (amd64/arm64) and libc (glibc/musl for Alpine). It verifies SHA256 checksums and installs to `/usr/local/bin` (or `~/.local/bin` if not root).
+The script detects the architecture (amd64, arm64, armv7) and the C library
+(glibc or musl), downloads the matching release archive, checks it against
+the release's SHA-256 checksums when `sha256sum` or `shasum` is available,
+and installs to `/usr/local/bin`, or to `~/.local/bin` when `/usr/local/bin`
+is not writable.
 
 </TabItem>
 <TabItem value="macos" label="macOS">
 
 ```bash
-# Install script (works on Intel and Apple Silicon)
+# Install script (Intel and Apple Silicon)
 curl -fsSL https://lynxdb.org/install.sh | sh
 
-# Or via Homebrew
+# Or Homebrew
 brew install lynxbase/tap/lynxdb
 ```
 
 </TabItem>
 <TabItem value="windows" label="Windows">
 
-```powershell
-# Download from GitHub Releases
-# https://github.com/lynxbase/lynxdb/releases
+Download the `windows-amd64` zip archive from
+[GitHub Releases](https://github.com/lynxbase/lynxdb/releases), or build it
+with Go:
 
-# Or use Go
+```powershell
 go install github.com/lynxbase/lynxdb/cmd/lynxdb@latest
 ```
 
-On Windows, LynxDB works best under WSL2 or Git Bash.
+The install script also runs under Git Bash and MSYS2.
 
 </TabItem>
 </Tabs>
 
-### Install Script Options
+### Install script options
 
-The install script supports customization via environment variables:
+Pass options after `sh -s --`, or set the matching environment variable:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LYNXDB_VERSION` | latest | Install a specific version |
-| `LYNXDB_CHANNEL` | stable | Release channel: `stable` or `nightly` |
-| `LYNXDB_ALLOW_PRERELEASE` | unset | Required for nightly and prerelease versions |
-| `LYNXDB_INSTALL_DIR` | auto-detect | Custom installation directory |
-| `LYNXDB_NO_MODIFY_PATH` | unset | Skip PATH modification |
-| `LYNXDB_FORCE` | unset | Skip confirmation prompts |
+| Option | Variable | Default | Description |
+|--------|----------|---------|-------------|
+| `--version <v>` | `LYNXDB_VERSION` | latest | Install a specific version, such as `v0.5.0` |
+| `--channel <c>` | `LYNXDB_CHANNEL` | `stable` | Release channel: `stable` or `nightly` |
+| `--allow-prerelease` | `LYNXDB_ALLOW_PRERELEASE` | unset | Required for nightly and prerelease versions |
+| `--dir <path>` | `LYNXDB_INSTALL_DIR` | auto | Installation directory |
+| `--no-modify-path` | `LYNXDB_NO_MODIFY_PATH` | unset | Do not add the directory to `PATH` |
+| `--force` | `LYNXDB_FORCE` | unset | Skip confirmation prompts |
+| | `LYNXDB_BASE_URL` | `https://dl.lynxdb.org` | Download from another base URL (GitHub Releases is the fallback) |
 
 ```bash
-# Install a specific version
-LYNXDB_VERSION=v0.5.0 curl -fsSL https://lynxdb.org/install.sh | sh
+# A specific version
+curl -fsSL https://lynxdb.org/install.sh | sh -s -- --version v0.5.0
 
-# Install to a custom directory
-LYNXDB_INSTALL_DIR=/opt/bin curl -fsSL https://lynxdb.org/install.sh | sh
+# A custom directory
+curl -fsSL https://lynxdb.org/install.sh | LYNXDB_INSTALL_DIR=~/bin sh
 ```
 
-### Nightly Builds
+### Nightly builds
 
-Nightly builds are prerelease builds from `main` for testing. They are not recommended for production and always require explicit opt-in.
+Nightly builds are prerelease builds of `main` for testing. They need an
+explicit opt-in.
 
 ```bash
-# Install latest nightly
+# Install script
 curl -fsSL https://lynxdb.org/install.sh | sh -s -- --channel nightly --allow-prerelease
 
-# Homebrew nightly package
+# Homebrew
 brew install lynxbase/tap/lynxdb-nightly
 ```
 
-To return to stable:
+To return to the stable channel, run the plain install script again, or
+swap the Homebrew formula:
 
 ```bash
-curl -fsSL https://lynxdb.org/install.sh | sh
 brew uninstall lynxdb-nightly
 brew install lynxbase/tap/lynxdb
 ```
 
 ## Docker
 
+Images are published to `ghcr.io/lynxbase/lynxdb` for `linux/amd64` and
+`linux/arm64`. The image runs `lynxdb server` by default. Inside a container,
+listen on `0.0.0.0` and keep the data directory on a volume:
+
 ```bash
-# Run server mode
 docker run -d --name lynxdb \
   -p 3100:3100 \
   -v lynxdb-data:/data \
-  ghcr.io/lynxbase/lynxdb server --data-dir /data
+  ghcr.io/lynxbase/lynxdb server --addr 0.0.0.0:3100 --data-dir /data
+```
 
-# Run a one-off query
+Run a one-off query over standard input:
+
+```bash
 echo '{"level":"error","msg":"test"}' | \
-  docker run -i ghcr.io/lynxbase/lynxdb query 'stats count() by level'
+  docker run -i --rm ghcr.io/lynxbase/lynxdb query 'source=main | stats count() by level'
+```
 
-# Pull latest nightly for testing
+The `nightly` tag follows the nightly builds:
+
+```bash
 docker pull ghcr.io/lynxbase/lynxdb:nightly
 ```
 
@@ -113,7 +129,7 @@ docker pull ghcr.io/lynxbase/lynxdb:nightly
 services:
   lynxdb:
     image: ghcr.io/lynxbase/lynxdb:latest
-    command: server --data-dir /data
+    command: server --addr 0.0.0.0:3100 --data-dir /data
     ports:
       - "3100:3100"
     volumes:
@@ -123,12 +139,14 @@ volumes:
   lynxdb-data:
 ```
 
-## From Source
+See [Docker deployment](../deployment/docker.md) for more examples.
 
-Requires Go 1.26+:
+## From source
+
+Requires Go 1.26 or later:
 
 ```bash
-# Via go install
+# go install
 go install github.com/lynxbase/lynxdb/cmd/lynxdb@latest
 
 # Or clone and build
@@ -137,49 +155,29 @@ cd lynxdb
 go build -o lynxdb ./cmd/lynxdb/
 ```
 
-## Verify Installation
+## Verify the installation
 
 ```bash
 lynxdb version
-# LynxDB v0.5.0 (abc1234) built 2026-03-01T10:00:00Z
-# Go: go1.26.3 darwin/arm64
 ```
 
-## Set Up as a Service
-
-After installing the binary, set up LynxDB as a production service with a single command:
-
-```bash
-# System-wide (creates user, dirs, config, hardened systemd service)
-sudo lynxdb install
-
-# User-local (no root required, uses ~/.local and user systemd/launchd)
-lynxdb install
+```text
+  Version        v0.5.0
+  Commit         abc1234
+  Built          2026-03-01T10:00:00Z
+  Go             go1.26.3 linux/amd64
 ```
 
-This replaces the manual steps of creating a dedicated user, directories, config file, and systemd/launchd unit. See the full [`install` reference](/docs/cli/install) for all flags and details.
+`lynxdb version --short` prints only the version; `--json` prints the same
+information as JSON.
 
-## Self-Update
+## Run as a service
 
-LynxDB can update itself:
+The binary does not install a service unit. To run the server under systemd,
+see [Server Mode](./server-mode.md#run-as-a-service) and
+[Single-node deployment](../deployment/single-node.md).
 
-```bash
-# Check for updates
-lynxdb upgrade --check
-
-# Upgrade to latest
-lynxdb upgrade
-
-# Upgrade to latest nightly
-lynxdb upgrade --channel nightly --allow-prerelease
-
-# Upgrade to a specific version
-lynxdb upgrade --version v0.6.0
-```
-
-## Shell Completion
-
-Enable tab completion for your shell:
+## Shell completion
 
 ```bash
 # Bash
@@ -192,21 +190,21 @@ lynxdb completion zsh >> ~/.zshrc
 lynxdb completion fish > ~/.config/fish/completions/lynxdb.fish
 ```
 
-## Supported Platforms
+PowerShell is supported too: `lynxdb completion powershell`.
 
-| OS | Architecture | Notes |
-|----|-------------|-------|
-| Linux | x86_64 (amd64) | glibc and musl (Alpine) |
-| Linux | ARM64 | glibc and musl |
-| Linux | ARMv7 | Raspberry Pi 3+ |
-| macOS | Intel (amd64) | macOS 12+ |
-| macOS | Apple Silicon (arm64) | M1/M2/M3/M4 |
-| Windows | x86_64 | Best with WSL2 |
+## Supported platforms
 
-All binaries are statically linked (`CGO_ENABLED=0`) with zero runtime dependencies.
+| OS | Architecture | Archives |
+|----|-------------|----------|
+| Linux | x86_64 (amd64) | glibc and musl |
+| Linux | arm64 | glibc and musl |
+| Linux | armv7 | glibc |
+| macOS | Intel (amd64) | |
+| macOS | Apple Silicon (arm64) | |
+| Windows | x86_64 (amd64) | zip |
 
-## Next Steps
+## Next steps
 
-- **[Quick Start](/docs/getting-started/quickstart)** -- Run your first query
-- **[Pipe Mode](/docs/getting-started/pipe-mode)** -- Query without a server
-- **[Server Mode](/docs/getting-started/server-mode)** -- Start a persistent server
+- [Quick Start](./quickstart.md): run a first query
+- [Pipe Mode](./pipe-mode.md): query files without a server
+- [Server Mode](./server-mode.md): start a persistent server

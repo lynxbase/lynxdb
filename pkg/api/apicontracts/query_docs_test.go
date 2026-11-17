@@ -19,14 +19,14 @@ func TestQueryContractsStayInDocsAndOpenAPI(t *testing.T) {
 		{
 			path: "docs/site/docs/api/query.md",
 			snippets: []string{
-				"Only empty or `json` are accepted on this endpoint.",
-				fieldList + " are not silently ignored on this path.",
+				"`json` or empty. Any other value is a `400 VALIDATION_ERROR`",
+				fieldList + " are rejected with `400 VALIDATION_ERROR`.",
 			},
 		},
 		{
 			path: "docs/site/docs/operations/troubleshooting.md",
 			snippets: []string{
-				"If you send",
+				"is rejected",
 				"`limit`",
 				"`offset`",
 				"`wait`",
@@ -38,7 +38,7 @@ func TestQueryContractsStayInDocsAndOpenAPI(t *testing.T) {
 			path: "docs/site/static/api/swagger.yaml",
 			snippets: []string{
 				"enum: [json]",
-				"- " + fieldList + " are rejected with `400`.",
+				fieldList + " are rejected with `400 VALIDATION_ERROR`.",
 			},
 		},
 	}

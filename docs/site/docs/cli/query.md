@@ -1,231 +1,203 @@
 ---
 sidebar_position: 2
 title: query
-description: Execute LynxFlow queries against a LynxDB server, local files, or stdin.
+description: Run PPL queries against a LynxDB server, local files or standard input.
 ---
 
 # query
 
-Execute a LynxFlow query against a running server, a local file, or stdin.
+Run a [PPL](../ppl/overview.md) query against a server, local files or standard input.
 
 ```
-lynxdb query [LynxFlow query] [flags]
+lynxdb query '<PPL query>' [flags]
 ```
 
 **Alias:** `q`
 
+Every query starts with a source, for example `source=main`, and continues with `| command` stages:
+
+```bash
+lynxdb query 'source=main level=ERROR | stats count() as errors by host | sort - errors'
+```
+
+Quote the query with single quotes so the shell leaves `|`, `>` and double-quoted strings alone. Several arguments are joined with spaces into one query.
+
 ## Flags
 
-| Flag | Short | Default | Description |
-|------|-------|---------|-------------|
-| `--since` | `-s` | | Relative time range (e.g., `15m`, `1h`, `7d`) |
-| `--from` | | | Absolute start time (ISO 8601) |
-| `--to` | | | Absolute end time (ISO 8601) |
-| `--file` | `-f` | | Query a local file instead of server |
-| `--sourcetype` | | | Override source type detection (file/stdin mode) |
-| `--source` | | | Set source metadata (file/stdin mode) |
-| `--output` | `-o` | | Write results to file |
-| `--timeout` | | | Query timeout (e.g., `10s`, `5m`) |
-| `--analyze` | | | Profile query execution (`basic`, `full`, `trace`) |
-| `--max-memory` | | | Max memory for ephemeral query (e.g., `512mb`, `1gb`) |
-| `--fail-on-empty` | | `false` | Exit with code 6 if no results |
-| `--copy` | | `false` | Copy results to clipboard as TSV |
-| `--explain` | | `false` | Show query plan without executing |
-| `--raw` | | `false` | Disable auto-format detection |
-| `--no-lint` | | `false` | Disable advisory query lints |
-| `--no-suggestions` | | `false` | Disable advisory query suggestions |
-| `--show-rewritten` | | `false` | Show normalized query rewrites |
-| `--queries-file` | | | Run one LynxFlow query per non-empty line from a file, or `-` for stdin |
-| `--language` | | | Query language. Only `lynxflow` is accepted; `spl2` is rejected with a migration error |
-| `--param` | `-D` | | Set query parameter (`--param name=value`); see [Query parameters](#query-parameters) |
+| Flag | Short | Default | Modes | Description |
+|------|-------|---------|-------|-------------|
+| `--since` | `-s` | | server | Relative time range: `15m`, `1h`, `7d` |
+| `--from` | | | server | Absolute start time (ISO 8601); needs `--to` |
+| `--to` | | | server | Absolute end time (ISO 8601); needs `--from` |
+| `--timeout` | | `6m` | server | Client-side limit for the whole query: `30s`, `10m` |
+| `--copy` | | `false` | server | Copy the result rows to the clipboard as TSV |
+| `--no-lint` | | `false` | server | Ask the server not to return advisory lints |
+| `--no-suggestions` | | `false` | server | Ask the server not to return advisory suggestions |
+| `--file` | `-f` | | local | Load a file or glob pattern and query it in process |
+| `--raw` | | `false` | local | Do not detect a log format while loading |
+| `--source` | | file path or `stdin` | local | `_source` value of the loaded events |
+| `--sourcetype` | | | local | `_sourcetype` value of the loaded events |
+| `--max-memory` | | | local | Memory limit for the in-process query: `512mb`, `1gb` |
+| `--output` | `-o` | | all | Write the result rows to a file instead of stdout |
+| `--analyze` | | | all | Print an execution profile: `basic` (bare flag), `full`, `trace` |
+| `--fail-on-empty` | | `false` | all | Exit with code 6 when the query returns no rows |
+| `--explain` | | `false` | all | Print the compiled plans and exit without running the query |
 
-The query argument is required unless `--queries-file` is set. `from main` is prepended automatically when the query starts with `|`. A query that starts with a stage name (such as `where`) is also valid — LynxFlow scans the default source implicitly.
+Flags marked "server" have no effect on a local query, and `--copy` fails with an error there. With `--since`, `--from` and `--to` absent, a server query covers all time unless the query sets its own range with `earliest=` and `latest=`.
 
-`--analyze` accepts an optional value; bare `--analyze` defaults to `basic`.
-
-## Three Execution Modes
-
-### 1. Server mode (default)
-
-Sends the query to a running LynxDB server via HTTP. This is the default when no `--file` flag is set and stdin is a terminal.
+A `\G` at the end of the query switches `--format auto` to vertical output, one field per line:
 
 ```bash
-lynxdb query 'from main level=error | stats count() by source'
-lynxdb q 'from main | where status >= 500 | top 10 path' --since 24h
+lynxdb query 'source=main level=ERROR | head 1 \G'
 ```
 
-### 2. File mode (`--file`)
+## Server mode
 
-Ingests file(s) into an ephemeral in-memory engine and queries locally. No server required. Glob patterns are supported.
+Without `--file` and with stdin attached to a terminal, `lynxdb query` sends the query to `POST /api/v1/query` on the server named by `--server` (see [Query API](../api/query.md)).
 
 ```bash
-lynxdb query --file access.log '| stats count() by status'
-lynxdb query --file '/var/log/*.log' '| where level == "ERROR" | stats count() by source'
+lynxdb query 'source=main status>=500 | top 10 path' --since 24h
+lynxdb query 'source=main | stats count() by host' \
+  --from 2026-01-15T00:00:00Z --to 2026-01-16T00:00:00Z
+lynxdb q 'source=main | timechart span=5m count() by level' --since 1h
 ```
 
-### 3. Stdin mode (pipe detected)
+The server answers small queries inline. A query that runs longer than the server's `query.sync_timeout` becomes an asynchronous job; the CLI polls the job and prints the result when it finishes, until `--timeout` expires. `lynxdb jobs` lists those jobs.
 
-Reads stdin into an ephemeral engine and queries locally. Detected automatically when stdin is not a terminal. No server required.
+Advisory lints from the server, such as a search over every index (`source=*`) on a server with many sources, print to stderr after the rows. `--no-lint` turns them off.
+
+The CLI picks local mode whenever stdin is a pipe. A script that runs under a pipe, such as a CI step, keeps server mode by redirecting stdin: `lynxdb query '...' < /dev/null`.
+
+## Local mode: files and stdin
+
+With `--file`, or when stdin is a pipe, the CLI runs the query without a server:
+
+1. It compiles the query first, so a query that does not compile fails before any input is read.
+2. It loads every line of the input as one event into an in-memory index named `main`.
+3. It runs the compiled plan in process with the same physical operators the server uses, then prints the result and exits.
 
 ```bash
-cat app.json | lynxdb query '| stats count() by level'
-kubectl logs deploy/api | lynxdb query '| where duration_ms > 1000 | stats avg(duration_ms) by endpoint'
+lynxdb query --file access.log 'source=main | stats count() by status'
+lynxdb query --file '/var/log/app/*.log' 'source=main level=ERROR | stats count() by _source'
+cat app.log | lynxdb query 'source=main | where response_time > 500 | stats count() by path'
+zcat archive.log.gz | lynxdb query 'source=main status>=500 | top 10 path'
 ```
 
-You cannot use `--file` and stdin simultaneously. `--copy` is only supported in server mode.
+`--file` takes a path or a glob pattern; quote a glob so the shell does not expand it. Using `--file` and piped stdin together is an error.
 
-## Examples
+While loading, the CLI extracts fields from each line:
 
-### Basic queries
+- A JSON object line yields its fields.
+- `key=value` pairs in a line become fields.
+- A recognized timestamp in the line becomes `_time`; a line without one gets the load time.
+- The CLI reads the first 20 lines to detect a log format. When it finds Apache/Nginx combined log format, syslog or Docker JSON logs, it extracts that format's fields as well (for combined: `client_ip`, `ident`, `user`, `timestamp`, `request`, `method`, `uri`, `protocol`, `status`, `bytes`, `referer`, `user_agent`) and says so on stderr:
+
+  ```
+    ℹ Detected Combined (100% of lines); fields are extracted while loading. Use --raw to disable.
+  ```
+
+`--raw` turns format detection off. JSON and `key=value` extraction still apply. Detection runs on the first file that matches `--file` and applies to all of them.
+
+Each loaded event carries `index=main`, `_source` (the file path, `stdin`, or `--source`) and `_sourcetype` (`--sourcetype`, empty by default). A line longer than 1 MiB stops the load with an error.
+
+A local query prints statistics to stderr, so stdout carries only rows:
 
 ```bash
-# Query a running server
-lynxdb query 'from main level=error | stats count() by source'
-lynxdb q 'from main | where status >= 500 | top 10 path' --since 24h
-
-# Short form (from main is auto-prepended)
-lynxdb query '| stats count() by source'
-lynxdb query 'where level == "error" | stats count()'
+lynxdb query --file access.log --format csv 'source=main | stats count() by level' > levels.csv
 ```
 
-### Time ranges
+## Plans: `--explain`
+
+`--explain` compiles the query in the CLI and prints the logical plan, the optimized plan and the optimizer rules that fired. It reads no input and contacts no server.
 
 ```bash
-# Relative time range
-lynxdb query 'from main level=error | stats count()' --since 1h
-
-# Absolute time range
-lynxdb query 'from main | stats count() by host' \
-  --from 2026-01-15T00:00:00Z --to 2026-01-15T23:59:59Z
+lynxdb query --explain 'source=main level=ERROR | stats count() as n by host | sort - n | head 3'
 ```
 
-### Local files and stdin
+```
+Logical plan:
+Limit(3)
+└─ Sort(n DESC NULLS LAST)
+   └─ Project(n, host)
+      └─ Aggregate(n = count() BY host)
+         └─ Filter(level = "ERROR")
+            └─ Scan(main)
+
+Optimized plan:
+TopN(3, n DESC NULLS LAST)
+└─ Project(n, host)
+   └─ Aggregate(n = count() BY host)
+      └─ Filter(level = "ERROR")
+         └─ Scan(main) columns=[_time, host, level] prune=level = "ERROR"
+
+Optimizer rules:
+  prune-scan x1
+  sort-limit-to-topn x1
+```
+
+To see how the server plans a query against its stored data, with cost and scan hints, use [`lynxdb explain`](./explain.md). [Pipeline execution](../ppl/pipeline-execution.md) explains the operators in these plans.
+
+## Profiles: `--analyze`
+
+`--analyze` prints an execution profile to stderr after the rows: phase timings, segments scanned and skipped, rows scanned, optimizer rules, memory and CPU, and recommendations. A bare `--analyze` means `basic`; `full` adds per-stage detail and `trace` adds per-segment detail.
 
 ```bash
-# Query local files (no server needed)
-lynxdb query --file access.log '| stats count() by status'
-lynxdb query --file '/var/log/*.log' '| where level == "ERROR" | stats count() by source'
-
-# Pipe from stdin (no server needed)
-cat app.json | lynxdb query '| stats count() by level'
-kubectl logs deploy/api | lynxdb query '| where duration_ms > 1000 | stats avg(duration_ms) by endpoint'
+lynxdb query 'source=main level=ERROR | stats count() by host' --analyze
+lynxdb query 'source=main level=ERROR | stats count() by host' --analyze full --since 1h
 ```
 
-### Profiling and debugging
+With `--format json`, the profile is printed as JSON.
+
+## Errors
+
+A query that does not compile prints the query with a caret under the position and the compiler's message, then exits with code 4:
 
 ```bash
-# Profile query performance
-lynxdb query 'from main level=error | stats count()' --analyze
-lynxdb query 'from main level=error | stats count()' --analyze full
-
-# Show query plan without executing
-lynxdb query 'from main level=error | stats count() by source' --explain
-
-# Query with timeout
-lynxdb query 'from main level=error | stats count()' --timeout 30s
+lynxdb query --file access.log 'source=main | where status >'
 ```
 
-### Query parameters
+```
+  source=main | where status >
+                              ^
 
-The `--param` flag is accepted for backward compatibility, but `${name}` placeholder substitution was removed together with SPL2. For parameterized pipelines, use LynxFlow `let` bindings instead:
+  ✖ ERROR: syntax error at line 1, column 29: expected an expression
+```
+
+Unsupported commands and functions fail the same way, with a message that names what is missing. [PPL errors](../ppl/errors.md) lists every error code. [Exit codes](./overview.md#exit-codes) lists the other failures.
+
+## Output
+
+Rows go to stdout in the format chosen by `--format`; statistics, hints and lints go to stderr.
+
+- On a terminal, `auto` prints a table, or a bare value for a single-column, single-row result, followed by a summary of rows, time, rows scanned, segments skipped and bytes read. `--verbose` adds the full statistics block.
+- When stdout is not a terminal, `auto` prints one JSON object per row and the statistics as one JSON line on stderr. `--no-stats` drops the statistics.
 
 ```bash
-lynxdb query --file events.ndjson 'let $errors = from main | where level == "ERROR"; from $errors | stats count()' --format ndjson --no-stats
+lynxdb query 'source=main | stats count() by host' --format csv > hosts.csv
+lynxdb query 'source=main level=ERROR | fields _time, host, path' --since 1h | jq -r .path
+lynxdb query 'source=main | stats count() as n by status | sort - n' --format table
 ```
 
-Expected output:
+[Output Formats](./output-formats.md) describes each format.
 
-```json
-{"count":2}
-```
-
-### Output control
+## Scripting
 
 ```bash
-# Force output format
-lynxdb query 'from main | stats count() by host' --format csv
-lynxdb query 'from main | stats count() by host' --format table
+# Fail a CI step when errors appear
+lynxdb query 'source=main level=ERROR' --since 15m --fail-on-empty --quiet < /dev/null > /dev/null \
+  && echo "errors in the last 15 minutes"
 
-# Write results to file
-lynxdb query 'from main level=error' --output errors.json
+# Pull rows from the server, then aggregate them locally
+lynxdb query 'source=main status>=500 | fields _raw' --since 1h --format raw \
+  | lynxdb query 'source=main | stats count() by path'
 
-# Copy results to clipboard
-lynxdb query 'from main level=error | stats count() by source' --copy
+# Copy a result to paste into a spreadsheet
+lynxdb query 'source=main | stats count() by host' --copy
 ```
 
-### Scripting
+## See also
 
-```bash
-# Exit code 6 when empty (for CI/scripting)
-lynxdb query 'from main level=FATAL' --fail-on-empty || echo "No fatal errors found"
-
-# Pipe query results to jq
-lynxdb query 'from main | stats count() by host' | jq '.host'
-
-# Export to file
-lynxdb query 'from main | where level == "ERROR"' --since 24h > errors.json
-
-# Chain queries (query server, then local post-process)
-lynxdb query 'from main | where status >= 500' --since 1h \
-  | lynxdb query '| stats count() by path'
-
-# Export as CSV
-lynxdb query 'from main | stats count() by host' --format csv > report.csv
-
-# Run one query per non-empty line
-lynxdb query --queries-file rules.lynxflow --since 24h --format ndjson
-```
-
-## Console Output
-
-### Server mode, TTY
-
-When stdout is a terminal and format is `auto`, the query prints formatted results with stats:
-
-```
-  . Scanning segments...  1.23s
-
-    Memtable:  4,200 events
-    Segments:  3 scanned / 5 to scan / 12 total
-    Skipped:   7 (bloom:3, time:2, index:1, stats:1)
-    Rows read: 156,000
-```
-
-On completion, results are shown as colorized JSON with stats:
-
-```
-  #1 {
-    "host": "web-01",
-    "count": 42530
-  }
-
-  --------------------------------------------------
-  Results:      2 results
-  Scanned:      150,000 events  (149,998 filtered, 100.0%)
-  Segments:     5 scanned / 12 total  (7 skipped)
-  Query time:   45ms
-```
-
-### Server mode, pipe (non-TTY)
-
-When stdout is not a terminal (pipe), output is newline-delimited JSON:
-
-```json
-{"host":"web-01","count":42530}
-{"host":"api-01","count":31204}
-```
-
-Stats and metadata are written to stderr so they do not interfere with piped data.
-
-To force machine-readable output in a terminal:
-
-```bash
-lynxdb query 'from main | stats count()' --format json
-```
-
-## See Also
-
-- [Output Formats](/docs/cli/output-formats) for details on `--format` options
-- [Shortcuts](/docs/cli/shortcuts) for `count`, `sample`, `last`, and `explain` shortcuts
-- [Interactive Shell](/docs/cli/shell) for the REPL interface
-- [LynxFlow v2 Reference](/docs/lynxflow/overview) for the query language reference
+- [explain](./explain.md) for server-side plans
+- [Search semantics](../ppl/search-and-types.md) for how `source=main error` and `field=value` terms match
+- [PPL command guide](../ppl/command-guide.md)
+- [Output Formats](./output-formats.md)

@@ -496,34 +496,6 @@ func (s *Service) ReportSources(_ context.Context, req *clusterpb.ReportSourcesR
 	return &clusterpb.ReportSourcesResponse{Ok: true}, nil
 }
 
-// RegisterView registers or updates a materialized view definition in the cluster FSM.
-func (s *Service) RegisterView(_ context.Context, req *clusterpb.RegisterViewRequest) (*clusterpb.RegisterViewResponse, error) {
-	payload, err := MarshalPayload(RegisterViewPayload{
-		ViewInfo: GlobalViewInfo{
-			Name:            req.Name,
-			Query:           req.Query,
-			Status:          ViewStatus(req.Status),
-			BackfillState:   req.Status,
-			CoordinatorNode: sharding.NodeID(req.CoordinatorNodeId),
-		},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("meta.Service.RegisterView: marshal: %w", err)
-	}
-
-	cmdData, err := EncodeCommand(&Command{Type: CmdRegisterView, Data: payload})
-	if err != nil {
-		return nil, fmt.Errorf("meta.Service.RegisterView: encode: %w", err)
-	}
-
-	future := s.raft.Apply(cmdData, 5*time.Second)
-	if err := future.Error(); err != nil {
-		return nil, fmt.Errorf("meta.Service.RegisterView: raft apply: %w", err)
-	}
-
-	return &clusterpb.RegisterViewResponse{Ok: true}, nil
-}
-
 // validRoles is the set of recognized cluster role names.
 var validRoles = map[string]bool{
 	"meta":   true,

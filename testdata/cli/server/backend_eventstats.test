@@ -1,6 +1,6 @@
 # format: json
-from backend
+source=backend
 | eventstats avg(duration_ms) as global_avg
-| extend is_slow = if(duration_ms > global_avg, "yes", "no")
+| eval is_slow = if(duration_ms > global_avg, "yes", "no")
 | stats count() by is_slow
 | sort is_slow

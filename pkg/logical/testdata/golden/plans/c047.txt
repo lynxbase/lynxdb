@@ -1,3 +1,0 @@
-Aggregate(p50(duration_ms), p95(duration_ms), p99(duration_ms), count() by service, bin(_time, 1h) [partial])
-  Scan(main)
-    pushdown.columns: [_raw, _source, _time, duration_ms, service]

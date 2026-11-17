@@ -57,11 +57,8 @@ type CaptureSpec struct {
 	Type string // "int", "float", "string", "bool", "timestamp", "duration", or ""
 }
 
-// ParseIterator implements the RFC-002 Phase 5 parse subsystem with per-row
-// error handling, first_of chains, typed captures, and no-overwrite merge.
-//
-// This iterator is used ONLY by the LynxFlow physical builder (new path).
-// The old UnpackIterator is preserved byte-identical for the SPL2 path.
+// ParseIterator extracts fields with format parsers, with per-row error
+// handling, first_of chains, typed captures, and no-overwrite merge.
 type ParseIterator struct {
 	child Iterator
 
@@ -101,7 +98,7 @@ type ParseIterator struct {
 	curProduced int      // fields the parser produced for this row, including no-overwrite skips
 }
 
-// NewParseIterator creates an RFC-002 parse operator.
+// NewParseIterator creates a parse operator.
 //
 // Parameters:
 //   - child: input iterator

@@ -9,7 +9,7 @@ func TestSystemQueryTablesExposeMemoryAndSpillStats(t *testing.T) {
 	engine := &Engine{}
 	resolver := &systemTableResolver{engine: engine}
 
-	job := newSearchJob("from main | sort duration desc", ResultTypeEvents)
+	job := newSearchJob("source=main | sort - duration", ResultTypeEvents)
 	job.Stats = SearchStats{
 		PeakMemoryBytes: 8192,
 		SpilledToDisk:   true,

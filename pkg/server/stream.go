@@ -5,9 +5,9 @@ import (
 	"sort"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/engine/physical"
 	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
-	"github.com/lynxbase/lynxdb/pkg/logical"
-	"github.com/lynxbase/lynxdb/pkg/logical/physical"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/storage"
@@ -35,7 +35,7 @@ type StreamingStats struct {
 // The returned iterator holds references to the pinned segment epoch and an
 // optional per-query memory budget. Both are released when the caller closes
 // the iterator; callers that abandon the iterator will leak the epoch pin.
-func (e *Engine) BuildStreamingPipeline(ctx context.Context, prog *logical.Plan,
+func (e *Engine) BuildStreamingPipeline(ctx context.Context, prog *ir.Plan,
 	hints *model.QueryHints,
 	externalTimeBounds *model.TimeBounds) (enginepipeline.Iterator, StreamingStats, error) {
 
@@ -65,7 +65,7 @@ func (e *Engine) BuildStreamingPipeline(ctx context.Context, prog *logical.Plan,
 // buildStreamingPipelineReal mirrors runStreamingPipeline but returns the
 // raw Iterator instead of draining it. The epoch is pinned and unpinned
 // when the returned iterator is closed.
-func (e *Engine) buildStreamingPipelineReal(ctx context.Context, prog *logical.Plan,
+func (e *Engine) buildStreamingPipelineReal(ctx context.Context, prog *ir.Plan,
 	hints *model.QueryHints) (enginepipeline.Iterator, StreamingStats, error) {
 
 	// Resolve glob patterns against the source registry.
@@ -98,16 +98,12 @@ func (e *Engine) buildStreamingPipelineReal(ctx context.Context, prog *logical.P
 		gov:          e.governor,
 	}
 
-	// Build the pipeline. Pass the view resolver so `from <viewname>` works
-	// in streaming mode too (e.g. live tail, streaming export).
-	var vr enginepipeline.ViewResolver
-	if e.viewRegistry != nil {
-		vr = e
-	}
-	source := indexStoreToSource(store, DefaultIndexName, vr)
-	iter, err := physical.Build(prog, physical.BuildOptions{
-		Source: source,
-		Now:    time.Now(),
+	source := indexStoreToSource(store, DefaultIndexName)
+	iter, err := physical.Build(prog, physical.Options{
+		Source:   source,
+		Describe: e.describeSource,
+		Now:      time.Now(),
+		Context:  ctx,
 	})
 	if err != nil {
 		ep.unpin()

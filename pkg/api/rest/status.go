@@ -47,18 +47,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	stats := s.engine.Stats()
 	cluster := s.engine.ClusterStatus()
 
-	mvTotal := 0
-	mvActive := 0
-	mvDefs := s.engine.ListMV()
-	if mvDefs != nil {
-		mvTotal = len(mvDefs)
-		for _, d := range mvDefs {
-			if d.Status == "active" {
-				mvActive++
-			}
-		}
-	}
-
 	data := map[string]interface{}{
 		"version":        buildinfo.Version,
 		"uptime_seconds": stats.UptimeSeconds,
@@ -72,10 +60,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		},
 		"queries": map[string]interface{}{
 			"active": s.engine.ActiveJobs(),
-		},
-		"views": map[string]interface{}{
-			"total":  mvTotal,
-			"active": mvActive,
 		},
 		"tail": map[string]interface{}{
 			"active_sessions":      s.activeTailSessions.Load(),

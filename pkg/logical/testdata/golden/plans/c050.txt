@@ -1,4 +1,0 @@
-TopK(5, -max_duration_ms)
-  Aggregate(max(duration_ms) as max_duration_ms by service [partial] [topk=5])
-    Scan(main)
-      pushdown.columns: [_raw, _source, _time, duration_ms, service]

@@ -40,9 +40,7 @@ type AggFunc struct {
 	// CondProgram is an optional compiled predicate for conditional aggregation.
 	// When non-nil, it is evaluated per row BEFORE extracting the value. If the
 	// predicate returns false or null, the row is skipped for this aggregate
-	// (treated as null). This is the LynxFlow v2 counterpart of the SPL2
-	// count(eval(condition)) pattern; the old path continues to use Program
-	// for that purpose and is unaffected by this field.
+	// (treated as null), as in count(eval(condition)).
 	CondProgram *vm.Program
 }
 
@@ -664,10 +662,7 @@ func (a *AggregateIterator) extractGroupKey(row map[string]event.Value) map[stri
 }
 
 func (a *AggregateIterator) extractValue(agg AggFunc, row map[string]event.Value) event.Value {
-	// Conditional aggregation (LynxFlow v2 path): evaluate the predicate
-	// first; if it returns false/null, skip this row for this aggregate.
-	// When CondProgram is nil (the common case and all SPL2 paths), this
-	// branch is never taken — zero overhead.
+	// Conditional aggregation: a false or NULL predicate skips the row.
 	if agg.CondProgram != nil {
 		condResult, condErr := a.vmInst.Execute(agg.CondProgram, row)
 		if condErr != nil {

@@ -5,7 +5,7 @@ description: Send Vector logs to LynxDB through the Elasticsearch sink.
 
 # Vector to LynxDB
 
-## If you are already running Vector
+## If you already run Vector
 
 Keep the Elasticsearch sink and point `endpoints` at LynxDB.
 
@@ -33,27 +33,37 @@ sinks:
     type: elasticsearch
     inputs: [files]
     endpoints: ["http://lynxdb:3100"]
-    compression: zstd
     mode: bulk
-# Vector zstd compression is accepted by LynxDB's ES bulk endpoint.
+    bulk:
+      index: "vector-logs"
+    compression: zstd
+# LynxDB's bulk endpoint accepts zstd-compressed requests.
 ```
 
-Generate the same shape locally with:
+## Where the events go
+
+Each event is stored in the LynxDB index named by the sink's `bulk.index`
+(here `vector-logs`). Vector's default index, `vector-%Y.%m.%d`, creates one
+index per day; query them together with `source=vector-*`.
 
 ```bash
-lynxdb shippers config vector --remote http://lynxdb:3100
+lynxdb query 'source=vector-logs | stats count() by _source'
 ```
 
-## Migrating from Elasticsearch
-
-Vector's Elasticsearch sink can continue using `mode: bulk`. LynxDB handles Vector's health check and zstd request compression.
+The file source's `file` field and the `host` field arrive as fields;
+`message` holds the log line. Extract more from it at query time; see
+[Field Extraction](../field-extraction.md).
 
 ## Troubleshooting
 
-If the Vector health check fails, confirm it is sending `HEAD /<index>` to the same host and port as the bulk sink. LynxDB returns `200 OK` for index health probes.
+Vector's health check sends `GET /` and `GET /_cluster/health` to the
+endpoint; LynxDB answers both. If the sink reports `400` responses, check
+that the index name uses only lowercase letters, digits, `.`, `_`, `-` and
+`+`.
 
 ## Supported behavior
 
-Supported: bulk mode, zstd compression, health checks, and `_index` to `_source` mapping.
+Supported: `mode: bulk`, `index` and `create` bulk actions, zstd and gzip
+compression, health checks, and `_index` routing to LynxDB indexes.
 
-Not supported yet: Vector `mode: data_stream`; that path is tracked separately from bulk mode.
+Not supported: Elasticsearch query APIs, and update or delete actions.

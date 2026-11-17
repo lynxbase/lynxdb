@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
+source=main
 | where threat_type != ""
 | stats count() by client_ip, threat_type
 | sort client_ip, threat_type

@@ -14,7 +14,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lynxbase/lynxdb/internal/webui"
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -29,8 +28,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/server"
-	shipperstats "github.com/lynxbase/lynxdb/pkg/server/shippers"
-	"github.com/lynxbase/lynxdb/pkg/storage/savedqueries"
 	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
@@ -39,9 +36,7 @@ type Server struct {
 	engine             *server.Engine
 	keyStore           *auth.KeyStore // Nil when auth is disabled.
 	queryService       *usecases.QueryService
-	viewService        *usecases.ViewService
 	tailService        *usecases.TailService
-	queryStore         *savedqueries.Store
 	runtimeCfg         *config.Config
 	cfgMu              sync.RWMutex
 	httpServer         *http.Server
@@ -62,14 +57,9 @@ type Server struct {
 	esHandshake        *eshttp.Handshake
 	esStubs            *eshttp.Stubs
 	promMetrics        *PrometheusMetrics
-	shipperRegistry    *shipperstats.Registry
 	splunkAckStore     *splunkhec.AckStore
 	levelVar           *slog.LevelVar
 	logger             *slog.Logger
-	topMu              sync.Mutex
-	topLastTotal       int64
-	topLastAt          time.Time
-	topRateEPS         float64
 }
 
 // Config configures the API server.
@@ -77,7 +67,6 @@ type Config struct {
 	Addr          string
 	DataDir       string         // Root directory for all data (segments, parts, indexes). Empty = in-memory only.
 	Retention     time.Duration  // Data retention period. 0 = use default (90 days).
-	NoUI          bool           // When true, the embedded Web UI is not served.
 	RuntimeConfig *config.Config // Optional full runtime snapshot used by reload/get-config paths.
 
 	KeyStore      *auth.KeyStore
@@ -91,7 +80,6 @@ type Config struct {
 	Syslog        config.SyslogConfig
 	Tail          config.TailConfig
 	Server        config.ServerConfig
-	Views         config.ViewsConfig
 	BufferManager config.BufferManagerConfig
 	Cluster       config.ClusterConfig
 }
@@ -105,34 +93,13 @@ func NewServer(cfg Config) (*Server, error) {
 		Logger:        cfg.Logger,
 		Query:         cfg.Query,
 		Server:        cfg.Server,
-		Views:         cfg.Views,
 		BufferManager: cfg.BufferManager,
 		Cluster:       cfg.Cluster,
 	})
 
-	// Build planner, query service, and view service.
-	// Wire the view catalog so the optimizer can rewrite matching queries
-	// to scan materialized views instead of raw data (~400x speedup).
-	p := planner.New(planner.WithViewCatalog(engine))
+	p := planner.New()
 	queryService := usecases.NewQueryService(p, engine, cfg.Query)
-	viewService := usecases.NewViewService(engine)
-	queryService.SetViewService(viewService)
 	tailService := usecases.NewTailService(p, engine)
-
-	// Initialize saved queries store.
-	var qStore *savedqueries.Store
-	var storeDegraded bool
-	var err error
-	if cfg.DataDir != "" {
-		qStore, err = savedqueries.OpenStore(cfg.DataDir)
-		if err != nil {
-			cfg.Logger.Warn("[DATA LOSS RISK] failed to open saved queries store, falling back to in-memory", "error", err)
-			qStore = savedqueries.OpenInMemory()
-			storeDegraded = true
-		}
-	} else {
-		qStore = savedqueries.OpenInMemory()
-	}
 
 	shutdownTimeout := cfg.HTTP.ShutdownTimeout
 	shutdownTimeout = defaultShutdownTimeout(shutdownTimeout)
@@ -147,7 +114,6 @@ func NewServer(cfg Config) (*Server, error) {
 		runtimeCfg.Listen = cfg.Addr
 		runtimeCfg.DataDir = cfg.DataDir
 		runtimeCfg.Retention = config.Duration(cfg.Retention)
-		runtimeCfg.NoUI = cfg.NoUI
 		if cfg.Query.SyncTimeout > 0 {
 			runtimeCfg.Query = cfg.Query
 		}
@@ -164,9 +130,7 @@ func NewServer(cfg Config) (*Server, error) {
 		engine:          engine,
 		keyStore:        cfg.KeyStore,
 		queryService:    queryService,
-		viewService:     viewService,
 		tailService:     tailService,
-		queryStore:      qStore,
 		runtimeCfg:      runtimeCfg,
 		ready:           make(chan struct{}),
 		queryCfg:        cfg.Query,
@@ -174,13 +138,9 @@ func NewServer(cfg Config) (*Server, error) {
 		shutdownTimeout: shutdownTimeout,
 		tailCfg:         cfg.Tail,
 		tlsConfig:       cfg.TLSConfig,
-		shipperRegistry: shipperstats.NewRegistry(shipperstats.DefaultRegistrySize),
 		splunkAckStore:  splunkhec.NewAckStore(10000),
 		levelVar:        cfg.LevelVar,
 		logger:          cfg.Logger,
-	}
-	if storeDegraded {
-		s.degraded.Store(true)
 	}
 
 	// Register Prometheus metrics and wire the OnQueryComplete hook so that
@@ -220,15 +180,8 @@ func NewServer(cfg Config) (*Server, error) {
 					MaxCompressedBytes:   int64(cfg.Ingest.Limits.MaxCompressedBodyBytes),
 					MaxDecompressedBytes: int64(cfg.Ingest.Limits.MaxDecompressedBodyBytes),
 				},
-				ObserveShipper: s.observeShipperRequest,
 			},
-			func(ctx context.Context, events []*event.Event) error {
-				processed, err := ingestPipelineForConfig(s.currentIngestConfig()).Process(events)
-				if err != nil {
-					return err
-				}
-				return s.submitShipperEvents(ctx, processed)
-			},
+			s.submitPipelineEvents,
 			cfg.Logger,
 			promMetrics,
 		)
@@ -240,17 +193,10 @@ func NewServer(cfg Config) (*Server, error) {
 	if cfg.Ingest.OTLP.GRPCListen != "" {
 		otlpReceiver, err := otlpgrpc.New(
 			otlpgrpc.Config{
-				Listen:         cfg.Ingest.OTLP.GRPCListen,
-				MaxRecvBytes:   int(cfg.Ingest.OTLP.GRPCMaxRecvBytes),
-				ObserveShipper: s.observeShipperRequest,
+				Listen:       cfg.Ingest.OTLP.GRPCListen,
+				MaxRecvBytes: int(cfg.Ingest.OTLP.GRPCMaxRecvBytes),
 			},
-			func(ctx context.Context, events []*event.Event) error {
-				processed, err := ingestPipelineForConfig(s.currentIngestConfig()).Process(events)
-				if err != nil {
-					return err
-				}
-				return s.submitShipperEvents(ctx, processed)
-			},
+			s.submitPipelineEvents,
 			cfg.Logger,
 			promMetrics,
 		)
@@ -341,7 +287,7 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /services/collector/raw", s.handleSplunkHECRaw)
 	mux.HandleFunc("POST /services/collector/ack", s.handleSplunkHECAck)
 	mux.HandleFunc("GET /services/collector/health", s.handleSplunkHECHealth)
-	// LynxFlow language catalog (RFC-002 §12).
+	// PPL command and function catalog.
 	mux.HandleFunc("GET /api/v1/catalog", s.handleCatalog)
 
 	// Field catalog.
@@ -360,31 +306,6 @@ func NewServer(cfg Config) (*Server, error) {
 	// Compaction history.
 	mux.HandleFunc("GET /api/v1/compaction/history", s.handleCompactionHistory)
 
-	// Saved queries (generic CRUD).
-	registerCRUD(mux, "/api/v1/queries", CRUDOpts[savedqueries.SavedQuery, *savedqueries.SavedQueryInput]{
-		Store:       s.queryStore,
-		ConflictErr: savedqueries.ErrAlreadyExists,
-		ServerRef:   s,
-		NewEntity: func(input *savedqueries.SavedQueryInput) *savedqueries.SavedQuery {
-			return input.ToSavedQuery()
-		},
-		MergeEntity: func(existing *savedqueries.SavedQuery, input *savedqueries.SavedQueryInput) *savedqueries.SavedQuery {
-			existing.Name = input.Name
-			if input.Q != "" {
-				existing.Q = input.Q
-			} else if input.Query != "" {
-				existing.Q = input.Query
-			}
-			existing.From = input.From
-			existing.Source = input.Source
-			existing.Metadata = input.Metadata
-			existing.LanguageVersion = "lynxflow"
-			existing.UpdatedAt = time.Now()
-
-			return existing
-		},
-	})
-
 	// Config API.
 	mux.HandleFunc("GET /api/v1/config", s.handleGetConfig)
 	mux.HandleFunc("PATCH /api/v1/config", s.handlePatchConfig)
@@ -395,15 +316,6 @@ func NewServer(cfg Config) (*Server, error) {
 	// Schema: field values and sources.
 	mux.HandleFunc("GET /api/v1/fields/{name}/values", s.handleFieldValues)
 	mux.HandleFunc("GET /api/v1/sources", s.handleListSources)
-
-	// Views (swagger paths, aliasing existing MV handlers).
-	mux.HandleFunc("GET /api/v1/views", s.handleListMV)
-	mux.HandleFunc("POST /api/v1/views", s.handleCreateMV)
-	mux.HandleFunc("GET /api/v1/views/{name}", s.handleGetMV)
-	mux.HandleFunc("PATCH /api/v1/views/{name}", s.handlePatchView)
-	mux.HandleFunc("DELETE /api/v1/views/{name}", s.handleDeleteMV)
-	mux.HandleFunc("GET /api/v1/views/{name}/backfill", s.handleViewBackfill)
-	mux.HandleFunc("POST /api/v1/views/{name}/backfill", s.handleViewBackfill)
 
 	// Elasticsearch compatibility.
 	mux.Handle("GET /{$}", s.esCompatibilityHandler("root", esHandshake))
@@ -464,8 +376,6 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// Unified status.
 	mux.HandleFunc("GET /api/v1/status", s.handleStatus)
-	mux.HandleFunc("GET /api/v1/top/snapshot", s.handleTopSnapshot)
-	mux.HandleFunc("GET /api/v1/shippers", s.handleListShippers)
 
 	// Auth management — only registered when auth is enabled, 404 otherwise.
 	if cfg.KeyStore != nil {
@@ -484,23 +394,13 @@ func NewServer(cfg Config) (*Server, error) {
 	// Health.
 	mux.HandleFunc("GET /health", s.handleHealth)
 
-	// Embedded Web UI. Keep / reserved for Elasticsearch-compatible clients;
-	// the browser UI lives under /ui/.
-	if !cfg.NoUI && webui.Enabled() {
-		mux.HandleFunc("GET "+webui.Path, func(w http.ResponseWriter, r *http.Request) {
-			http.Redirect(w, r, webui.Path+"/", http.StatusMovedPermanently)
-		})
-		mux.Handle("GET "+webui.Path+"/", webui.Handler())
-	}
-
 	idleTimeout := cfg.HTTP.IdleTimeout
 	idleTimeout = defaultIdleTimeout(idleTimeout)
 	// Build middleware chain (execution order, outer → inner):
-	// Recovery → RequestID → Logging → Auth → RateLimit → MaxBody → DualLimit → ShipperFingerprint → mux.
+	// Recovery → RequestID → Logging → Auth → RateLimit → MaxBody → DualLimit → mux.
 	// Auth runs before rate limiting so unauthenticated requests don't consume quota.
 	var handler http.Handler = mux
 	handler = s.esIndexHeadMiddleware(handler)
-	handler = ShipperFingerprintMiddleware(s.shipperRegistry, handler)
 	handler = limits.DualLimitMiddleware(limits.Config{
 		MaxCompressedBytes:   int64(cfg.Ingest.Limits.MaxCompressedBodyBytes),
 		MaxDecompressedBytes: int64(cfg.Ingest.Limits.MaxDecompressedBodyBytes),
@@ -735,64 +635,18 @@ func (s engineSink) Write(events []*event.Event) error {
 	return s.engine.IngestContext(context.Background(), events)
 }
 
-func (s *Server) submitShipperEvents(ctx context.Context, events []*event.Event) error {
-	if !s.currentIngestConfig().Staging.Enabled {
-		if err := s.engine.IngestContext(ctx, events); err != nil {
-			return err
-		}
-		s.recordShipperEvents(ctx, len(events))
-		return nil
+func (s *Server) submitEvents(ctx context.Context, events []*event.Event) error {
+	if s.currentIngestConfig().Staging.Enabled && s.stagingBuffer != nil {
+		return s.stagingBuffer.Add(ctx, events)
 	}
-	if s.stagingBuffer != nil {
-		if err := s.stagingBuffer.Add(ctx, events); err != nil {
-			return err
-		}
-		s.recordShipperEvents(ctx, len(events))
-		return nil
-	}
+	return s.engine.IngestContext(ctx, events)
+}
+
+func (s *Server) submitDurableEvents(ctx context.Context, events []*event.Event) error {
 	if err := s.engine.IngestContext(ctx, events); err != nil {
 		return err
 	}
-	s.recordShipperEvents(ctx, len(events))
-	return nil
-}
-
-func (s *Server) submitDurableShipperEvents(ctx context.Context, events []*event.Event) error {
-	if err := s.engine.IngestContext(ctx, events); err != nil {
-		return err
-	}
-	if err := s.engine.FlushBatcherContext(ctx); err != nil {
-		return err
-	}
-	s.recordShipperEvents(ctx, len(events))
-	return nil
-}
-
-func (s *Server) recordShipperEvents(ctx context.Context, count int) {
-	if s.shipperRegistry == nil {
-		return
-	}
-	if info, ok := shipperRequestInfo(ctx); ok {
-		s.shipperRegistry.Observe(info, count)
-	}
-}
-
-func (s *Server) observeShipperRequest(_ context.Context, userAgent, endpoint, remote string, count int) {
-	if s.shipperRegistry == nil || count <= 0 {
-		return
-	}
-	if endpoint == "/v1/logs" && shipperstats.DetectUserAgent(userAgent).Tool == "unknown" {
-		userAgent = "otelcol"
-	}
-	host, _, err := net.SplitHostPort(remote)
-	if err == nil {
-		remote = host
-	}
-	s.shipperRegistry.Observe(shipperstats.RequestInfo{
-		UserAgent: userAgent,
-		RemoteIP:  remote,
-		Endpoint:  endpoint,
-	}, count)
+	return s.engine.FlushBatcherContext(ctx)
 }
 
 func (s *Server) submitPipelineEvents(ctx context.Context, events []*event.Event) error {
@@ -800,7 +654,7 @@ func (s *Server) submitPipelineEvents(ctx context.Context, events []*event.Event
 	if err != nil {
 		return err
 	}
-	return s.submitShipperEvents(ctx, processed)
+	return s.submitEvents(ctx, processed)
 }
 
 func (s *Server) splunkHECHandler(requireSplunkAuth bool) *splunkhec.Handler {
@@ -814,12 +668,12 @@ func (s *Server) splunkHECHandler(requireSplunkAuth bool) *splunkhec.Handler {
 		MaxBatchSize:       ingestCfg.MaxBatchSize,
 		MaxLineBytes:       ingestCfg.MaxLineBytes,
 		AckStore:           s.splunkAckStore,
-		AckFlush:           s.flushStagedShipperEvents,
+		AckFlush:           s.flushStagedEvents,
 		RespondIngestError: func(w http.ResponseWriter, err error) { respondIngestError(w, err) },
 	}, s.submitPipelineEvents)
 }
 
-func (s *Server) flushStagedShipperEvents(ctx context.Context) error {
+func (s *Server) flushStagedEvents(ctx context.Context) error {
 	if s.stagingBuffer == nil {
 		return nil
 	}
@@ -915,7 +769,7 @@ func (s *Server) OTLPGRPCAddr() string {
 	return s.otlpGRPCReceiver.Addr()
 }
 
-// SetIndexStore sets an external IndexStore for full SPL2 queries.
+// SetIndexStore sets an external IndexStore that queries read.
 func (s *Server) SetIndexStore(store *model.IndexStore) {
 	s.engine.SetIndexStore(store)
 }

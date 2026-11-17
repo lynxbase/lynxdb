@@ -5,9 +5,10 @@ description: Point Filebeat at LynxDB using the Elasticsearch bulk-compatible en
 
 # Filebeat to LynxDB
 
-## If you are already running Filebeat
+## If you already run Filebeat
 
-Change the Elasticsearch host to LynxDB and keep the output type as `elasticsearch`.
+Change the Elasticsearch host to LynxDB and keep the output type
+`elasticsearch`.
 
 ```diff
  output.elasticsearch:
@@ -16,11 +17,11 @@ Change the Elasticsearch host to LynxDB and keep the output type as `elasticsear
 +  allow_older_versions: true
 ```
 
-Save the config, restart Filebeat, then check:
+Restart Filebeat, then check that events arrive:
 
 ```bash
-lynxdb shippers
-lynxdb query 'from main | stats count() as total by _source'
+lynxdb indexes
+lynxdb query 'source=filebeat-* | stats count() as total by index, _source'
 ```
 
 ## Full annotated config
@@ -38,37 +39,38 @@ output.elasticsearch:
   hosts: ["http://lynxdb:3100"]
   allow_older_versions: true
 
+# LynxDB accepts the setup probes, but there are no templates or ILM
+# policies to install.
 setup.template.enabled: false
 setup.ilm.enabled: false
-# LynxDB accepts Filebeat's ES bulk protocol but stores logs append-only.
 ```
 
-Generate the same shape locally with:
+## Where the events go
 
-```bash
-lynxdb shippers config filebeat --remote http://lynxdb:3100
-```
+LynxDB accepts `POST /_bulk`, `POST /<index>/_bulk` and the setup requests
+Filebeat sends at startup. Each document is stored in the LynxDB index named
+by its bulk `_index`, which for Filebeat is usually `filebeat-<version>`.
+`lynxdb indexes` lists the exact names; `source=filebeat-*` reads them all.
 
-## Migrating from Elasticsearch
-
-Filebeat can keep its Elasticsearch output. LynxDB accepts `POST /_bulk`, indexed bulk paths, and the setup probes Filebeat performs during startup.
-
-LynxDB maps the bulk `_index` value to the `_source` field. Every shipper-originated event is written to the LynxDB `main` index.
+The `log.file.path` of each document becomes its `_source`, `@timestamp`
+becomes `_time`, and `host.name` becomes `host`. The other keys are stored
+as fields; nested objects such as `agent` stay objects, which `spath` and
+`flatten` unpack (see [Working with JSON Logs](../json-processing.md)).
 
 ## Troubleshooting
 
-If Filebeat rejects the server version, set `allow_older_versions: true` or configure LynxDB's advertised Elasticsearch version with `ingest.es_compat.advertised_version`.
+If Filebeat rejects the server version, set `allow_older_versions: true` or
+change the version LynxDB advertises with `ingest.es_compat.advertised_version`
+(default `8.15.0`).
 
-If startup logs mention ILM or templates, disable `setup.ilm.enabled` and `setup.template.enabled`. LynxDB stubs the common setup endpoints, but disabling setup avoids extra probes.
-
-Run:
-
-```bash
-lynxdb doctor shippers
-```
+If startup logs mention ILM or templates, set `setup.ilm.enabled: false` and
+`setup.template.enabled: false`. LynxDB answers the common setup endpoints,
+but disabling setup avoids extra requests.
 
 ## Supported behavior
 
-Supported: Elasticsearch bulk ingest, gzip/zstd/snappy HTTP request decoding, setup probes, `_id` echoing in bulk responses.
+Supported: Elasticsearch bulk ingest, gzip, zstd and snappy request bodies,
+Filebeat's setup probes, and `_id` values echoed in bulk responses.
 
-Not supported: Elasticsearch query DSL, ILM state, template storage, `_id`-based deduplication, document updates, and deletes.
+Not supported: the Elasticsearch query DSL, ILM state, template storage,
+`_id`-based deduplication, document updates and deletes.

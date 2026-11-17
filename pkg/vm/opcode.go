@@ -182,18 +182,13 @@ const (
 	OpDateDiff    Opcode = 0xCE
 	OpStrftimeTZ  Opcode = 0xCF
 	OpTimeOfDayTZ Opcode = 0x84
-	// OpSearchMatch is RESERVED (0xC9). The handler was removed; the opcode
-	// constant is kept so that append-only numbering is preserved and any
-	// residual persisted bytecode (e.g. in materialized-view caches) gets a
-	// clean error instead of a silent misinterpretation.
+	// OpSearchMatch reserves 0xC9 and has no handler.
 	OpSearchMatch Opcode = 0xC9
 
 	// Network (operand: 2-byte CIDR pool index).
 	OpCIDRMatch Opcode = 0xE0 // net.IPNet.Contains
 
-	// RFC-002 typed-value opcodes (duration, array, object).
-	// These are additive plumbing for the LynxFlow frontend; the SPL2
-	// compiler does not emit them yet.
+	// Typed-value opcodes (duration, array, object).
 	OpArrayBuild    Opcode = 0xE1 // 2-byte operand: element count N; pop N values, push array
 	OpObjectBuild   Opcode = 0xE2 // 2-byte operand: entry count N; pop 2N values (key,val pairs), push object
 	OpIndex         Opcode = 0xE3 // pop index, pop container; arr[i] / obj["k"]; OOB/missing/null → null
@@ -201,7 +196,7 @@ const (
 	OpLen           Opcode = 0xE5 // pop value; string → rune count, array → element count; else null
 	OpConstDuration Opcode = 0xE6 // 2-byte operand: constant-pool index; pushes duration value
 
-	// RFC-002 LynxFlow strict-comparison opcodes.
+	// Strict comparison opcodes.
 	// Same-type: typed comparison. int vs float: cross-promote (both are "number").
 	// Null/missing operand → null. Incompatible types → null + warning counter.
 	OpEqStrict  Opcode = 0xE7 // pop 2, push bool/null; strict == (CS strings, no coercion)
@@ -211,14 +206,13 @@ const (
 	OpGtStrict  Opcode = 0xEB // pop 2, push bool/null; strict >
 	OpGteStrict Opcode = 0xEC // pop 2, push bool/null; strict >=
 
-	// RFC-002 LynxFlow 3VL logic opcodes.
+	// Three-valued logic opcodes.
 	OpNot3VL        Opcode = 0xED // pop 1, push bool/null; not(true)=false, not(false)=true, not(null)=null, not(non-bool)=null+warn
 	OpJumpIfNull3VL Opcode = 0xEE // 2-byte operand: target; if TOS is null, pop and jump; else leave on stack
 	OpAnd3VLNull    Opcode = 0xEF // pop 1 (right); left was null: if right=false→false, else→null
 	OpOr3VLNull     Opcode = 0xF0 // pop 1 (right); left was null: if right=true→true, else→null
 
-	// RFC-002 LynxFlow strict arithmetic opcodes.
-	// These follow §5.4 exactly: int+int→int, int+float→float, string+string→concat
+	// Strict arithmetic opcodes: int+int→int, int+float→float, string+string→concat
 	// (+ only), division by zero→null, no string-to-number promotion.
 	// Timestamp/duration algebra same as existing opcodes.
 	OpAddStrict Opcode = 0xF1 // string+string=concat, int+int=int, int+float=float, ts/dur algebra; string+num→null+warn
@@ -227,20 +221,20 @@ const (
 	OpDivStrict Opcode = 0xF4 // int/int=TRUNCATING int, int/float=float, dur/dur=float, dur/num=dur, /0→null
 	OpModStrict Opcode = 0xF5 // int%int only; non-int→null+warn; %0→null
 
-	// RFC-002 LynxFlow field-path and search opcodes.
+	// Field-path and search opcodes.
 	OpLoadPath     Opcode = 0xF6 // 2-byte operand: constant-pool index of dotted path string; flat column first, then object walk, no _raw fallback
 	OpFieldMissing Opcode = 0xF7 // 2-byte operand: field name index; pushes true if field absent from row
 	OpNegStrict    Opcode = 0xF8 // pop 1; negate int/float/duration; non-numeric→null+warn
 	OpInStrict     Opcode = 0xF9 // 2-byte operand: count N; pop N items + 1 value; strict equality check; null-aware
 
-	// RFC-002 LynxFlow function opcodes.
-	OpHasToken     Opcode = 0xFA // pop 2 (field, term); case-insensitive token match per §6.1
+	// Function opcodes.
+	OpHasToken     Opcode = 0xFA // pop 2 (field, term); case-insensitive whole-token match
 	OpContainsCI   Opcode = 0xFB // pop 2 (field, substr); case-insensitive substring
 	OpExtract      Opcode = 0xFC // 2-byte operand: regex pool index; pop string, push first capture group or null
 	OpExtractAll   Opcode = 0xFD // 2-byte operand: regex pool index; pop string, push array of all matches
-	OpSubstr0Based Opcode = 0xFE // pop 3 (str, start, len); 0-based start per RFC-002
+	OpSubstr0Based Opcode = 0xFE // pop 3 (str, start, len); 0-based start
 
-	// RFC-002 lambda + array/object function opcodes (b2).
+	// Lambda and array/object function opcodes.
 	OpArrayAny        Opcode = 0x03 // 2-byte operand: sub-program index; pop array, push bool (3VL)
 	OpArrayAll        Opcode = 0x04 // 2-byte operand: sub-program index; pop array, push bool (3VL)
 	OpArrayFilter     Opcode = 0x05 // 2-byte operand: sub-program index; pop array, push filtered array
@@ -251,7 +245,7 @@ const (
 	OpArrayDistinct   Opcode = 0x0A // pop array, push order-preserving deduplicated array
 	OpArraySort       Opcode = 0x0B // pop array, push sorted array (CompareValues; nulls last)
 	OpFlatten         Opcode = 0x0C // pop array, push one-level-flattened array
-	OpSplitArr        Opcode = 0x0D // pop 2 (str, sep); push array of strings (real FieldTypeArray); for LynxFlow split()
+	OpSplitArr        Opcode = 0x0D // pop 2 (str, sep); push array of strings
 	OpJoinArr         Opcode = 0x0E // pop 2 (arr, sep); join array elements with separator; push string
 	OpTimeOfDay       Opcode = 0x16 // pop timestamp; push duration since midnight UTC
 	OpDayOfWeek       Opcode = 0x17 // pop timestamp; push int 0-6 (0=Sunday, per time.Weekday)
@@ -511,7 +505,7 @@ var definitions = map[Opcode]*Definition{
 	OpLen:           {"OpLen", nil},
 	OpConstDuration: {"OpConstDuration", []int{2}},
 
-	// RFC-002 strict comparison
+	// Strict comparison
 	OpEqStrict:  {"OpEqStrict", nil},
 	OpNeqStrict: {"OpNeqStrict", nil},
 	OpLtStrict:  {"OpLtStrict", nil},
@@ -519,26 +513,26 @@ var definitions = map[Opcode]*Definition{
 	OpGtStrict:  {"OpGtStrict", nil},
 	OpGteStrict: {"OpGteStrict", nil},
 
-	// RFC-002 3VL logic
+	// Three-valued logic
 	OpNot3VL:        {"OpNot3VL", nil},
 	OpJumpIfNull3VL: {"OpJumpIfNull3VL", []int{2}},
 	OpAnd3VLNull:    {"OpAnd3VLNull", nil},
 	OpOr3VLNull:     {"OpOr3VLNull", nil},
 
-	// RFC-002 strict arithmetic
+	// Strict arithmetic
 	OpAddStrict: {"OpAddStrict", nil},
 	OpSubStrict: {"OpSubStrict", nil},
 	OpMulStrict: {"OpMulStrict", nil},
 	OpDivStrict: {"OpDivStrict", nil},
 	OpModStrict: {"OpModStrict", nil},
 
-	// RFC-002 field/search
+	// Field paths and search
 	OpLoadPath:     {"OpLoadPath", []int{2}},
 	OpFieldMissing: {"OpFieldMissing", []int{2}},
 	OpNegStrict:    {"OpNegStrict", nil},
 	OpInStrict:     {"OpInStrict", []int{2}},
 
-	// RFC-002 function opcodes
+	// Functions
 	OpHasToken:     {"OpHasToken", nil},
 	OpContainsCI:   {"OpContainsCI", nil},
 	OpExtract:      {"OpExtract", []int{2}},
@@ -562,7 +556,7 @@ var definitions = map[Opcode]*Definition{
 	OpNormalizeUTF8:  {"OpNormalizeUTF8", []int{2}},
 	OpTimestampGuess: {"OpTimestampGuess", nil},
 
-	// RFC-002 b2 lambda + array/object
+	// Lambdas and arrays/objects
 	OpArrayAny:        {"OpArrayAny", []int{2}},
 	OpArrayAll:        {"OpArrayAll", []int{2}},
 	OpArrayFilter:     {"OpArrayFilter", []int{2}},

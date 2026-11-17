@@ -1,1 +1,1 @@
-{"levels":"INFO|||WARN|||ERROR"}
+{"levels":["ERROR","INFO","WARN"]}

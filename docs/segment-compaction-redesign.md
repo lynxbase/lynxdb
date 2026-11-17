@@ -1,6 +1,6 @@
-# Segment Compaction Redesign
+# Segment Compaction
 
-LynxDB uses direct-to-part writes: accepted batches are buffered, flushed into immutable `.lsg` parts, and exposed after atomic rename. This keeps recovery simple, but sustained small-batch ingest can create L0 parts faster than background compaction removes them. The compaction lifecycle now treats part pressure as partition-local debt instead of a global count.
+LynxDB uses direct-to-part writes: accepted batches are buffered, flushed into immutable `.lsg` parts, and exposed after atomic rename. This keeps recovery simple, but sustained small-batch ingest can create L0 parts faster than background compaction removes them. Compaction therefore treats part pressure as debt local to each partition, not as a global count.
 
 ## Design
 

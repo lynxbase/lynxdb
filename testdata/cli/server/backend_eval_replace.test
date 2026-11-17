@@ -1,5 +1,6 @@
 # format: json
-from idx_backend
-| extend clean = replace(message, "[aeiou]", "*")
+source=backend
+| eval clean = replace(message, "[aeiou]", "*")
+| where like(clean, "%*%")
 | stats count() by level
 | sort level

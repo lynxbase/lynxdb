@@ -1,3 +1,0 @@
-1. Union(2 inputs)
-  2. Scan(app)
-  3. Scan(nginx)

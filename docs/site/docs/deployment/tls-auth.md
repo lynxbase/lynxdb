@@ -1,265 +1,199 @@
 ---
 title: TLS and Authentication
-description: Secure LynxDB with TLS encryption and API key authentication -- setup, certificate management, and key rotation.
+description: Serve LynxDB over HTTPS, turn on API key authentication, manage keys and scopes, and connect clients and shippers.
 ---
 
 # TLS and Authentication
 
-LynxDB supports TLS encryption for all HTTP traffic and API key authentication for access control. Both are optional and independent -- you can use TLS without auth, auth without TLS, or both together.
+TLS and API key authentication are independent; production servers should use both. Authentication needs a data directory, because keys are stored in `<data_dir>/auth/`.
 
 ## TLS
 
-### Auto-Generated Self-Signed Certificate
-
-The simplest way to enable TLS. LynxDB generates a self-signed certificate at startup:
+### Self-signed certificate
 
 ```bash
-lynxdb server --tls
+lynxdb server --data-dir /var/lib/lynxdb --tls
 ```
 
-The CLI implements Trust-On-First-Use (TOFU) for self-signed certificates:
+The server generates a certificate under `<data_dir>/tls/` on first start, reuses it afterwards, and prints its SHA-256 fingerprint at startup.
+
+### Your own certificate
 
 ```bash
-$ lynxdb login --server https://localhost:3100
-  TLS certificate is self-signed.
-  Fingerprint: SHA256:a1b2c3d4e5f6...
-  Trust this certificate? [y/N] y
-  Certificate fingerprint saved.
+lynxdb server --config /etc/lynxdb/config.yaml \
+  --tls-cert /etc/lynxdb/tls/server.crt \
+  --tls-key /etc/lynxdb/tls/server.key
 ```
 
-After trusting, subsequent connections to the same server work without prompts.
+```yaml
+tls:
+  cert_file: "/etc/lynxdb/tls/server.crt"
+  key_file: "/etc/lynxdb/tls/server.key"
+```
 
-### Your Own Certificates
-
-For production, use certificates from your organization's CA or Let's Encrypt:
+The certificate and key are PEM files and must be set together. The minimum protocol version is TLS 1.2. The certificate is loaded at startup, so a renewed certificate takes effect after a restart:
 
 ```bash
-lynxdb server \
-  --tls-cert /etc/ssl/certs/lynxdb.crt \
-  --tls-key /etc/ssl/private/lynxdb.key
+sudo certbot certonly --standalone -d lynxdb.example.com
+# /etc/letsencrypt/renewal-hooks/deploy/lynxdb.sh
+systemctl restart lynxdb
 ```
 
-#### With Let's Encrypt (certbot)
+The server's user needs read access to the key file.
+
+### Clients
 
 ```bash
-# Obtain certificate
-sudo certbot certonly --standalone -d lynxdb.company.com
-
-# Start LynxDB with the certificate
-lynxdb server \
-  --tls-cert /etc/letsencrypt/live/lynxdb.company.com/fullchain.pem \
-  --tls-key /etc/letsencrypt/live/lynxdb.company.com/privkey.pem
+lynxdb query --server https://lynxdb.example.com 'source=main level=ERROR | stats count() by host'
 ```
 
-Set up auto-renewal:
+A CA-signed certificate is verified normally. For a self-signed certificate, `lynxdb login` shows the fingerprint and asks whether to trust it, then saves it with the credentials; later commands verify the server against the saved fingerprint:
 
-```bash
-# /etc/cron.d/certbot-renew
-0 0 * * * root certbot renew --quiet --post-hook "systemctl reload lynxdb"
+```text
+$ lynxdb login --server https://lynxdb.internal:3100
+
+Warning: Unknown TLS certificate for https://lynxdb.internal:3100:
+  Fingerprint: SHA-256:4f:2a:...
+
+  Trust this certificate? [y/N]: y
 ```
 
-### systemd Service with TLS
-
-```ini
-# /etc/systemd/system/lynxdb.service
-[Service]
-ExecStart=/usr/local/bin/lynxdb server \
-  --config /etc/lynxdb/config.yaml \
-  --tls-cert /etc/ssl/certs/lynxdb.crt \
-  --tls-key /etc/ssl/private/lynxdb.key
-```
-
-### Client Configuration
-
-```bash
-# Connect to TLS-enabled server
-lynxdb query --server https://lynxdb.company.com 'from main level=error | stats count()'
-
-# Skip TLS verification (development only)
-lynxdb query --server https://localhost:3100 --tls-skip-verify 'from main level=error'
-
-# Or via environment variable
-export LYNXDB_SERVER=https://lynxdb.company.com
-export LYNXDB_TLS_SKIP_VERIFY=true  # Development only
-```
+If the certificate changes, the CLI refuses to connect until you run `lynxdb logout --server <url>` and log in again. Non-interactive scripts can pass `--tls-skip-verify` (or set `LYNXDB_TLS_SKIP_VERIFY=true`), which encrypts without authenticating the server.
 
 ## Authentication
 
-### Enabling Auth
-
-Enable API key authentication with the `--auth` flag:
+### Turn it on
 
 ```bash
-lynxdb server --auth
+lynxdb server --data-dir /var/lib/lynxdb --auth
 ```
 
-When auth is enabled and no keys exist, LynxDB generates a root key at startup:
-
-```
-Auth enabled -- no API keys exist. Generated root key:
-
-  lxk_a1b2c3d4e5f6...
-
-Save this key now. It will NOT be shown again.
+```yaml
+auth:
+  enabled: true
 ```
 
-### Logging In
+On the first start with no keys, the server generates a root key and prints it once to stderr:
+
+```text
+Auth enabled — no API keys exist. Generated root key:
+
+    lxk_a1b2c3d4e5f6...
+
+  Save this key now. It will NOT be shown again.
+```
+
+### Log in
 
 ```bash
-# Interactive (prompts for key with hidden input)
-lynxdb login
-
-# Non-interactive
-lynxdb login --token lxk_a1b2c3d4e5f6...
-
-# Or set the environment variable
-export LYNXDB_TOKEN=lxk_a1b2c3d4e5f6...
-```
-
-Credentials are stored in `~/.config/lynxdb/credentials` and are scoped to the server URL.
-
-### Creating API Keys
-
-Create additional keys for different services and team members:
-
-```bash
-# Create a key for your CI pipeline
-lynxdb auth create --name ci-pipeline
-# Created API key "ci-pipeline":
-#   lxk_9f8e7d6c5b4a...
-# Save this key now. It will NOT be shown again.
-
-# Create a key for Grafana
-lynxdb auth create --name grafana-dashboard
-
-# Create a key for the ingest pipeline
-lynxdb auth create --name filebeat-ingest
-```
-
-### Managing Keys
-
-```bash
-# List all keys
-lynxdb auth list
-# ID          NAME              PREFIX        CREATED              LAST USED
-# key_001     root              lxk_a1b2...   2026-01-15T10:00Z    2026-03-01T14:30Z
-# key_002     ci-pipeline       lxk_9f8e...   2026-02-01T09:00Z    2026-03-01T12:00Z
-# key_003     grafana-dashboard lxk_3c4d...   2026-02-15T11:00Z    2026-03-01T14:25Z
-
-# Revoke a key
-lynxdb auth revoke key_002
-
-# Check auth status
+lynxdb login                                    # prompts for the key
+lynxdb login --server https://lynxdb.example.com --token lxk_a1b2c3d4e5f6...
 lynxdb auth status
-# Server:     https://lynxdb.company.com
-# TLS:        verified (CA-signed)
-# Auth:       authenticated as "root" (key_001)
+lynxdb logout                                   # this server
+lynxdb logout --all                             # every saved server
 ```
 
-### Rotating the Root Key
+Credentials are saved per server URL in `credentials.yaml` under the user config directory (`~/.config/lynxdb/` on Linux, `~/Library/Application Support/lynxdb/` on macOS). The CLI picks a key in this order: `--token`, `LYNXDB_TOKEN`, saved credentials.
+
+### Create and manage keys
+
+Key management needs the root key.
 
 ```bash
+lynxdb auth create --name filebeat-prod --scope ingest
+lynxdb auth create --name dashboards --scope query --expires 90d --description "read-only dashboards"
+lynxdb auth list
+lynxdb auth revoke <id>
 lynxdb auth rotate-root
-# This will:
-#   1. Generate a new root key
-#   2. Revoke the current root key
-#   3. Update your local credentials
-#
-# Continue? [y/N] y
-#
-# New root key:
-#   lxk_new_root_key...
-# Save this key now. It will NOT be shown again.
-# Local credentials updated.
 ```
 
-### Logging Out
+`create` prints the token once; for an `ingest` key it also prints a ready-to-paste Filebeat `output.elasticsearch` block with the key in `api_key` form. `--expires` takes `30d`, `90d`, `1y` or `never` (default). `rotate-root` creates a root key, revokes the current one, and stores the replacement in the local credentials.
+
+### Scopes
+
+| Scope | Allows |
+|-------|--------|
+| `ingest` | `/api/v1/ingest`, `/api/v1/ingest/raw`, `/api/v1/ingest/hec`, `/api/v1/ingest/bulk`, and the `/api/v1/es/` bulk and document routes |
+| `query` | `GET` and `POST /api/v1/query`, `/api/v1/query/stream`, listing, reading and streaming jobs |
+| `admin` | Cancelling jobs, clearing the cache, `GET /api/v1/config` |
+| `full` | Everything a scoped key can do |
+| root key | Everything, plus key management, `POST /api/v1/indexes` and `PATCH /api/v1/config` |
+
+The other API routes accept any valid key regardless of scope: query explain, live tail, OTLP on `/api/v1/otlp/v1/logs`, field and source listings, status, stats, histogram, cache stats and the pprof endpoints.
+
+### Sending keys over HTTP
 
 ```bash
-# Remove credentials for current server
-lynxdb logout
-
-# Remove credentials for a specific server
-lynxdb logout --server https://lynxdb.company.com
-
-# Remove all saved credentials
-lynxdb logout --all
-```
-
-## TLS + Auth Together
-
-The recommended production setup uses both TLS and authentication:
-
-```bash
-lynxdb server \
-  --tls-cert /etc/ssl/certs/lynxdb.crt \
-  --tls-key /etc/ssl/private/lynxdb.key \
-  --auth \
-  --config /etc/lynxdb/config.yaml
-```
-
-Client setup:
-
-```bash
-# Login once
-lynxdb login --server https://lynxdb.company.com --token lxk_a1b2c3d4e5f6...
-
-# All subsequent commands use saved credentials
-lynxdb query 'from main level=error | stats count()'
-```
-
-### API Access with Auth
-
-```bash
-# Include token in API requests
-curl -s https://lynxdb.company.com/api/v1/query \
+curl -s https://lynxdb.example.com/api/v1/query \
   -H "Authorization: Bearer lxk_a1b2c3d4e5f6..." \
-  -d '{"q": "from main level=error | stats count()"}'
+  -H "Content-Type: application/json" \
+  -d '{"q": "source=main level=ERROR | stats count() by host"}'
+```
 
-# Or use the X-LynxDB-Token header
-curl -s https://lynxdb.company.com/api/v1/query \
-  -H "X-LynxDB-Token: lxk_a1b2c3d4e5f6..." \
-  -d '{"q": "from main level=error | stats count()"}'
+| Scheme | Header | Typical client |
+|--------|--------|----------------|
+| Bearer | `Authorization: Bearer <token>` | CLI, scripts |
+| ApiKey | `Authorization: ApiKey <base64(id:token)>` | Filebeat, Elasticsearch clients |
+| Basic | `Authorization: Basic <base64(user:token)>`, user name ignored | Fluent Bit, Vector |
+| Query parameter | `?_token=<token>` | Browser `EventSource` for live tail |
+
+The server strips the `_token` parameter from the URL before logging, but it can still appear in proxy logs; prefer headers.
+
+### Routes outside API key authentication
+
+API key checks apply to paths under `/api/`. The other routes behave as follows when auth is on:
+
+| Route | Behavior |
+|-------|----------|
+| `/health`, `/metrics` | Open, for probes and Prometheus. |
+| `/_bulk`, `/{index}/_bulk` and other root-level Elasticsearch routes | Bulk requests are rejected with `401`; point shippers at `/api/v1/es/_bulk` with a key. |
+| `/services/collector*` (Splunk HEC) | Not checked against API keys: any non-empty `Authorization: Splunk <token>` is accepted. Use `/api/v1/ingest/hec` for authenticated HEC ingest, or block these paths at a proxy. |
+| OTLP listener (`ingest.otlp.http_listen`, `grpc_listen`) | Separate plain listeners without auth or TLS. Disable them or keep them on a private network; `/api/v1/otlp/v1/logs` on the API port is authenticated. |
+
+## TLS and Auth Together
+
+```yaml
+listen: "0.0.0.0:3100"
+data_dir: "/var/lib/lynxdb"
+
+tls:
+  cert_file: "/etc/lynxdb/tls/server.crt"
+  key_file: "/etc/lynxdb/tls/server.key"
+
+auth:
+  enabled: true
+
+ingest:
+  otlp:
+    http_listen: ""
+```
+
+```bash
+lynxdb login --server https://lynxdb.example.com --token lxk_a1b2c3d4e5f6...
+lynxdb query 'source=main level=ERROR | stats count() as errors by host | sort - errors'
 ```
 
 ## Connection Profiles
 
-Manage multiple server connections with profiles:
-
 ```bash
-# Add a production profile
-lynxdb config add-profile prod \
-  --url https://lynxdb.company.com \
-  --token lxk_production_key...
-
-# Add a staging profile
-lynxdb config add-profile staging \
-  --url https://staging-lynxdb.company.com \
-  --token lxk_staging_key...
-
-# Use a specific profile
-lynxdb query 'from main level=error | stats count()' --profile prod
-
-# Set default profile
+lynxdb config add-profile prod --url https://lynxdb.example.com --token lxk_prod...
+lynxdb config add-profile staging --url https://staging.example.com --token lxk_staging...
+lynxdb query 'source=main level=ERROR | stats count() by host' --profile prod
 export LYNXDB_PROFILE=prod
 ```
 
-## Security Checklist
+## Checklist
 
-For production deployments:
-
-- [ ] Enable TLS with CA-signed certificates (not self-signed)
-- [ ] Enable authentication (`--auth`)
-- [ ] Save the root key securely (password manager, secrets vault)
-- [ ] Create separate API keys for each service/user
-- [ ] Rotate the root key after initial setup
-- [ ] Set up certificate auto-renewal
-- [ ] Use firewall rules to restrict port access
-- [ ] Monitor auth failures in logs
+- [ ] TLS with a CA-signed certificate, and a restart after each renewal
+- [ ] `auth.enabled: true` with a persistent `data_dir`
+- [ ] Root key stored in a secrets manager; rotated with `lynxdb auth rotate-root` after setup
+- [ ] One key per shipper and user, with the narrowest scope
+- [ ] OTLP listeners disabled or on a private network; `/services/collector` blocked if HEC is not used
+- [ ] Firewall limited to the ports in use
 
 ## Next Steps
 
-- [Single Node Deployment](/docs/deployment/single-node) -- systemd service setup
-- [Docker Deployment](/docs/deployment/docker) -- container-based TLS
-- [Kubernetes Deployment](/docs/deployment/kubernetes) -- K8s secrets for TLS and auth
-- [Monitoring](/docs/operations/monitoring) -- monitor security events
+- [Single Node Deployment](./single-node.md)
+- [Docker Deployment](./docker.md)
+- [Kubernetes Deployment](./kubernetes.md)
+- [auth command](../cli/auth.md)

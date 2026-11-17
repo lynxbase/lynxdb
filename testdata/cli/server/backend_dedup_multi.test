@@ -1,5 +1,5 @@
 # format: json
-from backend
+source=backend
 | dedup 2 level
-| keep level, service
+| fields level, service
 | sort level, service

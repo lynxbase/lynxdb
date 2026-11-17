@@ -1,5 +1,5 @@
 # format: json
-from backend
-| sort -duration_ms
+source=backend
+| sort - duration_ms
 | head 3
-| keep duration_ms, service, level
+| fields duration_ms, service, level

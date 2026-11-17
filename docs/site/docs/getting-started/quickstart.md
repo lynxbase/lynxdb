@@ -1,12 +1,14 @@
 ---
 sidebar_position: 1
 title: Quick Start
-description: Install LynxDB and run your first query in 5 minutes.
+description: Install LynxDB and run your first PPL query in a few minutes.
 ---
 
 # Quick Start
 
-Get from zero to your first log analytics query in under 5 minutes.
+LynxDB is a log analytics database in a single binary. You query it with
+[OpenSearch PPL](../ppl/overview.md), either on local files with no server or
+on a running LynxDB server.
 
 ## Install
 
@@ -14,7 +16,7 @@ import Tabs from '@theme/Tabs';
 import TabItem from '@theme/TabItem';
 
 <Tabs>
-<TabItem value="curl" label="curl (Linux/macOS)" default>
+<TabItem value="curl" label="Install script (Linux/macOS)" default>
 
 ```bash
 curl -fsSL https://lynxdb.org/install.sh | sh
@@ -31,11 +33,11 @@ brew install lynxbase/tap/lynxdb
 <TabItem value="docker" label="Docker">
 
 ```bash
-docker run -p 3100:3100 ghcr.io/lynxbase/lynxdb server
+docker run -p 3100:3100 ghcr.io/lynxbase/lynxdb server --addr 0.0.0.0:3100
 ```
 
 </TabItem>
-<TabItem value="source" label="From Source">
+<TabItem value="source" label="Go">
 
 ```bash
 go install github.com/lynxbase/lynxdb/cmd/lynxdb@latest
@@ -44,16 +46,18 @@ go install github.com/lynxbase/lynxdb/cmd/lynxdb@latest
 </TabItem>
 </Tabs>
 
-Verify the installation:
+Check the binary:
 
 ```bash
 lynxdb version
 ```
 
-## Option 1: Query Local Files (No Server)
+See [Installation](./install.md) for all options.
 
-The fastest way to try LynxDB is local file mode. It starts no server and writes
-nothing outside the process.
+## Query a local file
+
+`lynxdb query --file` loads a file into an in-process index named `main`,
+runs the query and exits. Nothing is written to disk.
 
 Create a small NDJSON file:
 
@@ -65,115 +69,86 @@ cat > events.ndjson <<'EOF'
 EOF
 ```
 
-Run an aggregation:
+Count events by level:
 
 ```bash
-lynxdb query --file events.ndjson 'stats count() as count by level | sort level' --format ndjson --no-stats
+lynxdb query --file events.ndjson 'source=main | stats count() as n by level | sort level' --format ndjson --no-stats
 ```
-
-Expected output:
 
 ```json
-{"count":2,"level":"error"}
-{"count":1,"level":"info"}
+{"level":"error","n":2}
+{"level":"info","n":1}
 ```
 
-Run a filter and projection:
+Filter and pick columns:
 
 ```bash
-lynxdb query --file events.ndjson 'where status >= 500 | keep level, status, message | sort message' --format vertical --no-stats
+lynxdb query --file events.ndjson 'source=main | where status >= 500 | fields level, status, message' --format csv --no-stats
 ```
-
-Expected output:
 
 ```text
-  record 1
-    level  error
-  message  failed
-   status  500
-
-
-  record 2
-    level  error
-  message  timeout
-   status  503
+level,message,status
+error,failed,500
+error,timeout,503
 ```
 
-You can query any log file the same way:
+Any log file or command output works the same way:
 
 ```bash
-# Query a local log file
-lynxdb query --file /var/log/syslog 'stats count() by level'
+# A local nginx access log; combined-format fields are extracted on load
+lynxdb query --file /var/log/nginx/access.log 'source=main status>=500 | top 10 uri'
 
-# Pipe from any command
-kubectl logs deploy/api | lynxdb query 'stats avg(duration_ms) by endpoint'
-
-# Query nginx access logs
-lynxdb query --file '/var/log/nginx/*.log' 'where status >= 500 | top 10 uri'
+# Standard input
+kubectl logs deploy/api | lynxdb query 'source=main level=error | stats count() by msg'
 ```
 
-## Option 2: Run the Built-in Demo
+See [Pipe Mode](./pipe-mode.md) for formats, globs and output options.
 
-Start the demo to generate realistic log data from 4 sources:
+## Start a server
+
+A server stores events on disk and answers queries over HTTP on port 3100.
 
 ```bash
-# Terminal 1: Start the demo (generates 200 events/sec)
-lynxdb demo
+lynxdb server
 ```
 
-```bash
-# Terminal 2: Query the demo data
-lynxdb query 'from main _source=nginx status>=500
-  | stats count() as count, avg(duration_ms) as avg_lat by uri
-  | sort -count
-  | head 5'
-```
+In another terminal, send some events and query them:
 
 ```bash
-# Live tail errors
-lynxdb tail 'where level == "error"'
-```
-
-## Option 3: Start a Server
-
-For persistent storage and the full API:
-
-```bash
-# Start the server
-lynxdb server &
-
-# Ingest a structured event
+# A structured event through the REST API
 curl -X POST localhost:3100/api/v1/ingest \
   -H 'Content-Type: application/json' \
   -d '[{"event":"hello from lynxdb","source":"quickstart","fields":{"level":"info","service":"demo"}}]'
 
-# Or ingest a raw log file
+# A log file through the CLI
 lynxdb ingest access.log --source web-01
 
-# Query it
-lynxdb query 'from main level=info | stats count() by service'
+# Query the server
+lynxdb query 'source=main level=info | stats count() by service'
 ```
 
-## Your First LynxFlow Query
+See [Server Mode](./server-mode.md) for storage, ingestion and service setup.
 
-LynxFlow is a pipeline language. Data flows left to right through `|` (pipe) operators:
+## Read a query
 
-```lynxflow
-from main source=nginx status>=500
-  | stats count() as count, avg(duration_ms) by uri
-  | sort -count
-  | head 10
+```
+source=main status>=500
+| stats count() as errors, avg(duration_ms) as avg_ms by uri
+| sort - errors
+| head 10
 ```
 
-This reads as: "From nginx logs where status is 500+, count events and average duration by URI, sort by count descending, take top 10."
+- `source=main status>=500` reads the index `main` and keeps events whose
+  `status` is 500 or more.
+- `stats` counts the events and averages `duration_ms` for each `uri`.
+- `sort - errors` orders by the `errors` column, largest first.
+- `head 10` keeps the first ten rows.
 
-:::tip
-If your query omits the `from` stage, LynxDB reads from the default `main` dataset -- so `stats count()` is the same as `from main | stats count()`.
-:::
+[Your First Query](./first-query.md) walks through the basic commands.
 
-## Next Steps
+## Next steps
 
-- **[Pipe Mode](/docs/getting-started/pipe-mode)** -- Master serverless querying
-- **[Server Mode](/docs/getting-started/server-mode)** -- Set up persistent storage
-- **[Your First LynxFlow Query](/docs/getting-started/first-query)** -- LynxFlow crash course
-- **[LynxFlow v2 Reference](/docs/lynxflow/operators/from)** -- Full language reference
+- [Pipe Mode](./pipe-mode.md): query files and standard input without a server
+- [Server Mode](./server-mode.md): persistent storage and the REST API
+- [Your First Query](./first-query.md): PPL basics
+- [PPL overview](../ppl/overview.md): the query language reference

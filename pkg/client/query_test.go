@@ -3,6 +3,7 @@ package client
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -18,8 +19,8 @@ func TestQuery_SyncEvents(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
 		}
-		if req.Q != "error" {
-			t.Errorf("Q = %q, want %q", req.Q, "error")
+		if req.Q != "search source=main error" {
+			t.Errorf("Q = %q, want %q", req.Q, "search source=main error")
 		}
 
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -35,7 +36,7 @@ func TestQuery_SyncEvents(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(WithBaseURL(srv.URL))
-	result, err := c.Query(context.Background(), QueryRequest{Q: "error", From: "-1h"})
+	result, err := c.Query(context.Background(), QueryRequest{Q: "search source=main error", From: "-1h"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -105,7 +106,7 @@ func TestQuery_LintOptionAndMetadata(t *testing.T) {
 	lint := false
 	suggestions := false
 	c := NewClient(WithBaseURL(srv.URL))
-	result, err := c.Query(context.Background(), QueryRequest{Q: "error", Lint: &lint, Suggestions: &suggestions, LintLimit: 2, LintFull: true})
+	result, err := c.Query(context.Background(), QueryRequest{Q: "search source=main error", Lint: &lint, Suggestions: &suggestions, LintLimit: 2, LintFull: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,7 +156,7 @@ func TestQuery_SyncAggregate(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(WithBaseURL(srv.URL))
-	result, err := c.QuerySync(context.Background(), "| stats count by source", "-1h", "now")
+	result, err := c.QuerySync(context.Background(), "source=main | stats count() by source", "-1h", "now")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +194,7 @@ func TestQuery_Async(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(WithBaseURL(srv.URL))
-	job, err := c.QueryAsync(context.Background(), "long query", "-24h", "now")
+	job, err := c.QueryAsync(context.Background(), "source=main | stats count() by host", "-24h", "now")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +227,7 @@ func TestQuery_Timechart(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(WithBaseURL(srv.URL))
-	result, err := c.QuerySync(context.Background(), "| timechart count", "-1h", "now")
+	result, err := c.QuerySync(context.Background(), "source=main | timechart span=5m count()", "-1h", "now")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,8 +250,8 @@ func TestQueryGet(t *testing.T) {
 		}
 
 		q := r.URL.Query().Get("q")
-		if q != "error" {
-			t.Errorf("q = %q, want error", q)
+		if q != "search source=main error" {
+			t.Errorf("q = %q, want search source=main error", q)
 		}
 
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
@@ -265,7 +266,7 @@ func TestQueryGet(t *testing.T) {
 	defer srv.Close()
 
 	c := NewClient(WithBaseURL(srv.URL))
-	result, err := c.QueryGet(context.Background(), "error", "-1h", "", 100)
+	result, err := c.QueryGet(context.Background(), "search source=main error", "-1h", "", 100)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +279,7 @@ func TestQueryGet(t *testing.T) {
 func TestExplain(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query().Get("q")
-		if q != "error | stats count" {
+		if q != "search source=main error | stats count()" {
 			t.Errorf("q = %q", q)
 		}
 
@@ -286,21 +287,21 @@ func TestExplain(t *testing.T) {
 			"data": map[string]interface{}{
 				"is_valid": true,
 				"parsed": map[string]interface{}{
-					"pipeline":       []map[string]interface{}{{"command": "search"}, {"command": "stats"}},
 					"result_type":    "aggregate",
 					"estimated_cost": "low",
 					"uses_full_scan": false,
 					"fields_read":    []string{"level"},
+					"logical_plan":   "Aggregate()\n",
+					"optimized_plan": "Aggregate()\n",
 				},
-				"errors":       []interface{}{},
-				"acceleration": map[string]interface{}{"available": false},
+				"errors": []interface{}{},
 			},
 		})
 	}))
 	defer srv.Close()
 
 	c := NewClient(WithBaseURL(srv.URL))
-	result, err := c.Explain(context.Background(), "error | stats count")
+	result, err := c.Explain(context.Background(), "search source=main error | stats count()")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,8 +312,8 @@ func TestExplain(t *testing.T) {
 	if result.Parsed == nil {
 		t.Fatal("Parsed is nil")
 	}
-	if len(result.Parsed.Pipeline) != 2 {
-		t.Errorf("len(Pipeline) = %d, want 2", len(result.Parsed.Pipeline))
+	if result.Parsed.OptimizedPlan != "Aggregate()\n" {
+		t.Errorf("OptimizedPlan = %q", result.Parsed.OptimizedPlan)
 	}
 	if result.Parsed.ResultType != "aggregate" {
 		t.Errorf("ResultType = %q", result.Parsed.ResultType)
@@ -325,9 +326,10 @@ func TestQuery_InvalidQuery(t *testing.T) {
 		w.WriteHeader(http.StatusBadRequest)
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"error": map[string]interface{}{
-				"code":       "INVALID_QUERY",
-				"message":    "parse error: unexpected token",
-				"suggestion": "check syntax",
+				"code":       "SYNTAX_ERROR",
+				"message":    "syntax error at line 1, column 1: missing source",
+				"position":   map[string]interface{}{"line": 1, "column": 1},
+				"suggestion": "a query starts with source=<index>",
 			},
 		})
 	}))
@@ -341,5 +343,15 @@ func TestQuery_InvalidQuery(t *testing.T) {
 	}
 	if !IsInvalidQuery(err) {
 		t.Errorf("IsInvalidQuery = false, want true; err = %v", err)
+	}
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("err = %T, want *APIError", err)
+	}
+	if apiErr.Code != ErrCodeSyntaxError {
+		t.Errorf("Code = %q, want %q", apiErr.Code, ErrCodeSyntaxError)
+	}
+	if apiErr.Suggestion != "a query starts with source=<index>" {
+		t.Errorf("Suggestion = %q", apiErr.Suggestion)
 	}
 }

@@ -24,8 +24,5 @@ jobs:
           install: true
           cache: true
 
-      - name: Build Web UI
-        run: make webui
-
       - name: Run conformance matrix
         run: make test-conformance

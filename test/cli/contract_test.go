@@ -31,7 +31,7 @@ func TestContract_EnvConfig_Empty(t *testing.T) {
 	r := runLynxDBWithEnv(t,
 		map[string]string{"LYNXDB_CONFIG": ""},
 		"query", "--file", testdataLog("access.log"),
-		"--format", "json", "| stats count() as count",
+		"--format", "json", "source=main | stats count() as count",
 	)
 
 	if r.ExitCode != 0 {
@@ -45,13 +45,11 @@ func TestContract_EnvConfig_Empty(t *testing.T) {
 }
 
 func TestContract_NoColor_EnvVar(t *testing.T) {
-	// Regression: NO_COLOR=1 must suppress ANSI escape sequences in error output.
-	// Previously ensureThemeInit() did not check the env var independently of
-	// the cobra flag, causing ANSI escapes on early error paths.
-
+	// NO_COLOR=1 must suppress ANSI escapes on early error paths too, before
+	// the cobra flags are parsed.
 	r := runLynxDBWithEnv(t,
 		map[string]string{"NO_COLOR": "1"},
-		"query", "--file", testdataLog("access.log"), "| where",
+		"query", "--file", testdataLog("access.log"), "source=main | where",
 	)
 
 	// This triggers a parse error, which writes to stderr.
@@ -62,9 +60,7 @@ func TestContract_NoColor_EnvVar(t *testing.T) {
 }
 
 func TestContract_NoColor_Flag(t *testing.T) {
-	// Regression: --no-color flag must suppress ANSI escape sequences.
-
-	r := runLynxDB(t, "--no-color", "query", "--file", testdataLog("access.log"), "| where")
+	r := runLynxDB(t, "--no-color", "query", "--file", testdataLog("access.log"), "source=main | where")
 
 	if containsANSI(r.Stderr) {
 		t.Errorf("stderr contains ANSI escapes with --no-color:\n%s", r.Stderr)
@@ -74,7 +70,7 @@ func TestContract_NoColor_Flag(t *testing.T) {
 func TestContract_Quiet_SuppressesStderr(t *testing.T) {
 	// --quiet should suppress non-data output on stderr.
 	r := runLynxDB(t, "--quiet", "query", "--file", testdataLog("access.log"),
-		"--format", "json", "| stats count() as count")
+		"--format", "json", "source=main | stats count() as count")
 
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
@@ -90,7 +86,7 @@ func TestContract_OutputToFile(t *testing.T) {
 
 	r := runLynxDB(t, "query", "--file", testdataLog("access.log"),
 		"--format", "json", "--output", outFile,
-		"| stats count() as count by level")
+		"source=main | stats count() as count by level")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -121,7 +117,7 @@ func TestContract_Version_ContainsLynxDB(t *testing.T) {
 func TestContract_FailOnEmpty_FileMode(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("access.log"),
 		"--format", "json", "--fail-on-empty",
-		`| where level=="NONEXISTENT_LEVEL_XYZ"`)
+		`source=main | where level = "NONEXISTENT_LEVEL_XYZ"`)
 
 	if r.ExitCode != 6 {
 		t.Errorf("expected exit code 6 (no results with --fail-on-empty), got %d\nstderr: %s",

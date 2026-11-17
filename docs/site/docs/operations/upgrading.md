@@ -1,367 +1,192 @@
 ---
 title: Upgrading LynxDB
-description: Upgrade LynxDB safely -- self-update command, manual upgrade, rolling cluster upgrade, and version management.
+description: Upgrade LynxDB by replacing the binary and restarting -- install channels, upgrade procedures, storage format compatibility, and rollback.
 ---
 
 # Upgrading LynxDB
 
-LynxDB includes a built-in self-update mechanism. The binary can upgrade itself in place, or you can update through your package manager or container registry.
+LynxDB is a single binary. Upgrading means replacing that binary with a newer release and restarting the server. On startup the server checks the data directory's format marker and segment headers, rebuilds its part registry from disk, and continues where the old process stopped. There is no separate migration step.
 
-## Check for Updates
+Back up the data directory before upgrading a production server (see [Backup and Restore](/docs/operations/backup-restore)).
 
-```bash
-lynxdb upgrade --check
-```
+## Getting a New Binary
 
-```
-Update available: v0.4.0 -> v0.5.0
-Changelog: https://github.com/lynxbase/lynxdb/releases/tag/v0.5.0
-```
+### Install Script
 
-If you are already on the latest version:
-
-```
-LynxDB v0.5.0 is up to date.
-```
-
-## Self-Update (Single Binary)
-
-The simplest way to upgrade. The binary downloads the new version, verifies the checksum, and performs an atomic swap:
-
-```bash
-lynxdb upgrade
-```
-
-```
-Checking for updates...
-Downloading lynxdb v0.5.0 for linux/amd64...
-100%  15.0MB
-Checksum verified
-Upgraded: v0.4.0 -> v0.5.0
-```
-
-### Upgrade to a Specific Version
-
-```bash
-lynxdb upgrade --version v0.5.0-rc.1
-```
-
-Prerelease versions require explicit consent:
-
-```bash
-lynxdb upgrade --version v0.5.0-rc.1 --allow-prerelease
-```
-
-## Nightly Upgrades
-
-Nightly builds are prerelease builds from `main` for testing. They may contain regressions and are not recommended for production.
-
-```bash
-# Check latest nightly without installing
-lynxdb upgrade --check --channel nightly --allow-prerelease
-
-# Upgrade to latest nightly
-lynxdb upgrade --channel nightly --allow-prerelease
-```
-
-Stable upgrades never read the nightly manifest. `lynxdb upgrade` reads `https://dl.lynxdb.org/manifest.json`; nightly upgrades read `https://dl.lynxdb.org/nightly/manifest.json` only when both `--channel nightly` and `--allow-prerelease` are provided.
-
-### How Self-Update Works
-
-1. Fetches `manifest.json` from `dl.lynxdb.org` (fallback: GitHub Releases)
-2. Compares the installed version with the latest version
-3. Downloads the new binary to a temporary file while computing SHA256
-4. Verifies the checksum matches the manifest
-5. Performs an atomic rename: `.new` -> current binary, old binary -> `.old`
-6. Cleans up `.old` file
-
-The update is atomic -- if anything fails, the old binary remains in place.
-
-## Install Script
-
-Re-run the install script to upgrade:
+Re-run the install script. It reads the stable manifest at `https://dl.lynxdb.org/manifest.json`, downloads the release for your platform, verifies its checksum, and replaces the installed binary:
 
 ```bash
 curl -fsSL https://lynxdb.org/install.sh | sh
 ```
 
-The script detects the existing installation and shows the version change:
-
-```
-LynxDB v0.4.0 is installed. Upgrading to v0.5.0...
-```
-
-### Install a Specific Version
+Install a specific version:
 
 ```bash
+curl -fsSL https://lynxdb.org/install.sh | sh -s -- --version v0.5.0
+# or
 LYNXDB_VERSION=v0.5.0 curl -fsSL https://lynxdb.org/install.sh | sh
 ```
 
-### Install Nightly
+Install into a custom directory with `--dir /opt/lynxdb/bin` or `LYNXDB_INSTALL_DIR`.
 
-```bash
-curl -fsSL https://lynxdb.org/install.sh | sh -s -- --channel nightly --allow-prerelease
-```
-
-## Homebrew
+### Homebrew
 
 ```bash
 brew update
 brew upgrade lynxbase/tap/lynxdb
 ```
 
-Nightly uses a separate package because it installs the same `lynxdb` binary name:
+### Docker
 
 ```bash
-brew install lynxbase/tap/lynxdb-nightly
-brew upgrade lynxbase/tap/lynxdb-nightly
-```
-
-## Docker
-
-```bash
-# Pull the latest image
+# Latest stable release
 docker pull ghcr.io/lynxbase/lynxdb:latest
 
-# Or a specific version
+# A specific version
 docker pull ghcr.io/lynxbase/lynxdb:0.5.0
-
-# Or latest nightly for testing
-docker pull ghcr.io/lynxbase/lynxdb:nightly
 ```
 
-## Roll Back to Stable
-
-```bash
-curl -fsSL https://lynxdb.org/install.sh | sh
-brew uninstall lynxdb-nightly
-brew install lynxbase/tap/lynxdb
-docker pull ghcr.io/lynxbase/lynxdb:latest
-lynxdb upgrade
-```
-
-### Docker Compose
+With Docker Compose, update the image tag and recreate the container:
 
 ```bash
 docker compose pull
 docker compose up -d
 ```
 
-### Kubernetes
+### GitHub Releases
+
+Every release publishes archives and checksums on the [GitHub releases page](https://github.com/lynxbase/lynxdb/releases).
+
+## Nightly Builds
+
+Nightly builds are prereleases built from `main` for testing. They may contain regressions and are not meant for production. Their versions look like `v0.2.6-nightly.20261116.g403d8ad`.
 
 ```bash
-# Update the image tag in your manifest
-kubectl -n lynxdb set image statefulset/lynxdb lynxdb=ghcr.io/lynxbase/lynxdb:0.5.0
+# Install script
+curl -fsSL https://lynxdb.org/install.sh | sh -s -- --channel nightly --allow-prerelease
 
-# Watch the rollout
-kubectl -n lynxdb rollout status statefulset/lynxdb
+# Homebrew (a separate formula that installs the same lynxdb binary name)
+brew install lynxbase/tap/lynxdb-nightly
+brew upgrade lynxbase/tap/lynxdb-nightly
+
+# Docker
+docker pull ghcr.io/lynxbase/lynxdb:nightly
 ```
 
-## Single-Node Upgrade Procedure
+The install script reads the nightly manifest (`https://dl.lynxdb.org/nightly/manifest.json`) only when both `--channel nightly` and `--allow-prerelease` are given. To return to stable, re-run the install script without those flags, or `brew uninstall lynxdb-nightly && brew install lynxbase/tap/lynxdb`.
+
+## Single-Node Upgrade
 
 ### With systemd
 
 ```bash
-# 1. Check for updates
-lynxdb upgrade --check
-
-# 2. Stop the server
+# 1. Stop the server
 sudo systemctl stop lynxdb
 
-# 3. Upgrade the binary
-sudo lynxdb upgrade
-# or: curl -fsSL https://lynxdb.org/install.sh | sudo sh
-# or: sudo lynxdb install --yes   (re-running install upgrades the binary in place)
+# 2. Replace the binary
+curl -fsSL https://lynxdb.org/install.sh | sudo sh
 
-# 4. Verify the new version
-lynxdb version
+# 3. Check the version
+lynxdb version --short
 
-# 5. Start the server
+# 4. Start the server
 sudo systemctl start lynxdb
 
-# 6. Verify health
+# 5. Check health
 lynxdb health
 lynxdb status
 ```
 
-**Downtime:** A few seconds (stop -> upgrade -> start).
+Stopping the server flushes buffered events to parts. Downtime is the time between stop and start, usually a few seconds plus the startup part scan.
 
-### Zero-Downtime with Load Balancer
+### Behind a Load Balancer
 
-If you have a load balancer in front of LynxDB:
+1. Remove the node from the load balancer, or let its health check fail.
+2. Wait for in-flight requests to finish.
+3. Stop the server, replace the binary, start the server.
+4. Check `lynxdb health`.
+5. Add the node back.
 
-```bash
-# 1. Remove from load balancer
-# (configure health check to fail, or manually remove)
-
-# 2. Wait for in-flight requests to complete
-sleep 10
-
-# 3. Stop, upgrade, start
-sudo systemctl stop lynxdb
-sudo lynxdb upgrade
-sudo systemctl start lynxdb
-
-# 4. Verify health
-lynxdb health
-
-# 5. Re-add to load balancer
-```
-
-## Cluster Rolling Upgrade
-
-For cluster deployments, upgrade one node at a time to maintain availability:
-
-### Small Cluster (All Roles)
+### Kubernetes
 
 ```bash
-# Upgrade nodes one at a time
-for node in node-1 node-2 node-3; do
-  echo "Upgrading $node..."
-
-  # Stop the node
-  ssh $node "sudo systemctl stop lynxdb"
-
-  # Upgrade
-  ssh $node "sudo lynxdb upgrade"
-
-  # Start
-  ssh $node "sudo systemctl start lynxdb"
-
-  # Wait for the node to rejoin the cluster
-  sleep 30
-
-  # Verify health
-  ssh $node "lynxdb health"
-
-  echo "$node upgraded successfully."
-done
+kubectl -n lynxdb set image statefulset/lynxdb lynxdb=ghcr.io/lynxbase/lynxdb:0.5.0
+kubectl -n lynxdb rollout status statefulset/lynxdb
 ```
 
-### Protocol Version Compatibility
+## Several Servers
 
-LynxDB cluster nodes check protocol version compatibility during the `Handshake` RPC. Nodes with different protocol versions cannot join the same cluster. During a rolling upgrade:
-
-- Nodes running the **old** version continue to communicate normally.
-- The **new** binary must support the same protocol version as the old binary (backward-compatible within a minor version).
-- Major version upgrades that bump the protocol version require upgrading all nodes within a maintenance window.
-
-Check the release notes for protocol version changes before upgrading.
-
-### Large Cluster (Role-Separated)
-
-Upgrade in this order to minimize disruption:
-
-1. **Query nodes first** (stateless, easiest to replace)
-2. **Ingest nodes second** (stateless after flush)
-3. **Meta nodes last** (maintain Raft quorum)
+`lynxdb server` runs as a single node: the `cluster` settings are validated but start no cluster runtime (see [Distributed Architecture](/docs/architecture/distributed)). Servers that each own a data directory are upgraded independently, one at a time, with the single-node procedure above:
 
 ```bash
-# 1. Query nodes (can upgrade in parallel, but rolling is safer)
-for node in query-1 query-2 query-3; do
-  ssh $node "sudo systemctl stop lynxdb && sudo lynxdb upgrade && sudo systemctl start lynxdb"
-  sleep 15
-  ssh $node "lynxdb health"
-done
-
-# 2. Ingest nodes (one at a time, wait for shard reassignment ~25s)
-for node in ingest-1 ingest-2 ingest-3; do
-  ssh $node "sudo systemctl stop lynxdb && sudo lynxdb upgrade && sudo systemctl start lynxdb"
-  sleep 35  # Wait for shard reassignment (~25s) + rejoin
-  ssh $node "lynxdb health"
-done
-
-# 3. Meta nodes (one at a time, maintain quorum)
-for node in meta-1 meta-2 meta-3; do
-  ssh $node "sudo systemctl stop lynxdb && sudo lynxdb upgrade && sudo systemctl start lynxdb"
-  sleep 35  # Wait for Raft leader election + lease renewal
-  ssh $node "lynxdb health"
+for host in lynxdb-1 lynxdb-2 lynxdb-3; do
+  ssh "$host" "sudo systemctl stop lynxdb"
+  ssh "$host" "curl -fsSL https://lynxdb.org/install.sh | sudo sh"
+  ssh "$host" "sudo systemctl start lynxdb"
+  ssh "$host" "lynxdb health"
 done
 ```
 
-### Kubernetes Rolling Update
-
-```yaml
-# Update the image in the StatefulSet
-spec:
-  template:
-    spec:
-      containers:
-        - name: lynxdb
-          image: ghcr.io/lynxbase/lynxdb:0.5.0  # New version
-  updateStrategy:
-    type: RollingUpdate
-    rollingUpdate:
-      partition: 0  # Update all pods
-```
+A Kubernetes StatefulSet with `updateStrategy: RollingUpdate` replaces its pods one at a time after an image change:
 
 ```bash
 kubectl -n lynxdb rollout status statefulset/lynxdb
 ```
 
-## Version Compatibility
+## Storage Format
 
-### Data Format Compatibility
+Segments use the `.lsg` format, versioned by a format major. The data directory holds a `FORMAT` marker file (`LSGFMT v<N>`). On startup the server:
 
-LynxDB maintains backward compatibility for the `.lsg` segment format. Newer versions can read segments written by older versions. In rare cases, a major version upgrade may require ratcheting the on-disk format marker forward:
+1. Writes the marker for the newest format it supports when the data directory has no segments and no marker.
+2. Refuses to start when the directory holds segments but no marker, when the marker is newer than the binary supports, or when any segment has an unknown format major or required capability bit. The CLI exits with code 78.
+3. Logs a warning, without refusing to start, for a segment with physical damage such as a checksum failure.
 
-```bash
-# Stop the server first, then ratchet the data directory marker.
-lynxdb admin format-upgrade --data-dir /var/lib/lynxdb --to 2 --confirm
-```
+Format support by release:
 
-Always run this with the server stopped. The release notes specify the target format version when an upgrade requires it.
+| LynxDB release | Reads | Writes |
+|---|---|---|
+| v0.1.8 and later | format 1 and 2 | format 2 |
+| v0.1.6, v0.1.7 | format 1 | format 1 |
+| before v0.1.6 | older layouts | older layouts |
 
-### Config Compatibility
+Upgrading from v0.1.6 or later needs no action: the new binary reads the existing segments, writes new parts in format 2, and compaction rewrites merged parts in format 2. The marker is not rewritten. Data directories from releases before v0.1.6 have no `FORMAT` marker and use a layout current releases cannot read; re-ingest that data into a fresh data directory.
 
-New config keys are added with sensible defaults. Existing config files continue to work without changes. Unknown keys produce a warning during `lynxdb config validate`.
+See `docs/storage-format.md` in the repository for the format registry and capability bits.
+
+## Config Compatibility
+
+Config keys keep their meaning across releases, and new keys come with defaults, so an existing config file keeps working. `lynxdb config validate` warns about unknown keys: keys the running release does not read.
 
 ## Rollback
 
-If an upgrade causes issues:
-
-### Single Node
+To roll back, stop the server, install the older version, and start it again:
 
 ```bash
-# The old binary is saved as lynxdb.old after self-update
 sudo systemctl stop lynxdb
-sudo mv /usr/local/bin/lynxdb.old /usr/local/bin/lynxdb
+curl -fsSL https://lynxdb.org/install.sh | sudo sh -s -- --version v0.4.0
 sudo systemctl start lynxdb
 ```
 
-### Install a Specific Older Version
-
-```bash
-LYNXDB_VERSION=v0.4.0 curl -fsSL https://lynxdb.org/install.sh | sh
-```
-
-### Docker
+With Docker, pin the older tag:
 
 ```bash
 docker pull ghcr.io/lynxbase/lynxdb:0.4.0
 docker compose up -d
 ```
 
-## Release Channels
+A rollback works as long as the older release reads every segment in the data directory. Releases from v0.1.8 on read formats 1 and 2. Rolling back to v0.1.6 or v0.1.7 after a newer release wrote format 2 parts fails at startup; restore a backup taken before the upgrade instead.
 
-| Channel | URL | Description |
-|---------|-----|-------------|
-| Stable | `dl.lynxdb.org/manifest.json` | Production-ready releases |
-| Pre-release | `lynxdb upgrade --version v0.5.0-rc.1` | Release candidates for testing |
-
-## Checking Version
+## Checking the Version
 
 ```bash
-lynxdb version
-
-# Output:
-# LynxDB v0.5.0 (abc1234) built 2026-03-01T10:00:00Z
-# Go: go1.26.3 linux/amd64
+lynxdb version            # version, commit, build date, Go runtime
+lynxdb version --short    # version string only
+lynxdb version --json     # structured output
 ```
 
 ## Next Steps
 
 - [Backup and Restore](/docs/operations/backup-restore) -- back up before upgrading
-- [Monitoring](/docs/operations/monitoring) -- verify health after upgrade
-- [Troubleshooting](/docs/operations/troubleshooting) -- diagnose post-upgrade issues
-- [Configuration Overview](/docs/configuration/overview) -- check for new config options
+- [Monitoring](/docs/operations/monitoring) -- check health after an upgrade
+- [Troubleshooting](/docs/operations/troubleshooting) -- diagnose startup errors
+- [Configuration Overview](/docs/configuration/overview) -- configuration options

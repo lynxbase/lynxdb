@@ -16,7 +16,6 @@ func GenerateRecommendations(s *QueryStats) []Recommendation {
 		ruleNoBloomPruning,
 		ruleLowSkipRate,
 		ruleSortDominates,
-		ruleNoMVAcceleration,
 		ruleSegmentsErrored,
 		ruleCacheMiss,
 		ruleHighMemory,
@@ -107,27 +106,12 @@ func ruleSortDominates(s *QueryStats) *Recommendation {
 	return nil
 }
 
-func ruleNoMVAcceleration(s *QueryStats) *Recommendation {
-	if s.AcceleratedBy == "" && s.ScannedRows > 1_000_000 && !s.Ephemeral && hasStatsStage(s) {
-		return &Recommendation{
-			Category:         "performance",
-			Priority:         "info",
-			Message:          "Consider creating a materialized view for this aggregation query",
-			EstimatedSpeedup: "~100-400x",
-			SuggestedAction:  "lynxdb mv create <name> '<query>'",
-		}
-	}
-
-	return nil
-}
-
 func ruleSegmentsErrored(s *QueryStats) *Recommendation {
 	if s.SegmentsErrored > 0 {
 		return &Recommendation{
-			Category:        "correctness",
-			Priority:        "high",
-			Message:         fmt.Sprintf("%d segment(s) failed to read; run 'lynxdb doctor' to check storage health", s.SegmentsErrored),
-			SuggestedAction: "lynxdb doctor",
+			Category: "correctness",
+			Priority: "high",
+			Message:  fmt.Sprintf("%d segment(s) failed to read; check the server log for storage errors", s.SegmentsErrored),
 		}
 	}
 

@@ -1,5 +1,5 @@
-# unordered: true
 # file: backend_server.log
 # format: json
-from main
-| every 1h by service stats p50(duration_ms) as p50, p95(duration_ms) as p95, p99(duration_ms) as p99, count() as count
+source=main
+| stats p50(duration_ms) as p50, p95(duration_ms) as p95, p99(duration_ms) as p99, count() as count by span(_time, 1h) as hour, service
+| sort hour, service

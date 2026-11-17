@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| stats count() by level, service
-| xyseries level service count
+source=main
+| stats count() as c by level, service
+| xyseries format="$VAL$" level service in ("analytics-service", "auth-service", "deploy-service", "gateway-service", "import-service", "notification-service", "payment-service", "project-service", "report-service", "user-service") c
 | sort level

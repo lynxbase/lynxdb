@@ -84,7 +84,7 @@ func TestSubmit_SyncReturnsInlineResultForFastQuery(t *testing.T) {
 	svc := NewQueryService(planner.New(), e, cfg)
 
 	res, err := svc.Submit(context.Background(), SubmitRequest{
-		Query: "from submit-test | head 10",
+		Query: "source=submit-test | head 10",
 		Mode:  QueryModeSync,
 	})
 	if err != nil {
@@ -113,7 +113,7 @@ func TestSubmit_SyncReturnsResultWhenJobDoneAtTimer(t *testing.T) {
 
 	for i := 0; i < 100; i++ {
 		res, err := svc.Submit(context.Background(), SubmitRequest{
-			Query: "from submit-test | head 10",
+			Query: "source=submit-test | head 10",
 			Mode:  QueryModeSync,
 		})
 		if err != nil {
@@ -134,7 +134,7 @@ func TestSubmit_HybridReturnsResultWhenJobDoneAtTimer(t *testing.T) {
 
 	for i := 0; i < 100; i++ {
 		res, err := svc.Submit(context.Background(), SubmitRequest{
-			Query: "from submit-test | head 10",
+			Query: "source=submit-test | head 10",
 			Mode:  QueryModeHybrid,
 			Wait:  time.Nanosecond,
 		})
@@ -155,7 +155,7 @@ func TestSubmit_AsyncReturnsJobHandle(t *testing.T) {
 	svc := NewQueryService(planner.New(), e, config.DefaultConfig().Query)
 
 	res, err := svc.Submit(context.Background(), SubmitRequest{
-		Query: "from submit-test | head 10",
+		Query: "source=submit-test | head 10",
 		Mode:  QueryModeAsync,
 	})
 	if err != nil {

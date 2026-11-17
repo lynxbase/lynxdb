@@ -1,268 +1,211 @@
 ---
 title: Working with JSON Logs
-description: How to parse, query, and transform JSON log data using parse json, object and array access, from_json/to_json, and explode.
+description: How LynxDB stores JSON events and how to query them with dotted field names, spath, flatten, expand and the json_* functions.
 ---
 
 # Working with JSON Logs
 
-LynxDB provides multiple tools for working with JSON log data, from one-stage extraction to nested object access and array manipulation. This guide covers all the approaches and when to use each one.
+LynxDB stores a JSON event's text in `_raw` and extracts its top-level
+values as typed fields when it ingests the event. Nested objects and arrays
+are reached at query time with `spath`, `flatten`, `expand` and the `json_*`
+functions.
 
-## Quick reference
+The examples use events like this one:
 
-| Approach | Use when | Example |
-|----------|----------|---------|
-| **`\| parse json`** | Extracting all/some fields | `\| parse json \| stats count() as count by level` |
-| **Object access `f.a.b`** | Querying nested values after extraction | `\| parse json \| where response.status >= 500` |
-| **`\| parse json into (...)`** | Production pipelines with typed, projected captures | `\| parse json into (status as int)` |
-| **`from_json()`** | Extracting one embedded JSON value in an extend/where | `\| extend payload = from_json(body)` |
-| **`\| explode`** | Exploding JSON arrays into rows | `\| parse json \| explode items` |
-
----
-
-## `parse json` -- extraction
-
-The [`parse`](/docs/lynxflow/operators/parse) stage is LynxFlow's unified schema-on-read extractor (formerly the `json` and `unpack_json` commands in SPL2). `parse json` extracts all JSON keys from `_raw` (or a specified field) into columns:
-
-```bash
-# Extract all fields
-cat app.json | lynxdb query '| parse json | stats count() as count by level'
-
-# Extract specific fields only (faster for wide objects)
-cat app.json | lynxdb query '| parse json into (level, status, duration_ms) | where status >= 500'
-
-# Extract from a non-default field
-cat logs.json | lynxdb query '| parse json from message | keep level, service'
+```json
+{"timestamp":"2026-03-02T09:00:01.000Z","level":"error","service":"checkout","http.method":"POST","http.status":502,"duration_ms":5012,"user":{"id":"u-17","plan":"pro"},"items":[{"sku":"A1","qty":2},{"sku":"B3","qty":1}],"tags":["payments","retry"]}
 ```
 
-### Typed captures
+## What ingestion extracts
 
-`into (...)` both projects the fields you want and coerces their types at extraction time:
+For a JSON line sent as raw text (`lynxdb ingest`, `POST /api/v1/ingest/raw`,
+pipe mode):
 
-```bash
-lynxdb query 'from main | parse json into (level as string, status as int)'
-```
+- Each top-level string, number and boolean becomes a field with its type:
+  `level`, `service`, `http.method`, `http.status`, `duration_ms`.
+- Nested objects (`user`) and arrays (`items`, `tags`) are not extracted.
+  They remain in `_raw`.
+- A timestamp near the start of the line becomes `_time`; see
+  [Field Extraction](./field-extraction.md#what-ingestion-extracts).
 
-### Prefixes
+Documents sent through the Elasticsearch bulk API are stored with every key,
+and nested objects are kept as object values: the `kubernetes` object that
+Fluent Bit adds is a column of type object. OTLP attributes arrive as flat dotted
+names such as `resource.service.name`.
 
-Add a prefix to avoid field name collisions:
+## Dotted field names
 
-```bash
-lynxdb query 'from main | parse json prefix app_ | where app_level == "error"'
-```
-
-### Merge rules
-
-`parse` stages never delete columns and never silently overwrite an existing non-null field — on collision the existing value wins and a per-query warning counter increments. There is no `keep_original=` option because the original field is always kept.
-
----
-
-## Object and array access
-
-After `parse json`, nested values are real objects and arrays. Use dot-notation for objects and `[index]` for arrays:
-
-```bash
-echo '{"level":"error","request":{"method":"POST","duration_ms":5012}}' \
-  | lynxdb query '| where request.duration_ms > 1000 | extend method = request.method | keep level, method'
-```
-
-(Pipe mode auto-detects JSON input, so the nested `request` object is already a column here. For raw text containing JSON, add `| parse json` first.)
-
-### Multi-level nesting
-
-```lynxflow
-// Access deeply nested values
-| parse json
-| where response.headers.content_type == "application/json"
-| extend origin = request.headers.origin
-| stats count() as count by response.status
-```
-
-### Array elements
-
-```lynxflow
-| parse json
-| extend first_tag = tags[0]
-| extend num_items = len(order.items)
-| where num_items > 10
-```
-
-`len()` returns the element count of an array (formerly `json_array_length`); `keys()` returns the keys of an object (formerly `json_keys`).
-
-### How field resolution works
-
-When LynxFlow sees `request.method` in an expression, it resolves in order:
-
-1. **Flat column** -- a column literally named `request.method` (e.g. produced by ingest-time extraction).
-2. **Object access** -- the `method` key of the object column `request`.
-
-Backticks force interpretation 1 (`` `request.method` ``); `(request).method` or `request["method"]` force interpretation 2.
-
-:::warning Breaking change from SPL2
-There is no implicit `_raw` JSON fallback anymore. If no stage produced the field, dotted access yields `missing` — it does not silently re-parse `_raw`. Add `| parse json` to extract structure.
-:::
-
-### Safe access with `?.`
-
-Use `?.` when intermediate objects may be absent:
-
-```bash
-lynxdb query 'from main | parse json | extend origin = request?.headers?.origin'
-```
-
----
-
-## Single values: `from_json()`
-
-When one field contains an embedded JSON string and you only need a value or two, `from_json()` (formerly `json_extract`) parses it into an object you can access directly:
-
-```bash
-lynxdb query 'from main | extend payload = from_json(body) | extend user = payload?.user?.name'
-```
-
-`from_json()` returns `null` on invalid JSON — never the original string. The strict variant `from_json!()` raises a query error instead.
-
-### Build JSON output
-
-Construct objects with `{...}` literals and serialize with `to_json()` (formerly `json_object`):
-
-```bash
-lynxdb query 'from main
-  | stats count() as count by host, level
-  | extend summary = to_json({host: host, level: level, count: count})
-  | keep summary'
-```
-
----
-
-## Handling malformed JSON
-
-Instead of pre-validating with `json_valid()`, LynxFlow's `parse` stage has explicit `on_error` modes:
-
-```bash
-# Drop rows that fail to parse
-lynxdb query 'from main | parse json on_error drop'
-```
-
-The default mode is `propagate`: rows survive with best-effort fields, and the `_error` / `_error_detail` columns record what went wrong. Inspecting failures is a first-class workflow:
-
-```bash
-lynxdb query 'from main | parse json | where exists(_error) | keep _error, _error_detail, _raw'
-```
-
-Other modes: `null` (row survives, fields null, no error columns) and `strict` (the query fails on the first offending row). See the [parse reference](/docs/lynxflow/operators/parse).
-
----
-
-## `explode` -- arrays into rows
-
-When a field contains an array, [`explode`](/docs/lynxflow/operators/explode) (formerly `unroll`) creates one row per element:
-
-```bash
-echo '{"order":"ORD-1","items":[{"sku":"A1","qty":2},{"sku":"B3","qty":1}]}' \
-  | lynxdb query '| parse json | explode items | extend sku = items.sku, qty = items.qty | keep order, sku, qty'
-```
-
-Output:
+A field whose name contains dots, such as `http.status` from the JSON key
+`"http.status"` or `resource.service.name` from OTLP, is referred to by its
+name as written. Backticks quote it explicitly:
 
 ```
-order    sku    qty
-ORD-1    A1     2
-ORD-1    B3     1
+source=main | where http.status >= 400 | stats count() as n by service, http.method
+source=main | where `http.status` >= 400 | fields service, `http.status`
 ```
 
-Rows with a missing or empty array are dropped.
-
-### Array of objects
-
-After `explode items`, each row's `items` column holds one element. Object elements are reached with dot-notation (`items.sku`, `items.qty`). Note that `keep` only accepts flat column names — materialize nested values with `extend` first, as in the example above.
-
-### Array of scalars
-
-Use `as` to name the element column:
-
-```lynxflow
-// Input: {"name": "alice", "tags": ["admin", "user"]}
-| parse json | explode tags as tag
-// Row 1: name=alice, tag=admin
-// Row 2: name=alice, tag=user
+```text
+http.method,n,service
+POST,2,checkout
 ```
 
-### Aggregate over exploded data
+A dotted name refers to a column, not to a path inside an object: `user.id`
+is empty until `spath` or `flatten` creates a column with that name.
 
-```bash
-lynxdb query '| parse json
-  | explode items
-  | stats sum(items.qty) as total_sold, dc(order_id) as orders by items.sku
-  | sort -total_sold
-  | head 20'
+## Extract one value with `spath`
+
+`spath path=<path>` reads a JSON value out of `_raw` (or `input=<field>`)
+and stores it in `output=<field>` (by default, a field named like the
+path). Use dots for object members and `{N}` for array positions:
+
+```
+source=main | spath path=user.id output=user_id | stats count() as requests by user_id
 ```
 
----
-
-## Chaining parsers
-
-Real-world logs often have nested formats. Chain `parse` stages to handle them:
-
-### Docker JSON logs with embedded application log
-
-```bash
-# Docker wraps each log line in JSON: {"log":"...","stream":"stdout","time":"..."}
-# The inner "log" field contains the application logfmt output
-cat docker-logs.json | lynxdb query '
-  | parse json
-  | parse logfmt from log prefix app_
-  | where app_level == "error"
-  | stats count() as count by app_service'
+```text
+requests,user_id
+2,u-17
+1,u-04
+1,u-22
 ```
 
-### Syslog with embedded JSON
-
-```bash
-# Syslog header wraps a JSON application message
-cat syslog.log | lynxdb query '
-  | parse syslog
-  | parse json from message prefix app_
-  | stats count() as count by hostname, app_level'
+```
+source=main | spath path=user.plan output=plan | where plan = "pro" | fields service, duration_ms
+source=main | spath path=items{0}.sku output=first_sku | fields service, first_sku
 ```
 
-### Nginx access log with JSON body field
+To read inside an object column, for example from an Elasticsearch bulk
+document, set `input=`:
 
-```bash
-cat access.log | lynxdb query '
-  | parse combined
-  | parse json from request_body prefix body_
-  | where body_action == "purchase"
-  | stats sum(body_amount) as revenue by client_ip'
+```
+source=fluent-bit | spath input=kubernetes path=pod_name output=pod | stats count() by pod
 ```
 
-### Mixed-format streams
+## Extract everything with `spath` and `flatten`
 
-When lines may be JSON or logfmt, use a fallback chain — the first format that succeeds per row wins:
+`spath` without `path=` parses the whole document into one object column.
+`flatten` then turns each member into a column named by its path:
 
-```bash
-cat app.log | lynxdb query '| parse first_of(json, logfmt)'
+```
+source=main | spath output=doc | flatten doc | fields service, user.id, user.plan
 ```
 
----
+```text
+service,user.id,user.plan
+checkout,u-17,pro
+catalog,u-04,free
+checkout,u-17,pro
+checkout,u-22,free
+```
 
-## Performance tips
+`flatten` also works directly on an object column: on Fluent Bit events,
+`flatten kubernetes` adds `pod_name`, `namespace_name` and the other
+members of `kubernetes`.
 
-1. **Use `into (...)` for wide objects.** Extracting 3 fields from a 50-key JSON object is much faster than extracting all 50, and you get typed columns for free.
+## Arrays into rows
 
-2. **Use `from_json()` in extend/where for single embedded values.** When only one field holds JSON, you avoid running a full parse stage.
+`expand` (or `mvexpand`) emits one row per array element. Combined with
+`flatten`, it unpacks arrays of objects:
 
-3. **Place extraction early in the pipeline.** Extract before `where` so the filter operates on typed fields:
-   ```lynxflow
-   | parse json into (status as int) | where status >= 500   // fast: status is an int
-   ```
+```
+source=main
+| spath output=doc | flatten doc
+| expand items | flatten items
+| stats sum(qty) as units by sku
+| sort - units
+```
 
-4. **Choose an `on_error` mode deliberately.** `on_error drop` keeps malformed data out of production pipelines; the default `propagate` keeps rows and lets you audit failures via `_error`.
+```text
+sku,units
+C9,4
+A1,3
+B3,1
+```
 
----
+An event whose array is empty yields one row with empty values.
+
+## JSON functions
+
+These functions take and return JSON text and work in `eval` and `where`:
+
+| Function | Result |
+|----------|--------|
+| `json_valid(s)` | true when `s` is valid JSON |
+| `json(s)` | `s` when it is valid JSON, otherwise null |
+| `json_extract(s, path, ...)` | the value at a JSONPath such as `'$.user.plan'`; several paths return an array |
+| `json_keys(s)` | the keys of a JSON object, as a JSON array |
+| `json_array_length(s)` | the number of elements of a JSON array |
+| `json_object(k1, v1, ...)` | a JSON object built from key/value pairs |
+| `json_array(v1, ...)` | a JSON array |
+| `json_set(s, path, value)` | `s` with the value at `path` replaced |
+| `json_delete(s, path, ...)` | `s` without the given paths |
+| `json_append(s, path, value)` | `s` with `value` appended to the array at `path` |
+| `json_extend(s, path, value)` | `s` with the array at `path` extended by another array |
+
+```
+source=main
+| eval plan = json_extract(_raw, '$.user.plan'),
+       n_items = json_array_length(json_extract(_raw, '$.items'))
+| fields service, plan, n_items
+```
+
+```text
+n_items,plan,service
+2,pro,checkout
+0,free,catalog
+1,pro,checkout
+1,free,checkout
+```
+
+Filter on a nested value without creating a column:
+
+```
+source=main | where json_extract(_raw, '$.user.plan') = 'pro' | stats count() as n by service
+```
+
+Build a compact JSON summary for export:
+
+```
+source=main | eval summary = json_object('service', service, 'status', http.status) | fields summary
+```
+
+```text
+{"service":"checkout","status":502}
+{"service":"catalog","status":200}
+...
+```
+
+## Mixed JSON and text
+
+When a stream mixes JSON and plain lines, `json_valid` separates them:
+
+```
+source=main | eval is_json = json_valid(_raw) | stats count() as n by is_json
+source=main | where NOT json_valid(_raw) | fields _raw | head 10
+```
+
+## JSON inside a text field
+
+When JSON is embedded in a string field, such as the `log` field of Docker
+`json-file` lines or the `message` of a syslog line, point `spath` or
+`json_extract` at that field:
+
+```
+source=main | spath input=message path=request.id output=request_id | stats count() by request_id
+source=main | eval code = json_extract(log, '$.status') | where code = '500' | fields _time, log
+```
+
+## Tips
+
+- Search terms first. `source=main checkout | spath ...` lets the term index
+  skip events before any JSON is parsed.
+- Extract one path instead of the whole document when you need a few
+  values; `spath path=` reads less than `spath | flatten`.
+- Values that you filter or group on in most queries are cheaper as
+  top-level keys, which ingestion stores as typed columns.
 
 ## Next steps
 
-- [parse reference](/docs/lynxflow/operators/parse)
-- [explode reference](/docs/lynxflow/operators/explode)
-- [Scalar functions reference](/docs/lynxflow/functions) -- object and array function sections
-- [Field Extraction Guide](/docs/guides/field-extraction) -- parse regex, extend, and schema-on-read
+- [Field Extraction](./field-extraction.md): `parse`, `rex`, `grok` and ingest-time extraction
+- [Function guide](../ppl/function-guide.md): every JSON, string and conversion function
+- [Command guide](../ppl/command-guide.md): `spath`, `flatten`, `expand`

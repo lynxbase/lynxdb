@@ -1,3 +1,0 @@
-query: | where response_time > "100ms"
-error S003 [8:31] cannot compare int > string
-  suggestion: did you mean string(response_time) > "100ms", or response_time > int("100ms")?

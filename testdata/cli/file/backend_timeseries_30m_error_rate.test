@@ -1,7 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| extend bucket = bin(timestamp, 30m)
-| stats count() as total, count(where level == "ERROR") as errors by bucket
-| extend error_pct = round((float("errors*100") / total), 1)
+source=main
+| stats count() as total, count(eval(level = "ERROR")) as errors by span(_time, 30m) as bucket
+| eval error_pct = round(errors * 100.0 / total, 1)
 | sort bucket

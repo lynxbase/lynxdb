@@ -7,7 +7,7 @@ import (
 )
 
 // TestE2E_SourceDebug_DirectNormalizedQuery tests various query forms for
-// multi-source filtering. All queries use the LynxFlow syntax.
+// multi-source filtering.
 func TestE2E_SourceDebug_DirectNormalizedQuery(t *testing.T) {
 	h := setupMultiSource(t)
 
@@ -16,18 +16,12 @@ func TestE2E_SourceDebug_DirectNormalizedQuery(t *testing.T) {
 		query string
 		want  int
 	}{
-		// Baseline: from * without filter returns all events
-		{"from * all", `from * | stats count() as count`, 18},
-		// from specific index
-		{"from nginx", `from nginx | stats count() as count`, 10},
-		// from * with index!= filter
-		{"from * where index!=redis", `from * | where index != "redis" | stats count() as count`, 15},
-		// from * with _source= filter
-		{"from * where _source=nginx", `from * | where _source == "nginx" | stats count() as count`, 10},
-		// Try using _source field name (the canonical field name for source)
-		{"from * where _source=nginx", `from * | where _source == "nginx" | stats count() as count`, 10},
-		// Check: does WHERE index=="nginx" also work?
-		{"from * where index=nginx", `from * | where index == "nginx" | stats count() as count`, 10},
+		{"all indexes", `source=* | stats count() as count`, 18},
+		{"single index", `source=nginx | stats count() as count`, 10},
+		{"where index!=redis", `source=* | where index != "redis" | stats count() as count`, 15},
+		{"where _source=nginx", `source=* | where _source = "nginx" | stats count() as count`, 10},
+		{"search _source=nginx", `search source=* _source=nginx | stats count() as count`, 10},
+		{"where index=nginx", `source=* | where index = "nginx" | stats count() as count`, 10},
 	}
 
 	for _, tt := range tests {

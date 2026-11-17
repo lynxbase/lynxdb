@@ -14,7 +14,7 @@ import (
 
 func TestFile_StatsCount(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("access.log"),
-		"--format", "json", "| stats count() as count")
+		"--format", "json", "source=main | stats count() as count")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -27,7 +27,7 @@ func TestFile_StatsCount(t *testing.T) {
 
 func TestFile_CountByLevel(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("access.log"),
-		"--format", "json", "| stats count() as count by level")
+		"--format", "json", "source=main | stats count() as count by level")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -60,7 +60,7 @@ func TestFile_CountByLevel(t *testing.T) {
 
 func TestFile_WhereFilter(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("access.log"),
-		"--format", "json", `| where level=="ERROR" | stats count() as count`)
+		"--format", "json", `source=main | where level = "ERROR" | stats count() as count`)
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -73,7 +73,7 @@ func TestFile_WhereFilter(t *testing.T) {
 
 func TestFile_Head5(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("access.log"),
-		"--format", "json", "| head 5")
+		"--format", "json", "source=main | head 5")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -86,7 +86,7 @@ func TestFile_Head5(t *testing.T) {
 
 func TestFile_SortDescHead3(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("access.log"),
-		"--format", "json", "| stats count() as count by level | sort -count | head 3")
+		"--format", "json", "source=main | stats count() as count by level | sort - count | head 3")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -115,7 +115,7 @@ func TestFile_SortDescHead3(t *testing.T) {
 func TestFile_EvalExpression(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("access.log"),
 		"--format", "json",
-		`| extend fast=if(response_time<100,"yes","no") | stats count() as count by fast`)
+		`source=main | eval fast = if(response_time < 100, "yes", "no") | stats count() as count by fast`)
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -142,7 +142,7 @@ func TestFile_EvalExpression(t *testing.T) {
 
 func TestFile_FieldsProjection(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("access.log"),
-		"--format", "json", "| keep host, level | head 3")
+		"--format", "json", "source=main | fields host, level | head 3")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -175,7 +175,7 @@ func TestFile_FieldsProjection(t *testing.T) {
 
 func TestFile_Search_FullText(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("access.log"),
-		"--format", "json", `| where has(_raw, "ERROR") | stats count() as count`)
+		"--format", "json", `search source=main ERROR | stats count() as count`)
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -188,7 +188,7 @@ func TestFile_Search_FullText(t *testing.T) {
 
 func TestFile_GlobPattern(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("access*.log"),
-		"--format", "json", "| stats count() as count")
+		"--format", "json", "source=main | stats count() as count")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -201,7 +201,7 @@ func TestFile_GlobPattern(t *testing.T) {
 
 func TestFile_NginxLog(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("nginx_access.log"),
-		"--format", "json", "| stats count() as count")
+		"--format", "json", "source=main | stats count() as count")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -214,7 +214,7 @@ func TestFile_NginxLog(t *testing.T) {
 
 func TestFile_BackendJSON(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("backend_server.log"),
-		"--format", "json", "| stats count() as count")
+		"--format", "json", "source=main | stats count() as count")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -227,7 +227,7 @@ func TestFile_BackendJSON(t *testing.T) {
 
 func TestFile_NonexistentFile(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", "/nonexistent/path/file.log",
-		"--format", "json", "| stats count() as count")
+		"--format", "json", "source=main | stats count() as count")
 
 	if r.ExitCode == 0 {
 		t.Errorf("expected non-zero exit code for nonexistent file, got 0")
@@ -236,7 +236,7 @@ func TestFile_NonexistentFile(t *testing.T) {
 
 func TestFile_ValidNDJSON_Output(t *testing.T) {
 	r := runLynxDB(t, "query", "--file", testdataLog("access.log"),
-		"--format", "json", "| head 10")
+		"--format", "json", "source=main | head 10")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}

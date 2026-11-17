@@ -31,13 +31,7 @@ func TestGolden_File(t *testing.T) {
 
 			logPath := testdataLog(tc.File)
 
-			args := []string{"query", "--file", logPath, "--format", tc.Format}
-			if tc.Language != "" {
-				args = append(args, "--language", tc.Language)
-			}
-			args = append(args, tc.Query)
-
-			result := runLynxDB(t, args...)
+			result := runLynxDB(t, "query", "--file", logPath, "--format", tc.Format, tc.Query)
 			assertGolden(t, tc, result)
 		})
 	}
@@ -79,34 +73,11 @@ func TestGolden_Server(t *testing.T) {
 				t.Skip(tc.Skip)
 			}
 
-			args := []string{"--server", srv.BaseURL, "query", "--format", tc.Format}
-			if tc.Language != "" {
-				args = append(args, "--language", tc.Language)
-			}
-			args = append(args, tc.Query)
-
 			querySlots <- struct{}{}
 			defer func() { <-querySlots }()
 
-			result := runLynxDB(t, args...)
+			result := runLynxDB(t, "--server", srv.BaseURL, "query", "--format", tc.Format, tc.Query)
 			assertGolden(t, tc, result)
 		})
 	}
 }
-
-// Known bugs discovered by golden tests (all resolved — retained for history)
-//
-// BUG 1 (FIXED): SelectCommand not implemented in pipeline builder.
-//   Fixed: pipeline.go:726 now handles *spl2.SelectCommand as project + rename.
-//
-// BUG 2 (FIXED): Transaction duration was non-deterministic.
-//   Fixed: TimestampNormalizer now correctly parses event timestamps from raw
-//   JSON, so _time reflects the event timestamp and duration is deterministic.
-//
-// BUG 3 (FIXED): Multisearch sub-queries return 0 rows.
-//   Fixed: pipeline.go propagates defaultSource; ConcurrentUnionIterator
-//   provides deterministic child-index-ordered output.
-//
-// BUG 4 (FIXED): timechart used system clock instead of event timestamps.
-//   Fixed: TimestampNormalizer correctly parses event timestamps from raw JSON,
-//   so _time reflects the event timestamp and timechart produces correct buckets.
