@@ -966,8 +966,18 @@ func refFinish(a exec.Agg, st *refAgg, float bool) exec.Value {
 		}
 		sorted := append([]float64(nil), st.numbers...)
 		sort.Float64s(sorted)
+		distinct := 0
+		for i, x := range sorted {
+			if x != 0 && (i == 0 || x != sorted[i-1]) {
+				distinct++
+			}
+		}
+		exact := sorted[uint64(a.P/100*float64(n-1))]
+		if distinct > exec.SketchExactValues {
+			exact = exec.SketchValue(exact)
+		}
 
-		return floatValue(exec.SketchValue(sorted[uint64(a.P/100*float64(n-1))]))
+		return floatValue(exact)
 	case exec.ArgMin, exec.ArgMax:
 		return st.arg
 	case exec.FirstRow:

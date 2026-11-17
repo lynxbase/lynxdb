@@ -9,45 +9,39 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/mem"
 )
 
-// sketchOf is a percentile sketch outside a group, for tests.
+// sketchOf is a percentile sketch outside a group, for tests: the words are
+// the zeros and the refs of the positive and the negative store.
 type sketchOf struct {
-	h        *stateHeap
-	neg, pos stateRef
-	zeros    uint64
+	h *stateHeap
+	w [3]int64
 }
 
+var sketchAt = sketchWords{zeros: 0, pos: 1, neg: 2}
+
 func (s *sketchOf) add(x float64) {
-	switch {
-	case x > 0:
-		s.pos = ddAdd(s.h, s.pos, ddKey(x), 1)
-	case x < 0:
-		s.neg = ddAdd(s.h, s.neg, ddKey(-x), 1)
-	default:
-		s.zeros++
+	if x == 0 {
+		s.w[0]++
+	} else {
+		sketchAt.add(s.h, s.w[:], x, 1)
 	}
 }
 
 func (s *sketchOf) merge(o *sketchOf) {
-	for _, st := range []struct {
-		dst *stateRef
-		src []byte
-	}{{&s.neg, o.h.get(o.neg)}, {&s.pos, o.h.get(o.pos)}} {
-		switch {
-		case len(st.src) == 0:
-		case *st.dst == 0:
-			*st.dst = s.h.set(0, st.src)
-		default:
-			*st.dst = ddMerge(s.h, *st.dst, st.src)
+	s.w[0] += o.w[0]
+	for i, positive := range []bool{true, false} {
+		if src := o.h.get(stateRef(o.w[1+i])); len(src) != 0 {
+			sketchAt.merge(s.h, s.w[:], src, positive)
 		}
 	}
-	s.zeros += o.zeros
 }
 
 func (s *sketchOf) quantile(q float64) float64 {
-	v, _ := ddQuantile(s.h.get(s.neg), s.h.get(s.pos), s.zeros, q)
+	v, _ := ddQuantile(s.h.get(stateRef(s.w[2])), s.h.get(stateRef(s.w[1])), uint64(s.w[0]), q)
 
 	return v
 }
+
+func (s *sketchOf) size() int { return len(s.h.get(stateRef(s.w[1]))) + len(s.h.get(stateRef(s.w[2]))) }
 
 var sketchQuantiles = []float64{0, 0.001, 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.95, 0.99, 0.999, 1}
 
@@ -92,11 +86,15 @@ func TestSketchIsWithinOnePercentOfExactQuantiles(t *testing.T) {
 			}
 			for _, q := range sketchQuantiles {
 				exact := values[int(q*float64(n-1))]
-				if got := s.quantile(q); math.Abs(got-exact) > ddAlpha*math.Abs(exact)*(1+1e-9) {
+				got := s.quantile(q)
+				if n <= ddExactMax && got != exact {
+					t.Fatalf("%d values, signed %v, quantile %g: got %g, want exactly %g", n, signed, q, got, exact)
+				}
+				if math.Abs(got-exact) > ddAlpha*math.Abs(exact)*(1+1e-9) {
 					t.Fatalf("%d values, signed %v, quantile %g: got %g, exact %g, off by %.3f%%", n, signed, q, got, exact, 100*(got-exact)/exact)
 				}
 			}
-			if size := len(h.get(s.pos)) + len(h.get(s.neg)); size > 8<<10 {
+			if size := s.size(); size > 8<<10 {
 				t.Fatalf("%d values take %d bytes", n, size)
 			}
 		}
@@ -150,7 +148,7 @@ func TestSketchHasAHardSizeCap(t *testing.T) {
 		backward.add(values[len(values)-1-i])
 	}
 	for _, s := range []*sketchOf{&forward, &backward} {
-		if size := len(h.get(s.pos)); size > ddHeader+8*ddMaxBuckets {
+		if size := s.size(); size > ddHeader+8*ddMaxBuckets {
 			t.Fatalf("the store takes %d bytes", size)
 		}
 		// The buckets kept span a factor of gamma^2048 below the greatest
@@ -178,5 +176,49 @@ func TestSketchHasAHardSizeCap(t *testing.T) {
 	}
 	if v, _ := ddQuantile(nil, h.get(ref), 0, 0.5); math.Abs(v-42) > ddAlpha*42 {
 		t.Fatalf("median %g, want 42", v)
+	}
+}
+
+// TestSketchOfFewDistinctNumbersIsExact covers the numbers of a small
+// domain, such as response statuses, however many there are of each and
+// however they are split and merged.
+func TestSketchOfFewDistinctNumbersIsExact(t *testing.T) {
+	a := mem.NewArena()
+	defer a.Free()
+	var h stateHeap
+	h.init(a)
+	rng := rand.New(rand.NewSource(9))
+	domain := []float64{200, 200, 200, 200, 201, 204, 301, 304, 400, 404, 404, 500, 503, 0, -1, 0.5}
+	for _, distinct := range []int{1, len(domain), ddExactMax, ddExactMax + 1, 200} {
+		var values []float64
+		whole := sketchOf{h: &h}
+		pieces := []sketchOf{{h: &h}, {h: &h}, {h: &h}}
+		for i := 0; i < 20_000; i++ {
+			x := domain[rng.Intn(min(distinct, len(domain)))]
+			if distinct > len(domain) && rng.Intn(2) == 0 {
+				x = float64(1000 + rng.Intn(distinct-11))
+			}
+			values = append(values, x)
+			whole.add(x)
+			pieces[min(rng.Intn(40), 2)].add(x)
+		}
+		sort.Float64s(values)
+		merged := sketchOf{h: &h}
+		for p := range pieces {
+			merged.merge(&pieces[p])
+		}
+		for _, q := range sketchQuantiles {
+			exact := values[int(q*float64(len(values)-1))]
+			got := whole.quantile(q)
+			if distinct <= ddExactMax && got != exact {
+				t.Fatalf("%d distinct numbers, quantile %g: got %g, want exactly %g", distinct, q, got, exact)
+			}
+			if math.Abs(got-exact) > ddAlpha*math.Abs(exact) {
+				t.Fatalf("%d distinct numbers, quantile %g: got %g, exact %g", distinct, q, got, exact)
+			}
+			if m := merged.quantile(q); m != got {
+				t.Fatalf("%d distinct numbers, quantile %g: merged to %g, want %g", distinct, q, m, got)
+			}
+		}
 	}
 }

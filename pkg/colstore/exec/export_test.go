@@ -54,8 +54,12 @@ func DistinctEstimate(hashes map[uint64]struct{}) int64 {
 	return hllCount(h.get(ref))
 }
 
-// SketchValue returns what a Percentile reports for a quantile whose exact
-// value is x.
+// SketchExactValues is the number of distinct numbers other than zero up to
+// which a Percentile is exact.
+const SketchExactValues = ddExactMax
+
+// SketchValue returns what a Percentile of more distinct numbers reports for
+// a quantile whose exact value is x.
 func SketchValue(x float64) float64 {
 	switch {
 	case x > 0:

@@ -128,6 +128,11 @@ func (ap *aggPlan) mergeStates(h *stateHeap, dst []int64, src *stateSource) {
 		if len(b) == 0 {
 			continue
 		}
+		if st.op == stateSketchPos || st.op == stateSketchNeg {
+			ap.args[st.arg].sketch.merge(h, dst, b, st.op == stateSketchPos)
+
+			continue
+		}
 		ref := stateRef(dst[st.word])
 		cur := h.get(ref)
 		if len(cur) == 0 {
@@ -142,8 +147,6 @@ func (ap *aggPlan) mergeStates(h *stateHeap, dst []int64, src *stateSource) {
 			}
 		case stateHLL:
 			dst[st.word] = int64(hllMerge(h, ref, b))
-		case stateSketchPos, stateSketchNeg:
-			dst[st.word] = int64(ddMerge(h, ref, b))
 		}
 	}
 }
@@ -273,8 +276,8 @@ func (ap *aggPlan) sketch(arg int) {
 	}
 	// The word is fed with the stores, not with the argument's other words.
 	ap.words = append(ap.words, wordSpec{op: wordZeros, arg: -1})
-	a.zeros = len(ap.words) - 1
-	a.pos, a.neg = ap.states[ap.state(stateSketchPos, arg)].word, ap.states[ap.state(stateSketchNeg, arg)].word
+	a.sketch.zeros = len(ap.words) - 1
+	a.sketch.pos, a.sketch.neg = ap.states[ap.state(stateSketchPos, arg)].word, ap.states[ap.state(stateSketchNeg, arg)].word
 	a.sketched = true
 }
 
@@ -282,8 +285,6 @@ func (ap *aggPlan) sketch(arg int) {
 // rows when it is nil, to the percentile sketch of an argument: the integers
 // or else the floats given.
 func (a *aggWorker) feedSketch(arg *aggArg, t *target, ints []int64, floats []float64, gid, rows []uint32, n int) {
-	var last float64
-	var lastKey int32
 	for j := 0; j < n; j++ {
 		g, r := t.one, j
 		if t.gid != nil {
@@ -299,21 +300,12 @@ func (a *aggWorker) feedSketch(arg *aggArg, t *target, ints []int64, floats []fl
 			x = floats[r]
 		}
 		words := t.words[g*a.stride : (g+1)*a.stride]
-		at := arg.pos
 		switch {
 		case x != x:
-			continue
 		case x == 0:
-			words[arg.zeros]++
-
-			continue
-		case x < 0:
-			at, x = arg.neg, -x
+			words[arg.sketch.zeros]++
+		default:
+			arg.sketch.add(&a.heap, words, x, 1)
 		}
-		// A value seen again in a row is not put through the logarithm.
-		if x != last {
-			last, lastKey = x, ddKey(x)
-		}
-		words[at] = int64(ddAdd(&a.heap, stateRef(words[at]), lastKey, 1))
 	}
 }

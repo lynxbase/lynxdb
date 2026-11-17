@@ -82,10 +82,10 @@ type aggArg struct {
 	states   []int
 	// stateKinds is the set of kinds whose values the states read.
 	stateKinds uint8
-	// sketched is set when the argument has a percentile sketch: the word
-	// zeros and the states that the words pos and neg refer to.
-	sketched        bool
-	zeros, pos, neg int
+	// sketched is set when the argument has the percentile sketch that the
+	// words of sketch hold.
+	sketched bool
+	sketch   sketchWords
 	// counted is set when only the number of values is asked for.
 	counted bool
 	// picks is set when a group picks a row of the argument, and placed
@@ -540,7 +540,8 @@ func (ap *aggPlan) column(o *aggOut, words []int64, h *stateHeap, n int, floats 
 		arg := &ap.args[o.arg]
 		for g := range out {
 			w := words[g*stride : (g+1)*stride]
-			v, ok := ddQuantile(h.get(stateRef(w[arg.neg])), h.get(stateRef(w[arg.pos])), uint64(w[arg.zeros]), o.p/100)
+			s := arg.sketch
+			v, ok := ddQuantile(h.get(stateRef(w[s.neg])), h.get(stateRef(w[s.pos])), uint64(w[s.zeros]), o.p/100)
 			if out[g] = v; !ok {
 				dst.setNull(g)
 			}
