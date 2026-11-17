@@ -1,5 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| where level in ["error", "fatal"]
+source=main
+| where lower(level) in ("error", "fatal")
 | stats count() by service
+| sort service

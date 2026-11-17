@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| extend clean = replace(message, "[^a-zA-Z0-9 ]", "")
-| extend msg_len = len(clean)
+source=main
+| eval clean = replace(message, "[^a-zA-Z0-9 ]", "")
+| eval msg_len = length(clean)
 | stats avg(msg_len) as avg_len

@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| extend err_msg = coalesce(error, "none")
+source=main
+| eval err_msg = coalesce(error, "none")
 | stats count() by err_msg
 | sort err_msg

@@ -27,7 +27,7 @@ func generateJSONLines(n int) string {
 func TestPipe_StatsCount(t *testing.T) {
 	input := generateJSONLines(10)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "| stats count() as count")
+	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "source=main | stats count() as count")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -42,7 +42,7 @@ func TestPipe_StatsCountByLevel(t *testing.T) {
 	// 12 events: 4 info, 4 error, 4 warn (evenly distributed by modulo 3).
 	input := generateJSONLines(12)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "| stats count() as count by level")
+	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "source=main | stats count() as count by level")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -71,7 +71,7 @@ func TestPipe_WhereFilter(t *testing.T) {
 	input := generateJSONLines(12)
 
 	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
-		`| where level=="error" | stats count() as count`)
+		`source=main | where level = "error" | stats count() as count`)
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -85,7 +85,7 @@ func TestPipe_WhereFilter(t *testing.T) {
 func TestPipe_Head_LimitsResults(t *testing.T) {
 	input := generateJSONLines(20)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "| head 5")
+	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "source=main | head 5")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -100,7 +100,7 @@ func TestPipe_SortDescending(t *testing.T) {
 	input := generateJSONLines(12)
 
 	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
-		"| stats count() as count by level | sort -count")
+		"source=main | stats count() as count by level | sort - count")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -123,7 +123,7 @@ func TestPipe_EvalComputedField(t *testing.T) {
 	input := generateJSONLines(12)
 
 	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
-		`| extend category=if(level=="error","bad","ok") | stats count() as count by category`)
+		`source=main | eval category = if(level = "error", "bad", "ok") | stats count() as count by category`)
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -151,7 +151,7 @@ func TestPipe_EvalComputedField(t *testing.T) {
 func TestPipe_Dedup_UniqueRows(t *testing.T) {
 	input := generateJSONLines(12)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "| dedup level")
+	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "source=main | dedup level")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -176,7 +176,7 @@ func TestPipe_Rename(t *testing.T) {
 	input := generateJSONLines(6)
 
 	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
-		"| stats count() as count by level | rename count AS total")
+		"source=main | stats count() as count by level | rename count as total")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -200,7 +200,7 @@ func TestPipe_Rename(t *testing.T) {
 func TestPipe_FormatJSON_ValidNDJSON(t *testing.T) {
 	input := generateJSONLines(5)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "| head 5")
+	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "source=main | head 5")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -223,7 +223,7 @@ func TestPipe_FormatCSV(t *testing.T) {
 	input := generateJSONLines(6)
 
 	r := runLynxDBWithStdin(t, input, "query", "--format", "csv",
-		"| stats count() as count by level")
+		"source=main | stats count() as count by level")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -250,7 +250,7 @@ func TestPipe_FormatTable(t *testing.T) {
 	input := generateJSONLines(6)
 
 	r := runLynxDBWithStdin(t, input, "query", "--format", "table",
-		"| stats count() as count by level")
+		"source=main | stats count() as count by level")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -268,7 +268,7 @@ func TestPipe_FormatTSV(t *testing.T) {
 	input := generateJSONLines(6)
 
 	r := runLynxDBWithStdin(t, input, "query", "--format", "tsv",
-		"| stats count() as count by level")
+		"source=main | stats count() as count by level")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -289,7 +289,7 @@ func TestPipe_FormatTSV(t *testing.T) {
 func TestPipe_FormatRaw(t *testing.T) {
 	input := generateJSONLines(5)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "raw", "| head 5")
+	r := runLynxDBWithStdin(t, input, "query", "--format", "raw", "source=main | head 5")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -309,7 +309,7 @@ func TestPipe_FormatRaw(t *testing.T) {
 func TestPipe_LargeInput_1000Events(t *testing.T) {
 	input := generateJSONLines(1000)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "| stats count() as count")
+	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "source=main | stats count() as count")
 	if r.ExitCode != 0 {
 		t.Fatalf("exit code %d, stderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -323,7 +323,7 @@ func TestPipe_LargeInput_1000Events(t *testing.T) {
 func TestPipe_ParseError_Stderr(t *testing.T) {
 	input := generateJSONLines(5)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "| where")
+	r := runLynxDBWithStdin(t, input, "query", "--format", "json", "source=main | where")
 
 	if r.ExitCode == 0 {
 		t.Errorf("expected non-zero exit code for parse error, got 0")

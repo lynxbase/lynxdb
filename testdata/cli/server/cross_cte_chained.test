@@ -1,7 +1,0 @@
-# format: json
-let $noninfo = from backend
-| where level != "INFO";
-let $errs = from $noninfo
-| where level == "ERROR";
-from $errs
-| stats count()

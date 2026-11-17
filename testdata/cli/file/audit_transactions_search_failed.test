@@ -1,5 +1,4 @@
 # file: audit_transactions.log
 # format: json
-from main
-| where has(_raw, "status=failed")
+search source=main "status=failed"
 | stats count()

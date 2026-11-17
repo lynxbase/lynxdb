@@ -1,0 +1,6 @@
+# file: backend_server.log
+# format: json
+source=main
+| where service = "payment-service"
+| where status = 500
+| stats count(), sum(amount_cents) as total

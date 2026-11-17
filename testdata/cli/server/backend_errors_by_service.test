@@ -1,0 +1,5 @@
+# format: json
+source=backend
+| where level = "ERROR"
+| stats count() by service
+| sort service

@@ -1,6 +1,5 @@
 # file: backend_server.log
 # format: json
-from main
-| extend bucket = bin(timestamp, 15m)
-| stats count(), dc(service) as services by bucket
+source=main
+| stats count(), dc(service) as services by span(_time, 15m) as bucket
 | sort bucket

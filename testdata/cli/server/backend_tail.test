@@ -1,5 +1,6 @@
 # format: json
-from backend
+source=backend
+| sort - timestamp
+| head 3
 | sort timestamp
-| tail 3
-| keep level, service, status
+| fields level, service, status

@@ -1,6 +1,5 @@
 # format: json
-from backend
-| extend bucket = bin(timestamp, 30m)
-| stats count() by bucket, level
-| xyseries bucket level count
+source=backend
+| stats count() as c by span(_time, 30m) as bucket, level
+| xyseries format="$VAL$" bucket level in ("ERROR", "INFO", "WARN") c
 | sort bucket

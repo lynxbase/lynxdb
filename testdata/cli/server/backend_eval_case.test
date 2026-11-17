@@ -1,5 +1,5 @@
 # format: json
-from backend
-| extend status_class = case(status < 300, "2xx", status < 400, "3xx", status < 500, "4xx", 1 == 1, "5xx")
+source=backend
+| eval status_class = case(status < 300, "2xx", status < 400, "3xx", status < 500, "4xx" else "5xx")
 | stats count() by status_class
 | sort status_class

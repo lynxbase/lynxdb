@@ -1,4 +1,4 @@
 # unordered: true
 # format: json
-from backend
-| every 1h stats count()
+source=backend
+| timechart span=1h count()

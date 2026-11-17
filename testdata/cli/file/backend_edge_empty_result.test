@@ -1,5 +1,5 @@
 # file: backend_server.log
 # format: json
-from main
-| where level == "FATAL"
+source=main
+| where level = "FATAL"
 | stats count()

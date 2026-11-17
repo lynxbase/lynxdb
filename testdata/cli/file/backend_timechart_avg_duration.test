@@ -1,5 +1,5 @@
 # unordered: true
 # file: backend_server.log
 # format: json
-from main
-| every 1h stats avg(duration_ms)
+source=main
+| timechart span=1h avg(duration_ms)

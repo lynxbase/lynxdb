@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| where not level == "INFO"
+source=main
+| where not level = "INFO"
 | stats count() by level
 | sort level

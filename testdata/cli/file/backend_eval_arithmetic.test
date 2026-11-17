@@ -1,7 +1,7 @@
 # file: backend_server.log
 # format: json
-from main
+source=main
 | where amount_cents > 0
-| extend amount_usd = round((float(amount_cents) / 100), 2)
-| keep amount_usd, service
+| eval amount_usd = round(amount_cents / 100.0, 2)
+| fields amount_usd, service
 | sort amount_usd

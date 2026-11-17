@@ -1,4 +1,4 @@
 # file: backend_server.log
 # format: json
-from main
+source=main
 | stats avg(duration_ms), max(duration_ms), min(duration_ms)

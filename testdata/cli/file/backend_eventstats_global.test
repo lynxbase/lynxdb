@@ -1,7 +1,7 @@
 # unordered: true
 # file: backend_server.log
 # format: json
-from main
+source=main
 | eventstats avg(duration_ms) as global_avg
-| where duration_ms > (global_avg * 2)
-| keep service, duration_ms, global_avg
+| where duration_ms > global_avg * 2
+| fields service, duration_ms, global_avg

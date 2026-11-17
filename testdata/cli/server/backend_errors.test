@@ -1,4 +1,4 @@
 # format: json
-from backend
-| where level == "ERROR"
+source=backend
+| where level = "ERROR"
 | stats count()

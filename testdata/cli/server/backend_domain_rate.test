@@ -1,3 +1,4 @@
 # format: json
-from idx_backend
-| every 1h by level stats count() as rate
+source=backend
+| stats count() as rate by span(_time, 1h) as hour, level
+| sort hour, level

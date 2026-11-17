@@ -1,6 +1,7 @@
 # file: backend_server.log
 # format: json
-from main
-| tail 3
-| keep level, service, duration_ms
+source=main
+| reverse
+| head 3
+| fields level, service, duration_ms
 | sort duration_ms

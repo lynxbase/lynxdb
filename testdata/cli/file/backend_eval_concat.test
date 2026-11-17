@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| extend label = string(level) + ":" + string(service)
+source=main
+| eval label = concat(level, ":", service)
 | stats count() by label
 | sort label

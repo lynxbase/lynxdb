@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| extend bucket = case(duration_ms < 50, "fast", duration_ms < 500, "normal", duration_ms < 2000, "slow", 1 == 1, "critical")
+source=main
+| eval bucket = case(duration_ms < 50, "fast", duration_ms < 500, "normal", duration_ms < 2000, "slow" else "critical")
 | stats count(), avg(duration_ms) as avg_ms by bucket
 | sort bucket

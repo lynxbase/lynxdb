@@ -1,7 +1,7 @@
 # format: json
-from backend
+source=backend
 | eventstats avg(duration_ms) as avg_dur by service
-| where duration_ms > (avg_dur * 2)
-| keep service, duration_ms, avg_dur
-| sort -duration_ms
+| where duration_ms > avg_dur * 2
+| fields service, duration_ms, avg_dur
+| sort - duration_ms
 | head 5

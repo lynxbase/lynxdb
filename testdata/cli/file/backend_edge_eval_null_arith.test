@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| extend x = (amount_cents * 2)
+source=main
+| eval x = amount_cents * 2
 | where x > 0
 | stats count()

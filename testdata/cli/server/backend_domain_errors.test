@@ -1,4 +1,5 @@
 # format: json
-from idx_backend
-| where level in ["error", "fatal"]
+source=backend
+| where lower(level) in ("error", "fatal")
 | stats count() by service
+| sort service

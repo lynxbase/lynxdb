@@ -1,5 +1,5 @@
 # file: backend_server.log
 # format: json
-from main
-| where level in ["ERROR", "WARN"]
+source=main
+| where level in ("ERROR", "WARN")
 | stats count()

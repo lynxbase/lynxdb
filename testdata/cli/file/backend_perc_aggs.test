@@ -1,4 +1,4 @@
 # file: backend_server.log
 # format: json
-from main
+source=main
 | stats p50(duration_ms) as p50, p90(duration_ms) as p90, p99(duration_ms) as p99, avg(duration_ms) as avg_dur

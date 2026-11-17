@@ -1,7 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| extend has_error = if(exists(error), "yes", "no")
-| extend has_amount = if(exists(amount_cents), "yes", "no")
+source=main
+| eval has_error = if(isnotnull(error), "yes", "no"), has_amount = if(isnotnull(amount_cents), "yes", "no")
 | stats count() by has_error, has_amount
 | sort has_error, has_amount

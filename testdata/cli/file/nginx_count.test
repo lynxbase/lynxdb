@@ -1,4 +1,4 @@
 # file: nginx_access.log
 # format: json
-from main
+source=main
 | stats count()

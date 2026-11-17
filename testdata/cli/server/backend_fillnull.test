@@ -1,6 +1,6 @@
 # format: json
-from backend
-| extend error = error ?? "N/A"
+source=backend
+| fillnull with "N/A" in error
 | where error != "N/A"
 | stats count() by error
 | sort error

@@ -1,5 +1,5 @@
 # unordered: true
 # file: backend_server.log
 # format: json
-from main
+source=main
 | top 3 service

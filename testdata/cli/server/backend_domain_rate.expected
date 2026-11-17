@@ -1,1 +1,7 @@
-
+{"hour":"2026-02-10T08:00:00Z","level":"ERROR","rate":2}
+{"hour":"2026-02-10T08:00:00Z","level":"INFO","rate":6}
+{"hour":"2026-02-10T08:00:00Z","level":"WARN","rate":3}
+{"hour":"2026-02-10T09:00:00Z","level":"ERROR","rate":3}
+{"hour":"2026-02-10T09:00:00Z","level":"INFO","rate":4}
+{"hour":"2026-02-10T09:00:00Z","level":"WARN","rate":3}
+{"hour":"2026-02-10T10:00:00Z","level":"INFO","rate":5}

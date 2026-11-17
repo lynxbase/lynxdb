@@ -1,7 +1,7 @@
 # file: backend_server.log
 # format: json
-from main
-| extend err = coalesce(error, "none")
-| extend amt = coalesce(amount_cents, 0)
+source=main
+| eval err = coalesce(error, "none")
+| eval amt = coalesce(amount_cents, 0)
 | stats count() by err
 | sort err
