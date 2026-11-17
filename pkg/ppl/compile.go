@@ -58,17 +58,15 @@ func CompileQuery(q *ast.Query) (*Result, error) {
 
 type compiler struct {
 	sources []string
-	seen    map[string]bool
 }
 
 func (c *compiler) noteSource(name string) {
-	if c.seen == nil {
-		c.seen = map[string]bool{}
+	for _, s := range c.sources {
+		if s == name {
+			return
+		}
 	}
-	if !c.seen[name] {
-		c.seen[name] = true
-		c.sources = append(c.sources, name)
-	}
+	c.sources = append(c.sources, name)
 }
 
 // pipe is the state of a pipeline being compiled.
@@ -144,10 +142,14 @@ func (c *compiler) commands(input ir.Node, origin ir.Node, cmds []ast.Command) (
 // EventSchema is the schema of events read from a source: the time and raw
 // text columns are typed, every other column is discovered at read time.
 func EventSchema() ir.Schema {
-	return ir.OpenSchema(
-		ir.Column{Name: ir.TimeColumn, Type: ir.Timestamp},
-		ir.Column{Name: ir.RawColumn, Type: ir.String, Nullable: true},
-	)
+	return ir.OpenSchema(eventColumns...)
+}
+
+// eventColumns is shared by every event schema; schemas are never modified
+// in place, and its full capacity makes appends copy.
+var eventColumns = []ir.Column{
+	{Name: ir.TimeColumn, Type: ir.Timestamp},
+	{Name: ir.RawColumn, Type: ir.String, Nullable: true},
 }
 
 func canonicalField(name string) string {
