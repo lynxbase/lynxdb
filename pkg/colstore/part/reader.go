@@ -1380,7 +1380,7 @@ func (b *Block) decodeBytes(ref *ColumnRef, chunk []byte, sparse bool, rows int,
 
 		return nil
 	case encDict:
-		return b.decodeDict(chunk, count, sparse, rows, dst)
+		return b.decodeDict(chunk, count, sparse, rows, ref.flags&flagCounts != 0, dst)
 	}
 
 	return ErrCorrupt
@@ -1502,19 +1502,21 @@ func (b *Block) readData(src []byte, dst *vec.Column) error {
 	return nil
 }
 
-func (b *Block) decodeDict(chunk []byte, count int, sparse bool, rows int, dst *vec.Column) error {
+// readEntries fills dst with the entries of the dictionary at the start of
+// chunk and returns their number and what follows them.
+func (b *Block) readEntries(chunk []byte, dst *vec.Column) (size uint64, rest []byte, err error) {
 	size, n := binary.Uvarint(chunk)
 	if n <= 0 || size < 2 || size > maxDictSize {
-		return ErrCorrupt
+		return 0, nil, ErrCorrupt
 	}
 	lens, rest, err := readInts(b.d.ints, chunk[n:], int(size), &b.d)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	b.d.ints = lens
 	payload, rest, stored, err := readBlob(rest, &dst.Data)
 	if err != nil {
-		return err
+		return 0, nil, err
 	}
 	if stored {
 		dst.Data = append(dst.Data[:0], payload...)
@@ -1527,10 +1529,83 @@ func (b *Block) decodeDict(chunk []byte, count int, sparse bool, rows int, dst *
 	}
 	dst.Offsets[size] = uint32(off)
 	if off != uint64(len(dst.Data)) || !nonNegative(lens) {
-		return ErrCorrupt
+		return 0, nil, ErrCorrupt
+	}
+	dst.Layout = vec.Dict
+
+	return size, rest, nil
+}
+
+// skipCounts returns what follows the rows of n dictionary entries.
+func skipCounts(src []byte, n int) ([]byte, bool) {
+	for ; n > 0; n-- {
+		_, used := binary.Uvarint(src)
+		if used <= 0 {
+			return nil, false
+		}
+		src = src[used:]
 	}
 
-	dst.Layout = vec.Dict
+	return src, true
+}
+
+// Counted reports whether the column holds, with its dictionary, the
+// number of rows of every entry.
+func (c *ColumnRef) Counted() bool { return !c.bad && c.enc == encDict && c.flags&flagCounts != 0 }
+
+// DecodeCounts fills dst with the dictionary of a counted column, without
+// the codes of its rows, and appends to counts the number of rows that hold
+// each entry.
+func (b *Block) DecodeCounts(ref *ColumnRef, dst *vec.Column, counts []uint32) ([]uint32, error) {
+	if !ref.Counted() {
+		return counts, ErrCorrupt
+	}
+	chunk := b.data[ref.off : ref.off+ref.length]
+	if !b.checked(ref, chunk) {
+		return counts, ErrCorrupt
+	}
+	if ref.flags&flagSparse != 0 {
+		ok := len(chunk) > 0
+		if ok {
+			chunk, _, ok = skipBlob(chunk[1:])
+		}
+		if !ok {
+			return counts, ErrCorrupt
+		}
+	}
+	dst.Kind, dst.Rows, dst.Valid = ref.Kind, b.Rows, nil
+	dst.Codes8, dst.Codes16 = dst.Codes8[:0], dst.Codes16[:0]
+	size, rest, err := b.readEntries(chunk, dst)
+	if err != nil {
+		return counts, err
+	}
+	total := uint64(0)
+	for i := uint64(0); i < size; i++ {
+		n, used := binary.Uvarint(rest)
+		if used <= 0 || n > uint64(ref.Count) {
+			return counts, ErrCorrupt
+		}
+		rest, total = rest[used:], total+n
+		counts = append(counts, uint32(n))
+	}
+	if total != uint64(ref.Count) {
+		return counts, ErrCorrupt
+	}
+
+	return counts, nil
+}
+
+func (b *Block) decodeDict(chunk []byte, count int, sparse bool, rows int, counted bool, dst *vec.Column) error {
+	size, rest, err := b.readEntries(chunk, dst)
+	if err != nil {
+		return err
+	}
+	if counted {
+		ok := false
+		if rest, ok = skipCounts(rest, int(size)); !ok {
+			return ErrCorrupt
+		}
+	}
 	if len(rest) == 0 {
 		return ErrCorrupt
 	}
@@ -1688,8 +1763,14 @@ func (b *Block) FindEqual(ref *ColumnRef, want []byte, dst []uint32) ([]uint32, 
 		return dst, err == nil, err
 	}
 	if ref.enc == encDict {
-		entry := dst[from]
-		if dst, ok = b.findCode(dst[:from], chunk[n+m+int(size):], entry, texts, ref.Count); !ok {
+		entry, codes := dst[from], chunk[n+m+int(size):]
+		if ref.flags&flagCounts != 0 {
+			codes, ok = skipCounts(codes, texts)
+		}
+		if !ok {
+			return dst[:from], false, ErrCorrupt
+		}
+		if dst, ok = b.findCode(dst[:from], codes, entry, texts, ref.Count); !ok {
 			return dst[:from], false, ErrCorrupt
 		}
 	}

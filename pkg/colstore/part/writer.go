@@ -150,7 +150,10 @@ type writerBuffers struct {
 	e         encodeScratch
 	ints      []int64
 	dictBytes []byte // the integer codec owns e.tmp
-	dict      dictBuilder
+	// counted is set when the dictionary last written holds the rows of
+	// its entries.
+	counted bool
+	dict    dictBuilder
 	// column holds the tokens of the column being encoded, and tokens
 	// those of the block's columns without a filter of their own. The
 	// columns of the block that get one have their tokens in tokenKeys, where
@@ -863,7 +866,7 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 		return
 	}
 	if ok && w.encodeDict(c, distinct) {
-		ent.enc = encDict
+		w.asDict(ent)
 		w.tokenizeEntries(c)
 
 		return
@@ -894,7 +897,8 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 				dict := len(w.block)
 				w.appendFlat(slot, c, 0)
 				if flat := len(w.block) - dict; (dict-start)*wideDictShare <= flat*(wideDictShare+1) {
-					tr.wide, ent.enc, w.block = true, encDict, w.block[:dict]
+					tr.wide, w.block = true, w.block[:dict]
+					w.asDict(ent)
 				} else {
 					ent.enc, w.block = encFlat, w.block[:start+copy(w.block[start:], w.block[dict:])]
 				}
@@ -905,7 +909,7 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 			}
 		} else if tr.wideLeft--; tr.wide {
 			if distinct, ok := w.dict.build(c, true); ok && w.encodeDict(c, distinct) {
-				ent.enc = encDict
+				w.asDict(ent)
 				w.tokenizeEntries(c)
 
 				return
@@ -941,6 +945,14 @@ func (w *Writer) appendFlat(slot int, c *shred.Column, stride int) {
 		}
 	}
 	w.appendValues(slot, data, c.Count)
+}
+
+// asDict marks the column of ent as the dictionary that encodeDict wrote.
+func (w *Writer) asDict(ent *dirEntry) {
+	ent.enc = encDict
+	if w.counted {
+		ent.flags |= flagCounts
+	}
 }
 
 // tokenizeEntries adds the tokens of the entries of the dictionary that
@@ -983,6 +995,17 @@ func (w *Writer) encodeDict(c *shred.Column, distinct int) bool {
 		out = w.blobs.appendBlob(w.block, w.dictBytes, &w.e.zbuf)
 	}
 	w.block = out
+	// A dictionary of few entries says how many rows hold each, which
+	// answers a count by the column without its codes.
+	if w.counted = distinct <= maxCounted; w.counted {
+		var rows [maxCounted]uint32
+		for _, code := range d.codes {
+			rows[d.rank[code]]++
+		}
+		for _, n := range rows[:distinct] {
+			w.block = binary.AppendUvarint(w.block, uint64(n))
+		}
+	}
 
 	// Codes stay out of the general codec so that reading them costs a few
 	// shifts per row; runs take over when they halve the packed size.
