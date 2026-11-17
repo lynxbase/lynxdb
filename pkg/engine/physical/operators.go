@@ -239,7 +239,7 @@ func (b *builder) window(x *ir.Window) (pipeline.Iterator, error) {
 	if x.Frame.Kind == ir.FramePartition {
 		it = pipeline.NewEventStatsIterator(it, aggs, groupBy, b.batchSize())
 	} else {
-		it = pipeline.NewStreamStatsIteratorWithDuration(it, aggs, groupBy, x.Frame.Rows, 0, !x.Frame.ExcludeCurrent)
+		it = pipeline.NewStreamStatsIterator(it, aggs, groupBy, x.Frame.Rows, !x.Frame.ExcludeCurrent)
 	}
 	it = dropTemps(it, temps)
 	if len(post) > 0 {

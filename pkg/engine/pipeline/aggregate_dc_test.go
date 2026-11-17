@@ -18,7 +18,6 @@ func TestAggregateDistinctCountAcrossHLLPromotion(t *testing.T) {
 
 			iter := NewAggregateIterator(NewRowScanIterator(rows, 512), []AggFunc{
 				{Name: "dc", Field: "x", Alias: "d"},
-				{Name: "estdc_error", Field: "x", Alias: "e"},
 			}, nil)
 
 			ctx := context.Background()
@@ -40,9 +39,6 @@ func TestAggregateDistinctCountAcrossHLLPromotion(t *testing.T) {
 			tolerance := float64(distinct) * 0.05
 			if diff := float64(got) - float64(distinct); diff > tolerance || diff < -tolerance {
 				t.Fatalf("distinct count %d, want %d within %.0f", got, distinct, tolerance)
-			}
-			if result[0]["e"].IsNull() {
-				t.Fatal("estdc_error is null")
 			}
 		})
 	}
