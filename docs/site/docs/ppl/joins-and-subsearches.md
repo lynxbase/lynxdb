@@ -107,7 +107,8 @@ LynxDB supports uncorrelated subqueries. Each subquery runs once, before the
 outer query, and its rows are held in memory; an `IN` subquery of one column
 that returns at most 1024 values becomes a list of those values in the
 outer filter. End a subquery with `fields` or `stats` so that its columns
-are known when the query is planned.
+are known when the query is planned: an `IN` or a scalar subquery that
+returns whole events fails to compile.
 
 A correlated subquery fails to compile with `UNSUPPORTED_FEATURE`: a
 reference through the outer query's source name or alias, or to a field
