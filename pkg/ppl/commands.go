@@ -404,10 +404,11 @@ func (c *compiler) eval(st *pipe, n *ast.EvalCommand) error {
 	if n.Command == "fieldformat" {
 		return c.unsupportedCommand(n)
 	}
-	comp := &ir.Compute{Input: st.node}
-	s := st.schema()
+	comp := &ir.Compute{Input: st.node, Assigns: make([]ir.Assign, 0, len(n.Assigns))}
+	var s ir.SchemaBuilder
+	s.Init(st.schema(), len(n.Assigns))
 	for _, a := range n.Assigns {
-		x := c.ectx(s)
+		x := c.ectx(s.Schema())
 		v, err := x.expr(a.Expr)
 		if err != nil {
 			return err
@@ -417,7 +418,7 @@ func (c *compiler) eval(st *pipe, n *ast.EvalCommand) error {
 		}
 		name := canonicalField(a.Field.Name())
 		comp.Assigns = append(comp.Assigns, ir.Assign{Name: name, Expr: v})
-		s = s.With(ir.Column{Name: name, Type: v.Type(), Nullable: true})
+		s.With(ir.Column{Name: name, Type: v.Type(), Nullable: true})
 	}
 	st.node = comp
 	return nil

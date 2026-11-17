@@ -16,7 +16,6 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
-	"github.com/lynxbase/lynxdb/pkg/colstore/exec/flow"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
@@ -55,58 +54,56 @@ type benchPlan struct {
 	plan exec.Node
 	// ordered is set when the plan's sort makes the row order unique.
 	ordered bool
-	// text is the query in LynxFlow, when the language can state it.
+	// text is the query in PPL, when the language can state it.
 	text string
 	// estimated is set when the answer may differ between layouts.
 	estimated bool
 }
 
-// benchTexts states the benchmark plans in LynxFlow, by plan name; a search
-// function of the language ignores letter case, so only the plans that do
-// have a text.
+// benchTexts states the benchmark plans in PPL, by plan name. The language
+// searches words without regard to letter case, so only the plans that do
+// the same have a text. A text names its columns in the order of its plan.
 func benchTexts(win benchWindows) map[string]string {
-	const created = `from bluesky | where kind == "commit" and commit.operation == "create"`
+	const created = `source=bluesky | where kind = 'commit' and commit.operation = 'create'`
 	const text = "commit.record.text"
 	stamp := func(ns int64) string { return time.Unix(0, ns).UTC().Format(time.RFC3339Nano) }
 	within := func(lo, hi int64) string {
-		return fmt.Sprintf(`_time >= timestamp(%q) and _time <= timestamp(%q)`, stamp(lo), stamp(hi))
+		return fmt.Sprintf(`_time >= '%s' and _time <= '%s'`, stamp(lo), stamp(hi))
 	}
-	byCount := ` | stats count() as count by commit.collection | sort -count, commit.collection`
+	byCount := ` | stats count() as count by commit.collection | fields commit.collection, count | sort - count, commit.collection`
+	posts := created + ` and commit.collection = 'app.bsky.feed.post'`
 
 	return map[string]string{
-		"Q1":                 `from bluesky` + byCount,
-		"Q2":                 created + ` | stats count() as count, dc(did) as users by commit.collection | sort -count, commit.collection`,
-		"Q2 estimated users": created + ` | stats count() as count, estdc(did) as users by commit.collection | sort -count, commit.collection`,
-		"Q3": created + ` and commit.collection in ["app.bsky.feed.like", "app.bsky.feed.post", "app.bsky.feed.repost"]` +
-			` | extend hour = date_part(_time, "hour") | stats count() as count by commit.collection, hour | sort hour, commit.collection`,
-		"Q4": created + ` and commit.collection == "app.bsky.feed.post" | stats min(_time) as first by did | sort first, did | head 3`,
-		"Q5": created + ` and commit.collection == "app.bsky.feed.post" | stats min(_time) as first, max(_time) as last by did` +
-			` | extend span_ms = last / 1000000 - first / 1000000 | keep did, span_ms | sort -span_ms, did | head 3`,
-		"S1 rare token":            `from bluesky | where has(commit.record.subject.uri, "sc7btuzqdaepksx43mr74pma") | stats count()`,
-		"S2 any case":              `from bluesky | where has(` + text + `, "love") | stats count()`,
-		"S3 any case":              `from bluesky | where has(` + text + `, "good morning") | stats count()`,
-		"S4 any case":              `from bluesky | where has_glob(` + text + `, "crypto*") | stats count()`,
-		"S5 substring":             `from bluesky | where contains_cs(` + text + `, "ware") | stats count()`,
-		"S5 any case":              `from bluesky | where contains(` + text + `, "ware") | stats count()`,
-		"S6 field equals":          `from bluesky | where did == "did:plc:yj3sjq3blzpynh27cumnp5ks" | stats count()`,
-		"S7 unique id":             `from bluesky | where commit.cid == "bafyreicsj6qpl6dreic6ekdjxvdjltncngl52x3jddf6dxhg2gwo35iqhi" | stats count()`,
-		"R1 regex with a literal":  `from bluesky | where matches(` + text + `, r"` + benchRegexLiteral + `") | stats count()`,
-		"R2 regex of classes":      `from bluesky | where matches(` + text + `, r"` + benchRegexClasses + `") | stats count()`,
-		"R3 regex, any case":       `from bluesky | where matches(` + text + `, r"` + benchRegexAnyCase + `") | stats count()`,
-		"A1 rare token, any field": `from bluesky sc7btuzqdaepksx43mr74pma | stats count()`,
-		"A3 any field, any case":   `from bluesky love | stats count()`,
-		"T1 count in 10 minutes":   `from bluesky | where ` + within(win.tenLo, win.tenHi) + ` | stats count()`,
-		"T3 groups in 1 hour":      `from bluesky | where ` + within(win.hourLo, win.hourHi) + byCount,
-		"L1 latest post per user": created + ` and commit.collection == "app.bsky.feed.post"` +
-			` | stats latest(commit.record.text) as text, max(_time) as at by did | sort -at, did | head 5`,
-		"P1 percentiles by collection": `from bluesky | extend ms = _time % 60000000000 / 1000000` +
-			` | stats p50(ms) as p50, p95(ms) as p95, p99(ms) as p99 by commit.collection | sort commit.collection`,
-		"K1 top 10 users by events": `from bluesky | stats count() as count by did | sort -count, did | head 10`,
-		"K2 top 10 users and their share": `from bluesky | stats count() as count by did | eventstats sum(count) as total` +
-			` | extend percent = round(count * 100.0 / total, 2) | drop total | sort -count, did | head 10`,
-		"L2 latest post of every user": created + ` and commit.collection == "app.bsky.feed.post"` +
-			` | stats latest(commit.record.text) as text by did`,
-		"T4 latest 20 of a user": `from bluesky | where did == "did:plc:yj3sjq3blzpynh27cumnp5ks" | extend event = commit.collection | keep _time, event | sort -_time, event | head 20`,
+		"Q1": `source=bluesky` + byCount,
+		"Q2": created + ` | stats count() as count, distinct_count(did) as users by commit.collection` +
+			` | fields commit.collection, count, users | sort - count, commit.collection`,
+		"Q2 estimated users": created + ` | stats count() as count, distinct_count_approx(did) as users by commit.collection` +
+			` | fields commit.collection, count, users | sort - count, commit.collection`,
+		"Q3": created + ` and commit.collection in ('app.bsky.feed.like', 'app.bsky.feed.post', 'app.bsky.feed.repost')` +
+			` | eval hour = hour(_time) | stats count() as count by commit.collection, hour | fields commit.collection, hour, count | sort hour, commit.collection`,
+		"Q4":                        posts + ` | stats min(_time) as first by did | fields did, first | sort first, did | head 3`,
+		"S1 rare token":             `source=bluesky | where match(commit.record.subject.uri, 'sc7btuzqdaepksx43mr74pma') | stats count()`,
+		"S2 any case":               `source=bluesky | where match(` + text + `, 'love') | stats count()`,
+		"S3 any case":               `source=bluesky | where match_phrase(` + text + `, 'good morning') | stats count()`,
+		"S4 any case":               `source=bluesky | where match_phrase_prefix(` + text + `, 'crypto') | stats count()`,
+		"S5 substring":              `source=bluesky | where like(` + text + `, '%ware%', true) | stats count()`,
+		"S5 any case":               `source=bluesky | where like(` + text + `, '%ware%') | stats count()`,
+		"S6 field equals":           `source=bluesky | where did = 'did:plc:yj3sjq3blzpynh27cumnp5ks' | stats count()`,
+		"S7 unique id":              `source=bluesky | where commit.cid = 'bafyreicsj6qpl6dreic6ekdjxvdjltncngl52x3jddf6dxhg2gwo35iqhi' | stats count()`,
+		"R1 regex with a literal":   `source=bluesky | where regexp_match(` + text + `, '` + benchRegexLiteral + `') | stats count()`,
+		"R2 regex of classes":       `source=bluesky | where regexp_match(` + text + `, '` + benchRegexClasses + `') | stats count()`,
+		"R3 regex, any case":        `source=bluesky | where regexp_match(` + text + `, '` + benchRegexAnyCase + `') | stats count()`,
+		"A1 rare token, any field":  `source=bluesky sc7btuzqdaepksx43mr74pma | stats count()`,
+		"A3 any field, any case":    `source=bluesky love | stats count()`,
+		"T1 count in 10 minutes":    `source=bluesky | where ` + within(win.tenLo, win.tenHi) + ` | stats count()`,
+		"T3 groups in 1 hour":       `source=bluesky | where ` + within(win.hourLo, win.hourHi) + byCount,
+		"L1 latest post per user":   posts + ` | stats latest(` + text + `) as text, max(_time) as at by did | fields did, text, at | sort - at, did | head 5`,
+		"K1 top 10 users by events": `source=bluesky | stats count() as count by did | fields did, count | sort - count, did | head 10`,
+		"K2 top 10 users and their share": `source=bluesky | stats count() as count by did | eventstats sum(count) as total` +
+			` | eval percent = round(count * 100.0 / total, 2) | fields did, count, percent | sort - count, did | head 10`,
+		"L2 latest post of every user": posts + ` | stats latest(` + text + `) as text by did | fields did, text`,
+		"T4 latest 20 of a user": `source=bluesky | where did = 'did:plc:yj3sjq3blzpynh27cumnp5ks' | eval event = commit.collection` +
+			` | fields _time, event | sort - _time, event | head 20`,
 	}
 }
 
@@ -497,7 +494,7 @@ func TestJSONBenchReference(t *testing.T) {
 					if q.text == "" {
 						return
 					}
-					plan, err := flow.Compile(q.text, flow.Options{})
+					plan, err := pplPlan(q.text, time.Time{})
 					if err != nil {
 						t.Fatalf("%s: %v", q.text, err)
 					}
@@ -740,7 +737,7 @@ func TestJSONBenchPlans(t *testing.T) {
 			}
 			var stated exec.Node
 			compiled, _, err := timeRuns(20, func() (err error) {
-				stated, err = flow.Compile(q.text, flow.Options{})
+				stated, err = pplPlan(q.text, time.Time{})
 
 				return err
 			})

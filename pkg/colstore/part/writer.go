@@ -62,6 +62,8 @@ type Writer struct {
 	raw      uint64
 	minT     int64
 	maxT     int64
+	// times holds the row times of the block being written.
+	times []int64
 	// copied counts the blocks taken over from other parts as stored.
 	copied int
 	// groups holds the offset, length and stripe count of every filter
@@ -263,6 +265,7 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	ent := dirEntry{pathID: 0, kind: vec.KindInt, count: rows}
 	w.encodeInts(&ent, b.Times)
 	w.finish(&ent, 0)
+	w.times = b.Times
 	for _, c := range b.Columns() {
 		if c.Count == 0 {
 			continue
@@ -660,7 +663,14 @@ func (w *Writer) encodeColumn(c *shred.Column, rows int) {
 	case vec.KindBool:
 		w.encodeBools(&ent, c.Bools)
 	case vec.KindInt:
-		w.encodeInts(&ent, c.Ints)
+		if power, ok := timeUnit(c.Ints, w.times); ok {
+			// The member that the row times were taken from.
+			ent.enc = encTime
+			ent.minI, ent.maxI = vec.MinMaxInt64(c.Ints)
+			w.block = append(w.block, power)
+		} else {
+			w.encodeInts(&ent, c.Ints)
+		}
 	case vec.KindFloat:
 		w.encodeFloats(&ent, c.Floats)
 	case vec.KindString, vec.KindVariant:
@@ -727,6 +737,34 @@ func (w *Writer) encodeBools(ent *dirEntry, vals []uint8) {
 		w.e.tmp[i>>3] |= v << (uint(i) & 7)
 	}
 	w.block = w.blobs.appendBlob(w.block, w.e.tmp, &w.e.zbuf)
+}
+
+// timeUnits holds the nanoseconds of the units that a time is given in, by
+// their power of ten.
+var timeUnits = [...]int64{0: 1, 3: 1e3, 6: 1e6, 9: 1e9}
+
+// timeUnit reports whether vals, one for every row, are the times of the
+// rows in one coarser unit, and that unit's power of ten in nanoseconds.
+// Columns that all hold one value stay constants.
+func timeUnit(vals, times []int64) (power byte, ok bool) {
+	if len(vals) != len(times) || vals[0] == 0 || times[0]%vals[0] != 0 {
+		return 0, false
+	}
+	unit := times[0] / vals[0]
+	for power = 0; int(power) < len(timeUnits) && timeUnits[power] != unit; power++ {
+	}
+	if int(power) == len(timeUnits) || unit == 0 {
+		return 0, false
+	}
+	same := true
+	for i, v := range vals {
+		if times[i]%unit != 0 || times[i]/unit != v {
+			return 0, false
+		}
+		same = same && v == vals[0]
+	}
+
+	return power, !same
 }
 
 func (w *Writer) encodeInts(ent *dirEntry, vals []int64) {

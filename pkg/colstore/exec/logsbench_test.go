@@ -26,7 +26,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
-	"github.com/lynxbase/lynxdb/pkg/colstore/exec/flow"
+	"github.com/lynxbase/lynxdb/pkg/colstore/exec/irplan"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 )
@@ -601,21 +601,16 @@ func TestLogsBench(t *testing.T) {
 				plan exec.Node
 			}
 			var variants []variant
-			stated, err := flow.Compile(q.text, flow.Options{Now: logsEpoch.Add(opts.Span)})
-			switch {
-			case err == nil:
-				variants = append(variants, variant{cell{name: q.name}, stated})
-			case errors.Is(err, flow.ErrUnsupported) || q.restated != "":
-				refused[q.name] = logRefusal(err)
-			default:
-				t.Errorf("%s: %v", q.name, err)
-			}
-			if err != nil && q.restated != "" {
-				restated, err := flow.Compile(q.restated, flow.Options{Now: logsEpoch.Add(opts.Span)})
-				if err != nil {
-					t.Fatalf("%s: %v", q.restated, err)
+			if q.text != "" {
+				stated, err := pplPlan(q.text, logsEpoch.Add(opts.Span))
+				switch {
+				case err == nil:
+					variants = append(variants, variant{cell{name: q.name}, stated})
+				case errors.Is(err, irplan.ErrUnsupported):
+					refused[q.name] = logRefusal(err)
+				default:
+					t.Errorf("%s: %v", q.name, err)
 				}
-				variants = append(variants, variant{cell{name: q.name + ", restated"}, restated})
 			}
 			if q.plan != nil {
 				variants = append(variants, variant{cell{name: q.name + ", by hand"}, q.plan})
@@ -654,7 +649,7 @@ func TestLogsBench(t *testing.T) {
 		fmt.Fprintf(&out, " %20s", name)
 	}
 	for _, q := range queries {
-		for _, name := range []string{q.name, q.name + ", restated", q.name + ", by hand"} {
+		for _, name := range []string{q.name, q.name + ", by hand"} {
 			cells := table[name]
 			if len(cells) == 0 {
 				continue

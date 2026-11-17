@@ -108,7 +108,7 @@ func (p *parser) fieldList() []*ast.Field {
 
 var clauseKeywords = []string{"by", "as", "in", "with", "using", "from", "over", "keepempty", "consecutive", "replace", "append", "output", "on", "where", "and", "or"}
 
-func isClauseKeyword(t lexer.Token) bool {
+func isClauseKeyword(t *lexer.Token) bool {
 	for _, k := range clauseKeywords {
 		if t.Is(k) {
 			return true
@@ -136,9 +136,18 @@ func (p *parser) where() ast.Command {
 	return &ast.WhereCommand{Cond: p.expr(), Base: p.base(start)}
 }
 
+// fieldsNode holds a fields command and room for its first names in one
+// allocation.
+type fieldsNode struct {
+	c     ast.FieldsCommand
+	names [4]string
+}
+
 func (p *parser) fields(name string) ast.Command {
 	start := p.next().Pos
-	c := &ast.FieldsCommand{Command: name}
+	n := &fieldsNode{c: ast.FieldsCommand{Command: name}}
+	c := &n.c
+	c.Fields = n.names[:0]
 	if p.accept(lexer.Minus) {
 		c.Exclude = true
 	} else {
@@ -195,9 +204,18 @@ func (p *parser) replace() ast.Command {
 	return c
 }
 
+// evalNode holds an eval command and room for its first assignments in one
+// allocation.
+type evalNode struct {
+	c       ast.EvalCommand
+	assigns [2]ast.EvalAssign
+}
+
 func (p *parser) eval(name string) ast.Command {
 	start := p.next().Pos
-	c := &ast.EvalCommand{Command: name}
+	n := &evalNode{c: ast.EvalCommand{Command: name}}
+	c := &n.c
+	c.Assigns = n.assigns[:0]
 	for {
 		at := p.peek().Pos
 		f := p.field()

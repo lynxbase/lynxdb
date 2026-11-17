@@ -107,6 +107,19 @@ Compilation errors carry a kind, a position and an optional hint:
 The physical planner reports constructs the engine cannot run with
 `physical.UnsupportedError`; nothing unsupported is silently approximated.
 
+## Limits and plan reuse
+
+The parser rejects, with a `syntax` error, a query longer than 256 KiB, a
+nesting of parentheses, `NOT`, signs, function calls, search groups and
+subsearches deeper than 256 levels, and a pipeline of more than 1000
+commands. Within these bounds compilation takes time linear in the query
+size, apart from field lookups in schemas of thousands of columns.
+
+Compiling depends on the query text alone: relative times stay symbolic
+until execution and source columns are discovered at read time. `query.Compile`
+therefore keeps the plans of the 1024 most recently used queries of up to
+2 KiB and returns a copy of the cached result for a repeated text.
+
 ## Adding a command
 
 1. Add the syntax to `pkg/ppl/ast` and a parse function to

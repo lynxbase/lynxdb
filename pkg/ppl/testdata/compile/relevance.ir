@@ -1,0 +1,2 @@
+Filter(((((((SEARCH_WORD(message, "connection") OR SEARCH_WORD(message, "refused")) AND (SEARCH_WORD(host, "web") AND SEARCH_WORD(host, "01"))) AND SEARCH_PHRASE(message, "good morning")) AND SEARCH_WORD(message, "Milne")) AND SEARCH_PREFIX(agent, "crypto")) AND SEARCH_REGEX(author, "(?i)(?:^|[^\\p{L}\\p{Nd}])Alexander Mil")) AND FALSE)
+└─ Scan(t)

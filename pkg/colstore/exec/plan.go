@@ -96,23 +96,36 @@ type Filter struct {
 }
 
 // Project computes Exprs over the columns of its input and replaces them.
+// With Rest, a projection of a scan is followed by every other field that
+// its rows hold, one column per path in the order of the paths' names: a
+// field is other when neither it nor an object it is in is named by Exprs or
+// by Except. A row that does not hold a field has no value there, and one
+// that holds a null has a value of the null kind. Above an aggregate, the
+// last expression is a column that a FirstRow gives, and the fields are
+// those of the rows it picked.
 type Project struct {
-	Input Node
-	Exprs []Named
+	Input  Node
+	Exprs  []Named
+	Rest   bool
+	Except []string
 }
 
-// Order names a column to sort by; nulls sort last.
+// Order names a column to sort by; nulls sort last, or first with
+// NullsFirst.
 type Order struct {
-	Column string
-	Desc   bool
+	Column     string
+	Desc       bool
+	NullsFirst bool
 }
 
 // Sort orders its input by By and keeps the first Limit rows, every row when
-// Limit is zero; with no By it only limits.
+// Limit is zero; with no By it only limits. The columns named by Hide order
+// the rows and are not in the result.
 type Sort struct {
 	Input Node
 	By    []Order
 	Limit int
+	Hide  []string
 }
 
 func (*Scan) node()      {}

@@ -111,6 +111,10 @@ const (
 	OpTrimRight
 	OpIndexOf
 	OpTotal
+
+	// opPlace is where a row is in the table, for reading its fields once
+	// the rows of the result are known.
+	opPlace
 )
 
 // Expr is a node of an expression tree; which fields it uses depends on Op.

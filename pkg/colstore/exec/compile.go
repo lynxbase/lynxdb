@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
@@ -54,11 +55,26 @@ type query struct {
 	located []*sexpr
 	final   []*sexpr
 	early   bool
+	// places is set when a plan without an aggregate records where its rows
+	// are. rest is set when its last column is those places, which the
+	// result replaces by the rows' fields other than hidden.
+	places bool
+	rest   bool
+	hidden []string
+	// hide names the columns that the result leaves out.
+	hide []string
+	// byTime is set for rows that a limit keeps the first of by their time:
+	// negative for the latest first, positive for the earliest; timeCol is
+	// the column of the time. The scan then takes the blocks in that order
+	// and leaves out those that the rows kept so far rule out.
+	byTime  int
+	timeCol int
 }
 
 type orderSpec struct {
-	col  int
-	desc bool
+	col        int
+	desc       bool
+	nullsFirst bool
 }
 
 // sexpr is a scalar expression over the columns of a block.
@@ -133,6 +149,9 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 			}
 		}
 	case prj != nil:
+		if len(prj.Exprs) == 0 && !prj.Rest {
+			return nil, unsupported("a projection of no columns")
+		}
 		for _, e := range prj.Exprs {
 			s, err := q.scanExpr(e.Expr, 0)
 			if err != nil {
@@ -161,11 +180,62 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 				return nil, unsupported("sort by unknown column %q", o.Column)
 			}
 			q.early = q.early || (q.final != nil && q.final[col] != nil)
-			q.order = append(q.order, orderSpec{col: col, desc: o.Desc})
+			q.order = append(q.order, orderSpec{col: col, desc: o.Desc, nullsFirst: o.NullsFirst})
 		}
+	}
+	if agg == nil {
+		if q.limit > 0 && len(q.order) > 0 {
+			by := q.order[0]
+			if e := q.rowExprs[by.col]; e.op == OpColumn && q.paths[e.path] == part.TimePath && (e.kind == vec.KindInt || e.kind == KindAny) {
+				q.byTime, q.timeCol = 1, by.col
+				if by.desc {
+					q.byTime = -1
+				}
+			}
+		}
+		q.lateRows(prj)
+	}
+	if srt != nil {
+		for _, name := range srt.Hide {
+			if !slices.Contains(q.names, name) || name == placeName {
+				return nil, unsupported("no column %q to hide", name)
+			}
+		}
+		q.hide = srt.Hide
 	}
 
 	return q, nil
+}
+
+// placeName names the column of places, which no result shows.
+const placeName = "\x00place"
+
+// lateRows leaves what a plan of rows need not read for every row that
+// passes the filter to be read for the rows of the result alone: under a
+// sort with a limit, the columns the sort does not read, and every field
+// that the projection does not name.
+func (q *query) lateRows(prj *Project) {
+	if q.limit > 0 && len(q.order) > 0 {
+		for i, e := range q.rowExprs {
+			sorts := false
+			for _, o := range q.order {
+				sorts = sorts || o.col == i
+			}
+			if e.op != OpColumn || sorts {
+				continue
+			}
+			if q.final == nil {
+				q.final = make([]*sexpr, len(q.rowExprs))
+			}
+			q.final[i], q.rowExprs[i], q.places = e, &sexpr{op: opPlace}, true
+		}
+	}
+	if !prj.Rest {
+		return
+	}
+	q.hidden = append(append(q.hidden, q.names...), prj.Except...)
+	q.rowExprs, q.names = append(q.rowExprs, &sexpr{op: opPlace}), append(q.names, placeName)
+	q.places, q.rest = true, true
 }
 
 func (q *query) path(name string) int {

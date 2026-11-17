@@ -87,6 +87,7 @@ const (
 	encConst = 1 // one value, held in the directory
 	encFlat  = 2 // one value per present row
 	encDict  = 3 // sorted dictionary and one code per present row
+	encTime  = 4 // the time of every row in a coarser unit, whose power of ten is the chunk
 )
 
 const flagSparse = 1

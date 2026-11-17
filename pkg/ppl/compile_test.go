@@ -65,7 +65,11 @@ func TestCompileErrors(t *testing.T) {
 		{"source=t | stats count() by host | where status > 1", ErrSemantic, "field status not found"},
 		{"source=t | eval x = 1 + true", ErrType, "not defined"},
 		{"source=t | where 'a' = true", ErrType, "cannot compare"},
-		{"source=t | where match(body, 'x')", ErrUnsupportedFunction, "relevance"},
+		{"source=t | where multi_match(['body'], 'x')", ErrUnsupportedFunction, "relevance"},
+		{"source=t | where match_phrase(body, 'a b', slop=2)", ErrUnsupportedFeature, "slop option"},
+		{"source=t | where match(body, 'a', operator='xor')", ErrSemantic, "operator must be AND or OR"},
+		{"source=t | where match(1, 'a')", ErrSemantic, "must be a field"},
+		{"source=t | stats count() by host | where match(body, 'a')", ErrSemantic, "field body not found"},
 		{"source=t | kmeans centroids=3", ErrUnsupportedCommand, "ML Commons"},
 		{"source=t | eval x = nosuchfunc(1)", ErrUnsupportedFunction, "unknown function nosuchfunc"},
 		{"source=t | eval x = count()", ErrSemantic, "only valid in stats"},
@@ -76,6 +80,8 @@ func TestCompileErrors(t *testing.T) {
 		{"source=t | where abs('x') > 1", ErrType, "abs"},
 		{"source=t earliest=-7x", ErrSemantic, "invalid time modifier"},
 		{"source=t | stats count() as c, avg(x) as c", ErrSemantic, "duplicate aggregation name"},
+		{"source=t | stats percentile(x, y)", ErrType, "percent must be a number"},
+		{"sourCe=0|stAts perCentile(0,A)", ErrType, "percent must be a number"},
 	}
 	for _, c := range cases {
 		_, err := Compile(c.q)

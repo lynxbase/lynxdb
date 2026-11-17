@@ -58,17 +58,15 @@ func CompileQuery(q *ast.Query) (*Result, error) {
 
 type compiler struct {
 	sources []string
-	seen    map[string]bool
 }
 
 func (c *compiler) noteSource(name string) {
-	if c.seen == nil {
-		c.seen = map[string]bool{}
+	for _, s := range c.sources {
+		if s == name {
+			return
+		}
 	}
-	if !c.seen[name] {
-		c.seen[name] = true
-		c.sources = append(c.sources, name)
-	}
+	c.sources = append(c.sources, name)
 }
 
 // pipe is the state of a pipeline being compiled.
@@ -79,9 +77,43 @@ type pipe struct {
 	origin ir.Node
 	// aliases maps join and source aliases to their qualifier.
 	aliases map[string]bool
+	// sch is the output schema of schNode, an earlier value of node.
+	sch     ir.Schema
+	schNode ir.Node
 }
 
-func (p *pipe) schema() ir.Schema { return p.node.Schema() }
+// schema returns the output schema of the pipeline, deriving it from the
+// schema of the previous pipeline node instead of from the source.
+func (p *pipe) schema() ir.Schema {
+	if p.schNode != p.node {
+		if p.schNode == nil {
+			p.sch = p.node.Schema()
+		} else {
+			p.sch = deriveSchema(p.node, p.schNode, p.sch)
+		}
+		p.schNode = p.node
+	}
+	return p.sch
+}
+
+// deriveSchema returns the output schema of n given that known, a node
+// that may occur below n, has the schema s.
+func deriveSchema(n, known ir.Node, s ir.Schema) ir.Schema {
+	if n == known {
+		return s
+	}
+	var nodes [2]ir.Node
+	ins := ir.AppendInputs(nodes[:0], n)
+	if len(ins) == 0 {
+		return n.Schema()
+	}
+	var schemas [2]ir.Schema
+	in := schemas[:0]
+	for _, x := range ins {
+		in = append(in, deriveSchema(x, known, s))
+	}
+	return ir.DeriveSchema(n, in...)
+}
 
 func (c *compiler) pipeline(pl *ast.Pipeline) (ir.Node, error) {
 	st, err := c.sourceCommand(pl.Commands[0])
@@ -110,10 +142,14 @@ func (c *compiler) commands(input ir.Node, origin ir.Node, cmds []ast.Command) (
 // EventSchema is the schema of events read from a source: the time and raw
 // text columns are typed, every other column is discovered at read time.
 func EventSchema() ir.Schema {
-	return ir.OpenSchema(
-		ir.Column{Name: ir.TimeColumn, Type: ir.Timestamp},
-		ir.Column{Name: ir.RawColumn, Type: ir.String, Nullable: true},
-	)
+	return ir.OpenSchema(eventColumns...)
+}
+
+// eventColumns is shared by every event schema; schemas are never modified
+// in place, and its full capacity makes appends copy.
+var eventColumns = []ir.Column{
+	{Name: ir.TimeColumn, Type: ir.Timestamp},
+	{Name: ir.RawColumn, Type: ir.String, Nullable: true},
 }
 
 func canonicalField(name string) string {

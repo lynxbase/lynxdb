@@ -155,6 +155,21 @@ func (t *Table) Snapshot() *Snapshot {
 	}
 }
 
+// Union returns a snapshot of the rows of all of snaps, which stay the
+// caller's to release; the union is released on its own.
+func Union(snaps ...*Snapshot) *Snapshot {
+	v := &version{}
+	for _, s := range snaps {
+		for _, h := range s.v.parts {
+			h.refs.Add(1)
+			v.parts = append(v.parts, h)
+		}
+	}
+	v.refs.Store(1)
+
+	return &Snapshot{v: v}
+}
+
 // Parts returns the parts visible to the snapshot.
 func (s *Snapshot) Parts() []*Handle { return s.v.parts }
 

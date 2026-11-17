@@ -1,0 +1,154 @@
+package columnar
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/lynxbase/lynxdb/pkg/colstore"
+	"github.com/lynxbase/lynxdb/pkg/colstore/part"
+	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
+	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/ppl"
+)
+
+var testNow = time.Unix(1_700_010_000, 0).UTC()
+
+// testTables maps a table's name to its rows.
+type testTables map[string]*colstore.Table
+
+func (t testTables) Snapshot(name string) (*colstore.Snapshot, bool) {
+	tbl, ok := t[name]
+	if !ok {
+		return nil, false
+	}
+
+	return tbl.Snapshot(), true
+}
+
+func (t testTables) Names() []string {
+	names := make([]string, 0, len(t))
+	for name := range t {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	return names
+}
+
+func tableOf(t testing.TB, docs ...string) *colstore.Table {
+	t.Helper()
+	batch := shred.NewBatch(shred.Options{TimeField: "ts"})
+	for _, doc := range docs {
+		if err := batch.AddJSON([]byte(doc), 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var buf bytes.Buffer
+	w := part.NewWriter(&buf, part.Options{})
+	if err := w.WriteBatch(batch); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := part.Open(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tbl := colstore.NewTable()
+	if err := tbl.Apply([]*colstore.Handle{colstore.NewHandle(p, nil)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(tbl.Close)
+
+	return tbl
+}
+
+func testData(t testing.TB) testTables {
+	at := func(ago int) int64 { return testNow.Add(-time.Duration(ago) * time.Minute).UnixMicro() }
+	return testTables{
+		"logs": tableOf(t,
+			fmt.Sprintf(`{"ts":%d,"level":"error","status":500,"dur":1.5,"host":"a","msg":"disk full on node","tags":["x","y"]}`, at(30)),
+			fmt.Sprintf(`{"ts":%d,"level":"info","status":200,"dur":0.5,"host":"a","msg":"request served"}`, at(90)),
+			fmt.Sprintf(`{"ts":%d,"level":"error","status":503,"dur":2.5,"host":"b","msg":"Disk failure","http":{"path":"/x"}}`, at(150)),
+			fmt.Sprintf(`{"ts":%d,"level":"warn","status":404,"dur":0.25,"host":"b","msg":"not found"}`, at(210)),
+			fmt.Sprintf(`{"ts":%d,"level":"info","status":200,"dur":1.0,"host":"a","msg":"request served"}`, at(400))),
+		"logs-old": tableOf(t,
+			fmt.Sprintf(`{"ts":%d,"level":"error","status":500,"host":"c","msg":"old failure"}`, at(9000))),
+		"hosts": tableOf(t,
+			fmt.Sprintf(`{"ts":%d,"host":"a","dc":"east"}`, at(1)),
+			fmt.Sprintf(`{"ts":%d,"host":"b","dc":"west"}`, at(2))),
+	}
+}
+
+// render gives the rows as text: the fields of a row in the order of their
+// names, rows in the order they came in.
+func render(rows []map[string]event.Value, skip ...string) string {
+	out := make([]string, len(rows))
+	for i, row := range rows {
+		var names []string
+		for name := range row {
+			if !strings.Contains(" "+strings.Join(skip, " ")+" ", " "+name+" ") {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		fields := make([]string, len(names))
+		for j, name := range names {
+			fields[j] = name + "=" + row[name].String()
+		}
+		out[i] = strings.Join(fields, " ")
+	}
+
+	return strings.Join(out, "; ")
+}
+
+func TestRun(t *testing.T) {
+	tables := testData(t)
+	for _, c := range []struct {
+		name, text, want string
+		columnar         bool
+	}{
+		{"an aggregate in the columnar executor", `source=logs | stats count() as n, max(status) as top by level | sort level`,
+			"level=error n=2 top=503; level=info n=2 top=200; level=warn n=1 top=404", true},
+		{"whole events in the columnar executor", `source=logs | where status = 404 | fields - _time, ts`,
+			"dur=0.25 host=b level=warn msg=not found status=404", true},
+		{"a time in the columnar executor", `source=logs | stats max(_time) as last by host | sort host | head 1`,
+			"host=a last=" + event.TimestampValue(testNow.Add(-30*time.Minute)).String(), true},
+		{"a function of the row operators above an aggregate", `source=logs | stats count() as n by host | eval h = md5(host) | sort host | fields n, h`,
+			"h=0cc175b9c0f1b6a831c399e269772661 n=3; h=92eb5ffee6ae2fec3ad71c777531578f n=2", false},
+		{"a function of the row operators below an aggregate", `source=logs | eval h = md5(host) | stats count() as n by h | sort h`,
+			"h=0cc175b9c0f1b6a831c399e269772661 n=3; h=92eb5ffee6ae2fec3ad71c777531578f n=2", false},
+		{"an array of an event", `source=logs | where status = 500 | eval n = array_length(tags) | fields n, host`, "host=a n=2", false},
+		{"tables of a pattern", "source=`logs*` | stats count() as n by host | sort host", "host=a n=3; host=b n=2; host=c n=1", true},
+		{"two tables", "source=logs, hosts | stats count() as n", "n=7", true},
+		{"events of two tables", "source=logs-old, hosts | eval h = md5(host) | stats count() as n by h | sort h | head 1", "h=0cc175b9c0f1b6a831c399e269772661 n=1", false},
+		{"a table that is not there", `source=nope | stats count() as n`, "n=0", true},
+		{"a join of two tables", `source=logs | join left=l right=r ON l.host = r.host hosts | stats count() as n by dc | sort dc`, "dc=east n=3; dc=west n=2", false},
+		{"a lookup in another table", `source=logs | lookup hosts host OUTPUT dc | stats count() as n by dc | sort dc`, "dc=east n=3; dc=west n=2", false},
+		{"a statistic of every event's group", `source=logs | eventstats avg(dur) as mean by host | where dur > mean | fields host, dur, mean`,
+			"dur=1.5 host=a mean=1; dur=2.5 host=b mean=1.375", false},
+		{"a field taken out of text", `source=logs | rex field=msg "(?<first>\w+)" | stats count() as n by first | sort - n, first | head 2`,
+			"first=request n=2; first=Disk n=1", false},
+		{"the fields of a table", `describe hosts`, "column=_time; column=dc; column=host; column=ts", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			compiled, err := ppl.Compile(c.text)
+			if err != nil {
+				t.Fatalf("%s: %v", c.text, err)
+			}
+			res, err := Run(context.Background(), compiled.Plan, tables, Options{Now: testNow})
+			if err != nil {
+				t.Fatalf("%s: %v", c.text, err)
+			}
+			if got := render(res.Rows); got != c.want || res.Columnar != c.columnar {
+				t.Fatalf("%s\n got  %s (columnar %v)\n want %s (columnar %v)", c.text, got, res.Columnar, c.want, c.columnar)
+			}
+		})
+	}
+}

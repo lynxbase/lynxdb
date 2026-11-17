@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"math/big"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -751,6 +753,47 @@ type refAgg struct {
 
 // refRun evaluates a plan over rows and returns its output rows and column
 // names.
+// refRowNumber is the path that holds the number of a row while the fields
+// of the rows that an aggregate picked are looked up.
+const refRowNumber = "\x00row"
+
+// refRest replaces the last value of every row, the number of the row of
+// kept that it came from, by the fields of that row that the projection
+// neither names nor hides, in the order of their names.
+func refRest(out [][]exec.Value, names []string, kept []refRow, prj *exec.Project) ([][]exec.Value, []string) {
+	hidden := append(append(slices.Clone(names), prj.Except...), refRowNumber)
+	shown := func(path string) bool {
+		for _, h := range hidden {
+			if path == h || strings.HasPrefix(path, h+".") {
+				return false
+			}
+		}
+
+		return true
+	}
+	seen := map[string]bool{}
+	var fields []string
+	for _, row := range out {
+		for path := range kept[row[len(row)-1].Int] {
+			if !seen[path] && shown(path) {
+				seen[path] = true
+				fields = append(fields, path)
+			}
+		}
+	}
+	sort.Strings(fields)
+	for i, row := range out {
+		from := kept[row[len(row)-1].Int]
+		row = row[:len(row)-1]
+		for _, path := range fields {
+			row = append(row, from[path])
+		}
+		out[i] = row
+	}
+
+	return out, append(names, fields...)
+}
+
 func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 	srt, _ := plan.(*exec.Sort)
 	if srt != nil {
@@ -769,6 +812,23 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 		plan = agg.Input
 	}
 	scan := plan.(*exec.Scan)
+	if agg != nil && prj != nil && prj.Rest {
+		// The pick that the fields follow gives the number of its row.
+		numbered := make([]refRow, len(rows))
+		for i, row := range rows {
+			numbered[i] = maps.Clone(row)
+			numbered[i][refRowNumber] = exec.Value{Kind: vec.KindInt, Int: int64(i)}
+		}
+		rows = numbered
+		picked := *agg
+		picked.Aggs = slices.Clone(agg.Aggs)
+		for i, a := range picked.Aggs {
+			if a.Name == prj.Exprs[len(prj.Exprs)-1].Expr.Path {
+				picked.Aggs[i].Arg = exec.Col(refRowNumber, vec.KindInt)
+			}
+		}
+		agg = &picked
+	}
 	var kept []refRow
 	for _, row := range rows {
 		if scan.Filter == nil || refTrue(scan.Filter, row) {
@@ -816,16 +876,50 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 		for _, e := range prj.Exprs {
 			names = append(names, e.Name)
 		}
-		for _, row := range kept {
+		for i, row := range kept {
 			var res []exec.Value
 			for _, e := range prj.Exprs {
 				res = append(res, refValue(e.Expr, row))
 			}
+			if prj.Rest {
+				// The row's number, which refRest replaces by its fields.
+				res = append(res, exec.Value{Kind: vec.KindInt, Int: int64(i)})
+			}
 			out = append(out, res)
 		}
 	}
+	rest := func(out [][]exec.Value, names []string) ([][]exec.Value, []string) {
+		switch {
+		case prj != nil && prj.Rest && agg != nil:
+			out, names = refRest(out, names[:len(names)-1], rows, prj)
+		case prj != nil && prj.Rest:
+			out, names = refRest(out, names, kept, prj)
+		}
+		if srt == nil || len(srt.Hide) == 0 {
+			return out, names
+		}
+		var shown []int
+		for c, name := range names {
+			if !slices.Contains(srt.Hide, name) {
+				shown = append(shown, c)
+			}
+		}
+		for i, row := range out {
+			left := make([]exec.Value, len(shown))
+			for j, c := range shown {
+				left[j] = row[c]
+			}
+			out[i] = left
+		}
+		left := make([]string, len(shown))
+		for j, c := range shown {
+			left[j] = names[c]
+		}
+
+		return out, left
+	}
 	if srt == nil {
-		return out, names
+		return rest(out, names)
 	}
 	if len(srt.By) > 0 {
 		cols := make([]int, len(srt.By))
@@ -838,7 +932,7 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 		}
 		sort.SliceStable(out, func(i, j int) bool {
 			for k, o := range srt.By {
-				if c := refOrder(out[i][cols[k]], out[j][cols[k]], o.Desc); c != 0 {
+				if c := refOrder(out[i][cols[k]], out[j][cols[k]], o); c != 0 {
 					return c < 0
 				}
 			}
@@ -850,7 +944,7 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 		out = out[:srt.Limit]
 	}
 
-	return out, names
+	return rest(out, names)
 }
 
 // refTotals returns e with every Total replaced by the sum of its column
@@ -919,7 +1013,7 @@ func refHaving(e *exec.Expr, row refRow) bool {
 		return false
 	}
 
-	return refCompare(e.Op, refOrder(a, b, false))
+	return refCompare(e.Op, refOrder(a, b, exec.Order{}))
 }
 
 // refPost evaluates a projection over an aggregate's row.
@@ -953,16 +1047,20 @@ func refRank(k vec.Kind) int {
 	return 4
 }
 
-// refOrder orders two values for a sort column: nulls last, then booleans,
-// numbers, strings.
-func refOrder(a, b exec.Value, desc bool) int {
+// refOrder orders two values for a sort column: nulls at the end the column
+// asks for, then booleans, numbers, strings.
+func refOrder(a, b exec.Value, o exec.Order) int {
+	desc, null := o.Desc, 1
+	if o.NullsFirst {
+		null = -1
+	}
 	switch {
 	case a.IsNull() && b.IsNull():
 		return 0
 	case a.IsNull():
-		return 1
+		return null
 	case b.IsNull():
-		return -1
+		return -null
 	}
 	c := cmpInt(int64(refRank(a.Kind)), int64(refRank(b.Kind)))
 	if c == 0 {
@@ -1045,7 +1143,7 @@ func refAggregate(rows []refRow, agg *exec.Aggregate) ([][]exec.Value, []string)
 				if _, ok := refNumber(by); ok {
 					c := 1
 					if !st.argBy.IsNull() {
-						c = refOrder(by, st.argBy, a.Func == exec.ArgMin)
+						c = refOrder(by, st.argBy, exec.Order{Desc: a.Func == exec.ArgMin})
 					}
 					// Of rows that tie, an ArgMin keeps the first and an
 					// ArgMax the last.

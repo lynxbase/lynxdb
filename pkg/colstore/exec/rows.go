@@ -35,6 +35,18 @@ func (w *worker) project(n int, idx []uint32) error {
 
 // gather stores the value of e for each selected row in dst.
 func (w *worker) gather(e *sexpr, n int, idx []uint32, dst *colVec) error {
+	if e.op == opPlace {
+		places := dst.bulkInts(n)
+		for j := range places {
+			r := j
+			if idx != nil {
+				r = int(idx[j])
+			}
+			places[j] = w.place | int64(r)
+		}
+
+		return nil
+	}
 	dst.reset()
 	if e.op == OpLiteral {
 		for i := 0; i < n; i++ {

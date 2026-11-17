@@ -6,6 +6,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 	"github.com/lynxbase/lynxdb/pkg/mem"
 	"github.com/lynxbase/lynxdb/pkg/vec"
+	"unsafe"
 )
 
 const (
@@ -136,6 +137,7 @@ func newWorker(x *execution) *worker {
 		s.anyString = func(v []byte) { s.anyHit = s.anyHit || s.anyPat.Match(v) }
 	}
 	w.sink.init(q)
+	w.sink.bound = x.bound
 	if q.agg != nil {
 		w.agg.init(w)
 	}
@@ -363,12 +365,15 @@ func (w *worker) evalInt(e *sexpr, n int, idx []uint32, depth int) (vals []int64
 			out[i] = hourOfDay(t)
 		}
 
-		return out, valid, nil
+		return out, w.ownValid(valid, depth), nil
 	}
 	a, va, err := w.evalInt(e.args[0], n, idx, depth+1)
 	if err != nil {
 		return nil, nil, err
 	}
+	// The second argument is computed in the buffers below the first one's,
+	// which hold the mask the first got from an argument of its own.
+	va = w.ownValid(va, depth+1)
 	b, vb, err := w.evalInt(e.args[1], n, idx, depth+2)
 	if err != nil {
 		return nil, nil, err
@@ -405,7 +410,21 @@ func (w *worker) evalInt(e *sexpr, n int, idx []uint32, depth int) (vals []int64
 		valid = w.divide(out, a, b, valid, depth, true)
 	}
 
-	return out, valid, nil
+	return out, w.ownValid(valid, depth), nil
+}
+
+// ownValid returns valid in the buffer of depth, which the expressions
+// computed afterwards at the same or a greater depth of another branch
+// leave alone.
+func (w *worker) ownValid(valid []uint8, depth int) []uint8 {
+	if len(valid) == 0 || unsafe.SliceData(valid) == unsafe.SliceData(w.valids[depth]) {
+		return valid
+	}
+	own := sized(w.valids[depth], len(valid))
+	w.valids[depth] = own
+	copy(own, valid)
+
+	return own
 }
 
 // divide stores a/b into out, or its remainder when mod is set, and returns

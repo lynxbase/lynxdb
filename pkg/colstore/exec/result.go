@@ -77,6 +77,8 @@ func (r *Result) Value(row, col int) Value {
 		return Value{Kind: kind, Float: c.Values.Floats[row]}
 	case vec.KindString, vec.KindVariant:
 		return Value{Kind: kind, Bytes: c.Values.Data[c.Values.Offsets[row]:c.Values.Offsets[row+1]]}
+	case vec.KindNull:
+		return Value{Kind: kind}
 	}
 
 	return Value{}
@@ -159,6 +161,10 @@ func (c *colVec) push(kind vec.Kind) {
 }
 
 func (c *colVec) appendNull() { c.push(KindAny) }
+
+// appendPresentNull adds a row that holds a null, as a field of a stored
+// row can; appendNull adds one that holds nothing.
+func (c *colVec) appendPresentNull() { c.push(vec.KindNull) }
 
 func (c *colVec) appendInt(kind vec.Kind, v int64) {
 	c.push(kind)
@@ -276,6 +282,8 @@ func (c *colVec) value(i int) Value {
 		return Value{Kind: kind, Float: c.floats[i]}
 	case vec.KindString, vec.KindVariant:
 		return Value{Kind: kind, Bytes: c.bytes(i)}
+	case vec.KindNull:
+		return Value{Kind: kind}
 	}
 
 	return Value{}
@@ -295,6 +303,8 @@ func (c *colVec) appendFrom(src *colVec, i int) {
 		c.appendFloat(src.floats[i])
 	case vec.KindString, vec.KindVariant:
 		c.appendBytes(kind, src.bytes(i))
+	case vec.KindNull:
+		c.appendPresentNull()
 	default:
 		c.appendNull()
 	}

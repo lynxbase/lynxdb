@@ -86,6 +86,97 @@ func (s Schema) With(c Column) Schema {
 	return Schema{Columns: cols, Open: s.Open}
 }
 
+// SchemaBuilder derives a schema by successive With calls on one copy of
+// the columns, finding columns of wide schemas through an index so that the
+// cost stays linear in the number of columns.
+type SchemaBuilder struct {
+	cols []Column
+	open bool
+	// index maps names to positions once the schema is wide; dups is set
+	// when the columns repeat a name, which rules the index out.
+	index map[string]int
+	dups  bool
+	finds int
+}
+
+// wideSchema is the column count from which a SchemaBuilder indexes names,
+// once a few lookups have shown that the index pays for itself.
+const wideSchema = 32
+
+// Init starts the builder from a copy of in with room for extra columns.
+func (b *SchemaBuilder) Init(in Schema, extra int) {
+	b.cols = make([]Column, len(in.Columns), len(in.Columns)+extra)
+	copy(b.cols, in.Columns)
+	b.open, b.index, b.dups, b.finds = in.Open, nil, false, 0
+}
+
+func (b *SchemaBuilder) find(name string) int {
+	b.finds++
+	if b.index == nil && !b.dups && len(b.cols) > wideSchema && b.finds > 8 {
+		idx := make(map[string]int, 2*len(b.cols))
+		for i, c := range b.cols {
+			if _, ok := idx[c.Name]; ok {
+				b.dups = true
+				break
+			}
+			idx[c.Name] = i
+		}
+		if !b.dups {
+			b.index = idx
+		}
+	}
+	if b.index != nil {
+		if i, ok := b.index[name]; ok {
+			return i
+		}
+		return -1
+	}
+	for i := range b.cols {
+		if b.cols[i].Name == name {
+			return i
+		}
+	}
+	return -1
+}
+
+// With replaces the columns named c.Name by c, or appends c, as
+// Schema.With does.
+func (b *SchemaBuilder) With(c Column) {
+	if b.dups {
+		replaced := false
+		for i := range b.cols {
+			if b.cols[i].Name == c.Name {
+				b.cols[i] = c
+				replaced = true
+			}
+		}
+		if !replaced {
+			b.cols = append(b.cols, c)
+		}
+		return
+	}
+	if i := b.find(c.Name); i >= 0 {
+		b.cols[i] = c
+		return
+	}
+	if b.index != nil {
+		b.index[c.Name] = len(b.cols)
+	}
+	b.cols = append(b.cols, c)
+}
+
+// Lookup returns the first column with the given name.
+func (b *SchemaBuilder) Lookup(name string) (Column, bool) {
+	if i := b.find(name); i >= 0 {
+		return b.cols[i], true
+	}
+	return Column{}, false
+}
+
+// Schema returns the schema built so far; later With calls modify its
+// columns in place.
+func (b *SchemaBuilder) Schema() Schema { return Schema{Columns: b.cols, Open: b.open} }
+
 // Without returns a copy of s without the named columns.
 func (s Schema) Without(names ...string) Schema {
 	drop := make(map[string]bool, len(names))

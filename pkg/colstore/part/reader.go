@@ -364,6 +364,9 @@ type ColumnRef struct {
 	constVal []byte
 }
 
+// Size returns the number of bytes the column takes in its block.
+func (c *ColumnRef) Size() int { return int(c.length) }
+
 // Const reports whether every present row holds the same value.
 func (c *ColumnRef) Const() bool { return c.enc == encConst }
 
@@ -816,6 +819,25 @@ func (b *Block) DecodePresence(ref *ColumnRef, dst *vec.Column) error {
 	return err
 }
 
+// decodeTimes fills dst with the times of the rows in the unit whose power
+// of ten is the chunk.
+func (b *Block) decodeTimes(chunk []byte, sparse bool, dst *vec.Column) error {
+	times, ok := b.Column(0, vec.KindInt)
+	if len(chunk) != 1 || int(chunk[0]) >= len(timeUnits) || timeUnits[chunk[0]] == 0 || sparse || !ok || times.enc == encTime {
+		return ErrCorrupt
+	}
+	if err := b.decode(times, dst, false); err != nil {
+		return err
+	}
+	if unit := timeUnits[chunk[0]]; unit != 1 {
+		for i := range dst.Ints {
+			dst.Ints[i] /= unit
+		}
+	}
+
+	return nil
+}
+
 func (b *Block) decode(ref *ColumnRef, dst *vec.Column, byValue bool) error {
 	if ref.bad {
 		return ErrCorrupt
@@ -854,6 +876,9 @@ func (b *Block) decode(ref *ColumnRef, dst *vec.Column, byValue bool) error {
 			dst.Ints = append(dst.Ints[:0], ref.MinInt)
 
 			return nil
+		}
+		if ref.enc == encTime {
+			return b.decodeTimes(chunk, sparse, dst)
 		}
 		if !sparse {
 			vals, _, err := readInts(dst.Ints, chunk, count, &b.d)

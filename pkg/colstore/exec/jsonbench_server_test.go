@@ -23,14 +23,13 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
-	"github.com/lynxbase/lynxdb/pkg/colstore/exec/flow"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
-// flowServer puts a store behind HTTP and answers LynxFlow queries through
+// benchServer puts a store behind HTTP and answers PPL queries through
 // the executor, so that the load generators and query clients used for other
 // systems can drive the whole path from query text to answer.
-type flowServer struct {
+type benchServer struct {
 	t        testing.TB
 	store    *colstore.Store
 	buffers  sync.Pool
@@ -45,15 +44,15 @@ type flowServer struct {
 }
 
 const (
-	flowServerChunk = 4 << 20
+	benchServerChunk = 4 << 20
 	// answerRows bounds the rows of an answer that a response spells out.
 	answerRows = 20
 )
 
-func newFlowServer(t testing.TB, store *colstore.Store) *flowServer {
-	s := &flowServer{t: t, store: store, stop: make(chan struct{})}
+func newBenchServer(t testing.TB, store *colstore.Store) *benchServer {
+	s := &benchServer{t: t, store: store, stop: make(chan struct{})}
 	s.buffers.New = func() any {
-		b := make([]byte, 0, flowServerChunk)
+		b := make([]byte, 0, benchServerChunk)
 
 		return &b
 	}
@@ -63,7 +62,7 @@ func newFlowServer(t testing.TB, store *colstore.Store) *flowServer {
 
 // insert takes a body of NDJSON in pieces that end at line ends, so that a
 // large request is never held whole.
-func (s *flowServer) insert(w http.ResponseWriter, r *http.Request) {
+func (s *benchServer) insert(w http.ResponseWriter, r *http.Request) {
 	bufp := s.buffers.Get().(*[]byte)
 	defer s.buffers.Put(bufp)
 	buf := (*bufp)[:0]
@@ -124,7 +123,7 @@ func (s *flowServer) insert(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprintf(w, `{"accepted":%d,"rejected":%d}`+"\n", lines-rejected, rejected)
 }
 
-func (s *flowServer) stats(w http.ResponseWriter, _ *http.Request) {
+func (s *benchServer) stats(w http.ResponseWriter, _ *http.Request) {
 	snap := s.store.Table().Snapshot()
 	defer snap.Release()
 	var rows uint64
@@ -146,7 +145,7 @@ func (s *flowServer) stats(w http.ResponseWriter, _ *http.Request) {
 // benchPlan returns the benchmark plan with the short name: the first word
 // of its name, followed by i when it disregards letter case. The time windows
 // are those of the table at the first call.
-func (s *flowServer) benchPlan(snap *colstore.Snapshot, short string) (benchPlan, bool, error) {
+func (s *benchServer) benchPlan(snap *colstore.Snapshot, short string) (benchPlan, bool, error) {
 	s.named.Do(func() {
 		win, err := windowsFromEnv()
 		if err != nil {
@@ -208,9 +207,9 @@ func renderValue(v exec.Value) string {
 	return "null"
 }
 
-// query answers flow=, a query in LynxFlow, or q=, a benchmark query by its
-// short name, which runs as its plan or with form=text as its LynxFlow text.
-func (s *flowServer) query(w http.ResponseWriter, r *http.Request) {
+// query answers ppl=, a query in PPL, or q=, a benchmark query by its short
+// name, which runs as its plan or with form=text as its PPL text.
+func (s *benchServer) query(w http.ResponseWriter, r *http.Request) {
 	args := r.URL.Query()
 	workers := 0
 	if v := args.Get("workers"); v != "" {
@@ -225,7 +224,7 @@ func (s *flowServer) query(w http.ResponseWriter, r *http.Request) {
 	snap := s.store.Table().Snapshot()
 	defer snap.Release()
 
-	text := args.Get("flow")
+	text := args.Get("ppl")
 	var plan exec.Node
 	if name := args.Get("q"); name != "" {
 		q, ok, err := s.benchPlan(snap, name)
@@ -251,7 +250,7 @@ func (s *flowServer) query(w http.ResponseWriter, r *http.Request) {
 	cpuBefore, begin := cpuTime(), time.Now()
 	if plan == nil {
 		var err error
-		if plan, err = flow.Compile(text, flow.Options{}); err != nil {
+		if plan, err = pplPlan(text, time.Time{}); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 
 			return
@@ -281,7 +280,7 @@ func (s *flowServer) query(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *flowServer) handler() http.Handler {
+func (s *benchServer) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /insert", s.insert)
 	mux.HandleFunc("GET /stats", s.stats)
@@ -319,13 +318,13 @@ func (s *flowServer) handler() http.Handler {
 	return mux
 }
 
-// flowStoreOptions configures the store of the benchmark: the benchmark's
+// benchStoreOptions configures the store of the benchmark: the benchmark's
 // sort key unless LYNXDB_BENCH_SORT names another ("none" for arrival order),
 // time partitions of LYNXDB_BENCH_PARTITION when set, and the buffers of
 // Append, the merge fan-in and the backlog below which merges give way to
 // flushes from LYNXDB_BENCH_BUFFER_MB, LYNXDB_BENCH_FANIN and
 // LYNXDB_BENCH_MERGE_BACKLOG.
-func flowStoreOptions(t testing.TB) colstore.StoreOptions {
+func benchStoreOptions(t testing.TB) colstore.StoreOptions {
 	t.Helper()
 	opts := colstore.StoreOptions{TimeField: benchTimeField, BlockRows: benchBlockRows, SortKey: benchSortKey}
 	switch v := os.Getenv("LYNXDB_BENCH_SORT"); v {
@@ -364,27 +363,27 @@ func flowStoreOptions(t testing.TB) colstore.StoreOptions {
 	return opts
 }
 
-// TestJSONBenchFlowServer serves the store in LYNXDB_BENCH_DIR on the address
+// TestJSONBenchServer serves the store in LYNXDB_BENCH_DIR on the address
 // LYNXDB_BENCH_LISTEN until POST /shutdown. POST /insert takes NDJSON
 // (?sync=1 answers once it is durable); POST /sync, /settle and /compact wait
 // for those states; POST /evict lets go of the mapped pages of the part
 // files, so that dropping the page cache afterwards makes the next query a
-// cold one; GET /stats describes the table. GET /query?flow= runs a query
-// written in LynxFlow; GET /query?q= runs a benchmark query by its short name
+// cold one; GET /stats describes the table. GET /query?ppl= runs a query
+// written in PPL; GET /query?q= runs a benchmark query by its short name
 // (Q1 to Q5, S1 to S7, S2i to S5i, A1 to A3, T1 to T4) as its plan, or as its
-// LynxFlow text with form=text. A query takes one goroutine per CPU unless
+// PPL text with form=text. A query takes one goroutine per CPU unless
 // workers= says otherwise.
-func TestJSONBenchFlowServer(t *testing.T) {
+func TestJSONBenchServer(t *testing.T) {
 	addr, dir := os.Getenv("LYNXDB_BENCH_LISTEN"), os.Getenv("LYNXDB_BENCH_DIR")
 	if addr == "" || dir == "" {
 		t.Skip("set LYNXDB_BENCH_LISTEN and LYNXDB_BENCH_DIR")
 	}
-	store, err := colstore.OpenStore(dir, flowStoreOptions(t))
+	store, err := colstore.OpenStore(dir, benchStoreOptions(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	s := newFlowServer(t, store)
+	s := newBenchServer(t, store)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
@@ -398,9 +397,9 @@ func TestJSONBenchFlowServer(t *testing.T) {
 	}
 }
 
-// loadFlowServer sends data through the insert handler from several streams
+// loadBenchServer sends data through the insert handler from several streams
 // and waits until the table has settled.
-func loadFlowServer(t testing.TB, handler http.Handler, data []byte, streams int) {
+func loadBenchServer(t testing.TB, handler http.Handler, data []byte, streams int) {
 	t.Helper()
 	pieces := make(chan []byte, streams)
 	var wg sync.WaitGroup
@@ -436,20 +435,20 @@ func loadFlowServer(t testing.TB, handler http.Handler, data []byte, streams int
 	}
 }
 
-func TestFlowServerTakesInsertsAndAnswersQueries(t *testing.T) {
+func TestBenchServerTakesInsertsAndAnswersQueries(t *testing.T) {
 	store, err := colstore.OpenStore(t.TempDir(), colstore.StoreOptions{SortKey: []string{"svc"}, FlushInterval: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	handler := newFlowServer(t, store).handler()
+	handler := newBenchServer(t, store).handler()
 	var body bytes.Buffer
 	const docs = 5000
 	for i := range docs {
 		fmt.Fprintf(&body, `{"n":%d,"svc":"s%02d","msg":"request %d done"}`+"\n", i, i%7, i)
 	}
 	body.WriteString("oops")
-	loadFlowServer(t, handler, body.Bytes(), 2)
+	loadBenchServer(t, handler, body.Bytes(), 2)
 
 	get := func(target string) (int, string) {
 		rec := httptest.NewRecorder()
@@ -458,7 +457,7 @@ func TestFlowServerTakesInsertsAndAnswersQueries(t *testing.T) {
 		return rec.Code, strings.TrimSpace(rec.Body.String())
 	}
 	query := func(text string) string {
-		code, body := get("/query?flow=" + url.QueryEscape(text))
+		code, body := get("/query?ppl=" + url.QueryEscape(text))
 		if code != http.StatusOK {
 			t.Fatalf("%s answered %d: %s", text, code, body)
 		}
@@ -472,25 +471,25 @@ func TestFlowServerTakesInsertsAndAnswersQueries(t *testing.T) {
 
 		return fmt.Sprint(answer.Rows, answer.Answer)
 	}
-	if got, want := query(`from logs | stats count()`), fmt.Sprintf("1 [[%d]]", docs); got != want {
+	if got, want := query(`source=logs | stats count()`), fmt.Sprintf("1 [[%d]]", docs); got != want {
 		t.Errorf("count: %s, want %s", got, want)
 	}
-	if got, want := query(`from logs | where svc == "s03" | stats count() as n, max(n) as top`), "1 [[714 4994]]"; got != want {
+	if got, want := query(`source=logs | where svc = 's03' | stats count() as n, max(n) as top`), "1 [[714 4994]]"; got != want {
 		t.Errorf("one service: %s, want %s", got, want)
 	}
-	if got, want := query(`from logs "request 4242 done" | stats count()`), "1 [[1]]"; got != want {
+	if got, want := query(`source=logs "request 4242 done" | stats count()`), "1 [[1]]"; got != want {
 		t.Errorf("a phrase in any field: %s, want %s", got, want)
 	}
-	if got, want := query(`from logs | where n < 3 | keep n, svc | sort n`), "3 [[0 s00] [1 s01] [2 s02]]"; got != want {
+	if got, want := query(`source=logs | where n < 3 | fields n, svc | sort n`), "3 [[0 s00] [1 s01] [2 s02]]"; got != want {
 		t.Errorf("rows: %s, want %s", got, want)
 	}
-	if got, want := query(`from logs | where matches(msg, r"request 42\d\d d(one|ead)") | stats count()`), "1 [[100]]"; got != want {
+	if got, want := query(`source=logs | where regexp_match(msg, 'request 42\d\d d(one|ead)') | stats count()`), "1 [[100]]"; got != want {
 		t.Errorf("a regular expression: %s, want %s", got, want)
 	}
-	if code, body := get("/query?flow=" + url.QueryEscape(`from logs | where matches(msg, r"(") | stats count()`)); code != http.StatusBadRequest {
+	if code, body := get("/query?ppl=" + url.QueryEscape(`source=logs | where regexp_match(msg, '(') | stats count()`)); code != http.StatusBadRequest {
 		t.Errorf("an expression that does not compile answered %d: %s", code, body)
 	}
-	if code, body := get("/query?flow=from%20logs%20%7C%20nonsense"); code != http.StatusBadRequest {
+	if code, body := get("/query?ppl=source%3Dlogs%20%7C%20nonsense"); code != http.StatusBadRequest {
 		t.Errorf("a query that does not parse answered %d: %s", code, body)
 	}
 	if code, body := get("/query?q=nope"); code != http.StatusNotFound {
@@ -515,7 +514,7 @@ func TestFlowServerTakesInsertsAndAnswersQueries(t *testing.T) {
 
 // TestJSONBenchConcurrent loads LYNXDB_BENCH_NDJSON into a store and, when
 // LYNXDB_BENCH_CONCURRENT is set, runs each query of LYNXDB_BENCH_QUERY (short
-// names, as LynxFlow text where the query has one) from each number of
+// names, as PPL text where the query has one) from each number of
 // clients in LYNXDB_BENCH_CLIENTS at once for LYNXDB_BENCH_SECONDS, every
 // query on LYNXDB_BENCH_QUERY_WORKERS goroutines (one per CPU when unset).
 // With LYNXDB_BENCH_INGEST_STREAMS that many streams keep inserting the file
@@ -526,14 +525,14 @@ func TestJSONBenchConcurrent(t *testing.T) {
 		t.Skip("set LYNXDB_BENCH_CONCURRENT and LYNXDB_BENCH_NDJSON")
 	}
 	data := benchData(t)
-	store, err := colstore.OpenStore(t.TempDir(), flowStoreOptions(t))
+	store, err := colstore.OpenStore(t.TempDir(), benchStoreOptions(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	server := newFlowServer(t, store)
+	server := newBenchServer(t, store)
 	handler := server.handler()
-	loadFlowServer(t, handler, data, 8)
+	loadBenchServer(t, handler, data, 8)
 	if os.Getenv("LYNXDB_BENCH_COMPACT") != "" {
 		if err := store.Compact(); err != nil {
 			t.Fatal(err)

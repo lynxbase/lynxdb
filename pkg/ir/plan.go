@@ -35,6 +35,61 @@ type Node interface {
 	isNode()
 }
 
+// unary is implemented by operators with exactly one input, so traversals
+// can reach it without allocating an input slice.
+type unary interface {
+	input() Node
+}
+
+// AppendInputs appends the inputs of n to dst, in the order Inputs returns
+// them.
+func AppendInputs(dst []Node, n Node) []Node {
+	if u, ok := n.(unary); ok {
+		return append(dst, u.input())
+	}
+	return append(dst, n.Inputs()...)
+}
+
+// DeriveSchema returns the output schema of n computed from the output
+// schemas of its inputs, given in input order; it equals n.Schema() and
+// lets a caller that already knows the input schemas avoid recomputing
+// them.
+func DeriveSchema(n Node, inputs ...Schema) Schema {
+	switch x := n.(type) {
+	case *Filter, *Sort, *Limit, *TopN, *Reverse, *Dedup:
+		return inputs[0]
+	case *Project:
+		return x.schemaFrom(inputs[0])
+	case *RenameColumns:
+		return x.schemaFrom(inputs[0])
+	case *Compute:
+		return x.schemaFrom(inputs[0])
+	case *Window:
+		return x.schemaFrom(inputs[0])
+	case *Extract:
+		return x.schemaFrom(inputs[0])
+	case *Patterns:
+		return x.schemaFrom(inputs[0])
+	case *Unnest:
+		return x.schemaFrom(inputs[0])
+	case *FlattenObject:
+		return x.schemaFrom(inputs[0])
+	case *FillNull:
+		return x.schemaFrom(inputs[0])
+	case *Totals:
+		return x.schemaFrom(inputs[0])
+	case *CombineValues:
+		return x.schemaFrom(inputs[0])
+	case *Join:
+		return x.schemaFrom(inputs[0], inputs[1])
+	case *ZipColumns:
+		return x.schemaFrom(inputs[0], inputs[1])
+	case *Union:
+		return UnionSchemas(inputs...)
+	}
+	return n.Schema()
+}
+
 func one(inputs []Node, op string) Node {
 	if len(inputs) != 1 {
 		panic(fmt.Sprintf("ir: %s takes 1 input, got %d", op, len(inputs)))
@@ -180,6 +235,7 @@ type Filter struct {
 }
 
 func (f *Filter) Inputs() []Node { return []Node{f.Input} }
+func (f *Filter) input() Node    { return f.Input }
 func (f *Filter) WithInputs(in []Node) Node {
 	c := *f
 	c.Input = one(in, "Filter")
@@ -200,6 +256,7 @@ type Project struct {
 }
 
 func (p *Project) Inputs() []Node { return []Node{p.Input} }
+func (p *Project) input() Node    { return p.Input }
 func (p *Project) WithInputs(in []Node) Node {
 	c := *p
 	c.Input = one(in, "Project")
@@ -219,38 +276,90 @@ func (p *Project) Label() string {
 	}
 	return "Project(" + strings.Join(names, ", ") + ")"
 }
-func (p *Project) Schema() Schema {
-	in := p.Input.Schema()
+func (p *Project) Schema() Schema { return p.schemaFrom(p.Input.Schema()) }
+
+func (p *Project) schemaFrom(in Schema) Schema {
 	if p.Drop {
-		var drop []string
-		for _, n := range p.Names {
-			drop = append(drop, in.MatchNames(n)...)
+		cols := make([]Column, 0, len(in.Columns))
+		for _, c := range in.Columns {
+			if !p.drops(c.Name) {
+				cols = append(cols, c)
+			}
 		}
-		return in.Without(drop...)
+		return Schema{Columns: cols, Open: in.Open}
 	}
 	out := Schema{}
-	seen := map[string]bool{}
+	var seen map[string]bool
+	add := func(c Column) {
+		if seen != nil {
+			if seen[c.Name] {
+				return
+			}
+			seen[c.Name] = true
+		} else {
+			for i := range out.Columns {
+				if out.Columns[i].Name == c.Name {
+					return
+				}
+			}
+			if len(out.Columns) >= 16 {
+				seen = make(map[string]bool, 2*len(out.Columns))
+				for i := range out.Columns {
+					seen[out.Columns[i].Name] = true
+				}
+				seen[c.Name] = true
+			}
+		}
+		if out.Columns == nil {
+			out.Columns = make([]Column, 0, len(p.Names))
+		}
+		out.Columns = append(out.Columns, c)
+	}
+	var first map[string]int
+	if len(in.Columns) > wideSchema && len(p.Names) > 4 {
+		first = make(map[string]int, len(in.Columns))
+		for i := len(in.Columns) - 1; i >= 0; i-- {
+			first[in.Columns[i].Name] = i
+		}
+	}
+	lookup := func(name string) (Column, bool) {
+		if first == nil {
+			return in.Lookup(name)
+		}
+		if i, ok := first[name]; ok {
+			return in.Columns[i], true
+		}
+		return Column{}, false
+	}
 	for _, n := range p.Names {
-		matches := in.MatchNames(n)
-		if IsNamePattern(n) && in.Open {
+		if !IsNamePattern(n) {
+			if c, ok := lookup(n); ok {
+				add(c)
+			} else if in.Open {
+				add(Column{Name: n, Type: Any, Nullable: true})
+			}
+			continue
+		}
+		if in.Open {
 			out.Open = true
 		}
-		if len(matches) == 0 && !IsNamePattern(n) && in.Open {
-			matches = []string{n}
-		}
-		for _, m := range matches {
-			if seen[m] {
-				continue
-			}
-			seen[m] = true
-			if c, ok := in.Lookup(m); ok {
-				out.Columns = append(out.Columns, c)
-			} else {
-				out.Columns = append(out.Columns, Column{Name: m, Type: Any, Nullable: true})
+		for _, c := range in.Columns {
+			if MatchName(n, c.Name) {
+				add(c)
 			}
 		}
 	}
 	return out
+}
+
+// drops reports whether a dropping projection removes the column name.
+func (p *Project) drops(name string) bool {
+	for _, n := range p.Names {
+		if n == name || IsNamePattern(n) && MatchName(n, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // Rename is one column rename. From and To may both contain '*'; the text a
@@ -268,6 +377,7 @@ type RenameColumns struct {
 }
 
 func (r *RenameColumns) Inputs() []Node { return []Node{r.Input} }
+func (r *RenameColumns) input() Node    { return r.Input }
 func (r *RenameColumns) WithInputs(in []Node) Node {
 	c := *r
 	c.Input = one(in, "RenameColumns")
@@ -281,8 +391,10 @@ func (r *RenameColumns) Label() string {
 	}
 	return "Rename(" + strings.Join(parts, ", ") + ")"
 }
-func (r *RenameColumns) Schema() Schema {
-	s := r.Input.Schema().Clone()
+func (r *RenameColumns) Schema() Schema { return r.schemaFrom(r.Input.Schema()) }
+
+func (r *RenameColumns) schemaFrom(in Schema) Schema {
+	s := in.Clone()
 	for _, rn := range r.Renames {
 		s = renameSchema(s, rn)
 	}
@@ -377,6 +489,7 @@ type Compute struct {
 }
 
 func (c *Compute) Inputs() []Node { return []Node{c.Input} }
+func (c *Compute) input() Node    { return c.Input }
 func (c *Compute) WithInputs(in []Node) Node {
 	cc := *c
 	cc.Input = one(in, "Compute")
@@ -390,12 +503,18 @@ func (c *Compute) Label() string {
 	}
 	return "Compute(" + strings.Join(parts, ", ") + ")"
 }
-func (c *Compute) Schema() Schema {
-	s := c.Input.Schema()
-	for _, a := range c.Assigns {
-		s = s.With(Column{Name: a.Name, Type: a.Expr.Type(), Nullable: true})
+func (c *Compute) Schema() Schema { return c.schemaFrom(c.Input.Schema()) }
+
+func (c *Compute) schemaFrom(in Schema) Schema {
+	if len(c.Assigns) == 0 {
+		return in
 	}
-	return s
+	var b SchemaBuilder
+	b.Init(in, len(c.Assigns))
+	for _, a := range c.Assigns {
+		b.With(Column{Name: a.Name, Type: a.Expr.Type(), Nullable: true})
+	}
+	return b.Schema()
 }
 
 // NamedExpr is an expression with an output column name.
@@ -441,6 +560,7 @@ type Aggregate struct {
 }
 
 func (a *Aggregate) Inputs() []Node { return []Node{a.Input} }
+func (a *Aggregate) input() Node    { return a.Input }
 func (a *Aggregate) WithInputs(in []Node) Node {
 	c := *a
 	c.Input = one(in, "Aggregate")
@@ -484,13 +604,24 @@ func (a *Aggregate) Label() string {
 	}
 	return b.String()
 }
+
+// Column annotations shared by every aggregate schema; they are never
+// modified.
+var (
+	groupMeta     = map[string]string{"role": "group"}
+	aggregateMeta = map[string]string{"role": "aggregate"}
+)
+
 func (a *Aggregate) Schema() Schema {
 	var s Schema
+	if n := len(a.Groups) + len(a.Aggs); n > 0 {
+		s.Columns = make([]Column, 0, n)
+	}
 	for _, g := range a.Groups {
-		s.Columns = append(s.Columns, Column{Name: g.Name, Type: g.Expr.Type(), Nullable: !a.DropNullGroups, Meta: map[string]string{"role": "group"}})
+		s.Columns = append(s.Columns, Column{Name: g.Name, Type: g.Expr.Type(), Nullable: !a.DropNullGroups, Meta: groupMeta})
 	}
 	for _, ag := range a.Aggs {
-		s.Columns = append(s.Columns, Column{Name: ag.Name, Type: ag.Agg.Type(), Nullable: true, Meta: map[string]string{"role": "aggregate"}})
+		s.Columns = append(s.Columns, Column{Name: ag.Name, Type: ag.Agg.Type(), Nullable: true, Meta: aggregateMeta})
 	}
 	return s
 }
@@ -536,6 +667,7 @@ type Window struct {
 }
 
 func (w *Window) Inputs() []Node { return []Node{w.Input} }
+func (w *Window) input() Node    { return w.Input }
 func (w *Window) WithInputs(in []Node) Node {
 	c := *w
 	c.Input = one(in, "Window")
@@ -583,12 +715,18 @@ func (w *Window) Label() string {
 	b.WriteString(")")
 	return b.String()
 }
-func (w *Window) Schema() Schema {
-	s := w.Input.Schema()
-	for _, f := range w.Funcs {
-		s = s.With(Column{Name: f.Name, Type: f.Agg.Type(), Nullable: true})
+func (w *Window) Schema() Schema { return w.schemaFrom(w.Input.Schema()) }
+
+func (w *Window) schemaFrom(in Schema) Schema {
+	if len(w.Funcs) == 0 {
+		return in
 	}
-	return s
+	var b SchemaBuilder
+	b.Init(in, len(w.Funcs))
+	for _, f := range w.Funcs {
+		b.With(Column{Name: f.Name, Type: f.Agg.Type(), Nullable: true})
+	}
+	return b.Schema()
 }
 
 // SortKey is one ordering key. NULLs sort before all values when NullsFirst
@@ -623,6 +761,7 @@ type Sort struct {
 }
 
 func (s *Sort) Inputs() []Node { return []Node{s.Input} }
+func (s *Sort) input() Node    { return s.Input }
 func (s *Sort) WithInputs(in []Node) Node {
 	c := *s
 	c.Input = one(in, "Sort")
@@ -641,6 +780,7 @@ type Limit struct {
 }
 
 func (l *Limit) Inputs() []Node { return []Node{l.Input} }
+func (l *Limit) input() Node    { return l.Input }
 func (l *Limit) WithInputs(in []Node) Node {
 	c := *l
 	c.Input = one(in, "Limit")
@@ -664,6 +804,7 @@ type TopN struct {
 }
 
 func (t *TopN) Inputs() []Node { return []Node{t.Input} }
+func (t *TopN) input() Node    { return t.Input }
 func (t *TopN) WithInputs(in []Node) Node {
 	c := *t
 	c.Input = one(in, "TopN")
@@ -685,6 +826,7 @@ type Reverse struct {
 }
 
 func (r *Reverse) Inputs() []Node { return []Node{r.Input} }
+func (r *Reverse) input() Node    { return r.Input }
 func (r *Reverse) WithInputs(in []Node) Node {
 	c := *r
 	c.Input = one(in, "Reverse")
@@ -706,6 +848,7 @@ type Dedup struct {
 }
 
 func (d *Dedup) Inputs() []Node { return []Node{d.Input} }
+func (d *Dedup) input() Node    { return d.Input }
 func (d *Dedup) WithInputs(in []Node) Node {
 	c := *d
 	c.Input = one(in, "Dedup")
@@ -813,12 +956,14 @@ func (j *Join) Label() string {
 	}
 	return b.String()
 }
-func (j *Join) Schema() Schema {
-	l := j.Left.Schema()
+func (j *Join) Schema() Schema { return j.schemaFrom(j.Left.Schema(), j.Right.Schema()) }
+
+func (j *Join) schemaFrom(left, right Schema) Schema {
+	l := left
 	if j.Kind == JoinSemi || j.Kind == JoinAnti {
 		return l
 	}
-	r := j.Right.Schema()
+	r := right
 	out := Schema{Open: l.Open || r.Open}
 	leftNullable := j.Kind == JoinRight || j.Kind == JoinFull
 	rightNullable := j.Kind == JoinLeft || j.Kind == JoinFull
@@ -920,9 +1065,11 @@ func (z *ZipColumns) Label() string {
 	}
 	return "ZipColumns()"
 }
-func (z *ZipColumns) Schema() Schema {
-	s := z.Left.Schema()
-	for _, c := range z.Right.Schema().Columns {
+func (z *ZipColumns) Schema() Schema { return z.schemaFrom(z.Left.Schema(), z.Right.Schema()) }
+
+func (z *ZipColumns) schemaFrom(left, right Schema) Schema {
+	s := left
+	for _, c := range right.Columns {
 		if _, ok := s.Lookup(c.Name); ok && !z.Override {
 			continue
 		}
@@ -930,7 +1077,7 @@ func (z *ZipColumns) Schema() Schema {
 		cc.Nullable = true
 		s = s.With(cc)
 	}
-	if z.Right.Schema().Open {
+	if right.Open {
 		s.Open = true
 	}
 	return s
@@ -970,6 +1117,7 @@ type Extract struct {
 }
 
 func (e *Extract) Inputs() []Node { return []Node{e.Input} }
+func (e *Extract) input() Node    { return e.Input }
 func (e *Extract) WithInputs(in []Node) Node {
 	c := *e
 	c.Input = one(in, "Extract")
@@ -994,10 +1142,17 @@ func (e *Extract) Label() string {
 	}
 	return s
 }
-func (e *Extract) Schema() Schema {
-	s := e.Input.Schema()
-	for _, c := range e.Outputs {
-		s = s.With(c)
+func (e *Extract) Schema() Schema { return e.schemaFrom(e.Input.Schema()) }
+
+func (e *Extract) schemaFrom(in Schema) Schema {
+	s := in
+	if len(e.Outputs) > 0 {
+		var b SchemaBuilder
+		b.Init(in, len(e.Outputs))
+		for _, c := range e.Outputs {
+			b.With(c)
+		}
+		s = b.Schema()
 	}
 	if e.Method == ExtractJSON && e.Path == "" {
 		s.Open = true
@@ -1036,6 +1191,7 @@ type Patterns struct {
 }
 
 func (p *Patterns) Inputs() []Node { return []Node{p.Input} }
+func (p *Patterns) input() Node    { return p.Input }
 func (p *Patterns) WithInputs(in []Node) Node {
 	c := *p
 	c.Input = one(in, "Patterns")
@@ -1062,7 +1218,14 @@ const (
 
 func (p *Patterns) Schema() Schema {
 	if !p.Aggregate {
-		return p.Input.Schema().With(Column{Name: p.Output, Type: String, Nullable: true})
+		return p.schemaFrom(p.Input.Schema())
+	}
+	return p.schemaFrom(Schema{})
+}
+
+func (p *Patterns) schemaFrom(in Schema) Schema {
+	if !p.Aggregate {
+		return in.With(Column{Name: p.Output, Type: String, Nullable: true})
 	}
 	var s Schema
 	for _, g := range p.GroupBy {
@@ -1090,6 +1253,7 @@ type Unnest struct {
 }
 
 func (u *Unnest) Inputs() []Node { return []Node{u.Input} }
+func (u *Unnest) input() Node    { return u.Input }
 func (u *Unnest) WithInputs(in []Node) Node {
 	c := *u
 	c.Input = one(in, "Unnest")
@@ -1106,8 +1270,10 @@ func (u *Unnest) Label() string {
 	}
 	return s + ")"
 }
-func (u *Unnest) Schema() Schema {
-	s := u.Input.Schema()
+func (u *Unnest) Schema() Schema { return u.schemaFrom(u.Input.Schema()) }
+
+func (u *Unnest) schemaFrom(in Schema) Schema {
+	s := in
 	t := Any
 	if c, ok := s.Lookup(u.Field); ok {
 		t = c.Type.ElemType()
@@ -1129,6 +1295,7 @@ type FlattenObject struct {
 }
 
 func (f *FlattenObject) Inputs() []Node { return []Node{f.Input} }
+func (f *FlattenObject) input() Node    { return f.Input }
 func (f *FlattenObject) WithInputs(in []Node) Node {
 	c := *f
 	c.Input = one(in, "FlattenObject")
@@ -1142,10 +1309,17 @@ func (f *FlattenObject) Label() string {
 	}
 	return s + ")"
 }
-func (f *FlattenObject) Schema() Schema {
-	s := f.Input.Schema()
-	for _, a := range f.Aliases {
-		s = s.With(Column{Name: a, Type: Any, Nullable: true})
+func (f *FlattenObject) Schema() Schema { return f.schemaFrom(f.Input.Schema()) }
+
+func (f *FlattenObject) schemaFrom(in Schema) Schema {
+	s := in
+	if len(f.Aliases) > 0 {
+		var b SchemaBuilder
+		b.Init(in, len(f.Aliases))
+		for _, a := range f.Aliases {
+			b.With(Column{Name: a, Type: Any, Nullable: true})
+		}
+		s = b.Schema()
 	}
 	s.Open = true
 	return s
@@ -1161,6 +1335,7 @@ type FillNull struct {
 }
 
 func (f *FillNull) Inputs() []Node { return []Node{f.Input} }
+func (f *FillNull) input() Node    { return f.Input }
 func (f *FillNull) WithInputs(in []Node) Node {
 	c := *f
 	c.Input = one(in, "FillNull")
@@ -1177,16 +1352,22 @@ func (f *FillNull) Label() string {
 	}
 	return "FillNull(" + strings.Join(parts, ", ") + ")"
 }
-func (f *FillNull) Schema() Schema {
-	s := f.Input.Schema()
+func (f *FillNull) Schema() Schema { return f.schemaFrom(f.Input.Schema()) }
+
+func (f *FillNull) schemaFrom(in Schema) Schema {
+	if len(f.Fields) == 0 {
+		return in
+	}
+	var b SchemaBuilder
+	b.Init(in, len(f.Fields))
 	for _, a := range f.Fields {
 		t := a.Expr.Type()
-		if c, ok := s.Lookup(a.Name); ok {
+		if c, ok := b.Lookup(a.Name); ok {
 			t = Unify(c.Type, t)
 		}
-		s = s.With(Column{Name: a.Name, Type: t})
+		b.With(Column{Name: a.Name, Type: t})
 	}
-	return s
+	return b.Schema()
 }
 
 // Transpose turns up to MaxRows rows into columns: each input column becomes
@@ -1199,6 +1380,7 @@ type Transpose struct {
 }
 
 func (t *Transpose) Inputs() []Node { return []Node{t.Input} }
+func (t *Transpose) input() Node    { return t.Input }
 func (t *Transpose) WithInputs(in []Node) Node {
 	c := *t
 	c.Input = one(in, "Transpose")
@@ -1231,6 +1413,7 @@ type Totals struct {
 }
 
 func (t *Totals) Inputs() []Node { return []Node{t.Input} }
+func (t *Totals) input() Node    { return t.Input }
 func (t *Totals) WithInputs(in []Node) Node {
 	c := *t
 	c.Input = one(in, "Totals")
@@ -1250,8 +1433,10 @@ func (t *Totals) Label() string {
 	}
 	return "Totals(" + strings.Join(parts, ", ") + ")"
 }
-func (t *Totals) Schema() Schema {
-	s := t.Input.Schema()
+func (t *Totals) Schema() Schema { return t.schemaFrom(t.Input.Schema()) }
+
+func (t *Totals) schemaFrom(in Schema) Schema {
+	s := in
 	if t.RowTotals {
 		s = s.With(Column{Name: t.RowColumn, Type: Float, Nullable: true})
 	}
@@ -1272,15 +1457,18 @@ type CombineValues struct {
 }
 
 func (c *CombineValues) Inputs() []Node { return []Node{c.Input} }
+func (c *CombineValues) input() Node    { return c.Input }
 func (c *CombineValues) WithInputs(in []Node) Node {
 	cc := *c
 	cc.Input = one(in, "CombineValues")
 	return &cc
 }
-func (*CombineValues) isNode()         {}
-func (c *CombineValues) Label() string { return "CombineValues(" + QuoteName(c.Field) + ")" }
-func (c *CombineValues) Schema() Schema {
-	s := c.Input.Schema()
+func (*CombineValues) isNode()          {}
+func (c *CombineValues) Label() string  { return "CombineValues(" + QuoteName(c.Field) + ")" }
+func (c *CombineValues) Schema() Schema { return c.schemaFrom(c.Input.Schema()) }
+
+func (c *CombineValues) schemaFrom(in Schema) Schema {
+	s := in
 	t := Any
 	if col, ok := s.Lookup(c.Field); ok {
 		t = col.Type

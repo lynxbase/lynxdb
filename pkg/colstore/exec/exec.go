@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -47,6 +48,9 @@ type execution struct {
 	rows int64
 	// ords numbers the parts of the snapshot for a plan that locates rows.
 	ords map[*part.Part]int
+	// bound is the time that a row must reach to be among the first rows by
+	// time that the plan keeps, once some goroutine holds that many.
+	bound *atomic.Int64
 	// taken counts the rows that a plan with a limit and no order has
 	// produced.
 	taken atomic.Int64
@@ -75,7 +79,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		defer running.Add(-1)
 	}
 	var ords map[*part.Part]int
-	if q.located != nil {
+	if q.located != nil || q.places {
 		ords = map[*part.Part]int{}
 		for i, h := range snap.Parts() {
 			ords[h.Part] = i
@@ -100,6 +104,14 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 	defer x.release()
 	scan := q.opts
 	scan.Workers = n
+	if q.byTime != 0 {
+		x.bound = new(atomic.Int64)
+		x.bound.Store(math.MinInt64)
+		if q.byTime > 0 {
+			x.bound.Store(math.MaxInt64)
+		}
+		scan.ByTime, scan.Bound = q.byTime, x.bound
+	}
 	stats, err := snap.Scan(ctx, scan, x.block)
 	if err != nil && !errors.Is(err, errEnough) {
 		return nil, err
