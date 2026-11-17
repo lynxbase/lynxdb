@@ -93,6 +93,9 @@ type aggScratch struct {
 	fl    []float64
 	// hashes holds the hash of each entry of a dictionary.
 	hashes []uint64
+	// added holds, for every entry of a dictionary, the group that last
+	// counted it as a distinct value, plus one.
+	added []uint32
 	// okeys and ohas hold, per order of the plan and row of the block, the
 	// key that orders the row and whether it has one.
 	okeys [][]int64
@@ -1515,6 +1518,34 @@ func (a *aggWorker) distinctBytes(d int, t *target, c *vec.Column, kind vec.Kind
 
 		return
 	}
+	if c.Layout == vec.Dict {
+		// An entry is hashed once, and given to a group once for as long
+		// as the rows that hold it stay with that group.
+		s := a.s
+		s.hashes, s.added = sized(s.hashes, 2*c.DictLen()), sized(s.added, c.DictLen())
+		hashes, added := s.hashes, s.added
+		clear(added)
+		for j := 0; j < n; j++ {
+			g, r := t.one, j
+			if t.gid != nil {
+				g = int(gid[j])
+			}
+			if rows != nil {
+				r = int(rows[j])
+			}
+			code := c.Code(r)
+			switch added[code] {
+			case uint32(g) + 1:
+				continue
+			case 0:
+				hashes[2*code], hashes[2*code+1] = vec.Hash128(c.DictValue(code))
+			}
+			added[code] = uint32(g) + 1
+			a.addDistinct(log, t.global[g], hashes[2*code], hashes[2*code+1]^seed)
+		}
+
+		return
+	}
 	lastG := -1
 	var last []byte
 	for j := 0; j < n; j++ {
@@ -1529,8 +1560,6 @@ func (a *aggWorker) distinctBytes(d int, t *target, c *vec.Column, kind vec.Kind
 		switch c.Layout {
 		case vec.Flat:
 			v = c.Data[c.Offsets[r]:c.Offsets[r+1]]
-		case vec.Dict:
-			v = c.DictValue(c.Code(r))
 		default:
 			v = c.DictValue(0)
 		}
