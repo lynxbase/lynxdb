@@ -26,7 +26,6 @@ func newMapIterator(child pipeline.Iterator, batch int, f func(map[string]event.
 
 func (m *mapIterator) Init(ctx context.Context) error { return m.child.Init(ctx) }
 func (m *mapIterator) Close() error                   { return m.child.Close() }
-func (m *mapIterator) Schema() []pipeline.FieldInfo   { return nil }
 
 func (m *mapIterator) Next(ctx context.Context) (*pipeline.Batch, error) {
 	for {
@@ -60,7 +59,6 @@ func newBlockingIterator(child pipeline.Iterator, batch int, f func([]map[string
 
 func (b *blockingIterator) Init(ctx context.Context) error { return b.child.Init(ctx) }
 func (b *blockingIterator) Close() error                   { return b.child.Close() }
-func (b *blockingIterator) Schema() []pipeline.FieldInfo   { return nil }
 
 func (b *blockingIterator) Next(ctx context.Context) (*pipeline.Batch, error) {
 	if !b.done {
@@ -150,8 +148,6 @@ func (z *zipIterator) Close() error {
 	}
 	return err
 }
-
-func (z *zipIterator) Schema() []pipeline.FieldInfo { return nil }
 
 func (z *zipIterator) Next(ctx context.Context) (*pipeline.Batch, error) {
 	if !z.loaded {
@@ -272,8 +268,6 @@ func (j *joinIterator) Close() error {
 	}
 	return err
 }
-
-func (j *joinIterator) Schema() []pipeline.FieldInfo { return nil }
 
 func (j *joinIterator) build(ctx context.Context) error {
 	rows, err := pipeline.CollectAll(ctx, j.right)

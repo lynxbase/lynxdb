@@ -50,18 +50,16 @@ func (f *FilterIterator) Next(ctx context.Context) (*Batch, error) {
 		return compactBatch(batch, mask, matchCount), nil
 	}
 }
-func (f *FilterIterator) Close() error        { return f.child.Close() }
-func (f *FilterIterator) Schema() []FieldInfo { return f.child.Schema() }
+func (f *FilterIterator) Close() error { return f.child.Close() }
 
 func NewFilterIterator(child Iterator, predicate *vm.Program) *FilterIterator {
 	return &FilterIterator{child: child, predicate: predicate}
 }
 
 type ProjectIterator struct {
-	child   Iterator
-	fields  []string
-	remove  bool
-	hasGlob bool
+	child  Iterator
+	fields []string
+	remove bool
 }
 
 func (p *ProjectIterator) Init(ctx context.Context) error { return p.child.Init(ctx) }
@@ -79,19 +77,6 @@ func (p *ProjectIterator) Next(ctx context.Context) (*Batch, error) {
 	return p.applyKeep(batch), nil
 }
 func (p *ProjectIterator) Close() error { return p.child.Close() }
-func (p *ProjectIterator) Schema() []FieldInfo {
-	if p.hasGlob {
-		return nil
-	}
-	if p.remove {
-		return p.child.Schema()
-	}
-	schema := make([]FieldInfo, len(p.fields))
-	for i, f := range p.fields {
-		schema[i] = FieldInfo{Name: f}
-	}
-	return schema
-}
 
 func (p *ProjectIterator) applyKeep(batch *Batch) *Batch {
 	out := &Batch{Columns: make(map[string][]event.Value, len(p.fields)), Len: batch.Len}
@@ -154,14 +139,7 @@ func (p *ProjectIterator) applyRemove(batch *Batch) *Batch {
 }
 
 func NewProjectIterator(child Iterator, fields []string, remove bool) *ProjectIterator {
-	hasGlob := false
-	for _, f := range fields {
-		if strings.ContainsAny(f, "*?") {
-			hasGlob = true
-			break
-		}
-	}
-	return &ProjectIterator{child: child, fields: fields, remove: remove, hasGlob: hasGlob}
+	return &ProjectIterator{child: child, fields: fields, remove: remove}
 }
 
 func compactBatch(batch *Batch, mask []bool, matchCount int) *Batch {

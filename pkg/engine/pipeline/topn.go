@@ -63,8 +63,6 @@ func (t *TopNIterator) Close() error {
 	return t.child.Close()
 }
 
-func (t *TopNIterator) Schema() []FieldInfo { return t.child.Schema() }
-
 func (t *TopNIterator) buildTopN(ctx context.Context) error {
 	t.h = &topNHeap{
 		fields: t.fields,

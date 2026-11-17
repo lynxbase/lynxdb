@@ -87,8 +87,6 @@ func (s *SortIterator) Close() error {
 	return s.child.Close()
 }
 
-func (s *SortIterator) Schema() []FieldInfo { return s.child.Schema() }
-
 func (s *SortIterator) materialize(ctx context.Context) error {
 	s.mergedBatch = NewBatch(0)
 	for {

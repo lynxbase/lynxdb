@@ -63,7 +63,3 @@ func (e *EvalIterator) Next(ctx context.Context) (*Batch, error) {
 func (e *EvalIterator) Close() error {
 	return e.child.Close()
 }
-
-func (e *EvalIterator) Schema() []FieldInfo {
-	return e.child.Schema()
-}

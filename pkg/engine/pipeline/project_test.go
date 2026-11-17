@@ -33,8 +33,7 @@ func (s *staticIterator) Next(ctx context.Context) (*Batch, error) {
 
 	return b, nil
 }
-func (s *staticIterator) Close() error        { return nil }
-func (s *staticIterator) Schema() []FieldInfo { return nil }
+func (s *staticIterator) Close() error { return nil }
 
 func TestProjectIterator_KeepExact(t *testing.T) {
 	batch := makeBatch(map[string][]event.Value{
@@ -241,28 +240,5 @@ func TestProjectIterator_KeepStar(t *testing.T) {
 	}
 	if len(out.Columns) != 3 {
 		t.Fatalf("columns: got %d, want 3 (all)", len(out.Columns))
-	}
-}
-
-func TestProjectIterator_SchemaWithGlobs(t *testing.T) {
-	proj := NewProjectIterator(
-		&staticIterator{},
-		[]string{"pg.*"},
-		false,
-	)
-	if schema := proj.Schema(); schema != nil {
-		t.Errorf("Schema() with globs should return nil, got %v", schema)
-	}
-}
-
-func TestProjectIterator_SchemaWithoutGlobs(t *testing.T) {
-	proj := NewProjectIterator(
-		&staticIterator{},
-		[]string{"host", "status"},
-		false,
-	)
-	schema := proj.Schema()
-	if len(schema) != 2 {
-		t.Fatalf("Schema() length: got %d, want 2", len(schema))
 	}
 }

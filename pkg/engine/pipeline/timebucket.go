@@ -112,5 +112,3 @@ func (b *BinIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (b *BinIterator) Close() error { return b.child.Close() }
-
-func (b *BinIterator) Schema() []FieldInfo { return b.child.Schema() }

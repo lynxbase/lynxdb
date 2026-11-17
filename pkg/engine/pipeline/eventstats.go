@@ -68,9 +68,6 @@ func (e *EventStatsIterator) Close() error {
 	return e.child.Close()
 }
 
-// Schema delegates to the child iterator.
-func (e *EventStatsIterator) Schema() []FieldInfo { return e.child.Schema() }
-
 func (e *EventStatsIterator) materialize(ctx context.Context) error {
 	// Pass 1: collect all rows and compute aggregates.
 	groups := make(map[string]*aggGroup)

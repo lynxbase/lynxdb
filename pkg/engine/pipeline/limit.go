@@ -49,10 +49,6 @@ func (l *LimitIterator) Close() error {
 	return l.child.Close()
 }
 
-func (l *LimitIterator) Schema() []FieldInfo {
-	return l.child.Schema()
-}
-
 // OffsetIterator skips the first N rows from its child.
 type OffsetIterator struct {
 	child   Iterator
@@ -95,8 +91,4 @@ func (o *OffsetIterator) Next(ctx context.Context) (*Batch, error) {
 
 func (o *OffsetIterator) Close() error {
 	return o.child.Close()
-}
-
-func (o *OffsetIterator) Schema() []FieldInfo {
-	return o.child.Schema()
 }

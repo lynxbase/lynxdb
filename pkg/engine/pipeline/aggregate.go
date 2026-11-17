@@ -227,42 +227,6 @@ func (a *AggregateIterator) Close() error {
 	return a.child.Close()
 }
 
-func (a *AggregateIterator) Schema() []FieldInfo {
-	var schema []FieldInfo
-	for _, g := range a.groupBy {
-		schema = append(schema, FieldInfo{Name: g, Type: "any"})
-	}
-	for _, agg := range a.aggs {
-		schema = append(schema, FieldInfo{Name: agg.Alias, Type: aggResultType(agg.Name)})
-	}
-
-	return schema
-}
-
-// aggResultType returns the output type of an aggregate function. Group keys
-// and input-dependent aggregates (sum, min, max, first, last, ...) stay "any"
-// until typed scan schemas land with the logical-IR physical builder.
-func aggResultType(name string) string {
-	switch name {
-	case aggCount, aggDC, aggRowNum:
-		return "int"
-	case aggAvg, aggRate, aggPerSec, aggPerMin, aggPerHr, aggPerDay,
-		aggStdev, aggStdevP, aggVar, aggVarP, aggEstDCE,
-		aggPerc, aggPerc25, aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99, aggPercW,
-		aggRunSum, aggMovAvg, aggDelta, aggAvgW, aggEntropy, aggCorr, aggCovar,
-		aggMAD:
-		return "float"
-	case aggEarT, aggLatT:
-		return "timestamp"
-	case aggLinFit:
-		return "object"
-	case aggTopK, aggTopKW, aggValCnt, aggMaxN, aggMinN:
-		return "array"
-	default:
-		return "any"
-	}
-}
-
 func (a *AggregateIterator) processBatch(batch *Batch) {
 	row := make(map[string]event.Value, len(batch.Columns))
 	for i := 0; i < batch.Len; i++ {

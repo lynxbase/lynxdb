@@ -77,5 +77,3 @@ func reverseRows(rows []map[string]event.Value) {
 func (r *ReverseIterator) Close() error {
 	return r.child.Close()
 }
-
-func (r *ReverseIterator) Schema() []FieldInfo { return r.child.Schema() }

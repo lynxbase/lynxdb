@@ -393,8 +393,6 @@ func (s *stream) Close() error {
 	return nil
 }
 
-func (s *stream) Schema() []pipeline.FieldInfo { return nil }
-
 // batchOf turns the columns of a result into a batch of the row operators,
 // by the rules of rowsOf.
 func batchOf(res *exec.Result, schema ir.Schema) *pipeline.Batch {

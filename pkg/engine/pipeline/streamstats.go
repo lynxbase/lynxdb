@@ -722,8 +722,6 @@ func (s *StreamStatsIterator) Close() error {
 	return s.child.Close()
 }
 
-func (s *StreamStatsIterator) Schema() []FieldInfo { return s.child.Schema() }
-
 // oldest returns the oldest entry in the ring buffer without removing it.
 // Returns nil if the buffer is empty.
 func (r *ringBuffer) oldest() map[string]event.Value {

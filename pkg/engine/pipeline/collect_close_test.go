@@ -23,5 +23,3 @@ func (c *closeErrorIterator) Init(context.Context) error { return nil }
 func (c *closeErrorIterator) Next(context.Context) (*Batch, error) { return nil, nil }
 
 func (c *closeErrorIterator) Close() error { return c.closeErr }
-
-func (c *closeErrorIterator) Schema() []FieldInfo { return nil }

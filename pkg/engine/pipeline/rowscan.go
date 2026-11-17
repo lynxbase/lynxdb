@@ -42,5 +42,4 @@ func (r *RowScanIterator) Next(ctx context.Context) (*Batch, error) {
 	return batch, nil
 }
 
-func (r *RowScanIterator) Close() error        { return nil }
-func (r *RowScanIterator) Schema() []FieldInfo { return nil }
+func (r *RowScanIterator) Close() error { return nil }

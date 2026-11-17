@@ -45,5 +45,3 @@ func (u *UnionIterator) Close() error {
 
 	return nil
 }
-
-func (u *UnionIterator) Schema() []FieldInfo { return nil }
