@@ -345,17 +345,43 @@ func (c *compiler) where(st *pipe, n *ast.WhereCommand) error {
 func (c *compiler) fields(st *pipe, n *ast.FieldsCommand) error {
 	s := st.schema()
 	names := make([]string, len(n.Fields))
+	var paths []ir.Assign
+	var renames []ir.Rename
 	for i, f := range n.Fields {
 		name := canonicalField(f)
 		if !ir.IsNamePattern(name) {
-			if _, ok := s.Resolve(name); !ok {
+			t, ok := s.Resolve(name)
+			if !ok {
 				return unknownField(n, name, s)
+			}
+			if !n.Exclude && memberOfColumn(s, name) {
+				// The row operators' eval would read its own empty target first.
+				tmp := "__path_" + strconv.Itoa(len(paths))
+				paths = append(paths, ir.Assign{Name: tmp, Expr: &ir.FieldRef{Name: name, T: t}})
+				renames = append(renames, ir.Rename{From: tmp, To: name})
 			}
 		}
 		names[i] = name
 	}
-	st.node = &ir.Project{Input: st.node, Names: names, Drop: n.Exclude}
+	input := st.node
+	if len(paths) > 0 {
+		input = &ir.RenameColumns{Input: &ir.Compute{Input: input, Assigns: paths}, Renames: renames}
+	}
+	st.node = &ir.Project{Input: input, Names: names, Drop: n.Exclude}
 	return nil
+}
+
+// memberOfColumn reports whether name reads a member of an object column of s.
+func memberOfColumn(s ir.Schema, name string) bool {
+	dot := strings.IndexByte(name, '.')
+	if dot <= 0 {
+		return false
+	}
+	if _, column := s.Lookup(name); column {
+		return false
+	}
+	root, ok := s.Lookup(name[:dot])
+	return ok && (root.Type.Kind == ir.KindObject || root.Type.Kind == ir.KindAny)
 }
 
 func (c *compiler) rename(st *pipe, n *ast.RenameCommand) error {

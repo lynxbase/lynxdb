@@ -1,0 +1,1 @@
+source=logs | fields a.b, payload | spath input=payload | fields a.b, payload.user.name, payload

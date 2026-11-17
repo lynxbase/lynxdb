@@ -146,7 +146,7 @@ b98d1038e3465d57	source=mvcombine_data | where ip='10.0.0.1' and bytes=100 and t
 6242b36c4811fba2	source=mvcombine_data | mvcombine does_not_exist
 45ab89b46915cdbe	source=people | eval tags = array('error', 'warning', 'info') | fields tags | head 1 | mvexpand tags | fields tags
 998fd04f5550fa57	source=people | eval ids = array(1, 2, 3, 4, 5) | fields ids | head 1 | mvexpand ids limit=3 | fields ids
-ea4fae36f463229e	source=people | head 1 | fields projects | mvexpand projects | fields projects.name
+f61645ea9d3f4a9e	source=people | head 1 | fields projects | mvexpand projects | fields projects.name
 e033507e743ba744	source=people | eval tags = array('error') | fields tags | head 1 | mvexpand tags | fields tags
 c80944f74cc65de4	source=people | eval some_field = 'x' | fields some_field | head 1 | mvexpand tags | fields tags
 8d582601efda2794	source=otellogs | where severityText = 'ERROR' | stats list(`resource.attributes.service.name`) as affected_services by severityText | nomv affected_services | fields severityText, affected_services
@@ -237,7 +237,7 @@ b3291266b1a86616	source=structured | spath input=doc_n n | fields doc_n n
 64b2afe92553e860	source=structured | spath input=doc_list output=first_element list{0} | spath input=doc_list output=all_elements list{} | spath input=doc_list output=nested nest_out.nest_in | fields doc_list first_element all_elements nested
 f9fd995c1ff2a5ef	source=structured | spath input=doc_n n | eval n=cast(n as int) | stats sum(n) | fields `sum(n)`
 1023d7b2911a97fa	source=structured | spath output=a input=doc_escape "['a fancy field name']" | spath output=b input=doc_escape "['a.b.c']" | fields a b
-9efdfa8e7709e223	source=structured | spath input=doc_auto output=doc | fields doc_auto, doc.user.name, doc.user.age, doc.`tags{}`, doc.active
+2098293b33acc6fb	source=structured | spath input=doc_auto output=doc | fields doc_auto, doc.user.name, doc.user.age, doc.`tags{}`, doc.active
 712135404f146494	source=otellogs | stats count() as total_logs
 381db4304b49888e	source=otellogs | stats avg(severityNumber) as avg_severity
 9557a68b12c67e2e	source=otellogs | stats count() as log_count by severityText | sort - log_count

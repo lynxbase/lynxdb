@@ -1,0 +1,6 @@
+Project(a.b, payload.user.name, payload)
+└─ Rename(__path_0 -> payload.user.name)
+   └─ Compute(__path_0 = payload.user.name)
+      └─ Compute(payload = parse_json(payload))
+         └─ Project(a.b, payload)
+            └─ Scan(logs)
