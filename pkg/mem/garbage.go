@@ -20,14 +20,17 @@ const (
 // BoundGarbage holds the memory that awaits collection to about allowance
 // bytes in a process whose live heap is larger than that: by default the
 // collector lets the heap double, which for the buffers of a load is as
-// much again as they hold. A smaller heap keeps the default. It does
-// nothing when GOGC is set, applies to the whole process, and returns the
-// function that ends it.
+// much again as they hold. A smaller heap keeps the default, and so does a
+// heap that is mostly pointers: the allowance is never less than the part
+// of the heap that a collection has to scan, so that collecting more often
+// costs no more than the default does on that part. It does nothing when
+// GOGC is set, applies to the whole process, and returns the function that
+// ends it.
 func BoundGarbage(allowance int64) (stop func()) {
 	if os.Getenv("GOGC") != "" || allowance <= 0 {
 		return func() {}
 	}
-	b := &garbageBound{allowance: uint64(allowance), sample: []metrics.Sample{{Name: "/gc/heap/live:bytes"}}}
+	b := &garbageBound{allowance: uint64(allowance), sample: []metrics.Sample{{Name: "/gc/heap/live:bytes"}, {Name: "/gc/scan/heap:bytes"}}}
 	b.percent.Store(defaultGCPercent)
 	b.arm()
 
@@ -61,7 +64,11 @@ func (b *garbageBound) arm() {
 
 func (b *garbageBound) adjust() {
 	metrics.Read(b.sample)
-	want := gcPercentFor(b.sample[0].Value.Uint64(), b.allowance)
+	live, scanned := b.sample[0].Value.Uint64(), uint64(0)
+	if b.sample[1].Value.Kind() == metrics.KindUint64 {
+		scanned = b.sample[1].Value.Uint64()
+	}
+	want := gcPercentFor(live, max(b.allowance, scanned))
 	have := b.percent.Load()
 	if want == have || (want != defaultGCPercent && want-have < gcPercentStep && have-want < gcPercentStep) {
 		return

@@ -52,6 +52,22 @@ func TestBoundGarbageFollowsTheLiveHeap(t *testing.T) {
 	runtime.KeepAlive(held)
 	*held = nil
 	settles("with the heap released", func(p int) bool { return p == defaultGCPercent })
+	// A heap of pointers is collected about as often as by default.
+	type node struct{ next, prev, up, down, left, right, self *node }
+	nodes := new([]node)
+	*nodes = make([]node, 1<<20)
+	for i := range *nodes {
+		n := &(*nodes)[(i+1)%len(*nodes)]
+		(*nodes)[i] = node{n, n, n, n, n, n, n}
+	}
+	for range 5 {
+		runtime.GC()
+		time.Sleep(time.Millisecond)
+	}
+	if p := current(); p < 90 {
+		t.Fatalf("with 56 MB of pointers live the collector runs at %d%%", p)
+	}
+	runtime.KeepAlive(nodes)
 	stop()
 	if p := current(); p != defaultGCPercent {
 		t.Fatalf("after the bound ended the collector runs at %d%%", p)
