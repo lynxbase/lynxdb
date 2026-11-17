@@ -128,7 +128,7 @@ indexes care about. `Field` empty means the event's raw text.
 | `Unnest` | One row per array element. |
 | `FlattenObject` | Object members as columns. |
 | `FillNull` | NULL replacement per column or for all columns. |
-| `Transpose`, `Totals`, `CombineValues`, `Pivot` | Reshaping operators. |
+| `Transpose`, `Totals`, `CombineValues` | Reshaping operators. |
 
 ## Function registry
 

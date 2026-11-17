@@ -1189,49 +1189,6 @@ func (f *FillNull) Schema() Schema {
 	return s
 }
 
-// Pivot turns rows keyed by (RowKeys, ColumnKey) into one row per RowKeys
-// value with one column per distinct ColumnKey value holding Value. When
-// MaxColumns is positive only the MaxColumns column keys with the largest
-// Value totals get their own column; the rest are summed into OtherColumn,
-// or dropped when OtherColumn is empty. A NULL column key is named
-// NullColumn, or dropped when NullColumn is empty.
-type Pivot struct {
-	Input       Node
-	RowKeys     []string
-	ColumnKey   string
-	Value       string
-	MaxColumns  int
-	OtherColumn string
-	NullColumn  string
-}
-
-func (p *Pivot) Inputs() []Node { return []Node{p.Input} }
-func (p *Pivot) WithInputs(in []Node) Node {
-	c := *p
-	c.Input = one(in, "Pivot")
-	return &c
-}
-func (*Pivot) isNode() {}
-func (p *Pivot) Label() string {
-	s := fmt.Sprintf("Pivot(rows=[%s], columns=%s, value=%s", strings.Join(p.RowKeys, ", "), p.ColumnKey, p.Value)
-	if p.MaxColumns > 0 {
-		s += fmt.Sprintf(", max=%d", p.MaxColumns)
-	}
-	return s + ")"
-}
-func (p *Pivot) Schema() Schema {
-	in := p.Input.Schema()
-	s := Schema{Open: true}
-	for _, k := range p.RowKeys {
-		if c, ok := in.Lookup(k); ok {
-			s.Columns = append(s.Columns, c)
-		} else {
-			s.Columns = append(s.Columns, Column{Name: k, Type: Any, Nullable: true})
-		}
-	}
-	return s
-}
-
 // Transpose turns up to MaxRows rows into columns: each input column becomes
 // an output row whose first column (HeaderColumn) holds the column name and
 // whose following columns, named "row 1", "row 2", ..., hold the values.

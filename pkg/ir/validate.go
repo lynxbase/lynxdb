@@ -194,10 +194,6 @@ func (v *validator) node(n Node) {
 		if x.Field == "" {
 			v.fail(n, "no field")
 		}
-	case *Pivot:
-		if x.ColumnKey == "" || x.Value == "" {
-			v.fail(n, "pivot needs a column key and a value")
-		}
 	case *Transpose:
 		if x.MaxRows < 1 {
 			v.fail(n, "max rows must be positive")

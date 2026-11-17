@@ -314,8 +314,6 @@ func (b *builder) dispatch(n ir.Node) (pipeline.Iterator, error) {
 			return nil, err
 		}
 		return newBlockingIterator(child, b.batchSize(), combineRows(x.Field)), nil
-	case *ir.Pivot:
-		return nil, unsupported("pivot")
 	}
 	return nil, fmt.Errorf("physical: unknown operator %T", n)
 }
