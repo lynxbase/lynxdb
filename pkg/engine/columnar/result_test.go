@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"math/rand"
 	"reflect"
 	"slices"
 	"strings"
@@ -188,6 +190,31 @@ plain text line
 	}
 	if got := strings.Join(ask(`describe t`, false), " "); !strings.Contains(got, `"msg"`) || strings.Contains(got, `{}`) {
 		t.Fatalf("describe: %s", got)
+	}
+}
+
+// TestTimesAsText requires the text of a time to be what the standard
+// library writes for it.
+func TestTimesAsText(t *testing.T) {
+	times := []int64{0, 1, -1, 999_999_999, 1_000_000_000, -1_000_000_000, 1_700_000_000_500_000_000,
+		951_782_400_000_000_000, 951_868_799_999_999_999, 4_107_542_400_000_000_000, -2_208_988_800_000_000_000,
+		math.MaxInt64, math.MinInt64}
+	rng := rand.New(rand.NewSource(1))
+	for range 20000 {
+		times = append(times, rng.Int63()-rng.Int63(), rng.Int63n(4e18)/1e6*1e6, rng.Int63n(4e18)/1e9*1e9)
+	}
+	for _, nanos := range times {
+		want := `"` + time.Unix(0, nanos).UTC().Format(time.RFC3339Nano) + `"`
+		if got := string(appendTime(nil, nanos)); got != want {
+			t.Fatalf("%d: %s, want %s", nanos, got, want)
+		}
+	}
+}
+
+func BenchmarkTimesAsText(b *testing.B) {
+	var buf []byte
+	for i := 0; b.Loop(); i++ {
+		buf = appendTime(buf[:0], 1_700_000_000_123_456_000+int64(i)*1_000_003)
 	}
 }
 
