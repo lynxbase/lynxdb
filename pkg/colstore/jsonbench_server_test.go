@@ -201,6 +201,11 @@ func (s *benchServer) handler() http.Handler {
 		return s.store.Settle()
 	}))
 	mux.HandleFunc("POST /compact", step(s.store.Compact))
+	mux.HandleFunc("POST /evict", step(func() error {
+		s.store.ReleasePages()
+
+		return nil
+	}))
 	mux.HandleFunc("POST /shutdown", func(w http.ResponseWriter, _ *http.Request) {
 		s.once.Do(func() { close(s.stop) })
 		fmt.Fprintln(w, "{}")
@@ -223,7 +228,9 @@ func newBenchServer(t testing.TB, store *Store) *benchServer {
 // TestJSONBenchServer serves the store in LYNXDB_BENCH_DIR on the address
 // LYNXDB_BENCH_LISTEN until POST /shutdown: POST /insert takes NDJSON
 // (?sync=1 answers once it is durable), POST /sync, /settle and /compact
-// wait for those states, GET /stats describes the table, and GET /query?q=
+// wait for those states, POST /evict lets go of the mapped pages of the part
+// files so that dropping the page cache afterwards makes the next query a
+// cold one, GET /stats describes the table, and GET /query?q=
 // runs a benchmark query by its short name (Q1 to Q5, S1 to S7, S2i to S5i
 // for the searches without regard to case, T1 to T4).
 // The store is configured by the settings of TestJSONBenchIngest.
@@ -302,7 +309,7 @@ func TestBenchServerTakesInsertsAndAnswersQueries(t *testing.T) {
 		}
 		resp.Body.Close()
 	}
-	for _, path := range []string{"/settle", "/compact"} {
+	for _, path := range []string{"/settle", "/compact", "/evict"} {
 		resp, err := http.Post(base+path, "", nil)
 		if err != nil || resp.StatusCode != http.StatusOK {
 			t.Fatalf("%s: %v %v", path, err, resp)
