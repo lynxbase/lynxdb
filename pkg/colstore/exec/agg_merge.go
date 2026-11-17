@@ -2,6 +2,7 @@ package exec
 
 import (
 	"encoding/binary"
+	"slices"
 
 	"github.com/lynxbase/lynxdb/pkg/mem"
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -14,17 +15,24 @@ var serialGroups = 4096
 // merger is the state one goroutine owns while it merges what the workers
 // aggregated.
 type merger struct {
+	*mergeScratch
 	arena *mem.Arena
 	table *vec.ByteTable
 	set   *vec.HashSet128
-	words []int64
 	n     int
 	// users counts the distinct values per distinct count and shared group.
 	users [][]int64
-	batch []colVec
-	post  postEval
 	sink  sink
 }
+
+// mergeScratch is the memory a merger keeps between queries.
+type mergeScratch struct {
+	words []int64
+	batch []colVec
+	post  postEval
+}
+
+var mergeScratchPool mem.Pool[mergeScratch]
 
 func (m *merger) held() int {
 	if m.arena == nil {
@@ -45,6 +53,8 @@ func (m *merger) held() int {
 func (x *execution) merger(slot int) *merger {
 	m := &x.mergers[slot]
 	if m.arena == nil {
+		m.mergeScratch = mergeScratchPool.Get()
+		m.words = m.words[:0]
 		m.arena = mem.NewArena()
 		m.table = vec.NewByteTable(m.arena)
 		m.sink.init(x.q)
@@ -148,7 +158,13 @@ func (x *execution) finishAggregate(ws []*worker) ([]*sink, error) {
 func (m *merger) partition(plan *aggPlan, partition int, ws []*worker) {
 	stride := len(plan.words)
 	m.table.Clear()
-	m.words, m.n = m.words[:0], 0
+	records := 0
+	for _, w := range ws {
+		if w.agg.log != nil {
+			records += w.agg.log.Len(partition)
+		}
+	}
+	m.words, m.n = slices.Grow(m.words[:0], records*stride), 0
 	for _, w := range ws {
 		if w.agg.log == nil {
 			continue

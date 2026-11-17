@@ -126,8 +126,12 @@ func (x *execution) release() {
 		}
 	}
 	for i := range x.mergers {
-		if a := x.mergers[i].arena; a != nil {
-			a.Free()
+		if m := &x.mergers[i]; m.arena != nil {
+			m.arena.Free()
+			for c := range m.batch {
+				m.batch[c].keys = nil
+			}
+			mergeScratchPool.Put(m.mergeScratch)
 		}
 	}
 }
