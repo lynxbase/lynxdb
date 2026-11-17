@@ -74,6 +74,16 @@ func (c *Column) start(i int) uint32 {
 // Bytes returns the payload of string or variant value i.
 func (c *Column) Bytes(i int) []byte { return c.Data[c.start(i):c.Ends[i]] }
 
+// ValueAt returns the index of the value that row holds, if it holds one.
+func (c *Column) ValueAt(row int) (int, bool) {
+	if !c.Sparse {
+		return row, row < c.Count
+	}
+	i := lowerBound(c.RowIDs, uint32(row))
+
+	return i, i < len(c.RowIDs) && c.RowIDs[i] == uint32(row)
+}
+
 // Row returns the row that value i belongs to.
 func (c *Column) Row(i int) int {
 	if c.Sparse {

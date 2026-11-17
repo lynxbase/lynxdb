@@ -130,6 +130,28 @@ func SplitKeys(srcs []*Part, n int) [][]byte {
 	return cuts
 }
 
+// AppendRowKey appends the encoded sort key of a row of b.
+func AppendRowKey(dst []byte, b *shred.Batch, key []string, row int) []byte {
+	for _, path := range key {
+		found := false
+		for kind := vec.KindNull; kind <= vec.KindVariant && !found; kind++ {
+			c := b.Lookup(path, kind)
+			if c == nil || c.Count == 0 {
+				continue
+			}
+			if i, ok := c.ValueAt(row); ok {
+				dst = appendKeyValue(dst, c, i)
+				found = true
+			}
+		}
+		if !found {
+			dst = append(dst, 0)
+		}
+	}
+
+	return dst
+}
+
 // appendEdgeKey appends the encoded sort key of the first row of b, or of
 // its last row.
 func appendEdgeKey(dst []byte, b *shred.Batch, key []string, last bool) []byte {
