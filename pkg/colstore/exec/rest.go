@@ -135,7 +135,17 @@ func rest(snap *colstore.Snapshot, q *query, at *colVec, n, workers int) ([]stri
 	}
 	starts = append(starts, len(picks))
 	names := &fieldNames{ids: map[string]int32{}, hidden: q.hidden}
-	rs := make([]resolver, max(1, min(workers, len(starts)-1)))
+	// The blocks and the columns decoded from them serve the next query.
+	scratch := resolvePool.Get()
+	defer resolvePool.Put(scratch)
+	scratch.rs = fit(scratch.rs, max(1, min(workers, len(starts)-1)))
+	rs := scratch.rs
+	for i := range rs {
+		for j := range rs[i].bufs {
+			rs[i].bufs[j] = rs[i].bufs[j][:0]
+		}
+		rs[i].cur = 0
+	}
 	found := make([][]cell, len(rs))
 	var failed atomic.Pointer[error]
 	err := forEach(len(starts)-1, len(rs), func(slot, i int) {
