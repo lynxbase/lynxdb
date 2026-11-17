@@ -18,6 +18,7 @@ type sortScratch struct {
 	packed []uint64
 	spare  []uint64
 	moved  []uint64
+	runs   []rowRun
 	ranks  [][]uint32
 	slot   []uint32
 	order  []uint32
@@ -340,8 +341,102 @@ func (b *Batch) rankBytes(c *Column, dst []uint32, base uint32) uint32 {
 // over the rows.
 const fewValues = 32
 
+// rowRun is a stretch of rows that stay next to one another when the rows
+// are moved: n rows from row from on.
+type rowRun struct{ from, n int }
+
+// minRun is the mean length of the stretches from which rows are moved a
+// stretch at a time.
+const minRun = 32
+
+// permuteRuns moves every row perm[i] to position i a stretch of adjacent
+// rows at a time, and reports false, having moved nothing, when the
+// stretches are short. Rows that arrive in order from several sources at
+// once, each a stretch, are brought into order at the cost of copying them.
+func (b *Batch) permuteRuns() bool {
+	s := b.sort
+	n := b.Rows
+	s.runs = s.runs[:0]
+	for at := 0; at < n; {
+		from := int(s.perm[at])
+		to := at + 1
+		for to < n && int(s.perm[to]) == from+to-at {
+			to++
+		}
+		if s.runs = append(s.runs, rowRun{from, to - at}); len(s.runs)*minRun > n {
+			return false
+		}
+		at = to
+	}
+	s.times = s.times[:0]
+	for _, r := range s.runs {
+		s.times = append(s.times, b.Times[r.from:r.from+r.n]...)
+	}
+	copy(b.Times, s.times)
+	for _, c := range b.cols {
+		if c.Count == 0 {
+			continue
+		}
+		whole := !c.Sparse && c.Count == n
+		s.rows, s.bools, s.ints, s.floats, s.data, s.ends = s.rows[:0], s.bools[:0], s.ints[:0], s.floats[:0], s.data[:0], s.ends[:0]
+		at := 0
+		for _, r := range s.runs {
+			// first and end bound the values whose rows are in the run.
+			first, end := min(r.from, c.Count), min(r.from+r.n, c.Count)
+			if c.Sparse {
+				first, end = lowerBound(c.RowIDs, uint32(r.from)), lowerBound(c.RowIDs, uint32(r.from+r.n))
+			}
+			if !whole {
+				for i := first; i < end; i++ {
+					s.rows = append(s.rows, uint32(at+c.Row(i)-r.from))
+				}
+			}
+			at += r.n
+			if first == end {
+				continue
+			}
+			switch c.Kind {
+			case vec.KindBool:
+				s.bools = append(s.bools, c.Bools[first:end]...)
+			case vec.KindInt:
+				s.ints = append(s.ints, c.Ints[first:end]...)
+			case vec.KindFloat:
+				s.floats = append(s.floats, c.Floats[first:end]...)
+			case vec.KindString, vec.KindVariant:
+				start := c.start(first)
+				shift := uint32(len(s.data)) - start
+				s.data = append(s.data, c.Data[start:c.Ends[end-1]]...)
+				for _, e := range c.Ends[first:end] {
+					s.ends = append(s.ends, e+shift)
+				}
+			}
+		}
+		if !whole {
+			c.Sparse = true
+			c.RowIDs = append(c.RowIDs[:0], s.rows...)
+		}
+		c.lastRow = -1
+		switch c.Kind {
+		case vec.KindBool:
+			copy(c.Bools, s.bools)
+		case vec.KindInt:
+			copy(c.Ints, s.ints)
+		case vec.KindFloat:
+			copy(c.Floats, s.floats)
+		case vec.KindString, vec.KindVariant:
+			copy(c.Data, s.data)
+			copy(c.Ends, s.ends)
+		}
+	}
+
+	return true
+}
+
 // permute moves every row perm[i] to position i.
 func (b *Batch) permute() {
+	if b.permuteRuns() {
+		return
+	}
 	s := b.sort
 	n := b.Rows
 	if cap(s.inv) < n {
