@@ -750,20 +750,6 @@ func TestPartialAgg_EstDCError_HLLPromotion(t *testing.T) {
 
 // --- Percentile partial aggregation tests ---
 
-func TestIsPushableAgg_Percentiles(t *testing.T) {
-	for _, name := range []string{"perc50", "perc75", "perc90", "perc95", "perc99", "stdev"} {
-		if !IsPushableAgg(name) {
-			t.Errorf("IsPushableAgg(%q) = false, want true", name)
-		}
-	}
-	// Non-pushable should still return false.
-	for _, name := range []string{"values", "first", "last", "earliest_time", "latest_time", "rate", "per_second"} {
-		if IsPushableAgg(name) {
-			t.Errorf("IsPushableAgg(%q) = true, want false", name)
-		}
-	}
-}
-
 func TestPartialAgg_Perc99(t *testing.T) {
 	var fieldSets []map[string]event.Value
 	for i := 1; i <= 100; i++ {

@@ -40,18 +40,7 @@ type PartialAggGroup struct {
 // an exact map[string]bool. Above it, the set is converted to HLL (~0.8%
 // error) to bound memory usage for high-cardinality fields in distributed
 // partial aggregation.
-//
-// Configurable via config.ClusterConfig.DCHLLThreshold; call
-// SetDCHLLThreshold at startup to override the default.
 var dcHLLThreshold = 10_000
-
-// SetDCHLLThreshold overrides the default dc() HLL promotion threshold.
-// Must be called before any queries execute (typically at server startup).
-func SetDCHLLThreshold(n int) {
-	if n > 0 {
-		dcHLLThreshold = n
-	}
-}
 
 // PartialAggState holds running state for one group's one function.
 // Fields are exported for serialization/deserialization by the MV subsystem.
@@ -77,19 +66,6 @@ type PartialAggState struct {
 	// Merged across segments via Chan et al. parallel variance formula.
 	StdevMean float64
 	StdevM2   float64
-}
-
-// IsPushableAgg returns true if the aggregation function can be decomposed
-// into partial aggregation + merge.
-func IsPushableAgg(name string) bool {
-	switch strings.ToLower(name) {
-	case aggCount, aggSum, aggSumSq, aggAvg, aggMin, aggMax, aggRange, aggDC, aggEstDCE, aggMode, aggPerc,
-		aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99, aggPercW,
-		aggStdev, aggStdevP, aggVar, aggVarP:
-		return true
-	default:
-		return false
-	}
 }
 
 // ComputePartialAgg computes partial aggregates from a slice of events.
@@ -127,98 +103,6 @@ func ComputePartialAggWithBudget(events []*event.Event, spec *PartialAggSpec, ac
 	}
 
 	return result, nil
-}
-
-// ComputePartialAggFromBatches runs partial aggregation on pipeline output batches.
-// Used by the transform+partial-agg path where events have been transformed
-// (rex, eval, etc.) before aggregation. Reads group-by and agg field values
-// from batch columns instead of event.Event fields.
-func ComputePartialAggFromBatches(batches []*Batch, spec *PartialAggSpec) []*PartialAggGroup {
-	groups := make(map[uint64][]*PartialAggGroup)
-	h := fnv.New64a()
-	var buf [8]byte
-
-	for _, batch := range batches {
-		for i := 0; i < batch.Len; i++ {
-			// Compute group key hash from batch columns.
-			h.Reset()
-			for _, g := range spec.GroupBy {
-				v := batch.Value(g, i)
-				hashValue(h, v, buf[:])
-			}
-			hval := h.Sum64()
-			if len(spec.GroupBy) == 0 {
-				hval = 0
-			}
-
-			// Find or create group.
-			group := findOrCreateBatchGroup(groups, hval, batch, i, spec)
-
-			// Update partial state for each aggregation function.
-			for j, fn := range spec.Funcs {
-				var val event.Value
-				if fn.Field == "" {
-					val = event.IntValue(1) // count(*)
-				} else {
-					val = batch.Value(fn.Field, i)
-				}
-				weightVal := event.NullValue()
-				if fn.WeightField != "" {
-					weightVal = batch.Value(fn.WeightField, i)
-				}
-				updatePartialStateWithWeight(&group.States[j], fn.Name, val, weightVal)
-			}
-		}
-	}
-
-	var result []*PartialAggGroup
-	for _, chain := range groups {
-		result = append(result, chain...)
-	}
-
-	return result
-}
-
-// findOrCreateBatchGroup looks up or creates a partial agg group for a batch row.
-func findOrCreateBatchGroup(groups map[uint64][]*PartialAggGroup, h uint64, batch *Batch, row int, spec *PartialAggSpec) *PartialAggGroup {
-	chain := groups[h]
-	for _, g := range chain {
-		if batchKeysEqual(g.Key, batch, row, spec.GroupBy) {
-			return g
-		}
-	}
-	group := &PartialAggGroup{
-		Key:    extractBatchGroupKey(batch, row, spec.GroupBy),
-		States: make([]PartialAggState, len(spec.Funcs)),
-	}
-	for j := range group.States {
-		group.States[j].Min = event.NullValue()
-		group.States[j].Max = event.NullValue()
-	}
-	groups[h] = append(chain, group)
-
-	return group
-}
-
-// extractBatchGroupKey extracts group-by field values from a batch row.
-func extractBatchGroupKey(batch *Batch, row int, groupBy []string) map[string]event.Value {
-	key := make(map[string]event.Value, len(groupBy))
-	for _, g := range groupBy {
-		key[g] = batch.Value(g, row)
-	}
-
-	return key
-}
-
-// batchKeysEqual checks if a group's stored key matches a batch row's fields.
-func batchKeysEqual(key map[string]event.Value, batch *Batch, row int, groupBy []string) bool {
-	for _, g := range groupBy {
-		if key[g] != batch.Value(g, row) {
-			return false
-		}
-	}
-
-	return true
 }
 
 // MergePartialAggs merges multiple slices of partial groups into final result rows.
@@ -315,68 +199,6 @@ func MergePartialAggs(partials [][]*PartialAggGroup, spec *PartialAggSpec) []map
 	}
 
 	return rows
-}
-
-// MergePartialGroupsNoFinalize merges multiple partial groups by key,
-// combining intermediate state without finalizing. Used by MV compaction
-// where we need to reduce segment count but preserve merge-ability.
-// Returns merged groups with intermediate state (not finalized values).
-func MergePartialGroupsNoFinalize(groups []*PartialAggGroup, spec *PartialAggSpec) []*PartialAggGroup {
-	merged := make(map[uint64][]*PartialAggGroup)
-
-	for _, pg := range groups {
-		h := partialGroupKeyHashFromMap(pg.Key, spec.GroupBy)
-		found := false
-		chain := merged[h]
-		for _, existing := range chain {
-			if partialKeysEqual(existing.Key, pg.Key, spec.GroupBy) {
-				for j, fn := range spec.Funcs {
-					mergePartialState(&existing.States[j], &pg.States[j], fn.Name)
-				}
-				found = true
-
-				break
-			}
-		}
-		if !found {
-			clone := &PartialAggGroup{
-				Key:    pg.Key,
-				States: make([]PartialAggState, len(pg.States)),
-			}
-			copy(clone.States, pg.States)
-			// Deep-copy DistinctSet maps, HLLs, and TDigests to avoid mutation of original.
-			for j := range clone.States {
-				if pg.States[j].DistinctSet != nil {
-					clone.States[j].DistinctSet = make(map[string]bool, len(pg.States[j].DistinctSet))
-					for k := range pg.States[j].DistinctSet {
-						clone.States[j].DistinctSet[k] = true
-					}
-				}
-				if pg.States[j].ModeCounts != nil {
-					clone.States[j].ModeCounts = make(map[string]int64, len(pg.States[j].ModeCounts))
-					for k, v := range pg.States[j].ModeCounts {
-						clone.States[j].ModeCounts[k] = v
-					}
-				}
-				if pg.States[j].DistinctHLL != nil {
-					data := pg.States[j].DistinctHLL.MarshalBinary()
-					clone.States[j].DistinctHLL = UnmarshalHyperLogLog(data)
-				}
-				if pg.States[j].Digest != nil {
-					data := pg.States[j].Digest.MarshalBinary()
-					clone.States[j].Digest = UnmarshalTDigest(data)
-				}
-			}
-			merged[h] = append(chain, clone)
-		}
-	}
-
-	var result []*PartialAggGroup
-	for _, chain := range merged {
-		result = append(result, chain...)
-	}
-
-	return result
 }
 
 // MergePartialAggsTopK merges partial aggregations and returns only the top K results.
@@ -666,11 +488,6 @@ func partialKeysEqual(a, b map[string]event.Value, groupBy []string) bool {
 	}
 
 	return true
-}
-
-// updatePartialState updates a partial aggregation state with a new value.
-func updatePartialState(s *PartialAggState, fn string, val event.Value) {
-	updatePartialStateWithWeight(s, fn, val, event.NullValue())
 }
 
 func updatePartialStateWithWeight(s *PartialAggState, fn string, val, weightVal event.Value) {
