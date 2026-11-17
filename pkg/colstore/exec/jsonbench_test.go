@@ -16,6 +16,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
+	"github.com/lynxbase/lynxdb/pkg/colstore/exec/flow"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
@@ -36,6 +37,44 @@ type benchPlan struct {
 	plan exec.Node
 	// ordered is set when the plan's sort makes the row order unique.
 	ordered bool
+	// text is the query in LynxFlow, when the language can state it.
+	text string
+}
+
+// benchTexts states the benchmark plans in LynxFlow, by plan name; a search
+// function of the language ignores letter case, so only the plans that do
+// have a text.
+func benchTexts(win benchWindows) map[string]string {
+	const created = `from bluesky | where kind == "commit" and commit.operation == "create"`
+	const text = "commit.record.text"
+	stamp := func(ns int64) string { return time.Unix(0, ns).UTC().Format(time.RFC3339Nano) }
+	within := func(lo, hi int64) string {
+		return fmt.Sprintf(`_time >= timestamp(%q) and _time <= timestamp(%q)`, stamp(lo), stamp(hi))
+	}
+	byCount := ` | stats count() as count by commit.collection | sort -count, commit.collection`
+
+	return map[string]string{
+		"Q1": `from bluesky` + byCount,
+		"Q2": created + ` | stats count() as count, dc(did) as users by commit.collection | sort -count, commit.collection`,
+		"Q3": created + ` and commit.collection in ["app.bsky.feed.like", "app.bsky.feed.post", "app.bsky.feed.repost"]` +
+			` | extend hour = date_part(_time, "hour") | stats count() as count by commit.collection, hour | sort hour, commit.collection`,
+		"Q4": created + ` and commit.collection == "app.bsky.feed.post" | stats min(_time) as first by did | sort first, did | head 3`,
+		"Q5": created + ` and commit.collection == "app.bsky.feed.post" | stats min(_time) as first, max(_time) as last by did` +
+			` | extend span_ms = last / 1000000 - first / 1000000 | keep did, span_ms | sort -span_ms, did | head 3`,
+		"S1 rare token":            `from bluesky | where has(commit.record.subject.uri, "sc7btuzqdaepksx43mr74pma") | stats count()`,
+		"S2 any case":              `from bluesky | where has(` + text + `, "love") | stats count()`,
+		"S3 any case":              `from bluesky | where has(` + text + `, "good morning") | stats count()`,
+		"S4 any case":              `from bluesky | where has_glob(` + text + `, "crypto*") | stats count()`,
+		"S5 substring":             `from bluesky | where contains_cs(` + text + `, "ware") | stats count()`,
+		"S5 any case":              `from bluesky | where contains(` + text + `, "ware") | stats count()`,
+		"S6 field equals":          `from bluesky | where did == "did:plc:yj3sjq3blzpynh27cumnp5ks" | stats count()`,
+		"S7 unique id":             `from bluesky | where commit.cid == "bafyreicsj6qpl6dreic6ekdjxvdjltncngl52x3jddf6dxhg2gwo35iqhi" | stats count()`,
+		"A1 rare token, any field": `from bluesky sc7btuzqdaepksx43mr74pma | stats count()`,
+		"A3 any field, any case":   `from bluesky love | stats count()`,
+		"T1 count in 10 minutes":   `from bluesky | where ` + within(win.tenLo, win.tenHi) + ` | stats count()`,
+		"T3 groups in 1 hour":      `from bluesky | where ` + within(win.hourLo, win.hourHi) + byCount,
+		"T4 latest 20 of a user":   `from bluesky | where did == "did:plc:yj3sjq3blzpynh27cumnp5ks" | extend event = commit.collection | keep _time, event | sort -_time, event | head 20`,
+	}
 }
 
 // benchWindows holds the time windows of the time-bounded queries, inclusive
@@ -111,25 +150,25 @@ func benchPlans(win benchWindows) []benchPlan {
 		return []*exec.Expr{exec.Ge(exec.Time(), exec.Int(lo)), exec.Le(exec.Time(), exec.Int(hi))}
 	}
 
-	return []benchPlan{
-		{"Q1", &exec.Sort{Input: &exec.Aggregate{Input: &exec.Scan{}, Keys: []exec.Named{collection}, Aggs: []exec.Agg{count}}, By: byCount}, true},
-		{"Q2", &exec.Sort{Input: &exec.Aggregate{
+	plans := []benchPlan{
+		{name: "Q1", plan: &exec.Sort{Input: &exec.Aggregate{Input: &exec.Scan{}, Keys: []exec.Named{collection}, Aggs: []exec.Agg{count}}, By: byCount}, ordered: true},
+		{name: "Q2", plan: &exec.Sort{Input: &exec.Aggregate{
 			Input: &exec.Scan{Filter: exec.And(created...)},
 			Keys:  []exec.Named{collection},
 			Aggs:  []exec.Agg{count, {Name: "users", Func: exec.CountDistinct, Arg: str("did")}},
-		}, By: byCount}, true},
-		{"Q3", &exec.Sort{Input: &exec.Aggregate{
+		}, By: byCount}, ordered: true},
+		{name: "Q3", plan: &exec.Sort{Input: &exec.Aggregate{
 			Input: &exec.Scan{Filter: exec.And(append(created[:2:2], exec.Or(isCollection("app.bsky.feed.like"),
 				isCollection("app.bsky.feed.post"), isCollection("app.bsky.feed.repost")))...)},
 			Keys: []exec.Named{collection, named("hour", exec.HourOfDay(exec.Time()))},
 			Aggs: []exec.Agg{count},
-		}, By: []exec.Order{{Column: "hour"}, {Column: "event"}}}, true},
-		{"Q4", &exec.Sort{Input: &exec.Aggregate{
+		}, By: []exec.Order{{Column: "hour"}, {Column: "event"}}}, ordered: true},
+		{name: "Q4", plan: &exec.Sort{Input: &exec.Aggregate{
 			Input: posts,
 			Keys:  []exec.Named{named("did", str("did"))},
 			Aggs:  []exec.Agg{{Name: "first", Func: exec.Min, Arg: exec.Time()}},
-		}, By: []exec.Order{{Column: "first"}, {Column: "did"}}, Limit: 3}, true},
-		{"Q5", &exec.Sort{Input: &exec.Project{
+		}, By: []exec.Order{{Column: "first"}, {Column: "did"}}, Limit: 3}, ordered: true},
+		{name: "Q5", plan: &exec.Sort{Input: &exec.Project{
 			Input: &exec.Aggregate{
 				Input: posts,
 				Keys:  []exec.Named{named("did", str("did"))},
@@ -137,29 +176,36 @@ func benchPlans(win benchWindows) []benchPlan {
 			},
 			Exprs: []exec.Named{named("did", anyOf("did")), named("span_ms", exec.Sub(
 				exec.Div(anyOf("last"), exec.Int(1_000_000)), exec.Div(anyOf("first"), exec.Int(1_000_000))))},
-		}, By: []exec.Order{{Column: "span_ms", Desc: true}, {Column: "did"}}, Limit: 3}, true},
-		{"S1 rare token", search(exec.Match(str("commit.record.subject.uri"), tokenfilter.Word("sc7btuzqdaepksx43mr74pma"))), true},
-		{"S2 common token", search(exec.Match(text, tokenfilter.Word("love"))), true},
-		{"S3 phrase", search(exec.Match(text, tokenfilter.Word("Good morning"))), true},
-		{"S4 prefix", search(exec.Match(text, tokenfilter.Prefix("crypto"))), true},
-		{"S5 substring", search(exec.Match(text, tokenfilter.Substring("ware"))), true},
-		{"S6 field equals", search(exec.Eq(str("did"), exec.Str("did:plc:yj3sjq3blzpynh27cumnp5ks"))), true},
-		{"S7 unique id", search(exec.Eq(str("commit.cid"), exec.Str("bafyreicsj6qpl6dreic6ekdjxvdjltncngl52x3jddf6dxhg2gwo35iqhi"))), true},
-		{"A1 rare token, any field", search(exec.MatchAny(tokenfilter.Word("sc7btuzqdaepksx43mr74pma"))), true},
-		{"A2 common token, any field", search(exec.MatchAny(tokenfilter.Word("love"))), true},
-		{"S2 any case", search(exec.Match(text, tokenfilter.Word("love").IgnoreCase())), true},
-		{"S3 any case", search(exec.Match(text, tokenfilter.Word("good morning").IgnoreCase())), true},
-		{"S4 any case", search(exec.Match(text, tokenfilter.Prefix("crypto").IgnoreCase())), true},
-		{"S5 any case", search(exec.Match(text, tokenfilter.Substring("ware").IgnoreCase())), true},
-		{"T1 count in 10 minutes", search(exec.And(within(win.tenLo, win.tenHi)...)), true},
-		{"T2 token in 10 minutes", search(exec.And(append(within(win.tenLo, win.tenHi), exec.Match(text, tokenfilter.Word("love")))...)), true},
-		{"T3 groups in 1 hour", &exec.Sort{Input: &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(within(win.hourLo, win.hourHi)...)},
-			Keys: []exec.Named{collection}, Aggs: []exec.Agg{count}}, By: byCount}, true},
-		{"T4 latest 20 of a user", &exec.Sort{Input: &exec.Project{
+		}, By: []exec.Order{{Column: "span_ms", Desc: true}, {Column: "did"}}, Limit: 3}, ordered: true},
+		{name: "S1 rare token", plan: search(exec.Match(str("commit.record.subject.uri"), tokenfilter.Word("sc7btuzqdaepksx43mr74pma"))), ordered: true},
+		{name: "S2 common token", plan: search(exec.Match(text, tokenfilter.Word("love"))), ordered: true},
+		{name: "S3 phrase", plan: search(exec.Match(text, tokenfilter.Word("Good morning"))), ordered: true},
+		{name: "S4 prefix", plan: search(exec.Match(text, tokenfilter.Prefix("crypto"))), ordered: true},
+		{name: "S5 substring", plan: search(exec.Match(text, tokenfilter.Substring("ware"))), ordered: true},
+		{name: "S6 field equals", plan: search(exec.Eq(str("did"), exec.Str("did:plc:yj3sjq3blzpynh27cumnp5ks"))), ordered: true},
+		{name: "S7 unique id", plan: search(exec.Eq(str("commit.cid"), exec.Str("bafyreicsj6qpl6dreic6ekdjxvdjltncngl52x3jddf6dxhg2gwo35iqhi"))), ordered: true},
+		{name: "A1 rare token, any field", plan: search(exec.MatchAny(tokenfilter.Word("sc7btuzqdaepksx43mr74pma"))), ordered: true},
+		{name: "A2 common token, any field", plan: search(exec.MatchAny(tokenfilter.Word("love"))), ordered: true},
+		{name: "A3 any field, any case", plan: search(exec.MatchAny(tokenfilter.Word("love").IgnoreCase())), ordered: true},
+		{name: "S2 any case", plan: search(exec.Match(text, tokenfilter.Word("love").IgnoreCase())), ordered: true},
+		{name: "S3 any case", plan: search(exec.Match(text, tokenfilter.Word("good morning").IgnoreCase())), ordered: true},
+		{name: "S4 any case", plan: search(exec.Match(text, tokenfilter.Prefix("crypto").IgnoreCase())), ordered: true},
+		{name: "S5 any case", plan: search(exec.Match(text, tokenfilter.Substring("ware").IgnoreCase())), ordered: true},
+		{name: "T1 count in 10 minutes", plan: search(exec.And(within(win.tenLo, win.tenHi)...)), ordered: true},
+		{name: "T2 token in 10 minutes", plan: search(exec.And(append(within(win.tenLo, win.tenHi), exec.Match(text, tokenfilter.Word("love")))...)), ordered: true},
+		{name: "T3 groups in 1 hour", plan: &exec.Sort{Input: &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(within(win.hourLo, win.hourHi)...)},
+			Keys: []exec.Named{collection}, Aggs: []exec.Agg{count}}, By: byCount}, ordered: true},
+		{name: "T4 latest 20 of a user", plan: &exec.Sort{Input: &exec.Project{
 			Input: &exec.Scan{Filter: exec.Eq(str("did"), exec.Str("did:plc:yj3sjq3blzpynh27cumnp5ks"))},
 			Exprs: []exec.Named{named("time", exec.Time()), collection},
-		}, By: []exec.Order{{Column: "time", Desc: true}, {Column: "event"}}, Limit: 20}, true},
+		}, By: []exec.Order{{Column: "time", Desc: true}, {Column: "event"}}, Limit: 20}, ordered: true},
 	}
+	texts := benchTexts(win)
+	for i := range plans {
+		plans[i].text = texts[plans[i].name]
+	}
+
+	return plans
 }
 
 // loadArrival shreds data on every core, one part per worker, in the order
@@ -382,7 +428,18 @@ func TestJSONBenchReference(t *testing.T) {
 		for _, q := range benchPlans(windowsOf(t, snap)) {
 			for _, workers := range []int{cores, 1} {
 				t.Run(fmt.Sprintf("%s/%s/%d", name, q.name, workers), func(t *testing.T) {
-					check(t, snap, rows, q.plan, q.ordered, workers)
+					res := check(t, snap, rows, q.plan, q.ordered, workers)
+					if q.text == "" {
+						return
+					}
+					plan, err := flow.Compile(q.text, flow.Options{})
+					if err != nil {
+						t.Fatalf("%s: %v", q.text, err)
+					}
+					stated := check(t, snap, rows, plan, q.ordered, workers)
+					if got, want := fmt.Sprint(resultRows(stated)), fmt.Sprint(resultRows(res)); q.ordered && got != want {
+						t.Fatalf("%s\n gives %s\n the plan %s", q.text, got, want)
+					}
 				})
 			}
 		}
@@ -588,6 +645,36 @@ func TestJSONBenchPlans(t *testing.T) {
 				t.Logf("%-8s %-22s answer: %s", "", q.name, got)
 			}
 			answers[q.name] = got
+			if q.text == "" {
+				continue
+			}
+			var stated exec.Node
+			compiled, _, err := timeRuns(20, func() (err error) {
+				stated, err = flow.Compile(q.text, flow.Options{})
+
+				return err
+			})
+			if err != nil {
+				t.Fatalf("%s: %v", q.text, err)
+			}
+			took, cpu, err = timeRuns(runs, func() (err error) {
+				res, err = exec.Run(context.Background(), tbl.snap, stated, exec.Options{Workers: cores})
+
+				return err
+			})
+			if err != nil {
+				t.Fatalf("%s: %v", q.text, err)
+			}
+			how = "hashed"
+			if res.Stats.Ordered {
+				how = "in key order"
+			}
+			t.Logf("%-8s %-22s %8.2f ms on %d cores (median %.2f, cpu %.1f) as text, %s, after %.3f ms to parse and compile (median %.3f)",
+				tbl.name, q.name, millis(took[0]), cores, millis(took[runs/2]), millis(cpu), how,
+				float64(compiled[0].Nanoseconds())/1e6, float64(compiled[10].Nanoseconds())/1e6)
+			if stated := answer(q.name, res); stated != got {
+				t.Errorf("%s %s as text\n got  %s\n want %s", tbl.name, q.name, stated, got)
+			}
 		}
 	}
 }
