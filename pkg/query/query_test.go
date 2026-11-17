@@ -11,6 +11,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/engine/physical"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/ppl"
 )
 
 var t0 = time.Date(2024, 2, 1, 9, 0, 0, 0, time.UTC)
@@ -84,6 +85,21 @@ func rowsText(rows []map[string]event.Value) string {
 		lines = append(lines, strings.Join(parts, " "))
 	}
 	return strings.Join(lines, "\n")
+}
+
+// TestCorrelatedSubqueriesFailToCompile pins subqueries that read a field of
+// the query around them: they fail to compile instead of matching nothing.
+func TestCorrelatedSubqueriesFailToCompile(t *testing.T) {
+	for q, field := range map[string]string{
+		"source=logs | where exists [ source=users | where host = logs.host ] | fields host":                                   "logs.host",
+		"source=logs | eval top = 100 | where host in [ source=users | fields host, owner | where owner = top | fields host ]": "field top",
+	} {
+		_, err := Compile(q)
+		pe, ok := ppl.AsError(err)
+		if !ok || pe.Kind != ppl.ErrUnsupportedFeature || !strings.Contains(pe.Msg, "correlated subqueries are not supported") || !strings.Contains(pe.Msg, field) {
+			t.Errorf("%s: got %v, want an unsupported_feature error naming %s", q, err, field)
+		}
+	}
 }
 
 func TestExecute(t *testing.T) {

@@ -58,6 +58,11 @@ func CompileQuery(q *ast.Query) (*Result, error) {
 
 type compiler struct {
 	sources []string
+	// st is the pipeline whose commands are being compiled.
+	st *pipe
+	// outer holds the pipelines enclosing the subquery being compiled,
+	// innermost last.
+	outer []*pipe
 }
 
 func (c *compiler) noteSource(name string) {
@@ -120,22 +125,28 @@ func (c *compiler) pipeline(pl *ast.Pipeline) (ir.Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	enclosing := c.st
+	c.st = st
 	for _, cmd := range pl.Commands[1:] {
 		if err := c.command(st, cmd); err != nil {
 			return nil, err
 		}
 	}
+	c.st = enclosing
 	return st.node, nil
 }
 
 // commands applies commands without a source command to an existing input.
 func (c *compiler) commands(input ir.Node, origin ir.Node, cmds []ast.Command) (ir.Node, error) {
 	st := &pipe{node: input, origin: origin}
+	enclosing := c.st
+	c.st = st
 	for _, cmd := range cmds {
 		if err := c.command(st, cmd); err != nil {
 			return nil, err
 		}
 	}
+	c.st = enclosing
 	return st.node, nil
 }
 
@@ -175,6 +186,7 @@ func resolveName(n ast.Node, name string, s ir.Schema) (*ir.FieldRef, error) {
 
 func unknownField(n ast.Node, name string, s ir.Schema) *Error {
 	e := semanticErr(n, "field %s not found", ir.QuoteName(name))
+	e.field = name
 	if names := s.Names(); len(names) > 0 && len(names) <= 30 {
 		e.Hint = "available fields: " + strings.Join(names, ", ")
 	}

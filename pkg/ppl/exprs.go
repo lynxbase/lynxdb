@@ -261,7 +261,43 @@ func (x *ectx) field(n *ast.Field) (ir.Expr, error) {
 			return e, nil
 		}
 	}
+	if len(x.c.outer) > 0 && len(n.Parts) > 1 && x.c.outerQualifier(n.Parts[0]) {
+		return nil, correlated(n, "%s of the outer query", name)
+	}
 	return resolve(&ast.Field{Base: n.Base, Parts: []string{name}}, x.schema)
+}
+
+// outerQualifier reports whether q names the source or an alias of a query
+// enclosing the subquery being compiled, and not one of the subquery's own.
+func (c *compiler) outerQualifier(q string) bool {
+	if qualifies(c.st, q) {
+		return false
+	}
+	for _, p := range c.outer {
+		if qualifies(p, q) {
+			return true
+		}
+	}
+	return false
+}
+
+func qualifies(p *pipe, q string) bool {
+	if p == nil {
+		return false
+	}
+	if p.aliases[q] {
+		return true
+	}
+	for _, src := range sourceNames(p.origin) {
+		if src == q {
+			return true
+		}
+	}
+	return false
+}
+
+func correlated(n ast.Node, format string, args ...any) *Error {
+	return unsupportedFeature(n, "correlated subqueries are not supported: the subquery refers to "+format, args...)
 }
 
 func (x *ectx) unary(n *ast.Unary) (ir.Expr, error) {
@@ -614,9 +650,12 @@ func (x *ectx) cast(n *ast.Cast) (ir.Expr, error) {
 }
 
 func (x *ectx) subquery(n *ast.Subquery) (ir.Expr, error) {
-	plan, err := x.c.pipeline(n.Pipeline)
+	c := x.c
+	c.outer = append(c.outer, c.st)
+	plan, err := c.pipeline(n.Pipeline)
+	c.outer = c.outer[:len(c.outer)-1]
 	if err != nil {
-		return nil, err
+		return nil, outerField(err, x.schema)
 	}
 	switch n.Kind {
 	case ast.SubqueryExists:
@@ -639,6 +678,21 @@ func (x *ectx) subquery(n *ast.Subquery) (ir.Expr, error) {
 		return nil, semanticErr(n, "a scalar subquery must return exactly one column; end it with stats or fields")
 	}
 	return &ir.Subquery{Mode: ir.SubqueryScalar, Plan: plan, T: s.Columns[0].Type}, nil
+}
+
+// outerField reports a field that a subquery does not have and that the
+// query around it, whose schema is outer, does as a correlated reference.
+func outerField(err error, outer ir.Schema) error {
+	pe, ok := err.(*Error)
+	if !ok || pe.field == "" {
+		return err
+	}
+	if _, known := outer.Lookup(pe.field); !known {
+		return err
+	}
+	e := correlated(nil, "field %s of the outer query", ir.QuoteName(pe.field))
+	e.Pos, e.End = pe.Pos, pe.End
+	return e
 }
 
 func (x *ectx) datePart(n *ast.DatePart) (ir.Expr, error) {

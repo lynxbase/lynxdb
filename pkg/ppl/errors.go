@@ -39,6 +39,8 @@ type Error struct {
 	Hint string
 	// Expected lists the tokens a syntax error would have accepted.
 	Expected []string
+	// field is the name a field-not-found error could not resolve.
+	field string
 }
 
 func (e *Error) Error() string {

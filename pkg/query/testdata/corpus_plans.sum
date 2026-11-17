@@ -300,12 +300,12 @@ dddc92fc25ab2b34	source = outer | eval m = [ source = inner | stats max(c) ] | f
 dbe8c06721a4c9ea	source = outer | eval m = [ source = inner | stats max(c) ] + b | fields m, a
 ca122ca561c1f70f	source = outer | where a > [ source = inner | stats min(c) ] | fields a
 bea4f7a96a252a7d	source = outer a > [ source = inner | stats min(c) ] | fields a
-a74832d02a0d87a7	source = outer | eval m = [ source = inner | where outer.b = inner.d | stats max(c) ] | fields m, a
+0d90d5921f76a7c8	source = outer | eval m = [ source = inner | where outer.b = inner.d | stats max(c) ] | fields m, a
 24eff9692eece989	source = outer | eval m = [ source = inner | where b = d | stats max(c) ] | fields m, a
-426a4b72124ffdbd	source = outer | eval m = [ source = inner | where outer.b > inner.d | stats max(c) ] | fields m, a
-bc392b1f5cbedd41	source = outer | where a = [ source = inner | where outer.b = inner.d | stats max(c) ]
+0d90d5921f76a7c8	source = outer | eval m = [ source = inner | where outer.b > inner.d | stats max(c) ] | fields m, a
+e179108d46720947	source = outer | where a = [ source = inner | where outer.b = inner.d | stats max(c) ]
 c671071c7da830c1	source = outer | where a = [ source = inner | where b = d | stats max(c) ]
-78c2f33fdd229e9a	source = outer | where [ source = inner | where outer.b = inner.d OR inner.d = 1 | stats count() ] > 0 | fields a
+fcf83c42593c8c81	source = outer | where [ source = inner | where outer.b = inner.d OR inner.d = 1 | stats count() ] > 0 | fields a
 acb6b9bdfcd9fe75	source = outer a = [ source = inner | where b = d | stats max(c) ]
 3991c9bea5e9d916	source = outer [ source = inner | where outer.b = inner.d OR inner.d = 1 | stats count() ] > 0 | fields a
 6ae130cb00a9f051	source = outer | where a = [ source = inner | stats max(c) | sort c ] OR b = [ source = inner | where c = 1 | stats min(d) | sort d ]
