@@ -479,3 +479,38 @@ func TestCommitInAReadOnlyDirectoryLeavesFilesForTheNextOpen(t *testing.T) {
 	}
 	checkDirMatchesManifest(t, d, "after reopen")
 }
+
+func TestClosedDirTakesNoCommit(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "table")
+	d, err := OpenDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := d.Commit([]*PartFile{writePartFile(t, d, 0, 100, "a")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	late := writePartFile(t, d, 100, 100, "late")
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Commit([]*PartFile{late}, nil); !errors.Is(err, ErrClosed) {
+		t.Fatalf("a commit after Close: %v", err)
+	}
+	if _, err := d.Commit(nil, base); !errors.Is(err, ErrClosed) {
+		t.Fatalf("a removal after Close: %v", err)
+	}
+	if got := partFiles(t, path); len(got) != 1 {
+		t.Fatalf("files %v after a commit to a closed directory", got)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("closing twice: %v", err)
+	}
+	if d, err = OpenDir(path); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if rows, sum := rowsAndSum(t, d); rows != 100 || sum != 99*100/2 {
+		t.Fatalf("after reopen: %d rows, sum %d", rows, sum)
+	}
+}

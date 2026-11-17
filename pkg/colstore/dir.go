@@ -70,6 +70,7 @@ type Dir struct {
 	live map[*Handle]*partFileRef
 	// failed, once set, is what every further change returns.
 	failed error
+	closed bool
 }
 
 // partFileRef ties a handle to its file; dead marks a part the manifest no
@@ -593,11 +594,19 @@ func (d *Dir) rewrite() error {
 }
 
 // Close releases the table's parts and the manifest; parts held by
-// snapshots stay readable until those are released.
+// snapshots stay readable until those are released. A closed directory
+// returns ErrClosed for every change.
 func (d *Dir) Close() error {
-	d.table.Close()
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.closed {
+		return nil
+	}
+	d.closed = true
+	if d.failed == nil {
+		d.failed = ErrClosed
+	}
+	d.table.Close()
 
 	return d.log.Close()
 }

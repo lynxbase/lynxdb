@@ -89,6 +89,11 @@ type Store struct {
 	next     atomic.Uint32
 	flushing chan struct{}
 
+	// closed is set when Close begins; closing runs it once.
+	closed   atomic.Bool
+	closing  sync.Once
+	closeErr error
+
 	mu   sync.Mutex
 	idle *sync.Cond
 	// kicks counts requests to look for merges and seen the requests the
@@ -148,17 +153,23 @@ func (s *Store) Table() *Table { return s.dir.Table() }
 func (s *Store) ReleasePages() { s.dir.ReleasePages() }
 
 // Close writes what Append buffered, stops the merger and closes the
-// directory; writers must be closed first.
+// directory; writers must be closed first. Rows of an Append that returned
+// nil are written, and from then on the store returns ErrClosed. Closing
+// again returns what the first Close returned.
 func (s *Store) Close() error {
-	close(s.done)
-	<-s.flushing
-	syncErr := s.Sync()
-	<-s.stopped
-	s.mu.Lock()
-	err := s.err
-	s.mu.Unlock()
+	s.closing.Do(func() {
+		s.closed.Store(true)
+		close(s.done)
+		<-s.flushing
+		syncErr := s.flushShards(0)
+		<-s.stopped
+		s.mu.Lock()
+		err := s.err
+		s.mu.Unlock()
+		s.closeErr = errors.Join(syncErr, err, s.dir.Close())
+	})
 
-	return errors.Join(syncErr, err, s.dir.Close())
+	return s.closeErr
 }
 
 // appendShard is one buffer of Append; since is when its oldest unwritten
@@ -189,11 +200,16 @@ func (s *Store) Append(lines []byte) (rejected int64, err error) {
 		sh.mu.Lock()
 	}
 	defer sh.mu.Unlock()
+	// Close flushes every buffer after it has set closed, so the rows of
+	// a caller that got here before are written by it.
+	if s.closed.Load() {
+		return 0, ErrClosed
+	}
 	if sh.w == nil {
 		sh.w = s.NewWriter()
 	}
 	before := sh.w.Rejected
-	err = sh.w.AddNDJSON(lines)
+	err = sh.w.add(lines)
 	switch {
 	case sh.w.buffered == 0:
 		sh.since = time.Time{}
@@ -205,7 +221,13 @@ func (s *Store) Append(lines []byte) (rejected int64, err error) {
 }
 
 // Sync writes everything Append has buffered and returns once it is durable.
-func (s *Store) Sync() error { return s.flushShards(0) }
+func (s *Store) Sync() error {
+	if s.closed.Load() {
+		return ErrClosed
+	}
+
+	return s.flushShards(0)
+}
 
 // flushShards writes the buffers whose oldest row is at least age old.
 func (s *Store) flushShards(age time.Duration) error {
@@ -221,7 +243,7 @@ func (s *Store) flushShards(age time.Duration) error {
 			if sh.w == nil || sh.w.buffered == 0 || time.Since(sh.since) < age {
 				return
 			}
-			errs[i] = sh.w.Flush()
+			errs[i] = sh.w.flush()
 			sh.since = time.Time{}
 		}()
 	}
@@ -288,6 +310,9 @@ func (s *Store) Settle() error {
 // unix nanoseconds, and returns the number of rows removed. A store that is
 // not partitioned keeps everything.
 func (s *Store) DropBefore(t int64) (uint64, error) {
+	if s.closed.Load() {
+		return 0, ErrClosed
+	}
 	width := int64(s.opts.Partition)
 	if width <= 0 {
 		return 0, nil
@@ -579,6 +604,14 @@ func (s *Store) NewWriter() *Writer {
 // AddNDJSON buffers the documents of lines, one per line, and writes a run
 // each time the buffer has grown to the store's flush size.
 func (w *Writer) AddNDJSON(lines []byte) error {
+	if w.s.closed.Load() {
+		return ErrClosed
+	}
+
+	return w.add(lines)
+}
+
+func (w *Writer) add(lines []byte) error {
 	for len(lines) > 0 {
 		chunk := lines
 		if room := w.s.opts.FlushBytes - w.buffered; room < len(chunk) {
@@ -591,7 +624,7 @@ func (w *Writer) AddNDJSON(lines []byte) error {
 		w.errs = w.batch.AddNDJSON(chunk, 0, w.errs[:0])
 		w.Rejected += int64(len(w.errs))
 		if w.buffered += len(chunk); w.buffered >= w.s.opts.FlushBytes {
-			if err := w.Flush(); err != nil {
+			if err := w.flush(); err != nil {
 				return err
 			}
 		}
@@ -603,6 +636,14 @@ func (w *Writer) AddNDJSON(lines []byte) error {
 // Flush writes the buffered rows as one run per partition they fall in;
 // when it returns nil they are durable and visible to new snapshots.
 func (w *Writer) Flush() error {
+	if w.batch.Rows > 0 && w.s.closed.Load() {
+		return ErrClosed
+	}
+
+	return w.flush()
+}
+
+func (w *Writer) flush() error {
 	if w.batch.Rows == 0 {
 		return nil
 	}
