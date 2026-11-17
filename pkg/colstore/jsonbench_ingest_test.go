@@ -35,8 +35,8 @@ import (
 // runs due to be merged below which merges give way to the rows that wait
 // to be written, LYNXDB_BENCH_NO_PACKING leaves
 // identifier-like strings to the general codec, and LYNXDB_BENCH_VALUE_SLACK
-// is the percentage by which long values may grow for a faster codec ("off"
-// for none; the store's default is 50).
+// is the percentage by which long values may grow for a faster codec (none
+// by default, as in the store).
 func TestJSONBenchIngest(t *testing.T) {
 	dir, path := os.Getenv("LYNXDB_BENCH_DIR"), os.Getenv("LYNXDB_BENCH_NDJSON")
 	if dir == "" || path == "" || os.Getenv("LYNXDB_BENCH_INGEST") == "" {

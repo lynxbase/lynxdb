@@ -60,8 +60,10 @@ type StoreOptions struct {
 	// merged into one run, and again once rows that came later make up an
 	// eighth of it.
 	Partition time.Duration
-	// Part sets how parts are encoded; its ordering fields are overridden,
-	// and a ValueSlack of zero means 50, a negative one none.
+	// Part sets how parts are encoded; its ordering fields are overridden.
+	// Text is stored at its smallest unless ValueSlack is set: on a volume
+	// bound by throughput the bytes decide how long a scan of cold text
+	// and a load take.
 	Part part.Options
 	// FlushLevel is the compression effort of the runs writers flush, which
 	// merges replace by parts of Part.Level.
@@ -83,9 +85,6 @@ const (
 	// defaultMergeBacklog lets a burst of rows be written before the runs
 	// it leaves are merged, and bounds the runs that queries then meet.
 	defaultMergeBacklog = 64
-	// defaultValueSlack lets text that shrinks little take the codec that
-	// scans read several times faster, for at most half again its size.
-	defaultValueSlack = 50
 )
 
 // Store keeps a table in a directory, takes documents through writers that
@@ -198,9 +197,6 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	}
 	if opts.MergeBacklog == 0 {
 		opts.MergeBacklog = defaultMergeBacklog
-	}
-	if opts.Part.ValueSlack == 0 {
-		opts.Part.ValueSlack = defaultValueSlack
 	}
 	opts.Part.Ordered, opts.Part.SortKey = true, opts.SortKey
 	dir, err := OpenDir(path)
