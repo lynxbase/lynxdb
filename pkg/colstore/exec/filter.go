@@ -183,9 +183,9 @@ func (w *worker) decide(p *pred) verdict {
 }
 
 // evalAny selects the rows in which a string column of the block, whatever
-// its path, holds the pattern. It decodes every string column that is not a
-// constant and whose token filter admits the pattern, and tests a dictionary
-// once per entry.
+// its path, holds the pattern. It decodes the values of every string column
+// that is not a constant and whose token filter admits the pattern, tests a
+// dictionary once per entry, and finds the rows of the values that match.
 func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
 	m := w.mask(depth)
 	clear(m)
@@ -212,7 +212,7 @@ func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
 		}
 		w.searched++
 		c := &w.anyCol
-		if err := w.b.Decode(ref, c); err != nil {
+		if err := w.b.DecodeValues(ref, c); err != nil {
 			return none, err
 		}
 		w.decoded = true
@@ -239,27 +239,41 @@ func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
 			for _, code := range w.idx2 {
 				w.table[code] = 0xFF
 			}
+			hit = true
+			if c.Valid != nil {
+				w.anyRows = c.Valid.AppendSet(w.anyRows[:0])
+				for v, r := range w.anyRows {
+					if w.table[c.Code(v)] != 0 {
+						m[r] = 0xFF
+					}
+				}
+
+				continue
+			}
 			other := w.mask(depth + 1)
 			if len(c.Codes8) != 0 {
 				vec.MaskLookup8(other, c.Codes8, w.table)
 			} else {
 				vec.MaskLookup16(other, c.Codes16, w.table)
 			}
-			// Rows without a value are decoded as code 0.
-			if c.Valid != nil && w.table[0] != 0 {
-				vec.MaskAndBitmap(other, c.Valid)
-			}
 			vec.MaskOr(m, m, other)
-			hit = true
 		default:
-			w.idx2 = p.pat.AppendMatches(w.idx2[:0], c.Offsets[:c.Rows+1], c.Data)
+			w.idx2 = p.pat.AppendMatches(w.idx2[:0], c.Offsets[:ref.Count+1], c.Data)
+			if len(w.idx2) == 0 {
+				continue
+			}
+			hit = true
 			if c.Valid != nil {
-				w.idx2 = vec.IndexesAndBitmap(w.idx2, c.Valid)
+				w.anyRows = c.Valid.AppendSet(w.anyRows[:0])
+				for _, v := range w.idx2 {
+					m[w.anyRows[v]] = 0xFF
+				}
+
+				continue
 			}
 			for _, r := range w.idx2 {
 				m[r] = 0xFF
 			}
-			hit = hit || len(w.idx2) > 0
 		}
 	}
 	if !hit {
