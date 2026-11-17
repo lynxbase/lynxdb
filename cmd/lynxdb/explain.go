@@ -65,7 +65,6 @@ func runExplain(query string, analyze bool) error {
 		}
 		rows := queryResultToRows(qResult)
 		st = buildQueryStatsFromMeta(qResult.Meta, int64(len(rows)), time.Since(start))
-		st.Recommendations = stats.GenerateRecommendations(st)
 	}
 
 	if isJSONFormat() {

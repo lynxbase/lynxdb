@@ -261,7 +261,7 @@ func runLocalQuery(db *database.DB, q, outputFile string, failEmpty bool, analyz
 	if err := db.Sync(); err != nil {
 		return err
 	}
-	st := &stats.QueryStats{ScanType: "ephemeral"}
+	st := &stats.QueryStats{}
 	for _, ix := range db.Stats() {
 		st.ScannedRows += int64(ix.Rows)
 	}
@@ -408,8 +408,6 @@ func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outp
 	st.ResultRows = int64(len(rows))
 
 	if analyze != "" {
-		st.Recommendations = stats.GenerateRecommendations(st)
-
 		if isJSONFormat() {
 			return stats.FormatProfileJSON(os.Stderr, st)
 		}
@@ -528,8 +526,6 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 	st := buildQueryStatsFromMeta(result.Meta, int64(len(rows)), time.Since(start))
 
 	if analyze != "" {
-		st.Recommendations = stats.GenerateRecommendations(st)
-
 		if isJSONFormat() {
 			return stats.FormatProfileJSON(os.Stderr, st)
 		}
@@ -574,25 +570,8 @@ func printQueryInsightFooter(st *stats.QueryStats) {
 	if st.ScannedRows > 0 {
 		metrics = append(metrics, ui.Metric{Label: "Scanned", Value: formatCount(st.ScannedRows)})
 	}
-	if skipped := st.SkippedSegments(); skipped > 0 {
-		metrics = append(metrics, ui.Metric{
-			Label: "Skipped",
-			Value: formatCount(int64(skipped)) + " segments",
-			Hint:  skipBreakdownHint(st),
-		})
-	}
-	if st.ProcessedBytes > 0 {
-		metrics = append(metrics, ui.Metric{Label: "Read", Value: formatBytes(st.ProcessedBytes)})
-	}
 
 	fmt.Fprintln(os.Stderr, ui.Stderr.MetricGrid(metrics, globalCompact))
-
-	if hints := queryInsightHints(st); len(hints) > 0 {
-		fmt.Fprintln(os.Stderr)
-		for _, hint := range hints {
-			fmt.Fprintf(os.Stderr, "  %s %s\n", ui.Stderr.Info.Render("•"), ui.Stderr.Dim.Render(hint))
-		}
-	}
 
 	if globalVerbose {
 		var statsBuf bytes.Buffer
@@ -603,45 +582,6 @@ func printQueryInsightFooter(st *stats.QueryStats) {
 			fmt.Fprintln(os.Stderr, ui.Stderr.Dim.Render(detail))
 		}
 	}
-}
-
-func skipBreakdownHint(st *stats.QueryStats) string {
-	var parts []string
-	if st.BloomSkippedSegments > 0 {
-		parts = append(parts, fmt.Sprintf("bloom %s", formatCount(int64(st.BloomSkippedSegments))))
-	}
-	if st.TimeSkippedSegments > 0 {
-		parts = append(parts, fmt.Sprintf("time %s", formatCount(int64(st.TimeSkippedSegments))))
-	}
-	if st.IndexSkippedSegments > 0 {
-		parts = append(parts, fmt.Sprintf("index %s", formatCount(int64(st.IndexSkippedSegments))))
-	}
-	if st.StatSkippedSegments > 0 {
-		parts = append(parts, fmt.Sprintf("stats %s", formatCount(int64(st.StatSkippedSegments))))
-	}
-	if st.RangeSkippedSegments > 0 {
-		parts = append(parts, fmt.Sprintf("range %s", formatCount(int64(st.RangeSkippedSegments))))
-	}
-
-	return strings.Join(parts, ", ")
-}
-
-func queryInsightHints(st *stats.QueryStats) []string {
-	var hints []string
-	if st.CacheHit {
-		hints = append(hints, "served from query cache")
-	}
-	if st.VectorizedFilterUsed {
-		hints = append(hints, "vectorized filters used")
-	}
-	if st.InvertedIndexHits > 0 {
-		hints = append(hints, fmt.Sprintf("inverted index hits: %s", formatCount(int64(st.InvertedIndexHits))))
-	}
-	if len(st.IndexesUsed) > 0 {
-		hints = append(hints, "indexes: "+strings.Join(st.IndexesUsed, ", "))
-	}
-
-	return hints
 }
 
 // queryResultToRows converts a typed *client.QueryResult to []map[string]interface{}.
@@ -715,8 +655,6 @@ func handleAsyncFallback(ctx context.Context, jobID string, failEmpty bool, anal
 	st := buildQueryStatsFromMeta(result.Meta, int64(len(rows)), time.Since(start))
 
 	if analyze != "" {
-		st.Recommendations = stats.GenerateRecommendations(st)
-
 		if isJSONFormat() {
 			return stats.FormatProfileJSON(os.Stderr, st)
 		}
