@@ -30,7 +30,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/server"
 	shipperstats "github.com/lynxbase/lynxdb/pkg/server/shippers"
-	"github.com/lynxbase/lynxdb/pkg/storage/savedqueries"
 	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
@@ -40,7 +39,6 @@ type Server struct {
 	keyStore           *auth.KeyStore // Nil when auth is disabled.
 	queryService       *usecases.QueryService
 	tailService        *usecases.TailService
-	queryStore         *savedqueries.Store
 	runtimeCfg         *config.Config
 	cfgMu              sync.RWMutex
 	httpServer         *http.Server
@@ -107,21 +105,6 @@ func NewServer(cfg Config) (*Server, error) {
 	queryService := usecases.NewQueryService(p, engine, cfg.Query)
 	tailService := usecases.NewTailService(p, engine)
 
-	// Initialize saved queries store.
-	var qStore *savedqueries.Store
-	var storeDegraded bool
-	var err error
-	if cfg.DataDir != "" {
-		qStore, err = savedqueries.OpenStore(cfg.DataDir)
-		if err != nil {
-			cfg.Logger.Warn("[DATA LOSS RISK] failed to open saved queries store, falling back to in-memory", "error", err)
-			qStore = savedqueries.OpenInMemory()
-			storeDegraded = true
-		}
-	} else {
-		qStore = savedqueries.OpenInMemory()
-	}
-
 	shutdownTimeout := cfg.HTTP.ShutdownTimeout
 	shutdownTimeout = defaultShutdownTimeout(shutdownTimeout)
 
@@ -153,7 +136,6 @@ func NewServer(cfg Config) (*Server, error) {
 		keyStore:        cfg.KeyStore,
 		queryService:    queryService,
 		tailService:     tailService,
-		queryStore:      qStore,
 		runtimeCfg:      runtimeCfg,
 		ready:           make(chan struct{}),
 		queryCfg:        cfg.Query,
@@ -165,9 +147,6 @@ func NewServer(cfg Config) (*Server, error) {
 		splunkAckStore:  splunkhec.NewAckStore(10000),
 		levelVar:        cfg.LevelVar,
 		logger:          cfg.Logger,
-	}
-	if storeDegraded {
-		s.degraded.Store(true)
 	}
 
 	// Register Prometheus metrics and wire the OnQueryComplete hook so that
@@ -346,31 +325,6 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// Compaction history.
 	mux.HandleFunc("GET /api/v1/compaction/history", s.handleCompactionHistory)
-
-	// Saved queries (generic CRUD).
-	registerCRUD(mux, "/api/v1/queries", CRUDOpts[savedqueries.SavedQuery, *savedqueries.SavedQueryInput]{
-		Store:       s.queryStore,
-		ConflictErr: savedqueries.ErrAlreadyExists,
-		ServerRef:   s,
-		NewEntity: func(input *savedqueries.SavedQueryInput) *savedqueries.SavedQuery {
-			return input.ToSavedQuery()
-		},
-		MergeEntity: func(existing *savedqueries.SavedQuery, input *savedqueries.SavedQueryInput) *savedqueries.SavedQuery {
-			existing.Name = input.Name
-			if input.Q != "" {
-				existing.Q = input.Q
-			} else if input.Query != "" {
-				existing.Q = input.Query
-			}
-			existing.From = input.From
-			existing.Source = input.Source
-			existing.Metadata = input.Metadata
-			existing.LanguageVersion = "lynxflow"
-			existing.UpdatedAt = time.Now()
-
-			return existing
-		},
-	})
 
 	// Config API.
 	mux.HandleFunc("GET /api/v1/config", s.handleGetConfig)

@@ -632,27 +632,6 @@ type StreamMeta struct {
 	TookMS  int64 `json:"took_ms"`
 }
 
-// SavedQuery is a saved query definition.
-type SavedQuery struct {
-	ID        string                 `json:"id"`
-	Name      string                 `json:"name"`
-	Q         string                 `json:"q"`
-	From      string                 `json:"from,omitempty"`
-	Source    string                 `json:"source,omitempty"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
-	CreatedAt string                 `json:"created_at,omitempty"`
-	UpdatedAt string                 `json:"updated_at,omitempty"`
-}
-
-// SavedQueryInput is the request body for creating/updating a saved query.
-type SavedQueryInput struct {
-	Name     string                 `json:"name"`
-	Q        string                 `json:"q"`
-	From     string                 `json:"from,omitempty"`
-	Source   string                 `json:"source,omitempty"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
-}
-
 // ConfigResult is the response from GetConfig().
 type ConfigResult map[string]interface{}
 

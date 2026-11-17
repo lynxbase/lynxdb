@@ -364,3 +364,29 @@ func runAuthStatus(_ *cobra.Command, _ []string) error {
 
 	return nil
 }
+
+// formatRelativeTime renders an RFC 3339 timestamp as an age such as "5m ago".
+func formatRelativeTime(iso string) string {
+	t, err := time.Parse(time.RFC3339Nano, iso)
+	if err != nil {
+		t, err = time.Parse(time.RFC3339, iso)
+		if err != nil {
+			return iso
+		}
+	}
+
+	d := time.Since(t)
+
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 30*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	default:
+		return fmt.Sprintf("%dmo ago", int(d.Hours()/(24*30)))
+	}
+}
