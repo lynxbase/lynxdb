@@ -30,11 +30,9 @@ echo "  LynxDB Profiling Run — $TIMESTAMP"
 echo "========================================="
 echo ""
 
-# Kill any stale server on the same port
 if curl -sf "$BASE/health" >/dev/null 2>&1; then
-    echo "WARNING: Server already running on $ADDR. Killing it..."
-    pkill -f "lynxdb server" 2>/dev/null || true
-    sleep 2
+    echo "ERROR: a server already answers on $ADDR; stop it or set LYNXDB_ADDR" >&2
+    exit 1
 fi
 
 echo "=== Build ==="
@@ -48,11 +46,12 @@ if [ ! -f testdata/bench/json_100k.log ]; then
     echo ""
 fi
 
-# Start server
-echo "=== Start server (profile-runtime, no-ui) ==="
-GODEBUG=gctrace=1 ./lynxdb server \
+# The fixtures are older than the default retention, so it is turned off.
+echo "=== Start server (profile-runtime) ==="
+GODEBUG=gctrace=1 LYNXDB_RETENTION=0s ./lynxdb server \
     --addr "$ADDR" \
-    --no-ui \
+    --data-dir "$OUTDIR/data" \
+    --otlp-http-listen "" \
     --log-level info \
     --profile-runtime \
     >"$OUTDIR/server-stdout.log" \
@@ -87,19 +86,9 @@ done
 echo "  Seed complete: 2M events ingested."
 echo ""
 
-# Wait for compaction
-echo "=== Wait for segments + compaction ==="
-for i in $(seq 1 60); do
-    SEGMENTS=$(curl -sf "$BASE/api/v1/stats" | python3 -c "import sys,json; print(json.load(sys.stdin)['data']['segment_count'])" 2>/dev/null || echo "0")
-    if [ "$SEGMENTS" -gt 3 ] 2>/dev/null; then
-        echo "  Segments: $SEGMENTS (>3, compaction likely ran)"
-        break
-    fi
-    if [ "$i" -eq 60 ]; then
-        echo "  Warning: Only $SEGMENTS segments after 60s. Continuing anyway."
-    fi
-    sleep 1
-done
+# /api/v1/stats writes the buffered events before it counts them.
+echo "=== Stored events ==="
+curl -sf "$BASE/api/v1/stats" | python3 -c "import sys,json; d=json.load(sys.stdin)['data']; print('  Events: %d, parts: %d, bytes: %d' % (d['total_events'], d['part_count'], d['storage_bytes']))"
 echo ""
 
 # Heap baseline
