@@ -33,24 +33,11 @@
 # Query execution configuration.
 # query:
 #   sync_timeout: 30s                # Max wait for synchronous query completion
-#   max_query_runtime: 5m            # Max query execution time (0 = unlimited)
 #   job_ttl: 5m                      # Completed job retention time
-#   job_gc_interval: 30s             # Job garbage collection interval
 #   max_concurrent: 32               # Max concurrent queries
 #   default_result_limit: 1000       # Default result row limit
 #   max_result_limit: 50000          # Maximum allowed result row limit
-#   max_query_memory_bytes: 1gb      # Per-query memory budget
 #   max_query_length: 1048576        # Max query text length, bytes (1 MiB)
-#   broad_source_lint_threshold: 10  # Source count that triggers broad-source query lints
-#   broad_segment_lint_threshold: 1000  # Segment count that triggers broad-search query lints
-#   preview_size: 50                 # Rows returned in async-job preview
-#   bitmap_selectivity_threshold: 0.9  # Skip bitmap when >90% of rows match
-#   global_query_pool_bytes: 0       # Total query memory pool (0 = auto: 25% RAM)
-#   spill_dir:                       # Temp dir for spill files (empty = os.TempDir)
-#   max_temp_dir_size_bytes: 10gb    # Max disk space for spill files (0 = unlimited)
-#   dedup_exact: false               # Use exact string matching for dedup
-#   slow_query_threshold_ms: 1000    # Log slow queries above this threshold (0 = disabled)
-#   max_branch_parallelism: 0        # Max goroutines for branch parallelism (0 = GOMAXPROCS)
 
 # Ingestion configuration.
 # ingest:

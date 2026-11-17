@@ -178,14 +178,8 @@ func (q *QueryConfig) validate() error {
 	if q.SyncTimeout < time.Second {
 		return validationErr("query", "sync_timeout", q.SyncTimeout.String(), "must be at least 1s")
 	}
-	if q.MaxQueryRuntime > 0 && q.MaxQueryRuntime < time.Second {
-		return validationErr("query", "max_query_runtime", q.MaxQueryRuntime.String(), "must be at least 1s or 0 (unlimited)")
-	}
 	if q.JobTTL < time.Second {
 		return validationErr("query", "job_ttl", q.JobTTL.String(), "must be at least 1s")
-	}
-	if q.JobGCInterval < time.Second {
-		return validationErr("query", "job_gc_interval", q.JobGCInterval.String(), "must be at least 1s")
 	}
 	if q.MaxConcurrent < 1 {
 		return validationErr("query", "max_concurrent", fmt.Sprintf("%d", q.MaxConcurrent), "must be at least 1")
@@ -196,30 +190,8 @@ func (q *QueryConfig) validate() error {
 	if q.MaxResultLimit < q.DefaultResultLimit {
 		return validationErr("query", "max_result_limit", fmt.Sprintf("%d", q.MaxResultLimit), "must be >= default_result_limit")
 	}
-	if q.BitmapSelectivityThreshold < 0 || q.BitmapSelectivityThreshold > 1.0 {
-		return validationErr("query", "bitmap_selectivity_threshold",
-			fmt.Sprintf("%.2f", q.BitmapSelectivityThreshold),
-			"must be between 0.0 and 1.0")
-	}
-	if q.MaxQueryMemory < 0 {
-		return validationErr("query", "max_query_memory_bytes", q.MaxQueryMemory.String(), "must not be negative")
-	}
-	if q.GlobalQueryPoolBytes < 0 {
-		return validationErr("query", "global_query_pool_bytes", q.GlobalQueryPoolBytes.String(), "must not be negative")
-	}
-	// Pool must fit at least one query — otherwise no query can ever run.
-	if q.GlobalQueryPoolBytes > 0 && q.MaxQueryMemory > 0 && q.GlobalQueryPoolBytes < q.MaxQueryMemory {
-		return validationErr("query", "global_query_pool_bytes", q.GlobalQueryPoolBytes.String(),
-			fmt.Sprintf("must be >= max_query_memory_bytes (%s); pool must fit at least one query", q.MaxQueryMemory.String()))
-	}
 	if q.MaxQueryLength < 0 {
 		return validationErr("query", "max_query_length", fmt.Sprintf("%d", q.MaxQueryLength), "must not be negative (0 = unlimited)")
-	}
-	if q.BroadSourceLintThreshold < 0 {
-		return validationErr("query", "broad_source_lint_threshold", fmt.Sprintf("%d", q.BroadSourceLintThreshold), "must not be negative")
-	}
-	if q.BroadSegmentLintThreshold < 0 {
-		return validationErr("query", "broad_segment_lint_threshold", fmt.Sprintf("%d", q.BroadSegmentLintThreshold), "must not be negative")
 	}
 
 	return nil

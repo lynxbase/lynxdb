@@ -17,7 +17,6 @@ import (
 	"github.com/lynxbase/lynxdb/internal/output"
 	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/client"
-	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/database"
 	"github.com/lynxbase/lynxdb/pkg/ingest/ndjson"
 	ingestpipeline "github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
@@ -52,7 +51,6 @@ func newQueryCmd() *cobra.Command {
 		outputFile string
 		timeout    string
 		analyze    string
-		maxMemory  string
 		failEmpty  bool
 		copyFlag   bool
 		explain    bool
@@ -107,10 +105,10 @@ or standard input. Local input is loaded into the index main.`,
 				return fmt.Errorf("--copy is only supported in server mode")
 			}
 			if file != "" {
-				return runQueryFile(query, file, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode)
+				return runQueryFile(query, file, source, sourcetype, outputFile, failEmpty, analyze, rawMode)
 			}
 			if stdinPiped {
-				return runQueryStdin(query, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode)
+				return runQueryStdin(query, source, sourcetype, outputFile, failEmpty, analyze, rawMode)
 			}
 
 			err := runQueryServer(query, since, from, to, timeout, failEmpty, analyze)
@@ -136,7 +134,6 @@ or standard input. Local input is loaded into the index main.`,
 	f.StringVarP(&outputFile, "output", "o", "", "Write results to file")
 	f.StringVar(&timeout, "timeout", "", "Query timeout (e.g., 10s, 5m)")
 	f.StringVar(&analyze, "analyze", "", "Profile query execution (basic, full, trace)")
-	f.StringVar(&maxMemory, "max-memory", "", "Max memory for ephemeral query (e.g., 512mb, 1gb)")
 	f.BoolVar(&failEmpty, "fail-on-empty", false, "Exit with code 6 if no results")
 	f.BoolVar(&copyFlag, "copy", false, "Copy results to clipboard as TSV")
 	f.BoolVar(&explain, "explain", false, "Show query plan without executing")
@@ -153,28 +150,13 @@ or standard input. Local input is loaded into the index main.`,
 	return cmd
 }
 
-func parseMaxMemory(maxMemory string) (int64, error) {
-	if maxMemory == "" {
-		return 0, nil
-	}
-	b, err := config.ParseByteSize(maxMemory)
-	if err != nil {
-		return 0, fmt.Errorf("invalid --max-memory: %w", err)
-	}
-
-	return int64(b), nil
-}
-
-func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode bool) error {
+func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty bool, analyze string, rawMode bool) error {
 	matches, err := filepath.Glob(file)
 	if err != nil {
 		return fmt.Errorf("invalid file pattern: %w", err)
 	}
 	if len(matches) == 0 {
 		return noFilesMatchingError{pattern: file}
-	}
-	if _, err := parseMaxMemory(maxMemory); err != nil {
-		return err
 	}
 	if err := checkLocalQuery(query); err != nil {
 		return err
@@ -227,10 +209,7 @@ func loadLocal(db *database.DB, r io.Reader, source, sourcetype, format string) 
 	})
 }
 
-func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode bool) error {
-	if _, err := parseMaxMemory(maxMemory); err != nil {
-		return err
-	}
+func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool, analyze string, rawMode bool) error {
 	if err := checkLocalQuery(query); err != nil {
 		return err
 	}

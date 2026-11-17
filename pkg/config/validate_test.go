@@ -91,15 +91,8 @@ func TestValidateQuery(t *testing.T) {
 		{"zero sync timeout", func(q *QueryConfig) { q.SyncTimeout = 0 }, "query.sync_timeout"},
 		{"zero max concurrent", func(q *QueryConfig) { q.MaxConcurrent = 0 }, "query.max_concurrent"},
 		{"result limit inversion", func(q *QueryConfig) { q.MaxResultLimit = 10; q.DefaultResultLimit = 100 }, "query.max_result_limit"},
-		{"negative pool bytes", func(q *QueryConfig) { q.GlobalQueryPoolBytes = -1 }, "query.global_query_pool_bytes"},
-		{"pool smaller than per-query", func(q *QueryConfig) {
-			q.MaxQueryMemory = 1 * GB
-			q.GlobalQueryPoolBytes = 512 * MB
-		}, "must be >= max_query_memory_bytes"},
-		// F11: MaxQueryMemory validation
-		{"negative max_query_memory", func(q *QueryConfig) { q.MaxQueryMemory = -1 }, "query.max_query_memory_bytes"},
-		{"negative broad source lint threshold", func(q *QueryConfig) { q.BroadSourceLintThreshold = -1 }, "query.broad_source_lint_threshold"},
-		{"negative broad segment lint threshold", func(q *QueryConfig) { q.BroadSegmentLintThreshold = -1 }, "query.broad_segment_lint_threshold"},
+		{"zero job ttl", func(q *QueryConfig) { q.JobTTL = 0 }, "query.job_ttl"},
+		{"negative max query length", func(q *QueryConfig) { q.MaxQueryLength = -1 }, "query.max_query_length"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

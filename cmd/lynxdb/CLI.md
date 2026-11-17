@@ -101,7 +101,6 @@ Alias `q`. Runs a PPL query. Arguments are joined with spaces. A trailing `\G` s
 | `--output` | `-o` | | Write results to a file |
 | `--timeout` | | `6m` | Query timeout (`10s`, `5m`); server mode |
 | `--analyze` | | | Execution profile: `basic` (bare flag), `full`, `trace` |
-| `--max-memory` | | | Memory limit of a local query (`512mb`, `1gb`) |
 | `--fail-on-empty` | | `false` | Exit with code 6 when there are no rows |
 | `--copy` | | `false` | Copy results to the clipboard as TSV; server mode |
 | `--explain` | | `false` | Print the compiled plans without running the query |
@@ -390,7 +389,7 @@ lynxdb config add-profile prod --url https://logs.example.com --token "$PROD_KEY
 lynxdb query 'source=main level=ERROR | stats count() by host' --profile prod
 ```
 
-A reload applies `log_level`, `retention`, `query.*` (except `query.global_query_pool_bytes`, `query.spill_dir`, `query.max_temp_dir_size_bytes`), `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`, `ingest.es_compat.*`, `ingest.limits.*`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`, `http.shutdown_timeout` and the `syslog` index, sourcetype, timezone, hostname and batch settings. Other changes need a restart.
+A reload applies `log_level`, `query.*` (except `query.max_concurrent` and `query.job_ttl`), `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`, `ingest.es_compat.*`, `ingest.limits.*`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`, `http.shutdown_timeout` and the `syslog` index, sourcetype, timezone, hostname and batch settings. Other changes need a restart.
 
 ---
 

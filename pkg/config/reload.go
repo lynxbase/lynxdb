@@ -53,9 +53,6 @@ var nonHotReloadableExactFields = map[string]struct{}{
 	"ingest.fsync":                    {},
 	"ingest.dedup_enabled":            {},
 	"ingest.dedup_capacity":           {},
-	"query.global_query_pool_bytes":   {},
-	"query.spill_dir":                 {},
-	"query.max_temp_dir_size_bytes":   {},
 }
 
 // ClassifyReloadChanges returns the changed config fields grouped by whether

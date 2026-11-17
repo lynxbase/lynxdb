@@ -272,17 +272,6 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Query.JobTTL.String() }},
-	{LYNXDB_QUERY_JOB_GC_INTERVAL, "query.job_gc_interval",
-		func(c *Config, v string) error {
-			d, err := time.ParseDuration(v)
-			if err != nil {
-				return err
-			}
-			c.Query.JobGCInterval = d
-
-			return nil
-		},
-		func(c *Config) string { return c.Query.JobGCInterval.String() }},
 	{LYNXDB_QUERY_MAX_CONCURRENT, "query.max_concurrent",
 		func(c *Config, v string) error {
 			n, err := strconv.Atoi(v)
@@ -316,19 +305,6 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.Itoa(c.Query.MaxResultLimit) }},
-	{LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD, "query.bitmap_selectivity_threshold",
-		func(c *Config, v string) error {
-			f, err := strconv.ParseFloat(v, 64)
-			if err != nil {
-				return err
-			}
-			c.Query.BitmapSelectivityThreshold = f
-
-			return nil
-		},
-		func(c *Config) string {
-			return fmt.Sprintf("%.2f", c.Query.BitmapSelectivityThreshold)
-		}},
 
 	// Ingest
 	{LYNXDB_INGEST_MAX_BODY_SIZE, "ingest.max_body_size",
@@ -664,114 +640,6 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Syslog.BatchTimeout.String() }},
-
-	// Query — additional bindings
-	{LYNXDB_QUERY_MAX_QUERY_RUNTIME, "query.max_query_runtime",
-		func(c *Config, v string) error {
-			d, err := time.ParseDuration(v)
-			if err != nil {
-				return err
-			}
-			c.Query.MaxQueryRuntime = d
-
-			return nil
-		},
-		func(c *Config) string { return c.Query.MaxQueryRuntime.String() }},
-	{LYNXDB_QUERY_MAX_QUERY_MEMORY_BYTES, "query.max_query_memory_bytes",
-		func(c *Config, v string) error {
-			b, err := ParseByteSize(v)
-			if err != nil {
-				return err
-			}
-			c.Query.MaxQueryMemory = b
-
-			return nil
-		},
-		func(c *Config) string { return c.Query.MaxQueryMemory.String() }},
-	{LYNXDB_QUERY_GLOBAL_QUERY_POOL_BYTES, "query.global_query_pool_bytes",
-		func(c *Config, v string) error {
-			b, err := ParseByteSize(v)
-			if err != nil {
-				return err
-			}
-			c.Query.GlobalQueryPoolBytes = b
-
-			return nil
-		},
-		func(c *Config) string { return c.Query.GlobalQueryPoolBytes.String() }},
-	{LYNXDB_QUERY_SPILL_DIR, "query.spill_dir",
-		func(c *Config, v string) error {
-			c.Query.SpillDir = v
-
-			return nil
-		},
-		func(c *Config) string { return c.Query.SpillDir }},
-	{LYNXDB_QUERY_MAX_TEMP_DIR_SIZE_BYTES, "query.max_temp_dir_size_bytes",
-		func(c *Config, v string) error {
-			b, err := ParseByteSize(v)
-			if err != nil {
-				return err
-			}
-			c.Query.MaxTempDirSizeBytes = b
-
-			return nil
-		},
-		func(c *Config) string { return c.Query.MaxTempDirSizeBytes.String() }},
-	{LYNXDB_QUERY_DEDUP_EXACT, "query.dedup_exact",
-		func(c *Config, v string) error {
-			b, err := strconv.ParseBool(v)
-			if err != nil {
-				return err
-			}
-			c.Query.DedupExact = b
-
-			return nil
-		},
-		func(c *Config) string { return strconv.FormatBool(c.Query.DedupExact) }},
-	{LYNXDB_QUERY_SLOW_QUERY_THRESHOLD_MS, "query.slow_query_threshold_ms",
-		func(c *Config, v string) error {
-			n, err := strconv.ParseInt(v, 10, 64)
-			if err != nil {
-				return err
-			}
-			c.Query.SlowQueryThresholdMs = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.FormatInt(c.Query.SlowQueryThresholdMs, 10) }},
-	{LYNXDB_QUERY_MAX_BRANCH_PARALLELISM, "query.max_branch_parallelism",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.Query.MaxBranchParallelism = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.Query.MaxBranchParallelism) }},
-	{LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD, "query.broad_source_lint_threshold",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.Query.BroadSourceLintThreshold = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.Query.BroadSourceLintThreshold) }},
-	{LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD, "query.broad_segment_lint_threshold",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.Query.BroadSegmentLintThreshold = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.Query.BroadSegmentLintThreshold) }},
 
 	// Storage — additional bindings
 	{LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT, "storage.remote_fetch_timeout",

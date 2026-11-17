@@ -99,8 +99,6 @@ func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("LYNXDB_LISTEN", "0.0.0.0:4000")
 	t.Setenv("LYNXDB_LOG_LEVEL", "debug")
 	t.Setenv("LYNXDB_QUERY_MAX_CONCURRENT", "50")
-	t.Setenv("LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD", "7")
-	t.Setenv("LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD", "77")
 	t.Setenv("LYNXDB_STORAGE_PARTITION", "6h")
 	t.Setenv("LYNXDB_STORAGE_FLUSH_INTERVAL", "2s")
 	t.Setenv("LYNXDB_STORAGE_TIME_FIELDS", "ts, @timestamp")
@@ -127,12 +125,6 @@ func TestLoadEnvOverrides(t *testing.T) {
 	}
 	if cfg.Query.MaxConcurrent != 50 {
 		t.Errorf("MaxConcurrent: got %d", cfg.Query.MaxConcurrent)
-	}
-	if cfg.Query.BroadSourceLintThreshold != 7 {
-		t.Errorf("BroadSourceLintThreshold: got %d", cfg.Query.BroadSourceLintThreshold)
-	}
-	if cfg.Query.BroadSegmentLintThreshold != 77 {
-		t.Errorf("BroadSegmentLintThreshold: got %d", cfg.Query.BroadSegmentLintThreshold)
 	}
 	if cfg.Storage.Partition != Duration(6*time.Hour) {
 		t.Errorf("Partition: got %v", cfg.Storage.Partition)

@@ -110,24 +110,11 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 
 	// Query.
 	durationEntry("query.sync_timeout", cfg.Query.SyncTimeout, dflt.Query.SyncTimeout, fileCfg.Query.SyncTimeout, LYNXDB_QUERY_SYNC_TIMEOUT)
-	durationEntry("query.max_query_runtime", cfg.Query.MaxQueryRuntime, dflt.Query.MaxQueryRuntime, fileCfg.Query.MaxQueryRuntime, LYNXDB_QUERY_MAX_QUERY_RUNTIME)
 	durationEntry("query.job_ttl", cfg.Query.JobTTL, dflt.Query.JobTTL, fileCfg.Query.JobTTL, LYNXDB_QUERY_JOB_TTL)
-	durationEntry("query.job_gc_interval", cfg.Query.JobGCInterval, dflt.Query.JobGCInterval, fileCfg.Query.JobGCInterval, LYNXDB_QUERY_JOB_GC_INTERVAL)
 	add("query.max_concurrent", fmt.Sprintf("%d", cfg.Query.MaxConcurrent), fmt.Sprintf("%d", dflt.Query.MaxConcurrent), fmt.Sprintf("%d", fileCfg.Query.MaxConcurrent), LYNXDB_QUERY_MAX_CONCURRENT)
 	add("query.default_result_limit", fmt.Sprintf("%d", cfg.Query.DefaultResultLimit), fmt.Sprintf("%d", dflt.Query.DefaultResultLimit), fmt.Sprintf("%d", fileCfg.Query.DefaultResultLimit), LYNXDB_QUERY_DEFAULT_RESULT_LIMIT)
 	add("query.max_result_limit", fmt.Sprintf("%d", cfg.Query.MaxResultLimit), fmt.Sprintf("%d", dflt.Query.MaxResultLimit), fmt.Sprintf("%d", fileCfg.Query.MaxResultLimit), LYNXDB_QUERY_MAX_RESULT_LIMIT)
-	add("query.max_query_memory_bytes", cfg.Query.MaxQueryMemory.String(), dflt.Query.MaxQueryMemory.String(), fileCfg.Query.MaxQueryMemory.String(), LYNXDB_QUERY_MAX_QUERY_MEMORY_BYTES)
-	add("query.bitmap_selectivity_threshold", fmt.Sprintf("%.2f", cfg.Query.BitmapSelectivityThreshold), fmt.Sprintf("%.2f", dflt.Query.BitmapSelectivityThreshold), fmt.Sprintf("%.2f", fileCfg.Query.BitmapSelectivityThreshold), LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD)
-	add("query.global_query_pool_bytes", cfg.Query.GlobalQueryPoolBytes.String(), dflt.Query.GlobalQueryPoolBytes.String(), fileCfg.Query.GlobalQueryPoolBytes.String(), LYNXDB_QUERY_GLOBAL_QUERY_POOL_BYTES)
-	add("query.spill_dir", cfg.Query.SpillDir, dflt.Query.SpillDir, fileCfg.Query.SpillDir, LYNXDB_QUERY_SPILL_DIR)
-	add("query.max_temp_dir_size_bytes", cfg.Query.MaxTempDirSizeBytes.String(), dflt.Query.MaxTempDirSizeBytes.String(), fileCfg.Query.MaxTempDirSizeBytes.String(), LYNXDB_QUERY_MAX_TEMP_DIR_SIZE_BYTES)
-	add("query.dedup_exact", strconv.FormatBool(cfg.Query.DedupExact), strconv.FormatBool(dflt.Query.DedupExact), strconv.FormatBool(fileCfg.Query.DedupExact), LYNXDB_QUERY_DEDUP_EXACT)
-	add("query.slow_query_threshold_ms", strconv.FormatInt(cfg.Query.SlowQueryThresholdMs, 10), strconv.FormatInt(dflt.Query.SlowQueryThresholdMs, 10), strconv.FormatInt(fileCfg.Query.SlowQueryThresholdMs, 10), LYNXDB_QUERY_SLOW_QUERY_THRESHOLD_MS)
-	add("query.max_branch_parallelism", strconv.Itoa(cfg.Query.MaxBranchParallelism), strconv.Itoa(dflt.Query.MaxBranchParallelism), strconv.Itoa(fileCfg.Query.MaxBranchParallelism), LYNXDB_QUERY_MAX_BRANCH_PARALLELISM)
 	add("query.max_query_length", strconv.Itoa(cfg.Query.MaxQueryLength), strconv.Itoa(dflt.Query.MaxQueryLength), strconv.Itoa(fileCfg.Query.MaxQueryLength), LYNXDB_QUERY_MAX_QUERY_LENGTH)
-	add("query.broad_source_lint_threshold", strconv.Itoa(cfg.Query.BroadSourceLintThreshold), strconv.Itoa(dflt.Query.BroadSourceLintThreshold), strconv.Itoa(fileCfg.Query.BroadSourceLintThreshold), LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD)
-	add("query.broad_segment_lint_threshold", strconv.Itoa(cfg.Query.BroadSegmentLintThreshold), strconv.Itoa(dflt.Query.BroadSegmentLintThreshold), strconv.Itoa(fileCfg.Query.BroadSegmentLintThreshold), LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD)
-	add("query.preview_size", strconv.Itoa(cfg.Query.PreviewSize), strconv.Itoa(dflt.Query.PreviewSize), strconv.Itoa(fileCfg.Query.PreviewSize), LYNXDB_QUERY_PREVIEW_SIZE)
 
 	// Ingest.
 	add("ingest.max_body_size", cfg.Ingest.MaxBodySize.String(), dflt.Ingest.MaxBodySize.String(), fileCfg.Ingest.MaxBodySize.String(), LYNXDB_INGEST_MAX_BODY_SIZE)

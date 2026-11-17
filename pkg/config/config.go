@@ -127,73 +127,16 @@ type StorageConfig struct {
 
 // QueryConfig holds query execution parameters.
 type QueryConfig struct {
-	SyncTimeout        time.Duration `yaml:"sync_timeout"           json:"sync_timeout"`
-	MaxQueryRuntime    time.Duration `yaml:"max_query_runtime"      json:"max_query_runtime"`
-	JobTTL             time.Duration `yaml:"job_ttl"                json:"job_ttl"`
-	JobGCInterval      time.Duration `yaml:"job_gc_interval"        json:"job_gc_interval"`
-	MaxConcurrent      int           `yaml:"max_concurrent"         json:"max_concurrent"`
-	DefaultResultLimit int           `yaml:"default_result_limit"   json:"default_result_limit"`
-	MaxResultLimit     int           `yaml:"max_result_limit"       json:"max_result_limit"`
-	MaxQueryMemory     ByteSize      `yaml:"max_query_memory_bytes" json:"max_query_memory_bytes"`
-
-	// BitmapSelectivityThreshold is the maximum fraction of rows a bitmap may
-	// cover before the engine falls back to sequential scan with projection.
-	// When the inverted index bitmap covers more than this fraction of rows,
-	// the bitmap is discarded to avoid per-row roaring bitmap lookup overhead.
-	// Default: 0.9 (90%). Set to 1.0 to always use bitmap path.
-	BitmapSelectivityThreshold float64 `yaml:"bitmap_selectivity_threshold" json:"bitmap_selectivity_threshold"`
-
-	// GlobalQueryPoolBytes limits the total memory available for all concurrent
-	// queries combined. 0 means auto-detect at startup (25% of system RAM).
-	// This prevents pathological concurrent queries from OOMing the process.
-	GlobalQueryPoolBytes ByteSize `yaml:"global_query_pool_bytes" json:"global_query_pool_bytes"`
-
-	// SpillDir is the directory for temporary spill files created during sort
-	// and aggregate operations that exceed the memory budget. Empty means use
-	// the system temp directory (os.TempDir()).
-	SpillDir string `yaml:"spill_dir" json:"spill_dir"`
-
-	// MaxTempDirSizeBytes limits the total disk space used by spill files across
-	// all concurrent queries. When the limit is reached, new spill file creation
-	// fails with ErrTempSpaceFull. 0 means unlimited (no quota enforcement).
-	// Default: 10GB.
-	MaxTempDirSizeBytes ByteSize `yaml:"max_temp_dir_size_bytes" json:"max_temp_dir_size_bytes"`
-
-	// DedupExact forces the dedup operator to use exact string matching
-	// instead of xxhash64. Use this when dedup correctness is critical
-	// for very high cardinality datasets (>1M unique values), where the
-	// xxhash64 collision probability becomes non-negligible.
-	// Default: false (use hash-based dedup for ~7x lower memory usage).
-	DedupExact bool `yaml:"dedup_exact" json:"dedup_exact"`
-
-	// SlowQueryThresholdMs is the duration in milliseconds above which a
-	// query is logged at WARN level with full execution statistics.
-	// Set to 0 to disable slow query logging. Default: 1000 (1 second).
-	// Hot-reloadable: takes effect without server restart.
-	SlowQueryThresholdMs int64 `yaml:"slow_query_threshold_ms" json:"slow_query_threshold_ms"`
-
-	// MaxBranchParallelism limits the number of concurrent goroutines for
-	// branch-level parallelism in append, multisearch and multi-source scans.
-	// 0 means auto (GOMAXPROCS). This is a soft limit on goroutines, not I/O.
-	MaxBranchParallelism int `yaml:"max_branch_parallelism" json:"max_branch_parallelism"`
+	SyncTimeout        time.Duration `yaml:"sync_timeout"         json:"sync_timeout"`
+	JobTTL             time.Duration `yaml:"job_ttl"              json:"job_ttl"`
+	MaxConcurrent      int           `yaml:"max_concurrent"       json:"max_concurrent"`
+	DefaultResultLimit int           `yaml:"default_result_limit" json:"default_result_limit"`
+	MaxResultLimit     int           `yaml:"max_result_limit"     json:"max_result_limit"`
 
 	// MaxQueryLength is the maximum allowed length of a query string in bytes.
 	// Requests exceeding this limit are rejected with HTTP 400.
 	// Default: 1048576 (1MB). Set to 0 to disable the limit.
 	MaxQueryLength int `yaml:"max_query_length" json:"max_query_length"`
-
-	// BroadSourceLintThreshold is the selected source count that triggers
-	// advisory all-source and broad-search lints. Default: 10.
-	BroadSourceLintThreshold int `yaml:"broad_source_lint_threshold" json:"broad_source_lint_threshold"`
-
-	// BroadSegmentLintThreshold is the selected segment count that triggers
-	// advisory broad-search lints. Default: 1000.
-	BroadSegmentLintThreshold int `yaml:"broad_segment_lint_threshold" json:"broad_segment_lint_threshold"`
-
-	// PreviewSize is the maximum number of rows included in SSE progress
-	// preview events while a query is running. 0 disables preview.
-	// Default: 50.
-	PreviewSize int `yaml:"preview_size" json:"preview_size"`
 }
 
 // IngestConfig holds ingestion parameters.
@@ -364,21 +307,12 @@ func DefaultConfig() *Config {
 		},
 
 		Query: QueryConfig{
-			SyncTimeout:                30 * time.Second,
-			MaxQueryRuntime:            5 * time.Minute,
-			JobTTL:                     5 * time.Minute,
-			JobGCInterval:              30 * time.Second,
-			MaxConcurrent:              defaultMaxConcurrent,
-			DefaultResultLimit:         1000,
-			MaxResultLimit:             50000,
-			MaxQueryMemory:             1 << 30, // 1 GB
-			MaxTempDirSizeBytes:        10 * GB, // 10 GB
-			BitmapSelectivityThreshold: 0.9,
-			SlowQueryThresholdMs:       1000,    // 1 second
-			MaxQueryLength:             1 << 20, // 1 MB
-			BroadSourceLintThreshold:   10,
-			BroadSegmentLintThreshold:  1000,
-			PreviewSize:                50,
+			SyncTimeout:        30 * time.Second,
+			JobTTL:             5 * time.Minute,
+			MaxConcurrent:      defaultMaxConcurrent,
+			DefaultResultLimit: 1000,
+			MaxResultLimit:     50000,
+			MaxQueryLength:     1 << 20, // 1 MB
 		},
 
 		Ingest: IngestConfig{

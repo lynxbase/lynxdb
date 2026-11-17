@@ -161,60 +161,21 @@ const (
 	// LYNXDB_LOG_LEVEL is the log level: debug, info, warn, error.
 	// YAML key: log_level. Default: info.
 	LYNXDB_LOG_LEVEL = "LYNXDB_LOG_LEVEL"
-	// LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD is the skip bitmap when this fraction of rows match.
-	// YAML key: query.bitmap_selectivity_threshold. Default: 0.9.
-	LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD = "LYNXDB_QUERY_BITMAP_SELECTIVITY_THRESHOLD"
-	// LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD is the segment count that triggers broad-search lint.
-	// YAML key: query.broad_segment_lint_threshold. Default: 1000.
-	LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD = "LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD"
-	// LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD is the source count that triggers all-source and broad-search lints.
-	// YAML key: query.broad_source_lint_threshold. Default: 10.
-	LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD = "LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD"
-	// LYNXDB_QUERY_DEDUP_EXACT is the use exact string matching for dedup.
-	// YAML key: query.dedup_exact. Default: false.
-	LYNXDB_QUERY_DEDUP_EXACT = "LYNXDB_QUERY_DEDUP_EXACT"
 	// LYNXDB_QUERY_DEFAULT_RESULT_LIMIT is the default result row limit.
 	// YAML key: query.default_result_limit. Default: 1000.
 	LYNXDB_QUERY_DEFAULT_RESULT_LIMIT = "LYNXDB_QUERY_DEFAULT_RESULT_LIMIT"
-	// LYNXDB_QUERY_GLOBAL_QUERY_POOL_BYTES is the total query memory pool (0 = auto: 25% RAM).
-	// YAML key: query.global_query_pool_bytes. Default: 0.
-	LYNXDB_QUERY_GLOBAL_QUERY_POOL_BYTES = "LYNXDB_QUERY_GLOBAL_QUERY_POOL_BYTES"
-	// LYNXDB_QUERY_JOB_GC_INTERVAL is the job garbage collection interval.
-	// YAML key: query.job_gc_interval. Default: 30s.
-	LYNXDB_QUERY_JOB_GC_INTERVAL = "LYNXDB_QUERY_JOB_GC_INTERVAL"
 	// LYNXDB_QUERY_JOB_TTL is the completed job retention time.
 	// YAML key: query.job_ttl. Default: 5m.
 	LYNXDB_QUERY_JOB_TTL = "LYNXDB_QUERY_JOB_TTL"
-	// LYNXDB_QUERY_MAX_BRANCH_PARALLELISM is the max goroutines for branch parallelism (0 = GOMAXPROCS).
-	// YAML key: query.max_branch_parallelism. Default: 0.
-	LYNXDB_QUERY_MAX_BRANCH_PARALLELISM = "LYNXDB_QUERY_MAX_BRANCH_PARALLELISM"
-	// LYNXDB_QUERY_MAX_CONCURRENT is the max concurrent async queries.
-	// YAML key: query.max_concurrent. Default: 10.
+	// LYNXDB_QUERY_MAX_CONCURRENT is the max concurrent queries.
+	// YAML key: query.max_concurrent. Default: 32.
 	LYNXDB_QUERY_MAX_CONCURRENT = "LYNXDB_QUERY_MAX_CONCURRENT"
 	// LYNXDB_QUERY_MAX_QUERY_LENGTH is the max query source length in bytes.
 	// YAML key: query.max_query_length. Default: 1048576.
 	LYNXDB_QUERY_MAX_QUERY_LENGTH = "LYNXDB_QUERY_MAX_QUERY_LENGTH"
-	// LYNXDB_QUERY_MAX_QUERY_MEMORY_BYTES is the per-query memory budget.
-	// YAML key: query.max_query_memory_bytes. Default: 1gb.
-	LYNXDB_QUERY_MAX_QUERY_MEMORY_BYTES = "LYNXDB_QUERY_MAX_QUERY_MEMORY_BYTES"
-	// LYNXDB_QUERY_MAX_QUERY_RUNTIME is the max query execution time (0 = unlimited).
-	// YAML key: query.max_query_runtime. Default: 5m.
-	LYNXDB_QUERY_MAX_QUERY_RUNTIME = "LYNXDB_QUERY_MAX_QUERY_RUNTIME"
 	// LYNXDB_QUERY_MAX_RESULT_LIMIT is the maximum allowed result row limit.
 	// YAML key: query.max_result_limit. Default: 50000.
 	LYNXDB_QUERY_MAX_RESULT_LIMIT = "LYNXDB_QUERY_MAX_RESULT_LIMIT"
-	// LYNXDB_QUERY_MAX_TEMP_DIR_SIZE_BYTES is the max disk space for spill files (0 = unlimited).
-	// YAML key: query.max_temp_dir_size_bytes. Default: 10gb.
-	LYNXDB_QUERY_MAX_TEMP_DIR_SIZE_BYTES = "LYNXDB_QUERY_MAX_TEMP_DIR_SIZE_BYTES"
-	// LYNXDB_QUERY_PREVIEW_SIZE is the rows returned in async-job preview.
-	// YAML key: query.preview_size. Default: 50.
-	LYNXDB_QUERY_PREVIEW_SIZE = "LYNXDB_QUERY_PREVIEW_SIZE"
-	// LYNXDB_QUERY_SLOW_QUERY_THRESHOLD_MS is the log slow queries above this threshold (0 = disabled).
-	// YAML key: query.slow_query_threshold_ms. Default: 1000.
-	LYNXDB_QUERY_SLOW_QUERY_THRESHOLD_MS = "LYNXDB_QUERY_SLOW_QUERY_THRESHOLD_MS"
-	// LYNXDB_QUERY_SPILL_DIR is the temp dir for spill files (empty = os.TempDir).
-	// YAML key: query.spill_dir. Default: "".
-	LYNXDB_QUERY_SPILL_DIR = "LYNXDB_QUERY_SPILL_DIR"
 	// LYNXDB_QUERY_SYNC_TIMEOUT is the max wait for synchronous query completion.
 	// YAML key: query.sync_timeout. Default: 30s.
 	LYNXDB_QUERY_SYNC_TIMEOUT = "LYNXDB_QUERY_SYNC_TIMEOUT"
