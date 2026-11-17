@@ -164,8 +164,7 @@ func NewProjectIterator(child Iterator, fields []string, remove bool) *ProjectIt
 }
 
 // TailIterator keeps the last N rows from a child using a fixed-capacity ring
-// buffer. Memory usage is bounded to O(count) regardless of input size. The
-// ring buffer pattern mirrors pkg/usecases/tail.go catchupRing.
+// buffer. Memory usage is bounded to O(count) regardless of input size.
 type TailIterator struct {
 	child    Iterator
 	count    int
