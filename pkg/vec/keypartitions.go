@@ -21,19 +21,30 @@ type KeyPartitions struct {
 	arena *mem.Arena
 	shift uint
 	parts []keyPartition
+	// chunks holds the chunks that filled up, of every partition, and
+	// next[i] the chunk that follows chunks[i] in its partition, -1 for none;
+	// one shared list spares each partition a list of its own on the heap.
+	chunks [][]byte
+	next   []int32
 }
 
 type keyPartition struct {
-	cur  []byte
-	full [][]byte
-	n    int
-	held int // bytes of every chunk
+	cur []byte
+	// first and last index the partition's full chunks, -1 without any.
+	first, last int32
+	n           int
+	held        int // bytes of every chunk
 }
 
 // NewKeyPartitions returns a log with 1<<bits partitions that allocates
 // from a.
 func NewKeyPartitions(a *mem.Arena, bits int) *KeyPartitions {
-	return &KeyPartitions{arena: a, shift: uint(64 - bits), parts: make([]keyPartition, 1<<bits)}
+	p := &KeyPartitions{arena: a, shift: uint(64 - bits), parts: make([]keyPartition, 1<<bits)}
+	for i := range p.parts {
+		p.parts[i].first, p.parts[i].last = -1, -1
+	}
+
+	return p
 }
 
 // Partitions returns the number of partitions.
@@ -63,7 +74,15 @@ func (p *KeyPartitions) Add(h uint64, rec []byte) {
 func (p *KeyPartitions) grow(kp *keyPartition, need int) {
 	size := max(min(max(kp.held/2, minKeyChunk), maxKeyChunk), need)
 	if len(kp.cur) != 0 {
-		kp.full = append(kp.full, kp.cur)
+		id := int32(len(p.chunks))
+		p.chunks = append(p.chunks, kp.cur)
+		p.next = append(p.next, -1)
+		if kp.last >= 0 {
+			p.next[kp.last] = id
+		} else {
+			kp.first = id
+		}
+		kp.last = id
 	}
 	kp.cur = mem.Raw[byte](p.arena, 0, size)
 	kp.held += size
@@ -73,8 +92,8 @@ func (p *KeyPartitions) grow(kp *keyPartition, need int) {
 // insertion order; the payload is valid until the arena is reset.
 func (p *KeyPartitions) Each(i int, fn func(h uint64, rec []byte)) {
 	kp := &p.parts[i]
-	for _, chunk := range kp.full {
-		eachKeyRecord(chunk, fn)
+	for id := kp.first; id >= 0; id = p.next[id] {
+		eachKeyRecord(p.chunks[id], fn)
 	}
 	eachKeyRecord(kp.cur, fn)
 }
