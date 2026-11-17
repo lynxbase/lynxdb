@@ -149,7 +149,6 @@ lynxdb query --file access.log 'source=main level=ERROR | stats count() by host'
     total            39ms
 
   Rows:  1,000 scanned  →  5 results
-    scan: ephemeral
 ```
 
 With `--format json`, the profile is printed as JSON.
