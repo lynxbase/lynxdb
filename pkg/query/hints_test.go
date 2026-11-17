@@ -46,7 +46,7 @@ func TestScanHintsToQueryHints(t *testing.T) {
 	if q.Limit != 0 {
 		t.Errorf("a limit above a filter must not reach the scan, got %d", q.Limit)
 	}
-	if !reflect.DeepEqual(q.RequiredCols, []string{"_raw", "_time", "host"}) {
+	if !reflect.DeepEqual(q.RequiredCols, []string{"_raw", "_time", "host", "index"}) {
 		t.Errorf("required columns = %v", q.RequiredCols)
 	}
 }
