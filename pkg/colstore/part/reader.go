@@ -34,6 +34,8 @@ type Part struct {
 	// when the block is first opened: dirHeld has a bit per block that
 	// did, and dirMu guards the moving.
 	detached bool
+	// counts holds, by path id, the rows of the values of counted paths.
+	counts map[uint32]*Counts
 	// sound has a bit for every column of every block, at the place of its
 	// directory entry, that is set once the bytes of the column were seen
 	// to match their checksum, until Recheck clears it; advised has one
@@ -254,7 +256,7 @@ func Open(data []byte) (*Part, error) {
 	p.RawBytes = r.uvarint()
 	p.MinTime = unzigzag(r.uvarint())
 	p.MaxTime = unzigzag(r.uvarint())
-	if r.bad || len(p.paths) == 0 || p.paths[0] != TimePath {
+	if r.bad || len(p.paths) == 0 || p.paths[0] != TimePath || !p.readCounts(&r) {
 		return nil, ErrCorrupt
 	}
 	// The filters of a group's blocks fill every stripe, those of one
@@ -1547,6 +1549,49 @@ func skipCounts(src []byte, n int) ([]byte, bool) {
 	}
 
 	return src, true
+}
+
+// Counts holds the string values at one path of a part, in order, with the rows that hold each.
+type Counts struct {
+	Values [][]byte
+	Rows   []uint64
+	// Held is the number of rows that hold a value.
+	Held uint64
+}
+
+// Counts returns the rows of every value at a path that holds few strings and nothing else; other rows miss the path.
+func (p *Part) Counts(pathID uint32) (*Counts, bool) {
+	c, ok := p.counts[pathID]
+
+	return c, ok
+}
+
+// readCounts reads the rows of the values of counted paths, which end a footer.
+func (p *Part) readCounts(r *reader) bool {
+	paths := r.uvarint()
+	if r.bad || paths > uint64(len(p.paths)) {
+		return false
+	}
+	for ; paths > 0; paths-- {
+		id, values := r.uvarint(), r.uvarint()
+		if r.bad || id >= uint64(len(p.paths)) || values == 0 || values > maxCounted {
+			return false
+		}
+		c := &Counts{Values: make([][]byte, 0, values), Rows: make([]uint64, 0, values)}
+		for ; values > 0; values-- {
+			v, rows := r.bytes(r.uvarint()), r.uvarint()
+			c.Values, c.Rows, c.Held = append(c.Values, v), append(c.Rows, rows), c.Held+rows
+		}
+		if r.bad || c.Held > p.Rows {
+			return false
+		}
+		if p.counts == nil {
+			p.counts = make(map[uint32]*Counts)
+		}
+		p.counts[uint32(id)] = c
+	}
+
+	return !r.bad
 }
 
 // Counted reports whether the column holds, with its dictionary, the

@@ -151,9 +151,16 @@ type writerBuffers struct {
 	ints      []int64
 	dictBytes []byte // the integer codec owns e.tmp
 	// counted is set when the dictionary last written holds the rows of
-	// its entries.
-	counted bool
-	dict    dictBuilder
+	// its entries, which dictRows then holds too.
+	counted  bool
+	dictRows [maxCounted]uint32
+	// sums holds, by path, the rows of every string value that all blocks
+	// so far count; the copied fields read those of a block copied as stored.
+	sums        []pathSum
+	copiedBlock Block
+	copiedDict  vec.Column
+	copiedRows  []uint32
+	dict        dictBuilder
 	// column holds the tokens of the column being encoded, and tokens
 	// those of the block's columns without a filter of their own. The
 	// columns of the block that get one have their tokens in tokenKeys, where
@@ -232,6 +239,8 @@ func (w *Writer) Reset(out io.Writer, opts Options) {
 	clear(w.ids)
 	w.index, w.dirs, w.keys, w.lastKey, w.keyStats = w.index[:0], w.dirs[:0], w.keys[:0], w.lastKey[:0], w.keyStats[:0]
 	w.rows, w.raw, w.minT, w.maxT = 0, 0, 0, 0
+	clear(w.sums)
+	w.sums = w.sums[:0]
 	w.groups, w.filters, w.blooms = w.groups[:0], w.filters[:0], w.blooms[:0]
 	w.groupFilters, w.grouped, w.stripe, w.verifiedGroup = 0, 0, 0, nil
 	w.groupBlocks, w.groupBytes, w.stripes, w.fixedStripes = filterGroupBlocks, filterGroupBytes, 0, 0
@@ -585,6 +594,9 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 		copy(ents, w.e.tmp)
 	}
 	w.block = append(w.block, dir[entries:]...)
+	if err := w.sumCopied(src, i, pathMap); err != nil {
+		return err
+	}
 
 	var entry [indexEntrySize]byte
 	if !w.opts.NoTokenFilter {
@@ -691,6 +703,10 @@ func (w *Writer) encodeColumn(c *shred.Column, rows int) {
 	if c.Count != rows {
 		ent.flags |= flagSparse
 		w.appendPresence(c, rows)
+	}
+	w.pathSum(ent.pathID).values += uint64(c.Count)
+	if c.Kind != vec.KindString && c.Kind != vec.KindVariant {
+		w.noSum(ent.pathID)
 	}
 	switch c.Kind {
 	case vec.KindNull:
@@ -862,11 +878,16 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 		ent.enc = encConst
 		ent.constVal = c.Bytes(0)
 		w.tokenize(c.Kind, ent.constVal)
+		if c.Kind == vec.KindString {
+			w.sum(ent.pathID, ent.constVal, uint64(c.Count))
+		} else {
+			w.noSum(ent.pathID)
+		}
 
 		return
 	}
 	if ok && w.encodeDict(c, distinct) {
-		w.asDict(ent)
+		w.asDict(ent, c)
 		w.tokenizeEntries(c)
 
 		return
@@ -898,9 +919,10 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 				w.appendFlat(slot, c, 0)
 				if flat := len(w.block) - dict; (dict-start)*wideDictShare <= flat*(wideDictShare+1) {
 					tr.wide, w.block = true, w.block[:dict]
-					w.asDict(ent)
+					w.asDict(ent, c)
 				} else {
 					ent.enc, w.block = encFlat, w.block[:start+copy(w.block[start:], w.block[dict:])]
+					w.noSum(ent.pathID)
 				}
 				// The entries are all the values there are.
 				w.tokenizeEntries(c)
@@ -909,13 +931,14 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 			}
 		} else if tr.wideLeft--; tr.wide {
 			if distinct, ok := w.dict.build(c, true); ok && w.encodeDict(c, distinct) {
-				w.asDict(ent)
+				w.asDict(ent, c)
 				w.tokenizeEntries(c)
 
 				return
 			}
 		}
 	}
+	w.noSum(ent.pathID)
 	ent.enc = encFlat
 	for i := 0; i < c.Count; i++ {
 		w.tokenize(c.Kind, c.Bytes(i))
@@ -948,11 +971,108 @@ func (w *Writer) appendFlat(slot int, c *shred.Column, stride int) {
 }
 
 // asDict marks the column of ent as the dictionary that encodeDict wrote.
-func (w *Writer) asDict(ent *dirEntry) {
+func (w *Writer) asDict(ent *dirEntry, c *shred.Column) {
 	ent.enc = encDict
 	if w.counted {
 		ent.flags |= flagCounts
 	}
+	if !w.counted || c.Kind != vec.KindString {
+		w.noSum(ent.pathID)
+
+		return
+	}
+	for at, entry := range w.dict.order {
+		w.sum(ent.pathID, c.Bytes(int(w.dict.first[entry])), uint64(w.dictRows[at]))
+	}
+}
+
+// pathSum counts the rows of each string value at one path: held of the
+// path's values are counted, and off is set once some cannot be.
+type pathSum struct {
+	off          bool
+	index        map[string]int
+	rows         []uint64
+	bytes        int
+	held, values uint64
+}
+
+// maxCountedBytes bounds the values of one path that a footer holds.
+const maxCountedBytes = 1 << 16
+
+func (w *Writer) pathSum(pathID uint32) *pathSum {
+	for len(w.sums) <= int(pathID) {
+		w.sums = append(w.sums, pathSum{})
+	}
+
+	return &w.sums[pathID]
+}
+
+// sumCopied adds what block i of src counts to the sums of its paths.
+func (w *Writer) sumCopied(src *Part, i int, pathMap []uint32) error {
+	b := &w.copiedBlock
+	if err := src.OpenBlock(i, b); err != nil {
+		return err
+	}
+	refs := b.Columns()
+	for j := range refs {
+		ref := &refs[j]
+		id := pathMap[ref.PathID]
+		w.pathSum(id).values += uint64(ref.Count)
+		switch {
+		case ref.Kind != vec.KindString:
+			w.noSum(id)
+		case ref.Const():
+			w.sum(id, ref.ConstBytes(), uint64(ref.Count))
+		case ref.Counted() && !w.pathSum(id).off:
+			rows, err := b.DecodeCounts(ref, &w.copiedDict, w.copiedRows[:0])
+			if err != nil {
+				return err
+			}
+			w.copiedRows = rows
+			for entry, n := range rows {
+				w.sum(id, w.copiedDict.DictValue(entry), uint64(n))
+			}
+		default:
+			w.noSum(id)
+		}
+	}
+
+	return nil
+}
+
+// sum adds rows that hold value at a path.
+func (w *Writer) sum(pathID uint32, value []byte, rows uint64) {
+	s := w.pathSum(pathID)
+	if s.off {
+		return
+	}
+	at, ok := s.index[string(value)]
+	if !ok {
+		if s.bytes += len(value); len(s.rows) == maxCounted || s.bytes > maxCountedBytes {
+			w.noSum(pathID)
+
+			return
+		}
+		if s.index == nil {
+			s.index = make(map[string]int)
+		}
+		at = len(s.rows)
+		s.index[string(value)] = at
+		s.rows = append(s.rows, 0)
+	}
+	s.rows[at] += rows
+	s.held += rows
+}
+
+// noSum tells that a block holds values at a path that are not counted.
+func (w *Writer) noSum(pathID uint32) {
+	s := w.pathSum(pathID)
+	s.off, s.index, s.rows = true, nil, nil
+}
+
+// counts reports whether the sums of a path cover every value it holds.
+func (s *pathSum) counts() bool {
+	return !s.off && len(s.rows) > 0 && s.held == s.values
 }
 
 // tokenizeEntries adds the tokens of the entries of the dictionary that
@@ -998,11 +1118,12 @@ func (w *Writer) encodeDict(c *shred.Column, distinct int) bool {
 	// A dictionary of few entries says how many rows hold each, which
 	// answers a count by the column without its codes.
 	if w.counted = distinct <= maxCounted; w.counted {
-		var rows [maxCounted]uint32
+		rows := w.dictRows[:distinct]
+		clear(rows)
 		for _, code := range d.codes {
 			rows[d.rank[code]]++
 		}
-		for _, n := range rows[:distinct] {
+		for _, n := range rows {
 			w.block = binary.AppendUvarint(w.block, uint64(n))
 		}
 	}
@@ -1248,6 +1369,7 @@ func (w *Writer) Close() error {
 	footer = binary.AppendUvarint(footer, w.raw)
 	footer = binary.AppendUvarint(footer, zigzag(w.minT))
 	footer = binary.AppendUvarint(footer, zigzag(w.maxT))
+	footer = w.appendSums(footer)
 
 	footerOff := w.off
 	w.write(footer)
@@ -1266,6 +1388,39 @@ func (w *Writer) Close() error {
 	}
 
 	return err
+}
+
+// appendSums appends the counted paths: their number, then for each its
+// id, the number of its values, and the values in order with their rows.
+func (w *Writer) appendSums(dst []byte) []byte {
+	n := 0
+	for i := range w.sums {
+		if w.sums[i].counts() {
+			n++
+		}
+	}
+	dst = binary.AppendUvarint(dst, uint64(n))
+	var values []string
+	for id := range w.sums {
+		s := &w.sums[id]
+		if !s.counts() {
+			continue
+		}
+		values = values[:0]
+		for v := range s.index {
+			values = append(values, v)
+		}
+		slices.Sort(values)
+		dst = binary.AppendUvarint(dst, uint64(id))
+		dst = binary.AppendUvarint(dst, uint64(len(values)))
+		for _, v := range values {
+			dst = binary.AppendUvarint(dst, uint64(len(v)))
+			dst = append(dst, v...)
+			dst = binary.AppendUvarint(dst, s.rows[s.index[v]])
+		}
+	}
+
+	return dst
 }
 
 // dictBuilder finds the distinct values of a byte column.
