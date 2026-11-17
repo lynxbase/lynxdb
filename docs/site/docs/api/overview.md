@@ -131,8 +131,7 @@ Paths below are relative to `/api/v1` unless they start with `/health`, `/metric
 | `GET` | `/query/jobs/{id}` | Job status and result | [Query](./query.md#get-queryjobsid) |
 | `DELETE` | `/query/jobs/{id}` | Cancel a job | [Query](./query.md#delete-queryjobsid) |
 | `GET` | `/query/jobs/{id}/stream` | Job progress over SSE | [Query](./query.md#get-queryjobsidstream) |
-| `GET` | `/tail` | Live tail over SSE | [Live Tail & Histogram](./tail-histogram.md) |
-| `GET` | `/histogram` | Event counts per time bucket | [Live Tail & Histogram](./tail-histogram.md#get-histogram) |
+| `GET` | `/histogram` | Event counts per time bucket | [Histogram](./histogram.md) |
 | `GET` | `/fields` | Field catalog | [Fields & Sources](./fields.md) |
 | `GET` | `/fields/{name}/values` | Top values of a field | [Fields & Sources](./fields.md#get-fieldsnamevalues) |
 | `GET` | `/sources` | Sources with event counts | [Fields & Sources](./fields.md#get-sources) |

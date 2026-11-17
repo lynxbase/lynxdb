@@ -138,24 +138,6 @@ curl -s -X POST localhost:3100/api/v1/query/stream \
 
 See the [Query API](../api/query.md) for jobs, errors and profiling.
 
-## Live tail
-
-`lynxdb tail` takes a full PPL query, prints recent matching events, then
-streams new ones as they arrive:
-
-```bash
-# Every event
-lynxdb tail
-
-# Errors only
-lynxdb tail 'source=main level=ERROR'
-
-# Server errors with selected fields
-lynxdb tail 'source=main status>=500 | fields _time, host, path, status'
-```
-
-See [Live Tail](../guides/live-tail.md).
-
 ## Inspect the server
 
 ```bash

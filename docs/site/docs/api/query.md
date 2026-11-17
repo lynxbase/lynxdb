@@ -540,6 +540,6 @@ data: {"data":{"columns":["avg_ms","level","n"],"has_more":false,"rows":[[411.21
 ## Related
 
 - [API overview](./overview.md): authentication, envelopes, endpoint map
-- [Live tail and histogram](./tail-histogram.md)
+- [Histogram](./histogram.md)
 - [`lynxdb query`](../cli/query.md)
 - [PPL overview](../ppl/overview.md), [PPL errors](../ppl/errors.md), [feature matrix](../ppl/feature-matrix.md)

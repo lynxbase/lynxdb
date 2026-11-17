@@ -117,7 +117,7 @@ default_source: web
 
 | Area | Commands |
 |------|----------|
-| Query | [`query`](./query.md) (`q`), [`explain`](./explain.md), [`tail`](./tail.md) (`t`), [`fields`](./status.md#fields) (`f`) |
+| Query | [`query`](./query.md) (`q`), [`explain`](./explain.md), [`fields`](./status.md#fields) (`f`) |
 | Load data | [`ingest`](./ingest.md) (`i`), [`import`](./ingest.md#import) |
 | Run the server | [`server`](./server.md) |
 | Inspect the server | [`status`](./status.md) (`st`), [`health`](./status.md#health), [`indexes`](./status.md#indexes), [`cache`](./status.md#cache), [`jobs`](./status.md#jobs) |
