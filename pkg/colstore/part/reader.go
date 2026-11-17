@@ -2,10 +2,12 @@ package part
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/binary"
 	"hash/crc32"
 	"math"
 	"math/bits"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -71,6 +73,9 @@ type filterGroup struct {
 	size    uint64
 	stripes uint64
 	stripe  uint64
+	// ahead names the pages last asked of the kernel ahead of a lookup:
+	// a column and a stripe, so that the blocks of the group ask once.
+	ahead atomic.Uint64
 }
 
 // maxFilterBlocks bounds the bloom blocks of one filter so that scaling a
@@ -172,9 +177,11 @@ func Open(data []byte) (*Part, error) {
 	if r.bad || len(p.paths) == 0 || p.paths[0] != TimePath {
 		return nil, ErrCorrupt
 	}
-	// The filters of a group's blocks follow one another in every stripe
-	// and fill it; group, filter and filled walk them to check that.
-	group, filter, filled := 0, 0, uint64(0)
+	// The filters of a group's blocks fill every stripe, those of one
+	// column side by side; group, filter and filled walk them to check
+	// that, and first is the first filter of the group.
+	group, filter, first, filled := 0, 0, 0, uint64(0)
+	var order []int32
 	for i := 0; i < p.NumBlocks(); i++ {
 		e := p.index[i*indexEntrySize:]
 		start, size := binary.LittleEndian.Uint64(e[20:]), uint64(binary.LittleEndian.Uint32(e[28:]))
@@ -187,7 +194,10 @@ func Open(data []byte) (*Part, error) {
 			continue
 		}
 		if filled == p.groups[group].stripe && group+1 < len(p.groups) {
-			group, filled = group+1, 0
+			if order = p.placed(order, first, filter); order == nil {
+				return nil, ErrCorrupt
+			}
+			group, filled, first = group+1, 0, filter
 		}
 		g, end := &p.groups[group], len(p.filters)/filterEntrySize
 		if len(e) > indexEntrySize {
@@ -201,19 +211,47 @@ func Open(data []byte) (*Part, error) {
 			path, pieces := binary.LittleEndian.Uint32(f), uint64(binary.LittleEndian.Uint32(f[8:]))
 			kind := binary.LittleEndian.Uint32(f[4:])
 			own := uint64(path) < uint64(len(p.paths)) && (kind == uint32(vec.KindString) || kind == uint32(vec.KindVariant))
-			if (!own && (path != noPath || kind != 0)) || pieces == 0 ||
-				uint64(binary.LittleEndian.Uint32(f[12:])) != filled || pieces > g.stripe-filled {
+			if (!own && (path != noPath || kind != 0)) || pieces == 0 || pieces > g.stripe-filled {
 				return nil, ErrCorrupt
 			}
 			filled += pieces
 		}
 	}
 	if len(p.groups) > 0 && (group != len(p.groups)-1 || filled != p.groups[group].stripe ||
-		filter != len(p.filters)/filterEntrySize) {
+		filter != len(p.filters)/filterEntrySize || p.placed(order, first, filter) == nil) {
 		return nil, ErrCorrupt
 	}
 
 	return p, nil
+}
+
+// placed checks that the filters first to end, those of one group, lie in
+// every stripe in the order of their columns and, within a column, of their
+// blocks, each after the pieces of those before it. It returns order, its
+// scratch, or nil when they do not.
+func (p *Part) placed(order []int32, first, end int) []int32 {
+	order = order[:0]
+	for f := first; f < end; f++ {
+		order = append(order, int32(f))
+	}
+	slices.SortStableFunc(order, func(a, b int32) int {
+		x, y := p.filters[int(a)*filterEntrySize:], p.filters[int(b)*filterEntrySize:]
+
+		return cmp.Or(cmp.Compare(binary.LittleEndian.Uint32(x), binary.LittleEndian.Uint32(y)), cmp.Compare(x[4], y[4]))
+	})
+	before := uint32(0)
+	for _, f := range order {
+		e := p.filters[int(f)*filterEntrySize:]
+		if binary.LittleEndian.Uint32(e[12:]) != before {
+			return nil
+		}
+		before += binary.LittleEndian.Uint32(e[8:])
+	}
+	if order == nil {
+		order = []int32{}
+	}
+
+	return order
 }
 
 // readKeyStats reads the key statistics of every block and reports whether
@@ -259,10 +297,11 @@ func (p *Part) KeyRuns(i, depth int) int {
 	return int(p.keyStats[i*(len(p.sortKey)+1)+depth])
 }
 
-// SetBlockData makes the part read the column chunks of its blocks from
-// data, which holds the same bytes as the data it was opened on; a part
-// mapped from a file gives the two mappings advice of their own, since
-// chunks are read one here and one there and everything else side by side.
+// SetBlockData makes the part read the column chunks of its blocks and the
+// pages of its token filters from data, which holds the same bytes as the
+// data it was opened on; a part mapped from a file gives the two mappings
+// advice of their own, since chunks and filter pages are read one here and
+// one there and everything else side by side.
 func (p *Part) SetBlockData(data []byte) {
 	if len(data) == len(p.data) {
 		p.blocks = data
@@ -594,6 +633,7 @@ func (b *Block) ColumnsMayContain(dst vec.Bitmap, hashes []uint64) (vec.Bitmap, 
 		return dst, nil
 	}
 	g, first, end := p.blockFilters(b.index)
+	p.aheadStripe(g, hashes)
 	sound := ^uint64(0)
 	for f := first; f < end; f++ {
 		if binary.LittleEndian.Uint32(p.filters[f*filterEntrySize:]) != noPath {
@@ -651,9 +691,46 @@ func (p *Part) MayContainTokensIn(i int, pathID uint32, kind vec.Kind, hashes []
 	if f < 0 {
 		return false, nil
 	}
+	if len(hashes) > 0 && p.readAhead != nil {
+		// The pieces of the column's filters of the blocks around this one
+		// are next to its own.
+		_, page, _ := p.probe(g, f, hashes[0])
+		stripe := uint64(tokenfilter.Block(hashes[0], int(g.stripes)))
+		from := max(page, g.off+filterPage) - filterPage
+		p.ahead(g, (uint64(pathID)<<8|uint64(kind))<<16|stripe, from, min(page+3*filterPage, g.off+g.size))
+	}
 	sound := ^uint64(0)
 
 	return p.holds(g, f, hashes, &sound)
+}
+
+// ahead asks for the bytes from to to of the part, which lookups in group g
+// are about to read, unless the lookup before asked for the same: key names
+// what they hold.
+func (p *Part) ahead(g *filterGroup, key, from, to uint64) {
+	if g.ahead.Load() != key+1 && g.ahead.Swap(key+1) != key+1 {
+		p.readAhead(int(from), int(to-from))
+	}
+}
+
+// ForgetReadAhead makes the lookups in the token filters ask for their
+// pages again, after the pages of the part were let go of.
+func (p *Part) ForgetReadAhead() {
+	for i := range p.groups {
+		p.groups[i].ahead.Store(0)
+	}
+}
+
+// aheadStripe asks for the stripe of group g that lookups of hash in every
+// filter of its blocks read.
+func (p *Part) aheadStripe(g *filterGroup, hashes []uint64) {
+	if len(hashes) == 0 || p.readAhead == nil {
+		return
+	}
+	stripe := uint64(tokenfilter.Block(hashes[0], int(g.stripes)))
+	from := stripe * g.stripe / pageBlocks * filterPage
+	to := min(((stripe+1)*g.stripe+pageBlocks-1)/pageBlocks*filterPage, g.size)
+	p.ahead(g, uint64(noPath)<<24|stripe, g.off+from, g.off+to)
 }
 
 // columnFilter returns which of the filters first to end of a block holds
@@ -678,15 +755,17 @@ func (p *Part) columnFilter(first, end int, pathID uint32, kind vec.Kind) (f int
 // holds reports whether filter f of group g may hold every token of hashes.
 // sound is the page of the part whose checksum the caller has seen to match.
 func (p *Part) holds(g *filterGroup, f int, hashes []uint64, sound *uint64) (bool, error) {
+	// The view of the part that reads the pages asked for and no others.
+	data := p.blocks
 	for _, h := range hashes {
 		block, page, end := p.probe(g, f, h)
 		if page != *sound {
-			if crc32.Checksum(p.data[page+4:end], castagnoli) != binary.LittleEndian.Uint32(p.data[page:]) {
+			if crc32.Checksum(data[page+4:end], castagnoli) != binary.LittleEndian.Uint32(data[page:]) {
 				return false, ErrCorrupt
 			}
 			*sound = page
 		}
-		if !tokenfilter.BlockMayContain(p.data[block:], h) {
+		if !tokenfilter.BlockMayContain(data[block:], h) {
 			return false, nil
 		}
 	}
@@ -731,7 +810,7 @@ func (p *Part) MayContainTokens(i int, hashes []uint64) (bool, error) {
 		return true, nil
 	}
 	g, f, end := p.blockFilters(i)
-	// Filters of one block lie side by side, so most share a page.
+	p.aheadStripe(g, hashes)
 	for sound := ^uint64(0); f < end; f++ {
 		if may, err := p.holds(g, f, hashes, &sound); may || err != nil {
 			return may, err
@@ -783,7 +862,7 @@ func (g *filterGroup) pages() int { return int((g.size + filterPage - 1) / filte
 func (p *Part) appendFilter(dst []byte, g *filterGroup, f int, verified vec.Bitmap) ([]byte, bool) {
 	e := p.filters[f*filterEntrySize:]
 	pieces, before := uint64(binary.LittleEndian.Uint32(e[8:])), uint64(binary.LittleEndian.Uint32(e[12:]))
-	group := p.data[g.off : g.off+g.size]
+	group := p.blocks[g.off : g.off+g.size]
 	for k := uint64(0); k < g.stripes; k++ {
 		for n, end := k*g.stripe+before, k*g.stripe+before+pieces; n < end; {
 			page := n / pageBlocks

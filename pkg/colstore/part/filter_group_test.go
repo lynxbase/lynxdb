@@ -425,13 +425,14 @@ func TestFilterGroupsCloseAtTheirSizeBound(t *testing.T) {
 	}
 }
 
-// A part with block data of its own reads column chunks from it and
-// everything else from the bytes it was opened on.
+// A part with block data of its own reads column chunks and filter pages
+// from it and everything else from the bytes it was opened on.
 func TestPartReadsChunksFromItsBlockData(t *testing.T) {
 	r := rand.New(rand.NewSource(9))
 	whole := wordySource(t, r, 0, 11*60, 60, 3, 3, 8)
 	want, _ := readAll(t, whole)
-	// One copy keeps the column chunks only, the other all but them.
+	// One copy keeps the column chunks and the filter groups only, the
+	// other all but them.
 	chunks := make([]byte, len(whole.data))
 	rest := append([]byte(nil), whole.data...)
 	for i := 0; i < whole.NumBlocks(); i++ {
@@ -441,13 +442,18 @@ func TestPartReadsChunksFromItsBlockData(t *testing.T) {
 		copy(chunks[start:end], rest[start:end])
 		clear(rest[start:end])
 	}
+	for i := range whole.groups {
+		g := &whole.groups[i]
+		copy(chunks[g.off:g.off+g.size], rest[g.off:g.off+g.size])
+		clear(rest[g.off : g.off+g.size])
+	}
+	whole.SetBlockData(chunks[:len(chunks)-1])
+	if _, err := whole.MayContainToken(0, 1); err != nil {
+		t.Fatalf("block data of another length took the place of the part's: %v", err)
+	}
 	p, err := Open(rest)
 	if err != nil {
 		t.Fatal(err)
-	}
-	p.SetBlockData(chunks[:len(chunks)-1])
-	if _, err := p.MayContainToken(0, 1); err != nil {
-		t.Fatalf("block data of another length took the place of the part's: %v", err)
 	}
 	p.SetBlockData(chunks)
 	if got, _ := readAll(t, p); !reflect.DeepEqual(got, want) {
@@ -608,7 +614,7 @@ func (f *fileReads) windows() int {
 }
 
 // Looking a token up in every block of a group reads the pages of one
-// stripe, which lie side by side in the file and come in with one fault: one
+// stripe, which lie side by side in the file and are asked for at once: one
 // read of the file a group for one token, in one or two windows, and three
 // for three tokens. A filter stored behind its block takes a read for every
 // block and token.
@@ -677,4 +683,78 @@ func BenchmarkMayContainToken(b *testing.B) {
 		}
 	}
 	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*blocks*len(hashes)), "ns/probe")
+}
+
+// In every stripe of a group the pieces of one column's filters lie side by
+// side, block after block: looking a token up in a column reads, over the
+// blocks of a group, a run of pages a fraction of the stripe long.
+func TestColumnLookupReadsItsPiecesSideBySide(t *testing.T) {
+	r := rand.New(rand.NewSource(3))
+	word := func() string {
+		b := make([]byte, 6+r.Intn(6))
+		for i := range b {
+			b[i] = byte('a' + r.Intn(26))
+		}
+
+		return string(b)
+	}
+	var buf bytes.Buffer
+	w := NewWriter(&buf, Options{})
+	batch := shred.NewBatch(shred.Options{})
+	const blocks, rows = 40, 600
+	for i := 0; i < blocks*rows; i++ {
+		doc := fmt.Sprintf(`{"a":"%s %s %s %s %s %s","b":"%s %s %s %s %s %s","c":"%s %s %s %s %s %s","n":%d}`,
+			word(), word(), word(), word(), word(), word(), word(), word(), word(), word(), word(), word(),
+			word(), word(), word(), word(), word(), word(), i)
+		if err := batch.AddJSON([]byte(doc), int64(i)); err != nil {
+			t.Fatal(err)
+		}
+		if batch.Rows == rows {
+			if err := w.WriteBatch(batch); err != nil {
+				t.Fatal(err)
+			}
+			batch.Reset()
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Open(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := p.PathID("a")
+	if !p.OwnFilter(0, a, vec.KindString) || !p.OwnFilter(blocks-1, a, vec.KindString) {
+		t.Fatal("the column has no filter of its own to look up in")
+	}
+	for g, run := range groupRuns(p) {
+		if run[1]-run[0] < 8 {
+			continue
+		}
+		group := &p.groups[g]
+		stripe := int(group.stripe+pageBlocks-1) / pageBlocks
+		for n := 0; n < 200; n++ {
+			hash := r.Uint64()
+			pages := map[uint64]bool{}
+			for i := run[0]; i <= run[1]; i++ {
+				_, first, end := p.blockFilters(i)
+				f, own := p.columnFilter(first, end, a, vec.KindString)
+				if !own {
+					t.Fatalf("block %d has no filter for the column", i)
+				}
+				_, page, _ := p.probe(group, f, hash)
+				pages[page] = true
+			}
+			lo, hi := ^uint64(0), uint64(0)
+			for page := range pages {
+				lo, hi = min(lo, page), max(hi, page)
+			}
+			// Three columns share the stripe, and a run of pieces need
+			// not start or end on a page.
+			if span := int(hi-lo)/filterPage + 1; span > stripe/2+1 || len(pages) != span {
+				t.Fatalf("group %d of %d blocks: a token of one column reads %d pages over %d, a stripe has %d",
+					g, run[1]-run[0]+1, len(pages), span, stripe)
+			}
+		}
+	}
 }

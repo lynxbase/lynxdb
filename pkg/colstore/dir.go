@@ -466,12 +466,10 @@ func (d *Dir) open(name string, meta PartMeta) (*Handle, *partFileRef, error) {
 	}
 	var blocks mmap.MMap
 	if readAdvice {
-		// Column chunks are read one here and one there, each asked for in
-		// one piece, through a mapping of their own. The token filters, the
-		// directories and the footer are read side by side and keep the
-		// kernel's own read-ahead. Advice for runs of blocks within one
-		// mapping would split it at every filter group, and the kernel
-		// bounds the mappings of a process.
+		// Column chunks and the pages of token filters are read one here
+		// and one there, each asked for in one piece, through a mapping of
+		// their own. The directories and the footer are read side by side
+		// and keep the kernel's own read-ahead.
 		if blocks, err = mmap.Map(f, mmap.RDONLY, 0); err != nil {
 			_ = data.Unmap()
 			f.Close()
@@ -512,9 +510,10 @@ func (d *Dir) Table() *Table { return d.table }
 func (d *Dir) ReleasePages() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for _, ref := range d.live {
+	for h, ref := range d.live {
 		adviseDontNeed(ref.data)
 		adviseDontNeed(ref.blocks)
+		h.Part.ForgetReadAhead()
 	}
 }
 

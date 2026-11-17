@@ -1,12 +1,14 @@
 package part
 
 import (
+	"cmp"
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
 	"io"
 	"math"
 	"math/bits"
+	"slices"
 	"sort"
 
 	"github.com/cespare/xxhash/v2"
@@ -80,6 +82,10 @@ type Writer struct {
 	groupFilters int
 	grouped      int
 	stripe       uint32
+	// order and starts serve closeGroup: the filters of the group by
+	// column, and where each begins in blooms.
+	order        []int32
+	starts       []int
 	groupBlocks  int
 	groupBytes   int
 	stripes      int
@@ -430,13 +436,31 @@ func (w *Writer) closeGroup(last bool) {
 	w.groups = binary.LittleEndian.AppendUint32(w.groups, uint32(w.stripes))
 
 	entries := w.filters[len(w.filters)-w.groupFilters*filterEntrySize:]
+	// In every stripe the pieces of one column's filters lie side by side,
+	// block after block, so that looking a token up in a column reads one
+	// place of the group and not one per block.
+	order, starts := w.order[:0], w.starts[:0]
+	for i, at := 0, 0; i < w.groupFilters; i++ {
+		order, starts = append(order, int32(i)), append(starts, at)
+		at += w.stripes * int(binary.LittleEndian.Uint32(entries[i*filterEntrySize+8:])) * tokenfilter.BlockBytes
+	}
+	slices.SortStableFunc(order, func(a, b int32) int {
+		x, y := entries[int(a)*filterEntrySize:], entries[int(b)*filterEntrySize:]
+
+		return cmp.Or(cmp.Compare(binary.LittleEndian.Uint32(x), binary.LittleEndian.Uint32(y)), cmp.Compare(x[4], y[4]))
+	})
+	before := uint32(0)
+	for _, i := range order {
+		e := entries[int(i)*filterEntrySize:]
+		binary.LittleEndian.PutUint32(e[12:], before)
+		before += binary.LittleEndian.Uint32(e[8:])
+	}
+	w.order, w.starts = order, starts
 	pages, placed := w.pages[:0], 0
 	for k := 0; k < w.stripes; k++ {
-		at := 0
-		for e := entries; len(e) > 0; e = e[filterEntrySize:] {
-			piece := int(binary.LittleEndian.Uint32(e[8:])) * tokenfilter.BlockBytes
-			src := w.blooms[at+k*piece : at+(k+1)*piece]
-			at += w.stripes * piece
+		for _, i := range order {
+			piece := int(binary.LittleEndian.Uint32(entries[int(i)*filterEntrySize+8:])) * tokenfilter.BlockBytes
+			src := w.blooms[starts[i]+k*piece : starts[i]+(k+1)*piece]
 			for len(src) > 0 {
 				if placed%pageBlocks == 0 {
 					if len(pages) >= groupFlush {
