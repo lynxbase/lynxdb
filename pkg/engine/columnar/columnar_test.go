@@ -307,6 +307,9 @@ func TestValuesCollectedFromCounts(t *testing.T) {
 		`source=nope | stats values(level) as levels`:                                            `{"levels":[]}`,
 		`source=logs | where status > 999 | stats values(level) as levels, count() as n by host`: ``,
 		`source=logs | stats values(level) as levels, avg(dur) as mean by host | sort host`:      `{"levels":["error","info"],"mean":1,"host":"a"} {"levels":["error","warn"],"mean":1.375,"host":"b"}`,
+		`source=logs | stats avg(status) as mean, values(host) as hosts, avg(nope) as none by level | sort level`: `{"mean":501.5,"hosts":["a","b"],"none":null,"level":"error"} ` +
+			`{"mean":200,"hosts":["a"],"none":null,"level":"info"} {"mean":404,"hosts":["b"],"none":null,"level":"warn"}`,
+		`source=logs | stats values(level) as levels, list(host) as hosts by host | sort host`: `{"levels":["error","info"],"hosts":["a","a","a"],"host":"a"} {"levels":["error","warn"],"hosts":["b","b"],"host":"b"}`,
 	} {
 		compiled, err := query.Compile(text)
 		if err != nil {
