@@ -12,7 +12,8 @@ import (
 )
 
 // TestJSONBenchSmallWrites sends the lines of LYNXDB_BENCH_NDJSON, when
-// LYNXDB_BENCH_SMALL_WRITES is set, from LYNXDB_BENCH_CLIENTS clients in
+// LYNXDB_BENCH_SMALL_WRITES is set, from 1, 8, 64 and 256 clients, or from
+// LYNXDB_BENCH_CLIENTS of them, in
 // requests of LYNXDB_BENCH_REQUEST_DOCS lines for LYNXDB_BENCH_SECONDS, each
 // request waiting until its rows are durable, and reports the requests and
 // rows per second, the latency of a request, the parts written and CPU time.
@@ -44,7 +45,11 @@ func TestJSONBenchSmallWrites(t *testing.T) {
 	seconds := time.Duration(envInt(t, "LYNXDB_BENCH_SECONDS", 3)) * time.Second
 	t.Logf("%d CPUs; requests of %d lines; every request waits until it is durable", runtime.GOMAXPROCS(0), docs)
 	t.Logf("%7s %9s %10s %9s %9s %9s %7s %7s", "clients", "req/s", "rows/s", "p50 ms", "p99 ms", "CPU ms", "parts", "left")
-	for _, clients := range []int{1, 8, 64, 256} {
+	levels := []int{1, 8, 64, 256}
+	if only := envInt(t, "LYNXDB_BENCH_CLIENTS", 0); only > 0 {
+		levels = []int{only}
+	}
+	for _, clients := range levels {
 		opts := ingestOptions(t)
 		if opts.SortKey == nil {
 			opts.SortKey = []string{"kind", "commit.operation", "commit.collection", "did"}
