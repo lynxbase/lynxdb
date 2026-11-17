@@ -24,7 +24,6 @@ type Hints struct {
 	FieldEquals []FieldEqual
 	Columns     []string
 	Limit       int64
-	Descending  bool
 }
 
 // FieldEqual is a column that must equal a string value.
@@ -35,7 +34,7 @@ type FieldEqual struct {
 
 // ScanHints derives storage hints from a scan for reference time now.
 func ScanHints(scan *ir.Scan, now time.Time) Hints {
-	h := Hints{Sources: scan.Sources, Columns: scan.Columns, Limit: scan.Limit, Descending: scan.Descending}
+	h := Hints{Sources: scan.Sources, Columns: scan.Columns, Limit: scan.Limit}
 	// A scan of several sources keeps the index column, which tells its
 	// rows apart from those of the other sources a storage engine returns.
 	if h.Columns != nil && (len(scan.Sources) > 1 || (len(scan.Sources) == 1 && scan.Sources[0].Pattern)) &&

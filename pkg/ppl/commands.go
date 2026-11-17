@@ -398,7 +398,7 @@ func (c *compiler) rename(st *pipe, n *ast.RenameCommand) error {
 			}
 		}
 		rn.Renames = append(rn.Renames, ir.Rename{From: from, To: to})
-		s = (&ir.RenameColumns{Input: &ir.Empty{Out: s}, Renames: []ir.Rename{{From: from, To: to}}}).Schema()
+		s = ir.RenameSchema(s, ir.Rename{From: from, To: to})
 	}
 	st.node = rn
 	return nil

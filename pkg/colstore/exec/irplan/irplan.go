@@ -92,22 +92,16 @@ func Rows(scan *ir.Scan, opts Options) (exec.Node, error) {
 		}
 	}
 	if scan.Columns != nil {
-		// The time orders the newest first, and stands for the row where
-		// no column is asked for.
+		// The time stands for the row where no column is asked for.
 		names := scan.Columns
-		if (scan.Descending || len(names) == 0) && !slices.Contains(names, ir.TimeColumn) {
-			names = append(names[:len(names):len(names)], ir.TimeColumn)
+		if len(names) == 0 {
+			names = []string{ir.TimeColumn}
 		}
 		if err := t.project(&ir.Project{Names: names}); err != nil {
 			return nil, err
 		}
 	}
-	switch {
-	case scan.Descending:
-		if err := t.order([]ir.SortKey{{Expr: ir.Field(ir.TimeColumn), Desc: true}}, scan.Limit); err != nil {
-			return nil, err
-		}
-	case scan.Limit > 0:
+	if scan.Limit > 0 {
 		t.sort = &exec.Sort{Limit: int(scan.Limit)}
 	}
 
@@ -319,7 +313,7 @@ func (t *translator) total(n *ir.Window) error {
 	for _, f := range n.Funcs {
 		call := f.Agg
 		refused := unsupported("the window function %s; a window gives the sum of a column of an aggregate", call)
-		if call.Func.Name != "sum" || len(call.Args) != 1 || call.Distinct || call.Filter != nil {
+		if call.Func.Name != "sum" || len(call.Args) != 1 || call.Filter != nil {
 			return refused
 		}
 		e, err := t.expr(call.Args[0])
@@ -406,7 +400,7 @@ func (t *translator) fill(n *ir.FillNull) error {
 // as functions of the text, one for each column; a text without a match
 // gives them null, or the empty string where the node asks for it.
 func (t *translator) extract(n *ir.Extract) error {
-	if n.Method != ir.ExtractRegex || n.MaxMatches > 1 {
+	if n.MaxMatches > 1 {
 		return unsupported("%s", n.Label())
 	}
 	re, err := regexp.Compile(n.Pattern)
@@ -515,8 +509,8 @@ var aggFuncs = map[string]exec.AggFunc{
 }
 
 func (t *translator) aggregate(n *ir.Aggregate) error {
-	if t.agg != nil || t.dedup != nil || n.Phase != ir.AggComplete {
-		return unsupported("%s above an aggregate, above the first rows of keys, or split in phases", n.Label())
+	if t.agg != nil || t.dedup != nil {
+		return unsupported("%s above an aggregate or above the first rows of keys", n.Label())
 	}
 	agg := &exec.Aggregate{}
 	env := map[string]*exec.Expr{}
@@ -559,10 +553,6 @@ func (t *translator) aggCall(a ir.NamedAgg) (exec.Agg, error) {
 	out := exec.Agg{Name: a.Name, Func: fn}
 	args := call.Args
 	switch {
-	case call.Distinct && fn == exec.Count && len(args) == 1:
-		out.Func = exec.CountDistinct
-	case call.Distinct:
-		return exec.Agg{}, refused
 	case fn == exec.Count && len(args) > 1:
 		return exec.Agg{}, refused
 	case fn == exec.Percentile:
@@ -1204,13 +1194,7 @@ func quoteMeta(s string) string {
 // search translates a search of text: of one column, or of every string of
 // the row when it names none.
 func (t *translator) search(s *ir.Search) (*exec.Expr, error) {
-	fold := func(p tokenfilter.Pattern) tokenfilter.Pattern {
-		if s.CaseSensitive {
-			return p
-		}
-
-		return p.IgnoreCase()
-	}
+	fold := tokenfilter.Pattern.IgnoreCase
 	var patterns []tokenfilter.Pattern
 	switch s.Mode {
 	case ir.SearchWord:
@@ -1225,11 +1209,7 @@ func (t *translator) search(s *ir.Search) (*exec.Expr, error) {
 	case ir.SearchSubstring:
 		patterns = append(patterns, fold(tokenfilter.Substring(s.Pattern)))
 	case ir.SearchRegex:
-		expr := s.Pattern
-		if !s.CaseSensitive {
-			expr = "(?i)" + expr
-		}
-		p, err := tokenfilter.Regexp(expr)
+		p, err := tokenfilter.Regexp("(?i)" + s.Pattern)
 		if err != nil {
 			return nil, fmt.Errorf("irplan: %s: %w", s, err)
 		}

@@ -402,12 +402,10 @@ func isWordByte(r rune) bool {
 	return r == '_' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || r > 127
 }
 
-// phraseMatcher matches text containing the phrase at token boundaries.
-func phraseMatcher(phrase string, caseSensitive bool) NativeFunc {
-	needle := phrase
-	if !caseSensitive {
-		needle = strings.ToLower(phrase)
-	}
+// phraseMatcher matches text containing the phrase at token boundaries,
+// ignoring case.
+func phraseMatcher(phrase string) NativeFunc {
+	needle := strings.ToLower(phrase)
 	first, _ := firstRune(needle)
 	last, _ := lastRune(needle)
 	return func(a []event.Value) event.Value {
@@ -415,9 +413,7 @@ func phraseMatcher(phrase string, caseSensitive bool) NativeFunc {
 		if !ok {
 			return event.NullValue()
 		}
-		if !caseSensitive {
-			s = strings.ToLower(s)
-		}
+		s = strings.ToLower(s)
 		for off := 0; ; {
 			i := strings.Index(s[off:], needle)
 			if i < 0 {
@@ -458,16 +454,6 @@ func prevRune(s string, i int) rune {
 func nextRune(s string, i int) rune {
 	r, _ := firstRune(s[i:])
 	return r
-}
-
-func substringMatcher(sub string) NativeFunc {
-	return func(a []event.Value) event.Value {
-		s, ok := str(a[0])
-		if !ok {
-			return event.NullValue()
-		}
-		return event.BoolValue(strings.Contains(s, sub))
-	}
 }
 
 func regexMatcher(pattern string, caseSensitive bool) (NativeFunc, error) {

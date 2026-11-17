@@ -119,9 +119,7 @@ type Scan struct {
 	// Limit, when positive, bounds the number of rows operators above the
 	// scan consume in scan order.
 	Limit int64
-	// Descending asks for newest-first event order.
-	Descending bool
-	Out        Schema
+	Out   Schema
 }
 
 func (*Scan) Inputs() []Node { return nil }
@@ -149,9 +147,6 @@ func (s *Scan) Label() string {
 	b.WriteString(")")
 	if !s.Time.IsZero() {
 		b.WriteString(" time=" + s.Time.String())
-	}
-	if s.Descending {
-		b.WriteString(" desc")
 	}
 	if s.Limit > 0 {
 		b.WriteString(" limit=" + strconv.FormatInt(s.Limit, 10))
@@ -184,23 +179,6 @@ func (*Values) isNode()          {}
 func (v *Values) Label() string {
 	return fmt.Sprintf("Values(rows=%d, columns=[%s])", len(v.Rows), strings.Join(v.Out.Names(), ", "))
 }
-
-// Empty produces no rows.
-type Empty struct {
-	Out Schema
-}
-
-func (*Empty) Inputs() []Node { return nil }
-func (e *Empty) WithInputs(in []Node) Node {
-	if len(in) != 0 {
-		panic("ir: Empty takes no inputs")
-	}
-	c := *e
-	return &c
-}
-func (e *Empty) Schema() Schema { return e.Out }
-func (*Empty) isNode()          {}
-func (*Empty) Label() string    { return "Empty()" }
 
 // SourceSchema produces one row per column observed in a source.
 type SourceSchema struct {
@@ -396,12 +374,13 @@ func (r *RenameColumns) Schema() Schema { return r.schemaFrom(r.Input.Schema()) 
 func (r *RenameColumns) schemaFrom(in Schema) Schema {
 	s := in.Clone()
 	for _, rn := range r.Renames {
-		s = renameSchema(s, rn)
+		s = RenameSchema(s, rn)
 	}
 	return s
 }
 
-func renameSchema(s Schema, rn Rename) Schema {
+// RenameSchema returns s with the columns rn applies to renamed.
+func RenameSchema(s Schema, rn Rename) Schema {
 	var out Schema
 	out.Open = s.Open
 	renamed := map[string]Column{}
@@ -529,18 +508,6 @@ type NamedAgg struct {
 	Agg  *AggCall
 }
 
-// AggregatePhase identifies a split of an aggregation across workers.
-type AggregatePhase uint8
-
-const (
-	// AggComplete aggregates input rows to final values.
-	AggComplete AggregatePhase = iota
-	// AggPartial aggregates input rows to mergeable partial states.
-	AggPartial
-	// AggFinal merges partial states to final values.
-	AggFinal
-)
-
 // Aggregate groups rows by Groups and computes Aggs per group. The output
 // has the group columns followed by the aggregate columns. Without groups it
 // produces exactly one row, even for empty input.
@@ -551,12 +518,6 @@ type Aggregate struct {
 	// DropNullGroups drops input rows whose group values contain a NULL
 	// instead of forming a NULL group.
 	DropNullGroups bool
-	Phase          AggregatePhase
-	// Limit, when positive, is the maximum number of groups a consumer
-	// reads after ordering by OrderBy; it lets the executor keep a bounded
-	// heap of groups.
-	Limit   int64
-	OrderBy []SortKey
 }
 
 func (a *Aggregate) Inputs() []Node { return []Node{a.Input} }
@@ -593,24 +554,8 @@ func (a *Aggregate) Label() string {
 	if a.DropNullGroups {
 		b.WriteString(" drop_null_groups")
 	}
-	switch a.Phase {
-	case AggPartial:
-		b.WriteString(" phase=partial")
-	case AggFinal:
-		b.WriteString(" phase=final")
-	}
-	if a.Limit > 0 {
-		b.WriteString(" limit=" + strconv.FormatInt(a.Limit, 10) + " order=" + sortKeysString(a.OrderBy))
-	}
 	return b.String()
 }
-
-// Column annotations shared by every aggregate schema; they are never
-// modified.
-var (
-	groupMeta     = map[string]string{"role": "group"}
-	aggregateMeta = map[string]string{"role": "aggregate"}
-)
 
 func (a *Aggregate) Schema() Schema {
 	var s Schema
@@ -618,10 +563,10 @@ func (a *Aggregate) Schema() Schema {
 		s.Columns = make([]Column, 0, n)
 	}
 	for _, g := range a.Groups {
-		s.Columns = append(s.Columns, Column{Name: g.Name, Type: g.Expr.Type(), Nullable: !a.DropNullGroups, Meta: groupMeta})
+		s.Columns = append(s.Columns, Column{Name: g.Name, Type: g.Expr.Type(), Nullable: !a.DropNullGroups})
 	}
 	for _, ag := range a.Aggs {
-		s.Columns = append(s.Columns, Column{Name: ag.Name, Type: ag.Agg.Type(), Nullable: true, Meta: aggregateMeta})
+		s.Columns = append(s.Columns, Column{Name: ag.Name, Type: ag.Agg.Type(), Nullable: true})
 	}
 	return s
 }
@@ -634,7 +579,7 @@ const (
 	// attaches the result to every row of it.
 	FramePartition FrameKind = iota + 1
 	// FrameRunning evaluates each function over the rows of the partition up
-	// to the current row in input order, optionally bounded by Rows or Span.
+	// to the current row in input order, optionally bounded by Rows.
 	FrameRunning
 )
 
@@ -645,13 +590,6 @@ type Frame struct {
 	Rows int
 	// ExcludeCurrent leaves the current row out of a running frame.
 	ExcludeCurrent bool
-	// Span, when set, limits a running frame to rows whose time column is
-	// within the duration before the current row's.
-	Span Expr
-	// ResetBefore and ResetAfter restart the running state before or after a
-	// row for which the predicate is TRUE.
-	ResetBefore Expr
-	ResetAfter  Expr
 }
 
 // Window evaluates aggregate and window functions per row and appends their
@@ -683,15 +621,6 @@ func (w *Window) Label() string {
 		}
 		if w.Frame.ExcludeCurrent {
 			b.WriteString(" exclude_current")
-		}
-		if w.Frame.Span != nil {
-			b.WriteString(" span=" + w.Frame.Span.String())
-		}
-		if w.Frame.ResetBefore != nil {
-			b.WriteString(" reset_before=" + w.Frame.ResetBefore.String())
-		}
-		if w.Frame.ResetAfter != nil {
-			b.WriteString(" reset_after=" + w.Frame.ResetAfter.String())
 		}
 		b.WriteString("](")
 	} else {
@@ -1083,34 +1012,14 @@ func (z *ZipColumns) schemaFrom(left, right Schema) Schema {
 	return s
 }
 
-// ExtractMethod selects how Extract derives columns from text.
-type ExtractMethod uint8
-
-const (
-	// ExtractRegex applies an RE2 pattern; each named group becomes a column.
-	ExtractRegex ExtractMethod = iota + 1
-	// ExtractJSON parses the text as JSON. With Path set it extracts the
-	// value at that path into the single output column; without, every
-	// top-level member becomes a column.
-	ExtractJSON
-)
-
-var extractMethodNames = map[ExtractMethod]string{
-	ExtractRegex: "regex", ExtractJSON: "json",
-}
-
-func (m ExtractMethod) String() string { return extractMethodNames[m] }
-
-// Extract derives columns from a string expression. A row whose text does
-// not match gets NoMatch in the outputs it would have produced: NULL, or the
-// empty string when NoMatchEmpty is set. With MaxMatches > 1 a regex output
-// holds an array of up to MaxMatches matches.
+// Extract derives columns from a string expression with an RE2 pattern, one
+// for each named group. A row whose text does not match gets NoMatch in the
+// outputs: NULL, or the empty string when NoMatchEmpty is set. With
+// MaxMatches > 1 an output holds an array of up to MaxMatches matches.
 type Extract struct {
 	Input        Node
 	Source       Expr
-	Method       ExtractMethod
 	Pattern      string
-	Path         string
 	Outputs      []Column
 	MaxMatches   int
 	NoMatchEmpty bool
@@ -1125,12 +1034,9 @@ func (e *Extract) WithInputs(in []Node) Node {
 }
 func (*Extract) isNode() {}
 func (e *Extract) Label() string {
-	s := "Extract[" + e.Method.String() + "](" + e.Source.String()
+	s := "Extract[regex](" + e.Source.String()
 	if e.Pattern != "" {
 		s += ", " + strconv.Quote(e.Pattern)
-	}
-	if e.Path != "" {
-		s += ", path=" + strconv.Quote(e.Path)
 	}
 	names := make([]string, len(e.Outputs))
 	for i, c := range e.Outputs {
@@ -1154,37 +1060,19 @@ func (e *Extract) schemaFrom(in Schema) Schema {
 		}
 		s = b.Schema()
 	}
-	if e.Method == ExtractJSON && e.Path == "" {
-		s.Open = true
-	}
 	return s
 }
 
-// PatternMethod selects the log-pattern mining algorithm.
-type PatternMethod uint8
-
-const (
-	// PatternSimple replaces every maximal run of characters matching the
-	// configured regex (by default alphanumeric runs) with a placeholder.
-	PatternSimple PatternMethod = iota + 1
-	// PatternCluster groups texts by token-level similarity and replaces
-	// variable tokens with a placeholder.
-	PatternCluster
-)
-
-// Patterns derives a log pattern from a text column. In row mode it adds the
-// pattern column to each row; in aggregate mode it emits one row per
-// pattern with its count and sample texts.
+// Patterns derives a log pattern from a text column by replacing every
+// maximal run of characters matching Regex with a placeholder. In row mode
+// it adds the pattern column to each row; in aggregate mode it emits one row
+// per pattern with its count and sample texts.
 type Patterns struct {
 	Input     Node
 	Source    Expr
-	Method    PatternMethod
 	Output    string
 	Aggregate bool
-	// Regex is the character class PatternSimple replaces.
-	Regex string
-	// Threshold is PatternCluster's similarity threshold in (0, 1].
-	Threshold float64
+	Regex     string
 	// MaxSamples bounds the samples kept per pattern in aggregate mode.
 	MaxSamples int
 	GroupBy    []Expr
@@ -1199,15 +1087,11 @@ func (p *Patterns) WithInputs(in []Node) Node {
 }
 func (*Patterns) isNode() {}
 func (p *Patterns) Label() string {
-	m := "simple"
-	if p.Method == PatternCluster {
-		m = "cluster"
-	}
 	mode := "rows"
 	if p.Aggregate {
 		mode = "aggregate"
 	}
-	return fmt.Sprintf("Patterns[%s, %s](%s -> %s)", m, mode, p.Source, p.Output)
+	return fmt.Sprintf("Patterns[simple, %s](%s -> %s)", mode, p.Source, p.Output)
 }
 
 // Pattern-aggregate output column names.

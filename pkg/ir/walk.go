@@ -263,9 +263,6 @@ func NodeExprs(n Node) []Expr {
 		for _, a := range x.Aggs {
 			out = append(out, a.Agg)
 		}
-		for _, k := range x.OrderBy {
-			out = append(out, k.Expr)
-		}
 		return out
 	case *Window:
 		var out []Expr
@@ -274,11 +271,6 @@ func NodeExprs(n Node) []Expr {
 		}
 		for _, a := range x.Funcs {
 			out = append(out, a.Agg)
-		}
-		for _, e := range []Expr{x.Frame.Span, x.Frame.ResetBefore, x.Frame.ResetAfter} {
-			if e != nil {
-				out = append(out, e)
-			}
 		}
 		return out
 	case *Sort:

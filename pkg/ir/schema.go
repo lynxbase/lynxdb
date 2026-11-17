@@ -10,9 +10,6 @@ type Column struct {
 	Name     string
 	Type     Type
 	Nullable bool
-	// Meta carries optional annotations such as a column's origin
-	// ("group", "aggregate") for renderers; it never changes semantics.
-	Meta map[string]string
 }
 
 // Schema is the output schema of an operator.

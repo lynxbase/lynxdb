@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -680,31 +679,4 @@ func (b *builder) movingAverages(child pipeline.Iterator, x *ir.Window) (pipelin
 		}
 		return []map[string]event.Value{row}
 	}), nil
-}
-
-// NodeStats records an operator's runtime output.
-type NodeStats struct {
-	Rows    int64
-	Batches int64
-	Wall    time.Duration
-}
-
-type statsIterator struct {
-	child pipeline.Iterator
-	stats *NodeStats
-}
-
-func (s *statsIterator) Init(ctx context.Context) error { return s.child.Init(ctx) }
-func (s *statsIterator) Close() error                   { return s.child.Close() }
-func (s *statsIterator) Schema() []pipeline.FieldInfo   { return s.child.Schema() }
-
-func (s *statsIterator) Next(ctx context.Context) (*pipeline.Batch, error) {
-	start := time.Now()
-	b, err := s.child.Next(ctx)
-	s.stats.Wall += time.Since(start)
-	if b != nil {
-		s.stats.Rows += int64(b.Len)
-		s.stats.Batches++
-	}
-	return b, err
 }

@@ -134,12 +134,9 @@ func varies(e ir.Expr) bool {
 // over the count. It reports false for an aggregate with a call that does
 // not add up this way.
 func inTwo(agg *ir.Aggregate, input ir.Node, value ir.Expr, between func(ir.Node) ir.Node) (ir.Node, bool) {
-	if agg.Phase != ir.AggComplete {
-		return nil, false
-	}
 	for _, a := range agg.Aggs {
 		call := a.Agg
-		if call.Filter != nil || call.Distinct {
+		if call.Filter != nil {
 			return nil, false
 		}
 		switch call.Func.Name {
@@ -189,7 +186,7 @@ func inTwo(agg *ir.Aggregate, input ir.Node, value ir.Expr, between func(ir.Node
 		valueName = name()
 		first.Groups = append(first.Groups, ir.NamedExpr{Name: valueName, Expr: value})
 	}
-	second := &ir.Aggregate{DropNullGroups: agg.DropNullGroups, Phase: agg.Phase, Limit: agg.Limit, OrderBy: agg.OrderBy}
+	second := &ir.Aggregate{DropNullGroups: agg.DropNullGroups}
 	for _, g := range agg.Groups {
 		second.Groups = append(second.Groups, ir.NamedExpr{Name: g.Name, Expr: &ir.FieldRef{Name: g.Name, T: g.Expr.Type()}})
 	}

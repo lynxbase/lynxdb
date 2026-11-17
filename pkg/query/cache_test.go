@@ -26,7 +26,7 @@ func TestPlanCacheReturnsIndependentResults(t *testing.T) {
 	if ir.Render(a.Plan) != ir.Render(b.Plan) || ir.Render(a.Logical) != ir.Render(b.Logical) {
 		t.Fatal("cached plan differs")
 	}
-	a.Plan.Root = &ir.Empty{}
+	a.Plan.Root = &ir.Values{}
 	a.Sources = append(a.Sources, "other")
 	c, err := Compile(q)
 	if err != nil {

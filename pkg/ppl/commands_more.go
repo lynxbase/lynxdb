@@ -190,7 +190,7 @@ func (c *compiler) parse(st *pipe, n *ast.ParseCommand) error {
 		if len(g.Fields) == 0 {
 			return semanticErr(n, "the grok pattern captures no fields; use %%{PATTERN:name}")
 		}
-		ex.Method, ex.Pattern = ir.ExtractRegex, g.Regex
+		ex.Pattern = g.Regex
 		for _, f := range g.Fields {
 			ex.Outputs = append(ex.Outputs, ir.Column{Name: f, Type: ir.String, Nullable: true})
 		}
@@ -198,7 +198,6 @@ func (c *compiler) parse(st *pipe, n *ast.ParseCommand) error {
 		if _, err := regexp.Compile(n.Pattern); err != nil {
 			return semanticErr(n, "invalid regular expression: %v", err)
 		}
-		ex.Method = ir.ExtractRegex
 		ex.Outputs = regexOutputs(n.Pattern)
 		if len(ex.Outputs) == 0 {
 			return semanticErr(n, "the parse pattern has no named groups; use (?<name>...)")
@@ -259,7 +258,7 @@ func (c *compiler) rex(st *pipe, n *ast.RexCommand) error {
 			outs[i].Type = ir.ArrayOf(ir.String)
 		}
 	}
-	st.node = &ir.Extract{Input: st.node, Source: ref, Method: ir.ExtractRegex, Pattern: n.Pattern, Outputs: outs, MaxMatches: maxMatch}
+	st.node = &ir.Extract{Input: st.node, Source: ref, Pattern: n.Pattern, Outputs: outs, MaxMatches: maxMatch}
 	return nil
 }
 
@@ -343,7 +342,7 @@ func (c *compiler) patterns(st *pipe, n *ast.PatternsCommand) error {
 	if err != nil {
 		return err
 	}
-	p := &ir.Patterns{Input: st.node, Source: src, Method: ir.PatternSimple, Output: "patterns_field", MaxSamples: 10, Regex: `[a-zA-Z0-9]+`}
+	p := &ir.Patterns{Input: st.node, Source: src, Output: "patterns_field", MaxSamples: 10, Regex: `[a-zA-Z0-9]+`}
 	for _, f := range n.By {
 		ref, err := resolve(f, s)
 		if err != nil {
@@ -384,11 +383,9 @@ func (c *compiler) patterns(st *pipe, n *ast.PatternsCommand) error {
 			}
 			p.Regex = v
 		case "frequency_threshold_percentage":
-			f, err := strconv.ParseFloat(v, 64)
-			if err != nil || f <= 0 || f > 1 {
+			if f, err := strconv.ParseFloat(v, 64); err != nil || f <= 0 || f > 1 {
 				return semanticErr(a.Value, "frequency_threshold_percentage must be in (0, 1]")
 			}
-			p.Threshold = f
 		case "buffer_limit", "variable_count_threshold":
 		case "show_numbered_token":
 			if b, err := boolArgValue(a); err != nil || b {

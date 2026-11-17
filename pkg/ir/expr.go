@@ -447,10 +447,9 @@ func (m SearchMode) String() string { return searchModeNames[m] }
 // of the event as ingested. The result is NULL when the searched column is
 // NULL or not a string.
 type Search struct {
-	Mode          SearchMode
-	Field         string
-	Pattern       string
-	CaseSensitive bool
+	Mode    SearchMode
+	Field   string
+	Pattern string
 }
 
 func (*Search) Type() Type { return Bool }
@@ -460,11 +459,7 @@ func (s *Search) String() string {
 	if s.Field != "" {
 		field = QuoteName(s.Field)
 	}
-	cs := ""
-	if s.CaseSensitive {
-		cs = ", case_sensitive"
-	}
-	return "SEARCH_" + strings.ToUpper(s.Mode.String()) + "(" + field + ", " + strconv.Quote(s.Pattern) + cs + ")"
+	return "SEARCH_" + strings.ToUpper(s.Mode.String()) + "(" + field + ", " + strconv.Quote(s.Pattern) + ")"
 }
 
 // SubqueryMode selects how a Subquery is consumed.
@@ -510,9 +505,8 @@ func (s *Subquery) String() string {
 // AggCall is an aggregate or window function application. It appears only
 // in Aggregate and Window operators.
 type AggCall struct {
-	Func     *Func
-	Args     []Expr
-	Distinct bool
+	Func *Func
+	Args []Expr
 	// Filter restricts the rows the aggregate consumes; nil consumes all.
 	Filter Expr
 	T      Type
@@ -523,9 +517,6 @@ func (*AggCall) isExpr()      {}
 func (a *AggCall) String() string {
 	var b strings.Builder
 	b.WriteString(a.Func.Name + "(")
-	if a.Distinct {
-		b.WriteString("DISTINCT ")
-	}
 	b.WriteString(joinExprs(a.Args) + ")")
 	if a.Filter != nil {
 		b.WriteString(" FILTER (WHERE " + a.Filter.String() + ")")

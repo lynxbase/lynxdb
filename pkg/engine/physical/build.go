@@ -29,8 +29,6 @@ type Options struct {
 	Now time.Time
 	// Context bounds subquery evaluation during Build.
 	Context context.Context
-	// Collect, when set, receives per-operator runtime statistics.
-	Collect map[ir.Node]*NodeStats
 }
 
 // UnsupportedError reports an IR construct this engine cannot execute.
@@ -133,24 +131,11 @@ func (b *builder) runSubquery(sq *ir.Subquery) (*vm.SubqueryResult, error) {
 	return res, nil
 }
 
-func (b *builder) node(n ir.Node) (pipeline.Iterator, error) {
-	iter, err := b.dispatch(n)
-	if err != nil {
-		return nil, err
-	}
-	if b.opts.Collect != nil {
-		ns := &NodeStats{}
-		b.opts.Collect[n] = ns
-		iter = &statsIterator{child: iter, stats: ns}
-	}
-	return iter, nil
-}
-
 func (b *builder) input(n ir.Node) (pipeline.Iterator, error) {
 	return b.node(n.Inputs()[0])
 }
 
-func (b *builder) dispatch(n ir.Node) (pipeline.Iterator, error) {
+func (b *builder) node(n ir.Node) (pipeline.Iterator, error) {
 	switch x := n.(type) {
 	case *ir.Scan:
 		if b.opts.Source == nil {
@@ -163,8 +148,6 @@ func (b *builder) dispatch(n ir.Node) (pipeline.Iterator, error) {
 		return b.timeFilter(it, x.Time)
 	case *ir.Values:
 		return b.values(x)
-	case *ir.Empty:
-		return pipeline.NewRowScanIterator(nil, b.batchSize()), nil
 	case *ir.SourceSchema:
 		if b.opts.Describe == nil {
 			return nil, unsupported("describe in this execution mode")

@@ -129,10 +129,6 @@ func (v *validator) check(n Node, in Schema, inputs []Schema) {
 		if len(x.Aggs) == 0 && len(x.Groups) == 0 {
 			v.fail(n, "no groups and no aggregates")
 		}
-		out := x.Schema()
-		for _, k := range x.OrderBy {
-			v.expr(n, k.Expr, out, false, nil)
-		}
 	case *Window:
 		for _, g := range x.PartitionBy {
 			scalarIn(g.Expr)
@@ -144,11 +140,6 @@ func (v *validator) check(n Node, in Schema, inputs []Schema) {
 		}
 		if x.Frame.Kind != FramePartition && x.Frame.Kind != FrameRunning {
 			v.fail(n, "invalid frame kind")
-		}
-		for _, e := range []Expr{x.Frame.Span, x.Frame.ResetBefore, x.Frame.ResetAfter} {
-			if e != nil {
-				scalarIn(e)
-			}
 		}
 	case *Sort:
 		if len(x.Keys) == 0 {
@@ -200,10 +191,10 @@ func (v *validator) check(n Node, in Schema, inputs []Schema) {
 		}
 	case *Extract:
 		scalarIn(x.Source)
-		if len(x.Outputs) == 0 && !(x.Method == ExtractJSON && x.Path == "") {
+		if len(x.Outputs) == 0 {
 			v.fail(n, "no output columns")
 		}
-		if x.Method == ExtractRegex && x.Pattern == "" {
+		if x.Pattern == "" {
 			v.fail(n, "empty pattern")
 		}
 	case *Patterns:

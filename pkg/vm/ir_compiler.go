@@ -286,16 +286,12 @@ func (c *irCompiler) search(n *ir.Search) error {
 		g := c.prog.AddGlob(strings.ToLower(n.Pattern))
 		c.prog.EmitOp(OpHasTokenGlob, g)
 	case ir.SearchPhrase:
-		c.native(phraseMatcher(n.Pattern, n.CaseSensitive), 1)
+		c.native(phraseMatcher(n.Pattern), 1)
 	case ir.SearchSubstring:
-		if n.CaseSensitive {
-			c.native(substringMatcher(n.Pattern), 1)
-		} else {
-			c.constant(event.StringValue(n.Pattern))
-			c.prog.EmitOp(OpContainsCI)
-		}
+		c.constant(event.StringValue(n.Pattern))
+		c.prog.EmitOp(OpContainsCI)
 	case ir.SearchRegex:
-		f, err := regexMatcher(n.Pattern, n.CaseSensitive)
+		f, err := regexMatcher(n.Pattern, false)
 		if err != nil {
 			return err
 		}

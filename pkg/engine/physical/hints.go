@@ -65,7 +65,6 @@ func (h Hints) QueryHints() *model.QueryHints {
 		SearchTerms: append([]string(nil), h.Terms...),
 		TokenGlobs:  append([]string(nil), h.TokenGlobs...),
 		Limit:       int(h.Limit),
-		ReverseScan: h.Descending,
 	}
 	if h.Columns != nil {
 		q.RequiredCols = append([]string(nil), h.Columns...)

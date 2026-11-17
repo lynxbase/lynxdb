@@ -2,8 +2,6 @@ package physical
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"regexp"
 	"sort"
 	"strings"
@@ -31,9 +29,6 @@ func (b *builder) aggFuncs(aggs []ir.NamedAgg) ([]pipeline.AggFunc, []ir.Assign,
 		name, ok := aggregateNames[a.Agg.Func.Name]
 		if !ok {
 			return nil, nil, unsupported("aggregate %s", a.Agg.Func.Name)
-		}
-		if a.Agg.Distinct {
-			return nil, nil, unsupported("DISTINCT aggregates")
 		}
 		f := pipeline.AggFunc{Name: name, Alias: a.Name}
 		if len(a.Agg.Args) > 0 {
@@ -78,9 +73,6 @@ func (b *builder) aggFuncs(aggs []ir.NamedAgg) ([]pipeline.AggFunc, []ir.Assign,
 }
 
 func (b *builder) aggregate(x *ir.Aggregate) (pipeline.Iterator, error) {
-	if x.Phase != ir.AggComplete {
-		return nil, unsupported("a split aggregate phase outside distributed execution")
-	}
 	child, err := b.input(x)
 	if err != nil {
 		return nil, err
@@ -220,9 +212,6 @@ func (b *builder) window(x *ir.Window) (pipeline.Iterator, error) {
 	if x.DropNullPartitions && len(x.PartitionBy) > 0 {
 		return nil, unsupported("bucket_nullable=false for eventstats and streamstats")
 	}
-	if x.Frame.Span != nil || x.Frame.ResetBefore != nil || x.Frame.ResetAfter != nil {
-		return nil, unsupported("streamstats reset_before, reset_after and time windows")
-	}
 	trend := 0
 	for _, f := range x.Funcs {
 		if f.Agg.Func.Kind == ir.WindowFunc {
@@ -317,17 +306,11 @@ func (b *builder) extract(x *ir.Extract) (pipeline.Iterator, error) {
 	if err != nil {
 		return nil, err
 	}
-	switch x.Method {
-	case ir.ExtractRegex:
-		re, err := regexp.Compile(x.Pattern)
-		if err != nil {
-			return nil, err
-		}
-		return newMapIterator(child, b.batchSize(), regexExtractor(src, re, x)), nil
-	case ir.ExtractJSON:
-		return newMapIterator(child, b.batchSize(), jsonExtractor(src, x)), nil
+	re, err := regexp.Compile(x.Pattern)
+	if err != nil {
+		return nil, err
 	}
-	return nil, unsupported("extract method %s", x.Method)
+	return newMapIterator(child, b.batchSize(), regexExtractor(src, re, x)), nil
 }
 
 func regexExtractor(src *vm.Program, re *regexp.Regexp, x *ir.Extract) func(map[string]event.Value) []map[string]event.Value {
@@ -384,60 +367,7 @@ func regexExtractor(src *vm.Program, re *regexp.Regexp, x *ir.Extract) func(map[
 	}
 }
 
-func jsonExtractor(src *vm.Program, x *ir.Extract) func(map[string]event.Value) []map[string]event.Value {
-	var machine vm.VM
-	return func(row map[string]event.Value) []map[string]event.Value {
-		v, err := machine.Execute(src, row)
-		if err != nil || v.Type() != event.FieldTypeString {
-			return []map[string]event.Value{row}
-		}
-		var obj map[string]any
-		dec := json.NewDecoder(strings.NewReader(v.AsString()))
-		dec.UseNumber()
-		if dec.Decode(&obj) != nil {
-			return []map[string]event.Value{row}
-		}
-		for k, val := range obj {
-			row[k] = jsonToValue(val)
-		}
-		return []map[string]event.Value{row}
-	}
-}
-
-func jsonToValue(x any) event.Value {
-	switch t := x.(type) {
-	case nil:
-		return event.NullValue()
-	case bool:
-		return event.BoolValue(t)
-	case string:
-		return event.StringValue(t)
-	case json.Number:
-		if n, err := t.Int64(); err == nil {
-			return event.IntValue(n)
-		}
-		f, _ := t.Float64()
-		return event.FloatValue(f)
-	case []any:
-		out := make([]event.Value, len(t))
-		for i, e := range t {
-			out[i] = jsonToValue(e)
-		}
-		return event.ArrayValue(out)
-	case map[string]any:
-		out := make(map[string]event.Value, len(t))
-		for k, e := range t {
-			out[k] = jsonToValue(e)
-		}
-		return event.ObjectValue(out)
-	}
-	return event.StringValue(fmt.Sprint(x))
-}
-
 func (b *builder) patterns(x *ir.Patterns) (pipeline.Iterator, error) {
-	if x.Method != ir.PatternSimple {
-		return nil, unsupported("the brain pattern method")
-	}
 	child, err := b.input(x)
 	if err != nil {
 		return nil, err
