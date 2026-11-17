@@ -117,9 +117,14 @@ func rest(snap *colstore.Snapshot, q *query, at *colVec, n, workers int) ([]stri
 		return nil, nil, nil
 	}
 	parts := snap.Parts()
-	picks := make([]placed, n)
-	for r := range picks {
-		picks[r] = placed{at.value(r).Int, int32(r)}
+	picks := make([]placed, 0, n)
+	for r := 0; r < n; r++ {
+		if v := at.value(r); v.Kind == vec.KindInt {
+			picks = append(picks, placed{v.Int, int32(r)})
+		}
+	}
+	if len(picks) == 0 {
+		return nil, nil, nil
 	}
 	slices.SortFunc(picks, func(a, b placed) int { return cmp.Compare(a.loc, b.loc) })
 	var starts []int
@@ -128,7 +133,7 @@ func rest(snap *colstore.Snapshot, q *query, at *colVec, n, workers int) ([]stri
 			starts = append(starts, i)
 		}
 	}
-	starts = append(starts, n)
+	starts = append(starts, len(picks))
 	names := &fieldNames{ids: map[string]int32{}, hidden: q.hidden}
 	rs := make([]resolver, max(1, min(workers, len(starts)-1)))
 	found := make([][]cell, len(rs))

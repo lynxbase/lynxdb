@@ -206,17 +206,8 @@ func (x *execution) finish(snap *colstore.Snapshot, sinks []*sink) ([]Column, in
 		if err := resolve(snap, q, q.final, out, n, len(x.workers)); err != nil {
 			return nil, 0, err
 		}
-		names := q.names
-		if q.rest {
-			last := len(out) - 1
-			fields, cols, err := rest(snap, q, &out[last], n, len(x.workers))
-			if err != nil {
-				return nil, 0, err
-			}
-			names, out = append(names[:last:last], fields...), append(out[:last:last], cols...)
-		}
 
-		return columns(names, out), n, nil
+		return x.shown(snap, out, n)
 	}
 	// The sinks hold every group as the aggregate left it: the located
 	// values are read first, and what the plan does above the aggregate
@@ -253,5 +244,34 @@ func (x *execution) finish(snap *colstore.Snapshot, sinks []*sink) ([]Column, in
 	}
 	out, n = gather(q, []*sink{&last})
 
-	return columns(q.names, out), n, nil
+	return x.shown(snap, out, n)
+}
+
+// shown turns the n rows of out into the columns of the result: the places
+// of a plan that asks for the rest of the fields become those fields, and
+// the hidden columns go.
+func (x *execution) shown(snap *colstore.Snapshot, out []colVec, n int) ([]Column, int, error) {
+	q := x.q
+	names := q.names
+	if q.rest {
+		last := len(out) - 1
+		fields, cols, err := rest(snap, q, &out[last], n, len(x.workers))
+		if err != nil {
+			return nil, 0, err
+		}
+		names, out = append(names[:last:last], fields...), append(out[:last:last], cols...)
+	}
+	if len(q.hide) != 0 {
+		kept := 0
+		names = slices.Clone(names)
+		for c, name := range names {
+			if !slices.Contains(q.hide, name) {
+				names[kept], out[kept] = name, out[c]
+				kept++
+			}
+		}
+		names, out = names[:kept], out[:kept]
+	}
+
+	return columns(names, out), n, nil
 }

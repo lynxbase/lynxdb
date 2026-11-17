@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
@@ -60,6 +61,8 @@ type query struct {
 	places bool
 	rest   bool
 	hidden []string
+	// hide names the columns that the result leaves out.
+	hide []string
 }
 
 type orderSpec struct {
@@ -176,6 +179,14 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 	}
 	if agg == nil {
 		q.lateRows(prj)
+	}
+	if srt != nil {
+		for _, name := range srt.Hide {
+			if !slices.Contains(q.names, name) || name == placeName {
+				return nil, unsupported("no column %q to hide", name)
+			}
+		}
+		q.hide = srt.Hide
 	}
 
 	return q, nil

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"math"
 	"math/big"
 	"slices"
@@ -752,11 +753,15 @@ type refAgg struct {
 
 // refRun evaluates a plan over rows and returns its output rows and column
 // names.
+// refRowNumber is the path that holds the number of a row while the fields
+// of the rows that an aggregate picked are looked up.
+const refRowNumber = "\x00row"
+
 // refRest replaces the last value of every row, the number of the row of
 // kept that it came from, by the fields of that row that the projection
 // neither names nor hides, in the order of their names.
 func refRest(out [][]exec.Value, names []string, kept []refRow, prj *exec.Project) ([][]exec.Value, []string) {
-	hidden := append(slices.Clone(names), prj.Except...)
+	hidden := append(append(slices.Clone(names), prj.Except...), refRowNumber)
 	shown := func(path string) bool {
 		for _, h := range hidden {
 			if path == h || strings.HasPrefix(path, h+".") {
@@ -807,6 +812,23 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 		plan = agg.Input
 	}
 	scan := plan.(*exec.Scan)
+	if agg != nil && prj != nil && prj.Rest {
+		// The pick that the fields follow gives the number of its row.
+		numbered := make([]refRow, len(rows))
+		for i, row := range rows {
+			numbered[i] = maps.Clone(row)
+			numbered[i][refRowNumber] = exec.Value{Kind: vec.KindInt, Int: int64(i)}
+		}
+		rows = numbered
+		picked := *agg
+		picked.Aggs = slices.Clone(agg.Aggs)
+		for i, a := range picked.Aggs {
+			if a.Name == prj.Exprs[len(prj.Exprs)-1].Expr.Path {
+				picked.Aggs[i].Arg = exec.Col(refRowNumber, vec.KindInt)
+			}
+		}
+		agg = &picked
+	}
 	var kept []refRow
 	for _, row := range rows {
 		if scan.Filter == nil || refTrue(scan.Filter, row) {
@@ -867,11 +889,34 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 		}
 	}
 	rest := func(out [][]exec.Value, names []string) ([][]exec.Value, []string) {
-		if agg != nil || !prj.Rest {
+		switch {
+		case prj != nil && prj.Rest && agg != nil:
+			out, names = refRest(out, names[:len(names)-1], rows, prj)
+		case prj != nil && prj.Rest:
+			out, names = refRest(out, names, kept, prj)
+		}
+		if srt == nil || len(srt.Hide) == 0 {
 			return out, names
 		}
+		var shown []int
+		for c, name := range names {
+			if !slices.Contains(srt.Hide, name) {
+				shown = append(shown, c)
+			}
+		}
+		for i, row := range out {
+			left := make([]exec.Value, len(shown))
+			for j, c := range shown {
+				left[j] = row[c]
+			}
+			out[i] = left
+		}
+		left := make([]string, len(shown))
+		for j, c := range shown {
+			left[j] = names[c]
+		}
 
-		return refRest(out, names, kept, prj)
+		return out, left
 	}
 	if srt == nil {
 		return rest(out, names)

@@ -50,6 +50,18 @@ func (q *query) project(p *Project) error {
 		}
 	}
 	q.names = names
+	if !p.Rest {
+		return nil
+	}
+	last := len(q.post) - 1
+	pick := q.post[last]
+	if q.located == nil || pick.op != OpColumn || q.located[pick.col] == nil {
+		return unsupported("the fields of a row above an aggregate follow a column that picks the row")
+	}
+	// The place of the row stays what the column holds.
+	q.located[pick.col], q.final[last] = nil, nil
+	q.rest = true
+	q.hidden = append(append(q.hidden, names[:last]...), p.Except...)
 
 	return nil
 }
