@@ -112,10 +112,12 @@ func (p *KeyPlan) Streams() int { return len(p.streams) }
 // Spans returns the blocks that can hold matching rows, one run per part.
 func (p *KeyPlan) Spans() []BlockSpan { return p.spans }
 
-// ColumnID names the column of a path that holds values of one kind.
+// ColumnID names the column of a path that holds values of one kind; with
+// Presence set a reader gets which rows hold a value and not the values.
 type ColumnID struct {
-	Path string
-	Kind vec.Kind
+	Path     string
+	Kind     vec.Kind
+	Presence bool
 }
 
 // Ranges cuts the matching rows into at most n key ranges of similar size
@@ -453,7 +455,13 @@ func (s *RangeScan) decode(id blockID, b *part.Block, sb *SharedBlock) error {
 		if !ok {
 			continue
 		}
-		if err := b.Decode(ref, &sb.columns[i]); err != nil {
+		var err error
+		if c.Presence {
+			err = b.DecodePresence(ref, &sb.columns[i])
+		} else {
+			err = b.Decode(ref, &sb.columns[i])
+		}
+		if err != nil {
 			return err
 		}
 		sb.present[i] = true
