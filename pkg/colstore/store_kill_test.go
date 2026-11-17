@@ -403,17 +403,16 @@ func runAndKill(t *testing.T, cfg killConfig, rng *rand.Rand, stats *killStats) 
 	return r
 }
 
-// readKillDocs decodes every column of every block of every part, checks
+// scanKillDocs decodes every column of every block of every part, checks
 // the rows against what their numbers say and the statistics of blocks and
 // parts against the rows, and returns how often each document is there.
-func readKillDocs(t *testing.T, snap *Snapshot) map[killDocID]int {
-	t.Helper()
+func scanKillDocs(snap *Snapshot) (map[killDocID]int, error) {
 	counts := map[killDocID]int{}
 	var b part.Block
 	var scratch, ws, ns, vs, ks, pads, times vec.Column
 	for _, h := range snap.Parts() {
 		if key := h.SortKey(); !h.Ordered() || len(key) != 1 || key[0] != "k" {
-			t.Fatalf("part of run %d is ordered by %v", h.Run, key)
+			return nil, fmt.Errorf("part of run %d is ordered by %v", h.Run, key)
 		}
 		var rows uint64
 		minTime, maxTime := int64(math.MaxInt64), int64(math.MinInt64)
@@ -421,16 +420,16 @@ func readKillDocs(t *testing.T, snap *Snapshot) map[killDocID]int {
 		first, last := h.KeyRange()
 		for i := 0; i < h.NumBlocks(); i++ {
 			if err := h.OpenBlock(i, &b); err != nil {
-				t.Fatalf("block %d of a part of run %d: %v", i, h.Run, err)
+				return nil, fmt.Errorf("block %d of a part of run %d: %v", i, h.Run, err)
 			}
 			cols := b.Columns()
 			for c := range cols {
 				if err := b.Decode(&cols[c], &scratch); err != nil {
-					t.Fatalf("column %s of block %d of a part of run %d: %v", h.Paths()[cols[c].PathID], i, h.Run, err)
+					return nil, fmt.Errorf("column %s of block %d of a part of run %d: %v", h.Paths()[cols[c].PathID], i, h.Run, err)
 				}
 			}
 			if _, err := h.MayContainToken(i, uint64(i)*0x9e3779b97f4a7c15); err != nil {
-				t.Fatalf("token filter of block %d of a part of run %d: %v", i, h.Run, err)
+				return nil, fmt.Errorf("token filter of block %d of a part of run %d: %v", i, h.Run, err)
 			}
 			for _, c := range []struct {
 				path string
@@ -442,7 +441,7 @@ func readKillDocs(t *testing.T, snap *Snapshot) map[killDocID]int {
 			} {
 				ref, err := column(h.Part, &b, c.path, c.kind, c.dst)
 				if err != nil || ref == nil || ref.Count != b.Rows {
-					t.Fatalf("column %s of block %d of a part of run %d does not hold every row: %v", c.path, i, h.Run, err)
+					return nil, fmt.Errorf("column %s of block %d of a part of run %d does not hold every row: %v", c.path, i, h.Run, err)
 				}
 			}
 			blockRows, blockMin, blockMax := h.BlockStats(i)
@@ -450,36 +449,46 @@ func readKillDocs(t *testing.T, snap *Snapshot) map[killDocID]int {
 			for row := 0; row < b.Rows; row++ {
 				id := killDocID{ws.Int(row), ns.Int(row)}
 				if vs.Int(row) != id.check() || string(ks.Bytes(row)) != id.key() || string(pads.Bytes(row)) != id.pad() || times.Int(row) != id.time() {
-					t.Fatalf("document %v holds v=%d k=%s pad=%s time=%d", id, vs.Int(row), ks.Bytes(row), pads.Bytes(row), times.Int(row))
+					return nil, fmt.Errorf("document %v holds v=%d k=%s pad=%s time=%d", id, vs.Int(row), ks.Bytes(row), pads.Bytes(row), times.Int(row))
 				}
 				if id.hour() != h.Partition {
-					t.Fatalf("document %v of hour %d is in partition %d", id, id.hour(), h.Partition)
+					return nil, fmt.Errorf("document %v of hour %d is in partition %d", id, id.hour(), h.Partition)
 				}
 				counts[id]++
 				lo, hi = min(lo, id.time()), max(hi, id.time())
 				key = part.AppendKeyString(key[:0], ks.Bytes(row))
 				if bytes.Compare(key, prev) < 0 {
-					t.Fatalf("key %x follows %x in a part of run %d", key, prev, h.Run)
+					return nil, fmt.Errorf("key %x follows %x in a part of run %d", key, prev, h.Run)
 				}
 				if row == 0 && !bytes.Equal(key, h.FirstKey(i)) {
-					t.Fatalf("block %d of a part of run %d starts with key %x, its statistics say %x", i, h.Run, key, h.FirstKey(i))
+					return nil, fmt.Errorf("block %d of a part of run %d starts with key %x, its statistics say %x", i, h.Run, key, h.FirstKey(i))
 				}
 				prev = append(prev[:0], key...)
 			}
 			if blockRows != b.Rows || blockMin != lo || blockMax != hi {
-				t.Fatalf("block %d of a part of run %d holds %d rows of times %d..%d, its statistics say %d rows of %d..%d",
+				return nil, fmt.Errorf("block %d of a part of run %d holds %d rows of times %d..%d, its statistics say %d rows of %d..%d",
 					i, h.Run, b.Rows, lo, hi, blockRows, blockMin, blockMax)
 			}
 			rows += uint64(b.Rows)
 			minTime, maxTime = min(minTime, lo), max(maxTime, hi)
 		}
 		if rows != h.Rows || rows == 0 || minTime != h.MinTime || maxTime != h.MaxTime {
-			t.Fatalf("a part of run %d holds %d rows of times %d..%d, its footer says %d rows of %d..%d",
+			return nil, fmt.Errorf("a part of run %d holds %d rows of times %d..%d, its footer says %d rows of %d..%d",
 				h.Run, rows, minTime, maxTime, h.Rows, h.MinTime, h.MaxTime)
 		}
 		if !bytes.Equal(first, h.FirstKey(0)) || !bytes.Equal(last, prev) {
-			t.Fatalf("a part of run %d has key range %x..%x, its rows %x..%x", h.Run, first, last, h.FirstKey(0), prev)
+			return nil, fmt.Errorf("a part of run %d has key range %x..%x, its rows %x..%x", h.Run, first, last, h.FirstKey(0), prev)
 		}
+	}
+
+	return counts, nil
+}
+
+func readKillDocs(t *testing.T, snap *Snapshot) map[killDocID]int {
+	t.Helper()
+	counts, err := scanKillDocs(snap)
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	return counts
