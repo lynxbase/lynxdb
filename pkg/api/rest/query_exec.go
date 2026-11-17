@@ -8,7 +8,6 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/database"
 	"github.com/lynxbase/lynxdb/pkg/engine/physical"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/ppl"
 	"github.com/lynxbase/lynxdb/pkg/query"
 	"github.com/lynxbase/lynxdb/pkg/timerange"
@@ -106,8 +105,6 @@ func queryErrorCode(err error) (ErrorCode, int) {
 		return ErrCodeUnsupportedFeature, http.StatusUnprocessableEntity
 	case errors.Is(err, database.ErrTooManyQueries):
 		return ErrCodeTooManyRequests, http.StatusTooManyRequests
-	case memgov.IsMemoryExhausted(err):
-		return ErrCodeQueryMemoryExceeded, http.StatusBadRequest
 	}
 
 	return ErrCodeExecutionError, http.StatusInternalServerError
@@ -121,15 +118,11 @@ func respondQueryFailure(w http.ResponseWriter, err error) {
 		return
 	}
 	code, status := queryErrorCode(err)
-	var opts []ErrorOpt
-	switch code {
-	case ErrCodeTooManyRequests:
+	if code == ErrCodeTooManyRequests {
 		// A query slot frees the instant any running query finishes.
 		w.Header().Set("Retry-After", "1")
-	case ErrCodeQueryMemoryExceeded:
-		opts = append(opts, WithSuggestion("Narrow the time range or add filters."))
 	}
-	respondError(w, code, status, err.Error(), opts...)
+	respondError(w, code, status, err.Error())
 }
 
 // respondCompileError writes a PPL compile error with its kind, position,

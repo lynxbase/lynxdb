@@ -149,11 +149,11 @@ func TestPrometheusMetrics_ErrorCounter(t *testing.T) {
 	families = gatherMetrics(t, pm)
 	assertCounterVecValue(t, families, "lynxdb_query_errors_total", string(ErrCodeExecutionError), 1)
 
-	pm.RecordQuery("aggregate", 500*time.Millisecond, string(ErrCodeQueryMemoryExceeded))
+	pm.RecordQuery("aggregate", 500*time.Millisecond, string(ErrCodeTooManyRequests))
 
 	families = gatherMetrics(t, pm)
 	assertCounterVecValue(t, families, "lynxdb_query_errors_total", string(ErrCodeExecutionError), 1)
-	assertCounterVecValue(t, families, "lynxdb_query_errors_total", string(ErrCodeQueryMemoryExceeded), 1)
+	assertCounterVecValue(t, families, "lynxdb_query_errors_total", string(ErrCodeTooManyRequests), 1)
 
 	pm.RecordQuery("events", 200*time.Millisecond, string(ErrCodeExecutionError))
 

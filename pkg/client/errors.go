@@ -20,7 +20,6 @@ const (
 	ErrCodeForbidden           ErrorCode = "FORBIDDEN"
 	ErrCodeLastRootKey         ErrorCode = "LAST_ROOT_KEY"
 	ErrCodeInternalError       ErrorCode = "INTERNAL_ERROR"
-	ErrCodeQueryMemoryExceeded ErrorCode = "QUERY_MEMORY_EXCEEDED"
 	ErrCodeSyntaxError         ErrorCode = "SYNTAX_ERROR"
 	ErrCodeSemanticError       ErrorCode = "SEMANTIC_ERROR"
 	ErrCodeTypeError           ErrorCode = "TYPE_ERROR"
@@ -83,11 +82,6 @@ func IsInvalidQuery(err error) bool {
 // IsValidationError reports whether the error is a VALIDATION_ERROR API error.
 func IsValidationError(err error) bool {
 	return hasCode(err, ErrCodeValidationError)
-}
-
-// IsQueryMemoryExceeded reports whether the error is a QUERY_MEMORY_EXCEEDED API error.
-func IsQueryMemoryExceeded(err error) bool {
-	return hasCode(err, ErrCodeQueryMemoryExceeded)
 }
 
 func hasCode(err error, code ErrorCode) bool {

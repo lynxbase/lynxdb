@@ -147,12 +147,6 @@ func renderErrorWithLynx(err error, showLynx bool) {
 		return
 	}
 
-	if client.IsQueryMemoryExceeded(err) {
-		renderMemoryError(err)
-
-		return
-	}
-
 	if isConnectionError(err) {
 		renderConnectionError()
 
@@ -219,23 +213,6 @@ func renderNoFilesMatchingError(err noFilesMatchingError) {
 	fmt.Fprintf(os.Stderr, "      %s\n", t.Info.Render("cat app.log | lynxdb query 'search source=main error'"))
 	fmt.Fprintf(os.Stderr, "      %s\n", t.Info.Render("ls -la"))
 	fmt.Fprintln(os.Stderr)
-}
-
-// renderMemoryError prints a query memory error with actionable next steps.
-func renderMemoryError(err error) {
-	var apiErr *client.APIError
-	if errors.As(err, &apiErr) {
-		renderAPIError(apiErr)
-		printNextSteps(
-			"lynxdb query '... | head 1000'         Limit results",
-			"lynxdb query '...' --since 1h          Narrow time range",
-			"lynxdb explain '...'                    Check query cost",
-		)
-
-		return
-	}
-
-	ui.Stderr.RenderError(err)
 }
 
 // renderConnectionError prints a connection error with helpful suggestions.

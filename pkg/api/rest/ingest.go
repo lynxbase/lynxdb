@@ -15,7 +15,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/engine/columnar"
 	"github.com/lynxbase/lynxdb/pkg/ingest/ndjson"
 	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // maxHeaderValue bounds the X-Index, X-Source, X-Source-Type and X-Host
@@ -41,9 +40,6 @@ func respondIngestError(w http.ResponseWriter, err error) bool {
 	case errors.Is(err, columnar.ErrClosed), errors.Is(err, colstore.ErrClosed):
 		w.Header().Set("Retry-After", "5")
 		respondError(w, ErrCodeShuttingDown, http.StatusServiceUnavailable, "server is shutting down")
-	case memgov.IsMemoryExhausted(err):
-		w.Header().Set("Retry-After", "5")
-		respondError(w, ErrCodeBackpressure, http.StatusServiceUnavailable, "ingest backpressure: memory exhausted")
 	default:
 		slog.Warn("ingest: internal error", "error", err)
 		respondInternalError(w, "ingest failed: internal error")
