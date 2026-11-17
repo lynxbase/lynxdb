@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -119,6 +120,15 @@ func (s *benchServer) stats(w http.ResponseWriter, _ *http.Request) {
 func (s *benchServer) query(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("q")
 	cores := runtime.GOMAXPROCS(0)
+	if v := r.URL.Query().Get("workers"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			http.Error(w, "workers must be a positive number", http.StatusBadRequest)
+
+			return
+		}
+		cores = n
+	}
 	snap := s.store.Table().Snapshot()
 	defer snap.Release()
 	paths := []string{"kind", "commit.operation", "commit.collection"}
@@ -232,7 +242,8 @@ func newBenchServer(t testing.TB, store *Store) *benchServer {
 // files so that dropping the page cache afterwards makes the next query a
 // cold one, GET /stats describes the table, and GET /query?q=
 // runs a benchmark query by its short name (Q1 to Q5, S1 to S7, S2i to S5i
-// for the searches without regard to case, T1 to T4).
+// for the searches without regard to case, T1 to T4) on as many goroutines
+// as workers= says, one per CPU without it.
 // The store is configured by the settings of TestJSONBenchIngest.
 func TestJSONBenchServer(t *testing.T) {
 	addr, dir := os.Getenv("LYNXDB_BENCH_LISTEN"), os.Getenv("LYNXDB_BENCH_DIR")
