@@ -254,44 +254,49 @@ func TestMergesGiveWayToFlushesBelowTheBacklog(t *testing.T) {
 		{"as many runs as the backlog", 2, false},
 		{"no backlog set", 0, false},
 	} {
-		t.Run(c.name, func(t *testing.T) {
-			opts := StoreOptions{SortKey: []string{"svc"}, MergeFanIn: 2, MergeBacklog: c.backlog, FlushInterval: -1}
-			s, err := OpenStore(t.TempDir(), opts)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer s.Close()
-			// A flush of the buffers that is writing all along.
-			s.flushWrites.Add(1)
-			for i := range 2 {
-				w := s.NewWriter()
-				if err := w.AddNDJSON(storeDocs(i*500, 500)); err != nil {
+		for press, hold := range map[string]func(s *Store, by int){
+			"a flush writing":      func(s *Store, by int) { s.flushWrites.Add(int32(by)) },
+			"rows waiting for one": func(s *Store, by int) { s.buffered.Add(int64(by) * pressingBytes) },
+		} {
+			t.Run(c.name+", "+press, func(t *testing.T) {
+				opts := StoreOptions{SortKey: []string{"svc"}, MergeFanIn: 2, MergeBacklog: c.backlog, FlushInterval: -1}
+				s, err := OpenStore(t.TempDir(), opts)
+				if err != nil {
 					t.Fatal(err)
 				}
-				if err := w.Close(); err != nil {
+				defer s.Close()
+				// The flush or the rows are there all along.
+				hold(s, 1)
+				for i := range 2 {
+					w := s.NewWriter()
+					if err := w.AddNDJSON(storeDocs(i*500, 500)); err != nil {
+						t.Fatal(err)
+					}
+					if err := w.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				deadline := time.Now().Add(2 * time.Second)
+				for runsOf(s) != 1 && time.Now().Before(deadline) && !c.waits {
+					time.Sleep(time.Millisecond)
+				}
+				if c.waits {
+					time.Sleep(100 * time.Millisecond)
+				}
+				if got := runsOf(s); (got == 2) != c.waits {
+					t.Fatalf("%d runs while it lasts", got)
+				}
+				hold(s, -1)
+				if err := s.Settle(); err != nil {
 					t.Fatal(err)
 				}
-			}
-			deadline := time.Now().Add(2 * time.Second)
-			for runsOf(s) != 1 && time.Now().Before(deadline) && !c.waits {
-				time.Sleep(time.Millisecond)
-			}
-			if c.waits {
-				time.Sleep(100 * time.Millisecond)
-			}
-			if got := runsOf(s); (got == 2) != c.waits {
-				t.Fatalf("%d runs while a flush is writing", got)
-			}
-			s.flushWrites.Add(-1)
-			if err := s.Settle(); err != nil {
-				t.Fatal(err)
-			}
-			if got := runsOf(s); got != 1 {
-				t.Fatalf("%d runs once the flush has ended", got)
-			}
-			if rows, sum := rowsAndSumOf(t, s.Table()); rows != 1000 || sum != 999*1000/2 {
-				t.Fatalf("%d rows, sum %d", rows, sum)
-			}
-		})
+				if got := runsOf(s); got != 1 {
+					t.Fatalf("%d runs once it has ended", got)
+				}
+				if rows, sum := rowsAndSumOf(t, s.Table()); rows != 1000 || sum != 999*1000/2 {
+					t.Fatalf("%d rows, sum %d", rows, sum)
+				}
+			})
+		}
 	}
 }

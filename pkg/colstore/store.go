@@ -48,9 +48,10 @@ type StoreOptions struct {
 	// decoded block per run it reads, and the merges running at once hold
 	// at most this many blocks together; zero means 96.
 	MergeBlocks int
-	// MergeBacklog makes merges give way to the flushes of Append's
-	// buffers, which the callers of Append and Sync wait for, while fewer
-	// runs than this are in the table; zero lets both share the disk.
+	// MergeBacklog makes merges give way to the rows that wait in Append's
+	// buffers and to their flushes, which the callers of Append and Sync
+	// wait for, while fewer runs than this are due to be merged; zero lets
+	// both share the disk.
 	MergeBacklog int
 	// Partition is the span of time whose rows are kept and merged apart
 	// from all others, so that a time range reads only the spans it meets
@@ -107,9 +108,9 @@ type Store struct {
 	// appending is held shared by every call of Append while it runs.
 	appending sync.RWMutex
 	// flushWrites counts the flushes of the buffers that are writing, and
-	// runs the runs in the table.
+	// due the runs in the table that merges are to take.
 	flushWrites atomic.Int32
-	runs        atomic.Int32
+	due         atomic.Int32
 	// flushMu lets one flush of the buffers run at a time. buffered counts
 	// the input bytes in the buffers and in unwritten, the batches that a
 	// failed flush took and the next one writes first.
@@ -764,22 +765,27 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 	return err
 }
 
-// countRuns notes the number of runs in the table.
+// countRuns notes the number of runs in the table that merges are to take.
 func (s *Store) countRuns() {
 	snap := s.dir.Table().Snapshot()
 	defer snap.Release()
-	runs := map[uint64]struct{}{}
-	for _, h := range snap.Parts() {
-		runs[h.Run] = struct{}{}
+	due := 0
+	for _, set := range pickMerges(snap.Parts(), s.opts.MergeFanIn, false) {
+		due += len(set)
 	}
-	s.runs.Store(int32(len(runs)))
+	s.due.Store(int32(due))
 }
 
-// giveWay holds a merge back while a flush of the buffers is writing and
-// the table has fewer runs than the backlog that merges may not let grow.
+// pressingBytes is the input in Append's buffers from which a flush is
+// near enough for merges to leave it the disk.
+const pressingBytes = 16 << 20
+
+// giveWay holds a merge back while rows wait in the buffers for a flush or
+// a flush is writing them, and fewer runs are due to be merged than the
+// backlog that merges may not let grow.
 func (s *Store) giveWay() {
-	for s.flushWrites.Load() > 0 && int(s.runs.Load()) < s.opts.MergeBacklog && !s.closed.Load() {
-		time.Sleep(time.Millisecond)
+	for (s.flushWrites.Load() > 0 || s.buffered.Load() >= pressingBytes) && int(s.due.Load()) < s.opts.MergeBacklog && !s.closed.Load() {
+		time.Sleep(2 * time.Millisecond)
 	}
 }
 
