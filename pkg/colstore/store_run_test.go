@@ -253,7 +253,8 @@ func TestMergesGiveWayToFlushesBelowTheBacklog(t *testing.T) {
 	}{
 		{"fewer runs than the backlog", 100, true},
 		{"as many runs as the backlog", 2, false},
-		{"no backlog set", 0, false},
+		{"the backlog of a store that sets none", 0, true},
+		{"no backlog", -1, false},
 	} {
 		for press, hold := range map[string]func(s *Store, by int){
 			"a flush writing":      func(s *Store, by int) { s.flushWrites.Add(int32(by)) },
