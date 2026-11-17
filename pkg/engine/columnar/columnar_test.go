@@ -405,3 +405,33 @@ func TestWindowStatisticsOfExpressions(t *testing.T) {
 		}
 	}
 }
+
+// TestBooleanArgumentsOfAggregates requires the row operators to take a
+// FALSE argument of an aggregate as a value, as the columnar executor does.
+func TestBooleanArgumentsOfAggregates(t *testing.T) {
+	tables := testData(t)
+	for _, c := range []struct {
+		text, want string
+		columnar   bool
+	}{
+		{`source=logs | stats count(status > 300) as n`, "n=5", true},
+		{`source=logs | eval r = rand() | where r >= 0 | stats count(status > 300) as n`, "n=5", false},
+		{`source=logs | stats count(status > 300) as n by host | sort host`, "host=a n=3; host=b n=2", true},
+		{`source=logs | eval r = rand() | where r >= 0 | stats count(status > 300) as n, dc(status > 300) as d, ` +
+			`values(status > 300) as v by host | sort host`, `d=2 host=a n=3 v=["false","true"]; d=1 host=b n=2 v=["true"]`, false},
+		{`source=logs | eval r = rand() | where r >= 0 | sort _time | eventstats count(status > 300) as n by host | ` +
+			`stats max(n) as n by host | sort host`, "host=a n=3; host=b n=2", false},
+	} {
+		compiled, err := query.Compile(c.text)
+		if err != nil {
+			t.Fatalf("%s: %v", c.text, err)
+		}
+		res, err := Run(context.Background(), compiled.Plan, tables, Options{Now: testNow})
+		if err != nil {
+			t.Fatalf("%s: %v", c.text, err)
+		}
+		if got := render(res.Maps()); got != c.want || res.Columnar != c.columnar {
+			t.Errorf("%s\n got  %s (columnar %v)\n want %s (columnar %v)", c.text, got, res.Columnar, c.want, c.columnar)
+		}
+	}
+}
