@@ -1,0 +1,232 @@
+package exec
+
+import (
+	"context"
+	"fmt"
+	"runtime"
+	"sync"
+	"sync/atomic"
+
+	"github.com/lynxbase/lynxdb/pkg/colstore"
+	"github.com/lynxbase/lynxdb/pkg/colstore/part"
+	"github.com/lynxbase/lynxdb/pkg/mem"
+	"github.com/lynxbase/lynxdb/pkg/vec"
+)
+
+// Options sets how a plan runs.
+type Options struct {
+	// Workers is the number of goroutines; zero means one per CPU.
+	Workers int
+}
+
+// sharedGroups gives every worker the same id for a group key, so that the
+// ids can stand for the groups in what workers hand to a merge.
+type sharedGroups struct {
+	mu    sync.Mutex
+	arena *mem.Arena
+	table *vec.ByteTable
+}
+
+func (s *sharedGroups) id(key []byte, h uint64) uint32 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return uint32(s.table.IDHashed(key, h))
+}
+
+// execution is one run of a query.
+type execution struct {
+	q       *query
+	workers []*worker
+	mergers []merger
+	shared  *sharedGroups
+}
+
+// Run executes plan over snap and returns its rows.
+func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) (*Result, error) {
+	q, err := compile(snap, plan)
+	if err != nil {
+		return nil, err
+	}
+	n := opts.Workers
+	if n <= 0 {
+		n = runtime.GOMAXPROCS(0)
+	}
+	x := &execution{q: q, workers: make([]*worker, n)}
+	if q.agg != nil && q.agg.group >= 0 {
+		a := mem.NewArena()
+		x.shared = &sharedGroups{arena: a, table: vec.NewByteTable(a)}
+	}
+	defer x.release()
+	scan := q.opts
+	scan.Workers = n
+	stats, err := snap.Scan(ctx, scan, x.block)
+	if err != nil {
+		return nil, err
+	}
+	active := x.workers[:0:0]
+	for _, w := range x.workers {
+		if w != nil {
+			active = append(active, w)
+		}
+	}
+	var sinks []*sink
+	if q.agg != nil {
+		if sinks, err = x.finishAggregate(active); err != nil {
+			return nil, err
+		}
+	} else {
+		for _, w := range active {
+			sinks = append(sinks, &w.sink)
+		}
+	}
+	res := &Result{}
+	res.Columns, res.Rows = collect(q, sinks)
+	res.Stats = Stats{
+		Blocks:         stats.Blocks,
+		SkippedByKey:   stats.SkippedByKey,
+		SkippedByToken: stats.SkippedByToken,
+		SkippedByTime:  stats.SkippedByTime,
+		HeldBytes:      x.held(),
+	}
+	for _, w := range active {
+		res.Stats.SkippedByStats += w.undecoded
+		res.Stats.BlocksMatched += w.blocks
+		res.Stats.RowsMatched += w.matched
+	}
+
+	return res, nil
+}
+
+// held returns the bytes the execution holds in arenas and buffers.
+func (x *execution) held() int64 {
+	n := 0
+	if x.shared != nil {
+		n += x.shared.arena.Size()
+	}
+	for _, w := range x.workers {
+		if w != nil {
+			n += w.arena.Size() + w.held() + w.sink.held()
+		}
+	}
+	for i := range x.mergers {
+		n += x.mergers[i].held()
+	}
+
+	return int64(n)
+}
+
+func (x *execution) release() {
+	if x.shared != nil {
+		x.shared.arena.Free()
+	}
+	for _, w := range x.workers {
+		if w != nil {
+			w.release()
+		}
+	}
+	for i := range x.mergers {
+		if a := x.mergers[i].arena; a != nil {
+			a.Free()
+		}
+	}
+}
+
+// block runs the plan's scan-side operators over one block.
+func (x *execution) block(n int, p *part.Part, b *part.Block) error {
+	w := x.workers[n]
+	if w == nil {
+		w = newWorker(x)
+		x.workers[n] = w
+	}
+	w.open(p, b)
+	q := x.q
+	count, idx := w.rows, []uint32(nil)
+	if q.filter != nil {
+		v, err := w.eval(q.filter, 0)
+		if err != nil {
+			return err
+		}
+		switch s := &w.sels[0]; {
+		case v == none:
+			if !w.decoded {
+				w.undecoded++
+			}
+
+			return nil
+		case v == all:
+		case q.agg != nil && q.agg.rowsOnly && len(q.agg.keys) == 0:
+			// A count of rows needs their number alone.
+			if count = len(s.list); !s.listed {
+				count = vec.MaskCount(s.mask)
+			}
+			w.agg.words[q.agg.rows] += int64(count)
+			if count > 0 {
+				w.blocks++
+				w.matched += int64(count)
+			}
+
+			return nil
+		case s.listed:
+			idx, count = s.list, len(s.list)
+		default:
+			w.idx = vec.MaskIndexes(w.idx[:0], s.mask)
+			idx, count = w.idx, len(w.idx)
+		}
+		switch count {
+		case 0:
+			return nil
+		case w.rows:
+			idx = nil
+		}
+	}
+	w.blocks++
+	w.matched += int64(count)
+	if q.agg != nil {
+		return w.agg.block(count, idx)
+	}
+
+	return w.project(count, idx)
+}
+
+// forEach calls fn for every i below n from up to workers goroutines,
+// passing each goroutine's number so that it can own a state; a panic in fn
+// becomes the returned error.
+func forEach(n, workers int, fn func(slot, i int)) (err error) {
+	workers = min(workers, n)
+	if workers <= 1 {
+		for i := 0; i < n; i++ {
+			fn(0, i)
+		}
+
+		return nil
+	}
+	var next atomic.Int64
+	var failed atomic.Pointer[error]
+	var wg sync.WaitGroup
+	for slot := 0; slot < workers; slot++ {
+		wg.Add(1)
+		go func(slot int) {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					e := fmt.Errorf("exec: merge failed: %v", r)
+					failed.CompareAndSwap(nil, &e)
+				}
+			}()
+			for failed.Load() == nil {
+				i := int(next.Add(1)) - 1
+				if i >= n {
+					return
+				}
+				fn(slot, i)
+			}
+		}(slot)
+	}
+	wg.Wait()
+	if e := failed.Load(); e != nil {
+		return *e
+	}
+
+	return nil
+}
