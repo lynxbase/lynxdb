@@ -101,6 +101,9 @@ const (
 	// LYNXDB_STORAGE_TIME_FIELDS is the comma-separated list of fields that set the event time, in order.
 	// YAML key: storage.time_fields. Default: _time,timestamp,@timestamp,time,ts.
 	LYNXDB_STORAGE_TIME_FIELDS = "LYNXDB_STORAGE_TIME_FIELDS"
+	// LYNXDB_STORAGE_SORT_KEY is the comma-separated list of fields that order the rows of each part.
+	// YAML key: storage.sort_key. Default: empty (time order).
+	LYNXDB_STORAGE_SORT_KEY = "LYNXDB_STORAGE_SORT_KEY"
 	// LYNXDB_SYSLOG_BATCH_SIZE is the flush after this many events.
 	// YAML key: syslog.batch_size. Default: 1000.
 	LYNXDB_SYSLOG_BATCH_SIZE = "LYNXDB_SYSLOG_BATCH_SIZE"

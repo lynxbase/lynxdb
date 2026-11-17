@@ -82,6 +82,7 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("storage.partition", cfg.Storage.Partition.String(), dflt.Storage.Partition.String(), fileCfg.Storage.Partition.String(), LYNXDB_STORAGE_PARTITION)
 	add("storage.flush_interval", cfg.Storage.FlushInterval.String(), dflt.Storage.FlushInterval.String(), fileCfg.Storage.FlushInterval.String(), LYNXDB_STORAGE_FLUSH_INTERVAL)
 	add("storage.time_fields", strings.Join(cfg.Storage.TimeFields, ","), strings.Join(dflt.Storage.TimeFields, ","), strings.Join(fileCfg.Storage.TimeFields, ","), LYNXDB_STORAGE_TIME_FIELDS)
+	add("storage.sort_key", strings.Join(cfg.Storage.SortKey, ","), strings.Join(dflt.Storage.SortKey, ","), strings.Join(fileCfg.Storage.SortKey, ","), LYNXDB_STORAGE_SORT_KEY)
 
 	// Helper for duration fields.
 	durationEntry := func(key string, val, dfltVal, fileVal time.Duration, envVar string) {

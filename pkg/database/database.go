@@ -44,6 +44,9 @@ type Config struct {
 	// TimeFields name the fields whose value becomes the time of an event;
 	// nil means DefaultTimeFields.
 	TimeFields []string
+	// SortKey names the fields that order the rows of the parts written
+	// from then on; empty keeps the order of time.
+	SortKey []string
 	// MaxConcurrent bounds the queries that run at once; zero means no
 	// bound.
 	MaxConcurrent int
@@ -86,6 +89,7 @@ func Open(cfg Config) (*DB, error) {
 	}
 	core, err := columnar.Open(columnar.Config{Dir: cfg.Dir, Store: colstore.StoreOptions{
 		TimeFields:    cfg.TimeFields,
+		SortKey:       cfg.SortKey,
 		KeepText:      true,
 		Partition:     cfg.Partition,
 		FlushInterval: cfg.FlushInterval,
@@ -146,6 +150,10 @@ func (db *DB) Fields(index string) ([]string, bool) {
 
 	return out, true
 }
+
+// Snapshot returns the parts that an index holds now, for the caller to
+// release; it reports false when there is no such index.
+func (db *DB) Snapshot(index string) (*colstore.Snapshot, bool) { return db.core.Snapshot(index) }
 
 // Drop removes an index and its events; it reports whether there was one.
 func (db *DB) Drop(index string) (bool, error) { return db.core.Drop(index) }

@@ -85,6 +85,11 @@ func (s *StorageConfig) validate() error {
 			return validationErr("storage", "time_fields", strings.Join(s.TimeFields, ","), "must not name an empty field")
 		}
 	}
+	for _, f := range s.SortKey {
+		if f == "" {
+			return validationErr("storage", "sort_key", strings.Join(s.SortKey, ","), "must not name an empty field")
+		}
+	}
 
 	return nil
 }

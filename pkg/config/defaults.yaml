@@ -18,6 +18,7 @@
 #   partition: 24h                   # Span of time whose events are kept apart
 #   flush_interval: 0s               # Longest wait before ingested events are written (0 = store default)
 #   time_fields: [_time, timestamp, "@timestamp", time, ts]  # Fields that set the event time, in order
+#   sort_key: []                     # Fields that order the rows of parts written from then on (empty = time order)
 
 # Query execution configuration.
 # query:

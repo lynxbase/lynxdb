@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -206,6 +207,31 @@ func TestServerTakesStorageTimeFields(t *testing.T) {
 	}
 	if events[0]["_time"] != "2026-01-02T03:04:05Z" {
 		t.Errorf("_time = %v, want the value of ts", events[0]["_time"])
+	}
+}
+
+func TestServerWritesPartsInSortKeyOrder(t *testing.T) {
+	srv, cleanup := startTestServerWithConfig(t, Config{Storage: config.StorageConfig{
+		SortKey: []string{"kind", "did"},
+	}})
+	defer cleanup()
+
+	ingestNDJSON(t, srv.Addr(), "main", `{"kind":"b","did":"x"}`+"\n"+`{"kind":"a","did":"y"}`+"\n")
+	if err := srv.db.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	snap, ok := srv.db.Snapshot("main")
+	if !ok {
+		t.Fatal("no index main")
+	}
+	defer snap.Release()
+	if len(snap.Parts()) == 0 {
+		t.Fatal("no parts")
+	}
+	for _, h := range snap.Parts() {
+		if got := strings.Join(h.SortKey(), ","); got != "kind,did" {
+			t.Errorf("part sort key = %q, want kind,did", got)
+		}
 	}
 }
 

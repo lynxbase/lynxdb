@@ -62,6 +62,9 @@ type StorageConfig struct {
 	FlushInterval Duration `yaml:"flush_interval" json:"flush_interval"`
 	// TimeFields name the fields whose value becomes the event time, tried in order.
 	TimeFields []string `yaml:"time_fields" json:"time_fields"`
+	// SortKey names the fields that order the rows of each part written
+	// after it is set; empty keeps the order of time.
+	SortKey []string `yaml:"sort_key" json:"sort_key"`
 }
 
 // QueryConfig holds query execution parameters.
@@ -163,6 +166,7 @@ func DefaultConfig() *Config {
 		Storage: StorageConfig{
 			Partition:  Duration(24 * time.Hour),
 			TimeFields: []string{"_time", "timestamp", "@timestamp", "time", "ts"},
+			SortKey:    []string{},
 		},
 
 		Query: QueryConfig{

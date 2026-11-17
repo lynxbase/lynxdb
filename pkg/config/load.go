@@ -176,6 +176,19 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strings.Join(c.Storage.TimeFields, ",") }},
+	{LYNXDB_STORAGE_SORT_KEY, "storage.sort_key",
+		func(c *Config, v string) error {
+			fields := []string{}
+			for _, f := range strings.Split(v, ",") {
+				if f = strings.TrimSpace(f); f != "" {
+					fields = append(fields, f)
+				}
+			}
+			c.Storage.SortKey = fields
+
+			return nil
+		},
+		func(c *Config) string { return strings.Join(c.Storage.SortKey, ",") }},
 
 	// Query
 	{LYNXDB_QUERY_SYNC_TIMEOUT, "query.sync_timeout",

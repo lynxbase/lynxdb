@@ -83,6 +83,7 @@ func NewServer(cfg Config) (*Server, error) {
 		Partition:     cfg.Storage.Partition.Duration(),
 		FlushInterval: cfg.Storage.FlushInterval.Duration(),
 		TimeFields:    cfg.Storage.TimeFields,
+		SortKey:       cfg.Storage.SortKey,
 		MaxConcurrent: cfg.Query.MaxConcurrent,
 		JobTTL:        cfg.Query.JobTTL,
 		Logger:        cfg.Logger,
