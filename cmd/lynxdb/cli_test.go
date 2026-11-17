@@ -47,7 +47,6 @@ func resetAllFlags(t *testing.T) {
 	flagInitDataDir = ""
 	flagInitRetention = ""
 	flagInitNoInteractive = false
-	shipperConfigRemote = ""
 
 	// Reset root persistent flags.
 	rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {

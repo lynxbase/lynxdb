@@ -6,7 +6,7 @@ LDFLAGS  = -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).Dat
 
 CUSTOM_GCL = ./custom-gcl
 
-.PHONY: build test test-unit test-e2e test-cli test-compat test-conformance test-compat-filebeat test-compat-fluentbit test-compat-vector test-compat-otelcol test-compat-splunk-hec docs-check-shippers docs-gen vet clean lint lint-build
+.PHONY: build test test-unit test-e2e test-cli test-compat test-conformance test-compat-filebeat test-compat-fluentbit test-compat-vector test-compat-otelcol test-compat-splunk-hec docs-gen vet clean lint lint-build
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o lynxdb ./cmd/lynxdb/
@@ -39,9 +39,6 @@ test-compat-otelcol:
 
 test-compat-splunk-hec:
 	go test -timeout 2m -tags=e2e -run "^TestE2E_Shipper_SplunkHEC" ./test/e2e/shippers/
-
-docs-check-shippers:
-	go test ./cmd/lynxdb -run "^TestDocsShipperConfigsContainRenderedTemplates$$" -count=1
 
 # Regenerate registry-driven docs (docs/site/docs/lynxflow/*, docs/grammar/lynxflow.ebnf).
 # Never commit a built docgen binary; always go run it.
