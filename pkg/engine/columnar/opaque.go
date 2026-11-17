@@ -29,8 +29,8 @@ func opaque(now time.Time) func(e ir.Expr, fields []*ir.FieldRef) (func() exec.F
 		if !pure {
 			return nil, false
 		}
-		prog, err := vm.CompileExpr(e, vm.CompileOptions{Now: now})
-		if err != nil {
+		prog := compile(e, now)
+		if prog == nil {
 			return nil, false
 		}
 		names := make([]string, len(fields))
@@ -65,6 +65,22 @@ func opaque(now time.Time) func(e ir.Expr, fields []*ir.FieldRef) (func() exec.F
 			}
 		}, true
 	}
+}
+
+// compile compiles an expression for the row engine, or returns nil for one
+// that it does not take; a panic of the compiler is such a refusal.
+func compile(e ir.Expr, now time.Time) (prog *vm.Program) {
+	defer func() {
+		if recover() != nil {
+			prog = nil
+		}
+	}()
+	prog, err := vm.CompileExpr(e, vm.CompileOptions{Now: now})
+	if err != nil {
+		return nil
+	}
+
+	return prog
 }
 
 // executorValue turns a value of a row into one of the executor's, with its
