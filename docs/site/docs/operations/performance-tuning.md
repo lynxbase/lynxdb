@@ -9,7 +9,7 @@ LynxDB performs well with default settings. This page covers the settings to cha
 
 ## Query Shape
 
-The largest wins come from the query itself. The server skips whole segments, and rows inside them, using the time range, search terms and string equality predicates of the query. See [Indexing](/docs/architecture/indexing) for how each one is used.
+The largest wins come from the query itself. The server skips whole segments, and rows inside them, using the time range, search terms and string equality predicates of the query.
 
 | Do | Why |
 |----|-----|

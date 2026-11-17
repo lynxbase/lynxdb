@@ -162,10 +162,7 @@ const sidebars: SidebarsConfig = {
       label: 'Architecture',
       items: [
         'architecture/overview',
-        'architecture/storage-engine',
-        'architecture/segment-format',
         'architecture/query-engine',
-        'architecture/indexing',
         'architecture/es-stubs',
         'architecture/design-decisions',
       ],

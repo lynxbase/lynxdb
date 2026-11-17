@@ -248,16 +248,6 @@ sudo systemctl restart lynxdb
 
 `storage.compaction_workers` is read at startup. `config reload` updates hot-reloadable settings but does not re-create the compaction scheduler with a new worker count.
 
-### Server Refuses to Start: Format Errors
-
-LynxDB checks the `FORMAT` marker and every segment header at startup. It refuses to start, with exit code 78, when:
-
-- the data directory holds segments but no `FORMAT` marker
-- the marker names a format newer than the binary supports (the data directory was written by a newer LynxDB)
-- a segment uses an unknown format version or required capability
-
-Run a LynxDB release that supports the data directory's format. See [Upgrading](/docs/operations/upgrading#storage-format). A segment with a checksum failure is logged as a warning and does not block startup.
-
 ## Server Issues
 
 ### High Memory Usage
@@ -273,8 +263,6 @@ lynxdb jobs qry_9c1d4e --cancel
 lynxdb config set query.global_query_pool_bytes 4gb
 sudo systemctl restart lynxdb
 ```
-
-`lynxdb status --format json` and `GET /api/v1/status` show memory per governor class.
 
 ### Server Won't Start
 

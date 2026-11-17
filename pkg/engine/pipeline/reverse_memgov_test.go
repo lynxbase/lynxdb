@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 func reverseMemgovRows(n int) []map[string]event.Value {
@@ -36,7 +35,7 @@ func assertReversed(t *testing.T, got []map[string]event.Value, n int) {
 
 func TestReverseWithinBudget(t *testing.T) {
 	const n = 500
-	acct := memgov.NewTestBudget("reverse", 1<<30).NewAccount("reverse")
+	acct := newTestBudget(1 << 30).NewAccount()
 	iter := NewReverseIteratorWithBudget(NewRowScanIterator(reverseMemgovRows(n), 32), 32, acct)
 
 	got, err := CollectAll(context.Background(), iter)
@@ -47,7 +46,7 @@ func TestReverseWithinBudget(t *testing.T) {
 }
 
 func TestReverseBudgetExceeded(t *testing.T) {
-	acct := memgov.NewTestBudget("reverse", 64).NewAccount("reverse")
+	acct := newTestBudget(64).NewAccount()
 	iter := NewReverseIteratorWithBudget(NewRowScanIterator(reverseMemgovRows(100), 16), 16, acct)
 
 	if _, err := CollectAll(context.Background(), iter); err == nil {

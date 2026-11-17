@@ -12,13 +12,13 @@ LynxDB follows the standard Go project layout. This page describes each package 
 
 ```
 lynxdb/
-├── cmd/            # Binaries: the lynxdb CLI and a segment fixture generator
+├── cmd/            # Binaries: the lynxdb CLI
 ├── pkg/            # Core packages
 ├── internal/       # Packages private to the module
 ├── test/           # End-to-end, CLI and regression tests
 ├── testdata/       # Sample logs and fixtures
 ├── scripts/        # Install, release and benchmark helper scripts
-├── docs/           # Documentation site (Docusaurus) and format documents
+├── docs/           # Documentation site (Docusaurus)
 ├── go.mod, go.sum  # Module definition
 ├── mise.toml       # Pinned toolchain (Go, golangci-lint, goreleaser, ...)
 └── Makefile        # Build, test and lint targets
@@ -47,10 +47,6 @@ The `main` package and the CLI commands, built with Cobra:
 | `version.go` | `lynxdb version` |
 
 This layer parses flags, loads configuration, and calls into `pkg/`. `CLI.md` in the directory documents the CLI conventions.
-
-### `cmd/lsg-fixture/`
-
-Writes the `.lsg` segment fixtures under `testdata/segments` that format compatibility tests read.
 
 ## `pkg/` -- Query Language and Planning
 
@@ -138,20 +134,6 @@ Query and tail services between the REST handlers and the engine: planning, sync
 
 The HTTP server: route registration (`server.go`), handlers for query, explain, jobs, tail, ingest, the Elasticsearch, OTLP and Splunk HEC protocols, fields, status, cache, config and auth, plus middleware and the response envelope. `pkg/api/apicontracts` holds request and response constants shared with the client.
 
-### `pkg/storage/` -- Storage Engine
-
-```
-pkg/storage/
-├── engine.go     # Ephemeral in-memory engine for CLI file and pipe mode
-├── part/         # AsyncBatcher, part writer, filesystem-scanned registry, retention
-├── segment/      # .lsg reader and writer; column/ encodings; index/ blooms, term index, range bitmaps
-├── compaction/   # Leveled compaction planning and merging
-├── format/       # FORMAT marker reading and writing
-└── sources/      # Registry of source names for multi-source and glob queries
-```
-
-See [Storage Engine](/docs/architecture/storage-engine) and [Segment Format](/docs/architecture/segment-format).
-
 ### `pkg/ingest/` -- Ingest Path
 
 ```
@@ -167,9 +149,9 @@ pkg/ingest/
 | Package | Purpose |
 |---------|---------|
 | `pkg/event` | The `Event` type and typed `Value` |
-| `pkg/model` | Shared types: storage hints, segment metadata, time bounds |
+| `pkg/model` | Shared types: storage hints, time bounds |
 | `pkg/config` | Configuration cascade (flags > env > file > defaults), validation, hot reload |
-| `pkg/memgov` | Process-wide memory governor with memory classes and per-query budgets |
+| `pkg/memgov` | Memory accounts that operators charge, and memory exhaustion errors |
 | `pkg/stats` | Query execution statistics for the CLI, API and metrics |
 | `pkg/auth` | API keys, credential files, TLS helpers |
 | `pkg/client` | Typed Go client for the REST API, used by the CLI |
@@ -204,7 +186,6 @@ test/
 flowchart TD
     CMD["cmd/lynxdb"] --> API["pkg/api/rest"]
     CMD --> CLIENT["pkg/client"]
-    CMD --> STORAGE["pkg/storage (ephemeral engine)"]
     CMD --> CONFIG["pkg/config"]
 
     API --> USECASES["pkg/usecases"]
@@ -212,7 +193,6 @@ flowchart TD
     USECASES --> PLANNER["pkg/planner"]
 
     PLANNER --> QUERY["pkg/query"]
-    STORAGE --> QUERY
     QUERY --> PPL["pkg/ppl"]
     QUERY --> OPT["pkg/ir/opt"]
     QUERY --> PHYSICAL["pkg/engine/physical"]
@@ -225,10 +205,6 @@ flowchart TD
     SERVER --> PLANNER
     SERVER --> PHYSICAL
     SERVER --> PIPELINE
-    SERVER --> PART["pkg/storage/part"]
-    SERVER --> SEGMENT["pkg/storage/segment"]
-    SERVER --> COMPACTION["pkg/storage/compaction"]
-    PIPELINE --> SEGMENT
 ```
 
 ## Related

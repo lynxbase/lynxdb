@@ -51,9 +51,7 @@ results
 ```
 
 `pkg/query` ties the stages together. `query.Compile` runs the frontend and
-the optimizer; `query.Run` builds and drains the physical plan over an
-in-memory event store, which is what the CLI's file and pipe modes use;
-`query.Explain` renders the plans. The server compiles with the same
+the optimizer; `query.Explain` renders the plans. The server compiles with the same
 `query.Compile` (through `pkg/planner`), derives storage hints from the
 plan, and differs only in the scan source it hands to the physical planner.
 
@@ -70,7 +68,7 @@ plan, and differs only in the scan source it hands to the physical planner.
 | `pkg/ir/opt` | Optimizer rules over IR. |
 | `pkg/vm` | Bytecode VM; `vm.CompileExpr` compiles IR expressions, with native implementations of every registry function. |
 | `pkg/engine/physical` | Physical planner from IR to pipeline iterators; storage hints derived from scans. |
-| `pkg/query` | Compile (with a cache of recent plans), optimize, explain and run. |
+| `pkg/query` | Compile (with a cache of recent plans), optimize and explain. |
 | `pkg/planner` | Server planning: compile, storage hints, request time bounds, live-tail validation. |
 | `internal/docgen` | Generates the command, function and aggregation tables from the catalogs. |
 

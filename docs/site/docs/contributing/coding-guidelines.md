@@ -178,7 +178,7 @@ Avoid package-level mutable state; state belongs to structs that are passed expl
 
 ## Performance-Sensitive Code
 
-Hot paths are the VM evaluation loop (`pkg/vm`), the scan, filter and aggregation iterators (`pkg/engine/pipeline`), and segment reading (`pkg/storage/segment`). Cold paths are configuration, setup, flush, compaction and API handler wiring.
+Hot paths are the VM evaluation loop (`pkg/vm`) and the scan, filter and aggregation iterators (`pkg/engine/pipeline`). Cold paths are configuration, setup, flush, compaction and API handler wiring.
 
 ### Hot Path Rules
 

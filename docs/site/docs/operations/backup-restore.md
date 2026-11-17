@@ -151,8 +151,6 @@ sudo chown -R lynxdb:lynxdb /var/lib/lynxdb
 sudo systemctl start lynxdb
 ```
 
-The restored server needs the same LynxDB release (or a later one that reads the backup's segment format; see [Upgrading](/docs/operations/upgrading#storage-format)).
-
 ## Testing Backups
 
 Periodically verify that backups can be restored:

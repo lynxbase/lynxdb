@@ -51,7 +51,7 @@ curl -s http://localhost:3100/api/v1/stats | jq .
 }
 ```
 
-`GET /api/v1/status` combines these counters with health, memory governor usage per class, active queries, and live tail sessions.
+`GET /api/v1/status` combines these counters with health, active queries, and live tail sessions.
 
 The CLI shows the same information:
 
@@ -117,14 +117,6 @@ lynxdb status --format json
 | `lynxdb_segments_skipped_time_total`, `lynxdb_segments_skipped_bloom_total`, `lynxdb_segments_skipped_column_stats_total` | Segments skipped by time range, bloom filter, and column min/max | A low skip ratio means queries lack time bounds or selective terms |
 | `lynxdb_cache_hits_total`, `lynxdb_cache_misses_total`, `lynxdb_cache_evictions_total`, `lynxdb_cache_size_bytes` | Query result cache | Hit rate and evictions |
 | `lynxdb_spill_bytes_active`, `lynxdb_spill_files_active`, `lynxdb_spill_bytes_total` | Spill files of blocking operators | Disk use against `query.max_temp_dir_size_bytes` |
-
-### Memory
-
-| Metric | Description | What to watch |
-|--------|-------------|---------------|
-| `lynxdb_memgov_class_bytes` | Bytes held per memory governor class | Growth of one class |
-| `lynxdb_memgov_class_peak_bytes` | Peak bytes per class | |
-| `lynxdb_memgov_pressure_events_total` | Memory pressure events | Sustained increases mean the memory pool is too small |
 
 ### Scrape Configuration
 
@@ -216,7 +208,6 @@ For production deployments, monitor at least:
 - [ ] `queries.active` in `/api/v1/status` against `query.max_concurrent` -- concurrency saturation
 - [ ] `lynxdb_compaction_queue_depth` -- compaction backlog
 - [ ] `buffered_events` in `/api/v1/stats` -- flush health
-- [ ] `lynxdb_memgov_pressure_events_total` -- memory pressure
 
 ## Next Steps
 

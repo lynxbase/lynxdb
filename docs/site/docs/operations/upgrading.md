@@ -133,26 +133,6 @@ A Kubernetes StatefulSet with `updateStrategy: RollingUpdate` replaces its pods 
 kubectl -n lynxdb rollout status statefulset/lynxdb
 ```
 
-## Storage Format
-
-Segments use the `.lsg` format, versioned by a format major. The data directory holds a `FORMAT` marker file (`LSGFMT v<N>`). On startup the server:
-
-1. Writes the marker for the newest format it supports when the data directory has no segments and no marker.
-2. Refuses to start when the directory holds segments but no marker, when the marker is newer than the binary supports, or when any segment has an unknown format major or required capability bit. The CLI exits with code 78.
-3. Logs a warning, without refusing to start, for a segment with physical damage such as a checksum failure.
-
-Format support by release:
-
-| LynxDB release | Reads | Writes |
-|---|---|---|
-| v0.1.8 and later | format 1 and 2 | format 2 |
-| v0.1.6, v0.1.7 | format 1 | format 1 |
-| before v0.1.6 | older layouts | older layouts |
-
-Upgrading from v0.1.6 or later needs no action: the new binary reads the existing segments, writes new parts in format 2, and compaction rewrites merged parts in format 2. The marker is not rewritten. Data directories from releases before v0.1.6 have no `FORMAT` marker and use a layout current releases cannot read; re-ingest that data into a fresh data directory.
-
-See `docs/storage-format.md` in the repository for the format registry and capability bits.
-
 ## Config Compatibility
 
 Config keys keep their meaning across releases, and new keys come with defaults, so an existing config file keeps working. `lynxdb config validate` warns about unknown keys: keys the running release does not read.

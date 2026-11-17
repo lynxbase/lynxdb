@@ -70,5 +70,4 @@ storage:
 ## Related
 
 - [Ingest Settings](./ingest.md)
-- [Storage Engine](../architecture/storage-engine.md)
 - [Performance Tuning](../operations/performance-tuning.md)

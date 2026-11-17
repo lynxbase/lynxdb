@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 func largeRawRow(size int) map[string]event.Value {
@@ -38,7 +37,7 @@ func TestLargeRowsTripBlockingOperatorBudgets(t *testing.T) {
 	row := largeRawRow(4096)
 
 	t.Run("eventstats", func(t *testing.T) {
-		acct := memgov.NewTestBudget("eventstats", 2048).NewAccount("eventstats")
+		acct := newTestBudget(2048).NewAccount()
 		iter := NewEventStatsIteratorWithBudget(
 			NewRowScanIterator([]map[string]event.Value{row}, 1),
 			[]AggFunc{{Name: "count", Alias: "cnt"}},
@@ -57,7 +56,7 @@ func TestBoundedOperatorsTrackActualLargeRowBytes(t *testing.T) {
 	row := largeRawRow(4096)
 
 	t.Run("topn", func(t *testing.T) {
-		acct := memgov.NewTestBudget("topn", 0).NewAccount("topn")
+		acct := newTestBudget(0).NewAccount()
 		iter := NewTopNIteratorWithBudget(
 			NewRowScanIterator([]map[string]event.Value{row}, 1),
 			[]SortField{{Name: "n"}},

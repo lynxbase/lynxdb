@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 func TestEventStatsEnrichesRows(t *testing.T) {
@@ -20,7 +19,7 @@ func TestEventStatsEnrichesRows(t *testing.T) {
 	}
 
 	child := NewRowScanIterator(rows, 64)
-	acct := memgov.NewTestBudget("test", 1*1024*1024).NewAccount("eventstats")
+	acct := newTestBudget(1 * 1024 * 1024).NewAccount()
 	aggs := []AggFunc{
 		{Name: "count", Alias: "cnt"},
 	}
@@ -59,7 +58,7 @@ func TestEventStatsBudgetExceeded(t *testing.T) {
 	}
 
 	child := NewRowScanIterator(rows, 64)
-	acct := memgov.NewTestBudget("test", 2*1024).NewAccount("eventstats")
+	acct := newTestBudget(2 * 1024).NewAccount()
 	aggs := []AggFunc{
 		{Name: "count", Alias: "cnt"},
 	}

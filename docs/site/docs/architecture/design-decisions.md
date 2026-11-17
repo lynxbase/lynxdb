@@ -201,7 +201,4 @@ Without a WAL:
 ## Related
 
 - [Architecture Overview](/docs/architecture/overview) -- how these decisions shape the system
-- [Storage Engine](/docs/architecture/storage-engine) -- part writes and compaction
-- [Segment Format](/docs/architecture/segment-format) -- columnar encoding details
 - [Query Engine](/docs/architecture/query-engine) -- compilation, the Volcano model and the bytecode VM
-- [Indexing](/docs/architecture/indexing) -- bloom filters and the term index

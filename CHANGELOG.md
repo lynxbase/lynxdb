@@ -54,8 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Physical planner** (`pkg/engine/physical`): IR operators to pipeline
   iterators, expressions to VM bytecode, subqueries evaluated once; sort and
   aggregation spill to disk under memory pressure.
-- **Single entry point** (`pkg/query`): `Compile`, `Run` and `Explain`, with
-  a cache of the 1024 most recently compiled plans.
+- **Single entry point** (`pkg/query`): `Compile` and `Explain`, with a cache
+  of the 1024 most recently compiled plans.
 
 ### Errors
 
@@ -79,16 +79,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Storage and ingest
 
-- **Storage engine**: columnar segment format (`.lsg` format-major v1 with
-  `LSG1` magic) with delta-varint timestamps, LZ4/ZSTD compression,
-  dictionary-encoded strings, Gorilla-encoded floats, region magics, and a
-  `FORMAT` marker.
-- **Full-text search**: FST-based inverted index with roaring bitmap posting
-  lists and bloom filters for segment skipping.
-- **Direct-to-part ingest**: `AsyncBatcher` buffers events in memory and
-  flushes immutable `.lsg` parts via atomic rename; configurable `fsync`
-  policy per part write.
-- **Compaction**: size-tiered compaction (L0 -> L1 -> L2) with rate limiting.
 - **Ingest compatibility**: Elasticsearch `_bulk` API, OpenTelemetry
   OTLP/HTTP and gRPC, Splunk HEC receivers, and syslog.
 - **File and pipe queries**: query local files and standard input with the

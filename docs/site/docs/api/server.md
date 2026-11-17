@@ -22,7 +22,7 @@ curl -s localhost:3100/health
 
 ## GET /metrics
 
-Prometheus text metrics, outside `/api/v1` and without authentication. Metric names start with `lynxdb_`: ingest counters and staging gauges, query duration, scan and memory histograms, segment skip counters, cache, compaction, spill and memory-governor metrics. See [Monitoring](../operations/monitoring.md).
+Prometheus text metrics, outside `/api/v1` and without authentication. Metric names start with `lynxdb_`: ingest counters and staging gauges, query duration, scan and memory histograms, segment skip counters, cache, compaction and spill metrics. See [Monitoring](../operations/monitoring.md).
 
 ## GET /api/v1/status
 
@@ -38,22 +38,12 @@ A compact snapshot of the server:
     "events": {"total": 1007, "today": 116},
     "queries": {"active": 0},
     "tail": {"active_sessions": 0, "subscriber_count": 0, "total_dropped_events": 0},
-    "retention": {"oldest_event": "2025-01-15T08:00:00Z"},
-    "memory": {
-      "governor": {
-        "allocated_bytes": 1110668,
-        "peak_bytes": 1508024,
-        "limit_bytes": 10307921510,
-        "by_class": {
-          "page-cache": {"allocated_bytes": 1110668, "peak_bytes": 1110668, "peak_60s_bytes": 1110668, "peak_24h_bytes": 1110668, "limit_bytes": 0}
-        }
-      }
-    }
+    "retention": {"oldest_event": "2025-01-15T08:00:00Z"}
   }
 }
 ```
 
-`retention` appears when the oldest event is known. `memory.governor` appears when the memory governor is active.
+`retention` appears when the oldest event is known.
 
 ## GET /api/v1/stats
 

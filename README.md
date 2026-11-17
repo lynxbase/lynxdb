@@ -144,10 +144,6 @@ Write spaces around `-` and `*` in arithmetic: as in the official PPL grammar,
 - **Canonical IR** between the language and the engine, with a rule-based
   optimizer and storage hints: time ranges, term-index lookups, column
   pruning and row limits reach the storage layer.
-- **Full-text index:** FST term dictionary, roaring bitmap postings, and bloom
-  filters for segment skipping.
-- **Columnar storage:** custom `.lsg` segments with delta-varint timestamps,
-  dictionary encoding, Gorilla XOR, and LZ4 compression.
 - **Operational modes:** stdin/file mode, local server, REST API, live tail,
   syslog, and shipper-compatible ingest.
 

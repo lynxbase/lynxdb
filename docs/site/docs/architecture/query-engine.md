@@ -30,9 +30,8 @@ flowchart TD
 | Physical planning | `pkg/engine/physical`, `pkg/vm` | Iterator tree with compiled bytecode programs |
 | Execution | `pkg/engine/pipeline` | Batches of rows |
 
-`pkg/query` is the single entry point that compiles query text. `query.Compile` runs the frontend and the optimizer and validates the optimized plan; `query.Run` builds and drains a plan over an in-memory event store. Everything that runs a query goes through `query.Compile`:
+`pkg/query` is the single entry point that compiles query text. `query.Compile` runs the frontend and the optimizer and validates the optimized plan. Everything that runs a query goes through `query.Compile`:
 
-- **CLI file and pipe mode** (`lynxdb query --file`, stdin): `pkg/storage` loads the input into an ephemeral in-memory engine under the index `main` and calls `query.Run`.
 - **Server**: `pkg/planner` compiles with `query.Compile`, adds storage hints, and the server builds the plan over its segment store.
 
 Compiling depends only on the query text: relative times stay symbolic until execution, and source schemas are discovered when rows are read. `pkg/query` therefore caches compiled plans by text (up to 1024 plans, for queries up to 2 KiB) and hands each caller its own copy of the immutable plan.
@@ -119,7 +118,7 @@ On the server, `pkg/planner` wraps compilation. `Plan` returns:
 | Columns read | `RequiredCols` | Reading only those columns |
 | Row limit, direction | `Limit`, `ReverseScan` | Stopping the scan early |
 
-A plan with one scan gets all of its hints. A plan with several scans (`join`, `append`, `multisearch`, subsearches) keeps only the union of their sources and time ranges, because each data-skipping hint belongs to one scan. [Indexing](/docs/architecture/indexing) describes how the server applies each hint.
+A plan with one scan gets all of its hints. A plan with several scans (`join`, `append`, `multisearch`, subsearches) keeps only the union of their sources and time ranges, because each data-skipping hint belongs to one scan.
 
 ## Server Execution
 
@@ -190,7 +189,5 @@ Scan (buffered events, then segments row group by row group)
 ## Related
 
 - [Architecture Overview](/docs/architecture/overview) -- system-level view
-- [Indexing](/docs/architecture/indexing) -- how storage hints skip data
-- [Segment Format](/docs/architecture/segment-format) -- the `.lsg` files the scan reads
 - [PPL architecture](../ppl/architecture.md) -- the compiler in detail
 - [PPL performance](../ppl/performance.md) -- writing queries that use the plan rewrites

@@ -3,11 +3,6 @@ package memgov
 // MemoryAccount is the interface for operator-level memory tracking.
 // Operators call Grow to request memory, Shrink to release it, and Close
 // to release all remaining bytes on completion.
-//
-// Implementations:
-//   - *AccountAdapter: governor-backed (new system)
-//   - *CoordinatedAccount: coordinator-wrapped AccountAdapter (budget redistribution)
-//   - nopAccount: no-op for tests and CLI pipe mode
 type MemoryAccount interface {
 	// Grow requests n bytes. Returns error if the budget/pool is exhausted.
 	Grow(n int64) error

@@ -11,7 +11,6 @@ number you publish.
 ```bash
 make bench-micro   # pipeline, VM and ingest; writes artifacts/bench-micro.txt
 go test -run '^$' -bench . -benchmem ./pkg/vm/...
-go test -run '^$' -bench . -benchmem ./pkg/storage/segment/...
 ```
 
 Compare runs with `benchstat`, and use `-count` of 5 or more.

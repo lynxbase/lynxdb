@@ -115,8 +115,6 @@ flowchart LR
 - **Compaction**: three levels (L0 overlapping → L1 merged → L2 near the target size of 1 GB), rate-limited.
 - **Retention**: time partitions older than the retention period are deleted.
 
-See [Storage Engine](/docs/architecture/storage-engine) and [Segment Format](/docs/architecture/segment-format).
-
 ### Query Engine
 
 ```mermaid
@@ -143,8 +141,6 @@ See [Query Engine](/docs/architecture/query-engine) and the [PPL architecture](.
 - **Bloom filters**: per row group and string column. A segment whose blooms lack a search token is skipped without reading its columns.
 - **Term index**: an FST term dictionary over the tokens of `_raw`, with roaring bitmap posting lists. Answers word, phrase, prefix and glob searches with the matching row numbers.
 - **Column statistics**: min/max per segment and row group, constant columns and column presence skip data for string equality predicates.
-
-See [Indexing](/docs/architecture/indexing).
 
 ### REST API
 
@@ -194,8 +190,5 @@ PPL query text
 
 ## Next Steps
 
-- [Storage Engine](/docs/architecture/storage-engine) -- buffering, part flush, compaction
-- [Segment Format](/docs/architecture/segment-format) -- the columnar `.lsg` format
 - [Query Engine](/docs/architecture/query-engine) -- compiler, optimizer, physical planning, execution
-- [Indexing](/docs/architecture/indexing) -- bloom filters, term index, column statistics
 - [Design Decisions](/docs/architecture/design-decisions) -- why columnar, why PPL, why Go, why a single binary

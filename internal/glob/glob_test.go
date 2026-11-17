@@ -30,8 +30,11 @@ func TestMatch(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		got := Match(tt.pattern, tt.text, tt.caseIns)
-		if got != tt.want {
+		re, err := Compile(tt.pattern, tt.caseIns)
+		if err != nil {
+			t.Fatalf("Compile(%q): %v", tt.pattern, err)
+		}
+		if got := re.MatchString(tt.text); got != tt.want {
 			t.Errorf("Match(%q, %q, %v) = %v, want %v",
 				tt.pattern, tt.text, tt.caseIns, got, tt.want)
 		}

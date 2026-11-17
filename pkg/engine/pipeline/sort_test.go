@@ -2,11 +2,56 @@ package pipeline
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
+
+// testBudget is a byte limit shared by the accounts it opens; zero means no limit.
+type testBudget struct {
+	mu    sync.Mutex
+	limit int64
+	used  int64
+}
+
+func newTestBudget(limit int64) *testBudget { return &testBudget{limit: limit} }
+
+func (b *testBudget) NewAccount() memgov.MemoryAccount { return &testAccount{budget: b} }
+
+type testAccount struct {
+	budget  *testBudget
+	used    int64
+	maxUsed int64
+}
+
+func (a *testAccount) Grow(n int64) error {
+	if n <= 0 {
+		return nil
+	}
+	a.budget.mu.Lock()
+	defer a.budget.mu.Unlock()
+	if a.budget.limit > 0 && a.budget.used+n > a.budget.limit {
+		return memgov.ErrQueryBudgetExceeded
+	}
+	a.budget.used += n
+	a.used += n
+	a.maxUsed = max(a.maxUsed, a.used)
+	return nil
+}
+
+func (a *testAccount) Shrink(n int64) {
+	n = min(max(n, 0), a.used)
+	a.budget.mu.Lock()
+	a.budget.used -= n
+	a.budget.mu.Unlock()
+	a.used -= n
+}
+
+func (a *testAccount) Close()         { a.Shrink(a.used) }
+func (a *testAccount) Used() int64    { return a.used }
+func (a *testAccount) MaxUsed() int64 { return a.maxUsed }
 
 // makeRowsWithField creates n rows with field "key" set to sequential integers
 // and "data" set to a string of the given size.
@@ -36,7 +81,7 @@ func TestSortInMemory(t *testing.T) {
 	}
 
 	child := NewRowScanIterator(rows, DefaultBatchSize)
-	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("sort")
+	acct := newTestBudget(1 << 30).NewAccount()
 	iter := NewSortIteratorWithBudget(child, []SortField{{Name: "key", Desc: false}}, DefaultBatchSize, acct)
 
 	ctx := context.Background()
@@ -62,7 +107,7 @@ func TestSortInMemory(t *testing.T) {
 
 func TestSortEmptyInput(t *testing.T) {
 	child := NewRowScanIterator(nil, DefaultBatchSize)
-	acct := memgov.NewTestBudget("test", 1<<20).NewAccount("sort")
+	acct := newTestBudget(1 << 20).NewAccount()
 	iter := NewSortIteratorWithBudget(child, []SortField{{Name: "key", Desc: false}}, DefaultBatchSize, acct)
 
 	ctx := context.Background()
@@ -83,7 +128,7 @@ func TestSortBudgetExceeded(t *testing.T) {
 	rows := makeRowsWithField(100, 8)
 	child := NewRowScanIterator(rows, 64)
 
-	acct := memgov.NewTestBudget("test", 1024).NewAccount("sort")
+	acct := newTestBudget(1024).NewAccount()
 	iter := NewSortIteratorWithBudget(child, []SortField{{Name: "key", Desc: false}}, 64, acct)
 
 	ctx := context.Background()
@@ -107,7 +152,7 @@ func TestSortLargeRowClearError(t *testing.T) {
 	rows := makeRowsWithField(1, rowSize)
 	child := NewRowScanIterator(rows, 1)
 
-	acct := memgov.NewTestBudget("test", 256*1024).NewAccount("sort")
+	acct := newTestBudget(256 * 1024).NewAccount()
 	iter := NewSortIteratorWithBudget(child, []SortField{{Name: "key", Desc: false}}, 1, acct)
 
 	ctx := context.Background()
@@ -163,9 +208,9 @@ func TestSortChildBudgetErrorPropagates(t *testing.T) {
 		rows[i], rows[j] = rows[j], rows[i]
 	}
 
-	monitor := memgov.NewTestBudget("test", 200*1024)
-	sortAcct := monitor.NewAccount("sort")
-	scanAcct := monitor.NewAccount("scan")
+	monitor := newTestBudget(200 * 1024)
+	sortAcct := monitor.NewAccount()
+	scanAcct := monitor.NewAccount()
 
 	budgetChild := &budgetErrorIterator{
 		inner:       NewRowScanIterator(rows, 32),
