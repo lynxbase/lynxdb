@@ -42,14 +42,14 @@ func numInt(v event.Value) (int64, bool) {
 		if math.IsNaN(f) || math.IsInf(f, 0) {
 			return 0, false
 		}
-		return int64(f), true
+		return toInt(f), true
 	case event.FieldTypeString:
 		s := strings.TrimSpace(v.AsString())
 		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
 			return n, true
 		}
 		if f, err := strconv.ParseFloat(s, 64); err == nil && !math.IsNaN(f) && !math.IsInf(f, 0) {
-			return int64(f), true
+			return toInt(f), true
 		}
 	case event.FieldTypeBool:
 		if v.AsBool() {
@@ -485,4 +485,19 @@ func regexMatcher(pattern string, caseSensitive bool) (NativeFunc, error) {
 		}
 		return event.BoolValue(re.MatchString(s))
 	}, nil
+}
+
+// toInt converts a float to an integer, saturating beyond int64, so that
+// the result does not depend on the processor.
+func toInt(f float64) int64 {
+	switch {
+	case f != f:
+		return 0
+	case f >= 1<<63:
+		return math.MaxInt64
+	case f < -(1 << 63):
+		return math.MinInt64
+	}
+
+	return int64(f)
 }

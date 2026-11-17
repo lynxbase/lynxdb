@@ -205,7 +205,7 @@ func registerMathFuncs() {
 			if !ok || math.IsNaN(x) || math.IsInf(x, 0) {
 				return event.NullValue()
 			}
-			return event.IntValue(int64(f(x)))
+			return event.IntValue(toInt(f(x)))
 		})
 	}
 	irFuncs["ceil"] = natively(roundTo(math.Ceil))
