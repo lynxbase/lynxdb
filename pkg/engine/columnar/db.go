@@ -210,7 +210,7 @@ func (db *DB) Stats() []IndexStats {
 		first, last := int64(0), int64(0)
 		for i, h := range snap.Parts() {
 			st.Rows += h.Rows
-			st.Bytes += int64(h.Part.Size())
+			st.Bytes += int64(h.Size())
 			st.Parts++
 			if i == 0 || h.MinTime < first {
 				first = h.MinTime

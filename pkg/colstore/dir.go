@@ -513,7 +513,7 @@ func (d *Dir) ReleasePages() {
 	for h, ref := range d.live {
 		adviseDontNeed(ref.data)
 		adviseDontNeed(ref.blocks)
-		h.Part.ForgetReadAhead()
+		h.ForgetReadAhead()
 	}
 }
 

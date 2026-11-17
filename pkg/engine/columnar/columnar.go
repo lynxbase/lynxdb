@@ -441,7 +441,7 @@ func (r *run) describe(src ir.Source) ([]map[string]event.Value, error) {
 	seen := map[string]bool{}
 	var names []string
 	for _, h := range snap.Parts() {
-		for _, path := range h.Part.Paths() {
+		for _, path := range h.Paths() {
 			if !seen[path] {
 				seen[path] = true
 				names = append(names, path)

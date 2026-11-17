@@ -75,11 +75,15 @@ func parseStamp(s []byte) (int64, bool) {
 	minute, ok6 := digits2(s[14:])
 	second, ok7 := digits2(s[17:])
 	year := century*100 + years
-	if !(ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7) || month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || second > 59 {
+	digits := ok1 && ok2 && ok3 && ok4 && ok5 && ok6 && ok7
+	if !digits || month < 1 || month > 12 || day < 1 || hour > 23 || minute > 59 || second > 59 {
 		return 0, false
 	}
-	leap := year%4 == 0 && (year%100 != 0 || year%400 == 0)
-	if most := monthDays[month]; day > most && !(month == 2 && leap && day == 29) {
+	most := monthDays[month]
+	if month == 2 && year%4 == 0 && (year%100 != 0 || year%400 == 0) {
+		most = 29
+	}
+	if day > most {
 		return 0, false
 	}
 	at, nanos := 19, int64(0)
