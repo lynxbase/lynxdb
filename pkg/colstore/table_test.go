@@ -385,3 +385,38 @@ func TestConcurrentReadersAndMerges(t *testing.T) {
 		t.Fatalf("%d parts leaked after Close", live.Load())
 	}
 }
+
+func TestUnionHoldsThePartsOfItsTablesUntilReleased(t *testing.T) {
+	var released []string
+	table := func(name string, first, rows int) *Table {
+		tbl := NewTable()
+		h := NewHandle(makePart(t, first, rows, 100, name), func() { released = append(released, name) })
+		if err := tbl.Apply([]*Handle{h}, nil); err != nil {
+			t.Fatal(err)
+		}
+
+		return tbl
+	}
+	a, b := table("a", 0, 1000), table("b", 1000, 500)
+	one, other := a.Snapshot(), b.Snapshot()
+	all := Union(one, other)
+	one.Release()
+	other.Release()
+	a.Close()
+	b.Close()
+	if rows, sum, _ := sumN(t, all, ScanOptions{}); rows != 1500 || sum != 1499*1500/2 {
+		t.Fatalf("the union holds %d rows, sum %d", rows, sum)
+	}
+	if len(released) != 0 {
+		t.Fatalf("parts released while the union uses them: %v", released)
+	}
+	all.Release()
+	if len(released) != 2 {
+		t.Fatalf("released = %v", released)
+	}
+	none := Union()
+	if rows, _, _ := sumN(t, none, ScanOptions{}); rows != 0 {
+		t.Fatalf("a union of nothing holds %d rows", rows)
+	}
+	none.Release()
+}
