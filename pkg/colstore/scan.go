@@ -1,13 +1,11 @@
 package colstore
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"math"
 	"runtime"
 	"runtime/debug"
-	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -188,6 +186,7 @@ type scanUnit struct {
 // scanLists holds the lists a scan makes of its blocks, kept between scans.
 type scanLists struct {
 	units   []scanUnit
+	ordered []scanUnit
 	ids     []uint32
 	empties []*part.Misses
 }
@@ -263,11 +262,9 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 		}
 	}
 	lists.units, lists.ids, lists.empties = units, ids, empties
-	switch {
-	case opts.ByTime < 0:
-		slices.SortStableFunc(units, func(a, b scanUnit) int { return cmp.Compare(b.last, a.last) })
-	case opts.ByTime > 0:
-		slices.SortStableFunc(units, func(a, b scanUnit) int { return cmp.Compare(a.first, b.first) })
+	if opts.ByTime != 0 {
+		lists.ordered = orderUnits(units, lists.ordered, opts.ByTime < 0)
+		units = lists.ordered
 	}
 
 	workers := opts.Workers
