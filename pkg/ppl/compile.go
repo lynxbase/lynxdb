@@ -60,8 +60,7 @@ type compiler struct {
 	sources []string
 	// st is the pipeline whose commands are being compiled.
 	st *pipe
-	// outer holds the pipelines enclosing the subquery being compiled,
-	// innermost last.
+	// outer holds the pipelines around the subquery being compiled, innermost last.
 	outer []*pipe
 }
 

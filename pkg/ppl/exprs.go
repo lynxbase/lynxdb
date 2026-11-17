@@ -267,8 +267,7 @@ func (x *ectx) field(n *ast.Field) (ir.Expr, error) {
 	return resolve(&ast.Field{Base: n.Base, Parts: []string{name}}, x.schema)
 }
 
-// outerQualifier reports whether q names the source or an alias of a query
-// enclosing the subquery being compiled, and not one of the subquery's own.
+// outerQualifier reports whether q names a source or alias of an outer query only.
 func (c *compiler) outerQualifier(q string) bool {
 	if qualifies(c.st, q) {
 		return false
@@ -680,8 +679,7 @@ func (x *ectx) subquery(n *ast.Subquery) (ir.Expr, error) {
 	return &ir.Subquery{Mode: ir.SubqueryScalar, Plan: plan, T: s.Columns[0].Type}, nil
 }
 
-// outerField reports a field that a subquery does not have and that the
-// query around it, whose schema is outer, does as a correlated reference.
+// outerField reports a field the subquery lacks and outer has as correlated.
 func outerField(err error, outer ir.Schema) error {
 	pe, ok := err.(*Error)
 	if !ok || pe.field == "" {
