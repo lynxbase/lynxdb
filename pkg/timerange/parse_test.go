@@ -64,54 +64,6 @@ func TestParseAbsolute(t *testing.T) {
 	}
 }
 
-func TestFromSince(t *testing.T) {
-	now := time.Date(2026, 2, 13, 12, 0, 0, 0, time.UTC)
-	tr, err := FromSince("1h", now)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !tr.Earliest.Equal(now.Add(-time.Hour)) {
-		t.Errorf("earliest: got %v, want %v", tr.Earliest, now.Add(-time.Hour))
-	}
-	if !tr.Latest.Equal(now) {
-		t.Errorf("latest: got %v, want %v", tr.Latest, now)
-	}
-}
-
-func TestTimeRangeContains(t *testing.T) {
-	tr := &TimeRange{
-		Earliest: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		Latest:   time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
-	}
-	if !tr.Contains(time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)) {
-		t.Error("should contain midpoint")
-	}
-	if tr.Contains(time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)) {
-		t.Error("should not contain time after range")
-	}
-}
-
-func TestTimeRangeOverlaps(t *testing.T) {
-	tr := &TimeRange{
-		Earliest: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		Latest:   time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC),
-	}
-	// Overlapping segment
-	if !tr.Overlaps(
-		time.Date(2025, 12, 31, 0, 0, 0, 0, time.UTC),
-		time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
-	) {
-		t.Error("should overlap")
-	}
-	// Non-overlapping segment
-	if tr.Overlaps(
-		time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC),
-		time.Date(2026, 1, 4, 0, 0, 0, 0, time.UTC),
-	) {
-		t.Error("should not overlap")
-	}
-}
-
 func TestFromAbsoluteRange(t *testing.T) {
 	tr, err := FromAbsoluteRange("2026-02-10T08:00:00Z", "2026-02-10T09:00:00Z")
 	if err != nil {

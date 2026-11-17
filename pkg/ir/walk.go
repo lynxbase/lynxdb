@@ -211,11 +211,6 @@ func ColumnsRead(e Expr) []string {
 	return out
 }
 
-// Conjuncts splits e at top-level ANDs.
-func Conjuncts(e Expr) []Expr {
-	return AppendConjuncts(nil, e)
-}
-
 // AppendConjuncts appends the top-level AND operands of e to dst.
 func AppendConjuncts(dst []Expr, e Expr) []Expr {
 	if b, ok := e.(*Binary); ok && b.Op == OpAnd {

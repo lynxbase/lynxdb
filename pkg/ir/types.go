@@ -1,7 +1,5 @@
 package ir
 
-import "strings"
-
 // Kind is the base kind of an IR type.
 type Kind uint8
 
@@ -137,25 +135,4 @@ func Unify(a, b Type) Type {
 	default:
 		return Any
 	}
-}
-
-// ParseType parses a canonical type name as produced by Type.String.
-func ParseType(s string) (Type, bool) {
-	s = strings.ToLower(strings.TrimSpace(s))
-	if strings.HasPrefix(s, "array<") && strings.HasSuffix(s, ">") {
-		elem, ok := ParseType(s[len("array<") : len(s)-1])
-		if !ok {
-			return Any, false
-		}
-		return ArrayOf(elem), true
-	}
-	for k, name := range kindNames {
-		if name == s {
-			if Kind(k) == KindArray {
-				return ArrayOf(Any), true
-			}
-			return Type{Kind: Kind(k)}, true
-		}
-	}
-	return Any, false
 }

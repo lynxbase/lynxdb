@@ -32,20 +32,6 @@ func (p *parser) intLit() int64 {
 	return n
 }
 
-func (p *parser) boolLit() bool {
-	t := p.peek()
-	if t.Is("true") || t.Is("t") {
-		p.next()
-		return true
-	}
-	if t.Is("false") || t.Is("f") {
-		p.next()
-		return false
-	}
-	p.fail(t, "expected true or false", "true", "false")
-	return false
-}
-
 func (p *parser) stringLit() string {
 	t := p.peek()
 	if t.Kind != lexer.String {

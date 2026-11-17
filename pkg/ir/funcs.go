@@ -321,16 +321,6 @@ func NumericResult(args []Type) (Type, error) {
 	return Float, nil
 }
 
-// ElemOf gives the element type of array argument i.
-func ElemOf(i int) ResultRule {
-	return func(args []Type) (Type, error) {
-		if i < len(args) {
-			return args[i].ElemType(), nil
-		}
-		return Any, nil
-	}
-}
-
 // ArrayOfArg gives an array of argument i's type.
 func ArrayOfArg(i int) ResultRule {
 	return func(args []Type) (Type, error) {

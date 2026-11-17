@@ -53,45 +53,6 @@ func TestGenerateKey(t *testing.T) {
 	})
 }
 
-func TestParseKeyType(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		token   string
-		want    auth.KeyType
-		wantErr bool
-	}{
-		{"lynx_rk_abcdefghij1234567890abcdefghij12", auth.KeyTypeRoot, false},
-		{"lynx_ak_abcdefghij1234567890abcdefghij12", auth.KeyTypeRegular, false},
-		{"lynx_xx_abcdefghij", "", true},
-		{"bad", "", true},
-		{"", "", true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.token, func(t *testing.T) {
-			t.Parallel()
-
-			got, err := auth.ParseKeyType(tt.token)
-			if tt.wantErr {
-				if err == nil {
-					t.Error("expected error")
-				}
-
-				return
-			}
-
-			if err != nil {
-				t.Fatal(err)
-			}
-
-			if got != tt.want {
-				t.Errorf("got %q, want %q", got, tt.want)
-			}
-		})
-	}
-}
-
 func TestKeyStoreCreateAndVerify(t *testing.T) {
 	t.Parallel()
 

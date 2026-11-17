@@ -40,34 +40,6 @@ func KeyPrefix(token string) string {
 	return token
 }
 
-// ParseKeyType extracts the key type from a token string.
-// Returns an error if the token format is invalid.
-func ParseKeyType(token string) (KeyType, error) {
-	if len(token) < len(keyPrefix)+3 { // "lynx_" + "rk" + "_" minimum
-		return "", fmt.Errorf("auth.ParseKeyType: token too short")
-	}
-
-	if token[:len(keyPrefix)] != keyPrefix {
-		return "", fmt.Errorf("auth.ParseKeyType: missing lynx_ prefix")
-	}
-
-	rest := token[len(keyPrefix):]
-
-	for i, ch := range rest {
-		if ch == '_' {
-			kt := KeyType(rest[:i])
-			switch kt {
-			case KeyTypeRoot, KeyTypeRegular:
-				return kt, nil
-			default:
-				return "", fmt.Errorf("auth.ParseKeyType: unknown key type %q", kt)
-			}
-		}
-	}
-
-	return "", fmt.Errorf("auth.ParseKeyType: invalid token format")
-}
-
 // randomAlphanumeric generates n cryptographically random alphanumeric characters.
 func randomAlphanumeric(n int) (string, error) {
 	alphabetLen := big.NewInt(int64(len(alphabet)))

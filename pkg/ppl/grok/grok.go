@@ -12,7 +12,6 @@ package grok
 import (
 	"fmt"
 	"regexp"
-	"sort"
 )
 
 // Patterns is the built-in pattern library, a subset of the standard grok
@@ -155,14 +154,4 @@ func expand(pattern string, depth int, top bool, c *Compiled, seen map[string]bo
 		return "", errOut
 	}
 	return out, nil
-}
-
-// Names returns the sorted names of the built-in patterns.
-func Names() []string {
-	out := make([]string, 0, len(Patterns))
-	for n := range Patterns {
-		out = append(out, n)
-	}
-	sort.Strings(out)
-	return out
 }

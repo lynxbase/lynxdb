@@ -115,19 +115,6 @@ func Parse(src string) (q *ast.Query, err error) {
 	return q, nil
 }
 
-// ParsePipeline parses one statement and returns its pipeline; a statement
-// with the explain prefix is a syntax error.
-func ParsePipeline(src string) (*ast.Pipeline, error) {
-	q, err := Parse(src)
-	if err != nil {
-		return nil, err
-	}
-	if q.Explain {
-		return nil, &SyntaxError{Pos: q.Span.Start, End: q.Span.End, Msg: "explain is not allowed here"}
-	}
-	return q.Pipeline, nil
-}
-
 func (p *parser) peek() *lexer.Token { return &p.toks[p.i] }
 
 func (p *parser) peekAt(n int) *lexer.Token {

@@ -13,16 +13,6 @@ type TimeRange struct {
 	Latest   time.Time
 }
 
-// Contains checks if a timestamp falls within the range.
-func (tr *TimeRange) Contains(t time.Time) bool {
-	return !t.Before(tr.Earliest) && !t.After(tr.Latest)
-}
-
-// Overlaps checks if a [minT, maxT] interval overlaps with this range.
-func (tr *TimeRange) Overlaps(minT, maxT time.Time) bool {
-	return !maxT.Before(tr.Earliest) && !minT.After(tr.Latest)
-}
-
 // ParseRelative parses relative time strings: "15m", "1h", "4h", "1d", "7d", "30d", "1w".
 // Returns the duration to subtract from now.
 func ParseRelative(s string) (time.Duration, error) {
@@ -204,19 +194,6 @@ func snapTo(t time.Time, unit byte) time.Time {
 	default:
 		return t
 	}
-}
-
-// FromSince creates a TimeRange from a --since flag value relative to now.
-func FromSince(since string, now time.Time) (*TimeRange, error) {
-	dur, err := ParseRelative(since)
-	if err != nil {
-		return nil, err
-	}
-
-	return &TimeRange{
-		Earliest: now.Add(-dur),
-		Latest:   now,
-	}, nil
 }
 
 // FromAbsoluteRange creates a TimeRange from --from/--to flag values.

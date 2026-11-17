@@ -88,34 +88,6 @@ func (e *Event) FieldNames() []string {
 	return names
 }
 
-// EstimateEventSize returns a conservative byte estimate for the in-memory
-// representation of the event. Used by the scan operator for memory budget
-// tracking. The estimate includes struct overhead, string data, and field
-// map entries. It is intentionally an over-estimate to avoid under-counting.
-func EstimateEventSize(e *Event) int64 {
-	// Base: struct header + map header + pointer overhead.
-	const baseBytes int64 = 128
-
-	size := baseBytes
-	size += int64(len(e.Raw))
-	size += int64(len(e.Source))
-	size += int64(len(e.SourceType))
-	size += int64(len(e.Host))
-	size += int64(len(e.Index))
-
-	for k, v := range e.Fields {
-		// Map entry: key string header + key data + Value struct.
-		size += int64(len(k)) + 16
-		if s, ok := v.TryAsString(); ok {
-			size += int64(len(s))
-		} else {
-			size += 8 // numeric types
-		}
-	}
-
-	return size
-}
-
 // String returns a human-readable representation of the event.
 func (e *Event) String() string {
 	return fmt.Sprintf("Event{time=%s, host=%s, index=%s, raw=%q}",

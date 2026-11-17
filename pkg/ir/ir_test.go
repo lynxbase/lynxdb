@@ -45,18 +45,6 @@ func TestUnify(t *testing.T) {
 	}
 }
 
-func TestParseTypeRoundTrip(t *testing.T) {
-	for _, ty := range []Type{Any, Bool, Int, Float, String, Timestamp, Duration, Object, ArrayOf(String), ArrayOf(ArrayOf(Int))} {
-		got, ok := ParseType(ty.String())
-		if !ok || !got.Equal(ty) {
-			t.Errorf("ParseType(%q) = %s, %v", ty.String(), got, ok)
-		}
-	}
-	if _, ok := ParseType("decimal"); ok {
-		t.Error("ParseType accepted an unknown type")
-	}
-}
-
 func TestAccepts(t *testing.T) {
 	if !Float.Accepts(Int) {
 		t.Error("float must accept int")

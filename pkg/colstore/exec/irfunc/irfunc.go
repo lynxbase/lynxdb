@@ -28,16 +28,6 @@ func Lookup(name string) (Builder, bool) {
 	return b, ok
 }
 
-// Names returns the functions that have a builder.
-func Names() []string {
-	out := make([]string, 0, len(builders))
-	for name := range builders {
-		out = append(out, name)
-	}
-
-	return out
-}
-
 var builders = map[string]Builder{}
 
 // ctx is the memory of one function: text forms of its arguments and the
