@@ -1259,7 +1259,7 @@ func refFinish(a exec.Agg, st *refAgg, float bool) exec.Value {
 				distinct++
 			}
 		}
-		exact := sorted[uint64(a.P/100*float64(n-1))]
+		exact := sorted[min(uint64(a.P/100*float64(n)), uint64(n-1))]
 		if distinct > exec.SketchExactValues {
 			exact = exec.SketchValue(exact)
 		}

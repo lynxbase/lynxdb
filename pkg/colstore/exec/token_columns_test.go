@@ -1,6 +1,7 @@
 package exec_test
 
 import (
+	"context"
 	"fmt"
 	"math/rand"
 	"testing"
@@ -90,10 +91,16 @@ func TestMatchesReadTheColumnsThatMayHoldTheirTokens(t *testing.T) {
 				}
 				check(t, snap, rows, rowsPlan, true, 4)
 				count := &exec.Aggregate{Input: &exec.Scan{Filter: c.filter}, Aggs: []exec.Agg{{Name: "count", Func: exec.Count}}}
-				s := check(t, snap, rows, count, true, 1).Stats
+				check(t, snap, rows, count, true, 1)
 				if l.sortKey != nil {
 					return
 				}
+				// What the tokens rule out, not what the runs above found.
+				res, err := exec.Run(context.Background(), snap, count, exec.Options{Workers: 1, Forgetful: true})
+				if err != nil {
+					t.Fatal(err)
+				}
+				s := res.Stats
 				if s.Blocks != c.blocks || s.Blocks+s.SkippedByToken != 6 {
 					t.Errorf("%d blocks opened and %d skipped by token, want %d opened", s.Blocks, s.SkippedByToken, c.blocks)
 				}

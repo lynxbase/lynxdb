@@ -345,17 +345,43 @@ func (c *compiler) where(st *pipe, n *ast.WhereCommand) error {
 func (c *compiler) fields(st *pipe, n *ast.FieldsCommand) error {
 	s := st.schema()
 	names := make([]string, len(n.Fields))
+	var paths []ir.Assign
+	var renames []ir.Rename
 	for i, f := range n.Fields {
 		name := canonicalField(f)
 		if !ir.IsNamePattern(name) {
-			if _, ok := s.Resolve(name); !ok {
+			t, ok := s.Resolve(name)
+			if !ok {
 				return unknownField(n, name, s)
+			}
+			if !n.Exclude && memberOfColumn(s, name) {
+				// The row operators' eval would read its own empty target first.
+				tmp := "__path_" + strconv.Itoa(len(paths))
+				paths = append(paths, ir.Assign{Name: tmp, Expr: &ir.FieldRef{Name: name, T: t}})
+				renames = append(renames, ir.Rename{From: tmp, To: name})
 			}
 		}
 		names[i] = name
 	}
-	st.node = &ir.Project{Input: st.node, Names: names, Drop: n.Exclude}
+	input := st.node
+	if len(paths) > 0 {
+		input = &ir.RenameColumns{Input: &ir.Compute{Input: input, Assigns: paths}, Renames: renames}
+	}
+	st.node = &ir.Project{Input: input, Names: names, Drop: n.Exclude}
 	return nil
+}
+
+// memberOfColumn reports whether name reads a member of an object column of s.
+func memberOfColumn(s ir.Schema, name string) bool {
+	dot := strings.IndexByte(name, '.')
+	if dot <= 0 {
+		return false
+	}
+	if _, column := s.Lookup(name); column {
+		return false
+	}
+	root, ok := s.Lookup(name[:dot])
+	return ok && (root.Type.Kind == ir.KindObject || root.Type.Kind == ir.KindAny)
 }
 
 func (c *compiler) rename(st *pipe, n *ast.RenameCommand) error {
@@ -584,7 +610,8 @@ func (c *compiler) windowStats(st *pipe, n *ast.StatsCommand) error {
 		w.Frame.Kind = ir.FrameRunning
 	}
 	global := true
-	for _, a := range n.Args {
+	var nullable *ast.Arg
+	for i, a := range n.Args {
 		switch a.Name {
 		case "bucket_nullable":
 			v, err := boolArgValue(a)
@@ -592,6 +619,7 @@ func (c *compiler) windowStats(st *pipe, n *ast.StatsCommand) error {
 				return err
 			}
 			w.DropNullPartitions = !v
+			nullable = &n.Args[i]
 		case "current":
 			v, err := boolArgValue(a)
 			if err != nil {
@@ -611,16 +639,7 @@ func (c *compiler) windowStats(st *pipe, n *ast.StatsCommand) error {
 			}
 			global = v
 		case "reset_before", "reset_after":
-			x := c.ectx(s)
-			cond, err := x.expr(a.Value)
-			if err != nil {
-				return err
-			}
-			if a.Name == "reset_before" {
-				w.Frame.ResetBefore = cond
-			} else {
-				w.Frame.ResetAfter = cond
-			}
+			return unsupportedFeature(a.Value, "streamstats %s is not supported", a.Name)
 		case "time_window":
 			return unsupportedFeature(a.Value, "streamstats time_window is not supported")
 		}
@@ -628,6 +647,9 @@ func (c *compiler) windowStats(st *pipe, n *ast.StatsCommand) error {
 	keys, err := c.groupKeys(n.By, s)
 	if err != nil {
 		return err
+	}
+	if w.DropNullPartitions && len(keys) > 0 {
+		return unsupportedFeature(nullable.Value, "%s bucket_nullable=false is not supported with a by clause; rows with a NULL group value are always grouped together", n.Command)
 	}
 	if n.Command == "streamstats" && w.Frame.Rows > 0 && global && len(keys) > 0 {
 		return unsupportedFeature(n, "streamstats window with global=true and a by clause is not supported; set global=false for per-group windows")

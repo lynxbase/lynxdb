@@ -68,7 +68,7 @@ ee811663b77f6805	source=otellogs | eval is_critical = IF(severityNumber >= 17, '
 52838e2da413f53b	source=otellogs | where severityText IN ('ERROR', 'WARN') | eval formatted = '[' + severityText + '] ' + body | sort severityNumber, `resource.attributes.service.name` | fields formatted | head 3
 5c5c9dc3f0b1e416	source=otellogs | eventstats count() as service_total by `resource.attributes.service.name` | where severityText = 'ERROR' | sort `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, service_total, body | head 3
 50b7419612813743	source=otellogs | where severityText = 'ERROR' | eventstats avg(severityNumber) as avg_sev, count() as error_count by `resource.attributes.service.name` | sort `resource.attributes.service.name` | fields `resource.attributes.service.name`, severityNumber, avg_sev, error_count
-be0a03770128bc8b	source=otellogs | eventstats bucket_nullable=false count() as scope_count by instrumentationScope.name | where severityText = 'ERROR' | sort `resource.attributes.service.name` | fields `resource.attributes.service.name`, `instrumentationScope.name`, scope_count
+97ad634ead71a133	source=otellogs | eventstats bucket_nullable=false count() as scope_count by instrumentationScope.name | where severityText = 'ERROR' | sort `resource.attributes.service.name` | fields `resource.attributes.service.name`, `instrumentationScope.name`, scope_count
 3b041a11fd2e496e	source=otellogs | where severityText = 'WARN' | stats list(`resource.attributes.service.name`) as services by severityText | expand services as service | fields severityText, service
 89489d029fe2da70	explain source=state_country | where country = 'USA' OR country = 'England' | stats count() by country
 89489d029fe2da70	explain source=state_country | where country = 'USA' OR country = 'England' | stats count() by country
@@ -146,7 +146,7 @@ b98d1038e3465d57	source=mvcombine_data | where ip='10.0.0.1' and bytes=100 and t
 6242b36c4811fba2	source=mvcombine_data | mvcombine does_not_exist
 45ab89b46915cdbe	source=people | eval tags = array('error', 'warning', 'info') | fields tags | head 1 | mvexpand tags | fields tags
 998fd04f5550fa57	source=people | eval ids = array(1, 2, 3, 4, 5) | fields ids | head 1 | mvexpand ids limit=3 | fields ids
-ea4fae36f463229e	source=people | head 1 | fields projects | mvexpand projects | fields projects.name
+f61645ea9d3f4a9e	source=people | head 1 | fields projects | mvexpand projects | fields projects.name
 e033507e743ba744	source=people | eval tags = array('error') | fields tags | head 1 | mvexpand tags | fields tags
 c80944f74cc65de4	source=people | eval some_field = 'x' | fields some_field | head 1 | mvexpand tags | fields tags
 8d582601efda2794	source=otellogs | where severityText = 'ERROR' | stats list(`resource.attributes.service.name`) as affected_services by severityText | nomv affected_services | fields severityText, affected_services
@@ -157,10 +157,10 @@ cd2a82fdb0b78b3e	source=otellogs | where severityText = 'ERROR' | patterns body 
 f25736dd8bdc1862	source=apache | patterns message method=simple_pattern new_field='no_numbers' pattern='[0-9]' | fields message, no_numbers
 d007ac31430958df	source=apache | patterns message method=simple_pattern mode=aggregation | fields patterns_field, pattern_count, sample_logs
 015b06daf08ad54d	source=apache | patterns message method=simple_pattern mode=aggregation show_numbered_token=true | fields patterns_field, pattern_count, tokens | head 1
-ccc618956ddbd6a3	source=apache | patterns message method=brain | fields message, patterns_field
-520a047998a1dca4	source=apache | patterns message method=brain variable_count_threshold=2 | fields message, patterns_field
-a39bec0de1f8e3fd	source=apache | patterns message method=brain mode=aggregation variable_count_threshold=2 | fields patterns_field, pattern_count, sample_logs
-69281d247fa96f00	source=apache | patterns message method=brain mode=aggregation show_numbered_token=true variable_count_threshold=2 | fields patterns_field, pattern_count, tokens
+72ac7286fad221ab	source=apache | patterns message method=brain | fields message, patterns_field
+27b964131bbebac6	source=apache | patterns message method=brain variable_count_threshold=2 | fields message, patterns_field
+4459284e0807ffbf	source=apache | patterns message method=brain mode=aggregation variable_count_threshold=2 | fields patterns_field, pattern_count, sample_logs
+e6d7102277c092ec	source=apache | patterns message method=brain mode=aggregation show_numbered_token=true variable_count_threshold=2 | fields patterns_field, pattern_count, tokens
 cb7350b1c92b30ec	source=otellogs | rare showcount=false severityText
 7c20be0acf89417b	source=otellogs | rare showcount=false severityText by `resource.attributes.service.name`
 4e68f99f3527dd06	source=otellogs | rare severityText
@@ -237,7 +237,7 @@ b3291266b1a86616	source=structured | spath input=doc_n n | fields doc_n n
 64b2afe92553e860	source=structured | spath input=doc_list output=first_element list{0} | spath input=doc_list output=all_elements list{} | spath input=doc_list output=nested nest_out.nest_in | fields doc_list first_element all_elements nested
 f9fd995c1ff2a5ef	source=structured | spath input=doc_n n | eval n=cast(n as int) | stats sum(n) | fields `sum(n)`
 1023d7b2911a97fa	source=structured | spath output=a input=doc_escape "['a fancy field name']" | spath output=b input=doc_escape "['a.b.c']" | fields a b
-9efdfa8e7709e223	source=structured | spath input=doc_auto output=doc | fields doc_auto, doc.user.name, doc.user.age, doc.`tags{}`, doc.active
+2098293b33acc6fb	source=structured | spath input=doc_auto output=doc | fields doc_auto, doc.user.name, doc.user.age, doc.`tags{}`, doc.active
 712135404f146494	source=otellogs | stats count() as total_logs
 381db4304b49888e	source=otellogs | stats avg(severityNumber) as avg_severity
 9557a68b12c67e2e	source=otellogs | stats count() as log_count by severityText | sort - log_count
@@ -265,14 +265,14 @@ c5a8c7a3c43531c0	source = table | streamstats current = false window = 2 max(a)
 d57a86f4e77deba5	source = table | streamstats dc(field) as distinct_count
 f0ee416a4e033ac6	source = table | streamstats distinct_count(category) by region
 6a91df288eb5311b	source = table | streamstats current=false window=2 global=false avg(a) by b
-379519f079f93e90	source = table | streamstats window=2 reset_before=a>31 avg(b)
-4752e63e2361d40b	source = table | streamstats current=false reset_after=a>31 avg(b) by c
+83983f15b6f7bcb8	source = table | streamstats window=2 reset_before=a>31 avg(b)
+d59108d678b10493	source = table | streamstats current=false reset_after=a>31 avg(b) by c
 38e8a3a6277bc2de	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort `resource.attributes.service.name` | streamstats count() as running_count by `resource.attributes.service.name` | fields `resource.attributes.service.name`, severityText, running_count
 1a9a5d2b76c7e531	source=otellogs | sort @timestamp | streamstats current=false window=2 max(severityNumber) as prev_max_severity | fields @timestamp, severityText, severityNumber, prev_max_severity | head 6
 bed1f91dac259e02	source=state_country | streamstats window=2 global=true avg(age) as running_avg by country
 80e09ae0cbafa390	source=state_country | streamstats window=2 global=false avg(age) as running_avg by country
-72593650e41f8f3e	source=state_country | streamstats current=false reset_before=age>34 reset_after=age<25 avg(age) as avg_age by country
-4d6a40eeeab22c70	source=accounts | streamstats bucket_nullable=false count() as cnt by employer | fields account_number, firstname, employer, cnt
+8715025aa855681a	source=state_country | streamstats current=false reset_before=age>34 reset_after=age<25 avg(age) as avg_age by country
+48e42602b879e23a	source=accounts | streamstats bucket_nullable=false count() as cnt by employer | fields account_number, firstname, employer, cnt
 1119ffaaebb7e964	source=accounts | streamstats bucket_nullable=true count() as cnt by employer | fields account_number, firstname, employer, cnt
 c27c0ea59cba792e	source = outer | where a in [ source = inner | fields b ]
 2aa96a6d84cedbeb	source = outer | where (a) in [ source = inner | fields b ]
@@ -300,12 +300,12 @@ dddc92fc25ab2b34	source = outer | eval m = [ source = inner | stats max(c) ] | f
 dbe8c06721a4c9ea	source = outer | eval m = [ source = inner | stats max(c) ] + b | fields m, a
 ca122ca561c1f70f	source = outer | where a > [ source = inner | stats min(c) ] | fields a
 bea4f7a96a252a7d	source = outer a > [ source = inner | stats min(c) ] | fields a
-a74832d02a0d87a7	source = outer | eval m = [ source = inner | where outer.b = inner.d | stats max(c) ] | fields m, a
+0d90d5921f76a7c8	source = outer | eval m = [ source = inner | where outer.b = inner.d | stats max(c) ] | fields m, a
 24eff9692eece989	source = outer | eval m = [ source = inner | where b = d | stats max(c) ] | fields m, a
-426a4b72124ffdbd	source = outer | eval m = [ source = inner | where outer.b > inner.d | stats max(c) ] | fields m, a
-bc392b1f5cbedd41	source = outer | where a = [ source = inner | where outer.b = inner.d | stats max(c) ]
+0d90d5921f76a7c8	source = outer | eval m = [ source = inner | where outer.b > inner.d | stats max(c) ] | fields m, a
+e179108d46720947	source = outer | where a = [ source = inner | where outer.b = inner.d | stats max(c) ]
 c671071c7da830c1	source = outer | where a = [ source = inner | where b = d | stats max(c) ]
-78c2f33fdd229e9a	source = outer | where [ source = inner | where outer.b = inner.d OR inner.d = 1 | stats count() ] > 0 | fields a
+fcf83c42593c8c81	source = outer | where [ source = inner | where outer.b = inner.d OR inner.d = 1 | stats count() ] > 0 | fields a
 acb6b9bdfcd9fe75	source = outer a = [ source = inner | where b = d | stats max(c) ]
 3991c9bea5e9d916	source = outer [ source = inner | where outer.b = inner.d OR inner.d = 1 | stats count() ] > 0 | fields a
 6ae130cb00a9f051	source = outer | where a = [ source = inner | stats max(c) | sort c ] OR b = [ source = inner | where c = 1 | stats min(d) | sort d ]
@@ -382,9 +382,9 @@ e0bdfa77ca4b919a	source=accounts | stats stddev_samp(age)
 9dedc172948817ea	source=accounts | stats dc(state) as distinct_states, distinct_count(state) as dc_states_alt by gender
 7478ed6ec031ca9d	source=accounts | stats distinct_count_approx(gender)
 0525ae7aad1f7069	source=events | stats earliest(message) by host | sort host
-cb7cf0405759b7ce	source=events | stats earliest(status, event_time) by category | sort category
+a1746a5f1e6d3500	source=events | stats earliest(status, event_time) by category | sort category
 8c84ae4b6da89863	source=events | stats latest(message) by host | sort host
-696cb4384076d290	source=events | stats latest(status, event_time) by category | sort category
+9116fd902d70649a	source=events | stats latest(status, event_time) by category | sort category
 eaf47f61b6b37c15	source=accounts | stats take(firstname)
 0dd9002f13b7a825	source=accounts | stats percentile(age, 90) by gender
 9f2b1474de6e36e5	source=accounts | stats perc99.5(age);

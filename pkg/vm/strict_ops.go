@@ -831,7 +831,7 @@ func (vm *VM) execArrayFilter(prog *Program, subIdx int, arrVal event.Value, fie
 }
 
 // execArrayMap implements map(arr, lambda):
-// - Applies lambda to each element, collecting results
+// - Applies lambda to each element, and its 0-based index if it takes two
 // - null results kept as null elements
 // - Empty array: []
 func (vm *VM) execArrayMap(prog *Program, subIdx int, arrVal event.Value, fields map[string]event.Value) (event.Value, error) {
@@ -845,9 +845,16 @@ func (vm *VM) execArrayMap(prog *Program, subIdx int, arrVal event.Value, fields
 	if len(arr) == 0 {
 		return event.ArrayValue(nil), nil
 	}
+	indexed := prog.SubPrograms[subIdx].Params == 2
 	result := make([]event.Value, len(arr))
+	var params [2]event.Value
 	for i, elem := range arr {
-		mapped, err := vm.execLambdaForElement(prog, subIdx, elem, fields)
+		params[0] = elem
+		n := 1
+		if indexed {
+			params[1], n = event.IntValue(int64(i)), 2
+		}
+		mapped, err := vm.execLambdaWithParams(prog, subIdx, params[:n], fields)
 		if err != nil {
 			return event.NullValue(), err
 		}

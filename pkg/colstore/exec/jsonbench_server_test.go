@@ -264,7 +264,7 @@ func (s *benchServer) query(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	res, err := exec.Run(r.Context(), snap, plan, exec.Options{Workers: workers})
+	res, err := exec.Run(r.Context(), snap, plan, exec.Options{Workers: workers, Forgetful: args.Get("fresh") != ""})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 
@@ -285,6 +285,7 @@ func (s *benchServer) query(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"rows": res.Rows, "answer": answer, "in_key_order": res.Stats.Ordered, "blocks": res.Stats.Blocks,
 		"counted_from_index": res.Stats.CountedByIndex, "hashed_for": res.Stats.HashedFor,
+		"left_out_as_empty": res.Stats.SkippedAsEmpty,
 	})
 }
 

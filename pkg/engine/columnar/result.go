@@ -108,8 +108,58 @@ func (r *Result) AppendJSON(dst []byte, i int) []byte {
 	return append(dst, '}')
 }
 
+// appendTime appends a time as quoted text in the layout of RFC 3339 with
+// the fraction of its second, in UTC.
 func appendTime(dst []byte, nanos int64) []byte {
-	return append(time.Unix(0, nanos).UTC().AppendFormat(append(dst, '"'), time.RFC3339Nano), '"')
+	secs := nanos / 1e9
+	frac := nanos - secs*1e9
+	if frac < 0 {
+		secs, frac = secs-1, frac+1e9
+	}
+	days := secs / 86400
+	rem := secs - days*86400
+	if rem < 0 {
+		days, rem = days-1, rem+86400
+	}
+	// The civil date of a day number, counting years from March.
+	z := days + 719468
+	era := z / 146097
+	if z < 0 {
+		era = (z - 146096) / 146097
+	}
+	doe := z - era*146097
+	yoe := (doe - doe/1460 + doe/36524 - doe/146096) / 365
+	doy := doe - (365*yoe + yoe/4 - yoe/100)
+	mp := (5*doy + 2) / 153
+	day := doy - (153*mp+2)/5 + 1
+	month, year := mp+3, yoe+era*400
+	if mp >= 10 {
+		month, year = mp-9, year+1
+	}
+	if year < 0 || year > 9999 {
+		return append(time.Unix(0, nanos).UTC().AppendFormat(append(dst, '"'), time.RFC3339Nano), '"')
+	}
+	two := func(dst []byte, v int64) []byte { return append(dst, byte('0'+v/10), byte('0'+v%10)) }
+	dst = two(two(append(dst, '"'), year/100), year%100)
+	dst = two(append(dst, '-'), month)
+	dst = two(append(dst, '-'), day)
+	dst = two(append(dst, 'T'), rem/3600)
+	dst = two(append(dst, ':'), rem/60%60)
+	dst = two(append(dst, ':'), rem%60)
+	if frac != 0 {
+		var digits [9]byte
+		for i := 8; i >= 0; i-- {
+			digits[i] = byte('0' + frac%10)
+			frac /= 10
+		}
+		n := 9
+		for digits[n-1] == '0' {
+			n--
+		}
+		dst = append(append(dst, '.'), digits[:n]...)
+	}
+
+	return append(dst, 'Z', '"')
 }
 
 // appendValue appends a value of a row as JSON; a duration is its

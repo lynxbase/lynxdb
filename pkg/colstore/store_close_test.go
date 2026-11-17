@@ -246,9 +246,9 @@ func TestDropBeforeThatMeetsACloseDropsOrReturnsErrClosed(t *testing.T) {
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// The drop is held where it waits for merges to end, and the store is
-	// closed in the meantime.
-	s.merging.Lock()
+	// The drop is held where it waits for its turn, and the store is closed
+	// in the meantime.
+	s.dropping.Lock()
 	type result struct {
 		rows uint64
 		err  error
@@ -262,7 +262,7 @@ func TestDropBeforeThatMeetsACloseDropsOrReturnsErrClosed(t *testing.T) {
 	closed := make(chan error, 1)
 	go func() { closed <- s.Close() }()
 	time.Sleep(20 * time.Millisecond)
-	s.merging.Unlock()
+	s.dropping.Unlock()
 	drop := <-dropped
 	if err := <-closed; err != nil {
 		t.Fatal(err)

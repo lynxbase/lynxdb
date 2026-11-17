@@ -30,7 +30,9 @@ import (
 // flushed runs (fastest by default) and of merged parts (fast by default);
 // compact is the third choice. LYNXDB_BENCH_PARTITION, a duration such as
 // 1h, partitions the table by time, LYNXDB_BENCH_MERGE_BLOCKS bounds the
-// decoded blocks that merges hold at once, LYNXDB_BENCH_NO_PACKING leaves
+// decoded blocks that merges hold at once, LYNXDB_BENCH_MERGE_BACKLOG the
+// runs due to be merged below which merges give way to the rows that wait
+// to be written, LYNXDB_BENCH_NO_PACKING leaves
 // identifier-like strings to the general codec, and LYNXDB_BENCH_VALUE_SLACK
 // is the percentage by which long values may grow for a faster codec ("off"
 // for none; the store's default is 50).
@@ -183,6 +185,9 @@ func ingestOptions(t testing.TB) StoreOptions {
 		BlockRows:  envInt(t, "LYNXDB_BENCH_BLOCK_ROWS", 16384),
 		FlushBytes: envInt(t, "LYNXDB_BENCH_RUN_MB", 128) << 20,
 		MergeFanIn: envInt(t, "LYNXDB_BENCH_FANIN", 8),
+	}
+	if os.Getenv("LYNXDB_BENCH_MERGE_BACKLOG") != "" {
+		opts.MergeBacklog = envInt(t, "LYNXDB_BENCH_MERGE_BACKLOG", 0)
 	}
 	if os.Getenv("LYNXDB_BENCH_MERGE_BLOCKS") != "" {
 		opts.MergeBlocks = envInt(t, "LYNXDB_BENCH_MERGE_BLOCKS", 0)

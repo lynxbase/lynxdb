@@ -61,8 +61,8 @@ const (
 	ApproxDistinct
 	// Percentile is the value below which P percent of the argument's
 	// numbers lie, within one percent of that value: the number that has
-	// floor(P/100*(n-1)) of the n numbers before it, read from a sketch of
-	// at most 32 KB per group. Every Percentile of one argument shares the
+	// floor(P/100*n) of the n numbers before it, the greatest for a P of
+	// 100, read from a sketch of at most 32 KB per group. Every Percentile of one argument shares the
 	// sketch.
 	Percentile
 )

@@ -48,13 +48,17 @@ type StoreOptions struct {
 	// decoded block per run it reads, and the merges running at once hold
 	// at most this many blocks together; zero means 96.
 	MergeBlocks int
-	// MergeBacklog makes merges give way to the flushes of Append's
-	// buffers, which the callers of Append and Sync wait for, while fewer
-	// runs than this are in the table; zero lets both share the disk.
+	// MergeBacklog makes merges give way to the rows that wait in Append's
+	// buffers and to their flushes, which the callers of Append and Sync
+	// wait for, while fewer runs than this are due to be merged; zero lets
+	// both share the disk.
 	MergeBacklog int
 	// Partition is the span of time whose rows are kept and merged apart
 	// from all others, so that a time range reads only the spans it meets
-	// and old spans can be dropped whole; zero keeps one partition.
+	// and old spans can be dropped whole; zero keeps one partition. A span
+	// that ended an hour ago, or its own length ago when that is less, is
+	// merged into one run, and again once rows that came later make up an
+	// eighth of it.
 	Partition time.Duration
 	// Part sets how parts are encoded; its ordering fields are overridden,
 	// and a ValueSlack of zero means 50, a negative one none.
@@ -96,9 +100,11 @@ type Store struct {
 	cores  chan struct{}
 	blocks blockBudget
 
-	// merging is held while merges run and while partitions are dropped,
-	// so that neither removes a part the other reads.
-	merging sync.Mutex
+	// dropping is held while partitions are dropped and while the
+	// directory closes, one at a time. merges counts the merges under way
+	// for the merger to wait for when it stops.
+	dropping sync.Mutex
+	merges   sync.WaitGroup
 
 	// shards are the buffers Append fills, each behind its own lock.
 	shards   []appendShard
@@ -107,9 +113,9 @@ type Store struct {
 	// appending is held shared by every call of Append while it runs.
 	appending sync.RWMutex
 	// flushWrites counts the flushes of the buffers that are writing, and
-	// runs the runs in the table.
+	// due the runs in the table that merges are to take.
 	flushWrites atomic.Int32
-	runs        atomic.Int32
+	due         atomic.Int32
 	// flushMu lets one flush of the buffers run at a time. buffered counts
 	// the input bytes in the buffers and in unwritten, the batches that a
 	// failed flush took and the next one writes first.
@@ -141,6 +147,17 @@ type Store struct {
 	err         error
 	// over is set when the merger has stopped for good.
 	over bool
+	// busy holds the runs that the merges under way read, with the
+	// partition of each, and running is the number of those merges;
+	// settling is set while one of them merges a closed partition into one
+	// run.
+	busy     map[uint64]int64
+	running  int
+	settling bool
+	// drops is set while the partitions that end at or before dropTo are
+	// being dropped; merges leave them alone.
+	drops  bool
+	dropTo int64
 }
 
 // OpenStore opens the table stored in path and starts its merger.
@@ -178,6 +195,7 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	}
 	s.blocks.init(opts.MergeBlocks)
 	s.idle = sync.NewCond(&s.mu)
+	s.busy = map[uint64]int64{}
 	s.shards = make([]appendShard, runtime.GOMAXPROCS(0))
 	s.countRuns()
 	s.synced = sync.NewCond(&s.syncMu)
@@ -218,9 +236,9 @@ func (s *Store) Close() error {
 		s.mu.Lock()
 		err := s.err
 		s.mu.Unlock()
-		s.merging.Lock()
+		s.dropping.Lock()
 		s.closeErr = errors.Join(syncErr, err, s.dir.Close())
-		s.merging.Unlock()
+		s.dropping.Unlock()
 	})
 
 	return s.closeErr
@@ -444,11 +462,17 @@ func (s *Store) flushLoop() {
 	}
 	tick := time.NewTicker(max(interval/4, time.Millisecond))
 	defer tick.Stop()
+	looked := time.Now()
 	for {
 		select {
 		case <-s.done:
 			return
 		case <-tick.C:
+			// Partitions close as time passes, with or without new rows.
+			if s.opts.Partition > 0 && time.Since(looked) >= closedLook {
+				looked = time.Now()
+				s.kick()
+			}
 			if err := s.flush(interval); err != nil {
 				s.mu.Lock()
 				if s.err == nil {
@@ -491,24 +515,36 @@ func (s *Store) Settle() error {
 // unix nanoseconds, and returns the number of rows removed. A store that is
 // not partitioned keeps everything.
 func (s *Store) DropBefore(t int64) (uint64, error) {
-	s.merging.Lock()
-	defer s.merging.Unlock()
-	// Close empties the table under the same lock, so a store found open
-	// here stays open until the partitions are dropped.
+	s.dropping.Lock()
+	defer s.dropping.Unlock()
+	// Close closes the directory under the same lock, so a store found
+	// open here stays open until the partitions are dropped.
 	if s.closed.Load() {
 		return 0, ErrClosed
 	}
-	width := int64(s.opts.Partition)
-	if width <= 0 {
+	if s.opts.Partition <= 0 {
 		return 0, nil
 	}
+	// Merges start on none of the partitions from here on, and those that
+	// read one of them end first: what they write would bring its rows
+	// back.
+	s.mu.Lock()
+	s.drops, s.dropTo = true, t
+	for s.mergesBefore(t) {
+		s.idle.Wait()
+	}
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.drops = false
+		s.mu.Unlock()
+	}()
 	snap := s.Table().Snapshot()
 	defer snap.Release()
 	var old []*Handle
 	var rows uint64
 	for _, h := range snap.Parts() {
-		// A partition near the end of the time range has no end to compare.
-		if end := (h.Partition + 1) * width; end/width == h.Partition+1 && end <= t {
+		if s.endsBy(h.Partition, t) {
 			old = append(old, h)
 			rows += h.Rows
 		}
@@ -524,6 +560,27 @@ func (s *Store) DropBefore(t int64) (uint64, error) {
 	return rows, nil
 }
 
+// endsBy reports whether partition p ends at or before the time t; a
+// partition near the end of the time range has no end to compare.
+func (s *Store) endsBy(p, t int64) bool {
+	width := int64(s.opts.Partition)
+	end := (p + 1) * width
+
+	return width > 0 && end/width == p+1 && end <= t
+}
+
+// mergesBefore reports whether a merge under way reads a partition that
+// ends at or before t; the caller holds the lock of the merger's state.
+func (s *Store) mergesBefore(t int64) bool {
+	for _, p := range s.busy {
+		if s.endsBy(p, t) {
+			return true
+		}
+	}
+
+	return false
+}
+
 // Compact merges the runs of every partition into one and waits for it.
 func (s *Store) Compact() error {
 	s.mu.Lock()
@@ -537,6 +594,7 @@ func (s *Store) Compact() error {
 func (s *Store) mergeLoop() {
 	defer close(s.stopped)
 	defer func() {
+		s.merges.Wait()
 		s.mu.Lock()
 		s.over = true
 		s.idle.Broadcast()
@@ -552,21 +610,20 @@ func (s *Store) mergeLoop() {
 			s.mu.Lock()
 			kicks, compact := s.kicks, s.compact
 			s.mu.Unlock()
-			merged, err := s.mergeOnce(compact)
+			started := s.startMerges(compact)
 			s.mu.Lock()
-			if err != nil && s.err == nil {
-				s.err = err
-			}
-			if !merged || err != nil {
+			// A merge that ends asks for another look, so the merger is
+			// idle only when it found nothing to start and none runs.
+			if (!started && s.running == 0) || s.err != nil {
 				s.seen = kicks
 				if s.kicks == kicks {
 					s.compact = false
 				}
 				s.idle.Broadcast()
 			}
-			again := s.kicks != kicks && err == nil
+			again := s.kicks != kicks && s.err == nil
 			s.mu.Unlock()
-			if !merged && !again || err != nil {
+			if !again {
 				break
 			}
 			select {
@@ -670,26 +727,146 @@ func pickMerges(parts []*Handle, fanIn int, compact bool) [][]sortedRun {
 	return sets
 }
 
-// mergeOnce runs the merges that are due, side by side, and reports whether
-// there were any.
-func (s *Store) mergeOnce(compact bool) (bool, error) {
-	s.merging.Lock()
-	defer s.merging.Unlock()
+// beforeMergeCommit, when set, runs before a merge commits its run.
+var beforeMergeCommit func(meta PartMeta)
+
+// timeNow is the clock by which partitions close.
+var timeNow = time.Now
+
+// closedLook is how often a store with partitions looks for ones that have
+// closed while no rows arrived.
+const closedLook = time.Minute
+
+// closedSet returns all the runs of the earliest partition that has closed,
+// that neither a merge under way nor a set of taken reads and of which no
+// single run holds seven eighths of the rows. One such partition is merged
+// at a time.
+func (s *Store) closedSet(free []*Handle, taken [][]sortedRun) [][]sortedRun {
+	width := int64(s.opts.Partition)
+	if width <= 0 || s.settling || s.opts.MergeFanIn < 2 {
+		return nil
+	}
+	now, grace := timeNow().UnixNano(), min(width, int64(time.Hour))
+	skip := map[int64]bool{}
+	for _, set := range taken {
+		skip[set[0].partition] = true
+	}
+	rows, most := map[int64]uint64{}, map[uint64]uint64{}
+	var closed []*Handle
+	for _, h := range free {
+		if skip[h.Partition] || !s.endsBy(h.Partition, now-grace) {
+			continue
+		}
+		closed = append(closed, h)
+		rows[h.Partition] += h.Rows
+		most[h.Run] += h.Rows
+	}
+	settled := map[int64]bool{}
+	for _, h := range closed {
+		if most[h.Run]*8 >= rows[h.Partition]*7 {
+			settled[h.Partition] = true
+		}
+	}
+	var open []*Handle
+	for _, h := range closed {
+		if !settled[h.Partition] {
+			open = append(open, h)
+		}
+	}
+
+	if sets := pickMerges(open, s.opts.MergeFanIn, true); len(sets) > 0 {
+		return sets[:1]
+	}
+
+	return nil
+}
+
+// startMerges starts the merges that are due among the runs that no merge
+// under way reads, each on its own, and reports whether there were any. A
+// merge that ends asks the merger to look again.
+func (s *Store) startMerges(compact bool) bool {
+	s.mu.Lock()
+	// A merge lets go of its runs once it has committed, so the table as it
+	// is under the lock holds no part that a merge has replaced and that
+	// counts as free.
 	snap := s.Table().Snapshot()
 	defer snap.Release()
-	sets := pickMerges(snap.Parts(), s.opts.MergeFanIn, compact)
-	errs := make([]error, len(sets))
-	var wg sync.WaitGroup
+	// Compaction takes a partition whole, so it leaves a partition alone
+	// while a merge reads one of its runs.
+	held := map[int64]bool{}
+	for _, h := range snap.Parts() {
+		if _, busy := s.busy[h.Run]; busy && compact {
+			held[h.Partition] = true
+		}
+	}
+	free := make([]*Handle, 0, len(snap.Parts()))
+	for _, h := range snap.Parts() {
+		_, busy := s.busy[h.Run]
+		if dropped := s.drops && s.endsBy(h.Partition, s.dropTo); !busy && !held[h.Partition] && !dropped {
+			free = append(free, h)
+		}
+	}
+	sets := pickMerges(free, s.opts.MergeFanIn, compact)
+	// settles is the set that merges a closed partition, if there is one.
+	settles := -1
+	if !compact {
+		// A partition some of whose runs a merge reads waits for it.
+		whole := free[:0:0]
+		partial := map[int64]bool{}
+		for _, h := range snap.Parts() {
+			if _, busy := s.busy[h.Run]; busy {
+				partial[h.Partition] = true
+			}
+		}
+		for _, h := range free {
+			if !partial[h.Partition] {
+				whole = append(whole, h)
+			}
+		}
+		if closed := s.closedSet(whole, sets); len(closed) > 0 {
+			sets, settles = append(sets, closed...), len(sets)
+			s.settling = true
+		}
+	}
+	for _, runs := range sets {
+		for _, r := range runs {
+			s.busy[r.id] = r.partition
+		}
+	}
+	s.running += len(sets)
+	s.mu.Unlock()
 	for i, runs := range sets {
-		wg.Add(1)
+		// A merge keeps the parts it reads; the others go as soon as the
+		// merges that replace them commit.
+		var parts []*Handle
+		for _, r := range runs {
+			parts = append(parts, r.parts...)
+		}
+		kept := keep(parts)
+		s.merges.Add(1)
 		go func() {
-			defer wg.Done()
-			errs[i] = s.mergeRuns(runs)
+			defer s.merges.Done()
+			err := s.mergeRuns(runs)
+			kept.Release()
+			s.mu.Lock()
+			for _, r := range runs {
+				delete(s.busy, r.id)
+			}
+			s.running--
+			if i == settles {
+				s.settling = false
+			}
+			if err != nil && s.err == nil {
+				s.err = err
+			}
+			// A drop may wait for this merge.
+			s.idle.Broadcast()
+			s.mu.Unlock()
+			s.kick()
 		}()
 	}
-	wg.Wait()
 
-	return len(sets) > 0, errors.Join(errs...)
+	return len(sets) > 0
 }
 
 // mergeRuns replaces runs by one run of the tier above the highest of them,
@@ -758,28 +935,36 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 
 		return err
 	}
+	if beforeMergeCommit != nil {
+		beforeMergeCommit(meta)
+	}
 	_, err := s.dir.Commit(files, inputs)
 	s.countRuns()
 
 	return err
 }
 
-// countRuns notes the number of runs in the table.
+// countRuns notes the number of runs in the table that merges are to take.
 func (s *Store) countRuns() {
 	snap := s.dir.Table().Snapshot()
 	defer snap.Release()
-	runs := map[uint64]struct{}{}
-	for _, h := range snap.Parts() {
-		runs[h.Run] = struct{}{}
+	due := 0
+	for _, set := range pickMerges(snap.Parts(), s.opts.MergeFanIn, false) {
+		due += len(set)
 	}
-	s.runs.Store(int32(len(runs)))
+	s.due.Store(int32(due))
 }
 
-// giveWay holds a merge back while a flush of the buffers is writing and
-// the table has fewer runs than the backlog that merges may not let grow.
+// pressingBytes is the input in Append's buffers from which a flush is
+// near enough for merges to leave it the disk.
+const pressingBytes = 16 << 20
+
+// giveWay holds a merge back while rows wait in the buffers for a flush or
+// a flush is writing them, and fewer runs are due to be merged than the
+// backlog that merges may not let grow.
 func (s *Store) giveWay() {
-	for s.flushWrites.Load() > 0 && int(s.runs.Load()) < s.opts.MergeBacklog && !s.closed.Load() {
-		time.Sleep(time.Millisecond)
+	for (s.flushWrites.Load() > 0 || s.buffered.Load() >= pressingBytes) && int(s.due.Load()) < s.opts.MergeBacklog && !s.closed.Load() {
+		time.Sleep(2 * time.Millisecond)
 	}
 }
 

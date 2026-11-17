@@ -758,3 +758,85 @@ func TestColumnLookupReadsItsPiecesSideBySide(t *testing.T) {
 		}
 	}
 }
+
+// TestColumnLookupsAskForTheirPagesAhead requires that lookups of a token in
+// one column, block after block of a mapped part, find every page they read
+// asked for beforehand, in one request for each group, and that the
+// requests run groups ahead of the lookups.
+func TestColumnLookupsAskForTheirPagesAhead(t *testing.T) {
+	r := rand.New(rand.NewSource(5))
+	word := func() string {
+		b := make([]byte, 6+r.Intn(6))
+		for i := range b {
+			b[i] = byte('a' + r.Intn(26))
+		}
+
+		return string(b)
+	}
+	var buf bytes.Buffer
+	w := NewWriter(&buf, Options{})
+	w.groupBlocks = 4
+	batch := shred.NewBatch(shred.Options{})
+	const blocks, rows = 48, 600
+	for i := 0; i < blocks*rows; i++ {
+		doc := fmt.Sprintf(`{"a":"%s %s %s %s %s %s","b":"%s %s %s %s %s %s","n":%d}`,
+			word(), word(), word(), word(), word(), word(), word(), word(), word(), word(), word(), word(), i)
+		if err := batch.AddJSON([]byte(doc), int64(i)); err != nil {
+			t.Fatal(err)
+		}
+		if batch.Rows == rows {
+			if err := w.WriteBatch(batch); err != nil {
+				t.Fatal(err)
+			}
+			batch.Reset()
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Open(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	groups := len(p.groups)
+	if groups < aheadGroups+3 {
+		t.Fatalf("%d groups, too few to look ahead of", groups)
+	}
+	var asked [][2]uint64
+	p.SetReadAhead(func(off, n int) { asked = append(asked, [2]uint64{uint64(off), uint64(off + n)}) })
+	a, _ := p.PathID("a")
+	for round := range 2 {
+		asked = asked[:0]
+		hash := r.Uint64()
+		for i := 0; i < blocks; i++ {
+			gi := p.groupOf(i)
+			_, first, end := p.blockFilters(i)
+			f, own := p.columnFilter(first, end, a, vec.KindString)
+			if !own {
+				t.Fatalf("block %d has no filter for the column", i)
+			}
+			_, page, pageEnd := p.probe(&p.groups[gi], f, hash)
+			if _, err := p.MayContainTokensIn(i, a, vec.KindString, []uint64{hash}); err != nil {
+				t.Fatal(err)
+			}
+			covered := false
+			for _, span := range asked {
+				covered = covered || (span[0] <= page && pageEnd <= span[1])
+			}
+			if !covered {
+				t.Fatalf("round %d: block %d of group %d reads a page that was not asked for", round, i, gi)
+			}
+			// The requests stay ahead of the group being read.
+			if want := min(gi+aheadGroups, groups-1) + 1; len(asked) != want {
+				t.Fatalf("round %d: %d requests when block %d of group %d was read, want %d", round, len(asked), i, gi, want)
+			}
+		}
+		for _, span := range asked {
+			if span[1]-span[0] > uint64(blocks)*filterPage {
+				t.Fatalf("a request of %d bytes for the pieces of one column in a group", span[1]-span[0])
+			}
+		}
+		// A part that let go of its pages asks for them again.
+		p.ForgetReadAhead()
+	}
+}

@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -254,43 +255,294 @@ func TestMergesGiveWayToFlushesBelowTheBacklog(t *testing.T) {
 		{"as many runs as the backlog", 2, false},
 		{"no backlog set", 0, false},
 	} {
+		for press, hold := range map[string]func(s *Store, by int){
+			"a flush writing":      func(s *Store, by int) { s.flushWrites.Add(int32(by)) },
+			"rows waiting for one": func(s *Store, by int) { s.buffered.Add(int64(by) * pressingBytes) },
+		} {
+			t.Run(c.name+", "+press, func(t *testing.T) {
+				opts := StoreOptions{SortKey: []string{"svc"}, MergeFanIn: 2, MergeBacklog: c.backlog, FlushInterval: -1}
+				s, err := OpenStore(t.TempDir(), opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer s.Close()
+				// The flush or the rows are there all along.
+				hold(s, 1)
+				for i := range 2 {
+					w := s.NewWriter()
+					if err := w.AddNDJSON(storeDocs(i*500, 500)); err != nil {
+						t.Fatal(err)
+					}
+					if err := w.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}
+				deadline := time.Now().Add(2 * time.Second)
+				for runsOf(s) != 1 && time.Now().Before(deadline) && !c.waits {
+					time.Sleep(time.Millisecond)
+				}
+				if c.waits {
+					time.Sleep(100 * time.Millisecond)
+				}
+				if got := runsOf(s); (got == 2) != c.waits {
+					t.Fatalf("%d runs while it lasts", got)
+				}
+				hold(s, -1)
+				if err := s.Settle(); err != nil {
+					t.Fatal(err)
+				}
+				if got := runsOf(s); got != 1 {
+					t.Fatalf("%d runs once it has ended", got)
+				}
+				if rows, sum := rowsAndSumOf(t, s.Table()); rows != 1000 || sum != 999*1000/2 {
+					t.Fatalf("%d rows, sum %d", rows, sum)
+				}
+			})
+		}
+	}
+}
+
+// TestMergesDoNotWaitForEachOther requires that the runs of rows that
+// arrive while a merge is under way are merged without waiting for it, and
+// that the store settles on one run once it ends.
+func TestMergesDoNotWaitForEachOther(t *testing.T) {
+	skipSyncs(t)
+	held, release := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	beforeMergeCommit = func(PartMeta) {
+		// The first merge to finish waits where it is about to commit.
+		wait := false
+		once.Do(func() { wait = true })
+		if wait {
+			close(held)
+			<-release
+		}
+	}
+	defer func() { beforeMergeCommit = nil }()
+	s, err := OpenStore(t.TempDir(), StoreOptions{SortKey: []string{"svc"}, MergeFanIn: 2, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	write := func(first int) {
+		t.Helper()
+		w := s.NewWriter()
+		if err := w.AddNDJSON(storeDocs(first, 500)); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runs := func() map[int]int {
+		snap := s.Table().Snapshot()
+		defer snap.Release()
+		tiers, seen := map[int]int{}, map[uint64]bool{}
+		for _, h := range snap.Parts() {
+			if !seen[h.Run] {
+				seen[h.Run] = true
+				tiers[h.Tier]++
+			}
+		}
+
+		return tiers
+	}
+	write(0)
+	write(500)
+	<-held
+	// Two more runs: their merge commits while the first one waits.
+	write(1000)
+	write(1500)
+	deadline := time.Now().Add(5 * time.Second)
+	for runs()[1] != 1 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := runs(); got[0] != 2 || got[1] != 1 {
+		t.Fatalf("runs by tier %v while a merge waits, want two unmerged and one merged", got)
+	}
+	settled := make(chan error, 1)
+	go func() { settled <- s.Settle() }()
+	select {
+	case err := <-settled:
+		t.Fatalf("the store settled while a merge was under way: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	if err := <-settled; err != nil {
+		t.Fatal(err)
+	}
+	if got := runs(); len(got) != 1 || got[2] != 1 {
+		t.Fatalf("runs by tier %v once settled, want one of the third tier", got)
+	}
+	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 2000 || sum != 1999*2000/2 {
+		t.Fatalf("%d rows, sum %d", rows, sum)
+	}
+}
+
+// TestClosedPartitionsAreMergedIntoOneRun requires that a partition whose
+// span ended an hour ago is merged into one run, that the ones still open
+// keep their runs, and that rows which come later are merged in once they
+// make up an eighth of the partition.
+func TestClosedPartitionsAreMergedIntoOneRun(t *testing.T) {
+	skipSyncs(t)
+	hour := int64(time.Hour)
+	var now atomic.Int64
+	timeNow = func() time.Time { return time.Unix(0, now.Load()) }
+	defer func() { timeNow = time.Now }()
+	// Half an hour into the third hour of the rows.
+	now.Store((firstTimedHour+2)*hour + hour/2)
+	s, err := OpenStore(t.TempDir(), StoreOptions{SortKey: []string{"svc"}, TimeField: "ts", Partition: time.Hour, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	write := func(docs []byte) {
+		t.Helper()
+		w := s.NewWriter()
+		if err := w.AddNDJSON(docs); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Settle(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// late returns count documents numbered from first in the first hour.
+	late := func(first, count int) []byte {
+		var buf bytes.Buffer
+		for i := first; i < first+count; i++ {
+			fmt.Fprintf(&buf, `{"n":%d,"svc":"s00","ts":%d}`+"\n", i, int64(firstTimedHour)*3600e6+int64(i))
+		}
+
+		return buf.Bytes()
+	}
+	runs := func() [3]int {
+		snap := s.Table().Snapshot()
+		defer snap.Release()
+		var out [3]int
+		seen := map[uint64]bool{}
+		for _, h := range snap.Parts() {
+			if !seen[h.Run] {
+				seen[h.Run] = true
+				out[h.Partition-firstTimedHour]++
+			}
+		}
+
+		return out
+	}
+	for i := range 3 {
+		write(timedDocs(i*300, 300, 3))
+	}
+	if got := runs(); got != [3]int{1, 3, 3} {
+		t.Fatalf("runs by hour %v, want the first hour in one run and three in the others", got)
+	}
+	// Few rows that come late stay a run of their own.
+	write(late(900, 30))
+	if got := runs(); got != [3]int{2, 3, 3} {
+		t.Fatalf("runs by hour %v after a few late rows, want them apart", got)
+	}
+	// With more of them the partition is one run again.
+	write(late(930, 30))
+	if got := runs(); got != [3]int{1, 3, 3} {
+		t.Fatalf("runs by hour %v after more late rows, want the first hour in one run", got)
+	}
+	// An hour later the second hour has closed as well.
+	now.Add(hour)
+	s.kick()
+	if err := s.Settle(); err != nil {
+		t.Fatal(err)
+	}
+	if got := runs(); got != [3]int{1, 1, 3} {
+		t.Fatalf("runs by hour %v an hour later, want the second hour in one run", got)
+	}
+	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 960 || sum != 959*960/2 {
+		t.Fatalf("%d rows, sum %d", rows, sum)
+	}
+}
+
+// TestADropWaitsOnlyForMergesOfItsPartitions requires that dropping a
+// partition waits for a merge that reads it, whose run would bring its rows
+// back, and for no merge of another partition.
+func TestADropWaitsOnlyForMergesOfItsPartitions(t *testing.T) {
+	skipSyncs(t)
+	hour := int64(time.Hour)
+	// No partition has closed by this clock, so that only the runs of one
+	// tier are merged.
+	timeNow = func() time.Time { return time.Unix(0, firstTimedHour*hour+hour/2) }
+	defer func() { timeNow = time.Now }()
+	for _, c := range []struct {
+		name  string
+		held  int64
+		waits bool
+	}{
+		{"a merge of the partition", firstTimedHour, true},
+		{"a merge of another partition", firstTimedHour + 2, false},
+	} {
 		t.Run(c.name, func(t *testing.T) {
-			opts := StoreOptions{SortKey: []string{"svc"}, MergeFanIn: 2, MergeBacklog: c.backlog, FlushInterval: -1}
-			s, err := OpenStore(t.TempDir(), opts)
+			reached, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			beforeMergeCommit = func(meta PartMeta) {
+				if meta.Partition == c.held {
+					once.Do(func() { close(reached) })
+					<-release
+				}
+			}
+			defer func() { beforeMergeCommit = nil }()
+			s, err := OpenStore(t.TempDir(), StoreOptions{SortKey: []string{"svc"}, TimeField: "ts", Partition: time.Hour, MergeFanIn: 2, FlushInterval: -1})
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			// A flush of the buffers that is writing all along.
-			s.flushWrites.Add(1)
 			for i := range 2 {
 				w := s.NewWriter()
-				if err := w.AddNDJSON(storeDocs(i*500, 500)); err != nil {
+				if err := w.AddNDJSON(timedDocs(i*300, 300, 3)); err != nil {
 					t.Fatal(err)
 				}
 				if err := w.Close(); err != nil {
 					t.Fatal(err)
 				}
 			}
-			deadline := time.Now().Add(2 * time.Second)
-			for runsOf(s) != 1 && time.Now().Before(deadline) && !c.waits {
-				time.Sleep(time.Millisecond)
+			<-reached
+			type result struct {
+				rows uint64
+				err  error
 			}
-			if c.waits {
-				time.Sleep(100 * time.Millisecond)
+			dropped := make(chan result, 1)
+			go func() {
+				rows, err := s.DropBefore((firstTimedHour + 1) * hour)
+				dropped <- result{rows, err}
+			}()
+			var drop result
+			select {
+			case drop = <-dropped:
+				if c.waits {
+					t.Fatal("the drop did not wait for the merge of its partition")
+				}
+				close(release)
+			case <-time.After(time.Second):
+				if !c.waits {
+					t.Fatal("the drop waited for a merge of another partition")
+				}
+				close(release)
+				drop = <-dropped
 			}
-			if got := runsOf(s); (got == 2) != c.waits {
-				t.Fatalf("%d runs while a flush is writing", got)
+			if drop.err != nil || drop.rows != 200 {
+				t.Fatalf("dropped %d rows: %v, want the 200 of the first hour", drop.rows, drop.err)
 			}
-			s.flushWrites.Add(-1)
 			if err := s.Settle(); err != nil {
 				t.Fatal(err)
 			}
-			if got := runsOf(s); got != 1 {
-				t.Fatalf("%d runs once the flush has ended", got)
+			snap := s.Table().Snapshot()
+			defer snap.Release()
+			for _, h := range snap.Parts() {
+				if h.Partition == firstTimedHour {
+					t.Fatal("the dropped partition holds a part again")
+				}
 			}
-			if rows, sum := rowsAndSumOf(t, s.Table()); rows != 1000 || sum != 999*1000/2 {
-				t.Fatalf("%d rows, sum %d", rows, sum)
+			if rows, _ := rowsAndSumOf(t, s.Table()); rows != 400 {
+				t.Fatalf("%d rows left, want 400", rows)
 			}
 		})
 	}

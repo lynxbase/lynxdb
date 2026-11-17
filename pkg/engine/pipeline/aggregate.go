@@ -2474,20 +2474,16 @@ func finalizeVarianceState(s *aggState, population, root bool) event.Value {
 	return event.FloatValue(variance)
 }
 
+// percentile returns the value that has floor(pct/100*n) of the n values
+// before it, the greatest for a pct of 100.
 func percentile(all []interface{}, pct float64) event.Value {
 	if len(all) == 0 {
 		return event.NullValue()
 	}
 	floats := float64SliceFromAll(all)
 	sort.Float64s(floats)
-	idx := pct / 100.0 * float64(len(floats)-1)
-	lower := int(idx)
-	if lower >= len(floats)-1 {
-		return event.FloatValue(floats[len(floats)-1])
-	}
-	frac := idx - float64(lower)
 
-	return event.FloatValue(floats[lower] + frac*(floats[lower+1]-floats[lower]))
+	return event.FloatValue(floats[min(int(pct/100*float64(len(floats))), len(floats)-1)])
 }
 
 func float64SliceFromAll(all []interface{}) []float64 {

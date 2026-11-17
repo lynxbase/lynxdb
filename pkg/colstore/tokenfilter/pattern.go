@@ -54,6 +54,30 @@ func Substring(needle string) Pattern { return newPattern(needle, false, false) 
 // IgnoreCase returns the pattern that matches without regard to letter
 // case: an ASCII letter of the needle matches both of its cases, any other
 // letter the runes with the same lowercase form.
+// AppendKey appends bytes that two patterns share only when they match the
+// same texts.
+func (p Pattern) AppendKey(dst []byte) []byte {
+	var flags byte
+	if p.wordStart {
+		flags |= 1
+	}
+	if p.wordEnd {
+		flags |= 2
+	}
+	if p.fold {
+		flags |= 4
+	}
+	source := ""
+	if p.re != nil {
+		flags |= 8
+		source = p.re.String()
+	}
+	dst = binary.AppendUvarint(append(dst, flags), uint64(len(p.needle)))
+	dst = binary.AppendUvarint(append(dst, p.needle...), uint64(len(source)))
+
+	return append(dst, source...)
+}
+
 // Number returns the number that a pattern for a whole word of digits
 // spells, which a search of every field also looks for among numbers.
 func (p Pattern) Number() (n int64, ok bool) {

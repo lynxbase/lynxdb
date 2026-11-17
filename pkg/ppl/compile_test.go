@@ -54,6 +54,23 @@ func TestCompileGolden(t *testing.T) {
 	}
 }
 
+// TestUncorrelatedSubqueriesCompile pins subqueries that read only their own
+// fields, including through their own source name or alias.
+func TestUncorrelatedSubqueriesCompile(t *testing.T) {
+	for _, q := range []string{
+		"source=outer | where a in [ source=inner | fields b ]",
+		"source=logs | where exists [ source=logs | where logs.x = 1 ]",
+		"source=outer | where exists [ source=inner as i | where i.c > 10 ]",
+		"source=outer | where a = [ source=inner | join left=l right=r on l.k = r.k other | stats max(c) ]",
+		"source=outer | eval m = [ source=inner | stats max(c) ] | where m > b",
+		"source=outer | stats count() as n by k | where k in [ source=inner | fields k ]",
+	} {
+		if _, err := Compile(q); err != nil {
+			t.Errorf("%s: %v", q, err)
+		}
+	}
+}
+
 func TestCompileErrors(t *testing.T) {
 	cases := []struct {
 		q    string
@@ -82,6 +99,22 @@ func TestCompileErrors(t *testing.T) {
 		{"source=t | stats count() as c, avg(x) as c", ErrSemantic, "duplicate aggregation name"},
 		{"source=t | stats percentile(x, y)", ErrType, "percent must be a number"},
 		{"sourCe=0|stAts perCentile(0,A)", ErrType, "percent must be a number"},
+		{"source=t | patterns body method=brain", ErrUnsupportedFeature, "patterns method=brain is not supported"},
+		{"source=t | patterns body method=BRAIN mode=aggregation", ErrUnsupportedFeature, "patterns method=brain is not supported"},
+		{"source=t | eventstats bucket_nullable=false count() by host", ErrUnsupportedFeature, "eventstats bucket_nullable=false is not supported"},
+		{"source=t | streamstats count() by host bucket_nullable=false", ErrUnsupportedFeature, "streamstats bucket_nullable=false is not supported"},
+		{"source=t | streamstats reset_before=status > 300 count()", ErrUnsupportedFeature, "streamstats reset_before is not supported"},
+		{"source=t | streamstats reset_after=(status > 300) count() as n by host", ErrUnsupportedFeature, "streamstats reset_after is not supported"},
+		{"source=t | stats earliest(status, event_time) by host", ErrUnsupportedFeature, "earliest ordered by event_time is not supported"},
+		{"source=t | eventstats latest(msg, date_add(_time, INTERVAL 1 DAY)) as m", ErrUnsupportedFeature, "latest ordered by an expression is not supported"},
+		{"source=outer | eval m = [ source=inner | where outer.b = inner.d | stats max(c) ]", ErrUnsupportedFeature, "correlated subqueries are not supported: the subquery refers to outer.b"},
+		{"source=t1 as a | where exists [ source=t2 | where a.id = id ]", ErrUnsupportedFeature, "the subquery refers to a.id of the outer query"},
+		{"source=a | where exists [ source=b | where exists [ source=c | where a.x = y ] ]", ErrUnsupportedFeature, "the subquery refers to a.x"},
+		{"source=a | where exists [ source=b | where exists [ source=c | where b.x = y ] ]", ErrUnsupportedFeature, "the subquery refers to b.x"},
+		{"source=logs | eval lim = 10 | where exists [ source=users | fields owner, n | where n > lim ]", ErrUnsupportedFeature, "the subquery refers to field lim of the outer query"},
+		{"source=logs | eval lim = 10 | where host in [ source=users | stats count() by host | sort lim | fields host ]", ErrUnsupportedFeature, "the subquery refers to field lim"},
+		{"source=a | eval k = 1 | where exists [ source=b | where exists [ source=c | fields n | where n = k ] ]", ErrUnsupportedFeature, "the subquery refers to field k of the outer query"},
+		{"source=outer | where exists [ source=inner | fields c | where a = c ]", ErrSemantic, "field a not found"},
 	}
 	for _, c := range cases {
 		_, err := Compile(c.q)

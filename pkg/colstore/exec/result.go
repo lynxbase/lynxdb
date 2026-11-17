@@ -14,6 +14,9 @@ type Stats struct {
 	SkippedByKey   int64
 	SkippedByToken int64
 	SkippedByTime  int64
+	// SkippedAsEmpty counts the blocks left out because an earlier query
+	// with the same filter found no row in them.
+	SkippedAsEmpty int64
 	// SkippedByStats counts opened blocks that the filter rejected from
 	// column statistics and constants, without decoding a column.
 	SkippedByStats int64

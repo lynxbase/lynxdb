@@ -248,7 +248,7 @@ func TestPercentiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := [][]float64{{1, 1.5}, {0.25, 2.5}}
+	want := [][]float64{{1, 1.5}, {2.5, 2.5}}
 	if res.Rows != len(want) {
 		t.Fatalf("got %d rows, want %d", res.Rows, len(want))
 	}

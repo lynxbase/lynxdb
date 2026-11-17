@@ -719,8 +719,10 @@ func TestJSONBenchPlans(t *testing.T) {
 				continue
 			}
 			var res *exec.Result
+			// Timed as a query met for the first time: what earlier runs
+			// learned about the blocks is reported apart, below.
 			run := func() (err error) {
-				res, err = exec.Run(context.Background(), tbl.snap, q.plan, exec.Options{Workers: cores})
+				res, err = exec.Run(context.Background(), tbl.snap, q.plan, exec.Options{Workers: cores, Forgetful: true})
 
 				return err
 			}
@@ -758,6 +760,23 @@ func TestJSONBenchPlans(t *testing.T) {
 			got := answer(q.name, res)
 			if want, ok := benchAnswers[q.name]; ok && rows == 1_000_000 && got != want {
 				t.Errorf("%s %s\n got  %s\n want %s", tbl.name, q.name, got, want)
+			}
+			again := func() (err error) {
+				res, err = exec.Run(context.Background(), tbl.snap, q.plan, exec.Options{Workers: cores})
+
+				return err
+			}
+			if err := again(); err != nil {
+				t.Fatal(err)
+			}
+			if took, cpu, err := timeRuns(runs, again); err != nil {
+				t.Fatal(err)
+			} else if res.Stats.SkippedAsEmpty > 0 {
+				t.Logf("%-8s %-22s %8.2f ms on %d cores (median %.2f, cpu %.1f) run again: %d blocks opened, %d left out as found empty",
+					tbl.name, q.name, millis(took[0]), cores, millis(took[runs/2]), millis(cpu), res.Stats.Blocks, res.Stats.SkippedAsEmpty)
+			}
+			if repeated := answer(q.name, res); repeated != got {
+				t.Errorf("%s %s run again answers %s, at first %s", tbl.name, q.name, repeated, got)
 			}
 			if prev, ok := answers[q.name]; ok && prev != got && !q.estimated {
 				t.Errorf("%s %s answers %s, another layout %s", tbl.name, q.name, got, prev)

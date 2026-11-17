@@ -331,7 +331,7 @@ func (c *irCompiler) compileLambda(l *ir.Lambda) (int, error) {
 		return 0, err
 	}
 	c.prog.EmitOp(OpReturn)
-	sub := &Program{Instructions: c.prog.Instructions, NumericStrings: true}
+	sub := &Program{Instructions: c.prog.Instructions, NumericStrings: true, Params: len(l.Params)}
 	c.prog.Instructions = parent
 	return c.prog.AddSubProgram(sub), nil
 }
