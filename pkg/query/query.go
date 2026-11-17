@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/engine/physical"
@@ -50,18 +51,26 @@ func Compile(src string) (*Compiled, error) {
 		Explain: res.Explain, ExplainMode: res.ExplainMode, Sources: res.Sources}, nil
 }
 
+// foldVMs recycles the VM Fold runs on; a VM is several kilobytes.
+var foldVMs = sync.Pool{New: func() any { return new(vm.VM) }}
+
 // Fold evaluates a constant expression with the VM.
 func Fold(e ir.Expr) (*ir.Literal, bool) {
 	prog, err := vm.CompileExpr(e, vm.CompileOptions{})
 	if err != nil {
 		return nil, false
 	}
-	var m vm.VM
+	m := foldVMs.Get().(*vm.VM)
+	// A VM caches per-program state that is not keyed by program, so a
+	// recycled one starts from zero.
+	*m = vm.VM{}
 	v, err := m.Execute(prog, nil)
-	if err != nil {
-		return nil, false
+	var lit *ir.Literal
+	ok := err == nil
+	if ok {
+		lit, ok = Literal(v)
 	}
-	lit, ok := Literal(v)
+	foldVMs.Put(m)
 	if !ok {
 		return nil, false
 	}
