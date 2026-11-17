@@ -76,9 +76,22 @@ func (p *parser) sourceRef() ast.SourceRef {
 		p.next()
 		return ast.SourceRef{Base: ast.Base{Span: p.span(start)}, Name: t.Value}
 	}
-	// Without quoted parts the name is the source text the tokens span.
+	// While its tokens are adjacent and unquoted, the name is the source
+	// text they span.
 	var b strings.Builder
-	quoted := false
+	copied := false
+	last := start.Offset
+	take := func(t *lexer.Token, text string) {
+		if !copied && (t.Kind == lexer.QuotedIdent || t.Pos.Offset != last) {
+			copied = true
+			b.WriteString(p.src[start.Offset:last])
+		}
+		if copied {
+			b.WriteString(text)
+		}
+		last = t.End.Offset
+		p.next()
+	}
 	for first := true; ; first = false {
 		t := p.peek()
 		if !first && t.SpaceBefore {
@@ -86,30 +99,21 @@ func (p *parser) sourceRef() ast.SourceRef {
 		}
 		switch t.Kind {
 		case lexer.Ident, lexer.NumericIdent, lexer.Integer, lexer.Decimal, lexer.Dot, lexer.Minus, lexer.Colon, lexer.Star, lexer.Span, lexer.Double, lexer.Float:
-			if quoted {
-				b.WriteString(t.Text)
-			}
-			p.next()
+			take(t, t.Text)
 			continue
 		case lexer.QuotedIdent:
 			if !first {
-				if !quoted {
-					quoted = true
-					b.WriteString(p.src[start.Offset:t.Pos.Offset])
-				}
-				b.WriteString(t.Value)
-				p.next()
+				take(t, t.Value)
 				continue
 			}
 		}
 		break
 	}
-	end := p.prevEnd().Offset
-	if p.i == 0 || end <= start.Offset {
+	if last == start.Offset {
 		p.fail(p.peek(), "expected an index name", "index name")
 	}
-	name := p.src[start.Offset:end]
-	if quoted {
+	name := p.src[start.Offset:last]
+	if copied {
 		name = b.String()
 	}
 	return ast.SourceRef{Base: ast.Base{Span: p.span(start)}, Name: name}
