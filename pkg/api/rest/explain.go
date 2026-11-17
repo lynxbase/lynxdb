@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/database"
 	"github.com/lynxbase/lynxdb/pkg/engine/physical"
 	"github.com/lynxbase/lynxdb/pkg/ir"
@@ -15,6 +16,9 @@ import (
 // logical and optimized plans and the hints its scans carry; with
 // analyze=true it also runs the query and reports its time and rows.
 func (s *Server) handleQueryExplain(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeQuery) {
+		return
+	}
 	q := r.URL.Query().Get("q")
 	if q == "" {
 		q = r.URL.Query().Get("query")

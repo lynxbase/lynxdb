@@ -677,6 +677,17 @@ func TestAuth_ScopeIngest_CannotQuery(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	explain, err := authReq("GET",
+		fmt.Sprintf("http://%s/api/v1/query/explain?q=source%%3Dmain", srv.Addr()),
+		ingestKey.Token, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	explain.Body.Close()
+	if explain.StatusCode != http.StatusForbidden {
+		t.Fatalf("explain status = %d, want 403", explain.StatusCode)
+	}
+
 	// Query should be forbidden.
 	body := []byte(`{"q":"source=main | head 5"}`)
 	resp, err := authReq("POST",
