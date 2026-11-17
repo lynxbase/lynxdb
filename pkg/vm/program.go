@@ -29,7 +29,20 @@ type Program struct {
 	// Instructions.
 	SubPrograms []*Program
 
+	// Natives holds the functions OpCallNative invokes.
+	Natives []NativeFunc
+
+	// NumericStrings makes the strict arithmetic, comparison and IN opcodes
+	// convert a string operand to a number when the other operand is one.
+	NumericStrings bool
+
 	BSIHandledComparisons int
+}
+
+// AddNative registers a native function and returns its index.
+func (p *Program) AddNative(f NativeFunc) int {
+	p.Natives = append(p.Natives, f)
+	return len(p.Natives) - 1
 }
 
 // AddSubProgram appends a compiled sub-program and returns its index.

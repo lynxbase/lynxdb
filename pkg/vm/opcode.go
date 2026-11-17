@@ -142,9 +142,13 @@ const (
 	OpFromEntries  Opcode = 0xAF
 
 	// Null Handling.
-	OpCoalesce  Opcode = 0xB0
-	OpIsNull    Opcode = 0xB1
-	OpIsNotNull Opcode = 0xB2
+	OpCoalesce Opcode = 0xB0
+
+	// OpCallNative has two 2-byte operands, a Program.Natives index and an
+	// argument count N; it pops N values and pushes the function's result.
+	OpCallNative Opcode = 0x8C
+	OpIsNull     Opcode = 0xB1
+	OpIsNotNull  Opcode = 0xB2
 
 	// Type Checks (pop 1, push bool).
 	OpIsNum          Opcode = 0xB3
@@ -464,6 +468,7 @@ var definitions = map[Opcode]*Definition{
 	OpFromEntries:  {"OpFromEntries", nil},
 
 	OpCoalesce:       {"OpCoalesce", []int{2}},
+	OpCallNative:     {"OpCallNative", []int{2, 2}},
 	OpIsNull:         {"OpIsNull", nil},
 	OpIsNotNull:      {"OpIsNotNull", nil},
 	OpIsNum:          {"OpIsNum", nil},

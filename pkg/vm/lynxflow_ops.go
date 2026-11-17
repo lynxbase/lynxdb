@@ -727,13 +727,15 @@ func (vm *VM) execLambdaWithParams(rootProg *Program, subIdx int, params []event
 	// Build an execution program that uses the sub's instructions but the
 	// root's pools. This avoids copying pools to every sub-program.
 	execProg := &Program{
-		Instructions:  sub.Instructions,
-		Constants:     rootProg.Constants,
-		FieldNames:    rootProg.FieldNames,
-		RegexPatterns: rootProg.RegexPatterns,
-		GlobPatterns:  rootProg.GlobPatterns,
-		CIDRNets:      rootProg.CIDRNets,
-		SubPrograms:   rootProg.SubPrograms,
+		Instructions:   sub.Instructions,
+		Constants:      rootProg.Constants,
+		FieldNames:     rootProg.FieldNames,
+		RegexPatterns:  rootProg.RegexPatterns,
+		GlobPatterns:   rootProg.GlobPatterns,
+		CIDRNets:       rootProg.CIDRNets,
+		SubPrograms:    rootProg.SubPrograms,
+		Natives:        rootProg.Natives,
+		NumericStrings: rootProg.NumericStrings,
 	}
 	vm.lambdaParams = append(vm.lambdaParams, params...)
 	// The sub-program runs from the bottom of the stack, so the caller's

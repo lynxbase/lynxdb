@@ -235,7 +235,8 @@ func (op BinaryOp) Commute() BinaryOp {
 // and a float is float; timestamp - timestamp is a duration and timestamp ±
 // duration is a timestamp. Adding two strings concatenates them. Wherever a
 // string meets a number, in arithmetic or in a comparison, the string is
-// converted to a number, and the result is NULL when it does not parse.
+// converted to a number, and wherever a string meets a timestamp it is
+// converted to a timestamp; the result is NULL when it does not parse.
 // Comparisons between other incompatible types yield NULL.
 type Binary struct {
 	Op BinaryOp

@@ -1297,6 +1297,28 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 				vm.stack[vm.sp-1] = event.IntValue(int64(len(parts)))
 			}
 
+		case OpCallNative:
+			fn, opErr := readIndexSafe(ins, ip, len(prog.Natives), "native function")
+			if opErr != nil {
+				return event.NullValue(), opErr
+			}
+			argc, opErr := readOperandSafe(ins, ip+2)
+			if opErr != nil {
+				return event.NullValue(), opErr
+			}
+			ip += 4
+			n := int(argc)
+			if n > vm.sp {
+				return event.NullValue(), ErrStackUnderflow
+			}
+			if n == 0 && vm.sp >= StackSize {
+				return event.NullValue(), ErrStackOverflow
+			}
+			res := prog.Natives[fn](vm.stack[vm.sp-n : vm.sp])
+			vm.sp -= n
+			vm.stack[vm.sp] = res
+			vm.sp++
+
 		case OpCoalesce:
 			operand, opErr := readOperandSafe(ins, ip)
 			if opErr != nil {
@@ -1906,6 +1928,9 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 		case OpEqStrict:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
+			if prog.NumericStrings {
+				a, b = numericPair(a, b)
+			}
 			vm.sp--
 			eq, isNull := strictEq(a, b, vm.Warnings)
 			if isNull {
@@ -1917,6 +1942,9 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 		case OpNeqStrict:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
+			if prog.NumericStrings {
+				a, b = numericPair(a, b)
+			}
 			vm.sp--
 			eq, isNull := strictEq(a, b, vm.Warnings)
 			if isNull {
@@ -1928,6 +1956,9 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 		case OpLtStrict:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
+			if prog.NumericStrings {
+				a, b = numericPair(a, b)
+			}
 			vm.sp--
 			cmp, isNull := strictCompare(a, b, vm.Warnings)
 			if isNull {
@@ -1939,6 +1970,9 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 		case OpLteStrict:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
+			if prog.NumericStrings {
+				a, b = numericPair(a, b)
+			}
 			vm.sp--
 			cmp, isNull := strictCompare(a, b, vm.Warnings)
 			if isNull {
@@ -1950,6 +1984,9 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 		case OpGtStrict:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
+			if prog.NumericStrings {
+				a, b = numericPair(a, b)
+			}
 			vm.sp--
 			cmp, isNull := strictCompare(a, b, vm.Warnings)
 			if isNull {
@@ -1961,6 +1998,9 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 		case OpGteStrict:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
+			if prog.NumericStrings {
+				a, b = numericPair(a, b)
+			}
 			vm.sp--
 			cmp, isNull := strictCompare(a, b, vm.Warnings)
 			if isNull {
@@ -2026,30 +2066,45 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 		case OpAddStrict:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
+			if prog.NumericStrings {
+				a, b = numericPair(a, b)
+			}
 			vm.sp--
 			vm.stack[vm.sp-1] = addStrict(a, b, vm.Warnings)
 
 		case OpSubStrict:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
+			if prog.NumericStrings {
+				a, b = numericPair(a, b)
+			}
 			vm.sp--
 			vm.stack[vm.sp-1] = subStrict(a, b, vm.Warnings)
 
 		case OpMulStrict:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
+			if prog.NumericStrings {
+				a, b = numericPair(a, b)
+			}
 			vm.sp--
 			vm.stack[vm.sp-1] = mulStrict(a, b, vm.Warnings)
 
 		case OpDivStrict:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
+			if prog.NumericStrings {
+				a, b = numericPair(a, b)
+			}
 			vm.sp--
 			vm.stack[vm.sp-1] = divStrict(a, b, vm.Warnings)
 
 		case OpModStrict:
 			b := vm.stack[vm.sp-1]
 			a := vm.stack[vm.sp-2]
+			if prog.NumericStrings {
+				a, b = numericPair(a, b)
+			}
 			vm.sp--
 			vm.stack[vm.sp-1] = modStrict(a, b, vm.Warnings)
 
@@ -2102,7 +2157,7 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 				if container.IsNull() {
 					vm.stack[vm.sp-1] = event.NullValue()
 				} else if container.Type() == event.FieldTypeArray {
-					vm.stack[vm.sp-1] = inStrict(val, container.AsArray(), vm.Warnings)
+					vm.stack[vm.sp-1] = inStrictMode(val, container.AsArray(), vm.Warnings, prog.NumericStrings)
 				} else {
 					// Non-array container: treat as single-element check
 					eq, isNull := strictEq(val, container, vm.Warnings)
@@ -2117,7 +2172,7 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 				items := make([]event.Value, count)
 				copy(items, vm.stack[vm.sp-count:vm.sp])
 				vm.sp -= count
-				vm.stack[vm.sp-1] = inStrict(val, items, vm.Warnings)
+				vm.stack[vm.sp-1] = inStrictMode(val, items, vm.Warnings, prog.NumericStrings)
 			}
 
 		// --- RFC-002 function opcodes ---
