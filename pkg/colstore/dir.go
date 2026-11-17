@@ -527,6 +527,8 @@ type PartFile struct {
 	name string
 	tmp  string
 	size int64
+	// before, when set, runs ahead of every write.
+	before func()
 }
 
 // Create starts a part file that is a run of its own. Any number of them can
@@ -544,11 +546,18 @@ func (d *Dir) Create() (*PartFile, error) {
 
 // Write appends part bytes to the file.
 func (pf *PartFile) Write(p []byte) (int, error) {
+	if pf.before != nil {
+		pf.before()
+	}
 	n, err := pf.f.Write(p)
 	pf.size += int64(n)
 
 	return n, err
 }
+
+// BeforeWrite makes fn run ahead of every write to the file, which lets a
+// writer of less urgent parts wait its turn at the disk.
+func (pf *PartFile) BeforeWrite(fn func()) { pf.before = fn }
 
 // Abort discards the file.
 func (pf *PartFile) Abort() {

@@ -45,6 +45,10 @@ type StoreOptions struct {
 	// decoded block per run it reads, and the merges running at once hold
 	// at most this many blocks together; zero means 96.
 	MergeBlocks int
+	// MergeBacklog makes merges give way to the flushes of Append's
+	// buffers, which the callers of Append and Sync wait for, while fewer
+	// runs than this are in the table; zero lets both share the disk.
+	MergeBacklog int
 	// Partition is the span of time whose rows are kept and merged apart
 	// from all others, so that a time range reads only the spans it meets
 	// and old spans can be dropped whole; zero keeps one partition.
@@ -99,6 +103,10 @@ type Store struct {
 	flushing chan struct{}
 	// appending is held shared by every call of Append while it runs.
 	appending sync.RWMutex
+	// flushWrites counts the flushes of the buffers that are writing, and
+	// runs the runs in the table.
+	flushWrites atomic.Int32
+	runs        atomic.Int32
 	// flushMu lets one flush of the buffers run at a time. buffered counts
 	// the input bytes in the buffers and in unwritten, the batches that a
 	// failed flush took and the next one writes first.
@@ -168,6 +176,7 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	s.blocks.init(opts.MergeBlocks)
 	s.idle = sync.NewCond(&s.mu)
 	s.shards = make([]appendShard, runtime.GOMAXPROCS(0))
+	s.countRuns()
 	s.synced = sync.NewCond(&s.syncMu)
 	s.flushing = make(chan struct{})
 	go s.mergeLoop()
@@ -397,10 +406,13 @@ func (s *Store) writeBuffers(age time.Duration) error {
 	if len(taken) == 0 {
 		return nil
 	}
+	s.flushWrites.Add(1)
 	files, err := s.writeRuns(taken)
 	if err == nil {
 		_, err = s.dir.Commit(files, nil)
 	}
+	s.flushWrites.Add(-1)
+	s.countRuns()
 	if err != nil {
 		s.unwritten, s.unwrittenBytes = taken, size
 		s.buffered.Add(size)
@@ -498,6 +510,7 @@ func (s *Store) DropBefore(t int64) (uint64, error) {
 	if len(old) == 0 {
 		return 0, nil
 	}
+	defer s.countRuns()
 	if _, err := s.dir.Commit(nil, old); err != nil {
 		return 0, err
 	}
@@ -719,6 +732,9 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 				return
 			}
 			pf.Meta = meta
+			if s.opts.MergeBacklog > 0 {
+				pf.BeforeWrite(s.giveWay)
+			}
 			files[i] = pf
 			w := part.NewWriter(pf, s.opts.Part)
 			if err := part.MergeRange(w, srcs, s.opts.BlockRows, lo, hi); err != nil {
@@ -740,8 +756,28 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 		return err
 	}
 	_, err := s.dir.Commit(files, inputs)
+	s.countRuns()
 
 	return err
+}
+
+// countRuns notes the number of runs in the table.
+func (s *Store) countRuns() {
+	snap := s.dir.Table().Snapshot()
+	defer snap.Release()
+	runs := map[uint64]struct{}{}
+	for _, h := range snap.Parts() {
+		runs[h.Run] = struct{}{}
+	}
+	s.runs.Store(int32(len(runs)))
+}
+
+// giveWay holds a merge back while a flush of the buffers is writing and
+// the table has fewer runs than the backlog that merges may not let grow.
+func (s *Store) giveWay() {
+	for s.flushWrites.Load() > 0 && int(s.runs.Load()) < s.opts.MergeBacklog && !s.closed.Load() {
+		time.Sleep(time.Millisecond)
+	}
 }
 
 // Writer buffers documents and writes them to the store as sorted runs. It
@@ -827,6 +863,7 @@ func (w *Writer) flush() error {
 	if _, err := w.s.dir.Commit(files, nil); err != nil {
 		return err
 	}
+	w.s.countRuns()
 	w.committed()
 	w.s.kick()
 

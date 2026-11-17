@@ -319,7 +319,10 @@ func (s *flowServer) handler() http.Handler {
 
 // flowStoreOptions configures the store of the benchmark: the benchmark's
 // sort key unless LYNXDB_BENCH_SORT names another ("none" for arrival order),
-// and time partitions of LYNXDB_BENCH_PARTITION when set.
+// time partitions of LYNXDB_BENCH_PARTITION when set, and the buffers of
+// Append, the merge fan-in and the backlog below which merges give way to
+// flushes from LYNXDB_BENCH_BUFFER_MB, LYNXDB_BENCH_FANIN and
+// LYNXDB_BENCH_MERGE_BACKLOG.
 func flowStoreOptions(t testing.TB) colstore.StoreOptions {
 	t.Helper()
 	opts := colstore.StoreOptions{TimeField: benchTimeField, BlockRows: benchBlockRows, SortKey: benchSortKey}
@@ -336,6 +339,24 @@ func flowStoreOptions(t testing.TB) colstore.StoreOptions {
 			t.Fatalf("LYNXDB_BENCH_PARTITION=%q is not a positive duration", v)
 		}
 		opts.Partition = width
+	}
+	for env, field := range map[string]*int{
+		"LYNXDB_BENCH_MERGE_BACKLOG": &opts.MergeBacklog, "LYNXDB_BENCH_FANIN": &opts.MergeFanIn,
+	} {
+		if v := os.Getenv(env); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 {
+				t.Fatalf("%s=%q is not a number", env, v)
+			}
+			*field = n
+		}
+	}
+	if v := os.Getenv("LYNXDB_BENCH_BUFFER_MB"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			t.Fatalf("LYNXDB_BENCH_BUFFER_MB=%q is not a positive number", v)
+		}
+		opts.BufferBytes = n << 20
 	}
 
 	return opts
