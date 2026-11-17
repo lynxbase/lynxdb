@@ -76,10 +76,57 @@ type mergeCost struct {
 	parts     int
 }
 
-// measureMerge runs fn, which merges into the writers sink hands out, and
-// returns what the run cost; the shortest of n runs counts.
-func measureMerge(t testing.TB, n int, profile string, fn func(sink func(i int) io.Writer) int) mergeCost {
+// runMerge runs fn, which merges into the writers sink hands out, and
+// returns what it cost; the peak heap counts from the heap in use at the
+// start.
+func runMerge(fn func(sink func(i int) io.Writer) int) mergeCost {
+	outs := make([]countingWriter, 4096)
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	stop := heapWatch()
+	cpuBefore, begin := cpuTime(), time.Now()
+	parts := fn(func(i int) io.Writer { return &outs[i] })
+	c := mergeCost{wall: time.Since(begin), cpu: cpuTime() - cpuBefore, parts: parts}
+	peak := stop()
+	runtime.ReadMemStats(&after)
+	c.mallocs, c.allocated = after.Mallocs-before.Mallocs, after.TotalAlloc-before.TotalAlloc
+	c.peakHeap = peak - min(peak, before.HeapAlloc)
+	for i := range outs {
+		c.size += outs[i].n.Load()
+	}
+
+	return c
+}
+
+// liveProbe is a sink that collects garbage before every block written to
+// it and keeps the largest heap that was left.
+type liveProbe struct{ peak *atomic.Uint64 }
+
+func (p liveProbe) Write(b []byte) (int, error) {
+	runtime.GC()
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	for {
+		old := p.peak.Load()
+		if ms.HeapAlloc <= old || p.peak.CompareAndSwap(old, ms.HeapAlloc) {
+			return len(b), nil
+		}
+	}
+}
+
+// measureMerge runs fn once collecting garbage at every block, which shows
+// the memory merging holds, and then n times back to back, as a store that
+// keeps merging runs it, of which the run using the least CPU counts.
+func measureMerge(t testing.TB, n int, profile string, fn func(sink func(i int) io.Writer) int) (held uint64, best mergeCost) {
 	t.Helper()
+	// Two collections empty the pools.
+	runtime.GC()
+	runtime.GC()
+	var floor runtime.MemStats
+	runtime.ReadMemStats(&floor)
+	var peak atomic.Uint64
+	fn(func(int) io.Writer { return liveProbe{&peak} })
+	held = peak.Load() - min(peak.Load(), floor.HeapAlloc)
 	if profile != "" {
 		f, err := os.Create(profile)
 		if err != nil {
@@ -91,29 +138,14 @@ func measureMerge(t testing.TB, n int, profile string, fn func(sink func(i int) 
 		}
 		defer pprof.StopCPUProfile()
 	}
-	var best mergeCost
 	for run := 0; run < n; run++ {
-		outs := make([]countingWriter, 4096)
-		runtime.GC()
-		var before, after runtime.MemStats
-		runtime.ReadMemStats(&before)
-		stop := heapWatch()
-		cpuBefore, begin := cpuTime(), time.Now()
-		parts := fn(func(i int) io.Writer { return &outs[i] })
-		c := mergeCost{wall: time.Since(begin), cpu: cpuTime() - cpuBefore, parts: parts}
-		peak := stop()
-		runtime.ReadMemStats(&after)
-		c.mallocs, c.allocated = after.Mallocs-before.Mallocs, after.TotalAlloc-before.TotalAlloc
-		c.peakHeap = peak - min(peak, before.HeapAlloc)
-		for i := range outs {
-			c.size += outs[i].n.Load()
-		}
+		c := runMerge(fn)
 		if run == 0 || c.cpu < best.cpu {
 			best = c
 		}
 	}
 
-	return best
+	return held, best
 }
 
 // contentDigest folds every value of every row of parts, in row order, into
@@ -182,8 +214,9 @@ func contentDigest(t testing.TB, parts []*part.Part) (digest uint64, rows, block
 // file named by LYNXDB_BENCH_NDJSON: as one merge on one goroutine, and as
 // range merges on every core. LYNXDB_BENCH_MERGE_RUNS sets the number of
 // source runs, LYNXDB_BENCH_RUNS the timed repetitions, LYNXDB_BENCH_SORT the
-// sort key, and LYNXDB_BENCH_PROFILE names a directory that receives one CPU
-// profile per mode.
+// sort key, LYNXDB_BENCH_MERGE_MODE keeps one of the modes whole and ranges,
+// and LYNXDB_BENCH_PROFILE names a directory that receives one CPU profile
+// per mode.
 func TestJSONBenchMerge(t *testing.T) {
 	path := os.Getenv("LYNXDB_BENCH_NDJSON")
 	if path == "" {
@@ -197,7 +230,7 @@ func TestJSONBenchMerge(t *testing.T) {
 	const blockRows = 16384
 	cores := runtime.GOMAXPROCS(0)
 	nRuns := envInt(t, "LYNXDB_BENCH_MERGE_RUNS", 12)
-	repeat := envInt(t, "LYNXDB_BENCH_RUNS", 3)
+	repeat := envInt(t, "LYNXDB_BENCH_RUNS", 5)
 	profileDir := os.Getenv("LYNXDB_BENCH_PROFILE")
 	profile := func(name string) string {
 		if profileDir == "" {
@@ -258,13 +291,17 @@ func TestJSONBenchMerge(t *testing.T) {
 		t.Logf("merged content digest %016x, %d parts, %d blocks", digest, n, blocks)
 	}
 
-	report := func(label string, c mergeCost) {
+	report := func(label, name string, fn func(func(int) io.Writer) int) {
+		if only := os.Getenv("LYNXDB_BENCH_MERGE_MODE"); only != "" && only != name {
+			return
+		}
+		held, c := measureMerge(t, repeat, profile("merge_"+name), fn)
 		perMillion := float64(rows) / 1e6
-		t.Logf("%-22s %7.0f ms wall, %6.0f krows/s, cpu %5.2f s per 1M rows, %7.0f allocs and %6.0f MB allocated per 1M rows, peak heap +%.0f MB, %.2f MB in %d parts",
+		t.Logf("%-21s %5.0f ms wall, %5.0f krows/s, cpu %.2f s and %6.0f allocs of %4.0f MB per 1M rows, holds %.0f MB, peak heap +%.0f MB; %.2f MB in %d parts",
 			label, ms(c.wall), float64(rows)/c.wall.Seconds()/1e3, c.cpu.Seconds()/perMillion,
-			float64(c.mallocs)/perMillion, float64(c.allocated)/1e6/perMillion, float64(c.peakHeap)/1e6,
-			float64(c.size)/1e6, c.parts)
+			float64(c.mallocs)/perMillion, float64(c.allocated)/1e6/perMillion,
+			float64(held)/1e6, float64(c.peakHeap)/1e6, float64(c.size)/1e6, c.parts)
 	}
-	report("whole, one goroutine", measureMerge(t, repeat, profile("merge_whole"), whole))
-	report(fmt.Sprintf("ranges, %d cores", cores), measureMerge(t, repeat, profile("merge_ranges"), ranges))
+	report("whole, one goroutine", "whole", whole)
+	report(fmt.Sprintf("ranges, %d cores", cores), "ranges", ranges)
 }
