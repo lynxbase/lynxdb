@@ -72,9 +72,27 @@ func MaskOr(dst, a, b []uint8) {
 	}
 }
 
+// spread holds, for every byte, the eight mask bytes of its bits.
+var spread = func() (t [256]uint64) {
+	for b := range t {
+		for bit := 0; bit < 8; bit++ {
+			if b>>bit&1 != 0 {
+				t[b] |= 0xFF << (8 * bit)
+			}
+		}
+	}
+
+	return t
+}()
+
 // MaskAndBitmap clears the mask bytes of rows whose bit in valid is clear.
 func MaskAndBitmap(mask []uint8, valid Bitmap) {
-	for i := range mask {
+	i := 0
+	for ; i+8 <= len(mask); i += 8 {
+		keep := spread[uint8(valid[i>>6]>>(uint(i)&63))]
+		binary.LittleEndian.PutUint64(mask[i:], binary.LittleEndian.Uint64(mask[i:])&keep)
+	}
+	for ; i < len(mask); i++ {
 		if !valid.Get(i) {
 			mask[i] = 0
 		}
