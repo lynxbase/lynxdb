@@ -43,7 +43,13 @@ type execution struct {
 	shared  *sharedGroups
 	// streaming is set while the aggregation runs in key order.
 	streaming bool
+	// taken counts the rows that a plan with a limit and no order has
+	// produced.
+	taken atomic.Int64
 }
+
+// errEnough ends a scan whose plan has all the rows it asked for.
+var errEnough = errors.New("exec: enough rows")
 
 // Run executes plan over snap and returns its rows.
 func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) (*Result, error) {
@@ -72,7 +78,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 	scan := q.opts
 	scan.Workers = n
 	stats, err := snap.Scan(ctx, scan, x.block)
-	if err != nil {
+	if err != nil && !errors.Is(err, errEnough) {
 		return nil, err
 	}
 	active := x.workers[:0:0]
@@ -201,7 +207,18 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 		return w.agg.block(count, idx)
 	}
 
-	return w.project(count, idx)
+	limited := q.limit > 0 && len(q.order) == 0
+	if limited && x.taken.Load() >= int64(q.limit) {
+		return errEnough
+	}
+	if err := w.project(count, idx); err != nil {
+		return err
+	}
+	if limited && x.taken.Add(int64(count)) >= int64(q.limit) {
+		return errEnough
+	}
+
+	return nil
 }
 
 // forEach calls fn for every i below n from up to workers goroutines,
