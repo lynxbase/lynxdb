@@ -614,3 +614,26 @@ func TestTokenLookupReadsOneStripeOfEveryGroup(t *testing.T) {
 		runs[0][1]+1, runs[1][1]-runs[1][0]+1, p.groups[0].stripe, float64(one.pages)/per, float64(one.faults)/per, float64(one.windows)/per,
 		readWindow>>10, float64(three.pages)/per, float64(three.faults)/per, float64(three.windows)/per)
 }
+
+// BenchmarkMayContainToken probes three tokens against every block of a part
+// of 320 blocks whose filters hold 80000 tokens each.
+func BenchmarkMayContainToken(b *testing.B) {
+	batch, _ := wordBatch(b, rand.New(rand.NewSource(1)), 2000, 40, 0)
+	p := repeatedBlocks(b, batch, 320, Options{})
+	hashes := tokenfilter.AppendHashes(nil, []byte("absent w7zzzzzzz missing"))
+	if len(hashes) != 3 {
+		b.Fatalf("%d tokens", len(hashes))
+	}
+	blocks := p.NumBlocks()
+	b.ResetTimer()
+	for b.Loop() {
+		for i := 0; i < blocks; i++ {
+			for _, h := range hashes {
+				if _, err := p.MayContainToken(i, h); err != nil {
+					b.Fatal(err)
+				}
+			}
+		}
+	}
+	b.ReportMetric(float64(b.Elapsed().Nanoseconds())/float64(b.N*blocks*len(hashes)), "ns/probe")
+}
