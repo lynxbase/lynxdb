@@ -192,6 +192,9 @@ func (s *Store) Table() *Table { return s.dir.Table() }
 // Lost is Dir.Lost for the store's directory.
 func (s *Store) Lost() []string { return s.dir.Lost() }
 
+// Written is Dir.Written for the store's directory.
+func (s *Store) Written() (flushed, merged int64) { return s.dir.Written() }
+
 // ReleasePages is Dir.ReleasePages for the store's directory.
 func (s *Store) ReleasePages() { s.dir.ReleasePages() }
 

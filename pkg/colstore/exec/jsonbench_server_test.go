@@ -135,9 +135,11 @@ func (s *flowServer) stats(w http.ResponseWriter, _ *http.Request) {
 		size += int64(h.Size())
 		runs[h.Run] = struct{}{}
 	}
+	flushed, merged := s.store.Written()
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"rows": rows, "bytes": size, "parts": len(snap.Parts()), "runs": len(runs),
 		"accepted": s.accepted.Load(), "rejected": s.rejected.Load(),
+		"written_by_flushes": flushed, "written_by_merges": merged,
 	})
 }
 
