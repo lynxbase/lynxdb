@@ -288,3 +288,40 @@ func TestNullsFilledInNamedColumns(t *testing.T) {
 		}
 	}
 }
+
+// TestValuesCollectedFromCounts requires an aggregate that collects the
+// values of a field to give what the row operators give over the events,
+// though the executor first counts each value in each group.
+func TestValuesCollectedFromCounts(t *testing.T) {
+	tables := testData(t)
+	for text, want := range map[string]string{
+		`source=logs | stats values(level) as levels by host | sort host`: `{"levels":["error","info"],"host":"a"} {"levels":["error","warn"],"host":"b"}`,
+		`source=logs | stats values(level) as levels, count() as n, max(status) as top, min(dur) as lo, sum(dur) as total, count(tags) as tagged by host | sort host`: `{"levels":["error","info"],"n":3,"top":500,"lo":0.5,"total":3,"tagged":1,"host":"a"} ` +
+			`{"levels":["error","warn"],"n":2,"top":503,"lo":0.25,"total":2.75,"tagged":0,"host":"b"}`,
+		`source=logs | stats values(level) as levels`:                                            `{"levels":["error","info","warn"]}`,
+		"source=logs | stats values(`http.path`) as paths, count() as n by host | sort host":     `{"paths":[],"n":3,"host":"a"} {"paths":["/x"],"n":2,"host":"b"}`,
+		`source=logs | stats values(status) as codes by level | sort level`:                      `{"codes":["500","503"],"level":"error"} {"codes":["200"],"level":"info"} {"codes":["404"],"level":"warn"}`,
+		`source=logs | stats values(dur) as durs by host | sort host`:                            `{"durs":["0.5","1","1.5"],"host":"a"} {"durs":["0.25","2.5"],"host":"b"}`,
+		`source=logs | stats values(nope) as none, count() as n by host | sort host`:             `{"none":[],"n":3,"host":"a"} {"none":[],"n":2,"host":"b"}`,
+		`source=logs, logs-old | stats values(host) as hosts by level | sort level`:              `{"hosts":["a","b","c"],"level":"error"} {"hosts":["a"],"level":"info"} {"hosts":["b"],"level":"warn"}`,
+		`source=nope | stats values(level) as levels`:                                            `{"levels":[]}`,
+		`source=logs | where status > 999 | stats values(level) as levels, count() as n by host`: ``,
+		`source=logs | stats values(level) as levels, avg(dur) as mean by host | sort host`:      `{"levels":["error","info"],"mean":1,"host":"a"} {"levels":["error","warn"],"mean":1.375,"host":"b"}`,
+	} {
+		compiled, err := query.Compile(text)
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		res, err := Run(context.Background(), compiled.Plan, tables, Options{Now: testNow})
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		rows := make([]string, res.Len())
+		for i := range rows {
+			rows[i] = string(res.AppendJSON(nil, i))
+		}
+		if got := strings.Join(rows, " "); got != want {
+			t.Errorf("%s\n got  %s\n want %s", text, got, want)
+		}
+	}
+}
