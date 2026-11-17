@@ -49,6 +49,10 @@ type Column struct {
 	// Values holds the rows in the flat layout; a row uses the buffer of its
 	// own kind.
 	Values vec.Column
+	// Field is set for a column that holds a field of the events as it is
+	// stored: a row without a value there does not hold the field, where in
+	// any other column it holds null.
+	Field bool
 }
 
 // Result is the rows a query produced.
@@ -208,6 +212,8 @@ func (c *colVec) appendValue(v Value) {
 		c.appendFloat(v.Float)
 	case vec.KindString, vec.KindVariant:
 		c.appendBytes(v.Kind, v.Bytes)
+	case vec.KindNull:
+		c.appendPresentNull()
 	default:
 		c.appendNull()
 	}

@@ -64,12 +64,19 @@ func (r *resolver) read(parts []*colstore.Handle, q *query, e *sexpr, picks []pl
 	}
 	pathID, ok := p.PathID(q.paths[e.path])
 	// A row that holds values of several kinds gives the lowest.
-	for kind := vec.KindVariant; ok && kind >= vec.KindBool; kind-- {
+	for kind := vec.KindVariant; ok && kind >= vec.KindNull; kind-- {
 		ref, has := r.b.Column(pathID, kind)
-		if e.kinds&kindBit(kind) == 0 || !has || ref.Count == 0 {
+		// A field read whatever its kind also gives the nulls it holds.
+		if wanted := e.kinds&kindBit(kind) != 0 || (kind == vec.KindNull && e.kind == KindAny); !wanted || !has || ref.Count == 0 {
 			continue
 		}
-		if err := r.b.Decode(ref, &r.col); err != nil {
+		var err error
+		if kind == vec.KindNull {
+			err = r.b.DecodePresence(ref, &r.col)
+		} else {
+			err = r.b.Decode(ref, &r.col)
+		}
+		if err != nil {
 			return err
 		}
 		for _, pk := range picks {
@@ -79,6 +86,7 @@ func (r *resolver) read(parts []*colstore.Handle, q *query, e *sexpr, picks []pl
 			}
 			v := Value{Kind: kind}
 			switch kind {
+			case vec.KindNull:
 			case vec.KindBool:
 				v.Bool = r.col.Bool(row)
 			case vec.KindInt:
@@ -252,26 +260,25 @@ func (x *execution) finish(snap *colstore.Snapshot, sinks []*sink) ([]Column, in
 // the hidden columns go.
 func (x *execution) shown(snap *colstore.Snapshot, out []colVec, n int) ([]Column, int, error) {
 	q := x.q
-	names := q.names
+	names, named := q.names, len(q.names)
 	if q.rest {
-		last := len(out) - 1
-		fields, cols, err := rest(snap, q, &out[last], n, len(x.workers))
+		named--
+		others, cols, err := rest(snap, q, &out[named], n, len(x.workers))
 		if err != nil {
 			return nil, 0, err
 		}
-		names, out = append(names[:last:last], fields...), append(out[:last:last], cols...)
+		names, out = append(names[:named:named], others...), append(out[:named:named], cols...)
 	}
-	if len(q.hide) != 0 {
-		kept := 0
-		names = slices.Clone(names)
-		for c, name := range names {
-			if !slices.Contains(q.hide, name) {
-				names[kept], out[kept] = name, out[c]
-				kept++
-			}
+	shown := make([]Column, 0, len(out))
+	for c, name := range names {
+		if slices.Contains(q.hide, name) {
+			continue
 		}
-		names, out = names[:kept], out[:kept]
+		col := out[c].column(name)
+		// The fields that the plan does not name come as they are stored.
+		col.Field = c >= named || (c < len(q.fields) && q.fields[c])
+		shown = append(shown, col)
 	}
 
-	return columns(names, out), n, nil
+	return shown, n, nil
 }
