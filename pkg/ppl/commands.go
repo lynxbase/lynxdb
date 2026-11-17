@@ -402,7 +402,7 @@ func (c *compiler) replace(st *pipe, n *ast.ReplaceCommand) error {
 
 func (c *compiler) eval(st *pipe, n *ast.EvalCommand) error {
 	if n.Command == "fieldformat" {
-		return unsupportedFeature(n, "fieldformat is not supported; use eval with concat() to format a field")
+		return c.unsupportedCommand(n)
 	}
 	comp := &ir.Compute{Input: st.node}
 	s := st.schema()

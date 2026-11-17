@@ -146,19 +146,9 @@ func unknownField(n ast.Node, name string, s ir.Schema) *Error {
 }
 
 func (c *compiler) unsupportedCommand(cmd ast.Command) *Error {
-	reasons := map[string]string{
-		"kmeans":           "it runs the OpenSearch ML Commons plugin, which LynxDB does not have",
-		"ad":               "it runs the OpenSearch ML Commons plugin, which LynxDB does not have",
-		"ml":               "it runs the OpenSearch ML Commons plugin, which LynxDB does not have",
-		"show datasources": "LynxDB has no external data sources; every index is local",
-		"rest":             "it reads OpenSearch cluster management endpoints; use the LynxDB REST API instead",
-		"graphlookup":      "recursive graph traversal needs an iterative join operator LynxDB does not have yet",
-		"foreach":          "templated per-field evaluation is not implemented; write one eval per field",
-		"timewrap":         "period-over-period wrapping is not implemented; compute the shifted period with eval and join",
-	}
-	reason := reasons[cmd.Name()]
-	if reason == "" {
-		reason = "LynxDB does not implement it"
+	reason := "LynxDB does not implement it"
+	if entry, ok := LookupCommand(cmd.Name()); ok && entry.Notes != "" {
+		reason = entry.Notes
 	}
 	return errAt(ErrUnsupportedCommand, cmd, "the %s command is not supported: %s", cmd.Name(), reason)
 }
