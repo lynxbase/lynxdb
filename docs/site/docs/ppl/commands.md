@@ -56,7 +56,7 @@ Every PPL command of the OpenSearch command reference and how LynxDB executes it
 | `show datasources` | unsupported | LynxDB has no external data sources; every index is local |
 | `sort` | full | ip(field) sorts by the text form of the address |
 | `spath` | partial | auto-extract keeps JSON value types; a JSON null stays NULL |
-| `stats` | partial | bucket_nullable supported; partitions, allnum and delim accepted without effect; dedup_splitvalues unsupported; distinct_count is exact up to 10,000 values per group and estimated beyond; output row order is unspecified |
+| `stats` | partial | bucket_nullable supported; partitions, allnum and delim accepted without effect; dedup_splitvalues unsupported; distinct_count is estimated beyond 10,000 values per group only by the row operators; output row order is unspecified |
 | `streamstats` | partial | current, window and global=false supported; bucket_nullable=false with a by clause, reset_before, reset_after, time_window, and window with global=true and a by clause are unsupported |
 | `subquery` | partial | uncorrelated IN, EXISTS and scalar subqueries; a subquery is evaluated once before the outer query; correlated subqueries are not supported: a reference through the outer source name or alias (outer.b), or to a field only the outer query has, fails to compile, and an unqualified name the subquery can also have reads the subquery's own field |
 | `table` | full |  |

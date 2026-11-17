@@ -14,9 +14,9 @@ Aggregation functions of `stats`, `eventstats`, `streamstats`, `timechart` and `
 | `avg` | full | exact | Arithmetic mean of the numeric values. |
 | `c` | full | exact | alias of count |
 | `count` | full | exact | count() and count(*) count rows; count(x) counts non-NULL x; count(eval(cond)) counts rows where cond is TRUE |
-| `dc` | full | exact | alias of distinct_count; exact |
-| `distinct_count` | full | exact | exact |
-| `distinct_count_approx` | full | approximate | HyperLogLog estimate |
+| `dc` | full | exact | alias of distinct_count, which counts differently in the columnar executor and the row operators |
+| `distinct_count` | full | exact | number of distinct non-NULL values; the columnar executor counts exactly and tells kinds apart (1, 1.0 and '1' are three values); the row operators compare values by their text (1, 1.0 and '1' are one value) and, in stats, estimate with HyperLogLog beyond 10,000 values per group |
+| `distinct_count_approx` | full | approximate | the columnar executor counts exactly up to 383 values per group and estimates beyond with a 1.6% standard error; the row operators count it as distinct_count |
 | `earliest` | full | exact | the value of the row with the earliest _time; a time field other than _time or @timestamp is not supported |
 | `first` | full | none | The first non-NULL value in input order. |
 | `last` | full | none | The last non-NULL value in input order. |

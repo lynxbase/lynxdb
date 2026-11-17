@@ -39,7 +39,7 @@ var commandCatalog = map[string]CommandSupport{
 	"fillnull":         {Support: Full, Notes: "without a field list, fills NULL values of the columns each row has"},
 	"expand":           {Support: Full},
 	"flatten":          {Support: Partial, Notes: "aliases are assigned to members in key order"},
-	"stats":            {Support: Partial, Notes: "bucket_nullable supported; partitions, allnum and delim accepted without effect; dedup_splitvalues unsupported; distinct_count is exact up to 10,000 values per group and estimated beyond; output row order is unspecified"},
+	"stats":            {Support: Partial, Notes: "bucket_nullable supported; partitions, allnum and delim accepted without effect; dedup_splitvalues unsupported; distinct_count is estimated beyond 10,000 values per group only by the row operators; output row order is unspecified"},
 	"eventstats":       {Support: Partial, Notes: "bucket_nullable=false with a by clause and the window functions row_number, rank, dense_rank, percent_rank, cume_dist, nth and ntile are unsupported"},
 	"streamstats":      {Support: Partial, Notes: "current, window and global=false supported; bucket_nullable=false with a by clause, reset_before, reset_after, time_window, and window with global=true and a by clause are unsupported"},
 	"bin":              {Support: Partial, Notes: "span= with numeric and time units; bins, minspan, aligntime, start, end and logarithmic spans are unsupported"},
