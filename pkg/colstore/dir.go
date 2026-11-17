@@ -526,9 +526,15 @@ type PartFile struct {
 	name string
 	tmp  string
 	size int64
+	// begun is how much of the file the device was asked to start on.
+	begun int64
 	// before, when set, runs ahead of every write.
 	before func()
 }
+
+// writebackStep is the bytes written to a part file between requests to
+// the device to start on them.
+const writebackStep = 1 << 20
 
 // Create starts a part file that is a run of its own. Any number of them can
 // be written at once.
@@ -550,6 +556,10 @@ func (pf *PartFile) Write(p []byte) (int, error) {
 	}
 	n, err := pf.f.Write(p)
 	pf.size += int64(n)
+	if pf.size-pf.begun >= writebackStep {
+		startWriteback(pf.f, pf.begun, pf.size-pf.begun)
+		pf.begun = pf.size
+	}
 
 	return n, err
 }

@@ -151,7 +151,11 @@ func TestRun(t *testing.T) {
 			"dur=1.5 host=a mean=1; dur=2.5 host=b mean=1.375", false},
 		{"a field taken out of text", `source=logs | rex field=msg "(?<first>\w+)" | stats count() as n by first | sort - n, first | head 2`,
 			"first=request n=2; first=Disk n=1", false},
-		{"the fields of a table", `describe hosts`, "column=_time; column=dc; column=host; column=ts", false},
+		{"the fields of a table", `describe hosts | fields COLUMN_NAME, TYPE_NAME, ORDINAL_POSITION`,
+			"COLUMN_NAME=_time ORDINAL_POSITION=1 TYPE_NAME=timestamp; COLUMN_NAME=dc ORDINAL_POSITION=2 TYPE_NAME=string; " +
+				"COLUMN_NAME=host ORDINAL_POSITION=3 TYPE_NAME=string; COLUMN_NAME=ts ORDINAL_POSITION=4 TYPE_NAME=bigint", false},
+		{"the types of a table's fields", `describe logs | where COLUMN_NAME in ('dur', 'tags', 'status') | fields COLUMN_NAME, TYPE_NAME, TABLE_NAME`,
+			"COLUMN_NAME=dur TABLE_NAME=logs TYPE_NAME=double; COLUMN_NAME=status TABLE_NAME=logs TYPE_NAME=bigint; COLUMN_NAME=tags TABLE_NAME=logs TYPE_NAME=array", false},
 		{"rows numbered as they come and cut short", `source=logs | where status < 500 | streamstats count() as i | where i <= 2 | stats count() as n`, "n=2", false},
 		{"a field taken out of text and a limit", `source=logs | rex field=msg "(?<first>\\w+)" | where first = 'request' | head 1 | fields first, status`,
 			"first=request status=200", false},

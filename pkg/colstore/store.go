@@ -50,8 +50,8 @@ type StoreOptions struct {
 	MergeBlocks int
 	// MergeBacklog makes merges give way to the rows that wait in Append's
 	// buffers and to their flushes, which the callers of Append and Sync
-	// wait for, while fewer runs than this are due to be merged; zero lets
-	// both share the disk.
+	// wait for, while fewer runs than this are due to be merged; zero
+	// means 64, and a negative value lets both share the disk.
 	MergeBacklog int
 	// Partition is the span of time whose rows are kept and merged apart
 	// from all others, so that a time range reads only the spans it meets
@@ -80,6 +80,9 @@ const (
 	// defaultMergeBlocks bounds the decoded blocks that all range merges
 	// hold together, each several megabytes of column values.
 	defaultMergeBlocks = 96
+	// defaultMergeBacklog lets a burst of rows be written before the runs
+	// it leaves are merged, and bounds the runs that queries then meet.
+	defaultMergeBacklog = 64
 	// defaultValueSlack lets text that shrinks little take the codec that
 	// scans read several times faster, for at most half again its size.
 	defaultValueSlack = 50
@@ -179,6 +182,9 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	}
 	if opts.MergeBlocks <= 0 {
 		opts.MergeBlocks = defaultMergeBlocks
+	}
+	if opts.MergeBacklog == 0 {
+		opts.MergeBacklog = defaultMergeBacklog
 	}
 	if opts.Part.ValueSlack == 0 {
 		opts.Part.ValueSlack = defaultValueSlack
