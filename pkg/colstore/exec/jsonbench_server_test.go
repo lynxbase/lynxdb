@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"slices"
 	"strconv"
 	"strings"
@@ -295,6 +296,23 @@ func (s *benchServer) handler() http.Handler {
 	mux.HandleFunc("POST /insert", s.insert)
 	mux.HandleFunc("GET /stats", s.stats)
 	mux.HandleFunc("GET /query", s.query)
+	// A CPU profile of the server over seconds=N, ten by default.
+	mux.HandleFunc("GET /profile", func(w http.ResponseWriter, r *http.Request) {
+		seconds, err := strconv.Atoi(r.URL.Query().Get("seconds"))
+		if err != nil || seconds <= 0 {
+			seconds = 10
+		}
+		if err := pprof.StartCPUProfile(w); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+
+			return
+		}
+		defer pprof.StopCPUProfile()
+		select {
+		case <-time.After(time.Duration(seconds) * time.Second):
+		case <-r.Context().Done():
+		}
+	})
 	step := func(fn func() error) http.HandlerFunc {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			begin := time.Now()
