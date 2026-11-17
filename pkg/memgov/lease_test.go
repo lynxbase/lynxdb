@@ -41,7 +41,6 @@ func TestUnit_Lease_Release_NilSafe(t *testing.T) {
 
 func TestUnit_Lease_Bytes_ReturnsReservedAmount(t *testing.T) {
 	lease := &Lease{
-		gov:   &NopGovernor{},
 		class: ClassMetadata,
 		bytes: 4096,
 	}
@@ -67,7 +66,6 @@ func TestUnit_Lease_IsReleased_NilReturnsTrue(t *testing.T) {
 
 func TestUnit_Lease_IsReleased_BeforeAndAfterRelease(t *testing.T) {
 	lease := &Lease{
-		gov:   &NopGovernor{},
 		class: ClassSpillable,
 		bytes: 512,
 	}

@@ -13,7 +13,7 @@ var _ MemoryAccount = (*AccountAdapter)(nil)
 func TestUnit_AccountAdapter_Grow_IncreasesUsedAndMaxUsed(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	opMem := NewOperatorMemory(gov, "test-op")
-	acct := NewAccountAdapter(opMem)
+	acct := newTrackedAccountAdapter(opMem, nil)
 	defer acct.Close()
 
 	if err := acct.Grow(1024); err != nil {
@@ -43,7 +43,7 @@ func TestUnit_AccountAdapter_Grow_IncreasesUsedAndMaxUsed(t *testing.T) {
 func TestUnit_AccountAdapter_Grow_ZeroIsNoOp(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	opMem := NewOperatorMemory(gov, "test-op")
-	acct := NewAccountAdapter(opMem)
+	acct := newTrackedAccountAdapter(opMem, nil)
 	defer acct.Close()
 
 	if err := acct.Grow(0); err != nil {
@@ -68,7 +68,7 @@ func TestUnit_AccountAdapter_Grow_ZeroIsNoOp(t *testing.T) {
 func TestUnit_AccountAdapter_Shrink_DecreasesUsed(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	opMem := NewOperatorMemory(gov, "test-op")
-	acct := NewAccountAdapter(opMem)
+	acct := newTrackedAccountAdapter(opMem, nil)
 	defer acct.Close()
 
 	if err := acct.Grow(4096); err != nil {
@@ -89,7 +89,7 @@ func TestUnit_AccountAdapter_Shrink_DecreasesUsed(t *testing.T) {
 func TestUnit_AccountAdapter_Shrink_MoreThanUsed_ClampsToZero(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	opMem := NewOperatorMemory(gov, "test-op")
-	acct := NewAccountAdapter(opMem)
+	acct := newTrackedAccountAdapter(opMem, nil)
 	defer acct.Close()
 
 	if err := acct.Grow(100); err != nil {
@@ -107,7 +107,7 @@ func TestUnit_AccountAdapter_Shrink_MoreThanUsed_ClampsToZero(t *testing.T) {
 func TestUnit_AccountAdapter_Shrink_ReleasesToGovernor(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	opMem := NewOperatorMemory(gov, "test-op")
-	acct := NewAccountAdapter(opMem)
+	acct := newTrackedAccountAdapter(opMem, nil)
 	defer acct.Close()
 
 	if err := acct.Grow(4096); err != nil {
@@ -139,7 +139,7 @@ func TestUnit_AccountAdapter_Shrink_ReleasesToGovernor(t *testing.T) {
 func TestUnit_AccountAdapter_Shrink_ZeroAndNegative_NoOp(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	opMem := NewOperatorMemory(gov, "test-op")
-	acct := NewAccountAdapter(opMem)
+	acct := newTrackedAccountAdapter(opMem, nil)
 	defer acct.Close()
 
 	if err := acct.Grow(500); err != nil {
@@ -160,7 +160,7 @@ func TestUnit_AccountAdapter_Shrink_ZeroAndNegative_NoOp(t *testing.T) {
 func TestUnit_AccountAdapter_MaxUsed_TracksPeak(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	opMem := NewOperatorMemory(gov, "test-op")
-	acct := NewAccountAdapter(opMem)
+	acct := newTrackedAccountAdapter(opMem, nil)
 	defer acct.Close()
 
 	// Grow to 3000, shrink to 1000, grow to 2000.
@@ -192,7 +192,7 @@ func TestUnit_AccountAdapter_MaxUsed_TracksPeak(t *testing.T) {
 func TestUnit_AccountAdapter_Close_ReleasesViaOperatorMemory(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	opMem := NewOperatorMemory(gov, "test-op")
-	acct := NewAccountAdapter(opMem)
+	acct := newTrackedAccountAdapter(opMem, nil)
 
 	if err := acct.Grow(4096); err != nil {
 		t.Fatalf("Grow failed: %v", err)
@@ -211,27 +211,11 @@ func TestUnit_AccountAdapter_Close_ReleasesViaOperatorMemory(t *testing.T) {
 	}
 }
 
-func TestUnit_AccountAdapter_OperatorMemory_ReturnsUnderlying(t *testing.T) {
-	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
-	opMem := NewOperatorMemory(gov, "test-op")
-	acct := NewAccountAdapter(opMem)
-	defer acct.Close()
-
-	got := acct.OperatorMemory()
-	if got == nil {
-		t.Fatal("OperatorMemory() returned nil")
-	}
-	// They must be the exact same interface value.
-	if got != opMem {
-		t.Error("OperatorMemory() returned a different OperatorMemory than was passed to constructor")
-	}
-}
-
 func TestUnit_AccountAdapter_Grow_GovernorLimitExceeded_ReturnsError(t *testing.T) {
 	// Governor with a very small limit -- 256 bytes total.
 	gov := NewGovernor(GovernorConfig{TotalLimit: 256})
 	opMem := NewOperatorMemory(gov, "test-op")
-	acct := NewAccountAdapter(opMem)
+	acct := newTrackedAccountAdapter(opMem, nil)
 	defer acct.Close()
 
 	// First grow should succeed.
@@ -261,7 +245,7 @@ func TestUnit_AccountAdapter_Grow_GovernorLimitExceeded_ReturnsError(t *testing.
 func TestUnit_AccountAdapter_Grow_GovernorLimitExactBoundary_Succeeds(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 512})
 	opMem := NewOperatorMemory(gov, "test-op")
-	acct := NewAccountAdapter(opMem)
+	acct := newTrackedAccountAdapter(opMem, nil)
 	defer acct.Close()
 
 	// Grow to exactly the limit.
@@ -282,7 +266,7 @@ func TestUnit_AccountAdapter_Grow_GovernorLimitExactBoundary_Succeeds(t *testing
 func TestUnit_AccountAdapter_GrowShrinkGrow_StateConsistency(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	opMem := NewOperatorMemory(gov, "test-op")
-	acct := NewAccountAdapter(opMem)
+	acct := newTrackedAccountAdapter(opMem, nil)
 	defer acct.Close()
 
 	// Grow, shrink all, grow again -- should work from clean state.
@@ -312,7 +296,7 @@ func TestUnit_AccountAdapter_GrowShrinkGrow_StateConsistency(t *testing.T) {
 func TestUnit_BudgetAdapter_NewAccount_CreatesWorkingAccountAdapter(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	budget := NewQueryBudget(gov, "query-1")
-	adapter := NewBudgetAdapter(budget, gov)
+	adapter := NewBudgetAdapterWithLimit(budget, gov, 0)
 	defer adapter.Close()
 
 	acct := adapter.NewAccount("sort")
@@ -341,7 +325,7 @@ func TestUnit_BudgetAdapter_NewAccount_CreatesWorkingAccountAdapter(t *testing.T
 func TestUnit_BudgetAdapter_MultipleNewAccount_CreatesIndependentAccounts(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	budget := NewQueryBudget(gov, "query-2")
-	adapter := NewBudgetAdapter(budget, gov)
+	adapter := NewBudgetAdapterWithLimit(budget, gov, 0)
 	defer adapter.Close()
 
 	acct1 := adapter.NewAccount("sort")
@@ -378,7 +362,7 @@ func TestUnit_BudgetAdapter_MultipleNewAccount_CreatesIndependentAccounts(t *tes
 func TestUnit_BudgetAdapter_MultipleNewAccount_DistinctOperatorMemories(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	budget := NewQueryBudget(gov, "query-3")
-	adapter := NewBudgetAdapter(budget, gov)
+	adapter := NewBudgetAdapterWithLimit(budget, gov, 0)
 	defer adapter.Close()
 
 	acct1 := adapter.NewAccount("sort")
@@ -387,57 +371,15 @@ func TestUnit_BudgetAdapter_MultipleNewAccount_DistinctOperatorMemories(t *testi
 	defer acct2.Close()
 
 	// Each account wraps a different OperatorMemory instance.
-	om1 := acct1.OperatorMemory()
-	om2 := acct2.OperatorMemory()
-	if om1 == om2 {
+	if acct1.opMem == acct2.opMem {
 		t.Error("NewAccount should create distinct OperatorMemory instances, but got the same one")
-	}
-}
-
-func TestUnit_BudgetAdapter_NewSpillableAccount_ChargesClassSpillable(t *testing.T) {
-	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
-	budget := NewQueryBudget(gov, "query-spillable")
-	adapter := NewBudgetAdapter(budget, gov)
-	defer adapter.Close()
-
-	acct := adapter.NewSpillableAccount("sort")
-	if acct == nil {
-		t.Fatal("NewSpillableAccount returned nil")
-	}
-	if err := acct.Grow(4096); err != nil {
-		t.Fatalf("acct.Grow failed: %v", err)
-	}
-	if got := gov.ClassUsage(ClassSpillable).Allocated; got != 4096 {
-		t.Fatalf("ClassSpillable allocated = %d, want 4096", got)
-	}
-	if got := gov.ClassUsage(ClassNonRevocable).Allocated; got != 0 {
-		t.Fatalf("ClassNonRevocable allocated = %d, want 0", got)
-	}
-	if got := adapter.CurAllocated(); got != 4096 {
-		t.Fatalf("adapter.CurAllocated = %d, want 4096", got)
-	}
-
-	acct.Shrink(1024)
-	if got := gov.ClassUsage(ClassSpillable).Allocated; got != 3072 {
-		t.Fatalf("ClassSpillable after Shrink = %d, want 3072", got)
-	}
-	if got := adapter.CurAllocated(); got != 3072 {
-		t.Fatalf("adapter.CurAllocated after Shrink = %d, want 3072", got)
-	}
-
-	acct.Close()
-	if got := gov.ClassUsage(ClassSpillable).Allocated; got != 0 {
-		t.Fatalf("ClassSpillable after Close = %d, want 0", got)
-	}
-	if got := adapter.CurAllocated(); got != 0 {
-		t.Fatalf("adapter.CurAllocated after Close = %d, want 0", got)
 	}
 }
 
 func TestUnit_BudgetAdapter_Close_ReleasesQueryBudget(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	budget := NewQueryBudget(gov, "query-4")
-	adapter := NewBudgetAdapter(budget, gov)
+	adapter := NewBudgetAdapterWithLimit(budget, gov, 0)
 
 	// Borrow some memory through the budget directly to verify Close releases it.
 	lease, err := budget.Borrow(ClassSpillable, 8192)
@@ -462,7 +404,7 @@ func TestUnit_BudgetAdapter_Close_ReleasesQueryBudget(t *testing.T) {
 func TestUnit_BudgetAdapter_NewAccount_AccountWorksAfterBudgetBorrow(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	budget := NewQueryBudget(gov, "query-5")
-	adapter := NewBudgetAdapter(budget, gov)
+	adapter := NewBudgetAdapterWithLimit(budget, gov, 0)
 	defer adapter.Close()
 
 	// Borrow through the budget first.
@@ -496,7 +438,7 @@ func TestUnit_AccountAdapter_UsedAsStatsMemoryAccount(t *testing.T) {
 	gov := NewGovernor(GovernorConfig{TotalLimit: 1 << 20})
 	opMem := NewOperatorMemory(gov, "test-op")
 
-	var acct MemoryAccount = NewAccountAdapter(opMem)
+	var acct MemoryAccount = newTrackedAccountAdapter(opMem, nil)
 	defer acct.Close()
 
 	if err := acct.Grow(512); err != nil {

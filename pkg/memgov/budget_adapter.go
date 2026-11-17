@@ -24,13 +24,8 @@ type BudgetAdapter struct {
 	peak      atomic.Int64 // high-water mark of aggregate allocation
 }
 
-// NewBudgetAdapter creates a bridge that produces AccountAdapters from a QueryBudget.
-func NewBudgetAdapter(budget QueryBudget, gov Governor) *BudgetAdapter {
-	return &BudgetAdapter{budget: budget, gov: gov}
-}
-
-// NewBudgetAdapterWithLimit creates a BudgetAdapter with a per-query memory limit.
-// The limit is used for coordinator creation and operator budget splitting.
+// NewBudgetAdapterWithLimit creates a BudgetAdapter with a per-query memory
+// limit; zero means no per-query limit.
 func NewBudgetAdapterWithLimit(budget QueryBudget, gov Governor, limit int64) *BudgetAdapter {
 	return &BudgetAdapter{budget: budget, gov: gov, limit: limit}
 }
@@ -41,21 +36,6 @@ func NewBudgetAdapterWithLimit(budget QueryBudget, gov Governor, limit int64) *B
 func (ba *BudgetAdapter) NewAccount(label string) *AccountAdapter {
 	opMem := NewOperatorMemory(ba.gov, label)
 	return newTrackedAccountAdapter(opMem, ba)
-}
-
-// NewSpillableAccount creates an account whose allocations are charged to
-// ClassSpillable. Use this for blocking operators that can release memory by
-// spilling or by coordinator-directed budget shrinkage. Ordinary NewAccount
-// remains ClassNonRevocable for scan buffers and other pinned work.
-func (ba *BudgetAdapter) NewSpillableAccount(label string) *AccountAdapter {
-	return newTrackedClassAccountAdapter(ba.gov, ClassSpillable, ba)
-}
-
-// NewMetadataAccount creates an account charged to ClassMetadata. Use this for
-// auxiliary data structures such as bloom filters and indexes that are
-// re-readable or rebuildable, but are not operator working rows.
-func (ba *BudgetAdapter) NewMetadataAccount(label string) *AccountAdapter {
-	return newTrackedClassAccountAdapter(ba.gov, ClassMetadata, ba)
 }
 
 // Limit returns the per-query memory limit (0 = no per-query limit).
@@ -92,11 +72,6 @@ func (ba *BudgetAdapter) trackGrow(n int64) {
 // trackShrink records a release from an operator account.
 func (ba *BudgetAdapter) trackShrink(n int64) {
 	ba.allocated.Add(-n)
-}
-
-// Governor returns the underlying governor for sub-budget creation (e.g., CTEs).
-func (ba *BudgetAdapter) Governor() Governor {
-	return ba.gov
 }
 
 // Close releases all outstanding leases in the underlying QueryBudget.
