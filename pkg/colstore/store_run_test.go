@@ -381,9 +381,9 @@ func TestMergesDoNotWaitForEachOther(t *testing.T) {
 }
 
 // TestClosedPartitionsAreMergedIntoOneRun requires that a partition whose
-// span ended an hour ago is merged into one run, that the ones still open
-// keep their runs, and that rows which come later are merged in once they
-// make up an eighth of the partition.
+// span ended an hour ago is merged into one run once rows stop arriving in
+// it, that the ones still open keep their runs, and that rows which come
+// later are merged in once they make up an eighth of the partition.
 func TestClosedPartitionsAreMergedIntoOneRun(t *testing.T) {
 	skipSyncs(t)
 	hour := int64(time.Hour)
@@ -406,6 +406,8 @@ func TestClosedPartitionsAreMergedIntoOneRun(t *testing.T) {
 		if err := w.Close(); err != nil {
 			t.Fatal(err)
 		}
+		now.Add(int64(closedQuiet))
+		s.kick()
 		if err := s.Settle(); err != nil {
 			t.Fatal(err)
 		}
@@ -460,6 +462,84 @@ func TestClosedPartitionsAreMergedIntoOneRun(t *testing.T) {
 	}
 	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 960 || sum != 959*960/2 {
 		t.Fatalf("%d rows, sum %d", rows, sum)
+	}
+}
+
+// TestAClosedPartitionWaitsForQuietAndSkipsItsTiers requires that a closed
+// partition keeps its runs while rows arrive in it, without the merges by
+// tier that its whole merge would repeat, that it is merged by tier once it
+// holds as many runs as two tiers take, and that it is merged whole when
+// rows have stopped arriving.
+func TestAClosedPartitionWaitsForQuietAndSkipsItsTiers(t *testing.T) {
+	skipSyncs(t)
+	hour := int64(time.Hour)
+	var now atomic.Int64
+	timeNow = func() time.Time { return time.Unix(0, now.Load()) }
+	defer func() { timeNow = time.Now }()
+	now.Store((firstTimedHour+2)*hour + hour/2)
+	s, err := OpenStore(t.TempDir(), StoreOptions{TimeField: "ts", Partition: time.Hour, MergeFanIn: 3, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	// tiers returns the tiers of the runs of the first hour, lowest first.
+	tiers := func() []int {
+		snap := s.Table().Snapshot()
+		defer snap.Release()
+		seen := map[uint64]bool{}
+		var out []int
+		for _, h := range snap.Parts() {
+			if h.Partition == firstTimedHour && !seen[h.Run] {
+				seen[h.Run] = true
+				out = append(out, h.Tier)
+			}
+		}
+		slices.Sort(out)
+
+		return out
+	}
+	rows := 0
+	write := func() {
+		t.Helper()
+		var buf bytes.Buffer
+		for i := rows; i < rows+50; i++ {
+			fmt.Fprintf(&buf, `{"n":%d,"ts":%d}`+"\n", i, int64(firstTimedHour)*3600e6+int64(i))
+		}
+		rows += 50
+		w := s.NewWriter()
+		if err := w.AddNDJSON(buf.Bytes()); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		// Rows keep arriving: less than the quiet time passes.
+		now.Add(int64(closedQuiet) / 4)
+		s.kick()
+		if err := s.Settle(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 8 {
+		write()
+	}
+	if got := tiers(); !slices.Equal(got, []int{0, 0, 0, 0, 0, 0, 0, 0}) {
+		t.Fatalf("tiers of the runs %v while rows arrive, want eight flushed runs", got)
+	}
+	write()
+	if got := tiers(); !slices.Equal(got, []int{0, 0, 0, 0, 0, 0, 1}) {
+		t.Fatalf("tiers of the runs %v at nine runs, want three of them merged", got)
+	}
+	now.Add(int64(closedQuiet))
+	s.kick()
+	if err := s.Settle(); err != nil {
+		t.Fatal(err)
+	}
+	if got := tiers(); len(got) != 1 {
+		t.Fatalf("tiers of the runs %v once quiet, want one run", got)
+	}
+	if got, sum := rowsAndSumOf(t, s.Table()); got != int64(rows) || sum != int64(rows-1)*int64(rows)/2 {
+		t.Fatalf("%d rows, sum %d, want %d rows", got, sum, rows)
 	}
 }
 

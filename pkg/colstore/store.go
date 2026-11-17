@@ -173,6 +173,8 @@ type Store struct {
 	busy     map[uint64]int64
 	running  int
 	settling bool
+	// arrived holds, by partition, when rows were last flushed to it.
+	arrived map[int64]int64
 	// drops is set while the partitions that end at or before dropTo are
 	// being dropped; merges leave them alone.
 	drops  bool
@@ -215,6 +217,7 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	s.blocks.init(opts.MergeBlocks)
 	s.idle = sync.NewCond(&s.mu)
 	s.busy = map[uint64]int64{}
+	s.arrived = map[int64]int64{}
 	s.shards = make([]appendShard, runtime.GOMAXPROCS(0))
 	s.countRuns()
 	s.synced = sync.NewCond(&s.syncMu)
@@ -555,7 +558,9 @@ func (s *Store) writeBuffers(age time.Duration) error {
 		s.flushWrites.Add(1)
 		var files []*PartFile
 		if files, err = s.writeRuns(taken); err == nil {
-			_, err = s.dir.Commit(files, nil)
+			if _, err = s.dir.Commit(files, nil); err == nil {
+				s.noteArrival(files)
+			}
 		}
 		s.flushWrites.Add(-1)
 		s.countRuns()
@@ -877,9 +882,78 @@ var beforeMergeCommit func(meta PartMeta)
 // timeNow is the clock by which partitions close.
 var timeNow = time.Now
 
+// closedQuiet is how long a closed partition goes without rows before it
+// is merged whole: rows that still arrive would have it merged again.
+const closedQuiet = 10 * time.Second
+
 // closedLook is how often a store with partitions looks for ones that have
-// closed while no rows arrived.
-const closedLook = time.Minute
+// closed or gone quiet while no rows arrived.
+const closedLook = closedQuiet / 2
+
+// noteArrival records that rows were flushed to the partitions of files.
+func (s *Store) noteArrival(files []*PartFile) {
+	now := timeNow().UnixNano()
+	s.mu.Lock()
+	for _, f := range files {
+		s.arrived[f.Meta.Partition] = now
+	}
+	s.mu.Unlock()
+}
+
+// wholeDue returns the closed partitions among parts that are due to be
+// merged whole, each with the number of its runs: those of several runs of
+// which none holds seven eighths of the rows.
+func (s *Store) wholeDue(parts []*Handle) map[int64]int {
+	width := int64(s.opts.Partition)
+	if width <= 0 || s.opts.MergeFanIn < 2 {
+		return nil
+	}
+	now, grace := timeNow().UnixNano(), min(width, int64(time.Hour))
+	rows, most, runs := map[int64]uint64{}, map[uint64]uint64{}, map[int64]int{}
+	for _, h := range parts {
+		if !s.endsBy(h.Partition, now-grace) {
+			continue
+		}
+		if _, seen := most[h.Run]; !seen {
+			runs[h.Partition]++
+		}
+		rows[h.Partition] += h.Rows
+		most[h.Run] += h.Rows
+	}
+	for _, h := range parts {
+		if n, closed := runs[h.Partition]; closed && (n < 2 || most[h.Run]*8 >= rows[h.Partition]*7) {
+			delete(runs, h.Partition)
+		}
+	}
+
+	return runs
+}
+
+// leaveToWhole drops the merges by tier in the partitions that are due to
+// be merged whole, which would write their rows twice. A partition that
+// holds fanIn runs for each of fanIn keeps one at a time, so that its runs
+// stay few while rows keep arriving; merging names the partitions that a
+// merge under way reads.
+func (s *Store) leaveToWhole(sets [][]sortedRun, parts []*Handle, merging map[int64]bool) [][]sortedRun {
+	due := s.wholeDue(parts)
+	if len(due) == 0 {
+		return sets
+	}
+	most := s.opts.MergeFanIn * s.opts.MergeFanIn
+	out, kept := sets[:0], map[int64]bool{}
+	for _, set := range sets {
+		p := set[0].partition
+		switch n, whole := due[p]; {
+		case !whole:
+			out = append(out, set)
+		case n >= most && !kept[p] && !merging[p]:
+			kept[p] = true
+			out = append(out, set)
+		}
+	}
+
+	return out
+}
 
 // recheckEvery is how often the parts are told to check what is read from
 // them against its checksum again.
@@ -898,10 +972,10 @@ func (s *Store) recheck() {
 // again before they are given up.
 const spareIdle = 10 * time.Second
 
-// closedSet returns all the runs of the earliest partition that has closed,
-// that neither a merge under way nor a set of taken reads and of which no
-// single run holds seven eighths of the rows. One such partition is merged
-// at a time.
+// closedSet returns all the runs of the earliest partition that has closed
+// and gone quiet, that neither a merge under way nor a set of taken reads
+// and of which no single run holds seven eighths of the rows. One such
+// partition is merged at a time.
 func (s *Store) closedSet(free []*Handle, taken [][]sortedRun) [][]sortedRun {
 	width := int64(s.opts.Partition)
 	if width <= 0 || s.settling || s.opts.MergeFanIn < 2 {
@@ -915,7 +989,7 @@ func (s *Store) closedSet(free []*Handle, taken [][]sortedRun) [][]sortedRun {
 	rows, most := map[int64]uint64{}, map[uint64]uint64{}
 	var closed []*Handle
 	for _, h := range free {
-		if skip[h.Partition] || !s.endsBy(h.Partition, now-grace) {
+		if skip[h.Partition] || !s.endsBy(h.Partition, now-grace) || now-s.arrived[h.Partition] < int64(closedQuiet) {
 			continue
 		}
 		closed = append(closed, h)
@@ -979,6 +1053,7 @@ func (s *Store) startMerges(compact bool) bool {
 				partial[h.Partition] = true
 			}
 		}
+		sets = s.leaveToWhole(sets, snap.Parts(), partial)
 		for _, h := range free {
 			if !partial[h.Partition] {
 				whole = append(whole, h)
@@ -1110,7 +1185,7 @@ func (s *Store) countRuns() {
 	snap := s.dir.Table().Snapshot()
 	defer snap.Release()
 	due := 0
-	for _, set := range pickMerges(snap.Parts(), s.opts.MergeFanIn, false) {
+	for _, set := range s.leaveToWhole(pickMerges(snap.Parts(), s.opts.MergeFanIn, false), snap.Parts(), nil) {
 		due += len(set)
 	}
 	s.due.Store(int32(due))
@@ -1212,6 +1287,7 @@ func (w *Writer) flush() error {
 	if _, err := w.s.dir.Commit(files, nil); err != nil {
 		return err
 	}
+	w.s.noteArrival(files)
 	w.s.countRuns()
 	w.committed()
 	w.s.kick()
