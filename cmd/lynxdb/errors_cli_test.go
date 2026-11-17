@@ -164,24 +164,6 @@ func TestExtractFieldFromError(t *testing.T) {
 	}
 }
 
-func TestExtractPositionFromError_LargePosition(t *testing.T) {
-	pos, _ := extractPositionFromError("unexpected token at position 9999")
-	if pos != 9999 {
-		t.Errorf("expected position 9999, got %d", pos)
-	}
-}
-
-func TestExtractPositionFromError_EmptyMessage(t *testing.T) {
-	pos, length := extractPositionFromError("")
-	if pos != -1 {
-		t.Errorf("expected position -1 for empty string, got %d", pos)
-	}
-
-	if length != 1 {
-		t.Errorf("expected length 1 for empty string, got %d", length)
-	}
-}
-
 func TestIsTimeoutError_StringMatch(t *testing.T) {
 	tests := []struct {
 		msg  string

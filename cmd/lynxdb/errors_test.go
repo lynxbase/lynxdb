@@ -13,59 +13,21 @@ func TestExtractPositionFromError(t *testing.T) {
 		name    string
 		msg     string
 		wantPos int
-		wantLen int
 	}{
-		{
-			name:    "line and column",
-			msg:     `syntax error at line 1, column 13: expected a search term`,
-			wantPos: 12,
-			wantLen: 1,
-		},
-		{
-			name:    "position 0 with token",
-			msg:     `unexpected command IDENT "level" at position 0`,
-			wantPos: 0,
-			wantLen: 5, // len("level")
-		},
-		{
-			name:    "position 10 with token",
-			msg:     `unexpected command IDENT "stauts" at position 10`,
-			wantPos: 10,
-			wantLen: 6, // len("stauts")
-		},
-		{
-			name:    "no position marker",
-			msg:     `some other error`,
-			wantPos: -1,
-			wantLen: 1,
-		},
-		{
-			name:    "position with no token",
-			msg:     `parse error at position 5`,
-			wantPos: 5,
-			wantLen: 1,
-		},
-		{
-			name:    "position with quoted string token",
-			msg:     `expected IDENT, got STRING "hello world" at position 3`,
-			wantPos: 3,
-			wantLen: 11, // len("hello world")
-		},
+		{"line and column", `syntax error at line 1, column 13: expected a search term`, 12},
+		{"later line", `syntax error at line 2, column 4: expected a search term`, -1},
+		{"no position", `some other error`, -1},
+		{"empty", ``, -1},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pos, length := extractPositionFromError(tt.msg)
-			if pos != tt.wantPos {
+			if pos := extractPositionFromError(tt.msg); pos != tt.wantPos {
 				t.Errorf("pos = %d, want %d", pos, tt.wantPos)
-			}
-			if length != tt.wantLen {
-				t.Errorf("length = %d, want %d", length, tt.wantLen)
 			}
 		})
 	}
 }
-
 func TestQueryErrorUnwrap(t *testing.T) {
 	inner := &client.APIError{
 		HTTPStatus: 400,

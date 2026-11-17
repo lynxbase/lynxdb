@@ -344,14 +344,14 @@ func renderQueryError(query string, position, length int, message, suggestion st
 // renderQueryParseError renders a query compile error from the server with
 // a caret under the position named in its message.
 func renderQueryParseError(ae *client.APIError, query string) {
-	pos, length := extractPositionFromError(ae.Message)
+	pos := extractPositionFromError(ae.Message)
 
 	suggestion := ae.Suggestion
 	if suggestion == "" {
 		suggestion = tryFieldNameSuggestion(ae.Message)
 	}
 
-	ui.Stderr.RenderQueryErrorWithCode(query, pos, length, ae.Message, suggestion, string(ae.Code))
+	ui.Stderr.RenderQueryErrorWithCode(query, pos, 1, ae.Message, suggestion, string(ae.Code))
 }
 
 // isRequiredFlagError reports whether err is a cobra "required flag(s) not set" error.
@@ -420,58 +420,20 @@ func renderRequiredFlagError(err error) {
 	ui.Stderr.RenderRequiredFlagError(flags, usageLine, example)
 }
 
-// extractPositionFromError parses "at position N" from an error message and
-// extracts the token literal length for the caret span.
-// Returns (position, length) where position is -1 if not found.
-func extractPositionFromError(msg string) (int, int) {
-	if _, rest, ok := strings.Cut(msg, "at line 1, column "); ok {
-		col := 0
-		for _, c := range rest {
-			if c < '0' || c > '9' {
-				break
-			}
-			col = col*10 + int(c-'0')
-		}
-		if col > 0 {
-			return col - 1, 1
-		}
+// extractPositionFromError returns the 0-based column of a compile error at
+// line 1, or -1 when the message names no such position.
+func extractPositionFromError(msg string) int {
+	_, rest, ok := strings.Cut(msg, "at line 1, column ")
+	if !ok {
+		return -1
 	}
-	const marker = "at position "
-	idx := strings.Index(msg, marker)
-	if idx < 0 {
-		return -1, 1
-	}
-
-	rest := msg[idx+len(marker):]
-	pos := 0
-	hasDigit := false
-
+	col := 0
 	for _, c := range rest {
-		if c >= '0' && c <= '9' {
-			pos = pos*10 + int(c-'0')
-			hasDigit = true
-		} else {
+		if c < '0' || c > '9' {
 			break
 		}
+		col = col*10 + int(c-'0')
 	}
 
-	if !hasDigit {
-		return -1, 1
-	}
-
-	// Try to extract the token literal length from the quoted token in the message.
-	// Error messages often contain: IDENT "level" or STRING "foo"
-	length := 1
-	if qIdx := strings.LastIndex(msg, "\""); qIdx > 0 {
-		// Find the opening quote before the last closing quote.
-		sub := msg[:qIdx]
-		if oIdx := strings.LastIndex(sub, "\""); oIdx >= 0 {
-			tokenLit := msg[oIdx+1 : qIdx]
-			if tokenLit != "" && len(tokenLit) < 100 {
-				length = len(tokenLit)
-			}
-		}
-	}
-
-	return pos, length
+	return col - 1
 }
