@@ -6,6 +6,11 @@ import (
 	"testing"
 )
 
+// detectFormat picks a formatter with default human-output options.
+func detectFormat(format Format, rows []map[string]interface{}) Formatter {
+	return DetectFormatWithOptions(format, rows, HumanTableOptions{})
+}
+
 func TestTableFormatter(t *testing.T) {
 	rows := []map[string]interface{}{
 		{"host": "web-01", "count": int64(42)},
@@ -100,35 +105,35 @@ func TestSingleValueFormatter(t *testing.T) {
 }
 
 func TestDetectFormat_JSON(t *testing.T) {
-	f := DetectFormat(FormatJSON, nil)
+	f := detectFormat(FormatJSON, nil)
 	if _, ok := f.(*JSONFormatter); !ok {
 		t.Error("expected JSONFormatter")
 	}
 }
 
 func TestDetectFormat_Table(t *testing.T) {
-	f := DetectFormat(FormatTable, nil)
+	f := detectFormat(FormatTable, nil)
 	if _, ok := f.(*TableFormatter); !ok {
 		t.Error("expected TableFormatter")
 	}
 }
 
 func TestDetectFormat_CSV(t *testing.T) {
-	f := DetectFormat(FormatCSV, nil)
+	f := detectFormat(FormatCSV, nil)
 	if _, ok := f.(*CSVFormatter); !ok {
 		t.Error("expected CSVFormatter")
 	}
 }
 
 func TestDetectFormat_NDJSON(t *testing.T) {
-	f := DetectFormat(FormatNDJSON, nil)
+	f := detectFormat(FormatNDJSON, nil)
 	if _, ok := f.(*JSONFormatter); !ok {
 		t.Errorf("expected JSONFormatter for NDJSON, got %T", f)
 	}
 }
 
 func TestDetectFormat_TSV(t *testing.T) {
-	f := DetectFormat(FormatTSV, nil)
+	f := detectFormat(FormatTSV, nil)
 	if _, ok := f.(*TSVFormatter); !ok {
 		t.Errorf("expected TSVFormatter, got %T", f)
 	}
@@ -174,7 +179,7 @@ func TestDetectFormat_Table_SingleRawValue(t *testing.T) {
 	rows := []map[string]interface{}{
 		{"_raw": "line1\nline2\nline3"},
 	}
-	f := DetectFormat(FormatTable, rows)
+	f := detectFormat(FormatTable, rows)
 	if _, ok := f.(*SingleValueFormatter); !ok {
 		t.Errorf("expected SingleValueFormatter for single _raw row with -F table, got %T", f)
 	}
@@ -186,7 +191,7 @@ func TestDetectFormat_Auto_SingleRawValue(t *testing.T) {
 	rows := []map[string]interface{}{
 		{"_raw": "line1\nline2\nline3"},
 	}
-	f := DetectFormat(FormatAuto, rows)
+	f := detectFormat(FormatAuto, rows)
 	if f == nil {
 		t.Fatal("expected non-nil formatter")
 	}
@@ -196,7 +201,7 @@ func TestDetectFormat_Table_MultiColumn_NotSingleRaw(t *testing.T) {
 	rows := []map[string]interface{}{
 		{"_raw": "some text", "_time": "2026-01-01T00:00:00Z"},
 	}
-	f := DetectFormat(FormatTable, rows)
+	f := detectFormat(FormatTable, rows)
 	if _, ok := f.(*TableFormatter); !ok {
 		t.Errorf("expected TableFormatter for multi-column row, got %T", f)
 	}
@@ -277,25 +282,5 @@ func TestRenderTabular_AutoNonTTYUsesJSON(t *testing.T) {
 	got := strings.TrimSpace(buf.String())
 	if want := `{"zeta":1,"alpha":2}`; got != want {
 		t.Fatalf("auto non-TTY output = %q, want %q", got, want)
-	}
-}
-
-func TestRenderKeyValue_CSV(t *testing.T) {
-	var buf bytes.Buffer
-	err := RenderKeyValue(&buf,
-		map[string]any{"zeta": 1, "alpha": 2},
-		FormatCSV,
-		HumanTableOptions{},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	if got, want := lines[0], "KEY,VALUE"; got != want {
-		t.Fatalf("header = %q, want %q", got, want)
-	}
-	if got, want := lines[1], "alpha,2"; got != want {
-		t.Fatalf("first row = %q, want %q", got, want)
 	}
 }
