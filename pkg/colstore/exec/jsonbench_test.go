@@ -490,6 +490,9 @@ func TestJSONBenchReference(t *testing.T) {
 		for _, q := range benchPlans(windowsOf(t, snap)) {
 			for _, workers := range []int{cores, 1} {
 				t.Run(fmt.Sprintf("%s/%s/%d", name, q.name, workers), func(t *testing.T) {
+					if q.estimated && name == "ordered" {
+						t.Skip("in key order an estimate is the exact count, which the reference does not give")
+					}
 					res := check(t, snap, rows, q.plan, q.ordered, workers)
 					if q.text == "" {
 						return

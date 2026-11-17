@@ -70,9 +70,41 @@ func flattenInto(row refRow, prefix string, obj map[string]any) {
 		case nil:
 			row[path] = exec.Value{Kind: vec.KindNull}
 		default:
-			row[path] = exec.Value{Kind: vec.KindVariant}
+			// An array keeps its elements, which a search over every field
+			// reads.
+			row[path] = exec.Value{Kind: vec.KindVariant, Bytes: appendVariant(nil, v)}
 		}
 	}
+}
+
+// appendVariant appends a decoded JSON value in the variant encoding.
+func appendVariant(dst []byte, v any) []byte {
+	switch v := v.(type) {
+	case nil:
+		return variant.AppendNull(dst)
+	case bool:
+		return variant.AppendBool(dst, v)
+	case string:
+		return variant.AppendString(dst, []byte(v))
+	case json.Number:
+		return variant.AppendNumber(dst, []byte(v.String()))
+	case []any:
+		dst, mark := variant.BeginArray(dst)
+		for _, e := range v {
+			dst = appendVariant(dst, e)
+		}
+
+		return variant.End(dst, mark)
+	case map[string]any:
+		dst, mark := variant.BeginObject(dst)
+		for k, e := range v {
+			dst = appendVariant(variant.AppendKey(dst, []byte(k)), e)
+		}
+
+		return variant.End(dst, mark)
+	}
+
+	return dst
 }
 
 // refValue evaluates a value expression for a row of the table.
