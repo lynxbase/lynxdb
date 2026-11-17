@@ -18,6 +18,9 @@ var ErrCorrupt = errors.New("part: corrupt data")
 // costs more time than the few bytes compression saves are worth.
 const minCompressSize = 512
 
+// sectionWindow is how far back the faster levels look for repeats.
+const sectionWindow = 1 << 20
+
 var (
 	codecOnce sync.Once
 	encoders  [3]*zstd.Encoder
@@ -40,9 +43,12 @@ const (
 func codecs() {
 	codecOnce.Do(func() {
 		// EncodeAll and DecodeAll are stateless and safe for concurrent use.
-		encoders[LevelFast], _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault), zstd.WithEncoderCRC(false))
+		// A section rarely exceeds the window, and every encoder state keeps
+		// twice the window as history.
+		window := zstd.WithWindowSize(sectionWindow)
+		encoders[LevelFast], _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault), zstd.WithEncoderCRC(false), window)
 		encoders[LevelCompact], _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedBetterCompression), zstd.WithEncoderCRC(false))
-		encoders[LevelFastest], _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderCRC(false))
+		encoders[LevelFastest], _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedFastest), zstd.WithEncoderCRC(false), window)
 		decoder, _ = zstd.NewReader(nil, zstd.WithDecoderConcurrency(0))
 	})
 }
