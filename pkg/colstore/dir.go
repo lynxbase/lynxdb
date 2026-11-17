@@ -23,8 +23,13 @@ import (
 
 const (
 	manifestName = "MANIFEST"
-	partSuffix   = ".part"
-	tmpSuffix    = ".tmp"
+	// endName is the file of marks that say how far the manifest reached.
+	endName = manifestName + ".end"
+	// lostName is the directory for parts that no record names and that
+	// no mark allows to be removed.
+	lostName   = "lost+found"
+	partSuffix = ".part"
+	tmpSuffix  = ".tmp"
 )
 
 // readAdvice is cleared by benchmarks that measure reads without advice to
@@ -65,8 +70,14 @@ type Dir struct {
 	mu      sync.Mutex
 	log     *os.File
 	records int
-	// size is the length of the records in the log.
-	size int64
+	// size is the length of the records in the log and first the checksum
+	// of the first of them, zero for an empty log.
+	size  int64
+	first uint32
+	// end holds the marks; slot is the one of the log in use.
+	end  *os.File
+	slot int
+	lost []string
 	live map[*Handle]*partFileRef
 	// failed, once set, is what every further change returns.
 	failed error
@@ -94,7 +105,9 @@ type PartMeta struct {
 
 // OpenDir opens the table stored in path, creating the directory when it
 // does not exist and removing files no manifest record names. An open that
-// fails with ErrManifest leaves every file as it found it.
+// fails with ErrManifest leaves every file as it found it. A part file is
+// removed only under a mark that says the manifest has lost no record;
+// without one it is moved to the lost+found directory, see Lost.
 func OpenDir(path string) (*Dir, error) {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return nil, err
@@ -113,10 +126,22 @@ func OpenDir(path string) (*Dir, error) {
 		return nil, err
 	}
 	d.records, d.size = records, int64(valid)
+	if valid > 0 {
+		d.first = binary.LittleEndian.Uint32(log[4:])
+	}
+	slot, err := readEnd(path, endMark{size: d.size, first: d.first})
+	if err != nil {
+		return nil, err
+	}
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
 		return nil, err
+	}
+	// The names of parts set aside are not given to parts again.
+	kept, _ := os.ReadDir(filepath.Join(path, lostName))
+	for _, e := range kept {
+		d.skipID(e.Name())
 	}
 	var unnamed []string
 	for _, e := range entries {
@@ -124,9 +149,7 @@ func OpenDir(path string) (*Dir, error) {
 		if !strings.HasSuffix(name, partSuffix) && !strings.HasSuffix(name, tmpSuffix) {
 			continue
 		}
-		if id, ok := partID(name); ok && id >= d.nextID.Load() {
-			d.nextID.Store(id + 1)
-		}
+		d.skipID(name)
 		if _, ok := names[name]; !ok {
 			// A finished part is written after the manifest exists, so one
 			// without a manifest lost it and may be live.
@@ -158,7 +181,7 @@ func OpenDir(path string) (*Dir, error) {
 	}
 	// Files are cut and removed only once every live part has opened: when
 	// one is missing, an unnamed file may hold the only copy of its rows.
-	if err := tidy(path, unnamed, valid, len(log)); err != nil {
+	if d.lost, err = tidy(path, unnamed, valid, len(log), slot >= 0); err != nil {
 		d.table.Close()
 
 		return nil, err
@@ -168,26 +191,113 @@ func OpenDir(path string) (*Dir, error) {
 
 		return nil, err
 	}
+	if d.end, err = os.OpenFile(filepath.Join(path, endName), os.O_RDWR|os.O_CREATE, 0o644); err != nil {
+		d.log.Close()
+		d.table.Close()
+
+		return nil, err
+	}
+	d.slot = max(slot, 0)
+	d.mark(d.slot, endMark{size: d.size, first: d.first})
 	d.trim()
 
 	return d, nil
 }
 
-// tidy cuts the manifest to the size of its whole records and removes the
-// files it does not name.
-func tidy(path string, unnamed []string, valid, size int) error {
+// tidy cuts the manifest to the size of its whole records and clears away
+// the files it does not name. When no mark says the manifest is whole, a
+// finished part may be one that a lost record named: it is moved aside and
+// returned, not removed.
+func tidy(path string, unnamed []string, valid, size int, whole bool) (lost []string, err error) {
 	if valid < size {
 		if err := os.Truncate(filepath.Join(path, manifestName), int64(valid)); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	for _, name := range unnamed {
-		if err := os.Remove(filepath.Join(path, name)); err != nil {
-			return err
+		file := filepath.Join(path, name)
+		if whole || !strings.HasSuffix(name, partSuffix) {
+			if err := os.Remove(file); err != nil {
+				return lost, err
+			}
+
+			continue
+		}
+		if err := os.MkdirAll(filepath.Join(path, lostName), 0o755); err != nil {
+			return lost, err
+		}
+		if err := os.Rename(file, filepath.Join(path, lostName, name)); err != nil {
+			return lost, err
+		}
+		lost = append(lost, name)
+	}
+
+	return lost, nil
+}
+
+// Lost returns the names of the part files that the open moved into the
+// lost+found directory of the table.
+func (d *Dir) Lost() []string { return d.lost }
+
+// endMark says how far a manifest reached: the size of its records, and the
+// checksum of the first of them, which tells a rewritten manifest from the
+// one it replaced. A manifest shorter than its mark has lost records.
+type endMark struct {
+	size  int64
+	first uint32
+}
+
+const endMarkSize = 16
+
+func (m endMark) bytes() []byte {
+	b := make([]byte, endMarkSize)
+	binary.LittleEndian.PutUint64(b, uint64(m.size))
+	binary.LittleEndian.PutUint32(b[8:], m.first)
+	binary.LittleEndian.PutUint32(b[12:], crc32.Checksum(b[:12], castagnoli))
+
+	return b
+}
+
+// readEnd compares the manifest that log describes with the marks of the
+// directory. It returns the slot of a mark that says the manifest is whole,
+// -1 when no mark speaks of it, and ErrManifest when it is shorter than a
+// mark of it.
+func readEnd(path string, log endMark) (slot int, err error) {
+	data, err := os.ReadFile(filepath.Join(path, endName))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return 0, err
+	}
+	slot = -1
+	for i := 0; len(data) >= (i+1)*endMarkSize; i++ {
+		b := data[i*endMarkSize:]
+		if crc32.Checksum(b[:12], castagnoli) != binary.LittleEndian.Uint32(b[12:]) {
+			continue
+		}
+		size, first := int64(binary.LittleEndian.Uint64(b)), binary.LittleEndian.Uint32(b[8:])
+		switch {
+		// A manifest never goes back to no records, whatever replaced it.
+		case size > log.size && (first == log.first || log.size == 0):
+			return 0, fmt.Errorf("%w: %d bytes of records are left of %d", ErrManifest, log.size, size)
+		// The mark of an empty manifest stays until the first record is
+		// marked, which a crash can come before.
+		case first == log.first || size == 0:
+			slot = i
 		}
 	}
 
-	return nil
+	return slot, nil
+}
+
+// mark notes in a slot of the end file how far a manifest has reached. The
+// file is not synced: a mark that is behind its manifest claims less.
+func (d *Dir) mark(slot int, m endMark) {
+	_, _ = d.end.WriteAt(m.bytes(), int64(slot)*endMarkSize)
+}
+
+func (d *Dir) skipID(name string) {
+	if id, ok := partID(name); ok && id >= d.nextID.Load() {
+		d.nextID.Store(id + 1)
+	}
 }
 
 func partID(name string) (uint64, bool) {
@@ -516,8 +626,12 @@ func (d *Dir) appendLog(record []byte) error {
 		err = syncFile(d.log)
 	}
 	if err == nil {
+		if d.size == 0 {
+			d.first = binary.LittleEndian.Uint32(record[4:])
+		}
 		d.records++
 		d.size += int64(len(record))
+		d.mark(d.slot, endMark{size: d.size, first: d.first})
 
 		return nil
 	}
@@ -567,10 +681,14 @@ func (d *Dir) rewrite() error {
 		return err
 	}
 	record := appendRecord(nil, names, metas, nil)
+	next := endMark{size: int64(len(record)), first: binary.LittleEndian.Uint32(record[4:])}
 	if _, err = f.Write(record); err == nil {
 		err = syncFile(f)
 	}
 	if err == nil {
+		// The mark of the rewritten manifest is there before the manifest
+		// is, in the slot that the manifest in use leaves alone.
+		d.mark(1-d.slot, next)
 		err = os.Rename(tmp, file)
 	}
 	if err != nil {
@@ -583,7 +701,8 @@ func (d *Dir) rewrite() error {
 	// cannot be synced: records appended to the file it replaced would be
 	// lost. The next change syncs the directory before it adds a record.
 	d.log.Close()
-	d.log, d.records, d.size = f, 1, int64(len(record))
+	d.log, d.records, d.size = f, 1, next.size
+	d.slot, d.first = 1-d.slot, next.first
 	// Errors of the log then carry its name and not the temporary one.
 	if named, err := os.OpenFile(file, os.O_WRONLY|os.O_APPEND, 0o644); err == nil {
 		f.Close()
@@ -607,6 +726,7 @@ func (d *Dir) Close() error {
 		d.failed = ErrClosed
 	}
 	d.table.Close()
+	d.end.Close()
 
 	return d.log.Close()
 }

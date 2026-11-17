@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
+	"strings"
 	"testing"
 )
 
@@ -157,19 +159,76 @@ func (h *dirHistory) state(size int) int {
 	return k
 }
 
-func TestOpenDirCutsATornRecordOrLeavesTheDirectoryAlone(t *testing.T) {
+func TestOpenDirRefusesAManifestShorterThanItsMark(t *testing.T) {
+	h := buildDirHistory(t)
+	file := filepath.Join(h.path, manifestName)
+	manifest, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every cut, also one that falls between two records or leaves none:
+	// the mark was written behind the last record.
+	for size := 0; size < len(manifest); size++ {
+		if err := os.WriteFile(file, manifest[:size], 0o644); err != nil {
+			t.Fatal(err)
+		}
+		before := dirContents(t, h.path)
+		if d, err := OpenDir(h.path); !errors.Is(err, ErrManifest) {
+			if err == nil {
+				d.Close()
+			}
+			t.Fatalf("cut at %d of %d: %v; files %v", size, len(manifest), err, partFiles(t, h.path))
+		}
+		if after := dirContents(t, h.path); !sameContents(before, after) {
+			t.Fatalf("cut at %d: a refused open changed the directory: %v, was %v", size, fileNames(after), fileNames(before))
+		}
+	}
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenDir(h.path); !errors.Is(err, ErrManifest) {
+		t.Fatalf("without the manifest: %v", err)
+	}
+	// With all of its records back the manifest opens.
+	if err := os.WriteFile(file, manifest, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := OpenDir(h.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	last := len(h.rows) - 1
+	if rows, sum := rowsAndSum(t, d); rows != h.rows[last] || sum != h.sum[last] {
+		t.Fatalf("%d rows, sum %d", rows, sum)
+	}
+}
+
+func TestOpenDirSetsPartsAsideWhenNoMarkSaysTheManifestIsWhole(t *testing.T) {
 	h := buildDirHistory(t)
 	manifest, err := os.ReadFile(filepath.Join(h.path, manifestName))
 	if err != nil {
 		t.Fatal(err)
 	}
 	last := len(h.bounds) - 1
-	opened, refused := 0, 0
-	// Every cut inside the last four records, which hold a flush, a drop
-	// and the merge before them.
-	for size := h.bounds[last-4]; size < len(manifest); size++ {
+	opened, refused, aside := 0, 0, 0
+	// No record at all, and every cut inside the last four records, which
+	// hold a flush, a drop and the merge before them.
+	sizes := []int{0, 3, h.bounds[1] - 1}
+	for size := h.bounds[last-4]; size <= len(manifest); size++ {
+		sizes = append(sizes, size)
+	}
+	for _, size := range sizes {
 		path := copyDir(t, h.path)
+		// The marks are lost, or the directory is older than they are.
+		if err := os.Remove(filepath.Join(path, endName)); err != nil {
+			t.Fatal(err)
+		}
 		if err := os.WriteFile(filepath.Join(path, manifestName), manifest[:size], 0o644); err != nil {
+			t.Fatal(err)
+		}
+		half := filepath.Join(path, "00000000000000ff"+partSuffix+tmpSuffix)
+		if err := os.WriteFile(half, []byte("half a part"), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		before := dirContents(t, path)
@@ -182,9 +241,7 @@ func TestOpenDirCutsATornRecordOrLeavesTheDirectoryAlone(t *testing.T) {
 		}
 		d, err := OpenDir(path)
 		if !complete {
-			// The records that are left name parts a later record removed:
-			// nothing may be touched, least of all the parts of that later
-			// record.
+			// The records that are left name parts a later record removed.
 			if !errors.Is(err, ErrManifest) {
 				t.Fatalf("cut at %d of %d: opening without the parts of record %d: %v", size, len(manifest), k, err)
 			}
@@ -201,6 +258,7 @@ func TestOpenDirCutsATornRecordOrLeavesTheDirectoryAlone(t *testing.T) {
 		if rows, sum := rowsAndSum(t, d); rows != h.rows[k] || sum != h.sum[k] {
 			t.Fatalf("cut at %d: %d rows, sum %d; record %d left %d rows, sum %d", size, rows, sum, k, h.rows[k], h.sum[k])
 		}
+		lost := d.Lost()
 		if err := d.Close(); err != nil {
 			t.Fatal(err)
 		}
@@ -208,18 +266,74 @@ func TestOpenDirCutsATornRecordOrLeavesTheDirectoryAlone(t *testing.T) {
 		if after[manifestName] != string(manifest[:h.bounds[k]]) {
 			t.Fatalf("cut at %d: the manifest holds %d bytes, want the %d of its whole records", size, len(after[manifestName]), h.bounds[k])
 		}
-		if len(after) != len(h.live[k])+1 {
-			t.Fatalf("cut at %d: files %v, want the manifest and %d parts", size, fileNames(after), len(h.live[k]))
+		// The parts behind the cut may be the only copy of their rows.
+		kept := map[string]string{}
+		if _, ok := after[lostName]; ok {
+			kept = dirContents(t, filepath.Join(path, lostName))
 		}
-		for name := range h.live[k] {
-			if after[name] != before[name] {
-				t.Fatalf("cut at %d: live part %s changed", size, name)
+		for name, data := range before {
+			_, live := h.live[k][name]
+			switch {
+			case !strings.HasSuffix(name, partSuffix):
+			case live && after[name] != data:
+				t.Fatalf("cut at %d: live part %s is missing or changed", size, name)
+			case !live && (kept[name] != data || !slices.Contains(lost, name)):
+				t.Fatalf("cut at %d: part %s, which no record names, was not set aside; lost %v", size, name, lost)
+			case !live && after[name] != "":
+				t.Fatalf("cut at %d: part %s was set aside and left in place", size, name)
 			}
 		}
+		if len(kept) != len(lost) {
+			t.Fatalf("cut at %d: %d files set aside, %d reported", size, len(kept), len(lost))
+		}
+		if _, ok := after[filepath.Base(half)]; ok {
+			t.Fatalf("cut at %d: a temporary file was kept", size)
+		}
+		aside += len(lost)
 		opened++
 	}
-	if opened == 0 || refused == 0 {
-		t.Fatalf("%d cuts opened and %d were refused; the history must give both", opened, refused)
+	if opened < 3 || refused == 0 || aside == 0 {
+		t.Fatalf("%d cuts opened with %d parts set aside and %d were refused", opened, aside, refused)
+	}
+}
+
+func TestPartsSetAsideKeepTheirNamesToThemselves(t *testing.T) {
+	h := buildDirHistory(t)
+	if err := os.Remove(filepath.Join(h.path, endName)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.path, manifestName), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d, err := OpenDir(h.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lost := d.Lost()
+	if len(lost) != len(h.live[len(h.live)-1]) {
+		t.Fatalf("%d parts set aside, %d were live", len(lost), len(h.live[len(h.live)-1]))
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// The next open has a mark, finds nothing unnamed and leaves the parts
+	// set aside where they are; new parts get names of their own.
+	if d, err = OpenDir(h.path); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if len(d.Lost()) != 0 {
+		t.Fatalf("an open with nothing unnamed reports %v", d.Lost())
+	}
+	pf := writePartFile(t, d, 0, 10, "next")
+	if slices.Contains(lost, pf.name) {
+		t.Fatalf("a part file took the name %s of a part set aside", pf.name)
+	}
+	if _, err := d.Commit([]*PartFile{pf}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if kept := dirContents(t, filepath.Join(h.path, lostName)); len(kept) != len(lost) {
+		t.Fatalf("%d files are set aside, were %d", len(kept), len(lost))
 	}
 }
 
@@ -356,8 +470,9 @@ func TestOpenDirRemovesWhatAKillLeavesBehind(t *testing.T) {
 	live := liveNames(d)
 	after := dirContents(t, path)
 	// Gone are the unlisted part, the two temporary files and the removed
-	// part; the manifest and the foreign file stay beside the live parts.
-	if len(after) != len(live)+2 || len(after) != len(before)-4 {
+	// part; the manifest, its marks and the foreign file stay beside the
+	// live parts.
+	if len(after) != len(live)+3 || len(after) != len(before)-4 {
 		t.Fatalf("files %v, were %v; %d parts are live", fileNames(after), fileNames(before), len(live))
 	}
 	for name := range live {
@@ -499,5 +614,88 @@ func TestOpenDirRefusesPartsThatLostTheirManifest(t *testing.T) {
 	defer again.Close()
 	if got := partFiles(t, killed); len(got) != 0 {
 		t.Fatalf("a temporary file survived: %v", got)
+	}
+}
+
+func TestKillBetweenManifestAndMarkLeavesAManifestThatCountsAsWhole(t *testing.T) {
+	defer func(n int) { manifestRewriteAfter = n }(manifestRewriteAfter)
+	manifestRewriteAfter = 3
+	path := filepath.Join(t.TempDir(), "table")
+	d, err := OpenDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A part without a record lies in the directory all along: an open that
+	// takes the manifest for whole removes it, any other sets it aside.
+	unlisted := writePartFile(t, d, 9000, 10, "unlisted")
+	if err := unlisted.f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(unlisted.tmp, filepath.Join(path, unlisted.name)); err != nil {
+		t.Fatal(err)
+	}
+	type image struct {
+		path, when string
+		rows       int64
+	}
+	var images []image
+	var committed int64
+	rewriteAt := -1
+	// The directory is copied behind every sync around the manifest: with
+	// a record that has no mark yet, with a rewritten manifest that is not
+	// in place yet, and with one that is.
+	replaceSyncFile(t, func(f *os.File) error {
+		if err := f.Sync(); err != nil {
+			return err
+		}
+		switch base := filepath.Base(f.Name()); {
+		case base == manifestName:
+			committed += 100
+		case base == manifestName+tmpSuffix:
+			rewriteAt = len(images)
+		case f.Name() != path:
+			return nil
+		}
+		images = append(images, image{copyDir(t, path), filepath.Base(f.Name()), committed})
+
+		return nil
+	})
+	for i := 0; i < 9; i++ {
+		if _, err := d.Commit([]*PartFile{writePartFile(t, d, i*100, 100, "x")}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if rewriteAt < 0 || rewriteAt+1 >= len(images) {
+		t.Fatalf("no rewrite among %d syncs", len(images))
+	}
+	// Between the two copies around a rewrite lies the moment at which the
+	// mark of the rewritten manifest is written and the manifest is not
+	// renamed yet.
+	between := image{copyDir(t, images[rewriteAt].path), "the mark of a rewrite", images[rewriteAt].rows}
+	next, err := os.ReadFile(filepath.Join(images[rewriteAt+1].path, endName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(between.path, endName), next, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i, img := range append(images, between) {
+		killed, err := OpenDir(img.path)
+		if err != nil {
+			t.Fatalf("copy %d, behind the sync of %s: %v", i, img.when, err)
+		}
+		if rows, sum := rowsAndSum(t, killed); rows != img.rows || sum != (img.rows-1)*img.rows/2 {
+			t.Fatalf("copy %d, behind the sync of %s: %d rows, sum %d; want %d rows", i, img.when, rows, sum, img.rows)
+		}
+		if lost := killed.Lost(); len(lost) != 0 {
+			t.Fatalf("copy %d, behind the sync of %s: parts %v were set aside", i, img.when, lost)
+		}
+		checkDirMatchesManifest(t, killed, "a copy behind the sync of "+img.when)
+		if err := killed.Close(); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

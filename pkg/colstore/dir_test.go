@@ -59,7 +59,7 @@ func partFiles(t testing.TB, dir string) []string {
 	}
 	var names []string
 	for _, e := range entries {
-		if e.Name() != manifestName {
+		if e.Name() != manifestName && e.Name() != endName {
 			names = append(names, e.Name())
 		}
 	}
