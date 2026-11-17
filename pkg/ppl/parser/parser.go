@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/lynxbase/lynxdb/pkg/ppl/ast"
 	"github.com/lynxbase/lynxdb/pkg/ppl/lexer"
@@ -41,16 +42,35 @@ type parser struct {
 	i    int
 }
 
+// parsers recycles parser state, chiefly the token buffer.
+var parsers = sync.Pool{New: func() any { return new(parser) }}
+
+// maxPooledTokens bounds the token buffer a pooled parser keeps.
+const maxPooledTokens = 1 << 12
+
+func (p *parser) release() {
+	clear(p.toks)
+	if cap(p.toks) > maxPooledTokens {
+		p.toks = nil
+	}
+	p.toks, p.src, p.i = p.toks[:0], "", 0
+	parsers.Put(p)
+}
+
 // Parse parses one PPL statement.
 func Parse(src string) (q *ast.Query, err error) {
-	toks, lexErrs := lexer.Tokenize(src)
+	p := parsers.Get().(*parser)
+	toks, lexErrs := lexer.AppendTokens(p.toks[:0], src)
+	p.toks, p.src = toks, src
 	if len(lexErrs) > 0 {
 		e := lexErrs[0]
+		p.release()
 		return nil, &SyntaxError{Pos: e.Pos, End: e.Pos, Msg: e.Msg}
 	}
-	p := &parser{src: src, toks: toks}
 	defer func() {
-		if r := recover(); r != nil {
+		r := recover()
+		p.release()
+		if r != nil {
 			b, ok := r.(bailout)
 			if !ok {
 				panic(r)
@@ -75,17 +95,17 @@ func ParsePipeline(src string) (*ast.Pipeline, error) {
 	return q.Pipeline, nil
 }
 
-func (p *parser) peek() lexer.Token { return p.toks[p.i] }
+func (p *parser) peek() *lexer.Token { return &p.toks[p.i] }
 
-func (p *parser) peekAt(n int) lexer.Token {
+func (p *parser) peekAt(n int) *lexer.Token {
 	if p.i+n < len(p.toks) {
-		return p.toks[p.i+n]
+		return &p.toks[p.i+n]
 	}
-	return p.toks[len(p.toks)-1]
+	return &p.toks[len(p.toks)-1]
 }
 
-func (p *parser) next() lexer.Token {
-	t := p.toks[p.i]
+func (p *parser) next() *lexer.Token {
+	t := &p.toks[p.i]
 	if t.Kind != lexer.EOF {
 		p.i++
 	}
@@ -101,7 +121,7 @@ func (p *parser) prevEnd() lexer.Pos {
 
 func (p *parser) span(start lexer.Pos) ast.Span { return ast.Span{Start: start, End: p.prevEnd()} }
 
-func (p *parser) fail(t lexer.Token, msg string, expected ...string) {
+func (p *parser) fail(t *lexer.Token, msg string, expected ...string) {
 	found := describe(t)
 	if msg == "" {
 		msg = "unexpected " + found
@@ -113,7 +133,7 @@ func (p *parser) failAt(pos lexer.Pos, msg string) {
 	panic(bailout{&SyntaxError{Pos: pos, End: pos, Msg: msg}})
 }
 
-func describe(t lexer.Token) string {
+func describe(t *lexer.Token) string {
 	switch t.Kind {
 	case lexer.EOF:
 		return "end of query"
@@ -144,14 +164,14 @@ func (p *parser) acceptKw(kw string) bool {
 	return false
 }
 
-func (p *parser) expect(k lexer.Kind) lexer.Token {
+func (p *parser) expect(k lexer.Kind) *lexer.Token {
 	if !p.at(k) {
 		p.fail(p.peek(), "", k.String())
 	}
 	return p.next()
 }
 
-func (p *parser) expectKw(kw string) lexer.Token {
+func (p *parser) expectKw(kw string) *lexer.Token {
 	if !p.atKw(kw) {
 		p.fail(p.peek(), "", strings.ToUpper(kw))
 	}

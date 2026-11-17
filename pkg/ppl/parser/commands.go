@@ -108,7 +108,7 @@ func (p *parser) fieldList() []*ast.Field {
 
 var clauseKeywords = []string{"by", "as", "in", "with", "using", "from", "over", "keepempty", "consecutive", "replace", "append", "output", "on", "where", "and", "or"}
 
-func isClauseKeyword(t lexer.Token) bool {
+func isClauseKeyword(t *lexer.Token) bool {
 	for _, k := range clauseKeywords {
 		if t.Is(k) {
 			return true

@@ -117,7 +117,7 @@ type Token struct {
 
 // Is reports whether the token is the identifier kw, compared without regard
 // to case; kw must be lower-case ASCII.
-func (t Token) Is(kw string) bool {
+func (t *Token) Is(kw string) bool {
 	if t.Kind != Ident {
 		return false
 	}

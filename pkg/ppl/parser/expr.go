@@ -163,7 +163,7 @@ func (p *parser) unary() ast.Expr {
 	return p.primary()
 }
 
-func (p *parser) literal(kind ast.LiteralKind, t lexer.Token, text string) *ast.Literal {
+func (p *parser) literal(kind ast.LiteralKind, t *lexer.Token, text string) *ast.Literal {
 	return &ast.Literal{Base: ast.Base{Span: ast.Span{Start: t.Pos, End: t.End}}, Kind: kind, Text: text}
 }
 
@@ -269,7 +269,7 @@ func splitSpan(v string) (num, unit string) {
 }
 
 // identPart reads one segment of a qualified name.
-func (p *parser) identPart() (string, lexer.Token) {
+func (p *parser) identPart() (string, *lexer.Token) {
 	t := p.peek()
 	switch t.Kind {
 	case lexer.Ident, lexer.NumericIdent:
