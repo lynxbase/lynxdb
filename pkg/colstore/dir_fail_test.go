@@ -277,7 +277,7 @@ func TestCommitThatFailsLeavesNothingBehind(t *testing.T) {
 func TestDirTakesNoChangeOnceARecordCanBeNeitherWrittenNorTakenBack(t *testing.T) {
 	cases := []struct {
 		name string
-		// arrange makes every write of the manifest fail from now on.
+		// arrange makes every later write of the manifest fail.
 		arrange func(d *Dir)
 	}{
 		{"the manifest was closed", func(d *Dir) { d.log.Close() }},
@@ -455,7 +455,7 @@ func TestCommitInAReadOnlyDirectoryLeavesFilesForTheNextOpen(t *testing.T) {
 		t.Fatal(err)
 	}
 	if commitErr == nil || createErr == nil {
-		t.Fatalf("in a read-only directory a commit returned %v and a new part file %v", commitErr, createErr)
+		t.Fatalf("in a read-only directory a commit returned %v and creating a part file %v", commitErr, createErr)
 	}
 	if rows, sum := rowsAndSum(t, d); rows != 100 || sum != 99*100/2 {
 		t.Fatalf("after the failed commit: %d rows, sum %d", rows, sum)

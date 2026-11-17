@@ -317,7 +317,7 @@ func TestPartsSetAsideKeepTheirNamesToThemselves(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The next open has a mark, finds nothing unnamed and leaves the parts
-	// set aside where they are; new parts get names of their own.
+	// set aside where they are; parts written later get names of their own.
 	if d, err = OpenDir(h.path); err != nil {
 		t.Fatal(err)
 	}
