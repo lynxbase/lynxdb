@@ -2,6 +2,7 @@ package part
 
 import (
 	"bytes"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -598,7 +599,7 @@ func TestWriterEncodesFlatValuesAtTheLevelThatWonTheLastTrial(t *testing.T) {
 		want := min(size(LevelFast, data), size(LevelFastest, data))
 		for i := 0; i < 2*trialEvery+3; i++ {
 			start := len(w.block)
-			w.appendValues(slot, data)
+			w.appendValues(slot, data, 4000)
 			if got := len(w.block) - start; got != want {
 				t.Fatalf("column %d, block %d: section of %d bytes, the smaller level gives %d", slot, i, got, want)
 			}
@@ -608,19 +609,70 @@ func TestWriterEncodesFlatValuesAtTheLevelThatWonTheLastTrial(t *testing.T) {
 			}
 		}
 	}
-	if !w.trials[0].fastest {
+	if w.trials[0].choice != valuesFastest {
 		t.Error("values without repeats were not encoded at the fastest level")
 	}
 
 	// Another level is the caller's choice, and small values are not worth
 	// a trial.
 	compact := NewWriter(&bytes.Buffer{}, Options{Level: LevelCompact})
-	compact.appendValues(0, text)
+	compact.appendValues(0, text, 4000)
 	if got, want := len(compact.block), size(LevelCompact, text); got != want || len(compact.trials) != 0 {
 		t.Fatalf("compact level: section of %d bytes, want %d", got, want)
 	}
-	w.appendValues(7, text[:trialMinSize-1])
+	w.appendValues(7, text[:trialMinSize-1], 1)
 	if len(w.trials) > 7 {
 		t.Fatal("small values were tried at both levels")
+	}
+}
+
+func TestWriterTakesTheFasterCodecForLongValuesWithinTheSlack(t *testing.T) {
+	r := rand.New(rand.NewSource(43))
+	// Prose with a wide vocabulary shrinks little under either codec; lines
+	// that repeat a template shrink far more under the general one.
+	vocabulary := make([][]byte, 4000)
+	for i := range vocabulary {
+		vocabulary[i] = make([]byte, 3+r.Intn(7))
+		for k := range vocabulary[i] {
+			vocabulary[i][k] = byte('a' + r.Intn(26))
+		}
+	}
+	var prose, lines []byte
+	for i := 0; i < 3000; i++ {
+		for j := 0; j < 14; j++ {
+			prose = append(append(prose, vocabulary[r.Intn(len(vocabulary))]...), ' ')
+		}
+		lines = append(lines, fmt.Sprintf("GET /api/v1/items/%d HTTP/1.1 200 %d bytes from 10.0.%d.%d in %dms ", r.Intn(50), 1000+r.Intn(9), r.Intn(4), r.Intn(250), r.Intn(90))...)
+	}
+	section := func(w *Writer, slot int, data []byte, count int) (kind uint64, size int) {
+		start := len(w.block)
+		w.appendValues(slot, data, count)
+		head, _ := binary.Uvarint(w.block[start:])
+		var decoded []byte
+		payload, rest, _, err := readBlob(w.block[start:], &decoded)
+		if err != nil || len(rest) != 0 || !bytes.Equal(payload, data) {
+			t.Fatalf("section does not decode: %v", err)
+		}
+
+		return head & 3, len(w.block) - start
+	}
+	plain := NewWriter(&bytes.Buffer{}, Options{})
+	loose := NewWriter(&bytes.Buffer{}, Options{ValueSlack: 50})
+	for round := 0; round < trialEvery+2; round++ {
+		_, zstdSize := section(plain, 0, prose, 3000)
+		kind, size := section(loose, 0, prose, 3000)
+		if kind != blobLZ4 || size*100 > zstdSize*150 {
+			t.Fatalf("round %d: prose took codec %d at %d bytes against %d", round, kind, size, zstdSize)
+		}
+		if kind, _ := section(loose, 1, lines, 3000); kind != blobZstd {
+			t.Fatalf("round %d: lines that shrink well took codec %d", round, kind)
+		}
+		// The same prose counted as short values stays with the general codec.
+		if kind, _ := section(loose, 2, prose, len(prose)/8); kind != blobZstd {
+			t.Fatalf("round %d: short values took codec %d", round, kind)
+		}
+		if kind, _ := section(plain, 1, prose, 3000); kind != blobZstd {
+			t.Fatalf("round %d: without slack the values took codec %d", round, kind)
+		}
 	}
 }

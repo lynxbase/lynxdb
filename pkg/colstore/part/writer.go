@@ -29,6 +29,10 @@ type Options struct {
 	// NoPacking leaves identifier-like strings to the general codec
 	// instead of storing them at a few bits per character.
 	NoPacking bool
+	// ValueSlack, when positive, lets long string values take a codec that
+	// is read several times faster where it makes them larger by at most
+	// this many percent.
+	ValueSlack int
 	// Ordered declares that the rows arrive ordered by their values at the
 	// SortKey paths and then by timestamp; the writer records it unchecked.
 	Ordered bool
@@ -71,12 +75,23 @@ type Writer struct {
 	*writerBuffers
 }
 
-// trial is the outcome of encoding one column's values at two levels.
+// trial is the outcome of encoding one column's values in several ways.
 type trial struct {
-	// left counts the blocks until the levels are compared again.
-	left    uint8
-	fastest bool
+	// left counts the blocks until the ways are compared again.
+	left   uint8
+	choice uint8
 }
+
+// The ways the values of a flat column are encoded.
+const (
+	valuesFast = iota
+	valuesFastest
+	valuesLZ4
+)
+
+// longValue is the mean length from which values count as text that a scan
+// reads in bulk.
+const longValue = 32
 
 const (
 	// trialEvery is how many blocks pass between two comparisons.
@@ -564,7 +579,7 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 				return
 			}
 		}
-		w.appendValues(int(ent.pathID)*kindSlots+int(c.Kind), data)
+		w.appendValues(int(ent.pathID)*kindSlots+int(c.Kind), data, c.Count)
 
 		return
 	}
@@ -621,11 +636,14 @@ func (w *Writer) packs(kind vec.Kind) bool {
 	return kind == vec.KindString && !w.opts.NoPacking && w.opts.Codec == CodecZstd
 }
 
-// appendValues appends the values of the flat column at slot as a section.
-// At LevelFast a column is encoded at LevelFastest for as long as that gave
-// it no larger a section the last time both were tried: values with little
-// to match, such as hashes, come out smaller and in half the time.
-func (w *Writer) appendValues(slot int, data []byte) {
+// appendValues appends the count values of the flat column at slot, laid
+// end to end in data, as a section. At LevelFast a column is encoded at
+// LevelFastest for as long as that gave it no larger a section the last
+// time both were tried: values with little to match, such as hashes, come
+// out smaller and in half the time. With ValueSlack set, long values that
+// the general codec shrinks little go to the codec that reads several times
+// faster, when that costs at most the given share of their size.
+func (w *Writer) appendValues(slot int, data []byte, count int) {
 	bc := &w.values
 	if bc.codec != CodecZstd || bc.level != LevelFast || len(data) < trialMinSize {
 		w.block = bc.appendBlob(w.block, data, &w.e.zbuf)
@@ -643,21 +661,33 @@ func (w *Writer) appendValues(slot int, data []byte) {
 		bc.level = LevelFastest
 		w.block = bc.appendBlob(w.block, data, &w.e.zbuf)
 		bc.level = LevelFast
-		tr.left, tr.fastest = trialEvery, len(w.block)-fast <= fast-start
-		if tr.fastest {
-			w.block = w.block[:start+copy(w.block[start:], w.block[fast:])]
-		} else {
-			w.block = w.block[:fast]
+		fastest := len(w.block)
+		tr.left, tr.choice = trialEvery, valuesFast
+		from, to := start, fast
+		if fastest-fast <= fast-start {
+			tr.choice, from, to = valuesFastest, fast, fastest
 		}
+		if slack := w.opts.ValueSlack; slack > 0 && len(data) >= longValue*count {
+			bc.codec = CodecLZ4
+			w.block = bc.appendBlob(w.block, data, &w.e.zbuf)
+			bc.codec = CodecZstd
+			if lz := len(w.block) - fastest; lz*100 <= (to-from)*(100+slack) {
+				tr.choice, from, to = valuesLZ4, fastest, len(w.block)
+			}
+		}
+		w.block = w.block[:start+copy(w.block[start:], w.block[from:to])]
 
 		return
 	}
 	tr.left--
-	if tr.fastest {
+	switch tr.choice {
+	case valuesFastest:
 		bc.level = LevelFastest
+	case valuesLZ4:
+		bc.codec = CodecLZ4
 	}
 	w.block = bc.appendBlob(w.block, data, &w.e.zbuf)
-	bc.level = LevelFast
+	bc.codec, bc.level = CodecZstd, LevelFast
 }
 
 // appendDirectory writes the entries at a fixed size so that a reader can
