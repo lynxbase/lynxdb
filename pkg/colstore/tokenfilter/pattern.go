@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"math/bits"
+	"regexp"
 	"sort"
 	"sync"
 	"unicode"
@@ -12,8 +13,12 @@ import (
 
 // Pattern is a byte string searched in text, with its ends optionally
 // required to fall on token boundaries, and with or without regard to
-// letter case.
+// letter case, or a regular expression.
 type Pattern struct {
+	// re, when set, decides a match; the needle is then a string that
+	// every match holds, or empty when the expression requires none.
+	re *regexp.Regexp
+
 	needle []byte
 	// startInToken and endInToken say whether the needle's first and last
 	// runes are token runes; only then does a boundary need a look outside.
@@ -203,6 +208,9 @@ func (p Pattern) bounded(text []byte, at int) bool {
 
 // Match reports whether text holds the pattern.
 func (p Pattern) Match(text []byte) bool {
+	if p.re != nil {
+		return (len(p.needle) == 0 || p.index(text, 0) >= 0) && p.re.Match(text)
+	}
 	if len(p.needle) == 0 {
 		return false
 	}
@@ -230,6 +238,9 @@ func (p Pattern) Match(text []byte) bool {
 // their number.
 func (p Pattern) AppendMatches(dst, offsets []uint32, data []byte) []uint32 {
 	n := len(offsets) - 1
+	if p.re != nil {
+		return p.appendRegexpMatches(dst, offsets, data)
+	}
 	if n <= 0 || len(p.needle) == 0 {
 		return dst
 	}
