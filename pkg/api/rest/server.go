@@ -23,8 +23,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/otlphttp"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/splunkhec"
 	syslogrecv "github.com/lynxbase/lynxdb/pkg/ingest/receiver/syslog"
-	"github.com/lynxbase/lynxdb/pkg/ingest/staging"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/server"
@@ -50,7 +48,6 @@ type Server struct {
 	syslogReceiver   *syslogrecv.Receiver
 	otlpHTTPReceiver *otlphttp.Receiver
 	otlpGRPCReceiver *otlpgrpc.Receiver
-	stagingBuffer    *staging.Buffer
 	esHandshake      *eshttp.Handshake
 	esStubs          *eshttp.Stubs
 	promMetrics      *PrometheusMetrics
@@ -437,24 +434,11 @@ func normalizedESCompatConfig(ingest config.IngestConfig) config.ESCompatConfig 
 	return out
 }
 
-func stagingConfigFromIngest(ingest config.IngestConfig) staging.Config {
-	cfg := ingest.Staging
-	return staging.Config{
-		Enabled:           cfg.Enabled,
-		MaxBytes:          int64(cfg.MaxBytes),
-		MaxAge:            cfg.MaxAge.Duration(),
-		MaxInflightEvents: cfg.MaxInflightEvents,
-		FlushRetries:      cfg.FlushRetries,
-		FlushBackoffMax:   cfg.FlushBackoffMax.Duration(),
-	}
-}
-
 // Start starts the API server. Blocks until context is canceled.
 func (s *Server) Start(ctx context.Context) error {
 	if err := s.engine.Start(ctx); err != nil {
 		return err
 	}
-	s.startStagingBuffer()
 
 	if s.syslogReceiver != nil {
 		go func() {
@@ -467,7 +451,6 @@ func (s *Server) Start(ctx context.Context) error {
 			if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
 				slog.Error("engine shutdown failed after syslog listen error", "error", shutErr)
 			}
-			s.closeStagingBuffer(context.Background())
 			return fmt.Errorf("syslog: %w", err)
 		}
 	}
@@ -488,7 +471,6 @@ func (s *Server) Start(ctx context.Context) error {
 			if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
 				slog.Error("engine shutdown failed after OTLP listen error", "error", shutErr)
 			}
-			s.closeStagingBuffer(context.Background())
 			return fmt.Errorf("otlp http: %w", err)
 		}
 		s.promMetrics.SetListenerUp("otlp_http", true)
@@ -513,7 +495,6 @@ func (s *Server) Start(ctx context.Context) error {
 			if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
 				slog.Error("engine shutdown failed after OTLP gRPC listen error", "error", shutErr)
 			}
-			s.closeStagingBuffer(context.Background())
 			return fmt.Errorf("otlp grpc: %w", err)
 		}
 		s.promMetrics.SetListenerUp("otlp_grpc", true)
@@ -535,7 +516,6 @@ func (s *Server) Start(ctx context.Context) error {
 		if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
 			slog.Error("engine shutdown failed after listen error", "error", shutErr)
 		}
-		s.closeStagingBuffer(context.Background())
 		return fmt.Errorf("api: listen: %w", err)
 	}
 
@@ -569,7 +549,6 @@ func (s *Server) Start(ctx context.Context) error {
 			_ = s.otlpGRPCReceiver.Stop(context.Background())
 			s.promMetrics.SetListenerUp("otlp_grpc", false)
 		}
-		s.closeStagingBuffer(context.Background())
 
 		// Shutdown ordering: reject ingests → drain HTTP → flush storage.
 		s.engine.PrepareShutdown()
@@ -612,9 +591,6 @@ func (s engineSink) Write(events []*event.Event) error {
 }
 
 func (s *Server) submitEvents(ctx context.Context, events []*event.Event) error {
-	if s.currentIngestConfig().Staging.Enabled && s.stagingBuffer != nil {
-		return s.stagingBuffer.Add(ctx, events)
-	}
 	return s.engine.IngestContext(ctx, events)
 }
 
@@ -644,16 +620,9 @@ func (s *Server) splunkHECHandler(requireSplunkAuth bool) *splunkhec.Handler {
 		MaxBatchSize:       ingestCfg.MaxBatchSize,
 		MaxLineBytes:       ingestCfg.MaxLineBytes,
 		AckStore:           s.splunkAckStore,
-		AckFlush:           s.flushStagedEvents,
+		AckFlush:           s.engine.FlushBatcherContext,
 		RespondIngestError: func(w http.ResponseWriter, err error) { respondIngestError(w, err) },
 	}, s.submitPipelineEvents)
-}
-
-func (s *Server) flushStagedEvents(ctx context.Context) error {
-	if s.stagingBuffer == nil {
-		return nil
-	}
-	return s.stagingBuffer.Flush(ctx)
 }
 
 func (s *Server) handleSplunkHECEvent(w http.ResponseWriter, r *http.Request) {
@@ -686,31 +655,6 @@ func (s *Server) handleSplunkHECAck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.splunkHECHandler(true).HandleAck(w, r)
-}
-
-func (s *Server) startStagingBuffer() {
-	if s.stagingBuffer != nil {
-		return
-	}
-	s.stagingBuffer = staging.NewBuffer(
-		stagingConfigFromIngest(s.currentIngestConfig()),
-		func(ctx context.Context, events []*event.Event) error {
-			return s.engine.IngestContext(ctx, events)
-		},
-		memgov.NewClassAccount(s.engine.Governor(), memgov.ClassTempIO),
-		s.promMetrics,
-	)
-}
-
-func (s *Server) closeStagingBuffer(ctx context.Context) {
-	if s.stagingBuffer == nil {
-		return
-	}
-	stagingCtx, cancel := context.WithTimeout(ctx, s.currentShutdownTimeout())
-	defer cancel()
-	if err := s.stagingBuffer.Close(stagingCtx); err != nil {
-		s.engine.Logger().Error("staging buffer shutdown error", "error", err)
-	}
 }
 
 // WaitReady blocks until the server has completed initialization and is ready.

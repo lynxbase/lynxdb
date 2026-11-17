@@ -300,23 +300,6 @@ func (i *IngestConfig) validate() error {
 	if i.OTLP.GRPCMaxRecvBytes < 1*MB {
 		return validationErr("ingest", "otlp.grpc_max_recv_bytes", i.OTLP.GRPCMaxRecvBytes.String(), "must be at least 1mb")
 	}
-	if i.Staging.Enabled {
-		if i.Staging.MaxBytes < 1*KB {
-			return validationErr("ingest", "staging.max_bytes", i.Staging.MaxBytes.String(), "must be at least 1kb")
-		}
-		if i.Staging.MaxAge.Duration() <= 0 {
-			return validationErr("ingest", "staging.max_age", i.Staging.MaxAge.String(), "must be positive when staging is enabled")
-		}
-		if i.Staging.MaxInflightEvents < 1 {
-			return validationErr("ingest", "staging.max_inflight_events", fmt.Sprintf("%d", i.Staging.MaxInflightEvents), "must be at least 1")
-		}
-		if i.Staging.FlushRetries < 0 {
-			return validationErr("ingest", "staging.flush_retries", fmt.Sprintf("%d", i.Staging.FlushRetries), "must not be negative")
-		}
-		if i.Staging.FlushBackoffMax.Duration() < 0 {
-			return validationErr("ingest", "staging.flush_backoff_max", i.Staging.FlushBackoffMax.String(), "must not be negative")
-		}
-	}
 
 	switch i.Mode {
 	case "", "full", "lightweight":

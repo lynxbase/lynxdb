@@ -280,25 +280,6 @@ func applyCLIOverrides(cmd *cobra.Command, cfg *config.Config) ([]config.CLIOver
 		cli = append(cli, config.CLIOverride{Key: "ingest.limits.max_decompressed_body_bytes", Value: b.String(), Flag: "--ingest-max-decompressed-body-bytes"})
 		flags = append(flags, "--ingest-max-decompressed-body-bytes")
 	}
-	if cmd.Flags().Changed("ingest-staging-enabled") {
-		cfg.Ingest.Staging.Enabled = flagIngestStagingEnabled
-		cli = append(cli, config.CLIOverride{Key: "ingest.staging.enabled", Value: strconv.FormatBool(flagIngestStagingEnabled), Flag: "--ingest-staging-enabled"})
-		flags = append(flags, "--ingest-staging-enabled")
-	}
-	if cmd.Flags().Changed("ingest-staging-max-bytes") {
-		b, err := config.ParseByteSize(flagIngestStagingMaxBytes)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid --ingest-staging-max-bytes: %w", err)
-		}
-		cfg.Ingest.Staging.MaxBytes = b
-		cli = append(cli, config.CLIOverride{Key: "ingest.staging.max_bytes", Value: b.String(), Flag: "--ingest-staging-max-bytes"})
-		flags = append(flags, "--ingest-staging-max-bytes")
-	}
-	if cmd.Flags().Changed("ingest-staging-max-age") {
-		cfg.Ingest.Staging.MaxAge = config.Duration(flagIngestStagingMaxAge)
-		cli = append(cli, config.CLIOverride{Key: "ingest.staging.max_age", Value: flagIngestStagingMaxAge.String(), Flag: "--ingest-staging-max-age"})
-		flags = append(flags, "--ingest-staging-max-age")
-	}
 
 	return cli, flags, nil
 }

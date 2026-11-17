@@ -155,24 +155,6 @@ const (
 	// LYNXDB_INGEST_SPLUNK_HEC_REQUIRE_TOKEN is the require valid Splunk token for HEC requests.
 	// YAML key: ingest.splunk_hec.require_token. Default: false.
 	LYNXDB_INGEST_SPLUNK_HEC_REQUIRE_TOKEN = "LYNXDB_INGEST_SPLUNK_HEC_REQUIRE_TOKEN"
-	// LYNXDB_INGEST_STAGING_ENABLED is the coalesce small shipper batches before ingest.
-	// YAML key: ingest.staging.enabled. Default: true.
-	LYNXDB_INGEST_STAGING_ENABLED = "LYNXDB_INGEST_STAGING_ENABLED"
-	// LYNXDB_INGEST_STAGING_FLUSH_BACKOFF_MAX is the max retry backoff for staged flush.
-	// YAML key: ingest.staging.flush_backoff_max. Default: 5s.
-	LYNXDB_INGEST_STAGING_FLUSH_BACKOFF_MAX = "LYNXDB_INGEST_STAGING_FLUSH_BACKOFF_MAX"
-	// LYNXDB_INGEST_STAGING_FLUSH_RETRIES is the sink retries before dropping staged events.
-	// YAML key: ingest.staging.flush_retries. Default: 3.
-	LYNXDB_INGEST_STAGING_FLUSH_RETRIES = "LYNXDB_INGEST_STAGING_FLUSH_RETRIES"
-	// LYNXDB_INGEST_STAGING_MAX_AGE is the flush oldest pending batch after this age.
-	// YAML key: ingest.staging.max_age. Default: 5s.
-	LYNXDB_INGEST_STAGING_MAX_AGE = "LYNXDB_INGEST_STAGING_MAX_AGE"
-	// LYNXDB_INGEST_STAGING_MAX_BYTES is the flush or reject when pending bytes exceed this.
-	// YAML key: ingest.staging.max_bytes. Default: 64mb.
-	LYNXDB_INGEST_STAGING_MAX_BYTES = "LYNXDB_INGEST_STAGING_MAX_BYTES"
-	// LYNXDB_INGEST_STAGING_MAX_INFLIGHT_EVENTS is the max pending events in staging.
-	// YAML key: ingest.staging.max_inflight_events. Default: 1000000.
-	LYNXDB_INGEST_STAGING_MAX_INFLIGHT_EVENTS = "LYNXDB_INGEST_STAGING_MAX_INFLIGHT_EVENTS"
 	// LYNXDB_LISTEN is the listen address for the HTTP API server.
 	// YAML key: listen. Default: localhost:3100.
 	LYNXDB_LISTEN = "LYNXDB_LISTEN"

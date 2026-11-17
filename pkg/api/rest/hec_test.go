@@ -2,7 +2,6 @@ package rest
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -83,11 +82,8 @@ func TestIntegration_HEC_CanonicalIngestsWithSplunkToken(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d, want 200, body=%s", resp.StatusCode, body)
 	}
-	if srv.stagingBuffer == nil {
-		t.Fatal("expected HEC ingest to use staging buffer")
-	}
-	if err := srv.stagingBuffer.Flush(context.Background()); err != nil {
-		t.Fatalf("flush staging: %v", err)
+	if err := srv.engine.FlushBatcher(); err != nil {
+		t.Fatalf("flush: %v", err)
 	}
 	if srv.engine.SegmentCount() == 0 {
 		t.Fatal("expected segment after HEC ingest")
@@ -118,8 +114,8 @@ func TestIntegration_HEC_CompressedBodies_Decoded(t *testing.T) {
 				body, _ := io.ReadAll(resp.Body)
 				t.Fatalf("status = %d, want 200, body=%s", resp.StatusCode, body)
 			}
-			if err := srv.stagingBuffer.Flush(context.Background()); err != nil {
-				t.Fatalf("flush staging: %v", err)
+			if err := srv.engine.FlushBatcher(); err != nil {
+				t.Fatalf("flush: %v", err)
 			}
 			if srv.engine.SegmentCount() == 0 {
 				t.Fatal("expected segment after compressed HEC ingest")
@@ -177,7 +173,7 @@ func TestIntegration_HEC_AckMode_RoundTrip(t *testing.T) {
 		t.Fatalf("ackId = %#v, want positive number", eventBody["ackId"])
 	}
 	if srv.engine.SegmentCount() == 0 {
-		t.Fatal("expected HEC ack response after staging flush")
+		t.Fatal("expected HEC ack response after a flush")
 	}
 
 	ackReq, _ := http.NewRequest(http.MethodPost,

@@ -46,9 +46,6 @@ var (
 	flagOTLPGRPCMaxRecvBytes           string
 	flagIngestMaxCompressedBodyBytes   string
 	flagIngestMaxDecompressedBodyBytes string
-	flagIngestStagingEnabled           bool
-	flagIngestStagingMaxBytes          string
-	flagIngestStagingMaxAge            time.Duration
 
 	// Cluster flags.
 	flagClusterEnabled  bool
@@ -94,9 +91,6 @@ func init() {
 	serverCmd.Flags().StringVar(&flagOTLPGRPCMaxRecvBytes, "otlp-grpc-max-recv-bytes", "", "OTLP gRPC max receive message size")
 	serverCmd.Flags().StringVar(&flagIngestMaxCompressedBodyBytes, "ingest-max-compressed-body-bytes", "", "Max compressed shipper body size")
 	serverCmd.Flags().StringVar(&flagIngestMaxDecompressedBodyBytes, "ingest-max-decompressed-body-bytes", "", "Max decompressed shipper body size")
-	serverCmd.Flags().BoolVar(&flagIngestStagingEnabled, "ingest-staging-enabled", true, "Enable server-side shipper staging buffer")
-	serverCmd.Flags().StringVar(&flagIngestStagingMaxBytes, "ingest-staging-max-bytes", "", "Staging buffer byte ceiling")
-	serverCmd.Flags().DurationVar(&flagIngestStagingMaxAge, "ingest-staging-max-age", 0, "Staging buffer max age")
 
 	// Cluster flags.
 	serverCmd.Flags().BoolVar(&flagClusterEnabled, "cluster.enabled", false, "Enable cluster mode")

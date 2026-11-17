@@ -270,9 +270,6 @@ Starts the server. Settings come from the config file, then `LYNXDB_*` environme
 | `--otlp-grpc-max-recv-bytes` | | Largest OTLP/gRPC message |
 | `--ingest-max-compressed-body-bytes` | | Largest compressed shipper body |
 | `--ingest-max-decompressed-body-bytes` | | Largest decompressed shipper body |
-| `--ingest-staging-enabled` | `true` | Server-side shipper staging buffer |
-| `--ingest-staging-max-bytes` | | Staging buffer size limit |
-| `--ingest-staging-max-age` | | Staging buffer max age |
 | `--cluster.enabled` | `false` | Cluster mode |
 | `--cluster.node-id` | | Node ID |
 | `--cluster.roles` | | `meta`, `ingest`, `query` (comma-separated) |
@@ -408,7 +405,7 @@ lynxdb config add-profile prod --url https://logs.example.com --token "$PROD_KEY
 lynxdb query 'source=main level=ERROR | stats count() by host' --profile prod
 ```
 
-A reload applies `log_level`, `retention`, `query.*` (except `query.global_query_pool_bytes`, `query.spill_dir`, `query.max_temp_dir_size_bytes`), `storage.compaction_rate_limit_mb`, `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`, `ingest.es_compat.*`, `ingest.limits.*`, `ingest.staging.*`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`, `http.shutdown_timeout` and the `syslog` index, sourcetype, timezone, hostname and batch settings. Other changes need a restart.
+A reload applies `log_level`, `retention`, `query.*` (except `query.global_query_pool_bytes`, `query.spill_dir`, `query.max_temp_dir_size_bytes`), `storage.compaction_rate_limit_mb`, `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`, `ingest.es_compat.*`, `ingest.limits.*`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`, `http.shutdown_timeout` and the `syslog` index, sourcetype, timezone, hostname and batch settings. Other changes need a restart.
 
 ---
 

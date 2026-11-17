@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/spf13/pflag"
 
@@ -155,10 +154,6 @@ func TestApplyCLIOverrides_ShipperFlagsOverrideEnv(t *testing.T) {
 	if err := serverCmd.Flags().Set("ingest-max-compressed-body-bytes", "16mb"); err != nil {
 		t.Fatal(err)
 	}
-	if err := serverCmd.Flags().Set("ingest-staging-max-age", "2s"); err != nil {
-		t.Fatal(err)
-	}
-
 	cli, _, err := applyCLIOverrides(serverCmd, cfg)
 	if err != nil {
 		t.Fatalf("applyCLIOverrides: %v", err)
@@ -176,11 +171,8 @@ func TestApplyCLIOverrides_ShipperFlagsOverrideEnv(t *testing.T) {
 	if cfg.Ingest.Limits.MaxCompressedBodyBytes != 16*config.MB {
 		t.Fatalf("MaxCompressedBodyBytes = %s", cfg.Ingest.Limits.MaxCompressedBodyBytes)
 	}
-	if cfg.Ingest.Staging.MaxAge != config.Duration(2*time.Second) {
-		t.Fatalf("Staging.MaxAge = %s", cfg.Ingest.Staging.MaxAge)
-	}
-	if len(cli) != 5 {
-		t.Fatalf("cli overrides = %d, want 5", len(cli))
+	if len(cli) != 4 {
+		t.Fatalf("cli overrides = %d, want 4", len(cli))
 	}
 }
 

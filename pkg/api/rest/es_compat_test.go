@@ -89,11 +89,10 @@ func TestESBulk_BasicIndex(t *testing.T) {
 	}
 }
 
-func TestESBulk_DurableBeforeSuccessWithStagingEnabled(t *testing.T) {
+func TestESBulk_DurableBeforeSuccess(t *testing.T) {
 	ingestCfg := config.DefaultConfig().Ingest
 	ingestCfg.OTLP.HTTPListen = ""
 	ingestCfg.OTLP.GRPCListen = ""
-	ingestCfg.Staging.Enabled = true
 
 	srv, cleanup := startTestServerWithConfig(t, Config{
 		DataDir: t.TempDir(),

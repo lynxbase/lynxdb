@@ -99,7 +99,6 @@ func TestServer_OTLPHTTPReceiver_SnappyProtobuf(t *testing.T) {
 	ingestCfg := config.DefaultConfig().Ingest
 	ingestCfg.OTLP.HTTPListen = "127.0.0.1:0"
 	ingestCfg.OTLP.GRPCListen = ""
-	ingestCfg.Staging.Enabled = false
 	srv, cleanup := startTestServerWithConfig(t, Config{Ingest: ingestCfg})
 	defer cleanup()
 
@@ -140,7 +139,6 @@ func TestServer_OTLPGRPCReceiver_Protobuf(t *testing.T) {
 	ingestCfg := config.DefaultConfig().Ingest
 	ingestCfg.OTLP.HTTPListen = ""
 	ingestCfg.OTLP.GRPCListen = "127.0.0.1:0"
-	ingestCfg.Staging.Enabled = false
 	srv, cleanup := startTestServerWithConfig(t, Config{Ingest: ingestCfg})
 	defer cleanup()
 
@@ -181,7 +179,6 @@ func TestServer_OTLPGRPCReceiver_GzipProtobuf(t *testing.T) {
 	ingestCfg := config.DefaultConfig().Ingest
 	ingestCfg.OTLP.HTTPListen = ""
 	ingestCfg.OTLP.GRPCListen = "127.0.0.1:0"
-	ingestCfg.Staging.Enabled = false
 	srv, cleanup := startTestServerWithConfig(t, Config{Ingest: ingestCfg})
 	defer cleanup()
 

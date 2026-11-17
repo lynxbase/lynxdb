@@ -48,13 +48,6 @@ type PrometheusMetrics struct {
 	ingestOTLPRequestBytes     prometheus.Histogram
 	ingestListenerUp           *prometheus.GaugeVec
 	decompressionRejectedTotal *prometheus.CounterVec
-	stagingFlushesTotal        *prometheus.CounterVec
-	stagingOverflowsTotal      prometheus.Counter
-	stagingDroppedTotal        *prometheus.CounterVec
-	stagingBytes               prometheus.Gauge
-	stagingEvents              prometheus.Gauge
-	stagingAgeSeconds          prometheus.Gauge
-	stagingFlushSizeBytes      prometheus.Histogram
 
 	// Compaction metrics.
 	compactionRunsTotal     prometheus.Counter
@@ -227,35 +220,6 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		Name: "lynxdb_ingest_decompression_rejected_total",
 		Help: "Total shipper ingest requests rejected by compressed or decompressed body limits.",
 	}, []string{"stage", "encoding"})
-	stagingFlushes := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "lynxdb_ingest_staging_flushes_total",
-		Help: "Total staging-buffer flushes by trigger.",
-	}, []string{"trigger"})
-	stagingOverflows := prometheus.NewCounter(prometheus.CounterOpts{
-		Name: "lynxdb_ingest_staging_overflows_total",
-		Help: "Total staging-buffer overflows.",
-	})
-	stagingDropped := prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "lynxdb_ingest_staging_dropped_total",
-		Help: "Total staged events dropped after retry exhaustion.",
-	}, []string{"reason"})
-	stagingBytes := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "lynxdb_ingest_staging_bytes",
-		Help: "Current pending bytes in the shipper staging buffer.",
-	})
-	stagingEvents := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "lynxdb_ingest_staging_events",
-		Help: "Current pending event count in the shipper staging buffer.",
-	})
-	stagingAge := prometheus.NewGauge(prometheus.GaugeOpts{
-		Name: "lynxdb_ingest_staging_age_seconds",
-		Help: "Age of the oldest pending staged event in seconds.",
-	})
-	stagingFlushSize := prometheus.NewHistogram(prometheus.HistogramOpts{
-		Name:    "lynxdb_ingest_staging_flush_size_bytes",
-		Help:    "Bytes flushed from the shipper staging buffer.",
-		Buckets: prometheus.ExponentialBuckets(1024, 2, 19),
-	})
 
 	// Compaction metrics.
 	compactionRuns := prometheus.NewCounter(prometheus.CounterOpts{
@@ -372,13 +336,6 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		ingestOTLPRequestBytes,
 		ingestListenerUp,
 		decompressionRejected,
-		stagingFlushes,
-		stagingOverflows,
-		stagingDropped,
-		stagingBytes,
-		stagingEvents,
-		stagingAge,
-		stagingFlushSize,
 		compactionRuns,
 		compactionDuration,
 		compactionInput,
@@ -430,13 +387,6 @@ func NewPrometheusMetrics() *PrometheusMetrics {
 		ingestOTLPRequestBytes:     ingestOTLPRequestBytes,
 		ingestListenerUp:           ingestListenerUp,
 		decompressionRejectedTotal: decompressionRejected,
-		stagingFlushesTotal:        stagingFlushes,
-		stagingOverflowsTotal:      stagingOverflows,
-		stagingDroppedTotal:        stagingDropped,
-		stagingBytes:               stagingBytes,
-		stagingEvents:              stagingEvents,
-		stagingAgeSeconds:          stagingAge,
-		stagingFlushSizeBytes:      stagingFlushSize,
 		compactionRunsTotal:        compactionRuns,
 		compactionDurationTotal:    compactionDuration,
 		compactionInputBytes:       compactionInput,
@@ -508,25 +458,6 @@ func (pm *PrometheusMetrics) OnReject(stage, encoding string) {
 		encoding = "identity"
 	}
 	pm.decompressionRejectedTotal.WithLabelValues(stage, encoding).Inc()
-}
-
-func (pm *PrometheusMetrics) SetState(bytes int64, events int, ageSeconds float64) {
-	pm.stagingBytes.Set(float64(bytes))
-	pm.stagingEvents.Set(float64(events))
-	pm.stagingAgeSeconds.Set(ageSeconds)
-}
-
-func (pm *PrometheusMetrics) RecordFlush(trigger string, bytes int64) {
-	pm.stagingFlushesTotal.WithLabelValues(trigger).Inc()
-	pm.stagingFlushSizeBytes.Observe(float64(bytes))
-}
-
-func (pm *PrometheusMetrics) RecordOverflow() {
-	pm.stagingOverflowsTotal.Inc()
-}
-
-func (pm *PrometheusMetrics) RecordDropped(reason string, events int) {
-	pm.stagingDroppedTotal.WithLabelValues(reason).Add(float64(events))
 }
 
 // Handler returns the HTTP handler that serves the Prometheus metrics endpoint.

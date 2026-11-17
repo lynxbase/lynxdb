@@ -221,14 +221,13 @@ type QueryConfig struct {
 
 // IngestConfig holds ingestion parameters.
 type IngestConfig struct {
-	MaxBodySize  ByteSize            `yaml:"max_body_size"  json:"max_body_size"`
-	MaxBatchSize int                 `yaml:"max_batch_size" json:"max_batch_size"`
-	MaxLineBytes int                 `yaml:"max_line_bytes" json:"max_line_bytes"`
-	ESCompat     ESCompatConfig      `yaml:"es_compat" json:"es_compat"`
-	OTLP         OTLPConfig          `yaml:"otlp" json:"otlp"`
-	SplunkHEC    SplunkHECConfig     `yaml:"splunk_hec" json:"splunk_hec"`
-	Limits       IngestLimitsConfig  `yaml:"limits" json:"limits"`
-	Staging      IngestStagingConfig `yaml:"staging" json:"staging"`
+	MaxBodySize  ByteSize           `yaml:"max_body_size"  json:"max_body_size"`
+	MaxBatchSize int                `yaml:"max_batch_size" json:"max_batch_size"`
+	MaxLineBytes int                `yaml:"max_line_bytes" json:"max_line_bytes"`
+	ESCompat     ESCompatConfig     `yaml:"es_compat" json:"es_compat"`
+	OTLP         OTLPConfig         `yaml:"otlp" json:"otlp"`
+	SplunkHEC    SplunkHECConfig    `yaml:"splunk_hec" json:"splunk_hec"`
+	Limits       IngestLimitsConfig `yaml:"limits" json:"limits"`
 
 	// Mode controls how much parsing happens at ingest time.
 	// "full" (default): extract all JSON fields into columns.
@@ -278,15 +277,6 @@ type OTLPConfig struct {
 type SplunkHECConfig struct {
 	Enabled      bool `yaml:"enabled" json:"enabled"`
 	RequireToken bool `yaml:"require_token" json:"require_token"`
-}
-
-type IngestStagingConfig struct {
-	Enabled           bool     `yaml:"enabled" json:"enabled"`
-	MaxBytes          ByteSize `yaml:"max_bytes" json:"max_bytes"`
-	MaxAge            Duration `yaml:"max_age" json:"max_age"`
-	MaxInflightEvents int      `yaml:"max_inflight_events" json:"max_inflight_events"`
-	FlushRetries      int      `yaml:"flush_retries" json:"flush_retries"`
-	FlushBackoffMax   Duration `yaml:"flush_backoff_max" json:"flush_backoff_max"`
 }
 
 // SyslogConfig configures the native syslog TCP/UDP receiver.
@@ -451,14 +441,6 @@ func DefaultConfig() *Config {
 			Limits: IngestLimitsConfig{
 				MaxCompressedBodyBytes:   32 * MB,
 				MaxDecompressedBodyBytes: 256 * MB,
-			},
-			Staging: IngestStagingConfig{
-				Enabled:           true,
-				MaxBytes:          64 * MB,
-				MaxAge:            Duration(5 * time.Second),
-				MaxInflightEvents: 1_000_000,
-				FlushRetries:      3,
-				FlushBackoffMax:   Duration(5 * time.Second),
 			},
 		},
 
