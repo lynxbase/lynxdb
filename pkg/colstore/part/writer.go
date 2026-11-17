@@ -52,6 +52,8 @@ type Writer struct {
 	raw     uint64
 	minT    int64
 	maxT    int64
+	// copied counts the blocks taken over from other parts as stored.
+	copied int
 
 	blobs  blobCodec // every section but the values of flat columns
 	values blobCodec
@@ -122,7 +124,7 @@ func (w *Writer) Reset(out io.Writer, opts Options) {
 	if w.writerBuffers == nil {
 		w.writerBuffers = writerPool.Get()
 	}
-	w.w, w.opts, w.off, w.err = out, opts, 0, nil
+	w.w, w.opts, w.off, w.err, w.copied = out, opts, 0, nil, 0
 	w.paths = w.paths[:0]
 	clear(w.ids)
 	w.index, w.keys, w.lastKey = w.index[:0], w.keys[:0], w.lastKey[:0]
@@ -229,6 +231,114 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	w.write(w.block)
 
 	return w.err
+}
+
+// copies reports whether block i of src can become a block of w as it is
+// stored. The level and codec of its sections are not recorded, so a writer
+// that asks for the compact level or another codec than the default one
+// encodes every block itself.
+func (w *Writer) copies(src *Part, i int) bool {
+	e := src.index[i*indexEntrySize:]
+
+	return w.opts.Level != LevelCompact && w.opts.Codec == CodecZstd &&
+		(w.opts.NoTokenFilter || binary.LittleEndian.Uint32(e[36:]) != 0)
+}
+
+// copyBlock appends block i of src without decoding its columns. pathMap
+// holds the id in w of every path of src met so far and noPath for the
+// others, and raw is the input size accounted to the block.
+func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int) error {
+	if w.err != nil {
+		return w.err
+	}
+	e := src.index[i*indexEntrySize:]
+	rows, minT, maxT := src.BlockStats(i)
+	start := binary.LittleEndian.Uint64(e[20:])
+	data := src.data[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
+	filterOff, dirOff := binary.LittleEndian.Uint32(e[32:]), binary.LittleEndian.Uint32(e[40:])
+	dir := data[dirOff:]
+	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
+		return ErrCorrupt
+	}
+	n, size := binary.Uvarint(dir)
+	if size <= 0 || n > uint64(len(dir)-size)/dirEntrySize {
+		return ErrCorrupt
+	}
+	entries := size + int(n)*dirEntrySize
+
+	w.block = append(w.block[:0], data[:filterOff]...)
+	if !w.opts.NoTokenFilter {
+		w.block = append(w.block, data[filterOff:dirOff]...)
+	}
+	newDir := len(w.block)
+	w.block = append(w.block, dir[:entries]...)
+	// Path ids are per part, and entries stay ordered by id and kind.
+	ents := w.block[newDir+size:]
+	sorted, prev := true, uint64(0)
+	for at := 0; at < len(ents); at += dirEntrySize {
+		id := binary.LittleEndian.Uint32(ents[at:])
+		if uint64(id) >= uint64(len(pathMap)) {
+			return ErrCorrupt
+		}
+		if pathMap[id] == noPath {
+			pathMap[id] = w.pathID(src.paths[id])
+		}
+		binary.LittleEndian.PutUint32(ents[at:], pathMap[id])
+		key := uint64(pathMap[id])<<8 | uint64(ents[at+4])
+		sorted = sorted && key >= prev
+		prev = key
+	}
+	if !sorted {
+		w.e.tmp = sortEntries(w.e.tmp[:0], ents)
+		copy(ents, w.e.tmp)
+	}
+	w.block = append(w.block, dir[entries:]...)
+
+	var entry [indexEntrySize]byte
+	copy(entry[:20], e[:20])
+	binary.LittleEndian.PutUint64(entry[20:], w.off)
+	binary.LittleEndian.PutUint32(entry[28:], uint32(len(w.block)))
+	binary.LittleEndian.PutUint32(entry[32:], filterOff)
+	binary.LittleEndian.PutUint32(entry[36:], uint32(newDir)-filterOff)
+	binary.LittleEndian.PutUint32(entry[40:], uint32(newDir))
+	binary.LittleEndian.PutUint32(entry[44:], uint32(len(w.block)-newDir))
+	binary.LittleEndian.PutUint32(entry[48:], crc32.Checksum(w.block[newDir:], castagnoli))
+	w.index = append(w.index, entry[:]...)
+	w.keys = binary.AppendUvarint(w.keys, uint64(len(src.firstKeys[i])))
+	w.keys = append(w.keys, src.firstKeys[i]...)
+	w.lastKey = append(w.lastKey[:0], src.upperKey(i)...)
+
+	if w.rows == 0 || minT < w.minT {
+		w.minT = minT
+	}
+	if w.rows == 0 || maxT > w.maxT {
+		w.maxT = maxT
+	}
+	w.rows += uint64(rows)
+	w.raw += uint64(raw)
+	w.copied++
+	w.write(w.block)
+
+	return w.err
+}
+
+// sortEntries appends the directory entries in ents to dst ordered by path
+// id and kind.
+func sortEntries(dst, ents []byte) []byte {
+	n := len(ents) / dirEntrySize
+	order := make([]int, n)
+	for i := range order {
+		order[i] = i
+	}
+	key := func(i int) uint64 {
+		return uint64(binary.LittleEndian.Uint32(ents[i*dirEntrySize:]))<<8 | uint64(ents[i*dirEntrySize+4])
+	}
+	sort.SliceStable(order, func(a, b int) bool { return key(order[a]) < key(order[b]) })
+	for _, i := range order {
+		dst = append(dst, ents[i*dirEntrySize:(i+1)*dirEntrySize]...)
+	}
+
+	return dst
 }
 
 func (w *Writer) finish(ent *dirEntry, start int) {

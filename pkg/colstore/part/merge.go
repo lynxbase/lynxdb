@@ -50,6 +50,10 @@ func MergeRange(w *Writer, srcs []*Part, blockRows int, lo, hi []byte) error {
 		}
 		c := cursorPool.Get()
 		c.src, c.part, c.block = i, p, -1
+		c.pathMap = grow(c.pathMap, len(p.paths))
+		for j := range c.pathMap {
+			c.pathMap[j] = noPath
+		}
 		c.slots = grow(c.slots, len(p.paths)*kindSlots)
 		clear(c.slots)
 		c.keyIDs = c.keyIDs[:0]
@@ -72,6 +76,10 @@ func MergeRange(w *Writer, srcs []*Part, blockRows int, lo, hi []byte) error {
 	return m.run()
 }
 
+// shortShare is how many blocks a merge writes for every block under half
+// of its row limit that it writes before its last.
+const shortShare = 4
+
 // kindSlots is the number of value kinds a path can hold, rounded up.
 const kindSlots = 8
 
@@ -90,12 +98,21 @@ type merger struct {
 	tree    []int32
 	winners []int32
 	// raw is the input size not yet accounted to an output block.
-	raw    int
-	keyBuf []byte
-	times  []int64
+	raw int
+	// blocks and short count the blocks written and those of them under
+	// half of blockRows.
+	blocks, short int
+	// copied is the source of the last block written when it was copied as
+	// stored, and nil otherwise.
+	copied      *Part
+	copiedBlock int
+	keyBuf      []byte
+	times       []int64
 	// counts and unsorted serve the sort of a cursor's events.
 	counts   []uint32
 	unsorted []uint64
+	last     Block
+	lastCols []vec.Column
 }
 
 var mergerPool = mem.Pool[merger]{Reset: func(m *merger) bool {
@@ -110,7 +127,7 @@ var mergerPool = mem.Pool[merger]{Reset: func(m *merger) bool {
 	}
 	*m = merger{
 		cursors: m.cursors[:0], tree: m.tree[:0], winners: m.winners[:0],
-		keyBuf: m.keyBuf[:0], times: m.times[:0],
+		keyBuf: m.keyBuf[:0], times: m.times[:0], lastCols: m.lastCols,
 		counts: m.counts[:0], unsorted: m.unsorted[:0],
 	}
 
@@ -164,6 +181,8 @@ type mergeCursor struct {
 	// one of each path and kind of the part.
 	outs  []*shred.Column
 	slots []*shred.Column
+	// pathMap gives the destination's id of each path of the part.
+	pathMap []uint32
 }
 
 // densePlan is how the rows of a column without gaps reach the output.
@@ -209,6 +228,15 @@ var cursorPool = mem.Pool[mergeCursor]{Reset: func(c *mergeCursor) bool {
 
 	return true
 }}
+
+// upperKey returns an encoded sort key that no row of block i comes after.
+func (p *Part) upperKey(i int) []byte {
+	if i+1 < len(p.firstKeys) {
+		return p.firstKeys[i+1]
+	}
+
+	return p.lastKey
+}
 
 // advance moves the cursor to its next block without decoding it.
 func (c *mergeCursor) advance(m *merger) {
@@ -365,7 +393,7 @@ func (c *mergeCursor) decodeKeys(m *merger) error {
 	if m.lo != nil && bytes.Compare(p.firstKeys[c.block], m.lo) < 0 {
 		c.pos = c.search(m, m.lo)
 	}
-	if m.hi != nil {
+	if m.hi != nil && bytes.Compare(p.upperKey(c.block), m.hi) >= 0 {
 		c.end = c.search(m, m.hi)
 	}
 	if c.pos < c.end {
@@ -683,10 +711,16 @@ func (m *merger) run() error {
 		}
 		if c.state == cursorBound {
 			streak = -1
-			if err := c.decodeKeys(m); err != nil {
+			copied, err := m.copyBlock(wi, c)
+			if err != nil {
 				return err
 			}
-			if c.pos == c.end {
+			if !copied {
+				if err := c.decodeKeys(m); err != nil {
+					return err
+				}
+			}
+			if copied || c.pos == c.end {
 				m.advance(wi, c)
 			}
 			m.replay(wi)
@@ -708,10 +742,9 @@ func (m *merger) run() error {
 		}
 		c.pos += n
 		if m.out.Rows == m.blockRows {
-			if err := m.w.WriteBatch(m.out); err != nil {
+			if err := m.flush(); err != nil {
 				return err
 			}
-			m.out.Reset()
 		}
 		if c.pos == c.end {
 			m.advance(wi, c)
@@ -720,5 +753,127 @@ func (m *merger) run() error {
 		}
 		m.replay(wi)
 	}
-	return m.w.WriteBatch(m.out)
+	if err := m.w.WriteBatch(m.out); err != nil {
+		return err
+	}
+	if m.out.Rows > 0 {
+		m.copied = nil
+	}
+
+	return m.settleLastKey()
+}
+
+// flush writes the rows gathered so far as one block.
+func (m *merger) flush() error {
+	if m.out.Rows < m.blockRows/2 {
+		m.short++
+	}
+	m.blocks++
+	m.copied = nil
+	err := m.w.WriteBatch(m.out)
+	m.out.Reset()
+
+	return err
+}
+
+// copyBlock writes the block a cursor stands before as it is stored, when
+// every row of it lies inside the merged range and before the rows of the
+// other cursors, and reports whether it did.
+func (m *merger) copyBlock(wi int32, c *mergeCursor) (bool, error) {
+	p, b := c.part, c.block
+	rows, _, maxTime := p.BlockStats(b)
+	if rows > m.blockRows || !m.w.copies(p, b) {
+		return false, nil
+	}
+	first, upper := p.firstKeys[b], p.upperKey(b)
+	if (m.lo != nil && bytes.Compare(first, m.lo) < 0) || (m.hi != nil && bytes.Compare(upper, m.hi) >= 0) {
+		return false, nil
+	}
+	if other := m.challenger(wi); other != nil {
+		switch d := bytes.Compare(upper, other.key); {
+		case d > 0:
+			return false, nil
+		case d == 0:
+			// Rows that share the key of the other cursor's row precede it
+			// only by time and source.
+			if !bytes.Equal(first, upper) || maxTime > other.time || (maxTime == other.time && c.src > other.src) {
+				return false, nil
+			}
+		}
+	}
+	// Short blocks stay under one in four, so that copying cannot cut a
+	// part into slivers; the rows before the first copied block do not
+	// count, since a range begins inside a block of most sources.
+	half, short, written := m.blockRows/2, 0, 1
+	if rows < half {
+		short++
+	}
+	if m.out.Rows > 0 {
+		written++
+		if m.out.Rows < half && m.blocks > 0 {
+			short++
+		}
+	}
+	if short > 0 && shortShare*(m.short+short) > m.blocks+written {
+		return false, nil
+	}
+	if m.out.Rows > 0 {
+		if err := m.flush(); err != nil {
+			return false, err
+		}
+	}
+	if err := m.w.copyBlock(p, b, c.pathMap, m.raw); err != nil {
+		return false, err
+	}
+	m.raw = 0
+	m.blocks++
+	if rows < half {
+		m.short++
+	}
+	m.copied, m.copiedBlock = p, b
+
+	return true, nil
+}
+
+// settleLastKey gives the writer the sort key of its last row when the last
+// block was copied without being decoded.
+func (m *merger) settleLastKey() error {
+	p, b := m.copied, m.copiedBlock
+	if p == nil {
+		return nil
+	}
+	if b == p.NumBlocks()-1 {
+		m.w.lastKey = append(m.w.lastKey[:0], p.lastKey...)
+
+		return nil
+	}
+	if err := p.OpenBlock(b, &m.last); err != nil {
+		return err
+	}
+	key := m.w.lastKey[:0]
+	row := m.last.Rows - 1
+	for _, path := range m.w.opts.SortKey {
+		var found *vec.Column
+		if id, ok := p.PathID(path); ok {
+			refs := m.last.Path(id)
+			for len(m.lastCols) < len(refs) {
+				m.lastCols = append(m.lastCols, vec.Column{})
+			}
+			for j := range refs {
+				col := &m.lastCols[j]
+				if err := m.last.Decode(&refs[j], col); err != nil {
+					return err
+				}
+				if col.IsValid(row) {
+					found = col
+
+					break
+				}
+			}
+		}
+		key = appendDecodedKey(key, found, row)
+	}
+	m.w.lastKey = key
+
+	return nil
 }
