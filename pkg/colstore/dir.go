@@ -1,6 +1,7 @@
 package colstore
 
 import (
+	"bytes"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -35,9 +36,9 @@ var manifestRewriteAfter = 1024
 
 var castagnoli = crc32.MakeTable(crc32.Castagnoli)
 
-// ErrManifest reports a manifest that names a part the directory cannot
-// provide.
-var ErrManifest = errors.New("colstore: manifest names a missing or damaged part")
+// ErrManifest reports a manifest that is damaged or names a part the
+// directory cannot provide.
+var ErrManifest = errors.New("colstore: manifest is damaged or names a missing or damaged part")
 
 // Dir keeps a table's parts as files in one directory. A manifest, an
 // append-only log of part set changes, names the live files; a change is
@@ -147,27 +148,14 @@ func partID(name string) (uint64, bool) {
 // replay returns the live part names the manifest describes and the number
 // of records it holds, cutting off a record torn by a crash.
 func (d *Dir) replay() (names map[string]PartMeta, records int, err error) {
-	names = map[string]PartMeta{}
 	file := filepath.Join(d.path, manifestName)
 	data, err := os.ReadFile(file)
-	if errors.Is(err, os.ErrNotExist) {
-		return names, 0, nil
-	}
-	if err != nil {
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, 0, err
 	}
-	valid := 0
-	for rest := data; len(rest) >= 8; {
-		size := int(binary.LittleEndian.Uint32(rest))
-		if size > len(rest)-8 || crc32.Checksum(rest[8:8+size], castagnoli) != binary.LittleEndian.Uint32(rest[4:]) {
-			break
-		}
-		if !applyRecord(names, rest[8:8+size]) {
-			break
-		}
-		rest = rest[8+size:]
-		valid = len(data) - len(rest)
-		records++
+	names, records, valid, err := parseManifest(data)
+	if err != nil {
+		return nil, 0, err
 	}
 	if valid < len(data) {
 		if err := os.Truncate(file, int64(valid)); err != nil {
@@ -176,6 +164,69 @@ func (d *Dir) replay() (names map[string]PartMeta, records int, err error) {
 	}
 
 	return names, records, nil
+}
+
+// parseManifest returns the live part names the records of data describe,
+// the number of records and their size; bytes behind them are a torn append.
+func parseManifest(data []byte) (names map[string]PartMeta, records, valid int, err error) {
+	names = map[string]PartMeta{}
+	for valid < len(data) {
+		payload, ok := wholeRecord(data[valid:])
+		if !ok {
+			if !tornAppend(data[valid:]) {
+				return nil, 0, 0, fmt.Errorf("%w: record %d is damaged", ErrManifest, records)
+			}
+
+			break
+		}
+		if !applyRecord(names, payload) {
+			return nil, 0, 0, fmt.Errorf("%w: record %d is malformed", ErrManifest, records)
+		}
+		valid += 8 + len(payload)
+		records++
+	}
+
+	return names, records, valid, nil
+}
+
+// wholeRecord returns the payload of the record that data starts with when
+// all of it is there and matches its checksum.
+func wholeRecord(data []byte) ([]byte, bool) {
+	if len(data) < 8 {
+		return nil, false
+	}
+	size := uint64(binary.LittleEndian.Uint32(data))
+	// Zeros pass for an empty record, which no change writes.
+	if size == 0 || size > uint64(len(data)-8) || crc32.Checksum(data[8:8+size], castagnoli) != binary.LittleEndian.Uint32(data[4:]) {
+		return nil, false
+	}
+
+	return data[8 : 8+size], true
+}
+
+// tornAppend reports whether tail, which does not start with a whole record,
+// is what a crash during an append leaves: zeros, or the first bytes of one
+// record. Anything else is damage, and cutting it off would drop the records
+// behind it.
+func tornAppend(tail []byte) bool {
+	if len(bytes.TrimLeft(tail, "\x00")) == 0 || len(tail) < 8 {
+		return true
+	}
+	size := uint64(binary.LittleEndian.Uint32(tail))
+	if size <= uint64(len(tail)-8) {
+		return false
+	}
+	// A record that is whole under another size has a damaged size.
+	if crc32.Checksum(tail[8:], castagnoli) == binary.LittleEndian.Uint32(tail[4:]) {
+		return false
+	}
+	for at := 1; at <= len(tail)-8; at++ {
+		if _, ok := wholeRecord(tail[at:]); ok {
+			return false
+		}
+	}
+
+	return true
 }
 
 // A manifest record lists the parts a change adds, each with its run, tier
