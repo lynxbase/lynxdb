@@ -55,6 +55,7 @@ var rootCmd = &cobra.Command{
 	Short:         "LynxDB - log analytics in a single binary",
 	Long:          `LynxDB is a columnar log storage and search engine queried with PPL.`,
 	RunE:          runRootCommand,
+	Args:          cobra.ArbitraryArgs,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -182,6 +183,9 @@ func runRootCommand(cmd *cobra.Command, args []string) error {
 			return runQueryStdin(query, "", "", "", false, "", "", false)
 		}
 
+		if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
+			return fmt.Errorf("unknown command %q for \"lynxdb\"; did you mean %s?", args[0], strings.Join(s, ", "))
+		}
 		return fmt.Errorf("bare query requires piped stdin. Use: cat file | lynxdb '%s'", query)
 	}
 
