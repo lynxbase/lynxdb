@@ -577,7 +577,6 @@ func printQueryInsightFooter(st *stats.QueryStats) {
 }
 
 // queryResultToRows converts a typed *client.QueryResult to []map[string]interface{}.
-// Used by count.go, diff.go, sample.go, and the plain query path.
 func queryResultToRows(result *client.QueryResult) []map[string]interface{} {
 	if result == nil {
 		return nil

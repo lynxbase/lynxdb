@@ -200,7 +200,6 @@ type Theme struct {
 	Value lipgloss.Style
 	Rule  lipgloss.Style
 	Muted lipgloss.Style
-	Panel lipgloss.Style
 
 	// Semantic blocks.
 	SectionTitle lipgloss.Style
@@ -216,28 +215,14 @@ type Theme struct {
 	JSONNull  lipgloss.Style
 	JSONBrace lipgloss.Style
 	JSONPunct lipgloss.Style
-	JSONIdx   lipgloss.Style
 
 	// Status icons (pre-rendered strings are returned by Icon* methods).
-	StatusOK      lipgloss.Style
-	StatusWarn    lipgloss.Style
-	StatusErr     lipgloss.Style
-	StatusRunning lipgloss.Style
-
-	// Log levels (tail).
-	LevelError lipgloss.Style
-	LevelWarn  lipgloss.Style
-	LevelInfo  lipgloss.Style
-	LevelDebug lipgloss.Style
+	StatusOK   lipgloss.Style
+	StatusWarn lipgloss.Style
+	StatusErr  lipgloss.Style
 
 	// Table.
 	TableHeader lipgloss.Style
-	TableRule   lipgloss.Style
-
-	// Diff.
-	DiffUp   lipgloss.Style
-	DiffDown lipgloss.Style
-	DiffNew  lipgloss.Style
 }
 
 // Writer returns the io.Writer this theme renders to.
@@ -272,7 +257,6 @@ func newThemeFromEnv(w io.Writer) *Theme {
 	t.Value = lipgloss.NewStyle().Foreground(ColorWhite()).Bold(true)
 	t.Rule = lipgloss.NewStyle().Foreground(ColorDark())
 	t.Muted = lipgloss.NewStyle().Foreground(ColorDim())
-	t.Panel = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(ColorDark()).Padding(0, 1)
 
 	// Semantic blocks.
 	t.SectionTitle = lipgloss.NewStyle().Foreground(ColorWhite()).Bold(true)
@@ -288,28 +272,14 @@ func newThemeFromEnv(w io.Writer) *Theme {
 	t.JSONNull = lipgloss.NewStyle().Foreground(ColorDim()).Faint(true)
 	t.JSONBrace = lipgloss.NewStyle().Foreground(ColorWhite())
 	t.JSONPunct = lipgloss.NewStyle().Foreground(ColorGray())
-	t.JSONIdx = lipgloss.NewStyle().Foreground(ColorDim()).Faint(true)
 
 	// Status icons.
 	t.StatusOK = lipgloss.NewStyle().Foreground(ColorSuccess()).Bold(true)
 	t.StatusWarn = lipgloss.NewStyle().Foreground(ColorWarning()).Bold(true)
 	t.StatusErr = lipgloss.NewStyle().Foreground(ColorError()).Bold(true)
-	t.StatusRunning = lipgloss.NewStyle().Foreground(ColorAccent())
-
-	// Log levels.
-	t.LevelError = lipgloss.NewStyle().Foreground(ColorError())
-	t.LevelWarn = lipgloss.NewStyle().Foreground(ColorWarning())
-	t.LevelInfo = lipgloss.NewStyle().Foreground(ColorSuccess())
-	t.LevelDebug = lipgloss.NewStyle().Foreground(ColorDim())
 
 	// Table.
 	t.TableHeader = lipgloss.NewStyle().Bold(true)
-	t.TableRule = lipgloss.NewStyle().Foreground(ColorDark())
-
-	// Diff.
-	t.DiffUp = lipgloss.NewStyle().Foreground(ColorError())
-	t.DiffDown = lipgloss.NewStyle().Foreground(ColorSuccess())
-	t.DiffNew = lipgloss.NewStyle().Foreground(ColorSuccess())
 
 	return t
 }
@@ -360,45 +330,34 @@ func newNoColorTheme(w io.Writer) *Theme {
 	s := lipgloss.NewStyle() // plain style — no colors, no bold, no ANSI
 
 	return &Theme{
-		w:             w,
-		Bold:          s,
-		Dim:           s,
-		Faint:         s,
-		Success:       s,
-		Warning:       s,
-		Error:         s,
-		Info:          s,
-		Accent:        s,
-		Label:         s,
-		Value:         s,
-		Rule:          s,
-		Muted:         s,
-		Panel:         s,
-		SectionTitle:  s,
-		Hint:          s,
-		MetricLabel:   s,
-		MetricValue:   s,
-		JSONKey:       s,
-		JSONStr:       s,
-		JSONNum:       s,
-		JSONBool:      s,
-		JSONNull:      s,
-		JSONBrace:     s,
-		JSONPunct:     s,
-		JSONIdx:       s,
-		StatusOK:      s,
-		StatusWarn:    s,
-		StatusErr:     s,
-		StatusRunning: s,
-		LevelError:    s,
-		LevelWarn:     s,
-		LevelInfo:     s,
-		LevelDebug:    s,
-		TableHeader:   s,
-		TableRule:     s,
-		DiffUp:        s,
-		DiffDown:      s,
-		DiffNew:       s,
+		w:            w,
+		Bold:         s,
+		Dim:          s,
+		Faint:        s,
+		Success:      s,
+		Warning:      s,
+		Error:        s,
+		Info:         s,
+		Accent:       s,
+		Label:        s,
+		Value:        s,
+		Rule:         s,
+		Muted:        s,
+		SectionTitle: s,
+		Hint:         s,
+		MetricLabel:  s,
+		MetricValue:  s,
+		JSONKey:      s,
+		JSONStr:      s,
+		JSONNum:      s,
+		JSONBool:     s,
+		JSONNull:     s,
+		JSONBrace:    s,
+		JSONPunct:    s,
+		StatusOK:     s,
+		StatusWarn:   s,
+		StatusErr:    s,
+		TableHeader:  s,
 	}
 }
 
