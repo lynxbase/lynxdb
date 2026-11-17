@@ -681,6 +681,13 @@ func (t *translator) field(name string) (*exec.Expr, error) {
 	if e, ok := t.env[name]; ok {
 		return e, nil
 	}
+	// A member of a value that the query computed is inside that value,
+	// and no stored column holds it.
+	for i := strings.LastIndexByte(name, '.'); i > 0; i = strings.LastIndexByte(name[:i], '.') {
+		if e, ok := t.env[name[:i]]; ok && (e.Op != exec.OpColumn || e.Path != name[:i]) {
+			return nil, unsupported("%s, a member of a computed column", name)
+		}
+	}
 	switch {
 	case t.agg != nil:
 		return nil, unsupported("the column %s, which the aggregate does not have", name)

@@ -290,6 +290,7 @@ func TestRefusedPlans(t *testing.T) {
 		`source=logs | where rand() > 2 | stats count()`:                                      "the function rand",
 		`source=logs | sort - status | head 2 | where status > 1`:                             "above a sort or a limit",
 		`source=logs | fields h* | head 1`:                                                    "the column pattern h*",
+		`source=logs | eval o = json_object('a', status) | eval x = o.a | fields x`:           "o.a, a member of a computed column",
 	} {
 		_, err := compile(text)
 		if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), want) {
