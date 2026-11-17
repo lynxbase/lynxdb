@@ -484,13 +484,24 @@ func (a *Aggregate) Label() string {
 	}
 	return b.String()
 }
+
+// Column annotations shared by every aggregate schema; they are never
+// modified.
+var (
+	groupMeta     = map[string]string{"role": "group"}
+	aggregateMeta = map[string]string{"role": "aggregate"}
+)
+
 func (a *Aggregate) Schema() Schema {
 	var s Schema
+	if n := len(a.Groups) + len(a.Aggs); n > 0 {
+		s.Columns = make([]Column, 0, n)
+	}
 	for _, g := range a.Groups {
-		s.Columns = append(s.Columns, Column{Name: g.Name, Type: g.Expr.Type(), Nullable: !a.DropNullGroups, Meta: map[string]string{"role": "group"}})
+		s.Columns = append(s.Columns, Column{Name: g.Name, Type: g.Expr.Type(), Nullable: !a.DropNullGroups, Meta: groupMeta})
 	}
 	for _, ag := range a.Aggs {
-		s.Columns = append(s.Columns, Column{Name: ag.Name, Type: ag.Agg.Type(), Nullable: true, Meta: map[string]string{"role": "aggregate"}})
+		s.Columns = append(s.Columns, Column{Name: ag.Name, Type: ag.Agg.Type(), Nullable: true, Meta: aggregateMeta})
 	}
 	return s
 }
