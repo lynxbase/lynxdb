@@ -76,7 +76,7 @@ func TestServer_DiskFlushAndRecover(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	if files := partFiles(t, filepath.Join(dir, "main")); len(files) == 0 {
+	if files := partFiles(t, filepath.Join(dir, "indexes", "main")); len(files) == 0 {
 		t.Fatal("expected part files on disk")
 	}
 	ix, ok := indexStats(srv1, "main")

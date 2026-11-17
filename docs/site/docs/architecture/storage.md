@@ -6,7 +6,7 @@ description: How LynxDB keeps events -- one columnar store per index, time parti
 
 # Storage
 
-Every index has a columnar store of its own (`pkg/colstore`), kept in one directory under the data directory. `pkg/engine/columnar` opens the stores and `pkg/database` sets them up for a server. This page follows events from ingest to disk and back out.
+Every index has a columnar store of its own (`pkg/colstore`), kept in one directory under `indexes/` in the data directory. `pkg/engine/columnar` opens the stores and `pkg/database` sets them up for a server. This page follows events from ingest to disk and back out.
 
 ## The Data Directory
 

@@ -20,7 +20,7 @@ func TestServer_ForcedCrash_FlushedPartSurvivesRestart(t *testing.T) {
 	ingestFile(t, srv, testdataLog("backend_server.log"))
 	assertServerCount(t, srv, 26)
 
-	indexDir := filepath.Join(dataDir, "main")
+	indexDir := filepath.Join(dataDir, "indexes", "main")
 	partPath := waitForFinalPart(t, indexDir, 5*time.Second)
 	// A part file that was being written when the process died ends in .tmp.
 	staleTmpPath := filepath.Join(indexDir, "forced_crash_cleanup.part.tmp")

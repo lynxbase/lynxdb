@@ -41,7 +41,7 @@ An `Overrides` line lists the environment variables and flags that changed
 settings. The server also starts an OTLP/HTTP log receiver on port 4318. See
 [Server configuration](../configuration/server.md) for every flag and setting.
 
-Each index is a directory under the data directory, created with the
+Each index is a directory under `indexes/` in the data directory, created with the
 index's first events. See [Storage](../architecture/storage.md) for what the
 files hold.
 

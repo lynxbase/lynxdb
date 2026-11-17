@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -77,7 +78,7 @@ func NewServer(cfg Config) (*Server, error) {
 		cfg.Logger = slog.Default()
 	}
 	db, err := database.Open(database.Config{
-		Dir:           cfg.DataDir,
+		Dir:           indexDir(cfg.DataDir),
 		Retention:     cfg.Retention,
 		Partition:     cfg.Storage.Partition.Duration(),
 		FlushInterval: cfg.Storage.FlushInterval.Duration(),
@@ -648,6 +649,17 @@ func (s *Server) TLSEnabled() bool {
 // DB returns the database the server serves.
 func (s *Server) DB() *database.DB {
 	return s.db
+}
+
+// indexDir is the directory of the indexes under a data directory, apart
+// from the server's keys and certificates; an empty data directory keeps
+// the indexes in a temporary one.
+func indexDir(dataDir string) string {
+	if dataDir == "" {
+		return ""
+	}
+
+	return filepath.Join(dataDir, "indexes")
 }
 
 // bodyLimits bounds request bodies: the native ingest endpoints by

@@ -86,7 +86,7 @@ lynxdb server --otlp-http-listen :4318 --otlp-grpc-listen :4317
 
 ## Data directory
 
-The data directory holds one directory per index, each with the store that keeps that index's events. An index comes into being with its first events. Next to the indexes are `auth/` (API keys, with `--auth`), `tls/` (the self-signed certificate, with `--tls`) and the PID file `lynxdb.pid`. [Storage settings](../configuration/storage.md) describe how events are written, partitioned by time and dropped by retention.
+The data directory holds `indexes/`, with one directory per index, each with the store that keeps that index's events. An index comes into being with its first events. Next to `indexes/` are `auth/` (API keys, with `--auth`), `tls/` (the self-signed certificate, with `--tls`) and the PID file `lynxdb.pid`. [Storage settings](../configuration/storage.md) describe how events are written, partitioned by time and dropped by retention.
 
 With `--data-dir ""` the server keeps its indexes in a temporary directory and removes it at shutdown. The startup banner shows `Data (in-memory)`. Features that keep files next to the data are not available: `--auth` has no effect, and `--tls` without a certificate refuses to start. The PID file goes to `$XDG_RUNTIME_DIR`, or the system temp directory.
 

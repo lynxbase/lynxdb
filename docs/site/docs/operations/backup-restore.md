@@ -5,13 +5,13 @@ description: Back up and restore LynxDB -- the data directory layout, consistent
 
 # Backup and Restore
 
-LynxDB keeps everything it stores in the `data_dir` directory, one subdirectory per index. A backup is a copy of that directory taken at one moment: from a stopped server, or from an atomic filesystem snapshot.
+LynxDB keeps everything it stores in the `data_dir` directory, one subdirectory of `indexes/` per index. A backup is a copy of that directory taken at one moment: from a stopped server, or from an atomic filesystem snapshot.
 
 ## What to Back Up
 
 | Component | Location | Contains |
 |-----------|----------|----------|
-| Indexes | `<data_dir>/<index>/` | The index's `MANIFEST`, `MANIFEST.end` and `.part` files |
+| Indexes | `<data_dir>/indexes/<index>/` | The index's `MANIFEST`, `MANIFEST.end` and `.part` files |
 | API keys | `<data_dir>/auth/keys.json` | Keys, when authentication is on |
 | TLS certificate | `<data_dir>/tls/` | The self-signed certificate and key, when `--tls` generated them |
 | Config file | `/etc/lynxdb/config.yaml` or `~/.config/lynxdb/config.yaml` | Server configuration |
