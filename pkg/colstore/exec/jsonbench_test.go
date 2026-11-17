@@ -94,7 +94,11 @@ func benchTexts(win benchWindows) map[string]string {
 		"A3 any field, any case":   `from bluesky love | stats count()`,
 		"T1 count in 10 minutes":   `from bluesky | where ` + within(win.tenLo, win.tenHi) + ` | stats count()`,
 		"T3 groups in 1 hour":      `from bluesky | where ` + within(win.hourLo, win.hourHi) + byCount,
-		"T4 latest 20 of a user":   `from bluesky | where did == "did:plc:yj3sjq3blzpynh27cumnp5ks" | extend event = commit.collection | keep _time, event | sort -_time, event | head 20`,
+		"L1 latest post per user": created + ` and commit.collection == "app.bsky.feed.post"` +
+			` | stats latest(commit.record.text) as text, max(_time) as at by did | sort -at, did | head 5`,
+		"L2 latest post of every user": created + ` and commit.collection == "app.bsky.feed.post"` +
+			` | stats latest(commit.record.text) as text by did`,
+		"T4 latest 20 of a user": `from bluesky | where did == "did:plc:yj3sjq3blzpynh27cumnp5ks" | extend event = commit.collection | keep _time, event | sort -_time, event | head 20`,
 	}
 }
 
@@ -224,6 +228,14 @@ func benchPlans(win benchWindows) []benchPlan {
 			Exprs: []exec.Named{named("time", exec.Time()), collection},
 		}, By: []exec.Order{{Column: "time", Desc: true}, {Column: "event"}}, Limit: 20}, ordered: true},
 	}
+	latestText := exec.Agg{Name: "text", Func: exec.Latest, Arg: text}
+	plans = append(plans,
+		benchPlan{name: "L1 latest post per user", plan: &exec.Sort{Input: &exec.Aggregate{Input: posts, Keys: []exec.Named{named("did", str("did"))},
+			Aggs: []exec.Agg{latestText, {Name: "at", Func: exec.Max, Arg: exec.Time()}}},
+			By: []exec.Order{{Column: "at", Desc: true}, {Column: "did"}}, Limit: 5}, ordered: true},
+		benchPlan{name: "L2 latest post of every user", plan: &exec.Aggregate{Input: posts, Keys: []exec.Named{named("did", str("did"))},
+			Aggs: []exec.Agg{latestText}}},
+	)
 	texts := benchTexts(win)
 	for i := range plans {
 		plans[i].text = texts[plans[i].name]
@@ -475,6 +487,15 @@ func TestJSONBenchReference(t *testing.T) {
 // answer renders a result the way the hand-written benchmark prints its own.
 func answer(name string, res *exec.Result) string {
 	var b strings.Builder
+	if strings.HasPrefix(name, "L2") {
+		// Too many rows to print: their number and the bytes of their texts.
+		total := 0
+		for i := 0; i < res.Rows; i++ {
+			total += len(res.Value(i, 1).Bytes)
+		}
+
+		return fmt.Sprintf("%d rows, %d bytes", res.Rows, total)
+	}
 	for i := 0; i < res.Rows; i++ {
 		if i > 0 {
 			b.WriteByte(' ')
@@ -487,6 +508,10 @@ func answer(name string, res *exec.Result) string {
 			continue
 		case strings.HasPrefix(name, "T4"):
 			fmt.Fprintf(&b, "%d:%s", row[0].Int/1000, row[1].Bytes)
+
+			continue
+		case strings.HasPrefix(name, "L1"):
+			fmt.Fprintf(&b, "%s@%d:%d", row[0].Bytes, row[2].Int/1000, len(row[1].Bytes))
 
 			continue
 		}
