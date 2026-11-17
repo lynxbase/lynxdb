@@ -221,6 +221,9 @@ func hashBytes(kind vec.Kind, v []byte) uint64 { return vec.Hash(v) ^ kindSeeds[
 // the first n rows when it is nil, to the distinct-count states of an
 // argument: the integers or floats given, or else the values of c.
 func (a *aggWorker) feedHashes(arg *aggArg, t *target, kind vec.Kind, c *vec.Column, ints []int64, floats []float64, gid, rows []uint32, n int) {
+	if a.counted >= 0 && arg == &a.plan.args[a.counted] {
+		return
+	}
 	for _, i := range arg.states {
 		st := &a.plan.states[i]
 		if st.op != stateHLL {
@@ -308,4 +311,16 @@ func (a *aggWorker) feedSketch(arg *aggArg, t *target, ints []int64, floats []fl
 			arg.sketch.add(&a.heap, words, x, 1)
 		}
 	}
+}
+
+// hllWord returns the word of the distinct-count state of argument arg, or
+// -1 when it has none.
+func (ap *aggPlan) hllWord(arg int) int {
+	for _, s := range ap.states {
+		if s.op == stateHLL && s.arg == arg {
+			return s.word
+		}
+	}
+
+	return -1
 }

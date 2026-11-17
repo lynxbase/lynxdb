@@ -154,3 +154,42 @@ func TestOrderedAggregationSkipsBlocksByToken(t *testing.T) {
 		snap.Release()
 	}
 }
+
+// TestEstimatedDistinctCountIsExactInKeyOrder checks that an ApproxDistinct
+// of the sort key column after the group keys gives the exact count, of
+// groups with more values than a set of hashes holds too.
+func TestEstimatedDistinctCountIsExactInKeyOrder(t *testing.T) {
+	docs := synthDocs(9000, 6)
+	rows := referenceRows(t, docs, "ts")
+	created := exec.And(exec.Eq(str("kind"), exec.Str("commit")), exec.Eq(str("op"), exec.Str("create")))
+	aggs := func(fn exec.AggFunc) []exec.Agg {
+		return []exec.Agg{{Name: "rows", Func: exec.Count}, {Name: "users", Func: fn, Arg: str("user")}}
+	}
+	plan := func(fn exec.AggFunc, more ...exec.Agg) exec.Node {
+		return &exec.Aggregate{Input: &exec.Scan{Filter: created}, Keys: keys("coll"), Aggs: append(aggs(fn), more...)}
+	}
+	texts := exec.Agg{Name: "texts", Func: exec.ApproxDistinct, Arg: str("msg")}
+	for _, l := range []layout{
+		{name: "runs", blockRows: 64, parts: 3, sortKey: []string{"kind", "op", "coll", "user"}},
+		{name: "one stream", blockRows: 200, parts: 1, sortKey: []string{"kind", "op", "coll", "user"}},
+	} {
+		tbl := buildTable(t, docs, "ts", l)
+		snap := tbl.Snapshot()
+		for _, workers := range []int{1, 5} {
+			res := checkAgainst(t, snap, rows, plan(exec.ApproxDistinct), plan(exec.CountDistinct), false, workers)
+			most := int64(0)
+			for i := 0; i < res.Rows; i++ {
+				most = max(most, res.Value(i, 2).Int)
+			}
+			if !res.Stats.Ordered || most < 500 {
+				t.Fatalf("%s: in key order: %v; the largest group has %d users, want more than a set holds", l.name, res.Stats.Ordered, most)
+			}
+			// Another estimate in the plan is still a sketch.
+			with := checkAgainst(t, snap, rows, plan(exec.ApproxDistinct, texts), plan(exec.CountDistinct, texts), false, workers)
+			if !with.Stats.Ordered {
+				t.Fatalf("%s: with a second estimate the plan does not run in key order", l.name)
+			}
+		}
+		snap.Release()
+	}
+}

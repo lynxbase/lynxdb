@@ -57,6 +57,8 @@ type benchPlan struct {
 	ordered bool
 	// text is the query in LynxFlow, when the language can state it.
 	text string
+	// estimated is set when the answer may differ between layouts.
+	estimated bool
 }
 
 // benchTexts states the benchmark plans in LynxFlow, by plan name; a search
@@ -189,7 +191,7 @@ func benchPlans(win benchWindows) []benchPlan {
 			Input: &exec.Scan{Filter: exec.And(created...)},
 			Keys:  []exec.Named{collection},
 			Aggs:  []exec.Agg{count, {Name: "users", Func: exec.ApproxDistinct, Arg: str("did")}},
-		}, By: byCount}, ordered: true},
+		}, By: byCount}, ordered: true, estimated: true},
 		{name: "Q3", plan: &exec.Sort{Input: &exec.Aggregate{
 			Input: &exec.Scan{Filter: exec.And(append(created[:2:2], exec.Or(isCollection("app.bsky.feed.like"),
 				isCollection("app.bsky.feed.post"), isCollection("app.bsky.feed.repost")))...)},
@@ -705,10 +707,10 @@ func TestJSONBenchPlans(t *testing.T) {
 			if want, ok := benchAnswers[q.name]; ok && rows == 1_000_000 && got != want {
 				t.Errorf("%s %s\n got  %s\n want %s", tbl.name, q.name, got, want)
 			}
-			if prev, ok := answers[q.name]; ok && prev != got {
+			if prev, ok := answers[q.name]; ok && prev != got && !q.estimated {
 				t.Errorf("%s %s answers %s, another layout %s", tbl.name, q.name, got, prev)
 			}
-			if _, ok := answers[q.name]; !ok {
+			if _, ok := answers[q.name]; !ok || q.estimated {
 				t.Logf("%-8s %-22s answer: %s", "", q.name, got)
 			}
 			answers[q.name] = got

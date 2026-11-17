@@ -58,6 +58,10 @@ type orderedPlan struct {
 	rowsOnly         []bool
 	floats           []bool
 	skipped          int64
+	// estimated is the argument of an ApproxDistinct that follows the group
+	// keys in the sort key, whose distinct values the order of the rows
+	// then counts exactly; -1 without one.
+	estimated int
 	// residual is what the filter asks beyond the key prefix, or nil, and
 	// tokens what a block with a row passing it must hold.
 	residual *pred
@@ -179,7 +183,7 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 	}
 
 	o := &orderedPlan{groups: len(ap.keys), keyOf: make([]int, len(ap.keys)), floats: make([]bool, len(ap.args)),
-		residual: residual, tokens: tokens, prefix: prefix}
+		residual: residual, tokens: tokens, prefix: prefix, estimated: -1}
 	for i, k := range ap.keys {
 		if k.op != OpColumn || (k.kind != vec.KindString && k.kind != KindAny) {
 			return nil
@@ -203,14 +207,18 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 	distinct := -1
 	for i := range ap.args {
 		arg := &ap.args[i]
-		if len(arg.distinct) != 0 {
-			// Values that are not strings end the run in key order.
-			if distinct >= 0 || arg.expr.op != OpColumn || (arg.expr.kind != vec.KindString && arg.expr.kind != KindAny) ||
-				position(q.paths[arg.expr.path]) != prefix+len(ap.keys) {
-				return nil
-			}
+		// Values that are not strings end the run in key order.
+		next := arg.expr.op == OpColumn && (arg.expr.kind == vec.KindString || arg.expr.kind == KindAny) &&
+			position(q.paths[arg.expr.path]) == prefix+len(ap.keys)
+		if len(arg.distinct) != 0 && (distinct >= 0 || !next) {
+			return nil
+		}
+		if sketched := ap.hllWord(i) >= 0; next && distinct < 0 && (sketched || len(arg.distinct) != 0) {
 			distinct = i
 			o.parts = append(o.parts, prefix+len(ap.keys))
+			if sketched {
+				o.estimated = i
+			}
 		}
 		// The kind of a numeric aggregate must not depend on rows that a
 		// group handed on earlier has not seen.
@@ -292,8 +300,8 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 	}
 	o.key = key
 	o.byIndex = residual == nil && key.Streams() == 1
-	for _, w := range ap.words {
-		o.byIndex = o.byIndex && (w.op == wordRows || w.op == wordGroup)
+	for i, w := range ap.words {
+		o.byIndex = o.byIndex && (w.op == wordRows || w.op == wordGroup || (o.estimated >= 0 && i == ap.hllWord(o.estimated)))
 	}
 	o.blocks = key.Streams() == 1
 	for _, h := range snap.Parts() {
@@ -970,6 +978,11 @@ func (ow *orderedWorker) flush() {
 		distinct[i] = ow.users
 	}
 	for i := range plan.outs {
+		if out := &plan.outs[i]; out.fn == ApproxDistinct && out.arg == ow.o.estimated {
+			copy(ow.batch[keys+i].bulkInts(ow.count), ow.users)
+
+			continue
+		}
 		plan.column(&plan.outs[i], ow.states, &ow.w.agg.heap, ow.count, ow.o.floats, distinct, &ow.batch[keys+i])
 	}
 	out, n := ow.batch, ow.count

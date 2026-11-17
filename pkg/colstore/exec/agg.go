@@ -166,8 +166,10 @@ type aggWorker struct {
 	floats []bool
 	one    [1]uint32
 	// streaming is set when groups arrive in key order, which counts
-	// distinct values without logging them.
+	// distinct values without logging them; counted is then the argument
+	// whose estimated distinct count the key order gives exactly, or -1.
 	streaming bool
+	counted   int
 	// times is the time column of the open block for picks by time.
 	times *vec.Column
 }
@@ -179,7 +181,10 @@ func (a *aggWorker) init(w *worker) {
 	a.floats = make([]bool, len(a.plan.args))
 	a.s.parts = fit(a.s.parts, len(a.plan.keys))
 	a.s.okeys, a.s.ohas = fit(a.s.okeys, len(a.plan.orders)), fit(a.s.ohas, len(a.plan.orders))
-	a.streaming = w.x.streaming
+	a.streaming, a.counted = w.x.streaming, -1
+	if a.streaming {
+		a.counted = w.q.ordered.estimated
+	}
 	for i := 0; i < a.plan.distinct && !a.streaming; i++ {
 		a.dlogs = append(a.dlogs, vec.NewKeyPartitions(w.arena, partitionBits))
 	}
@@ -926,7 +931,7 @@ func (a *aggWorker) feed(t *target, n int, idx []uint32) error {
 		a.firstRows(t, i, n, idx)
 	}
 	for i := range a.plan.args {
-		if a.streaming && len(a.plan.args[i].words) == 0 && len(a.plan.args[i].states) == 0 {
+		if arg := &a.plan.args[i]; a.streaming && len(arg.words) == 0 && (len(arg.states) == 0 || (i == a.counted && len(arg.states) == 1)) {
 			continue
 		}
 		if err := a.feedArg(i, t, n, idx); err != nil {

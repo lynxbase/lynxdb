@@ -120,11 +120,19 @@ func resultRows(res *exec.Result) []string {
 // in order when ordered is set.
 func check(t *testing.T, snap *colstore.Snapshot, rows []refRow, plan exec.Node, ordered bool, workers int) *exec.Result {
 	t.Helper()
+
+	return checkAgainst(t, snap, rows, plan, plan, ordered, workers)
+}
+
+// checkAgainst runs plan on snap and requires the rows that the reference
+// evaluator gives for the plan like.
+func checkAgainst(t *testing.T, snap *colstore.Snapshot, rows []refRow, plan, like exec.Node, ordered bool, workers int) *exec.Result {
+	t.Helper()
 	res, err := exec.Run(context.Background(), snap, plan, exec.Options{Workers: workers})
 	if err != nil {
 		t.Fatalf("run: %v", err)
 	}
-	wantRows, names := refRun(rows, plan)
+	wantRows, names := refRun(rows, like)
 	if len(res.Columns) != len(names) {
 		t.Fatalf("got %d columns, want %d", len(res.Columns), len(names))
 	}

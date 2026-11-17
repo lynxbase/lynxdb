@@ -55,7 +55,9 @@ const (
 	FirstRow
 	// ApproxDistinct estimates the number of distinct values of the
 	// argument, telling kinds apart, in at most 4 KB per group: exactly up
-	// to 383 values, and beyond with a standard error of 1.6 percent.
+	// to 383 values, and beyond with a standard error of 1.6 percent. Over
+	// a table sorted by the group keys and then by the argument, the order
+	// of the rows counts the values, and the estimate is exact.
 	ApproxDistinct
 	// Percentile is the value below which P percent of the argument's
 	// numbers lie, within one percent of that value: the number that has
