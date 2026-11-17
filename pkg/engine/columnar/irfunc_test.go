@@ -25,9 +25,6 @@ import (
 // why: they stay with the bridge to the row engine or with the row
 // operators.
 var notNative = map[string]string{
-	"now":       "the query's reference time; the planner turns it into a constant",
-	"curdate":   "a function of the query's reference time, which a builder does not receive",
-	"curtime":   "a function of the query's reference time, which a builder does not receive",
 	"sysdate":   "volatile: the executor computes a function once per distinct argument",
 	"rand":      "volatile: the executor computes a function once per distinct argument",
 	"forall":    "takes a lambda",
@@ -474,7 +471,7 @@ func tuples(s shape, limit int, r *rand.Rand) [][]exec.Value {
 // against compares the native function of a call with the row engine's
 // value of the call over argument tuples and returns the first difference.
 func against(t testing.TB, call *ir.Call, b irfunc.Builder, s shape, rows [][]exec.Value) (string, bool) {
-	newFunc, err := b(call)
+	newFunc, err := b(call, irfunc.Env{Now: testNow})
 	if err != nil {
 		return "", false
 	}

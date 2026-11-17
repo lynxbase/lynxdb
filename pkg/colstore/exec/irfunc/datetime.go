@@ -251,9 +251,19 @@ var getFormats = map[string]map[string]string{
 }
 
 func init() {
-	def("unix_timestamp", func(call *ir.Call) (func() impl, error) {
+	constant := func(name string, f func(now time.Time) val) {
+		defEnv(name, func(_ *ir.Call, env Env) (func() impl, error) {
+			v := f(env.Now.UTC())
+			return func() impl { return func(*ctx, []val) val { return v } }, nil
+		})
+	}
+	constant("now", func(now time.Time) val { return timeVal(now) })
+	constant("curdate", func(now time.Time) val { return timeVal(dayStart(now)) })
+	constant("curtime", func(now time.Time) val { return durVal(now.Sub(dayStart(now))) })
+	defEnv("unix_timestamp", func(call *ir.Call, env Env) (func() impl, error) {
 		if len(call.Args) == 0 {
-			return nil, errorf("unix_timestamp of the reference time is computed once per query")
+			v := floatVal(float64(env.Now.UnixNano()) / 1e9)
+			return func() impl { return func(*ctx, []val) val { return v } }, nil
 		}
 		return func() impl {
 			return timeFn(func(_ *ctx, t time.Time) val { return floatVal(float64(t.UnixNano()) / 1e9) })

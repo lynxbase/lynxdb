@@ -877,7 +877,7 @@ func (t *translator) call(c *ir.Call) (*exec.Expr, error) {
 	if !ok {
 		return nil, err
 	}
-	newFunc, buildErr := b(c)
+	newFunc, buildErr := b(c, irfunc.Env{Now: t.now})
 	if buildErr != nil {
 		return nil, err
 	}

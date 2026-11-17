@@ -155,7 +155,7 @@ func BenchmarkFunctions(b *testing.B) {
 			ways["bridge"] = exec.Call(newFunc, fieldArgs...)
 		}
 		if build, ok := irfunc.Lookup(c.call.Func.Name); ok {
-			if newFunc, err := build(c.call); err == nil {
+			if newFunc, err := build(c.call, irfunc.Env{Now: testNow}); err == nil {
 				ways["native"] = exec.Call(newFunc, args...)
 			}
 		}

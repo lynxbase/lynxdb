@@ -4,15 +4,22 @@ package irfunc
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 	"github.com/lynxbase/lynxdb/pkg/ir"
 )
 
+// Env is what a function may take from the query it runs in.
+type Env struct {
+	// Now is the query's reference time.
+	Now time.Time
+}
+
 // Builder makes the function of a call. It may specialize on the call's
 // constant arguments and on the IR types of its arguments; the function
 // receives the values of all the call's arguments in order.
-type Builder func(call *ir.Call) (func() exec.Func, error)
+type Builder func(call *ir.Call, env Env) (func() exec.Func, error)
 
 // Lookup returns the builder of an IR function.
 func Lookup(name string) (Builder, bool) {
@@ -63,11 +70,16 @@ func (c *ctx) result(start int) val { return strVal(bytesString(c.out[start:])) 
 
 // def registers a function whose implementation is made per call.
 func def(name string, build func(call *ir.Call) (func() impl, error)) {
+	defEnv(name, func(call *ir.Call, _ Env) (func() impl, error) { return build(call) })
+}
+
+// defEnv registers a function whose implementation depends on the query.
+func defEnv(name string, build func(call *ir.Call, env Env) (func() impl, error)) {
 	if _, dup := builders[name]; dup {
 		panic("irfunc: duplicate function " + name)
 	}
-	builders[name] = func(call *ir.Call) (func() exec.Func, error) {
-		mk, err := build(call)
+	builders[name] = func(call *ir.Call, env Env) (func() exec.Func, error) {
+		mk, err := build(call, env)
 		if err != nil {
 			return nil, err
 		}
