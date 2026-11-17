@@ -2,6 +2,7 @@ package irfunc
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -33,6 +34,37 @@ func mapRunes(dst []byte, s string, f func(rune) rune) []byte {
 	}
 
 	return dst
+}
+
+// changeCase writes s in lower or upper case, ASCII by arithmetic.
+func changeCase(dst []byte, s string, upper bool) []byte {
+	from, f := byte('A'), unicode.ToLower
+	if upper {
+		from, f = 'a', unicode.ToUpper
+	}
+	dst = slices.Grow(dst, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= utf8.RuneSelf {
+			return mapRunes(dst, s[i:], f)
+		}
+		if c-from < 26 {
+			c ^= 0x20
+		}
+		dst = append(dst, c)
+	}
+
+	return dst
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			return false
+		}
+	}
+
+	return true
 }
 
 func isSpace(r rune) bool { return unicode.IsSpace(r) }
@@ -67,12 +99,12 @@ func init() {
 	fixed("length", strFn(func(_ *ctx, s string) val { return intVal(int64(utf8.RuneCountInString(s))) }))
 	fixed("lower", strFn(func(c *ctx, s string) val {
 		start := len(c.out)
-		c.out = mapRunes(c.out, s, unicode.ToLower)
+		c.out = changeCase(c.out, s, false)
 		return c.result(start)
 	}))
 	fixed("upper", strFn(func(c *ctx, s string) val {
 		start := len(c.out)
-		c.out = mapRunes(c.out, s, unicode.ToUpper)
+		c.out = changeCase(c.out, s, true)
 		return c.result(start)
 	}))
 	fixed("trim", strFn(func(_ *ctx, s string) val { return strVal(strings.TrimSpace(s)) }))
@@ -80,6 +112,13 @@ func init() {
 	fixed("rtrim", strFn(func(_ *ctx, s string) val { return strVal(strings.TrimRightFunc(s, isSpace)) }))
 	fixed("reverse", strFn(func(c *ctx, s string) val {
 		start := len(c.out)
+		if isASCII(s) {
+			c.out = slices.Grow(c.out, len(s))[:start+len(s)]
+			for i := 0; i < len(s); i++ {
+				c.out[start+len(s)-1-i] = s[i]
+			}
+			return c.result(start)
+		}
 		c.rs = c.rs[:0]
 		for _, r := range s {
 			c.rs = append(c.rs, r)
