@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/lynxbase/lynxdb/pkg/ir"
 )
 
 // encodeJSON writes x as JSON text without escaping HTML, as the row engine
@@ -281,38 +283,7 @@ func init() {
 		}
 		return c.encodeJSON(out)
 	}))
-	fixed("json_extract", strict(func(c *ctx, a []val) val {
-		root, ok := decodeJSON(a[0])
-		if !ok {
-			return null
-		}
-		var results []any
-		for _, pv := range a[1:] {
-			p, _ := c.str(pv)
-			steps, ok := parsePath(p)
-			if !ok {
-				return null
-			}
-			vals, wild := evalPath(root, steps)
-			switch {
-			case len(a) == 2 && !wild:
-				if len(vals) == 0 {
-					return null
-				}
-				return c.scalarOrJSON(vals[0])
-			case len(a) == 2:
-				return c.encodeJSON(vals)
-			}
-			if len(vals) == 1 && !wild {
-				results = append(results, vals[0])
-			} else if len(vals) > 0 {
-				results = append(results, vals)
-			} else {
-				results = append(results, nil)
-			}
-		}
-		return c.encodeJSON(results)
-	}))
+	def("json_extract", func(*ir.Call) (func() impl, error) { return func() impl { return jsonExtract(paths{}) }, nil })
 	fixed("json_delete", jsonEditor(func(parent any, last pathStep, _ any) any {
 		switch t := parent.(type) {
 		case map[string]any:
@@ -379,6 +350,60 @@ func init() {
 	}
 	fixed("json_append", appendTo(false))
 	fixed("json_extend", appendTo(true))
+}
+
+// paths keeps the steps of the paths a function parsed last.
+type paths map[string][]pathStep
+
+func (p paths) parse(text string) ([]pathStep, bool) {
+	if steps, ok := p[text]; ok {
+		return steps, steps != nil
+	}
+	steps, ok := parsePath(text)
+	if len(p) >= 16 {
+		clear(p)
+	}
+	if ok && steps == nil {
+		steps = []pathStep{}
+	}
+	p[strings.Clone(text)] = steps
+
+	return steps, ok
+}
+
+func jsonExtract(cache paths) impl {
+	return strict(func(c *ctx, a []val) val {
+		root, ok := decodeJSON(a[0])
+		if !ok {
+			return null
+		}
+		var results []any
+		for _, pv := range a[1:] {
+			p, _ := c.str(pv)
+			steps, ok := cache.parse(p)
+			if !ok {
+				return null
+			}
+			vals, wild := evalPath(root, steps)
+			switch {
+			case len(a) == 2 && !wild:
+				if len(vals) == 0 {
+					return null
+				}
+				return c.scalarOrJSON(vals[0])
+			case len(a) == 2:
+				return c.encodeJSON(vals)
+			}
+			if len(vals) == 1 && !wild {
+				results = append(results, vals[0])
+			} else if len(vals) > 0 {
+				results = append(results, vals)
+			} else {
+				results = append(results, nil)
+			}
+		}
+		return c.encodeJSON(results)
+	})
 }
 
 // sortStrings sorts by insertion, as the row engine does; the order is the
