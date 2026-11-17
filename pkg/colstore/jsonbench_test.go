@@ -241,11 +241,45 @@ func sortedCounts(m map[string]*eventCount) []eventCount {
 	return out
 }
 
-// queryTopEvents is Q1: count() by commit.collection, largest first.
+// countedByIndex adds the rows of block i of p to counts or nulls when the
+// part's index says that the block holds one value of path, and reports
+// whether it did.
+func countedByIndex(p *part.Part, i int, path string, counts map[string]int64, nulls *int64) bool {
+	if !useKeyStats || !p.Ordered() {
+		return false
+	}
+	for column, key := range p.SortKey() {
+		if key != path {
+			continue
+		}
+		if p.KeyRuns(i, column+1) != 1 {
+			return false
+		}
+		rows, _, _ := p.BlockStats(i)
+		if name, ok := part.KeyString(nil, p.FirstKey(i), column); ok {
+			counts[string(name)] += int64(rows)
+		} else {
+			*nulls += int64(rows)
+		}
+
+		return true
+	}
+
+	return false
+}
+
+// queryTopEvents is Q1: count() by commit.collection, largest first. Blocks
+// of parts ordered by the collection that hold one collection are counted
+// from the index of their part.
 func queryTopEvents(snap *Snapshot, workers int) ([]eventCount, error) {
 	ws := newBenchWorkers(workers)
 	defer freeBenchWorkers(ws)
-	stats, err := snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
+	indexed := map[string]int64{}
+	var indexedNulls int64
+	skip := func(p *part.Part, i int) bool {
+		return countedByIndex(p, i, "commit.collection", indexed, &indexedNulls)
+	}
+	stats, err := snap.Scan(context.Background(), ScanOptions{Workers: workers, Skip: skip}, func(n int, p *part.Part, b *part.Block) error {
 		w := ws[n]
 		w.blocks++
 		w.rows += int64(b.Rows)
@@ -284,7 +318,13 @@ func queryTopEvents(snap *Snapshot, workers int) ([]eventCount, error) {
 		return nil, err
 	}
 	merged, nulls := mergeCounts(ws)
-	if nulls > 0 {
+	for name, count := range indexed {
+		if merged[name] == nil {
+			merged[name] = &eventCount{event: name}
+		}
+		merged[name].count += count
+	}
+	if nulls += indexedNulls; nulls > 0 {
 		merged[""] = &eventCount{count: nulls}
 	}
 	recordMemory(ws)

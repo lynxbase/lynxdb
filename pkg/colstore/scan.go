@@ -26,6 +26,9 @@ type ScanOptions struct {
 	// Key prunes blocks by sort key; the snapshot's own filter applies when
 	// it is empty.
 	Key KeyFilter
+	// Skip, when set, is asked once per block before the scan starts and
+	// leaves out the blocks it returns true for.
+	Skip func(p *part.Part, block int) bool
 }
 
 // KeyFilter names string values that rows must hold at the leading sort key
@@ -110,6 +113,9 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 			if _, lo, hi := h.BlockStats(i); hi < minT || lo > maxT {
 				stats.SkippedByTime++
 
+				continue
+			}
+			if opts.Skip != nil && opts.Skip(h.Part, i) {
 				continue
 			}
 			units = append(units, scanUnit{p: h.Part, block: i})
