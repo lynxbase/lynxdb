@@ -102,12 +102,15 @@ type Filter struct {
 // by Except. A row that does not hold a field has no value there, and one
 // that holds a null has a value of the null kind. Above an aggregate, the
 // last expression is a column that a FirstRow gives, and the fields are
-// those of the rows it picked.
+// those of the rows it picked. With Under, the fields that follow are only
+// those inside the objects at these paths, whether Exprs names the objects
+// or not.
 type Project struct {
 	Input  Node
 	Exprs  []Named
 	Rest   bool
 	Except []string
+	Under  []string
 }
 
 // Order names a column to sort by; nulls sort last, or first with

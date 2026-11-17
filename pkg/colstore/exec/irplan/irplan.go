@@ -617,7 +617,15 @@ func (t *translator) plan() (exec.Node, error) {
 	case t.dedup != nil:
 		node = t.firstRows(scan, cols, false)
 	default:
-		node = &exec.Project{Input: scan, Exprs: cols}
+		// A field that is an object has no value of its own: its members
+		// follow the columns.
+		var objects []string
+		for _, c := range cols {
+			if c.Expr.Op == exec.OpColumn && c.Expr.Path == c.Name && c.Name != part.TimePath {
+				objects = append(objects, c.Name)
+			}
+		}
+		node = &exec.Project{Input: scan, Exprs: cols, Rest: len(objects) > 0, Under: objects}
 	}
 	if t.sort != nil {
 		for _, by := range t.sort.By {

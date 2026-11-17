@@ -31,6 +31,19 @@ type fieldNames struct {
 	ids    map[string]int32
 	names  []string
 	hidden []string
+	// under, when set, names the objects whose members alone are shown.
+	under []string
+}
+
+// inside reports whether path is a member of the object at one of objects.
+func inside(path string, objects []string) bool {
+	for _, o := range objects {
+		if len(path) > len(o) && path[len(o)] == '.' && strings.HasPrefix(path, o) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // id returns the number of the field at path, or -1 for one that the plan
@@ -42,9 +55,17 @@ func (f *fieldNames) id(path string) int32 {
 		return id
 	}
 	id := int32(len(f.names))
-	for _, h := range f.hidden {
-		if path == h || (strings.HasPrefix(path, h) && path[len(h)] == '.') {
+	switch {
+	case f.under != nil:
+		// A member that the plan names is a column of its own already.
+		if !inside(path, f.under) || slices.Contains(f.hidden, path) {
 			id = -1
+		}
+	default:
+		for _, h := range f.hidden {
+			if path == h || (strings.HasPrefix(path, h) && path[len(h)] == '.') {
+				id = -1
+			}
 		}
 	}
 	if id >= 0 {
@@ -69,6 +90,9 @@ func (r *resolver) fields(parts []*colstore.Handle, names *fieldNames, block int
 	for i := range refs {
 		ref := &refs[i]
 		if ref.Count == 0 || ref.Kind < vec.KindNull || ref.Kind > vec.KindVariant {
+			continue
+		}
+		if names.under != nil && !inside(paths[ref.PathID], names.under) {
 			continue
 		}
 		// Most fields of a wide table are in few rows: which rows hold the
@@ -147,7 +171,7 @@ func rest(snap *colstore.Snapshot, q *query, at *colVec, n, workers int) ([]stri
 	}
 	starts = append(starts, len(picks))
 	blocks := len(starts) - 1
-	names := &fieldNames{ids: map[string]int32{}, hidden: q.hidden}
+	names := &fieldNames{ids: map[string]int32{}, hidden: q.hidden, under: q.under}
 	// The blocks and the columns decoded from them serve the next query.
 	scratch := resolvePool.Get()
 	defer resolvePool.Put(scratch)

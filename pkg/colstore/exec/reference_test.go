@@ -787,6 +787,16 @@ const refRowNumber = "\x00row"
 func refRest(out [][]exec.Value, names []string, kept []refRow, prj *exec.Project) ([][]exec.Value, []string) {
 	hidden := append(append(slices.Clone(names), prj.Except...), refRowNumber)
 	shown := func(path string) bool {
+		if len(prj.Under) > 0 {
+			// Only the members of the objects, less those named already.
+			for _, o := range prj.Under {
+				if strings.HasPrefix(path, o+".") {
+					return !slices.Contains(hidden, path)
+				}
+			}
+
+			return false
+		}
 		for _, h := range hidden {
 			if path == h || strings.HasPrefix(path, h+".") {
 				return false

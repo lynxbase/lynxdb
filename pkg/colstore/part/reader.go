@@ -45,6 +45,10 @@ type Part struct {
 	// readAhead, when set, is told which bytes of data are about to be
 	// read.
 	readAhead func(off, n int)
+	// objects holds the paths of the objects whose members have columns,
+	// once objectsOnce has listed them.
+	objectsOnce sync.Once
+	objects     map[string]struct{}
 	// misses holds, by condition, the blocks found to hold no row passing
 	// it; missClock orders the uses of the conditions.
 	missMu    sync.RWMutex
@@ -428,6 +432,24 @@ func (p *Part) NumBlocks() int { return len(p.index) / indexEntrySize }
 
 // Paths returns the column paths; a path's position is its id in this part.
 func (p *Part) Paths() []string { return p.paths }
+
+// HasObject reports whether a column of the part holds a member of the
+// object at path.
+func (p *Part) HasObject(path string) bool {
+	p.objectsOnce.Do(func() {
+		p.objects = map[string]struct{}{}
+		for _, full := range p.paths {
+			for i := 0; i < len(full); i++ {
+				if full[i] == '.' {
+					p.objects[full[:i]] = struct{}{}
+				}
+			}
+		}
+	})
+	_, ok := p.objects[path]
+
+	return ok
+}
 
 // PathID returns the id of path in this part.
 func (p *Part) PathID(path string) (uint32, bool) {
