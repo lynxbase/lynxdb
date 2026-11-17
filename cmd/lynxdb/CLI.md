@@ -346,8 +346,8 @@ Manage API keys on the server. `create`, `list`, `revoke` and `rotate-root` need
 | Subcommand | Flags | Description |
 |------------|-------|-------------|
 | `auth create` | `--name` (required), `--scope` (`full`; `ingest`, `query`, `admin`), `--expires` (`never`; `30d`, `90d`, `1y`, Go durations), `--description` | Create a key; the token is shown once |
-| `auth list` (aliases `ls`, `list-keys`) | | List keys: ID, name, scope, expiry, last use, age |
-| `auth revoke <id>` (alias `revoke-key`) | `--yes`/`-y` | Revoke a key |
+| `auth list` (alias `ls`) | | List keys: ID, name, scope, expiry, last use, age |
+| `auth revoke <id>` | `--yes`/`-y` | Revoke a key |
 | `auth rotate-root` | `--yes`/`-y` | Replace the root key and update saved credentials |
 | `auth status` | | Server, TLS mode and whether the current key authenticates |
 

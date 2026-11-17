@@ -107,7 +107,7 @@ lynxdb auth create --name web-01 --scope ingest --format json | jq -r .token
 lynxdb auth list
 ```
 
-**Aliases:** `ls`, `list-keys`
+**Alias:** `ls`
 
 Lists keys with ID, name, scope, expiry, last use and age. The root key shows as `[root]`, and the summary counts keys that expire within 30 days.
 
@@ -126,8 +126,6 @@ Lists keys with ID, name, scope, expiry, last use and age. The root key shows as
 ```
 lynxdb auth revoke <id> [--yes]
 ```
-
-**Alias:** `revoke-key`
 
 Revokes a key at once; requests that use it fail from then on. The command asks for confirmation when stdin is a terminal; `--yes` (`-y`) skips the prompt.
 

@@ -40,17 +40,16 @@ var authCreateKeyCmd = &cobra.Command{
 
 var authListKeysCmd = &cobra.Command{
 	Use:     "list",
-	Aliases: []string{"list-keys", "ls"}, // backward compat
+	Aliases: []string{"ls"},
 	Short:   "List all API keys",
 	RunE:    runAuthListKeys,
 }
 
 var authRevokeKeyCmd = &cobra.Command{
-	Use:     "revoke <id>",
-	Aliases: []string{"revoke-key"}, // backward compat
-	Short:   "Revoke an API key",
-	Args:    cobra.ExactArgs(1),
-	RunE:    runAuthRevokeKey,
+	Use:   "revoke <id>",
+	Short: "Revoke an API key",
+	Args:  cobra.ExactArgs(1),
+	RunE:  runAuthRevokeKey,
 }
 
 var authRotateRootCmd = &cobra.Command{

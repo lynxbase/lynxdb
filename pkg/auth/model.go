@@ -80,7 +80,7 @@ func (k *APIKey) EffectiveScope() Scope {
 }
 
 // KeyInfo is the public representation of an API key (no hash, no token).
-// Used in list-keys and similar responses.
+// Used in key listings and similar responses.
 type KeyInfo struct {
 	ID          string    `json:"id"`
 	Name        string    `json:"name"`
