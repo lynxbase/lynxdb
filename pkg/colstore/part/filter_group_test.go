@@ -438,3 +438,179 @@ func probeOf(p *Part, i int, hash uint64) (block, page, end uint64) {
 
 	return p.probe(g, f, hash)
 }
+
+// wordBatch returns a batch of rows documents that hold words distinct
+// words each and pad random characters that make one token, with the number
+// of distinct tokens in it.
+func wordBatch(t testing.TB, r *rand.Rand, rows, words, pad int) (*shred.Batch, int) {
+	t.Helper()
+	batch := shred.NewBatch(shred.Options{})
+	var docs []string
+	var doc []byte
+	for i := 0; i < rows; i++ {
+		doc = append(doc[:0], `{"m":"`...)
+		for k := 0; k < words; k++ {
+			doc = strconv.AppendUint(append(doc, 'w'), uint64(i*words+k), 36)
+			doc = append(doc, ' ')
+		}
+		doc = append(doc, `","sig":"`...)
+		for k := 0; k < pad; k++ {
+			doc = append(doc, "0123456789abcdef"[r.Intn(16)])
+		}
+		doc = append(doc, `"}`...)
+		if err := batch.AddJSON(doc, int64(i)); err != nil {
+			t.Fatal(err)
+		}
+		docs = append(docs, string(doc))
+	}
+
+	return batch, len(tokensOf(t, docs))
+}
+
+// repeatedBlocks writes batch as every one of blocks blocks.
+func repeatedBlocks(t testing.TB, batch *shred.Batch, blocks int, opts Options) *Part {
+	t.Helper()
+	var buf bytes.Buffer
+	w := NewWriter(&buf, opts)
+	for i := 0; i < blocks; i++ {
+		if err := w.WriteBatch(batch); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Open(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return p
+}
+
+// Striping costs the rounding of every filter to a whole number of bloom
+// blocks per stripe, the room of a bloom block for the checksum of a page,
+// what fills the file up to the page a group starts on, four bytes of index
+// per block and a table of groups. Blocks of the benchmark's size do not
+// notice even when the rounding is the most it can be, as it is for the
+// row more than the usual 16384 that these blocks hold.
+func TestStripedFiltersTakeTheSpaceOfSeparateOnes(t *testing.T) {
+	batch, tokens := wordBatch(t, rand.New(rand.NewSource(2)), 16385, 4, 200)
+	const blocks = 5
+	striped := repeatedBlocks(t, batch, blocks, Options{})
+	bare := repeatedBlocks(t, batch, blocks, Options{NoTokenFilter: true})
+
+	// A filter of its natural size behind its block, with a checksum per
+	// page.
+	natural := len(tokenfilter.Append(nil, make([]uint64, tokens), 1))
+	if rounded := filterSize(striped, 0) * tokenfilter.BlockBytes; rounded != natural+(filterStripes-1)*tokenfilter.BlockBytes {
+		t.Fatalf("a filter of %d bytes was rounded to %d", natural, rounded)
+	}
+	separate := bare.Size() + blocks*(natural+4*((natural+filterPage-1)/filterPage)-4)
+	growth := float64(striped.Size()-separate) / float64(separate)
+	t.Logf("%d blocks of %d tokens: %d bytes striped, %d with separate filters of %d bytes, %+.3f%%",
+		blocks, tokens, striped.Size(), separate, natural, 100*growth)
+	if growth > 0.005 {
+		t.Fatalf("striping grows the part by %.3f%%", 100*growth)
+	}
+}
+
+// readWindow is the kernel's default read-ahead: a fault on a page of a
+// mapped file that is not in memory reads the window around it, half of it
+// before the page.
+const (
+	readWindow = 128 << 10
+	kernelPage = 4096
+)
+
+// fileReads plays token lookups against a mapped part of which no page is in
+// memory.
+type fileReads struct {
+	cached map[uint64]bool
+	// pages are the pages of the file that the lookups read, and faults
+	// counts those for which the kernel reads from the file.
+	pages  map[uint64]bool
+	faults int
+}
+
+func newFileReads() *fileReads {
+	return &fileReads{cached: map[uint64]bool{}, pages: map[uint64]bool{}}
+}
+
+// lookup reads what looking hash up in blocks first to last of p reads.
+func (f *fileReads) lookup(p *Part, hash uint64, first, last int) {
+	const half = readWindow / kernelPage / 2
+	for i := first; i <= last; i++ {
+		_, page, end := probeOf(p, i, hash)
+		for at := page / kernelPage; at <= (end-1)/kernelPage; at++ {
+			f.pages[at] = true
+			if f.cached[at] {
+				continue
+			}
+			f.faults++
+			for near := max(at, half) - half; near < at+half; near++ {
+				f.cached[near] = true
+			}
+		}
+	}
+}
+
+// windows returns how many windows of readWindow bytes, counted from the
+// start of the file, hold a page that the lookups read.
+func (f *fileReads) windows() int {
+	seen := map[uint64]bool{}
+	for page := range f.pages {
+		seen[page*kernelPage/readWindow] = true
+	}
+
+	return len(seen)
+}
+
+// Looking a token up in every block of a group reads the pages of one
+// stripe, which lie side by side in the file and come in with one fault: one
+// read of the file a group for one token, in one or two windows, and three
+// for three tokens. A filter stored behind its block takes a read for every
+// block and token.
+func TestTokenLookupReadsOneStripeOfEveryGroup(t *testing.T) {
+	batch, tokens := wordBatch(t, rand.New(rand.NewSource(1)), 2000, 40, 0)
+	const blocks = 60
+	p := repeatedBlocks(t, batch, blocks, Options{})
+	runs := groupRuns(p)
+	if tokens != 80000 || len(runs) != 2 || runs[0][1] >= filterGroupBlocks-1 {
+		t.Fatalf("%d tokens a block, groups %v: the first is to close for its size", tokens, runs)
+	}
+	r := rand.New(rand.NewSource(7))
+	const lookups = 500
+	var one, three struct{ pages, faults, windows int }
+	for n := 0; n < lookups; n++ {
+		hashes := [3]uint64{r.Uint64(), r.Uint64(), r.Uint64()}
+		for g, run := range runs {
+			for i := run[0]; i <= run[1]; i++ {
+				block, page, end := probeOf(p, i, hashes[0])
+				if page%kernelPage != 0 || end-page > kernelPage || block < page+tokenfilter.BlockBytes || block+tokenfilter.BlockBytes > end {
+					t.Fatalf("block %d: bloom block at %d of the page %d..%d", i, block, page, end)
+				}
+			}
+			// A stripe need not start or end on a page.
+			stripe := int(p.groups[g].stripe+pageBlocks-1)/pageBlocks + 1
+			reads := newFileReads()
+			reads.lookup(p, hashes[0], run[0], run[1])
+			if reads.faults != 1 || len(reads.pages) > stripe || reads.windows() > 2 {
+				t.Fatalf("one token in the %d blocks of group %d: %d reads of the file for %d pages in %d windows, a stripe has %d pages",
+					run[1]-run[0]+1, g, reads.faults, len(reads.pages), reads.windows(), stripe)
+			}
+			one.pages, one.faults, one.windows = one.pages+len(reads.pages), one.faults+reads.faults, one.windows+reads.windows()
+			reads.lookup(p, hashes[1], run[0], run[1])
+			reads.lookup(p, hashes[2], run[0], run[1])
+			if reads.faults > 3 || len(reads.pages) > 3*stripe || reads.windows() > 6 {
+				t.Fatalf("three tokens in the %d blocks of group %d: %d reads of the file for %d pages in %d windows, a stripe has %d pages",
+					run[1]-run[0]+1, g, reads.faults, len(reads.pages), reads.windows(), stripe)
+			}
+			three.pages, three.faults, three.windows = three.pages+len(reads.pages), three.faults+reads.faults, three.windows+reads.windows()
+		}
+	}
+	per := float64(lookups * len(runs))
+	t.Logf("groups of %d and %d blocks, stripes of %d bloom blocks: a group gives one token %.1f pages in %.2f reads and %.2f windows of %d KiB, three tokens %.1f pages in %.2f reads and %.2f windows",
+		runs[0][1]+1, runs[1][1]-runs[1][0]+1, p.groups[0].stripe, float64(one.pages)/per, float64(one.faults)/per, float64(one.windows)/per,
+		readWindow>>10, float64(three.pages)/per, float64(three.faults)/per, float64(three.windows)/per)
+}
