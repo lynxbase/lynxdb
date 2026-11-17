@@ -86,6 +86,29 @@ func (s Schema) With(c Column) Schema {
 	return Schema{Columns: cols, Open: s.Open}
 }
 
+// growColumns returns a copy of cols with room for n more columns.
+func growColumns(cols []Column, n int) []Column {
+	out := make([]Column, len(cols), len(cols)+n)
+	copy(out, cols)
+	return out
+}
+
+// setColumn replaces the columns named c.Name by c in place, or appends c
+// when there is none, as With does on a copy.
+func setColumn(cols []Column, c Column) []Column {
+	replaced := false
+	for i := range cols {
+		if cols[i].Name == c.Name {
+			cols[i] = c
+			replaced = true
+		}
+	}
+	if !replaced {
+		cols = append(cols, c)
+	}
+	return cols
+}
+
 // Without returns a copy of s without the named columns.
 func (s Schema) Without(names ...string) Schema {
 	drop := make(map[string]bool, len(names))
