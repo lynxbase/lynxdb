@@ -72,7 +72,8 @@ func requiredLiteral(re *syntax.Regexp) (needle string, fold bool) {
 		}
 		for start := 0; start < len(run); {
 			end := start
-			for end < len(run) && (!anyFold || !breaksFold(run[end])) {
+			// The replacement rune stands for any byte that is not UTF-8.
+			for end < len(run) && run[end].r != utf8.RuneError && (!anyFold || !breaksFold(run[end])) {
 				end++
 			}
 			var piece []byte

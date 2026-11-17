@@ -4,6 +4,7 @@ import (
 	"math/rand"
 	"regexp"
 	"regexp/syntax"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -153,4 +154,54 @@ func TestAutomatonBoundsItsTablesForManyClassesOfRunes(t *testing.T) {
 	if bytes := 4 * c.limit * (1<<7 + c.classes); c.limit < 8 || bytes > maxTableBytes {
 		t.Fatalf("%d states of %d classes may take %d bytes", c.limit, c.classes, bytes)
 	}
+}
+
+// FuzzRegexp requires that a pattern answers as the library does for any
+// expression the library takes.
+func FuzzRegexp(f *testing.F) {
+	for _, seed := range [][2]string{
+		{`\d{5}`, "a 12345 b"}, {`[Gg]ood (morning|night)`, "Good night"}, {`(?i)crypto\w*`, "CRYPTOk"}, {`^a$|b\z`, "a\nb"},
+		{`(?i)stra\x{df}e`, "STRAẞE"}, {`(?s)a.c`, "a\nc"}, {`\bfoo\b`, "a foo"}, {`(?m)^x$`, "a\nx\n"}, {`a*?`, ""},
+		{`(a|b)*abb`, "abababb"}, {`[^\x00-\x7f]+`, "hé\xff"}, {`(?i)k\x{17f}`, "Ks"}, {`x{2,}y?$`, "xxxy"},
+	} {
+		f.Add(seed[0], seed[1])
+	}
+	f.Fuzz(func(t *testing.T, expr, text string) {
+		if len(expr) > 64 || len(text) > 256 {
+			return
+		}
+		re, err := regexp.Compile(expr)
+		if err != nil {
+			return
+		}
+		p, err := Regexp(expr)
+		if err != nil {
+			t.Fatalf("%q compiles for the library and not here: %v", expr, err)
+		}
+		want := re.MatchString(text)
+		if got := p.Match([]byte(text)); got != want {
+			t.Fatalf("%q on %q: %v, the library says %v (needle %q)", expr, text, got, want, p.needle)
+		}
+		// The same text between two others, as one run of values.
+		data := []byte("left " + text + " right")
+		offsets := []uint32{0, 5, uint32(5 + len(text)), uint32(len(data))}
+		got := p.AppendMatches(nil, offsets, data)
+		var wanted []uint32
+		for i := range 3 {
+			if re.Match(data[offsets[i]:offsets[i+1]]) {
+				wanted = append(wanted, uint32(i))
+			}
+		}
+		if !slices.Equal(got, wanted) {
+			t.Fatalf("%q over the run around %q: %v, the library says %v (needle %q)", expr, text, got, wanted, p.needle)
+		}
+		if want {
+			has := AppendHashes(nil, []byte(text))
+			for _, token := range p.Tokens(nil) {
+				if !slices.Contains(has, token) {
+					t.Fatalf("%q matches %q, which lacks a token the pattern requires (needle %q)", expr, text, p.needle)
+				}
+			}
+		}
+	})
 }

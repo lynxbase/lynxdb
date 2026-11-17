@@ -33,6 +33,8 @@ func TestRegexpFindsTheLiteralEveryMatchHolds(t *testing.T) {
 		{`(?i)caf\x{e9} au lait`, " au lait", true},
 		{`caf\x{e9} au lait`, "caf\u00e9 au lait", false},
 		{`(?i)id=42 `, "id=42 ", true},
+		// The replacement rune matches bytes that are not UTF-8.
+		{"ab\ufffdcde", "cde", false},
 	} {
 		p, err := Regexp(c.expr)
 		if err != nil {
