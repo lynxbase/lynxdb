@@ -50,7 +50,7 @@ type Batch struct {
 	pos int
 
 	timeCols *pathCols
-	sort     sortScratch
+	sort     *sortScratch // held only while the batch is being sorted
 	seq      uint64
 	rest     []byte
 	restMark int

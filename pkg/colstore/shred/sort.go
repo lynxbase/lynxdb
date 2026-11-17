@@ -27,12 +27,22 @@ type sortScratch struct {
 	ids    []uint32
 }
 
+// sortPool shares the buffers of sorting between batches: a batch needs
+// them only while it is being sorted, and they are as large as its largest
+// column.
+var sortPool mem.Pool[sortScratch]
+
 // SortBy reorders the rows of a complete batch by their values at the key
 // paths, then by timestamp, keeping the arrival order of equal rows.
 //
 // At one path a missing value sorts first, then values in kind order (null,
 // bool, int, float, string, variant) and by value within a kind.
-func (b *Batch) SortBy(keys []string) { b.sortBy(nil, keys) }
+func (b *Batch) SortBy(keys []string) {
+	b.sort = sortPool.Get()
+	b.sortBy(nil, keys)
+	sortPool.Put(b.sort)
+	b.sort = nil
+}
 
 // TimeBucket is a run of adjacent rows whose timestamps share one bucket.
 type TimeBucket struct {
@@ -47,7 +57,12 @@ func (b *Batch) SortByTimeBuckets(dst []TimeBucket, width int64, keys []string) 
 	if b.Rows == 0 {
 		return dst
 	}
-	s := &b.sort
+	b.sort = sortPool.Get()
+	defer func() {
+		sortPool.Put(b.sort)
+		b.sort = nil
+	}()
+	s := b.sort
 	s.buckets = s.buckets[:0]
 	lo, hi := floorDiv(b.Times[0], width), floorDiv(b.Times[0], width)
 	for _, t := range b.Times {
@@ -90,7 +105,7 @@ func (b *Batch) sortBy(buckets []int64, keys []string) {
 	if n < 2 {
 		return
 	}
-	s := &b.sort
+	s := b.sort
 	for len(s.ranks) < len(keys) {
 		s.ranks = append(s.ranks, nil)
 	}
@@ -145,7 +160,7 @@ func (b *Batch) rank(path string, dst []uint32) []uint32 {
 	if pc == nil {
 		return dst
 	}
-	s := &b.sort
+	s := b.sort
 	base := uint32(1)
 	for kind := vec.KindNull; kind <= vec.KindVariant; kind++ {
 		c := pc.byKind[kind]
@@ -192,7 +207,7 @@ func (b *Batch) rank(path string, dst []uint32) []uint32 {
 // rankBytes ranks the values of a string or variant column in byte order
 // and returns the number of distinct values.
 func (b *Batch) rankBytes(c *Column, dst []uint32, base uint32) uint32 {
-	s := &b.sort
+	s := b.sort
 	arena := mem.NewArena()
 	defer arena.Free()
 	table := vec.NewByteTable(arena)
@@ -224,7 +239,7 @@ func (b *Batch) rankBytes(c *Column, dst []uint32, base uint32) uint32 {
 
 // permute moves every row perm[i] to position i.
 func (b *Batch) permute() {
-	s := &b.sort
+	s := b.sort
 	n := b.Rows
 	if cap(s.inv) < n {
 		s.inv = make([]uint32, n)
