@@ -78,10 +78,32 @@ type filterGroup struct {
 	size    uint64
 	stripes uint64
 	stripe  uint64
-	// ahead names the pages last asked of the kernel ahead of a lookup:
-	// a column and a stripe, so that the blocks of the group ask once.
-	ahead atomic.Uint64
+	// first is the group's first block and blocks their number.
+	first, blocks int32
+	// ahead names the pages last asked of the kernel ahead of lookups, a
+	// column and a stripe each, so that the blocks of the group ask once;
+	// turn counts the entries replaced.
+	ahead [4]atomic.Uint64
+	turn  atomic.Uint32
 }
+
+// asked reports whether the pages that key names were asked for before, and
+// notes that they are now.
+func (g *filterGroup) asked(key uint64) bool {
+	for i := range g.ahead {
+		if g.ahead[i].Load() == key+1 {
+			return true
+		}
+	}
+	g.ahead[g.turn.Add(1)%uint32(len(g.ahead))].Store(key + 1)
+
+	return false
+}
+
+// aheadGroups is the number of groups after the one a lookup reads whose
+// pages it asks for as well: a scan of the part then finds them read, and
+// the device reads several at a time.
+const aheadGroups = 8
 
 // maxFilterBlocks bounds the bloom blocks of one filter so that scaling a
 // hash to them stays within 64 bits.
@@ -226,8 +248,18 @@ func Open(data []byte) (*Part, error) {
 		filter != len(p.filters)/filterEntrySize || p.placed(order, first, filter) == nil) {
 		return nil, ErrCorrupt
 	}
+	for i := int(nBlocks) - 1; i >= 0 && len(p.groups) > 0; i-- {
+		g := &p.groups[p.groupOf(i)]
+		g.first = int32(i)
+		g.blocks++
+	}
 
 	return p, nil
+}
+
+// groupOf returns the number of the filter group of block i.
+func (p *Part) groupOf(i int) int {
+	return int(binary.LittleEndian.Uint32(p.index[i*indexEntrySize+32:]))
 }
 
 // placed checks that the filters first to end, those of one group, lie in
@@ -638,7 +670,7 @@ func (b *Block) ColumnsMayContain(dst vec.Bitmap, hashes []uint64) (vec.Bitmap, 
 		return dst, nil
 	}
 	g, first, end := p.blockFilters(b.index)
-	p.aheadStripe(g, hashes)
+	p.aheadStripe(p.groupOf(b.index), hashes)
 	sound := ^uint64(0)
 	for f := first; f < end; f++ {
 		if binary.LittleEndian.Uint32(p.filters[f*filterEntrySize:]) != noPath {
@@ -697,45 +729,88 @@ func (p *Part) MayContainTokensIn(i int, pathID uint32, kind vec.Kind, hashes []
 		return false, nil
 	}
 	if len(hashes) > 0 && p.readAhead != nil {
-		// The pieces of the column's filters of the blocks around this one
-		// are next to its own.
-		_, page, _ := p.probe(g, f, hashes[0])
-		stripe := uint64(tokenfilter.Block(hashes[0], int(g.stripes)))
-		from := max(page, g.off+filterPage) - filterPage
-		p.ahead(g, (uint64(pathID)<<8|uint64(kind))<<16|stripe, from, min(page+3*filterPage, g.off+g.size))
+		p.aheadColumn(p.groupOf(i), pathID, kind, hashes[0])
 	}
 	sound := ^uint64(0)
 
 	return p.holds(g, f, hashes, &sound)
 }
 
-// ahead asks for the bytes from to to of the part, which lookups in group g
-// are about to read, unless the lookup before asked for the same: key names
-// what they hold.
-func (p *Part) ahead(g *filterGroup, key, from, to uint64) {
-	if g.ahead.Load() != key+1 && g.ahead.Swap(key+1) != key+1 {
-		p.readAhead(int(from), int(to-from))
-	}
-}
-
 // ForgetReadAhead makes the lookups in the token filters ask for their
 // pages again, after the pages of the part were let go of.
 func (p *Part) ForgetReadAhead() {
 	for i := range p.groups {
-		p.groups[i].ahead.Store(0)
+		for j := range p.groups[i].ahead {
+			p.groups[i].ahead[j].Store(0)
+		}
 	}
 }
 
-// aheadStripe asks for the stripe of group g that lookups of hash in every
-// filter of its blocks read.
-func (p *Part) aheadStripe(g *filterGroup, hashes []uint64) {
+// aheadColumn asks for the pages that lookups of hash in the filters of one
+// column read in group gi and in the groups after it. The pieces of the
+// column's filters lie side by side in a stripe, block after block.
+func (p *Part) aheadColumn(gi int, pathID uint32, kind vec.Kind, hash uint64) {
+	ask := func(j int) bool {
+		g := &p.groups[j]
+		stripe := uint64(tokenfilter.Block(hash, int(g.stripes)))
+		if g.asked((uint64(pathID)<<8|uint64(kind))<<16 | stripe) {
+			return false
+		}
+		from, to := uint64(math.MaxUint64), uint64(0)
+		for b := int(g.first); b < int(g.first+g.blocks); b++ {
+			_, first, end := p.blockFilters(b)
+			if f, _ := p.columnFilter(first, end, pathID, kind); f >= 0 {
+				e := p.filters[f*filterEntrySize:]
+				pieces, before := uint64(binary.LittleEndian.Uint32(e[8:])), uint64(binary.LittleEndian.Uint32(e[12:]))
+				from, to = min(from, before), max(to, before+pieces)
+			}
+		}
+		if to != 0 {
+			at := stripe * g.stripe
+			from, to = (at+from)/pageBlocks*filterPage, min(((at+to-1)/pageBlocks+1)*filterPage, g.size)
+			p.readAhead(int(g.off+from), int(to-from))
+		}
+
+		return true
+	}
+	p.aheadFrom(gi, ask)
+}
+
+// aheadFrom asks for the pages of group gi and, when a lookup reads it for
+// the first time, of the groups after it; a later lookup in the group asks
+// for the one group that the scan then nears.
+func (p *Part) aheadFrom(gi int, ask func(group int) bool) {
+	last := min(gi+aheadGroups, len(p.groups)-1)
+	if !ask(gi) {
+		if last > gi {
+			ask(last)
+		}
+
+		return
+	}
+	for j := gi + 1; j <= last; j++ {
+		ask(j)
+	}
+}
+
+// aheadStripe asks for the stripe that lookups of hashes in every filter of
+// the blocks read in group gi and in the groups after it.
+func (p *Part) aheadStripe(gi int, hashes []uint64) {
 	if len(hashes) == 0 || p.readAhead == nil {
 		return
 	}
-	stripe := uint64(tokenfilter.Block(hashes[0], int(g.stripes)))
-	from := stripe * g.stripe / pageBlocks * filterPage
-	to := min(((stripe+1)*g.stripe+pageBlocks-1)/pageBlocks*filterPage, g.size)
-	p.ahead(g, uint64(noPath)<<24|stripe, g.off+from, g.off+to)
+	p.aheadFrom(gi, func(j int) bool {
+		g := &p.groups[j]
+		stripe := uint64(tokenfilter.Block(hashes[0], int(g.stripes)))
+		if g.asked(uint64(noPath)<<24 | stripe) {
+			return false
+		}
+		from := stripe * g.stripe / pageBlocks * filterPage
+		to := min(((stripe+1)*g.stripe+pageBlocks-1)/pageBlocks*filterPage, g.size)
+		p.readAhead(int(g.off+from), int(to-from))
+
+		return true
+	})
 }
 
 // columnFilter returns which of the filters first to end of a block holds
@@ -815,7 +890,7 @@ func (p *Part) MayContainTokens(i int, hashes []uint64) (bool, error) {
 		return true, nil
 	}
 	g, f, end := p.blockFilters(i)
-	p.aheadStripe(g, hashes)
+	p.aheadStripe(p.groupOf(i), hashes)
 	for sound := ^uint64(0); f < end; f++ {
 		if may, err := p.holds(g, f, hashes, &sound); may || err != nil {
 			return may, err
