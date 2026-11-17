@@ -14,12 +14,19 @@ The `storage` section, together with the top-level `data_dir` and `retention`, c
 | `storage.partition` | `LYNXDB_STORAGE_PARTITION` | `24h` (shown as `1d`) | Span of event time whose events are kept apart. `0` means `24h`. |
 | `storage.flush_interval` | `LYNXDB_STORAGE_FLUSH_INTERVAL` | `0s` | Longest time ingested events wait in memory before they are written. `0` means one second. |
 | `storage.time_fields` | `LYNXDB_STORAGE_TIME_FIELDS` | `[_time, timestamp, "@timestamp", time, ts]` | Fields whose value becomes the event time, tried in this order. In the environment variable, a comma-separated list. |
+| `storage.sort_key` | `LYNXDB_STORAGE_SORT_KEY` | `[]` | Fields that order the rows of each part, in every index. Empty keeps the rows in the order of time. In the environment variable, a comma-separated list. See [Sort key](#sort-key). |
 
 None of these settings change on reload; they take effect at the next start.
 
+## Sort key
+
+`storage.sort_key` lists field paths, such as `[kind, commit.collection, did]`, that order the rows inside each part the store writes. Queries that filter or group by the leading fields of the key read fewer blocks: with a key that starts with the fields a query groups by, rows of one group sit next to each other. Without a key, rows are kept in the order of their time, which suits queries over time ranges.
+
+The key applies to the parts written after it is set. Parts written before keep their order, and the store reads both, so changing the key needs no migration. The setting holds for every index; there is no key per index.
+
 ## Indexes
 
-Every index has a store of its own: a directory under `data_dir` named after the index. An index comes into being with its first events, and its name holds letters, digits, dots, dashes and underscores, does not start with a dot, and is at most 255 characters long. Ingest that names another index is rejected with `400 VALIDATION_ERROR`.
+Every index has a store of its own: a directory under `data_dir/indexes` named after the index. An index comes into being with its first events, and its name holds letters, digits, dots, dashes and underscores, does not start with a dot, and is at most 255 characters long. Ingest that names another index is rejected with `400 VALIDATION_ERROR`.
 
 A store keeps its events in immutable column files, called parts, grouped into sorted runs. `lynxdb indexes` and `GET /api/v1/stats` report the events, bytes and parts of each index.
 
