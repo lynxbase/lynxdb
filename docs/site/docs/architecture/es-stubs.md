@@ -16,7 +16,7 @@ The ingest routes take documents while `ingest.es_compat.enabled` is on (the def
 | `POST /_bulk` | Bulk ingest into the index each action names |
 | `POST /{index}/_bulk` | Same, with `{index}` for actions that name no `_index` |
 | `POST /_data_stream/{name}/_bulk` | Same, with the data stream `{name}` for actions that name no `_index` |
-| `POST /api/v1/es/_bulk`, `POST /api/v1/ingest/bulk` | Prefixed bulk aliases |
+| `POST /api/v1/es/_bulk` | Prefixed bulk alias |
 | `POST /api/v1/es/_data_stream/{name}/_bulk` | Prefixed data stream bulk alias |
 | `POST /api/v1/es/{index}/_doc` | Single-document ingest into `{index}` |
 

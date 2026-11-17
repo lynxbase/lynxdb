@@ -718,22 +718,6 @@ paths:
         '403':
           $ref: '#/components/responses/Forbidden'
 
-  /api/v1/ingest/bulk:
-    post:
-      operationId: ingestBulk
-      tags: [Ingest, Elasticsearch]
-      summary: Ingest an Elasticsearch bulk body
-      description: Same as `POST /api/v1/es/_bulk`. Needs `ingest` scope.
-      requestBody:
-        $ref: '#/components/requestBodies/ESBulk'
-      responses:
-        '200':
-          $ref: '#/components/responses/ESBulkResult'
-        '400':
-          $ref: '#/components/responses/ESError'
-        '503':
-          $ref: '#/components/responses/ESError'
-
   # SERVER
 
   /health:

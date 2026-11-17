@@ -1407,44 +1407,6 @@ func TestQuery_FormatValidation(t *testing.T) {
 	})
 }
 
-func TestIngestBulk_Route(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	body := `{"index":{"_index":"test"}}
-{"message":"hello","level":"info"}
-{"index":{"_index":"test"}}
-{"message":"world","level":"error"}
-`
-	resp, err := http.Post(
-		fmt.Sprintf("http://%s/api/v1/ingest/bulk", srv.Addr()),
-		"application/x-ndjson",
-		bytes.NewBufferString(body),
-	)
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status: %d, body: %s", resp.StatusCode, string(b))
-	}
-
-	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
-	if result["errors"] != false {
-		t.Errorf("errors: got %v, want false", result["errors"])
-	}
-	items := result["items"].([]interface{})
-	if len(items) != 2 {
-		t.Errorf("items: got %d, want 2", len(items))
-	}
-	if n := queryEventCount(t, srv.Addr(), `{"q":"source=test"}`); n != 2 {
-		t.Errorf("test events: got %d, want 2", n)
-	}
-}
-
 func TestJobStream_Basic(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

@@ -117,7 +117,7 @@ lynxdb auth rotate-root
 
 | Scope | Allows |
 |-------|--------|
-| `ingest` | `/api/v1/ingest`, `/api/v1/ingest/raw`, `/api/v1/ingest/hec`, `/api/v1/ingest/bulk`, and the `/api/v1/es/` bulk and document routes |
+| `ingest` | `/api/v1/ingest`, `/api/v1/ingest/raw`, `/api/v1/ingest/hec`, and the `/api/v1/es/` bulk and document routes |
 | `query` | `GET` and `POST /api/v1/query`, `/api/v1/query/stream`, listing, reading and streaming jobs |
 | `admin` | Cancelling jobs, `GET /api/v1/config` |
 | `full` | Everything a scoped key can do |

@@ -82,7 +82,7 @@ Keys have one of four scopes: `ingest`, `query`, `admin`, `full`. Root keys and 
 
 | Endpoints | Required |
 |---|---|
-| `POST /ingest`, `/ingest/raw`, `/ingest/hec`, `/ingest/bulk`, `/es/_bulk`, `/es/_data_stream/{name}/_bulk`, `/es/{index}/_doc` | `ingest` |
+| `POST /ingest`, `/ingest/raw`, `/ingest/hec`, `/es/_bulk`, `/es/_data_stream/{name}/_bulk`, `/es/{index}/_doc` | `ingest` |
 | `POST` and `GET /query`, `POST /query/stream`, `GET /query/jobs`, `GET /query/jobs/{id}`, `GET /query/jobs/{id}/stream` | `query` |
 | `DELETE /query/jobs/{id}`, `GET /config` | `admin` |
 | `PATCH /config`, `/auth/...` | a root key |
@@ -158,7 +158,6 @@ Paths below are relative to `/api/v1` unless they start with `/health`, `/metric
 | `POST` | `/ingest` | Ingest NDJSON events | [Ingest](./ingest.md) |
 | `POST` | `/ingest/raw` | Ingest log text | [Ingest](./ingest.md#post-ingestraw) |
 | `POST` | `/ingest/hec` | Ingest Splunk HEC events | [Ingest](./ingest.md#post-ingesthec) |
-| `POST` | `/ingest/bulk` | Ingest an Elasticsearch bulk body | [Ingest](./ingest.md#post-ingestbulk) |
 | `GET` | `/indexes` | List indexes | [Ingest](./ingest.md#get-indexes) |
 | `POST` | `/es/_bulk`, `/_bulk`, `/{index}/_bulk` | Elasticsearch bulk ingest | [Compatibility](./compatibility.md) |
 | `POST` | `/es/{index}/_doc` | Elasticsearch single-document ingest | [Compatibility](./compatibility.md#post-apiv1esindex_doc) |

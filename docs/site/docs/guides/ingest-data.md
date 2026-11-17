@@ -175,8 +175,7 @@ request's `_index`. A document without one goes to the index in the URL
 (`POST /<index>/_bulk`, `POST /_data_stream/<name>/_bulk`), otherwise to
 `main`. Query it with `source=<index>`, or `source=filebeat-*` for a family
 of indexes; `lynxdb indexes` lists the names. `POST /_bulk`,
-`POST /<index>/_bulk`, `/api/v1/es/_bulk` and `/api/v1/ingest/bulk` all
-accept bulk requests. See the [compatibility API](../api/compatibility.md).
+`POST /<index>/_bulk` and `/api/v1/es/_bulk` all accept bulk requests. See the [compatibility API](../api/compatibility.md).
 
 ### OpenTelemetry (OTLP)
 

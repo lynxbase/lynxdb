@@ -28,7 +28,7 @@ curl -s localhost:3100/api/v1/query \
 
 | Route | Index of an action without `_index` |
 |---|---|
-| `POST /_bulk`, `POST /api/v1/es/_bulk`, `POST /api/v1/ingest/bulk` | `main` |
+| `POST /_bulk`, `POST /api/v1/es/_bulk` | `main` |
 | `POST /{index}/_bulk` | `{index}` |
 | `POST /_data_stream/{name}/_bulk`, `POST /api/v1/es/_data_stream/{name}/_bulk` | `{name}` |
 

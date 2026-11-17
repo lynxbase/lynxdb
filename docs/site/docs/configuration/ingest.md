@@ -14,7 +14,7 @@ The `ingest` section controls the HTTP ingest endpoints and the shipper-compatib
 | `POST /api/v1/ingest` | NDJSON, one event per line | Each line unchanged |
 | `POST /api/v1/ingest/raw` | Log lines | JSON object lines unchanged; any other line as an event with `_raw`, its timestamp and its `key=value` fields |
 | `POST /api/v1/ingest/hec`, `POST /services/collector`, `/services/collector/event`, `/services/collector/raw` | Splunk HEC | One flat JSON object per event |
-| `POST /api/v1/es/_bulk`, `POST /api/v1/ingest/bulk`, `POST /_bulk`, `POST /{index}/_bulk` | Elasticsearch bulk API | Each document line unchanged |
+| `POST /api/v1/es/_bulk`, `POST /_bulk`, `POST /{index}/_bulk` | Elasticsearch bulk API | Each document line unchanged |
 | `POST /api/v1/otlp/v1/logs` on the API port, `POST /v1/logs` on `ingest.otlp.http_listen` | OTLP/HTTP logs | One flat JSON object per log record |
 | `ingest.otlp.grpc_listen` | OTLP/gRPC logs | One flat JSON object per log record |
 

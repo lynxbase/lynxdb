@@ -11,7 +11,6 @@ description: NDJSON event ingest, raw log text ingest, Splunk HEC and Elasticsea
 | `POST /api/v1/ingest` | Structured events | NDJSON, one JSON object per line |
 | `POST /api/v1/ingest/raw` | Log files and streams | Log text, one event per line |
 | `POST /api/v1/ingest/hec` | Splunk HEC senders | One HEC event object per line |
-| `POST /api/v1/ingest/bulk` | Elasticsearch bulk producers | Elasticsearch `_bulk` NDJSON |
 
 Shippers that speak Elasticsearch, Splunk HEC or OTLP can also use the [compatibility endpoints](./compatibility.md). When authentication is on, the ingest endpoints need a key with `ingest` scope.
 
@@ -137,18 +136,6 @@ curl -s -X POST localhost:3100/api/v1/ingest/hec \
 ```
 
 This path authenticates like every other `/api/v1` endpoint and does not read `Authorization: Splunk` tokens. It accepts events whatever `ingest.splunk_hec.enabled` says. Shippers configured for Splunk usually point at `/services/collector`; see [Splunk HEC](./compatibility.md#splunk-hec) for those routes, acknowledgements and the mapping of HEC fields to events.
-
-## POST /ingest/bulk
-
-The Elasticsearch bulk handler under the native ingest path, with the same request and response as `POST /api/v1/es/_bulk`:
-
-```bash
-curl -s -X POST localhost:3100/api/v1/ingest/bulk \
-  -H 'Content-Type: application/x-ndjson' \
-  --data-binary $'{"index":{"_index":"logs"}}\n{"message":"hello from filebeat","@timestamp":"2026-11-17T09:00:00Z"}\n'
-```
-
-See [Elasticsearch](./compatibility.md#elasticsearch) for the format.
 
 ## GET /indexes
 

@@ -253,7 +253,6 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 	mux.HandleFunc("POST /api/v1/ingest", s.handleIngestEvents)
 	mux.HandleFunc("POST /api/v1/ingest/raw", s.handleIngestRaw)
 	mux.HandleFunc("POST /api/v1/ingest/hec", s.handleIngestHEC)
-	mux.HandleFunc("POST /api/v1/ingest/bulk", s.handleESBulk)
 	mux.HandleFunc("POST /services/collector/event", s.handleSplunkHECEvent)
 	mux.HandleFunc("POST /services/collector", s.handleSplunkHECEvent)
 	mux.HandleFunc("POST /services/collector/raw", s.handleSplunkHECRaw)
