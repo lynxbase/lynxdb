@@ -104,6 +104,10 @@ func benchTexts(win benchWindows) map[string]string {
 		"L2 latest post of every user": posts + ` | stats latest(` + text + `) as text by did | fields did, text`,
 		"T4 latest 20 of a user": `source=bluesky | where did = 'did:plc:yj3sjq3blzpynh27cumnp5ks' | eval event = commit.collection` +
 			` | fields _time, event | sort - _time, event | head 20`,
+		"N1 latest 100 events":             `source=bluesky | sort - _time | head 100`,
+		"N2 latest 100 events with a word": `source=bluesky love | sort - _time | head 100`,
+		"N3 latest 100 posts": `source=bluesky | where commit.collection = 'app.bsky.feed.post' | sort - _time | head 100` +
+			` | fields _time, did, commit.record.text`,
 	}
 }
 
@@ -258,6 +262,19 @@ func benchPlans(win benchWindows) []benchPlan {
 		}}, By: topUsers, Limit: 10}, ordered: true},
 		benchPlan{name: "L2 latest post of every user", plan: &exec.Aggregate{Input: posts, Keys: []exec.Named{named("did", str("did"))},
 			Aggs: []exec.Agg{latestText}}},
+	)
+	// The latest events, as a log viewer asks for them: whole events, and
+	// three fields of the latest posts.
+	latest := func(filter *exec.Expr) exec.Node {
+		return &exec.Sort{Input: &exec.Project{Input: &exec.Scan{Filter: filter}, Exprs: []exec.Named{named("_time", exec.Time())}, Rest: true},
+			By: []exec.Order{{Column: "_time", Desc: true}}, Limit: 100}
+	}
+	plans = append(plans,
+		benchPlan{name: "N1 latest 100 events", plan: latest(nil)},
+		benchPlan{name: "N2 latest 100 events with a word", plan: latest(exec.MatchAny(tokenfilter.Word("love").IgnoreCase()))},
+		benchPlan{name: "N3 latest 100 posts", plan: &exec.Sort{Input: &exec.Project{Input: &exec.Scan{Filter: isCollection("app.bsky.feed.post")},
+			Exprs: []exec.Named{named("_time", exec.Time()), named("did", str("did")), named("text", text)}},
+			By: []exec.Order{{Column: "_time", Desc: true}}, Limit: 100}},
 	)
 	texts := benchTexts(win)
 	for i := range plans {
@@ -521,6 +538,23 @@ func answer(name string, res *exec.Result) string {
 		}
 
 		return fmt.Sprintf("%d rows, %d bytes", res.Rows, total)
+	}
+	if strings.HasPrefix(name, "N") {
+		// Events with the same time come in any order: the number of rows
+		// and of values, and the times of the first and the last.
+		values := 0
+		for i := 0; i < res.Rows; i++ {
+			for c := range res.Columns {
+				if !res.Value(i, c).IsNull() {
+					values++
+				}
+			}
+		}
+		if res.Rows == 0 {
+			return "0 rows"
+		}
+
+		return fmt.Sprintf("%d rows, %d values, from %d to %d", res.Rows, values, res.Value(0, 0).Int/1000, res.Value(res.Rows-1, 0).Int/1000)
 	}
 	for i := 0; i < res.Rows; i++ {
 		if i > 0 {
