@@ -32,8 +32,8 @@ var aggregateCatalog = map[string]*AggSupport{
 	"distinct_count":        {IR: "distinct_count", Note: "exact"},
 	"dc":                    {IR: "distinct_count", Note: "alias of distinct_count; exact"},
 	"distinct_count_approx": {IR: "distinct_count_approx", Note: "HyperLogLog estimate"},
-	"earliest":              {IR: "earliest", Note: "orders by _time unless a time field is given"},
-	"latest":                {IR: "latest", Note: "orders by _time unless a time field is given"},
+	"earliest":              {IR: "earliest", Note: "the value of the row with the earliest _time; a time field other than _time or @timestamp is not supported"},
+	"latest":                {IR: "latest", Note: "the value of the row with the latest _time; a time field other than _time or @timestamp is not supported"},
 	"take":                  {IR: "take", Note: "default size 10"},
 	"percentile":            {IR: "percentile", Note: "t-digest; the optional compression argument is accepted and not used"},
 	"percentile_approx":     {IR: "percentile", Note: "alias of percentile"},
@@ -203,6 +203,16 @@ func (x *ectx) aggCall(term ast.AggTerm, window bool, spanSeconds float64) (*ir.
 	args, err := x.args(n, 0, -1)
 	if err != nil {
 		return nil, nil, err
+	}
+	if (spec.IR == "earliest" || spec.IR == "latest") && len(args) == 2 {
+		if ref, ok := args[1].(*ir.FieldRef); !ok || ref.Name != ir.TimeColumn {
+			by := "an expression"
+			if f, ok := n.Args[1].(*ast.Field); ok {
+				by = f.Name()
+			}
+			return nil, nil, unsupportedFeature(n.Args[1], "%s ordered by %s is not supported; %s orders rows by the event time %s, so leave out the time field",
+				n.Name, by, n.Name, ir.TimeColumn)
+		}
 	}
 	return x.agg(n, spec.IR, args)
 }

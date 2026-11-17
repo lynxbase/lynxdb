@@ -17,10 +17,10 @@ Aggregation functions of `stats`, `eventstats`, `streamstats`, `timechart` and `
 | `dc` | full | exact | alias of distinct_count; exact |
 | `distinct_count` | full | exact | exact |
 | `distinct_count_approx` | full | approximate | HyperLogLog estimate |
-| `earliest` | full | exact | orders by _time unless a time field is given |
+| `earliest` | full | exact | the value of the row with the earliest _time; a time field other than _time or @timestamp is not supported |
 | `first` | full | none | The first non-NULL value in input order. |
 | `last` | full | none | The last non-NULL value in input order. |
-| `latest` | full | exact | orders by _time unless a time field is given |
+| `latest` | full | exact | the value of the row with the latest _time; a time field other than _time or @timestamp is not supported |
 | `list` | full | none | Array of the non-NULL values in input order, at most 100. |
 | `max` | full | exact | Largest value; numbers order before strings. |
 | `median` | full | approximate | percentile(x, 50) |

@@ -88,6 +88,8 @@ func TestCompileErrors(t *testing.T) {
 		{"source=t | streamstats count() by host bucket_nullable=false", ErrUnsupportedFeature, "streamstats bucket_nullable=false is not supported"},
 		{"source=t | streamstats reset_before=status > 300 count()", ErrUnsupportedFeature, "streamstats reset_before is not supported"},
 		{"source=t | streamstats reset_after=(status > 300) count() as n by host", ErrUnsupportedFeature, "streamstats reset_after is not supported"},
+		{"source=t | stats earliest(status, event_time) by host", ErrUnsupportedFeature, "earliest ordered by event_time is not supported"},
+		{"source=t | eventstats latest(msg, date_add(_time, INTERVAL 1 DAY)) as m", ErrUnsupportedFeature, "latest ordered by an expression is not supported"},
 	}
 	for _, c := range cases {
 		_, err := Compile(c.q)

@@ -122,6 +122,8 @@ func TestExecute(t *testing.T) {
 			"count()=3 span(@timestamp,5m)=09:00\ncount()=1 span(@timestamp,5m)=09:05\ncount()=1 span(@timestamp,5m)=09:10"},
 		{"source=logs | stats count(eval(status >= 500)) as errors, dc(host) as hosts",
 			"errors=2 hosts=3"},
+		{"source=logs | stats earliest(status, @timestamp) as e, latest(status, _time) as l, earliest(host) as h",
+			"e=200 h=\"web-1\" l=503"},
 		{"source=logs | eventstats max(bytes) as mx by service | where bytes = mx | fields host",
 			"host=\"web-1\"\nhost=\"web-1\"\nhost=\"web-2\""},
 		{"source=logs | streamstats count() as n | fields n",

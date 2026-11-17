@@ -62,6 +62,8 @@ func TestOptionsNoEngineRunsFailToCompile(t *testing.T) {
 		"source=logs | eventstats bucket_nullable=false count() by host": "bucket_nullable=false",
 		"source=logs | streamstats reset_before=(status > 300) count()":  "reset_before",
 		"source=logs | streamstats reset_after=(status > 300) count()":   "reset_after",
+		"source=logs | stats earliest(status, ts) by host":               "earliest ordered by ts",
+		"source=logs | stats latest(status, ts) by host":                 "latest ordered by ts",
 	} {
 		_, err := Compile(q)
 		pe, ok := ppl.AsError(err)
