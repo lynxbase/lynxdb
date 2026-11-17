@@ -215,7 +215,7 @@ func ingestOptions(t testing.TB) StoreOptions {
 	opts.FlushLevel = benchLevel(t, "LYNXDB_BENCH_FLUSH_LEVEL", part.LevelFastest)
 	opts.Part.Level = benchLevel(t, "LYNXDB_BENCH_LEVEL", part.LevelFast)
 	switch s := os.Getenv("LYNXDB_BENCH_SORT"); s {
-	case "":
+	case "", "none":
 	case "default":
 		opts.SortKey = []string{"kind", "commit.operation", "commit.collection", "did"}
 	default:

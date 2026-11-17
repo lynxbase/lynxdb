@@ -131,6 +131,7 @@ func (b *Batch) Reset() {
 	b.Rows = 0
 	b.Times = b.Times[:0]
 	b.Bytes = 0
+	b.src = nil
 }
 
 const maxRetainedBytes = 256 << 20
@@ -144,7 +145,6 @@ var batchPool = mem.Pool[Batch]{Reset: func(b *Batch) bool {
 		return false
 	}
 	b.Reset()
-	b.src = nil
 
 	return true
 }}

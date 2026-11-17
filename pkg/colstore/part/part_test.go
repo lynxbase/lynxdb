@@ -371,9 +371,13 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 		sec := sections[g]
 		at := r.Intn(sec.size)
 		bit := byte(1) << r.Intn(8)
+		// A page is checked when it is first read after the pages of the
+		// part were let go of.
 		data[sec.off+at] ^= bit
+		p.ForgetReadAhead()
 		total += lookups(place{g, at / filterPage})
 		data[sec.off+at] ^= bit
+		p.ForgetReadAhead()
 	}
 	if total == 0 {
 		t.Fatal("no lookup read a damaged page")

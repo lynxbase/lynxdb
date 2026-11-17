@@ -2,6 +2,7 @@ package shred
 
 import (
 	"cmp"
+	"math/bits"
 	"slices"
 
 	"github.com/lynxbase/lynxdb/pkg/mem"
@@ -14,6 +15,10 @@ type sortScratch struct {
 
 	perm   []uint32
 	inv    []uint32
+	packed []uint64
+	spare  []uint64
+	moved  []uint64
+	runs   []rowRun
 	ranks  [][]uint32
 	slot   []uint32
 	order  []uint32
@@ -118,21 +123,23 @@ func (b *Batch) sortBy(buckets []int64, keys []string) {
 		s.perm = append(s.perm, uint32(i))
 	}
 	times := b.Times
-	slices.SortFunc(s.perm, func(x, y uint32) int {
-		if buckets != nil && buckets[x] != buckets[y] {
-			return cmp.Compare(buckets[x], buckets[y])
-		}
-		for _, r := range ranks {
-			if r[x] != r[y] {
-				return cmp.Compare(r[x], r[y])
+	if !b.sortPacked(buckets, ranks) {
+		slices.SortFunc(s.perm, func(x, y uint32) int {
+			if buckets != nil && buckets[x] != buckets[y] {
+				return cmp.Compare(buckets[x], buckets[y])
 			}
-		}
-		if times[x] != times[y] {
-			return cmp.Compare(times[x], times[y])
-		}
+			for _, r := range ranks {
+				if r[x] != r[y] {
+					return cmp.Compare(r[x], r[y])
+				}
+			}
+			if times[x] != times[y] {
+				return cmp.Compare(times[x], times[y])
+			}
 
-		return cmp.Compare(x, y)
-	})
+			return cmp.Compare(x, y)
+		})
+	}
 	sorted := true
 	for i, p := range s.perm {
 		if p != uint32(i) {
@@ -145,6 +152,98 @@ func (b *Batch) sortBy(buckets []int64, keys []string) {
 		return
 	}
 	b.permute()
+}
+
+// digitBits is the width of the digits that sortPacked sorts by.
+const digitBits = 11
+
+// sortPacked orders perm, which lists the rows as they are, by the bucket
+// and the ranks of a row packed into one number, sorted digit by digit,
+// then by time. It reports false, with perm untouched, when a number does
+// not hold them.
+func (b *Batch) sortPacked(buckets []int64, ranks [][]uint32) bool {
+	s := b.sort
+	n := b.Rows
+	var widths [8]uint
+	if len(ranks) > len(widths) {
+		return false
+	}
+	total, lo := uint(0), int64(0)
+	if buckets != nil {
+		hi := buckets[0]
+		lo = hi
+		for _, v := range buckets {
+			lo, hi = min(lo, v), max(hi, v)
+		}
+		total = uint(bits.Len64(uint64(hi) - uint64(lo)))
+	}
+	for k, r := range ranks {
+		widths[k] = uint(bits.Len32(slices.Max(r)))
+		total += widths[k]
+	}
+	if total > 64 {
+		return false
+	}
+	if cap(s.packed) < n {
+		s.packed, s.spare = make([]uint64, n), make([]uint64, n)
+	}
+	if cap(s.inv) < n {
+		s.inv = make([]uint32, n)
+	}
+	keys, perm := s.packed[:n], s.perm
+	for i := range keys {
+		key := uint64(0)
+		if buckets != nil {
+			key = uint64(buckets[i]) - uint64(lo)
+		}
+		for k, r := range ranks {
+			key = key<<widths[k] | uint64(r[i])
+		}
+		keys[i] = key
+	}
+	// Each pass keeps the order of rows whose digits are equal, so the
+	// last leaves rows of one number in the order they came in.
+	otherKeys, otherPerm := s.spare[:n], s.inv[:n]
+	var counts [1 << digitBits]uint32
+	for shift := uint(0); shift < total; shift += digitBits {
+		clear(counts[:])
+		for _, key := range keys {
+			counts[key>>shift&(1<<digitBits-1)]++
+		}
+		if counts[keys[0]>>shift&(1<<digitBits-1)] == uint32(n) {
+			continue
+		}
+		at := uint32(0)
+		for d, c := range counts {
+			counts[d], at = at, at+c
+		}
+		for i, key := range keys {
+			d := key >> shift & (1<<digitBits - 1)
+			otherKeys[counts[d]], otherPerm[counts[d]] = key, perm[i]
+			counts[d]++
+		}
+		keys, otherKeys, perm, otherPerm = otherKeys, keys, otherPerm, perm
+	}
+	s.packed, s.spare, s.perm, s.inv = keys, otherKeys, perm, otherPerm
+	times := b.Times
+	for from := 0; from < n; {
+		to, ordered := from+1, true
+		for ; to < n && keys[to] == keys[from]; to++ {
+			ordered = ordered && times[perm[to]] >= times[perm[to-1]]
+		}
+		if !ordered {
+			slices.SortFunc(perm[from:to], func(x, y uint32) int {
+				if times[x] != times[y] {
+					return cmp.Compare(times[x], times[y])
+				}
+
+				return cmp.Compare(x, y)
+			})
+		}
+		from = to
+	}
+
+	return true
 }
 
 // rank assigns every row a number that orders it by its value at path;
@@ -237,8 +336,107 @@ func (b *Batch) rankBytes(c *Column, dst []uint32, base uint32) uint32 {
 	return uint32(distinct)
 }
 
+// fewValues is the share of the rows, one in this many, under which the
+// values of a column are sorted by row instead of being found by a pass
+// over the rows.
+const fewValues = 32
+
+// rowRun is a stretch of rows that stay next to one another when the rows
+// are moved: n rows from row from on.
+type rowRun struct{ from, n int }
+
+// minRun is the mean length of the stretches from which rows are moved a
+// stretch at a time.
+const minRun = 32
+
+// permuteRuns moves every row perm[i] to position i a stretch of adjacent
+// rows at a time, and reports false, having moved nothing, when the
+// stretches are short. Rows that arrive in order from several sources at
+// once, each a stretch, are brought into order at the cost of copying them.
+func (b *Batch) permuteRuns() bool {
+	s := b.sort
+	n := b.Rows
+	s.runs = s.runs[:0]
+	for at := 0; at < n; {
+		from := int(s.perm[at])
+		to := at + 1
+		for to < n && int(s.perm[to]) == from+to-at {
+			to++
+		}
+		if s.runs = append(s.runs, rowRun{from, to - at}); len(s.runs)*minRun > n {
+			return false
+		}
+		at = to
+	}
+	s.times = s.times[:0]
+	for _, r := range s.runs {
+		s.times = append(s.times, b.Times[r.from:r.from+r.n]...)
+	}
+	copy(b.Times, s.times)
+	for _, c := range b.cols {
+		if c.Count == 0 {
+			continue
+		}
+		whole := !c.Sparse && c.Count == n
+		s.rows, s.bools, s.ints, s.floats, s.data, s.ends = s.rows[:0], s.bools[:0], s.ints[:0], s.floats[:0], s.data[:0], s.ends[:0]
+		at := 0
+		for _, r := range s.runs {
+			// first and end bound the values whose rows are in the run.
+			first, end := min(r.from, c.Count), min(r.from+r.n, c.Count)
+			if c.Sparse {
+				first, end = lowerBound(c.RowIDs, uint32(r.from)), lowerBound(c.RowIDs, uint32(r.from+r.n))
+			}
+			if !whole {
+				for i := first; i < end; i++ {
+					s.rows = append(s.rows, uint32(at+c.Row(i)-r.from))
+				}
+			}
+			at += r.n
+			if first == end {
+				continue
+			}
+			switch c.Kind {
+			case vec.KindBool:
+				s.bools = append(s.bools, c.Bools[first:end]...)
+			case vec.KindInt:
+				s.ints = append(s.ints, c.Ints[first:end]...)
+			case vec.KindFloat:
+				s.floats = append(s.floats, c.Floats[first:end]...)
+			case vec.KindString, vec.KindVariant:
+				start := c.start(first)
+				shift := uint32(len(s.data)) - start
+				s.data = append(s.data, c.Data[start:c.Ends[end-1]]...)
+				for _, e := range c.Ends[first:end] {
+					s.ends = append(s.ends, e+shift)
+				}
+			}
+		}
+		if !whole {
+			c.Sparse = true
+			c.RowIDs = append(c.RowIDs[:0], s.rows...)
+		}
+		c.lastRow = -1
+		switch c.Kind {
+		case vec.KindBool:
+			copy(c.Bools, s.bools)
+		case vec.KindInt:
+			copy(c.Ints, s.ints)
+		case vec.KindFloat:
+			copy(c.Floats, s.floats)
+		case vec.KindString, vec.KindVariant:
+			copy(c.Data, s.data)
+			copy(c.Ends, s.ends)
+		}
+	}
+
+	return true
+}
+
 // permute moves every row perm[i] to position i.
 func (b *Batch) permute() {
+	if b.permuteRuns() {
+		return
+	}
 	s := b.sort
 	n := b.Rows
 	if cap(s.inv) < n {
@@ -263,6 +461,21 @@ func (b *Batch) permute() {
 		s.order = s.order[:0]
 		if !c.Sparse && c.Count == n {
 			s.order = append(s.order, s.perm...)
+		} else if c.Count < n/fewValues {
+			// Few values are sorted by the row they move to, which costs
+			// less than a pass over all the rows.
+			s.moved = s.moved[:0]
+			for i := 0; i < c.Count; i++ {
+				s.moved = append(s.moved, uint64(s.inv[c.Row(i)])<<32|uint64(i))
+			}
+			slices.Sort(s.moved)
+			s.rows = s.rows[:0]
+			for _, m := range s.moved {
+				s.order = append(s.order, uint32(m))
+				s.rows = append(s.rows, uint32(m>>32))
+			}
+			c.Sparse = true
+			c.RowIDs = append(c.RowIDs[:0], s.rows...)
 		} else {
 			slot := s.slot[:n]
 			clear(slot)
