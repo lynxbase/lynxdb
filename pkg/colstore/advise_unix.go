@@ -28,3 +28,11 @@ func adviseWillNeed(data []byte, off, n int) {
 		_ = unix.Madvise(data[start:end], unix.MADV_WILLNEED)
 	}
 }
+
+// adviseDontNeed lets go of the resident pages of a mapped part; they are
+// read from the file again when touched.
+func adviseDontNeed(data []byte) {
+	if len(data) > 0 {
+		_ = unix.Madvise(data, unix.MADV_DONTNEED)
+	}
+}

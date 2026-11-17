@@ -339,3 +339,20 @@ func TestDirKeepsRunAndTierOfParts(t *testing.T) {
 		t.Fatalf("run %d was handed out again after reopen as %d", run, next)
 	}
 }
+
+func TestDirReadsPartsAgainAfterReleasingTheirPages(t *testing.T) {
+	d, err := OpenDir(filepath.Join(t.TempDir(), "table"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if _, err := d.Commit([]*PartFile{writePartFile(t, d, 0, 2000, "a"), writePartFile(t, d, 2000, 1000, "b")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < 3; round++ {
+		if rows, sum := rowsAndSum(t, d); rows != 3000 || sum != 2999*3000/2 {
+			t.Fatalf("round %d: %d rows, sum %d", round, rows, sum)
+		}
+		d.ReleasePages()
+	}
+}

@@ -142,6 +142,9 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 // Table returns the table of live parts.
 func (s *Store) Table() *Table { return s.dir.Table() }
 
+// ReleasePages is Dir.ReleasePages for the store's directory.
+func (s *Store) ReleasePages() { s.dir.ReleasePages() }
+
 // Close writes what Append buffered, stops the merger and closes the
 // directory; writers must be closed first.
 func (s *Store) Close() error {

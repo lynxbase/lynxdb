@@ -59,6 +59,7 @@ type Dir struct {
 type partFileRef struct {
 	name string
 	meta PartMeta
+	data []byte // the mapping of the part file
 	dead atomic.Bool
 }
 
@@ -269,7 +270,7 @@ func (d *Dir) open(name string, meta PartMeta) (*Handle, error) {
 		adviseRandom(data[:p.BlocksEnd()&^(pageSize-1)])
 		p.SetReadAhead(func(off, n int) { adviseWillNeed(data, off, n) })
 	}
-	ref := &partFileRef{name: name, meta: meta}
+	ref := &partFileRef{name: name, meta: meta, data: data}
 	h := NewHandle(p, func() {
 		_ = data.Unmap()
 		f.Close()
@@ -290,6 +291,18 @@ func (d *Dir) NewRun() uint64 { return d.nextRun.Add(1) - 1 }
 
 // Table returns the table of live parts.
 func (d *Dir) Table() *Table { return d.table }
+
+// ReleasePages lets go of the pages of the live part files that this process
+// holds in memory through their mappings; reads bring them back from the
+// page cache or the disk. The kernel does not drop cached pages that a
+// process still maps, so a cold read is measured after this call.
+func (d *Dir) ReleasePages() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, ref := range d.live {
+		adviseDontNeed(ref.data)
+	}
+}
 
 // PartFile is a part being written; it becomes visible through Commit, which
 // records Meta with it.
