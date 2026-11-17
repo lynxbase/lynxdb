@@ -22,6 +22,10 @@ const (
 type Config struct {
 	MaxCompressedBytes   int64
 	MaxDecompressedBytes int64
+	// CompressedSetting and DecompressedSetting name the settings that set
+	// the limits, for the error that a rejected body gets.
+	CompressedSetting   string
+	DecompressedSetting string
 }
 
 type Hook interface {
@@ -32,13 +36,18 @@ type TooLargeError struct {
 	Stage    string
 	Encoding string
 	Limit    int64
+	Setting  string
 }
 
 func (e *TooLargeError) Error() string {
-	if e.Encoding == "" {
-		return fmt.Sprintf("%s body exceeds limit %d", e.Stage, e.Limit)
+	msg := fmt.Sprintf("%s body exceeds limit %d", e.Stage, e.Limit)
+	if e.Encoding != "" {
+		msg += " for " + e.Encoding + " encoding"
 	}
-	return fmt.Sprintf("%s body exceeds limit %d for %s encoding", e.Stage, e.Limit, e.Encoding)
+	if e.Setting != "" {
+		msg += " set by " + e.Setting
+	}
+	return msg
 }
 
 func IsTooLarge(err error) bool {
@@ -61,6 +70,7 @@ func DualLimitMiddleware(cfg Config, hook Hook) func(http.Handler) http.Handler 
 					Stage:    StageCompressed,
 					Encoding: encoding,
 					Limit:    cfg.MaxCompressedBytes,
+					Setting:  cfg.CompressedSetting,
 				}).Error())
 				return
 			}
@@ -102,6 +112,7 @@ func WrapBody(body io.ReadCloser, encoding string, cfg Config, hook Hook, shared
 	}
 
 	raw := newCapReadCloser(body, cfg.MaxCompressedBytes, StageCompressed, encoding, hook, shared)
+	raw.setting = cfg.CompressedSetting
 	var decoded io.ReadCloser = raw
 
 	switch encoding {
@@ -127,7 +138,10 @@ func WrapBody(body io.ReadCloser, encoding string, cfg Config, hook Hook, shared
 		return nil, fmt.Errorf("unsupported content encoding %q", encoding)
 	}
 
-	return newCapReadCloser(decoded, cfg.MaxDecompressedBytes, StageDecompressed, encoding, hook, shared), nil
+	capped := newCapReadCloser(decoded, cfg.MaxDecompressedBytes, StageDecompressed, encoding, hook, shared)
+	capped.setting = cfg.DecompressedSetting
+
+	return capped, nil
 }
 
 type state struct {
@@ -148,6 +162,7 @@ type capReadCloser struct {
 	read     int64
 	stage    string
 	encoding string
+	setting  string
 	hook     Hook
 	state    *state
 }
@@ -192,7 +207,7 @@ func (r *capReadCloser) Close() error {
 }
 
 func (r *capReadCloser) reject() error {
-	err := &TooLargeError{Stage: r.stage, Encoding: r.encoding, Limit: r.limit}
+	err := &TooLargeError{Stage: r.stage, Encoding: r.encoding, Limit: r.limit, Setting: r.setting}
 	r.state.setTooLarge(err)
 	recordReject(r.hook, r.stage, r.encoding)
 	return err

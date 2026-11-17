@@ -349,10 +349,7 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 	// Auth runs before rate limiting so unauthenticated requests don't consume quota.
 	var handler http.Handler = mux
 	handler = s.esIndexHeadMiddleware(handler)
-	handler = limits.DualLimitMiddleware(limits.Config{
-		MaxCompressedBytes:   int64(cfg.Ingest.Limits.MaxCompressedBodyBytes),
-		MaxDecompressedBytes: int64(cfg.Ingest.Limits.MaxDecompressedBodyBytes),
-	}, promMetrics)(handler)
+	handler = bodyLimits(cfg.Ingest, promMetrics, handler)
 	handler = MaxBodyMiddleware(int64(cfg.Ingest.MaxBodySize), handler)
 	if cfg.HTTP.RateLimit > 0 {
 		s.rateLimiter = NewRateLimiter(cfg.HTTP.RateLimit, int(cfg.HTTP.RateLimit)*2)
@@ -651,6 +648,33 @@ func (s *Server) TLSEnabled() bool {
 // DB returns the database the server serves.
 func (s *Server) DB() *database.DB {
 	return s.db
+}
+
+// bodyLimits bounds request bodies: the native ingest endpoints by
+// ingest.max_body_size, every other route by the shipper limits.
+func bodyLimits(cfg config.IngestConfig, hook limits.Hook, next http.Handler) http.Handler {
+	maxBody := int64(cfg.MaxBodySize)
+	native := limits.DualLimitMiddleware(limits.Config{
+		MaxCompressedBytes:   maxBody,
+		MaxDecompressedBytes: maxBody,
+		CompressedSetting:    "ingest.max_body_size",
+		DecompressedSetting:  "ingest.max_body_size",
+	}, hook)(next)
+	shipper := limits.DualLimitMiddleware(limits.Config{
+		MaxCompressedBytes:   int64(cfg.Limits.MaxCompressedBodyBytes),
+		MaxDecompressedBytes: int64(cfg.Limits.MaxDecompressedBodyBytes),
+		CompressedSetting:    "ingest.limits.max_compressed_body_bytes",
+		DecompressedSetting:  "ingest.limits.max_decompressed_body_bytes",
+	}, hook)(next)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/ingest", "/api/v1/ingest/raw":
+			native.ServeHTTP(w, r)
+		default:
+			shipper.ServeHTTP(w, r)
+		}
+	})
 }
 
 func defaultIdleTimeout(d time.Duration) time.Duration {
