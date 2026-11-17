@@ -182,6 +182,8 @@ func (t *translator) node(n ir.Node) error {
 		}
 	case *ir.Extract:
 		return t.extract(n)
+	case *ir.FillNull:
+		return t.fill(n)
 	case *ir.Project:
 		return t.project(n)
 	case *ir.RenameColumns:
@@ -374,6 +376,28 @@ func (t *translator) project(n *ir.Project) error {
 		cols = append(cols, exec.Named{Name: name, Expr: e})
 	}
 	t.cols, t.named = cols, true
+
+	return nil
+}
+
+// fill gives the columns that the node names their own value where they
+// hold one and the node's value where they hold null or nothing.
+func (t *translator) fill(n *ir.FillNull) error {
+	otherwise, ok := ir.LookupFunc("coalesce")
+	if len(n.Fields) == 0 || !ok {
+		return unsupported("%s", n.Label())
+	}
+	cols := make([]*exec.Expr, len(n.Fields))
+	for i, f := range n.Fields {
+		var err error
+		filled := &ir.Call{Func: otherwise, Args: []ir.Expr{&ir.FieldRef{Name: f.Name, T: ir.Any}, f.Expr}, T: ir.Any}
+		if cols[i], err = t.expr(filled); err != nil {
+			return err
+		}
+	}
+	for i, f := range n.Fields {
+		t.set(f.Name, cols[i])
+	}
 
 	return nil
 }
