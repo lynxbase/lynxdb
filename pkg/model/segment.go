@@ -18,13 +18,3 @@ type SegmentMeta struct {
 	Tier       string    `json:"tier,omitempty" msgpack:"tier,omitempty"`
 	ObjectKey  string    `json:"object_key,omitempty" msgpack:"okey,omitempty"`
 }
-
-// TimeRange returns the duration covered by this segment.
-func (s SegmentMeta) TimeRange() time.Duration {
-	return s.MaxTime.Sub(s.MinTime)
-}
-
-// Overlaps returns true if this segment's time range overlaps with the given range.
-func (s SegmentMeta) Overlaps(start, end time.Time) bool {
-	return !s.MaxTime.Before(start) && !s.MinTime.After(end)
-}
