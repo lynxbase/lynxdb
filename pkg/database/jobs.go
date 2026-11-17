@@ -36,7 +36,9 @@ type Job struct {
 	state    JobState
 	finished time.Time
 	result   *columnar.Result
-	err      error
+	// rows is the number of rows of a result that the job gave up.
+	rows int
+	err  error
 }
 
 // JobStatus is what is known of a job at one moment.
@@ -64,6 +66,7 @@ func (j *Job) Status() JobStatus {
 	} else {
 		st.Elapsed = j.finished.Sub(j.Started)
 	}
+	st.Rows = j.rows
 	if j.result != nil {
 		st.Rows = j.result.Len()
 	}
@@ -122,18 +125,52 @@ func (db *DB) Submit(c *query.Compiled, src string, opts QueryOptions) (*Job, er
 // Job returns the job with an id.
 func (db *DB) Job(id string) (*Job, bool) { return db.jobs.get(id) }
 
+// Answered tells that the request of a job took its whole answer. Nothing
+// reads such a job later, so it gives up its rows, and only the last
+// maxAnswered of them stay listed: a server that answers many queries a
+// second would hold millions otherwise.
+func (db *DB) Answered(j *Job) {
+	j.mu.Lock()
+	if j.result != nil {
+		j.rows, j.result = j.result.Len(), nil
+	}
+	j.mu.Unlock()
+	db.jobs.answered(j.ID)
+}
+
 // Jobs lists the jobs, the latest first.
 func (db *DB) Jobs() []*Job { return db.jobs.list() }
 
 type jobs struct {
 	mu   sync.Mutex
 	byID map[string]*Job
+	// taken is a ring of the jobs whose answers their requests took, and
+	// next the place of the oldest once it is full.
+	taken []string
+	next  int
 }
 
 func (js *jobs) add(j *Job) {
 	js.mu.Lock()
 	defer js.mu.Unlock()
 	js.byID[j.ID] = j
+}
+
+// maxAnswered is how many jobs whose answers were taken stay listed.
+const maxAnswered = 1024
+
+func (js *jobs) answered(id string) {
+	js.mu.Lock()
+	defer js.mu.Unlock()
+	if len(js.taken) < maxAnswered {
+		js.taken = append(js.taken, id)
+
+		return
+	}
+	// The oldest gives its place in the ring to the latest.
+	delete(js.byID, js.taken[js.next])
+	js.taken[js.next] = id
+	js.next = (js.next + 1) % maxAnswered
 }
 
 func (js *jobs) get(id string) (*Job, bool) {

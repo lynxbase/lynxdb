@@ -182,6 +182,74 @@ func TestJobs(t *testing.T) {
 	}
 }
 
+// TestAnsweredJobsAreFewAndHoldNoRows requires a job whose request took its
+// answer to stay listed with its row count and without its rows, and only
+// the last of such jobs to stay, however many queries were answered.
+func TestAnsweredJobsAreFewAndHoldNoRows(t *testing.T) {
+	db := openTest(t, Config{})
+	if _, err := db.Append("main", []byte(`{"a":1}`+"\n"+`{"a":2}`+"\n")); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	c, err := query.Compile("source=main | fields a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var first, last *Job
+	for i := 0; i < maxAnswered+50; i++ {
+		j, err := db.Submit(c, "source=main | fields a", QueryOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-j.Done()
+		if res, err := j.Result(); err != nil || res.Len() != 2 {
+			t.Fatalf("query %d: %v", i, err)
+		}
+		db.Answered(j)
+		if first == nil {
+			first = j
+		}
+		last = j
+	}
+	if n := len(db.Jobs()); n != maxAnswered {
+		t.Fatalf("%d jobs are listed, want the last %d", n, maxAnswered)
+	}
+	if _, ok := db.Job(first.ID); ok {
+		t.Fatal("the first answered job is still listed")
+	}
+	got, ok := db.Job(last.ID)
+	if !ok {
+		t.Fatal("the last answered job is not listed")
+	}
+	if res, _ := got.Result(); res != nil {
+		t.Fatal("an answered job holds its rows")
+	}
+	if st := got.Status(); st.State != JobDone || st.Rows != 2 {
+		t.Fatalf("status of an answered job: %+v", st)
+	}
+	// A job that nobody answered stays until its time is over.
+	kept, err := db.Submit(c, "source=main | fields a", QueryOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	<-kept.Done()
+	for i := 0; i < maxAnswered+1; i++ {
+		j, err := db.Submit(c, "source=main | fields a", QueryOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		<-j.Done()
+		db.Answered(j)
+	}
+	if got, ok := db.Job(kept.ID); !ok {
+		t.Fatal("a job that was not answered is gone")
+	} else if res, err := got.Result(); err != nil || res == nil || res.Len() != 2 {
+		t.Fatalf("its rows: %v", err)
+	}
+}
+
 func TestTooManyQueries(t *testing.T) {
 	db := openTest(t, Config{MaxConcurrent: 1})
 	release, err := db.acquire()

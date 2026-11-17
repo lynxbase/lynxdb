@@ -158,6 +158,7 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 	case <-job.Done():
 	case <-r.Context().Done():
 		job.Cancel()
+		s.db.Answered(job)
 		return
 	case <-timer.C:
 		// A job that ended as the timer fired is answered in full.
@@ -168,8 +169,9 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 			return
 		}
 	}
-
 	res, err := job.Result()
+	// The request takes the whole answer, so nothing reads the job later.
+	s.db.Answered(job)
 	if err != nil {
 		respondQueryFailure(w, err)
 		return
