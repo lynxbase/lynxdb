@@ -476,6 +476,7 @@ func (d *Dir) open(name string, meta PartMeta) (*Handle, *partFileRef, error) {
 			return nil, nil, err
 		}
 		adviseRandom(blocks)
+		p.Detach()
 		p.SetBlockData(blocks)
 		p.SetReadAhead(func(off, n int) { adviseWillNeed(blocks, off, n) })
 	}

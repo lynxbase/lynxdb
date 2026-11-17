@@ -441,7 +441,7 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 		src.readAhead(int(start), len(data))
 	}
 	dirOff := binary.LittleEndian.Uint32(e[40:])
-	dir := src.dirs[dirOff : dirOff+binary.LittleEndian.Uint32(e[44:])]
+	dir := src.directories()[dirOff : dirOff+binary.LittleEndian.Uint32(e[44:])]
 	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
 		return ErrCorrupt
 	}

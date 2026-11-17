@@ -1,10 +1,12 @@
 package part
 
 import (
+	"bytes"
 	"encoding/binary"
 	"hash/crc32"
 	"math"
 	"math/bits"
+	"sync"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -24,6 +26,10 @@ type Part struct {
 	// per block.
 	dirs    []byte
 	dirsOff int
+	// detached is set once the index is held apart from data; dirsCopied
+	// guards the copy of dirs that follows.
+	detached   bool
+	dirsCopied sync.Once
 	// filters holds an entry for every token filter, block after block,
 	// and groups locates them; every block names its group and its first
 	// filter, and a part without filters has neither.
@@ -258,6 +264,35 @@ func (p *Part) SetBlockData(data []byte) {
 	}
 }
 
+// Detach copies what locates blocks, filters and keys out of the part's
+// data, and the block directories at their first use, so that finding a
+// block reads the data no more; a part mapped from a file then keeps its
+// index in memory whatever becomes of the file's pages.
+func (p *Part) Detach() {
+	p.index, p.filters = bytes.Clone(p.index), bytes.Clone(p.filters)
+	size := len(p.lastKey)
+	for _, k := range p.firstKeys {
+		size += len(k)
+	}
+	keys := make([]byte, 0, size)
+	for i, k := range p.firstKeys {
+		keys = append(keys, k...)
+		p.firstKeys[i] = keys[len(keys)-len(k) : len(keys) : len(keys)]
+	}
+	keys = append(keys, p.lastKey...)
+	p.lastKey = keys[len(keys)-len(p.lastKey):]
+	p.detached = true
+}
+
+// directories returns the column directories of all blocks.
+func (p *Part) directories() []byte {
+	if p.detached {
+		p.dirsCopied.Do(func() { p.dirs = bytes.Clone(p.dirs) })
+	}
+
+	return p.dirs
+}
+
 // SetReadAhead makes the part announce the bytes it is about to read, as an
 // offset and a length in its data, to fn, which a part mapped from a file
 // uses to have them read in one request. It announces the block directories
@@ -365,7 +400,7 @@ func (p *Part) OpenBlock(i int, b *Block) error {
 	b.part, b.index, b.start = p, i, int(start)
 	b.data = p.blocks[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
 	dirOff := binary.LittleEndian.Uint32(e[40:])
-	dir := p.dirs[dirOff : dirOff+binary.LittleEndian.Uint32(e[44:])]
+	dir := p.directories()[dirOff : dirOff+binary.LittleEndian.Uint32(e[44:])]
 	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
 		return ErrCorrupt
 	}
