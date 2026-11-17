@@ -160,23 +160,13 @@ func (r *run) columnar(n ir.Node) (rows []map[string]event.Value, ok bool, err e
 			at = ins[0]
 		}
 	}
-	names := r.sources(scan)
-	if len(names) != 1 {
-		return nil, false, nil
-	}
 	plan, err := irplan.Plan(&ir.Plan{Root: n}, irplan.Options{Now: r.opts.Now})
 	if err != nil {
 		// What the planner does not take, or takes for an error, is for the
 		// row operators to run or to refuse.
 		return nil, false, nil
 	}
-	snap, found := r.tables.Snapshot(names[0])
-	if !found {
-		// A table that is not there holds no rows.
-		none := colstore.NewTable()
-		defer none.Close()
-		snap = none.Snapshot()
-	}
+	snap := r.snapshot(scan)
 	defer snap.Release()
 	res, err := exec.Run(r.ctx, snap, plan, exec.Options{Workers: r.opts.Workers})
 	switch {
@@ -187,6 +177,26 @@ func (r *run) columnar(n ir.Node) (rows []map[string]event.Value, ok bool, err e
 	}
 
 	return rowsOf(res, n.Schema()), true, nil
+}
+
+// snapshot returns the rows of the tables that a scan reads, for the caller
+// to release. A table that is not there holds no rows.
+func (r *run) snapshot(scan *ir.Scan) *colstore.Snapshot {
+	var snaps []*colstore.Snapshot
+	for _, name := range r.sources(scan) {
+		if snap, ok := r.tables.Snapshot(name); ok {
+			snaps = append(snaps, snap)
+		}
+	}
+	if len(snaps) == 1 {
+		return snaps[0]
+	}
+	all := colstore.Union(snaps...)
+	for _, snap := range snaps {
+		snap.Release()
+	}
+
+	return all
 }
 
 // sources returns the names of the tables that a scan reads.
@@ -236,19 +246,13 @@ func (r *run) source(scan *ir.Scan) (pipeline.Iterator, error) {
 	if err != nil {
 		return nil, err
 	}
-	var rows []map[string]event.Value
-	for _, name := range r.sources(scan) {
-		snap, ok := r.tables.Snapshot(name)
-		if !ok {
-			continue
-		}
-		res, err := exec.Run(r.ctx, snap, plan, exec.Options{Workers: r.opts.Workers})
-		snap.Release()
-		if err != nil {
-			return nil, err
-		}
-		rows = append(rows, rowsOf(res, ir.Schema{Open: true})...)
+	snap := r.snapshot(scan)
+	res, err := exec.Run(r.ctx, snap, plan, exec.Options{Workers: r.opts.Workers})
+	snap.Release()
+	if err != nil {
+		return nil, err
 	}
+	rows := rowsOf(res, ir.Schema{Open: true})
 	if scan.Descending {
 		sort.SliceStable(rows, func(i, j int) bool {
 			return rows[i][ir.TimeColumn].AsTimestamp().After(rows[j][ir.TimeColumn].AsTimestamp())
