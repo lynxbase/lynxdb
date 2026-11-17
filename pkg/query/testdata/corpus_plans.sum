@@ -675,23 +675,23 @@ f1e49c6e333f7cce	source=people | eval `SINH(2)` = SINH(2) | fields `SINH(2)`
 bdcb6fc1b1258cd4	source=location | eval `CBRT(8)` = CBRT(8), `CBRT(9.261)` = CBRT(9.261), `CBRT(-27)` = CBRT(-27) | fields `CBRT(8)`, `CBRT(9.261)`, `CBRT(-27)`
 6cadb694e39d39fd	source=people | eval `RINT(1.7)` = RINT(1.7) | fields `RINT(1.7)`
 88b266bfb1f49764	source=people | eval `TAN(0)` = TAN(0) | fields `TAN(0)`
-0bd3267f77530ec3	source=accounts | where match(address, 'Street') | fields lastname, address
-0b199f6a234e91ea	source=accounts | where match(firstname, 'Hattie', operator='AND', boost=2.0) | fields lastname
-093df9e16968cfb1	source=books | where match_phrase(author, 'Alexander Milne') | fields author, title
-a34d44709d499b49	source=books | where match_phrase(author, 'Alan Milne', slop = 2) | fields author, title
-bf84db295181ac95	source=books | where match_phrase_prefix(author, 'Alexander Mil') | fields author, title
-04f0db8837d0eb3d	source=books | where match_phrase_prefix(author, 'Alan Mil', slop = 2) | fields author, title
-32528a9db7a7dce6	source=books | where multi_match(['title'], 'Pooh House') | fields id, title, author
-5222051797a0a6ca	source=books | where multi_match(['title'], 'Pooh House', operator='AND', analyzer=default) | fields id, title, author
-61421d1b53464720	source=books | where multi_match('Pooh House') | fields id, title, author
-9b0586ea31a1eca0	source=books | where simple_query_string(['title'], 'Pooh House') | fields id, title, author
-38c04cd7742a935a	source=books | where simple_query_string(['title'], 'Pooh House', flags='ALL', default_operator='AND') | fields id, title, author
-a6efc0fc9ed84b1e	source=books | where simple_query_string('Pooh House') | fields id, title, author
-08e2fc2fa381b5d7	source=accounts | where match_bool_prefix(address, 'Bristol Stre') | fields firstname, address
-3b270d503495d723	source=accounts | where match_bool_prefix(address, 'Bristol Stre', minimum_should_match = 2) | fields firstname, address
-71fadf4dd6a2cafb	source=books | where query_string(['title'], 'Pooh House') | fields id, title, author
-8ee2bd6d96cef629	source=books | where query_string(['title'], 'Pooh House', default_operator='AND') | fields id, title, author
-3a8e2a7eb7c0f903	source=books | where query_string('Pooh House') | fields id, title, author
+8dfca39567fb3809	source=accounts | where match(address, 'Street') | fields lastname, address
+eee283b2350734ab	source=accounts | where match(firstname, 'Hattie', operator='AND', boost=2.0) | fields lastname
+589ad91d0ad1c07f	source=books | where match_phrase(author, 'Alexander Milne') | fields author, title
+64901bb931c16e93	source=books | where match_phrase(author, 'Alan Milne', slop = 2) | fields author, title
+5efdf75f6e0e125b	source=books | where match_phrase_prefix(author, 'Alexander Mil') | fields author, title
+0f0b9778fb7ea36f	source=books | where match_phrase_prefix(author, 'Alan Mil', slop = 2) | fields author, title
+6d5b188eb1d4318d	source=books | where multi_match(['title'], 'Pooh House') | fields id, title, author
+cc56a544beac40d7	source=books | where multi_match(['title'], 'Pooh House', operator='AND', analyzer=default) | fields id, title, author
+29703e8d184be8d5	source=books | where multi_match('Pooh House') | fields id, title, author
+f50040e9ac05f4a3	source=books | where simple_query_string(['title'], 'Pooh House') | fields id, title, author
+9264fcc3e01164e5	source=books | where simple_query_string(['title'], 'Pooh House', flags='ALL', default_operator='AND') | fields id, title, author
+0abb509c8f73841f	source=books | where simple_query_string('Pooh House') | fields id, title, author
+5a6dd9313a540b0f	source=accounts | where match_bool_prefix(address, 'Bristol Stre') | fields firstname, address
+eb96d0c0c4e72cf3	source=accounts | where match_bool_prefix(address, 'Bristol Stre', minimum_should_match = 2) | fields firstname, address
+46bb82ad62e87ad8	source=books | where query_string(['title'], 'Pooh House') | fields id, title, author
+21812b079f2c20e8	source=books | where query_string(['title'], 'Pooh House', default_operator='AND') | fields id, title, author
+a02371a08e8b5b5a	source=books | where query_string('Pooh House') | fields id, title, author
 901d6868e01b7c7c	source=accounts | eval max_val = MAX(age, 30) | fields age, max_val
 546f7eebdd3e8ca6	source=accounts | eval result = MAX(firstname, 'John') | fields firstname, result
 fb925ec9f02a4c5f	source=accounts | eval result = MAX(age, 35, 'John', firstname) | fields age, firstname, result

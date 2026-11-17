@@ -65,7 +65,7 @@ func TestCompileErrors(t *testing.T) {
 		{"source=t | stats count() by host | where status > 1", ErrSemantic, "field status not found"},
 		{"source=t | eval x = 1 + true", ErrType, "not defined"},
 		{"source=t | where 'a' = true", ErrType, "cannot compare"},
-		{"source=t | where match(body, 'x')", ErrUnsupportedFunction, "relevance"},
+		{"source=t | where match(body, 'x')", ErrUnsupportedFunction, "where with like or regexp_match"},
 		{"source=t | kmeans centroids=3", ErrUnsupportedCommand, "ML Commons"},
 		{"source=t | eval x = nosuchfunc(1)", ErrUnsupportedFunction, "unknown function nosuchfunc"},
 		{"source=t | eval x = count()", ErrSemantic, "only valid in stats"},

@@ -224,7 +224,7 @@ func init() {
 		return x.checkedCall(n, "transform", []ir.Expr{arr, &ir.Lambda{Params: []*ir.LambdaParam{param}, Body: body}})
 	})
 
-	unsupportedFunc("LynxDB has no relevance scoring; use the search command, or where with like, contains or regexp_match",
+	unsupportedFunc("LynxDB has no relevance scoring; use the search command, or where with like or regexp_match",
 		"match", "match_phrase", "match_phrase_prefix", "match_bool_prefix", "simple_query_string", "multi_match", "query_string")
 	unsupportedFunc("LynxDB has no GeoIP database", "geoip")
 }
