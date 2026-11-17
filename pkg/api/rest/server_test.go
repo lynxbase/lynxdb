@@ -798,13 +798,13 @@ func TestServer_StatsListAggregatePreservesDuplicates(t *testing.T) {
 	row := rows[0].([]interface{})
 	values := map[string]string{}
 	for i, col := range cols {
-		values[fmt.Sprint(col)] = row[i].(string)
+		values[fmt.Sprint(col)] = fmt.Sprint(row[i])
 	}
-	if got := values["user_list"]; got != "alice|||bob|||alice" {
-		t.Fatalf("user_list: got %q, want alice|||bob|||alice", got)
+	if got := values["user_list"]; got != "[alice bob alice]" {
+		t.Fatalf("user_list: got %s, want [alice bob alice]", got)
 	}
-	if got := values["user_values"]; got != "alice|||bob" {
-		t.Fatalf("user_values: got %q, want alice|||bob", got)
+	if got := values["user_values"]; got != "[alice bob]" {
+		t.Fatalf("user_values: got %s, want [alice bob]", got)
 	}
 }
 
