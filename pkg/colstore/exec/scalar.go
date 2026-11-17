@@ -114,6 +114,9 @@ var typeDict = func() (d vec.Column) {
 type operand struct {
 	cols  [kindSlots + 1]*vec.Column
 	dense bool
+	// computed is set for the outcome of a function, where a row without a
+	// value holds a null instead of nothing.
+	computed bool
 }
 
 // at returns the value of row r.
@@ -135,6 +138,9 @@ func (o *operand) at(r int) Value {
 		}
 
 		return Value{Kind: kind, Bytes: c.Bytes(r)}
+	}
+	if o.computed {
+		return Value{Kind: vec.KindNull}
 	}
 
 	return Value{}
@@ -191,7 +197,7 @@ func (b *builder) held() int {
 
 func (b *builder) put(j int, v Value) {
 	k := v.Kind
-	if k == KindAny {
+	if v.IsNull() {
 		return
 	}
 	c := &b.cols[k]
@@ -234,7 +240,7 @@ func (b *builder) put(j int, v Value) {
 }
 
 func (b *builder) finish() operand {
-	o := operand{dense: true}
+	o := operand{dense: true, computed: true}
 	for k := vec.KindNull; k <= vec.KindVariant; k++ {
 		if b.count[k] == 0 {
 			continue
@@ -288,9 +294,9 @@ func (s *scalarOut) held() int {
 
 // literal returns a constant operand.
 func (w *worker) literal(e *sexpr, n int) operand {
-	o := operand{dense: true}
+	o := operand{dense: true, computed: true}
 	v := e.lit
-	if v.Kind == KindAny {
+	if v.IsNull() {
 		return o
 	}
 	s := &w.outs[e.slot]
@@ -393,7 +399,7 @@ func (w *worker) kindOperand(e *sexpr) (operand, error) {
 	c := &s.dict
 	if e.op == OpTypeOf {
 		*c = vec.Column{Kind: vec.KindString, Layout: vec.Dict, Rows: rows, Offsets: typeDict.Offsets, Data: typeDict.Data, Codes8: codes}
-		o.cols[vec.KindString] = c
+		o.cols[vec.KindString], o.computed = c, true
 
 		return o, nil
 	}
@@ -410,7 +416,7 @@ func (w *worker) kindOperand(e *sexpr) (operand, error) {
 	s.bools = sized(s.bools, vec.BitmapWords(rows))
 	vec.BitmapFromMask(s.bools, mask)
 	*c = vec.Column{Kind: vec.KindBool, Rows: rows, Bools: s.bools}
-	o.cols[vec.KindBool] = c
+	o.cols[vec.KindBool], o.computed = c, true
 
 	return o, nil
 }
@@ -428,7 +434,7 @@ func (w *worker) intOperand(e *sexpr, n int, idx []uint32) (operand, error) {
 	if valid != nil {
 		vec.BitmapFromMask(c.UseValid(n), valid[:n])
 	}
-	o := operand{dense: true}
+	o := operand{dense: true, computed: true}
 	o.cols[vec.KindInt] = c
 
 	return o, nil
@@ -460,8 +466,8 @@ func (w *worker) overEntries(e *sexpr, args []operand, k, n int, idx []uint32) o
 	src, dense := args[k].cols[vec.KindString], args[k].dense
 	entries := src.DictLen()
 	s.entries = vec.Column{Kind: vec.KindString, Rows: entries, Offsets: src.Offsets, Data: src.Data}
-	var at operand
-	at.cols[vec.KindString], at.dense = &s.entries, true
+	at := operand{dense: true, computed: args[k].computed}
+	at.cols[vec.KindString] = &s.entries
 	args[k] = at
 	res := w.byRow(e, args, entries, nil, &s.ent)
 
@@ -474,14 +480,16 @@ func (w *worker) overEntries(e *sexpr, args []operand, k, n int, idx []uint32) o
 		for i := range args {
 			vals[i] = args[i].at(0)
 		}
-		vals[k] = Value{}
+		if vals[k] = (Value{}); args[k].computed {
+			vals[k].Kind = vec.KindNull
+		}
 		absent, s.buf = scalarValue(e.op, &e.pat, vals, s.buf[:0])
 		if absent.Bytes != nil {
 			s.absent = append(s.absent[:0], absent.Bytes...)
 			absent.Bytes = s.absent
 		}
 	}
-	if c := res.cols[vec.KindBool]; c != nil && c.Valid == nil && res.only() == c && absent.Kind == KindAny && src.Layout == vec.Dict {
+	if c := res.cols[vec.KindBool]; c != nil && c.Valid == nil && res.only() == c && absent.IsNull() && src.Layout == vec.Dict {
 		// The outcome of each entry goes to the rows through their codes.
 		table := sized(s.buf, max(entries, 256))
 		s.buf = table
@@ -498,16 +506,16 @@ func (w *worker) overEntries(e *sexpr, args []operand, k, n int, idx []uint32) o
 		s.bools = sized(s.bools, vec.BitmapWords(src.Rows))
 		vec.BitmapFromMask(s.bools, mask)
 		s.dict = vec.Column{Kind: vec.KindBool, Rows: src.Rows, Valid: src.Valid, Bools: s.bools}
-		var o operand
-		o.cols[vec.KindBool], o.dense = &s.dict, dense
+		o := operand{dense: dense, computed: true}
+		o.cols[vec.KindBool] = &s.dict
 
 		return o
 	}
-	if c := res.cols[vec.KindString]; c != nil && c.Valid == nil && res.only() == c && absent.Kind == KindAny {
+	if c := res.cols[vec.KindString]; c != nil && c.Valid == nil && res.only() == c && absent.IsNull() {
 		s.dict = vec.Column{Kind: vec.KindString, Layout: src.Layout, Rows: src.Rows, Valid: src.Valid,
 			Offsets: c.Offsets, Data: c.Data, Codes8: src.Codes8, Codes16: src.Codes16}
-		var o operand
-		o.cols[vec.KindString], o.dense = &s.dict, dense
+		o := operand{dense: dense, computed: true}
+		o.cols[vec.KindString] = &s.dict
 
 		return o
 	}
@@ -823,7 +831,7 @@ func (w *worker) numeric(e *sexpr, args []operand, n int, idx []uint32) (o opera
 			c.Valid = nil
 		}
 	}
-	o.dense = true
+	o.dense, o.computed = true, true
 	if c.Valid == nil || c.Valid.Count() > 0 {
 		o.cols[c.Kind] = c
 	}

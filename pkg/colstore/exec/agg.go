@@ -45,9 +45,11 @@ type keyPart struct {
 	col  *vec.Column
 	val  []byte
 	// card is the number of codes the part takes; a nullable part uses the
-	// last one for rows without the key.
+	// last one for rows without the key, which absent tags as null or as
+	// missing.
 	card     int
 	nullable bool
+	absent   byte
 	// ints holds the values of a partInts; one is set when they all equal
 	// lo.
 	ints []int64
@@ -296,7 +298,7 @@ func (a *aggWorker) classify(n int, idx []uint32) (codes bool, domain int, err e
 func (a *aggWorker) classifyKey(e *sexpr, p *keyPart, n int, idx []uint32) error {
 	w := a.w
 	p.mode, p.col, p.val, p.card, p.nullable, p.one, p.valid, p.dense, p.computed = partRows, nil, nil, 1, false, false, nil, false, false
-	p.step = 1
+	p.step, p.absent = 1, tagMissing
 	if e.op != OpColumn {
 		return a.classifyComputed(e, p, n, idx)
 	}
@@ -312,14 +314,32 @@ func (a *aggWorker) classifyKey(e *sexpr, p *keyPart, n int, idx []uint32) error
 		found = 1
 	}
 	p.kind = kind
+	// Rows without a value hold a null where the path has one, and are
+	// missing otherwise; a block with both is read row by row.
+	both := false
+	if nulls := w.ref(e.path, vec.KindNull); nulls != nil && e.kind == KindAny {
+		held := nulls.Count
+		for k := vec.KindBool; k <= vec.KindVariant; k++ {
+			if ref := w.ref(e.path, k); ref != nil {
+				held += ref.Count
+			}
+		}
+		if p.absent = tagNull; held < w.rows {
+			p.absent, both = tagMissing, true
+		}
+	}
 	switch {
-	case found == 0:
+	case found == 0 && !both:
 		p.mode = partNull
 
 		return nil
-	case found > 1:
+	case found > 1 || both:
 		p.mode = partRows
-		for k := vec.KindBool; k <= vec.KindVariant; k++ {
+		for k := vec.KindNull; k <= vec.KindVariant; k++ {
+			p.cols[k] = nil
+			if k == vec.KindNull && !both {
+				continue
+			}
 			c, err := w.column(e.path, k)
 			if err != nil {
 				return err
@@ -387,7 +407,7 @@ func (a *aggWorker) classifyKey(e *sexpr, p *keyPart, n int, idx []uint32) error
 
 // classifyOperand presents the value of the computed key e.
 func (a *aggWorker) classifyOperand(e *sexpr, o *operand, p *keyPart) {
-	p.dense = o.dense
+	p.dense, p.absent = o.dense, tagNull
 	var c *vec.Column
 	found := 0
 	for kind := vec.KindBool; kind <= vec.KindVariant; kind++ {
@@ -430,7 +450,7 @@ func (a *aggWorker) classifyOperand(e *sexpr, o *operand, p *keyPart) {
 			}
 		}
 		if (uint64(hi)-uint64(lo))/uint64(p.step) >= maxCodes {
-			p.step = 1
+			p.step, p.absent = 1, tagMissing
 
 			return
 		}
@@ -460,7 +480,7 @@ func (a *aggWorker) classifyComputed(e *sexpr, p *keyPart, n int, idx []uint32) 
 	}
 	// The values live in a buffer of the evaluator; the part takes it over.
 	p.buf, w.ints[0] = vals, p.buf
-	p.kind, p.ints, p.dense, p.computed = vec.KindInt, vals, true, true
+	p.kind, p.ints, p.dense, p.computed, p.absent = vec.KindInt, vals, true, true, tagNull
 	if valid != nil {
 		p.vbuf = append(p.vbuf[:0], valid...)
 		p.valid, p.nullable = p.vbuf, true
@@ -607,7 +627,7 @@ func (a *aggWorker) codeKey(code int) ([]byte, uint64) {
 		last := k == len(parts)-1
 		switch {
 		case p.mode == partNull, p.nullable && pc[k] == p.card-1:
-			key = append(key, tagNull)
+			key = append(key, p.absent)
 		case p.mode == partConst:
 			key = appendKeyBytes(key, bytesTag(p.kind), p.val, last)
 		case p.mode == partDict:
@@ -716,7 +736,7 @@ func (a *aggWorker) localKey(p *keyPart, inPlace bool, g int) []byte {
 	}
 	r := s.lrows[g]
 	if p.col.Valid != nil && !p.col.Valid.Get(int(r)) {
-		s.key = append(s.key[:0], tagNull)
+		s.key = append(s.key[:0], p.absent)
 	} else {
 		s.key = append(append(s.key[:0], bytesTag(p.kind)), p.col.Data[p.col.Offsets[r]:p.col.Offsets[r+1]]...)
 	}
@@ -745,7 +765,7 @@ func (a *aggWorker) runsOfBytes(p *keyPart, gid, idx []uint32) {
 			if cur < 0 || !prevNull {
 				cur = len(s.lhash)
 				s.lrows = append(s.lrows, r)
-				s.lhash = append(s.lhash, keyHash([]byte{tagNull}))
+				s.lhash = append(s.lhash, keyHash([]byte{p.absent}))
 				prevNull = true
 			}
 			gid[j] = uint32(cur)
@@ -799,16 +819,16 @@ func appendRowKey(dst []byte, p *keyPart, j, r int, last bool) []byte {
 	}
 	switch p.mode {
 	case partNull:
-		return append(dst, tagNull)
+		return append(dst, p.absent)
 	case partConst:
 		if p.nullable && !p.col.Valid.Get(r) {
-			return append(dst, tagNull)
+			return append(dst, p.absent)
 		}
 
 		return appendKeyBytes(dst, bytesTag(p.kind), p.val, last)
 	case partDict, partBytes:
 		if p.col.Valid != nil && !p.col.Valid.Get(r) {
-			return append(dst, tagNull)
+			return append(dst, p.absent)
 		}
 
 		return appendKeyBytes(dst, bytesTag(p.kind), p.col.Bytes(r), last)
@@ -816,12 +836,12 @@ func appendRowKey(dst []byte, p *keyPart, j, r int, last bool) []byte {
 		switch {
 		case p.computed:
 			if p.valid != nil && p.valid[j] == 0 {
-				return append(dst, tagNull)
+				return append(dst, p.absent)
 			}
 
 			return appendKeyInt(dst, p.ints[j])
 		case p.nullable && !p.col.Valid.Get(r):
-			return append(dst, tagNull)
+			return append(dst, p.absent)
 		case p.one:
 			return appendKeyInt(dst, p.lo)
 		}
@@ -830,7 +850,7 @@ func appendRowKey(dst []byte, p *keyPart, j, r int, last bool) []byte {
 	}
 	if p.computed {
 		if p.valid != nil && p.valid[j] == 0 {
-			return append(dst, tagNull)
+			return append(dst, p.absent)
 		}
 
 		return appendKeyInt(dst, p.ints[j])
@@ -851,8 +871,11 @@ func appendRowKey(dst []byte, p *keyPart, j, r int, last bool) []byte {
 
 		return appendKeyBytes(dst, bytesTag(kind), c.Bytes(r), last)
 	}
+	if c := p.cols[vec.KindNull]; c != nil && c.IsValid(r) {
+		return append(dst, tagNull)
+	}
 
-	return append(dst, tagNull)
+	return append(dst, p.absent)
 }
 
 // feed adds the selected rows to the states of t.

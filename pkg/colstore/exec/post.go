@@ -238,7 +238,10 @@ func (p *postEval) byValue(e *pexpr, in []colVec, n int) *colVec {
 	out.reset()
 	for i := 0; i < n; i++ {
 		for k, a := range args {
-			p.vals[k] = a.value(i)
+			// A column of an aggregate holds a value or a null.
+			if p.vals[k] = a.value(i); p.vals[k].Kind == KindAny {
+				p.vals[k].Kind = vec.KindNull
+			}
 		}
 		var v Value
 		v, p.text = scalarValue(e.op, &e.pat, p.vals, p.text[:0])

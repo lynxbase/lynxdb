@@ -2,6 +2,7 @@ package exec_test
 
 import (
 	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
@@ -138,4 +139,52 @@ func TestScalarFunctionsOverAggregates(t *testing.T) {
 	eachLayout(t, 2500, func(t *testing.T, snap *colstore.Snapshot, rows []refRow, workers int) {
 		check(t, snap, rows, plan, true, workers)
 	})
+}
+
+func TestNullAndMissingKeys(t *testing.T) {
+	var docs [][]byte
+	for i := 0; i < 900; i++ {
+		switch i % 9 {
+		case 0, 1:
+			docs = append(docs, []byte(fmt.Sprintf(`{"id":%d,"k":"a"}`, i)))
+		case 2, 3, 4:
+			docs = append(docs, []byte(fmt.Sprintf(`{"id":%d,"k":null}`, i)))
+		default:
+			docs = append(docs, []byte(fmt.Sprintf(`{"id":%d}`, i)))
+		}
+	}
+	rows := referenceRows(t, docs, "")
+	count := []exec.Agg{{Name: "rows", Func: exec.Count}}
+	upper := exec.Upper(anyOf("k"))
+	cases := []struct {
+		name string
+		plan exec.Node
+		want string
+	}{
+		{"a path", &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("k"), Aggs: count}, `["a" | 200 null | 300 null | 400]`},
+		{"a path as strings", &exec.Aggregate{Input: &exec.Scan{}, Keys: []exec.Named{named("k", str("k"))}, Aggs: count}, `["a" | 200 null | 700]`},
+		{"a function", &exec.Aggregate{Input: &exec.Scan{}, Keys: []exec.Named{named("k", upper)}, Aggs: count}, `["A" | 200 null | 700]`},
+		{"null function", &exec.Aggregate{Input: &exec.Scan{Filter: exec.IsNull(upper)}, Aggs: count}, `[700]`},
+		{"missing function", &exec.Aggregate{Input: &exec.Scan{Filter: exec.IsMissing(upper)}, Aggs: count}, `[0]`},
+		{"present function", &exec.Aggregate{Input: &exec.Scan{Filter: exec.Exists(upper)}, Aggs: count}, `[900]`},
+		{"null path", &exec.Aggregate{Input: &exec.Scan{Filter: exec.IsNull(anyOf("k"))}, Aggs: count}, `[300]`},
+		{"missing path", &exec.Aggregate{Input: &exec.Scan{Filter: exec.IsMissing(anyOf("k"))}, Aggs: count}, `[400]`},
+		{"kinds", &exec.Aggregate{Input: &exec.Scan{}, Keys: []exec.Named{named("t", exec.TypeOf(anyOf("k"))), named("u", exec.TypeOf(upper))}, Aggs: count},
+			`["missing" | "null" | 400 "null" | "null" | 300 "string" | "string" | 200]`},
+	}
+	for _, blockRows := range []int{64, 1 << 16} {
+		tbl := buildTable(t, docs, "", layout{blockRows: blockRows, parts: 2})
+		snap := tbl.Snapshot()
+		for _, c := range cases {
+			t.Run(fmt.Sprintf("%s/%d", c.name, blockRows), func(t *testing.T) {
+				res := check(t, snap, rows, c.plan, false, 3)
+				got := resultRows(res)
+				sort.Strings(got)
+				if fmt.Sprint(got) != c.want {
+					t.Fatalf("got %v, want %s", got, c.want)
+				}
+			})
+		}
+		snap.Release()
+	}
 }

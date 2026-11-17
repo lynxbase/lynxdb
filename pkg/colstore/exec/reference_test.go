@@ -90,6 +90,10 @@ func refValue(e *exec.Expr, row refRow) exec.Value {
 	args := make([]exec.Value, len(e.Args))
 	for i, a := range e.Args {
 		args[i] = refValue(a, row)
+		// A function or a literal without a value is null, not missing.
+		if a.Op != exec.OpColumn && args[i].Kind == exec.KindAny {
+			args[i].Kind = vec.KindNull
+		}
 		switch e.Op {
 		case exec.OpExists, exec.OpIsNull, exec.OpIsMissing, exec.OpTypeOf:
 			// A reference to every kind tells a null from a missing value.
@@ -540,6 +544,28 @@ func cmpInt(a, b int64) int {
 
 // refKey renders a value so that equal values of equal kinds, and only
 // those, render alike.
+// refKeyValue returns the value of a group key and what tells its group
+// apart: a null and a missing key form two groups with a null key each.
+func refKeyValue(e *exec.Expr, row refRow) (exec.Value, string) {
+	if e.Op == exec.OpColumn {
+		v, ok := row[e.Path]
+		switch {
+		case ok && e.Kind == exec.KindAny && v.Kind == vec.KindNull:
+			return exec.Value{}, "null"
+		case !ok || (e.Kind != exec.KindAny && v.Kind != e.Kind):
+			return exec.Value{}, "missing"
+		}
+
+		return v, refKey(v)
+	}
+	v := refValue(e, row)
+	if v.IsNull() {
+		return exec.Value{}, "null"
+	}
+
+	return v, refKey(v)
+}
+
 func refKey(v exec.Value) string {
 	switch v.Kind {
 	case vec.KindBool:
@@ -714,7 +740,9 @@ func refPost(e *exec.Expr, row refRow) exec.Value {
 	}
 	args := make([]exec.Value, len(e.Args))
 	for i, a := range e.Args {
-		args[i] = refPost(a, row)
+		if args[i] = refPost(a, row); args[i].Kind == exec.KindAny {
+			args[i].Kind = vec.KindNull
+		}
 	}
 
 	return refApply(e, args)
@@ -794,9 +822,9 @@ func refAggregate(rows []refRow, agg *exec.Aggregate) ([][]exec.Value, []string)
 		var keys []exec.Value
 		var id strings.Builder
 		for _, k := range agg.Keys {
-			v := refValue(k.Expr, row)
+			v, name := refKeyValue(k.Expr, row)
 			keys = append(keys, v)
-			id.WriteString(strconv.Quote(refKey(v)))
+			id.WriteString(strconv.Quote(name))
 		}
 		g := groups[id.String()]
 		if g == nil {

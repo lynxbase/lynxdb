@@ -12,15 +12,18 @@
 // with booleans.
 //
 // Scalar functions compute a value per row. A function of a value it cannot
-// take, of a null or of a missing one gives no value, which Exists, IsNull,
+// take, of a null or of a missing one gives a null, which Exists, IsNull,
 // IsMissing, TypeOf, Coalesce, If and Case tell apart from a value as their
 // comments say. Arithmetic keeps integers, gives a float when either side is
 // one, and gives no value when dividing by zero; Add joins two strings.
 // Inside a scalar function, comparisons, And, Or and Not are three-valued:
 // they give no value where the outcome depends on a value that is not there.
 //
-// Group keys keep the kind of every value, so 1 and "1" form two groups, and
-// missing keys form one group whose key is null.
+// Group keys keep the kind of every value, so 1 and "1" form two groups. The
+// rows where a key is null and the rows where it is missing form two more
+// groups, whose keys are both null in the result: a reference of KindAny is
+// null where the path holds a JSON null, a function is null where it gives
+// no value, and anything else without a value is missing.
 //
 // Aggregates: Count without an argument counts rows; with one it counts the
 // rows where the argument has a value. CountDistinct counts the distinct
