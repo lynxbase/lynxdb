@@ -5,7 +5,7 @@ description: Run LynxDB on Kubernetes as a StatefulSet with a persistent volume,
 
 # Kubernetes Deployment
 
-LynxDB runs as one container from `ghcr.io/lynxbase/lynxdb`. A StatefulSet with a PersistentVolumeClaim gives it stable storage for parts, API keys and the PID file.
+LynxDB runs as one container from `ghcr.io/lynxbase/lynxdb`. A StatefulSet with a PersistentVolumeClaim gives it stable storage for its indexes, API keys and the PID file.
 
 ## Single-Node StatefulSet
 
@@ -26,8 +26,6 @@ data:
 
     query:
       max_concurrent: 32
-      max_query_runtime: "10m"
-      spill_dir: "/data/spill"
 
     ingest:
       otlp:
@@ -130,7 +128,7 @@ kubectl -n lynxdb logs lynxdb-0 | grep -A2 'Generated root key'
 Notes:
 
 - `/health` needs no API key, so the probes work with auth on. With TLS on, set `scheme: HTTPS` on both probes.
-- The automatic memory pool is 40% of the container's memory limit. Set `server.total_memory_pool_bytes` to change it.
+- Every index lives in its own directory on the volume; the server opens them all at startup.
 - On the first start with auth on, the root key is printed once to the pod log. Keys live in the volume under `/data/auth`.
 - The image has no shell. Use `kubectl -n lynxdb exec lynxdb-0 -- lynxdb health` or `kubectl -n lynxdb port-forward svc/lynxdb 3100` to reach the server.
 - The OTLP listener has no auth; drop the `otlp-http` port, or keep it on an internal Service only, if the cluster network is shared.
@@ -161,7 +159,7 @@ spec:
                   number: 3100
 ```
 
-Buffering off and a long read timeout keep live tail (SSE) and NDJSON streaming responses flowing. The body size matches `ingest.limits.max_compressed_body_bytes`.
+Buffering off and a long read timeout keep job progress streams (SSE) and NDJSON exports flowing. The body size matches `ingest.limits.max_compressed_body_bytes`.
 
 ## Prometheus
 

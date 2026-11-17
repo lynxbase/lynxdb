@@ -40,14 +40,14 @@ Images are published for `linux/amd64` and `linux/arm64`. Nightly builds come fr
 
 ## docker run Examples
 
-### In-memory
+### Without a data directory
 
 ```bash
 docker run -d --name lynxdb -p 3100:3100 \
   ghcr.io/lynxbase/lynxdb:latest server --addr 0.0.0.0:3100 --data-dir ""
 ```
 
-Nothing is persisted, and authentication is unavailable in this mode.
+With an empty data directory the server keeps its indexes in a temporary directory that it removes when it stops. Nothing outlives the container, and authentication is unavailable in this mode.
 
 ### Persistent, with TLS and auth
 
@@ -122,7 +122,7 @@ volumes:
   lynxdb-data:
 ```
 
-The health check runs the `lynxdb` binary itself, since the image has no shell or `curl`. With TLS on, use `--server https://localhost:3100 --tls-skip-verify`. On Linux the automatic memory pool is 40% of the cgroup memory limit when one is set, so a container limit is enough to size it; set `server.total_memory_pool_bytes` to choose a different share.
+The health check runs the `lynxdb` binary itself, since the image has no shell or `curl`. With TLS on, use `--server https://localhost:3100 --tls-skip-verify`.
 
 ### Log shippers
 

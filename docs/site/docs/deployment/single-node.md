@@ -5,7 +5,7 @@ description: Run LynxDB as a single-node server under systemd with persistent st
 
 # Single Node Deployment
 
-One `lynxdb server` process handles ingest, storage, compaction and queries. This is the recommended deployment.
+One `lynxdb server` process handles ingest, storage and queries.
 
 ## Install
 
@@ -47,12 +47,10 @@ retention: "30d"
 log_level: "info"
 
 storage:
-  compaction_workers: 2
+  partition: "24h"
 
 query:
   max_concurrent: 32
-  max_query_runtime: "10m"
-  spill_dir: "/var/lib/lynxdb/spill"
 
 ingest:
   otlp:
@@ -172,17 +170,17 @@ sudo systemctl reload lynxdb
 sudo -u lynxdb lynxdb config reload --config /etc/lynxdb/config.yaml
 ```
 
-A reload re-reads the config file and environment and applies `log_level`, `retention`, most `query.*` settings, `tail.*`, and parts of `ingest.*` and `syslog.*`. Listen addresses, `data_dir`, TLS, auth and storage layout need a restart. The full list is in [Configuration Overview](../configuration/overview.md#reloading-a-running-server).
+A reload re-reads the config file and environment and applies `log_level`, the `query.*` settings except `query.max_concurrent` and `query.job_ttl`, and parts of `ingest.*` and `syslog.*`. `retention`, `storage.*`, listen addresses, `data_dir`, TLS and auth need a restart; the server logs the changes it left unapplied. The full list is in [Configuration Overview](../configuration/overview.md#reloading-a-running-server).
 
 ## Sizing
 
-- Memory: queries and the query cache share `server.total_memory_pool_bytes`, 40% of RAM by default. Each query is limited by `query.max_query_memory_bytes` (1 GB) and spills sorts and aggregations to `query.spill_dir` beyond that.
-- Disk: parts are compressed columnar files. Put `data_dir` and `spill_dir` on SSD. Retention deletes whole time partitions (`storage.partition_by`).
-- CPU: compaction uses `storage.compaction_workers` cores; queries use the rest.
+- Disk: every index keeps its events in compressed columnar part files under `data_dir`. Put `data_dir` on SSD. Retention deletes whole time partitions (`storage.partition`, one day by default), so plan for the retention period plus one partition. See [Retention](../operations/retention.md#estimating-storage-needs) for measuring the size of your data.
+- Memory: ingested events wait in memory until the store writes them, at most `storage.flush_interval` (one second by default). Queries hold the rows they aggregate, sort or return.
+- CPU: the store merges parts in the background; queries share the cores among themselves.
 
 ## Logs
 
-The server writes its log to stdout (text format, level from `log_level`); under systemd it goes to the journal. Queries slower than `query.slow_query_threshold_ms` are logged at `WARN`.
+The server writes its log to stdout (text format, level from `log_level`); under systemd it goes to the journal. Every HTTP request except `/health` is logged at `INFO` with its status and duration; see [Monitoring](../operations/monitoring.md#request-log).
 
 ## Backup
 

@@ -51,14 +51,14 @@ bodies. With `Logstash_Format On`, the index name carries the date, such as
 `logstash-2026.02.17`; `lynxdb indexes` shows the names.
 
 ```bash
-lynxdb query 'source=fluent-bit | stats count() by _source'
+lynxdb query 'source=fluent-bit | stats count() by host'
 ```
 
-Records from Fluent Bit's Kubernetes filter keep their `kubernetes` object;
-unpack it with `flatten` or `spath`:
+Each record is stored as sent. The members of the `kubernetes` object that
+Fluent Bit's Kubernetes filter adds are fields named by their path:
 
 ```bash
-lynxdb query 'source=fluent-bit | flatten kubernetes | stats count() by namespace_name, pod_name'
+lynxdb query 'source=fluent-bit | stats count() by kubernetes.namespace_name, kubernetes.pod_name'
 ```
 
 ## Troubleshooting
@@ -66,8 +66,8 @@ lynxdb query 'source=fluent-bit | flatten kubernetes | stats count() by namespac
 Use `Suppress_Type_Name On` with current Fluent Bit versions. If you see
 retry loops, check the Fluent Bit logs for HTTP 4xx or 5xx responses; a
 `400` with `invalid_index_name_exception` means the index name has
-characters LynxDB does not accept (index names use lowercase letters,
-digits, `.`, `_`, `-` and `+`).
+characters LynxDB does not accept (bulk index names use lowercase letters,
+digits, `.`, `_` and `-`, and do not start with `_`, `-`, `+` or `.`).
 
 ## Supported behavior
 
