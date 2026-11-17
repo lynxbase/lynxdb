@@ -178,6 +178,8 @@ func TestExecute(t *testing.T) {
 			"n=2\nn=2\nn=1\nn=5"},
 		{"source=logs | where status = 503 | eval z = nul | fillnull with 0 in z | fields z",
 			"z=0"},
+		{"source=logs | where status = 503 | eval y = transform(tags, (t, i) -> concat(t, tostring(i))) | fields y",
+			`y=["x0","y1"]`},
 		{"source=logs | where status = 503 | expand tags as tag | fields tag",
 			"tag=\"x\"\ntag=\"y\""},
 		{"source=logs | where status = 503 | mvexpand tags | fields tags",

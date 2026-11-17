@@ -28,6 +28,9 @@ type Program struct {
 	// program for pool lookups). Each sub-program contains only its own
 	// Instructions.
 	SubPrograms []*Program
+	// Params is the number of parameters of a lambda body; OpArrayMap
+	// passes the element's 0-based index as the second.
+	Params int
 
 	// Natives holds the functions OpCallNative invokes.
 	Natives []NativeFunc
