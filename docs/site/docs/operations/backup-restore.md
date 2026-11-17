@@ -5,15 +5,15 @@ description: Backup and restore strategies for LynxDB -- filesystem snapshots, S
 
 # Backup and Restore
 
-LynxDB stores all data in the `data_dir` directory. Backups are straightforward because the storage format is self-contained -- there are no external dependencies or distributed state to coordinate (except in cluster mode where S3 is the source of truth).
+LynxDB stores its data in the `data_dir` directory, plus the S3 bucket when tiering is enabled. Backups are simple because parts are immutable, self-contained files and there is no distributed state to coordinate.
 
 ## What to Back Up
 
 | Component | Location | Contains |
 |-----------|----------|----------|
-| Data directory | `data_dir` (e.g., `/var/lib/lynxdb`) | Part files, indexes, caches, manifests, and metadata |
+| Data directory | `data_dir` (e.g., `/var/lib/lynxdb`) | Part files, indexes, caches, compaction manifests, the `FORMAT` marker, and `auth/keys.json` (API keys when auth is enabled) |
 | Config file | `/etc/lynxdb/config.yaml` or `~/.config/lynxdb/config.yaml` | Server configuration |
-| Credentials | `~/.config/lynxdb/credentials` | API keys (if auth is enabled) |
+| CLI credentials | `~/.config/lynxdb/credentials.yaml` on each client machine | Tokens saved by `lynxdb login` |
 
 ## Single-Node Backup
 
@@ -83,20 +83,18 @@ Set up as a cron job:
 
 ## S3-Based Backup
 
-When S3 tiering is enabled, S3 already contains all compacted segments. For a complete backup strategy:
+With S3 tiering enabled, segments that moved to the warm or cold tier live in the S3 bucket, and their local files are deleted. A complete backup therefore covers both:
 
-### Segments (Already in S3)
+- the data directory: hot parts, the `FORMAT` marker, manifests and the `auth/` directory with API keys
+- the S3 bucket: tiered segments
+- config files
 
-If you use S3 tiering, compacted segments are already in S3. Your backup strategy only needs to cover:
-- Local in-flight buffering and recent hot-tier parts on ingest nodes
-- Metadata (config, API keys, materialized view definitions)
+### S3 Bucket Backup
 
-### Full S3 Backup
-
-Enable S3 cross-region replication for disaster recovery:
+Turn on versioning, and replication to a second bucket, for disaster recovery:
 
 ```bash
-# Enable versioning (required for replication)
+# Turn on versioning (required for replication)
 aws s3api put-bucket-versioning \
   --bucket my-lynxdb-logs \
   --versioning-configuration Status=Enabled
@@ -186,33 +184,7 @@ sudo chown -R lynxdb:lynxdb /var/lib/lynxdb
 sudo systemctl start lynxdb
 ```
 
-### Restore from S3
-
-If S3 was the source of truth (cluster mode), a new node will automatically download segments from S3 on startup. You only need to configure the new node with the same S3 bucket:
-
-```yaml
-storage:
-  s3_bucket: "my-lynxdb-logs"
-  s3_region: "us-east-1"
-```
-
-```bash
-lynxdb server --config /etc/lynxdb/config.yaml
-# Segments are fetched from S3 on demand
-```
-
-## Cluster Backup
-
-In cluster mode with S3 shared storage:
-
-- **Segments**: Already in S3 (source of truth). Back up using S3 versioning and cross-region replication.
-- **Metadata**: Back up the meta node data directories (Raft state). Only one meta node's state is needed for restore.
-- **Config**: Back up config files for all node roles.
-
-```bash
-# Back up meta node state
-tar czf /backups/lynxdb-meta-$(date +%Y%m%d).tar.gz /var/lib/lynxdb
-```
+The restored server needs the same LynxDB release (or a later one that reads the backup's segment format; see [Upgrading](/docs/operations/upgrading#storage-format)).
 
 ## Testing Backups
 
@@ -229,7 +201,7 @@ docker run -d \
   ghcr.io/lynxbase/lynxdb:latest
 
 # Verify data is intact
-curl -s localhost:3101/api/v1/stats | jq .events_total
+curl -s localhost:3101/api/v1/stats | jq .data.total_events
 docker rm -f lynxdb-restore-test
 ```
 

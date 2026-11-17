@@ -1,125 +1,100 @@
 ---
 title: Docker Deployment
-description: Deploy LynxDB with Docker and Docker Compose -- images, volumes, environment variables, and multi-service examples.
+description: Run LynxDB with Docker and Docker Compose - image tags, volumes, environment variables, health checks and a MinIO example.
 ---
 
 # Docker Deployment
 
-LynxDB provides official Docker images built from scratch (no OS, just the static binary). The image is small (~15MB) and runs with zero dependencies.
-
 ## Quick Start
 
 ```bash
-# Run LynxDB with persistent storage
-docker run -d \
-  --name lynxdb \
+docker run -d --name lynxdb \
   -p 3100:3100 \
   -v lynxdb-data:/data \
   -e LYNXDB_LISTEN=0.0.0.0:3100 \
   -e LYNXDB_DATA_DIR=/data \
   ghcr.io/lynxbase/lynxdb:latest
 
-# Verify
 curl http://localhost:3100/health
 ```
 
-## Docker Images
+Set `LYNXDB_LISTEN=0.0.0.0:3100`: the default `localhost:3100` is not reachable through a published port. Set `LYNXDB_DATA_DIR` to a mounted volume, or data is written inside the container's filesystem.
 
-| Image | Description |
-|-------|-------------|
-| `ghcr.io/lynxbase/lynxdb:latest` | Latest stable release |
-| `ghcr.io/lynxbase/lynxdb:nightly` | Latest nightly prerelease for testing |
-| `ghcr.io/lynxbase/lynxdb:0.5.0` | Specific version |
-| `ghcr.io/lynxbase/lynxdb:0.5` | Latest patch for minor version |
+## Image
 
-Images are available for `linux/amd64` and `linux/arm64`.
-
-Nightly images are prerelease builds from `main`. They may contain regressions and are not recommended for production.
+The image is built `FROM scratch`: it holds the static `lynxdb` binary at `/usr/local/bin/lynxdb` and the CA certificate bundle, nothing else. There is no shell, `curl` or `wget` in the image. The entrypoint is `lynxdb` and the default command is `server`, so arguments after the image name replace `server`:
 
 ```bash
-docker pull ghcr.io/lynxbase/lynxdb:nightly
+docker run --rm ghcr.io/lynxbase/lynxdb:latest version
+docker run -d ... ghcr.io/lynxbase/lynxdb:latest server --addr 0.0.0.0:3100 --data-dir /data
 ```
 
-To return to stable:
+| Tag | Contents |
+|-----|----------|
+| `latest` | Latest stable release |
+| `<version>`, for example `0.5.0` | A specific release |
+| `nightly` | Latest nightly prerelease |
+| `<version>-nightly.<date>.g<sha>`, `sha-<commit>` | A specific nightly build |
+
+Images are published for `linux/amd64` and `linux/arm64`. Nightly builds come from `main` and are not meant for production.
+
+## docker run Examples
+
+### In-memory
 
 ```bash
-docker pull ghcr.io/lynxbase/lynxdb:latest
+docker run -d --name lynxdb -p 3100:3100 \
+  ghcr.io/lynxbase/lynxdb:latest server --addr 0.0.0.0:3100 --data-dir ""
 ```
 
-## Docker Run
+Nothing is persisted, and authentication is unavailable in this mode.
 
-### Minimal (In-Memory)
-
-```bash
-docker run -d \
-  --name lynxdb \
-  -p 3100:3100 \
-  -e LYNXDB_LISTEN=0.0.0.0:3100 \
-  ghcr.io/lynxbase/lynxdb:latest
-```
-
-### Persistent Storage
+### Persistent, with TLS and auth
 
 ```bash
-docker run -d \
-  --name lynxdb \
-  -p 3100:3100 \
+docker run -d --name lynxdb -p 3100:3100 \
   -v lynxdb-data:/data \
+  -v /srv/lynxdb/tls:/tls:ro \
   -e LYNXDB_LISTEN=0.0.0.0:3100 \
   -e LYNXDB_DATA_DIR=/data \
   -e LYNXDB_RETENTION=30d \
-  ghcr.io/lynxbase/lynxdb:latest
-```
-
-### With S3 Tiering
-
-```bash
-docker run -d \
-  --name lynxdb \
-  -p 3100:3100 \
-  -v lynxdb-data:/data \
-  -e LYNXDB_LISTEN=0.0.0.0:3100 \
-  -e LYNXDB_DATA_DIR=/data \
-  -e LYNXDB_STORAGE_S3_BUCKET=my-logs \
-  -e LYNXDB_STORAGE_S3_REGION=us-east-1 \
-  -e AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE \
-  -e AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY \
-  ghcr.io/lynxbase/lynxdb:latest
-```
-
-### With Config File
-
-```bash
-docker run -d \
-  --name lynxdb \
-  -p 3100:3100 \
-  -v lynxdb-data:/data \
-  -v /path/to/config.yaml:/etc/lynxdb/config.yaml:ro \
-  ghcr.io/lynxbase/lynxdb:latest server --config /etc/lynxdb/config.yaml
-```
-
-### With TLS and Auth
-
-```bash
-docker run -d \
-  --name lynxdb \
-  -p 3100:3100 \
-  -v lynxdb-data:/data \
-  -v /path/to/certs:/certs:ro \
-  -e LYNXDB_LISTEN=0.0.0.0:3100 \
-  -e LYNXDB_DATA_DIR=/data \
   ghcr.io/lynxbase/lynxdb:latest server \
-    --tls-cert /certs/lynxdb.crt \
-    --tls-key /certs/lynxdb.key \
-    --auth
+    --tls-cert /tls/server.crt --tls-key /tls/server.key --auth
+
+docker logs lynxdb 2>&1 | grep -A2 'Generated root key'
 ```
+
+The root key is printed once, on the first start with an empty key store; the keys are stored in the volume under `/data/auth`.
+
+### With a config file
+
+`/etc/lynxdb/config.yaml` is in the config search path, so mounting a file there is enough:
+
+```bash
+docker run -d --name lynxdb -p 3100:3100 \
+  -v lynxdb-data:/data \
+  -v /srv/lynxdb/config.yaml:/etc/lynxdb/config.yaml:ro \
+  ghcr.io/lynxbase/lynxdb:latest
+```
+
+The file must set `listen: "0.0.0.0:3100"` and `data_dir: "/data"`.
+
+### Other ports
+
+Publish only the listeners you use:
+
+| Port | Listener | Setting |
+|------|----------|---------|
+| 3100 | HTTP API | `listen` |
+| 4318 | OTLP/HTTP, on by default inside the container | `ingest.otlp.http_listen` |
+| 5514, 6514 | Syslog | `syslog.udp`, `syslog.tcp` |
 
 ## Docker Compose
 
-### Single Node
+### Single node
 
 ```yaml
-# docker-compose.yaml
+# compose.yaml
 services:
   lynxdb:
     image: ghcr.io/lynxbase/lynxdb:latest
@@ -131,25 +106,28 @@ services:
       LYNXDB_LISTEN: "0.0.0.0:3100"
       LYNXDB_DATA_DIR: "/data"
       LYNXDB_RETENTION: "30d"
-      LYNXDB_LOG_LEVEL: "info"
-      LYNXDB_STORAGE_COMPRESSION: "lz4"
-      LYNXDB_STORAGE_CACHE_MAX_BYTES: "2gb"
-      LYNXDB_QUERY_MAX_CONCURRENT: "20"
+      LYNXDB_QUERY_MAX_CONCURRENT: "32"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "lynxdb", "health", "--server", "http://localhost:3100"]
+      test: ["CMD", "/usr/local/bin/lynxdb", "health", "--server", "http://localhost:3100"]
       interval: 30s
       timeout: 5s
       retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 4g
 
 volumes:
   lynxdb-data:
 ```
 
-### With MinIO for S3 Tiering
+The health check runs the `lynxdb` binary itself, since the image has no shell or `curl`. With TLS on, use `--server https://localhost:3100 --tls-skip-verify`. On Linux the automatic memory pool is 40% of the cgroup memory limit when one is set, so a container limit is enough to size it; set `server.total_memory_pool_bytes` to choose a different share.
+
+### With MinIO for S3 tiering
 
 ```yaml
-# docker-compose.yaml
+# compose.yaml
 services:
   lynxdb:
     image: ghcr.io/lynxbase/lynxdb:latest
@@ -165,12 +143,11 @@ services:
       LYNXDB_STORAGE_S3_REGION: "us-east-1"
       LYNXDB_STORAGE_S3_ENDPOINT: "http://minio:9000"
       LYNXDB_STORAGE_S3_FORCE_PATH_STYLE: "true"
-      LYNXDB_STORAGE_SEGMENT_CACHE_SIZE: "5gb"
       AWS_ACCESS_KEY_ID: "minioadmin"
       AWS_SECRET_ACCESS_KEY: "minioadmin"
     depends_on:
-      minio:
-        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
     restart: unless-stopped
 
   minio:
@@ -197,8 +174,8 @@ services:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin;
-      mc mb --ignore-existing local/lynxdb;
+      mc alias set local http://minio:9000 minioadmin minioadmin &&
+      mc mb --ignore-existing local/lynxdb
       "
 
 volumes:
@@ -206,116 +183,42 @@ volumes:
   minio-data:
 ```
 
-### Full Stack with Log Shipping
+### Log shippers
 
-```yaml
-# docker-compose.yaml
-services:
-  lynxdb:
-    image: ghcr.io/lynxbase/lynxdb:latest
-    ports:
-      - "3100:3100"
-    volumes:
-      - lynxdb-data:/data
-    environment:
-      LYNXDB_LISTEN: "0.0.0.0:3100"
-      LYNXDB_DATA_DIR: "/data"
-      LYNXDB_RETENTION: "30d"
-    restart: unless-stopped
+Shippers such as Filebeat, Fluent Bit and Vector send to the Elasticsearch bulk API (`http://lynxdb:3100/api/v1/es/_bulk`), Splunk HEC or OTLP. See the [Ingest Data guides](../guides/ingest-data.md) for shipper configs.
 
-  # Example app generating logs
-  app:
-    image: your-app:latest
-    logging:
-      driver: "fluentd"
-      options:
-        fluentd-address: "localhost:24224"
-        tag: "app.{{.Name}}"
-
-  # Fluentd ships logs to LynxDB via Elasticsearch _bulk API
-  fluentd:
-    image: fluent/fluentd:latest
-    ports:
-      - "24224:24224"
-    volumes:
-      - ./fluentd.conf:/fluentd/etc/fluent.conf:ro
-    depends_on:
-      - lynxdb
-
-volumes:
-  lynxdb-data:
-```
-
-## Resource Limits
-
-Set memory and CPU limits appropriate for your workload:
-
-```yaml
-services:
-  lynxdb:
-    image: ghcr.io/lynxbase/lynxdb:latest
-    deploy:
-      resources:
-        limits:
-          memory: 4g
-          cpus: "4"
-        reservations:
-          memory: 1g
-          cpus: "1"
-```
-
-## Dockerfile for Custom Image
-
-If you need to customize the image (e.g., add a config file):
+## Custom Image
 
 ```dockerfile
 FROM ghcr.io/lynxbase/lynxdb:latest
-
 COPY config.yaml /etc/lynxdb/config.yaml
-
-ENTRYPOINT ["lynxdb"]
-CMD ["server", "--config", "/etc/lynxdb/config.yaml"]
 ```
 
-## Health Checks
+The base image's entrypoint and command still apply.
 
-The `/health` endpoint returns `200 OK` when the server is ready:
+## Querying from the Host
 
 ```bash
-# From outside the container
-curl http://localhost:3100/health
-
-# Docker health check
-docker inspect --format='{{.State.Health.Status}}' lynxdb
+lynxdb query --server http://localhost:3100 'source=main level=ERROR | stats count() by host'
+docker exec lynxdb lynxdb query 'source=main | stats count() by host'
 ```
 
-## Viewing Logs
+## Updating the Image
+
+Data lives in the volume, so replacing the container keeps it:
 
 ```bash
-docker logs lynxdb
-docker logs -f lynxdb          # Follow
-docker logs --since 1h lynxdb  # Last hour
-```
-
-## Upgrading
-
-```bash
-# Pull new image
 docker pull ghcr.io/lynxbase/lynxdb:latest
-
-# Recreate container (data is on the volume, so nothing is lost)
-docker stop lynxdb
-docker rm lynxdb
+docker stop lynxdb && docker rm lynxdb
 docker run -d --name lynxdb ... ghcr.io/lynxbase/lynxdb:latest
 
-# Or with Docker Compose
-docker compose pull
-docker compose up -d
+# Compose
+docker compose pull && docker compose up -d
 ```
 
 ## Next Steps
 
-- [Kubernetes Deployment](/docs/deployment/kubernetes) -- deploy on Kubernetes
-- [S3 Storage Setup](/docs/deployment/s3-setup) -- MinIO and AWS S3 integration
-- [Environment Variables](/docs/configuration/environment-variables) -- full variable reference
-- [TLS and Authentication](/docs/deployment/tls-auth) -- secure the deployment
+- [Kubernetes Deployment](./kubernetes.md)
+- [S3/MinIO Storage Backend](./s3-setup.md)
+- [Environment Variables](../configuration/environment-variables.md)
+- [TLS and Authentication](./tls-auth.md)

@@ -1,237 +1,193 @@
 ---
 title: Live Log Tailing
-description: How to stream logs in real time using lynxdb tail, the SSE tail endpoint, and understand the catchup-then-live behavior.
+description: Stream matching events in real time with lynxdb tail and the SSE tail endpoint, and know which PPL commands a live tail accepts.
 ---
 
 # Live Log Tailing
 
-LynxDB provides real-time log streaming with full LynxFlow pipeline support. Use `lynxdb tail` from the CLI or connect to the SSE `/api/v1/tail` endpoint programmatically. The tail stream first catches up with recent historical events, then transitions to live streaming.
+A live tail runs a [PPL](../ppl/overview.md) query against events as they
+arrive. It first replays the most recent stored events that match, then
+streams new matching events until you stop it. Use `lynxdb tail` from a
+terminal or the Server-Sent Events endpoint `GET /api/v1/tail` from code.
 
 ## Tail from the CLI
 
-Use [`lynxdb tail`](/docs/cli/tail) to stream events in real time:
+[`lynxdb tail`](../cli/tail.md) takes a full PPL query, starting with a
+source like any other query. With no query it tails `source=*`, every index.
 
 ```bash
+# Every event
 lynxdb tail
+
+# Errors from the main index
+lynxdb tail 'source=main level=ERROR'
+
+# 5xx responses from web hosts
+lynxdb tail 'source=main host=web-* | where status >= 500'
+
+# Slow requests, with selected fields
+lynxdb tail 'source=main | where response_time > 700 | fields _time, host, path, response_time'
 ```
 
-### Filter the stream
+### Transform the stream
 
-Apply any search filter to tail only matching events:
+Commands that work one row at a time can follow the source:
 
 ```bash
-# Tail only errors
-lynxdb tail 'where level == "error"'
+# Compute a field
+lynxdb tail 'source=main level=ERROR | eval slow = if(response_time > 500, "yes", "no")'
 
-# Tail 5xx from nginx
-lynxdb tail 'where _source == "nginx" and status >= 500'
+# Extract a field from the message
+lynxdb tail 'source=main | parse msg "(?<verb>[A-Z]+) (?<route>\S+) completed" | where verb = "DELETE"'
 
-# Tail with field-value filter
-lynxdb tail 'where _source == "api-gateway" and duration_ms > 1000'
+# One event per host
+lynxdb tail 'source=main level=ERROR | dedup host'
 ```
 
-### Apply a LynxFlow pipeline
+### Replay before going live
 
-Use extend, keep, and other operators to transform the stream:
-
-```bash
-lynxdb tail 'where level == "error" | extend sev = upper(level) | keep _time, _source, sev, message'
-```
-
-### Control catchup behavior
-
-By default, `lynxdb tail` fetches the last 100 historical events from the past hour, then switches to live streaming. Adjust this with `--count` and `--from`:
+By default, `lynxdb tail` replays up to 100 matching events from the past
+hour, then switches to live streaming. `--count` (`-n`) and `--from` change
+that:
 
 ```bash
-# Fetch 50 historical events before going live
-lynxdb tail --count 50
+# Replay 50 events
+lynxdb tail 'source=main level=ERROR' --count 50
 
-# Look back 6 hours for historical catchup
-lynxdb tail 'where level == "error"' --from -6h
+# Look back 6 hours
+lynxdb tail 'source=main level=ERROR' --from -6h
 
-# Fetch last 200 events from the past 24 hours
-lynxdb tail 'where level == "error"' --count 200 --from -24h
+# Up to 200 events from the past 24 hours
+lynxdb tail 'source=main level=ERROR' --count 200 --from -24h
 ```
 
 ### Console output
 
-Events are colorized by level with timestamp, source, and message:
+On a terminal each event prints as one line with its time, level, source
+and message (or `_raw` when there is no `message` field). A marker line
+separates the replay from the live stream:
 
+```text
+2025-01-15T08:08:15.554Z [ERROR] web-01: 2025-01-15T08:08:15.554Z host=web-02 level=ERROR method=DELETE path=/api/v1/auth/login status=503 ...
+2025-01-15T08:08:16.151Z [ERROR] web-01: 2025-01-15T08:08:16.151Z host=api-02 level=ERROR method=PUT path=/api/v1/search status=500 ...
+--- historical catchup complete (2 events, 4ms) — streaming live ---
 ```
-2026-01-15T14:23:01Z [ERROR] nginx: connection refused to upstream
-2026-01-15T14:23:02Z [INFO] api-gateway: request handled in 45ms
---- historical catchup complete (47 events, 312ms) --- streaming live ---
-2026-01-15T14:23:03Z [ERROR] nginx: timeout exceeded
-2026-01-15T14:23:04Z [WARN] redis: slow query detected (45ms)
-```
 
-Press `Ctrl+C` to stop tailing.
-
----
-
-## Tail via the REST API (SSE)
-
-Connect to the [`GET /api/v1/tail`](/docs/api/tail-histogram) endpoint to receive events as Server-Sent Events (SSE):
+With `--format json`, each event prints as one JSON object per line, which
+suits `jq`:
 
 ```bash
-curl -N -G "localhost:3100/api/v1/tail" \
-  --data-urlencode 'q=where level == "error"' \
-  -d from=-1h -d count=100
+lynxdb tail 'source=main level=ERROR | fields _time, host, status, msg' --format json
 ```
 
-### SSE event types
-
-The stream sends three types of SSE events:
-
-| Event type | Description |
-|------------|-------------|
-| `result` | A matching event (historical or live) |
-| `catchup_done` | Marker indicating historical catchup is complete |
-| `result` (after catchup) | A live event |
-
-### Example SSE stream
-
+```json
+{"_time":"2025-01-15T08:08:15.554Z","host":"web-02","msg":"DELETE /api/v1/auth/login completed","status":503}
+{"_time":"2025-01-15T08:08:16.151Z","host":"api-02","msg":"PUT /api/v1/search completed","status":500}
 ```
+
+Press `Ctrl+C` to stop.
+
+## What a tail query can contain
+
+A live stream never ends, so a tail query can only use commands that
+produce output row by row:
+
+- search terms and field comparisons in the source command, `where`, `regex`
+- `eval`, `fields`, `rename`, `fillnull`, `replace`, `convert`
+- `parse`, `rex`, `grok`, `spath`
+- `dedup`, `head`
+
+Commands that need all of their input before they produce a row are
+rejected: `stats`, `timechart`, `chart`, `top`, `rare`, `sort`, `reverse`,
+`eventstats`, `streamstats`, `trendline`, `join`, `lookup`, `append`,
+`appendcol`, `union`, `multisearch`, `transpose`, `addtotals`,
+`addcoltotals`, `mvcombine`, `patterns` and `describe`. The error names the
+plan operator that blocked the query. `lynxdb tail 'source=main | stats
+count() by host'` fails with:
+
+```text
+Aggregate is not supported in live tail: it needs all input rows before producing output
+```
+
+For a periodically refreshed aggregate, run `lynxdb query` with `--since`
+from a loop or a scheduler instead.
+
+## Tail over HTTP (SSE)
+
+[`GET /api/v1/tail`](../api/tail-histogram.md) streams the same results as
+Server-Sent Events. `q` is required; `from` (default `-1h`) and `count`
+(default 100, at most 10000) control the replay.
+
+```bash
+curl -N -G localhost:3100/api/v1/tail \
+  --data-urlencode 'q=source=main level=ERROR | fields _time, host, status' \
+  -d count=2
+```
+
+```text
 event: result
-data: {"_time":"2026-01-15T14:22:58Z","level":"error","message":"connection refused","source":"nginx"}
+data: {"_time":"2025-01-15T08:08:15.554Z","host":"web-02","status":503}
 
 event: result
-data: {"_time":"2026-01-15T14:23:01Z","level":"error","message":"timeout exceeded","source":"api-gw"}
+data: {"_time":"2025-01-15T08:08:16.151Z","host":"api-02","status":500}
 
 event: catchup_done
-data: {"count": 47}
+data: {"count":2}
 
-event: result
-data: {"_time":"2026-01-15T14:23:15Z","level":"error","message":"disk full","source":"postgres"}
+event: heartbeat
+data: {"ts":"2026-01-15T14:23:30Z"}
 ```
 
-### Query parameters
+| Event | Meaning |
+|-------|---------|
+| `result` | One matching event, from the replay or live |
+| `catchup_done` | The replay is complete; `count` is the number of replayed events |
+| `heartbeat` | Sent every 15 seconds while live |
+| `warning` | The client read too slowly and events were dropped |
+| `close` | The session reached `tail.max_session_duration` |
+| `error` | The stream failed |
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `q` | (none) | LynxFlow filter or pipeline |
-| `from` | `-1h` | Historical lookback period |
-| `count` | `100` | Max historical events to fetch |
+A query that does not compile answers with the usual query error envelope;
+a query with a blocking command answers `422`.
 
----
+## Replay, then live
 
-## Catchup-then-live behavior
+The server subscribes to new events before it reads the stored ones, so the
+switch from replay to live loses no event and sends none twice. The replay
+returns the most recent `count` matching events within the `from` window,
+which gives immediate context: when you start tailing during an error spike,
+the last errors appear at once and new ones follow as they are ingested.
 
-The tail stream operates in two phases:
+## Limits
 
-### Phase 1: Historical catchup
+| Setting | Default | Effect |
+|---------|---------|--------|
+| `tail.max_concurrent_sessions` | 100 | Further sessions get `429` with `Retry-After: 5` |
+| `tail.max_session_duration` | 24h | The stream sends a `close` event and ends |
 
-LynxDB queries the storage engine for recent events matching your filter, up to the `count` limit within the `from` time range. These events are delivered as `result` SSE events. This gives you immediate context about recent activity.
+## Examples
 
-### Phase 2: Live streaming
-
-After delivering the `catchup_done` event, the stream transitions to live mode. New events matching your filter are delivered in near-real-time as they are ingested. The stream stays open indefinitely until you disconnect.
-
-### Why catchup matters
-
-Without catchup, opening a tail stream would show nothing until the next matching event arrives. The catchup phase gives you immediate context. For example, if you are debugging an error spike, you see the last 100 errors immediately, then new errors appear as they happen.
-
----
-
-## Practical examples
-
-### Debug a production issue
-
-Open two terminals:
+### Watch a deployment
 
 ```bash
-# Terminal 1: Tail errors from all sources
-lynxdb tail 'where level == "error" | keep _time, _source, message'
-
-# Terminal 2: Tail slow queries
-lynxdb tail 'where _source == "postgres" and duration_ms > 500 | keep _time, query, duration_ms'
+lynxdb tail 'source=main level IN (ERROR, FATAL) | fields _time, host, level, msg' --from -5m
 ```
 
-### Monitor a deployment
-
-Start tailing before deploying and watch for errors:
+### Follow one service
 
 ```bash
-lynxdb tail 'where level == "error" or level == "fatal" | keep _time, _source, level, message' --from -5m
+lynxdb tail 'source=main _source=api-gateway | fields _time, level, path, response_time, msg'
 ```
 
-### Watch a specific service
+### Post-process with jq
 
 ```bash
-lynxdb tail 'where _source == "api-gateway" | keep _time, level, endpoint, duration_ms, message'
+lynxdb tail 'source=main | where status >= 500' --format json \
+  | jq -r '"\(.host) \(.path) \(.status)"'
 ```
-
-### Tail with grep-like filtering
-
-Combine tail with Unix tools for additional processing:
-
-```bash
-# Pipe tail output to grep for secondary filtering
-lynxdb tail 'where _source == "nginx"' --format json | grep "timeout"
-```
-
----
-
-## Using tail in the Web UI
-
-The Web UI has a dedicated Live Tail view. Open it by navigating to the tail page in your browser or using:
-
-```bash
-lynxdb ui
-```
-
-The Web UI connects to the same SSE endpoint and provides a visual interface with syntax-highlighted events, pause/resume, and filter editing.
-
----
-
-## Differences from `lynxdb query`
-
-| Feature | `lynxdb tail` | `lynxdb query` |
-|---------|---------------|----------------|
-| Duration | Runs indefinitely (streaming) | Runs once and exits |
-| Time range | Catchup window + live | Fixed window |
-| New events | Delivered as they arrive | Only existing events |
-| Use case | Real-time monitoring | Historical analysis |
-
----
-
-## The `lynxdb watch` alternative
-
-If you want to see aggregation results update over time (instead of individual events), use [`lynxdb watch`](/docs/cli/shortcuts):
-
-```bash
-# Re-run an aggregation every 5 seconds
-lynxdb watch 'where level == "error" | stats count() by source' --interval 5s
-
-# Show deltas between runs
-lynxdb watch 'stats count() by level' --since 15m --diff
-```
-
-`watch` re-executes the query at each interval and displays the latest results. It is useful for monitoring aggregate trends rather than individual events.
-
----
-
-## Live tail in cluster mode
-
-In a distributed LynxDB cluster, the tail stream aggregates events from multiple nodes to provide a unified real-time view.
-
-### How cluster tail works
-
-1. **Catchup phase**: The query coordinator performs a distributed query across all relevant shards to fetch historical events. This is the same scatter-gather mechanism used for regular queries.
-2. **Live phase**: After catchup, the coordinator opens streaming connections to all ingest nodes that own active shards. New events matching the filter are forwarded in near-real-time.
-3. **Ordering**: Events from multiple ingest nodes are merged using watermark-based ordering to provide a roughly time-ordered stream. Due to clock skew and network latency, strict global ordering is not guaranteed -- events may arrive slightly out of order.
-
-### Behavior differences
-
-- **Latency**: In cluster mode, tail events pass through one additional hop (ingest node → query coordinator → client) compared to single-node mode.
-- **Completeness**: The tail stream includes events from all ingest nodes. If an ingest node fails during tailing, events from that node stop arriving, but the stream continues from surviving nodes.
-- **From the user's perspective**: The CLI, SSE endpoint, and Web UI behave identically in single-node and cluster modes.
-
----
 
 ## Next steps
 
-- [Search and filter logs](/docs/guides/search-and-filter) -- craft effective filter expressions for tail
-- [CLI: `tail`](/docs/cli/tail) -- complete CLI reference for the tail command
-- [REST API: Tail and histogram](/docs/api/tail-histogram) -- SSE endpoint reference
-- [CLI: shortcuts](/docs/cli/shortcuts) -- `watch`, `diff`, and other real-time commands
+- [CLI: `tail`](../cli/tail.md)
+- [Tail and histogram API](../api/tail-histogram.md)
+- [Search semantics](../ppl/search-and-types.md): the filters a tail query starts with

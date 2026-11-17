@@ -1,185 +1,88 @@
 ---
 title: S3 Tiering
-description: Configure LynxDB object-store tiering -- S3 bucket, region, tiering interval, endpoint overrides, and the local segment cache.
+description: Configure the object store that LynxDB moves older segments to, the tiering interval, and remote segment fetches.
 ---
 
 # S3 Tiering
 
-LynxDB can offload older segments to S3-compatible object storage while keeping them queryable through a local cache.
-
-:::note Status
-The built-in tiering loop evaluates segment age on `storage.tiering_interval`, uploads eligible hot segments to object storage, and later moves warm segments into the cold namespace. If you want the cold tier to use Glacier or Deep Archive underneath, add bucket lifecycle rules at the S3 layer.
-:::
+LynxDB can move older segments from local disk to an S3-compatible bucket and still query them: a query that needs a remote segment downloads it into a local cache first.
 
 ## How Tiering Works
 
+```text
+hot (local disk)  ->  warm (<prefix>warm/<index>/<id>.lsg)  ->  cold (<prefix>cold/<index>/<id>.lsg)
 ```
-Hot (local disk)  -->  Warm (object store)  -->  Cold (object store / archive policy)
-```
 
-1. Fresh parts stay on local disk for fast reads.
-2. The background tiering loop checks segment age against the index config.
-3. Eligible hot segments are uploaded to object storage and marked warm.
-4. Warm segments can later be promoted to cold object keys.
-5. Queries fetch remote segments into the local segment cache on demand.
+1. Every `storage.tiering_interval`, the server checks the segments produced by compaction.
+2. A segment older than 7 days (counted from when it was written) is uploaded to the warm key. After the upload is confirmed with a HEAD request, the local file is deleted.
+3. After 30 days the segment is copied to the cold key.
+4. When a query needs a warm or cold segment, the server downloads it to `<data_dir>/segment-cache/<id>.lsg` and reads it from there on later queries. Concurrent requests for the same segment share one download.
+5. Failed uploads are retried on later cycles.
 
-## S3 Bucket Configuration
+The 7-day and 30-day ages are fixed per index. To move cold objects to Glacier or Deep Archive, add a bucket lifecycle rule on the `<prefix>cold/` prefix; LynxDB does not set storage classes.
 
-### Bucket Name
+:::caution Tiering without a bucket
+The tiering loop runs on every disk-backed server. Without `storage.s3_bucket`, the server uses an in-process object store, so segments moved to the warm tier live only in memory and are lost on restart. If `retention` is longer than 7 days, configure a bucket.
+:::
 
-| Config Key | `storage.s3_bucket` |
-|---|---|
-| **CLI Flag** | `--s3-bucket` |
-| **Env Var** | `LYNXDB_STORAGE_S3_BUCKET` |
-| **Default** | `""` (tiering disabled) |
+## Bucket Settings
+
+| Key | Flag | Env var | Default | Description |
+|-----|------|---------|---------|-------------|
+| `storage.s3_bucket` | `--s3-bucket` | `LYNXDB_STORAGE_S3_BUCKET` | empty | Bucket name. |
+| `storage.s3_region` | `--s3-region` | `LYNXDB_STORAGE_S3_REGION` | `us-east-1` | Bucket region. It takes precedence over `AWS_REGION`. |
+| `storage.s3_prefix` | `--s3-prefix` | `LYNXDB_STORAGE_S3_PREFIX` | `lynxdb/` | Key prefix inside the bucket. |
+| `storage.s3_endpoint` | none | `LYNXDB_STORAGE_S3_ENDPOINT` | empty | Endpoint URL for S3-compatible stores (MinIO, Ceph, R2). |
+| `storage.s3_force_path_style` | none | `LYNXDB_STORAGE_S3_FORCE_PATH_STYLE` | `false` | Path-style addressing (`endpoint/bucket/key`), needed by MinIO and most self-hosted stores. |
+
+All bucket settings need a restart. The server does not contact the bucket at startup; access errors show up in the log as `tiering: move to warm failed` on the first upload.
+
+## Tiering and Fetch Settings
+
+| Key | Flag | Env var | Default | Description |
+|-----|------|---------|---------|-------------|
+| `storage.tiering_interval` | `--tiering-interval` | `LYNXDB_STORAGE_TIERING_INTERVAL` | `5m` | How often tier moves run. Each cycle is bounded by the interval minus 5 seconds (at least 30 seconds). |
+| `storage.remote_fetch_timeout` | none | `LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT` | `30s` | Timeout for downloading one remote segment during a query. |
+| `storage.tiering_parallelism` | none | `LYNXDB_STORAGE_TIERING_PARALLELISM` | `3` | Validated (at least 1) but not read: uploads run one at a time per cycle. |
+| `storage.segment_cache_size` | none | `LYNXDB_STORAGE_SEGMENT_CACHE_SIZE` | `10gb` | Not read: the segment cache directory is not size-bounded. Cached files are deleted when their segment expires. |
+
+## Credentials
+
+LynxDB uses the AWS SDK default credential chain:
+
+1. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` and `AWS_SESSION_TOKEN`
+2. Shared config and credentials files (`~/.aws/config`, `~/.aws/credentials`, `AWS_PROFILE`)
+3. Web identity tokens (EKS IAM Roles for Service Accounts)
+4. ECS task roles and EC2 instance profiles
+
+The identity needs `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject` and `s3:ListBucket` on the bucket and prefix. See [S3/MinIO Storage Backend](../deployment/s3-setup.md) for a policy and setup steps.
+
+## Examples
+
+AWS S3:
 
 ```yaml
 storage:
-  s3_bucket: "my-lynxdb-logs"
-```
-
-### Region
-
-| Config Key | `storage.s3_region` |
-|---|---|
-| **CLI Flag** | `--s3-region` |
-| **Env Var** | `LYNXDB_STORAGE_S3_REGION` |
-| **Default** | `us-east-1` |
-
-```yaml
-storage:
+  s3_bucket: "example-lynxdb-logs"
   s3_region: "eu-west-1"
-```
-
-### Key Prefix
-
-| Config Key | `storage.s3_prefix` |
-|---|---|
-| **CLI Flag** | `--s3-prefix` |
-| **Env Var** | `LYNXDB_STORAGE_S3_PREFIX` |
-| **Default** | `lynxdb/` |
-
-```yaml
-storage:
   s3_prefix: "production/"
-```
-
-### Custom Endpoint
-
-Use this for MinIO, Ceph, or other S3-compatible stores.
-
-| Config Key | `storage.s3_endpoint` |
-|---|---|
-| **Env Var** | `LYNXDB_STORAGE_S3_ENDPOINT` |
-| **Default** | `""` |
-
-```yaml
-storage:
-  s3_endpoint: "http://minio.local:9000"
-  s3_force_path_style: true
-```
-
-### Force Path Style
-
-| Config Key | `storage.s3_force_path_style` |
-|---|---|
-| **Env Var** | `LYNXDB_STORAGE_S3_FORCE_PATH_STYLE` |
-| **Default** | `false` |
-
-## Tiering Interval
-
-How often LynxDB evaluates segments for hot-to-warm or warm-to-cold movement.
-
-| Config Key | `storage.tiering_interval` |
-|---|---|
-| **CLI Flag** | `--tiering-interval` |
-| **Env Var** | `LYNXDB_STORAGE_TIERING_INTERVAL` |
-| **Default** | `5m` |
-
-```yaml
-storage:
   tiering_interval: "5m"
+  remote_fetch_timeout: "60s"
 ```
 
-## Tiering Parallelism
-
-Maximum concurrent tier-upload workers.
-
-| Config Key | `storage.tiering_parallelism` |
-|---|---|
-| **Env Var** | `LYNXDB_STORAGE_TIERING_PARALLELISM` |
-| **Default** | `3` |
-
-```yaml
-storage:
-  tiering_parallelism: 3
-```
-
-## Segment Cache
-
-Local cache for remote segments fetched from object storage.
-
-| Config Key | `storage.segment_cache_size` |
-|---|---|
-| **Env Var** | `LYNXDB_STORAGE_SEGMENT_CACHE_SIZE` |
-| **Default** | `10gb` |
-
-```yaml
-storage:
-  segment_cache_size: "20gb"
-```
-
-The cache survives restarts and reduces repeated object-store downloads for commonly queried warm or cold segments.
-
-## Remote Fetch Timeout
-
-| Config Key | `storage.remote_fetch_timeout` |
-|---|---|
-| **Env Var** | `LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT` |
-| **Default** | `30s` |
-
-```yaml
-storage:
-  remote_fetch_timeout: "30s"
-```
-
-## AWS Credentials
-
-LynxDB uses the standard AWS SDK credential chain:
-
-1. Environment variables
-2. Shared credentials file
-3. Instance profile or task role
-4. Web identity / IRSA
-
-## MinIO Example
+MinIO:
 
 ```yaml
 storage:
   s3_bucket: "lynxdb"
   s3_region: "us-east-1"
-  s3_endpoint: "http://minio.local:9000"
+  s3_endpoint: "http://minio:9000"
   s3_force_path_style: true
-  tiering_interval: "5m"
-  segment_cache_size: "20gb"
 ```
 
-## Complete Example
+## Related
 
-```yaml
-storage:
-  s3_bucket: "company-lynxdb-logs"
-  s3_region: "us-west-2"
-  s3_prefix: "production/"
-  tiering_interval: "5m"
-  tiering_parallelism: 3
-  segment_cache_size: "20gb"
-  remote_fetch_timeout: "30s"
-```
-
-## Next Steps
-
-- [Storage Engine](/docs/architecture/storage-engine)
-- [Storage Settings](/docs/configuration/storage)
-- [S3/MinIO Storage Backend Setup](/docs/deployment/s3-setup)
-- [Large Cluster](/docs/deployment/large-cluster)
+- [S3/MinIO Storage Backend](../deployment/s3-setup.md)
+- [Storage Settings](./storage.md)
+- [Storage Engine](../architecture/storage-engine.md)
+- [Retention](../operations/retention.md)

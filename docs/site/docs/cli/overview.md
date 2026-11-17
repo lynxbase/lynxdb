@@ -1,158 +1,163 @@
 ---
 sidebar_position: 1
 title: CLI Overview
-description: LynxDB CLI modes, global flags, root-command behavior, and the full command map.
+description: How the lynxdb binary runs queries, global flags, connection settings, the command map and exit codes.
 ---
 
 # CLI Overview
 
-LynxDB ships as a single binary. The same executable provides:
-
-- ad hoc analytics on local files and stdin
-- a persistent server
-- a Web UI launcher
-- administrative commands for auth, status, cache, config, jobs, and views
+LynxDB ships as one binary, `lynxdb`. It runs the server and is also the client for it. Queries are written in [PPL](../ppl/overview.md), the OpenSearch Piped Processing Language.
 
 ```
 lynxdb [command] [flags]
 ```
 
-## Modes of Operation
+## Where a query runs
 
-The CLI changes behavior depending on the command and on whether stdin is piped.
+`lynxdb query` runs a query in one of two places.
 
-### Server mode
+| Mode | Trigger | What happens |
+|------|---------|--------------|
+| Server | Default | The CLI sends the query to `POST /api/v1/query` on the server named by `--server` and prints the rows it returns. |
+| Local | `--file <path or glob>`, or piped stdin | The CLI loads the input into an in-memory index named `main`, compiles the query and runs the same plan in process. No server is involved. |
 
-```bash
-lynxdb server
-```
-
-Starts the HTTP server. Commands such as `query`, `ingest`, `status`, `fields`, `jobs`, and `mv` then talk to that server over HTTP.
-
-### Local file mode
+Both modes compile the same PPL text through the same compiler and optimizer, so a query that works against a file works against the server.
 
 ```bash
-lynxdb query --file access.log '| stats count() by status'
+# Server
+lynxdb query 'source=main level=ERROR | stats count() as errors by host'
+
+# Local file
+lynxdb query --file access.log 'source=main | stats count() by status'
+
+# Standard input
+kubectl logs deploy/api | lynxdb query 'source=main | where response_time > 500 | stats count() by path'
 ```
 
-Queries files directly without a running server. LynxDB creates an ephemeral in-memory engine, ingests the matching file set, runs the query, prints results, and exits.
+The [query page](./query.md) covers flags, time ranges and how local input is parsed.
 
-### Stdin pipe mode
+### Bare stdin
 
-```bash
-cat app.log | lynxdb query '| stats count() by level'
-```
-
-This is the same ephemeral execution path as file mode, but the input comes from stdin.
-
-### Bare stdin mode
-
-If stdin is piped and you run `lynxdb` with no subcommand, LynxDB defaults to a preview query:
+Run `lynxdb` without a subcommand and with piped stdin to load the input and print its first ten events (`source=main | head 10`):
 
 ```bash
 cat app.log | lynxdb
 ```
 
-That runs the equivalent of `| head 10` after format detection.
-
-If stdin is piped and the first argument is not a known subcommand, LynxDB treats the remaining arguments as a query:
+When the first argument is not a command name, the arguments form a query over stdin:
 
 ```bash
-cat app.log | lynxdb 'where level == "error" | stats count() by source'
+cat app.log | lynxdb 'source=main | stats count() by level'
 ```
 
-## Global Flags
+Without piped stdin, a bare query fails with a hint to pipe input, and plain `lynxdb` prints a short welcome screen.
 
-Available on all commands:
+## Global flags
 
-| Flag | Short | Default | Env Var | Description |
+These flags work with every command.
+
+| Flag | Short | Default | Env var | Description |
 |------|-------|---------|---------|-------------|
-| `--config` | | (auto) | | Path to config file |
-| `--server` | | `http://localhost:3100` | `LYNXDB_SERVER` | LynxDB server address |
-| `--token` | | | `LYNXDB_TOKEN` | API key for authentication |
-| `--profile` | `-p` | | `LYNXDB_PROFILE` | Connection profile name |
-| `--format` | `-F` | `auto` | | Output format: auto, json, ndjson, table, box, ascii, markdown, vertical, line, G, csv, tsv, raw |
-| `--quiet` | `-q` | `false` | | Suppress non-data output |
-| `--verbose` | `-v` | `false` | | Show extra detail |
-| `--no-stats` | | `false` | | Suppress query statistics |
-| `--no-color` | | `false` | | Disable colored output |
-| `--theme` | | `auto` | | Human output theme: auto, dark, light, plain |
-| `--compact` | | `false` | | Use compact human output |
-| `--max-rows` | | `0` | | Maximum rows to show in human table output (`0` = all) |
-| `--max-width` | | `0` | | Maximum width for human table output (`0` = terminal width) |
+| `--server` | | `http://localhost:3100` | `LYNXDB_SERVER` | Server address |
+| `--token` | | | `LYNXDB_TOKEN` | API key sent as a bearer token |
+| `--profile` | `-p` | | `LYNXDB_PROFILE` | Connection profile from the config file |
+| `--config` | | auto | `LYNXDB_CONFIG` | Config file path (server, `config` commands, profiles) |
+| `--format` | `-F` | `auto` | | Output format: `auto`, `json`, `ndjson`, `table`, `box`, `ascii`, `markdown`, `vertical`, `line`, `G`, `csv`, `tsv`, `raw` |
+| `--quiet` | `-q` | `false` | | Print data only: no hints, progress, statistics or error banners |
+| `--verbose` | `-v` | `false` | | Show extra detail, such as the full statistics block after a query |
+| `--no-stats` | | `false` | | Do not print query statistics |
+| `--no-color` | | `false` | | Disable color (`NO_COLOR` with any value does the same) |
+| `--theme` | | `auto` | | Human output theme: `auto`, `dark`, `light`, `plain` |
+| `--compact` | | `false` | | Tighter human output |
+| `--max-rows` | | `0` | | Rows shown in human table output (`0` = all) |
+| `--max-width` | | `0` | | Width of human table output (`0` = terminal width) |
 | `--null-value` | | | | Placeholder for null or empty values in human table output |
-| `--debug` | | `false` | | Enable debug logging to stderr |
-| `--tls-skip-verify` | | `false` | `LYNXDB_TLS_SKIP_VERIFY` | Skip TLS certificate verification |
+| `--debug` | | `false` | | Debug logging to stderr |
+| `--tls-skip-verify` | | `false` | `LYNXDB_TLS_SKIP_VERIFY` | Skip TLS certificate verification (`true`, `1` or `yes` in the env var) |
 
-## Output Mode
+`lynxdb import` uses `--format` for its input format, and `lynxdb login` uses `--token` for the key to save; on those two commands the global flag of the same name is not available.
 
-With `--format auto`, LynxDB chooses a human-friendly format for interactive terminals and a machine-friendly format when stdout is piped. Use `--format` to force a stable format for scripts.
+See [Output Formats](./output-formats.md) for what each format prints.
 
-```bash
-# Stable JSON for scripts
-lynxdb query 'from main level=error | stats count() by source' --format json
+## Connection settings
 
-# Stable CSV export
-lynxdb query 'from main level=error | stats count() by source' --format csv
+The CLI resolves the server address in this order, first match wins:
 
-# Human-readable table output
-lynxdb query 'from main level=error | stats count() by source' --format table
+1. `--server`
+2. The URL of the profile named by `--profile`, `LYNXDB_PROFILE` or `.lynxdbrc`
+3. `server` in the nearest `.lynxdbrc`
+4. `LYNXDB_SERVER`
+5. `http://localhost:3100`
 
-# Vertical output for wide rows
-lynxdb query 'from main level=error | head 2' --format vertical
+The API key comes from `--token`, then `LYNXDB_TOKEN`, then the credentials file that `lynxdb login` writes (`lynxdb/credentials.yaml` under the user config directory, keyed by server URL).
+
+### Project defaults: `.lynxdbrc`
+
+The CLI looks for a `.lynxdbrc` YAML file in the current directory and each parent. Values apply only when the matching flag is not given:
+
+```yaml
+server: https://logs.example.com
+profile: staging
+default_format: table
+default_since: 6h
+default_source: web
 ```
 
-`NO_COLOR` disables colored output when set. `--format line` and `--format G`
-are aliases for vertical output; the query suffix `\G` also switches auto
-format to vertical output.
+| Key | Applies to |
+|-----|-----------|
+| `server` | `--server` |
+| `profile` | `--profile` |
+| `default_format` | `--format` |
+| `default_since` | `lynxdb query --since` |
+| `default_source` | `--source` on `query`, `ingest` and `import` |
 
-## Exit Codes
+`.lynxdbrc` holds client defaults only. Server settings live in the config file; see [config](./config-cmd.md).
 
-The root command advertises these exit codes:
+## Commands
+
+| Area | Commands |
+|------|----------|
+| Query | [`query`](./query.md) (`q`), [`explain`](./explain.md), [`tail`](./tail.md) (`t`), [`fields`](./status.md#fields) (`f`) |
+| Load data | [`ingest`](./ingest.md) (`i`), [`import`](./ingest.md#import) |
+| Run the server | [`server`](./server.md) |
+| Inspect the server | [`status`](./status.md) (`st`), [`health`](./status.md#health), [`indexes`](./status.md#indexes), [`cache`](./status.md#cache), [`jobs`](./status.md#jobs) |
+| Authentication | [`login`](./auth.md#login), [`logout`](./auth.md#logout), [`auth`](./auth.md) |
+| Configuration | [`config`](./config-cmd.md) |
+| Utilities | [`version`](./status.md#version), [`completion`](./completion.md) |
+
+Every command prints its flags and examples with `lynxdb <command> --help`.
+
+## Exit codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Success |
-| 1 | General error |
-| 2 | Usage error |
-| 3 | Connection error |
-| 4 | Query parse error |
-| 5 | Query timeout |
-| 6 | No results (`--fail-on-empty`) |
-| 7 | Authentication error |
-| 10 | Aborted by user |
-| 130 | Interrupted |
+| 1 | Any other failure: an unknown flag, a missing argument, an execution error on the server, a bad file |
+| 2 | A required flag is missing, for example `lynxdb auth create` without `--name` |
+| 3 | The CLI cannot connect to the server |
+| 4 | The query does not compile: a PPL syntax, semantic, type, planning or unsupported-feature error, reported by the server or by local compilation. Other HTTP 400 rejections, such as `QUERY_TOO_LARGE`, also exit with 4 |
+| 5 | The query timed out (`--timeout`, the CLI's 6-minute default, or a server timeout) |
+| 6 | The query returned no rows and `--fail-on-empty` was set |
+| 7 | The API key is missing, invalid or lacks the scope for the request |
+| 78 | The data directory was written in an on-disk format this binary cannot open |
+| 130 | Interrupted with Ctrl+C |
 
-## Command Map
+[PPL errors](../ppl/errors.md) lists the compile error codes and their messages.
 
-Some commands have dedicated reference pages in this documentation set. Others are currently discoverable via `lynxdb <command> --help`.
-
-| Category | Commands |
-|----------|----------|
-| Querying and ingest | [`query`](/docs/cli/query), [`ingest`](/docs/cli/ingest), `import`, [`tail`](/docs/cli/tail), `fields`, `count`, `sample`, `watch`, `diff`, `last`, `explain`, `examples` |
-| Server and operations | [`server`](/docs/cli/server), `status`, `health`, `indexes`, `cache`, `jobs`, `doctor`, `shippers` |
-| Saved objects | [`mv`](/docs/cli/mv), `saved`, `save`, `run` |
-| Authentication and connection | `login`, `logout`, `auth`, [`config`](/docs/cli/config-cmd) |
-| Interactive and UI | [`shell`](/docs/cli/shell), `ui`, `open`, `share`, `top` |
-| Setup and maintenance | `init`, [`install`](/docs/cli/install), `uninstall`, `upgrade`, `version`, [`completion`](/docs/cli/completion), `admin format-upgrade` |
-| Diagnostics and misc | [`bench`](/docs/cli/bench-demo), `demo`, `grammar`, `explain-error`, `sigma` |
-
-## Migration Hints
-
-LynxFlow v2 replaced the legacy SPL2 language. When a query uses a removed SPL2 stage, the parser rejects it with a targeted error and a suggestion for the v2 equivalent:
-
+```bash
+lynxdb query 'source=main level=FATAL' --since 1h --fail-on-empty --quiet > /dev/null
+case $? in
+  0) echo "fatal errors found" ;;
+  6) echo "no fatal errors" ;;
+  3) echo "server unreachable" ;;
+  4) echo "query does not compile" ;;
+  *) echo "query failed" ;;
+esac
 ```
-error[E011] at 1:3: eval is renamed to extend in v2
-  | eval is_slow = duration_ms > 1000
-    ^~~~
-  suggestion: extend
-```
-
-Run `lynxdb examples` for a built-in query cookbook.
 
 ## Related
 
-- [Query Command](/docs/cli/query)
-- [Server Command](/docs/cli/server)
-- [config & doctor](/docs/cli/config-cmd)
-- [Output Formats](/docs/cli/output-formats)
+- [query](./query.md)
+- [explain](./explain.md)
+- [PPL overview](../ppl/overview.md)
+- [REST API](../api/overview.md)

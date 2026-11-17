@@ -6,316 +6,254 @@ description: Package map of the LynxDB codebase -- what each package does and ho
 
 # Project Structure
 
-LynxDB follows standard Go project layout conventions. This page describes every package and its role in the system.
+LynxDB follows the standard Go project layout. This page describes each package and its role.
 
 ## Top-Level Layout
 
 ```
 lynxdb/
-├── cmd/lynxdb/           # CLI entry point
-├── pkg/                  # Public packages (the core of LynxDB)
-├── internal/             # Private packages (not importable outside the module)
-├── test/                 # Test suites
-├── docs/                 # Documentation site (Docusaurus)
-├── go.mod                # Go module definition
-├── go.sum                # Dependency checksums
-└── Makefile              # Build and test targets
+├── cmd/            # Binaries: the lynxdb CLI and a segment fixture generator
+├── pkg/            # Core packages
+├── internal/       # Packages private to the module
+├── test/           # End-to-end, CLI, cluster, regression, chaos and simulation tests
+├── testdata/       # Sample logs and fixtures
+├── scripts/        # Install, release and benchmark helper scripts
+├── docs/           # Documentation site (Docusaurus) and format documents
+├── go.mod, go.sum  # Module definition
+├── mise.toml       # Pinned toolchain (Go, golangci-lint, goreleaser, ...)
+└── Makefile        # Build, test and lint targets
 ```
 
-## `cmd/lynxdb/` -- CLI Entry Point
+## `cmd/`
 
-The `cmd/lynxdb/` directory contains the `main` package and the CLI command definitions. Each subcommand (`server`, `query`, `ingest`, `status`, `mv`, `config`, `bench`, `demo`) is defined here and delegates to the appropriate `pkg/` package.
+### `cmd/lynxdb/` -- CLI
 
-```
-cmd/lynxdb/
-├── main.go               # Entry point, root command
-├── server.go             # `lynxdb server` command
-├── query.go              # `lynxdb query` command
-├── ingest.go             # `lynxdb ingest` command
-├── status.go             # `lynxdb status` command
-├── mv.go                 # `lynxdb mv` (materialized views) command
-├── config.go             # `lynxdb config` command
-├── bench.go              # `lynxdb bench` command
-├── demo.go               # `lynxdb demo` command
-└── completion.go         # Shell completion generation
-```
+The `main` package and the CLI commands, built with Cobra:
 
-This layer is intentionally thin -- it parses flags, sets up configuration, and calls into `pkg/`.
+| File | Command |
+|------|---------|
+| `root.go`, `main.go` | Root command, global flags, exit codes |
+| `server.go` | `lynxdb server` |
+| `query.go` | `lynxdb query` (server mode, and file and pipe mode in process) |
+| `explain.go` | `lynxdb explain` |
+| `tail.go` | `lynxdb tail` |
+| `fields.go` | `lynxdb fields` |
+| `ingest.go`, `import.go` | `lynxdb ingest`, `lynxdb import` |
+| `status.go` | `lynxdb status`, `health`, `indexes`, `cache` |
+| `jobs.go` | `lynxdb jobs` |
+| `config.go` | `lynxdb config` and its subcommands |
+| `authcmd.go`, `login.go`, `logout.go` | `lynxdb auth`, `login`, `logout` |
+| `completion.go`, `completions.go` | Shell completion |
+| `version.go` | `lynxdb version` |
 
-## `pkg/` -- Core Packages
+This layer parses flags, loads configuration, and calls into `pkg/`. `CLI.md` in the directory documents the CLI conventions.
 
-### `pkg/api/rest/` -- HTTP Server and REST API
+### `cmd/lsg-fixture/`
 
-The REST API layer. Contains the HTTP server, all endpoint handlers, middleware (auth, logging, rate limiting), and the response envelope format.
+Writes the `.lsg` segment fixtures under `testdata/segments` that format compatibility tests read.
 
-Key responsibilities:
-- HTTP server lifecycle (start, shutdown, TLS).
-- Route registration for all `/api/v1/` endpoints.
-- Request parsing and validation.
-- Response serialization (JSON, NDJSON, SSE).
-- The compatibility layer (Elasticsearch `_bulk`, OTLP, Splunk HEC).
+## `pkg/` -- Query Language and Planning
 
-See [REST API Overview](/docs/api/overview) for the user-facing API documentation.
+### `pkg/ppl/` -- PPL Frontend
 
-### `pkg/lynxflow/` -- LynxFlow Query Language
-
-The LynxFlow v2 frontend: lexer, parser, AST, semantic analysis, desugaring, and the registry that defines the language surface. (The old `pkg/spl2` package was removed when LynxFlow v2 replaced the SPL2 dialect -- see `docs/grammar/RFC-002.md`.)
+Compiles OpenSearch Piped Processing Language into the IR.
 
 ```
-pkg/lynxflow/
-├── lexer/                # Tokenizer
-├── parser/               # Recursive descent parser with caret diagnostics
-├── ast/                  # AST node types
-├── sema/                 # Semantic analysis, schema inference, suggestions
-├── desugar/              # Sugar stages → core operator rewrites
-├── registry/             # Operator/function/aggregate catalog (single source of truth)
-├── lint/                 # Query linting
-├── format/               # Query formatting
-└── run/                  # Embedded execution for CLI file/pipe mode
+pkg/ppl/
+├── lexer/        # Tokens with line and column, following the official PPL lexer rules
+├── parser/       # Hand-written recursive-descent parser
+├── ast/          # Syntax tree with source spans
+├── grok/         # Grok pattern library, expanded to RE2 at compile time
+├── compile.go    # Entry point: parse, analyze, lower, validate
+├── commands.go, commands_more.go, chart.go, join.go, search.go, exprs.go, timespec.go
+│                 # Semantic analysis and lowering of each command and expression
+├── catalog.go    # Command catalog: support level and notes per command
+├── functions.go, relevance.go   # Scalar function catalog
+├── aggs.go       # Aggregation catalog
+└── errors.go     # Structured errors with codes, positions and hints
 ```
 
-Key responsibilities:
-- Convert LynxFlow text to a typed AST.
-- Error recovery (report multiple errors per query) with error codes, caret spans, and suggestions.
-- Infer the schema flowing through each stage and validate arguments against the registry.
-- Desugar sugar stages (`every`, `top`, search sugar, ...) onto the core operator set.
+See [PPL architecture](../ppl/architecture.md), [Adding commands](../ppl/adding-commands.md) and [Adding functions](../ppl/adding-functions.md).
 
-The registry is the single source of truth for the language surface: the parser, sema, shell highlighting, and the docs generator (`internal/docgen`) all read from it.
+### `pkg/ir/` -- Intermediate Representation
 
-See [Query Engine](/docs/architecture/query-engine) for how the frontend fits into the query pipeline.
+The typed, language-independent plan: operators, expressions, schemas, types, the function registry, validation (`ir.Validate`), walking, and rendering for `explain`. See [PPL IR](../ppl/ir.md).
 
-### `pkg/logical/` -- Logical Plan IR and Optimizer
+### `pkg/ir/opt/` -- Optimizer
 
-The typed logical plan IR, lowering from the desugared AST, and plan optimization.
+Rule-based rewrites over IR plans (`fold-constants`, `merge-filters`, `remove-true-filter`, `prune-scan`, `time-range-to-scan`, `sort-limit-to-topn`, `limit-into-scan`) and column pruning. See [PPL optimizer](../ppl/optimizer.md).
 
-```
-pkg/logical/
-├── lower.go              # Desugared AST → logical plan lowering
-├── node.go, plan.go      # Plan node types (Scan, Filter, Project, Aggregate, ...)
-├── render.go             # Plan rendering
-├── explain/              # EXPLAIN output from the logical plan
-├── opt/                  # Rule-based fixed-point optimizer (expression + plan rules)
-└── physical/             # Physical pipeline builder (plan → pipeline operators + VM programs)
-```
+### `pkg/query/` -- Compile and Run
 
-Key responsibilities of `pkg/logical/opt`:
-- Expression simplification (constant folding, boolean algebra, `??`/`if()` folding).
-- Filter merge/elimination and predicate pushdown.
-- Aggregation optimization (partial aggregation, TopK pushdown).
-- Limit pushdown and column pruning.
-- Materialized view rewrite.
+The single entry point that turns query text into results: `Compile` (frontend, optimizer, plan cache), `Run` over an in-memory event store, and `Explain`.
 
-See [Query Engine -- Optimizer](/docs/architecture/query-engine#optimizer) for the full rule list.
+### `pkg/planner/` -- Server-Side Planning
 
-### `pkg/planner/` -- Server-Side Query Planning
+Wraps `query.Compile` for the server: storage hints, request time bounds, result-cache eligibility, and validation of live tail plans.
 
-A thin wrapper around the LynxFlow parser, desugarer, semantic analyzer, and logical optimizer. It presents the `Planner` interface that the server stack (REST API) uses to plan queries. CLI file/pipe mode uses `pkg/lynxflow/run` instead.
+## `pkg/` -- Execution
 
-### `pkg/langdetect/` -- Language Validation
+### `pkg/engine/physical/` -- Physical Planner
 
-Post-SPL2-removal shim: the only supported language is LynxFlow. Validates an explicit `language` parameter and returns an explicit error for `spl2`.
+Turns IR operators into pipeline iterators, compiles IR expressions to VM programs, evaluates uncorrelated subqueries, and derives storage hints from scans (`hints.go`, `source.go`).
 
-### `pkg/sigmaqueries/` -- Sigma Compatibility Corpus
+### `pkg/engine/pipeline/` -- Volcano Iterators
 
-The Sigma/rsigma compatibility corpus with `.lynxflow` golden queries and tests.
-
-### `pkg/engine/pipeline/` -- Volcano Iterator Pipeline
-
-The streaming query execution engine. Implements the Volcano iterator model. Representative files (the package contains many more operators and their tests):
-
-```
-pkg/engine/pipeline/
-├── iterator.go           # Operator interface and iterator plumbing
-├── batch.go              # Row batches (1024 rows per Next())
-├── from.go               # Scan entry (reads .lsg parts + batcher buffer)
-├── rowscan.go            # Row-oriented scan
-├── columnar_scan.go      # Columnar scan
-├── livescan.go           # Live tail streaming scan (SSE)
-├── eval.go               # Eval operator (extend)
-├── aggregate.go          # Aggregate operator (stats)
-├── partial_agg.go        # Partial aggregation (per-segment partial + merge)
-├── sort.go               # Sort operator (sort), spill-to-disk in spill.go
-├── limit.go              # Limit operator (head)
-├── parse_iterator.go     # Parse operator (parse json / logfmt / regex)
-├── streamstats.go        # StreamStats operator (streamstats)
-├── eventstats.go         # EventStats operator (eventstats)
-├── join.go               # Join operator (join)
-├── union.go              # Union operator (union)
-├── dedup.go              # Dedup operator (dedup)
-├── rename.go             # Rename operator (rename)
-├── top.go                # Top/Rare operator (top, rare)
-├── transaction.go        # Transaction operator (transaction)
-└── tee.go                # Tee sink (tee, CLI mode only)
-```
-
-Each operator implements the `Operator` interface with a `Next()` method that returns the next batch of rows. Aggregation functions (`count()`, `avg`, `dc`, `perc`, ...) are implemented here with partial/merge semantics for distributed execution; their signatures are declared in `pkg/lynxflow/registry`.
+The iterator interface (`Init`, `Next`, `Close`) and the operators: scans (`segment_stream.go` for server segments, `rowscan.go`, `livescan.go` for live tail), filter and eval, aggregation with spill (`aggregate.go`, `spill*.go`), sort and top-N, joins, unions, dedup, window operators (`eventstats.go`, `streamstats.go`), extraction, and the memory coordinator. Batches hold up to 1024 rows.
 
 ### `pkg/vm/` -- Bytecode VM
 
-The stack-based bytecode VM for evaluating expressions in `where`, `extend`, and `stats` stages.
+Compiles IR expressions to bytecode (`ir_compiler.go`) and runs them on a fixed 256-slot stack, with native implementations of every function in the IR registry.
 
-Key responsibilities:
-- Compile AST expressions to bytecode programs.
-- Execute bytecode with zero heap allocations.
-- 60+ opcodes for arithmetic, comparison, boolean logic, string operations, and function calls.
+### `pkg/engine/unpack/` -- Log Format Parsers
 
-See [Query Engine -- Bytecode VM](/docs/architecture/query-engine#bytecode-vm) for architecture details.
+Field extractors for common log formats (combined, syslog, docker, JSON, logfmt, key=value, CEF, LEEF, W3C, and others), used by the CLI's ephemeral engine while loading files and by the pipeline's unpack iterator.
+
+### `pkg/engine/columnar/`, `pkg/colstore/`, `pkg/vec/`, `pkg/mem/` -- Columnar Store
+
+A columnar table store and a block-at-a-time executor for IR plans:
+
+```
+pkg/colstore/
+├── part/         # Immutable columnar parts: blocks plus an indexing footer
+├── shred/        # JSON documents parsed straight into typed column builders
+├── variant/      # Binary encoding for JSON values without a column of their own
+├── tokenfilter/  # Search tokens and split-block Bloom filters per block
+└── exec/         # Executor over table snapshots; exec/irplan plans IR onto it
+```
+
+`pkg/engine/columnar` runs IR plans over these tables, handing the parts it cannot run to the row operators of `pkg/engine/physical`. `pkg/vec` holds typed column vectors and kernels; `pkg/mem` holds region allocators and pools. The server and the CLI do not use this store; the JSONBench benchmarks in `pkg/colstore` exercise it.
+
+## `pkg/` -- Server, Storage and Ingest
+
+### `pkg/server/` -- Engine
+
+The server `Engine`: ingest into the batcher, part flush and registration, segment handles, query execution over segments (`query.go`, `store.go`), async jobs, compaction and tiering loops, retention, system status, and the cluster query adapter.
+
+### `pkg/usecases/` -- Application Services
+
+Query and tail services between the REST handlers and the engine: planning, sync/async execution, result shaping, metadata queries.
+
+### `pkg/api/rest/` -- HTTP API
+
+The HTTP server: route registration (`server.go`), handlers for query, explain, jobs, tail, ingest, the Elasticsearch, OTLP and Splunk HEC protocols, fields, status, cache, config and auth, plus middleware and the response envelope. `pkg/api/apicontracts` holds request and response constants shared with the client.
 
 ### `pkg/storage/` -- Storage Engine
 
-The core storage engine package. Contains the top-level `Engine` type that coordinates async ingest buffering, immutable part files, segment management, compaction, and tiering.
-
 ```
 pkg/storage/
-├── part/                 # Async batcher, part writer, and filesystem registry
-├── segment/              # Columnar .lsg format
-├── compaction/           # Size-tiered compaction
-├── tiering/              # Hot/warm/cold with S3 offload
-└── views/                # Materialized views
+├── engine.go     # Ephemeral in-memory engine for CLI file and pipe mode
+├── part/         # AsyncBatcher, part writer, filesystem-scanned registry, retention
+├── segment/      # .lsg reader and writer; column/ encodings; index/ blooms, term index, range bitmaps
+├── compaction/   # Leveled compaction planning and merging
+├── tiering/      # Hot/warm/cold tiering with S3 and the local segment cache
+├── format/       # FORMAT marker reading and writing
+└── sources/      # Registry of source names for multi-source and glob queries
 ```
 
-#### `pkg/storage/segment/` -- Segment Reader and Writer
+See [Storage Engine](/docs/architecture/storage-engine) and [Segment Format](/docs/architecture/segment-format).
 
-The columnar `.lsg` segment format implementation.
-
-Key files:
-- `writer.go` -- Segment writer (always produces V2 format).
-- `reader.go` -- Segment reader (accepts V1 and V2).
-- `mmap.go` -- Memory-mapped segment access via `MmapSegment`.
-- `encoding.go` -- Per-column encoding (delta-varint, dictionary, Gorilla, LZ4).
-- `bloom.go` -- Bloom filter construction and querying.
-- `index.go` -- FST inverted index construction and querying.
-- `footer.go` -- Footer decoding (`decodeFooter` returns `(*Footer, uint16, error)`).
-
-See [Segment Format](/docs/architecture/segment-format) for the binary format specification.
-
-#### `pkg/storage/part/` -- Direct-to-Part Writes
-
-Implements the async batcher, immutable part writer, and filesystem-scanned registry used by the current ingest path.
-
-#### `pkg/storage/compaction/` -- Compaction
-
-Size-tiered compaction engine. Merges L0 -> L1 -> L2 segments. Rate-limited to avoid I/O starvation.
-
-#### `pkg/storage/tiering/` -- Tiered Storage
-
-Manages the lifecycle of segments across storage tiers: hot (local SSD), warm (S3), cold (Glacier). Includes the local segment cache for warm-tier queries.
-
-#### `pkg/storage/views/` -- Materialized Views
-
-Materialized view lifecycle: definition, query dispatch, backfill, incremental update, merge, and retention.
-
-### `pkg/event/` -- Core Event Type
-
-Defines the `Event` type (the unit of data flowing through the system) and an event pool for allocation reuse.
-
-### `pkg/model/` -- Configuration and Errors
-
-Shared types for configuration, index definitions, and structured error types.
-
-### `pkg/config/` -- Configuration Loading
-
-Loads configuration from the cascade: CLI flags > environment variables > config file > defaults. Supports hot-reload for a subset of settings.
-
-### `pkg/cache/` -- Segment Query Cache
-
-Filesystem-based segment query cache. Key = `(segment_id, CRC32, query_hash, time_range)`. TTL + LRU eviction. Persistent across restarts.
-
-### `pkg/ingest/` -- Ingest Pipeline
+### `pkg/ingest/` -- Ingest Path
 
 ```
 pkg/ingest/
-├── pipeline/             # Ingest pipeline (parse, extract timestamps, route)
-├── receiver/             # HTTP and OTLP receivers
-└── parser/               # Log format auto-detection (JSON, syslog, CLF, raw)
+├── pipeline/     # Ingest stages: format detection, field extraction, timestamps, dedup
+├── receiver/     # HTTP, Elasticsearch (eshttp), OTLP (otlphttp, otlpgrpc, otlpcommon), Splunk HEC, syslog
+├── staging/      # Coalesces small shipper batches before the engine
+└── limits/       # Request body size limits for shipper endpoints
 ```
 
-Handles the ingest path from raw bytes to structured events ready for the storage engine.
+### `pkg/cluster/` -- Cluster Mode
 
-### `pkg/client/` -- Go Client Library
+```
+pkg/cluster/
+├── meta/         # Raft metadata store: nodes, shard map, leases, catalogs
+├── sharding/     # Time-bucket and hash-partition shard IDs
+├── ingest/       # Event routing, batch replication, part catalog, meta-loss handling
+├── query/        # Distributed planning (ir_planner.go), coordinator, shard handler, shard pruning
+├── rebalance/    # Incremental rebalancing and partition splitting
+├── rpc/          # gRPC transport; proto/ holds the protobuf definitions
+└── tracing/      # OpenTelemetry helpers
+```
 
-A Go HTTP client for the LynxDB REST API. Used by the CLI in server mode and available for external integrations.
+`lynxdb server` validates the `cluster` configuration but does not start this runtime: `Engine.InitCluster`, `Engine.InitClusterQuery` and `cluster.NewNode` are called only from tests. See [Distributed Architecture](/docs/architecture/distributed).
 
-### `pkg/timerange/` -- Time Range Utilities
+### Shared Packages
 
-Parsing and manipulation of time ranges. Handles relative expressions (`-1h`, `earliest=-7d latest=now`) and absolute timestamps.
+| Package | Purpose |
+|---------|---------|
+| `pkg/event` | The `Event` type and typed `Value` |
+| `pkg/model` | Shared types: storage hints, segment metadata, time bounds |
+| `pkg/config` | Configuration cascade (flags > env > file > defaults), validation, hot reload |
+| `pkg/memgov` | Process-wide memory governor with memory classes and per-query budgets |
+| `pkg/bufmgr` | Opt-in unified buffer manager (`buffer_manager.enabled`) |
+| `pkg/cache` | Query result cache |
+| `pkg/stats` | Query execution statistics for the CLI, API and metrics |
+| `pkg/auth` | API keys, credential files, TLS helpers |
+| `pkg/client` | Typed Go client for the REST API, used by the CLI |
+| `pkg/timerange` | Parsing of relative and absolute time ranges |
 
-## `internal/` -- Private Packages
+## `internal/`
 
-### `internal/docgen/` -- Docs Generator
+| Package | Purpose |
+|---------|---------|
+| `internal/docgen` | Writes the generated PPL reference pages (`docs/site/docs/ppl/commands.md`, `functions.md`, `aggregations.md`) from the catalogs; run `go run ./internal/docgen` or `make docs-gen` |
+| `internal/objstore` | `ObjectStore` interface with in-memory and S3 implementations |
+| `internal/output` | Result formatters for the CLI (JSON, NDJSON, table, CSV, TSV, raw, ...) |
+| `internal/ui` | CLI theme and rendering components |
+| `internal/buildinfo` | Version, commit and build date injected with `-ldflags` |
+| `internal/glob` | Glob matching (`*`, `**`, `?`, classes, braces) |
 
-Generates the registry-driven language reference (`docs/site/docs/lynxflow/**`) and the EBNF grammar (`docs/grammar/lynxflow.ebnf`) from `pkg/lynxflow/registry`. Run with `go run ./internal/docgen` or `make docs-gen`.
-
-### `internal/objstore/` -- Object Store Interface
-
-The `ObjectStore` interface abstracts object storage. Two implementations:
-
-- `MemStore` -- In-memory implementation for testing.
-- `S3Store` -- Production implementation backed by AWS S3 (or S3-compatible APIs like MinIO).
-
-### `internal/output/` -- CLI Output Formatting
-
-Formatters for CLI output: JSON (default), table (human-readable), CSV, and raw (plain text). Auto-detects TTY vs pipe to choose between interactive and machine-readable formats.
-
-## `test/` -- Test Suites
+## `test/`
 
 ```
 test/
-├── e2e/                  # End-to-end HTTP API tests (ingest, query, tail, views, compat)
-├── cli/                  # CLI tests against the built binary (pipe/file mode, exit codes, goldens)
-├── integration/          # Cluster and Sigma-compatibility integration tests
-├── regression/           # Query correctness regression tests
-├── chaos/                # Fault-injection tests (Docker-based)
-└── simulation/           # Property-based cluster/network/S3 simulation tests
+├── e2e/          # Server tests over the REST API; e2e/shippers runs real shippers in containers
+├── cli/          # Tests against the built binary: pipe and file mode, exit codes, goldens
+├── integration/  # Cluster tests
+├── regression/   # Query correctness regressions
+├── chaos/        # Docker-based fault injection
+└── simulation/   # Property-based simulation of cluster, network and S3
 ```
 
-- **E2E tests**: Start a real server and exercise the REST API end to end (`make test-e2e`).
-- **CLI tests**: Invoke the `lynxdb` binary as a subprocess and verify output, exit codes, and golden files (`make test-cli`).
-- **Integration tests**: Cluster behavior and the Sigma compatibility corpus.
-- **Regression tests**: Each test corresponds to a specific bug fix and ensures the bug does not reappear.
-- **Chaos and simulation tests**: Fault injection and property-based simulation of cluster components.
+- **E2E**: `make test-e2e`; shipper compatibility with `make test-compat` and the nightly [conformance matrix](/docs/operations/shipper-conformance).
+- **CLI**: `make test-cli` builds the binary and runs `test/cli` with the `clitest` tag.
+- **Regression**: each test pins a fixed bug.
 
 ## Dependency Graph
-
-The following diagram shows the primary dependency relationships between core packages:
 
 ```mermaid
 flowchart TD
     CMD["cmd/lynxdb"] --> API["pkg/api/rest"]
-    CMD --> CONFIG["pkg/config"]
     CMD --> CLIENT["pkg/client"]
-    CMD --> RUN["pkg/lynxflow/run (file/pipe mode)"]
+    CMD --> STORAGE["pkg/storage (ephemeral engine)"]
+    CMD --> CONFIG["pkg/config"]
 
-    API --> ENGINE["pkg/storage (engine)"]
-    API --> PLANNER["pkg/planner"]
+    API --> USECASES["pkg/usecases"]
+    USECASES --> SERVER["pkg/server"]
+    USECASES --> PLANNER["pkg/planner"]
 
-    PLANNER --> LYNXFLOW["pkg/lynxflow (parser, sema, desugar)"]
-    PLANNER --> LOGICAL["pkg/logical"]
-    PLANNER --> OPT["pkg/logical/opt"]
-
-    RUN --> LYNXFLOW
-    RUN --> OPT
-    RUN --> PHYSICAL["pkg/logical/physical"]
-
-    OPT --> LOGICAL
-    PHYSICAL --> LOGICAL
+    PLANNER --> QUERY["pkg/query"]
+    STORAGE --> QUERY
+    QUERY --> PPL["pkg/ppl"]
+    QUERY --> OPT["pkg/ir/opt"]
+    QUERY --> PHYSICAL["pkg/engine/physical"]
+    PPL --> IR["pkg/ir"]
+    OPT --> IR
+    PHYSICAL --> IR
     PHYSICAL --> PIPELINE["pkg/engine/pipeline"]
+    PHYSICAL --> VM["pkg/vm"]
 
-    PIPELINE --> VM["pkg/vm"]
-    PIPELINE --> ENGINE
-    PIPELINE --> CACHE["pkg/cache"]
-
-    ENGINE --> PART["pkg/storage/part"]
-    ENGINE --> SEGMENT["pkg/storage/segment"]
-    ENGINE --> COMPACTION["pkg/storage/compaction"]
-    ENGINE --> TIERING["pkg/storage/tiering"]
-    ENGINE --> VIEWS["pkg/storage/views"]
-
+    SERVER --> PLANNER
+    SERVER --> PHYSICAL
+    SERVER --> PIPELINE
+    SERVER --> PART["pkg/storage/part"]
+    SERVER --> SEGMENT["pkg/storage/segment"]
+    SERVER --> COMPACTION["pkg/storage/compaction"]
+    SERVER --> TIERING["pkg/storage/tiering"]
+    SERVER --> CLUSTER["pkg/cluster/..."]
+    PIPELINE --> SEGMENT
     TIERING --> OBJSTORE["internal/objstore"]
-
-    ENGINE --> EVENT["pkg/event"]
-    SEGMENT --> EVENT
-    PIPELINE --> EVENT
 ```
 
 ## Related

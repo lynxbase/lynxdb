@@ -1,210 +1,164 @@
 ---
 sidebar_position: 12
 title: Output Formats
-description: LynxDB output format options -- json, ndjson, table, box, ascii, markdown, vertical, csv, tsv, raw, and auto-detection behavior.
+description: The --format values of the LynxDB CLI, what auto chooses, and the flags that shape human tables.
 ---
 
 # Output Formats
 
-Control output format with the `--format` / `-F` global flag, available on all commands.
+The global `--format` (`-F`) flag picks how commands print rows. It applies to `query`, `tail` and the inspection commands; `lynxdb import` uses its own `--format` for the input format.
 
 ```bash
-lynxdb query 'from main level=error | stats count() by source' --format table
-lynxdb query 'from main level=error | stats count() by source' -F csv
+lynxdb query 'source=main level=ERROR | stats count() as errors by host' --format csv
 ```
 
-## Format Reference
+## Formats
 
-| Format | Description | Auto-selected when |
-|--------|-------------|--------------------|
-| `auto` | Auto-detect based on context (default) | Always the default |
-| `json` | Newline-delimited JSON, one object per line | Pipe (non-TTY) output |
-| `ndjson` | Alias for `json` | Never auto-selected |
-| `table` | Box table with headers | TTY output with multiple columns |
-| `box` | Box table with headers | Never auto-selected |
-| `ascii` | ASCII table for terminals without box drawing | Never auto-selected |
-| `markdown` | Markdown table | Never auto-selected |
-| `vertical` | One record per block, one field per line | Never auto-selected |
-| `line` | Alias for `vertical` | Never auto-selected |
-| `G` | Alias for `vertical` | Never auto-selected |
-| `csv` | RFC 4180 CSV with header row | Never auto-selected |
-| `tsv` | Tab-separated values with header row | Never auto-selected |
-| `raw` | `_raw` field value per line, or tab-separated k=v | Never auto-selected |
+| Format | Output |
+|--------|--------|
+| `auto` | The default. On a terminal: a table, or a bare value for a one-row, one-column result. Otherwise: `json` |
+| `json` | One JSON object per row, one row per line |
+| `ndjson` | Same as `json` |
+| `table` | Table with box-drawing borders and a row count |
+| `box` | Same layout as `table` |
+| `ascii` | Table drawn with plain ASCII characters, for terminals without box drawing |
+| `markdown` | Markdown table |
+| `vertical` | One block per row, one `field  value` line per field |
+| `line`, `G` | Same as `vertical` |
+| `csv` | RFC 4180 CSV with a header row |
+| `tsv` | Tab-separated values with a header row |
+| `raw` | The `_raw` text of each row; rows without `_raw` print as tab-separated `field=value` pairs |
 
-## Auto Behavior
-
-The default `--format auto` adapts based on context:
-
-| Context | Behavior |
-|---------|----------|
-| TTY + single scalar result | Plain value (just the number or string) |
-| TTY + multiple results | Human table |
-| Non-TTY (pipe) | `json` (one JSON object per line) |
-
-## Examples by Format
-
-### json and ndjson
+A `\G` at the end of a query switches `auto` to `vertical`, as in a MySQL client:
 
 ```bash
-lynxdb query 'from main level=error | stats count() by source' --format json
+lynxdb query 'source=main level=ERROR | head 1 \G'
 ```
+
+## Examples
+
+The query for every example:
+
+```bash
+lynxdb query 'source=main level=ERROR | stats count() as errors by host | sort - errors | head 3' --format <format>
+```
+
+`json`:
 
 ```json
-{"source":"nginx","count":340}
-{"source":"api-gateway","count":120}
+{"errors":67,"host":"api-02"}
+{"errors":58,"host":"web-02"}
+{"errors":57,"host":"web-03"}
 ```
 
-`ndjson` uses the same byte format:
+`table`:
+
+```
+┌────────┬────────┐
+│ host   │ errors │
+├────────┼────────┤
+│ api-02 │     67 │
+│ web-02 │     58 │
+│ web-03 │     57 │
+└────────┴────────┘
+(3 rows)
+```
+
+`ascii`:
+
+```
++--------+--------+
+| host   | errors |
++--------+--------+
+| api-02 |     67 |
+| web-02 |     58 |
+| web-03 |     57 |
++--------+--------+
+(3 rows)
+```
+
+`markdown`:
+
+```
+| host   | errors |
+|--------|--------|
+| api-02 |     67 |
+| web-02 |     58 |
+| web-03 |     57 |
+(3 rows)
+```
+
+`csv`:
+
+```
+host,errors
+api-02,67
+web-02,58
+web-03,57
+```
+
+`vertical`, for wide event rows:
 
 ```bash
-lynxdb query 'from main level=error | stats count() by source' --format ndjson
+lynxdb query 'source=main level=ERROR | fields host, path, status, response_time | head 1' --format vertical
 ```
 
 ```
-{"source":"nginx","count":340}
-{"source":"api-gateway","count":120}
-```
-
-### table
-
-```bash
-lynxdb query 'from main level=error | stats count() by source' --format table
-```
-
-```
-┌─────────────┬───────┐
-│ source      │ count │
-├─────────────┼───────┤
-│ nginx       │   340 │
-│ api-gateway │   120 │
-└─────────────┴───────┘
-(2 rows)
-```
-
-Use `--format ascii` when box-drawing characters are not desired:
-
-```bash
-lynxdb query 'from main level=error | stats count() by source' --format ascii
-```
-
-Use `--format markdown` for README or issue comments:
-
-```bash
-lynxdb query 'from main level=error | stats count() by source' --format markdown
-```
-
-### vertical
-
-```bash
-lynxdb query 'from main level=error | head 1' --format vertical
-```
-
-```text
   record 1
-    _time  2026-01-15T00:00:00Z
-   source  nginx
-    level  error
-  message  upstream timeout
+           host  web-03
+           path  /api/v1/users
+  response_time  786
+         status  502
 ```
 
-The query suffix `\G` is equivalent to `--format vertical` when `--format` is
-still `auto`:
+`raw` prints the original lines, ready for another tool or for a local query:
 
 ```bash
-lynxdb query 'from main level=error | head 1 \G'
-```
-
-### csv
-
-```bash
-lynxdb query 'from main level=error | stats count() by source' --format csv
+lynxdb query 'source=main status>=500 | head 2' --format raw
 ```
 
 ```
-source,count
-nginx,340
-api-gateway,120
+2026-01-15T08:00:00.105Z host=web-03 level=ERROR method=GET path=/api/v1/users status=502 user=grace response_time=786 bytes=32228 msg="GET /api/v1/users completed"
+2026-01-15T08:00:00.543Z host=api-02 level=ERROR method=DELETE path=/api/v1/search status=502 user=grace response_time=462 bytes=46701 msg="DELETE /api/v1/search completed"
 ```
 
-### tsv
+Columns come in a fixed order, not the order of the query's `fields` or `stats` clause: built-in fields such as `_time`, `_raw`, `index`, `_source`, `_sourcetype` and `host` first, then the other fields alphabetically. JSON objects list their keys alphabetically.
 
-```bash
-lynxdb query 'from main level=error | stats count() by source' --format tsv
-```
+## Human table flags
 
-```
-source	count
-nginx	340
-api-gateway	120
-```
-
-### raw
-
-```bash
-lynxdb query 'from main _source=nginx | head 3' --format raw
-```
-
-```
-192.168.1.1 - - [14/Feb/2026:14:23:01 +0000] "GET /api HTTP/1.1" 200 1234
-192.168.1.1 - - [14/Feb/2026:14:23:02 +0000] "POST /login HTTP/1.1" 302 0
-192.168.1.1 - - [14/Feb/2026:14:23:03 +0000] "GET /dashboard HTTP/1.1" 200 5678
-```
-
-## Disabling Colors
-
-Colors are enabled by default when output goes to a TTY. Disable them with:
-
-```bash
-# Flag
-lynxdb query 'from main level=error | stats count()' --no-color
-
-# Environment variable (any non-empty value)
-NO_COLOR=1 lynxdb query 'from main level=error | stats count()'
-```
-
-## Human Table Controls
-
-These global flags apply to `table`, `box`, `ascii`, `markdown`, `vertical`,
-`line`, `G`, and TTY `auto` output:
+These global flags shape `table`, `box`, `ascii`, `markdown`, `vertical` and terminal `auto` output:
 
 | Flag | Description |
 |------|-------------|
-| `--compact` | Reduce table spacing |
-| `--theme auto|dark|light|plain` | Select the human output theme |
-| `--max-rows <n>` | Show at most `n` rows in human output |
-| `--max-width <n>` | Wrap tables to `n` columns (`0` = terminal width) |
-| `--null-value <text>` | Placeholder for null or empty values |
+| `--max-rows <n>` | Show at most `n` rows |
+| `--max-width <n>` | Fit tables into `n` columns (`0` = terminal width) |
+| `--null-value <text>` | Print this for null or empty values |
+| `--compact` | Less padding |
+| `--theme <name>` | `auto`, `dark`, `light` or `plain` |
+| `--no-color` | No color; `NO_COLOR` with any value does the same |
 
-## Piping and Scripting
+## Data on stdout, everything else on stderr
 
-When stdout is not a terminal, `--format auto` produces clean JSON suitable for piping:
-
-```bash
-# Pipe to jq
-lynxdb query 'from main | stats count() by host' | jq '.host'
-
-# Export to file
-lynxdb query 'from main | where level == "ERROR"' --since 24h > errors.json
-
-# Export as CSV for spreadsheets
-lynxdb query 'from main | stats count() by host' --format csv > report.csv
-
-# Chain with other tools
-lynxdb query '| stats count() by status' --format csv | sort -t, -k2 -rn
-```
-
-### Metadata to stderr
-
-Stats and summary lines are written to stderr so they do not pollute piped output:
+Rows go to stdout. Statistics, hints, warnings, lints and errors go to stderr, so a redirect or a pipe receives only data:
 
 ```bash
-# Only JSON goes to the file; stats go to the terminal
-lynxdb query --file access.log '| stats count()' > result.json
-# stderr shows: Scanned 50,000 events | 1 results | 89ms
+lynxdb query 'source=main | stats count() by host' --format csv > hosts.csv
+lynxdb query 'source=main level=ERROR | fields host, path' --since 1h | jq -r .path | sort | uniq -c
 ```
 
-## See Also
+When stdout is not a terminal, a query also writes its statistics as one JSON line to stderr:
 
-- [CLI Overview](/docs/cli/overview) for global flags and TTY behavior
-- [query](/docs/cli/query) for query-specific output details
-- [Shell Completion](/docs/cli/completion) for setting up tab completion
+```json
+{"stats":{"total_ms":1,"scanned_rows":294,"result_rows":5,"scanned_segments":2,"total_segments":4,"scan_type":"full_scan","skip_ratio":0.5,"processed_bytes":238997}}
+```
+
+`--no-stats` drops it and `--quiet` drops everything except data.
+
+## Commands other than query
+
+`status`, `health`, `indexes`, `cache stats`, `jobs`, `fields`, `auth list`, `config get` and `config list-profiles` print a styled view on a terminal and plain rows otherwise. `--format json` gives each command's JSON document or one JSON object per item; `csv`, `tsv`, `markdown` and the table formats print the same data as rows.
+
+## See also
+
+- [query](./query.md#output)
+- [CLI overview](./overview.md#global-flags)

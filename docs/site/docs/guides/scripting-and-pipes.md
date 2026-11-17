@@ -1,329 +1,259 @@
 ---
 title: Scripting with LynxDB
-description: How to use LynxDB in scripts, Unix pipelines, CI/CD workflows, and automated reporting with CSV, NDJSON, and jq integration.
+description: Use LynxDB in shell scripts, Unix pipelines, CI jobs and scheduled reports, with JSON lines, CSV, jq and exit codes.
 ---
 
 # Scripting with LynxDB
 
-LynxDB is designed to work as a composable Unix tool. When stdout is not a terminal, it outputs plain NDJSON by default, making it easy to pipe results into `jq`, `awk`, `sort`, or any other tool. This guide covers scripting patterns, output formats, CI/CD integration, and automation.
+`lynxdb query` behaves like a Unix filter. When stdout is not a terminal it
+prints one JSON object per line, writes statistics and hints to stderr, and
+reports the outcome through its exit code. This guide collects patterns for
+scripts, pipelines and CI jobs.
 
 ## Pipe mode: no server required
 
-LynxDB can query local files and stdin without a running server. This makes it a powerful replacement for `grep` + `awk` in log analysis pipelines:
+The CLI queries local files and standard input in process:
 
 ```bash
-# Pipe any log source through LynxFlow
-cat /var/log/syslog | lynxdb query 'where level == "ERROR" | stats count() by service'
+# Any log source through PPL
+cat /var/log/app.log | lynxdb query 'source=main level=ERROR | stats count() by service'
 
-# Query a local file
-lynxdb query --file access.log 'stats count() by status'
+# A local file
+lynxdb query --file access.log 'source=main | stats count() by status'
 
-# Glob multiple files
-lynxdb query --file '/var/log/nginx/*.log' 'where status >= 500 | top 10 uri'
+# Several files
+lynxdb query --file '/var/log/nginx/*.log' 'source=main status>=500 | top 10 uri'
 
-# Decompress and query
-zcat archive.log.gz | lynxdb query 'where status >= 500 | top 10 path'
+# Compressed input
+zcat archive.log.gz | lynxdb query 'source=main | where status >= 500 | top 10 path'
 
-# Process kubectl output
-kubectl logs deploy/api --since=1h | lynxdb query 'stats avg(duration_ms), p99(duration_ms) by endpoint'
-
-# Docker logs
-docker logs myapp 2>&1 | lynxdb query 'where contains(_raw, "OOM") | stats count() by container'
+# kubectl output
+kubectl logs deploy/api --since=1h | lynxdb query 'source=main | stats avg(duration_ms), p99(duration_ms) by endpoint'
 ```
 
-See the [pipe mode guide](/docs/getting-started/pipe-mode) for more details on serverless usage.
-
----
+See [Pipe Mode](../getting-started/pipe-mode.md) for format detection and
+loading details.
 
 ## Output formats
 
-Control the output format with the `--format` / `-F` flag:
+`--format` (`-F`) picks the output format:
 
-| Format | Flag | Description |
-|--------|------|-------------|
-| Auto | `--format auto` | JSON in TTY, NDJSON when piped (default) |
-| JSON | `--format json` | Pretty-printed JSON |
-| NDJSON | `--format ndjson` | One JSON object per line |
-| Table | `--format table` | Aligned columns with headers |
-| CSV | `--format csv` | RFC 4180 CSV with header row |
-| TSV | `--format tsv` | Tab-separated values with header row |
-| Raw | `--format raw` | `_raw` field value per line |
+| Format | Output |
+|--------|--------|
+| `auto` | Table on a terminal, JSON lines otherwise (default) |
+| `json`, `ndjson` | One JSON object per line |
+| `table`, `box`, `ascii`, `markdown` | Tables |
+| `vertical` | One block per row |
+| `csv`, `tsv` | Header row, then one line per row |
+| `raw` | The `_raw` text of each row |
 
-### Automatic format detection
+See [Output Formats](../cli/output-formats.md) for the full list.
 
-When stdout is a terminal (TTY), LynxDB shows colorized interactive output. When stdout is piped (non-TTY), it switches to plain NDJSON automatically. You never need to configure this for simple pipelines.
+### Data on stdout, everything else on stderr
 
-### Metadata goes to stderr
-
-Summary lines and query statistics are written to stderr, so they never pollute piped output:
+Rows go to stdout. The statistics footer, hints and lint warnings go to
+stderr, so redirection captures only data:
 
 ```bash
-# Only JSON goes to the file; stats go to the terminal
-lynxdb query --file access.log 'stats count()' > result.json
-# stderr shows: Scanned 50,000 events | 1 results | 89ms
+lynxdb query --file access.log 'source=main | stats count()' > result.json
 ```
 
----
+When stdout is not a terminal, the statistics are printed to stderr as one
+JSON object; `--no-stats` drops them and `--quiet` (`-q`) drops all non-data
+output.
 
 ## Integration with jq
 
-[jq](https://jqlang.github.io/jq/) is the most common companion tool for LynxDB output.
-
-### Extract a single field
+`json` output is one object per line, the shape `jq` reads by default.
 
 ```bash
-lynxdb query 'from main _source=nginx | stats count() as count by uri | sort -count | head 10' | jq '.uri'
+# One field
+lynxdb query 'source=main | stats count() as n by path | sort - n | head 10' | jq -r '.path'
+
+# Filter rows
+lynxdb query 'source=main | stats count() as n by path' | jq 'select(.n > 100)'
+
+# Reshape
+lynxdb query 'source=main | stats count() as n by host' | jq '{host, events: .n}'
+
+# Sum across rows
+lynxdb query 'source=main | stats count() as n by status' | jq -s 'map(.n) | add'
 ```
-
-### Filter results
-
-```bash
-lynxdb query 'from main _source=nginx | stats count() as count by uri' | jq 'select(.count > 1000)'
-```
-
-### Transform to a different shape
-
-```bash
-lynxdb query 'stats count() as count by source' | jq '{source: .source, events: .count}'
-```
-
-### Aggregate in jq
-
-```bash
-lynxdb query 'from main _source=nginx | stats count() as count by status' | jq -s 'map(.count) | add'
-```
-
-### Pretty-print
-
-```bash
-lynxdb query 'stats count() by level' | jq .
-```
-
----
 
 ## CSV export
 
-Export query results as CSV for spreadsheets, data tools, or further processing:
-
 ```bash
-# Export to CSV file
-lynxdb query 'from main _source=nginx | stats count() as count, avg(duration_ms) by uri | sort -count' \
+# A report file
+lynxdb query 'source=main | stats count() as n, avg(response_time) as avg_ms by path | sort - n' \
   --format csv > report.csv
 
-# Open in a spreadsheet
-lynxdb query 'from main level=error | stats count() by source, level' --format csv | open -f
+# Sort with standard tools
+lynxdb query --file access.log 'source=main | stats count() as n by status' --format csv | sort -t, -k2 -rn
 
-# Pipe to standard Unix tools
-lynxdb query --file access.log 'stats count() as count by status' --format csv | sort -t, -k2 -rn
+# Tab-separated
+lynxdb query 'source=main | stats count() by host' --format tsv > data.tsv
 ```
 
-### TSV export
+## Chain queries
+
+Pull rows from the server, then aggregate them locally in pipe mode:
 
 ```bash
-lynxdb query 'stats count() by source' --format tsv > data.tsv
+lynxdb query 'source=main status>=500 | fields host, path, status' --since 1h --format ndjson \
+  | lynxdb query 'source=main | stats count() as errors by path | sort - errors | head 5'
 ```
-
----
-
-## Chain LynxDB commands
-
-Pipe the output of one LynxDB query into another:
-
-```bash
-# Query server, then post-process locally
-lynxdb query 'from main _source=nginx status>=500' --since 1h \
-  | lynxdb query 'stats count() as count by uri | sort -count | head 5'
-```
-
-The first query fetches data from the server. The second query processes the results locally using pipe mode.
-
----
 
 ## Write results to a file
 
-Use `--output` to write directly to a file:
+Use shell redirection:
 
 ```bash
-lynxdb query 'from main level=error' --since 24h --output errors.json
+lynxdb query 'source=main level=ERROR' --since 24h --format json > errors.json
+lynxdb query 'source=main level=ERROR' --since 24h --format csv > errors.csv
 ```
 
-Or use shell redirection:
+For local queries, `--output <file>` writes the rows to a file; set
+`--format` with it, since `auto` picks the format from the terminal, not
+from the file.
 
-```bash
-lynxdb query 'from main level=error' --since 24h > errors.json
-lynxdb query 'from main level=error' --since 24h --format csv > errors.csv
-```
-
----
-
-## CI/CD integration
+## CI/CD
 
 ### Fail on matching events
 
-Use `--fail-on-empty` to exit with code 6 when a query returns no results. Invert the logic for error detection:
+`--fail-on-empty` exits with code 6 when a query returns no rows. Turn it
+around to fail a job when errors do appear:
 
 ```bash
-# Check for errors after deployment
-if lynxdb query 'from main level=fatal source=api' --since 10m --fail-on-empty 2>/dev/null; then
-  echo "FATAL: Errors detected after deployment"
+if lynxdb query 'source=main level=FATAL _source=api' --since 10m --fail-on-empty --quiet > /dev/null; then
+  echo "FATAL events after deployment"
   exit 1
 fi
-echo "No fatal errors found"
+echo "No fatal events"
 ```
 
-### Exit codes for scripting
-
-Use LynxDB's [exit codes](/docs/cli/overview) in scripts:
-
-```bash
-lynxdb query 'from main level=FATAL' --fail-on-empty 2>/dev/null
-case $? in
-  0) echo "Fatal errors found!" ;;
-  6) echo "No fatal errors -- all clear" ;;
-  3) echo "Server unreachable" ;;
-  4) echo "Bad query syntax" ;;
-  *) echo "Unexpected error" ;;
-esac
-```
+### Exit codes
 
 | Code | Meaning |
 |------|---------|
-| 0 | Query succeeded with results |
-| 3 | Cannot reach server |
-| 4 | LynxFlow syntax error |
-| 5 | Query timeout |
-| 6 | No results (with `--fail-on-empty`) |
-| 130 | Interrupted (Ctrl+C) |
+| 0 | Success |
+| 1 | Other failure |
+| 2 | Invalid flags or missing arguments |
+| 3 | The server is unreachable |
+| 4 | The query does not compile |
+| 5 | The query timed out |
+| 6 | No rows, with `--fail-on-empty` |
+| 7 | Missing or invalid API key |
+| 130 | Interrupted with Ctrl+C |
+
+```bash
+lynxdb query 'source=main level=FATAL' --since 1h --fail-on-empty --quiet > /dev/null
+case $? in
+  0) echo "fatal events found" ;;
+  6) echo "no fatal events" ;;
+  3) echo "server unreachable" ;;
+  4) echo "query does not compile" ;;
+  *) echo "query failed" ;;
+esac
+```
+
+See [CLI overview](../cli/overview.md#exit-codes) for the complete list.
 
 ### Post-deployment smoke test
 
 ```bash
 #!/bin/bash
 # post-deploy-check.sh
+set -euo pipefail
 
-echo "Waiting 60s for logs to accumulate..."
 sleep 60
 
-ERROR_COUNT=$(lynxdb query 'from main level=error source=api' --since 2m --format json | jq -s 'length')
-FATAL_COUNT=$(lynxdb query 'from main level=fatal source=api' --since 2m --format json | jq -s 'length')
+ERRORS=$(lynxdb query 'source=main level=ERROR _source=api | stats count() as n' --since 2m --no-stats | jq '.n')
+FATAL=$(lynxdb query 'source=main level=FATAL _source=api | stats count() as n' --since 2m --no-stats | jq '.n')
 
-echo "Errors: $ERROR_COUNT, Fatal: $FATAL_COUNT"
+echo "errors=$ERRORS fatal=$FATAL"
 
-if [ "$FATAL_COUNT" -gt 0 ]; then
-  echo "FATAL errors detected -- rolling back"
+if [ "$FATAL" -gt 0 ] || [ "$ERRORS" -gt 50 ]; then
+  echo "rolling back"
   exit 1
 fi
-
-if [ "$ERROR_COUNT" -gt 50 ]; then
-  echo "Error rate too high -- rolling back"
-  exit 1
-fi
-
-echo "Deployment looks healthy"
 ```
 
-### Scheduled reports with cron
+### Scheduled reports
 
 ```bash
-# Generate a daily error report
-# Add to crontab: 0 9 * * * /path/to/daily-report.sh
-
 #!/bin/bash
+# daily-report.sh, run from cron: 0 9 * * * /opt/scripts/daily-report.sh
 DATE=$(date +%Y-%m-%d)
-lynxdb query 'from main level=error | stats count() as count by source | sort -count' \
-  --since 24h --format csv > "/reports/errors-${DATE}.csv"
+lynxdb query 'source=main level=ERROR | stats count() as n by _source | sort - n' \
+  --since 24h --format csv --no-stats > "/reports/errors-${DATE}.csv"
 ```
 
-### Use saved queries in CI
-
-Save queries once, run them in any pipeline:
+## Quiet and plain output
 
 ```bash
-# One-time setup
-lynxdb save "ci-health" 'from main level=fatal OR level=error | stats count() as errors by source | where errors > 0'
+# Only data
+lynxdb query 'source=main level=ERROR | stats count()' --quiet
 
-# In CI pipeline
-lynxdb run ci-health --since 5m --format json | jq -e 'length == 0' || exit 1
+# No statistics footer
+lynxdb query 'source=main level=ERROR | stats count()' --no-stats
+
+# No colors
+NO_COLOR=1 lynxdb query 'source=main level=ERROR | stats count()'
 ```
 
-See [saved queries](/docs/guides/saved-queries) for more details.
+## Connection settings
 
----
-
-## Suppress non-data output
-
-Use `--quiet` / `-q` to suppress all non-data output (stats, progress, hints):
+Set these once instead of passing flags to every command:
 
 ```bash
-lynxdb query 'from main level=error | stats count()' --quiet
-```
-
-Use `--no-stats` to suppress only the query statistics footer:
-
-```bash
-lynxdb query 'from main level=error | stats count()' --no-stats
-```
-
-Use `--no-color` or set `NO_COLOR=1` to disable colored output:
-
-```bash
-NO_COLOR=1 lynxdb query 'from main level=error | stats count()'
-```
-
----
-
-## Environment variables for automation
-
-Set these environment variables to avoid passing flags repeatedly:
-
-```bash
-export LYNXDB_SERVER=https://lynxdb.company.com
+export LYNXDB_SERVER=https://lynxdb.example.com:3100
 export LYNXDB_TOKEN=lxk_your_api_key
 export LYNXDB_PROFILE=production
 ```
 
-See the [environment variables reference](/docs/configuration/environment-variables) for the full list.
+A `.lynxdbrc` file in the working directory or a parent sets project
+defaults (`server`, `profile`, `default_format`, `default_since`,
+`default_source`). See [CLI overview](../cli/overview.md) and
+[Environment variables](../configuration/environment-variables.md).
 
----
+## Examples
 
-## Practical script examples
-
-### Monitor error rate and notify via external tool
+### Alert on an error rate
 
 ```bash
 #!/bin/bash
-ERROR_RATE=$(lynxdb query 'from main _source=nginx | stats count() as total, count(where status >= 500) as errors | extend rate = round(errors / total * 100, 2)' \
-  --since 5m --format json | jq -r '.rate')
+RATE=$(lynxdb query 'source=main
+  | stats count() as total, count(eval(status >= 500)) as errors
+  | eval rate = round(errors * 100.0 / total, 2)' \
+  --since 5m --no-stats | jq -r '.rate')
 
-if (( $(echo "$ERROR_RATE > 5.0" | bc -l) )); then
+if (( $(echo "$RATE > 5.0" | bc -l) )); then
   curl -X POST "https://hooks.slack.com/services/..." \
-    -d "{\"text\": \"Error rate is ${ERROR_RATE}% -- investigate!\"}"
+    -d "{\"text\": \"5xx rate is ${RATE}%\"}"
 fi
 ```
 
-### Generate a multi-format report
+### One query, several formats
 
 ```bash
 #!/bin/bash
-QUERY='from main _source=nginx | stats count() as count, avg(duration_ms) as avg_lat, p99(duration_ms) as p99_lat by uri | sort -count | head 20'
+QUERY='source=main | stats count() as n, avg(response_time) as avg_ms, p99(response_time) as p99_ms by path | sort - n | head 20'
 
 lynxdb query "$QUERY" --since 24h --format csv > report.csv
 lynxdb query "$QUERY" --since 24h --format json > report.json
 lynxdb query "$QUERY" --since 24h --format table
 ```
 
-### Tail and filter with standard tools
+### Tail into jq
 
 ```bash
-# Tail and pipe through grep for secondary filtering
-lynxdb tail 'where _source == "nginx"' --format json | jq -r 'select(.status >= 500) | "\(.uri) \(.status)"'
+lynxdb tail 'source=main | where status >= 500' --format json \
+  | jq -r '"\(.path) \(.status)"'
 ```
-
----
 
 ## Next steps
 
-- [Pipe mode](/docs/getting-started/pipe-mode) -- detailed guide to serverless file and stdin queries
-- [Output formats](/docs/cli/output-formats) -- complete reference for all output format options
-- [Saved queries](/docs/guides/saved-queries) -- save and reuse queries in scripts
-- [CLI overview](/docs/cli/overview) -- complete CLI reference with all commands and flags
+- [Pipe Mode](../getting-started/pipe-mode.md)
+- [Output Formats](../cli/output-formats.md)
+- [CLI: `query`](../cli/query.md)
+- [CLI overview](../cli/overview.md)

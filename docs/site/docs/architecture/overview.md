@@ -1,12 +1,12 @@
 ---
 sidebar_position: 1
 title: Architecture Overview
-description: High-level architecture of LynxDB -- storage engine, query engine, API layer, and the three execution modes (pipe, server, cluster).
+description: High-level architecture of LynxDB -- storage engine, query engine, API layer, and the three ways to run it (pipe, server, cluster).
 ---
 
 # Architecture Overview
 
-LynxDB is a columnar log analytics database written from scratch in Go. Every component -- the storage engine, query engine, indexing layer, and HTTP API -- is purpose-built for log search and aggregation workloads. There are no embedded third-party databases (no RocksDB, no SQLite, no Lucene). This page provides a high-level map of the system and explains how the pieces fit together.
+LynxDB is a columnar log analytics database written in Go. The storage engine, query engine, indexes and HTTP API are built for log search and aggregation; there is no embedded third-party database (no RocksDB, no SQLite, no Lucene). Queries are written in OpenSearch Piped Processing Language (PPL). This page maps the system and how its parts fit together.
 
 ## System Diagram
 
@@ -14,7 +14,7 @@ LynxDB is a columnar log analytics database written from scratch in Go. Every co
                           ┌─────────────────────────────┐
                           │         lynxdb CLI          │
                           │  query · ingest · server    │
-                          │  status · mv · config       │
+                          │  status · tail · config     │
                           └──────────────┬──────────────┘
                                          │
                 ┌────────────────────────┼────────────────────────┐
@@ -22,7 +22,7 @@ LynxDB is a columnar log analytics database written from scratch in Go. Every co
          ┌──────┴──────┐         ┌───────┴──────┐        ┌───────┴──────┐
          │  Pipe Mode  │         │  Server Mode │        │ Cluster Mode │
          │ (ephemeral  │         │ (persistent  │        │ (distributed │
-         │  in-memory) │         │  single-node)│        │  multi-node) │
+         │  in-memory) │         │  single node)│        │  multi-node) │
          └─────────────┘         └──────┬───────┘        └──────┬───────┘
                                         │                       │
             ┌───────────────────────────┼───────────────────────┘
@@ -30,60 +30,56 @@ LynxDB is a columnar log analytics database written from scratch in Go. Every co
 ┌───────────┴───────────────────────────────────────────────┐
 │                    Storage Engine                          │
 │                                                           │
-│  ┌──────────────┐  ┌───────────┐  ┌──────────┐          │
-│  │ AsyncBatcher │→ │ Part      │→ │  S3 Tier │          │
-│  │ (per-index   │  │ Writer    │  │  (warm/  │          │
-│  │  buffering)  │  │  (.lsg)   │  │   cold)  │          │
-│  └──────────────┘  └─────┬─────┘  └──────────┘          │
-│                                   │                       │
-│  ┌────────────────────────────────┤                       │
-│  │           Indexes              │                       │
-│  │  ┌────────┐  ┌──────────────┐  │  ┌─────────────────┐ │
-│  │  │ Bloom  │  │  Inverted    │  │  │   Compaction    │ │
-│  │  │ Filter │  │  Index (FST  │  │  │  L0 → L1 → L2  │ │
-│  │  │        │  │  + roaring)  │  │  │                 │ │
-│  │  └────────┘  └──────────────┘  │  └─────────────────┘ │
+│  ┌──────────────┐  ┌───────────┐  ┌──────────┐            │
+│  │ AsyncBatcher │→ │ Part      │→ │  S3 Tier │            │
+│  │ (per-index   │  │ Writer    │  │  (warm/  │            │
+│  │  buffering)  │  │  (.lsg)   │  │   cold)  │            │
+│  └──────────────┘  └─────┬─────┘  └──────────┘            │
+│                          │                                │
+│  ┌───────────────────────┴────────┐                       │
+│  │         Per-segment indexes    │  ┌─────────────────┐  │
+│  │  ┌────────┐  ┌──────────────┐  │  │   Compaction    │  │
+│  │  │ Bloom  │  │  Term index  │  │  │  L0 → L1 → L2   │  │
+│  │  │ filters│  │ (FST+roaring)│  │  │                 │  │
+│  │  └────────┘  └──────────────┘  │  └─────────────────┘  │
 │  └────────────────────────────────┘                       │
 └───────────────────────────────────────────────────────────┘
             │
 ┌───────────┴───────────────────────────────────────────────┐
 │                    Query Engine                            │
 │                                                           │
-│  ┌─────────┐  ┌───────────┐  ┌──────────┐  ┌──────────┐ │
-│  │LynxFlow │→ │ Optimizer │→ │ Pipeline │→ │  Output  │ │
-│  │ Parser  │  │ (rules)   │  │ (Volcano │  │  (JSON/  │ │
-│  │         │  │           │  │ iterator)│  │ table/csv│ │
-│  └─────────┘  └───────────┘  └──────────┘  └──────────┘ │
-│                                    │                      │
-│  ┌─────────────┐  ┌───────────────┤  ┌─────────────────┐ │
-│  │ Bytecode VM │  │  Pipeline     │  │  Segment Cache  │ │
-│  │ (60+ ops,   │  │  Operators    │  │  (TTL + LRU,    │ │
-│  │  0 allocs)  │  │               │  │   persistent)   │ │
-│  └─────────────┘  └───────────────┘  └─────────────────┘ │
+│  ┌─────────┐  ┌────────┐  ┌───────────┐  ┌──────────────┐ │
+│  │  PPL    │→ │   IR   │→ │ Optimizer │→ │ Physical plan│ │
+│  │ frontend│  │  plan  │  │  (rules)  │  │ + VM bytecode│ │
+│  └─────────┘  └────────┘  └───────────┘  └──────┬───────┘ │
+│                                                 │         │
+│  ┌──────────────────┐  ┌────────────────────────┴───────┐ │
+│  │  Result cache    │  │  Pipeline iterators (Volcano)  │ │
+│  └──────────────────┘  └────────────────────────────────┘ │
 └───────────────────────────────────────────────────────────┘
 ```
 
-## Three Execution Modes
+## Three Ways to Run
 
-LynxDB ships as a single static binary. The same binary runs in three modes depending on how you invoke it. Internally, all three modes share the same storage engine and query engine -- the difference is lifecycle and networking.
+LynxDB ships as a single static binary that runs in pipe mode or as a server; both share the query engine. `pkg/cluster` holds the components of a third, distributed mode.
 
 ### Pipe Mode (Ephemeral, In-Memory)
 
 ```bash
-cat app.log | lynxdb query 'where level == "ERROR" | stats count() by service'
-lynxdb query --file '/var/log/nginx/*.log' 'where status >= 500 | top 10 uri'
+cat app.log | lynxdb query 'source=main | where level = "ERROR" | stats count() by service'
+lynxdb query --file '/var/log/nginx/*.log' 'source=main status>=500 | top 10 uri'
 ```
 
-In pipe mode, LynxDB behaves like `grep` or `awk`. The binary:
+In pipe mode, LynxDB works like `grep` or `awk`. The binary:
 
-1. Creates an ephemeral in-memory storage engine (no data directory, no persisted parts).
-2. Ingests all data from stdin or the specified file(s).
-3. Runs the full LynxFlow pipeline -- parser, optimizer, Volcano iterator, bytecode VM.
-4. Prints results to stdout and exits.
+1. Creates an ephemeral in-memory engine (no data directory, no files written).
+2. Loads stdin or the given files into the index `main`. Combined, syslog and docker log formats are detected and their fields extracted while loading; `key=value` pairs are extracted too. `--raw` turns detection off.
+3. Compiles the query and runs it with the same compiler, optimizer and operators as the server.
+4. Prints the results and exits.
 
-There is no daemon, no config file, no network I/O. The entire LynxFlow engine runs locally in-process. This mode is ideal for ad-hoc debugging, scripting, and integration with Unix pipelines.
+There is no daemon, no config file and no network I/O.
 
-### Server Mode (Persistent, Single-Node)
+### Server Mode (Persistent, Single Node)
 
 ```bash
 lynxdb server --data-dir /var/lib/lynxdb
@@ -91,38 +87,38 @@ lynxdb server --data-dir /var/lib/lynxdb
 
 Server mode starts a long-running process that:
 
-1. Opens (or creates) a data directory with part files, caches, and metadata.
+1. Opens (or creates) a data directory with part files, caches and metadata, and checks its `FORMAT` marker.
 2. Scans the data directory, removes stale temporary files, and rebuilds the in-memory part registry.
 3. Starts the HTTP API on port 3100 (configurable).
-4. Accepts ingest requests, buffers events in `AsyncBatcher`, and flushes immutable `.lsg` parts.
-5. Runs background compaction (L0 -> L1 -> L2).
-6. Serves queries against on-disk and remotely tiered segments.
+4. Accepts ingest requests, buffers events in the `AsyncBatcher`, and flushes immutable `.lsg` parts.
+5. Runs background compaction (L0 → L1 → L2), retention, and optional S3 tiering.
+6. Serves queries over buffered events, local parts and tiered segments.
 
-A single server handles 50-100K events/sec on commodity hardware. Optional S3 tiering offloads older segments to object storage while keeping them queryable through a local segment cache.
+Optional S3 tiering moves older segments to object storage and keeps them queryable through a local segment cache.
 
 ### Cluster Mode (Distributed, Multi-Node)
 
-```bash
-lynxdb server --cluster.seeds node1:9400,node2:9400,node3:9400
-```
+:::caution Cluster runtime
+`lynxdb server` validates the `cluster` section of the configuration, but it does not start the cluster runtime: it opens no gRPC listener, joins no Raft group, and routes no shards. This section describes the cluster components in `pkg/cluster`.
+:::
 
-Cluster mode uses the same binary with clustering flags. Nodes discover each other via seed addresses and form a cluster with three roles:
+The cluster design uses the same binary with clustering settings. Nodes find each other through seed addresses and take one or more of three roles:
 
 | Role | Responsibility | Scales with |
 |------|----------------|-------------|
-| **Meta** (3-5 nodes) | Raft consensus, shard map, node registry, leader leases, field catalog, source registry, view coordination | Cluster size |
-| **Ingest** (N nodes) | Batcher write, part flush, S3 upload, batcher replication | Write throughput |
+| **Meta** (3-5 nodes) | Raft consensus, shard map, node registry, leader leases, field catalog, source registry | Cluster size |
+| **Ingest** (N nodes) | Batcher writes, part flush, S3 upload, batch replication | Write throughput |
 | **Query** (M nodes) | Scatter-gather, partial aggregation merge, segment caching | Query concurrency |
 
-In small clusters (< 10 nodes), every node runs all three roles. At scale, you split roles for independent scaling. The architecture is shared-storage: S3 is the source of truth for segments, making ingest and query nodes effectively stateless. Data is sharded using a two-level scheme (time bucketing + xxhash64 hash partitioning) and replicated via batcher-based replication with configurable ACK levels.
+In small clusters (fewer than 10 nodes), every node runs all three roles. S3 is the source of truth for segments. Data is sharded in two levels (time bucket, then `xxhash64` hash partition) and replicated with batch replication and configurable ACK levels.
 
-See [Distributed Architecture](/docs/architecture/distributed) for full details.
+See [Distributed Architecture](/docs/architecture/distributed) for details.
 
 ## Major Subsystems
 
 ### Storage Engine
 
-The storage engine handles the full data lifecycle: ingest -> async buffering -> part flush -> compaction -> tiering.
+The storage engine handles the data lifecycle: ingest → buffering → part flush → compaction → tiering → retention.
 
 ```mermaid
 flowchart LR
@@ -134,115 +130,97 @@ flowchart LR
     D -->|age policy| F[S3 Tier]
 ```
 
-Key design choices:
+- **AsyncBatcher**: per-index in-memory buffering that flushes on event count, size or idle time.
+- **Part writer**: writes `tmp_*.lsg`, optionally `fsync`s, then renames the file into place.
+- **Segments**: columnar `.lsg` files, row groups of up to 65536 rows. Timestamps are delta-encoded, strings dictionary- or LZ4-encoded, floats Gorilla-encoded, with LZ4 or ZSTD block compression. Each segment embeds per-row-group bloom filters, column statistics and an FST term index over `_raw`.
+- **Compaction**: three levels (L0 overlapping → L1 merged → L2 near the target size of 1 GB), rate-limited.
+- **Tiering and retention**: hot (local disk) → warm (S3) → cold (S3 or archive policy); time partitions older than the retention period are deleted.
 
-- **AsyncBatcher**: Per-index in-memory buffering with internal flush thresholds for event count, bytes, and wait time.
-- **Part writer**: Writes to `tmp_*.lsg`, optionally `fsync`s, then atomically renames into place.
-- **Segments**: Columnar `.lsg` V2 format. Per-column encoding: delta-varint for timestamps, dictionary for strings, Gorilla for floats, LZ4 for raw text. Each segment embeds a bloom filter and FST-based inverted index.
-- **Compaction**: Size-tiered with three levels (L0 overlapping -> L1 merged -> L2 fully compacted at ~1 GB). Rate-limited to avoid I/O starvation.
-- **Tiering**: Hot (local SSD, < 7d) -> Warm (S3, < 30d) -> Cold (Glacier, < 90d). Local segment cache for warm-tier queries.
-
-See [Storage Engine](/docs/architecture/storage-engine) and [Segment Format](/docs/architecture/segment-format) for deep dives.
+See [Storage Engine](/docs/architecture/storage-engine) and [Segment Format](/docs/architecture/segment-format).
 
 ### Query Engine
 
-The query engine transforms LynxFlow text into a streaming execution pipeline:
-
 ```mermaid
 flowchart LR
-    A["LynxFlow Text"] --> B["Parser"]
-    B --> C["AST"]
-    C --> D["Sema + Desugar"]
-    D --> E["Logical Plan + Optimizer"]
-    E --> F["Volcano Pipeline"]
+    A["PPL text"] --> B["pkg/ppl"]
+    B --> C["pkg/ir plan"]
+    C --> D["pkg/ir/opt"]
+    D --> E["pkg/engine/physical"]
+    E --> F["pkg/engine/pipeline"]
     F --> G["Results"]
 ```
 
-Key components:
+- **Frontend** (`pkg/ppl`): lexer, recursive-descent parser, semantic analysis against each command's output schema, and lowering to the IR. Errors carry a code, position and hint.
+- **IR** (`pkg/ir`): a language-independent tree of typed logical operators. Everything after the frontend works on the IR only.
+- **Optimizer** (`pkg/ir/opt`): rule-based rewrites (constant folding, filter merging, scan pruning predicates, time ranges, top-N, limit pushdown) and column pruning.
+- **Planner** (`pkg/planner`): adds the storage hints (search terms, field equality, time bounds, columns) the server uses to skip segments and row groups.
+- **Physical planner** (`pkg/engine/physical`): maps IR operators onto pipeline iterators and compiles expressions to bytecode for the VM (`pkg/vm`).
+- **Pipeline** (`pkg/engine/pipeline`): pull-based iterators over batches of up to 1024 rows. `head 10` stops reading once it has 10 rows.
+- **Result cache** (`pkg/cache`): caches complete query results keyed by query, time range and ingest generation.
 
-- **Frontend** (`pkg/lynxflow`): Recursive descent parser for full LynxFlow, semantic analysis with schema inference, and desugaring of sugar stages onto the core operator set. Error recovery with caret diagnostics and suggestions.
-- **Optimizer** (`pkg/logical/opt`): Rule-based, fixed-point -- expression simplification, predicate pushdown, column pruning, partial aggregation, TopK pushdown, limit pushdown, materialized view rewrite.
-- **Pipeline** (`pkg/engine/pipeline`): Volcano iterator model with one streaming operator per LynxFlow core stage. Pull-based with 1024-row batches. `head 10` on 100M events reads one batch, not the entire dataset.
-- **Bytecode VM** (`pkg/vm`): Stack-based VM with 60+ opcodes for evaluating `where`, `extend`, and `stats` expressions. Fixed 256-slot stack. 22ns/op for a simple predicate (`status >= 500`). Zero heap allocations on the hot path.
-- **Cache**: Filesystem-based segment query cache. Key = `(segment_id, CRC32, query_hash, time_range)`. TTL + LRU eviction. Persistent across restarts.
-
-See [Query Engine](/docs/architecture/query-engine) for the full breakdown.
+See [Query Engine](/docs/architecture/query-engine) and the [PPL architecture](../ppl/architecture.md) pages.
 
 ### Indexing
 
-LynxDB builds two index structures per segment during flush:
+- **Bloom filters**: per row group and string column. A segment whose blooms lack a search token is skipped without reading its columns.
+- **Term index**: an FST term dictionary over the tokens of `_raw`, with roaring bitmap posting lists. Answers word, phrase, prefix and glob searches with the matching row numbers.
+- **Column statistics**: min/max per segment and row group, constant columns and column presence skip data for string equality predicates.
 
-- **Bloom filters**: Per-segment probabilistic index for term-level segment skipping. If a bloom filter says a term is absent, the entire segment is skipped without reading column data.
-- **FST-based inverted index**: Finite State Transducer mapping terms to roaring bitmap posting lists. Supports prefix, wildcard, and fuzzy matching with sub-millisecond lookup.
-
-Together, these indexes enable full-text search that is orders of magnitude faster than brute-force scanning. See [Indexing](/docs/architecture/indexing).
+See [Indexing](/docs/architecture/indexing).
 
 ### REST API
 
-The HTTP API layer (`pkg/api/rest`) exposes all functionality over HTTP:
+The HTTP API (`pkg/api/rest`) exposes:
 
-- **Ingest**: Structured event arrays via `/api/v1/ingest`, raw lines via `/api/v1/ingest/raw`, plus compatibility endpoints for Elasticsearch `_bulk`, OTLP, and Splunk HEC.
-- **Query**: Sync, async, and hybrid execution modes. NDJSON streaming for large result sets. SSE for real-time progress.
-- **Management**: Fields catalog, saved queries, materialized views, configuration.
+- **Ingest**: event arrays at `/api/v1/ingest`, raw lines at `/api/v1/ingest/raw`, the Elasticsearch `_bulk` API, OTLP logs, and the Splunk HEC protocol.
+- **Query**: synchronous, asynchronous (jobs) and hybrid execution, NDJSON streaming, explain, live tail over SSE, and the PPL catalog at `/api/v1/catalog`.
+- **Management**: field catalog, indexes, sources, server status and statistics, cache, configuration, API keys.
 
-See [REST API Overview](/docs/api/overview) for endpoint documentation.
+See [REST API Overview](/docs/api/overview).
 
 ## Data Flow
 
 ### Write Path
 
 ```
-HTTP POST /api/v1/ingest, /api/v1/ingest/raw, /api/v1/es/_bulk, or /api/v1/otlp/v1/logs
-  → Decode request shape (structured event array, raw lines, or compatibility payload)
-  → Convert request payloads into internal events
+HTTP POST /api/v1/ingest, /api/v1/ingest/raw, /_bulk, /services/collector, or /api/v1/otlp/v1/logs
+  → Decode the request (event array, raw lines, or protocol payload)
+  → Convert payloads into events
   → Buffer in AsyncBatcher
-  → [Cluster mode] Route to shard primary, replicate via batcher
-  → [Flush thresholds reached]
+  → [Flush threshold reached]
     → Write tmp_*.lsg part
     → Optional fsync + atomic rename
     → Register part metadata
-    → [In cluster mode: upload to S3]
   → [Background]
     → Compaction merges L0 → L1 → L2
-    → Tiering offloads aged segments to S3/Glacier
+    → Tiering moves aged segments to S3
+    → Retention deletes expired time partitions
 ```
 
 ### Read Path
 
 ```
-LynxFlow query text
-  → Parse to AST, desugar, lower to logical plan
-  → Optimize (rule-based, fixed-point)
-  → Build Volcano pipeline
-  → Scan operator:
-    → Check segment time ranges (prune by time)
-    → Check bloom filters (prune by term)
-    → Check inverted index (resolve full-text search)
-    → Read matching columns from .lsg parts
-    → Read from batcher buffer (events buffered but not yet flushed)
-  → Stream through pipeline operators (Filter, Eval, Aggregate, Sort, ...)
-  → Bytecode VM evaluates expressions (0 allocs per row)
-  → Output (JSON / table / CSV / NDJSON)
+PPL query text
+  → Parse, analyze and lower to an IR plan (cached by query text)
+  → Optimize (rewrite rules, column pruning)
+  → Derive storage hints
+  → Result cache lookup
+  → Select segments: source scope, time bounds, column min/max, bloom filters
+  → Build pipeline iterators; compile expressions to VM bytecode
+  → Scan:
+    → Events still in the batcher
+    → Selected segments, row group by row group:
+      → Term index bitmap, row group filters
+      → Decode only the required columns
+  → Stream through operators (Filter, Compute, Aggregate, TopN, ...)
+  → Output (JSON / NDJSON / table / CSV)
 ```
-
-## Performance Characteristics
-
-| Metric | Value |
-|--------|-------|
-| VM simple predicate (`status >= 500`) | 22 ns/op, 0 allocs |
-| VM complex predicate (`status >= 500 and host == "web-01"`) | 55 ns/op, 0 allocs |
-| Streaming `head 10` on 100K events | 0.23 ms |
-| Binary search on sorted timestamps (1M events) | 15 ns vs 232 us full scan |
-| Cache hit latency | 299 ns |
-| Pipeline throughput (where + stats, 100K events) | ~2.1M events/sec |
-| Single-node ingest throughput | 300K+ events/sec |
-| Materialized view acceleration | ~400x vs raw scan |
 
 ## Next Steps
 
-- [Storage Engine](/docs/architecture/storage-engine) -- async buffering, part flush, compaction, tiering
-- [Segment Format](/docs/architecture/segment-format) -- columnar `.lsg` V2 format and encoding strategies
-- [Query Engine](/docs/architecture/query-engine) -- parser, optimizer, pipeline, bytecode VM
-- [Indexing](/docs/architecture/indexing) -- bloom filters, FST inverted index, roaring bitmaps
+- [Storage Engine](/docs/architecture/storage-engine) -- buffering, part flush, compaction, tiering
+- [Segment Format](/docs/architecture/segment-format) -- the columnar `.lsg` format
+- [Query Engine](/docs/architecture/query-engine) -- compiler, optimizer, physical planning, execution
+- [Indexing](/docs/architecture/indexing) -- bloom filters, term index, column statistics
 - [Distributed Architecture](/docs/architecture/distributed) -- Raft, sharding, scatter-gather, S3
-- [Design Decisions](/docs/architecture/design-decisions) -- why columnar, why LynxFlow, why Go, why single binary
+- [Design Decisions](/docs/architecture/design-decisions) -- why columnar, why PPL, why Go, why a single binary

@@ -1,240 +1,114 @@
 ---
 sidebar_position: 5
 title: Fields & Sources
-description: GET /fields, /fields/\{name\}/values, and /sources -- field catalog, value stats, and log source discovery.
+description: The field catalog, the top values of a field, and the event sources with their counts.
 ---
 
 # Fields & Sources API
 
-Automatic field discovery with types, coverage stats, and top values. These endpoints power the Fields sidebar, autocomplete, and Quick Stats in the Web UI.
+These endpoints describe stored data from segment metadata, without running a query. Clients use them for field lists and completion. Any valid key can call them when authentication is on.
 
 ## GET /fields
 
-List all discovered fields with types, coverage statistics, and top values.
+Lists the fields found in stored segments, with their type and how many events carry them.
 
-### Query Parameters
-
-| Parameter | Required | Default | Description |
-|---|---|---|---|
-| `from` | No | -- | Restrict stats to time range start |
-| `to` | No | -- | Restrict stats to time range end |
-| `prefix` | No | -- | Filter fields by name prefix (for autocomplete) |
-| `source` | No | -- | Only fields seen from a specific source |
-
-### List All Fields
+| Parameter | Description |
+|---|---|
+| `prefix` | Return only fields whose name starts with this prefix |
 
 ```bash
-curl -s localhost:3100/api/v1/fields | jq .
+curl -s 'localhost:3100/api/v1/fields?prefix=st'
 ```
-
-**Response (200):**
 
 ```json
-{
-  "data": {
-    "fields": [
-      {
-        "name": "_timestamp",
-        "type": "datetime",
-        "count": 847000000,
-        "coverage": 1.0
-      },
-      {
-        "name": "level",
-        "type": "string",
-        "count": 847000000,
-        "coverage": 1.0,
-        "top_values": [
-          {"value": "info", "count": 612000000},
-          {"value": "error", "count": 142000000},
-          {"value": "warn", "count": 93000000}
-        ]
-      },
-      {
-        "name": "status",
-        "type": "integer",
-        "count": 423000000,
-        "coverage": 0.50,
-        "min": 200,
-        "max": 504,
-        "top_values": [
-          {"value": 200, "count": 380000000},
-          {"value": 404, "count": 21000000}
-        ]
-      },
-      {
-        "name": "duration_ms",
-        "type": "float",
-        "count": 423000000,
-        "coverage": 0.50,
-        "min": 0.1,
-        "max": 30001.0,
-        "avg": 145.3,
-        "p50": 42.0,
-        "p99": 3200.0
-      }
-    ]
-  }
-}
+{"data": {"fields": [{"name": "status", "type": "int", "coverage": 100, "total_count": 1000}]}}
 ```
 
-### Field Object Properties
+| Field | Description |
+|---|---|
+| `name` | Field name |
+| `type` | Stored type: `string`, `int`, `float`, `bool`, `datetime` |
+| `coverage` | Percentage of events that have the field, 0 to 100 |
+| `total_count` | Events that have a value for the field |
+| `top_values` | Up to five common values with counts, when known; omitted otherwise |
 
-| Field | Type | Description |
-|---|---|---|
-| `name` | string | Field name |
-| `type` | string | Detected type: `string`, `integer`, `float`, `boolean`, `datetime` |
-| `count` | integer | Total events containing this field |
-| `coverage` | number | Fraction of all events containing this field (0.0--1.0) |
-| `min` | number | Minimum value (numeric/datetime fields only) |
-| `max` | number | Maximum value (numeric/datetime fields only) |
-| `avg` | number | Average value (numeric fields only) |
-| `p50` | number | 50th percentile (numeric fields only) |
-| `p99` | number | 99th percentile (numeric fields only) |
-| `top_values` | array | Most common values with counts (string/integer fields) |
-
-### Filter by Prefix (Autocomplete)
-
-```bash
-curl -s "localhost:3100/api/v1/fields?prefix=sta" | jq .
-```
-
-Returns only fields whose names start with `sta` (e.g., `status`, `state`, `start_time`).
-
-### Filter by Source
-
-```bash
-curl -s "localhost:3100/api/v1/fields?source=nginx" | jq .
-```
-
-Returns only fields seen in events tagged with `source=nginx`.
-
-### Scoped to Time Range
-
-```bash
-curl -s "localhost:3100/api/v1/fields?from=-1h&to=now" | jq .
-```
-
----
+The catalog covers every index. Built-in fields (`_time`, `_raw`, `_source`, `_sourcetype`, `index`, `host`) appear alongside extracted ones.
 
 ## GET /fields/\{name\}/values
 
-Top values for a specific field. Powers the "Quick Stats" sidebar and value autocomplete in the search bar.
+Returns the most common values of one field.
 
-### Path Parameters
-
-| Parameter | Required | Description |
+| Parameter | Default | Description |
 |---|---|---|
-| `name` | Yes | Field name |
-
-### Query Parameters
-
-| Parameter | Required | Default | Description |
-|---|---|---|---|
-| `from` | No | -- | Restrict to time range start |
-| `to` | No | -- | Restrict to time range end |
-| `limit` | No | `10` | Number of top values to return (max 100) |
-
-### Example
+| `limit` | `10` | Values to return, at most 100 |
+| `from` (or `since`) | | Start of the time range: relative or ISO 8601 |
+| `to` | | End of the time range |
 
 ```bash
-curl -s "localhost:3100/api/v1/fields/status/values?from=-1h&limit=10" | jq .
+curl -s 'localhost:3100/api/v1/fields/level/values?limit=3'
 ```
-
-**Response (200):**
 
 ```json
 {
   "data": {
-    "field": "status",
-    "type": "integer",
+    "field": "level",
     "values": [
-      {"value": 200, "count": 89421, "percent": 72.3},
-      {"value": 404, "count": 18234, "percent": 14.7},
-      {"value": 500, "count": 9123, "percent": 7.4},
-      {"value": 502, "count": 4521, "percent": 3.7},
-      {"value": 504, "count": 2401, "percent": 1.9}
+      {"value": "INFO", "count": 359, "percent": 35.72},
+      {"value": "WARN", "count": 347, "percent": 34.53},
+      {"value": "ERROR", "count": 294, "percent": 29.25}
     ],
-    "unique_count": 14,
-    "total_count": 123700
+    "unique_count": 4,
+    "total_count": 1005
   },
-  "meta": {
-    "from": "2026-02-14T13:52:00Z",
-    "to": "2026-02-14T14:52:00Z"
-  }
+  "meta": {"took_ms": 0}
 }
 ```
 
-### Value Object Properties
+| Field | Description |
+|---|---|
+| `values[].value` | The value, as a string |
+| `values[].count` | Events with this value |
+| `values[].percent` | `count` as a percentage of `total_count` |
+| `unique_count` | Distinct values |
+| `total_count` | Events that have the field |
 
-| Field | Type | Description |
-|---|---|---|
-| `value` | any | The field value |
-| `count` | integer | Number of events with this value |
-| `percent` | number | Percentage of total events for this field |
-
-### Response Metadata
-
-| Field | Type | Description |
-|---|---|---|
-| `data.field` | string | Field name |
-| `data.type` | string | Detected field type |
-| `data.unique_count` | integer | Total number of distinct values |
-| `data.total_count` | integer | Total events containing this field |
-| `meta.from` | string | Effective time range start (ISO 8601) |
-| `meta.to` | string | Effective time range end (ISO 8601) |
-
----
+An unknown field returns empty `values` and zero counts. To compute the same breakdown with filters, use a query such as `source=main status>=500 | top 10 path`.
 
 ## GET /sources
 
-List all log sources with volume statistics.
+Lists the event sources (the `source` label set at ingest) with their event counts and time span.
+
+| Parameter | Description |
+|---|---|
+| `pattern` | Glob on the source name: `*` matches any run of characters, `?` one character |
 
 ```bash
-curl -s localhost:3100/api/v1/sources | jq .
+curl -s 'localhost:3100/api/v1/sources?pattern=ng*'
 ```
-
-**Response (200):**
 
 ```json
 {
   "data": {
+    "pattern": "ng*",
     "sources": [
-      {
-        "name": "nginx",
-        "event_count": 423000000,
-        "last_event": "2026-02-14T14:52:01Z",
-        "first_event": "2026-01-15T00:00:01Z",
-        "rate": 1200.5,
-        "storage_bytes": 5200000000
-      },
-      {
-        "name": "api-gateway",
-        "event_count": 312000000,
-        "last_event": "2026-02-14T14:52:00Z",
-        "first_event": "2026-01-15T00:00:02Z",
-        "rate": 890.2,
-        "storage_bytes": 4100000000
-      }
+      {"name": "nginx", "event_count": 2, "first_event": "2026-11-17T10:43:02Z", "last_event": "2026-11-17T10:43:02Z"}
     ]
-  }
+  },
+  "meta": {"took_ms": 0}
 }
 ```
 
-### Source Object Properties
+| Field | Description |
+|---|---|
+| `name` | Source label |
+| `event_count` | Stored events from the source |
+| `first_event`, `last_event` | Time of the oldest and newest event (RFC 3339) |
 
-| Field | Type | Description |
-|---|---|---|
-| `name` | string | Source name (set via `X-Source` header or `source` field) |
-| `event_count` | integer | Total events from this source |
-| `last_event` | string | Timestamp of most recent event (ISO 8601) |
-| `first_event` | string | Timestamp of earliest event (ISO 8601) |
-| `rate` | number | Current ingest rate (events per second) |
-| `storage_bytes` | integer | Storage used by this source |
+Indexes are listed by [`GET /api/v1/indexes`](./ingest.md#indexes). To query one index, start the query with `source=<index>`.
 
 ## Related
 
-- **[`lynxdb fields` CLI command](/docs/cli/shortcuts)** -- field catalog from the command line
-- **[Schema-on-Read](/docs/architecture/storage-engine)** -- how fields are discovered automatically
-- **[Field Extraction guide](/docs/guides/field-extraction)** -- extracting fields at query time with `parse` and `extend`
-- **[`from` operator](/docs/lynxflow/operators/from)** -- using field values in search-sugar queries
+- [PPL catalog](./query.md#get-catalog): the commands and functions a query can use
+- [Search and types in PPL](../ppl/search-and-types.md): how field types affect comparisons
+- [Field extraction guide](../guides/field-extraction.md)
+- [CLI overview](../cli/overview.md): `lynxdb fields`

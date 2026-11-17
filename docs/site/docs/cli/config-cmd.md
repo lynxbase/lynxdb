@@ -1,333 +1,173 @@
 ---
 sidebar_position: 9
-title: config & doctor
-description: Manage LynxDB configuration -- init, validate, reload, get/set values, profiles, and environment diagnostics.
+title: config
+description: Show, validate, edit and reload LynxDB configuration, and manage connection profiles.
 ---
 
-# config & doctor
+# config
 
-Show and manage LynxDB configuration. The `config` command tree covers initialization, validation, hot-reload, individual settings, and connection profiles. The `doctor` command checks your environment.
-
-## config
-
-When run without a subcommand, displays the resolved configuration with all overrides applied.
+Show and manage the server's configuration file and the CLI's connection profiles.
 
 ```
 lynxdb config [subcommand] [flags]
 ```
 
-### Persistent Flags
+Without a subcommand, `config` prints every setting with its value and where the value came from: `default`, the config file, an environment variable or a flag.
 
-Available on `config` and all its subcommands:
+## Config file
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--addr` | | Listen address override |
-| `--data-dir` | | Data directory override |
-| `--s3-bucket` | | S3 bucket override |
-| `--s3-region` | | AWS region override |
-| `--s3-prefix` | | S3 prefix override |
-| `--compaction-interval` | | Compaction interval override |
-| `--tiering-interval` | | Tiering interval override |
-| `--cache-max-mb` | | Cache max size override |
-| `--log-level` | | Log level override |
+When `--config` is not given, the first file found wins:
 
----
+1. `LYNXDB_CONFIG`
+2. `./lynxdb.yaml`
+3. `$XDG_CONFIG_HOME/lynxdb/config.yaml`, or `~/.config/lynxdb/config.yaml`
+4. `~/.lynxdb/config.yaml`
+5. `/etc/lynxdb/config.yaml`
+
+With no file, built-in defaults apply. The commands that write a file (`init`, `set`, `edit`, `reset`) use `--config`, or else `$XDG_CONFIG_HOME/lynxdb/config.yaml` (`~/.config/lynxdb/config.yaml`).
+
+Settings resolve in this order, highest first: `lynxdb server` flags, `LYNXDB_*` environment variables, the config file, defaults. [Configuration](../configuration/overview.md) lists every key and [Environment variables](../configuration/environment-variables.md) their variable names.
+
+## Override flags
+
+`config` and `config validate` accept these flags to preview what the same `lynxdb server` flags would change:
+
+| Flag | Overrides |
+|------|-----------|
+| `--addr` | `listen` |
+| `--data-dir` | `data_dir` |
+| `--s3-bucket` | `storage.s3_bucket` |
+| `--s3-region` | `storage.s3_region` |
+| `--s3-prefix` | `storage.s3_prefix` |
+| `--compaction-interval` | `storage.compaction_interval` |
+| `--tiering-interval` | `storage.tiering_interval` |
+| `--cache-max-mb` | `storage.cache_max_bytes` |
+| `--log-level` | `log_level` |
+
+```bash
+lynxdb config --data-dir /var/lib/lynxdb --log-level debug
+```
 
 ## config init
-
-Create a default config file with all documented settings.
 
 ```
 lynxdb config init [--system]
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--system` | `false` | Write to `/etc/lynxdb/config.yaml` instead of user directory |
-
-```bash
-# Create user config
-lynxdb config init
-
-# Create system-wide config
-lynxdb config init --system
-```
-
----
+Writes a commented template with every setting and its default. `--system` writes `/etc/lynxdb/config.yaml`. The command refuses to overwrite an existing file.
 
 ## config validate
-
-Validate config file and show non-default values. Warns on unknown keys.
 
 ```
 lynxdb config validate
 ```
 
----
-
-## config reload
-
-Send SIGHUP to a running server to reload its configuration. The server writes a PID file so this command can find it automatically.
-
-```
-lynxdb config reload
-```
-
-**Hot-reloadable settings** (no restart required):
-
-- `log_level`
-- `retention`
-- most `query.*` execution settings
-- `ingest.mode`, `ingest.max_batch_size`, and `ingest.max_line_bytes`
-- `tail.*`
-- `http.idle_timeout`, `http.shutdown_timeout`, and `http.read_header_timeout`
-- `storage.compaction_rate_limit_mb`
-
-**Settings that require a restart** (server warns on reload):
-
-- `listen`
-- `data_dir`
-- `tls.*`
-- `auth.*`
-- `no_ui`
-- `http.rate_limit`
-- `ingest.max_body_size` and ingest-engine settings such as dedup/fsync
-- `query.global_query_pool_bytes`, `query.spill_dir`, and `query.max_temp_dir_size_bytes`
-- storage scheduler settings such as `storage.compaction_workers`
-
----
+Loads and validates the config file, warns about unknown keys, and lists the values that differ from the defaults.
 
 ## config get
-
-Show a single config value. Tab-completes known config keys.
 
 ```
 lynxdb config get <key>
 ```
 
+Prints one value and its origin. Keys tab-complete.
+
 ```bash
 lynxdb config get retention
 lynxdb config get storage.compression
+lynxdb config get listen --format json
 ```
 
----
-
 ## config set
-
-Set a config value in the config file.
 
 ```
 lynxdb config set <key> <value> [--dry-run]
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--dry-run` | `false` | Show what would change without applying |
+Writes one value to the config file. `--dry-run` shows the current and the new value without writing.
 
 ```bash
 lynxdb config set retention 30d
 lynxdb config set storage.compression zstd
-lynxdb config set retention 1d --dry-run
+lynxdb config set log_level debug --dry-run
 ```
 
----
+A running server picks the change up on [`config reload`](#config-reload).
 
 ## config edit
-
-Open config file in `$EDITOR`. Creates the file with defaults if it does not exist.
 
 ```
 lynxdb config edit
 ```
 
----
+Opens the config file in `$EDITOR` (or `$VISUAL`), creating it from the template first when it does not exist.
 
 ## config path
-
-Print the resolved config file path.
 
 ```
 lynxdb config path
 ```
 
----
+Prints the path `init`, `set`, `edit` and `reset` write to.
 
 ## config reset
-
-Reset config file to defaults (with confirmation).
 
 ```
 lynxdb config reset [--dry-run]
 ```
 
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--dry-run` | `false` | Show what would be reset without applying |
+Overwrites the config file with the default template after you type `reset` to confirm. `--dry-run` shows what would be reset.
 
----
+## config reload
+
+```
+lynxdb config reload
+```
+
+Sends `SIGHUP` to the running server. The CLI finds the server's PID in `<data_dir>/lynxdb.pid`, so it reads the same config to locate the data directory. [server](./server.md#what-a-reload-changes) lists the settings a reload applies.
 
 ## config add-profile
-
-Add or update a connection profile for quick server switching.
 
 ```
 lynxdb config add-profile <name> --url <url> [--token <token>]
 ```
 
+A connection profile stores a server URL and an optional API key in the config file, under `profiles`. Running it again with the same name updates the profile.
+
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--url` | (required) | Server URL for the profile |
-| `--token` | | Authentication token (optional) |
+| `--url` | required | Server URL |
+| `--token` | | API key |
 
 ```bash
-# Add a production profile
-lynxdb config add-profile prod --url https://lynxdb.company.com --token xxx
-
-# Add a staging profile without auth
-lynxdb config add-profile staging --url https://staging.company.com
+lynxdb config add-profile prod --url https://logs.example.com --token "$PROD_KEY"
+lynxdb config add-profile staging --url https://staging-logs.example.com
 ```
 
-Use profiles with the global `--profile` / `-p` flag:
+Select a profile with `--profile` (`-p`), `LYNXDB_PROFILE` or `profile:` in `.lynxdbrc`. `--server` takes precedence over the profile's URL.
 
 ```bash
-lynxdb query 'from main level=error | stats count()' --profile prod
-lynxdb query 'from main level=error | stats count()' -p staging
+lynxdb query 'source=main level=ERROR | stats count() by host' --profile prod
+lynxdb status -p staging
+LYNXDB_PROFILE=prod lynxdb tail 'source=main level=ERROR'
 ```
-
-Or set a default profile via environment variable:
-
-```bash
-export LYNXDB_PROFILE=prod
-lynxdb query 'from main level=error | stats count()'
-```
-
----
 
 ## config list-profiles
-
-List all connection profiles.
 
 ```
 lynxdb config list-profiles
 ```
 
----
+Lists profiles with their URL and whether they hold a key.
 
 ## config remove-profile
-
-Remove a connection profile.
 
 ```
 lynxdb config remove-profile <name>
 ```
 
----
+## See also
 
-## Configuration Precedence
-
-Settings are resolved in this order (highest to lowest priority):
-
-1. CLI flags (`--addr`, `--data-dir`, etc.)
-2. Environment variables (`LYNXDB_LISTEN`, `LYNXDB_DATA_DIR`, etc.)
-3. Project file (`.lynxdbrc` in current or parent directory)
-4. Config file (YAML)
-5. Compiled defaults
-
-### Config File Search Order
-
-When `--config` is not specified:
-
-1. `LYNXDB_CONFIG` environment variable
-2. `./lynxdb.yaml` (current directory)
-3. `$XDG_CONFIG_HOME/lynxdb/config.yaml` (or `~/.config/lynxdb/config.yaml`)
-4. `~/.lynxdb/config.yaml`
-5. `/etc/lynxdb/config.yaml`
-
-The first file found is used. If none exist, compiled defaults apply.
-
-### Project File (`.lynxdbrc`)
-
-A `.lynxdbrc` YAML file in the current or any parent directory can set per-project defaults:
-
-```yaml
-server: https://staging.company.com
-default_format: table
-default_since: 6h
-default_source: web
-profile: staging
-```
-
-These are applied as defaults and are overridden by explicit CLI flags.
-
-- `server`, `default_format`, and `profile` affect root CLI defaults
-- `default_since` is applied to `lynxdb query` when `--since` is omitted
-- `default_source` is applied to `lynxdb query`, `lynxdb ingest`, and `lynxdb import` when `--source` is omitted
-
-### Example Config File
-
-```yaml
-listen: "localhost:3100"
-data_dir: "/var/lib/lynxdb"
-retention: "7d"
-log_level: "info"
-
-storage:
-  compression: "lz4"
-  row_group_size: 65536
-  flush_threshold: "512mb"
-  compaction_interval: "30s"
-  compaction_workers: 2
-  s3_bucket: ""
-  s3_region: "us-east-1"
-  cache_max_bytes: "1gb"
-  cache_ttl: "5m"
-
-query:
-  sync_timeout: "30s"
-  max_query_runtime: "5m"
-  max_concurrent: 32
-  default_result_limit: 1000
-  max_result_limit: 50000
-
-ingest:
-  max_body_size: "100mb"
-  max_batch_size: 1000
-
-http:
-  idle_timeout: "2m"
-  shutdown_timeout: "30s"
-```
-
----
-
-## doctor
-
-Run environment diagnostics. Checks binary, config, data directory, server connectivity, disk space, retention, and shell completion.
-
-```
-lynxdb doctor
-```
-
-Supports `--format json`.
-
-### Console Output
-
-```
-  ok Binary        v0.1.0 (linux/amd64, go1.26.3)
-  ok Config        /home/user/.config/lynxdb/config.yaml (valid)
-  ok Data dir      /var/lib/lynxdb (42 GB free)
-  ok Server        localhost:3100 (healthy, uptime 2d 5h)
-  ok Events        3.4M total
-  ok Storage       1.2 GB
-  ok Retention     7d
-  ok Completion    zsh detected
-
-  All checks passed.
-```
-
-## See Also
-
-- [Server](/docs/cli/server) for running the server and signal handling
-- [CLI Overview](/docs/cli/overview) for global flags and environment variables
-- [Shell Completion](/docs/cli/completion) for setting up tab completion
+- [CLI overview](./overview.md#connection-settings) for `.lynxdbrc` and connection precedence
+- [Configuration](../configuration/overview.md)
+- [server](./server.md)

@@ -1,236 +1,194 @@
 ---
 sidebar_position: 1
 title: Development Setup
-description: Clone, build, test, and run LynxDB from source. Go version requirements, make targets, and development workflow.
+description: Clone, build, test, and run LynxDB from source. Toolchain, make targets, and development workflow.
 ---
 
 # Development Setup
 
-This guide covers everything you need to build, test, and run LynxDB from source.
+This page covers building, testing, and running LynxDB from source.
 
 ## Prerequisites
 
-| Requirement | Minimum Version | Check |
-|------------|----------------|-------|
-| **Go** | 1.26.3+ | `go version` |
+| Requirement | Version | Check |
+|------------|---------|-------|
+| **Go** | 1.26.3 (pinned in `mise.toml`) | `go version` |
 | **Git** | 2.x | `git --version` |
 | **Make** | 3.x | `make --version` |
+| **Docker** | Optional: shipper, conformance and chaos tests | `docker version` |
 
-LynxDB has no other external dependencies. No JVM, no C libraries, no protobuf compiler. The Go toolchain is all you need.
+`mise.toml` pins every tool the project uses (Go, golangci-lint, goreleaser, Node for the docs site). With [mise](https://mise.jdx.dev) installed, `mise install` sets them up, and `mise x -- <command>` runs a command with them.
+
+LynxDB needs no C libraries and no JVM. The protobuf code in `pkg/cluster/rpc/proto` is checked in, so building does not need `protoc`.
 
 ## Clone and Build
 
 ```bash
-# Clone the repository
 git clone https://github.com/lynxbase/lynxdb.git
 cd lynxdb
 
-# Build the binary
+# Build the binary with version metadata (output: ./lynxdb)
+make build
+
+# Or a plain build
 go build -o lynxdb ./cmd/lynxdb/
 
-# Verify it works
 ./lynxdb version
 ```
 
-The built binary is a static executable with no runtime dependencies. You can copy it to any machine with the same OS/architecture and run it.
+The binary is a static executable; copy it to any machine with the same OS and architecture.
 
 ## Make Targets
 
-The project includes a Makefile with common development tasks:
+```bash
+make build             # Build ./lynxdb with version, commit and date
+make test              # Unit + e2e + CLI tests
+make test-unit         # go test ./... with the race detector
+make test-e2e          # Server tests over the REST API (e2e build tag)
+make test-cli          # Build, then run test/cli against the binary (clitest build tag)
+make test-compat       # Shipper compatibility tests (Filebeat, Fluent Bit, Vector, OTel Collector, HEC); needs Docker
+make test-conformance  # Full shipper conformance matrix; needs Docker
+make bench-micro       # Micro benchmarks for pipeline, VM and ingest; writes artifacts/bench-micro.txt
+make bench-fixtures    # Generate benchmark fixtures (scripts/genbench)
+make vet               # go vet ./...
+make docs-gen          # Regenerate the PPL reference pages from the catalogs
+make clean             # Remove build artifacts
+```
+
+Lint with the pinned golangci-lint and `.golangci.yml`:
 
 ```bash
-# Build the binary (output: ./lynxdb)
-make build
-
-# Run the main test suite (unit + e2e + cli)
-make test
-
-# Run only unit tests (includes the race detector)
-make test-unit
-
-# Run end-to-end tests (starts a server)
-make test-e2e
-
-# Run CLI tests against the built binary
-make test-cli
-
-# Run shipper compatibility tests (Filebeat, Fluent Bit, Vector, ...)
-make test-compat
-
-# Run micro benchmarks
-make bench-micro
-
-# Run macro benchmarks against the built binary
-make bench-macro
-
-# Run the linter (golangci-lint)
-make lint
-
-# Run go vet
-make vet
-
-# Regenerate the LynxFlow language reference docs from the registry
-make docs-gen
-
-# Clean build artifacts
-make clean
+golangci-lint run ./...
 ```
 
 ## Running Locally
 
-### Pipe Mode (No Server)
+### Pipe and File Mode (No Server)
 
-The fastest way to test changes -- query local files or stdin:
+The fastest way to try a change is to query a file or stdin; the query runs in process:
 
 ```bash
-# Build and run a query against a log file
-go run ./cmd/lynxdb/ query --file /var/log/syslog 'stats count() by level'
+go run ./cmd/lynxdb/ query --file testdata/logs/access.log 'source=main | stats count() by level'
 
-# Pipe data through
-echo '{"level":"error","msg":"test"}' | go run ./cmd/lynxdb/ query 'stats count() by level'
+echo '{"level":"error","msg":"test"}' | go run ./cmd/lynxdb/ query 'source=main | stats count() by level'
+```
+
+Input is loaded into the index `main`. `--explain` prints the logical plan, the optimized plan and the optimizer rules without running the query:
+
+```bash
+go run ./cmd/lynxdb/ query --explain 'source=main level=ERROR | stats count() by host'
 ```
 
 ### Server Mode
 
-Start a local server with an in-memory data directory (data lost on exit):
+Start a server that keeps its data in memory (lost on exit):
 
 ```bash
-# Start the server (foreground)
-go run ./cmd/lynxdb/ server
+go run ./cmd/lynxdb/ server --data-dir ""
 
-# In another terminal: ingest data
-./lynxdb ingest testdata/sample.log
-
-# Query
-./lynxdb query 'from main level=error | stats count()'
+# In another terminal: ingest and query
+./lynxdb ingest testdata/logs/access.log
+./lynxdb query 'source=main level=ERROR | stats count() by host'
 ```
 
-Start with a persistent data directory:
+Without `--data-dir`, the server uses the configured data directory (default `~/.local/share/lynxdb`). For a separate development directory:
 
 ```bash
-# Create a temp directory for development
 mkdir -p /tmp/lynxdb-dev
-
-# Start with persistence
 go run ./cmd/lynxdb/ server --data-dir /tmp/lynxdb-dev --log-level debug
 ```
 
-### Demo Mode
-
-Run the built-in demo to generate realistic log data:
-
-```bash
-# Terminal 1: Start the demo (generates 200 events/sec from 4 sources)
-go run ./cmd/lynxdb/ demo
-
-# Terminal 2: Query the demo data
-./lynxdb query 'from main _source=nginx | stats count() by status'
-./lynxdb query 'from main level=error | every 1m stats count()'
-```
+`testdata/logs/` holds sample logs (`access.log`, `nginx_access.log`, `OpenSSH_2k.log`, `mixed_json.log`, and others) for manual testing.
 
 ## Running Tests
 
-### Unit Tests
+Tests read testdata with paths relative to the package directory, so run `go test` from the repository root with package paths.
 
-Unit tests are fast and do not require a running server:
+### Unit Tests
 
 ```bash
 # All unit tests
 go test ./...
 
-# A specific package
+# One package tree
+go test ./pkg/ppl/...
+go test ./pkg/ir/...
 go test ./pkg/storage/segment/...
-go test ./pkg/lynxflow/...
-go test ./pkg/vm/...
 
-# With verbose output
-go test -v ./pkg/lynxflow/parser/...
-
-# A specific test function
-go test -v -run TestRFC002Examples ./pkg/lynxflow/parser/...
+# One test
+go test -v -run TestCompileGolden ./pkg/ppl/
 ```
 
-### With Race Detector
+### Golden Files
 
-Always run tests with the race detector during development:
+The PPL compiler and the query corpus compare against golden files:
+
+- `pkg/ppl/testdata/compile/` -- compiled plans and errors for PPL queries (`TestCompileGolden`, `TestCompileErrors`)
+- `pkg/query/testdata/corpus_plans.sum` -- optimized plans of the query corpus (`TestCorpusPlansGolden`)
+
+After an intended plan change, rewrite them with `-update` and review the diff:
+
+```bash
+go test ./pkg/ppl/ -run TestCompileGolden -update
+go test ./pkg/query/ -run TestCorpusPlansGolden -update
+```
+
+### Generated Reference Pages
+
+`docs/site/docs/ppl/commands.md`, `functions.md` and `aggregations.md` are generated from the catalogs in `pkg/ppl` and the IR function registry. After changing a catalog entry, regenerate them:
+
+```bash
+go run ./internal/docgen   # or: make docs-gen
+```
+
+`TestGeneratedPagesAreCurrent` in `internal/docgen` fails when the committed pages differ from the catalogs.
+
+### Race Detector
 
 ```bash
 go test -race ./...
 ```
 
-### End-to-End Tests
-
-E2E tests start a real server and exercise the REST API end to end:
+### End-to-End and CLI Tests
 
 ```bash
-make test-e2e
+make test-e2e   # starts servers and exercises the REST API
+make test-cli   # runs the built binary as a subprocess: output, exit codes, goldens
 ```
 
-### CLI Tests
-
-CLI tests invoke the built `lynxdb` binary as a subprocess and verify output, exit codes, and golden files:
+### Cluster, Regression, Chaos
 
 ```bash
-make test-cli
+go test -tags integration ./test/integration/...   # cluster tests
+go test ./test/regression/...                      # query correctness regressions
 ```
 
-### Integration Tests
-
-Cluster and Sigma-compatibility integration tests:
-
-```bash
-go test ./test/integration/...
-```
-
-### Regression Tests
-
-Regression tests verify that specific bug fixes remain in place:
-
-```bash
-go test ./test/regression/...
-```
+`test/chaos` runs Docker-based fault injection; `test/simulation` runs property-based simulations of cluster nodes, the network and S3.
 
 ## Benchmarks
 
-Run performance benchmarks:
-
 ```bash
-# All benchmarks
-go test -bench=. -benchmem ./...
+# Micro benchmarks (pipeline, VM, ingest)
+make bench-micro
 
-# VM benchmarks (expression evaluation)
+# One package
 go test -bench=. -benchmem ./pkg/vm/...
-
-# Storage benchmarks (segment read/write)
 go test -bench=. -benchmem ./pkg/storage/segment/...
-
-# Pipeline benchmarks (query execution)
 go test -bench=. -benchmem ./pkg/engine/pipeline/...
 ```
 
-Run the built-in benchmark command (ingest + query throughput):
-
-```bash
-./lynxdb bench --events 100000
-./lynxdb bench --events 1000000
-```
+The columnar store's JSONBench suite and its results are described in `BENCHMARKS.md` at the repository root.
 
 ## IDE Setup
 
 ### VS Code
 
-Recommended extensions:
-
-- **Go** (`golang.go`) -- language support, debugging, testing
-- **Go Test Explorer** -- test discovery in the sidebar
-
-Recommended `settings.json`:
+- **Go** (`golang.go`) for language support, debugging and tests.
 
 ```json
 {
   "go.testFlags": ["-race", "-count=1"],
   "go.lintTool": "golangci-lint",
-  "go.lintFlags": ["--fast"],
   "editor.formatOnSave": true,
   "[go]": {
     "editor.defaultFormatter": "golang.go"
@@ -240,34 +198,25 @@ Recommended `settings.json`:
 
 ### GoLand / IntelliJ
 
-- Open the project root directory (the one containing `go.mod`).
-- Go settings are auto-detected from `go.mod`.
-- Enable the race detector in run configurations: add `-race` to "Go tool arguments".
+- Open the repository root (the directory with `go.mod`).
+- Add `-race` to "Go tool arguments" in run configurations.
 
 ## Development Workflow
 
-A typical development cycle:
-
-1. **Create a branch**: `git checkout -b feature/my-change`
-2. **Make changes**: Edit code in `pkg/`, `cmd/`, or `internal/`.
-3. **Run unit tests**: `go test ./pkg/path/to/changed/package/...`
-4. **Run the linter**: `make lint`
-5. **Run the full test suite**: `make test`
-6. **Test manually**: Run `lynxdb demo` or `lynxdb server` and verify behavior.
-7. **Commit and push**: Follow the [coding guidelines](/docs/contributing/coding-guidelines).
+1. **Create a branch** off `main`: `git checkout -b feat/my-change` (see [Coding Guidelines](/docs/contributing/coding-guidelines#branches-and-commits)).
+2. **Change code** in `pkg/`, `cmd/` or `internal/`.
+3. **Run the package tests**: `go test ./pkg/path/to/package/...`
+4. **Update goldens and generated pages** if plans or catalogs changed.
+5. **Lint**: `go vet ./...` and `golangci-lint run ./...`
+6. **Run the suite**: `make test`
+7. **Try it**: `lynxdb query --file ...` or `lynxdb server`.
+8. **Commit** small, single-purpose commits and open a pull request.
 
 ## Cross-Compilation
 
-Build for a different OS/architecture:
-
 ```bash
-# Linux AMD64
 GOOS=linux GOARCH=amd64 go build -o lynxdb-linux-amd64 ./cmd/lynxdb/
-
-# Linux ARM64
 GOOS=linux GOARCH=arm64 go build -o lynxdb-linux-arm64 ./cmd/lynxdb/
-
-# macOS ARM64 (Apple Silicon)
 GOOS=darwin GOARCH=arm64 go build -o lynxdb-darwin-arm64 ./cmd/lynxdb/
 ```
 

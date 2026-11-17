@@ -1,236 +1,121 @@
 ---
 sidebar_position: 5
 title: Indexing
-description: Full-text search indexing in LynxDB -- FST-based inverted indexes, roaring bitmap posting lists, bloom filters, and how search queries use the index.
+description: How LynxDB skips data -- per-segment term indexes (FST + roaring bitmaps), per-row-group bloom filters, column statistics and time bounds, and how a query's storage hints use them.
 ---
 
 # Indexing
 
-LynxDB provides full-text search through two index structures embedded in every segment: bloom filters for fast segment-level skipping, and FST-based inverted indexes with roaring bitmap posting lists for row-level precision. Together, they enable sub-millisecond search across millions of events without brute-force scanning.
+Every `.lsg` segment carries the structures the server uses to avoid reading data a query does not need:
 
-## Index Architecture
+| Structure | Granularity | Built from | Answers |
+|-----------|-------------|-----------|---------|
+| Time range | Segment and row group | `_time` | Can any event fall inside the query's time bounds? |
+| Bloom filters | Row group, per string column | Tokens of `_raw`, `_source`, `_sourcetype`, `host`, `index` and every string field | Can this row group contain a token? |
+| Term index (FST + roaring bitmaps) | Segment | Tokens of `_raw` | Which rows contain a token? |
+| Column statistics | Segment and row group | Min/max, counts, constant columns | Can a column hold a value? |
+| Range bitmaps (format 2) | Row group, selected numeric columns | Column values | Which rows have a value in a range? |
+
+A query reaches these structures through the **storage hints** the planner derives from the optimized plan (see [Query Engine](/docs/architecture/query-engine#planner-and-storage-hints)). The predicates stay in the plan's `Filter` above the scan, so index lookups only narrow the rows read; every row the scan returns is still checked by the filter.
+
+## From Query to Hints
+
+The optimizer's `prune-scan` rule copies the indexable conjuncts of the `Filter` directly above a `Scan` into the scan's pruning predicates, and `time-range-to-scan` narrows the scan's time range. `physical.ScanHints` (`pkg/engine/physical/source.go`) then turns them into hints:
+
+| Query | Pruning predicate | Hint |
+|-------|-------------------|------|
+| `source=main timeout` | word search on `_raw` | `SearchTerms: [timeout]` |
+| `source=main "connection refused"` | phrase search on `_raw` | `SearchTerms: [connection, refused]` |
+| `source=main timeout OR refused` | disjunction of words | `SearchTermTree: AND(OR(timeout, refused))` |
+| `source=main time*` | prefix search | `TokenGlobs: [time*]` |
+| `source=main host=web-01` | `host = "web-01"` | `FieldPredicates: host = web-01` |
+| `source=main earliest=-1h` | scan time range | `TimeBounds` resolved against the current time |
+| `... \| fields host, status` | columns read | `RequiredCols` |
+
+Search text is split into tokens the same way the index splits `_raw`: maximal runs of letters and digits, lower-cased. A phrase therefore becomes an AND of its tokens at the index level, and the filter checks the exact phrase afterwards.
+
+What does not become a hint: comparisons other than string equality (`status>=500`, `status=500` with a number), searches on a named field with wildcards (`host=web-*`), regular expressions, `LIKE`, and predicates after a `stats`, `eval` of the compared field, or any other operator between the filter and the scan. These run as row filters over the rows the scan returns. A plan with several scans (`join`, `append`, `multisearch`, subsearches) keeps only the union of their sources and time ranges.
+
+`lynxdb query --explain` shows the pruning predicates on the `Scan` line:
 
 ```
-Query: from main "connection refused"
-                    │
-                    ▼
-    ┌───────────────────────────────┐
-    │      Bloom Filter Check       │
-    │  (per-segment, ~100ns)        │
-    │                               │
-    │  seg_001: "connection" → YES  │
-    │  seg_002: "connection" → NO   │  ← skip entirely
-    │  seg_003: "connection" → YES  │
-    └───────────────┬───────────────┘
-                    │ (segments that pass)
-                    ▼
-    ┌───────────────────────────────┐
-    │    Inverted Index Lookup      │
-    │  (per-segment, ~1-10us)       │
-    │                               │
-    │  FST: "connection" → offset   │
-    │  FST: "refused" → offset      │
-    │                               │
-    │  Roaring bitmap intersection: │
-    │  events(connection) ∩         │
-    │  events(refused)              │
-    │  = {12, 847, 1203, 5891}     │
-    └───────────────┬───────────────┘
-                    │ (matching event IDs)
-                    ▼
-    ┌───────────────────────────────┐
-    │      Column Data Read         │
-    │  (only matching rows)         │
-    │                               │
-    │  Read _raw[12], _raw[847],   │
-    │  _raw[1203], _raw[5891]      │
-    └───────────────────────────────┘
+Scan(main) time=[now-1h, +inf) columns=[_raw, _time, host, status] prune=SEARCH_WORD(_raw, "timeout") OR SEARCH_WORD(_raw, "refused") prune=host = "web-01"
 ```
+
+for
+
+```
+source=main earliest=-1h timeout OR refused host=web-01 status>=500 | fields host, status | head 20
+```
+
+## How the Server Applies Hints
+
+`pkg/server/store.go` and `pkg/engine/pipeline/segment_stream.go` apply the hints in this order.
+
+### 1. Segment Selection
+
+`shouldSkipSegment` drops a segment before it is opened for reading when:
+
+- its index is outside the query's source scope
+- its `[min_time, max_time]` does not overlap the time bounds
+- its column min/max excludes a string equality predicate (`host = "web-01"` when the segment's `host` range is `api-01`..`api-02`)
+- its bloom filter (the union of its row groups' `_raw` blooms) lacks one of the `SearchTerms`
+
+The remaining segments are read newest first, after the events still buffered in the ingest batcher.
+
+### 2. Term Index Lookup
+
+For each remaining segment, `SegmentStreamIterator` resolves the search hints against the segment's term index:
+
+- `SearchTermTree` is evaluated as bitmap algebra (AND of OR groups); otherwise each term in `SearchTerms` is looked up and the posting lists intersected.
+- Each `TokenGlobs` pattern is expanded against the FST term dictionary (up to 4096 terms) and the union of the matching posting lists is intersected in. A pattern that expands to more terms is ignored for pruning.
+
+An empty result skips the segment. A bitmap that covers more than `query.bitmap_selectivity_threshold` of the segment's rows (default 0.9) is dropped, because a sequential read of the needed columns is cheaper than reading row by row.
+
+```
+source=main "connection refused"
+
+FST lookup "connection" → {0, 5, 12, 33, 847, 1203, 5891}
+FST lookup "refused"    → {12, 847, 1203, 5891, 7002}
+intersection            → {12, 847, 1203, 5891}   rows to read
+```
+
+### 3. Row Group Filtering
+
+Segments are stored in row groups (`storage.row_group_size`, default 65536 rows). Before a row group is read, it is skipped when:
+
+- its time range is outside the time bounds
+- the `_raw` bloom filter of the row group lacks a search term
+- for an equality predicate: the column is constant with another value, absent from the row group, outside the row group's min/max, or its bloom filter lacks the value's tokens
+
+### 4. Reading Rows
+
+The row group is read with the term-index bitmap, the field predicates and the required columns: only the listed columns are decoded, and only rows in the bitmap that satisfy the field predicates become events. Events on the edge of the time bounds are filtered by time. The rows then flow into the `Filter` above the scan, which evaluates the full condition.
+
+`--analyze` reports each step: segments skipped by index, time, column statistics and bloom filter, rows scanned, and the bitmap hits.
 
 ## Bloom Filters
 
-Every v1 segment contains per-row-group bloom regions that record searchable terms. Bloom filters are probabilistic: they can tell you "definitely not present" (no false negatives) or "possibly present" (with a configurable false positive rate).
+The segment writer builds one bloom filter per row group for each string column, from the tokens of the column's values, with a 1% false-positive rate (`github.com/bits-and-blooms/bloom/v3`). Columns that hold one value in a row group are stored as constants and get no bloom filter. Blooms live in the `LSBL` region of the segment and are loaded on demand per row group; the union of a segment's `_raw` blooms is loaded once when the segment is opened.
 
-### Construction
+A bloom filter answers "definitely absent" or "possibly present". A token absent from every row group of a segment skips the segment without reading its columns.
 
-During segment flush, the segment writer:
+## Term Index
 
-1. Tokenizes the `_raw` column of every event (splitting on whitespace, punctuation, and common delimiters).
-2. Inserts each unique token into a bloom filter sized for the expected number of unique terms.
-3. Serializes the bloom filter to the segment file between the column data and the inverted index.
+The term index maps each token of `_raw` to the rows of the segment that contain it:
 
-The bloom filter is implemented using `github.com/bits-and-blooms/bloom/v3`.
+- **Term dictionary**: a finite state transducer (`github.com/blevesearch/vellum`) maps each token to the offset of its posting list. Exact lookups cost O(token length); prefix and glob patterns are answered by iterating the FST.
+- **Posting lists**: roaring bitmaps (`github.com/RoaringBitmap/roaring`) of row numbers. Roaring stores each 65536-row block as a sorted array, a bitmap or runs, whichever is smallest, and intersects and unions them block by block.
 
-### Query-Time Usage
+The index is built when a segment is written: every event's `_raw` is tokenized, each token's rows are collected into a bitmap, the sorted tokens are inserted into the FST, and both are written to the `LSIX` region. Compaction rebuilds the index for the merged segment.
 
-When the query optimizer detects search terms in the query (e.g., `from main "connection refused"` or `where contains(_raw, "timeout")`), it extracts the literal strings and checks them against each segment's bloom filter before scanning:
+## Range Bitmaps
 
-```
-for each segment:
-    for each search term:
-        if bloom_filter.Test(term) == false:
-            skip this segment entirely
-            break
-    if not skipped:
-        scan this segment
-```
-
-For selective queries where the search term appears in a small fraction of segments, bloom filter skipping eliminates 80-95% of segment reads. This is the single biggest optimization for full-text search.
-
-### Caching
-
-The bloom filter is loaded once when the segment is opened and cached on the `segmentHandle` struct. It is never re-read from disk. The in-memory size of a bloom filter is typically 1-10 KB per segment, so caching all bloom filters for thousands of segments costs only a few MB.
-
-### Parameters
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| False positive rate | 1% | Higher rate = smaller filter, more false scans |
-| Bit array size | Auto-scaled | Based on estimated unique terms per segment |
-| Hash function count | Optimal | Calculated from bit array size and expected terms |
-
-## FST-Based Inverted Index
-
-The inverted index maps terms to the specific event indices within a segment that contain each term. It uses a Finite State Transducer (FST) as the term dictionary and roaring bitmaps as posting lists.
-
-### Finite State Transducer (FST)
-
-The FST is a compact automaton that maps byte strings (terms) to integer values (offsets into the posting list section). Built with `github.com/blevesearch/vellum`, it provides:
-
-- **Exact lookup**: Given a term, retrieve its posting list offset in O(term length) time.
-- **Prefix iteration**: Iterate all terms matching a prefix (e.g., all terms starting with `error`).
-- **Fuzzy matching**: Find terms within a given edit distance (for typo-tolerant search).
-- **Compression**: An FST shares common prefixes and suffixes between terms. For log data with many repeated field names and values, an FST is 5-10x smaller than a hash map.
-
-### Roaring Bitmap Posting Lists
-
-Each term in the FST points to a roaring bitmap that records which event indices (row numbers within the segment) contain that term. Roaring bitmaps (`github.com/RoaringBitmap/roaring`) are compressed sorted integer sets optimized for set operations:
-
-- **Containers**: Values are split into 65536-element containers. Each container uses the best representation for its density:
-  - **Array container**: For sparse sets (< 4096 elements), a sorted array of uint16.
-  - **Bitmap container**: For dense sets, a 8 KB bitmap.
-  - **Run container**: For contiguous ranges, a run-length encoding.
-- **Set operations**: AND (intersection), OR (union), and NOT (complement) are implemented with container-level specialization and operate at memory bandwidth speed.
-- **Compression**: Typically 10-50x smaller than an uncompressed bitmap for log data posting lists.
-
-### Boolean Query Resolution
-
-For multi-term queries, the inverted index resolves boolean operations using bitmap algebra:
-
-```
-Query: from main "connection" "refused"
-
-1. FST lookup "connection" → posting list A = {0, 5, 12, 33, 847, 1203, 5891}
-2. FST lookup "refused"    → posting list B = {12, 847, 1203, 5891, 7002}
-3. A ∩ B (AND)             → result = {12, 847, 1203, 5891}
-
-Query: from main "error" "warning"
-
-1. FST lookup "error"   → posting list A = {1, 2, 5, 9, 12}
-2. FST lookup "warning" → posting list B = {3, 7, 14, 20}
-3. A ∪ B (OR)           → result = {1, 2, 3, 5, 7, 9, 12, 14, 20}
-
-Query: from main "error" "timeout" (as "error AND NOT timeout")
-
-1. FST lookup "error"   → posting list A = {1, 2, 5, 9, 12}
-2. FST lookup "timeout" → posting list B = {2, 9}
-3. A \ B (AND NOT)      → result = {1, 5, 12}
-```
-
-Roaring bitmap operations are extremely fast -- intersecting two posting lists with millions of entries takes microseconds.
-
-### Index Construction
-
-During segment flush:
-
-1. **Tokenization**: Each event's `_raw` field is tokenized into terms. The tokenizer splits on whitespace and punctuation, lowercases terms, and deduplicates.
-2. **Dictionary building**: Unique terms are collected and sorted lexicographically.
-3. **Posting list construction**: For each term, a roaring bitmap is built recording the event indices where the term appears.
-4. **FST construction**: The sorted terms are inserted into an FST builder, which produces a compact automaton.
-5. **Serialization**: The FST bytes and the serialized posting lists are written to the segment file.
-
-### Index Size
-
-The inverted index typically adds 10-20% to the segment file size. For a 500 MB segment with 1M events:
-
-| Component | Typical Size |
-|-----------|-------------|
-| FST | 2-5 MB |
-| Posting lists (roaring bitmaps) | 10-50 MB |
-| Bloom filter | 100 KB - 1 MB |
-| **Total index overhead** | **~15% of segment size** |
-
-The overhead is well worth it: indexed full-text search can be 100-1000x faster than brute-force scanning for selective queries.
-
-## How the Optimizer Uses Indexes
-
-The query optimizer integrates index usage across multiple rules:
-
-### 1. Time Range Pruning
-
-The segment header contains `min_timestamp` and `max_timestamp`. Queries with time bounds skip segments entirely:
-
-```lynxflow
-from main level=error | where _time >= "2026-01-15" and _time < "2026-01-16"
-```
-
-Any segment whose `max_timestamp < 2026-01-15` or `min_timestamp >= 2026-01-16` is pruned.
-
-### 2. Bloom Filter Pruning
-
-Literal string terms extracted from the query are tested against segment bloom filters:
-
-```lynxflow
-from main "connection refused"
-```
-
-Terms `"connection"` and `"refused"` are tested. Segments where either bloom filter test returns false are skipped.
-
-### 3. Inverted Index Scan
-
-For segments that pass bloom filter checks, the inverted index resolves the exact matching events:
-
-```lynxflow
-from main "connection refused" | where level == "error"
-```
-
-The inverted index resolves `"connection" AND "refused"` to a set of event IDs. The `where level == "error"` filter is then applied only to those events.
-
-### 4. Regex Literal Extraction
-
-When a query uses `parse regex` or `matches` with a regex pattern, the optimizer extracts any literal prefix or substring:
-
-```lynxflow
-| parse regex r"host=(?P<host>\S+)"
-```
-
-The literal `"host="` is extracted and used for bloom filter pruning, even though the full pattern is a regex.
-
-### 5. Combined Pruning
-
-All pruning strategies stack. A typical full-text search query benefits from all of them:
-
-```
-Segments on disk:              1,000
-After time range pruning:        200  (80% pruned)
-After bloom filter pruning:       15  (92.5% of remaining pruned)
-After inverted index:            ~50  events read (from 15 segments)
-```
-
-## Comparison with Other Approaches
-
-| Feature | LynxDB (FST + Roaring) | Lucene (Elasticsearch) | tsidx (Splunk) | Loki (No Index) |
-|---------|------------------------|------------------------|----------------|-----------------|
-| Term lookup | O(term length) | O(term length) | O(1) hash | N/A (grep) |
-| Prefix search | Native FST iteration | Automaton intersection | Not supported | N/A |
-| Fuzzy search | Levenshtein automaton | Levenshtein automaton | Not supported | N/A |
-| Posting list compression | Roaring bitmaps | Frame of Reference + bitmaps | Compressed bitmaps | N/A |
-| Memory footprint | Mmap (OS managed) | Heap (JVM managed) | Mmap | None |
-| Index build speed | Single-pass | Multi-pass merge | Single-pass | None |
+Format 2 segments can carry bit-sliced range bitmaps (Range BSI) for selected numeric columns, per row group, in a section the footer points to. The row group filter evaluates range predicates (`>`, `>=`, `<`, `<=`) on those columns with them. PPL plans produce only equality hints, so range comparisons in a query run as row filters and do not consult these bitmaps. `storage.compaction_disable_bsi_on_output` stops compaction from writing them.
 
 ## Related
 
-- [Segment Format](/docs/architecture/segment-format) -- where bloom filters and inverted indexes live in the `.lsg` file
-- [Query Engine](/docs/architecture/query-engine) -- how the optimizer integrates index lookups
-- [Storage Engine](/docs/architecture/storage-engine) -- when indexes are built (during segment flush)
-- [Design Decisions](/docs/architecture/design-decisions) -- why FST + roaring instead of Lucene
+- [Segment Format](/docs/architecture/segment-format) -- where blooms, the term index and statistics live in the `.lsg` file
+- [Query Engine](/docs/architecture/query-engine) -- how hints are derived from the plan
+- [Storage Engine](/docs/architecture/storage-engine) -- when segments and their indexes are written
+- [Performance Tuning](/docs/operations/performance-tuning#query-shape) -- writing queries that skip data

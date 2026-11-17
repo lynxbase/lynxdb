@@ -3,36 +3,24 @@ info:
   title: LynxDB API
   version: 1.0.0
   description: |
-    Splunk-power log analytics in a single binary. Zero dependencies. SPL2-compatible.
+    HTTP API of LynxDB, a columnar log store queried with OpenSearch Piped Processing Language (PPL).
 
-    ## Design Principles
+    Queries start with a source (`source=main ...`) or a source command (`describe main`),
+    followed by `| command` stages: `source=main status>=500 | stats count() as errors by host | sort - errors`.
 
-    1. **One URL — one resource.** `POST /query` does a query. `POST /ingest` ingests.
-    2. **Streaming-first.** Large-data endpoints support NDJSON via `Accept: application/x-ndjson`.
-    3. **Errors are UX.** Every error carries `code`, `message`, and optionally `suggestion` and `docs_url`.
-    4. **Single auth model.** Bearer token. Optional. Off by default.
-    5. **Zero required headers.** `Content-Type` defaults to `application/json`. `curl` just works.
+    ## Envelopes
+
+    Successful JSON responses wrap the payload in `data`, with an optional `meta` object.
+    Errors use `{"error": {"code", "message", "suggestion"}}`; query compile errors add
+    `position` (`line`, `column`) and `expected`.
+
+    Compatibility endpoints (Elasticsearch, Splunk HEC, OTLP) answer in the format of their protocol.
 
     ## Authentication
 
-    Off by default. When enabled via `lynxdb server --auth`:
-
-    ```
-    Authorization: Bearer <token>
-    ```
-
-    ## Response Envelope
-
-    ```json
-    // Success — "data" present, "error" absent
-    {"data": {...}, "meta": {"took_ms": 89}}
-
-    // Error — "error" present, "data" absent
-    {"error": {"code": "INVALID_QUERY", "message": "...", "suggestion": "..."}}
-    ```
-
-    No `"status": "ok"`. HTTP status codes carry that.
-
+    Off by default. When on, every `/api/...` route needs `Authorization: Bearer <token>`,
+    `ApiKey <base64(id:secret)>` or `Basic <base64(user:token)>`. SSE clients may pass `_token`
+    as a query parameter. `/health`, `/metrics` and routes outside `/api/` are not checked by the API key middleware.
   contact:
     name: LynxDB
     url: https://lynxdb.io
@@ -41,184 +29,60 @@ info:
     url: https://www.apache.org/licenses/LICENSE-2.0
 
 servers:
-  - url: http://localhost:3100/api/v1
-    description: Local development
+  - url: http://localhost:3100
+    description: Local server
 
 tags:
-  - name: Ingest
-    description: Send log events into LynxDB
   - name: Query
-    description: Search, aggregate, and analyze logs using SPL2
+    description: Run PPL queries, inspect plans, list the PPL catalog, manage jobs
   - name: Live
-    description: Real-time log streaming and histogram
+    description: Live tail and event histogram
   - name: Schema
-    description: Field discovery and value stats
+    description: Fields and sources from stored data
+  - name: Ingest
+    description: Native ingest endpoints and indexes
   - name: Server
-    description: Health checks and server status
-  - name: Saved Queries
-    description: Persist and reuse SPL2 queries
-  - name: Materialized Views
-    description: Precomputed projections and aggregations for query acceleration
-  - name: Config
-    description: Runtime configuration management
-  - name: Compatibility
-    description: Elasticsearch and OpenTelemetry compatibility endpoints
+    description: Health, metrics, status, cache, configuration and profiling
+  - name: Auth
+    description: API key management (only when authentication is on)
+  - name: Elasticsearch
+    description: Elasticsearch bulk ingest and setup probe stubs
+  - name: Splunk HEC
+    description: Splunk HTTP Event Collector ingest
+  - name: OTLP
+    description: OpenTelemetry log ingest
 
-# SECURITY
 security:
   - BearerAuth: []
+  - ApiKeyAuth: []
+  - BasicAuth: []
   - {}
 
-# PATHS
 paths:
-
-  # INGEST
-
-  /ingest:
-    post:
-      operationId: ingest
-      tags: [Ingest]
-      summary: Ingest events
-      description: |
-        Primary structured ingest endpoint. Accepts only a top-level JSON array of event-envelope objects.
-
-        - Each item must contain `event` plus optional `time`, `source`, `sourcetype`, `host`, `index`, and `fields`.
-        - Use `/ingest/raw` for newline-delimited text or NDJSON.
-        - Use `/es/_bulk` for Elasticsearch bulk payloads.
-      parameters:
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: array
-              items:
-                $ref: '#/components/schemas/StructuredIngestEvent'
-            examples:
-              batch:
-                summary: Batch of events
-                value:
-                  - event: "request started"
-                    source: "api"
-                    fields:
-                      trace_id: "abc123"
-                  - event: "request completed"
-                    source: "api"
-                    fields:
-                      trace_id: "abc123"
-                      duration_ms: 45
-      responses:
-        '200':
-          description: All events accepted
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IngestResponse'
-              example:
-                data:
-                  accepted: 3
-                  failed: 0
-        '207':
-          description: Partial failure — some events accepted, some rejected
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IngestPartialResponse'
-              example:
-                data:
-                  accepted: 2
-                  failed: 1
-                  errors:
-                    - index: 1
-                      code: "PARSE_ERROR"
-                      message: "Invalid JSON at line 2"
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '413':
-          $ref: '#/components/responses/PayloadTooLarge'
-        '429':
-          $ref: '#/components/responses/RateLimited'
-
-  /ingest/bulk:
-    post:
-      operationId: ingestBulk
-      tags: [Ingest]
-      summary: Elasticsearch-compatible bulk ingest
-      description: |
-        Accepts Elasticsearch `_bulk` API format for zero-config migration from Filebeat, Logstash, Vector, Fluentd.
-        Prefer `/es/_bulk`; `/ingest/bulk` is an alias to the same handler.
-
-        - `_index` is accepted but mapped to `_source` tag (LynxDB is single-index by design).
-        - `_type` is ignored.
-        - Response mimics ES bulk shape for client compatibility.
-      requestBody:
-        required: true
-        content:
-          application/x-ndjson:
-            schema:
-              type: string
-            example: |
-              {"index": {"_index": "logs"}}
-              {"message": "hello from filebeat", "@timestamp": "2026-02-14T12:00:00Z"}
-              {"index": {"_index": "logs"}}
-              {"message": "another event"}
-      responses:
-        '200':
-          description: Bulk ingest result (ES-compatible shape)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ESBulkResponse'
-              example:
-                took: 12
-                errors: false
-                items:
-                  - index:
-                      _id: "01JKNM3VXQP..."
-                      status: 201
-                  - index:
-                      _id: "01JKNM4ABCD..."
-                      status: 201
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '429':
-          $ref: '#/components/responses/RateLimited'
 
   # QUERY
 
-  /query:
+  /api/v1/query:
     post:
       operationId: queryPost
       tags: [Query]
-      summary: Execute SPL2 query
+      summary: Run a PPL query
       description: |
-        Core search endpoint. Executes any SPL2 pipeline including search, aggregation, and management commands.
+        Runs a PPL query and returns the result, or a job handle.
 
-        **Execution modes** (controlled by `wait` parameter):
-
-        | `wait` value | Behavior | Response |
+        | `wait` | Mode | Response |
         |---|---|---|
-        | `null` (default) | **Sync.** Block up to `query.sync_timeout` (30s). | `200` with results, or `202` + job if it exceeds the timeout |
-        | `0` | **Async.** Return immediately. | `202` with job handle |
-        | `N` (seconds) | **Hybrid.** Wait up to N seconds. | `200` if done in time, `202` + job otherwise |
+        | absent or `null` | sync | `200` with the result; `202` with a job handle if the query outlives `query.sync_timeout` (30s) |
+        | `0` | async | `202` with a job handle at once |
+        | `N` > 0 | hybrid | `200` if the query finishes within N seconds, otherwise `202` with a job handle |
 
-        Hybrid mode (`wait: 5`) is ideal for Web UI — fast queries return instantly, slow ones degrade to async with progress tracking.
+        Event queries return `data.type: events` with an `events` array. Queries whose result comes from
+        an aggregation (`stats`, `timechart`, `chart`, `top`, `rare`, `describe`, `transpose`) return
+        `data.type: aggregate` with `columns` and `rows`. Built-in columns come first, then the others alphabetically.
 
-        **Response `data.type` determines rendering:**
-        - `events` → log viewer (raw events)
-        - `aggregate` → table (stats results)
-        - `timechart` → chart (time-series)
-        - `view_created` → MV creation confirmation (when query contains `| materialize`)
-        - `job` → async job handle (when `wait` is set and query didn't complete in time)
-
-        **MV acceleration:** when the query planner detects a Materialized View that covers the query,
-        `meta.accelerated_by` is present in the response.
-
-        **SPL2 management commands** also flow through this endpoint:
-        - `| materialize "name"` — create MV
-        - `| from mv_name` — read from MV
-        - `| views` — list MVs
-        - `| dropview "name"` — delete MV
+        Compile errors answer `400` (`SYNTAX_ERROR`, `SEMANTIC_ERROR`, `TYPE_ERROR`, `PLANNING_ERROR`) or
+        `422` (`UNSUPPORTED_COMMAND`, `UNSUPPORTED_FUNCTION`, `UNSUPPORTED_FEATURE`). Failures while running answer
+        `500 EXECUTION_ERROR`, including constructs the execution engine cannot run.
       requestBody:
         required: true
         content:
@@ -226,225 +90,120 @@ paths:
             schema:
               $ref: '#/components/schemas/QueryRequest'
             examples:
-              search:
-                summary: Basic log search (sync, default)
+              events:
+                summary: Events
                 value:
-                  q: "level=error"
-                  from: "-1h"
-                  limit: 100
-              aggregation:
-                summary: Aggregation query (sync)
+                  q: 'source=main level=ERROR status>=500 | fields host, status, path | head 3'
+              aggregate:
+                summary: Aggregation over the last hour
                 value:
-                  q: "source=nginx status>=500 | stats count by uri | sort -count | head 10"
-                  from: "-1h"
-                  to: "now"
+                  q: 'source=main status>=500 | stats count() as errors, avg(response_time) as avg_ms by host | sort - errors | head 10'
+                  from: '-1h'
               hybrid:
-                summary: Hybrid mode — wait up to 5s, then fall back to async
+                summary: Wait up to 5 seconds, then return a job handle
                 value:
-                  q: "* | stats count by source, status"
-                  from: "-30d"
+                  q: 'source=main | stats count() by span(_time, 1h), level'
+                  from: '-30d'
                   wait: 5
               async:
-                summary: Async — return job handle immediately
+                summary: Return a job handle at once
                 value:
-                  q: "* | stats dc(user_id) by source"
-                  from: "-90d"
+                  q: 'source=main | stats dc(user) as users by host'
                   wait: 0
-              timechart:
-                summary: Time-series chart
+              paged:
+                summary: Third page of 3 rows
                 value:
-                  q: "level=error | timechart count span=5m"
-                  from: "-6h"
-              mv_query:
-                summary: Query a materialized view
-                value:
-                  q: "| from mv_errors_5m | where source=\"nginx\" | sort -count | head 10"
-              mv_create:
-                summary: Create a materialized view
-                value:
-                  q: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket | materialize \"mv_errors_5m\" retention=90d"
+                  q: 'source=main | stats count() as n by path | sort - n'
+                  limit: 3
+                  offset: 6
       responses:
         '200':
-          description: |
-            Query completed synchronously. Returned when:
-            - `wait` is `null` (default sync mode) and query completes in-request
-            - `wait` is `N > 0` (hybrid mode) and query completes within N seconds
+          description: The query finished
+          headers:
+            X-Query-ID:
+              schema:
+                type: string
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: '#/components/schemas/QueryEventsResponse'
-                  - $ref: '#/components/schemas/QueryAggregateResponse'
-                  - $ref: '#/components/schemas/QueryTimechartResponse'
-                  - $ref: '#/components/schemas/QueryViewCreatedResponse'
+                $ref: '#/components/schemas/QueryResponse'
               examples:
                 events:
-                  summary: Raw events result
+                  summary: Event result
                   value:
                     data:
                       type: events
                       events:
-                        - _id: "01JKNM3VXQP..."
-                          _timestamp: "2026-02-14T14:52:01.234Z"
-                          _source: nginx
-                          level: error
-                          status: 502
-                          uri: "/api/v1/users"
-                          method: GET
-                          duration_ms: 12
-                      total: 1247
-                      has_more: true
+                        - {host: api-02, path: /api/v1/orders, status: 500}
+                        - {host: web-01, path: /api/v1/users, status: 503}
+                        - {host: api-01, path: /api/v1/search, status: 503}
+                      total: 3
+                      has_more: false
                     meta:
-                      took_ms: 89
-                      scanned: 12400000
-                      query_id: "qry_7f3a..."
+                      took_ms: 0
+                      scanned: 33
+                      query_id: qry_f24fb85c3a02ebe2
+                      stats:
+                        rows_scanned: 33
+                        rows_returned: 3
+                        indexes_used: [main]
                 aggregate:
-                  summary: Aggregation result
+                  summary: Aggregate result
                   value:
                     data:
                       type: aggregate
-                      columns: ["uri", "count"]
+                      columns: [host, avg_ms, errors]
                       rows:
-                        - ["/api/v1/users", 1247]
-                        - ["/api/v1/orders", 893]
-                        - ["/health", 412]
-                      total_rows: 42
+                        - [api-02, 439, 48]
+                        - [web-02, 355.4, 43]
+                        - [web-03, 439.3, 41]
+                      total_rows: 3
+                      has_more: false
                     meta:
-                      took_ms: 34
-                      scanned: 12400000
-                      query_id: "qry_8b2c..."
-                accelerated:
-                  summary: MV-accelerated result
-                  value:
-                    data:
-                      type: aggregate
-                      columns: ["source", "count"]
-                      rows:
-                        - ["nginx", 142847]
-                        - ["api-gw", 89234]
-                      total_rows: 5
-                    meta:
-                      took_ms: 3
-                      scanned: 142847
-                      query_id: "qry_d4e1..."
-                      accelerated_by:
-                        view: mv_errors_5m
-                        original_scan: 12400000
-                        speedup: "~400x"
-                partial:
-                  summary: Partial result (MV still backfilling)
-                  value:
-                    data:
-                      type: aggregate
-                      partial: true
-                      columns: ["source", "count"]
-                      rows:
-                        - ["nginx", 95231]
-                        - ["api-gw", 42100]
-                    meta:
-                      took_ms: 4
-                      scanned: 95231
-                      query_id: "qry_f2a1..."
-                      accelerated_by:
-                        view: mv_errors_5m
-                        status: backfilling
-                        coverage_percent: 66.7
-                timechart:
-                  summary: Time-series result
-                  value:
-                    data:
-                      type: timechart
-                      interval: "5m"
-                      columns: ["_time", "count"]
-                      rows:
-                        - ["2026-02-14T14:00:00Z", 42]
-                        - ["2026-02-14T14:05:00Z", 87]
-                        - ["2026-02-14T14:10:00Z", 156]
-                    meta:
-                      took_ms: 45
-                      scanned: 12400000
-                      query_id: "qry_9c1d..."
-                view_created:
-                  summary: Materialized view created
-                  value:
-                    data:
-                      type: view_created
-                      view:
-                        name: mv_errors_5m
-                        query: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket"
-                        kind: aggregation
-                        retention: "90d"
-                        status: backfilling
-                        version: 1
-                        backfill:
-                          total: 12400000
-                          processed: 0
-                          percent: 0
-                    meta:
-                      took_ms: 12
+                      took_ms: 1
+                      scanned: 1003
+                      query_id: qry_4ab386b7cc5e94aa
         '202':
-          description: |
-            Query accepted for async execution. Returned when:
-            - `wait: 0` (async mode) — always returns 202 immediately
-            - `wait: N` (hybrid mode) — query didn't complete within N seconds
-
-            Response contains a job handle with current progress. Use `GET /query/jobs/{id}` to poll
-            or `GET /query/jobs/{id}/stream` for real-time SSE updates.
+          description: The query runs as a job; poll `/api/v1/query/jobs/{id}` or follow its SSE stream
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/QueryJobResponse'
-              examples:
-                async_immediate:
-                  summary: Async — job just started
-                  value:
-                    data:
-                      type: job
-                      job_id: "qry_9c1d4e"
-                      status: running
-                      progress:
-                        phase: parsing
-                        elapsed_ms: 0
-                hybrid_fallback:
-                  summary: Hybrid — timed out after 5s, shows progress so far
-                  value:
-                    data:
-                      type: job
-                      job_id: "qry_7f3a2b"
-                      status: running
-                      progress:
-                        phase: scanning_segments
-                        segments_total: 128
-                        segments_scanned: 24
-                        rows_read_so_far: 847291
-                        elapsed_ms: 5000
+                $ref: '#/components/schemas/JobHandleResponse'
+              example:
+                data:
+                  type: job
+                  job_id: qry_0f8eeb0e72818e85
+                  status: running
+                meta:
+                  query_id: qry_0f8eeb0e72818e85
         '400':
-          $ref: '#/components/responses/InvalidQuery'
+          $ref: '#/components/responses/QueryError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '422':
+          $ref: '#/components/responses/UnsupportedQuery'
         '429':
-          $ref: '#/components/responses/RateLimited'
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/ExecutionError'
+        '503':
+          $ref: '#/components/responses/PoolExhausted'
     get:
       operationId: queryGet
       tags: [Query]
-      summary: Execute SPL2 query (GET convenience)
-      description: GET variant for simple queries. Use POST for complex or long queries.
+      summary: Run a PPL query from query-string parameters
+      description: Sync mode only. Returns the same envelope as `POST /api/v1/query`.
       parameters:
         - name: q
           in: query
           required: true
           schema:
             type: string
-          example: "level=error"
-        - name: from
-          in: query
-          schema:
-            type: string
-            default: "-15m"
-          example: "-1h"
-        - name: to
-          in: query
-          schema:
-            type: string
-            default: "now"
+          example: 'source=main status>=500 | stats count() as errors by host'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
         - name: limit
           in: query
           schema:
@@ -456,38 +215,40 @@ paths:
           schema:
             type: string
             enum: [json]
-            default: json
-          description: Optional response format selector. Only `json` is accepted.
       responses:
         '200':
-          description: Query result
+          description: The query finished
           content:
             application/json:
               schema:
-                oneOf:
-                  - $ref: '#/components/schemas/QueryEventsResponse'
-                  - $ref: '#/components/schemas/QueryAggregateResponse'
-                  - $ref: '#/components/schemas/QueryTimechartResponse'
+                $ref: '#/components/schemas/QueryResponse'
+        '202':
+          description: The query outlived `query.sync_timeout` and runs as a job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobHandleResponse'
         '400':
-          $ref: '#/components/responses/InvalidQuery'
+          $ref: '#/components/responses/QueryError'
+        '422':
+          $ref: '#/components/responses/UnsupportedQuery'
+        '500':
+          $ref: '#/components/responses/ExecutionError'
 
-  /query/stream:
+  /api/v1/query/stream:
     post:
       operationId: queryStream
       tags: [Query]
-      summary: Execute query with NDJSON streaming
+      summary: Run a PPL query and stream rows as NDJSON
       description: |
-        Returns an NDJSON stream for large result sets, exports, and piping.
+        Writes one JSON object per row, then `{"__meta": {"total", "scanned", "took_ms"}}`.
+        If execution fails after output has started, the last line is
+        `{"__error": {"code": "EXECUTION_ERROR", "message": "..."}}` and no `__meta` line follows.
+        Compile errors answer with the normal error envelope before any row.
 
-        **This is different from job SSE** (`GET /query/jobs/{id}/stream`):
-        - `/query/stream` — NDJSON export of results. One event per line. For `curl | jq`, data pipelines.
-        - `/query/jobs/{id}/stream` — SSE progress tracking. For Web UI real-time updates.
-
-        - Response: `Transfer-Encoding: chunked`, one JSON object per line.
-        - Last line is always `{"__meta": {...}}` — stream summary.
-        - Supported request fields: `q`/`query`, `from`/`earliest`, `to`/`latest`, and `variables`.
-        - `limit`, `offset`, `wait`, `profile`, and `format` are rejected with `400`.
-        - Client disconnect = cancellation.
+        Accepts `q`/`query`, `from`/`earliest` and `to`/`latest`. `limit`, `offset`, `wait`, `profile`
+        and `format` are rejected with `400 VALIDATION_ERROR`. No row cap applies; use `head` in the query.
+        Closing the connection cancels the query.
       requestBody:
         required: true
         content:
@@ -495,102 +256,147 @@ paths:
             schema:
               $ref: '#/components/schemas/QueryStreamRequest'
             example:
-              q: "level=error"
-              from: "-24h"
+              q: 'source=main | stats count() as n by level'
       responses:
         '200':
-          description: NDJSON event stream
+          description: NDJSON rows
           content:
             application/x-ndjson:
               schema:
                 type: string
               example: |
-                {"_id":"01JKN...","_timestamp":"2026-02-14T14:52:01Z","level":"error","message":"timeout"}
-                {"_id":"01JKN...","_timestamp":"2026-02-14T14:51:58Z","level":"error","message":"refused"}
-                {"__meta":{"total":8432,"scanned":12400000,"took_ms":342}}
+                {"level":"WARN","n":347}
+                {"level":"INFO","n":359}
+                {"level":"ERROR","n":294}
+                {"__meta":{"scanned":1000,"took_ms":0,"total":3}}
         '400':
-          $ref: '#/components/responses/InvalidQuery'
+          $ref: '#/components/responses/QueryError'
+        '422':
+          $ref: '#/components/responses/UnsupportedQuery'
 
-  /query/explain:
+  /api/v1/query/explain:
     get:
       operationId: queryExplain
       tags: [Query]
-      summary: Parse and explain query without executing
+      summary: Compile a PPL query and return its plans
       description: |
-        Returns the parsed pipeline, estimated cost, fields involved, and MV acceleration availability.
-        Powers autocomplete, red-underline validation, and query planner UI.
+        Returns the logical and optimized plans and the scan hints without running the query.
+        An invalid query answers `200` with `is_valid: false` and the compile error.
+        With `analyze=true`, a valid query also runs and its statistics are returned as `execution`.
       parameters:
         - name: q
           in: query
           required: true
+          description: The PPL query (`query` is an alias)
           schema:
             type: string
-          example: "source=nginx | stats count by uri"
+          example: 'source=main status>=500 | stats count() as errors by host | sort - errors | head 5'
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
+        - name: analyze
+          in: query
+          schema:
+            type: boolean
       responses:
         '200':
-          description: Query explanation
+          description: Plans, or compile errors
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/QueryExplainResponse'
+                $ref: '#/components/schemas/ExplainResponse'
               examples:
                 valid:
-                  summary: Valid query with MV acceleration
+                  summary: Valid query
                   value:
                     data:
-                      parsed:
-                        pipeline:
-                          - type: search
-                            filters:
-                              - field: source
-                                op: "="
-                                value: nginx
-                          - type: stats
-                            aggregations:
-                              - fn: count
-                            group_by: ["uri"]
-                        result_type: aggregate
-                        estimated_cost: low
-                        uses_full_scan: false
-                        fields_read: ["source", "uri"]
-                        fields_produced: ["uri", "count"]
-                      acceleration:
-                        available: true
-                        view: mv_nginx_parsed
-                        reason: "MV covers filter (source=nginx) and GROUP BY (uri) with count aggregate"
-                        estimated_speedup: "~200x"
                       is_valid: true
+                      errors: []
+                      parsed:
+                        result_type: aggregate
+                        estimated_cost: high
+                        uses_full_scan: true
+                        fields_read: [_time, host, status]
+                        search_terms: null
+                        has_time_bounds: false
+                        logical_plan: "Limit(5)\n└─ Sort(errors DESC NULLS LAST)\n   └─ Project(errors, host)\n      └─ Aggregate(errors = count() BY host)\n         └─ Filter(status >= 500)\n            └─ Scan(main)\n"
+                        optimized_plan: "TopN(5, errors DESC NULLS LAST)\n└─ Project(errors, host)\n   └─ Aggregate(errors = count() BY host)\n      └─ Filter(status >= 500)\n         └─ Scan(main) columns=[_time, host, status]\n"
+                        compile_ms: 0.057
+                        optimizer_rules:
+                          - {name: sort-limit-to-topn, count: 1}
+                        source_scope:
+                          type: single
+                          sources: [main]
+                          total_sources_available: 2
                 invalid:
-                  summary: Invalid query with suggestion
+                  summary: Invalid query
                   value:
                     data:
                       is_valid: false
                       errors:
-                        - position: 24
-                          length: 6
-                          message: "Unknown command 'staats'"
-                          suggestion: stats
+                        - kind: semantic
+                          message: field status not found
+                          position: {line: 1, column: 50}
+                          suggestion: 'available fields: n, host'
+        '400':
+          $ref: '#/components/responses/QueryError'
 
-  /query/jobs:
+  /api/v1/catalog:
+    get:
+      operationId: catalog
+      tags: [Query]
+      summary: PPL commands and functions with their support level
+      description: |
+        The catalog is fixed for a binary. Responses carry a strong `ETag` and
+        `Cache-Control: public, max-age=86400`; a matching `If-None-Match` answers `304`.
+      parameters:
+        - name: If-None-Match
+          in: header
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The catalog
+          headers:
+            ETag:
+              schema:
+                type: string
+            Cache-Control:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CatalogResponse'
+              example:
+                data:
+                  language: ppl
+                  commands:
+                    - {name: bin, support: partial, notes: 'span= with numeric and time units; bins, minspan, aligntime, start, end and logarithmic spans are unsupported'}
+                    - {name: dedup, support: full}
+                    - {name: kmeans, support: unsupported, notes: 'it runs the OpenSearch ML Commons plugin, which LynxDB does not have'}
+                  functions:
+                    - {name: round, kind: scalar, category: math, support: full, doc: 'x rounded half away from zero to d decimal places (default 0).'}
+                    - {name: if, kind: scalar, support: full, lowering: CASE}
+                    - {name: geoip, kind: scalar, support: unsupported, unsupported: LynxDB has no GeoIP database}
+                    - {name: count, kind: aggregate, category: aggregation, support: full, doc: 'Number of rows, or with an argument the number of rows where it is not NULL.'}
+        '304':
+          description: Not modified
+
+  /api/v1/query/jobs:
     get:
       operationId: listJobs
       tags: [Query]
-      summary: List active and recent query jobs
-      description: |
-        Returns all running jobs and recently completed jobs (kept for `job_ttl`, default 5 minutes).
-        Useful for Web UI job manager and debugging. The optional `status` filter accepts
-        canonical values (`running`, `done`, `error`, `canceled`) and the aliases
-        `complete`, `failed`, and `cancelled`.
+      summary: List running and recent jobs
+      description: Finished jobs are kept for `query.job_ttl` (5m). Every query, sync ones included, is a job.
       parameters:
         - name: status
           in: query
           schema:
             type: string
             enum: [running, done, error, canceled, complete, failed, cancelled]
-          description: Filter by job status
       responses:
         '200':
-          description: Job list
+          description: Jobs
           content:
             application/json:
               schema:
@@ -598,370 +404,299 @@ paths:
               example:
                 data:
                   jobs:
-                    - job_id: "qry_9c1d4e"
-                      status: running
-                      query: "* | stats dc(user_id) by source"
-                      created_at: "2026-02-14T14:50:00Z"
-                    - job_id: "qry_7f3a2b"
+                    - job_id: qry_0f8eeb0e72818e85
+                      query: 'source=main | stats count() as n, avg(response_time) as avg_ms by level'
                       status: done
-                      query: "level=error | stats count by source"
-                      created_at: "2026-02-14T14:48:12Z"
+                      created_at: '2026-11-17T10:38:26.755295Z'
+        '400':
+          $ref: '#/components/responses/ValidationError'
 
-  /query/jobs/{jobId}:
+  /api/v1/query/jobs/{id}:
+    parameters:
+      - $ref: '#/components/parameters/JobID'
     get:
       operationId: getJob
       tags: [Query]
-      summary: Get job status, progress, and results
-      description: |
-        Poll this endpoint to track query progress. Response shape depends on `status`:
-
-        - `running` → `progress`
-        - `done` → `results`
-        - `error` → `error`
-        - `canceled` → cancellation error payload
-      parameters:
-        - name: jobId
-          in: path
-          required: true
-          schema:
-            type: string
-          example: "qry_9c1d4e"
+      summary: Get a job's status and result
       responses:
         '200':
-          description: Job status and results
+          description: The job. `progress` while running, `results` when done, `error` when failed or canceled
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/QueryJobResponse'
+                $ref: '#/components/schemas/JobResponse'
               examples:
                 running:
                   summary: Running
                   value:
                     data:
                       type: job
-                      job_id: "qry_9c1d4e"
+                      job_id: qry_0f8eeb0e72818e85
                       status: running
-                      query: "* | stats dc(user_id) by source, status"
+                      query: 'source=main | stats count() as n by level'
                       progress:
                         phase: scanning_segments
-                        segments_total: 128
-                        segments_scanned: 64
-                        rows_read_so_far: 423000000
-                        elapsed_ms: 18400
+                        segments_total: 30
+                        segments_scanned: 12
+                        segments_dispatched: 18
+                        segments_skipped_index: 4
+                        segments_skipped_time: 2
+                        segments_skipped_stats: 0
+                        segments_skipped_bloom: 3
+                        segments_skipped_range: 0
+                        buffered_events: 0
+                        rows_read_so_far: 120000
+                        elapsed_ms: 1840
                 done:
-                  summary: Completed — final results
+                  summary: Done
                   value:
                     data:
                       type: job
-                      job_id: "qry_9c1d4e"
+                      job_id: qry_0f8eeb0e72818e85
                       status: done
-                      query: "* | stats dc(user_id) by source, status"
-                      created_at: "2026-02-14T14:50:00Z"
-                      completed_at: "2026-02-14T14:50:37Z"
+                      query: 'source=main | stats count() as n, avg(response_time) as avg_ms by level'
+                      created_at: '2026-11-17T10:38:26.755295Z'
+                      completed_at: '2026-11-17T10:38:26.756746Z'
                       results:
                         type: aggregate
-                        columns: ["source", "status", "dc(user_id)"]
+                        columns: [avg_ms, level, n]
                         rows:
-                          - ["nginx", 200, 1784682]
-                          - ["nginx", 404, 85762]
-                          - ["api-gw", 200, 1224088]
-                          - ["api-gw", 500, 12044]
-                        total_rows: 14
+                          - [411.21325648414984, WARN, 347]
+                          - [414.4930362116992, INFO, 359]
+                          - [408.1224489795918, ERROR, 294]
+                        total_rows: 3
+                        has_more: false
                     meta:
-                      took_ms: 37200
-                      scanned: 84700000000
+                      took_ms: 1
+                      scanned: 1000
+                      query_id: qry_0f8eeb0e72818e85
                 error:
-                  summary: Failed — error details
+                  summary: Failed
                   value:
                     data:
                       type: job
-                      job_id: "qry_d4e1f2"
+                      job_id: qry_d4e1f2a0b1c2d3e4
                       status: error
-                      query: "* | stats count by uri"
                       error:
                         code: QUERY_MEMORY_EXCEEDED
-                        message: "Query exceeded 512 MB memory limit at 20% scan. Too many unique 'uri' values (>2M) for GROUP BY."
-                        suggestion: "Add a filter to reduce cardinality, or increase max_query_memory_mb in /config."
+                        message: query exceeded memory budget
         '404':
           $ref: '#/components/responses/NotFound'
     delete:
       operationId: cancelJob
       tags: [Query]
-      summary: Cancel a running query job
-      description: |
-        Cancels a running job. The response always returns the current terminal status plus
-        a `canceled` flag that tells you whether this request changed the job state.
-      parameters:
-        - name: jobId
-          in: path
-          required: true
-          schema:
-            type: string
-          example: "qry_9c1d4e"
+      summary: Cancel a job
+      description: Needs `admin` scope. `canceled` is `true` when this request stopped a running job.
       responses:
         '200':
-          description: Current job state after the cancel attempt
+          description: The job's state after the request
           content:
             application/json:
-              examples:
-                cancelled:
-                  summary: Successfully cancelled
-                  value:
-                    data:
-                      job_id: "qry_9c1d4e"
-                      status: canceled
-                      canceled: true
-                      completed_at: "2026-02-14T14:50:18Z"
-                already_done:
-                  summary: Job already finished
-                  value:
-                    data:
-                      job_id: "qry_9c1d4e"
-                      status: done
-                      canceled: false
-                      completed_at: "2026-02-14T14:50:37Z"
+              schema:
+                $ref: '#/components/schemas/CancelJobResponse'
+              example:
+                data:
+                  job_id: qry_0f8eeb0e72818e85
+                  status: canceled
+                  canceled: true
+                  completed_at: '2026-11-17T10:38:28Z'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
-  /query/jobs/{jobId}/stream:
+  /api/v1/query/jobs/{id}/stream:
+    parameters:
+      - $ref: '#/components/parameters/JobID'
     get:
       operationId: streamJob
       tags: [Query]
-      summary: SSE stream of job progress and final results
+      summary: Follow a job over Server-Sent Events
       description: |
-        Server-Sent Events stream for real-time job tracking. Preferred over polling for Web UI.
-
-        **Event types:**
-
-        | Event | When | Data |
-        |---|---|---|
-        | `progress` | Every ~1s while running | Progress snapshot plus optional preview rows |
-        | `complete` | Query finished | Final results |
-        | `failed` | Query errored | Error object |
-        | `canceled` | Job was cancelled | Progress at cancellation |
-
-        SSE (not WebSocket) because this is a unidirectional server→client stream. SSE auto-reconnects,
-        passes through proxies, and works with the native `EventSource` browser API.
-
-        ```javascript
-        const es = new EventSource("/api/v1/query/jobs/qry_xxx/stream");
-        es.addEventListener("progress", (e) => updateProgressBar(JSON.parse(e.data)));
-        es.addEventListener("complete", (e) => { showFinalResults(JSON.parse(e.data)); es.close(); });
-        es.addEventListener("failed",   (e) => { showError(JSON.parse(e.data)); es.close(); });
-        ```
-      parameters:
-        - name: jobId
-          in: path
-          required: true
-          schema:
-            type: string
-          example: "qry_9c1d4e"
+        | Event | Data |
+        |---|---|
+        | `progress` | About once a second: `phase`, `scanned`, `segments_total`, `percent`, `events_matched`, `elapsed_ms`, `eta_ms`, optional `preview` and `preview_version` |
+        | `complete` | `{"data": <result>, "meta": {"took_ms", "scanned", "stats"}}` |
+        | `failed` | `{"code", "message"}` |
+        | `canceled` | `{"scanned", "elapsed_ms"}` |
       responses:
         '200':
-          description: SSE event stream
+          description: SSE stream
           content:
             text/event-stream:
               schema:
                 type: string
               example: |
-                event: progress
-                data: {"phase":"scanning_segments","scanned":24,"segments_total":128,"percent":18.75,"events_matched":847291,"elapsed_ms":5000,"eta_ms":21666}
-
                 event: complete
-                data: {"data":{"type":"aggregate","columns":["source","count"],"rows":[["nginx",712345],["api-gw",356789]],"total_rows":5},"meta":{"took_ms":23100,"scanned":10400000000}}
-
+                data: {"data":{"columns":["avg_ms","level","n"],"has_more":false,"rows":[[411.2,"WARN",347]],"total_rows":1,"type":"aggregate"},"meta":{"scanned":1000,"took_ms":1}}
         '404':
           $ref: '#/components/responses/NotFound'
 
   # LIVE
 
-  /tail:
+  /api/v1/tail:
     get:
       operationId: liveTail
       tags: [Live]
-      summary: SSE live tail with full SPL2 pipeline
+      summary: Live tail over Server-Sent Events
       description: |
-        Server-Sent Events stream for real-time log tailing with full SPL2 pipeline support.
-        Uses the same query engine as `POST /query`, but in streaming mode.
+        Replays the last `count` matching stored events, sends `catchup_done`, then streams events as they arrive.
+        `q` is a full PPL query. Only row-by-row commands are allowed; commands that need all input
+        (`stats`, `timechart`, `chart`, `top`, `rare`, `sort`, `reverse`, `eventstats`, `streamstats`,
+        `trendline`, `join`, `lookup`, `append`, `appendcol`, `union`, `multisearch`, `transpose`, `addtotals`,
+        `addcoltotals`, `mvcombine`, `patterns`, `describe`) answer `422`.
 
-        **Two phases:**
-
-        1. **Catchup** — replays the last `count` matching events from storage (time range: `from` to now).
-           Each event is sent as `event: result`. Phase ends with `event: catchup_done`.
-        2. **Live** — streams new events from the EventBus through the SPL2 pipeline in real time.
-           Events are sent as `event: result`. Heartbeat every 15s as `event: heartbeat`.
-
-        **Supported SPL2 commands** (streaming, event-by-event):
-        `search`, `where`, `eval`, `fields`, `table`, `rename`, `rex`, `fillnull`, `head`, `bin`.
-
-        Commands requiring full materialization (`stats`, `sort`, `join`, `dedup`, `timechart`, etc.)
-        are rejected with `422`.
-
-        ```javascript
-        const es = new EventSource("/api/v1/tail?q=search+ERROR+|+where+status>500&count=100&from=-1h");
-        es.addEventListener("result",       (e) => appendRow(JSON.parse(e.data)));
-        es.addEventListener("catchup_done", (e) => showLiveIndicator());
-        es.addEventListener("heartbeat",    (e) => updatePing());
-        es.addEventListener("error",        (e) => showError(JSON.parse(e.data)));
-        ```
-
-        SSE (not WebSocket) because this is a unidirectional server-to-client stream. SSE auto-reconnects,
-        passes through proxies, and works with the native `EventSource` browser API.
+        | Event | Data |
+        |---|---|
+        | `result` | One event |
+        | `catchup_done` | `{"count": N}` |
+        | `heartbeat` | `{"ts"}`, every 15 seconds |
+        | `warning` | `{"type": "events_dropped", "count", "total_dropped"}` |
+        | `close` | `{"reason": "max_session_duration"}` |
+        | `error` | `{"error"}` |
+      security:
+        - BearerAuth: []
+        - ApiKeyAuth: []
+        - BasicAuth: []
+        - TokenQuery: []
+        - {}
       parameters:
         - name: q
           in: query
           required: true
           schema:
             type: string
-          description: SPL2 query (streaming commands only)
-          examples:
-            keyword:
-              summary: Simple keyword search
-              value: "search ERROR"
-            filtered:
-              summary: Filter with eval and projection
-              value: "search index=main ERROR | where status > 500 | eval sev=upper(level) | fields _time, _raw, sev"
+          example: 'source=main level=ERROR | where status >= 500 | fields _time, host, status'
         - name: count
           in: query
           schema:
             type: integer
             default: 100
-            minimum: 0
             maximum: 10000
-          description: Number of historical events to replay during catchup phase
         - name: from
           in: query
           schema:
             type: string
-            default: "-1h"
-          description: Catchup lookback window (relative or ISO 8601)
-          example: "-1h"
+            default: '-1h'
       responses:
         '200':
-          description: SSE event stream
+          description: SSE stream
           content:
             text/event-stream:
               schema:
                 type: string
               example: |
                 event: result
-                data: {"_time":"2026-02-14T14:51:58Z","_raw":"level=ERROR status=502 uri=/api/users","status":502}
-
-                event: result
-                data: {"_time":"2026-02-14T14:52:01Z","_raw":"level=ERROR status=503 uri=/api/orders","status":503}
+                data: {"_time":"2026-11-17T10:32:54.573324Z","host":"web-01","status":502}
 
                 event: catchup_done
-                data: {"count":2}
-
-                event: result
-                data: {"_time":"2026-02-14T14:52:15Z","_raw":"level=ERROR status=500 uri=/api/pay","status":500}
+                data: {"count":1}
 
                 event: heartbeat
-                data: {"ts":"2026-02-14T14:52:30Z"}
-
+                data: {"ts":"2026-11-17T10:45:12Z"}
         '400':
-          description: Parse error — invalid SPL2 query
+          description: 'Missing `q` (`{"error": "missing required parameter: q"}`), or a compile error in the query error envelope'
           content:
             application/json:
-              example:
-                error: "Unknown command 'staats'"
-                suggestion: stats
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/BareError'
+                  - $ref: '#/components/schemas/ErrorResponse'
         '422':
-          description: Query contains unsupported commands for tail
+          description: The query needs all its input, or uses unsupported PPL
           content:
             application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/BareError'
+                  - $ref: '#/components/schemas/ErrorResponse'
               example:
-                error: "unsupported commands for tail: stats (aggregation and stateful commands require full materialization)"
-                unsupported: ["stats"]
+                error: 'Aggregate is not supported in live tail: it needs all input rows before producing output'
+        '429':
+          description: '`tail.max_concurrent_sessions` reached; `Retry-After: 5`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BareError'
+              example:
+                error: too many active tail sessions
 
-  /histogram:
+  /api/v1/histogram:
     get:
       operationId: histogram
       tags: [Live]
-      summary: Time-bucketed event counts
+      summary: Event counts per time bucket
       description: |
-        Powers the timeline bar chart in the Web UI. Fires on every filter change — must be blazing fast.
-        Separate from `/query` because it runs independently and concurrently.
+        Counts every event in the range from segment metadata; takes no query.
+        The interval is the range divided by `buckets`, rounded to the nearest of
+        1s, 5s, 30s, 1m, 5m, 15m, 1h, 6h, 24h. With `group_by`, buckets carry `counts` by field value;
+        events without the field count under `other`.
       parameters:
-        - name: q
-          in: query
-          schema:
-            type: string
-          description: SPL2 filter expression (search part only, before pipes)
-          example: "level=error"
-        - name: from
-          in: query
-          required: true
-          schema:
-            type: string
-          example: "-1h"
-        - name: to
-          in: query
-          schema:
-            type: string
-            default: "now"
+        - $ref: '#/components/parameters/From'
+        - $ref: '#/components/parameters/To'
         - name: buckets
           in: query
           schema:
             type: integer
             default: 60
-          description: Target number of buckets. Server picks the best interval (1s, 5s, 1m, 5m, 1h).
+            maximum: 1000
+        - name: index
+          in: query
+          schema:
+            type: string
+        - name: group_by
+          in: query
+          schema:
+            type: string
       responses:
         '200':
-          description: Histogram data
+          description: Buckets
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HistogramResponse'
-              example:
-                data:
-                  interval: "1m"
-                  buckets:
-                    - time: "2026-02-14T14:00:00Z"
-                      count: 42
-                    - time: "2026-02-14T14:01:00Z"
-                      count: 87
-                    - time: "2026-02-14T14:02:00Z"
-                      count: 156
-                  total: 8432
-                meta:
-                  took_ms: 12
+              examples:
+                counts:
+                  summary: Counts
+                  value:
+                    data:
+                      interval: 15m0s
+                      buckets:
+                        - {time: '2026-11-17T09:18:00Z', count: 0}
+                        - {time: '2026-11-17T09:33:00Z', count: 113}
+                      total: 113
+                    meta:
+                      took_ms: 0
+                grouped:
+                  summary: Grouped by level
+                  value:
+                    data:
+                      interval: 15m0s
+                      buckets:
+                        - {time: '2026-11-17T09:18:00Z', counts: {}}
+                        - {time: '2026-11-17T09:33:00Z', counts: {ERROR: 33, INFO: 35, WARN: 43, other: 2}}
+                      total: 113
+                    meta:
+                      took_ms: 0
+        '400':
+          $ref: '#/components/responses/ValidationError'
 
   # SCHEMA
 
-  /fields:
+  /api/v1/fields:
     get:
       operationId: listFields
       tags: [Schema]
-      summary: List all fields with types and stats
-      description: Essential for autocomplete and the Fields sidebar in the Web UI.
+      summary: Fields found in stored segments
       parameters:
-        - name: from
-          in: query
-          schema:
-            type: string
-          description: Restrict stats to time range start
-          example: "-1h"
-        - name: to
-          in: query
-          schema:
-            type: string
-          description: Restrict stats to time range end
         - name: prefix
           in: query
           schema:
             type: string
-          description: Filter fields by name prefix (for autocomplete)
-          example: "sta"
-        - name: source
-          in: query
-          schema:
-            type: string
-          description: Fields seen from a specific source
-          example: "nginx"
+          example: st
       responses:
         '200':
-          description: Field list with stats
+          description: Fields
           content:
             application/json:
               schema:
@@ -969,771 +704,1547 @@ paths:
               example:
                 data:
                   fields:
-                    - name: "_timestamp"
-                      type: datetime
-                      count: 847000000
-                      coverage: 1.0
-                    - name: level
-                      type: string
-                      count: 847000000
-                      coverage: 1.0
-                      top_values:
-                        - value: info
-                          count: 612000000
-                        - value: error
-                          count: 142000000
-                        - value: warn
-                          count: 93000000
-                    - name: status
-                      type: integer
-                      count: 423000000
-                      coverage: 0.50
-                      min: 200
-                      max: 504
-                      top_values:
-                        - value: 200
-                          count: 380000000
-                        - value: 404
-                          count: 21000000
-                    - name: duration_ms
-                      type: float
-                      count: 423000000
-                      coverage: 0.50
-                      min: 0.1
-                      max: 30001.0
-                      avg: 145.3
-                      p50: 42.0
-                      p99: 3200.0
+                    - {name: status, type: int, coverage: 100, total_count: 1000}
 
-  /fields/{name}/values:
+  /api/v1/fields/{name}/values:
     get:
       operationId: fieldValues
       tags: [Schema]
-      summary: Top values for a specific field
-      description: Powers "Quick Stats" sidebar and value autocomplete in the search bar.
+      summary: Most common values of a field
       parameters:
         - name: name
           in: path
           required: true
           schema:
             type: string
-          example: status
-        - name: from
-          in: query
-          schema:
-            type: string
-          example: "-1h"
-        - name: to
-          in: query
-          schema:
-            type: string
+          example: level
         - name: limit
           in: query
           schema:
             type: integer
             default: 10
             maximum: 100
+        - name: from
+          in: query
+          description: Start of the time range (`since` is an alias)
+          schema:
+            type: string
+        - $ref: '#/components/parameters/To'
       responses:
         '200':
-          description: Top field values
+          description: Values
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/FieldValuesResponse'
               example:
                 data:
-                  field: status
-                  type: integer
+                  field: level
                   values:
-                    - value: 200
-                      count: 89421
-                      percent: 72.3
-                    - value: 404
-                      count: 18234
-                      percent: 14.7
-                    - value: 500
-                      count: 9123
-                      percent: 7.4
-                    - value: 502
-                      count: 4521
-                      percent: 3.7
-                    - value: 504
-                      count: 2401
-                      percent: 1.9
-                  unique_count: 14
-                  total_count: 123700
+                    - {value: INFO, count: 359, percent: 35.72}
+                    - {value: WARN, count: 347, percent: 34.53}
+                    - {value: ERROR, count: 294, percent: 29.25}
+                  unique_count: 4
+                  total_count: 1005
                 meta:
-                  from: "2026-02-14T13:52:00Z"
-                  to: "2026-02-14T14:52:00Z"
+                  took_ms: 0
 
-  /sources:
+  /api/v1/sources:
     get:
       operationId: listSources
       tags: [Schema]
-      summary: List log sources with volume stats
+      summary: Event sources with counts and time span
+      parameters:
+        - name: pattern
+          in: query
+          description: Glob on the source name (`*`, `?`)
+          schema:
+            type: string
+          example: 'ng*'
       responses:
         '200':
-          description: Source list
+          description: Sources
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SourcesResponse'
               example:
                 data:
+                  pattern: 'ng*'
                   sources:
-                    - name: nginx
-                      event_count: 423000000
-                      last_event: "2026-02-14T14:52:01Z"
-                      first_event: "2026-01-15T00:00:01Z"
-                      rate: 1200.5
-                      storage_bytes: 5200000000
-                    - name: api-gateway
-                      event_count: 312000000
-                      last_event: "2026-02-14T14:52:00Z"
-                      first_event: "2026-01-15T00:00:02Z"
-                      rate: 890.2
-                      storage_bytes: 4100000000
+                    - {name: nginx, event_count: 2, first_event: '2026-11-17T10:43:02Z', last_event: '2026-11-17T10:43:02Z'}
+                meta:
+                  took_ms: 0
 
-  # SERVER
+  # INGEST
 
-  /status:
-    get:
-      operationId: serverStatus
-      tags: [Server]
-      summary: Server info, storage, event stats, and health
-      responses:
-        '200':
-          description: Full server status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/StatusResponse'
-              example:
-                data:
-                  version: "0.4.0"
-                  uptime_seconds: 1234567
-                  storage:
-                    used_bytes: 13300000000
-                    total_bytes: 53700000000
-                    usage_percent: 24.8
-                  events:
-                    total: 847000000
-                    today: 1200000
-                    ingest_rate: 2340.5
-                  queries:
-                    active: 12
-                    avg_duration_ms: 45
-                    jobs:
-                      running: 2
-                      queued: 0
-                      max_concurrent: 32
-                  views:
-                    total: 3
-                    active: 2
-                    backfilling: 1
-                    storage_bytes: 2267789702
-                  retention:
-                    policy: "7d"
-                    oldest_event: "2026-02-07T00:00:01Z"
-                  health: healthy
-
-  /health:
-    get:
-      operationId: healthCheck
-      tags: [Server]
-      summary: Minimal health check for load balancers
-      description: Returns `200` when healthy, `503` when not. No envelope — trivially parseable.
-      responses:
-        '200':
-          description: Healthy
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  status:
-                    type: string
-                    enum: [ok]
-              example:
-                status: ok
-        '503':
-          description: Unhealthy
-          content:
-            application/json:
-              example:
-                status: unhealthy
-
-  # SAVED QUERIES
-
-  /queries:
-    get:
-      operationId: listSavedQueries
-      tags: [Saved Queries]
-      summary: List saved queries
-      responses:
-        '200':
-          description: Saved query list
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SavedQueriesResponse'
-              example:
-                data:
-                  queries:
-                    - id: sq_abc123
-                      name: "High 5xx rate"
-                      q: "source=nginx status>=500 | stats count by uri | sort -count"
-                      from: "-1h"
-                      created_at: "2026-02-10T12:00:00Z"
-                      updated_at: "2026-02-14T08:00:00Z"
+  /api/v1/ingest:
     post:
-      operationId: createSavedQuery
-      tags: [Saved Queries]
-      summary: Create a saved query
+      operationId: ingest
+      tags: [Ingest]
+      summary: Ingest a JSON array of events
+      description: |
+        Takes a top-level JSON array. A single object, NDJSON or plain text answers `400 INVALID_JSON`.
+        If a later batch fails after earlier ones were stored, the response is `200` with `failed` and a `warning`.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/SavedQueryInput'
+              type: array
+              items:
+                $ref: '#/components/schemas/StructuredIngestEvent'
             example:
-              name: "High 5xx rate"
-              q: "source=nginx status>=500 | stats count by uri | sort -count"
-              from: "-1h"
+              - time: 1763370000
+                event: user login
+                source: auth-api
+                sourcetype: app
+                host: web-01
+                fields: {user_id: 42, level: info, ip: 10.0.1.5}
+      responses:
+        '200':
+          $ref: '#/components/responses/IngestAccepted'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/Backpressure'
+
+  /api/v1/ingest/raw:
+    post:
+      operationId: ingestRaw
+      tags: [Ingest]
+      summary: Ingest newline-delimited text
+      description: |
+        Each non-empty line is one event, stored in `_raw`. When the body is cut off by `ingest.max_body_size`
+        after some events were stored, the response is `200` with `truncated: true` and a `warning`.
+      parameters:
+        - name: X-Source
+          in: header
+          schema:
+            type: string
+            default: http
+            maxLength: 256
+        - name: X-Source-Type
+          in: header
+          schema:
+            type: string
+            default: raw
+            maxLength: 256
+        - name: X-Index
+          in: header
+          schema:
+            type: string
+            default: main
+            maxLength: 256
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+            example: |
+              2026-11-17T08:00:00.105Z host=web-03 level=ERROR method=GET path=/api/v1/users status=502
+              2026-11-17T08:00:00.211Z host=web-01 level=INFO method=GET path=/api/v1/health status=200
+      responses:
+        '200':
+          $ref: '#/components/responses/IngestAccepted'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/Backpressure'
+
+  /api/v1/ingest/hec:
+    post:
+      operationId: ingestHEC
+      tags: [Ingest, Splunk HEC]
+      summary: Ingest Splunk HEC events with a LynxDB API key
+      description: One HEC event object per line. Authenticates with LynxDB API keys, not `Splunk` tokens.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/HECEvent'
+      responses:
+        '200':
+          $ref: '#/components/responses/HECSuccess'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/ingest/bulk:
+    post:
+      operationId: ingestBulk
+      tags: [Ingest, Elasticsearch]
+      summary: Elasticsearch bulk ingest (alias of /api/v1/es/_bulk)
+      requestBody:
+        $ref: '#/components/requestBodies/ESBulk'
+      responses:
+        '200':
+          $ref: '#/components/responses/ESBulkResult'
+        '400':
+          $ref: '#/components/responses/ESError'
+
+  /api/v1/indexes:
+    get:
+      operationId: listIndexes
+      tags: [Ingest]
+      summary: List indexes
+      responses:
+        '200':
+          description: Indexes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexesResponse'
+              example:
+                data:
+                  indexes:
+                    - {name: main, retention_period: 2160h0m0s, replication_factor: 1}
+    post:
+      operationId: createIndex
+      tags: [Ingest]
+      summary: Create an index
+      description: Needs a root key when authentication is on.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateIndexRequest'
+            example:
+              name: audit
+              retention_days: 365
       responses:
         '201':
           description: Created
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/SavedQueryResponse'
+                $ref: '#/components/schemas/CreateIndexResponse'
+              example:
+                data: {name: audit, status: created}
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
-  /queries/{id}:
-    put:
-      operationId: updateSavedQuery
-      tags: [Saved Queries]
-      summary: Replace a saved query
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SavedQueryInput'
-      responses:
-        '200':
-          description: Updated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SavedQueryResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    delete:
-      operationId: deleteSavedQuery
-      tags: [Saved Queries]
-      summary: Delete a saved query
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '204':
-          description: Deleted
+  # SERVER
 
-  # MATERIALIZED VIEWS
-
-  /views:
+  /health:
     get:
-      operationId: listViews
-      tags: [Materialized Views]
-      summary: List all materialized views
-      description: Returns every MV with operational status, storage, lag, and backfill progress.
+      operationId: health
+      tags: [Server]
+      summary: Health check
+      security: []
       responses:
         '200':
-          description: MV list
+          description: Health
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ViewsListResponse'
+                $ref: '#/components/schemas/HealthResponse'
               example:
-                data:
-                  views:
-                    - name: mv_errors_5m
-                      kind: aggregation
-                      query: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket"
-                      retention: "90d"
-                      status: active
-                      version: 1
-                      rows: 142847
-                      segments: 12
-                      storage_bytes: 12582912
-                      lag_ms: 1200
-                      created_at: "2026-02-12T10:00:00Z"
-                      last_event: "2026-02-14T14:52:01Z"
-                    - name: mv_5xx_hourly
-                      kind: aggregation
-                      query: "source=nginx status>=500 | stats count, p95(duration) by uri, time_bucket(timestamp, '1h') AS hour"
-                      retention: "365d"
-                      status: backfilling
-                      version: 1
-                      rows: 6720
-                      segments: 3
-                      storage_bytes: 348160
-                      lag_ms: null
-                      backfill:
-                        total: 12600000
-                        processed: 8400000
-                        percent: 66.7
-                        eta_seconds: 134
-                      created_at: "2026-02-14T14:30:00Z"
-                      last_event: null
-    post:
-      operationId: createView
-      tags: [Materialized Views]
-      summary: Create a materialized view (or trigger rebuild)
-      description: |
-        REST equivalent of `| materialize`. If name already exists, triggers a **versioned rebuild**:
-        old version keeps serving queries, new version builds in background, atomic swap on completion.
+                data: {status: healthy, degraded: false, version: 0.4.0}
 
-        Send `If-None-Match: *` to get `409 Conflict` if the view already exists (prevents accidental rebuilds).
-      parameters:
-        - name: If-None-Match
-          in: header
-          schema:
-            type: string
-          description: 'Set to `*` to prevent rebuild of existing view'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ViewInput'
-            examples:
-              aggregation:
-                summary: Aggregation MV
-                value:
-                  name: mv_errors_5m
-                  q: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket"
-                  retention: "90d"
-              projection:
-                summary: Projection MV
-                value:
-                  name: mv_access
-                  q: "source=nginx | extract timestamp, method, uri, status, size, duration"
-                  retention: "14d"
-                  partition_by: "date(timestamp)"
-              cascading:
-                summary: Cascading MV (built on another MV)
-                value:
-                  name: mv_errors_1h
-                  q: "| from mv_errors_5m | stats sum(count) AS count by source, time_bucket(bucket, '1h') AS hour"
-                  retention: "365d"
-      responses:
-        '201':
-          description: MV created, backfill started
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ViewResponse'
-              example:
-                data:
-                  name: mv_errors_5m
-                  kind: aggregation
-                  query: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket"
-                  retention: "90d"
-                  status: backfilling
-                  version: 1
-                  backfill:
-                    total: 12400000
-                    processed: 0
-                    percent: 0
-        '200':
-          description: Existing MV — versioned rebuild triggered
-          content:
-            application/json:
-              example:
-                data:
-                  name: mv_errors_5m
-                  kind: aggregation
-                  query: "level=error | stats count, avg(duration), p99(duration) by source, time_bucket(timestamp, '5m') AS bucket"
-                  retention: "90d"
-                  status: rebuilding
-                  version: 2
-                  previous_version:
-                    version: 1
-                    status: active
-                  backfill:
-                    total: 12400000
-                    processed: 0
-                    percent: 0
-        '409':
-          description: Conflict — view exists and `If-None-Match` was set
-          content:
-            application/json:
-              example:
-                error:
-                  code: ALREADY_EXISTS
-                  message: "View 'mv_errors_5m' already exists. Remove If-None-Match header to trigger rebuild."
-
-  /views/{name}:
+  /metrics:
     get:
-      operationId: getView
-      tags: [Materialized Views]
-      summary: Get MV details, column schema, and stats
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
-          example: mv_errors_5m
+      operationId: prometheusMetrics
+      tags: [Server]
+      summary: Prometheus metrics
+      security: []
       responses:
         '200':
-          description: Full MV details
+          description: Prometheus text exposition
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /api/v1/status:
+    get:
+      operationId: status
+      tags: [Server]
+      summary: Operational snapshot
+      responses:
+        '200':
+          description: Status
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ViewDetailResponse'
+                $ref: '#/components/schemas/StatusResponse'
               example:
                 data:
-                  name: mv_errors_5m
-                  kind: aggregation
-                  query: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket"
-                  retention: "90d"
-                  status: active
-                  version: 1
-                  columns:
-                    - name: source
-                      type: string
-                      encoding: dictionary
-                    - name: bucket
-                      type: timestamp
-                      encoding: delta-of-delta
-                    - name: count
-                      type: int64
-                      encoding: delta-varint
-                    - name: "avg(duration)"
-                      type: float64
-                      derived_from: ["_sum_duration", "_count_duration"]
-                  group_by: ["source", "bucket"]
-                  aggregations: ["count", "avg(duration)"]
-                  stats:
-                    rows: 142847
-                    segments: 12
-                    segments_pending_merge: 3
-                    storage_bytes: 12582912
-                    compression_ratio: 18.4
-                    lag_ms: 1200
-                    ingest_rate: 234.5
-                    oldest_event: "2026-01-15T00:00:01Z"
-                    newest_event: "2026-02-14T14:52:01Z"
-                  source_view: null
-                  created_at: "2026-02-12T10:00:00Z"
-        '404':
-          $ref: '#/components/responses/NotFound'
-    patch:
-      operationId: patchView
-      tags: [Materialized Views]
-      summary: Update mutable MV properties
-      description: |
-        Only `retention` and `paused` can be changed without rebuild.
-        To change `q`, `partition_by`, or `group_by`, use `POST /views` with the same name (triggers rebuild).
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ViewPatchInput'
-            examples:
-              change_retention:
-                summary: Change retention
-                value:
-                  retention: "30d"
-              pause:
-                summary: Pause MV pipeline
-                value:
-                  paused: true
+                  version: 0.4.0
+                  uptime_seconds: 485
+                  health: healthy
+                  storage: {used_bytes: 246702}
+                  events: {total: 1007, today: 116}
+                  queries: {active: 0}
+                  tail: {active_sessions: 0, subscriber_count: 0, total_dropped_events: 0}
+                  retention: {oldest_event: '2025-01-15T08:00:00Z'}
+
+  /api/v1/stats:
+    get:
+      operationId: stats
+      tags: [Server]
+      summary: Storage and event counters
       responses:
         '200':
-          description: Updated
+          description: Counters
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ViewResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
-    delete:
-      operationId: deleteView
-      tags: [Materialized Views]
-      summary: Delete MV and all its data
-      description: |
-        Atomic deletion. If the view has cascading dependents, returns `409`.
-        Use `?force=true` to delete the view and all dependents.
+                $ref: '#/components/schemas/StatsResponse'
+
+  /api/v1/metrics:
+    get:
+      operationId: storageMetrics
+      tags: [Server]
+      summary: Storage metrics as JSON
+      responses:
+        '200':
+          description: Metrics with `ingest`, `flush`, `segment`, `compaction`, `compaction_levels`, `tiering`, `cache`, `query`, `pruning`, `system_write_amplification`, `uptime_seconds` and optional `adaptive_compaction`
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DataObject'
+
+  /api/v1/cluster/status:
+    get:
+      operationId: clusterStatus
+      tags: [Server]
+      summary: Cluster summary
+      responses:
+        '200':
+          description: Summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterStatusResponse'
+
+  /api/v1/compaction/history:
+    get:
+      operationId: compactionHistory
+      tags: [Server]
+      summary: Recorded compactions
       parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
-        - name: force
+        - name: since
           in: query
+          description: RFC 3339 time
           schema:
-            type: boolean
-            default: false
-          description: Delete view and all cascading dependents
+            type: string
+            format: date-time
       responses:
-        '204':
-          description: Deleted
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '409':
-          description: View has dependents
+        '200':
+          description: Compactions
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompactionHistoryResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /api/v1/cache/stats:
+    get:
+      operationId: cacheStats
+      tags: [Server]
+      summary: Query result cache statistics
+      responses:
+        '200':
+          description: Statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CacheStatsResponse'
+              example:
+                data: {hits: 2, misses: 26, hit_rate: 0.0714, entries: 25, size_bytes: 1110668, evictions: 0}
+
+  /api/v1/cache:
+    delete:
+      operationId: cacheClear
+      tags: [Server]
+      summary: Clear the query result cache
+      description: Needs `admin` scope.
+      responses:
+        '200':
+          description: Cleared
           content:
             application/json:
               example:
-                error:
-                  code: HAS_DEPENDENTS
-                  message: "Cannot delete 'mv_errors_5m': view 'mv_errors_1h' depends on it."
-                  dependents: ["mv_errors_1h"]
-                  suggestion: "Delete dependent views first, or use ?force=true to delete all."
+                data: {status: cleared}
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
-  /views/{name}/backfill:
-    get:
-      operationId: viewBackfill
-      tags: [Materialized Views]
-      summary: Backfill/rebuild progress
-      parameters:
-        - name: name
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Backfill status
-          content:
-            application/json:
-              examples:
-                in_progress:
-                  summary: Backfill in progress
-                  value:
-                    data:
-                      status: backfilling
-                      version: 1
-                      total: 12600000
-                      processed: 8400000
-                      percent: 66.7
-                      rate: 62500
-                      eta_seconds: 67
-                      started_at: "2026-02-14T14:30:00Z"
-                      cursor: "seg-004:offset-847291"
-                      errors: 0
-                idle:
-                  summary: No backfill running
-                  value:
-                    data:
-                      status: idle
-                      last_completed: "2026-02-12T10:04:23Z"
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  # CONFIG
-
-  /config:
+  /api/v1/config:
     get:
       operationId: getConfig
-      tags: [Config]
-      summary: Current runtime configuration
+      tags: [Server]
+      summary: Running configuration
+      description: Needs `admin` scope. Top-level keys are `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tail`, `tls`, `auth`, `server`, `buffer_manager`, `cluster`, `profiles`.
       responses:
         '200':
           description: Configuration
           content:
             application/json:
-              example:
-                data:
-                  listen: "localhost:3100"
-                  data_dir: "~/.lynxdb/data"
-                  retention: "7d"
-                  auth_enabled: false
-                  otlp_enabled: false
-                  syslog_enabled: false
-                  max_query_memory_mb: 512
+              schema:
+                $ref: '#/components/schemas/DataObject'
+        '403':
+          $ref: '#/components/responses/Forbidden'
     patch:
       operationId: patchConfig
-      tags: [Config]
-      summary: Update runtime configuration
-      description: Only runtime-adjustable fields. Fields requiring restart are flagged in `meta.restart_required`.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/ConfigPatch'
-            example:
-              retention: "30d"
-              max_query_memory_mb: 1024
-      responses:
-        '200':
-          description: Updated config
-          content:
-            application/json:
-              example:
-                data:
-                  listen: "localhost:3100"
-                  data_dir: "~/.lynxdb/data"
-                  retention: "30d"
-                  auth_enabled: false
-                  otlp_enabled: false
-                  syslog_enabled: false
-                  max_query_memory_mb: 1024
-                meta:
-                  restart_required: []
-
-  # COMPATIBILITY
-
-  /es/_bulk:
-    post:
-      operationId: esBulk
-      tags: [Compatibility]
-      summary: Elasticsearch _bulk API
+      tags: [Server]
+      summary: Change the running configuration
       description: |
-        Drop-in compatible with Filebeat, Logstash, Vector, Fluentd.
-        `_index` maps to `_source` tag. `_type` is ignored.
-
-        ```yaml
-        # Filebeat config:
-        output.elasticsearch:
-          hosts: ["http://lynxdb:3100/api/v1/es"]
-        ```
-      requestBody:
-        required: true
-        content:
-          application/x-ndjson:
-            schema:
-              type: string
-      responses:
-        '200':
-          description: ES-compatible bulk response
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ESBulkResponse'
-
-  /es/{index}/_doc:
-    post:
-      operationId: esIndexDoc
-      tags: [Compatibility]
-      summary: Elasticsearch single-doc ingest
-      parameters:
-        - name: index
-          in: path
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LogEvent'
-      responses:
-        '201':
-          description: Document indexed
-          content:
-            application/json:
-              example:
-                _id: "01JKNM3VXQP..."
-                result: created
-
-  /es/:
-    get:
-      operationId: esClusterInfo
-      tags: [Compatibility]
-      summary: Fake ES cluster info (Filebeat handshake)
-      responses:
-        '200':
-          description: Minimal cluster info for client compatibility
-          content:
-            application/json:
-              example:
-                name: lynxdb
-                cluster_name: lynxdb
-                version:
-                  number: "8.0.0"
-                  build_flavor: default
-                tagline: "LynxDB — Splunk-power log analytics in a single binary"
-
-  /otlp/v1/logs:
-    post:
-      operationId: otlpLogs
-      tags: [Compatibility]
-      summary: OpenTelemetry OTLP log ingest
-      description: |
-        Accepts OTLP HTTP logs in JSON format.
-
-        Requests with `Content-Type: application/x-protobuf` are rejected with
-        `415 Unsupported Media Type`.
-
-        ```yaml
-        # OTEL Collector config:
-        exporters:
-          otlp_http:
-            endpoint: http://lynxdb:3100/api/v1/otlp
-            encoding: json
-        ```
+        Needs a root key. Accepted top-level keys: `retention`, `log_level`, `listen`, `query`, `ingest`,
+        `storage`, `http`, `syslog`. Changes are not written to the config file.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              additionalProperties: true
+            example:
+              log_level: debug
+              query:
+                max_query_runtime: 10m
       responses:
         '200':
-          description: Accepted
+          description: The resulting configuration and the settings that need a restart
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigPatchResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
-# COMPONENTS
+  /api/v1/debug/pprof/{profile}:
+    get:
+      operationId: pprof
+      tags: [Server]
+      summary: Go runtime profiles
+      parameters:
+        - name: profile
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [profile, trace, heap, allocs, goroutine, mutex, block, threadcreate, cmdline, symbol]
+        - name: seconds
+          in: query
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Profile data
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+
+  # AUTH
+
+  /api/v1/auth/keys:
+    post:
+      operationId: createKey
+      tags: [Auth]
+      summary: Create an API key
+      description: Needs a root key. Answers `404` when authentication is off.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateKeyRequest'
+            example:
+              name: filebeat
+              scope: ingest
+              expires_in: 90d
+              description: edge shipper
+      responses:
+        '201':
+          description: The key, with its token shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/CreatedKey'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    get:
+      operationId: listKeys
+      tags: [Auth]
+      summary: List API keys
+      description: Needs a root key. Tokens are not returned.
+      responses:
+        '200':
+          description: Keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      keys:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/APIKey'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/auth/keys/{id}:
+    delete:
+      operationId: revokeKey
+      tags: [Auth]
+      summary: Revoke an API key
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '204':
+          description: Revoked
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The key is the last root key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error:
+                  code: LAST_ROOT_KEY
+                  message: Cannot revoke the last root key. Use rotate-root instead.
+
+  /api/v1/auth/rotate-root:
+    post:
+      operationId: rotateRoot
+      tags: [Auth]
+      summary: Replace the calling root key
+      responses:
+        '200':
+          description: The replacement root key, with its token shown once
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    $ref: '#/components/schemas/RotateRootResult'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ELASTICSEARCH
+
+  /_bulk:
+    post:
+      operationId: esBulkRoot
+      tags: [Elasticsearch]
+      summary: Elasticsearch bulk ingest
+      description: |
+        `index` and `create` actions are stored; `update` and `delete` fail per item.
+        The target index is the data stream name, else `_index`, else the path index, else a `target_index`
+        field of the document, else `default`. Outside `/api/`, so with authentication on use `/api/v1/es/_bulk`.
+      security:
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/MsgField'
+        - $ref: '#/components/parameters/TimeField'
+      requestBody:
+        $ref: '#/components/requestBodies/ESBulk'
+      responses:
+        '200':
+          $ref: '#/components/responses/ESBulkResult'
+        '400':
+          $ref: '#/components/responses/ESError'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '503':
+          $ref: '#/components/responses/ESError'
+
+  /{index}/_bulk:
+    post:
+      operationId: esBulkIndex
+      tags: [Elasticsearch]
+      summary: Elasticsearch bulk ingest into an index
+      security:
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/ESIndex'
+        - $ref: '#/components/parameters/MsgField'
+        - $ref: '#/components/parameters/TimeField'
+      requestBody:
+        $ref: '#/components/requestBodies/ESBulk'
+      responses:
+        '200':
+          $ref: '#/components/responses/ESBulkResult'
+        '400':
+          $ref: '#/components/responses/ESError'
+
+  /_data_stream/{data_stream}/_bulk:
+    post:
+      operationId: esBulkDataStream
+      tags: [Elasticsearch]
+      summary: Elasticsearch bulk ingest into a data stream
+      security:
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/DataStream'
+      requestBody:
+        $ref: '#/components/requestBodies/ESBulk'
+      responses:
+        '200':
+          $ref: '#/components/responses/ESBulkResult'
+        '400':
+          $ref: '#/components/responses/ESError'
+
+  /api/v1/es/_bulk:
+    post:
+      operationId: esBulk
+      tags: [Elasticsearch]
+      summary: Elasticsearch bulk ingest (authenticated)
+      description: Needs `ingest` scope when authentication is on.
+      parameters:
+        - $ref: '#/components/parameters/MsgField'
+        - $ref: '#/components/parameters/TimeField'
+      requestBody:
+        $ref: '#/components/requestBodies/ESBulk'
+      responses:
+        '200':
+          $ref: '#/components/responses/ESBulkResult'
+        '400':
+          $ref: '#/components/responses/ESError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+
+  /api/v1/es/_data_stream/{data_stream}/_bulk:
+    post:
+      operationId: esBulkDataStreamPrefixed
+      tags: [Elasticsearch]
+      summary: Elasticsearch bulk ingest into a data stream (authenticated)
+      parameters:
+        - $ref: '#/components/parameters/DataStream'
+      requestBody:
+        $ref: '#/components/requestBodies/ESBulk'
+      responses:
+        '200':
+          $ref: '#/components/responses/ESBulkResult'
+        '400':
+          $ref: '#/components/responses/ESError'
+
+  /api/v1/es/{index}/_doc:
+    post:
+      operationId: esIndexDoc
+      tags: [Elasticsearch]
+      summary: Store one Elasticsearch document
+      parameters:
+        - $ref: '#/components/parameters/ESIndex'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+            example:
+              message: single event
+              '@timestamp': '2026-11-17T09:00:02Z'
+              level: info
+      responses:
+        '201':
+          description: Stored
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ESIndexDocResponse'
+              example:
+                _id: 83902dbd6e6c4283f4314362
+                _index: logs
+                result: created
+        '400':
+          $ref: '#/components/responses/ESError'
+
+  /:
+    get:
+      operationId: esHandshakeRoot
+      tags: [Elasticsearch]
+      summary: Elasticsearch cluster handshake
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESClusterInfo'
+    head:
+      operationId: esHandshakeRootHead
+      tags: [Elasticsearch]
+      summary: Elasticsearch handshake probe
+      security:
+        - {}
+      responses:
+        '200':
+          description: OK
+
+  /api/v1/es:
+    get:
+      operationId: esHandshake
+      tags: [Elasticsearch]
+      summary: Elasticsearch cluster handshake (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESClusterInfo'
+
+  /api/v1/es/:
+    get:
+      operationId: esHandshakeSlash
+      tags: [Elasticsearch]
+      summary: Elasticsearch cluster handshake (prefixed, trailing slash)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESClusterInfo'
+
+  /{index}:
+    head:
+      operationId: esIndexProbe
+      tags: [Elasticsearch]
+      summary: Index existence probe; always 200
+      security:
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/ESIndex'
+      responses:
+        '200':
+          description: OK
+
+  /api/v1/es/{index}:
+    head:
+      operationId: esIndexProbePrefixed
+      tags: [Elasticsearch]
+      summary: Index existence probe (prefixed); always 200
+      parameters:
+        - $ref: '#/components/parameters/ESIndex'
+      responses:
+        '200':
+          description: OK
+    put:
+      operationId: esCreateIndexPrefixed
+      tags: [Elasticsearch]
+      summary: Unsupported index management call
+      parameters:
+        - $ref: '#/components/parameters/ESIndex'
+      responses:
+        '501':
+          $ref: '#/components/responses/ESUnsupported'
+
+  /_xpack:
+    get:
+      operationId: esXPack
+      tags: [Elasticsearch]
+      summary: X-Pack feature summary stub
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /_xpack/license:
+    get:
+      operationId: esXPackLicense
+      tags: [Elasticsearch]
+      summary: Basic license stub
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /_license:
+    get:
+      operationId: esLicense
+      tags: [Elasticsearch]
+      summary: Basic license stub
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /_cat/templates:
+    get:
+      operationId: esCatTemplates
+      tags: [Elasticsearch]
+      summary: Empty template list
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESEmptyArray'
+
+  /_cat/indices:
+    get:
+      operationId: esCatIndices
+      tags: [Elasticsearch]
+      summary: Empty index list
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESEmptyArray'
+
+  /_cluster/health:
+    get:
+      operationId: esClusterHealth
+      tags: [Elasticsearch]
+      summary: Green single-node health stub
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /_index_template/{name}:
+    parameters:
+      - $ref: '#/components/parameters/StubName'
+    get:
+      operationId: esGetIndexTemplate
+      tags: [Elasticsearch]
+      summary: Empty index template list
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+    put:
+      operationId: esPutIndexTemplate
+      tags: [Elasticsearch]
+      summary: Acknowledge an index template without storing it
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESAcknowledged'
+
+  /_ilm/policy/{name}:
+    get:
+      operationId: esGetILMPolicy
+      tags: [Elasticsearch]
+      summary: ILM policy probe; always 404
+      security:
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/StubName'
+      responses:
+        '404':
+          $ref: '#/components/responses/ESStub'
+
+  /_ingest/pipeline/{name}:
+    get:
+      operationId: esGetIngestPipeline
+      tags: [Elasticsearch]
+      summary: Ingest pipeline probe; always 404
+      security:
+        - {}
+      parameters:
+        - $ref: '#/components/parameters/StubName'
+      responses:
+        '404':
+          $ref: '#/components/responses/ESStub'
+
+  /_nodes/{path}:
+    get:
+      operationId: esNodes
+      tags: [Elasticsearch]
+      summary: Minimal node HTTP info
+      security:
+        - {}
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /_alias:
+    get:
+      operationId: esAlias
+      tags: [Elasticsearch]
+      summary: Empty aliases object
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /_data_stream/{name}:
+    parameters:
+      - $ref: '#/components/parameters/StubName'
+    get:
+      operationId: esGetDataStream
+      tags: [Elasticsearch]
+      summary: Empty data stream list
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+    put:
+      operationId: esPutDataStream
+      tags: [Elasticsearch]
+      summary: Acknowledge a data stream without storing it
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESAcknowledged'
+
+  /_search:
+    get:
+      operationId: esSearch
+      tags: [Elasticsearch]
+      summary: Empty search hits
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /_security/user/_authenticate:
+    post:
+      operationId: esAuthenticate
+      tags: [Elasticsearch]
+      summary: Authenticated user stub
+      security:
+        - {}
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /api/v1/es/_xpack:
+    get:
+      operationId: esXPackPrefixed
+      tags: [Elasticsearch]
+      summary: X-Pack feature summary stub (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /api/v1/es/_xpack/license:
+    get:
+      operationId: esXPackLicensePrefixed
+      tags: [Elasticsearch]
+      summary: Basic license stub (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /api/v1/es/_license:
+    get:
+      operationId: esLicensePrefixed
+      tags: [Elasticsearch]
+      summary: Basic license stub (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /api/v1/es/_cat/templates:
+    get:
+      operationId: esCatTemplatesPrefixed
+      tags: [Elasticsearch]
+      summary: Empty template list (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESEmptyArray'
+
+  /api/v1/es/_cat/indices:
+    get:
+      operationId: esCatIndicesPrefixed
+      tags: [Elasticsearch]
+      summary: Empty index list (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESEmptyArray'
+
+  /api/v1/es/_cluster/health:
+    get:
+      operationId: esClusterHealthPrefixed
+      tags: [Elasticsearch]
+      summary: Green single-node health stub (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /api/v1/es/_ilm/policy/{name}:
+    parameters:
+      - $ref: '#/components/parameters/StubName'
+    get:
+      operationId: esGetILMPolicyPrefixed
+      tags: [Elasticsearch]
+      summary: ILM policy probe; always 404 (prefixed)
+      responses:
+        '404':
+          $ref: '#/components/responses/ESStub'
+    put:
+      operationId: esPutILMPolicyPrefixed
+      tags: [Elasticsearch]
+      summary: Unsupported ILM policy write
+      responses:
+        '501':
+          $ref: '#/components/responses/ESUnsupported'
+
+  /api/v1/es/_index_template/{name}:
+    parameters:
+      - $ref: '#/components/parameters/StubName'
+    get:
+      operationId: esGetIndexTemplatePrefixed
+      tags: [Elasticsearch]
+      summary: Empty index template list (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+    put:
+      operationId: esPutIndexTemplatePrefixed
+      tags: [Elasticsearch]
+      summary: Acknowledge an index template without storing it (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESAcknowledged'
+
+  /api/v1/es/_ingest/pipeline/{name}:
+    parameters:
+      - $ref: '#/components/parameters/StubName'
+    get:
+      operationId: esGetIngestPipelinePrefixed
+      tags: [Elasticsearch]
+      summary: Ingest pipeline probe; always 404 (prefixed)
+      responses:
+        '404':
+          $ref: '#/components/responses/ESStub'
+    put:
+      operationId: esPutIngestPipelinePrefixed
+      tags: [Elasticsearch]
+      summary: Unsupported ingest pipeline write
+      responses:
+        '501':
+          $ref: '#/components/responses/ESUnsupported'
+
+  /api/v1/es/_nodes/{path}:
+    get:
+      operationId: esNodesPrefixed
+      tags: [Elasticsearch]
+      summary: Minimal node HTTP info (prefixed)
+      parameters:
+        - name: path
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /api/v1/es/_data_stream/{name}:
+    parameters:
+      - $ref: '#/components/parameters/StubName'
+    get:
+      operationId: esGetDataStreamPrefixed
+      tags: [Elasticsearch]
+      summary: Empty data stream list (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+    put:
+      operationId: esPutDataStreamPrefixed
+      tags: [Elasticsearch]
+      summary: Acknowledge a data stream without storing it (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESAcknowledged'
+
+  /api/v1/es/_alias:
+    get:
+      operationId: esAliasPrefixed
+      tags: [Elasticsearch]
+      summary: Empty aliases object (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /api/v1/es/_search:
+    get:
+      operationId: esSearchPrefixed
+      tags: [Elasticsearch]
+      summary: Empty search hits (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  /api/v1/es/_security/user/_authenticate:
+    post:
+      operationId: esAuthenticatePrefixed
+      tags: [Elasticsearch]
+      summary: Authenticated user stub (prefixed)
+      responses:
+        '200':
+          $ref: '#/components/responses/ESStub'
+
+  # SPLUNK HEC
+
+  /services/collector:
+    post:
+      operationId: hecCollector
+      tags: [Splunk HEC]
+      summary: HEC event ingest
+      description: Same as `/services/collector/event`.
+      security:
+        - SplunkToken: []
+      parameters:
+        - $ref: '#/components/parameters/SplunkChannel'
+      requestBody:
+        $ref: '#/components/requestBodies/HECEvents'
+      responses:
+        '200':
+          $ref: '#/components/responses/HECSuccess'
+        '401':
+          $ref: '#/components/responses/HECUnauthorized'
+        '404':
+          $ref: '#/components/responses/HECDisabled'
+
+  /services/collector/event:
+    post:
+      operationId: hecEvent
+      tags: [Splunk HEC]
+      summary: HEC event ingest
+      description: |
+        One HEC event object per line; invalid lines are skipped and counted in `skipped_lines`.
+        Events are stored in the `main` index. Any non-empty `Splunk` token is accepted; LynxDB API keys are not checked.
+      security:
+        - SplunkToken: []
+      parameters:
+        - $ref: '#/components/parameters/SplunkChannel'
+      requestBody:
+        $ref: '#/components/requestBodies/HECEvents'
+      responses:
+        '200':
+          $ref: '#/components/responses/HECSuccess'
+        '401':
+          $ref: '#/components/responses/HECUnauthorized'
+        '404':
+          $ref: '#/components/responses/HECDisabled'
+
+  /services/collector/raw:
+    post:
+      operationId: hecRaw
+      tags: [Splunk HEC]
+      summary: HEC raw ingest
+      security:
+        - SplunkToken: []
+      parameters:
+        - $ref: '#/components/parameters/SplunkChannel'
+        - {name: source, in: query, schema: {type: string}}
+        - {name: sourcetype, in: query, schema: {type: string}}
+        - {name: host, in: query, schema: {type: string}}
+        - {name: index, in: query, schema: {type: string}}
+      requestBody:
+        required: true
+        content:
+          text/plain:
+            schema:
+              type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/HECSuccess'
+        '401':
+          $ref: '#/components/responses/HECUnauthorized'
+
+  /services/collector/ack:
+    post:
+      operationId: hecAck
+      tags: [Splunk HEC]
+      summary: Check acknowledgement IDs for a channel
+      security:
+        - SplunkToken: []
+      parameters:
+        - $ref: '#/components/parameters/SplunkChannel'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                acks:
+                  type: array
+                  items:
+                    type: integer
+            example:
+              acks: [1, 2]
+      responses:
+        '200':
+          description: Status of each ID
+          content:
+            application/json:
+              example:
+                acks: {'1': true, '2': false}
+        '400':
+          description: 'Invalid body (`{"text": "Invalid ack request", "code": 5}`)'
+
+  /services/collector/health:
+    get:
+      operationId: hecHealth
+      tags: [Splunk HEC]
+      summary: HEC health
+      security: []
+      responses:
+        '200':
+          description: Healthy
+          content:
+            application/json:
+              example:
+                text: HEC is healthy
+                code: 17
+        '404':
+          $ref: '#/components/responses/HECDisabled'
+
+  # OTLP
+
+  /api/v1/otlp/v1/logs:
+    post:
+      operationId: otlpLogsJSON
+      tags: [OTLP]
+      summary: OTLP logs as JSON on the API port
+      description: |
+        OTLP JSON only; `application/x-protobuf` answers `415`. `resource.attributes["deployment.environment"]`
+        selects the target index.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: Stored; the body is `{}`
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '415':
+          description: Protobuf is not accepted on this route
+
+  /v1/logs:
+    servers:
+      - url: http://localhost:4318
+        description: OTLP/HTTP listener (`ingest.otlp.http_listen`)
+    post:
+      operationId: otlpLogs
+      tags: [OTLP]
+      summary: OTLP/HTTP logs
+      description: Protobuf or JSON. Records go to the `main` index with `_sourcetype` `otlp`.
+      security:
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/x-protobuf:
+            schema:
+              type: string
+              format: binary
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        '200':
+          description: An empty ExportLogsServiceResponse
+        '400':
+          description: Invalid protobuf or JSON
+        '415':
+          description: Unsupported content type
+        '503':
+          description: Ingest failed; `Retry-After` is set
+
+  /v1/traces:
+    servers:
+      - url: http://localhost:4318
+    post:
+      operationId: otlpTraces
+      tags: [OTLP]
+      summary: OTLP traces; accepted and discarded
+      security:
+        - {}
+      responses:
+        '200':
+          description: An empty ExportTraceServiceResponse
+
+  /v1/metrics:
+    servers:
+      - url: http://localhost:4318
+    post:
+      operationId: otlpMetrics
+      tags: [OTLP]
+      summary: OTLP metrics; accepted and discarded
+      security:
+        - {}
+      responses:
+        '200':
+          description: An empty ExportMetricsServiceResponse
+
 components:
 
   securitySchemes:
     BearerAuth:
       type: http
       scheme: bearer
-      description: Optional. Off by default. Enable with `lynxdb server --auth`.
+    BasicAuth:
+      type: http
+      scheme: basic
+      description: The password is the token; the user name is ignored.
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: '`ApiKey <base64(id:token)>`, as sent by Elasticsearch clients.'
+    TokenQuery:
+      type: apiKey
+      in: query
+      name: _token
+      description: For SSE clients that cannot set headers.
+    SplunkToken:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: '`Splunk <token>`'
 
   parameters:
-    XSource:
-      name: X-Source
-      in: header
+    From:
+      name: from
+      in: query
+      description: 'Start time: relative (`-1h`, `-7d`, `-1d@d`), `now`, or ISO 8601'
       schema:
         type: string
-      description: Tag events with a source label (e.g., `nginx`, `api-gateway`)
-      example: nginx
-    XFormat:
-      name: X-Format
-      in: header
+      example: '-1h'
+    To:
+      name: to
+      in: query
+      description: End time, same formats as `from`
       schema:
         type: string
-        enum: [json, syslog, clf, raw, auto]
-        default: auto
-      description: Force log format parser. Default `auto` detects format.
+    JobID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+      example: qry_0f8eeb0e72818e85
+    ESIndex:
+      name: index
+      in: path
+      required: true
+      schema:
+        type: string
+    DataStream:
+      name: data_stream
+      in: path
+      required: true
+      schema:
+        type: string
+    StubName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+    MsgField:
+      name: _msg_field
+      in: query
+      description: Document field to store as `_raw` instead of the whole document
+      schema:
+        type: string
+    TimeField:
+      name: _time_field
+      in: query
+      description: Document field to read the event time from (default `@timestamp`)
+      schema:
+        type: string
+    SplunkChannel:
+      name: X-Splunk-Request-Channel
+      in: header
+      description: When set, events are flushed before the response and an `ackId` is returned
+      schema:
+        type: string
+
+  requestBodies:
+    ESBulk:
+      required: true
+      content:
+        application/x-ndjson:
+          schema:
+            type: string
+          example: |
+            {"index":{"_index":"logs"}}
+            {"message":"hello from filebeat","@timestamp":"2026-11-17T09:00:00Z","level":"info"}
+            {"create":{"_index":"logs"}}
+            {"message":"cpu usage high","@timestamp":"2026-11-17T09:00:01Z","host":"web-01"}
+    HECEvents:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HECEvent'
+          example:
+            event: user login succeeded
+            time: 1763370000
+            host: web-01
+            source: auth-service
+            sourcetype: json
+            fields: {level: info}
 
   responses:
+    QueryError:
+      description: The request is invalid or the query does not compile
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            syntax:
+              summary: SYNTAX_ERROR
+              value:
+                error:
+                  code: SYNTAX_ERROR
+                  message: 'syntax error at line 1, column 29: expected an expression'
+                  position: {line: 1, column: 29}
+                  expected: [expression]
+            semantic:
+              summary: SEMANTIC_ERROR
+              value:
+                error:
+                  code: SEMANTIC_ERROR
+                  message: 'semantic error at line 1, column 50: field status not found (available fields: n, host)'
+                  position: {line: 1, column: 50}
+                  suggestion: 'available fields: n, host'
+            type:
+              summary: TYPE_ERROR
+              value:
+                error:
+                  code: TYPE_ERROR
+                  message: 'type error at line 1, column 21: expected a boolean expression, got int'
+                  position: {line: 1, column: 21}
+            planning:
+              summary: PLANNING_ERROR
+              value:
+                error:
+                  code: PLANNING_ERROR
+                  message: 'planning error: time range: parse from "yesterday-ish": unable to parse time: "yesterday-ish"'
+            validation:
+              summary: VALIDATION_ERROR
+              value:
+                error:
+                  code: VALIDATION_ERROR
+                  message: unsupported format "csv"; only "json" is supported
+                  suggestion: Use the default JSON response, or POST /api/v1/query/stream for NDJSON exports.
+    UnsupportedQuery:
+      description: The query uses PPL that LynxDB does not run
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          examples:
+            command:
+              summary: UNSUPPORTED_COMMAND
+              value:
+                error:
+                  code: UNSUPPORTED_COMMAND
+                  message: 'unsupported_command error at line 1, column 15: the fieldformat command is not supported: display formatting with prefix and suffix is not implemented; use eval with concat()'
+                  position: {line: 1, column: 15}
+            function:
+              summary: UNSUPPORTED_FUNCTION
+              value:
+                error:
+                  code: UNSUPPORTED_FUNCTION
+                  message: 'unsupported_function error at line 1, column 24: function geoip is not supported: LynxDB has no GeoIP database'
+                  position: {line: 1, column: 24}
+            feature:
+              summary: UNSUPPORTED_FEATURE
+              value:
+                error:
+                  code: UNSUPPORTED_FEATURE
+                  message: 'unsupported_feature error at line 1, column 30: bin bins= is not supported; use span='
+                  position: {line: 1, column: 30}
+    ExecutionError:
+      description: The query failed while running
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: EXECUTION_ERROR
+              message: 'physical.Build: not supported by the execution engine: earliest ordered by a column other than _time'
+    PoolExhausted:
+      description: The server-wide query memory pool is full
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: QUERY_POOL_EXHAUSTED
+              message: query memory pool exhausted
+              suggestion: Wait for other queries to complete, or increase query.global_query_pool_bytes.
+    TooManyRequests:
+      description: Concurrency or rate limit reached
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: TOO_MANY_REQUESTS
+              message: rate limit exceeded
+    ValidationError:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
     Unauthorized:
-      description: Authentication required
+      description: Missing or invalid credentials
       content:
         application/json:
           schema:
@@ -1741,10 +2252,20 @@ components:
           example:
             error:
               code: AUTH_REQUIRED
-              message: "Authentication is enabled. Provide a Bearer token."
-              docs_url: "https://lynxdb.io/docs/auth"
+              message: 'Authentication required. Provide: Authorization: Bearer <key>'
+              suggestion: Run 'lynxdb login' or set LYNXDB_TOKEN environment variable
+    Forbidden:
+      description: The key lacks the required scope or is not a root key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: FORBIDDEN
+              message: 'This operation requires scope: query (your key has scope: ingest)'
     NotFound:
-      description: Resource not found
+      description: Not found
       content:
         application/json:
           schema:
@@ -1752,57 +2273,141 @@ components:
           example:
             error:
               code: NOT_FOUND
-              message: "Resource not found."
-    InvalidQuery:
-      description: Invalid SPL2 query
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-          example:
-            error:
-              code: INVALID_QUERY
-              message: "Unknown field 'stauts'."
-              suggestion: "status"
-    QueryTimeout:
-      description: Query exceeded time limit
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-          example:
-            error:
-              code: QUERY_TIMEOUT
-              message: "Query exceeded 30s timeout. Try narrowing the time range or adding filters."
+              message: job not found
     PayloadTooLarge:
-      description: Event or batch exceeds size limit
+      description: The body is over a size limit
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            $ref: '#/components/schemas/ESErrorResponse'
           example:
             error:
-              code: PAYLOAD_TOO_LARGE
-              message: "Event exceeds 1 MB limit."
-    RateLimited:
-      description: Too many requests
+              type: request_body_too_large
+              reason: compressed body exceeds limit 33554432
+            status: 413
+    Backpressure:
+      description: Ingest is saturated or the server is stopping
       headers:
         Retry-After:
           schema:
             type: integer
-          description: Seconds to wait before retrying
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
           example:
             error:
-              code: RATE_LIMITED
-              message: "Ingest rate limit exceeded. Retry after 1s."
+              code: BACKPRESSURE
+              message: 'ingest backpressure: compaction falling behind'
+    IngestAccepted:
+      description: Events stored
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/IngestResponse'
+          example:
+            data: {accepted: 2, failed: 0}
+    ESBulkResult:
+      description: Bulk result in Elasticsearch format
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ESBulkResponse'
+          example:
+            took: 14
+            errors: false
+            items:
+              - index: {_id: 7e09be76021487a477741b2e, _index: logs, status: 201, result: created}
+              - create: {_id: a7a8e87ecb20d263fe897b43, _index: logs, status: 201, result: created}
+    ESError:
+      description: Elasticsearch-format error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ESErrorResponse'
+          example:
+            error:
+              type: content_type_exception
+              reason: bulk endpoint requires application/x-ndjson or application/json
+            status: 400
+    ESClusterInfo:
+      description: Elasticsearch-style cluster description
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ESClusterInfo'
+          example:
+            name: lynxdb-host1-90011
+            cluster_name: lynxdb
+            cluster_uuid: Lp9Zztp3164yLH-aHknLAn
+            version:
+              number: 8.15.0
+              build_flavor: default
+              build_type: tarball
+              build_hash: lynxdb
+              build_date: '2025-01-01T00:00:00.000Z'
+              build_snapshot: false
+              lucene_version: 9.7.0
+              minimum_wire_compatibility_version: 7.17.0
+              minimum_index_compatibility_version: 7.0.0
+            tagline: You Know, for Logs
+    ESStub:
+      description: Fixed Elasticsearch-style response
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+    ESEmptyArray:
+      description: Empty JSON array
+      content:
+        application/json:
+          schema:
+            type: array
+            items: {}
+            maxItems: 0
+    ESAcknowledged:
+      description: Acknowledged without storing anything
+      content:
+        application/json:
+          example:
+            acknowledged: true
+    ESUnsupported:
+      description: Unsupported Elasticsearch management endpoint
+      content:
+        application/json:
+          example:
+            error: unsupported Elasticsearch management endpoint
+            status: 501
+    HECSuccess:
+      description: Events accepted
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HECResponse'
+          example:
+            text: Success
+            code: 0
+    HECUnauthorized:
+      description: Missing or invalid Splunk token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HECResponse'
+          example:
+            text: Token is required
+            code: 2
+    HECDisabled:
+      description: '`ingest.splunk_hec.enabled` is false'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HECResponse'
+          example:
+            text: HEC is disabled
+            code: 4
 
   schemas:
-
-    # ── Generic ──
 
     ErrorResponse:
       type: object
@@ -1814,19 +2419,206 @@ components:
           properties:
             code:
               type: string
-              description: Machine-readable SCREAMING_SNAKE code
-              example: INVALID_QUERY
+              enum:
+                - SYNTAX_ERROR
+                - SEMANTIC_ERROR
+                - TYPE_ERROR
+                - PLANNING_ERROR
+                - UNSUPPORTED_COMMAND
+                - UNSUPPORTED_FUNCTION
+                - UNSUPPORTED_FEATURE
+                - EXECUTION_ERROR
+                - QUERY_TOO_LARGE
+                - QUERY_MEMORY_EXCEEDED
+                - QUERY_POOL_EXHAUSTED
+                - TOO_MANY_REQUESTS
+                - VALIDATION_ERROR
+                - INVALID_JSON
+                - INVALID_REQUEST
+                - INVALID_QUERY
+                - AUTH_REQUIRED
+                - INVALID_TOKEN
+                - FORBIDDEN
+                - NOT_FOUND
+                - LAST_ROOT_KEY
+                - BACKPRESSURE
+                - SHUTTING_DOWN
+                - INTERNAL_ERROR
             message:
               type: string
-              example: "Unknown field 'stauts'"
             suggestion:
               type: string
-              example: status
-            docs_url:
-              type: string
-              format: uri
+            position:
+              $ref: '#/components/schemas/Position'
+            expected:
+              type: array
+              items:
+                type: string
+              description: Tokens the parser would have accepted (syntax errors)
 
-    Meta:
+    BareError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+
+    ESErrorResponse:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            type:
+              type: string
+            reason:
+              type: string
+        status:
+          type: integer
+
+    Position:
+      type: object
+      properties:
+        line:
+          type: integer
+        column:
+          type: integer
+
+    DataObject:
+      type: object
+      properties:
+        data:
+          type: object
+          additionalProperties: true
+
+    # Query
+
+    QueryRequest:
+      type: object
+      properties:
+        q:
+          type: string
+          description: The PPL query. Required unless `query` is set
+          example: 'source=main status>=500 | stats count() as errors by host'
+        query:
+          type: string
+          description: Alias for `q`
+        from:
+          type: string
+          description: 'Start time: relative (`-1h`, `-7d`, `-1d@d`), `now`, or ISO 8601. Omit for no lower bound'
+        to:
+          type: string
+          description: End time, same formats as `from`
+        earliest:
+          type: string
+          description: Alias for `from`
+        latest:
+          type: string
+          description: Alias for `to`
+        limit:
+          type: integer
+          default: 1000
+          maximum: 50000
+          description: Rows to return (`query.default_result_limit`, capped at `query.max_result_limit`)
+        offset:
+          type: integer
+          default: 0
+        wait:
+          type: number
+          nullable: true
+          description: Absent or `null` for sync, `0` for async, `N` for hybrid
+        profile:
+          type: string
+          enum: [basic, full, trace]
+          description: '`trace` adds per-segment read details to `meta.stats.segment_details`'
+        format:
+          type: string
+          enum: [json]
+        lint:
+          type: boolean
+          default: true
+          description: '`false` turns off advisory lints'
+        suggestions:
+          type: boolean
+          default: true
+          description: '`false` turns off advisory suggestions'
+        lint_limit:
+          type: integer
+          default: 5
+        lint_full:
+          type: boolean
+          default: false
+
+    QueryStreamRequest:
+      type: object
+      properties:
+        q:
+          type: string
+          description: The PPL query
+        query:
+          type: string
+        from:
+          type: string
+        to:
+          type: string
+        earliest:
+          type: string
+        latest:
+          type: string
+
+    EventsResult:
+      type: object
+      required: [type, events, total, has_more]
+      properties:
+        type:
+          type: string
+          enum: [events]
+        events:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        total:
+          type: integer
+          description: Events produced before `offset` and `limit`
+        has_more:
+          type: boolean
+
+    AggregateResult:
+      type: object
+      required: [type, columns, rows, total_rows, has_more]
+      properties:
+        type:
+          type: string
+          enum: [aggregate]
+        columns:
+          type: array
+          items:
+            type: string
+          description: Built-in fields first, then the other columns alphabetically
+        rows:
+          type: array
+          items:
+            type: array
+            items: {}
+        total_rows:
+          type: integer
+          description: Rows before `offset` and `limit`
+        has_more:
+          type: boolean
+
+    QueryResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          oneOf:
+            - $ref: '#/components/schemas/EventsResult'
+            - $ref: '#/components/schemas/AggregateResult'
+        meta:
+          $ref: '#/components/schemas/QueryMeta'
+
+    QueryMeta:
       type: object
       properties:
         took_ms:
@@ -1835,334 +2627,151 @@ components:
           type: integer
         query_id:
           type: string
-
-    # ── Ingest ──
-
-    LogEvent:
-      type: object
-      additionalProperties: true
-      description: Any JSON object. No required schema.
-      example:
-        message: "GET /api/users 200 12ms"
-        level: info
-        source: nginx
-        status: 200
-
-    StructuredIngestEvent:
-      type: object
-      required: [event]
-      properties:
-        event:
-          type: string
-          description: Raw event text stored in `_raw`
-        time:
-          type: number
-          description: Unix timestamp in seconds
-        source:
-          type: string
-        sourcetype:
-          type: string
-        host:
-          type: string
-        index:
-          type: string
-        fields:
-          type: object
-          additionalProperties: true
-          description: Additional scalar fields copied onto the event
-      example:
-        event: "request completed"
-        source: "api"
-        host: "web-01"
-        fields:
-          level: "info"
-          duration_ms: 45
-
-    IngestResponse:
-      type: object
-      required: [data]
-      properties:
-        data:
-          type: object
-          required: [accepted, failed]
-          properties:
-            accepted:
-              type: integer
-            failed:
-              type: integer
-
-    IngestPartialResponse:
-      type: object
-      required: [data]
-      properties:
-        data:
-          type: object
-          required: [accepted, failed, errors]
-          properties:
-            accepted:
-              type: integer
-            failed:
-              type: integer
-            errors:
-              type: array
-              items:
-                type: object
-                properties:
-                  index:
-                    type: integer
-                  code:
-                    type: string
-                  message:
-                    type: string
-
-    ESBulkResponse:
-      type: object
-      properties:
-        took:
+        segments_errored:
           type: integer
-        errors:
-          type: boolean
-        items:
+        stats:
+          $ref: '#/components/schemas/QueryStats'
+        explain:
+          type: object
+          properties:
+            source_scope:
+              type: object
+              properties:
+                selected:
+                  type: array
+                  items:
+                    type: string
+                count:
+                  type: integer
+            segments:
+              type: object
+              additionalProperties:
+                type: integer
+            candidate_rows:
+              type: integer
+            regex_engine:
+              type: string
+            literal_extraction:
+              type: boolean
+            wall_clock_ms:
+              type: number
+            scanned_bytes:
+              type: integer
+        warnings:
+          type: array
+          items:
+            type: string
+        lints:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueryLint'
+        suggestions:
           type: array
           items:
             type: object
             properties:
-              index:
-                type: object
-                properties:
-                  _id:
-                    type: string
-                  status:
-                    type: integer
-
-    # ── Query ──
-
-    QueryRequest:
-      type: object
-      properties:
-        q:
-          type: string
-          description: SPL2 query string
-          example: "source=nginx status>=500 | stats count by uri"
-        query:
-          type: string
-          description: Alias for `q`
-        earliest:
-          type: string
-          description: Legacy alias for `from`
-        latest:
-          type: string
-          description: Legacy alias for `to`
-        from:
-          type: string
-          description: "Start time: relative (`-1h`, `-7d`) or ISO 8601. Default: `-15m`"
-          default: "-15m"
-          example: "-1h"
-        to:
-          type: string
-          description: "End time: relative (`now`, `-5m`) or ISO 8601. Default: `now`"
-          default: "now"
-        limit:
-          type: integer
-          default: 1000
-          maximum: 50000
-          description: Max events to return
-        offset:
-          type: integer
-          default: 0
-          description: Offset for pagination (tabular results only)
-        format:
-          type: string
-          enum: [json]
-          default: json
-          description: Optional response format selector. Only `json` is accepted on `/query`.
-        wait:
-          type: number
-          nullable: true
-          default: null
-          description: |
-            Controls sync/async behavior:
-            - `null` (default) — **Sync.** Block until query completes. Returns `200` with results.
-            - `0` — **Async.** Return `202` immediately with a job handle. Client polls or subscribes to SSE for progress.
-            - `N` (seconds) — **Hybrid.** Wait up to N seconds. If query completes in time → `200` with results. If not → `202` with job handle and current progress. Best for UI: short queries feel instant, long queries degrade gracefully.
-          example: 5
-        profile:
-          type: string
-          enum: [basic, full, trace]
-          description: Include richer execution statistics in the response `meta.stats`.
-        variables:
-          type: object
-          additionalProperties:
-            type: string
-          description: Template variables substituted into the query before planning.
-
-    QueryStreamRequest:
-      type: object
-      properties:
-        q:
-          type: string
-          description: SPL2 query string
-        query:
-          type: string
-          description: Alias for `q`
-        earliest:
-          type: string
-          description: Legacy alias for `from`
-        latest:
-          type: string
-          description: Legacy alias for `to`
-        from:
-          type: string
-          description: "Start time: relative (`-1h`, `-7d`) or ISO 8601."
-        to:
-          type: string
-          description: "End time: relative (`now`, `-5m`) or ISO 8601."
-        variables:
-          type: object
-          additionalProperties:
-            type: string
-          description: Template variables substituted into the query before planning.
-
-    AcceleratedBy:
-      type: object
-      properties:
-        view:
-          type: string
-          description: Name of the MV used
-        original_scan:
-          type: integer
-          description: Events that would have been scanned without MV
-        speedup:
-          type: string
-          example: "~400x"
-        status:
-          type: string
-          enum: [active, backfilling]
-        coverage_percent:
-          type: number
-          description: Only present when MV is backfilling
-
-    QueryEventsResponse:
-      type: object
-      required: [data]
-      properties:
-        data:
-          type: object
-          required: [type, events, total]
-          properties:
-            type:
-              type: string
-              enum: [events]
-            events:
-              type: array
-              items:
-                $ref: '#/components/schemas/LogEvent'
-            total:
-              type: integer
-            has_more:
-              type: boolean
-            partial:
-              type: boolean
-              description: Present and `true` when served from a backfilling MV
-        meta:
-          allOf:
-            - $ref: '#/components/schemas/Meta'
-            - type: object
-              properties:
-                accelerated_by:
-                  $ref: '#/components/schemas/AcceleratedBy'
-
-    QueryAggregateResponse:
-      type: object
-      required: [data]
-      properties:
-        data:
-          type: object
-          required: [type, columns, rows]
-          properties:
-            type:
-              type: string
-              enum: [aggregate]
-            columns:
-              type: array
-              items:
+              text:
                 type: string
-            rows:
-              type: array
-              items:
-                type: array
-            total_rows:
-              type: integer
-            partial:
-              type: boolean
-        meta:
-          allOf:
-            - $ref: '#/components/schemas/Meta'
-            - type: object
-              properties:
-                accelerated_by:
-                  $ref: '#/components/schemas/AcceleratedBy'
-
-    QueryTimechartResponse:
-      type: object
-      required: [data]
-      properties:
-        data:
-          type: object
-          required: [type, interval, columns, rows]
-          properties:
-            type:
-              type: string
-              enum: [timechart]
-            interval:
-              type: string
-              example: "5m"
-            columns:
-              type: array
-              items:
+              reason:
                 type: string
-            rows:
-              type: array
-              items:
-                type: array
-        meta:
-          $ref: '#/components/schemas/Meta'
+              message:
+                type: string
+        rewrites:
+          type: array
+          items:
+            type: object
+            properties:
+              before:
+                type: string
+              after:
+                type: string
+              reason:
+                type: string
 
-    QueryViewCreatedResponse:
+    QueryLint:
       type: object
-      required: [data]
       properties:
-        data:
-          type: object
-          required: [type, view]
-          properties:
-            type:
-              type: string
-              enum: [view_created]
-            view:
-              $ref: '#/components/schemas/ViewSummary'
-        meta:
-          $ref: '#/components/schemas/Meta'
+        code:
+          type: string
+          enum: [ALL_SOURCES_HIGH_VOLUME, BROAD_SEARCH]
+        message:
+          type: string
+        reason:
+          type: string
+        severity:
+          type: string
+        position:
+          type: integer
 
-    # ── Query Jobs (async) ──
+    QueryStats:
+      type: object
+      additionalProperties: true
+      properties:
+        rows_scanned:
+          type: integer
+        rows_returned:
+          type: integer
+        matched_rows:
+          type: integer
+        segments_total:
+          type: integer
+        segments_scanned:
+          type: integer
+        segments_skipped_index:
+          type: integer
+        segments_skipped_time:
+          type: integer
+        segments_skipped_stats:
+          type: integer
+        segments_skipped_bloom:
+          type: integer
+        segments_skipped_range:
+          type: integer
+        indexes_used:
+          type: array
+          items:
+            type: string
+        parse_ms:
+          type: number
+        optimizer_rules:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              count:
+                type: integer
+        processed_bytes:
+          type: integer
+        peak_memory_bytes:
+          type: integer
+        spilled_to_disk:
+          type: boolean
+        cpu_user_ms:
+          type: number
+        cpu_sys_ms:
+          type: number
+        cache_hit:
+          type: boolean
+        segment_details:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
 
     JobProgress:
       type: object
-      required: [phase]
       properties:
         phase:
           type: string
           enum: [parsing, scanning_buffer, filtering_segments, scanning_segments, executing_pipeline]
-          description: Current execution phase
         segments_total:
           type: integer
-          description: Total segments considered for the query
         segments_scanned:
           type: integer
-          description: Segments scanned so far
         segments_dispatched:
           type: integer
-          description: Segments dispatched to workers
         segments_skipped_index:
           type: integer
         segments_skipped_time:
@@ -2177,18 +2786,11 @@ components:
           type: integer
         rows_read_so_far:
           type: integer
-          format: int64
-          description: Rows read so far
         elapsed_ms:
           type: number
-          description: Wall-clock time since job started
 
-    QueryJobResponse:
+    JobHandleResponse:
       type: object
-      required: [data]
-      description: |
-        Returned as `202` from `POST /query` when the query continues asynchronously,
-        and as `200` from `GET /query/jobs/{id}`.
       properties:
         data:
           type: object
@@ -2199,89 +2801,58 @@ components:
               enum: [job]
             job_id:
               type: string
-              example: "qry_9c1d4e"
+            status:
+              type: string
+              enum: [running]
+            progress:
+              $ref: '#/components/schemas/JobProgress'
+        meta:
+          $ref: '#/components/schemas/QueryMeta'
+
+    JobResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          required: [type, job_id, status]
+          properties:
+            type:
+              type: string
+              enum: [job]
+            job_id:
+              type: string
             status:
               type: string
               enum: [running, done, error, canceled]
             query:
               type: string
-              description: The original SPL2 query
             created_at:
               type: string
               format: date-time
             completed_at:
               type: string
               format: date-time
-              description: Present when `status` is `done`
             progress:
               $ref: '#/components/schemas/JobProgress'
             results:
-              description: Final query results. Present only when `status` is `done`. Same shape as sync `200` response `data`.
               oneOf:
-                - type: object
-                  properties:
-                    type:
-                      type: string
-                      enum: [events]
-                    events:
-                      type: array
-                      items:
-                        $ref: '#/components/schemas/LogEvent'
-                    total:
-                      type: integer
-                    has_more:
-                      type: boolean
-                - type: object
-                  properties:
-                    type:
-                      type: string
-                      enum: [aggregate]
-                    columns:
-                      type: array
-                      items:
-                        type: string
-                    rows:
-                      type: array
-                      items:
-                        type: array
-                    total_rows:
-                      type: integer
-                - type: object
-                  properties:
-                    type:
-                      type: string
-                      enum: [timechart]
-                    interval:
-                      type: string
-                    columns:
-                      type: array
-                      items:
-                        type: string
-                    rows:
-                      type: array
-                      items:
-                        type: array
+                - $ref: '#/components/schemas/EventsResult'
+                - $ref: '#/components/schemas/AggregateResult'
             error:
-              description: Present when `status` is `error` or `canceled`
               type: object
               properties:
                 code:
                   type: string
-                  example: QUERY_MEMORY_EXCEEDED
                 message:
                   type: string
-                suggestion:
-                  type: string
         meta:
-          $ref: '#/components/schemas/Meta'
+          $ref: '#/components/schemas/QueryMeta'
 
     JobListResponse:
       type: object
-      required: [data]
       properties:
         data:
           type: object
-          required: [jobs]
           properties:
             jobs:
               type: array
@@ -2290,32 +2861,49 @@ components:
                 properties:
                   job_id:
                     type: string
-                  status:
-                    type: string
-                    enum: [running, done, error, canceled]
                   query:
+                    type: string
+                  status:
                     type: string
                   created_at:
                     type: string
                     format: date-time
 
-    QueryExplainResponse:
+    CancelJobResponse:
       type: object
-      required: [data]
       properties:
         data:
           type: object
           properties:
+            job_id:
+              type: string
+            status:
+              type: string
+            canceled:
+              type: boolean
+            completed_at:
+              type: string
+              format: date-time
+
+    ExplainResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          required: [is_valid, errors]
+          properties:
+            is_valid:
+              type: boolean
+            errors:
+              type: array
+              items:
+                $ref: '#/components/schemas/CompileError'
             parsed:
               type: object
               properties:
-                pipeline:
-                  type: array
-                  items:
-                    type: object
                 result_type:
                   type: string
-                  enum: [events, aggregate, timechart]
+                  enum: [events, aggregate]
                 estimated_cost:
                   type: string
                   enum: [low, medium, high]
@@ -2325,100 +2913,187 @@ components:
                   type: array
                   items:
                     type: string
-                fields_produced:
+                search_terms:
                   type: array
+                  nullable: true
                   items:
                     type: string
-            acceleration:
-              type: object
-              properties:
-                available:
+                has_time_bounds:
                   type: boolean
-                view:
+                logical_plan:
                   type: string
-                reason:
+                optimized_plan:
                   type: string
-                estimated_speedup:
-                  type: string
-            is_valid:
-              type: boolean
-            errors:
+                compile_ms:
+                  type: number
+                optimizer_rules:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      count:
+                        type: integer
+                source_scope:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                    sources:
+                      type: array
+                      items:
+                        type: string
+                    pattern:
+                      type: string
+                    total_sources_available:
+                      type: integer
+            execution:
+              $ref: '#/components/schemas/QueryStats'
+
+    CompileError:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum: [syntax, semantic, type, unsupported_command, unsupported_function, unsupported_feature]
+        message:
+          type: string
+        position:
+          $ref: '#/components/schemas/Position'
+        expected:
+          type: array
+          items:
+            type: string
+        suggestion:
+          type: string
+
+    CatalogResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            language:
+              type: string
+              enum: [ppl]
+            commands:
+              type: array
+              items:
+                type: object
+                required: [name, support]
+                properties:
+                  name:
+                    type: string
+                  support:
+                    type: string
+                    enum: [full, partial, unsupported]
+                  notes:
+                    type: string
+            functions:
+              type: array
+              items:
+                type: object
+                required: [name, kind, support]
+                properties:
+                  name:
+                    type: string
+                  kind:
+                    type: string
+                    enum: [scalar, aggregate]
+                  category:
+                    type: string
+                  support:
+                    type: string
+                    enum: [full, unsupported]
+                  lowering:
+                    type: string
+                  notes:
+                    type: string
+                  doc:
+                    type: string
+                  unsupported:
+                    type: string
+
+    # Live and schema
+
+    HistogramResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            interval:
+              type: string
+              description: Go duration, such as `15m0s`
+            buckets:
               type: array
               items:
                 type: object
                 properties:
-                  position:
-                    type: integer
-                  length:
-                    type: integer
-                  message:
+                  time:
                     type: string
-                  suggestion:
-                    type: string
-
-    # ── Schema ──
+                    format: date-time
+                  count:
+                    type: integer
+                  counts:
+                    type: object
+                    additionalProperties:
+                      type: integer
+            total:
+              type: integer
+        meta:
+          type: object
+          properties:
+            took_ms:
+              type: number
 
     FieldsResponse:
       type: object
-      required: [data]
       properties:
         data:
           type: object
-          required: [fields]
           properties:
             fields:
               type: array
               items:
                 type: object
-                required: [name, type, count, coverage]
                 properties:
                   name:
                     type: string
                   type:
                     type: string
-                    enum: [string, integer, float, boolean, datetime]
-                  count:
-                    type: integer
+                    enum: [string, int, float, bool, datetime]
                   coverage:
                     type: number
-                    description: Fraction of events containing this field (0.0–1.0)
-                  min:
-                    type: number
-                  max:
-                    type: number
-                  avg:
-                    type: number
-                  p50:
-                    type: number
-                  p99:
-                    type: number
+                    description: Percentage of events with the field, 0 to 100
+                  total_count:
+                    type: integer
                   top_values:
                     type: array
                     items:
                       type: object
                       properties:
-                        value: {}
+                        value:
+                          type: string
                         count:
                           type: integer
 
     FieldValuesResponse:
       type: object
-      required: [data]
       properties:
         data:
           type: object
-          required: [field, type, values]
           properties:
             field:
-              type: string
-            type:
               type: string
             values:
               type: array
               items:
                 type: object
                 properties:
-                  value: {}
+                  value:
+                    type: string
                   count:
                     type: integer
                   percent:
@@ -2427,24 +3102,15 @@ components:
               type: integer
             total_count:
               type: integer
-        meta:
-          type: object
-          properties:
-            from:
-              type: string
-              format: date-time
-            to:
-              type: string
-              format: date-time
 
     SourcesResponse:
       type: object
-      required: [data]
       properties:
         data:
           type: object
-          required: [sources]
           properties:
+            pattern:
+              type: string
             sources:
               type: array
               items:
@@ -2454,52 +3120,207 @@ components:
                     type: string
                   event_count:
                     type: integer
-                  last_event:
-                    type: string
-                    format: date-time
                   first_event:
                     type: string
                     format: date-time
-                  rate:
-                    type: number
-                    description: Events per second (current)
-                  storage_bytes:
-                    type: integer
+                  last_event:
+                    type: string
+                    format: date-time
 
-    # ── Histogram ──
+    # Ingest
 
-    HistogramResponse:
+    StructuredIngestEvent:
       type: object
-      required: [data]
+      required: [event]
+      properties:
+        event:
+          type: string
+          description: Event text, stored in `_raw`
+        time:
+          type: number
+          description: Unix time in seconds
+        source:
+          type: string
+        sourcetype:
+          type: string
+        host:
+          type: string
+        index:
+          type: string
+          description: Target index; `main` when empty
+        fields:
+          type: object
+          additionalProperties: true
+          description: String, number and boolean values are kept
+
+    IngestResponse:
+      type: object
       properties:
         data:
           type: object
-          required: [interval, buckets, total]
+          required: [accepted, failed]
           properties:
-            interval:
+            accepted:
+              type: integer
+            failed:
+              type: integer
+            truncated:
+              type: boolean
+            warning:
               type: string
-              example: "1m"
-            buckets:
+
+    IndexesResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            indexes:
               type: array
               items:
                 type: object
-                required: [time, count]
                 properties:
-                  time:
+                  name:
                     type: string
-                    format: date-time
-                  count:
+                  retention_period:
+                    type: string
+                  replication_factor:
                     type: integer
-            total:
-              type: integer
-        meta:
-          $ref: '#/components/schemas/Meta'
 
-    # ── Status ──
+    CreateIndexRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        retention_days:
+          type: integer
+        replication_factor:
+          type: integer
+
+    CreateIndexResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            name:
+              type: string
+            status:
+              type: string
+
+    HECEvent:
+      type: object
+      properties:
+        time:
+          type: number
+          description: Unix time in seconds
+        event:
+          description: Event text, or an object stored as its JSON text
+        host:
+          type: string
+        source:
+          type: string
+        sourcetype:
+          type: string
+        index:
+          type: string
+          description: Stored as `_source` when `source` is empty, else as the field `source_tag`
+        fields:
+          type: object
+          additionalProperties: true
+
+    HECResponse:
+      type: object
+      properties:
+        text:
+          type: string
+        code:
+          type: integer
+        ackId:
+          type: integer
+        skipped_lines:
+          type: integer
+
+    ESBulkResponse:
+      type: object
+      properties:
+        took:
+          type: integer
+        errors:
+          type: boolean
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              index:
+                $ref: '#/components/schemas/ESBulkItem'
+              create:
+                $ref: '#/components/schemas/ESBulkItem'
+
+    ESBulkItem:
+      type: object
+      properties:
+        _id:
+          type: string
+        _index:
+          type: string
+        status:
+          type: integer
+        result:
+          type: string
+        error:
+          type: object
+          properties:
+            type:
+              type: string
+            reason:
+              type: string
+
+    ESIndexDocResponse:
+      type: object
+      properties:
+        _id:
+          type: string
+        _index:
+          type: string
+        result:
+          type: string
+
+    ESClusterInfo:
+      type: object
+      properties:
+        name:
+          type: string
+        cluster_name:
+          type: string
+        cluster_uuid:
+          type: string
+        version:
+          type: object
+          additionalProperties: true
+        tagline:
+          type: string
+
+    # Server
+
+    HealthResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: [healthy, degraded]
+            degraded:
+              type: boolean
+            version:
+              type: string
 
     StatusResponse:
       type: object
-      required: [data]
       properties:
         data:
           type: object
@@ -2507,16 +3328,14 @@ components:
             version:
               type: string
             uptime_seconds:
-              type: integer
+              type: number
+            health:
+              type: string
             storage:
               type: object
               properties:
                 used_bytes:
                   type: integer
-                total_bytes:
-                  type: integer
-                usage_percent:
-                  type: number
             events:
               type: object
               properties:
@@ -2524,285 +3343,194 @@ components:
                   type: integer
                 today:
                   type: integer
-                ingest_rate:
-                  type: number
             queries:
               type: object
               properties:
                 active:
                   type: integer
-                avg_duration_ms:
-                  type: number
-            views:
+            tail:
               type: object
               properties:
-                total:
+                active_sessions:
                   type: integer
-                active:
+                subscriber_count:
                   type: integer
-                backfilling:
-                  type: integer
-                storage_bytes:
+                total_dropped_events:
                   type: integer
             retention:
               type: object
               properties:
-                policy:
-                  type: string
                 oldest_event:
                   type: string
-                  format: date-time
-            health:
+            memory:
+              type: object
+              additionalProperties: true
+
+    StatsResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            uptime_seconds:
+              type: number
+            storage_bytes:
+              type: integer
+            total_events:
+              type: integer
+            events_today:
+              type: integer
+            index_count:
+              type: integer
+            segment_count:
+              type: integer
+            buffered_events:
+              type: integer
+            sources:
+              type: array
+              items: {}
+            oldest_event:
               type: string
-              enum: [healthy, degraded, unhealthy]
 
-    # ── Saved Queries ──
+    ClusterStatusResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+            node_count:
+              type: integer
+            index_count:
+              type: integer
+            segment_count:
+              type: integer
+            buffered_size:
+              type: integer
+            buffered_events:
+              type: integer
+            data_dir:
+              type: string
 
-    SavedQuery:
+    CompactionHistoryResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            compactions:
+              type: array
+              items:
+                type: object
+                additionalProperties: true
+            count:
+              type: integer
+
+    CacheStatsResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            hits:
+              type: integer
+            misses:
+              type: integer
+            hit_rate:
+              type: number
+            entries:
+              type: integer
+            size_bytes:
+              type: integer
+            evictions:
+              type: integer
+
+    ConfigPatchResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            config:
+              type: object
+              additionalProperties: true
+            restart_required:
+              type: array
+              items:
+                type: string
+
+    # Auth
+
+    CreateKeyRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        scope:
+          type: string
+          enum: [ingest, query, admin, full]
+          default: full
+        expires_in:
+          type: string
+          description: Go duration (`720h`), or days, weeks or years (`30d`, `4w`, `1y`); `never` for no expiry
+        description:
+          type: string
+
+    APIKey:
       type: object
       properties:
         id:
           type: string
         name:
           type: string
-        q:
+        prefix:
           type: string
-        from:
+        scope:
           type: string
+          enum: [ingest, query, admin, full]
+        description:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        is_root:
+          type: boolean
         created_at:
           type: string
           format: date-time
-        updated_at:
+        last_used_at:
           type: string
           format: date-time
 
-    SavedQueryInput:
-      type: object
-      required: [name, q]
-      properties:
-        name:
-          type: string
-          example: "High 5xx rate"
-        q:
-          type: string
-          example: "source=nginx status>=500 | stats count by uri | sort -count"
-        from:
-          type: string
-          example: "-1h"
-
-    SavedQueriesResponse:
-      type: object
-      required: [data]
-      properties:
-        data:
-          type: object
-          required: [queries]
+    CreatedKey:
+      allOf:
+        - $ref: '#/components/schemas/APIKey'
+        - type: object
           properties:
-            queries:
-              type: array
-              items:
-                $ref: '#/components/schemas/SavedQuery'
-
-    SavedQueryResponse:
-      type: object
-      required: [data]
-      properties:
-        data:
-          $ref: '#/components/schemas/SavedQuery'
-
-    # ── Materialized Views ──
-
-    ViewSummary:
-      type: object
-      required: [name, kind, query, status]
-      properties:
-        name:
-          type: string
-        kind:
-          type: string
-          enum: [projection, aggregation]
-        query:
-          type: string
-        retention:
-          type: string
-        status:
-          type: string
-          enum: [active, backfilling, rebuilding, paused, error]
-        version:
-          type: integer
-        rows:
-          type: integer
-        segments:
-          type: integer
-        storage_bytes:
-          type: integer
-        lag_ms:
-          type: integer
-          nullable: true
-        backfill:
-          $ref: '#/components/schemas/BackfillProgress'
-        previous_version:
-          type: object
-          properties:
-            version:
-              type: integer
-            status:
+            token:
               type: string
+              description: Shown once
+            api_key:
+              type: string
+              description: '`id:token`, for the `ApiKey` scheme'
+
+    RotateRootResult:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        prefix:
+          type: string
+        token:
+          type: string
+        is_root:
+          type: boolean
+        revoked_key_id:
+          type: string
         created_at:
           type: string
           format: date-time
-        last_event:
-          type: string
-          format: date-time
-          nullable: true
-
-    BackfillProgress:
-      type: object
-      properties:
-        total:
-          type: integer
-        processed:
-          type: integer
-        percent:
-          type: number
-        eta_seconds:
-          type: integer
-
-    ViewColumn:
-      type: object
-      required: [name, type]
-      properties:
-        name:
-          type: string
-        type:
-          type: string
-          enum: [string, int64, float64, timestamp, boolean]
-        encoding:
-          type: string
-          enum: [dictionary, delta-of-delta, delta-varint, gorilla, bitpacked]
-        derived_from:
-          type: array
-          items:
-            type: string
-          description: Internal state columns for computed aggregates (e.g., avg = sum/count)
-
-    ViewInput:
-      type: object
-      required: [name, q]
-      properties:
-        name:
-          type: string
-          pattern: '^mv_[a-z0-9_]+$'
-          description: "Must start with `mv_`. Lowercase, underscores, alphanumeric."
-          example: mv_errors_5m
-        q:
-          type: string
-          description: SPL2 pipeline (without `| materialize`)
-          example: "level=error | stats count, avg(duration) by source, time_bucket(timestamp, '5m') AS bucket"
-        retention:
-          type: string
-          description: "Duration string. Default: same as index retention."
-          example: "90d"
-        partition_by:
-          type: string
-          description: Partition strategy expression
-          example: "date(timestamp)"
-
-    ViewPatchInput:
-      type: object
-      properties:
-        retention:
-          type: string
-          example: "30d"
-        paused:
-          type: boolean
-
-    ViewResponse:
-      type: object
-      required: [data]
-      properties:
-        data:
-          $ref: '#/components/schemas/ViewSummary'
-
-    ViewDetailResponse:
-      type: object
-      required: [data]
-      properties:
-        data:
-          allOf:
-            - $ref: '#/components/schemas/ViewSummary'
-            - type: object
-              properties:
-                columns:
-                  type: array
-                  items:
-                    $ref: '#/components/schemas/ViewColumn'
-                group_by:
-                  type: array
-                  items:
-                    type: string
-                aggregations:
-                  type: array
-                  items:
-                    type: string
-                stats:
-                  type: object
-                  properties:
-                    rows:
-                      type: integer
-                    segments:
-                      type: integer
-                    segments_pending_merge:
-                      type: integer
-                    storage_bytes:
-                      type: integer
-                    compression_ratio:
-                      type: number
-                    lag_ms:
-                      type: integer
-                    ingest_rate:
-                      type: number
-                    oldest_event:
-                      type: string
-                      format: date-time
-                    newest_event:
-                      type: string
-                      format: date-time
-                source_view:
-                  type: string
-                  nullable: true
-                  description: Parent MV name for cascading views
-
-    ViewsListResponse:
-      type: object
-      required: [data]
-      properties:
-        data:
-          type: object
-          required: [views]
-          properties:
-            views:
-              type: array
-              items:
-                $ref: '#/components/schemas/ViewSummary'
-
-    # ── Config ──
-
-    ConfigPatch:
-      type: object
-      properties:
-        retention:
-          type: string
-          example: "30d"
-        max_query_memory_mb:
-          type: integer
-          example: 1024
-        listen:
-          type: string
-          description: Requires restart
-        auth_enabled:
-          type: boolean
-        otlp_enabled:
-          type: boolean
-        syslog_enabled:
-          type: boolean
