@@ -27,10 +27,10 @@ type merger struct {
 }
 
 func (m *merger) held() int {
-	n := 8*cap(m.words) + m.post.held() + m.sink.held()
-	if m.arena != nil {
-		n += m.arena.Size()
+	if m.arena == nil {
+		return 0
 	}
+	n := 8*cap(m.words) + m.post.held() + m.sink.held() + m.arena.Size()
 	for i := range m.users {
 		n += 8 * cap(m.users[i])
 	}
@@ -200,9 +200,14 @@ func (m *merger) emit(x *execution, table *vec.ByteTable, words []int64, n int, 
 	keys := len(plan.keys)
 	m.batch = fit(m.batch, len(plan.names))
 	for i := range m.batch[:keys] {
-		m.batch[i].reset()
+		// A sink that keeps few rows reads the keys of those alone.
+		if m.sink.top.k > 0 {
+			m.batch[i].view(table, i, keys, n)
+		} else {
+			m.batch[i].reset()
+		}
 	}
-	if keys > 0 {
+	if keys > 0 && m.sink.top.k == 0 {
 		for g := 0; g < n; g++ {
 			decodeKey(table.Key(g), m.batch[:keys])
 		}

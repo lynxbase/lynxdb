@@ -95,14 +95,31 @@ type colVec struct {
 	// kind is the kind of every row, KindAny while there is none, or
 	// kindMixed.
 	kind vec.Kind
+	// keys, when set, makes the column a view of one value of the encoded
+	// keys that a table numbers: value part of parts, for rows rows.
+	keys        *vec.ByteTable
+	part, parts int
+	rows        int
 }
 
 func (c *colVec) reset() {
 	c.kinds, c.ints, c.floats, c.ends, c.data = c.kinds[:0], c.ints[:0], c.floats[:0], c.ends[:0], c.data[:0]
-	c.kind = KindAny
+	c.kind, c.keys = KindAny, nil
 }
 
-func (c *colVec) len() int { return len(c.kinds) }
+// view makes the column the values that the keys of table hold at part.
+func (c *colVec) view(table *vec.ByteTable, part, parts, rows int) {
+	c.reset()
+	c.kind, c.keys, c.part, c.parts, c.rows = kindMixed, table, part, parts, rows
+}
+
+func (c *colVec) len() int {
+	if c.keys != nil {
+		return c.rows
+	}
+
+	return len(c.kinds)
+}
 
 func (c *colVec) held() int {
 	return cap(c.kinds) + 8*cap(c.ints) + 8*cap(c.floats) + 4*cap(c.ends) + cap(c.data)
@@ -234,6 +251,9 @@ func (c *colVec) bytes(i int) []byte {
 
 // value returns row i; its bytes alias the column.
 func (c *colVec) value(i int) Value {
+	if c.keys != nil {
+		return keyValue(c.keys.Key(i), c.part, c.parts)
+	}
 	switch kind := c.kinds[i]; kind {
 	case vec.KindBool:
 		return Value{Kind: kind, Bool: c.ints[i] != 0}
@@ -250,6 +270,11 @@ func (c *colVec) value(i int) Value {
 
 // appendFrom adds row i of src.
 func (c *colVec) appendFrom(src *colVec, i int) {
+	if src.keys != nil {
+		c.appendValue(src.value(i))
+
+		return
+	}
 	switch kind := src.kinds[i]; kind {
 	case vec.KindBool, vec.KindInt:
 		c.appendInt(kind, src.ints[i])
@@ -268,7 +293,7 @@ func (c *colVec) appendAll(src *colVec) {
 	if n == 0 {
 		return
 	}
-	if c.len() == 0 && len(c.ints) == 0 && len(c.floats) == 0 && len(c.ends) == 0 {
+	if src.keys == nil && c.len() == 0 && len(c.ints) == 0 && len(c.floats) == 0 && len(c.ends) == 0 {
 		c.kinds = append(c.kinds[:0], src.kinds...)
 		c.ints = append(c.ints[:0], src.ints...)
 		c.floats = append(c.floats[:0], src.floats...)

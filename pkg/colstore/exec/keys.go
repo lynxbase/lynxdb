@@ -102,3 +102,36 @@ func decodeKey(key []byte, cols []colVec) {
 		}
 	}
 }
+
+// keyValue returns value part of an encoded key of parts values; its bytes
+// alias the key.
+func keyValue(key []byte, part, parts int) Value {
+	for i := 0; ; i++ {
+		tag := key[0]
+		key = key[1:]
+		var v Value
+		size := 0
+		switch tag {
+		case tagFalse, tagTrue:
+			v = Value{Kind: vec.KindBool, Bool: tag == tagTrue}
+		case tagInt:
+			v, size = Value{Kind: vec.KindInt, Int: int64(binary.LittleEndian.Uint64(key))}, 8
+		case tagFloat:
+			v, size = Value{Kind: vec.KindFloat, Float: math.Float64frombits(binary.LittleEndian.Uint64(key))}, 8
+		case tagString, tagVariant:
+			size = len(key)
+			if i != parts-1 {
+				n, used := binary.Uvarint(key)
+				key, size = key[used:], int(n)
+			}
+			v = Value{Kind: vec.KindString, Bytes: key[:size]}
+			if tag == tagVariant {
+				v.Kind = vec.KindVariant
+			}
+		}
+		if i == part {
+			return v
+		}
+		key = key[size:]
+	}
+}
