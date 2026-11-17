@@ -175,6 +175,10 @@ func (p *Part) KeyRuns(i, depth int) int {
 	return int(p.keyStats[i*(len(p.sortKey)+1)+depth])
 }
 
+// BlocksEnd returns the offset in the part's data at which the blocks end
+// and the block directories begin.
+func (p *Part) BlocksEnd() int { return p.dirsOff }
+
 // SetReadAhead makes the part announce the bytes it is about to read, as an
 // offset and a length in its data, to fn, which a part mapped from a file
 // uses to have them read in one request. It announces the block directories

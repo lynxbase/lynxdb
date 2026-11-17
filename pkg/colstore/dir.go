@@ -29,10 +29,6 @@ const (
 // the kernel.
 var readAdvice = true
 
-// partTailBytes is how much of the end of a part file is asked for before
-// the part is opened: enough for the footer of all but the largest parts.
-const partTailBytes = 4 << 20
-
 // manifestRewriteAfter is the number of manifest records after which the
 // manifest is replaced by a single record listing the live parts.
 var manifestRewriteAfter = 1024
@@ -259,12 +255,6 @@ func (d *Dir) open(name string, meta PartMeta) (*Handle, error) {
 
 		return nil, err
 	}
-	// The footer and the block directories sit at the end of the file and
-	// are read first; everything else is read chunk by chunk on demand.
-	if readAdvice {
-		adviseRandom(data)
-		adviseWillNeed(data, max(0, len(data)-partTailBytes), partTailBytes)
-	}
 	p, err := part.Open(data)
 	if err != nil {
 		_ = data.Unmap()
@@ -273,6 +263,10 @@ func (d *Dir) open(name string, meta PartMeta) (*Handle, error) {
 		return nil, err
 	}
 	if readAdvice {
+		// Blocks are read a chunk here and a filter page there, each asked
+		// for in one piece; the directories and the footer behind them are
+		// read side by side and keep the kernel's own read-ahead.
+		adviseRandom(data[:p.BlocksEnd()&^(pageSize-1)])
 		p.SetReadAhead(func(off, n int) { adviseWillNeed(data, off, n) })
 	}
 	ref := &partFileRef{name: name, meta: meta}
