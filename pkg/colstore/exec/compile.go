@@ -279,7 +279,10 @@ type pred struct {
 	path int
 	lit  Value
 	pat  tokenfilter.Pattern
-	args []*pred
+	// tokens holds the hashes of the tokens that a string matching the
+	// pattern of a predAny has.
+	tokens []uint64
+	args   []*pred
 	// onInt and onFloat say which numeric columns a predNum reads; lo, hi
 	// and ne state the comparison for integers, and none that no integer
 	// satisfies it.
@@ -382,7 +385,7 @@ func (q *query) pred(e *Expr, depth int) (*pred, error) {
 
 		return &pred{kind: predConst, lit: e.Value}, nil
 	case OpMatchAny:
-		return &pred{kind: predAny, pat: e.Pattern, cost: 64}, nil
+		return &pred{kind: predAny, pat: e.Pattern, tokens: e.Pattern.Tokens(nil), cost: 64}, nil
 	case OpExists, OpIsNull, OpIsMissing:
 		if len(e.Args) == 1 {
 			if p := q.presence(e); p != nil {

@@ -2,6 +2,7 @@ package part
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"math"
 	"math/bits"
@@ -281,5 +282,98 @@ func TestRealDataColumnFilterRules(t *testing.T) {
 	growth := report("the writer", func(rc *ruleColumn) bool { return rc.encoded >= filterColumnBytes })
 	if growth > 0.02 {
 		t.Fatalf("filters of their own grow the part by %.2f%%", 100*growth)
+	}
+}
+
+// TestRealDataColumnFilterAnswers reports, for the filters of a real file as
+// the writer builds them, how large they are for their tokens and how often
+// they let a token pass that their columns do not hold.
+func TestRealDataColumnFilterAnswers(t *testing.T) {
+	data := realData(t)
+	p, err := Open(encodeNDJSON(t, data, 16384, Options{}, "time_us"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type filterStats struct {
+		name                 string
+		filters, tokens      int
+		blocks               int
+		random, randomPassed int
+		other, otherPassed   int
+	}
+	stats := map[string]*filterStats{}
+	r := rand.New(rand.NewSource(11))
+	var all filterStats
+	for i := 0; i < p.NumBlocks(); i++ {
+		truth := columnTokens(t, p, i)
+		g, first, end := p.blockFilters(i)
+		// held is what each filter of the block holds: the tokens of its
+		// column, or those of every column without a filter of its own.
+		held := make([]map[uint64]bool, end-first)
+		others := map[uint64]bool{}
+		for col, tokens := range truth {
+			f, own := p.columnFilter(first, end, col.path, col.kind)
+			if own {
+				held[f-first] = tokens
+			} else if held[f-first] == nil {
+				held[f-first] = map[uint64]bool{}
+			}
+			for h := range tokens {
+				others[h] = true
+				if !own {
+					held[f-first][h] = true
+				}
+			}
+		}
+		block := make([]uint64, 0, len(others))
+		for h := range others {
+			block = append(block, h)
+		}
+		sort.Slice(block, func(a, b int) bool { return block[a] < block[b] })
+		for f := first; f < end; f++ {
+			name := "the columns without one"
+			if path := binary.LittleEndian.Uint32(p.filters[f*filterEntrySize:]); path != noPath {
+				name = p.Paths()[path]
+			}
+			s := stats[name]
+			if s == nil {
+				s = &filterStats{name: name}
+				stats[name] = s
+			}
+			s.filters, s.tokens, s.blocks = s.filters+1, s.tokens+len(held[f-first]), s.blocks+p.filterBlocks(g, f)
+			sound := ^uint64(0)
+			probe := func(h uint64, asked, passed *int) {
+				if held[f-first][h] {
+					return
+				}
+				may, err := p.holds(g, f, []uint64{h}, &sound)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if *asked++; may {
+					*passed++
+				}
+			}
+			for n := 0; n < 2000; n++ {
+				probe(r.Uint64(), &s.random, &s.randomPassed)
+				probe(block[r.Intn(len(block))], &s.other, &s.otherPassed)
+			}
+		}
+	}
+	table := make([]*filterStats, 0, len(stats))
+	for _, s := range stats {
+		table = append(table, s)
+		all.filters, all.tokens, all.blocks = all.filters+s.filters, all.tokens+s.tokens, all.blocks+s.blocks
+		all.random, all.randomPassed, all.other, all.otherPassed = all.random+s.random, all.randomPassed+s.randomPassed, all.other+s.other, all.otherPassed+s.otherPassed
+	}
+	sort.Slice(table, func(i, j int) bool { return table[i].blocks > table[j].blocks })
+	all.name = "all filters"
+	for _, s := range append(table, &all) {
+		t.Logf("%-34s %4d filters of %6d tokens and %6d bytes, %4.1f bits a token; absent tokens let pass: %.2f%% of random ones, %.2f%% of those of the block's other columns",
+			s.name, s.filters, s.tokens/s.filters, s.blocks*tokenfilter.BlockBytes/s.filters, float64(s.blocks*256)/float64(max(s.tokens, 1)),
+			100*float64(s.randomPassed)/float64(max(s.random, 1)), 100*float64(s.otherPassed)/float64(max(s.other, 1)))
+	}
+	if rate := float64(all.randomPassed) / float64(all.random); rate > 0.01 {
+		t.Fatalf("filters let %.2f%% of absent tokens pass", 100*rate)
 	}
 }

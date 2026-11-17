@@ -20,6 +20,11 @@ type Stats struct {
 	// CountedByIndex counts blocks whose rows were aggregated from the part
 	// index without opening them.
 	CountedByIndex int64
+	// ColumnsSearched counts the columns that matches over every string
+	// column decoded, and ColumnsSkippedByToken those whose token filter
+	// ruled the pattern out.
+	ColumnsSearched       int64
+	ColumnsSkippedByToken int64
 	// BlocksMatched and RowsMatched count what passed the filter.
 	BlocksMatched int64
 	RowsMatched   int64

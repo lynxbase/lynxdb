@@ -184,12 +184,19 @@ func (w *worker) decide(p *pred) verdict {
 
 // evalAny selects the rows in which a string column of the block, whatever
 // its path, holds the pattern. It decodes every string column that is not a
-// constant, and tests a dictionary once per entry.
+// constant and whose token filter admits the pattern, and tests a dictionary
+// once per entry.
 func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
 	m := w.mask(depth)
 	clear(m)
 	hit := false
 	cols := w.b.Columns()
+	if len(p.tokens) != 0 {
+		var err error
+		if w.anyMay, err = w.b.ColumnsMayContain(w.anyMay, p.tokens); err != nil {
+			return none, err
+		}
+	}
 	for i := range cols {
 		ref := &cols[i]
 		if ref.Kind != vec.KindString || ref.Count == 0 || (ref.Const() && !p.pat.Match(ref.ConstBytes())) {
@@ -198,6 +205,12 @@ func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
 		if ref.Const() && ref.Count == w.rows {
 			return all, nil
 		}
+		if len(p.tokens) != 0 && !w.anyMay.Get(i) {
+			w.unsearched++
+
+			continue
+		}
+		w.searched++
 		c := &w.anyCol
 		if err := w.b.Decode(ref, c); err != nil {
 			return none, err

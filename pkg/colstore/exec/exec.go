@@ -118,6 +118,8 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 	}
 	for _, w := range active {
 		res.Stats.SkippedByStats += w.undecoded
+		res.Stats.ColumnsSearched += w.searched
+		res.Stats.ColumnsSkippedByToken += w.unsearched
 		res.Stats.BlocksMatched += w.blocks
 		res.Stats.RowsMatched += w.matched
 	}
