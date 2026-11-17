@@ -27,6 +27,9 @@ type BlockSpan struct {
 type KeyRange struct {
 	Lo, Hi  []byte
 	Streams [][]BlockSpan
+	// split is the number of ranges to cut this one into before it is
+	// read, when the plan found too few keys to cut at.
+	split int
 }
 
 // KeyPlan is how the rows matching a key filter lie in the ordered parts of a
@@ -116,9 +119,12 @@ func (p *KeyPlan) Ranges(n int, columns ...ColumnID) *RangeScan {
 	// Every key that starts with the prefix is below the prefix followed by
 	// 0xFF, which no value kind starts with.
 	bounds = append(bounds, append(append([]byte(nil), p.prefix...), 0xFF))
-	scan := &RangeScan{columns: columns, left: map[blockID]int{}, open: map[blockID]*SharedBlock{}}
+	scan := &RangeScan{columns: columns, keyColumns: p.columns, left: map[blockID]int{}, open: map[blockID]*SharedBlock{}}
+	var rows []int
+	total := 0
 	for i := 0; i+1 < len(bounds); i++ {
 		r := KeyRange{Lo: bounds[i], Hi: bounds[i+1]}
+		held := 0
 		for _, st := range p.streams {
 			var spans []BlockSpan
 			for _, pt := range st {
@@ -128,7 +134,8 @@ func (p *KeyPlan) Ranges(n int, columns ...ColumnID) *RangeScan {
 				}
 				spans = append(spans, BlockSpan{Part: pt, First: first, End: end})
 				for b := first; b < end; b++ {
-					scan.left[blockID{pt, b}]++
+					n, _, _ := pt.BlockStats(b)
+					held += n
 				}
 			}
 			if len(spans) > 0 {
@@ -137,7 +144,21 @@ func (p *KeyPlan) Ranges(n int, columns ...ColumnID) *RangeScan {
 		}
 		if len(r.Streams) > 0 {
 			scan.Ranges = append(scan.Ranges, r)
+			rows = append(rows, held)
+			total += held
 		}
+	}
+	// Block starts gave too few keys to cut at: the ranges that hold more
+	// than their share are cut again at keys found inside their blocks.
+	scarce := 2*len(scan.Ranges) < n
+	for i := range scan.Ranges {
+		r := &scan.Ranges[i]
+		if want := (2*n*rows[i] + total) / (2 * total); scarce && want > 1 {
+			r.split = want
+
+			continue
+		}
+		scan.expect(r)
 	}
 
 	return scan
@@ -180,7 +201,16 @@ type RangeScan struct {
 	Decoded atomic.Int64
 
 	columns []ColumnID
-	mu      sync.Mutex
+	// keyColumns is the number of sort key columns that rows of one group
+	// share.
+	keyColumns int
+	// queue holds the ranges to read, next the first one not taken, and
+	// splitting the workers that may still add ranges.
+	queue     []*KeyRange
+	next      int
+	splitting int
+	more      *sync.Cond
+	mu        sync.Mutex
 	// left counts the readers that have yet to finish with a block, open
 	// holds the blocks in use and free the ones to reuse.
 	left map[blockID]int
@@ -195,6 +225,116 @@ type RangeScan struct {
 var sharedBlockPool mem.Pool[SharedBlock]
 
 var errBlockNotDecoded = errors.New("colstore: block was not decoded")
+
+// expect counts a reader for every block of r.
+func (s *RangeScan) expect(r *KeyRange) {
+	for _, spans := range r.Streams {
+		for _, span := range spans {
+			for b := span.First; b < span.End; b++ {
+				s.left[blockID{span.Part, b}]++
+			}
+		}
+	}
+}
+
+// take returns the next range to read, waiting while a worker may still add
+// ranges, and nil when none is left.
+func (s *RangeScan) take() *KeyRange {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for s.next == len(s.queue) && s.splitting > 0 {
+		s.more.Wait()
+	}
+	if s.next == len(s.queue) {
+		return nil
+	}
+	r := s.queue[s.next]
+	s.next++
+	if r.split > 1 {
+		s.splitting++
+	}
+
+	return r
+}
+
+// cut replaces r, which take returned, by ranges cut at keys sampled from
+// the blocks of its first stream, read through b.
+func (s *RangeScan) cut(r *KeyRange, b *part.Block) error {
+	// Waiting workers go on even when reading a block fails or faults.
+	defer func() {
+		s.mu.Lock()
+		s.splitting--
+		s.more.Broadcast()
+		s.mu.Unlock()
+	}()
+	// The sampled blocks stay decoded until the readers of the cut ranges,
+	// counted below, are done with them.
+	type hold struct {
+		id blockID
+		sb *SharedBlock
+	}
+	var held []hold
+	var samples [][]byte
+	var scratch []byte
+	err := func() error {
+		for _, span := range r.Streams[0] {
+			for i := span.First; i < span.End && len(samples) < 16*r.split; i++ {
+				id := blockID{span.Part, i}
+				s.mu.Lock()
+				s.left[id]++
+				s.mu.Unlock()
+				sb, err := s.acquire(id, b)
+				if err != nil {
+					return err
+				}
+				held = append(held, hold{id, sb})
+				from, to := sb.Keys.Search(r.Lo, &scratch), sb.Keys.Search(r.Hi, &scratch)
+				for j := 1; j < 4*r.split && from < to; j++ {
+					row := from + j*(to-from)/(4*r.split)
+					samples = append(samples, part.KeyPrefix(sb.Keys.AppendKey(nil, row), s.keyColumns))
+				}
+			}
+		}
+
+		return nil
+	}()
+	bounds := [][]byte{r.Lo}
+	for j := 1; j < r.split && len(samples) > 0; j++ {
+		if key := samples[j*len(samples)/r.split]; bytes.Compare(key, bounds[len(bounds)-1]) > 0 {
+			bounds = append(bounds, key)
+		}
+	}
+	bounds = append(bounds, r.Hi)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	for i := 0; i+1 < len(bounds); i++ {
+		sub := &KeyRange{Lo: bounds[i], Hi: bounds[i+1]}
+		for _, spans := range r.Streams {
+			var in []BlockSpan
+			for _, span := range spans {
+				first, end := span.Part.BlocksInKeyRange(sub.Lo, sub.Hi)
+				if first, end = max(first, span.First), min(end, span.End); first < end {
+					in = append(in, BlockSpan{Part: span.Part, First: first, End: end})
+				}
+			}
+			if len(in) > 0 {
+				sub.Streams = append(sub.Streams, in)
+			}
+		}
+		if len(sub.Streams) > 0 {
+			s.expect(sub)
+			s.queue = append(s.queue, sub)
+		}
+	}
+	s.mu.Unlock()
+	for _, h := range held {
+		s.release(h.id, h.sb)
+	}
+
+	return nil
+}
 
 // acquire returns the decoded block id, decoding it through b unless another
 // reader has.
@@ -303,10 +443,15 @@ func (s *RangeScan) Run(ctx context.Context, workers int, fn func(worker int, r 
 	if workers <= 0 {
 		workers = runtime.GOMAXPROCS(0)
 	}
-	workers = min(workers, len(s.Ranges))
+	s.more = sync.NewCond(&s.mu)
+	tasks := 0
+	for i := range s.Ranges {
+		s.queue = append(s.queue, &s.Ranges[i])
+		tasks += max(1, s.Ranges[i].split)
+	}
+	workers = min(workers, tasks)
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	var next atomic.Int64
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
@@ -323,11 +468,17 @@ func (s *RangeScan) Run(ctx context.Context, workers int, fn func(worker int, r 
 			b := blockPool.Get()
 			defer blockPool.Put(b)
 			for ctx.Err() == nil {
-				i := next.Add(1) - 1
-				if i >= int64(len(s.Ranges)) {
+				r := s.take()
+				if r == nil {
 					return
 				}
-				if err := fn(worker, &s.Ranges[i], b); err != nil {
+				var err error
+				if r.split > 1 {
+					err = s.cut(r, b)
+				} else {
+					err = fn(worker, r, b)
+				}
+				if err != nil {
 					cancel(err)
 
 					return
