@@ -614,7 +614,7 @@ func conjunctTokens(c *Expr, dst []uint64) []uint64 {
 	case OpEq:
 		col, lit, op, ok := columnLiteral(c)
 		if ok && op == OpEq && lit.Kind == vec.KindString && (col.Kind == vec.KindString || col.Kind == KindAny) {
-			return tokenfilter.AppendHashes(dst, lit.Bytes)
+			return tokenfilter.AppendHashesLongestFirst(dst, lit.Bytes)
 		}
 	}
 

@@ -237,7 +237,7 @@ func queryWindowGroups(snap *Snapshot, workers int, win timeWindow, path string)
 func queryLatestEvents(snap *Snapshot, workers int, path, want string, limit int) ([]timedEvent, error) {
 	value := []byte(want)
 	all := timeWindow{lo: -1 << 63, hi: 1<<63 - 1}
-	ws, err := scanWindow(snap, workers, all, tokenfilter.AppendHashes(nil, value), func(w *windowWorker, p *part.Part, b *part.Block) error {
+	ws, err := scanWindow(snap, workers, all, tokenfilter.AppendHashesLongestFirst(nil, value), func(w *windowWorker, p *part.Part, b *part.Block) error {
 		ref, err := column(p, b, path, vec.KindString, &w.col)
 		if err != nil || ref == nil {
 			return err

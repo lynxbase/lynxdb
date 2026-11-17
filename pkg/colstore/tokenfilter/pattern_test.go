@@ -61,8 +61,8 @@ func TestPatternTokensAreHeldByEveryMatch(t *testing.T) {
 		p    Pattern
 		want []uint64
 	}{
-		{Word("Good morning"), hashes("good", "morning")},
-		{Word("did:plc:abc"), hashes("did", "plc", "abc")},
+		{Word("Good morning"), hashes("morning", "good")},
+		{Word("did:plc:abcdef"), hashes("abcdef", "did", "plc")},
 		{Prefix("crypto"), nil},
 		{Prefix("big crypto"), hashes("big")},
 		{Prefix("crypto "), hashes("crypto")},
@@ -278,6 +278,51 @@ func TestIndexFoldFindsNeedlesAtEveryOffset(t *testing.T) {
 			}
 			if got := indexFold(bytes.Repeat([]byte{'.'}, size), p.needle, p.foldMask); got != -1 {
 				t.Fatalf("%q found at %d in text without it", n, got)
+			}
+		}
+	}
+}
+
+func TestTokenHashesComeLongestFirstAndAgreeWithAppendHashes(t *testing.T) {
+	r := rand.New(rand.NewSource(31))
+	pieces := []string{"a", "bb", "ccc", "Dddd", "ééé", "утро", "1", "22", " ", "-", ":", "\xff", "_", "😀"}
+	for round := 0; round < 2000; round++ {
+		var text strings.Builder
+		for i, n := 0, r.Intn(12); i < n; i++ {
+			text.WriteString(pieces[r.Intn(len(pieces))])
+		}
+		in := []byte(text.String())
+		plain := AppendHashes(nil, in)
+		ordered := AppendHashesLongestFirst(nil, in)
+		tokens := splitTokens(nil, in)
+		if len(tokens) != len(plain) || len(ordered) != len(plain) {
+			t.Fatalf("%q: %d tokens, %d hashes in order, %d longest first", in, len(tokens), len(plain), len(ordered))
+		}
+		for i, token := range tokens {
+			if one := AppendHashes(nil, token); len(one) != 1 || one[0] != plain[i] {
+				t.Fatalf("%q: token %d is %q, which hashes to %v, not %v", in, i, token, one, plain[i])
+			}
+		}
+		// The same hashes, and no token before a longer one.
+		count := map[uint64]int{}
+		for _, h := range plain {
+			count[h]++
+		}
+		for _, h := range ordered {
+			count[h]--
+		}
+		for h, n := range count {
+			if n != 0 {
+				t.Fatalf("%q: hash %x differs by %d between the two orders", in, h, n)
+			}
+		}
+		lengths := map[uint64]int{}
+		for _, token := range tokens {
+			lengths[AppendHashes(nil, token)[0]] = len(token)
+		}
+		for i := 1; i < len(ordered); i++ {
+			if lengths[ordered[i-1]] < lengths[ordered[i]] {
+				t.Fatalf("%q: a token of %d bytes comes before one of %d", in, lengths[ordered[i-1]], lengths[ordered[i]])
 			}
 		}
 	}

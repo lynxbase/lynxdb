@@ -99,7 +99,7 @@ func queryCountPattern(snap *Snapshot, workers int, path string, pat tokenfilter
 func queryCountEquals(snap *Snapshot, workers int, path, want string) (int64, error) {
 	value := []byte(want)
 
-	return countRows(snap, workers, path, tokenfilter.AppendHashes(nil, value), func(w *searchWorker, c *vec.Column, _ int) int {
+	return countRows(snap, workers, path, tokenfilter.AppendHashesLongestFirst(nil, value), func(w *searchWorker, c *vec.Column, _ int) int {
 		if c.Layout == vec.Dict {
 			if _, ok := c.DictFind(value); !ok {
 				return 0

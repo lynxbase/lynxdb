@@ -265,16 +265,61 @@ func (p Pattern) AppendMatches(dst, offsets []uint32, data []byte) []uint32 {
 }
 
 // Tokens appends the hashes of the tokens that every text holding the
-// pattern has, which a block's filter can rule out.
+// pattern has, which a block's filter can rule out, longest token first.
 func (p Pattern) Tokens(dst []uint64) []uint64 {
-	start := len(dst)
-	dst = AppendHashes(dst, p.needle)
+	tokens := splitTokens(nil, p.needle)
 	// A token at an end of the needle may be a piece of a longer one.
-	if p.endInToken && !p.wordEnd && len(dst) > start {
-		dst = dst[:len(dst)-1]
+	if p.endInToken && !p.wordEnd && len(tokens) > 0 {
+		tokens = tokens[:len(tokens)-1]
 	}
-	if p.startInToken && !p.wordStart && len(dst) > start {
-		dst = append(dst[:start], dst[start+1:]...)
+	if p.startInToken && !p.wordStart && len(tokens) > 0 {
+		tokens = tokens[1:]
+	}
+
+	return appendLongestFirst(dst, tokens)
+}
+
+// AppendHashesLongestFirst appends the hash of every token of text, the
+// longest token first: a long token is in fewer blocks than a short one, so
+// filters probed in this order rule a block out with fewer probes.
+func AppendHashesLongestFirst(dst []uint64, text []byte) []uint64 {
+	return appendLongestFirst(dst, splitTokens(nil, text))
+}
+
+// splitTokens appends the tokens of text, in order, as AppendHashes sees
+// them.
+func splitTokens(dst [][]byte, text []byte) [][]byte {
+	start := -1
+	for i := 0; i < len(text); {
+		size := 1
+		isToken := false
+		if c := text[i]; c < utf8.RuneSelf {
+			isToken = asciiFold[c] != 0
+		} else {
+			var r rune
+			r, size = utf8.DecodeRune(text[i:])
+			isToken = tokenRune(r)
+		}
+		switch {
+		case isToken && start < 0:
+			start = i
+		case !isToken && start >= 0:
+			dst = append(dst, text[start:i])
+			start = -1
+		}
+		i += size
+	}
+	if start >= 0 {
+		dst = append(dst, text[start:])
+	}
+
+	return dst
+}
+
+func appendLongestFirst(dst []uint64, tokens [][]byte) []uint64 {
+	sort.SliceStable(tokens, func(i, j int) bool { return len(tokens[i]) > len(tokens[j]) })
+	for _, token := range tokens {
+		dst = AppendHashes(dst, token)
 	}
 
 	return dst
