@@ -58,7 +58,8 @@ func TestOptimizerKeepsVolatileCalls(t *testing.T) {
 // engine executes: they fail in Compile, before explain or a run.
 func TestOptionsNoEngineRunsFailToCompile(t *testing.T) {
 	for q, option := range map[string]string{
-		"source=logs | patterns _raw method=brain": "method=brain",
+		"source=logs | patterns _raw method=brain":                       "method=brain",
+		"source=logs | eventstats bucket_nullable=false count() by host": "bucket_nullable=false",
 	} {
 		_, err := Compile(q)
 		pe, ok := ppl.AsError(err)

@@ -68,7 +68,7 @@ ee811663b77f6805	source=otellogs | eval is_critical = IF(severityNumber >= 17, '
 52838e2da413f53b	source=otellogs | where severityText IN ('ERROR', 'WARN') | eval formatted = '[' + severityText + '] ' + body | sort severityNumber, `resource.attributes.service.name` | fields formatted | head 3
 5c5c9dc3f0b1e416	source=otellogs | eventstats count() as service_total by `resource.attributes.service.name` | where severityText = 'ERROR' | sort `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`, service_total, body | head 3
 50b7419612813743	source=otellogs | where severityText = 'ERROR' | eventstats avg(severityNumber) as avg_sev, count() as error_count by `resource.attributes.service.name` | sort `resource.attributes.service.name` | fields `resource.attributes.service.name`, severityNumber, avg_sev, error_count
-be0a03770128bc8b	source=otellogs | eventstats bucket_nullable=false count() as scope_count by instrumentationScope.name | where severityText = 'ERROR' | sort `resource.attributes.service.name` | fields `resource.attributes.service.name`, `instrumentationScope.name`, scope_count
+97ad634ead71a133	source=otellogs | eventstats bucket_nullable=false count() as scope_count by instrumentationScope.name | where severityText = 'ERROR' | sort `resource.attributes.service.name` | fields `resource.attributes.service.name`, `instrumentationScope.name`, scope_count
 3b041a11fd2e496e	source=otellogs | where severityText = 'WARN' | stats list(`resource.attributes.service.name`) as services by severityText | expand services as service | fields severityText, service
 89489d029fe2da70	explain source=state_country | where country = 'USA' OR country = 'England' | stats count() by country
 89489d029fe2da70	explain source=state_country | where country = 'USA' OR country = 'England' | stats count() by country
@@ -272,7 +272,7 @@ f0ee416a4e033ac6	source = table | streamstats distinct_count(category) by region
 bed1f91dac259e02	source=state_country | streamstats window=2 global=true avg(age) as running_avg by country
 80e09ae0cbafa390	source=state_country | streamstats window=2 global=false avg(age) as running_avg by country
 72593650e41f8f3e	source=state_country | streamstats current=false reset_before=age>34 reset_after=age<25 avg(age) as avg_age by country
-4d6a40eeeab22c70	source=accounts | streamstats bucket_nullable=false count() as cnt by employer | fields account_number, firstname, employer, cnt
+48e42602b879e23a	source=accounts | streamstats bucket_nullable=false count() as cnt by employer | fields account_number, firstname, employer, cnt
 1119ffaaebb7e964	source=accounts | streamstats bucket_nullable=true count() as cnt by employer | fields account_number, firstname, employer, cnt
 c27c0ea59cba792e	source = outer | where a in [ source = inner | fields b ]
 2aa96a6d84cedbeb	source = outer | where (a) in [ source = inner | fields b ]

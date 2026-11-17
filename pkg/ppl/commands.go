@@ -584,7 +584,8 @@ func (c *compiler) windowStats(st *pipe, n *ast.StatsCommand) error {
 		w.Frame.Kind = ir.FrameRunning
 	}
 	global := true
-	for _, a := range n.Args {
+	var nullable *ast.Arg
+	for i, a := range n.Args {
 		switch a.Name {
 		case "bucket_nullable":
 			v, err := boolArgValue(a)
@@ -592,6 +593,7 @@ func (c *compiler) windowStats(st *pipe, n *ast.StatsCommand) error {
 				return err
 			}
 			w.DropNullPartitions = !v
+			nullable = &n.Args[i]
 		case "current":
 			v, err := boolArgValue(a)
 			if err != nil {
@@ -628,6 +630,9 @@ func (c *compiler) windowStats(st *pipe, n *ast.StatsCommand) error {
 	keys, err := c.groupKeys(n.By, s)
 	if err != nil {
 		return err
+	}
+	if w.DropNullPartitions && len(keys) > 0 {
+		return unsupportedFeature(nullable.Value, "%s bucket_nullable=false is not supported with a by clause; rows with a NULL group value are always grouped together", n.Command)
 	}
 	if n.Command == "streamstats" && w.Frame.Rows > 0 && global && len(keys) > 0 {
 		return unsupportedFeature(n, "streamstats window with global=true and a by clause is not supported; set global=false for per-group windows")

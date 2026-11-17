@@ -23,7 +23,7 @@ Every PPL command of the OpenSearch command reference and how LynxDB executes it
 | `dedup` | full |  |
 | `describe` | partial | returns TABLE_NAME, COLUMN_NAME, TYPE_NAME and ORDINAL_POSITION from the values stored in the index |
 | `eval` | full |  |
-| `eventstats` | partial | bucket_nullable=false and the window functions row_number, rank, dense_rank, percent_rank, cume_dist, nth and ntile are unsupported |
+| `eventstats` | partial | bucket_nullable=false with a by clause and the window functions row_number, rank, dense_rank, percent_rank, cume_dist, nth and ntile are unsupported |
 | `expand` | full |  |
 | `explain` | partial | returns LynxDB's logical and optimized IR plans; the simple, standard, cost and extended modes render the same plans |
 | `fieldformat` | unsupported | display formatting with prefix and suffix is not implemented; use eval with concat() |
@@ -57,7 +57,7 @@ Every PPL command of the OpenSearch command reference and how LynxDB executes it
 | `sort` | full | ip(field) sorts by the text form of the address |
 | `spath` | partial | auto-extract keeps JSON value types; a JSON null stays NULL |
 | `stats` | partial | bucket_nullable supported; partitions, allnum and delim accepted without effect; dedup_splitvalues unsupported; distinct_count is exact up to 10,000 values per group and estimated beyond; output row order is unspecified |
-| `streamstats` | partial | current, window and global=false supported; reset_before, reset_after, time_window, and window with global=true and a by clause are unsupported |
+| `streamstats` | partial | current, window and global=false supported; bucket_nullable=false with a by clause, reset_before, reset_after, time_window, and window with global=true and a by clause are unsupported |
 | `subquery` | partial | uncorrelated IN, EXISTS and scalar subqueries; a subquery is evaluated once before the outer query; references to outer fields are not supported |
 | `table` | full |  |
 | `timechart` | partial | span, limit, useother, usenull, nullstr and timefield supported (the default time field is _time); bins and minspan unsupported; per_second, per_minute, per_hour and per_day supported |
