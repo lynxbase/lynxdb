@@ -138,6 +138,11 @@ type Store struct {
 	unwritten      []*shred.Batch
 	unwrittenBytes int64
 
+	// appended counts the calls of Append that buffered rows, and written
+	// is the count that the last flush to take the buffers found and has
+	// made durable: while the two are equal a Sync has nothing to wait for.
+	appended, written atomic.Uint64
+
 	// Callers of Sync share flushes: one flush runs at a time, and all who
 	// asked while it ran are served by the next. syncBegun and syncEnded
 	// count the flushes begun and ended, syncErr is the result of the last.
@@ -377,6 +382,7 @@ func (s *Store) appendPiece(lines []byte, at int64) (rejected int64, err error) 
 	}
 	sh.buffered += len(lines)
 	s.buffered.Add(int64(len(lines)))
+	s.appended.Add(1)
 
 	return int64(len(sh.errs)), nil
 }
@@ -450,6 +456,9 @@ func (s *Store) shredOptions() shred.Options {
 // Concurrent callers share a flush, so many small synchronous writes cost
 // one part and one wait for the disk per flush, not one per caller.
 func (s *Store) Sync() error {
+	if s.written.Load() == s.appended.Load() && !s.closed.Load() {
+		return nil
+	}
 	s.syncMu.Lock()
 	defer s.syncMu.Unlock()
 	// A flush under way may have passed a buffer before this caller's rows
@@ -514,6 +523,8 @@ func (s *Store) writeBuffers(age time.Duration) error {
 			return nil
 		}
 	}
+	// Rows of the calls counted so far are in the buffers taken below.
+	found := s.appended.Load()
 	taken, size := s.unwritten, s.unwrittenBytes
 	s.unwritten, s.unwrittenBytes = nil, 0
 	for i := range s.shards {
@@ -564,6 +575,7 @@ func (s *Store) writeBuffers(age time.Duration) error {
 
 		return err
 	}
+	s.written.Store(found)
 	for _, b := range taken {
 		s.spare.keep(b, len(s.shards))
 	}
