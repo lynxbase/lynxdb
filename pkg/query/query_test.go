@@ -102,6 +102,40 @@ func TestCorrelatedSubqueriesFailToCompile(t *testing.T) {
 	}
 }
 
+// TestProjectingEventColumnsKeepsOnlyThem pins that a projection of _time or
+// _raw plans and returns those columns and no event metadata.
+func TestProjectingEventColumnsKeepsOnlyThem(t *testing.T) {
+	e := ev(0, "GET /health 200", map[string]event.Value{"host": s("web-1")})
+	e.Source, e.SourceType = "access.log", "nginx"
+	store := physical.MapStore{"logs": {e}}
+	for q, want := range map[string]string{
+		"source=logs | fields _time":       "_time",
+		"source=logs | fields _raw":        "_raw",
+		"source=logs | fields _raw, _time": "_raw _time",
+		"source=logs | table _time, host":  "_time host",
+	} {
+		c, err := Compile(q)
+		if err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		if got := strings.Join(c.Plan.Root.Schema().Names(), " "); got != want {
+			t.Errorf("%s: plans columns %s, want %s", q, got, want)
+		}
+		rows, err := Run(context.Background(), c, store, Options{Now: t0.Add(time.Hour)})
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("%s: %d rows, %v", q, len(rows), err)
+		}
+		keys := make([]string, 0, len(rows[0]))
+		for k := range rows[0] {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		if got := strings.Join(keys, " "); got != want {
+			t.Errorf("%s: returns columns %s, want %s", q, got, want)
+		}
+	}
+}
+
 func TestExecute(t *testing.T) {
 	cases := []struct {
 		q, want string
