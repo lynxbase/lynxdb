@@ -411,3 +411,48 @@ func TestOpaqueExpressions(t *testing.T) {
 		t.Error("no expression was asked for")
 	}
 }
+
+// TestNumbersHeldAsText requires that a comparison of a field with a number
+// passes the rows that hold the number as text, as the IR reads it, and
+// leaves out the rows whose text is no number.
+func TestNumbersHeldAsText(t *testing.T) {
+	batch := shred.NewBatch(shred.Options{})
+	for i, doc := range []string{`{"code":200}`, `{"code":"200"}`, `{"code":"abc"}`, `{"code":404.5}`, `{"code":"404.5"}`, `{"other":1}`, `{"code":true}`} {
+		if err := batch.AddJSON([]byte(doc), int64(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var buf bytes.Buffer
+	w := part.NewWriter(&buf, part.Options{})
+	if err := w.WriteBatch(batch); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := part.Open(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tbl := colstore.NewTable()
+	if err := tbl.Apply([]*colstore.Handle{colstore.NewHandle(p, nil)}, nil); err != nil {
+		t.Fatal(err)
+	}
+	defer tbl.Close()
+	snap := tbl.Snapshot()
+	defer snap.Release()
+	for text, want := range map[string]string{
+		`source=t | where code = 200 | stats count()`:                 "2",
+		`source=t | where code != 200 | stats count()`:                "2",
+		`source=t | where code > 300 | stats count()`:                 "2",
+		`source=t | where 300 > code | stats count()`:                 "2",
+		`source=t | where not code >= 404.5 | stats count()`:          "2",
+		`source=t | where code = 200 or code = 404.5 | stats count()`: "4",
+		`source=t | where code = 'abc' | stats count()`:               "1",
+		`source=t | stats count() as n by code | where n > 5`:         "",
+	} {
+		if got := answer(t, snap, text); got != want {
+			t.Errorf("%s: %s, want %s", text, got, want)
+		}
+	}
+}

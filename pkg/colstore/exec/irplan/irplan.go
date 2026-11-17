@@ -21,6 +21,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 	"github.com/lynxbase/lynxdb/pkg/ir"
+	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
 // ErrUnsupported reports a plan that is valid but that the executor cannot
@@ -1187,6 +1188,38 @@ func (t *translator) search(s *ir.Search) (*exec.Expr, error) {
 	return exec.And(out...), nil
 }
 
+// compared translates a comparison that is a condition on rows. A field of
+// the table compared with a number also passes where it holds the number as
+// text, which the IR reads as the number; the executor compares a string
+// with a number as nothing.
+func (t *translator) compared(e *ir.Binary) (*exec.Expr, error) {
+	p, err := t.expr(e)
+	if err != nil || t.agg != nil || len(p.Args) != 2 {
+		return p, err
+	}
+	col, lit := p.Args[0], p.Args[1]
+	if col.Op == exec.OpLiteral {
+		col, lit = lit, col
+	}
+	if col.Op != exec.OpColumn || col.Kind != exec.KindAny || lit.Op != exec.OpLiteral {
+		return p, nil
+	}
+	number := lit
+	switch lit.Value.Kind {
+	case vec.KindInt:
+		number = exec.Float(float64(lit.Value.Int))
+	case vec.KindFloat:
+	default:
+		return p, nil
+	}
+	text := &exec.Expr{Op: p.Op, Args: []*exec.Expr{exec.ToFloat(exec.Col(col.Path, vec.KindString)), number}}
+	if p.Args[0].Op == exec.OpLiteral {
+		text.Args[0], text.Args[1] = text.Args[1], text.Args[0]
+	}
+
+	return exec.Or(p, text), nil
+}
+
 // join returns the conjunction or disjunction of a and b as one node over
 // the terms of both, which lets the executor order all of them by cost.
 func join(op exec.Op, a, b *exec.Expr) *exec.Expr {
@@ -1227,10 +1260,10 @@ func (t *translator) pred(e ir.Expr, not bool) (*exec.Expr, error) {
 			return join(exec.OpOr, a, b), nil
 		}
 		if op, ok := opposite[e.Op]; ok && not {
-			return t.expr(&ir.Binary{Op: op, L: e.L, R: e.R, T: e.T})
+			return t.compared(&ir.Binary{Op: op, L: e.L, R: e.R, T: e.T})
 		}
 		if _, ok := opposite[e.Op]; ok {
-			return t.expr(e)
+			return t.compared(e)
 		}
 	case *ir.InList:
 		if len(e.List) == 0 {
