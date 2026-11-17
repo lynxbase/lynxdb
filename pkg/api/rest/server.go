@@ -3,7 +3,6 @@ package rest
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -733,13 +732,6 @@ func (s *Server) currentShutdownTimeout() time.Duration {
 	defer s.cfgMu.RUnlock()
 
 	return s.shutdownTimeout
-}
-
-func httpError(w http.ResponseWriter, msg string, code int) {
-	w.WriteHeader(code)
-	if err := json.NewEncoder(w).Encode(map[string]string{"error": msg}); err != nil {
-		slog.Warn("failed to write error response", "error", err)
-	}
 }
 
 // requirePathValue extracts a named path parameter and validates it is non-empty.
