@@ -63,6 +63,12 @@ type query struct {
 	hidden []string
 	// hide names the columns that the result leaves out.
 	hide []string
+	// byTime is set for rows that a limit keeps the first of by their time:
+	// negative for the latest first, positive for the earliest; timeCol is
+	// the column of the time. The scan then takes the blocks in that order
+	// and leaves out those that the rows kept so far rule out.
+	byTime  int
+	timeCol int
 }
 
 type orderSpec struct {
@@ -178,6 +184,15 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 		}
 	}
 	if agg == nil {
+		if q.limit > 0 && len(q.order) > 0 {
+			by := q.order[0]
+			if e := q.rowExprs[by.col]; e.op == OpColumn && q.paths[e.path] == part.TimePath && (e.kind == vec.KindInt || e.kind == KindAny) {
+				q.byTime, q.timeCol = 1, by.col
+				if by.desc {
+					q.byTime = -1
+				}
+			}
+		}
 		q.lateRows(prj)
 	}
 	if srt != nil {

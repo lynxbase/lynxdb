@@ -1,11 +1,13 @@
 package colstore
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -33,6 +35,15 @@ type ScanOptions struct {
 	// Skip, when set, is asked once per block before the scan starts and
 	// leaves out the blocks it returns true for.
 	Skip func(p *part.Part, block int) bool
+	// ByTime, when not zero, makes the scan take the blocks by the times of
+	// their rows: by their latest row, latest first, when it is negative,
+	// and by their earliest row, earliest first, when it is positive. A
+	// block is then left out when its turn comes if Bound rules it out: its
+	// latest row is before Bound in the first order, or its earliest row
+	// after Bound in the second. The caller moves Bound while the scan runs,
+	// as it learns which rows it will keep.
+	ByTime int
+	Bound  *atomic.Int64
 }
 
 // ColumnTokens holds token hashes that the strings of one column of a block
@@ -145,6 +156,8 @@ type scanUnit struct {
 	p     *part.Part
 	block int32
 	ids   int32
+	// first and last are the times of the block's earliest and latest row.
+	first, last int64
 }
 
 // Scan calls fn from several goroutines, in no particular order, for every
@@ -179,7 +192,8 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 			stats.SkippedByKey += int64(h.NumBlocks() - (end - first))
 		}
 		for i := first; i < end; i++ {
-			if _, lo, hi := h.BlockStats(i); hi < minT || lo > maxT {
+			_, lo, hi := h.BlockStats(i)
+			if hi < minT || lo > maxT {
 				stats.SkippedByTime++
 
 				continue
@@ -192,8 +206,14 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 
 				continue
 			}
-			units = append(units, scanUnit{p: h.Part, block: int32(i), ids: int32(at)})
+			units = append(units, scanUnit{p: h.Part, block: int32(i), ids: int32(at), first: lo, last: hi})
 		}
+	}
+	switch {
+	case opts.ByTime < 0:
+		slices.SortStableFunc(units, func(a, b scanUnit) int { return cmp.Compare(b.last, a.last) })
+	case opts.ByTime > 0:
+		slices.SortStableFunc(units, func(a, b scanUnit) int { return cmp.Compare(a.first, b.first) })
 	}
 
 	workers := opts.Workers
@@ -204,7 +224,7 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 
 	ctx, cancel := context.WithCancelCause(ctx)
 	defer cancel(nil)
-	var next, read, skipped atomic.Int64
+	var next, read, skipped, late atomic.Int64
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
 		wg.Add(1)
@@ -226,6 +246,13 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 					return
 				}
 				u := units[i]
+				if opts.Bound != nil {
+					if bound := opts.Bound.Load(); (opts.ByTime < 0 && u.last < bound) || (opts.ByTime > 0 && u.first > bound) {
+						late.Add(1)
+
+						continue
+					}
+				}
 				may, err := mayContainAll(u.p, int(u.block), opts.Tokens)
 				for k := 0; k < len(sets) && may && err == nil; k++ {
 					may, err = mayContainSet(u.p, int(u.block), ids[int(u.ids)+k], sets[k].Hashes)
@@ -256,6 +283,7 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 	}
 	wg.Wait()
 	stats.Blocks, stats.SkippedByToken = read.Load(), stats.SkippedByToken+skipped.Load()
+	stats.SkippedByTime += late.Load()
 	if err := context.Cause(ctx); err != nil {
 		return stats, err
 	}

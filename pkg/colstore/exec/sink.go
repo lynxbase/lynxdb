@@ -3,6 +3,7 @@ package exec
 import (
 	"bytes"
 	"sort"
+	"sync/atomic"
 
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
@@ -13,6 +14,9 @@ type sink struct {
 	q    *query
 	cols []colVec
 	top  topK
+	// bound is where the sink of a plan that keeps the first rows by time
+	// tells the scan how far those reach.
+	bound *atomic.Int64
 	// raw is set when the sink takes every group as the aggregate leaves
 	// it, for what the plan does above the aggregate to run afterwards.
 	raw bool
@@ -61,6 +65,7 @@ func (s *sink) add(batch []colVec) {
 		}
 	case s.top.k > 0:
 		s.top.offer(batch, n)
+		s.tighten()
 	case s.q.limit > 0 && s.cols[0].len()+n > s.q.limit:
 		take := s.q.limit - s.cols[0].len()
 		for c := range batch {
@@ -71,6 +76,22 @@ func (s *sink) add(batch []colVec) {
 	default:
 		for c := range batch {
 			s.cols[c].appendAll(&batch[c])
+		}
+	}
+}
+
+// tighten tells the scan the time that a row must reach to be kept, once
+// the sink holds as many rows as the plan keeps: the time of the last of
+// them, which rows of other goroutines can only move further.
+func (s *sink) tighten() {
+	if s.bound == nil || len(s.top.rows) < s.top.k {
+		return
+	}
+	at := s.top.rows[0][s.q.timeCol].Int
+	for {
+		bound := s.bound.Load()
+		if (s.q.byTime < 0 && at <= bound) || (s.q.byTime > 0 && at >= bound) || s.bound.CompareAndSwap(bound, at) {
+			return
 		}
 	}
 }
