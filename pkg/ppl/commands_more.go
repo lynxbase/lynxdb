@@ -112,7 +112,7 @@ func (c *compiler) top(st *pipe, n *ast.TopCommand) error {
 	for _, b := range by {
 		keys = append(keys, ir.SortKey{Expr: &ir.FieldRef{Name: b.Name, T: b.Expr.Type()}, NullsFirst: true})
 	}
-	keys = append(keys, ir.SortKey{Expr: countRef, Desc: n.Command == "top"})
+	keys = append(keys, ir.SortKey{Expr: countRef, Desc: n.Command == "top", NullsFirst: n.Command != "top"})
 	for _, f := range fields {
 		keys = append(keys, ir.SortKey{Expr: &ir.FieldRef{Name: f.Name, T: f.Expr.Type()}, NullsFirst: true})
 	}
