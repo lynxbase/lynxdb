@@ -15,9 +15,6 @@ type ectx struct {
 	c      *compiler
 	schema ir.Schema
 	params []*ir.LambdaParam
-	// qualifiers maps join aliases to themselves so that alias.field
-	// resolves to the qualified column.
-	qualifiers map[string]bool
 }
 
 func (c *compiler) ectx(s ir.Schema) *ectx { return &ectx{c: c, schema: s} }
