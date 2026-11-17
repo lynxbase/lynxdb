@@ -332,8 +332,8 @@ func ddTotal(b []byte) (sum uint64) {
 
 // ddQuantile returns the value at quantile q, from 0 to 1, of the values
 // counted in a store of negative magnitudes, a number of zeros and a store
-// of positive values: the one that has floor(q*(n-1)) of the n values before
-// it. It reports false when there is no value.
+// of positive values: the one that has floor(q*n) of the n values before
+// it, the greatest for a q of 1. It reports false when there is no value.
 func ddQuantile(neg, pos []byte, zeros uint64, q float64) (float64, bool) {
 	if len(pos) != 0 && pos[0] == ddExact {
 		return ddExactQuantile(pos, zeros, q), true
@@ -342,7 +342,7 @@ func ddQuantile(neg, pos []byte, zeros uint64, q float64) (float64, bool) {
 	if total == 0 {
 		return 0, false
 	}
-	rank := uint64(q * float64(total-1))
+	rank := min(uint64(q*float64(total)), total-1)
 	var seen uint64
 	if len(neg) != 0 {
 		width, n, lo := ddShape(neg)
@@ -373,7 +373,7 @@ func ddExactQuantile(b []byte, zeros uint64, q float64) float64 {
 		_, count := ddEntry(b, i)
 		total += count
 	}
-	rank := uint64(q * float64(total-1))
+	rank := min(uint64(q*float64(total)), total-1)
 	var seen uint64
 	for i := 0; i < n; i++ {
 		x, count := ddEntry(b, i)

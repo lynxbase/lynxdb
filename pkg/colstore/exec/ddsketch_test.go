@@ -85,7 +85,7 @@ func TestSketchIsWithinOnePercentOfExactQuantiles(t *testing.T) {
 				t.Fatalf("the sample spans a factor of %.3g, want six orders of magnitude", span)
 			}
 			for _, q := range sketchQuantiles {
-				exact := values[int(q*float64(n-1))]
+				exact := values[min(int(q*float64(n)), n-1)]
 				got := s.quantile(q)
 				if n <= ddExactMax && got != exact {
 					t.Fatalf("%d values, signed %v, quantile %g: got %g, want exactly %g", n, signed, q, got, exact)
@@ -155,7 +155,7 @@ func TestSketchHasAHardSizeCap(t *testing.T) {
 		// value; quantiles that fall there keep the promise.
 		floor := sorted[len(sorted)-1] / math.Pow(ddGamma, ddMaxBuckets-1)
 		for _, q := range sketchQuantiles {
-			exact := sorted[int(q*float64(len(sorted)-1))]
+			exact := sorted[min(int(q*float64(len(sorted))), len(sorted)-1)]
 			got := s.quantile(q)
 			if exact > floor && math.Abs(got-exact) > ddAlpha*exact*(1+1e-9) {
 				t.Fatalf("quantile %g: got %g, exact %g", q, got, exact)
@@ -208,7 +208,7 @@ func TestSketchOfFewDistinctNumbersIsExact(t *testing.T) {
 			merged.merge(&pieces[p])
 		}
 		for _, q := range sketchQuantiles {
-			exact := values[int(q*float64(len(values)-1))]
+			exact := values[min(int(q*float64(len(values))), len(values)-1)]
 			got := whole.quantile(q)
 			if distinct <= ddExactMax && got != exact {
 				t.Fatalf("%d distinct numbers, quantile %g: got %g, want exactly %g", distinct, q, got, exact)
