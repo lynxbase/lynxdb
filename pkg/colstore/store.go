@@ -620,6 +620,13 @@ func (w *Writer) AddNDJSON(lines []byte) error {
 
 func (w *Writer) add(lines []byte) error {
 	for len(lines) > 0 {
+		// A buffer that a failed flush left full takes no line before it is
+		// written, so that a caller told of the failure can send all again.
+		if w.buffered >= w.s.opts.FlushBytes {
+			if err := w.flush(); err != nil {
+				return err
+			}
+		}
 		chunk := lines
 		if room := w.s.opts.FlushBytes - w.buffered; room < len(chunk) {
 			// The buffer takes whole lines, so the cut moves to a line end.

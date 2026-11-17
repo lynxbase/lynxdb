@@ -295,3 +295,61 @@ func TestStoreReportsAFailedMergeAndMergesAgain(t *testing.T) {
 		})
 	}
 }
+
+func TestAppendTakesNoLinesWhileAFullBufferCannotBeWritten(t *testing.T) {
+	failing := failSyncs(t, isPartFile)
+	path := filepath.Join(t.TempDir(), "store")
+	opts := StoreOptions{SortKey: []string{"svc"}, FlushBytes: 4 << 10, MergeFanIn: -1, FlushInterval: -1}
+	s, err := OpenStore(path, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The store stops before the syncs are put back.
+	t.Cleanup(func() { s.Close() })
+	failing.Store(true)
+	// The first request fills the buffer, and the flush of it fails.
+	if _, err := s.Append(storeDocs(0, 200)); !errors.Is(err, errInjected) {
+		t.Fatalf("an Append whose flush failed: %v", err)
+	}
+	// A client that is told of a failure sends the request again later;
+	// none of its lines may be kept in the meantime.
+	const requests, lines = 5, 50
+	for i := 1; i <= requests; i++ {
+		if _, err := s.Append(storeDocs(i*1000, lines)); !errors.Is(err, errInjected) {
+			t.Fatalf("request %d against a full buffer: %v", i, err)
+		}
+	}
+	failing.Store(false)
+	if err := s.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	counts := countN(t, s.Table())
+	for n, count := range counts {
+		if n >= 1000 || count != 1 {
+			t.Fatalf("document %d of a request that failed is there %d times", n, count)
+		}
+	}
+	// Of the request that filled the buffer the lines up to the flush stay.
+	if kept := int64(len(counts)); kept == 0 || kept >= 200 || counts[kept-1] != 1 {
+		t.Fatalf("%d documents of the first request are there, not its first lines", kept)
+	}
+	for i := 1; i <= requests; i++ {
+		if _, err := s.Append(storeDocs(i*1000, lines)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	again := countN(t, s.Table())
+	for i := 1; i <= requests; i++ {
+		for n := int64(i * 1000); n < int64(i*1000+lines); n++ {
+			if again[n] != 1 {
+				t.Fatalf("document %d of a request sent again is there %d times", n, again[n])
+			}
+		}
+	}
+	if len(again) != len(counts)+requests*lines {
+		t.Fatalf("%d documents, want %d", len(again), len(counts)+requests*lines)
+	}
+}
