@@ -289,7 +289,9 @@ func readEnd(path string, log endMark) (slot int, err error) {
 }
 
 // mark notes in a slot of the end file how far a manifest has reached. The
-// file is not synced: a mark that is behind its manifest claims less.
+// file is not synced: a mark that is behind its manifest claims less. A mark
+// follows the sync of its record, so a crash between the two that is followed
+// by the loss of exactly that record goes unseen.
 func (d *Dir) mark(slot int, m endMark) {
 	_, _ = d.end.WriteAt(m.bytes(), int64(slot)*endMarkSize)
 }
