@@ -13,6 +13,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/ppl"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
@@ -295,5 +296,72 @@ func TestRefusedPlans(t *testing.T) {
 		if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: got %v, want an unsupported error naming %q", text, err, want)
 		}
+	}
+}
+
+// TestOpaqueExpressions requires that an expression without operations of
+// the executor is computed by the function the caller gives for it, from
+// the fields it reads, and that the plan is refused without one.
+func TestOpaqueExpressions(t *testing.T) {
+	snap := testSnapshot(t)
+	asked := 0
+	opaque := func(e ir.Expr, fields []*ir.FieldRef) (func() exec.Func, bool) {
+		call, ok := e.(*ir.Call)
+		if !ok || call.Func.Name != "reverse" || len(fields) != 1 {
+			return nil, false
+		}
+		asked++
+
+		return func() exec.Func {
+			return func(args []exec.Value, buf []byte) (exec.Value, []byte) {
+				if args[0].Kind != vec.KindString {
+					return exec.Value{Kind: vec.KindNull}, buf
+				}
+				for i := len(args[0].Bytes) - 1; i >= 0; i-- {
+					buf = append(buf, args[0].Bytes[i])
+				}
+
+				return exec.Value{Kind: vec.KindString, Bytes: buf}, buf
+			}
+		}, true
+	}
+	for text, want := range map[string]string{
+		`source=logs | eval r = upper(reverse(level)) | stats count() as n by r | sort r`:             "1 NRAW; 2 OFNI; 2 RORRE",
+		`source=logs | where reverse(level) = 'nraw' | stats count() as n`:                            "1",
+		`source=logs | stats count() as n by level | eval r = reverse(level) | sort level | fields r`: "rorre; ofni; nraw",
+	} {
+		res, err := ppl.Compile(text)
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		if _, err := Plan(res.Plan, Options{Now: testNow}); !errors.Is(err, ErrUnsupported) {
+			t.Errorf("%s without a function: %v", text, err)
+		}
+		plan, err := Plan(res.Plan, Options{Now: testNow, Opaque: opaque})
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		out, err := exec.Run(context.Background(), snap, plan, exec.Options{Workers: 2})
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		var rows []string
+		for i := 0; i < out.Rows; i++ {
+			var vals []string
+			for _, v := range out.Row(i, nil) {
+				if v.Kind == vec.KindInt {
+					vals = append(vals, fmt.Sprint(v.Int))
+				} else {
+					vals = append(vals, string(v.Bytes))
+				}
+			}
+			rows = append(rows, strings.Join(vals, " "))
+		}
+		if got := strings.Join(rows, "; "); got != want {
+			t.Errorf("%s\n got  %s\n want %s", text, got, want)
+		}
+	}
+	if asked == 0 {
+		t.Error("no expression was asked for")
 	}
 }

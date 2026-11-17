@@ -31,6 +31,11 @@ type Options struct {
 	// Now is the time that relative times count from; the zero time means
 	// the time of the call.
 	Now time.Time
+	// Opaque, when set, is asked for a function that computes an expression
+	// which the executor has no operations for: the function takes the
+	// values of fields, in their order, in one row. It returns false for an
+	// expression that it does not compute either.
+	Opaque func(e ir.Expr, fields []*ir.FieldRef) (func() exec.Func, bool)
 }
 
 func unsupported(format string, args ...any) error {
@@ -39,7 +44,7 @@ func unsupported(format string, args ...any) error {
 
 // Plan returns the executor's plan for p.
 func Plan(p *ir.Plan, opts Options) (exec.Node, error) {
-	t := &translator{now: opts.Now, env: map[string]*exec.Expr{}}
+	t := &translator{now: opts.Now, opaque: opts.Opaque, env: map[string]*exec.Expr{}}
 	if t.now.IsZero() {
 		t.now = time.Now()
 	}
@@ -68,7 +73,10 @@ func Plan(p *ir.Plan, opts Options) (exec.Node, error) {
 // translator builds a plan from the operators of a query from its scan
 // upwards.
 type translator struct {
-	now    time.Time
+	now time.Time
+	// opaque computes the expressions that the executor has no operations
+	// for, when the caller gave a way to.
+	opaque func(e ir.Expr, fields []*ir.FieldRef) (func() exec.Func, bool)
 	filter []*exec.Expr
 	// env maps the name of a computed or renamed column to its expression:
 	// over the table's paths below an aggregate, over the aggregate's
@@ -686,8 +694,54 @@ var scalarCalls = map[string]exec.Op{
 	"num_bucket": exec.OpBin, "hour": exec.OpHourOfDay,
 }
 
-// expr translates a value expression.
+// expr translates a value expression: into the operations of the executor,
+// or else into a function of the fields that the expression reads.
 func (t *translator) expr(e ir.Expr) (*exec.Expr, error) {
+	out, err := t.operations(e)
+	if err == nil || t.opaque == nil || !errors.Is(err, ErrUnsupported) {
+		return out, err
+	}
+	var fields []*ir.FieldRef
+	whole := true
+	ir.WalkExpr(e, func(x ir.Expr) bool {
+		switch x := x.(type) {
+		case *ir.Subquery:
+			whole = false
+		case *ir.FieldRef:
+			if !slices.ContainsFunc(fields, func(f *ir.FieldRef) bool { return f.Name == x.Name }) {
+				fields = append(fields, x)
+			}
+		}
+
+		return whole
+	})
+	if !whole {
+		return nil, err
+	}
+	// A function takes an argument: a constant stands in for one that
+	// reads no field.
+	args := []*exec.Expr{exec.Bool(true)}
+	if len(fields) != 0 {
+		args = args[:0]
+	}
+	for _, f := range fields {
+		arg, failed := t.field(f.Name)
+		if failed != nil {
+			return nil, failed
+		}
+		args = append(args, arg)
+	}
+	newFunc, ok := t.opaque(e, fields)
+	if !ok {
+		return nil, err
+	}
+
+	return exec.Call(newFunc, args...), nil
+}
+
+// operations translates a value expression into the operations of the
+// executor.
+func (t *translator) operations(e ir.Expr) (*exec.Expr, error) {
 	switch e := e.(type) {
 	case *ir.Literal:
 		return literal(e)
