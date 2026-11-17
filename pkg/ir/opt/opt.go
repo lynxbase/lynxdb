@@ -27,7 +27,7 @@ type rule struct {
 	apply func(ir.Node, *Options) (ir.Node, bool)
 }
 
-var rules = []rule{
+var rules = [...]rule{
 	{"fold-constants", foldConstants},
 	{"merge-filters", mergeFilters},
 	{"remove-true-filter", removeTrueFilter},
@@ -40,15 +40,16 @@ var rules = []rule{
 // Optimize applies the rewrite rules until the plan stops changing, at
 // most a fixed number of passes.
 func Optimize(p *ir.Plan, opts Options) (*ir.Plan, []Applied) {
-	counts := map[string]int{}
+	var counts [len(rules)]int
 	root := p.Root
 	for pass := 0; pass < 8; pass++ {
 		changed := false
-		for _, r := range rules {
+		for i := range rules {
+			apply := rules[i].apply
 			root = ir.Transform(root, func(n ir.Node) ir.Node {
-				out, ok := r.apply(n, &opts)
+				out, ok := apply(n, &opts)
 				if ok {
-					counts[r.name]++
+					counts[i]++
 					changed = true
 					return out
 				}
@@ -61,8 +62,8 @@ func Optimize(p *ir.Plan, opts Options) (*ir.Plan, []Applied) {
 	}
 	root = columnPruning(root)
 	var applied []Applied
-	for _, r := range rules {
-		if c := counts[r.name]; c > 0 {
+	for i, r := range rules {
+		if c := counts[i]; c > 0 {
 			applied = append(applied, Applied{Rule: r.name, Count: c})
 		}
 	}
@@ -75,6 +76,9 @@ func foldConstants(n ir.Node, o *Options) (ir.Node, bool) {
 	}
 	changed := false
 	fold := func(e ir.Expr) ir.Expr {
+		if !hasFoldable(e) {
+			return e
+		}
 		return ir.RewriteExpr(e, func(x ir.Expr) ir.Expr {
 			if !foldable(x) {
 				return x
@@ -94,15 +98,39 @@ func foldConstants(n ir.Node, o *Options) (ir.Node, bool) {
 			return &ir.Filter{Input: x.Input, Cond: c}, true
 		}
 	case *ir.Compute:
-		assigns := make([]ir.Assign, len(x.Assigns))
+		var assigns []ir.Assign
 		for i, a := range x.Assigns {
-			assigns[i] = ir.Assign{Name: a.Name, Expr: fold(a.Expr)}
+			e := fold(a.Expr)
+			if e != a.Expr && assigns == nil {
+				assigns = make([]ir.Assign, len(x.Assigns))
+				copy(assigns, x.Assigns[:i])
+			}
+			if assigns != nil {
+				assigns[i] = ir.Assign{Name: a.Name, Expr: e}
+			}
 		}
 		if changed {
 			return &ir.Compute{Input: x.Input, Assigns: assigns}, true
 		}
 	}
 	return n, false
+}
+
+// hasFoldable reports whether e or one of its sub-expressions is foldable.
+func hasFoldable(e ir.Expr) bool {
+	if e == nil {
+		return false
+	}
+	if foldable(e) {
+		return true
+	}
+	var buf [4]ir.Expr
+	for _, c := range ir.AppendExprChildren(buf[:0], e) {
+		if hasFoldable(c) {
+			return true
+		}
+	}
+	return false
 }
 
 // foldable reports whether e is a deterministic computation over literals
@@ -116,7 +144,8 @@ func foldable(e ir.Expr) bool {
 			return false
 		}
 	}
-	for _, c := range ir.ExprChildren(e) {
+	var buf [4]ir.Expr
+	for _, c := range ir.AppendExprChildren(buf[:0], e) {
 		if _, ok := c.(*ir.Literal); !ok {
 			return false
 		}
@@ -161,7 +190,8 @@ func pruneScan(n ir.Node, _ *Options) (ir.Node, bool) {
 		return n, false
 	}
 	var add []ir.Expr
-	for _, c := range ir.Conjuncts(f.Cond) {
+	var buf [8]ir.Expr
+	for _, c := range ir.AppendConjuncts(buf[:0], f.Cond) {
 		if indexable(c) && !containsExpr(scan.Prune, c) {
 			add = append(add, c)
 		}
@@ -232,7 +262,8 @@ func timeRangeToScan(n ir.Node, _ *Options) (ir.Node, bool) {
 		tr = *scan.Time
 	}
 	changed := false
-	for _, c := range ir.Conjuncts(f.Cond) {
+	var buf [8]ir.Expr
+	for _, c := range ir.AppendConjuncts(buf[:0], f.Cond) {
 		b, ok := c.(*ir.Binary)
 		if !ok {
 			continue
