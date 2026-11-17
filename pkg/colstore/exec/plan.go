@@ -57,15 +57,23 @@ const (
 	// argument, telling kinds apart, in at most 4 KB per group: exactly up
 	// to 383 values, and beyond with a standard error of 1.6 percent.
 	ApproxDistinct
+	// Percentile is the value below which P percent of the argument's
+	// numbers lie, within one percent of that value: the number that has
+	// floor(P/100*(n-1)) of the n numbers before it, read from a sketch of
+	// at most 32 KB per group. Every Percentile of one argument shares the
+	// sketch.
+	Percentile
 )
 
-// Agg is one aggregate; Arg is nil for a Count of rows, and By orders the
-// rows of an ArgMin or an ArgMax.
+// Agg is one aggregate; Arg is nil for a Count of rows, By orders the rows
+// of an ArgMin or an ArgMax, and P is the percentage of a Percentile, from 0
+// to 100.
 type Agg struct {
 	Name string
 	Func AggFunc
 	Arg  *Expr
 	By   *Expr
+	P    float64
 }
 
 // Aggregate groups its input by Keys and computes Aggs per group; its

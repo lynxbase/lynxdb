@@ -19,6 +19,11 @@ const (
 	// stateHLL holds the hashes of the distinct values or a sketch of them,
 	// as hll.go lays them out.
 	stateHLL
+	// stateSketchPos and stateSketchNeg hold the stores of a percentile
+	// sketch for the positive and the negative numbers, as ddsketch.go lays
+	// them out.
+	stateSketchPos
+	stateSketchNeg
 )
 
 // stateSpec is one state of variable size per group. The group's row of
@@ -45,6 +50,8 @@ func (ap *aggPlan) state(op stateOp, arg int) int {
 		ap.args[arg].stateKinds |= kindBit(vec.KindString)
 	case stateHLL:
 		ap.args[arg].stateKinds |= allKinds
+	case stateSketchPos, stateSketchNeg:
+		ap.args[arg].stateKinds |= numericKinds
 	}
 
 	return len(ap.states) - 1
@@ -135,6 +142,8 @@ func (ap *aggPlan) mergeStates(h *stateHeap, dst []int64, src *stateSource) {
 			}
 		case stateHLL:
 			dst[st.word] = int64(hllMerge(h, ref, b))
+		case stateSketchPos, stateSketchNeg:
+			dst[st.word] = int64(ddMerge(h, ref, b))
 		}
 	}
 }
@@ -252,5 +261,59 @@ func (a *aggWorker) feedHashes(arg *aggArg, t *target, kind vec.Kind, c *vec.Col
 			word := &t.words[g*a.stride+st.word]
 			*word = int64(hllAdd(&a.heap, stateRef(*word), hash))
 		}
+	}
+}
+
+// sketch gives argument arg a percentile sketch: a word that counts its
+// zeros and the states of two stores.
+func (ap *aggPlan) sketch(arg int) {
+	a := &ap.args[arg]
+	if a.sketched {
+		return
+	}
+	// The word is fed with the stores, not with the argument's other words.
+	ap.words = append(ap.words, wordSpec{op: wordZeros, arg: -1})
+	a.zeros = len(ap.words) - 1
+	a.pos, a.neg = ap.states[ap.state(stateSketchPos, arg)].word, ap.states[ap.state(stateSketchNeg, arg)].word
+	a.sketched = true
+}
+
+// feedSketch adds the numbers of the n rows listed in rows, or the first n
+// rows when it is nil, to the percentile sketch of an argument: the integers
+// or else the floats given.
+func (a *aggWorker) feedSketch(arg *aggArg, t *target, ints []int64, floats []float64, gid, rows []uint32, n int) {
+	var last float64
+	var lastKey int32
+	for j := 0; j < n; j++ {
+		g, r := t.one, j
+		if t.gid != nil {
+			g = int(gid[j])
+		}
+		if rows != nil {
+			r = int(rows[j])
+		}
+		var x float64
+		if ints != nil {
+			x = float64(ints[r])
+		} else {
+			x = floats[r]
+		}
+		words := t.words[g*a.stride : (g+1)*a.stride]
+		at := arg.pos
+		switch {
+		case x != x:
+			continue
+		case x == 0:
+			words[arg.zeros]++
+
+			continue
+		case x < 0:
+			at, x = arg.neg, -x
+		}
+		// A value seen again in a row is not put through the logarithm.
+		if x != last {
+			last, lastKey = x, ddKey(x)
+		}
+		words[at] = int64(ddAdd(&a.heap, stateRef(words[at]), lastKey, 1))
 	}
 }

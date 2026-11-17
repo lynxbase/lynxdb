@@ -27,6 +27,14 @@ func stateAggs() []exec.Agg {
 		{Name: "flags", Func: exec.ApproxDistinct, Arg: anyOf("flag")},
 		{Name: "bigs", Func: exec.ApproxDistinct, Arg: exec.Mod(num("big"), exec.Int(1000))},
 		{Name: "none", Func: exec.ApproxDistinct, Arg: anyOf("nope")},
+		{Name: "p50_n", Func: exec.Percentile, Arg: anyOf("n"), P: 50},
+		{Name: "p99_n", Func: exec.Percentile, Arg: anyOf("n"), P: 99},
+		{Name: "p0_score", Func: exec.Percentile, Arg: float("score"), P: 0},
+		{Name: "p95_score", Func: exec.Percentile, Arg: float("score"), P: 95},
+		{Name: "p100_x", Func: exec.Percentile, Arg: num("nested.x"), P: 100},
+		{Name: "p25_big", Func: exec.Percentile, Arg: num("big"), P: 25},
+		{Name: "p75_diff", Func: exec.Percentile, Arg: exec.Sub(num("n"), exec.Int(50)), P: 75},
+		{Name: "p50_nope", Func: exec.Percentile, Arg: anyOf("nope"), P: 50},
 	}
 }
 

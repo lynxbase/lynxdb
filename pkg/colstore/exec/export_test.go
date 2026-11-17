@@ -53,3 +53,16 @@ func DistinctEstimate(hashes map[uint64]struct{}) int64 {
 
 	return hllCount(h.get(ref))
 }
+
+// SketchValue returns what a Percentile reports for a quantile whose exact
+// value is x.
+func SketchValue(x float64) float64 {
+	switch {
+	case x > 0:
+		return ddValue(ddKey(x))
+	case x < 0:
+		return -ddValue(ddKey(-x))
+	}
+
+	return 0
+}

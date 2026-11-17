@@ -960,6 +960,14 @@ func refFinish(a exec.Agg, st *refAgg, float bool) exec.Value {
 		return st.first
 	case exec.ApproxDistinct:
 		return intValue(exec.DistinctEstimate(st.hashes))
+	case exec.Percentile:
+		if n == 0 {
+			return exec.Value{}
+		}
+		sorted := append([]float64(nil), st.numbers...)
+		sort.Float64s(sorted)
+
+		return floatValue(exec.SketchValue(sorted[uint64(a.P/100*float64(n-1))]))
 	case exec.ArgMin, exec.ArgMax:
 		return st.arg
 	case exec.FirstRow:

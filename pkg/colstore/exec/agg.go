@@ -1349,12 +1349,18 @@ func (a *aggWorker) feedInts(arg *aggArg, t *target, gid []uint32, vals []int64,
 	if len(arg.states) != 0 {
 		a.feedHashes(arg, t, vec.KindInt, nil, vals, nil, gid, rows, n)
 	}
+	if arg.sketched {
+		a.feedSketch(arg, t, vals, nil, gid, rows, n)
+	}
 }
 
 func (a *aggWorker) feedFloats(arg *aggArg, t *target, gid []uint32, vals []float64, rows []uint32, n int) {
 	stride := a.stride
 	if len(arg.states) != 0 {
 		a.feedHashes(arg, t, vec.KindFloat, nil, nil, vals, gid, rows, n)
+	}
+	if arg.sketched {
+		a.feedSketch(arg, t, nil, vals, gid, rows, n)
 	}
 	for _, i := range arg.words {
 		op := a.plan.words[i].op

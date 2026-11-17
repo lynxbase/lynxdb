@@ -48,6 +48,8 @@ const (
 	// wordState holds the stateRef of a state of variable size, which is
 	// fed and merged apart from the words.
 	wordState
+	// wordZeros counts the zeros of an argument with a percentile sketch.
+	wordZeros
 )
 
 type wordSpec struct {
@@ -80,6 +82,10 @@ type aggArg struct {
 	states   []int
 	// stateKinds is the set of kinds whose values the states read.
 	stateKinds uint8
+	// sketched is set when the argument has a percentile sketch: the word
+	// zeros and the states that the words pos and neg refer to.
+	sketched        bool
+	zeros, pos, neg int
 	// counted is set when only the number of values is asked for.
 	counted bool
 	// picks is set when a group picks a row of the argument, and placed
@@ -109,6 +115,8 @@ type aggOut struct {
 	// state is the state of an aggregate that has one, such as the extreme
 	// string of a Min or a Max whose argument reads strings.
 	state int
+	// p is the percentage of a Percentile.
+	p float64
 }
 
 // aggPlan is an aggregation bound to the table: a group's state is a row of
@@ -295,6 +303,12 @@ func (q *query) aggregate(a *Aggregate) error {
 			out.count = ap.word(wordCount, out.arg)
 		case ApproxDistinct:
 			out.state = ap.state(stateHLL, out.arg)
+		case Percentile:
+			if kinds&numericKinds == 0 || g.P != g.P || g.P < 0 || g.P > 100 {
+				return unsupported("aggregate %q takes numbers and a percentage from 0 to 100", g.Name)
+			}
+			ap.sketch(out.arg)
+			out.p = g.P
 		case CountDistinct:
 			out.distinct = ap.distinct
 			ap.args[out.arg].distinct = append(ap.args[out.arg].distinct, ap.distinct)
@@ -516,6 +530,18 @@ func (ap *aggPlan) column(o *aggOut, words []int64, h *stateHeap, n int, floats 
 		for g := range out {
 			if out[g] = words[g*stride+o.pick]; out[g] < 0 {
 				out[g] = 0
+				dst.setNull(g)
+			}
+		}
+
+		return
+	case Percentile:
+		out := dst.bulkFloats(n)
+		arg := &ap.args[o.arg]
+		for g := range out {
+			w := words[g*stride : (g+1)*stride]
+			v, ok := ddQuantile(h.get(stateRef(w[arg.neg])), h.get(stateRef(w[arg.pos])), uint64(w[arg.zeros]), o.p/100)
+			if out[g] = v; !ok {
 				dst.setNull(g)
 			}
 		}
