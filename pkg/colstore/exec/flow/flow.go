@@ -51,6 +51,9 @@ func Compile(text string, opts Options) (exec.Node, error) {
 			return nil, fmt.Errorf("flow: %s at offset %d", d.Message, d.Span.Start)
 		}
 	}
+	if q.Pipeline.Source != nil {
+		quoteTerms(q.Pipeline.Source.SugarTerms)
+	}
 	q, _ = desugar.Desugar(q, desugar.Options{})
 	if len(q.Lets) != 0 {
 		return nil, unsupported("let")
@@ -71,6 +74,33 @@ func Compile(text string, opts Options) (exec.Node, error) {
 	}
 
 	return t.plan()
+}
+
+// quoteTerms makes the bare word that a search term compares a field with a
+// string, which desugaring would leave looking like a field.
+func quoteTerms(e ast.SearchExpr) {
+	word := func(v ast.Expr) ast.Expr {
+		if id, ok := v.(*ast.Ident); ok && !id.Quoted {
+			return &ast.Literal{Kind: ast.LitString, Raw: fmt.Sprintf("%q", id.Name), Value: id.Name, Pos: id.Pos}
+		}
+
+		return v
+	}
+	switch e := e.(type) {
+	case *ast.SearchBinary:
+		quoteTerms(e.Left)
+		quoteTerms(e.Right)
+	case *ast.SearchNot:
+		quoteTerms(e.Operand)
+	case *ast.SearchParen:
+		quoteTerms(e.Inner)
+	case *ast.SearchKeyValue:
+		e.Value = word(e.Value)
+	case *ast.SearchIn:
+		for i := range e.Values {
+			e.Values[i] = word(e.Values[i])
+		}
+	}
 }
 
 // translator builds a plan from the stages of a pipeline in order.
