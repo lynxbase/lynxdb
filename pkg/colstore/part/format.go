@@ -56,10 +56,14 @@ const (
 	filterGroupBlocks = 128
 	filterGroupBytes  = 6 << 20
 	filterStripes     = 128
-	// filterColumnTokens is the number of distinct tokens in a block from
-	// which a column gets a filter of its own, so that a search can tell
-	// which columns to read; the filter of the other columns holds theirs.
-	filterColumnTokens = 4096
+	// filterColumnBytes is the encoded size from which a column of a block
+	// gets a filter of its own, so that a search can tell which columns to
+	// read; the filter of the other columns holds their tokens. Measured on
+	// 1m events in blocks of 16384 rows, a search of every string column
+	// for a word that most blocks hold decodes 9% of what it does with one
+	// filter a block, and the part is 1.8% larger; from 12 KiB on it is
+	// 2.1% larger, and from 32 KiB on the search decodes 11%.
+	filterColumnBytes = 16 << 10
 	// path id, kind, encoding, flags, a zero byte, value count, chunk
 	// offset, chunk length, chunk checksum, and the offset of the entry's
 	// statistics and constant value among those that follow the entries.

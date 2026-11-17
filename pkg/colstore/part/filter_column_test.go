@@ -57,8 +57,8 @@ func columnTokens(t testing.TB, p *Part, i int) map[column]map[uint64]bool {
 }
 
 // columnAnswers requires every column of every block of p to answer token
-// lookups as its values do: a column with at least own distinct tokens from
-// a filter of its own, the others from the one they share. It returns the
+// lookups as its values do: a column encoded in at least own bytes from a
+// filter of its own, the others from the one they share. It returns the
 // share of lookups of absent tokens that a filter lets pass.
 func columnAnswers(t testing.TB, p *Part, own int, r *rand.Rand) float64 {
 	t.Helper()
@@ -68,10 +68,14 @@ func columnAnswers(t testing.TB, p *Part, own int, r *rand.Rand) float64 {
 		truth := columnTokens(t, p, i)
 		filtered := map[column]bool{}
 		p.FilterColumns(i, func(path uint32, kind vec.Kind) { filtered[column{path, kind}] = true })
+		if err := p.OpenBlock(i, &b); err != nil {
+			t.Fatal(err)
+		}
 		shared, hashes := map[uint64]bool{}, []uint64{}
 		for col, tokens := range truth {
-			if filtered[col] != (len(tokens) >= own) {
-				t.Fatalf("block %d: column %s/%s of %d tokens has a filter of its own: %v", i, p.Paths()[col.path], col.kind, len(tokens), filtered[col])
+			ref, ok := b.Column(col.path, col.kind)
+			if !ok || filtered[col] != (int(ref.length) >= own) {
+				t.Fatalf("block %d: column %s/%s of %d bytes has a filter of its own: %v", i, p.Paths()[col.path], col.kind, ref.length, filtered[col])
 			}
 			for h := range tokens {
 				hashes = append(hashes, h)
@@ -82,9 +86,6 @@ func columnAnswers(t testing.TB, p *Part, own int, r *rand.Rand) float64 {
 		}
 		for n := 0; n < 300; n++ {
 			hashes = append(hashes, r.Uint64())
-		}
-		if err := p.OpenBlock(i, &b); err != nil {
-			t.Fatal(err)
 		}
 		for _, h := range hashes {
 			held, any := false, false
@@ -119,8 +120,8 @@ func columnAnswers(t testing.TB, p *Part, own int, r *rand.Rand) float64 {
 }
 
 // columnSource returns an ordered part of rows rows in blocks of blockRows,
-// of a service of its own, whose columns differ in how many tokens they
-// hold; a column of a block gets its own filter from own tokens on.
+// of a service of its own, whose columns differ in size; a column of a block
+// gets its own filter from own encoded bytes on.
 func columnSource(t testing.TB, r *rand.Rand, src, rows, blockRows, own int) *Part {
 	t.Helper()
 	all := shred.NewBatch(shred.Options{})
@@ -140,7 +141,7 @@ func columnSource(t testing.TB, r *rand.Rand, src, rows, blockRows, own int) *Pa
 	all.SortBy(mergeKey)
 	var buf bytes.Buffer
 	w := NewWriter(&buf, Options{Ordered: true, SortKey: mergeKey})
-	w.columnTokens = own
+	w.columnBytes = own
 	block := shred.NewBatch(shred.Options{})
 	for from := 0; from < all.Rows; from += blockRows {
 		block.Reset()
@@ -185,7 +186,7 @@ func TestColumnFiltersAnswerAsTheValuesOfTheirColumns(t *testing.T) {
 		opts.Ordered, opts.SortKey = true, mergeKey
 		var buf bytes.Buffer
 		w := NewWriter(&buf, opts)
-		w.columnTokens = own
+		w.columnBytes = own
 		if err := Merge(w, []*Part{srcs[1], srcs[0]}, blockRows); err != nil {
 			t.Fatal(err)
 		}

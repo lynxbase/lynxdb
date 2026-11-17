@@ -272,7 +272,7 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 	const group, stripes, blocks = 3, 4, 8
 	var buf bytes.Buffer
 	w := NewWriter(&buf, Options{})
-	w.groupBlocks, w.stripes, w.columnTokens = group, stripes, math.MaxInt
+	w.groupBlocks, w.stripes, w.columnBytes = group, stripes, math.MaxInt
 	batch := shred.NewBatch(shred.Options{})
 	var pieces [blocks]int
 	for i := 0; i < blocks; i++ {

@@ -115,7 +115,7 @@ func TestRealDataFilterGroups(t *testing.T) {
 		var buf bytes.Buffer
 		buf.Grow(len(data) / 3)
 		w := NewWriter(&buf, opts)
-		w.groupBlocks, w.groupBytes, w.stripes, w.columnTokens = group, size, stripes, math.MaxInt
+		w.groupBlocks, w.groupBytes, w.stripes, w.columnBytes = group, size, stripes, math.MaxInt
 		writeNDJSON(t, w, data, blockRows, "time_us")
 		p, err := Open(buf.Bytes())
 		if err != nil {

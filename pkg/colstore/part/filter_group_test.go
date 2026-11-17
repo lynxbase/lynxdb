@@ -21,7 +21,7 @@ import (
 // their filters, and have stripes stripes.
 func stripedWriter(buf *bytes.Buffer, opts Options, group, stripes int) *Writer {
 	w := NewWriter(buf, opts)
-	w.groupBlocks, w.groupBytes, w.stripes, w.columnTokens = group, 1<<40, stripes, math.MaxInt
+	w.groupBlocks, w.groupBytes, w.stripes, w.columnBytes = group, 1<<40, stripes, math.MaxInt
 
 	return w
 }
@@ -437,7 +437,7 @@ func repeatedBlocks(t testing.TB, batch *shred.Batch, blocks int, opts Options) 
 	t.Helper()
 	var buf bytes.Buffer
 	w := NewWriter(&buf, opts)
-	w.columnTokens = math.MaxInt
+	w.columnBytes = math.MaxInt
 	for i := 0; i < blocks; i++ {
 		if err := w.WriteBatch(batch); err != nil {
 			t.Fatal(err)

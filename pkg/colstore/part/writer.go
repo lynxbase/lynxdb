@@ -79,9 +79,9 @@ type Writer struct {
 	groupBlocks  int
 	groupBytes   int
 	stripes      int
-	// columnTokens is the number of distinct tokens from which a column
-	// of a block gets a filter of its own.
-	columnTokens int
+	// columnBytes is the encoded size from which a column of a block gets
+	// a filter of its own.
+	columnBytes int
 	// verified marks the filter pages of group verifiedGroup, a group of
 	// a part being merged, that copyBlock has checked.
 	verified      vec.Bitmap
@@ -198,7 +198,7 @@ func (w *Writer) Reset(out io.Writer, opts Options) {
 	w.groups, w.filters, w.blooms = w.groups[:0], w.filters[:0], w.blooms[:0]
 	w.groupFilters, w.grouped, w.stripe, w.verifiedGroup = 0, 0, 0, nil
 	w.groupBlocks, w.groupBytes, w.stripes = filterGroupBlocks, filterGroupBytes, filterStripes
-	w.columnTokens = filterColumnTokens
+	w.columnBytes = filterColumnBytes
 	w.blobs.codec, w.blobs.level = CodecZstd, opts.Level
 	w.values.codec, w.values.level = opts.Codec, opts.Level
 	w.pathID(TimePath)
@@ -318,12 +318,12 @@ func (w *Writer) startFilters(entry []byte, first int) {
 	w.grouped++
 }
 
-// filterColumn gives the column whose tokens w.column holds a filter of its
-// own when they are many, and leaves them to the filter of the block's other
-// columns when they are few.
-func (w *Writer) filterColumn(path uint32, kind vec.Kind) {
+// filterColumn gives the column whose tokens w.column holds, encoded in
+// encoded bytes, a filter of its own when it is large, and leaves them to the
+// filter of the block's other columns when it is small.
+func (w *Writer) filterColumn(path uint32, kind vec.Kind, encoded int) {
 	keys := w.column.Keys()
-	if len(keys) < w.columnTokens {
+	if encoded < w.columnBytes {
 		w.tokens.Add(keys)
 
 		return
@@ -594,7 +594,7 @@ func (w *Writer) encodeColumn(c *shred.Column, rows int) {
 		w.column.Reset()
 		w.encodeBytes(&ent, c)
 		if !w.opts.NoTokenFilter {
-			w.filterColumn(ent.pathID, c.Kind)
+			w.filterColumn(ent.pathID, c.Kind, len(w.block)-start)
 		}
 	}
 	w.finish(&ent, start)
