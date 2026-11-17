@@ -514,3 +514,68 @@ func TestClosedDirTakesNoCommit(t *testing.T) {
 		t.Fatalf("after reopen: %d rows, sum %d", rows, sum)
 	}
 }
+
+func TestCommitsThatRemoveTheSamePartLeaveOneWinner(t *testing.T) {
+	// Without syncs the commits reach the manifest close to each other.
+	replaceSyncFile(t, func(*os.File) error { return nil })
+	path := filepath.Join(t.TempDir(), "table")
+	d, err := OpenDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for round := 0; round < 40; round++ {
+		input, err := d.Commit([]*PartFile{writePartFile(t, d, 0, 10, "input")}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Several merges of the same input, of which one may stand.
+		const racers = 4
+		outputs := make([]*PartFile, racers)
+		for i := range outputs {
+			outputs[i] = writePartFile(t, d, 0, 10, "merged")
+		}
+		handles := make([][]*Handle, racers)
+		errs := make([]error, racers)
+		begin := make(chan struct{})
+		var wg sync.WaitGroup
+		for i := range outputs {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-begin
+				handles[i], errs[i] = d.Commit(outputs[i:i+1], input)
+			}()
+		}
+		close(begin)
+		wg.Wait()
+		var won []*Handle
+		for i, err := range errs {
+			switch {
+			case err == nil && won == nil:
+				won = handles[i]
+			case err == nil:
+				t.Fatalf("round %d: two commits removed the same part", round)
+			case !errors.Is(err, ErrUnknownPart):
+				t.Fatalf("round %d: %v", round, err)
+			}
+		}
+		if rows, sum := rowsAndSum(t, d); won == nil || rows != 10 || sum != 45 {
+			t.Fatalf("round %d: %d rows, sum %d, winner %v", round, rows, sum, won != nil)
+		}
+		checkDirMatchesManifest(t, d, "after the race")
+		if _, err := d.Commit(nil, won); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if d, err = OpenDir(path); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if rows, _ := rowsAndSum(t, d); rows != 0 {
+		t.Fatalf("after reopen: %d rows", rows)
+	}
+	checkDirMatchesManifest(t, d, "after reopen")
+}
