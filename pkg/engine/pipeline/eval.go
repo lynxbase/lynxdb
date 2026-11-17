@@ -2,7 +2,6 @@ package pipeline
 
 import (
 	"context"
-	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/vm"
@@ -13,10 +12,6 @@ type EvalIterator struct {
 	child       Iterator
 	assignments []EvalAssignment
 	vmInst      vm.VM
-	// VM profiling (trace level only).
-	profileVM bool
-	vmCalls   int64
-	vmTimeNS  int64
 }
 
 // EvalAssignment pairs a field name with its compiled program.
@@ -52,16 +47,7 @@ func (e *EvalIterator) Next(ctx context.Context) (*Batch, error) {
 	for i := 0; i < batch.Len; i++ {
 		batch.RowInto(i, row)
 		for _, assign := range e.assignments {
-			var result event.Value
-			var execErr error
-			if e.profileVM {
-				start := time.Now()
-				result, execErr = e.vmInst.Execute(assign.Program, row)
-				e.vmTimeNS += time.Since(start).Nanoseconds()
-				e.vmCalls++
-			} else {
-				result, execErr = e.vmInst.Execute(assign.Program, row)
-			}
+			result, execErr := e.vmInst.Execute(assign.Program, row)
 			if execErr != nil {
 				continue
 			}
@@ -80,14 +66,4 @@ func (e *EvalIterator) Close() error {
 
 func (e *EvalIterator) Schema() []FieldInfo {
 	return e.child.Schema()
-}
-
-// SetProfileVM enables per-call VM timing collection (trace level).
-func (e *EvalIterator) SetProfileVM(enable bool) {
-	e.profileVM = enable
-}
-
-// VMStats returns the accumulated VM execution metrics.
-func (e *EvalIterator) VMStats() (calls, timeNS int64) {
-	return e.vmCalls, e.vmTimeNS
 }

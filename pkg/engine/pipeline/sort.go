@@ -125,11 +125,6 @@ func (s *SortIterator) Close() error {
 	return s.child.Close()
 }
 
-// MemoryUsed returns the current tracked memory for this operator.
-func (s *SortIterator) MemoryUsed() int64 {
-	return s.acct.Used()
-}
-
 func (s *SortIterator) Schema() []FieldInfo { return s.child.Schema() }
 
 func (s *SortIterator) materialize(ctx context.Context) error {

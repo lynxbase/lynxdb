@@ -81,11 +81,6 @@ func (e *EventStatsIterator) Close() error {
 	return e.child.Close()
 }
 
-// MemoryUsed returns the current tracked memory for this operator.
-func (e *EventStatsIterator) MemoryUsed() int64 {
-	return e.acct.Used()
-}
-
 // Schema delegates to the child iterator.
 func (e *EventStatsIterator) Schema() []FieldInfo { return e.child.Schema() }
 

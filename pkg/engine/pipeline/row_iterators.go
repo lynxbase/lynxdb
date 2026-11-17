@@ -17,8 +17,6 @@ type FilterIterator struct {
 	child     Iterator
 	predicate *vm.Program
 	vmInst    vm.VM
-	evalCount int64
-	passCount int64
 }
 
 func (f *FilterIterator) Init(ctx context.Context) error { return f.child.Init(ctx) }
@@ -35,13 +33,11 @@ func (f *FilterIterator) Next(ctx context.Context) (*Batch, error) {
 		matchCount := 0
 		for i := 0; i < batch.Len; i++ {
 			row := batch.Row(i)
-			f.evalCount++
 			if f.predicate != nil {
 				result, _ := f.vmInst.Execute(f.predicate, row)
 				if result.Type() == event.FieldTypeBool && result.AsBool() {
 					mask[i] = true
 					matchCount++
-					f.passCount++
 				}
 			}
 		}
@@ -56,9 +52,6 @@ func (f *FilterIterator) Next(ctx context.Context) (*Batch, error) {
 }
 func (f *FilterIterator) Close() error        { return f.child.Close() }
 func (f *FilterIterator) Schema() []FieldInfo { return f.child.Schema() }
-func (f *FilterIterator) VMStats() (int64, int64) {
-	return f.evalCount, f.passCount
-}
 
 func NewFilterIterator(child Iterator, predicate *vm.Program) *FilterIterator {
 	return &FilterIterator{child: child, predicate: predicate}
@@ -184,11 +177,7 @@ func compactBatch(batch *Batch, mask []bool, matchCount int) *Batch {
 	return result
 }
 
-type CollectOptions struct {
-	OnBatch func(int, []map[string]event.Value)
-}
-
-func CollectAll(ctx context.Context, iter Iterator, opts ...CollectOptions) (rows []map[string]event.Value, err error) {
+func CollectAll(ctx context.Context, iter Iterator) (rows []map[string]event.Value, err error) {
 	if err := iter.Init(ctx); err != nil {
 		return nil, err
 	}
@@ -207,9 +196,6 @@ func CollectAll(ctx context.Context, iter Iterator, opts ...CollectOptions) (row
 		}
 		for i := 0; i < batch.Len; i++ {
 			rows = append(rows, batch.Row(i))
-		}
-		if len(opts) > 0 && opts[0].OnBatch != nil {
-			opts[0].OnBatch(len(rows), rows)
 		}
 	}
 	return rows, nil

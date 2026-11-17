@@ -79,11 +79,6 @@ func (t *TopNIterator) Close() error {
 
 func (t *TopNIterator) Schema() []FieldInfo { return t.child.Schema() }
 
-// MemoryUsed returns the current tracked memory for this operator.
-func (t *TopNIterator) MemoryUsed() int64 {
-	return t.acct.Used()
-}
-
 func (t *TopNIterator) buildTopN(ctx context.Context) error {
 	t.h = &topNHeap{
 		fields: t.fields,

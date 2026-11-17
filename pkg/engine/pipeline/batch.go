@@ -138,29 +138,6 @@ func (b *Batch) MarkPresent(column string, row int) {
 	b.Present[column] = pres
 }
 
-// MarkAbsent marks a cell as absent while leaving its padded column value null.
-func (b *Batch) MarkAbsent(column string, row int) {
-	if row < 0 || row >= b.Len {
-		return
-	}
-	pres := b.ensurePresence(column)
-	for len(pres) < b.Len {
-		pres = append(pres, true)
-	}
-	pres[row] = false
-	b.Present[column] = pres
-}
-
-func (b *Batch) MarkColumnAbsent(column string) {
-	if b.Len == 0 {
-		return
-	}
-	if b.Present == nil {
-		b.Present = make(map[string][]bool)
-	}
-	b.Present[column] = make([]bool, b.Len)
-}
-
 func (b *Batch) ensurePresence(column string) []bool {
 	if b.Present == nil {
 		b.Present = make(map[string][]bool)

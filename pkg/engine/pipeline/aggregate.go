@@ -242,11 +242,6 @@ func (a *AggregateIterator) Close() error {
 	return a.child.Close()
 }
 
-// MemoryUsed returns the current tracked memory for this operator.
-func (a *AggregateIterator) MemoryUsed() int64 {
-	return a.acct.Used()
-}
-
 func (a *AggregateIterator) Schema() []FieldInfo {
 	var schema []FieldInfo
 	for _, g := range a.groupBy {
