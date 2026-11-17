@@ -94,13 +94,13 @@ Every PPL scalar function name. A name maps onto an IR registry function, is low
 | `left` | string | full | The first n characters of s. |
 | `length` | string | full | Number of characters (Unicode code points) in s. |
 | `like` |  | full | lowered to like |
-| `ln` | math | full | Natural logarithm; NULL for x <= 0. |
+| `ln` | math | full | Natural logarithm; NULL for x &lt;= 0. |
 | `localtime` | datetime | full | The query's reference time. |
 | `localtimestamp` | datetime | full | The query's reference time. |
 | `locate` | string | full | 1-based position of the first occurrence of sub in s at or after start, or 0. |
 | `log` | math | full | Natural logarithm of x, or with two arguments the base-b logarithm of x; NULL for non-positive input. |
-| `log10` | math | full | Base-10 logarithm; NULL for x <= 0. |
-| `log2` | math | full | Base-2 logarithm; NULL for x <= 0. |
+| `log10` | math | full | Base-10 logarithm; NULL for x &lt;= 0. |
+| `log2` | math | full | Base-2 logarithm; NULL for x &lt;= 0. |
 | `lower` | string | full | s in lower case. |
 | `ltrim` | string | full | s without leading white space. |
 | `makedate` | datetime | full | The date for a year and day of year. |

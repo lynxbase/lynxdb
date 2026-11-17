@@ -73,8 +73,9 @@ func header(title, position, intro string) string {
 		"# " + title + "\n\n" + intro + "\n\n"
 }
 
+// cell makes s the text of a table cell that MDX reads as text.
 func cell(s string) string {
-	s = strings.ReplaceAll(s, "|", `\|`)
+	s = strings.NewReplacer("|", `\|`, "<", "&lt;", "{", "&#123;").Replace(s)
 	return strings.ReplaceAll(s, "\n", " ")
 }
 
