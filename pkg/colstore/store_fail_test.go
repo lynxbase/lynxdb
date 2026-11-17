@@ -307,10 +307,19 @@ func TestAppendTakesNoLinesWhileAFullBufferCannotBeWritten(t *testing.T) {
 	// The store stops before the syncs are put back.
 	t.Cleanup(func() { s.Close() })
 	failing.Store(true)
-	// The first request fills the buffer, and the flush of it fails.
-	if _, err := s.Append(storeDocs(0, 200)); !errors.Is(err, errInjected) {
-		t.Fatalf("an Append whose flush failed: %v", err)
+	// The first request fills the buffer, whose flush fails. It is told
+	// only if it still has lines to buffer when the flush has failed.
+	_, first := s.Append(storeDocs(0, 200))
+	if first != nil && !errors.Is(first, errInjected) {
+		t.Fatalf("an Append whose flush failed: %v", first)
 	}
+	within(t, "the flush of the full buffer to fail", func() {
+		for failed := false; !failed; time.Sleep(time.Millisecond) {
+			s.roomMu.Lock()
+			failed = s.flushErr != nil
+			s.roomMu.Unlock()
+		}
+	})
 	// A client that is told of a failure sends the request again later;
 	// none of its lines may be kept in the meantime.
 	const requests, lines = 5, 50
@@ -329,9 +338,10 @@ func TestAppendTakesNoLinesWhileAFullBufferCannotBeWritten(t *testing.T) {
 			t.Fatalf("document %d of a request that failed is there %d times", n, count)
 		}
 	}
-	// Of the request that filled the buffer the lines up to the flush stay.
-	if kept := int64(len(counts)); kept == 0 || kept >= 200 || counts[kept-1] != 1 {
-		t.Fatalf("%d documents of the first request are there, not its first lines", kept)
+	// Of the request that filled the buffer the lines it buffered stay:
+	// all of them when it was not told of the failure.
+	if kept := int64(len(counts)); kept == 0 || counts[kept-1] != 1 || (first == nil) != (kept == 200) {
+		t.Fatalf("%d documents of the first request are there, which was answered %v", kept, first)
 	}
 	for i := 1; i <= requests; i++ {
 		if _, err := s.Append(storeDocs(i*1000, lines)); err != nil {

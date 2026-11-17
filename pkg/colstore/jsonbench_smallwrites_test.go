@@ -50,7 +50,7 @@ func TestJSONBenchSmallWrites(t *testing.T) {
 		waits = "a request is answered once its rows are buffered"
 	}
 	t.Logf("%d CPUs; requests of %d lines; %s", runtime.GOMAXPROCS(0), docs, waits)
-	t.Logf("%7s %9s %10s %9s %9s %9s %7s %7s", "clients", "req/s", "rows/s", "p50 ms", "p99 ms", "CPU ms", "parts", "left")
+	t.Logf("%7s %9s %10s %9s %9s %9s %9s %7s %7s", "clients", "req/s", "rows/s", "p50 ms", "p99 ms", "max ms", "CPU ms", "parts", "left")
 	levels := []int{1, 8, 64, 256}
 	if only := envInt(t, "LYNXDB_BENCH_CLIENTS", 0); only > 0 {
 		levels = []int{only}
@@ -106,8 +106,8 @@ func TestJSONBenchSmallWrites(t *testing.T) {
 		snap := store.Table().Snapshot()
 		left := len(snap.Parts())
 		snap.Release()
-		t.Logf("%7d %9.0f %10.0f %9.2f %9.2f %9.2f %7d %7d", clients, float64(len(all))/wall.Seconds(), float64(len(all)*docs)/wall.Seconds(),
-			ms(all[len(all)/2]), ms(all[len(all)*99/100]), ms(cpu)/float64(len(all)), written, left)
+		t.Logf("%7d %9.0f %10.0f %9.2f %9.2f %9.2f %9.2f %7d %7d", clients, float64(len(all))/wall.Seconds(), float64(len(all)*docs)/wall.Seconds(),
+			ms(all[len(all)/2]), ms(all[len(all)*99/100]), ms(all[len(all)-1]), ms(cpu)/float64(len(all)), written, left)
 		if err := store.Close(); err != nil {
 			t.Fatal(err)
 		}
