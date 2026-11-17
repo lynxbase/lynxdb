@@ -231,46 +231,6 @@ spec:
       path: /metrics
       interval: 30s
 ```
-## Cluster Mode
-
-:::caution
-`lynxdb server` does not start the cluster runtime; see [Cluster Settings](../configuration/cluster.md). Pods configured as below each serve only their own data.
-:::
-
-Cluster nodes need stable names and a headless Service on the gRPC port. The pod name maps to the node ID:
-
-```yaml
-# StatefulSet "lynxdb" with serviceName: lynxdb-headless and replicas: 3
-env:
-  - name: LYNXDB_CLUSTER_ENABLED
-    value: "true"
-  - name: LYNXDB_CLUSTER_NODE_ID
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.name
-  - name: LYNXDB_CLUSTER_ROLES
-    value: "meta,ingest,query"
-  - name: LYNXDB_CLUSTER_SEEDS
-    value: "lynxdb-0.lynxdb-headless.lynxdb.svc.cluster.local:9400,lynxdb-1.lynxdb-headless.lynxdb.svc.cluster.local:9400,lynxdb-2.lynxdb-headless.lynxdb.svc.cluster.local:9400"
-ports:
-  - name: http
-    containerPort: 3100
-  - name: grpc
-    containerPort: 9400
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: lynxdb-headless
-  namespace: lynxdb
-spec:
-  clusterIP: None
-  selector:
-    app: lynxdb
-  ports:
-    - name: grpc
-      port: 9400
-```
 
 ## Next Steps
 

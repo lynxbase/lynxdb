@@ -42,13 +42,6 @@ lynxdb ingest access.log
 lynxdb query 'source=main status>=500 | stats count() as errors by path | sort - errors | head 10' --since 1h
 ```
 
-### Cluster components
-
-`pkg/cluster` holds Raft-backed metadata, gRPC communication between nodes
-and a distributed query planner. `lynxdb server` runs as a single node and
-does not start them; see [Distributed architecture](./architecture/distributed.md)
-and [Cluster configuration](./configuration/cluster.md).
-
 ## The query language
 
 ```

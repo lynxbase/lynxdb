@@ -116,7 +116,7 @@ kubectl -n lynxdb rollout status statefulset/lynxdb
 
 ## Several Servers
 
-`lynxdb server` runs as a single node: the `cluster` settings are validated but start no cluster runtime (see [Distributed Architecture](/docs/architecture/distributed)). Servers that each own a data directory are upgraded independently, one at a time, with the single-node procedure above:
+Servers that each own a data directory are upgraded independently, one at a time, with the single-node procedure above:
 
 ```bash
 for host in lynxdb-1 lynxdb-2 lynxdb-3; do

@@ -154,7 +154,6 @@ Paths below are relative to `/api/v1` unless they start with `/health`, `/metric
 | `GET` | `/status` | Operational snapshot | [Server](./server.md#get-apiv1status) |
 | `GET` | `/stats` | Storage and event counters | [Server](./server.md#get-apiv1stats) |
 | `GET` | `/metrics` (under `/api/v1`) | Storage metrics as JSON | [Server](./server.md#get-apiv1metrics) |
-| `GET` | `/cluster/status` | Cluster summary | [Server](./server.md#get-apiv1clusterstatus) |
 | `GET` | `/compaction/history` | Recent compactions | [Server](./server.md#get-apiv1compactionhistory) |
 | `GET` | `/cache/stats` | Query cache statistics | [Server](./server.md#cache) |
 | `DELETE` | `/cache` | Clear the query cache | [Server](./server.md#cache) |

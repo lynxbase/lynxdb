@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Troubleshoot common LynxDB issues -- connectivity, query errors, storage, memory, and cluster problems.
+description: Troubleshoot common LynxDB issues -- connectivity, query errors, storage and memory problems.
 ---
 
 # Troubleshooting
@@ -301,10 +301,6 @@ sudo systemctl start lynxdb
 # Watch the logs for the part scan
 sudo journalctl -u lynxdb -f
 ```
-
-## Cluster Settings Have No Effect
-
-`lynxdb server` validates the `cluster` section of the configuration, but it does not start the cluster runtime: it opens no gRPC listener on `cluster.grpc_port`, joins no Raft group, and routes no shards. Each server runs as a single node with its own data directory. See [Distributed Architecture](/docs/architecture/distributed) for the cluster components in `pkg/cluster`.
 
 ## CLI Issues
 

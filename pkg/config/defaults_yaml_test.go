@@ -24,7 +24,7 @@ func TestDefaultsYAMLMatchesCompiledDefaults(t *testing.T) {
 	compiled := DefaultConfig()
 
 	// Compare only the subsections the YAML template documents. The YAML is a
-	// curated subset (no profiles block, no cluster block, no TLS/Auth blocks)
+	// curated subset (no profiles block, no TLS/Auth blocks)
 	// so we can't deep-equal the whole Config. Compare each documented subtree.
 	cases := []struct {
 		name        string

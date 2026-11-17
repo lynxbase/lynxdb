@@ -122,8 +122,7 @@ func aggregationsPage() string {
 	var b strings.Builder
 	b.WriteString(header("Aggregations", "12",
 		"Aggregation functions of `stats`, `eventstats`, `streamstats`, `timechart` and `chart`. "+
-			"*merge* tells how partial results combine when an aggregation is split between "+
-			"cluster shards."))
+			"*merge* tells how partial results of an aggregation combine."))
 	b.WriteString("| Function | Support | Merge | Notes |\n|---|---|---|---|\n")
 	for _, a := range ppl.AggregateFunctions() {
 		support, notes, merge := "full", a.Note, ""

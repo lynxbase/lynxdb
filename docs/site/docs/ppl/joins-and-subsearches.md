@@ -45,8 +45,6 @@ right columns.
   whose residual is TRUE.
 - The right side is held in memory; put the smaller input on the right and
   filter it in the subsearch.
-- The distributed query planner does not split joins; see
-  [Pipeline execution](./pipeline-execution.md#cluster-execution).
 
 ## lookup
 
@@ -115,4 +113,3 @@ the query is planned.
 
 - `graphlookup` (recursive traversal) fails with `UNSUPPORTED_COMMAND`.
 - Correlated subqueries (references to outer fields) are not supported.
-- The distributed query planner does not split joins, unions and subqueries.

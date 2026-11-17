@@ -93,15 +93,6 @@ func (td *TDigest) Quantile(q float64) float64 {
 	return td.centroids[len(td.centroids)-1].mean
 }
 
-// Merge merges another t-digest into this one.
-func (td *TDigest) Merge(other *TDigest) {
-	td.centroids = append(td.centroids, other.centroids...)
-	td.count += other.count
-	if len(td.centroids) > td.maxSize {
-		td.compress()
-	}
-}
-
 // Count returns the total number of values added.
 func (td *TDigest) Count() float64 {
 	return td.count
@@ -154,82 +145,4 @@ func (td *TDigest) compress() {
 	}
 
 	td.centroids = merged
-}
-
-// MarshalBinary serializes the t-digest to a byte slice.
-// Layout: [compression:8][count:8][numCentroids:4][centroids: n*(mean:8+count:8)].
-func (td *TDigest) MarshalBinary() []byte {
-	n := len(td.centroids)
-	buf := make([]byte, 8+8+4+n*16)
-	off := 0
-	putFloat64(buf[off:], td.compression)
-	off += 8
-	putFloat64(buf[off:], td.count)
-	off += 8
-	buf[off] = byte(n)
-	buf[off+1] = byte(n >> 8)
-	buf[off+2] = byte(n >> 16)
-	buf[off+3] = byte(n >> 24)
-	off += 4
-	for _, c := range td.centroids {
-		putFloat64(buf[off:], c.mean)
-		off += 8
-		putFloat64(buf[off:], c.count)
-		off += 8
-	}
-
-	return buf
-}
-
-// UnmarshalTDigest deserializes a t-digest from bytes produced by MarshalBinary.
-// Returns nil if data is too short or corrupted.
-func UnmarshalTDigest(data []byte) *TDigest {
-	if len(data) < 20 { // 8+8+4 minimum
-		return nil
-	}
-	off := 0
-	compression := getFloat64(data[off:])
-	off += 8
-	count := getFloat64(data[off:])
-	off += 8
-	n := int(data[off]) | int(data[off+1])<<8 | int(data[off+2])<<16 | int(data[off+3])<<24
-	off += 4
-	if len(data) < off+n*16 {
-		return nil
-	}
-	centroids := make([]centroid, n)
-	for i := 0; i < n; i++ {
-		centroids[i].mean = getFloat64(data[off:])
-		off += 8
-		centroids[i].count = getFloat64(data[off:])
-		off += 8
-	}
-
-	td := &TDigest{
-		centroids:   centroids,
-		compression: compression,
-		count:       count,
-		maxSize:     int(compression) * 5,
-	}
-
-	return td
-}
-
-func putFloat64(buf []byte, v float64) {
-	bits := math.Float64bits(v)
-	buf[0] = byte(bits)
-	buf[1] = byte(bits >> 8)
-	buf[2] = byte(bits >> 16)
-	buf[3] = byte(bits >> 24)
-	buf[4] = byte(bits >> 32)
-	buf[5] = byte(bits >> 40)
-	buf[6] = byte(bits >> 48)
-	buf[7] = byte(bits >> 56)
-}
-
-func getFloat64(buf []byte) float64 {
-	bits := uint64(buf[0]) | uint64(buf[1])<<8 | uint64(buf[2])<<16 | uint64(buf[3])<<24 |
-		uint64(buf[4])<<32 | uint64(buf[5])<<40 | uint64(buf[6])<<48 | uint64(buf[7])<<56
-
-	return math.Float64frombits(bits)
 }

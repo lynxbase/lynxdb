@@ -34,7 +34,6 @@ flowchart TD
 
 - **CLI file and pipe mode** (`lynxdb query --file`, stdin): `pkg/storage` loads the input into an ephemeral in-memory engine under the index `main` and calls `query.Run`.
 - **Server**: `pkg/planner` compiles with `query.Compile`, adds storage hints, and the server builds the plan over its segment store.
-- **Cluster shards** (the distributed design in `pkg/cluster/query`, which `lynxdb server` does not start): each shard compiles the query text it receives with the same planner (see [Distributed Architecture](/docs/architecture/distributed#distributed-query-execution)).
 
 Compiling depends only on the query text: relative times stay symbolic until execution, and source schemas are discovered when rows are read. `pkg/query` therefore caches compiled plans by text (up to 1024 plans, for queries up to 2 KiB) and hands each caller its own copy of the immutable plan.
 
@@ -132,8 +131,6 @@ A plan with one scan gets all of its hints. A plan with several scans (`join`, `
 4. **Physical planning**: `physical.Build` turns the plan into iterators with a per-query memory coordinator and the server's spill manager.
 5. **Collection**: the root iterator is drained into result rows. Event queries without a `head` are capped at `query.max_result_limit` rows.
 
-When an engine has a cluster coordinator attached, it hands the plan to the coordinator instead; `lynxdb server` attaches none (see [Distributed Architecture](/docs/architecture/distributed)).
-
 ## Physical Planning
 
 `pkg/engine/physical` maps each IR operator onto one or more pipeline iterators and compiles every IR expression into a VM program:
@@ -195,6 +192,5 @@ Scan (buffered events, then segments row group by row group)
 - [Architecture Overview](/docs/architecture/overview) -- system-level view
 - [Indexing](/docs/architecture/indexing) -- how storage hints skip data
 - [Segment Format](/docs/architecture/segment-format) -- the `.lsg` files the scan reads
-- [Distributed Architecture](/docs/architecture/distributed) -- splitting plans across shards
 - [PPL architecture](../ppl/architecture.md) -- the compiler in detail
 - [PPL performance](../ppl/performance.md) -- writing queries that use the plan rewrites

@@ -158,16 +158,6 @@ spec:
       interval: 30s
 ```
 
-## Server Summary
-
-`GET /api/v1/cluster/status` returns the server's health, node count, index and segment counts, buffered events and data directory:
-
-```json
-{"data":{"buffered_events":0,"buffered_size":0,"data_dir":"/var/lib/lynxdb","index_count":4,"node_count":1,"segment_count":11,"status":"healthy"}}
-```
-
-`lynxdb server` runs as a single node, so `node_count` is 1 (see [Distributed Architecture](/docs/architecture/distributed)).
-
 ## Cache Statistics
 
 ```bash

@@ -154,7 +154,6 @@ curl -s -X POST localhost:3100/api/v1/indexes \
 |---|---|
 | `name` | Index name (required). Use lowercase letters, digits, `-` and `_`, so the name works unquoted in `source=` |
 | `retention_days` | Retention in days; 90 when omitted |
-| `replication_factor` | Copies in a cluster; 1 when omitted |
 
 Ingest endpoints also create an index the first time an event names it. Query an index with `source=<name>`:
 

@@ -7,7 +7,7 @@ sidebar_position: 12
 
 # Aggregations
 
-Aggregation functions of `stats`, `eventstats`, `streamstats`, `timechart` and `chart`. *merge* tells how partial results combine when an aggregation is split between cluster shards.
+Aggregation functions of `stats`, `eventstats`, `streamstats`, `timechart` and `chart`. *merge* tells how partial results of an aggregation combine.
 
 | Function | Support | Merge | Notes |
 |---|---|---|---|

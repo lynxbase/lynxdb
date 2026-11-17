@@ -1,7 +1,7 @@
 ---
 title: Pipeline execution
 sidebar_label: Pipeline execution
-description: How LynxDB runs a compiled PPL plan, locally, on a server and in a cluster.
+description: How LynxDB runs a compiled PPL plan, locally and on a server.
 ---
 
 # Pipeline execution
@@ -86,30 +86,6 @@ ingested. The query is compiled like any other; the server rejects plans
 that contain an operator needing all of its input (Aggregate, Sort, TopN,
 Window, Reverse, Join, Union, Transpose, Totals, CombineValues, Patterns,
 SourceSchema) with 422.
-
-## Cluster execution
-
-:::caution
-`lynxdb server` runs as a single node: it does not start the cluster
-runtime in `pkg/cluster` (see [Cluster configuration](../configuration/cluster.md)).
-This section describes the distributed query planner in `pkg/cluster/query`.
-:::
-
-The distributed planner splits a plan that is a single chain of operators
-over one scan:
-
-- the shards run the row-local prefix of the chain (filters, `eval`,
-  `fields`, `rename`, extraction, `expand`, `flatten`) over their local
-  data, using the same storage hints;
-- when the first coordinator operator is a `stats` whose aggregations are
-  all `count`, `sum`, `avg`, `min` or `max` over fields, grouped by fields,
-  shards compute partial states and the coordinator merges them; a `sort`
-  and `head` directly after it merge as a top-K;
-- every other operator runs on the coordinator over the merged rows.
-
-The planner rejects plans with joins, unions (`append`, `union`,
-`multisearch`) or subqueries with `only a single pipeline over one scan runs
-distributed`.
 
 ## Reading a plan
 

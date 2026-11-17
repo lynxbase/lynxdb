@@ -10,15 +10,6 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// formatBoolPtr formats a *bool as "true", "false", or "" (unset).
-func formatBoolPtr(b *bool) string {
-	if b == nil {
-		return ""
-	}
-
-	return strconv.FormatBool(*b)
-}
-
 // Entry describes a single config value with its source.
 type Entry struct {
 	Key    string
@@ -164,26 +155,6 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 
 	// Auth.
 	add("auth.enabled", strconv.FormatBool(cfg.Auth.Enabled), strconv.FormatBool(dflt.Auth.Enabled), strconv.FormatBool(fileCfg.Auth.Enabled), LYNXDB_AUTH_ENABLED)
-
-	// Cluster.
-	add("cluster.enabled", strconv.FormatBool(cfg.Cluster.Enabled), strconv.FormatBool(dflt.Cluster.Enabled), strconv.FormatBool(fileCfg.Cluster.Enabled), LYNXDB_CLUSTER_ENABLED)
-	add("cluster.node_id", cfg.Cluster.NodeID, dflt.Cluster.NodeID, fileCfg.Cluster.NodeID, LYNXDB_CLUSTER_NODE_ID)
-	add("cluster.roles", strings.Join(cfg.Cluster.Roles, ","), strings.Join(dflt.Cluster.Roles, ","), strings.Join(fileCfg.Cluster.Roles, ","), LYNXDB_CLUSTER_ROLES)
-	add("cluster.seeds", strings.Join(cfg.Cluster.Seeds, ","), strings.Join(dflt.Cluster.Seeds, ","), strings.Join(fileCfg.Cluster.Seeds, ","), LYNXDB_CLUSTER_SEEDS)
-	add("cluster.grpc_port", strconv.Itoa(cfg.Cluster.GRPCPort), strconv.Itoa(dflt.Cluster.GRPCPort), strconv.Itoa(fileCfg.Cluster.GRPCPort), LYNXDB_CLUSTER_GRPC_PORT)
-	add("cluster.heartbeat_interval", cfg.Cluster.HeartbeatInterval.String(), dflt.Cluster.HeartbeatInterval.String(), fileCfg.Cluster.HeartbeatInterval.String(), LYNXDB_CLUSTER_HEARTBEAT_INTERVAL)
-	add("cluster.lease_duration", cfg.Cluster.LeaseDuration.String(), dflt.Cluster.LeaseDuration.String(), fileCfg.Cluster.LeaseDuration.String(), LYNXDB_CLUSTER_LEASE_DURATION)
-	add("cluster.max_clock_skew", cfg.Cluster.MaxClockSkew.String(), dflt.Cluster.MaxClockSkew.String(), fileCfg.Cluster.MaxClockSkew.String(), LYNXDB_CLUSTER_MAX_CLOCK_SKEW)
-	add("cluster.virtual_partition_count", strconv.Itoa(cfg.Cluster.VirtualPartitionCount), strconv.Itoa(dflt.Cluster.VirtualPartitionCount), strconv.Itoa(fileCfg.Cluster.VirtualPartitionCount), LYNXDB_CLUSTER_VIRTUAL_PARTITION_COUNT)
-	add("cluster.time_bucket_size", cfg.Cluster.TimeBucketSize.String(), dflt.Cluster.TimeBucketSize.String(), fileCfg.Cluster.TimeBucketSize.String(), LYNXDB_CLUSTER_TIME_BUCKET_SIZE)
-	add("cluster.ack_level", cfg.Cluster.AckLevel, dflt.Cluster.AckLevel, fileCfg.Cluster.AckLevel, LYNXDB_CLUSTER_ACK_LEVEL)
-	add("cluster.replication_factor", strconv.Itoa(cfg.Cluster.ReplicationFactor), strconv.Itoa(dflt.Cluster.ReplicationFactor), strconv.Itoa(fileCfg.Cluster.ReplicationFactor), LYNXDB_CLUSTER_REPLICATION_FACTOR)
-	add("cluster.meta_loss_timeout", cfg.Cluster.MetaLossTimeout.String(), dflt.Cluster.MetaLossTimeout.String(), fileCfg.Cluster.MetaLossTimeout.String(), LYNXDB_CLUSTER_META_LOSS_TIMEOUT)
-	add("cluster.max_concurrent_shard_queries", fmt.Sprintf("%d", cfg.Cluster.MaxConcurrentShardQueries), fmt.Sprintf("%d", dflt.Cluster.MaxConcurrentShardQueries), fmt.Sprintf("%d", fileCfg.Cluster.MaxConcurrentShardQueries), LYNXDB_CLUSTER_MAX_CONCURRENT_SHARD_QUERIES)
-	durationEntry("cluster.shard_query_timeout", cfg.Cluster.ShardQueryTimeout.Duration(), dflt.Cluster.ShardQueryTimeout.Duration(), fileCfg.Cluster.ShardQueryTimeout.Duration(), LYNXDB_CLUSTER_SHARD_QUERY_TIMEOUT)
-	add("cluster.partial_failure_threshold", fmt.Sprintf("%.2f", cfg.Cluster.PartialFailureThreshold), fmt.Sprintf("%.2f", dflt.Cluster.PartialFailureThreshold), fmt.Sprintf("%.2f", fileCfg.Cluster.PartialFailureThreshold), LYNXDB_CLUSTER_PARTIAL_FAILURE_THRESHOLD)
-	add("cluster.partial_results", formatBoolPtr(cfg.Cluster.PartialResultsEnabled), formatBoolPtr(dflt.Cluster.PartialResultsEnabled), formatBoolPtr(fileCfg.Cluster.PartialResultsEnabled), LYNXDB_CLUSTER_PARTIAL_RESULTS)
-	add("cluster.dc_hll_threshold", fmt.Sprintf("%d", cfg.Cluster.DCHLLThreshold), fmt.Sprintf("%d", dflt.Cluster.DCHLLThreshold), fmt.Sprintf("%d", fileCfg.Cluster.DCHLLThreshold), LYNXDB_CLUSTER_DC_HLL_THRESHOLD)
 
 	return entries
 }

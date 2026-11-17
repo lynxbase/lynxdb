@@ -80,9 +80,9 @@ const pillars: FeatureItem[] = [
     title: 'One Binary',
     description: (
       <>
-        Query files from the command line, run a server with on-disk storage
-        and a REST API, or join servers into a cluster. One statically linked
-        binary, no JVM and no external services.
+        Query files from the command line, or run a server with on-disk
+        storage and a REST API. One statically linked binary, no JVM and no
+        external services.
       </>
     ),
   },

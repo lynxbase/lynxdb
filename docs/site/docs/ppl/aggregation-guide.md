@@ -8,7 +8,7 @@ description: How PPL aggregation functions behave in LynxDB.
 
 Aggregation functions run in `stats`, `eventstats`, `streamstats`, `chart`
 and `timechart`. The [aggregation table](./aggregations.md) lists every name
-with its support and how partial results merge across cluster shards.
+with its support and how its partial results merge.
 
 ```
 source=main
@@ -105,13 +105,3 @@ The OpenSearch window functions `row_number`, `rank`, `dense_rank`,
 `percent_rank`, `cume_dist`, `nth` and `ntile` fail with
 `UNSUPPORTED_FUNCTION`. `trendline` computes simple (`sma`) and weighted
 (`wma`) moving averages.
-
-## Distributed aggregation
-
-The distributed query planner (`pkg/cluster/query`) splits a `stats` whose
-aggregations are all `count`, `sum`, `avg`, `min` or `max` over plain
-fields, grouped by plain fields, into partial states computed per shard and
-merged on the coordinator. Other aggregations run on the coordinator over
-the shards' rows. `lynxdb server` itself runs as a single node. The *merge* column of the
-[aggregation table](./aggregations.md) records which functions have exact,
-approximate or no partial forms. See [Pipeline execution](./pipeline-execution.md#cluster-execution).

@@ -104,9 +104,7 @@ Test locations:
 - Unit tests: next to the code (`*_test.go` in the same package).
 - E2E tests: `test/e2e/` (shipper compatibility in `test/e2e/shippers/`).
 - CLI tests: `test/cli/`.
-- Cluster integration tests: `test/integration/` (`integration` build tag).
 - Regression tests: `test/regression/`.
-- Chaos and simulation tests: `test/chaos/`, `test/simulation/`.
 
 ## Common Tasks
 
@@ -122,8 +120,7 @@ make clean              # remove local build artifacts
 
 - `cmd/lynxdb/` -- CLI entry point.
 - `pkg/` -- Core packages: PPL frontend (`pkg/ppl`), IR and optimizer
-  (`pkg/ir`), execution (`pkg/engine`, `pkg/vm`), storage, ingest, API,
-  cluster.
+  (`pkg/ir`), execution (`pkg/engine`, `pkg/vm`), storage, ingest, API.
 - `internal/` -- Packages not meant for import outside the module.
 
 See the [project structure guide](docs/site/docs/contributing/project-structure.md).

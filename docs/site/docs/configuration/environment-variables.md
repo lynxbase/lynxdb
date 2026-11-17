@@ -166,20 +166,6 @@ lynxdb query 'source=main level=ERROR | stats count() by host'
 | `LYNXDB_BUFFER_MANAGER_BATCHER_TARGET_PERCENT` | `buffer_manager.batcher_target_percent` | `10` |
 | `LYNXDB_BUFFER_MANAGER_MAX_PINNED_PAGES_PER_QUERY` | `buffer_manager.max_pinned_pages_per_query` | `1024` |
 
-### Cluster
-
-| Variable | Key | Default |
-|----------|-----|---------|
-| `LYNXDB_CLUSTER_ENABLED` | `cluster.enabled` | `false` |
-| `LYNXDB_CLUSTER_NODE_ID` | `cluster.node_id` | empty |
-| `LYNXDB_CLUSTER_ROLES` | `cluster.roles` | empty |
-| `LYNXDB_CLUSTER_SEEDS` | `cluster.seeds` | empty |
-| `LYNXDB_CLUSTER_GRPC_PORT` | `cluster.grpc_port` | `9400` |
-| `LYNXDB_CLUSTER_VIRTUAL_PARTITION_COUNT` | `cluster.virtual_partition_count` | `1024` |
-| `LYNXDB_CLUSTER_ACK_LEVEL` | `cluster.ack_level` | `one` |
-| `LYNXDB_CLUSTER_REPLICATION_FACTOR` | `cluster.replication_factor` | `1` |
-| `LYNXDB_CLUSTER_META_LOSS_TIMEOUT` | `cluster.meta_loss_timeout` | `30s` |
-
 ## Keys Without a Variable
 
 These keys are read from the config file only:
@@ -187,7 +173,6 @@ These keys are read from the config file only:
 - `query.max_query_length`, `query.preview_size`
 - `ingest.fsync`, `ingest.dedup_enabled`, `ingest.dedup_capacity`
 - `http.read_header_timeout`
-- `cluster.heartbeat_interval`, `cluster.lease_duration`, `cluster.max_clock_skew`, `cluster.time_bucket_size`, `cluster.max_concurrent_shard_queries`, `cluster.shard_query_timeout`, `cluster.partial_results`, `cluster.partial_failure_threshold`, `cluster.dc_hll_threshold`
 - `profiles.*`
 
 ## AWS Variables

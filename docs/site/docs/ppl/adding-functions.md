@@ -44,12 +44,10 @@ at planning time when all arguments are literals, so they must be pure.
 
 1. Register the aggregate in `pkg/ir/funcs_catalog.go` with
    `aggregate(name, minArgs, params, result, merge, doc)`. The merge kind
-   (`exact`, `approximate`, none) states whether partial results combine
-   across shards; mark order-dependent aggregates with `ordered`.
+   (`exact`, `approximate`, none) states whether partial results combine;
+   mark order-dependent aggregates with `ordered`.
 2. Map it to a pipeline aggregator in `pkg/engine/physical/operators.go`
    (`aggregateNames`) and implement the aggregator in `pkg/engine/pipeline`.
-   Distributed partial aggregation is enabled per function in
-   `partialAggSpec` (`pkg/cluster/query/ir_planner.go`).
 3. Add the PPL name to `aggregateCatalog` in `pkg/ppl/aggs.go`, with a note
    for any deviation from OpenSearch. Special argument handling (such as
    `percentile`'s constant percent) goes in `ectx.aggCall`.

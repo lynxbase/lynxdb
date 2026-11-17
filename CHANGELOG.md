@@ -56,11 +56,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   aggregation spill to disk under memory pressure.
 - **Single entry point** (`pkg/query`): `Compile`, `Run` and `Explain`, with
   a cache of the 1024 most recently compiled plans.
-- **Distributed query planner** (`pkg/cluster/query`): a single pipeline
-  splits into a row-local shard prefix and coordinator operators; `stats`
-  with `count`, `sum`, `avg`, `min` and `max` over plain group keys
-  aggregates partially on shards. `lynxdb server` runs as a single node and
-  does not start the cluster runtime.
 
 ### Errors
 
@@ -80,7 +75,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `logout`, `completion` and `version`.
 - **REST API**: query (sync, async jobs and hybrid), streaming, explain,
   catalog, jobs, fields, sources, histogram, live tail (SSE), ingest, indexes,
-  stats, cache, config, status, cluster status, API keys and metrics.
+  stats, cache, config, status, API keys and metrics.
 
 ### Storage and ingest
 

@@ -26,9 +26,8 @@ engine through IR operators, so most commands need no engine change.
    schema derivation and label, its validation in `pkg/ir/validate.go`, its
    expression listing in `pkg/ir/walk.go`, its column handling in
    `pkg/ir/opt/prune.go` if it should not stop column pruning, and its
-   physical mapping in `pkg/engine/physical`. Decide whether it is row-local
-   for cluster execution (`isRowLocal` in `pkg/cluster/query/ir_planner.go`)
-   and whether live tail must reject it (`planner.ValidateForTail`).
+   physical mapping in `pkg/engine/physical`. Decide whether live tail must
+   reject it (`planner.ValidateForTail`).
 4. **Catalog.** Record the support level and notes in
    `pkg/ppl/catalog.go`. Notes state the limitations and deviations from
    OpenSearch PPL; for an unsupported command they state the reason.

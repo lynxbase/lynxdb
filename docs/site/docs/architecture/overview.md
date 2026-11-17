@@ -1,7 +1,7 @@
 ---
 sidebar_position: 1
 title: Architecture Overview
-description: High-level architecture of LynxDB -- storage engine, query engine, API layer, and the three ways to run it (pipe, server, cluster).
+description: High-level architecture of LynxDB -- storage engine, query engine, API layer, and the two ways to run it (pipe, server).
 ---
 
 # Architecture Overview
@@ -17,15 +17,15 @@ LynxDB is a columnar log analytics database written in Go. The storage engine, q
                           │  status · tail · config     │
                           └──────────────┬──────────────┘
                                          │
-                ┌────────────────────────┼────────────────────────┐
-                │                        │                        │
-         ┌──────┴──────┐         ┌───────┴──────┐        ┌───────┴──────┐
-         │  Pipe Mode  │         │  Server Mode │        │ Cluster Mode │
-         │ (ephemeral  │         │ (persistent  │        │ (distributed │
-         │  in-memory) │         │  single node)│        │  multi-node) │
-         └─────────────┘         └──────┬───────┘        └──────┬───────┘
-                                        │                       │
-            ┌───────────────────────────┼───────────────────────┘
+                ┌────────────────────────┤
+                │                        │
+         ┌──────┴──────┐         ┌───────┴──────┐
+         │  Pipe Mode  │         │  Server Mode │
+         │ (ephemeral  │         │ (persistent  │
+         │  in-memory) │         │  single node)│
+         └─────────────┘         └──────┬───────┘
+                                        │
+            ┌───────────────────────────┘
             │
 ┌───────────┴───────────────────────────────────────────────┐
 │                    Storage Engine                          │
@@ -53,15 +53,15 @@ LynxDB is a columnar log analytics database written in Go. The storage engine, q
 │  │ frontend│  │  plan  │  │  (rules)  │  │ + VM bytecode│ │
 │  └─────────┘  └────────┘  └───────────┘  └──────┬───────┘ │
 │                                                 │         │
-│  ┌──────────────────┐  ┌────────────────────────┴───────┐ │
-│  │  Result cache    │  │  Pipeline iterators (Volcano)  │ │
-│  └──────────────────┘  └────────────────────────────────┘ │
+│                        ┌────────────────────────┴───────┐ │
+│                        │  Pipeline iterators (Volcano)  │ │
+│                        └────────────────────────────────┘ │
 └───────────────────────────────────────────────────────────┘
 ```
 
-## Three Ways to Run
+## Two Ways to Run
 
-LynxDB ships as a single static binary that runs in pipe mode or as a server; both share the query engine. `pkg/cluster` holds the components of a third, distributed mode.
+LynxDB ships as a single static binary that runs in pipe mode or as a server; both share the query engine.
 
 ### Pipe Mode (Ephemeral, In-Memory)
 
@@ -95,24 +95,6 @@ Server mode starts a long-running process that:
 6. Serves queries over buffered events, local parts and tiered segments.
 
 Optional S3 tiering moves older segments to object storage and keeps them queryable through a local segment cache.
-
-### Cluster Mode (Distributed, Multi-Node)
-
-:::caution Cluster runtime
-`lynxdb server` validates the `cluster` section of the configuration, but it does not start the cluster runtime: it opens no gRPC listener, joins no Raft group, and routes no shards. This section describes the cluster components in `pkg/cluster`.
-:::
-
-The cluster design uses the same binary with clustering settings. Nodes find each other through seed addresses and take one or more of three roles:
-
-| Role | Responsibility | Scales with |
-|------|----------------|-------------|
-| **Meta** (3-5 nodes) | Raft consensus, shard map, node registry, leader leases, field catalog, source registry | Cluster size |
-| **Ingest** (N nodes) | Batcher writes, part flush, S3 upload, batch replication | Write throughput |
-| **Query** (M nodes) | Scatter-gather, partial aggregation merge, segment caching | Query concurrency |
-
-In small clusters (fewer than 10 nodes), every node runs all three roles. S3 is the source of truth for segments. Data is sharded in two levels (time bucket, then `xxhash64` hash partition) and replicated with batch replication and configurable ACK levels.
-
-See [Distributed Architecture](/docs/architecture/distributed) for details.
 
 ## Major Subsystems
 
@@ -156,7 +138,6 @@ flowchart LR
 - **Planner** (`pkg/planner`): adds the storage hints (search terms, field equality, time bounds, columns) the server uses to skip segments and row groups.
 - **Physical planner** (`pkg/engine/physical`): maps IR operators onto pipeline iterators and compiles expressions to bytecode for the VM (`pkg/vm`).
 - **Pipeline** (`pkg/engine/pipeline`): pull-based iterators over batches of up to 1024 rows. `head 10` stops reading once it has 10 rows.
-- **Result cache** (`pkg/cache`): caches complete query results keyed by query, time range and ingest generation.
 
 See [Query Engine](/docs/architecture/query-engine) and the [PPL architecture](../ppl/architecture.md) pages.
 
@@ -204,7 +185,6 @@ PPL query text
   → Parse, analyze and lower to an IR plan (cached by query text)
   → Optimize (rewrite rules, column pruning)
   → Derive storage hints
-  → Result cache lookup
   → Select segments: source scope, time bounds, column min/max, bloom filters
   → Build pipeline iterators; compile expressions to VM bytecode
   → Scan:
@@ -222,5 +202,4 @@ PPL query text
 - [Segment Format](/docs/architecture/segment-format) -- the columnar `.lsg` format
 - [Query Engine](/docs/architecture/query-engine) -- compiler, optimizer, physical planning, execution
 - [Indexing](/docs/architecture/indexing) -- bloom filters, term index, column statistics
-- [Distributed Architecture](/docs/architecture/distributed) -- Raft, sharding, scatter-gather, S3
 - [Design Decisions](/docs/architecture/design-decisions) -- why columnar, why PPL, why Go, why a single binary

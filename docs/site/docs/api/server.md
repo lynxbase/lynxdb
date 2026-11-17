@@ -1,7 +1,7 @@
 ---
 sidebar_position: 10
 title: Server
-description: Health checks, Prometheus and JSON metrics, status snapshots, cache, compaction history, cluster status, runtime configuration, API keys and profiling endpoints.
+description: Health checks, Prometheus and JSON metrics, status snapshots, cache, compaction history, runtime configuration, API keys and profiling endpoints.
 ---
 
 # Server API
@@ -79,22 +79,6 @@ Storage and event counters, as used by `lynxdb status`:
 
 Storage metrics as JSON, separate from the Prometheus endpoint. The top-level keys are `uptime_seconds`, `ingest`, `flush`, `segment`, `compaction`, `compaction_levels`, `tiering`, `cache`, `query`, `pruning` and `system_write_amplification`, plus `adaptive_compaction` when adaptive compaction is on.
 
-## GET /api/v1/cluster/status
-
-```json
-{
-  "data": {
-    "status": "healthy",
-    "node_count": 1,
-    "index_count": 2,
-    "segment_count": 7,
-    "buffered_size": 0,
-    "buffered_events": 0,
-    "data_dir": "/var/lib/lynxdb"
-  }
-}
-```
-
 ## GET /api/v1/compaction/history
 
 Recorded compactions.
@@ -127,7 +111,7 @@ Returns the running configuration. Needs `admin` scope when authentication is on
 curl -s localhost:3100/api/v1/config
 ```
 
-The top-level keys of `data` are `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tail`, `tls`, `auth`, `server`, `buffer_manager`, `cluster` and `profiles`. See [Configuration](../configuration/overview.md) for each section.
+The top-level keys of `data` are `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tail`, `tls`, `auth`, `server`, `buffer_manager` and `profiles`. See [Configuration](../configuration/overview.md) for each section.
 
 ## PATCH /api/v1/config
 

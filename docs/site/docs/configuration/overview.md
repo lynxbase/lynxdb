@@ -47,9 +47,9 @@ Warning: unknown config key "storage.compresion" in /etc/lynxdb/config.yaml
 
 | Type | Format | Examples |
 |------|--------|----------|
-| Duration | Go duration syntax. `retention`, `ingest.staging.*`, `syslog.*` and `cluster.*` durations also accept a `d` suffix for days. | `200ms`, `30s`, `5m`, `24h`, `7d` |
+| Duration | Go duration syntax. `retention`, `ingest.staging.*` and `syslog.*` durations also accept a `d` suffix for days. | `200ms`, `30s`, `5m`, `24h`, `7d` |
 | Byte size | Integer bytes or a `kb`, `mb`, `gb`, `tb` suffix (case-insensitive, 1kb = 1024 bytes) | `1048576`, `512mb`, `10gb` |
-| List | YAML list in the file, comma-separated in environment variables and flags | `[meta, ingest, query]`, `meta,ingest,query` |
+| List | YAML list in the file, comma-separated in environment variables and flags | `[_time, timestamp]`, `_time,timestamp` |
 
 ## The `config` Command
 
@@ -125,7 +125,7 @@ Applied on reload:
 - `http.shutdown_timeout`
 - `syslog.index`, `syslog.sourcetype`, `syslog.default_timezone`, `syslog.default_hostname`, `syslog.batch_size`, `syslog.batch_timeout`
 
-Every other setting needs a restart, including `listen`, `data_dir`, `tls.*`, `auth.*`, all other `storage.*` keys, `http.idle_timeout`, `http.read_header_timeout`, `http.rate_limit`, `ingest.max_body_size`, `ingest.fsync`, `ingest.dedup_*`, `ingest.otlp.*`, syslog listeners and connection limits, `server.*`, `buffer_manager.*` and `cluster.*`.
+Every other setting needs a restart, including `listen`, `data_dir`, `tls.*`, `auth.*`, all other `storage.*` keys, `http.idle_timeout`, `http.read_header_timeout`, `http.rate_limit`, `ingest.max_body_size`, `ingest.fsync`, `ingest.dedup_*`, `ingest.otlp.*`, syslog listeners and connection limits, `server.*` and `buffer_manager.*`.
 
 `PATCH /api/v1/config` applies a JSON patch to the running configuration with the same rules and returns the keys that still need a restart in `restart_required`. When auth is on, it needs the root key.
 
@@ -180,5 +180,4 @@ default_source: web
 - [Ingest Settings](./ingest.md)
 - [Syslog Receiver](./syslog.md)
 - [S3 Tiering](./s3-tiering.md)
-- [Cluster Settings](./cluster.md)
 - [Environment Variables](./environment-variables.md)

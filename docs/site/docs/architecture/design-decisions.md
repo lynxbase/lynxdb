@@ -67,11 +67,11 @@ A row-oriented store can only apply generic compression to whole rows, which com
 
 ## A Language-Independent IR
 
-**Decision**: The PPL frontend lowers queries to a canonical IR (`pkg/ir`); the optimizer, physical planner, executor and cluster coordinator work only on the IR.
+**Decision**: The PPL frontend lowers queries to a canonical IR (`pkg/ir`); the optimizer, physical planner and executor work only on the IR.
 
 **Reasoning**:
 
-- **One engine contract**: storage hints, plan rewrites and distributed splitting are written once, against IR operators, not against syntax.
+- **One engine contract**: storage hints and plan rewrites are written once, against IR operators, not against syntax.
 - **Testable rewrites**: every optimizer rule is a plan-to-plan function, checked by `ir.Validate` and visible in `explain`.
 - **Cheap compilation**: compilation depends only on the query text, so plans are cached by text and reused across requests.
 
@@ -107,7 +107,7 @@ The key factors:
 
 ## A Single Binary
 
-**Decision**: Ship one static binary that works as a CLI tool and a server, with the cluster components (`pkg/cluster`) linked into the same binary.
+**Decision**: Ship one static binary that works as a CLI tool and a server.
 
 **Alternatives**: Separate binaries per role, microservices.
 
@@ -115,8 +115,7 @@ The key factors:
 
 1. **Operational simplicity**: one binary to install, upgrade and monitor, with no version matrix between components.
 2. **Pipe mode**: `lynxdb query --file app.log 'source=main | stats count()'` runs the same compiler and operators as the server in process. This works because the whole query engine is linked into the CLI.
-3. **Gradual scaling**: the cluster design keeps the same binary, with roles chosen by configuration (`cluster.roles`) rather than separate programs. `lynxdb server` does not start the cluster runtime (see [Distributed Architecture](/docs/architecture/distributed)).
-4. **Testing**: integration tests exercise the real server code path.
+3. **Testing**: integration tests exercise the real server code path.
 
 ## Schema-on-Read
 

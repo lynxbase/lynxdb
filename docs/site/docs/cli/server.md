@@ -65,18 +65,6 @@ The server loads its config file (see [config](./config-cmd.md) for the search o
 
 The HTTP ingest endpoints, including Splunk HEC (`/services/collector`), are always served on the main listener. See [Ingest settings](../configuration/ingest.md) and [Syslog](../configuration/syslog.md).
 
-### Cluster
-
-| Flag | Description |
-|------|-------------|
-| `--cluster.enabled` | Run as a cluster node |
-| `--cluster.node-id` | Unique node ID |
-| `--cluster.roles` | Comma-separated roles: `meta`, `ingest`, `query` |
-| `--cluster.seeds` | Comma-separated seed addresses (`host:port`) |
-| `--cluster.grpc-port` | Port for node-to-node gRPC |
-
-See [Cluster settings](../configuration/cluster.md).
-
 Size flags take values such as `512mb` or `2gb`; interval flags take durations such as `30s`, `5m` or `1d`.
 
 ## Examples

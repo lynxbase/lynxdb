@@ -56,8 +56,6 @@ in-memory event store, which is what the CLI's file and pipe modes use;
 `query.Explain` renders the plans. The server compiles with the same
 `query.Compile` (through `pkg/planner`), derives storage hints from the
 plan, and differs only in the scan source it hands to the physical planner.
-In a cluster, `pkg/cluster/query` splits the optimized plan between shards
-and the coordinator.
 
 ## Packages
 
@@ -74,7 +72,6 @@ and the coordinator.
 | `pkg/engine/physical` | Physical planner from IR to pipeline iterators; storage hints derived from scans. |
 | `pkg/query` | Compile (with a cache of recent plans), optimize, explain and run. |
 | `pkg/planner` | Server planning: compile, storage hints, request time bounds, live-tail validation. |
-| `pkg/cluster/query` | Distributed split of a plan into a shard prefix and coordinator operators. |
 | `internal/docgen` | Generates the command, function and aggregation tables from the catalogs. |
 
 ## Semantic analysis

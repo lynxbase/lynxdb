@@ -1020,19 +1020,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/DataObject'
 
-  /api/v1/cluster/status:
-    get:
-      operationId: clusterStatus
-      tags: [Server]
-      summary: Cluster summary
-      responses:
-        '200':
-          description: Summary
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ClusterStatusResponse'
-
   /api/v1/compaction/history:
     get:
       operationId: compactionHistory
@@ -1091,7 +1078,7 @@ paths:
       operationId: getConfig
       tags: [Server]
       summary: Running configuration
-      description: Needs `admin` scope. Top-level keys are `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tail`, `tls`, `auth`, `server`, `buffer_manager`, `cluster`, `profiles`.
+      description: Needs `admin` scope. Top-level keys are `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tail`, `tls`, `auth`, `server`, `buffer_manager`, `profiles`.
       responses:
         '200':
           description: Configuration
@@ -3391,27 +3378,6 @@ components:
               type: array
               items: {}
             oldest_event:
-              type: string
-
-    ClusterStatusResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            status:
-              type: string
-            node_count:
-              type: integer
-            index_count:
-              type: integer
-            segment_count:
-              type: integer
-            buffered_size:
-              type: integer
-            buffered_events:
-              type: integer
-            data_dir:
               type: string
 
     CompactionHistoryResponse:

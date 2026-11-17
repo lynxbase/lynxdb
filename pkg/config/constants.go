@@ -6,60 +6,6 @@ const (
 	// LYNXDB_AUTH_ENABLED is the enable or disable API key authentication.
 	// YAML key: auth.enabled. Default: false.
 	LYNXDB_AUTH_ENABLED = "LYNXDB_AUTH_ENABLED"
-	// LYNXDB_CLUSTER_ACK_LEVEL is the cluster acknowledgement level.
-	// YAML key: cluster.ack_level. Default: "".
-	LYNXDB_CLUSTER_ACK_LEVEL = "LYNXDB_CLUSTER_ACK_LEVEL"
-	// LYNXDB_CLUSTER_DC_HLL_THRESHOLD is the DC HLL threshold for cluster.
-	// YAML key: cluster.dc_hll_threshold. Default: "".
-	LYNXDB_CLUSTER_DC_HLL_THRESHOLD = "LYNXDB_CLUSTER_DC_HLL_THRESHOLD"
-	// LYNXDB_CLUSTER_ENABLED is the enable clustering.
-	// YAML key: cluster.enabled. Default: false.
-	LYNXDB_CLUSTER_ENABLED = "LYNXDB_CLUSTER_ENABLED"
-	// LYNXDB_CLUSTER_GRPC_PORT is the cluster gRPC port.
-	// YAML key: cluster.grpc_port. Default: "".
-	LYNXDB_CLUSTER_GRPC_PORT = "LYNXDB_CLUSTER_GRPC_PORT"
-	// LYNXDB_CLUSTER_HEARTBEAT_INTERVAL is the heartbeat interval between cluster nodes.
-	// YAML key: cluster.heartbeat_interval. Default: "".
-	LYNXDB_CLUSTER_HEARTBEAT_INTERVAL = "LYNXDB_CLUSTER_HEARTBEAT_INTERVAL"
-	// LYNXDB_CLUSTER_LEASE_DURATION is the cluster lease duration.
-	// YAML key: cluster.lease_duration. Default: "".
-	LYNXDB_CLUSTER_LEASE_DURATION = "LYNXDB_CLUSTER_LEASE_DURATION"
-	// LYNXDB_CLUSTER_MAX_CLOCK_SKEW is the max clock skew tolerance.
-	// YAML key: cluster.max_clock_skew. Default: "".
-	LYNXDB_CLUSTER_MAX_CLOCK_SKEW = "LYNXDB_CLUSTER_MAX_CLOCK_SKEW"
-	// LYNXDB_CLUSTER_MAX_CONCURRENT_SHARD_QUERIES is the max concurrent shard queries.
-	// YAML key: cluster.max_concurrent_shard_queries. Default: "".
-	LYNXDB_CLUSTER_MAX_CONCURRENT_SHARD_QUERIES = "LYNXDB_CLUSTER_MAX_CONCURRENT_SHARD_QUERIES"
-	// LYNXDB_CLUSTER_META_LOSS_TIMEOUT is the meta node loss timeout.
-	// YAML key: cluster.meta_loss_timeout. Default: "".
-	LYNXDB_CLUSTER_META_LOSS_TIMEOUT = "LYNXDB_CLUSTER_META_LOSS_TIMEOUT"
-	// LYNXDB_CLUSTER_NODE_ID is the unique node identifier.
-	// YAML key: cluster.node_id. Default: "".
-	LYNXDB_CLUSTER_NODE_ID = "LYNXDB_CLUSTER_NODE_ID"
-	// LYNXDB_CLUSTER_PARTIAL_FAILURE_THRESHOLD is the partial failure threshold.
-	// YAML key: cluster.partial_failure_threshold. Default: "".
-	LYNXDB_CLUSTER_PARTIAL_FAILURE_THRESHOLD = "LYNXDB_CLUSTER_PARTIAL_FAILURE_THRESHOLD"
-	// LYNXDB_CLUSTER_PARTIAL_RESULTS is the allow partial query results.
-	// YAML key: cluster.partial_results. Default: "".
-	LYNXDB_CLUSTER_PARTIAL_RESULTS = "LYNXDB_CLUSTER_PARTIAL_RESULTS"
-	// LYNXDB_CLUSTER_REPLICATION_FACTOR is the number of replicas per shard.
-	// YAML key: cluster.replication_factor. Default: "".
-	LYNXDB_CLUSTER_REPLICATION_FACTOR = "LYNXDB_CLUSTER_REPLICATION_FACTOR"
-	// LYNXDB_CLUSTER_ROLES is the comma-separated list of node roles.
-	// YAML key: cluster.roles. Default: "".
-	LYNXDB_CLUSTER_ROLES = "LYNXDB_CLUSTER_ROLES"
-	// LYNXDB_CLUSTER_SEEDS is the comma-separated list of seed nodes.
-	// YAML key: cluster.seeds. Default: "".
-	LYNXDB_CLUSTER_SEEDS = "LYNXDB_CLUSTER_SEEDS"
-	// LYNXDB_CLUSTER_SHARD_QUERY_TIMEOUT is the timeout for shard queries.
-	// YAML key: cluster.shard_query_timeout. Default: "".
-	LYNXDB_CLUSTER_SHARD_QUERY_TIMEOUT = "LYNXDB_CLUSTER_SHARD_QUERY_TIMEOUT"
-	// LYNXDB_CLUSTER_TIME_BUCKET_SIZE is the time bucket size for cluster.
-	// YAML key: cluster.time_bucket_size. Default: "".
-	LYNXDB_CLUSTER_TIME_BUCKET_SIZE = "LYNXDB_CLUSTER_TIME_BUCKET_SIZE"
-	// LYNXDB_CLUSTER_VIRTUAL_PARTITION_COUNT is the virtual partition count.
-	// YAML key: cluster.virtual_partition_count. Default: "".
-	LYNXDB_CLUSTER_VIRTUAL_PARTITION_COUNT = "LYNXDB_CLUSTER_VIRTUAL_PARTITION_COUNT"
 	// LYNXDB_CONFIG is the path to the YAML config file (overrides auto-discovery).
 	LYNXDB_CONFIG = "LYNXDB_CONFIG"
 	// LYNXDB_DATA_DIR is the root data directory for persistent storage.

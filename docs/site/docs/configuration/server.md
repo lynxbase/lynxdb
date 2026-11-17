@@ -129,7 +129,6 @@ Every flag of `lynxdb server`, with the config key it sets:
 | `--ingest-max-decompressed-body-bytes` | `ingest.limits.max_decompressed_body_bytes` |
 | `--ingest-staging-enabled` | `ingest.staging.enabled` |
 | `--ingest-staging-max-bytes`, `--ingest-staging-max-age` | `ingest.staging.max_bytes`, `ingest.staging.max_age` |
-| `--cluster.enabled`, `--cluster.node-id`, `--cluster.roles`, `--cluster.seeds`, `--cluster.grpc-port` | `cluster.enabled`, `cluster.node_id`, `cluster.roles`, `cluster.seeds`, `cluster.grpc_port` |
 | `--profile-runtime` | none: turns on mutex and block profiling for the pprof endpoints under `/api/v1/debug/pprof/` (2 to 5% overhead) |
 
 The startup banner lists the config file in use and every environment variable and flag that overrode it.

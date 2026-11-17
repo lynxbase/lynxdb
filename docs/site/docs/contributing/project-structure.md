@@ -15,7 +15,7 @@ lynxdb/
 ├── cmd/            # Binaries: the lynxdb CLI and a segment fixture generator
 ├── pkg/            # Core packages
 ├── internal/       # Packages private to the module
-├── test/           # End-to-end, CLI, cluster, regression, chaos and simulation tests
+├── test/           # End-to-end, CLI and regression tests
 ├── testdata/       # Sample logs and fixtures
 ├── scripts/        # Install, release and benchmark helper scripts
 ├── docs/           # Documentation site (Docusaurus) and format documents
@@ -128,7 +128,7 @@ pkg/colstore/
 
 ### `pkg/server/` -- Engine
 
-The server `Engine`: ingest into the batcher, part flush and registration, segment handles, query execution over segments (`query.go`, `store.go`), async jobs, compaction and tiering loops, retention, system status, and the cluster query adapter.
+The server `Engine`: ingest into the batcher, part flush and registration, segment handles, query execution over segments (`query.go`, `store.go`), async jobs, compaction and tiering loops, retention and system status.
 
 ### `pkg/usecases/` -- Application Services
 
@@ -163,21 +163,6 @@ pkg/ingest/
 └── limits/       # Request body size limits for shipper endpoints
 ```
 
-### `pkg/cluster/` -- Cluster Mode
-
-```
-pkg/cluster/
-├── meta/         # Raft metadata store: nodes, shard map, leases, catalogs
-├── sharding/     # Time-bucket and hash-partition shard IDs
-├── ingest/       # Event routing, batch replication, part catalog, meta-loss handling
-├── query/        # Distributed planning (ir_planner.go), coordinator, shard handler, shard pruning
-├── rebalance/    # Incremental rebalancing and partition splitting
-├── rpc/          # gRPC transport; proto/ holds the protobuf definitions
-└── tracing/      # OpenTelemetry helpers
-```
-
-`lynxdb server` validates the `cluster` configuration but does not start this runtime: `Engine.InitCluster`, `Engine.InitClusterQuery` and `cluster.NewNode` are called only from tests. See [Distributed Architecture](/docs/architecture/distributed).
-
 ### Shared Packages
 
 | Package | Purpose |
@@ -187,7 +172,6 @@ pkg/cluster/
 | `pkg/config` | Configuration cascade (flags > env > file > defaults), validation, hot reload |
 | `pkg/memgov` | Process-wide memory governor with memory classes and per-query budgets |
 | `pkg/bufmgr` | Opt-in unified buffer manager (`buffer_manager.enabled`) |
-| `pkg/cache` | Query result cache |
 | `pkg/stats` | Query execution statistics for the CLI, API and metrics |
 | `pkg/auth` | API keys, credential files, TLS helpers |
 | `pkg/client` | Typed Go client for the REST API, used by the CLI |
@@ -210,10 +194,7 @@ pkg/cluster/
 test/
 ├── e2e/          # Server tests over the REST API; e2e/shippers runs real shippers in containers
 ├── cli/          # Tests against the built binary: pipe and file mode, exit codes, goldens
-├── integration/  # Cluster tests
-├── regression/   # Query correctness regressions
-├── chaos/        # Docker-based fault injection
-└── simulation/   # Property-based simulation of cluster, network and S3
+└── regression/   # Query correctness regressions
 ```
 
 - **E2E**: `make test-e2e`; shipper compatibility with `make test-compat` and the nightly [conformance matrix](/docs/operations/shipper-conformance).
@@ -251,7 +232,6 @@ flowchart TD
     SERVER --> SEGMENT["pkg/storage/segment"]
     SERVER --> COMPACTION["pkg/storage/compaction"]
     SERVER --> TIERING["pkg/storage/tiering"]
-    SERVER --> CLUSTER["pkg/cluster/..."]
     PIPELINE --> SEGMENT
     TIERING --> OBJSTORE["internal/objstore"]
 ```
