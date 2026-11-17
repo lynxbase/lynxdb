@@ -288,7 +288,7 @@ func printStartupBanner(cfgPath string, cfg *config.Config, envOverrides []confi
 	if cfg.DataDir != "" {
 		fmt.Println(t.KeyValue("Data", cfg.DataDir))
 	} else {
-		fmt.Println(t.KeyValue("Data", t.Dim.Render("(in-memory)")))
+		fmt.Println(t.KeyValue("Data", t.Dim.Render("(temporary directory)")))
 	}
 
 	fmt.Println(t.KeyValue("Listen", cfg.Listen))

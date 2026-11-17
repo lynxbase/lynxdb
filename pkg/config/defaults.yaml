@@ -4,7 +4,7 @@
 # Listen address for the HTTP API server.
 # listen: localhost:3100
 
-# Root data directory. Set to "" for ephemeral in-memory mode.
+# Root data directory. Set to "" to keep data in a temporary directory removed at shutdown.
 # data_dir: ~/.local/share/lynxdb
 
 # Global data retention period. Events older than this are deleted.
