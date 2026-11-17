@@ -40,7 +40,7 @@ var notNative = map[string]string{
 // pendingNative lists the categories whose functions may still lack a
 // native implementation; those run through the bridge to the row engine.
 var pendingNative = map[string]bool{
-	"math": true, "condition": true, "cryptographic": true, "system": true, "ip": true, "bucketing": true,
+	"condition": true, "cryptographic": true, "system": true, "ip": true,
 	"json": true, "collection": true,
 }
 
