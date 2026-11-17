@@ -61,9 +61,8 @@ type benchPlan struct {
 }
 
 // benchTexts states the benchmark plans in PPL, by plan name. The language
-// searches a word in every field and a substring or a regular expression in
-// one, so only the plans that do the same have a text. A text names its
-// columns in the order of its plan.
+// searches words without regard to letter case, so only the plans that do
+// the same have a text. A text names its columns in the order of its plan.
 func benchTexts(win benchWindows) map[string]string {
 	const created = `source=bluesky | where kind = 'commit' and commit.operation = 'create'`
 	const text = "commit.record.text"
@@ -83,6 +82,10 @@ func benchTexts(win benchWindows) map[string]string {
 		"Q3": created + ` and commit.collection in ('app.bsky.feed.like', 'app.bsky.feed.post', 'app.bsky.feed.repost')` +
 			` | eval hour = hour(_time) | stats count() as count by commit.collection, hour | fields commit.collection, hour, count | sort hour, commit.collection`,
 		"Q4":                        posts + ` | stats min(_time) as first by did | fields did, first | sort first, did | head 3`,
+		"S1 rare token":             `source=bluesky | where match(commit.record.subject.uri, 'sc7btuzqdaepksx43mr74pma') | stats count()`,
+		"S2 any case":               `source=bluesky | where match(` + text + `, 'love') | stats count()`,
+		"S3 any case":               `source=bluesky | where match_phrase(` + text + `, 'good morning') | stats count()`,
+		"S4 any case":               `source=bluesky | where match_phrase_prefix(` + text + `, 'crypto') | stats count()`,
 		"S5 substring":              `source=bluesky | where like(` + text + `, '%ware%', true) | stats count()`,
 		"S5 any case":               `source=bluesky | where like(` + text + `, '%ware%') | stats count()`,
 		"S6 field equals":           `source=bluesky | where did = 'did:plc:yj3sjq3blzpynh27cumnp5ks' | stats count()`,

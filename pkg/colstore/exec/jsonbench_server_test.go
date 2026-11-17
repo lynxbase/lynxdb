@@ -498,7 +498,7 @@ func TestBenchServerTakesInsertsAndAnswersQueries(t *testing.T) {
 	if code, body := get("/query?q=Q1&workers=0"); code != http.StatusBadRequest {
 		t.Errorf("no workers answered %d: %s", code, body)
 	}
-	for _, target := range []string{"/query?q=Q1", "/query?q=Q1&form=text&workers=2", "/query?q=S5i&form=text", "/query?q=S2", "/query?q=T4"} {
+	for _, target := range []string{"/query?q=Q1", "/query?q=Q1&form=text&workers=2", "/query?q=S2i&form=text", "/query?q=S2", "/query?q=T4"} {
 		if code, body := get(target); code != http.StatusOK {
 			t.Errorf("%s answered %d: %s", target, code, body)
 		}

@@ -63,9 +63,6 @@ func logQueries(c logConstants) []logQuery {
 	counted := func(filter *exec.Expr) exec.Node {
 		return &exec.Aggregate{Input: &exec.Scan{Filter: filter}, Aggs: count}
 	}
-	word := func(path, text string) *exec.Expr {
-		return exec.Match(anyOf(path), tokenfilter.Word(text).IgnoreCase())
-	}
 	sshd := regex(`Failed password for invalid user \w+ from 10\.`)
 	posted := regex(`POST /api/v1/\w+/\d+/\w+ HTTP`)
 
@@ -92,7 +89,7 @@ func logQueries(c logConstants) []logQuery {
 			text: `source=logs | stats distinct_count(host) as hosts, distinct_count(pod) as pods, count() as n by service, env | sort service, env`},
 		{name: "P1 events of a trace", text: `source=logs | where trace_id = '` + c.trace + `' | fields _time, service, level, message | sort _time`, ordered: true},
 		{name: "P2 identifier in any field", text: `source=logs "` + c.trace + `" | stats count() as n`, ordered: true},
-		{name: "S1 phrase in message", plan: counted(word("message", "connection reset by peer")), ordered: true},
+		{name: "S1 phrase in message", text: `source=logs | where match_phrase(message, 'connection reset by peer') | stats count() as n`, ordered: true},
 		{name: "S2 word in any field", text: `source=logs deadlock | stats count() as n`, ordered: true},
 		{name: "S3 regex on message", text: `source=logs | where regexp_match(message, 'timeout after \d+ms waiting') | stats count() as n`, ordered: true},
 		{name: "S4 regex on text lines", text: `source=logs | where regexp_match(_raw, 'Failed password for invalid user \w+ from 10\.') | stats count() as n`,
@@ -102,8 +99,7 @@ func logQueries(c logConstants) []logQuery {
 		{name: "S6 word on text lines", text: `source=logs sshd | stats count() as n`,
 			plan: counted(exec.Match(raw, tokenfilter.Word("sshd").IgnoreCase())), ordered: true},
 		{name: "S7 word in stack traces", ordered: true,
-			plan: &exec.Sort{Input: &exec.Aggregate{Input: &exec.Scan{Filter: word("error.stack", "DeadlockLoserDataAccessException")}, Keys: keys("service"), Aggs: count},
-				By: []exec.Order{{Column: "n", Desc: true}, {Column: "service"}}}},
+			text: `source=logs | where match(error.stack, 'DeadlockLoserDataAccessException') | stats count() as n by service | sort - n, service`},
 		{name: "S8 substring in message", text: `source=logs | where like(message, '%exhaust%') | stats count() as n`, ordered: true},
 		{name: "T1 latest 100 errors of a service", ordered: true,
 			text: `source=logs | where service = '` + c.service + `' and ` + failed + ` | fields _time, host, message | sort - _time, message | head 100`},
