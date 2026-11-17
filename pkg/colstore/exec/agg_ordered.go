@@ -36,6 +36,10 @@ const (
 	orderedBatch = 4096
 )
 
+// orderedChunk is the number of rows of a block that are split into groups
+// at once, which bounds the states a cursor holds.
+var orderedChunk = 4096
+
 // orderedPlan says how a query's aggregation maps onto the sort key.
 type orderedPlan struct {
 	key *colstore.KeyPlan
@@ -377,8 +381,10 @@ type orderedCursor struct {
 	words  []int64
 	i, n   int
 	cur    [][]byte
-	// repeat tells that the first row of the block continues the distinct
-	// value of the row before it in the stream.
+	// at and to bound the rows of the block that are yet to be loaded.
+	at, to int
+	// repeat tells that the first row loaded continues the distinct value
+	// of the row before it in the stream.
 	repeat bool
 	// counted is set for a block taken from the part index as one run with
 	// the group in key and values distinct values.
@@ -394,14 +400,11 @@ func (c *orderedCursor) load() {
 	}
 }
 
-// orderedWorker is the state one goroutine owns while it merges key ranges.
-type orderedWorker struct {
-	w       *worker
-	o       *orderedPlan
-	scan    *colstore.RangeScan
+// orderedScratch is the memory a worker keeps between queries for
+// aggregation in key order.
+type orderedScratch struct {
 	cursors []*orderedCursor
 	heap    []*orderedCursor
-	turn    int
 
 	// open is the group the merge is in and pending the one before it,
 	// which is the last of the range unless another group follows.
@@ -417,26 +420,77 @@ type orderedWorker struct {
 
 	bound []uint8
 	gid   []uint32
-	// edges holds the first and last group of every range the worker read.
-	edges []*orderedEdges
-	// byIndex and byToken count the blocks counted from the part index and
-	// the ones the token filters ruled out.
-	byIndex, byToken int64
+	// edges holds the first and last group of every range the worker read,
+	// ranges of them in this query.
+	edges  []*orderedEdges
+	ranges int
 }
 
-func (ow *orderedWorker) held() int {
-	n := 8*(cap(ow.states)+cap(ow.users)) + cap(ow.bound) + 4*cap(ow.gid) + ow.post.held()
-	for _, c := range ow.cursors {
+func (s *orderedScratch) held() int {
+	n := 8*(cap(s.states)+cap(s.users)) + cap(s.bound) + 4*cap(s.gid) + s.post.held() + s.having.held()
+	for _, c := range s.cursors {
 		n += 4*(cap(c.starts)+cap(c.group)) + 8*cap(c.words)
 		for _, k := range c.key {
 			n += cap(k)
 		}
 	}
-	for i := range ow.batch {
-		n += ow.batch[i].held()
+	for i := range s.batch {
+		n += s.batch[i].held()
 	}
 
 	return n
+}
+
+// drop forgets the blocks and ranges of the scan the scratch last served.
+func (s *orderedScratch) drop() {
+	for _, c := range s.cursors {
+		c.r = colstore.RangeReader{}
+		clear(c.cols)
+		clear(c.cur)
+	}
+	clear(s.heap[:cap(s.heap)])
+	for _, e := range s.edges {
+		e.lo = nil
+	}
+}
+
+// orderedWorker is the state one goroutine owns while it merges key ranges.
+type orderedWorker struct {
+	*orderedScratch
+	w    *worker
+	o    *orderedPlan
+	scan *colstore.RangeScan
+	turn int
+	// byIndex and byToken count the blocks counted from the part index and
+	// the ones the token filters ruled out.
+	byIndex, byToken int64
+}
+
+func newOrderedWorker(w *worker, o *orderedPlan, scan *colstore.RangeScan, turn int) *orderedWorker {
+	s := &w.ord
+	if s.open == nil {
+		s.open, s.pending = &orderedGroup{}, &orderedGroup{}
+	}
+	s.states, s.users, s.count, s.ranges = s.states[:0], s.users[:0], 0, 0
+	s.batch = fit(s.batch, len(w.q.agg.names))
+	for i := range s.batch {
+		s.batch[i].reset()
+	}
+
+	return &orderedWorker{orderedScratch: s, w: w, o: o, scan: scan, turn: turn}
+}
+
+// edgesOf returns the edges to fill for the range kr, which the worker reads
+// next.
+func (ow *orderedWorker) edgesOf(kr *colstore.KeyRange, seq int) *orderedEdges {
+	if ow.ranges == len(ow.edges) {
+		ow.edges = append(ow.edges, &orderedEdges{})
+	}
+	e := ow.edges[ow.ranges]
+	ow.ranges++
+	e.lo, e.seq, e.first.set, e.last.set = kr.Lo, seq, false, false
+
+	return e
 }
 
 // markChanges sets bound[j] for every row from+j, j above zero, whose value
@@ -560,16 +614,20 @@ func (ow *orderedWorker) fromIndex(c *orderedCursor, p *part.Part, i int) bool {
 	return true
 }
 
-// next loads the next block of c that has rows in the range passing the
-// filter, splits them into runs and computes the states of their groups; it
-// reports false at the end of the stream.
+// next loads the next rows of c that are in the range and pass the filter,
+// at most orderedChunk of a block at once, splits them into runs and
+// computes the states of their groups; it reports false at the end of the
+// stream.
 func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
-	w, o := ow.w, ow.o
-	stride := w.agg.stride
-	var sb *colstore.SharedBlock
-	var from, to, n int
-	var picked []uint32
+	o := ow.o
 	for {
+		if c.at < c.to {
+			if ok, err := ow.chunk(c); ok || err != nil {
+				return ok, err
+			}
+
+			continue
+		}
 		p, i, whole, ok := c.r.Peek()
 		if !ok {
 			return false, nil
@@ -599,32 +657,62 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 		} else if !ok {
 			continue
 		}
-		sb = c.r.Block
-		from, to = c.r.From, c.r.To
-		c.counted, c.repeat = false, c.repeat && from == 0
-		n = to - from
+		from, to := c.r.From, c.r.To
 		for p, pos := range o.parts {
-			col := sb.Keys.Column(pos, vec.KindString)
-			if col == nil || (col.Valid != nil && col.Valid.Rank(to)-col.Valid.Rank(from) != n) {
+			col := c.r.Block.Keys.Column(pos, vec.KindString)
+			if col == nil || (col.Valid != nil && col.Valid.Rank(to)-col.Valid.Rank(from) != to-from) {
 				return false, errUnordered
 			}
 			c.cols[p] = col
 		}
-		w.window(sb, from, to)
-		if o.residual == nil {
-			break
+		c.at, c.to = from, to
+		c.counted, c.repeat = false, c.repeat && from == 0
+		ow.w.blocks++
+	}
+}
+
+// sameKey reports whether rows a and b of c's block agree in every key
+// column the merge orders by.
+func (c *orderedCursor) sameKey(a, b int) bool {
+	for _, col := range c.cols {
+		switch col.Layout {
+		case vec.Const:
+		case vec.Dict:
+			if col.Code(a) != col.Code(b) {
+				return false
+			}
+		default:
+			if string(col.Bytes(a)) != string(col.Bytes(b)) {
+				return false
+			}
 		}
+	}
+
+	return true
+}
+
+// chunk loads the next rows of the block c is in, and reports false when
+// none of them passes the filter.
+func (ow *orderedWorker) chunk(c *orderedCursor) (bool, error) {
+	w, o := ow.w, ow.o
+	stride := w.agg.stride
+	from, to := c.at, min(c.to, c.at+orderedChunk)
+	// The index speaks for the first row of a block; a later chunk looks at
+	// the row before it.
+	if o.byIndex && from > c.r.From {
+		c.repeat = c.sameKey(from-1, from)
+	}
+	c.at = to
+	n := to - from
+	w.window(c.r.Block, from, to)
+	var picked []uint32
+	if o.residual != nil {
 		rows, every, err := ow.selected()
-		if err != nil {
+		if err != nil || (!every && len(rows) == 0) {
 			return false, err
 		}
-		if every {
-			break
-		}
-		if len(rows) > 0 {
+		if !every {
 			picked, n = rows, len(rows)
-
-			break
 		}
 	}
 	ow.bound = sized(ow.bound, n)
@@ -668,7 +756,6 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 	for i := 0; i < int(g); i++ {
 		copy(c.words[i*stride:], w.q.agg.init)
 	}
-	w.blocks++
 	w.matched += int64(n)
 	if err := w.agg.feed(&target{words: c.words, gid: gid}, n, picked); err != nil {
 		return false, err
@@ -783,29 +870,26 @@ func (ow *orderedWorker) close(edges *orderedEdges) {
 
 // emitRuns queues runs from to end of c, each of which is a whole group.
 func (ow *orderedWorker) emitRuns(c *orderedCursor, from, end int) {
-	plan := ow.w.q.agg
-	if ow.batch == nil {
-		ow.batch = make([]colVec, len(plan.names))
-	}
 	stride := ow.w.agg.stride
-	for i, k := range ow.o.keyOf {
-		col, dst := c.cols[k], &ow.batch[i]
-		for run := from; run < end; run++ {
-			dst.appendBytes(vec.KindString, col.Bytes(int(c.starts[run])))
+	for from < end {
+		to := min(end, from+orderedBatch-ow.count)
+		for i, k := range ow.o.keyOf {
+			col, dst := c.cols[k], &ow.batch[i]
+			for run := from; run < to; run++ {
+				dst.appendBytes(vec.KindString, col.Bytes(int(c.starts[run])))
+			}
 		}
-	}
-	ow.states = append(ow.states, c.words[from*stride:end*stride]...)
-	if ow.count += end - from; ow.count >= orderedBatch {
-		ow.flush()
+		ow.states = append(ow.states, c.words[from*stride:to*stride]...)
+		if ow.count += to - from; ow.count >= orderedBatch {
+			ow.flush()
+		}
+		from = to
 	}
 }
 
 // emit queues a finished group for the sink.
 func (ow *orderedWorker) emit(g *orderedGroup) {
 	plan := ow.w.q.agg
-	if ow.batch == nil {
-		ow.batch = make([]colVec, len(plan.names))
-	}
 	for i, k := range ow.o.keyOf {
 		ow.batch[i].appendBytes(vec.KindString, g.key[k])
 	}
@@ -856,9 +940,6 @@ func (ow *orderedWorker) merge(kr *colstore.KeyRange, edges *orderedEdges, b *pa
 		ow.cursors = append(ow.cursors, &orderedCursor{})
 	}
 	ow.heap = ow.heap[:0]
-	if ow.open == nil {
-		ow.open, ow.pending = &orderedGroup{}, &orderedGroup{}
-	}
 	ow.open.set, ow.pending.set = false, false
 	// With one stream left and no distinct count, every run but the first
 	// and the last of a block is a whole group.
@@ -869,6 +950,7 @@ func (ow *orderedWorker) merge(kr *colstore.KeyRange, edges *orderedEdges, b *pa
 		c := ow.cursors[(s+ow.turn)%streams]
 		c.cols, c.cur = fit(c.cols, len(ow.o.parts)), fit(c.cur, len(ow.o.parts))
 		c.r.Reset(ow.scan, kr, (s+ow.turn)%streams)
+		c.at, c.to = 0, 0
 		ok, err := ow.next(c, b)
 		if err != nil {
 			return err
@@ -946,13 +1028,11 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 		ow := ows[n]
 		if ow == nil {
 			x.workers[n] = newWorker(x)
-			ow = &orderedWorker{w: x.workers[n], o: o, scan: scan, turn: n}
+			ow = newOrderedWorker(x.workers[n], o, scan, n)
 			ows[n] = ow
 		}
-		edges := &orderedEdges{lo: kr.Lo, seq: seq[kr]}
-		ow.edges = append(ow.edges, edges)
 
-		return ow.merge(kr, edges, b)
+		return ow.merge(kr, ow.edgesOf(kr, seq[kr]), b)
 	})
 	if err != nil {
 		return nil, err
@@ -963,14 +1043,14 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 	last := ows[0]
 	if last == nil {
 		x.workers[0] = newWorker(x)
-		last = &orderedWorker{w: x.workers[0], o: o, scan: scan}
+		last = newOrderedWorker(x.workers[0], o, scan, 0)
 		ows[0] = last
 	}
 	plan := q.agg
 	var edges []*orderedEdges
 	for _, ow := range ows {
 		if ow != nil {
-			edges = append(edges, ow.edges...)
+			edges = append(edges, ow.edges[:ow.ranges]...)
 		}
 	}
 	sort.Slice(edges, func(i, j int) bool {
@@ -1006,7 +1086,7 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 				carry.users--
 			}
 			if e.users > 0 {
-				carry.last = e.last
+				carry.last = append(carry.last[:0], e.last...)
 			}
 		}
 	}

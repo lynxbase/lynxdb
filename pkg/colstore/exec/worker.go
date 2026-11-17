@@ -48,6 +48,7 @@ type scratch struct {
 
 	agg aggScratch
 	row rowScratch
+	ord orderedScratch
 }
 
 // worker is the state one scan goroutine owns for one query.
@@ -119,6 +120,7 @@ func (w *worker) release() {
 	for i := range w.views {
 		w.views[i].Drop()
 	}
+	w.ord.drop()
 	scratchPool.Put(w.scratch)
 	w.scratch = nil
 }

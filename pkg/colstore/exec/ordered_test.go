@@ -2,6 +2,7 @@ package exec_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
@@ -64,7 +65,12 @@ func TestOrderedAggregation(t *testing.T) {
 		{name: "runs", blockRows: 64, parts: 3, sortKey: key},
 		{name: "one run", blockRows: 200, parts: 1, sortKey: key},
 		{name: "one block", blockRows: 1 << 16, parts: 2, sortKey: key},
+		{name: "small chunks", blockRows: 200, parts: 1, sortKey: key},
+		{name: "small chunks of runs", blockRows: 1 << 16, parts: 2, sortKey: key},
 	} {
+		if strings.HasPrefix(l.name, "small chunks") {
+			t.Cleanup(exec.SetOrderedChunk(7))
+		}
 		tbl := buildTable(t, docs, "ts", l)
 		snap := tbl.Snapshot()
 		for _, c := range cases {

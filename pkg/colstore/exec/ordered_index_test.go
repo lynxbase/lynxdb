@@ -115,13 +115,18 @@ func TestCountsFromThePartIndex(t *testing.T) {
 			Keys: keys("coll"), Aggs: []exec.Agg{count, users}}, false},
 	}
 	key := []string{"kind", "op", "coll", "user"}
-	for _, odd := range []bool{false, true} {
+	for _, c := range []struct {
+		odd   bool
+		chunk int
+	}{{false, 4096}, {true, 4096}, {false, 5}, {true, 5}} {
+		odd := c.odd
+		t.Cleanup(exec.SetOrderedChunk(c.chunk))
 		docs := keyedDocs(9000, 3, odd)
 		rows := referenceRows(t, docs, "ts")
 		for _, tbl := range indexTables(t, docs, key) {
 			for _, q := range queries {
 				for _, workers := range []int{1, 5} {
-					t.Run(fmt.Sprintf("odd=%v/%s/%s/%d", odd, tbl.name, q.name, workers), func(t *testing.T) {
+					t.Run(fmt.Sprintf("odd=%v/chunks of %d/%s/%s/%d", odd, c.chunk, tbl.name, q.name, workers), func(t *testing.T) {
 						_, sorted := q.plan.(*exec.Sort)
 						res := check(t, tbl.snap, rows, q.plan, sorted, workers)
 						if odd {
