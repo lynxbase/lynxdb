@@ -10,30 +10,28 @@ import (
 )
 
 type queryStreamRequest struct {
-	Q         string            `json:"q"`
-	Query     string            `json:"query"`
-	From      string            `json:"from"`
-	To        string            `json:"to"`
-	Earliest  string            `json:"earliest"`
-	Latest    string            `json:"latest"`
-	Variables map[string]string `json:"variables,omitempty"`
-	Limit     *int              `json:"limit"`
-	Offset    *int              `json:"offset"`
-	Format    *string           `json:"format"`
-	Wait      *float64          `json:"wait"`
-	Profile   *string           `json:"profile"`
-	Language  string            `json:"language,omitempty"`
+	Q        string   `json:"q"`
+	Query    string   `json:"query"`
+	From     string   `json:"from"`
+	To       string   `json:"to"`
+	Earliest string   `json:"earliest"`
+	Latest   string   `json:"latest"`
+	Limit    *int     `json:"limit"`
+	Offset   *int     `json:"offset"`
+	Format   *string  `json:"format"`
+	Wait     *float64 `json:"wait"`
+	Profile  *string  `json:"profile"`
+	Language string   `json:"language,omitempty"`
 }
 
 func (r queryStreamRequest) toQueryRequest() QueryRequest {
 	return QueryRequest{
-		Q:         r.Q,
-		Query:     r.Query,
-		From:      r.From,
-		To:        r.To,
-		Earliest:  r.Earliest,
-		Latest:    r.Latest,
-		Variables: r.Variables,
+		Q:        r.Q,
+		Query:    r.Query,
+		From:     r.From,
+		To:       r.To,
+		Earliest: r.Earliest,
+		Latest:   r.Latest,
 	}
 }
 
@@ -96,7 +94,6 @@ func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	query = substituteVariables(query, req.Variables)
 	if !s.checkQueryLength(w, query) {
 		return
 	}

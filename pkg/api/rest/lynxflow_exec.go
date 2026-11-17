@@ -18,7 +18,6 @@ import (
 // cache, scan stats, job infrastructure, and sync/hybrid/async dispatch).
 func (s *Server) executeLynxFlowQuery(w http.ResponseWriter, r *http.Request, req QueryRequest, lang langDetectResult) {
 	query := req.effectiveQuery()
-	query = substituteVariables(query, req.Variables)
 
 	skipResultCache := planner.DynamicTimeBounds(req.effectiveFrom(), req.effectiveTo()) ||
 		planner.QueryUsesDynamicTimeSyntax(query)
