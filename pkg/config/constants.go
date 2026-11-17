@@ -17,9 +17,6 @@ const (
 	// LYNXDB_HTTP_RATE_LIMIT is the requests per second per IP (0 = unlimited).
 	// YAML key: http.rate_limit. Default: 0.
 	LYNXDB_HTTP_RATE_LIMIT = "LYNXDB_HTTP_RATE_LIMIT"
-	// LYNXDB_HTTP_READ_HEADER_TIMEOUT is the max time allowed to read request headers.
-	// YAML key: http.read_header_timeout. Default: 10s.
-	LYNXDB_HTTP_READ_HEADER_TIMEOUT = "LYNXDB_HTTP_READ_HEADER_TIMEOUT"
 	// LYNXDB_HTTP_SHUTDOWN_TIMEOUT is the graceful shutdown timeout.
 	// YAML key: http.shutdown_timeout. Default: 30s.
 	LYNXDB_HTTP_SHUTDOWN_TIMEOUT = "LYNXDB_HTTP_SHUTDOWN_TIMEOUT"
@@ -80,9 +77,6 @@ const (
 	// LYNXDB_QUERY_MAX_CONCURRENT is the max concurrent queries.
 	// YAML key: query.max_concurrent. Default: 32.
 	LYNXDB_QUERY_MAX_CONCURRENT = "LYNXDB_QUERY_MAX_CONCURRENT"
-	// LYNXDB_QUERY_MAX_QUERY_LENGTH is the max query source length in bytes.
-	// YAML key: query.max_query_length. Default: 1048576.
-	LYNXDB_QUERY_MAX_QUERY_LENGTH = "LYNXDB_QUERY_MAX_QUERY_LENGTH"
 	// LYNXDB_QUERY_MAX_RESULT_LIMIT is the maximum allowed result row limit.
 	// YAML key: query.max_result_limit. Default: 50000.
 	LYNXDB_QUERY_MAX_RESULT_LIMIT = "LYNXDB_QUERY_MAX_RESULT_LIMIT"

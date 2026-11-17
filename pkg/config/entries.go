@@ -64,7 +64,7 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 			return
 		}
 		source := "default"
-		if os.Getenv(envVar) != "" {
+		if envVar != "" && os.Getenv(envVar) != "" {
 			source = "env var"
 		} else if hasFile && fileValue != "" && fileValue != dfltValue {
 			source = "config file"
@@ -95,7 +95,7 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("query.max_concurrent", fmt.Sprintf("%d", cfg.Query.MaxConcurrent), fmt.Sprintf("%d", dflt.Query.MaxConcurrent), fmt.Sprintf("%d", fileCfg.Query.MaxConcurrent), LYNXDB_QUERY_MAX_CONCURRENT)
 	add("query.default_result_limit", fmt.Sprintf("%d", cfg.Query.DefaultResultLimit), fmt.Sprintf("%d", dflt.Query.DefaultResultLimit), fmt.Sprintf("%d", fileCfg.Query.DefaultResultLimit), LYNXDB_QUERY_DEFAULT_RESULT_LIMIT)
 	add("query.max_result_limit", fmt.Sprintf("%d", cfg.Query.MaxResultLimit), fmt.Sprintf("%d", dflt.Query.MaxResultLimit), fmt.Sprintf("%d", fileCfg.Query.MaxResultLimit), LYNXDB_QUERY_MAX_RESULT_LIMIT)
-	add("query.max_query_length", strconv.Itoa(cfg.Query.MaxQueryLength), strconv.Itoa(dflt.Query.MaxQueryLength), strconv.Itoa(fileCfg.Query.MaxQueryLength), LYNXDB_QUERY_MAX_QUERY_LENGTH)
+	add("query.max_query_length", strconv.Itoa(cfg.Query.MaxQueryLength), strconv.Itoa(dflt.Query.MaxQueryLength), strconv.Itoa(fileCfg.Query.MaxQueryLength), "")
 
 	// Ingest.
 	add("ingest.max_body_size", cfg.Ingest.MaxBodySize.String(), dflt.Ingest.MaxBodySize.String(), fileCfg.Ingest.MaxBodySize.String(), LYNXDB_INGEST_MAX_BODY_SIZE)
@@ -116,7 +116,7 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	// HTTP.
 	durationEntry("http.idle_timeout", cfg.HTTP.IdleTimeout, dflt.HTTP.IdleTimeout, fileCfg.HTTP.IdleTimeout, LYNXDB_HTTP_IDLE_TIMEOUT)
 	durationEntry("http.shutdown_timeout", cfg.HTTP.ShutdownTimeout, dflt.HTTP.ShutdownTimeout, fileCfg.HTTP.ShutdownTimeout, LYNXDB_HTTP_SHUTDOWN_TIMEOUT)
-	durationEntry("http.read_header_timeout", cfg.HTTP.ReadHeaderTimeout, dflt.HTTP.ReadHeaderTimeout, fileCfg.HTTP.ReadHeaderTimeout, LYNXDB_HTTP_READ_HEADER_TIMEOUT)
+	durationEntry("http.read_header_timeout", cfg.HTTP.ReadHeaderTimeout, dflt.HTTP.ReadHeaderTimeout, fileCfg.HTTP.ReadHeaderTimeout, "")
 	add("http.rate_limit", fmt.Sprintf("%.2f", cfg.HTTP.RateLimit), fmt.Sprintf("%.2f", dflt.HTTP.RateLimit), fmt.Sprintf("%.2f", fileCfg.HTTP.RateLimit), LYNXDB_HTTP_RATE_LIMIT)
 
 	// Syslog.
