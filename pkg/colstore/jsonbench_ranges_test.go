@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math/rand"
+	"os"
 	"reflect"
 	"testing"
 
@@ -317,8 +318,8 @@ func (w *rangeWorker) fillDids(c *rangeCursor) bool {
 }
 
 // useKeyStats lets a block inside one group be counted from the part's index
-// alone; tests turn it off to compare the answers.
-var useKeyStats = true
+// alone; LYNXDB_BENCH_KEY_STATS=0 and tests turn it off to compare.
+var useKeyStats = os.Getenv("LYNXDB_BENCH_KEY_STATS") != "0"
 
 // countByIndex counts block i of p, which lies inside the range, from the
 // part's index when the index says that the block holds one group and only
