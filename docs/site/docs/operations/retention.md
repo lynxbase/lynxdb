@@ -37,7 +37,7 @@ A duration is a Go duration (`6h`, `90m`) or a number of days (`7d`, `90d`, `365
 Events are partitioned by their time. `storage.partition` sets the span of a partition (`24h` by default); partitions are aligned to the Unix epoch, so with the default each partition covers one UTC day.
 
 1. A retention pass runs when the server starts and then once a minute.
-2. It removes from every index the partitions that end at or before `now - retention`.
+2. It removes from every index the partitions that end at or before the cutoff, `now - retention`.
 3. A removed partition's part files are deleted once no running query reads them.
 
 This means:
@@ -45,6 +45,7 @@ This means:
 - Deletion happens a whole partition at a time. With `retention: 7d` and daily partitions, the events of a day are deleted once that day ended more than 7 days ago, so the oldest events kept are up to 8 days old.
 - A smaller `storage.partition` makes deletion finer, at the cost of more partitions for the store to keep apart.
 - Retention applies to every index alike.
+- Retention goes by the time of each event, not the time it arrived. Events whose own time is already older than the retention period, such as those of an old log file, are removed by the next pass, within about a minute of arriving. Set `retention: 0s` on a server that should keep them.
 
 ## Monitoring Retention
 
@@ -62,11 +63,13 @@ lynxdb status
 lynxdb status --format json | jq '{total_events, storage_bytes, oldest_event}'
 ```
 
-The server logs every pass that deletes events:
+The server logs every index from which a pass removes events, at `WARN`, with the number of events and the cutoff in UTC:
 
 ```text
-time=2026-11-17T16:51:51.514+01:00 level=INFO msg="retention dropped events" events=26
+time=2026-11-17T17:03:37.221+01:00 level=WARN msg="retention removed events older than the cutoff" index=main events=26 cutoff=2026-11-16T16:03:37Z
 ```
+
+A pass that fails for an index logs `msg="retention failed"` with the index and the error, and the next pass tries again.
 
 ## Changing Retention
 

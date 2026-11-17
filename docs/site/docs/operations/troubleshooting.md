@@ -134,6 +134,8 @@ A field of a nested JSON object is a column named by its path, such as `http.sta
 
 Events without a time field get the time they arrived. A query with `--since` or `earliest=` selects by that time, so events loaded from an old file may fall outside the range; see [`storage.time_fields`](/docs/configuration/storage).
 
+Events whose own time is older than `retention` (default `7d`) are removed by the next retention pass, within about a minute of arriving. The server log then shows `msg="retention removed events older than the cutoff"` for the index. Set `retention: 0s` to keep old events; see [Retention](/docs/operations/retention).
+
 ### "Query timeout"
 
 **Symptoms:** Exit code 5 (timeout).
@@ -211,6 +213,7 @@ A query syncs the database before it runs, so it sees every event whose ingest r
 - Check the response of the ingest request: `accepted` counts the events stored. A line that is not a JSON object is kept as an event holding the text in `_raw`, so search for its text rather than for fields.
 - Check the index: `?index=` and `X-Index` choose it for `/api/v1/ingest` and `/api/v1/ingest/raw`, the bulk `_index` for Elasticsearch shippers. `lynxdb indexes` lists the names.
 - Check the time: an event's time comes from the first of `storage.time_fields` it holds. A query with a time range leaves out events whose time falls outside it.
+- Check retention: events whose time is older than `retention` are removed within about a minute of arriving.
 
 ### `400 VALIDATION_ERROR` on an Index Name
 
@@ -218,7 +221,13 @@ Index names hold letters, digits, `.`, `-` and `_`, and do not start with a dot.
 
 ### `413` or Truncated Bodies
 
-A body larger than `ingest.max_body_size` is refused with `413`. Raw ingest that reaches the limit part-way keeps the lines read so far and answers with `"truncated": true`. Send smaller batches or raise `ingest.max_body_size` and restart.
+A body over its limit is refused with `413`, and the message names the setting that sets the limit:
+
+```json
+{"error":{"reason":"compressed body exceeds limit 1024 set by ingest.max_body_size","type":"request_body_too_large"},"status":413}
+```
+
+`POST /api/v1/ingest` and `/api/v1/ingest/raw` are bounded by `ingest.max_body_size`, compressed or not. The other routes (Elasticsearch bulk, Splunk HEC, OTLP on the API port) are bounded by `ingest.limits.max_compressed_body_bytes` and `ingest.limits.max_decompressed_body_bytes`. A raw body sent without a length that runs past the limit part-way keeps the lines already stored and answers with `"truncated": true`. Send smaller batches, or raise the setting and restart.
 
 ## Storage Issues
 
