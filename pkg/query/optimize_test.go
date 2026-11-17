@@ -60,6 +60,8 @@ func TestOptionsNoEngineRunsFailToCompile(t *testing.T) {
 	for q, option := range map[string]string{
 		"source=logs | patterns _raw method=brain":                       "method=brain",
 		"source=logs | eventstats bucket_nullable=false count() by host": "bucket_nullable=false",
+		"source=logs | streamstats reset_before=(status > 300) count()":  "reset_before",
+		"source=logs | streamstats reset_after=(status > 300) count()":   "reset_after",
 	} {
 		_, err := Compile(q)
 		pe, ok := ppl.AsError(err)

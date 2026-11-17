@@ -265,13 +265,13 @@ c5a8c7a3c43531c0	source = table | streamstats current = false window = 2 max(a)
 d57a86f4e77deba5	source = table | streamstats dc(field) as distinct_count
 f0ee416a4e033ac6	source = table | streamstats distinct_count(category) by region
 6a91df288eb5311b	source = table | streamstats current=false window=2 global=false avg(a) by b
-379519f079f93e90	source = table | streamstats window=2 reset_before=a>31 avg(b)
-4752e63e2361d40b	source = table | streamstats current=false reset_after=a>31 avg(b) by c
+83983f15b6f7bcb8	source = table | streamstats window=2 reset_before=a>31 avg(b)
+d59108d678b10493	source = table | streamstats current=false reset_after=a>31 avg(b) by c
 38e8a3a6277bc2de	source=otellogs | where severityText IN ('ERROR', 'WARN') | sort `resource.attributes.service.name` | streamstats count() as running_count by `resource.attributes.service.name` | fields `resource.attributes.service.name`, severityText, running_count
 1a9a5d2b76c7e531	source=otellogs | sort @timestamp | streamstats current=false window=2 max(severityNumber) as prev_max_severity | fields @timestamp, severityText, severityNumber, prev_max_severity | head 6
 bed1f91dac259e02	source=state_country | streamstats window=2 global=true avg(age) as running_avg by country
 80e09ae0cbafa390	source=state_country | streamstats window=2 global=false avg(age) as running_avg by country
-72593650e41f8f3e	source=state_country | streamstats current=false reset_before=age>34 reset_after=age<25 avg(age) as avg_age by country
+8715025aa855681a	source=state_country | streamstats current=false reset_before=age>34 reset_after=age<25 avg(age) as avg_age by country
 48e42602b879e23a	source=accounts | streamstats bucket_nullable=false count() as cnt by employer | fields account_number, firstname, employer, cnt
 1119ffaaebb7e964	source=accounts | streamstats bucket_nullable=true count() as cnt by employer | fields account_number, firstname, employer, cnt
 c27c0ea59cba792e	source = outer | where a in [ source = inner | fields b ]

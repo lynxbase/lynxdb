@@ -86,6 +86,8 @@ func TestCompileErrors(t *testing.T) {
 		{"source=t | patterns body method=BRAIN mode=aggregation", ErrUnsupportedFeature, "patterns method=brain is not supported"},
 		{"source=t | eventstats bucket_nullable=false count() by host", ErrUnsupportedFeature, "eventstats bucket_nullable=false is not supported"},
 		{"source=t | streamstats count() by host bucket_nullable=false", ErrUnsupportedFeature, "streamstats bucket_nullable=false is not supported"},
+		{"source=t | streamstats reset_before=status > 300 count()", ErrUnsupportedFeature, "streamstats reset_before is not supported"},
+		{"source=t | streamstats reset_after=(status > 300) count() as n by host", ErrUnsupportedFeature, "streamstats reset_after is not supported"},
 	}
 	for _, c := range cases {
 		_, err := Compile(c.q)

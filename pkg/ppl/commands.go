@@ -613,16 +613,7 @@ func (c *compiler) windowStats(st *pipe, n *ast.StatsCommand) error {
 			}
 			global = v
 		case "reset_before", "reset_after":
-			x := c.ectx(s)
-			cond, err := x.expr(a.Value)
-			if err != nil {
-				return err
-			}
-			if a.Name == "reset_before" {
-				w.Frame.ResetBefore = cond
-			} else {
-				w.Frame.ResetAfter = cond
-			}
+			return unsupportedFeature(a.Value, "streamstats %s is not supported", a.Name)
 		case "time_window":
 			return unsupportedFeature(a.Value, "streamstats time_window is not supported")
 		}
