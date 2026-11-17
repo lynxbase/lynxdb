@@ -1,0 +1,1 @@
+source=t | where match(message, 'connection refused') and match(host, 'web 01', operator='AND', boost=2.0) and match_phrase(message, 'good morning') and match_phrase(message, 'Milne') and match_phrase_prefix(agent, 'crypto') and match_phrase_prefix(author, 'Alexander Mil') and match(message, '...')

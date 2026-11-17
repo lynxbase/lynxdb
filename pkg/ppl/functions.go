@@ -21,6 +21,7 @@ type FuncSupport struct {
 	// Unsupported explains why LynxDB does not execute the function.
 	Unsupported string
 	lower       func(x *ectx, n *ast.Call) (ir.Expr, error)
+	namedArgs   bool
 }
 
 // The PPL scalar function catalog: every PPL function name, mapped to an IR
@@ -224,8 +225,8 @@ func init() {
 		return x.checkedCall(n, "transform", []ir.Expr{arr, &ir.Lambda{Params: []*ir.LambdaParam{param}, Body: body}})
 	})
 
-	unsupportedFunc("LynxDB has no relevance scoring; use the search command, or where with like or regexp_match",
-		"match", "match_phrase", "match_phrase_prefix", "match_bool_prefix", "simple_query_string", "multi_match", "query_string")
+	unsupportedFunc("LynxDB has no relevance scoring; use match, match_phrase or match_phrase_prefix on one field, the search command, or where with like or regexp_match",
+		"match_bool_prefix", "simple_query_string", "multi_match", "query_string")
 	unsupportedFunc("LynxDB has no GeoIP database", "geoip")
 }
 
@@ -268,7 +269,7 @@ func (x *ectx) call(n *ast.Call) (ir.Expr, error) {
 	if spec.Unsupported != "" {
 		return nil, errAt(ErrUnsupportedFunction, n, "function %s is not supported: %s", n.Name, spec.Unsupported)
 	}
-	if len(n.NamedArgs) > 0 {
+	if len(n.NamedArgs) > 0 && !spec.namedArgs {
 		return nil, semanticErr(n, "%s does not take named arguments", n.Name)
 	}
 	if spec.lower != nil {

@@ -50,6 +50,26 @@ and has no index-specific behaviour, but the optimizer passes its indexable
 conjuncts (equality with a string, raw-text searches) to the scan for
 pruning in the same way.
 
+## Searching one field
+
+The relevance functions search the tokens of one column, case-insensitively,
+with the same tokens as the search command (maximal runs of letters and
+digits). LynxDB computes no relevance scores, so they are plain filters.
+
+| Function | LynxDB semantics |
+| --- | --- |
+| `match(f, 'a b')` | the column contains the token `a` or the token `b`; with `operator='AND'`, both |
+| `match_phrase(f, 'a b')` | the phrase occurs in the column at token boundaries |
+| `match_phrase_prefix(f, 'cry')` | a token of the column starts with `cry` |
+| `match_phrase_prefix(f, 'a b')` | the phrase occurs from a token boundary, its last token as a prefix |
+
+`match` joins several tokens with OR by default, as OpenSearch does.
+`boost` is accepted and ignored. `zero_terms_query` (`none` or `all`)
+decides the result when the text has no tokens; the default `none` matches
+nothing. Other options, such as `slop` or `fuzziness`, are rejected as
+unsupported. `multi_match`, `simple_query_string`, `query_string` and
+`match_bool_prefix` are not supported.
+
 ## Data types
 
 | PPL type | LynxDB value | Notes |
