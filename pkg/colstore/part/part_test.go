@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"reflect"
 	"strings"
@@ -501,5 +502,73 @@ func TestWriterResetWritesTheSamePartAgain(t *testing.T) {
 	write(w, &again, Options{}, docs)
 	if !bytes.Equal(again.Bytes(), fresh.Bytes()) {
 		t.Fatalf("a reused writer wrote %d bytes that differ from the %d of a new one", again.Len(), fresh.Len())
+	}
+}
+
+func TestDecodePackedHoldsTheValuesOfMarkedRowsInOrder(t *testing.T) {
+	p := buildPart(t, sampleDocs(700), 300, Options{})
+	var b Block
+	var byRow, packed vec.Column
+	sparse := 0
+	for i := 0; i < p.NumBlocks(); i++ {
+		if err := p.OpenBlock(i, &b); err != nil {
+			t.Fatal(err)
+		}
+		refs := b.Columns()
+		for j := range refs {
+			ref := &refs[j]
+			if err := b.Decode(ref, &byRow); err != nil {
+				t.Fatal(err)
+			}
+			if err := b.DecodePacked(ref, &packed); err != nil {
+				t.Fatal(err)
+			}
+			if packed.Rows != byRow.Rows || packed.Layout != byRow.Layout || (packed.Valid == nil) != (byRow.Valid == nil) {
+				t.Fatalf("block %d column %d: packed %d rows, layout %d", i, j, packed.Rows, packed.Layout)
+			}
+			if byRow.Valid != nil {
+				sparse++
+			}
+			slot := 0
+			for row := 0; row < b.Rows; row++ {
+				if !byRow.IsValid(row) {
+					if packed.IsValid(row) {
+						t.Fatalf("block %d column %d: packed marks row %d", i, j, row)
+					}
+
+					continue
+				}
+				at := row
+				if byRow.Valid != nil {
+					at = slot
+				}
+				slot++
+				name := p.Paths()[ref.PathID]
+				switch ref.Kind {
+				case vec.KindBool:
+					if packed.Bool(at) != byRow.Bool(row) {
+						t.Fatalf("%s: row %d differs", name, row)
+					}
+				case vec.KindInt:
+					if packed.Int(at) != byRow.Int(row) {
+						t.Fatalf("%s: row %d differs", name, row)
+					}
+				case vec.KindFloat:
+					if math.Float64bits(packed.Float(at)) != math.Float64bits(byRow.Float(row)) {
+						t.Fatalf("%s: row %d differs", name, row)
+					}
+				case vec.KindString, vec.KindVariant:
+					if !bytes.Equal(packed.Bytes(at), byRow.Bytes(row)) {
+						t.Fatalf("%s: row %d differs", name, row)
+					}
+				}
+			}
+			if slot != ref.Count {
+				t.Fatalf("block %d column %d: %d values, want %d", i, j, slot, ref.Count)
+			}
+		}
+	}
+	if sparse == 0 {
+		t.Fatal("no column has gaps")
 	}
 }

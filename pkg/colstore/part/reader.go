@@ -448,6 +448,16 @@ func grow[T any](s []T, n int) []T {
 // Decode materializes a column into dst, one slot per row, leaving dst with
 // no reference to the part's bytes.
 func (b *Block) Decode(ref *ColumnRef, dst *vec.Column) error {
+	return b.decode(ref, dst, false)
+}
+
+// DecodePacked is Decode with one slot per value: slot i of a column with
+// gaps holds the value of the i-th row that Valid marks.
+func (b *Block) DecodePacked(ref *ColumnRef, dst *vec.Column) error {
+	return b.decode(ref, dst, true)
+}
+
+func (b *Block) decode(ref *ColumnRef, dst *vec.Column, packed bool) error {
 	if ref.bad {
 		return ErrCorrupt
 	}
@@ -468,12 +478,17 @@ func (b *Block) Decode(ref *ColumnRef, dst *vec.Column) error {
 			return err
 		}
 	}
+	// A packed column is laid out as one without gaps over its values.
+	slots := rows
+	if packed && sparse {
+		slots, sparse = count, false
+	}
 
 	switch ref.Kind {
 	case vec.KindNull:
 		return nil
 	case vec.KindBool:
-		return b.decodeBools(ref, chunk, sparse, dst)
+		return b.decodeBools(ref, chunk, sparse, slots, dst)
 	case vec.KindInt:
 		if ref.enc == encConst {
 			dst.Layout = vec.Const
@@ -498,10 +513,10 @@ func (b *Block) Decode(ref *ColumnRef, dst *vec.Column) error {
 
 		return nil
 	case vec.KindFloat:
-		return b.decodeFloats(ref, chunk, sparse, dst)
+		return b.decodeFloats(ref, chunk, sparse, slots, dst)
 	}
 
-	return b.decodeBytes(ref, chunk, sparse, dst)
+	return b.decodeBytes(ref, chunk, sparse, slots, dst)
 }
 
 // readPresence fills dst.Valid from the presence section at the start of
@@ -563,8 +578,8 @@ func (b *Block) positions(valid vec.Bitmap) []uint32 {
 	return b.pos
 }
 
-func (b *Block) decodeBools(ref *ColumnRef, chunk []byte, sparse bool, dst *vec.Column) error {
-	rows, count := b.Rows, ref.Count
+func (b *Block) decodeBools(ref *ColumnRef, chunk []byte, sparse bool, rows int, dst *vec.Column) error {
+	count := ref.Count
 	if ref.enc == encConst {
 		if len(ref.constVal) != 1 {
 			return ErrCorrupt
@@ -598,8 +613,8 @@ func (b *Block) decodeBools(ref *ColumnRef, chunk []byte, sparse bool, dst *vec.
 	return nil
 }
 
-func (b *Block) decodeFloats(ref *ColumnRef, chunk []byte, sparse bool, dst *vec.Column) error {
-	rows, count := b.Rows, ref.Count
+func (b *Block) decodeFloats(ref *ColumnRef, chunk []byte, sparse bool, rows int, dst *vec.Column) error {
+	count := ref.Count
 	if ref.enc == encConst {
 		if len(ref.constVal) != 8 {
 			return ErrCorrupt
@@ -631,8 +646,8 @@ func (b *Block) decodeFloats(ref *ColumnRef, chunk []byte, sparse bool, dst *vec
 	return nil
 }
 
-func (b *Block) decodeBytes(ref *ColumnRef, chunk []byte, sparse bool, dst *vec.Column) error {
-	rows, count := b.Rows, ref.Count
+func (b *Block) decodeBytes(ref *ColumnRef, chunk []byte, sparse bool, rows int, dst *vec.Column) error {
+	count := ref.Count
 	switch ref.enc {
 	case encConst:
 		dst.Layout = vec.Const
@@ -673,7 +688,7 @@ func (b *Block) decodeBytes(ref *ColumnRef, chunk []byte, sparse bool, dst *vec.
 
 		return nil
 	case encDict:
-		return b.decodeDict(chunk, count, sparse, dst)
+		return b.decodeDict(chunk, count, sparse, rows, dst)
 	}
 
 	return ErrCorrupt
@@ -795,8 +810,7 @@ func (b *Block) readData(src []byte, dst *vec.Column) error {
 	return nil
 }
 
-func (b *Block) decodeDict(chunk []byte, count int, sparse bool, dst *vec.Column) error {
-	rows := b.Rows
+func (b *Block) decodeDict(chunk []byte, count int, sparse bool, rows int, dst *vec.Column) error {
 	size, n := binary.Uvarint(chunk)
 	if n <= 0 || size < 2 || size > maxDictSize {
 		return ErrCorrupt

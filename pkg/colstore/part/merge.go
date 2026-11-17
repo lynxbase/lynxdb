@@ -181,6 +181,8 @@ type mergeCursor struct {
 	// one of each path and kind of the part.
 	outs  []*shred.Column
 	slots []*shred.Column
+	// next is the slot of the next value of each column decoded packed.
+	next []uint32
 	// pathMap gives the destination's id of each path of the part.
 	pathMap []uint32
 }
@@ -325,7 +327,13 @@ func (c *mergeCursor) decode(j int) error {
 	if n := c.blk.dataSize(ref); n > 0 {
 		col.fit(int(n))
 	}
-	err := c.blk.Decode(ref, &col.Column)
+	// Key columns are read by row; the others only in row order.
+	var err error
+	if c.isKey[j] {
+		err = c.blk.Decode(ref, &col.Column)
+	} else {
+		err = c.blk.DecodePacked(ref, &col.Column)
+	}
 	if col.data != nil && cap(col.Data) != cap(col.data.b) {
 		// Decode had to replace the buffer, which is kept for the pool's sake.
 		col.Data = append(col.data.b[:0], col.Data...)
@@ -452,6 +460,7 @@ func (c *mergeCursor) decodeRows(m *merger) error {
 	n := len(c.refs)
 	c.outs = grow(c.outs, n)
 	clear(c.outs)
+	c.next = grow(c.next, n)
 	for i := range c.dense {
 		c.dense[i] = densePlan{}
 	}
@@ -493,6 +502,9 @@ func (c *mergeCursor) decodeRows(m *merger) error {
 			continue
 		}
 		unsorted = appendValid(unsorted, col.Valid, c.pos, c.end-c.pos, uint64(j))
+		if !c.isKey[j] {
+			c.next[j] = uint32(col.Valid.Rank(c.pos))
+		}
 	}
 	// A counting sort by row keeps the values of one column in row order.
 	for _, e := range unsorted {
@@ -563,7 +575,12 @@ func (c *mergeCursor) emit(m *merger, n int) error {
 	for end := uint64(a+n) << 32; c.nextEvent < len(c.events) && c.events[c.nextEvent] < end; c.nextEvent++ {
 		e := c.events[c.nextEvent]
 		row, j := int(e>>32), int(uint32(e))
-		copyValue(c.outs[j], &c.cols[j].Column, row, row+shift)
+		at := row
+		if !c.isKey[j] {
+			at = int(c.next[j])
+			c.next[j]++
+		}
+		copyValue(c.outs[j], &c.cols[j].Column, at, row+shift)
 	}
 	if c.times.Layout == vec.Flat {
 		out.AppendRows(c.times.Ints[a:a+n], m.raw)
