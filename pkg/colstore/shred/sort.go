@@ -17,6 +17,7 @@ type sortScratch struct {
 	inv    []uint32
 	packed []uint64
 	spare  []uint64
+	moved  []uint64
 	ranks  [][]uint32
 	slot   []uint32
 	order  []uint32
@@ -334,6 +335,11 @@ func (b *Batch) rankBytes(c *Column, dst []uint32, base uint32) uint32 {
 	return uint32(distinct)
 }
 
+// fewValues is the share of the rows, one in this many, under which the
+// values of a column are sorted by row instead of being found by a pass
+// over the rows.
+const fewValues = 32
+
 // permute moves every row perm[i] to position i.
 func (b *Batch) permute() {
 	s := b.sort
@@ -360,6 +366,21 @@ func (b *Batch) permute() {
 		s.order = s.order[:0]
 		if !c.Sparse && c.Count == n {
 			s.order = append(s.order, s.perm...)
+		} else if c.Count < n/fewValues {
+			// Few values are sorted by the row they move to, which costs
+			// less than a pass over all the rows.
+			s.moved = s.moved[:0]
+			for i := 0; i < c.Count; i++ {
+				s.moved = append(s.moved, uint64(s.inv[c.Row(i)])<<32|uint64(i))
+			}
+			slices.Sort(s.moved)
+			s.rows = s.rows[:0]
+			for _, m := range s.moved {
+				s.order = append(s.order, uint32(m))
+				s.rows = append(s.rows, uint32(m>>32))
+			}
+			c.Sparse = true
+			c.RowIDs = append(c.RowIDs[:0], s.rows...)
 		} else {
 			slot := s.slot[:n]
 			clear(slot)
