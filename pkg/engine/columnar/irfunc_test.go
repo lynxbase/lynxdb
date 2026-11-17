@@ -606,19 +606,31 @@ func against(t testing.TB, call *ir.Call, b irfunc.Builder, s shape, rows [][]ex
 		}
 		var got exec.Value
 		got, buf = native(args, buf[:0])
-		if !sameValue(got, want) && !(wildcard(call, args) && sameInAnyOrder(got, want)) {
-			in := make([]string, len(args))
-			for i, v := range args {
-				in[i] = show(v)
-				if !s.isLit[i] && s.types[i].Kind != ir.KindAny {
-					in[i] += " as " + s.types[i].String()
-				}
-			}
-			return fmt.Sprintf("%s(%s): native %s, row engine %s", call.Func.Name, strings.Join(in, ", "), show(got), show(want)), true
+		if sameValue(got, want) || (wildcard(call, args) && sameInAnyOrder(got, want)) {
+			continue
 		}
+		in := make([]string, len(args))
+		for i, v := range args {
+			in[i] = show(v)
+			if !s.isLit[i] && s.types[i].Kind != ir.KindAny {
+				in[i] += " as " + s.types[i].String()
+			}
+		}
+		return fmt.Sprintf("%s(%s): native %s, row engine %s", call.Func.Name, strings.Join(in, ", "), show(got), show(want)), true
 	}
 
 	return "", true
+}
+
+// TestRowEngineBugs requires that the bugs listed name functions that
+// exist, so the list follows the registry.
+func TestRowEngineBugs(t *testing.T) {
+	for _, b := range rowEngineBugs {
+		name, _, _ := strings.Cut(b.function, " ")
+		if _, ok := ir.LookupFunc(name); !ok && name != "every" {
+			t.Errorf("%s is not a function", b.function)
+		}
+	}
 }
 
 func TestNativeFunctions(t *testing.T) {
