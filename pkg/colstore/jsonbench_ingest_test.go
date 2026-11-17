@@ -28,8 +28,9 @@ import (
 // LYNXDB_BENCH_FLUSH_LEVEL and LYNXDB_BENCH_LEVEL the compression effort of
 // flushed runs (fastest by default) and of merged parts (fast by default);
 // compact is the third choice. LYNXDB_BENCH_PARTITION, a duration such as
-// 1h, partitions the table by time, and LYNXDB_BENCH_MERGE_BLOCKS bounds the
-// decoded blocks that merges hold at once.
+// 1h, partitions the table by time, LYNXDB_BENCH_MERGE_BLOCKS bounds the
+// decoded blocks that merges hold at once, and LYNXDB_BENCH_NO_PACKING
+// leaves identifier-like strings to the general codec.
 func TestJSONBenchIngest(t *testing.T) {
 	dir, path := os.Getenv("LYNXDB_BENCH_DIR"), os.Getenv("LYNXDB_BENCH_NDJSON")
 	if dir == "" || path == "" || os.Getenv("LYNXDB_BENCH_INGEST") == "" {
@@ -170,6 +171,7 @@ func ingestOptions(t testing.TB) StoreOptions {
 		}
 		opts.Partition = width
 	}
+	opts.Part.NoPacking = os.Getenv("LYNXDB_BENCH_NO_PACKING") != ""
 	opts.FlushLevel = benchLevel(t, "LYNXDB_BENCH_FLUSH_LEVEL", part.LevelFastest)
 	opts.Part.Level = benchLevel(t, "LYNXDB_BENCH_LEVEL", part.LevelFast)
 	switch s := os.Getenv("LYNXDB_BENCH_SORT"); s {
