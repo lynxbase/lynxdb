@@ -7,6 +7,7 @@ package query
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/engine/physical"
@@ -128,6 +129,23 @@ func Run(ctx context.Context, c *Compiled, store physical.EventStore, opts Optio
 		return nil, err
 	}
 	return pipeline.CollectAll(ctx, iter)
+}
+
+// Explain renders the logical and optimized plans of a compiled query and
+// the optimizer rules that rewrote it.
+func Explain(c *Compiled) string {
+	var b strings.Builder
+	b.WriteString("Logical plan:\n")
+	b.WriteString(ir.Render(c.Logical))
+	b.WriteString("\nOptimized plan:\n")
+	b.WriteString(ir.Render(c.Plan))
+	if len(c.Applied) > 0 {
+		b.WriteString("\nOptimizer rules:\n")
+		for _, a := range c.Applied {
+			fmt.Fprintf(&b, "  %s x%d\n", a.Rule, a.Count)
+		}
+	}
+	return b.String()
 }
 
 // Execute compiles and runs a query over an in-memory event store.
