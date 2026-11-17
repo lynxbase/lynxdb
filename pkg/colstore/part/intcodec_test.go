@@ -54,6 +54,32 @@ func TestIntCodecRoundTrip(t *testing.T) {
 	}
 }
 
+// TestIntCodecTakesOutACommonFactor requires that values that are whole
+// multiples above their least take the space of the multiples.
+func TestIntCodecTakesOutACommonFactor(t *testing.T) {
+	r := rand.New(rand.NewSource(3))
+	const n = 4096
+	for _, factor := range []int64{2, 7, 1000, 1_000_000, 1_000_000_000, 1 << 40} {
+		for _, base := range []int64{0, -12345, 1_700_000_000_000_000_000, math.MinInt64 + 5} {
+			vals, counts := make([]int64, n), make([]int64, n)
+			for i := range vals {
+				counts[i] = r.Int63n(1 << 20)
+				vals[i] = base + counts[i]*factor
+			}
+			counts[0], vals[0] = 0, base
+			counts[1], vals[1] = 1, base+factor
+			size, plain := roundTripInts(t, "multiples", vals), roundTripInts(t, "counts", counts)
+			if size > plain+24 {
+				t.Errorf("multiples of %d above %d took %d bytes, their counts %d", factor, base, size, plain)
+			}
+		}
+	}
+	roundTripInts(t, "the widest span", append(make([]int64, 30), math.MinInt64, math.MaxInt64-1, 0, 2, -2))
+	if got := commonFactor([]int64{10, 16, 22, 13}, 10); got != 3 {
+		t.Errorf("the common factor of distances 0, 6, 12, 3 is %d", got)
+	}
+}
+
 func TestIntCodecPicksCompactModes(t *testing.T) {
 	r := rand.New(rand.NewSource(2))
 	const n = 16384
@@ -95,7 +121,11 @@ func TestReadIntsRejectsTruncatedSections(t *testing.T) {
 	for i := range vals {
 		vals[i] = int64(i*i) - 9000
 	}
-	for _, src := range [][]int64{vals, {5, 5, 5, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5}} {
+	thousands := make([]int64, 200)
+	for i := range thousands {
+		thousands[i] = int64(i*i%977) * 1000
+	}
+	for _, src := range [][]int64{vals, thousands, {5, 5, 5, 6, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5}} {
 		enc := appendInts(nil, src, &blobCodec{}, &e)
 		for cut := 0; cut < len(enc); cut++ {
 			if _, _, err := readInts(nil, enc[:cut], len(src), &d); err == nil {
