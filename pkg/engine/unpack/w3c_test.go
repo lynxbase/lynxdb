@@ -6,8 +6,15 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
+// newW3CParser returns a W3CParser configured by a #Fields: directive.
+func newW3CParser(header string) *W3CParser {
+	p := &W3CParser{}
+	_ = p.Parse("#Fields: "+header, func(string, event.Value) bool { return true })
+	return p
+}
+
 func TestW3CParser_Basic(t *testing.T) {
-	p := NewW3CParser("date time s-ip cs-method cs-uri-stem sc-status")
+	p := newW3CParser("date time s-ip cs-method cs-uri-stem sc-status")
 
 	input := `2026-02-14 14:52:01 10.0.0.1 GET /api/health 200`
 
@@ -70,7 +77,7 @@ func TestW3CParser_EmbeddedFieldsDirective(t *testing.T) {
 }
 
 func TestW3CParser_MissingValues(t *testing.T) {
-	p := NewW3CParser("date time cs-uri-stem sc-status sc-bytes")
+	p := newW3CParser("date time cs-uri-stem sc-status sc-bytes")
 
 	// "-" represents missing value in W3C format.
 	fields := make(map[string]event.Value)
@@ -91,7 +98,7 @@ func TestW3CParser_MissingValues(t *testing.T) {
 }
 
 func TestW3CParser_CommentLines(t *testing.T) {
-	p := NewW3CParser("date time")
+	p := newW3CParser("date time")
 
 	// Comment lines are skipped.
 	err := p.Parse("#Version: 1.0", func(key string, val event.Value) bool {
@@ -121,7 +128,7 @@ func TestW3CParser_NoFields(t *testing.T) {
 }
 
 func TestW3CParser_FewerValuesThanFields(t *testing.T) {
-	p := NewW3CParser("date time method uri status")
+	p := newW3CParser("date time method uri status")
 
 	fields := make(map[string]event.Value)
 	err := p.Parse("2026-01-01 00:00:00 GET", func(key string, val event.Value) bool {
@@ -138,7 +145,7 @@ func TestW3CParser_FewerValuesThanFields(t *testing.T) {
 }
 
 func TestW3CParser_Empty(t *testing.T) {
-	p := NewW3CParser("date time")
+	p := newW3CParser("date time")
 	err := p.Parse("", func(key string, val event.Value) bool {
 		t.Fatalf("should not emit on empty input")
 		return true
@@ -152,23 +159,5 @@ func TestW3CParser_Name(t *testing.T) {
 	p := &W3CParser{}
 	if p.Name() != "w3c" {
 		t.Errorf("Name: got %q, want %q", p.Name(), "w3c")
-	}
-}
-
-func TestW3CParser_HeaderWithPrefix(t *testing.T) {
-	// NewW3CParser should handle both with and without "#Fields:" prefix.
-	p := NewW3CParser("#Fields: date time status")
-
-	fields := make(map[string]event.Value)
-	err := p.Parse("2026-01-01 12:00:00 404", func(key string, val event.Value) bool {
-		fields[key] = val
-		return true
-	})
-	if err != nil {
-		t.Fatalf("Parse: %v", err)
-	}
-
-	if fields["status"].AsInt() != 404 {
-		t.Errorf("status: got %v, want 404", fields["status"])
 	}
 }
