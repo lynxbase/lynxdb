@@ -520,6 +520,8 @@ type Block struct {
 	parsed vec.Bitmap
 	d      decodeScratch
 	pos    []uint32
+	// present holds the rows of a sparse column searched as it is stored.
+	present vec.Column
 }
 
 // OpenBlock points b at block i of p.
@@ -1542,9 +1544,9 @@ func (r *reader) uint64() uint64 {
 	return 0
 }
 
-// FindEqual appends to dst the numbers of the values of a string column
-// that equal want, read from the form they are stored in; it reports false
-// for a column stored in a form that has to be decoded to be searched.
+// FindEqual appends to dst the rows whose value of a string column equals
+// want, read from the form the values are stored in; it reports false for a
+// column stored in a form that has to be decoded to be searched.
 func (b *Block) FindEqual(ref *ColumnRef, want []byte, dst []uint32) ([]uint32, bool, error) {
 	if ref.bad {
 		return dst, false, ErrCorrupt
@@ -1557,7 +1559,8 @@ func (b *Block) FindEqual(ref *ColumnRef, want []byte, dst []uint32) ([]uint32, 
 		b.part.readAhead(b.start+int(ref.off), int(ref.length))
 	}
 	chunk, ok := whole, true
-	if ref.flags&flagSparse != 0 && len(chunk) > 0 {
+	sparse := ref.flags&flagSparse != 0
+	if sparse && len(chunk) > 0 {
 		chunk, _, ok = skipBlob(chunk[1:])
 	}
 	if ok {
@@ -1575,7 +1578,22 @@ func (b *Block) FindEqual(ref *ColumnRef, want []byte, dst []uint32) ([]uint32, 
 	if crc32.Checksum(whole, castagnoli) != ref.crc {
 		return dst, false, ErrCorrupt
 	}
+	from := len(dst)
 	dst, err := findPacked(dst, chunk[n+m:n+m+int(size)], int(rawLen), want)
+	if err != nil || !sparse || len(dst) == from {
+		return dst, err == nil, err
+	}
+	// The values found are numbered among the rows that hold one.
+	if _, err := b.readPresence(whole, ref.Count, &b.present); err != nil {
+		return dst[:from], false, err
+	}
+	rows := b.positions(b.present.Valid)
+	for i, v := range dst[from:] {
+		if int(v) >= len(rows) {
+			return dst[:from], false, ErrCorrupt
+		}
+		dst[from+i] = rows[v]
+	}
 
-	return dst, err == nil, err
+	return dst, true, nil
 }
