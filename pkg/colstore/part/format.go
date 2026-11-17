@@ -90,7 +90,15 @@ const (
 	encTime  = 4 // the time of every row in a coarser unit, whose power of ten is the chunk
 )
 
-const flagSparse = 1
+const (
+	flagSparse = 1
+	// flagCounts marks a dictionary column that holds, after its entries,
+	// the number of rows of each.
+	flagCounts = 2
+)
+
+// maxCounted is the most entries of a dictionary whose rows are counted.
+const maxCounted = 256
 
 // Presence modes of a sparse column.
 const (
