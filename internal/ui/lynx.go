@@ -14,15 +14,6 @@ const (
 	LynxSad   LynxMood = "sad"
 )
 
-func LynxFrame(mood LynxMood) string {
-	frames := LynxFrames(mood)
-	if len(frames) == 0 {
-		return ""
-	}
-
-	return frames[len(frames)-1]
-}
-
 func LynxFrames(mood LynxMood) []string {
 	switch mood {
 	case LynxSad:
