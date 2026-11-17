@@ -137,6 +137,8 @@ func TestRun(t *testing.T) {
 		{"tables of a pattern", "source=`logs*` | stats count() as n by host | sort host", "host=a n=3; host=b n=2; host=c n=1", true},
 		{"two tables", "source=logs, hosts | stats count() as n", "n=7", true},
 		{"events of two tables", "source=logs-old, hosts | eval h = md5(host) | stats count() as n by h | sort h | head 1", "h=0cc175b9c0f1b6a831c399e269772661 n=1", true},
+		{"a number searched in every field", `source=logs 404 | fields msg`, "msg=not found", true},
+		{"a number and a word searched in every field", `source=logs 200 served NOT 500 | stats count() as n`, "n=2", true},
 		{"a table that is not there", `source=nope | stats count() as n`, "n=0", true},
 		{"a join of two tables", `source=logs | join left=l right=r ON l.host = r.host hosts | stats count() as n by dc | sort dc`, "dc=east n=3; dc=west n=2", false},
 		{"a lookup in another table", `source=logs | lookup hosts host OUTPUT dc | stats count() as n by dc | sort dc`, "dc=east n=3; dc=west n=2", false},

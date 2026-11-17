@@ -377,9 +377,13 @@ type pred struct {
 	lit  Value
 	pat  tokenfilter.Pattern
 	// tokens holds the hashes of the tokens that a string matching the
-	// pattern of a predAny has.
-	tokens []uint64
-	args   []*pred
+	// pattern of a predAny has; numbered is set when the pattern is a word
+	// of digits, which the numbers of a row match as well, and number is
+	// what it spells.
+	tokens   []uint64
+	number   int64
+	numbered bool
+	args     []*pred
 	// onInt and onFloat say which numeric columns a predNum reads; lo, hi
 	// and ne state the comparison for integers, and none that no integer
 	// satisfies it.
@@ -482,7 +486,10 @@ func (q *query) pred(e *Expr, depth int) (*pred, error) {
 
 		return &pred{kind: predConst, lit: e.Value}, nil
 	case OpMatchAny:
-		return &pred{kind: predAny, pat: e.Pattern, tokens: e.Pattern.Tokens(nil), cost: 64}, nil
+		p := &pred{kind: predAny, pat: e.Pattern, tokens: e.Pattern.Tokens(nil), cost: 64}
+		p.number, p.numbered = e.Pattern.Number()
+
+		return p, nil
 	case OpExists, OpIsNull, OpIsMissing:
 		if len(e.Args) == 1 {
 			if p := q.presence(e); p != nil {
@@ -725,7 +732,11 @@ func conjunctTokens(c *Expr, dst []colstore.ColumnTokens) []colstore.ColumnToken
 	var set colstore.ColumnTokens
 	switch c.Op {
 	case OpMatchAny:
-		set.Hashes = c.Pattern.Tokens(nil)
+		// A word of digits is also a number of a row, which no token
+		// filter knows of.
+		if _, number := c.Pattern.Number(); !number {
+			set.Hashes = c.Pattern.Tokens(nil)
+		}
 	case OpMatch:
 		if len(c.Args) == 1 && c.Args[0] != nil && c.Args[0].Op == OpColumn &&
 			(c.Args[0].Kind == vec.KindString || c.Args[0].Kind == KindAny) {

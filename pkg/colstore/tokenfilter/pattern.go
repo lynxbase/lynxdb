@@ -54,6 +54,22 @@ func Substring(needle string) Pattern { return newPattern(needle, false, false) 
 // IgnoreCase returns the pattern that matches without regard to letter
 // case: an ASCII letter of the needle matches both of its cases, any other
 // letter the runes with the same lowercase form.
+// Number returns the number that a pattern for a whole word of digits
+// spells, which a search of every field also looks for among numbers.
+func (p Pattern) Number() (n int64, ok bool) {
+	if p.re != nil || !p.wordStart || !p.wordEnd || len(p.needle) == 0 || len(p.needle) > 18 {
+		return 0, false
+	}
+	for _, c := range p.needle {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int64(c-'0')
+	}
+
+	return n, true
+}
+
 func (p Pattern) IgnoreCase() Pattern {
 	p.fold = true
 	p.needle = appendLower(nil, p.needle)

@@ -2,6 +2,8 @@ package exec
 
 import (
 	"bytes"
+	"github.com/lynxbase/lynxdb/pkg/colstore/part"
+	"math"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/variant"
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -306,11 +308,64 @@ func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
 			}
 		}
 	}
+	if p.numbered {
+		found, err := w.anyNumber(p.number, cols, m)
+		if err != nil {
+			return none, err
+		}
+		hit = hit || found
+	}
 	if !hit {
 		return none, nil
 	}
 
 	return some, nil
+}
+
+// anyNumber marks in m the rows that hold the number n in a numeric column:
+// an integer of that size, or a float whose whole part it is, as the text
+// of the number would hold the word. It reports whether there is such a row.
+func (w *worker) anyNumber(n int64, cols []part.ColumnRef, m []uint8) (bool, error) {
+	hit := false
+	whole := float64(n)
+	for i := range cols {
+		ref := &cols[i]
+		if ref.Count == 0 {
+			continue
+		}
+		switch ref.Kind {
+		case vec.KindInt:
+			if (n < ref.MinInt || n > ref.MaxInt) && (-n < ref.MinInt || -n > ref.MaxInt) {
+				continue
+			}
+		case vec.KindFloat:
+			if (ref.MaxFloat < whole || ref.MinFloat >= whole+1) && (ref.MinFloat > -whole || ref.MaxFloat <= -whole-1) {
+				continue
+			}
+		default:
+			continue
+		}
+		c := &w.anyCol
+		if err := w.b.Decode(ref, c); err != nil {
+			return false, err
+		}
+		w.decoded = true
+		for r := 0; r < w.rows; r++ {
+			if !c.IsValid(r) {
+				continue
+			}
+			if ref.Kind == vec.KindInt {
+				if v := c.Int(r); v != n && v != -n {
+					continue
+				}
+			} else if math.Trunc(math.Abs(c.Float(r))) != whole {
+				continue
+			}
+			m[r], hit = 0xFF, true
+		}
+	}
+
+	return hit, nil
 }
 
 // evalHas selects the rows that hold a value of one of the kinds of p.

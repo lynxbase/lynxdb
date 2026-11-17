@@ -605,8 +605,15 @@ func refTrue(e *exec.Expr, row refRow) bool {
 	case exec.OpNot:
 		return !refTrue(e.Args[0], row)
 	case exec.OpMatchAny:
+		number, numbered := e.Pattern.Number()
 		for _, v := range row {
 			if v.Kind == vec.KindString && e.Pattern.Match(v.Bytes) {
+				return true
+			}
+			// A word of digits is the size of an integer or the whole
+			// part of a float.
+			if numbered && ((v.Kind == vec.KindInt && (v.Int == number || v.Int == -number)) ||
+				(v.Kind == vec.KindFloat && math.Trunc(math.Abs(v.Float)) == float64(number))) {
 				return true
 			}
 			if v.Kind == vec.KindVariant {
