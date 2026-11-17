@@ -40,7 +40,7 @@ test-compat-otelcol:
 test-compat-splunk-hec:
 	go test -timeout 2m -tags=e2e -run "^TestE2E_Shipper_SplunkHEC" ./test/e2e/shippers/
 
-# Regenerate registry-driven docs (docs/site/docs/lynxflow/*, docs/grammar/lynxflow.ebnf).
+# Regenerate the PPL reference pages from the catalogs (docs/site/docs/ppl/{commands,functions,aggregations}.md).
 # Never commit a built docgen binary; always go run it.
 docs-gen:
 	go run ./internal/docgen
