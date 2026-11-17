@@ -32,7 +32,10 @@ type KeyRange struct {
 // KeyPlan is how the rows matching a key filter lie in the ordered parts of a
 // snapshot: in streams of parts whose key ranges follow one another.
 type KeyPlan struct {
-	prefix  []byte
+	prefix []byte
+	// columns is the number of sort key columns of the filter and the
+	// group, the ones rows must share to belong together.
+	columns int
 	parts   []*part.Part
 	streams [][]*part.Part
 	// Blocks and Rows count the blocks that can hold matching rows.
@@ -48,7 +51,7 @@ func (s *Snapshot) PlanKeyRanges(key KeyFilter, group []string) (*KeyPlan, bool)
 		return nil, false
 	}
 	paths := append(append([]string(nil), key.Paths...), group...)
-	plan := &KeyPlan{prefix: key.prefix()}
+	plan := &KeyPlan{prefix: key.prefix(), columns: len(paths)}
 	for _, h := range s.v.parts {
 		sk := h.SortKey()
 		if !h.Ordered() || len(sk) < len(paths) {
@@ -109,7 +112,7 @@ type ColumnID struct {
 // whose readers also get the listed columns of every block.
 func (p *KeyPlan) Ranges(n int, columns ...ColumnID) *RangeScan {
 	bounds := [][]byte{p.prefix}
-	bounds = append(bounds, part.SplitKeysWithPrefix(p.parts, n, p.prefix)...)
+	bounds = append(bounds, part.SplitKeysWithPrefix(p.parts, n, p.prefix, p.columns)...)
 	// Every key that starts with the prefix is below the prefix followed by
 	// 0xFF, which no value kind starts with.
 	bounds = append(bounds, append(append([]byte(nil), p.prefix...), 0xFF))
@@ -264,6 +267,18 @@ func (s *RangeScan) release(id blockID, sb *SharedBlock) {
 	s.mu.Unlock()
 }
 
+// skip ends one reader's use of a block it did not read.
+func (s *RangeScan) skip(id blockID) {
+	s.mu.Lock()
+	if s.left[id]--; s.left[id] == 0 {
+		if sb := s.open[id]; sb != nil {
+			delete(s.open, id)
+			s.free = append(s.free, sb)
+		}
+	}
+	s.mu.Unlock()
+}
+
 // Retained returns the bytes of the decode buffers the scan held when Run
 // ended.
 func (s *RangeScan) Retained() int { return s.retained }
@@ -356,38 +371,83 @@ func (r *RangeReader) drop() {
 	}
 }
 
-// Next moves to the next block of the stream that has rows inside the range,
-// decoding through b a block that no reader has decoded yet; it reports false
-// at the end of the stream.
-func (r *RangeReader) Next(b *part.Block) (bool, error) {
+// Peek ends the use of the current block and reports the next block of the
+// stream without reading it: its part and number, and whether the part's
+// index proves that every row of it is inside the range. It reports false at
+// the end of the stream.
+func (r *RangeReader) Peek() (p *part.Part, block int, whole, ok bool) {
 	r.drop()
 	for r.span < len(r.spans) {
 		s := &r.spans[r.span]
-		if r.next >= s.End {
-			if r.span++; r.span < len(r.spans) {
-				r.next = r.spans[r.span].First
-			}
+		if r.next < s.End {
+			whole = bytes.Compare(s.Part.FirstKey(r.next), r.lo) >= 0 && s.Part.BlockBelowKey(r.next, r.hi)
 
-			continue
+			return s.Part, r.next, whole, true
 		}
-		id := blockID{s.Part, r.next}
-		r.next++
-		sb, err := r.scan.acquire(id, b)
-		if err != nil {
-			return false, err
+		if r.span++; r.span < len(r.spans) {
+			r.next = r.spans[r.span].First
 		}
-		r.Block, r.id, r.From, r.To = sb, id, 0, sb.Rows
-		if bytes.Compare(s.Part.FirstKey(id.block), r.lo) < 0 {
-			r.From = sb.Keys.Search(r.lo, &r.scratch)
-		}
-		if !s.Part.BlockBelowKey(id.block, r.hi) {
-			r.To = sb.Keys.Search(r.hi, &r.scratch)
-		}
-		if r.From < r.To {
-			return true, nil
-		}
-		r.drop()
 	}
 
+	return nil, 0, false, false
+}
+
+// Shared returns how many leading sort key columns the first row of the
+// block that Peek reports shares with the row before it in the stream; it is
+// zero when that row belongs to a part with no rows inside the range.
+func (r *RangeReader) Shared() int {
+	s := &r.spans[r.span]
+	if r.next > 0 {
+		return s.Part.KeyShared(r.next)
+	}
+	if r.span == 0 {
+		return 0
+	}
+	_, last := r.spans[r.span-1].Part.KeyRange()
+
+	return part.SharedKeyColumns(last, s.Part.FirstKey(0))
+}
+
+// Skip passes over the block that Peek reports without reading it.
+func (r *RangeReader) Skip() {
+	r.scan.skip(blockID{r.spans[r.span].Part, r.next})
+	r.next++
+}
+
+// Read moves to the block that Peek reports, decoding it through b unless
+// another reader has, and reports whether it has rows inside the range.
+func (r *RangeReader) Read(b *part.Block) (bool, error) {
+	s := &r.spans[r.span]
+	id := blockID{s.Part, r.next}
+	r.next++
+	sb, err := r.scan.acquire(id, b)
+	if err != nil {
+		return false, err
+	}
+	r.Block, r.id, r.From, r.To = sb, id, 0, sb.Rows
+	if bytes.Compare(s.Part.FirstKey(id.block), r.lo) < 0 {
+		r.From = sb.Keys.Search(r.lo, &r.scratch)
+	}
+	if !s.Part.BlockBelowKey(id.block, r.hi) {
+		r.To = sb.Keys.Search(r.hi, &r.scratch)
+	}
+	if r.From < r.To {
+		return true, nil
+	}
+	r.drop()
+
 	return false, nil
+}
+
+// Next moves to the next block of the stream that has rows inside the range
+// and reports false at the end of the stream.
+func (r *RangeReader) Next(b *part.Block) (bool, error) {
+	for {
+		if _, _, _, ok := r.Peek(); !ok {
+			return false, nil
+		}
+		if ok, err := r.Read(b); ok || err != nil {
+			return ok, err
+		}
+	}
 }

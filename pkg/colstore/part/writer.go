@@ -49,10 +49,15 @@ type Writer struct {
 	keys  []byte // first sort key of each block, length-prefixed
 	// lastKey is the sort key of the last row written.
 	lastKey []byte
-	rows    uint64
-	raw     uint64
-	minT    int64
-	maxT    int64
+	// keyStats holds, per block, the leading key columns its first row
+	// shares with the row before it, then the number of distinct key
+	// prefixes of every length.
+	keyStats []byte
+	ks       keyStatScratch
+	rows     uint64
+	raw      uint64
+	minT     int64
+	maxT     int64
 	// copied counts the blocks taken over from other parts as stored.
 	copied int
 
@@ -128,7 +133,7 @@ func (w *Writer) Reset(out io.Writer, opts Options) {
 	w.w, w.opts, w.off, w.err, w.copied = out, opts, 0, nil, 0
 	w.paths = w.paths[:0]
 	clear(w.ids)
-	w.index, w.dirs, w.keys, w.lastKey = w.index[:0], w.dirs[:0], w.keys[:0], w.lastKey[:0]
+	w.index, w.dirs, w.keys, w.lastKey, w.keyStats = w.index[:0], w.dirs[:0], w.keys[:0], w.lastKey[:0], w.keyStats[:0]
 	w.rows, w.raw, w.minT, w.maxT = 0, 0, 0, 0
 	w.blobs.codec, w.blobs.level = CodecZstd, opts.Level
 	w.values.codec, w.values.level = opts.Codec, opts.Level
@@ -223,6 +228,7 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 		w.e.tmp = appendEdgeKey(w.e.tmp[:0], b, w.opts.SortKey, false)
 		w.keys = binary.AppendUvarint(w.keys, uint64(len(w.e.tmp)))
 		w.keys = append(w.keys, w.e.tmp...)
+		w.appendKeyStats(b, w.e.tmp)
 		w.lastKey = appendEdgeKey(w.lastKey[:0], b, w.opts.SortKey, true)
 	}
 
@@ -252,8 +258,10 @@ func (w *Writer) copies(src *Part, i int) bool {
 
 // copyBlock appends block i of src without decoding its columns. pathMap
 // holds the id in w of every path of src met so far and noPath for the
-// others, and raw is the input size accounted to the block.
-func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int) error {
+// others, and raw is the input size accounted to the block. follows says
+// that the block before it in w is block i-1 of src; otherwise the writer's
+// last key must be that of its last row, not a bound on it.
+func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows bool) error {
 	if w.err != nil {
 		return w.err
 	}
@@ -314,6 +322,21 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int) error {
 	w.block = w.block[:newDir]
 	w.keys = binary.AppendUvarint(w.keys, uint64(len(src.firstKeys[i])))
 	w.keys = append(w.keys, src.firstKeys[i]...)
+	if key := w.opts.SortKey; len(key) > 0 {
+		// The statistics of the rows are the block's own; what its first
+		// row shares with the row before depends on where it lands.
+		shared := 0
+		switch {
+		case follows:
+			shared = src.KeyShared(i)
+		case w.rows > 0:
+			shared = SharedKeyColumns(w.lastKey, src.firstKeys[i])
+		}
+		w.keyStats = binary.AppendUvarint(w.keyStats, uint64(shared))
+		for d := 1; d <= len(key); d++ {
+			w.keyStats = binary.AppendUvarint(w.keyStats, uint64(src.KeyRuns(i, d)))
+		}
+	}
 	w.lastKey = append(w.lastKey[:0], src.upperKey(i)...)
 
 	if w.rows == 0 || minT < w.minT {
@@ -612,6 +635,90 @@ func (w *Writer) appendDirectory() {
 	w.block = append(w.block, w.stats...)
 }
 
+// keyStatScratch resolves, for every row of a block and every sort key path,
+// the kind of the row's value and its position in the column of that kind.
+type keyStatScratch struct {
+	kinds []uint8
+	vals  []uint32
+	cols  []*shred.Column
+	diff  []int
+}
+
+// same reports whether rows r-1 and r of a block of rows rows hold equal
+// values at key path d.
+func (s *keyStatScratch) same(d, rows, r int) bool {
+	at := d*rows + r
+	kind := vec.Kind(s.kinds[at])
+	if kind != vec.Kind(s.kinds[at-1]) {
+		return false
+	}
+	if kind <= vec.KindNull {
+		return true
+	}
+	c := s.cols[d*int(vec.KindVariant)+int(vec.KindVariant-kind)]
+	i, j := int(s.vals[at-1]), int(s.vals[at])
+	switch kind {
+	case vec.KindBool:
+		return c.Bools[i] == c.Bools[j]
+	case vec.KindInt:
+		return c.Ints[i] == c.Ints[j]
+	case vec.KindFloat:
+		return keyFloat(c.Floats[i]) == keyFloat(c.Floats[j])
+	}
+
+	return string(c.Bytes(i)) == string(c.Bytes(j))
+}
+
+// appendKeyStats records the key statistics of the block of b, whose first
+// row has the encoded sort key first.
+func (w *Writer) appendKeyStats(b *shred.Batch, first []byte) {
+	key := w.opts.SortKey
+	if len(key) == 0 {
+		return
+	}
+	shared := 0
+	if w.rows > 0 {
+		shared = SharedKeyColumns(w.lastKey, first)
+	}
+	w.keyStats = binary.AppendUvarint(w.keyStats, uint64(shared))
+	s, rows := &w.ks, b.Rows
+	s.kinds, s.vals = grow(s.kinds, len(key)*rows), grow(s.vals, len(key)*rows)
+	clear(s.kinds)
+	s.cols = s.cols[:0]
+	for d, path := range key {
+		kinds, vals := s.kinds[d*rows:(d+1)*rows], s.vals[d*rows:(d+1)*rows]
+		// A row's key value is the one of the lowest kind it holds at the
+		// path, so lower kinds overwrite higher ones.
+		for kind := vec.KindVariant; kind >= vec.KindNull; kind-- {
+			c := b.Lookup(path, kind)
+			s.cols = append(s.cols, c)
+			if c == nil {
+				continue
+			}
+			for i := 0; i < c.Count; i++ {
+				r := c.Row(i)
+				kinds[r], vals[r] = uint8(kind), uint32(i)
+			}
+		}
+	}
+	// diff[d] counts the rows whose key first differs from the row before
+	// at column d.
+	s.diff = grow(s.diff, len(key)+1)
+	clear(s.diff)
+	for r := 1; r < rows; r++ {
+		d := 0
+		for d < len(key) && s.same(d, rows, r) {
+			d++
+		}
+		s.diff[d]++
+	}
+	runs := 1
+	for d := range key {
+		runs += s.diff[d]
+		w.keyStats = binary.AppendUvarint(w.keyStats, uint64(runs))
+	}
+}
+
 // Close writes the footer; the part is complete once it returns nil.
 func (w *Writer) Close() error {
 	if w.writerBuffers == nil {
@@ -640,6 +747,7 @@ func (w *Writer) Close() error {
 	if w.opts.Ordered {
 		footer = binary.AppendUvarint(footer, uint64(len(w.lastKey)))
 		footer = append(footer, w.lastKey...)
+		footer = append(footer, w.keyStats...)
 	}
 	footer = binary.AppendUvarint(footer, w.rows)
 	footer = binary.AppendUvarint(footer, w.raw)

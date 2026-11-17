@@ -142,6 +142,65 @@ func TestRangeScanReadsMatchingRowsOnce(t *testing.T) {
 	}
 }
 
+func TestRangeReaderTellsSharedKeyColumns(t *testing.T) {
+	rng := rand.New(rand.NewSource(3))
+	var data bytes.Buffer
+	for i := 0; i < 5000; i++ {
+		b := fmt.Sprintf(`"b":"u%02d",`, rng.Intn(40))
+		switch rng.Intn(15) {
+		case 0:
+			b = ""
+		case 1:
+			b = fmt.Sprintf(`"b":%d,`, rng.Intn(3))
+		}
+		fmt.Fprintf(&data, `{"a":"x",%s"c":%d,"time_us":%d}`+"\n", b, rng.Intn(4), 1000+i)
+	}
+	key := []string{"a", "b", "c"}
+	tbl := orderedTable(t, data.Bytes(), 6, 32, key, true)
+	defer tbl.Close()
+	snap := tbl.Snapshot()
+	defer snap.Release()
+	plan, ok := snap.PlanKeyRanges(KeyFilter{Paths: key[:1], Values: [][]byte{[]byte("x")}}, key[1:2])
+	if !ok || plan.Streams() != 1 {
+		t.Fatal("the merged parts are not one stream")
+	}
+	scan := plan.Ranges(1)
+	blocks, continued := 0, 0
+	err := scan.Run(context.Background(), 1, func(_ int, kr *KeyRange, b *part.Block) error {
+		var r RangeReader
+		r.Reset(scan, kr, 0)
+		var last, first []byte
+		for {
+			p, i, whole, ok := r.Peek()
+			if !ok {
+				return nil
+			}
+			shared := r.Shared()
+			if ok, err := r.Read(b); err != nil || !ok {
+				return err
+			}
+			if whole && (r.From != 0 || r.To != r.Block.Rows) {
+				return fmt.Errorf("block %d is not whole: rows %d to %d of %d", i, r.From, r.To, r.Block.Rows)
+			}
+			first = r.Block.Keys.AppendKey(first[:0], 0)
+			if want := part.SharedKeyColumns(last, first); blocks > 0 && shared != want {
+				return fmt.Errorf("block %d of %d shares %d key columns with the row before it, reader says %d", i, p.NumBlocks(), want, shared)
+			}
+			if shared >= 2 {
+				continued++
+			}
+			blocks++
+			last = r.Block.Keys.AppendKey(last[:0], r.Block.Rows-1)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if blocks < 100 || continued < 20 {
+		t.Fatalf("%d blocks, %d of them continue a value", blocks, continued)
+	}
+}
+
 func TestPlanKeyRangesNeedsOrderedParts(t *testing.T) {
 	tbl := NewTable()
 	defer tbl.Close()

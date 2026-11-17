@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"math/rand"
 	"testing"
+
+	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
+	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
 func TestBlocksWithKeyPrefixCoversEveryMatchingRow(t *testing.T) {
@@ -120,5 +123,106 @@ func TestKeyRangeBoundsEveryRowOfAnOrderedPart(t *testing.T) {
 	unordered := buildPart(t, docs, 500, Options{})
 	if first, last := unordered.KeyRange(); first != nil || last != nil {
 		t.Fatal("an unordered part reported a key range")
+	}
+}
+
+func TestKeyStatsMatchDecodedKeys(t *testing.T) {
+	rng := rand.New(rand.NewSource(11))
+	key := []string{"a", "b", "c"}
+	value := func(path string, values int) string {
+		switch rng.Intn(10) {
+		case 0:
+			return ""
+		case 1:
+			return fmt.Sprintf(`"%s":%d,`, path, rng.Intn(3))
+		case 2:
+			return fmt.Sprintf(`"%s":%s,`, path, []string{"true", "false", "null", "1.5"}[rng.Intn(4)])
+		}
+
+		return fmt.Sprintf(`"%s":"v%d\u0000%d",`, path, rng.Intn(values), rng.Intn(2))
+	}
+	all := shred.NewBatch(shred.Options{})
+	for i := 0; i < 4000; i++ {
+		doc := "{" + value("a", 3) + value("b", 5) + value("c", 30) + fmt.Sprintf(`"n":%d}`, i)
+		if err := all.AddJSON([]byte(doc), int64(i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all.SortBy(key)
+	var buf bytes.Buffer
+	w := NewWriter(&buf, Options{Ordered: true, SortKey: key})
+	block := shred.NewBatch(shred.Options{})
+	for from := 0; from < all.Rows; {
+		to := min(from+1+rng.Intn(60), all.Rows)
+		block.Reset()
+		all.CopyRows(block, from, to)
+		if err := w.WriteBatch(block); err != nil {
+			t.Fatal(err)
+		}
+		from = to
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Open(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var b Block
+	var keys BlockKeys
+	var prev, cur []byte
+	continued := 0
+	for i := 0; i < p.NumBlocks(); i++ {
+		if err := p.OpenBlock(i, &b); err != nil {
+			t.Fatal(err)
+		}
+		if err := keys.Load(&b); err != nil {
+			t.Fatal(err)
+		}
+		runs := make([]int, len(key)+1)
+		for row := 0; row < b.Rows; row++ {
+			cur = keys.AppendKey(cur[:0], row)
+			shared := SharedKeyColumns(prev, cur)
+			if row == 0 {
+				if i > 0 && shared != p.KeyShared(i) {
+					t.Fatalf("block %d shares %d key columns with the row before it, the index says %d", i, shared, p.KeyShared(i))
+				}
+				if shared == len(key) {
+					continued++
+				}
+				shared = 0
+			}
+			for d := shared + 1; d <= len(key); d++ {
+				runs[d]++
+			}
+			if len(KeyPrefix(cur, 3)) != len(cur) || SharedKeyColumns(cur, KeyPrefix(cur, 2)) != 2 || len(KeyPrefix(cur, 0)) != 0 {
+				t.Fatalf("key prefixes of %x are wrong", cur)
+			}
+			prev = append(prev[:0], cur...)
+		}
+		for d := 0; d <= len(key); d++ {
+			if want := max(runs[d], 1); p.KeyRuns(i, d) != want {
+				t.Fatalf("block %d has %d distinct prefixes of %d columns, the index says %d", i, want, d, p.KeyRuns(i, d))
+			}
+		}
+	}
+	if p.NumBlocks() < 100 || continued < 10 {
+		t.Fatalf("%d blocks, %d of them start with the key of the row before", p.NumBlocks(), continued)
+	}
+}
+
+func TestKeyStringUnescapes(t *testing.T) {
+	key := AppendKeyString(AppendKeyInt(AppendKeyString(nil, []byte("a\x00b")), 7), []byte{0, 0, 0xFF})
+	if got, ok := KeyString(nil, key, 0); !ok || string(got) != "a\x00b" {
+		t.Fatalf("column 0: %q %v", got, ok)
+	}
+	if _, ok := KeyString(nil, key, 1); ok || KeyKind(key, 1) != vec.KindInt {
+		t.Fatal("column 1 is not an integer")
+	}
+	if got, ok := KeyString(nil, key, 2); !ok || string(got) != "\x00\x00\xff" {
+		t.Fatalf("column 2: %q %v", got, ok)
+	}
+	if KeyKind(key, 3) != 0 || SharedKeyColumns(key, KeyPrefix(key, 2)) != 2 || SharedKeyColumns(key, key) != 3 {
+		t.Fatal("key columns are miscounted")
 	}
 }

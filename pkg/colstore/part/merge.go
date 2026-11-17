@@ -753,11 +753,8 @@ func (m *merger) run() error {
 		}
 		m.replay(wi)
 	}
-	if err := m.w.WriteBatch(m.out); err != nil {
-		return err
-	}
 	if m.out.Rows > 0 {
-		m.copied = nil
+		return m.flush()
 	}
 
 	return m.settleLastKey()
@@ -769,6 +766,11 @@ func (m *merger) flush() error {
 		m.short++
 	}
 	m.blocks++
+	// The key statistics of the block compare its first row with the last
+	// row written, which a copied block left as a bound.
+	if err := m.settleLastKey(); err != nil {
+		return err
+	}
 	m.copied = nil
 	err := m.w.WriteBatch(m.out)
 	m.out.Reset()
@@ -822,7 +824,13 @@ func (m *merger) copyBlock(wi int32, c *mergeCursor) (bool, error) {
 			return false, err
 		}
 	}
-	if err := m.w.copyBlock(p, b, c.pathMap, m.raw); err != nil {
+	follows := m.copied == p && m.copiedBlock == b-1
+	if !follows {
+		if err := m.settleLastKey(); err != nil {
+			return false, err
+		}
+	}
+	if err := m.w.copyBlock(p, b, c.pathMap, m.raw, follows); err != nil {
 		return false, err
 	}
 	m.raw = 0

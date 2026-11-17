@@ -28,6 +28,10 @@ type Part struct {
 	firstKeys [][]byte
 	// lastKey holds the encoded sort key of the last row.
 	lastKey []byte
+	// keyStats holds, per block, the leading key columns its first row
+	// shares with the row before it, then the number of distinct key
+	// prefixes of every length.
+	keyStats []uint32
 
 	// Rows is the number of rows in the part.
 	Rows uint64
@@ -99,6 +103,9 @@ func Open(data []byte) (*Part, error) {
 			p.firstKeys = append(p.firstKeys, r.bytes(r.uvarint()))
 		}
 		p.lastKey = r.bytes(r.uvarint())
+		if !p.readKeyStats(&r, int(nBlocks)) {
+			return nil, ErrCorrupt
+		}
 	}
 	p.Rows = r.uvarint()
 	p.RawBytes = r.uvarint()
@@ -119,6 +126,49 @@ func Open(data []byte) (*Part, error) {
 	}
 
 	return p, nil
+}
+
+// readKeyStats reads the key statistics of every block and reports whether
+// they can be true.
+func (p *Part) readKeyStats(r *reader, blocks int) bool {
+	k := len(p.sortKey)
+	if k == 0 {
+		return true
+	}
+	p.keyStats = make([]uint32, 0, blocks*(k+1))
+	for i := 0; i < blocks && !r.bad; i++ {
+		shared := r.uvarint()
+		if shared > uint64(k) || (i == 0 && shared != 0) {
+			return false
+		}
+		p.keyStats = append(p.keyStats, uint32(shared))
+		rows, _, _ := p.BlockStats(i)
+		prev := uint64(1)
+		for d := 0; d < k; d++ {
+			runs := r.uvarint()
+			if runs < prev || runs > uint64(rows) {
+				return false
+			}
+			p.keyStats = append(p.keyStats, uint32(runs))
+			prev = runs
+		}
+	}
+
+	return !r.bad
+}
+
+// KeyShared returns how many leading sort key columns the first row of block
+// i shares with the row before it in the part, zero for the first block.
+func (p *Part) KeyShared(i int) int { return int(p.keyStats[i*(len(p.sortKey)+1)]) }
+
+// KeyRuns returns the number of distinct values that the first depth sort
+// key columns take in block i.
+func (p *Part) KeyRuns(i, depth int) int {
+	if depth == 0 {
+		return 1
+	}
+
+	return int(p.keyStats[i*(len(p.sortKey)+1)+depth])
 }
 
 // Ordered reports whether the rows are ordered by SortKey and then by
