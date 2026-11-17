@@ -285,10 +285,10 @@ func (t *topK) down(i int) {
 
 // columns turns the rows that gather returned into the columns of the
 // result.
-func columns(q *query, out []colVec) []Column {
+func columns(names []string, out []colVec) []Column {
 	cols := make([]Column, len(out))
 	for c := range out {
-		cols[c] = out[c].column(q.names[c])
+		cols[c] = out[c].column(names[c])
 	}
 
 	return cols

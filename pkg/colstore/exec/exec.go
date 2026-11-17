@@ -75,7 +75,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		defer running.Add(-1)
 	}
 	var ords map[*part.Part]int
-	if q.located != nil {
+	if q.located != nil || q.places {
 		ords = map[*part.Part]int{}
 		for i, h := range snap.Parts() {
 			ords[h.Part] = i

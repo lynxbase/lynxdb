@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"math/big"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -751,6 +752,43 @@ type refAgg struct {
 
 // refRun evaluates a plan over rows and returns its output rows and column
 // names.
+// refRest replaces the last value of every row, the number of the row of
+// kept that it came from, by the fields of that row that the projection
+// neither names nor hides, in the order of their names.
+func refRest(out [][]exec.Value, names []string, kept []refRow, prj *exec.Project) ([][]exec.Value, []string) {
+	hidden := append(slices.Clone(names), prj.Except...)
+	shown := func(path string) bool {
+		for _, h := range hidden {
+			if path == h || strings.HasPrefix(path, h+".") {
+				return false
+			}
+		}
+
+		return true
+	}
+	seen := map[string]bool{}
+	var fields []string
+	for _, row := range out {
+		for path := range kept[row[len(row)-1].Int] {
+			if !seen[path] && shown(path) {
+				seen[path] = true
+				fields = append(fields, path)
+			}
+		}
+	}
+	sort.Strings(fields)
+	for i, row := range out {
+		from := kept[row[len(row)-1].Int]
+		row = row[:len(row)-1]
+		for _, path := range fields {
+			row = append(row, from[path])
+		}
+		out[i] = row
+	}
+
+	return out, append(names, fields...)
+}
+
 func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 	srt, _ := plan.(*exec.Sort)
 	if srt != nil {
@@ -816,16 +854,27 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 		for _, e := range prj.Exprs {
 			names = append(names, e.Name)
 		}
-		for _, row := range kept {
+		for i, row := range kept {
 			var res []exec.Value
 			for _, e := range prj.Exprs {
 				res = append(res, refValue(e.Expr, row))
 			}
+			if prj.Rest {
+				// The row's number, which refRest replaces by its fields.
+				res = append(res, exec.Value{Kind: vec.KindInt, Int: int64(i)})
+			}
 			out = append(out, res)
 		}
 	}
+	rest := func(out [][]exec.Value, names []string) ([][]exec.Value, []string) {
+		if agg != nil || !prj.Rest {
+			return out, names
+		}
+
+		return refRest(out, names, kept, prj)
+	}
 	if srt == nil {
-		return out, names
+		return rest(out, names)
 	}
 	if len(srt.By) > 0 {
 		cols := make([]int, len(srt.By))
@@ -850,7 +899,7 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 		out = out[:srt.Limit]
 	}
 
-	return out, names
+	return rest(out, names)
 }
 
 // refTotals returns e with every Total replaced by the sum of its column

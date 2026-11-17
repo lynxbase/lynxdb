@@ -96,9 +96,16 @@ type Filter struct {
 }
 
 // Project computes Exprs over the columns of its input and replaces them.
+// With Rest, a projection of a scan is followed by every other field that
+// its rows hold, one column per path in the order of the paths' names: a
+// field is other when neither it nor an object it is in is named by Exprs or
+// by Except. A row that does not hold a field has no value there, and one
+// that holds a null has a value of the null kind.
 type Project struct {
-	Input Node
-	Exprs []Named
+	Input  Node
+	Exprs  []Named
+	Rest   bool
+	Except []string
 }
 
 // Order names a column to sort by; nulls sort last, or first with

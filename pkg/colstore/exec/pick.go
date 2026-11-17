@@ -206,8 +206,17 @@ func (x *execution) finish(snap *colstore.Snapshot, sinks []*sink) ([]Column, in
 		if err := resolve(snap, q, q.final, out, n, len(x.workers)); err != nil {
 			return nil, 0, err
 		}
+		names := q.names
+		if q.rest {
+			last := len(out) - 1
+			fields, cols, err := rest(snap, q, &out[last], n, len(x.workers))
+			if err != nil {
+				return nil, 0, err
+			}
+			names, out = append(names[:last:last], fields...), append(out[:last:last], cols...)
+		}
 
-		return columns(q, out), n, nil
+		return columns(names, out), n, nil
 	}
 	// The sinks hold every group as the aggregate left it: the located
 	// values are read first, and what the plan does above the aggregate
@@ -244,5 +253,5 @@ func (x *execution) finish(snap *colstore.Snapshot, sinks []*sink) ([]Column, in
 	}
 	out, n = gather(q, []*sink{&last})
 
-	return columns(q, out), n, nil
+	return columns(q.names, out), n, nil
 }
