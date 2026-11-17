@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"runtime"
 	"runtime/metrics"
+	"runtime/pprof"
 	"sort"
 	"strings"
 	"sync"
@@ -76,11 +77,14 @@ func TestJSONBenchIngest(t *testing.T) {
 			}
 		}
 	}()
-	megabytes := float64(len(data)) / 1e6
+	// LYNXDB_BENCH_REPEAT feeds the input that many times over, to reach the
+	// merge tiers of a larger load with a small file.
+	repeat := envInt(t, "LYNXDB_BENCH_REPEAT", 1)
+	megabytes := float64(len(data)) * float64(repeat) / 1e6
 	cpuStart, start := cpuTime(), time.Now()
 	var rejected atomic.Int64
 	var wg sync.WaitGroup
-	for _, region := range splitAtLines(data, streams) {
+	for _, piece := range splitAtLines(data, streams) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -88,7 +92,11 @@ func TestJSONBenchIngest(t *testing.T) {
 			if !shared {
 				w = s.NewWriter()
 			}
-			for len(region) > 0 {
+			region, left := piece, repeat-1
+			for len(region) > 0 || left > 0 {
+				if len(region) == 0 {
+					region, left = piece, left-1
+				}
 				var request []byte
 				request, region = shred.SplitLines(region, requestDocs)
 				if shared {
@@ -127,6 +135,19 @@ func TestJSONBenchIngest(t *testing.T) {
 		t.FailNow()
 	}
 	durable, durableCPU := time.Since(start), cpuTime()-cpuStart
+	// LYNXDB_BENCH_HEAP_PROFILE names a file for a heap profile taken now,
+	// while the write buffers are still held and merges run.
+	if name := os.Getenv("LYNXDB_BENCH_HEAP_PROFILE"); name != "" {
+		f, err := os.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		runtime.GC()
+		if err := pprof.WriteHeapProfile(f); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
 	t.Logf("durable: %.1f MB of JSON on %d streams in %.2fs wall, %.2fs CPU (%.0f MB/s), %d lines rejected, key %v",
 		megabytes, streams, durable.Seconds(), durableCPU.Seconds(), megabytes/durable.Seconds(), rejected.Load(), opts.SortKey)
 	logStoreShape(t, s, "when durable")
