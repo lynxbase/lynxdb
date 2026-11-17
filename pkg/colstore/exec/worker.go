@@ -28,6 +28,8 @@ type scratch struct {
 	refs   []*part.ColumnRef
 	state  []uint8
 	cols   []vec.Column
+	// used marks the columns that the query decoded.
+	used []bool
 
 	sels   []selection
 	ints   [][]int64
@@ -69,6 +71,8 @@ func newWorker(x *execution) *worker {
 	s.refs = fit(s.refs, slots)
 	s.state = fit(s.state, slots)
 	s.cols = fit(s.cols, slots)
+	s.used = fit(s.used, slots)
+	clear(s.used)
 	s.sels = fit(s.sels, q.depth+3)
 	s.ints = fit(s.ints, q.depth+3)
 	s.valids = fit(s.valids, q.depth+3)
@@ -115,7 +119,9 @@ func sized[T any](s []T, n int) []T {
 func (w *worker) held() int {
 	n := 0
 	for i := range w.cols {
-		n += w.cols[i].Retained()
+		if w.used[i] {
+			n += w.cols[i].Retained()
+		}
 	}
 	for i := range w.sels {
 		n += cap(w.sels[i].mask) + 4*cap(w.sels[i].list)
@@ -171,7 +177,7 @@ func (w *worker) column(path int, kind vec.Kind) (*vec.Column, error) {
 		if err := w.b.Decode(ref, c); err != nil {
 			return nil, err
 		}
-		w.state[s], w.decoded = slotDecoded, true
+		w.state[s], w.used[s], w.decoded = slotDecoded, true, true
 	}
 
 	return c, nil
