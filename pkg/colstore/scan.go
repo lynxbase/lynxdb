@@ -35,6 +35,13 @@ type ScanOptions struct {
 	// Skip, when set, is asked once per block before the scan starts and
 	// leaves out the blocks it returns true for.
 	Skip func(p *part.Part, block int) bool
+	// Condition, when not empty, names what the caller requires of a row;
+	// scans share a name only for one requirement, of which the tokens and
+	// the times are a part. The scan leaves out the blocks that an earlier
+	// one learned to hold no such row and remembers those its tokens rule
+	// out; the caller adds the blocks in which it finds none to the Misses
+	// that the part keeps under the name.
+	Condition string
 	// ByTime, when not zero, makes the scan take the blocks by the times of
 	// their rows: by their latest row, latest first, when it is negative,
 	// and by their earliest row, earliest first, when it is positive. A
@@ -145,6 +152,9 @@ type ScanStats struct {
 	SkippedByTime  int64
 	SkippedByToken int64
 	SkippedByKey   int64
+	// SkippedAsEmpty counts the blocks that an earlier scan with the same
+	// condition learned to hold no row.
+	SkippedAsEmpty int64
 }
 
 // blockPool keeps the decode buffers of scan workers across scans.
@@ -154,6 +164,7 @@ var blockPool mem.Pool[part.Block]
 // sets in its part start among those of all parts.
 type scanUnit struct {
 	p     *part.Part
+	empty *part.Misses
 	block int32
 	ids   int32
 	// first and last are the times of the block's earliest and latest row.
@@ -186,6 +197,10 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 		at := len(ids)
 		var named bool
 		ids, named = resolveTokens(ids, h.Part, sets)
+		var empty *part.Misses
+		if opts.Condition != "" {
+			empty = h.Misses(opts.Condition)
+		}
 		first, end := 0, h.NumBlocks()
 		if h.Ordered() && key.covers(h.SortKey()) {
 			first, end = h.BlocksWithKeyPrefix(keyPrefix)
@@ -198,6 +213,11 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 
 				continue
 			}
+			if empty != nil && empty.Has(i) {
+				stats.SkippedAsEmpty++
+
+				continue
+			}
 			if opts.Skip != nil && opts.Skip(h.Part, i) {
 				continue
 			}
@@ -206,7 +226,7 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 
 				continue
 			}
-			units = append(units, scanUnit{p: h.Part, block: int32(i), ids: int32(at), first: lo, last: hi})
+			units = append(units, scanUnit{p: h.Part, empty: empty, block: int32(i), ids: int32(at), first: lo, last: hi})
 		}
 	}
 	switch {
@@ -264,6 +284,9 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 				}
 				if !may {
 					skipped.Add(1)
+					if u.empty != nil {
+						u.empty.Add(int(u.block))
+					}
 
 					continue
 				}

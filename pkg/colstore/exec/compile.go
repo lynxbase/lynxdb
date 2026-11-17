@@ -136,6 +136,10 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 		}
 		q.filter = p
 		q.opts = pushdown(snap, scan.Filter)
+		// A filter with a long name costs more to look up than it saves.
+		if name, ok := condition(nil, scan.Filter); ok && len(name) <= 4096 {
+			q.opts.Condition = string(name)
+		}
 	}
 
 	switch {

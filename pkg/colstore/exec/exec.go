@@ -19,6 +19,10 @@ import (
 type Options struct {
 	// Workers is the number of goroutines; zero means one per CPU.
 	Workers int
+	// Forgetful makes the query open every block that its filter admits,
+	// whatever earlier queries with the same filter found there, and leave
+	// nothing for later ones to go by.
+	Forgetful bool
 }
 
 // sharedGroups gives every worker the same id for a group key, so that the
@@ -57,6 +61,9 @@ type execution struct {
 	// emit, when set, takes the rows of a plan of rows block by block in
 	// place of the workers' sinks.
 	emit func(batch []colVec, n int) error
+	// condition names the filter for what parts remember of it, or is
+	// empty.
+	condition string
 }
 
 // running counts the executions that chose their own number of goroutines
@@ -130,6 +137,10 @@ func Each(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options,
 	}
 	scan := q.opts
 	scan.Workers = n
+	if opts.Forgetful {
+		scan.Condition = ""
+	}
+	x.condition = scan.Condition
 	if _, err := snap.Scan(ctx, scan, x.block); err != nil && !errors.Is(err, errEnough) {
 		return err
 	}
@@ -178,6 +189,10 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 	defer x.release()
 	scan := q.opts
 	scan.Workers = n
+	if opts.Forgetful {
+		scan.Condition = ""
+	}
+	x.condition = scan.Condition
 	if q.byTime != 0 {
 		x.bound = new(atomic.Int64)
 		x.bound.Store(math.MinInt64)
@@ -215,6 +230,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		SkippedByKey:   stats.SkippedByKey,
 		SkippedByToken: stats.SkippedByToken,
 		SkippedByTime:  stats.SkippedByTime,
+		SkippedAsEmpty: stats.SkippedAsEmpty,
 		HeldBytes:      x.held(),
 		HashedFor:      hashedFor,
 	}
@@ -287,6 +303,7 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 			if !w.decoded {
 				w.undecoded++
 			}
+			x.empty(p, b)
 
 			return nil
 		case v == all:
@@ -299,6 +316,8 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 			if count > 0 {
 				w.blocks++
 				w.matched += int64(count)
+			} else {
+				x.empty(p, b)
 			}
 
 			return nil
@@ -310,6 +329,8 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 		}
 		switch count {
 		case 0:
+			x.empty(p, b)
+
 			return nil
 		case w.rows:
 			idx = nil
@@ -333,6 +354,14 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 	}
 
 	return nil
+}
+
+// empty remembers that no row of block b passes the filter, for the scans
+// with the same filter that follow.
+func (x *execution) empty(p *part.Part, b *part.Block) {
+	if x.condition != "" {
+		p.Misses(x.condition).Add(b.Index())
+	}
 }
 
 // forEach calls fn for every i below n from up to workers goroutines,

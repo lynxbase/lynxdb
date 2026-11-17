@@ -45,6 +45,11 @@ type Part struct {
 	// readAhead, when set, is told which bytes of data are about to be
 	// read.
 	readAhead func(off, n int)
+	// misses holds, by condition, the blocks found to hold no row passing
+	// it; missClock orders the uses of the conditions.
+	missMu    sync.RWMutex
+	misses    map[string]*Misses
+	missClock atomic.Uint64
 
 	ordered bool
 	sortKey []string
