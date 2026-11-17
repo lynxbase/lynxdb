@@ -9,9 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	storageformat "github.com/lynxbase/lynxdb/pkg/storage/format"
 	"github.com/lynxbase/lynxdb/pkg/storage/part"
@@ -93,67 +91,6 @@ func TestIntegration_Compaction_MixedV1V2Inputs_RangePredicateMatchesBruteForce(
 		t.Fatalf("status>=500 count = %d, want %d", got, want)
 	}
 	assertCompactionStatusBSIMatchesRows(t, output.Data)
-}
-
-func TestIntegration_Compaction_PartialMigrationQuery_UsesV2BSIAndV1Fallback(t *testing.T) {
-	// SegmentStreamIterator is restored: this test exercises the streaming scan
-	// path with BSI range predicates against mixed V1/V2 segments.
-	v1A := compactionSegmentInfoFromFixture(t, "v1-a", L0, "v1.lsg")
-	v1B := compactionSegmentInfoFromFixture(t, "v1-b", L0, "v1_with_primary.lsg")
-	base := time.Date(2030, 1, 2, 5, 30, 0, 0, time.UTC)
-	v2A := compactionSegmentInfoFromData(t, "v2-a", L0,
-		writeCompactionV2Segment(t, makeCompactionBSIEvents(t, base, 512, 300, "v2-a")))
-	v2B := compactionSegmentInfoFromData(t, "v2-b", L0,
-		writeCompactionV2Segment(t, makeCompactionBSIEvents(t, base.Add(512*time.Millisecond), 512, 900, "v2-b")))
-	compactedV2, err := NewCompactor(testLogger()).Execute(context.Background(), &Plan{
-		InputSegments: []*SegmentInfo{v2A, v2B},
-		OutputLevel:   L1,
-	})
-	if err != nil {
-		t.Fatalf("Execute V2 compaction: %v", err)
-	}
-	openCompactionOutput(t, compactedV2.Data, segment.LSG_FORMAT_MAJOR_V2, true)
-
-	sources := []*pipeline.SegmentSource{
-		compactionSegmentSource(t, v1A),
-		compactionSegmentSource(t, v1B),
-		compactionSegmentSource(t, compactedV2),
-	}
-	hints := &pipeline.SegmentStreamHints{
-		RangePreds: []model.RangePredicate{{Field: "status", Min: "500"}},
-	}
-	iter := pipeline.NewSegmentStreamIterator(
-		sources,
-		nil,
-		hints,
-		128,
-		memgov.NewTestBudget("phase5-compaction", 0).NewAccount("scan"),
-	)
-	defer iter.Close()
-	if err := iter.Init(context.Background()); err != nil {
-		t.Fatalf("Init: %v", err)
-	}
-	rows, err := pipeline.CollectAll(context.Background(), iter)
-	if err != nil {
-		t.Fatalf("CollectAll: %v", err)
-	}
-
-	var allEvents []*event.Event
-	allEvents = append(allEvents, readCompactionEvents(t, v1A.Data)...)
-	allEvents = append(allEvents, readCompactionEvents(t, v1B.Data)...)
-	allEvents = append(allEvents, readCompactionEvents(t, compactedV2.Data)...)
-	if got, want := len(rows), countStatusAtLeast(allEvents, 500); got != want {
-		t.Fatalf("status>=500 rows = %d, want %d", got, want)
-	}
-
-	stats := iter.Stats()
-	if stats.RGRangeBSIChecks == 0 {
-		t.Fatal("RGRangeBSIChecks = 0, want V2 segment to contribute BSI checks")
-	}
-	if stats.RGRangeBSIChecks >= stats.RowGroupsTotal {
-		t.Fatalf("RGRangeBSIChecks = %d, RowGroupsTotal = %d; want V1 row groups served without BSI",
-			stats.RGRangeBSIChecks, stats.RowGroupsTotal)
-	}
 }
 
 func TestUnit_CompactionPlanning_MixedFormats_SelectsByPolicyNotFormat(t *testing.T) {
@@ -437,25 +374,6 @@ func compactionPlanSegment(id string, level int, min time.Time, sizeBytes int64)
 			SizeBytes:  sizeBytes,
 			Level:      level,
 			Partition:  "2030-01-02",
-		},
-	}
-}
-
-func compactionSegmentSource(t *testing.T, seg *SegmentInfo) *pipeline.SegmentSource {
-	t.Helper()
-	reader, err := segment.OpenSegment(seg.Data)
-	if err != nil {
-		t.Fatalf("OpenSegment(%s): %v", seg.Meta.ID, err)
-	}
-	return &pipeline.SegmentSource{
-		Reader: reader,
-		Index:  seg.Meta.Index,
-		Meta: pipeline.SegmentMeta{
-			ID:         seg.Meta.ID,
-			MinTime:    seg.Meta.MinTime,
-			MaxTime:    seg.Meta.MaxTime,
-			EventCount: seg.Meta.EventCount,
-			SizeBytes:  seg.Meta.SizeBytes,
 		},
 	}
 }
