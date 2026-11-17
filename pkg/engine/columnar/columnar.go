@@ -76,8 +76,11 @@ func Run(ctx context.Context, plan *ir.Plan, tables Tables, opts Options) (*Resu
 	}
 	r := &run{ctx: ctx, tables: tables, opts: opts}
 	defer r.release()
-	root, err := r.push(plan.Root, true)
+	root, err := resolved(ctx, plan.Root, tables, opts)
 	if err != nil {
+		return nil, err
+	}
+	if root, err = r.push(root, true); err != nil {
 		return nil, err
 	}
 	out := &Result{}
