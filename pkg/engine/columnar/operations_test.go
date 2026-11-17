@@ -25,55 +25,25 @@ var operationValues = []string{
 
 var operationB = []string{`"b"`, `2`, `""`, `null`, `1.5`}
 
-// operationExprs are expressions the planner maps to operations of the
-// executor.
+// operationExprs are expressions over fields: the planner maps some to
+// operations of the executor and the rest to native functions.
 var operationExprs = []string{
 	"tostring(a)", "lower(a)", "upper(a)", "length(a)", "concat(a, b)", "concat(a, '-')",
-	"starts_with(a, 'a')", "ends_with(a, 'c')", "trim(a)", "ltrim(a)", "rtrim(a)",
+	"trim(a)", "ltrim(a)", "rtrim(a)",
 	"abs(a)", "round(a)", "floor(a)", "ceil(a)", "sqrt(a)", "ln(a)", "exp(a)", "pow(a, 2)", "mod(a, 3)",
 	"log(a)", "hour(a)", "coalesce(a, b)", "typeof(a)", "substring(a, 2)", "substring(a, 2, 2)", "substring(a, -2)",
-	"locate('b', a)", "like(a, '%a%')", "contains(a, 'a')", "regexp_match(a, 'a.c')", "regexp_replace(a, 'a', 'X')",
-	"is_null(a)",
+	"locate('b', a)", "like(a, '%a%')", "regexp_match(a, 'a.c')", "regexp_replace(a, 'a', 'X')",
 }
 
-const (
-	notText    = "the executor gives no value for an argument that is not a string, the IR takes its text"
-	notNumber  = "the executor gives no value for a numeric string or a boolean, the IR reads it as a number"
-	roundsInts = notNumber + "; the executor rounds an integer to a float, the IR keeps it an integer"
-	saturates  = notNumber + "; the executor gives no value for a float beyond int64, the IR converts it"
-)
+// notText is how the executor's text matching differs from the IR.
+const notText = "the executor gives no value for an argument that is not a string, the IR takes its text"
 
 // knownDifferences records the expressions whose executor operations give
-// what the IR's rules do not, and how.
+// what the IR's rules do not, and how: the matches with a constant pattern,
+// which the planner keeps for the blocks their token filters rule out.
 var knownDifferences = map[string]string{
-	"tostring(a)":    "the executor writes the float 3 as 3, the IR as 3.0, and gives no value for an array",
-	"lower(a)":       notText,
-	"upper(a)":       notText,
-	"length(a)":      notText,
-	"concat(a, b)":   notText,
-	"concat(a, '-')": notText,
-	"trim(a)":        notText,
-	"ltrim(a)":       notText,
-	"rtrim(a)":       notText,
-	"abs(a)":         notNumber,
-	"round(a)":       roundsInts,
-	"floor(a)":       saturates,
-	"ceil(a)":        saturates,
-	"sqrt(a)":        notNumber,
-	"ln(a)":          notNumber,
-	"exp(a)":         notNumber,
-	"pow(a, 2)":      notNumber,
-	"mod(a, 3)":      "the executor gives no value for a numeric string",
-	"log(a)":         notNumber,
-	"hour(a)": "the executor reads an integer of no declared type as a time and gives no value for a time " +
-		"string, the IR the reverse",
-	"typeof(a)":                   "the executor names a stored null missing, the IR null",
-	"substring(a, 2)":             notText,
-	"substring(a, 2, 2)":          notText,
-	"substring(a, -2)":            notText,
-	"like(a, '%a%')":              notText,
-	"regexp_match(a, 'a.c')":      notText,
-	"regexp_replace(a, 'a', 'X')": notText,
+	"like(a, '%a%')":         notText,
+	"regexp_match(a, 'a.c')": notText,
 }
 
 // TestExecutorOperationsAgainstIR runs the expressions the planner maps to

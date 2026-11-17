@@ -726,14 +726,10 @@ var opposite = map[ir.BinaryOp]ir.BinaryOp{
 }
 
 // scalarCalls maps the functions that take their arguments as they are.
+// Functions that the executor would compute value by value anyway run as
+// their native implementations, which follow the IR's rules.
 var scalarCalls = map[string]exec.Op{
-	"coalesce": exec.OpCoalesce, "typeof": exec.OpTypeOf,
-	"length": exec.OpLength, "lower": exec.OpLower, "upper": exec.OpUpper, "concat": exec.OpConcat,
-	"starts_with": exec.OpStartsWith, "ends_with": exec.OpEndsWith,
-	"trim": exec.OpTrim, "ltrim": exec.OpTrimLeft, "rtrim": exec.OpTrimRight,
-	"abs": exec.OpAbs, "round": exec.OpRound, "floor": exec.OpFloor, "ceil": exec.OpCeil, "sqrt": exec.OpSqrt,
-	"ln": exec.OpLn, "exp": exec.OpExp, "pow": exec.OpPow, "mod": exec.OpMod,
-	"num_bucket": exec.OpBin, "hour": exec.OpHourOfDay,
+	"coalesce": exec.OpCoalesce, "num_bucket": exec.OpBin,
 }
 
 // expr translates a value expression: into the operations of the executor,
@@ -938,7 +934,7 @@ func (t *translator) operationCall(c *ir.Call) (*exec.Expr, error) {
 		}
 
 		return exec.Match(field, p), nil
-	case name == "time_bucket" && len(c.Args) == 3:
+	case name == "time_bucket" && len(c.Args) == 3 && c.Args[0].Type().Kind == ir.KindTimestamp:
 		width, ok := bucketWidth(c.Args[1], c.Args[2])
 		if !ok {
 			return nil, refused
@@ -949,9 +945,15 @@ func (t *translator) operationCall(c *ir.Call) (*exec.Expr, error) {
 		}
 
 		return exec.Bin(a, exec.Int(int64(width))), nil
-	case name == "substring":
-		return t.substring(c)
-	case name == "timestampdiff" && len(c.Args) == 3:
+	case name == "hour" && len(c.Args) == 1 && c.Args[0].Type().Kind == ir.KindTimestamp:
+		a, err := t.expr(c.Args[0])
+		if err != nil {
+			return nil, err
+		}
+
+		return exec.HourOfDay(a), nil
+	case name == "timestampdiff" && len(c.Args) == 3 &&
+		c.Args[1].Type().Kind == ir.KindTimestamp && c.Args[2].Type().Kind == ir.KindTimestamp:
 		unit, _ := text(c.Args[0])
 		width, ok := diffUnits[unit]
 		if !ok {
@@ -967,19 +969,6 @@ func (t *translator) operationCall(c *ir.Call) (*exec.Expr, error) {
 		}
 
 		return exec.Div(exec.Sub(to, from), exec.Int(int64(width))), nil
-	case name == "regexp_replace" && len(c.Args) == 3:
-		// A pattern without regular expression syntax is a plain string.
-		from, ok := text(c.Args[1])
-		to, isText := text(c.Args[2])
-		if !ok || !isText || from == "" || strings.ContainsAny(from, `\.+*?()|[]{}^$`) || strings.ContainsAny(to, `\$`) {
-			return nil, refused
-		}
-		a, err := t.expr(c.Args[0])
-		if err != nil {
-			return nil, err
-		}
-
-		return exec.Replace(a, exec.Str(from), exec.Str(to)), nil
 	case name == "locate" && len(c.Args) == 2:
 		sub, err := t.expr(c.Args[0])
 		if err != nil {
@@ -993,20 +982,6 @@ func (t *translator) operationCall(c *ir.Call) (*exec.Expr, error) {
 		at := exec.Coalesce(exec.Add(exec.IndexOf(a, sub), exec.Int(1)), exec.Int(0))
 
 		return exec.Case(present(a), at), nil
-	case name == "tostring" && len(c.Args) == 1:
-		a, err := t.expr(c.Args[0])
-		if err != nil {
-			return nil, err
-		}
-
-		return exec.ToString(a), nil
-	case name == "log" && len(c.Args) == 1:
-		a, err := t.expr(c.Args[0])
-		if err != nil {
-			return nil, err
-		}
-
-		return exec.Ln(a), nil
 	}
 	op, ok := scalarCalls[name]
 	if !ok {
@@ -1022,39 +997,6 @@ func (t *translator) operationCall(c *ir.Call) (*exec.Expr, error) {
 	}
 
 	return &exec.Expr{Op: op, Args: args}, nil
-}
-
-// substring translates a substring that starts at a constant place, which
-// the IR counts from one and the executor from zero.
-func (t *translator) substring(c *ir.Call) (*exec.Expr, error) {
-	refused := unsupported("the function %s", c)
-	if len(c.Args) < 2 || len(c.Args) > 3 {
-		return nil, refused
-	}
-	lit, ok := c.Args[1].(*ir.Literal)
-	if !ok {
-		return nil, refused
-	}
-	start, ok := lit.V.(int64)
-	if !ok || start == 0 {
-		return nil, refused
-	}
-	if start > 0 {
-		start--
-	}
-	s, err := t.expr(c.Args[0])
-	if err != nil {
-		return nil, err
-	}
-	if len(c.Args) == 2 {
-		return exec.Substr(s, exec.Int(start)), nil
-	}
-	count, err := t.expr(c.Args[2])
-	if err != nil {
-		return nil, err
-	}
-
-	return exec.Substr(s, exec.Int(start), count), nil
 }
 
 // diffUnits holds the units of a difference of times that have one length.
