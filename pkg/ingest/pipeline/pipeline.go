@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -43,9 +42,7 @@ func (p *Pipeline) Process(events []*event.Event) ([]*event.Event, error) {
 }
 
 // JSONParser parses events with JSON raw data and extracts fields.
-type JSONParser struct {
-	ParseErrors atomic.Int64 // events where JSON unmarshal failed
-}
+type JSONParser struct{}
 
 func (p *JSONParser) Process(events []*event.Event) ([]*event.Event, error) {
 	for _, e := range events {
@@ -54,7 +51,6 @@ func (p *JSONParser) Process(events []*event.Event) ([]*event.Event, error) {
 		}
 		var fields map[string]interface{}
 		if err := json.Unmarshal([]byte(e.Raw), &fields); err != nil {
-			p.ParseErrors.Add(1)
 			e.ParseError = true
 			continue // Not JSON, skip.
 		}
@@ -372,10 +368,9 @@ func tryParseAt(raw string, start int, format string, fmtLen, currentYear int) (
 	return time.Time{}, 0, false
 }
 
-// Router determines the target index and partition for each event.
+// Router sets the index of each event that names none.
 type Router struct {
-	DefaultIndex   string
-	PartitionCount int
+	DefaultIndex string
 }
 
 func (r *Router) Process(events []*event.Event) ([]*event.Event, error) {
@@ -388,21 +383,11 @@ func (r *Router) Process(events []*event.Event) ([]*event.Event, error) {
 	return events, nil
 }
 
-// Partition returns the partition number for an event based on host hash.
-func (r *Router) Partition(e *event.Event) int {
-	h := fnv.New32a()
-	h.Write([]byte(e.Host))
-
-	return int(h.Sum32() % uint32(r.PartitionCount))
-}
-
 // MetadataOnlyParser extracts only well-known metadata fields from JSON,
 // leaving all other data in _raw for query-time extraction via REX/spath.
 // This is the core of "lightweight" ingest mode — it avoids the CPU cost
 // of full JSON unmarshal and per-field SetField calls.
-type MetadataOnlyParser struct {
-	ParseErrors atomic.Int64
-}
+type MetadataOnlyParser struct{}
 
 // metadataFields are the only fields extracted in lightweight mode.
 var metadataFields = map[string]bool{
@@ -426,7 +411,6 @@ func (p *MetadataOnlyParser) Process(events []*event.Event) ([]*event.Event, err
 		}
 		var fields map[string]interface{}
 		if err := json.Unmarshal([]byte(e.Raw), &fields); err != nil {
-			p.ParseErrors.Add(1)
 			e.ParseError = true
 			continue
 		}
@@ -465,13 +449,9 @@ func LightweightPipeline() *Pipeline {
 	return New(
 		DefaultTimestampNormalizer(),
 		&MetadataOnlyParser{},
-		&Router{DefaultIndex: "main", PartitionCount: 4},
+		&Router{DefaultIndex: "main"},
 	)
 }
-
-// sharedJSONParser accumulates the parse failures of every DefaultPipeline
-// into a single counter.
-var sharedJSONParser = &JSONParser{}
 
 // DefaultPipeline returns a standard ingestion pipeline.
 // Each call gets its own TimestampNormalizer because it keeps advisory parse
@@ -479,8 +459,8 @@ var sharedJSONParser = &JSONParser{}
 func DefaultPipeline() *Pipeline {
 	return New(
 		DefaultTimestampNormalizer(),
-		sharedJSONParser,
+		&JSONParser{},
 		&KeyValueParser{},
-		&Router{DefaultIndex: "main", PartitionCount: 4},
+		&Router{DefaultIndex: "main"},
 	)
 }

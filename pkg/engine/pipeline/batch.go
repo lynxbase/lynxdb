@@ -1,25 +1,6 @@
 package pipeline
 
-import (
-	"sort"
-
-	"github.com/lynxbase/lynxdb/pkg/event"
-)
-
-// builtinFieldOrder defines the canonical display order for LynxDB internal
-// fields. Kept in sync with internal/output and pkg/api/rest.
-var builtinFieldOrder = [...]string{
-	"_time", "_raw", "index", "_source", "_sourcetype", "source", "sourcetype", "host",
-}
-
-var builtinFieldRank = func() map[string]int {
-	m := make(map[string]int, len(builtinFieldOrder))
-	for i, name := range builtinFieldOrder {
-		m[name] = i
-	}
-
-	return m
-}()
+import "github.com/lynxbase/lynxdb/pkg/event"
 
 // DefaultBatchSize is the default number of rows per batch.
 const DefaultBatchSize = 1024
@@ -204,31 +185,6 @@ func presenceFor(b *Batch, column string, n int) []bool {
 		return out
 	}
 	return densePresence(n)
-}
-
-// ColumnNames returns all column names in the batch in deterministic order:
-// builtin fields in canonical order, then user-defined fields alphabetically.
-func (b *Batch) ColumnNames() []string {
-	names := make([]string, 0, len(b.Columns))
-	for k := range b.Columns {
-		names = append(names, k)
-	}
-	sort.Slice(names, func(i, j int) bool {
-		ri, oki := builtinFieldRank[names[i]]
-		rj, okj := builtinFieldRank[names[j]]
-		switch {
-		case oki && okj:
-			return ri < rj
-		case oki:
-			return true // builtin before user
-		case okj:
-			return false // user after builtin
-		default:
-			return names[i] < names[j]
-		}
-	})
-
-	return names
 }
 
 // Slice returns a new batch containing rows [start:end).

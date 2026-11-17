@@ -209,9 +209,6 @@ func (b *builder) window(x *ir.Window) (pipeline.Iterator, error) {
 	if err != nil {
 		return nil, err
 	}
-	if x.DropNullPartitions && len(x.PartitionBy) > 0 {
-		return nil, unsupported("bucket_nullable=false for eventstats and streamstats")
-	}
 	trend := 0
 	for _, f := range x.Funcs {
 		if f.Agg.Func.Kind == ir.WindowFunc {

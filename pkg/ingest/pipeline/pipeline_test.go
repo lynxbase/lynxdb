@@ -101,7 +101,7 @@ func TestTimestampNormalizerEDGARFormat(t *testing.T) {
 }
 
 func TestRouter(t *testing.T) {
-	router := &Router{DefaultIndex: "main", PartitionCount: 4}
+	router := &Router{DefaultIndex: "main"}
 
 	e1 := event.NewEvent(time.Now(), "test")
 	e2 := event.NewEvent(time.Now(), "test")
@@ -117,25 +117,6 @@ func TestRouter(t *testing.T) {
 	}
 	if events[1].Index != "security" {
 		t.Errorf("e2 index: got %q, want security (preserved)", events[1].Index)
-	}
-}
-
-func TestRouter_Partition(t *testing.T) {
-	router := &Router{DefaultIndex: "main", PartitionCount: 4}
-
-	e := event.NewEvent(time.Now(), "test")
-	e.Host = "web-01"
-
-	p := router.Partition(e)
-	if p < 0 || p >= 4 {
-		t.Errorf("partition: got %d, expected 0-3", p)
-	}
-
-	// Same host should always get same partition.
-	for i := 0; i < 100; i++ {
-		if router.Partition(e) != p {
-			t.Fatal("partition not deterministic")
-		}
 	}
 }
 
@@ -211,9 +192,6 @@ func TestMetadataOnlyParser_NonJSON(t *testing.T) {
 	}
 	if !events[0].ParseError {
 		t.Error("expected ParseError for non-JSON input")
-	}
-	if parser.ParseErrors.Load() != 1 {
-		t.Errorf("ParseErrors: got %d, want 1", parser.ParseErrors.Load())
 	}
 }
 
