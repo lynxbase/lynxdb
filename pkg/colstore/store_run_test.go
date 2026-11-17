@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -374,6 +375,89 @@ func TestMergesDoNotWaitForEachOther(t *testing.T) {
 		t.Fatalf("runs by tier %v once settled, want one of the third tier", got)
 	}
 	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 2000 || sum != 1999*2000/2 {
+		t.Fatalf("%d rows, sum %d", rows, sum)
+	}
+}
+
+// TestClosedPartitionsAreMergedIntoOneRun requires that a partition whose
+// span ended an hour ago is merged into one run, that the ones still open
+// keep their runs, and that rows which come later are merged in once they
+// make up an eighth of the partition.
+func TestClosedPartitionsAreMergedIntoOneRun(t *testing.T) {
+	skipSyncs(t)
+	hour := int64(time.Hour)
+	var now atomic.Int64
+	timeNow = func() time.Time { return time.Unix(0, now.Load()) }
+	defer func() { timeNow = time.Now }()
+	// Half an hour into the third hour of the rows.
+	now.Store((firstTimedHour+2)*hour + hour/2)
+	s, err := OpenStore(t.TempDir(), StoreOptions{SortKey: []string{"svc"}, TimeField: "ts", Partition: time.Hour, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	write := func(docs []byte) {
+		t.Helper()
+		w := s.NewWriter()
+		if err := w.AddNDJSON(docs); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Settle(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// late returns count documents numbered from first in the first hour.
+	late := func(first, count int) []byte {
+		var buf bytes.Buffer
+		for i := first; i < first+count; i++ {
+			fmt.Fprintf(&buf, `{"n":%d,"svc":"s00","ts":%d}`+"\n", i, int64(firstTimedHour)*3600e6+int64(i))
+		}
+
+		return buf.Bytes()
+	}
+	runs := func() [3]int {
+		snap := s.Table().Snapshot()
+		defer snap.Release()
+		var out [3]int
+		seen := map[uint64]bool{}
+		for _, h := range snap.Parts() {
+			if !seen[h.Run] {
+				seen[h.Run] = true
+				out[h.Partition-firstTimedHour]++
+			}
+		}
+
+		return out
+	}
+	for i := range 3 {
+		write(timedDocs(i*300, 300, 3))
+	}
+	if got := runs(); got != [3]int{1, 3, 3} {
+		t.Fatalf("runs by hour %v, want the first hour in one run and three in the others", got)
+	}
+	// Few rows that come late stay a run of their own.
+	write(late(900, 30))
+	if got := runs(); got != [3]int{2, 3, 3} {
+		t.Fatalf("runs by hour %v after a few late rows, want them apart", got)
+	}
+	// With more of them the partition is one run again.
+	write(late(930, 30))
+	if got := runs(); got != [3]int{1, 3, 3} {
+		t.Fatalf("runs by hour %v after more late rows, want the first hour in one run", got)
+	}
+	// An hour later the second hour has closed as well.
+	now.Add(hour)
+	s.kick()
+	if err := s.Settle(); err != nil {
+		t.Fatal(err)
+	}
+	if got := runs(); got != [3]int{1, 1, 3} {
+		t.Fatalf("runs by hour %v an hour later, want the second hour in one run", got)
+	}
+	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 960 || sum != 959*960/2 {
 		t.Fatalf("%d rows, sum %d", rows, sum)
 	}
 }
