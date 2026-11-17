@@ -354,10 +354,10 @@ func (w *Writer) filterBlock(entry []byte) {
 	rest := len(shared) > 0 || len(w.owned) == 0
 	total, start := 0, 0
 	if rest {
-		total = tokenfilter.Blocks(len(shared))
+		total = tokenfilter.Blocks(len(shared), tokenfilter.SharedBits)
 	}
 	for _, o := range w.owned {
-		total += tokenfilter.Blocks(o.end - start)
+		total += tokenfilter.Blocks(o.end-start, tokenfilter.ColumnBits)
 		start = o.end
 	}
 	stripes := w.fixedStripes
@@ -386,7 +386,11 @@ func (w *Writer) filterBlock(entry []byte) {
 // that have none.
 func (w *Writer) appendFilter(path uint32, kind vec.Kind, keys []uint64) {
 	start := len(w.blooms)
-	w.blooms = tokenfilter.Append(w.blooms, keys, w.stripes)
+	bits := tokenfilter.ColumnBits
+	if path == noPath {
+		bits = tokenfilter.SharedBits
+	}
+	w.blooms = tokenfilter.Append(w.blooms, keys, w.stripes, bits)
 	w.addFilter(path, kind, (len(w.blooms)-start)/tokenfilter.BlockBytes)
 }
 

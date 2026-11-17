@@ -68,7 +68,7 @@ func ownFilters(t testing.TB, p *Part, units ...int) (filters [][]byte, tokens [
 		at += rows
 		var own []byte
 		for _, unit := range units {
-			if own = tokenfilter.Append(own[:0], keys, unit); len(own) == filterSize(p, i)*tokenfilter.BlockBytes {
+			if own = tokenfilter.Append(own[:0], keys, unit, tokenfilter.SharedBits); len(own) == filterSize(p, i)*tokenfilter.BlockBytes {
 				break
 			}
 		}
@@ -540,7 +540,7 @@ func TestStripedFiltersTakeTheSpaceOfSeparateOnes(t *testing.T) {
 
 	// A filter of its natural size behind its block, with a checksum per
 	// page.
-	natural := len(tokenfilter.Append(nil, make([]uint64, tokens), 1))
+	natural := len(tokenfilter.Append(nil, make([]uint64, tokens), 1, tokenfilter.SharedBits))
 	if rounded := filterSize(striped, 0) * tokenfilter.BlockBytes; rounded != natural+(filterStripes-1)*tokenfilter.BlockBytes {
 		t.Fatalf("a filter of %d bytes was rounded to %d", natural, rounded)
 	}

@@ -289,7 +289,7 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 		if err := w.WriteBatch(batch); err != nil {
 			t.Fatal(err)
 		}
-		pieces[i] = len(tokenfilter.Append(nil, tokensOf(t, docs), stripes)) / tokenfilter.BlockBytes / stripes
+		pieces[i] = len(tokenfilter.Append(nil, tokensOf(t, docs), stripes, tokenfilter.SharedBits)) / tokenfilter.BlockBytes / stripes
 	}
 	if err := w.Close(); err != nil {
 		t.Fatal(err)

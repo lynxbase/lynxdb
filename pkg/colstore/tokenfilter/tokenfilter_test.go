@@ -236,7 +236,7 @@ func TestFilterHasNoFalseNegativesAndFewFalsePositives(t *testing.T) {
 		for i := 0; i < n; i++ {
 			set.Add(hashesOf(fmt.Sprintf("token%d", i)))
 		}
-		filter := Append([]byte("prefix"), set.Keys(), 1)[len("prefix"):]
+		filter := Append([]byte("prefix"), set.Keys(), 1, SharedBits)[len("prefix"):]
 		for i := 0; i < n; i++ {
 			if !MayContain(filter, hashesOf(fmt.Sprintf("TOKEN%d", i))[0]) {
 				t.Fatalf("n=%d: token %d missing", n, i)
@@ -286,7 +286,7 @@ func TestFilterSeparatesSimilarTokens(t *testing.T) {
 		if len(set.Keys()) != n {
 			t.Errorf("%s: %d of %d tokens have distinct hashes", name, len(set.Keys()), n)
 		}
-		filter := Append(nil, set.Keys(), 1)
+		filter := Append(nil, set.Keys(), 1, SharedBits)
 		hits := 0
 		for i := n; i < 2*n; i++ {
 			if MayContain(filter, hashesOf(gen(i))[0]) {
@@ -322,9 +322,9 @@ func TestAppendRoundsFiltersUpToTheUnit(t *testing.T) {
 		for i := 0; i < n; i++ {
 			set.Add(hashesOf(fmt.Sprintf("token%d", i)))
 		}
-		natural := len(Append(nil, set.Keys(), 1))
+		natural := len(Append(nil, set.Keys(), 1, SharedBits))
 		for _, unit := range []int{1, 2, 7, 16, 128} {
-			filter := Append(nil, set.Keys(), unit)
+			filter := Append(nil, set.Keys(), unit, SharedBits)
 			if step := unit * BlockBytes; len(filter)%step != 0 || len(filter) < natural || len(filter) >= natural+step {
 				t.Fatalf("%d tokens, unit %d: %d bytes for a natural size of %d", n, unit, len(filter), natural)
 			}
