@@ -227,54 +227,15 @@ const (
 	// LYNXDB_SERVER_TOTAL_MEMORY_POOL_BYTES is the total memory for queries + cache (0 = auto: 40% RAM).
 	// YAML key: server.total_memory_pool_bytes. Default: 0.
 	LYNXDB_SERVER_TOTAL_MEMORY_POOL_BYTES = "LYNXDB_SERVER_TOTAL_MEMORY_POOL_BYTES"
-	// LYNXDB_STORAGE_CACHE_MAX_BYTES is the query result cache memory limit.
-	// YAML key: storage.cache_max_bytes. Default: 1gb.
-	LYNXDB_STORAGE_CACHE_MAX_BYTES = "LYNXDB_STORAGE_CACHE_MAX_BYTES"
-	// LYNXDB_STORAGE_CACHE_TTL is the query result cache TTL.
-	// YAML key: storage.cache_ttl. Default: 5m.
-	LYNXDB_STORAGE_CACHE_TTL = "LYNXDB_STORAGE_CACHE_TTL"
-	// LYNXDB_STORAGE_COMPACTION_INTERVAL is the compaction check interval.
-	// YAML key: storage.compaction_interval. Default: 30s.
-	LYNXDB_STORAGE_COMPACTION_INTERVAL = "LYNXDB_STORAGE_COMPACTION_INTERVAL"
-	// LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB is the compaction disk bandwidth limit in MB/s.
-	// YAML key: storage.compaction_rate_limit_mb. Default: 100.
-	LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB = "LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB"
-	// LYNXDB_STORAGE_COMPACTION_DISABLE_BSI_ON_OUTPUT disables range BSI emission from compaction output.
-	// YAML key: storage.compaction_disable_bsi_on_output. Default: false.
-	LYNXDB_STORAGE_COMPACTION_DISABLE_BSI_ON_OUTPUT = "LYNXDB_STORAGE_COMPACTION_DISABLE_BSI_ON_OUTPUT"
-	// LYNXDB_STORAGE_COMPACTION_WORKERS is the parallel compaction workers.
-	// YAML key: storage.compaction_workers. Default: 2.
-	LYNXDB_STORAGE_COMPACTION_WORKERS = "LYNXDB_STORAGE_COMPACTION_WORKERS"
-	// LYNXDB_STORAGE_COMPRESSION is the block compression: lz4 or zstd.
-	// YAML key: storage.compression. Default: lz4.
-	LYNXDB_STORAGE_COMPRESSION = "LYNXDB_STORAGE_COMPRESSION"
-	// LYNXDB_STORAGE_FLUSH_IDLE_TIMEOUT is the flush batcher after this idle period (0 = disabled).
-	// YAML key: storage.flush_idle_timeout. Default: 200ms.
-	LYNXDB_STORAGE_FLUSH_IDLE_TIMEOUT = "LYNXDB_STORAGE_FLUSH_IDLE_TIMEOUT"
-	// LYNXDB_STORAGE_FLUSH_THRESHOLD is the batcher flush threshold.
-	// YAML key: storage.flush_threshold. Default: 512mb.
-	LYNXDB_STORAGE_FLUSH_THRESHOLD = "LYNXDB_STORAGE_FLUSH_THRESHOLD"
-	// LYNXDB_STORAGE_L0_THRESHOLD is the L0 to L1 compaction trigger.
-	// YAML key: storage.l0_threshold. Default: 4.
-	LYNXDB_STORAGE_L0_THRESHOLD = "LYNXDB_STORAGE_L0_THRESHOLD"
-	// LYNXDB_STORAGE_L1_THRESHOLD is the L1 to L2 compaction trigger.
-	// YAML key: storage.l1_threshold. Default: 4.
-	LYNXDB_STORAGE_L1_THRESHOLD = "LYNXDB_STORAGE_L1_THRESHOLD"
-	// LYNXDB_STORAGE_L2_TARGET_SIZE is the target size for L2 segments.
-	// YAML key: storage.l2_target_size. Default: 1gb.
-	LYNXDB_STORAGE_L2_TARGET_SIZE = "LYNXDB_STORAGE_L2_TARGET_SIZE"
-	// LYNXDB_STORAGE_MAX_COLUMNS_PER_PART is the max columns per written part.
-	// YAML key: storage.max_columns_per_part. Default: 256.
-	LYNXDB_STORAGE_MAX_COLUMNS_PER_PART = "LYNXDB_STORAGE_MAX_COLUMNS_PER_PART"
-	// LYNXDB_STORAGE_PARTITION_BY is the time-based partition granularity (daily, hourly).
-	// YAML key: storage.partition_by. Default: daily.
-	LYNXDB_STORAGE_PARTITION_BY = "LYNXDB_STORAGE_PARTITION_BY"
+	// LYNXDB_STORAGE_FLUSH_INTERVAL is the longest wait before ingested events are written (0 = store default).
+	// YAML key: storage.flush_interval. Default: 0s.
+	LYNXDB_STORAGE_FLUSH_INTERVAL = "LYNXDB_STORAGE_FLUSH_INTERVAL"
+	// LYNXDB_STORAGE_PARTITION is the span of time whose events are kept apart.
+	// YAML key: storage.partition. Default: 24h.
+	LYNXDB_STORAGE_PARTITION = "LYNXDB_STORAGE_PARTITION"
 	// LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT is the timeout for fetching remote segments.
 	// YAML key: storage.remote_fetch_timeout. Default: 30s.
 	LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT = "LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT"
-	// LYNXDB_STORAGE_ROW_GROUP_SIZE is the rows per row group in segments.
-	// YAML key: storage.row_group_size. Default: 65536.
-	LYNXDB_STORAGE_ROW_GROUP_SIZE = "LYNXDB_STORAGE_ROW_GROUP_SIZE"
 	// LYNXDB_STORAGE_S3_BUCKET is the S3 bucket for warm/cold storage.
 	// YAML key: storage.s3_bucket. Default: "".
 	LYNXDB_STORAGE_S3_BUCKET = "LYNXDB_STORAGE_S3_BUCKET"
@@ -299,6 +260,9 @@ const (
 	// LYNXDB_STORAGE_TIERING_PARALLELISM is the concurrent tier uploads.
 	// YAML key: storage.tiering_parallelism. Default: 3.
 	LYNXDB_STORAGE_TIERING_PARALLELISM = "LYNXDB_STORAGE_TIERING_PARALLELISM"
+	// LYNXDB_STORAGE_TIME_FIELDS is the comma-separated list of fields that set the event time, in order.
+	// YAML key: storage.time_fields. Default: _time,timestamp,@timestamp,time,ts.
+	LYNXDB_STORAGE_TIME_FIELDS = "LYNXDB_STORAGE_TIME_FIELDS"
 	// LYNXDB_SYSLOG_BATCH_SIZE is the flush after this many events.
 	// YAML key: syslog.batch_size. Default: 1000.
 	LYNXDB_SYSLOG_BATCH_SIZE = "LYNXDB_SYSLOG_BATCH_SIZE"

@@ -15,22 +15,11 @@
 
 # Storage engine configuration.
 # storage:
-#   compression: lz4                 # Block compression: "lz4" or "zstd"
-#   row_group_size: 65536            # Rows per row group in segments
-#   flush_threshold: 512mb           # Batcher flush threshold
-#   flush_idle_timeout: 200ms        # Flush batcher after this idle period (0 = disabled)
-#   max_columns_per_part: 256        # Max columns per written part
-#   partition_by: daily              # Time-based partition granularity (daily, hourly)
+#   partition: 24h                   # Span of time whose events are kept apart
+#   flush_interval: 0s               # Longest wait before ingested events are written (0 = store default)
+#   time_fields: [_time, timestamp, "@timestamp", time, ts]  # Fields that set the event time, in order
 #
-#   compaction_interval: 30s         # Compaction check interval
-#   compaction_workers: 2            # Parallel compaction workers
-#   compaction_rate_limit_mb: 100    # Compaction disk bandwidth limit (MB/s)
-#   compaction_disable_bsi_on_output: false  # Disable BSI emission from compaction output
-#   l0_threshold: 4                  # L0->L1 compaction trigger
-#   l1_threshold: 4                  # L1->L2 compaction trigger
-#   l2_target_size: 1gb              # Target size for L2 segments
-#
-#   s3_bucket:                       # S3 bucket for warm/cold storage
+#   s3_bucket:                      # S3 bucket for warm/cold storage
 #   s3_region: us-east-1             # AWS region
 #   s3_prefix: lynxdb/               # Key prefix in S3
 #   s3_endpoint:                     # S3-compatible endpoint (for MinIO, etc.)
@@ -40,9 +29,6 @@
 #   tiering_parallelism: 3           # Concurrent tier uploads
 #   segment_cache_size: 10gb         # Local disk cache for remote segments
 #   remote_fetch_timeout: 30s        # Timeout for fetching remote segments
-#
-#   cache_max_bytes: 1gb             # Query result cache memory limit
-#   cache_ttl: 5m                    # Query result cache TTL
 
 # Query execution configuration.
 # query:

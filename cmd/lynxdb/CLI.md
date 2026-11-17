@@ -364,7 +364,7 @@ lynxdb auth revoke ak_7fA3mNpQ --yes
 lynxdb config [subcommand] [flags]
 ```
 
-Without a subcommand, prints every setting with its value and origin. `config` and `config validate` accept the override flags `--addr`, `--data-dir`, `--s3-bucket`, `--s3-region`, `--s3-prefix`, `--compaction-interval`, `--tiering-interval`, `--cache-max-mb`, `--log-level`.
+Without a subcommand, prints every setting with its value and origin. `config` and `config validate` accept the override flags `--addr`, `--data-dir`, `--s3-bucket`, `--s3-region`, `--s3-prefix`, `--tiering-interval`, `--log-level`.
 
 Config file search, when `--config` is unset: `LYNXDB_CONFIG`, `./lynxdb.yaml`, `$XDG_CONFIG_HOME/lynxdb/config.yaml` (or `~/.config/lynxdb/config.yaml`), `~/.lynxdb/config.yaml`, `/etc/lynxdb/config.yaml`.
 
@@ -390,7 +390,7 @@ lynxdb config add-profile prod --url https://logs.example.com --token "$PROD_KEY
 lynxdb query 'source=main level=ERROR | stats count() by host' --profile prod
 ```
 
-A reload applies `log_level`, `retention`, `query.*` (except `query.global_query_pool_bytes`, `query.spill_dir`, `query.max_temp_dir_size_bytes`), `storage.compaction_rate_limit_mb`, `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`, `ingest.es_compat.*`, `ingest.limits.*`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`, `http.shutdown_timeout` and the `syslog` index, sourcetype, timezone, hostname and batch settings. Other changes need a restart.
+A reload applies `log_level`, `retention`, `query.*` (except `query.global_query_pool_bytes`, `query.spill_dir`, `query.max_temp_dir_size_bytes`), `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`, `ingest.es_compat.*`, `ingest.limits.*`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`, `http.shutdown_timeout` and the `syslog` index, sourcetype, timezone, hostname and batch settings. Other changes need a restart.
 
 ---
 

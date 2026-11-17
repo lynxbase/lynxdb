@@ -21,15 +21,13 @@ var flagInitSystem bool
 
 // Shared CLI override flags — used by both "server" and "config" commands.
 var (
-	flagAddr               string
-	flagDataDir            string
-	flagS3Bucket           string
-	flagS3Region           string
-	flagS3Prefix           string
-	flagCompactionInterval string
-	flagTieringInterval    string
-	flagCacheMaxMB         string
-	flagLogLevel           string
+	flagAddr            string
+	flagDataDir         string
+	flagS3Bucket        string
+	flagS3Region        string
+	flagS3Prefix        string
+	flagTieringInterval string
+	flagLogLevel        string
 )
 
 var configCmd = &cobra.Command{
@@ -60,7 +58,7 @@ var configGetCmd = &cobra.Command{
 	Use:   "get <key>",
 	Short: "Show a single config value",
 	Example: `  lynxdb config get retention
-  lynxdb config get storage.compression
+  lynxdb config get storage.partition
   lynxdb config get listen`,
 	Args: cobra.ExactArgs(1),
 	RunE: runConfigGet,
@@ -75,7 +73,7 @@ var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a config value in the config file",
 	Example: `  lynxdb config set retention 30d
-  lynxdb config set storage.compression zstd
+  lynxdb config set storage.partition 1h
   lynxdb config set log_level debug
   lynxdb config set retention 1d --dry-run`,
 	Args: cobra.ExactArgs(2),
@@ -147,9 +145,7 @@ func init() {
 	configCmd.PersistentFlags().StringVar(&flagS3Bucket, "s3-bucket", "", "S3 bucket override")
 	configCmd.PersistentFlags().StringVar(&flagS3Region, "s3-region", "", "AWS region override")
 	configCmd.PersistentFlags().StringVar(&flagS3Prefix, "s3-prefix", "", "S3 prefix override")
-	configCmd.PersistentFlags().StringVar(&flagCompactionInterval, "compaction-interval", "", "Compaction interval override")
 	configCmd.PersistentFlags().StringVar(&flagTieringInterval, "tiering-interval", "", "Tiering interval override")
-	configCmd.PersistentFlags().StringVar(&flagCacheMaxMB, "cache-max-mb", "", "Cache max size override")
 	configCmd.PersistentFlags().StringVar(&flagLogLevel, "log-level", "", "Log level override")
 
 	configInitCmd.Flags().BoolVar(&flagInitSystem, "system", false, "Write to /etc/lynxdb/config.yaml")
@@ -200,15 +196,6 @@ func applyCLIOverrides(cmd *cobra.Command, cfg *config.Config) ([]config.CLIOver
 	checkStr("s3-prefix", "storage.s3_prefix", flagS3Prefix, func() { cfg.Storage.S3Prefix = flagS3Prefix })
 	checkStr("log-level", "log_level", flagLogLevel, func() { cfg.LogLevel = flagLogLevel })
 
-	if cmd.Flags().Changed("compaction-interval") {
-		d, err := config.ParseDuration(flagCompactionInterval)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid --compaction-interval: %w", err)
-		}
-		cfg.Storage.CompactionInterval = d.Duration()
-		cli = append(cli, config.CLIOverride{Key: "storage.compaction_interval", Value: d.Duration().String(), Flag: "--compaction-interval"})
-		flags = append(flags, "--compaction-interval")
-	}
 	if cmd.Flags().Changed("tiering-interval") {
 		d, err := config.ParseDuration(flagTieringInterval)
 		if err != nil {
@@ -217,15 +204,6 @@ func applyCLIOverrides(cmd *cobra.Command, cfg *config.Config) ([]config.CLIOver
 		cfg.Storage.TieringInterval = d.Duration()
 		cli = append(cli, config.CLIOverride{Key: "storage.tiering_interval", Value: d.Duration().String(), Flag: "--tiering-interval"})
 		flags = append(flags, "--tiering-interval")
-	}
-	if cmd.Flags().Changed("cache-max-mb") {
-		b, err := config.ParseByteSize(flagCacheMaxMB)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid --cache-max-mb: %w", err)
-		}
-		cfg.Storage.CacheMaxBytes = b
-		cli = append(cli, config.CLIOverride{Key: "storage.cache_max_bytes", Value: b.String(), Flag: "--cache-max-mb"})
-		flags = append(flags, "--cache-max-mb")
 	}
 	if cmd.Flags().Changed("ingest-es-enabled") {
 		cfg.Ingest.ESCompat.Enabled = flagIngestESEnabled

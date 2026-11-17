@@ -20,7 +20,7 @@ var DefaultsTemplate []byte
 
 // Override describes a single env var or config file override that was applied.
 type Override struct {
-	Key    string // e.g. "listen", "storage.compression"
+	Key    string // e.g. "listen", "storage.partition"
 	Source string // e.g. "LYNXDB_LISTEN" or "config file"
 	Value  string
 }
@@ -103,7 +103,7 @@ func resolveConfigPath(explicit string) (string, bool) {
 // envBinding maps an environment variable to a Config setter.
 type envBinding struct {
 	envVar   string
-	key      string // config key, e.g. "listen", "storage.compression"
+	key      string // config key, e.g. "listen", "storage.partition"
 	apply    func(c *Config, v string) error
 	valueStr func(c *Config) string // extract current value after apply
 }
@@ -143,141 +143,39 @@ var envBindings = []envBinding{
 		func(c *Config) string { return c.LogLevel }},
 
 	// Storage
-	{LYNXDB_STORAGE_COMPRESSION, "storage.compression",
+	{LYNXDB_STORAGE_PARTITION, "storage.partition",
 		func(c *Config, v string) error {
-			c.Storage.Compression = v
-
-			return nil
-		},
-		func(c *Config) string { return c.Storage.Compression }},
-	{LYNXDB_STORAGE_ROW_GROUP_SIZE, "storage.row_group_size",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
+			d, err := ParseDuration(v)
 			if err != nil {
 				return err
 			}
-			c.Storage.RowGroupSize = n
+			c.Storage.Partition = d
 
 			return nil
 		},
-		func(c *Config) string { return strconv.Itoa(c.Storage.RowGroupSize) }},
-	{LYNXDB_STORAGE_FLUSH_THRESHOLD, "storage.flush_threshold",
+		func(c *Config) string { return c.Storage.Partition.String() }},
+	{LYNXDB_STORAGE_FLUSH_INTERVAL, "storage.flush_interval",
 		func(c *Config, v string) error {
-			b, err := ParseByteSize(v)
+			d, err := ParseDuration(v)
 			if err != nil {
 				return err
 			}
-			c.Storage.FlushThreshold = b
+			c.Storage.FlushInterval = d
 
 			return nil
 		},
-		func(c *Config) string { return c.Storage.FlushThreshold.String() }},
-	{LYNXDB_STORAGE_FLUSH_IDLE_TIMEOUT, "storage.flush_idle_timeout",
+		func(c *Config) string { return c.Storage.FlushInterval.String() }},
+	{LYNXDB_STORAGE_TIME_FIELDS, "storage.time_fields",
 		func(c *Config, v string) error {
-			d, err := time.ParseDuration(v)
-			if err != nil {
-				return err
+			fields := strings.Split(v, ",")
+			for i := range fields {
+				fields[i] = strings.TrimSpace(fields[i])
 			}
-			c.Storage.FlushIdleTimeout = d
+			c.Storage.TimeFields = fields
 
 			return nil
 		},
-		func(c *Config) string { return c.Storage.FlushIdleTimeout.String() }},
-	{LYNXDB_STORAGE_MAX_COLUMNS_PER_PART, "storage.max_columns_per_part",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.MaxColumnsPerPart = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.Storage.MaxColumnsPerPart) }},
-	{LYNXDB_STORAGE_PARTITION_BY, "storage.partition_by",
-		func(c *Config, v string) error {
-			c.Storage.PartitionBy = v
-
-			return nil
-		},
-		func(c *Config) string { return c.Storage.PartitionBy }},
-	{LYNXDB_STORAGE_COMPACTION_INTERVAL, "storage.compaction_interval",
-		func(c *Config, v string) error {
-			d, err := time.ParseDuration(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.CompactionInterval = d
-
-			return nil
-		},
-		func(c *Config) string { return c.Storage.CompactionInterval.String() }},
-	{LYNXDB_STORAGE_COMPACTION_WORKERS, "storage.compaction_workers",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.CompactionWorkers = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.Storage.CompactionWorkers) }},
-	{LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB, "storage.compaction_rate_limit_mb",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.CompactionRateLimitMB = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.Storage.CompactionRateLimitMB) }},
-	{LYNXDB_STORAGE_COMPACTION_DISABLE_BSI_ON_OUTPUT, "storage.compaction_disable_bsi_on_output",
-		func(c *Config, v string) error {
-			b, err := strconv.ParseBool(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.CompactionDisableBSIOnOutput = b
-
-			return nil
-		},
-		func(c *Config) string { return strconv.FormatBool(c.Storage.CompactionDisableBSIOnOutput) }},
-	{LYNXDB_STORAGE_L0_THRESHOLD, "storage.l0_threshold",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.L0Threshold = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.Storage.L0Threshold) }},
-	{LYNXDB_STORAGE_L1_THRESHOLD, "storage.l1_threshold",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.L1Threshold = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.Storage.L1Threshold) }},
-	{LYNXDB_STORAGE_L2_TARGET_SIZE, "storage.l2_target_size",
-		func(c *Config, v string) error {
-			b, err := ParseByteSize(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.L2TargetSize = b
-
-			return nil
-		},
-		func(c *Config) string { return c.Storage.L2TargetSize.String() }},
+		func(c *Config) string { return strings.Join(c.Storage.TimeFields, ",") }},
 	{LYNXDB_STORAGE_S3_BUCKET, "storage.s3_bucket",
 		func(c *Config, v string) error {
 			c.Storage.S3Bucket = v
@@ -350,28 +248,6 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Storage.SegmentCacheSize.String() }},
-	{LYNXDB_STORAGE_CACHE_MAX_BYTES, "storage.cache_max_bytes",
-		func(c *Config, v string) error {
-			b, err := ParseByteSize(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.CacheMaxBytes = b
-
-			return nil
-		},
-		func(c *Config) string { return c.Storage.CacheMaxBytes.String() }},
-	{LYNXDB_STORAGE_CACHE_TTL, "storage.cache_ttl",
-		func(c *Config, v string) error {
-			d, err := time.ParseDuration(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.CacheTTL = d
-
-			return nil
-		},
-		func(c *Config) string { return c.Storage.CacheTTL.String() }},
 
 	// Query
 	{LYNXDB_QUERY_SYNC_TIMEOUT, "query.sync_timeout",
@@ -1337,7 +1213,7 @@ func Save(cfg *Config, path string) error {
 	return os.WriteFile(path, data, 0o600)
 }
 
-// GetValue looks up a config key (dotted path like "storage.compression")
+// GetValue looks up a config key (dotted path like "storage.partition")
 // and returns the effective value and its source.
 // The configPath is the explicit --config flag value (empty = auto-discover).
 func GetValue(configPath, key string) (value, source string, err error) {
@@ -1373,7 +1249,7 @@ func SetValueInFile(path, key, value string) error {
 		return fmt.Errorf("unknown config key %q", key)
 	}
 
-	// Split dotted key: "storage.compression" -> section="storage", field="compression".
+	// Split dotted key: "storage.partition" -> section="storage", field="partition".
 	var section, field string
 	if idx := strings.IndexByte(key, '.'); idx >= 0 {
 		section = key[:idx]

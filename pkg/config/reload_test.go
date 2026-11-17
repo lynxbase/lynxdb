@@ -20,7 +20,8 @@ func TestClassifyReloadChanges(t *testing.T) {
 	newCfg.HTTP.RateLimit = 250
 	newCfg.TLS.Enabled = true
 	newCfg.Auth.Enabled = true
-	newCfg.Storage.CompactionWorkers = 4
+	newCfg.Storage.Partition = Duration(time.Hour)
+	newCfg.Storage.TimeFields = []string{"ts"}
 
 	changes := ClassifyReloadChanges(oldCfg, &newCfg)
 
@@ -36,7 +37,8 @@ func TestClassifyReloadChanges(t *testing.T) {
 	assertContains(t, changes.RestartRequired, "http.rate_limit")
 	assertContains(t, changes.RestartRequired, "tls.enabled")
 	assertContains(t, changes.RestartRequired, "auth.enabled")
-	assertContains(t, changes.RestartRequired, "storage.compaction_workers")
+	assertContains(t, changes.RestartRequired, "storage.partition")
+	assertContains(t, changes.RestartRequired, "storage.time_fields")
 }
 
 func TestClassifyReloadChangesIgnoresProfiles(t *testing.T) {

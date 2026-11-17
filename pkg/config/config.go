@@ -106,32 +106,12 @@ type Profile struct {
 
 // StorageConfig holds storage engine parameters.
 type StorageConfig struct {
-	Compression      string        `yaml:"compression"          json:"compression"`
-	RowGroupSize     int           `yaml:"row_group_size"       json:"row_group_size"`
-	FlushThreshold   ByteSize      `yaml:"flush_threshold"      json:"flush_threshold"`
-	FlushIdleTimeout time.Duration `yaml:"flush_idle_timeout"   json:"flush_idle_timeout"`
-
-	// MaxColumnsPerPart limits the number of user-defined columns extracted
-	// per segment. When the number of unique fields across events in a batch
-	// exceeds this limit, only the top-N most frequent fields are stored as
-	// columns; the rest remain searchable via _raw full-text search.
-	// This prevents column explosion from high-cardinality JSON keys.
-	// Default: 256. Set to 0 to disable the cap (not recommended).
-	MaxColumnsPerPart int `yaml:"max_columns_per_part" json:"max_columns_per_part"`
-
-	// PartitionBy controls the time-based partitioning of data on disk.
-	// Valid values: "daily" (default), "hourly", "weekly", "monthly", "none".
-	// Finer granularity enables faster retention (rm -rf per partition) and
-	// more targeted time-range queries. Coarser reduces directory count.
-	PartitionBy string `yaml:"partition_by" json:"partition_by"`
-
-	CompactionInterval           time.Duration `yaml:"compaction_interval"      json:"compaction_interval"`
-	CompactionWorkers            int           `yaml:"compaction_workers"       json:"compaction_workers"`
-	CompactionRateLimitMB        int           `yaml:"compaction_rate_limit_mb" json:"compaction_rate_limit_mb"`
-	CompactionDisableBSIOnOutput bool          `yaml:"compaction_disable_bsi_on_output" json:"compaction_disable_bsi_on_output"`
-	L0Threshold                  int           `yaml:"l0_threshold"             json:"l0_threshold"`
-	L1Threshold                  int           `yaml:"l1_threshold"             json:"l1_threshold"`
-	L2TargetSize                 ByteSize      `yaml:"l2_target_size"           json:"l2_target_size"`
+	// Partition is the span of time whose events are kept apart; retention drops whole spans.
+	Partition Duration `yaml:"partition" json:"partition"`
+	// FlushInterval bounds how long ingested events wait in memory; zero means the store's default.
+	FlushInterval Duration `yaml:"flush_interval" json:"flush_interval"`
+	// TimeFields name the fields whose value becomes the event time, tried in order.
+	TimeFields []string `yaml:"time_fields" json:"time_fields"`
 
 	S3Bucket         string `yaml:"s3_bucket"           json:"s3_bucket"`
 	S3Region         string `yaml:"s3_region"           json:"s3_region"`
@@ -143,9 +123,6 @@ type StorageConfig struct {
 	TieringParallelism int           `yaml:"tiering_parallelism" json:"tiering_parallelism"`
 	SegmentCacheSize   ByteSize      `yaml:"segment_cache_size"  json:"segment_cache_size"`
 	RemoteFetchTimeout time.Duration `yaml:"remote_fetch_timeout" json:"remote_fetch_timeout"`
-
-	CacheMaxBytes ByteSize      `yaml:"cache_max_bytes" json:"cache_max_bytes"`
-	CacheTTL      time.Duration `yaml:"cache_ttl"       json:"cache_ttl"`
 }
 
 // QueryConfig holds query execution parameters.
@@ -374,19 +351,8 @@ func DefaultConfig() *Config {
 		LogLevel:  "info",
 
 		Storage: StorageConfig{
-			Compression:       "lz4",
-			RowGroupSize:      65536,
-			FlushThreshold:    512 * MB,
-			FlushIdleTimeout:  200 * time.Millisecond,
-			MaxColumnsPerPart: 256,
-			PartitionBy:       "daily",
-
-			CompactionInterval:    30 * time.Second,
-			CompactionWorkers:     2,
-			CompactionRateLimitMB: 100,
-			L0Threshold:           4,
-			L1Threshold:           4,
-			L2TargetSize:          1 * GB,
+			Partition:  Duration(24 * time.Hour),
+			TimeFields: []string{"_time", "timestamp", "@timestamp", "time", "ts"},
 
 			S3Region: "us-east-1",
 			S3Prefix: "lynxdb/",
@@ -395,9 +361,6 @@ func DefaultConfig() *Config {
 			TieringParallelism: 3,
 			SegmentCacheSize:   10 * GB,
 			RemoteFetchTimeout: 30 * time.Second,
-
-			CacheMaxBytes: 1 * GB,
-			CacheTTL:      5 * time.Minute,
 		},
 
 		Query: QueryConfig{

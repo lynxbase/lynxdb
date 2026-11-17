@@ -11,18 +11,18 @@ import (
 func TestFormatConfigError_Validation(t *testing.T) {
 	ve := &ValidationError{
 		Section: "storage",
-		Field:   "compression",
-		Value:   "snappy",
-		Message: "must be lz4 or zstd",
+		Field:   "partition",
+		Value:   "-1h0m0s",
+		Message: "must not be negative",
 	}
 	result := FormatConfigError(ve, "")
-	if !strings.Contains(result, "Validation error: storage.compression") {
+	if !strings.Contains(result, "Validation error: storage.partition") {
 		t.Errorf("expected structured header, got:\n%s", result)
 	}
-	if !strings.Contains(result, "Value:   snappy") {
+	if !strings.Contains(result, "Value:   -1h0m0s") {
 		t.Errorf("expected value line, got:\n%s", result)
 	}
-	if !strings.Contains(result, "Problem: must be lz4 or zstd") {
+	if !strings.Contains(result, "Problem: must not be negative") {
 		t.Errorf("expected problem line, got:\n%s", result)
 	}
 }

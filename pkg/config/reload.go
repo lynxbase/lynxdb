@@ -15,7 +15,6 @@ type ReloadChanges struct {
 var hotReloadableExactFields = map[string]struct{}{
 	"log_level":                                   {},
 	"retention":                                   {},
-	"storage.compaction_rate_limit_mb":            {},
 	"ingest.mode":                                 {},
 	"ingest.max_batch_size":                       {},
 	"ingest.max_line_bytes":                       {},

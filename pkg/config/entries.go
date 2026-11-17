@@ -88,19 +88,9 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("log_level", cfg.LogLevel, dflt.LogLevel, fileCfg.LogLevel, LYNXDB_LOG_LEVEL)
 
 	// Storage.
-	add("storage.compression", cfg.Storage.Compression, dflt.Storage.Compression, fileCfg.Storage.Compression, LYNXDB_STORAGE_COMPRESSION)
-	add("storage.row_group_size", fmt.Sprintf("%d", cfg.Storage.RowGroupSize), fmt.Sprintf("%d", dflt.Storage.RowGroupSize), fmt.Sprintf("%d", fileCfg.Storage.RowGroupSize), LYNXDB_STORAGE_ROW_GROUP_SIZE)
-	add("storage.flush_threshold", cfg.Storage.FlushThreshold.String(), dflt.Storage.FlushThreshold.String(), fileCfg.Storage.FlushThreshold.String(), LYNXDB_STORAGE_FLUSH_THRESHOLD)
-	add("storage.flush_idle_timeout", cfg.Storage.FlushIdleTimeout.String(), dflt.Storage.FlushIdleTimeout.String(), fileCfg.Storage.FlushIdleTimeout.String(), LYNXDB_STORAGE_FLUSH_IDLE_TIMEOUT)
-	add("storage.max_columns_per_part", fmt.Sprintf("%d", cfg.Storage.MaxColumnsPerPart), fmt.Sprintf("%d", dflt.Storage.MaxColumnsPerPart), fmt.Sprintf("%d", fileCfg.Storage.MaxColumnsPerPart), LYNXDB_STORAGE_MAX_COLUMNS_PER_PART)
-	add("storage.partition_by", cfg.Storage.PartitionBy, dflt.Storage.PartitionBy, fileCfg.Storage.PartitionBy, LYNXDB_STORAGE_PARTITION_BY)
-	add("storage.compaction_interval", cfg.Storage.CompactionInterval.String(), dflt.Storage.CompactionInterval.String(), fileCfg.Storage.CompactionInterval.String(), LYNXDB_STORAGE_COMPACTION_INTERVAL)
-	add("storage.compaction_workers", fmt.Sprintf("%d", cfg.Storage.CompactionWorkers), fmt.Sprintf("%d", dflt.Storage.CompactionWorkers), fmt.Sprintf("%d", fileCfg.Storage.CompactionWorkers), LYNXDB_STORAGE_COMPACTION_WORKERS)
-	add("storage.compaction_rate_limit_mb", fmt.Sprintf("%d", cfg.Storage.CompactionRateLimitMB), fmt.Sprintf("%d", dflt.Storage.CompactionRateLimitMB), fmt.Sprintf("%d", fileCfg.Storage.CompactionRateLimitMB), LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB)
-	add("storage.compaction_disable_bsi_on_output", strconv.FormatBool(cfg.Storage.CompactionDisableBSIOnOutput), strconv.FormatBool(dflt.Storage.CompactionDisableBSIOnOutput), strconv.FormatBool(fileCfg.Storage.CompactionDisableBSIOnOutput), LYNXDB_STORAGE_COMPACTION_DISABLE_BSI_ON_OUTPUT)
-	add("storage.l0_threshold", fmt.Sprintf("%d", cfg.Storage.L0Threshold), fmt.Sprintf("%d", dflt.Storage.L0Threshold), fmt.Sprintf("%d", fileCfg.Storage.L0Threshold), LYNXDB_STORAGE_L0_THRESHOLD)
-	add("storage.l1_threshold", fmt.Sprintf("%d", cfg.Storage.L1Threshold), fmt.Sprintf("%d", dflt.Storage.L1Threshold), fmt.Sprintf("%d", fileCfg.Storage.L1Threshold), LYNXDB_STORAGE_L1_THRESHOLD)
-	add("storage.l2_target_size", cfg.Storage.L2TargetSize.String(), dflt.Storage.L2TargetSize.String(), fileCfg.Storage.L2TargetSize.String(), LYNXDB_STORAGE_L2_TARGET_SIZE)
+	add("storage.partition", cfg.Storage.Partition.String(), dflt.Storage.Partition.String(), fileCfg.Storage.Partition.String(), LYNXDB_STORAGE_PARTITION)
+	add("storage.flush_interval", cfg.Storage.FlushInterval.String(), dflt.Storage.FlushInterval.String(), fileCfg.Storage.FlushInterval.String(), LYNXDB_STORAGE_FLUSH_INTERVAL)
+	add("storage.time_fields", strings.Join(cfg.Storage.TimeFields, ","), strings.Join(dflt.Storage.TimeFields, ","), strings.Join(fileCfg.Storage.TimeFields, ","), LYNXDB_STORAGE_TIME_FIELDS)
 	add("storage.s3_bucket", cfg.Storage.S3Bucket, dflt.Storage.S3Bucket, fileCfg.Storage.S3Bucket, LYNXDB_STORAGE_S3_BUCKET)
 	add("storage.s3_region", cfg.Storage.S3Region, dflt.Storage.S3Region, fileCfg.Storage.S3Region, LYNXDB_STORAGE_S3_REGION)
 	add("storage.s3_prefix", cfg.Storage.S3Prefix, dflt.Storage.S3Prefix, fileCfg.Storage.S3Prefix, LYNXDB_STORAGE_S3_PREFIX)
@@ -109,8 +99,6 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("storage.tiering_interval", cfg.Storage.TieringInterval.String(), dflt.Storage.TieringInterval.String(), fileCfg.Storage.TieringInterval.String(), LYNXDB_STORAGE_TIERING_INTERVAL)
 	add("storage.tiering_parallelism", fmt.Sprintf("%d", cfg.Storage.TieringParallelism), fmt.Sprintf("%d", dflt.Storage.TieringParallelism), fmt.Sprintf("%d", fileCfg.Storage.TieringParallelism), LYNXDB_STORAGE_TIERING_PARALLELISM)
 	add("storage.segment_cache_size", cfg.Storage.SegmentCacheSize.String(), dflt.Storage.SegmentCacheSize.String(), fileCfg.Storage.SegmentCacheSize.String(), LYNXDB_STORAGE_SEGMENT_CACHE_SIZE)
-	add("storage.cache_max_bytes", cfg.Storage.CacheMaxBytes.String(), dflt.Storage.CacheMaxBytes.String(), fileCfg.Storage.CacheMaxBytes.String(), LYNXDB_STORAGE_CACHE_MAX_BYTES)
-	add("storage.cache_ttl", cfg.Storage.CacheTTL.String(), dflt.Storage.CacheTTL.String(), fileCfg.Storage.CacheTTL.String(), LYNXDB_STORAGE_CACHE_TTL)
 
 	// Helper for duration fields.
 	durationEntry := func(key string, val, dfltVal, fileVal time.Duration, envVar string) {

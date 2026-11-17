@@ -11,9 +11,9 @@ import (
 // ValidationError describes a single config validation failure with context.
 type ValidationError struct {
 	Section string // "storage", "query", "ingest", "http", or "" for top-level
-	Field   string // "compression", "log_level", etc.
+	Field   string // "partition", "log_level", etc.
 	Value   string // the actual invalid value
-	Message string // "must be lz4 or zstd"
+	Message string // "must not be negative"
 }
 
 func (e *ValidationError) Error() string {
@@ -153,55 +153,19 @@ func (cl *ClusterConfig) validate() error {
 }
 
 func (s *StorageConfig) validate() error {
-	switch s.Compression {
-	case "lz4", "zstd":
-		// ok
-	default:
-		return validationErr("storage", "compression", s.Compression, "must be lz4 or zstd")
+	if s.Partition < 0 {
+		return validationErr("storage", "partition", s.Partition.String(), "must not be negative")
 	}
-
-	switch s.PartitionBy {
-	case "", "daily", "hourly", "weekly", "monthly", "none":
-		// ok ("" uses default)
-	default:
-		return validationErr("storage", "partition_by", s.PartitionBy, "must be daily, hourly, weekly, monthly, or none")
+	if s.FlushInterval < 0 {
+		return validationErr("storage", "flush_interval", s.FlushInterval.String(), "must not be negative")
 	}
-
-	if s.RowGroupSize < 1 {
-		return validationErr("storage", "row_group_size", fmt.Sprintf("%d", s.RowGroupSize), "must be at least 1")
-	}
-	if s.FlushThreshold < 1*MB {
-		return validationErr("storage", "flush_threshold", s.FlushThreshold.String(), "must be at least 1mb")
-	}
-	if s.FlushIdleTimeout < 0 {
-		return validationErr("storage", "flush_idle_timeout", s.FlushIdleTimeout.String(), "must not be negative")
-	}
-	if s.CompactionInterval < time.Second {
-		return validationErr("storage", "compaction_interval", s.CompactionInterval.String(), "must be at least 1s")
-	}
-	if s.CompactionWorkers < 1 {
-		return validationErr("storage", "compaction_workers", fmt.Sprintf("%d", s.CompactionWorkers), "must be at least 1")
-	}
-	if s.CompactionRateLimitMB < 0 {
-		return validationErr("storage", "compaction_rate_limit_mb", fmt.Sprintf("%d", s.CompactionRateLimitMB), "must not be negative")
-	}
-	if s.L0Threshold < 1 {
-		return validationErr("storage", "l0_threshold", fmt.Sprintf("%d", s.L0Threshold), "must be at least 1")
-	}
-	if s.L1Threshold < 1 {
-		return validationErr("storage", "l1_threshold", fmt.Sprintf("%d", s.L1Threshold), "must be at least 1")
-	}
-	if s.L2TargetSize < 1*MB {
-		return validationErr("storage", "l2_target_size", s.L2TargetSize.String(), "must be at least 1mb")
+	for _, f := range s.TimeFields {
+		if f == "" {
+			return validationErr("storage", "time_fields", strings.Join(s.TimeFields, ","), "must not name an empty field")
+		}
 	}
 	if s.TieringParallelism < 1 {
 		return validationErr("storage", "tiering_parallelism", fmt.Sprintf("%d", s.TieringParallelism), "must be at least 1")
-	}
-	if s.CacheMaxBytes < 0 {
-		return validationErr("storage", "cache_max_bytes", s.CacheMaxBytes.String(), "must not be negative")
-	}
-	if s.CacheTTL < 0 {
-		return validationErr("storage", "cache_ttl", s.CacheTTL.String(), "must not be negative")
 	}
 	if s.RemoteFetchTimeout < 0 {
 		return validationErr("storage", "remote_fetch_timeout", s.RemoteFetchTimeout.String(), "must not be negative")

@@ -186,6 +186,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 		TLSConfig:     tlsCfg,
 		Logger:        logger,
 		LevelVar:      &levelVar,
+		Storage:       cfg.Storage,
 		Query:         cfg.Query,
 		Ingest:        cfg.Ingest,
 		HTTP:          cfg.HTTP,

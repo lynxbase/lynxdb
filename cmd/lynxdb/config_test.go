@@ -183,7 +183,7 @@ func TestConfigValidate_Valid(t *testing.T) {
 	os.WriteFile(cfgPath, []byte(`
 listen: "0.0.0.0:3200"
 storage:
-  compression: "zstd"
+  partition: 1h
 `), 0o644)
 
 	cmd := rootCmd
@@ -315,14 +315,14 @@ func TestConfigShow_InvalidDuration(t *testing.T) {
 	defer os.Chdir(origDir)
 
 	cmd := rootCmd
-	cmd.SetArgs([]string{"config", "--compaction-interval", "not-a-duration"})
+	cmd.SetArgs([]string{"config", "--tiering-interval", "not-a-duration"})
 
 	_, err := captureStdout(t, cmd.Execute)
 	if err == nil {
 		t.Fatal("expected error for invalid duration flag")
 	}
-	if !strings.Contains(err.Error(), "invalid --compaction-interval") {
-		t.Errorf("error %q should mention 'invalid --compaction-interval'", err.Error())
+	if !strings.Contains(err.Error(), "invalid --tiering-interval") {
+		t.Errorf("error %q should mention 'invalid --tiering-interval'", err.Error())
 	}
 }
 
@@ -458,10 +458,10 @@ func TestConfigSet_NestedKey(t *testing.T) {
 	resetConfigFlags(t)
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
-	os.WriteFile(cfgPath, []byte("storage:\n  compression: lz4\n"), 0o644)
+	os.WriteFile(cfgPath, []byte("storage:\n  partition: 24h\n"), 0o644)
 
 	cmd := rootCmd
-	cmd.SetArgs([]string{"config", "set", "storage.compression", "zstd", "--config", cfgPath})
+	cmd.SetArgs([]string{"config", "set", "storage.partition", "1h", "--config", cfgPath})
 
 	_, err := captureStdout(t, cmd.Execute)
 	if err != nil {
@@ -472,8 +472,8 @@ func TestConfigSet_NestedKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if !strings.Contains(string(data), "zstd") {
-		t.Errorf("expected 'zstd' in file, got:\n%s", string(data))
+	if !strings.Contains(string(data), "partition: 1h") {
+		t.Errorf("expected 'partition: 1h' in file, got:\n%s", string(data))
 	}
 }
 

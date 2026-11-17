@@ -168,14 +168,16 @@ func TestReloadConfigReportsStartupTimeFields(t *testing.T) {
 
 	updated.TLS.Enabled = !updated.TLS.Enabled
 	updated.Auth.Enabled = !updated.Auth.Enabled
-	updated.Storage.CompactionWorkers++
+	updated.Storage.Partition = config.Duration(time.Hour)
+	updated.Storage.FlushInterval = config.Duration(time.Second)
+	updated.Storage.TimeFields = []string{"ts"}
 
 	restartRequired, err := srv.ReloadConfig(&updated)
 	if err != nil {
 		t.Fatalf("ReloadConfig: %v", err)
 	}
 
-	for _, field := range []string{"tls.enabled", "auth.enabled", "storage.compaction_workers"} {
+	for _, field := range []string{"tls.enabled", "auth.enabled", "storage.partition", "storage.flush_interval", "storage.time_fields"} {
 		found := false
 		for _, got := range restartRequired {
 			if got == field {
@@ -186,6 +188,24 @@ func TestReloadConfigReportsStartupTimeFields(t *testing.T) {
 		if !found {
 			t.Fatalf("restart_required missing %q in %v", field, restartRequired)
 		}
+	}
+}
+
+func TestServerTakesStorageTimeFields(t *testing.T) {
+	srv, cleanup := startTestServerWithConfig(t, Config{Storage: config.StorageConfig{
+		Partition:  config.Duration(time.Hour),
+		TimeFields: []string{"ts"},
+	}})
+	defer cleanup()
+
+	ingestNDJSON(t, srv.Addr(), "main", `{"timestamp":"2020-01-01T00:00:00Z","ts":"2026-01-02T03:04:05Z"}`+"\n")
+
+	events := queryEvents(t, srv.Addr(), `{"q":"source=main"}`)
+	if len(events) != 1 {
+		t.Fatalf("events: got %d, want 1", len(events))
+	}
+	if events[0]["_time"] != "2026-01-02T03:04:05Z" {
+		t.Errorf("_time = %v, want the value of ts", events[0]["_time"])
 	}
 }
 

@@ -62,13 +62,9 @@ func TestValidateStorage(t *testing.T) {
 		modify  func(*StorageConfig)
 		wantErr string
 	}{
-		{"bad compression", func(s *StorageConfig) { s.Compression = "snappy" }, "storage.compression"},
-		{"zero row group", func(s *StorageConfig) { s.RowGroupSize = 0 }, "storage.row_group_size"},
-		{"small flush", func(s *StorageConfig) { s.FlushThreshold = 100 }, "storage.flush_threshold"},
-		{"zero compaction workers", func(s *StorageConfig) { s.CompactionWorkers = 0 }, "storage.compaction_workers"},
-		{"zero l0 threshold", func(s *StorageConfig) { s.L0Threshold = 0 }, "storage.l0_threshold"},
-		{"small l2 target", func(s *StorageConfig) { s.L2TargetSize = 100 }, "storage.l2_target_size"},
-		// F10: RemoteFetchTimeout validation
+		{"negative partition", func(s *StorageConfig) { s.Partition = Duration(-time.Hour) }, "storage.partition"},
+		{"negative flush_interval", func(s *StorageConfig) { s.FlushInterval = Duration(-time.Second) }, "storage.flush_interval"},
+		{"empty time field", func(s *StorageConfig) { s.TimeFields = []string{"ts", ""} }, "storage.time_fields"},
 		{"negative remote_fetch_timeout", func(s *StorageConfig) { s.RemoteFetchTimeout = -time.Second }, "storage.remote_fetch_timeout"},
 	}
 	for _, tt := range tests {
@@ -314,7 +310,7 @@ func TestValidateBufferManager_PercentsSumExactly100(t *testing.T) {
 
 func TestValidationErrorType(t *testing.T) {
 	cfg := DefaultConfig()
-	cfg.Storage.Compression = "snappy"
+	cfg.Storage.Partition = Duration(-time.Hour)
 	err := cfg.Validate()
 	if err == nil {
 		t.Fatal("expected error")
@@ -327,13 +323,13 @@ func TestValidationErrorType(t *testing.T) {
 	if ve.Section != "storage" {
 		t.Errorf("Section: got %q, want storage", ve.Section)
 	}
-	if ve.Field != "compression" {
-		t.Errorf("Field: got %q, want compression", ve.Field)
+	if ve.Field != "partition" {
+		t.Errorf("Field: got %q, want partition", ve.Field)
 	}
-	if ve.Value != "snappy" {
-		t.Errorf("Value: got %q, want snappy", ve.Value)
+	if ve.Value != "-1h0m0s" {
+		t.Errorf("Value: got %q, want -1h0m0s", ve.Value)
 	}
-	if ve.Message != "must be lz4 or zstd" {
+	if ve.Message != "must not be negative" {
 		t.Errorf("Message: got %q", ve.Message)
 	}
 }

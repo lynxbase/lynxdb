@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -16,11 +17,14 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("expected info, got %s", cfg.LogLevel)
 	}
-	if cfg.Storage.Compression != "lz4" {
-		t.Errorf("expected lz4, got %s", cfg.Storage.Compression)
+	if cfg.Storage.Partition != Duration(24*time.Hour) {
+		t.Errorf("expected 24h partition, got %v", cfg.Storage.Partition)
 	}
-	if cfg.Storage.RowGroupSize != 65536 {
-		t.Errorf("expected 65536, got %d", cfg.Storage.RowGroupSize)
+	if cfg.Storage.FlushInterval != 0 {
+		t.Errorf("expected zero flush interval, got %v", cfg.Storage.FlushInterval)
+	}
+	if want := []string{"_time", "timestamp", "@timestamp", "time", "ts"}; !slices.Equal(cfg.Storage.TimeFields, want) {
+		t.Errorf("expected time fields %v, got %v", want, cfg.Storage.TimeFields)
 	}
 	if cfg.Query.MaxConcurrent != defaultMaxConcurrent {
 		t.Errorf("expected %d, got %d", defaultMaxConcurrent, cfg.Query.MaxConcurrent)

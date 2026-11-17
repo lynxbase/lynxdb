@@ -87,7 +87,7 @@ func TestEntriesWithFileAndEnv(t *testing.T) {
 	os.WriteFile(cfgPath, []byte(`
 listen: "0.0.0.0:3200"
 storage:
-  compression: "zstd"
+  partition: 1h
 `), 0o644)
 
 	t.Setenv("LYNXDB_LISTEN", "0.0.0.0:5000")
@@ -104,12 +104,12 @@ storage:
 			if e.Value != "0.0.0.0:5000" {
 				t.Errorf("listen value: got %q", e.Value)
 			}
-		case "storage.compression":
+		case "storage.partition":
 			if e.Source != "config file" {
-				t.Errorf("storage.compression source: got %q, want config file", e.Source)
+				t.Errorf("storage.partition source: got %q, want config file", e.Source)
 			}
-			if e.Value != "zstd" {
-				t.Errorf("storage.compression value: got %q", e.Value)
+			if e.Value != "1h0m0s" {
+				t.Errorf("storage.partition value: got %q", e.Value)
 			}
 		}
 	}

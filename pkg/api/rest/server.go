@@ -64,6 +64,7 @@ type Config struct {
 	TLSConfig *tls.Config // If non-nil, server listens with TLS.
 	Logger    *slog.Logger
 	LevelVar  *slog.LevelVar // Optional. When set, ReloadConfig adjusts the log level through it.
+	Storage   config.StorageConfig
 	Query     config.QueryConfig
 	Ingest    config.IngestConfig
 	HTTP      config.HTTPConfig
@@ -78,6 +79,9 @@ func NewServer(cfg Config) (*Server, error) {
 	db, err := database.Open(database.Config{
 		Dir:           cfg.DataDir,
 		Retention:     cfg.Retention,
+		Partition:     cfg.Storage.Partition.Duration(),
+		FlushInterval: cfg.Storage.FlushInterval.Duration(),
+		TimeFields:    cfg.Storage.TimeFields,
 		MaxConcurrent: cfg.Query.MaxConcurrent,
 		JobTTL:        cfg.Query.JobTTL,
 		Logger:        cfg.Logger,
@@ -104,6 +108,9 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 		runtimeCfg.Listen = cfg.Addr
 		runtimeCfg.DataDir = cfg.DataDir
 		runtimeCfg.Retention = config.Duration(cfg.Retention)
+		if cfg.Storage.Partition > 0 {
+			runtimeCfg.Storage = cfg.Storage
+		}
 		if cfg.Query.SyncTimeout > 0 {
 			runtimeCfg.Query = cfg.Query
 		}
