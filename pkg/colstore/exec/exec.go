@@ -43,6 +43,8 @@ type execution struct {
 	shared  *sharedGroups
 	// streaming is set while the aggregation runs in key order.
 	streaming bool
+	// rows is the number of rows the workers aggregated.
+	rows int64
 	// ords numbers the parts of the snapshot for a plan that locates rows.
 	ords map[*part.Part]int
 	// taken counts the rows that a plan with a limit and no order has

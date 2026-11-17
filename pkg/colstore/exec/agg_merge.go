@@ -64,6 +64,7 @@ func (x *execution) merger(slot int) *merger {
 		for i := range m.post.tmp {
 			m.post.tmp[i].reset()
 		}
+		m.post.rows = x.rows
 		m.arena = mem.NewArena()
 		m.heap.init(m.arena)
 		m.table = vec.NewByteTable(m.arena)
@@ -83,6 +84,7 @@ func (x *execution) finishAggregate(ws []*worker) ([]*sink, error) {
 	floats := make([]bool, len(plan.args))
 	logged, total := false, 0
 	for _, w := range ws {
+		x.rows += w.matched
 		for i, f := range w.agg.floats {
 			floats[i] = floats[i] || f
 		}

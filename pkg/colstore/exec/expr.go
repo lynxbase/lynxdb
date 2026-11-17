@@ -110,6 +110,7 @@ const (
 	OpTrimLeft
 	OpTrimRight
 	OpIndexOf
+	OpTotal
 )
 
 // Expr is a node of an expression tree; which fields it uses depends on Op.
@@ -335,3 +336,9 @@ func TrimRight(s *Expr, args ...*Expr) *Expr {
 // IndexOf is how many characters precede the first occurrence of the string
 // needle in s, and has no value when there is none.
 func IndexOf(s, needle *Expr) *Expr { return call(OpIndexOf, s, needle) }
+
+// Total is the sum of the numbers that a column of an aggregate holds over
+// its groups: all of them in the filter above the aggregate, and those that
+// pass that filter in the projection. The groups are then all held until it
+// is known.
+func Total(column *Expr) *Expr { return call(OpTotal, column) }

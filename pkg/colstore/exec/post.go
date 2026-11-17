@@ -16,6 +16,9 @@ type pexpr struct {
 	pat  tokenfilter.Pattern
 	// byValue is set for a function computed row by row from values.
 	byValue bool
+	// rows is set for the total of a count of rows that no filter thins out:
+	// the number of rows aggregated, known before the groups are merged.
+	rows bool
 }
 
 func (q *query) project(p *Project) error {
@@ -33,6 +36,9 @@ func (q *query) project(p *Project) error {
 	if len(q.post) == 0 {
 		return unsupported("a projection without columns")
 	}
+	for _, pe := range q.post {
+		q.totals(pe)
+	}
 	if q.located != nil {
 		q.final = make([]*sexpr, len(q.post))
 		for i, pe := range q.post {
@@ -46,6 +52,57 @@ func (q *query) project(p *Project) error {
 	q.names = names
 
 	return nil
+}
+
+// totals decides how the totals in e become known: the total of a count of
+// rows from the scan, any other once every group is merged.
+func (q *query) totals(e *pexpr) {
+	for _, a := range e.args {
+		q.totals(a)
+	}
+	if e.op != OpTotal {
+		return
+	}
+	if out := e.col - len(q.agg.keys); q.having == nil && out >= 0 && q.agg.outs[out].fn == Count && q.agg.outs[out].rows >= 0 {
+		// Rows are counted as they are scanned, not in key order.
+		e.rows, q.ordered = true, nil
+
+		return
+	}
+	q.early = true
+}
+
+// total makes dst n rows of the sum of the numbers in col: an integer when
+// all of them are, a null when there is none.
+func total(dst, col *colVec, n int) {
+	var ints int64
+	var floats float64
+	isFloat, any := false, false
+	for i := 0; i < n; i++ {
+		switch v := col.value(i); v.Kind {
+		case vec.KindInt:
+			ints, any = ints+v.Int, true
+		case vec.KindFloat:
+			floats, isFloat, any = floats+v.Float, true, true
+		}
+	}
+	switch {
+	case !any:
+		dst.reset()
+		for i := 0; i < n; i++ {
+			dst.appendNull()
+		}
+	case isFloat:
+		out := dst.bulkFloats(n)
+		for i := range out {
+			out[i] = floats + float64(ints)
+		}
+	default:
+		out := dst.bulkInts(n)
+		for i := range out {
+			out[i] = ints
+		}
+	}
 }
 
 // locates reports whether the expression reads a column that locates a row.
@@ -76,6 +133,17 @@ func postExpr(e *Expr, in []string, slots *int) (*pexpr, error) {
 		*slots++
 
 		return &pexpr{op: OpLiteral, lit: e.Value, slot: *slots - 1}, nil
+	case OpTotal:
+		if len(e.Args) != 1 || e.Args[0] == nil || e.Args[0].Op != OpColumn {
+			return nil, unsupported("a total takes a column of the aggregate")
+		}
+		of, err := postExpr(e.Args[0], in, slots)
+		if err != nil {
+			return nil, err
+		}
+		*slots++
+
+		return &pexpr{op: OpTotal, col: of.col, slot: *slots - 1}, nil
 	case OpHourOfDay, OpAdd, OpSub, OpMul, OpDiv:
 		want := 2
 		if e.Op == OpHourOfDay {
@@ -116,8 +184,10 @@ func postExpr(e *Expr, in []string, slots *int) (*pexpr, error) {
 
 // postEval computes a projection over batches of aggregate rows.
 type postEval struct {
-	tmp []colVec
-	out []colVec
+	// rows is the number of rows the query aggregated.
+	rows int64
+	tmp  []colVec
+	out  []colVec
 	// args, vals and text serve functions computed from values.
 	args []*colVec
 	vals []Value
@@ -154,6 +224,19 @@ func (p *postEval) buf(slot int) *colVec {
 
 func (p *postEval) eval(e *pexpr, in []colVec, n int) *colVec {
 	switch e.op {
+	case OpTotal:
+		out := p.buf(e.slot)
+		if e.rows {
+			all := out.bulkInts(n)
+			for i := range all {
+				all[i] = p.rows
+			}
+
+			return out
+		}
+		total(out, &in[e.col], n)
+
+		return out
 	case OpColumn:
 		return &in[e.col]
 	case OpLiteral:

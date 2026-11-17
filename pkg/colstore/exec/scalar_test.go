@@ -1,6 +1,8 @@
 package exec_test
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"testing"
@@ -207,5 +209,59 @@ func TestNullAndMissingKeys(t *testing.T) {
 			})
 		}
 		snap.Release()
+	}
+}
+
+// TestTotalsOverGroups covers the share of each group in the total of a
+// column, over the groups that pass the filter above the aggregate.
+func TestTotalsOverGroups(t *testing.T) {
+	aggs := []exec.Agg{
+		{Name: "rows", Func: exec.Count},
+		{Name: "sum_score", Func: exec.Sum, Arg: float("score")},
+		{Name: "sum_n", Func: exec.Sum, Arg: num("n")},
+		{Name: "max_msg", Func: exec.Max, Arg: str("msg")},
+	}
+	shares := []exec.Named{
+		named("user", anyOf("user")),
+		named("rows", anyOf("rows")),
+		named("all", exec.Total(anyOf("rows"))),
+		named("share", exec.Round(exec.Div(exec.Mul(anyOf("rows"), exec.Float(100)), exec.Total(anyOf("rows"))), exec.Int(3))),
+		named("of score", exec.Div(anyOf("sum_score"), exec.Total(anyOf("sum_score")))),
+		named("ints", exec.Sub(exec.Total(anyOf("sum_n")), anyOf("sum_n"))),
+		named("no numbers", exec.Total(anyOf("max_msg"))),
+	}
+	posts := exec.And(exec.Eq(str("kind"), exec.Str("commit")), exec.Eq(str("op"), exec.Str("create")), exec.Eq(str("coll"), exec.Str("feed.post")))
+	byUser := func(filter *exec.Expr) exec.Node {
+		return &exec.Aggregate{Input: &exec.Scan{Filter: filter}, Keys: keys("user"), Aggs: aggs}
+	}
+	top := []exec.Order{{Column: "rows", Desc: true}, {Column: "user"}}
+	plans := map[string]exec.Node{
+		"top":           &exec.Sort{Input: &exec.Project{Input: byUser(nil), Exprs: shares}, By: top, Limit: 10},
+		"in key order":  &exec.Sort{Input: &exec.Project{Input: byUser(posts), Exprs: shares}, By: top, Limit: 10},
+		"of the passed": &exec.Sort{Input: &exec.Project{Input: &exec.Filter{Input: byUser(nil), Cond: exec.Gt(anyOf("rows"), exec.Int(3))}, Exprs: shares}, By: top},
+		"of none":       &exec.Project{Input: &exec.Filter{Input: byUser(nil), Cond: exec.Gt(anyOf("rows"), exec.Int(1<<40))}, Exprs: shares},
+		"of one group":  &exec.Project{Input: &exec.Aggregate{Input: &exec.Scan{}, Aggs: aggs}, Exprs: shares[1:]},
+		"above a share": &exec.Sort{Input: &exec.Project{Input: &exec.Filter{Input: byUser(nil),
+			Cond: exec.Gt(exec.Mul(anyOf("rows"), exec.Int(200)), exec.Total(anyOf("rows")))}, Exprs: shares}, By: top},
+	}
+	for _, limits := range [][2]int{{1 << 16, 4096}, {4, 0}} {
+		restore := exec.SetLimits(limits[0], limits[1])
+		eachLayout(t, 3000, func(t *testing.T, snap *colstore.Snapshot, rows []refRow, workers int) {
+			for name, plan := range plans {
+				t.Run(fmt.Sprintf("%s/%d", name, limits[0]), func(t *testing.T) {
+					_, sorted := plan.(*exec.Sort)
+					check(t, snap, rows, plan, sorted, workers)
+				})
+			}
+		})
+		restore()
+	}
+	for name, plan := range map[string]exec.Node{
+		"a total of rows":       &exec.Project{Input: &exec.Scan{}, Exprs: []exec.Named{named("x", exec.Total(anyOf("n")))}},
+		"a total of a function": &exec.Project{Input: byUser(nil), Exprs: []exec.Named{named("x", exec.Total(exec.Add(anyOf("rows"), exec.Int(1))))}},
+	} {
+		if _, err := exec.Run(context.Background(), colstore.NewTable().Snapshot(), plan, exec.Options{}); !errors.Is(err, exec.ErrUnsupported) {
+			t.Errorf("%s: got %v, want ErrUnsupported", name, err)
+		}
 	}
 }

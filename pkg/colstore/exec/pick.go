@@ -163,6 +163,20 @@ func resolve(snap *colstore.Snapshot, q *query, located []*sexpr, cols []colVec,
 	return nil
 }
 
+// uses reports whether e has a node of op.
+func uses(e *Expr, op Op) bool {
+	if e == nil {
+		return false
+	}
+	for _, a := range e.Args {
+		if uses(a, op) {
+			return true
+		}
+	}
+
+	return e.Op == op
+}
+
 // reads reports whether e refers to a column of names that locates a row.
 func reads(e *Expr, names []string, located []*sexpr) bool {
 	if e == nil {
@@ -214,7 +228,7 @@ func (x *execution) finish(snap *colstore.Snapshot, sinks []*sink) ([]Column, in
 		return nil, 0, err
 	}
 	var having havingEval
-	var post postEval
+	post := postEval{rows: x.rows}
 	out := raw
 	if q.having != nil && n > 0 {
 		out = having.run(q, out, n)

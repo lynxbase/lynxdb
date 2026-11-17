@@ -121,7 +121,7 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 		}
 		q.ordered = q.planOrdered(snap, scan.Filter)
 		q.names, q.final = q.agg.names, q.located
-		q.early = flt != nil && q.located != nil && reads(flt.Cond, q.names, q.located)
+		q.early = flt != nil && ((q.located != nil && reads(flt.Cond, q.names, q.located)) || uses(flt.Cond, OpTotal))
 		if flt != nil {
 			if err := q.filterAbove(flt); err != nil {
 				return nil, err

@@ -748,7 +748,7 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 				for i, name := range names {
 					named[name] = row[i]
 				}
-				if refHaving(flt.Cond, named) {
+				if refHaving(refTotals(flt.Cond, out, names), named) {
 					passed = append(passed, row)
 				}
 			}
@@ -767,7 +767,7 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 				}
 				var res []exec.Value
 				for _, e := range prj.Exprs {
-					res = append(res, refPost(e.Expr, named))
+					res = append(res, refPost(refTotals(e.Expr, in, inNames), named))
 				}
 				out = append(out, res)
 			}
@@ -811,6 +811,45 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 	}
 
 	return out, names
+}
+
+// refTotals returns e with every Total replaced by the sum of its column
+// over rows.
+func refTotals(e *exec.Expr, rows [][]exec.Value, names []string) *exec.Expr {
+	if e.Op == exec.OpTotal {
+		sum, floats, any := 0.0, false, false
+		whole := int64(0)
+		for _, row := range rows {
+			for c, name := range names {
+				if name != e.Args[0].Path {
+					continue
+				}
+				if x, ok := refNumber(row[c]); ok {
+					sum, any = sum+x, true
+					whole += row[c].Int
+					floats = floats || row[c].Kind == vec.KindFloat
+				}
+			}
+		}
+		switch {
+		case !any:
+			return &exec.Expr{Op: exec.OpLiteral}
+		case floats:
+			return exec.Float(sum)
+		}
+
+		return exec.Int(whole)
+	}
+	if len(e.Args) == 0 {
+		return e
+	}
+	out := *e
+	out.Args = make([]*exec.Expr, len(e.Args))
+	for i, a := range e.Args {
+		out.Args[i] = refTotals(a, rows, names)
+	}
+
+	return &out
 }
 
 // refHaving evaluates a filter over an aggregate's row.
