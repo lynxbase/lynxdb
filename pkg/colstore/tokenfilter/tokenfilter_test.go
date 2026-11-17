@@ -236,7 +236,7 @@ func TestFilterHasNoFalseNegativesAndFewFalsePositives(t *testing.T) {
 		for i := 0; i < n; i++ {
 			set.Add(hashesOf(fmt.Sprintf("token%d", i)))
 		}
-		filter := Append([]byte("prefix"), set.Keys())[len("prefix"):]
+		filter := Append([]byte("prefix"), set.Keys(), 1)[len("prefix"):]
 		for i := 0; i < n; i++ {
 			if !MayContain(filter, hashesOf(fmt.Sprintf("TOKEN%d", i))[0]) {
 				t.Fatalf("n=%d: token %d missing", n, i)
@@ -286,7 +286,7 @@ func TestFilterSeparatesSimilarTokens(t *testing.T) {
 		if len(set.Keys()) != n {
 			t.Errorf("%s: %d of %d tokens have distinct hashes", name, len(set.Keys()), n)
 		}
-		filter := Append(nil, set.Keys())
+		filter := Append(nil, set.Keys(), 1)
 		hits := 0
 		for i := n; i < 2*n; i++ {
 			if MayContain(filter, hashesOf(gen(i))[0]) {
@@ -295,6 +295,44 @@ func TestFilterSeparatesSimilarTokens(t *testing.T) {
 		}
 		if rate := float64(hits) / n; rate > 0.015 {
 			t.Errorf("%s: false-positive rate %.4f", name, rate)
+		}
+	}
+}
+
+// Filters of any sizes can be cut into the same number of pieces and a hash
+// looked up in the same piece of each.
+func TestHashFallsInTheSamePieceOfFiltersOfAnySize(t *testing.T) {
+	r := rand.New(rand.NewSource(1))
+	hashes := []uint64{0, 1, 1<<32 - 1, 1 << 32, 1<<63 - 1, 1 << 63, ^uint64(0), 0xffffffff << 32}
+	for len(hashes) < 200000 {
+		hashes = append(hashes, r.Uint64())
+	}
+	for _, h := range hashes {
+		pieces, per := 1+r.Intn(300), 1+r.Intn(5000)
+		if got, want := Block(h, pieces*per)/per, Block(h, pieces); got != want {
+			t.Fatalf("hash %x falls in piece %d of %d in a filter of %d bloom blocks and in bloom block %d of %d",
+				h, got, pieces, pieces*per, want, pieces)
+		}
+	}
+}
+
+func TestAppendRoundsFiltersUpToTheUnit(t *testing.T) {
+	for _, n := range []int{0, 1, 21, 22, 700, 30000} {
+		var set Set
+		for i := 0; i < n; i++ {
+			set.Add(hashesOf(fmt.Sprintf("token%d", i)))
+		}
+		natural := len(Append(nil, set.Keys(), 1))
+		for _, unit := range []int{1, 2, 7, 16, 128} {
+			filter := Append(nil, set.Keys(), unit)
+			if step := unit * BlockBytes; len(filter)%step != 0 || len(filter) < natural || len(filter) >= natural+step {
+				t.Fatalf("%d tokens, unit %d: %d bytes for a natural size of %d", n, unit, len(filter), natural)
+			}
+			for i := 0; i < n; i++ {
+				if h := hashesOf(fmt.Sprintf("token%d", i))[0]; !MayContain(filter, h) || !BlockMayContain(filter[Block(h, len(filter)/BlockBytes)*BlockBytes:], h) {
+					t.Fatalf("%d tokens, unit %d: token %d missing", n, unit, i)
+				}
+			}
 		}
 	}
 }

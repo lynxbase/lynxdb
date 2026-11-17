@@ -231,7 +231,7 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 
 	filterOff := len(w.block)
 	if !w.opts.NoTokenFilter {
-		w.block = tokenfilter.Append(w.block, w.tokens.Keys())
+		w.block = tokenfilter.Append(w.block, w.tokens.Keys(), 1)
 		for at, end := filterOff, len(w.block); at < end; at += filterPage {
 			sum := crc32.Checksum(w.block[at:min(at+filterPage, end)], castagnoli)
 			w.block = binary.LittleEndian.AppendUint32(w.block, sum)
