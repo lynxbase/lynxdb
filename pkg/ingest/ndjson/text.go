@@ -7,7 +7,6 @@ import (
 	"io"
 	"time"
 
-	"github.com/lynxbase/lynxdb/pkg/engine/unpack"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 )
@@ -22,12 +21,12 @@ type Text struct {
 }
 
 // NewText returns a converter that extracts the fields of format, a log
-// format that unpack parses, besides the timestamp and key=value pairs;
+// format that NewParser parses, besides the timestamp and key=value pairs;
 // an empty format extracts only those.
 func NewText(format string) (*Text, error) {
 	pipe := pipeline.DefaultPipeline()
 	if format != "" {
-		p, err := unpack.NewParser(format)
+		p, err := NewParser(format)
 		if err != nil {
 			return nil, err
 		}
@@ -39,7 +38,7 @@ func NewText(format string) (*Text, error) {
 
 // formatFields sets the fields a format parser finds in the text of each
 // event, keeping the fields the event already has.
-type formatFields struct{ parser unpack.FormatParser }
+type formatFields struct{ parser FormatParser }
 
 func (f formatFields) Process(events []*event.Event) ([]*event.Event, error) {
 	for _, ev := range events {

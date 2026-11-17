@@ -1,8 +1,4 @@
-// Package unpack provides format-specific parsers for extracting structured
-// fields from log lines. Each parser implements the FormatParser interface
-// and uses a callback-based design to write fields directly into batch columns,
-// avoiding intermediate map[string]Value allocations per row.
-package unpack
+package ndjson
 
 import (
 	"fmt"
@@ -12,12 +8,9 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
-// FormatParser parses a log line and emits extracted key-value pairs.
-// The emit callback writes directly into batch columns. Returning false
-// from emit short-circuits parsing (used for fields() filtering).
+// FormatParser parses a log line and emits the key-value pairs it extracts.
 type FormatParser interface {
-	// Parse extracts fields from input and calls emit for each key-value pair.
-	// If emit returns false, parsing stops early (short-circuit for fields filtering).
+	// Parse calls emit for each field of input; emit returning false stops it.
 	Parse(input string, emit func(key string, val event.Value) bool) error
 
 	// Name returns the parser format name: "syslog" or "combined".
@@ -33,7 +26,7 @@ func NewParser(format string) (FormatParser, error) {
 	case "combined":
 		return &CombinedParser{}, nil
 	default:
-		return nil, fmt.Errorf("unpack: unknown format %q (supported: syslog, combined)", format)
+		return nil, fmt.Errorf("ndjson: unknown format %q (supported: syslog, combined)", format)
 	}
 }
 

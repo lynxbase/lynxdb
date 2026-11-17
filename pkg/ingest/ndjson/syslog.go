@@ -1,4 +1,4 @@
-package unpack
+package ndjson
 
 import (
 	"strconv"
