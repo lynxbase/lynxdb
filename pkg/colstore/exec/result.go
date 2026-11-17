@@ -293,6 +293,27 @@ func (c *colVec) appendFrom(src *colVec, i int) {
 }
 
 // appendAll adds every row of src.
+// reserve makes room for rows more rows with bytes more bytes of strings, so
+// that appending them grows the column once.
+func (c *colVec) reserve(rows, bytes int) {
+	c.kinds = slices.Grow(c.kinds, rows)
+	if bytes > 0 {
+		c.ends, c.data = slices.Grow(c.ends, len(c.kinds)+rows-len(c.ends)), slices.Grow(c.data, bytes)
+	}
+}
+
+// reserveAll makes room in each column of dst for the rows that the sinks
+// hold of it.
+func reserveAll(dst []colVec, sinks []*sink) {
+	for c := range dst {
+		rows, bytes := 0, 0
+		for _, s := range sinks {
+			rows, bytes = rows+s.cols[c].len(), bytes+len(s.cols[c].data)
+		}
+		dst[c].reserve(rows, bytes)
+	}
+}
+
 func (c *colVec) appendAll(src *colVec) {
 	n := src.len()
 	if n == 0 {
@@ -305,6 +326,22 @@ func (c *colVec) appendAll(src *colVec) {
 		c.ends = append(c.ends[:0], src.ends...)
 		c.data = append(c.data[:0], src.data...)
 		c.kind = src.kind
+
+		return
+	}
+	if src.keys == nil && src.kind == vec.KindString && c.kind == vec.KindString && len(c.ends) == len(c.kinds) {
+		// Strings after strings move as one run of bytes.
+		base := uint32(len(c.data))
+		c.kinds, c.data = append(c.kinds, src.kinds...), append(c.data, src.data...)
+		for _, end := range src.ends {
+			c.ends = append(c.ends, base+end)
+		}
+		if len(c.ints) != 0 {
+			c.ints = append(c.ints, make([]int64, n)...)
+		}
+		if len(c.floats) != 0 {
+			c.floats = append(c.floats, make([]float64, n)...)
+		}
 
 		return
 	}

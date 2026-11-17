@@ -7,6 +7,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
+	"github.com/lynxbase/lynxdb/pkg/mem"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
@@ -19,23 +20,39 @@ type placed struct {
 
 // resolver is what one goroutine keeps while it reads located rows.
 type resolver struct {
-	b    part.Block
-	col  vec.Column
+	b   part.Block
+	col vec.Column
+	// bufs hold the bytes of the values read, in chunks that stay where
+	// they are; cur is the chunk being filled.
 	bufs [][]byte
+	cur  int
 }
 
 // keep copies v into memory that stays where it is.
 func (r *resolver) keep(v []byte) []byte {
-	last := len(r.bufs) - 1
-	if last < 0 || cap(r.bufs[last])-len(r.bufs[last]) < len(v) {
-		r.bufs = append(r.bufs, make([]byte, 0, max(64<<10, len(v))))
-		last++
-	}
-	b := append(r.bufs[last], v...)
-	r.bufs[last] = b
+	for ; r.cur < len(r.bufs); r.cur++ {
+		if b := r.bufs[r.cur]; cap(b)-len(b) >= len(v) {
+			b = append(b, v...)
+			r.bufs[r.cur] = b
 
-	return b[len(b)-len(v) : len(b) : len(b)]
+			return b[len(b)-len(v) : len(b) : len(b)]
+		}
+	}
+	r.bufs = append(r.bufs, append(make([]byte, 0, max(64<<10, len(v))), v...))
+
+	return r.bufs[r.cur][:len(v):len(v)]
 }
+
+// resolveScratch is the memory that reading located rows keeps between
+// queries.
+type resolveScratch struct {
+	rs     []resolver
+	picks  []placed
+	starts []int
+	vals   []Value
+}
+
+var resolvePool mem.Pool[resolveScratch]
 
 // read stores in vals the values that column e holds in the rows of picks,
 // all of which are in one block.
@@ -87,15 +104,26 @@ func resolve(snap *colstore.Snapshot, q *query, located []*sexpr, cols []colVec,
 		return nil
 	}
 	parts := snap.Parts()
-	rs := make([]resolver, max(workers, 1))
-	var picks []placed
-	var starts []int
-	vals := make([]Value, n)
+	s := resolvePool.Get()
+	defer resolvePool.Put(s)
+	s.rs, s.vals = fit(s.rs, max(workers, 1)), fit(s.vals, n)
+	rs, picks, starts, vals := s.rs, s.picks, s.starts, s.vals
+	defer func() {
+		// The values point into the buffers, which serve the next query.
+		clear(vals)
+		s.picks, s.starts = picks, starts
+	}()
 	for c, e := range located {
 		if e == nil {
 			continue
 		}
 		picks, starts = picks[:0], starts[:0]
+		for i := range rs {
+			for j := range rs[i].bufs {
+				rs[i].bufs[j] = rs[i].bufs[j][:0]
+			}
+			rs[i].cur = 0
+		}
 		for r := 0; r < n; r++ {
 			if v := cols[c].value(r); v.Kind == vec.KindInt {
 				picks = append(picks, placed{v.Int, int32(r)})
@@ -121,7 +149,12 @@ func resolve(snap *colstore.Snapshot, q *query, located []*sexpr, cols []colVec,
 		if err != nil {
 			return err
 		}
+		total := 0
+		for i := range vals {
+			total += len(vals[i].Bytes)
+		}
 		cols[c].reset()
+		cols[c].reserve(n, total)
 		for _, v := range vals {
 			cols[c].appendValue(v)
 		}
@@ -169,6 +202,7 @@ func (x *execution) finish(snap *colstore.Snapshot, sinks []*sink) ([]Column, in
 	if len(sinks) == 1 {
 		raw = sinks[0].cols
 	} else {
+		reserveAll(raw, sinks)
 		for _, s := range sinks {
 			for c := range raw {
 				raw[c].appendAll(&s.cols[c])

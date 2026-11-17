@@ -320,6 +320,7 @@ func gather(q *query, sinks []*sink) ([]colVec, int) {
 	case len(sinks) == 1 && len(q.order) == 0:
 		out = sinks[0].cols
 	default:
+		reserveAll(out, sinks)
 		for _, s := range sinks {
 			for c := range out {
 				out[c].appendAll(&s.cols[c])
