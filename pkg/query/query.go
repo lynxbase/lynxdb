@@ -175,12 +175,3 @@ func Explain(c *Compiled) string {
 	}
 	return b.String()
 }
-
-// Execute compiles and runs a query over an in-memory event store.
-func Execute(ctx context.Context, src string, store physical.EventStore, opts Options) ([]map[string]event.Value, error) {
-	c, err := Compile(src)
-	if err != nil {
-		return nil, err
-	}
-	return Run(ctx, c, store, opts)
-}

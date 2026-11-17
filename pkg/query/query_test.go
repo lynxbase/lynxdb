@@ -25,9 +25,8 @@ func ev(min int, raw string, fields map[string]event.Value) *event.Event {
 	return e
 }
 
-func s(v string) event.Value  { return event.StringValue(v) }
-func i(v int64) event.Value   { return event.IntValue(v) }
-func f(v float64) event.Value { return event.FloatValue(v) }
+func s(v string) event.Value { return event.StringValue(v) }
+func i(v int64) event.Value  { return event.IntValue(v) }
 
 func testStore() physical.MapStore {
 	return physical.MapStore{
@@ -47,7 +46,11 @@ func testStore() physical.MapStore {
 
 func run(t *testing.T, q string) string {
 	t.Helper()
-	rows, err := Execute(context.Background(), q, testStore(), Options{Now: t0.Add(time.Hour)})
+	c, err := Compile(q)
+	if err != nil {
+		return "ERROR " + err.Error()
+	}
+	rows, err := Run(context.Background(), c, testStore(), Options{Now: t0.Add(time.Hour)})
 	if err != nil {
 		return "ERROR " + err.Error()
 	}
