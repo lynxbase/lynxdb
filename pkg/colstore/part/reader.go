@@ -17,6 +17,10 @@ type Part struct {
 	paths []string
 	ids   map[string]uint32
 	index []byte
+	// dirs holds the column directories of all blocks, side by side, so
+	// that opening blocks reads one region of the part and not one place
+	// per block.
+	dirs []byte
 
 	ordered bool
 	sortKey []string
@@ -84,6 +88,11 @@ func Open(data []byte) (*Part, error) {
 		return nil, ErrCorrupt
 	}
 	p.index = r.bytes(nBlocks * indexEntrySize)
+	dirsOff, dirsLen := r.uvarint(), r.uvarint()
+	if r.bad || dirsOff < headerSize || dirsOff > off || dirsLen > off-dirsOff {
+		return nil, ErrCorrupt
+	}
+	p.dirs = data[dirsOff : dirsOff+dirsLen]
 	if p.ordered {
 		p.firstKeys = make([][]byte, 0, nBlocks)
 		for i := uint64(0); i < nBlocks; i++ {
@@ -103,8 +112,8 @@ func Open(data []byte) (*Part, error) {
 		start, size := binary.LittleEndian.Uint64(e[20:]), uint64(binary.LittleEndian.Uint32(e[28:]))
 		filterOff, filterLen := uint64(binary.LittleEndian.Uint32(e[32:])), uint64(binary.LittleEndian.Uint32(e[36:]))
 		dirOff, dirLen := uint64(binary.LittleEndian.Uint32(e[40:])), uint64(binary.LittleEndian.Uint32(e[44:]))
-		if start < headerSize || start > off || size > off-start ||
-			filterOff+filterLen != dirOff || dirOff+dirLen != size {
+		if start < headerSize || start > dirsOff || size > dirsOff-start ||
+			filterOff+filterLen != size || dirOff > dirsLen || dirLen > dirsLen-dirOff {
 			return nil, ErrCorrupt
 		}
 	}
@@ -206,8 +215,8 @@ func (p *Part) OpenBlock(i int, b *Block) error {
 	b.data = p.data[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
 	filterOff, dirOff := binary.LittleEndian.Uint32(e[32:]), binary.LittleEndian.Uint32(e[40:])
 	b.chunks = filterOff
-	b.filter = b.data[filterOff:dirOff]
-	dir := b.data[dirOff:]
+	b.filter = b.data[filterOff:]
+	dir := p.dirs[dirOff : dirOff+binary.LittleEndian.Uint32(e[44:])]
 	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
 		return ErrCorrupt
 	}

@@ -45,6 +45,7 @@ type Writer struct {
 	paths []string
 	ids   map[string]uint32
 	index []byte
+	dirs  []byte // the column directory of every block
 	keys  []byte // first sort key of each block, length-prefixed
 	// lastKey is the sort key of the last row written.
 	lastKey []byte
@@ -127,7 +128,7 @@ func (w *Writer) Reset(out io.Writer, opts Options) {
 	w.w, w.opts, w.off, w.err, w.copied = out, opts, 0, nil, 0
 	w.paths = w.paths[:0]
 	clear(w.ids)
-	w.index, w.keys, w.lastKey = w.index[:0], w.keys[:0], w.lastKey[:0]
+	w.index, w.dirs, w.keys, w.lastKey = w.index[:0], w.dirs[:0], w.keys[:0], w.lastKey[:0]
 	w.rows, w.raw, w.minT, w.maxT = 0, 0, 0, 0
 	w.blobs.codec, w.blobs.level = CodecZstd, opts.Level
 	w.values.codec, w.values.level = opts.Codec, opts.Level
@@ -198,21 +199,26 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 			w.block = binary.LittleEndian.AppendUint32(w.block, sum)
 		}
 	}
-	dirOff := len(w.block)
+	// The directory is built at the end of the block buffer and moved to
+	// the part's directory section, which is written after the last block.
+	blockLen := len(w.block)
 	w.appendDirectory()
+	dir := w.block[blockLen:]
 
 	var entry [indexEntrySize]byte
 	binary.LittleEndian.PutUint32(entry[0:], uint32(rows))
 	binary.LittleEndian.PutUint64(entry[4:], uint64(minT))
 	binary.LittleEndian.PutUint64(entry[12:], uint64(maxT))
 	binary.LittleEndian.PutUint64(entry[20:], w.off)
-	binary.LittleEndian.PutUint32(entry[28:], uint32(len(w.block)))
+	binary.LittleEndian.PutUint32(entry[28:], uint32(blockLen))
 	binary.LittleEndian.PutUint32(entry[32:], uint32(filterOff))
-	binary.LittleEndian.PutUint32(entry[36:], uint32(dirOff-filterOff))
-	binary.LittleEndian.PutUint32(entry[40:], uint32(dirOff))
-	binary.LittleEndian.PutUint32(entry[44:], uint32(len(w.block)-dirOff))
-	binary.LittleEndian.PutUint32(entry[48:], crc32.Checksum(w.block[dirOff:], castagnoli))
+	binary.LittleEndian.PutUint32(entry[36:], uint32(blockLen-filterOff))
+	binary.LittleEndian.PutUint32(entry[40:], uint32(len(w.dirs)))
+	binary.LittleEndian.PutUint32(entry[44:], uint32(len(dir)))
+	binary.LittleEndian.PutUint32(entry[48:], crc32.Checksum(dir, castagnoli))
 	w.index = append(w.index, entry[:]...)
+	w.dirs = append(w.dirs, dir...)
+	w.block = w.block[:blockLen]
 	if w.opts.Ordered {
 		w.e.tmp = appendEdgeKey(w.e.tmp[:0], b, w.opts.SortKey, false)
 		w.keys = binary.AppendUvarint(w.keys, uint64(len(w.e.tmp)))
@@ -256,7 +262,7 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int) error {
 	start := binary.LittleEndian.Uint64(e[20:])
 	data := src.data[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
 	filterOff, dirOff := binary.LittleEndian.Uint32(e[32:]), binary.LittleEndian.Uint32(e[40:])
-	dir := data[dirOff:]
+	dir := src.dirs[dirOff : dirOff+binary.LittleEndian.Uint32(e[44:])]
 	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
 		return ErrCorrupt
 	}
@@ -268,7 +274,7 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int) error {
 
 	w.block = append(w.block[:0], data[:filterOff]...)
 	if !w.opts.NoTokenFilter {
-		w.block = append(w.block, data[filterOff:dirOff]...)
+		w.block = append(w.block, data[filterOff:]...)
 	}
 	newDir := len(w.block)
 	w.block = append(w.block, dir[:entries]...)
@@ -297,13 +303,15 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int) error {
 	var entry [indexEntrySize]byte
 	copy(entry[:20], e[:20])
 	binary.LittleEndian.PutUint64(entry[20:], w.off)
-	binary.LittleEndian.PutUint32(entry[28:], uint32(len(w.block)))
+	binary.LittleEndian.PutUint32(entry[28:], uint32(newDir))
 	binary.LittleEndian.PutUint32(entry[32:], filterOff)
 	binary.LittleEndian.PutUint32(entry[36:], uint32(newDir)-filterOff)
-	binary.LittleEndian.PutUint32(entry[40:], uint32(newDir))
+	binary.LittleEndian.PutUint32(entry[40:], uint32(len(w.dirs)))
 	binary.LittleEndian.PutUint32(entry[44:], uint32(len(w.block)-newDir))
 	binary.LittleEndian.PutUint32(entry[48:], crc32.Checksum(w.block[newDir:], castagnoli))
 	w.index = append(w.index, entry[:]...)
+	w.dirs = append(w.dirs, w.block[newDir:]...)
+	w.block = w.block[:newDir]
 	w.keys = binary.AppendUvarint(w.keys, uint64(len(src.firstKeys[i])))
 	w.keys = append(w.keys, src.firstKeys[i]...)
 	w.lastKey = append(w.lastKey[:0], src.upperKey(i)...)
@@ -625,6 +633,9 @@ func (w *Writer) Close() error {
 	}
 	footer = binary.AppendUvarint(footer, uint64(len(w.index)/indexEntrySize))
 	footer = append(footer, w.index...)
+	footer = binary.AppendUvarint(footer, w.off)
+	footer = binary.AppendUvarint(footer, uint64(len(w.dirs)))
+	w.write(w.dirs)
 	footer = append(footer, w.keys...)
 	if w.opts.Ordered {
 		footer = binary.AppendUvarint(footer, uint64(len(w.lastKey)))

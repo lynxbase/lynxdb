@@ -5,19 +5,20 @@ import "hash/crc32"
 // File layout:
 //
 //	header   magic, version
-//	blocks   each: column chunks, token filter, column directory
+//	blocks   each: column chunks, token filter
+//	dirs     the column directory of every block
 //	footer   path names, sort key, block index, first keys, totals
 //	trailer  footer offset, footer length, footer checksum, version, magic
 const (
 	fileMagic     = 0x5450584c // "LXPT"
-	formatVersion = 3
+	formatVersion = 4
 
 	headerSize  = 8
 	trailerSize = 28
 	// rows, min time, max time, block offset, block length, filter offset,
-	// filter length, directory offset, directory length and the checksum of
-	// the directory; column chunks and filter pages carry their own
-	// checksums.
+	// filter length, the directory's offset among the directories, its
+	// length and its checksum; column chunks and filter pages carry their
+	// own checksums.
 	indexEntrySize = 52
 	// A filter is followed by one checksum per filterPage of its bytes, so
 	// a probe verifies the page it reads and not the whole filter.
