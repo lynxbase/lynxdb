@@ -23,6 +23,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/api/rest"
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/mem"
 )
 
 var (
@@ -79,6 +80,7 @@ func init() {
 }
 
 func runServer(cmd *cobra.Command, args []string) error {
+	defer mem.BoundGarbage(garbageAllowance)()
 	cfg, cfgPath, envOverrides, warnings, err := config.LoadWithOverrides(flagConfigPath)
 	if err != nil {
 		return err

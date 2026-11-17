@@ -20,6 +20,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/database"
 	"github.com/lynxbase/lynxdb/pkg/ingest/ndjson"
 	ingestpipeline "github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/mem"
 	"github.com/lynxbase/lynxdb/pkg/ppl"
 	"github.com/lynxbase/lynxdb/pkg/query"
 	"github.com/lynxbase/lynxdb/pkg/stats"
@@ -162,6 +163,7 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 		return err
 	}
 
+	defer mem.BoundGarbage(garbageAllowance)()
 	db, err := database.Open(database.Config{})
 	if err != nil {
 		return err
@@ -195,6 +197,10 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 	return runLocalQuery(db, query, outputFile, failEmpty, analyze, start)
 }
 
+// garbageAllowance bounds the heap awaiting collection in a process that
+// opens a database.
+const garbageAllowance = 512 << 20
+
 // loadLocal appends the lines of r to the index main of a local database.
 func loadLocal(db *database.DB, r io.Reader, source, sourcetype, format string) error {
 	conv, err := ndjson.NewText(format)
@@ -214,6 +220,7 @@ func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool,
 		return err
 	}
 
+	defer mem.BoundGarbage(garbageAllowance)()
 	db, err := database.Open(database.Config{})
 	if err != nil {
 		return err
