@@ -70,6 +70,47 @@ func Plan(p *ir.Plan, opts Options) (exec.Node, error) {
 	return t.plan()
 }
 
+// Rows returns the plan that gives the events of a scan as rows: those in
+// its time range that pass the conditions among its hints which the executor
+// has operations for, with the columns it names or else whole, and no more
+// of them than its limit. The conditions it leaves out are for the operators
+// above the scan, which hold them all.
+func Rows(scan *ir.Scan, opts Options) (exec.Node, error) {
+	t := &translator{now: opts.Now, opaque: opts.Opaque, env: map[string]*exec.Expr{}}
+	if t.now.IsZero() {
+		t.now = time.Now()
+	}
+	if err := t.node(&ir.Scan{Time: scan.Time}); err != nil {
+		return nil, err
+	}
+	for _, hint := range scan.Prune {
+		if p, err := t.pred(hint, false); err == nil {
+			t.filter = append(t.filter, p)
+		}
+	}
+	if scan.Columns != nil {
+		// The time orders the newest first, and stands for the row where
+		// no column is asked for.
+		names := scan.Columns
+		if (scan.Descending || len(names) == 0) && !slices.Contains(names, ir.TimeColumn) {
+			names = append(names[:len(names):len(names)], ir.TimeColumn)
+		}
+		if err := t.project(&ir.Project{Names: names}); err != nil {
+			return nil, err
+		}
+	}
+	switch {
+	case scan.Descending:
+		if err := t.order([]ir.SortKey{{Expr: ir.Field(ir.TimeColumn), Desc: true}}, scan.Limit); err != nil {
+			return nil, err
+		}
+	case scan.Limit > 0:
+		t.sort = &exec.Sort{Limit: int(scan.Limit)}
+	}
+
+	return t.plan()
+}
+
 // translator builds a plan from the operators of a query from its scan
 // upwards.
 type translator struct {
