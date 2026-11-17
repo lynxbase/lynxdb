@@ -118,58 +118,6 @@ func TestEstimateEventSize(t *testing.T) {
 	}
 }
 
-func TestScanTightBudgetWithSortSpill(t *testing.T) {
-	// Integration test: scan and sort share a tight BudgetAdapter.
-	// The budget is large enough for the sort to spill and reclaim capacity,
-	// but small enough that scan batches cause pressure. Verifies the
-	// sort-spill-on-child-budget-exceeded path handles real budget sharing.
-	const (
-		numEvents = 200
-		rawSize   = 512 // ~512B per event
-		batchSize = 32
-	)
-
-	events := makeSizedEvents(numEvents, rawSize)
-
-	// Budget: 30KB. Each event is ~512B + overhead ≈ 700B.
-	// A batch of 32 events is ~22KB. Sort accumulates rows and eventually
-	// hits the limit, triggering spill. After spill, scan can continue.
-	monitor := memgov.NewTestBudget("test", 30*1024)
-	scanAcct := monitor.NewAccount("scan")
-	sortAcct := monitor.NewAccount("sort")
-
-	scan := NewScanIteratorWithBudget(events, batchSize, scanAcct)
-	mgr, err := NewSpillManager(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mgr.CleanupAll()
-
-	sortIter := NewSortIteratorWithSpill(scan, []SortField{{Name: "idx", Desc: false}}, batchSize, sortAcct, mgr)
-
-	ctx := context.Background()
-	if err := sortIter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	result, err := CollectAll(ctx, sortIter)
-	if err != nil {
-		t.Fatalf("expected query to complete with budget sharing + spill, got error: %v", err)
-	}
-
-	if len(result) != numEvents {
-		t.Fatalf("expected %d rows, got %d", numEvents, len(result))
-	}
-
-	// Verify sorted ascending by idx.
-	for i := 0; i < len(result); i++ {
-		got := result[i]["idx"].AsInt()
-		if got != int64(i) {
-			t.Fatalf("row %d: expected idx=%d, got %d", i, i, got)
-		}
-	}
-}
-
 func TestScanMinBatchBudgetError(t *testing.T) {
 	// When the budget is impossibly small (cannot fit even a single event),
 	// the scan should return a clear actionable error, not hang or panic.

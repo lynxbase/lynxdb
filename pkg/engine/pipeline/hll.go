@@ -132,7 +132,7 @@ func (h *HyperLogLog) Merge(other *HyperLogLog) {
 	}
 }
 
-// MarshalBinary serializes the HLL registers to a byte slice for spill persistence.
+// MarshalBinary serializes the HLL registers to a byte slice.
 // Layout: [precision:1][registers:m].
 func (h *HyperLogLog) MarshalBinary() []byte {
 	buf := make([]byte, 1+len(h.registers))

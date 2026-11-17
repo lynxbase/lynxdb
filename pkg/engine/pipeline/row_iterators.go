@@ -11,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -231,35 +230,6 @@ func CollectAll(ctx context.Context, iter Iterator, opts ...CollectOptions) (row
 	return rows, nil
 }
 
-func CollectAllWithBudget(ctx context.Context, iter Iterator, acct memgov.MemoryAccount) (rows []map[string]event.Value, err error) {
-	acct = memgov.EnsureAccount(acct)
-	if err := iter.Init(ctx); err != nil {
-		return nil, err
-	}
-	defer func() {
-		if e := iter.Close(); e != nil {
-			err = errors.Join(err, e)
-		}
-	}()
-	for {
-		batch, err := iter.Next(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if batch == nil {
-			break
-		}
-		for i := 0; i < batch.Len; i++ {
-			row := batch.Row(i)
-			if e := acct.Grow(EstimateRowBytes(row)); e != nil {
-				return nil, e
-			}
-			rows = append(rows, row)
-		}
-	}
-	return rows, nil
-}
-
 type IndexStore interface {
 	MaterializeEvents(ctx context.Context, index string) ([]*event.Event, error)
 }
@@ -273,12 +243,4 @@ type ColumnarBatchStore struct{ Batches map[string][]*Batch }
 
 func (s *ColumnarBatchStore) MaterializeEvents(_ context.Context, _ string) ([]*event.Event, error) {
 	return nil, nil
-}
-
-// BuildResult bundles the root iterator of a built pipeline with its
-// optional memory coordinator and governor budget.
-type BuildResult struct {
-	Iterator    Iterator
-	Coordinator *MemoryCoordinator
-	GovBudget   *memgov.BudgetAdapter
 }

@@ -34,59 +34,23 @@ func assertReversed(t *testing.T, got []map[string]event.Value, n int) {
 	}
 }
 
-func TestReverseBudgetExceededWithoutSpill(t *testing.T) {
-	acct := memgov.NewTestBudget("reverse", 64).NewAccount("reverse")
-	iter := NewReverseIteratorWithBudget(NewRowScanIterator(reverseMemgovRows(100), 16), 16, acct)
-
-	if _, err := CollectAll(context.Background(), iter); err == nil {
-		t.Fatal("expected reverse materialization to exceed tiny budget without spill")
-	}
-}
-
-func TestReverseSpillsUnderBudgetPressure(t *testing.T) {
+func TestReverseWithinBudget(t *testing.T) {
 	const n = 500
-	mgr, err := NewSpillManager(t.TempDir(), nil)
-	if err != nil {
-		t.Fatalf("create spill manager: %v", err)
-	}
-	defer mgr.CleanupAll()
-
-	acct := memgov.NewTestBudget("reverse", 4*1024).NewAccount("reverse")
-	iter := NewReverseIteratorWithSpill(NewRowScanIterator(reverseMemgovRows(n), 32), 32, acct, mgr)
+	acct := memgov.NewTestBudget("reverse", 1<<30).NewAccount("reverse")
+	iter := NewReverseIteratorWithBudget(NewRowScanIterator(reverseMemgovRows(n), 32), 32, acct)
 
 	got, err := CollectAll(context.Background(), iter)
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertReversed(t, got, n)
-
-	if iter.spilledRows == 0 {
-		t.Fatal("expected reverse spill path to write rows")
-	}
 }
 
-func TestReverseSpillChunksReleasedOnEarlyClose(t *testing.T) {
-	mgr, err := NewSpillManager(t.TempDir(), nil)
-	if err != nil {
-		t.Fatalf("create spill manager: %v", err)
-	}
-	defer mgr.CleanupAll()
+func TestReverseBudgetExceeded(t *testing.T) {
+	acct := memgov.NewTestBudget("reverse", 64).NewAccount("reverse")
+	iter := NewReverseIteratorWithBudget(NewRowScanIterator(reverseMemgovRows(100), 16), 16, acct)
 
-	acct := memgov.NewTestBudget("reverse", 4*1024).NewAccount("reverse")
-	iter := NewReverseIteratorWithSpill(NewRowScanIterator(reverseMemgovRows(500), 32), 32, acct, mgr)
-
-	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	// Read a single batch, then abandon the query.
-	if _, err := iter.Next(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if err := iter.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if fileCount, _ := mgr.Stats(); fileCount != 0 {
-		t.Fatalf("expected all spill chunks released on close, %d still tracked", fileCount)
+	if _, err := CollectAll(context.Background(), iter); err == nil {
+		t.Fatal("expected reverse materialization to exceed tiny budget")
 	}
 }

@@ -156,7 +156,7 @@ func (td *TDigest) compress() {
 	td.centroids = merged
 }
 
-// MarshalBinary serializes the t-digest to a byte slice for spill persistence.
+// MarshalBinary serializes the t-digest to a byte slice.
 // Layout: [compression:8][count:8][numCentroids:4][centroids: n*(mean:8+count:8)].
 func (td *TDigest) MarshalBinary() []byte {
 	n := len(td.centroids)

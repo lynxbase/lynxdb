@@ -132,9 +132,6 @@ type Options struct {
 	// Now is the query's reference time; zero means the current time.
 	Now       time.Time
 	BatchSize int
-	// Coordinator and SpillManager enable memory accounting and disk spill.
-	Coordinator  *pipeline.MemoryCoordinator
-	SpillManager *pipeline.SpillManager
 	// Collect, when set, receives per-operator runtime statistics.
 	Collect map[ir.Node]*physical.NodeStats
 }
@@ -149,14 +146,12 @@ func Run(ctx context.Context, c *Compiled, store physical.EventStore, opts Optio
 		defaultSource = "main"
 	}
 	iter, err := physical.Build(c.Plan, physical.Options{
-		Source:       physical.NewEventSource(store, defaultSource, opts.Now),
-		Describe:     DescribeStore(store),
-		Coordinator:  opts.Coordinator,
-		SpillManager: opts.SpillManager,
-		BatchSize:    opts.BatchSize,
-		Now:          opts.Now,
-		Context:      ctx,
-		Collect:      opts.Collect,
+		Source:    physical.NewEventSource(store, defaultSource, opts.Now),
+		Describe:  DescribeStore(store),
+		BatchSize: opts.BatchSize,
+		Now:       opts.Now,
+		Context:   ctx,
+		Collect:   opts.Collect,
 	})
 	if err != nil {
 		return nil, err

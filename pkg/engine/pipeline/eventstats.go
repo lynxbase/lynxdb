@@ -2,10 +2,7 @@ package pipeline
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
-	"os"
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -14,32 +11,16 @@ import (
 )
 
 // EventStatsIterator implements two-pass aggregation: accumulate globals, then enrich rows.
-//
-// When a SpillManager is configured, the iterator spills rows to disk when the
-// memory budget is exceeded. Aggregation group state stays in memory (it is
-// typically much smaller than the row set). During pass 2, rows are read back
-// from disk and enriched with aggregation results.
 type EventStatsIterator struct {
 	child     Iterator
 	aggs      []AggFunc
 	groupBy   []string
-	rows      []map[string]event.Value // in-memory rows (before spill or if small enough)
+	rows      []map[string]event.Value
 	vmInst    vm.VM
 	emitted   bool
 	batchSize int
 	offset    int
 	acct      memgov.MemoryAccount // per-operator memory tracking
-
-	// Spill-to-disk support.
-	spillMgr        *SpillManager        // lifecycle manager for spill files (nil = no spill support)
-	spillWriter     *ColumnarSpillWriter // writes rows to disk during pass 1 (non-nil after spill)
-	spillPath       string               // path to spill file (for cleanup)
-	spillReader     *ColumnarSpillReader // reads rows back during pass 2
-	spilled         bool                 // true after rows started going to disk
-	spilledRows     int64                // total rows written to spill file
-	spillBytesTotal int64                // persisted spill bytes (survives Close)
-	rowBytesInMem   int64                // bytes tracked for e.rows
-	groups          map[string]*aggGroup // agg state (stays in memory in both modes)
 }
 
 // NewEventStatsIterator creates a two-pass eventstats operator.
@@ -65,41 +46,13 @@ func NewEventStatsIteratorWithBudget(child Iterator, aggs []AggFunc, groupBy []s
 	return e
 }
 
-// newEventStatsIteratorWithSpill creates an eventstats operator with memory budget
-// tracking and disk spill support. When the in-memory row buffer exceeds the
-// budget, rows are written to a spill file while aggregation state stays in
-// memory. During pass 2, rows are read back from disk and enriched.
-func newEventStatsIteratorWithSpill(child Iterator, aggs []AggFunc, groupBy []string, batchSize int, acct memgov.MemoryAccount, mgr *SpillManager) *EventStatsIterator {
-	e := NewEventStatsIteratorWithBudget(child, aggs, groupBy, batchSize, acct)
-	e.spillMgr = mgr
-	if ca, ok := e.acct.(*CoordinatedAccount); ok && mgr != nil {
-		ca.SetOnRevoke(func(target int64) int64 {
-			if e.spilled || len(e.rows) == 0 {
-				return 0
-			}
-			before := e.acct.Used()
-			if err := e.spillBufferedRows(); err != nil {
-				return 0
-			}
-			freed := before - e.acct.Used()
-			if freed < 0 {
-				return 0
-			}
-
-			return freed
-		})
-	}
-
-	return e
-}
-
 // Init delegates to the child iterator.
 func (e *EventStatsIterator) Init(ctx context.Context) error {
 	return e.child.Init(ctx)
 }
 
 // Next returns the next batch of enriched rows. On first call, materializes
-// all input (pass 1: accumulate aggregates, buffer/spill rows), then emits
+// all input (pass 1: accumulate aggregates, buffer rows), then emits
 // enriched rows in batches (pass 2).
 func (e *EventStatsIterator) Next(ctx context.Context) (*Batch, error) {
 	if !e.emitted {
@@ -108,11 +61,6 @@ func (e *EventStatsIterator) Next(ctx context.Context) (*Batch, error) {
 		}
 	}
 
-	if e.spilled {
-		return e.nextFromSpill()
-	}
-
-	// In-memory path.
 	if e.offset >= len(e.rows) {
 		return nil, nil
 	}
@@ -126,41 +74,11 @@ func (e *EventStatsIterator) Next(ctx context.Context) (*Batch, error) {
 	return batch, nil
 }
 
-// Close releases resources: memory budget account, spill writer/reader, and spill file.
+// Close releases the memory budget account and closes the child.
 func (e *EventStatsIterator) Close() error {
-	var errs []error
 	e.acct.Close()
 
-	// Close spill writer if still open (e.g., materialize() returned an error
-	// after transitionToSpill succeeded but before CloseFile was called).
-	if e.spillWriter != nil {
-		if err := e.spillWriter.CloseFile(); err != nil {
-			errs = append(errs, fmt.Errorf("eventstats: close spill writer: %w", err))
-		}
-		e.spillWriter = nil
-	}
-
-	if e.spillReader != nil {
-		e.spillReader.Close()
-		e.spillReader = nil
-	}
-	if e.spillPath != "" {
-		// Persist spill bytes before cleanup (ResourceStats may be called after Close).
-		if info, err := os.Stat(e.spillPath); err == nil {
-			e.spillBytesTotal = info.Size()
-		}
-		if e.spillMgr != nil {
-			e.spillMgr.Release(e.spillPath)
-		} else {
-			removeSpillFile(e.spillPath)
-		}
-		e.spillPath = ""
-	}
-
-	if err := e.child.Close(); err != nil {
-		errs = append(errs, err)
-	}
-	return errors.Join(errs...)
+	return e.child.Close()
 }
 
 // MemoryUsed returns the current tracked memory for this operator.
@@ -174,7 +92,6 @@ func (e *EventStatsIterator) Schema() []FieldInfo { return e.child.Schema() }
 func (e *EventStatsIterator) materialize(ctx context.Context) error {
 	// Pass 1: collect all rows and compute aggregates.
 	groups := make(map[string]*aggGroup)
-	e.groups = groups
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -190,41 +107,17 @@ func (e *EventStatsIterator) materialize(ctx context.Context) error {
 
 		for i := 0; i < batch.Len; i++ {
 			row := batch.Row(i)
-
-			// Store the row: in-memory or on disk.
-			if e.spilled {
-				// Disk mode: write directly to spill file.
-				if writeErr := e.spillWriter.WriteRow(row); writeErr != nil {
-					return fmt.Errorf("eventstats.materialize: write spill: %w", writeErr)
-				}
-				e.spilledRows++
-			} else {
-				// In-memory mode: try to grow budget.
-				rowBytes := EstimateRowBytes(row)
-				if growErr := e.acct.Grow(rowBytes); growErr != nil {
-					// Budget exceeded — try to spill if SpillManager is available.
-					if e.spillMgr != nil {
-						if spillErr := e.transitionToSpill(row); spillErr != nil {
-							return fmt.Errorf("eventstats.materialize: %w", spillErr)
-						}
-						// Row was already written to disk by transitionToSpill.
-					} else {
-						return fmt.Errorf("eventstats.materialize: %w", growErr)
-					}
-				} else {
-					e.rows = append(e.rows, row)
-					e.rowBytesInMem += rowBytes
-				}
+			if growErr := e.acct.Grow(EstimateRowBytes(row)); growErr != nil {
+				return fmt.Errorf("eventstats.materialize: %w", growErr)
 			}
+			e.rows = append(e.rows, row)
 
-			// Update aggregation state (same for both paths).
 			key := e.groupKey(row)
 			group, ok := groups[key]
 			if !ok {
 				// Track memory for new group.
 				groupBytes := int64(len(e.groupBy))*estimatedKeyBytes + int64(len(e.aggs))*estimatedAggStateBytes
 				if growErr := e.acct.Grow(groupBytes); growErr != nil {
-					// Groups must fit in memory — cannot spill aggregation state.
 					return fmt.Errorf("eventstats.materialize: too many groups: %w", growErr)
 				}
 				group = &aggGroup{
@@ -249,122 +142,18 @@ func (e *EventStatsIterator) materialize(ctx context.Context) error {
 		}
 	}
 
-	// Close spill writer handle so it can be read back in pass 2.
-	if e.spilled && e.spillWriter != nil {
-		if err := e.spillWriter.CloseFile(); err != nil {
-			return fmt.Errorf("eventstats.materialize: close spill: %w", err)
-		}
-	}
-
 	// Pass 2: enrich rows with aggregated values.
-	if !e.spilled {
-		// In-memory path: enrich all rows in place.
-		for _, row := range e.rows {
-			key := e.groupKey(row)
-			group := groups[key]
-			for j, agg := range e.aggs {
-				row[agg.Alias] = finalizeEventStatsAgg(&group.states[j], agg)
-			}
+	for _, row := range e.rows {
+		key := e.groupKey(row)
+		group := groups[key]
+		for j, agg := range e.aggs {
+			row[agg.Alias] = finalizeEventStatsAgg(&group.states[j], agg)
 		}
 	}
-	// If spilled, pass 2 enrichment happens during Next() via nextFromSpill().
 
 	e.emitted = true
 
 	return nil
-}
-
-// transitionToSpill moves from in-memory to disk mode. All buffered in-memory
-// rows are written to a spill file, followed by the current row that triggered
-// the transition. The in-memory row slice is cleared and row-tracking memory
-// is released back to the budget.
-func (e *EventStatsIterator) transitionToSpill(currentRow map[string]event.Value) error {
-	if err := e.spillBufferedRows(); err != nil {
-		return err
-	}
-
-	// Write the current row that triggered the spill.
-	if writeErr := e.spillWriter.WriteRow(currentRow); writeErr != nil {
-		return fmt.Errorf("write current row: %w", writeErr)
-	}
-	e.spilledRows++
-
-	return nil
-}
-
-func (e *EventStatsIterator) spillBufferedRows() error {
-	sw, err := NewColumnarSpillWriter(e.spillMgr, "eventstats")
-	if err != nil {
-		return fmt.Errorf("create spill file: %w", err)
-	}
-
-	// Set spillPath and spillWriter BEFORE writing so that Close() can always
-	// release the file handle and spill path even if a write error occurs below.
-	e.spillWriter = sw
-	e.spillPath = sw.Path()
-	e.spilled = true
-
-	// Write all buffered in-memory rows to disk.
-	for _, row := range e.rows {
-		if writeErr := sw.WriteRow(row); writeErr != nil {
-			return fmt.Errorf("write buffered row: %w", writeErr)
-		}
-	}
-	e.spilledRows = int64(len(e.rows))
-
-	// Release row memory from budget (group memory stays tracked).
-	e.acct.Shrink(e.rowBytesInMem)
-
-	// Notify coordinator that this operator has spilled, allowing rebalancing.
-	if sn, ok := e.acct.(SpillNotifier); ok {
-		sn.NotifySpilled()
-	}
-
-	// Clear in-memory rows.
-	e.rows = nil
-	e.rowBytesInMem = 0
-
-	return nil
-}
-
-// nextFromSpill reads rows back from the spill file, enriches each with
-// aggregation results, and returns them as batches.
-func (e *EventStatsIterator) nextFromSpill() (*Batch, error) {
-	// Lazy-open the reader on first call.
-	if e.spillReader == nil {
-		r, err := NewColumnarSpillReader(e.spillPath)
-		if err != nil {
-			return nil, fmt.Errorf("eventstats: open spill reader: %w", err)
-		}
-		e.spillReader = r
-	}
-
-	batch := NewBatch(e.batchSize)
-	for batch.Len < e.batchSize {
-		row, err := e.spillReader.ReadRow()
-		if err != nil {
-			if errors.Is(err, io.EOF) {
-				break
-			}
-
-			return nil, fmt.Errorf("eventstats: read spill: %w", err)
-		}
-
-		// Enrich with aggregation results.
-		key := e.groupKey(row)
-		if group, ok := e.groups[key]; ok {
-			for j, agg := range e.aggs {
-				row[agg.Alias] = finalizeEventStatsAgg(&group.states[j], agg)
-			}
-		}
-		batch.AddRow(row)
-	}
-
-	if batch.Len == 0 {
-		return nil, nil
-	}
-
-	return batch, nil
 }
 
 // groupKey builds a composite key from the BY-clause fields of a row.
