@@ -500,7 +500,8 @@ type Writer struct {
 	s        *Store
 	batch    *shred.Batch
 	block    *shred.Batch
-	buffered int // input bytes in batch
+	part     *part.Writer // reused from run to run for its buffers
+	buffered int          // input bytes in batch
 	buckets  []shred.TimeBucket
 	errs     []shred.LineError
 }
@@ -573,7 +574,13 @@ func (w *Writer) Flush() error {
 		}
 		pf.Meta.Partition = bucket.ID
 		files = append(files, pf)
-		pw := part.NewWriter(pf, flushed)
+		pw := w.part
+		if pw == nil {
+			pw = part.NewWriter(pf, flushed)
+			w.part = pw
+		} else {
+			pw.Reset(pf, flushed)
+		}
 		for end := from + bucket.Rows; from < end; from += min(s.opts.BlockRows, end-from) {
 			w.block.Reset()
 			w.batch.CopyRows(w.block, from, min(from+s.opts.BlockRows, end))
