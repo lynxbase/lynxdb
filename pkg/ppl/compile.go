@@ -79,9 +79,43 @@ type pipe struct {
 	origin ir.Node
 	// aliases maps join and source aliases to their qualifier.
 	aliases map[string]bool
+	// sch is the output schema of schNode, an earlier value of node.
+	sch     ir.Schema
+	schNode ir.Node
 }
 
-func (p *pipe) schema() ir.Schema { return p.node.Schema() }
+// schema returns the output schema of the pipeline, deriving it from the
+// schema of the previous pipeline node instead of from the source.
+func (p *pipe) schema() ir.Schema {
+	if p.schNode != p.node {
+		if p.schNode == nil {
+			p.sch = p.node.Schema()
+		} else {
+			p.sch = deriveSchema(p.node, p.schNode, p.sch)
+		}
+		p.schNode = p.node
+	}
+	return p.sch
+}
+
+// deriveSchema returns the output schema of n given that known, a node
+// that may occur below n, has the schema s.
+func deriveSchema(n, known ir.Node, s ir.Schema) ir.Schema {
+	if n == known {
+		return s
+	}
+	var nodes [2]ir.Node
+	ins := ir.AppendInputs(nodes[:0], n)
+	if len(ins) == 0 {
+		return n.Schema()
+	}
+	var schemas [2]ir.Schema
+	in := schemas[:0]
+	for _, x := range ins {
+		in = append(in, deriveSchema(x, known, s))
+	}
+	return ir.DeriveSchema(n, in...)
+}
 
 func (c *compiler) pipeline(pl *ast.Pipeline) (ir.Node, error) {
 	st, err := c.sourceCommand(pl.Commands[0])
