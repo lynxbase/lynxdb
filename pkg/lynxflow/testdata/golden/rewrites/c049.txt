@@ -1,2 +1,0 @@
-implicit-source:  => from main
-sugar:percentiles: percentiles duration_ms by service => stats p50(duration_ms) as p50_duration_ms, p75(duration_ms) as p75_duration_ms, p90(duration_ms) as p90_duration_ms, p95(duration_ms) as p95_duration_ms, p99(duration_ms) as p99_duration_ms by service

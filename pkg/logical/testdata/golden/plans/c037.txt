@@ -1,7 +1,0 @@
-TopK(5, -deviation)
-  Project(service, duration_ms, svc_avg, deviation)
-    Filter((deviation > 0))
-      Extend(deviation=(duration_ms - svc_avg))
-        Aggregate(avg(duration_ms) as svc_avg by service [eventstats])
-          Scan(main)
-            pushdown.columns: [_raw, _source, _time, duration_ms, service]

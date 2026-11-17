@@ -1,5 +1,0 @@
-Sort(+has_error, +has_amount)
-  Aggregate(count() by has_error, has_amount [partial])
-    Extend(has_error=if(exists(error), "yes", "no"), has_amount=if(exists(amount_cents), "yes", "no"))
-      Scan(main)
-        pushdown.columns: [_raw, _source, _time, amount_cents, error]

@@ -1,5 +1,0 @@
-Query
-  Pipeline
-    Stage parse
-      Format logfmt
-      Prefix log.

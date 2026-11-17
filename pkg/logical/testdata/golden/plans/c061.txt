@@ -1,3 +1,0 @@
-Filter(((exists(FieldA) and (not exists(FieldB))) and (Enabled == true)))
-  Scan(main)
-    pushdown.field_predicate: (Enabled == true)

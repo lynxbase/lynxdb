@@ -1,10 +1,8 @@
 package vm
 
-// RFC-002 LynxFlow strict-semantics opcode runtime implementations.
-//
-// These functions implement the new opcodes added for the LynxFlow v2 compiler.
-// They follow RFC-002 §5.2 (3VL logic), §5.4 (arithmetic/comparison rules),
-// and §5.5 (case sensitivity). The old SPL2 opcodes are untouched.
+// Runtime of the strict opcodes the IR compiler emits: three-valued logic,
+// typed comparison and arithmetic without implicit string conversion, and
+// case-sensitive string comparison.
 
 import (
 	"bytes"
@@ -12,7 +10,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"math"
 	"net"
 	"net/url"
@@ -30,9 +27,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
-// Strict comparison (RFC-002 §5.4)
-
-// strictCompare implements RFC-002 strict comparison semantics:
+// strictCompare implements strict comparison:
 // - null/missing operand → null
 // - same type: typed comparison (string is lexical CS, numeric, bool ==/!= only, timestamp, duration)
 // - int vs float: cross-promote (both are "number" — NOT a type error)
@@ -99,7 +94,7 @@ func strictCompare(a, b event.Value, warnings *WarningCounters) (int, bool) {
 		}
 	}
 
-	// Cross-type numeric: int vs float (RFC-002: both are "number", cross-promote IS allowed)
+	// int and float compare as numbers.
 	if (at == event.FieldTypeInt && bt == event.FieldTypeFloat) ||
 		(at == event.FieldTypeFloat && bt == event.FieldTypeInt) {
 		af := toFloat64ForCompare(a)
@@ -130,7 +125,7 @@ func toFloat64ForCompare(v event.Value) float64 {
 	}
 }
 
-// strictEq implements RFC-002 strict equality. Returns (bool, isNull).
+// strictEq implements strict equality. Returns (bool, isNull).
 func strictEq(a, b event.Value, warnings *WarningCounters) (bool, bool) {
 	cmp, isNull := strictCompare(a, b, warnings)
 	if isNull {
@@ -139,9 +134,7 @@ func strictEq(a, b event.Value, warnings *WarningCounters) (bool, bool) {
 	return cmp == 0, false
 }
 
-// Strict arithmetic (RFC-002 §5.4)
-
-// addStrict implements RFC-002 §5.4 addition:
+// addStrict implements strict addition:
 // - null propagation
 // - string + string = concat ONLY
 // - string + non-string = null + warning (sema catches known cases; runtime is lenient-null)
@@ -251,7 +244,7 @@ func divStrict(a, b event.Value, warnings *WarningCounters) event.Value {
 	}
 	at, bt := a.Type(), b.Type()
 
-	// int / int → TRUNCATING int (5/2 == 2 per §5.4)
+	// int / int truncates: 5/2 == 2.
 	if at == event.FieldTypeInt && bt == event.FieldTypeInt {
 		bv := b.AsInt()
 		if bv == 0 {
@@ -293,7 +286,7 @@ func modStrict(a, b event.Value, warnings *WarningCounters) event.Value {
 	if a.IsNull() || b.IsNull() {
 		return event.NullValue()
 	}
-	// RFC-002 §5.4: % is int-only (other types → null + warning)
+	// % takes ints only; other types give NULL and a warning.
 	if a.Type() == event.FieldTypeInt && b.Type() == event.FieldTypeInt {
 		bv := b.AsInt()
 		if bv == 0 {
@@ -301,7 +294,7 @@ func modStrict(a, b event.Value, warnings *WarningCounters) event.Value {
 		}
 		return event.IntValue(a.AsInt() % bv)
 	}
-	// dur % dur → dur (also valid per §5.4)
+	// dur % dur → dur
 	if a.Type() == event.FieldTypeDuration && b.Type() == event.FieldTypeDuration {
 		bd := b.AsDuration()
 		if bd == 0 {
@@ -382,7 +375,7 @@ func execLoadPath(fields map[string]event.Value, path string) event.Value {
 	return val
 }
 
-// OpHasToken: case-insensitive whole-token match per §6.1/6.2
+// OpHasToken: case-insensitive whole-token match
 
 // hasToken checks if the field string contains the search term as a whole token,
 // case-insensitively. A token is a run of ASCII alphanumerics and Unicode
@@ -521,7 +514,7 @@ func stringArray(v event.Value) ([]string, bool) {
 	return out, true
 }
 
-// tokenize splits a string into tokens per the tokenizer contract (§6.1):
+// tokenize splits a string into index tokens:
 // runs of ASCII alphanumerics and Unicode letters/digits.
 func tokenize(s string) []string {
 	var tokens []string
@@ -557,8 +550,6 @@ func execTokens(v event.Value) event.Value {
 
 	return event.ArrayValue(values)
 }
-
-// OpSubstr0Based: 0-based start per RFC-002
 
 func substr0Based(str, start, length event.Value) event.Value {
 	if str.IsNull() || start.IsNull() {
@@ -695,22 +686,6 @@ func inStrict(val event.Value, items []event.Value, warnings *WarningCounters) e
 		return event.NullValue()
 	}
 	return event.BoolValue(false)
-}
-
-// Strict-cast bang error
-
-// ErrStrictCast is returned when a strict-cast function (e.g. int!()) fails.
-// The error includes the function name and the value that could not be cast,
-// providing row context for debugging. The VM returns this error, halting the
-// query — this is the designed behavior for bang variants per RFC-002 §5.4.
-type ErrStrictCast struct {
-	Func  string // e.g. "int!"
-	Value string // string representation of the offending value
-	Type  string // type of the offending value
-}
-
-func (e *ErrStrictCast) Error() string {
-	return fmt.Sprintf("strict cast %s failed: cannot convert %s (type %s)", e.Func, e.Value, e.Type)
 }
 
 // Lambda execution: any, all, filter, map

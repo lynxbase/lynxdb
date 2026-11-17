@@ -1,4 +1,0 @@
-Query
-  Pipeline
-    Stage drop
-      Pattern _raw

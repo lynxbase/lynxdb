@@ -1,4 +1,0 @@
-Filter(((status >= 400) and (status < 500)))
-  Scan(main)
-    pushdown.field_predicate: (status >= 400)
-    pushdown.field_predicate: (status < 500)

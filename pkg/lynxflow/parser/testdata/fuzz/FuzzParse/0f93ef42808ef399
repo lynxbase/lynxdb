@@ -1,2 +1,0 @@
-go test fuzz v1
-string("dedup 0 0")

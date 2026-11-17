@@ -1,5 +1,0 @@
-Sort(+label)
-  Aggregate(count() by label [partial])
-    Extend(label=((level + ":") + service))
-      Scan(main)
-        pushdown.columns: [_raw, _source, _time, level, service]

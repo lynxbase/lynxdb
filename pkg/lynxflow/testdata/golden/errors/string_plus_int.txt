@@ -1,3 +1,0 @@
-query: | extend x = name + 42
-error S002 [13:22] cannot add string + int
-  suggestion: did you mean string(42), or name + string(42)?

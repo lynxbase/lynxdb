@@ -1,3 +1,0 @@
-1. Filter(level == "error")
-  2. Parse(json)
-    3. Scan(app)

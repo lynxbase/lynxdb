@@ -1,5 +1,0 @@
-Sort(+severity)
-  Aggregate(count() by severity [partial])
-    Extend(severity=case((level == "ERROR"), "critical", (level == "WARN"), "warning", "normal"))
-      Scan(main)
-        pushdown.columns: [_raw, _source, _time, level]

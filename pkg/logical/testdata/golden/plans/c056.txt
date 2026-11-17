@@ -1,2 +1,0 @@
-Filter((((FieldA == "val1") and (not (FieldB == "val2"))) or (FieldC == "val3")))
-  Scan(main)

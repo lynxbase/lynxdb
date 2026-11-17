@@ -1,7 +1,0 @@
-Query
-  Pipeline
-    Stage extend
-      Assign is_err
-        Binary >=
-          Ident status
-          Int 500

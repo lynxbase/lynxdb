@@ -1,3 +1,0 @@
-query: | where _time > "yesterday"
-error S003 [8:27] cannot compare timestamp > string
-  suggestion: did you mean string(_time) > "yesterday", or _time > timestamp("yesterday")?

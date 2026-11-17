@@ -1,2 +1,0 @@
-Filter(((has(_raw, "error") or has(_raw, "timeout")) or has(_raw, "refused")))
-  Scan(main)

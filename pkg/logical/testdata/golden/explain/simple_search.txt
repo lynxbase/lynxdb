@@ -1,9 +1,0 @@
-1. Filter(has(_raw, "timeout"))
-  2. Scan(nginx, [(-1h)])
-    raw_term: "timeout" via FST
-
-Annotations:
-  Desugar rewrites:
-    search-sugar: timeout => where has(_raw, "timeout")
-  Optimizer rules:
-    predicate-pushdown (1x)

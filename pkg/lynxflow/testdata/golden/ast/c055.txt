@@ -1,7 +1,0 @@
-Query
-  Pipeline
-    From
-      Source main
-      SugarTerms
-        KeyValue CommandLine=
-          String "whoami"

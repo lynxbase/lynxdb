@@ -1,1 +1,0 @@
-search-sugar: ((FieldA="val1" and (not FieldB="val2")) or FieldC="val3") => where (((FieldA == "val1") and (not (FieldB == "val2"))) or (FieldC == "val3"))

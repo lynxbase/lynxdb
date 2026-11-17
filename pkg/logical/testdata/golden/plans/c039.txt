@@ -1,6 +1,0 @@
-Project(service, duration_ms, rolling_avg)
-  Limit(6)
-    Aggregate(avg(duration_ms) as rolling_avg [streamstats window=3])
-      Sort(+timestamp)
-        Scan(main)
-          pushdown.columns: [_raw, _source, _time, duration_ms, service, timestamp]

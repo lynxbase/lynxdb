@@ -1,2 +1,0 @@
-implicit-source:  => from main
-sugar:latency: latency duration_ms every 1h by service => stats p50(duration_ms), p95(duration_ms), p99(duration_ms), count() by service, bin(_time, 1h)

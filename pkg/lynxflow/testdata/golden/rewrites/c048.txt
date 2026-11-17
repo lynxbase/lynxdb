@@ -1,2 +1,0 @@
-implicit-source:  => from main
-sugar:rate: rate per 1h by level => stats count() as rate by level, bin(_time, 1h)

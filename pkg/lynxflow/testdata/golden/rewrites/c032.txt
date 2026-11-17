@@ -1,2 +1,0 @@
-implicit-source:  => from main
-sugar:rare: rare 3 service => stats count() as count by service | eventstats sum(count) as _total | extend percent = round(((count * 100) / _total), 2) | drop _total | sort count | head 3

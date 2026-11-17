@@ -1,7 +1,0 @@
-Query
-  Pipeline
-    Stage rate
-      Per
-        Duration 1h
-      By
-        Ident level

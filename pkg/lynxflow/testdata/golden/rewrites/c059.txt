@@ -1,1 +1,0 @@
-search-sugar: ((error or timeout) or refused) => where ((has(_raw, "error") or has(_raw, "timeout")) or has(_raw, "refused"))

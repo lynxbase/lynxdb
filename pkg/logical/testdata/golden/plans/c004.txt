@@ -1,5 +1,0 @@
-Aggregate(count() [partial])
-  Filter((status == 500))
-    Scan(main)
-      pushdown.field_predicate: (status == 500)
-      pushdown.columns: [_raw, _source, _time, status]

@@ -1,7 +1,0 @@
-Sort(-pct)
-  Project(service, hits, pct)
-    Extend(pct=round(((hits * 100) / total), 1))
-      Aggregate(sum(hits) as total [eventstats])
-        Aggregate(count() as hits by service [partial])
-          Scan(main)
-            pushdown.columns: [_raw, _source, _time, service]

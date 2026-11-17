@@ -1,2 +1,0 @@
-implicit-source:  => from main
-sugar:every: every 1h by level stats count() => stats count() by level, bin(_time, 1h)

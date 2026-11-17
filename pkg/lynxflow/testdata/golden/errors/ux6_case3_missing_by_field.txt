@@ -1,3 +1,0 @@
-query: | stats count() by timestamp
-error S008 [19:28] unknown field 'timestamp' in group-by clause
-  suggestion: did you mean '_time'?

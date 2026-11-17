@@ -1,2 +1,0 @@
-go test fuzz v1
-string("stAts(0),A((where(0)))")

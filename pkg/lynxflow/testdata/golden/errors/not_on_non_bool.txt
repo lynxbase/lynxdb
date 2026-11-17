@@ -1,2 +1,0 @@
-query: | where not status
-warning S004 [12:18] operand of 'not' has type int, expected bool

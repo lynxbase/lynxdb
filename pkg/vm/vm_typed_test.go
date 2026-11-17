@@ -467,7 +467,7 @@ func TestVMLen_Int(t *testing.T) {
 	}
 }
 
-// Duration arithmetic matrix (RFC-002 section 5.4)
+// Duration arithmetic matrix
 
 func TestVMDuration_AddDurations(t *testing.T) {
 	// 1s + 2s = 3s

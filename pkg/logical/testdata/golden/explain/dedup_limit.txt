@@ -1,3 +1,0 @@
-1. Limit(5)
-  2. Dedup(1, host)  [spill-capable]
-    3. Scan(app)
