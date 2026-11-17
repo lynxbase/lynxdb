@@ -579,6 +579,7 @@ func (s *Store) flushLoop() {
 		tick = ticker.C
 	}
 	looked := time.Now()
+	rechecked := looked
 	for {
 		select {
 		case <-s.done:
@@ -588,6 +589,10 @@ func (s *Store) flushLoop() {
 			_ = s.flushFull()
 		case <-tick:
 			s.dropSpare()
+			if time.Since(rechecked) >= recheckEvery {
+				rechecked = time.Now()
+				s.recheck()
+			}
 			// Partitions close as time passes, with or without new rows.
 			if s.opts.Partition > 0 && time.Since(looked) >= closedLook {
 				looked = time.Now()
@@ -856,6 +861,19 @@ var timeNow = time.Now
 // closedLook is how often a store with partitions looks for ones that have
 // closed while no rows arrived.
 const closedLook = time.Minute
+
+// recheckEvery is how often the parts are told to check what is read from
+// them against its checksum again.
+const recheckEvery = time.Hour
+
+// recheck has every read of the parts check what it reads again.
+func (s *Store) recheck() {
+	snap := s.Table().Snapshot()
+	defer snap.Release()
+	for _, h := range snap.Parts() {
+		h.Recheck()
+	}
+}
 
 // spareIdle is how long the batches of written buffers wait to be filled
 // again before they are given up.

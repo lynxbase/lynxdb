@@ -34,9 +34,13 @@ type Part struct {
 	// when the block is first opened: dirHeld has a bit per block that
 	// did, and dirMu guards the moving.
 	detached bool
-	dirMu    sync.Mutex
-	dirHeap  []byte
-	dirHeld  []atomic.Uint64
+	// sound has a bit for every column of every block, at the place of its
+	// directory entry, that is set once the bytes of the column were seen
+	// to match their checksum, until Recheck clears it.
+	sound   []atomic.Uint64
+	dirMu   sync.Mutex
+	dirHeap []byte
+	dirHeld []atomic.Uint64
 	// filters holds an entry for every token filter, block after block,
 	// and groups locates them; every block names its group and its first
 	// filter, and a part without filters has neither.
@@ -177,6 +181,7 @@ func Open(data []byte) (*Part, error) {
 		return nil, ErrCorrupt
 	}
 	p.dirs, p.dirsOff = data[dirsOff:dirsOff+dirsLen], int(dirsOff)
+	p.sound = make([]atomic.Uint64, len(p.dirs)/dirEntrySize/64+1)
 	p.groups = make([]filterGroup, nGroups)
 	for g, end := 0, uint64(headerSize); g < len(p.groups); g++ {
 		e := groups[g*groupEntrySize:]
@@ -491,6 +496,7 @@ type ColumnRef struct {
 	off      uint32
 	length   uint32
 	crc      uint32
+	slot     uint32
 	constVal []byte
 }
 
@@ -523,6 +529,8 @@ type Block struct {
 	parsed vec.Bitmap
 	d      decodeScratch
 	pos    []uint32
+	// slot numbers the block's first column among the columns of the part.
+	slot uint32
 	// present holds the rows of a sparse column searched as it is stored.
 	present vec.Column
 }
@@ -544,6 +552,7 @@ func (p *Part) OpenBlock(i int, b *Block) error {
 	}
 	entries := size + int(n)*dirEntrySize
 	b.dir, b.stats = dir[size:entries], dir[entries:]
+	b.slot = (binary.LittleEndian.Uint32(e[40:]) + uint32(size)) / dirEntrySize
 	b.cols = grow(b.cols, int(n))
 	b.parsed = grow(b.parsed, vec.BitmapWords(int(n)))
 	clear(b.parsed)
@@ -590,6 +599,7 @@ func (b *Block) col(i int) *ColumnRef {
 		off:    binary.LittleEndian.Uint32(e[12:]),
 		length: binary.LittleEndian.Uint32(e[16:]),
 		crc:    binary.LittleEndian.Uint32(e[20:]),
+		slot:   b.slot + uint32(i),
 	}
 	r := reader{}
 	if at := binary.LittleEndian.Uint32(e[24:]); uint64(at) <= uint64(len(b.stats)) {
@@ -762,17 +772,46 @@ func (p *Part) MayContainTokensIn(i int, pathID uint32, kind vec.Kind, hashes []
 }
 
 // ForgetReadAhead makes the lookups in the token filters ask for their
-// pages again and check them again, after the pages of the part were let
-// go of.
+// pages again, and every read check what it reads again, after the pages
+// of the part were let go of.
 func (p *Part) ForgetReadAhead() {
 	for i := range p.groups {
 		for j := range p.groups[i].ahead {
 			p.groups[i].ahead[j].Store(0)
 		}
+	}
+	p.Recheck()
+}
+
+// Recheck makes every read of the part check what it reads against its
+// checksum again. A column and a page of a token filter are checked when
+// they are first read and not again until then: the bytes of a part do not
+// change, and what a device returns for them later is checked by calling
+// this from time to time.
+func (p *Part) Recheck() {
+	for i := range p.sound {
+		p.sound[i].Store(0)
+	}
+	for i := range p.groups {
 		for j := range p.groups[i].sound {
 			p.groups[i].sound[j].Store(0)
 		}
 	}
+}
+
+// checked reports whether the bytes of a column match their checksum,
+// which it takes when they were not seen to since the last Recheck.
+func (b *Block) checked(ref *ColumnRef, chunk []byte) bool {
+	word, bit := &b.part.sound[ref.slot>>6], uint64(1)<<(ref.slot&63)
+	if word.Load()&bit != 0 {
+		return true
+	}
+	if crc32.Checksum(chunk, castagnoli) != ref.crc {
+		return false
+	}
+	word.Or(bit)
+
+	return true
 }
 
 // aheadColumn asks for the pages that lookups of hash in the filters of one
@@ -1023,7 +1062,7 @@ func (b *Block) DecodePresence(ref *ColumnRef, dst *vec.Column) error {
 	if b.part.readAhead != nil && ref.length >= minReadAhead {
 		b.part.readAhead(b.start+int(ref.off), int(ref.length))
 	}
-	if crc32.Checksum(chunk, castagnoli) != ref.crc {
+	if !b.checked(ref, chunk) {
 		return ErrCorrupt
 	}
 	dst.Kind, dst.Rows, dst.Layout, dst.Valid = ref.Kind, b.Rows, vec.Flat, nil
@@ -1062,7 +1101,7 @@ func (b *Block) decode(ref *ColumnRef, dst *vec.Column, byValue bool) error {
 	if b.part.readAhead != nil && ref.length >= minReadAhead {
 		b.part.readAhead(b.start+int(ref.off), int(ref.length))
 	}
-	if crc32.Checksum(chunk, castagnoli) != ref.crc {
+	if !b.checked(ref, chunk) {
 		return ErrCorrupt
 	}
 	rows, count := b.Rows, ref.Count
@@ -1589,7 +1628,7 @@ func (b *Block) FindEqual(ref *ColumnRef, want []byte, dst []uint32) ([]uint32, 
 	if m <= 0 || size > uint64(len(chunk)-n-m) || rawLen > maxSectionSize {
 		return dst, false, ErrCorrupt
 	}
-	if crc32.Checksum(whole, castagnoli) != ref.crc {
+	if !b.checked(ref, whole) {
 		return dst, false, ErrCorrupt
 	}
 	from := len(dst)
