@@ -174,6 +174,9 @@ func tokenRune(r rune) bool {
 	return r != utf8.RuneError && (unicode.IsLetter(r) || unicode.IsDigit(r))
 }
 
+// IsTokenRune reports whether r is part of a token and not a separator.
+func IsTokenRune(r rune) bool { return tokenRune(r) }
+
 func tokenRuneAt(text []byte, i int) bool {
 	if i >= len(text) {
 		return false
