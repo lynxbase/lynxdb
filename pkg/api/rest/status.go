@@ -13,7 +13,7 @@ import (
 // storeTotals sums the stats of the indexes.
 type storeTotals struct {
 	events         uint64
-	bytes          int64
+	bytes, filters int64
 	parts          int
 	oldest, newest time.Time
 }
@@ -23,6 +23,7 @@ func sumStats(stats []columnar.IndexStats) storeTotals {
 	for _, ix := range stats {
 		t.events += ix.Rows
 		t.bytes += ix.Bytes
+		t.filters += ix.FilterBytes
 		t.parts += ix.Parts
 		if ix.Parts == 0 {
 			continue
@@ -67,6 +68,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	response := map[string]interface{}{
 		"uptime_seconds": int(time.Since(s.started).Seconds()),
 		"storage_bytes":  totals.bytes,
+		"filter_bytes":   totals.filters,
 		"total_events":   totals.events,
 		"index_count":    len(stats),
 		"part_count":     totals.parts,

@@ -84,6 +84,9 @@ func TestStats_IndexesAndJobs(t *testing.T) {
 			t.Errorf("missing %s in %v", key, data)
 		}
 	}
+	if filters, _ := data["filter_bytes"].(float64); filters <= 0 || filters >= data["storage_bytes"].(float64) {
+		t.Errorf("filter_bytes = %v of storage_bytes %v, want a part of it", data["filter_bytes"], data["storage_bytes"])
+	}
 	indexes, _ := data["indexes"].([]interface{})
 	if len(indexes) != 2 {
 		t.Fatalf("indexes = %v, want main and web", data["indexes"])

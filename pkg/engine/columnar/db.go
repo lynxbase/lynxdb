@@ -192,7 +192,9 @@ type IndexStats struct {
 	Name  string
 	Rows  uint64
 	Bytes int64
-	Parts int
+	// FilterBytes is the part of Bytes that the token filters take.
+	FilterBytes int64
+	Parts       int
 	// First and Last are the times of the earliest and the latest event;
 	// both are zero for an index without events.
 	First, Last time.Time
@@ -212,6 +214,7 @@ func (db *DB) Stats() []IndexStats {
 		for i, h := range snap.Parts() {
 			st.Rows += h.Rows
 			st.Bytes += int64(h.Size())
+			st.FilterBytes += h.FilterBytes()
 			st.Parts++
 			if i == 0 || h.MinTime < first {
 				first = h.MinTime

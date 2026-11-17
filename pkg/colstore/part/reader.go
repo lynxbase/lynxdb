@@ -478,6 +478,16 @@ func (p *Part) SortKey() []string { return p.sortKey }
 // Size returns the part's size in bytes.
 func (p *Part) Size() int { return len(p.data) }
 
+// FilterBytes returns the bytes of the part's token filters.
+func (p *Part) FilterBytes() int64 {
+	var n int64
+	for i := range p.groups {
+		n += int64(p.groups[i].size)
+	}
+
+	return n
+}
+
 // NumBlocks returns the number of blocks.
 func (p *Part) NumBlocks() int { return len(p.index) / indexEntrySize }
 

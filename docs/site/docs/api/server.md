@@ -89,6 +89,7 @@ curl -s localhost:3100/api/v1/stats
   "data": {
     "uptime_seconds": 137,
     "storage_bytes": 53424,
+    "filter_bytes": 9216,
     "total_events": 1060,
     "index_count": 3,
     "part_count": 4,
@@ -107,6 +108,7 @@ curl -s localhost:3100/api/v1/stats
 | Field | Description |
 |---|---|
 | `storage_bytes`, `total_events`, `part_count` | Totals over the indexes |
+| `filter_bytes` | The part of `storage_bytes` that the token filters take; each index entry has it too |
 | `oldest_event`, `newest_event` | Times of the oldest and newest event, in whole seconds; absent without events |
 | `indexes` | One entry per index, as in [`GET /api/v1/indexes`](./ingest.md#get-indexes) |
 | `jobs` | Jobs the server keeps, by state |
