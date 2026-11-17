@@ -1,15 +1,15 @@
 ---
 title: Upgrading LynxDB
-description: Upgrade LynxDB by replacing the binary and restarting -- install channels, upgrade procedures, storage format compatibility, and rollback.
+description: Upgrade LynxDB by replacing the binary and restarting -- install channels, upgrade procedures, config compatibility, and rollback.
 ---
 
 # Upgrading LynxDB
 
-LynxDB is a single binary. Upgrading means replacing that binary with a newer release and restarting the server. On startup the server checks the data directory's format marker and segment headers, rebuilds its part registry from disk, and continues where the old process stopped. There is no separate migration step.
+LynxDB is a single binary. Upgrading means replacing that binary with a newer release and restarting the server. On startup the server opens every index directory under `data_dir` from its manifest and continues from the state the stopped process left. There is no separate migration step.
 
 Back up the data directory before upgrading a production server (see [Backup and Restore](/docs/operations/backup-restore)).
 
-## Getting a New Binary
+## Getting a Release
 
 ### Install Script
 
@@ -97,7 +97,7 @@ lynxdb health
 lynxdb status
 ```
 
-Stopping the server flushes buffered events to parts. Downtime is the time between stop and start, usually a few seconds plus the startup part scan.
+Stopping the server writes the events it holds in memory and closes every index. Downtime is the time between stop and start.
 
 ### Behind a Load Balancer
 
@@ -135,7 +135,16 @@ kubectl -n lynxdb rollout status statefulset/lynxdb
 
 ## Config Compatibility
 
-Config keys keep their meaning across releases, and new keys come with defaults, so an existing config file keeps working. `lynxdb config validate` warns about unknown keys: keys the running release does not read.
+A config key that the running release does not read is ignored, and the server prints a warning about it to stderr at startup. Check a config file against the installed release before the restart:
+
+```bash
+lynxdb config validate --config /etc/lynxdb/config.yaml
+```
+
+```text
+  ⚠  unknown config key "query.max_rows" in /etc/lynxdb/config.yaml
+  ✔ Config file /etc/lynxdb/config.yaml is valid.
+```
 
 ## Rollback
 
@@ -154,7 +163,7 @@ docker pull ghcr.io/lynxbase/lynxdb:0.4.0
 docker compose up -d
 ```
 
-A rollback works as long as the older release reads every segment in the data directory. Releases from v0.1.8 on read formats 1 and 2. Rolling back to v0.1.6 or v0.1.7 after a newer release wrote format 2 parts fails at startup; restore a backup taken before the upgrade instead.
+A rollback works when the older release opens every index the newer one wrote. If the older server stops at startup with an error about an index, restore the backup taken before the upgrade.
 
 ## Checking the Version
 

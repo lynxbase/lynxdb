@@ -1,6 +1,6 @@
 ---
 title: Troubleshooting
-description: Troubleshoot common LynxDB issues -- connectivity, query errors, storage and memory problems.
+description: Troubleshoot common LynxDB issues -- connectivity, query errors, ingest, storage and startup problems.
 ---
 
 # Troubleshooting
@@ -14,9 +14,13 @@ lynxdb status
 
 ## Connection Issues
 
-### "Cannot reach server"
+### "Cannot connect"
 
 **Symptoms:** `lynxdb query` exits with code 3 (connection).
+
+```text
+  ✖ CONNECTION: Cannot connect to http://localhost:3100
+```
 
 **Checks:**
 
@@ -46,17 +50,17 @@ sudo journalctl -u lynxdb --since "10 minutes ago"
 
 ### "Missing or invalid authentication token"
 
-**Symptoms:** Exit code 7 (auth).
+**Symptoms:** Exit code 7 (auth). The server answers `401 AUTH_REQUIRED` or `401 INVALID_TOKEN`, or `403 FORBIDDEN` for a key whose scope does not allow the request.
 
 ```bash
 # Check auth status
 lynxdb auth status
 
-# Re-authenticate
+# Log in again
 lynxdb login
 
-# Or set the token directly
-export LYNXDB_TOKEN=lxk_your_token_here
+# Or set the key directly
+export LYNXDB_TOKEN=lynx_ak_your_key_here
 ```
 
 ### TLS Certificate Errors
@@ -65,7 +69,8 @@ export LYNXDB_TOKEN=lxk_your_token_here
 # Skip verification (development only)
 lynxdb query 'source=main level=ERROR | head 10' --tls-skip-verify
 
-# Or re-trust the certificate
+# Or trust the certificate again
+lynxdb logout --server https://localhost:3100
 lynxdb login --server https://localhost:3100
 ```
 
@@ -77,12 +82,12 @@ lynxdb login --server https://localhost:3100
 
 The error names the position and, where it can, the fix:
 
-```
-✖ SEMANTIC_ERROR: semantic error at line 1, column 56: field avg_rt not found (available fields: avg(response_time), host)
+```text
+  ✖ SEMANTIC_ERROR: semantic error at line 1, column 57: field avg_rt not found (available fields: avg(duration_ms), service)
 
-  source=main | stats avg(response_time) by host | where avg_rt > 100
-                                                         ^
-  Hint: available fields: avg(response_time), host
+    source=main | stats avg(duration_ms) by service | where avg_rt > 100
+                                                            ^
+    Hint: available fields: avg(duration_ms), service
 ```
 
 Common mistakes:
@@ -91,8 +96,8 @@ Common mistakes:
 |-------|-------|-----|
 | `main \| head 10` | `source=main \| head 10` | A query starts with a source |
 | `source=main \| search error` | `source=main error` or `source=main \| where match(_raw, 'error')` | `search` is only the first command; filter later stages with `where` |
-| `stats avg(response_time) by host \| where avg_rt > 100` | `stats avg(response_time) as avg_rt by host \| where avg_rt > 100` | An unaliased aggregate is named `avg(response_time)` |
-| `eval d = response_time-100` | `eval d = response_time - 100` | `a-b` is one identifier; put spaces around `-` and `*` |
+| `stats avg(duration_ms) by service \| where avg_rt > 100` | `stats avg(duration_ms) as avg_rt by service \| where avg_rt > 100` | An unaliased aggregate is named `avg(duration_ms)` |
+| `eval d = duration_ms-100` | `eval d = duration_ms - 100` | `a-b` is one field name; put spaces around `-` |
 | `bin _time bins=10` | `bin _time span=5m` | `bins=` is not supported |
 
 Check a query without running it:
@@ -105,7 +110,7 @@ See [PPL errors](../ppl/errors.md) for every error code and [PPL syntax](../ppl/
 
 ### No Results
 
-A field that does not exist is not an error: LynxDB is schema-on-read, so `where lvl = "ERROR"` returns no rows when the field is `level`. Check the data and field names:
+A field that does not exist is not an error: LynxDB reads schemas on query, so `where lvl = "ERROR"` returns no rows when the field is `level`. Check the data and field names:
 
 ```bash
 # How many events are there?
@@ -123,26 +128,32 @@ lynxdb query 'source=main | head 5'
 lynxdb indexes
 ```
 
-Field comparisons are exact and case-sensitive (`level=ERROR` does not match `error`); free-text terms are case-insensitive.
+Field comparisons are exact and case-sensitive (`level=ERROR` does not match `error`); search terms are case-insensitive.
+
+A field of a nested JSON object is a column named by its path, such as `http.status` for `{"http":{"status":502}}`. An event that lacks a field has no value for it, so `where` comparisons on that field are false for the event.
+
+Events without a time field get the time they arrived. A query with `--since` or `earliest=` selects by that time, so events loaded from an old file may fall outside the range; see [`storage.time_fields`](/docs/configuration/storage).
 
 ### "Query timeout"
 
 **Symptoms:** Exit code 5 (timeout).
 
+The server does not stop a query on its own. A query that runs longer than `query.sync_timeout` (default `30s`) becomes a job, and the CLI polls it until `--timeout` (default `6m`) expires.
+
 ```bash
 # Raise the client-side timeout
-lynxdb query 'source=main | stats count() by host' --timeout 5m
-
-# Raise the server-side limit
-lynxdb config set query.max_query_runtime 30m
-lynxdb config reload
+lynxdb query 'source=main | stats count() by host' --timeout 15m
 ```
 
 **Fixes:**
 
-- Bound the time range: `--since 1h` or `earliest=-1h` in the source
+- Bound the time range: `--since 1h` or `earliest=-1h` in the search
 - End event searches with `head`: `... | head 100`
-- Profile the query with `--analyze` to find the slow stage
+- Look at the plan with `lynxdb explain` (see [Performance Tuning](/docs/operations/performance-tuning#query-shape))
+
+### "Too many concurrent queries"
+
+**Symptoms:** `429 TOO_MANY_REQUESTS` with `Retry-After: 1`. `query.max_concurrent` queries, synchronous and asynchronous, are running. Retry after a second, cancel jobs you do not need (`lynxdb jobs --status running`, `lynxdb jobs <id> --cancel`), or raise `query.max_concurrent` and restart the server.
 
 ### `/api/v1/query/stream` returns VALIDATION_ERROR
 
@@ -159,7 +170,13 @@ A request that also sends `limit`, `offset`, `wait`, `profile`, or `format` is r
 curl -X POST localhost:3100/api/v1/query/stream \
   -H 'Content-Type: application/json' \
   -d '{"q":"source=main | head 10","limit":10}'
+```
 
+```json
+{"error":{"code":"VALIDATION_ERROR","message":"unsupported fields for /query/stream: limit","suggestion":"Use only q/query, from/to and earliest/latest with /query/stream."}}
+```
+
+```bash
 # Right: bound the rows in the query
 curl -X POST localhost:3100/api/v1/query/stream \
   -H 'Content-Type: application/json' \
@@ -174,95 +191,59 @@ curl -X POST localhost:3100/api/v1/query \
 ### Slow Queries
 
 ```bash
-lynxdb query 'source=main level=ERROR | stats count() by host' --analyze=full
+lynxdb explain 'source=main level=ERROR | stats count() by host'
 ```
 
-Check the profile for:
+Check the `Scan` line of the optimized plan:
 
-- **Segments scanned vs skipped**: if most segments are scanned, the query has no time range or selective term
-- **Rows scanned vs returned**: many rows read for few results means the filter does not reach the scan
-- **Per-operator time**: which stage dominates
+- **No time range**: the scan reads every partition. Add `earliest=` or `--since`.
+- **Many columns**: name the fields you need with `fields`.
+- **Filters far from the scan**: filters placed after `eval` or `stats` cannot narrow the scan.
 
-**Fixes:**
+See [Performance Tuning](/docs/operations/performance-tuning#query-shape).
 
-- Add a time range: `--since 1h`
-- Put selective terms and field comparisons in the source command: `source=main host=web-01 status>=500` instead of filtering later with `where`
-- See [Performance Tuning](/docs/operations/performance-tuning#query-shape)
+## Ingest Issues
+
+### Events Do Not Appear
+
+A query syncs the database before it runs, so it sees every event whose ingest request was answered. When events are missing:
+
+- Check the response of the ingest request: `accepted` counts the events stored. A line that is not a JSON object is kept as an event holding the text in `_raw`, so search for its text rather than for fields.
+- Check the index: `?index=` and `X-Index` choose it for `/api/v1/ingest` and `/api/v1/ingest/raw`, the bulk `_index` for Elasticsearch shippers. `lynxdb indexes` lists the names.
+- Check the time: an event's time comes from the first of `storage.time_fields` it holds. A query with a time range leaves out events whose time falls outside it.
+
+### `400 VALIDATION_ERROR` on an Index Name
+
+Index names hold letters, digits, `.`, `-` and `_`, and do not start with a dot. Elasticsearch bulk requests take lowercase index names only.
+
+### `413` or Truncated Bodies
+
+A body larger than `ingest.max_body_size` is refused with `413`. Raw ingest that reaches the limit part-way keeps the lines read so far and answers with `"truncated": true`. Send smaller batches or raise `ingest.max_body_size` and restart.
 
 ## Storage Issues
 
 ### Disk Full
 
-**Symptoms:** The server stops accepting writes; compaction fails.
+**Symptoms:** Ingest requests fail; the server log shows write errors.
 
 ```bash
 # Check disk usage
 df -h /var/lib/lynxdb
 
-# Check LynxDB storage size
-lynxdb status
-
-# Immediate relief: reduce retention (expired partitions go at the next hourly pass)
-lynxdb config set retention 3d
-lynxdb config reload
-
-# Clear the query result cache
-lynxdb cache clear --force
+# Check what each index holds
+lynxdb indexes
 ```
 
-**Long-term fixes:**
+**Fixes:**
 
-- Increase disk size
-- Reduce the retention period
-- Switch compression to `zstd`
+- Free or add disk space
+- Reduce the retention period (`lynxdb config set retention 3d`, then restart); the first retention pass after the restart deletes the expired partitions
 
-### Buffered Events Keep Growing
+### Part Count Keeps Growing
 
-If buffered events keep growing, flushes are not keeping up:
-
-```bash
-# Check buffered events and segment counts
-lynxdb status --format json | jq '{buffered_events, segment_count}'
-
-# Check server logs for flush errors
-sudo journalctl -u lynxdb | grep -i flush
-```
-
-**Common causes:**
-
-- The disk is full -- free space for part writes
-- Sustained ingest exceeds the available disk bandwidth
-
-### Compaction Backlog
-
-If the segment count keeps growing, compaction falls behind. `lynxdb_compaction_queue_depth` on `/metrics` shows pending jobs.
-
-```bash
-# Check the segment count
-lynxdb status --format json | jq .segment_count
-
-# Increase compaction workers, then restart the server
-lynxdb config set storage.compaction_workers 4
-sudo systemctl restart lynxdb
-```
-
-`storage.compaction_workers` is read at startup. `config reload` updates hot-reloadable settings but does not re-create the compaction scheduler with a new worker count.
+`part_count` in `/api/v1/stats` rises with ingest and falls as the store merges parts. If it only grows, merges cannot keep up with the ingest rate. Check the disk's throughput and the server log for write errors, and send fewer, larger batches.
 
 ## Server Issues
-
-### High Memory Usage
-
-```bash
-# Check running queries
-lynxdb jobs --status running
-
-# Cancel an expensive query
-lynxdb jobs qry_9c1d4e --cancel
-
-# Lower the query memory pool, then restart
-lynxdb config set query.global_query_pool_bytes 4gb
-sudo systemctl restart lynxdb
-```
 
 ### Server Won't Start
 
@@ -277,15 +258,22 @@ ls -la /var/lib/lynxdb
 lynxdb server --log-level debug
 ```
 
+### Damaged Index
+
+When an index's manifest names a part file that is missing or damaged, the server stops at startup and names the index and the file:
+
+```text
+  ✖ ERROR: server init: open database: columnar: index main: colstore: manifest is damaged or names a missing or damaged part: 0000000000000000.part: open /var/lib/lynxdb/main/0000000000000000.part: no such file or directory
+```
+
+The server leaves the files as they are. Restore the index directory from a backup (see [Backup and Restore](/docs/operations/backup-restore#one-index)), or move the index directory out of the data directory to start without that index.
+
 ### Crash Recovery
 
-After a crash, LynxDB scans the data directory, removes stale temporary files, and rebuilds its in-memory part registry on the next startup. Events that were buffered but not yet flushed to a part are lost; shippers that retry on failure resend them.
+After a crash, each index opens from its manifest on the next start: files that no manifest record names are removed, or moved to `lost+found/` in the index directory when the manifest may have lost records. Events whose ingest request was answered but that were not yet written are lost; shippers that retry on failure send them again. See [Durability](/docs/operations/backup-restore#durability).
 
 ```bash
-# Start the server again
 sudo systemctl start lynxdb
-
-# Watch the logs for the part scan
 sudo journalctl -u lynxdb -f
 ```
 
@@ -295,7 +283,7 @@ sudo journalctl -u lynxdb -f
 
 ```bash
 lynxdb completion bash >> ~/.bashrc                              # Bash
-lynxdb completion zsh >> ~/.zshrc                                # Zsh
+lynxdb completion zsh > "${fpath[1]}/_lynxdb"                    # Zsh
 lynxdb completion fish > ~/.config/fish/completions/lynxdb.fish  # Fish
 
 # Reload the shell
@@ -320,15 +308,13 @@ lynxdb config validate
 | Code | Name | Meaning |
 |------|------|---------|
 | 0 | OK | Success |
-| 1 | General | Unspecified failure |
+| 1 | General | Unspecified failure, including a server that fails to start |
 | 2 | Usage | Invalid flags or missing arguments |
 | 3 | Connection | Cannot reach server |
 | 4 | Query | The query does not compile |
 | 5 | Timeout | Server timeout or `--timeout` exceeded |
 | 6 | NoResults | No results (with `--fail-on-empty`) |
 | 7 | Auth | Missing or invalid authentication token |
-| 10 | Aborted | User declined a confirmation |
-| 78 | Config | Configuration error or incompatible on-disk format |
 | 130 | Interrupted | Ctrl+C |
 
 ## Getting Help

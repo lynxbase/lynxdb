@@ -1,57 +1,90 @@
 ---
 title: Monitoring
-description: Monitor LynxDB health and performance -- health and status endpoints, the status command, Prometheus metrics, cache statistics, and query profiling.
+description: Monitor LynxDB health and performance -- health, status and stats endpoints, the status command, Prometheus metrics, request logs and query profiles.
 ---
 
 # Monitoring LynxDB
 
-LynxDB reports its health and performance through REST endpoints, a Prometheus `/metrics` endpoint, and CLI commands. This page lists what each one shows and what to watch.
+LynxDB reports its health and load through REST endpoints, a Prometheus `/metrics` endpoint, its request log and CLI commands. This page lists what each one shows and what to watch.
 
 ## Health Check
 
-The `/health` endpoint is meant for load balancers and container orchestrators:
+`GET /health` is meant for load balancers and container orchestrators. It needs no API key:
 
 ```bash
 curl http://localhost:3100/health
-# {"data":{"degraded":false,"status":"healthy","version":"X.Y.Z"}}
 ```
 
-It returns `200 OK` when the server accepts requests. Use it for:
+```json
+{"data":{"status":"healthy","version":"dev"}}
+```
 
-- load balancer health checks
-- Kubernetes liveness and readiness probes
-- uptime monitoring
+It answers `200 OK` while the server accepts requests. Use it for load balancer health checks, Kubernetes liveness and readiness probes, and uptime monitoring. The CLI calls the same endpoint:
 
 ```bash
-# CLI health check
 lynxdb health
 ```
 
 ## Server Status
 
-`GET /api/v1/stats` returns storage and event counters:
+`GET /api/v1/status` sums up the server:
 
 ```bash
-curl -s http://localhost:3100/api/v1/stats | jq .
+curl -s http://localhost:3100/api/v1/status
 ```
 
 ```json
 {
   "data": {
-    "buffered_events": 0,
-    "events_today": 114,
-    "index_count": 2,
-    "oldest_event": "2025-01-15T08:00:00Z",
-    "segment_count": 4,
-    "sources": [],
-    "storage_bytes": 242686,
-    "total_events": 1003,
-    "uptime_seconds": 394
+    "events": {"total": 60},
+    "health": "healthy",
+    "queries": {"active": 0},
+    "retention": {"oldest_event": "2026-02-10T08:12:03Z"},
+    "storage": {"used_bytes": 6803},
+    "uptime_seconds": 8,
+    "version": "dev"
   }
 }
 ```
 
-`GET /api/v1/status` combines these counters with health, active queries, and live tail sessions.
+| Field | Meaning |
+|-------|---------|
+| `events.total` | Events held by all indexes |
+| `storage.used_bytes` | Bytes of the part files of all indexes |
+| `queries.active` | Query jobs running now |
+| `retention.policy` | The `retention` setting, such as `168h0m0s`; absent when retention is `0` |
+| `retention.oldest_event` | Time of the oldest event held |
+
+`GET /api/v1/stats` breaks the same numbers down by index and counts the query jobs the server keeps:
+
+```bash
+curl -s http://localhost:3100/api/v1/stats
+```
+
+```json
+{
+  "data": {
+    "index_count": 2,
+    "indexes": [
+      {"name": "main", "events": 26, "bytes": 3978, "parts": 1,
+       "first_event": "2026-02-10T08:12:03.045Z", "last_event": "2026-02-10T10:45:00.5Z"},
+      {"name": "nginx", "events": 34, "bytes": 2825, "parts": 1,
+       "first_event": "2026-11-17T15:43:19.088137Z", "last_event": "2026-11-17T15:43:19.088137Z"}
+    ],
+    "jobs": {"canceled": 0, "done": 0, "error": 0, "running": 0},
+    "newest_event": "2026-11-17T15:43:19Z",
+    "oldest_event": "2026-02-10T08:12:03Z",
+    "part_count": 2,
+    "storage_bytes": 6803,
+    "total_events": 60,
+    "uptime_seconds": 8
+  }
+}
+```
+
+Both endpoints sync the database before they answer, so they count every event ingested before the request.
+
+`parts` is the number of immutable part files an index holds. The store merges parts in the background, so the count rises with ingest and falls again as merges finish. A count that only grows means merges cannot keep up with ingest.
 
 The CLI shows the same information:
 
@@ -59,64 +92,65 @@ The CLI shows the same information:
 lynxdb status
 ```
 
-```
-  LynxDB X.Y.Z — uptime 2d 5h — healthy
+```text
+  LynxDB dev — uptime 0m — healthy
 
-  Storage   1.2 GB
-  Events    3,456,789 total  123,456 today
-  Segments  42  buffer: 8,200 events
-  Indexes   3
-  Oldest    2025-01-08T10:30:00Z
+  Storage  6.6 KB
+  Events   60 total
+  Parts    2
+  Indexes  2
+  Indexes        main (43%), nginx (57%)
+  Oldest         2026-02-10T08:12:03Z
+  Newest         2026-11-17T15:43:19Z
 ```
-
-For machine-readable output:
 
 ```bash
-lynxdb status --format json
+lynxdb status --format json   # the fields of /api/v1/stats
+lynxdb indexes                # one row per index: events, bytes, parts, first and last event
 ```
 
 ## Prometheus Metrics
 
-`GET /metrics` serves the Prometheus text format. Besides the standard `go_*` and `process_*` series, it exports these LynxDB series:
+`GET /metrics` serves the Prometheus text format without authentication. Besides the standard `go_*` and `process_*` series, it exports these LynxDB series. A series with labels appears once it has been recorded.
 
 ### Ingest
 
-| Metric | Description | What to watch |
-|--------|-------------|---------------|
-| `lynxdb_ingest_events_total` | Events ingested | Rate drops point at shipper or network problems |
-| `lynxdb_ingest_bytes_total` | Raw bytes ingested | Capacity planning |
-| `lynxdb_ingest_batches_total` | Ingest batches processed | |
-| `lynxdb_ingest_errors_total` | Ingest errors | Any sustained increase |
-| `lynxdb_ingest_listener_up` | Whether an ingest listener (OTLP, syslog) is bound | `0` for a listener you configured |
-| `lynxdb_ingest_staging_bytes`, `lynxdb_ingest_staging_events` | Pending data in the shipper staging buffer | Steady growth means the sink falls behind |
-| `lynxdb_ingest_staging_age_seconds` | Age of the oldest staged event | Should stay below `ingest.staging.max_age` |
-| `lynxdb_ingest_staging_overflows_total` | Staging buffer overflows | Non-zero means shippers receive rejections |
-| `lynxdb_ingest_es_bulk_requests_total`, `lynxdb_ingest_es_bulk_items_total` | Elasticsearch bulk requests and items by result | Rejected items |
-| `lynxdb_ingest_otlp_request_bytes` | OTLP HTTP request body sizes (histogram) | |
-
-### Storage and Compaction
-
-| Metric | Description | What to watch |
-|--------|-------------|---------------|
-| `lynxdb_compaction_queue_depth` | Pending compaction jobs | A growing queue means compaction cannot keep up; add workers or raise the rate limit |
-| `lynxdb_compaction_runs_total`, `lynxdb_compaction_errors_total` | Compaction runs and failures | Any errors |
-| `lynxdb_compaction_input_bytes_total`, `lynxdb_compaction_output_bytes_total` | Bytes read and written by compaction | Write amplification |
-| `lynxdb_compaction_duration_seconds_total` | Cumulative compaction time | |
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `lynxdb_ingest_events_total` | | Events ingested |
+| `lynxdb_ingest_batches_total` | | Batches ingested |
+| `lynxdb_ingest_bytes_total` | | NDJSON bytes taken by `/api/v1/ingest`, `/api/v1/ingest/raw` and the bulk routes |
+| `lynxdb_ingest_errors_total` | | Batches the database refused |
+| `lynxdb_ingest_dropped_records_total` | `source`, `reason` | Records dropped by a receiver |
+| `lynxdb_ingest_decompression_rejected_total` | `stage`, `encoding` | Shipper requests over `ingest.limits.*` |
+| `lynxdb_ingest_listener_up` | `listener` | `1` while the `es`, `otlp_http` or `otlp_grpc` listener is bound |
+| `lynxdb_ingest_es_bulk_requests_total` | `result` | Elasticsearch bulk requests |
+| `lynxdb_ingest_es_bulk_items_total` | `action`, `result` | Elasticsearch bulk items |
+| `lynxdb_ingest_es_bulk_duration_seconds` | | Time per bulk request (histogram) |
+| `lynxdb_ingest_es_handshake_total` | `kind` | Elasticsearch handshake and setup probes |
+| `lynxdb_ingest_otlp_requests_total` | `signal`, `encoding`, `result` | OTLP requests |
+| `lynxdb_ingest_otlp_records_total` | `signal`, `result` | OTLP log records |
+| `lynxdb_ingest_otlp_request_bytes` | | Decompressed OTLP/HTTP body sizes (histogram) |
+| `lynxdb_syslog_messages_received_total` | `transport`, `dialect` | Syslog messages, when syslog is on |
+| `lynxdb_syslog_messages_dropped_total` | `transport`, `reason` | Dropped syslog messages |
+| `lynxdb_syslog_parse_errors_total` | `dialect` | Syslog messages that did not parse |
+| `lynxdb_syslog_active_connections` | | Open TCP syslog connections |
 
 ### Queries
 
-| Metric | Description | What to watch |
-|--------|-------------|---------------|
-| `lynxdb_query_duration_seconds` | Query duration (histogram) | p99 latency |
-| `lynxdb_query_scan_duration_seconds`, `lynxdb_query_pipeline_duration_seconds` | Time in segment scan and in pipeline execution | Which phase dominates |
-| `lynxdb_query_rows_scanned` | Rows scanned per query (histogram) | Queries without selective filters |
-| `lynxdb_query_peak_memory_bytes` | Peak memory per query (histogram) | Queries close to `query.max_query_memory_bytes` |
-| `lynxdb_query_errors_total` | Query errors by type | Timeouts and memory errors |
-| `lynxdb_query_slow_total` | Queries above `query.slow_query_threshold_ms` | |
-| `lynxdb_segments_scanned_total` | Segments read by queries | |
-| `lynxdb_segments_skipped_time_total`, `lynxdb_segments_skipped_bloom_total`, `lynxdb_segments_skipped_column_stats_total` | Segments skipped by time range, bloom filter, and column min/max | A low skip ratio means queries lack time bounds or selective terms |
-| `lynxdb_cache_hits_total`, `lynxdb_cache_misses_total`, `lynxdb_cache_evictions_total`, `lynxdb_cache_size_bytes` | Query result cache | Hit rate and evictions |
-| `lynxdb_spill_bytes_active`, `lynxdb_spill_files_active`, `lynxdb_spill_bytes_total` | Spill files of blocking operators | Disk use against `query.max_temp_dir_size_bytes` |
+| Metric | Labels | Description |
+|--------|--------|-------------|
+| `lynxdb_query_duration_seconds` | `result_type` (`events`, `aggregate`) | Query duration (histogram) |
+| `lynxdb_query_errors_total` | `type` | Failed queries by error code, such as `EXECUTION_ERROR` |
+
+### What to Watch
+
+- The rate of `lynxdb_ingest_events_total`: a drop points at shippers or the network.
+- `lynxdb_ingest_errors_total` and `lynxdb_ingest_dropped_records_total`: any sustained increase.
+- `lynxdb_ingest_listener_up` at `0` for a listener you configured.
+- The p99 of `lynxdb_query_duration_seconds`.
+- `lynxdb_query_errors_total` by `type`: queries that compiled but failed while they ran.
+- `status=429` in the [request log](#request-log): queries refused because `query.max_concurrent` queries were running.
 
 ### Scrape Configuration
 
@@ -148,66 +182,45 @@ spec:
       interval: 30s
 ```
 
-## Cache Statistics
+## Request Log
 
-```bash
-lynxdb cache stats
+The server logs every HTTP request except `/health` at `INFO` to stdout, with its method, path, status, `duration_ms`, remote address, request ID and, for queries, the `query_id`:
+
+```text
+time=2026-11-17T16:49:30.931+01:00 level=INFO msg="http request" method=POST path=/api/v1/query status=200 duration_ms=18 remote=127.0.0.1:60671 query_id=qry_0df6d3917e47b479 request_id=18e8dfd823b-0002
 ```
 
-```
-  Cache Statistics
-
-  Hits      12,456
-  Misses    3,789
-  Hit Rate  76.7%
-  Entries   1,234
-  Size      456 MB
-  Evictions 89
-```
-
-```bash
-# Machine-readable
-lynxdb cache stats --format json
-```
-
-The result cache key includes an ingest generation counter, so new data makes earlier entries miss. A low hit rate is expected under constant ingest. When the same queries repeat over data that does not change, raise `storage.cache_max_bytes` or `storage.cache_ttl`.
+The `query_id` is the same one that query responses carry in `meta.query_id` and the `X-Query-ID` header.
 
 ## Query Profiling
 
-Profile a single query to find where it spends time:
+`--analyze` adds a profile to a query's output. Pass the level with `=`; a bare `--analyze` means `basic`, and a word after it is read as part of the query:
 
 ```bash
-# Phase breakdown, segments scanned and skipped, rows, optimizer rules
-lynxdb query 'source=main level=ERROR | stats count() by host' --analyze
-
-# Adds per-operator timing
-lynxdb query 'source=main level=ERROR | stats count() by host' --analyze=full
-
-# Adds per-segment detail
-lynxdb query 'source=main level=ERROR | stats count() by host' --analyze=trace
+lynxdb query 'source=main level=ERROR | stats count() by service' --analyze=full
 ```
 
-Pass the level with `=`: a bare `--analyze` means `basic`. The profile shows:
+```text
+  ══════ Query Profile ══════
 
-- segments scanned and skipped, with the skip reason (time, index, column stats, bloom)
-- rows scanned and rows returned
-- the optimizer rules that rewrote the plan
-- peak memory and CPU time
-- recommendations, such as adding a time range
+  Phase Breakdown:
+    exec            207µs    12%   ████████████████████
+                 ──────────
+    total             1ms
+```
 
-`lynxdb explain --analyze '<query>'` runs the query on the server and prints the logical and optimized plans together with its profile. See [PPL performance](../ppl/performance.md) for how plan shape affects cost.
+`exec` is the time the server spent running the query; `total` includes the round trip. `lynxdb explain` prints the plan the server runs, with the columns each scan reads; see [Performance Tuning](/docs/operations/performance-tuning#query-shape).
 
 ## Monitoring Checklist
 
 For production deployments, monitor at least:
 
-- [ ] `/health` -- uptime
-- [ ] `lynxdb_ingest_events_total` rate -- shipper failures
-- [ ] Disk usage and growth -- capacity planning
-- [ ] `lynxdb_query_duration_seconds` p99 -- latency
-- [ ] `queries.active` in `/api/v1/status` against `query.max_concurrent` -- concurrency saturation
-- [ ] `lynxdb_compaction_queue_depth` -- compaction backlog
-- [ ] `buffered_events` in `/api/v1/stats` -- flush health
+- [ ] `/health`: uptime
+- [ ] The rate of `lynxdb_ingest_events_total`: shipper failures
+- [ ] Disk use of the data directory, and `storage_bytes` in `/api/v1/stats`: capacity
+- [ ] The p99 of `lynxdb_query_duration_seconds`: latency
+- [ ] `queries.active` in `/api/v1/status` against `query.max_concurrent`: concurrency
+- [ ] `part_count` in `/api/v1/stats`: merges keeping up with ingest
 
 ## Next Steps
 
