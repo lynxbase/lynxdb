@@ -1,0 +1,237 @@
+package colstore
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"slices"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/lynxbase/lynxdb/pkg/colstore/part"
+)
+
+// runDocs returns count documents numbered from first with a key of two
+// columns, the second of which takes many values, and a timestamp in
+// microseconds that spreads them over five hours.
+func runDocs(first, count int) []byte {
+	var buf bytes.Buffer
+	for i := first; i < first+count; i++ {
+		fmt.Fprintf(&buf, `{"n":%d,"svc":"s%02d","user":"u%05d","ts":%d}`+"\n", i, (i*7)%11, (i*7919)%4001, 1_700_000_000_000_000+int64(i%5)*3_600_000_000+int64(i))
+	}
+
+	return buf.Bytes()
+}
+
+// checkRuns requires every run of the snapshot to hold its rows in key
+// order across parts whose key ranges do not meet, and returns the number of
+// runs and of parts.
+func checkRuns(t testing.TB, snap *Snapshot, key []string) (runs, parts int) {
+	t.Helper()
+	byRun := map[uint64][]*Handle{}
+	for _, h := range snap.Parts() {
+		byRun[h.Run] = append(byRun[h.Run], h)
+	}
+	var b part.Block
+	var keys part.BlockKeys
+	for run, hs := range byRun {
+		slices.SortFunc(hs, func(x, y *Handle) int {
+			a, _ := x.KeyRange()
+			c, _ := y.KeyRange()
+
+			return bytes.Compare(a, c)
+		})
+		var prev, at []byte
+		for i, h := range hs {
+			if len(h.SortKey()) != len(key) {
+				t.Fatalf("run %d: a part with the key %v", run, h.SortKey())
+			}
+			first, last := h.KeyRange()
+			if i > 0 && bytes.Compare(first, prev) <= 0 {
+				t.Fatalf("run %d: part %d starts at a key that part %d holds", run, i, i-1)
+			}
+			if h.Partition != hs[0].Partition {
+				t.Fatalf("run %d spans partitions %d and %d", run, hs[0].Partition, h.Partition)
+			}
+			for j := 0; j < h.NumBlocks(); j++ {
+				if err := h.OpenBlock(j, &b); err != nil {
+					t.Fatal(err)
+				}
+				if err := keys.Load(&b); err != nil {
+					t.Fatal(err)
+				}
+				for row := 0; row < b.Rows; row++ {
+					at = keys.AppendKey(at[:0], row)
+					if bytes.Compare(at, prev) < 0 {
+						t.Fatalf("run %d: part %d block %d row %d goes back in key order", run, i, j, row)
+					}
+					prev = append(prev[:0], at...)
+				}
+			}
+			if !bytes.Equal(prev, last) {
+				t.Fatalf("run %d: part %d ends at another key than it says", run, i)
+			}
+		}
+		parts += len(hs)
+	}
+
+	return len(byRun), parts
+}
+
+func TestAppendWritesItsBuffersAsOneRunOfPartsByKeyRange(t *testing.T) {
+	key := []string{"svc", "user"}
+	for _, c := range []struct {
+		name string
+		opts StoreOptions
+	}{
+		{"one partition", StoreOptions{SortKey: key, BlockRows: 256, BufferBytes: 1 << 20, MergeFanIn: -1, FlushInterval: -1}},
+		{"hourly partitions", StoreOptions{SortKey: key, TimeField: "ts", BlockRows: 256, BufferBytes: 1 << 20, MergeFanIn: -1, FlushInterval: -1, Partition: time.Hour}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			store, err := OpenStore(t.TempDir(), c.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			const writers, requests, docs = 6, 12, 1500
+			var wg sync.WaitGroup
+			for w := range writers {
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					for r := range requests {
+						if _, err := store.Append(runDocs((w*requests+r)*docs, docs)); err != nil {
+							t.Error(err)
+
+							return
+						}
+					}
+				}()
+			}
+			wg.Wait()
+			if err := store.Sync(); err != nil {
+				t.Fatal(err)
+			}
+			const total = writers * requests * docs
+			if rows, sum := rowsAndSumOf(t, store.Table()); rows != total || sum != (total-1)*total/2 {
+				t.Fatalf("%d rows, sum %d; want %d rows", rows, sum, total)
+			}
+			snap := store.Table().Snapshot()
+			defer snap.Release()
+			runs, parts := checkRuns(t, snap, key)
+			flushed, _ := store.dir.Written()
+			// About 6 MB of input in buffers of 1 MB: a handful of flushes,
+			// each one run per partition, and far fewer runs than requests.
+			partitions := 1
+			if c.opts.Partition > 0 {
+				partitions = 5
+			}
+			if runs < 2*partitions || runs > 12*partitions || parts <= runs {
+				t.Fatalf("%d runs of %d parts for %d requests (%d bytes flushed)", runs, parts, writers*requests, flushed)
+			}
+		})
+	}
+}
+
+func TestAppendHoldsNoMoreThanItsBuffersAndARunBeingWritten(t *testing.T) {
+	// A slow disk, so that buffers fill while a run is written.
+	replaceSyncFile(t, func(*os.File) error {
+		time.Sleep(2 * time.Millisecond)
+
+		return nil
+	})
+	const budget = 64 << 10
+	store, err := OpenStore(t.TempDir(), StoreOptions{SortKey: []string{"svc"}, BufferBytes: budget, MergeFanIn: -1, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	request := runDocs(0, 100)
+	stop := make(chan struct{})
+	var most int64
+	var watching sync.WaitGroup
+	watching.Add(1)
+	go func() {
+		defer watching.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				most = max(most, store.buffered.Load())
+				time.Sleep(50 * time.Microsecond)
+			}
+		}
+	}()
+	var wg sync.WaitGroup
+	for w := range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := range 150 {
+				if _, err := store.Append(runDocs((w*150+r)*100, 100)); err != nil {
+					t.Error(err)
+
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	close(stop)
+	watching.Wait()
+	// Every caller may add one request beyond the budget before it waits.
+	if limit := int64(budget + 8*len(request)); most > limit || most < budget/2 {
+		t.Fatalf("the buffers held %d bytes of input at most, with a budget of %d", most, budget)
+	}
+	if err := store.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	const total = 8 * 150 * 100
+	if rows, sum := rowsAndSumOf(t, store.Table()); rows != total || sum != (total-1)*total/2 {
+		t.Fatalf("%d rows, sum %d; want %d rows", rows, sum, total)
+	}
+}
+
+func TestAppendWithoutASortKeyKeepsEveryBufferARunOfItsOwn(t *testing.T) {
+	store, err := OpenStore(t.TempDir(), StoreOptions{BufferBytes: 256 << 10, MergeFanIn: -1, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	var wg sync.WaitGroup
+	for w := range 4 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := range 10 {
+				if _, err := store.Append(runDocs((w*10+r)*500, 500)); err != nil {
+					t.Error(err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if err := store.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	const total = 4 * 10 * 500
+	if rows, sum := rowsAndSumOf(t, store.Table()); rows != total || sum != (total-1)*total/2 {
+		t.Fatalf("%d rows, sum %d; want %d rows", rows, sum, total)
+	}
+	snap := store.Table().Snapshot()
+	defer snap.Release()
+	runs := map[uint64]int{}
+	for _, h := range snap.Parts() {
+		runs[h.Run]++
+		if h.Ordered() {
+			t.Fatal("a part of a store without a sort key is ordered")
+		}
+	}
+	for run, parts := range runs {
+		if parts != 1 {
+			t.Fatalf("run %d has %d parts", run, parts)
+		}
+	}
+}

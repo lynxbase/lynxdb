@@ -299,7 +299,7 @@ func TestStoreReportsAFailedMergeAndMergesAgain(t *testing.T) {
 func TestAppendTakesNoLinesWhileAFullBufferCannotBeWritten(t *testing.T) {
 	failing := failSyncs(t, isPartFile)
 	path := filepath.Join(t.TempDir(), "store")
-	opts := StoreOptions{SortKey: []string{"svc"}, FlushBytes: 4 << 10, MergeFanIn: -1, FlushInterval: -1}
+	opts := StoreOptions{SortKey: []string{"svc"}, BufferBytes: 4 << 10, MergeFanIn: -1, FlushInterval: -1}
 	s, err := OpenStore(path, opts)
 	if err != nil {
 		t.Fatal(err)

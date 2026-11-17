@@ -55,7 +55,7 @@ type killConfig struct {
 
 func killStoreOptions() StoreOptions {
 	return StoreOptions{
-		SortKey: []string{"k"}, TimeField: "ts", BlockRows: 64, FlushBytes: 4 << 10,
+		SortKey: []string{"k"}, TimeField: "ts", BlockRows: 64, FlushBytes: 4 << 10, BufferBytes: 8 << 10,
 		MergeFanIn: 2, FlushInterval: 3 * time.Millisecond, Partition: time.Hour,
 	}
 }

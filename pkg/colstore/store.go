@@ -25,6 +25,12 @@ type StoreOptions struct {
 	KeepText bool
 	// BlockRows is the number of rows per block; zero means 16384.
 	BlockRows int
+	// BufferBytes is the input that the buffers of Append hold together
+	// before they are written as one run; zero means eight times
+	// FlushBytes. While a run is written Append takes as much again before
+	// it waits, and the run's rows are copied once into key ranges, so the
+	// buffers take at most about three times this input in memory.
+	BufferBytes int
 	// FlushBytes is the input a writer buffers before it writes a run;
 	// zero means 128 MiB.
 	FlushBytes int
@@ -91,7 +97,15 @@ type Store struct {
 	shards   []appendShard
 	next     atomic.Uint32
 	flushing chan struct{}
-	flushMu  sync.Mutex
+	// appending is held shared by every call of Append while it runs.
+	appending sync.RWMutex
+	// flushMu lets one flush of the buffers run at a time. buffered counts
+	// the input bytes in the buffers and in unwritten, the batches that a
+	// failed flush took and the next one writes first.
+	flushMu        sync.Mutex
+	buffered       atomic.Int64
+	unwritten      []*shred.Batch
+	unwrittenBytes int64
 
 	// Callers of Sync share flushes: one flush runs at a time, and all who
 	// asked while it ran are served by the next. syncBegun and syncEnded
@@ -125,6 +139,9 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	}
 	if opts.FlushBytes <= 0 {
 		opts.FlushBytes = defaultFlushBytes
+	}
+	if opts.BufferBytes <= 0 {
+		opts.BufferBytes = 8 * opts.FlushBytes
 	}
 	if opts.MergeFanIn == 0 {
 		opts.MergeFanIn = defaultMergeFanIn
@@ -176,9 +193,12 @@ func (s *Store) ReleasePages() { s.dir.ReleasePages() }
 func (s *Store) Close() error {
 	s.closing.Do(func() {
 		s.closed.Store(true)
+		s.appending.Lock()
+		//nolint:staticcheck // The lock is taken only to wait for the calls of Append under way.
+		s.appending.Unlock()
 		close(s.done)
 		<-s.flushing
-		syncErr := s.flushShards(0)
+		syncErr := s.flush(0)
 		<-s.stopped
 		s.mu.Lock()
 		err := s.err
@@ -194,15 +214,21 @@ func (s *Store) Close() error {
 // appendShard is one buffer of Append; since is when its oldest unwritten
 // row arrived.
 type appendShard struct {
-	mu    sync.Mutex
-	w     *Writer
-	since time.Time
+	mu       sync.Mutex
+	batch    *shred.Batch
+	buffered int // input bytes in batch
+	since    time.Time
+	errs     []shred.LineError
 }
+
+// appendPiece is the most input Append shreds before it looks at the
+// budget of the buffers again.
+const appendPiece = 4 << 20
 
 // Append buffers the documents of lines, one per line, and returns the
 // number of lines that are not JSON objects. It is safe for concurrent use;
 // the rows become durable and visible within the flush interval, or as soon
-// as a buffer is full, or on Sync.
+// as the buffers are full, or on Sync.
 func (s *Store) Append(lines []byte) (rejected int64, err error) {
 	return s.AppendAt(lines, 0)
 }
@@ -210,6 +236,48 @@ func (s *Store) Append(lines []byte) (rejected int64, err error) {
 // AppendAt is Append for lines that arrived at the time at, in unix
 // nanoseconds, which becomes the time of every row that carries none.
 func (s *Store) AppendAt(lines []byte, at int64) (rejected int64, err error) {
+	// Close waits for the calls under way, so that it writes all the rows
+	// of a call or refuses the call whole.
+	s.appending.RLock()
+	defer s.appending.RUnlock()
+	if s.closed.Load() {
+		return 0, ErrClosed
+	}
+	for len(lines) > 0 {
+		// Full buffers, or rows that a failed flush left, are written
+		// before more lines are taken, so that a caller told of a failure
+		// can send all again.
+		room := int64(s.opts.BufferBytes) - s.buffered.Load()
+		if room <= 0 {
+			if err := s.flushFull(); err != nil {
+				return rejected, err
+			}
+
+			continue
+		}
+		piece := lines
+		if at := int(min(room, appendPiece)); len(piece) > at {
+			// The buffers take whole lines, so the cut moves to a line end.
+			if nl := bytes.IndexByte(piece[at:], '\n'); nl >= 0 {
+				piece = piece[:at+nl+1]
+			}
+		}
+		n, err := s.appendPiece(piece, at)
+		rejected += n
+		if err != nil {
+			return rejected, err
+		}
+		lines = lines[len(piece):]
+	}
+	// The caller that fills the buffers writes them and learns the result.
+	if s.buffered.Load() >= int64(s.opts.BufferBytes) {
+		return rejected, s.flushFull()
+	}
+
+	return rejected, nil
+}
+
+func (s *Store) appendPiece(lines []byte, at int64) (rejected int64, err error) {
 	var sh *appendShard
 	// The first free buffer in a fixed order, so that a light load fills
 	// one buffer and not all of them.
@@ -225,24 +293,21 @@ func (s *Store) AppendAt(lines []byte, at int64) (rejected int64, err error) {
 		sh.mu.Lock()
 	}
 	defer sh.mu.Unlock()
-	// Close flushes every buffer after it has set closed, so the rows of
-	// a caller that got here before are written by it.
-	if s.closed.Load() {
-		return 0, ErrClosed
+	if sh.batch == nil {
+		sh.batch = shred.Get(s.shredOptions())
 	}
-	if sh.w == nil {
-		sh.w = s.NewWriter()
-	}
-	before := sh.w.Rejected
-	err = sh.w.add(lines, at)
-	switch {
-	case sh.w.buffered == 0:
-		sh.since = time.Time{}
-	case sh.since.IsZero():
+	sh.errs = sh.batch.AddNDJSON(lines, at, sh.errs[:0])
+	if sh.buffered == 0 {
 		sh.since = time.Now()
 	}
+	sh.buffered += len(lines)
+	s.buffered.Add(int64(len(lines)))
 
-	return sh.w.Rejected - before, err
+	return int64(len(sh.errs)), nil
+}
+
+func (s *Store) shredOptions() shred.Options {
+	return shred.Options{TimeField: s.opts.TimeField, KeepText: s.opts.KeepText}
 }
 
 // Sync writes everything Append has buffered and returns once it is durable.
@@ -267,7 +332,7 @@ func (s *Store) Sync() error {
 		s.syncBegun++
 		flush := s.syncBegun
 		s.syncMu.Unlock()
-		err := s.flushShards(0)
+		err := s.flush(0)
 		s.syncMu.Lock()
 		s.syncing, s.syncEnded, s.syncErr = false, flush, err
 		s.synced.Broadcast()
@@ -276,57 +341,78 @@ func (s *Store) Sync() error {
 	return s.syncErr
 }
 
-// flushShards writes the buffers whose oldest row is at least age old.
-func (s *Store) flushShards(age time.Duration) error {
-	// Every buffer that is due is written at once and all of them are
-	// committed together, so a flush waits for the disk once however many
-	// buffers it finds. Their locks are held until then, which two flushes
-	// at once would take in conflicting orders.
+// flushFull writes the buffers when they hold their budget; a caller that
+// waited for another flush may find them written.
+func (s *Store) flushFull() error {
 	s.flushMu.Lock()
 	defer s.flushMu.Unlock()
-	errs := make([]error, len(s.shards)+1)
-	written := make([][]*PartFile, len(s.shards))
-	held := make([]bool, len(s.shards))
-	var wg sync.WaitGroup
-	for i := range s.shards {
-		sh := &s.shards[i]
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			sh.mu.Lock()
-			if sh.w == nil || sh.w.buffered == 0 || time.Since(sh.since) < age {
-				sh.mu.Unlock()
+	if s.buffered.Load() < int64(s.opts.BufferBytes) {
+		return nil
+	}
 
-				return
-			}
-			held[i] = true
-			written[i], errs[i] = sh.w.write()
-		}()
-	}
-	wg.Wait()
-	var files []*PartFile
-	for _, of := range written {
-		files = append(files, of...)
-	}
-	if len(files) > 0 {
-		_, errs[len(s.shards)] = s.dir.Commit(files, nil)
-	}
-	for i := range s.shards {
-		if !held[i] {
-			continue
+	return s.writeBuffers(0)
+}
+
+// flush writes the rows that Append has buffered when one of them has
+// waited for age, and returns once they are durable.
+func (s *Store) flush(age time.Duration) error {
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+
+	return s.writeBuffers(age)
+}
+
+// writeBuffers takes the batch of every buffer and writes them all as one
+// run per partition, committed in one manifest record. The buffers are free
+// for Append while the run is written. The caller holds flushMu.
+func (s *Store) writeBuffers(age time.Duration) error {
+	if age > 0 {
+		due := len(s.unwritten) > 0
+		for i := range s.shards {
+			sh := &s.shards[i]
+			sh.mu.Lock()
+			due = due || (sh.buffered > 0 && time.Since(sh.since) >= age)
+			sh.mu.Unlock()
 		}
+		if !due {
+			return nil
+		}
+	}
+	taken, size := s.unwritten, s.unwrittenBytes
+	s.unwritten, s.unwrittenBytes = nil, 0
+	for i := range s.shards {
 		sh := &s.shards[i]
-		if errs[i] == nil && errs[len(s.shards)] == nil {
-			sh.w.committed()
-			sh.since = time.Time{}
+		sh.mu.Lock()
+		if sh.buffered > 0 {
+			size += int64(sh.buffered)
+			if sh.batch.Rows > 0 {
+				taken = append(taken, sh.batch)
+				sh.batch = nil
+			}
+			sh.buffered, sh.since = 0, time.Time{}
 		}
 		sh.mu.Unlock()
 	}
-	if len(files) > 0 && errs[len(s.shards)] == nil {
-		s.kick()
+	s.buffered.Add(-size)
+	if len(taken) == 0 {
+		return nil
 	}
+	files, err := s.writeRuns(taken)
+	if err == nil {
+		_, err = s.dir.Commit(files, nil)
+	}
+	if err != nil {
+		s.unwritten, s.unwrittenBytes = taken, size
+		s.buffered.Add(size)
 
-	return errors.Join(errs...)
+		return err
+	}
+	for _, b := range taken {
+		shred.Put(b)
+	}
+	s.kick()
+
+	return nil
 }
 
 // flushLoop writes buffers that have waited for the flush interval.
@@ -345,7 +431,7 @@ func (s *Store) flushLoop() {
 		case <-s.done:
 			return
 		case <-tick.C:
-			if err := s.flushShards(interval); err != nil {
+			if err := s.flush(interval); err != nil {
 				s.mu.Lock()
 				if s.err == nil {
 					s.err = err
