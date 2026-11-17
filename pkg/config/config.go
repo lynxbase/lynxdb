@@ -22,17 +22,15 @@ type Config struct {
 	Retention Duration `yaml:"retention" json:"retention"`
 	LogLevel  string   `yaml:"log_level" json:"log_level"`
 
-	Storage       StorageConfig       `yaml:"storage"        json:"storage"`
-	Query         QueryConfig         `yaml:"query"          json:"query"`
-	Ingest        IngestConfig        `yaml:"ingest"         json:"ingest"`
-	HTTP          HTTPConfig          `yaml:"http"           json:"http"`
-	Syslog        SyslogConfig        `yaml:"syslog"         json:"syslog"`
-	TLS           TLSConfig           `yaml:"tls"            json:"tls"`
-	Auth          AuthConfig          `yaml:"auth"           json:"auth"`
-	Server        ServerConfig        `yaml:"server"         json:"server"`
-	BufferManager BufferManagerConfig `yaml:"buffer_manager" json:"buffer_manager"`
-	Cluster       ClusterConfig       `yaml:"cluster"        json:"cluster"`
-	Profiles      map[string]Profile  `yaml:"profiles"       json:"profiles"`
+	Storage  StorageConfig      `yaml:"storage"  json:"storage"`
+	Query    QueryConfig        `yaml:"query"    json:"query"`
+	Ingest   IngestConfig       `yaml:"ingest"   json:"ingest"`
+	HTTP     HTTPConfig         `yaml:"http"     json:"http"`
+	Syslog   SyslogConfig       `yaml:"syslog"   json:"syslog"`
+	TLS      TLSConfig          `yaml:"tls"      json:"tls"`
+	Auth     AuthConfig         `yaml:"auth"     json:"auth"`
+	Cluster  ClusterConfig      `yaml:"cluster"  json:"cluster"`
+	Profiles map[string]Profile `yaml:"profiles" json:"profiles"`
 }
 
 // ClusterConfig holds distributed clustering parameters.
@@ -155,25 +153,6 @@ type IngestConfig struct {
 	// sourcetype, level, index), leaving all other data in _raw for query-time
 	// extraction via rex or spath. Reduces ingest CPU by ~30-40%.
 	Mode string `yaml:"mode" json:"mode"`
-
-	// FSync controls whether part files are fsynced before atomic rename.
-	// When true (default), data is guaranteed durable after each flush.
-	// When false, the OS page cache buffers writes — lower latency for
-	// small batches but data may be lost on power failure. Safe for async
-	// ingest pipelines where lost data can be re-sent.
-	FSync *bool `yaml:"fsync" json:"fsync"`
-
-	// DedupEnabled enables xxhash64-based event deduplication at ingest time.
-	// Catches duplicate events from at-least-once delivery, retried HTTP
-	// requests, or replayed log files. Disabled by default to avoid false
-	// positives on legitimately repeated log lines.
-	DedupEnabled bool `yaml:"dedup_enabled" json:"dedup_enabled"`
-
-	// DedupCapacity is the number of recent event hashes to remember across
-	// batches for cross-batch dedup. Higher values catch duplicates over a
-	// longer window but use more memory (~16 bytes per entry).
-	// Default: 100,000.
-	DedupCapacity int `yaml:"dedup_capacity" json:"dedup_capacity"`
 }
 
 type IngestLimitsConfig struct {
@@ -182,10 +161,9 @@ type IngestLimitsConfig struct {
 }
 
 type ESCompatConfig struct {
-	Enabled                 bool   `yaml:"enabled" json:"enabled"`
-	AdvertisedVersion       string `yaml:"advertised_version" json:"advertised_version"`
-	ClusterName             string `yaml:"cluster_name" json:"cluster_name"`
-	StripLogstashDateSuffix bool   `yaml:"strip_logstash_date_suffix" json:"strip_logstash_date_suffix"`
+	Enabled           bool   `yaml:"enabled" json:"enabled"`
+	AdvertisedVersion string `yaml:"advertised_version" json:"advertised_version"`
+	ClusterName       string `yaml:"cluster_name" json:"cluster_name"`
 }
 
 type OTLPConfig struct {
@@ -233,58 +211,6 @@ type HTTPConfig struct {
 	RateLimit         float64       `yaml:"rate_limit"                json:"rate_limit"` // requests per second; 0 = unlimited
 }
 
-// ServerConfig holds unified memory pool parameters.
-type ServerConfig struct {
-	// TotalMemoryPoolBytes is the total memory for queries + cache combined.
-	// When set, it enables elastic sharing: queries can evict cache entries
-	// down to a reserve floor, and cache grows to fill free space when query
-	// load is low.
-	// 0 means auto-detect at startup (40% of system RAM, clamped [512MB, 128GB]).
-	// When set, it replaces both GlobalQueryPoolBytes and CacheMaxBytes.
-	TotalMemoryPoolBytes ByteSize `yaml:"total_memory_pool_bytes" json:"total_memory_pool_bytes"`
-
-	// CacheReservePercent is the minimum cache floor as a percentage of
-	// TotalMemoryPoolBytes. Queries cannot evict cache below this floor.
-	// Valid range: 0-50. Default: 20.
-	CacheReservePercent int `yaml:"cache_reserve_percent" json:"cache_reserve_percent"`
-}
-
-// BufferManagerConfig configures the unified buffer manager.
-// When Enabled is false (default), the system uses streaming scan with
-// per-operator spill at fixed thresholds.
-type BufferManagerConfig struct {
-	// Enabled activates the unified buffer manager. Default: false.
-	Enabled bool `yaml:"enabled" json:"enabled"`
-
-	// MaxMemoryBytes is the total memory for the buffer pool.
-	// 0 = auto (80% of total RAM, clamped to sensible bounds).
-	MaxMemoryBytes ByteSize `yaml:"max_memory_bytes" json:"max_memory_bytes"`
-
-	// PageSize is the page size in bytes. Default: 65536 (64KB).
-	PageSize int `yaml:"page_size" json:"page_size"`
-
-	// CacheTargetPercent is the advisory fraction (0-100) of the pool for segment cache.
-	// Default: 60.
-	CacheTargetPercent int `yaml:"cache_target_percent" json:"cache_target_percent"`
-
-	// QueryTargetPercent is the advisory fraction (0-100) for query operators.
-	// Default: 30.
-	QueryTargetPercent int `yaml:"query_target_percent" json:"query_target_percent"`
-
-	// BatcherTargetPercent is the advisory fraction (0-100) for batcher.
-	// Default: 10.
-	BatcherTargetPercent int `yaml:"batcher_target_percent" json:"batcher_target_percent"`
-
-	// EnableOffHeap uses mmap for page data (recommended for production).
-	// When false or on unsupported platforms, falls back to Go heap allocation.
-	// Default: true.
-	EnableOffHeap bool `yaml:"enable_off_heap" json:"enable_off_heap"`
-
-	// MaxPinnedPagesPerQuery is a safety limit to prevent pin leaks.
-	// 0 = no limit. Default: 1024.
-	MaxPinnedPagesPerQuery int `yaml:"max_pinned_pages_per_query" json:"max_pinned_pages_per_query"`
-}
-
 // DefaultConfig returns a Config populated with all compiled defaults.
 func DefaultConfig() *Config {
 	return &Config{
@@ -316,15 +242,13 @@ func DefaultConfig() *Config {
 		},
 
 		Ingest: IngestConfig{
-			MaxBodySize:   100 * MB,
-			MaxBatchSize:  1000,
-			MaxLineBytes:  1 << 20, // 1 MB
-			DedupCapacity: 100_000,
+			MaxBodySize:  100 * MB,
+			MaxBatchSize: 1000,
+			MaxLineBytes: 1 << 20, // 1 MB
 			ESCompat: ESCompatConfig{
-				Enabled:                 true,
-				AdvertisedVersion:       "8.15.0",
-				ClusterName:             "lynxdb",
-				StripLogstashDateSuffix: true,
+				Enabled:           true,
+				AdvertisedVersion: "8.15.0",
+				ClusterName:       "lynxdb",
 			},
 			OTLP: OTLPConfig{
 				HTTPListen:       "0.0.0.0:4318",
@@ -364,10 +288,6 @@ func DefaultConfig() *Config {
 			BatchTimeout:    Duration(200 * time.Millisecond),
 		},
 
-		Server: ServerConfig{
-			CacheReservePercent: 20,
-		},
-
 		Cluster: ClusterConfig{
 			Enabled:                   false,
 			GRPCPort:                  9400,
@@ -383,16 +303,6 @@ func DefaultConfig() *Config {
 			ShardQueryTimeout:         Duration(30 * time.Second),
 			PartialFailureThreshold:   0.5,
 			DCHLLThreshold:            10000,
-		},
-
-		BufferManager: BufferManagerConfig{
-			Enabled:                false, // opt-in; streaming scan + fixed-threshold spill work without it
-			PageSize:               65536, // 64KB
-			CacheTargetPercent:     60,
-			QueryTargetPercent:     30,
-			BatcherTargetPercent:   10,
-			EnableOffHeap:          true,
-			MaxPinnedPagesPerQuery: 1024,
 		},
 	}
 }

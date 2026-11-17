@@ -69,12 +69,6 @@ func (c *Config) Validate() error {
 	if err := c.Syslog.validate(); err != nil {
 		return err
 	}
-	if err := c.Server.validate(); err != nil {
-		return err
-	}
-	if err := c.BufferManager.validate(); err != nil {
-		return err
-	}
 
 	if err := c.Cluster.validate(); err != nil {
 		return err
@@ -244,10 +238,6 @@ func (i *IngestConfig) validate() error {
 		return validationErr("ingest", "mode", i.Mode, "must be full or lightweight")
 	}
 
-	if i.DedupEnabled && i.DedupCapacity < 1 {
-		return validationErr("ingest", "dedup_capacity", fmt.Sprintf("%d", i.DedupCapacity), "must be at least 1 when dedup_enabled is true")
-	}
-
 	return nil
 }
 
@@ -314,52 +304,6 @@ func (t *TLSConfig) validate() error {
 	}
 	if t.KeyFile != "" && t.CertFile == "" {
 		return validationErr("tls", "cert_file", "", "must be set when key_file is provided")
-	}
-
-	return nil
-}
-
-func (s *ServerConfig) validate() error {
-	if s.TotalMemoryPoolBytes < 0 {
-		return validationErr("server", "total_memory_pool_bytes", s.TotalMemoryPoolBytes.String(), "must not be negative")
-	}
-	if s.CacheReservePercent < 0 || s.CacheReservePercent > 50 {
-		return validationErr("server", "cache_reserve_percent",
-			fmt.Sprintf("%d", s.CacheReservePercent), "must be between 0 and 50")
-	}
-
-	return nil
-}
-
-func (b *BufferManagerConfig) validate() error {
-	if b.Enabled {
-		if b.PageSize < 4096 || b.PageSize&(b.PageSize-1) != 0 {
-			return validationErr("buffer_manager", "page_size",
-				fmt.Sprintf("%d", b.PageSize), "must be a power of 2 and at least 4096")
-		}
-	}
-	if b.CacheTargetPercent < 0 || b.CacheTargetPercent > 100 {
-		return validationErr("buffer_manager", "cache_target_percent",
-			fmt.Sprintf("%d", b.CacheTargetPercent), "must be between 0 and 100")
-	}
-	if b.QueryTargetPercent < 0 || b.QueryTargetPercent > 100 {
-		return validationErr("buffer_manager", "query_target_percent",
-			fmt.Sprintf("%d", b.QueryTargetPercent), "must be between 0 and 100")
-	}
-	if b.BatcherTargetPercent < 0 || b.BatcherTargetPercent > 100 {
-		return validationErr("buffer_manager", "batcher_target_percent",
-			fmt.Sprintf("%d", b.BatcherTargetPercent), "must be between 0 and 100")
-	}
-	total := b.CacheTargetPercent + b.QueryTargetPercent + b.BatcherTargetPercent
-	if total > 100 {
-		return validationErr("buffer_manager", "target_percents",
-			fmt.Sprintf("cache(%d) + query(%d) + batcher(%d) = %d",
-				b.CacheTargetPercent, b.QueryTargetPercent, b.BatcherTargetPercent, total),
-			"sum of target percentages must not exceed 100")
-	}
-	if b.MaxPinnedPagesPerQuery < 0 {
-		return validationErr("buffer_manager", "max_pinned_pages_per_query",
-			fmt.Sprintf("%d", b.MaxPinnedPagesPerQuery), "must not be negative (0 = no limit)")
 	}
 
 	return nil

@@ -48,7 +48,6 @@
 #     enabled: true                  # Enable drop-in Elasticsearch shipper endpoints
 #     advertised_version: 8.15.0     # Version shown to Filebeat/Fluent Bit/Vector
 #     cluster_name: lynxdb           # Cluster name in Elasticsearch handshake
-#     strip_logstash_date_suffix: true # Map Fluent Bit Logstash_Format indexes to one source
 #   otlp:
 #     http_listen: 0.0.0.0:4318      # Canonical OTLP/HTTP listen address (empty = disabled)
 #     grpc_listen:                   # OTLP/gRPC listen address (empty = disabled)
@@ -59,9 +58,7 @@
 #   limits:
 #     max_compressed_body_bytes: 32mb   # Max compressed shipper request body
 #     max_decompressed_body_bytes: 256mb # Max decoded shipper request body
-#   mode:                            # Ingest mode (empty = auto)
-#   dedup_enabled: false             # Enable dedup of identical consecutive events
-#   dedup_capacity: 100000           # Dedup LRU capacity (per index)
+#   mode:                            # Ingest parsing: full or lightweight (empty = full)
 
 # HTTP server configuration.
 # http:
@@ -99,22 +96,6 @@
 # Authentication configuration.
 # auth:
 #   enabled: false                   # Enable API key authentication
-
-# Server-level memory pool configuration.
-# server:
-#   total_memory_pool_bytes: 0       # Total memory for queries + cache (0 = auto: 40% RAM)
-#   cache_reserve_percent: 20        # Minimum cache floor as % of pool (0-50)
-
-# Unified buffer manager (opt-in).
-# buffer_manager:
-#   enabled: false                   # Activate unified buffer manager
-#   max_memory_bytes: 0              # Total buffer pool memory (0 = auto: 80% RAM)
-#   page_size: 65536                 # Page size in bytes (must be power of 2, >= 4096)
-#   cache_target_percent: 60         # Advisory % of pool for segment cache
-#   query_target_percent: 30         # Advisory % of pool for query operators
-#   batcher_target_percent: 10       # Advisory % of pool for batcher
-#   enable_off_heap: true            # Use mmap for page data
-#   max_pinned_pages_per_query: 1024 # Safety limit for pinned pages (0 = no limit)
 
 # Connection profiles for multi-server setups.
 # profiles:

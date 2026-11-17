@@ -13,25 +13,24 @@ type ReloadChanges struct {
 }
 
 var hotReloadableExactFields = map[string]struct{}{
-	"log_level":                                   {},
-	"retention":                                   {},
-	"ingest.mode":                                 {},
-	"ingest.max_batch_size":                       {},
-	"ingest.max_line_bytes":                       {},
-	"ingest.es_compat.enabled":                    {},
-	"ingest.es_compat.advertised_version":         {},
-	"ingest.es_compat.strip_logstash_date_suffix": {},
-	"ingest.limits.max_compressed_body_bytes":     {},
-	"ingest.limits.max_decompressed_body_bytes":   {},
-	"ingest.splunk_hec.enabled":                   {},
-	"ingest.splunk_hec.require_token":             {},
-	"http.shutdown_timeout":                       {},
-	"syslog.index":                                {},
-	"syslog.sourcetype":                           {},
-	"syslog.default_timezone":                     {},
-	"syslog.default_hostname":                     {},
-	"syslog.batch_size":                           {},
-	"syslog.batch_timeout":                        {},
+	"log_level":                                 {},
+	"retention":                                 {},
+	"ingest.mode":                               {},
+	"ingest.max_batch_size":                     {},
+	"ingest.max_line_bytes":                     {},
+	"ingest.es_compat.enabled":                  {},
+	"ingest.es_compat.advertised_version":       {},
+	"ingest.limits.max_compressed_body_bytes":   {},
+	"ingest.limits.max_decompressed_body_bytes": {},
+	"ingest.splunk_hec.enabled":                 {},
+	"ingest.splunk_hec.require_token":           {},
+	"http.shutdown_timeout":                     {},
+	"syslog.index":                              {},
+	"syslog.sourcetype":                         {},
+	"syslog.default_timezone":                   {},
+	"syslog.default_hostname":                   {},
+	"syslog.batch_size":                         {},
+	"syslog.batch_timeout":                      {},
 }
 
 var hotReloadablePrefixes = []string{
@@ -50,9 +49,6 @@ var nonHotReloadableExactFields = map[string]struct{}{
 	"ingest.otlp.grpc_listen":         {},
 	"ingest.otlp.grpc_max_recv_bytes": {},
 	"ingest.max_body_size":            {},
-	"ingest.fsync":                    {},
-	"ingest.dedup_enabled":            {},
-	"ingest.dedup_capacity":           {},
 }
 
 // ClassifyReloadChanges returns the changed config fields grouped by whether

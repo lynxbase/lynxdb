@@ -41,9 +41,6 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Ingest.ESCompat.ClusterName != "lynxdb" {
 		t.Errorf("expected ES cluster name lynxdb, got %q", cfg.Ingest.ESCompat.ClusterName)
 	}
-	if !cfg.Ingest.ESCompat.StripLogstashDateSuffix {
-		t.Error("expected ES Logstash date suffix stripping enabled by default")
-	}
 	if cfg.Ingest.OTLP.HTTPListen != "0.0.0.0:4318" {
 		t.Errorf("expected OTLP HTTP listen 0.0.0.0:4318, got %q", cfg.Ingest.OTLP.HTTPListen)
 	}

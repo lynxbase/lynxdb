@@ -182,31 +182,6 @@ func TestValidateHTTP(t *testing.T) {
 	}
 }
 
-func TestValidateServer(t *testing.T) {
-	tests := []struct {
-		name    string
-		modify  func(*ServerConfig)
-		wantErr string
-	}{
-		{"negative total_memory_pool_bytes", func(s *ServerConfig) { s.TotalMemoryPoolBytes = -1 }, "server.total_memory_pool_bytes"},
-		{"cache_reserve_percent too high", func(s *ServerConfig) { s.CacheReservePercent = 51 }, "server.cache_reserve_percent"},
-		{"cache_reserve_percent negative", func(s *ServerConfig) { s.CacheReservePercent = -1 }, "server.cache_reserve_percent"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
-			tt.modify(&cfg.Server)
-			err := cfg.Validate()
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
-			}
-		})
-	}
-}
-
 func TestValidateTLS(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -237,67 +212,6 @@ func TestValidateTLS_BothSetIsValid(t *testing.T) {
 	cfg.TLS.KeyFile = "/path/key.pem"
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("both cert and key should be valid: %v", err)
-	}
-}
-
-func TestValidateBufferManager(t *testing.T) {
-	tests := []struct {
-		name    string
-		modify  func(*BufferManagerConfig)
-		wantErr string
-	}{
-		{"non-power-of-2 page_size when enabled", func(b *BufferManagerConfig) {
-			b.Enabled = true
-			b.PageSize = 5000
-		}, "buffer_manager.page_size"},
-		{"page_size too small when enabled", func(b *BufferManagerConfig) {
-			b.Enabled = true
-			b.PageSize = 2048
-		}, "buffer_manager.page_size"},
-		{"cache_target_percent over 100", func(b *BufferManagerConfig) { b.CacheTargetPercent = 101 }, "buffer_manager.cache_target_percent"},
-		{"cache_target_percent negative", func(b *BufferManagerConfig) { b.CacheTargetPercent = -1 }, "buffer_manager.cache_target_percent"},
-		{"query_target_percent over 100", func(b *BufferManagerConfig) { b.QueryTargetPercent = 101 }, "buffer_manager.query_target_percent"},
-		{"batcher_target_percent negative", func(b *BufferManagerConfig) { b.BatcherTargetPercent = -1 }, "buffer_manager.batcher_target_percent"},
-		// F8: cross-field sum check
-		{"target percents sum > 100", func(b *BufferManagerConfig) {
-			b.CacheTargetPercent = 60
-			b.QueryTargetPercent = 30
-			b.BatcherTargetPercent = 20
-		}, "sum of target percentages must not exceed 100"},
-		{"negative max_pinned_pages_per_query", func(b *BufferManagerConfig) { b.MaxPinnedPagesPerQuery = -1 }, "buffer_manager.max_pinned_pages_per_query"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
-			tt.modify(&cfg.BufferManager)
-			err := cfg.Validate()
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestValidateBufferManager_DisabledSkipsPageSizeCheck(t *testing.T) {
-	// When disabled, non-power-of-2 page sizes should still pass (the field is unused).
-	cfg := DefaultConfig()
-	cfg.BufferManager.Enabled = false
-	cfg.BufferManager.PageSize = 5000
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("disabled buffer manager should skip page_size check: %v", err)
-	}
-}
-
-func TestValidateBufferManager_PercentsSumExactly100(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.BufferManager.CacheTargetPercent = 50
-	cfg.BufferManager.QueryTargetPercent = 30
-	cfg.BufferManager.BatcherTargetPercent = 20
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("percents summing to exactly 100 should be valid: %v", err)
 	}
 }
 

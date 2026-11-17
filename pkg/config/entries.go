@@ -123,7 +123,6 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("ingest.es_compat.enabled", strconv.FormatBool(cfg.Ingest.ESCompat.Enabled), strconv.FormatBool(dflt.Ingest.ESCompat.Enabled), strconv.FormatBool(fileCfg.Ingest.ESCompat.Enabled), LYNXDB_INGEST_ES_COMPAT_ENABLED)
 	add("ingest.es_compat.advertised_version", cfg.Ingest.ESCompat.AdvertisedVersion, dflt.Ingest.ESCompat.AdvertisedVersion, fileCfg.Ingest.ESCompat.AdvertisedVersion, LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION)
 	add("ingest.es_compat.cluster_name", cfg.Ingest.ESCompat.ClusterName, dflt.Ingest.ESCompat.ClusterName, fileCfg.Ingest.ESCompat.ClusterName, LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME)
-	add("ingest.es_compat.strip_logstash_date_suffix", strconv.FormatBool(cfg.Ingest.ESCompat.StripLogstashDateSuffix), strconv.FormatBool(dflt.Ingest.ESCompat.StripLogstashDateSuffix), strconv.FormatBool(fileCfg.Ingest.ESCompat.StripLogstashDateSuffix), LYNXDB_INGEST_ES_COMPAT_STRIP_LOGSTASH_DATE_SUFFIX)
 	add("ingest.otlp.http_listen", cfg.Ingest.OTLP.HTTPListen, dflt.Ingest.OTLP.HTTPListen, fileCfg.Ingest.OTLP.HTTPListen, LYNXDB_INGEST_OTLP_HTTP_LISTEN)
 	add("ingest.otlp.grpc_listen", cfg.Ingest.OTLP.GRPCListen, dflt.Ingest.OTLP.GRPCListen, fileCfg.Ingest.OTLP.GRPCListen, LYNXDB_INGEST_OTLP_GRPC_LISTEN)
 	add("ingest.otlp.grpc_max_recv_bytes", cfg.Ingest.OTLP.GRPCMaxRecvBytes.String(), dflt.Ingest.OTLP.GRPCMaxRecvBytes.String(), fileCfg.Ingest.OTLP.GRPCMaxRecvBytes.String(), LYNXDB_INGEST_OTLP_GRPC_MAX_RECV_BYTES)
@@ -132,9 +131,6 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("ingest.limits.max_compressed_body_bytes", cfg.Ingest.Limits.MaxCompressedBodyBytes.String(), dflt.Ingest.Limits.MaxCompressedBodyBytes.String(), fileCfg.Ingest.Limits.MaxCompressedBodyBytes.String(), LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES)
 	add("ingest.limits.max_decompressed_body_bytes", cfg.Ingest.Limits.MaxDecompressedBodyBytes.String(), dflt.Ingest.Limits.MaxDecompressedBodyBytes.String(), fileCfg.Ingest.Limits.MaxDecompressedBodyBytes.String(), LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES)
 	add("ingest.mode", cfg.Ingest.Mode, dflt.Ingest.Mode, fileCfg.Ingest.Mode, LYNXDB_INGEST_MODE)
-	add("ingest.fsync", formatBoolPtr(cfg.Ingest.FSync), formatBoolPtr(dflt.Ingest.FSync), formatBoolPtr(fileCfg.Ingest.FSync), LYNXDB_INGEST_FSYNC)
-	add("ingest.dedup_enabled", strconv.FormatBool(cfg.Ingest.DedupEnabled), strconv.FormatBool(dflt.Ingest.DedupEnabled), strconv.FormatBool(fileCfg.Ingest.DedupEnabled), LYNXDB_INGEST_DEDUP_ENABLED)
-	add("ingest.dedup_capacity", strconv.Itoa(cfg.Ingest.DedupCapacity), strconv.Itoa(dflt.Ingest.DedupCapacity), strconv.Itoa(fileCfg.Ingest.DedupCapacity), LYNXDB_INGEST_DEDUP_CAPACITY)
 
 	// HTTP.
 	durationEntry("http.idle_timeout", cfg.HTTP.IdleTimeout, dflt.HTTP.IdleTimeout, fileCfg.HTTP.IdleTimeout, LYNXDB_HTTP_IDLE_TIMEOUT)
@@ -168,20 +164,6 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 
 	// Auth.
 	add("auth.enabled", strconv.FormatBool(cfg.Auth.Enabled), strconv.FormatBool(dflt.Auth.Enabled), strconv.FormatBool(fileCfg.Auth.Enabled), LYNXDB_AUTH_ENABLED)
-
-	// Server.
-	add("server.total_memory_pool_bytes", cfg.Server.TotalMemoryPoolBytes.String(), dflt.Server.TotalMemoryPoolBytes.String(), fileCfg.Server.TotalMemoryPoolBytes.String(), LYNXDB_SERVER_TOTAL_MEMORY_POOL_BYTES)
-	add("server.cache_reserve_percent", strconv.Itoa(cfg.Server.CacheReservePercent), strconv.Itoa(dflt.Server.CacheReservePercent), strconv.Itoa(fileCfg.Server.CacheReservePercent), LYNXDB_SERVER_CACHE_RESERVE_PERCENT)
-
-	// Buffer Manager.
-	add("buffer_manager.enabled", strconv.FormatBool(cfg.BufferManager.Enabled), strconv.FormatBool(dflt.BufferManager.Enabled), strconv.FormatBool(fileCfg.BufferManager.Enabled), LYNXDB_BUFFER_MANAGER_ENABLED)
-	add("buffer_manager.max_memory_bytes", cfg.BufferManager.MaxMemoryBytes.String(), dflt.BufferManager.MaxMemoryBytes.String(), fileCfg.BufferManager.MaxMemoryBytes.String(), LYNXDB_BUFFER_MANAGER_MAX_MEMORY_BYTES)
-	add("buffer_manager.page_size", strconv.Itoa(cfg.BufferManager.PageSize), strconv.Itoa(dflt.BufferManager.PageSize), strconv.Itoa(fileCfg.BufferManager.PageSize), LYNXDB_BUFFER_MANAGER_PAGE_SIZE)
-	add("buffer_manager.cache_target_percent", strconv.Itoa(cfg.BufferManager.CacheTargetPercent), strconv.Itoa(dflt.BufferManager.CacheTargetPercent), strconv.Itoa(fileCfg.BufferManager.CacheTargetPercent), LYNXDB_BUFFER_MANAGER_CACHE_TARGET_PERCENT)
-	add("buffer_manager.query_target_percent", strconv.Itoa(cfg.BufferManager.QueryTargetPercent), strconv.Itoa(dflt.BufferManager.QueryTargetPercent), strconv.Itoa(fileCfg.BufferManager.QueryTargetPercent), LYNXDB_BUFFER_MANAGER_QUERY_TARGET_PERCENT)
-	add("buffer_manager.batcher_target_percent", strconv.Itoa(cfg.BufferManager.BatcherTargetPercent), strconv.Itoa(dflt.BufferManager.BatcherTargetPercent), strconv.Itoa(fileCfg.BufferManager.BatcherTargetPercent), LYNXDB_BUFFER_MANAGER_BATCHER_TARGET_PERCENT)
-	add("buffer_manager.enable_off_heap", strconv.FormatBool(cfg.BufferManager.EnableOffHeap), strconv.FormatBool(dflt.BufferManager.EnableOffHeap), strconv.FormatBool(fileCfg.BufferManager.EnableOffHeap), LYNXDB_BUFFER_MANAGER_ENABLE_OFF_HEAP)
-	add("buffer_manager.max_pinned_pages_per_query", strconv.Itoa(cfg.BufferManager.MaxPinnedPagesPerQuery), strconv.Itoa(dflt.BufferManager.MaxPinnedPagesPerQuery), strconv.Itoa(fileCfg.BufferManager.MaxPinnedPagesPerQuery), LYNXDB_BUFFER_MANAGER_MAX_PINNED_PAGES_PER_QUERY)
 
 	// Cluster.
 	add("cluster.enabled", strconv.FormatBool(cfg.Cluster.Enabled), strconv.FormatBool(dflt.Cluster.Enabled), strconv.FormatBool(fileCfg.Cluster.Enabled), LYNXDB_CLUSTER_ENABLED)

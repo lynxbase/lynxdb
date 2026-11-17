@@ -6,30 +6,6 @@ const (
 	// LYNXDB_AUTH_ENABLED is the enable or disable API key authentication.
 	// YAML key: auth.enabled. Default: false.
 	LYNXDB_AUTH_ENABLED = "LYNXDB_AUTH_ENABLED"
-	// LYNXDB_BUFFER_MANAGER_BATCHER_TARGET_PERCENT is the advisory % of pool for batcher.
-	// YAML key: buffer_manager.batcher_target_percent. Default: 10.
-	LYNXDB_BUFFER_MANAGER_BATCHER_TARGET_PERCENT = "LYNXDB_BUFFER_MANAGER_BATCHER_TARGET_PERCENT"
-	// LYNXDB_BUFFER_MANAGER_CACHE_TARGET_PERCENT is the advisory % of pool for segment cache.
-	// YAML key: buffer_manager.cache_target_percent. Default: 60.
-	LYNXDB_BUFFER_MANAGER_CACHE_TARGET_PERCENT = "LYNXDB_BUFFER_MANAGER_CACHE_TARGET_PERCENT"
-	// LYNXDB_BUFFER_MANAGER_ENABLED is the activate unified buffer manager.
-	// YAML key: buffer_manager.enabled. Default: false.
-	LYNXDB_BUFFER_MANAGER_ENABLED = "LYNXDB_BUFFER_MANAGER_ENABLED"
-	// LYNXDB_BUFFER_MANAGER_ENABLE_OFF_HEAP is the use mmap for page data.
-	// YAML key: buffer_manager.enable_off_heap. Default: true.
-	LYNXDB_BUFFER_MANAGER_ENABLE_OFF_HEAP = "LYNXDB_BUFFER_MANAGER_ENABLE_OFF_HEAP"
-	// LYNXDB_BUFFER_MANAGER_MAX_MEMORY_BYTES is the total buffer pool memory (0 = auto: 80% RAM).
-	// YAML key: buffer_manager.max_memory_bytes. Default: 0.
-	LYNXDB_BUFFER_MANAGER_MAX_MEMORY_BYTES = "LYNXDB_BUFFER_MANAGER_MAX_MEMORY_BYTES"
-	// LYNXDB_BUFFER_MANAGER_MAX_PINNED_PAGES_PER_QUERY is the safety limit for pinned pages (0 = no limit).
-	// YAML key: buffer_manager.max_pinned_pages_per_query. Default: 1024.
-	LYNXDB_BUFFER_MANAGER_MAX_PINNED_PAGES_PER_QUERY = "LYNXDB_BUFFER_MANAGER_MAX_PINNED_PAGES_PER_QUERY"
-	// LYNXDB_BUFFER_MANAGER_PAGE_SIZE is the page size in bytes (must be power of 2, >= 4096).
-	// YAML key: buffer_manager.page_size. Default: 65536.
-	LYNXDB_BUFFER_MANAGER_PAGE_SIZE = "LYNXDB_BUFFER_MANAGER_PAGE_SIZE"
-	// LYNXDB_BUFFER_MANAGER_QUERY_TARGET_PERCENT is the advisory % of pool for query operators.
-	// YAML key: buffer_manager.query_target_percent. Default: 30.
-	LYNXDB_BUFFER_MANAGER_QUERY_TARGET_PERCENT = "LYNXDB_BUFFER_MANAGER_QUERY_TARGET_PERCENT"
 	// LYNXDB_CLUSTER_ACK_LEVEL is the cluster acknowledgement level.
 	// YAML key: cluster.ack_level. Default: "".
 	LYNXDB_CLUSTER_ACK_LEVEL = "LYNXDB_CLUSTER_ACK_LEVEL"
@@ -101,12 +77,6 @@ const (
 	// LYNXDB_HTTP_SHUTDOWN_TIMEOUT is the graceful shutdown timeout.
 	// YAML key: http.shutdown_timeout. Default: 30s.
 	LYNXDB_HTTP_SHUTDOWN_TIMEOUT = "LYNXDB_HTTP_SHUTDOWN_TIMEOUT"
-	// LYNXDB_INGEST_DEDUP_CAPACITY is the dedup LRU capacity per index.
-	// YAML key: ingest.dedup_capacity. Default: 100000.
-	LYNXDB_INGEST_DEDUP_CAPACITY = "LYNXDB_INGEST_DEDUP_CAPACITY"
-	// LYNXDB_INGEST_DEDUP_ENABLED is the enable dedup of identical consecutive events.
-	// YAML key: ingest.dedup_enabled. Default: false.
-	LYNXDB_INGEST_DEDUP_ENABLED = "LYNXDB_INGEST_DEDUP_ENABLED"
 	// LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION is the version shown to Elasticsearch shippers.
 	// YAML key: ingest.es_compat.advertised_version. Default: 8.15.0.
 	LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION = "LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION"
@@ -116,12 +86,6 @@ const (
 	// LYNXDB_INGEST_ES_COMPAT_ENABLED is the enable drop-in Elasticsearch shipper endpoints.
 	// YAML key: ingest.es_compat.enabled. Default: true.
 	LYNXDB_INGEST_ES_COMPAT_ENABLED = "LYNXDB_INGEST_ES_COMPAT_ENABLED"
-	// LYNXDB_INGEST_ES_COMPAT_STRIP_LOGSTASH_DATE_SUFFIX is the map Fluent Bit Logstash_Format indexes to one source.
-	// YAML key: ingest.es_compat.strip_logstash_date_suffix. Default: true.
-	LYNXDB_INGEST_ES_COMPAT_STRIP_LOGSTASH_DATE_SUFFIX = "LYNXDB_INGEST_ES_COMPAT_STRIP_LOGSTASH_DATE_SUFFIX"
-	// LYNXDB_INGEST_FSYNC is the flush to disk on every ingest batch (empty = auto).
-	// YAML key: ingest.fsync. Default: "".
-	LYNXDB_INGEST_FSYNC = "LYNXDB_INGEST_FSYNC"
 	// LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES is the max compressed shipper request body.
 	// YAML key: ingest.limits.max_compressed_body_bytes. Default: 32mb.
 	LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES = "LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES"
@@ -182,12 +146,6 @@ const (
 	// LYNXDB_RETENTION is the global data retention period; events older than this are deleted.
 	// YAML key: retention. Default: 7d.
 	LYNXDB_RETENTION = "LYNXDB_RETENTION"
-	// LYNXDB_SERVER_CACHE_RESERVE_PERCENT is the minimum cache floor as % of pool (0-50).
-	// YAML key: server.cache_reserve_percent. Default: 20.
-	LYNXDB_SERVER_CACHE_RESERVE_PERCENT = "LYNXDB_SERVER_CACHE_RESERVE_PERCENT"
-	// LYNXDB_SERVER_TOTAL_MEMORY_POOL_BYTES is the total memory for queries + cache (0 = auto: 40% RAM).
-	// YAML key: server.total_memory_pool_bytes. Default: 0.
-	LYNXDB_SERVER_TOTAL_MEMORY_POOL_BYTES = "LYNXDB_SERVER_TOTAL_MEMORY_POOL_BYTES"
 	// LYNXDB_STORAGE_FLUSH_INTERVAL is the longest wait before ingested events are written (0 = store default).
 	// YAML key: storage.flush_interval. Default: 0s.
 	LYNXDB_STORAGE_FLUSH_INTERVAL = "LYNXDB_STORAGE_FLUSH_INTERVAL"

@@ -36,8 +36,6 @@ func TestDefaultsYAMLMatchesCompiledDefaults(t *testing.T) {
 		{"Query", fromYAML.Query, compiled.Query, true},
 		{"Ingest", fromYAML.Ingest, compiled.Ingest, true},
 		{"HTTP", fromYAML.HTTP, compiled.HTTP, true},
-		{"Server", fromYAML.Server, compiled.Server, true},
-		{"BufferManager", fromYAML.BufferManager, compiled.BufferManager, true},
 	}
 
 	for _, c := range cases {
@@ -55,7 +53,7 @@ func TestDefaultsYAMLMatchesCompiledDefaults(t *testing.T) {
 // uncommentYAMLTemplate strips the `# ` prefix from every commented line that
 // looks like YAML content (key:value, map header, list item). The hash-prefix
 // convention in defaults.yaml uses `# storage:` for section headers and
-// `#   compression: lz4` for fields — so we must preserve the indentation of
+// `#   partition: 24h` for fields — so we must preserve the indentation of
 // the YAML *after* the hash while ignoring any whitespace between the hash
 // and the content. Lines that are pure prose comments are left alone (they
 // become double-commented and are ignored by the YAML parser).
@@ -68,7 +66,7 @@ func uncommentYAMLTemplate(in []byte) []byte {
 	for _, line := range strings.Split(string(in), "\n") {
 		if m := keyish.FindStringSubmatch(line); m != nil {
 			// Drop the leading `# ` but preserve the indent that followed it.
-			// e.g. "#   compression: lz4" -> "  compression: lz4"
+			// e.g. "#   partition: 24h" -> "  partition: 24h"
 			indent := m[1]
 			indent = strings.TrimPrefix(indent, " ") // consume the single space immediately after `#`
 			b.WriteString(indent)

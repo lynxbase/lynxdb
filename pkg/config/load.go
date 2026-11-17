@@ -365,17 +365,6 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Ingest.ESCompat.ClusterName }},
-	{LYNXDB_INGEST_ES_COMPAT_STRIP_LOGSTASH_DATE_SUFFIX, "ingest.es_compat.strip_logstash_date_suffix",
-		func(c *Config, v string) error {
-			b, err := strconv.ParseBool(v)
-			if err != nil {
-				return err
-			}
-			c.Ingest.ESCompat.StripLogstashDateSuffix = b
-
-			return nil
-		},
-		func(c *Config) string { return strconv.FormatBool(c.Ingest.ESCompat.StripLogstashDateSuffix) }},
 	{LYNXDB_INGEST_OTLP_HTTP_LISTEN, "ingest.otlp.http_listen",
 		func(c *Config, v string) error {
 			c.Ingest.OTLP.HTTPListen = v
@@ -693,120 +682,6 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strconv.FormatBool(c.Auth.Enabled) }},
-
-	// Server
-	{LYNXDB_SERVER_TOTAL_MEMORY_POOL_BYTES, "server.total_memory_pool_bytes",
-		func(c *Config, v string) error {
-			b, err := ParseByteSize(v)
-			if err != nil {
-				return err
-			}
-			c.Server.TotalMemoryPoolBytes = b
-
-			return nil
-		},
-		func(c *Config) string { return c.Server.TotalMemoryPoolBytes.String() }},
-	{LYNXDB_SERVER_CACHE_RESERVE_PERCENT, "server.cache_reserve_percent",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.Server.CacheReservePercent = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.Server.CacheReservePercent) }},
-
-	// Buffer Manager
-	{LYNXDB_BUFFER_MANAGER_ENABLED, "buffer_manager.enabled",
-		func(c *Config, v string) error {
-			b, err := strconv.ParseBool(v)
-			if err != nil {
-				return err
-			}
-			c.BufferManager.Enabled = b
-
-			return nil
-		},
-		func(c *Config) string { return strconv.FormatBool(c.BufferManager.Enabled) }},
-	{LYNXDB_BUFFER_MANAGER_MAX_MEMORY_BYTES, "buffer_manager.max_memory_bytes",
-		func(c *Config, v string) error {
-			b, err := ParseByteSize(v)
-			if err != nil {
-				return err
-			}
-			c.BufferManager.MaxMemoryBytes = b
-
-			return nil
-		},
-		func(c *Config) string { return c.BufferManager.MaxMemoryBytes.String() }},
-	{LYNXDB_BUFFER_MANAGER_PAGE_SIZE, "buffer_manager.page_size",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.BufferManager.PageSize = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.BufferManager.PageSize) }},
-	{LYNXDB_BUFFER_MANAGER_CACHE_TARGET_PERCENT, "buffer_manager.cache_target_percent",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.BufferManager.CacheTargetPercent = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.BufferManager.CacheTargetPercent) }},
-	{LYNXDB_BUFFER_MANAGER_QUERY_TARGET_PERCENT, "buffer_manager.query_target_percent",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.BufferManager.QueryTargetPercent = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.BufferManager.QueryTargetPercent) }},
-	{LYNXDB_BUFFER_MANAGER_BATCHER_TARGET_PERCENT, "buffer_manager.batcher_target_percent",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.BufferManager.BatcherTargetPercent = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.BufferManager.BatcherTargetPercent) }},
-	{LYNXDB_BUFFER_MANAGER_ENABLE_OFF_HEAP, "buffer_manager.enable_off_heap",
-		func(c *Config, v string) error {
-			b, err := strconv.ParseBool(v)
-			if err != nil {
-				return err
-			}
-			c.BufferManager.EnableOffHeap = b
-
-			return nil
-		},
-		func(c *Config) string { return strconv.FormatBool(c.BufferManager.EnableOffHeap) }},
-	{LYNXDB_BUFFER_MANAGER_MAX_PINNED_PAGES_PER_QUERY, "buffer_manager.max_pinned_pages_per_query",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.BufferManager.MaxPinnedPagesPerQuery = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.BufferManager.MaxPinnedPagesPerQuery) }},
 
 	// Cluster
 	{LYNXDB_CLUSTER_ENABLED, "cluster.enabled",

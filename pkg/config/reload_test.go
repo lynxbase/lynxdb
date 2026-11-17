@@ -14,7 +14,6 @@ func TestClassifyReloadChanges(t *testing.T) {
 	newCfg.Ingest.Mode = "lightweight"
 	newCfg.Ingest.SplunkHEC.Enabled = false
 	newCfg.Ingest.SplunkHEC.RequireToken = true
-	newCfg.Ingest.DedupEnabled = true
 	newCfg.HTTP.ReadHeaderTimeout = 15 * time.Second
 	newCfg.HTTP.RateLimit = 250
 	newCfg.TLS.Enabled = true
@@ -31,7 +30,6 @@ func TestClassifyReloadChanges(t *testing.T) {
 	assertContains(t, changes.HotReloaded, "ingest.splunk_hec.require_token")
 
 	assertContains(t, changes.RestartRequired, "http.read_header_timeout")
-	assertContains(t, changes.RestartRequired, "ingest.dedup_enabled")
 	assertContains(t, changes.RestartRequired, "http.rate_limit")
 	assertContains(t, changes.RestartRequired, "tls.enabled")
 	assertContains(t, changes.RestartRequired, "auth.enabled")

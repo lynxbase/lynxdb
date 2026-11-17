@@ -104,7 +104,6 @@ func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("LYNXDB_STORAGE_TIME_FIELDS", "ts, @timestamp")
 	t.Setenv("LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION", "9.0.1")
 	t.Setenv("LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME", "logs")
-	t.Setenv("LYNXDB_INGEST_ES_COMPAT_STRIP_LOGSTASH_DATE_SUFFIX", "false")
 	t.Setenv("LYNXDB_INGEST_OTLP_HTTP_LISTEN", "127.0.0.1:18318")
 	t.Setenv("LYNXDB_INGEST_OTLP_GRPC_LISTEN", "127.0.0.1:18317")
 	t.Setenv("LYNXDB_INGEST_OTLP_GRPC_MAX_RECV_BYTES", "32mb")
@@ -140,9 +139,6 @@ func TestLoadEnvOverrides(t *testing.T) {
 	}
 	if cfg.Ingest.ESCompat.ClusterName != "logs" {
 		t.Errorf("ClusterName: got %q", cfg.Ingest.ESCompat.ClusterName)
-	}
-	if cfg.Ingest.ESCompat.StripLogstashDateSuffix {
-		t.Error("StripLogstashDateSuffix: got true, want false")
 	}
 	if cfg.Ingest.OTLP.HTTPListen != "127.0.0.1:18318" {
 		t.Errorf("OTLP.HTTPListen: got %q", cfg.Ingest.OTLP.HTTPListen)
