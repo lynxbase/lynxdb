@@ -461,3 +461,89 @@ func TestClosedPartitionsAreMergedIntoOneRun(t *testing.T) {
 		t.Fatalf("%d rows, sum %d", rows, sum)
 	}
 }
+
+// TestADropWaitsOnlyForMergesOfItsPartitions requires that dropping a
+// partition waits for a merge that reads it, whose run would bring its rows
+// back, and for no merge of another partition.
+func TestADropWaitsOnlyForMergesOfItsPartitions(t *testing.T) {
+	skipSyncs(t)
+	hour := int64(time.Hour)
+	// No partition has closed by this clock, so that only the runs of one
+	// tier are merged.
+	timeNow = func() time.Time { return time.Unix(0, firstTimedHour*hour+hour/2) }
+	defer func() { timeNow = time.Now }()
+	for _, c := range []struct {
+		name  string
+		held  int64
+		waits bool
+	}{
+		{"a merge of the partition", firstTimedHour, true},
+		{"a merge of another partition", firstTimedHour + 2, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			reached, release := make(chan struct{}), make(chan struct{})
+			var once sync.Once
+			beforeMergeCommit = func(meta PartMeta) {
+				if meta.Partition == c.held {
+					once.Do(func() { close(reached) })
+					<-release
+				}
+			}
+			defer func() { beforeMergeCommit = nil }()
+			s, err := OpenStore(t.TempDir(), StoreOptions{SortKey: []string{"svc"}, TimeField: "ts", Partition: time.Hour, MergeFanIn: 2, FlushInterval: -1})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.Close()
+			for i := range 2 {
+				w := s.NewWriter()
+				if err := w.AddNDJSON(timedDocs(i*300, 300, 3)); err != nil {
+					t.Fatal(err)
+				}
+				if err := w.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			<-reached
+			type result struct {
+				rows uint64
+				err  error
+			}
+			dropped := make(chan result, 1)
+			go func() {
+				rows, err := s.DropBefore((firstTimedHour + 1) * hour)
+				dropped <- result{rows, err}
+			}()
+			var drop result
+			select {
+			case drop = <-dropped:
+				if c.waits {
+					t.Fatal("the drop did not wait for the merge of its partition")
+				}
+				close(release)
+			case <-time.After(time.Second):
+				if !c.waits {
+					t.Fatal("the drop waited for a merge of another partition")
+				}
+				close(release)
+				drop = <-dropped
+			}
+			if drop.err != nil || drop.rows != 200 {
+				t.Fatalf("dropped %d rows: %v, want the 200 of the first hour", drop.rows, drop.err)
+			}
+			if err := s.Settle(); err != nil {
+				t.Fatal(err)
+			}
+			snap := s.Table().Snapshot()
+			defer snap.Release()
+			for _, h := range snap.Parts() {
+				if h.Partition == firstTimedHour {
+					t.Fatal("the dropped partition holds a part again")
+				}
+			}
+			if rows, _ := rowsAndSumOf(t, s.Table()); rows != 400 {
+				t.Fatalf("%d rows left, want 400", rows)
+			}
+		})
+	}
+}
