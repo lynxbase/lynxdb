@@ -11,7 +11,12 @@ import (
 // predicates (= != < <= > >= LIKE ILIKE REGEXP CONTAINS, IN, BETWEEN, IS
 // NULL), + -, * / %, unary minus.
 
-func (p *parser) expr() ast.Expr { return p.orExpr() }
+func (p *parser) expr() ast.Expr {
+	p.enter()
+	e := p.orExpr()
+	p.depth--
+	return e
+}
 
 func (p *parser) binary(op string, l, r ast.Expr) ast.Expr {
 	return &ast.Binary{Base: ast.Base{Span: ast.Span{Start: l.NodeSpan().Start, End: r.NodeSpan().End}}, Op: op, L: l, R: r}
@@ -47,7 +52,9 @@ func (p *parser) andExpr() ast.Expr {
 func (p *parser) notExpr() ast.Expr {
 	if p.atKw("not") {
 		start := p.next().Pos
+		p.enter()
 		x := p.notExpr()
+		p.depth--
 		return &ast.Unary{Base: ast.Base{Span: p.span(start)}, Op: "not", X: x}
 	}
 	return p.predicate()
@@ -146,7 +153,9 @@ func (p *parser) multiplicative() ast.Expr {
 func (p *parser) unary() ast.Expr {
 	if p.at(lexer.Minus) || p.at(lexer.Plus) {
 		t := p.next()
+		p.enter()
 		x := p.unary()
+		p.depth--
 		if lit, ok := x.(*ast.Literal); ok && t.End.Offset == lit.Span.Start.Offset &&
 			(lit.Kind == ast.LitInt || lit.Kind == ast.LitDecimal || lit.Kind == ast.LitDouble || lit.Kind == ast.LitFloat) {
 			if t.Kind == lexer.Minus {

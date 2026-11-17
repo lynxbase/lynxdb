@@ -94,7 +94,11 @@ func FuzzCompileMatchesReference(f *testing.F) {
 		f.Add(src)
 	}
 	f.Fuzz(func(t *testing.T, src string) {
-		if got, want := liveOutcome(src), referenceOutcome(src); got != want {
+		got := liveOutcome(src)
+		if strings.Contains(got, "nests deeper than") || strings.Contains(got, "more than 1000 commands") {
+			return
+		}
+		if want := referenceOutcome(src); got != want {
 			t.Fatalf("outcome differs for %q\n--- got\n%s--- want\n%s", src, got, want)
 		}
 	})

@@ -138,7 +138,9 @@ func (p *parser) searchOr() ast.SearchExpr {
 func (p *parser) searchNot() ast.SearchExpr {
 	if p.atKw("not") {
 		start := p.next().Pos
+		p.enter()
 		x := p.searchNot()
+		p.depth--
 		return &ast.SearchNot{Base: ast.Base{Span: p.span(start)}, X: x}
 	}
 	return p.searchPrimary()
@@ -147,6 +149,8 @@ func (p *parser) searchNot() ast.SearchExpr {
 func (p *parser) searchPrimary() ast.SearchExpr {
 	start := p.peek().Pos
 	if p.accept(lexer.LParen) {
+		p.enter()
+		defer func() { p.depth-- }()
 		e := p.searchAnd()
 		for !p.at(lexer.RParen) {
 			if p.at(lexer.EOF) || p.at(lexer.Pipe) {

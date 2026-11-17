@@ -37,9 +37,38 @@ func (e *SyntaxError) Error() string {
 type bailout struct{ err *SyntaxError }
 
 type parser struct {
-	src  string
-	toks []lexer.Token
-	i    int
+	src   string
+	toks  []lexer.Token
+	i     int
+	depth int
+}
+
+// MaxQueryBytes bounds the length of a query, and with it the time and
+// memory compiling one can take.
+const MaxQueryBytes = 256 << 10
+
+// MaxDepth bounds the nesting of expressions, search terms and subsearches,
+// so that parsing and every recursive pass over the result stay within a
+// small stack.
+const MaxDepth = 256
+
+// MaxCommands bounds the commands of one pipeline; each command adds an
+// operator whose schema is derived from a copy of its input's.
+const MaxCommands = 1000
+
+// addCommand parses the next command of pl.
+func (p *parser) addCommand(pl *ast.Pipeline) {
+	if len(pl.Commands) >= MaxCommands {
+		p.fail(p.peek(), "a pipeline has more than "+strconv.Itoa(MaxCommands)+" commands")
+	}
+	pl.Commands = append(pl.Commands, p.command())
+}
+
+func (p *parser) enter() {
+	p.depth++
+	if p.depth > MaxDepth {
+		p.fail(p.peek(), "the query nests deeper than "+strconv.Itoa(MaxDepth)+" levels")
+	}
 }
 
 // parsers recycles parser state, chiefly the token buffer.
@@ -53,12 +82,16 @@ func (p *parser) release() {
 	if cap(p.toks) > maxPooledTokens {
 		p.toks = nil
 	}
-	p.toks, p.src, p.i = p.toks[:0], "", 0
+	p.toks, p.src, p.i, p.depth = p.toks[:0], "", 0, 0
 	parsers.Put(p)
 }
 
 // Parse parses one PPL statement.
 func Parse(src string) (q *ast.Query, err error) {
+	if len(src) > MaxQueryBytes {
+		start := lexer.Pos{Line: 1, Col: 1}
+		return nil, &SyntaxError{Pos: start, End: start, Msg: "the query is longer than " + strconv.Itoa(MaxQueryBytes) + " bytes"}
+	}
 	p := parsers.Get().(*parser)
 	toks, lexErrs := lexer.AppendTokens(p.toks[:0], src)
 	p.toks, p.src = toks, src
@@ -231,6 +264,8 @@ func newPipeline() *ast.Pipeline {
 // pipeline parses "[|] source-command (| command)*". When top is false the
 // pipeline ends at a closing bracket.
 func (p *parser) pipeline(top bool) *ast.Pipeline {
+	p.enter()
+	defer func() { p.depth-- }()
 	start := p.peek().Pos
 	pl := newPipeline()
 	p.accept(lexer.Pipe)
@@ -239,7 +274,7 @@ func (p *parser) pipeline(top bool) *ast.Pipeline {
 		if p.at(lexer.EOF) || p.at(lexer.RBracket) || p.at(lexer.Pipe) || p.at(lexer.Semicolon) {
 			continue
 		}
-		pl.Commands = append(pl.Commands, p.command())
+		p.addCommand(pl)
 	}
 	if !top && !p.at(lexer.RBracket) {
 		p.fail(p.peek(), "", "'|'", "']'")
@@ -251,15 +286,17 @@ func (p *parser) pipeline(top bool) *ast.Pipeline {
 // subPipeline parses the body of appendpipe and appendcol: commands with no
 // source command.
 func (p *parser) subPipeline() *ast.Pipeline {
+	p.enter()
+	defer func() { p.depth-- }()
 	start := p.peek().Pos
 	pl := newPipeline()
 	p.accept(lexer.Pipe)
-	pl.Commands = append(pl.Commands, p.command())
+	p.addCommand(pl)
 	for p.accept(lexer.Pipe) {
 		if p.at(lexer.RBracket) {
 			break
 		}
-		pl.Commands = append(pl.Commands, p.command())
+		p.addCommand(pl)
 	}
 	if !p.at(lexer.RBracket) {
 		p.fail(p.peek(), "", "'|'", "']'")
