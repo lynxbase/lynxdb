@@ -525,12 +525,37 @@ type hourCount struct {
 
 var feedEvents = []string{"app.bsky.feed.like", "app.bsky.feed.post", "app.bsky.feed.repost"}
 
+// holdsOtherValue reports whether the part's index says that block i of p
+// holds one value of path and that keep rejects it.
+func holdsOtherValue(p *part.Part, i int, path string, keep func(value []byte) bool) bool {
+	if !useKeyStats || !p.Ordered() {
+		return false
+	}
+	for column, key := range p.SortKey() {
+		if key != path {
+			continue
+		}
+		if p.KeyRuns(i, column+1) != 1 {
+			return false
+		}
+		value, ok := part.KeyString(nil, p.FirstKey(i), column)
+
+		return !ok || !keep(value)
+	}
+
+	return false
+}
+
 // queryEventsByHour is Q3: count() by collection and hour of day for the
-// three feed collections.
+// three feed collections. Blocks that the index of their part shows to hold
+// another collection are left out.
 func queryEventsByHour(snap *Snapshot, workers int) ([]hourCount, error) {
 	ws := newBenchWorkers(workers)
 	defer freeBenchWorkers(ws)
-	stats, err := snap.Scan(context.Background(), ScanOptions{Workers: workers}, func(n int, p *part.Part, b *part.Block) error {
+	skip := func(p *part.Part, i int) bool {
+		return holdsOtherValue(p, i, "commit.collection", func(name []byte) bool { return feedEvent(name) >= 0 })
+	}
+	stats, err := snap.Scan(context.Background(), ScanOptions{Workers: workers, Skip: skip}, func(n int, p *part.Part, b *part.Block) error {
 		w := ws[n]
 		if ok, err := w.created(p, b); !ok || err != nil {
 			return err
