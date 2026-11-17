@@ -757,13 +757,7 @@ func (w *worker) numeric(e *sexpr, args []operand, n int, idx []uint32) (o opera
 			compareInts(mask, e.op, a.ints, b.ints)
 		} else {
 			x, y := a.asFloats(s, 0), b.asFloats(s, 1)
-			for i := range mask {
-				var m uint8
-				if compareFloat(e.op, x[i], y[i]) {
-					m = 0xFF
-				}
-				mask[i] = m
-			}
+			compareFloats(mask, e.op, x, y)
 			// A NaN compares with nothing.
 			for i := range mask {
 				if x[i] != x[i] || y[i] != y[i] {
@@ -859,28 +853,136 @@ func (w *worker) numeric(e *sexpr, args []operand, n int, idx []uint32) (o opera
 	return o, true
 }
 
+// compareInts sets mask where the comparison op holds between x and y, with
+// one loop per comparison: a greater-than is the less-than of the swapped
+// arguments, and an inequality the opposite of an equality.
 func compareInts(mask []uint8, op Op, x, y []int64) {
+	switch op {
+	case OpGt:
+		x, y, op = y, x, OpLt
+	case OpGe:
+		x, y, op = y, x, OpLe
+	}
 	x, y = x[:len(mask)], y[:len(mask)]
-	for i := range mask {
-		var hit bool
-		switch op {
-		case OpEq:
-			hit = x[i] == y[i]
-		case OpNe:
-			hit = x[i] != y[i]
-		case OpLt:
-			hit = x[i] < y[i]
-		case OpLe:
-			hit = x[i] <= y[i]
-		case OpGt:
-			hit = x[i] > y[i]
-		default:
-			hit = x[i] >= y[i]
+	switch op {
+	case OpLt:
+		for i := range mask {
+			var m uint8
+			if x[i] < y[i] {
+				m = 0xFF
+			}
+			mask[i] = m
 		}
-		var m uint8
-		if hit {
-			m = 0xFF
+	case OpLe:
+		for i := range mask {
+			var m uint8
+			if x[i] <= y[i] {
+				m = 0xFF
+			}
+			mask[i] = m
 		}
-		mask[i] = m
+	default:
+		for i := range mask {
+			var m uint8
+			if x[i] == y[i] {
+				m = 0xFF
+			}
+			mask[i] = m
+		}
+		if op == OpNe {
+			vec.MaskNot(mask, mask)
+		}
+	}
+}
+
+// compareFloats is compareInts for floats; a NaN equals nothing and is
+// neither below nor above anything.
+func compareFloats(mask []uint8, op Op, x, y []float64) {
+	switch op {
+	case OpGt:
+		x, y, op = y, x, OpLt
+	case OpGe:
+		x, y, op = y, x, OpLe
+	}
+	x, y = x[:len(mask)], y[:len(mask)]
+	switch op {
+	case OpLt:
+		for i := range mask {
+			var m uint8
+			if x[i] < y[i] {
+				m = 0xFF
+			}
+			mask[i] = m
+		}
+	case OpLe:
+		for i := range mask {
+			var m uint8
+			if x[i] <= y[i] {
+				m = 0xFF
+			}
+			mask[i] = m
+		}
+	default:
+		for i := range mask {
+			var m uint8
+			if x[i] == y[i] {
+				m = 0xFF
+			}
+			mask[i] = m
+		}
+		if op == OpNe {
+			vec.MaskNot(mask, mask)
+		}
+	}
+}
+
+// compareFloatsTo sets mask where the comparison op holds between each of x
+// and y.
+func compareFloatsTo(mask []uint8, op Op, x []float64, y float64) {
+	x = x[:len(mask)]
+	switch op {
+	case OpLt:
+		for i := range mask {
+			var m uint8
+			if x[i] < y {
+				m = 0xFF
+			}
+			mask[i] = m
+		}
+	case OpLe:
+		for i := range mask {
+			var m uint8
+			if x[i] <= y {
+				m = 0xFF
+			}
+			mask[i] = m
+		}
+	case OpGt:
+		for i := range mask {
+			var m uint8
+			if x[i] > y {
+				m = 0xFF
+			}
+			mask[i] = m
+		}
+	case OpGe:
+		for i := range mask {
+			var m uint8
+			if x[i] >= y {
+				m = 0xFF
+			}
+			mask[i] = m
+		}
+	default:
+		for i := range mask {
+			var m uint8
+			if x[i] == y {
+				m = 0xFF
+			}
+			mask[i] = m
+		}
+		if op == OpNe {
+			vec.MaskNot(mask, mask)
+		}
 	}
 }

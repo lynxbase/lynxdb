@@ -786,13 +786,7 @@ func (w *worker) evalFloatColumn(p *pred, depth int) (verdict, error) {
 		return w.present(c, depth), nil
 	}
 	m := w.mask(depth)
-	for i, x := range c.Floats[:w.rows] {
-		var b uint8
-		if compareFloat(p.op, x, p.f) {
-			b = 0xFF
-		}
-		m[i] = b
-	}
+	compareFloatsTo(m, p.op, c.Floats[:w.rows], p.f)
 	if c.Valid != nil {
 		vec.MaskAndBitmap(m, c.Valid)
 	}
@@ -835,30 +829,7 @@ func (w *worker) evalInts(p *pred, depth int) (verdict, error) {
 		return none, err
 	}
 	m := w.mask(depth)
-	a, b = a[:len(m)], b[:len(m)]
-	for i := range m {
-		var bit uint8
-		x, y := a[i], b[i]
-		var hit bool
-		switch p.op {
-		case OpEq:
-			hit = x == y
-		case OpNe:
-			hit = x != y
-		case OpLt:
-			hit = x < y
-		case OpLe:
-			hit = x <= y
-		case OpGt:
-			hit = x > y
-		default:
-			hit = x >= y
-		}
-		if hit {
-			bit = 0xFF
-		}
-		m[i] = bit
-	}
+	compareInts(m, p.op, a, b)
 	if va != nil {
 		vec.MaskAnd(m, m, va)
 	}
