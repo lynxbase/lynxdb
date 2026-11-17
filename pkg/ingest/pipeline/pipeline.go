@@ -1,3 +1,4 @@
+// Package pipeline implements ingest processing stages.
 package pipeline
 
 import (
@@ -5,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -396,54 +396,6 @@ func (r *Router) Partition(e *event.Event) int {
 	return int(h.Sum32() % uint32(r.PartitionCount))
 }
 
-// Batcher collects events into batches.
-type Batcher struct {
-	BatchSize int
-}
-
-func NewBatcher(batchSize int) *Batcher {
-	return &Batcher{BatchSize: batchSize}
-}
-
-// Batch splits events into batches of the configured size.
-func (b *Batcher) Batch(events []*event.Event) [][]*event.Event {
-	var batches [][]*event.Event
-	for i := 0; i < len(events); i += b.BatchSize {
-		end := i + b.BatchSize
-		if end > len(events) {
-			end = len(events)
-		}
-		batches = append(batches, events[i:end])
-	}
-
-	return batches
-}
-
-// SyslogParser extracts fields from syslog-formatted messages.
-//
-// Deprecated: use pkg/ingest/receiver/syslog for native RFC 3164/5424 parsing.
-type SyslogParser struct{}
-
-var syslogPattern = regexp.MustCompile(`^<(\d+)>(\w{3}\s+\d+\s+\d+:\d+:\d+)\s+(\S+)\s+(\S+?)(?:\[(\d+)\])?:\s*(.*)$`)
-
-func (p *SyslogParser) Process(events []*event.Event) ([]*event.Event, error) {
-	for _, e := range events {
-		matches := syslogPattern.FindStringSubmatch(e.Raw)
-		if matches == nil {
-			continue
-		}
-		e.SetField("priority", event.StringValue(matches[1]))
-		e.Host = matches[3]
-		e.SetField("program", event.StringValue(matches[4]))
-		if matches[5] != "" {
-			e.SetField("pid", event.StringValue(matches[5]))
-		}
-		e.SetField("message", event.StringValue(matches[6]))
-	}
-
-	return events, nil
-}
-
 // MetadataOnlyParser extracts only well-known metadata fields from JSON,
 // leaving all other data in _raw for query-time extraction via REX/spath.
 // This is the core of "lightweight" ingest mode — it avoids the CPU cost
@@ -595,12 +547,6 @@ func (p *SelectiveJSONParser) Process(events []*event.Event) ([]*event.Event, er
 // parse failure counts across all pipelines into a single counter.
 var sharedJSONParser = &JSONParser{}
 
-// ParseFailureCount returns the total number of JSON parse failures across all
-// default and selective ingest pipelines. Use this to wire into metrics.
-func ParseFailureCount() int64 {
-	return sharedJSONParser.ParseErrors.Load()
-}
-
 // DefaultPipeline returns a standard ingestion pipeline.
 // Each call gets its own TimestampNormalizer because it keeps advisory parse
 // hints that are mutated while events are processed.
@@ -621,23 +567,6 @@ func isInternalField(name string) bool {
 	}
 
 	return false
-}
-
-// FastTimestampAssigner assigns time.Now() to events with zero timestamps
-// without attempting any format-based parsing. Used when the full
-// TimestampNormalizer would waste CPU trying formats that won't match
-// (e.g., JSON lines where JSON parser is skipped).
-type FastTimestampAssigner struct{}
-
-func (f *FastTimestampAssigner) Process(events []*event.Event) ([]*event.Event, error) {
-	now := time.Now()
-	for _, e := range events {
-		if e.Time.IsZero() {
-			e.Time = now
-		}
-	}
-
-	return events, nil
 }
 
 // SelectivePipeline builds an ingest pipeline that only runs the stages
@@ -684,51 +613,4 @@ func SelectivePipeline(requiredFields map[string]bool) *Pipeline {
 	stages = append(stages, &Router{DefaultIndex: "main", PartitionCount: 4})
 
 	return New(stages...)
-}
-
-// SplitRawLines splits raw text into individual events by newline.
-func SplitRawLines(raw, source, sourceType string) []*event.Event {
-	events := make([]*event.Event, 0, strings.Count(raw, "\n")+1)
-	start := 0
-	for start <= len(raw) {
-		end := strings.IndexByte(raw[start:], '\n')
-		if end < 0 {
-			end = len(raw)
-		} else {
-			end += start
-		}
-		line := raw[start:end]
-		// Trim trailing \r (Windows line endings) but avoid full TrimSpace scan.
-		line = strings.TrimSuffix(line, "\r")
-		if isBlankLine(line) {
-			if end == len(raw) {
-				break
-			}
-			start = end + 1
-			continue
-		}
-		e := event.NewEvent(time.Time{}, line)
-		e.Source = source
-		e.SourceType = sourceType
-		events = append(events, e)
-		if end == len(raw) {
-			break
-		}
-		start = end + 1
-	}
-
-	return events
-}
-
-// isBlankLine checks if a string contains only whitespace without scanning
-// the full string when non-whitespace is found early (unlike strings.TrimSpace).
-func isBlankLine(s string) bool {
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case ' ', '\t', '\r', '\n':
-		default:
-			return false
-		}
-	}
-	return true
 }
