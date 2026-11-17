@@ -29,11 +29,10 @@ var authCmd = &cobra.Command{
 }
 
 var authCreateKeyCmd = &cobra.Command{
-	Use:     "create",
-	Aliases: []string{"create-key"}, // backward compat
-	Short:   "Create a new API key",
+	Use:   "create",
+	Short: "Create a new API key",
 	Example: `  lynxdb auth create --name web-01 --scope ingest
-  lynxdb auth create --name grafana-dash --scope query --expires 90d
+  lynxdb auth create --name dashboards --scope query --expires 90d
   lynxdb auth create --name ci-pipeline
   lynxdb auth create --name web-01 --scope ingest --format json | jq -r .api_key`,
 	RunE: runAuthCreateKey,

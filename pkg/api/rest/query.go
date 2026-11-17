@@ -223,14 +223,14 @@ func broadScopeLints(query string, stats *server.SearchStats, queryCfg config.Qu
 	if hasSearch && ((sourceThreshold > 0 && sourceCount >= sourceThreshold) || (segmentThreshold > 0 && segmentCount >= segmentThreshold)) {
 		return []model.QueryLint{{
 			Code:     model.LintBroadSearch,
-			Message:  fmt.Sprintf("Broad search over %d sources; narrow with `FROM`, `source=`, or a time range", sourceCount),
+			Message:  fmt.Sprintf("Broad search over %d sources; narrow with `source=<name>` or a time range", sourceCount),
 			Position: 0,
 		}}
 	}
 	if sourceThreshold > 0 && sourceCount >= sourceThreshold {
 		return []model.QueryLint{{
 			Code:     model.LintAllSourcesHigh,
-			Message:  "Narrow the source with `FROM <source>` or `source=<name>`",
+			Message:  "Narrow the source with `source=<name>`",
 			Position: 0,
 		}}
 	}

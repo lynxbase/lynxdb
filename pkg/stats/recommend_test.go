@@ -276,15 +276,11 @@ func TestGenerateRecommendations_SpeedupEstimates(t *testing.T) {
 }
 
 func TestGenerateRecommendations_SuggestedActions(t *testing.T) {
-	t.Run("segments errored has action", func(t *testing.T) {
+	t.Run("segments errored is reported", func(t *testing.T) {
 		s := &QueryStats{SegmentsErrored: 1}
 		recs := GenerateRecommendations(s)
-		found := findRec(recs, "segment(s) failed")
-		if found == nil {
+		if findRec(recs, "segment(s) failed") == nil {
 			t.Fatal("expected recommendation")
-		}
-		if found.SuggestedAction != "lynxdb doctor" {
-			t.Errorf("action = %q, want 'lynxdb doctor'", found.SuggestedAction)
 		}
 	})
 

@@ -109,10 +109,9 @@ func ruleSortDominates(s *QueryStats) *Recommendation {
 func ruleSegmentsErrored(s *QueryStats) *Recommendation {
 	if s.SegmentsErrored > 0 {
 		return &Recommendation{
-			Category:        "correctness",
-			Priority:        "high",
-			Message:         fmt.Sprintf("%d segment(s) failed to read; run 'lynxdb doctor' to check storage health", s.SegmentsErrored),
-			SuggestedAction: "lynxdb doctor",
+			Category: "correctness",
+			Priority: "high",
+			Message:  fmt.Sprintf("%d segment(s) failed to read; check the server log for storage errors", s.SegmentsErrored),
 		}
 	}
 

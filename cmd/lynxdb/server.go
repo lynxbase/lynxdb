@@ -405,7 +405,7 @@ func bootstrapAuth(dataDir string) (*auth.KeyStore, error) {
 		fmt.Fprintf(os.Stderr, "\n    %s\n\n", t.Bold.Render(created.Token))
 		fmt.Fprintf(os.Stderr, "  %s\n", t.Dim.Render("Save this key now. It will NOT be shown again."))
 		fmt.Fprintf(os.Stderr, "  %s\n", t.Dim.Render("Use it to authenticate:  lynxdb login"))
-		fmt.Fprintf(os.Stderr, "  %s\n\n", t.Dim.Render("Or generate new keys:    lynxdb auth create-key"))
+		fmt.Fprintf(os.Stderr, "  %s\n\n", t.Dim.Render("Or generate new keys:    lynxdb auth create"))
 	} else {
 		fmt.Fprintln(os.Stderr, ui.Stderr.KeyValue("Auth", fmt.Sprintf("enabled (%d keys)", ks.Len())))
 	}
