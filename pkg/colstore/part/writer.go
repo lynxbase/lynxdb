@@ -24,6 +24,9 @@ type Options struct {
 	Codec Codec
 	// NoTokenFilter leaves blocks without a token filter.
 	NoTokenFilter bool
+	// NoPacking leaves identifier-like strings to the general codec
+	// instead of storing them at a few bits per character.
+	NoPacking bool
 	// Ordered declares that the rows arrive ordered by their values at the
 	// SortKey paths and then by timestamp; the writer records it unchecked.
 	Ordered bool
@@ -354,13 +357,27 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 	if !ok {
 		ent.enc = encFlat
 		w.ints = w.ints[:0]
+		stride := len(c.Bytes(0))
 		for i := 0; i < c.Count; i++ {
 			val := c.Bytes(i)
+			if len(val) != stride {
+				stride = 0
+			}
 			w.ints = append(w.ints, int64(len(val)))
 			w.tokenize(c.Kind, val)
 		}
 		w.block = appendInts(w.block, w.ints, &w.blobs, &w.e)
-		w.block = w.values.appendBlob(w.block, c.Data[:c.Ends[c.Count-1]], &w.e.zbuf)
+		data := c.Data[:c.Ends[c.Count-1]]
+		// Values that repeat are left to the general codec, which finds
+		// the repeats; packing cannot.
+		if stride > 0 && w.packs(c.Kind) && w.dict.fewRepeats(c) {
+			if out, packed := w.values.appendPackedBlob(w.block, data, stride, &w.e.zbuf); packed {
+				w.block = out
+
+				return
+			}
+		}
+		w.block = w.values.appendBlob(w.block, data, &w.e.zbuf)
 
 		return
 	}
@@ -370,14 +387,25 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 	w.block = binary.AppendUvarint(w.block, uint64(distinct))
 	w.ints = w.ints[:0]
 	w.dictBytes = w.dictBytes[:0]
+	stride := len(c.Bytes(int(d.first[d.order[0]])))
 	for _, entry := range d.order {
 		val := c.Bytes(int(d.first[entry]))
+		if len(val) != stride {
+			stride = 0
+		}
 		w.ints = append(w.ints, int64(len(val)))
 		w.dictBytes = append(w.dictBytes, val...)
 		w.tokenize(c.Kind, val)
 	}
 	w.block = appendInts(w.block, w.ints, &w.blobs, &w.e)
-	w.block = w.blobs.appendBlob(w.block, w.dictBytes, &w.e.zbuf)
+	out, packed := w.block, false
+	if w.packs(c.Kind) {
+		out, packed = w.blobs.appendPackedBlob(w.block, w.dictBytes, stride, &w.e.zbuf)
+	}
+	if !packed {
+		out = w.blobs.appendBlob(w.block, w.dictBytes, &w.e.zbuf)
+	}
+	w.block = out
 
 	// Codes stay out of the general codec so that reading them costs a few
 	// shifts per row; runs take over when they halve the packed size.
@@ -399,6 +427,11 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 		return
 	}
 	w.block = appendPacked(append(w.block, codesPacked), d.codes, d.rank, width)
+}
+
+// packs reports whether strings of kind may be stored as packed sections.
+func (w *Writer) packs(kind vec.Kind) bool {
+	return kind == vec.KindString && !w.opts.NoPacking && w.opts.Codec == CodecZstd
 }
 
 // appendDirectory writes the entries at a fixed size so that a reader can
@@ -486,6 +519,45 @@ type dictBuilder struct {
 	order []uint32 // entry numbers sorted by value
 	rank  []uint32 // position of each entry in order
 	col   *shred.Column
+	seen  []uint64 // hashes of the values fewRepeats has met
+}
+
+// maxRepeats is the share of values, one in this many, that may repeat an
+// earlier one before a column counts as having repeats worth finding.
+const maxRepeats = 32
+
+// fewRepeats reports whether nearly every value of c differs from all
+// values before it.
+func (d *dictBuilder) fewRepeats(c *shred.Column) bool {
+	size := 64
+	for size < 2*c.Count {
+		size *= 2
+	}
+	if cap(d.seen) < size {
+		d.seen = make([]uint64, size)
+	}
+	seen := d.seen[:size]
+	clear(seen)
+	mask := uint64(size - 1)
+	repeats, limit := 0, c.Count/maxRepeats
+	for i := 0; i < c.Count; i++ {
+		// Zero marks an empty slot.
+		h := xxhash.Sum64(c.Bytes(i)) | 1
+		slot := h & mask
+		for seen[slot] != 0 && seen[slot] != h {
+			slot = (slot + 1) & mask
+		}
+		if seen[slot] == h {
+			if repeats++; repeats > limit {
+				return false
+			}
+
+			continue
+		}
+		seen[slot] = h
+	}
+
+	return true
 }
 
 func (d *dictBuilder) Len() int      { return len(d.order) }

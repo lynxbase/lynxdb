@@ -10,7 +10,7 @@ import "hash/crc32"
 //	trailer  footer offset, footer length, footer checksum, version, magic
 const (
 	fileMagic     = 0x5450584c // "LXPT"
-	formatVersion = 2
+	formatVersion = 3
 
 	headerSize  = 8
 	trailerSize = 28

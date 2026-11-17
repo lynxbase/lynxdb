@@ -64,6 +64,7 @@ const (
 	blobStored = 0
 	blobZstd   = 1
 	blobLZ4    = 2
+	blobPacked = 3
 )
 
 // blobCodec compresses sections with one codec and reuses its buffers.
@@ -71,7 +72,29 @@ type blobCodec struct {
 	codec Codec
 	level Level
 	lz    lz4.Compressor
+	pack  packScratch
 }
+
+// appendPackedBlob appends payload, strings of length stride laid end to
+// end, as a packed section built in scratch, and reports whether it did;
+// when it did not, dst is unchanged.
+func (bc *blobCodec) appendPackedBlob(dst, payload []byte, stride int, scratch *[]byte) ([]byte, bool) {
+	if len(payload) < minCompressSize {
+		return dst, false
+	}
+	body, ok := appendSymbols((*scratch)[:0], payload, stride, &bc.pack)
+	*scratch = body
+	if !ok || len(body)+binary.MaxVarintLen32 >= len(payload) {
+		return dst, false
+	}
+	dst = binary.AppendUvarint(dst, uint64(len(body))<<2|blobPacked)
+	dst = binary.AppendUvarint(dst, uint64(len(payload)))
+
+	return append(dst, body...), true
+}
+
+// unpackers holds the scratch of packed sections being read.
+var unpackers = sync.Pool{New: func() any { return new(packScratch) }}
 
 // appendBlob appends payload as a length-prefixed section, compressed through
 // scratch when that makes it smaller.
@@ -144,6 +167,14 @@ func readBlob(src []byte, buf *[]byte) (payload, rest []byte, stored bool, err e
 			return nil, nil, false, ErrCorrupt
 		}
 		out = (*buf)[:got]
+	case blobPacked:
+		scratch := unpackers.Get().(*packScratch)
+		var derr error
+		out, derr = readSymbols((*buf)[:0], src[:size], int(rawLen), scratch)
+		unpackers.Put(scratch)
+		if derr != nil {
+			return nil, nil, false, ErrCorrupt
+		}
 	default:
 		return nil, nil, false, ErrCorrupt
 	}
