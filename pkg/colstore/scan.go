@@ -1,11 +1,13 @@
 package colstore
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -70,6 +72,39 @@ const rampFrom = 4
 type ColumnTokens struct {
 	Path   string
 	Hashes []uint64
+	// Value, when set, is the string that the column of every matching
+	// row equals, which the counts in a part's footer decide alone.
+	Value []byte
+}
+
+// unprobed stands for the path id of a token set that the blocks of a part
+// are not probed for.
+const unprobed = anyColumn - 1
+
+// decideCounted settles the token sets of a part whose value the part
+// counts at the path: the part holds no matching row when it lacks the
+// value, and its filters are not probed for a value held by at least one
+// row per block, which lies in most blocks. It reports whether the part may
+// hold matching rows.
+func decideCounted(ids []uint32, p *part.Part, sets []ColumnTokens) bool {
+	for k := range sets {
+		if sets[k].Value == nil || ids[k] == anyColumn {
+			continue
+		}
+		counts, ok := p.Counts(ids[k])
+		if !ok {
+			continue
+		}
+		i := slices.IndexFunc(counts.Values, func(v []byte) bool { return bytes.Equal(v, sets[k].Value) })
+		if i < 0 {
+			return false
+		}
+		if counts.Rows[i] >= uint64(p.NumBlocks()) {
+			ids[k] = unprobed
+		}
+	}
+
+	return true
 }
 
 // anyColumn stands for the path id of a token set without a path.
@@ -228,6 +263,11 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 		at := len(ids)
 		var named bool
 		ids, named = resolveTokens(ids, h.Part, sets)
+		if named && !decideCounted(ids[at:], h.Part, sets) {
+			stats.SkippedByToken += int64(h.NumBlocks())
+
+			continue
+		}
 		var empty *part.Misses
 		if opts.Condition != "" {
 			empty = h.Misses(opts.Condition)
@@ -288,7 +328,9 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 		p := parts[u.part].Part
 		may, err := mayContainAll(p, int(u.block), opts.Tokens)
 		for k := 0; k < len(sets) && may && err == nil; k++ {
-			may, err = mayContainSet(p, int(u.block), ids[int(u.ids)+k], sets[k].Hashes)
+			if id := ids[int(u.ids)+k]; id != unprobed {
+				may, err = mayContainSet(p, int(u.block), id, sets[k].Hashes)
+			}
 		}
 		if err != nil {
 			cancel(err)

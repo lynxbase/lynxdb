@@ -774,7 +774,7 @@ func conjunctTokens(c *Expr, dst []colstore.ColumnTokens) []colstore.ColumnToken
 	case OpEq:
 		col, lit, op, ok := columnLiteral(c)
 		if ok && op == OpEq && lit.Kind == vec.KindString && (col.Kind == vec.KindString || col.Kind == KindAny) {
-			set.Path, set.Hashes = col.Path, tokenfilter.AppendHashesLongestFirst(nil, lit.Bytes)
+			set.Path, set.Hashes, set.Value = col.Path, tokenfilter.AppendHashesLongestFirst(nil, lit.Bytes), lit.Bytes
 		}
 	}
 	if len(set.Hashes) == 0 {
