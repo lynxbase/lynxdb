@@ -53,6 +53,10 @@ const (
 	// the order the table stores them, null where that row holds none;
 	// every FirstRow of an aggregate reads the same row.
 	FirstRow
+	// ApproxDistinct estimates the number of distinct values of the
+	// argument, telling kinds apart, in at most 4 KB per group: exactly up
+	// to 383 values, and beyond with a standard error of 1.6 percent.
+	ApproxDistinct
 )
 
 // Agg is one aggregate; Arg is nil for a Count of rows, and By orders the

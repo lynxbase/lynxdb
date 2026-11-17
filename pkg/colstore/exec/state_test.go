@@ -19,6 +19,14 @@ func stateAggs() []exec.Agg {
 		{Name: "min_coll", Func: exec.Min, Arg: str("coll")},
 		{Name: "max_lower", Func: exec.Max, Arg: exec.Lower(str("user"))},
 		{Name: "min_nope", Func: exec.Min, Arg: anyOf("nope")},
+		{Name: "users", Func: exec.ApproxDistinct, Arg: str("user")},
+		{Name: "ids", Func: exec.ApproxDistinct, Arg: num("id")},
+		{Name: "kinds_of_n", Func: exec.ApproxDistinct, Arg: anyOf("n")},
+		{Name: "scores", Func: exec.ApproxDistinct, Arg: float("score")},
+		{Name: "colls", Func: exec.ApproxDistinct, Arg: anyOf("coll")},
+		{Name: "flags", Func: exec.ApproxDistinct, Arg: anyOf("flag")},
+		{Name: "bigs", Func: exec.ApproxDistinct, Arg: exec.Mod(num("big"), exec.Int(1000))},
+		{Name: "none", Func: exec.ApproxDistinct, Arg: anyOf("nope")},
 	}
 }
 

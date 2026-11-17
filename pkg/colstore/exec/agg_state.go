@@ -3,6 +3,7 @@ package exec
 import (
 	"bytes"
 	"encoding/binary"
+	"math"
 
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
@@ -15,6 +16,9 @@ const (
 	// string after a tag byte, so that an empty string is not no state.
 	stateMinBytes stateOp = iota + 1
 	stateMaxBytes
+	// stateHLL holds the hashes of the distinct values or a sketch of them,
+	// as hll.go lays them out.
+	stateHLL
 )
 
 // stateSpec is one state of variable size per group. The group's row of
@@ -36,6 +40,12 @@ func (ap *aggPlan) state(op stateOp, arg int) int {
 	ap.words = append(ap.words, wordSpec{op: wordState, arg: -1})
 	ap.states = append(ap.states, stateSpec{op: op, word: len(ap.words) - 1, arg: arg})
 	ap.args[arg].states = append(ap.args[arg].states, len(ap.states)-1)
+	switch op {
+	case stateMinBytes, stateMaxBytes:
+		ap.args[arg].stateKinds |= kindBit(vec.KindString)
+	case stateHLL:
+		ap.args[arg].stateKinds |= allKinds
+	}
 
 	return len(ap.states) - 1
 }
@@ -123,6 +133,8 @@ func (ap *aggPlan) mergeStates(h *stateHeap, dst []int64, src *stateSource) {
 			if c := bytes.Compare(b[1:], cur[1:]); c != 0 && (c > 0) == (st.op == stateMaxBytes) {
 				dst[st.word] = int64(h.set(ref, b))
 			}
+		case stateHLL:
+			dst[st.word] = int64(hllMerge(h, ref, b))
 		}
 	}
 }
@@ -179,6 +191,66 @@ func (a *aggWorker) feedStrings(arg *aggArg, t *target, c *vec.Column, gid, rows
 			copy(b[1:], v)
 			*word = int64(ref)
 			lastG, last = g, b[1:]
+		}
+	}
+}
+
+// The hashes that an approximate distinct count gives values; kinds are
+// told apart as in an exact one.
+func hashInt(v int64) uint64 { return vec.Mix64(uint64(v) ^ kindSeeds[vec.KindInt]) }
+
+func hashFloat(v float64) uint64 { return vec.Mix64(math.Float64bits(v) ^ kindSeeds[vec.KindFloat]) }
+
+func hashBool(v bool) uint64 { return vec.Mix64(uint64(btoi(v)) ^ kindSeeds[vec.KindBool]) }
+
+func hashBytes(kind vec.Kind, v []byte) uint64 { return vec.Hash(v) ^ kindSeeds[kind] }
+
+// feedHashes adds the values of one kind in the n rows listed in rows, or
+// the first n rows when it is nil, to the distinct-count states of an
+// argument: the integers or floats given, or else the values of c.
+func (a *aggWorker) feedHashes(arg *aggArg, t *target, kind vec.Kind, c *vec.Column, ints []int64, floats []float64, gid, rows []uint32, n int) {
+	for _, i := range arg.states {
+		st := &a.plan.states[i]
+		if st.op != stateHLL {
+			continue
+		}
+		// A dictionary is hashed once per entry.
+		var entries []uint64
+		if ints == nil && floats == nil && kind != vec.KindBool && c.Layout == vec.Dict {
+			a.s.hashes = sized(a.s.hashes, c.DictLen())
+			entries = a.s.hashes
+			for e := range entries {
+				entries[e] = hashBytes(kind, c.DictValue(e))
+			}
+		}
+		lastG, last := -1, uint64(0)
+		for j := 0; j < n; j++ {
+			g, r := t.one, j
+			if t.gid != nil {
+				g = int(gid[j])
+			}
+			if rows != nil {
+				r = int(rows[j])
+			}
+			var hash uint64
+			switch {
+			case ints != nil:
+				hash = hashInt(ints[r])
+			case floats != nil:
+				hash = hashFloat(floats[r])
+			case entries != nil:
+				hash = entries[c.Code(r)]
+			case kind == vec.KindBool:
+				hash = hashBool(c.Bool(r))
+			default:
+				hash = hashBytes(kind, columnBytes(c, r))
+			}
+			if g == lastG && hash == last {
+				continue
+			}
+			lastG, last = g, hash
+			word := &t.words[g*a.stride+st.word]
+			*word = int64(hllAdd(&a.heap, stateRef(*word), hash))
 		}
 	}
 }

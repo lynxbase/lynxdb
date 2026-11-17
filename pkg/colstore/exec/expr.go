@@ -38,7 +38,8 @@
 //
 // A group's state is a row of 64-bit words, and for the aggregates that need
 // more, states of variable size that the words refer to: the extreme string
-// of a Min or a Max, as long as that string.
+// of a Min or a Max, as long as that string, and the set of hashes or the
+// sketch of an ApproxDistinct, of at most 4 KB.
 package exec
 
 import (

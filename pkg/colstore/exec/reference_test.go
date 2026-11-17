@@ -604,6 +604,7 @@ type refAgg struct {
 	numbers                    []float64
 	strs                       int64
 	minStr, maxStr             string
+	hashes                     map[uint64]struct{}
 	// The values of the first and the last row with one, and of the rows
 	// with the smallest and the largest time.
 	first, last, earliest, latest exec.Value
@@ -881,6 +882,12 @@ func refAggregate(rows []refRow, agg *exec.Aggregate) ([][]exec.Value, []string)
 				}
 			}
 			st.values++
+			if a.Func == exec.ApproxDistinct {
+				if st.hashes == nil {
+					st.hashes = map[uint64]struct{}{}
+				}
+				st.hashes[exec.DistinctHash(v)] = struct{}{}
+			}
 			st.distinct[refKey(v)] = struct{}{}
 			if at := row[part.TimePath].Int; st.values == 1 {
 				st.first, st.earliest, st.latest, st.minTime, st.maxTime = v, v, v, at, at
@@ -951,6 +958,8 @@ func refFinish(a exec.Agg, st *refAgg, float bool) exec.Value {
 		return st.latest
 	case exec.AnyValue:
 		return st.first
+	case exec.ApproxDistinct:
+		return intValue(exec.DistinctEstimate(st.hashes))
 	case exec.ArgMin, exec.ArgMax:
 		return st.arg
 	case exec.FirstRow:

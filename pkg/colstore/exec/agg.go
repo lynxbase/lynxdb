@@ -86,6 +86,8 @@ type aggScratch struct {
 	rec   []byte
 	dense []int64
 	fl    []float64
+	// hashes holds the hash of each entry of a dictionary.
+	hashes []uint64
 	// okeys and ohas hold, per order of the plan and row of the block, the
 	// key that orders the row and whether it has one.
 	okeys [][]int64
@@ -106,6 +108,7 @@ type aggScratch struct {
 func (s *aggScratch) empty() {
 	s.gid, s.gid2, s.idx2, s.hist, s.cache = s.gid[:0], s.gid2[:0], s.idx2[:0], s.hist[:0], s.cache[:0]
 	s.codes, s.tmp, s.key, s.rec, s.dense, s.fl = s.codes[:0], s.tmp[:0], s.key[:0], s.rec[:0], s.dense[:0], s.fl[:0]
+	s.hashes = s.hashes[:0]
 	s.lkeys, s.lends, s.lrows, s.lhash, s.lwords, s.lglobal = s.lkeys[:0], s.lends[:0], s.lrows[:0], s.lhash[:0], s.lwords[:0], s.lglobal[:0]
 	for i := range s.parts {
 		s.parts[i].buf, s.parts[i].vbuf = s.parts[i].buf[:0], s.parts[i].vbuf[:0]
@@ -118,7 +121,7 @@ func (s *aggScratch) empty() {
 func (s *aggScratch) held() int {
 	n := 4*(used(s.gid)+used(s.gid2)+used(s.idx2)+used(s.hist)+used(s.cache)+used(s.lends)+used(s.lrows)+used(s.lglobal)) +
 		2*(used(s.codes)+used(s.tmp)) + used(s.key) + used(s.rec) + used(s.lkeys) +
-		8*(used(s.dense)+used(s.fl)+used(s.lhash)+used(s.lwords))
+		8*(used(s.dense)+used(s.fl)+used(s.lhash)+used(s.lwords)+used(s.hashes))
 	for i := range s.parts {
 		n += 8*used(s.parts[i].buf) + used(s.parts[i].vbuf)
 	}
@@ -984,7 +987,7 @@ func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uin
 	w := a.w
 	arg := &a.plan.args[i]
 	numeric := kind == vec.KindInt || kind == vec.KindFloat
-	if w.shared == nil && len(arg.distinct) == 0 && !arg.picks && (!numeric || arg.counted) && (len(arg.states) == 0 || kind != vec.KindString) {
+	if w.shared == nil && len(arg.distinct) == 0 && !arg.picks && (!numeric || arg.counted) && arg.stateKinds&kindBit(kind) == 0 {
 		// Only the number of values is asked for, which needs none of them.
 		ref := w.ref(arg.expr.path, kind)
 		switch {
@@ -1178,8 +1181,11 @@ func (a *aggWorker) feedValues(i int, kind vec.Kind, c *vec.Column, t *target, n
 				a.distinctBytes(d, t, c, kind, gid, rows, count)
 			}
 		}
-		if kind == vec.KindString && len(arg.states) != 0 {
-			a.feedStrings(arg, t, c, gid, rows, count)
+		if len(arg.states) != 0 {
+			if kind == vec.KindString {
+				a.feedStrings(arg, t, c, gid, rows, count)
+			}
+			a.feedHashes(arg, t, kind, c, nil, nil, gid, rows, count)
 		}
 	}
 }
@@ -1340,10 +1346,16 @@ func (a *aggWorker) feedInts(arg *aggArg, t *target, gid []uint32, vals []int64,
 			a.distinctInts(d, t, gid, vals, rows, n)
 		}
 	}
+	if len(arg.states) != 0 {
+		a.feedHashes(arg, t, vec.KindInt, nil, vals, nil, gid, rows, n)
+	}
 }
 
 func (a *aggWorker) feedFloats(arg *aggArg, t *target, gid []uint32, vals []float64, rows []uint32, n int) {
 	stride := a.stride
+	if len(arg.states) != 0 {
+		a.feedHashes(arg, t, vec.KindFloat, nil, nil, vals, gid, rows, n)
+	}
 	for _, i := range arg.words {
 		op := a.plan.words[i].op
 		for j := 0; j < n; j++ {

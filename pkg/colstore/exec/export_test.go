@@ -1,5 +1,10 @@
 package exec
 
+import (
+	"github.com/lynxbase/lynxdb/pkg/mem"
+	"github.com/lynxbase/lynxdb/pkg/vec"
+)
+
 // Pushdown exposes the scan options derived from a filter.
 var Pushdown = pushdown
 
@@ -19,4 +24,32 @@ func SetLimits(tableGroups, serial int) (restore func()) {
 	maxTableGroups, serialGroups = tableGroups, serial
 
 	return func() { maxTableGroups, serialGroups = oldTable, oldSerial }
+}
+
+// DistinctHash returns the hash that ApproxDistinct gives a value.
+func DistinctHash(v Value) uint64 {
+	switch v.Kind {
+	case vec.KindInt:
+		return hashInt(v.Int)
+	case vec.KindFloat:
+		return hashFloat(v.Float)
+	case vec.KindBool:
+		return hashBool(v.Bool)
+	}
+
+	return hashBytes(v.Kind, v.Bytes)
+}
+
+// DistinctEstimate returns what ApproxDistinct gives for a set of hashes.
+func DistinctEstimate(hashes map[uint64]struct{}) int64 {
+	a := mem.NewArena()
+	defer a.Free()
+	var h stateHeap
+	h.init(a)
+	var ref stateRef
+	for hash := range hashes {
+		ref = hllAdd(&h, ref, hash)
+	}
+
+	return hllCount(h.get(ref))
 }

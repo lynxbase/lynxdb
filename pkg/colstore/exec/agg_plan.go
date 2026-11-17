@@ -78,6 +78,8 @@ type aggArg struct {
 	words    []int
 	distinct []int
 	states   []int
+	// stateKinds is the set of kinds whose values the states read.
+	stateKinds uint8
 	// counted is set when only the number of values is asked for.
 	counted bool
 	// picks is set when a group picks a row of the argument, and placed
@@ -104,8 +106,8 @@ type aggOut struct {
 	// located the column whose value in that row is the aggregate.
 	pick    int
 	located *sexpr
-	// state is the state with the extreme string of a Min or a Max whose
-	// argument reads strings.
+	// state is the state of an aggregate that has one, such as the extreme
+	// string of a Min or a Max whose argument reads strings.
 	state int
 }
 
@@ -291,6 +293,8 @@ func (q *query) aggregate(a *Aggregate) error {
 		switch g.Func {
 		case Count:
 			out.count = ap.word(wordCount, out.arg)
+		case ApproxDistinct:
+			out.state = ap.state(stateHLL, out.arg)
 		case CountDistinct:
 			out.distinct = ap.distinct
 			ap.args[out.arg].distinct = append(ap.args[out.arg].distinct, ap.distinct)
@@ -514,6 +518,14 @@ func (ap *aggPlan) column(o *aggOut, words []int64, h *stateHeap, n int, floats 
 				out[g] = 0
 				dst.setNull(g)
 			}
+		}
+
+		return
+	case ApproxDistinct:
+		out := dst.bulkInts(n)
+		at := ap.states[o.state].word
+		for g := range out {
+			out[g] = hllCount(h.get(stateRef(words[g*stride+at])))
 		}
 
 		return
