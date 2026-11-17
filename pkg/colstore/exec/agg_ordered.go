@@ -86,6 +86,10 @@ func (p *pred) columns(need func(path int, kinds uint8), exprs func(e *sexpr)) {
 	case predInts:
 		exprs(p.left)
 		exprs(p.right)
+	case predExpr:
+		exprs(p.left)
+	case predHas:
+		need(p.path, p.kinds)
 	}
 	for _, a := range p.args {
 		a.columns(need, exprs)
@@ -212,7 +216,7 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 		o.slotKey[s], o.slotCol[s] = int16(position(q.paths[s/kindSlots])), -1
 	}
 	slot := func(path int, kinds uint8) {
-		for kind := vec.KindBool; kind <= vec.KindVariant; kind++ {
+		for kind := vec.KindNull; kind <= vec.KindVariant; kind++ {
 			s := path*kindSlots + int(kind) - 1
 			if kinds&kindBit(kind) == 0 || o.slotKey[s] >= 0 || o.slotCol[s] >= 0 {
 				continue
@@ -221,23 +225,21 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 			o.columns = append(o.columns, colstore.ColumnID{Path: q.paths[path], Kind: kind})
 		}
 	}
-	var need func(e *sexpr, kinds uint8)
-	need = func(e *sexpr, kinds uint8) {
-		if e.op != OpColumn {
-			for _, a := range e.args {
-				need(a, kindBit(vec.KindInt))
-			}
-
-			return
+	var need func(e *sexpr)
+	need = func(e *sexpr) {
+		if e.op == OpColumn {
+			slot(e.path, e.kinds)
 		}
-		slot(e.path, kinds)
+		for _, a := range e.args {
+			need(a)
+		}
 	}
 	if residual != nil {
-		residual.columns(slot, func(e *sexpr) { need(e, kindBit(vec.KindInt)) })
+		residual.columns(slot, need)
 	}
 	for i := range ap.args {
 		if len(ap.args[i].words) != 0 {
-			need(ap.args[i].expr, ap.args[i].kinds)
+			need(ap.args[i].expr)
 		}
 	}
 

@@ -43,6 +43,21 @@ func (w *worker) gather(e *sexpr, n int, idx []uint32, dst *colVec) error {
 
 		return nil
 	}
+	if e.op != OpColumn && !e.ints {
+		o, err := w.operand(e, n, idx)
+		if err != nil {
+			return err
+		}
+		for j := 0; j < n; j++ {
+			r := j
+			if idx != nil && !o.dense {
+				r = int(idx[j])
+			}
+			dst.appendValue(o.at(r))
+		}
+
+		return nil
+	}
 	if e.op != OpColumn {
 		vals, valid, err := w.evalInt(e, n, idx, 0)
 		if err != nil {

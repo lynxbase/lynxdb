@@ -11,6 +11,14 @@
 // values only, a numeric literal with integers and floats, a boolean literal
 // with booleans.
 //
+// Scalar functions compute a value per row. A function of a value it cannot
+// take, of a null or of a missing one gives no value, which Exists, IsNull,
+// IsMissing, TypeOf, Coalesce, If and Case tell apart from a value as their
+// comments say. Arithmetic keeps integers, gives a float when either side is
+// one, and gives no value when dividing by zero; Add joins two strings.
+// Inside a scalar function, comparisons, And, Or and Not are three-valued:
+// they give no value where the outcome depends on a value that is not there.
+//
 // Group keys keep the kind of every value, so 1 and "1" form two groups, and
 // missing keys form one group whose key is null.
 //
@@ -54,6 +62,28 @@ const (
 	OpSub
 	OpMul
 	OpDiv
+	OpMod
+	OpBin
+	OpToInt
+	OpToFloat
+	OpToString
+	OpToBool
+	OpIf
+	OpCase
+	OpCoalesce
+	OpNullIf
+	OpExists
+	OpIsNull
+	OpIsMissing
+	OpTypeOf
+	OpLength
+	OpLower
+	OpUpper
+	OpSubstr
+	OpConcat
+	OpStartsWith
+	OpEndsWith
+	OpReplace
 )
 
 // Expr is a node of an expression tree; which fields it uses depends on Op.
@@ -152,3 +182,79 @@ func Mul(a, b *Expr) *Expr { return pair(OpMul, a, b) }
 
 // Div is a / b, truncated for integers and missing when b is zero.
 func Div(a, b *Expr) *Expr { return pair(OpDiv, a, b) }
+
+// Mod is the remainder of the integer division a / b.
+func Mod(a, b *Expr) *Expr { return pair(OpMod, a, b) }
+
+func call(op Op, args ...*Expr) *Expr { return &Expr{Op: op, Args: args} }
+
+// Bin is the start of the bucket of the given width that holds x: the
+// largest multiple of width that is not above x.
+func Bin(x, width *Expr) *Expr { return call(OpBin, x, width) }
+
+// ToInt converts a number, a boolean or the decimal text of a number to an
+// integer, truncating a fraction.
+func ToInt(a *Expr) *Expr { return call(OpToInt, a) }
+
+// ToFloat converts a number, a boolean or the text of a number to a float.
+func ToFloat(a *Expr) *Expr { return call(OpToFloat, a) }
+
+// ToString is the text of a string, a number or a boolean.
+func ToString(a *Expr) *Expr { return call(OpToString, a) }
+
+// ToBool converts a boolean, a number, which is true unless zero, or the
+// text true or false.
+func ToBool(a *Expr) *Expr { return call(OpToBool, a) }
+
+// If is a where cond is true and b where it is false.
+func If(cond, a, b *Expr) *Expr { return call(OpIf, cond, a, b) }
+
+// Case takes conditions and values in turn, then optionally a default: it
+// is the value after the first condition that is true, or else the default.
+func Case(args ...*Expr) *Expr { return call(OpCase, args...) }
+
+// Coalesce is the first argument that has a value.
+func Coalesce(args ...*Expr) *Expr { return call(OpCoalesce, args...) }
+
+// NullIf is a unless it equals b.
+func NullIf(a, b *Expr) *Expr { return call(OpNullIf, a, b) }
+
+// Exists is true where a holds a value or a null.
+func Exists(a *Expr) *Expr { return call(OpExists, a) }
+
+// IsNull is true where a holds a null.
+func IsNull(a *Expr) *Expr { return call(OpIsNull, a) }
+
+// IsMissing is true where a holds neither a value nor a null.
+func IsMissing(a *Expr) *Expr { return call(OpIsMissing, a) }
+
+// TypeOf names what a holds: string, int, float, bool, array, null or
+// missing.
+func TypeOf(a *Expr) *Expr { return call(OpTypeOf, a) }
+
+// Length is the number of characters of a string.
+func Length(a *Expr) *Expr { return call(OpLength, a) }
+
+// Lower is a string in lower case.
+func Lower(a *Expr) *Expr { return call(OpLower, a) }
+
+// Upper is a string in upper case.
+func Upper(a *Expr) *Expr { return call(OpUpper, a) }
+
+// Substr is the characters of s from start, counted from zero or, when
+// negative, from the end; args may hold how many characters to take.
+func Substr(s, start *Expr, args ...*Expr) *Expr {
+	return call(OpSubstr, append([]*Expr{s, start}, args...)...)
+}
+
+// Concat joins strings.
+func Concat(args ...*Expr) *Expr { return call(OpConcat, args...) }
+
+// StartsWith is true where the string s begins with prefix.
+func StartsWith(s, prefix *Expr) *Expr { return call(OpStartsWith, s, prefix) }
+
+// EndsWith is true where the string s ends with suffix.
+func EndsWith(s, suffix *Expr) *Expr { return call(OpEndsWith, s, suffix) }
+
+// Replace is s with every occurrence of the string from replaced by to.
+func Replace(s, from, to *Expr) *Expr { return call(OpReplace, s, from, to) }

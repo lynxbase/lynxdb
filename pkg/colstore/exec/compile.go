@@ -41,8 +41,10 @@ type query struct {
 	names []string
 	order []orderSpec
 	limit int
-	// depth bounds the nesting of the filter and of scalar expressions.
+	// depth bounds the nesting of the filter and of scalar expressions, and
+	// slots counts the computed nodes of the scalar expressions.
 	depth int
+	slots int
 }
 
 type orderSpec struct {
@@ -56,7 +58,16 @@ type sexpr struct {
 	path int
 	kind vec.Kind
 	lit  Value
+	pat  tokenfilter.Pattern
 	args []*sexpr
+	// kinds is the set of kinds the expression can give, a bit per kind.
+	kinds uint8
+	// ints is set for a tree of integer columns, integer literals and
+	// integer functions, which evalInt computes at depth.
+	ints  bool
+	depth int
+	// slot numbers the buffers of a computed node or a literal.
+	slot int
 }
 
 func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
@@ -174,47 +185,55 @@ func (q *query) scanExpr(e *Expr, depth int) (*sexpr, error) {
 		if e.Kind > vec.KindVariant {
 			return nil, unsupported("column %q of unknown kind", e.Path)
 		}
-
-		return &sexpr{op: OpColumn, path: q.path(e.Path), kind: e.Kind}, nil
-	case OpLiteral:
-		return &sexpr{op: OpLiteral, lit: e.Value}, nil
-	case OpHourOfDay, OpAdd, OpSub, OpMul, OpDiv:
-		want := 2
-		if e.Op == OpHourOfDay {
-			want = 1
-		}
-		if len(e.Args) != want {
-			return nil, unsupported("wrong number of arguments")
-		}
-		s := &sexpr{op: e.Op}
-		for i, a := range e.Args {
-			arg, err := q.scanExpr(a, depth+1+i)
-			if err != nil {
-				return nil, err
-			}
-			if !arg.integer() {
-				return nil, unsupported("scalar functions take integers")
-			}
-			s.args = append(s.args, arg)
+		s := &sexpr{op: OpColumn, path: q.path(e.Path), kind: e.Kind, kinds: kindBit(e.Kind), ints: e.Kind == vec.KindInt, depth: depth}
+		if e.Kind == KindAny {
+			s.kinds = allKinds
 		}
 
 		return s, nil
-	}
-
-	return nil, unsupported("expression is not a value")
-}
-
-// integer reports whether e can be read as integers: a computed value, an
-// integer literal, or a column, of which only the integers are read.
-func (e *sexpr) integer() bool {
-	switch e.op {
-	case OpColumn:
-		return e.kind == vec.KindInt || e.kind == KindAny
 	case OpLiteral:
-		return e.lit.Kind == vec.KindInt
+		s := &sexpr{op: OpLiteral, lit: e.Value, ints: e.Value.Kind == vec.KindInt, depth: depth, slot: q.slots}
+		if !e.Value.IsNull() {
+			s.kinds = kindBit(e.Value.Kind)
+		}
+		q.slots++
+
+		return s, nil
+	}
+	least, most := arity(e.Op)
+	if least == 0 {
+		return nil, unsupported("expression is not a value")
+	}
+	if len(e.Args) < least || (most >= 0 && len(e.Args) > most) {
+		return nil, unsupported("wrong number of arguments")
+	}
+	s := &sexpr{op: e.Op, pat: e.Pattern, depth: depth, slot: q.slots}
+	q.slots++
+	switch e.Op {
+	case OpHourOfDay, OpAdd, OpSub, OpMul, OpDiv:
+		s.ints = true
+	}
+	for i, a := range e.Args {
+		arg, err := q.scanExpr(a, depth+1+i)
+		if err != nil {
+			return nil, err
+		}
+		s.ints = s.ints && arg.ints
+		switch e.Op {
+		case OpExists, OpIsNull, OpIsMissing, OpTypeOf:
+			// A reference to every kind sees nulls apart from missing values.
+			if arg.op == OpColumn && arg.kind == KindAny {
+				arg.kinds |= nullBit
+			}
+		}
+		s.args = append(s.args, arg)
+	}
+	s.kinds = resultKinds(e.Op, s.args)
+	if s.ints {
+		s.kinds = kindBit(vec.KindInt)
 	}
 
-	return true
+	return s, nil
 }
 
 type predKind uint8
@@ -232,6 +251,11 @@ const (
 	predBool
 	// predInts compares two integer expressions row by row.
 	predInts
+	// predExpr is true where a scalar expression gives true.
+	predExpr
+	// predHas is true where a path holds a value of one of the kinds of a
+	// set, or where it holds none of them when ne is set.
+	predHas
 )
 
 // pred is a filter node bound to the table's paths.
@@ -250,8 +274,30 @@ type pred struct {
 	ne, none       bool
 	f              float64
 	left, right    *sexpr
+	// kinds is the set of kinds a predHas looks for.
+	kinds uint8
 	// cost orders the arguments of an And, cheapest first.
 	cost int
+}
+
+// presence returns the filter node for Exists, IsNull or IsMissing of a
+// column, which block statistics can settle.
+func (q *query) presence(e *Expr) *pred {
+	col := e.Args[0]
+	if len(e.Args) != 1 || col == nil || col.Op != OpColumn || col.Kind > vec.KindVariant {
+		return nil
+	}
+	p := &pred{kind: predHas, path: q.path(col.Path), kinds: kindBit(col.Kind), ne: e.Op == OpIsMissing, cost: 1}
+	switch {
+	case col.Kind == KindAny && e.Op == OpIsNull:
+		p.kinds = nullBit
+	case col.Kind == KindAny:
+		p.kinds = allKinds | nullBit
+	case e.Op == OpIsNull:
+		return &pred{kind: predConst}
+	}
+
+	return p
 }
 
 func (q *query) pred(e *Expr, depth int) (*pred, error) {
@@ -291,8 +337,11 @@ func (q *query) pred(e *Expr, depth int) (*pred, error) {
 
 		return &pred{kind: predNot, args: []*pred{arg}, cost: arg.cost}, nil
 	case OpMatch:
-		if len(e.Args) != 1 || e.Args[0] == nil || e.Args[0].Op != OpColumn {
-			return nil, unsupported("match takes a column")
+		if len(e.Args) != 1 || e.Args[0] == nil {
+			return nil, unsupported("match takes one argument")
+		}
+		if e.Args[0].Op != OpColumn {
+			return q.predExpr(e, depth)
 		}
 		col := e.Args[0]
 		if col.Kind != vec.KindString && col.Kind != KindAny {
@@ -318,9 +367,32 @@ func (q *query) pred(e *Expr, depth int) (*pred, error) {
 		}
 
 		return &pred{kind: predConst, lit: e.Value}, nil
+	case OpExists, OpIsNull, OpIsMissing:
+		if len(e.Args) == 1 {
+			if p := q.presence(e); p != nil {
+				return p, nil
+			}
+		}
+	}
+	if least, _ := arity(e.Op); least == 0 {
+		return nil, unsupported("expression is not a filter")
 	}
 
-	return nil, unsupported("expression is not a filter")
+	return q.predExpr(e, depth)
+}
+
+// predExpr returns the filter node that is true where the scalar expression
+// e gives true.
+func (q *query) predExpr(e *Expr, depth int) (*pred, error) {
+	s, err := q.scanExpr(e, depth+1)
+	if err != nil {
+		return nil, err
+	}
+	if s.kinds&kindBit(vec.KindBool) == 0 {
+		return &pred{kind: predConst}, nil
+	}
+
+	return &pred{kind: predExpr, left: s, cost: 12}, nil
 }
 
 // mergeRanges folds the integer range comparisons of one column among the
@@ -377,8 +449,8 @@ func (q *query) comparison(op Op, a, b *Expr, depth int) (*pred, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !left.integer() || !right.integer() {
-			return nil, unsupported("a comparison of two expressions takes integers")
+		if !left.ints || !right.ints {
+			return q.predExpr(pair(op, a, b), depth)
 		}
 
 		return &pred{kind: predInts, op: op, left: left, right: right, cost: 8}, nil

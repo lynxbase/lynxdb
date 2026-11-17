@@ -1,6 +1,9 @@
 package exec
 
-import "github.com/lynxbase/lynxdb/pkg/vec"
+import (
+	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
+	"github.com/lynxbase/lynxdb/pkg/vec"
+)
 
 // pexpr is a scalar expression over the columns of an aggregate.
 type pexpr struct {
@@ -10,6 +13,9 @@ type pexpr struct {
 	args []*pexpr
 	// slot numbers the buffer that holds a computed node's values.
 	slot int
+	pat  tokenfilter.Pattern
+	// byValue is set for a function computed row by row from values.
+	byValue bool
 }
 
 func (q *query) project(p *Project) error {
@@ -70,13 +76,31 @@ func postExpr(e *Expr, in []string, slots *int) (*pexpr, error) {
 		return pe, nil
 	}
 
-	return nil, unsupported("expression over an aggregate")
+	least, most := arity(e.Op)
+	if least == 0 || len(e.Args) < least || (most >= 0 && len(e.Args) > most) {
+		return nil, unsupported("expression over an aggregate")
+	}
+	*slots++
+	pe := &pexpr{op: e.Op, pat: e.Pattern, slot: *slots - 1, byValue: true}
+	for _, a := range e.Args {
+		arg, err := postExpr(a, in, slots)
+		if err != nil {
+			return nil, err
+		}
+		pe.args = append(pe.args, arg)
+	}
+
+	return pe, nil
 }
 
 // postEval computes a projection over batches of aggregate rows.
 type postEval struct {
 	tmp []colVec
 	out []colVec
+	// args, vals and text serve functions computed from values.
+	args []*colVec
+	vals []Value
+	text []byte
 }
 
 func (p *postEval) held() int {
@@ -141,6 +165,9 @@ func (p *postEval) eval(e *pexpr, in []colVec, n int) *colVec {
 
 		return out
 	}
+	if e.byValue {
+		return p.byValue(e, in, n)
+	}
 	a := p.eval(e.args[0], in, n)
 	out := p.buf(e.slot)
 	if lit := e.args[1]; lit.op == OpLiteral && lit.lit.Kind == vec.KindInt && a.kind == vec.KindInt && (e.op != OpDiv || lit.lit.Int != 0) {
@@ -199,6 +226,29 @@ func (p *postEval) eval(e *pexpr, in []colVec, n int) *colVec {
 	return out
 }
 
+// byValue computes a function row by row from the values of its arguments.
+func (p *postEval) byValue(e *pexpr, in []colVec, n int) *colVec {
+	base := len(p.args)
+	for _, a := range e.args {
+		p.args = append(p.args, p.eval(a, in, n))
+	}
+	args := p.args[base:]
+	p.vals = fit(p.vals, len(args))
+	out := p.buf(e.slot)
+	out.reset()
+	for i := 0; i < n; i++ {
+		for k, a := range args {
+			p.vals[k] = a.value(i)
+		}
+		var v Value
+		v, p.text = scalarValue(e.op, &e.pat, p.vals, p.text[:0])
+		out.appendValue(v)
+	}
+	p.args = p.args[:base]
+
+	return out
+}
+
 // arith applies an arithmetic operation to two values: integers stay
 // integers, a float makes the result a float, and anything else, like a
 // division of integers by zero, gives null.
@@ -238,6 +288,9 @@ func arith(op Op, a, b Value) Value {
 	case OpMul:
 		x *= y
 	default:
+		if y == 0 {
+			return Value{}
+		}
 		x /= y
 	}
 

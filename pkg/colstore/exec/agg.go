@@ -48,14 +48,21 @@ type keyPart struct {
 	// last one for rows without the key.
 	card     int
 	nullable bool
-	// ints holds the values of a partInts, one per selected row when dense
-	// and one per block row otherwise; one is set when they all equal lo.
-	ints  []int64
+	// ints holds the values of a partInts; one is set when they all equal
+	// lo.
+	ints []int64
+	one  bool
+	lo   int64
+	// step is what the values of a partInts are multiples of, counted
+	// from lo.
+	step int64
+	// dense is set when the part's columns and ints hold one value per
+	// selected row instead of one per block row.
 	dense bool
-	one   bool
-	lo    int64
-	// valid marks the selected rows of a dense part that have a value.
-	valid []uint8
+	// computed is set for integers that evalInt gave, one per selected row;
+	// valid then marks the rows that have a value, nil when all do.
+	computed bool
+	valid    []uint8
 	// cols are the columns of a partRows by kind.
 	cols [kindSlots + 1]*vec.Column
 
@@ -288,7 +295,8 @@ func (a *aggWorker) classify(n int, idx []uint32) (codes bool, domain int, err e
 
 func (a *aggWorker) classifyKey(e *sexpr, p *keyPart, n int, idx []uint32) error {
 	w := a.w
-	p.mode, p.col, p.val, p.card, p.nullable, p.one, p.valid, p.dense = partRows, nil, nil, 1, false, false, nil, false
+	p.mode, p.col, p.val, p.card, p.nullable, p.one, p.valid, p.dense, p.computed = partRows, nil, nil, 1, false, false, nil, false, false
+	p.step = 1
 	if e.op != OpColumn {
 		return a.classifyComputed(e, p, n, idx)
 	}
@@ -377,15 +385,82 @@ func (a *aggWorker) classifyKey(e *sexpr, p *keyPart, n int, idx []uint32) error
 	return nil
 }
 
+// classifyOperand presents the value of the computed key e.
+func (a *aggWorker) classifyOperand(e *sexpr, o *operand, p *keyPart) {
+	p.dense = o.dense
+	var c *vec.Column
+	found := 0
+	for kind := vec.KindBool; kind <= vec.KindVariant; kind++ {
+		if p.cols[kind] = o.cols[kind]; o.cols[kind] != nil {
+			c = o.cols[kind]
+			found++
+		}
+	}
+	p.cols[vec.KindNull] = nil
+	switch {
+	case found == 0:
+		p.mode = partNull
+
+		return
+	case found > 1:
+		return
+	}
+	p.kind, p.col, p.nullable = c.Kind, c, c.Valid != nil
+	switch c.Kind {
+	case vec.KindString, vec.KindVariant:
+		switch c.Layout {
+		case vec.Const:
+			p.mode, p.val = partConst, c.DictValue(0)
+		case vec.Dict:
+			p.mode, p.card = partDict, c.DictLen()
+		default:
+			p.mode = partBytes
+
+			return
+		}
+	case vec.KindInt:
+		lo, hi := c.Ints[0], c.Ints[0]
+		if p.one = c.Layout == vec.Const; !p.one {
+			lo, hi = vec.MinMaxInt64(c.Ints[:c.Rows])
+		}
+		// Bucket starts are multiples of the bucket width.
+		if e.op == OpBin {
+			if w := e.args[1]; w.op == OpLiteral && w.lit.Kind == vec.KindInt && w.lit.Int > 1 && lo%w.lit.Int == 0 {
+				p.step = w.lit.Int
+			}
+		}
+		if (uint64(hi)-uint64(lo))/uint64(p.step) >= maxCodes {
+			p.step = 1
+
+			return
+		}
+		p.mode, p.lo, p.card, p.ints = partInts, lo, int((hi-lo)/p.step)+1, c.Ints
+	default:
+		return
+	}
+	if p.nullable {
+		p.card++
+	}
+}
+
 func (a *aggWorker) classifyComputed(e *sexpr, p *keyPart, n int, idx []uint32) error {
 	w := a.w
+	if !e.ints {
+		o, err := w.operand(e, n, idx)
+		if err != nil {
+			return err
+		}
+		a.classifyOperand(e, &o, p)
+
+		return nil
+	}
 	vals, valid, err := w.evalInt(e, n, idx, 0)
 	if err != nil {
 		return err
 	}
 	// The values live in a buffer of the evaluator; the part takes it over.
 	p.buf, w.ints[0] = vals, p.buf
-	p.kind, p.ints, p.dense = vec.KindInt, vals, true
+	p.kind, p.ints, p.dense, p.computed = vec.KindInt, vals, true, true
 	if valid != nil {
 		p.vbuf = append(p.vbuf[:0], valid...)
 		p.valid, p.nullable = p.vbuf, true
@@ -437,6 +512,9 @@ func (a *aggWorker) codes(n int, idx []uint32) []uint16 {
 
 // partCodes writes the code of one key for each selected row.
 func (a *aggWorker) partCodes(p *keyPart, dst []uint16, idx []uint32) {
+	if p.dense {
+		idx = nil
+	}
 	null := uint16(p.card - 1)
 	switch p.mode {
 	case partConst:
@@ -463,7 +541,11 @@ func (a *aggWorker) partCodes(p *keyPart, dst []uint16, idx []uint32) {
 		switch {
 		case p.one:
 			clear(dst)
-		case p.dense || idx == nil:
+		case p.step != 1:
+			for j, v := range p.ints[:len(dst)] {
+				dst[j] = uint16((v - p.lo) / p.step)
+			}
+		case idx == nil:
 			for j, v := range p.ints[:len(dst)] {
 				dst[j] = uint16(v - p.lo)
 			}
@@ -531,7 +613,7 @@ func (a *aggWorker) codeKey(code int) ([]byte, uint64) {
 		case p.mode == partDict:
 			key = appendKeyBytes(key, bytesTag(p.kind), p.col.DictValue(pc[k]), last)
 		default:
-			key = appendKeyInt(key, p.lo+int64(pc[k]))
+			key = appendKeyInt(key, p.lo+int64(pc[k])*p.step)
 		}
 	}
 	s.key = key
@@ -557,7 +639,7 @@ func (a *aggWorker) histogram(n int, idx []uint32, domain int) {
 			single = p
 		}
 	}
-	if single != nil && single.mode == partDict && len(single.col.Codes8) != 0 && idx == nil {
+	if single != nil && single.mode == partDict && len(single.col.Codes8) != 0 && (idx == nil || single.dense) {
 		c := single.col
 		vec.Histogram8((*[256]uint32)(hist), c.Codes8)
 		if c.Valid != nil {
@@ -645,6 +727,9 @@ func (a *aggWorker) localKey(p *keyPart, inPlace bool, g int) []byte {
 // runsOfBytes numbers the runs of equal strings of a flat column, hashing
 // each run's string in place.
 func (a *aggWorker) runsOfBytes(p *keyPart, gid, idx []uint32) {
+	if p.dense {
+		idx = nil
+	}
 	s := a.s
 	c := p.col
 	offs, data, valid := c.Offsets, c.Data, c.Valid
@@ -709,6 +794,9 @@ func (a *aggWorker) runsOfKeys(gid, idx []uint32) {
 // appendRowKey appends the encoded value of one key for selected row j,
 // which is row r of the block.
 func appendRowKey(dst []byte, p *keyPart, j, r int, last bool) []byte {
+	if p.dense {
+		r = j
+	}
 	switch p.mode {
 	case partNull:
 		return append(dst, tagNull)
@@ -726,7 +814,7 @@ func appendRowKey(dst []byte, p *keyPart, j, r int, last bool) []byte {
 		return appendKeyBytes(dst, bytesTag(p.kind), p.col.Bytes(r), last)
 	case partInts:
 		switch {
-		case p.dense:
+		case p.computed:
 			if p.valid != nil && p.valid[j] == 0 {
 				return append(dst, tagNull)
 			}
@@ -740,7 +828,7 @@ func appendRowKey(dst []byte, p *keyPart, j, r int, last bool) []byte {
 
 		return appendKeyInt(dst, p.col.Int(r))
 	}
-	if p.dense {
+	if p.computed {
 		if p.valid != nil && p.valid[j] == 0 {
 			return append(dst, tagNull)
 		}
@@ -792,6 +880,22 @@ func (a *aggWorker) feed(t *target, n int, idx []uint32) error {
 func (a *aggWorker) feedArg(i int, t *target, n int, idx []uint32) error {
 	w := a.w
 	arg := &a.plan.args[i]
+	if arg.expr.op != OpColumn && !arg.expr.ints {
+		o, err := w.operand(arg.expr, n, idx)
+		if err != nil {
+			return err
+		}
+		if o.dense {
+			idx = nil
+		}
+		for kind := vec.KindBool; kind <= vec.KindVariant; kind++ {
+			if c := o.cols[kind]; c != nil && arg.kinds&kindBit(kind) != 0 {
+				a.feedValues(i, kind, c, t, n, idx)
+			}
+		}
+
+		return nil
+	}
 	if arg.expr.op != OpColumn {
 		vals, valid, err := w.evalInt(arg.expr, n, idx, 0)
 		if err != nil {
@@ -845,6 +949,15 @@ func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uin
 	if err != nil {
 		return err
 	}
+	a.feedValues(i, kind, c, t, n, idx)
+
+	return nil
+}
+
+// feedValues adds the values that column c of an argument holds in the
+// selected rows.
+func (a *aggWorker) feedValues(i int, kind vec.Kind, c *vec.Column, t *target, n int, idx []uint32) {
+	arg := &a.plan.args[i]
 	gid, rows, count := t.gid, idx, n
 	if c.Valid != nil {
 		gid, rows = a.compactValid(c.Valid, t.gid, n, idx)
@@ -880,8 +993,6 @@ func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uin
 			}
 		}
 	}
-
-	return nil
 }
 
 // compactValid returns the selected rows that valid marks and their groups.

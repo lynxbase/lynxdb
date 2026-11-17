@@ -46,6 +46,13 @@ type scratch struct {
 	table  []uint8
 	idx    []uint32
 
+	// outs holds the buffers of the computed nodes of scalar expressions,
+	// opers the operands of the nodes being computed and vals the values of
+	// one row of them.
+	outs  []scalarOut
+	opers []operand
+	vals  []Value
+
 	agg aggScratch
 	row rowScratch
 	ord orderedScratch
@@ -90,6 +97,7 @@ func newWorker(x *execution) *worker {
 	clear(s.used)
 	s.seen, s.seenOK = fit(s.seen, slots), fit(s.seenOK, slots)
 	clear(s.seenOK)
+	s.outs, s.opers, s.vals = fit(s.outs, q.slots), s.opers[:0], s.vals[:0]
 	s.sels = fit(s.sels, q.depth+3)
 	s.ints = fit(s.ints, q.depth+3)
 	s.valids = fit(s.valids, q.depth+3)
@@ -121,6 +129,11 @@ func (w *worker) release() {
 		w.views[i].Drop()
 	}
 	w.ord.drop()
+	for i := range w.outs {
+		w.outs[i].entries, w.outs[i].dict, w.outs[i].lit.Data = vec.Column{}, vec.Column{}, nil
+	}
+	clear(w.opers[:cap(w.opers)])
+	clear(w.vals[:cap(w.vals)])
 	scratchPool.Put(w.scratch)
 	w.scratch = nil
 }
@@ -169,6 +182,9 @@ func (w *worker) held() int {
 	}
 	for i := range w.seen {
 		n += w.seen[i].Retained()
+	}
+	for i := range w.outs {
+		n += w.outs[i].held()
 	}
 	for i := range w.sels {
 		n += used(w.sels[i].mask) + 4*used(w.sels[i].list)

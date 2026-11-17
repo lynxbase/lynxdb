@@ -84,7 +84,12 @@ func sameExpr(a, b *sexpr) bool {
 	if a.op != b.op || a.path != b.path || a.kind != b.kind || len(a.args) != len(b.args) {
 		return false
 	}
-	if a.op == OpLiteral && (a.lit.Kind != b.lit.Kind || a.lit.Int != b.lit.Int) {
+	if a.op == OpLiteral && (a.lit.Kind != b.lit.Kind || a.lit.Int != b.lit.Int || a.lit.Float != b.lit.Float ||
+		a.lit.Bool != b.lit.Bool || string(a.lit.Bytes) != string(b.lit.Bytes)) {
+		return false
+	}
+	// Patterns are not compared.
+	if a.op == OpMatch {
 		return false
 	}
 	for i := range a.args {
@@ -102,14 +107,7 @@ func (ap *aggPlan) arg(e *sexpr) int {
 			return i
 		}
 	}
-	a := aggArg{expr: e, kinds: kindBit(vec.KindInt)}
-	if e.op == OpColumn {
-		a.kinds = kindBit(e.kind)
-		if e.kind == KindAny {
-			a.kinds = 1<<vec.KindBool | 1<<vec.KindInt | 1<<vec.KindFloat | 1<<vec.KindString | 1<<vec.KindVariant
-		}
-	}
-	ap.args = append(ap.args, a)
+	ap.args = append(ap.args, aggArg{expr: e, kinds: e.kinds &^ nullBit})
 
 	return len(ap.args) - 1
 }

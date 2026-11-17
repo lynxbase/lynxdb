@@ -303,17 +303,17 @@ func TestUnsupportedPlans(t *testing.T) {
 	scan := &exec.Scan{}
 	count := []exec.Agg{{Name: "count", Func: exec.Count}}
 	for name, plan := range map[string]exec.Node{
-		"bare scan":        scan,
-		"nil":              nil,
-		"nested aggregate": &exec.Aggregate{Input: &exec.Aggregate{Input: scan, Aggs: count}, Aggs: count},
-		"sum of strings":   &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "s", Func: exec.Sum, Arg: str("kind")}}},
-		"sum of nothing":   &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "s", Func: exec.Sum}}},
-		"empty aggregate":  &exec.Aggregate{Input: scan},
-		"unknown sort":     &exec.Sort{Input: &exec.Aggregate{Input: scan, Aggs: count}, By: []exec.Order{{Column: "nope"}}},
-		"unknown column":   &exec.Project{Input: &exec.Aggregate{Input: scan, Aggs: count}, Exprs: []exec.Named{named("x", anyOf("nope"))}},
-		"filter of ints":   &exec.Aggregate{Input: &exec.Scan{Filter: exec.Add(num("a"), num("b"))}, Aggs: count},
-		"bool ordering":    &exec.Aggregate{Input: &exec.Scan{Filter: exec.Lt(anyOf("a"), exec.Bool(true))}, Aggs: count},
-		"float arithmetic": &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "s", Func: exec.Sum, Arg: exec.Add(num("a"), exec.Float(1))}}},
+		"bare scan":         scan,
+		"nil":               nil,
+		"nested aggregate":  &exec.Aggregate{Input: &exec.Aggregate{Input: scan, Aggs: count}, Aggs: count},
+		"sum of strings":    &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "s", Func: exec.Sum, Arg: str("kind")}}},
+		"sum of nothing":    &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "s", Func: exec.Sum}}},
+		"empty aggregate":   &exec.Aggregate{Input: scan},
+		"unknown sort":      &exec.Sort{Input: &exec.Aggregate{Input: scan, Aggs: count}, By: []exec.Order{{Column: "nope"}}},
+		"unknown column":    &exec.Project{Input: &exec.Aggregate{Input: scan, Aggs: count}, Exprs: []exec.Named{named("x", anyOf("nope"))}},
+		"bool ordering":     &exec.Aggregate{Input: &exec.Scan{Filter: exec.Lt(anyOf("a"), exec.Bool(true))}, Aggs: count},
+		"too few arguments": &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "s", Func: exec.Sum, Arg: exec.Coalesce()}}},
+		"sum of text":       &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "s", Func: exec.Sum, Arg: exec.Lower(anyOf("a"))}}},
 	} {
 		if _, err := exec.Run(context.Background(), snap, plan, exec.Options{}); !errors.Is(err, exec.ErrUnsupported) {
 			t.Errorf("%s: got %v, want ErrUnsupported", name, err)

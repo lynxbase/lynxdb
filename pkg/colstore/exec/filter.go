@@ -156,9 +156,97 @@ func (w *worker) decide(p *pred) verdict {
 		if w.ref(p.path, vec.KindBool) == nil {
 			return none
 		}
+	case predHas:
+		v := none
+		for kind := vec.KindNull; kind <= vec.KindVariant; kind++ {
+			if p.kinds&kindBit(kind) == 0 {
+				continue
+			}
+			if ref := w.ref(p.path, kind); ref != nil {
+				if v = some; ref.Count == w.rows {
+					v = all
+
+					break
+				}
+			}
+		}
+		switch {
+		case v == some:
+		case (v == all) != p.ne:
+			return all
+		default:
+			return none
+		}
 	}
 
 	return some
+}
+
+// evalHas selects the rows that hold a value of one of the kinds of p.
+func (w *worker) evalHas(p *pred, depth int) (verdict, error) {
+	m := w.mask(depth)
+	have, every := false, false
+	for kind := vec.KindNull; kind <= vec.KindVariant && !every; kind++ {
+		if p.kinds&kindBit(kind) == 0 || !w.has(p.path, kind) {
+			continue
+		}
+		var valid vec.Bitmap
+		switch {
+		case w.shared != nil:
+			valid = w.sharedColumn(p.path, kind).Valid
+		case w.ref(p.path, kind).Count < w.rows:
+			var err error
+			if valid, err = w.presence(p.path, kind); err != nil {
+				return none, err
+			}
+		}
+		switch {
+		case valid == nil:
+			every = true
+		case !have:
+			vec.MaskFromBitmap(m, valid)
+			have = true
+		default:
+			other := w.mask(depth + 1)
+			vec.MaskFromBitmap(other, valid)
+			vec.MaskOr(m, m, other)
+		}
+	}
+	switch {
+	case every || !have:
+		if every != p.ne {
+			return all, nil
+		}
+
+		return none, nil
+	case p.ne:
+		vec.MaskNot(m, m)
+	}
+
+	return some, nil
+}
+
+// evalExpr selects the rows where a scalar expression gives true.
+func (w *worker) evalExpr(p *pred, depth int) (verdict, error) {
+	o, err := w.operand(p.left, w.rows, nil)
+	c := o.cols[vec.KindBool]
+	if err != nil || c == nil {
+		return none, err
+	}
+	m := w.mask(depth)
+	if c.Layout == vec.Const {
+		if !c.Bools.Get(0) {
+			return none, nil
+		}
+
+		return w.present(c, depth), nil
+	}
+	vec.MaskFromBitmap(m, c.Bools)
+	if c.Valid != nil {
+		vec.MaskAndBitmap(m, c.Valid)
+	}
+
+	return some, nil
 }
 
 // eval computes a filter node for the block; when it returns some, the
@@ -194,6 +282,10 @@ func (w *worker) eval(p *pred, depth int) (verdict, error) {
 		return w.evalBool(p, depth)
 	case predInts:
 		return w.evalInts(p, depth)
+	case predExpr:
+		return w.evalExpr(p, depth)
+	case predHas:
+		return w.evalHas(p, depth)
 	}
 	if p.lit.Bool {
 		return all, nil
