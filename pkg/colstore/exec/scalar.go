@@ -94,7 +94,7 @@ func resultKinds(op Op, args []*sexpr) uint8 {
 // none.
 func strict(op Op) bool {
 	switch op {
-	case OpIf, OpCase, OpCoalesce, OpNullIf, OpExists, OpIsNull, OpIsMissing, OpTypeOf, OpAnd, OpOr:
+	case OpIf, OpCase, OpCoalesce, OpNullIf, OpExists, OpIsNull, OpIsMissing, OpTypeOf, OpAnd, OpOr, OpFunc:
 		return false
 	}
 
@@ -487,7 +487,7 @@ func (w *worker) overEntries(e *sexpr, args []operand, k, n int, idx []uint32) o
 		if vals[k] = (Value{}); args[k].computed {
 			vals[k].Kind = vec.KindNull
 		}
-		absent, s.buf = scalarValue(e.op, &e.pat, vals, s.buf[:0])
+		absent, s.buf = w.value(e, vals, s.buf[:0])
 		if absent.Bytes != nil {
 			s.absent = append(s.absent[:0], absent.Bytes...)
 			absent.Bytes = s.absent
@@ -589,12 +589,28 @@ func (w *worker) byRow(e *sexpr, args []operand, n int, idx []uint32, b *builder
 			}
 		}
 		var v Value
-		v, buf = scalarValue(e.op, &e.pat, vals, buf[:0])
+		v, buf = w.value(e, vals, buf[:0])
 		b.put(j, v)
 	}
 	s.buf, w.vals = buf, w.vals[:base]
 
 	return b.finish()
+}
+
+// value computes the function of e for the values of its arguments in one
+// row.
+func (w *worker) value(e *sexpr, vals []Value, buf []byte) (Value, []byte) {
+	if e.op != OpFunc {
+		return scalarValue(e.op, &e.pat, vals, buf)
+	}
+	if w.fns == nil {
+		w.fns = make([]Func, w.q.funcs)
+	}
+	if w.fns[e.fn] == nil {
+		w.fns[e.fn] = e.newFunc()
+	}
+
+	return w.fns[e.fn](vals, buf)
 }
 
 // numbers is the numbers of an operand for the selected rows: ints or floats,

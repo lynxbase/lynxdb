@@ -46,6 +46,8 @@ type query struct {
 	// slots counts the computed nodes of the scalar expressions.
 	depth int
 	slots int
+	// funcs counts the OpFunc nodes of the scalar expressions.
+	funcs int
 	// located holds, per column of the aggregate, the column whose value in
 	// a row that the aggregate picked it stands for, or nil; nil when none
 	// does. The values are read for the rows of the result alone, which
@@ -93,6 +95,10 @@ type sexpr struct {
 	depth int
 	// slot numbers the buffers of a computed node or a literal.
 	slot int
+	// newFunc makes the function of an OpFunc node, which fn numbers among
+	// those of the query.
+	newFunc func() Func
+	fn      int
 }
 
 func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
@@ -281,6 +287,27 @@ func (q *query) scanExpr(e *Expr, depth int) (*sexpr, error) {
 
 		return s, nil
 	}
+	if e.Op == OpFunc {
+		if e.NewFunc == nil || len(e.Args) == 0 {
+			return nil, unsupported("a function without an implementation or without arguments")
+		}
+		s := &sexpr{op: OpFunc, newFunc: e.NewFunc, fn: q.funcs, depth: depth, slot: q.slots, kinds: allKinds}
+		q.slots++
+		q.funcs++
+		for i, a := range e.Args {
+			arg, err := q.scanExpr(a, depth+1+i)
+			if err != nil {
+				return nil, err
+			}
+			// The function tells a null from a field that is not there.
+			if arg.op == OpColumn && arg.kind == KindAny {
+				arg.kinds |= nullBit
+			}
+			s.args = append(s.args, arg)
+		}
+
+		return s, nil
+	}
 	least, most := arity(e.Op)
 	if least == 0 {
 		return nil, unsupported("expression is not a value")
@@ -463,7 +490,7 @@ func (q *query) pred(e *Expr, depth int) (*pred, error) {
 			}
 		}
 	}
-	if least, _ := arity(e.Op); least == 0 {
+	if least, _ := arity(e.Op); least == 0 && e.Op != OpFunc {
 		return nil, unsupported("expression is not a filter")
 	}
 

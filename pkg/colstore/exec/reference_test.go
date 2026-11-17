@@ -130,7 +130,7 @@ func refValue(e *exec.Expr, row refRow) exec.Value {
 			args[i].Kind = vec.KindNull
 		}
 		switch e.Op {
-		case exec.OpExists, exec.OpIsNull, exec.OpIsMissing, exec.OpTypeOf:
+		case exec.OpExists, exec.OpIsNull, exec.OpIsMissing, exec.OpTypeOf, exec.OpFunc:
 			// A reference to every kind tells a null from a missing value.
 			if a.Op == exec.OpColumn && a.Kind == exec.KindAny {
 				args[i] = row[a.Path]
@@ -216,6 +216,11 @@ func refMath(op exec.Op, args []exec.Value) exec.Value {
 
 // refApply applies a scalar function to the values of its arguments.
 func refApply(e *exec.Expr, args []exec.Value) exec.Value {
+	if e.Op == exec.OpFunc {
+		v, _ := e.NewFunc()(args, nil)
+
+		return v
+	}
 	null := exec.Value{}
 	isString := func(v exec.Value) bool { return v.Kind == vec.KindString }
 	a := args[0]
@@ -1007,6 +1012,10 @@ func refHaving(e *exec.Expr, row refRow) bool {
 		return false
 	case exec.OpNot:
 		return !refHaving(e.Args[0], row)
+	case exec.OpFunc:
+		v := refPost(e, row)
+
+		return v.Kind == vec.KindBool && v.Bool
 	}
 	a, b := refPost(e.Args[0], row), refPost(e.Args[1], row)
 	if a.IsNull() || b.IsNull() || refRank(a.Kind) != refRank(b.Kind) || a.Kind == vec.KindVariant {

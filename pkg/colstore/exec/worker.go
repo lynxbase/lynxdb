@@ -75,6 +75,9 @@ type scratch struct {
 
 // worker is the state one scan goroutine owns for one query.
 type worker struct {
+	// fns holds the functions of the query's OpFunc nodes, made for this
+	// goroutine when it first computes them.
+	fns []Func
 	*scratch
 	q     *query
 	x     *execution
