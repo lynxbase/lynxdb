@@ -32,6 +32,24 @@ const (
 
 var benchSortKey = []string{"kind", "commit.operation", "commit.collection", "did"}
 
+// The regular expressions of the benchmark: one that every match of holds a
+// literal, one made of character classes alone, and one without regard to
+// letter case.
+const (
+	benchRegexLiteral = `[Gg]ood (morning|night)`
+	benchRegexClasses = `\d{5}`
+	benchRegexAnyCase = `(?i)crypto\w*`
+)
+
+func regex(expr string) tokenfilter.Pattern {
+	p, err := tokenfilter.Regexp(expr)
+	if err != nil {
+		panic(err)
+	}
+
+	return p
+}
+
 type benchPlan struct {
 	name string
 	plan exec.Node
@@ -69,6 +87,9 @@ func benchTexts(win benchWindows) map[string]string {
 		"S5 any case":              `from bluesky | where contains(` + text + `, "ware") | stats count()`,
 		"S6 field equals":          `from bluesky | where did == "did:plc:yj3sjq3blzpynh27cumnp5ks" | stats count()`,
 		"S7 unique id":             `from bluesky | where commit.cid == "bafyreicsj6qpl6dreic6ekdjxvdjltncngl52x3jddf6dxhg2gwo35iqhi" | stats count()`,
+		"R1 regex with a literal":  `from bluesky | where matches(` + text + `, r"` + benchRegexLiteral + `") | stats count()`,
+		"R2 regex of classes":      `from bluesky | where matches(` + text + `, r"` + benchRegexClasses + `") | stats count()`,
+		"R3 regex, any case":       `from bluesky | where matches(` + text + `, r"` + benchRegexAnyCase + `") | stats count()`,
 		"A1 rare token, any field": `from bluesky sc7btuzqdaepksx43mr74pma | stats count()`,
 		"A3 any field, any case":   `from bluesky love | stats count()`,
 		"T1 count in 10 minutes":   `from bluesky | where ` + within(win.tenLo, win.tenHi) + ` | stats count()`,
@@ -184,6 +205,9 @@ func benchPlans(win benchWindows) []benchPlan {
 		{name: "S5 substring", plan: search(exec.Match(text, tokenfilter.Substring("ware"))), ordered: true},
 		{name: "S6 field equals", plan: search(exec.Eq(str("did"), exec.Str("did:plc:yj3sjq3blzpynh27cumnp5ks"))), ordered: true},
 		{name: "S7 unique id", plan: search(exec.Eq(str("commit.cid"), exec.Str("bafyreicsj6qpl6dreic6ekdjxvdjltncngl52x3jddf6dxhg2gwo35iqhi"))), ordered: true},
+		{name: "R1 regex with a literal", plan: search(exec.Match(text, regex(benchRegexLiteral))), ordered: true},
+		{name: "R2 regex of classes", plan: search(exec.Match(text, regex(benchRegexClasses))), ordered: true},
+		{name: "R3 regex, any case", plan: search(exec.Match(text, regex(benchRegexAnyCase))), ordered: true},
 		{name: "A1 rare token, any field", plan: search(exec.MatchAny(tokenfilter.Word("sc7btuzqdaepksx43mr74pma"))), ordered: true},
 		{name: "A2 common token, any field", plan: search(exec.MatchAny(tokenfilter.Word("love"))), ordered: true},
 		{name: "A3 any field, any case", plan: search(exec.MatchAny(tokenfilter.Word("love").IgnoreCase())), ordered: true},

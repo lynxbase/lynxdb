@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"runtime"
 	"slices"
@@ -433,7 +434,7 @@ func TestFlowServerTakesInsertsAndAnswersQueries(t *testing.T) {
 		return rec.Code, strings.TrimSpace(rec.Body.String())
 	}
 	query := func(text string) string {
-		code, body := get("/query?flow=" + strings.NewReplacer(" ", "%20", "|", "%7C", `"`, "%22", "=", "%3D").Replace(text))
+		code, body := get("/query?flow=" + url.QueryEscape(text))
 		if code != http.StatusOK {
 			t.Fatalf("%s answered %d: %s", text, code, body)
 		}
@@ -458,6 +459,12 @@ func TestFlowServerTakesInsertsAndAnswersQueries(t *testing.T) {
 	}
 	if got, want := query(`from logs | where n < 3 | keep n, svc | sort n`), "3 [[0 s00] [1 s01] [2 s02]]"; got != want {
 		t.Errorf("rows: %s, want %s", got, want)
+	}
+	if got, want := query(`from logs | where matches(msg, r"request 42\d\d d(one|ead)") | stats count()`), "1 [[100]]"; got != want {
+		t.Errorf("a regular expression: %s, want %s", got, want)
+	}
+	if code, body := get("/query?flow=" + url.QueryEscape(`from logs | where matches(msg, r"(") | stats count()`)); code != http.StatusBadRequest {
+		t.Errorf("an expression that does not compile answered %d: %s", code, body)
 	}
 	if code, body := get("/query?flow=from%20logs%20%7C%20nonsense"); code != http.StatusBadRequest {
 		t.Errorf("a query that does not parse answered %d: %s", code, body)
