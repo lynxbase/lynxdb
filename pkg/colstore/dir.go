@@ -45,6 +45,9 @@ var syncFile = (*os.File).Sync
 // directory cannot provide.
 var ErrManifest = errors.New("colstore: manifest is damaged or names a missing or damaged part")
 
+// ErrClosed reports the use of a store or a directory after its Close.
+var ErrClosed = errors.New("colstore: closed")
+
 // ErrFailed reports a directory that takes no further changes because its
 // table and its manifest may have come apart: a record could be neither
 // made durable nor taken back.

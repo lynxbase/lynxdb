@@ -96,6 +96,8 @@ type Store struct {
 	kicks, seen uint64
 	compact     bool
 	err         error
+	// over is set when the merger has stopped for good.
+	over bool
 }
 
 // OpenStore opens the table stored in path and starts its merger.
@@ -268,12 +270,15 @@ func (s *Store) kick() {
 }
 
 // Settle waits until no merge is due or running and returns the first error
-// a merge met.
+// a merge or a timed flush met, or ErrClosed once the merger has stopped.
 func (s *Store) Settle() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for s.seen != s.kicks && s.err == nil {
+	for s.seen != s.kicks && s.err == nil && !s.over {
 		s.idle.Wait()
+	}
+	if s.err == nil && s.over {
+		return ErrClosed
 	}
 
 	return s.err
@@ -322,6 +327,12 @@ func (s *Store) Compact() error {
 
 func (s *Store) mergeLoop() {
 	defer close(s.stopped)
+	defer func() {
+		s.mu.Lock()
+		s.over = true
+		s.idle.Broadcast()
+		s.mu.Unlock()
+	}()
 	for {
 		select {
 		case <-s.done:
