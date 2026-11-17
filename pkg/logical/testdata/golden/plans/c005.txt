@@ -1,4 +1,0 @@
-Aggregate(count() [partial])
-  Filter((((level == "ERROR") and (status == 500)) or ((level == "WARN") and (threat_type == "sqli"))))
-    Scan(main)
-      pushdown.columns: [_raw, _source, _time, level, status, threat_type]

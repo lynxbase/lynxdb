@@ -40,9 +40,7 @@ type AggFunc struct {
 	// CondProgram is an optional compiled predicate for conditional aggregation.
 	// When non-nil, it is evaluated per row BEFORE extracting the value. If the
 	// predicate returns false or null, the row is skipped for this aggregate
-	// (treated as null). This is the LynxFlow v2 counterpart of the SPL2
-	// count(eval(condition)) pattern; the old path continues to use Program
-	// for that purpose and is unaffected by this field.
+	// (treated as null), as in count(eval(condition)).
 	CondProgram *vm.Program
 }
 
@@ -664,10 +662,7 @@ func (a *AggregateIterator) extractGroupKey(row map[string]event.Value) map[stri
 }
 
 func (a *AggregateIterator) extractValue(agg AggFunc, row map[string]event.Value) event.Value {
-	// Conditional aggregation (LynxFlow v2 path): evaluate the predicate
-	// first; if it returns false/null, skip this row for this aggregate.
-	// When CondProgram is nil (the common case and all SPL2 paths), this
-	// branch is never taken — zero overhead.
+	// Conditional aggregation: a false or NULL predicate skips the row.
 	if agg.CondProgram != nil {
 		condResult, condErr := a.vmInst.Execute(agg.CondProgram, row)
 		if condErr != nil {
@@ -1481,11 +1476,7 @@ func (a *AggregateIterator) emitAllGroups() *Batch {
 		for _, group := range chain {
 			row := make(map[string]event.Value, len(a.groupBy)+len(a.aggs))
 			for k, v := range group.key {
-				if v.IsNull() {
-					row[k] = event.StringValue("")
-				} else {
-					row[k] = v
-				}
+				row[k] = v
 			}
 			for j, agg := range a.aggs {
 				row[agg.Alias] = a.finalizeAgg(&group.states[j], agg)
@@ -2479,20 +2470,16 @@ func finalizeVarianceState(s *aggState, population, root bool) event.Value {
 	return event.FloatValue(variance)
 }
 
+// percentile returns the value that has floor(pct/100*n) of the n values
+// before it, the greatest for a pct of 100.
 func percentile(all []interface{}, pct float64) event.Value {
 	if len(all) == 0 {
 		return event.NullValue()
 	}
 	floats := float64SliceFromAll(all)
 	sort.Float64s(floats)
-	idx := pct / 100.0 * float64(len(floats)-1)
-	lower := int(idx)
-	if lower >= len(floats)-1 {
-		return event.FloatValue(floats[len(floats)-1])
-	}
-	frac := idx - float64(lower)
 
-	return event.FloatValue(floats[lower] + frac*(floats[lower+1]-floats[lower]))
+	return event.FloatValue(floats[min(int(pct/100*float64(len(floats))), len(floats)-1)])
 }
 
 func float64SliceFromAll(all []interface{}) []float64 {

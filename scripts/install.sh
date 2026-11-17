@@ -607,15 +607,10 @@ print_completion() {
     success "${BOLD}LynxDB ${VERSION} installed successfully!${RESET}"
     printf '\n'
     printf '  %s\n' "Get started:"
-    printf '    %s\n' "${CYAN}lynxdb demo &${RESET}                  ${DIM}# Generate sample data${RESET}"
-    printf '    %s\n' "${CYAN}lynxdb query 'level=error'${RESET}     ${DIM}# Run your first query${RESET}"
+    printf '    %s\n' "${CYAN}lynxdb query --file app.log 'source=main | stats count() by level'${RESET}"
+    printf '    %s\n' "${CYAN}lynxdb server${RESET}                  ${DIM}# Start the server${RESET}"
     printf '    %s\n' "${CYAN}lynxdb --help${RESET}                  ${DIM}# See all commands${RESET}"
     printf '\n'
-    if [ -z "${SETUP_SERVER:-}" ]; then
-        printf '  %s\n' "Run as a service:"
-        printf '    %s\n' "${CYAN}sudo lynxdb install${RESET}            ${DIM}# Set up systemd service + production config${RESET}"
-        printf '\n'
-    fi
     printf '  %s\n' "${DIM}Docs:    https://docs.lynxdb.org/${RESET}"
     printf '  %s\n' "${DIM}Discord: https://discord.gg/RgggCFdgWK${RESET}"
     printf '\n'
@@ -635,7 +630,6 @@ ${UNDERLINE}Options${RESET}
       --channel CHANNEL   Release channel: stable or nightly
       --allow-prerelease  Allow nightly and explicit prerelease versions
   -d, --dir DIRECTORY     Custom installation directory
-  -s, --server            Set up as a system service (runs 'lynxdb install')
   -f, --force             Skip confirmation prompts
   -V, --verbose           Enable verbose output
   -q, --quiet             Minimal output
@@ -663,9 +657,6 @@ ${UNDERLINE}Examples${RESET}
   # Install to custom directory
   curl -fsSL https://lynxdb.org/install.sh | LYNXDB_INSTALL_DIR=~/bin sh
 
-  # Install and set up as a system service
-  curl -fsSL https://lynxdb.org/install.sh | sudo sh -s -- --server
-
 EOF
     exit 0
 }
@@ -682,7 +673,6 @@ parse_args() {
     VERBOSE="${LYNXDB_VERBOSE:-}"
     QUIET="${LYNXDB_QUIET:-}"
     FORCE="${LYNXDB_FORCE:-}"
-    SETUP_SERVER=""
 
     while [ "$#" -gt 0 ]; do
         case "$1" in
@@ -693,7 +683,6 @@ parse_args() {
             --allow-prerelease) ALLOW_PRERELEASE=1; shift ;;
             -d|--dir)       INSTALL_DIR="$2"; shift 2 ;;
             -d=*|--dir=*)   INSTALL_DIR="${1#*=}"; shift ;;
-            -s|--server)    SETUP_SERVER=1; shift ;;
             -f|--force)     FORCE=1; shift ;;
             -V|--verbose)   VERBOSE=1; shift ;;
             -q|--quiet)     QUIET=1; shift ;;
@@ -706,20 +695,6 @@ parse_args() {
                 ;;
         esac
     done
-}
-
-
-setup_server_mode() {
-    info "Setting up LynxDB as a system service..."
-    if [ "$(id -u)" = "0" ]; then
-        "${BIN_DIR}/lynxdb" install --yes
-    elif has sudo; then
-        warn "Root access required for system service setup."
-        $SUDO "${BIN_DIR}/lynxdb" install --yes
-    else
-        warn "Cannot set up system service without root access."
-        warn "To set up later: sudo lynxdb install"
-    fi
 }
 
 
@@ -748,9 +723,6 @@ main() {
     download_and_verify
     extract_and_install
     ensure_in_path
-    if [ -n "${SETUP_SERVER:-}" ]; then
-        setup_server_mode
-    fi
     print_completion
 }
 

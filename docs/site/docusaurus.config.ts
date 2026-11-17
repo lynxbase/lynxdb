@@ -4,7 +4,7 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'LynxDB',
-  tagline: 'Log analytics in a single binary. Zero dependencies. Lynx Flow query language.',
+  tagline: 'Log analytics in a single binary. Zero dependencies. OpenSearch PPL queries.',
   favicon: 'img/favicon.ico',
   url: 'https://docs.lynxdb.org',
   baseUrl: '/',
@@ -120,8 +120,8 @@ const config: Config = {
               to: '/docs/getting-started/quickstart',
             },
             {
-              label: 'LynxFlow Reference',
-              to: '/docs/lynxflow/overview',
+              label: 'PPL Reference',
+              to: '/docs/ppl/overview',
             },
             {
               label: 'REST API',

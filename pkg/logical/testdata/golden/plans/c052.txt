@@ -1,5 +1,0 @@
-Materialize("mv_errors_5m")
-  Aggregate(count(), avg(duration) by source, bin(_time, 5m) [partial])
-    Filter((level == error))
-      Scan(main)
-        pushdown.columns: [_raw, _source, _time, duration, error, level, source]

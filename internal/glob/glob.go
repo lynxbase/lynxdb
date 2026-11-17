@@ -1,10 +1,6 @@
 // Package glob provides RFC-style glob pattern matching used across the
 // codebase. The implementation supports *, **, ?, character classes [abc],
 // negated classes [!abc], and brace alternatives {a,b,c}.
-//
-// This package was originally extracted from the search evaluator so that non-query
-// packages (storage, server, pipeline) can use glob matching without depending
-// on the SPL2 parser.
 package glob
 
 import (

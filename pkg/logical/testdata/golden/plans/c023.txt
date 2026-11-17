@@ -1,4 +1,0 @@
-Aggregate(count() by is_internal [partial])
-  Extend(is_internal=if(cidr_match("10.0.0.0/8", client_ip), "yes", "no"))
-    Scan(main)
-      pushdown.columns: [_raw, _source, _time, client_ip]

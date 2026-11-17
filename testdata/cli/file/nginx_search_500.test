@@ -1,5 +1,4 @@
 # file: nginx_access.log
 # format: json
-from main
-| where has(_raw, "500")
+search source=main 500
 | stats count()

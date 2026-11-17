@@ -18,7 +18,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
 	"github.com/lynxbase/lynxdb/pkg/storage/tiering"
-	"github.com/lynxbase/lynxdb/pkg/storage/views"
 )
 
 // initDataDir creates the data directory structure using the Layout manager.
@@ -224,26 +223,6 @@ func (e *Engine) initDiskPersistence(ctx context.Context) error {
 		e.onPartitionDeleted(removedIDs, partitionDir)
 	})
 	e.retentionMgr.Start(ctx)
-
-	viewReg, err := views.OpenWithFormatVersion(e.layout.ViewsDir(), int(e.formatMajor))
-	if err != nil {
-		return fmt.Errorf("open view registry: %w", err)
-	}
-
-	e.viewRegistry = viewReg
-	e.mvDispatcher = views.NewDispatcherWithBudget(
-		viewReg,
-		e.layout,
-		e.logger,
-		e.viewsCfg.DispatchBatchSize,
-		e.viewsCfg.DispatchBatchDelay.Duration(),
-		e.governor,
-		int64(e.viewsCfg.InsertMaxMemoryBytes),
-	)
-
-	if err := e.mvDispatcher.Start(ctx); err != nil {
-		return fmt.Errorf("start MV dispatcher: %w", err)
-	}
 
 	return nil
 }

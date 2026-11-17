@@ -1,177 +1,158 @@
 ---
 sidebar_position: 5
-title: Your First LynxFlow Query
-description: Learn LynxFlow basics -- search, filter, aggregate, and visualize log data.
+title: Your First Query
+description: PPL basics in LynxDB - search, filter, aggregate, sort and extract fields.
 ---
 
-# Your First LynxFlow Query
+# Your First Query
 
-LynxFlow is LynxDB's query language. It's a pipeline language inspired by Splunk's SPL -- data flows left to right through pipe (`|`) operators.
+LynxDB queries are written in [OpenSearch PPL](../ppl/overview.md), the
+Piped Processing Language. A query names an index, then passes rows through
+commands separated by `|`, left to right.
 
-## The Pipeline Concept
+The examples run over lines such as:
 
-Every LynxFlow query is a pipeline of operators:
-
-```
-from <dataset> [search terms] | operator1 args | operator2 args | operator3 args
-```
-
-Data starts on the left (a `from` stage with optional search terms) and flows through each operator. Each operator transforms the data and passes it to the next.
-
-## Step 1: Search
-
-The simplest query is a keyword search attached to the `from` stage:
-
-```lynxflow
-from main error
+```text
+2025-01-15T08:00:00.105Z host=web-03 level=ERROR method=GET path=/api/v1/users status=502 user=grace response_time=786 bytes=32228 msg="GET /api/v1/users completed"
 ```
 
-This finds all events containing the word "error". You can also search specific fields:
+Run them on a file with `lynxdb query --file access.log '<query>'`, or on a
+server with `lynxdb query '<query>'`.
 
-```lynxflow
-from main level=error
+## Search
+
+Every query starts with a source. Terms after it keep only matching events:
+
+```
+source=main error
+source=main "connection refused"
+source=main level=ERROR host=web-*
+source=main status>=500
+source=main level IN (WARN, ERROR) NOT host=api-01
 ```
 
-Combine terms with boolean operators:
+A bare word matches a whole token of the raw text, ignoring case. A field
+comparison such as `level=ERROR` is exact and case-sensitive. See
+[Search semantics](../ppl/search-and-types.md).
 
-```lynxflow
-from main level=error source=nginx
-from main level=error OR level=warn
-from main level=error NOT source=redis
+## Filter with `where`
+
+Search terms belong to the source command. Later in the pipeline, filter
+with `where` and an expression:
+
+```
+source=main | where status >= 500 AND response_time > 700
+source=main | where like(path, '/api/v1/auth%')
+source=main | where level = "ERROR" OR status = 503
 ```
 
-:::tip
-If your query omits the `from` stage, LynxDB reads from the default `main` dataset. So `stats count()` is equivalent to `from main | stats count()`. Note that search-term sugar like `level=error` only works in the `from` stage -- everywhere else, use `where` with `==`.
-:::
+## Aggregate with `stats`
 
-## Step 2: Filter with `where`
-
-Use `where` for precise filtering. Inside `where`, `==` compares (a bare `=` binds values, so it is not a comparison):
-
-```lynxflow
-from main source=nginx | where status >= 500
-from main source=nginx | where status >= 500 and duration_ms > 1000
-from main source=nginx | where contains(uri, "/api/")
+```
+source=main | stats count()
+source=main level=ERROR | stats count() as errors by host
+source=main | stats count() as requests, avg(response_time) as avg_ms, p95(response_time) as p95_ms by host
 ```
 
-## Step 3: Aggregate with `stats`
+Name an aggregate with `as` so later commands can refer to it. Unnamed, the
+column is called `count()`.
 
-`stats` computes aggregations. Aggregate calls always take parentheses -- `count()`, not `count`:
+## Sort and limit
 
-```lynxflow
-// Count events
-from main | stats count()
-
-// Count by field
-from main level=error | stats count() by source
-
-// Multiple aggregations
-from main source=nginx | stats count(), avg(duration_ms), p99(duration_ms) by uri
-
-// With renaming
-from main source=nginx | stats count() as requests, avg(duration_ms) as avg_latency by uri
+```
+source=main level=ERROR | stats count() as errors by path | sort - errors | head 3
 ```
 
-## Step 4: Sort and Limit
-
-Alias `count()` with `as count` when later stages reference it:
-
-```lynxflow
-// Sort descending (prefix with -)
-from main source=nginx | stats count() as count by uri | sort -count
-
-// Take top N
-from main source=nginx | stats count() as count by uri | sort -count | head 10
-
-// Or use the TOP shortcut
-from main source=nginx | top 10 uri
+```text
+errors,path
+40,/api/v1/users
+38,/api/v1/orders
+35,/api/v1/search
 ```
 
-## Step 5: Select Columns
+`sort - errors` sorts descending; `sort errors` ascending. `top 3 path`
+returns the three most frequent values with their counts.
 
-```lynxflow
-// Pick specific fields
-from main level=error | keep _time, source, message
+## Choose columns
 
-// Remove fields
-from main level=error | drop _raw
+```
+source=main | fields host, status, msg
+source=main | fields - _raw
+source=main | rename response_time as rt
 ```
 
-## Step 6: Transform with EXTEND
+## Compute fields with `eval`
 
-Create computed fields:
-
-```lynxflow
-from main source=nginx
-  | stats count() as total, count(where status >= 500) as errors by uri
-  | extend error_rate = round(errors / total * 100, 1)
-  | where error_rate > 5
-  | sort -error_rate
-  | keep uri, total, errors, error_rate
+```
+source=main
+| stats count() as total, count(eval(status >= 500)) as errors by path
+| eval error_pct = round(errors * 100.0 / total, 1)
+| sort - error_pct
+| head 3
 ```
 
-## Step 7: Time Series with EVERY
-
-Aggregate over time buckets:
-
-```lynxflow
-// Error count per 5-minute bucket
-from main level=error | every 5m stats count()
-
-// Error count by source per 5 minutes
-from main level=error | every 5m by source stats count()
+```text
+error_pct,errors,path,total
+25.5,28,/api/v1/users,110
+24.8,25,/api/v1/health,101
+22.5,27,/api/v1/orders,120
 ```
 
-`every` is sugar for grouping by a time bucket -- `every 5m stats count()` desugars to `stats count() by bin(_time, 5m)`.
+Write spaces around `-` and `*` in arithmetic: `bytes * 8`, not `bytes*8`.
+Integer division truncates, so multiply by `100.0` for a percentage.
 
-## Step 8: Extract Fields with PARSE
+## Count over time
 
-Extract new fields from raw text using regex:
-
-```lynxflow
-from main "connection refused"
-  | parse regex r"host=(?P<host>\S+) port=(?P<port>\d+)"
-  | stats count() as count by host, port
-  | sort -count
+```
+source=main | timechart span=1m count() by level
+source=main | stats count() by span(_time, 5m), host
 ```
 
-## Putting It All Together
+See [Time series](../ppl/time-series.md).
 
-Here's a real-world query that finds the slowest API endpoints with high error rates:
+## Extract fields
 
-```lynxflow
-from main source=nginx
-  | stats count() as total,
-          count(where status >= 500) as errors,
-          avg(duration_ms) as avg_latency,
-          p99(duration_ms) as p99_latency
-    by uri
-  | extend error_rate = round(errors / total * 100, 1)
-  | where error_rate > 5 or p99_latency > 1000
-  | sort -error_rate
-  | keep uri, total, errors, error_rate, avg_latency, p99_latency
+`parse` pulls fields out of text with named regular expression groups:
+
+```
+source=main
+| parse msg '(?<verb>[A-Z]+) (?<route>\S+) completed'
+| stats count() as n by verb
+| sort - n
 ```
 
-## Operator Quick Reference
+```text
+n,verb
+260,PUT
+251,GET
+249,DELETE
+240,POST
+```
 
-| Operator | What it does | Example |
-|----------|-------------|---------|
-| `from` | Choose dataset + search sugar | `from main "connection refused"` |
-| `where` | Filter rows | `\| where status >= 500` |
-| `stats` | Aggregate | `\| stats count(), avg(x) by y` |
-| `extend` | Compute fields | `\| extend rate = errors / total * 100` |
-| `sort` | Order results | `\| sort -count` |
-| `head` | Limit results | `\| head 10` |
-| `keep` | Select columns | `\| keep uri, count` |
-| `drop` | Remove fields | `\| drop _raw` |
-| `parse` | Extract via regex/json/logfmt | `\| parse regex r"host=(?P<host>\S+)"` |
-| `every` | Time series | `\| every 5m stats count()` |
-| `top` | Top N values | `\| top 10 uri` |
-| `dedup` | Remove duplicates | `\| dedup host` |
+`rex`, `grok` and `spath` cover other cases; see
+[Field Extraction](../guides/field-extraction.md).
 
-## Next Steps
+## Quick reference
 
-- **[LynxFlow v2 Reference](/docs/lynxflow/operators/from)** -- Full language reference
-- **[Searching & Filtering](/docs/guides/search-and-filter)** -- Advanced search techniques
-- **[Aggregations](/docs/guides/aggregations)** -- All aggregation functions
-- **[STATS operator](/docs/lynxflow/operators/stats)** -- Detailed operator reference
+| Command | Purpose | Example |
+|---------|---------|---------|
+| `source=` | Read an index, search terms | `source=main level=ERROR` |
+| `where` | Filter rows | `where status >= 500` |
+| `stats` | Aggregate | `stats count() as n by host` |
+| `eval` | Compute fields | `eval kb = bytes / 1024.0` |
+| `sort` | Order rows | `sort - n` |
+| `head` | Limit rows | `head 10` |
+| `fields` | Keep or drop columns | `fields host, status` |
+| `rename` | Rename a column | `rename response_time as rt` |
+| `top` / `rare` | Most and least frequent values | `top 10 path` |
+| `dedup` | Keep the first row per value | `dedup host` |
+| `timechart` | Aggregate over time buckets | `timechart span=5m count() by level` |
+| `parse` | Extract with a regex | `parse msg '(?<verb>[A-Z]+) .*'` |
+
+## Next steps
+
+- [Getting started with PPL](../ppl/getting-started.md): a longer walkthrough
+- [Command guide](../ppl/command-guide.md): the main commands in depth
+- [Function guide](../ppl/function-guide.md) and [Aggregation guide](../ppl/aggregation-guide.md)
+- [Examples](../ppl/examples.md): queries for common log questions
+- [Supported commands](../ppl/commands.md): what LynxDB implements

@@ -2,10 +2,18 @@ package pipeline
 
 import "testing"
 
-func TestParseCommandForFormat_DoesNotEmitUnsupportedDelimitedParsers(t *testing.T) {
-	for _, format := range []DetectedFormat{FormatCSV, FormatTSV} {
-		if got := ParseCommandForFormat(format); got != "" {
-			t.Fatalf("ParseCommandForFormat(%s) = %q, want empty", format, got)
+func TestExtractFormatName(t *testing.T) {
+	cases := map[DetectedFormat]string{
+		FormatCombined: "combined",
+		FormatSyslog:   "syslog",
+		FormatDocker:   "docker",
+		FormatJSON:     "",
+		FormatCSV:      "",
+		FormatTSV:      "",
+	}
+	for format, want := range cases {
+		if got := ExtractFormatName(format); got != want {
+			t.Errorf("ExtractFormatName(%s) = %q, want %q", format, got, want)
 		}
 	}
 }

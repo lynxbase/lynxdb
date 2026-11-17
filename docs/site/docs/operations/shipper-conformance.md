@@ -5,7 +5,7 @@ description: Nightly compatibility coverage and quarantine reasons for drop-in l
 
 # Shipper Conformance Matrix
 
-The nightly conformance workflow runs the `e2e_matrix` test driver against pinned shipper cells. The pull-request compatibility suite remains smaller; nightly runs cover the broader matrix and report each cell separately.
+The nightly Shipper Conformance workflow (`.github/workflows/conformance.yaml`) runs `TestE2E_ConformanceMatrix` in `test/e2e/shippers` with the `e2e,e2e_matrix` build tags. Each cell starts a LynxDB server and a pinned shipper container, sends a fixture through the shipper, and checks that every event arrives. The pull-request compatibility suite is smaller; nightly runs cover the broader matrix and report each cell separately.
 
 ## Enforced cells
 
@@ -38,6 +38,8 @@ These cells are listed in the test driver with `t.Skip` and a reason. Promoting 
 | `splunk-uf/9.x/hec` | Splunk Universal Forwarder image requires license/bootstrap secrets in CI. |
 
 ## Local run
+
+The cells run shipper images through testcontainers, so Docker must be running.
 
 ```bash
 make test-conformance

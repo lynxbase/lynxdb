@@ -1,5 +1,4 @@
 # file: frontend_console.log
 # format: json
-from main
-| where has(_raw, "ERROR")
+search source=main ERROR
 | stats count()

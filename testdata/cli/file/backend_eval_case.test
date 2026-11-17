@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| extend severity = case(level == "ERROR", "critical", level == "WARN", "warning", 1 == 1, "normal")
+source=main
+| eval severity = case(level = "ERROR", "critical", level = "WARN", "warning" else "normal")
 | stats count() by severity
 | sort severity

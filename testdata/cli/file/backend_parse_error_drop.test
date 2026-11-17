@@ -1,6 +1,0 @@
-# file: mixed_json.log
-# format: json
-# unordered: false
-from main
-| parse json on_error drop
-| keep name

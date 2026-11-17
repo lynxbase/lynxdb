@@ -602,7 +602,7 @@ func runConfigAddProfile(_ *cobra.Command, args []string) error {
 
 	printSuccess("Added profile %q (url=%s)", name, profileURL)
 	printNextSteps(
-		fmt.Sprintf("lynxdb query 'level=error' --profile %s   Use this profile", name),
+		fmt.Sprintf("lynxdb query 'search source=main error' --profile %s   Use this profile", name),
 		"lynxdb config list-profiles                    List all profiles",
 	)
 

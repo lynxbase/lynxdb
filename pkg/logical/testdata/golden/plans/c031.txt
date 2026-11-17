@@ -1,7 +1,0 @@
-TopK(3, -count)
-  Project(-_total)
-    Extend(percent=round(((count * 100) / _total), 2))
-      Aggregate(sum(count) as _total [eventstats])
-        Aggregate(count() as count by service [partial])
-          Scan(main)
-            pushdown.columns: [_raw, _source, _time, service]

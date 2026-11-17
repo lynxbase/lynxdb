@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
+source=main
 | where level != "INFO"
 | where service != "gateway-service"
 | stats count() by level

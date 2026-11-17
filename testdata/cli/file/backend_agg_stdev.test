@@ -1,4 +1,4 @@
 # file: backend_server.log
 # format: json
-from main
-| stats stdev(duration_ms) as sd, avg(duration_ms) as mean
+source=main
+| stats stddev_samp(duration_ms) as sd, avg(duration_ms) as mean

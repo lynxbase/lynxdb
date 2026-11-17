@@ -1,5 +1,4 @@
 # file: backend_server.log
 # format: json
-from main
-| where has(_raw, "payment") and has(_raw, "failed")
+search source=main payment failed
 | stats count()

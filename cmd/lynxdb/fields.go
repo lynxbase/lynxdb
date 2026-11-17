@@ -117,7 +117,6 @@ func runFieldsList(since, from, to, source, prefix string) error {
 		}
 		fmt.Println(ui.Stdout.EmptyState("No fields found.",
 			"lynxdb ingest <file>           Ingest a log file",
-			"lynxdb demo                    Run demo with sample data",
 		))
 
 		return nil
@@ -242,7 +241,7 @@ func runFieldDetail(name, since, from, to, source string) error {
 	fmt.Println()
 	printNextSteps(
 		fmt.Sprintf("lynxdb fields %s --values   Full value list", name),
-		fmt.Sprintf("lynxdb query '%s=<value>'    Search by this field", name),
+		fmt.Sprintf("lynxdb query 'source=main | where %s = \"<value>\"'    Search by this field", name),
 	)
 
 	return nil

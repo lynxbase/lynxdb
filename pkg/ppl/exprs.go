@@ -15,9 +15,6 @@ type ectx struct {
 	c      *compiler
 	schema ir.Schema
 	params []*ir.LambdaParam
-	// qualifiers maps join aliases to themselves so that alias.field
-	// resolves to the qualified column.
-	qualifiers map[string]bool
 }
 
 func (c *compiler) ectx(s ir.Schema) *ectx { return &ectx{c: c, schema: s} }
@@ -261,7 +258,42 @@ func (x *ectx) field(n *ast.Field) (ir.Expr, error) {
 			return e, nil
 		}
 	}
+	if x.c.outer != nil && len(n.Parts) > 1 && x.c.outerQualifier(n.Parts[0]) {
+		return nil, correlated(n, "%s of the outer query", name)
+	}
 	return resolve(&ast.Field{Base: n.Base, Parts: []string{name}}, x.schema)
+}
+
+// outerQualifier reports whether q names a source or alias of an outer query only.
+func (c *compiler) outerQualifier(q string) bool {
+	if qualifies(c.st, q) {
+		return false
+	}
+	for o := c.outer; o != nil; o = o.next {
+		if qualifies(o.st, q) {
+			return true
+		}
+	}
+	return false
+}
+
+func qualifies(p *pipe, q string) bool {
+	if p == nil {
+		return false
+	}
+	if p.aliases[q] {
+		return true
+	}
+	for _, src := range sourceNames(p.origin) {
+		if src == q {
+			return true
+		}
+	}
+	return false
+}
+
+func correlated(n ast.Node, format string, args ...any) *Error {
+	return unsupportedFeature(n, "correlated subqueries are not supported: the subquery refers to "+format, args...)
 }
 
 func (x *ectx) unary(n *ast.Unary) (ir.Expr, error) {
@@ -614,9 +646,13 @@ func (x *ectx) cast(n *ast.Cast) (ir.Expr, error) {
 }
 
 func (x *ectx) subquery(n *ast.Subquery) (ir.Expr, error) {
-	plan, err := x.c.pipeline(n.Pipeline)
+	c := x.c
+	around := c.outer
+	c.outer = &enclosing{st: c.st, next: around}
+	plan, err := c.pipeline(n.Pipeline)
+	c.outer = around
 	if err != nil {
-		return nil, err
+		return nil, outerField(err, x.schema)
 	}
 	switch n.Kind {
 	case ast.SubqueryExists:
@@ -639,6 +675,20 @@ func (x *ectx) subquery(n *ast.Subquery) (ir.Expr, error) {
 		return nil, semanticErr(n, "a scalar subquery must return exactly one column; end it with stats or fields")
 	}
 	return &ir.Subquery{Mode: ir.SubqueryScalar, Plan: plan, T: s.Columns[0].Type}, nil
+}
+
+// outerField reports a field the subquery lacks and outer has as correlated.
+func outerField(err error, outer ir.Schema) error {
+	pe, ok := err.(*Error)
+	if !ok || pe.field == "" {
+		return err
+	}
+	if _, known := outer.Lookup(pe.field); !known {
+		return err
+	}
+	e := correlated(nil, "field %s of the outer query", ir.QuoteName(pe.field))
+	e.Pos, e.End = pe.Pos, pe.End
+	return e
 }
 
 func (x *ectx) datePart(n *ast.DatePart) (ir.Expr, error) {

@@ -1,5 +1,5 @@
 # file: backend_server.log
 # format: json
-from main
-| where (duration_ms > 100 and duration_ms < 1000)
+source=main
+| where duration_ms > 100 and duration_ms < 1000
 | stats count()

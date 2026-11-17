@@ -1,6 +1,0 @@
-Sort(+error)
-  Aggregate(count() by error [partial])
-    Filter((error != "N/A"))
-      Extend(error=(error ?? "N/A"), threat_type=(threat_type ?? "N/A"))
-        Scan(main)
-          pushdown.columns: [_raw, _source, _time, error, threat_type]

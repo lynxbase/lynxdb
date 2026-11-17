@@ -188,22 +188,6 @@ func TestTruncateStr_UnicodeNoTruncation(t *testing.T) {
 	}
 }
 
-func TestEnsureFromClause_PipePrefixed(t *testing.T) {
-	got := ensureFromClause("| stats count")
-	if got != "FROM main | stats count" {
-		t.Errorf("ensureFromClause pipe = %q, want %q", got, "FROM main | stats count")
-	}
-}
-
-func TestEnsureFromClause_AlreadyHasFrom(t *testing.T) {
-	input := "FROM idx | stats count"
-	got := ensureFromClause(input)
-	// Should preserve the existing FROM clause.
-	if got != input {
-		t.Errorf("ensureFromClause existing FROM = %q, want %q", got, input)
-	}
-}
-
 func TestSuggestWiderTimeRange_KnownRanges(t *testing.T) {
 	tests := []struct {
 		input string
@@ -225,13 +209,17 @@ func TestSuggestWiderTimeRange_KnownRanges(t *testing.T) {
 }
 
 func TestExtractFilterFields_SimpleFilter(t *testing.T) {
-	got := extractFilterFields("level=warn source=nginx")
+	got := extractFilterFields("search source=nginx level=warn host=web-01")
 	if got["level"] != "warn" {
 		t.Errorf("expected level=warn, got %v", got)
 	}
 
-	if got["source"] != "nginx" {
-		t.Errorf("expected source=nginx, got %v", got)
+	if got["host"] != "web-01" {
+		t.Errorf("expected host=web-01, got %v", got)
+	}
+
+	if _, ok := got["source"]; ok {
+		t.Errorf("source=<index> is not a filter field, got %v", got)
 	}
 }
 
@@ -250,7 +238,7 @@ func TestExtractFilterFields_ComparisonOperators(t *testing.T) {
 }
 
 func TestExtractFilterFields_SkipsPipes(t *testing.T) {
-	got := extractFilterFields("| stats count")
+	got := extractFilterFields("| stats count()")
 	if len(got) != 0 {
 		t.Errorf("expected empty map for pipe command, got %v", got)
 	}

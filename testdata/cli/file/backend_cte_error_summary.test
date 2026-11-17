@@ -1,6 +1,0 @@
-# file: backend_server.log
-# format: json
-let $errs = where level == "ERROR";
-from $errs
-| stats count() by service, error
-| sort service, error

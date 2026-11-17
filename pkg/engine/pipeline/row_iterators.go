@@ -1,8 +1,8 @@
 package pipeline
 
-// Row-level streaming iterators (filter, project, tail) consumed by the
-// LynxFlow physical builder, plus batch/row collection helpers and the
-// IndexStore abstractions used by the server execution paths.
+// Row-level streaming iterators (filter, project, tail) used by the physical
+// planner, plus batch/row collection helpers and the IndexStore abstractions
+// used by the server execution paths.
 
 import (
 	"context"
@@ -114,10 +114,20 @@ func (p *ProjectIterator) applyKeep(batch *Batch) *Batch {
 				}
 			}
 		} else {
+			// A field that is an object has no column of its own: its
+			// members are columns named after it.
+			members := false
+			for col, vals := range batch.Columns {
+				if len(col) > len(f) && col[len(f)] == '.' && strings.HasPrefix(col, f) {
+					out.Columns[col] = vals
+					copyPresenceColumn(out, batch, col)
+					members = true
+				}
+			}
 			if vals, ok := batch.Columns[f]; ok {
 				out.Columns[f] = vals
 				copyPresenceColumn(out, batch, f)
-			} else {
+			} else if !members {
 				nulls := make([]event.Value, batch.Len)
 				for i := range nulls {
 					nulls[i] = event.NullValue()
@@ -139,7 +149,8 @@ func (p *ProjectIterator) applyRemove(batch *Batch) *Batch {
 					drop = true
 					break
 				}
-			} else if col == f {
+			} else if col == f || (len(col) > len(f) && col[len(f)] == '.' && strings.HasPrefix(col, f)) {
+				// The members of a dropped object go with it.
 				drop = true
 				break
 			}

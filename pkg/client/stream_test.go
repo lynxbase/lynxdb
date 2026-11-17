@@ -113,7 +113,7 @@ func TestQueryStream_StripsUnsupportedFields(t *testing.T) {
 
 	c := NewClient(WithBaseURL(srv.URL))
 	meta, err := c.QueryStream(context.Background(), QueryRequest{
-		Q:       "FROM main | HEAD 10",
+		Q:       "source=main | head 10",
 		Limit:   10,
 		Offset:  20,
 		Format:  "json",
@@ -139,7 +139,7 @@ func TestQueryStream_StripsUnsupportedFields(t *testing.T) {
 	if _, ok := rawBody["profile"]; ok {
 		t.Fatalf("request body unexpectedly included profile: %v", rawBody)
 	}
-	if got := rawBody["q"]; got != "FROM main | HEAD 10" {
+	if got := rawBody["q"]; got != "source=main | head 10" {
 		t.Fatalf("q = %v, want query text", got)
 	}
 }

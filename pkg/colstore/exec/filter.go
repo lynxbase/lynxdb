@@ -2,6 +2,8 @@ package exec
 
 import (
 	"bytes"
+	"github.com/lynxbase/lynxdb/pkg/colstore/part"
+	"math"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/variant"
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -306,11 +308,64 @@ func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
 			}
 		}
 	}
+	if p.numbered {
+		found, err := w.anyNumber(p.number, cols, m)
+		if err != nil {
+			return none, err
+		}
+		hit = hit || found
+	}
 	if !hit {
 		return none, nil
 	}
 
 	return some, nil
+}
+
+// anyNumber marks in m the rows that hold the number n in a numeric column:
+// an integer of that size, or a float whose whole part it is, as the text
+// of the number would hold the word. It reports whether there is such a row.
+func (w *worker) anyNumber(n int64, cols []part.ColumnRef, m []uint8) (bool, error) {
+	hit := false
+	whole := float64(n)
+	for i := range cols {
+		ref := &cols[i]
+		if ref.Count == 0 {
+			continue
+		}
+		switch ref.Kind {
+		case vec.KindInt:
+			if (n < ref.MinInt || n > ref.MaxInt) && (-n < ref.MinInt || -n > ref.MaxInt) {
+				continue
+			}
+		case vec.KindFloat:
+			if (ref.MaxFloat < whole || ref.MinFloat >= whole+1) && (ref.MinFloat > -whole || ref.MaxFloat <= -whole-1) {
+				continue
+			}
+		default:
+			continue
+		}
+		c := &w.anyCol
+		if err := w.b.Decode(ref, c); err != nil {
+			return false, err
+		}
+		w.decoded = true
+		for r := 0; r < w.rows; r++ {
+			if !c.IsValid(r) {
+				continue
+			}
+			if ref.Kind == vec.KindInt {
+				if v := c.Int(r); v != n && v != -n {
+					continue
+				}
+			} else if math.Trunc(math.Abs(c.Float(r))) != whole {
+				continue
+			}
+			m[r], hit = 0xFF, true
+		}
+	}
+
+	return hit, nil
 }
 
 // evalHas selects the rows that hold a value of one of the kinds of p.
@@ -550,9 +605,9 @@ func (w *worker) present(c *vec.Column, depth int) verdict {
 func (w *worker) evalStrEq(p *pred, depth int) (verdict, error) {
 	want := p.lit.Bytes
 	// A column of identifiers that is not decoded yet is searched in the
-	// form it is stored in; a value per row is all that is handled here.
+	// form it is stored in.
 	if s := p.path*kindSlots + int(vec.KindString) - 1; w.shared == nil && w.state[s] != slotDecoded {
-		if ref := w.ref(p.path, vec.KindString); ref != nil && ref.Count == w.rows && !ref.Const() {
+		if ref := w.ref(p.path, vec.KindString); ref != nil && !ref.Const() {
 			found, ok, err := w.b.FindEqual(ref, want, w.idx2[:0])
 			if err != nil {
 				return none, err
@@ -786,13 +841,7 @@ func (w *worker) evalFloatColumn(p *pred, depth int) (verdict, error) {
 		return w.present(c, depth), nil
 	}
 	m := w.mask(depth)
-	for i, x := range c.Floats[:w.rows] {
-		var b uint8
-		if compareFloat(p.op, x, p.f) {
-			b = 0xFF
-		}
-		m[i] = b
-	}
+	compareFloatsTo(m, p.op, c.Floats[:w.rows], p.f)
 	if c.Valid != nil {
 		vec.MaskAndBitmap(m, c.Valid)
 	}
@@ -835,30 +884,7 @@ func (w *worker) evalInts(p *pred, depth int) (verdict, error) {
 		return none, err
 	}
 	m := w.mask(depth)
-	a, b = a[:len(m)], b[:len(m)]
-	for i := range m {
-		var bit uint8
-		x, y := a[i], b[i]
-		var hit bool
-		switch p.op {
-		case OpEq:
-			hit = x == y
-		case OpNe:
-			hit = x != y
-		case OpLt:
-			hit = x < y
-		case OpLe:
-			hit = x <= y
-		case OpGt:
-			hit = x > y
-		default:
-			hit = x >= y
-		}
-		if hit {
-			bit = 0xFF
-		}
-		m[i] = bit
-	}
+	compareInts(m, p.op, a, b)
 	if va != nil {
 		vec.MaskAnd(m, m, va)
 	}

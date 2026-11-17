@@ -127,7 +127,12 @@ func (b *builder) runSubquery(sq *ir.Subquery) (*vm.SubqueryResult, error) {
 	if sq.Mode == ir.SubqueryExists {
 		plan = &ir.Limit{Input: plan, Count: 1}
 	}
+	// The coordinator hands out operator budgets only after Build returns,
+	// so a subquery, which runs during Build, cannot draw on it.
+	coordinator := b.opts.Coordinator
+	b.opts.Coordinator = nil
 	iter, err := b.node(plan)
+	b.opts.Coordinator = coordinator
 	if err != nil {
 		return nil, fmt.Errorf("subquery: %w", err)
 	}
@@ -382,12 +387,15 @@ func (b *builder) sort(input ir.Node, keys []ir.SortKey, count, offset int64, to
 		return nil, err
 	}
 	var temps []ir.Assign
-	fields := make([]pipeline.SortField, len(keys))
-	for i, k := range keys {
+	fields := make([]pipeline.SortField, 0, len(keys))
+	for _, k := range keys {
+		// The pipeline sorts NULLs first ascending and last descending; the
+		// other placement sorts by is_null(key) first.
 		if k.NullsFirst == k.Desc {
-			return nil, unsupported("sorting with NULLs %s in %s order", map[bool]string{true: "first", false: "last"}[k.NullsFirst], map[bool]string{true: "descending", false: "ascending"}[k.Desc])
+			isNull := &ir.Call{Func: ir.MustFunc("is_null"), Args: []ir.Expr{k.Expr}, T: ir.Bool}
+			fields = append(fields, pipeline.SortField{Name: b.fieldOrTemp(isNull, &temps), Desc: k.NullsFirst})
 		}
-		fields[i] = pipeline.SortField{Name: b.fieldOrTemp(k.Expr, &temps), Desc: k.Desc}
+		fields = append(fields, pipeline.SortField{Name: b.fieldOrTemp(k.Expr, &temps), Desc: k.Desc})
 	}
 	var it pipeline.Iterator = child
 	if len(temps) > 0 {

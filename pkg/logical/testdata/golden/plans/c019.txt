@@ -1,5 +1,0 @@
-Sort(+err)
-  Aggregate(count() by err [partial])
-    Extend(err=(error ?? "none"), amt=(amount_cents ?? 0))
-      Scan(main)
-        pushdown.columns: [_raw, _source, _time, amount_cents, error]

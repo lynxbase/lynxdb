@@ -1,3 +1,0 @@
-query: | extend x = status + "abc"
-error S002 [13:27] cannot add int + string
-  suggestion: did you mean string(status) + "abc"?

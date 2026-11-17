@@ -11,16 +11,13 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/config"
-	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
+	"github.com/lynxbase/lynxdb/pkg/engine/physical"
+	"github.com/lynxbase/lynxdb/pkg/engine/unpack"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	ingestpipeline "github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
-	"github.com/lynxbase/lynxdb/pkg/logical"
-	"github.com/lynxbase/lynxdb/pkg/logical/opt"
-	"github.com/lynxbase/lynxdb/pkg/logical/physical"
-	"github.com/lynxbase/lynxdb/pkg/lynxflow/desugar"
-	"github.com/lynxbase/lynxdb/pkg/lynxflow/parser"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
-	"github.com/lynxbase/lynxdb/pkg/model"
+	"github.com/lynxbase/lynxdb/pkg/query"
 	"github.com/lynxbase/lynxdb/pkg/stats"
 )
 
@@ -113,6 +110,42 @@ type IngestOpts struct {
 	Index        string
 	MaxFileSize  int64 // Maximum allowed file size in bytes. 0 = unlimited.
 	MaxLineBytes int   // Maximum line length for scanner buffer. 0 = 1MB default.
+	// Format names an unpack field extractor applied to each line, such as
+	// combined or syslog; empty applies none.
+	Format string
+}
+
+// withFormat appends the field extractor of format to pipe.
+func withFormat(pipe *ingestpipeline.Pipeline, format string) (*ingestpipeline.Pipeline, error) {
+	if format == "" {
+		return pipe, nil
+	}
+	p, err := unpack.NewParser(format)
+	if err != nil {
+		return nil, err
+	}
+	return ingestpipeline.New(pipe, formatExtractor{p}), nil
+}
+
+// formatExtractor sets the fields a format parser finds in each event's raw
+// text, keeping fields the event already has.
+type formatExtractor struct {
+	parser unpack.FormatParser
+}
+
+func (f formatExtractor) Process(events []*event.Event) ([]*event.Event, error) {
+	for _, ev := range events {
+		if ev.Fields == nil {
+			ev.Fields = make(map[string]event.Value)
+		}
+		_ = f.parser.Parse(ev.Raw, func(key string, val event.Value) bool {
+			if _, ok := ev.Fields[key]; !ok {
+				ev.Fields[key] = val
+			}
+			return true
+		})
+	}
+	return events, nil
 }
 
 // QueryOpts controls query execution.
@@ -158,6 +191,10 @@ func (e *Engine) IngestFile(ctx context.Context, path string, opts IngestOpts) (
 
 // IngestReader reads from r and ingests all lines as events.
 func (e *Engine) IngestReader(ctx context.Context, r io.Reader, opts IngestOpts) (int, error) {
+	pipe, err := withFormat(e.pipe, opts.Format)
+	if err != nil {
+		return 0, err
+	}
 	maxLine := opts.MaxLineBytes
 	if maxLine <= 0 {
 		maxLine = 1024 * 1024 // 1MB default
@@ -193,7 +230,7 @@ func (e *Engine) IngestReader(ctx context.Context, r io.Reader, opts IngestOpts)
 			if err := ctx.Err(); err != nil {
 				return total, err
 			}
-			n, err := e.processBatch(batch, idx)
+			n, err := e.processBatchWith(pipe, batch, idx)
 			if err != nil {
 				return total, err
 			}
@@ -206,7 +243,7 @@ func (e *Engine) IngestReader(ctx context.Context, r io.Reader, opts IngestOpts)
 	}
 
 	if len(batch) > 0 {
-		n, err := e.processBatch(batch, idx)
+		n, err := e.processBatchWith(pipe, batch, idx)
 		if err != nil {
 			return total, err
 		}
@@ -298,76 +335,82 @@ func (e *Engine) EventCount() int {
 	return total
 }
 
-// Query parses and executes a LynxFlow query against ingested events.
-// Returns the result, query statistics, and any error.
-func (e *Engine) Query(ctx context.Context, query string, opts QueryOpts) (*QueryResult, *stats.QueryStats, error) {
+// Query compiles a PPL query and runs it over the ingested events.
+func (e *Engine) Query(ctx context.Context, q string, _ QueryOpts) (*QueryResult, *stats.QueryStats, error) {
 	st := &stats.QueryStats{
 		Ephemeral: true,
 		ScanType:  "ephemeral",
 	}
-
-	parseStart := time.Now()
-
-	prog, err := parseLFQuery(query)
+	c, err := compileQuery(q, st)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse: %w", err)
+		return nil, nil, err
+	}
+	pipeRows, err := e.run(ctx, c, defaultIndex, st)
+	if err != nil {
+		return nil, nil, err
 	}
 
-	// RFC-002: spl2.ExpandFragments removed; lynxflow has no fragment expansion.
-
-	st.ParseDuration = time.Since(parseStart)
-
-	optStart := time.Now()
-
-	// RFC-002: spl2 optimizer removed; using logical/opt.
-	prog, _ = opt.Optimize(prog)
-	// RFC-002: dataset optimization removed.
-
-	st.OptimizeDuration = time.Since(optStart)
-
-	// RFC-002: optimizer rule details removed.
-
-	// RFC-002 Phase 10: use the lynxflow physical builder (physical.Build)
-	// instead of the removed spl2 pipeline builder (BuildProgramWithGovernor).
-	source := physical.NewStorageSourceFromMap(e.events, defaultIndex)
-	cpuBefore := stats.TakeCPUSnapshot()
-	execStart := time.Now()
-
-	iter, err := physical.Build(prog, physical.BuildOptions{
-		Source: source,
-		Now:    time.Now(),
-	})
-	if err != nil {
-		return nil, nil, fmt.Errorf("build pipeline: %w", err)
-	}
-
-	pipeRows, err := pipeline.CollectAll(ctx, iter)
-	if err != nil {
-		return nil, nil, fmt.Errorf("execute: %w", err)
-	}
-
-	st.ExecDuration = time.Since(execStart)
-	applyBudgetAndCPUStats(st, nil, cpuBefore, stats.TakeCPUSnapshot())
-
-	// Extract per-stage stats and warnings from instrumented pipeline.
-	st.Stages = pipeline.CollectStageStats(iter)
-	st.Warnings = pipeline.CollectWarnings(iter)
-	extractMatchedRows(st)
-
-	// Count total events across all indexes for ScannedRows.
 	var totalEvents int64
 	for _, evts := range e.events {
 		totalEvents += int64(len(evts))
 	}
-
 	st.ScannedRows = totalEvents
-	// Use actual bytes tracked during ingestion instead of a fixed estimate.
 	st.ProcessedBytes = e.totalRawBytes
 	st.ResultRows = int64(len(pipeRows))
 
-	rows := pipelineRowsToInterfaceRows(pipeRows, queryAddsDefaultEventMetadata(prog))
+	return &QueryResult{Rows: pipelineRowsToInterfaceRows(pipeRows, true)}, st, nil
+}
 
-	return &QueryResult{Rows: rows}, st, nil
+func compileQuery(q string, st *stats.QueryStats) (*query.Compiled, error) {
+	start := time.Now()
+	c, err := query.Compile(q)
+	st.ParseDuration = time.Since(start)
+	return c, err
+}
+
+// run executes a compiled plan over the engine's events; a query written
+// with the explain command returns its rendered plans instead.
+func (e *Engine) run(ctx context.Context, c *query.Compiled, defaultIdx string, st *stats.QueryStats) ([]map[string]event.Value, error) {
+	if c.Explain {
+		return []map[string]event.Value{{"plan": event.StringValue(query.Explain(c))}}, nil
+	}
+	collect := map[ir.Node]*physical.NodeStats{}
+	cpuBefore := stats.TakeCPUSnapshot()
+	start := time.Now()
+	rows, err := query.Run(ctx, c, physical.MapStore(e.events), query.Options{DefaultSource: defaultIdx, Collect: collect})
+	if err != nil {
+		return nil, err
+	}
+	st.ExecDuration = time.Since(start)
+	applyBudgetAndCPUStats(st, nil, cpuBefore, stats.TakeCPUSnapshot())
+	st.Stages = stageStats(c.Plan, collect)
+	extractMatchedRows(st)
+	return rows, nil
+}
+
+// stageStats lists per-operator statistics in pipeline order, from the
+// scans up to the root.
+func stageStats(plan *ir.Plan, collect map[ir.Node]*physical.NodeStats) []stats.StageStats {
+	var out []stats.StageStats
+	ir.WalkPlan(plan.Root, func(n ir.Node) bool {
+		ns, ok := collect[n]
+		if !ok {
+			return true
+		}
+		name, _, _ := strings.Cut(n.Label(), "(")
+		s := stats.StageStats{Name: name, OutputRows: ns.Rows, Duration: ns.Wall}
+		if in := n.Inputs(); len(in) > 0 {
+			if is, ok := collect[in[0]]; ok {
+				s.InputRows = is.Rows
+			}
+		}
+		out = append(out, s)
+		return true
+	})
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
 }
 
 // extractMatchedRows derives MatchedRows from pipeline stage stats.
@@ -382,23 +425,18 @@ func extractMatchedRows(st *stats.QueryStats) {
 	}
 }
 
-// IngestReaderFiltered reads from r with query-aware predicate pushdown.
-// Lines that cannot match the query's search keywords are skipped before
-// Event allocation.
-func (e *Engine) IngestReaderFiltered(ctx context.Context, r io.Reader, query string, opts IngestOpts) (int, error) {
-	prog, err := parseLFQuery(query)
-	if err != nil {
-		return 0, fmt.Errorf("parse: %w", err)
+// IngestReaderFiltered reads from r after checking that the query compiles,
+// so a bad query fails before the input is read.
+func (e *Engine) IngestReaderFiltered(ctx context.Context, r io.Reader, q string, opts IngestOpts) (int, error) {
+	if _, err := query.Compile(q); err != nil {
+		return 0, err
 	}
-
-	_ = hintsFromLogicalPlan(prog)
 
 	var preFilter [][]byte
-	if false /* RFC-002: pushdown check removed */ {
-		preFilter = /* RFC-002 */ nil
+	pipe, err := withFormat(ingestpipeline.SelectivePipeline(nil), opts.Format)
+	if err != nil {
+		return 0, err
 	}
-
-	pipe := ingestpipeline.SelectivePipeline( /* RFC-002 */ nil)
 
 	idx := defaultIndex
 	if opts.Index != "" {
@@ -461,45 +499,25 @@ func cleanupSpiller(s *SegmentSpiller) {
 // escalates from in-memory accumulation to on-disk segment spill.
 const DefaultSpillThreshold = 256 * 1024 * 1024
 
-// QueryReader parses the query first, then reads from r with predicate
-// pushdown. For large inputs (>DefaultSpillThreshold), events are spilled to
-// temporary .lsg segment files on disk.
-// Returns the result, query statistics, and any error.
-func (e *Engine) QueryReader(ctx context.Context, r io.Reader, query string, opts IngestOpts, qopts QueryOpts) (*QueryResult, *stats.QueryStats, error) {
+// QueryReader compiles the query, reads events from r and runs the query
+// over them. Inputs larger than the spill threshold are spilled to
+// temporary segment files, read back filtered by the query's search terms.
+func (e *Engine) QueryReader(ctx context.Context, r io.Reader, q string, opts IngestOpts, qopts QueryOpts) (*QueryResult, *stats.QueryStats, error) {
 	st := &stats.QueryStats{
 		Ephemeral: true,
 		ScanType:  "ephemeral",
 	}
-
-	parseStart := time.Now()
-
-	prog, err := parseLFQuery(query)
+	c, err := compileQuery(q, st)
 	if err != nil {
-		return nil, nil, fmt.Errorf("parse: %w", err)
+		return nil, nil, err
 	}
-
-	st.ParseDuration = time.Since(parseStart)
-
-	optStart := time.Now()
-
-	// RFC-002: spl2 optimizer removed; using logical/opt.
-	prog, _ = opt.Optimize(prog)
-	// RFC-002: dataset optimization removed.
-
-	st.OptimizeDuration = time.Since(optStart)
-
-	// RFC-002: optimizer rule details removed.
-
-	hints := hintsFromLogicalPlan(prog)
 
 	var preFilter [][]byte
-	if false /* RFC-002: pushdown check removed */ {
-		preFilter = /* RFC-002 */ nil
+	pipe, err := withFormat(ingestpipeline.SelectivePipeline(nil), opts.Format)
+	if err != nil {
+		return nil, nil, err
 	}
-
-	pipe := ingestpipeline.SelectivePipeline( /* RFC-002 */ nil)
-
-	earlyLimit := 0 // RFC-002: streamable check removed
+	earlyLimit := 0
 
 	idx := defaultIndex
 	if opts.Index != "" {
@@ -620,6 +638,7 @@ func (e *Engine) QueryReader(ctx context.Context, r io.Reader, query string, opt
 	if spiller != nil {
 		defer func() { cleanupSpiller(spiller) }()
 
+		hints := physical.PlanHints(c.Plan, idx, time.Now())
 		iter := spiller.Iterator(hints.SearchTerms)
 		for {
 			ev, iterErr := iter.Next()
@@ -637,43 +656,16 @@ func (e *Engine) QueryReader(ctx context.Context, r io.Reader, query string, opt
 		}
 	}
 
-	// RFC-002 Phase 10: use the lynxflow physical builder (physical.Build)
-	// instead of the removed spl2 pipeline builder (BuildProgramWithGovernor).
-	qrSource := physical.NewStorageSourceFromMap(e.events, idx)
-	cpuBefore := stats.TakeCPUSnapshot()
-	execStart := time.Now()
-
-	qrIter, err := physical.Build(prog, physical.BuildOptions{
-		Source: qrSource,
-		Now:    time.Now(),
-	})
+	pipeRows, err := e.run(ctx, c, idx, st)
 	if err != nil {
-		return nil, nil, fmt.Errorf("build pipeline: %w", err)
+		return nil, nil, err
 	}
-
-	pipeRows, err := pipeline.CollectAll(ctx, qrIter)
-	if err != nil {
-		return nil, nil, fmt.Errorf("execute: %w", err)
-	}
-
-	st.ExecDuration = time.Since(execStart)
-	applyBudgetAndCPUStats(st, nil, cpuBefore, stats.TakeCPUSnapshot())
-
-	// Extract per-stage stats and warnings from instrumented pipeline.
-	st.Stages = pipeline.CollectStageStats(qrIter)
-	st.Warnings = pipeline.CollectWarnings(qrIter)
-	extractMatchedRows(st)
 
 	st.ScannedRows = int64(total)
-	// For QueryReader, use actual bytes tracked during ingestion for processed bytes estimate.
-	// memEstimate counts len(line)+128 per line — use it directly as a better approximation
-	// than the fixed 200 bytes/event constant, since it reflects actual line lengths.
 	st.ProcessedBytes = memEstimate
 	st.ResultRows = int64(len(pipeRows))
 
-	rows := pipelineRowsToInterfaceRows(pipeRows, queryProducesEventRows(prog))
-
-	return &QueryResult{Rows: rows}, st, nil
+	return &QueryResult{Rows: pipelineRowsToInterfaceRows(pipeRows, true)}, st, nil
 }
 
 func pipelineRowsToInterfaceRows(pipeRows []map[string]event.Value, addDefaultEventMetadata bool) []map[string]interface{} {
@@ -711,31 +703,15 @@ func canonicalizeDefaultEventMetadata(fields map[string]interface{}, addDefaults
 	delete(fields, "sourcetype")
 }
 
+// interfaceRowHasEventBuiltins reports whether a row is a whole event rather
+// than a computed row such as a time bucket of timechart.
 func interfaceRowHasEventBuiltins(fields map[string]interface{}) bool {
-	if _, ok := fields["_raw"]; ok {
-		return true
-	}
-	if _, ok := fields["_time"]; ok {
-		return true
-	}
-
-	return false
+	_, ok := fields["_raw"]
+	return ok
 }
 
-func queryProducesEventRows(q *logical.Plan) bool {
-	// RFC-002: spl2 command type switch removed.
-	return true
-}
-
-func queryAddsDefaultEventMetadata(q *logical.Plan) bool {
-	// RFC-002: spl2 command type switch removed. Return true as default.
-	return queryProducesEventRows(q)
-}
-
-// Events returns the full events map. This is intended for ephemeral engines
-// (CLI file/pipe mode) where the caller needs direct access to build a
-// LynxFlow StorageSource. The returned map is not a copy; do not modify
-// concurrently.
+// Events returns the full events map of an ephemeral engine. The returned
+// map is not a copy; do not modify it concurrently.
 func (e *Engine) Events() map[string][]*event.Event {
 	return e.events
 }
@@ -761,56 +737,4 @@ func (e *Engine) Close() error {
 	e.events = nil
 
 	return nil
-}
-
-// parseLFQuery parses a query string via the LynxFlow pipeline.
-func parseLFQuery(query string) (*logical.Plan, error) {
-	q, diags := parser.Parse(query)
-	for _, d := range diags {
-		if d.Severity == parser.SeverityError {
-			return nil, fmt.Errorf("parse error: %s", d.Message)
-		}
-	}
-	desugared, _ := desugar.Desugar(q, desugar.Options{DefaultSource: "main"})
-	plan, lowerDiags := logical.Lower(desugared, logical.Options{DefaultSource: "main"})
-	for _, d := range lowerDiags {
-		if d.Severity == parser.SeverityError {
-			return nil, fmt.Errorf("lower error: %s", d.Message)
-		}
-	}
-	return plan, nil
-}
-
-// hintsFromLogicalPlan extracts QueryHints from a logical plan.
-func hintsFromLogicalPlan(plan *logical.Plan) *model.QueryHints {
-	hints := &model.QueryHints{}
-	if plan == nil || plan.Root == nil {
-		return hints
-	}
-	walkPlanNodes(plan.Root, func(n logical.Node) {
-		scan, ok := n.(*logical.Scan)
-		if !ok || len(scan.Sources) == 0 {
-			return
-		}
-		src := scan.Sources[0]
-		if src.Name != "" && src.Name != "*" {
-			hints.IndexName = src.Name
-			hints.SourceScopeType = model.SourceScopeSingle
-			hints.SourceScopeSources = []string{src.Name}
-		}
-		if src.Name == "*" {
-			hints.SourceScopeType = model.SourceScopeAll
-		}
-	})
-	return hints
-}
-
-func walkPlanNodes(n logical.Node, f func(logical.Node)) {
-	if n == nil {
-		return
-	}
-	f(n)
-	for _, child := range n.Children() {
-		walkPlanNodes(child, f)
-	}
 }

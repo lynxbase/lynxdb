@@ -35,6 +35,13 @@ const (
 	ErrCodeQueryPoolExhausted  ErrorCode = "QUERY_POOL_EXHAUSTED"
 	ErrCodeQueryTooLarge       ErrorCode = "QUERY_TOO_LARGE"
 	ErrCodeUnsupportedCommand  ErrorCode = "UNSUPPORTED_COMMAND"
+	ErrCodeSyntaxError         ErrorCode = "SYNTAX_ERROR"
+	ErrCodeSemanticError       ErrorCode = "SEMANTIC_ERROR"
+	ErrCodeTypeError           ErrorCode = "TYPE_ERROR"
+	ErrCodeUnsupportedFunction ErrorCode = "UNSUPPORTED_FUNCTION"
+	ErrCodeUnsupportedFeature  ErrorCode = "UNSUPPORTED_FEATURE"
+	ErrCodePlanningError       ErrorCode = "PLANNING_ERROR"
+	ErrCodeExecutionError      ErrorCode = "EXECUTION_ERROR"
 )
 
 // errorBody is the structured error envelope.
@@ -86,8 +93,10 @@ func respondQueryError(w http.ResponseWriter, msg, code string) {
 	case ErrCodeQueryPoolExhausted:
 		respondError(w, ErrCodeQueryPoolExhausted, http.StatusServiceUnavailable, msg,
 			WithSuggestion("Wait for other queries to complete, or increase query.global_query_pool_bytes."))
+	case ErrCodeUnsupportedFeature:
+		respondError(w, ErrCodeUnsupportedFeature, http.StatusUnprocessableEntity, msg)
 	default:
-		respondInternalError(w, msg)
+		respondError(w, ErrCodeExecutionError, http.StatusInternalServerError, msg)
 	}
 }
 
@@ -96,7 +105,6 @@ type metaFields struct {
 	TookMS          *float64                `json:"took_ms,omitempty"`
 	Scanned         *int64                  `json:"scanned,omitempty"`
 	QueryID         string                  `json:"query_id,omitempty"`
-	Language        string                  `json:"language,omitempty"`         // "lynxflow" (the only supported language; "spl2" is rejected with migration guidance)
 	SegmentsErrored *int                    `json:"segments_errored,omitempty"` // E7: surface segment read errors
 	SearchStats     *metaStats              `json:"stats,omitempty"`            // rich query stats for CLI display
 	Warnings        []string                `json:"warnings,omitempty"`         // user-facing warnings about the query
@@ -161,10 +169,6 @@ type metaStats struct {
 	JoinStrategy         string              `json:"join_strategy,omitempty"`
 	ScanMS               float64             `json:"scan_ms,omitempty"`
 	PipelineMS           float64             `json:"pipeline_ms,omitempty"`
-	AcceleratedBy        string              `json:"accelerated_by,omitempty"`
-	MVStatus             string              `json:"mv_status,omitempty"`
-	MVSpeedup            string              `json:"mv_speedup,omitempty"`
-	MVOriginalScan       int64               `json:"mv_original_scan,omitempty"`
 	CacheHit             bool                `json:"cache_hit,omitempty"`
 	PipelineStages       []metaPipelineStage `json:"pipeline_stages,omitempty"`
 
@@ -350,15 +354,6 @@ func WithExplain(explain *metaExplain) MetaOpt {
 	}
 }
 
-// WithLanguage adds the resolved query language to the meta.
-func WithLanguage(lang string) MetaOpt {
-	return func(m *metaFields) {
-		if lang != "" {
-			m.Language = lang
-		}
-	}
-}
-
 // respondData writes {"data": payload, "meta": {...}}.
 // When a query_id is present, it is also set as an X-Query-ID response header
 // so the logging middleware can correlate HTTP requests with query execution (O1).
@@ -369,7 +364,7 @@ func respondData(w http.ResponseWriter, httpStatus int, data interface{}, opts .
 	}
 	envelope := map[string]interface{}{"data": data}
 	// Only include meta if it has content.
-	if meta.TookMS != nil || meta.Scanned != nil || meta.QueryID != "" || meta.Language != "" || meta.SegmentsErrored != nil || meta.SearchStats != nil || len(meta.Warnings) > 0 || len(meta.Lints) > 0 || len(meta.Suggestions) > 0 || len(meta.Rewrites) > 0 {
+	if meta.TookMS != nil || meta.Scanned != nil || meta.QueryID != "" || meta.SegmentsErrored != nil || meta.SearchStats != nil || len(meta.Warnings) > 0 || len(meta.Lints) > 0 || len(meta.Suggestions) > 0 || len(meta.Rewrites) > 0 {
 		envelope["meta"] = meta
 	}
 	// Expose query_id as a response header for logging middleware correlation.

@@ -1,54 +1,75 @@
 ---
 title: Performance Tuning
-description: Optimize LynxDB performance -- ingest throughput, query latency, compaction, memory, and cache tuning.
+description: Tune LynxDB for ingest throughput, query latency, compaction, memory, and cache use, and write queries that skip data.
 ---
 
 # Performance Tuning
 
-LynxDB is designed to perform well with default settings. This guide covers tuning for specific workloads when you need to push beyond defaults.
+LynxDB performs well with default settings. This page covers the settings to change for specific workloads, and how to write queries that read less data. Measure before and after each change with `--analyze` (see [Monitoring](/docs/operations/monitoring#query-profiling)).
 
-## Baseline Performance
+## Query Shape
 
-With default settings on commodity hardware:
+The largest wins come from the query itself. The server skips whole segments, and rows inside them, using the time range, search terms and string equality predicates of the query. See [Indexing](/docs/architecture/indexing) for how each one is used.
 
-| Metric | Value |
-|--------|-------|
-| Single-node ingest throughput | 300K+ events/sec |
-| Pipeline throughput (where + stats) | ~2.1M events/sec |
-| VM simple predicate | 22ns/op, 0 allocs |
-| Cache hit latency | 299ns |
-| Streaming `head 10` on 100K events | 0.23ms |
-| MV-accelerated query | ~400x speedup |
+| Do | Why |
+|----|-----|
+| Bound the time range: `source=main earliest=-1h ...`, or `--since 1h` on the CLI | Segments outside the range are never opened |
+| Put search terms and field comparisons in the source command: `source=main level=ERROR timeout` | Terms are checked against bloom filters and the term index; string equality is checked against column min/max |
+| Filter early, before `eval`, `stats` or `sort` | Filters directly above the scan become scan hints |
+| End event searches with `head N` | The pipeline stops pulling rows after N instead of reading every segment |
+| Name the fields you need with `fields` | Only those columns are read |
+| Use `sort ... | head N` instead of a full `sort` | The optimizer turns it into a top-N heap |
 
-If you are already achieving acceptable performance, there is no need to tune further.
+```bash
+# Reads only the segments of the last hour that may contain the token "timeout"
+lynxdb query 'source=main earliest=-1h level=ERROR timeout | head 50'
+
+# Top 10 failing paths on one host
+lynxdb query 'source=main host=web-01 status>=500
+  | stats count() as errors by path
+  | sort - errors
+  | head 10'
+```
+
+`lynxdb explain '<query>'` prints the optimized plan. Check that the `Scan` line carries `prune=` predicates, a time range and a `columns=` list:
+
+```
+Optimized plan:
+Project(`count()`, host)
+└─ Aggregate(`count()` = count() BY host)
+   └─ Filter(level = "ERROR")
+      └─ Scan(main) columns=[_time, host, level] prune=level = "ERROR"
+```
+
+See [PPL performance](../ppl/performance.md) for the full list of plan rewrites.
 
 ## Ingest Throughput
 
-### Increase Flush Threshold
+### Flush Threshold
 
-Larger flush targets can reduce small-part churn and improve compaction efficiency:
+A larger flush target writes fewer, larger parts and reduces compaction work:
 
 ```yaml
 storage:
   flush_threshold: "1gb"      # Default: 512mb
 ```
 
-Trade-off: Higher memory usage and more data buffered before a flush completes.
+Trade-off: more memory in use and more data buffered before a flush completes.
 
 ### Part Flush Durability
 
-For maximum throughput, reduce synchronous flush cost on non-critical pipelines:
+For the highest throughput on pipelines that can resend data, skip the fsync before the part rename:
 
 ```yaml
 ingest:
   fsync: false                # Lower flush latency, higher power-loss risk
 ```
 
-For stricter durability, keep `ingest.fsync: true`.
+Keep `ingest.fsync: true` when you need parts to survive power loss.
 
 ### Batch Size
 
-For the CLI `ingest` command, increase the client-side batch size:
+For the CLI `ingest` command, raise the client-side batch size:
 
 ```bash
 lynxdb ingest huge.log --batch-size 10000  # Default: 5000
@@ -58,15 +79,15 @@ For the HTTP API, send larger request bodies:
 
 ```yaml
 ingest:
-  max_body_size: "50mb"       # Default: 100mb
+  max_body_size: "100mb"      # Default: 100mb
   max_batch_size: 5000        # Default: 1000
 ```
 
 ## Query Latency
 
-### Increase Cache Size
+### Result Cache
 
-The query cache can dramatically reduce latency for repeated queries:
+The server caches complete query results. The cache key includes the query text, the time range and an ingest generation counter, so a cached result is only reused while no new data arrives. It helps most for repeated queries over historical data:
 
 ```yaml
 storage:
@@ -74,144 +95,118 @@ storage:
   cache_ttl: "10m"            # Default: 5m
 ```
 
-Monitor the cache hit rate:
+Check the hit rate with `lynxdb cache stats`. Queries whose result depends on the current time are never cached: relative time bounds, `now()` and other non-deterministic functions, and requests that pass `from`/`to`.
 
-```bash
-lynxdb cache stats
-```
-
-If the hit rate is below 50%, increase `cache_max_bytes`.
-
-### Increase Concurrent Queries
+### Concurrent Queries
 
 Allow more queries to run in parallel:
 
 ```yaml
 query:
-  max_concurrent: 30          # Default: 10
+  max_concurrent: 64          # Default: 32
 ```
 
-Rule of thumb: 2-3x the number of CPU cores, depending on available memory.
-
-### Use Materialized Views
-
-For repeated aggregation queries, materialized views provide ~400x speedup:
-
-```bash
-# Create a view for a common query pattern
-lynxdb mv create mv_errors_5m \
-  'from main level=error | stats count(), avg(duration) by source, bin(_time, 5m) as bucket' \
-  --retention 90d
-
-# Queries matching this pattern are automatically accelerated
-lynxdb query 'from main level=error | stats count() by source'
-# meta.accelerated_by: {view: mv_errors_5m, speedup: "~400x"}
-```
+Each running query holds its own memory budget (`query.max_query_memory_bytes`, default 1gb), so raise concurrency together with the memory pool.
 
 ### Segment Cache for S3 Tiering
 
-When using S3 tiering, increase the local segment cache to avoid S3 round-trips:
+With S3 tiering, a larger local segment cache avoids object-store round trips:
 
 ```yaml
 storage:
   segment_cache_size: "50gb"  # Default: 10gb
 ```
 
-Size this to hold 2-4x your most frequently queried warm-tier data.
+Size it to hold the warm-tier data you query most often.
 
-### Query Profiling
-
-Use `--analyze` to identify bottlenecks in specific queries:
+### Reading a Profile
 
 ```bash
-# Basic profiling
-lynxdb query 'from main level=error | stats count() by source' --analyze
-
-# Full profiling with per-operator timing
-lynxdb query 'from main level=error | stats count() by source' --analyze full
+lynxdb query 'source=main level=ERROR | stats count() by host' --analyze=full
 ```
 
 Look for:
-- **High scan count / low skip count**: Bloom filters or time-range indexes are not effective. Consider more selective queries.
-- **High filter ratio**: Most events are being scanned and discarded. Add materialized views for this query pattern.
-- **Slow operators**: Identify which pipeline operator is the bottleneck.
+
+- **Few skipped segments**: the query has no time range or no selective term. Add `earliest=` or a search term.
+- **Many rows scanned, few returned**: the filter is applied after the scan instead of narrowing it. Move string equality and terms into the source command.
+- **One slow operator**: per-operator timing shows which stage dominates.
 
 ## Compaction
 
-### Reduce Compaction Interval
+### Compaction Interval
 
-More frequent compaction checks keep L0 file count low:
+More frequent compaction checks keep the L0 part count low:
 
 ```yaml
 storage:
   compaction_interval: "15s"  # Default: 30s
 ```
 
-### Increase Compaction Workers
+### Compaction Workers
 
-More workers allow parallel compaction:
+More workers run compactions in parallel:
 
 ```yaml
 storage:
   compaction_workers: 4       # Default: 2
 ```
 
-Trade-off: More CPU and I/O during compaction.
+Trade-off: more CPU and I/O during compaction.
 
 ### Rate Limiting
 
-If compaction I/O affects query latency, apply a rate limit:
+If compaction I/O affects query latency, lower its bandwidth:
 
 ```yaml
 storage:
-  compaction_rate_limit_mb: 100  # Default: 100
+  compaction_rate_limit_mb: 50  # Default: 100
 ```
 
 ### Level Thresholds
 
-Tune when compaction triggers:
-
 ```yaml
 storage:
-  l0_threshold: 4             # Default: 4 (trigger L0->L1 compaction)
-  l1_threshold: 4             # Default: 4 (trigger L1->L2 compaction)
-  l2_target_size: "1gb"       # Default: 1gb (target size for L2 segments)
+  l0_threshold: 4             # Default: 4 (L0 -> L1 trigger)
+  l1_threshold: 4             # Default: 4 (L1 -> L2 trigger)
+  l2_target_size: "1gb"       # Default: 1gb
 ```
 
-Lower `l0_threshold` for more aggressive L0 compaction (reduces query latency but increases CPU). Higher `l2_target_size` for fewer, larger segments (better for sequential scan performance).
+A lower `l0_threshold` compacts L0 sooner (fewer parts per query, more CPU). A higher `l2_target_size` produces fewer, larger parts.
 
 ## Memory
 
-### Memory Pool
+### Query Memory Pool
 
-Set a global memory pool to prevent queries from using all available memory:
+Bound the memory all queries share:
 
 ```bash
 lynxdb server --max-query-pool 4gb
 ```
 
-When the pool is exhausted, queries spill intermediate results to disk.
+Aggregation and sort spill to disk when their share of the budget runs out. Other operators that hold rows (join, eventstats, top-N, reverse) are bounded by the same budget; a query that exceeds it fails with `QUERY_MEMORY_EXCEEDED`.
 
 ### Spill Directory
 
-Use a fast disk for spill files:
+Put spill files on a fast disk:
 
 ```bash
 lynxdb server --max-query-pool 4gb --spill-dir /data/lynxdb/tmp
 ```
 
+`query.max_temp_dir_size_bytes` (default 10gb) caps the disk space spill files use.
+
 ### Compression
 
-Switch to zstd for lower memory usage during decompression (at the cost of slightly more CPU):
+`zstd` produces smaller parts than `lz4` at the cost of more CPU on write and read:
 
 ```yaml
 storage:
   compression: "zstd"         # Default: lz4
 ```
 
-## Workload-Specific Tuning
+## Workload Profiles
 
-### High-Throughput Ingest (>100K events/sec)
+### High-Throughput Ingest
 
 ```yaml
 storage:
@@ -220,16 +215,15 @@ storage:
   compaction_interval: "15s"
 
 ingest:
-  max_body_size: "50mb"
   max_batch_size: 5000
   fsync: false
 ```
 
-### Dashboard-Heavy (Many Concurrent Queries)
+### Many Concurrent Queries
 
 ```yaml
 query:
-  max_concurrent: 50
+  max_concurrent: 64
   default_result_limit: 500
 
 storage:
@@ -237,29 +231,21 @@ storage:
   cache_ttl: "10m"
 ```
 
-Create materialized views for your hot aggregation queries:
-
-```bash
-lynxdb mv create mv_errors_5m \
-  'from main level=error | stats count() by source, bin(_time, 5m) as bucket' \
-  --retention 90d
-```
-
-### Long-Range Scans (Weeks/Months)
+### Long-Range Scans
 
 ```yaml
 query:
   max_query_runtime: "30m"    # Default: 5m
 
 storage:
-  segment_cache_size: "50gb"  # Large cache for warm-tier data
+  segment_cache_size: "50gb"
 ```
 
 ```bash
 lynxdb server --max-query-pool 8gb
 ```
 
-### Resource-Constrained (Small VMs)
+### Small VMs
 
 ```yaml
 storage:
@@ -268,40 +254,13 @@ storage:
   cache_max_bytes: "256mb"
 
 query:
-  max_concurrent: 5
-```
-
-## Benchmarking
-
-Run the built-in benchmark to establish a baseline:
-
-```bash
-lynxdb bench
-lynxdb bench --events 1000000
-```
-
-Compare results after tuning:
-
-```
-LynxDB Benchmark -- 100,000 events
-============================================================
-Generating events... 100000 lines
-
-Ingest:  100,000 events in 245ms (408,163 events/sec)
-
-QUERY                                         RESULTS       TIME
-Filtered aggregate                                  1       12ms
-Full scan aggregate                                 5        8ms
-Full-text search                                  340       15ms
-Range filter + top                                 10       11ms
-Time bucketed                                      96       14ms
-
-Done.
+  max_concurrent: 4
+  max_query_memory_bytes: "256mb"
 ```
 
 ## Next Steps
 
-- [Monitoring](/docs/operations/monitoring) -- track performance metrics
-- [Storage Settings](/docs/configuration/storage) -- detailed storage configuration
-- [Query Settings](/docs/configuration/query) -- query engine tuning
+- [Monitoring](/docs/operations/monitoring) -- metrics to watch while tuning
+- [Storage Settings](/docs/configuration/storage) -- storage configuration reference
+- [Query Settings](/docs/configuration/query) -- query engine configuration reference
 - [Troubleshooting](/docs/operations/troubleshooting) -- diagnose performance issues

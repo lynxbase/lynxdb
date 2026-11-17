@@ -19,7 +19,7 @@ func TestIngestAndQuery_StatsCount_JSON(t *testing.T) {
 	baseURL := setupServerWithData(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM main | stats count()")
+		"source=main | stats count()")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestIngestAndQuery_FilteredCount_JSON(t *testing.T) {
 	baseURL := setupServerWithData(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM main | where level==\""+testLevelError+"\" | stats count()")
+		"source=main | where level = \""+testLevelError+"\" | stats count()")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestIngestAndQuery_StatsCountByLevel_JSON(t *testing.T) {
 	baseURL := setupServerWithData(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM main | stats count() by level")
+		"source=main | stats count() by level")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestIngestAndQuery_FieldsProjection_JSON(t *testing.T) {
 	baseURL := setupServerWithData(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM main | keep level | head 5")
+		"source=main | fields level | head 5")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestIngestAndQuery_NDJSON(t *testing.T) {
 
 	// Server-mode query always returns NDJSON regardless of --format flag.
 	stdout, _, err := runCmd(t, "--server", baseURL, "query",
-		"FROM main | stats count() by level")
+		"source=main | stats count() by level")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestIngestAndQuery_Table(t *testing.T) {
 	baseURL := setupServerWithData(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "table",
-		"FROM main | stats count() by level")
+		"source=main | stats count() by level")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}

@@ -828,7 +828,7 @@ func processESBatch(ctx context.Context, pipe *pipeline.Pipeline, batch []*event
 		return err
 	}
 
-	return s.submitDurableShipperEvents(ctx, processed)
+	return s.submitDurableEvents(ctx, processed)
 }
 
 func makeSuccessItem(action, index, id string) esBulkItemResult {
@@ -938,7 +938,7 @@ func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if respondIngestError(w, s.submitShipperEvents(r.Context(), processed)) {
+	if respondIngestError(w, s.submitEvents(r.Context(), processed)) {
 		return
 	}
 

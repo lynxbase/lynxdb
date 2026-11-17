@@ -1,6 +1,6 @@
 # format: json
-from backend
+source=backend
 | stats count() as n by service
 | eventstats sum(n) as total
-| extend pct = round((float((n * 100)) / total), 1)
-| sort -pct, service
+| eval pct = round(n * 100.0 / total, 1)
+| sort - pct, service

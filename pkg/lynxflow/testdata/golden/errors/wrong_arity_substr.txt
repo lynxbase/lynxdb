@@ -1,3 +1,0 @@
-query: | extend x = substr()
-error S007 [13:21] 'substr' expects 2 to 3 arguments, got 0
-  suggestion: signature: substr(s: string, start: int, [len: int]) -> string

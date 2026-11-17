@@ -392,7 +392,7 @@ func BatchFromEvents(events []*event.Event) *Batch {
 			}
 		}
 		b.Columns["_source"] = col
-		b.Columns["source"] = col // alias: SPL2 queries use "source" without underscore
+		b.Columns["source"] = col // alias without the underscore
 		setPresenceIfSparse(b, "_source", pres)
 		setPresenceIfSparse(b, "source", pres)
 	}

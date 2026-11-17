@@ -1,3 +1,0 @@
-Filter((CommandLine == "whoami"))
-  Scan(main)
-    pushdown.field_predicate: (CommandLine == "whoami")

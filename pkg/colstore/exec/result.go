@@ -14,6 +14,9 @@ type Stats struct {
 	SkippedByKey   int64
 	SkippedByToken int64
 	SkippedByTime  int64
+	// SkippedAsEmpty counts the blocks left out because an earlier query
+	// with the same filter found no row in them.
+	SkippedAsEmpty int64
 	// SkippedByStats counts opened blocks that the filter rejected from
 	// column statistics and constants, without decoding a column.
 	SkippedByStats int64
@@ -49,6 +52,10 @@ type Column struct {
 	// Values holds the rows in the flat layout; a row uses the buffer of its
 	// own kind.
 	Values vec.Column
+	// Field is set for a column that holds a field of the events as it is
+	// stored: a row without a value there does not hold the field, where in
+	// any other column it holds null.
+	Field bool
 }
 
 // Result is the rows a query produced.
@@ -77,6 +84,8 @@ func (r *Result) Value(row, col int) Value {
 		return Value{Kind: kind, Float: c.Values.Floats[row]}
 	case vec.KindString, vec.KindVariant:
 		return Value{Kind: kind, Bytes: c.Values.Data[c.Values.Offsets[row]:c.Values.Offsets[row+1]]}
+	case vec.KindNull:
+		return Value{Kind: kind}
 	}
 
 	return Value{}
@@ -160,6 +169,10 @@ func (c *colVec) push(kind vec.Kind) {
 
 func (c *colVec) appendNull() { c.push(KindAny) }
 
+// appendPresentNull adds a row that holds a null, as a field of a stored
+// row can; appendNull adds one that holds nothing.
+func (c *colVec) appendPresentNull() { c.push(vec.KindNull) }
+
 func (c *colVec) appendInt(kind vec.Kind, v int64) {
 	c.push(kind)
 	n := len(c.kinds)
@@ -202,6 +215,8 @@ func (c *colVec) appendValue(v Value) {
 		c.appendFloat(v.Float)
 	case vec.KindString, vec.KindVariant:
 		c.appendBytes(v.Kind, v.Bytes)
+	case vec.KindNull:
+		c.appendPresentNull()
 	default:
 		c.appendNull()
 	}
@@ -276,6 +291,8 @@ func (c *colVec) value(i int) Value {
 		return Value{Kind: kind, Float: c.floats[i]}
 	case vec.KindString, vec.KindVariant:
 		return Value{Kind: kind, Bytes: c.bytes(i)}
+	case vec.KindNull:
+		return Value{Kind: kind}
 	}
 
 	return Value{}
@@ -295,6 +312,8 @@ func (c *colVec) appendFrom(src *colVec, i int) {
 		c.appendFloat(src.floats[i])
 	case vec.KindString, vec.KindVariant:
 		c.appendBytes(kind, src.bytes(i))
+	case vec.KindNull:
+		c.appendPresentNull()
 	default:
 		c.appendNull()
 	}

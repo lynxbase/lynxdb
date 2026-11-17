@@ -1,5 +1,0 @@
-Query
-  Pipeline
-    Stage where
-      Call exists
-        Ident amount

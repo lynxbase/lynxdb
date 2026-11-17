@@ -1,93 +1,44 @@
 ---
 title: Single Node Deployment
-description: Deploy LynxDB as a single-node server with systemd, persistent storage, and production defaults.
+description: Run LynxDB as a single-node server under systemd with persistent storage, a config file, and reloadable settings.
 ---
 
 # Single Node Deployment
 
-The simplest production deployment. A single LynxDB process handles ingestion, storage, compaction, and queries. Handles 50-100K events/sec on commodity hardware with no configuration needed.
+One `lynxdb server` process handles ingest, storage, compaction and queries. This is the recommended deployment.
 
-## Quick Start
+## Install
 
 ```bash
-# Install LynxDB
 curl -fsSL https://lynxdb.org/install.sh | sh
+lynxdb version
+```
 
-# Start with defaults (localhost:3100, ~/.local/share/lynxdb)
+The script installs the binary only. Archives for Linux, macOS and Windows are also attached to each [GitHub release](https://github.com/lynxbase/lynxdb/releases).
+
+To try it in the foreground with the defaults (`localhost:3100`, data in `~/.local/share/lynxdb`):
+
+```bash
 lynxdb server
 ```
 
 ## Production Setup
 
-### Recommended: `lynxdb install`
-
-A single command performs all production setup steps:
-
-```bash
-sudo lynxdb install
-```
-
-This creates:
-
-- A dedicated `lynxdb` system user and group
-- Data directory at `/var/lib/lynxdb` with correct ownership
-- Default config at `/etc/lynxdb/config.yaml`
-- File descriptor limits (`nofile=65536`)
-- `CAP_NET_BIND_SERVICE` for binding to privileged ports
-- A hardened systemd service with `ProtectSystem=strict`, `NoNewPrivileges=true`, and more
-- A post-install self-test to verify everything works
-
-Start and verify:
-
-```bash
-sudo systemctl enable lynxdb
-sudo systemctl start lynxdb
-
-lynxdb health
-lynxdb status
-```
-
-Customize with flags:
-
-```bash
-# Custom data directory
-sudo lynxdb install --data-dir /data/lynxdb
-
-# Skip the systemd unit (e.g., for container environments)
-sudo lynxdb install --skip-service
-
-# Non-interactive (CI/CD)
-sudo lynxdb install --yes
-```
-
-See the full [`install` reference](/docs/cli/install) for all flags.
-
-### Manual Setup
-
-If you need full control over each step, perform the setup manually:
-
-#### 1. Create a Dedicated User
+### 1. Create a user and directories
 
 ```bash
 sudo useradd --system --no-create-home --shell /usr/sbin/nologin lynxdb
-```
-
-#### 2. Create Directories
-
-```bash
-sudo mkdir -p /var/lib/lynxdb
-sudo mkdir -p /etc/lynxdb
+sudo mkdir -p /var/lib/lynxdb /etc/lynxdb
 sudo chown lynxdb:lynxdb /var/lib/lynxdb
 ```
 
-#### 3. Create Config File
+### 2. Write the config file
 
 ```bash
 sudo lynxdb config init --system
-sudo chown lynxdb:lynxdb /etc/lynxdb/config.yaml
 ```
 
-Edit `/etc/lynxdb/config.yaml`:
+This writes the commented template with every default to `/etc/lynxdb/config.yaml`. Edit the values you need:
 
 ```yaml
 listen: "0.0.0.0:3100"
@@ -96,29 +47,34 @@ retention: "30d"
 log_level: "info"
 
 storage:
-  compression: "lz4"
-  flush_threshold: "512mb"
-  compaction_interval: "30s"
   compaction_workers: 2
-  cache_max_bytes: "2gb"
 
 query:
-  max_concurrent: 20
+  max_concurrent: 32
   max_query_runtime: "10m"
-  default_result_limit: 1000
+  spill_dir: "/var/lib/lynxdb/spill"
 
 ingest:
-  max_body_size: "50mb"
+  otlp:
+    http_listen: ""          # set an address only if you ship OTLP; see Firewall
+
+auth:
+  enabled: true
 ```
 
-#### 4. Create systemd Service
+Check it:
 
-Create `/etc/systemd/system/lynxdb.service`:
+```bash
+sudo -u lynxdb lynxdb config validate --config /etc/lynxdb/config.yaml
+```
+
+### 3. Create the systemd unit
+
+`/etc/systemd/system/lynxdb.service`:
 
 ```ini
 [Unit]
-Description=LynxDB Log Analytics Database
-Documentation=https://docs.lynxdb.org/
+Description=LynxDB log analytics database
 After=network-online.target
 Wants=network-online.target
 
@@ -131,9 +87,7 @@ ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5s
 LimitNOFILE=65536
-LimitMEMLOCK=infinity
 
-# Security hardening
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/lynxdb
@@ -144,42 +98,32 @@ PrivateTmp=true
 WantedBy=multi-user.target
 ```
 
-#### 5. Start the Service
+Adjust the `ExecStart` path to where the binary is installed. If the syslog receiver listens on a port below 1024, add `AmbientCapabilities=CAP_NET_BIND_SERVICE`.
+
+### 4. Start and verify
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable lynxdb
-sudo systemctl start lynxdb
-
-# Check status
-sudo systemctl status lynxdb
-
-# View logs
+sudo systemctl enable --now lynxdb
 sudo journalctl -u lynxdb -f
 ```
 
-#### 6. Verify
+With `auth.enabled: true`, the first start prints a root key to the journal once. Save it, then:
 
 ```bash
-# Health check
+lynxdb login --server http://localhost:3100
 lynxdb health
-
-# Server status
 lynxdb status
-
-# Run diagnostics
-lynxdb doctor
+lynxdb query 'source=main | stats count() by host'
 ```
 
-## Configuration via Environment Variables
+## Settings by Environment Variable
 
-An alternative to the config file, especially useful for container deployments:
+Instead of editing the file, a systemd drop-in can set variables:
 
 ```ini
-# /etc/systemd/system/lynxdb.service.d/override.conf
+# /etc/systemd/system/lynxdb.service.d/env.conf
 [Service]
-Environment=LYNXDB_LISTEN=0.0.0.0:3100
-Environment=LYNXDB_DATA_DIR=/var/lib/lynxdb
 Environment=LYNXDB_RETENTION=30d
 Environment=LYNXDB_LOG_LEVEL=info
 ```
@@ -189,93 +133,75 @@ sudo systemctl daemon-reload
 sudo systemctl restart lynxdb
 ```
 
-## Enabling TLS and Authentication
+See [Environment Variables](../configuration/environment-variables.md) for the full list.
 
-For servers exposed to the network:
+## TLS and Authentication
 
 ```bash
-# With auto-generated self-signed certificate
-lynxdb server --tls --auth --config /etc/lynxdb/config.yaml
+# Self-signed certificate stored under <data_dir>/tls/
+lynxdb server --config /etc/lynxdb/config.yaml --tls --auth
 
-# With your own certificates
-lynxdb server \
-  --tls-cert /etc/ssl/certs/lynxdb.crt \
-  --tls-key /etc/ssl/private/lynxdb.key \
-  --auth \
-  --config /etc/lynxdb/config.yaml
+# Your own certificate
+lynxdb server --config /etc/lynxdb/config.yaml \
+  --tls-cert /etc/lynxdb/tls/server.crt \
+  --tls-key /etc/lynxdb/tls/server.key \
+  --auth
 ```
 
-Update the systemd `ExecStart` line accordingly. See [TLS and Authentication](/docs/deployment/tls-auth) for details.
+Put the same settings in the `tls` and `auth` sections of the config file to keep `ExecStart` short. See [TLS and Authentication](./tls-auth.md).
 
 ## Firewall
 
-Open port 3100 (or your custom port):
+| Port | Purpose |
+|------|---------|
+| 3100/tcp | HTTP API (`listen`) |
+| 4318/tcp | OTLP/HTTP listener (`ingest.otlp.http_listen`, on all interfaces by default, without auth) |
+| 5514/udp, 5514/tcp, 6514/tcp | Syslog, when configured |
 
 ```bash
-# ufw
 sudo ufw allow 3100/tcp
-
-# firewalld
-sudo firewall-cmd --permanent --add-port=3100/tcp
-sudo firewall-cmd --reload
-
-# iptables
-sudo iptables -A INPUT -p tcp --dport 3100 -j ACCEPT
+# or
+sudo firewall-cmd --permanent --add-port=3100/tcp && sudo firewall-cmd --reload
 ```
 
-## Hot-Reload Configuration
-
-Change settings without restarting:
+## Reloading Configuration
 
 ```bash
-# Edit config
-sudo vim /etc/lynxdb/config.yaml
-
-# Reload (sends SIGHUP)
-lynxdb config reload
-# or
 sudo systemctl reload lynxdb
+# or
+sudo -u lynxdb lynxdb config reload --config /etc/lynxdb/config.yaml
 ```
 
-Hot-reloadable settings: `log_level`, `retention`, `query.max_concurrent`, `query.default_result_limit`, `query.max_result_limit`, `query.max_query_runtime`.
+A reload re-reads the config file and environment and applies `log_level`, `retention`, most `query.*` settings, `tail.*`, and parts of `ingest.*` and `syslog.*`. Listen addresses, `data_dir`, TLS, auth and storage layout need a restart. The full list is in [Configuration Overview](../configuration/overview.md#reloading-a-running-server).
 
-## Hardware Recommendations
+## Sizing
 
-| Workload | CPU | Memory | Disk | Throughput |
-|----------|-----|--------|------|------------|
-| Light (up to 10K events/sec) | 2 cores | 2 GB | 50 GB SSD | Small team |
-| Medium (up to 50K events/sec) | 4 cores | 8 GB | 200 GB SSD | Startup |
-| Heavy (up to 100K events/sec) | 8 cores | 16 GB | 500 GB SSD | Mid-size company |
+- Memory: queries and the query cache share `server.total_memory_pool_bytes`, 40% of RAM by default. Each query is limited by `query.max_query_memory_bytes` (1 GB) and spills sorts and aggregations to `query.spill_dir` beyond that.
+- Disk: parts are compressed columnar files. Put `data_dir` and `spill_dir` on SSD. Retention deletes whole time partitions (`storage.partition_by`).
+- CPU: compaction uses `storage.compaction_workers` cores; queries use the rest.
 
-For higher throughput, consider a [small cluster](/docs/deployment/small-cluster) or [S3 tiering](/docs/deployment/s3-setup) for cost-effective long-term storage.
+For long retention on cheaper storage, add [S3 tiering](./s3-setup.md).
 
-## Log Rotation
+## Logs
 
-LynxDB writes logs to stderr, which systemd captures in the journal. Configure journal log rotation in `/etc/systemd/journald.conf`:
-
-```ini
-[Journal]
-SystemMaxUse=1G
-MaxRetentionSec=30d
-```
+The server writes its log to stdout (text format, level from `log_level`); under systemd it goes to the journal. Queries slower than `query.slow_query_threshold_ms` are logged at `WARN`.
 
 ## Backup
 
-For single-node deployments, the simplest backup strategy is periodic snapshots of the data directory:
+The simplest backup is a copy of the data directory while the server is stopped:
 
 ```bash
-# Stop writes briefly for a consistent snapshot
 sudo systemctl stop lynxdb
-tar czf /backups/lynxdb-$(date +%Y%m%d).tar.gz /var/lib/lynxdb
+sudo tar czf /backups/lynxdb-$(date +%Y%m%d).tar.gz -C /var/lib lynxdb
 sudo systemctl start lynxdb
 ```
 
-For zero-downtime backups, see [Backup and Restore](/docs/operations/backup-restore).
+See [Backup and Restore](../operations/backup-restore.md) for other strategies.
 
 ## Next Steps
 
-- [Docker Deployment](/docs/deployment/docker) -- container-based deployment
-- [S3 Storage Setup](/docs/deployment/s3-setup) -- add S3 tiering for long-term storage
-- [TLS and Authentication](/docs/deployment/tls-auth) -- secure the server
-- [Monitoring](/docs/operations/monitoring) -- observe server health
-- [Small Cluster](/docs/deployment/small-cluster) -- scale beyond a single node
+- [Docker Deployment](./docker.md)
+- [S3/MinIO Storage Backend](./s3-setup.md)
+- [TLS and Authentication](./tls-auth.md)
+- [Monitoring](../operations/monitoring.md)
+- [PPL overview](../ppl/overview.md)

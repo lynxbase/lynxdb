@@ -16,16 +16,6 @@ func (c *Client) Status(ctx context.Context) (*ServerStatus, error) {
 	return &s, nil
 }
 
-// TopSnapshot returns the aggregated live dashboard snapshot.
-func (c *Client) TopSnapshot(ctx context.Context) (*TopSnapshot, error) {
-	var s TopSnapshot
-	if _, err := c.doJSON(ctx, http.MethodGet, "/top/snapshot", nil, &s); err != nil {
-		return nil, err
-	}
-
-	return &s, nil
-}
-
 // Health returns the server health check result.
 // /health is outside /api/v1, so we use doRaw and unwrap the
 // {"data": ...} envelope before decoding into HealthResult.
@@ -66,15 +56,6 @@ func (c *Client) Stats(ctx context.Context) (*StatsResult, error) {
 	}
 
 	return &s, nil
-}
-
-// Shippers returns recently observed log shippers.
-func (c *Client) Shippers(ctx context.Context) ([]ShipperObservation, error) {
-	var out []ShipperObservation
-	if _, err := c.doJSON(ctx, http.MethodGet, "/shippers", nil, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
 }
 
 // CacheStats returns cache statistics.

@@ -1,5 +1,5 @@
 # file: backend_server.log
 # format: json
-from main
-| where (status >= 400 and level == "WARN")
+source=main
+| where status >= 400 and level = "WARN"
 | stats count()

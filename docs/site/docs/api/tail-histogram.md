@@ -1,206 +1,172 @@
 ---
 sidebar_position: 4
 title: Live Tail & Histogram
-description: GET /tail for SSE real-time log streaming, GET /histogram for time-bucketed event counts.
+description: GET /tail streams matching events over Server-Sent Events; GET /histogram returns event counts per time bucket.
 ---
 
 # Live Tail & Histogram API
 
-Real-time log streaming and time-bucketed event counts. These endpoints power the live tail view and timeline bar chart in the Web UI.
-
 ## GET /tail
 
-Server-Sent Events (SSE) stream for real-time log tailing with full LynxFlow pipeline support. Uses the same query engine as `POST /query`, but in streaming mode.
+Streams events that match a PPL query over Server-Sent Events: first the most recent stored events, then events as they arrive. Any valid key can open a tail when authentication is on.
 
-### Query Parameters
-
-| Parameter | Required | Default | Description |
-|---|---|---|---|
-| `q` | Yes | -- | LynxFlow query (streaming stages only) |
-| `count` | No | `100` | Number of historical events to replay during catchup (max 10,000) |
-| `from` | No | `"-1h"` | Catchup lookback window (relative or ISO 8601) |
-
-### Two Phases
-
-1. **Catchup** -- replays the last `count` matching events from storage (time range: `from` to now). Each event is sent as `event: result`. Phase ends with `event: catchup_done`.
-2. **Live** -- streams new events from the EventBus through the LynxFlow pipeline in real time. Events are sent as `event: result`. Heartbeat sent every 15 seconds as `event: heartbeat`.
-
-### Basic Example
+| Parameter | Default | Description |
+|---|---|---|
+| `q` | | A full PPL query, starting with a source like any other query (required) |
+| `count` | `100` | Stored events to replay before going live, at most 10000 |
+| `from` | `-1h` | How far back the replay looks: relative (`-30m`) or ISO 8601 |
 
 ```bash
-curl -N "localhost:3100/api/v1/tail?q=from+main+level%3Derror&from=-1h&count=100"
+curl -N -G localhost:3100/api/v1/tail \
+  --data-urlencode 'q=source=main level=ERROR | where status >= 500 | fields _time, host, status' \
+  --data-urlencode 'count=2'
 ```
 
-**SSE event stream:**
-
-```
+```text
 event: result
-data: {"_time":"2026-02-14T14:51:58Z","_raw":"level=ERROR status=502 uri=/api/users","status":502}
+data: {"_time":"2026-11-17T10:32:54.573324Z","host":"web-01","status":502}
 
 event: result
-data: {"_time":"2026-02-14T14:52:01Z","_raw":"level=ERROR status=503 uri=/api/orders","status":503}
+data: {"_time":"2026-11-17T10:32:54.573324Z","host":"api-01","status":503}
 
 event: catchup_done
 data: {"count":2}
 
-event: result
-data: {"_time":"2026-02-14T14:52:15Z","_raw":"level=ERROR status=500 uri=/api/pay","status":500}
-
 event: heartbeat
-data: {"ts":"2026-02-14T14:52:30Z"}
+data: {"ts":"2026-11-17T10:45:12Z"}
 ```
 
-### With a LynxFlow Pipeline
+The server subscribes to incoming events before it reads the stored ones, so no event is lost or sent twice at the switch from replay to live.
 
-Apply streaming transformations to the live tail:
-
-```bash
-# Filter and project fields
-curl -N "localhost:3100/api/v1/tail?q=from+main+%22ERROR%22+%7C+where+status+%3E+500+%7C+keep+_time,uri,status&count=50"
-
-# Extract fields with parse regex
-curl -N "localhost:3100/api/v1/tail?q=from+main+%22connection+refused%22+%7C+parse+regex+r%22host%3D(%3FP%3Chost%3E%5CS%2B)%22&from=-30m"
-```
-
-### Supported LynxFlow Stages
-
-Only streaming (event-by-event) stages are supported in live tail:
-
-| Supported | Not Supported |
-|---|---|
-| `where`, `extend`, `parse`, `keep`, `drop`, `rename`, `head` | `stats`, `sort`, `top` |
-
-Stages that must see all input before producing output (aggregation, sorting, top-k) are rejected with `422`:
-
-```json
-{
-  "error": "command \"stats\" is not supported in live tail (it requires all data before producing output)"
-}
-```
-
-### Event Types
+### Events
 
 | Event | When | Data |
 |---|---|---|
-| `result` | Each matching event (catchup + live) | Event JSON object |
-| `catchup_done` | Historical replay complete | `{"count": N}` |
-| `heartbeat` | Every 15s during live phase | `{"ts": "..."}` |
-| `error` | Query or pipeline error | Error object |
+| `result` | One per matching event, during replay and live | The event as a JSON object |
+| `catchup_done` | Replay finished | `{"count": N}` |
+| `heartbeat` | Every 15 seconds while live | `{"ts": "<RFC 3339 time>"}` |
+| `warning` | The client read too slowly and events were dropped | `{"type": "events_dropped", "count": N, "total_dropped": M}` |
+| `close` | The session reached `tail.max_session_duration` | `{"reason": "max_session_duration"}` |
+| `error` | The stream failed | `{"error": "<message>"}` |
 
-### JavaScript Example
+### Which queries can be tailed
+
+A live tail sees one event at a time, so the query can only use commands that produce output row by row. These work:
+
+- search terms and field comparisons in the source command, `where`, `regex`
+- `eval`, `fields`, `rename`, `fillnull`, `replace`, `convert`
+- `parse`, `grok`, `rex`, `spath`
+- `dedup`, `head`
+
+Commands that need all their input before they produce a row are rejected with `422`: `stats`, `timechart`, `chart`, `top`, `rare`, `sort`, `reverse`, `eventstats`, `streamstats`, `trendline`, `join`, `lookup`, `append`, `appendcol`, `union`, `multisearch`, `transpose`, `addtotals`, `addcoltotals`, `mvcombine`, `patterns` and `describe`. The message names the plan operator that blocked the query:
+
+```bash
+curl -s -G localhost:3100/api/v1/tail --data-urlencode 'q=source=main | stats count() by host'
+```
+
+```json
+{"error": "Aggregate is not supported in live tail: it needs all input rows before producing output"}
+```
+
+### Errors
+
+| HTTP | Body | When |
+|---|---|---|
+| 400 | `{"error": "missing required parameter: q"}` | No `q` |
+| 400, 422 | The query error envelope (`SYNTAX_ERROR`, `UNSUPPORTED_COMMAND`, ...) | The query does not compile; see [Query errors](./query.md#errors) |
+| 400 | `QUERY_TOO_LARGE` error envelope | The query is longer than `query.max_query_length` |
+| 422 | `{"error": "<Operator> is not supported in live tail: ..."}` | The query needs all its input; see above |
+| 429 | `{"error": "too many active tail sessions"}` | `tail.max_concurrent_sessions` (default 100) sessions are open; `Retry-After: 5` |
+
+### Browser clients
+
+`EventSource` cannot set headers. With authentication on, pass the token as `_token`:
 
 ```javascript
 const params = new URLSearchParams({
-  q: 'from main level=error | where status > 500',
-  count: 100,
-  from: '-1h'
+  q: 'source=main level=ERROR | where status >= 500 | fields _time, host, status, path',
+  count: '100',
+  from: '-1h',
+  _token: token,
 });
-
 const es = new EventSource(`/api/v1/tail?${params}`);
-
-es.addEventListener("result", (e) => {
-  appendRow(JSON.parse(e.data));
-});
-
-es.addEventListener("catchup_done", (e) => {
-  showLiveIndicator();
-});
-
-es.addEventListener("heartbeat", (e) => {
-  updatePing();
-});
-
-es.addEventListener("error", (e) => {
-  showError(JSON.parse(e.data));
-});
+es.addEventListener('result', (e) => appendRow(JSON.parse(e.data)));
+es.addEventListener('catchup_done', () => showLiveIndicator());
+es.addEventListener('warning', (e) => console.warn(JSON.parse(e.data)));
 ```
 
-### Error Responses
-
-| Status | Code | Description |
-|---|---|---|
-| `400` | -- | Invalid LynxFlow query (parse error, includes `suggestion`) |
-| `422` | -- | Query contains stages unsupported in live tail |
-
-:::tip Why SSE and not WebSocket?
-Live tail is a unidirectional server-to-client stream. SSE auto-reconnects, passes through HTTP proxies without special configuration, and works with the native `EventSource` browser API. WebSocket would add unnecessary complexity for a one-way data flow.
-:::
-
----
+See [`lynxdb tail`](../cli/tail.md) for the CLI and [Live tail](../guides/live-tail.md) for patterns.
 
 ## GET /histogram
 
-Time-bucketed event counts for the timeline bar chart. Designed to be fast -- fires on every filter change in the Web UI and runs independently and concurrently with the main query.
+Returns event counts per time bucket. Counts come from segment metadata and timestamps without running a query, so the endpoint is cheap enough to call on every change of a time picker. It counts every event in the range; it takes no query.
 
-### Query Parameters
+| Parameter | Default | Description |
+|---|---|---|
+| `from` | `-1h` | Start of the range: relative or ISO 8601 |
+| `to` | `now` | End of the range |
+| `buckets` | `60` | Number of buckets, at most 1000 |
+| `index` | all indexes | Count only this index |
+| `group_by` | | Split each bucket by the values of this field |
 
-| Parameter | Required | Default | Description |
-|---|---|---|---|
-| `q` | No | -- | LynxFlow filter expression (e.g. `level=error`) |
-| `from` | Yes | -- | Start time (relative or ISO 8601) |
-| `to` | No | `"now"` | End time |
-| `buckets` | No | `60` | Target number of buckets. Server picks the best interval (1s, 5s, 1m, 5m, 1h). |
-
-### Example
+The interval is the range divided by `buckets`, rounded to the nearest of 1s, 5s, 30s, 1m, 5m, 15m, 1h, 6h and 24h, and reported as a Go duration (`15m0s`). Bucket `i` starts at `from + i × interval`; events between the end of the last bucket and `to` are counted in the last bucket.
 
 ```bash
-curl -s "localhost:3100/api/v1/histogram?q=level%3Derror&from=-1h&buckets=60" | jq .
+curl -s 'localhost:3100/api/v1/histogram?from=-2h&buckets=4&index=main'
 ```
-
-**Response (200):**
 
 ```json
 {
   "data": {
-    "interval": "1m",
+    "interval": "15m0s",
     "buckets": [
-      {"time": "2026-02-14T14:00:00Z", "count": 42},
-      {"time": "2026-02-14T14:01:00Z", "count": 87},
-      {"time": "2026-02-14T14:02:00Z", "count": 156}
+      {"time": "2026-11-17T08:48:00Z", "count": 0},
+      {"time": "2026-11-17T09:03:00Z", "count": 0},
+      {"time": "2026-11-17T09:18:00Z", "count": 0},
+      {"time": "2026-11-17T09:33:00Z", "count": 113}
     ],
-    "total": 8432
+    "total": 113
   },
-  "meta": {
-    "took_ms": 12
-  }
+  "meta": {"took_ms": 0}
 }
 ```
 
-### Response Fields
-
-| Field | Type | Description |
-|---|---|---|
-| `data.interval` | string | Bucket interval chosen by server (e.g., `"1m"`, `"5m"`, `"1h"`) |
-| `data.buckets` | array | Array of `{time, count}` objects |
-| `data.buckets[].time` | string | ISO 8601 bucket start time |
-| `data.buckets[].count` | integer | Number of matching events in this bucket |
-| `data.total` | integer | Total matching events across all buckets |
-| `meta.took_ms` | number | Query execution time in milliseconds |
-
-### Interval Selection
-
-The server automatically selects the best interval based on the time range and target `buckets` count:
-
-| Time Range | Typical Interval |
-|---|---|
-| < 5 minutes | 1s or 5s |
-| 5 minutes -- 1 hour | 1m |
-| 1 -- 6 hours | 5m |
-| 6 -- 24 hours | 15m |
-| 1 -- 7 days | 1h |
-| > 7 days | 6h or 1d |
-
-### Without a Filter
-
-Omit `q` to get a histogram of all events:
+With `group_by`, each bucket has `counts` keyed by field value instead of `count`. Events without the field are counted under `other`:
 
 ```bash
-curl -s "localhost:3100/api/v1/histogram?from=-6h&buckets=72" | jq .
+curl -s 'localhost:3100/api/v1/histogram?from=-2h&buckets=4&index=main&group_by=level'
 ```
+
+```json
+{
+  "data": {
+    "interval": "15m0s",
+    "buckets": [
+      {"time": "2026-11-17T08:48:00Z", "counts": {}},
+      {"time": "2026-11-17T09:03:00Z", "counts": {}},
+      {"time": "2026-11-17T09:18:00Z", "counts": {}},
+      {"time": "2026-11-17T09:33:00Z", "counts": {"ERROR": 33, "INFO": 35, "WARN": 43, "other": 2}}
+    ],
+    "total": 113
+  },
+  "meta": {"took_ms": 0}
+}
+```
+
+An unparsable `from` or `to`, or `from` not before `to`, answers `400 VALIDATION_ERROR`.
+
+For counts filtered by a query, run a PPL query instead:
+
+```bash
+curl -s localhost:3100/api/v1/query \
+  -H 'Content-Type: application/json' \
+  -d '{"q": "source=main level=ERROR | stats count() as n by span(_time, 5m), host", "from": "-1h"}'
+```
+
+The result is an aggregate table with the columns `host`, `n` and `span(_time,5m)`.
 
 ## Related
 
-- **[`lynxdb tail` CLI command](/docs/cli/tail)** -- live tail from the command line
-- **[Live Tail guide](/docs/guides/live-tail)** -- usage patterns and tips
-- **[Query API](/docs/api/query)** -- full LynxFlow query execution
-- **[`from` operator](/docs/lynxflow/operators/from)** -- bracket time ranges and search-sugar syntax
+- [Query API](./query.md)
+- [`lynxdb tail`](../cli/tail.md)
+- [Time series in PPL](../ppl/time-series.md)

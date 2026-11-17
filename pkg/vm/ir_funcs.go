@@ -985,14 +985,17 @@ func registerCollectionFuncs() {
 		}
 		return event.IntValue(1)
 	})
-	lambdaOp := func(op Opcode) irEmitter {
+	lambdaOp := func(op Opcode, maxParams int) irEmitter {
 		return func(c *irCompiler, n *ir.Call) error {
 			if err := c.compile(n.Args[0]); err != nil {
 				return err
 			}
 			l, ok := n.Args[1].(*ir.Lambda)
-			if !ok || len(l.Params) != 1 {
-				return fmt.Errorf("vm: %s needs a one-parameter lambda", n.Func.Name)
+			if !ok || len(l.Params) < 1 || len(l.Params) > maxParams {
+				if maxParams == 1 {
+					return fmt.Errorf("vm: %s needs a one-parameter lambda", n.Func.Name)
+				}
+				return fmt.Errorf("vm: %s needs a lambda of one or %d parameters", n.Func.Name, maxParams)
 			}
 			idx, err := c.compileLambda(l)
 			if err != nil {
@@ -1002,10 +1005,10 @@ func registerCollectionFuncs() {
 			return nil
 		}
 	}
-	irFuncs["forall"] = lambdaOp(OpArrayAll)
-	irFuncs["exists"] = lambdaOp(OpArrayAny)
-	irFuncs["filter"] = lambdaOp(OpArrayFilter)
-	irFuncs["transform"] = lambdaOp(OpArrayMap)
+	irFuncs["forall"] = lambdaOp(OpArrayAll, 1)
+	irFuncs["exists"] = lambdaOp(OpArrayAny, 1)
+	irFuncs["filter"] = lambdaOp(OpArrayFilter, 1)
+	irFuncs["transform"] = lambdaOp(OpArrayMap, 2)
 	irFuncs["reduce"] = func(c *irCompiler, n *ir.Call) error {
 		if err := c.compile(n.Args[0]); err != nil {
 			return err

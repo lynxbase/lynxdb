@@ -157,5 +157,21 @@ arguments, aggregate placement, lambda scoping and subquery shapes.
   disjunctions of words) into `Scan.Prune`, keeping the filter;
 - narrowing `Scan.Time` with constant comparisons of the time column;
 - `Sort` + `Limit` into `TopN`;
-- pushing a row bound into `Scan.Limit` through row-preserving operators;
+- pushing a row bound into `Scan.Limit` through `Compute`, `Project` and
+  `RenameColumns`;
 - recording the required columns on each scan.
+
+See [IR optimizer](./optimizer.md) for each rule.
+
+## Storage hints
+
+`physical.PlanHints` (`pkg/engine/physical/hints.go`) converts the scans of
+an optimized plan into the storage engine's hints: sources, the resolved
+time range, search terms and token globs from raw-text `Search` pruning
+predicates, a term tree for disjunctions of words, field predicates for
+columns equal to strings, required columns, the row limit and the scan
+order. A plan with one scan gets all of its hints; a plan with several scans
+gets only the union of their sources and time ranges. The server's planner
+(`pkg/planner`) attaches these hints to every query, and the storage engine
+uses them to skip segments and select rows; the operators above the scan
+still evaluate every predicate.

@@ -2,10 +2,13 @@ package colstore
 
 import (
 	"bytes"
+	"cmp"
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -267,16 +270,56 @@ func TestStoreServesReadersWhileItMerges(t *testing.T) {
 	}
 }
 
-func TestStoreWithoutSortKeyKeepsArrivalOrderAndNeverMerges(t *testing.T) {
+// checkTimeOrder requires every run of the snapshot to hold its rows in the
+// order of their times, across parts whose time ranges do not meet.
+func checkTimeOrder(t testing.TB, snap *Snapshot) {
+	t.Helper()
+	byRun := map[uint64][]*Handle{}
+	for _, h := range snap.Parts() {
+		if !h.Ordered() || len(h.SortKey()) != 0 {
+			t.Fatalf("part is ordered=%v by %v", h.Ordered(), h.SortKey())
+		}
+		byRun[h.Run] = append(byRun[h.Run], h)
+	}
+	for run, hs := range byRun {
+		slices.SortFunc(hs, func(x, y *Handle) int { return cmp.Compare(x.MinTime, y.MinTime) })
+		last := int64(math.MinInt64)
+		for i, h := range hs {
+			if i > 0 && h.MinTime <= last {
+				t.Fatalf("run %d: a part starts at %d, the one before ends at %d", run, h.MinTime, last)
+			}
+			for b := 0; b < h.NumBlocks(); b++ {
+				_, lo, hi := h.BlockStats(b)
+				if lo < last || hi < lo {
+					t.Fatalf("run %d: block %d spans %d to %d after %d", run, b, lo, hi, last)
+				}
+				last = hi
+			}
+		}
+	}
+}
+
+// fallingDocs gives count documents numbered from first whose times fall as
+// their numbers rise.
+func fallingDocs(first, count int) []byte {
+	var buf bytes.Buffer
+	for i := first; i < first+count; i++ {
+		fmt.Fprintf(&buf, `{"n":%d,"ts":%d}`+"\n", i, 1_700_000_000_000-i)
+	}
+
+	return buf.Bytes()
+}
+
+func TestStoreWithoutASortKeyOrdersRowsByTimeAndMergesItsRuns(t *testing.T) {
 	skipSyncs(t)
-	s, err := OpenStore(filepath.Join(t.TempDir(), "store"), StoreOptions{FlushBytes: 1 << 10, MergeFanIn: 2})
+	s, err := OpenStore(filepath.Join(t.TempDir(), "store"), StoreOptions{TimeField: "ts", FlushBytes: 1 << 10, MergeFanIn: 2, BlockRows: 64})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
 	w := s.NewWriter()
 	for i := 0; i < 1000; i += 100 {
-		if err := w.AddNDJSON(append(storeDocs(i, 100), "not json\n"...)); err != nil {
+		if err := w.AddNDJSON(append(fallingDocs(i, 100), "not json\n"...)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -286,17 +329,25 @@ func TestStoreWithoutSortKeyKeepsArrivalOrderAndNeverMerges(t *testing.T) {
 	if w.Rejected != 10 {
 		t.Fatalf("%d lines rejected, want 10", w.Rejected)
 	}
+	before := s.Table().Snapshot()
+	runs := map[uint64]bool{}
+	for _, h := range before.Parts() {
+		runs[h.Run] = true
+	}
+	checkTimeOrder(t, before)
+	before.Release()
+	if len(runs) < 2 {
+		t.Fatalf("%d runs before compaction", len(runs))
+	}
 	if err := s.Compact(); err != nil {
 		t.Fatal(err)
 	}
 	snap := s.Table().Snapshot()
 	defer snap.Release()
-	if len(snap.Parts()) < 2 {
-		t.Fatalf("%d parts", len(snap.Parts()))
-	}
+	checkTimeOrder(t, snap)
 	for _, h := range snap.Parts() {
-		if h.Ordered() || h.Tier != 0 {
-			t.Fatalf("part is ordered=%v at tier %d", h.Ordered(), h.Tier)
+		if h.Run != snap.Parts()[0].Run || h.Tier == 0 {
+			t.Fatalf("part of run %d at tier %d after compaction", h.Run, h.Tier)
 		}
 	}
 	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 1000 || sum != 999*1000/2 {

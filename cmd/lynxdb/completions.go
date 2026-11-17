@@ -19,46 +19,6 @@ func completionClient() *client.Client {
 	)
 }
 
-// completeSavedQueryNames returns a ValidArgsFunction that fetches saved query
-// names from the server for tab completion. Falls back silently on error.
-func completeSavedQueryNames(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-	c := completionClient()
-
-	queries, err := c.ListSavedQueries(context.Background())
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	names := make([]string, 0, len(queries))
-	for _, q := range queries {
-		if q.Name != "" {
-			names = append(names, q.Name)
-		}
-	}
-
-	return names, cobra.ShellCompDirectiveNoFileComp
-}
-
-// completeMVNames returns a ValidArgsFunction that fetches materialized view
-// names from the server for tab completion.
-func completeMVNames(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-	c := completionClient()
-
-	views, err := c.ListViews(context.Background())
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	names := make([]string, 0, len(views))
-	for _, v := range views {
-		if v.Name != "" {
-			names = append(names, v.Name)
-		}
-	}
-
-	return names, cobra.ShellCompDirectiveNoFileComp
-}
-
 // completeJobIDs returns a ValidArgsFunction that fetches job IDs from the
 // server for tab completion.
 func completeJobIDs(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {

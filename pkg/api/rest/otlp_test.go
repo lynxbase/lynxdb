@@ -212,7 +212,6 @@ func TestServer_OTLPGRPCReceiver_GzipProtobuf(t *testing.T) {
 	if srv.engine.SegmentCount() == 0 {
 		t.Fatal("expected segments after gzip OTLP gRPC ingest")
 	}
-	assertShipperListed(t, srv, "otelcol", "", "/v1/logs", 1)
 }
 
 func TestServer_OTLPIngest_InvalidJSON(t *testing.T) {
@@ -350,7 +349,7 @@ func TestServer_OTLPIngestAndQuery(t *testing.T) {
 
 	// Query for the OTLP events.
 	searchBody, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | where has(_raw, "OTLP") | head 10`,
+		"q": `search source=main OTLP | head 10`,
 	})
 	qResp, err := http.Post(
 		fmt.Sprintf("http://%s/api/v1/query", srv.Addr()),

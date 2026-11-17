@@ -113,9 +113,8 @@ func isJSONObjectRaw(e *event.Event) bool {
 // kvTypedValue attempts to interpret a KV string value as a typed event.Value.
 // Integer-looking strings become IntValue, float-looking strings become
 // FloatValue, boolean "true"/"false" become BoolValue, everything else stays
-// StringValue. This ensures that downstream strict-typed comparisons (e.g.
-// LynxFlow status >= 500) work without explicit casts, matching the behaviour
-// of JSON-parsed events.
+// StringValue, so typed comparisons such as status >= 500 work without casts,
+// as they do for JSON-parsed events.
 func kvTypedValue(s string) event.Value {
 	// Fast path: empty string stays string.
 	if s == "" {

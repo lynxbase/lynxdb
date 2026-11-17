@@ -12,15 +12,21 @@ const (
 	intBytes8      = 2 // one byte per value above the minimum, then a blob
 	intBytes16     = 3 // two bytes per value above the minimum, then a blob
 	intConst       = 4 // one value shared by all
+	intScaled      = 5 // a factor, a base, and a section of how many factors each value is above the base
 )
+
+// minScaled is the number of values from which a common factor is worth
+// its two numbers.
+const minScaled = 16
 
 const frameLen = 128
 
 // encodeScratch holds the buffers reused while encoding one block.
 type encodeScratch struct {
-	tmp   []byte
-	zbuf  []byte
-	frame []uint64
+	tmp    []byte
+	zbuf   []byte
+	frame  []uint64
+	scaled []int64
 }
 
 // decodeScratch holds the buffers reused while decoding one column.
@@ -75,6 +81,20 @@ func appendInts(dst []byte, vals []int64, bc *blobCodec, e *encodeScratch) []byt
 	if span == 0 {
 		return binary.AppendUvarint(append(dst, intConst), zigzag(lo))
 	}
+	if len(vals) >= minScaled {
+		// Times in a coarser unit than they are held in, and sizes in whole
+		// units, are multiples: the factor is taken out of every value.
+		if factor := commonFactor(vals, lo); factor > 1 {
+			e.scaled = e.scaled[:0]
+			for _, v := range vals {
+				e.scaled = append(e.scaled, int64((uint64(v)-uint64(lo))/factor))
+			}
+			dst = binary.AppendUvarint(append(dst, intScaled), factor)
+			dst = binary.AppendUvarint(dst, zigzag(lo))
+
+			return appendInts(dst, e.scaled, bc, e)
+		}
+	}
 	plain, delta := framesSize(vals, false), framesSize(vals, true)
 	best := min(plain, delta)
 
@@ -110,6 +130,31 @@ func appendInts(dst []byte, vals []int64, bc *blobCodec, e *encodeScratch) []byt
 	dst = append(dst, intFrames)
 
 	return appendFrames(dst, vals, false, e)
+}
+
+// commonFactor returns the largest number that divides the distance of
+// every value from lo, which is 1 for most columns after a few values.
+func commonFactor(vals []int64, lo int64) uint64 {
+	factor := uint64(0)
+	for _, v := range vals {
+		d := uint64(v) - uint64(lo)
+		if factor != 0 && d%factor == 0 {
+			continue
+		}
+		for a, b := factor, d; ; {
+			if b == 0 {
+				factor = a
+
+				break
+			}
+			a, b = b, a%b
+		}
+		if factor == 1 {
+			return 1
+		}
+	}
+
+	return factor
 }
 
 func appendFrames(dst []byte, vals []int64, delta bool, e *encodeScratch) []byte {
@@ -171,30 +216,50 @@ func readInts(dst []int64, src []byte, count int, d *decodeScratch) ([]int64, []
 	if len(src) == 0 {
 		return nil, nil, ErrCorrupt
 	}
-	mode := src[0]
-	src = src[1:]
 	if cap(dst) < count {
 		dst = make([]int64, count)
 	}
 	dst = dst[:count]
+	if src[0] != intScaled {
+		return readSection(dst, src, d, 0, 1)
+	}
+	factor, n := binary.Uvarint(src[1:])
+	if n <= 0 || factor < 2 {
+		return nil, nil, ErrCorrupt
+	}
+	base, m := binary.Uvarint(src[1+n:])
+	// A section of factors is not one of factors again.
+	if src = src[1+n+max(m, 0):]; m <= 0 || len(src) == 0 || src[0] == intScaled {
+		return nil, nil, ErrCorrupt
+	}
+
+	return readSection(dst, src, d, uint64(unzigzag(base)), factor)
+}
+
+// readSection fills dst with the integers of the section at the start of
+// src, each times factor and above base, and returns the bytes after the
+// section.
+func readSection(dst []int64, src []byte, d *decodeScratch, base, factor uint64) ([]int64, []byte, error) {
+	mode, count := src[0], len(dst)
+	src = src[1:]
 	switch mode {
 	case intConst:
-		base, n := binary.Uvarint(src)
+		at, n := binary.Uvarint(src)
 		if n <= 0 {
 			return nil, nil, ErrCorrupt
 		}
-		v := unzigzag(base)
+		v := int64(base + factor*uint64(unzigzag(at)))
 		for i := range dst {
 			dst[i] = v
 		}
 
 		return dst, src[n:], nil
 	case intBytes8, intBytes16:
-		base, n := binary.Uvarint(src)
+		at, n := binary.Uvarint(src)
 		if n <= 0 {
 			return nil, nil, ErrCorrupt
 		}
-		lo := uint64(unzigzag(base))
+		lo := base + factor*uint64(unzigzag(at))
 		raw, rest, _, err := readBlob(src[n:], &d.zbuf)
 		if err != nil {
 			return nil, nil, err
@@ -204,14 +269,14 @@ func readInts(dst []int64, src []byte, count int, d *decodeScratch) ([]int64, []
 				return nil, nil, ErrCorrupt
 			}
 			for i, b := range raw {
-				dst[i] = int64(lo + uint64(b))
+				dst[i] = int64(lo + factor*uint64(b))
 			}
 		} else {
 			if len(raw) != 2*count {
 				return nil, nil, ErrCorrupt
 			}
 			for i := range dst {
-				dst[i] = int64(lo + uint64(binary.LittleEndian.Uint16(raw[2*i:])))
+				dst[i] = int64(lo + factor*uint64(binary.LittleEndian.Uint16(raw[2*i:])))
 			}
 		}
 
@@ -220,11 +285,11 @@ func readInts(dst []int64, src []byte, count int, d *decodeScratch) ([]int64, []
 		prev := int64(0)
 		for start := 0; start < count; start += frameLen {
 			frame := dst[start:min(start+frameLen, count)]
-			base, n := binary.Uvarint(src)
+			at, n := binary.Uvarint(src)
 			if n <= 0 || len(src) <= n {
 				return nil, nil, ErrCorrupt
 			}
-			lo := uint64(unzigzag(base))
+			lo := uint64(unzigzag(at))
 			width := uint(src[n])
 			src = src[n+1:]
 			if width > 64 {
@@ -234,13 +299,17 @@ func readInts(dst []int64, src []byte, count int, d *decodeScratch) ([]int64, []
 			if need > len(src) {
 				return nil, nil, ErrCorrupt
 			}
-			unpack(frame, src[:need], width, lo)
+			if mode == intFrames {
+				unpack(frame, src[:need], width, base+factor*lo, factor)
+				src = src[need:]
+
+				continue
+			}
+			unpack(frame, src[:need], width, lo, 1)
 			src = src[need:]
-			if mode == intDeltaFrames {
-				for i, x := range frame {
-					prev += x
-					frame[i] = prev
-				}
+			for i, x := range frame {
+				prev += x
+				frame[i] = int64(base + factor*uint64(prev))
 			}
 		}
 
@@ -250,8 +319,9 @@ func readInts(dst []int64, src []byte, count int, d *decodeScratch) ([]int64, []
 	return nil, nil, ErrCorrupt
 }
 
-// unpack reads len(dst) values of width bits from src and adds base to each.
-func unpack(dst []int64, src []byte, width uint, base uint64) {
+// unpack reads len(dst) values of width bits from src and stores each times
+// factor and above base.
+func unpack(dst []int64, src []byte, width uint, base, factor uint64) {
 	if width == 0 {
 		for i := range dst {
 			dst[i] = int64(base)
@@ -273,7 +343,7 @@ func unpack(dst []int64, src []byte, width uint, base uint64) {
 		if shift+width > 64 {
 			v |= binary.LittleEndian.Uint64(src[pos+8:]) << (64 - shift)
 		}
-		dst[i] = int64(base + v&mask)
+		dst[i] = int64(base + factor*(v&mask))
 	}
 	if i == len(dst) {
 		return
@@ -288,6 +358,6 @@ func unpack(dst []int64, src []byte, width uint, base uint64) {
 		if shift+width > 64 {
 			v |= binary.LittleEndian.Uint64(tail[pos+8:]) << (64 - shift)
 		}
-		dst[i] = int64(base + v&mask)
+		dst[i] = int64(base + factor*(v&mask))
 	}
 }

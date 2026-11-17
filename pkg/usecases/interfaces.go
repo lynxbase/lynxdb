@@ -6,11 +6,10 @@ import (
 
 	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/logical"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/server"
 	"github.com/lynxbase/lynxdb/pkg/storage"
-	"github.com/lynxbase/lynxdb/pkg/storage/views"
 )
 
 // QueryEngine is the subset of server.Engine needed by QueryService.
@@ -18,7 +17,7 @@ type QueryEngine interface {
 	SubmitQuery(ctx context.Context, params server.QueryParams) (*server.SearchJob, error)
 	ActiveJobCount() int64
 	MaxConcurrent() int32
-	BuildStreamingPipeline(ctx context.Context, prog *logical.Plan,
+	BuildStreamingPipeline(ctx context.Context, prog *ir.Plan,
 		hints *model.QueryHints,
 		externalTB *model.TimeBounds) (enginepipeline.Iterator, server.StreamingStats, error)
 	BuildEventStoreFromHints(hints *model.QueryHints) map[string][]*event.Event
@@ -48,17 +47,6 @@ type QueryEngine interface {
 	ListFieldNames() []string
 }
 
-// ViewEngine is the subset of server.Engine needed by ViewService.
-type ViewEngine interface {
-	CreateMV(def views.ViewDefinition) error
-	ListMV() []views.ViewDefinition
-	GetMV(name string) (views.ViewDefinition, error)
-	UpdateMV(def views.ViewDefinition) error
-	DeleteMV(name string) error
-	TriggerBackfill(name string) error
-	BackfillProgress(name string) *server.BackfillProgressInfo
-}
-
 // EventBusProvider is the subset of server.Engine needed by TailService.
 type EventBusProvider interface {
 	EventBus() *storage.EventBus
@@ -67,7 +55,7 @@ type EventBusProvider interface {
 // TailEngine is the subset of server.Engine needed by the new TailService.
 type TailEngine interface {
 	EventBusProvider
-	BuildStreamingPipeline(ctx context.Context, prog *logical.Plan,
+	BuildStreamingPipeline(ctx context.Context, prog *ir.Plan,
 		hints *model.QueryHints,
 		externalTB *model.TimeBounds) (enginepipeline.Iterator, server.StreamingStats, error)
 }

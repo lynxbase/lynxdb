@@ -1,5 +1,5 @@
 # file: backend_server.log
 # format: json
-from main
-| where status == 500
+source=main
+| where status = 500
 | stats count()

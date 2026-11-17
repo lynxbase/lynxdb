@@ -1,3 +1,0 @@
-query: | extend total = sum(status)
-error S005 [17:28] aggregate function 'sum' is only valid in stats/eventstats/streamstats
-  suggestion: aggregate functions are only valid inside stats, eventstats, or streamstats

@@ -59,7 +59,18 @@ func havingPred(e *Expr, in []string, slots, ids *int) (*hpred, error) {
 		return &hpred{op: e.Op, left: left, right: right, id: *ids - 1}, nil
 	}
 
-	return nil, unsupported("filter over an aggregate")
+	if e.Op != OpFunc {
+		return nil, unsupported("filter over an aggregate")
+	}
+	// A function passes the rows it gives true for.
+	left, err := postExpr(e, in, slots)
+	if err != nil {
+		return nil, err
+	}
+	*slots++
+	*ids++
+
+	return &hpred{op: OpEq, left: left, right: &pexpr{op: OpLiteral, lit: Value{Kind: vec.KindBool, Bool: true}, slot: *slots - 1}, id: *ids - 1}, nil
 }
 
 // havingEval applies a filter to batches of aggregate rows.

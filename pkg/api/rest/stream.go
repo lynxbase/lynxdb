@@ -10,30 +10,27 @@ import (
 )
 
 type queryStreamRequest struct {
-	Q         string            `json:"q"`
-	Query     string            `json:"query"`
-	From      string            `json:"from"`
-	To        string            `json:"to"`
-	Earliest  string            `json:"earliest"`
-	Latest    string            `json:"latest"`
-	Variables map[string]string `json:"variables,omitempty"`
-	Limit     *int              `json:"limit"`
-	Offset    *int              `json:"offset"`
-	Format    *string           `json:"format"`
-	Wait      *float64          `json:"wait"`
-	Profile   *string           `json:"profile"`
-	Language  string            `json:"language,omitempty"`
+	Q        string   `json:"q"`
+	Query    string   `json:"query"`
+	From     string   `json:"from"`
+	To       string   `json:"to"`
+	Earliest string   `json:"earliest"`
+	Latest   string   `json:"latest"`
+	Limit    *int     `json:"limit"`
+	Offset   *int     `json:"offset"`
+	Format   *string  `json:"format"`
+	Wait     *float64 `json:"wait"`
+	Profile  *string  `json:"profile"`
 }
 
 func (r queryStreamRequest) toQueryRequest() QueryRequest {
 	return QueryRequest{
-		Q:         r.Q,
-		Query:     r.Query,
-		From:      r.From,
-		To:        r.To,
-		Earliest:  r.Earliest,
-		Latest:    r.Latest,
-		Variables: r.Variables,
+		Q:        r.Q,
+		Query:    r.Query,
+		From:     r.From,
+		To:       r.To,
+		Earliest: r.Earliest,
+		Latest:   r.Latest,
 	}
 }
 
@@ -96,20 +93,11 @@ func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	query = substituteVariables(query, req.Variables)
 	if !s.checkQueryLength(w, query) {
 		return
 	}
 
-	if msg := validateExplicitLanguage(rawReq.Language); msg != "" {
-		respondError(w, ErrCodeValidationError, http.StatusBadRequest, msg,
-			WithSuggestion(`set language="lynxflow" or omit it; SPL2 was removed — see https://lynxdb.dev/docs/migration`))
-		return
-	}
-
-	// Post-RFC-002: all queries route through LynxFlow.
-	lang := detectQueryLanguage(query, rawReq.Language)
-	s.executeLynxFlowStream(w, r, query, req, lang)
+	s.runQueryStream(w, r, query, req)
 }
 
 // rowToInterface converts an event.Value map to a plain map for JSON serialization.

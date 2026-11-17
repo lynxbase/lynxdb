@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/engine/physical"
@@ -36,8 +37,32 @@ type Compiled struct {
 	Sources []string
 }
 
-// Compile parses, analyzes and optimizes a PPL query.
+// Compile parses, analyzes and optimizes a PPL query. Plans of recent
+// queries are reused; each call returns its own Compiled, whose plans are
+// immutable and may be shared.
 func Compile(src string) (*Compiled, error) {
+	c, ok := plans.get(src)
+	if !ok {
+		var err error
+		if c, err = compile(src); err != nil {
+			return nil, err
+		}
+		c.Applied = c.Applied[:len(c.Applied):len(c.Applied)]
+		c.Sources = c.Sources[:len(c.Sources):len(c.Sources)]
+		plans.put(src, c)
+	}
+	return c.copy(), nil
+}
+
+// copy returns a Compiled that shares only immutable values with c.
+func (c *Compiled) copy() *Compiled {
+	cp := *c
+	logical, plan := *c.Logical, *c.Plan
+	cp.Logical, cp.Plan = &logical, &plan
+	return &cp
+}
+
+func compile(src string) (*Compiled, error) {
 	res, err := ppl.Compile(src)
 	if err != nil {
 		return nil, err
@@ -50,18 +75,26 @@ func Compile(src string) (*Compiled, error) {
 		Explain: res.Explain, ExplainMode: res.ExplainMode, Sources: res.Sources}, nil
 }
 
+// foldVMs recycles the VM Fold runs on; a VM is several kilobytes.
+var foldVMs = sync.Pool{New: func() any { return new(vm.VM) }}
+
 // Fold evaluates a constant expression with the VM.
 func Fold(e ir.Expr) (*ir.Literal, bool) {
 	prog, err := vm.CompileExpr(e, vm.CompileOptions{})
 	if err != nil {
 		return nil, false
 	}
-	var m vm.VM
+	m := foldVMs.Get().(*vm.VM)
+	// A VM caches per-program state that is not keyed by program, so a
+	// recycled one starts from zero.
+	*m = vm.VM{}
 	v, err := m.Execute(prog, nil)
-	if err != nil {
-		return nil, false
+	var lit *ir.Literal
+	ok := err == nil
+	if ok {
+		lit, ok = Literal(v)
 	}
-	lit, ok := Literal(v)
+	foldVMs.Put(m)
 	if !ok {
 		return nil, false
 	}

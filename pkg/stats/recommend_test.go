@@ -96,23 +96,6 @@ func TestGenerateRecommendations_SortDominatesPipeline(t *testing.T) {
 	}
 }
 
-func TestGenerateRecommendations_MVSuggestion(t *testing.T) {
-	s := &QueryStats{
-		ScannedRows:   2_000_000,
-		Ephemeral:     false,
-		AcceleratedBy: "",
-		Stages: []StageStats{
-			{Name: "Stats", InputRows: 2_000_000, OutputRows: 10},
-		},
-	}
-
-	recs := GenerateRecommendations(s)
-	found := findRec(recs, "materialized view")
-	if found == nil {
-		t.Fatal("expected MV suggestion")
-	}
-}
-
 func TestGenerateRecommendations_SegmentsErrored(t *testing.T) {
 	s := &QueryStats{
 		SegmentsErrored: 3,
@@ -290,35 +273,14 @@ func TestGenerateRecommendations_SpeedupEstimates(t *testing.T) {
 		}
 	})
 
-	t.Run("MV suggestion has speedup and action", func(t *testing.T) {
-		s := &QueryStats{
-			ScannedRows: 2_000_000,
-			Stages:      []StageStats{{Name: "Stats", InputRows: 2_000_000, OutputRows: 10}},
-		}
-		recs := GenerateRecommendations(s)
-		found := findRec(recs, "materialized view")
-		if found == nil {
-			t.Fatal("expected recommendation")
-		}
-		if found.EstimatedSpeedup != "~100-400x" {
-			t.Errorf("speedup = %q, want ~100-400x", found.EstimatedSpeedup)
-		}
-		if found.SuggestedAction == "" {
-			t.Error("expected SuggestedAction to be set")
-		}
-	})
 }
 
 func TestGenerateRecommendations_SuggestedActions(t *testing.T) {
-	t.Run("segments errored has action", func(t *testing.T) {
+	t.Run("segments errored is reported", func(t *testing.T) {
 		s := &QueryStats{SegmentsErrored: 1}
 		recs := GenerateRecommendations(s)
-		found := findRec(recs, "segment(s) failed")
-		if found == nil {
+		if findRec(recs, "segment(s) failed") == nil {
 			t.Fatal("expected recommendation")
-		}
-		if found.SuggestedAction != "lynxdb doctor" {
-			t.Errorf("action = %q, want 'lynxdb doctor'", found.SuggestedAction)
 		}
 	})
 

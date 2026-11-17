@@ -1,7 +1,7 @@
 # file: backend_server.log
 # format: json
-from main
-| extend svc = lower(service)
+source=main
+| eval svc = lower(service)
 | dedup svc
-| keep svc
+| fields svc
 | sort svc

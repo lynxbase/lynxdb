@@ -1,2 +1,0 @@
-Filter(((contains(CommandLine, "whoami") and ends_with(Image, ".exe")) and starts_with(ParentImage, "C:\\Windows")))
-  Scan(main)

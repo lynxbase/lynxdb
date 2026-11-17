@@ -36,10 +36,6 @@ const (
 	CmdUpdateFieldCatalog
 	// CmdUpdateSourceRegistry merges a source set delta from an ingest node.
 	CmdUpdateSourceRegistry
-	// CmdRegisterView registers or updates a materialized view definition in the cluster.
-	CmdRegisterView
-	// CmdUnregisterView removes a materialized view definition from the cluster.
-	CmdUnregisterView
 	// CmdApplyRebalance applies a pre-computed incremental rebalance plan.
 	CmdApplyRebalance
 	// CmdProposeSplit proposes splitting a hot partition into two children.
@@ -75,10 +71,6 @@ func (ct CommandType) String() string {
 		return "UpdateFieldCatalog"
 	case CmdUpdateSourceRegistry:
 		return "UpdateSourceRegistry"
-	case CmdRegisterView:
-		return "RegisterView"
-	case CmdUnregisterView:
-		return "UnregisterView"
 	case CmdApplyRebalance:
 		return "ApplyRebalance"
 	case CmdProposeSplit:

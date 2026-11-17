@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"sort"
 	"strconv"
@@ -154,12 +155,33 @@ func checkAgainst(t *testing.T, snap *colstore.Snapshot, rows []refRow, plan, li
 		t.Fatalf("got %d rows, want %d\n got  %s\n want %s", len(got), len(want), head(got), head(want))
 	}
 	for i := range got {
-		if got[i] != want[i] {
+		if got[i] != want[i] && !sameRow(got[i], want[i]) {
 			t.Fatalf("row %d of %d\n got  %s\n want %s", i, len(got), got[i], want[i])
 		}
 	}
 
 	return res
+}
+
+// sameRow reports whether two rendered rows differ only in the last digits
+// of their floats, where sums taken in another order round apart.
+func sameRow(got, want string) bool {
+	a, b := strings.Split(got, " | "), strings.Split(want, " | ")
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] == b[i] {
+			continue
+		}
+		x, errX := strconv.ParseFloat(strings.TrimPrefix(a[i], "f"), 64)
+		y, errY := strconv.ParseFloat(strings.TrimPrefix(b[i], "f"), 64)
+		if errX != nil || errY != nil || a[i][0] != 'f' || b[i][0] != 'f' || math.Abs(x-y) > 1e-9*math.Max(math.Abs(x), math.Abs(y)) {
+			return false
+		}
+	}
+
+	return true
 }
 
 func head(rows []string) string {

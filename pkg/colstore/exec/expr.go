@@ -111,6 +111,11 @@ const (
 	OpTrimRight
 	OpIndexOf
 	OpTotal
+	OpFunc
+
+	// opPlace is where a row is in the table, for reading its fields once
+	// the rows of the result are known.
+	opPlace
 )
 
 // Expr is a node of an expression tree; which fields it uses depends on Op.
@@ -123,7 +128,24 @@ type Expr struct {
 	Value Value
 	// Pattern is what an OpMatch node searches for in its argument.
 	Pattern tokenfilter.Pattern
+	// NewFunc gives an OpFunc node its function. The executor calls it once
+	// for every goroutine that computes the node, so a function may keep
+	// memory of its own.
+	NewFunc func() Func
 	Args    []*Expr
+}
+
+// Func computes a value from the values of its arguments in one row; an
+// argument without a value is a null, or the zero Value where the row does
+// not hold the field. It gives the same value for the same arguments, so it
+// may be computed once for each of their combinations. A value that holds
+// bytes may be built in buf, which is returned for the next call; the value
+// is used before that call.
+type Func func(args []Value, buf []byte) (Value, []byte)
+
+// Call computes a function of at least one argument row by row.
+func Call(newFunc func() Func, args ...*Expr) *Expr {
+	return &Expr{Op: OpFunc, NewFunc: newFunc, Args: args}
 }
 
 // Value is one scalar; the zero Value is null.

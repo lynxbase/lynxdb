@@ -5,7 +5,11 @@ description: How LynxDB automatically rebalances shards across nodes and splits 
 
 # Rebalancing and Partition Splitting
 
-LynxDB automatically rebalances shard assignments when the cluster topology changes and splits hot partitions to distribute write load. Both operations run as background processes on the meta leader.
+`pkg/cluster/rebalance` rebalances shard assignments when the cluster topology changes and splits hot partitions to distribute write load. Both are designed to run as background processes on the meta leader.
+
+:::caution Cluster runtime
+`lynxdb server` validates the `cluster` section of the configuration, but it does not start the cluster runtime: it opens no gRPC listener, joins no Raft group, and routes no shards, so the rebalancer and splitter never run. The sections below describe the components in `pkg/cluster/rebalance`.
+:::
 
 ## Automatic Rebalancing
 
@@ -107,31 +111,17 @@ Splits are chained — a child partition can be split again if it becomes hot. T
 
 ## Monitoring
 
-### Key Metrics
+The rebalancer and splitter log each step at `info` level:
 
-| Metric | Description |
-|--------|-------------|
-| `rebalance_total` | Total rebalances applied |
-| `rebalance_move_total` | Total shard moves across all rebalances |
-| `rebalance_duration_ns` | Duration of last rebalance |
-| `split_total` | Total partition splits proposed |
-| `split_duration_ns` | Duration of last split |
-| `shard_draining` | Shards currently draining |
-| `shard_migrating` | Shards currently migrating |
-| `shard_splitting` | Shards currently splitting |
+| Log message | Meaning |
+|-------------|---------|
+| `applying rebalance plan` | A topology change produced a plan; the entry lists the moves |
+| `rebalance plan applied` | The plan was committed through Raft |
+| `rebalancer check failed` | A rebalance check returned an error |
+| `proposing partition split` | A partition crossed the hot-partition threshold |
+| `splitter check failed` | A split check returned an error |
 
-### Checking Shard State
-
-```bash
-lynxdb status
-```
-
-In cluster mode, the status output includes shard state counts:
-
-```
-Shards:  active=1024 draining=0 migrating=2 splitting=0
-Epoch:   47
-```
+`GET /api/v1/cluster/status` reports the cluster health and node count as seen by the node that answers.
 
 ## Troubleshooting
 
@@ -153,11 +143,11 @@ If splits are happening too frequently:
 
 ### Partition Count Growing
 
-Splits increase the total partition count. Monitor `shard_active` to ensure it stays within reasonable bounds. The `MaxSplitDepth` limit prevents unbounded growth.
+Splits increase the total partition count. The `MaxSplitDepth` limit prevents unbounded growth.
 
 ## Next Steps
 
 - [Distributed Architecture](/docs/architecture/distributed) -- how sharding works
 - [Cluster Configuration](/docs/configuration/cluster) -- all cluster settings
-- [Monitoring](/docs/operations/monitoring) -- cluster metrics reference
+- [Monitoring](/docs/operations/monitoring) -- health and metrics endpoints
 - [Large Cluster](/docs/deployment/large-cluster) -- production deployment guide

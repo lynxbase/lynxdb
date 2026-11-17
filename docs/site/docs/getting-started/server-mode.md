@@ -1,170 +1,189 @@
 ---
 sidebar_position: 4
 title: Server Mode
-description: Run LynxDB as a persistent server with storage, API, and web UI.
+description: Run LynxDB as a persistent server with on-disk storage and a REST API.
 ---
 
 # Server Mode
 
-Server mode runs LynxDB as a persistent HTTP server with on-disk storage, full REST API, and materialized views.
+`lynxdb server` runs LynxDB as an HTTP server. It stores events on disk,
+accepts data from the CLI, the REST API and log shippers, and answers
+[PPL](../ppl/overview.md) queries.
 
-## Start the Server
+## Start the server
 
 ```bash
-# Start with defaults (localhost:3100, data in ~/.local/share/lynxdb)
+# Defaults: listen on localhost:3100, data in ~/.local/share/lynxdb
 lynxdb server
 
-# Specify a data directory
+# Another data directory
 lynxdb server --data-dir /var/lib/lynxdb
 
-# Custom listen address
+# Listen on all interfaces
 lynxdb server --addr 0.0.0.0:3100
 
-# In-memory mode (no persistence, useful for testing)
+# In-memory: nothing is persisted (for tests)
 lynxdb server --data-dir ""
 ```
 
+On startup the server prints where its settings come from:
+
+```text
+  Config  /home/user/.config/lynxdb/config.yaml
+  Data    /var/lib/lynxdb
+  Listen  localhost:3100
+
+time=2026-01-15T10:00:00.000Z level=INFO msg="starting LynxDB" version=0.5.0 addr=localhost:3100 ...
+```
+
+It also starts an OTLP/HTTP log receiver on port 4318. See
+[Server configuration](../configuration/server.md) for every flag and setting.
+
 :::caution
-Use a persistent `data_dir` when enabling `--auth`. LynxDB only bootstraps and stores API keys when the server has a data directory.
+`--auth` needs a persistent data directory: API keys are stored there and
+are not created for an in-memory server.
 :::
 
-On startup, you'll see:
-
-```
-  Config:  /home/user/.config/lynxdb/config.yaml
-  Data:    /var/lib/lynxdb
-  Listen:  localhost:3100
-
-time=2026-01-15T10:00:00Z level=INFO msg="starting LynxDB" version=0.5.0 addr=localhost:3100
-```
-
-## Ingest Data
+## Ingest data
 
 ### From the CLI
 
 ```bash
-# Ingest a log file
+# A log file
 lynxdb ingest access.log --source web-01
 
-# Ingest with metadata
-lynxdb ingest access.log --source web-01 --sourcetype nginx
+# With a source type and a target index
+lynxdb ingest access.log --source web-01 --sourcetype nginx --index web
 
-# Pipe data
+# Standard input
 kubectl logs deploy/api --since=1h | lynxdb ingest --source k8s-api
 ```
 
-### From the API
+`lynxdb ingest` sends lines in batches of 5000 (`--batch-size`) to
+`POST /api/v1/ingest/raw` and prints the event count and rate when done.
+
+### From the REST API
 
 ```bash
-# Structured event payload array
-curl -X POST localhost:3100/api/v1/ingest \
-  -H 'Content-Type: application/json' \
-  -d '[{
-    "event": "user login",
-    "source": "auth-api",
-    "fields": {"user_id": 42, "level": "info"}
-  }]'
-
-# Structured batch
+# Structured events: a JSON array of objects with an "event" text
 curl -X POST localhost:3100/api/v1/ingest \
   -H 'Content-Type: application/json' \
   -d '[
-    {"event":"event 1","source":"demo","fields":{"level":"info"}},
-    {"event":"event 2","source":"demo","fields":{"level":"error"}}
+    {"event":"user login","source":"auth-api","fields":{"user_id":42,"level":"info"}},
+    {"event":"connection refused","source":"api","fields":{"service":"redis","level":"error"}}
   ]'
 
-# Raw text lines
-echo '192.168.1.1 - - [14/Feb/2026:14:23:01] "GET /api HTTP/1.1" 200' | \
+# Raw lines, one event per line
+echo '192.168.1.1 - - [14/Feb/2026:14:23:01 +0000] "GET /api HTTP/1.1" 200 1234' | \
   curl -X POST localhost:3100/api/v1/ingest/raw \
     -H 'X-Source: nginx' \
     --data-binary @-
 ```
 
-Use `/api/v1/es/_bulk` for Elasticsearch-style NDJSON shippers. `/api/v1/ingest/bulk` is an alias to the same handler, and `/api/v1/ingest/hec` is for Splunk HEC senders.
+```json
+{"data":{"accepted":2,"failed":0}}
+```
 
-## Query Data
+Log shippers connect through the Elasticsearch `_bulk` API, OTLP, Splunk HEC
+or syslog. See [Ingest Data](../guides/ingest-data.md).
+
+## Query data
 
 ### CLI
 
-```bash
-# Basic search
-lynxdb query 'from main level=error'
+`lynxdb query` sends the query to the server at `http://localhost:3100`
+(`--server` or `LYNXDB_SERVER` changes it):
 
-# Aggregation
-lynxdb query 'from main level=error | stats count() as count by source | sort -count'
+```bash
+# Search
+lynxdb query 'source=main level=ERROR'
+
+# Aggregate
+lynxdb query 'source=main level=ERROR | stats count() as errors by host | sort - errors'
 
 # Time range
-lynxdb query 'from main level=error | stats count()' --since 1h
+lynxdb query 'source=main level=ERROR | stats count()' --since 1h
 
 # Output formats
-lynxdb query 'from main level=error | stats count() by source' --format table
-lynxdb query 'from main level=error | stats count() by source' --format csv > report.csv
+lynxdb query 'source=main level=ERROR | stats count() by host' --format table
+lynxdb query 'source=main level=ERROR | stats count() by host' --format csv > report.csv
 ```
 
-### API
+### REST API
 
 ```bash
-# Synchronous query
-curl -s localhost:3100/api/v1/query \
-  -d '{"q": "from main level=error | stats count() by source", "from": "-1h"}' | jq .
-
-# Streaming results (NDJSON)
-curl -s localhost:3100/api/v1/query/stream \
-  -d '{"q": "from main level=error", "from": "-1h"}'
+curl -s -X POST localhost:3100/api/v1/query \
+  -H 'Content-Type: application/json' \
+  -d '{"q": "source=main level=ERROR | stats count() as errors by host | sort - errors | head 3", "from": "-1h"}'
 ```
 
-## Monitor with Live Tail
+```json
+{"data":{"columns":["host","errors"],"rows":[["api-02",67],["web-02",58],["web-03",57]],"total_rows":3,"has_more":false,"type":"aggregate"},"meta":{"took_ms":0,"scanned":294,"query_id":"qry_f2a8494fc0969fd9", ...}}
+```
 
-Stream log events in real-time:
+`POST /api/v1/query/stream` returns one JSON object per row, then a
+`__meta` line:
 
 ```bash
-# Tail all events
+curl -s -X POST localhost:3100/api/v1/query/stream \
+  -H 'Content-Type: application/json' \
+  -d '{"q": "source=main level=ERROR | fields _time, host, status | head 2"}'
+```
+
+```json
+{"_time":"2025-01-15T08:00:00.105Z","host":"web-03","status":502}
+{"_time":"2025-01-15T08:00:00.543Z","host":"api-02","status":502}
+{"__meta":{"scanned":294,"took_ms":0,"total":2}}
+```
+
+See the [Query API](../api/query.md) for jobs, errors and profiling.
+
+## Live tail
+
+`lynxdb tail` takes a full PPL query, prints recent matching events, then
+streams new ones as they arrive:
+
+```bash
+# Every event
 lynxdb tail
 
-# Tail with filter
-lynxdb tail 'where level == "error"'
+# Errors only
+lynxdb tail 'source=main level=ERROR'
 
-# Tail with pipeline
-lynxdb tail 'where _source == "nginx" and status >= 500 | keep _time, uri, status'
+# Server errors with selected fields
+lynxdb tail 'source=main status>=500 | fields _time, host, path, status'
 ```
 
-## Check Server Status
+See [Live Tail](../guides/live-tail.md).
+
+## Inspect the server
 
 ```bash
-# Server overview
-lynxdb status
-
-# Health check (for load balancers)
-lynxdb health
-
-# Field catalog
-lynxdb fields
-
-# Cache statistics
-lynxdb cache stats
+lynxdb status        # uptime, storage, event counts
+lynxdb health        # health check, for scripts and load balancers
+lynxdb indexes       # indexes and their retention
+lynxdb fields        # field catalog: name, type, coverage
+lynxdb cache stats   # query cache statistics
 ```
 
-## Run as a Service
+```text
+  LynxDB 0.5.0 — uptime 6m — healthy
 
-### Recommended: `lynxdb install`
-
-The easiest way to set up LynxDB as a system service. One command creates a dedicated user, directories, config file, and a hardened systemd/launchd unit:
-
-```bash
-sudo lynxdb install
-sudo systemctl start lynxdb
+  Storage   258.0 KB
+  Events    1,043 total  38 today
+  Segments  7  buffer: 0 events
+  Indexes   4
+  Oldest    2025-01-15T08:00:00Z
 ```
 
-See the full [`install` reference](/docs/cli/install) for all flags and customization options.
+## Run as a service
 
-### Manual systemd
-
-If you prefer to manage the service unit yourself:
+### systemd
 
 ```ini
 # /etc/systemd/system/lynxdb.service
 [Unit]
-Description=LynxDB Log Analytics
+Description=LynxDB log analytics
 After=network.target
 
 [Service]
@@ -179,8 +198,10 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl enable lynxdb
-sudo systemctl start lynxdb
+sudo useradd --system --home /var/lib/lynxdb --shell /usr/sbin/nologin lynxdb
+sudo mkdir -p /var/lib/lynxdb && sudo chown lynxdb:lynxdb /var/lib/lynxdb
+sudo systemctl daemon-reload
+sudo systemctl enable --now lynxdb
 ```
 
 ### Docker
@@ -189,18 +210,22 @@ sudo systemctl start lynxdb
 docker run -d --name lynxdb \
   -p 3100:3100 \
   -v lynxdb-data:/data \
-  ghcr.io/lynxbase/lynxdb server --data-dir /data
+  ghcr.io/lynxbase/lynxdb server --addr 0.0.0.0:3100 --data-dir /data
 ```
+
+See [Single-node deployment](../deployment/single-node.md) and
+[Docker deployment](../deployment/docker.md).
 
 ## Configuration
 
-Create a config file for persistent settings:
+Create a config file with every setting commented out:
 
 ```bash
 lynxdb config init
 ```
 
-This creates `~/.config/lynxdb/config.yaml` with all values commented out. Uncomment and edit the lines you want to change. An example configuration:
+It is written to `~/.config/lynxdb/config.yaml`. Uncomment the lines to
+change, for example:
 
 ```yaml
 listen: "localhost:3100"
@@ -212,11 +237,13 @@ storage:
   compression: "lz4"
 ```
 
-See the full [Configuration Reference](/docs/configuration/overview) for all options.
+`lynxdb config validate` checks the file and `lynxdb config reload` applies
+it to a running server. See the
+[Configuration Reference](../configuration/overview.md).
 
-## Next Steps
+## Next steps
 
-- **[Your First LynxFlow Query](/docs/getting-started/first-query)** -- Learn the query language
-- **[Ingesting Data](/docs/guides/ingest-data)** -- All ingestion methods
-- **[Configuration](/docs/configuration/overview)** -- Tune your server
-- **[Deployment](/docs/deployment/single-node)** -- Production deployment guide
+- [Your First Query](./first-query.md): PPL basics
+- [Ingest Data](../guides/ingest-data.md): every ingestion path
+- [Configuration](../configuration/overview.md): tune the server
+- [Single-node deployment](../deployment/single-node.md): production setup

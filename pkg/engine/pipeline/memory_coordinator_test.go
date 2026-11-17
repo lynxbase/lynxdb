@@ -61,11 +61,6 @@ func TestCoordinatorEqualSplit(t *testing.T) {
 	}
 }
 
-// TestQueryContextNewCoordinatedAccountUsesSpillableClass was deleted in
-// RFC-002 P10: queryContext.govBudget and newCoordinatedAccount were removed
-// with the spl2 pipeline builder. The LynxFlow physical builder manages
-// memory coordination through its own queryContext.
-
 func TestCoordinatorRedistributeAfterSpill(t *testing.T) {
 	// 2 operators, 100MB budget, 10% headroom.
 	budget := int64(100 << 20) // 100MB
@@ -534,14 +529,6 @@ func TestCoordinatorGrowDelegatesInnerError(t *testing.T) {
 	}
 }
 
-// TestCoordinatorSingleOperator and TestCoordinatorNilSafe were deleted in
-// RFC-002 P10: they tested queryContext.newCoordinatedAccount and
-// queryContext.coordinator which were removed with the spl2 pipeline builder.
-
-// TestCountSpillableOps was removed in RFC-002 Phase 10 along with the
-// spl2-typed countSpillableOps function. The LynxFlow physical builder
-// counts spillable nodes via the logical IR.
-
 func TestCoordinatorShrinkAfterSpill(t *testing.T) {
 	budget := int64(100 << 20)
 	mc := NewMemoryCoordinator(budget, 0.10)
@@ -598,11 +585,6 @@ func TestCoordinatorSmallBudget(t *testing.T) {
 		t.Errorf("small budget: aggregate soft limit: got %d, want %d", s[1].SoftLimit, reservationAggregate)
 	}
 }
-
-// TestSortAndAggregateCoordinated and TestSingleSpillableQueryGetsCoordinator
-// were removed in RFC-002 Phase 10. They tested BuildProgramWithGovernor which
-// used the spl2 AST path. The LynxFlow physical builder has its own coordinator
-// integration tests in pkg/logical/physical/.
 
 func TestCoordinatorPhaseReclaim(t *testing.T) {
 	// 2 operators: first completes, second should get freed capacity.

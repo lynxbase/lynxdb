@@ -1,0 +1,5 @@
+# format: json
+source=backend
+| where level != "INFO"
+| where level = "ERROR"
+| stats count()

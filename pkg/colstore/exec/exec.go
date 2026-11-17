@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -18,6 +20,10 @@ import (
 type Options struct {
 	// Workers is the number of goroutines; zero means one per CPU.
 	Workers int
+	// Forgetful makes the query open every block that its filter admits,
+	// whatever earlier queries with the same filter found there, and leave
+	// nothing for later ones to go by.
+	Forgetful bool
 }
 
 // sharedGroups gives every worker the same id for a group key, so that the
@@ -47,9 +53,18 @@ type execution struct {
 	rows int64
 	// ords numbers the parts of the snapshot for a plan that locates rows.
 	ords map[*part.Part]int
+	// bound is the time that a row must reach to be among the first rows by
+	// time that the plan keeps, once some goroutine holds that many.
+	bound *atomic.Int64
 	// taken counts the rows that a plan with a limit and no order has
 	// produced.
 	taken atomic.Int64
+	// emit, when set, takes the rows of a plan of rows block by block in
+	// place of the workers' sinks.
+	emit func(batch []colVec, n int) error
+	// condition names the filter for what parts remember of it, or is
+	// empty.
+	condition string
 }
 
 // running counts the executions that chose their own number of goroutines
@@ -58,6 +73,84 @@ var running atomic.Int32
 
 // errEnough ends a scan whose plan has all the rows it asked for.
 var errEnough = errors.New("exec: enough rows")
+
+// Supports reports whether plan is one that the executor runs over snap: nil,
+// or an error that wraps ErrUnsupported.
+func Supports(snap *colstore.Snapshot, plan Node) error {
+	_, err := compile(snap, plan)
+
+	return err
+}
+
+// Each runs a plan of rows that neither aggregates nor sorts, and hands the
+// rows of each block that has any to fn, in no order among blocks. One
+// goroutine calls fn at a time, and the result is the caller's to keep. A
+// limit ends the scan once that many rows were handed over, and so does an
+// error of fn, which Each returns.
+func Each(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options, fn func(*Result) error) error {
+	q, err := compile(snap, plan)
+	if err != nil {
+		return err
+	}
+	if q.agg != nil || len(q.order) != 0 {
+		return unsupported("rows are handed over as they are scanned: without an aggregate or a sort")
+	}
+	n := opts.Workers
+	if n <= 0 {
+		cpus := runtime.GOMAXPROCS(0)
+		n = max(1, min(cpus, 2*cpus/int(running.Add(1))))
+		defer running.Add(-1)
+	}
+	x := &execution{q: q, workers: make([]*worker, n)}
+	if q.places {
+		x.ords = map[*part.Part]int{}
+		for i, h := range snap.Parts() {
+			x.ords[h.Part] = i
+		}
+	}
+	defer x.release()
+	var handing sync.Mutex
+	handed := 0
+	x.emit = func(batch []colVec, rows int) error {
+		if q.limit > 0 {
+			handing.Lock()
+			rows = min(rows, q.limit-handed)
+			handed += rows
+			handing.Unlock()
+			if rows <= 0 {
+				return errEnough
+			}
+		}
+		out := make([]colVec, len(batch))
+		for c := range batch {
+			for i := 0; i < rows; i++ {
+				out[c].appendFrom(&batch[c], i)
+			}
+		}
+		cols, _, err := x.shown(snap, out, rows)
+		if err != nil {
+			return err
+		}
+		handing.Lock()
+		defer handing.Unlock()
+
+		return fn(&Result{Columns: cols, Rows: rows})
+	}
+	scan := q.opts
+	scan.Workers = n
+	if opts.Forgetful {
+		scan.Condition = ""
+	}
+	x.condition = scan.Condition
+	// A plan that takes its first rows as they come ends the scan early.
+	scan.Ramp = q.limit > 0 && len(q.order) == 0
+	scan.Kept = x.kept
+	if _, err := snap.Scan(ctx, scan, x.block); err != nil && !errors.Is(err, errEnough) {
+		return err
+	}
+
+	return nil
+}
 
 // Run executes plan over snap and returns its rows.
 func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) (*Result, error) {
@@ -75,7 +168,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		defer running.Add(-1)
 	}
 	var ords map[*part.Part]int
-	if q.located != nil {
+	if q.located != nil || q.places {
 		ords = map[*part.Part]int{}
 		for i, h := range snap.Parts() {
 			ords[h.Part] = i
@@ -100,6 +193,20 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 	defer x.release()
 	scan := q.opts
 	scan.Workers = n
+	if opts.Forgetful {
+		scan.Condition = ""
+	}
+	x.condition = scan.Condition
+	scan.Ramp = q.agg == nil && q.limit > 0 && len(q.order) == 0
+	scan.Kept = x.kept
+	if q.byTime != 0 {
+		x.bound = new(atomic.Int64)
+		x.bound.Store(math.MinInt64)
+		if q.byTime > 0 {
+			x.bound.Store(math.MaxInt64)
+		}
+		scan.ByTime, scan.Bound = q.byTime, x.bound
+	}
 	stats, err := snap.Scan(ctx, scan, x.block)
 	if err != nil && !errors.Is(err, errEnough) {
 		return nil, err
@@ -129,6 +236,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		SkippedByKey:   stats.SkippedByKey,
 		SkippedByToken: stats.SkippedByToken,
 		SkippedByTime:  stats.SkippedByTime,
+		SkippedAsEmpty: stats.SkippedAsEmpty,
 		HeldBytes:      x.held(),
 		HashedFor:      hashedFor,
 	}
@@ -201,6 +309,7 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 			if !w.decoded {
 				w.undecoded++
 			}
+			x.empty(p, b)
 
 			return nil
 		case v == all:
@@ -213,6 +322,8 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 			if count > 0 {
 				w.blocks++
 				w.matched += int64(count)
+			} else {
+				x.empty(p, b)
 			}
 
 			return nil
@@ -224,6 +335,8 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 		}
 		switch count {
 		case 0:
+			x.empty(p, b)
+
 			return nil
 		case w.rows:
 			idx = nil
@@ -247,6 +360,49 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 	}
 
 	return nil
+}
+
+// kept returns the rows that the plan has so far of those it keeps, for a
+// scan that starts with few blocks; no worker runs while it is asked.
+func (x *execution) kept() (have, want int) {
+	q := x.q
+	if len(q.order) == 0 {
+		return int(min(x.taken.Load(), int64(q.limit))), q.limit
+	}
+	var times []int64
+	for _, w := range x.workers {
+		if w == nil {
+			continue
+		}
+		for _, row := range w.sink.top.rows {
+			times = append(times, row[q.timeCol].Int)
+		}
+	}
+	if x.bound != nil && len(times) >= q.limit {
+		// The rows that the goroutines hold together reach further than
+		// those of any one of them.
+		slices.Sort(times)
+		at := times[len(times)-q.limit]
+		if q.byTime > 0 {
+			at = times[q.limit-1]
+		}
+		for {
+			bound := x.bound.Load()
+			if (q.byTime < 0 && at <= bound) || (q.byTime > 0 && at >= bound) || x.bound.CompareAndSwap(bound, at) {
+				break
+			}
+		}
+	}
+
+	return min(len(times), q.limit), q.limit
+}
+
+// empty remembers that no row of block b passes the filter, for the scans
+// with the same filter that follow.
+func (x *execution) empty(p *part.Part, b *part.Block) {
+	if x.condition != "" {
+		p.Misses(x.condition).Add(b.Index())
+	}
 }
 
 // forEach calls fn for every i below n from up to workers goroutines,

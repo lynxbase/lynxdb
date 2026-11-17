@@ -1,0 +1,7 @@
+# file: access.log
+# format: json
+source=main
+| where level = "ERROR"
+| eval is_50x = if(status >= 500, "yes", "no")
+| stats count() by is_50x
+| sort is_50x

@@ -1,3 +1,0 @@
-Aggregate(count() by level, bin(_time, 1h) [partial])
-  Scan(main)
-    pushdown.columns: [_raw, _source, _time, level]

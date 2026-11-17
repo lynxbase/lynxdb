@@ -1,8 +1,7 @@
 # file: backend_server.log
 # format: json
-from main
-| extend msg_upper = upper(message)
-| extend msg_len = len(msg_upper)
-| extend msg_short = substr(msg_upper, 0, 10)
-| stats count(), avg(msg_len) as avg_len
-| extend avg_short = len(msg_short)
+source=main
+| eval msg_upper = upper(message)
+| eval msg_len = length(msg_upper)
+| eval msg_short = substring(msg_upper, 1, 10)
+| stats count(), avg(msg_len) as avg_len, max(length(msg_short)) as max_short

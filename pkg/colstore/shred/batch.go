@@ -2,8 +2,7 @@ package shred
 
 import (
 	"errors"
-	"time"
-	"unsafe"
+	"slices"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/variant"
 	"github.com/lynxbase/lynxdb/pkg/mem"
@@ -27,14 +26,24 @@ const (
 
 // Options configures how documents become rows.
 type Options struct {
-	// TimeField is the path whose value becomes the row timestamp.
-	TimeField string
+	// TimeField is the path whose value becomes the row timestamp: a
+	// number of seconds, milliseconds, microseconds or nanoseconds since
+	// the epoch, told apart by its size, or a date and a time of day as
+	// text. TimeFields are further paths, tried in their order for a row
+	// that has no time at the ones before.
+	TimeField  string
+	TimeFields []string
 	// MaxColumns bounds the columns of one batch; members beyond it are
 	// kept in the RestPath column.
 	MaxColumns int
 	// KeepText makes AddNDJSON keep a line that is not a JSON object as a
 	// row of text instead of reporting it.
 	KeepText bool
+}
+
+func (o Options) same(other Options) bool {
+	return o.TimeField == other.TimeField && o.MaxColumns == other.MaxColumns && o.KeepText == other.KeepText &&
+		slices.Equal(o.TimeFields, other.TimeFields)
 }
 
 // Batch is an append-only columnar buffer; one written as a block of a part
@@ -52,12 +61,16 @@ type Batch struct {
 	src []byte
 	pos int
 
-	timeCols *pathCols
-	sort     *sortScratch // held only while the batch is being sorted
-	seq      uint64
-	rest     []byte
-	restMark int
-	scratch  []byte
+	// timeCols holds the columns of the time paths that the batch has met,
+	// in the order they are tried, and timePaths the number of paths the
+	// batch had when the others were last looked for.
+	timeCols  []*pathCols
+	timePaths int
+	sort      *sortScratch // held only while the batch is being sorted
+	seq       uint64
+	rest      []byte
+	restMark  int
+	scratch   []byte
 }
 
 type pathCols struct {
@@ -91,7 +104,7 @@ func (b *Batch) init() {
 	b.cols = b.cols[:0]
 	b.paths = make(map[string]*pathCols, 64)
 	b.root = &node{}
-	b.timeCols = nil
+	b.timeCols, b.timePaths = b.timeCols[:0], -1
 }
 
 // Columns returns every column, including ones without values in this batch.
@@ -118,6 +131,7 @@ func (b *Batch) Reset() {
 	b.Rows = 0
 	b.Times = b.Times[:0]
 	b.Bytes = 0
+	b.src = nil
 }
 
 const maxRetainedBytes = 256 << 20
@@ -131,7 +145,6 @@ var batchPool = mem.Pool[Batch]{Reset: func(b *Batch) bool {
 		return false
 	}
 	b.Reset()
-	b.src = nil
 
 	return true
 }}
@@ -142,7 +155,7 @@ func Get(opts Options) *Batch {
 		opts.MaxColumns = defaultMaxColumns
 	}
 	b := batchPool.Get()
-	if b.root == nil || b.opts != opts {
+	if b.root == nil || !b.opts.same(opts) {
 		b.opts = opts
 		b.init()
 	}
@@ -283,7 +296,7 @@ func (b *Batch) endRow(ts int64, size int) {
 		c.Ends = append(c.Ends, uint32(len(c.Data)))
 		b.rest, b.restMark = b.rest[:0], 0
 	}
-	if b.opts.TimeField != "" {
+	if b.opts.TimeField != "" || len(b.opts.TimeFields) != 0 {
 		if t, ok := b.rowTime(); ok {
 			ts = t
 		}
@@ -304,20 +317,32 @@ func (b *Batch) rollback() {
 }
 
 func (b *Batch) rowTime() (int64, bool) {
-	if b.timeCols == nil {
-		b.timeCols = b.paths[b.opts.TimeField]
-		if b.timeCols == nil {
-			return 0, false
+	if b.timePaths != len(b.paths) {
+		// A path met since the last row may be one of the time paths.
+		b.timePaths, b.timeCols = len(b.paths), b.timeCols[:0]
+		if pc := b.paths[b.opts.TimeField]; pc != nil {
+			b.timeCols = append(b.timeCols, pc)
+		}
+		for _, path := range b.opts.TimeFields {
+			if pc := b.paths[path]; pc != nil {
+				b.timeCols = append(b.timeCols, pc)
+			}
 		}
 	}
 	row := int32(b.Rows)
-	if c := b.timeCols.byKind[vec.KindInt]; c != nil && c.lastRow == row {
-		return EpochNanos(c.Ints[c.Count-1]), true
-	}
-	if c := b.timeCols.byKind[vec.KindString]; c != nil && c.lastRow == row {
-		s := c.Bytes(c.Count - 1)
-		if t, err := time.Parse(time.RFC3339Nano, unsafe.String(unsafe.SliceData(s), len(s))); err == nil {
-			return t.UnixNano(), true
+	for _, pc := range b.timeCols {
+		if c := pc.byKind[vec.KindInt]; c != nil && c.lastRow == row {
+			return EpochNanos(c.Ints[c.Count-1]), true
+		}
+		if c := pc.byKind[vec.KindFloat]; c != nil && c.lastRow == row {
+			if t, ok := epochFloat(c.Floats[c.Count-1]); ok {
+				return t, true
+			}
+		}
+		if c := pc.byKind[vec.KindString]; c != nil && c.lastRow == row {
+			if t, ok := ParseTime(c.Bytes(c.Count - 1)); ok {
+				return t, true
+			}
 		}
 	}
 

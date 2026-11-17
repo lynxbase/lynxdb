@@ -19,6 +19,8 @@ type pexpr struct {
 	// rows is set for the total of a count of rows that no filter thins out:
 	// the number of rows aggregated, known before the groups are merged.
 	rows bool
+	// newFunc makes the function of an OpFunc node.
+	newFunc func() Func
 }
 
 func (q *query) project(p *Project) error {
@@ -39,17 +41,31 @@ func (q *query) project(p *Project) error {
 	for _, pe := range q.post {
 		q.totals(pe)
 	}
+	q.fields = make([]bool, len(q.post))
 	if q.located != nil {
 		q.final = make([]*sexpr, len(q.post))
 		for i, pe := range q.post {
 			if pe.op == OpColumn {
 				q.final[i] = q.located[pe.col]
+				q.fields[i] = q.final[i] != nil
 			} else if pe.locates(q.located) {
 				q.early = true
 			}
 		}
 	}
 	q.names = names
+	if !p.Rest {
+		return nil
+	}
+	last := len(q.post) - 1
+	pick := q.post[last]
+	if q.located == nil || pick.op != OpColumn || q.located[pick.col] == nil {
+		return unsupported("the fields of a row above an aggregate follow a column that picks the row")
+	}
+	// The place of the row stays what the column holds.
+	q.located[pick.col], q.final[last] = nil, nil
+	q.rest = true
+	q.hidden = append(append(q.hidden, names[:last]...), p.Except...)
 
 	return nil
 }
@@ -166,11 +182,14 @@ func postExpr(e *Expr, in []string, slots *int) (*pexpr, error) {
 	}
 
 	least, most := arity(e.Op)
+	if e.Op == OpFunc && e.NewFunc != nil && len(e.Args) != 0 {
+		least, most = 1, -1
+	}
 	if least == 0 || len(e.Args) < least || (most >= 0 && len(e.Args) > most) {
 		return nil, unsupported("expression over an aggregate")
 	}
 	*slots++
-	pe := &pexpr{op: e.Op, pat: e.Pattern, slot: *slots - 1, byValue: true}
+	pe := &pexpr{op: e.Op, pat: e.Pattern, slot: *slots - 1, byValue: true, newFunc: e.NewFunc}
 	for _, a := range e.Args {
 		arg, err := postExpr(a, in, slots)
 		if err != nil {
@@ -184,6 +203,8 @@ func postExpr(e *Expr, in []string, slots *int) (*pexpr, error) {
 
 // postEval computes a projection over batches of aggregate rows.
 type postEval struct {
+	// fns holds the functions of the OpFunc nodes this evaluator computed.
+	fns map[*pexpr]Func
 	// rows is the number of rows the query aggregated.
 	rows int64
 	tmp  []colVec
@@ -340,6 +361,16 @@ func (p *postEval) byValue(e *pexpr, in []colVec, n int) *colVec {
 	p.vals = fit(p.vals, len(args))
 	out := p.buf(e.slot)
 	out.reset()
+	var fn Func
+	if e.op == OpFunc {
+		if fn = p.fns[e]; fn == nil {
+			if p.fns == nil {
+				p.fns = map[*pexpr]Func{}
+			}
+			fn = e.newFunc()
+			p.fns[e] = fn
+		}
+	}
 	for i := 0; i < n; i++ {
 		for k, a := range args {
 			// A column of an aggregate holds a value or a null.
@@ -348,7 +379,11 @@ func (p *postEval) byValue(e *pexpr, in []colVec, n int) *colVec {
 			}
 		}
 		var v Value
-		v, p.text = scalarValue(e.op, &e.pat, p.vals, p.text[:0])
+		if fn != nil {
+			v, p.text = fn(p.vals, p.text[:0])
+		} else {
+			v, p.text = scalarValue(e.op, &e.pat, p.vals, p.text[:0])
+		}
 		out.appendValue(v)
 	}
 	p.args = p.args[:base]

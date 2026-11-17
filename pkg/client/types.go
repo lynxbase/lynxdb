@@ -104,10 +104,6 @@ type SearchStats struct {
 	JoinStrategy         string          `json:"join_strategy,omitempty"`
 	ScanMS               float64         `json:"scan_ms,omitempty"`
 	PipelineMS           float64         `json:"pipeline_ms,omitempty"`
-	AcceleratedBy        string          `json:"accelerated_by,omitempty"`
-	MVStatus             string          `json:"mv_status,omitempty"`
-	MVSpeedup            string          `json:"mv_speedup,omitempty"`
-	MVOriginalScan       int64           `json:"mv_original_scan,omitempty"`
 	CacheHit             bool            `json:"cache_hit,omitempty"`
 	PipelineStages       []PipelineStage `json:"pipeline_stages,omitempty"`
 
@@ -214,7 +210,6 @@ type QueryRequest struct {
 	Suggestions *bool    `json:"suggestions,omitempty"` // false disables advisory suggestions
 	LintLimit   int      `json:"lint_limit,omitempty"`  // max lints to return; default 5
 	LintFull    bool     `json:"lint_full,omitempty"`   // true returns all advisory lints
-	Language    string   `json:"language,omitempty"`    // "lynxflow" or "spl2"; absent = auto-detect
 }
 
 // QueryResult is the polymorphic response from Query().
@@ -243,17 +238,7 @@ type AggregateResult struct {
 	TotalRows int                    `json:"total_rows,omitempty"`
 	Interval  string                 `json:"interval,omitempty"`
 	Partial   bool                   `json:"partial,omitempty"`
-	AccelBy   *AcceleratedBy         `json:"-"`
 	RawData   map[string]interface{} `json:"-"`
-}
-
-// AcceleratedBy indicates MV acceleration was used.
-type AcceleratedBy struct {
-	View            string  `json:"view"`
-	OriginalScan    int64   `json:"original_scan"`
-	Speedup         string  `json:"speedup"`
-	Status          string  `json:"status"`
-	CoveragePercent float64 `json:"coverage_percent,omitempty"`
 }
 
 // JobHandle is returned for async/hybrid queries (HTTP 202).
@@ -358,50 +343,30 @@ type JobSummary struct {
 
 // ExplainResult is the response from Explain().
 type ExplainResult struct {
-	IsValid      bool           `json:"is_valid"`
-	Parsed       *ExplainParsed `json:"parsed,omitempty"`
-	Errors       []ExplainError `json:"errors"`
-	Acceleration *ExplainAccel  `json:"acceleration,omitempty"`
+	IsValid bool           `json:"is_valid"`
+	Parsed  *ExplainParsed `json:"parsed,omitempty"`
+	Errors  []ExplainError `json:"errors"`
 }
 
-// ExplainParsed contains the parsed query analysis.
+// ExplainParsed describes a compiled query: its IR plans and scan hints.
 type ExplainParsed struct {
-	Pipeline        []ExplainStage          `json:"pipeline"`
-	ResultType      string                  `json:"result_type"`
-	EstimatedCost   string                  `json:"estimated_cost"`
-	UsesFullScan    bool                    `json:"uses_full_scan"`
-	FieldsRead      []string                `json:"fields_read"`
-	SearchTerms     []string                `json:"search_terms,omitempty"`
-	HasTimeBounds   bool                    `json:"has_time_bounds,omitempty"`
-	RangePredicates []ExplainRangePredicate `json:"range_predicates,omitempty"`
-
-	// Optimizer details (rich explain output).
-	OptimizerStats    map[string]int       `json:"optimizer_stats,omitempty"`
-	OptimizerMessages []string             `json:"optimizer_messages,omitempty"`
-	OptimizerWarnings []string             `json:"optimizer_warnings,omitempty"`
-	PhysicalPlan      *ExplainPhysicalPlan `json:"physical_plan,omitempty"`
-	ParseMS           float64              `json:"parse_ms,omitempty"`
-	OptimizeMS        float64              `json:"optimize_ms,omitempty"`
-	TotalRules        int                  `json:"total_rules,omitempty"`
-	OptimizerRules    []ExplainRuleDetail  `json:"optimizer_rules,omitempty"`
-	SourceScope       *ExplainSourceScope  `json:"source_scope,omitempty"`
+	ResultType     string              `json:"result_type"`
+	EstimatedCost  string              `json:"estimated_cost"`
+	UsesFullScan   bool                `json:"uses_full_scan"`
+	FieldsRead     []string            `json:"fields_read"`
+	SearchTerms    []string            `json:"search_terms,omitempty"`
+	HasTimeBounds  bool                `json:"has_time_bounds,omitempty"`
+	LogicalPlan    string              `json:"logical_plan"`
+	OptimizedPlan  string              `json:"optimized_plan"`
+	CompileMS      float64             `json:"compile_ms,omitempty"`
+	OptimizerRules []ExplainRuleDetail `json:"optimizer_rules,omitempty"`
+	SourceScope    *ExplainSourceScope `json:"source_scope,omitempty"`
 }
 
-// ExplainPhysicalPlan describes the runtime execution strategy.
-type ExplainPhysicalPlan struct {
-	CountStarOnly       bool   `json:"count_star_only,omitempty"`
-	PartialAgg          bool   `json:"partial_agg,omitempty"`
-	RexLiteralPreFilter bool   `json:"rex_literal_prefilter,omitempty"`
-	TopKAgg             bool   `json:"topk_agg,omitempty"`
-	TopK                int    `json:"topk,omitempty"`
-	JoinStrategy        string `json:"join_strategy,omitempty"`
-}
-
-// ExplainRuleDetail describes a single optimizer rule.
+// ExplainRuleDetail is an optimizer rule and the number of times it fired.
 type ExplainRuleDetail struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Count       int    `json:"count"`
+	Name  string `json:"name"`
+	Count int    `json:"count"`
 }
 
 // ExplainSourceScope describes the resolved source scope.
@@ -412,41 +377,19 @@ type ExplainSourceScope struct {
 	TotalSourcesAvailable int      `json:"total_sources_available,omitempty"`
 }
 
-// ExplainRangePredicate describes how a range predicate is executed.
-type ExplainRangePredicate struct {
-	Field            string `json:"field"`
-	Min              string `json:"min,omitempty"`
-	Max              string `json:"max,omitempty"`
-	LoweredToBSI     bool   `json:"lowered_to_bsi,omitempty"`
-	RGFilterStrategy string `json:"rg_filter_strategy"`
-	RowVMStrategy    string `json:"row_vm_strategy"`
-}
-
-// ExplainStage is a single pipeline stage.
-type ExplainStage struct {
-	Command        string   `json:"command"`
-	Description    string   `json:"description,omitempty"`
-	FieldsAdded    []string `json:"fields_added,omitempty"`
-	FieldsRemoved  []string `json:"fields_removed,omitempty"`
-	FieldsOut      []string `json:"fields_out,omitempty"`
-	FieldsOptional []string `json:"fields_optional,omitempty"`
-	FieldsUnknown  bool     `json:"fields_unknown,omitempty"`
-}
-
-// ExplainError is a parse error returned by Explain().
+// ExplainError is a compile error returned by Explain().
 type ExplainError struct {
-	Position   int    `json:"position,omitempty"`
-	Length     int    `json:"length,omitempty"`
-	Message    string `json:"message"`
-	Suggestion string `json:"suggestion,omitempty"`
+	Kind       string         `json:"kind,omitempty"`
+	Position   *ErrorPosition `json:"position,omitempty"`
+	Expected   []string       `json:"expected,omitempty"`
+	Message    string         `json:"message"`
+	Suggestion string         `json:"suggestion,omitempty"`
 }
 
-// ExplainAccel describes MV acceleration availability.
-type ExplainAccel struct {
-	Available        bool   `json:"available"`
-	View             string `json:"view,omitempty"`
-	Reason           string `json:"reason,omitempty"`
-	EstimatedSpeedup string `json:"estimated_speedup,omitempty"`
+// ErrorPosition is the line and column of a compile error, both 1-based.
+type ErrorPosition struct {
+	Line   int `json:"line"`
+	Column int `json:"column"`
 }
 
 // IngestEvent is a single structured event payload for POST /api/v1/ingest.
@@ -531,7 +474,6 @@ type ServerStatus struct {
 	Storage       StatusStorage     `json:"storage"`
 	Events        StatusEvents      `json:"events"`
 	Queries       StatusQueries     `json:"queries"`
-	Views         StatusViews       `json:"views"`
 	Retention     *StatusRetention  `json:"retention,omitempty"`
 	Tail          *StatusTail       `json:"tail,omitempty"`
 	MemoryPool    *StatusMemoryPool `json:"memory_pool,omitempty"`
@@ -574,172 +516,10 @@ type StatusQueries struct {
 	AvgDurationMS float64 `json:"avg_duration_ms,omitempty"`
 }
 
-// StatusViews holds MV summary info.
-type StatusViews struct {
-	Total        int   `json:"total"`
-	Active       int   `json:"active"`
-	Backfilling  int   `json:"backfilling,omitempty"`
-	StorageBytes int64 `json:"storage_bytes,omitempty"`
-}
-
 // StatusRetention holds retention policy info.
 type StatusRetention struct {
 	Policy      string `json:"policy,omitempty"`
 	OldestEvent string `json:"oldest_event,omitempty"`
-}
-
-// TopSnapshot is the response from GET /api/v1/top/snapshot.
-type TopSnapshot struct {
-	Server  TopServerSnapshot  `json:"server"`
-	Events  TopEventsSnapshot  `json:"events"`
-	Storage TopStorageSnapshot `json:"storage"`
-	Indexes []TopIndexSnapshot `json:"indexes"`
-	Queries TopQueriesSnapshot `json:"queries"`
-	Memory  TopMemorySnapshot  `json:"memory"`
-	Cluster TopClusterSnapshot `json:"cluster"`
-}
-
-// TopServerSnapshot describes the server identity and health for the top TUI.
-type TopServerSnapshot struct {
-	Version       string `json:"version"`
-	Health        string `json:"health"`
-	UptimeSeconds int64  `json:"uptime_seconds"`
-	DataDir       string `json:"data_dir"`
-	Profile       string `json:"profile"`
-}
-
-// TopEventsSnapshot holds event and ingest counters.
-type TopEventsSnapshot struct {
-	Total         int64   `json:"total"`
-	Today         int64   `json:"today"`
-	Buffered      int64   `json:"buffered"`
-	IngestRateEPS float64 `json:"ingest_rate_eps"`
-}
-
-// TopStorageSnapshot holds storage counters and compaction level distribution.
-type TopStorageSnapshot struct {
-	UsedBytes       int64          `json:"used_bytes"`
-	SegmentCount    int            `json:"segment_count"`
-	SegmentBytes    int64          `json:"segment_bytes"`
-	SegmentsByLevel map[string]int `json:"segments_by_level"`
-	OldestEvent     string         `json:"oldest_event,omitempty"`
-}
-
-// TopIndexSnapshot describes per-index dashboard statistics.
-type TopIndexSnapshot struct {
-	Name            string         `json:"name"`
-	EventCount      int64          `json:"event_count"`
-	SegmentCount    int            `json:"segment_count"`
-	SizeBytes       int64          `json:"size_bytes"`
-	SegmentsByLevel map[string]int `json:"segments_by_level"`
-	ActiveQueries   int            `json:"active_queries"`
-	LoadScore       float64        `json:"load_score"`
-}
-
-// TopQueriesSnapshot holds active/recent query rows.
-type TopQueriesSnapshot struct {
-	Active       int           `json:"active"`
-	Recent       int           `json:"recent"`
-	CacheHitRate float64       `json:"cache_hit_rate"`
-	Rows         []TopQueryRow `json:"rows"`
-}
-
-// TopQueryRow is one row in the active query table.
-type TopQueryRow struct {
-	JobID              string    `json:"job_id"`
-	Query              string    `json:"query"`
-	Status             string    `json:"status"`
-	CreatedAt          time.Time `json:"created_at"`
-	ElapsedMS          float64   `json:"elapsed_ms"`
-	Phase              string    `json:"phase,omitempty"`
-	Percent            float64   `json:"percent"`
-	RowsReadSoFar      int64     `json:"rows_read_so_far,omitempty"`
-	SegmentsTotal      int       `json:"segments_total,omitempty"`
-	SegmentsScanned    int       `json:"segments_scanned,omitempty"`
-	SegmentsDispatched int       `json:"segments_dispatched,omitempty"`
-	SegmentsSkipped    int       `json:"segments_skipped,omitempty"`
-	CurrentMemoryBytes int64     `json:"current_memory_bytes,omitempty"`
-	PeakMemoryBytes    int64     `json:"peak_memory_bytes,omitempty"`
-	SpillBytes         int64     `json:"spill_bytes,omitempty"`
-	SpillFiles         int       `json:"spill_files,omitempty"`
-	ProcessedBytes     int64     `json:"processed_bytes,omitempty"`
-	Indexes            []string  `json:"indexes,omitempty"`
-}
-
-// TopMemorySnapshot holds memory and spill counters.
-type TopMemorySnapshot struct {
-	Governor      *TopGovernorStats      `json:"governor,omitempty"`
-	BufferManager *TopBufferManagerStats `json:"buffer_manager,omitempty"`
-	SpillFiles    int                    `json:"spill_files"`
-	SpillBytes    int64                  `json:"spill_bytes"`
-}
-
-// TopGovernorStats mirrors the server memory governor snapshot.
-type TopGovernorStats struct {
-	Allocated      int64           `json:"allocated"`
-	Peak           int64           `json:"peak"`
-	Limit          int64           `json:"limit"`
-	ReserveEvents  int64           `json:"reserve_events"`
-	ReleaseEvents  int64           `json:"release_events"`
-	PressureEvents int64           `json:"pressure_events"`
-	ByClass        []TopClassStats `json:"by_class,omitempty"`
-}
-
-// TopClassStats holds memory stats for a single governor class.
-type TopClassStats struct {
-	Allocated int64 `json:"allocated"`
-	Peak      int64 `json:"peak"`
-	Peak60s   int64 `json:"peak_60s"`
-	Peak24h   int64 `json:"peak_24h"`
-	Limit     int64 `json:"limit"`
-}
-
-// TopBufferManagerStats mirrors buffer manager frame counters.
-type TopBufferManagerStats struct {
-	TotalFrames    int   `json:"total_frames"`
-	FreeFrames     int   `json:"free_frames"`
-	CleanFrames    int   `json:"clean_frames"`
-	DirtyFrames    int   `json:"dirty_frames"`
-	PinnedFrames   int   `json:"pinned_frames"`
-	EvictionCount  int64 `json:"eviction_count"`
-	WritebackCount int64 `json:"writeback_count"`
-	HitCount       int64 `json:"hit_count"`
-	MissCount      int64 `json:"miss_count"`
-	SegCacheFrames int   `json:"seg_cache_frames"`
-	QueryFrames    int   `json:"query_frames"`
-	MemtableFrames int   `json:"memtable_frames"`
-}
-
-// TopClusterSnapshot is a topology summary with single-node fallback.
-type TopClusterSnapshot struct {
-	Status            string            `json:"status"`
-	NodeCount         int               `json:"node_count"`
-	IndexCount        int               `json:"index_count"`
-	SegmentCount      int               `json:"segment_count"`
-	BufferedSize      int64             `json:"buffered_size"`
-	BufferedEvents    int64             `json:"buffered_events"`
-	DataDir           string            `json:"data_dir"`
-	MetaNodes         int               `json:"meta_nodes,omitempty"`
-	IngestNodes       int               `json:"ingest_nodes,omitempty"`
-	QueryNodes        int               `json:"query_nodes,omitempty"`
-	ShardCount        int               `json:"shard_count,omitempty"`
-	TotalEvents       int64             `json:"total_events,omitempty"`
-	TotalStorageBytes int64             `json:"total_storage_bytes,omitempty"`
-	Nodes             []TopNodeSnapshot `json:"nodes,omitempty"`
-}
-
-// TopNodeSnapshot describes one cluster node when available.
-type TopNodeSnapshot struct {
-	ID            string   `json:"id"`
-	Roles         []string `json:"roles"`
-	State         string   `json:"state"`
-	CPUPercent    float64  `json:"cpu_percent"`
-	MemoryUsed    int64    `json:"memory_used"`
-	MemoryTotal   int64    `json:"memory_total"`
-	DiskUsed      int64    `json:"disk_used"`
-	DiskTotal     int64    `json:"disk_total"`
-	ActiveQueries int64    `json:"active_queries"`
-	IngestRateEPS int64    `json:"ingest_rate_eps"`
 }
 
 // HealthResult is the response from Health().
@@ -764,18 +544,6 @@ type StatsResult struct {
 type StatsSource struct {
 	Name  string `json:"name"`
 	Count int64  `json:"count"`
-}
-
-// ShipperObservation describes one recently observed log shipper.
-type ShipperObservation struct {
-	Tool         string    `json:"tool"`
-	Version      string    `json:"version,omitempty"`
-	Status       string    `json:"status"`
-	LastSeenAt   time.Time `json:"last_seen_at"`
-	EventsPerMin int64     `json:"events_per_min"`
-	Endpoint     string    `json:"endpoint"`
-	RemoteIP     string    `json:"remote_ip,omitempty"`
-	UserAgent    string    `json:"user_agent,omitempty"`
 }
 
 // IndexInfo describes an index from the server.
@@ -816,89 +584,6 @@ type StreamMeta struct {
 	Total   int   `json:"total"`
 	Scanned int64 `json:"scanned"`
 	TookMS  int64 `json:"took_ms"`
-}
-
-// View is a materialized view summary.
-type View struct {
-	Name         string            `json:"name"`
-	Kind         string            `json:"kind"`
-	Query        string            `json:"query"`
-	Retention    string            `json:"retention,omitempty"`
-	Status       string            `json:"status"`
-	Version      int               `json:"version,omitempty"`
-	Rows         int64             `json:"rows,omitempty"`
-	Segments     int               `json:"segments,omitempty"`
-	StorageBytes int64             `json:"storage_bytes,omitempty"`
-	LagMS        *int64            `json:"lag_ms,omitempty"`
-	Backfill     *BackfillProgress `json:"backfill,omitempty"`
-	CreatedAt    string            `json:"created_at,omitempty"`
-	LastEvent    *string           `json:"last_event,omitempty"`
-}
-
-// BackfillProgress tracks MV backfill.
-type BackfillProgress struct {
-	Phase           string  `json:"phase"`
-	SegmentsTotal   int     `json:"segments_total"`
-	SegmentsScanned int     `json:"segments_scanned"`
-	SegmentsSkipped int     `json:"segments_skipped"`
-	RowsScanned     int64   `json:"rows_scanned"`
-	ElapsedMS       float64 `json:"elapsed_ms"`
-}
-
-// ViewDetail extends View with schema info.
-type ViewDetail struct {
-	View
-	Columns      []ViewColumn `json:"columns,omitempty"`
-	GroupBy      []string     `json:"group_by,omitempty"`
-	Aggregations []string     `json:"aggregations,omitempty"`
-	SourceView   *string      `json:"source_view,omitempty"`
-}
-
-// ViewColumn describes a column in a materialized view.
-// Type is serialized as a numeric FieldType by the server (uint8).
-type ViewColumn struct {
-	Name        string      `json:"name"`
-	Type        interface{} `json:"type"`
-	Encoding    string      `json:"encoding,omitempty"`
-	DerivedFrom []string    `json:"derived_from,omitempty"`
-}
-
-// ViewInput is the request body for creating a view.
-type ViewInput struct {
-	Name        string `json:"name"`
-	Q           string `json:"query"`
-	Retention   string `json:"retention,omitempty"`
-	PartitionBy string `json:"partition_by,omitempty"`
-}
-
-// ViewPatchInput is the request body for patching a view.
-type ViewPatchInput struct {
-	Retention       *string `json:"retention,omitempty"`
-	Paused          *bool   `json:"paused,omitempty"`
-	Query           *string `json:"query,omitempty"`
-	LanguageVersion *string `json:"language_version,omitempty"`
-	MigratedFrom    *string `json:"migrated_from,omitempty"`
-}
-
-// SavedQuery is a saved query definition.
-type SavedQuery struct {
-	ID        string                 `json:"id"`
-	Name      string                 `json:"name"`
-	Q         string                 `json:"q"`
-	From      string                 `json:"from,omitempty"`
-	Source    string                 `json:"source,omitempty"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
-	CreatedAt string                 `json:"created_at,omitempty"`
-	UpdatedAt string                 `json:"updated_at,omitempty"`
-}
-
-// SavedQueryInput is the request body for creating/updating a saved query.
-type SavedQueryInput struct {
-	Name     string                 `json:"name"`
-	Q        string                 `json:"q"`
-	From     string                 `json:"from,omitempty"`
-	Source   string                 `json:"source,omitempty"`
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // ConfigResult is the response from GetConfig().

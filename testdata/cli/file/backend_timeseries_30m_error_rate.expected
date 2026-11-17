@@ -1,6 +1,6 @@
-{"bucket":"2026-02-10T08:00:00Z","error_pct":null,"errors":2,"total":5}
-{"bucket":"2026-02-10T08:30:00Z","error_pct":null,"errors":0,"total":6}
-{"bucket":"2026-02-10T09:00:00Z","error_pct":null,"errors":3,"total":8}
-{"bucket":"2026-02-10T09:30:00Z","error_pct":null,"errors":0,"total":2}
-{"bucket":"2026-02-10T10:00:00Z","error_pct":null,"errors":0,"total":3}
-{"bucket":"2026-02-10T10:30:00Z","error_pct":null,"errors":0,"total":2}
+{"bucket":"2026-02-10T08:00:00Z","error_pct":40,"errors":2,"total":5}
+{"bucket":"2026-02-10T08:30:00Z","error_pct":0,"errors":0,"total":6}
+{"bucket":"2026-02-10T09:00:00Z","error_pct":37.5,"errors":3,"total":8}
+{"bucket":"2026-02-10T09:30:00Z","error_pct":0,"errors":0,"total":2}
+{"bucket":"2026-02-10T10:00:00Z","error_pct":0,"errors":0,"total":3}
+{"bucket":"2026-02-10T10:30:00Z","error_pct":0,"errors":0,"total":2}

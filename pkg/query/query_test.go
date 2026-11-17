@@ -11,6 +11,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/engine/physical"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/ppl"
 )
 
 var t0 = time.Date(2024, 2, 1, 9, 0, 0, 0, time.UTC)
@@ -86,6 +87,55 @@ func rowsText(rows []map[string]event.Value) string {
 	return strings.Join(lines, "\n")
 }
 
+// TestCorrelatedSubqueriesFailToCompile pins subqueries that read a field of
+// the query around them: they fail to compile instead of matching nothing.
+func TestCorrelatedSubqueriesFailToCompile(t *testing.T) {
+	for q, field := range map[string]string{
+		"source=logs | where exists [ source=users | where host = logs.host ] | fields host":                                   "logs.host",
+		"source=logs | eval top = 100 | where host in [ source=users | fields host, owner | where owner = top | fields host ]": "field top",
+	} {
+		_, err := Compile(q)
+		pe, ok := ppl.AsError(err)
+		if !ok || pe.Kind != ppl.ErrUnsupportedFeature || !strings.Contains(pe.Msg, "correlated subqueries are not supported") || !strings.Contains(pe.Msg, field) {
+			t.Errorf("%s: got %v, want an unsupported_feature error naming %s", q, err, field)
+		}
+	}
+}
+
+// TestProjectingEventColumnsKeepsOnlyThem pins that a projection of _time or
+// _raw plans and returns those columns and no event metadata.
+func TestProjectingEventColumnsKeepsOnlyThem(t *testing.T) {
+	e := ev(0, "GET /health 200", map[string]event.Value{"host": s("web-1")})
+	e.Source, e.SourceType = "access.log", "nginx"
+	store := physical.MapStore{"logs": {e}}
+	for q, want := range map[string]string{
+		"source=logs | fields _time":       "_time",
+		"source=logs | fields _raw":        "_raw",
+		"source=logs | fields _raw, _time": "_raw _time",
+		"source=logs | table _time, host":  "_time host",
+	} {
+		c, err := Compile(q)
+		if err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		if got := strings.Join(c.Plan.Root.Schema().Names(), " "); got != want {
+			t.Errorf("%s: plans columns %s, want %s", q, got, want)
+		}
+		rows, err := Run(context.Background(), c, store, Options{Now: t0.Add(time.Hour)})
+		if err != nil || len(rows) != 1 {
+			t.Fatalf("%s: %d rows, %v", q, len(rows), err)
+		}
+		keys := make([]string, 0, len(rows[0]))
+		for k := range rows[0] {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		if got := strings.Join(keys, " "); got != want {
+			t.Errorf("%s: returns columns %s, want %s", q, got, want)
+		}
+	}
+}
+
 func TestExecute(t *testing.T) {
 	cases := []struct {
 		q, want string
@@ -95,6 +145,18 @@ func TestExecute(t *testing.T) {
 		{"search source=logs connection refused | fields host",
 			`host="web-2"`},
 		{"search source=logs conn* NOT timeout | fields status",
+			"status=500"},
+		{"source=logs | where match(level, 'error') | fields status",
+			"status=500\nstatus=503"},
+		{"source=logs | where match(host, '2 3') | fields status",
+			"status=500\nstatus=404\nstatus=503"},
+		{"source=logs | where match(host, 'web 3', operator='AND') | fields status",
+			"status=404"},
+		{"source=logs | where match_phrase(_raw, 'connection Timeout') | fields status",
+			"status=503"},
+		{"source=logs | where match_phrase_prefix(_raw, 'conn') | fields status",
+			"status=500\nstatus=503"},
+		{"source=logs | where match_phrase_prefix(_raw, 'connection ref') | fields status",
 			"status=500"},
 		{`search source=logs "connection timeout" | fields status`,
 			"status=503"},
@@ -110,6 +172,8 @@ func TestExecute(t *testing.T) {
 			"count()=3 span(@timestamp,5m)=09:00\ncount()=1 span(@timestamp,5m)=09:05\ncount()=1 span(@timestamp,5m)=09:10"},
 		{"source=logs | stats count(eval(status >= 500)) as errors, dc(host) as hosts",
 			"errors=2 hosts=3"},
+		{"source=logs | stats earliest(status, @timestamp) as e, latest(status, _time) as l, earliest(host) as h",
+			"e=200 h=\"web-1\" l=503"},
 		{"source=logs | eventstats max(bytes) as mx by service | where bytes = mx | fields host",
 			"host=\"web-1\"\nhost=\"web-1\"\nhost=\"web-2\""},
 		{"source=logs | streamstats count() as n | fields n",
@@ -134,6 +198,12 @@ func TestExecute(t *testing.T) {
 			"host=\"web-1\"\nhost=\"web-1\"\nhost=\"web-3\""},
 		{"source=logs | eval doc = json_object('a', status) | spath input=doc path=a output=st | where st > 400 | fields st",
 			"st=500\nst=404\nst=503"},
+		{"source=logs | where status >= 500 | eval doc = concat('{\"user\":{\"name\":\"', host, '\"}}') | spath input=doc | fields doc.user.name",
+			"doc.user.name=\"web-2\"\ndoc.user.name=\"web-2\""},
+		{"source=logs | where status = 404 | eval doc = concat('{\"user\":{\"name\":\"', host, '\"}}') | spath input=doc | fields doc, status | fields doc.user.name, status",
+			"doc.user.name=\"web-3\" status=404"},
+		{"source=logs | where status = 404 | eval doc = concat('{\"user\":{\"name\":\"', host, '\"}}') | spath input=doc | table doc.user.name, doc.user",
+			"doc.user={\"name\":\"web-3\"} doc.user.name=\"web-3\""},
 		{"source=logs | where status = 200 | join left=l right=r on l.host = r.host users | fields host, owner",
 			"host=\"web-1\" owner=\"ops\"\nhost=\"web-1\" owner=\"ops\""},
 		{"source=logs | lookup users host replace owner | where isnotnull(owner) | fields status, owner",
@@ -148,6 +218,8 @@ func TestExecute(t *testing.T) {
 			"n=2\nn=2\nn=1\nn=5"},
 		{"source=logs | where status = 503 | eval z = nul | fillnull with 0 in z | fields z",
 			"z=0"},
+		{"source=logs | where status = 503 | eval y = transform(tags, (t, i) -> concat(t, tostring(i))) | fields y",
+			`y=["x0","y1"]`},
 		{"source=logs | where status = 503 | expand tags as tag | fields tag",
 			"tag=\"x\"\ntag=\"y\""},
 		{"source=logs | where status = 503 | mvexpand tags | fields tags",
@@ -170,6 +242,8 @@ func TestExecute(t *testing.T) {
 			"x=1\nx=1"},
 		{"makeresults format=json data='[{\"a\":1},{\"a\":2}]' | stats sum(a) as total",
 			"total=3"},
+		{"makeresults format=json data='[{\"x\":1},{\"x\":1.0},{\"x\":\"1\"},{\"x\":2}]' | stats dc(x) as d, distinct_count_approx(x) as a",
+			"a=2 d=2"},
 		{"source=logs | replace 'web-*' WITH 'host-*' IN host | dedup host | fields host",
 			"host=\"host-1\"\nhost=\"host-2\"\nhost=\"host-3\""},
 		{"source=logs | eval b = tostring(bytes) | convert num(b) as n | where n > 60 | fields n",

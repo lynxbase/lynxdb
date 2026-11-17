@@ -1,5 +1,5 @@
 # file: backend_server.log
 # format: json
-from main
+source=main
 | stats p50(duration_ms) as p50, p75(duration_ms) as p75, p90(duration_ms) as p90, p95(duration_ms) as p95, p99(duration_ms) as p99 by service
 | sort service

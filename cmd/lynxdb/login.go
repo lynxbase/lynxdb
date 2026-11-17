@@ -121,7 +121,7 @@ func runLogin(_ *cobra.Command, _ []string) error {
 
 	printMeta("Credentials saved.")
 	printNextSteps(
-		fmt.Sprintf("lynxdb query 'level=error | stats count' --server %s", globalServer),
+		fmt.Sprintf("lynxdb query 'search source=main error | stats count()' --server %s", globalServer),
 	)
 
 	return nil

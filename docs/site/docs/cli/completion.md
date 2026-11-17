@@ -1,46 +1,40 @@
 ---
 sidebar_position: 13
 title: Shell Completion
-description: Set up shell completion for LynxDB CLI in Bash, Zsh, Fish, and PowerShell.
+description: Tab completion for the LynxDB CLI in Bash, Zsh, Fish and PowerShell.
 ---
 
 # Shell Completion
 
-Generate shell completion scripts for tab-completing LynxDB commands, flags, and arguments.
+```
+lynxdb completion bash|zsh|fish|powershell
+```
 
-```
-lynxdb completion [bash|zsh|fish|powershell]
-```
+Prints a completion script for the shell named in the argument.
 
 ## Bash
 
 ```bash
-# Add to current session
+# Current session
 source <(lynxdb completion bash)
 
-# Persist across sessions
+# Every session
 lynxdb completion bash >> ~/.bashrc
 ```
 
-After adding to `~/.bashrc`, restart your shell or run `source ~/.bashrc`.
+Bash completion needs the `bash-completion` package (`apt install bash-completion`, `brew install bash-completion@2`).
 
 ## Zsh
 
 ```bash
-# Add to current session
+# Current session
 source <(lynxdb completion zsh)
 
-# Persist across sessions
-lynxdb completion zsh >> ~/.zshrc
-```
-
-If you use a completions directory:
-
-```bash
+# Every session, from a directory in $fpath
 lynxdb completion zsh > "${fpath[1]}/_lynxdb"
 ```
 
-After adding, restart your shell or run `source ~/.zshrc`.
+`compinit` must run in `~/.zshrc`. Start a new shell after installing.
 
 ## Fish
 
@@ -48,54 +42,26 @@ After adding, restart your shell or run `source ~/.zshrc`.
 lynxdb completion fish > ~/.config/fish/completions/lynxdb.fish
 ```
 
-Fish loads completions automatically from the completions directory.
-
 ## PowerShell
 
 ```powershell
-# Add to current session
+# Current session
 lynxdb completion powershell | Out-String | Invoke-Expression
 
-# Persist across sessions (add to your PowerShell profile)
+# Every session
 lynxdb completion powershell >> $PROFILE
 ```
 
-## What Gets Completed
+## What completes
 
-The completion script provides tab-completion for:
+- command and subcommand names, such as `lynxdb config <TAB>`
+- flag names, such as `lynxdb query --<TAB>`
+- config keys for `config get` and `config set`
+- field names for `lynxdb fields <TAB>`, fetched from the server
+- job IDs for `lynxdb jobs <TAB>`, fetched from the server
 
-- All top-level commands (`query`, `ingest`, `server`, `tail`, `mv`, etc.)
-- Subcommands (`mv create`, `mv list`, `config get`, etc.)
-- Flags and their values (e.g., `--format` completes to `json`, `table`, `csv`, etc.)
-- Config keys for `config get` and `config set`
-- Saved query names for `saved run` and `saved delete`
-- Materialized view names for `mv status`, `mv drop`, `mv pause`, `mv resume`
+Field names and job IDs come from the server named by `--server` with a 2-second timeout; when it does not answer, nothing is offered. Query text and flag values are not completed.
 
-## Verifying Completion
+## See also
 
-After installation, verify that completion is working:
-
-```bash
-lynxdb <TAB><TAB>
-# Should list all available commands
-
-lynxdb query --format <TAB><TAB>
-# Should list: auto json ndjson table csv tsv raw
-
-lynxdb mv <TAB><TAB>
-# Should list: create list status drop pause resume
-```
-
-## Troubleshooting
-
-If completions are not working:
-
-1. Run `lynxdb doctor` to check if shell completion is detected
-2. Ensure your shell is sourcing the completion file
-3. For Zsh, ensure `compinit` is called in your `.zshrc`
-4. For Bash, ensure `bash-completion` is installed (`apt install bash-completion` or `brew install bash-completion`)
-
-## See Also
-
-- [CLI Overview](/docs/cli/overview) for all available commands
-- [config](/docs/cli/config-cmd) for the `doctor` command that checks completion setup
+- [CLI overview](./overview.md)

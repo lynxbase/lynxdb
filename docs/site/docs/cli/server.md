@@ -1,7 +1,7 @@
 ---
-sidebar_position: 5
+sidebar_position: 6
 title: server
-description: Start the LynxDB server -- flags, startup behavior, TLS, authentication, signals, and systemd integration.
+description: Start the LynxDB server - flags, storage, TLS, authentication, receivers, signals and systemd.
 ---
 
 # server
@@ -12,174 +12,170 @@ Start the LynxDB server.
 lynxdb server [flags]
 ```
 
+The server loads its config file (see [config](./config-cmd.md) for the search order), applies `LYNXDB_*` environment variables, then the flags below. With no config at all it listens on `localhost:3100` and stores data under `~/.local/share/lynxdb` (`$XDG_DATA_HOME/lynxdb` when that is set).
+
 ## Flags
+
+### Storage and runtime
+
+| Flag | Description |
+|------|-------------|
+| `--addr` | Listen address, for example `0.0.0.0:3100` |
+| `--data-dir` | Data directory; `""` keeps everything in memory |
+| `--s3-bucket` | S3 bucket for warm and cold storage |
+| `--s3-region` | AWS region of the bucket |
+| `--s3-prefix` | Key prefix in the bucket |
+| `--compaction-interval` | How often compaction checks for work, for example `30s` |
+| `--tiering-interval` | How often tiering evaluates segments, for example `5m` |
+| `--cache-max-mb` | Query result cache size, for example `512mb`, `1gb` |
+| `--max-query-pool` | Memory pool shared by all queries, for example `4gb` |
+| `--spill-dir` | Directory for spill files (default: the OS temp directory) |
+| `--log-level` | `debug`, `info`, `warn` or `error` |
+| `--profile-runtime` | Turn on Go mutex and block profiling (about 2-5% overhead) |
+
+### Security
+
+| Flag | Description |
+|------|-------------|
+| `--auth` | Require API keys |
+| `--tls` | Serve HTTPS; without `--tls-cert`, generate a self-signed certificate in `<data-dir>/tls/` |
+| `--tls-cert` | Certificate PEM file (with `--tls-key`; either one turns TLS on) |
+| `--tls-key` | Private key PEM file |
+
+### Receivers
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--addr` | (from config) | Listen address (overrides config) |
-| `--data-dir` | (from config) | Root directory for data storage |
-| `--s3-bucket` | | S3 bucket for warm/cold storage |
-| `--s3-region` | | AWS region |
-| `--s3-prefix` | | Key prefix in S3 |
-| `--compaction-interval` | | Compaction check interval |
-| `--tiering-interval` | | Tier evaluation interval |
-| `--cache-max-mb` | | Max cache size (e.g., `1gb`, `512mb`) |
-| `--log-level` | | Log level: debug, info, warn, error |
-| `--auth` | `false` | Enable API key authentication |
-| `--tls` | `false` | Enable TLS (auto-generates self-signed cert if no `--tls-cert`) |
-| `--tls-cert` | | Path to TLS certificate PEM file |
-| `--tls-key` | | Path to TLS private key PEM file |
-| `--max-query-pool` | | Global query memory pool (e.g., `2gb`, `4gb`) |
-| `--spill-dir` | | Directory for temporary spill files (default: OS temp dir) |
-| `--no-ui` | `false` | Disable the embedded Web UI |
-| `--ui` | `false` | Open the embedded Web UI in a browser after startup |
-| `--profile-runtime` | `false` | Enable Go mutex and block profiling |
-| `--cluster.enabled` | `false` | Enable cluster mode |
-| `--cluster.node-id` | | Unique node identifier in cluster mode |
-| `--cluster.roles` | | Comma-separated node roles: `meta`, `ingest`, `query` |
-| `--cluster.seeds` | | Comma-separated seed node addresses (`host:port`) |
-| `--cluster.grpc-port` | | gRPC port for inter-node communication |
-| `--ingest-es-enabled` | `true` | Enable the Elasticsearch-compatible bulk endpoint |
-| `--ingest-es-version` | | Elasticsearch version advertised in compatibility handshakes |
-| `--otlp-http-listen` | | OTLP HTTP listen address (empty disables) |
-| `--otlp-grpc-listen` | | OTLP gRPC listen address (empty disables) |
-| `--otlp-grpc-max-recv-bytes` | | OTLP gRPC max receive message size |
-| `--ingest-max-compressed-body-bytes` | | Max compressed shipper body size |
-| `--ingest-max-decompressed-body-bytes` | | Max decompressed shipper body size |
-| `--ingest-staging-enabled` | `true` | Enable the server-side shipper staging buffer |
-| `--ingest-staging-max-bytes` | | Staging buffer byte ceiling |
-| `--ingest-staging-max-age` | | Staging buffer max age |
-| `--syslog <addr>` | | Enable UDP and TCP syslog on address (default port `5514`) |
-| `--syslog-udp <addr>` | | Enable UDP syslog only |
-| `--syslog-tcp <addr>` | | Enable TCP syslog only (default port `6514` with `--syslog-tls`) |
-| `--syslog-tls` | `false` | Wrap TCP syslog with server TLS |
-| `--syslog-parser <dialect>` | | Parser: `auto`, `rfc5424`, `rfc3164`, `raw` |
-| `--syslog-index <name>` | | Target index for syslog events |
+| `--syslog` | | Receive syslog over UDP and TCP on this address (port `5514` when the address has none) |
+| `--syslog-udp` | | Receive syslog over UDP only |
+| `--syslog-tcp` | | Receive syslog over TCP only (port `6514` with `--syslog-tls`) |
+| `--syslog-tls` | `false` | Wrap TCP syslog in the server's TLS |
+| `--syslog-parser` | | `auto`, `rfc5424`, `rfc3164` or `raw` |
+| `--syslog-index` | | Index for syslog events |
+| `--otlp-http-listen` | `0.0.0.0:4318` | OTLP/HTTP logs listener address; empty disables |
+| `--otlp-grpc-listen` | | OTLP/gRPC logs listener address; empty disables |
+| `--otlp-grpc-max-recv-bytes` | | Largest OTLP/gRPC message |
+| `--ingest-es-enabled` | `true` | Serve the Elasticsearch-compatible `_bulk` endpoint |
+| `--ingest-es-version` | | Elasticsearch version reported to clients that check it |
+| `--ingest-max-compressed-body-bytes` | | Largest compressed request body from a log shipper |
+| `--ingest-max-decompressed-body-bytes` | | Largest request body after decompression |
+| `--ingest-staging-enabled` | `true` | Buffer shipper requests in the server-side staging area |
+| `--ingest-staging-max-bytes` | | Staging buffer size limit |
+| `--ingest-staging-max-age` | | Longest time an entry stays in the staging buffer, for example `5s` |
+
+The HTTP ingest endpoints, including Splunk HEC (`/services/collector`), are always served on the main listener. See [Ingest settings](../configuration/ingest.md) and [Syslog](../configuration/syslog.md).
+
+### Cluster
+
+| Flag | Description |
+|------|-------------|
+| `--cluster.enabled` | Run as a cluster node |
+| `--cluster.node-id` | Unique node ID |
+| `--cluster.roles` | Comma-separated roles: `meta`, `ingest`, `query` |
+| `--cluster.seeds` | Comma-separated seed addresses (`host:port`) |
+| `--cluster.grpc-port` | Port for node-to-node gRPC |
+
+See [Cluster settings](../configuration/cluster.md).
+
+Size flags take values such as `512mb` or `2gb`; interval flags take durations such as `30s`, `5m` or `1d`.
 
 ## Examples
 
 ```bash
-# Start with defaults (localhost:3100)
+# Defaults: localhost:3100, data under ~/.local/share/lynxdb
 lynxdb server
 
-# Start with persistent storage and custom address
-lynxdb server --addr 0.0.0.0:8080 --data-dir /var/lib/lynxdb
+# Listen on all interfaces with a fixed data directory
+lynxdb server --addr 0.0.0.0:3100 --data-dir /var/lib/lynxdb
 
-# In-memory mode (no persistence)
+# In memory, nothing written to disk
 lynxdb server --data-dir ""
 
-# With S3 tiering
-lynxdb server --s3-bucket my-logs --s3-region eu-west-1
+# Tier old segments to S3
+lynxdb server --data-dir /var/lib/lynxdb --s3-bucket my-logs --s3-region eu-west-1
 
-# With TLS and auth
-lynxdb server --tls --auth --data-dir /var/lib/lynxdb
+# HTTPS with a self-signed certificate and API keys
+lynxdb server --data-dir /var/lib/lynxdb --tls --auth
 
-# With syslog receiver on port 514
-lynxdb server --syslog :514 --data-dir /var/lib/lynxdb
-
-# With syslog over TLS
-lynxdb server --tls --syslog-tcp :6514 --syslog-tls --data-dir /var/lib/lynxdb
-
-# With OTLP HTTP and gRPC receivers
-lynxdb server --otlp-http-listen :4318 --otlp-grpc-listen :4317
-
-# Disable the Elasticsearch-compatible bulk endpoint
-lynxdb server --ingest-es-enabled=false
-
-# With your own certificates
+# Your own certificate
 lynxdb server --tls-cert /etc/ssl/lynxdb.crt --tls-key /etc/ssl/lynxdb.key
+
+# Syslog on port 514, UDP and TCP
+lynxdb server --syslog :514
+
+# Syslog over TLS
+lynxdb server --tls --syslog-tcp :6514 --syslog-tls
+
+# OTLP receivers
+lynxdb server --otlp-http-listen :4318 --otlp-grpc-listen :4317
 ```
 
-## Startup Output
+## Startup output
+
+The server prints where its settings came from, then logs to stdout:
 
 ```
-  Config:  /home/user/.config/lynxdb/config.yaml
-  Overrides: --addr, --log-level
-  Data:    /var/lib/lynxdb
-  Listen:  0.0.0.0:8080
+  Config     /etc/lynxdb/config.yaml
+  Overrides  LYNXDB_LOG_LEVEL, --addr
+  Data       /var/lib/lynxdb
+  Listen     0.0.0.0:3100
 
-time=2026-01-15T10:00:00.000Z level=INFO msg="starting LynxDB" version=X.Y.Z addr=0.0.0.0:8080
+time=2026-01-15T10:00:00.000Z level=INFO msg="starting LynxDB" version=1.0.0 addr=0.0.0.0:3100 config=/etc/lynxdb/config.yaml
 ```
+
+With TLS on, it also prints the certificate path and its SHA-256 fingerprint. Clients pin that fingerprint on first [`lynxdb login`](./auth.md#login).
+
+It writes its PID to `<data-dir>/lynxdb.pid` (or `$XDG_RUNTIME_DIR/lynxdb.pid` in memory mode) so that `lynxdb config reload` can find it.
 
 ## Authentication
 
-When `--auth` is enabled and no keys exist, a root key is generated and displayed once:
+With `--auth` (or `auth.enabled: true`) the server keeps API keys in `<data-dir>/auth/`, so authentication needs a data directory. When no key exists yet, it creates a root key and prints it once on stderr:
 
 ```
-  Auth enabled — no API keys exist. Generated root key:
+  ⚠  Auth enabled — no API keys exist. Generated root key:
 
-    lxk_a1b2c3d4e5f6...
+    lynx_rk_7fA3mNpQ9xKvL2wB8cD4eF6gH1jR5tY
 
   Save this key now. It will NOT be shown again.
 ```
 
-Use the root key to create additional keys with `lynxdb auth create --name <name>`. See the [config command](/docs/cli/config-cmd) for managing connection profiles that store tokens.
+Log in with it and create narrower keys:
 
-Use a persistent `--data-dir` when enabling auth. LynxDB only bootstraps the API key store when the server has a data directory to store keys in.
+```bash
+lynxdb login --token lynx_rk_7fA3mNpQ9xKvL2wB8cD4eF6gH1jR5tY
+lynxdb auth create --name shipper --scope ingest
+```
+
+See [auth](./auth.md) and [TLS & Authentication](../deployment/tls-auth.md).
 
 ## Signals
 
 | Signal | Action |
 |--------|--------|
-| `SIGINT` | Graceful shutdown (finish in-flight requests, flush, exit) |
-| `SIGTERM` | Graceful shutdown (same as SIGINT) |
-| `SIGHUP` | Hot-reload configuration from file |
+| `SIGINT`, `SIGTERM` | Graceful shutdown: stop accepting requests, finish in-flight work, flush buffered events, exit |
+| `SIGHUP` | Reload the config file |
 
-Graceful shutdown ensures all in-flight queries complete and any pending part flushes are finished before the process exits.
+`lynxdb config reload` sends `SIGHUP` to the PID in the PID file.
 
-### Hot-Reloadable Settings
+### What a reload changes
 
-These settings are applied to new work when you send `SIGHUP` or run `lynxdb config reload`:
+A reload applies these settings to new work without a restart:
 
-- `log_level`
-- `retention`
-- `query.*` execution limits such as `max_concurrent`, `default_result_limit`, `max_result_limit`, `max_query_runtime`, `max_query_length`, and profiling preview settings
+- `log_level`, `retention`
+- `query.*` and `tail.*`, except `query.global_query_pool_bytes`, `query.spill_dir` and `query.max_temp_dir_size_bytes`
 - `storage.compaction_rate_limit_mb`
+- `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`
+- `ingest.es_compat.*`, `ingest.limits.*`, `ingest.staging.*`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`
+- `http.shutdown_timeout`
 - `syslog.index`, `syslog.sourcetype`, `syslog.default_timezone`, `syslog.default_hostname`, `syslog.batch_size`, `syslog.batch_timeout`
 
-Restart the server after changing startup-time settings such as:
+Any other change, such as `listen`, `data_dir`, TLS, auth, OTLP listeners, `ingest.max_body_size` or storage scheduler settings, needs a restart; the server logs the fields it left unapplied.
 
-- `listen`
-- `data_dir`
-- TLS certificate and key settings
-- authentication enablement
-- UI enablement
-- compaction worker counts and similar storage scheduler settings
-
-## systemd Integration
-
-### Recommended: `lynxdb install`
-
-The easiest way to create a production systemd service. It generates a hardened unit file with security settings (`ProtectSystem=strict`, `NoNewPrivileges=true`, etc.), creates a dedicated user, sets file descriptor limits, and grants `CAP_NET_BIND_SERVICE`:
-
-```bash
-sudo lynxdb install
-```
-
-See the full [`install` reference](/docs/cli/install) for all flags.
-
-### Managing the service
-
-```bash
-# Enable and start
-sudo systemctl enable lynxdb
-sudo systemctl start lynxdb
-
-# Hot-reload config
-sudo systemctl reload lynxdb
-
-# Check status
-sudo systemctl status lynxdb
-journalctl -u lynxdb -f
-```
-
-### Manual unit file
-
-If you need full control over the service unit, create `/etc/systemd/system/lynxdb.service` yourself:
+## systemd
 
 ```ini
 [Unit]
-Description=LynxDB Log Analytics Server
+Description=LynxDB log analytics server
 After=network.target
 
 [Service]
@@ -196,42 +192,15 @@ LimitNOFILE=65536
 WantedBy=multi-user.target
 ```
 
-## Related Commands
-
-| Command | Description |
-|---------|-------------|
-| `lynxdb status` | Show detailed server status (alias: `st`) |
-| `lynxdb health` | Quick health check |
-| `lynxdb indexes` | List all indexes |
-| `lynxdb cache stats` | Show cache statistics |
-| `lynxdb cache clear` | Clear the query cache |
-
-### status
-
 ```bash
-lynxdb status
+sudo systemctl enable --now lynxdb
+sudo systemctl reload lynxdb      # SIGHUP: reload the config
+journalctl -u lynxdb -f
 ```
 
-```
-  LynxDB v0.1.0 — uptime 2d 5h 30m — healthy
+## See also
 
-  Storage:     1.2 GB
-  Events:      3,456,789 total    123,456 today
-  Segments:    42    Memtable: 8200 events
-  Sources:     nginx (45%), api-gateway (30%), postgres (25%)
-  Oldest:      2025-01-08T10:30:00Z
-  Indexes:     3
-```
-
-### health
-
-```bash
-lynxdb health
-lynxdb health --format json
-```
-
-## See Also
-
-- [config](/docs/cli/config-cmd) for configuration management and profiles
-- [bench & demo](/docs/cli/bench-demo) for testing and demonstration modes
-- [CLI Overview](/docs/cli/overview) for global flags and modes of operation
+- [Server settings](../configuration/server.md)
+- [status, health and other inspection commands](./status.md)
+- [config](./config-cmd.md)
+- [Single-node deployment](../deployment/single-node.md)

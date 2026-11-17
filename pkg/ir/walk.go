@@ -4,45 +4,60 @@ package ir
 // not expressions and are not returned.
 func ExprChildren(e Expr) []Expr {
 	switch x := e.(type) {
-	case *Unary:
-		return []Expr{x.X}
-	case *Binary:
-		return []Expr{x.L, x.R}
 	case *Call:
 		return x.Args
-	case *Case:
-		out := make([]Expr, 0, 2*len(x.Whens)+1)
-		for _, w := range x.Whens {
-			out = append(out, w.Cond, w.Then)
-		}
-		if x.Else != nil {
-			out = append(out, x.Else)
-		}
-		return out
-	case *Cast:
-		return []Expr{x.X}
 	case *ArrayExpr:
 		return x.Elems
 	case *ObjectExpr:
 		return x.Values
-	case *Index:
-		return []Expr{x.X, x.Key}
-	case *Lambda:
-		return []Expr{x.Body}
-	case *InList:
-		return append([]Expr{x.X}, x.List...)
-	case *IsMissing:
-		return []Expr{x.Field}
 	case *Subquery:
 		return x.Args
-	case *AggCall:
-		out := append([]Expr(nil), x.Args...)
-		if x.Filter != nil {
-			out = append(out, x.Filter)
-		}
-		return out
 	}
-	return nil
+	return AppendExprChildren(nil, e)
+}
+
+// AppendExprChildren appends the direct sub-expressions of e to dst, in the
+// order ExprChildren returns them.
+func AppendExprChildren(dst []Expr, e Expr) []Expr {
+	switch x := e.(type) {
+	case *Unary:
+		return append(dst, x.X)
+	case *Binary:
+		return append(dst, x.L, x.R)
+	case *Call:
+		return append(dst, x.Args...)
+	case *Case:
+		for _, w := range x.Whens {
+			dst = append(dst, w.Cond, w.Then)
+		}
+		if x.Else != nil {
+			dst = append(dst, x.Else)
+		}
+		return dst
+	case *Cast:
+		return append(dst, x.X)
+	case *ArrayExpr:
+		return append(dst, x.Elems...)
+	case *ObjectExpr:
+		return append(dst, x.Values...)
+	case *Index:
+		return append(dst, x.X, x.Key)
+	case *Lambda:
+		return append(dst, x.Body)
+	case *InList:
+		return append(append(dst, x.X), x.List...)
+	case *IsMissing:
+		return append(dst, x.Field)
+	case *Subquery:
+		return append(dst, x.Args...)
+	case *AggCall:
+		dst = append(dst, x.Args...)
+		if x.Filter != nil {
+			dst = append(dst, x.Filter)
+		}
+		return dst
+	}
+	return dst
 }
 
 // WalkExpr visits e and its sub-expressions in pre-order; when visit returns
@@ -51,7 +66,8 @@ func WalkExpr(e Expr, visit func(Expr) bool) {
 	if e == nil || !visit(e) {
 		return
 	}
-	for _, c := range ExprChildren(e) {
+	var buf [4]Expr
+	for _, c := range AppendExprChildren(buf[:0], e) {
 		WalkExpr(c, visit)
 	}
 }
@@ -197,10 +213,15 @@ func ColumnsRead(e Expr) []string {
 
 // Conjuncts splits e at top-level ANDs.
 func Conjuncts(e Expr) []Expr {
+	return AppendConjuncts(nil, e)
+}
+
+// AppendConjuncts appends the top-level AND operands of e to dst.
+func AppendConjuncts(dst []Expr, e Expr) []Expr {
 	if b, ok := e.(*Binary); ok && b.Op == OpAnd {
-		return append(Conjuncts(b.L), Conjuncts(b.R)...)
+		return AppendConjuncts(AppendConjuncts(dst, b.L), b.R)
 	}
-	return []Expr{e}
+	return append(dst, e)
 }
 
 // And combines predicates with AND; it returns nil for an empty list.
@@ -306,6 +327,13 @@ func sortKeyExprs(keys []SortKey) []Expr {
 // rewrite is applied to the operator (re-created with the new inputs when
 // any changed).
 func Transform(n Node, rewrite func(Node) Node) Node {
+	if u, ok := n.(unary); ok {
+		in := u.input()
+		if nin := Transform(in, rewrite); nin != in {
+			n = n.WithInputs([]Node{nin})
+		}
+		return rewrite(n)
+	}
 	ins := n.Inputs()
 	if len(ins) > 0 {
 		changed := false
@@ -334,6 +362,10 @@ func WalkPlan(n Node, visit func(Node) bool) {
 			}
 			return true
 		})
+	}
+	if u, ok := n.(unary); ok {
+		WalkPlan(u.input(), visit)
+		return
 	}
 	for _, in := range n.Inputs() {
 		WalkPlan(in, visit)

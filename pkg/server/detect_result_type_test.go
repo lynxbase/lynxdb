@@ -3,93 +3,35 @@ package server
 import (
 	"testing"
 
-	"github.com/lynxbase/lynxdb/pkg/logical"
+	"github.com/lynxbase/lynxdb/pkg/query"
 )
 
 func TestDetectResultType(t *testing.T) {
-	scan := &logical.Scan{}
-
 	tests := []struct {
-		name string
-		root logical.Node
-		want ResultType
+		query string
+		want  ResultType
 	}{
-		{
-			name: "nil_plan_returns_events",
-			root: nil,
-			want: ResultTypeEvents,
-		},
-		{
-			name: "aggregate_returns_aggregate",
-			root: &logical.Aggregate{},
-			want: ResultTypeAggregate,
-		},
-		{
-			name: "topk_returns_aggregate",
-			root: &logical.TopK{},
-			want: ResultTypeAggregate,
-		},
-		{
-			name: "describe_returns_aggregate",
-			root: &logical.Describe{},
-			want: ResultTypeAggregate,
-		},
-		{
-			name: "window_aggregate_returns_events",
-			root: &logical.Aggregate{
-				Window: &logical.WindowSpec{Variant: logical.WindowEventstats},
-			},
-			want: ResultTypeEvents,
-		},
-		{
-			name: "limit_over_aggregate_returns_aggregate",
-			root: &logical.Limit{N: 10},
-			want: ResultTypeAggregate,
-		},
-		{
-			name: "sort_over_aggregate_returns_aggregate",
-			root: &logical.Sort{},
-			want: ResultTypeAggregate,
-		},
-		{
-			name: "project_over_aggregate_returns_aggregate",
-			root: &logical.Project{},
-			want: ResultTypeAggregate,
-		},
-		{
-			name: "scan_returns_events",
-			root: scan,
-			want: ResultTypeEvents,
-		},
-		{
-			name: "limit_over_scan_returns_events",
-			root: &logical.Limit{N: 5},
-			want: ResultTypeEvents,
-		},
-		{
-			name: "sort_over_topk_returns_aggregate",
-			root: &logical.Sort{},
-			want: ResultTypeAggregate,
-		},
+		{"source=main", ResultTypeEvents},
+		{"source=main | where status >= 500 | head 5", ResultTypeEvents},
+		{"source=main | stats count() by host", ResultTypeAggregate},
+		{"source=main | stats count() by host | sort - `count()` | head 3", ResultTypeAggregate},
+		{"source=main | stats count() as c by host | where c > 1 | fields host", ResultTypeAggregate},
+		{"source=main | top 3 host", ResultTypeAggregate},
+		{"source=main | eventstats count() by host", ResultTypeEvents},
+		{"describe main", ResultTypeAggregate},
 	}
-
-	// Wire up inputs for composite cases.
-	tests[5].root.(*logical.Limit).Input = &logical.Aggregate{}   // limit_over_aggregate
-	tests[6].root.(*logical.Sort).Input = &logical.Aggregate{}    // sort_over_aggregate
-	tests[7].root.(*logical.Project).Input = &logical.Aggregate{} // project_over_aggregate
-	tests[9].root.(*logical.Limit).Input = scan                   // limit_over_scan
-	tests[10].root.(*logical.Sort).Input = &logical.TopK{}        // sort_over_topk
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var prog *logical.Plan
-			if tt.root != nil {
-				prog = &logical.Plan{Root: tt.root}
+		t.Run(tt.query, func(t *testing.T) {
+			c, err := query.Compile(tt.query)
+			if err != nil {
+				t.Fatalf("compile: %v", err)
 			}
-			got := DetectResultType(prog)
-			if got != tt.want {
+			if got := DetectResultType(c.Plan); got != tt.want {
 				t.Errorf("DetectResultType() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+	if got := DetectResultType(nil); got != ResultTypeEvents {
+		t.Errorf("DetectResultType(nil) = %q, want events", got)
 	}
 }

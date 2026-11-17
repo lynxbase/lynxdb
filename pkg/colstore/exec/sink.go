@@ -3,6 +3,7 @@ package exec
 import (
 	"bytes"
 	"sort"
+	"sync/atomic"
 
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
@@ -13,6 +14,9 @@ type sink struct {
 	q    *query
 	cols []colVec
 	top  topK
+	// bound is where the sink of a plan that keeps the first rows by time
+	// tells the scan how far those reach.
+	bound *atomic.Int64
 	// raw is set when the sink takes every group as the aggregate leaves
 	// it, for what the plan does above the aggregate to run afterwards.
 	raw bool
@@ -61,6 +65,7 @@ func (s *sink) add(batch []colVec) {
 		}
 	case s.top.k > 0:
 		s.top.offer(batch, n)
+		s.tighten()
 	case s.q.limit > 0 && s.cols[0].len()+n > s.q.limit:
 		take := s.q.limit - s.cols[0].len()
 		for c := range batch {
@@ -71,6 +76,22 @@ func (s *sink) add(batch []colVec) {
 	default:
 		for c := range batch {
 			s.cols[c].appendAll(&batch[c])
+		}
+	}
+}
+
+// tighten tells the scan the time that a row must reach to be kept, once
+// the sink holds as many rows as the plan keeps: the time of the last of
+// them, which rows of other goroutines can only move further.
+func (s *sink) tighten() {
+	if s.bound == nil || len(s.top.rows) < s.top.k {
+		return
+	}
+	at := s.top.rows[0][s.q.timeCol].Int
+	for {
+		bound := s.bound.Load()
+		if (s.q.byTime < 0 && at <= bound) || (s.q.byTime > 0 && at >= bound) || s.bound.CompareAndSwap(bound, at) {
+			return
 		}
 	}
 }
@@ -149,20 +170,20 @@ func btoi(b bool) int {
 	return 0
 }
 
-// compareOrdered orders two values by one sort column: nulls last, then by
-// value in the column's direction.
-func compareOrdered(a, b Value, desc bool) int {
+// compareOrdered orders two values by one sort column: nulls at their end,
+// then by value in the column's direction.
+func compareOrdered(a, b Value, o orderSpec) int {
 	an, bn := a.IsNull(), b.IsNull()
 	switch {
 	case an && bn:
 		return 0
-	case an:
+	case an != o.nullsFirst && (an || bn):
 		return 1
-	case bn:
+	case an || bn:
 		return -1
 	}
 	c := compareValues(a, b)
-	if desc {
+	if o.desc {
 		return -c
 	}
 
@@ -178,7 +199,7 @@ type topK struct {
 
 func (t *topK) compare(a, b []Value) int {
 	for _, o := range t.order {
-		if c := compareOrdered(a[o.col], b[o.col], o.desc); c != 0 {
+		if c := compareOrdered(a[o.col], b[o.col], o); c != 0 {
 			return c
 		}
 	}
@@ -189,7 +210,7 @@ func (t *topK) compare(a, b []Value) int {
 // before reports whether row i of batch sorts before the kept row.
 func (t *topK) before(batch []colVec, i int, row []Value) bool {
 	for _, o := range t.order {
-		if c := compareOrdered(batch[o.col].value(i), row[o.col], o.desc); c != 0 {
+		if c := compareOrdered(batch[o.col].value(i), row[o.col], o); c != 0 {
 			return c < 0
 		}
 	}
@@ -285,15 +306,6 @@ func (t *topK) down(i int) {
 
 // columns turns the rows that gather returned into the columns of the
 // result.
-func columns(q *query, out []colVec) []Column {
-	cols := make([]Column, len(out))
-	for c := range out {
-		cols[c] = out[c].column(q.names[c])
-	}
-
-	return cols
-}
-
 // gather returns the rows of the result that the sinks hold, in the plan's
 // order and within its limit.
 func gather(q *query, sinks []*sink) ([]colVec, int) {
@@ -349,7 +361,7 @@ func sorted(q *query, cols []colVec) []colVec {
 	sort.SliceStable(perm, func(i, j int) bool {
 		a, b := perm[i], perm[j]
 		for _, o := range q.order {
-			if c := compareOrdered(cols[o.col].value(a), cols[o.col].value(b), o.desc); c != 0 {
+			if c := compareOrdered(cols[o.col].value(a), cols[o.col].value(b), o); c != 0 {
 				return c < 0
 			}
 		}

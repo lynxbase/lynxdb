@@ -1,4 +1,0 @@
-Aggregate(count(), avg(duration_ms) as avg_dur, min(duration_ms) as min_dur, max(duration_ms) as max_dur [partial])
-  Filter((duration_ms between 20 and 6000))
-    Scan(main)
-      pushdown.columns: [_raw, _source, _time, duration_ms]

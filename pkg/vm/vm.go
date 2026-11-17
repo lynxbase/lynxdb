@@ -43,7 +43,7 @@ var ErrInvalidBytecode = errors.New("vm: invalid bytecode")
 // a type mismatch. This indicates a compiler bug.
 var ErrVMTypeMismatch = errors.New("vm: type mismatch (possible compiler bug)")
 
-// VM is a stack-based virtual machine for evaluating SPL2 expressions.
+// VM is a stack-based virtual machine that evaluates compiled IR expressions.
 // The VM is designed to be reused across events with zero allocations on the hot path.
 //
 // NOTE: This file intentionally uses the deprecated As*() methods (AsInt, AsFloat,
@@ -82,9 +82,8 @@ type VM struct {
 	// 1 = enclosing, etc.
 	lambdaParams []event.Value
 
-	// Warnings tracks RFC-002 runtime warning counters (incompatible
-	// comparisons, not-on-non-bool, etc.). Nil for SPL2 programs; set
-	// explicitly by the caller when running LynxFlow programs.
+	// Warnings counts runtime warnings such as incompatible comparisons;
+	// nil disables counting.
 	Warnings *WarningCounters
 }
 
@@ -381,7 +380,7 @@ func (vm *VM) execGlobMatch(prog *Program, ins []byte, ip int) (int, error) {
 }
 
 // execHasTokenGlob implements has_glob(field, pattern): case-insensitive
-// whole-token glob match per §6.1. The pattern is lowercased at compile time;
+// whole-token glob match. The pattern is lowercased at compile time;
 // tokens are lowercased here, so the cached regex stays case-sensitive.
 func (vm *VM) execHasTokenGlob(prog *Program, ins []byte, ip int) (int, error) {
 	idx, err := readIndexSafe(ins, ip, len(prog.GlobPatterns), "pattern")
@@ -799,7 +798,7 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 			}
 
 		case OpSplitArr:
-			// split(s, sep) -> array of strings (LynxFlow first-class arrays).
+			// split(s, sep) -> array of strings.
 			delim := vm.stack[vm.sp-1]
 			str := vm.stack[vm.sp-2]
 			vm.sp--
@@ -1367,7 +1366,7 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 
 		case OpBin:
 			// bin(ts, dur) or bin(x, width): pop width/span (TOS), pop value.
-			// Coercion rule (RFC-002 §10):
+			// Coercion rule:
 			//   - number + number → snap to numeric width
 			//   - FieldTypeTimestamp → snap directly
 			//   - FieldTypeString parseable as RFC3339 → parse, snap, return timestamp
@@ -1638,11 +1637,8 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 			vm.stack[vm.sp-1] = ipMaskValue(mask, ip)
 
 		case OpSearchMatch:
-			// RESERVED opcode (0xC9). No emitter produces this opcode since
-			// RFC-002 Phase 10 removed the SPL2 search parser. If encountered
-			// in residual persisted bytecode, return a clear error rather than
-			// silently misbehaving.
-			return event.NullValue(), fmt.Errorf("%w: OpSearchMatch (0xC9) is a retired opcode; re-compile the query", ErrInvalidBytecode)
+			// Reserved: no compiler emits 0xC9.
+			return event.NullValue(), fmt.Errorf("%w: OpSearchMatch (0xC9) is reserved", ErrInvalidBytecode)
 
 		case OpJsonExtract:
 			// Stack: [..., field, path] → [..., result]
@@ -1848,7 +1844,7 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 				}
 			}
 
-		// RFC-002 typed-value opcodes (duration, array, object).
+		// Typed-value opcodes (duration, array, object).
 
 		case OpConstDuration:
 			newIP, err := vm.execConst(prog, ins, ip)
@@ -1923,7 +1919,7 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 			a := vm.stack[vm.sp-1]
 			vm.stack[vm.sp-1] = lenValue(a)
 
-		// --- RFC-002 LynxFlow strict comparison opcodes ---
+		// --- strict comparison ---
 
 		case OpEqStrict:
 			b := vm.stack[vm.sp-1]
@@ -2009,7 +2005,7 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 				vm.stack[vm.sp-1] = event.BoolValue(cmp >= 0)
 			}
 
-		// --- RFC-002 3VL logic opcodes ---
+		// --- three-valued logic ---
 
 		case OpNot3VL:
 			a := vm.stack[vm.sp-1]
@@ -2061,7 +2057,7 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 				vm.stack[vm.sp-1] = event.NullValue()
 			}
 
-		// --- RFC-002 strict arithmetic opcodes ---
+		// --- strict arithmetic ---
 
 		case OpAddStrict:
 			b := vm.stack[vm.sp-1]
@@ -2108,7 +2104,7 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 			vm.sp--
 			vm.stack[vm.sp-1] = modStrict(a, b, vm.Warnings)
 
-		// --- RFC-002 field/path opcodes ---
+		// --- field paths ---
 
 		case OpLoadPath:
 			if vm.sp >= StackSize {
@@ -2175,7 +2171,7 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 				vm.stack[vm.sp-1] = inStrictMode(val, items, vm.Warnings, prog.NumericStrings)
 			}
 
-		// --- RFC-002 function opcodes ---
+		// --- functions ---
 
 		case OpHasToken:
 			b := vm.stack[vm.sp-1] // term
@@ -2301,20 +2297,6 @@ func (vm *VM) ExecuteWithContext(prog *Program, fields map[string]event.Value, p
 			str := vm.stack[vm.sp-3]
 			vm.sp -= 2
 			vm.stack[vm.sp-1] = substr0Based(str, start, length)
-
-		case OpStrictCastFail:
-			constIdx, scErr := readIndexSafe(ins, ip, len(prog.Constants), "constant")
-			if scErr != nil {
-				return event.NullValue(), scErr
-			}
-			funcName := valueToString(prog.Constants[constIdx])
-			return event.NullValue(), &ErrStrictCast{
-				Func:  funcName,
-				Value: "<null>",
-				Type:  "null",
-			}
-
-		// --- RFC-002 b2 lambda + array/object opcodes ---
 
 		case OpLoadLambdaParam:
 			if vm.sp >= StackSize {
@@ -2786,7 +2768,7 @@ func addValues(a, b event.Value) event.Value {
 	if aok && bok {
 		return event.FloatValue(af + bf)
 	}
-	// RFC-002 §5.4: timestamp +/- duration, duration + duration
+	// timestamp +/- duration, duration + duration
 	if a.Type() == event.FieldTypeTimestamp && b.Type() == event.FieldTypeDuration {
 		return event.TimestampValue(a.AsTimestamp().Add(b.AsDuration()))
 	}
@@ -2815,7 +2797,7 @@ func subValues(a, b event.Value) event.Value {
 	if aok && bok {
 		return event.FloatValue(af - bf)
 	}
-	// RFC-002 §5.4: timestamp - timestamp → duration; timestamp - duration → timestamp;
+	// timestamp - timestamp → duration; timestamp - duration → timestamp;
 	// duration - duration → duration
 	if a.Type() == event.FieldTypeTimestamp && b.Type() == event.FieldTypeTimestamp {
 		return event.DurationValue(a.AsTimestamp().Sub(b.AsTimestamp()))
@@ -2845,7 +2827,7 @@ func mulValues(a, b event.Value) event.Value {
 	if aok && bok {
 		return event.FloatValue(af * bf)
 	}
-	// RFC-002 §5.4: duration * number → duration (commutative)
+	// duration * number → duration (commutative)
 	if a.Type() == event.FieldTypeDuration {
 		if bf, ok := ValueToFloat(b); ok {
 			return event.DurationValue(time.Duration(float64(a.AsDuration()) * bf))
@@ -2881,7 +2863,7 @@ func divValues(a, b event.Value) event.Value {
 
 		return event.FloatValue(af / bf)
 	}
-	// RFC-002 §5.4: duration / number → duration; duration / duration → float
+	// duration / number → duration; duration / duration → float
 	if a.Type() == event.FieldTypeDuration && b.Type() == event.FieldTypeDuration {
 		bd := b.AsDuration()
 		if bd == 0 {
@@ -2913,7 +2895,7 @@ func modValues(a, b event.Value) event.Value {
 
 		return event.IntValue(a.AsInt() % bv)
 	}
-	// RFC-002 §5.4: duration % duration → duration
+	// duration % duration → duration
 	if a.Type() == event.FieldTypeDuration && b.Type() == event.FieldTypeDuration {
 		bd := b.AsDuration()
 		if bd == 0 {
@@ -3261,7 +3243,7 @@ func substrValue(str, start, length event.Value) event.Value {
 		return event.NullValue()
 	}
 	s := valueToString(str)
-	// SPL2 substr is 1-indexed
+	// substr is 1-indexed
 	startIdx, _ := ValueToFloat(start)
 	lenVal, _ := ValueToFloat(length)
 	si := int(startIdx) - 1 // convert to 0-indexed
@@ -3755,7 +3737,7 @@ func strftimeValueInLocation(ts, format event.Value, loc *time.Location) event.V
 		return event.NullValue()
 	}
 	fmtStr := valueToString(format)
-	goFmt := splTimeToGo(fmtStr)
+	goFmt := strftimeToGo(fmtStr)
 
 	return event.StringValue(t.Format(goFmt))
 }
@@ -3770,7 +3752,7 @@ func strptimeValue(ts, format event.Value) event.Value {
 		if format.IsNull() || format.Type() != event.FieldTypeString {
 			return event.NullValue()
 		}
-		layout := splTimeToGo(format.AsString())
+		layout := strftimeToGo(format.AsString())
 		t, err := time.ParseInLocation(layout, tsStr, time.UTC)
 		if err != nil {
 			return event.NullValue()
@@ -3886,7 +3868,7 @@ func numericValue(v event.Value) (float64, bool) {
 }
 
 // binTimestampValue implements bin(ts, dur): snap a timestamp to a duration boundary.
-// Coercion rules (RFC-002 §10):
+// Coercion rules:
 //   - timestamp input → snap directly
 //   - string input parseable as RFC3339 → parse, snap, return timestamp
 //   - int input → treat as Unix nanoseconds, snap, return timestamp
@@ -4487,8 +4469,8 @@ func xxhash64Value(v event.Value) event.Value {
 	return event.StringValue(strconv.FormatUint(h, 16))
 }
 
-// splTimeReplacer converts SPL2 strftime format tokens to Go time layout tokens.
-var splTimeReplacer = strings.NewReplacer(
+// strftimeReplacer converts strftime format tokens to Go time layout tokens.
+var strftimeReplacer = strings.NewReplacer(
 	"%Y", "2006",
 	"%m", "01",
 	"%d", "02",
@@ -4505,5 +4487,5 @@ var splTimeReplacer = strings.NewReplacer(
 	"%A", "Monday",
 )
 
-// splTimeToGo converts SPL2 strftime format to Go time layout.
-func splTimeToGo(spl string) string { return splTimeReplacer.Replace(spl) }
+// strftimeToGo converts a strftime format to a Go time layout.
+func strftimeToGo(format string) string { return strftimeReplacer.Replace(format) }

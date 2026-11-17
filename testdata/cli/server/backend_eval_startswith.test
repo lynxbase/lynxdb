@@ -1,5 +1,5 @@
 # format: json
-from idx_backend
-| extend is_api = if(starts_with(path, "/api"), "yes", "no")
+source=backend
+| eval is_api = if(like(path, "/api%"), "yes", "no")
 | stats count() by is_api
 | sort is_api

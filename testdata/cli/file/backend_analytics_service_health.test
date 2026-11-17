@@ -1,7 +1,7 @@
 # file: backend_server.log
 # format: json
-from main
-| stats count() as requests, avg(duration_ms) as avg_dur, max(duration_ms) as max_dur, count(where status >= 500) as errors by service
-| extend health = if(errors > 0, "unhealthy", "healthy")
-| sort -errors, service
+source=main
+| stats count() as requests, avg(duration_ms) as avg_dur, max(duration_ms) as max_dur, count(eval(status >= 500)) as errors by service
+| eval health = if(errors > 0, "unhealthy", "healthy")
+| sort - errors, service
 | head 5

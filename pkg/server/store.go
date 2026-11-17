@@ -1556,26 +1556,13 @@ func (e *Engine) buildTransformPartialAggStore(
 	return allPartials, ss
 }
 
-// runTransformAndAgg converts events to a batch, runs transform commands through
-// a mini Volcano pipeline, then computes partial aggregates from the output batches.
-// Thread-safe: each call creates its own pipeline instances (regex compilation is
-// per-worker, the compiled *regexp.Regexp objects are immutable and goroutine-safe).
+// runTransformAndAgg returns no groups: no planner produces transform specs
+// for segment-level partial aggregation.
 func (e *Engine) runTransformAndAgg(
-	ctx context.Context,
-	events []*event.Event,
-	tSpec *enginepipeline.PartialAggSpec,
+	_ context.Context,
+	_ []*event.Event,
+	_ *enginepipeline.PartialAggSpec,
 ) []*enginepipeline.PartialAggGroup {
-	if len(events) == 0 {
-		return nil
-	}
-
-	// Build a mini-pipeline: Scan → [transform commands...].
-	// Use a simple query with the transform commands and a synthetic source.
-	miniStore := &enginepipeline.ServerIndexStore{
-		Events: map[string][]*event.Event{"_transform": events},
-	}
-	// RFC-002: transform mini-pipeline removed.
-	_ = miniStore
 	return nil
 }
 

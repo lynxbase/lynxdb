@@ -1,7 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| extend is_api = if(starts_with(path, "/api"), "yes", "no")
-| extend is_v2 = if(contains(path, "/v2/"), "yes", "no")
+source=main
+| eval is_api = if(like(path, "/api%"), "yes", "no"), is_v2 = if(like(path, "%/v2/%"), "yes", "no")
 | stats count() by is_api, is_v2
 | sort is_api, is_v2

@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| extend hour = strftime(_time, "%H")
+source=main
+| eval hour = strftime(_time, "%H")
 | stats count() by hour
 | sort hour

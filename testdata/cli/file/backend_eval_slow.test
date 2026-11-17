@@ -1,6 +1,6 @@
 # file: backend_server.log
 # format: json
-from main
-| extend slow = if(duration_ms > 1000, "yes", "no")
+source=main
+| eval slow = if(duration_ms > 1000, "yes", "no")
 | stats count() by slow
 | sort slow

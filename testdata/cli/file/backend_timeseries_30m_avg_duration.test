@@ -1,6 +1,5 @@
 # file: backend_server.log
 # format: json
-from main
-| extend bucket = bin(timestamp, 30m)
-| stats avg(duration_ms) as avg_dur by bucket
+source=main
+| stats avg(duration_ms) as avg_dur by span(_time, 30m) as bucket
 | sort bucket

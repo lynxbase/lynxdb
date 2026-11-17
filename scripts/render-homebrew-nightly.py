@@ -65,7 +65,7 @@ def render_formula(version: str, base_url: str, artifacts: dict[tuple[str, str],
     linux_arm64_url, linux_arm64_sha = entry("linux", "arm64")
 
     return f'''class LynxdbNightly < Formula
-  desc "Open-source log analytics database with a single binary and SPL2 query language"
+  desc "Open-source log analytics database in a single binary, queried with PPL"
   homepage "https://lynxdb.org"
   version "{version_no_v}"
   license "Apache-2.0"

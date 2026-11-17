@@ -25,7 +25,7 @@ type QueryStats struct {
 
 	// TotalDuration is end-to-end from query parse start to final result written.
 	TotalDuration time.Duration
-	// ParseDuration is the time spent in the SPL2 lexer + parser + AST build.
+	// ParseDuration is the time spent compiling the query to an optimized plan.
 	ParseDuration time.Duration
 	// OptimizeDuration is the time spent applying optimizer rules.
 	OptimizeDuration time.Duration
@@ -142,19 +142,6 @@ type QueryStats struct {
 	// CPUTimeSys is kernel CPU time consumed (from syscall.Getrusage).
 	CPUTimeSys time.Duration
 
-	// MV acceleration (zero values mean "not used")
-
-	// AcceleratedBy is the name of the MV used (empty if none).
-	AcceleratedBy string
-	// MVSpeedup is a human-readable speedup estimate, e.g. "~400x".
-	MVSpeedup string
-	// MVStatus is the MV state: "active", "backfilling", or "partial".
-	MVStatus string
-	// MVCoveragePercent is the fraction of the time range covered by the MV (0-100).
-	MVCoveragePercent float64
-	// MVOriginalScan is the estimated rows that would have been scanned without MV.
-	MVOriginalScan int64
-
 	// Pipeline breakdown (populated when --verbose)
 
 	// Stages holds per-operator metrics for the pipeline breakdown.
@@ -203,7 +190,7 @@ type Recommendation struct {
 	Priority         string // "high", "medium", "low", "info"
 	Message          string
 	EstimatedSpeedup string // e.g., "~10x" (optional, trace-level)
-	SuggestedAction  string // e.g., "lynxdb mv create ..." (optional)
+	SuggestedAction  string // optional command to run
 }
 
 // OperatorBudgetStats holds per-operator memory budget statistics from the
@@ -296,7 +283,6 @@ func FromSearchStats(
 	scanMS float64,
 	pipelineMS float64,
 	indexesUsed []string,
-	acceleratedBy string,
 ) *QueryStats {
 	st := &QueryStats{
 		ExecDuration:         timeDurFromMS(elapsedMS),
@@ -320,7 +306,6 @@ func FromSearchStats(
 		DictFilterUsed:       dictFilterUsed,
 		JoinStrategy:         joinStrategy,
 		IndexesUsed:          indexesUsed,
-		AcceleratedBy:        acceleratedBy,
 	}
 
 	// Derive scan type from available information.

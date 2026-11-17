@@ -33,18 +33,38 @@ func (v *validator) fail(n Node, format string, args ...any) {
 	v.errs = append(v.errs, &ValidationError{Node: n.Label(), Msg: fmt.Sprintf(format, args...)})
 }
 
-func (v *validator) node(n Node) {
-	for _, in := range n.Inputs() {
+// node validates n and its inputs and returns the output schema of n; ok
+// is false when n has a nil input somewhere below it.
+func (v *validator) node(n Node) (out Schema, ok bool) {
+	var nodeBuf [2]Node
+	ins := AppendInputs(nodeBuf[:0], n)
+	var schemaBuf [2]Schema
+	schemas := schemaBuf[:0]
+	ok = true
+	for _, in := range ins {
 		if in == nil {
 			v.fail(n, "nil input")
-			return
+			return Schema{}, false
 		}
-		v.node(in)
+		s, inOK := v.node(in)
+		schemas = append(schemas, s)
+		ok = ok && inOK
+	}
+	if !ok {
+		for i, in := range ins {
+			schemas[i] = in.Schema()
+		}
 	}
 	var in Schema
-	if ins := n.Inputs(); len(ins) == 1 {
-		in = ins[0].Schema()
+	if len(ins) == 1 {
+		in = schemas[0]
 	}
+	v.check(n, in, schemas)
+	return DeriveSchema(n, schemas...), true
+}
+
+// check validates the operator n itself against its input schemas.
+func (v *validator) check(n Node, in Schema, inputs []Schema) {
 	scalarIn := func(e Expr) { v.expr(n, e, in, false, nil) }
 
 	switch x := n.(type) {
@@ -67,21 +87,29 @@ func (v *validator) node(n Node) {
 		scalarIn(x.Cond)
 		v.boolean(n, x.Cond)
 	case *Compute:
-		s := in
+		var b SchemaBuilder
+		b.Init(in, len(x.Assigns))
 		for _, a := range x.Assigns {
 			if a.Name == "" {
 				v.fail(n, "assignment without a name")
 			}
-			v.expr(n, a.Expr, s, false, nil)
-			s = s.With(Column{Name: a.Name, Type: a.Expr.Type(), Nullable: true})
+			v.expr(n, a.Expr, b.Schema(), false, nil)
+			b.With(Column{Name: a.Name, Type: a.Expr.Type(), Nullable: true})
 		}
 	case *Project:
 		if len(x.Names) == 0 {
 			v.fail(n, "no columns")
 		}
 		if !in.Open {
+			var known map[string]bool
+			if len(in.Columns) > wideSchema && len(x.Names) > 8 {
+				known = make(map[string]bool, len(in.Columns))
+				for _, c := range in.Columns {
+					known[c.Name] = true
+				}
+			}
 			for _, name := range x.Names {
-				if !IsNamePattern(name) {
+				if !IsNamePattern(name) && !known[name] {
 					if _, ok := in.Resolve(name); !ok {
 						v.fail(n, "unknown column %s", QuoteName(name))
 					}
@@ -151,7 +179,7 @@ func (v *validator) node(n Node) {
 		if len(x.LeftKeys) != len(x.RightKeys) {
 			v.fail(n, "%d left keys for %d right keys", len(x.LeftKeys), len(x.RightKeys))
 		}
-		ls, rs := x.Left.Schema(), x.Right.Schema()
+		ls, rs := inputs[0], inputs[1]
 		for _, k := range x.LeftKeys {
 			v.expr(n, k, ls, false, nil)
 		}
@@ -310,8 +338,10 @@ func (v *validator) expr(n Node, e Expr, in Schema, inLambdaArg bool, scope []*L
 		if x.Plan == nil {
 			v.fail(n, "subquery without a plan")
 		} else {
-			v.node(x.Plan)
-			s := x.Plan.Schema()
+			s, ok := v.node(x.Plan)
+			if !ok {
+				s = x.Plan.Schema()
+			}
 			if x.Mode == SubqueryScalar && !s.Open && len(s.Columns) != 1 {
 				v.fail(n, "scalar subquery returns %d columns", len(s.Columns))
 			}

@@ -1,26 +1,23 @@
 ---
 title: S3/MinIO Storage Backend
-description: Set up S3 or MinIO as the shared storage backend for LynxDB tiered storage and cluster deployments.
+description: Set up AWS S3, MinIO or another S3-compatible store for LynxDB tiered storage.
 ---
 
 # S3/MinIO Storage Backend
 
-S3-compatible object storage is used for two purposes in LynxDB:
+LynxDB moves segments older than 7 days from local disk to an S3-compatible bucket (the warm tier, under `<prefix>warm/`) and copies them to `<prefix>cold/` after 30 days. Queries download remote segments into `<data_dir>/segment-cache/` on demand. [S3 Tiering](../configuration/s3-tiering.md) describes the settings and the tiering cycle.
 
-1. **Tiered storage** -- automatically move older segments from local SSD to S3 (warm tier) and Glacier (cold tier)
-2. **Shared storage** -- in cluster mode, S3 is the source of truth for segments, enabling stateless ingest and query nodes
+## AWS S3
 
-## AWS S3 Setup
-
-### 1. Create an S3 Bucket
+### 1. Create a bucket
 
 ```bash
-aws s3 mb s3://my-lynxdb-logs --region us-east-1
+aws s3 mb s3://example-lynxdb-logs --region eu-west-1
 ```
 
-### 2. Create an IAM Policy
+### 2. Grant access
 
-Create a policy with the minimum required permissions:
+Tiering issues `PutObject`, `GetObject` (including ranged reads), `HeadObject`, `CopyObject` and `DeleteObject`. With `s3:ListBucket`, a `HeadObject` on a missing key answers 404 instead of 403:
 
 ```json
 {
@@ -28,258 +25,123 @@ Create a policy with the minimum required permissions:
   "Statement": [
     {
       "Effect": "Allow",
-      "Action": [
-        "s3:GetObject",
-        "s3:PutObject",
-        "s3:DeleteObject",
-        "s3:ListBucket",
-        "s3:GetBucketLocation"
-      ],
-      "Resource": [
-        "arn:aws:s3:::my-lynxdb-logs",
-        "arn:aws:s3:::my-lynxdb-logs/*"
-      ]
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "Resource": "arn:aws:s3:::example-lynxdb-logs/production/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::example-lynxdb-logs",
+      "Condition": {"StringLike": {"s3:prefix": "production/*"}}
     }
   ]
 }
 ```
 
-```bash
-aws iam create-policy \
-  --policy-name LynxDBS3Access \
-  --policy-document file://lynxdb-s3-policy.json
-```
+### 3. Provide credentials
 
-### 3. Configure Credentials
+LynxDB uses the AWS SDK default credential chain, so any of these works:
 
-**Option A: Environment variables**
-
-```bash
-export AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE
-export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-
-lynxdb server --s3-bucket my-lynxdb-logs --s3-region us-east-1
-```
-
-**Option B: AWS credentials file**
-
-```ini
-# ~/.aws/credentials
-[default]
-aws_access_key_id = AKIAIOSFODNN7EXAMPLE
-aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
-```
-
-**Option C: IAM instance profile (EC2)**
-
-No credentials needed. Attach the IAM role to the EC2 instance.
-
-**Option D: IRSA (EKS)**
-
-```yaml
-# Kubernetes ServiceAccount
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: lynxdb
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/lynxdb-s3-role
-```
+- `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` in the server environment
+- A shared credentials file or `AWS_PROFILE` for the server's user
+- An EC2 instance profile or ECS task role
+- EKS IAM Roles for Service Accounts (see [Kubernetes](./kubernetes.md#s3-tiering))
 
 ### 4. Configure LynxDB
 
 ```yaml
-# config.yaml
 storage:
-  s3_bucket: "my-lynxdb-logs"
-  s3_region: "us-east-1"
-  s3_prefix: "production/"           # Optional: namespace within bucket
+  s3_bucket: "example-lynxdb-logs"
+  s3_region: "eu-west-1"
+  s3_prefix: "production/"
   tiering_interval: "5m"
-  tiering_parallelism: 4
-  segment_cache_size: "20gb"
 ```
+
+or with flags:
 
 ```bash
-lynxdb server \
-  --data-dir /var/lib/lynxdb \
-  --s3-bucket my-lynxdb-logs \
-  --s3-region us-east-1
+lynxdb server --data-dir /var/lib/lynxdb \
+  --s3-bucket example-lynxdb-logs --s3-region eu-west-1 --s3-prefix production/
 ```
 
-### 5. Configure S3 Lifecycle Rules (Optional)
+Restart the server after changing bucket settings.
 
-Set up automatic transitions to Glacier for cold storage:
+### 5. Optional: archive the cold tier
+
+LynxDB does not set storage classes. A lifecycle rule on the cold prefix moves those objects to cheaper storage:
 
 ```bash
 aws s3api put-bucket-lifecycle-configuration \
-  --bucket my-lynxdb-logs \
+  --bucket example-lynxdb-logs \
   --lifecycle-configuration '{
-    "Rules": [
-      {
-        "ID": "ColdTier",
-        "Status": "Enabled",
-        "Filter": {"Prefix": "production/"},
-        "Transitions": [
-          {
-            "Days": 90,
-            "StorageClass": "GLACIER"
-          }
-        ]
-      }
-    ]
+    "Rules": [{
+      "ID": "lynxdb-cold",
+      "Status": "Enabled",
+      "Filter": {"Prefix": "production/cold/"},
+      "Transitions": [{"Days": 0, "StorageClass": "GLACIER_IR"}]
+    }]
   }'
 ```
 
-## MinIO Setup
+Use a class with millisecond retrieval (such as Glacier Instant Retrieval): a query that touches a cold segment reads it directly, and classes that need a restore request fail those reads.
 
-MinIO provides S3-compatible object storage that you can self-host.
-
-### 1. Deploy MinIO
+## MinIO
 
 ```bash
-# Docker
-docker run -d \
-  --name minio \
-  -p 9000:9000 \
-  -p 9001:9001 \
+docker run -d --name minio -p 9000:9000 -p 9001:9001 \
   -v minio-data:/data \
-  -e MINIO_ROOT_USER=minioadmin \
-  -e MINIO_ROOT_PASSWORD=minioadmin \
+  -e MINIO_ROOT_USER=minioadmin -e MINIO_ROOT_PASSWORD=minioadmin \
   minio/minio server /data --console-address ":9001"
-```
 
-### 2. Create a Bucket
-
-```bash
-# Install mc (MinIO Client)
-# Then create a bucket:
 mc alias set local http://localhost:9000 minioadmin minioadmin
 mc mb local/lynxdb
 ```
 
-### 3. Configure LynxDB
-
 ```yaml
-# config.yaml
 storage:
   s3_bucket: "lynxdb"
   s3_region: "us-east-1"
-  s3_endpoint: "http://minio.local:9000"
+  s3_endpoint: "http://localhost:9000"
   s3_force_path_style: true
-  tiering_interval: "5m"
-  segment_cache_size: "10gb"
 ```
 
 ```bash
 export AWS_ACCESS_KEY_ID=minioadmin
 export AWS_SECRET_ACCESS_KEY=minioadmin
-
-lynxdb server \
-  --data-dir /var/lib/lynxdb \
-  --s3-bucket lynxdb \
-  --s3-region us-east-1
+lynxdb server --config /etc/lynxdb/config.yaml
 ```
 
-### Docker Compose with MinIO
-
-```yaml
-services:
-  lynxdb:
-    image: ghcr.io/lynxbase/lynxdb:latest
-    ports:
-      - "3100:3100"
-    volumes:
-      - lynxdb-data:/data
-    environment:
-      LYNXDB_LISTEN: "0.0.0.0:3100"
-      LYNXDB_DATA_DIR: "/data"
-      LYNXDB_STORAGE_S3_BUCKET: "lynxdb"
-      LYNXDB_STORAGE_S3_REGION: "us-east-1"
-      LYNXDB_STORAGE_S3_ENDPOINT: "http://minio:9000"
-      LYNXDB_STORAGE_S3_FORCE_PATH_STYLE: "true"
-      AWS_ACCESS_KEY_ID: "minioadmin"
-      AWS_SECRET_ACCESS_KEY: "minioadmin"
-    depends_on:
-      minio-init:
-        condition: service_completed_successfully
-
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio-data:/data
-    environment:
-      MINIO_ROOT_USER: "minioadmin"
-      MINIO_ROOT_PASSWORD: "minioadmin"
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin;
-      mc mb --ignore-existing local/lynxdb;
-      "
-
-volumes:
-  lynxdb-data:
-  minio-data:
-```
+A Docker Compose file with LynxDB, MinIO and a bucket-creation job is in [Docker Deployment](./docker.md#with-minio-for-s3-tiering).
 
 ## Other S3-Compatible Stores
 
-LynxDB works with any S3-compatible object store by setting `s3_endpoint` and `s3_force_path_style`:
+| Store | `s3_endpoint` | `s3_force_path_style` |
+|-------|---------------|-----------------------|
+| AWS S3 | empty | `false` |
+| MinIO | `http://minio:9000` | `true` |
+| Ceph RadosGW | gateway URL | `true` |
+| Cloudflare R2 | `https://<account-id>.r2.cloudflarestorage.com` | `true` |
+| DigitalOcean Spaces | `https://<region>.digitaloceanspaces.com` | `false` |
+| Backblaze B2 | `https://s3.<region>.backblazeb2.com` | `false` |
 
-| Provider | Endpoint | Notes |
-|----------|----------|-------|
-| AWS S3 | (default) | Standard AWS SDK credential chain |
-| MinIO | `http://minio:9000` | Set `s3_force_path_style: true` |
-| Cloudflare R2 | `https://<account-id>.r2.cloudflarestorage.com` | Set `s3_force_path_style: true` |
-| DigitalOcean Spaces | `https://<region>.digitaloceanspaces.com` | |
-| Backblaze B2 | `https://s3.<region>.backblazeb2.com` | |
-| Ceph (RadosGW) | Your Ceph gateway URL | Set `s3_force_path_style: true` |
+Set `s3_region` to the region name the store expects (`auto` for R2).
 
-## Segment Cache
+## Verifying
 
-Query nodes maintain a local cache of frequently accessed warm-tier segments. Configure the cache size based on available disk space:
+The server does not contact the bucket at startup. To confirm that tiering works:
 
-```yaml
-storage:
-  segment_cache_size: "50gb"    # Local cache for warm-tier segments
-```
-
-The cache uses LRU eviction. Size it to hold the segments most frequently queried. A good starting point is 2-4x the hot tier size.
-
-## Verifying S3 Connectivity
-
-After starting the server with S3 configured:
+- Watch the log for `tiering: move to warm failed`, which carries the S3 error (credentials, region, endpoint).
+- Check the tiering counters on `/metrics`:
 
 ```bash
-# Check server status (should show S3 configuration)
-lynxdb status
-
-# Run diagnostics
-lynxdb doctor
-
-# Ingest some data and wait for tiering
-lynxdb demo &
-sleep 300  # Wait for tiering interval
-lynxdb status  # Check segment distribution
+curl -s http://localhost:3100/metrics | grep -E '^lynxdb_tiering_(uploads|downloads)'
 ```
+
+`lynxdb_tiering_uploads_total` grows when segments move to the bucket, and `lynxdb_tiering_downloads_total` when queries fetch them back. Uploads start once compacted segments are older than 7 days.
 
 ## Next Steps
 
-- [S3 Tiering Configuration](/docs/configuration/s3-tiering) -- detailed tiering settings
-- [Small Cluster](/docs/deployment/small-cluster) -- cluster with S3 shared storage
-- [Large Cluster](/docs/deployment/large-cluster) -- role-separated cluster
-- [Backup and Restore](/docs/operations/backup-restore) -- S3-based backup strategies
+- [S3 Tiering settings](../configuration/s3-tiering.md)
+- [Docker Deployment](./docker.md)
+- [Kubernetes Deployment](./kubernetes.md)
+- [Backup and Restore](../operations/backup-restore.md)

@@ -75,9 +75,6 @@ func (c *Config) Validate() error {
 	if err := c.Server.validate(); err != nil {
 		return err
 	}
-	if err := c.Views.validate(); err != nil {
-		return err
-	}
 	if err := c.BufferManager.validate(); err != nil {
 		return err
 	}
@@ -413,34 +410,6 @@ func (s *ServerConfig) validate() error {
 	if s.CacheReservePercent < 0 || s.CacheReservePercent > 50 {
 		return validationErr("server", "cache_reserve_percent",
 			fmt.Sprintf("%d", s.CacheReservePercent), "must be between 0 and 50")
-	}
-
-	return nil
-}
-
-func (v *ViewsConfig) validate() error {
-	if v.MaxBackfillMemoryBytes < 0 {
-		return validationErr("views", "max_backfill_memory_bytes", v.MaxBackfillMemoryBytes.String(), "must not be negative")
-	}
-	if v.InsertMaxMemoryBytes < 0 {
-		return validationErr("views", "insert_max_memory_bytes", v.InsertMaxMemoryBytes.String(), "must not be negative")
-	}
-	if v.BackfillBackpressureWait.Duration() < 0 {
-		return validationErr("views", "backfill_backpressure_wait", v.BackfillBackpressureWait.String(), "must not be negative")
-	}
-	if v.BackfillMaxRetries < 0 {
-		return validationErr("views", "backfill_max_retries",
-			fmt.Sprintf("%d", v.BackfillMaxRetries), "must not be negative")
-	}
-	if v.DispatchBatchSize < 0 {
-		return validationErr("views", "dispatch_batch_size",
-			fmt.Sprintf("%d", v.DispatchBatchSize), "must not be negative (0 = use default)")
-	}
-	if v.DispatchBatchDelay.Duration() < 0 {
-		return validationErr("views", "dispatch_batch_delay", v.DispatchBatchDelay.String(), "must not be negative")
-	}
-	if v.BackfillTimeout.Duration() < 0 {
-		return validationErr("views", "backfill_timeout", v.BackfillTimeout.String(), "must not be negative")
 	}
 
 	return nil

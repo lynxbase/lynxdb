@@ -1,77 +1,116 @@
 ---
-title: Search semantics and data types
-sidebar_label: Search and data types
-description: How PPL search expressions use LynxDB's indexes, and how PPL types map onto LynxDB values.
+title: Search semantics
+sidebar_label: Search semantics
+description: How PPL search expressions match events and use LynxDB's indexes.
 ---
 
-# Search semantics and data types
+# Search semantics
 
 ## The search command
 
 `search source=<index> [<search expression>]` reads events from an index
-(or several, comma-separated, or an `*` pattern) and keeps those matching
-the search expression. The grammar follows OpenSearch PPL: `NOT` binds
-tightest, then `OR`, then `AND`; adjacent terms are joined by an implicit
-`AND`; parentheses group.
+(or several, comma-separated, or an `*` pattern such as `logs-*`) and keeps
+those matching the search expression. `source=<index>` alone at the start of
+a query is the same command; `index=` is a synonym of `source=`. The source
+clause may appear anywhere among the terms.
+
+The grammar follows OpenSearch PPL: `NOT` binds tightest, then `OR`, then
+`AND`; adjacent terms are joined by an implicit `AND`; parentheses group.
+`error OR warn timeout` reads as `(error OR warn) AND timeout`.
 
 | Search term | LynxDB semantics | Index use |
 | --- | --- | --- |
-| `error` | the raw text contains the token `error`, any case | term-index hint (whole token) |
-| `conn*` | a token of the raw text starts with `conn` | term-index hint (token prefix) |
-| `us?r`, `*err*` | a token matches the wildcard pattern | term-index hint (token wildcard) |
-| `"connection refused"` | the phrase occurs at token boundaries, any case | term-index hint on its tokens; phrase verified per row |
-| `status=500` | the column equals 500 (a numeric string matches too) | verified per row |
-| `host="web-01"` | the column equals the string, case-sensitive | column-value pruning hint |
-| `host=web-*` | the whole column value matches the wildcard, case-sensitive | verified per row |
-| `status!=500` | the column is absent or not 500 | verified per row |
-| `status>=500` | numeric or lexical comparison | verified per row |
-| `level IN (WARN, ERROR)` | any listed value | verified per row |
-| `earliest=-1h@h latest=now` | the event time is in the range | time pruning hint; enforced exactly |
+| `error` | the raw text contains the token `error`, any case | term index and bloom filters |
+| `api/v1/users`, `web-01` | a term with punctuation is a phrase of its tokens | term index on its tokens; phrase checked per row |
+| `conn*` | a token of the raw text starts with `conn` | term index (token prefix) |
+| `us?r`, `*err*` | a token matches the wildcard pattern | term index (token wildcard) |
+| `"connection refused"` | the phrase occurs at token boundaries, any case | term index on its tokens; phrase checked per row |
+| `level=ERROR`, `host="web-01"` | the column equals the string, case-sensitive | column statistics and column predicates |
+| `status=500` | the column equals 500 (a numeric string matches too) | checked per row |
+| `host=web-*` | the whole column value matches the wildcard, case-sensitive | checked per row |
+| `status!=500` | the column is absent or not 500 | checked per row |
+| `status>=500` | numeric or lexical comparison | checked per row |
+| `level IN (WARN, ERROR)` | any listed value | checked per row |
+| `error OR warn` | either word | term index (any of the words) |
+| `NOT error` | the raw text lacks the token | checked per row |
+| `earliest=-1h latest=now` | the event time is in the range | segment time ranges; enforced exactly |
 
-Deviations from OpenSearch:
+Tokens are maximal runs of letters and digits, compared in lower case.
+
+### LynxDB behavior
 
 - OpenSearch searches free text in every field (`index.query.default_field`
-  defaults to `*`). LynxDB searches the event's raw text, which holds every
-  field of the event as ingested. Every term is verified per row; the term
-  hints let a storage engine with a term index skip data that cannot match.
+  defaults to `*`). LynxDB searches the event's raw text `_raw`, which holds
+  every field of the event as ingested.
 - OpenSearch analyzes text fields, so a field comparison on a text field
   matches individual tokens. LynxDB compares the whole column value, as
-  OpenSearch does for keyword fields.
+  OpenSearch does for keyword fields. Use `match(field, 'text')` for token
+  matching on one field.
 - A search term is two-valued: `NOT term` and `field!=value` match events
   without the field.
+- A cross-cluster prefix (`cluster:index`) is read as part of the index name.
 
-Time modifiers accept `now`, absolute times (`yyyy-MM-dd HH:mm:ss`,
-`MM/dd/yyyy:HH:mm:ss`), Unix seconds, and relative chains such as `-7d`,
-`+1d@d`, `-1month@month` and `@w1`. Relative values resolve against the
-query's start time, in UTC.
+## Time modifiers
 
-The `where` command evaluates boolean expressions with three-valued logic
-and has no index-specific behaviour, but the optimizer passes its indexable
-conjuncts (equality with a string, raw-text searches) to the scan for
-pruning in the same way.
+`earliest=` and `latest=` accept `now`, absolute times (`yyyy-MM-dd HH:mm:ss`,
+`MM/dd/yyyy:HH:mm:ss`, quoted), Unix seconds, and relative chains such as
+`-7d`, `+1d@d`, `-1mon@mon` and `@w1`. Relative values resolve against the
+query's start time, in UTC. The bounds narrow the scan's time range and are
+enforced exactly. The REST `from`/`to` parameters and the CLI `--since`,
+`--from` and `--to` flags add a second range; a query reads the
+intersection.
 
-## Data types
+## The where command
 
-| PPL type | LynxDB value | Notes |
+`where` evaluates a boolean expression with three-valued logic (see
+[Expressions](./expressions.md)). It has no index-specific semantics, but the
+optimizer hands its indexable conjuncts (raw-text searches, a column equal
+to a string, disjunctions of raw-text words) to the scan in the same way as
+search terms. `where host = 'web-01'` and `source=main host="web-01"` read
+the same data.
+
+## Searching one field
+
+The relevance functions search the tokens of one column, case-insensitively,
+with the same tokens as the search command. LynxDB computes no relevance
+scores, so they are plain filters.
+
+| Function | LynxDB semantics |
+| --- | --- |
+| `match(f, 'a b')` | the column contains the token `a` or the token `b`; with `operator='AND'`, both |
+| `match_phrase(f, 'a b')` | the phrase occurs in the column at token boundaries |
+| `match_phrase_prefix(f, 'cry')` | a token of the column starts with `cry` |
+| `match_phrase_prefix(f, 'a b')` | the phrase occurs from a token boundary, its last token as a prefix |
+
+`match` joins several tokens with OR by default, as OpenSearch does.
+`boost` is accepted and ignored. `zero_terms_query` (`none` or `all`)
+decides the result when the text has no tokens; the default `none` matches
+nothing. Other options, such as `slop` or `fuzziness`, fail with
+`UNSUPPORTED_FEATURE`. `multi_match`, `simple_query_string`, `query_string`
+and `match_bool_prefix` fail with `UNSUPPORTED_FUNCTION`. Field searches are
+checked per row; the term index covers `_raw` only.
+
+## How the server uses search terms
+
+Compilation turns each search into an IR predicate that stays in the plan, so
+results never depend on an index. The optimizer also copies the indexable
+predicates into the scan (`prune=` in a plan), and the server's planner
+(`pkg/planner`) converts the plan's scans into storage hints
+(`pkg/engine/physical/hints.go`) that decide which segments and rows the
+server reads:
+
+| Hint | From | The server uses it to |
 | --- | --- | --- |
-| boolean | bool | |
-| tinyint, smallint, int, bigint | int (64-bit) | |
-| float, double | float (64-bit) | |
-| string | string | |
-| timestamp | timestamp | nanosecond precision, UTC |
-| date | timestamp at 00:00 UTC | `date(x)` and `DATE '...'` return the start of the day |
-| time | duration since midnight | `time(x)`, `maketime`, `sec_to_time` |
-| interval | duration, or a calendar count for month, quarter and year | `INTERVAL n MONTH` is applied with calendar arithmetic |
-| ip | string | `cidrmatch` parses addresses |
-| struct | object | |
-| array | array | |
-| binary, geo_point | not supported | |
+| time bounds | `earliest`/`latest`, comparisons of `_time` with constants, request `from`/`to` | skip segments outside the range |
+| search terms | words and phrase tokens on `_raw` | skip segments whose bloom filter lacks a term; select rows through the term index |
+| token globs | prefix and wildcard terms on `_raw` | select rows through the term index |
+| term tree | `OR` of single words on `_raw` | select rows through the term index |
+| field predicates | a column equal to a string | skip segments by column statistics; filter rows while reading |
+| required columns | the columns the plan reads | read only those columns |
+| limit | `head` over row-preserving commands | stop reading early |
 
-Values of columns read from an index carry their stored types; columns
-LynxDB extracted as text stay strings until converted. Conversions are
-explicit through `cast`, `tonumber`, `tostring` and the `convert` command,
-and implicit only where the [IR specification](./ir.md) defines them:
-strings meeting numbers or timestamps in comparisons and arithmetic.
+A plan with several scans (joins, subsearches, `append`) keeps only the union
+of their sources and time ranges. Predicates the hints do not cover are
+evaluated per row. See [Performance](./performance.md).
 
-Timestamps are written as `yyyy-MM-dd HH:mm:ss[.fraction]` when converted to
-strings; durations as `HH:mm:ss[.fraction]`.
+Types and conversions are described in [Data types](./data-types.md).

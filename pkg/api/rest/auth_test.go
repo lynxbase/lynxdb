@@ -707,7 +707,7 @@ func TestAuth_ScopeIngest_CannotQuery(t *testing.T) {
 	}
 
 	// Query should be forbidden.
-	body := []byte(`{"q":"FROM main | head 5"}`)
+	body := []byte(`{"q":"source=main | head 5"}`)
 	resp, err := authReq("POST",
 		fmt.Sprintf("http://%s/api/v1/query", srv.Addr()),
 		ingestKey.Token, body)

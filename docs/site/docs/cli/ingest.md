@@ -1,16 +1,19 @@
 ---
-sidebar_position: 3
+sidebar_position: 5
 title: ingest & import
-description: Ingest raw logs and import structured data into LynxDB.
+description: Send raw log lines or structured NDJSON, CSV and Elasticsearch bulk files to a LynxDB server.
 ---
 
 # ingest & import
 
-Two commands for getting data into LynxDB: `ingest` for raw log lines, and `import` for structured data formats.
+Two commands send data to a running server:
+
+- `ingest` sends raw log lines. The server stores each line as an event and extracts fields when it is queried.
+- `import` reads structured files (NDJSON, CSV, Elasticsearch `_bulk`) and keeps their field values, timestamps and metadata.
+
+To query a file without a server, use [`lynxdb query --file`](./query.md#local-mode-files-and-stdin) instead.
 
 ## ingest
-
-Ingest logs from a file or stdin into a running LynxDB server.
 
 ```
 lynxdb ingest [file] [flags]
@@ -18,115 +21,111 @@ lynxdb ingest [file] [flags]
 
 **Alias:** `i`
 
+Reads a file, or stdin when no file is given, and sends the lines to `POST /api/v1/ingest/raw` in batches. Empty lines are skipped. On a terminal it shows a progress bar for a file and a running count for stdin.
+
 ### Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--source` | | Source metadata for events |
-| `--sourcetype` | | Sourcetype metadata for events |
-| `--index` | | Target index name |
-| `--batch-size` | `5000` | Number of lines per batch |
+| `--index` | `main` | Target index |
+| `--source` | `http` | `source` of every event (`default_source` in `.lynxdbrc` applies when the flag is absent) |
+| `--sourcetype` | `raw` | `sourcetype` of every event |
+| `--batch-size` | `5000` | Lines per request, from 1 to 1,000,000 |
 
-Data is sent in batches via `POST /api/v1/ingest/raw`. Empty lines are skipped. Shows a progress bar (file mode) or counter (stdin mode) on TTY.
+The CLI sends `--index`, `--source` and `--sourcetype` as the `X-Index`, `X-Source` and `X-Source-Type` headers; the defaults above are the server's when a header is absent.
 
 ### Examples
 
 ```bash
-# Ingest a log file
 lynxdb ingest access.log
-
-# With source metadata
 lynxdb ingest access.log --source web-01 --sourcetype nginx
-
-# Target a specific index
-lynxdb ingest data.log --index production
-
-# From stdin
-cat access.log | lynxdb ingest --source web-01
-
-# Tune batch size for large files
-lynxdb ingest huge.log --batch-size 10000
+lynxdb ingest app.log --index production
+cat app.log | lynxdb ingest --source app
+zcat archive.log.gz | lynxdb ingest --sourcetype nginx
+kubectl logs deploy/api --since=1h | lynxdb ingest --source k8s-api
+lynxdb ingest huge.log --batch-size 20000
 ```
 
-## import
+After the upload, query the data:
 
-Bulk import structured data from files (NDJSON, CSV, Elasticsearch `_bulk` export).
+```bash
+lynxdb query 'source=main | stats count() by level'
+```
+
+### Partial batches
+
+The server reports, per batch, how many lines it accepted. The CLI warns when:
+
+- the server truncated a request body at `ingest.max_body_size`: reduce `--batch-size` or raise the limit;
+- the server rejected events under backpressure: reduce `--batch-size` or check the server log.
+
+The summary line counts accepted events only.
+
+## import
 
 ```
 lynxdb import <file> [flags]
 ```
 
-Unlike `ingest` which handles raw log lines, `import` understands structured formats and preserves field types, timestamps, and metadata from the source system.
+Reads a structured file and sends its events in batches. Use `-` as the file to read stdin; stdin needs an explicit `--format`.
 
 ### Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--format` | `auto` | Input format: `auto`, `ndjson`, `csv`, `esbulk` |
-| `--source` | | Source metadata for all events |
-| `--index` | | Target index name |
-| `--batch-size` | `5000` | Number of events per batch |
-| `--dry-run` | `false` | Validate and count events without importing |
-| `--delimiter` | `,` | Field delimiter for CSV format |
+| `--index` | | Target index for events that do not name one |
+| `--source` | | `source` for events that do not name one |
+| `--batch-size` | `5000` | Events per request |
+| `--delimiter` | `,` | CSV field delimiter; `'\t'` for tab |
+| `--dry-run` | `false` | Parse and count events without sending them |
 
-Format is auto-detected from file extension and content. Use `-` as the file argument to read from stdin (requires `--format`).
+On `import`, `--format` names the input format; the global output `--format` does not apply.
 
-### Supported Formats
+### Format detection
 
-| Format | Extensions | Description |
-|--------|-----------|-------------|
-| `ndjson` | `.json`, `.ndjson` | Newline-delimited JSON, one object per line |
-| `csv` | `.csv` | RFC 4180 CSV with header row |
-| `esbulk` | | Elasticsearch `_bulk` export format |
+With `--format auto` the file extension decides: `.csv` and `.tsv` are CSV, `.ndjson` and `.jsonl` are NDJSON. For `.json`, `.log` and files without an extension, the first line decides: an Elasticsearch bulk action line (`{"index":{"_index":...}}` or `{"create":{...}}`) means `esbulk`, a JSON object means NDJSON, a line with commas means CSV. Anything else is read as NDJSON. The CLI prints the format it picked.
+
+### NDJSON
+
+One JSON object per line. Two shapes are accepted:
+
+- **Envelope.** An object whose keys are only `event`, `time`, `source`, `sourcetype`, `host`, `index` and `fields`, with a string `event`. `event` becomes the raw text, `time` the timestamp, and the scalar values of `fields` become fields.
+- **Flat object.** `_raw` becomes the raw text (the whole line when there is no `_raw`). The first of `time`, `_time`, `timestamp`, `_timestamp`, `@timestamp`, `ts`, `datetime` that holds epoch seconds or an RFC 3339 / `2006-01-02 15:04:05` time becomes the timestamp. `source`, `sourcetype`, `host` and `index` become metadata, and every other scalar value (string, number, boolean) becomes a field. Nested objects and arrays are dropped.
+
+Lines that are not valid JSON are skipped and counted in the summary.
+
+### CSV
+
+The first row is the header. Each later row becomes an event with one field per non-empty column. Numeric values are stored as numbers. A `_time` column becomes the timestamp and a `_raw` column the raw text. Rows that fail to parse are skipped and counted.
+
+### Elasticsearch bulk
+
+Action and document line pairs, as written by the Elasticsearch `_bulk` API or by tools that export from it. The CLI forwards them to the server's Elasticsearch-compatible endpoint, `POST /api/v1/es/_bulk`. Each action's `_index` names the target index, so `--index` is rejected with this format; `--source` replaces the `_index` of every action. The import fails when the server reports item errors.
 
 ### Examples
 
 ```bash
-# Import NDJSON (auto-detected)
-lynxdb import events.json
 lynxdb import events.ndjson
-
-# Import CSV with headers
-lynxdb import splunk_export.csv
-lynxdb import data.csv --source web-01 --index nginx
-
-# Import Elasticsearch _bulk export
-lynxdb import es_dump.json --format esbulk
-
-# Validate without importing
-lynxdb import events.json --dry-run
-
-# Import from stdin
-cat events.ndjson | lynxdb import - --format ndjson
-
-# Import TSV with tab delimiter
+lynxdb import export.csv --source web-01 --index nginx
 lynxdb import data.tsv --format csv --delimiter '\t'
+lynxdb import es_dump.json --format esbulk
+lynxdb import events.json --dry-run
+cat events.ndjson | lynxdb import - --format ndjson
 ```
 
-## ingest vs. import
+## ingest compared with import
 
 | | `ingest` | `import` |
-|---|----------|----------|
-| Input | Raw log lines (text) | Structured data (JSON, CSV) |
-| Field handling | Schema-on-read at query time | Fields preserved from source |
-| Timestamp | Auto-detected from line content | Preserved from structured field |
-| Typical use | Shipping raw log files | Migrating from Splunk, ES, or CSV exports |
-| Stdin support | Automatic detection | Requires `-` file argument + `--format` |
+|---|---|---|
+| Input | Log lines | NDJSON, CSV, Elasticsearch bulk |
+| Fields | Extracted from the raw text when queried | Taken from the structured record |
+| Timestamp | Found in the line by the server | Read from the record's time field |
+| Endpoint | `/api/v1/ingest/raw` | `/api/v1/ingest`, or `/api/v1/es/_bulk` for `esbulk` |
+| Stdin | Default when no file is given | File argument `-` with `--format` |
 
-## Pipe Integration
+## See also
 
-```bash
-# Filter logs before ingesting
-grep "2026-01-15" /var/log/app.log | lynxdb ingest --source app
-
-# Decompress and ingest
-zcat archive.log.gz | lynxdb ingest --sourcetype nginx
-
-# Stream from another tool
-kubectl logs deploy/api --since=1h | lynxdb ingest --source k8s-api
-```
-
-## See Also
-
-- [query](/docs/cli/query) for querying ingested data
-- [Server](/docs/cli/server) for running the LynxDB server that receives ingested data
+- [Ingest API](../api/ingest.md)
+- [query](./query.md) to query what you loaded
+- [server](./server.md) for the syslog, OTLP, Elasticsearch and HEC receivers

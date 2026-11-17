@@ -26,6 +26,9 @@ type resolver struct {
 	// they are; cur is the chunk being filled.
 	bufs [][]byte
 	cur  int
+	// cells and spans are what the resolver read of whole rows.
+	cells []cell
+	spans []fieldSpan
 }
 
 // keep copies v into memory that stays where it is.
@@ -50,6 +53,8 @@ type resolveScratch struct {
 	picks  []placed
 	starts []int
 	vals   []Value
+	spans  []fieldSpan
+	cells  []cell
 }
 
 var resolvePool mem.Pool[resolveScratch]
@@ -64,12 +69,19 @@ func (r *resolver) read(parts []*colstore.Handle, q *query, e *sexpr, picks []pl
 	}
 	pathID, ok := p.PathID(q.paths[e.path])
 	// A row that holds values of several kinds gives the lowest.
-	for kind := vec.KindVariant; ok && kind >= vec.KindBool; kind-- {
+	for kind := vec.KindVariant; ok && kind >= vec.KindNull; kind-- {
 		ref, has := r.b.Column(pathID, kind)
-		if e.kinds&kindBit(kind) == 0 || !has || ref.Count == 0 {
+		// A field read whatever its kind also gives the nulls it holds.
+		if wanted := e.kinds&kindBit(kind) != 0 || (kind == vec.KindNull && e.kind == KindAny); !wanted || !has || ref.Count == 0 {
 			continue
 		}
-		if err := r.b.Decode(ref, &r.col); err != nil {
+		var err error
+		if kind == vec.KindNull {
+			err = r.b.DecodePresence(ref, &r.col)
+		} else {
+			err = r.b.Decode(ref, &r.col)
+		}
+		if err != nil {
 			return err
 		}
 		for _, pk := range picks {
@@ -79,6 +91,7 @@ func (r *resolver) read(parts []*colstore.Handle, q *query, e *sexpr, picks []pl
 			}
 			v := Value{Kind: kind}
 			switch kind {
+			case vec.KindNull:
 			case vec.KindBool:
 				v.Bool = r.col.Bool(row)
 			case vec.KindInt:
@@ -207,7 +220,7 @@ func (x *execution) finish(snap *colstore.Snapshot, sinks []*sink) ([]Column, in
 			return nil, 0, err
 		}
 
-		return columns(q, out), n, nil
+		return x.shown(snap, out, n)
 	}
 	// The sinks hold every group as the aggregate left it: the located
 	// values are read first, and what the plan does above the aggregate
@@ -244,5 +257,33 @@ func (x *execution) finish(snap *colstore.Snapshot, sinks []*sink) ([]Column, in
 	}
 	out, n = gather(q, []*sink{&last})
 
-	return columns(q, out), n, nil
+	return x.shown(snap, out, n)
+}
+
+// shown turns the n rows of out into the columns of the result: the places
+// of a plan that asks for the rest of the fields become those fields, and
+// the hidden columns go.
+func (x *execution) shown(snap *colstore.Snapshot, out []colVec, n int) ([]Column, int, error) {
+	q := x.q
+	names, named := q.names, len(q.names)
+	if q.rest {
+		named--
+		others, cols, err := rest(snap, q, &out[named], n, len(x.workers))
+		if err != nil {
+			return nil, 0, err
+		}
+		names, out = append(names[:named:named], others...), append(out[:named:named], cols...)
+	}
+	shown := make([]Column, 0, len(out))
+	for c, name := range names {
+		if slices.Contains(q.hide, name) {
+			continue
+		}
+		col := out[c].column(name)
+		// The fields that the plan does not name come as they are stored.
+		col.Field = c >= named || (c < len(q.fields) && q.fields[c])
+		shown = append(shown, col)
+	}
+
+	return shown, n, nil
 }

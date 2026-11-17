@@ -1,3 +1,0 @@
-query: | extend x = count()
-error S005 [13:20] aggregate function 'count' is only valid in stats/eventstats/streamstats
-  suggestion: aggregate functions are only valid inside stats, eventstats, or streamstats

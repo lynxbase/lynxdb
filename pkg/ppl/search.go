@@ -30,9 +30,9 @@ func (c *compiler) search(cmd *ast.SearchCommand) (*pipe, error) {
 		}
 		node = scan
 	}
-	st := &pipe{node: node, aliases: map[string]bool{}}
+	st := &pipe{node: node}
 	if cmd.Alias != "" {
-		st.aliases[cmd.Alias] = true
+		st.aliases = map[string]bool{cmd.Alias: true}
 	}
 	if cmd.Filter != nil {
 		rest, tr, err := splitTimeModifiers(cmd.Filter)

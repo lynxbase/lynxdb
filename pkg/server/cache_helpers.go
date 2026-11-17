@@ -5,7 +5,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/cache"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/logical"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/model"
 )
 
@@ -64,7 +64,7 @@ func resultRowHasEventBuiltins(fields map[string]interface{}) bool {
 	return false
 }
 
-func queryAllowsDefaultEventMetadata(_ *logical.Plan) bool { return true }
+func queryAllowsDefaultEventMetadata(_ *ir.Plan) bool { return true }
 
 // resultRowsToCachedResult converts executor result rows to a CachedResult.
 func resultRowsToCachedResult(rows []model.ResultRow) *cache.CachedResult {

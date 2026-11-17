@@ -1,12 +1,15 @@
 package part
 
 import (
+	"bytes"
+	"cmp"
 	"encoding/binary"
 	"errors"
 	"hash/crc32"
 	"io"
 	"math"
 	"math/bits"
+	"slices"
 	"sort"
 
 	"github.com/cespare/xxhash/v2"
@@ -62,6 +65,8 @@ type Writer struct {
 	raw      uint64
 	minT     int64
 	maxT     int64
+	// times holds the row times of the block being written.
+	times []int64
 	// copied counts the blocks taken over from other parts as stored.
 	copied int
 	// groups holds the offset, length and stripe count of every filter
@@ -78,6 +83,10 @@ type Writer struct {
 	groupFilters int
 	grouped      int
 	stripe       uint32
+	// order and starts serve closeGroup: the filters of the group by
+	// column, and where each begins in blooms.
+	order        []int32
+	starts       []int
 	groupBlocks  int
 	groupBytes   int
 	stripes      int
@@ -105,6 +114,11 @@ type trial struct {
 	// left counts the blocks until the ways are compared again.
 	left   uint8
 	choice uint8
+	// wide tells whether identifiers that repeat go into a dictionary of
+	// more than half as many entries, and wideLeft counts the blocks until
+	// that is compared again with storing them as they are.
+	wideLeft uint8
+	wide     bool
 }
 
 // The ways the values of a flat column are encoded.
@@ -123,6 +137,9 @@ const (
 	trialEvery = 16
 	// trialMinSize is the size under which values are not worth comparing.
 	trialMinSize = 4096
+	// wideDictShare bounds what a dictionary of identifiers may cost over
+	// the general codec: one part in this many of its size.
+	wideDictShare = 16
 )
 
 // writerBuffers holds what a writer reuses from block to block.
@@ -263,6 +280,7 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	ent := dirEntry{pathID: 0, kind: vec.KindInt, count: rows}
 	w.encodeInts(&ent, b.Times)
 	w.finish(&ent, 0)
+	w.times = b.Times
 	for _, c := range b.Columns() {
 		if c.Count == 0 {
 			continue
@@ -427,13 +445,31 @@ func (w *Writer) closeGroup(last bool) {
 	w.groups = binary.LittleEndian.AppendUint32(w.groups, uint32(w.stripes))
 
 	entries := w.filters[len(w.filters)-w.groupFilters*filterEntrySize:]
+	// In every stripe the pieces of one column's filters lie side by side,
+	// block after block, so that looking a token up in a column reads one
+	// place of the group and not one per block.
+	order, starts := w.order[:0], w.starts[:0]
+	for i, at := 0, 0; i < w.groupFilters; i++ {
+		order, starts = append(order, int32(i)), append(starts, at)
+		at += w.stripes * int(binary.LittleEndian.Uint32(entries[i*filterEntrySize+8:])) * tokenfilter.BlockBytes
+	}
+	slices.SortStableFunc(order, func(a, b int32) int {
+		x, y := entries[int(a)*filterEntrySize:], entries[int(b)*filterEntrySize:]
+
+		return cmp.Or(cmp.Compare(binary.LittleEndian.Uint32(x), binary.LittleEndian.Uint32(y)), cmp.Compare(x[4], y[4]))
+	})
+	before := uint32(0)
+	for _, i := range order {
+		e := entries[int(i)*filterEntrySize:]
+		binary.LittleEndian.PutUint32(e[12:], before)
+		before += binary.LittleEndian.Uint32(e[8:])
+	}
+	w.order, w.starts = order, starts
 	pages, placed := w.pages[:0], 0
 	for k := 0; k < w.stripes; k++ {
-		at := 0
-		for e := entries; len(e) > 0; e = e[filterEntrySize:] {
-			piece := int(binary.LittleEndian.Uint32(e[8:])) * tokenfilter.BlockBytes
-			src := w.blooms[at+k*piece : at+(k+1)*piece]
-			at += w.stripes * piece
+		for _, i := range order {
+			piece := int(binary.LittleEndian.Uint32(entries[int(i)*filterEntrySize+8:])) * tokenfilter.BlockBytes
+			src := w.blooms[starts[i]+k*piece : starts[i]+(k+1)*piece]
 			for len(src) > 0 {
 				if placed%pageBlocks == 0 {
 					if len(pages) >= groupFlush {
@@ -512,10 +548,9 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 	if src.readAhead != nil {
 		src.readAhead(int(start), len(data))
 	}
-	dirOff := binary.LittleEndian.Uint32(e[40:])
-	dir := src.directories()[dirOff : dirOff+binary.LittleEndian.Uint32(e[44:])]
-	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
-		return ErrCorrupt
+	dir, err := src.directory(i, e)
+	if err != nil {
+		return err
 	}
 	n, size := binary.Uvarint(dir)
 	if size <= 0 || n > uint64(len(dir)-size)/dirEntrySize {
@@ -660,7 +695,14 @@ func (w *Writer) encodeColumn(c *shred.Column, rows int) {
 	case vec.KindBool:
 		w.encodeBools(&ent, c.Bools)
 	case vec.KindInt:
-		w.encodeInts(&ent, c.Ints)
+		if power, ok := timeUnit(c.Ints, w.times); ok {
+			// The member that the row times were taken from.
+			ent.enc = encTime
+			ent.minI, ent.maxI = vec.MinMaxInt64(c.Ints)
+			w.block = append(w.block, power)
+		} else {
+			w.encodeInts(&ent, c.Ints)
+		}
 	case vec.KindFloat:
 		w.encodeFloats(&ent, c.Floats)
 	case vec.KindString, vec.KindVariant:
@@ -729,6 +771,34 @@ func (w *Writer) encodeBools(ent *dirEntry, vals []uint8) {
 	w.block = w.blobs.appendBlob(w.block, w.e.tmp, &w.e.zbuf)
 }
 
+// timeUnits holds the nanoseconds of the units that a time is given in, by
+// their power of ten.
+var timeUnits = [...]int64{0: 1, 3: 1e3, 6: 1e6, 9: 1e9}
+
+// timeUnit reports whether vals, one for every row, are the times of the
+// rows in one coarser unit, and that unit's power of ten in nanoseconds.
+// Columns that all hold one value stay constants.
+func timeUnit(vals, times []int64) (power byte, ok bool) {
+	if len(vals) != len(times) || vals[0] == 0 || times[0]%vals[0] != 0 {
+		return 0, false
+	}
+	unit := times[0] / vals[0]
+	for power = 0; int(power) < len(timeUnits) && timeUnits[power] != unit; power++ {
+	}
+	if int(power) == len(timeUnits) || unit == 0 {
+		return 0, false
+	}
+	same := true
+	for i, v := range vals {
+		if times[i]%unit != 0 || times[i]/unit != v {
+			return 0, false
+		}
+		same = same && v == vals[0]
+	}
+
+	return power, !same
+}
+
 func (w *Writer) encodeInts(ent *dirEntry, vals []int64) {
 	ent.minI, ent.maxI = vec.MinMaxInt64(vals)
 	if ent.minI == ent.maxI {
@@ -784,7 +854,7 @@ func (w *Writer) tokenize(kind vec.Kind, val []byte) {
 }
 
 func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
-	distinct, ok := w.dict.build(c)
+	distinct, ok := w.dict.build(c, false)
 	if ok && distinct == 1 {
 		ent.enc = encConst
 		ent.constVal = c.Bytes(0)
@@ -792,36 +862,101 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 
 		return
 	}
-	if !ok {
-		ent.enc = encFlat
-		w.ints = w.ints[:0]
-		stride := len(c.Bytes(0))
-		for i := 0; i < c.Count; i++ {
-			val := c.Bytes(i)
-			if len(val) != stride {
+	if ok && w.encodeDict(c, distinct) {
+		ent.enc = encDict
+		w.tokenizeEntries(c)
+
+		return
+	}
+	// Identifiers, strings of one length, pack: as they are when few of
+	// them repeat, and as a dictionary when more do and that costs little
+	// more than the general codec, which reads several times slower.
+	stride := 0
+	if w.packs(c.Kind) && c.Count >= minPackedStrings {
+		stride = len(c.Bytes(0))
+		for i := 1; i < c.Count && stride > 0; i++ {
+			if int(c.Ends[i]-c.Ends[i-1]) != stride {
 				stride = 0
 			}
-			w.ints = append(w.ints, int64(len(val)))
-			w.tokenize(c.Kind, val)
 		}
-		w.block = appendInts(w.block, w.ints, &w.blobs, &w.e)
-		data := c.Data[:c.Ends[c.Count-1]]
-		// Values that repeat are left to the general codec, which finds
-		// the repeats; packing cannot.
-		if stride > 0 && w.packs(c.Kind) && w.dict.fewRepeats(c) {
-			if out, packed := w.values.appendPackedBlob(w.block, data, stride, &w.e.zbuf); packed {
-				w.block = out
+	}
+	slot := int(ent.pathID)*kindSlots + int(c.Kind)
+	lone := stride > 0 && w.dict.fewRepeats(c)
+	if stride > 0 && !lone {
+		for len(w.trials) <= slot {
+			w.trials = append(w.trials, trial{})
+		}
+		tr := &w.trials[slot]
+		if tr.wideLeft == 0 {
+			tr.wideLeft, tr.wide = trialEvery, false
+			start := len(w.block)
+			if distinct, ok := w.dict.build(c, true); ok && w.encodeDict(c, distinct) {
+				dict := len(w.block)
+				w.appendFlat(slot, c, 0)
+				if flat := len(w.block) - dict; (dict-start)*wideDictShare <= flat*(wideDictShare+1) {
+					tr.wide, ent.enc, w.block = true, encDict, w.block[:dict]
+				} else {
+					ent.enc, w.block = encFlat, w.block[:start+copy(w.block[start:], w.block[dict:])]
+				}
+				// The entries are all the values there are.
+				w.tokenizeEntries(c)
+
+				return
+			}
+		} else if tr.wideLeft--; tr.wide {
+			if distinct, ok := w.dict.build(c, true); ok && w.encodeDict(c, distinct) {
+				ent.enc = encDict
+				w.tokenizeEntries(c)
 
 				return
 			}
 		}
-		w.appendValues(int(ent.pathID)*kindSlots+int(c.Kind), data, c.Count)
-
-		return
 	}
+	ent.enc = encFlat
+	for i := 0; i < c.Count; i++ {
+		w.tokenize(c.Kind, c.Bytes(i))
+	}
+	if !lone {
+		stride = 0
+	}
+	w.appendFlat(slot, c, stride)
+}
 
-	ent.enc = encDict
+// appendFlat appends the values of the column one after another, packed
+// when stride, their length, is set and packing suits them.
+func (w *Writer) appendFlat(slot int, c *shred.Column, stride int) {
+	w.ints = w.ints[:0]
+	for i := 0; i < c.Count; i++ {
+		w.ints = append(w.ints, int64(len(c.Bytes(i))))
+	}
+	w.block = appendInts(w.block, w.ints, &w.blobs, &w.e)
+	data := c.Data[:c.Ends[c.Count-1]]
+	// Values that repeat are left to the general codec, which finds the
+	// repeats; packing cannot.
+	if stride > 0 {
+		if out, packed := w.values.appendPackedBlob(w.block, data, stride, &w.e.zbuf); packed {
+			w.block = out
+
+			return
+		}
+	}
+	w.appendValues(slot, data, c.Count)
+}
+
+// tokenizeEntries adds the tokens of the entries of the dictionary that
+// the builder holds.
+func (w *Writer) tokenizeEntries(c *shred.Column) {
+	for _, entry := range w.dict.order {
+		w.tokenize(c.Kind, c.Bytes(int(w.dict.first[entry])))
+	}
+}
+
+// encodeDict appends the column as the dictionary that the builder holds,
+// and reports whether it did: a dictionary of more than half as many
+// entries as values pays off only packed.
+func (w *Writer) encodeDict(c *shred.Column, distinct int) bool {
 	d := &w.dict
+	mark := len(w.block)
 	w.block = binary.AppendUvarint(w.block, uint64(distinct))
 	w.ints = w.ints[:0]
 	w.dictBytes = w.dictBytes[:0]
@@ -833,7 +968,6 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 		}
 		w.ints = append(w.ints, int64(len(val)))
 		w.dictBytes = append(w.dictBytes, val...)
-		w.tokenize(c.Kind, val)
 	}
 	w.block = appendInts(w.block, w.ints, &w.blobs, &w.e)
 	out, packed := w.block, false
@@ -841,6 +975,11 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 		out, packed = w.blobs.appendPackedBlob(w.block, w.dictBytes, stride, &w.e.zbuf)
 	}
 	if !packed {
+		if distinct > c.Count/2 {
+			w.block = w.block[:mark]
+
+			return false
+		}
 		out = w.blobs.appendBlob(w.block, w.dictBytes, &w.e.zbuf)
 	}
 	w.block = out
@@ -862,9 +1001,11 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 	if len(w.e.tmp) < limit {
 		w.block = append(append(w.block, codesRuns), w.e.tmp...)
 
-		return
+		return true
 	}
 	w.block = appendPacked(append(w.block, codesPacked), d.codes, d.rank, width)
+
+	return true
 }
 
 // packs reports whether strings of kind may be stored as packed sections.
@@ -1112,7 +1253,7 @@ type dictBuilder struct {
 	codes []uint32 // entry number of every value
 	order []uint32 // entry numbers sorted by value
 	rank  []uint32 // position of each entry in order
-	col   *shred.Column
+	keys  []dictKey
 	seen  []uint64 // hashes of the values fewRepeats has met
 }
 
@@ -1154,21 +1295,59 @@ func (d *dictBuilder) fewRepeats(c *shred.Column) bool {
 	return true
 }
 
-func (d *dictBuilder) Len() int      { return len(d.order) }
-func (d *dictBuilder) Swap(i, j int) { d.order[i], d.order[j] = d.order[j], d.order[i] }
-func (d *dictBuilder) Less(i, j int) bool {
-	return string(d.col.Bytes(int(d.first[d.order[i]]))) < string(d.col.Bytes(int(d.first[d.order[j]])))
+// dictKey is an entry of a dictionary with the bytes of its value that
+// most often tell it from the others: the eight after the bytes that all
+// the values begin with, as a number that orders as they do.
+type dictKey struct {
+	head  uint64
+	entry uint32
+}
+
+// sortEntries puts the entries in order by their values.
+func (d *dictBuilder) sortEntries(c *shred.Column) {
+	value := func(entry uint32) []byte { return c.Bytes(int(d.first[entry])) }
+	shared := value(0)
+	for entry := 1; entry < len(d.first) && len(shared) > 0; entry++ {
+		v := value(uint32(entry))
+		n := 0
+		for n < len(shared) && n < len(v) && v[n] == shared[n] {
+			n++
+		}
+		shared = shared[:n]
+	}
+	d.keys = d.keys[:0]
+	for entry := range d.first {
+		v := value(uint32(entry))[len(shared):]
+		var head [8]byte
+		copy(head[:], v)
+		d.keys = append(d.keys, dictKey{binary.BigEndian.Uint64(head[:]), uint32(entry)})
+	}
+	slices.SortFunc(d.keys, func(a, b dictKey) int {
+		if a.head != b.head {
+			return cmp.Compare(a.head, b.head)
+		}
+
+		return bytes.Compare(value(a.entry), value(b.entry))
+	})
+	for i, k := range d.keys {
+		d.order[i] = k.entry
+	}
 }
 
 // build reports the number of distinct values of c and whether a dictionary
-// pays off: every value equal, or at most half as many entries as values.
-func (d *dictBuilder) build(c *shred.Column) (distinct int, ok bool) {
+// pays off: every value equal, or at most half as many entries as values,
+// or seven in eight when wide is set, for entries that pack. A column whose
+// values repeat too seldom for the wider one is not given to it.
+func (d *dictBuilder) build(c *shred.Column, wide bool) (distinct int, ok bool) {
 	n := c.Count
 	limit := min(n/2, maxDictSize)
+	if wide {
+		limit = min(n-n/8, maxDictSize)
+	}
 	if n < 8 {
 		limit = 1
 	}
-	if n >= 1024 && d.sampleAllDistinct(c) {
+	if !wide && n >= 1024 && d.sampleAllDistinct(c) {
 		return 0, false
 	}
 	size := 64
@@ -1212,9 +1391,7 @@ func (d *dictBuilder) build(c *shred.Column) (distinct int, ok bool) {
 	for i := 0; i < distinct; i++ {
 		d.order = append(d.order, uint32(i))
 	}
-	d.col = c
-	sort.Sort(d)
-	d.col = nil
+	d.sortEntries(c)
 	if cap(d.rank) < distinct {
 		d.rank = make([]uint32, distinct)
 	}

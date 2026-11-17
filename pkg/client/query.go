@@ -64,16 +64,7 @@ func (c *Client) QueryGet(ctx context.Context, q, from, to string, limit int) (*
 
 // Explain returns the query execution plan without running the query.
 func (c *Client) Explain(ctx context.Context, q string) (*ExplainResult, error) {
-	return c.ExplainLang(ctx, q, "")
-}
-
-// ExplainLang is Explain with an explicit query language ("lynxflow" or
-// "spl2"); empty means server-side auto-detection.
-func (c *Client) ExplainLang(ctx context.Context, q, language string) (*ExplainResult, error) {
 	path := "/query/explain?q=" + urlEncode(q)
-	if language != "" {
-		path += "&language=" + urlEncode(language)
-	}
 
 	var result ExplainResult
 	if _, err := c.doJSON(ctx, http.MethodGet, path, nil, &result); err != nil {

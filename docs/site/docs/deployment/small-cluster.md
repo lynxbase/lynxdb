@@ -1,53 +1,48 @@
 ---
 title: Small Cluster (3-10 Nodes)
-description: Deploy a small LynxDB cluster where every node runs all roles -- meta, ingest, and query.
+description: Topology and configuration for a small LynxDB cluster where every node runs the meta, ingest and query roles.
 ---
 
 # Small Cluster (3-10 Nodes)
 
-In a small cluster, every node runs all three roles (meta, ingest, query). This is the simplest HA deployment -- same binary on every node, same config with different `node_id` values.
+In a small cluster every node runs all three roles (`meta`, `ingest`, `query`) with the same binary and the same configuration, except for `node_id`.
 
-## Architecture
+:::caution Cluster runtime
+`lynxdb server` validates the `cluster` settings but does not start the cluster runtime: it opens no gRPC listener, joins no Raft group and routes no shards. Each node configured as below stores and queries only its own data. This page describes the topology the cluster components in `pkg/cluster` are built for. For production, run a [single node](./single-node.md).
+:::
 
+## Topology
+
+```text
+   +-------------------+  +-------------------+  +-------------------+
+   | node-1            |  | node-2            |  | node-3            |
+   | meta+ingest+query |  | meta+ingest+query |  | meta+ingest+query |
+   +---------+---------+  +---------+---------+  +---------+---------+
+             |       gRPC :9400 (Raft, replication, shard queries)
+             +----------------------+----------------------+
+                                    |
+                           S3-compatible bucket
 ```
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│   Node 1     │    │   Node 2     │    │   Node 3     │
-│ meta+ingest  │    │ meta+ingest  │    │ meta+ingest  │
-│   +query     │    │   +query     │    │   +query     │
-└──────┬───────┘    └──────┬───────┘    └──────┬───────┘
-       │                   │                   │
-       └───────────────────┼───────────────────┘
-                     ┌─────┴─────┐
-                     │  S3/MinIO │
-                     │ (source   │
-                     │  of truth)│
-                     └───────────┘
-```
 
-Key properties:
-- **Raft consensus** for metadata (hashicorp/raft) -- needs 3+ nodes for quorum
-- **Batcher replication** for data durability via gRPC streaming with configurable ACK levels
-- **S3 is the source of truth** for parts -- ingest nodes are stateless except for the async batcher buffer awaiting flush
-- **Two-level sharding**: time bucketing (default 24h) + `xxhash64(source + "\x00" + host) % 1024` virtual partitions
-- **Node failure** triggers shard reassignment in ~25 seconds with no data loss
+- The meta role runs a Raft group (hashicorp/raft) that holds the shard map, node registry and shard leases. Three meta nodes tolerate one failure; five tolerate two.
+- Events are sharded by time bucket (`cluster.time_bucket_size`, 24 hours by default) and by `xxhash64(source + "\x00" + host) mod cluster.virtual_partition_count`.
+- Ingest nodes replicate batches to in-sync replicas (`cluster.replication_factor`) and acknowledge according to `cluster.ack_level`.
+- Any node can coordinate a query; see [Distributed Query Execution](./large-cluster.md#distributed-query-execution).
 
 ## Prerequisites
 
-- 3+ nodes (5 recommended for production)
-- S3-compatible object store (AWS S3 or MinIO)
-- Network connectivity between nodes on port 9400 (cluster) and 3100 (HTTP)
+- 3 or 5 nodes with synchronized clocks (NTP)
+- TCP 3100 (HTTP) and 9400 (gRPC) open between nodes
+- An S3-compatible bucket for tiered segments, if retention exceeds local disk
 
 ## Configuration
 
-Each node gets the same config with a unique `node_id`:
-
-### Node 1: `/etc/lynxdb/config.yaml`
+`/etc/lynxdb/config.yaml` on `node-1`; the other nodes differ only in `node_id`:
 
 ```yaml
 listen: "0.0.0.0:3100"
 data_dir: "/var/lib/lynxdb"
 retention: "30d"
-log_level: "info"
 
 cluster:
   enabled: true
@@ -57,97 +52,36 @@ cluster:
     - "node-1.example.com:9400"
     - "node-2.example.com:9400"
     - "node-3.example.com:9400"
-  virtual_partition_count: 1024
-  time_bucket_size: "24h"
+  grpc_port: 9400
   replication_factor: 3
   ack_level: "one"
-  heartbeat_interval: "5s"
-  lease_duration: "10s"
 
 storage:
-  s3_bucket: "my-lynxdb-logs"
+  s3_bucket: "example-lynxdb-logs"
   s3_region: "us-east-1"
-  compression: "lz4"
-  flush_threshold: "512mb"
-  cache_max_bytes: "4gb"
-  segment_cache_size: "10gb"
 
-query:
-  max_concurrent: 20
-```
-
-### Node 2: `/etc/lynxdb/config.yaml`
-
-```yaml
-listen: "0.0.0.0:3100"
-data_dir: "/var/lib/lynxdb"
-retention: "30d"
-log_level: "info"
-
-cluster:
+auth:
   enabled: true
-  node_id: "node-2"
-  roles: [meta, ingest, query]
-  seeds:
-    - "node-1.example.com:9400"
-    - "node-2.example.com:9400"
-    - "node-3.example.com:9400"
-  virtual_partition_count: 1024
-  time_bucket_size: "24h"
-  replication_factor: 3
-  ack_level: "one"
-  heartbeat_interval: "5s"
-  lease_duration: "10s"
-
-storage:
-  s3_bucket: "my-lynxdb-logs"
-  s3_region: "us-east-1"
-  compression: "lz4"
-  flush_threshold: "512mb"
-  cache_max_bytes: "4gb"
-  segment_cache_size: "10gb"
-
-query:
-  max_concurrent: 20
 ```
 
-### Node 3: `/etc/lynxdb/config.yaml`
-
-Same as above with `node_id: "node-3"`.
-
-## Starting the Cluster
-
-Start all nodes. Order does not matter -- they will discover each other via the seed list:
+The same settings as flags:
 
 ```bash
-# On each node
-lynxdb server --config /etc/lynxdb/config.yaml
+lynxdb server \
+  --addr 0.0.0.0:3100 \
+  --data-dir /var/lib/lynxdb \
+  --cluster.enabled \
+  --cluster.node-id node-1 \
+  --cluster.roles meta,ingest,query \
+  --cluster.seeds node-1.example.com:9400,node-2.example.com:9400,node-3.example.com:9400 \
+  --cluster.grpc-port 9400
 ```
 
-Verify the cluster is formed:
+`lynxdb config validate` checks the cluster section: with `enabled: true` it requires `node_id`, at least one valid role, at least one seed, and a valid `grpc_port`. Every key is described in [Cluster Settings](../configuration/cluster.md).
 
-```bash
-lynxdb status
-# Should show all 3 nodes
-```
+## Load Balancer
 
-## Load Balancing
-
-Place a load balancer in front of the cluster for both ingest and query traffic:
-
-```
-                   ┌──────────────┐
-                   │ Load Balancer│
-                   │ (nginx/HAProxy)
-                   └──────┬───────┘
-              ┌───────────┼───────────┐
-              │           │           │
-        ┌─────┴─────┐ ┌──┴──────┐ ┌──┴──────┐
-        │  Node 1   │ │ Node 2  │ │ Node 3  │
-        └───────────┘ └─────────┘ └─────────┘
-```
-
-Example nginx config:
+Clients reach the nodes through one HTTP load balancer:
 
 ```nginx
 upstream lynxdb {
@@ -157,89 +91,37 @@ upstream lynxdb {
 }
 
 server {
-    listen 80;
-    server_name lynxdb.company.com;
+    listen 443 ssl;
+    server_name lynxdb.example.com;
 
-    client_max_body_size 50m;
+    client_max_body_size 32m;
 
     location / {
         proxy_pass http://lynxdb;
         proxy_http_version 1.1;
         proxy_set_header Connection "";
         proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
 
-        # SSE support for tail and streaming
+        # live tail (SSE) and NDJSON streaming
         proxy_buffering off;
         proxy_read_timeout 3600s;
-    }
-
-    location /health {
-        proxy_pass http://lynxdb;
     }
 }
 ```
 
-## Scaling
+Use `GET /health` on port 3100 as the health check.
 
-### Adding a Node
+## Failure Behavior
 
-1. Deploy LynxDB on the new node with the same config (new `node_id`, same seeds)
-2. Start the server -- it auto-joins the cluster
-3. Shards are rebalanced automatically
-
-```yaml
-# node-4 config
-cluster:
-  node_id: "node-4"
-  roles: [meta, ingest, query]
-  seeds:
-    - "node-1.example.com:9400"
-    - "node-2.example.com:9400"
-    - "node-3.example.com:9400"
-```
-
-### Removing a Node
-
-1. Stop the LynxDB process on the node
-2. Shards are reassigned to remaining nodes within ~25 seconds
-3. No data loss (batches replicated to ISR peers, segments in S3)
-
-## Failure Handling
-
-| Scenario | Impact | Recovery |
-|----------|--------|----------|
-| 1 node down (of 3) | Raft quorum maintained, reads and writes continue | Automatic shard reassignment in ~25s |
-| 2 nodes down (of 3) | Raft quorum lost, writes degrade gracefully for `meta_loss_timeout` (30s), then fail | Bring at least 1 node back |
-| S3 unavailable | New segments cannot be tiered, local storage fills up | S3 recovery; pending segments are uploaded |
-| Network partition | Nodes on minority side lose Raft quorum; leader leases prevent split-brain | Network recovery; automatic rejoin |
-
-## Monitoring
-
-Monitor cluster health:
-
-```bash
-# Check status from any node
-lynxdb status
-
-# Health check for load balancers
-curl http://node-1:3100/health
-```
-
-See [Monitoring](/docs/operations/monitoring) for Prometheus setup.
-
-## When to Upgrade to a Large Cluster
-
-Consider splitting roles when:
-- Ingest throughput exceeds what 10 nodes can handle
-- Query latency is affected by compaction or ingest load
-- You need independent scaling of ingest and query capacity
-
-See [Large Cluster](/docs/deployment/large-cluster) for role-separated architecture.
+| Event | Effect |
+|-------|--------|
+| One meta node down (of 3) | The Raft group keeps a quorum. |
+| Two meta nodes down (of 3) | No quorum: shard map changes and lease renewals stop. After `cluster.meta_loss_timeout` (30s) without a renewal, ingest nodes enter meta-loss mode and keep accepting writes without lease validation until the meta group is back. |
+| Shards fail during a query | With `cluster.partial_results` (default on), the query returns results from the shards that answered, as long as at least `cluster.partial_failure_threshold` (0.5) of them did. |
 
 ## Next Steps
 
-- [Large Cluster](/docs/deployment/large-cluster) -- scale beyond 10 nodes with role splitting
-- [S3 Storage Setup](/docs/deployment/s3-setup) -- configure the shared S3 backend
-- [Kubernetes Deployment](/docs/deployment/kubernetes) -- deploy the cluster on K8s
-- [Performance Tuning](/docs/operations/performance-tuning) -- optimize cluster performance
+- [Large Cluster](./large-cluster.md)
+- [Cluster Settings](../configuration/cluster.md)
+- [Distributed Architecture](../architecture/distributed.md)
+- [S3/MinIO Storage Backend](./s3-setup.md)

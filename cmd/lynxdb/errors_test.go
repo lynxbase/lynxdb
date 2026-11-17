@@ -16,20 +16,26 @@ func TestExtractPositionFromError(t *testing.T) {
 		wantLen int
 	}{
 		{
+			name:    "line and column",
+			msg:     `syntax error at line 1, column 13: expected a search term`,
+			wantPos: 12,
+			wantLen: 1,
+		},
+		{
 			name:    "position 0 with token",
-			msg:     `spl2: unexpected command IDENT "level" at position 0`,
+			msg:     `unexpected command IDENT "level" at position 0`,
 			wantPos: 0,
 			wantLen: 5, // len("level")
 		},
 		{
 			name:    "position 10 with token",
-			msg:     `spl2: unexpected command IDENT "stauts" at position 10`,
+			msg:     `unexpected command IDENT "stauts" at position 10`,
 			wantPos: 10,
 			wantLen: 6, // len("stauts")
 		},
 		{
 			name:    "no position marker",
-			msg:     `spl2: some other error`,
+			msg:     `some other error`,
 			wantPos: -1,
 			wantLen: 1,
 		},
@@ -41,7 +47,7 @@ func TestExtractPositionFromError(t *testing.T) {
 		},
 		{
 			name:    "position with quoted string token",
-			msg:     `spl2: expected IDENT, got STRING "hello world" at position 3`,
+			msg:     `expected IDENT, got STRING "hello world" at position 3`,
 			wantPos: 3,
 			wantLen: 11, // len("hello world")
 		},
@@ -177,12 +183,12 @@ func TestParseRequiredFlags(t *testing.T) {
 func TestIsQueryParseError_WithQueryError(t *testing.T) {
 	inner := &client.APIError{
 		HTTPStatus: 400,
-		Code:       client.ErrCodeInvalidQuery,
-		Message:    "parse error: unexpected token",
+		Code:       client.ErrCodeSyntaxError,
+		Message:    "syntax error at line 1, column 1: missing source",
 	}
 	qe := &queryError{inner: inner, query: "bad | query"}
 
 	if !isQueryParseError(qe) {
-		t.Error("isQueryParseError should return true for queryError wrapping INVALID_QUERY")
+		t.Error("isQueryParseError should return true for queryError wrapping SYNTAX_ERROR")
 	}
 }

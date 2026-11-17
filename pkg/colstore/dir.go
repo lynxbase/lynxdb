@@ -466,12 +466,10 @@ func (d *Dir) open(name string, meta PartMeta) (*Handle, *partFileRef, error) {
 	}
 	var blocks mmap.MMap
 	if readAdvice {
-		// Column chunks are read one here and one there, each asked for in
-		// one piece, through a mapping of their own. The token filters, the
-		// directories and the footer are read side by side and keep the
-		// kernel's own read-ahead. Advice for runs of blocks within one
-		// mapping would split it at every filter group, and the kernel
-		// bounds the mappings of a process.
+		// Column chunks and the pages of token filters are read one here
+		// and one there, each asked for in one piece, through a mapping of
+		// their own. The directories and the footer are read side by side
+		// and keep the kernel's own read-ahead.
 		if blocks, err = mmap.Map(f, mmap.RDONLY, 0); err != nil {
 			_ = data.Unmap()
 			f.Close()
@@ -512,9 +510,10 @@ func (d *Dir) Table() *Table { return d.table }
 func (d *Dir) ReleasePages() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	for _, ref := range d.live {
+	for h, ref := range d.live {
 		adviseDontNeed(ref.data)
 		adviseDontNeed(ref.blocks)
+		h.ForgetReadAhead()
 	}
 }
 
@@ -527,9 +526,15 @@ type PartFile struct {
 	name string
 	tmp  string
 	size int64
+	// begun is how much of the file the device was asked to start on.
+	begun int64
 	// before, when set, runs ahead of every write.
 	before func()
 }
+
+// writebackStep is the bytes written to a part file between requests to
+// the device to start on them.
+const writebackStep = 1 << 20
 
 // Create starts a part file that is a run of its own. Any number of them can
 // be written at once.
@@ -551,6 +556,10 @@ func (pf *PartFile) Write(p []byte) (int, error) {
 	}
 	n, err := pf.f.Write(p)
 	pf.size += int64(n)
+	if pf.size-pf.begun >= writebackStep {
+		startWriteback(pf.f, pf.begun, pf.size-pf.begun)
+		pf.begun = pf.size
+	}
 
 	return n, err
 }

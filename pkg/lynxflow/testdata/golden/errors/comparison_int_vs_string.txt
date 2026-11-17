@@ -1,3 +1,0 @@
-query: | where status == "500"
-error S003 [8:23] cannot compare int == string
-  suggestion: did you mean status == 500?

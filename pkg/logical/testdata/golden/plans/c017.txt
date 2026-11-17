@@ -1,7 +1,0 @@
-Sort(+amount_usd)
-  Project(amount_usd, service)
-    Extend(amount_usd=round((amount_cents / 100), 2))
-      Filter((amount_cents > 0))
-        Scan(main)
-          pushdown.field_predicate: (amount_cents > 0)
-          pushdown.columns: [_raw, _source, _time, amount_cents, service]

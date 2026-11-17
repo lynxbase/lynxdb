@@ -1,7 +1,7 @@
 # file: backend_server.log
 # format: json
-from main
-| drop trace_id, span_id, instance, memory_mb, cpu_pct
-| keep level, service, method, path, status, duration_ms, message, timestamp
+source=main
+| fields - trace_id, span_id, instance, memory_mb, cpu_pct
+| fields level, service, method, path, status, duration_ms, message, timestamp
 | head 3
 | sort timestamp

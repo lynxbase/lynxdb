@@ -1,4 +1,0 @@
-Filter(contains(_raw, "connection refused"))
-  Scan(main)
-    pushdown.bloom_term: "connection"
-    pushdown.bloom_term: "refused"

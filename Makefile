@@ -6,7 +6,7 @@ LDFLAGS  = -X $(PKG).Version=$(VERSION) -X $(PKG).Commit=$(COMMIT) -X $(PKG).Dat
 
 CUSTOM_GCL = ./custom-gcl
 
-.PHONY: build test test-unit test-e2e test-cli test-compat test-conformance test-compat-filebeat test-compat-fluentbit test-compat-vector test-compat-otelcol test-compat-splunk-hec docs-check-shippers docs-gen vet clean lint lint-build sync-rsigma-golden compat-manifest
+.PHONY: build test test-unit test-e2e test-cli test-compat test-conformance test-compat-filebeat test-compat-fluentbit test-compat-vector test-compat-otelcol test-compat-splunk-hec docs-gen vet clean lint lint-build
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o lynxdb ./cmd/lynxdb/
@@ -40,10 +40,7 @@ test-compat-otelcol:
 test-compat-splunk-hec:
 	go test -timeout 2m -tags=e2e -run "^TestE2E_Shipper_SplunkHEC" ./test/e2e/shippers/
 
-docs-check-shippers:
-	go test ./cmd/lynxdb -run "^TestDocsShipperConfigsContainRenderedTemplates$$" -count=1
-
-# Regenerate registry-driven docs (docs/site/docs/lynxflow/*, docs/grammar/lynxflow.ebnf).
+# Regenerate the PPL reference pages from the catalogs (docs/site/docs/ppl/{commands,functions,aggregations}.md).
 # Never commit a built docgen binary; always go run it.
 docs-gen:
 	go run ./internal/docgen
@@ -53,12 +50,6 @@ test-cli: build
 
 vet:
 	go vet ./...
-
-sync-rsigma-golden:
-	scripts/sync_rsigma_golden.sh
-
-compat-manifest:
-	go run ./cmd/lynxdb-compat-manifest --lynxdb-version "$(VERSION)"
 
 lint-build:
 	golangci-lint custom
@@ -72,7 +63,7 @@ $(CUSTOM_GCL): .custom-gcl.yml
 clean:
 	rm -f lynxdb custom-gcl
 
-.PHONY: bench-micro bench-fixtures bench-macro
+.PHONY: bench-micro bench-fixtures
 
 bench-micro:
 	@mkdir -p artifacts
@@ -84,20 +75,3 @@ bench-micro:
 
 bench-fixtures:
 	go run scripts/genbench/main.go
-
-bench-macro: build
-	@mkdir -p artifacts
-	./lynxdb bench --events 1000000 | tee artifacts/bench-macro.txt
-
-.PHONY: webui-install webui webui-dev
-
-webui-install:
-	cd web && bun install
-
-webui: webui-install
-	cd web && bun run build
-	rm -rf internal/webui/dist
-	cp -r web/dist internal/webui/dist
-
-webui-dev:
-	cd web && bun run dev

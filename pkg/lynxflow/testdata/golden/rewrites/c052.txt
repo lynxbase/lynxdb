@@ -1,1 +1,0 @@
-search-sugar: level=error => where (level == error)

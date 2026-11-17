@@ -10,17 +10,16 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/cluster/tracing"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/logical"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/model"
 )
 
-// ExecuteQueryIR plans, fans out, and merges a distributed query using the
-// logical IR. It accepts pre-resolved QueryHints (from the server-side
-// planner via hintsFromPlan) so that time bounds and source scope are
-// accurate for shard pruning — no lossy conversion needed.
+// ExecuteQueryIR splits plan, fans the shard part of query out to the
+// shards selected by hints, and merges their results.
 func (c *Coordinator) ExecuteQueryIR(
 	ctx context.Context,
-	plan *logical.Plan,
+	query string,
+	plan *ir.Plan,
 	hints *model.QueryHints,
 ) (*DistributedQueryResult, error) {
 	ctx, span := tracing.Tracer().Start(ctx, "lynxdb.query.distributed.ir")
@@ -48,7 +47,7 @@ func (c *Coordinator) ExecuteQueryIR(
 	}
 
 	span.SetAttributes(
-		attribute.String(tracing.AttrQueryText, irPlan.ShardQuery),
+		attribute.String(tracing.AttrQueryText, query),
 		attribute.String(tracing.AttrMergeStrategy, irPlan.Strategy.String()),
 		attribute.Int(tracing.AttrShardsTotal, len(targets)),
 	)
@@ -63,7 +62,7 @@ func (c *Coordinator) ExecuteQueryIR(
 
 	// 3. Build a DistributedPlan compatible with the existing fan-out methods.
 	compatPlan := &DistributedPlan{
-		ShardQuery:     irPlan.ShardQuery,
+		ShardQuery:     query,
 		Strategy:       irPlan.Strategy,
 		PartialAggSpec: irPlan.PartialAggSpec,
 		TopK:           irPlan.TopK,
@@ -109,13 +108,6 @@ func (c *Coordinator) ExecuteQueryIR(
 	}
 
 	meta.Partial = meta.ShardsFailed > 0 && meta.ShardsSuccess > 0
-
-	// Record join strategy for tracing when a join node is present.
-	if strategy := irPlan.JoinStrategy; strategy != nil {
-		span.SetAttributes(
-			attribute.String("lynxdb.query.join_strategy", strategy.Type),
-		)
-	}
 
 	span.SetAttributes(
 		attribute.Int(tracing.AttrShardsSuccess, meta.ShardsSuccess),

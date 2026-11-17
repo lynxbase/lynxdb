@@ -217,3 +217,129 @@ func TestSortByTimeBucketsGroupsRowsByBucketThenKey(t *testing.T) {
 		t.Fatalf("an empty batch has buckets %v", got)
 	}
 }
+
+// TestSortByOrdersKeysOfManyValues requires the order of the reference for
+// keys with about as many values as rows: few enough of them that their
+// ranks pack into one number of several digits, and too many for that.
+func TestSortByOrdersKeysOfManyValues(t *testing.T) {
+	for _, nkeys := range []int{1, 3, 7} {
+		t.Run(fmt.Sprintf("%d keys", nkeys), func(t *testing.T) {
+			r := rand.New(rand.NewSource(int64(nkeys)))
+			b := NewBatch(Options{})
+			var keys []string
+			for k := 0; k < nkeys; k++ {
+				keys = append(keys, fmt.Sprintf("k%d", k))
+			}
+			const rows = 6000
+			for i := 0; i < rows; i++ {
+				doc := fmt.Sprintf(`{"seq":%d`, i)
+				for k, key := range keys {
+					// The first key repeats, so that the later ones and
+					// the time decide among its rows.
+					span := rows
+					if k == 0 {
+						span = 40
+					}
+					if r.Intn(20) != 0 {
+						doc += fmt.Sprintf(`,"%s":"v%05d"`, key, r.Intn(span))
+					}
+				}
+				if err := b.AddJSON([]byte(doc+"}"), int64(r.Intn(8))); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := rowsOf(t, b)
+			times := append([]int64(nil), b.Times...)
+			index := make([]int, len(want))
+			for i := range index {
+				index[i] = i
+			}
+			sort.SliceStable(index, func(x, y int) bool {
+				a, c := index[x], index[y]
+				for _, k := range keys {
+					if d := compareKey(want[a], want[c], k); d != 0 {
+						return d < 0
+					}
+				}
+
+				return times[a] < times[c]
+			})
+			b.SortBy(keys)
+			got := rowsOf(t, b)
+			for at, from := range index {
+				if !reflect.DeepEqual(got[at], want[from]) || b.Times[at] != times[from] {
+					t.Fatalf("row %d after sorting\n got  %v @%d\n want %v @%d", at, got[at], b.Times[at], want[from], times[from])
+				}
+			}
+		})
+	}
+}
+
+// TestSortByMovesRowsThatArriveInStretches requires rows that came in
+// order from several sources, a stretch from each in turn, to be brought
+// into order like any others: with fields that every row holds, that only
+// the first rows hold, that some rows lack, and that hold objects.
+func TestSortByMovesRowsThatArriveInStretches(t *testing.T) {
+	for name, keys := range map[string][]string{"by time": nil, "by a key": {"src"}} {
+		t.Run(name, func(t *testing.T) {
+			r := rand.New(rand.NewSource(9))
+			b := NewBatch(Options{})
+			const sources, stretch, rounds = 4, 500, 6
+			next := make([]int64, sources)
+			for round := 0; round < rounds; round++ {
+				// The sources take turns in an order of their own.
+				for _, src := range r.Perm(sources) {
+					for i := 0; i < stretch; i++ {
+						seq := b.Rows
+						doc := fmt.Sprintf(`{"seq":%d,"src":"s%d","msg":"m%d"`, seq, src, r.Intn(50))
+						if seq < 700 {
+							doc += fmt.Sprintf(`,"early":%d`, seq)
+						}
+						if r.Intn(9) == 0 {
+							doc += fmt.Sprintf(`,"rare":"r%d","obj":{"a":%d,"b":[%d,"x"]}`, r.Intn(5), seq, seq)
+						}
+						if r.Intn(3) != 0 {
+							doc += fmt.Sprintf(`,"often":%g,"flag":%v`, float64(seq)/4, seq%2 == 0)
+						}
+						// Times of one source rise, and lie apart from the others'.
+						next[src] += int64(1 + r.Intn(3))
+						if err := b.AddJSON([]byte(doc+"}"), int64(src)*1_000_000+next[src]); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+			}
+			want := rowsOf(t, b)
+			times := append([]int64(nil), b.Times...)
+			index := make([]int, len(want))
+			for i := range index {
+				index[i] = i
+			}
+			sort.SliceStable(index, func(x, y int) bool {
+				a, c := index[x], index[y]
+				for _, k := range keys {
+					if d := compareKey(want[a], want[c], k); d != 0 {
+						return d < 0
+					}
+				}
+
+				return times[a] < times[c]
+			})
+			b.SortBy(keys)
+			got := rowsOf(t, b)
+			for at, from := range index {
+				if !reflect.DeepEqual(got[at], want[from]) || b.Times[at] != times[from] {
+					t.Fatalf("row %d after sorting\n got  %v @%d\n want %v @%d", at, got[at], b.Times[at], want[from], times[from])
+				}
+			}
+			// The batch takes rows as before.
+			if err := b.AddJSON([]byte(`{"seq":-1,"src":"s9","early":1,"rare":"z"}`), 1<<40); err != nil {
+				t.Fatal(err)
+			}
+			last := rowsOf(t, b)
+			if len(last) != len(want)+1 || !reflect.DeepEqual(last[:len(want)], got) || last[len(want)]["src"] != "s9" {
+				t.Fatalf("a row added after sorting: %v", last[len(last)-1])
+			}
+		})
+	}
+}

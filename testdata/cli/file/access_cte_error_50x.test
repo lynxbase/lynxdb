@@ -1,7 +1,0 @@
-# file: access.log
-# format: json
-let $errs = where level == "ERROR";
-from $errs
-| extend is_50x = if(status >= 500, "yes", "no")
-| stats count() by is_50x
-| sort is_50x

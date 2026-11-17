@@ -217,9 +217,8 @@ func (t *Theme) RenderConnectionError(server string) {
 		Suggestion: "Start the server, check the environment, or point --server at the right endpoint.",
 		Commands: []string{
 			"lynxdb server",
-			"lynxdb doctor",
-			"lynxdb query --file app.log 'level=error'",
-			"lynxdb query --server http://logs:3100 'level=error'",
+			"lynxdb query --file app.log 'search source=main error'",
+			"lynxdb query --server http://logs:3100 'search source=main error'",
 		},
 	}))
 }

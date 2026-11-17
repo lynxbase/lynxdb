@@ -1,9 +1,11 @@
 package physical
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -132,10 +134,63 @@ func (b *builder) aggregate(x *ir.Aggregate) (pipeline.Iterator, error) {
 	if len(renames) > 0 {
 		it = newRenameIterator(it, renames)
 	}
+	if arrays := arrayAggregates(x.Aggs); len(arrays) > 0 {
+		it = &arrayAggIterator{Iterator: it, columns: arrays}
+	}
 	if len(post) > 0 {
 		return b.compute(it, post)
 	}
 	return it, nil
+}
+
+// arrayAggregates maps the output columns of list, values and take to
+// whether their elements are sorted and distinct.
+func arrayAggregates(aggs []ir.NamedAgg) map[string]bool {
+	out := map[string]bool{}
+	for _, a := range aggs {
+		switch a.Agg.Func.Name {
+		case "values":
+			out[a.Name] = true
+		case "list", "take":
+			out[a.Name] = false
+		}
+	}
+	return out
+}
+
+// arrayAggIterator turns the pipeline's joined string form of list and
+// values results into arrays of strings.
+type arrayAggIterator struct {
+	pipeline.Iterator
+	columns map[string]bool
+}
+
+func (a *arrayAggIterator) Next(ctx context.Context) (*pipeline.Batch, error) {
+	batch, err := a.Iterator.Next(ctx)
+	if err != nil || batch == nil {
+		return batch, err
+	}
+	for name, sorted := range a.columns {
+		col := batch.Columns[name]
+		for i := range col {
+			if col[i].Type() != event.FieldTypeString {
+				continue
+			}
+			var parts []string
+			if s := col[i].AsString(); s != "" {
+				parts = strings.Split(s, "|||")
+			}
+			if sorted {
+				sort.Strings(parts)
+			}
+			elems := make([]event.Value, len(parts))
+			for j, p := range parts {
+				elems[j] = event.StringValue(p)
+			}
+			col[i] = event.ArrayValue(elems)
+		}
+	}
+	return batch, nil
 }
 
 var bucketUnits = map[string]time.Duration{

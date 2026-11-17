@@ -18,10 +18,10 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/cluster/rpc"
 	clusterpb "github.com/lynxbase/lynxdb/pkg/cluster/rpc/proto"
 	"github.com/lynxbase/lynxdb/pkg/cluster/tracing"
+	"github.com/lynxbase/lynxdb/pkg/engine/physical"
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/logical"
-	"github.com/lynxbase/lynxdb/pkg/logical/physical"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/model"
 )
 
@@ -89,15 +89,15 @@ func NewCoordinator(
 	}
 }
 
-// ExecuteQuery plans, fans out, and merges a distributed query using the
-// logical IR plan. It delegates to ExecuteQueryIR. This is the sole entry
-// point for distributed query execution after the SPL2 path was removed.
+// ExecuteQuery plans, fans out, and merges a distributed query. Shards
+// compile query themselves; plan is its compiled form on the coordinator.
 func (c *Coordinator) ExecuteQuery(
 	ctx context.Context,
-	prog *logical.Plan,
+	query string,
+	plan *ir.Plan,
 	hints *model.QueryHints,
 ) (*DistributedQueryResult, error) {
-	return c.ExecuteQueryIR(ctx, prog, hints)
+	return c.ExecuteQueryIR(ctx, query, plan, hints)
 }
 
 // executePartialAgg fans out partial aggregation to all shards and merges.
@@ -366,112 +366,26 @@ func (c *Coordinator) checkPartialFailure(meta *QueryMeta) error {
 	return nil
 }
 
-// applyCoordCommands runs coordinator-only pipeline commands on merged rows.
-//
-// It constructs a synthetic logical.Plan whose leaf is a Scan("_merged")
-// with the coordNodes chained above it, then executes via physical.Build
-// using a RowScanIterator as the Source hook. This ensures coordinator-side
-// stages (sort, head, dedup, etc.) are properly applied after merge.
-//
-// CoordNodes are cloned bottom-up to avoid mutating the shared IR plan tree.
-// The IR planner's split detaches coord nodes from the original tree, but
-// their Input pointers may still reference shared nodes. We rebuild the
-// chain with fresh unaryNode.Input wiring so the physical builder sees a
-// clean single-child chain from root down to the synthetic Scan.
-func applyCoordCommands(ctx context.Context, rows []map[string]event.Value, coordNodes []logical.Node) ([]map[string]event.Value, error) {
+// applyCoordCommands runs the coordinator operators over the merged shard
+// rows. The chain is rebuilt with WithInputs over a scan whose source hook
+// returns the rows, so the original plan is not modified.
+func applyCoordCommands(ctx context.Context, rows []map[string]event.Value, coordNodes []ir.Node) ([]map[string]event.Value, error) {
 	if len(coordNodes) == 0 {
 		return rows, nil
 	}
-
-	// Build a synthetic plan: Scan("_merged") -> coordNodes[0] -> ... -> coordNodes[N-1]
-	// The coordNodes are in pipeline order (first = closest to scan).
-	//
-	// Clone each node to avoid mutating the shared IR tree. We use
-	// SetChildren to rewire the chain bottom-up.
-	syntheticScan := &logical.Scan{
-		Sources: []logical.SourcePattern{
-			{Kind: 0, Name: "_merged"},
-		},
+	var input ir.Node = &ir.Scan{Out: coordNodes[0].Inputs()[0].Schema()}
+	for _, n := range coordNodes {
+		input = n.WithInputs([]ir.Node{input})
 	}
-
-	// Clone coord nodes and rebuild the chain.
-	cloned := make([]logical.Node, len(coordNodes))
-	for i, n := range coordNodes {
-		cloned[i] = cloneCoordNode(n)
-	}
-
-	// Wire: cloned[0].Input = syntheticScan, cloned[1].Input = cloned[0], etc.
-	cloned[0].SetChildren([]logical.Node{syntheticScan})
-	for i := 1; i < len(cloned); i++ {
-		cloned[i].SetChildren([]logical.Node{cloned[i-1]})
-	}
-
-	plan := &logical.Plan{
-		Root: cloned[len(cloned)-1],
-	}
-
-	// Build the physical pipeline with a Source hook that returns the merged rows.
-	// Pass the caller's context so CTE materialization and pipeline execution
-	// honour cancellation and deadlines.
-	iter, err := physical.Build(plan, physical.BuildOptions{
-		Source: func(_ *logical.Scan) (pipeline.Iterator, error) {
+	iter, err := physical.Build(&ir.Plan{Root: input}, physical.Options{
+		Source: func(*ir.Scan) (pipeline.Iterator, error) {
 			return pipeline.NewRowScanIterator(rows, pipeline.DefaultBatchSize), nil
 		},
 		Now:     time.Now(),
 		Context: ctx,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("applyCoordCommands: physical.Build: %w", err)
+		return nil, fmt.Errorf("applyCoordCommands: %w", err)
 	}
-
-	result, err := pipeline.CollectAll(ctx, iter)
-	if err != nil {
-		return nil, fmt.Errorf("applyCoordCommands: collect: %w", err)
-	}
-
-	return result, nil
-}
-
-// cloneCoordNode creates a shallow copy of a logical node so that SetChildren
-// does not mutate the original IR plan tree. Only the node shell is copied;
-// the expression/config fields are shared (they are read-only during execution).
-func cloneCoordNode(n logical.Node) logical.Node {
-	switch nd := n.(type) {
-	case *logical.Sort:
-		clone := *nd
-		return &clone
-	case *logical.Limit:
-		clone := *nd
-		return &clone
-	case *logical.Dedup:
-		clone := *nd
-		return &clone
-	case *logical.TopK:
-		clone := *nd
-		return &clone
-	case *logical.Filter:
-		clone := *nd
-		return &clone
-	case *logical.Extend:
-		clone := *nd
-		return &clone
-	case *logical.Project:
-		clone := *nd
-		return &clone
-	case *logical.Aggregate:
-		clone := *nd
-		return &clone
-	case *logical.Join:
-		clone := *nd
-		return &clone
-	case *logical.Describe:
-		clone := *nd
-		return &clone
-	case *logical.Helper:
-		clone := *nd
-		return &clone
-	default:
-		// Unknown node type: return as-is (caller should not pass Scan here).
-		return n
-	}
+	return pipeline.CollectAll(ctx, iter)
 }

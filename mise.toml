@@ -9,17 +9,12 @@
 go     = "1.26.3"
 node   = "20.19.0"
 python = "3.13.7"
-rust   = "1.85.0"
-bun    = "1.2.8"
 
 # Release and distribution tooling.
 "aqua:goreleaser/goreleaser"  = "2.15.2"
 "aqua:golangci/golangci-lint" = "2.12.2"
 "aqua:rclone/rclone"          = "1.69.3"
 "aqua:cli/cli"                = "2.92.0"
-
-# rsigma-cli is built from the upstream git tag. The binary is named `rsigma`.
-"cargo:https://github.com/timescale/rsigma" = { version = "tag:v0.9.0", crate = "rsigma" }
 
 [env]
 DO_NOT_TRACK = "1"
@@ -32,18 +27,10 @@ run = "make build"
 description = "Run all tests (unit + e2e + cli)"
 run = "make test"
 
-[tasks.web]
-description = "Build the embedded Web UI"
-run = "make webui"
-
 [tasks.lint]
 description = "Build the custom golangci-lint and run it"
 run = "make lint"
 
-[tasks.sync-rsigma]
-description = "Refresh the pinned rsigma golden corpus"
-run = "scripts/sync_rsigma_golden.sh"
-
 [tasks.bench]
 description = "Run benchmark suite"
-run = "make bench-macro"
+run = "make bench-micro"

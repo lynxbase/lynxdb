@@ -1,5 +1,5 @@
 # file: backend_server.log
 # format: json
-from main
+source=main
 | stats avg(amount_cents) as avg_amount, count(amount_cents) as has_amount, count() as total
-| extend coverage_pct = round((float((has_amount * 100)) / total), 1)
+| eval coverage_pct = round(has_amount * 100.0 / total, 1)

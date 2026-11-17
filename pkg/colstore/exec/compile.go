@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
@@ -39,12 +40,19 @@ type query struct {
 	// post computes the final columns from an aggregate's; nil keeps them.
 	post  []*pexpr
 	names []string
+	// fields marks the named columns that hold a stored field as it is.
+	fields []bool
+	// under, when set, names the objects whose members alone follow the
+	// named columns.
+	under []string
 	order []orderSpec
 	limit int
 	// depth bounds the nesting of the filter and of scalar expressions, and
 	// slots counts the computed nodes of the scalar expressions.
 	depth int
 	slots int
+	// funcs counts the OpFunc nodes of the scalar expressions.
+	funcs int
 	// located holds, per column of the aggregate, the column whose value in
 	// a row that the aggregate picked it stands for, or nil; nil when none
 	// does. The values are read for the rows of the result alone, which
@@ -54,11 +62,26 @@ type query struct {
 	located []*sexpr
 	final   []*sexpr
 	early   bool
+	// places is set when a plan without an aggregate records where its rows
+	// are. rest is set when its last column is those places, which the
+	// result replaces by the rows' fields other than hidden.
+	places bool
+	rest   bool
+	hidden []string
+	// hide names the columns that the result leaves out.
+	hide []string
+	// byTime is set for rows that a limit keeps the first of by their time:
+	// negative for the latest first, positive for the earliest; timeCol is
+	// the column of the time. The scan then takes the blocks in that order
+	// and leaves out those that the rows kept so far rule out.
+	byTime  int
+	timeCol int
 }
 
 type orderSpec struct {
-	col  int
-	desc bool
+	col        int
+	desc       bool
+	nullsFirst bool
 }
 
 // sexpr is a scalar expression over the columns of a block.
@@ -77,6 +100,10 @@ type sexpr struct {
 	depth int
 	// slot numbers the buffers of a computed node or a literal.
 	slot int
+	// newFunc makes the function of an OpFunc node, which fn numbers among
+	// those of the query.
+	newFunc func() Func
+	fn      int
 }
 
 func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
@@ -112,6 +139,10 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 		}
 		q.filter = p
 		q.opts = pushdown(snap, scan.Filter)
+		// A filter with a long name costs more to look up than it saves.
+		if name, ok := condition(nil, scan.Filter); ok && len(name) <= 4096 {
+			q.opts.Condition = string(name)
+		}
 	}
 
 	switch {
@@ -133,13 +164,16 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 			}
 		}
 	case prj != nil:
+		if len(prj.Exprs) == 0 && !prj.Rest {
+			return nil, unsupported("a projection of no columns")
+		}
 		for _, e := range prj.Exprs {
 			s, err := q.scanExpr(e.Expr, 0)
 			if err != nil {
 				return nil, err
 			}
 			q.rowExprs = append(q.rowExprs, s)
-			q.names = append(q.names, e.Name)
+			q.names, q.fields = append(q.names, e.Name), append(q.fields, e.Expr.Op == OpColumn)
 		}
 	default:
 		return nil, unsupported("a plan without an aggregate needs a projection")
@@ -161,11 +195,75 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 				return nil, unsupported("sort by unknown column %q", o.Column)
 			}
 			q.early = q.early || (q.final != nil && q.final[col] != nil)
-			q.order = append(q.order, orderSpec{col: col, desc: o.Desc})
+			q.order = append(q.order, orderSpec{col: col, desc: o.Desc, nullsFirst: o.NullsFirst})
 		}
+	}
+	if agg == nil {
+		if q.limit > 0 && len(q.order) > 0 {
+			by := q.order[0]
+			if e := q.rowExprs[by.col]; e.op == OpColumn && q.paths[e.path] == part.TimePath && (e.kind == vec.KindInt || e.kind == KindAny) {
+				q.byTime, q.timeCol = 1, by.col
+				if by.desc {
+					q.byTime = -1
+				}
+			}
+		}
+		q.lateRows(snap, prj)
+	}
+	if srt != nil {
+		for _, name := range srt.Hide {
+			if !slices.Contains(q.names, name) || name == placeName {
+				return nil, unsupported("no column %q to hide", name)
+			}
+		}
+		q.hide = srt.Hide
 	}
 
 	return q, nil
+}
+
+// placeName names the column of places, which no result shows.
+const placeName = "\x00place"
+
+// lateRows leaves what a plan of rows need not read for every row that
+// passes the filter to be read for the rows of the result alone: under a
+// sort with a limit, the columns the sort does not read, and every field
+// that the projection does not name.
+func (q *query) lateRows(snap *colstore.Snapshot, prj *Project) {
+	if q.limit > 0 && len(q.order) > 0 {
+		for i, e := range q.rowExprs {
+			sorts := false
+			for _, o := range q.order {
+				sorts = sorts || o.col == i
+			}
+			if e.op != OpColumn || sorts {
+				continue
+			}
+			if q.final == nil {
+				q.final = make([]*sexpr, len(q.rowExprs))
+			}
+			q.final[i], q.rowExprs[i], q.places = e, &sexpr{op: opPlace}, true
+		}
+	}
+	if !prj.Rest {
+		return
+	}
+	if len(prj.Under) > 0 {
+		// Objects that no part holds members of leave nothing to read.
+		held := false
+		for i := 0; snap != nil && i < len(snap.Parts()); i++ {
+			for _, path := range prj.Under {
+				held = held || snap.Parts()[i].HasObject(path)
+			}
+		}
+		if !held {
+			return
+		}
+		q.under = prj.Under
+	}
+	q.hidden = append(append(q.hidden, q.names...), prj.Except...)
+	q.rowExprs, q.names = append(q.rowExprs, &sexpr{op: opPlace}), append(q.names, placeName)
+	q.places, q.rest = true, true
 }
 
 func (q *query) path(name string) int {
@@ -208,6 +306,27 @@ func (q *query) scanExpr(e *Expr, depth int) (*sexpr, error) {
 			s.kinds = kindBit(e.Value.Kind)
 		}
 		q.slots++
+
+		return s, nil
+	}
+	if e.Op == OpFunc {
+		if e.NewFunc == nil || len(e.Args) == 0 {
+			return nil, unsupported("a function without an implementation or without arguments")
+		}
+		s := &sexpr{op: OpFunc, newFunc: e.NewFunc, fn: q.funcs, depth: depth, slot: q.slots, kinds: allKinds}
+		q.slots++
+		q.funcs++
+		for i, a := range e.Args {
+			arg, err := q.scanExpr(a, depth+1+i)
+			if err != nil {
+				return nil, err
+			}
+			// The function tells a null from a field that is not there.
+			if arg.op == OpColumn && arg.kind == KindAny {
+				arg.kinds |= nullBit
+			}
+			s.args = append(s.args, arg)
+		}
 
 		return s, nil
 	}
@@ -280,9 +399,13 @@ type pred struct {
 	lit  Value
 	pat  tokenfilter.Pattern
 	// tokens holds the hashes of the tokens that a string matching the
-	// pattern of a predAny has.
-	tokens []uint64
-	args   []*pred
+	// pattern of a predAny has; numbered is set when the pattern is a word
+	// of digits, which the numbers of a row match as well, and number is
+	// what it spells.
+	tokens   []uint64
+	number   int64
+	numbered bool
+	args     []*pred
 	// onInt and onFloat say which numeric columns a predNum reads; lo, hi
 	// and ne state the comparison for integers, and none that no integer
 	// satisfies it.
@@ -385,7 +508,10 @@ func (q *query) pred(e *Expr, depth int) (*pred, error) {
 
 		return &pred{kind: predConst, lit: e.Value}, nil
 	case OpMatchAny:
-		return &pred{kind: predAny, pat: e.Pattern, tokens: e.Pattern.Tokens(nil), cost: 64}, nil
+		p := &pred{kind: predAny, pat: e.Pattern, tokens: e.Pattern.Tokens(nil), cost: 64}
+		p.number, p.numbered = e.Pattern.Number()
+
+		return p, nil
 	case OpExists, OpIsNull, OpIsMissing:
 		if len(e.Args) == 1 {
 			if p := q.presence(e); p != nil {
@@ -393,7 +519,7 @@ func (q *query) pred(e *Expr, depth int) (*pred, error) {
 			}
 		}
 	}
-	if least, _ := arity(e.Op); least == 0 {
+	if least, _ := arity(e.Op); least == 0 && e.Op != OpFunc {
 		return nil, unsupported("expression is not a filter")
 	}
 
@@ -628,7 +754,11 @@ func conjunctTokens(c *Expr, dst []colstore.ColumnTokens) []colstore.ColumnToken
 	var set colstore.ColumnTokens
 	switch c.Op {
 	case OpMatchAny:
-		set.Hashes = c.Pattern.Tokens(nil)
+		// A word of digits is also a number of a row, which no token
+		// filter knows of.
+		if _, number := c.Pattern.Number(); !number {
+			set.Hashes = c.Pattern.Tokens(nil)
+		}
 	case OpMatch:
 		if len(c.Args) == 1 && c.Args[0] != nil && c.Args[0].Op == OpColumn &&
 			(c.Args[0].Kind == vec.KindString || c.Args[0].Kind == KindAny) {

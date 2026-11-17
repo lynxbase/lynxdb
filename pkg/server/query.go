@@ -4,55 +4,40 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 	"runtime/debug"
 	"sort"
 	"sync/atomic"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/cache"
+	"github.com/lynxbase/lynxdb/pkg/engine/physical"
 	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/logical"
-	"github.com/lynxbase/lynxdb/pkg/logical/physical"
-	lfAST "github.com/lynxbase/lynxdb/pkg/lynxflow/ast"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/stats"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
-	"github.com/lynxbase/lynxdb/pkg/storage/views"
 	"github.com/lynxbase/lynxdb/pkg/timerange"
 )
 
-// DetectResultType walks the pipeline backwards, skipping pass-through commands
-// (head, tail, sort, fields, table, rename, fillnull, topn) to find the last
-// result-type-defining command.
-func DetectResultType(prog *logical.Plan) ResultType {
-	// RFC-002: delegates to logical plan node inspection instead of spl2 AST.
-	if prog == nil || prog.Root == nil {
+// DetectResultType reports whether a plan returns events or a table: it
+// looks through row-preserving operators for an aggregation or schema.
+func DetectResultType(plan *ir.Plan) ResultType {
+	if plan == nil || plan.Root == nil {
 		return ResultTypeEvents
 	}
-	return detectLogicalResultType(prog.Root)
-}
-
-func detectLogicalResultType(n logical.Node) ResultType {
-	switch nd := n.(type) {
-	case *logical.Aggregate:
-		if nd.Window != nil {
+	for n := plan.Root; ; {
+		switch x := n.(type) {
+		case *ir.Aggregate, *ir.SourceSchema, *ir.Transpose:
+			return ResultTypeAggregate
+		case *ir.Filter, *ir.Project, *ir.RenameColumns, *ir.Compute, *ir.Sort,
+			*ir.Limit, *ir.TopN, *ir.Reverse, *ir.Dedup, *ir.FillNull, *ir.Totals:
+			n = x.Inputs()[0]
+		default:
 			return ResultTypeEvents
 		}
-		return ResultTypeAggregate
-	case *logical.TopK:
-		return ResultTypeAggregate
-	case *logical.Describe:
-		return ResultTypeAggregate
-	case *logical.Limit:
-		return detectLogicalResultType(nd.Input)
-	case *logical.Sort:
-		return detectLogicalResultType(nd.Input)
-	case *logical.Project:
-		return detectLogicalResultType(nd.Input)
-	default:
-		return ResultTypeEvents
 	}
 }
 
@@ -229,7 +214,7 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 	defer e.failJobOnPanic(job)
 
 	logger := e.logger.With("query_id", job.ID)
-	prog := params.Program
+	prog := params.Plan
 	externalTimeBounds := params.ExternalTimeBounds
 	start := time.Now()
 
@@ -254,7 +239,6 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 	// Use pre-extracted hints from planner when available; fall back to extraction.
 	hints := params.Hints
 	if hints == nil {
-		// RFC-002: hints pre-extracted by planner.
 		hints = &model.QueryHints{}
 	}
 	// Merge external time bounds.
@@ -315,14 +299,9 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		}
 	}
 
-	// RFC-002: countStarOnly and partialAgg annotation checks removed.
-	// These relied on spl2 AST annotations which no longer exist.
 	var aggSpec *enginepipeline.PartialAggSpec
 
-	ann := queryAnnotations{
-		acceleratedBy: params.AcceleratedBy,
-		mvStatus:      params.MVStatus,
-	}
+	var ann queryAnnotations
 
 	// Governor handles memory enforcement. No per-query budget monitor needed.
 	cpuBefore := stats.TakeCPUSnapshot()
@@ -377,10 +356,6 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		return
 	}
 
-	// Check for scope hint: warn Splunk users who search all sources without
-	// narrowing by source/index when many sources exist.
-	// RFC-002: spl2.DetectScopeHint removed; scope lints handled by lynxflow lint pass.
-
 	cpuAfter := stats.TakeCPUSnapshot()
 	elapsed := time.Since(start)
 	job.mu.Lock()
@@ -419,14 +394,10 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		PrewhereBytesAvoided: qr.ss.PrewhereBytesAvoided,
 		RangePredicates:      append([]model.RangePredicate(nil), qr.rangePredicates...),
 		PrefetchUsed:         qr.ss.PrefetchUsed,
-		PartialAggUsed:       aggSpec != nil || hasTransformPartialAgg(prog),
+		PartialAggUsed:       aggSpec != nil,
 		TopKUsed:             qr.topKUsed,
 		DictFilterUsed:       qr.ss.DictFilterUsed,
 		JoinStrategy:         ann.joinStrategy,
-		AcceleratedBy:        ann.acceleratedBy,
-		MVStatus:             ann.mvStatus,
-		MVSpeedup:            estimateMVSpeedup(ann.mvRows, qr.rowsScanned),
-		MVOriginalScan:       ann.mvRows,
 		PipelineStages:       qr.pipelineStages,
 		Warnings:             qr.warnings,
 		SegmentDetails:       qr.ss.SegmentDetails,
@@ -529,7 +500,7 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		}
 	}
 	if params.ResultType == ResultTypeEvents {
-		canonicalizeEventMetadataFields(qr.rows, queryAllowsDefaultEventMetadata(params.Program))
+		canonicalizeEventMetadataFields(qr.rows, queryAllowsDefaultEventMetadata(params.Plan))
 	}
 
 	// Determine slow query flag BEFORE calling onQueryComplete so Prometheus
@@ -665,7 +636,7 @@ type queryPipelineResult struct {
 // scatter-gather across shards. Otherwise, local execution is used.
 func (e *Engine) runQueryPipeline(
 	ctx context.Context,
-	prog *logical.Plan,
+	prog *ir.Plan,
 	hints *model.QueryHints,
 	params QueryParams,
 	aggSpec *enginepipeline.PartialAggSpec,
@@ -675,7 +646,7 @@ func (e *Engine) runQueryPipeline(
 	scanStart time.Time,
 ) (*queryPipelineResult, error) {
 	if e.clusterCoordinator != nil {
-		return e.runDistributedPipeline(ctx, prog, hints, onProgress, scanStart)
+		return e.runDistributedPipeline(ctx, params.Query, prog, hints, onProgress, scanStart)
 	}
 
 	return e.runStandardPipeline(ctx, prog, hints, params, onProgress, onPreview, scanStart)
@@ -685,14 +656,15 @@ func (e *Engine) runQueryPipeline(
 // for scatter-gather execution across all relevant shards.
 func (e *Engine) runDistributedPipeline(
 	ctx context.Context,
-	prog *logical.Plan,
+	query string,
+	prog *ir.Plan,
 	hints *model.QueryHints,
 	onProgress func(*SearchProgress),
 	scanStart time.Time,
 ) (*queryPipelineResult, error) {
 	onProgress(&SearchProgress{Phase: PhaseScanningSegments})
 
-	result, err := e.clusterCoordinator.ExecuteQuery(ctx, prog, hints)
+	result, err := e.clusterCoordinator.ExecuteQuery(ctx, query, prog, hints)
 	if err != nil {
 		return nil, fmt.Errorf("runDistributedPipeline: %w", err)
 	}
@@ -715,7 +687,7 @@ func (e *Engine) runDistributedPipeline(
 
 func (e *Engine) runStandardPipeline(
 	ctx context.Context,
-	prog *logical.Plan,
+	prog *ir.Plan,
 	hints *model.QueryHints,
 	params QueryParams,
 	onProgress func(*SearchProgress),
@@ -830,7 +802,7 @@ func (e *Engine) runStandardPipeline(
 // lazy row group reads from segment files.
 func (e *Engine) runStreamingPipeline(
 	ctx context.Context,
-	prog *logical.Plan,
+	prog *ir.Plan,
 	hints *model.QueryHints,
 	params QueryParams,
 	onProgress func(*SearchProgress),
@@ -891,7 +863,6 @@ func (e *Engine) runStreamingPipeline(
 	ss.SegmentsTotal = len(segs)
 	ss.BufferedEvents = len(memEvents)
 	sources := e.buildSegmentSources(ctx, segs, segFilterHints, &ss)
-	// RFC-002: opt.LowerRangeToBSI removed.
 
 	// Propagate segment skip counts to global pruning metrics.
 	e.recordPruningMetrics(&ss)
@@ -1042,37 +1013,17 @@ func (e *Engine) parallelConfig() *enginepipeline.ParallelConfig {
 	}
 }
 
-// buildProgramPipeline builds the query pipeline via the LynxFlow physical
-// builder (physical.Build). This replaces the deleted SPL2 BuildProgramWithGovernor.
-//
-// The IndexStore is adapted to a physical.Source callback: MaterializeEvents
-// provides the events for each index, and they are converted to pipeline rows.
-// For StreamingServerStore, the buffered events and segment data are accessible
-// through this path. For ColumnarBatchStore, the pre-materialized batches are
-// used directly.
-//
-// When the Engine has a view registry, the Source callback first checks whether
-// a scan's source name matches a materialized view. If so, it returns the
-// view's finalized events via ResolveView instead of scanning an index.
-//
-// Memory governance: creates a per-query MemoryCoordinator from the engine's
-// governor and passes the engine's spillMgr so that blocking operators (sort,
-// join, aggregate, tail, eventstats, transaction, sessionize) use their
-// spill-capable constructors. The coordinator and budget are returned in
+// buildProgramPipeline plans an IR plan onto pipeline iterators reading the
+// given store. Blocking operators get a per-query memory coordinator from
+// the engine governor and the engine's spill manager; both are returned in
 // BuildResult so operator budgets surface in query stats.
 func (e *Engine) buildProgramPipeline(
 	ctx context.Context,
-	prog *logical.Plan,
+	prog *ir.Plan,
 	store enginepipeline.IndexStore,
 	_ string,
 ) (*enginepipeline.BuildResult, error) {
-	// Build a view resolver from the engine's view registry when available.
-	// The resolver is a thin closure that delegates to Engine.ResolveView.
-	var vr enginepipeline.ViewResolver
-	if e.viewRegistry != nil {
-		vr = e
-	}
-	source := indexStoreToSource(store, DefaultIndexName, vr)
+	source := indexStoreToSource(store, DefaultIndexName)
 
 	// Create per-query memory coordinator and budget from the engine governor.
 	var coordinator *enginepipeline.MemoryCoordinator
@@ -1096,8 +1047,9 @@ func (e *Engine) buildProgramPipeline(
 		coordinator = enginepipeline.NewMemoryCoordinator(coordBudget, 0.10)
 	}
 
-	iter, err := physical.Build(prog, physical.BuildOptions{
+	iter, err := physical.Build(prog, physical.Options{
 		Source:       source,
+		Describe:     e.describeSource,
 		Now:          time.Now(),
 		Context:      ctx,
 		Coordinator:  coordinator,
@@ -1132,183 +1084,151 @@ func (e *Engine) buildProgramPipeline(
 //
 // For ColumnarBatchStore, which holds pre-materialized batches, this converts
 // the batches to rows.
-//
-// When vr is non-nil, the returned Source checks whether a scan's source name
-// matches a materialized view BEFORE falling through to index-based scan.
-// This enables `from <viewname>` to query views directly.
-func indexStoreToSource(store enginepipeline.IndexStore, defaultIndex string, vr enginepipeline.ViewResolver) func(*logical.Scan) (enginepipeline.Iterator, error) {
-	// Check if the store is a StreamingServerStore — use its GetEventIterator
-	// which returns a real SegmentStreamIterator reading both buffered and segment data.
-	if ss, ok := store.(*StreamingServerStore); ok {
-		return streamingStoreToSource(ss, defaultIndex, vr)
-	}
-
-	// Check if the store is a ColumnarBatchStore — convert batches to rows.
-	if bs, ok := store.(*enginepipeline.ColumnarBatchStore); ok {
-		return batchStoreToSource(bs, defaultIndex, vr)
-	}
-
-	// Generic fallback: use MaterializeEvents.
-	return materializeStoreToSource(store, defaultIndex, vr)
-}
-
-// streamingStoreToSource creates a Source from a StreamingServerStore by
-// returning a SegmentStreamIterator that reads both buffered events and
-// flushed segment data through the store's GetEventIterator.
-//
-// When vr is non-nil, the source first checks whether the scan's source name
-// matches a materialized view. If so, the view's finalized events are returned
-// via a FromIterator, bypassing the segment scan entirely.
-func streamingStoreToSource(ss *StreamingServerStore, defaultIndex string, vr enginepipeline.ViewResolver) func(*logical.Scan) (enginepipeline.Iterator, error) {
-	return func(scan *logical.Scan) (enginepipeline.Iterator, error) {
-		targetIndex := resolveIndexFromScan(scan, defaultIndex)
-
-		// Check if the target names a materialized view.
-		if vr != nil && targetIndex != "*" && targetIndex != defaultIndex {
-			if iter, ok := tryResolveViewSourceWithRollup(vr, targetIndex, scan.ViewRollup); ok {
-				return iter, nil
-			}
+func indexStoreToSource(store enginepipeline.IndexStore, defaultIndex string) func(*ir.Scan) (enginepipeline.Iterator, error) {
+	switch st := store.(type) {
+	case *StreamingServerStore:
+		return func(scan *ir.Scan) (enginepipeline.Iterator, error) {
+			index, match := scanIndexes(scan, defaultIndex)
+			return filterIndexes(st.GetEventIterator(index), match), nil
 		}
-
-		// For wildcard queries, pass "" so GetEventIterator includes all indexes.
-		// The SegmentStreamIterator's matchesStreamSourceScope handles "*"
-		// when IndexName is empty (no filter -- scan everything).
-		iterIndex := targetIndex
-		if iterIndex == "*" {
-			iterIndex = ""
-		}
-
-		return ss.GetEventIterator(iterIndex), nil
-	}
-}
-
-// batchStoreToSource creates a Source from a ColumnarBatchStore.
-func batchStoreToSource(bs *enginepipeline.ColumnarBatchStore, defaultIndex string, vr enginepipeline.ViewResolver) func(*logical.Scan) (enginepipeline.Iterator, error) {
-	return func(scan *logical.Scan) (enginepipeline.Iterator, error) {
-		targetIndex := resolveIndexFromScan(scan, defaultIndex)
-
-		// Check if the target names a materialized view.
-		if vr != nil && targetIndex != "*" && targetIndex != defaultIndex {
-			if iter, ok := tryResolveViewSourceWithRollup(vr, targetIndex, scan.ViewRollup); ok {
-				return iter, nil
-			}
-		}
-
-		var allRows []map[string]event.Value
-		for idxName, batches := range bs.Batches {
-			if targetIndex != "*" && idxName != targetIndex {
-				continue
-			}
-			for _, batch := range batches {
-				for i := 0; i < batch.Len; i++ {
-					allRows = append(allRows, batch.Row(i))
+	case *enginepipeline.ColumnarBatchStore:
+		return func(scan *ir.Scan) (enginepipeline.Iterator, error) {
+			index, match := scanIndexes(scan, defaultIndex)
+			var rows []map[string]event.Value
+			for name, batches := range st.Batches {
+				if (index != "" && name != index) || (match != nil && !match(name)) {
+					continue
+				}
+				for _, batch := range batches {
+					for i := 0; i < batch.Len; i++ {
+						rows = append(rows, batch.Row(i))
+					}
 				}
 			}
+			return enginepipeline.NewRowScanIterator(rows, enginepipeline.DefaultBatchSize), nil
 		}
-		return enginepipeline.NewRowScanIterator(allRows, enginepipeline.DefaultBatchSize), nil
+	}
+	return func(scan *ir.Scan) (enginepipeline.Iterator, error) {
+		index, match := scanIndexes(scan, defaultIndex)
+		if index == "" {
+			index = "*"
+		}
+		events, err := store.MaterializeEvents(context.Background(), index)
+		if err != nil {
+			return nil, fmt.Errorf("MaterializeEvents(%s): %w", index, err)
+		}
+		iter := enginepipeline.NewRowScanIterator(eventsToValueRows(events), enginepipeline.DefaultBatchSize)
+		return filterIndexes(iter, match), nil
 	}
 }
 
-// materializeStoreToSource creates a Source from a generic IndexStore using
-// MaterializeEvents.
-func materializeStoreToSource(store enginepipeline.IndexStore, defaultIndex string, vr enginepipeline.ViewResolver) func(*logical.Scan) (enginepipeline.Iterator, error) {
-	return func(scan *logical.Scan) (enginepipeline.Iterator, error) {
-		targetIndex := resolveIndexFromScan(scan, defaultIndex)
-
-		// Check if the target names a materialized view.
-		if vr != nil && targetIndex != "*" && targetIndex != defaultIndex {
-			if iter, ok := tryResolveViewSourceWithRollup(vr, targetIndex, scan.ViewRollup); ok {
-				return iter, nil
+// scanIndexes returns the one index a scan reads, or "" with a matcher of
+// index names for a scan of several sources or patterns. A nil matcher
+// with "" reads every index.
+func scanIndexes(scan *ir.Scan, defaultIndex string) (string, func(string) bool) {
+	if len(scan.Sources) == 0 {
+		return defaultIndex, nil
+	}
+	if len(scan.Sources) == 1 && !scan.Sources[0].Pattern && scan.Sources[0].Name != "*" {
+		return scan.Sources[0].Name, nil
+	}
+	for _, s := range scan.Sources {
+		if s.Name == "*" {
+			return "", nil
+		}
+	}
+	sources := scan.Sources
+	return "", func(index string) bool {
+		for _, s := range sources {
+			if !s.Pattern && s.Name == index {
+				return true
+			}
+			if ok, _ := path.Match(s.Name, index); s.Pattern && ok {
+				return true
 			}
 		}
+		return false
+	}
+}
 
-		events, err := store.MaterializeEvents(context.Background(), targetIndex)
-		if err != nil {
-			return nil, fmt.Errorf("MaterializeEvents(%s): %w", targetIndex, err)
+// FilterScanIndexes keeps the rows of it that belong to an index the scan
+// reads.
+func FilterScanIndexes(scan *ir.Scan, it enginepipeline.Iterator) enginepipeline.Iterator {
+	index, match := scanIndexes(scan, DefaultIndexName)
+	if index != "" {
+		return filterIndexes(it, func(name string) bool { return name == index })
+	}
+	return filterIndexes(it, match)
+}
+
+// filterIndexes keeps the rows whose index column satisfies match; rows
+// without one belong to the default index.
+func filterIndexes(it enginepipeline.Iterator, match func(string) bool) enginepipeline.Iterator {
+	if match == nil {
+		return it
+	}
+	return &indexFilterIterator{Iterator: it, match: match}
+}
+
+type indexFilterIterator struct {
+	enginepipeline.Iterator
+	match func(string) bool
+}
+
+func (f *indexFilterIterator) Next(ctx context.Context) (*enginepipeline.Batch, error) {
+	for {
+		b, err := f.Iterator.Next(ctx)
+		if err != nil || b == nil {
+			return b, err
 		}
-		rows := eventsToValueRows(events)
-		return enginepipeline.NewRowScanIterator(rows, enginepipeline.DefaultBatchSize), nil
-	}
-}
-
-// tryResolveViewSource checks whether targetName matches a materialized view
-// and, if so, returns a pipeline Iterator over the view's finalized events.
-// Returns (nil, false) when targetName is not a view — the caller should fall
-// through to index-based scan. Errors from ResolveView (e.g. view needs
-// migration) are propagated by returning (nil, true) — callers type-switch
-// to see whether the Iterator is nil *and* ok is true (indicating an error
-// case that should be raised).
-//
-// Design note: we try ResolveView unconditionally for non-default, non-star
-// names. If the name is not a known view, ResolveView returns ErrViewNotFound
-// and we fall through silently. This avoids needing a separate "view exists?"
-// API.
-func tryResolveViewSource(vr enginepipeline.ViewResolver, targetName string) (enginepipeline.Iterator, bool) {
-	return tryResolveViewSourceWithRollup(vr, targetName, nil)
-}
-
-func tryResolveViewSourceWithRollup(vr enginepipeline.ViewResolver, targetName string, rollup *logical.ViewRollup) (enginepipeline.Iterator, bool) {
-	var (
-		events []*event.Event
-		err    error
-	)
-	if rollup != nil {
-		events, err = vr.ResolveViewRollup(targetName, rollup.GroupBy, viewRollupFuncs(rollup.Aggs))
-	} else {
-		events, err = vr.ResolveView(targetName)
-	}
-	if err != nil {
-		// ErrViewNotFound means this name isn't a view — fall through to index scan.
-		if errors.Is(err, views.ErrViewNotFound) {
-			return nil, false
+		keep := make([]int, 0, b.Len)
+		for i := 0; i < b.Len; i++ {
+			index := DefaultIndexName
+			if v := b.Value("index", i); v.Type() == event.FieldTypeString && v.AsString() != "" {
+				index = v.AsString()
+			}
+			if f.match(index) {
+				keep = append(keep, i)
+			}
 		}
-		// Other errors (e.g. ErrViewNeedsMigration) should surface to the user.
-		// Wrap the error in an errorIterator so the pipeline reports it.
-		return &viewErrorIterator{err: fmt.Errorf("from %s: %w", targetName, err)}, true
+		if len(keep) == b.Len {
+			return b, nil
+		}
+		if len(keep) > 0 {
+			return b.PermuteSlice(keep), nil
+		}
 	}
-	rows := eventsToValueRows(events)
-	return enginepipeline.NewRowScanIterator(rows, enginepipeline.DefaultBatchSize), true
 }
 
-func viewRollupFuncs(aggs []logical.ViewRollupAgg) []enginepipeline.PartialAggFunc {
-	funcs := make([]enginepipeline.PartialAggFunc, 0, len(aggs))
-	for _, a := range aggs {
-		funcs = append(funcs, enginepipeline.PartialAggFunc{
-			Name:        a.Func,
-			Field:       a.Field,
-			WeightField: a.WeightField,
-			Alias:       a.Alias,
-			Quantile:    a.Quantile,
-		})
+// describeSource lists the columns the field catalog knows, for describe.
+func (e *Engine) describeSource(src ir.Source) ([]map[string]event.Value, error) {
+	fields := e.ListFields()
+	out := make([]map[string]event.Value, len(fields))
+	for i, f := range fields {
+		out[i] = map[string]event.Value{
+			"TABLE_NAME":       event.StringValue(src.Name),
+			"COLUMN_NAME":      event.StringValue(f.Name),
+			"TYPE_NAME":        event.StringValue(describeTypeName(f.Type)),
+			"ORDINAL_POSITION": event.IntValue(int64(i + 1)),
+		}
 	}
-	return funcs
+	return out, nil
 }
 
-// viewErrorIterator is a pipeline iterator that returns a stored error on Init.
-// Used to surface view resolution errors (e.g. needs-migration) through the
-// normal pipeline error path.
-type viewErrorIterator struct {
-	err error
-}
-
-func (v *viewErrorIterator) Init(_ context.Context) error                          { return v.err }
-func (v *viewErrorIterator) Next(_ context.Context) (*enginepipeline.Batch, error) { return nil, nil }
-func (v *viewErrorIterator) Close() error                                          { return nil }
-func (v *viewErrorIterator) Schema() []enginepipeline.FieldInfo                    { return nil }
-
-// resolveIndexFromScan extracts the target index name from a logical.Scan node.
-func resolveIndexFromScan(scan *logical.Scan, defaultIndex string) string {
-	if len(scan.Sources) == 0 {
-		return defaultIndex
+func describeTypeName(catalogType string) string {
+	switch catalogType {
+	case "int":
+		return "bigint"
+	case "float":
+		return "double"
+	case "bool":
+		return "boolean"
+	case "duration":
+		return "interval"
+	case "object":
+		return "struct"
 	}
-	src := scan.Sources[0]
-	if src.Kind == lfAST.SourceStar {
-		return "*"
-	}
-	if src.Name != "" {
-		return src.Name
-	}
-	return defaultIndex
+	return catalogType
 }
 
 // eventsToValueRows converts []*event.Event to []map[string]event.Value
@@ -1361,35 +1281,6 @@ func (e *Engine) countStarFromMetadata(hints *model.QueryHints) int64 {
 	return total
 }
 
-// findAggregateNode returns the first Aggregate node in the logical plan, or nil.
-func findAggregateNode(plan *logical.Plan) *logical.Aggregate {
-	if plan == nil || plan.Root == nil {
-		return nil
-	}
-	var found *logical.Aggregate
-	walkLogicalNodes(plan.Root, func(n logical.Node) {
-		if agg, ok := n.(*logical.Aggregate); ok && found == nil {
-			found = agg
-		}
-	})
-	return found
-}
-
-// mergedRowsToEvents converts merged aggregation result rows to events
-// for feeding into a sub-pipeline (e.g., sort, head after stats).
-func mergedRowsToEvents(rows []map[string]event.Value) []*event.Event {
-	events := make([]*event.Event, len(rows))
-	for i, row := range rows {
-		fields := make(map[string]event.Value, len(row))
-		for k, v := range row {
-			fields[k] = v
-		}
-		events[i] = &event.Event{Fields: fields}
-	}
-
-	return events
-}
-
 // convertStageStats converts pipeline stats.StageStats to server PipelineStage.
 // It also computes exclusive (self) timing for each stage using the Volcano
 // model property: exclusive = inclusive - child inclusive.
@@ -1416,21 +1307,6 @@ func convertStageStats(stages []stats.StageStats) []PipelineStage {
 	}
 
 	return result
-}
-
-// estimateMVSpeedup returns a human-readable speedup estimate (e.g., "~400x")
-// by comparing the original scan row count to the MV row count. Returns "" if
-// no meaningful estimate can be computed (e.g., no MV rows or no original scan).
-func estimateMVSpeedup(originalRows, mvRows int64) string {
-	if originalRows <= 0 || mvRows <= 0 {
-		return ""
-	}
-	ratio := float64(originalRows) / float64(mvRows)
-	if ratio < 2 {
-		return ""
-	}
-
-	return fmt.Sprintf("~%.0fx", ratio)
 }
 
 // applyBudgetAndCPUDelta populates SearchStats from a governor BudgetAdapter
@@ -1562,6 +1438,10 @@ func classifyQueryError(err error) string {
 	if memgov.IsMemoryExhausted(err) {
 		return "QUERY_MEMORY_EXCEEDED"
 	}
+	var ue *physical.UnsupportedError
+	if errors.As(err, &ue) {
+		return "UNSUPPORTED_FEATURE"
+	}
 
 	return ""
 }
@@ -1595,60 +1475,36 @@ func extractMatchedRowsFromStages(stages []stats.StageStats) int64 {
 	return 0
 }
 
-// hasTransformPartialAgg checks whether the program has a transformPartialAgg annotation.
-func hasTransformPartialAgg(_ *logical.Plan) bool {
-	return false
-}
-
-// planHasRootLimit checks whether the root of the logical plan is an explicit
-// Limit (head/tail). Used to avoid double-capping: if the user already wrote
-// | head N or | tail N, we do not inject an additional limit.
-func planHasRootLimit(plan *logical.Plan) bool {
+// planHasRootLimit reports whether the plan ends in an explicit row limit,
+// so the server does not add its own result cap on top.
+func planHasRootLimit(plan *ir.Plan) bool {
 	if plan == nil || plan.Root == nil {
 		return false
 	}
-	_, ok := plan.Root.(*logical.Limit)
-	return ok
+	switch plan.Root.(type) {
+	case *ir.Limit, *ir.TopN:
+		return true
+	}
+	return false
 }
 
-// collectIndexNamesFromPlan extracts all index names from a logical plan.
-func collectIndexNamesFromPlan(prog *logical.Plan) []string {
-	if prog == nil || prog.Root == nil {
-		return nil
-	}
+// collectIndexNamesFromPlan lists the distinct indexes the plan's scans name
+// literally; patterns and the all-indexes source are left out.
+func collectIndexNamesFromPlan(plan *ir.Plan) []string {
 	var names []string
 	seen := map[string]bool{}
-	walkLogicalNodes(prog.Root, func(n logical.Node) {
-		if scan, ok := n.(*logical.Scan); ok && scanSrc(scan) != "" && scanSrc(scan) != "*" {
-			if !seen[scanSrc(scan)] {
-				seen[scanSrc(scan)] = true
-				names = append(names, scanSrc(scan))
+	for _, scan := range physical.Scans(plan) {
+		for _, s := range scan.Sources {
+			if s.Pattern || s.Name == "*" || seen[s.Name] {
+				continue
 			}
+			seen[s.Name] = true
+			names = append(names, s.Name)
 		}
-	})
+	}
 	return names
 }
 
-func walkLogicalNodes(n logical.Node, f func(logical.Node)) {
-	if n == nil {
-		return
-	}
-	f(n)
-	for _, child := range n.Children() {
-		walkLogicalNodes(child, f)
-	}
-}
-
 type queryAnnotations struct {
-	joinStrategy  string
-	acceleratedBy string
-	mvStatus      string
-	mvRows        int64
-}
-
-func scanSrc(scan *logical.Scan) string {
-	if len(scan.Sources) == 0 {
-		return ""
-	}
-	return scan.Sources[0].Name
+	joinStrategy string
 }

@@ -1,253 +1,208 @@
 ---
 sidebar_position: 7
 title: Design Decisions
-description: Key design decisions behind LynxDB -- why columnar storage, why LynxFlow, why Go, why a single binary, why schema-on-read, and why FST + roaring bitmaps.
+description: Key design decisions behind LynxDB -- columnar storage, OpenSearch PPL compiled to a language-independent IR, Go, a single binary, schema-on-read, FST + roaring bitmaps, the Volcano model, and direct-to-part writes.
 ---
 
 # Design Decisions
 
-This page explains the reasoning behind the major design decisions in LynxDB. Each section describes the decision, the alternatives we considered, and why we chose the approach we did.
+This page explains the reasoning behind the major design decisions in LynxDB: the decision, the alternatives, and why the chosen approach fits log analytics.
 
-## Why Columnar Storage (Not Row-Oriented)
+## Columnar Storage
 
-**Decision**: Store log data in a columnar format where each field is stored in a separate column with type-specific encoding.
+**Decision**: Store log data in a columnar format where each field is a separate column with type-specific encoding.
 
-**Alternatives**: Row-oriented storage (each event stored as a contiguous blob, e.g., JSON on disk), hybrid formats (e.g., PAX/Parquet).
-
-**Reasoning**:
-
-Log analytics queries almost always access a subset of fields. A query like `stats count() by level` needs only the `level` column -- in a columnar format, it reads that single column. In a row-oriented format, it reads every byte of every event to extract one field.
-
-| Access pattern | Columnar | Row-oriented |
-|---------------|----------|-------------|
-| `stats count() by level` (1 field) | Read ~5% of data | Read 100% of data |
-| `where status >= 500` (1 field predicate) | Read ~5% of data | Read 100% of data |
-| `keep _time, level, message` (3 fields) | Read ~15% of data | Read 100% of data |
-| Full event reconstruction | Read 100% of data | Read 100% of data |
-
-The only case where row-oriented wins is full event reconstruction, which is rare in analytics workloads. Even for `from main "error"` where you display the full event, the inverted index resolves matching events first, and then only the matching rows are read in full.
-
-Additionally, columnar storage enables type-specific encoding:
-
-- Timestamps: delta-varint (5-10x compression)
-- String fields: dictionary encoding (10-50x for low cardinality)
-- Float fields: Gorilla encoding (10-15x for low variance)
-- Raw text: LZ4 compression (3-5x)
-
-A row-oriented store can only apply generic compression (e.g., gzip) to entire rows, which is significantly less effective.
-
-## Why LynxFlow (Not SQL)
-
-**Decision**: Use LynxFlow, a pipeline query language purpose-built for log analytics, not SQL.
-
-**Alternatives**: SQL, SPL/SPL2 (Splunk), LogQL (Grafana Loki), Lucene DSL (Elasticsearch).
-
-**History**: LynxDB originally shipped an SPL2 dialect. Living with it exposed too much inherited ambiguity -- `=` doubling as comparison and assignment, `count` versus `count()`, a search-specific precedence model, and a long tail of overlapping commands. LynxFlow v2 (RFC-002, June 2026) replaced it as a clean-break redesign: same pipeline philosophy, one consistent grammar. The full capability mapping is in `docs/grammar/RFC-002.md` §15 and the CHANGELOG section "Breaking Changes (LynxFlow vs SPL2)".
+**Alternatives**: Row-oriented storage (each event as a contiguous blob, such as JSON on disk), hybrid formats.
 
 **Reasoning**:
 
-Pipeline languages in the SPL tradition were specifically designed for log analytics. SQL was designed for relational data. The mismatch shows in practice:
+Log analytics queries almost always touch a few fields. `stats count() by level` needs only the `level` column; a columnar format reads that column, while a row-oriented format reads every byte of every event to extract one field.
 
-**Pipeline vs. nested subqueries**: Log analysis is naturally a pipeline: filter -> transform -> aggregate -> sort -> limit. LynxFlow expresses this directly:
+| Query | Columnar | Row-oriented |
+|-------|----------|--------------|
+| `stats count() by level` (1 field) | Reads the `level` column | Reads every event |
+| `where status >= 500` (1 field predicate) | Reads the `status` column | Reads every event |
+| `fields _time, level, msg` (3 fields) | Reads 3 columns | Reads every event |
+| Full event reconstruction | Reads every column | Reads every event |
 
-```
-from nginx | where status >= 500
-  | extend duration_sec = duration_ms / 1000
-  | stats count(), avg(duration_sec) by uri
-  | sort -count
+Row-oriented storage only wins for full event reconstruction. Even for `source=main error`, which shows whole events, the term index finds the matching rows first and only those rows are read in full.
+
+Columnar storage also allows type-specific encoding:
+
+- Timestamps: delta-varint
+- Strings: dictionary encoding for low cardinality, LZ4 otherwise
+- Floats: Gorilla encoding
+- Raw text: LZ4, or ZSTD with `storage.compression: zstd`
+
+A row-oriented store can only apply generic compression to whole rows, which compresses worse.
+
+## OpenSearch PPL as the Query Language
+
+**Decision**: Use OpenSearch Piped Processing Language (PPL), an open, documented pipeline language, and compile it to a language-independent IR.
+
+**Reasoning**:
+
+- **Pipelines match how logs are analyzed**: filter, extract, aggregate, sort, limit. Each command reads the previous command's output, so queries are built one stage at a time:
+
+  ```
+  source=main status>=500
+  | eval duration_sec = response_time / 1000.0
+  | stats count() as n, avg(duration_sec) as avg_sec by path
+  | sort - n
   | head 10
-```
+  ```
 
-The SQL equivalent requires nested subqueries or CTEs:
+- **Search first**: `source=main error` is a complete query. Free-text terms and field comparisons go straight into the source command, where the storage engine can use them to skip data.
+- **Extraction inside the query**: `parse`, `rex`, `grok` and `spath` pull structure out of raw text at query time:
 
-```sql
-SELECT uri, COUNT(*) as cnt, AVG(duration_ms / 1000.0) as avg_dur
-FROM logs
-WHERE source = 'nginx' AND status >= 500
-GROUP BY uri
-ORDER BY cnt DESC
-LIMIT 10
-```
+  ```
+  source=main
+  | rex field=_raw "user=(?<uname>\w+)"
+  | stats dc(uname) as users, count() as n by path
+  | where users > 5
+  | sort - n
+  ```
 
-For simple queries, SQL is comparable. But LynxFlow shines for multi-stage transformations:
+- **An existing language**: PPL has a published grammar and command reference. Users and tools that know it need not learn a LynxDB-specific dialect, and LynxDB states exactly which commands and functions it supports in its catalogs (`GET /api/v1/catalog`).
 
-```
-from main
-  | parse regex r"client=(?P<ip>\d+\.\d+\.\d+\.\d+)"
-  | stats dc(ip) as unique_ips, count() by uri
-  | where unique_ips > 100
-  | sort -count
-```
+## A Language-Independent IR
 
-This would require nested subqueries in SQL, and the `parse regex` (regex extraction) step has no clean SQL equivalent.
+**Decision**: The PPL frontend lowers queries to a canonical IR (`pkg/ir`); the optimizer, physical planner, executor and cluster coordinator work only on the IR.
 
-**Practical benefits**:
+**Reasoning**:
 
-- **Splunk familiarity**: Millions of engineers already know SPL. LynxFlow keeps the pipe-stage model and most stage names (`stats`, `sort`, `dedup`, `top`), so migration from Splunk stays straightforward.
-- **Search-first**: `from main level=error` is a complete query, with search sugar in the `from` stage. In SQL, you always need `SELECT ... FROM ... WHERE`.
-- **Pipeline composability**: Each stage is independent. You can build queries incrementally by adding pipe stages.
-- **One grammar, no ambiguity**: `==` always compares, `=` always binds (the from-stage search sugar `level=error` is the single exception). Diagnostics carry error codes, caret spans, and suggestions.
+- **One engine contract**: storage hints, plan rewrites and distributed splitting are written once, against IR operators, not against syntax.
+- **Testable rewrites**: every optimizer rule is a plan-to-plan function, checked by `ir.Validate` and visible in `explain`.
+- **Cheap compilation**: compilation depends only on the query text, so plans are cached by text and reused across requests.
 
-## Why Go (Not Rust or C++)
+See [Query Engine](/docs/architecture/query-engine) and [PPL IR](../ppl/ir.md).
+
+## Go
 
 **Decision**: Implement LynxDB in Go.
 
 **Alternatives**: Rust, C++, Java.
 
-**Reasoning**:
-
 | Factor | Go | Rust | C++ | Java |
-|--------|----|----|-----|------|
-| **Build speed** | ~5 sec | ~60 sec | ~120 sec | ~30 sec |
-| **Single binary** | Native (static link) | Native (static link) | Possible (complex) | Requires JVM |
-| **Cross-compilation** | `GOOS=linux go build` | Possible (complex) | Very complex | JVM portability |
-| **Concurrency** | Goroutines (M:N) | async/await + threads | Threads | Virtual threads |
-| **Memory safety** | GC (no use-after-free) | Ownership (no GC) | Manual (risky) | GC |
-| **Ecosystem** | Good (cloud-native) | Growing | Mature | Mature |
-| **Contributor pool** | Large | Growing | Large | Large |
+|--------|----|------|-----|------|
+| **Single binary** | Native (static link) | Native (static link) | Possible (complex) | Requires a JVM |
+| **Cross-compilation** | `GOOS=linux go build` | Possible | Complex | JVM portability |
+| **Concurrency** | Goroutines | async/await + threads | Threads | Virtual threads |
+| **Memory safety** | GC | Ownership | Manual | GC |
+| **Build speed** | Fast | Slow | Slow | Moderate |
 
 The key factors:
 
-1. **Single static binary**: Go produces statically linked binaries by default. `go build` gives you one file that runs anywhere -- no runtime, no shared libraries, no JVM. This is essential for LynxDB's "one binary, every scale" philosophy.
+1. **Single static binary**: `go build` produces one file with no runtime, shared libraries or JVM, which the single-binary model needs.
+2. **Fast compilation**: short builds keep contributor iteration and CI fast.
+3. **Concurrency**: goroutines fit concurrent ingest, streaming query execution and background work (compaction, tiering, retention).
+4. **Performance**: the hot paths avoid per-row allocations: the VM runs on a fixed-size stack, and batches and buffers are reused.
+5. **Contributor accessibility**: Go has a gentler learning curve than Rust.
 
-2. **Fast compilation**: Go compiles the entire LynxDB codebase in under 5 seconds. This matters for contributor productivity and CI/CD speed. Rust compiles can take minutes for a project this size.
+**Why not Rust?** Better raw performance and no GC pauses, at the cost of slower builds and a steeper learning curve. With allocation-free hot paths, GC is not the bottleneck.
 
-3. **Concurrency**: Go's goroutines and channels are ideal for LynxDB's architecture -- concurrent ingest (async batcher + direct-to-part writes), streaming query execution (Volcano iterators pulling from multiple segments), and background operations (compaction, tiering).
+**Why not C++?** Memory safety. A database that ingests arbitrary data and evaluates user-provided expressions cannot afford use-after-free or buffer overflows.
 
-4. **Performance**: Go's performance is sufficient. The bytecode VM achieves 22ns/op with zero allocations through careful design (fixed-size stack, no interfaces on the hot path). Where Go's GC could be a concern (the VM hot loop), we pre-allocate and reuse, eliminating GC pressure entirely.
+**Why not Java?** A single binary in Java means shipping a JRE, and the JVM's baseline memory use is high for a tool that also runs in pipes.
 
-5. **Contributor accessibility**: Go has a gentler learning curve than Rust. For an open-source project, this matters -- more potential contributors can ramp up quickly.
+## A Single Binary
 
-**Why not Rust?** Rust would give marginally better raw performance and eliminates GC pauses entirely. But LynxDB's hot paths are already zero-allocation, so GC is not a practical concern. The trade-off is significantly slower builds, a steeper contributor learning curve, and more complex cross-compilation.
+**Decision**: Ship one static binary that works as a CLI tool and a server, with the cluster components (`pkg/cluster`) linked into the same binary.
 
-**Why not C++?** Memory safety. A database that ingests arbitrary user data and evaluates user-provided expressions cannot afford use-after-free or buffer overflow vulnerabilities. Go's memory safety eliminates this entire class of bugs.
-
-**Why not Java?** The JVM. LynxDB's idle memory footprint is ~50 MB. The JVM alone consumes hundreds of MB. A "single binary" in Java means shipping a JRE, which defeats the purpose.
-
-## Why a Single Binary
-
-**Decision**: Ship one static binary that works as a CLI tool, a server, and a cluster node.
-
-**Alternatives**: Separate binaries for each role (e.g., `lynxdb-ingest`, `lynxdb-query`, `lynxdb-meta`), microservices architecture.
+**Alternatives**: Separate binaries per role, microservices.
 
 **Reasoning**:
 
-1. **Operational simplicity**: One binary to install, update, and monitor. `curl | sh` gives you everything. No version matrix between components.
+1. **Operational simplicity**: one binary to install, upgrade and monitor, with no version matrix between components.
+2. **Pipe mode**: `lynxdb query --file app.log 'source=main | stats count()'` runs the same compiler and operators as the server in process. This works because the whole query engine is linked into the CLI.
+3. **Gradual scaling**: the cluster design keeps the same binary, with roles chosen by configuration (`cluster.roles`) rather than separate programs. `lynxdb server` does not start the cluster runtime (see [Distributed Architecture](/docs/architecture/distributed)).
+4. **Testing**: integration tests exercise the real server code path.
 
-2. **Pipe mode**: The CLI `lynxdb query --file app.log 'stats count()'` creates an ephemeral in-memory engine inside the same binary. This only works because the entire storage engine and query engine are linked into the binary. Separate binaries cannot offer this.
+## Schema-on-Read
 
-3. **Gradual scaling**: Start with `lynxdb server` on a laptop. When you need a cluster, add `--cluster.seeds` to the same binary. No re-architecture, no new binaries, no migration. Role selection is a config flag (`--cluster.role ingest`).
+**Decision**: No upfront schema. Fields are discovered at ingest and structure can be extracted at query time.
 
-4. **Testing**: Every integration test exercises the real code path, not a mock or a separate test harness. The test binary includes the full server.
-
-The trade-off is a larger binary size (~30 MB), which is negligible for a server-side application.
-
-## Why Schema-on-Read
-
-**Decision**: No upfront schema definition. Fields are discovered and indexed automatically. Structure is extracted at query time.
-
-**Alternatives**: Schema-on-write (Elasticsearch mappings, ClickHouse table definitions), label-based (Grafana Loki).
+**Alternatives**: Schema-on-write (index mappings, table definitions), label-based indexing.
 
 **Reasoning**:
 
-Log data is inherently heterogeneous:
+Log data is heterogeneous:
 
 - Different services emit different fields.
-- Fields change between deployments (new fields added, old fields removed).
-- The same field name may have different types across sources.
-- Raw text logs (syslog, nginx access logs) have no schema at all.
+- Fields change between deployments.
+- The same field name may hold different types in different sources.
+- Raw text logs (syslog, access logs) have no schema at all.
 
-Schema-on-write systems require defining the schema before ingesting data. When logs change shape (which they always do), you get mapping conflicts (Elasticsearch), ingestion failures, or the need to reindex.
-
-Schema-on-read accepts any data and extracts structure at query time:
+Schema-on-write systems need the schema before ingest; when logs change shape, they produce mapping conflicts, ingest failures or reindexing. Schema-on-read accepts any data and extracts structure when it is needed:
 
 ```
-// Extract fields from raw text with parse regex
-from main "connection refused"
-  | parse regex r"host=(?P<host>\S+) port=(?P<port>\d+)"
-  | stats count() by host, port
+source=main "connection refused"
+| rex field=_raw "host=(?<h>\S+) port=(?<port>\d+)"
+| stats count() by h, port
 ```
 
-This is more flexible and more forgiving. The trade-off is that queries over unindexed fields require scanning, but the bloom filter and inverted index provide efficient full-text search for the common case, and materialized views handle the repeated-query case.
+The trade-off is that predicates on fields without index support are evaluated row by row. Time bounds, bloom filters, the term index and column statistics keep the common cases fast.
 
-## Why FST + Roaring Bitmaps (Not Lucene)
+## FST + Roaring Bitmaps
 
-**Decision**: Build a custom inverted index using FST (Finite State Transducers) for the term dictionary and roaring bitmaps for posting lists.
+**Decision**: Build the term index from an FST (finite state transducer) term dictionary and roaring bitmap posting lists.
 
-**Alternatives**: Embed Lucene (via cgo or a JNI bridge), use a simpler hash-based index, use token bloom filters (ClickHouse approach).
-
-**Reasoning**:
-
-**Why not Lucene?** Lucene is Java. Embedding it in a Go binary requires either cgo (with JNI, adding the JVM as a dependency) or a sidecar process. Both violate the "single binary, zero dependencies" principle. Lucene is also a general-purpose library with significant complexity (segment merging, codec versioning, near-real-time search) that LynxDB does not need.
-
-**Why FST instead of a hash map?** FSTs share prefixes and suffixes between terms, making them 5-10x more compact than a hash map. They also support prefix iteration and fuzzy matching natively, which a hash map cannot do. The FST library (`github.com/blevesearch/vellum`) is a mature Go implementation with excellent performance.
-
-**Why roaring bitmaps instead of compressed bitmaps or sorted arrays?** Roaring bitmaps automatically choose the best container type (array, bitmap, or run-length) based on density. This makes them efficient for both sparse posting lists (a rare term appearing in 10 events) and dense posting lists (a common term appearing in 90% of events). Set operations (AND, OR, NOT) are implemented with container-level specialization and operate at memory bandwidth speed.
-
-**Why not token bloom filters (ClickHouse approach)?** Token bloom filters only support exact term membership tests. They cannot answer prefix queries, fuzzy queries, or phrase queries. They also have no notion of which events contain a term -- only whether the term exists in the segment at all. LynxDB's bloom filters serve the same segment-skipping role, but the FST + roaring inverted index adds row-level precision on top.
-
-| Feature | LynxDB (FST + Roaring) | Lucene | Hash + Sorted Array | Token Bloom |
-|---------|------------------------|--------|---------------------|-------------|
-| Prefix search | Yes | Yes | No | No |
-| Fuzzy search | Yes | Yes | No | No |
-| Row-level posting lists | Yes | Yes | Yes | No |
-| Compressed | Yes (FST + roaring) | Yes | Partially | Yes |
-| Dependencies | Pure Go | JVM | None | None |
-| Memory model | mmap | JVM heap | mmap | mmap |
-
-## Why Volcano Iterator Model (Not Materialization)
-
-**Decision**: Use the Volcano (pull-based iterator) model for query execution, not a materialization (batch) approach.
-
-**Alternatives**: Full materialization (compute each stage fully before starting the next), vectorized batch processing (like DuckDB).
+**Alternatives**: Embedding Lucene, a hash-based term dictionary, token bloom filters alone.
 
 **Reasoning**:
 
-The Volcano model excels at **short-circuiting**. `head 10` on 100M events reads only the first batch (1024 rows or fewer), not the entire dataset. This is the difference between 0.23ms and hundreds of milliseconds.
+- **Not Lucene**: Lucene is Java. Embedding it in a Go binary needs a JVM or a sidecar process, which breaks the single-binary model, and it brings machinery (codec versioning, near-real-time search) that immutable log segments do not need.
+- **FST instead of a hash map**: FSTs share prefixes and suffixes between terms, so the dictionary is compact, and prefix and glob searches iterate the FST directly. LynxDB uses `github.com/blevesearch/vellum`.
+- **Roaring bitmaps**: each 65536-row block is stored as an array, a bitmap or runs, whichever is smallest, so both rare and common terms are compact, and AND/OR are fast block by block.
+- **Not bloom filters alone**: a bloom filter only answers whether a token may be present. LynxDB keeps per-row-group bloom filters for skipping, and the term index adds the exact rows.
 
-Log analytics queries frequently use `head`, `tail`, and `limit`. Interactive exploration (the Web UI, the CLI TUI) almost always limits results. The Volcano model makes these queries nearly instant regardless of data size.
+| Feature | FST + Roaring | Hash + sorted arrays | Token bloom filters |
+|---------|---------------|---------------------|---------------------|
+| Exact term lookup | Yes | Yes | Membership only |
+| Prefix and glob search | Yes | No | No |
+| Row-level posting lists | Yes | Yes | No |
+| Pure Go | Yes | Yes | Yes |
 
-The trade-off is that the Volcano model has higher per-row overhead than vectorized processing (function call per `Next()` vs. tight loop over a column vector). LynxDB compensates with:
+## Volcano Iterator Model
 
-- **1024-row batches**: Each `Next()` returns a batch, amortizing the function call overhead.
-- **Bytecode VM**: Expression evaluation uses a stack-based VM with zero allocations, not interpreted AST walking.
-- **Partial aggregation**: Aggregations are computed per-segment (batch-like) and merged globally (streaming).
+**Decision**: Execute queries with pull-based iterators (the Volcano model) over row batches.
 
-The result is ~2.1M events/sec pipeline throughput, which is sufficient for single-node query volumes.
-
-## Historical Note: WAL vs LSM
-
-**Original direction**: Use a simple append-only WAL for durability, not a full LSM tree.
-
-**Alternatives**: LSM tree (RocksDB, LevelDB), B-tree (SQLite, BoltDB).
+**Alternatives**: Full materialization (compute each stage before starting the next), fully vectorized columnar execution.
 
 **Reasoning**:
 
-Log data is **append-only by nature**. Events are never updated or deleted in place. The only mutations are:
+The Volcano model stops early. `head 10` stops pulling after its first batch, so a search over a large index returns as soon as it has 10 rows, and remaining segments are never opened. Log exploration nearly always limits its results.
 
-1. Append (ingest a new event).
-2. Delete (retention policy removes entire segments).
+The cost is per-batch call overhead compared with tight loops over column vectors. LynxDB reduces it with:
 
-This reasoning came from the same append-only workload assumptions that still shape the system today. The current implementation has since moved to direct-to-part writes with `AsyncBatcher` and atomic rename instead of a separate WAL + memtable pipeline.
+- **Batches of up to 1024 rows** per `Next()` call
+- **A bytecode VM** for expressions instead of walking an expression tree per row
+- **Storage hints** that skip segments and row groups before any operator sees their rows
 
-The core tradeoff remains the same: prefer a storage path specialized for immutable log segments over a general-purpose LSM or B-tree stack.
+## Direct-to-Part Writes (No WAL, No LSM)
 
-- Async batcher: fast writes + bounded in-memory buffering
-- Segment writer: columnar encoding + indexing
-- Compaction: merge small segments into large ones
+**Decision**: Buffer events in memory and write immutable columnar parts directly, with atomic renames; no write-ahead log and no general-purpose LSM or B-tree.
 
-### Why no WAL?
+**Alternatives**: WAL + memtable, LSM tree (RocksDB, LevelDB), B-tree (SQLite, BoltDB).
 
-A traditional WAL adds latency to every write (fsync per commit) and complexity to recovery (replay on startup). For log analytics, neither tradeoff is worth it:
+**Reasoning**:
 
-- **Latency**: WAL fsyncs serialise ingestion. LynxDB's batcher absorbs bursts and writes parts in bulk, achieving higher throughput with the same disk.
-- **Complexity**: A WAL requires replay logic, truncation handling, and cross-crash consistency guarantees. LynxDB's crash recovery is a simple filesystem scan — delete stale `tmp_*` files and rebuild the registry from surviving `.lsg` parts.
-- **Accepted data window**: Events buffered in the `AsyncBatcher` are in memory and can be lost on crash. This is the same tradeoff [ClickHouse makes](https://github.com/ClickHouse/ClickHouse/issues/64906) — by default, ClickHouse does not fsync after insert, and even with async inserts enabled, `wait_for_async_insert = 0` acknowledges data before it reaches disk. For log workloads, losing the last few seconds of buffered events is an acceptable tradeoff for higher throughput.
+Log data is append-only. The only mutations are appending events and deleting whole time partitions on retention. A storage path specialized for immutable segments fits that:
+
+- **AsyncBatcher**: fast writes, bounded in-memory buffering, backpressure when compaction falls behind
+- **Segment writer**: columnar encoding and index building in one pass
+- **Compaction**: merges small parts into large ones
+
+Without a WAL:
+
+- **Latency**: no fsync per write; the batcher absorbs bursts and writes parts in bulk.
+- **Recovery**: startup is a filesystem scan that deletes stale `tmp_*` files and rebuilds the registry from the surviving `.lsg` parts; there is nothing to replay.
+- **Accepted data window**: events buffered in the batcher are in memory and can be lost on a crash. ClickHouse makes the [same trade-off](https://github.com/ClickHouse/ClickHouse/issues/64906) by default. Shippers that retry on failure resend them.
 
 ## Related
 
-- [Architecture Overview](/docs/architecture/overview) -- how these decisions manifest in the system
-- [Storage Engine](/docs/architecture/storage-engine) -- current part-write and compaction implementation
+- [Architecture Overview](/docs/architecture/overview) -- how these decisions shape the system
+- [Storage Engine](/docs/architecture/storage-engine) -- part writes and compaction
 - [Segment Format](/docs/architecture/segment-format) -- columnar encoding details
-- [Query Engine](/docs/architecture/query-engine) -- Volcano model and bytecode VM
-- [Indexing](/docs/architecture/indexing) -- FST + roaring bitmap implementation
+- [Query Engine](/docs/architecture/query-engine) -- compilation, the Volcano model and the bytecode VM
+- [Indexing](/docs/architecture/indexing) -- bloom filters and the term index

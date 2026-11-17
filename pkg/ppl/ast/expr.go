@@ -1,5 +1,7 @@
 package ast
 
+import "strings"
+
 // LiteralKind classifies literals.
 type LiteralKind uint8
 
@@ -42,14 +44,10 @@ type Field struct {
 
 // Name returns the dotted field name.
 func (f *Field) Name() string {
-	n := ""
-	for i, p := range f.Parts {
-		if i > 0 {
-			n += "."
-		}
-		n += p
+	if len(f.Parts) == 1 {
+		return f.Parts[0]
 	}
-	return n
+	return strings.Join(f.Parts, ".")
 }
 
 // Unary is NOT x or -x; Op is "not" or "-".

@@ -1,5 +1,5 @@
 # format: json
-from idx_backend
-| extend err = coalesce(error, "none")
+source=backend
+| eval err = coalesce(error, "none")
 | stats count() by err
 | sort err

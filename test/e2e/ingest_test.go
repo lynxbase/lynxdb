@@ -15,7 +15,7 @@ func TestE2E_IngestRaw_TextPlain_CountMatches(t *testing.T) {
 	h := NewHarness(t)
 	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 
-	result := h.MustQuery(`from idx_ssh | stats count() as count`)
+	result := h.MustQuery(`source=idx_ssh | stats count() as count`)
 	requireAggValue(t, result, "count", 2000)
 }
 
@@ -24,10 +24,10 @@ func TestE2E_IngestRaw_MultipleIndexes(t *testing.T) {
 	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 	h.IngestFile("idx_openstack", "testdata/logs/OpenStack_2k.log")
 
-	r1 := h.MustQuery(`from idx_ssh | stats count() as count`)
+	r1 := h.MustQuery(`source=idx_ssh | stats count() as count`)
 	requireAggValue(t, r1, "count", 2000)
 
-	r2 := h.MustQuery(`from idx_openstack | stats count() as count`)
+	r2 := h.MustQuery(`source=idx_openstack | stats count() as count`)
 	requireAggValue(t, r2, "count", 2000)
 }
 
@@ -61,7 +61,7 @@ func TestE2E_IngestJSON_StructuredEvents(t *testing.T) {
 		t.Errorf("expected 3 accepted, got %d", result.Accepted)
 	}
 
-	r := h.MustQuery(`from main | stats count() as count`)
+	r := h.MustQuery(`source=main | stats count() as count`)
 	requireAggValue(t, r, "count", 3)
 }
 
@@ -82,7 +82,7 @@ func TestE2E_IngestRaw_NewIndex_Queryable(t *testing.T) {
 	}
 
 	// Data should land in custom_index (X-Index header is sent by IngestRaw).
-	r := h.MustQuery(`from custom_index | stats count() as count`)
+	r := h.MustQuery(`source=custom_index | stats count() as count`)
 	requireAggValue(t, r, "count", 3)
 }
 
@@ -100,11 +100,11 @@ func TestE2E_IngestRaw_IndexHeader_RoutesToCorrectIndex(t *testing.T) {
 	}
 
 	// IngestRaw sends X-Index header, so data lands in bug_test_idx.
-	rTarget := h.MustQuery(`from bug_test_idx | stats count() as count`)
+	rTarget := h.MustQuery(`source=bug_test_idx | stats count() as count`)
 	requireAggValue(t, rTarget, "count", 2)
 
 	// Verify nothing leaked to main.
-	rMain := h.MustQuery(`from main | stats count() as count`)
+	rMain := h.MustQuery(`source=main | stats count() as count`)
 	mainCount := GetInt(rMain, "count")
 	if mainCount != 0 {
 		t.Errorf("expected 0 events in main, got %d (data leaked from bug_test_idx)", mainCount)

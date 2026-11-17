@@ -1,146 +1,192 @@
 ---
 sidebar_position: 3
 title: Pipe Mode (No Server)
-description: Query local files and stdin using LynxDB without running a server.
+description: Query local files and standard input with LynxDB without running a server.
 ---
 
 # Pipe Mode (No Server)
 
-LynxDB works without a running server. The CLI can query local files and stdin using the full LynxFlow engine with zero network overhead. Think of it as `grep` with the power of a full analytics engine.
+`lynxdb query` runs without a server when you give it a file or pipe data
+into it. It works like `grep` or `jq`: read the input, run a
+[PPL](../ppl/overview.md) query, print the result, exit.
 
-## How It Works
+## How it works
 
-When you use `--file` or pipe data through stdin, LynxDB:
+With `--file` or piped standard input, the CLI:
 
-1. Creates an ephemeral in-memory engine
-2. Ingests the data (auto-detects JSON, NDJSON, or plain text)
-3. Runs the full LynxFlow pipeline
-4. Prints results
-5. Exits
+1. Compiles the query first, so a bad query fails before any input is read.
+2. Creates an in-memory engine and loads every line into the index `main`.
+3. Extracts fields while loading: top-level JSON keys, `key=value` pairs, and
+   the fields of combined access logs and of syslog lines with a `<PRI>`
+   header.
+4. Runs the same compiled plan a server would run, prints the rows, and
+   exits.
 
-No daemon, no config file, no data directory. Everything happens in-process.
+No daemon, config file or data directory is involved. Queries start with
+`source=main`, as on a server.
 
-## Query Local Files
+## Query local files
 
 ```bash
-# Single file
-lynxdb query --file access.log 'stats count() by status'
+# One file
+lynxdb query --file access.log 'source=main | stats count() by status'
 
-# Glob patterns
-lynxdb query --file '/var/log/nginx/*.log' 'where status >= 500 | top 10 uri'
-
-# Multiple file types
-lynxdb query --file '/var/log/*.log' 'stats count() by source'
+# A glob (quote it so the shell does not expand it)
+lynxdb query --file '/var/log/nginx/*.log' 'source=main status>=500 | top 10 uri'
 ```
 
-## Pipe from Stdin
+Each event's `_source` is the path of the file it came from; `--source`
+overrides it and `--sourcetype` sets `_sourcetype`.
+
+## Pipe from standard input
 
 ```bash
 # Kubernetes logs
-kubectl logs deploy/api | lynxdb query 'stats avg(duration_ms), p99(duration_ms) by endpoint'
+kubectl logs deploy/api | lynxdb query 'source=main | stats avg(duration_ms), p99(duration_ms) by endpoint'
 
 # Docker logs
-docker logs myapp 2>&1 | lynxdb query 'where contains(_raw, "OOM") | stats count() by container'
-
-# System logs
-cat /var/log/syslog | lynxdb query 'where level == "ERROR" | stats count() by service'
+docker logs myapp 2>&1 | lynxdb query 'source=main OOM | fields _time, _raw | head 20'
 
 # Compressed files
-zcat archive.log.gz | lynxdb query 'where status >= 500 | top 10 path'
+zcat archive.log.gz | lynxdb query 'source=main | where status >= 500 | top 10 path'
 
-# Filter before querying
-grep "2026-01-15" /var/log/app.log | lynxdb query 'stats count() by level'
+# Pre-filter with grep
+grep "2026-01-15" /var/log/app.log | lynxdb query 'source=main | stats count() by level'
 ```
 
-## Combine with Unix Tools
+Piped events get `_source` `stdin` unless `--source` is set. `--file` and
+piped input cannot be combined in one command.
 
-LynxDB plays well with the Unix pipeline:
+Piping into `lynxdb` with no command prints the first ten events, which is a
+quick way to see which fields were extracted:
 
 ```bash
-# Output as CSV and sort with system tools
-lynxdb query --file access.log 'stats count() as count by status' --format csv | sort -t, -k2 -rn
-
-# Chain with jq for JSON post-processing
-lynxdb query --file app.json 'stats count() as count by endpoint' --format json | jq '.count'
-
-# Feed results into another LynxDB query
-lynxdb query 'from main | where status >= 500' --since 1h \
-  | lynxdb query 'stats count() by path'
-
-# Export to file
-lynxdb query --file access.log 'where level == "ERROR"' > errors.json
+cat app.log | lynxdb
 ```
 
-## Output Behavior
+## Format detection
 
-LynxDB is TTY-aware:
+The CLI samples the first 20 lines. When at least 70% of them are combined
+access log or syslog lines, it prints a `Detected ...` notice on stderr and
+extracts that format's fields:
 
-- **Terminal (interactive):** Colorized JSON output with query statistics
-- **Pipe (non-TTY):** Plain NDJSON for scripting
+| Format | Fields |
+|--------|--------|
+| Combined access log | `client_ip`, `ident`, `user`, `timestamp`, `request`, `method`, `uri`, `protocol`, `status`, `bytes`, `referer`, `user_agent` |
+| Syslog (RFC 3164 and RFC 5424 with `<PRI>`) | `priority`, `facility`, `severity`, `facility_name`, `severity_name`, `timestamp`, `hostname`, `appname`, `procid`, `message`, and more |
+
+Top-level JSON keys and `key=value` pairs are extracted from every line
+whatever the detected format; a Docker `json-file` line, for example, yields
+`log`, `stream` and `time`. `--raw` turns off format detection. Anything
+else is extracted at query time with `parse`, `rex`, `grok` or `spath`; see
+[Field Extraction](../guides/field-extraction.md).
+
+## Combine with Unix tools
+
+Results go to stdout; the statistics footer and hints go to stderr.
 
 ```bash
-# Terminal: colorized output with stats
-lynxdb query --file access.log 'stats count() by status'
+# CSV, sorted by the shell
+lynxdb query --file access.log 'source=main | stats count() as n by status' --format csv | sort -t, -k2 -rn
 
-# Pipe: raw JSON, stats go to stderr
-lynxdb query --file access.log 'stats count() by status' | jq .
+# JSON lines into jq
+lynxdb query --file app.json 'source=main | stats count() as n by endpoint' --format json | jq '.n'
+
+# Pull rows from a server, aggregate them locally
+lynxdb query 'source=main status>=500 | fields host, path, status' --since 1h --format ndjson \
+  | lynxdb query 'source=main | stats count() as errors by path | sort - errors'
+
+# Write the result to a file
+lynxdb query --file access.log 'source=main level=ERROR' --format json --output errors.json
 ```
 
-:::tip
-Metadata and statistics are always written to stderr, so they never pollute piped output. Only result data goes to stdout.
-:::
+## Output
 
-## Memory Management
+The default format depends on where stdout goes:
 
-For large files, you can limit memory usage:
+- **Terminal:** a table (or a single value for a one-cell result), followed
+  by a short statistics footer on stderr.
+- **Pipe or file:** one JSON object per line. The statistics go to stderr as
+  JSON; `--no-stats` drops them.
 
 ```bash
-lynxdb query --file huge.log 'stats count() by level' --max-memory 512mb
+# Table on the terminal
+lynxdb query --file access.log 'source=main | stats count() by status'
+
+# JSON lines for jq
+lynxdb query --file access.log 'source=main | stats count() by status' --no-stats | jq .
 ```
 
-When the memory limit is reached, LynxDB spills intermediate results to disk automatically.
+`--format` picks any other format: `table`, `csv`, `tsv`, `vertical`,
+`markdown`, `raw` and more. See [Output Formats](../cli/output-formats.md).
 
-## Real-World Examples
+## See the plan
 
-### Debug a Production Issue
+`--explain` compiles the query and prints its logical plan, optimized plan
+and the optimizer rules that fired, without reading any input or contacting
+a server:
 
 ```bash
-# Find the most common errors in the last hour of logs
+lynxdb query --explain 'source=main level=ERROR | stats count() as errors by host | sort - errors | head 3'
+```
+
+```text
+Logical plan:
+Limit(3)
+└─ Sort(errors DESC NULLS LAST)
+   └─ Project(errors, host)
+      └─ Aggregate(errors = count() BY host)
+         └─ Filter(level = "ERROR")
+            └─ Scan(main)
+
+Optimized plan:
+TopN(3, errors DESC NULLS LAST)
+└─ Project(errors, host)
+   └─ Aggregate(errors = count() BY host)
+      └─ Filter(level = "ERROR")
+         └─ Scan(main) columns=[_time, host, level] prune=level = "ERROR"
+
+Optimizer rules:
+  prune-scan x1
+  sort-limit-to-topn x1
+```
+
+## Examples
+
+### Find the most common errors
+
+```bash
 tail -n 100000 /var/log/app.log | lynxdb query '
-  where level == "ERROR"
-  | stats count() as count by message
-  | sort -count
+  source=main level=ERROR
+  | stats count() as n by msg
+  | sort - n
   | head 10'
 ```
 
-### Analyze Nginx Access Logs
+### Error rates of an nginx access log
 
 ```bash
-# Top slow endpoints with error rates
 lynxdb query --file /var/log/nginx/access.log '
-  stats count() as total,
-        count(where status >= 500) as errors,
-        avg(duration_ms) as avg_lat,
-        p99(duration_ms) as p99_lat
-    by uri
-  | extend error_rate = round(errors / total * 100, 1)
-  | where error_rate > 5
-  | sort -error_rate
-  | keep uri, total, errors, error_rate, avg_lat, p99_lat'
+  source=main
+  | stats count() as total, count(eval(status >= 500)) as errors by uri
+  | eval error_pct = round(errors * 100.0 / total, 1)
+  | where error_pct > 5
+  | sort - error_pct
+  | head 20'
 ```
 
-### Monitor Kubernetes Pods
+### Kubernetes pods
 
 ```bash
-# Error rate by service across all pods
 kubectl logs -l app=api --all-containers --since=1h | lynxdb query '
-  stats count() as total, count(where level == "error") as errors by service
-  | extend error_pct = round(errors / total * 100, 1)
-  | sort -error_pct'
+  source=main
+  | stats count() as total, count(eval(level = "error")) as errors by service
+  | eval error_pct = round(errors * 100.0 / total, 1)
+  | sort - error_pct'
 ```
 
-## Next Steps
+## Next steps
 
-- **[Server Mode](/docs/getting-started/server-mode)** -- Set up persistent storage
-- **[Your First LynxFlow Query](/docs/getting-started/first-query)** -- Learn the query language
-- **[Scripting with LynxDB](/docs/guides/scripting-and-pipes)** -- Advanced piping patterns
+- [Server Mode](./server-mode.md): persistent storage
+- [Your First Query](./first-query.md): PPL basics
+- [Scripting with LynxDB](../guides/scripting-and-pipes.md): more piping patterns

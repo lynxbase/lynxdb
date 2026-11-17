@@ -15,47 +15,32 @@ func timestampBound(lit *ir.Literal) *ir.TimeBound {
 	return ir.AbsoluteBound(t)
 }
 
-// colSet is a set of required column names; nil means every column.
+// colSet is a set of required column names; nil means every column. A set
+// travels down a chain of single-input operators and is updated in place:
+// an operator no longer needs its own set once its input's is known.
 type colSet map[string]bool
 
 func (s colSet) all() bool { return s == nil }
 
-func (s colSet) with(names ...string) colSet {
-	if s == nil {
-		return nil
+// addCols adds the columns e reads, the names ir.ColumnsRead lists.
+func (s colSet) addCols(e ir.Expr) colSet {
+	if s == nil || e == nil {
+		return s
 	}
-	out := make(colSet, len(s)+len(names))
-	for k := range s {
-		out[k] = true
-	}
-	for _, n := range names {
-		out[n] = true
-	}
-	return out
-}
-
-func (s colSet) without(names ...string) colSet {
-	if s == nil {
-		return nil
-	}
-	out := make(colSet, len(s))
-	for k := range s {
-		out[k] = true
-	}
-	for _, n := range names {
-		delete(out, n)
-	}
-	return out
-}
-
-func exprCols(es ...ir.Expr) []string {
-	var out []string
-	for _, e := range es {
-		if e != nil {
-			out = append(out, ir.ColumnsRead(e)...)
+	ir.WalkExpr(e, func(x ir.Expr) bool {
+		switch v := x.(type) {
+		case *ir.FieldRef:
+			s[v.Name] = true
+		case *ir.Search:
+			if v.Field == "" {
+				s[ir.RawColumn] = true
+			} else {
+				s[v.Field] = true
+			}
 		}
-	}
-	return out
+		return true
+	})
+	return s
 }
 
 // columnPruning records on each scan the columns the plan above it reads,
@@ -71,8 +56,9 @@ func prune(n ir.Node, req colSet) ir.Node {
 		if req.all() {
 			return n
 		}
-		cols := make([]string, 0, len(req)+1)
-		for c := range req.with(ir.TimeColumn) {
+		req[ir.TimeColumn] = true
+		cols := make([]string, 0, len(req))
+		for c := range req {
 			cols = append(cols, c)
 		}
 		sort.Strings(cols)
@@ -80,96 +66,129 @@ func prune(n ir.Node, req colSet) ir.Node {
 		cp.Columns = cols
 		return &cp
 	case *ir.Project:
-		if x.Drop {
+		switch {
+		case x.Drop:
 			in = req
-			break
-		}
-		in = colSet{}
-		for _, name := range x.Names {
-			if ir.IsNamePattern(name) {
-				in = nil
-				break
-			}
-			if req.all() || req[name] {
+		case hasPattern(x.Names):
+		case req.all():
+			in = make(colSet, len(x.Names))
+			for _, name := range x.Names {
 				in[name] = true
+			}
+		default:
+			in = req
+			for c := range in {
+				if !containsName(x.Names, c) {
+					delete(in, c)
+				}
 			}
 		}
 	case *ir.Aggregate:
 		in = colSet{}
 		for _, g := range x.Groups {
-			in = in.with(exprCols(g.Expr)...)
+			in.addCols(g.Expr)
 		}
 		for _, a := range x.Aggs {
-			in = in.with(exprCols(a.Agg)...)
+			in.addCols(a.Agg)
 		}
 	case *ir.Filter:
-		in = req.with(exprCols(x.Cond)...)
+		in = req.addCols(x.Cond)
 	case *ir.Compute:
 		if !req.all() {
-			names := make([]string, len(x.Assigns))
-			var reads []string
-			for i, a := range x.Assigns {
-				names[i] = a.Name
-				reads = append(reads, exprCols(a.Expr)...)
+			for _, a := range x.Assigns {
+				delete(req, a.Name)
 			}
-			in = req.without(names...).with(reads...)
+			for _, a := range x.Assigns {
+				req.addCols(a.Expr)
+			}
+			in = req
 		}
 	case *ir.Sort:
-		in = req.with(sortCols(x.Keys)...)
+		in = req
+		for _, k := range x.Keys {
+			in.addCols(k.Expr)
+		}
 	case *ir.TopN:
-		in = req.with(sortCols(x.Keys)...)
+		in = req
+		for _, k := range x.Keys {
+			in.addCols(k.Expr)
+		}
 	case *ir.Limit, *ir.Reverse:
 		in = req
 	case *ir.Dedup:
-		in = req.with(exprCols(x.Keys...)...)
+		in = req
+		for _, k := range x.Keys {
+			in.addCols(k)
+		}
 	case *ir.RenameColumns:
-		if !req.all() {
+		if !req.all() && !hasPatternRename(x.Renames) {
 			in = req
 			for _, rn := range x.Renames {
-				if ir.IsNamePattern(rn.From) {
-					in = nil
-					break
-				}
 				if in[rn.To] {
-					in = in.without(rn.To).with(rn.From)
+					delete(in, rn.To)
+					in[rn.From] = true
 				}
 			}
 		}
 	case *ir.Extract:
 		if !req.all() {
-			names := make([]string, len(x.Outputs))
-			for i, c := range x.Outputs {
-				names[i] = c.Name
+			for _, c := range x.Outputs {
+				delete(req, c.Name)
 			}
-			in = req.without(names...).with(exprCols(x.Source)...)
+			in = req.addCols(x.Source)
 		}
-	default:
-		in = nil
 	}
-	ins := n.Inputs()
-	if len(ins) == 0 {
+	var buf [2]ir.Node
+	ins := ir.AppendInputs(buf[:0], n)
+	switch len(ins) {
+	case 0:
+		return n
+	case 1:
+		if pruned := prune(ins[0], in); pruned != ins[0] {
+			return n.WithInputs([]ir.Node{pruned})
+		}
 		return n
 	}
-	nins := make([]ir.Node, len(ins))
-	changed := false
+	var nins []ir.Node
 	for i, c := range ins {
-		r := in
-		if len(ins) > 1 {
-			r = nil
+		p := prune(c, nil)
+		if p != c && nins == nil {
+			nins = make([]ir.Node, len(ins))
+			copy(nins, ins[:i])
 		}
-		nins[i] = prune(c, r)
-		changed = changed || nins[i] != c
+		if nins != nil {
+			nins[i] = p
+		}
 	}
-	if !changed {
+	if nins == nil {
 		return n
 	}
 	return n.WithInputs(nins)
 }
 
-func sortCols(keys []ir.SortKey) []string {
-	var out []string
-	for _, k := range keys {
-		out = append(out, exprCols(k.Expr)...)
+func hasPattern(names []string) bool {
+	for _, n := range names {
+		if ir.IsNamePattern(n) {
+			return true
+		}
 	}
-	return out
+	return false
+}
+
+func containsName(names []string, name string) bool {
+	for _, n := range names {
+		if n == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasPatternRename(renames []ir.Rename) bool {
+	for _, rn := range renames {
+		if ir.IsNamePattern(rn.From) {
+			return true
+		}
+	}
+	return false
 }

@@ -31,7 +31,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/storage/part"
 	"github.com/lynxbase/lynxdb/pkg/storage/sources"
 	"github.com/lynxbase/lynxdb/pkg/storage/tiering"
-	"github.com/lynxbase/lynxdb/pkg/storage/views"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -97,14 +96,6 @@ type Engine struct {
 	batcher      *part.AsyncBatcher
 	retentionMgr *part.RetentionManager
 
-	// Materialized views.
-	viewRegistry   *views.ViewRegistry
-	mvDispatcher   *views.Dispatcher
-	backfillJobs   sync.Map // viewName (string) → *SearchJob — tracks active backfill jobs for progress reporting
-	backfillCtx    context.Context
-	backfillCancel context.CancelFunc
-	backfillWG     sync.WaitGroup
-
 	// Source registry for multi-source/wildcard query resolution.
 	sourceRegistry *sources.Registry
 
@@ -140,10 +131,9 @@ type Engine struct {
 	compactionSched *compaction.Scheduler
 	adaptiveCtrl    *compaction.AdaptiveController
 
-	// Server, ingest, views, and cluster config.
+	// Server, ingest, and cluster config.
 	serverCfg  config.ServerConfig
 	ingestCfg  config.IngestConfig
-	viewsCfg   config.ViewsConfig
 	bufMgrCfg  config.BufferManagerConfig
 	clusterCfg config.ClusterConfig
 
@@ -177,7 +167,6 @@ type Config struct {
 	Query         config.QueryConfig
 	Ingest        config.IngestConfig
 	Server        config.ServerConfig
-	Views         config.ViewsConfig
 	BufferManager config.BufferManagerConfig
 	Cluster       config.ClusterConfig
 }
@@ -325,7 +314,6 @@ func NewEngine(cfg Config) *Engine {
 		segCacheConsumer:   segCacheConsumer,
 		serverCfg:          cfg.Server,
 		ingestCfg:          cfg.Ingest,
-		viewsCfg:           cfg.Views,
 		bufMgrCfg:          bmCfg,
 		clusterCfg:         cfg.Cluster,
 		sourceRegistry:     sources.NewRegistry(),
@@ -392,11 +380,6 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.jobGCCancel = jobGCCancel
 	go e.startJobGC(jobGCCtx)
 
-	// Backfill goroutines inherit a cancellable context tied to the engine
-	// lifecycle so Shutdown can stop in-flight MV backfills before tearing
-	// down disk state.
-	e.backfillCtx, e.backfillCancel = context.WithCancel(ctx)
-
 	if e.dataDir != "" {
 		// Start deletion pacer for rate-limited file removal.
 		e.deletionPacer = compaction.NewDeletionPacer(0)
@@ -443,24 +426,6 @@ func (e *Engine) Shutdown(timeout time.Duration) error {
 		errs = append(errs, err)
 	}
 
-	// Cancel and drain in-flight MV backfills BEFORE flushing the batcher.
-	// Backfills submit queries that call e.batcher.Flush(), then write directly
-	// to disk via the dispatcher and registry — leaving them running across
-	// shutdown races with the data directory being torn down by callers.
-	if e.backfillCancel != nil {
-		e.backfillCancel()
-	}
-	backfillDone := make(chan struct{})
-	go func() {
-		e.backfillWG.Wait()
-		close(backfillDone)
-	}()
-	select {
-	case <-backfillDone:
-	case <-time.After(timeout):
-		e.logger.Warn("shutdown: MV backfill drain timeout")
-	}
-
 	// Cancel any in-flight query goroutines (executeQuery) and wait for them
 	// to fully unwind. job.Cancel() closes the job's done channel but the
 	// underlying executeQuery goroutine may still be touching disk via
@@ -499,14 +464,6 @@ func (e *Engine) Shutdown(timeout time.Duration) error {
 		if err := e.batcher.CloseContext(shutdownCtx); err != nil {
 			e.logger.Error("shutdown batcher close failed", "error", err)
 			errs = append(errs, fmt.Errorf("close batcher: %w", err))
-		}
-	}
-
-	// Flush MV dispatcher.
-	if e.mvDispatcher != nil {
-		if err := e.mvDispatcher.Stop(); err != nil {
-			e.logger.Error("shutdown MV dispatcher failed", "error", err)
-			errs = append(errs, fmt.Errorf("stop MV dispatcher: %w", err))
 		}
 	}
 
@@ -956,7 +913,6 @@ func (e *Engine) HasBloomFilter() bool {
 }
 
 func closestSourceMatch(name string, available []string) string {
-	// RFC-002: spl2.ClosestMatch removed; simple prefix match fallback.
 	for _, a := range available {
 		if len(a) > 0 && len(name) > 0 && a[0] == name[0] {
 			return a

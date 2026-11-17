@@ -1,5 +1,5 @@
 # file: backend_server.log
 # format: json
-from main
-| where ((level == "ERROR" and status == 500) or (level == "WARN" and threat_type == "sqli"))
+source=main
+| where (level = "ERROR" and status = 500) or (level = "WARN" and threat_type = "sqli")
 | stats count()

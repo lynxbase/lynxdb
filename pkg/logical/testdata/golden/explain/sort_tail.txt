@@ -1,3 +1,0 @@
-1. Limit(tail 20)  [spill-capable]
-  2. Sort(-_time)  [spill-capable]
-    3. Scan(app)

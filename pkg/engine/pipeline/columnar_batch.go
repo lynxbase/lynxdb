@@ -13,7 +13,7 @@ import (
 // field-discovery pass, no row-oriented intermediate.
 //
 // Aliases: _source is aliased as "source", _sourcetype as "sourcetype"
-// to match BatchFromEvents behavior (SPL2 queries use the short names).
+// to match BatchFromEvents.
 func BatchFromColumnar(cr *segment.ColumnarResult) *Batch {
 	if cr == nil || cr.Count == 0 {
 		return &Batch{Columns: make(map[string][]event.Value), Len: 0}
@@ -50,7 +50,7 @@ func BatchFromColumnar(cr *segment.ColumnarResult) *Batch {
 		}
 		batch.Columns[name] = col
 
-		// Aliases: SPL2 queries use "source" and "sourcetype" without underscore.
+		// Aliases "source" and "sourcetype" without the underscore.
 		switch name {
 		case "_source":
 			batch.Columns["source"] = col

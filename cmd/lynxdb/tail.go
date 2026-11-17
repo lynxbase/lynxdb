@@ -25,16 +25,17 @@ func newTailCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:     "tail [filter]",
+		Use:     "tail [PPL query]",
 		Aliases: []string{"t"},
 		Short:   "Live tail logs from server (SSE stream)",
-		Long:    `Stream live log events from the server using Server-Sent Events. Optionally filter with a LynxFlow expression.`,
-		Example: `  lynxdb tail                                   Stream all events
-  lynxdb tail 'level == "error"'                Stream errors only
-  lynxdb tail 'source == "nginx" and status >= 500'  Stream 5xx from nginx
-  lynxdb tail --count 50 --from -1h             Last 50 events + live`,
+		Long: `Stream live events from the server using Server-Sent Events. The optional
+PPL query may use streaming commands only; it defaults to source=*.`,
+		Example: `  lynxdb tail                                                  Stream all events
+  lynxdb tail 'source=main | where level = "error"'            Stream errors only
+  lynxdb tail 'source=nginx | where status >= 500'             Stream 5xx from nginx
+  lynxdb tail --count 50 --from -1h                            Last 50 events, then live`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			filter := ""
+			filter := "source=*"
 			if len(args) > 0 {
 				filter = strings.Join(args, " ")
 			}
@@ -50,23 +51,23 @@ func newTailCmd() *cobra.Command {
 }
 
 func runTail(filter, from string, count int) error {
-	// Pre-validate filter via explain so users get caret display on parse errors.
-	if filter != "" {
-		ctx := context.Background()
-		if _, err := apiClient().Explain(ctx, filter); err != nil {
-			if client.IsInvalidQuery(err) {
-				return &queryError{inner: err, query: filter}
-			}
-			// Non-parse errors (e.g. connection) — proceed anyway (best-effort).
+	// Compile the query on the server first so errors show a caret.
+	res, err := apiClient().Explain(context.Background(), filter)
+	switch {
+	case err != nil && client.IsInvalidQuery(err):
+		return &queryError{inner: err, query: filter}
+	case err == nil && !res.IsValid && len(res.Errors) > 0:
+		e := res.Errors[0]
+		col := -1
+		if e.Position != nil {
+			col = e.Position.Column - 1
 		}
+		renderQueryError(filter, col, 1, e.Message, e.Suggestion)
+		return fmt.Errorf("invalid query")
 	}
 
 	if !globalQuiet {
-		if filter != "" {
-			printMeta("Tailing events matching: %s", filter)
-		} else {
-			printMeta("Tailing all events...")
-		}
+		printMeta("Tailing: %s", filter)
 		printHint("Press Ctrl+C to stop.")
 	}
 
@@ -74,7 +75,7 @@ func runTail(filter, from string, count int) error {
 	start := time.Now()
 	eventCount := 0
 
-	err := apiClient().Tail(ctx, filter, from, count, func(evt client.SSEEvent) error {
+	err = apiClient().Tail(ctx, filter, from, count, func(evt client.SSEEvent) error {
 		if evt.Event == "catchup_done" {
 			elapsed := formatElapsed(time.Since(start))
 			printMeta("--- historical catchup complete (%d events, %s) — streaming live ---", eventCount, elapsed)

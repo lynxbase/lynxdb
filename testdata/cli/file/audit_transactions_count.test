@@ -1,4 +1,4 @@
 # file: audit_transactions.log
 # format: json
-from main
+source=main
 | stats count()

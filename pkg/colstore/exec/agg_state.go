@@ -211,7 +211,13 @@ func (a *aggWorker) feedStrings(arg *aggArg, t *target, c *vec.Column, gid, rows
 // told apart as in an exact one.
 func hashInt(v int64) uint64 { return vec.Mix64(uint64(v) ^ kindSeeds[vec.KindInt]) }
 
-func hashFloat(v float64) uint64 { return vec.Mix64(math.Float64bits(v) ^ kindSeeds[vec.KindFloat]) }
+func hashFloat(v float64) uint64 {
+	if i, ok := whole(v); ok {
+		return hashInt(i)
+	}
+
+	return vec.Mix64(math.Float64bits(v) ^ kindSeeds[vec.KindFloat])
+}
 
 func hashBool(v bool) uint64 { return vec.Mix64(uint64(btoi(v)) ^ kindSeeds[vec.KindBool]) }
 

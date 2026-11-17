@@ -5,9 +5,11 @@ description: Send OpenTelemetry Collector logs to LynxDB using OTLP HTTP or OTLP
 
 # OpenTelemetry Collector to LynxDB
 
-## If you are already running the Collector
+## If you already run the Collector
 
-Change the OTLP exporter endpoint to LynxDB. LynxDB listens on the standard OTLP ports by default: `4318` for HTTP and `4317` for gRPC.
+Point the OTLP/HTTP exporter at LynxDB. The server's OTLP/HTTP receiver
+listens on `0.0.0.0:4318` by default (`--otlp-http-listen` or
+`ingest.otlp.http_listen` changes it).
 
 ```diff
  exporters:
@@ -16,7 +18,12 @@ Change the OTLP exporter endpoint to LynxDB. LynxDB listens on the standard OTLP
 +    endpoint: "http://lynxdb:4318"
 ```
 
-For gRPC:
+The OTLP/gRPC receiver is off by default. Start the server with an address
+for it, then use the `otlp` exporter:
+
+```bash
+lynxdb server --otlp-grpc-listen 0.0.0.0:4317
+```
 
 ```yaml
 exporters:
@@ -29,7 +36,11 @@ exporters:
 ## Full annotated config
 
 ```yaml
-# OpenTelemetry Collector logs exporter for LynxDB.
+# OpenTelemetry Collector logs pipeline for LynxDB.
+receivers:
+  filelog:
+    include: [/var/log/app/*.log]
+
 exporters:
   otlphttp/lynxdb:
     endpoint: "http://lynxdb:4318"
@@ -40,25 +51,39 @@ service:
     logs:
       receivers: [filelog]
       exporters: [otlphttp/lynxdb]
-# Point endpoint at LynxDB's OTLP HTTP listener, usually http://host:4318.
 ```
 
-Generate the same shape locally with:
+## How records are stored
+
+OTLP log records are written to the `main` index with `_sourcetype` `otlp`.
+The record body becomes `_raw` and the record time becomes `_time`. The
+`service.name` resource attribute becomes `_source` (falling back to
+`host.name`, then `otlp`), and `host.name` also fills `host`. Other fields:
+
+| Field | From |
+|-------|------|
+| `resource.<name>` | Each resource attribute, such as `resource.service.name` |
+| `<name>` | Each log record attribute, under its own name |
+| `level` | The severity text in lowercase, or `trace` ... `fatal` from the severity number |
+| `trace_id`, `span_id` | The record's trace context, hex encoded |
+| `scope.name`, `scope.version` | The instrumentation scope |
+
+Attribute names keep their dots, so they are queried as written:
 
 ```bash
-lynxdb shippers config otelcol --remote http://lynxdb:4318
+lynxdb query 'source=main _source=checkout level=error | stats count() by resource.host.name'
 ```
-
-## Migrating from an OTLP backend
-
-LynxDB accepts OTLP logs. Resource attributes are flattened with a `resource.` prefix, scope metadata is preserved, and `service.name` becomes the LynxDB `_source` when present.
 
 ## Troubleshooting
 
-Use `http://` for OTLP HTTP unless LynxDB is behind a TLS-terminating proxy. For gRPC, set `tls.insecure: true` when connecting directly to the default plaintext listener.
+Use `http://` for OTLP/HTTP unless LynxDB sits behind a TLS-terminating
+proxy. For gRPC, set `tls.insecure: true` when connecting directly to the
+plaintext listener. Large gRPC batches are limited by
+`--otlp-grpc-max-recv-bytes` (default 16 MB).
 
 ## Supported behavior
 
-Supported: OTLP HTTP JSON/protobuf, OTLP gRPC protobuf, gzip compression, and partial-success compatible log export responses.
+Supported: OTLP/HTTP with JSON or protobuf, OTLP/gRPC with protobuf, gzip
+compression, and partial-success export responses.
 
-Not supported: OTLP traces and metrics ingestion. LynxDB accepts log records only.
+Not supported: OTLP traces and metrics. LynxDB accepts log records only.

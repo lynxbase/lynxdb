@@ -1,6 +1,0 @@
-Sort(+bucket)
-  Extend(error_pct=round(((errors * 100) / total), 1))
-    Aggregate(count() as total, count() as errors by bucket [partial])
-      Extend(bucket=bin(timestamp, 30m))
-        Scan(main)
-          pushdown.columns: [_raw, _source, _time, level, timestamp]

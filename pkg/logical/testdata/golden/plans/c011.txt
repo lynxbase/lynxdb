@@ -1,3 +1,0 @@
-Aggregate(count() as errors, count() as success, count() as total [partial])
-  Scan(main)
-    pushdown.columns: [_raw, _source, _time, status]

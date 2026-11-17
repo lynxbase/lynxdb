@@ -20,12 +20,6 @@ func runProgram(t *testing.T, prog *Program, fields map[string]event.Value) even
 	return result
 }
 
-// RFC-002 P10: ~30 test functions that used spl2 AST types (CompileExpr,
-// FuncCallExpr, CompareExpr, GlobExpr, InExpr, FStringExpr, etc.) were
-// deleted. These functions are covered by lynxflow_conformance_test.go
-// and lynxflow_b2_conformance_test.go which test the same VM behavior
-// through the lynxflow AST compilation path.
-
 func TestVMIntegerArithmetic(t *testing.T) {
 	tests := []struct {
 		name string
@@ -601,7 +595,7 @@ func TestVMRegexMatch(t *testing.T) {
 }
 
 func TestVMSubstring(t *testing.T) {
-	// substr("hello", 1, 3) → "hel" (1-indexed like SPL2)
+	// substr("hello", 1, 3) → "hel" (1-indexed)
 	p := &Program{}
 	p.AddConstant(event.StringValue("hello"))
 	p.AddConstant(event.IntValue(1))

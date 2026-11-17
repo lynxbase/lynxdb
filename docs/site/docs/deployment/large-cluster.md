@@ -1,239 +1,143 @@
 ---
-title: Large Cluster (10-1000+ Nodes)
-description: Deploy a large LynxDB cluster with separated meta, ingest, and query roles for independent scaling.
+title: Large Cluster (10+ Nodes)
+description: Role-separated LynxDB cluster topology with dedicated meta, ingest and query nodes, and how distributed queries split between shards and the coordinator.
 ---
 
-# Large Cluster (10-1000+ Nodes)
+# Large Cluster (10+ Nodes)
 
-For large-scale deployments, LynxDB supports role splitting. Each node runs one specific role, allowing independent scaling of metadata management, write throughput, and query concurrency.
+A large cluster gives each node one role, so metadata, write throughput and query concurrency scale separately.
 
-:::note Current implementation status
-The repo includes the core cluster building blocks for this topology, but the operational surface for large separated-role clusters is still broader than the small-cluster path. Treat this guide as advanced deployment guidance and verify failover, rebalancing, and shard-routing behavior in staging before production use.
+:::caution Cluster runtime
+`lynxdb server` validates the `cluster` settings but does not start the cluster runtime: it opens no gRPC listener, joins no Raft group and routes no shards. Each node configured as below stores and queries only its own data. This page describes the topology and query planning of the cluster components in `pkg/cluster`. For production, run a [single node](./single-node.md).
 :::
-
-## Architecture
-
-```
-┌──────────────┐    ┌──────────────┐    ┌──────────────┐
-│ Meta Nodes   │    │ Ingest Nodes │    │ Query Nodes  │
-│ (3-5, Raft)  │    │ (N, stateless│    │ (M, stateless│
-│              │    │  + batcher)  │    │  + cache)    │
-│ - Shard map  │    │ - Batcher    │    │ - Scatter-   │
-│ - Node reg   │    │ - Memtable   │    │   gather     │
-│ - Leases     │    │ - Flush→S3   │    │ - Partial    │
-│              │    │ - Replicate  │    │   merge      │
-└──────┬───────┘    └──────┬───────┘    └──────┬───────┘
-       │                   │                   │
-       └───────────────────┼───────────────────┘
-                     ┌─────┴─────┐
-                     │  S3/MinIO │
-                     │ (source   │
-                     │  of truth)│
-                     └───────────┘
-```
 
 ## Roles
 
-| Role | Scales with | Count | Responsibility |
-|------|-------------|-------|----------------|
-| **Meta** | Cluster size | 3-5 (fixed) | Raft consensus, shard map, node registry, leader leases, field catalog, source registry |
-| **Ingest** | Write throughput | N nodes | Async batcher, direct-to-part writes, S3 upload, batcher replication |
-| **Query** | Query concurrency | M nodes | Scatter-gather, partial aggregation merge, result caching |
+| Role | Count | Responsibility |
+|------|-------|----------------|
+| `meta` | 3 or 5 | Raft group with the shard map, node registry, shard leases, field catalog and source registry. Holds no event data. |
+| `ingest` | scales with write volume | Routes events to shards, writes parts, replicates batches to in-sync replicas. |
+| `query` | scales with query load | Prunes shards by time and source, fans out shard queries, merges results. |
 
-## Meta Node Configuration
-
-Meta nodes run the Raft consensus protocol. You need 3 for production (tolerates 1 failure) or 5 (tolerates 2 failures). Meta nodes are lightweight and do not store log data.
-
-```yaml
-# /etc/lynxdb/config.yaml (meta-1, meta-2, meta-3)
-listen: "0.0.0.0:3100"
-data_dir: "/var/lib/lynxdb"
-log_level: "info"
-
-cluster:
-  node_id: "meta-1"    # Unique per node
-  roles: [meta]
-  seeds:
-    - "meta-1.example.com:9400"
-    - "meta-2.example.com:9400"
-    - "meta-3.example.com:9400"
+```text
+              ingest LB                          query LB
+                  |                                  |
+    +-------------+-------------+      +-------------+-------------+
+    | ingest-1  ingest-2  ...   |      | query-1  query-2  ...     |
+    +-------------+-------------+      +-------------+-------------+
+                  |        gRPC :9400        |
+                  +-----------+--------------+
+                              |
+                  meta-1  meta-2  meta-3  (Raft)
 ```
 
-## Ingest Node Configuration
+## Node Configuration
 
-Ingest nodes receive data, buffer events in the async batcher, write parts directly to immutable `.lsg` files, upload them to S3, and replicate batches to ISR peers via gRPC streaming. They are stateless after flush -- if an ingest node dies, its shards are reassigned and replicated batches are available on ISR peers.
+Meta nodes:
 
 ```yaml
-# /etc/lynxdb/config.yaml (ingest nodes)
 listen: "0.0.0.0:3100"
 data_dir: "/var/lib/lynxdb"
-log_level: "info"
 
 cluster:
   enabled: true
-  node_id: "ingest-1"    # Unique per node
-  roles: [ingest]
-  seeds:
-    - "meta-1.example.com:9400"
-    - "meta-2.example.com:9400"
-    - "meta-3.example.com:9400"
-  virtual_partition_count: 1024
-  time_bucket_size: "24h"
-  replication_factor: 3
-  ack_level: "one"
-  heartbeat_interval: "5s"
-  lease_duration: "10s"
-
-storage:
-  s3_bucket: "my-lynxdb-logs"
-  s3_region: "us-east-1"
-  compression: "lz4"
-  flush_threshold: "512mb"
-  compaction_workers: 4
-
-ingest:
-  max_body_size: "50mb"
+  node_id: "meta-1"          # unique per node
+  roles: [meta]
+  seeds: ["meta-1.example.com:9400", "meta-2.example.com:9400", "meta-3.example.com:9400"]
 ```
 
-## Query Node Configuration
-
-Query nodes execute distributed queries using scatter-gather. They pull segments from S3 (with a local cache) and merge partial aggregation results from shards.
+Ingest nodes:
 
 ```yaml
-# /etc/lynxdb/config.yaml (query nodes)
 listen: "0.0.0.0:3100"
 data_dir: "/var/lib/lynxdb"
-log_level: "info"
 
 cluster:
-  node_id: "query-1"    # Unique per node
-  roles: [query]
-  seeds:
-    - "meta-1.example.com:9400"
-    - "meta-2.example.com:9400"
-    - "meta-3.example.com:9400"
+  enabled: true
+  node_id: "ingest-1"
+  roles: [ingest]
+  seeds: ["meta-1.example.com:9400", "meta-2.example.com:9400", "meta-3.example.com:9400"]
+  replication_factor: 3
+  ack_level: "one"
 
 storage:
-  s3_bucket: "my-lynxdb-logs"
+  s3_bucket: "example-lynxdb-logs"
   s3_region: "us-east-1"
-  segment_cache_size: "50gb"
-  cache_max_bytes: "8gb"
+  compaction_workers: 4
+```
+
+Query nodes:
+
+```yaml
+listen: "0.0.0.0:3100"
+data_dir: "/var/lib/lynxdb"
+
+cluster:
+  enabled: true
+  node_id: "query-1"
+  roles: [query]
+  seeds: ["meta-1.example.com:9400", "meta-2.example.com:9400", "meta-3.example.com:9400"]
+  max_concurrent_shard_queries: 50
+  shard_query_timeout: "30s"
+
+storage:
+  s3_bucket: "example-lynxdb-logs"
+  s3_region: "us-east-1"
 
 query:
-  max_concurrent: 50
+  max_concurrent: 64
   max_query_runtime: "30m"
 ```
 
+See [Cluster Settings](../configuration/cluster.md) for every key.
+
 ## Distributed Query Execution
 
-The optimizer automatically splits queries for distributed execution:
+A distributed query must be a single pipeline over one scan. The coordinator compiles the query and splits it in two:
 
-```
-"source=nginx | where status>=500 | stats count() by uri | sort -count | head 10"
+1. **Shard prefix.** The scan with its search terms and time range, followed by the longest run of row-local commands: commands that map each row on its own, such as `where`, `eval`, `fields`, `rename`, `parse`, `rex`, `grok`, `spath`, `expand` and `flatten`. Every shard runs this prefix over its own data. Shards receive the query text and derive the same split.
+2. **Coordinator operators.** Everything after the prefix runs on the coordinator over the merged shard rows: `sort`, `head`, `dedup`, `eventstats`, `streamstats`, `top`, `timechart` and the rest.
 
-  Shard-level (pushed):    | where status>=500 | stats count() by uri   (partial agg)
-  Coordinator (merged):    | sort -count | head 10
-```
+When the first coordinator operator is a `stats` whose aggregations are all `count`, `sum`, `avg`, `min` or `max` over fields, grouped by plain fields, shards compute partial aggregates and the coordinator merges them, so only one row per group travels per shard. Any other aggregation (`dc`, `p95`, `count(eval(...))`, grouping by `span(...)` or an expression) runs entirely on the coordinator over all prefix rows.
 
-Operators that push down to shards: scan, filter, eval, partial stats, TopK.
-Operators that run on the coordinator: sort, join, global dedup, streamstats.
+| Query | On each shard | On the coordinator |
+|-------|---------------|--------------------|
+| `source=main level=ERROR \| where status >= 500 \| eval kb = bytes / 1024 \| fields host, path, kb` | Whole query | Concatenates rows |
+| `source=main status>=500 \| stats count() as errors, avg(response_time) as avg_ms by path \| sort - errors \| head 10` | Scan, partial `count` and `avg` by `path` | Merges partials, keeps the top 10 |
+| `source=main \| rex field=msg "(?<verb>[A-Z]+) (?<route>\S+)" \| stats count() as n, max(response_time) as worst by verb` | Scan, `rex`, partial `count` and `max` | Merges partials |
+| `source=main \| stats dc(user) as users, p95(response_time) as p95_ms by host` | Scan | Full `stats` over all rows |
+| `source=main \| stats count() by span(_time, 5m)` | Scan | Full `stats` (the group key is an expression) |
 
-## Network Architecture
+Queries with a join, a union (`append`, `union`, `multisearch`) or a subsearch do not run distributed. For example, `source=main | where host in [ source=main | where status = 503 | fields host ] | stats count() by host` fails with:
 
-```
-                    ┌─────────────────────────────────────┐
-                    │         Load Balancer                │
-                    │   (ingest LB)    (query LB)         │
-                    └────────┬──────────────┬──────────────┘
-                             │              │
-              ┌──────────────┤              ├──────────────┐
-              │              │              │              │
-        ┌─────┴────┐  ┌─────┴────┐  ┌─────┴────┐  ┌─────┴────┐
-        │Ingest-1  │  │Ingest-2  │  │ Query-1  │  │ Query-2  │
-        │Ingest-3  │  │Ingest-4  │  │ Query-3  │  │ Query-4  │
-        └──────────┘  └──────────┘  └──────────┘  └──────────┘
-              │              │              │              │
-              └──────────────┼──────────────┼──────────────┘
-                             │              │
-                     ┌───────┴───┐  ┌───────┴───┐
-                     │  Meta-1   │  │  Meta-2   │
-                     │  Meta-3   │  │           │
-                     └───────────┘  └───────────┘
+```text
+cluster query: only a single pipeline over one scan runs distributed; joins, unions and subqueries do not
 ```
 
-### Required Ports
+Shard RPCs per query are limited by `cluster.max_concurrent_shard_queries`, and each times out after `cluster.shard_query_timeout`. With `cluster.partial_results` on, a query returns the rows from the shards that answered when at least `cluster.partial_failure_threshold` of them did.
 
-| Port | Protocol | Direction | Purpose |
-|------|----------|-----------|---------|
-| 3100 | TCP | Inbound | HTTP API (ingest, query, health) |
-| 9400 | TCP | Between nodes | Cluster communication (Raft, shard rebalancing, replication) |
+To make queries cheap on many shards, filter early so the shard prefix discards most rows, and aggregate with the mergeable functions. See [PPL performance](../ppl/performance.md).
 
-### Load Balancer Setup
+## Network
 
-Use separate load balancers (or URL-based routing) for ingest and query traffic:
+| Port | Between | Purpose |
+|------|---------|---------|
+| 3100/tcp | clients and nodes | HTTP API |
+| 9400/tcp | all nodes | gRPC: Raft, replication, shard queries |
 
-- **Ingest LB** routes `POST /api/v1/ingest*` to ingest nodes
-- **Query LB** routes all other traffic to query nodes
-- Health check: `GET /health` on port 3100
+Route traffic by path:
 
-## Scaling Guidelines
+- **Ingest load balancer**: `/api/v1/ingest*`, `/api/v1/es/`, `/_bulk`, `/services/collector*`, `/api/v1/otlp/` to ingest nodes.
+- **Query load balancer**: `/api/v1/query*`, `/api/v1/tail`, `/api/v1/fields*` and the remaining API routes to query nodes.
+- Health checks: `GET /health` on port 3100.
 
-### Ingest Nodes
+## Meta Quorum Loss
 
-Scale ingest nodes based on write throughput:
-
-| Events/sec | Recommended Ingest Nodes |
-|------------|--------------------------|
-| 100K | 2-3 |
-| 500K | 5-10 |
-| 1M | 10-20 |
-| 5M+ | 50+ |
-
-### Query Nodes
-
-Scale query nodes based on concurrent query load:
-
-| Concurrent Queries | Recommended Query Nodes |
-|---|---|
-| 10 | 2-3 |
-| 50 | 5-10 |
-| 200 | 20-30 |
-| 500+ | 50+ |
-
-### Meta Nodes
-
-Meta nodes are lightweight. 3 nodes handle clusters up to ~500 nodes. Use 5 for larger clusters.
-
-## Node Failure Recovery
-
-| Scenario | Impact | Recovery Time |
-|----------|--------|---------------|
-| Ingest node failure | Shards reassigned to surviving ingest nodes | ~25 seconds |
-| Query node failure | Load balancer routes to surviving query nodes | Immediate (health check) |
-| Meta node failure (1 of 3) | Raft quorum maintained, cluster operates normally | Automatic |
-| Meta node failure (2 of 3) | Raft quorum lost, no new shard assignments | Bring 1 meta node back |
-| Meta quorum loss (all) | Ingest continues in degraded mode for `meta_loss_timeout` (30s) | Restore meta quorum |
-
-S3 is the source of truth. No data is lost when ingest nodes fail because batches are replicated to ISR peers.
-
-## Example: 50-Node Cluster
-
-```
-Meta:   3 nodes (m5.large)
-Ingest: 20 nodes (c5.2xlarge, 8 vCPU, 16GB RAM)
-Query:  27 nodes (r5.2xlarge, 8 vCPU, 64GB RAM)
-S3:     Single bucket, us-east-1
-```
-
-Estimated capacity:
-- Ingest: ~2M events/sec
-- Query: ~100 concurrent queries
-- Storage: Unlimited (S3)
-- Hot cache: ~1.3TB across query nodes
+Without a meta quorum, shard map changes and lease renewals stop. Ingest nodes that go `cluster.meta_loss_timeout` without a renewal enter meta-loss mode: they keep accepting writes without lease validation, mark those parts as unvalidated, skip compaction coordination, and re-validate when the meta group returns.
 
 ## Next Steps
 
-- [S3 Storage Setup](/docs/deployment/s3-setup) -- configure the S3 backend
-- [Small Cluster](/docs/deployment/small-cluster) -- simpler deployment for fewer than 10 nodes
-- [Performance Tuning](/docs/operations/performance-tuning) -- optimize cluster performance
-- [Monitoring](/docs/operations/monitoring) -- cluster-wide observability
+- [Small Cluster](./small-cluster.md)
+- [Cluster Settings](../configuration/cluster.md)
+- [Distributed Architecture](../architecture/distributed.md)
+- [PPL overview](../ppl/overview.md)

@@ -1,312 +1,200 @@
 ---
 sidebar_position: 4
 title: Query Engine
-description: LynxDB query engine internals -- recursive descent LynxFlow parser, semantic analysis and desugaring, logical plan lowering, rule-based fixed-point optimizer, Volcano iterator pipeline, and zero-allocation bytecode VM.
+description: How LynxDB runs a query -- PPL compilation to a language-independent IR, rule-based optimization, storage hints, physical planning onto pipeline iterators and bytecode VM programs, and server-side execution.
 ---
 
 # Query Engine
 
-The LynxDB query engine transforms LynxFlow text into a streaming execution pipeline that can process millions of events per second with minimal memory overhead. It consists of four major stages: the LynxFlow frontend (lexing, parsing, semantic analysis, desugaring), logical planning and optimization, physical pipeline construction, and execution.
+LynxDB compiles OpenSearch Piped Processing Language (PPL) into a language-independent intermediate representation (IR), optimizes the IR plan, and turns it into a tree of pull-based iterators that read from the storage engine. This page follows a query through those stages and through the server around them. The PPL pages cover the compiler in detail: [architecture](../ppl/architecture.md), [compilation](../ppl/compilation.md), [IR](../ppl/ir.md), [optimizer](../ppl/optimizer.md) and [performance](../ppl/performance.md).
 
-## Pipeline Overview
+## Query Path
 
 ```mermaid
-flowchart LR
-    A["LynxFlow Text"] --> B["Lexer"]
-    B --> C["Parser"]
-    C --> D["AST"]
-    D --> E["Sema + Desugar"]
-    E --> F["Logical Plan"]
-    F --> G["Optimizer"]
-    G --> H["Physical Builder"]
-    H --> I["Volcano Pipeline"]
-    I --> J["Results"]
+flowchart TD
+    A["PPL text"] --> B["pkg/ppl<br/>lexer, parser, semantic analysis, lowering"]
+    B --> C["pkg/ir plan"]
+    C --> D["pkg/ir/opt<br/>rewrite rules, column pruning"]
+    D --> E["pkg/planner<br/>plan + storage hints"]
+    E --> F["pkg/engine/physical<br/>IR operators to iterators,<br/>expressions to pkg/vm bytecode"]
+    F --> G["pkg/engine/pipeline<br/>batch iterators over storage"]
+    G --> H["Results"]
 ```
 
-There are two entry points into this flow:
+| Stage | Package | Output |
+|-------|---------|--------|
+| Lexing and parsing | `pkg/ppl/lexer`, `pkg/ppl/parser`, `pkg/ppl/ast` | Syntax tree with source spans |
+| Semantic analysis and lowering | `pkg/ppl` | Validated IR plan |
+| Optimization | `pkg/ir/opt` | Equivalent, cheaper IR plan and the list of rules that fired |
+| Planning | `pkg/planner`, `pkg/engine/physical/hints.go` | Plan plus storage hints for segment selection |
+| Physical planning | `pkg/engine/physical`, `pkg/vm` | Iterator tree with compiled bytecode programs |
+| Execution | `pkg/engine/pipeline` | Batches of rows |
 
-- **Server mode**: `pkg/planner` wraps the frontend and optimizer behind the `Planner` interface used by the REST API.
-- **CLI file/pipe mode**: `pkg/lynxflow/run` is a thin orchestrator (parse -> desugar -> lower -> optimize -> build -> drain) used for embedded execution with no server.
+`pkg/query` is the single entry point that compiles query text. `query.Compile` runs the frontend and the optimizer and validates the optimized plan; `query.Run` builds and drains a plan over an in-memory event store. Everything that runs a query goes through `query.Compile`:
 
-Both paths share the same frontend, optimizer, and pipeline -- the difference is only lifecycle and wiring.
+- **CLI file and pipe mode** (`lynxdb query --file`, stdin): `pkg/storage` loads the input into an ephemeral in-memory engine under the index `main` and calls `query.Run`.
+- **Server**: `pkg/planner` compiles with `query.Compile`, adds storage hints, and the server builds the plan over its segment store.
+- **Cluster shards** (the distributed design in `pkg/cluster/query`, which `lynxdb server` does not start): each shard compiles the query text it receives with the same planner (see [Distributed Architecture](/docs/architecture/distributed#distributed-query-execution)).
 
-:::note Historical note
-LynxDB originally shipped an SPL2 dialect. It was replaced by LynxFlow v2 (RFC-002, June 2026) as a clean-break redesign; the old `pkg/spl2` package was removed. The full capability mapping lives in `docs/grammar/RFC-002.md` §15 and the CHANGELOG section "Breaking Changes (LynxFlow vs SPL2)".
-:::
+Compiling depends only on the query text: relative times stay symbolic until execution, and source schemas are discovered when rows are read. `pkg/query` therefore caches compiled plans by text (up to 1024 plans, for queries up to 2 KiB) and hands each caller its own copy of the immutable plan.
 
-## LynxFlow Frontend
+## Frontend: PPL to IR
 
-The frontend lives under `pkg/lynxflow`. The parser is hand-written recursive descent (no parser generators). This choice gives full control over error messages, error recovery, and performance.
+`pkg/ppl` turns PPL text into an IR plan:
 
-### Lexer
+1. **Lexer** (`pkg/ppl/lexer`): tokens with line and column. Identifiers may contain `-` and `*`, as in the official PPL grammar, so `a-b` is one identifier.
+2. **Parser** (`pkg/ppl/parser`): a hand-written recursive-descent parser that builds the syntax tree (`pkg/ppl/ast`). It reports the first syntax error with its position and the expected tokens, and rejects queries over 256 KiB, nesting deeper than 256 levels and pipelines over 1000 commands.
+3. **Semantic analysis**: every field reference is resolved against the schema the previous command produces. Index scans have open schemas (any field may exist); `stats`, `fields`, `top` and similar commands produce closed schemas, where an unknown field is a `SEMANTIC_ERROR` that lists the available fields. Functions resolve through the PPL catalogs (`pkg/ppl/functions.go`, `pkg/ppl/aggs.go`) onto the IR function registry, and static types are checked.
+4. **Lowering**: each command becomes IR operators. Search terms in the source command become a `Filter` over `_raw` and field comparisons; `eval` becomes `Compute`; `stats` becomes `Aggregate`; `sort ... | head` becomes `Sort` and `Limit`.
 
-The lexer (`pkg/lynxflow/lexer`) tokenizes the input string into a stream of tokens: stage and clause keywords (`where`, `stats`, `by`), identifiers, string literals, raw strings (`r"..."` for regexes), numbers, durations (`5m`), operators (`>=`, `==`, `??`, `|`), and `$` binding references.
+Commands the catalog marks unsupported fail with `UNSUPPORTED_COMMAND`, `UNSUPPORTED_FUNCTION` or `UNSUPPORTED_FEATURE`. See [PPL compilation](../ppl/compilation.md) and [PPL errors](../ppl/errors.md).
 
-### Recursive Descent Parser
+## IR
 
-The parser (`pkg/lynxflow/parser`) consumes the token stream and builds an AST (`pkg/lynxflow/ast`). Key characteristics:
+The IR in `pkg/ir` is a tree of logical operators, each with typed expressions and an output schema, and knows nothing about PPL syntax. Its operators are `Scan`, `Values`, `Empty`, `SourceSchema`, `Filter`, `Compute`, `Project`, `RenameColumns`, `Aggregate`, `Window`, `Sort`, `TopN`, `Limit`, `Reverse`, `Dedup`, `Join`, `Union`, `ZipColumns`, `Extract`, `Patterns`, `Unnest`, `FlattenObject`, `FillNull`, `Transpose`, `Totals` and `CombineValues`. `ir.Validate` checks every plan the frontend and the optimizer produce.
 
-- **No backtracking**: The parser makes a single left-to-right pass over the token stream, deciding the production rule based on the current token (LL(1) where possible, with limited lookahead for ambiguous cases).
-- **Error recovery**: On syntax errors, the parser attempts to recover by skipping to the next pipe (`|`) operator and continuing to parse subsequent stages. This allows reporting multiple errors in a single parse, rather than stopping at the first one.
-- **Caret diagnostics**: Errors carry stable error codes, source spans rendered with caret underlines, and targeted suggestions. For example, `stats count by host` produces `error[E013]: count requires parentheses: count()` with the suggestion `count()`.
-- **Registry-driven**: Operator, function, and aggregate signatures come from `pkg/lynxflow/registry` -- the single source of truth also used by semantic analysis, linting, shell syntax highlighting, and the docs generator (`internal/docgen`, which produces `docs/site/docs/lynxflow/**` and `docs/grammar/lynxflow.ebnf`).
-
-### AST
-
-The AST represents a query as a pipeline of stages. Each stage node carries its arguments. For `from main _source=nginx status>=500 | stats count() by uri | sort -count | head 10`:
-
-```
-Pipeline [
-  From  { source: "main", search: [_source=nginx, status>=500] }
-  Stats { aggs: [count()], by: [uri] }
-  Sort  { keys: [-count] }
-  Head  { n: 10 }
-]
-```
-
-Named bindings are declared with `let` and substituted wherever referenced:
-
-```
-let $threats = from idx_backend | where threat_type in ["sqli", "path_traversal"] | keep client_ip, threat_type;
-from $threats | stats count() by threat_type
-```
-
-### Semantic Analysis and Desugaring
-
-Two passes run between parsing and lowering:
-
-- **Sema** (`pkg/lynxflow/sema`): Infers the schema flowing through each stage (field names and types), validates stage arguments against the registry, and generates did-you-mean suggestions for misspelled fields and functions.
-- **Desugar** (`pkg/lynxflow/desugar`): Rewrites sugar stages onto the core operator set. For example, `every 5m stats count()` desugars to `stats count() by bin(_time, 5m)`, and from-stage search sugar desugars to filters.
-
-### Search Sugar
-
-The `from` stage accepts search sugar -- the only place where `=` compares rather than binds:
-
-- Bare terms: `from main error timeout` (full-text search against `_raw`)
-- Quoted phrases: `from main "connection refused"`
-- Field comparisons: `from main level=error status>=500`
-- Time ranges: `from main[-1h] | where status >= 500 | top 10 uri`
-
-Mid-pipeline, use explicit predicates instead: `where has(_raw, "refused")` or `where contains(_raw, "timeout")`.
-
-## Logical Plan
-
-`pkg/logical` defines the typed logical plan IR. Lowering converts the desugared AST into a tree of plan nodes, where each node represents a relational operator (Scan, Filter, Project, Aggregate, Join, Union, ...) and knows its input children and output schema.
-
-Two design decisions worth noting:
-
-- **Expressions stay as AST nodes**: The bytecode VM compiles directly from `ast.Expr`, so there is no separate expression IR.
-- **Relative time bounds stay unresolved**: Time bounds are stored as relative markers (`-1h`), not wall-clock times, making plans deterministic and cacheable regardless of when they were built.
+A `Scan` carries, besides its sources, everything the optimizer learns about the rows it must produce: a time range, pruning predicates, the columns read, a row limit and a scan direction. See [PPL IR](../ppl/ir.md).
 
 ## Optimizer
 
-The optimizer (`pkg/logical/opt`) transforms the logical plan to reduce work at execution time. Rules run in a fixed-point loop with deterministic rule order (up to 10 passes) until no rule fires. Each pass has two phases: expression rules, then plan rules.
+`pkg/ir/opt` applies rewrite rules bottom-up over the plan until no rule fires (at most 8 passes), then runs column pruning once. Every rule preserves the result. Rules that hand predicates to a scan keep them in the `Filter` above it, so a storage engine may use any subset of them.
 
-### Expression Rules
+| Rule | Rewrite |
+|------|---------|
+| `fold-constants` | Evaluates deterministic expressions over literals with the VM: `status >= 400 + 100` becomes `status >= 500` |
+| `merge-filters` | Merges adjacent `Filter` operators into one conjunction |
+| `remove-true-filter` | Drops a `Filter` whose condition is the literal `true` |
+| `prune-scan` | Copies the indexable conjuncts of a `Filter` directly above a `Scan` into the scan's pruning predicates: raw-text word, phrase, prefix and glob searches, disjunctions of words, and a column equal to a string literal |
+| `time-range-to-scan` | Narrows the scan's time range with comparisons of `_time` against constant timestamps in the `Filter` above it |
+| `sort-limit-to-topn` | Replaces `Limit` over `Sort` with `TopN`, a bounded heap |
+| `limit-into-scan` | Tells a scan how many rows the plan reads when only `Compute`, `Project` or `RenameColumns` separate a `Limit` from it |
+| column pruning | Records on each scan the columns the plan above it reads |
 
-Applied bottom-up at every expression position in every plan node.
+For example:
 
-| Rule | Description | Example |
-|------|-------------|---------|
-| **paren-strip** | Remove redundant parentheses so downstream rules see clean trees | `(x)` becomes `x` |
-| **const-fold-arith** | Evaluate constant arithmetic at plan time | `1 + 1` becomes `2` |
-| **const-fold-compare** | Evaluate constant comparisons at plan time | `where 1 + 1 > 1` becomes `where true` |
-| **bool-simplify** | Apply boolean algebra | `true and p` becomes `p` |
-| **coalesce-fold** | Fold `??` chains with constant arms | `null ?? x` becomes `x` |
-| **if-fold** | Fold `if()` with a constant condition | `if(true, a, b)` becomes `a` |
-| **cmp-normalize** | Normalize comparison shapes | constant moved to the right-hand side |
+```
+source=main | where _time >= timestamp('2025-01-15 08:00:00') | where status >= 400 + 100 | eval kb = bytes / 1024 | head 5
+```
 
-### Plan Rules
+```
+Logical plan:
+Limit(5)
+└─ Compute(kb = bytes / 1024)
+   └─ Filter(status >= (400 + 100))
+      └─ Filter(_time >= timestamp("2025-01-15 08:00:00"))
+         └─ Scan(main)
 
-Applied bottom-up over the plan tree.
+Optimized plan:
+Limit(5)
+└─ Compute(kb = bytes / 1024)
+   └─ Filter((_time >= timestamp("2025-01-15T08:00:00Z")) AND (status >= 500))
+      └─ Scan(main) time=[2025-01-15T08:00:00Z, +inf)
 
-| Rule | Description | Effect |
-|------|-------------|--------|
-| **filter-merge** | Merge adjacent Filter nodes into one predicate | One VM program instead of two |
-| **filter-elim** | Remove always-true filters | Dead operator removed |
-| **filter-false-to-empty** | Replace always-false filters with an empty source | No scan at all |
-| **predicate-pushdown** | Move filters past non-filtering operators toward the scan | Fewer events reach expensive operators |
-| **partial-agg** | Split aggregation into per-segment partial phase and global merge phase | Reduces memory, enables distributed execution |
-| **topk-into-agg** | When `stats` is followed by `sort` + `head`, push the limit into a heap-based TopK aggregation | Avoids full sort for "top N" queries |
-| **tail-scan** | Push `tail N` into the scan | Read from the end instead of materializing everything |
-| **limit-pushdown** | Push `head` limits toward the scan | Short-circuit earlier |
-| **column-pruning** | Remove columns never referenced downstream | Reduce memory and I/O |
-| **mv-rewrite** | Detect queries satisfiable by a materialized view and rewrite the scan to read from the view | ~400x speedup |
+Optimizer rules:
+  fold-constants x2
+  merge-filters x1
+  time-range-to-scan x1
+```
 
-### Scan-Time Pruning
+`lynxdb query --explain` prints both plans and the rules locally; `lynxdb explain` and `GET /api/v1/query/explain` ask the server. See [PPL optimizer](../ppl/optimizer.md) for each rule's conditions.
 
-Predicates pushed into the Scan node drive pruning when the physical scan reads segments:
+## Planner and Storage Hints
 
-| Technique | Description | Effect |
-|-----------|-------------|--------|
-| **Time range pruning** | Time bounds from `from main[-1h]` or `_time` predicates prune segments by time range | Skip segments outside the query window |
-| **Bloom filter pruning** | Literal search terms are checked against per-segment bloom filters | Skip segments that definitely do not contain the term |
-| **Inverted index lookup** | Full-text search resolves to inverted index lookups | Read only matching rows, not the whole segment |
-| **Interpolation search** | Interpolation search instead of binary search on sorted timestamp columns | 4.4x faster than binary search (1.8ns vs 15ns) |
+On the server, `pkg/planner` wraps compilation. `Plan` returns:
 
-## Physical Pipeline Builder
+- the compiled and optimized plan and the applied rules
+- **storage hints** (`model.QueryHints`) from `physical.PlanHints` in `pkg/engine/physical/hints.go`
+- the request's `from`/`to` bounds, parsed separately and intersected with the plan's time range at execution
+- `SkipResultCache` when the result depends on the time of execution: relative time bounds, `now()` or another non-deterministic function
 
-The physical builder (`pkg/logical/physical`) converts the optimized logical plan into a tree of streaming operators from `pkg/engine/pipeline`, compiling every expression (filters, extend assignments, aggregation arguments) into `pkg/vm` bytecode programs along the way.
+`physical.ScanHints` translates one `Scan` into hints:
 
-## Volcano Iterator Pipeline
+| Scan property | Hint | Used for |
+|---------------|------|----------|
+| Sources | Source scope (single index, list, glob, all) | Selecting segments of the queried indexes |
+| Time range, resolved against the current time | `TimeBounds` | Skipping segments and row groups by time |
+| Word and phrase searches | `SearchTerms`, tokenized to lower-case letter and digit runs | Bloom filters and term index lookups |
+| Disjunctions of single-word searches | `SearchTermTree` (`AND` of `OR` groups) | Term index lookups |
+| Prefix and glob searches | `TokenGlobs` | Term dictionary (FST) expansion; never bloom filters |
+| Column equal to a string literal | `FieldPredicates` with `=` | Column min/max skipping, per-row-group filters, row filtering during the read |
+| Columns read | `RequiredCols` | Reading only those columns |
+| Row limit, direction | `Limit`, `ReverseScan` | Stopping the scan early |
 
-The execution engine uses the Volcano iterator model: a tree of operators where each operator implements a `Next()` method that pulls the next batch of results from its child operator.
+A plan with one scan gets all of its hints. A plan with several scans (`join`, `append`, `multisearch`, subsearches) keeps only the union of their sources and time ranges, because each data-skipping hint belongs to one scan. [Indexing](/docs/architecture/indexing) describes how the server applies each hint.
 
-### Pull-Based Streaming
+## Server Execution
+
+`pkg/server` runs a planned query in these steps:
+
+1. **Result cache**: the cache key is the query hash, the ingest generation (a counter that changes on every ingest) and the effective time range. A hit returns the cached rows; queries with `SkipResultCache`, or with request `from`/`to`, bypass the cache.
+2. **Segment selection**: the server pins the current set of segments so compaction cannot unmap them during the query, orders them newest first, and drops segments outside the source scope or time bounds, segments whose column min/max excludes a string equality predicate, and segments whose bloom filter lacks a search term.
+3. **Scan source**: the physical planner's `Source` hook opens a `SegmentStreamIterator` for each `Scan`. It reads events still in the ingest batcher first, then the selected segments one row group at a time, applying the term index, per-row-group filters and the required columns. Only one row group's events are in memory at a time.
+4. **Physical planning**: `physical.Build` turns the plan into iterators with a per-query memory coordinator and the server's spill manager.
+5. **Collection**: the root iterator is drained into result rows. Event queries without a `head` are capped at `query.max_result_limit` rows.
+
+When an engine has a cluster coordinator attached, it hands the plan to the coordinator instead; `lynxdb server` attaches none (see [Distributed Architecture](/docs/architecture/distributed)).
+
+## Physical Planning
+
+`pkg/engine/physical` maps each IR operator onto one or more pipeline iterators and compiles every IR expression into a VM program:
+
+| IR operator | Iterator |
+|-------------|----------|
+| `Scan` | Storage source from the `Source` hook, plus a time filter that enforces the scan's time range exactly |
+| `Filter` | Filter iterator running a boolean VM program per row |
+| `Compute` | Eval iterator running one VM program per assignment |
+| `Project`, `RenameColumns` | Column selection and renaming |
+| `Aggregate` | Hash aggregation; spills partial state to disk under memory pressure |
+| `Sort` | Sort; spills sorted runs to disk under memory pressure |
+| `TopN` | Bounded heap of N (+ offset) rows |
+| `Limit` | Offset and limit iterators that stop pulling from their input when done |
+| `Window` | `eventstats`, `streamstats` and `trendline` iterators |
+| `Dedup`, `Reverse`, `FillNull` | Dedicated iterators |
+| `Join` | Hash join; the right side is held in memory |
+| `Union` | Concatenation, or a newest-first merge for `multisearch` |
+| `Extract`, `Patterns`, `Unnest`, `FlattenObject` | Row-mapping iterators for `parse`/`grok`/`rex`, `patterns`, `expand`, `flatten` |
+| `Transpose`, `Totals`, `CombineValues`, `ZipColumns` | Iterators that collect their input first |
+| `SourceSchema` | Rows describing the fields of an index (`describe`) |
+
+Uncorrelated subqueries (`where x in [ ... ]`, `exists`, scalar subsearches) run once while the plan is built, and their rows become constants of the VM programs that use them. A subquery's columns must be known before execution, so it ends with `fields` or `stats`.
+
+Operators that hold rows register a memory account with the per-query coordinator. Aggregation and sort spill to disk when their share runs out; the others fail the query with `QUERY_MEMORY_EXCEEDED`.
+
+## Pipeline Execution
+
+`pkg/engine/pipeline` uses the Volcano model: each iterator's `Next()` pulls the next batch from its input. Batches hold up to 1024 rows.
 
 ```
 Output
   ↑ Next()
-Sort
+TopN(10)
   ↑ Next()
-Aggregate (global merge)
+Aggregate(count() BY path)
   ↑ Next()
-Filter (where status >= 500)
+Filter(status >= 500)
   ↑ Next()
-Scan (segments + buffered/in-memory events)
+Scan (buffered events, then segments row group by row group)
 ```
 
-Each `Next()` call returns a batch of up to 1024 rows. This design has critical advantages for log analytics:
-
-- **Short-circuit**: `head 10` on 100M events reads only enough batches to fill 10 results (0.23 ms), not the entire dataset.
-- **Bounded memory**: Each operator holds at most one batch in memory. A pipeline scanning 100 GB of segments uses a few MB of memory.
-- **Composable**: Operators are independent and composable. Adding a new stage means implementing one `Next()` method.
-
-### Pipeline Operators
-
-| Operator | LynxFlow Stage | Description |
-|----------|---------------|-------------|
-| **Scan** | `from` (incl. search sugar) | Reads events from segments and buffered/in-memory event stores. Applies time/bloom/index pruning. |
-| **Filter** | `where` | Evaluates a boolean predicate via the bytecode VM. |
-| **Project** | `keep`, `drop` | Selects or removes columns. |
-| **Eval** | `extend` | Computes new fields using the bytecode VM. |
-| **Aggregate** | `stats` | Hash-based aggregation with partial/global merge support. |
-| **Sort** | `sort` | In-memory sort with spill-to-disk for large result sets. |
-| **Limit** | `head`, `tail` | Limits the number of output rows. |
-| **Parse** | `parse json`, `parse logfmt`, `parse regex` | Structure extraction at query time. |
-| **StreamStats** | `streamstats` | Running aggregation over the event stream. |
-| **EventStats** | `eventstats` | Aggregation appended to each event (no reduction). |
-| **Join** | `join` | Hash join between two datasets. |
-| **Union** | `union` | Concatenates multiple datasets. |
-| **Dedup** | `dedup` | Removes duplicate events by specified fields. |
-| **Rename** | `rename` | Renames fields. |
-| **Top/Rare** | `top`, `rare` | Heap-based most/least frequent values. |
-| **Transaction** | `transaction` | Groups events into transactions by correlation fields. |
-| **Live scan** | Live tail | Streams events as they arrive (SSE). |
-
-Sugar stages (`every`, `baseline`, `changes`, `rate`, ...) desugar onto these core operators before lowering. The full registry-generated stage catalog lives in the [LynxFlow reference](/docs/lynxflow/overview).
+- **Early stop**: `head 10` stops pulling once it has 10 rows, so the scan reads no further segments.
+- **Bounded memory for streaming operators**: filters, evals and projections hold one batch at a time. Blocking operators (aggregation, sort, joins, `eventstats`) hold their state under the memory coordinator.
+- **Statistics**: each iterator records rows in and out and time spent; `--analyze` and the `profile` request field report them.
 
 ## Bytecode VM
 
-The bytecode VM evaluates expressions in `where`, `extend`, and `stats` stages. It is designed for extreme throughput on the hot path.
+`pkg/vm` evaluates every expression: filter conditions, `eval` assignments, aggregation arguments, sort keys and join keys. `vm.CompileExpr` compiles an IR expression into a program of one-byte opcodes with a constant pool. The VM runs on a fixed 256-slot stack of values, so evaluating a row allocates no stack. Every function in the IR registry has a native Go implementation in `pkg/vm`. The optimizer's constant folding uses the same VM, so a folded constant has exactly the value the expression has at run time.
 
-### Architecture
+`where status >= 500` compiles to four instructions: `OpLoadPath` pushes the row's `status` value, a constant instruction pushes `500` from the constant pool, `OpGteStrict` compares them with null-aware semantics (a missing or null operand yields null, which a filter treats as false), and `OpReturn` ends the program. `AND`, `OR` and `NOT` compile to three-valued opcodes and conditional jumps, so the right side of `AND` runs only when the left side does not decide the result.
 
-```
-┌────────────────────────────────────┐
-│          Bytecode Program          │
-│  [LOAD_FIELD "status"]            │
-│  [PUSH_INT 500]                   │
-│  [CMP_GE]                         │
-│  [HALT]                           │
-├────────────────────────────────────┤
-│          Execution Stack           │
-│  Fixed 256 slots (no heap alloc)  │
-│  [slot 0: field value]            │
-│  [slot 1: constant 500]           │
-│  [slot 2: comparison result]      │
-├────────────────────────────────────┤
-│          Field Resolver            │
-│  Maps field names → column index  │
-│  + current row pointer            │
-└────────────────────────────────────┘
-```
+## Live Tail
 
-### Design Principles
-
-- **Zero allocations**: The stack is a fixed-size array (256 slots) allocated once per query, not per event. No heap allocations occur during evaluation.
-- **Stack-based**: Operations push and pop values on the stack. `LOAD_FIELD "status"` pushes the field value; `PUSH_INT 500` pushes the constant; `CMP_GE` pops both and pushes the boolean result.
-- **Compact bytecode**: Each opcode is a single byte. The program for `status >= 500` is 4 instructions (~12 bytes).
-
-### Opcodes (60+)
-
-The VM supports 60+ opcodes across several categories:
-
-| Category | Examples |
-|----------|---------|
-| **Stack** | `PUSH_INT`, `PUSH_FLOAT`, `PUSH_STRING`, `PUSH_BOOL`, `PUSH_NULL`, `POP`, `DUP` |
-| **Field** | `LOAD_FIELD`, `STORE_FIELD` |
-| **Arithmetic** | `ADD`, `SUB`, `MUL`, `DIV`, `MOD`, `NEG` |
-| **Comparison** | `CMP_EQ`, `CMP_NE`, `CMP_LT`, `CMP_LE`, `CMP_GT`, `CMP_GE` |
-| **Boolean** | `AND`, `OR`, `NOT` |
-| **String** | `CONCAT`, `LOWER`, `UPPER`, `SUBSTR`, `LEN`, `MATCH` (regex) |
-| **Type** | `TO_NUMBER`, `TO_STRING`, `IS_NULL`, `IS_NOT_NULL`, `COALESCE` |
-| **Control** | `JUMP`, `JUMP_IF_FALSE`, `JUMP_IF_TRUE`, `HALT` |
-| **Functions** | `CALL_IF`, `CALL_CASE`, `CALL_ROUND`, `CALL_LN`, `CALL_STRFTIME`, ... |
-
-### Performance
-
-| Expression | Latency | Allocations |
-|-----------|---------|-------------|
-| `status >= 500` | 22 ns/op | 0 |
-| `status >= 500 and host == "web-01"` | 55 ns/op | 0 |
-| `if(status >= 500, "error", "ok")` | ~40 ns/op | 0 |
-| `round(duration_ms / 1000, 2)` | ~35 ns/op | 0 |
-
-At 22 ns/op, the VM can evaluate ~45 million predicates per second on a single core. In practice, I/O and pipeline overhead dominate, but the VM is never the bottleneck.
-
-## Segment Query Cache
-
-The query engine includes a filesystem-based segment cache that memoizes query results per segment:
-
-- **Key**: `(segment_id, CRC32, query_hash, time_range)` -- ensures cache correctness even if the segment is rewritten by compaction.
-- **Value**: Serialized partial result (e.g., partial aggregation state).
-- **Eviction**: TTL (configurable) + LRU when the cache exceeds the size limit.
-- **Persistence**: The cache is stored on the filesystem and survives restarts.
-
-### Cache Hit Flow
-
-```
-Query: "from main level=error | stats count() by source"
-
-Segment seg_001:
-  cache key = hash(seg_001, crc32, query_hash, time_range)
-  → cache HIT (299ns) → return cached partial agg
-
-Segment seg_002:
-  cache key = hash(seg_002, crc32, query_hash, time_range)
-  → cache MISS → scan segment → compute partial agg → cache result → return
-
-Global merge: merge partial aggs from all segments → final result
-```
-
-For repeated queries (scheduled reports, dashboards), the cache turns segment scans into sub-microsecond lookups.
-
-## Partial Aggregation
-
-Partial aggregation is a two-phase execution strategy that reduces memory usage and enables distributed query execution:
-
-### Phase 1: Per-Segment Partial
-
-Each segment produces a partial aggregation result. For `stats count(), avg(duration) by source`:
-
-- Each segment computes `{source: "nginx", count: 142, sum_duration: 15432.5, count_duration: 142}` locally.
-
-### Phase 2: Global Merge
-
-The coordinator merges all partial results:
-
-- `count()` = sum of all partial counts
-- `avg(duration)` = sum of all `sum_duration` / sum of all `count_duration`
-
-This works because count and sum are associative and commutative. All aggregation functions in LynxDB implement partial and merge semantics.
-
-In distributed mode, Phase 1 runs on shard nodes and Phase 2 runs on the coordinator. See [Distributed Architecture](/docs/architecture/distributed).
+`GET /api/v1/tail` and `lynxdb tail` compile the query with the same planner, then reject plans containing an operator that needs all of its input before producing output (`Aggregate`, `Sort`, `TopN`, `Window`, `Reverse`, `Transpose`, `Totals`, `Join`, `Union`, `ZipColumns`, `CombineValues`, `Patterns`, `SourceSchema`) with `422`. Filters, `eval`, `fields`, `rename`, extraction commands, `dedup` and `head` run over the live event stream.
 
 ## Related
 
 - [Architecture Overview](/docs/architecture/overview) -- system-level view
-- [Segment Format](/docs/architecture/segment-format) -- how the scan operator reads `.lsg` files
-- [Indexing](/docs/architecture/indexing) -- bloom filters and inverted index integration
-- [LynxFlow Reference](/docs/lynxflow/overview) -- the query language that the parser implements
-- [Design Decisions](/docs/architecture/design-decisions) -- why Volcano, why a bytecode VM
+- [Indexing](/docs/architecture/indexing) -- how storage hints skip data
+- [Segment Format](/docs/architecture/segment-format) -- the `.lsg` files the scan reads
+- [Distributed Architecture](/docs/architecture/distributed) -- splitting plans across shards
+- [PPL architecture](../ppl/architecture.md) -- the compiler in detail
+- [PPL performance](../ppl/performance.md) -- writing queries that use the plan rewrites

@@ -1,5 +1,0 @@
-Project(service, duration_ms, global_avg)
-  Filter((duration_ms > (global_avg * 2)))
-    Aggregate(avg(duration_ms) as global_avg [eventstats])
-      Scan(main)
-        pushdown.columns: [_raw, _source, _time, duration_ms, service]

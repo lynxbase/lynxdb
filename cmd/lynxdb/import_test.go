@@ -87,7 +87,7 @@ func TestImportCommand_NDJSONEndToEnd(t *testing.T) {
 	}
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		`FROM imported | stats count() by status`)
+		`source=imported | stats count() by status`)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}

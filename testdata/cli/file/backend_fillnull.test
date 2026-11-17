@@ -1,7 +1,7 @@
 # file: backend_server.log
 # format: json
-from main
-| extend error = error ?? "N/A", threat_type = threat_type ?? "N/A"
+source=main
+| fillnull with "N/A" in error, threat_type
 | where error != "N/A"
 | stats count() by error
 | sort error

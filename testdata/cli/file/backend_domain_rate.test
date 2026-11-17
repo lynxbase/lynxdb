@@ -1,5 +1,5 @@
-# unordered: true
 # file: backend_server.log
 # format: json
-from main
-| every 1h by level stats count() as rate
+source=main
+| stats count() as rate by span(_time, 1h) as hour, level
+| sort hour, level

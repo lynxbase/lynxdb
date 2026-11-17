@@ -1,5 +1,4 @@
 # format: json
-from backend
-| extend bucket = bin(timestamp, 30m)
-| stats count() by bucket, level
+source=backend
+| stats count() by span(_time, 30m) as bucket, level
 | sort bucket, level
