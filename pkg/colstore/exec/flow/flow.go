@@ -544,43 +544,55 @@ func text(e ast.Expr) (string, bool) {
 	return l.Value.(string), true
 }
 
-// pattern returns what a search function looks for in its field.
-func pattern(c *ast.Call) (p tokenfilter.Pattern, ok bool) {
+// pattern returns what a search function looks for in its field; ok is
+// false for a call that is not a search function with a constant term.
+func pattern(c *ast.Call) (p tokenfilter.Pattern, ok bool, err error) {
 	if len(c.Args) != 2 {
-		return p, false
+		return p, false, nil
 	}
 	term, ok := text(c.Args[1])
 	if !ok || term == "" {
-		return p, false
+		return p, false, nil
 	}
 	switch c.Callee {
 	case "has":
-		return tokenfilter.Word(term).IgnoreCase(), true
+		return tokenfilter.Word(term).IgnoreCase(), true, nil
 	case "contains", "contains_phrase":
-		return tokenfilter.Substring(term).IgnoreCase(), true
+		return tokenfilter.Substring(term).IgnoreCase(), true, nil
 	case "contains_cs":
-		return tokenfilter.Substring(term), true
+		return tokenfilter.Substring(term), true, nil
 	case "has_glob":
 		// A word, or the start of one followed by a star.
 		prefix, star := strings.CutSuffix(term, "*")
 		if strings.ContainsAny(prefix, `*?\`) || prefix == "" {
-			return p, false
+			return p, false, nil
 		}
 		if star {
-			return tokenfilter.Prefix(prefix).IgnoreCase(), true
+			return tokenfilter.Prefix(prefix).IgnoreCase(), true, nil
 		}
 
-		return tokenfilter.Word(term).IgnoreCase(), true
+		return tokenfilter.Word(term).IgnoreCase(), true, nil
+	case "matches":
+		p, err := tokenfilter.Regexp(term)
+		if err != nil {
+			return p, false, fmt.Errorf("flow: %s: %w", format.Expr(c), err)
+		}
+
+		return p, true, nil
 	}
 
-	return p, false
+	return p, false, nil
 }
 
 func (t *translator) call(c *ast.Call) (*exec.Expr, error) {
 	if c.Receiver != nil || c.Bang {
 		return nil, unsupported("call %s", format.Expr(c))
 	}
-	if p, ok := pattern(c); ok {
+	p, ok, err := pattern(c)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		if name, isPath := path(c.Args[0]); isPath && name == rawField && t.agg == nil {
 			if _, shadowed := t.env[rawField]; !shadowed {
 				return exec.MatchAny(p), nil

@@ -122,7 +122,7 @@ func TestFlowRefusesWhatItCannotRun(t *testing.T) {
 		`from logs | where kind == "commit"`,
 		`from logs | stats count() by coll | stats count()`,
 		`from logs | dedup user | count`,
-		`from logs | where matches(msg, "a.*b") | count`,
+		`from logs | where extract(msg, "a(.*)b") == "x" | count`,
 		`from logs | stats count(where n > 5) by coll`,
 		`from logs | stats count() as count by coll | sort -count | keep coll`,
 		`from logs[@d] | count`,
