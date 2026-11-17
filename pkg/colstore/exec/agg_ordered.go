@@ -202,7 +202,8 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 	for i := range ap.args {
 		arg := &ap.args[i]
 		if len(arg.distinct) != 0 {
-			if distinct >= 0 || arg.expr.op != OpColumn || arg.expr.kind != vec.KindString ||
+			// Values that are not strings end the run in key order.
+			if distinct >= 0 || arg.expr.op != OpColumn || (arg.expr.kind != vec.KindString && arg.expr.kind != KindAny) ||
 				position(q.paths[arg.expr.path]) != prefix+len(ap.keys) {
 				return nil
 			}

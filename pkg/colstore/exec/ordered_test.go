@@ -69,7 +69,7 @@ func TestOrderedAggregation(t *testing.T) {
 			{Name: "top", Func: exec.Max, Arg: exec.ToFloat(exec.Bin(num("n"), exec.Int(7)))},
 			{Name: "typed", Func: exec.Count, Arg: exec.NullIf(exec.TypeOf(anyOf("n")), exec.Str("missing"))}}}, true, false},
 		{"untyped numbers", &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: []exec.Agg{{Name: "s", Func: exec.Sum, Arg: anyOf("n")}}}, false, false},
-		{"untyped distinct", &exec.Aggregate{Input: &exec.Scan{Filter: created}, Keys: keys("coll"), Aggs: []exec.Agg{{Name: "u", Func: exec.CountDistinct, Arg: anyOf("user")}}}, false, false},
+		{"untyped distinct", &exec.Aggregate{Input: &exec.Scan{Filter: created}, Keys: keys("coll"), Aggs: []exec.Agg{{Name: "u", Func: exec.CountDistinct, Arg: anyOf("user")}}}, true, false},
 	}
 	key := []string{"kind", "op", "coll", "user"}
 	for _, l := range []layout{
