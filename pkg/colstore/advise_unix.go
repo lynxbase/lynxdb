@@ -19,13 +19,17 @@ func adviseRandom(data []byte) {
 	}
 }
 
-// adviseWillNeed asks for n bytes at off of a mapped part in one request,
-// ahead of the faults that reading them page by page would take.
+// adviseStep is the most one request for read-ahead asks for: the kernel
+// cuts a larger request down to its read-ahead window or the device's
+// largest transfer, whichever is more, and 128 KiB is under both defaults.
+const adviseStep = 128 << 10
+
+// adviseWillNeed asks for n bytes at off of a mapped part ahead of the
+// faults that reading them page by page would take.
 func adviseWillNeed(data []byte, off, n int) {
-	start := off &^ (pageSize - 1)
 	end := min(off+n, len(data))
-	if start < end {
-		_ = unix.Madvise(data[start:end], unix.MADV_WILLNEED)
+	for at := off &^ (pageSize - 1); at < end; at += adviseStep {
+		_ = unix.Madvise(data[at:min(at+adviseStep, end)], unix.MADV_WILLNEED)
 	}
 }
 
