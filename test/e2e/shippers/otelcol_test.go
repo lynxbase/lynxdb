@@ -44,10 +44,17 @@ service:
 				},
 			})
 
-			waitForSourceCount(t, rig, "otlp", 100, func() string { return containerLogs(t, ctr) })
+			waitForCount(t, rig, otlpFixtureCount(), 100, func() string { return containerLogs(t, ctr) })
 			assertNoShipperErrors(t, containerLogs(t, ctr))
 		})
 	}
+}
+
+// otlpFixtureCount counts the fixture log records: they go to main, their
+// body becomes _raw, and without a service.name or host.name their source
+// is otlp.
+func otlpFixtureCount() string {
+	return countQuery("main", `source = "otlp" and `+holds("_raw", fixtureText))
 }
 
 func TestE2E_Shipper_OtelCol_GRPC(t *testing.T) {
@@ -80,6 +87,6 @@ service:
 		},
 	})
 
-	waitForSourceCount(t, rig, "otlp", 100, func() string { return containerLogs(t, ctr) })
+	waitForCount(t, rig, otlpFixtureCount(), 100, func() string { return containerLogs(t, ctr) })
 	assertNoShipperErrors(t, containerLogs(t, ctr))
 }

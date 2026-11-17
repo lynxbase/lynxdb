@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
@@ -19,10 +20,12 @@ func TestE2E_QueryAsync_ReturnsJobHandle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QueryAsync: %v", err)
 	}
-	if jh.JobID == "" {
-		t.Fatal("expected non-empty job ID")
+	if !strings.HasPrefix(jh.JobID, "qry_") {
+		t.Fatalf("expected a job ID starting with qry_, got %q", jh.JobID)
 	}
-	t.Logf("job ID: %s, status: %s", jh.JobID, jh.Status)
+	if jh.Status != "running" && jh.Status != "done" {
+		t.Errorf("expected status running or done, got %q", jh.Status)
+	}
 }
 
 func TestE2E_QueryAsync_PollJob_ReturnsResult(t *testing.T) {
@@ -118,11 +121,16 @@ func TestE2E_QueryAsync_CancelJob(t *testing.T) {
 		t.Fatalf("QueryAsync: %v", err)
 	}
 
-	err = h.Client().CancelJob(ctx, jh.JobID)
+	if err := h.Client().CancelJob(ctx, jh.JobID); err != nil {
+		t.Fatalf("CancelJob: %v", err)
+	}
+
+	// The job may finish before the cancel reaches it.
+	job, err := h.Client().GetJob(ctx, jh.JobID)
 	if err != nil {
-		// Job may have already completed before we could cancel it.
-		t.Logf("CancelJob returned error (job may have completed): %v", err)
-	} else {
-		t.Logf("job %s cancelled successfully", jh.JobID)
+		t.Fatalf("GetJob: %v", err)
+	}
+	if job.Status != "canceled" && job.Status != "done" {
+		t.Errorf("expected status canceled or done, got %q", job.Status)
 	}
 }

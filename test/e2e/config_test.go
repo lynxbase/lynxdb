@@ -41,10 +41,11 @@ func TestE2E_Config_PatchAndVerify(t *testing.T) {
 		t.Fatal("expected non-nil patched config")
 	}
 
-	// Verify the patch is reflected.
 	cfg, err := h.Client().GetConfig(ctx)
 	if err != nil {
 		t.Fatalf("GetConfig after patch: %v", err)
 	}
-	t.Logf("config after patch: %v", cfg)
+	if cfg["retention"] != retention {
+		t.Errorf("expected retention=%s after patch, got %v", retention, cfg["retention"])
+	}
 }

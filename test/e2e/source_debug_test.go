@@ -18,10 +18,11 @@ func TestE2E_SourceDebug_DirectNormalizedQuery(t *testing.T) {
 	}{
 		{"all indexes", `source=* | stats count() as count`, 18},
 		{"single index", `source=nginx | stats count() as count`, 10},
-		{"where index!=redis", `source=* | where index != "redis" | stats count() as count`, 15},
-		{"where _source=nginx", `source=* | where _source = "nginx" | stats count() as count`, 10},
-		{"search _source=nginx", `search source=* _source=nginx | stats count() as count`, 10},
-		{"where index=nginx", `source=* | where index = "nginx" | stats count() as count`, 10},
+		{"index list", `source=nginx, redis | stats count() as count`, 13},
+		{"search single index", `search source=nginx | stats count() as count`, 10},
+		{"where source!=redis", `source=* | where source != "redis" | stats count() as count`, 15},
+		{"where source=nginx", `source=* | where source = "nginx" | stats count() as count`, 10},
+		{"search sourcetype=raw", `search source=* sourcetype=raw | stats count() as count`, 18},
 	}
 
 	for _, tt := range tests {

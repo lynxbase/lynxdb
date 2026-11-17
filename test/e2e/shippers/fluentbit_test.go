@@ -16,14 +16,18 @@ func TestE2E_Shipper_FluentBit(t *testing.T) {
 	tests := []struct {
 		name   string
 		output string
-		source string
+		// index is the index, or index glob, the documents land in.
+		index string
+		// indexName is a pattern that the name of that index matches.
+		indexName string
 	}{
 		{
 			name: "plain_index",
 			output: `    Logstash_Format Off
     Index test-fluentbit
 `,
-			source: "test-fluentbit",
+			index:     "test-fluentbit",
+			indexName: `^test-fluentbit$`,
 		},
 		{
 			name: "logstash_format",
@@ -31,7 +35,8 @@ func TestE2E_Shipper_FluentBit(t *testing.T) {
     Logstash_Prefix fluent-bit
     Logstash_DateFormat %Y.%m.%d
 `,
-			source: "fluent-bit",
+			index:     "fluent-bit-*",
+			indexName: `^fluent-bit-\d{4}\.\d{2}\.\d{2}$`,
 		},
 	}
 
@@ -65,7 +70,9 @@ func TestE2E_Shipper_FluentBit(t *testing.T) {
 				},
 			})
 
-			waitForSourceCount(t, rig, tt.source, 100, func() string { return containerLogs(t, ctr) })
+			// The tail input puts each line in the log field of a record.
+			waitForCount(t, rig, countQuery(tt.index, holds("log", fixtureText)), 100, func() string { return containerLogs(t, ctr) })
+			requireIndexNames(t, rig, tt.indexName)
 			assertNoShipperErrors(t, containerLogs(t, ctr))
 		})
 	}

@@ -6,6 +6,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestE2E_OTLP_IngestLogs(t *testing.T) {
@@ -43,8 +44,26 @@ func TestE2E_OTLP_IngestLogs(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		t.Errorf("expected success status, got %d", resp.StatusCode)
+	if resp.StatusCode != 200 {
+		t.Fatalf("expected status 200, got %d", resp.StatusCode)
 	}
-	t.Logf("OTLP ingest: status=%d", resp.StatusCode)
+
+	// Without a deployment.environment attribute the records go to main;
+	// service.name becomes the source.
+	r := h.MustQuery(`source=main | sort _time | fields _time, _raw, level, source, sourcetype`)
+	rows := EventRows(r)
+	if len(rows) != 2 {
+		t.Fatalf("expected 2 events, got %d: %v", len(rows), rows)
+	}
+	for i, want := range []struct{ time, raw, level string }{
+		{time.Unix(1700000000, 0).UTC().Format(time.RFC3339Nano), "OTLP test log line 1", "info"},
+		{time.Unix(1700000001, 0).UTC().Format(time.RFC3339Nano), "OTLP test log line 2", "error"},
+	} {
+		row := rows[i]
+		if row["_time"] != want.time || row["_raw"] != want.raw || row["level"] != want.level ||
+			row["source"] != "test-svc" || row["sourcetype"] != "otlp" {
+			t.Errorf("event %d: expected _time=%s _raw=%q level=%s source=test-svc sourcetype=otlp, got %v",
+				i, want.time, want.raw, want.level, row)
+		}
+	}
 }

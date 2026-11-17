@@ -17,7 +17,6 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/api/rest"
 	"github.com/lynxbase/lynxdb/pkg/client"
-	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 // Harness
@@ -76,15 +75,10 @@ func (h *Harness) startServer() {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	storageCfg := config.DefaultConfig().Storage
-	storageCfg.CompactionInterval = 1 * time.Hour // disable auto-compaction in tests
-	storageCfg.TieringInterval = 1 * time.Hour    // disable auto-tiering in tests
-
 	var err error
 	h.srv, err = rest.NewServer(rest.Config{
 		Addr:    "127.0.0.1:0",
 		DataDir: h.dataDir,
-		Storage: storageCfg,
 		Logger:  logger,
 	})
 	if err != nil {
@@ -137,10 +131,8 @@ func (h *Harness) stopServer() {
 		h.cancel()
 		h.cancel = nil
 
-		// Wait for srv.Start() to return. Start() blocks on <-shutdownDone
-		// which is closed only after the engine flush + registry sync complete.
-		// This guarantees all data is on disk before we potentially restart
-		// the server on the same data directory.
+		// Start returns after it closes the database, so a restart may reopen
+		// the data directory at once.
 		select {
 		case <-h.startDone:
 		case <-time.After(30 * time.Second):
@@ -160,15 +152,12 @@ func (h *Harness) RestartServer() {
 	h.t.Log("server restarted")
 }
 
-// FlushBatcher forces buffered ingest data into durable segments before a test
-// takes a query baseline.
-func (h *Harness) FlushBatcher() {
+// Sync makes every appended event durable.
+func (h *Harness) Sync() {
 	h.t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := h.srv.Engine().FlushBatcherContext(ctx); err != nil {
-		h.t.Fatalf("flush batcher: %v", err)
+	if err := h.srv.DB().Sync(); err != nil {
+		h.t.Fatalf("sync database: %v", err)
 	}
 }
 
@@ -265,7 +254,7 @@ func EventCount(r *client.QueryResult) int {
 		if r.Events != nil {
 			return len(r.Events.Events)
 		}
-	case client.ResultTypeAggregate, client.ResultTypeTimechart:
+	case client.ResultTypeAggregate:
 		if r.Aggregate != nil {
 			return len(r.Aggregate.Rows)
 		}
@@ -302,7 +291,7 @@ func EventRows(r *client.QueryResult) []map[string]interface{} {
 		if r.Events != nil {
 			return r.Events.Events
 		}
-	case client.ResultTypeAggregate, client.ResultTypeTimechart:
+	case client.ResultTypeAggregate:
 		return AggRows(r)
 	}
 	return nil
@@ -413,7 +402,3 @@ func assertQueryResultsEqual(t *testing.T, name string, pre, post *client.QueryR
 		}
 	}
 }
-
-// Unused import guard
-
-var _ = http.StatusOK
