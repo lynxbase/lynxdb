@@ -596,3 +596,39 @@ func TestAppendedRowsBecomeVisibleWithinTheFlushInterval(t *testing.T) {
 		t.Fatalf("a light load was spread over %d parts", n)
 	}
 }
+
+func TestBlockBudgetBoundsWhatIsHeldAtOnce(t *testing.T) {
+	var b blockBudget
+	b.init(10)
+	var held, peak atomic.Int64
+	var wg sync.WaitGroup
+	for i := 0; i < 40; i++ {
+		wg.Add(1)
+		// Requests of 1 to 4 units, and some larger than the whole budget.
+		n := 1 + i%4
+		if i%13 == 0 {
+			n = 25
+		}
+		go func() {
+			defer wg.Done()
+			b.acquire(n)
+			now := held.Add(int64(min(n, 10)))
+			for {
+				p := peak.Load()
+				if now <= p || peak.CompareAndSwap(p, now) {
+					break
+				}
+			}
+			time.Sleep(time.Millisecond)
+			held.Add(-int64(min(n, 10)))
+			b.release(n)
+		}()
+	}
+	wg.Wait()
+	if peak.Load() > 10 || peak.Load() < 5 {
+		t.Fatalf("%d units were held at once under a budget of 10", peak.Load())
+	}
+	if b.free != 10 {
+		t.Fatalf("%d units are free after every release", b.free)
+	}
+}

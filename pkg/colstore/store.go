@@ -32,6 +32,10 @@ type StoreOptions struct {
 	// memory before they are written; zero means one second, a negative
 	// value writes them only when a buffer is full or on Sync.
 	FlushInterval time.Duration
+	// MergeBlocks bounds the memory of merging: a range merge holds one
+	// decoded block per run it reads, and the merges running at once hold
+	// at most this many blocks together; zero means 96.
+	MergeBlocks int
 	// Partition is the span of time whose rows are kept and merged apart
 	// from all others, so that a time range reads only the spans it meets
 	// and old spans can be dropped whole; zero keeps one partition.
@@ -51,9 +55,9 @@ const (
 	// mergedPartRows is the least a part of a merged run holds, which keeps
 	// small merges from scattering their rows over many files.
 	mergedPartRows = 1 << 16
-	// mergeBlockBudget bounds the decoded blocks the range merges of one
-	// merge hold together, each several megabytes of column values.
-	mergeBlockBudget = 1024
+	// defaultMergeBlocks bounds the decoded blocks that all range merges
+	// hold together, each several megabytes of column values.
+	defaultMergeBlocks = 96
 )
 
 // Store keeps a table in a directory, takes documents through writers that
@@ -66,8 +70,10 @@ type Store struct {
 	wake    chan struct{}
 	done    chan struct{}
 	stopped chan struct{}
-	// cores bounds the range merges that run at once, over all merges.
-	cores chan struct{}
+	// cores bounds the range merges that run at once, over all merges, and
+	// blocks the decoded blocks they hold.
+	cores  chan struct{}
+	blocks blockBudget
 
 	// merging is held while merges run and while partitions are dropped,
 	// so that neither removes a part the other reads.
@@ -101,6 +107,9 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	if opts.FlushInterval == 0 {
 		opts.FlushInterval = defaultFlushInterval
 	}
+	if opts.MergeBlocks <= 0 {
+		opts.MergeBlocks = defaultMergeBlocks
+	}
 	opts.Part.Ordered, opts.Part.SortKey = len(opts.SortKey) > 0, opts.SortKey
 	dir, err := OpenDir(path)
 	if err != nil {
@@ -111,6 +120,7 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 		wake: make(chan struct{}, 1), done: make(chan struct{}), stopped: make(chan struct{}),
 		cores: make(chan struct{}, runtime.GOMAXPROCS(0)),
 	}
+	s.blocks.init(opts.MergeBlocks)
 	s.idle = sync.NewCond(&s.mu)
 	s.shards = make([]appendShard, runtime.GOMAXPROCS(0))
 	s.flushing = make(chan struct{})
@@ -337,6 +347,38 @@ func (s *Store) mergeLoop() {
 	}
 }
 
+// blockBudget hands out a fixed number of units to callers that wait until
+// enough are free.
+type blockBudget struct {
+	mu    sync.Mutex
+	freed *sync.Cond
+	total int
+	free  int
+}
+
+func (b *blockBudget) init(total int) {
+	b.total, b.free = total, total
+	b.freed = sync.NewCond(&b.mu)
+}
+
+// acquire takes n units, or the whole budget when n exceeds it.
+func (b *blockBudget) acquire(n int) {
+	n = min(n, b.total)
+	b.mu.Lock()
+	for b.free < n {
+		b.freed.Wait()
+	}
+	b.free -= n
+	b.mu.Unlock()
+}
+
+func (b *blockBudget) release(n int) {
+	b.mu.Lock()
+	b.free += min(n, b.total)
+	b.mu.Unlock()
+	b.freed.Broadcast()
+}
+
 // sortedRun is the parts of one run.
 type sortedRun struct {
 	id        uint64
@@ -442,16 +484,15 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 	meta := PartMeta{Run: s.dir.NewRun(), Tier: tier + 1, Partition: runs[0].partition}
 	files := make([]*PartFile, len(cuts)+1)
 	errs := make([]error, len(files))
-	// Each range merge holds one decoded block per run.
-	held := make(chan struct{}, max(1, mergeBlockBudget/len(runs)))
 	var wg sync.WaitGroup
 	for i := range files {
 		wg.Add(1)
-		held <- struct{}{}
+		// Each range merge holds one decoded block per run.
+		s.blocks.acquire(len(runs))
 		s.cores <- struct{}{}
 		go func() {
 			defer wg.Done()
-			defer func() { <-s.cores; <-held }()
+			defer func() { <-s.cores; s.blocks.release(len(runs)) }()
 			var lo, hi []byte
 			if i > 0 {
 				lo = cuts[i-1]
