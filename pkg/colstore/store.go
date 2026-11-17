@@ -40,7 +40,8 @@ type StoreOptions struct {
 	// from all others, so that a time range reads only the spans it meets
 	// and old spans can be dropped whole; zero keeps one partition.
 	Partition time.Duration
-	// Part sets how parts are encoded; its ordering fields are overridden.
+	// Part sets how parts are encoded; its ordering fields are overridden,
+	// and a ValueSlack of zero means 50, a negative one none.
 	Part part.Options
 	// FlushLevel is the compression effort of the runs writers flush, which
 	// merges replace by parts of Part.Level.
@@ -59,6 +60,9 @@ const (
 	// defaultMergeBlocks bounds the decoded blocks that all range merges
 	// hold together, each several megabytes of column values.
 	defaultMergeBlocks = 96
+	// defaultValueSlack lets text that shrinks little take the codec that
+	// scans read several times faster, for at most half again its size.
+	defaultValueSlack = 50
 )
 
 // Store keeps a table in a directory, takes documents through writers that
@@ -110,6 +114,9 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	}
 	if opts.MergeBlocks <= 0 {
 		opts.MergeBlocks = defaultMergeBlocks
+	}
+	if opts.Part.ValueSlack == 0 {
+		opts.Part.ValueSlack = defaultValueSlack
 	}
 	opts.Part.Ordered, opts.Part.SortKey = len(opts.SortKey) > 0, opts.SortKey
 	dir, err := OpenDir(path)
