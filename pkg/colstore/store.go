@@ -52,9 +52,10 @@ const (
 	defaultFlushBytes     = 128 << 20
 	defaultMergeFanIn     = 8
 	defaultFlushInterval  = time.Second
-	// mergedPartRows is the least a part of a merged run holds, which keeps
-	// small merges from scattering their rows over many files.
-	mergedPartRows = 1 << 16
+	// mergedPartRows is the least a part of a merged run holds. Range merges
+	// that are narrower decode the blocks at their borders several times
+	// over and scatter the rows over many files.
+	mergedPartRows = 1 << 17
 	// defaultMergeBlocks bounds the decoded blocks that all range merges
 	// hold together, each several megabytes of column values.
 	defaultMergeBlocks = 96
