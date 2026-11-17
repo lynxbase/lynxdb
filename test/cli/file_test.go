@@ -161,12 +161,8 @@ func TestFile_FieldsProjection(t *testing.T) {
 			t.Errorf("row %d missing projected field 'level'", i)
 		}
 
-		// Should only have projected fields (plus internal _time/_timestamp/_raw).
 		for k := range row {
-			switch k {
-			case "host", "level", "_time", "_timestamp", "_raw":
-				// allowed
-			default:
+			if k != "host" && k != "level" {
 				t.Errorf("row %d has unexpected field %q after projection", i, k)
 			}
 		}

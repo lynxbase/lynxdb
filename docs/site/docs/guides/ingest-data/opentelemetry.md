@@ -55,9 +55,9 @@ service:
 
 ## How records are stored
 
-OTLP log records are written to the `main` index with `_sourcetype` `otlp`.
+OTLP log records are written to the `main` index with `sourcetype` `otlp`.
 The record body becomes `_raw` and the record time becomes `_time`. The
-`service.name` resource attribute becomes `_source` (falling back to
+`service.name` resource attribute becomes `source` (falling back to
 `host.name`, then `otlp`), and `host.name` also fills `host`. Other fields:
 
 | Field | From |
@@ -71,7 +71,11 @@ The record body becomes `_raw` and the record time becomes `_time`. The
 Attribute names keep their dots, so they are queried as written:
 
 ```bash
-lynxdb query 'source=main _source=checkout level=error | stats count() by resource.host.name'
+lynxdb query 'source=main level=error | where source = "checkout" | stats count() by resource.host.name'
+```
+
+```json
+{"count()":1,"resource.host.name":"node-7"}
 ```
 
 ## Troubleshooting

@@ -665,7 +665,10 @@ func (x *ectx) subquery(n *ast.Subquery) (ir.Expr, error) {
 			}
 		}
 		s := plan.Schema()
-		if !s.Open && len(s.Columns) != len(args) {
+		if s.Open {
+			return nil, semanticErr(n, "an IN subquery must name the columns it returns; end it with fields or stats")
+		}
+		if len(s.Columns) != len(args) {
 			return nil, semanticErr(n, "the IN subquery returns %d columns for %d values", len(s.Columns), len(args))
 		}
 		return &ir.Subquery{Mode: ir.SubqueryIn, Plan: plan, Args: args, Not: n.Not, T: ir.Bool}, nil

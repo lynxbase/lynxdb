@@ -107,16 +107,3 @@ func BenchmarkKVParse(b *testing.B) {
 		_, _ = kv.Process(events)
 	}
 }
-
-// BenchmarkSplitRawLines benchmarks line splitting.
-func BenchmarkSplitRawLines(b *testing.B) {
-	lines := ""
-	for i := 0; i < 100; i++ {
-		lines += benchJSONLine + "\n"
-	}
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = SplitRawLines(lines, "bench", "json")
-	}
-}

@@ -13,7 +13,7 @@ import (
 //	         the group's token filters in stripes
 //	dirs     the column directory of every block
 //	footer   path names, sort key, block index, filters, filter groups,
-//	         first keys, totals
+//	         first keys, totals, the rows of the values of counted paths
 //	trailer  footer offset, footer length, footer checksum, version, magic
 //
 // A token's probe reads one bloom block of a filter, and which n-th of the
@@ -29,7 +29,7 @@ import (
 // the filters of its blocks, so that rounding a filter to them costs little.
 const (
 	fileMagic     = 0x5450584c // "LXPT"
-	formatVersion = 6
+	formatVersion = 7
 
 	headerSize  = 8
 	trailerSize = 28
@@ -90,7 +90,15 @@ const (
 	encTime  = 4 // the time of every row in a coarser unit, whose power of ten is the chunk
 )
 
-const flagSparse = 1
+const (
+	flagSparse = 1
+	// flagCounts marks a dictionary column that holds, after its entries,
+	// the number of rows of each.
+	flagCounts = 2
+)
+
+// maxCounted is the most entries of a dictionary whose rows are counted.
+const maxCounted = 256
 
 // Presence modes of a sparse column.
 const (

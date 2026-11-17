@@ -121,14 +121,6 @@ func TestClusterUUID_DifferentDataDir_DifferentUUID(t *testing.T) {
 	}
 }
 
-func TestClusterUUID_S3Bucket_TakesPrecedence(t *testing.T) {
-	a := deriveClusterUUID(Config{DataDir: "/tmp/a", S3Bucket: "logs-prod"})
-	b := deriveClusterUUID(Config{DataDir: "/tmp/b", S3Bucket: "logs-prod"})
-	if a != b {
-		t.Fatalf("s3 bucket should take precedence: %q != %q", a, b)
-	}
-}
-
 func TestClusterUUID_Length22_Base64URL(t *testing.T) {
 	uuid := deriveClusterUUID(Config{DataDir: "/tmp/lynxdb-a"})
 	if len(uuid) != 22 {

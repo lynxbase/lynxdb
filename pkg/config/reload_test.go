@@ -11,16 +11,15 @@ func TestClassifyReloadChanges(t *testing.T) {
 
 	newCfg.Retention = Duration(14 * 24 * time.Hour)
 	newCfg.Query.MaxQueryLength = 256
-	newCfg.Query.GlobalQueryPoolBytes = ByteSize(2 * GB)
 	newCfg.Ingest.Mode = "lightweight"
 	newCfg.Ingest.SplunkHEC.Enabled = false
 	newCfg.Ingest.SplunkHEC.RequireToken = true
-	newCfg.Ingest.DedupEnabled = true
 	newCfg.HTTP.ReadHeaderTimeout = 15 * time.Second
 	newCfg.HTTP.RateLimit = 250
 	newCfg.TLS.Enabled = true
 	newCfg.Auth.Enabled = true
-	newCfg.Storage.CompactionWorkers = 4
+	newCfg.Storage.Partition = Duration(time.Hour)
+	newCfg.Storage.TimeFields = []string{"ts"}
 
 	changes := ClassifyReloadChanges(oldCfg, &newCfg)
 
@@ -31,12 +30,11 @@ func TestClassifyReloadChanges(t *testing.T) {
 	assertContains(t, changes.HotReloaded, "ingest.splunk_hec.require_token")
 
 	assertContains(t, changes.RestartRequired, "http.read_header_timeout")
-	assertContains(t, changes.RestartRequired, "query.global_query_pool_bytes")
-	assertContains(t, changes.RestartRequired, "ingest.dedup_enabled")
 	assertContains(t, changes.RestartRequired, "http.rate_limit")
 	assertContains(t, changes.RestartRequired, "tls.enabled")
 	assertContains(t, changes.RestartRequired, "auth.enabled")
-	assertContains(t, changes.RestartRequired, "storage.compaction_workers")
+	assertContains(t, changes.RestartRequired, "storage.partition")
+	assertContains(t, changes.RestartRequired, "storage.time_fields")
 }
 
 func TestClassifyReloadChangesIgnoresProfiles(t *testing.T) {

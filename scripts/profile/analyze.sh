@@ -131,12 +131,12 @@ else
 fi
 echo "" >> "$FINDINGS"
 
-# --- Storage Metrics ---
-echo "## Storage Metrics Snapshot" >> "$FINDINGS"
-if [ -f "$DIR/storage-metrics.json" ]; then
+# --- Index Stats ---
+echo "## Index Stats Snapshot" >> "$FINDINGS"
+if [ -f "$DIR/stats.json" ]; then
     echo '```json' >> "$FINDINGS"
-    python3 -m json.tool "$DIR/storage-metrics.json" >> "$FINDINGS" 2>/dev/null || \
-        cat "$DIR/storage-metrics.json" >> "$FINDINGS"
+    python3 -m json.tool "$DIR/stats.json" >> "$FINDINGS" 2>/dev/null || \
+        cat "$DIR/stats.json" >> "$FINDINGS"
     echo '```' >> "$FINDINGS"
 else
     echo "(not collected)" >> "$FINDINGS"

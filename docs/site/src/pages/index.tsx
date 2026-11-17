@@ -20,18 +20,18 @@ function TerminalMockup() {
       </div>
       <div className="terminal-body">
         <div>
-          <span className="prompt">$</span> cat app.log | lynxdb query 'source=main | stats count() as n by level | sort - n'
+          <span className="prompt">$</span> cat access.log | lynxdb query 'source=main | stats count() as n by level | sort - n'
         </div>
         <br />
-        <div className="output">┌───────┬────────┐</div>
-        <div className="output">│ level │ n      │</div>
-        <div className="output">├───────┼────────┤</div>
-        <div className="output">│ INFO  │ 42847  │</div>
-        <div className="output">│ ERROR │ 3291   │</div>
-        <div className="output">│ WARN  │ 1104   │</div>
-        <div className="output">└───────┴────────┘</div>
+        <div className="output">┌───────┬─────┐</div>
+        <div className="output">│ level │ n   │</div>
+        <div className="output">├───────┼─────┤</div>
+        <div className="output">│ INFO  │ 359 │</div>
+        <div className="output">│ WARN  │ 347 │</div>
+        <div className="output">│ ERROR │ 294 │</div>
+        <div className="output">└───────┴─────┘</div>
         <br />
-        <div className="success">  Rows 3 · Took 12ms · Scanned 47,242</div>
+        <div className="success">  (3 rows)</div>
       </div>
     </div>
   );
@@ -80,9 +80,9 @@ const pillars: FeatureItem[] = [
     title: 'One Binary',
     description: (
       <>
-        Query files from the command line, run a server with on-disk storage
-        and a REST API, or join servers into a cluster. One statically linked
-        binary, no JVM and no external services.
+        Query files from the command line, or run a server with on-disk
+        storage and a REST API. One statically linked binary, no JVM and no
+        external services.
       </>
     ),
   },
@@ -103,8 +103,8 @@ const pillars: FeatureItem[] = [
     description: (
       <>
         Pipe <code>kubectl logs</code>, <code>docker logs</code> or any file
-        into <code>lynxdb query</code>. No daemon, no config, no data
-        directory: load, query, print, exit.
+        into <code>lynxdb query</code>. No daemon and no config: load into a
+        temporary directory, query, print, exit.
       </>
     ),
   },
@@ -122,11 +122,12 @@ const differentiators: FeatureItem[] = [
     ),
   },
   {
-    title: 'Indexed Columnar Storage',
+    title: 'Columnar Storage',
     description: (
       <>
-        Events are stored in compressed columnar segments with a term index
-        and bloom filters, so searches skip the segments that cannot match.
+        Every index is a columnar store, partitioned by time. Each block of
+        events carries token filters, so searches skip the blocks that cannot
+        match and scan the rest on every core.
       </>
     ),
   },

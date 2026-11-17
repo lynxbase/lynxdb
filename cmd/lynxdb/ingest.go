@@ -167,7 +167,6 @@ func runIngest(args []string, source, sourcetype, index string, batchSize int) e
 	printNextSteps(
 		"lynxdb query 'source=main | stats count() by level'   Query your data",
 		"lynxdb fields                            Explore field names",
-		"lynxdb tail                              Live tail events",
 	)
 
 	return nil

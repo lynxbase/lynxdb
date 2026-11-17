@@ -1,5 +1,5 @@
-{"level":"INFO","service":"project-service","status":200}
-{"level":"INFO","service":"project-service","status":201}
+{"level":"ERROR","service":"payment-service","status":500}
+{"level":"ERROR","service":"payment-service","status":500}
+{"level":"INFO","service":"payment-service","status":200}
 {"level":"INFO","service":"user-service","status":200}
 {"level":"INFO","service":"user-service","status":200}
-{"level":"WARN","service":"gateway-service","status":400}

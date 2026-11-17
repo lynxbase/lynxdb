@@ -78,6 +78,11 @@ source=main | fields host, resp*
 Keeps the listed columns in order, or drops them with `-`. Names may contain
 `*`. `table` is a synonym.
 
+The members of an object are columns named by their path. For events such
+as `{"http": {"path": "/api/users", "status": 200}}`, `fields http.path`
+keeps the column `http.path`, and `fields http` keeps every member of the
+object as its own column: `http.path`, `http.status`.
+
 ### rename
 
 ```
@@ -164,10 +169,11 @@ source=main | stats count(eval(status >= 500)) as errors, count() as total by ho
 source=main | stats bucket_nullable=false count() by user
 ```
 
-One row per group. Without `by`, one row. Group columns come first, then the
-aggregates. An aggregate without `as` is named after its text: `count()`,
-`p95(response_time)`. Rows whose group value is NULL form their own group
-unless `bucket_nullable=false`. See the [aggregation guide](./aggregation-guide.md).
+One row per group. Without `by`, one row. The aggregates come first, then the
+group columns. An aggregate without `as` is named after its text: `count()`,
+`p95(response_time)`. Rows whose group value is NULL, and rows that lack the
+group field, form a group whose key is NULL, unless `bucket_nullable=false`
+drops them. See the [aggregation guide](./aggregation-guide.md).
 
 LynxDB behavior: output row order is unspecified; add `sort`. `partitions`,
 `allnum` and `delim` are accepted and have no effect. `dedup_splitvalues`
@@ -183,7 +189,7 @@ source=main | eventstats avg(response_time) as avg_rt by host
 Adds the aggregate of each row's group to the row, keeping every row. The
 window functions `row_number`, `rank`, `dense_rank`, `percent_rank`,
 `cume_dist`, `nth` and `ntile` fail with `UNSUPPORTED_FUNCTION`;
-`bucket_nullable=false` is rejected by the execution engine.
+`bucket_nullable=false` with a `by` clause fails with `UNSUPPORTED_FEATURE`.
 
 ### streamstats
 
@@ -195,8 +201,8 @@ source=main | streamstats window=5 global=false avg(response_time) as moving by 
 
 Running aggregates in input order. LynxDB supports `current`, `window` and
 `global=false`. `window` with `global=true` (the default) and a `by` clause,
-and `time_window`, fail with `UNSUPPORTED_FEATURE`; `reset_before` and
-`reset_after` are rejected by the execution engine.
+`time_window`, `reset_before`, `reset_after`, and `bucket_nullable=false`
+with a `by` clause fail with `UNSUPPORTED_FEATURE`.
 
 ### top, rare
 
@@ -283,8 +289,8 @@ source=main | patterns msg mode=aggregation
 The `simple_pattern` method: in label mode it adds `patterns_field`; in
 aggregation mode it returns `patterns_field`, `pattern_count` and
 `sample_logs`. A `by` clause is supported only in aggregation mode.
-`show_numbered_token=true` fails with `UNSUPPORTED_FEATURE`; the `brain`
-method is rejected by the execution engine.
+`method=brain` and `show_numbered_token=true` fail with
+`UNSUPPORTED_FEATURE`.
 
 ## Arrays and objects
 

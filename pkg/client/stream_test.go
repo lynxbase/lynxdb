@@ -13,7 +13,7 @@ import (
 func TestReadNDJSON_Basic(t *testing.T) {
 	input := `{"message":"line1","level":"info"}
 {"message":"line2","level":"error"}
-{"__meta":{"total":2,"scanned":100,"took_ms":5}}
+{"__meta":{"total":2,"took_ms":5}}
 `
 	var lines []json.RawMessage
 
@@ -34,9 +34,6 @@ func TestReadNDJSON_Basic(t *testing.T) {
 	}
 	if meta.Total != 2 {
 		t.Errorf("meta.Total = %d, want 2", meta.Total)
-	}
-	if meta.Scanned != 100 {
-		t.Errorf("meta.Scanned = %d, want 100", meta.Scanned)
 	}
 	if meta.TookMS != 5 {
 		t.Errorf("meta.TookMS = %d, want 5", meta.TookMS)
@@ -107,17 +104,16 @@ func TestQueryStream_StripsUnsupportedFields(t *testing.T) {
 			t.Fatalf("decode body: %v", err)
 		}
 		w.Header().Set("Content-Type", "application/x-ndjson")
-		_, _ = io.WriteString(w, "{\"message\":\"ok\"}\n{\"__meta\":{\"total\":1,\"scanned\":1,\"took_ms\":1}}\n")
+		_, _ = io.WriteString(w, "{\"message\":\"ok\"}\n{\"__meta\":{\"total\":1,\"took_ms\":1}}\n")
 	}))
 	defer srv.Close()
 
 	c := NewClient(WithBaseURL(srv.URL))
 	meta, err := c.QueryStream(context.Background(), QueryRequest{
-		Q:       "source=main | head 10",
-		Limit:   10,
-		Offset:  20,
-		Format:  "json",
-		Profile: "trace",
+		Q:      "source=main | head 10",
+		Limit:  10,
+		Offset: 20,
+		Format: "json",
 	}, func(_ json.RawMessage) error {
 		return nil
 	})

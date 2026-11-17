@@ -1,7 +1,7 @@
 ---
 sidebar_position: 7
 title: Design Decisions
-description: Key design decisions behind LynxDB -- columnar storage, OpenSearch PPL compiled to a language-independent IR, Go, a single binary, schema-on-read, FST + roaring bitmaps, the Volcano model, and direct-to-part writes.
+description: Key design decisions behind LynxDB -- columnar storage, a store per index partitioned by time, buffered writes without a write-ahead log, per-block token filters, two executors, OpenSearch PPL compiled to a language-independent IR, Go, a single binary and schema-on-read.
 ---
 
 # Design Decisions
@@ -10,7 +10,7 @@ This page explains the reasoning behind the major design decisions in LynxDB: th
 
 ## Columnar Storage
 
-**Decision**: Store log data in a columnar format where each field is a separate column with type-specific encoding.
+**Decision**: Store events in columns: every field path, and every kind of value it holds, is a column of its own with an encoding that suits it.
 
 **Alternatives**: Row-oriented storage (each event as a contiguous blob, such as JSON on disk), hybrid formats.
 
@@ -25,16 +25,62 @@ Log analytics queries almost always touch a few fields. `stats count() by level`
 | `fields _time, level, msg` (3 fields) | Reads 3 columns | Reads every event |
 | Full event reconstruction | Reads every column | Reads every event |
 
-Row-oriented storage only wins for full event reconstruction. Even for `source=main error`, which shows whole events, the term index finds the matching rows first and only those rows are read in full.
+Columns also compress and evaluate well: a column of few distinct values is a dictionary and small codes, and a filter tests each dictionary entry once; a column that holds one value in a block is a constant that a filter settles without reading rows; times are stored in the coarsest unit that keeps them exact. See [Storage](./storage.md#parts).
 
-Columnar storage also allows type-specific encoding:
+## A Store per Index, Partitioned by Time
 
-- Timestamps: delta-varint
-- Strings: dictionary encoding for low cardinality, LZ4 otherwise
-- Floats: Gorilla encoding
-- Raw text: LZ4, or ZSTD with `storage.compression: zstd`
+**Decision**: Each index is a store of its own in a directory of its own, and its rows are kept apart by time partition (`storage.partition`, 24 hours by default).
 
-A row-oriented store can only apply generic compression to whole rows, which compresses worse.
+**Alternatives**: One table for all indexes with the index as a column; one time-ordered set of files per index without partitions.
+
+**Reasoning**:
+
+- **Retention is a file operation.** Log data is append-only; the only deletion is age. Dropping a whole partition deletes its files and touches nothing else.
+- **Time ranges read only their partitions.** Nearly every log query is bounded in time.
+- **Merges stay small and local.** A merge never mixes rows of two partitions, so a partition that has closed is merged once into one run and then left alone.
+- **Indexes are independent.** An index that takes a burst of events does not slow the merges of another, and its directory can be copied or deleted on its own.
+
+## Buffered Writes and a Manifest, without a Write-Ahead Log
+
+**Decision**: Buffer incoming events in memory and write them as sorted, immutable runs; a manifest, an append-only log of changes to the set of parts, makes each write durable and visible in one record.
+
+**Alternatives**: A write-ahead log with a memtable; an LSM tree (RocksDB, LevelDB); a B-tree (SQLite, BoltDB).
+
+**Reasoning**:
+
+- **One write per event.** Events go to disk once, already in columns, and not first to a log and later to a table.
+- **Batching.** A flush writes everything that arrived within the flush interval as one run per partition, and concurrent syncs share one flush, so many small requests cost one write and one wait for the disk.
+- **A clear durability point.** Rows are durable once their manifest record is on disk. The server syncs before it answers an Elasticsearch `_bulk` request and before every query; plain ingest requests rely on the flush interval, and a crash can lose at most that long of their events. Shippers that retry resend them.
+- **Recovery is reading the manifest.** There is nothing to replay: the manifest names the live parts, and files it does not name are left behind by writes that did not commit.
+
+## Token Filters per Block
+
+**Decision**: Give every block of a part token filters, split-block Bloom filters over the case-folded words of its strings, and answer searches by scanning the blocks that the filters admit.
+
+**Alternatives**: An inverted index with posting lists per term; embedding Lucene.
+
+**Reasoning**:
+
+- **Writes stay one pass.** A block's filters are built while the block is written and rebuilt by every merge; there is no term dictionary to maintain or merge.
+- **Small and local.** A probe for one word reads one page of a part's filters for a whole group of blocks.
+- **Scans are fast anyway.** A block the filters admit is read column by column on every core, so the cost of a false positive is one block.
+- **Not Lucene**: Lucene is Java. Embedding it needs a JVM or a sidecar process, which breaks the single-binary model.
+
+The trade-off: a word that appears in most blocks skips little, and a search then reads the strings of those blocks.
+
+## Two Executors
+
+**Decision**: Run what the columnar executor can take straight over the column blocks, and the rest of the plan on row operators.
+
+**Alternatives**: Only row-at-a-time operators (the Volcano model) over decoded events; only a vectorized columnar engine.
+
+**Reasoning**:
+
+- **The common queries are columnar.** Filters, computed columns, one aggregate, a choice of columns, a sort and a limit cover search and most dashboards. The columnar executor runs them over encoded blocks on every core and builds no row until the result is written.
+- **PPL is larger than that.** `join`, `eventstats`, `streamstats`, `transpose`, `patterns` and others need rows. The row operators run them over the rows that the columnar executor produces, so every query that compiles also runs.
+- **One plan.** Both executors take the same IR, and the split is decided per query, from the scans up.
+
+See [Query Engine](./query-engine.md).
 
 ## OpenSearch PPL as the Query Language
 
@@ -52,7 +98,7 @@ A row-oriented store can only apply generic compression to whole rows, which com
   | head 10
   ```
 
-- **Search first**: `source=main error` is a complete query. Free-text terms and field comparisons go straight into the source command, where the storage engine can use them to skip data.
+- **Search first**: `source=main error` is a complete query. Free-text terms and field comparisons go straight into the source command, where the executor uses them to skip blocks.
 - **Extraction inside the query**: `parse`, `rex`, `grok` and `spath` pull structure out of raw text at query time:
 
   ```
@@ -67,15 +113,15 @@ A row-oriented store can only apply generic compression to whole rows, which com
 
 ## A Language-Independent IR
 
-**Decision**: The PPL frontend lowers queries to a canonical IR (`pkg/ir`); the optimizer, physical planner, executor and cluster coordinator work only on the IR.
+**Decision**: The PPL frontend lowers queries to a canonical IR (`pkg/ir`); the optimizer and both executors work only on the IR.
 
 **Reasoning**:
 
-- **One engine contract**: storage hints, plan rewrites and distributed splitting are written once, against IR operators, not against syntax.
+- **One engine contract**: plan rewrites and the split between the executors are written once, against IR operators, not against syntax.
 - **Testable rewrites**: every optimizer rule is a plan-to-plan function, checked by `ir.Validate` and visible in `explain`.
 - **Cheap compilation**: compilation depends only on the query text, so plans are cached by text and reused across requests.
 
-See [Query Engine](/docs/architecture/query-engine) and [PPL IR](../ppl/ir.md).
+See [PPL IR](../ppl/ir.md).
 
 ## Go
 
@@ -93,13 +139,13 @@ See [Query Engine](/docs/architecture/query-engine) and [PPL IR](../ppl/ir.md).
 
 The key factors:
 
-1. **Single static binary**: `go build` produces one file with no runtime, shared libraries or JVM, which the single-binary model needs.
+1. **Single static binary**: `go build` produces one file with no runtime, shared libraries or JVM.
 2. **Fast compilation**: short builds keep contributor iteration and CI fast.
-3. **Concurrency**: goroutines fit concurrent ingest, streaming query execution and background work (compaction, tiering, retention).
-4. **Performance**: the hot paths avoid per-row allocations: the VM runs on a fixed-size stack, and batches and buffers are reused.
+3. **Concurrency**: goroutines fit concurrent ingest, scans on every core and background work (flushes, merges, retention).
+4. **Performance under a GC**: the hot paths keep garbage low: column buffers and batches are reused, query state lives in arenas, and the VM runs on a fixed-size stack.
 5. **Contributor accessibility**: Go has a gentler learning curve than Rust.
 
-**Why not Rust?** Better raw performance and no GC pauses, at the cost of slower builds and a steeper learning curve. With allocation-free hot paths, GC is not the bottleneck.
+**Why not Rust?** Better raw performance and no GC pauses, at the cost of slower builds and a steeper learning curve.
 
 **Why not C++?** Memory safety. A database that ingests arbitrary data and evaluates user-provided expressions cannot afford use-after-free or buffer overflows.
 
@@ -107,20 +153,19 @@ The key factors:
 
 ## A Single Binary
 
-**Decision**: Ship one static binary that works as a CLI tool and a server, with the cluster components (`pkg/cluster`) linked into the same binary.
+**Decision**: Ship one static binary that works as a CLI tool and a server.
 
 **Alternatives**: Separate binaries per role, microservices.
 
 **Reasoning**:
 
 1. **Operational simplicity**: one binary to install, upgrade and monitor, with no version matrix between components.
-2. **Pipe mode**: `lynxdb query --file app.log 'source=main | stats count()'` runs the same compiler and operators as the server in process. This works because the whole query engine is linked into the CLI.
-3. **Gradual scaling**: the cluster design keeps the same binary, with roles chosen by configuration (`cluster.roles`) rather than separate programs. `lynxdb server` does not start the cluster runtime (see [Distributed Architecture](/docs/architecture/distributed)).
-4. **Testing**: integration tests exercise the real server code path.
+2. **Pipe mode**: `lynxdb query --file app.log 'source=main | stats count()'` opens the same database and runs the same compiler and executors as the server, in process.
+3. **Testing**: integration tests exercise the real server code path.
 
 ## Schema-on-Read
 
-**Decision**: No upfront schema. Fields are discovered at ingest and structure can be extracted at query time.
+**Decision**: No upfront schema. Every field path becomes a column when it first appears, and structure can be extracted at query time.
 
 **Alternatives**: Schema-on-write (index mappings, table definitions), label-based indexing.
 
@@ -133,76 +178,20 @@ Log data is heterogeneous:
 - The same field name may hold different types in different sources.
 - Raw text logs (syslog, access logs) have no schema at all.
 
-Schema-on-write systems need the schema before ingest; when logs change shape, they produce mapping conflicts, ingest failures or reindexing. Schema-on-read accepts any data and extracts structure when it is needed:
+Schema-on-write systems need the schema before ingest; when logs change shape, they produce mapping conflicts, ingest failures or reindexing. LynxDB keeps the values of one path in a column per kind, so `status` as an integer in one service and as a string in another coexist, and extracts structure when it is needed:
 
 ```
-source=main "connection refused"
-| rex field=_raw "host=(?<h>\S+) port=(?<port>\d+)"
-| stats count() by h, port
+source=main "Invalid user"
+| rex field=_raw "Invalid user (?<user>\S+) from (?<ip>\S+)"
+| where isnotnull(user)
+| stats count() as n by user, ip
+| sort - n
 ```
 
-The trade-off is that predicates on fields without index support are evaluated row by row. Time bounds, bloom filters, the term index and column statistics keep the common cases fast.
-
-## FST + Roaring Bitmaps
-
-**Decision**: Build the term index from an FST (finite state transducer) term dictionary and roaring bitmap posting lists.
-
-**Alternatives**: Embedding Lucene, a hash-based term dictionary, token bloom filters alone.
-
-**Reasoning**:
-
-- **Not Lucene**: Lucene is Java. Embedding it in a Go binary needs a JVM or a sidecar process, which breaks the single-binary model, and it brings machinery (codec versioning, near-real-time search) that immutable log segments do not need.
-- **FST instead of a hash map**: FSTs share prefixes and suffixes between terms, so the dictionary is compact, and prefix and glob searches iterate the FST directly. LynxDB uses `github.com/blevesearch/vellum`.
-- **Roaring bitmaps**: each 65536-row block is stored as an array, a bitmap or runs, whichever is smallest, so both rare and common terms are compact, and AND/OR are fast block by block.
-- **Not bloom filters alone**: a bloom filter only answers whether a token may be present. LynxDB keeps per-row-group bloom filters for skipping, and the term index adds the exact rows.
-
-| Feature | FST + Roaring | Hash + sorted arrays | Token bloom filters |
-|---------|---------------|---------------------|---------------------|
-| Exact term lookup | Yes | Yes | Membership only |
-| Prefix and glob search | Yes | No | No |
-| Row-level posting lists | Yes | Yes | No |
-| Pure Go | Yes | Yes | Yes |
-
-## Volcano Iterator Model
-
-**Decision**: Execute queries with pull-based iterators (the Volcano model) over row batches.
-
-**Alternatives**: Full materialization (compute each stage before starting the next), fully vectorized columnar execution.
-
-**Reasoning**:
-
-The Volcano model stops early. `head 10` stops pulling after its first batch, so a search over a large index returns as soon as it has 10 rows, and remaining segments are never opened. Log exploration nearly always limits its results.
-
-The cost is per-batch call overhead compared with tight loops over column vectors. LynxDB reduces it with:
-
-- **Batches of up to 1024 rows** per `Next()` call
-- **A bytecode VM** for expressions instead of walking an expression tree per row
-- **Storage hints** that skip segments and row groups before any operator sees their rows
-
-## Direct-to-Part Writes (No WAL, No LSM)
-
-**Decision**: Buffer events in memory and write immutable columnar parts directly, with atomic renames; no write-ahead log and no general-purpose LSM or B-tree.
-
-**Alternatives**: WAL + memtable, LSM tree (RocksDB, LevelDB), B-tree (SQLite, BoltDB).
-
-**Reasoning**:
-
-Log data is append-only. The only mutations are appending events and deleting whole time partitions on retention. A storage path specialized for immutable segments fits that:
-
-- **AsyncBatcher**: fast writes, bounded in-memory buffering, backpressure when compaction falls behind
-- **Segment writer**: columnar encoding and index building in one pass
-- **Compaction**: merges small parts into large ones
-
-Without a WAL:
-
-- **Latency**: no fsync per write; the batcher absorbs bursts and writes parts in bulk.
-- **Recovery**: startup is a filesystem scan that deletes stale `tmp_*` files and rebuilds the registry from the surviving `.lsg` parts; there is nothing to replay.
-- **Accepted data window**: events buffered in the batcher are in memory and can be lost on a crash. ClickHouse makes the [same trade-off](https://github.com/ClickHouse/ClickHouse/issues/64906) by default. Shippers that retry on failure resend them.
+The trade-off is that a field extracted at query time is computed for every row the query reads. Time ranges and the token filters of the search terms keep that set small.
 
 ## Related
 
-- [Architecture Overview](/docs/architecture/overview) -- how these decisions shape the system
-- [Storage Engine](/docs/architecture/storage-engine) -- part writes and compaction
-- [Segment Format](/docs/architecture/segment-format) -- columnar encoding details
-- [Query Engine](/docs/architecture/query-engine) -- compilation, the Volcano model and the bytecode VM
-- [Indexing](/docs/architecture/indexing) -- bloom filters and the term index
+- [Architecture Overview](./overview.md) -- how these decisions shape the system
+- [Storage](./storage.md) -- partitions, runs, parts and the manifest
+- [Query Engine](./query-engine.md) -- compilation and the two executors

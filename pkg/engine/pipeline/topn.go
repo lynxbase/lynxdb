@@ -79,11 +79,6 @@ func (t *TopNIterator) Close() error {
 
 func (t *TopNIterator) Schema() []FieldInfo { return t.child.Schema() }
 
-// MemoryUsed returns the current tracked memory for this operator.
-func (t *TopNIterator) MemoryUsed() int64 {
-	return t.acct.Used()
-}
-
 func (t *TopNIterator) buildTopN(ctx context.Context) error {
 	t.h = &topNHeap{
 		fields: t.fields,
@@ -218,4 +213,14 @@ func (h *topNHeap) Pop() interface{} {
 	h.rows = old[:n-1]
 
 	return item
+}
+
+// cloneRow creates a shallow copy of a row.
+func cloneRow(row map[string]event.Value) map[string]event.Value {
+	clone := make(map[string]event.Value, len(row))
+	for k, v := range row {
+		clone[k] = v
+	}
+
+	return clone
 }

@@ -131,8 +131,20 @@ eval total = reduce(values, 0, (acc, x) -> acc + x), any_big = exists(values, x 
 
 `mvindex` and `mvfind` count from 0. Lambdas (`x -> expr`,
 `(acc, x) -> expr`) are valid only as arguments of `forall`, `exists`,
-`filter`, `transform` and `reduce`. `mvmap(field, expr)` evaluates `expr`
-with the field name standing for each element.
+`filter`, `transform` and `reduce`. The lambda of `transform` takes the
+element, or the element and its 0-based index:
+
+```
+makeresults count=1 | eval a = array(10, 20, 30) | eval d = transform(a, x -> x * 2), i = transform(a, (x, i) -> x + i) | fields a, d, i
+```
+
+```
+a           d           i
+[10,20,30]  [20,40,60]  [10,21,32]
+```
+
+`mvmap(field, expr)` evaluates `expr` with the field name standing for each
+element.
 
 ## IP, hashing, system
 

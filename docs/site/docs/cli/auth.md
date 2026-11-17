@@ -5,7 +5,7 @@ description: Save credentials for a LynxDB server and manage its API keys.
 
 # login, logout & auth
 
-A server started with `--auth` requires an API key on every request. `login` and `logout` manage the keys the CLI stores; `auth` manages the keys the server accepts.
+A server started with `--auth` requires an API key on every request under `/api/`. `login` and `logout` manage the keys the CLI stores; `auth` manages the keys the server accepts.
 
 See [TLS & Authentication](../deployment/tls-auth.md) for server setup.
 
@@ -46,7 +46,7 @@ lynxdb logout --all
 lynxdb auth <subcommand>
 ```
 
-The subcommands call the server's key API, so they need a key with the `admin` or `full` scope, such as the root key printed at first start.
+`create`, `list`, `revoke` and `rotate-root` call the server's key API, which takes only the root key, the one the server prints at its first start. Any other key gets `403 FORBIDDEN` and the command exits with 7.
 
 ### auth create
 
@@ -58,15 +58,17 @@ lynxdb auth create --name <name> [--scope <scope>] [--expires <duration>] [--des
 |------|---------|-------------|
 | `--name` | required | Key name |
 | `--scope` | `full` | `ingest`, `query`, `admin` or `full` |
-| `--expires` | `never` | Lifetime: `30d`, `12w`, `1y`, or a duration such as `720h` |
+| `--expires` | `never` | Lifetime: `30d`, `12w`, `1y`, or a Go duration such as `720h` |
 | `--description` | | Free text |
 
 | Scope | Allows |
 |-------|--------|
-| `ingest` | Ingest endpoints: raw, HEC, Elasticsearch `_bulk`, OTLP |
-| `query` | Queries, fields, tail |
-| `admin` | Key management, config, cache, stats |
-| `full` | Everything |
+| `ingest` | Ingest endpoints: `/api/v1/ingest`, `/api/v1/ingest/raw`, `/api/v1/ingest/hec`, Elasticsearch `_bulk` |
+| `query` | Queries, query streams and job status |
+| `admin` | Canceling jobs, reading the server config |
+| `full` | Everything except the key API and config changes, which take the root key |
+
+Endpoints that only read state, such as `/api/v1/stats`, `/api/v1/status`, `/api/v1/fields`, `/api/v1/histogram` and `/api/v1/query/explain`, take a key of any scope.
 
 The token is printed once on stderr. An `ingest` key also prints a Filebeat output snippet for the Elasticsearch-compatible endpoint, and a `query` key prints CLI and HTTP header usage. With `--format json` the key is printed to stdout as JSON: `token` is the bearer token and `api_key` the Elasticsearch-style API key.
 
@@ -77,21 +79,55 @@ lynxdb auth create --name ci --scope admin --description "CI automation"
 lynxdb auth create --name web-01 --scope ingest --format json | jq -r .token
 ```
 
+```
+  ✔ API key created
+
+  Name           shipper
+  ID             ak_apc9c7MczIzS
+  Scope          ingest
+  Expires        never
+
+  Token (shown once — save it now):
+    lynx_ak_LDIFHYYuqEwOqAAiI59gHFdtPyex41uY
+
+  ─── filebeat.yml ─────────────────────────────────────────
+  output.elasticsearch:
+    hosts: ["https://logs.example.com/api/v1/es"]
+    api_key: "ak_apc9c7MczIzS:lynx_ak_LDIFHYYuqEwOqAAiI59gHFdtPyex41uY"
+    allow_older_versions: true
+
+  setup.ilm.enabled: false
+  setup.template.enabled: false
+  ─────────────────────────────────────────────────────────────
+```
+
 ### auth list
 
 ```
 lynxdb auth list
 ```
 
-**Aliases:** `ls`
+**Aliases:** `ls`, `list-keys`
 
 Lists keys with ID, name, scope, expiry, last use and age. The root key shows as `[root]`, and the summary counts keys that expire within 30 days.
+
+```
+┌─────────────────┬─────────┬────────┬────────────┬───────────┬──────────┐
+│ ID              │ NAME    │ SCOPE  │ EXPIRES    │ LAST USED │ CREATED  │
+├─────────────────┼─────────┼────────┼────────────┼───────────┼──────────┤
+│ rk_HVyY4Qs5JGXq │ [root]  │ full   │ never      │ just now  │ just now │
+│ ak_apc9c7MczIzS │ shipper │ ingest │ never      │ —         │ just now │
+│ ak_FEIkzu2kl0N5 │ dash    │ query  │ 2027-02-15 │ —         │ just now │
+└─────────────────┴─────────┴────────┴────────────┴───────────┴──────────┘
+```
 
 ### auth revoke
 
 ```
 lynxdb auth revoke <id> [--yes]
 ```
+
+**Alias:** `revoke-key`
 
 Revokes a key at once; requests that use it fail from then on. The command asks for confirmation when stdin is a terminal; `--yes` (`-y`) skips the prompt.
 

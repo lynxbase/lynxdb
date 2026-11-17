@@ -70,7 +70,7 @@ func runJobsList(statusFilter string) error {
 
 	if len(result.Jobs) == 0 {
 		if !humanOutputActive() {
-			return renderTabular(os.Stdout, []string{"ID", "STATUS", "PROGRESS", "QUERY"}, nil, ui.Stdout)
+			return renderTabular(os.Stdout, []string{"ID", "STATUS", "CREATED", "QUERY"}, nil, ui.Stdout)
 		}
 		fmt.Println("No jobs found.")
 
@@ -79,19 +79,10 @@ func runJobsList(statusFilter string) error {
 
 	rows := make([][]any, 0, len(result.Jobs))
 	for _, j := range result.Jobs {
-		progress := ""
-		if j.Progress != nil {
-			progress = fmt.Sprintf("%.0f%%", j.Progress.Percent)
-		}
-
-		if j.Status == "done" {
-			progress = "100%"
-		}
-
-		rows = append(rows, []any{j.JobID, j.Status, progress, j.Query})
+		rows = append(rows, []any{j.JobID, j.Status, j.CreatedAt, j.Query})
 	}
 
-	return renderTabular(os.Stdout, []string{"ID", "STATUS", "PROGRESS", "QUERY"}, rows, ui.Stdout)
+	return renderTabular(os.Stdout, []string{"ID", "STATUS", "CREATED", "QUERY"}, rows, ui.Stdout)
 
 }
 
@@ -117,12 +108,7 @@ func runJobDetail(jobID string) error {
 			{"query", job.Query},
 		}
 		if job.Progress != nil {
-			rows = append(rows,
-				[2]any{"progress_percent", job.Progress.Percent},
-				[2]any{"segments_scanned", job.Progress.Scanned},
-				[2]any{"segments_total", job.Progress.TotalEstimate},
-				[2]any{"elapsed_ms", job.Progress.ElapsedMS},
-			)
+			rows = append(rows, [2]any{"elapsed_ms", job.Progress.ElapsedMS})
 		}
 		if job.Error != nil && job.Error.Message != "" {
 			rows = append(rows, [2]any{"error", job.Error.Message})
@@ -135,14 +121,6 @@ func runJobDetail(jobID string) error {
 	fmt.Println(t.KeyValue("Job", job.JobID))
 	fmt.Println(t.KeyValue("Status", job.Status))
 	fmt.Println(t.KeyValue("Query", job.Query))
-
-	if job.Progress != nil {
-		fmt.Println(t.KeyValue("Progress", fmt.Sprintf("%.0f%%", job.Progress.Percent)))
-
-		if job.Progress.TotalEstimate > 0 {
-			fmt.Println(t.KeyValue("Segments", fmt.Sprintf("%d / %d scanned", job.Progress.Scanned, job.Progress.TotalEstimate)))
-		}
-	}
 
 	if job.Progress != nil && job.Progress.ElapsedMS > 0 {
 		fmt.Println(t.KeyValue("Elapsed", fmt.Sprintf("%dms", job.Progress.ElapsedMS)))

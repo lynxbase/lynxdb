@@ -23,7 +23,6 @@ release-tmp
 # Locally built tool binaries (use `go run ./internal/docgen`, etc.)
 /docgen
 /lynxdb-compat-manifest
-/lsg-fixture
 
 # Python
 __pycache__/

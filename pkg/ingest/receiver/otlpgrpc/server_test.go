@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/ingest/staging"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	logscollector "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	metricscollector "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	tracecollector "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -39,7 +39,7 @@ func TestReceiver_ExportLogs_SubmitsEvents(t *testing.T) {
 
 func TestReceiver_ExportLogs_OverflowResourceExhausted(t *testing.T) {
 	r := startTestReceiver(t, func(context.Context, []*event.Event) error {
-		return staging.ErrBufferOverflow
+		return memgov.ErrMemoryPressure
 	})
 	conn := dialReceiver(t, r)
 	defer conn.Close()

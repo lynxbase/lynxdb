@@ -1,3 +1,4 @@
+// Package pipeline implements ingest processing stages.
 package pipeline
 
 import (
@@ -5,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"regexp"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -396,54 +396,6 @@ func (r *Router) Partition(e *event.Event) int {
 	return int(h.Sum32() % uint32(r.PartitionCount))
 }
 
-// Batcher collects events into batches.
-type Batcher struct {
-	BatchSize int
-}
-
-func NewBatcher(batchSize int) *Batcher {
-	return &Batcher{BatchSize: batchSize}
-}
-
-// Batch splits events into batches of the configured size.
-func (b *Batcher) Batch(events []*event.Event) [][]*event.Event {
-	var batches [][]*event.Event
-	for i := 0; i < len(events); i += b.BatchSize {
-		end := i + b.BatchSize
-		if end > len(events) {
-			end = len(events)
-		}
-		batches = append(batches, events[i:end])
-	}
-
-	return batches
-}
-
-// SyslogParser extracts fields from syslog-formatted messages.
-//
-// Deprecated: use pkg/ingest/receiver/syslog for native RFC 3164/5424 parsing.
-type SyslogParser struct{}
-
-var syslogPattern = regexp.MustCompile(`^<(\d+)>(\w{3}\s+\d+\s+\d+:\d+:\d+)\s+(\S+)\s+(\S+?)(?:\[(\d+)\])?:\s*(.*)$`)
-
-func (p *SyslogParser) Process(events []*event.Event) ([]*event.Event, error) {
-	for _, e := range events {
-		matches := syslogPattern.FindStringSubmatch(e.Raw)
-		if matches == nil {
-			continue
-		}
-		e.SetField("priority", event.StringValue(matches[1]))
-		e.Host = matches[3]
-		e.SetField("program", event.StringValue(matches[4]))
-		if matches[5] != "" {
-			e.SetField("pid", event.StringValue(matches[5]))
-		}
-		e.SetField("message", event.StringValue(matches[6]))
-	}
-
-	return events, nil
-}
-
 // MetadataOnlyParser extracts only well-known metadata fields from JSON,
 // leaving all other data in _raw for query-time extraction via REX/spath.
 // This is the core of "lightweight" ingest mode — it avoids the CPU cost
@@ -517,89 +469,9 @@ func LightweightPipeline() *Pipeline {
 	)
 }
 
-// SelectiveJSONParser extracts only the requested top-level JSON keys from
-// event raw data, skipping all others. When a query needs 2 of 20 fields,
-// this avoids 90% of the unmarshal work compared to the full JSONParser.
-//
-// Uses json.Decoder.Token() for streaming key scanning and Decoder.Decode()
-// only for matching key values. Non-matching keys are skipped via
-// json.RawMessage consumption (cheaper than full Decode + discard).
-type SelectiveJSONParser struct {
-	RequiredFields map[string]bool
-	ParseErrors    *atomic.Int64 // shared counter with JSONParser
-}
-
-func (p *SelectiveJSONParser) Process(events []*event.Event) ([]*event.Event, error) {
-	for _, e := range events {
-		if e.Raw == "" {
-			continue
-		}
-		dec := json.NewDecoder(strings.NewReader(e.Raw))
-
-		// Expect opening '{'.
-		tok, err := dec.Token()
-		if err != nil {
-			p.ParseErrors.Add(1)
-			e.ParseError = true
-			continue
-		}
-		if delim, ok := tok.(json.Delim); !ok || delim != '{' {
-			p.ParseErrors.Add(1)
-			e.ParseError = true
-			continue
-		}
-
-		for dec.More() {
-			// Read key token.
-			keyTok, err := dec.Token()
-			if err != nil {
-				break
-			}
-			key, ok := keyTok.(string)
-			if !ok {
-				break
-			}
-
-			if !p.RequiredFields[key] {
-				// Skip the value — consume it as RawMessage.
-				var skip json.RawMessage
-				if err := dec.Decode(&skip); err != nil {
-					break
-				}
-				continue
-			}
-
-			// Decode the value for a required key.
-			var v interface{}
-			if err := dec.Decode(&v); err != nil {
-				break
-			}
-			switch val := v.(type) {
-			case string:
-				e.SetField(key, event.StringValue(val))
-			case float64:
-				if val == float64(int64(val)) {
-					e.SetField(key, event.IntValue(int64(val)))
-				} else {
-					e.SetField(key, event.FloatValue(val))
-				}
-			case bool:
-				e.SetField(key, event.BoolValue(val))
-			}
-		}
-	}
-	return events, nil
-}
-
-// sharedJSONParser is used by DefaultPipeline and SelectivePipeline to accumulate
-// parse failure counts across all pipelines into a single counter.
+// sharedJSONParser accumulates the parse failures of every DefaultPipeline
+// into a single counter.
 var sharedJSONParser = &JSONParser{}
-
-// ParseFailureCount returns the total number of JSON parse failures across all
-// default and selective ingest pipelines. Use this to wire into metrics.
-func ParseFailureCount() int64 {
-	return sharedJSONParser.ParseErrors.Load()
-}
 
 // DefaultPipeline returns a standard ingestion pipeline.
 // Each call gets its own TimestampNormalizer because it keeps advisory parse
@@ -611,124 +483,4 @@ func DefaultPipeline() *Pipeline {
 		&KeyValueParser{},
 		&Router{DefaultIndex: "main", PartitionCount: 4},
 	)
-}
-
-// isInternalField returns true for fields that are always available without parsing.
-func isInternalField(name string) bool {
-	switch name {
-	case "_raw", "_time", "_source", "_sourcetype", "host", "index", "source", "sourcetype":
-		return true
-	}
-
-	return false
-}
-
-// FastTimestampAssigner assigns time.Now() to events with zero timestamps
-// without attempting any format-based parsing. Used when the full
-// TimestampNormalizer would waste CPU trying formats that won't match
-// (e.g., JSON lines where JSON parser is skipped).
-type FastTimestampAssigner struct{}
-
-func (f *FastTimestampAssigner) Process(events []*event.Event) ([]*event.Event, error) {
-	now := time.Now()
-	for _, e := range events {
-		if e.Time.IsZero() {
-			e.Time = now
-		}
-	}
-
-	return events, nil
-}
-
-// SelectivePipeline builds an ingest pipeline that only runs the stages
-// needed to produce the required fields. If requiredFields is nil, all stages
-// run (same as DefaultPipeline). If requiredFields contains only internal
-// fields (like _raw, _time), JSON and KV parsing are skipped entirely,
-// and timestamp normalization uses a fast path (no format parsing).
-func SelectivePipeline(requiredFields map[string]bool) *Pipeline {
-	needParsing := requiredFields == nil // nil means "all fields needed"
-	if !needParsing {
-		for field := range requiredFields {
-			if !isInternalField(field) {
-				needParsing = true
-
-				break
-			}
-		}
-	}
-
-	var stages []Stage
-	if needParsing {
-		// Full timestamp normalization needed since JSON parser may extract timestamps.
-		stages = append(stages, DefaultTimestampNormalizer())
-		// Use selective JSON parser when a bounded set of fields is requested.
-		// This avoids full unmarshal when only a few fields are needed.
-		if requiredFields != nil {
-			stages = append(stages, &SelectiveJSONParser{
-				RequiredFields: requiredFields,
-				ParseErrors:    &sharedJSONParser.ParseErrors,
-			})
-		} else {
-			stages = append(stages, sharedJSONParser)
-		}
-		stages = append(stages, &KeyValueParser{})
-	} else {
-		// Fast path: no JSON/KV parsing needed, but we still need proper
-		// timestamp extraction from _raw. The TimestampNormalizer scans raw
-		// text (including JSON) for embedded timestamps at word/quote
-		// boundaries, which is essential for correct _time values in
-		// timechart and transaction commands.
-		stages = append(stages, DefaultTimestampNormalizer())
-	}
-
-	stages = append(stages, &Router{DefaultIndex: "main", PartitionCount: 4})
-
-	return New(stages...)
-}
-
-// SplitRawLines splits raw text into individual events by newline.
-func SplitRawLines(raw, source, sourceType string) []*event.Event {
-	events := make([]*event.Event, 0, strings.Count(raw, "\n")+1)
-	start := 0
-	for start <= len(raw) {
-		end := strings.IndexByte(raw[start:], '\n')
-		if end < 0 {
-			end = len(raw)
-		} else {
-			end += start
-		}
-		line := raw[start:end]
-		// Trim trailing \r (Windows line endings) but avoid full TrimSpace scan.
-		line = strings.TrimSuffix(line, "\r")
-		if isBlankLine(line) {
-			if end == len(raw) {
-				break
-			}
-			start = end + 1
-			continue
-		}
-		e := event.NewEvent(time.Time{}, line)
-		e.Source = source
-		e.SourceType = sourceType
-		events = append(events, e)
-		if end == len(raw) {
-			break
-		}
-		start = end + 1
-	}
-
-	return events
-}
-
-// isBlankLine checks if a string contains only whitespace without scanning
-// the full string when non-whitespace is found early (unlike strings.TrimSpace).
-func isBlankLine(s string) bool {
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case ' ', '\t', '\r', '\n':
-		default:
-			return false
-		}
-	}
-	return true
 }

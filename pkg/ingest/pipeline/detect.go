@@ -40,50 +40,6 @@ var combinedRegex = regexp.MustCompile(`^\S+ \S+ \S+ \[[^\]]+\] "[^"]+" \d+ \d+`
 // syslogRegex matches RFC 3164 and RFC 5424 syslog formats.
 var syslogRegex = regexp.MustCompile(`^<\d+>(?:\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\S+\s+\S+|[1-9]\s+\d{4}-\d{2}-\d{2}T\S+\s+\S+\s+\S+\s+\S+\s+\S+\s+)`)
 
-// DetectFormat analyzes a sample of lines and returns the best detected format.
-// sampleLines should contain the first 10-20 lines of the data source.
-func DetectFormat(sampleLines []string) DetectedFormat {
-	if len(sampleLines) == 0 {
-		return FormatPlain
-	}
-
-	conf := DetectFormatConfidence(sampleLines)
-
-	// Require at least 70% confidence and 2x advantage over runner-up.
-	best := FormatPlain
-	bestScore := conf.JSON
-	if conf.Logfmt > bestScore {
-		bestScore = conf.Logfmt
-		best = FormatLogfmt
-	}
-	if conf.Combined > bestScore {
-		bestScore = conf.Combined
-		best = FormatCombined
-	}
-	if conf.Syslog > bestScore {
-		bestScore = conf.Syslog
-		best = FormatSyslog
-	}
-	if conf.Docker > bestScore {
-		bestScore = conf.Docker
-		best = FormatDocker
-	}
-	if conf.CSV > bestScore {
-		bestScore = conf.CSV
-		best = FormatCSV
-	}
-	if conf.TSV > bestScore {
-		bestScore = conf.TSV
-		best = FormatTSV
-	}
-
-	if bestScore < 0.7 {
-		return FormatPlain
-	}
-
-	return best
-}
-
 // DetectFormatConfidence returns confidence scores for each format.
 func DetectFormatConfidence(lines []string) FormatConfidence {
 	n := float64(len(lines))

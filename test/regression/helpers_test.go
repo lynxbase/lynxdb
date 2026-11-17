@@ -3,12 +3,15 @@ package regression
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"runtime"
 	"sync"
 	"testing"
 
-	"github.com/lynxbase/lynxdb/pkg/storage"
+	"github.com/lynxbase/lynxdb/pkg/database"
+	"github.com/lynxbase/lynxdb/pkg/ingest/ndjson"
+	"github.com/lynxbase/lynxdb/pkg/query"
 )
 
 // Project root resolution
@@ -24,82 +27,122 @@ func testdataPath(relPath string) string {
 	return filepath.Join(projectRoot(), "testdata", relPath)
 }
 
-// Shared engine fixtures (initialized once per test binary run)
+// Shared database fixtures (initialized once per test binary run)
 
 var (
 	sshOnce   sync.Once
-	sshEng    *storage.Engine
-	sshCount  int
+	sshDB     *database.DB
 	sshInitOK bool
 
 	openstackOnce   sync.Once
-	openstackEng    *storage.Engine
-	openstackCount  int
+	openstackDB     *database.DB
 	openstackInitOK bool
 )
 
-// sshEngine returns a shared engine with OpenSSH_2k.log ingested into "main".
-// The engine is created once and reused across all tests.
-func sshEngine(t *testing.T) *storage.Engine {
+// TestMain closes the shared databases, which removes their directories.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	for _, db := range []*database.DB{sshDB, openstackDB} {
+		if db != nil {
+			_ = db.Close()
+		}
+	}
+	os.Exit(code)
+}
+
+// loadLogDB opens a database in a temporary directory and loads the lines of
+// a log file into the index main.
+func loadLogDB(path, source string) (*database.DB, error) {
+	db, err := database.Open(database.Config{})
+	if err != nil {
+		return nil, err
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	conv, err := ndjson.NewText("")
+	if err != nil {
+		return nil, err
+	}
+	conv.Source = source
+	if err := conv.Read(f, func(b []byte) error {
+		_, err := db.Append(database.DefaultSource, b)
+		return err
+	}); err != nil {
+		return nil, err
+	}
+
+	return db, db.Sync()
+}
+
+// sshEngine returns a shared database with OpenSSH_2k.log loaded into "main".
+// The database is created once and reused across all tests.
+func sshEngine(t *testing.T) *database.DB {
 	t.Helper()
 
 	sshOnce.Do(func() {
-		sshEng = storage.NewEphemeralEngine()
 		var err error
-		sshCount, err = sshEng.IngestFile(context.Background(), testdataPath("logs/OpenSSH_2k.log"), storage.IngestOpts{Source: "ssh"})
+		sshDB, err = loadLogDB(testdataPath("logs/OpenSSH_2k.log"), "ssh")
 		if err != nil {
-			t.Fatalf("ingest OpenSSH_2k.log: %v", err)
-		}
-		if sshCount == 0 {
-			t.Fatal("no events ingested from OpenSSH_2k.log")
+			t.Fatalf("load OpenSSH_2k.log: %v", err)
 		}
 		sshInitOK = true
 	})
 
 	if !sshInitOK {
-		t.Fatal("SSH engine initialization failed in a prior test")
+		t.Fatal("SSH database initialization failed in a prior test")
 	}
 
-	return sshEng
+	return sshDB
 }
 
-// openstackEngine returns a shared engine with OpenStack_2k.log ingested into "main".
-func openstackEngine(t *testing.T) *storage.Engine {
+// openstackEngine returns a shared database with OpenStack_2k.log loaded into "main".
+func openstackEngine(t *testing.T) *database.DB {
 	t.Helper()
 
 	openstackOnce.Do(func() {
-		openstackEng = storage.NewEphemeralEngine()
 		var err error
-		openstackCount, err = openstackEng.IngestFile(context.Background(), testdataPath("logs/OpenStack_2k.log"), storage.IngestOpts{Source: "openstack"})
+		openstackDB, err = loadLogDB(testdataPath("logs/OpenStack_2k.log"), "openstack")
 		if err != nil {
-			t.Fatalf("ingest OpenStack_2k.log: %v", err)
-		}
-		if openstackCount == 0 {
-			t.Fatal("no events ingested from OpenStack_2k.log")
+			t.Fatalf("load OpenStack_2k.log: %v", err)
 		}
 		openstackInitOK = true
 	})
 
 	if !openstackInitOK {
-		t.Fatal("OpenStack engine initialization failed in a prior test")
+		t.Fatal("OpenStack database initialization failed in a prior test")
 	}
 
-	return openstackEng
+	return openstackDB
 }
 
 // Query helper
 
-// mustQuery executes a PPL query against the engine and fatals on error.
-func mustQuery(t *testing.T, eng *storage.Engine, q string) []map[string]interface{} {
+// mustQuery runs a PPL query against the database and fatals on error.
+func mustQuery(t *testing.T, db *database.DB, q string) []map[string]interface{} {
 	t.Helper()
 
-	ctx := context.Background()
-	res, _, err := eng.Query(ctx, q, storage.QueryOpts{})
+	c, err := query.Compile(q)
+	if err != nil {
+		t.Fatalf("compile %q: %v", q, err)
+	}
+	res, err := db.Query(context.Background(), c, database.QueryOptions{})
 	if err != nil {
 		t.Fatalf("query %q: %v", q, err)
 	}
+	maps := res.Maps()
+	rows := make([]map[string]interface{}, len(maps))
+	for i, m := range maps {
+		row := make(map[string]interface{}, len(m))
+		for k, v := range m {
+			row[k] = v.Interface()
+		}
+		rows[i] = row
+	}
 
-	return res.Rows
+	return rows
 }
 
 // Assertion helpers

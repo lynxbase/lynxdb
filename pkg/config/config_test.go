@@ -1,6 +1,7 @@
 package config
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -16,11 +17,14 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("expected info, got %s", cfg.LogLevel)
 	}
-	if cfg.Storage.Compression != "lz4" {
-		t.Errorf("expected lz4, got %s", cfg.Storage.Compression)
+	if cfg.Storage.Partition != Duration(24*time.Hour) {
+		t.Errorf("expected 24h partition, got %v", cfg.Storage.Partition)
 	}
-	if cfg.Storage.RowGroupSize != 65536 {
-		t.Errorf("expected 65536, got %d", cfg.Storage.RowGroupSize)
+	if cfg.Storage.FlushInterval != 0 {
+		t.Errorf("expected zero flush interval, got %v", cfg.Storage.FlushInterval)
+	}
+	if want := []string{"_time", "timestamp", "@timestamp", "time", "ts"}; !slices.Equal(cfg.Storage.TimeFields, want) {
+		t.Errorf("expected time fields %v, got %v", want, cfg.Storage.TimeFields)
 	}
 	if cfg.Query.MaxConcurrent != defaultMaxConcurrent {
 		t.Errorf("expected %d, got %d", defaultMaxConcurrent, cfg.Query.MaxConcurrent)
@@ -36,9 +40,6 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Ingest.ESCompat.ClusterName != "lynxdb" {
 		t.Errorf("expected ES cluster name lynxdb, got %q", cfg.Ingest.ESCompat.ClusterName)
-	}
-	if !cfg.Ingest.ESCompat.StripLogstashDateSuffix {
-		t.Error("expected ES Logstash date suffix stripping enabled by default")
 	}
 	if cfg.Ingest.OTLP.HTTPListen != "0.0.0.0:4318" {
 		t.Errorf("expected OTLP HTTP listen 0.0.0.0:4318, got %q", cfg.Ingest.OTLP.HTTPListen)
@@ -57,15 +58,6 @@ func TestDefaultConfig(t *testing.T) {
 	}
 	if cfg.Ingest.Limits.MaxDecompressedBodyBytes != 256*MB {
 		t.Errorf("expected decompressed body limit 256mb, got %s", cfg.Ingest.Limits.MaxDecompressedBodyBytes)
-	}
-	if !cfg.Ingest.Staging.Enabled {
-		t.Error("expected staging enabled by default")
-	}
-	if cfg.Ingest.Staging.MaxBytes != 64*MB {
-		t.Errorf("expected staging max_bytes 64mb, got %s", cfg.Ingest.Staging.MaxBytes)
-	}
-	if cfg.Ingest.Staging.MaxAge != Duration(5*time.Second) {
-		t.Errorf("expected staging max_age 5s, got %s", cfg.Ingest.Staging.MaxAge)
 	}
 	if cfg.HTTP.IdleTimeout != 120*time.Second {
 		t.Errorf("expected 120s, got %v", cfg.HTTP.IdleTimeout)

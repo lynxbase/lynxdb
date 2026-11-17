@@ -42,17 +42,21 @@ run-time type: `null`, `string`, `int`, `float`, `bool`, `timestamp`,
 
 ## Schema-on-read columns
 
-Events have two typed columns: `_time` (timestamp) and `_raw` (string, the
-event text). `@timestamp` is an alias of `_time`. Every other column of an
-index is discovered when it is read and has type `any` at planning time: its
-values carry the types they were stored with. Fields LynxDB extracted from
-text at ingest (`key=value` pairs, format fields) are stored with the type
-their text parses as (integers, floats, otherwise strings).
+Events have two typed columns: `_time` (timestamp) and `_raw` (string).
+`_raw` holds the text of an event that arrived as a line that is not a JSON
+object; a JSON event has no `_raw`. `@timestamp` is an alias of `_time`.
+Every other column of an index is discovered when it is read and has type
+`any` at planning time: its values carry the types they were stored with.
+The members of a JSON object are columns named by their path, such as
+`http.status`. Fields LynxDB extracted from text at ingest (`key=value`
+pairs, format fields) are stored with the type their text parses as
+(integers, floats, otherwise strings).
 
-A reference to a column that a row does not have evaluates to NULL. Commands
-that build a new schema, such as `stats`, `fields` or `top`, produce closed
-schemas: a later reference to a column they do not output is a semantic
-error.
+A reference to a column that a row does not have evaluates to NULL, but
+results are sparse: a field that an event lacks is absent from its result
+row, not NULL. Commands that build their own schema, such as `stats`, `fields`
+or `top`, produce closed schemas: a later reference to a column they do not
+output is a semantic error.
 
 ## Conversions
 

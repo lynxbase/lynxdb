@@ -77,7 +77,7 @@ setup.ilm.enabled: false
 				{Reader: strings.NewReader(config), ContainerFilePath: "/usr/share/filebeat/filebeat.yml", FileMode: 0o644},
 			},
 		})
-		waitForSourceCount(t, rig, "filebeat-8.15.0", 100, func() string { return containerLogs(t, ctr) })
+		waitForCount(t, rig, countQuery("filebeat-8.15.0", holds("message", fixtureText)), 100, func() string { return containerLogs(t, ctr) })
 		assertNoShipperErrors(t, containerLogs(t, ctr))
 	}
 }
@@ -89,13 +89,13 @@ func runMatrixFluentBit(image string, logstashFormat bool) func(*testing.T) {
 		output := `    Logstash_Format Off
     Index test-fluentbit
 `
-		source := "test-fluentbit"
+		index, indexName := "test-fluentbit", `^test-fluentbit$`
 		if logstashFormat {
 			output = `    Logstash_Format On
     Logstash_Prefix fluent-bit
     Logstash_DateFormat %Y.%m.%d
 `
-			source = "fluent-bit"
+			index, indexName = "fluent-bit-*", `^fluent-bit-\d{4}\.\d{2}\.\d{2}$`
 		}
 		config := fmt.Sprintf(`
 [INPUT]
@@ -121,7 +121,8 @@ func runMatrixFluentBit(image string, logstashFormat bool) func(*testing.T) {
 				{Reader: strings.NewReader(config), ContainerFilePath: "/fluent-bit/etc/fluent-bit.conf", FileMode: 0o644},
 			},
 		})
-		waitForSourceCount(t, rig, source, 100, func() string { return containerLogs(t, ctr) })
+		waitForCount(t, rig, countQuery(index, holds("log", fixtureText)), 100, func() string { return containerLogs(t, ctr) })
+		requireIndexNames(t, rig, indexName)
 		assertNoShipperErrors(t, containerLogs(t, ctr))
 	}
 }
@@ -133,7 +134,7 @@ func runMatrixVector(image, mode string) func(*testing.T) {
 		extra := `    bulk:
       index: test-vector
 `
-		source := "test-vector"
+		index := "test-vector"
 		if mode == "data_stream" {
 			extra = `    bulk:
       action: create
@@ -142,7 +143,7 @@ func runMatrixVector(image, mode string) func(*testing.T) {
       dataset: generic
       namespace: default
 `
-			source = "logs-generic-default"
+			index = "logs-generic-default"
 		}
 		config := fmt.Sprintf(`
 sources:
@@ -170,7 +171,7 @@ sinks:
 				{Reader: strings.NewReader(config), ContainerFilePath: "/etc/vector/vector.yaml", FileMode: 0o644},
 			},
 		})
-		waitForSourceCount(t, rig, source, 100, func() string { return containerLogs(t, ctr) })
+		waitForCount(t, rig, countQuery(index, holds("message", fixtureText)), 100, func() string { return containerLogs(t, ctr) })
 		assertNoShipperErrors(t, containerLogs(t, ctr))
 	}
 }
@@ -204,7 +205,7 @@ service:
 				{Reader: strings.NewReader(config), ContainerFilePath: "/etc/otelcol.yaml", FileMode: 0o644},
 			},
 		})
-		waitForSourceCount(t, rig, "otlp", 100, func() string { return containerLogs(t, ctr) })
+		waitForCount(t, rig, otlpFixtureCount(), 100, func() string { return containerLogs(t, ctr) })
 		assertNoShipperErrors(t, containerLogs(t, ctr))
 	}
 }
@@ -239,7 +240,7 @@ service:
 				{Reader: strings.NewReader(config), ContainerFilePath: "/etc/otelcol.yaml", FileMode: 0o644},
 			},
 		})
-		waitForSourceCount(t, rig, "otlp", 100, func() string { return containerLogs(t, ctr) })
+		waitForCount(t, rig, otlpFixtureCount(), 100, func() string { return containerLogs(t, ctr) })
 		assertNoShipperErrors(t, containerLogs(t, ctr))
 	}
 }
@@ -262,7 +263,7 @@ func runMatrixSplunkHEC() func(*testing.T) {
 				containerFile(fixture, "/tmp/hec.jsonl"),
 			},
 		})
-		waitForSourceCount(t, rig, "splunk-hec", 100, func() string { return containerLogs(t, ctr) })
+		waitForCount(t, rig, hecFixtureCount(), 100, func() string { return containerLogs(t, ctr) })
 		assertNoShipperErrors(t, containerLogs(t, ctr))
 	}
 }

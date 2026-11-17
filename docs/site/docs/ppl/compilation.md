@@ -41,12 +41,17 @@ Search terms lower as follows:
 | `NOT user=bob` | `NOT coalesce(user = "bob", FALSE)` (two-valued) |
 | `level IN (WARN, ERROR)` | `(level = "WARN") OR (level = "ERROR")` |
 
+A plan renders a free-text search with `_raw` as its field; it searches
+every string field of the event, of which `_raw` holds the text of a line
+that is not JSON.
+
 ## Commands
 
 | PPL | IR |
 | --- | --- |
 | `where c` | `Filter(c)` |
-| `fields a, b`, `fields - a` | `Project(a, b)`, `Project(drop a)` |
+| `fields a, b`, `fields - a` | `Project(a, b)`, `Project(drop a)`; a stored member such as `http.path` is a column of its own |
+| `fields p.x` where `p` is an object computed by an earlier command | `Compute(__path_0 = p.x)`, `Rename(__path_0 -> p.x)`, then `Project(p.x)`: the member becomes a column named by its path |
 | `rename a as b` | `RenameColumns(a -> b)` |
 | `eval x = e, y = f` | `Compute(x = e, y = f)` |
 | `replace`, `convert`, `nomv` | `Compute` with `wildcard_replace`, conversion functions (`convert_num`, `dur2sec`, ...), `mvjoin` |
@@ -115,5 +120,5 @@ normalized: `count()`, `percentile(response_time, 99)`, `span(_time,1h)`.
 
 Each command has a compile golden under `pkg/ppl/testdata/compile`: a `.ppl`
 query and the `.ir` plan it must produce. `pkg/query` checks a corpus of
-query plans (`testdata/corpus_plans.sum`) and executes queries end to end in
-`query_test.go`.
+query plans (`testdata/corpus_plans.sum`), and `pkg/database/execute_test.go`
+runs queries end to end over a database.

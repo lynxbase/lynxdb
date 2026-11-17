@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/storage/part"
 )
 
 func (r *Receiver) serveTCP(ln net.Listener) error {
@@ -63,13 +62,6 @@ func (r *Receiver) handleTCPConn(conn net.Conn) {
 		if err != nil {
 			r.metrics.IncDropped("tcp", dropReason(err))
 			r.logger.Warn("syslog TCP ingest failed", "remote", conn.RemoteAddr(), "error", err, "batch_size", len(batch))
-			if errors.Is(err, part.ErrTooManyParts) {
-				_ = conn.SetReadDeadline(time.Now().Add(time.Second))
-				time.Sleep(time.Second)
-				batch = batch[:0]
-				stopTimer(timer)
-				return true
-			}
 			batch = batch[:0]
 			stopTimer(timer)
 			return false

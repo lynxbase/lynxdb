@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 func TestAggregateDistinctCountAcrossHLLPromotion(t *testing.T) {
@@ -17,7 +16,7 @@ func TestAggregateDistinctCountAcrossHLLPromotion(t *testing.T) {
 				rows = append(rows, map[string]event.Value{"x": event.StringValue(fmt.Sprintf("v%d", i))})
 			}
 
-			acct := memgov.NewTestBudget("test", 1<<30).NewAccount("agg")
+			acct := newTestBudget(1 << 30).NewAccount()
 			iter := NewAggregateIterator(NewRowScanIterator(rows, 512), []AggFunc{
 				{Name: "dc", Field: "x", Alias: "d"},
 				{Name: "estdc_error", Field: "x", Alias: "e"},

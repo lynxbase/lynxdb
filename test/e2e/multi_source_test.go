@@ -11,8 +11,8 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
-// ingestSourceEvents ingests n simple plain-text events into the given index.
-// Uses IngestRaw (text/plain) with X-Index header to route events.
+// ingestSourceEvents ingests n plain-text events into an index whose source
+// field is the index name.
 func ingestSourceEvents(t *testing.T, h *Harness, index string, n int) {
 	t.Helper()
 
@@ -35,7 +35,7 @@ func ingestSourceEvents(t *testing.T, h *Harness, index string, n int) {
 	}
 }
 
-// setupMultiSource creates a harness with events in three sources.
+// setupMultiSource creates a harness with events in three indexes.
 func setupMultiSource(t *testing.T) *Harness {
 	t.Helper()
 	h := NewHarness(t)
@@ -84,17 +84,14 @@ func TestE2E_MultiSource_IndexIN_SingleValue(t *testing.T) {
 	requireAggValue(t, r, "count", 3)
 }
 
-// Index exclusion
+// Source field exclusion
 
-func TestE2E_MultiSource_IndexNotEquals_ExcludesSource(t *testing.T) {
+func TestE2E_MultiSource_SourceFieldNotEquals_ExcludesSource(t *testing.T) {
 	h := setupMultiSource(t)
 
-	r := h.MustQuery(`source=* | where index != "redis" | stats count() as count`)
-	got := GetInt(r, "count")
-	// Should exclude redis (3 events), so at least nginx (10) + postgres (5).
-	if got < 15 {
-		t.Errorf("expected at least 15 events (excluding redis), got %d", got)
-	}
+	// The source field of every event names its index: nginx (10) + postgres (5).
+	r := h.MustQuery(`source=* | where source != "redis" | stats count() as count`)
+	requireAggValue(t, r, "count", 15)
 }
 
 // Source clause forms
@@ -120,22 +117,20 @@ func TestE2E_MultiSource_FROM_SingleIndex(t *testing.T) {
 	requireAggValue(t, r, "count", 3)
 }
 
-// stats count() as count by index
+// stats count() as count by source
 
-func TestE2E_MultiSource_StatsCountByIndex(t *testing.T) {
+func TestE2E_MultiSource_StatsCountBySource(t *testing.T) {
 	h := setupMultiSource(t)
 
-	r := h.MustQuery(`source=* | stats count() as count by index`)
+	r := h.MustQuery(`source=* | stats count() as count by source`)
 	rows := AggRows(r)
-	if len(rows) < 3 {
-		t.Fatalf("expected at least 3 groups for stats count by index, got %d", len(rows))
+	if len(rows) != 3 {
+		t.Fatalf("expected 3 groups for stats count by source, got %d: %v", len(rows), rows)
 	}
 
-	// Build lookup: index name -> count.
 	counts := make(map[string]int)
 	for _, row := range rows {
-		idx := fmt.Sprint(row["index"])
-		counts[idx] = toInt(row["count"])
+		counts[fmt.Sprint(row["source"])] = toInt(row["count"])
 	}
 
 	if counts["nginx"] != 10 {
@@ -197,9 +192,16 @@ func TestE2E_MultiSource_Explain_ReportsScope(t *testing.T) {
 	if result.Parsed == nil {
 		t.Fatal("expected non-nil parsed result")
 	}
+	scope := result.Parsed.SourceScope
+	if scope == nil {
+		t.Fatal("expected a source scope")
+	}
+	if scope.Type != "list" || strings.Join(scope.Sources, ",") != "nginx,postgres" {
+		t.Errorf("expected scope list [nginx postgres], got type=%q sources=%v", scope.Type, scope.Sources)
+	}
 }
 
-// Nonexistent source returns warning
+// Nonexistent source
 
 func TestE2E_MultiSource_NonexistentSource_ReturnsResults(t *testing.T) {
 	h := setupMultiSource(t)
@@ -214,8 +216,8 @@ func TestE2E_MultiSource_NonexistentSource_ReturnsResults(t *testing.T) {
 
 // Glob pattern queries
 
-// ingestGlobEvents ingests events where Index and Source are DIFFERENT values.
-// Distinct values catch any aliasing of index to source.
+// ingestGlobEvents ingests events whose index and source differ, which
+// catches any aliasing of index to source.
 func ingestGlobEvents(t *testing.T, h *Harness, index, source string, n int) {
 	t.Helper()
 
@@ -238,8 +240,8 @@ func ingestGlobEvents(t *testing.T, h *Harness, index, source string, n int) {
 	}
 }
 
-// setupGlobIndexes creates indexes with a common prefix for glob testing.
-// Uses DIFFERENT Index and Source values to validate the index/source separation.
+// setupGlobIndexes creates indexes with a common prefix for glob testing,
+// each with a source that differs from its name.
 func setupGlobIndexes(t *testing.T) *Harness {
 	t.Helper()
 	h := NewHarness(t)
@@ -275,41 +277,28 @@ func TestE2E_GlobIndex_FROM_Star_All(t *testing.T) {
 	requireAggValue(t, r, "count", 26)
 }
 
-func TestE2E_GlobIndex_StatsCountByIndex_DiffersFromSource(t *testing.T) {
+func TestE2E_GlobIndex_StatsCountBySource_DiffersFromIndex(t *testing.T) {
 	h := setupGlobIndexes(t)
 
-	// stats count() as count by index should group by physical partition (logs-web, logs-api, etc.)
-	// NOT by source (nginx-access, api-gateway, etc.)
-	r := h.MustQuery(`source=* | stats count() as count by index`)
+	// The source field holds the source each event was sent with, not its index.
+	r := h.MustQuery(`source=* | stats count() as count by source`)
 	rows := AggRows(r)
-	if len(rows) < 4 {
-		t.Fatalf("expected at least 4 index groups, got %d", len(rows))
+	if len(rows) != 4 {
+		t.Fatalf("expected 4 source groups, got %d: %v", len(rows), rows)
 	}
 
 	counts := make(map[string]int)
 	for _, row := range rows {
-		idx := fmt.Sprint(row["index"])
-		counts[idx] = toInt(row["count"])
+		counts[fmt.Sprint(row["source"])] = toInt(row["count"])
 	}
-
-	// Verify we see physical partition names, not source names.
-	if counts["logs-web"] != 10 {
-		t.Errorf("expected logs-web=10, got %d", counts["logs-web"])
+	for source, want := range map[string]int{"nginx-access": 10, "api-gateway": 8, "postgres-main": 5, "node-exporter": 3} {
+		if counts[source] != want {
+			t.Errorf("expected %s=%d, got %d", source, want, counts[source])
+		}
 	}
-	if counts["logs-api"] != 8 {
-		t.Errorf("expected logs-api=8, got %d", counts["logs-api"])
-	}
-	if counts["logs-db"] != 5 {
-		t.Errorf("expected logs-db=5, got %d", counts["logs-db"])
-	}
-	if counts["metrics-cpu"] != 3 {
-		t.Errorf("expected metrics-cpu=3, got %d", counts["metrics-cpu"])
-	}
-
-	// Source names should NOT appear as index values.
-	for _, badKey := range []string{"nginx-access", "api-gateway", "postgres-main", "node-exporter"} {
-		if _, found := counts[badKey]; found {
-			t.Errorf("source name %q should NOT appear in 'stats count by index' results", badKey)
+	for _, index := range []string{"logs-web", "logs-api", "logs-db", "metrics-cpu"} {
+		if _, found := counts[index]; found {
+			t.Errorf("index name %q should not appear as a source value", index)
 		}
 	}
 }
@@ -333,17 +322,19 @@ func TestE2E_GlobIndex_FROM_CommaSeparated(t *testing.T) {
 func TestE2E_GlobIndex_SourceFieldNotConfusedWithIndex(t *testing.T) {
 	h := setupGlobIndexes(t)
 
-	// Querying by _source (the logical source tag) should use the Source value,
-	// not the Index value. Index=logs-web has Source=nginx-access.
-	r := h.MustQuery(`source=logs-web | stats count() as count by _source`)
+	// Index logs-web holds the events sent with source nginx-access.
+	r := h.MustQuery(`source=logs-web | stats count() as count by source`)
 	rows := AggRows(r)
-	if len(rows) == 0 {
-		t.Fatal("expected at least 1 row for stats by _source")
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row for stats by source, got %d: %v", len(rows), rows)
+	}
+	if srcVal := fmt.Sprint(rows[0]["source"]); srcVal != "nginx-access" {
+		t.Errorf("expected source='nginx-access', got %q", srcVal)
+	}
+	if got := toInt(rows[0]["count"]); got != 10 {
+		t.Errorf("expected count=10, got %d", got)
 	}
 
-	// The _source value should be "nginx-access", NOT "logs-web".
-	srcVal := fmt.Sprint(rows[0]["_source"])
-	if srcVal != "nginx-access" {
-		t.Errorf("expected _source='nginx-access', got %q", srcVal)
-	}
+	requireAggValue(t, h.MustQuery(`source=* | where source = "nginx-access" | stats count() as count`), "count", 10)
+	requireAggValue(t, h.MustQuery(`source=* | where source = "logs-web" | stats count() as count`), "count", 0)
 }

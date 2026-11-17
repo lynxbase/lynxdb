@@ -24,13 +24,14 @@ Query local files and standard input without a server:
 
 ```bash
 cat /var/log/app.log | lynxdb query 'source=main | where level = "ERROR" | stats count() by service'
-kubectl logs deploy/api | lynxdb query 'source=main | stats avg(duration_ms), p99(duration_ms) by endpoint'
+kubectl logs deploy/api | lynxdb query 'source=main | stats avg(duration_ms), p99(duration_ms) by service'
 lynxdb query --file access.log 'source=main status>=500 | top 10 path'
 ```
 
-The CLI loads the input into an in-memory index named `main`, extracts
-`key=value` pairs and the fields of common log formats, runs the query and
-exits. No daemon, configuration file or data directory is involved.
+The CLI loads the input into an index named `main` in a temporary directory,
+extracts timestamps, `key=value` pairs and the fields of common log formats,
+runs the query, and deletes the directory on exit. No daemon or configuration
+file is involved.
 
 ### Server
 
@@ -41,13 +42,6 @@ lynxdb server
 lynxdb ingest access.log
 lynxdb query 'source=main status>=500 | stats count() as errors by path | sort - errors | head 10' --since 1h
 ```
-
-### Cluster components
-
-`pkg/cluster` holds Raft-backed metadata, gRPC communication between nodes
-and a distributed query planner. `lynxdb server` runs as a single node and
-does not start them; see [Distributed architecture](./architecture/distributed.md)
-and [Cluster configuration](./configuration/cluster.md).
 
 ## The query language
 
@@ -67,17 +61,17 @@ features it does not implement.
 
 ## Features
 
-- **OpenSearch PPL** in the CLI, the REST API and live tail, with structured
-  errors that carry a position, the expected tokens and a suggestion.
-- **Columnar storage** in its own `.lsg` segment format: delta-encoded
-  timestamps, dictionary encoding, LZ4 compression.
-- **Full-text search** through an FST-based term index with roaring bitmap
-  posting lists and per-segment bloom filters.
-- **Schema-on-read**: no upfront schema; fields are discovered at ingest and
-  query time.
+- **OpenSearch PPL** in the CLI and the REST API, with structured errors that
+  carry a position, the expected tokens and a suggestion.
+- **Columnar storage**: one store per index, partitioned by time, with
+  dictionary and constant encodings and zstd or LZ4 compression.
+- **Full-text search** through token filters on every block, which let a
+  search skip the blocks that cannot hold its words; the rest are scanned on
+  every core.
+- **Schema-on-read**: no upfront schema; every field path becomes a column
+  when it first appears, and structure can be extracted at query time.
 - **Ingest compatibility**: Elasticsearch `_bulk`, OpenTelemetry OTLP,
-  Splunk HEC, syslog, and a native JSON API.
-- **Tiered storage** on S3-compatible object stores.
+  Splunk HEC, syslog, and an NDJSON API.
 
 ## How LynxDB compares
 
@@ -87,7 +81,7 @@ features it does not implement.
 | **Dependencies** | None | Bundled JVM | Object storage (production) | Keeper (for replication) |
 | **Query files without a server** | Yes | No | No | Yes (`clickhouse-local`) |
 | **Schema** | On read | On write | Labels + line | On write |
-| **Full-text index** | FST + roaring bitmaps | Lucene | Label index only | Token bloom filter |
+| **Full-text index** | Token filters per block | Lucene | Label index only | Data-skipping indexes |
 | **License** | Apache 2.0 | ELv2 / AGPL | AGPL | Apache 2.0 |
 
 ## Next steps

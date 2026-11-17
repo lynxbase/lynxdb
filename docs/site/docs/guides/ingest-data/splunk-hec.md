@@ -35,7 +35,11 @@ curl -sS "http://lynxdb:3100/services/collector/event" \
 Query it:
 
 ```bash
-lynxdb query 'source=main _source=manual | fields _time, _sourcetype, _raw'
+lynxdb query 'source=main | where source = "manual" | fields _time, sourcetype, _raw'
+```
+
+```json
+{"_raw":"hello from splunk hec","_time":"2026-11-17T15:46:47.15592Z","sourcetype":"text"}
 ```
 
 ## Field mapping
@@ -45,10 +49,10 @@ lynxdb query 'source=main _source=manual | fields _time, _sourcetype, _raw'
 | `event` | `_raw` |
 | `time` | `_time` |
 | `host` | `host` |
-| `source` | `_source` |
-| `sourcetype` | `_sourcetype` |
-| `fields` | structured fields |
-| `index` | `_source` when `source` is empty, otherwise the `source_tag` field |
+| `source` | `source` |
+| `sourcetype` | `sourcetype` |
+| `fields` | fields of the same names |
+| `index` | `source` when `source` is empty, otherwise the `source_tag` field |
 
 Events are written to the LynxDB `main` index whatever their HEC `index`.
 The ingest pipeline then extracts `key=value` pairs and JSON keys from the
@@ -70,8 +74,9 @@ which IDs are committed.
 curl -sS http://lynxdb:3100/services/collector/health
 ```
 
-Events are buffered for up to `ingest.staging.max_age` (5 seconds by
-default) before they become searchable. HEC routes can be turned off with
+A query syncs the database before it runs, so an event is searchable once
+its request was answered. An event whose ID `/services/collector/ack`
+reports as committed is written to disk. HEC routes can be turned off with
 `ingest.splunk_hec.enabled: false`.
 
 ## Supported behavior

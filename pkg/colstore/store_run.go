@@ -164,8 +164,8 @@ func (s *Store) writeRunPart(p *runPart) (*PartFile, error) {
 	src, from, to := p.segs[0].b, p.segs[0].from, p.segs[0].to
 	if len(p.segs) > 1 {
 		// Rows of several batches are brought together and into order.
-		local := shred.Get(s.shredOptions())
-		defer shred.Put(local)
+		local := s.joined.take(s.shredOptions())
+		defer s.joined.keep(local, runtime.GOMAXPROCS(0))
 		for _, sg := range p.segs {
 			sg.b.CopyRows(local, sg.from, sg.to)
 		}
@@ -186,8 +186,8 @@ func (s *Store) writeRunPart(p *runPart) (*PartFile, error) {
 		pw.Reset(pf, flushed)
 	}
 	defer runWriters.Put(pw)
-	block := shred.Get(shred.Options{})
-	defer shred.Put(block)
+	block := s.cut.take(shred.Options{})
+	defer s.cut.keep(block, runtime.GOMAXPROCS(0))
 	for ; from < to; from += min(s.opts.BlockRows, to-from) {
 		block.Reset()
 		src.CopyRows(block, from, min(from+s.opts.BlockRows, to))

@@ -1,0 +1,5 @@
+# file: mixed_json.log
+# format: json
+source=main
+| where isnotnull(name)
+| fields name

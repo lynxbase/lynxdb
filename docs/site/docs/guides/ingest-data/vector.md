@@ -47,19 +47,19 @@ Each event is stored in the LynxDB index named by the sink's `bulk.index`
 index per day; query them together with `source=vector-*`.
 
 ```bash
-lynxdb query 'source=vector-logs | stats count() by _source'
+lynxdb query 'source=vector-logs | stats count() by file'
 ```
 
-The file source's `file` field and the `host` field arrive as fields;
-`message` holds the log line. Extract more from it at query time; see
+Each event is stored as sent: the file source's `file` and `host` fields
+arrive as fields, `timestamp` sets the event time, and `message` holds the
+log line. Extract more from it at query time; see
 [Field Extraction](../field-extraction.md).
 
 ## Troubleshooting
 
 Vector's health check sends `GET /` and `GET /_cluster/health` to the
 endpoint; LynxDB answers both. If the sink reports `400` responses, check
-that the index name uses only lowercase letters, digits, `.`, `_`, `-` and
-`+`.
+that the index name uses only lowercase letters, digits, `.`, `_` and `-`.
 
 ## Supported behavior
 

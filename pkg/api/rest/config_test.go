@@ -2,12 +2,13 @@ package rest
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,23 +115,11 @@ func TestConfig_PatchAppliesLogLevel(t *testing.T) {
 	levelVar.Set(slog.LevelInfo)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: &levelVar}))
-	srv, err := NewServer(Config{
-		Addr:     "127.0.0.1:0",
+	srv, cleanup := startTestServerWithConfig(t, Config{
 		Logger:   logger,
 		LevelVar: &levelVar,
-		Query:    config.QueryConfig{SpillDir: t.TempDir()},
 	})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go srv.Start(ctx)
-	srv.WaitReady()
-	defer func() {
-		cancel()
-		time.Sleep(50 * time.Millisecond)
-	}()
+	defer cleanup()
 
 	body, _ := json.Marshal(map[string]interface{}{"log_level": "debug"})
 	req, _ := http.NewRequest("PATCH", fmt.Sprintf("http://%s/api/v1/config", srv.Addr()), bytes.NewReader(body))
@@ -180,14 +169,16 @@ func TestReloadConfigReportsStartupTimeFields(t *testing.T) {
 
 	updated.TLS.Enabled = !updated.TLS.Enabled
 	updated.Auth.Enabled = !updated.Auth.Enabled
-	updated.Storage.CompactionWorkers++
+	updated.Storage.Partition = config.Duration(time.Hour)
+	updated.Storage.FlushInterval = config.Duration(time.Second)
+	updated.Storage.TimeFields = []string{"ts"}
 
 	restartRequired, err := srv.ReloadConfig(&updated)
 	if err != nil {
 		t.Fatalf("ReloadConfig: %v", err)
 	}
 
-	for _, field := range []string{"tls.enabled", "auth.enabled", "storage.compaction_workers"} {
+	for _, field := range []string{"tls.enabled", "auth.enabled", "storage.partition", "storage.flush_interval", "storage.time_fields"} {
 		found := false
 		for _, got := range restartRequired {
 			if got == field {
@@ -197,6 +188,72 @@ func TestReloadConfigReportsStartupTimeFields(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("restart_required missing %q in %v", field, restartRequired)
+		}
+	}
+}
+
+func TestServerTakesStorageTimeFields(t *testing.T) {
+	srv, cleanup := startTestServerWithConfig(t, Config{Storage: config.StorageConfig{
+		Partition:  config.Duration(time.Hour),
+		TimeFields: []string{"ts"},
+	}})
+	defer cleanup()
+
+	ingestNDJSON(t, srv.Addr(), "main", `{"timestamp":"2020-01-01T00:00:00Z","ts":"2026-01-02T03:04:05Z"}`+"\n")
+
+	events := queryEvents(t, srv.Addr(), `{"q":"source=main"}`)
+	if len(events) != 1 {
+		t.Fatalf("events: got %d, want 1", len(events))
+	}
+	if events[0]["_time"] != "2026-01-02T03:04:05Z" {
+		t.Errorf("_time = %v, want the value of ts", events[0]["_time"])
+	}
+}
+
+func TestServerWritesPartsInSortKeyOrder(t *testing.T) {
+	srv, cleanup := startTestServerWithConfig(t, Config{Storage: config.StorageConfig{
+		SortKey: []string{"kind", "did"},
+	}})
+	defer cleanup()
+
+	ingestNDJSON(t, srv.Addr(), "main", `{"kind":"b","did":"x"}`+"\n"+`{"kind":"a","did":"y"}`+"\n")
+	if err := srv.db.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	snap, ok := srv.db.Snapshot("main")
+	if !ok {
+		t.Fatal("no index main")
+	}
+	defer snap.Release()
+	if len(snap.Parts()) == 0 {
+		t.Fatal("no parts")
+	}
+	for _, h := range snap.Parts() {
+		if got := strings.Join(h.SortKey(), ","); got != "kind,did" {
+			t.Errorf("part sort key = %q, want kind,did", got)
+		}
+	}
+}
+
+func TestReloadConfigReportsDatabaseFields(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	srv.cfgMu.RLock()
+	updated := *srv.runtimeCfg
+	srv.cfgMu.RUnlock()
+
+	updated.Retention += config.Duration(time.Hour)
+	updated.Query.MaxConcurrent++
+	updated.Query.JobTTL *= 2
+
+	restartRequired, err := srv.ReloadConfig(&updated)
+	if err != nil {
+		t.Fatalf("ReloadConfig: %v", err)
+	}
+	for _, field := range []string{"retention", "query.max_concurrent", "query.job_ttl"} {
+		if !slices.Contains(restartRequired, field) {
+			t.Errorf("restart_required missing %q in %v", field, restartRequired)
 		}
 	}
 }

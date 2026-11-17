@@ -5,7 +5,7 @@ description: Configure the native syslog receiver that ingests RFC 5424, RFC 316
 
 # Syslog Receiver
 
-The `syslog` section configures a native receiver for syslog over UDP (RFC 5426), TCP (RFC 6587) and TCP with TLS. Messages are parsed as RFC 5424, RFC 3164 or raw text and written through the same ingest path as the HTTP API.
+The `syslog` section configures a native receiver for syslog over UDP (RFC 5426), TCP (RFC 6587) and TCP with TLS. Messages are parsed as RFC 5424, RFC 3164 or raw text and written to the index `syslog.index`, one flat JSON object per message.
 
 The receiver is off until `syslog.udp` or `syslog.tcp` has an address.
 
@@ -43,7 +43,7 @@ Ports below 1024 (such as 514) need root or the `CAP_NET_BIND_SERVICE` capabilit
 Check what arrived:
 
 ```bash
-lynxdb query 'source=main _sourcetype="syslog:rfc5424" | stats count() by host, app_name'
+lynxdb query 'source=main sourcetype="syslog:rfc5424" | stats count() by host, app_name'
 lynxdb query 'source=main severity <= 3 | stats count() by host, severity_label'
 ```
 
@@ -86,7 +86,7 @@ A message that fails to parse is stored as a raw event and counted in `lynxdb_sy
 | `message` | yes | yes | Message text |
 | `sd_<SD-ID>_<param>` | yes | no | Structured data parameters |
 
-The event time is the header timestamp, or the receive time when the header has none. The `_sourcetype` field is `<syslog.sourcetype>:<dialect>`: `syslog:rfc5424`, `syslog:rfc3164` or `syslog:raw`.
+Each event also keeps the message in `_raw`, and the `key=value` pairs of the message text become fields too. The event time is the header timestamp, or the receive time when the header has none. The `sourcetype` field is `<syslog.sourcetype>:<dialect>`: `syslog:rfc5424`, `syslog:rfc3164` or `syslog:raw`.
 
 ## TCP Framing
 
@@ -105,7 +105,7 @@ With `auto` framing, a connection whose first byte is a digit uses octet countin
 | `syslog.default_hostname` | `LYNXDB_SYSLOG_DEFAULT_HOSTNAME` | empty | Host for messages whose hostname is missing or `-`. |
 | `syslog.index` | `LYNXDB_SYSLOG_INDEX` (flag `--syslog-index`) | `main` | Target index. |
 | `syslog.sourcetype` | `LYNXDB_SYSLOG_SOURCETYPE` | `syslog` | Base sourcetype; the dialect is appended. |
-| `syslog.use_peer_as_source` | `LYNXDB_SYSLOG_USE_PEER_AS_SOURCE` | `true` | Set the `_source` field to `udp://<peer>` or `tcp://<peer>`. |
+| `syslog.use_peer_as_source` | `LYNXDB_SYSLOG_USE_PEER_AS_SOURCE` | `true` | Set the `source` field to `udp://<peer>` or `tcp://<peer>`. |
 
 ## Limits and Batching
 

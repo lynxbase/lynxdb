@@ -8,112 +8,122 @@ description: Which fields LynxDB extracts when it ingests events, and how to ext
 LynxDB reads schemas on query, not on write: you never declare fields before
 sending data. Fields come from two places:
 
-- **Ingest time.** The ingest pipeline pulls the timestamp, JSON keys and
-  `key=value` pairs out of each event and stores them as columns.
+- **Ingest time.** The keys of a JSON event are its fields. For a line of
+  log text, the server takes the timestamp and `key=value` pairs out of the
+  line and keeps the line in `_raw`.
 - **Query time.** PPL commands such as `parse`, `rex`, `grok` and `spath`
   extract more fields from `_raw` or any other text field while a query runs.
 
 ## What ingestion extracts
 
-Every event has these columns:
+### JSON events
 
-| Column | Content |
-|--------|---------|
-| `_time` | Event time (`@timestamp` is an alias) |
-| `_raw` | The original event text |
-| `_source` | Where the event came from: `--source`, the `X-Source` header, a file path, a shipper's source |
-| `_sourcetype` | Source type: `--sourcetype`, the `X-Source-Type` header, `raw` for raw HTTP lines |
-| `host` | Host name, when the event or its sender provides one |
-| `index` | The index the event is stored in (`main` unless chosen otherwise) |
+An event sent as a JSON object is stored as sent. Its keys are its fields,
+with their JSON types; the members of a nested object are fields named by
+their path (`http.status` for `{"http":{"status":502}}`), and arrays keep
+their elements. A JSON event has no `_raw`. See
+[Working with JSON Logs](./json-processing.md).
 
-The server's ingest pipeline then processes each line in this order:
+### Lines of text
+
+`POST /api/v1/ingest/raw`, `lynxdb ingest` and pipe mode turn each line that
+is not a JSON object into an event:
+
+| Field | Content |
+|-------|---------|
+| `_raw` | The line |
+| `_time` | The timestamp found in the line, otherwise the time it arrived |
+| `source` | `--source`, the `X-Source` header (default `http`), or the file name in pipe mode |
+| `sourcetype` | `--sourcetype`, the `X-Source-Type` header (default `raw`) |
+| `host` | The `X-Host` header, or a `host=` pair in the line |
+
+The ingest pipeline processes each line in this order:
 
 1. **Timestamp.** LynxDB looks for a timestamp at the start of the line or
    after a space or quote within its first 100 characters. It recognizes RFC
    3339 with a numeric offset, UTC timestamps with milliseconds
    (`2026-01-15T08:00:00.105Z`), `2026-01-15 08:00:00[.000]` and syslog-style
    `Jan 15 08:00:00`. When none is found, the event gets the time it was
-   received. Structured payloads carry their own time instead: the `time`
-   field (epoch seconds) of `/api/v1/ingest` and Splunk HEC, `@timestamp` of
-   Elasticsearch bulk documents, the record time of OTLP logs.
-2. **JSON.** When the line is a JSON object, each top-level string, number
-   and boolean becomes a typed field. Nested objects and arrays stay in
-   `_raw`; extract them with [`spath`](#json-with-spath) or the
-   [JSON functions](./json-processing.md).
-3. **`key=value` pairs.** For lines that are not JSON, every `key=value` and
-   `key="quoted value"` pair becomes a field. Values that look like integers,
-   floats or `true`/`false` are stored with that type, so `status >= 500`
-   compares numbers. The keys `host`, `source`, `sourcetype` and `index` fill
-   the built-in columns. A key never overwrites a field the event already has.
+   received.
+2. **`key=value` pairs.** Every `key=value` and `key="quoted value"` pair
+   becomes a field. Values that look like integers, floats or `true`/`false`
+   are stored with that type, so `status >= 500` compares numbers. A key never
+   overwrites a field the event already has.
 
 A line such as
 
 ```text
-2025-01-15T08:00:00.105Z host=web-03 level=ERROR method=GET path=/api/v1/users status=502 user=grace response_time=786 bytes=32228 msg="GET /api/v1/users completed"
+2026-11-17T08:00:00.105Z host=web-03 level=ERROR method=GET path=/api/v1/users status=502 user=grace response_time=786 msg="GET /api/v1/users completed"
 ```
 
 arrives with `_time`, `host`, `level`, `method`, `path`, `status`, `user`,
-`response_time`, `bytes` and `msg` already extracted.
+`response_time` and `msg` already extracted.
 
-Structured transports add their own fields: the `fields` object of
-`POST /api/v1/ingest` and of Splunk HEC events, every key of an
-Elasticsearch bulk document (nested objects are kept as object values), and
-OTLP attributes (resource attributes with a `resource.` prefix). See
-[Ingest Data](./ingest-data.md).
+### Shipper protocols
+
+Elasticsearch bulk documents are stored as sent, like JSON events. Splunk HEC,
+OTLP and syslog events are decoded and stored as one JSON object each: the
+event text in `_raw`, its time in `_time`, `host`, `source` and
+`sourcetype`, and the protocol's own fields, such as the `fields` object of
+a HEC event or the attributes of an OTLP record. The ingest pipeline then
+extracts `key=value` pairs from the event text, and the keys of event text
+that is a JSON object. See [Ingest Data](./ingest-data.md).
 
 ### Lightweight ingest mode
 
-With `ingest.mode: lightweight` the server skips full JSON and `key=value`
-extraction. It keeps only `host`, `source`, `sourcetype`, `index`, `level`
-and the timestamp keys of JSON events; everything else stays in `_raw` for
-query-time extraction. This lowers ingest CPU at the cost of slower queries
-on the skipped fields. See [Ingest configuration](../configuration/ingest.md).
+With `ingest.mode: lightweight`, the pipeline of Splunk HEC, OTLP and syslog
+events skips full JSON and `key=value` extraction. It keeps only `host`,
+`source`, `sourcetype`, `index`, `level` and the timestamp keys of JSON
+event text; everything else stays in `_raw` for query-time extraction. See
+[Ingest configuration](../configuration/ingest.md).
 
 ### Pipe mode
 
-`lynxdb query --file` and piped input run the same pipeline. In addition,
-when most sampled lines are combined access logs or syslog lines with a
-`<PRI>` header, the CLI extracts those formats' fields while loading
-(`client_ip`, `method`, `uri`, `status`, ... for combined; `hostname`,
-`appname`, `severity_name`, `message`, ... for syslog). The server does not
-detect these formats; use `grok` or `parse` on them. See
-[Pipe Mode](../getting-started/pipe-mode.md#format-detection).
+`lynxdb query --file` and piped input load lines like raw ingest. In addition,
+when most of the first 20 lines are combined access logs, syslog lines or
+Docker JSON log lines, the CLI extracts those formats' fields while loading
+(`client_ip`, `method`, `uri`, `status`, ... for combined). The server does
+not detect these formats; use `grok` or `parse` on them. `--raw` turns
+detection off. See [Pipe Mode](../getting-started/pipe-mode.md#format-detection).
 
 ## See which fields exist
 
-On a server, `lynxdb fields` lists the field catalog with types and
-coverage:
+On a server, `lynxdb fields` lists every field and the indexes that hold it:
 
 ```bash
-lynxdb fields
+lynxdb fields --source kv
 ```
 
 ```text
-┌───────────────┬──────────┬──────────┬────────────┐
-│ FIELD         │ TYPE     │ COVERAGE │ TOP VALUES │
-├───────────────┼──────────┼──────────┼────────────┤
-│ _raw          │ string   │      100 │            │
-│ _time         │ datetime │      100 │            │
-│ host          │ string   │      100 │            │
-│ level         │ string   │     99.8 │            │
-│ status        │ int      │     99.3 │            │
-│ ...           │          │          │            │
-└───────────────┴──────────┴──────────┴────────────┘
+┌───────────────┬─────────┐
+│ FIELD         │ INDEXES │
+├───────────────┼─────────┤
+│ _raw          │ kv      │
+│ _time         │ kv      │
+│ host          │ kv      │
+│ level         │ kv      │
+│ method        │ kv      │
+│ msg           │ kv      │
+...
 ```
 
-In a query, `describe <index>` returns one row per stored column:
+In a query, `describe <index>` returns one row per stored column with its
+type:
 
 ```
-describe main
+describe kv
 ```
 
 ```text
 COLUMN_NAME,ORDINAL_POSITION,TABLE_NAME,TYPE_NAME
-_raw,1,main,string
-_source,2,main,string
-_time,3,main,timestamp
-bytes,4,main,bigint
-host,5,main,string
+_raw,1,kv,string
+_time,2,kv,timestamp
+host,3,kv,string
+level,4,kv,string
+method,5,kv,string
+msg,6,kv,string
+path,7,kv,string
+response_time,8,kv,bigint
 ...
 ```
 
@@ -136,7 +146,7 @@ source=main "Invalid user"
 | parse _raw 'Invalid user (?<user>\S+) from (?<ip>\S+)'
 | where user != ''
 | stats count() as attempts by user
-| sort - attempts
+| sort - attempts, user
 | head 3
 ```
 
@@ -147,10 +157,18 @@ attempts,user
 6,support
 ```
 
-`parse` works on any string field, not only `_raw`:
+`parse` works on any string field, not only `_raw`. Over the JSON events of a
+backend service:
 
 ```
-source=main | parse path '/api/v1/(?<resource>[a-z]+)' | stats count() as n by resource
+source=main | parse path '/api/v2/(?<resource>[a-z]+)' | stats count() as n by resource | sort - n | head 3
+```
+
+```text
+n,resource
+8,users
+5,
+4,payments
 ```
 
 Regular expressions use RE2 syntax: no lookaround and no backreferences.
@@ -209,7 +227,7 @@ LabSZ,518
 A whole access log line in one pattern:
 
 ```
-source=nginx | grok _raw '%{COMBINEDAPACHELOG}' | stats count() as n by response | sort - n
+source=nginx | grok _raw '%{COMBINEDAPACHELOG}' | stats count() as n by response | sort - n, response
 ```
 
 ```text
@@ -224,24 +242,18 @@ n,response
 `COMBINEDAPACHELOG` yields `clientip`, `ident`, `auth`, `timestamp`, `verb`,
 `request`, `httpversion`, `response`, `bytes`, `referrer` and `agent`.
 
-### JSON with `spath`
+### JSON text with `spath`
 
-`spath` reads JSON text. With `path=`, it extracts one value; `{0}` indexes an
-array:
-
-```
-source=main | spath path=user.id output=user_id | stats count() as requests by user_id
-```
-
-Without `path=`, it parses the whole document into an object column, and
-`flatten` turns its members into dotted columns:
+The fields of a JSON event need no extraction. `spath` reads JSON that sits
+inside a text field, such as the `log` field of Docker `json-file` lines.
+With `path=`, it extracts one value; `{0}` indexes an array:
 
 ```
-source=main | spath output=doc | flatten doc | fields service, user.id, user.plan
+source=main | spath input=log path=request.id output=request_id | where isnotnull(request_id) | fields _time, request_id
 ```
 
-[Working with JSON Logs](./json-processing.md) covers `spath`, arrays and the
-`json_*` functions.
+[Working with JSON Logs](./json-processing.md) covers nested fields, arrays,
+`spath` and the `json_*` functions.
 
 ### Filter rows with `regex`
 
@@ -320,10 +332,10 @@ source=nginx
 
 ## Tips
 
-- Put search terms in the source command (`source=main "Failed password"`)
-  so the term index narrows the events before the regular expression runs.
+- Put search terms in the search (`source=main "Failed password"`) so the
+  scan skips the blocks without the term before the regular expression runs.
 - Extraction is per query. When a field is queried all the time, send it as a
-  structured field or a `key=value` pair so ingestion stores it as a column.
+  JSON key or a `key=value` pair so ingestion stores it as a column.
 - `lynxdb query --file` is a fast way to try a pattern on a sample file
   before running it on a server.
 

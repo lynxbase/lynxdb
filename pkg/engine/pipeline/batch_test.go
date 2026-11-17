@@ -2,49 +2,9 @@ package pipeline
 
 import (
 	"testing"
-	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
-
-func TestBatchFromEvents_IndexUsesPhysicalIndexNotSource(t *testing.T) {
-	ev := &event.Event{
-		Time:       time.Unix(0, 1),
-		Raw:        "raw",
-		Source:     "/var/log/app/nginx_access.log",
-		SourceType: "json",
-		Index:      "nginx-access",
-	}
-
-	b := BatchFromEvents([]*event.Event{ev})
-	if got := b.Value("index", 0).String(); got != "nginx-access" {
-		t.Fatalf("index = %q, want nginx-access", got)
-	}
-	if got := b.Value("_source", 0).String(); got != "/var/log/app/nginx_access.log" {
-		t.Fatalf("_source = %q, want file path", got)
-	}
-	if got := b.Value("source", 0).String(); got != "/var/log/app/nginx_access.log" {
-		t.Fatalf("source = %q, want file path", got)
-	}
-}
-
-func TestBatchFromEventsFiltered_IndexUsesPhysicalIndexNotSource(t *testing.T) {
-	ev := &event.Event{
-		Source: "/var/log/app/nginx_access.log",
-		Index:  "nginx-access",
-	}
-
-	b := batchFromEventsFiltered([]*event.Event{ev}, []string{"index", "_source", "source"})
-	if got := b.Value("index", 0).String(); got != "nginx-access" {
-		t.Fatalf("index = %q, want nginx-access", got)
-	}
-	if got := b.Value("_source", 0).String(); got != "/var/log/app/nginx_access.log" {
-		t.Fatalf("_source = %q, want file path", got)
-	}
-	if got := b.Value("source", 0).String(); got != "/var/log/app/nginx_access.log" {
-		t.Fatalf("source = %q, want file path", got)
-	}
-}
 
 func TestBatchAppendBatch_Basic(t *testing.T) {
 	b1 := &Batch{

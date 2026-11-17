@@ -176,13 +176,23 @@ var blockPool mem.Pool[part.Block]
 // scanUnit is a block to scan; ids is where the path ids of the scan's token
 // sets in its part start among those of all parts.
 type scanUnit struct {
-	p     *part.Part
-	empty *part.Misses
+	// part numbers the part among those of the snapshot: a unit holds no
+	// pointer, so that the list of a scan costs the collector nothing.
+	part  int32
 	block int32
 	ids   int32
 	// first and last are the times of the block's earliest and latest row.
 	first, last int64
 }
+
+// scanLists holds the lists a scan makes of its blocks, kept between scans.
+type scanLists struct {
+	units   []scanUnit
+	ids     []uint32
+	empties []*part.Misses
+}
+
+var scanListsPool = sync.Pool{New: func() any { return new(scanLists) }}
 
 // Scan calls fn from several goroutines, in no particular order, for every
 // block that may hold matching rows; a panic or memory fault in a worker
@@ -198,10 +208,19 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 	}
 	keyPrefix := key.prefix()
 	var stats ScanStats
-	var units []scanUnit
-	var ids []uint32
+	lists := scanListsPool.Get().(*scanLists)
+	defer func() {
+		clear(lists.empties)
+		scanListsPool.Put(lists)
+	}()
+	parts := s.v.parts
+	units, ids := lists.units[:0], lists.ids[:0]
+	empties := lists.empties[:0]
+	for range parts {
+		empties = append(empties, nil)
+	}
 	sets := opts.ColumnTokens
-	for _, h := range s.v.parts {
+	for n, h := range parts {
 		if h.MaxTime < minT || h.MinTime > maxT {
 			stats.SkippedByTime += int64(h.NumBlocks())
 
@@ -213,6 +232,7 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 		var empty *part.Misses
 		if opts.Condition != "" {
 			empty = h.Misses(opts.Condition)
+			empties[n] = empty
 		}
 		first, end := 0, h.NumBlocks()
 		if h.Ordered() && key.covers(h.SortKey()) {
@@ -239,9 +259,10 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 
 				continue
 			}
-			units = append(units, scanUnit{p: h.Part, empty: empty, block: int32(i), ids: int32(at), first: lo, last: hi})
+			units = append(units, scanUnit{part: int32(n), block: int32(i), ids: int32(at), first: lo, last: hi})
 		}
 	}
+	lists.units, lists.ids, lists.empties = units, ids, empties
 	switch {
 	case opts.ByTime < 0:
 		slices.SortStableFunc(units, func(a, b scanUnit) int { return cmp.Compare(b.last, a.last) })
@@ -267,9 +288,10 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 				return true
 			}
 		}
-		may, err := mayContainAll(u.p, int(u.block), opts.Tokens)
+		p := parts[u.part].Part
+		may, err := mayContainAll(p, int(u.block), opts.Tokens)
 		for k := 0; k < len(sets) && may && err == nil; k++ {
-			may, err = mayContainSet(u.p, int(u.block), ids[int(u.ids)+k], sets[k].Hashes)
+			may, err = mayContainSet(p, int(u.block), ids[int(u.ids)+k], sets[k].Hashes)
 		}
 		if err != nil {
 			cancel(err)
@@ -278,19 +300,19 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 		}
 		if !may {
 			skipped.Add(1)
-			if u.empty != nil {
-				u.empty.Add(int(u.block))
+			if empty := empties[u.part]; empty != nil {
+				empty.Add(int(u.block))
 			}
 
 			return true
 		}
-		if err := u.p.OpenBlock(int(u.block), b); err != nil {
+		if err := p.OpenBlock(int(u.block), b); err != nil {
 			cancel(err)
 
 			return false
 		}
 		read.Add(1)
-		if err := fn(worker, u.p, b); err != nil {
+		if err := fn(worker, p, b); err != nil {
 			cancel(err)
 
 			return false

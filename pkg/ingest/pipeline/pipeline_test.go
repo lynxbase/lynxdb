@@ -139,42 +139,6 @@ func TestRouter_Partition(t *testing.T) {
 	}
 }
 
-func TestBatcher(t *testing.T) {
-	batcher := NewBatcher(10)
-
-	events := make([]*event.Event, 25)
-	for i := range events {
-		events[i] = event.NewEvent(time.Now(), "test")
-	}
-
-	batches := batcher.Batch(events)
-	if len(batches) != 3 {
-		t.Errorf("batches: got %d, want 3", len(batches))
-	}
-	if len(batches[0]) != 10 || len(batches[1]) != 10 || len(batches[2]) != 5 {
-		t.Errorf("batch sizes: %d, %d, %d", len(batches[0]), len(batches[1]), len(batches[2]))
-	}
-}
-
-func TestSyslogParser(t *testing.T) {
-	e := event.NewEvent(time.Now(), `<34>Jan 15 10:30:00 web-01 sshd[12345]: Failed password for root from 10.0.0.1`)
-	parser := &SyslogParser{}
-	events, err := parser.Process([]*event.Event{e})
-	if err != nil {
-		t.Fatalf("Process: %v", err)
-	}
-
-	if events[0].Host != "web-01" {
-		t.Errorf("host: got %q", events[0].Host)
-	}
-	if events[0].GetField("program").AsString() != "sshd" {
-		t.Errorf("program: got %v", events[0].GetField("program"))
-	}
-	if events[0].GetField("pid").AsString() != "12345" {
-		t.Errorf("pid: got %v", events[0].GetField("pid"))
-	}
-}
-
 func TestPipeline_FullChain(t *testing.T) {
 	pipe := DefaultPipeline()
 
@@ -201,14 +165,6 @@ func TestPipeline_FullChain(t *testing.T) {
 	}
 	if processed[0].Time.IsZero() {
 		t.Error("timestamp not set")
-	}
-}
-
-func TestSplitRawLines(t *testing.T) {
-	raw := "line one\nline two\n\nline three\n"
-	events := SplitRawLines(raw, "test", "raw")
-	if len(events) != 3 {
-		t.Errorf("got %d events, want 3", len(events))
 	}
 }
 

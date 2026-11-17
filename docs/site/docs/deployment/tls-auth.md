@@ -76,18 +76,22 @@ auth:
 On the first start with no keys, the server generates a root key and prints it once to stderr:
 
 ```text
-Auth enabled — no API keys exist. Generated root key:
+  ⚠  Auth enabled — no API keys exist. Generated root key:
 
-    lxk_a1b2c3d4e5f6...
+    lynx_rk_7fA3mNpQ9xKvL2wB8cD4eF6gH1jR5tY
 
   Save this key now. It will NOT be shown again.
+  Use it to authenticate:  lynxdb login
+  Or generate new keys:    lynxdb auth create
 ```
+
+Root keys start with `lynx_rk_`, other keys with `lynx_ak_`.
 
 ### Log in
 
 ```bash
 lynxdb login                                    # prompts for the key
-lynxdb login --server https://lynxdb.example.com --token lxk_a1b2c3d4e5f6...
+lynxdb login --server https://lynxdb.example.com --token lynx_rk_7fA3mNpQ9xKvL2wB8cD4eF6gH1jR5tY
 lynxdb auth status
 lynxdb logout                                   # this server
 lynxdb logout --all                             # every saved server
@@ -115,17 +119,17 @@ lynxdb auth rotate-root
 |-------|--------|
 | `ingest` | `/api/v1/ingest`, `/api/v1/ingest/raw`, `/api/v1/ingest/hec`, `/api/v1/ingest/bulk`, and the `/api/v1/es/` bulk and document routes |
 | `query` | `GET` and `POST /api/v1/query`, `/api/v1/query/stream`, listing, reading and streaming jobs |
-| `admin` | Cancelling jobs, clearing the cache, `GET /api/v1/config` |
+| `admin` | Cancelling jobs, `GET /api/v1/config` |
 | `full` | Everything a scoped key can do |
-| root key | Everything, plus key management, `POST /api/v1/indexes` and `PATCH /api/v1/config` |
+| root key | Everything, plus key management and `PATCH /api/v1/config` |
 
-The other API routes accept any valid key regardless of scope: query explain, live tail, OTLP on `/api/v1/otlp/v1/logs`, field and source listings, status, stats, histogram, cache stats and the pprof endpoints.
+The other API routes accept any valid key regardless of scope: query explain, the PPL catalog, OTLP on `/api/v1/otlp/v1/logs`, index, field and source listings, status, stats, histogram and the pprof endpoints.
 
 ### Sending keys over HTTP
 
 ```bash
 curl -s https://lynxdb.example.com/api/v1/query \
-  -H "Authorization: Bearer lxk_a1b2c3d4e5f6..." \
+  -H "Authorization: Bearer lynx_ak_Q2wE4rT6yU8iO0pA1sD3fG5hJ7kL9zX" \
   -H "Content-Type: application/json" \
   -d '{"q": "source=main level=ERROR | stats count() by host"}'
 ```
@@ -135,7 +139,7 @@ curl -s https://lynxdb.example.com/api/v1/query \
 | Bearer | `Authorization: Bearer <token>` | CLI, scripts |
 | ApiKey | `Authorization: ApiKey <base64(id:token)>` | Filebeat, Elasticsearch clients |
 | Basic | `Authorization: Basic <base64(user:token)>`, user name ignored | Fluent Bit, Vector |
-| Query parameter | `?_token=<token>` | Browser `EventSource` for live tail |
+| Query parameter | `?_token=<token>` | Browser `EventSource` for job progress streams |
 
 The server strips the `_token` parameter from the URL before logging, but it can still appear in proxy logs; prefer headers.
 
@@ -169,15 +173,15 @@ ingest:
 ```
 
 ```bash
-lynxdb login --server https://lynxdb.example.com --token lxk_a1b2c3d4e5f6...
+lynxdb login --server https://lynxdb.example.com --token lynx_rk_7fA3mNpQ9xKvL2wB8cD4eF6gH1jR5tY
 lynxdb query 'source=main level=ERROR | stats count() as errors by host | sort - errors'
 ```
 
 ## Connection Profiles
 
 ```bash
-lynxdb config add-profile prod --url https://lynxdb.example.com --token lxk_prod...
-lynxdb config add-profile staging --url https://staging.example.com --token lxk_staging...
+lynxdb config add-profile prod --url https://lynxdb.example.com --token lynx_ak_prod...
+lynxdb config add-profile dev --url https://dev.example.com --token lynx_ak_dev...
 lynxdb query 'source=main level=ERROR | stats count() by host' --profile prod
 export LYNXDB_PROFILE=prod
 ```

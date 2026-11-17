@@ -24,8 +24,7 @@ The same text runs everywhere a query is accepted:
 | `lynxdb query '<query>'` | the server, over REST |
 | `lynxdb query --file app.log '<query>'`, `cat app.log \| lynxdb query '<query>'` | the CLI process, over the input loaded into the index `main` |
 | `POST /api/v1/query`, `/api/v1/query/stream` | the server |
-| `lynxdb tail '<query>'`, `GET /api/v1/tail` | the server, over live events (streaming commands only) |
-| `lynxdb explain '<query>'`, `GET /api/v1/query/explain` | the server's planner, without running the query |
+| `lynxdb explain '<query>'`, `GET /api/v1/query/explain` | the server's compiler, without running the query |
 
 Every entry point compiles the text with the same compiler (`pkg/query`) into
 the same plan, so a query that works on a file works on the server.
@@ -38,10 +37,10 @@ The PPL pages keep three things apart:
    documented behavior follow the OpenSearch PPL reference. Where LynxDB
    implements a feature fully, the OpenSearch documentation applies.
 2. **LynxDB execution behavior.** LynxDB stores schema-on-read log events,
-   not OpenSearch documents. Free-text search runs against each event's raw
-   text and its term index, every index is local, and there are no relevance
-   scores. Where this changes a result, the pages say so under a *LynxDB
-   behavior* heading.
+   not OpenSearch documents. Free-text search matches the tokens of every
+   string field of an event, every index is local, and there are no
+   relevance scores. Where this changes a result, the pages say so under a
+   *LynxDB behavior* heading.
 3. **OpenSearch features LynxDB does not support.** Unsupported commands,
    functions and options fail at compile time with an `UNSUPPORTED_COMMAND`,
    `UNSUPPORTED_FUNCTION` or `UNSUPPORTED_FEATURE` error. Nothing unsupported

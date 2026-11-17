@@ -1,84 +1,53 @@
 package rest
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	dto "github.com/prometheus/client_model/go"
-
-	"github.com/lynxbase/lynxdb/pkg/memgov"
-	"github.com/lynxbase/lynxdb/pkg/server"
 )
 
 func TestPrometheusMetrics_RecordQuery(t *testing.T) {
 	pm := NewPrometheusMetrics()
 
-	ss := &server.SearchStats{
-		ElapsedMS:           350,
-		ScanMS:              280,
-		PipelineMS:          70,
-		RowsScanned:         50_000,
-		PeakMemoryBytes:     8 * 1024 * 1024,
-		SegmentsSkippedBF:   2,
-		SegmentsSkippedStat: 1,
-		SegmentsSkippedTime: 3,
-		SegmentsScanned:     5,
-	}
+	pm.RecordQuery("events", 350*time.Millisecond, "")
 
-	pm.RecordQuery(ss)
-
-	// Gather and verify metrics are present.
 	families := gatherMetrics(t, pm)
 
 	assertHistogramCount(t, families, "lynxdb_query_duration_seconds", 1)
-	assertHistogramCount(t, families, "lynxdb_query_scan_duration_seconds", 1)
-	assertHistogramCount(t, families, "lynxdb_query_pipeline_duration_seconds", 1)
-	assertHistogramCount(t, families, "lynxdb_query_peak_memory_bytes", 1)
-	assertHistogramCount(t, families, "lynxdb_query_rows_scanned", 1)
+	assertCounterValue(t, families, "lynxdb_query_errors_total", 0)
 
-	assertCounterValue(t, families, "lynxdb_segments_skipped_bloom_total", 2)
-	assertCounterValue(t, families, "lynxdb_segments_skipped_column_stats_total", 1)
-	assertCounterValue(t, families, "lynxdb_segments_skipped_time_total", 3)
-	assertCounterValue(t, families, "lynxdb_segments_scanned_total", 5)
+	var sum float64
+	for _, m := range families["lynxdb_query_duration_seconds"].GetMetric() {
+		sum += m.GetHistogram().GetSampleSum()
+	}
+	if sum != 0.35 {
+		t.Errorf("duration sum = %v, want 0.35", sum)
+	}
 }
 
 func TestPrometheusMetrics_MultipleQueries(t *testing.T) {
 	pm := NewPrometheusMetrics()
 
 	for i := 0; i < 5; i++ {
-		pm.RecordQuery(&server.SearchStats{
-			ElapsedMS:         float64(100 * (i + 1)),
-			RowsScanned:       int64(1000 * (i + 1)),
-			SegmentsSkippedBF: 1,
-			SegmentsScanned:   2,
-		})
+		pm.RecordQuery("events", time.Duration(100*(i+1))*time.Millisecond, "")
 	}
 
 	families := gatherMetrics(t, pm)
 
 	assertHistogramCount(t, families, "lynxdb_query_duration_seconds", 5)
-	assertCounterValue(t, families, "lynxdb_segments_skipped_bloom_total", 5)
-	assertCounterValue(t, families, "lynxdb_segments_scanned_total", 10)
-}
-
-func TestPrometheusMetrics_NilStats(t *testing.T) {
-	pm := NewPrometheusMetrics()
-
-	// Should not panic.
-	pm.RecordQuery(nil)
-
-	families := gatherMetrics(t, pm)
-	assertHistogramCount(t, families, "lynxdb_query_duration_seconds", 0)
 }
 
 func TestPrometheusMetrics_Handler(t *testing.T) {
 	pm := NewPrometheusMetrics()
-	pm.RecordQuery(&server.SearchStats{ElapsedMS: 42, RowsScanned: 100, SegmentsScanned: 1})
+	pm.RecordQuery("events", 42*time.Millisecond, "")
+	pm.RecordIngest(3, 120)
 
-	// Serve the /metrics endpoint.
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/metrics", http.NoBody)
 	pm.Handler().ServeHTTP(w, r)
@@ -93,23 +62,35 @@ func TestPrometheusMetrics_Handler(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	bodyStr := string(body)
 
-	// Verify key metric names appear in the exposition format.
 	// lynxdb_query_errors_total is a CounterVec — Prometheus does not
 	// emit it until at least one label combination has been observed.
 	for _, name := range []string{
 		"lynxdb_query_duration_seconds",
-		"lynxdb_query_scan_duration_seconds",
-		"lynxdb_query_rows_scanned",
-		"lynxdb_segments_scanned_total",
-		"lynxdb_segments_skipped_bloom_total",
-		"lynxdb_segments_skipped_column_stats_total",
-		"lynxdb_segments_skipped_time_total",
-		"lynxdb_query_slow_total",
+		"lynxdb_ingest_events_total",
+		"lynxdb_ingest_batches_total",
+		"lynxdb_ingest_bytes_total",
+		"lynxdb_ingest_errors_total",
+		"lynxdb_ingest_es_bulk_duration_seconds",
+		"lynxdb_ingest_otlp_request_bytes",
 	} {
 		if !strings.Contains(bodyStr, name) {
 			t.Errorf("metric %q not found in /metrics output", name)
 		}
 	}
+}
+
+func TestPrometheusMetrics_RecordIngest(t *testing.T) {
+	pm := NewPrometheusMetrics()
+
+	pm.RecordIngest(3, 120)
+	pm.RecordIngest(2, 80)
+	pm.RecordIngestError()
+
+	families := gatherMetrics(t, pm)
+	assertCounterValue(t, families, "lynxdb_ingest_events_total", 5)
+	assertCounterValue(t, families, "lynxdb_ingest_batches_total", 2)
+	assertCounterValue(t, families, "lynxdb_ingest_bytes_total", 200)
+	assertCounterValue(t, families, "lynxdb_ingest_errors_total", 1)
 }
 
 func TestPrometheusMetrics_DecompressionRejectCounter(t *testing.T) {
@@ -120,24 +101,6 @@ func TestPrometheusMetrics_DecompressionRejectCounter(t *testing.T) {
 	families := gatherMetrics(t, pm)
 	assertCounterVecLabelValue(t, families, "lynxdb_ingest_decompression_rejected_total", "stage", "decompressed", 1)
 	assertCounterVecLabelValue(t, families, "lynxdb_ingest_decompression_rejected_total", "encoding", "gzip", 1)
-}
-
-func TestPrometheusMetrics_StagingMetrics(t *testing.T) {
-	pm := NewPrometheusMetrics()
-
-	pm.SetState(2048, 3, 1.5)
-	pm.RecordFlush("sync", 2048)
-	pm.RecordOverflow()
-	pm.RecordDropped("sink_error", 2)
-
-	families := gatherMetrics(t, pm)
-	assertGaugeValue(t, families, "lynxdb_ingest_staging_bytes", 2048)
-	assertGaugeValue(t, families, "lynxdb_ingest_staging_events", 3)
-	assertGaugeValue(t, families, "lynxdb_ingest_staging_age_seconds", 1.5)
-	assertCounterVecLabelValue(t, families, "lynxdb_ingest_staging_flushes_total", "trigger", "sync", 1)
-	assertCounterValue(t, families, "lynxdb_ingest_staging_overflows_total", 1)
-	assertCounterVecLabelValue(t, families, "lynxdb_ingest_staging_dropped_total", "reason", "sink_error", 2)
-	assertHistogramCount(t, families, "lynxdb_ingest_staging_flush_size_bytes", 1)
 }
 
 func TestPrometheusMetrics_ESHandshakeCounter(t *testing.T) {
@@ -173,164 +136,40 @@ func TestPrometheusMetrics_IngestCompatibilityMetrics(t *testing.T) {
 	assertGaugeVecValue(t, families, "lynxdb_ingest_listener_up", "listener", "es", 1)
 }
 
-func TestPrometheusMetrics_ZeroSkipsNotRecorded(t *testing.T) {
-	pm := NewPrometheusMetrics()
-
-	// Query with zero segment skips — counters should remain at 0.
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS:           10,
-		RowsScanned:         100,
-		SegmentsSkippedBF:   0,
-		SegmentsSkippedStat: 0,
-		SegmentsSkippedTime: 0,
-		SegmentsScanned:     0,
-	})
-
-	families := gatherMetrics(t, pm)
-
-	assertCounterValue(t, families, "lynxdb_segments_skipped_bloom_total", 0)
-	assertCounterValue(t, families, "lynxdb_segments_skipped_column_stats_total", 0)
-	assertCounterValue(t, families, "lynxdb_segments_scanned_total", 0)
-}
-
-func TestPrometheusMetrics_SlowQueryCounter(t *testing.T) {
-	pm := NewPrometheusMetrics()
-
-	// Non-slow query: SlowQuery=false — counter should stay at 0.
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS:       500,
-		RowsScanned:     1000,
-		ResultTypeLabel: "events",
-		SlowQuery:       false,
-	})
-
-	families := gatherMetrics(t, pm)
-	assertCounterValue(t, families, "lynxdb_query_slow_total", 0)
-
-	// Slow query: SlowQuery=true — counter should increment.
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS:       2000,
-		RowsScanned:     50_000,
-		ResultTypeLabel: "events",
-		SlowQuery:       true,
-	})
-
-	families = gatherMetrics(t, pm)
-	assertCounterValue(t, families, "lynxdb_query_slow_total", 1)
-
-	// Another slow query — counter should be 2.
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS:       5000,
-		RowsScanned:     100_000,
-		ResultTypeLabel: "aggregate",
-		SlowQuery:       true,
-	})
-
-	families = gatherMetrics(t, pm)
-	assertCounterValue(t, families, "lynxdb_query_slow_total", 2)
-}
-
 func TestPrometheusMetrics_ErrorCounter(t *testing.T) {
 	pm := NewPrometheusMetrics()
 
-	// Successful query — no error counter increment.
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS:       100,
-		ResultTypeLabel: "events",
-	})
+	pm.RecordQuery("events", 100*time.Millisecond, "")
 
 	families := gatherMetrics(t, pm)
 	assertCounterValue(t, families, "lynxdb_query_errors_total", 0)
 
-	// Timeout error.
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS:       60_000,
-		ResultTypeLabel: "events",
-		ErrorType:       "timeout",
-	})
+	pm.RecordQuery("events", time.Minute, string(ErrCodeExecutionError))
 
 	families = gatherMetrics(t, pm)
-	assertCounterVecValue(t, families, "lynxdb_query_errors_total", "timeout", 1)
+	assertCounterVecValue(t, families, "lynxdb_query_errors_total", string(ErrCodeExecutionError), 1)
 
-	// Memory error.
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS:       500,
-		ResultTypeLabel: "aggregate",
-		ErrorType:       "memory",
-	})
+	pm.RecordQuery("aggregate", 500*time.Millisecond, string(ErrCodeQueryMemoryExceeded))
 
 	families = gatherMetrics(t, pm)
-	assertCounterVecValue(t, families, "lynxdb_query_errors_total", "timeout", 1)
-	assertCounterVecValue(t, families, "lynxdb_query_errors_total", "memory", 1)
+	assertCounterVecValue(t, families, "lynxdb_query_errors_total", string(ErrCodeExecutionError), 1)
+	assertCounterVecValue(t, families, "lynxdb_query_errors_total", string(ErrCodeQueryMemoryExceeded), 1)
 
-	// Execution error.
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS:       200,
-		ResultTypeLabel: "events",
-		ErrorType:       "execution",
-	})
+	pm.RecordQuery("events", 200*time.Millisecond, string(ErrCodeExecutionError))
 
 	families = gatherMetrics(t, pm)
-	assertCounterVecValue(t, families, "lynxdb_query_errors_total", "execution", 1)
-	// Total across all labels should be 3.
+	assertCounterVecValue(t, families, "lynxdb_query_errors_total", string(ErrCodeExecutionError), 2)
 	assertCounterValue(t, families, "lynxdb_query_errors_total", 3)
-}
-
-func TestPrometheusMetrics_QuerySpillCounters(t *testing.T) {
-	pm := NewPrometheusMetrics()
-
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS:     100,
-		SpilledToDisk: true,
-		SpillBytes:    4096,
-		PipelineStages: []server.PipelineStage{
-			{Name: "sort", SpilledRows: 10, SpillBytes: 4096},
-		},
-	})
-
-	families := gatherMetrics(t, pm)
-	assertCounterVecLabelValue(t, families, "lynxdb_query_spilled_total", "operator", "sort", 1)
-	assertCounterValue(t, families, "lynxdb_spill_bytes_total", 4096)
-}
-
-func TestPrometheusMetrics_GovernorAndSpillGauges(t *testing.T) {
-	pm := NewPrometheusMetrics()
-
-	stats := &memgov.TotalStats{PressureEvents: 2}
-	stats.ByClass[memgov.ClassSpillable] = memgov.ClassStats{Allocated: 1024, Peak: 2048}
-	pm.RecordGovernorStats(stats)
-	pm.RecordSpillStats(3, 8192)
-	pm.RecordRevocationStats(10)
-
-	stats.PressureEvents = 5
-	stats.ByClass[memgov.ClassSpillable] = memgov.ClassStats{Allocated: 512, Peak: 4096}
-	pm.RecordGovernorStats(stats)
-	pm.RecordRevocationStats(25)
-
-	families := gatherMetrics(t, pm)
-	assertGaugeVecValue(t, families, "lynxdb_memgov_class_bytes", "class", "spillable", 512)
-	assertGaugeVecValue(t, families, "lynxdb_memgov_class_peak_bytes", "class", "spillable", 4096)
-	assertCounterValue(t, families, "lynxdb_memgov_pressure_events_total", 5)
-	assertCounterVecLabelValue(t, families, "lynxdb_memgov_revocation_freed_bytes_total", "class", "spillable", 25)
-	assertGaugeValue(t, families, "lynxdb_spill_files_active", 3)
-	assertGaugeValue(t, families, "lynxdb_spill_bytes_active", 8192)
+	// Failed queries count in the duration histogram too.
+	assertHistogramCount(t, families, "lynxdb_query_duration_seconds", 4)
 }
 
 func TestPrometheusMetrics_ResultTypeLabel(t *testing.T) {
 	pm := NewPrometheusMetrics()
 
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS:       100,
-		ResultTypeLabel: "events",
-	})
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS:       200,
-		ResultTypeLabel: "aggregate",
-	})
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS:       300,
-		ResultTypeLabel: "timechart",
-	})
+	pm.RecordQuery("events", 100*time.Millisecond, "")
+	pm.RecordQuery("aggregate", 200*time.Millisecond, "")
+	pm.RecordQuery("aggregate", 300*time.Millisecond, "")
 
 	families := gatherMetrics(t, pm)
 	mf, ok := families["lynxdb_query_duration_seconds"]
@@ -338,7 +177,6 @@ func TestPrometheusMetrics_ResultTypeLabel(t *testing.T) {
 		t.Fatal("lynxdb_query_duration_seconds not found")
 	}
 
-	// We should have 3 label combinations: events, aggregate, timechart.
 	labels := make(map[string]uint64)
 	for _, m := range mf.GetMetric() {
 		for _, lp := range m.GetLabel() {
@@ -350,44 +188,15 @@ func TestPrometheusMetrics_ResultTypeLabel(t *testing.T) {
 		}
 	}
 
-	for _, rt := range []string{"events", "aggregate", "timechart"} {
-		if labels[rt] != 1 {
-			t.Errorf("result_type=%q: expected count 1, got %d", rt, labels[rt])
-		}
-	}
-}
-
-func TestPrometheusMetrics_ResultTypeFallback(t *testing.T) {
-	pm := NewPrometheusMetrics()
-
-	// Empty ResultTypeLabel should fall back to "query".
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS: 42,
-	})
-
-	families := gatherMetrics(t, pm)
-	mf, ok := families["lynxdb_query_duration_seconds"]
-	if !ok {
-		t.Fatal("lynxdb_query_duration_seconds not found")
-	}
-
-	for _, m := range mf.GetMetric() {
-		for _, lp := range m.GetLabel() {
-			if lp.GetName() == "result_type" && lp.GetValue() != "query" {
-				t.Errorf("expected fallback label 'query', got %q", lp.GetValue())
-			}
-		}
+	if labels["events"] != 1 || labels["aggregate"] != 2 || len(labels) != 2 {
+		t.Errorf("result_type counts = %v, want events 1 and aggregate 2", labels)
 	}
 }
 
 func TestPrometheusMetrics_ErrorsAppearInHandler(t *testing.T) {
 	pm := NewPrometheusMetrics()
 
-	// Record an error so the CounterVec emits a label.
-	pm.RecordQuery(&server.SearchStats{
-		ElapsedMS: 100,
-		ErrorType: "timeout",
-	})
+	pm.RecordQuery("events", 100*time.Millisecond, string(ErrCodeExecutionError))
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodGet, "/metrics", http.NoBody)
@@ -402,12 +211,41 @@ func TestPrometheusMetrics_ErrorsAppearInHandler(t *testing.T) {
 	if !strings.Contains(bodyStr, "lynxdb_query_errors_total") {
 		t.Error("lynxdb_query_errors_total not found in /metrics output after recording error")
 	}
-	if !strings.Contains(bodyStr, `type="timeout"`) {
-		t.Error(`type="timeout" label not found in /metrics output`)
+	if want := fmt.Sprintf(`type=%q`, ErrCodeExecutionError); !strings.Contains(bodyStr, want) {
+		t.Errorf("%s label not found in /metrics output", want)
 	}
 }
 
-// Helpers
+func TestPrometheusMetrics_ServerRecordsQueriesAndIngest(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	ingestTestEvents(t, srv.Addr(), 10, 2)
+	postQueryData(t, srv.Addr(), map[string]interface{}{"q": "source=main | stats count() by host"})
+
+	// The duration of a query job is recorded once the job has finished.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		families := gatherMetrics(t, srv.promMetrics)
+		var aggregates uint64
+		for _, m := range families["lynxdb_query_duration_seconds"].GetMetric() {
+			for _, lp := range m.GetLabel() {
+				if lp.GetName() == "result_type" && lp.GetValue() == "aggregate" {
+					aggregates += m.GetHistogram().GetSampleCount()
+				}
+			}
+		}
+		if aggregates == 1 {
+			assertCounterValue(t, families, "lynxdb_ingest_events_total", 10)
+			assertCounterValue(t, families, "lynxdb_ingest_batches_total", 1)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("aggregate query durations recorded = %d, want 1", aggregates)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 // gatherMetrics uses the registry's Gather() method to collect all registered
 // metric families without going through text parsing (avoids expfmt validation
@@ -517,27 +355,6 @@ func assertCounterVecLabelValue(t *testing.T, families map[string]*dto.MetricFam
 		return // label not found and expected 0 — OK
 	}
 	t.Errorf("metric %q: label %s=%q not found", name, labelName, labelValue)
-}
-
-func assertGaugeValue(t *testing.T, families map[string]*dto.MetricFamily, name string, expectedValue float64) {
-	t.Helper()
-
-	mf, ok := families[name]
-	if !ok {
-		t.Errorf("metric %q not found", name)
-
-		return
-	}
-
-	var total float64
-	for _, m := range mf.GetMetric() {
-		if g := m.GetGauge(); g != nil {
-			total += g.GetValue()
-		}
-	}
-	if total != expectedValue {
-		t.Errorf("metric %q: expected gauge %f, got %f", name, expectedValue, total)
-	}
 }
 
 func assertGaugeVecValue(t *testing.T, families map[string]*dto.MetricFamily, name, labelName, labelValue string, expectedValue float64) {

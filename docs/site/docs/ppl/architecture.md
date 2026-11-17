@@ -9,8 +9,8 @@ description: How a PPL query becomes canonical IR, an optimized plan and a pipel
 LynxDB executes OpenSearch Piped Processing Language (PPL). The query
 language and the database engine meet at one boundary: the canonical
 intermediate representation (IR) in `pkg/ir`. The PPL frontend produces IR;
-the optimizer, the planners and the execution engine consume IR and know
-nothing about PPL syntax.
+the optimizer and both executors consume IR and know nothing about PPL
+syntax.
 
 ```
 query text
@@ -35,29 +35,27 @@ pkg/ir/opt           rule-based optimizer: constant folding, filter merging,
                      limits, column pruning
     |
     v
-pkg/planner          (server) storage hints from the plan's scans,
-                     via pkg/engine/physical/hints.go
+pkg/database         runs the plan as a query or a job, narrowed to the
+                     request's time range
     |
     v
-pkg/engine/physical  physical planner: IR operators to pipeline iterators,
-                     IR expressions to VM bytecode (pkg/vm), subquery
-                     evaluation
+pkg/engine/columnar  gives the columnar executor (pkg/colstore/exec, plans
+                     translated by pkg/colstore/exec/irplan) the largest
+                     part of the plan above each scan that it can run
     |
     v
-pkg/engine/pipeline  batch iterators reading from the storage engine
+pkg/engine/physical  row operators for the rest: IR operators to pipeline
+pkg/engine/pipeline  iterators, IR expressions to VM bytecode (pkg/vm),
+                     subquery evaluation
     |
     v
 results
 ```
 
-`pkg/query` ties the stages together. `query.Compile` runs the frontend and
-the optimizer; `query.Run` builds and drains the physical plan over an
-in-memory event store, which is what the CLI's file and pipe modes use;
-`query.Explain` renders the plans. The server compiles with the same
-`query.Compile` (through `pkg/planner`), derives storage hints from the
-plan, and differs only in the scan source it hands to the physical planner.
-In a cluster, `pkg/cluster/query` splits the optimized plan between shards
-and the coordinator.
+`pkg/query` ties the compiling stages together: `query.Compile` runs the
+frontend and the optimizer, and `query.Explain` renders the plans. The CLI
+and the server compile with the same `query.Compile` and run the plan with
+the same `pkg/database`; they differ only in where the indexes are.
 
 ## Packages
 
@@ -71,10 +69,13 @@ and the coordinator.
 | `pkg/ir` | IR types, schemas, expressions, operators, function registry, validation and rendering. |
 | `pkg/ir/opt` | Optimizer rules over IR. |
 | `pkg/vm` | Bytecode VM; `vm.CompileExpr` compiles IR expressions, with native implementations of every registry function. |
-| `pkg/engine/physical` | Physical planner from IR to pipeline iterators; storage hints derived from scans. |
-| `pkg/query` | Compile (with a cache of recent plans), optimize, explain and run. |
-| `pkg/planner` | Server planning: compile, storage hints, request time bounds, live-tail validation. |
-| `pkg/cluster/query` | Distributed split of a plan into a shard prefix and coordinator operators. |
+| `pkg/query` | Compile (with a cache of recent plans), optimize and explain. |
+| `pkg/database` | Runs compiled queries over the indexes, as calls or as jobs. |
+| `pkg/engine/columnar` | Splits a plan between the columnar executor and the row operators and collects the result. |
+| `pkg/colstore/exec/irplan` | Translates the IR operators the columnar executor runs, and refuses the others. |
+| `pkg/colstore/exec`, `pkg/colstore/exec/irfunc` | The columnar executor and its scalar functions. |
+| `pkg/engine/physical` | Row operators: IR to pipeline iterators; the plan summary `explain` reports. |
+| `pkg/engine/pipeline` | Pipeline iterators over batches of rows. |
 | `internal/docgen` | Generates the command, function and aggregation tables from the catalogs. |
 
 ## Semantic analysis
@@ -116,9 +117,12 @@ Compilation errors carry a kind, a position and an optional hint:
 | `unsupported_function` | A PPL function LynxDB does not execute, or an unknown function. |
 | `unsupported_feature` | A command option or language feature LynxDB does not execute. |
 
-The physical planner reports constructs the engine cannot run with
-`physical.UnsupportedError`; nothing unsupported is silently approximated.
-[Error handling](./errors.md) maps the kinds to API codes.
+The row operators report the few constructs they cannot run with
+`physical.UnsupportedError`, whose message starts with `not supported by
+the execution engine:`; nothing unsupported is silently approximated. A
+construct the columnar executor does not take is not an error: the row
+operators run it. [Error handling](./errors.md) maps the kinds to API
+codes.
 
 ## Limits and plan reuse
 

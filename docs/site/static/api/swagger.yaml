@@ -10,17 +10,26 @@ info:
 
     ## Envelopes
 
-    Successful JSON responses wrap the payload in `data`, with an optional `meta` object.
-    Errors use `{"error": {"code", "message", "suggestion"}}`; query compile errors add
-    `position` (`line`, `column`) and `expected`.
+    Successful JSON responses wrap the payload in `data`, with a `meta` object (`took_ms`, `query_id`, `rows`)
+    when there is something to report. Errors use `{"error": {"code", "message", "suggestion"}}`; query compile
+    errors add `position` (`line`, `column`) and `expected`.
 
     Compatibility endpoints (Elasticsearch, Splunk HEC, OTLP) answer in the format of their protocol.
 
     ## Authentication
 
     Off by default. When on, every `/api/...` route needs `Authorization: Bearer <token>`,
-    `ApiKey <base64(id:secret)>` or `Basic <base64(user:token)>`. SSE clients may pass `_token`
+    `ApiKey <base64(id:token)>` or `Basic <base64(user:token)>`. Clients that cannot set headers may pass `_token`
     as a query parameter. `/health`, `/metrics` and routes outside `/api/` are not checked by the API key middleware.
+
+    ## Bodies
+
+    `Content-Encoding: gzip`, `zstd` or `snappy` bodies are decoded on every route. `POST /api/v1/ingest`
+    and `/api/v1/ingest/raw` are bounded by `ingest.max_body_size` alone, as sent and decoded; every other
+    route by `ingest.limits.max_compressed_body_bytes` as sent and `ingest.limits.max_decompressed_body_bytes`
+    decoded, and by `ingest.max_body_size` as sent. A body over its limit answers `413` with
+    `{"error": {"type": "request_body_too_large", "reason"}, "status": 413}`, the reason naming the setting;
+    an unknown encoding answers `400` with `type` `invalid_request`.
   contact:
     name: LynxDB
     url: https://lynxdb.io
@@ -35,14 +44,12 @@ servers:
 tags:
   - name: Query
     description: Run PPL queries, inspect plans, list the PPL catalog, manage jobs
-  - name: Live
-    description: Live tail and event histogram
   - name: Schema
-    description: Fields and sources from stored data
+    description: Fields, field values, indexes and the event histogram
   - name: Ingest
-    description: Native ingest endpoints and indexes
+    description: Native ingest endpoints
   - name: Server
-    description: Health, metrics, status, cache, configuration and profiling
+    description: Health, metrics, status, configuration and profiling
   - name: Auth
     description: API key management (only when authentication is on)
   - name: Elasticsearch
@@ -68,7 +75,7 @@ paths:
       tags: [Query]
       summary: Run a PPL query
       description: |
-        Runs a PPL query and returns the result, or a job handle.
+        Runs a PPL query as a job and returns the result, or a job handle. Needs `query` scope.
 
         | `wait` | Mode | Response |
         |---|---|---|
@@ -78,11 +85,12 @@ paths:
 
         Event queries return `data.type: events` with an `events` array. Queries whose result comes from
         an aggregation (`stats`, `timechart`, `chart`, `top`, `rare`, `describe`, `transpose`) return
-        `data.type: aggregate` with `columns` and `rows`. Built-in columns come first, then the others alphabetically.
+        `data.type: aggregate` with `columns` and `rows`. The columns the query fixes come first, in its order;
+        then the built-in fields, then the others alphabetically.
 
         Compile errors answer `400` (`SYNTAX_ERROR`, `SEMANTIC_ERROR`, `TYPE_ERROR`, `PLANNING_ERROR`) or
         `422` (`UNSUPPORTED_COMMAND`, `UNSUPPORTED_FUNCTION`, `UNSUPPORTED_FEATURE`). Failures while running answer
-        `500 EXECUTION_ERROR`, including constructs the execution engine cannot run.
+        `500 EXECUTION_ERROR`.
       requestBody:
         required: true
         content:
@@ -111,11 +119,11 @@ paths:
                   q: 'source=main | stats dc(user) as users by host'
                   wait: 0
               paged:
-                summary: Third page of 3 rows
+                summary: Rows 3 to 5
                 value:
                   q: 'source=main | stats count() as n by path | sort - n'
                   limit: 3
-                  offset: 6
+                  offset: 2
       responses:
         '200':
           description: The query finished
@@ -134,48 +142,41 @@ paths:
                     data:
                       type: events
                       events:
-                        - {host: api-02, path: /api/v1/orders, status: 500}
-                        - {host: web-01, path: /api/v1/users, status: 503}
-                        - {host: api-01, path: /api/v1/search, status: 503}
+                        - {host: api-02, status: 500, path: /api/v1/orders}
+                        - {host: web-01, status: 503, path: /api/v1/users}
+                        - {host: api-01, status: 503, path: /api/v1/search}
                       total: 3
                       has_more: false
                     meta:
-                      took_ms: 0
-                      scanned: 33
-                      query_id: qry_f24fb85c3a02ebe2
-                      stats:
-                        rows_scanned: 33
-                        rows_returned: 3
-                        indexes_used: [main]
+                      took_ms: 0.19
+                      query_id: qry_f8b21fe1891075c3
+                      rows: 3
                 aggregate:
                   summary: Aggregate result
                   value:
                     data:
                       type: aggregate
-                      columns: [host, avg_ms, errors]
+                      columns: [errors, avg_ms, host]
                       rows:
-                        - [api-02, 439, 48]
-                        - [web-02, 355.4, 43]
-                        - [web-03, 439.3, 41]
+                        - [48, 439, api-02]
+                        - [43, 355.4, web-02]
+                        - [41, 439.3, web-03]
                       total_rows: 3
                       has_more: false
                     meta:
-                      took_ms: 1
-                      scanned: 1003
-                      query_id: qry_4ab386b7cc5e94aa
+                      took_ms: 0.218
+                      query_id: qry_ff9a60bb26c70c81
+                      rows: 3
         '202':
           description: The query runs as a job; poll `/api/v1/query/jobs/{id}` or follow its SSE stream
+          headers:
+            X-Query-ID:
+              schema:
+                type: string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/JobHandleResponse'
-              example:
-                data:
-                  type: job
-                  job_id: qry_0f8eeb0e72818e85
-                  status: running
-                meta:
-                  query_id: qry_0f8eeb0e72818e85
         '400':
           $ref: '#/components/responses/QueryError'
         '401':
@@ -188,13 +189,11 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/ExecutionError'
-        '503':
-          $ref: '#/components/responses/PoolExhausted'
     get:
       operationId: queryGet
       tags: [Query]
       summary: Run a PPL query from query-string parameters
-      description: Sync mode only. Returns the same envelope as `POST /api/v1/query`.
+      description: Sync mode only. Returns the same envelope as `POST /api/v1/query`. Needs `query` scope.
       parameters:
         - name: q
           in: query
@@ -210,6 +209,11 @@ paths:
             type: integer
             default: 1000
             maximum: 50000
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
         - name: format
           in: query
           schema:
@@ -232,6 +236,8 @@ paths:
           $ref: '#/components/responses/QueryError'
         '422':
           $ref: '#/components/responses/UnsupportedQuery'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/ExecutionError'
 
@@ -241,15 +247,14 @@ paths:
       tags: [Query]
       summary: Run a PPL query and stream rows as NDJSON
       description: |
-        Writes one JSON object per row, then `{"__meta": {"total", "scanned", "took_ms"}}`.
-        If execution fails after output has started, the last line is
-        `{"__error": {"code": "EXECUTION_ERROR", "message": "..."}}` and no `__meta` line follows.
-        Compile errors answer with the normal error envelope before any row.
+        Runs the query to the end, then writes one JSON object per row and a last line
+        `{"__meta": {"total", "took_ms"}}`. A query that fails, at compile time or while running,
+        answers with the normal error envelope and status. Needs `query` scope.
 
         Accepts `q`/`query`, `from`/`earliest` and `to`/`latest`.
         `limit`, `offset`, `wait`, `profile`, and `format` are rejected with `400 VALIDATION_ERROR`.
         No row cap applies; use `head` in the query.
-        Closing the connection cancels the query.
+        Closing the connection while the query runs cancels it.
       requestBody:
         required: true
         content:
@@ -266,32 +271,41 @@ paths:
               schema:
                 type: string
               example: |
-                {"level":"WARN","n":347}
-                {"level":"INFO","n":359}
-                {"level":"ERROR","n":294}
-                {"__meta":{"scanned":1000,"took_ms":0,"total":3}}
+                {"n":294,"level":"ERROR"}
+                {"n":359,"level":"INFO"}
+                {"n":347,"level":"WARN"}
+                {"__meta":{"total":3,"took_ms":0}}
         '400':
           $ref: '#/components/responses/QueryError'
         '422':
           $ref: '#/components/responses/UnsupportedQuery'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/ExecutionError'
 
   /api/v1/query/explain:
     get:
       operationId: queryExplain
       tags: [Query]
-      summary: Compile a PPL query and return its plans
+      summary: Compile a query and return its plans
       description: |
-        Returns the logical and optimized plans and the scan hints without running the query.
-        An invalid query answers `200` with `is_valid: false` and the compile error.
-        With `analyze=true`, a valid query also runs and its statistics are returned as `execution`.
+        Returns the logical and optimized plans and scan hints without running the query.
+        An invalid query answers `200` with `is_valid: false` and its compile errors.
+        With `analyze=true`, also runs the query and adds `execution` (`took_ms`, `rows`).
+        Any valid key can call it.
       parameters:
         - name: q
           in: query
+          description: The PPL query; `query` is an alias
           required: true
-          description: The PPL query (`query` is an alias)
           schema:
             type: string
           example: 'source=main status>=500 | stats count() as errors by host | sort - errors | head 5'
+        - name: query
+          in: query
+          schema:
+            type: string
         - $ref: '#/components/parameters/From'
         - $ref: '#/components/parameters/To'
         - name: analyze
@@ -300,46 +314,13 @@ paths:
             type: boolean
       responses:
         '200':
-          description: Plans, or compile errors
+          description: The plans, or the compile errors
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ExplainResponse'
-              examples:
-                valid:
-                  summary: Valid query
-                  value:
-                    data:
-                      is_valid: true
-                      errors: []
-                      parsed:
-                        result_type: aggregate
-                        estimated_cost: high
-                        uses_full_scan: true
-                        fields_read: [_time, host, status]
-                        search_terms: null
-                        has_time_bounds: false
-                        logical_plan: "Limit(5)\n└─ Sort(errors DESC NULLS LAST)\n   └─ Project(errors, host)\n      └─ Aggregate(errors = count() BY host)\n         └─ Filter(status >= 500)\n            └─ Scan(main)\n"
-                        optimized_plan: "TopN(5, errors DESC NULLS LAST)\n└─ Project(errors, host)\n   └─ Aggregate(errors = count() BY host)\n      └─ Filter(status >= 500)\n         └─ Scan(main) columns=[_time, host, status]\n"
-                        compile_ms: 0.057
-                        optimizer_rules:
-                          - {name: sort-limit-to-topn, count: 1}
-                        source_scope:
-                          type: single
-                          sources: [main]
-                          total_sources_available: 2
-                invalid:
-                  summary: Invalid query
-                  value:
-                    data:
-                      is_valid: false
-                      errors:
-                        - kind: semantic
-                          message: field status not found
-                          position: {line: 1, column: 50}
-                          suggestion: 'available fields: n, host'
         '400':
-          $ref: '#/components/responses/QueryError'
+          $ref: '#/components/responses/ValidationError'
 
   /api/v1/catalog:
     get:
@@ -347,8 +328,8 @@ paths:
       tags: [Query]
       summary: PPL commands and functions with their support level
       description: |
-        The catalog is fixed for a binary. Responses carry a strong `ETag` and
-        `Cache-Control: public, max-age=86400`; a matching `If-None-Match` answers `304`.
+        Fixed for a given binary. Carries `ETag` and `Cache-Control: public, max-age=86400`;
+        a matching `If-None-Match` answers `304`. Any valid key can call it.
       parameters:
         - name: If-None-Match
           in: header
@@ -361,37 +342,24 @@ paths:
             ETag:
               schema:
                 type: string
-            Cache-Control:
-              schema:
-                type: string
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CatalogResponse'
-              example:
-                data:
-                  language: ppl
-                  commands:
-                    - {name: bin, support: partial, notes: 'span= with numeric and time units; bins, minspan, aligntime, start, end and logarithmic spans are unsupported'}
-                    - {name: dedup, support: full}
-                    - {name: kmeans, support: unsupported, notes: 'it runs the OpenSearch ML Commons plugin, which LynxDB does not have'}
-                  functions:
-                    - {name: round, kind: scalar, category: math, support: full, doc: 'x rounded half away from zero to d decimal places (default 0).'}
-                    - {name: if, kind: scalar, support: full, lowering: CASE}
-                    - {name: geoip, kind: scalar, support: unsupported, unsupported: LynxDB has no GeoIP database}
-                    - {name: count, kind: aggregate, category: aggregation, support: full, doc: 'Number of rows, or with an argument the number of rows where it is not NULL.'}
         '304':
-          description: Not modified
+          description: The catalog has not changed
 
   /api/v1/query/jobs:
     get:
       operationId: listJobs
       tags: [Query]
-      summary: List running and recent jobs
-      description: Finished jobs are kept for `query.job_ttl` (5m). Every query, sync ones included, is a job.
+      summary: List jobs
+      description: |
+        Running jobs and finished jobs younger than `query.job_ttl` (5m), the latest first. Needs `query` scope.
       parameters:
         - name: status
           in: query
+          description: '`complete`, `failed` and `cancelled` are aliases of `done`, `error` and `canceled`'
           schema:
             type: string
             enum: [running, done, error, canceled, complete, failed, cancelled]
@@ -402,13 +370,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/JobListResponse'
-              example:
-                data:
-                  jobs:
-                    - job_id: qry_0f8eeb0e72818e85
-                      query: 'source=main | stats count() as n, avg(response_time) as avg_ms by level'
-                      status: done
-                      created_at: '2026-11-17T10:38:26.755295Z'
         '400':
           $ref: '#/components/responses/ValidationError'
 
@@ -418,91 +379,33 @@ paths:
     get:
       operationId: getJob
       tags: [Query]
-      summary: Get a job's status and result
+      summary: State and result of a job
+      description: |
+        A running job carries `progress`; a done job carries `results`, limited to `query.default_result_limit` rows;
+        a failed or canceled job carries `error`. Needs `query` scope.
       responses:
         '200':
-          description: The job. `progress` while running, `results` when done, `error` when failed or canceled
+          description: The job
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/JobResponse'
-              examples:
-                running:
-                  summary: Running
-                  value:
-                    data:
-                      type: job
-                      job_id: qry_0f8eeb0e72818e85
-                      status: running
-                      query: 'source=main | stats count() as n by level'
-                      progress:
-                        phase: scanning_segments
-                        segments_total: 30
-                        segments_scanned: 12
-                        segments_dispatched: 18
-                        segments_skipped_index: 4
-                        segments_skipped_time: 2
-                        segments_skipped_stats: 0
-                        segments_skipped_bloom: 3
-                        segments_skipped_range: 0
-                        buffered_events: 0
-                        rows_read_so_far: 120000
-                        elapsed_ms: 1840
-                done:
-                  summary: Done
-                  value:
-                    data:
-                      type: job
-                      job_id: qry_0f8eeb0e72818e85
-                      status: done
-                      query: 'source=main | stats count() as n, avg(response_time) as avg_ms by level'
-                      created_at: '2026-11-17T10:38:26.755295Z'
-                      completed_at: '2026-11-17T10:38:26.756746Z'
-                      results:
-                        type: aggregate
-                        columns: [avg_ms, level, n]
-                        rows:
-                          - [411.21325648414984, WARN, 347]
-                          - [414.4930362116992, INFO, 359]
-                          - [408.1224489795918, ERROR, 294]
-                        total_rows: 3
-                        has_more: false
-                    meta:
-                      took_ms: 1
-                      scanned: 1000
-                      query_id: qry_0f8eeb0e72818e85
-                error:
-                  summary: Failed
-                  value:
-                    data:
-                      type: job
-                      job_id: qry_d4e1f2a0b1c2d3e4
-                      status: error
-                      error:
-                        code: QUERY_MEMORY_EXCEEDED
-                        message: query exceeded memory budget
         '404':
           $ref: '#/components/responses/NotFound'
     delete:
       operationId: cancelJob
       tags: [Query]
       summary: Cancel a job
-      description: Needs `admin` scope. `canceled` is `true` when this request stopped a running job.
+      description: |
+        Cancels the job and waits up to a second for it to stop. `canceled` is `true` when the job was running.
+        Needs `admin` scope.
       responses:
         '200':
-          description: The job's state after the request
+          description: The job after the request
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CancelJobResponse'
-              example:
-                data:
-                  job_id: qry_0f8eeb0e72818e85
-                  status: canceled
-                  canceled: true
-                  completed_at: '2026-11-17T10:38:28Z'
-        '403':
-          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
 
@@ -516,125 +419,54 @@ paths:
       description: |
         | Event | Data |
         |---|---|
-        | `progress` | About once a second: `phase`, `scanned`, `segments_total`, `percent`, `events_matched`, `elapsed_ms`, `eta_ms`, optional `preview` and `preview_version` |
-        | `complete` | `{"data": <result>, "meta": {"took_ms", "scanned", "stats"}}` |
+        | `progress` | `{"status", "elapsed_ms"}`, once a second while the job runs |
+        | `complete` | `{"data": <result>, "meta": {"took_ms", "query_id", "rows"}}` |
         | `failed` | `{"code", "message"}` |
-        | `canceled` | `{"scanned", "elapsed_ms"}` |
+        | `canceled` | `{"status", "elapsed_ms"}` |
+
+        Needs `query` scope; `_token` carries the key for `EventSource` clients.
+      security:
+        - BearerAuth: []
+        - TokenQuery: []
+        - {}
       responses:
         '200':
-          description: SSE stream
+          description: Event stream
           content:
             text/event-stream:
               schema:
                 type: string
               example: |
+                event: progress
+                data: {"elapsed_ms":52,"status":"running"}
+
                 event: complete
-                data: {"data":{"columns":["avg_ms","level","n"],"has_more":false,"rows":[[411.2,"WARN",347]],"total_rows":1,"type":"aggregate"},"meta":{"scanned":1000,"took_ms":1}}
+                data: {"data":{"type":"aggregate","columns":["n"],"rows":[[1010025]],"total_rows":1,"has_more":false},"meta":{"took_ms":4049.035,"query_id":"qry_cfb13bcc9a82770c","rows":1}}
         '404':
           $ref: '#/components/responses/NotFound'
 
-  # LIVE
+  # SCHEMA
 
-  /api/v1/tail:
+  /api/v1/histogram:
     get:
-      operationId: liveTail
-      tags: [Live]
-      summary: Live tail over Server-Sent Events
+      operationId: histogram
+      tags: [Schema]
+      summary: Event counts per time bucket
       description: |
-        Replays the last `count` matching stored events, sends `catchup_done`, then streams events as they arrive.
-        `q` is a full PPL query. Only row-by-row commands are allowed; commands that need all input
-        (`stats`, `timechart`, `chart`, `top`, `rare`, `sort`, `reverse`, `eventstats`, `streamstats`,
-        `trendline`, `join`, `lookup`, `append`, `appendcol`, `union`, `multisearch`, `transpose`, `addtotals`,
-        `addcoltotals`, `mvcombine`, `patterns`, `describe`) answer `422`.
-
-        | Event | Data |
-        |---|---|
-        | `result` | One event |
-        | `catchup_done` | `{"count": N}` |
-        | `heartbeat` | `{"ts"}`, every 15 seconds |
-        | `warning` | `{"type": "events_dropped", "count", "total_dropped"}` |
-        | `close` | `{"reason": "max_session_duration"}` |
-        | `error` | `{"error"}` |
-      security:
-        - BearerAuth: []
-        - ApiKeyAuth: []
-        - BasicAuth: []
-        - TokenQuery: []
-        - {}
+        The interval is the range divided by `buckets`, snapped to the nearest of 1s, 5s, 30s, 1m, 5m, 15m,
+        1h, 6h and 1d (whole days above a day). Buckets start at multiples of the interval since the Unix epoch,
+        from the one holding `from` to the last one that starts before `to`. Any valid key can call it.
       parameters:
-        - name: q
-          in: query
-          required: true
-          schema:
-            type: string
-          example: 'source=main level=ERROR | where status >= 500 | fields _time, host, status'
-        - name: count
-          in: query
-          schema:
-            type: integer
-            default: 100
-            maximum: 10000
         - name: from
           in: query
           schema:
             type: string
             default: '-1h'
-      responses:
-        '200':
-          description: SSE stream
-          content:
-            text/event-stream:
-              schema:
-                type: string
-              example: |
-                event: result
-                data: {"_time":"2026-11-17T10:32:54.573324Z","host":"web-01","status":502}
-
-                event: catchup_done
-                data: {"count":1}
-
-                event: heartbeat
-                data: {"ts":"2026-11-17T10:45:12Z"}
-        '400':
-          description: 'Missing `q` (`{"error": "missing required parameter: q"}`), or a compile error in the query error envelope'
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - $ref: '#/components/schemas/BareError'
-                  - $ref: '#/components/schemas/ErrorResponse'
-        '422':
-          description: The query needs all its input, or uses unsupported PPL
-          content:
-            application/json:
-              schema:
-                oneOf:
-                  - $ref: '#/components/schemas/BareError'
-                  - $ref: '#/components/schemas/ErrorResponse'
-              example:
-                error: 'Aggregate is not supported in live tail: it needs all input rows before producing output'
-        '429':
-          description: '`tail.max_concurrent_sessions` reached; `Retry-After: 5`'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/BareError'
-              example:
-                error: too many active tail sessions
-
-  /api/v1/histogram:
-    get:
-      operationId: histogram
-      tags: [Live]
-      summary: Event counts per time bucket
-      description: |
-        Counts every event in the range from segment metadata; takes no query.
-        The interval is the range divided by `buckets`, rounded to the nearest of
-        1s, 5s, 30s, 1m, 5m, 15m, 1h, 6h, 24h. With `group_by`, buckets carry `counts` by field value;
-        events without the field count under `other`.
-      parameters:
-        - $ref: '#/components/parameters/From'
-        - $ref: '#/components/parameters/To'
+        - name: to
+          in: query
+          schema:
+            type: string
+            default: now
         - name: buckets
           in: query
           schema:
@@ -643,10 +475,7 @@ paths:
             maximum: 1000
         - name: index
           in: query
-          schema:
-            type: string
-        - name: group_by
-          in: query
+          description: Count only this index; all indexes when absent
           schema:
             type: string
       responses:
@@ -656,45 +485,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/HistogramResponse'
-              examples:
-                counts:
-                  summary: Counts
-                  value:
-                    data:
-                      interval: 15m0s
-                      buckets:
-                        - {time: '2026-11-17T09:18:00Z', count: 0}
-                        - {time: '2026-11-17T09:33:00Z', count: 113}
-                      total: 113
-                    meta:
-                      took_ms: 0
-                grouped:
-                  summary: Grouped by level
-                  value:
-                    data:
-                      interval: 15m0s
-                      buckets:
-                        - {time: '2026-11-17T09:18:00Z', counts: {}}
-                        - {time: '2026-11-17T09:33:00Z', counts: {ERROR: 33, INFO: 35, WARN: 43, other: 2}}
-                      total: 113
-                    meta:
-                      took_ms: 0
         '400':
           $ref: '#/components/responses/ValidationError'
-
-  # SCHEMA
 
   /api/v1/fields:
     get:
       operationId: listFields
       tags: [Schema]
-      summary: Fields found in stored segments
+      summary: Field catalog
+      description: The fields the indexes hold, each with the indexes that hold it. Any valid key can call it.
       parameters:
+        - name: index
+          in: query
+          description: Only this index; `source` is an alias
+          schema:
+            type: string
+        - name: source
+          in: query
+          schema:
+            type: string
         - name: prefix
           in: query
           schema:
             type: string
-          example: st
       responses:
         '200':
           description: Fields
@@ -702,80 +515,79 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FieldsResponse'
-              example:
-                data:
-                  fields:
-                    - {name: status, type: int, coverage: 100, total_count: 1000}
 
   /api/v1/fields/{name}/values:
     get:
       operationId: fieldValues
       tags: [Schema]
-      summary: Most common values of a field
+      summary: Most frequent values of a field
+      description: Any valid key can call it.
       parameters:
         - name: name
           in: path
           required: true
           schema:
             type: string
-          example: level
         - name: limit
           in: query
           schema:
             type: integer
             default: 10
             maximum: 100
-        - name: from
+        - name: index
           in: query
-          description: Start of the time range (`since` is an alias)
+          schema:
+            type: string
+        - $ref: '#/components/parameters/From'
+        - name: since
+          in: query
+          description: Span back from now, such as `1h`; `from` wins when both are set
           schema:
             type: string
         - $ref: '#/components/parameters/To'
       responses:
         '200':
-          description: Values
+          description: Values with their counts
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/FieldValuesResponse'
-              example:
-                data:
-                  field: level
-                  values:
-                    - {value: INFO, count: 359, percent: 35.72}
-                    - {value: WARN, count: 347, percent: 34.53}
-                    - {value: ERROR, count: 294, percent: 29.25}
-                  unique_count: 4
-                  total_count: 1005
-                meta:
-                  took_ms: 0
+        '400':
+          $ref: '#/components/responses/ValidationError'
 
   /api/v1/sources:
     get:
       operationId: listSources
       tags: [Schema]
-      summary: Event sources with counts and time span
+      summary: Indexes with their event counts
+      description: Any valid key can call it.
       parameters:
         - name: pattern
           in: query
-          description: Glob on the source name (`*`, `?`)
+          description: Glob on the index name
           schema:
             type: string
-          example: 'ng*'
       responses:
         '200':
-          description: Sources
+          description: Indexes
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/SourcesResponse'
-              example:
-                data:
-                  pattern: 'ng*'
-                  sources:
-                    - {name: nginx, event_count: 2, first_event: '2026-11-17T10:43:02Z', last_event: '2026-11-17T10:43:02Z'}
-                meta:
-                  took_ms: 0
+
+  /api/v1/indexes:
+    get:
+      operationId: listIndexes
+      tags: [Schema]
+      summary: List indexes
+      description: Any valid key can call it.
+      responses:
+        '200':
+          description: Indexes
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexesResponse'
 
   # INGEST
 
@@ -783,28 +595,37 @@ paths:
     post:
       operationId: ingest
       tags: [Ingest]
-      summary: Ingest a JSON array of events
+      summary: Ingest NDJSON events
       description: |
-        Takes a top-level JSON array. A single object, NDJSON or plain text answers `400 INVALID_JSON`.
-        If a later batch fails after earlier ones were stored, the response is `200` with `failed` and a `warning`.
+        Appends the lines of the body, unchanged, to one index: the `index` query parameter, else the
+        `X-Index` header, else `main`. A line that is not a JSON object becomes an event holding the text in `_raw`.
+        The event time comes from the first of `storage.time_fields` an event holds, else the time of arrival.
+        Needs `ingest` scope.
+      parameters:
+        - name: index
+          in: query
+          schema:
+            type: string
+        - name: X-Index
+          in: header
+          schema:
+            type: string
       requestBody:
         required: true
         content:
-          application/json:
+          application/x-ndjson:
             schema:
-              type: array
-              items:
-                $ref: '#/components/schemas/StructuredIngestEvent'
-            example:
-              - time: 1763370000
-                event: user login
-                source: auth-api
-                sourcetype: app
-                host: web-01
-                fields: {user_id: 42, level: info, ip: 10.0.1.5}
+              type: string
+            example: |
+              {"_time":"2026-11-17T08:00:00Z","level":"info","msg":"user login","user_id":42}
+              {"timestamp":"2026-11-17T08:00:05Z","level":"error","msg":"payment failed","order":{"id":7,"total":19.5}}
       responses:
         '200':
-          $ref: '#/components/responses/IngestAccepted'
+          description: Lines accepted and rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestResponse'
         '400':
           $ref: '#/components/responses/ValidationError'
         '401':
@@ -814,17 +635,29 @@ paths:
         '413':
           $ref: '#/components/responses/PayloadTooLarge'
         '503':
-          $ref: '#/components/responses/Backpressure'
+          $ref: '#/components/responses/ShuttingDown'
 
   /api/v1/ingest/raw:
     post:
       operationId: ingestRaw
       tags: [Ingest]
-      summary: Ingest newline-delimited text
+      summary: Ingest log text
       description: |
-        Each non-empty line is one event, stored in `_raw`. When the body is cut off by `ingest.max_body_size`
-        after some events were stored, the response is `200` with `truncated: true` and a `warning`.
+        One event per line. A line that is a JSON object passes unchanged. Any other line becomes an event with the
+        line in `_raw`, its leading timestamp as `_time`, its `key=value` pairs as typed fields, and the labels of the
+        headers as `source`, `sourcetype` and `host`. The index is `X-Index`, else the `index` query parameter,
+        else `main`. When the body is cut off after some events were stored, the response carries
+        `truncated: true` and a `warning`. Needs `ingest` scope.
       parameters:
+        - name: X-Index
+          in: header
+          schema:
+            type: string
+            maxLength: 256
+        - name: index
+          in: query
+          schema:
+            type: string
         - name: X-Source
           in: header
           schema:
@@ -837,11 +670,10 @@ paths:
             type: string
             default: raw
             maxLength: 256
-        - name: X-Index
+        - name: X-Host
           in: header
           schema:
             type: string
-            default: main
             maxLength: 256
       requestBody:
         required: true
@@ -850,43 +682,49 @@ paths:
             schema:
               type: string
             example: |
-              2026-11-17T08:00:00.105Z host=web-03 level=ERROR method=GET path=/api/v1/users status=502
-              2026-11-17T08:00:00.211Z host=web-01 level=INFO method=GET path=/api/v1/health status=200
+              2026-11-17T08:00:00.000Z level=warn path=/api/users latency_ms=812 slow request
       responses:
         '200':
-          $ref: '#/components/responses/IngestAccepted'
+          description: Lines accepted and rejected
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IngestResponse'
         '400':
           $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
-        '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '503':
-          $ref: '#/components/responses/Backpressure'
+          $ref: '#/components/responses/ShuttingDown'
 
   /api/v1/ingest/hec:
     post:
       operationId: ingestHEC
       tags: [Ingest, Splunk HEC]
-      summary: Ingest Splunk HEC events with a LynxDB API key
-      description: One HEC event object per line. Authenticates with LynxDB API keys, not `Splunk` tokens.
+      summary: Ingest Splunk HEC events with a LynxDB key
+      description: |
+        The Splunk HEC event handler, authenticated with a LynxDB key of `ingest` scope instead of a Splunk token.
+        Events go to the `main` index.
+      parameters:
+        - $ref: '#/components/parameters/SplunkChannel'
       requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/HECEvent'
+        $ref: '#/components/requestBodies/HECEvents'
       responses:
         '200':
           $ref: '#/components/responses/HECSuccess'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
 
   /api/v1/ingest/bulk:
     post:
       operationId: ingestBulk
       tags: [Ingest, Elasticsearch]
-      summary: Elasticsearch bulk ingest (alias of /api/v1/es/_bulk)
+      summary: Ingest an Elasticsearch bulk body
+      description: Same as `POST /api/v1/es/_bulk`. Needs `ingest` scope.
       requestBody:
         $ref: '#/components/requestBodies/ESBulk'
       responses:
@@ -894,50 +732,8 @@ paths:
           $ref: '#/components/responses/ESBulkResult'
         '400':
           $ref: '#/components/responses/ESError'
-
-  /api/v1/indexes:
-    get:
-      operationId: listIndexes
-      tags: [Ingest]
-      summary: List indexes
-      responses:
-        '200':
-          description: Indexes
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/IndexesResponse'
-              example:
-                data:
-                  indexes:
-                    - {name: main, retention_period: 2160h0m0s, replication_factor: 1}
-    post:
-      operationId: createIndex
-      tags: [Ingest]
-      summary: Create an index
-      description: Needs a root key when authentication is on.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/CreateIndexRequest'
-            example:
-              name: audit
-              retention_days: 365
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CreateIndexResponse'
-              example:
-                data: {name: audit, status: created}
-        '400':
-          $ref: '#/components/responses/ValidationError'
-        '403':
-          $ref: '#/components/responses/Forbidden'
+        '503':
+          $ref: '#/components/responses/ESError'
 
   # SERVER
 
@@ -949,17 +745,15 @@ paths:
       security: []
       responses:
         '200':
-          description: Health
+          description: The server is up
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/HealthResponse'
-              example:
-                data: {status: healthy, degraded: false, version: 0.4.0}
 
   /metrics:
     get:
-      operationId: prometheusMetrics
+      operationId: metrics
       tags: [Server]
       summary: Prometheus metrics
       security: []
@@ -975,7 +769,7 @@ paths:
     get:
       operationId: status
       tags: [Server]
-      summary: Operational snapshot
+      summary: Server snapshot
       responses:
         '200':
           description: Status
@@ -983,115 +777,27 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/StatusResponse'
-              example:
-                data:
-                  version: 0.4.0
-                  uptime_seconds: 485
-                  health: healthy
-                  storage: {used_bytes: 246702}
-                  events: {total: 1007, today: 116}
-                  queries: {active: 0}
-                  tail: {active_sessions: 0, subscriber_count: 0, total_dropped_events: 0}
-                  retention: {oldest_event: '2025-01-15T08:00:00Z'}
 
   /api/v1/stats:
     get:
       operationId: stats
       tags: [Server]
-      summary: Storage and event counters
+      summary: Indexes, storage totals and job counts
       responses:
         '200':
-          description: Counters
+          description: Stats
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/StatsResponse'
-
-  /api/v1/metrics:
-    get:
-      operationId: storageMetrics
-      tags: [Server]
-      summary: Storage metrics as JSON
-      responses:
-        '200':
-          description: Metrics with `ingest`, `flush`, `segment`, `compaction`, `compaction_levels`, `tiering`, `cache`, `query`, `pruning`, `system_write_amplification`, `uptime_seconds` and optional `adaptive_compaction`
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DataObject'
-
-  /api/v1/cluster/status:
-    get:
-      operationId: clusterStatus
-      tags: [Server]
-      summary: Cluster summary
-      responses:
-        '200':
-          description: Summary
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ClusterStatusResponse'
-
-  /api/v1/compaction/history:
-    get:
-      operationId: compactionHistory
-      tags: [Server]
-      summary: Recorded compactions
-      parameters:
-        - name: since
-          in: query
-          description: RFC 3339 time
-          schema:
-            type: string
-            format: date-time
-      responses:
-        '200':
-          description: Compactions
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CompactionHistoryResponse'
-        '400':
-          $ref: '#/components/responses/ValidationError'
-
-  /api/v1/cache/stats:
-    get:
-      operationId: cacheStats
-      tags: [Server]
-      summary: Query result cache statistics
-      responses:
-        '200':
-          description: Statistics
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CacheStatsResponse'
-              example:
-                data: {hits: 2, misses: 26, hit_rate: 0.0714, entries: 25, size_bytes: 1110668, evictions: 0}
-
-  /api/v1/cache:
-    delete:
-      operationId: cacheClear
-      tags: [Server]
-      summary: Clear the query result cache
-      description: Needs `admin` scope.
-      responses:
-        '200':
-          description: Cleared
-          content:
-            application/json:
-              example:
-                data: {status: cleared}
-        '403':
-          $ref: '#/components/responses/Forbidden'
 
   /api/v1/config:
     get:
       operationId: getConfig
       tags: [Server]
       summary: Running configuration
-      description: Needs `admin` scope. Top-level keys are `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tail`, `tls`, `auth`, `server`, `buffer_manager`, `cluster`, `profiles`.
+      description: |
+        Needs `admin` scope. Durations in `query` and `http` are integer nanoseconds; the others are text.
       responses:
         '200':
           description: Configuration
@@ -1106,22 +812,21 @@ paths:
       tags: [Server]
       summary: Change the running configuration
       description: |
-        Needs a root key. Accepted top-level keys: `retention`, `log_level`, `listen`, `query`, `ingest`,
-        `storage`, `http`, `syslog`. Changes are not written to the config file.
+        Merges the body into the running configuration, validates it and applies it like a `SIGHUP` reload.
+        Accepted top-level keys: `retention`, `log_level`, `listen`, `query`, `ingest`, `storage`, `http`, `syslog`.
+        Settings that take effect only after a restart are listed in `restart_required`. Needs a root key.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
             example:
               log_level: debug
-              query:
-                max_query_runtime: 10m
+              query: {default_result_limit: 500}
       responses:
         '200':
-          description: The resulting configuration and the settings that need a restart
+          description: The resulting configuration
           content:
             application/json:
               schema:
@@ -1145,11 +850,12 @@ paths:
             enum: [profile, trace, heap, allocs, goroutine, mutex, block, threadcreate, cmdline, symbol]
         - name: seconds
           in: query
+          description: Duration of `profile` and `trace`
           schema:
             type: integer
       responses:
         '200':
-          description: Profile data
+          description: The profile
           content:
             application/octet-stream:
               schema:
@@ -1177,14 +883,11 @@ paths:
               description: edge shipper
       responses:
         '201':
-          description: The key, with its token shown once
+          description: The key and its token, shown once
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    $ref: '#/components/schemas/CreatedKey'
+                $ref: '#/components/schemas/CreatedKeyResponse'
         '400':
           $ref: '#/components/responses/ValidationError'
         '403':
@@ -1195,22 +898,14 @@ paths:
       operationId: listKeys
       tags: [Auth]
       summary: List API keys
-      description: Needs a root key. Tokens are not returned.
+      description: Needs a root key. Answers `404` when authentication is off.
       responses:
         '200':
-          description: Keys
+          description: Keys without their tokens
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      keys:
-                        type: array
-                        items:
-                          $ref: '#/components/schemas/APIKey'
+                $ref: '#/components/schemas/KeyListResponse'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -1221,6 +916,7 @@ paths:
       operationId: revokeKey
       tags: [Auth]
       summary: Revoke an API key
+      description: Needs a root key. Answers `404` when authentication is off.
       parameters:
         - name: id
           in: path
@@ -1230,6 +926,8 @@ paths:
       responses:
         '204':
           description: Revoked
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
@@ -1238,26 +936,20 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-              example:
-                error:
-                  code: LAST_ROOT_KEY
-                  message: Cannot revoke the last root key. Use rotate-root instead.
 
   /api/v1/auth/rotate-root:
     post:
       operationId: rotateRoot
       tags: [Auth]
       summary: Replace the calling root key
+      description: Needs a root key. Answers `404` when authentication is off.
       responses:
         '200':
-          description: The replacement root key, with its token shown once
+          description: The replacement key
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  data:
-                    $ref: '#/components/schemas/RotateRootResult'
+                $ref: '#/components/schemas/RotateRootResponse'
         '403':
           $ref: '#/components/responses/Forbidden'
         '404':
@@ -1267,18 +959,14 @@ paths:
 
   /_bulk:
     post:
-      operationId: esBulkRoot
+      operationId: esBulk
       tags: [Elasticsearch]
       summary: Elasticsearch bulk ingest
       description: |
-        `index` and `create` actions are stored; `update` and `delete` fail per item.
-        The target index is the data stream name, else `_index`, else the path index, else a `target_index`
-        field of the document, else `default`. Outside `/api/`, so with authentication on use `/api/v1/es/_bulk`.
-      security:
-        - {}
-      parameters:
-        - $ref: '#/components/parameters/MsgField'
-        - $ref: '#/components/parameters/TimeField'
+        `index` and `create` actions append their document line unchanged to the action's `_index`, else `main`.
+        `update` and `delete` actions fail per item. The documents are durable before the response.
+        Outside `/api/`, so with authentication on it answers `401`; use `/api/v1/es/_bulk`.
+      security: []
       requestBody:
         $ref: '#/components/requestBodies/ESBulk'
       responses:
@@ -1287,21 +975,19 @@ paths:
         '400':
           $ref: '#/components/responses/ESError'
         '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+          $ref: '#/components/responses/ESError'
         '503':
           $ref: '#/components/responses/ESError'
 
   /{index}/_bulk:
     post:
-      operationId: esBulkIndex
+      operationId: esIndexBulk
       tags: [Elasticsearch]
       summary: Elasticsearch bulk ingest into an index
-      security:
-        - {}
+      description: Same as `/_bulk`, with `{index}` for actions that name no `_index`.
+      security: []
       parameters:
         - $ref: '#/components/parameters/ESIndex'
-        - $ref: '#/components/parameters/MsgField'
-        - $ref: '#/components/parameters/TimeField'
       requestBody:
         $ref: '#/components/requestBodies/ESBulk'
       responses:
@@ -1312,11 +998,11 @@ paths:
 
   /_data_stream/{data_stream}/_bulk:
     post:
-      operationId: esBulkDataStream
+      operationId: esDataStreamBulk
       tags: [Elasticsearch]
       summary: Elasticsearch bulk ingest into a data stream
-      security:
-        - {}
+      description: Same as `/_bulk`, with the data stream name for actions that name no `_index`.
+      security: []
       parameters:
         - $ref: '#/components/parameters/DataStream'
       requestBody:
@@ -1329,13 +1015,10 @@ paths:
 
   /api/v1/es/_bulk:
     post:
-      operationId: esBulk
+      operationId: esPrefixedBulk
       tags: [Elasticsearch]
-      summary: Elasticsearch bulk ingest (authenticated)
-      description: Needs `ingest` scope when authentication is on.
-      parameters:
-        - $ref: '#/components/parameters/MsgField'
-        - $ref: '#/components/parameters/TimeField'
+      summary: Elasticsearch bulk ingest under /api/v1/es
+      description: Same as `/_bulk`, authenticated with an `ingest` key.
       requestBody:
         $ref: '#/components/requestBodies/ESBulk'
       responses:
@@ -1345,14 +1028,18 @@ paths:
           $ref: '#/components/responses/ESError'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '413':
-          $ref: '#/components/responses/PayloadTooLarge'
+          $ref: '#/components/responses/ESError'
+        '503':
+          $ref: '#/components/responses/ESError'
 
   /api/v1/es/_data_stream/{data_stream}/_bulk:
     post:
-      operationId: esBulkDataStreamPrefixed
+      operationId: esPrefixedDataStreamBulk
       tags: [Elasticsearch]
-      summary: Elasticsearch bulk ingest into a data stream (authenticated)
+      summary: Elasticsearch data stream bulk ingest under /api/v1/es
       parameters:
         - $ref: '#/components/parameters/DataStream'
       requestBody:
@@ -1367,7 +1054,8 @@ paths:
     post:
       operationId: esIndexDoc
       tags: [Elasticsearch]
-      summary: Store one Elasticsearch document
+      summary: Elasticsearch single-document ingest
+      description: Appends one JSON object to `{index}`. Needs `ingest` scope.
       parameters:
         - $ref: '#/components/parameters/ESIndex'
       requestBody:
@@ -1376,7 +1064,6 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
             example:
               message: single event
               '@timestamp': '2026-11-17T09:00:02Z'
@@ -1388,78 +1075,56 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ESIndexDocResponse'
-              example:
-                _id: 83902dbd6e6c4283f4314362
-                _index: logs
-                result: created
         '400':
+          $ref: '#/components/responses/ESError'
+        '503':
           $ref: '#/components/responses/ESError'
 
   /:
     get:
-      operationId: esHandshakeRoot
+      operationId: esHandshake
       tags: [Elasticsearch]
       summary: Elasticsearch cluster handshake
-      security:
-        - {}
+      security: []
       responses:
         '200':
-          $ref: '#/components/responses/ESClusterInfo'
-    head:
-      operationId: esHandshakeRootHead
-      tags: [Elasticsearch]
-      summary: Elasticsearch handshake probe
-      security:
-        - {}
-      responses:
-        '200':
-          description: OK
+          description: Cluster description
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ESClusterInfo'
 
   /api/v1/es:
     get:
-      operationId: esHandshake
+      operationId: esPrefixedHandshake
       tags: [Elasticsearch]
-      summary: Elasticsearch cluster handshake (prefixed)
+      summary: Elasticsearch cluster handshake under /api/v1/es (also with a trailing slash)
       responses:
         '200':
-          $ref: '#/components/responses/ESClusterInfo'
-
-  /api/v1/es/:
-    get:
-      operationId: esHandshakeSlash
-      tags: [Elasticsearch]
-      summary: Elasticsearch cluster handshake (prefixed, trailing slash)
-      responses:
-        '200':
-          $ref: '#/components/responses/ESClusterInfo'
+          description: Cluster description
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ESClusterInfo'
 
   /{index}:
     head:
-      operationId: esIndexProbe
+      operationId: esIndexHead
       tags: [Elasticsearch]
-      summary: Index existence probe; always 200
-      security:
-        - {}
+      summary: Index existence probe
+      description: Answers `200` for any index name; `HEAD /api/v1/es/{index}` answers the same.
+      security: []
       parameters:
         - $ref: '#/components/parameters/ESIndex'
       responses:
         '200':
-          description: OK
+          description: Present
 
   /api/v1/es/{index}:
-    head:
-      operationId: esIndexProbePrefixed
-      tags: [Elasticsearch]
-      summary: Index existence probe (prefixed); always 200
-      parameters:
-        - $ref: '#/components/parameters/ESIndex'
-      responses:
-        '200':
-          description: OK
     put:
-      operationId: esCreateIndexPrefixed
+      operationId: esCreateIndex
       tags: [Elasticsearch]
-      summary: Unsupported index management call
+      summary: Index creation (not supported)
       parameters:
         - $ref: '#/components/parameters/ESIndex'
       responses:
@@ -1470,9 +1135,8 @@ paths:
     get:
       operationId: esXPack
       tags: [Elasticsearch]
-      summary: X-Pack feature summary stub
-      security:
-        - {}
+      summary: X-Pack feature summary stub (also under /api/v1/es)
+      security: []
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
@@ -1481,20 +1145,8 @@ paths:
     get:
       operationId: esXPackLicense
       tags: [Elasticsearch]
-      summary: Basic license stub
-      security:
-        - {}
-      responses:
-        '200':
-          $ref: '#/components/responses/ESStub'
-
-  /_license:
-    get:
-      operationId: esLicense
-      tags: [Elasticsearch]
-      summary: Basic license stub
-      security:
-        - {}
+      summary: License stub (also /_license, and both under /api/v1/es)
+      security: []
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
@@ -1503,9 +1155,8 @@ paths:
     get:
       operationId: esCatTemplates
       tags: [Elasticsearch]
-      summary: Empty template list
-      security:
-        - {}
+      summary: Empty template list (also under /api/v1/es)
+      security: []
       responses:
         '200':
           $ref: '#/components/responses/ESEmptyArray'
@@ -1514,9 +1165,8 @@ paths:
     get:
       operationId: esCatIndices
       tags: [Elasticsearch]
-      summary: Empty index list
-      security:
-        - {}
+      summary: Empty index list (also under /api/v1/es)
+      security: []
       responses:
         '200':
           $ref: '#/components/responses/ESEmptyArray'
@@ -1525,9 +1175,8 @@ paths:
     get:
       operationId: esClusterHealth
       tags: [Elasticsearch]
-      summary: Green single-node health stub
-      security:
-        - {}
+      summary: Green single-node health (also under /api/v1/es)
+      security: []
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
@@ -1538,18 +1187,16 @@ paths:
     get:
       operationId: esGetIndexTemplate
       tags: [Elasticsearch]
-      summary: Empty index template list
-      security:
-        - {}
+      summary: Empty index template list (also under /api/v1/es)
+      security: []
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
     put:
       operationId: esPutIndexTemplate
       tags: [Elasticsearch]
-      summary: Acknowledge an index template without storing it
-      security:
-        - {}
+      summary: Acknowledges and stores nothing (also under /api/v1/es)
+      security: []
       responses:
         '200':
           $ref: '#/components/responses/ESAcknowledged'
@@ -1558,9 +1205,8 @@ paths:
     get:
       operationId: esGetILMPolicy
       tags: [Elasticsearch]
-      summary: ILM policy probe; always 404
-      security:
-        - {}
+      summary: No ILM policies (also under /api/v1/es); PUT under /api/v1/es answers 501
+      security: []
       parameters:
         - $ref: '#/components/parameters/StubName'
       responses:
@@ -1571,9 +1217,8 @@ paths:
     get:
       operationId: esGetIngestPipeline
       tags: [Elasticsearch]
-      summary: Ingest pipeline probe; always 404
-      security:
-        - {}
+      summary: No ingest pipelines (also under /api/v1/es); PUT under /api/v1/es answers 501
+      security: []
       parameters:
         - $ref: '#/components/parameters/StubName'
       responses:
@@ -1584,9 +1229,8 @@ paths:
     get:
       operationId: esNodes
       tags: [Elasticsearch]
-      summary: Minimal node HTTP info
-      security:
-        - {}
+      summary: Minimal node HTTP info (also under /api/v1/es)
+      security: []
       parameters:
         - name: path
           in: path
@@ -1601,9 +1245,8 @@ paths:
     get:
       operationId: esAlias
       tags: [Elasticsearch]
-      summary: Empty aliases object
-      security:
-        - {}
+      summary: Empty aliases (also under /api/v1/es)
+      security: []
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
@@ -1614,18 +1257,16 @@ paths:
     get:
       operationId: esGetDataStream
       tags: [Elasticsearch]
-      summary: Empty data stream list
-      security:
-        - {}
+      summary: Empty data stream list (also under /api/v1/es)
+      security: []
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
     put:
       operationId: esPutDataStream
       tags: [Elasticsearch]
-      summary: Acknowledge a data stream without storing it
-      security:
-        - {}
+      summary: Acknowledges and stores nothing (also under /api/v1/es)
+      security: []
       responses:
         '200':
           $ref: '#/components/responses/ESAcknowledged'
@@ -1634,9 +1275,8 @@ paths:
     get:
       operationId: esSearch
       tags: [Elasticsearch]
-      summary: Empty search hits
-      security:
-        - {}
+      summary: Empty hits (also under /api/v1/es)
+      security: []
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
@@ -1645,177 +1285,8 @@ paths:
     post:
       operationId: esAuthenticate
       tags: [Elasticsearch]
-      summary: Authenticated user stub
-      security:
-        - {}
-      responses:
-        '200':
-          $ref: '#/components/responses/ESStub'
-
-  /api/v1/es/_xpack:
-    get:
-      operationId: esXPackPrefixed
-      tags: [Elasticsearch]
-      summary: X-Pack feature summary stub (prefixed)
-      responses:
-        '200':
-          $ref: '#/components/responses/ESStub'
-
-  /api/v1/es/_xpack/license:
-    get:
-      operationId: esXPackLicensePrefixed
-      tags: [Elasticsearch]
-      summary: Basic license stub (prefixed)
-      responses:
-        '200':
-          $ref: '#/components/responses/ESStub'
-
-  /api/v1/es/_license:
-    get:
-      operationId: esLicensePrefixed
-      tags: [Elasticsearch]
-      summary: Basic license stub (prefixed)
-      responses:
-        '200':
-          $ref: '#/components/responses/ESStub'
-
-  /api/v1/es/_cat/templates:
-    get:
-      operationId: esCatTemplatesPrefixed
-      tags: [Elasticsearch]
-      summary: Empty template list (prefixed)
-      responses:
-        '200':
-          $ref: '#/components/responses/ESEmptyArray'
-
-  /api/v1/es/_cat/indices:
-    get:
-      operationId: esCatIndicesPrefixed
-      tags: [Elasticsearch]
-      summary: Empty index list (prefixed)
-      responses:
-        '200':
-          $ref: '#/components/responses/ESEmptyArray'
-
-  /api/v1/es/_cluster/health:
-    get:
-      operationId: esClusterHealthPrefixed
-      tags: [Elasticsearch]
-      summary: Green single-node health stub (prefixed)
-      responses:
-        '200':
-          $ref: '#/components/responses/ESStub'
-
-  /api/v1/es/_ilm/policy/{name}:
-    parameters:
-      - $ref: '#/components/parameters/StubName'
-    get:
-      operationId: esGetILMPolicyPrefixed
-      tags: [Elasticsearch]
-      summary: ILM policy probe; always 404 (prefixed)
-      responses:
-        '404':
-          $ref: '#/components/responses/ESStub'
-    put:
-      operationId: esPutILMPolicyPrefixed
-      tags: [Elasticsearch]
-      summary: Unsupported ILM policy write
-      responses:
-        '501':
-          $ref: '#/components/responses/ESUnsupported'
-
-  /api/v1/es/_index_template/{name}:
-    parameters:
-      - $ref: '#/components/parameters/StubName'
-    get:
-      operationId: esGetIndexTemplatePrefixed
-      tags: [Elasticsearch]
-      summary: Empty index template list (prefixed)
-      responses:
-        '200':
-          $ref: '#/components/responses/ESStub'
-    put:
-      operationId: esPutIndexTemplatePrefixed
-      tags: [Elasticsearch]
-      summary: Acknowledge an index template without storing it (prefixed)
-      responses:
-        '200':
-          $ref: '#/components/responses/ESAcknowledged'
-
-  /api/v1/es/_ingest/pipeline/{name}:
-    parameters:
-      - $ref: '#/components/parameters/StubName'
-    get:
-      operationId: esGetIngestPipelinePrefixed
-      tags: [Elasticsearch]
-      summary: Ingest pipeline probe; always 404 (prefixed)
-      responses:
-        '404':
-          $ref: '#/components/responses/ESStub'
-    put:
-      operationId: esPutIngestPipelinePrefixed
-      tags: [Elasticsearch]
-      summary: Unsupported ingest pipeline write
-      responses:
-        '501':
-          $ref: '#/components/responses/ESUnsupported'
-
-  /api/v1/es/_nodes/{path}:
-    get:
-      operationId: esNodesPrefixed
-      tags: [Elasticsearch]
-      summary: Minimal node HTTP info (prefixed)
-      parameters:
-        - name: path
-          in: path
-          required: true
-          schema:
-            type: string
-      responses:
-        '200':
-          $ref: '#/components/responses/ESStub'
-
-  /api/v1/es/_data_stream/{name}:
-    parameters:
-      - $ref: '#/components/parameters/StubName'
-    get:
-      operationId: esGetDataStreamPrefixed
-      tags: [Elasticsearch]
-      summary: Empty data stream list (prefixed)
-      responses:
-        '200':
-          $ref: '#/components/responses/ESStub'
-    put:
-      operationId: esPutDataStreamPrefixed
-      tags: [Elasticsearch]
-      summary: Acknowledge a data stream without storing it (prefixed)
-      responses:
-        '200':
-          $ref: '#/components/responses/ESAcknowledged'
-
-  /api/v1/es/_alias:
-    get:
-      operationId: esAliasPrefixed
-      tags: [Elasticsearch]
-      summary: Empty aliases object (prefixed)
-      responses:
-        '200':
-          $ref: '#/components/responses/ESStub'
-
-  /api/v1/es/_search:
-    get:
-      operationId: esSearchPrefixed
-      tags: [Elasticsearch]
-      summary: Empty search hits (prefixed)
-      responses:
-        '200':
-          $ref: '#/components/responses/ESStub'
-
-  /api/v1/es/_security/user/_authenticate:
-    post:
-      operationId: esAuthenticatePrefixed
-      tags: [Elasticsearch]
-      summary: Authenticated user stub (prefixed)
+      summary: Authenticated user stub (also under /api/v1/es)
+      security: []
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
@@ -1826,8 +1297,11 @@ paths:
     post:
       operationId: hecCollector
       tags: [Splunk HEC]
-      summary: HEC event ingest
-      description: Same as `/services/collector/event`.
+      summary: Splunk HEC event ingest
+      description: |
+        One HEC event object per line; lines that are not valid JSON are skipped and counted in `skipped_lines`.
+        Events go to the `main` index. Needs `Authorization: Splunk <token>` with a non-empty token.
+        `/services/collector/event` is the same route.
       security:
         - SplunkToken: []
       parameters:
@@ -1846,10 +1320,7 @@ paths:
     post:
       operationId: hecEvent
       tags: [Splunk HEC]
-      summary: HEC event ingest
-      description: |
-        One HEC event object per line; invalid lines are skipped and counted in `skipped_lines`.
-        Events are stored in the `main` index. Any non-empty `Splunk` token is accepted; LynxDB API keys are not checked.
+      summary: Splunk HEC event ingest
       security:
         - SplunkToken: []
       parameters:
@@ -1868,15 +1339,28 @@ paths:
     post:
       operationId: hecRaw
       tags: [Splunk HEC]
-      summary: HEC raw ingest
+      summary: Splunk HEC raw ingest
+      description: One event per line. Events go to the `main` index; `index` stands in for an empty `source`.
       security:
         - SplunkToken: []
       parameters:
+        - name: source
+          in: query
+          schema:
+            type: string
+        - name: sourcetype
+          in: query
+          schema:
+            type: string
+        - name: host
+          in: query
+          schema:
+            type: string
+        - name: index
+          in: query
+          schema:
+            type: string
         - $ref: '#/components/parameters/SplunkChannel'
-        - {name: source, in: query, schema: {type: string}}
-        - {name: sourcetype, in: query, schema: {type: string}}
-        - {name: host, in: query, schema: {type: string}}
-        - {name: index, in: query, schema: {type: string}}
       requestBody:
         required: true
         content:
@@ -1888,12 +1372,14 @@ paths:
           $ref: '#/components/responses/HECSuccess'
         '401':
           $ref: '#/components/responses/HECUnauthorized'
+        '404':
+          $ref: '#/components/responses/HECDisabled'
 
   /services/collector/ack:
     post:
       operationId: hecAck
       tags: [Splunk HEC]
-      summary: Check acknowledgement IDs for a channel
+      summary: Splunk HEC acknowledgements
       security:
         - SplunkToken: []
       parameters:
@@ -1913,28 +1399,38 @@ paths:
               acks: [1, 2]
       responses:
         '200':
-          description: Status of each ID
+          description: The state of each acknowledgement ID
           content:
             application/json:
+              schema:
+                type: object
+                properties:
+                  acks:
+                    type: object
+                    additionalProperties:
+                      type: boolean
               example:
                 acks: {'1': true, '2': false}
         '400':
-          description: 'Invalid body (`{"text": "Invalid ack request", "code": 5}`)'
+          description: '`{"text": "Invalid ack request", "code": 5}`'
+        '401':
+          $ref: '#/components/responses/HECUnauthorized'
+        '404':
+          $ref: '#/components/responses/HECDisabled'
 
   /services/collector/health:
     get:
       operationId: hecHealth
       tags: [Splunk HEC]
-      summary: HEC health
+      summary: Splunk HEC health
       security: []
       responses:
         '200':
-          description: Healthy
+          description: '`{"text": "HEC is healthy", "code": 17}`'
           content:
             application/json:
-              example:
-                text: HEC is healthy
-                code: 17
+              schema:
+                $ref: '#/components/schemas/HECResponse'
         '404':
           $ref: '#/components/responses/HECDisabled'
 
@@ -1944,24 +1440,35 @@ paths:
     post:
       operationId: otlpLogsJSON
       tags: [OTLP]
-      summary: OTLP logs as JSON on the API port
+      summary: OTLP/HTTP JSON logs on the API port
       description: |
-        OTLP JSON only; `application/x-protobuf` answers `415`. `resource.attributes["deployment.environment"]`
-        selects the target index.
+        Takes OTLP JSON only. `resource.attributes["deployment.environment"]` names the target index, else `main`.
+        Any valid key can call it.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              additionalProperties: true
       responses:
         '200':
-          description: Stored; the body is `{}`
+          description: '`{}`'
+          content:
+            application/json:
+              schema:
+                type: object
         '400':
-          $ref: '#/components/responses/ValidationError'
+          description: The body is not valid OTLP JSON (`INVALID_JSON`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
         '415':
-          description: Protobuf is not accepted on this route
+          description: '`application/x-protobuf` is not accepted on this route (`INVALID_REQUEST`)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
   /v1/logs:
     servers:
@@ -1971,9 +1478,8 @@ paths:
       operationId: otlpLogs
       tags: [OTLP]
       summary: OTLP/HTTP logs
-      description: Protobuf or JSON. Records go to the `main` index with `_sourcetype` `otlp`.
-      security:
-        - {}
+      description: Protobuf or JSON. Records go to the `main` index; records with an empty body are dropped.
+      security: []
       requestBody:
         required: true
         content:
@@ -1984,16 +1490,15 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
       responses:
         '200':
-          description: An empty ExportLogsServiceResponse
+          description: An empty `ExportLogsServiceResponse`
         '400':
-          description: Invalid protobuf or JSON
+          description: The body does not decode
         '415':
           description: Unsupported content type
         '503':
-          description: Ingest failed; `Retry-After` is set
+          description: The events could not be stored
 
   /v1/traces:
     servers:
@@ -2001,12 +1506,11 @@ paths:
     post:
       operationId: otlpTraces
       tags: [OTLP]
-      summary: OTLP traces; accepted and discarded
-      security:
-        - {}
+      summary: Accepted and discarded
+      security: []
       responses:
         '200':
-          description: An empty ExportTraceServiceResponse
+          description: An empty `ExportTraceServiceResponse`
 
   /v1/metrics:
     servers:
@@ -2014,12 +1518,11 @@ paths:
     post:
       operationId: otlpMetrics
       tags: [OTLP]
-      summary: OTLP metrics; accepted and discarded
-      security:
-        - {}
+      summary: Accepted and discarded
+      security: []
       responses:
         '200':
-          description: An empty ExportMetricsServiceResponse
+          description: An empty `ExportMetricsServiceResponse`
 
 components:
 
@@ -2040,7 +1543,7 @@ components:
       type: apiKey
       in: query
       name: _token
-      description: For SSE clients that cannot set headers.
+      description: For clients that cannot set headers, such as `EventSource`.
     SplunkToken:
       type: apiKey
       in: header
@@ -2051,14 +1554,14 @@ components:
     From:
       name: from
       in: query
-      description: 'Start time: relative (`-1h`, `-7d`, `-1d@d`), `now`, or ISO 8601'
+      description: 'Start time, inclusive: relative (`-1h`, `-7d`, `-1d@d`), `now`, or absolute (`2026-11-17T08:00:00Z`, `2026-11-17`)'
       schema:
         type: string
       example: '-1h'
     To:
       name: to
       in: query
-      description: End time, same formats as `from`
+      description: End time, exclusive; same formats as `from`
       schema:
         type: string
     JobID:
@@ -2067,7 +1570,7 @@ components:
       required: true
       schema:
         type: string
-      example: qry_0f8eeb0e72818e85
+      example: qry_2d2d123959b57199
     ESIndex:
       name: index
       in: path
@@ -2086,22 +1589,10 @@ components:
       required: true
       schema:
         type: string
-    MsgField:
-      name: _msg_field
-      in: query
-      description: Document field to store as `_raw` instead of the whole document
-      schema:
-        type: string
-    TimeField:
-      name: _time_field
-      in: query
-      description: Document field to read the event time from (default `@timestamp`)
-      schema:
-        type: string
     SplunkChannel:
       name: X-Splunk-Request-Channel
       in: header
-      description: When set, events are flushed before the response and an `ackId` is returned
+      description: When set, the events are durable before the response and an `ackId` is returned
       schema:
         type: string
 
@@ -2155,25 +1646,12 @@ components:
                   message: 'semantic error at line 1, column 50: field status not found (available fields: n, host)'
                   position: {line: 1, column: 50}
                   suggestion: 'available fields: n, host'
-            type:
-              summary: TYPE_ERROR
-              value:
-                error:
-                  code: TYPE_ERROR
-                  message: 'type error at line 1, column 21: expected a boolean expression, got int'
-                  position: {line: 1, column: 21}
-            planning:
-              summary: PLANNING_ERROR
-              value:
-                error:
-                  code: PLANNING_ERROR
-                  message: 'planning error: time range: parse from "yesterday-ish": unable to parse time: "yesterday-ish"'
-            validation:
-              summary: VALIDATION_ERROR
+            format:
+              summary: Unsupported format
               value:
                 error:
                   code: VALIDATION_ERROR
-                  message: unsupported format "csv"; only "json" is supported
+                  message: 'unsupported format "csv"; only "json" is supported'
                   suggestion: Use the default JSON response, or POST /api/v1/query/stream for NDJSON exports.
     UnsupportedQuery:
       description: The query uses PPL that LynxDB does not run
@@ -2181,51 +1659,19 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-          examples:
-            command:
-              summary: UNSUPPORTED_COMMAND
-              value:
-                error:
-                  code: UNSUPPORTED_COMMAND
-                  message: 'unsupported_command error at line 1, column 15: the fieldformat command is not supported: display formatting with prefix and suffix is not implemented; use eval with concat()'
-                  position: {line: 1, column: 15}
-            function:
-              summary: UNSUPPORTED_FUNCTION
-              value:
-                error:
-                  code: UNSUPPORTED_FUNCTION
-                  message: 'unsupported_function error at line 1, column 24: function geoip is not supported: LynxDB has no GeoIP database'
-                  position: {line: 1, column: 24}
-            feature:
-              summary: UNSUPPORTED_FEATURE
-              value:
-                error:
-                  code: UNSUPPORTED_FEATURE
-                  message: 'unsupported_feature error at line 1, column 30: bin bins= is not supported; use span='
-                  position: {line: 1, column: 30}
+          example:
+            error:
+              code: UNSUPPORTED_FEATURE
+              message: 'unsupported_feature error at line 1, column 31: patterns method=brain is not supported; use method=simple_pattern'
+              position: {line: 1, column: 31}
     ExecutionError:
-      description: The query failed while running
+      description: The query failed while running (`EXECUTION_ERROR`)
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-          example:
-            error:
-              code: EXECUTION_ERROR
-              message: 'physical.Build: not supported by the execution engine: earliest ordered by a column other than _time'
-    PoolExhausted:
-      description: The server-wide query memory pool is full
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
-          example:
-            error:
-              code: QUERY_POOL_EXHAUSTED
-              message: query memory pool exhausted
-              suggestion: Wait for other queries to complete, or increase query.global_query_pool_bytes.
     TooManyRequests:
-      description: Concurrency or rate limit reached
+      description: '`query.max_concurrent` queries run, or the per-IP rate limit was hit (`TOO_MANY_REQUESTS`)'
       headers:
         Retry-After:
           schema:
@@ -2234,60 +1680,40 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-          example:
-            error:
-              code: TOO_MANY_REQUESTS
-              message: rate limit exceeded
     ValidationError:
-      description: Invalid request
+      description: A parameter is missing or invalid (`VALIDATION_ERROR`)
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     Unauthorized:
-      description: Missing or invalid credentials
+      description: No credentials (`AUTH_REQUIRED`) or credentials that match no key (`INVALID_TOKEN`)
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-          example:
-            error:
-              code: AUTH_REQUIRED
-              message: 'Authentication required. Provide: Authorization: Bearer <key>'
-              suggestion: Run 'lynxdb login' or set LYNXDB_TOKEN environment variable
     Forbidden:
-      description: The key lacks the required scope or is not a root key
+      description: The key lacks the scope or root right the endpoint needs (`FORBIDDEN`)
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-          example:
-            error:
-              code: FORBIDDEN
-              message: 'This operation requires scope: query (your key has scope: ingest)'
     NotFound:
-      description: Not found
+      description: No such job or key, or authentication is off on an `/auth` route (`NOT_FOUND`)
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-          example:
-            error:
-              code: NOT_FOUND
-              message: job not found
     PayloadTooLarge:
-      description: The body is over a size limit
+      description: The body is over its size limit (`request_body_too_large`, the reason naming the setting), or a body sent without `Content-Length` grows past `ingest.max_body_size` (`INVALID_REQUEST`)
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/ESErrorResponse'
-          example:
-            error:
-              type: request_body_too_large
-              reason: compressed body exceeds limit 33554432
-            status: 413
-    Backpressure:
-      description: Ingest is saturated or the server is stopping
+            oneOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - $ref: '#/components/schemas/ESErrorResponse'
+    ShuttingDown:
+      description: The server is stopping (`SHUTTING_DOWN`)
       headers:
         Retry-After:
           schema:
@@ -2296,120 +1722,80 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-          example:
-            error:
-              code: BACKPRESSURE
-              message: 'ingest backpressure: compaction falling behind'
-    IngestAccepted:
-      description: Events stored
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/IngestResponse'
-          example:
-            data: {accepted: 2, failed: 0}
     ESBulkResult:
-      description: Bulk result in Elasticsearch format
+      description: Per-item results; `errors` is true when any item failed
+      headers:
+        X-Elastic-Product:
+          schema:
+            type: string
+            enum: [Elasticsearch]
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ESBulkResponse'
           example:
-            took: 14
+            took: 11
             errors: false
             items:
-              - index: {_id: 7e09be76021487a477741b2e, _index: logs, status: 201, result: created}
-              - create: {_id: a7a8e87ecb20d263fe897b43, _index: logs, status: 201, result: created}
+              - index: {_id: 6d9b0922f5d2a1dc62c2e0cb, _index: logs, status: 201, result: created}
+              - create: {_id: a69dde78334e9ebc64b0a249, _index: logs, status: 201, result: created}
     ESError:
-      description: Elasticsearch-format error
+      description: An Elasticsearch-style error
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/ESErrorResponse'
-          example:
-            error:
-              type: content_type_exception
-              reason: bulk endpoint requires application/x-ndjson or application/json
-            status: 400
-    ESClusterInfo:
-      description: Elasticsearch-style cluster description
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ESClusterInfo'
-          example:
-            name: lynxdb-host1-90011
-            cluster_name: lynxdb
-            cluster_uuid: Lp9Zztp3164yLH-aHknLAn
-            version:
-              number: 8.15.0
-              build_flavor: default
-              build_type: tarball
-              build_hash: lynxdb
-              build_date: '2025-01-01T00:00:00.000Z'
-              build_snapshot: false
-              lucene_version: 9.7.0
-              minimum_wire_compatibility_version: 7.17.0
-              minimum_index_compatibility_version: 7.0.0
-            tagline: You Know, for Logs
     ESStub:
-      description: Fixed Elasticsearch-style response
+      description: A fixed Elasticsearch-shaped response
       content:
         application/json:
           schema:
             type: object
-            additionalProperties: true
     ESEmptyArray:
-      description: Empty JSON array
+      description: An empty array
       content:
         application/json:
           schema:
             type: array
             items: {}
-            maxItems: 0
     ESAcknowledged:
-      description: Acknowledged without storing anything
+      description: '`{"acknowledged": true}`'
       content:
         application/json:
-          example:
-            acknowledged: true
+          schema:
+            type: object
+            properties:
+              acknowledged:
+                type: boolean
     ESUnsupported:
-      description: Unsupported Elasticsearch management endpoint
+      description: '`{"error": "unsupported Elasticsearch management endpoint", "status": 501}`'
       content:
         application/json:
-          example:
-            error: unsupported Elasticsearch management endpoint
-            status: 501
+          schema:
+            type: object
     HECSuccess:
-      description: Events accepted
+      description: The events are stored
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/HECResponse'
           example:
-            text: Success
             code: 0
+            text: Success
     HECUnauthorized:
-      description: Missing or invalid Splunk token
+      description: '`{"text": "Token is required", "code": 2}` or `{"text": "Invalid token", "code": 3}`'
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/HECResponse'
-          example:
-            text: Token is required
-            code: 2
     HECDisabled:
-      description: '`ingest.splunk_hec.enabled` is false'
+      description: '`ingest.splunk_hec.enabled` is false: `{"text": "HEC is disabled", "code": 4}`'
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/HECResponse'
-          example:
-            text: HEC is disabled
-            code: 4
 
   schemas:
-
     ErrorResponse:
       type: object
       required: [error]
@@ -2430,19 +1816,15 @@ components:
                 - UNSUPPORTED_FEATURE
                 - EXECUTION_ERROR
                 - QUERY_TOO_LARGE
-                - QUERY_MEMORY_EXCEEDED
-                - QUERY_POOL_EXHAUSTED
                 - TOO_MANY_REQUESTS
                 - VALIDATION_ERROR
                 - INVALID_JSON
                 - INVALID_REQUEST
-                - INVALID_QUERY
                 - AUTH_REQUIRED
                 - INVALID_TOKEN
                 - FORBIDDEN
                 - NOT_FOUND
                 - LAST_ROOT_KEY
-                - BACKPRESSURE
                 - SHUTTING_DOWN
                 - INTERNAL_ERROR
             message:
@@ -2455,15 +1837,6 @@ components:
               type: array
               items:
                 type: string
-              description: Tokens the parser would have accepted (syntax errors)
-
-    BareError:
-      type: object
-      required: [error]
-      properties:
-        error:
-          type: string
-
     ESErrorResponse:
       type: object
       properties:
@@ -2476,7 +1849,6 @@ components:
               type: string
         status:
           type: integer
-
     Position:
       type: object
       properties:
@@ -2484,32 +1856,34 @@ components:
           type: integer
         column:
           type: integer
-
     DataObject:
       type: object
       properties:
         data:
           type: object
-          additionalProperties: true
-
-    # Query
-
+    Meta:
+      type: object
+      properties:
+        took_ms:
+          type: number
+        query_id:
+          type: string
+        rows:
+          type: integer
+          description: Rows the query produced, before `offset` and `limit`
     QueryRequest:
       type: object
       properties:
         q:
           type: string
-          description: The PPL query. Required unless `query` is set
-          example: 'source=main status>=500 | stats count() as errors by host'
+          description: The PPL query; required unless `query` is set
         query:
           type: string
           description: Alias for `q`
         from:
           type: string
-          description: 'Start time: relative (`-1h`, `-7d`, `-1d@d`), `now`, or ISO 8601. Omit for no lower bound'
         to:
           type: string
-          description: End time, same formats as `from`
         earliest:
           type: string
           description: Alias for `from`
@@ -2518,44 +1892,23 @@ components:
           description: Alias for `to`
         limit:
           type: integer
-          default: 1000
-          maximum: 50000
-          description: Rows to return (`query.default_result_limit`, capped at `query.max_result_limit`)
+          description: Default `query.default_result_limit` (1000), capped at `query.max_result_limit` (50000)
         offset:
           type: integer
-          default: 0
         wait:
           type: number
           nullable: true
-          description: Absent or `null` for sync, `0` for async, `N` for hybrid
-        profile:
-          type: string
-          enum: [basic, full, trace]
-          description: '`trace` adds per-segment read details to `meta.stats.segment_details`'
+          description: Absent or null for sync, 0 for async, N seconds for hybrid
         format:
           type: string
           enum: [json]
-        lint:
-          type: boolean
-          default: true
-          description: '`false` turns off advisory lints'
-        suggestions:
-          type: boolean
-          default: true
-          description: '`false` turns off advisory suggestions'
-        lint_limit:
-          type: integer
-          default: 5
-        lint_full:
-          type: boolean
-          default: false
-
+          description: '`json` or empty. Any other value is a `400 VALIDATION_ERROR`'
     QueryStreamRequest:
       type: object
+      description: '`limit`, `offset`, `wait`, `profile`, and `format` are rejected with `400 VALIDATION_ERROR`.'
       properties:
         q:
           type: string
-          description: The PPL query
         query:
           type: string
         from:
@@ -2566,10 +1919,8 @@ components:
           type: string
         latest:
           type: string
-
     EventsResult:
       type: object
-      required: [type, events, total, has_more]
       properties:
         type:
           type: string
@@ -2578,16 +1929,12 @@ components:
           type: array
           items:
             type: object
-            additionalProperties: true
         total:
           type: integer
-          description: Events produced before `offset` and `limit`
         has_more:
           type: boolean
-
     AggregateResult:
       type: object
-      required: [type, columns, rows, total_rows, has_more]
       properties:
         type:
           type: string
@@ -2596,7 +1943,6 @@ components:
           type: array
           items:
             type: string
-          description: Built-in fields first, then the other columns alphabetically
         rows:
           type: array
           items:
@@ -2604,198 +1950,30 @@ components:
             items: {}
         total_rows:
           type: integer
-          description: Rows before `offset` and `limit`
         has_more:
           type: boolean
-
     QueryResponse:
       type: object
-      required: [data]
       properties:
         data:
           oneOf:
             - $ref: '#/components/schemas/EventsResult'
             - $ref: '#/components/schemas/AggregateResult'
         meta:
-          $ref: '#/components/schemas/QueryMeta'
-
-    QueryMeta:
-      type: object
-      properties:
-        took_ms:
-          type: number
-        scanned:
-          type: integer
-        query_id:
-          type: string
-        segments_errored:
-          type: integer
-        stats:
-          $ref: '#/components/schemas/QueryStats'
-        explain:
-          type: object
-          properties:
-            source_scope:
-              type: object
-              properties:
-                selected:
-                  type: array
-                  items:
-                    type: string
-                count:
-                  type: integer
-            segments:
-              type: object
-              additionalProperties:
-                type: integer
-            candidate_rows:
-              type: integer
-            regex_engine:
-              type: string
-            literal_extraction:
-              type: boolean
-            wall_clock_ms:
-              type: number
-            scanned_bytes:
-              type: integer
-        warnings:
-          type: array
-          items:
-            type: string
-        lints:
-          type: array
-          items:
-            $ref: '#/components/schemas/QueryLint'
-        suggestions:
-          type: array
-          items:
-            type: object
-            properties:
-              text:
-                type: string
-              reason:
-                type: string
-              message:
-                type: string
-        rewrites:
-          type: array
-          items:
-            type: object
-            properties:
-              before:
-                type: string
-              after:
-                type: string
-              reason:
-                type: string
-
-    QueryLint:
-      type: object
-      properties:
-        code:
-          type: string
-          enum: [ALL_SOURCES_HIGH_VOLUME, BROAD_SEARCH]
-        message:
-          type: string
-        reason:
-          type: string
-        severity:
-          type: string
-        position:
-          type: integer
-
-    QueryStats:
-      type: object
-      additionalProperties: true
-      properties:
-        rows_scanned:
-          type: integer
-        rows_returned:
-          type: integer
-        matched_rows:
-          type: integer
-        segments_total:
-          type: integer
-        segments_scanned:
-          type: integer
-        segments_skipped_index:
-          type: integer
-        segments_skipped_time:
-          type: integer
-        segments_skipped_stats:
-          type: integer
-        segments_skipped_bloom:
-          type: integer
-        segments_skipped_range:
-          type: integer
-        indexes_used:
-          type: array
-          items:
-            type: string
-        parse_ms:
-          type: number
-        optimizer_rules:
-          type: array
-          items:
-            type: object
-            properties:
-              name:
-                type: string
-              count:
-                type: integer
-        processed_bytes:
-          type: integer
-        peak_memory_bytes:
-          type: integer
-        spilled_to_disk:
-          type: boolean
-        cpu_user_ms:
-          type: number
-        cpu_sys_ms:
-          type: number
-        cache_hit:
-          type: boolean
-        segment_details:
-          type: array
-          items:
-            type: object
-            additionalProperties: true
-
+          $ref: '#/components/schemas/Meta'
     JobProgress:
       type: object
       properties:
-        phase:
+        status:
           type: string
-          enum: [parsing, scanning_buffer, filtering_segments, scanning_segments, executing_pipeline]
-        segments_total:
-          type: integer
-        segments_scanned:
-          type: integer
-        segments_dispatched:
-          type: integer
-        segments_skipped_index:
-          type: integer
-        segments_skipped_time:
-          type: integer
-        segments_skipped_stats:
-          type: integer
-        segments_skipped_bloom:
-          type: integer
-        segments_skipped_range:
-          type: integer
-        buffered_events:
-          type: integer
-        rows_read_so_far:
-          type: integer
+          enum: [running, done, error, canceled]
         elapsed_ms:
-          type: number
-
+          type: integer
     JobHandleResponse:
       type: object
       properties:
         data:
           type: object
-          required: [type, job_id, status]
           properties:
             type:
               type: string
@@ -2808,14 +1986,20 @@ components:
             progress:
               $ref: '#/components/schemas/JobProgress'
         meta:
-          $ref: '#/components/schemas/QueryMeta'
-
+          $ref: '#/components/schemas/Meta'
+      example:
+        data:
+          type: job
+          job_id: qry_2d2d123959b57199
+          status: running
+          progress: {status: running, elapsed_ms: 0}
+        meta:
+          query_id: qry_2d2d123959b57199
     JobResponse:
       type: object
       properties:
         data:
           type: object
-          required: [type, job_id, status]
           properties:
             type:
               type: string
@@ -2833,6 +2017,7 @@ components:
             completed_at:
               type: string
               format: date-time
+              description: When the job is done
             progress:
               $ref: '#/components/schemas/JobProgress'
             results:
@@ -2841,14 +2026,14 @@ components:
                 - $ref: '#/components/schemas/AggregateResult'
             error:
               type: object
+              description: When the job failed or was canceled
               properties:
                 code:
                   type: string
                 message:
                   type: string
         meta:
-          $ref: '#/components/schemas/QueryMeta'
-
+          $ref: '#/components/schemas/Meta'
     JobListResponse:
       type: object
       properties:
@@ -2869,7 +2054,6 @@ components:
                   created_at:
                     type: string
                     format: date-time
-
     CancelJobResponse:
       type: object
       properties:
@@ -2885,13 +2069,11 @@ components:
             completed_at:
               type: string
               format: date-time
-
     ExplainResponse:
       type: object
       properties:
         data:
           type: object
-          required: [is_valid, errors]
           properties:
             is_valid:
               type: boolean
@@ -2912,6 +2094,7 @@ components:
                   type: boolean
                 fields_read:
                   type: array
+                  nullable: true
                   items:
                     type: string
                 search_terms:
@@ -2941,6 +2124,7 @@ components:
                   properties:
                     type:
                       type: string
+                      enum: [single, list, glob, all]
                     sources:
                       type: array
                       items:
@@ -2950,8 +2134,13 @@ components:
                     total_sources_available:
                       type: integer
             execution:
-              $ref: '#/components/schemas/QueryStats'
-
+              type: object
+              description: With `analyze=true`
+              properties:
+                took_ms:
+                  type: number
+                rows:
+                  type: integer
     CompileError:
       type: object
       properties:
@@ -2968,7 +2157,6 @@ components:
             type: string
         suggestion:
           type: string
-
     CatalogResponse:
       type: object
       properties:
@@ -2982,7 +2170,6 @@ components:
               type: array
               items:
                 type: object
-                required: [name, support]
                 properties:
                   name:
                     type: string
@@ -2995,7 +2182,6 @@ components:
               type: array
               items:
                 type: object
-                required: [name, kind, support]
                 properties:
                   name:
                     type: string
@@ -3015,9 +2201,6 @@ components:
                     type: string
                   unsupported:
                     type: string
-
-    # Live and schema
-
     HistogramResponse:
       type: object
       properties:
@@ -3026,7 +2209,7 @@ components:
           properties:
             interval:
               type: string
-              description: Go duration, such as `15m0s`
+              example: 15m0s
             buckets:
               type: array
               items:
@@ -3037,18 +2220,10 @@ components:
                     format: date-time
                   count:
                     type: integer
-                  counts:
-                    type: object
-                    additionalProperties:
-                      type: integer
             total:
               type: integer
         meta:
-          type: object
-          properties:
-            took_ms:
-              type: number
-
+          $ref: '#/components/schemas/Meta'
     FieldsResponse:
       type: object
       properties:
@@ -3062,24 +2237,14 @@ components:
                 properties:
                   name:
                     type: string
-                  type:
-                    type: string
-                    enum: [string, int, float, bool, datetime]
-                  coverage:
-                    type: number
-                    description: Percentage of events with the field, 0 to 100
-                  total_count:
-                    type: integer
-                  top_values:
+                  indexes:
                     type: array
                     items:
-                      type: object
-                      properties:
-                        value:
-                          type: string
-                        count:
-                          type: integer
-
+                      type: string
+      example:
+        data:
+          fields:
+            - {name: status, indexes: [backend, main]}
     FieldValuesResponse:
       type: object
       properties:
@@ -3093,17 +2258,11 @@ components:
               items:
                 type: object
                 properties:
-                  value:
-                    type: string
+                  value: {}
                   count:
                     type: integer
-                  percent:
-                    type: number
-            unique_count:
-              type: integer
-            total_count:
-              type: integer
-
+        meta:
+          $ref: '#/components/schemas/Meta'
     SourcesResponse:
       type: object
       properties:
@@ -3127,49 +2286,25 @@ components:
                   last_event:
                     type: string
                     format: date-time
-
-    # Ingest
-
-    StructuredIngestEvent:
-      type: object
-      required: [event]
-      properties:
-        event:
-          type: string
-          description: Event text, stored in `_raw`
-        time:
-          type: number
-          description: Unix time in seconds
-        source:
-          type: string
-        sourcetype:
-          type: string
-        host:
-          type: string
-        index:
-          type: string
-          description: Target index; `main` when empty
-        fields:
-          type: object
-          additionalProperties: true
-          description: String, number and boolean values are kept
-
-    IngestResponse:
+        meta:
+          $ref: '#/components/schemas/Meta'
+    Index:
       type: object
       properties:
-        data:
-          type: object
-          required: [accepted, failed]
-          properties:
-            accepted:
-              type: integer
-            failed:
-              type: integer
-            truncated:
-              type: boolean
-            warning:
-              type: string
-
+        name:
+          type: string
+        events:
+          type: integer
+        bytes:
+          type: integer
+        parts:
+          type: integer
+        first_event:
+          type: string
+          format: date-time
+        last_event:
+          type: string
+          format: date-time
     IndexesResponse:
       type: object
       properties:
@@ -3179,45 +2314,32 @@ components:
             indexes:
               type: array
               items:
-                type: object
-                properties:
-                  name:
-                    type: string
-                  retention_period:
-                    type: string
-                  replication_factor:
-                    type: integer
-
-    CreateIndexRequest:
-      type: object
-      required: [name]
-      properties:
-        name:
-          type: string
-        retention_days:
-          type: integer
-        replication_factor:
-          type: integer
-
-    CreateIndexResponse:
+                $ref: '#/components/schemas/Index'
+    IngestResponse:
       type: object
       properties:
         data:
           type: object
           properties:
-            name:
+            accepted:
+              type: integer
+            failed:
+              type: integer
+            truncated:
+              type: boolean
+              description: '`/ingest/raw` only: the body was cut off after some events were stored'
+            warning:
               type: string
-            status:
-              type: string
-
+      example:
+        data: {accepted: 3, failed: 0}
     HECEvent:
       type: object
       properties:
+        event:
+          description: Text, or an object stored as its JSON text
         time:
           type: number
-          description: Unix time in seconds
-        event:
-          description: Event text, or an object stored as its JSON text
+          description: Unix seconds
         host:
           type: string
         source:
@@ -3226,11 +2348,9 @@ components:
           type: string
         index:
           type: string
-          description: Stored as `_source` when `source` is empty, else as the field `source_tag`
+          description: Stored as `source_tag`, or as `source` when `source` is empty
         fields:
           type: object
-          additionalProperties: true
-
     HECResponse:
       type: object
       properties:
@@ -3242,7 +2362,6 @@ components:
           type: integer
         skipped_lines:
           type: integer
-
     ESBulkResponse:
       type: object
       properties:
@@ -3259,7 +2378,6 @@ components:
                 $ref: '#/components/schemas/ESBulkItem'
               create:
                 $ref: '#/components/schemas/ESBulkItem'
-
     ESBulkItem:
       type: object
       properties:
@@ -3278,7 +2396,6 @@ components:
               type: string
             reason:
               type: string
-
     ESIndexDocResponse:
       type: object
       properties:
@@ -3288,7 +2405,7 @@ components:
           type: string
         result:
           type: string
-
+          enum: [created]
     ESClusterInfo:
       type: object
       properties:
@@ -3300,12 +2417,12 @@ components:
           type: string
         version:
           type: object
-          additionalProperties: true
+          properties:
+            number:
+              type: string
+              example: 8.15.0
         tagline:
           type: string
-
-    # Server
-
     HealthResponse:
       type: object
       properties:
@@ -3314,12 +2431,9 @@ components:
           properties:
             status:
               type: string
-              enum: [healthy, degraded]
-            degraded:
-              type: boolean
+              enum: [healthy]
             version:
               type: string
-
     StatusResponse:
       type: object
       properties:
@@ -3329,9 +2443,10 @@ components:
             version:
               type: string
             uptime_seconds:
-              type: number
+              type: integer
             health:
               type: string
+              enum: [healthy]
             storage:
               type: object
               properties:
@@ -3342,31 +2457,19 @@ components:
               properties:
                 total:
                   type: integer
-                today:
-                  type: integer
             queries:
               type: object
               properties:
                 active:
                   type: integer
-            tail:
-              type: object
-              properties:
-                active_sessions:
-                  type: integer
-                subscriber_count:
-                  type: integer
-                total_dropped_events:
-                  type: integer
             retention:
               type: object
               properties:
+                policy:
+                  type: string
                 oldest_event:
                   type: string
-            memory:
-              type: object
-              additionalProperties: true
-
+                  format: date-time
     StatsResponse:
       type: object
       properties:
@@ -3374,79 +2477,36 @@ components:
           type: object
           properties:
             uptime_seconds:
-              type: number
+              type: integer
             storage_bytes:
               type: integer
             total_events:
               type: integer
-            events_today:
-              type: integer
             index_count:
               type: integer
-            segment_count:
+            part_count:
               type: integer
-            buffered_events:
-              type: integer
-            sources:
-              type: array
-              items: {}
             oldest_event:
               type: string
-
-    ClusterStatusResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            status:
+              format: date-time
+            newest_event:
               type: string
-            node_count:
-              type: integer
-            index_count:
-              type: integer
-            segment_count:
-              type: integer
-            buffered_size:
-              type: integer
-            buffered_events:
-              type: integer
-            data_dir:
-              type: string
-
-    CompactionHistoryResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            compactions:
+              format: date-time
+            indexes:
               type: array
               items:
-                type: object
-                additionalProperties: true
-            count:
-              type: integer
-
-    CacheStatsResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            hits:
-              type: integer
-            misses:
-              type: integer
-            hit_rate:
-              type: number
-            entries:
-              type: integer
-            size_bytes:
-              type: integer
-            evictions:
-              type: integer
-
+                $ref: '#/components/schemas/Index'
+            jobs:
+              type: object
+              properties:
+                running:
+                  type: integer
+                done:
+                  type: integer
+                error:
+                  type: integer
+                canceled:
+                  type: integer
     ConfigPatchResponse:
       type: object
       properties:
@@ -3455,14 +2515,10 @@ components:
           properties:
             config:
               type: object
-              additionalProperties: true
             restart_required:
               type: array
               items:
                 type: string
-
-    # Auth
-
     CreateKeyRequest:
       type: object
       required: [name]
@@ -3475,10 +2531,9 @@ components:
           default: full
         expires_in:
           type: string
-          description: Go duration (`720h`), or days, weeks or years (`30d`, `4w`, `1y`); `never` for no expiry
+          description: Go duration (`720h`), `30d`, `4w`, `1y`, or `never`
         description:
           type: string
-
     APIKey:
       type: object
       properties:
@@ -3490,12 +2545,12 @@ components:
           type: string
         scope:
           type: string
-          enum: [ingest, query, admin, full]
         description:
           type: string
         expires_at:
           type: string
           format: date-time
+          description: '`0001-01-01T00:00:00Z` for a key that does not expire'
         is_root:
           type: boolean
         created_at:
@@ -3504,34 +2559,47 @@ components:
         last_used_at:
           type: string
           format: date-time
-
-    CreatedKey:
-      allOf:
-        - $ref: '#/components/schemas/APIKey'
-        - type: object
-          properties:
-            token:
-              type: string
-              description: Shown once
-            api_key:
-              type: string
-              description: '`id:token`, for the `ApiKey` scheme'
-
-    RotateRootResult:
+    CreatedKeyResponse:
       type: object
       properties:
-        id:
-          type: string
-        name:
-          type: string
-        prefix:
-          type: string
-        token:
-          type: string
-        is_root:
-          type: boolean
-        revoked_key_id:
-          type: string
-        created_at:
-          type: string
-          format: date-time
+        data:
+          allOf:
+            - $ref: '#/components/schemas/APIKey'
+            - type: object
+              properties:
+                token:
+                  type: string
+                api_key:
+                  type: string
+                  description: '`id:token`, for the `ApiKey` scheme'
+    KeyListResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            keys:
+              type: array
+              items:
+                $ref: '#/components/schemas/APIKey'
+    RotateRootResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            id:
+              type: string
+            name:
+              type: string
+            prefix:
+              type: string
+            token:
+              type: string
+            is_root:
+              type: boolean
+            created_at:
+              type: string
+              format: date-time
+            revoked_key_id:
+              type: string

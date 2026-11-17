@@ -18,22 +18,30 @@ func TestE2E_QueryStream_NDJSON_DeliversEvents(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	var count int
+	var rows []map[string]interface{}
 	meta, err := h.Client().QueryStream(ctx, client.QueryRequest{
-		Q:     `source=idx_ssh | head 10`,
-		Limit: 10,
+		Q: `source=idx_ssh | head 10`,
 	}, func(msg json.RawMessage) error {
-		count++
+		var row map[string]interface{}
+		if err := json.Unmarshal(msg, &row); err != nil {
+			return err
+		}
+		rows = append(rows, row)
 		return nil
 	})
 	if err != nil {
 		t.Fatalf("QueryStream: %v", err)
 	}
-	if count == 0 {
-		t.Error("expected to receive at least 1 streamed event")
+	if len(rows) != 10 {
+		t.Fatalf("expected 10 streamed events, got %d", len(rows))
 	}
-	if meta != nil {
-		t.Logf("stream meta: total=%d, scanned=%d, took_ms=%d", meta.Total, meta.Scanned, meta.TookMS)
+	if meta == nil || meta.Total != 10 {
+		t.Errorf("expected stream meta total=10, got %+v", meta)
+	}
+	// head without sort follows time order: the log starts at Dec 10 06:55:46.
+	want := "Dec 10 06:55:46 LabSZ sshd[24200]: reverse mapping checking getaddrinfo for ns.marryaldkfaczcz.com [173.234.31.186] failed - POSSIBLE BREAK-IN ATTEMPT!"
+	if rows[0]["_raw"] != want {
+		t.Errorf("expected the first log line, got %v", rows[0]["_raw"])
 	}
 }
 
@@ -51,12 +59,10 @@ func TestE2E_QueryStream_EmptyResult_ZeroTotal(t *testing.T) {
 		return nil
 	})
 	if err != nil {
-		// Some implementations may return an error for nonexistent index.
-		t.Logf("QueryStream on nonexistent index returned error: %v", err)
-		return
+		t.Fatalf("QueryStream on a nonexistent index: %v", err)
 	}
-	if meta != nil && meta.Total != 0 {
-		t.Errorf("expected total=0 for empty result, got %d", meta.Total)
+	if meta == nil || meta.Total != 0 {
+		t.Errorf("expected stream meta total=0, got %+v", meta)
 	}
 	if count != 0 {
 		t.Errorf("expected 0 streamed events, got %d", count)

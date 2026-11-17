@@ -1,11 +1,11 @@
 ---
 title: Kubernetes Deployment
-description: Run LynxDB on Kubernetes as a StatefulSet with a persistent volume, a ConfigMap, probes, S3 credentials and Prometheus scraping.
+description: Run LynxDB on Kubernetes as a StatefulSet with a persistent volume, a ConfigMap, probes and Prometheus scraping.
 ---
 
 # Kubernetes Deployment
 
-LynxDB runs as one container from `ghcr.io/lynxbase/lynxdb`. A StatefulSet with a PersistentVolumeClaim gives it stable storage for parts, API keys and the PID file.
+LynxDB runs as one container from `ghcr.io/lynxbase/lynxdb`. A StatefulSet with a PersistentVolumeClaim gives it stable storage for its indexes, API keys and the PID file.
 
 ## Single-Node StatefulSet
 
@@ -26,8 +26,6 @@ data:
 
     query:
       max_concurrent: 32
-      max_query_runtime: "10m"
-      spill_dir: "/data/spill"
 
     ingest:
       otlp:
@@ -130,7 +128,7 @@ kubectl -n lynxdb logs lynxdb-0 | grep -A2 'Generated root key'
 Notes:
 
 - `/health` needs no API key, so the probes work with auth on. With TLS on, set `scheme: HTTPS` on both probes.
-- The automatic memory pool is 40% of the container's memory limit. Set `server.total_memory_pool_bytes` to change it.
+- Every index lives in its own directory on the volume; the server opens them all at startup.
 - On the first start with auth on, the root key is printed once to the pod log. Keys live in the volume under `/data/auth`.
 - The image has no shell. Use `kubectl -n lynxdb exec lynxdb-0 -- lynxdb health` or `kubectl -n lynxdb port-forward svc/lynxdb 3100` to reach the server.
 - The OTLP listener has no auth; drop the `otlp-http` port, or keep it on an internal Service only, if the cluster network is shared.
@@ -161,56 +159,7 @@ spec:
                   number: 3100
 ```
 
-Buffering off and a long read timeout keep live tail (SSE) and NDJSON streaming responses flowing. The body size matches `ingest.limits.max_compressed_body_bytes`.
-
-## S3 Tiering
-
-Static credentials from a Secret:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: lynxdb-s3-credentials
-  namespace: lynxdb
-type: Opaque
-stringData:
-  access-key-id: "AKIAIOSFODNN7EXAMPLE"
-  secret-access-key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-```
-
-```yaml
-# container spec
-env:
-  - name: LYNXDB_STORAGE_S3_BUCKET
-    value: "example-lynxdb-logs"
-  - name: LYNXDB_STORAGE_S3_REGION
-    value: "us-east-1"
-  - name: AWS_ACCESS_KEY_ID
-    valueFrom:
-      secretKeyRef:
-        name: lynxdb-s3-credentials
-        key: access-key-id
-  - name: AWS_SECRET_ACCESS_KEY
-    valueFrom:
-      secretKeyRef:
-        name: lynxdb-s3-credentials
-        key: secret-access-key
-```
-
-On EKS, use IAM Roles for Service Accounts instead; the AWS SDK picks up the web identity token:
-
-```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: lynxdb
-  namespace: lynxdb
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/lynxdb-s3
-```
-
-Add `serviceAccountName: lynxdb` to the pod spec. See [S3/MinIO Storage Backend](./s3-setup.md) for the IAM policy.
+Buffering off and a long read timeout keep job progress streams (SSE) and NDJSON exports flowing. The body size matches `ingest.limits.max_compressed_body_bytes`.
 
 ## Prometheus
 
@@ -231,50 +180,9 @@ spec:
       path: /metrics
       interval: 30s
 ```
-## Cluster Mode
-
-:::caution
-`lynxdb server` does not start the cluster runtime; see [Cluster Settings](../configuration/cluster.md). Pods configured as below each serve only their own data.
-:::
-
-Cluster nodes need stable names and a headless Service on the gRPC port. The pod name maps to the node ID:
-
-```yaml
-# StatefulSet "lynxdb" with serviceName: lynxdb-headless and replicas: 3
-env:
-  - name: LYNXDB_CLUSTER_ENABLED
-    value: "true"
-  - name: LYNXDB_CLUSTER_NODE_ID
-    valueFrom:
-      fieldRef:
-        fieldPath: metadata.name
-  - name: LYNXDB_CLUSTER_ROLES
-    value: "meta,ingest,query"
-  - name: LYNXDB_CLUSTER_SEEDS
-    value: "lynxdb-0.lynxdb-headless.lynxdb.svc.cluster.local:9400,lynxdb-1.lynxdb-headless.lynxdb.svc.cluster.local:9400,lynxdb-2.lynxdb-headless.lynxdb.svc.cluster.local:9400"
-ports:
-  - name: http
-    containerPort: 3100
-  - name: grpc
-    containerPort: 9400
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: lynxdb-headless
-  namespace: lynxdb
-spec:
-  clusterIP: None
-  selector:
-    app: lynxdb
-  ports:
-    - name: grpc
-      port: 9400
-```
 
 ## Next Steps
 
 - [Docker Deployment](./docker.md)
-- [S3/MinIO Storage Backend](./s3-setup.md)
 - [TLS and Authentication](./tls-auth.md)
 - [Monitoring](../operations/monitoring.md)

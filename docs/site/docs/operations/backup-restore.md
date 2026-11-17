@@ -1,50 +1,69 @@
 ---
 title: Backup and Restore
-description: Backup and restore strategies for LynxDB -- filesystem snapshots, S3-based backups, and disaster recovery.
+description: Back up and restore LynxDB -- the data directory layout, consistent copies of a stopped server or a filesystem snapshot, and restoring whole indexes.
 ---
 
 # Backup and Restore
 
-LynxDB stores its data in the `data_dir` directory, plus the S3 bucket when tiering is enabled. Backups are simple because parts are immutable, self-contained files and there is no distributed state to coordinate.
+LynxDB keeps everything it stores in the `data_dir` directory, one subdirectory of `indexes/` per index. A backup is a copy of that directory taken at one moment: from a stopped server, or from an atomic filesystem snapshot.
 
 ## What to Back Up
 
 | Component | Location | Contains |
 |-----------|----------|----------|
-| Data directory | `data_dir` (e.g., `/var/lib/lynxdb`) | Part files, indexes, caches, compaction manifests, the `FORMAT` marker, and `auth/keys.json` (API keys when auth is enabled) |
+| Indexes | `<data_dir>/indexes/<index>/` | The index's `MANIFEST`, `MANIFEST.end` and `.part` files |
+| API keys | `<data_dir>/auth/keys.json` | Keys, when authentication is on |
+| TLS certificate | `<data_dir>/tls/` | The self-signed certificate and key, when `--tls` generated them |
 | Config file | `/etc/lynxdb/config.yaml` or `~/.config/lynxdb/config.yaml` | Server configuration |
-| CLI credentials | `~/.config/lynxdb/credentials.yaml` on each client machine | Tokens saved by `lynxdb login` |
+| CLI credentials | `credentials.yaml` in the user config directory of each client | Keys saved by `lynxdb login` |
+
+`<data_dir>/lynxdb.pid` holds the PID of the running server and needs no backup.
+
+### Inside an index directory
+
+```text
+/var/lib/lynxdb/main/
+├── 0000000000000000.part
+├── 0000000000000001.part
+├── MANIFEST
+└── MANIFEST.end
+```
+
+- A `.part` file is immutable once written. New events and merges add part files; a merge then deletes the parts it replaced.
+- `MANIFEST` is an append-only log of the changes to the set of live parts. A change is visible only after its record is on disk.
+- `MANIFEST.end` records how far the manifest reached, so that a manifest that lost records is detected.
+
+When a store opens, it reads the manifest, opens every part it names, and deletes the files no record names: temporary files of writes that did not finish, and parts a merge replaced. A part file that no record names while the manifest may have lost records is moved to `lost+found/` in the index directory instead of being deleted. A manifest that names a missing or damaged part, or that is shorter than its end mark, stops the server at startup and leaves every file as it was.
+
+Because merges delete part files while the server runs, a file-by-file copy of a running server can hold a manifest that names parts the copy lacks. Copy a stopped server, or a snapshot.
 
 ## Single-Node Backup
 
-### Method 1: Stop-and-Copy (Simplest)
+### Stop and Copy
 
-Stop the server, copy the data directory, restart:
+Stopping the server writes the events it holds in memory and closes every index:
 
 ```bash
-# Stop the server
 sudo systemctl stop lynxdb
 
-# Create backup
 tar czf /backups/lynxdb-$(date +%Y%m%d-%H%M%S).tar.gz \
   /var/lib/lynxdb \
   /etc/lynxdb/config.yaml
 
-# Restart
 sudo systemctl start lynxdb
 ```
 
-Downtime: seconds to minutes depending on data size. This is the safest method because it guarantees a consistent snapshot.
+The server is down for the time of the copy.
 
-### Method 2: Filesystem Snapshot (Zero Downtime)
+### Filesystem Snapshot
 
-If your filesystem supports snapshots (LVM, ZFS, Btrfs, EBS snapshots):
+A snapshot that captures the whole data directory at one instant (LVM, ZFS, Btrfs, cloud volume snapshots) is a consistent copy of a running server. It is what the server would find after a power cut: the events of the last flush interval may be missing (see [Durability](#durability)).
 
 ```bash
 # LVM snapshot
 sudo lvcreate --snapshot --name lynxdb-snap --size 10G /dev/vg0/lynxdb
 sudo mount /dev/vg0/lynxdb-snap /mnt/lynxdb-snap
-tar czf /backups/lynxdb-$(date +%Y%m%d-%H%M%S).tar.gz /mnt/lynxdb-snap
+tar czf /backups/lynxdb-$(date +%Y%m%d-%H%M%S).tar.gz -C /mnt/lynxdb-snap .
 sudo umount /mnt/lynxdb-snap
 sudo lvremove -f /dev/vg0/lynxdb-snap
 ```
@@ -55,159 +74,108 @@ sudo zfs snapshot tank/lynxdb@backup-$(date +%Y%m%d)
 sudo zfs send tank/lynxdb@backup-$(date +%Y%m%d) > /backups/lynxdb-snapshot.zfs
 ```
 
-```bash
-# AWS EBS snapshot
-VOLUME_ID=$(aws ec2 describe-volumes \
-  --filters "Name=attachment.instance-id,Values=$(ec2-metadata -i | cut -d' ' -f2)" \
-  --query 'Volumes[?Attachments[?Device==`/dev/xvdf`]].VolumeId' \
-  --output text)
-aws ec2 create-snapshot --volume-id $VOLUME_ID --description "lynxdb-backup-$(date +%Y%m%d)"
-```
+The snapshot must cover the whole data directory; snapshots of separate volumes are not taken at the same instant.
 
-### Method 3: rsync (Incremental)
+### Incremental Copies with rsync
 
-For incremental backups of a running server. Note: this may capture temporary files or a part write mid-flight, so stop-and-copy or a filesystem snapshot is still safer:
+Part files never change once written, so `rsync` copies only the parts added since the last run. Run it against a stopped server or a mounted snapshot, not the live directory:
 
 ```bash
-rsync -avz --delete \
-  /var/lib/lynxdb/ \
-  /backups/lynxdb-latest/
-```
-
-Set up as a cron job:
-
-```bash
-# /etc/cron.d/lynxdb-backup
-0 2 * * * root rsync -avz --delete /var/lib/lynxdb/ /backups/lynxdb-latest/ 2>&1 | logger -t lynxdb-backup
-```
-
-## S3-Based Backup
-
-With S3 tiering enabled, segments that moved to the warm or cold tier live in the S3 bucket, and their local files are deleted. A complete backup therefore covers both:
-
-- the data directory: hot parts, the `FORMAT` marker, manifests and the `auth/` directory with API keys
-- the S3 bucket: tiered segments
-- config files
-
-### S3 Bucket Backup
-
-Turn on versioning, and replication to a second bucket, for disaster recovery:
-
-```bash
-# Turn on versioning (required for replication)
-aws s3api put-bucket-versioning \
-  --bucket my-lynxdb-logs \
-  --versioning-configuration Status=Enabled
-
-# Set up cross-region replication
-aws s3api put-bucket-replication \
-  --bucket my-lynxdb-logs \
-  --replication-configuration '{
-    "Role": "arn:aws:iam::123456789012:role/replication-role",
-    "Rules": [{
-      "Status": "Enabled",
-      "Destination": {
-        "Bucket": "arn:aws:s3:::my-lynxdb-logs-dr",
-        "StorageClass": "STANDARD_IA"
-      }
-    }]
-  }'
+rsync -a --delete /mnt/lynxdb-snap/ /backups/lynxdb-latest/
 ```
 
 ### Backup Script
 
 ```bash
 #!/bin/bash
-# lynxdb-backup.sh -- full backup for single-node LynxDB
-
+# lynxdb-backup.sh -- stop, copy, start
 set -euo pipefail
 
 BACKUP_DIR="/backups/lynxdb"
 DATA_DIR="/var/lib/lynxdb"
 CONFIG="/etc/lynxdb/config.yaml"
-DATE=$(date +%Y%m%d-%H%M%S)
-BACKUP_FILE="${BACKUP_DIR}/lynxdb-${DATE}.tar.gz"
+BACKUP_FILE="${BACKUP_DIR}/lynxdb-$(date +%Y%m%d-%H%M%S).tar.gz"
 
 mkdir -p "$BACKUP_DIR"
 
-echo "Starting LynxDB backup..."
+systemctl stop lynxdb
+trap 'systemctl start lynxdb' EXIT
+tar czf "$BACKUP_FILE" "$DATA_DIR" "$CONFIG"
 
-# Create backup (server continues running)
-tar czf "$BACKUP_FILE" \
-  "$DATA_DIR" \
-  "$CONFIG" \
-  2>/dev/null
+echo "Backup complete: $BACKUP_FILE ($(du -h "$BACKUP_FILE" | cut -f1))"
 
-BACKUP_SIZE=$(du -h "$BACKUP_FILE" | cut -f1)
-echo "Backup complete: $BACKUP_FILE ($BACKUP_SIZE)"
-
-# Rotate old backups (keep last 7)
+# Keep the last 7 backups
 ls -t "${BACKUP_DIR}"/lynxdb-*.tar.gz | tail -n +8 | xargs -r rm
-echo "Old backups rotated."
 ```
+
+## Durability
+
+An ingest request is answered once its events are in the server's buffers. The store writes buffered events to part files within `storage.flush_interval` (one second by default) and syncs them before a query, a stats request or a Splunk HEC acknowledgement. Events that were answered but not yet written are lost if the process or the machine stops abruptly; shippers that retry unacknowledged batches send them again. A clean stop writes every buffered event.
 
 ## Restoring from Backup
 
-### Single-Node Restore
+### Whole Server
 
 ```bash
-# Stop the server
 sudo systemctl stop lynxdb
-
-# Remove existing data
 sudo rm -rf /var/lib/lynxdb/*
-
-# Extract backup
 sudo tar xzf /backups/lynxdb-20260301-020000.tar.gz -C /
-
-# Fix ownership
 sudo chown -R lynxdb:lynxdb /var/lib/lynxdb
-
-# Start the server
 sudo systemctl start lynxdb
 
-# Verify
 lynxdb health
 lynxdb status
 ```
 
+### One Index
+
+Every index lives in its own directory, so one index can be restored on its own. Copy the whole directory, from one backup:
+
+```bash
+sudo systemctl stop lynxdb
+sudo rm -rf /var/lib/lynxdb/web
+sudo tar xzf /backups/lynxdb-20260301-020000.tar.gz -C / var/lib/lynxdb/web
+sudo chown -R lynxdb:lynxdb /var/lib/lynxdb/web
+sudo systemctl start lynxdb
+```
+
+The server opens every index directory it finds at startup, so an index directory copied from another server appears under its directory name.
+
 ### Restore to a Different Server
 
 ```bash
-# Copy backup to new server
 scp /backups/lynxdb-20260301-020000.tar.gz new-server:/tmp/
 
-# On new server
 ssh new-server
 sudo tar xzf /tmp/lynxdb-20260301-020000.tar.gz -C /
 sudo chown -R lynxdb:lynxdb /var/lib/lynxdb
 sudo systemctl start lynxdb
 ```
 
-The restored server needs the same LynxDB release (or a later one that reads the backup's segment format; see [Upgrading](/docs/operations/upgrading#storage-format)).
-
 ## Testing Backups
 
-Periodically verify that backups can be restored:
+Restore a backup into a scratch container and compare its counts with the source:
 
 ```bash
-# Spin up a test instance
-docker run -d \
-  --name lynxdb-restore-test \
+mkdir -p /tmp/lynxdb-restore
+tar xzf /backups/lynxdb-20260301-020000.tar.gz -C /tmp/lynxdb-restore
+
+docker run -d --name lynxdb-restore-test \
   -p 3101:3100 \
-  -v /backups/lynxdb-latest:/data \
+  -v /tmp/lynxdb-restore/var/lib/lynxdb:/data \
   -e LYNXDB_LISTEN=0.0.0.0:3100 \
   -e LYNXDB_DATA_DIR=/data \
+  -e LYNXDB_RETENTION=0 \
   ghcr.io/lynxbase/lynxdb:latest
 
-# Verify data is intact
 curl -s localhost:3101/api/v1/stats | jq .data.total_events
 docker rm -f lynxdb-restore-test
 ```
 
+`LYNXDB_RETENTION=0` keeps the test server from deleting partitions that have expired since the backup.
+
 ## Next Steps
 
 - [Retention Policies](/docs/operations/retention) -- manage data lifecycle
-- [S3 Storage Setup](/docs/deployment/s3-setup) -- S3-based storage
 - [Upgrading](/docs/operations/upgrading) -- safe upgrade procedures
 - [Troubleshooting](/docs/operations/troubleshooting) -- diagnose issues

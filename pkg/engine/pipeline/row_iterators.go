@@ -1,18 +1,15 @@
 package pipeline
 
-// Row-level streaming iterators (filter, project, tail) used by the physical
-// planner, plus batch/row collection helpers and the IndexStore abstractions
-// used by the server execution paths.
+// Row-level streaming iterators (filter, project) used by the physical
+// planner, plus batch/row collection helpers.
 
 import (
 	"context"
 	"errors"
 	"path"
 	"strings"
-	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -20,8 +17,6 @@ type FilterIterator struct {
 	child     Iterator
 	predicate *vm.Program
 	vmInst    vm.VM
-	evalCount int64
-	passCount int64
 }
 
 func (f *FilterIterator) Init(ctx context.Context) error { return f.child.Init(ctx) }
@@ -38,13 +33,11 @@ func (f *FilterIterator) Next(ctx context.Context) (*Batch, error) {
 		matchCount := 0
 		for i := 0; i < batch.Len; i++ {
 			row := batch.Row(i)
-			f.evalCount++
 			if f.predicate != nil {
 				result, _ := f.vmInst.Execute(f.predicate, row)
 				if result.Type() == event.FieldTypeBool && result.AsBool() {
 					mask[i] = true
 					matchCount++
-					f.passCount++
 				}
 			}
 		}
@@ -59,9 +52,6 @@ func (f *FilterIterator) Next(ctx context.Context) (*Batch, error) {
 }
 func (f *FilterIterator) Close() error        { return f.child.Close() }
 func (f *FilterIterator) Schema() []FieldInfo { return f.child.Schema() }
-func (f *FilterIterator) VMStats() (int64, int64) {
-	return f.evalCount, f.passCount
-}
 
 func NewFilterIterator(child Iterator, predicate *vm.Program) *FilterIterator {
 	return &FilterIterator{child: child, predicate: predicate}
@@ -174,186 +164,6 @@ func NewProjectIterator(child Iterator, fields []string, remove bool) *ProjectIt
 	return &ProjectIterator{child: child, fields: fields, remove: remove, hasGlob: hasGlob}
 }
 
-// TailIterator keeps the last N rows from a child using a fixed-capacity ring
-// buffer. Memory usage is bounded to O(count) regardless of input size. The
-// ring buffer pattern mirrors pkg/usecases/tail.go catchupRing.
-type TailIterator struct {
-	child    Iterator
-	count    int
-	ring     []map[string]event.Value // fixed-capacity ring buffer
-	ringPos  int                      // next write position when ring is full
-	ringFull bool                     // true once the ring has wrapped
-	consumed bool
-	emitted  bool
-	acct     memgov.MemoryAccount
-	tracked  int64 // bytes currently tracked in the account
-}
-
-func (t *TailIterator) Init(ctx context.Context) error { return t.child.Init(ctx) }
-func (t *TailIterator) Next(ctx context.Context) (*Batch, error) {
-	if !t.consumed {
-		// Consume all rows from child, keeping the last t.count in a ring buffer.
-		for {
-			if err := ctx.Err(); err != nil {
-				return nil, err
-			}
-			batch, err := t.child.Next(ctx)
-			if err != nil {
-				return nil, err
-			}
-			if batch == nil {
-				break
-			}
-			for i := 0; i < batch.Len; i++ {
-				row := batch.Row(i)
-				rowBytes := EstimateRowBytes(row)
-
-				if !t.ringFull {
-					// Ring not yet full -- grow into capacity.
-					if t.acct != nil {
-						if err := t.acct.Grow(rowBytes); err != nil {
-							return nil, err
-						}
-						t.tracked += rowBytes
-					}
-					t.ring = append(t.ring, row)
-					if len(t.ring) == t.count {
-						t.ringFull = true
-						t.ringPos = 0
-					}
-				} else {
-					// Ring full -- evict oldest, shrink its estimate, grow new.
-					evicted := t.ring[t.ringPos]
-					evictedBytes := EstimateRowBytes(evicted)
-					if t.acct != nil {
-						t.acct.Shrink(evictedBytes)
-						t.tracked -= evictedBytes
-						if err := t.acct.Grow(rowBytes); err != nil {
-							return nil, err
-						}
-						t.tracked += rowBytes
-					}
-					t.ring[t.ringPos] = row
-					t.ringPos = (t.ringPos + 1) % t.count
-				}
-			}
-		}
-		t.consumed = true
-	}
-	if t.emitted || len(t.ring) == 0 {
-		return nil, nil
-	}
-	t.emitted = true
-
-	// Linearize ring to chronological order.
-	var rows []map[string]event.Value
-	if !t.ringFull {
-		rows = t.ring
-	} else {
-		rows = make([]map[string]event.Value, t.count)
-		copy(rows, t.ring[t.ringPos:])
-		copy(rows[t.count-t.ringPos:], t.ring[:t.ringPos])
-	}
-	return RowsToBatch(rows), nil
-}
-
-func (t *TailIterator) Close() error {
-	if t.acct != nil {
-		if t.tracked > 0 {
-			t.acct.Shrink(t.tracked)
-			t.tracked = 0
-		}
-		t.acct.Close()
-	}
-	return t.child.Close()
-}
-func (t *TailIterator) Schema() []FieldInfo { return t.child.Schema() }
-
-func NewTailIterator(child Iterator, count, _ int) *TailIterator {
-	if count <= 0 {
-		count = 10
-	}
-	return &TailIterator{
-		child: child,
-		count: count,
-		ring:  make([]map[string]event.Value, 0, count),
-		acct:  memgov.NopAccount(),
-	}
-}
-
-// NewTailIteratorWithBudget creates a TailIterator that tracks memory usage
-// via the provided account. The account is Closed when the iterator is closed.
-func NewTailIteratorWithBudget(child Iterator, count, batchSize int, acct memgov.MemoryAccount) *TailIterator {
-	if count <= 0 {
-		count = 10
-	}
-	return &TailIterator{
-		child: child,
-		count: count,
-		ring:  make([]map[string]event.Value, 0, count),
-		acct:  memgov.EnsureAccount(acct),
-	}
-}
-
-// RowsToBatch converts row maps to a columnar batch.
-func RowsToBatch(rows []map[string]event.Value) *Batch {
-	if len(rows) == 0 {
-		return nil
-	}
-	cols := make(map[string][]event.Value)
-	// Collect all column names.
-	colNames := make(map[string]struct{})
-	for _, row := range rows {
-		for k := range row {
-			colNames[k] = struct{}{}
-		}
-	}
-	for name := range colNames {
-		col := make([]event.Value, len(rows))
-		for i, row := range rows {
-			if v, ok := row[name]; ok {
-				col[i] = v
-			} else {
-				col[i] = event.NullValue()
-			}
-		}
-		cols[name] = col
-	}
-	return &Batch{Columns: cols, Len: len(rows)}
-}
-
-func parseDuration(s string) time.Duration {
-	if s == "" {
-		return 0
-	}
-	if d, err := time.ParseDuration(s); err == nil {
-		return d
-	}
-	if len(s) > 1 && s[len(s)-1] == 'd' {
-		n := 0
-		for _, c := range s[:len(s)-1] {
-			if c >= '0' && c <= '9' {
-				n = n*10 + int(c-'0')
-			}
-		}
-		return time.Duration(n) * 24 * time.Hour
-	}
-	return 0
-}
-
-func copyBSIMetadataFilter(dst, src *Batch, mask []bool) {
-	if dst == nil || src == nil || len(mask) == 0 {
-		return
-	}
-	var indices []int
-	for i, keep := range mask {
-		if keep {
-			indices = append(indices, i)
-		}
-	}
-	copyBSIMetadataPermutation(dst, src, indices)
-}
-
 func compactBatch(batch *Batch, mask []bool, matchCount int) *Batch {
 	result := &Batch{Columns: make(map[string][]event.Value, len(batch.Columns)), Len: matchCount}
 	for k, col := range batch.Columns {
@@ -375,15 +185,10 @@ func compactBatch(batch *Batch, mask []bool, matchCount int) *Batch {
 			setPresenceIfSparse(result, k, outPres)
 		}
 	}
-	copyBSIMetadataFilter(result, batch, mask)
 	return result
 }
 
-type CollectOptions struct {
-	OnBatch func(int, []map[string]event.Value)
-}
-
-func CollectAll(ctx context.Context, iter Iterator, opts ...CollectOptions) (rows []map[string]event.Value, err error) {
+func CollectAll(ctx context.Context, iter Iterator) (rows []map[string]event.Value, err error) {
 	if err := iter.Init(ctx); err != nil {
 		return nil, err
 	}
@@ -403,70 +208,6 @@ func CollectAll(ctx context.Context, iter Iterator, opts ...CollectOptions) (row
 		for i := 0; i < batch.Len; i++ {
 			rows = append(rows, batch.Row(i))
 		}
-		if len(opts) > 0 && opts[0].OnBatch != nil {
-			opts[0].OnBatch(len(rows), rows)
-		}
 	}
 	return rows, nil
-}
-
-func CollectAllWithBudget(ctx context.Context, iter Iterator, acct memgov.MemoryAccount) (rows []map[string]event.Value, err error) {
-	acct = memgov.EnsureAccount(acct)
-	if err := iter.Init(ctx); err != nil {
-		return nil, err
-	}
-	defer func() {
-		if e := iter.Close(); e != nil {
-			err = errors.Join(err, e)
-		}
-	}()
-	for {
-		batch, err := iter.Next(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if batch == nil {
-			break
-		}
-		for i := 0; i < batch.Len; i++ {
-			row := batch.Row(i)
-			if e := acct.Grow(EstimateRowBytes(row)); e != nil {
-				return nil, e
-			}
-			rows = append(rows, row)
-		}
-	}
-	return rows, nil
-}
-
-func growRowsEstimate(acct memgov.MemoryAccount, rows []map[string]event.Value) error {
-	for _, row := range rows {
-		if err := acct.Grow(EstimateRowBytes(row)); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-type IndexStore interface {
-	MaterializeEvents(ctx context.Context, index string) ([]*event.Event, error)
-}
-type ServerIndexStore struct{ Events map[string][]*event.Event }
-
-func (s *ServerIndexStore) MaterializeEvents(_ context.Context, index string) ([]*event.Event, error) {
-	return s.Events[index], nil
-}
-
-type ColumnarBatchStore struct{ Batches map[string][]*Batch }
-
-func (s *ColumnarBatchStore) MaterializeEvents(_ context.Context, _ string) ([]*event.Event, error) {
-	return nil, nil
-}
-
-// BuildResult bundles the root iterator of a built pipeline with its
-// optional memory coordinator and governor budget.
-type BuildResult struct {
-	Iterator    Iterator
-	Coordinator *MemoryCoordinator
-	GovBudget   *memgov.BudgetAdapter
 }

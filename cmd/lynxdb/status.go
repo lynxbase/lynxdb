@@ -19,7 +19,6 @@ func init() {
 	rootCmd.AddCommand(newStatusCmd())
 	rootCmd.AddCommand(newHealthCmd())
 	rootCmd.AddCommand(newIndexesCmd())
-	rootCmd.AddCommand(newCacheCmd())
 }
 
 func newStatusCmd() *cobra.Command {
@@ -49,39 +48,6 @@ func newIndexesCmd() *cobra.Command {
 	}
 }
 
-func newCacheCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "cache",
-		Short: "Cache management",
-	}
-	cmd.AddCommand(newCacheClearCmd(), newCacheStatsCmd())
-
-	return cmd
-}
-
-func newCacheClearCmd() *cobra.Command {
-	var force bool
-
-	cmd := &cobra.Command{
-		Use:   "clear",
-		Short: "Clear the query cache",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCacheClear(force)
-		},
-	}
-	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
-
-	return cmd
-}
-
-func newCacheStatsCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "stats",
-		Short: "Show cache statistics",
-		RunE:  runCacheStats,
-	}
-}
-
 func runStatus(_ *cobra.Command, _ []string) error {
 	stopAnimation := startStatusLynxAnimation()
 	defer stopAnimation()
@@ -103,18 +69,17 @@ func runStatus(_ *cobra.Command, _ []string) error {
 
 	if isJSONFormat() {
 		out := map[string]interface{}{
-			"uptime_seconds":  stats.UptimeSeconds,
-			"storage_bytes":   stats.StorageBytes,
-			"total_events":    stats.TotalEvents,
-			"events_today":    stats.EventsToday,
-			"index_count":     stats.IndexCount,
-			"segment_count":   stats.SegmentCount,
-			"buffered_events": stats.BufferedEvents,
-			"oldest_event":    stats.OldestEvent,
-			"health":          healthStatus,
+			"uptime_seconds": stats.UptimeSeconds,
+			"storage_bytes":  stats.StorageBytes,
+			"total_events":   stats.TotalEvents,
+			"index_count":    stats.IndexCount,
+			"part_count":     stats.PartCount,
+			"oldest_event":   stats.OldestEvent,
+			"newest_event":   stats.NewestEvent,
+			"health":         healthStatus,
 		}
-		if len(stats.Sources) > 0 {
-			out["sources"] = stats.Sources
+		if len(stats.Indexes) > 0 {
+			out["indexes"] = stats.Indexes
 		}
 
 		b, _ := json.MarshalIndent(out, "", "  ")
@@ -128,11 +93,10 @@ func runStatus(_ *cobra.Command, _ []string) error {
 			{"uptime_seconds", stats.UptimeSeconds},
 			{"storage_bytes", stats.StorageBytes},
 			{"total_events", stats.TotalEvents},
-			{"events_today", stats.EventsToday},
 			{"index_count", stats.IndexCount},
-			{"segment_count", stats.SegmentCount},
-			{"buffered_events", stats.BufferedEvents},
+			{"part_count", stats.PartCount},
 			{"oldest_event", stats.OldestEvent},
+			{"newest_event", stats.NewestEvent},
 			{"health", healthStatus},
 		}
 		return renderKeyValues(os.Stdout, rows, ui.Stdout)
@@ -149,61 +113,31 @@ func runStatus(_ *cobra.Command, _ []string) error {
 
 	metrics := []ui.Metric{
 		{Label: "Storage", Value: formatBytes(stats.StorageBytes)},
-		{
-			Label: "Events",
-			Value: formatCountHuman(stats.TotalEvents) + " total",
-			Hint:  formatCountHuman(stats.EventsToday) + " today",
-		},
-		{
-			Label: "Segments",
-			Value: formatCount(int64(stats.SegmentCount)),
-			Hint:  "buffer: " + formatCount(int64(stats.BufferedEvents)) + " events",
-		},
+		{Label: "Events", Value: formatCountHuman(stats.TotalEvents) + " total"},
+		{Label: "Parts", Value: formatCount(int64(stats.PartCount))},
 		{Label: "Indexes", Value: formatCount(int64(stats.IndexCount))},
 	}
 	fmt.Println(t.MetricGrid(metrics, globalCompact))
 
-	if len(stats.Sources) > 0 {
-		parts := make([]string, 0, len(stats.Sources))
-		for _, s := range stats.Sources {
+	if len(stats.Indexes) > 0 {
+		parts := make([]string, 0, len(stats.Indexes))
+		for _, ix := range stats.Indexes {
 			if stats.TotalEvents > 0 {
-				pct := float64(s.Count) / float64(stats.TotalEvents) * 100
-				parts = append(parts, fmt.Sprintf("%s (%.0f%%)", s.Name, pct))
+				pct := float64(ix.Events) / float64(stats.TotalEvents) * 100
+				parts = append(parts, fmt.Sprintf("%s (%.0f%%)", ix.Name, pct))
 			} else {
-				parts = append(parts, s.Name)
+				parts = append(parts, ix.Name)
 			}
 		}
 
-		fmt.Println(t.KeyValue("Sources", strings.Join(parts, ", ")))
+		fmt.Println(t.KeyValue("Indexes", strings.Join(parts, ", ")))
 	}
 
 	if stats.OldestEvent != "" {
 		fmt.Println(t.KeyValue("Oldest", t.Dim.Render(stats.OldestEvent)))
 	}
-
-	statusData, statusErr := c.Status(ctx)
-	if statusErr == nil && statusData.MemoryPool != nil {
-		mp := statusData.MemoryPool
-		fmt.Println()
-		fmt.Println(t.Section("Memory Pool"))
-		memMetrics := []ui.Metric{
-			{Label: "Total", Value: formatBytes(mp.TotalBytes)},
-			{Label: "Queries", Value: formatBytes(mp.QueryAllocated)},
-			{Label: "Cache", Value: formatBytes(mp.CacheAllocated)},
-			{Label: "Free", Value: formatBytes(mp.FreeBytes)},
-		}
-		fmt.Println(t.MetricGrid(memMetrics, globalCompact))
-
-		if mp.CacheEvictions > 0 {
-			fmt.Println(t.KeyValue("  Evictions",
-				fmt.Sprintf("%s (%s freed)",
-					formatCount(mp.CacheEvictions),
-					formatBytes(mp.CacheEvictedBytes))))
-		}
-
-		if mp.QueryRejections > 0 {
-			fmt.Println(t.KeyValue("  Rejections", formatCount(mp.QueryRejections)))
-		}
+	if stats.NewestEvent != "" {
+		fmt.Println(t.KeyValue("Newest", t.Dim.Render(stats.NewestEvent)))
 	}
 
 	fmt.Println()
@@ -356,9 +290,10 @@ func runIndexes(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
+	header := []string{"NAME", "EVENTS", "BYTES", "PARTS", "FIRST", "LAST"}
 	if len(indexes) == 0 {
 		if !humanOutputActive() {
-			return renderTabular(os.Stdout, []string{"NAME", "RETENTION", "REPLICATION"}, nil, ui.Stdout)
+			return renderTabular(os.Stdout, header, nil, ui.Stdout)
 		}
 		fmt.Println("No indexes found.")
 		printNextSteps(
@@ -371,87 +306,14 @@ func runIndexes(_ *cobra.Command, _ []string) error {
 	t := ui.Stdout
 	rows := make([][]any, 0, len(indexes))
 	for _, idx := range indexes {
-		rows = append(rows, []any{idx.Name, idx.RetentionPeriod, idx.ReplicationFactor})
+		rows = append(rows, []any{idx.Name, idx.Events, idx.Bytes, idx.Parts, idx.FirstEvent, idx.LastEvent})
 	}
-	if err := renderTabular(os.Stdout, []string{"NAME", "RETENTION", "REPLICATION"}, rows, t); err != nil {
+	if err := renderTabular(os.Stdout, header, rows, t); err != nil {
 		return err
 	}
 	if humanOutputActive() {
 		fmt.Printf("\n%s\n", t.Dim.Render(fmt.Sprintf("%d indexes", len(indexes))))
 	}
-
-	return nil
-}
-
-func runCacheClear(force bool) error {
-	if !force {
-		if !confirmAction("Clear the entire query cache?") {
-			printHint("Aborted.")
-
-			return nil
-		}
-	}
-
-	ctx := context.Background()
-	if err := apiClient().CacheClear(ctx); err != nil {
-		return err
-	}
-
-	printSuccess("Cache cleared")
-
-	return nil
-}
-
-func runCacheStats(_ *cobra.Command, _ []string) error {
-	ctx := context.Background()
-
-	stats, err := apiClient().CacheStats(ctx)
-	if err != nil {
-		return err
-	}
-
-	if isJSONFormat() {
-		b, _ := json.MarshalIndent(stats, "", "  ")
-		fmt.Println(string(b))
-
-		return nil
-	}
-
-	if !humanOutputActive() {
-		rows := [][2]any{}
-		for _, key := range []string{"hits", "misses", "hit_rate", "entries", "size_bytes", "evictions"} {
-			if value, ok := stats[key]; ok {
-				rows = append(rows, [2]any{key, value})
-			}
-		}
-		return renderKeyValues(os.Stdout, rows, ui.Stdout)
-	}
-
-	t := ui.Stdout
-	fmt.Printf("\n  %s\n\n", t.Bold.Render("Cache Statistics"))
-
-	if v, ok := stats["hits"].(float64); ok {
-		fmt.Println(t.KeyValue("Hits", formatCount(int64(v))))
-	}
-	if v, ok := stats["misses"].(float64); ok {
-		fmt.Println(t.KeyValue("Misses", formatCount(int64(v))))
-	}
-	if v, ok := stats["hit_rate"]; ok {
-		if rate, ok := v.(float64); ok {
-			fmt.Println(t.KeyValue("Hit Rate", fmt.Sprintf("%.1f%%", rate*100)))
-		}
-	}
-	if v, ok := stats["entries"].(float64); ok {
-		fmt.Println(t.KeyValue("Entries", formatCount(int64(v))))
-	}
-	if v, ok := stats["size_bytes"].(float64); ok {
-		fmt.Println(t.KeyValue("Size", formatBytes(int64(v))))
-	}
-	if v, ok := stats["evictions"].(float64); ok {
-		fmt.Println(t.KeyValue("Evictions", formatCount(int64(v))))
-	}
-
-	fmt.Println()
 
 	return nil
 }

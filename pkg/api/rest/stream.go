@@ -2,11 +2,13 @@ package rest
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/api/apicontracts"
 	"github.com/lynxbase/lynxdb/pkg/auth"
-	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 type queryStreamRequest struct {
@@ -64,6 +66,8 @@ func (r queryStreamRequest) unsupportedFields() []string {
 	return fields
 }
 
+// handleQueryStream runs a query and writes its rows as NDJSON, one object
+// per line, then a __meta line.
 func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeQuery) {
 		return
@@ -87,25 +91,67 @@ func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	req := rawReq.toQueryRequest()
-	query := req.effectiveQuery()
-	if query == "" {
+	src := req.effectiveQuery()
+	if src == "" {
 		respondError(w, ErrCodeValidationError, http.StatusBadRequest, "query is required")
 
 		return
 	}
-	if !s.checkQueryLength(w, query) {
+	if !s.checkQueryLength(w, src) {
+		return
+	}
+	cq, ok := compileQuery(w, src, req.effectiveFrom(), req.effectiveTo())
+	if !ok {
 		return
 	}
 
-	s.runQueryStream(w, r, query, req)
-}
-
-// rowToInterface converts an event.Value map to a plain map for JSON serialization.
-func rowToInterface(row map[string]event.Value) map[string]interface{} {
-	out := make(map[string]interface{}, len(row))
-	for k, v := range row {
-		out[k] = v.Interface()
+	start := time.Now()
+	if err := s.db.Sync(); err != nil {
+		respondQueryFailure(w, err)
+		return
+	}
+	res, err := s.db.Query(r.Context(), cq.c, cq.opts)
+	took := time.Since(start)
+	errType := ""
+	if err != nil {
+		code, _ := queryErrorCode(err)
+		errType = string(code)
+	}
+	s.promMetrics.RecordQuery(string(DetectResultType(cq.c.Plan)), took, errType)
+	if err != nil {
+		respondQueryFailure(w, err)
+		return
 	}
 
-	return out
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusOK)
+
+	flusher, _ := w.(http.Flusher)
+	const flushBytes = 1 << 20
+	var buf []byte
+	write := func() bool {
+		if _, err := w.Write(buf); err != nil {
+			slog.Warn("rest: stream write failed", "error", err)
+			return false
+		}
+		if flusher != nil {
+			flusher.Flush()
+		}
+		buf = buf[:0]
+		return true
+	}
+	n := res.Len()
+	for i := 0; i < n; i++ {
+		buf = append(res.AppendJSON(buf, i), '\n')
+		if len(buf) >= flushBytes && !write() {
+			return
+		}
+	}
+	buf = append(buf, `{"__meta":{"total":`...)
+	buf = strconv.AppendInt(buf, int64(n), 10)
+	buf = append(buf, `,"took_ms":`...)
+	buf = strconv.AppendInt(buf, took.Milliseconds(), 10)
+	buf = append(buf, "}}\n"...)
+	write()
 }

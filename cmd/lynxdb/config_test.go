@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/spf13/pflag"
 
@@ -155,10 +154,6 @@ func TestApplyCLIOverrides_ShipperFlagsOverrideEnv(t *testing.T) {
 	if err := serverCmd.Flags().Set("ingest-max-compressed-body-bytes", "16mb"); err != nil {
 		t.Fatal(err)
 	}
-	if err := serverCmd.Flags().Set("ingest-staging-max-age", "2s"); err != nil {
-		t.Fatal(err)
-	}
-
 	cli, _, err := applyCLIOverrides(serverCmd, cfg)
 	if err != nil {
 		t.Fatalf("applyCLIOverrides: %v", err)
@@ -176,11 +171,8 @@ func TestApplyCLIOverrides_ShipperFlagsOverrideEnv(t *testing.T) {
 	if cfg.Ingest.Limits.MaxCompressedBodyBytes != 16*config.MB {
 		t.Fatalf("MaxCompressedBodyBytes = %s", cfg.Ingest.Limits.MaxCompressedBodyBytes)
 	}
-	if cfg.Ingest.Staging.MaxAge != config.Duration(2*time.Second) {
-		t.Fatalf("Staging.MaxAge = %s", cfg.Ingest.Staging.MaxAge)
-	}
-	if len(cli) != 5 {
-		t.Fatalf("cli overrides = %d, want 5", len(cli))
+	if len(cli) != 4 {
+		t.Fatalf("cli overrides = %d, want 4", len(cli))
 	}
 }
 
@@ -191,7 +183,7 @@ func TestConfigValidate_Valid(t *testing.T) {
 	os.WriteFile(cfgPath, []byte(`
 listen: "0.0.0.0:3200"
 storage:
-  compression: "zstd"
+  partition: 1h
 `), 0o644)
 
 	cmd := rootCmd
@@ -310,27 +302,6 @@ func TestFindServerPID_NoPIDFile(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no PID file found") {
 		t.Errorf("error %q should mention 'no PID file found'", err.Error())
-	}
-}
-
-func TestConfigShow_InvalidDuration(t *testing.T) {
-	resetConfigFlags(t)
-	t.Setenv("LYNXDB_CONFIG", "")
-
-	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
-
-	cmd := rootCmd
-	cmd.SetArgs([]string{"config", "--compaction-interval", "not-a-duration"})
-
-	_, err := captureStdout(t, cmd.Execute)
-	if err == nil {
-		t.Fatal("expected error for invalid duration flag")
-	}
-	if !strings.Contains(err.Error(), "invalid --compaction-interval") {
-		t.Errorf("error %q should mention 'invalid --compaction-interval'", err.Error())
 	}
 }
 
@@ -466,10 +437,10 @@ func TestConfigSet_NestedKey(t *testing.T) {
 	resetConfigFlags(t)
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
-	os.WriteFile(cfgPath, []byte("storage:\n  compression: lz4\n"), 0o644)
+	os.WriteFile(cfgPath, []byte("storage:\n  partition: 24h\n"), 0o644)
 
 	cmd := rootCmd
-	cmd.SetArgs([]string{"config", "set", "storage.compression", "zstd", "--config", cfgPath})
+	cmd.SetArgs([]string{"config", "set", "storage.partition", "1h", "--config", cfgPath})
 
 	_, err := captureStdout(t, cmd.Execute)
 	if err != nil {
@@ -480,8 +451,8 @@ func TestConfigSet_NestedKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read config: %v", err)
 	}
-	if !strings.Contains(string(data), "zstd") {
-		t.Errorf("expected 'zstd' in file, got:\n%s", string(data))
+	if !strings.Contains(string(data), "partition: 1h") {
+		t.Errorf("expected 'partition: 1h' in file, got:\n%s", string(data))
 	}
 }
 

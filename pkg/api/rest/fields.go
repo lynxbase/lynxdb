@@ -1,21 +1,84 @@
 package rest
 
 import (
+	"fmt"
 	"net/http"
 	"path"
+	"sort"
 	"strings"
 	"time"
 
-	"github.com/lynxbase/lynxdb/pkg/usecases"
+	"github.com/lynxbase/lynxdb/pkg/engine/columnar"
+	"github.com/lynxbase/lynxdb/pkg/query"
+	"github.com/lynxbase/lynxdb/pkg/timerange"
 )
 
+// pplName quotes an index or field name for a PPL query; * stays as it is.
+func pplName(name string) (string, error) {
+	if name == "*" {
+		return name, nil
+	}
+	if name == "" || strings.ContainsAny(name, "`\n\r") {
+		return "", fmt.Errorf("name %q cannot be used in a query", name)
+	}
+
+	return "`" + name + "`", nil
+}
+
+// runInternalQuery compiles and runs a query the server builds itself over
+// [from, to); a zero end leaves that side open.
+func (s *Server) runInternalQuery(r *http.Request, src string, from, to time.Time) (*columnar.Result, error) {
+	c, err := query.Compile(src)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.db.Sync(); err != nil {
+		return nil, err
+	}
+	opts, _ := queryTimeRange("", "")
+	opts.From, opts.To = from, to
+
+	return s.db.Query(r.Context(), c, opts)
+}
+
+// handleListFields lists the fields of the indexes, each with the indexes
+// that hold it; ?index= or ?source= narrows them to one index and ?prefix=
+// to the names that start with it.
+func (s *Server) handleListFields(w http.ResponseWriter, r *http.Request) {
+	s.syncForRead()
+	names := s.db.Names()
+	if index := firstNonEmpty(r.URL.Query().Get("index"), r.URL.Query().Get("source")); index != "" {
+		names = []string{index}
+	}
+	prefix := strings.TrimSpace(r.URL.Query().Get("prefix"))
+	byField := map[string][]string{}
+	for _, index := range names {
+		fields, ok := s.db.Fields(index)
+		if !ok {
+			continue
+		}
+		for _, f := range fields {
+			if strings.HasPrefix(f, prefix) {
+				byField[f] = append(byField[f], index)
+			}
+		}
+	}
+	out := make([]map[string]interface{}, 0, len(byField))
+	for name, indexes := range byField {
+		out = append(out, map[string]interface{}{"name": name, "indexes": indexes})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i]["name"].(string) < out[j]["name"].(string) })
+	respondData(w, http.StatusOK, map[string]interface{}{"fields": out})
+}
+
+// handleFieldValues returns the most frequent values of a field with their
+// counts, among the events that hold it.
 func (s *Server) handleFieldValues(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	fieldName, ok := requirePathValue(r, w, "name")
 	if !ok {
 		return
 	}
-
 	limit := parseIntParam(r, "limit", 10)
 	if limit <= 0 {
 		limit = 10
@@ -23,62 +86,88 @@ func (s *Server) handleFieldValues(w http.ResponseWriter, r *http.Request) {
 	if limit > 100 {
 		limit = 100
 	}
-
-	result, err := s.queryService.FieldValues(r.Context(), usecases.FieldValuesRequest{
-		FieldName: fieldName,
-		Limit:     limit,
-		From:      firstNonEmpty(r.URL.Query().Get("from"), r.URL.Query().Get("since")),
-		To:        r.URL.Query().Get("to"),
-	})
+	field, err := pplName(fieldName)
 	if err != nil {
-		respondInternalError(w, err.Error())
-
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	values := make([]map[string]interface{}, len(result.Values))
-	for i, fv := range result.Values {
-		values[i] = map[string]interface{}{
-			"value":   fv.Value,
-			"count":   fv.Count,
-			"percent": fv.Percent,
-		}
+	index, err := pplName(firstNonEmpty(r.URL.Query().Get("index"), "*"))
+	if err != nil {
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error())
+		return
+	}
+	now := time.Now()
+	tr, err := timerange.ParseOptionalRange(
+		firstNonEmpty(r.URL.Query().Get("from"), sinceParam(r.URL.Query().Get("since"))), r.URL.Query().Get("to"), now)
+	if err != nil {
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error())
+		return
+	}
+	var from, to time.Time
+	if tr != nil {
+		from, to = tr.Earliest, tr.Latest
 	}
 
-	took := time.Since(start)
+	// Events without the field would form a group of their own.
+	src := fmt.Sprintf("source=%s | where isnotnull(%s) | stats count() as count by %s | sort - count | head %d",
+		index, field, field, limit)
+	res, err := s.runInternalQuery(r, src, from, to)
+	if err != nil {
+		respondQueryFailure(w, err)
+		return
+	}
+	values := make([]map[string]interface{}, 0, res.Len())
+	for _, row := range res.Maps() {
+		var value interface{}
+		if v, ok := row[fieldName]; ok {
+			value = v.Interface()
+		}
+		var count interface{}
+		if v, ok := row["count"]; ok {
+			count = v.Interface()
+		}
+		values = append(values, map[string]interface{}{"value": value, "count": count})
+	}
+
 	respondData(w, http.StatusOK, map[string]interface{}{
-		"field":        result.Field,
-		"values":       values,
-		"unique_count": result.UniqueCount,
-		"total_count":  result.TotalCount,
-	}, WithTook(took))
+		"field":  fieldName,
+		"values": values,
+	}, WithTook(time.Since(start)))
 }
 
+// sinceParam turns a since of the form 15m into the relative time -15m.
+func sinceParam(since string) string {
+	since = strings.TrimSpace(since)
+	if since == "" || strings.HasPrefix(since, "-") {
+		return since
+	}
+
+	return "-" + since
+}
+
+// handleListSources lists the indexes with their event counts and the times
+// of their earliest and latest events; ?pattern= keeps the names it matches.
 func (s *Server) handleListSources(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
 	pattern := r.URL.Query().Get("pattern")
 
-	result, err := s.queryService.ListSources(r.Context())
-	if err != nil {
-		respondInternalError(w, err.Error())
-
-		return
-	}
-
-	sources := make([]map[string]interface{}, 0, len(result.Sources))
-	for _, info := range result.Sources {
+	s.syncForRead()
+	sources := make([]map[string]interface{}, 0)
+	for _, ix := range s.db.Stats() {
 		if pattern != "" {
-			matched, _ := sourceGlobMatch(pattern, info.Name)
-			if !matched {
+			if matched, _ := path.Match(pattern, ix.Name); !matched {
 				continue
 			}
 		}
-		sources = append(sources, map[string]interface{}{
-			"name":        info.Name,
-			"event_count": info.EventCount,
-			"first_event": info.FirstEvent.UTC().Format(time.RFC3339),
-			"last_event":  info.LastEvent.UTC().Format(time.RFC3339),
-		})
+		entry := map[string]interface{}{
+			"name":        ix.Name,
+			"event_count": ix.Rows,
+		}
+		if ix.Parts > 0 {
+			entry["first_event"] = ix.First.Format(time.RFC3339)
+			entry["last_event"] = ix.Last.Format(time.RFC3339)
+		}
+		sources = append(sources, entry)
 	}
 
 	resp := map[string]interface{}{
@@ -87,15 +176,7 @@ func (s *Server) handleListSources(w http.ResponseWriter, r *http.Request) {
 	if pattern != "" {
 		resp["pattern"] = pattern
 	}
-
-	took := time.Since(start)
-	respondData(w, http.StatusOK, resp, WithTook(took))
-}
-
-// sourceGlobMatch wraps path.Match for source name glob matching.
-// Supports * (any sequence) and ? (any single char).
-func sourceGlobMatch(pattern, name string) (bool, error) {
-	return path.Match(pattern, name)
+	respondData(w, http.StatusOK, resp, WithTook(time.Since(start)))
 }
 
 func firstNonEmpty(values ...string) string {

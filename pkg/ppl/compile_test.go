@@ -109,6 +109,8 @@ func TestCompileErrors(t *testing.T) {
 		{"source=t | eventstats latest(msg, date_add(_time, INTERVAL 1 DAY)) as m", ErrUnsupportedFeature, "latest ordered by an expression is not supported"},
 		{"source=outer | eval m = [ source=inner | where outer.b = inner.d | stats max(c) ]", ErrUnsupportedFeature, "correlated subqueries are not supported: the subquery refers to outer.b"},
 		{"source=t1 as a | where exists [ source=t2 | where a.id = id ]", ErrUnsupportedFeature, "the subquery refers to a.id of the outer query"},
+		{"source=outer | where a in [ source=inner | where b > 1 ]", ErrSemantic, "an IN subquery must name the columns it returns"},
+		{"source=outer | where a in [ source=inner | fields b, c ]", ErrSemantic, "the IN subquery returns 2 columns for 1 values"},
 		{"source=a | where exists [ source=b | where exists [ source=c | where a.x = y ] ]", ErrUnsupportedFeature, "the subquery refers to a.x"},
 		{"source=a | where exists [ source=b | where exists [ source=c | where b.x = y ] ]", ErrUnsupportedFeature, "the subquery refers to b.x"},
 		{"source=logs | eval lim = 10 | where exists [ source=users | fields owner, n | where n > lim ]", ErrUnsupportedFeature, "the subquery refers to field lim of the outer query"},

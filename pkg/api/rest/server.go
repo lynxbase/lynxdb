@@ -3,12 +3,13 @@ package rest
 import (
 	"context"
 	"crypto/tls"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/http/pprof"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/database"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/limits"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/eshttp"
@@ -23,87 +25,80 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/otlphttp"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/splunkhec"
 	syslogrecv "github.com/lynxbase/lynxdb/pkg/ingest/receiver/syslog"
-	"github.com/lynxbase/lynxdb/pkg/ingest/staging"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
-	"github.com/lynxbase/lynxdb/pkg/model"
-	"github.com/lynxbase/lynxdb/pkg/planner"
-	"github.com/lynxbase/lynxdb/pkg/server"
-	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
 // Server is the main LynxDB API server.
 type Server struct {
-	engine             *server.Engine
-	keyStore           *auth.KeyStore // Nil when auth is disabled.
-	queryService       *usecases.QueryService
-	tailService        *usecases.TailService
-	runtimeCfg         *config.Config
-	cfgMu              sync.RWMutex
-	httpServer         *http.Server
-	listenAddr         atomic.Value  // stores resolved listen address (string)
-	ready              chan struct{} // closed when server is ready to accept requests
-	queryCfg           config.QueryConfig
-	ingestCfg          config.IngestConfig
-	shutdownTimeout    time.Duration
-	rateLimiter        *RateLimiter // nil if rate limiting is disabled
-	tailCfg            config.TailConfig
-	activeTailSessions atomic.Int64 // current number of active tail SSE sessions
-	degraded           atomic.Bool  // true when a persistent store fell back to in-memory
-	tlsConfig          *tls.Config  // non-nil when TLS is enabled
-	syslogReceiver     *syslogrecv.Receiver
-	otlpHTTPReceiver   *otlphttp.Receiver
-	otlpGRPCReceiver   *otlpgrpc.Receiver
-	stagingBuffer      *staging.Buffer
-	esHandshake        *eshttp.Handshake
-	esStubs            *eshttp.Stubs
-	promMetrics        *PrometheusMetrics
-	splunkAckStore     *splunkhec.AckStore
-	levelVar           *slog.LevelVar
-	logger             *slog.Logger
+	db               *database.DB
+	started          time.Time
+	keyStore         *auth.KeyStore // Nil when auth is disabled.
+	runtimeCfg       *config.Config
+	cfgMu            sync.RWMutex
+	httpServer       *http.Server
+	listenAddr       atomic.Value  // stores resolved listen address (string)
+	ready            chan struct{} // closed when server is ready to accept requests
+	queryCfg         config.QueryConfig
+	ingestCfg        config.IngestConfig
+	shutdownTimeout  time.Duration
+	rateLimiter      *RateLimiter // nil if rate limiting is disabled
+	tlsConfig        *tls.Config  // non-nil when TLS is enabled
+	syslogReceiver   *syslogrecv.Receiver
+	otlpHTTPReceiver *otlphttp.Receiver
+	otlpGRPCReceiver *otlpgrpc.Receiver
+	esHandshake      *eshttp.Handshake
+	esStubs          *eshttp.Stubs
+	promMetrics      *PrometheusMetrics
+	splunkAckStore   *splunkhec.AckStore
+	levelVar         *slog.LevelVar
+	logger           *slog.Logger
 }
 
 // Config configures the API server.
 type Config struct {
 	Addr          string
-	DataDir       string         // Root directory for all data (segments, parts, indexes). Empty = in-memory only.
-	Retention     time.Duration  // Data retention period. 0 = use default (90 days).
+	DataDir       string         // Root directory of the indexes. Empty keeps them in a temporary directory.
+	Retention     time.Duration  // How long events are kept; zero keeps them all.
 	RuntimeConfig *config.Config // Optional full runtime snapshot used by reload/get-config paths.
 
-	KeyStore      *auth.KeyStore
-	TLSConfig     *tls.Config // If non-nil, server listens with TLS.
-	Storage       config.StorageConfig
-	Logger        *slog.Logger
-	LevelVar      *slog.LevelVar // Optional. When set, ReloadConfig adjusts the log level through it.
-	Query         config.QueryConfig
-	Ingest        config.IngestConfig
-	HTTP          config.HTTPConfig
-	Syslog        config.SyslogConfig
-	Tail          config.TailConfig
-	Server        config.ServerConfig
-	BufferManager config.BufferManagerConfig
-	Cluster       config.ClusterConfig
+	KeyStore  *auth.KeyStore
+	TLSConfig *tls.Config // If non-nil, server listens with TLS.
+	Logger    *slog.Logger
+	LevelVar  *slog.LevelVar // Optional. When set, ReloadConfig adjusts the log level through it.
+	Storage   config.StorageConfig
+	Query     config.QueryConfig
+	Ingest    config.IngestConfig
+	HTTP      config.HTTPConfig
+	Syslog    config.SyslogConfig
 }
 
-// NewServer creates a new LynxDB API server.
+// NewServer opens the database in cfg.DataDir and builds the API server.
 func NewServer(cfg Config) (*Server, error) {
-	engine := server.NewEngine(server.Config{
-		DataDir:       cfg.DataDir,
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	db, err := database.Open(database.Config{
+		Dir:           indexDir(cfg.DataDir),
 		Retention:     cfg.Retention,
-		Storage:       cfg.Storage,
+		Partition:     cfg.Storage.Partition.Duration(),
+		FlushInterval: cfg.Storage.FlushInterval.Duration(),
+		TimeFields:    cfg.Storage.TimeFields,
+		SortKey:       cfg.Storage.SortKey,
+		MaxConcurrent: cfg.Query.MaxConcurrent,
+		JobTTL:        cfg.Query.JobTTL,
 		Logger:        cfg.Logger,
-		Query:         cfg.Query,
-		Server:        cfg.Server,
-		BufferManager: cfg.BufferManager,
-		Cluster:       cfg.Cluster,
 	})
+	if err != nil {
+		return nil, fmt.Errorf("open database: %w", err)
+	}
+	s, err := newServer(cfg, db)
+	if err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
 
-	p := planner.New()
-	queryService := usecases.NewQueryService(p, engine, cfg.Query)
-	tailService := usecases.NewTailService(p, engine)
+	return s, nil
+}
 
-	shutdownTimeout := cfg.HTTP.ShutdownTimeout
-	shutdownTimeout = defaultShutdownTimeout(shutdownTimeout)
-
+func newServer(cfg Config, db *database.DB) (*Server, error) {
 	// Build the runtime config snapshot used by GET/PATCH /config and reload
 	// diffing. Prefer the fully loaded config when the caller has it.
 	runtimeCfg := config.DefaultConfig()
@@ -114,6 +109,9 @@ func NewServer(cfg Config) (*Server, error) {
 		runtimeCfg.Listen = cfg.Addr
 		runtimeCfg.DataDir = cfg.DataDir
 		runtimeCfg.Retention = config.Duration(cfg.Retention)
+		if cfg.Storage.Partition > 0 {
+			runtimeCfg.Storage = cfg.Storage
+		}
 		if cfg.Query.SyncTimeout > 0 {
 			runtimeCfg.Query = cfg.Query
 		}
@@ -127,31 +125,25 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 
 	s := &Server{
-		engine:          engine,
+		db:              db,
+		started:         time.Now(),
 		keyStore:        cfg.KeyStore,
-		queryService:    queryService,
-		tailService:     tailService,
 		runtimeCfg:      runtimeCfg,
 		ready:           make(chan struct{}),
 		queryCfg:        cfg.Query,
 		ingestCfg:       cfg.Ingest,
-		shutdownTimeout: shutdownTimeout,
-		tailCfg:         cfg.Tail,
+		shutdownTimeout: defaultShutdownTimeout(cfg.HTTP.ShutdownTimeout),
 		tlsConfig:       cfg.TLSConfig,
 		splunkAckStore:  splunkhec.NewAckStore(10000),
 		levelVar:        cfg.LevelVar,
 		logger:          cfg.Logger,
 	}
 
-	// Register Prometheus metrics and wire the OnQueryComplete hook so that
-	// every completed query records histogram observations (duration, scan,
-	// pipeline, memory, rows) and increments segment-skip counters.
 	promMetrics := NewPrometheusMetrics()
 	s.promMetrics = promMetrics
 	promMetrics.SetListenerUp("es", false)
 	promMetrics.SetListenerUp("otlp_http", false)
 	promMetrics.SetListenerUp("otlp_grpc", false)
-	engine.SetOnQueryComplete(promMetrics.RecordQuery)
 
 	if cfg.Syslog.Enabled() {
 		tlsCfg := cfg.TLSConfig
@@ -160,7 +152,7 @@ func NewServer(cfg Config) (*Server, error) {
 		}
 		syslogReceiver, err := syslogrecv.New(
 			cfg.Syslog,
-			engineSink{engine: engine},
+			dbSink{s: s},
 			ingestPipelineForConfig(cfg.Ingest),
 			tlsCfg,
 			cfg.Logger,
@@ -211,7 +203,6 @@ func NewServer(cfg Config) (*Server, error) {
 		AdvertisedVersion: esCfg.AdvertisedVersion,
 		ClusterName:       esCfg.ClusterName,
 		DataDir:           cfg.DataDir,
-		S3Bucket:          cfg.Storage.S3Bucket,
 	})
 	if err != nil {
 		return nil, err
@@ -221,7 +212,6 @@ func NewServer(cfg Config) (*Server, error) {
 		AdvertisedVersion: esCfg.AdvertisedVersion,
 		ClusterName:       esCfg.ClusterName,
 		DataDir:           cfg.DataDir,
-		S3Bucket:          cfg.Storage.S3Bucket,
 	})
 	if err != nil {
 		return nil, err
@@ -230,19 +220,7 @@ func NewServer(cfg Config) (*Server, error) {
 
 	mux := http.NewServeMux()
 
-	// Prometheus metrics endpoint (standard /metrics path).
-	// Wraps the handler to refresh storage metrics on each scrape.
-	promHandler := promMetrics.Handler()
-	mux.Handle("GET /metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if s.engine != nil {
-			promMetrics.RecordStorageMetrics(s.engine.Metrics())
-			promMetrics.RecordGovernorStats(s.engine.GovernorStats())
-			spillFiles, spillBytes := s.engine.SpillStats()
-			promMetrics.RecordSpillStats(spillFiles, spillBytes)
-			promMetrics.RecordRevocationStats(s.engine.RevocationFreedSpillableBytes())
-		}
-		promHandler.ServeHTTP(w, r)
-	}))
+	mux.Handle("GET /metrics", promMetrics.Handler())
 
 	// pprof debug endpoints for live CPU/memory profiling.
 	// Authenticated via KeyAuthMiddleware (under /api/v1/ prefix).
@@ -270,14 +248,8 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("DELETE /api/v1/query/jobs/{id}", s.handleCancelJob)
 	mux.HandleFunc("GET /api/v1/query/jobs", s.handleListJobs)
 
-	// Index management.
 	mux.HandleFunc("GET /api/v1/indexes", s.handleListIndexes)
-	mux.HandleFunc("POST /api/v1/indexes", s.handleCreateIndex)
 
-	// Cluster status.
-	mux.HandleFunc("GET /api/v1/cluster/status", s.handleClusterStatus)
-
-	// Ingest endpoints (new paths).
 	mux.HandleFunc("POST /api/v1/ingest", s.handleIngestEvents)
 	mux.HandleFunc("POST /api/v1/ingest/raw", s.handleIngestRaw)
 	mux.HandleFunc("POST /api/v1/ingest/hec", s.handleIngestHEC)
@@ -290,32 +262,16 @@ func NewServer(cfg Config) (*Server, error) {
 	// PPL command and function catalog.
 	mux.HandleFunc("GET /api/v1/catalog", s.handleCatalog)
 
-	// Field catalog.
 	mux.HandleFunc("GET /api/v1/fields", s.handleListFields)
+	mux.HandleFunc("GET /api/v1/fields/{name}/values", s.handleFieldValues)
+	mux.HandleFunc("GET /api/v1/sources", s.handleListSources)
 
-	// Server stats.
 	mux.HandleFunc("GET /api/v1/stats", s.handleStats)
 
-	// Cache management.
-	mux.HandleFunc("DELETE /api/v1/cache", s.handleCacheClear)
-	mux.HandleFunc("GET /api/v1/cache/stats", s.handleCacheStats)
-
-	// Storage metrics.
-	mux.HandleFunc("GET /api/v1/metrics", s.handleMetrics)
-
-	// Compaction history.
-	mux.HandleFunc("GET /api/v1/compaction/history", s.handleCompactionHistory)
-
-	// Config API.
 	mux.HandleFunc("GET /api/v1/config", s.handleGetConfig)
 	mux.HandleFunc("PATCH /api/v1/config", s.handlePatchConfig)
 
-	// Histogram.
 	mux.HandleFunc("GET /api/v1/histogram", s.handleHistogram)
-
-	// Schema: field values and sources.
-	mux.HandleFunc("GET /api/v1/fields/{name}/values", s.handleFieldValues)
-	mux.HandleFunc("GET /api/v1/sources", s.handleListSources)
 
 	// Elasticsearch compatibility.
 	mux.Handle("GET /{$}", s.esCompatibilityHandler("root", esHandshake))
@@ -344,7 +300,7 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("GET /api/v1/es/", s.handleESClusterInfo)
 	mux.HandleFunc("GET /api/v1/es", s.handleESClusterInfo)
 
-	// Backward-compatible ES stub aliases under the legacy API prefix.
+	// The same Elasticsearch stubs under the /api/v1/es prefix.
 	esStub := s.handleESStub
 	mux.Handle("GET /api/v1/es/_xpack", s.esCompatibilityHandler("xpack", http.HandlerFunc(esStubs.XPackInfo)))
 	mux.Handle("GET /api/v1/es/_xpack/license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
@@ -371,10 +327,6 @@ func NewServer(cfg Config) (*Server, error) {
 	// OTLP HTTP Logs ingestion.
 	mux.HandleFunc("POST /api/v1/otlp/v1/logs", s.handleOTLPLogs)
 
-	// Live tail (SSE).
-	mux.HandleFunc("GET /api/v1/tail", s.handleTail)
-
-	// Unified status.
 	mux.HandleFunc("GET /api/v1/status", s.handleStatus)
 
 	// Auth management — only registered when auth is enabled, 404 otherwise.
@@ -391,20 +343,14 @@ func NewServer(cfg Config) (*Server, error) {
 		mux.HandleFunc("POST /api/v1/auth/rotate-root", disabled)
 	}
 
-	// Health.
 	mux.HandleFunc("GET /health", s.handleHealth)
 
-	idleTimeout := cfg.HTTP.IdleTimeout
-	idleTimeout = defaultIdleTimeout(idleTimeout)
 	// Build middleware chain (execution order, outer → inner):
 	// Recovery → RequestID → Logging → Auth → RateLimit → MaxBody → DualLimit → mux.
 	// Auth runs before rate limiting so unauthenticated requests don't consume quota.
 	var handler http.Handler = mux
 	handler = s.esIndexHeadMiddleware(handler)
-	handler = limits.DualLimitMiddleware(limits.Config{
-		MaxCompressedBytes:   int64(cfg.Ingest.Limits.MaxCompressedBodyBytes),
-		MaxDecompressedBytes: int64(cfg.Ingest.Limits.MaxDecompressedBodyBytes),
-	}, promMetrics)(handler)
+	handler = bodyLimits(cfg.Ingest, promMetrics, handler)
 	handler = MaxBodyMiddleware(int64(cfg.Ingest.MaxBodySize), handler)
 	if cfg.HTTP.RateLimit > 0 {
 		s.rateLimiter = NewRateLimiter(cfg.HTTP.RateLimit, int(cfg.HTTP.RateLimit)*2)
@@ -415,14 +361,11 @@ func NewServer(cfg Config) (*Server, error) {
 	handler = RequestIDMiddleware(handler)
 	handler = RecoveryMiddleware(cfg.Logger, handler)
 
-	readHeaderTimeout := cfg.HTTP.ReadHeaderTimeout
-	readHeaderTimeout = defaultReadHeaderTimeout(readHeaderTimeout)
-
 	s.httpServer = &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           handler,
-		IdleTimeout:       idleTimeout,
-		ReadHeaderTimeout: readHeaderTimeout,
+		IdleTimeout:       defaultIdleTimeout(cfg.HTTP.IdleTimeout),
+		ReadHeaderTimeout: defaultReadHeaderTimeout(cfg.HTTP.ReadHeaderTimeout),
 	}
 
 	return s, nil
@@ -461,109 +404,22 @@ func normalizedESCompatConfig(ingest config.IngestConfig) config.ESCompatConfig 
 	return out
 }
 
-func stagingConfigFromIngest(ingest config.IngestConfig) staging.Config {
-	cfg := ingest.Staging
-	return staging.Config{
-		Enabled:           cfg.Enabled,
-		MaxBytes:          int64(cfg.MaxBytes),
-		MaxAge:            cfg.MaxAge.Duration(),
-		MaxInflightEvents: cfg.MaxInflightEvents,
-		FlushRetries:      cfg.FlushRetries,
-		FlushBackoffMax:   cfg.FlushBackoffMax.Duration(),
-	}
-}
-
-// Start starts the API server. Blocks until context is canceled.
+// Start starts the receivers and serves the API until ctx is canceled, then
+// shuts the server down and closes the database.
 func (s *Server) Start(ctx context.Context) error {
-	if err := s.engine.Start(ctx); err != nil {
+	if err := s.startReceivers(ctx); err != nil {
+		s.stopReceivers()
+		s.closeDB()
 		return err
-	}
-	s.startStagingBuffer()
-
-	if s.syslogReceiver != nil {
-		go func() {
-			if err := s.syslogReceiver.Start(ctx); err != nil {
-				s.engine.Logger().Error("syslog receiver stopped with error", "error", err)
-			}
-		}()
-		s.syslogReceiver.WaitReady()
-		if err := s.syslogReceiver.ReadyError(); err != nil {
-			if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
-				slog.Error("engine shutdown failed after syslog listen error", "error", shutErr)
-			}
-			s.closeStagingBuffer(context.Background())
-			return fmt.Errorf("syslog: %w", err)
-		}
-	}
-	if s.otlpHTTPReceiver != nil {
-		go func() {
-			if err := s.otlpHTTPReceiver.Start(ctx); err != nil {
-				s.engine.Logger().Error("OTLP HTTP receiver stopped with error", "error", err)
-			}
-		}()
-		s.otlpHTTPReceiver.WaitReady()
-		if err := s.otlpHTTPReceiver.ReadyError(); err != nil {
-			if s.syslogReceiver != nil {
-				s.syslogReceiver.Stop()
-			}
-			if s.otlpHTTPReceiver != nil {
-				_ = s.otlpHTTPReceiver.Stop(context.Background())
-			}
-			if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
-				slog.Error("engine shutdown failed after OTLP listen error", "error", shutErr)
-			}
-			s.closeStagingBuffer(context.Background())
-			return fmt.Errorf("otlp http: %w", err)
-		}
-		s.promMetrics.SetListenerUp("otlp_http", true)
-	}
-	if s.otlpGRPCReceiver != nil {
-		go func() {
-			if err := s.otlpGRPCReceiver.Start(ctx); err != nil {
-				s.engine.Logger().Error("OTLP gRPC receiver stopped with error", "error", err)
-			}
-		}()
-		s.otlpGRPCReceiver.WaitReady()
-		if err := s.otlpGRPCReceiver.ReadyError(); err != nil {
-			if s.syslogReceiver != nil {
-				s.syslogReceiver.Stop()
-			}
-			if s.otlpHTTPReceiver != nil {
-				_ = s.otlpHTTPReceiver.Stop(context.Background())
-			}
-			if s.otlpGRPCReceiver != nil {
-				_ = s.otlpGRPCReceiver.Stop(context.Background())
-			}
-			if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
-				slog.Error("engine shutdown failed after OTLP gRPC listen error", "error", shutErr)
-			}
-			s.closeStagingBuffer(context.Background())
-			return fmt.Errorf("otlp grpc: %w", err)
-		}
-		s.promMetrics.SetListenerUp("otlp_grpc", true)
 	}
 
 	var lc net.ListenConfig
 	ln, err := lc.Listen(ctx, "tcp", s.httpServer.Addr)
 	if err != nil {
-		// Engine was started but we can't listen — shut it down.
-		if s.syslogReceiver != nil {
-			s.syslogReceiver.Stop()
-		}
-		if s.otlpHTTPReceiver != nil {
-			_ = s.otlpHTTPReceiver.Stop(context.Background())
-		}
-		if s.otlpGRPCReceiver != nil {
-			_ = s.otlpGRPCReceiver.Stop(context.Background())
-		}
-		if shutErr := s.engine.Shutdown(5 * time.Second); shutErr != nil {
-			slog.Error("engine shutdown failed after listen error", "error", shutErr)
-		}
-		s.closeStagingBuffer(context.Background())
+		s.stopReceivers()
+		s.closeDB()
 		return fmt.Errorf("api: listen: %w", err)
 	}
-
-	// Wrap with TLS if configured.
 	if s.tlsConfig != nil {
 		ln = tls.NewListener(ln, s.tlsConfig)
 	}
@@ -571,82 +427,130 @@ func (s *Server) Start(ctx context.Context) error {
 	s.listenAddr.Store(ln.Addr().String())
 	s.promMetrics.SetListenerUp("es", true)
 
-	// shutdownDone is closed after the engine has fully shut down (batcher
-	// flushed, mmaps closed). Start() waits on this channel before returning
-	// so callers can safely reuse the data directory.
+	// Start returns only after shutdown has closed the database, so that a
+	// caller may reopen the data directory at once.
 	shutdownDone := make(chan struct{})
 	go func() {
 		defer close(shutdownDone)
 		<-ctx.Done()
-		if s.rateLimiter != nil {
-			s.rateLimiter.Stop()
-		}
-
-		if s.syslogReceiver != nil {
-			s.syslogReceiver.Stop()
-		}
-		if s.otlpHTTPReceiver != nil {
-			_ = s.otlpHTTPReceiver.Stop(context.Background())
-			s.promMetrics.SetListenerUp("otlp_http", false)
-		}
-		if s.otlpGRPCReceiver != nil {
-			_ = s.otlpGRPCReceiver.Stop(context.Background())
-			s.promMetrics.SetListenerUp("otlp_grpc", false)
-		}
-		s.closeStagingBuffer(context.Background())
-
-		// Shutdown ordering: reject ingests → drain HTTP → flush storage.
-		s.engine.PrepareShutdown()
-		shutdownTimeout := s.currentShutdownTimeout()
-		s.engine.Logger().Info("shutting down: draining in-flight requests", "timeout", shutdownTimeout)
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
-		if err := s.httpServer.Shutdown(shutdownCtx); err != nil {
-			s.engine.Logger().Error("HTTP server shutdown error", "error", err)
-		}
-		s.promMetrics.SetListenerUp("es", false)
-
-		// Safe to flush batcher and close mmaps — no in-flight ingests remain.
-		if err := s.engine.Shutdown(shutdownTimeout); err != nil {
-			s.engine.Logger().Error("engine shutdown error", "error", err)
-		}
+		s.shutdown()
 	}()
 
 	close(s.ready)
-	s.engine.Logger().Info("API server started", "addr", s.Addr())
-	if err := s.httpServer.Serve(ln); err != nil && err != http.ErrServerClosed {
+	s.logger.Info("API server started", "addr", s.Addr())
+	if err := s.httpServer.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
-
-	// Wait for the shutdown goroutine to complete (batcher flush + mmap close)
-	// before returning. Without this, callers that restart the server on the
-	// same data directory may read stale data because the batcher flush has
-	// not finished yet.
 	<-shutdownDone
 
 	return nil
 }
 
-type engineSink struct {
-	engine *server.Engine
-}
-
-func (s engineSink) Write(events []*event.Event) error {
-	return s.engine.IngestContext(context.Background(), events)
-}
-
-func (s *Server) submitEvents(ctx context.Context, events []*event.Event) error {
-	if s.currentIngestConfig().Staging.Enabled && s.stagingBuffer != nil {
-		return s.stagingBuffer.Add(ctx, events)
+// startReceivers starts the syslog and OTLP listeners and waits until each
+// is bound.
+func (s *Server) startReceivers(ctx context.Context) error {
+	if s.syslogReceiver != nil {
+		go func() {
+			if err := s.syslogReceiver.Start(ctx); err != nil {
+				s.logger.Error("syslog receiver stopped with error", "error", err)
+			}
+		}()
+		s.syslogReceiver.WaitReady()
+		if err := s.syslogReceiver.ReadyError(); err != nil {
+			return fmt.Errorf("syslog: %w", err)
+		}
 	}
-	return s.engine.IngestContext(ctx, events)
+	if s.otlpHTTPReceiver != nil {
+		go func() {
+			if err := s.otlpHTTPReceiver.Start(ctx); err != nil {
+				s.logger.Error("OTLP HTTP receiver stopped with error", "error", err)
+			}
+		}()
+		s.otlpHTTPReceiver.WaitReady()
+		if err := s.otlpHTTPReceiver.ReadyError(); err != nil {
+			return fmt.Errorf("otlp http: %w", err)
+		}
+		s.promMetrics.SetListenerUp("otlp_http", true)
+	}
+	if s.otlpGRPCReceiver != nil {
+		go func() {
+			if err := s.otlpGRPCReceiver.Start(ctx); err != nil {
+				s.logger.Error("OTLP gRPC receiver stopped with error", "error", err)
+			}
+		}()
+		s.otlpGRPCReceiver.WaitReady()
+		if err := s.otlpGRPCReceiver.ReadyError(); err != nil {
+			return fmt.Errorf("otlp grpc: %w", err)
+		}
+		s.promMetrics.SetListenerUp("otlp_grpc", true)
+	}
+
+	return nil
 }
 
-func (s *Server) submitDurableEvents(ctx context.Context, events []*event.Event) error {
-	if err := s.engine.IngestContext(ctx, events); err != nil {
+func (s *Server) stopReceivers() {
+	if s.syslogReceiver != nil {
+		s.syslogReceiver.Stop()
+	}
+	if s.otlpHTTPReceiver != nil {
+		_ = s.otlpHTTPReceiver.Stop(context.Background())
+		s.promMetrics.SetListenerUp("otlp_http", false)
+	}
+	if s.otlpGRPCReceiver != nil {
+		_ = s.otlpGRPCReceiver.Stop(context.Background())
+		s.promMetrics.SetListenerUp("otlp_grpc", false)
+	}
+}
+
+// shutdown stops the receivers, drains the HTTP requests in flight and
+// closes the database.
+func (s *Server) shutdown() {
+	if s.rateLimiter != nil {
+		s.rateLimiter.Stop()
+	}
+	s.stopReceivers()
+
+	timeout := s.currentShutdownTimeout()
+	s.logger.Info("shutting down: draining in-flight requests", "timeout", timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	if err := s.httpServer.Shutdown(ctx); err != nil {
+		s.logger.Error("HTTP server shutdown error", "error", err)
+	}
+	s.promMetrics.SetListenerUp("es", false)
+	s.closeDB()
+}
+
+// syncForRead makes the events appended so far count in the stats and fields
+// of the indexes, which see only written events.
+func (s *Server) syncForRead() {
+	if err := s.db.Sync(); err != nil {
+		s.logger.Warn("database sync failed", "error", err)
+	}
+}
+
+func (s *Server) closeDB() {
+	if err := s.db.Close(); err != nil {
+		s.logger.Error("database close error", "error", err)
+	}
+}
+
+// dbSink hands the events of the syslog receiver to the database.
+type dbSink struct{ s *Server }
+
+func (d dbSink) Write(events []*event.Event) error {
+	return d.s.submitEvents(context.Background(), events)
+}
+
+// submitEvents adds decoded events to the indexes they name.
+func (s *Server) submitEvents(_ context.Context, events []*event.Event) error {
+	if err := s.db.AppendEvents(events); err != nil {
+		s.promMetrics.RecordIngestError()
 		return err
 	}
-	return s.engine.FlushBatcherContext(ctx)
+	s.promMetrics.RecordIngest(len(events), 0)
+
+	return nil
 }
 
 func (s *Server) submitPipelineEvents(ctx context.Context, events []*event.Event) error {
@@ -668,16 +572,9 @@ func (s *Server) splunkHECHandler(requireSplunkAuth bool) *splunkhec.Handler {
 		MaxBatchSize:       ingestCfg.MaxBatchSize,
 		MaxLineBytes:       ingestCfg.MaxLineBytes,
 		AckStore:           s.splunkAckStore,
-		AckFlush:           s.flushStagedEvents,
+		AckFlush:           func(context.Context) error { return s.db.Sync() },
 		RespondIngestError: func(w http.ResponseWriter, err error) { respondIngestError(w, err) },
 	}, s.submitPipelineEvents)
-}
-
-func (s *Server) flushStagedEvents(ctx context.Context) error {
-	if s.stagingBuffer == nil {
-		return nil
-	}
-	return s.stagingBuffer.Flush(ctx)
 }
 
 func (s *Server) handleSplunkHECEvent(w http.ResponseWriter, r *http.Request) {
@@ -712,31 +609,6 @@ func (s *Server) handleSplunkHECAck(w http.ResponseWriter, r *http.Request) {
 	s.splunkHECHandler(true).HandleAck(w, r)
 }
 
-func (s *Server) startStagingBuffer() {
-	if s.stagingBuffer != nil {
-		return
-	}
-	s.stagingBuffer = staging.NewBuffer(
-		stagingConfigFromIngest(s.currentIngestConfig()),
-		func(ctx context.Context, events []*event.Event) error {
-			return s.engine.IngestContext(ctx, events)
-		},
-		memgov.NewClassAccount(s.engine.Governor(), memgov.ClassTempIO),
-		s.promMetrics,
-	)
-}
-
-func (s *Server) closeStagingBuffer(ctx context.Context) {
-	if s.stagingBuffer == nil {
-		return
-	}
-	stagingCtx, cancel := context.WithTimeout(ctx, s.currentShutdownTimeout())
-	defer cancel()
-	if err := s.stagingBuffer.Close(stagingCtx); err != nil {
-		s.engine.Logger().Error("staging buffer shutdown error", "error", err)
-	}
-}
-
 // WaitReady blocks until the server has completed initialization and is ready.
 func (s *Server) WaitReady() {
 	<-s.ready
@@ -769,19 +641,52 @@ func (s *Server) OTLPGRPCAddr() string {
 	return s.otlpGRPCReceiver.Addr()
 }
 
-// SetIndexStore sets an external IndexStore that queries read.
-func (s *Server) SetIndexStore(store *model.IndexStore) {
-	s.engine.SetIndexStore(store)
-}
-
 // TLSEnabled reports whether the server is listening with TLS.
 func (s *Server) TLSEnabled() bool {
 	return s.tlsConfig != nil
 }
 
-// Engine returns the underlying Engine (for tests).
-func (s *Server) Engine() *server.Engine {
-	return s.engine
+// DB returns the database the server serves.
+func (s *Server) DB() *database.DB {
+	return s.db
+}
+
+// indexDir is the directory of the indexes under a data directory, apart
+// from the server's keys and certificates; an empty data directory keeps
+// the indexes in a temporary one.
+func indexDir(dataDir string) string {
+	if dataDir == "" {
+		return ""
+	}
+
+	return filepath.Join(dataDir, "indexes")
+}
+
+// bodyLimits bounds request bodies: the native ingest endpoints by
+// ingest.max_body_size, every other route by the shipper limits.
+func bodyLimits(cfg config.IngestConfig, hook limits.Hook, next http.Handler) http.Handler {
+	maxBody := int64(cfg.MaxBodySize)
+	native := limits.DualLimitMiddleware(limits.Config{
+		MaxCompressedBytes:   maxBody,
+		MaxDecompressedBytes: maxBody,
+		CompressedSetting:    "ingest.max_body_size",
+		DecompressedSetting:  "ingest.max_body_size",
+	}, hook)(next)
+	shipper := limits.DualLimitMiddleware(limits.Config{
+		MaxCompressedBytes:   int64(cfg.Limits.MaxCompressedBodyBytes),
+		MaxDecompressedBytes: int64(cfg.Limits.MaxDecompressedBodyBytes),
+		CompressedSetting:    "ingest.limits.max_compressed_body_bytes",
+		DecompressedSetting:  "ingest.limits.max_decompressed_body_bytes",
+	}, hook)(next)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/ingest", "/api/v1/ingest/raw":
+			native.ServeHTTP(w, r)
+		default:
+			shipper.ServeHTTP(w, r)
+		}
+	})
 }
 
 func defaultIdleTimeout(d time.Duration) time.Duration {
@@ -822,25 +727,11 @@ func (s *Server) currentIngestConfig() config.IngestConfig {
 	return s.ingestCfg
 }
 
-func (s *Server) currentTailConfig() config.TailConfig {
-	s.cfgMu.RLock()
-	defer s.cfgMu.RUnlock()
-
-	return s.tailCfg
-}
-
 func (s *Server) currentShutdownTimeout() time.Duration {
 	s.cfgMu.RLock()
 	defer s.cfgMu.RUnlock()
 
 	return s.shutdownTimeout
-}
-
-func httpError(w http.ResponseWriter, msg string, code int) {
-	w.WriteHeader(code)
-	if err := json.NewEncoder(w).Encode(map[string]string{"error": msg}); err != nil {
-		slog.Warn("failed to write error response", "error", err)
-	}
 }
 
 // requirePathValue extracts a named path parameter and validates it is non-empty.

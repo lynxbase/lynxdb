@@ -8,7 +8,7 @@ description: How PPL aggregation functions behave in LynxDB.
 
 Aggregation functions run in `stats`, `eventstats`, `streamstats`, `chart`
 and `timechart`. The [aggregation table](./aggregations.md) lists every name
-with its support and how partial results merge across cluster shards.
+with its support and how its partial results merge.
 
 ```
 source=main
@@ -35,6 +35,8 @@ source=main
 - Aggregations are valid only in the aggregating commands; `eval x = count()`
   is a `SEMANTIC_ERROR`, and a scalar function used as an aggregation
   (`stats lower(host)`) is a `SEMANTIC_ERROR` too.
+- Rows that lack a `by` field, or hold NULL in it, are aggregated in a group
+  whose key is NULL; `stats bucket_nullable=false` leaves them out.
 
 ## Counting
 
@@ -46,10 +48,17 @@ source=main
 | `distinct_count(x)`, `dc(x)` | number of distinct values |
 | `distinct_count_approx(x)` | number of distinct values |
 
-LynxDB behavior: `distinct_count` and `dc` count exactly up to 10,000
-distinct values per group and switch to a HyperLogLog estimate beyond that
-(the `stats` entry of the command table states this);
-`distinct_count_approx` uses the same implementation.
+LynxDB behavior: the two executors count distinct values differently. The
+columnar executor, which runs a `stats` that only filters and computed
+columns separate from the index, counts
+`distinct_count` exactly and tells kinds apart, so `1`, `1.0` and `'1'` are
+three values; its `distinct_count_approx` is exact up to 383 values per group
+and estimates beyond with a standard error of 1.6%. The row operators compare
+values by their text, so `1`, `1.0` and `'1'` are one value; in `stats` they
+count exactly up to 10,000 values per group and estimate with HyperLogLog
+beyond, and they count `distinct_count_approx` as `distinct_count`.
+[Pipeline execution](./pipeline-execution.md) says which executor runs
+what.
 
 ## Numbers
 
@@ -65,9 +74,27 @@ stats percentile(response_time, 99), p95(response_time), perc99.9(response_time)
 
 `percentile(x, p)` and `percentile_approx(x, p)` take `p` between 0 and 100.
 The shortcuts `pNN` and `percNN` (including fractions such as `p99.9`) and
-`median(x)` (`percentile(x, 50)`) are the same function. LynxDB computes
-percentiles with a t-digest; the optional compression argument is accepted
-and not used.
+`median(x)` (`percentile(x, 50)`) are the same function. The optional
+compression argument is accepted and not used.
+
+LynxDB behavior: the percentile is the value that has `floor(p/100*n)` of
+the `n` numeric values before it, the greatest for `p = 100`, without
+interpolation between neighbours. Over the values 1, 2, 3 and 4, the median
+is 3 and `percentile(x, 25)` is 2:
+
+```
+makeresults count=4 | streamstats count() as x | stats percentile(x, 25) as p25, median(x) as p50, percentile(x, 100) as p100
+```
+
+```
+p25  p50  p100
+2    3    4
+```
+
+The columnar executor reads percentiles from a sketch per group: exact while
+the group holds at most 63 distinct non-zero numbers, and beyond that within
+1% of the value. The row operators keep the values and are exact up to
+10,000 values per group, then estimate with a t-digest.
 
 ## Time-ordered values
 
@@ -77,8 +104,17 @@ and not used.
 | `first(x)`, `last(x)` | the first or last non-NULL value in input order |
 
 OpenSearch allows a second argument naming the time field of `earliest` and
-`latest`. LynxDB orders by `_time`; another time field fails when the query
-runs.
+`latest`. LynxDB orders by `_time`: `earliest(x, _time)` and
+`earliest(x, @timestamp)` are accepted, and any other second argument fails
+to compile with `UNSUPPORTED_FEATURE`:
+
+```
+source=main | stats earliest(msg, response_time) by host
+```
+
+```
+unsupported_feature error at line 1, column 35: earliest ordered by response_time is not supported; earliest orders rows by the event time _time, so leave out the time field
+```
 
 ## Collections
 
@@ -105,13 +141,3 @@ The OpenSearch window functions `row_number`, `rank`, `dense_rank`,
 `percent_rank`, `cume_dist`, `nth` and `ntile` fail with
 `UNSUPPORTED_FUNCTION`. `trendline` computes simple (`sma`) and weighted
 (`wma`) moving averages.
-
-## Distributed aggregation
-
-The distributed query planner (`pkg/cluster/query`) splits a `stats` whose
-aggregations are all `count`, `sum`, `avg`, `min` or `max` over plain
-fields, grouped by plain fields, into partial states computed per shard and
-merged on the coordinator. Other aggregations run on the coordinator over
-the shards' rows. `lynxdb server` itself runs as a single node. The *merge* column of the
-[aggregation table](./aggregations.md) records which functions have exact,
-approximate or no partial forms. See [Pipeline execution](./pipeline-execution.md#cluster-execution).

@@ -63,6 +63,13 @@ func TestE2E_IngestJSON_StructuredEvents(t *testing.T) {
 
 	r := h.MustQuery(`source=main | stats count() as count`)
 	requireAggValue(t, r, "count", 3)
+
+	r = h.MustQuery(`source=main | where status >= 400 | stats count() as count by host | sort host`)
+	rows := AggRows(r)
+	if len(rows) != 2 || rows[0]["host"] != "web-01" || toInt(rows[0]["count"]) != 1 ||
+		rows[1]["host"] != "web-02" || toInt(rows[1]["count"]) != 1 {
+		t.Errorf("expected web-01=1 and web-02=1, got %v", rows)
+	}
 }
 
 func TestE2E_IngestRaw_NewIndex_Queryable(t *testing.T) {
@@ -111,19 +118,19 @@ func TestE2E_IngestRaw_IndexHeader_RoutesToCorrectIndex(t *testing.T) {
 	}
 }
 
-func TestE2E_IngestRaw_EmptyBody_ReturnsError(t *testing.T) {
+func TestE2E_IngestRaw_EmptyBody_AcceptsNothing(t *testing.T) {
 	h := NewHarness(t)
 	ctx := context.Background()
 
-	_, err := h.Client().IngestRaw(ctx, bytes.NewReader(nil), client.IngestOpts{
+	result, err := h.Client().IngestRaw(ctx, bytes.NewReader(nil), client.IngestOpts{
 		Index:       "main",
 		ContentType: "text/plain",
 	})
-	// Empty body should return an error or zero accepted.
 	if err != nil {
-		// Error is the expected path.
-		t.Logf("empty body correctly returned error: %v", err)
-		return
+		t.Fatalf("IngestRaw with an empty body: %v", err)
 	}
-	t.Log("empty body did not return error (server accepted empty payload)")
+	if result.Accepted != 0 || result.Failed != 0 {
+		t.Errorf("expected accepted=0 failed=0, got %+v", result)
+	}
+	requireAggValue(t, h.MustQuery(`source=main | stats count() as count`), "count", 0)
 }

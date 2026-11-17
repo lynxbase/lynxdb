@@ -15,15 +15,17 @@ into it. It works like `grep` or `jq`: read the input, run a
 With `--file` or piped standard input, the CLI:
 
 1. Compiles the query first, so a bad query fails before any input is read.
-2. Creates an in-memory engine and loads every line into the index `main`.
-3. Extracts fields while loading: top-level JSON keys, `key=value` pairs, and
-   the fields of combined access logs and of syslog lines with a `<PRI>`
-   header.
-4. Runs the same compiled plan a server would run, prints the rows, and
-   exits.
+2. Opens a database in a temporary directory and loads every line into the
+   index `main`.
+3. Keeps a line that is a JSON object as it is, with its members as fields.
+   Any other line becomes an event holding the text in `_raw`, with its
+   leading timestamp, its `key=value` pairs, and the fields of combined
+   access logs and syslog lines extracted.
+4. Runs the same compiled plan a server would run, prints the rows, deletes
+   the temporary directory and exits.
 
-No daemon, config file or data directory is involved. Queries start with
-`source=main`, as on a server.
+No daemon or config file is involved. Queries start with `source=main`, as
+on a server.
 
 ## Query local files
 
@@ -35,14 +37,15 @@ lynxdb query --file access.log 'source=main | stats count() by status'
 lynxdb query --file '/var/log/nginx/*.log' 'source=main status>=500 | top 10 uri'
 ```
 
-Each event's `_source` is the path of the file it came from; `--source`
-overrides it and `--sourcetype` sets `_sourcetype`.
+A text line's `source` field is the path of the file it came from;
+`--source` overrides it and `--sourcetype` sets `sourcetype`. JSON lines keep
+their own fields only.
 
 ## Pipe from standard input
 
 ```bash
 # Kubernetes logs
-kubectl logs deploy/api | lynxdb query 'source=main | stats avg(duration_ms), p99(duration_ms) by endpoint'
+kubectl logs deploy/api | lynxdb query 'source=main | stats avg(duration_ms), p99(duration_ms) by service'
 
 # Docker logs
 docker logs myapp 2>&1 | lynxdb query 'source=main OOM | fields _time, _raw | head 20'
@@ -54,7 +57,7 @@ zcat archive.log.gz | lynxdb query 'source=main | where status >= 500 | top 10 p
 grep "2026-01-15" /var/log/app.log | lynxdb query 'source=main | stats count() by level'
 ```
 
-Piped events get `_source` `stdin` unless `--source` is set. `--file` and
+Piped text lines get the `source` `stdin` unless `--source` is set. `--file` and
 piped input cannot be combined in one command.
 
 Piping into `lynxdb` with no command prints the first ten events, which is a
@@ -75,9 +78,10 @@ extracts that format's fields:
 | Combined access log | `client_ip`, `ident`, `user`, `timestamp`, `request`, `method`, `uri`, `protocol`, `status`, `bytes`, `referer`, `user_agent` |
 | Syslog (RFC 3164 and RFC 5424 with `<PRI>`) | `priority`, `facility`, `severity`, `facility_name`, `severity_name`, `timestamp`, `hostname`, `appname`, `procid`, `message`, and more |
 
-Top-level JSON keys and `key=value` pairs are extracted from every line
-whatever the detected format; a Docker `json-file` line, for example, yields
-`log`, `stream` and `time`. `--raw` turns off format detection. Anything
+A JSON line keeps its fields whatever the detected format; a Docker
+`json-file` line, for example, yields `log`, `stream` and `time`, and members
+of nested objects become fields named like `http.path`. `--raw` turns off
+format detection. Anything
 else is extracted at query time with `parse`, `rex`, `grok` or `spath`; see
 [Field Extraction](../guides/field-extraction.md).
 
@@ -87,7 +91,7 @@ Results go to stdout; the statistics footer and hints go to stderr.
 
 ```bash
 # CSV, sorted by the shell
-lynxdb query --file access.log 'source=main | stats count() as n by status' --format csv | sort -t, -k2 -rn
+lynxdb query --file access.log 'source=main | stats count() as n by status' --format csv | sort -t, -k1 -rn
 
 # JSON lines into jq
 lynxdb query --file app.json 'source=main | stats count() as n by endpoint' --format json | jq '.n'

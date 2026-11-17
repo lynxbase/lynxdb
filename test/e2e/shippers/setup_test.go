@@ -42,20 +42,16 @@ func StartLynxDB(t *testing.T) *TestRig {
 	cfg.DataDir = t.TempDir()
 	cfg.Ingest.OTLP.HTTPListen = listenHost + ":0"
 	cfg.Ingest.OTLP.GRPCListen = listenHost + ":0"
-	cfg.Storage.CompactionInterval = time.Hour
-	cfg.Storage.TieringInterval = time.Hour
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	srv, err := rest.NewServer(rest.Config{
 		Addr:          cfg.Listen,
 		DataDir:       cfg.DataDir,
-		Storage:       cfg.Storage,
 		Logger:        logger,
 		RuntimeConfig: cfg,
 		Ingest:        cfg.Ingest,
 		Query:         cfg.Query,
 		HTTP:          cfg.HTTP,
-		Server:        cfg.Server,
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

@@ -29,7 +29,10 @@ type query struct {
 	pathIdx map[string]int
 	filter  *pred
 	opts    colstore.ScanOptions
-	agg     *aggPlan
+	// timed is set when the filter asks only for a time from minT to maxT.
+	timed      bool
+	minT, maxT int64
+	agg        *aggPlan
 	// ordered is set when the aggregation can run in key order.
 	ordered *orderedPlan
 	// rowExprs are the columns of a plan without an aggregate.
@@ -132,6 +135,7 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 	if !ok || scan == nil {
 		return nil, unsupported("a plan is a scan, then an optional aggregate, projection and sort")
 	}
+	q.minT, q.maxT, q.timed = timeRange(scan.Filter)
 	if scan.Filter != nil {
 		p, err := q.pred(scan.Filter, 0)
 		if err != nil {
@@ -777,6 +781,39 @@ func conjunctTokens(c *Expr, dst []colstore.ColumnTokens) []colstore.ColumnToken
 	return append(dst, set)
 }
 
+// timeBound returns the row times that a comparison with a time allows.
+func timeBound(op Op, t int64) (lo, hi int64) {
+	var p pred
+	if p.intRange(op, t); p.none {
+		return math.MaxInt64, math.MinInt64
+	}
+
+	return p.lo, p.hi
+}
+
+// timeRange returns the row times a filter allows and whether it asks nothing else.
+func timeRange(filter *Expr) (minT, maxT int64, only bool) {
+	minT, maxT = math.MinInt64, math.MaxInt64
+	if filter == nil {
+		return minT, maxT, true
+	}
+	for _, c := range conjuncts(filter, nil) {
+		switch c.Op {
+		case OpEq, OpLt, OpLe, OpGt, OpGe:
+		default:
+			return 0, 0, false
+		}
+		col, lit, op, ok := columnLiteral(c)
+		if !ok || lit.Kind != vec.KindInt || col.Path != part.TimePath || (col.Kind != vec.KindInt && col.Kind != KindAny) {
+			return 0, 0, false
+		}
+		lo, hi := timeBound(op, lit.Int)
+		minT, maxT = max(minT, lo), min(maxT, hi)
+	}
+
+	return minT, maxT, true
+}
+
 // pushdown derives what the scan can skip from the conjuncts of the filter:
 // string equalities on the leading sort key paths of the snapshot's ordered
 // parts become a key filter, string equalities and text matches contribute
@@ -800,12 +837,8 @@ func pushdown(snap *colstore.Snapshot, filter *Expr) colstore.ScanOptions {
 					equal[col.Path] = lit.Bytes
 				}
 			case lit.Kind == vec.KindInt && col.Path == part.TimePath && (col.Kind == vec.KindInt || col.Kind == KindAny):
-				var p pred
-				p.intRange(op, lit.Int)
-				if p.none {
-					p.lo, p.hi = math.MaxInt64, math.MinInt64
-				}
-				minT, maxT = max(minT, p.lo), min(maxT, p.hi)
+				lo, hi := timeBound(op, lit.Int)
+				minT, maxT = max(minT, lo), min(maxT, hi)
 			}
 		}
 	}

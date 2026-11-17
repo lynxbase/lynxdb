@@ -1,47 +1,53 @@
 ---
 title: Working with JSON Logs
-description: How LynxDB stores JSON events and how to query them with dotted field names, spath, flatten, expand and the json_* functions.
+description: How LynxDB stores JSON events and how to query them with dotted field names, expand, flatten, spath and the json_* functions.
 ---
 
 # Working with JSON Logs
 
-LynxDB stores a JSON event's text in `_raw` and extracts its top-level
-values as typed fields when it ingests the event. Nested objects and arrays
-are reached at query time with `spath`, `flatten`, `expand` and the `json_*`
-functions.
+LynxDB stores a JSON event as the object it is. Every key is a field with its
+JSON type, the members of a nested object are fields named by their path, and
+arrays keep their elements. Queries reach nested values by name, without an
+extraction step.
 
 The examples use events like this one:
 
 ```json
-{"timestamp":"2026-03-02T09:00:01.000Z","level":"error","service":"checkout","http.method":"POST","http.status":502,"duration_ms":5012,"user":{"id":"u-17","plan":"pro"},"items":[{"sku":"A1","qty":2},{"sku":"B3","qty":1}],"tags":["payments","retry"]}
+{"timestamp":"2026-03-02T09:00:01.000Z","level":"error","service":"checkout","http":{"method":"POST","status":502},"duration_ms":5012,"user":{"id":"u-17","plan":"pro"},"items":[{"sku":"A1","qty":2},{"sku":"B3","qty":1}],"tags":["payments","retry"]}
 ```
 
-## What ingestion extracts
+## How JSON events are stored
 
-For a JSON line sent as raw text (`lynxdb ingest`, `POST /api/v1/ingest/raw`,
-pipe mode):
+A JSON object sent to `POST /api/v1/ingest`, `POST /api/v1/ingest/raw`,
+`lynxdb ingest`, an Elasticsearch bulk request or pipe mode is stored as sent:
 
-- Each top-level string, number and boolean becomes a field with its type:
-  `level`, `service`, `http.method`, `http.status`, `duration_ms`.
-- Nested objects (`user`) and arrays (`items`, `tags`) are not extracted.
-  They remain in `_raw`.
-- A timestamp near the start of the line becomes `_time`; see
-  [Field Extraction](./field-extraction.md#what-ingestion-extracts).
+- Each top-level string, number, boolean and null is a field with its type:
+  `level`, `service`, `duration_ms`.
+- Each member of a nested object is a field named by its path:
+  `http.method`, `http.status`, `user.id`, `user.plan`.
+- An array is one field holding the array: `items`, `tags`.
+- The event time comes from the first of `_time`, `timestamp`, `@timestamp`,
+  `time` and `ts` that the event holds (`storage.time_fields`), otherwise from
+  the time it arrived.
+- The event has no `_raw`. Search terms match the text of its string fields.
 
-Documents sent through the Elasticsearch bulk API are stored with every key,
-and nested objects are kept as object values: the `kubernetes` object that
-Fluent Bit adds is a column of type object. OTLP attributes arrive as flat dotted
-names such as `resource.service.name`.
+The first event above reads back as:
+
+```json
+{"_time":"2026-03-02T09:00:01Z","duration_ms":5012,"http.method":"POST","http.status":502,"items":[{"qty":2,"sku":"A1"},{"qty":1,"sku":"B3"}],"level":"error","service":"checkout","tags":["payments","retry"],"timestamp":"2026-03-02T09:00:01.000Z","user.id":"u-17","user.plan":"pro"}
+```
+
+An event that lacks a field has no value for it: the field is absent from its
+row, comparisons on it are false, and `stats ... by` puts the event in a
+group whose key is null.
 
 ## Dotted field names
 
-A field whose name contains dots, such as `http.status` from the JSON key
-`"http.status"` or `resource.service.name` from OTLP, is referred to by its
-name as written. Backticks quote it explicitly:
+A nested field is referred to by its path. Backticks quote a name
+explicitly:
 
 ```
 source=main | where http.status >= 400 | stats count() as n by service, http.method
-source=main | where `http.status` >= 400 | fields service, `http.status`
 ```
 
 ```text
@@ -49,67 +55,52 @@ http.method,n,service
 POST,2,checkout
 ```
 
-A dotted name refers to a column, not to a path inside an object: `user.id`
-is empty until `spath` or `flatten` creates a column with that name.
-
-## Extract one value with `spath`
-
-`spath path=<path>` reads a JSON value out of `_raw` (or `input=<field>`)
-and stores it in `output=<field>` (by default, a field named like the
-path). Use dots for object members and `{N}` for array positions:
-
 ```
-source=main | spath path=user.id output=user_id | stats count() as requests by user_id
+source=main | where `http.status` >= 400 | fields service, `http.status`
 ```
 
 ```text
-requests,user_id
+http.status,service
+502,checkout
+503,checkout
+```
+
+```
+source=main | where user.plan = "pro" | fields service, duration_ms
+source=main | stats count() as requests by user.id | sort - requests, user.id
+```
+
+```text
+requests,user.id
 2,u-17
 1,u-04
 1,u-22
 ```
 
-```
-source=main | spath path=user.plan output=plan | where plan = "pro" | fields service, duration_ms
-source=main | spath path=items{0}.sku output=first_sku | fields service, first_sku
-```
+## Arrays into rows
 
-To read inside an object column, for example from an Elasticsearch bulk
-document, set `input=`:
+`expand` (or `mvexpand`) emits one row per array element:
 
 ```
-source=fluent-bit | spath input=kubernetes path=pod_name output=pod | stats count() by pod
-```
-
-## Extract everything with `spath` and `flatten`
-
-`spath` without `path=` parses the whole document into one object column.
-`flatten` then turns each member into a column named by its path:
-
-```
-source=main | spath output=doc | flatten doc | fields service, user.id, user.plan
+source=main | expand tags | stats count() as n by tags | sort - n, tags
 ```
 
 ```text
-service,user.id,user.plan
-checkout,u-17,pro
-catalog,u-04,free
-checkout,u-17,pro
-checkout,u-22,free
+n,tags
+2,payments
+1,
+1,browse
+1,retry
 ```
 
-`flatten` also works directly on an object column: on Fluent Bit events,
-`flatten kubernetes` adds `pod_name`, `namespace_name` and the other
-members of `kubernetes`.
+An event whose array is empty yields one row without a value, the empty
+group above.
 
-## Arrays into rows
-
-`expand` (or `mvexpand`) emits one row per array element. Combined with
-`flatten`, it unpacks arrays of objects:
+For an array of objects, `flatten` then turns the members of each element
+into columns:
 
 ```
 source=main
-| spath output=doc | flatten doc
 | expand items | flatten items
 | stats sum(qty) as units by sku
 | sort - units
@@ -120,13 +111,88 @@ sku,units
 C9,4
 A1,3
 B3,1
+,0
 ```
 
-An event whose array is empty yields one row with empty values.
+`json_array_length` counts the elements of an array:
+
+```
+source=main | eval n_items = json_array_length(items) | fields service, user.plan, n_items
+```
+
+```text
+n_items,service,user.plan
+2,checkout,pro
+0,catalog,free
+1,checkout,pro
+1,checkout,free
+```
+
+## JSON inside a text field
+
+When JSON is embedded in a string field, such as the `log` field of Docker
+`json-file` lines or the `message` of a syslog line, `spath` and the `json_*`
+functions read it. The examples use Docker lines such as:
+
+```json
+{"log":"{\"status\":500,\"request\":{\"id\":\"r-1\"},\"msg\":\"upstream timeout\"}\n","stream":"stdout","time":"2026-03-02T09:10:00.000000000Z"}
+```
+
+`spath input=<field> path=<path>` extracts one value into `output=<field>`.
+Use dots for object members and `{N}` for array positions:
+
+```
+source=main | spath input=log path=request.id output=request_id | where isnotnull(request_id) | stats count() as n by request_id | sort request_id
+```
+
+```text
+n,request_id
+1,r-1
+1,r-2
+1,r-3
+```
+
+Without `path=`, `spath` parses the whole document into one object, and
+`flatten` turns its members into columns:
+
+```
+source=main | spath input=log output=doc | flatten doc | where isnotnull(status) | fields status, request.id, msg
+```
+
+```text
+msg,request.id,status
+upstream timeout,r-1,500
+ok,r-2,200
+db error,r-3,500
+```
+
+`json_extract` reads a value at a JSONPath and keeps its JSON type:
+
+```
+source=main | eval code = json_extract(log, '$.status') | where code = 500 | fields stream, code
+```
+
+```text
+code,stream
+500,stdout
+500,stdout
+```
+
+When a field mixes JSON and plain text, `json_valid` separates them:
+
+```
+source=main | eval is_json = json_valid(log) | stats count() as n by is_json
+```
+
+```text
+is_json,n
+false,1
+true,3
+```
 
 ## JSON functions
 
-These functions take and return JSON text and work in `eval` and `where`:
+These functions work in `eval` and `where`:
 
 | Function | Result |
 |----------|--------|
@@ -142,27 +208,6 @@ These functions take and return JSON text and work in `eval` and `where`:
 | `json_append(s, path, value)` | `s` with `value` appended to the array at `path` |
 | `json_extend(s, path, value)` | `s` with the array at `path` extended by another array |
 
-```
-source=main
-| eval plan = json_extract(_raw, '$.user.plan'),
-       n_items = json_array_length(json_extract(_raw, '$.items'))
-| fields service, plan, n_items
-```
-
-```text
-n_items,plan,service
-2,pro,checkout
-0,free,catalog
-1,pro,checkout
-1,free,checkout
-```
-
-Filter on a nested value without creating a column:
-
-```
-source=main | where json_extract(_raw, '$.user.plan') = 'pro' | stats count() as n by service
-```
-
 Build a compact JSON summary for export:
 
 ```
@@ -170,39 +215,19 @@ source=main | eval summary = json_object('service', service, 'status', http.stat
 ```
 
 ```text
-{"service":"checkout","status":502}
-{"service":"catalog","status":200}
+{"summary":"{\"service\":\"checkout\",\"status\":502}"}
+{"summary":"{\"service\":\"catalog\",\"status\":200}"}
 ...
-```
-
-## Mixed JSON and text
-
-When a stream mixes JSON and plain lines, `json_valid` separates them:
-
-```
-source=main | eval is_json = json_valid(_raw) | stats count() as n by is_json
-source=main | where NOT json_valid(_raw) | fields _raw | head 10
-```
-
-## JSON inside a text field
-
-When JSON is embedded in a string field, such as the `log` field of Docker
-`json-file` lines or the `message` of a syslog line, point `spath` or
-`json_extract` at that field:
-
-```
-source=main | spath input=message path=request.id output=request_id | stats count() by request_id
-source=main | eval code = json_extract(log, '$.status') | where code = '500' | fields _time, log
 ```
 
 ## Tips
 
-- Search terms first. `source=main checkout | spath ...` lets the term index
-  skip events before any JSON is parsed.
-- Extract one path instead of the whole document when you need a few
-  values; `spath path=` reads less than `spath | flatten`.
-- Values that you filter or group on in most queries are cheaper as
-  top-level keys, which ingestion stores as typed columns.
+- Search terms first. `source=main checkout | ...` lets the scan skip blocks
+  without the term before any value is read.
+- Name the fields you need with `fields`: each nested field is a column of
+  its own, and a query reads only the columns it uses.
+- `spath path=` reads less than `spath | flatten` when you need a few values
+  out of embedded JSON.
 
 ## Next steps
 

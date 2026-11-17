@@ -1,20 +1,23 @@
 # Benchmarks
 
-LynxDB has three kinds of benchmarks: Go micro benchmarks of the hot paths,
-and two dataset suites, JSONBench and a generated logs suite, that time whole
-queries over the columnar store (`pkg/colstore`). Results are not checked in;
-record the commit, the machine, the data size and the store layout with every
-number you publish.
+LynxDB has four kinds of benchmarks: Go micro benchmarks of the hot paths,
+two dataset suites, JSONBench and a generated logs suite, that time whole
+queries over the columnar store (`pkg/colstore`), and a profiling run of the
+server under mixed load. Results are not checked in; record the commit, the
+machine, the data size and the store layout with every number you publish.
 
 ## Micro Benchmarks
 
 ```bash
 make bench-micro   # pipeline, VM and ingest; writes artifacts/bench-micro.txt
 go test -run '^$' -bench . -benchmem ./pkg/vm/...
-go test -run '^$' -bench . -benchmem ./pkg/storage/segment/...
 ```
 
-Compare runs with `benchstat`, and use `-count` of 5 or more.
+Packages with `Benchmark` functions: `pkg/vec`, `pkg/colstore/part`,
+`pkg/colstore/shred`, `pkg/colstore/tokenfilter`, `pkg/engine/columnar`,
+`pkg/engine/pipeline`, `pkg/vm`, `pkg/query`, `pkg/mem` and
+`pkg/ingest/pipeline`. Compare runs with `benchstat`, and use `-count` of 5 or
+more.
 
 ## JSONBench
 
@@ -36,6 +39,17 @@ LYNXDB_BENCH_DIR=/data/bluesky LYNXDB_BENCH_LISTEN=127.0.0.1:9000 go test ./pkg/
 curl -s 'http://127.0.0.1:9000/query?q=Q1'
 curl -s --get 'http://127.0.0.1:9000/query' --data-urlencode 'ppl=source=bluesky | stats count()'
 ```
+
+Other harnesses over the same file:
+
+| Test | Package | Measures |
+|---|---|---|
+| `TestJSONBench` | `pkg/colstore` | The queries over one loaded table, by block size, codec and compression effort |
+| `TestJSONBenchMerge` | `pkg/colstore` | Merging runs as one merge and as range merges on every core |
+| `TestJSONBenchOrdered` | `pkg/colstore` | The queries over key-ordered and arrival-ordered parts, which must agree |
+| `TestJSONBenchConcurrent` | `pkg/colstore/exec` | Queries per second and latency from concurrent clients, with optional concurrent inserts (`LYNXDB_BENCH_CONCURRENT`) |
+| `TestJSONBenchSearchedColumns` | `pkg/colstore/exec` | How many columns searches decode, and how many the token filters spare |
+| `TestJSONBenchReference` | `pkg/colstore/exec` | The plans' answers against a reference evaluator over a sample |
 
 Useful variables: `LYNXDB_BENCH_RUNS` (timed runs, best reported),
 `LYNXDB_BENCH_QUERY` (keep queries whose name contains it),
@@ -82,7 +96,9 @@ LYNXDB_LOGSBENCH=1 go test ./pkg/colstore/exec -run '^TestLogsBench$' -v
 
 `LYNXDB_LOGSBENCH_QUERY`, `LYNXDB_LOGSBENCH_LAYOUT`, `LYNXDB_LOGSBENCH_RUNS`
 and `LYNXDB_LOGSBENCH_PROFILE` work like their JSONBench counterparts.
-`TestLogsBenchReference` checks every answer against a reference evaluator.
+`TestLogsBenchReference` checks every answer against a reference evaluator,
+and `TestLogsBenchFile` writes the generated stream to
+`LYNXDB_LOGSBENCH_FILE` for loading into other systems.
 Example queries (`logQueries` in `logsbench_queries_test.go`):
 
 | Name | Query |
@@ -93,3 +109,17 @@ Example queries (`logQueries` in `logsbench_queries_test.go`):
 | S2 | `source=logs deadlock \| stats count() as n` |
 | S3 | `source=logs \| where regexp_match(message, 'timeout after \d+ms waiting') \| stats count() as n` |
 | E2 | `source=logs \| where isnull(user_id) \| stats count() as n` |
+
+## Server Profiling
+
+`scripts/profile/run-all.sh` builds the binary, starts a server with runtime
+profiling in a fresh data directory under `artifacts/profiles/<time>/`, loads
+`testdata/bench/json_100k.log` twenty times, runs a minute of concurrent
+ingest and PPL queries, collects CPU, heap, allocation, goroutine, mutex,
+block and trace profiles, and writes `FINDINGS.md` with the top functions and
+GC pauses. `make bench-fixtures` generates the fixtures when they are missing.
+
+```bash
+scripts/profile/run-all.sh
+LYNXDB_ADDR=localhost:3200 scripts/profile/run-all.sh
+```

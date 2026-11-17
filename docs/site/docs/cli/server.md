@@ -1,7 +1,7 @@
 ---
 sidebar_position: 6
 title: server
-description: Start the LynxDB server - flags, storage, TLS, authentication, receivers, signals and systemd.
+description: Start the LynxDB server - flags, data directory, TLS, authentication, receivers, signals and systemd.
 ---
 
 # server
@@ -21,24 +21,16 @@ The server loads its config file (see [config](./config-cmd.md) for the search o
 | Flag | Description |
 |------|-------------|
 | `--addr` | Listen address, for example `0.0.0.0:3100` |
-| `--data-dir` | Data directory; `""` keeps everything in memory |
-| `--s3-bucket` | S3 bucket for warm and cold storage |
-| `--s3-region` | AWS region of the bucket |
-| `--s3-prefix` | Key prefix in the bucket |
-| `--compaction-interval` | How often compaction checks for work, for example `30s` |
-| `--tiering-interval` | How often tiering evaluates segments, for example `5m` |
-| `--cache-max-mb` | Query result cache size, for example `512mb`, `1gb` |
-| `--max-query-pool` | Memory pool shared by all queries, for example `4gb` |
-| `--spill-dir` | Directory for spill files (default: the OS temp directory) |
+| `--data-dir` | Data directory; `""` keeps the indexes in a temporary directory that is removed at shutdown |
 | `--log-level` | `debug`, `info`, `warn` or `error` |
-| `--profile-runtime` | Turn on Go mutex and block profiling (about 2-5% overhead) |
+| `--profile-runtime` | Turn on Go mutex and block profiling for the pprof endpoints (about 2-5% overhead) |
 
 ### Security
 
 | Flag | Description |
 |------|-------------|
-| `--auth` | Require API keys |
-| `--tls` | Serve HTTPS; without `--tls-cert`, generate a self-signed certificate in `<data-dir>/tls/` |
+| `--auth` | Require API keys (needs a data directory) |
+| `--tls` | Serve HTTPS; without `--tls-cert`, use a self-signed certificate kept in `<data-dir>/tls/` |
 | `--tls-cert` | Certificate PEM file (with `--tls-key`; either one turns TLS on) |
 | `--tls-key` | Private key PEM file |
 
@@ -57,27 +49,12 @@ The server loads its config file (see [config](./config-cmd.md) for the search o
 | `--otlp-grpc-max-recv-bytes` | | Largest OTLP/gRPC message |
 | `--ingest-es-enabled` | `true` | Serve the Elasticsearch-compatible `_bulk` endpoint |
 | `--ingest-es-version` | | Elasticsearch version reported to clients that check it |
-| `--ingest-max-compressed-body-bytes` | | Largest compressed request body from a log shipper |
+| `--ingest-max-compressed-body-bytes` | | Largest request body on the wire |
 | `--ingest-max-decompressed-body-bytes` | | Largest request body after decompression |
-| `--ingest-staging-enabled` | `true` | Buffer shipper requests in the server-side staging area |
-| `--ingest-staging-max-bytes` | | Staging buffer size limit |
-| `--ingest-staging-max-age` | | Longest time an entry stays in the staging buffer, for example `5s` |
 
 The HTTP ingest endpoints, including Splunk HEC (`/services/collector`), are always served on the main listener. See [Ingest settings](../configuration/ingest.md) and [Syslog](../configuration/syslog.md).
 
-### Cluster
-
-| Flag | Description |
-|------|-------------|
-| `--cluster.enabled` | Run as a cluster node |
-| `--cluster.node-id` | Unique node ID |
-| `--cluster.roles` | Comma-separated roles: `meta`, `ingest`, `query` |
-| `--cluster.seeds` | Comma-separated seed addresses (`host:port`) |
-| `--cluster.grpc-port` | Port for node-to-node gRPC |
-
-See [Cluster settings](../configuration/cluster.md).
-
-Size flags take values such as `512mb` or `2gb`; interval flags take durations such as `30s`, `5m` or `1d`.
+Size flags take values such as `512mb` or `2gb`.
 
 ## Examples
 
@@ -88,11 +65,8 @@ lynxdb server
 # Listen on all interfaces with a fixed data directory
 lynxdb server --addr 0.0.0.0:3100 --data-dir /var/lib/lynxdb
 
-# In memory, nothing written to disk
+# Indexes in a temporary directory, removed at shutdown
 lynxdb server --data-dir ""
-
-# Tier old segments to S3
-lynxdb server --data-dir /var/lib/lynxdb --s3-bucket my-logs --s3-region eu-west-1
 
 # HTTPS with a self-signed certificate and API keys
 lynxdb server --data-dir /var/lib/lynxdb --tls --auth
@@ -110,26 +84,32 @@ lynxdb server --tls --syslog-tcp :6514 --syslog-tls
 lynxdb server --otlp-http-listen :4318 --otlp-grpc-listen :4317
 ```
 
+## Data directory
+
+The data directory holds `indexes/`, with one directory per index, each with the store that keeps that index's events. An index comes into being with its first events. Next to `indexes/` are `auth/` (API keys, with `--auth`), `tls/` (the self-signed certificate, with `--tls`) and the PID file `lynxdb.pid`. [Storage settings](../configuration/storage.md) describe how events are written, partitioned by time and dropped by retention.
+
+With `--data-dir ""` the server keeps its indexes in a temporary directory and removes it at shutdown. The startup banner shows `Data (in-memory)`. Features that keep files next to the data are not available: `--auth` has no effect, and `--tls` without a certificate refuses to start. The PID file goes to `$XDG_RUNTIME_DIR`, or the system temp directory.
+
 ## Startup output
 
 The server prints where its settings came from, then logs to stdout:
 
 ```
-  Config     /etc/lynxdb/config.yaml
-  Overrides  LYNXDB_LOG_LEVEL, --addr
-  Data       /var/lib/lynxdb
-  Listen     0.0.0.0:3100
+  Config  /etc/lynxdb/config.yaml
+  Overrides LYNXDB_LOG_LEVEL, --addr
+  Data    /var/lib/lynxdb
+  Listen  0.0.0.0:3100
 
-time=2026-01-15T10:00:00.000Z level=INFO msg="starting LynxDB" version=1.0.0 addr=0.0.0.0:3100 config=/etc/lynxdb/config.yaml
+time=2026-11-17T10:00:00.000Z level=INFO msg="starting LynxDB" version=1.0.0 addr=0.0.0.0:3100 config=/etc/lynxdb/config.yaml
 ```
 
 With TLS on, it also prints the certificate path and its SHA-256 fingerprint. Clients pin that fingerprint on first [`lynxdb login`](./auth.md#login).
 
-It writes its PID to `<data-dir>/lynxdb.pid` (or `$XDG_RUNTIME_DIR/lynxdb.pid` in memory mode) so that `lynxdb config reload` can find it.
+It writes its PID to `<data-dir>/lynxdb.pid` so that `lynxdb config reload` can find it.
 
 ## Authentication
 
-With `--auth` (or `auth.enabled: true`) the server keeps API keys in `<data-dir>/auth/`, so authentication needs a data directory. When no key exists yet, it creates a root key and prints it once on stderr:
+With `--auth` (or `auth.enabled: true`) the server keeps API keys in `<data-dir>/auth/`. When no key exists yet, it creates a root key and prints it once on stderr:
 
 ```
   ⚠  Auth enabled — no API keys exist. Generated root key:
@@ -137,6 +117,8 @@ With `--auth` (or `auth.enabled: true`) the server keeps API keys in `<data-dir>
     lynx_rk_7fA3mNpQ9xKvL2wB8cD4eF6gH1jR5tY
 
   Save this key now. It will NOT be shown again.
+  Use it to authenticate:  lynxdb login
+  Or generate new keys:    lynxdb auth create
 ```
 
 Log in with it and create narrower keys:
@@ -152,24 +134,23 @@ See [auth](./auth.md) and [TLS & Authentication](../deployment/tls-auth.md).
 
 | Signal | Action |
 |--------|--------|
-| `SIGINT`, `SIGTERM` | Graceful shutdown: stop accepting requests, finish in-flight work, flush buffered events, exit |
+| `SIGINT`, `SIGTERM` | Graceful shutdown: stop the receivers, finish requests in flight within `http.shutdown_timeout`, cancel running query jobs, write the events still in memory, exit |
 | `SIGHUP` | Reload the config file |
 
 `lynxdb config reload` sends `SIGHUP` to the PID in the PID file.
 
 ### What a reload changes
 
-A reload applies these settings to new work without a restart:
+A reload reads the config file and the environment again; it does not re-apply the flags the server started with. It applies these settings without a restart:
 
-- `log_level`, `retention`
-- `query.*` and `tail.*`, except `query.global_query_pool_bytes`, `query.spill_dir` and `query.max_temp_dir_size_bytes`
-- `storage.compaction_rate_limit_mb`
+- `log_level`
+- `query.sync_timeout`, `query.default_result_limit`, `query.max_result_limit`, `query.max_query_length`
 - `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`
-- `ingest.es_compat.*`, `ingest.limits.*`, `ingest.staging.*`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`
+- `ingest.es_compat.enabled`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`
 - `http.shutdown_timeout`
 - `syslog.index`, `syslog.sourcetype`, `syslog.default_timezone`, `syslog.default_hostname`, `syslog.batch_size`, `syslog.batch_timeout`
 
-Any other change, such as `listen`, `data_dir`, TLS, auth, OTLP listeners, `ingest.max_body_size` or storage scheduler settings, needs a restart; the server logs the fields it left unapplied.
+Any other change, such as `listen`, `data_dir`, `retention`, `storage.*`, `query.max_concurrent`, `query.job_ttl`, TLS, auth, the OTLP listeners or the body limits, needs a restart; the server logs the fields it left unapplied.
 
 ## systemd
 

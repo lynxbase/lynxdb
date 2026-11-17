@@ -25,16 +25,17 @@ engine through IR operators, so most commands need no engine change.
    expresses the semantics, add an operator to `pkg/ir/plan.go` with its
    schema derivation and label, its validation in `pkg/ir/validate.go`, its
    expression listing in `pkg/ir/walk.go`, its column handling in
-   `pkg/ir/opt/prune.go` if it should not stop column pruning, and its
-   physical mapping in `pkg/engine/physical`. Decide whether it is row-local
-   for cluster execution (`isRowLocal` in `pkg/cluster/query/ir_planner.go`)
-   and whether live tail must reject it (`planner.ValidateForTail`).
+   `pkg/ir/opt/prune.go` if it should not stop column pruning, and its row
+   operator in `pkg/engine/physical` and `pkg/engine/pipeline`. When the
+   columnar executor should run it too, translate it in
+   `pkg/colstore/exec/irplan`; an operator that the translation refuses is
+   run by the row operators.
 4. **Catalog.** Record the support level and notes in
    `pkg/ppl/catalog.go`. Notes state the limitations and deviations from
    OpenSearch PPL; for an unsupported command they state the reason.
 5. **Tests.** Add a compile golden pair under `pkg/ppl/testdata/compile`
    (`name.ppl` and the expected `name.ir`) and an execution case in
-   `pkg/query/query_test.go`. Parser-only cases go in
+   `pkg/database/execute_test.go`. Parser-only cases go in
    `pkg/ppl/parser/corpus_test.go`.
 6. **Documentation.** Regenerate the reference tables with
    `go run ./internal/docgen` and describe the command in the

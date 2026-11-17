@@ -87,3 +87,23 @@ func TestPollJob_NoDeadlineRespectsCancel(t *testing.T) {
 		t.Errorf("PollJob did not stop promptly after cancel: ran %v", time.Since(start))
 	}
 }
+
+func TestPollJob_ErrorStateFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{
+				"type": "job", "job_id": "qry_test", "status": "error",
+				"error": map[string]interface{}{"code": "EXECUTION_ERROR", "message": "boom"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := NewClient(WithBaseURL(srv.URL)).PollJob(ctx, "qry_test", nil)
+	if err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("PollJob err = %v, want the job's error", err)
+	}
+}

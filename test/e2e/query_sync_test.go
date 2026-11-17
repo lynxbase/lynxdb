@@ -96,7 +96,7 @@ func TestE2E_QuerySync_InvalidQuery_ReturnsError(t *testing.T) {
 	t.Logf("invalid query correctly returned error: %v", err)
 }
 
-func TestE2E_QuerySync_NonexistentIndex_ReturnsEmptyOrError(t *testing.T) {
+func TestE2E_QuerySync_NonexistentIndex_ReturnsZeroCount(t *testing.T) {
 	h := NewHarness(t)
 
 	result := h.MustQuery(`source=nonexistent_idx_12345 | stats count() as count`)

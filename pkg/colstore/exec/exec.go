@@ -207,6 +207,10 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		}
 		scan.ByTime, scan.Bound = q.byTime, x.bound
 	}
+	counted := x.countParts(snap)
+	if counted != nil {
+		scan.Skip = counted.skip
+	}
 	stats, err := snap.Scan(ctx, scan, x.block)
 	if err != nil && !errors.Is(err, errEnough) {
 		return nil, err
@@ -239,6 +243,9 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		SkippedAsEmpty: stats.SkippedAsEmpty,
 		HeldBytes:      x.held(),
 		HashedFor:      hashedFor,
+	}
+	if counted != nil {
+		res.Stats.CountedByIndex = counted.blocks
 	}
 	for _, w := range active {
 		res.Stats.SkippedByStats += w.undecoded

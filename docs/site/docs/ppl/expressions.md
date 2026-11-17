@@ -112,7 +112,7 @@ forms:
 | timestampadd, timestampdiff | `timestampdiff(SECOND, _time, now())` |
 | position | `position('v1' in path)` |
 | interval | `date_add(_time, INTERVAL 1 DAY)` |
-| lambda | `transform(arr, x -> x * 2)`, `reduce(arr, 0, (acc, x) -> acc + x)` |
+| lambda | `transform(arr, x -> x * 2)`, `transform(arr, (x, i) -> x + i)`, `reduce(arr, 0, (acc, x) -> acc + x)` |
 | named options | `match(msg, 'a b', operator='AND')` (relevance functions only) |
 
 Aggregation functions such as `count()` or `avg(x)` are only valid in
@@ -128,6 +128,7 @@ where EXISTS [ source=main | where status = 999 ]
 eval max_rt = [ source=main | stats max(response_time) ]
 ```
 
-Subqueries are uncorrelated: they cannot refer to fields of the outer query.
-Each runs once, before the outer query, and its result is held in memory. See
-[Joins and subsearches](./joins-and-subsearches.md).
+Subqueries are uncorrelated: a reference to the outer query's source name,
+alias or fields fails to compile with `UNSUPPORTED_FEATURE`. Each subquery
+runs once, before the outer query, and its result is held in memory. See
+[Joins and subsearches](./joins-and-subsearches.md#subqueries-in-expressions).

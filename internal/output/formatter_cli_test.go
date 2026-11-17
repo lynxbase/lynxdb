@@ -415,7 +415,7 @@ func TestCollectColumns_Deterministic100Runs(t *testing.T) {
 // DetectFormat edge cases
 
 func TestDetectFormat_Raw(t *testing.T) {
-	f := DetectFormat(FormatRaw, nil)
+	f := detectFormat(FormatRaw, nil)
 	if _, ok := f.(*RawFormatter); !ok {
 		t.Errorf("expected *RawFormatter, got %T", f)
 	}

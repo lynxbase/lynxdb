@@ -9,22 +9,22 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
-	"github.com/lynxbase/lynxdb/pkg/server"
+	"github.com/lynxbase/lynxdb/pkg/database"
+	"github.com/lynxbase/lynxdb/pkg/query"
 )
 
-func normalizeJobStatusFilter(raw string) (string, error) {
-	status := strings.ToLower(strings.TrimSpace(raw))
-	switch status {
+func normalizeJobStatusFilter(raw string) (database.JobState, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "":
 		return "", nil
-	case server.JobStatusRunning, server.JobStatusDone, server.JobStatusError, server.JobStatusCanceled:
-		return status, nil
-	case "complete":
-		return server.JobStatusDone, nil
-	case "failed":
-		return server.JobStatusError, nil
-	case "cancelled":
-		return server.JobStatusCanceled, nil
+	case "running":
+		return database.JobRunning, nil
+	case "done", "complete":
+		return database.JobDone, nil
+	case "error", "failed":
+		return database.JobFailed, nil
+	case "canceled", "cancelled":
+		return database.JobCanceled, nil
 	default:
 		return "", fmt.Errorf(
 			"invalid job status %q; expected one of running, done, error, canceled, complete, failed, cancelled",
@@ -33,7 +33,31 @@ func normalizeJobStatusFilter(raw string) (string, error) {
 	}
 }
 
-// handleGetJob returns the status/results of a job by string ID.
+// jobResultType returns the shape of the rows of a job's query.
+func jobResultType(job *database.Job) ResultType {
+	c, err := query.Compile(job.Query)
+	if err != nil {
+		return ResultTypeEvents
+	}
+
+	return DetectResultType(c.Plan)
+}
+
+func (s *Server) jobResultLimit() int {
+	if limit := s.currentQueryConfig().DefaultResultLimit; limit > 0 {
+		return limit
+	}
+
+	return defaultResultLimit
+}
+
+func jobError(err error) map[string]interface{} {
+	code, _ := queryErrorCode(err)
+
+	return map[string]interface{}{"code": string(code), "message": err.Error()}
+}
+
+// handleGetJob returns the state of a job and, once it is done, its result.
 func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeQuery) {
 		return
@@ -42,85 +66,36 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	job, ok := s.engine.GetJob(jobID)
+	job, ok := s.db.Job(jobID)
 	if !ok {
 		respondError(w, ErrCodeNotFound, http.StatusNotFound, "job not found")
 
 		return
 	}
 
-	snap := job.Snapshot()
-
-	if snap.Status == server.JobStatusRunning {
-		data := map[string]interface{}{
-			"type": "job", "job_id": snap.ID, "status": server.JobStatusRunning,
-			"query": snap.Query,
-		}
-		if p := job.Progress.Load(); p != nil {
-			data["progress"] = p
-		}
-		respondData(w, http.StatusOK, data,
-			WithQueryID(snap.ID),
-			WithWarnings(snap.Warnings),
-			WithLints(snap.Lints),
-			WithSuggestions(snap.Suggestions),
-			WithRewrites(snap.Rewrites))
-
-		return
+	st := job.Status()
+	data := map[string]interface{}{
+		"type":       "job",
+		"job_id":     st.ID,
+		"status":     string(st.State),
+		"query":      st.Query,
+		"created_at": st.Started.UTC(),
 	}
-	if snap.Status == server.JobStatusError || snap.Status == server.JobStatusCanceled {
-		errCode := "QUERY_ERROR"
-		if snap.ErrorCode != "" {
-			errCode = snap.ErrorCode
-		}
-		respondData(w, http.StatusOK, map[string]interface{}{
-			"type": "job", "job_id": snap.ID, "status": snap.Status,
-			"error": map[string]interface{}{
-				"code":    errCode,
-				"message": snap.Error,
-			},
-		},
-			WithQueryID(snap.ID),
-			WithWarnings(snap.Warnings),
-			WithLints(snap.Lints),
-			WithSuggestions(snap.Suggestions),
-			WithRewrites(snap.Rewrites))
-
-		return
-	}
-
-	// status == "done" — wrap results in a job envelope so the client
-	// always sees {type: "job", status: "done", job_id: "...", results: {...}}.
-	defaultLimit := s.currentQueryConfig().DefaultResultLimit
-	if defaultLimit == 0 {
-		defaultLimit = 1000
-	}
-	var results interface{}
-	switch snap.ResultType {
-	case server.ResultTypeAggregate, server.ResultTypeTimechart:
-		results = buildAggregateResponse(snap.ResultType, snap.Results, defaultLimit, 0)
+	switch st.State {
+	case database.JobRunning:
+		data["progress"] = jobProgress(st)
+		respondData(w, http.StatusOK, data, WithQueryID(st.ID))
+	case database.JobFailed, database.JobCanceled:
+		data["error"] = jobError(st.Err)
+		respondData(w, http.StatusOK, data, WithQueryID(st.ID), WithTook(st.Elapsed))
 	default:
-		results = buildEventsResponse(snap.Results, defaultLimit, 0)
+		res, _ := job.Result()
+		results := appendResultData(nil, res, jobResultType(job), s.jobResultLimit(), 0)
+		data["completed_at"] = st.Started.Add(st.Elapsed).UTC()
+		data["results"] = json.RawMessage(results)
+		respondData(w, http.StatusOK, data,
+			WithTook(st.Elapsed), WithQueryID(st.ID), WithRows(st.Rows))
 	}
-	lints := lintsWithBroadScope(snap.Lints, snap.Query, &snap.Stats, s.currentQueryConfig(), snap.LintsEnabled, snap.LintLimit, snap.LintFull)
-	respondData(w, http.StatusOK, map[string]interface{}{
-		"type":         "job",
-		"job_id":       snap.ID,
-		"status":       "done",
-		"query":        snap.Query,
-		"created_at":   snap.CreatedAt,
-		"completed_at": snap.DoneAt,
-		"results":      results,
-	},
-		WithTookMS(snap.Stats.ElapsedMS),
-		WithScanned(snap.Stats.RowsScanned),
-		WithQueryID(snap.ID),
-		WithSearchStats(searchStatsToMeta(&snap.Stats)),
-		WithWarnings(snap.Warnings),
-		WithLints(lints),
-		WithSuggestions(snap.Suggestions),
-		WithRewrites(snap.Rewrites),
-		WithExplain(explainFromSearchStats(&snap.Stats, snap.Query)))
 }
 
 // handleCancelJob cancels a running job.
@@ -132,47 +107,58 @@ func (s *Server) handleCancelJob(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	result, ok := s.engine.CancelJob(jobID)
+	job, ok := s.db.Job(jobID)
 	if !ok {
 		respondError(w, ErrCodeNotFound, http.StatusNotFound, "job not found")
 
 		return
 	}
 
+	running := job.Status().State == database.JobRunning
+	job.Cancel()
+	select {
+	case <-job.Done():
+	case <-time.After(time.Second):
+	}
+	st := job.Status()
 	data := map[string]interface{}{
 		"job_id":   jobID,
-		"status":   result.Snapshot.Status,
-		"canceled": result.Canceled,
+		"status":   string(st.State),
+		"canceled": running,
 	}
-	if !result.Snapshot.DoneAt.IsZero() {
-		data["completed_at"] = result.Snapshot.DoneAt
+	if st.State != database.JobRunning {
+		data["completed_at"] = st.Started.Add(st.Elapsed).UTC()
 	}
 	respondData(w, http.StatusOK, data)
 }
 
-// handleListJobs returns all active/recent jobs.
+// handleListJobs lists the jobs the database keeps, the latest first.
 func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeQuery) {
 		return
 	}
-	status, err := normalizeJobStatusFilter(r.URL.Query().Get("status"))
+	state, err := normalizeJobStatusFilter(r.URL.Query().Get("status"))
 	if err != nil {
 		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error())
 
 		return
 	}
-	jobs := s.engine.ListJobs(status)
-	entries := make([]map[string]interface{}, len(jobs))
-	for i, j := range jobs {
-		entries[i] = map[string]interface{}{
-			"job_id": j.ID, "query": j.Query,
-			"status": j.Status, "created_at": j.CreatedAt,
+	entries := []map[string]interface{}{}
+	for _, job := range s.db.Jobs() {
+		st := job.Status()
+		if state != "" && st.State != state {
+			continue
 		}
+		entries = append(entries, map[string]interface{}{
+			"job_id": st.ID, "query": st.Query,
+			"status": string(st.State), "created_at": st.Started.UTC(),
+		})
 	}
 	respondData(w, http.StatusOK, map[string]interface{}{"jobs": entries})
 }
 
-// handleJobStream sends SSE events for job progress and results.
+// handleJobStream sends SSE progress events with the state and elapsed time
+// of a job every second, then its result or error.
 func (s *Server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeQuery) {
 		return
@@ -181,7 +167,7 @@ func (s *Server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	job, ok := s.engine.GetJob(jobID)
+	job, ok := s.db.Job(jobID)
 	if !ok {
 		respondError(w, ErrCodeNotFound, http.StatusNotFound, "job not found")
 
@@ -201,117 +187,53 @@ func (s *Server) handleJobStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("X-Accel-Buffering", "no")
 	flusher.Flush()
 
-	ctx := r.Context()
-	enc := json.NewEncoder(w)
-
-	writeSSE := func(event string, data interface{}) {
-		fmt.Fprintf(w, "event: %s\n", event)
-		fmt.Fprintf(w, "data: ")
-		if err := enc.Encode(data); err != nil {
-			slog.Warn("rest: job stream json encode failed", "error", err)
-		}
-		fmt.Fprintf(w, "\n")
+	writeSSE := func(event string, data []byte) {
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
 		flusher.Flush()
 	}
+	writeSSEJSON := func(event string, v interface{}) {
+		data, err := json.Marshal(v)
+		if err != nil {
+			slog.Warn("rest: job stream json encode failed", "error", err)
+			return
+		}
+		writeSSE(event, data)
+	}
 
-	ticker := time.NewTicker(1 * time.Second)
+	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 
-	var lastPreviewVersion int64
-
 	for {
-		snap := job.Snapshot()
-
-		switch snap.Status {
-		case server.JobStatusRunning:
-			progress := map[string]interface{}{
-				"phase":   "scanning",
-				"percent": 0.0,
+		st := job.Status()
+		switch st.State {
+		case database.JobRunning:
+			writeSSEJSON("progress", jobProgress(st))
+		case database.JobDone:
+			res, _ := job.Result()
+			meta, err := json.Marshal(buildMeta([]MetaOpt{WithTook(st.Elapsed), WithQueryID(st.ID), WithRows(st.Rows)}))
+			if err != nil {
+				slog.Warn("rest: job stream json encode failed", "error", err)
+				return
 			}
-			if p := job.Progress.Load(); p != nil {
-				total := p.SegmentsTotal
-				scanned := p.SegmentsScanned
-				pct := 0.0
-				if total > 0 {
-					pct = float64(scanned) / float64(total) * 100
-				}
-				progress = map[string]interface{}{
-					"phase":          string(p.Phase),
-					"scanned":        p.SegmentsScanned,
-					"segments_total": p.SegmentsTotal,
-					"percent":        pct,
-					"events_matched": p.RowsReadSoFar,
-					"elapsed_ms":     p.ElapsedMS,
-				}
-				if pct > 0 {
-					progress["eta_ms"] = p.ElapsedMS / pct * (100 - pct)
-				}
-			}
-			if snap := job.Preview.Load(); snap != nil && snap.Version > lastPreviewVersion {
-				progress["preview"] = snap.Rows
-				progress["preview_version"] = snap.Version
-				lastPreviewVersion = snap.Version
-			}
-			writeSSE("progress", progress)
-
-		case server.JobStatusDone:
-			defaultLimit := s.currentQueryConfig().DefaultResultLimit
-			if defaultLimit == 0 {
-				defaultLimit = 1000
-			}
-			var data interface{}
-			switch snap.ResultType {
-			case server.ResultTypeAggregate, server.ResultTypeTimechart:
-				data = buildAggregateResponse(snap.ResultType, snap.Results, defaultLimit, 0)
-			default:
-				data = buildEventsResponse(snap.Results, defaultLimit, 0)
-			}
-			// Build stats meta for the complete event.
-			// Include took_ms and scanned at the envelope level (matching
-			// the sync response structure from writeSyncResultFromUsecase)
-			// so the frontend can read server-side execution time and row
-			// count without falling back to client-side elapsedMs.
-			statsEnvelope := searchStatsToMeta(&snap.Stats)
-			writeSSE("complete", map[string]interface{}{
-				"data": data,
-				"meta": map[string]interface{}{
-					"took_ms": snap.Stats.ElapsedMS,
-					"scanned": snap.Stats.RowsScanned,
-					"stats":   statsEnvelope,
-				},
-			})
+			out := append([]byte(`{"data":`), appendResultData(nil, res, jobResultType(job), s.jobResultLimit(), 0)...)
+			out = append(append(append(out, `,"meta":`...), meta...), '}')
+			writeSSE("complete", out)
 
 			return
-
-		case server.JobStatusError:
-			errCode := "QUERY_ERROR"
-			if snap.ErrorCode != "" {
-				errCode = snap.ErrorCode
-			}
-			writeSSE("failed", map[string]interface{}{
-				"code": errCode, "message": snap.Error,
-			})
+		case database.JobFailed:
+			writeSSEJSON("failed", jobError(st.Err))
 
 			return
-
-		case server.JobStatusCanceled:
-			progress := map[string]interface{}{}
-			if p := job.Progress.Load(); p != nil {
-				progress["scanned"] = p.RowsReadSoFar
-				progress["elapsed_ms"] = p.ElapsedMS
-			}
-			writeSSE("canceled", progress)
+		case database.JobCanceled:
+			writeSSEJSON("canceled", jobProgress(st))
 
 			return
 		}
 
 		select {
 		case <-job.Done():
-			// Job finished; loop once more to emit terminal event.
-			continue
 		case <-ticker.C:
-			// Periodic progress update.
-		case <-ctx.Done():
+		case <-r.Context().Done():
 			return
 		}
 	}

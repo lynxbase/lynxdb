@@ -17,7 +17,7 @@ The CLI calls `GET /api/v1/query/explain` on the server named by `--server`. The
 - the **logical plan**: the IR tree the compiler produced from the PPL text;
 - the **optimized plan**: the tree after the rule-based optimizer, with the scan's column list and pruning predicate;
 - the **optimizer rules** that fired, with how often each fired;
-- **scan hints**: the result type (`events` or `aggregate`), a cost class, the search terms the scan can look up in indexes and bloom filters, the fields read, and the sources in scope. A plan that has to read every event says so.
+- **scan hints**: the result type (`events` or `aggregate`), a cost class, the free-text search terms, the fields read, and the sources in scope. A plan that reads every event of its sources says so.
 
 ## Flags
 
@@ -54,33 +54,33 @@ Scan:
   cost          medium
   search terms  timeout
   fields read   _raw, _time, host
+  sources       single main
 ```
 
-The free-text term `timeout` becomes a `SEARCH_WORD` filter on `_raw`, the scan reads three columns, and segments whose term indexes cannot contain `timeout` are skipped.
+The free-text term `timeout` becomes a `SEARCH_WORD` filter on `_raw`, and the scan reads three columns of the index `main`.
 
 ## With `--analyze`
 
 ```bash
-lynxdb explain --analyze 'source=main level=ERROR | stats count() by host'
+lynxdb explain --analyze 'source=main level=ERROR | stats count()'
 ```
 
-After the plan, the CLI runs the query with full profiling and prints the profile: phase timings, segments scanned and skipped by reason, rows scanned and returned, optimizer rules, memory and CPU, and recommendations such as adding a time range.
+After the plan, the CLI runs the query and prints its profile: the time spent in each phase and the total.
 
 ```
-  Segments:  2/4 scanned (50.0% skipped)
-    index: 2
+  ══════ Query Profile ══════
 
-  Rows:  294 scanned  →  5 results
-
-  Recommendations:
-    [medium] Add --since or --from/--to to narrow the time range and skip segments (~2-10x speedup)
+  Phase Breakdown:
+    exec            102µs     6%   ████████████████████
+                 ──────────
+    total             1ms
 ```
 
 The query runs over all time; `explain` has no time-range flags.
 
 ## Invalid queries
 
-A query that does not compile prints the query with a caret under the position, the message and, when the compiler has one, a suggestion. The exit code is 4.
+A query that does not compile prints the server's error code and message, the query with a caret under the position and, when the compiler has one, a suggestion. The command then exits with code 1.
 
 ## `explain` compared with `query --explain`
 
@@ -89,7 +89,7 @@ A query that does not compile prints the query with a caret under the position, 
 | Where it compiles | On the server | In the CLI |
 | Needs a server | Yes | No |
 | Logical and optimized plans, optimizer rules | Yes | Yes |
-| Scan hints: cost, search terms, fields read, sources | Yes | No |
+| Scan hints: result type, cost, search terms, fields read, sources | Yes | No |
 | Execution profile | With `--analyze` | No |
 
 ## See also

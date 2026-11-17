@@ -67,6 +67,11 @@ type keyPart struct {
 	valid    []uint8
 	// cols are the columns of a partRows by kind.
 	cols [kindSlots + 1]*vec.Column
+	// counts, when set, holds the rows of every entry of a partDict whose
+	// column was read without the codes of its rows; held is the column
+	// that was read so.
+	counts []uint32
+	held   vec.Column
 
 	buf  []int64
 	vbuf []uint8
@@ -88,6 +93,9 @@ type aggScratch struct {
 	fl    []float64
 	// hashes holds the hash of each entry of a dictionary.
 	hashes []uint64
+	// added holds, for every entry of a dictionary, the group that last
+	// counted it as a distinct value, plus one.
+	added []uint32
 	// okeys and ohas hold, per order of the plan and row of the block, the
 	// key that orders the row and whether it has one.
 	okeys [][]int64
@@ -334,6 +342,7 @@ func (a *aggWorker) classify(n int, idx []uint32) (codes bool, domain int, err e
 func (a *aggWorker) classifyKey(e *sexpr, p *keyPart, n int, idx []uint32) error {
 	w := a.w
 	p.mode, p.col, p.val, p.card, p.nullable, p.one, p.valid, p.dense, p.computed = partRows, nil, nil, 1, false, false, nil, false, false
+	p.counts = p.counts[:0]
 	p.step, p.absent = 1, tagMissing
 	if e.op != OpColumn {
 		return a.classifyComputed(e, p, n, idx)
@@ -392,6 +401,20 @@ func (a *aggWorker) classifyKey(e *sexpr, p *keyPart, n int, idx []uint32) error
 			p.mode, p.val = partConst, ref.ConstBytes()
 
 			return nil
+		}
+		// A count of the rows of every value needs no more of a column
+		// than its dictionary, where that says how many rows hold each
+		// entry.
+		if a.plan.rowsOnly && len(a.plan.keys) == 1 && idx == nil && w.shared == nil && n == w.rows && ref.Counted() &&
+			w.state[e.path*kindSlots+int(kind)-1] != slotDecoded {
+			var err error
+			if p.counts, err = w.b.DecodeCounts(ref, &p.held, p.counts); err != nil {
+				return err
+			}
+			w.decoded = true
+			p.col, p.nullable, p.mode, p.card = &p.held, ref.Count != w.rows, partDict, p.held.DictLen()
+
+			break
 		}
 		c, err := w.column(e.path, kind)
 		if err != nil {
@@ -695,7 +718,16 @@ func (a *aggWorker) histogram(n int, idx []uint32, domain int) {
 			single = p
 		}
 	}
-	if single != nil && single.mode == partDict && len(single.col.Codes8) != 0 && (idx == nil || single.dense) {
+	if single != nil && len(single.counts) != 0 {
+		rows := uint32(0)
+		for code, held := range single.counts {
+			hist[code] = held
+			rows += held
+		}
+		if single.nullable {
+			hist[single.card-1] = uint32(n) - rows
+		}
+	} else if single != nil && single.mode == partDict && len(single.col.Codes8) != 0 && (idx == nil || single.dense) {
 		c := single.col
 		vec.Histogram8((*[256]uint32)(hist), c.Codes8)
 		if c.Valid != nil {
@@ -1486,6 +1518,34 @@ func (a *aggWorker) distinctBytes(d int, t *target, c *vec.Column, kind vec.Kind
 
 		return
 	}
+	if c.Layout == vec.Dict {
+		// An entry is hashed once, and given to a group once for as long
+		// as the rows that hold it stay with that group.
+		s := a.s
+		s.hashes, s.added = sized(s.hashes, 2*c.DictLen()), sized(s.added, c.DictLen())
+		hashes, added := s.hashes, s.added
+		clear(added)
+		for j := 0; j < n; j++ {
+			g, r := t.one, j
+			if t.gid != nil {
+				g = int(gid[j])
+			}
+			if rows != nil {
+				r = int(rows[j])
+			}
+			code := c.Code(r)
+			switch added[code] {
+			case uint32(g) + 1:
+				continue
+			case 0:
+				hashes[2*code], hashes[2*code+1] = vec.Hash128(c.DictValue(code))
+			}
+			added[code] = uint32(g) + 1
+			a.addDistinct(log, t.global[g], hashes[2*code], hashes[2*code+1]^seed)
+		}
+
+		return
+	}
 	lastG := -1
 	var last []byte
 	for j := 0; j < n; j++ {
@@ -1500,8 +1560,6 @@ func (a *aggWorker) distinctBytes(d int, t *target, c *vec.Column, kind vec.Kind
 		switch c.Layout {
 		case vec.Flat:
 			v = c.Data[c.Offsets[r]:c.Offsets[r+1]]
-		case vec.Dict:
-			v = c.DictValue(c.Code(r))
 		default:
 			v = c.DictValue(0)
 		}

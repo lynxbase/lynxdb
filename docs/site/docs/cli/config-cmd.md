@@ -12,7 +12,23 @@ Show and manage the server's configuration file and the CLI's connection profile
 lynxdb config [subcommand] [flags]
 ```
 
-Without a subcommand, `config` prints every setting with its value and where the value came from: `default`, the config file, an environment variable or a flag.
+Without a subcommand, `config` prints every setting with its value and where the value came from: `default`, `config file`, `env var` or a flag.
+
+```
+  No config file found (using defaults)
+
+  Server
+  listen:                                  localhost:3100            (default)
+  data_dir:                                /home/alice/.local/share/lynxdb (default)
+  retention:                               7d                        (default)
+  log_level:                               info                      (default)
+
+  Storage
+  storage.partition:                       1d                        (default)
+  storage.flush_interval:                  0s                        (default)
+  storage.time_fields:                     _time,timestamp,@timestamp,time,ts (default)
+  ...
+```
 
 ## Config file
 
@@ -36,12 +52,6 @@ Settings resolve in this order, highest first: `lynxdb server` flags, `LYNXDB_*`
 |------|-----------|
 | `--addr` | `listen` |
 | `--data-dir` | `data_dir` |
-| `--s3-bucket` | `storage.s3_bucket` |
-| `--s3-region` | `storage.s3_region` |
-| `--s3-prefix` | `storage.s3_prefix` |
-| `--compaction-interval` | `storage.compaction_interval` |
-| `--tiering-interval` | `storage.tiering_interval` |
-| `--cache-max-mb` | `storage.cache_max_bytes` |
 | `--log-level` | `log_level` |
 
 ```bash
@@ -64,6 +74,12 @@ lynxdb config validate
 
 Loads and validates the config file, warns about unknown keys, and lists the values that differ from the defaults.
 
+```
+  ⚠  unknown config key "storage.partiton" in /etc/lynxdb/config.yaml
+  Did you mean "storage.partition"?
+  ✔ Config file /etc/lynxdb/config.yaml is valid.
+```
+
 ## config get
 
 ```
@@ -74,8 +90,14 @@ Prints one value and its origin. Keys tab-complete.
 
 ```bash
 lynxdb config get retention
-lynxdb config get storage.compression
+lynxdb config get storage.partition
 lynxdb config get listen --format json
+```
+
+With no config file, `config get storage.partition` prints `1d (default)`, and with `--format json`:
+
+```json
+{"key":"storage.partition","value":"1d","source":"default"}
 ```
 
 ## config set
@@ -84,15 +106,15 @@ lynxdb config get listen --format json
 lynxdb config set <key> <value> [--dry-run]
 ```
 
-Writes one value to the config file. `--dry-run` shows the current and the new value without writing.
+Writes one value to the config file, creating the file when it does not exist. `--dry-run` shows the current and the new value without writing.
 
 ```bash
 lynxdb config set retention 30d
-lynxdb config set storage.compression zstd
+lynxdb config set storage.partition 1h
 lynxdb config set log_level debug --dry-run
 ```
 
-A running server picks the change up on [`config reload`](#config-reload).
+A running server picks up the settings that a reload applies on [`config reload`](#config-reload); the others need a restart.
 
 ## config edit
 
@@ -132,7 +154,7 @@ Sends `SIGHUP` to the running server. The CLI finds the server's PID in `<data_d
 lynxdb config add-profile <name> --url <url> [--token <token>]
 ```
 
-A connection profile stores a server URL and an optional API key in the config file, under `profiles`. Running it again with the same name updates the profile.
+A connection profile stores a server URL and an optional API key in the config file, under `profiles`. Running it again with the same name updates the profile. `add-profile` and `remove-profile` write the config file back with every effective setting, so the file lists each key afterwards.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -141,15 +163,15 @@ A connection profile stores a server URL and an optional API key in the config f
 
 ```bash
 lynxdb config add-profile prod --url https://logs.example.com --token "$PROD_KEY"
-lynxdb config add-profile staging --url https://staging-logs.example.com
+lynxdb config add-profile dev --url http://dev-logs.example.com:3100
 ```
 
 Select a profile with `--profile` (`-p`), `LYNXDB_PROFILE` or `profile:` in `.lynxdbrc`. `--server` takes precedence over the profile's URL.
 
 ```bash
 lynxdb query 'source=main level=ERROR | stats count() by host' --profile prod
-lynxdb status -p staging
-LYNXDB_PROFILE=prod lynxdb tail 'source=main level=ERROR'
+lynxdb status -p dev
+LYNXDB_PROFILE=prod lynxdb jobs --status running
 ```
 
 ## config list-profiles
