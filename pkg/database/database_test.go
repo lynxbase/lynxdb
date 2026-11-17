@@ -92,6 +92,36 @@ func TestQueryTimeRange(t *testing.T) {
 	}
 }
 
+func TestQueryTimeRangeSubquery(t *testing.T) {
+	db := openTest(t, Config{})
+	web := `{"_time":"2026-01-01T00:00:00Z","n":1}
+{"_time":"2026-01-02T00:00:00Z","n":2}
+{"_time":"2026-01-03T00:00:00Z","n":3}
+`
+	ids := `{"_time":"2026-01-02T01:00:00Z","n":1}
+{"_time":"2026-01-02T02:00:00Z","n":2}
+{"_time":"2026-01-02T03:00:00Z","n":3}
+`
+	if _, err := db.Append("web", []byte(web)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Append("ids", []byte(ids)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	from := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 1, 3, 0, 0, 0, 0, time.UTC)
+	q := "source=ids | where n in [ source=web | fields n ] | stats count()"
+	if got := run(t, db, q, QueryOptions{}); got[0] != `{"count()":3}` {
+		t.Fatalf("whole range: %v", got)
+	}
+	if got := run(t, db, q, QueryOptions{From: from, To: to}); got[0] != `{"count()":1}` {
+		t.Fatalf("subquery not narrowed: %v", got)
+	}
+}
+
 func TestRetention(t *testing.T) {
 	db := openTest(t, Config{Retention: 48 * time.Hour})
 	now := time.Now().UTC()

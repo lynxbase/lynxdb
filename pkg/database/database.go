@@ -196,8 +196,22 @@ func (db *DB) query(ctx context.Context, c *query.Compiled, opts QueryOptions) (
 	return db.core.Query(ctx, plan, columnar.Options{DefaultSource: DefaultSource, Now: opts.Now})
 }
 
-// narrow returns the plan under n with every scan restricted to [from, to).
+// narrow returns the plan under n with every scan restricted to [from, to),
+// those of the subqueries in its filters and computed columns included.
 func narrow(n ir.Node, from, to, now time.Time) ir.Node {
+	switch x := n.(type) {
+	case *ir.Filter:
+		c := *x
+		c.Cond = narrowSubqueries(x.Cond, from, to, now)
+		n = &c
+	case *ir.Compute:
+		c := *x
+		c.Assigns = append([]ir.Assign(nil), x.Assigns...)
+		for i := range c.Assigns {
+			c.Assigns[i].Expr = narrowSubqueries(c.Assigns[i].Expr, from, to, now)
+		}
+		n = &c
+	}
 	if s, ok := n.(*ir.Scan); ok {
 		earliest, latest := s.Time.Resolve(now)
 		if !from.IsZero() && (earliest.IsZero() || from.After(earliest)) {
@@ -227,6 +241,19 @@ func narrow(n ir.Node, from, to, now time.Time) ir.Node {
 	}
 
 	return n.WithInputs(outs)
+}
+
+func narrowSubqueries(e ir.Expr, from, to, now time.Time) ir.Expr {
+	return ir.RewriteExpr(e, func(x ir.Expr) ir.Expr {
+		sq, ok := x.(*ir.Subquery)
+		if !ok {
+			return x
+		}
+		c := *sq
+		c.Plan = narrow(sq.Plan, from, to, now)
+
+		return &c
+	})
 }
 
 // maintain drops expired events and finished jobs until Close.
