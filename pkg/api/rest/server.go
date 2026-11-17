@@ -65,10 +65,6 @@ type Server struct {
 	splunkAckStore     *splunkhec.AckStore
 	levelVar           *slog.LevelVar
 	logger             *slog.Logger
-	topMu              sync.Mutex
-	topLastTotal       int64
-	topLastAt          time.Time
-	topRateEPS         float64
 }
 
 // Config configures the API server.
@@ -446,7 +442,6 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// Unified status.
 	mux.HandleFunc("GET /api/v1/status", s.handleStatus)
-	mux.HandleFunc("GET /api/v1/top/snapshot", s.handleTopSnapshot)
 	mux.HandleFunc("GET /api/v1/shippers", s.handleListShippers)
 
 	// Auth management — only registered when auth is enabled, 404 otherwise.
