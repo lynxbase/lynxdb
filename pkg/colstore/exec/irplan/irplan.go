@@ -1197,6 +1197,12 @@ func (t *translator) compared(e *ir.Binary) (*exec.Expr, error) {
 	if err != nil || t.agg != nil || len(p.Args) != 2 {
 		return p, err
 	}
+	switch p.Op {
+	case exec.OpEq, exec.OpNe, exec.OpLt, exec.OpLe, exec.OpGt, exec.OpGe:
+	default:
+		// The comparison became a function of the row engine's.
+		return p, nil
+	}
 	col, lit := p.Args[0], p.Args[1]
 	if col.Op == exec.OpLiteral {
 		col, lit = lit, col
