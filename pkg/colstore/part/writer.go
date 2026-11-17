@@ -60,6 +60,9 @@ type Writer struct {
 	maxT     int64
 	// copied counts the blocks taken over from other parts as stored.
 	copied int
+	// trials holds, per path and kind, how the values of a flat column are
+	// encoded.
+	trials []trial
 
 	blobs  blobCodec // every section but the values of flat columns
 	values blobCodec
@@ -67,6 +70,20 @@ type Writer struct {
 	// Close hands the buffers on to the next writer.
 	*writerBuffers
 }
+
+// trial is the outcome of encoding one column's values at two levels.
+type trial struct {
+	// left counts the blocks until the levels are compared again.
+	left    uint8
+	fastest bool
+}
+
+const (
+	// trialEvery is how many blocks pass between two comparisons.
+	trialEvery = 16
+	// trialMinSize is the size under which values are not worth comparing.
+	trialMinSize = 4096
+)
 
 // writerBuffers holds what a writer reuses from block to block.
 type writerBuffers struct {
@@ -131,6 +148,7 @@ func (w *Writer) Reset(out io.Writer, opts Options) {
 		w.writerBuffers = writerPool.Get()
 	}
 	w.w, w.opts, w.off, w.err, w.copied = out, opts, 0, nil, 0
+	clear(w.trials)
 	w.paths = w.paths[:0]
 	clear(w.ids)
 	w.index, w.dirs, w.keys, w.lastKey, w.keyStats = w.index[:0], w.dirs[:0], w.keys[:0], w.lastKey[:0], w.keyStats[:0]
@@ -546,7 +564,7 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 				return
 			}
 		}
-		w.block = w.values.appendBlob(w.block, data, &w.e.zbuf)
+		w.appendValues(int(ent.pathID)*kindSlots+int(c.Kind), data)
 
 		return
 	}
@@ -601,6 +619,45 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 // packs reports whether strings of kind may be stored as packed sections.
 func (w *Writer) packs(kind vec.Kind) bool {
 	return kind == vec.KindString && !w.opts.NoPacking && w.opts.Codec == CodecZstd
+}
+
+// appendValues appends the values of the flat column at slot as a section.
+// At LevelFast a column is encoded at LevelFastest for as long as that gave
+// it no larger a section the last time both were tried: values with little
+// to match, such as hashes, come out smaller and in half the time.
+func (w *Writer) appendValues(slot int, data []byte) {
+	bc := &w.values
+	if bc.codec != CodecZstd || bc.level != LevelFast || len(data) < trialMinSize {
+		w.block = bc.appendBlob(w.block, data, &w.e.zbuf)
+
+		return
+	}
+	for len(w.trials) <= slot {
+		w.trials = append(w.trials, trial{})
+	}
+	tr := &w.trials[slot]
+	start := len(w.block)
+	if tr.left == 0 {
+		w.block = bc.appendBlob(w.block, data, &w.e.zbuf)
+		fast := len(w.block)
+		bc.level = LevelFastest
+		w.block = bc.appendBlob(w.block, data, &w.e.zbuf)
+		bc.level = LevelFast
+		tr.left, tr.fastest = trialEvery, len(w.block)-fast <= fast-start
+		if tr.fastest {
+			w.block = w.block[:start+copy(w.block[start:], w.block[fast:])]
+		} else {
+			w.block = w.block[:fast]
+		}
+
+		return
+	}
+	tr.left--
+	if tr.fastest {
+		bc.level = LevelFastest
+	}
+	w.block = bc.appendBlob(w.block, data, &w.e.zbuf)
+	bc.level = LevelFast
 }
 
 // appendDirectory writes the entries at a fixed size so that a reader can

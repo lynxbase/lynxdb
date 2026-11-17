@@ -572,3 +572,55 @@ func TestDecodePackedHoldsTheValuesOfMarkedRowsInOrder(t *testing.T) {
 		t.Fatal("no column has gaps")
 	}
 }
+
+func TestWriterEncodesFlatValuesAtTheLevelThatWonTheLastTrial(t *testing.T) {
+	r := rand.New(rand.NewSource(41))
+	var hashes, text []byte
+	words := strings.Fields("the quick brown fox jumps over a lazy dog while seven wizards quietly box")
+	for i := 0; i < 4000; i++ {
+		hashes = append(hashes, "bafyrei"...)
+		for j := 0; j < 52; j++ {
+			hashes = append(hashes, "abcdefghijklmnopqrstuvwxyz234567"[r.Intn(32)])
+		}
+		for j := 0; j < 12; j++ {
+			text = append(append(text, words[r.Intn(len(words))]...), ' ')
+		}
+	}
+	size := func(level Level, data []byte) int {
+		bc := blobCodec{codec: CodecZstd, level: level}
+		var scratch []byte
+
+		return len(bc.appendBlob(nil, data, &scratch))
+	}
+	w := NewWriter(&bytes.Buffer{}, Options{})
+	var decoded []byte
+	for slot, data := range [][]byte{hashes, text} {
+		want := min(size(LevelFast, data), size(LevelFastest, data))
+		for i := 0; i < 2*trialEvery+3; i++ {
+			start := len(w.block)
+			w.appendValues(slot, data)
+			if got := len(w.block) - start; got != want {
+				t.Fatalf("column %d, block %d: section of %d bytes, the smaller level gives %d", slot, i, got, want)
+			}
+			payload, rest, _, err := readBlob(w.block[start:], &decoded)
+			if err != nil || len(rest) != 0 || !bytes.Equal(payload, data) {
+				t.Fatalf("column %d, block %d: section does not decode: %v", slot, i, err)
+			}
+		}
+	}
+	if !w.trials[0].fastest {
+		t.Error("values without repeats were not encoded at the fastest level")
+	}
+
+	// Another level is the caller's choice, and small values are not worth
+	// a trial.
+	compact := NewWriter(&bytes.Buffer{}, Options{Level: LevelCompact})
+	compact.appendValues(0, text)
+	if got, want := len(compact.block), size(LevelCompact, text); got != want || len(compact.trials) != 0 {
+		t.Fatalf("compact level: section of %d bytes, want %d", got, want)
+	}
+	w.appendValues(7, text[:trialMinSize-1])
+	if len(w.trials) > 7 {
+		t.Fatal("small values were tried at both levels")
+	}
+}
