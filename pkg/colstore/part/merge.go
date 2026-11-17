@@ -181,7 +181,7 @@ type mergeCursor struct {
 	// one of each path and kind of the part.
 	outs  []*shred.Column
 	slots []*shred.Column
-	// next is the slot of the next value of each column decoded packed.
+	// next is the slot of the next value of each column decoded by value.
 	next []uint32
 	// pathMap gives the destination's id of each path of the part.
 	pathMap []uint32
@@ -332,7 +332,7 @@ func (c *mergeCursor) decode(j int) error {
 	if c.isKey[j] {
 		err = c.blk.Decode(ref, &col.Column)
 	} else {
-		err = c.blk.DecodePacked(ref, &col.Column)
+		err = c.blk.DecodeValues(ref, &col.Column)
 	}
 	if col.data != nil && cap(col.Data) != cap(col.data.b) {
 		// Decode had to replace the buffer, which is kept for the pool's sake.

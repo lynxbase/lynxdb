@@ -505,10 +505,10 @@ func TestWriterResetWritesTheSamePartAgain(t *testing.T) {
 	}
 }
 
-func TestDecodePackedHoldsTheValuesOfMarkedRowsInOrder(t *testing.T) {
+func TestDecodeValuesHoldsTheValuesOfMarkedRowsInOrder(t *testing.T) {
 	p := buildPart(t, sampleDocs(700), 300, Options{})
 	var b Block
-	var byRow, packed vec.Column
+	var byRow, byValue vec.Column
 	sparse := 0
 	for i := 0; i < p.NumBlocks(); i++ {
 		if err := p.OpenBlock(i, &b); err != nil {
@@ -520,11 +520,11 @@ func TestDecodePackedHoldsTheValuesOfMarkedRowsInOrder(t *testing.T) {
 			if err := b.Decode(ref, &byRow); err != nil {
 				t.Fatal(err)
 			}
-			if err := b.DecodePacked(ref, &packed); err != nil {
+			if err := b.DecodeValues(ref, &byValue); err != nil {
 				t.Fatal(err)
 			}
-			if packed.Rows != byRow.Rows || packed.Layout != byRow.Layout || (packed.Valid == nil) != (byRow.Valid == nil) {
-				t.Fatalf("block %d column %d: packed %d rows, layout %d", i, j, packed.Rows, packed.Layout)
+			if byValue.Rows != byRow.Rows || byValue.Layout != byRow.Layout || (byValue.Valid == nil) != (byRow.Valid == nil) {
+				t.Fatalf("block %d column %d: by value %d rows, layout %d", i, j, byValue.Rows, byValue.Layout)
 			}
 			if byRow.Valid != nil {
 				sparse++
@@ -532,8 +532,8 @@ func TestDecodePackedHoldsTheValuesOfMarkedRowsInOrder(t *testing.T) {
 			slot := 0
 			for row := 0; row < b.Rows; row++ {
 				if !byRow.IsValid(row) {
-					if packed.IsValid(row) {
-						t.Fatalf("block %d column %d: packed marks row %d", i, j, row)
+					if byValue.IsValid(row) {
+						t.Fatalf("block %d column %d: by value a mark on row %d", i, j, row)
 					}
 
 					continue
@@ -546,19 +546,19 @@ func TestDecodePackedHoldsTheValuesOfMarkedRowsInOrder(t *testing.T) {
 				name := p.Paths()[ref.PathID]
 				switch ref.Kind {
 				case vec.KindBool:
-					if packed.Bool(at) != byRow.Bool(row) {
+					if byValue.Bool(at) != byRow.Bool(row) {
 						t.Fatalf("%s: row %d differs", name, row)
 					}
 				case vec.KindInt:
-					if packed.Int(at) != byRow.Int(row) {
+					if byValue.Int(at) != byRow.Int(row) {
 						t.Fatalf("%s: row %d differs", name, row)
 					}
 				case vec.KindFloat:
-					if math.Float64bits(packed.Float(at)) != math.Float64bits(byRow.Float(row)) {
+					if math.Float64bits(byValue.Float(at)) != math.Float64bits(byRow.Float(row)) {
 						t.Fatalf("%s: row %d differs", name, row)
 					}
 				case vec.KindString, vec.KindVariant:
-					if !bytes.Equal(packed.Bytes(at), byRow.Bytes(row)) {
+					if !bytes.Equal(byValue.Bytes(at), byRow.Bytes(row)) {
 						t.Fatalf("%s: row %d differs", name, row)
 					}
 				}

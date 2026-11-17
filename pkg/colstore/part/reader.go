@@ -451,13 +451,13 @@ func (b *Block) Decode(ref *ColumnRef, dst *vec.Column) error {
 	return b.decode(ref, dst, false)
 }
 
-// DecodePacked is Decode with one slot per value: slot i of a column with
+// DecodeValues is Decode with one slot per value: slot i of a column with
 // gaps holds the value of the i-th row that Valid marks.
-func (b *Block) DecodePacked(ref *ColumnRef, dst *vec.Column) error {
+func (b *Block) DecodeValues(ref *ColumnRef, dst *vec.Column) error {
 	return b.decode(ref, dst, true)
 }
 
-func (b *Block) decode(ref *ColumnRef, dst *vec.Column, packed bool) error {
+func (b *Block) decode(ref *ColumnRef, dst *vec.Column, byValue bool) error {
 	if ref.bad {
 		return ErrCorrupt
 	}
@@ -478,9 +478,9 @@ func (b *Block) decode(ref *ColumnRef, dst *vec.Column, packed bool) error {
 			return err
 		}
 	}
-	// A packed column is laid out as one without gaps over its values.
+	// By value, a column is laid out as one without gaps over its values.
 	slots := rows
-	if packed && sparse {
+	if byValue && sparse {
 		slots, sparse = count, false
 	}
 
