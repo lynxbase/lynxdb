@@ -108,9 +108,7 @@ func KeyAuthMiddleware(ks *auth.KeyStore, next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /health, /metrics, and non-API paths (static UI assets) are exempt
-		// from auth. The web UI handles authentication by sending tokens
-		// with API requests.
+		// /health, /metrics and non-API paths are exempt from auth.
 		if r.URL.Path == "/health" || r.URL.Path == "/metrics" || !strings.HasPrefix(r.URL.Path, "/api/") {
 			next.ServeHTTP(w, r)
 

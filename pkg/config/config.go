@@ -197,7 +197,7 @@ type QueryConfig struct {
 	SlowQueryThresholdMs int64 `yaml:"slow_query_threshold_ms" json:"slow_query_threshold_ms"`
 
 	// MaxBranchParallelism limits the number of concurrent goroutines for
-	// branch-level parallelism in APPEND, MULTISEARCH, and multi-source FROM.
+	// branch-level parallelism in append, multisearch and multi-source scans.
 	// 0 means auto (GOMAXPROCS). This is a soft limit on goroutines, not I/O.
 	MaxBranchParallelism int `yaml:"max_branch_parallelism" json:"max_branch_parallelism"`
 
@@ -235,7 +235,7 @@ type IngestConfig struct {
 	// "full" (default): extract all JSON fields into columns.
 	// "lightweight": extract only well-known metadata fields (_time, host, source,
 	// sourcetype, level, index), leaving all other data in _raw for query-time
-	// extraction via REX/spath. Reduces ingest CPU by ~30-40%.
+	// extraction via rex or spath. Reduces ingest CPU by ~30-40%.
 	Mode string `yaml:"mode" json:"mode"`
 
 	// FSync controls whether part files are fsynced before atomic rename.

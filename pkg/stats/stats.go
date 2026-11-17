@@ -190,7 +190,7 @@ type Recommendation struct {
 	Priority         string // "high", "medium", "low", "info"
 	Message          string
 	EstimatedSpeedup string // e.g., "~10x" (optional, trace-level)
-	SuggestedAction  string // e.g., "lynxdb mv create ..." (optional)
+	SuggestedAction  string // optional command to run
 }
 
 // OperatorBudgetStats holds per-operator memory budget statistics from the

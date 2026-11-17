@@ -7,8 +7,8 @@ type QueryHints struct {
 	TokenGlobs              []string                 // lowercased glob patterns matched against whole _raw tokens (FST expansion; candidate filter only — must never feed bloom MayContainAll)
 	SearchTermTree          *SearchTermTree          // structured boolean tree for inverted index OR/AND
 	IndexName               string                   // from Source.Index or SearchCommand.Index
-	SourceIndices           []string                 // multiple source names from FROM a, b, c
-	SourceGlob              string                   // glob pattern from FROM logs* (empty = not a glob)
+	SourceIndices           []string                 // multiple source names from source=a, b, c
+	SourceGlob              string                   // glob pattern from source=logs* (empty = not a glob)
 	SourceIncludeGlobs      []string                 // include globs from source lists
 	SourceExcludeGlobs      []string                 // exclude globs from source lists
 	SourceScopeType         string                   // "all", "single", "list", "glob"
