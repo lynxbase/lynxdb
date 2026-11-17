@@ -12,7 +12,7 @@ import (
 )
 
 // failSyncs makes the syncs that match fail while the returned switch is
-// set.
+// set, and leaves out all others.
 func failSyncs(t testing.TB, match func(name string) bool) *atomic.Bool {
 	t.Helper()
 	var failing atomic.Bool
@@ -21,7 +21,7 @@ func failSyncs(t testing.TB, match func(name string) bool) *atomic.Bool {
 			return errInjected
 		}
 
-		return f.Sync()
+		return nil
 	})
 
 	return &failing

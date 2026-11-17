@@ -17,7 +17,7 @@ func TestStoreKeepsItsRowsWhileEverythingRunsAtOnce(t *testing.T) {
 	defer func(n int) { manifestRewriteAfter = n }(manifestRewriteAfter)
 	manifestRewriteAfter = 4
 	// Without syncs far more flushes, merges and drops cross each other.
-	replaceSyncFile(t, func(*os.File) error { return nil })
+	skipSyncs(t)
 	path := filepath.Join(t.TempDir(), "store")
 	s, err := OpenStore(path, killStoreOptions())
 	if err != nil {
@@ -194,7 +194,16 @@ func TestStoreKeepsItsRowsWhileEverythingRunsAtOnce(t *testing.T) {
 		}()
 	}
 
-	time.Sleep(time.Second)
+	// Long enough for a drop and some scans; a soak gives it more.
+	least := 500 * time.Millisecond
+	if os.Getenv("LYNXDB_STORE_SOAK") != "" {
+		least = 10 * time.Second
+	}
+	for begun := time.Now(); time.Since(begun) < 20*time.Second; time.Sleep(10 * time.Millisecond) {
+		if time.Since(begun) >= least && dropped.Load() > 0 && scans.Load() > 2 {
+			break
+		}
+	}
 	close(stop)
 	readers.Wait()
 	// Appends, flushes, merges and drops are still arriving at the Close,

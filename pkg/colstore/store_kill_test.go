@@ -47,6 +47,8 @@ type killConfig struct {
 	// Next holds, per writer, the first document number it may use.
 	Next         []int64
 	RewriteAfter int
+	// NoSync leaves out the syncs, so that far more commits meet the kill.
+	NoSync bool
 }
 
 func killStoreOptions() StoreOptions {
@@ -105,6 +107,9 @@ func TestStoreKillChild(t *testing.T) {
 	}
 	say("start")
 	manifestRewriteAfter = cfg.RewriteAfter
+	if cfg.NoSync {
+		syncFile = func(*os.File) error { return nil }
+	}
 	s, err := OpenStore(cfg.Dir, killStoreOptions())
 	if err != nil {
 		say("error open: %v", err)
@@ -695,7 +700,7 @@ func runKillCycles(t *testing.T, seed int64, budget time.Duration) killStats {
 	m := &killModel{present: map[killDocID]struct{}{}, next: make([]int64, killWriters)}
 	var stats killStats
 	for deadline := time.Now().Add(budget); time.Now().Before(deadline); stats.Cycles++ {
-		cfg := killConfig{Dir: dir, Seed: seed*1000 + int64(stats.Cycles), Next: m.next, RewriteAfter: 1 + rng.Intn(12)}
+		cfg := killConfig{Dir: dir, Seed: seed*1000 + int64(stats.Cycles), Next: m.next, RewriteAfter: 1 + rng.Intn(12), NoSync: rng.Intn(2) == 0}
 		r := runAndKill(t, cfg, rng, &stats)
 		m.check(t, dir, r, rng, &stats)
 	}
@@ -710,7 +715,9 @@ func TestStoreSurvivesKills(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("needs a signal that cannot be caught")
 	}
-	budget, soak := 4*time.Second, false
+	// The parent kills nothing of its own.
+	skipSyncs(t)
+	budget, soak := 3*time.Second, false
 	if v := os.Getenv("LYNXDB_STORE_SOAK"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil {

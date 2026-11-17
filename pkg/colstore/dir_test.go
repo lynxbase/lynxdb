@@ -195,6 +195,7 @@ func TestDirRecoversFromInterruptedWrites(t *testing.T) {
 }
 
 func TestDirRewritesLongManifest(t *testing.T) {
+	skipSyncs(t)
 	defer func(n int) { manifestRewriteAfter = n }(manifestRewriteAfter)
 	manifestRewriteAfter = 5
 	path := filepath.Join(t.TempDir(), "table")
@@ -232,6 +233,7 @@ func TestDirRewritesLongManifest(t *testing.T) {
 }
 
 func TestDirServesReadersDuringCommits(t *testing.T) {
+	skipSyncs(t)
 	d, err := OpenDir(filepath.Join(t.TempDir(), "table"))
 	if err != nil {
 		t.Fatal(err)
@@ -273,6 +275,7 @@ func TestDirServesReadersDuringCommits(t *testing.T) {
 }
 
 func TestDirKeepsRunAndTierOfParts(t *testing.T) {
+	skipSyncs(t)
 	defer func(n int) { manifestRewriteAfter = n }(manifestRewriteAfter)
 	manifestRewriteAfter = 3
 	path := filepath.Join(t.TempDir(), "table")

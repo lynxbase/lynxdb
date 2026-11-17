@@ -67,6 +67,7 @@ func runShapes(t testing.TB, snap *Snapshot) map[uint64]*runShape {
 }
 
 func TestStoreFlushesSortedRunsAndMergesThemByTier(t *testing.T) {
+	skipSyncs(t)
 	path := filepath.Join(t.TempDir(), "store")
 	opts := StoreOptions{SortKey: []string{"svc"}, BlockRows: 64, FlushBytes: 4 << 10, MergeFanIn: 3}
 	s, err := OpenStore(path, opts)
@@ -202,6 +203,7 @@ func checkOrderedBySvc(t testing.TB, snap *Snapshot) {
 }
 
 func TestStoreServesReadersWhileItMerges(t *testing.T) {
+	skipSyncs(t)
 	s, err := OpenStore(filepath.Join(t.TempDir(), "store"), StoreOptions{
 		SortKey: []string{"svc"}, BlockRows: 32, FlushBytes: 2 << 10, MergeFanIn: 2,
 	})
@@ -264,6 +266,7 @@ func TestStoreServesReadersWhileItMerges(t *testing.T) {
 }
 
 func TestStoreWithoutSortKeyKeepsArrivalOrderAndNeverMerges(t *testing.T) {
+	skipSyncs(t)
 	s, err := OpenStore(filepath.Join(t.TempDir(), "store"), StoreOptions{FlushBytes: 1 << 10, MergeFanIn: 2})
 	if err != nil {
 		t.Fatal(err)
@@ -300,6 +303,7 @@ func TestStoreWithoutSortKeyKeepsArrivalOrderAndNeverMerges(t *testing.T) {
 }
 
 func TestWriterCutsALargeRequestIntoRunsOfTheFlushSize(t *testing.T) {
+	skipSyncs(t)
 	s, err := OpenStore(filepath.Join(t.TempDir(), "store"), StoreOptions{
 		SortKey: []string{"svc"}, FlushBytes: 8 << 10, MergeFanIn: -1,
 	})
@@ -391,6 +395,7 @@ func timedDocs(first, count, hours int) []byte {
 }
 
 func TestStoreKeepsPartitionsApartAndDropsOldOnes(t *testing.T) {
+	skipSyncs(t)
 	const hours = 5
 	hour, base := int64(time.Hour), int64(firstTimedHour)
 	opts := StoreOptions{
@@ -518,6 +523,7 @@ func TestPickMergesNeverMixesPartitions(t *testing.T) {
 }
 
 func TestAppendFromManyGoroutinesLosesNothing(t *testing.T) {
+	skipSyncs(t)
 	path := filepath.Join(t.TempDir(), "store")
 	opts := StoreOptions{SortKey: []string{"svc"}, FlushBytes: 8 << 10, MergeFanIn: 4, FlushInterval: -1}
 	s, err := OpenStore(path, opts)

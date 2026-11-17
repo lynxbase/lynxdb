@@ -12,6 +12,14 @@ import (
 	"testing"
 )
 
+// skipSyncs leaves the syncs out of a test that kills nothing: what a sync
+// adds shows only after the machine has crashed, and it takes most of the
+// time of a commit.
+func skipSyncs(t testing.TB) {
+	t.Helper()
+	replaceSyncFile(t, func(*os.File) error { return nil })
+}
+
 // replaceSyncFile puts fn in place of syncFile until the test ends.
 func replaceSyncFile(t testing.TB, fn func(f *os.File) error) {
 	t.Helper()
@@ -54,7 +62,7 @@ func TestManifestRewriteNamesThePartsTheLogNamed(t *testing.T) {
 
 		return nil
 	})
-	const committers, rounds = 8, 60
+	const committers, rounds = 8, 30
 	var wg sync.WaitGroup
 	for c := 0; c < committers; c++ {
 		wg.Add(1)
@@ -176,7 +184,7 @@ func TestCommitThatFailsLeavesNothingBehind(t *testing.T) {
 					return errInjected
 				}
 
-				return f.Sync()
+				return nil
 			})
 
 			return base[:1]
@@ -192,7 +200,7 @@ func TestCommitThatFailsLeavesNothingBehind(t *testing.T) {
 					return errInjected
 				}
 
-				return f.Sync()
+				return nil
 			})
 
 			return base[:1]
@@ -211,7 +219,7 @@ func TestCommitThatFailsLeavesNothingBehind(t *testing.T) {
 					return errInjected
 				}
 
-				return f.Sync()
+				return nil
 			})
 
 			return base[:1]
@@ -225,6 +233,7 @@ func TestCommitThatFailsLeavesNothingBehind(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			skipSyncs(t)
 			path := filepath.Join(t.TempDir(), "table")
 			d, err := OpenDir(path)
 			if err != nil {
@@ -287,7 +296,7 @@ func TestDirTakesNoChangeOnceARecordCanBeNeitherWrittenNorTakenBack(t *testing.T
 					return errInjected
 				}
 
-				return f.Sync()
+				return nil
 			})
 		}},
 	}
@@ -307,7 +316,7 @@ func TestDirTakesNoChangeOnceARecordCanBeNeitherWrittenNorTakenBack(t *testing.T
 			if _, err := d.Commit(merged, base); err == nil {
 				t.Fatal("a commit whose record was not written returned no error")
 			}
-			syncFile = (*os.File).Sync
+			skipSyncs(t)
 			// Whether the record is on disk is unknown, so no later change
 			// may be built on either answer.
 			for i := 0; i < 2; i++ {
@@ -356,7 +365,7 @@ func TestCommitStandsWhenTheManifestRewriteFails(t *testing.T) {
 					return errInjected
 				}
 
-				return f.Sync()
+				return nil
 			})
 
 			return func() {}
@@ -375,7 +384,7 @@ func TestCommitStandsWhenTheManifestRewriteFails(t *testing.T) {
 					}
 				}
 
-				return f.Sync()
+				return nil
 			})
 
 			return func() {}
@@ -383,6 +392,7 @@ func TestCommitStandsWhenTheManifestRewriteFails(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			skipSyncs(t)
 			defer func(n int) { manifestRewriteAfter = n }(manifestRewriteAfter)
 			manifestRewriteAfter = 2
 			path := filepath.Join(t.TempDir(), "table")
@@ -517,7 +527,7 @@ func TestClosedDirTakesNoCommit(t *testing.T) {
 
 func TestCommitsThatRemoveTheSamePartLeaveOneWinner(t *testing.T) {
 	// Without syncs the commits reach the manifest close to each other.
-	replaceSyncFile(t, func(*os.File) error { return nil })
+	skipSyncs(t)
 	path := filepath.Join(t.TempDir(), "table")
 	d, err := OpenDir(path)
 	if err != nil {

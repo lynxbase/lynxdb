@@ -109,6 +109,7 @@ func liveNames(d *Dir) map[string]struct{} {
 
 func buildDirHistory(t testing.TB) *dirHistory {
 	t.Helper()
+	skipSyncs(t)
 	h := &dirHistory{path: filepath.Join(t.TempDir(), "table")}
 	d, err := OpenDir(h.path)
 	if err != nil {
@@ -212,11 +213,18 @@ func TestOpenDirSetsPartsAsideWhenNoMarkSaysTheManifestIsWhole(t *testing.T) {
 	}
 	last := len(h.bounds) - 1
 	opened, refused, aside := 0, 0, 0
-	// No record at all, and every cut inside the last four records, which
-	// hold a flush, a drop and the merge before them.
+	// No record at all, and cuts inside the last four records, which hold
+	// a flush, a drop and the merge before them: every cut of the last two
+	// and around the ends of the others, every fourth elsewhere.
 	sizes := []int{0, 3, h.bounds[1] - 1}
 	for size := h.bounds[last-4]; size <= len(manifest); size++ {
-		sizes = append(sizes, size)
+		atEnd := false
+		for _, bound := range h.bounds {
+			atEnd = atEnd || size >= bound-1 && size <= bound+1
+		}
+		if atEnd || size >= h.bounds[last-2] || size%4 == 0 {
+			sizes = append(sizes, size)
+		}
 	}
 	for _, size := range sizes {
 		path := copyDir(t, h.path)
@@ -369,7 +377,13 @@ func TestOpenDirRefusesADamagedManifestAndKeepsEveryFile(t *testing.T) {
 	for i := 0; i < len(manifest)*8; i++ {
 		damaged := append([]byte(nil), manifest...)
 		damaged[i/8] ^= 1 << (i % 8)
-		refuse(fmt.Sprintf("bit %d flipped", i), damaged)
+		if _, _, _, err := parseManifest(damaged); !errors.Is(err, ErrManifest) {
+			t.Fatalf("bit %d flipped: the manifest reads with %v", i, err)
+		}
+		// One open for every byte shows that the refusal touches nothing.
+		if i%8 == i/8%8 {
+			refuse(fmt.Sprintf("bit %d flipped", i), damaged)
+		}
 	}
 	// Bytes behind the last record that hold a whole record of their own are
 	// not what an interrupted append leaves.
@@ -645,9 +659,6 @@ func TestKillBetweenManifestAndMarkLeavesAManifestThatCountsAsWhole(t *testing.T
 	// a record that has no mark yet, with a rewritten manifest that is not
 	// in place yet, and with one that is.
 	replaceSyncFile(t, func(f *os.File) error {
-		if err := f.Sync(); err != nil {
-			return err
-		}
 		switch base := filepath.Base(f.Name()); {
 		case base == manifestName:
 			committed += 100

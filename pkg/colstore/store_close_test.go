@@ -3,7 +3,6 @@ package colstore
 import (
 	"context"
 	"errors"
-	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -89,7 +88,7 @@ func TestClosedStoreTakesNothing(t *testing.T) {
 
 func TestSettleAndCompactReturnWhenTheStoreCloses(t *testing.T) {
 	// Without syncs the rounds are short enough to run many.
-	replaceSyncFile(t, func(*os.File) error { return nil })
+	skipSyncs(t)
 	for round := 0; round < 40; round++ {
 		s, err := OpenStore(filepath.Join(t.TempDir(), "store"), StoreOptions{
 			SortKey: []string{"svc"}, FlushBytes: 1 << 10, MergeFanIn: 2, FlushInterval: -1,
@@ -159,7 +158,7 @@ func countN(t testing.TB, tbl *Table) map[int64]int {
 
 func TestCloseWritesTheRowsOfEveryAppendThatReturnedNil(t *testing.T) {
 	// Without syncs many more flushes and merges meet the Close.
-	replaceSyncFile(t, func(*os.File) error { return nil })
+	skipSyncs(t)
 	for round := 0; round < 12; round++ {
 		path := filepath.Join(t.TempDir(), "store")
 		opts := StoreOptions{SortKey: []string{"svc"}, FlushBytes: 2 << 10, MergeFanIn: 2, FlushInterval: time.Millisecond}
