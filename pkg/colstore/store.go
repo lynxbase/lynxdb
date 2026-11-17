@@ -20,6 +20,9 @@ type StoreOptions struct {
 	SortKey []string
 	// TimeField is the path whose value becomes the row timestamp.
 	TimeField string
+	// KeepText keeps a line that is not a JSON object as a row holding its
+	// text; without it such a line is rejected.
+	KeepText bool
 	// BlockRows is the number of rows per block; zero means 16384.
 	BlockRows int
 	// FlushBytes is the input a writer buffers before it writes a run;
@@ -201,6 +204,12 @@ type appendShard struct {
 // the rows become durable and visible within the flush interval, or as soon
 // as a buffer is full, or on Sync.
 func (s *Store) Append(lines []byte) (rejected int64, err error) {
+	return s.AppendAt(lines, 0)
+}
+
+// AppendAt is Append for lines that arrived at the time at, in unix
+// nanoseconds, which becomes the time of every row that carries none.
+func (s *Store) AppendAt(lines []byte, at int64) (rejected int64, err error) {
 	var sh *appendShard
 	// The first free buffer in a fixed order, so that a light load fills
 	// one buffer and not all of them.
@@ -225,7 +234,7 @@ func (s *Store) Append(lines []byte) (rejected int64, err error) {
 		sh.w = s.NewWriter()
 	}
 	before := sh.w.Rejected
-	err = sh.w.add(lines)
+	err = sh.w.add(lines, at)
 	switch {
 	case sh.w.buffered == 0:
 		sh.since = time.Time{}
@@ -667,21 +676,25 @@ type Writer struct {
 func (s *Store) NewWriter() *Writer {
 	return &Writer{
 		s:     s,
-		batch: shred.NewBatch(shred.Options{TimeField: s.opts.TimeField}),
+		batch: shred.NewBatch(shred.Options{TimeField: s.opts.TimeField, KeepText: s.opts.KeepText}),
 	}
 }
 
 // AddNDJSON buffers the documents of lines, one per line, and writes a run
 // each time the buffer has grown to the store's flush size.
-func (w *Writer) AddNDJSON(lines []byte) error {
+func (w *Writer) AddNDJSON(lines []byte) error { return w.AddNDJSONAt(lines, 0) }
+
+// AddNDJSONAt is AddNDJSON for lines that arrived at the time at, in unix
+// nanoseconds, which becomes the time of every row that carries none.
+func (w *Writer) AddNDJSONAt(lines []byte, at int64) error {
 	if w.s.closed.Load() {
 		return ErrClosed
 	}
 
-	return w.add(lines)
+	return w.add(lines, at)
 }
 
-func (w *Writer) add(lines []byte) error {
+func (w *Writer) add(lines []byte, at int64) error {
 	for len(lines) > 0 {
 		// A buffer that a failed flush left full takes no line before it is
 		// written, so that a caller told of the failure can send all again.
@@ -698,7 +711,7 @@ func (w *Writer) add(lines []byte) error {
 			}
 		}
 		lines = lines[len(chunk):]
-		w.errs = w.batch.AddNDJSON(chunk, 0, w.errs[:0])
+		w.errs = w.batch.AddNDJSON(chunk, at, w.errs[:0])
 		w.Rejected += int64(len(w.errs))
 		if w.buffered += len(chunk); w.buffered >= w.s.opts.FlushBytes {
 			if err := w.flush(); err != nil {
