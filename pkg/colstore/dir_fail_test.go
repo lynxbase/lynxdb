@@ -204,6 +204,18 @@ func TestCommitThatFailsLeavesNothingBehind(t *testing.T) {
 
 			return base[:1]
 		}},
+		{"the manifest record cannot be made durable", func(d *Dir, add []*PartFile, base, gone []*Handle, failing *atomic.Bool) []*Handle {
+			replaceSyncFile(t, func(f *os.File) error {
+				// Cutting the record off again is the next sync and works.
+				if f.Name() == filepath.Join(d.path, manifestName) && failing.CompareAndSwap(true, false) {
+					return errInjected
+				}
+
+				return f.Sync()
+			})
+
+			return base[:1]
+		}},
 		{"a removed part is gone", func(d *Dir, add []*PartFile, base, gone []*Handle, failing *atomic.Bool) []*Handle {
 			return []*Handle{base[0], gone[0]}
 		}},
@@ -258,6 +270,68 @@ func TestCommitThatFailsLeavesNothingBehind(t *testing.T) {
 				t.Fatalf("after reopen: %d rows, sum %d", rows, sum)
 			}
 			checkDirMatchesManifest(t, d, "after reopen")
+		})
+	}
+}
+
+func TestDirTakesNoChangeOnceARecordCanBeNeitherWrittenNorTakenBack(t *testing.T) {
+	cases := []struct {
+		name string
+		// arrange makes every write of the manifest fail from now on.
+		arrange func(d *Dir)
+	}{
+		{"the manifest was closed", func(d *Dir) { d.log.Close() }},
+		{"the manifest cannot be made durable", func(d *Dir) {
+			replaceSyncFile(t, func(f *os.File) error {
+				if f.Name() == filepath.Join(d.path, manifestName) {
+					return errInjected
+				}
+
+				return f.Sync()
+			})
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "table")
+			d, err := OpenDir(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			base, err := d.Commit([]*PartFile{writePartFile(t, d, 0, 100, "a"), writePartFile(t, d, 100, 100, "b")}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.arrange(d)
+			merged := []*PartFile{writePartFile(t, d, 0, 200, "ab")}
+			if _, err := d.Commit(merged, base); err == nil {
+				t.Fatal("a commit whose record was not written returned no error")
+			}
+			syncFile = (*os.File).Sync
+			// Whether the record is on disk is unknown, so no later change
+			// may be built on either answer.
+			for i := 0; i < 2; i++ {
+				if _, err := d.Commit([]*PartFile{writePartFile(t, d, 200, 100, "c")}, nil); !errors.Is(err, ErrFailed) {
+					t.Fatalf("a commit after the failed record: %v", err)
+				}
+			}
+			if rows, sum := rowsAndSum(t, d); rows != 200 || sum != 199*200/2 {
+				t.Fatalf("after the failed commits: %d rows, sum %d", rows, sum)
+			}
+			_ = d.Close()
+
+			// A restart finds the merge done or not done, and nothing else.
+			if d, err = OpenDir(path); err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			if rows, sum := rowsAndSum(t, d); rows != 200 || sum != 199*200/2 {
+				t.Fatalf("after reopen: %d rows, sum %d", rows, sum)
+			}
+			checkDirMatchesManifest(t, d, "after reopen")
+			if _, err := d.Commit([]*PartFile{writePartFile(t, d, 200, 100, "c")}, nil); err != nil {
+				t.Fatalf("a commit after reopen: %v", err)
+			}
 		})
 	}
 }

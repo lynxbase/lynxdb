@@ -45,6 +45,10 @@ var syncFile = (*os.File).Sync
 // directory cannot provide.
 var ErrManifest = errors.New("colstore: manifest is damaged or names a missing or damaged part")
 
+// ErrFailed reports a directory that takes no further changes because a
+// manifest record could be neither made durable nor taken back.
+var ErrFailed = errors.New("colstore: manifest could not be written")
+
 // Dir keeps a table's parts as files in one directory. A manifest, an
 // append-only log of part set changes, names the live files; a change is
 // visible to readers only after its record is on disk.
@@ -57,7 +61,11 @@ type Dir struct {
 	mu      sync.Mutex
 	log     *os.File
 	records int
-	live    map[*Handle]*partFileRef
+	// size is the length of the records in the log.
+	size int64
+	live map[*Handle]*partFileRef
+	// failed, once set, is what every further change returns.
+	failed error
 }
 
 // partFileRef ties a handle to its file; dead marks a part the manifest no
@@ -99,7 +107,7 @@ func OpenDir(path string) (*Dir, error) {
 	if err != nil {
 		return nil, err
 	}
-	d.records = records
+	d.records, d.size = records, int64(valid)
 
 	entries, err := os.ReadDir(path)
 	if err != nil {
@@ -464,6 +472,9 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) (handles []*Handle, err 
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.failed != nil {
+		return handles, d.failed
+	}
 	gone := make([]string, 0, len(remove))
 	for i, h := range remove {
 		ref := d.live[h]
@@ -472,14 +483,11 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) (handles []*Handle, err 
 		}
 		gone = append(gone, ref.name)
 	}
-	recorded = true
-	if _, err := d.log.Write(appendRecord(nil, names, metas, gone)); err != nil {
+	if err := d.appendLog(appendRecord(nil, names, metas, gone)); err != nil {
+		recorded = d.failed != nil
+
 		return handles, err
 	}
-	if err := syncFile(d.log); err != nil {
-		return handles, err
-	}
-	d.records++
 	for i, h := range handles {
 		d.live[h] = refs[i]
 	}
@@ -497,6 +505,32 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) (handles []*Handle, err 
 	}
 
 	return handles, nil
+}
+
+// appendLog makes record the last of the manifest and durable. When it
+// cannot, it cuts the log back to the records before; when that fails as
+// well, the manifest may or may not hold the record after a restart, and the
+// directory takes no further changes.
+func (d *Dir) appendLog(record []byte) error {
+	_, err := d.log.Write(record)
+	if err == nil {
+		err = syncFile(d.log)
+	}
+	if err == nil {
+		d.records++
+		d.size += int64(len(record))
+
+		return nil
+	}
+	undo := d.log.Truncate(d.size)
+	if undo == nil {
+		undo = syncFile(d.log)
+	}
+	if undo != nil {
+		d.failed = fmt.Errorf("%w: %w", ErrFailed, err)
+	}
+
+	return err
 }
 
 // seal makes the file durable under its final name.
@@ -525,7 +559,8 @@ func (d *Dir) rewrite() error {
 	if err != nil {
 		return err
 	}
-	if _, err = f.Write(appendRecord(nil, names, metas, nil)); err == nil {
+	record := appendRecord(nil, names, metas, nil)
+	if _, err = f.Write(record); err == nil {
 		err = syncFile(f)
 	}
 	if cerr := f.Close(); err == nil {
@@ -544,7 +579,7 @@ func (d *Dir) rewrite() error {
 		d.log.Close()
 	}
 	d.log, err = os.OpenFile(file, os.O_WRONLY|os.O_APPEND, 0o644)
-	d.records = 1
+	d.records, d.size = 1, int64(len(record))
 
 	return err
 }
