@@ -349,6 +349,9 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 			idx = nil
 		}
 	}
+	if q.filter != nil {
+		b.Ahead(w.ahead[w.filtered:])
+	}
 	w.blocks++
 	w.matched += int64(count)
 	if q.agg != nil {

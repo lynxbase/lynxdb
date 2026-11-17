@@ -586,6 +586,8 @@ type Block struct {
 	slot uint32
 	// present holds the rows of a sparse column searched as it is stored.
 	present vec.Column
+	// spans is the scratch of Ahead.
+	spans [][2]uint32
 }
 
 // OpenBlock points b at block i of p.
@@ -884,6 +886,44 @@ func (b *Block) ahead(ref *ColumnRef) {
 	}
 	word.Or(bit)
 	p.readAhead(b.start+int(ref.off), int(ref.length))
+}
+
+// aheadGap is the most bytes between two chunks that one request reads
+// through rather than asking for the two apart: a device that serves a few
+// thousand requests a second reads about this much in the time of one.
+const aheadGap = 32 << 10
+
+// Ahead asks for the chunks of every column at the path ids that were not
+// asked for yet, in one request for each run of chunks that lie less than
+// aheadGap apart, whatever their size.
+func (b *Block) Ahead(ids []uint32) {
+	p := b.part
+	if p.readAhead == nil {
+		return
+	}
+	b.spans = b.spans[:0]
+	for _, id := range ids {
+		for i := b.seek(uint64(id) << 8); i < len(b.cols) && b.dirKey(i)>>8 == uint64(id); i++ {
+			ref := b.col(i)
+			if ref.bad || ref.length == 0 {
+				continue
+			}
+			word, bit := &p.advised[ref.slot>>6], uint64(1)<<(ref.slot&63)
+			if word.Load()&bit != 0 {
+				continue
+			}
+			word.Or(bit)
+			b.spans = append(b.spans, [2]uint32{ref.off, ref.off + ref.length})
+		}
+	}
+	slices.SortFunc(b.spans, func(x, y [2]uint32) int { return cmp.Compare(x[0], y[0]) })
+	for i := 0; i < len(b.spans); {
+		from, to := b.spans[i][0], b.spans[i][1]
+		for i++; i < len(b.spans) && b.spans[i][0] <= to+aheadGap; i++ {
+			to = max(to, b.spans[i][1])
+		}
+		p.readAhead(b.start+int(from), int(to-from))
+	}
 }
 
 // aheadColumn asks for the pages that lookups of hash in the filters of one

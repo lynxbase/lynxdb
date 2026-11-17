@@ -28,9 +28,13 @@ type selection struct {
 type scratch struct {
 	pathID []uint32
 	pathOK []bool
-	refs   []*part.ColumnRef
-	state  []uint8
-	cols   []vec.Column
+	// ahead holds the path ids in the open part of the paths that the
+	// filter reads, first, and of the others; filtered counts the first.
+	ahead    []uint32
+	filtered int
+	refs     []*part.ColumnRef
+	state    []uint8
+	cols     []vec.Column
 	// used marks the columns that the query decoded.
 	used []bool
 	// seen holds, per column slot, which rows of the open block hold a value
@@ -228,9 +232,21 @@ func (w *worker) held() int {
 func (w *worker) open(p *part.Part, b *part.Block) {
 	if p != w.p {
 		w.p = p
+		w.ahead, w.filtered = w.ahead[:0], 0
 		for i, name := range w.q.paths {
 			w.pathID[i], w.pathOK[i] = p.PathID(name)
+			if w.pathOK[i] {
+				w.ahead = append(w.ahead, w.pathID[i])
+				if i < w.q.filtered {
+					w.filtered++
+				}
+			}
 		}
+	}
+	if w.q.filter != nil {
+		b.Ahead(w.ahead[:w.filtered])
+	} else {
+		b.Ahead(w.ahead)
 	}
 	if w.x.ords != nil {
 		w.place = int64(w.x.ords[p])<<44 | int64(b.Index())<<16

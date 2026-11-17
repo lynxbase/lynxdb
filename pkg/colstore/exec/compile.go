@@ -28,7 +28,10 @@ type query struct {
 	paths   []string
 	pathIdx map[string]int
 	filter  *pred
-	opts    colstore.ScanOptions
+	// filtered is the number of paths, first among paths, that the filter
+	// reads.
+	filtered int
+	opts     colstore.ScanOptions
 	// timed is set when the filter asks only for a time from minT to maxT.
 	timed      bool
 	minT, maxT int64
@@ -141,7 +144,7 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 		if err != nil {
 			return nil, err
 		}
-		q.filter = p
+		q.filter, q.filtered = p, len(q.paths)
 		q.opts = pushdown(snap, scan.Filter)
 		// A filter with a long name costs more to look up than it saves.
 		if name, ok := condition(nil, scan.Filter); ok && len(name) <= 4096 {
