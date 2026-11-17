@@ -320,7 +320,7 @@ func TestServer_Status_JSON(t *testing.T) {
 		t.Fatalf("parse status JSON: %v\noutput: %q", err, r.Stdout)
 	}
 
-	required := []string{"uptime_seconds", "total_events", "segment_count", "health"}
+	required := []string{"uptime_seconds", "storage_bytes", "total_events", "index_count", "part_count", "health"}
 	for _, key := range required {
 		if _, ok := result[key]; !ok {
 			t.Errorf("status JSON missing required key %q, got keys: %v", key, mapKeys(result))
