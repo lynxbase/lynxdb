@@ -264,6 +264,7 @@ type Block struct {
 	MaxTime int64
 
 	part   *Part
+	index  int
 	start  int // offset of data in the part
 	data   []byte
 	chunks uint32 // size of the column chunks at the start of data
@@ -285,7 +286,7 @@ func (p *Part) OpenBlock(i int, b *Block) error {
 	e := p.index[i*indexEntrySize:]
 	b.Rows, b.MinTime, b.MaxTime = p.BlockStats(i)
 	start := binary.LittleEndian.Uint64(e[20:])
-	b.part, b.start = p, int(start)
+	b.part, b.index, b.start = p, i, int(start)
 	b.data = p.data[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
 	filterOff, dirOff := binary.LittleEndian.Uint32(e[32:]), binary.LittleEndian.Uint32(e[40:])
 	b.chunks = filterOff
@@ -372,6 +373,9 @@ func (b *Block) col(i int) *ColumnRef {
 
 	return c
 }
+
+// Index returns the number of the block in its part.
+func (b *Block) Index() int { return b.index }
 
 // Columns returns every column of the block, ordered by path id and kind.
 func (b *Block) Columns() []ColumnRef {
