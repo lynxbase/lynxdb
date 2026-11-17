@@ -20,7 +20,7 @@ const (
 	// numbers inside it addressable with 16 bits.
 	MaxRows = 1 << 16
 
-	defaultMaxColumns = 2048
+	defaultMaxColumns = 8192
 	maxDepth          = 64
 	indexThreshold    = 16
 )
@@ -100,10 +100,20 @@ func (b *Batch) Columns() []*Column { return b.cols }
 // Full reports whether the batch cannot take another row.
 func (b *Batch) Full() bool { return b.Rows >= MaxRows }
 
-// Reset drops the rows and keeps the learned paths and buffers.
+// Reset drops the rows and keeps the learned paths and buffers. Once the
+// paths fill half the budget and a quarter of the columns went unused, it
+// forgets them all, so that the budget is spent on the paths of the rows to
+// come and not on every path a long-lived batch has met.
 func (b *Batch) Reset() {
+	idle := 0
 	for _, c := range b.cols {
+		if c.Count == 0 {
+			idle++
+		}
 		c.reset()
+	}
+	if len(b.paths) > b.opts.MaxColumns/2 && 4*idle > len(b.cols) {
+		b.init()
 	}
 	b.Rows = 0
 	b.Times = b.Times[:0]
