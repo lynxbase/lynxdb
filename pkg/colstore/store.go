@@ -119,6 +119,14 @@ type Store struct {
 	// due the runs in the table that merges are to take.
 	flushWrites atomic.Int32
 	due         atomic.Int32
+	// full asks the flusher to write buffers that hold their budget. room
+	// tells the callers of Append that wait for it that the buffers were
+	// taken or that a flush ended; flushErr is what the last flush of the
+	// buffers returned.
+	full     chan struct{}
+	roomMu   sync.Mutex
+	room     *sync.Cond
+	flushErr error
 	// flushMu lets one flush of the buffers run at a time. buffered counts
 	// the input bytes in the buffers and in unwritten, the batches that a
 	// failed flush took and the next one writes first.
@@ -205,6 +213,8 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	s.shards = make([]appendShard, runtime.GOMAXPROCS(0))
 	s.countRuns()
 	s.synced = sync.NewCond(&s.syncMu)
+	s.room = sync.NewCond(&s.roomMu)
+	s.full = make(chan struct{}, 1)
 	s.flushing = make(chan struct{})
 	go s.mergeLoop()
 	go s.flushLoop()
@@ -288,7 +298,7 @@ func (s *Store) AppendAt(lines []byte, at int64) (rejected int64, err error) {
 		// can send all again.
 		room := int64(s.opts.BufferBytes) - s.buffered.Load()
 		if room <= 0 {
-			if err := s.flushFull(); err != nil {
+			if err := s.makeRoom(); err != nil {
 				return rejected, err
 			}
 
@@ -308,12 +318,38 @@ func (s *Store) AppendAt(lines []byte, at int64) (rejected int64, err error) {
 		}
 		lines = lines[len(piece):]
 	}
-	// The caller that fills the buffers writes them and learns the result.
+	// Full buffers are written by the flusher; the caller does not wait.
 	if s.buffered.Load() >= int64(s.opts.BufferBytes) {
-		return rejected, s.flushFull()
+		s.askFlush()
 	}
 
 	return rejected, nil
+}
+
+// askFlush has the flusher write the buffers that are full.
+func (s *Store) askFlush() {
+	select {
+	case s.full <- struct{}{}:
+	default:
+	}
+}
+
+// makeRoom waits until the flusher has taken the full buffers, which it
+// does before it writes them. Rows that a flush could not write fill the
+// buffers until one can: no more are taken then, and the caller is told so
+// that it can send its lines again.
+func (s *Store) makeRoom() error {
+	s.roomMu.Lock()
+	defer s.roomMu.Unlock()
+	for s.buffered.Load() >= int64(s.opts.BufferBytes) {
+		s.askFlush()
+		if s.flushErr != nil {
+			return s.flushErr
+		}
+		s.room.Wait()
+	}
+
+	return nil
 }
 
 func (s *Store) appendPiece(lines []byte, at int64) (rejected int64, err error) {
@@ -432,48 +468,71 @@ func (s *Store) writeBuffers(age time.Duration) error {
 		}
 		sh.mu.Unlock()
 	}
-	s.buffered.Add(-size)
-	if len(taken) == 0 {
-		return nil
+	// The buffers are free again at once, unless the flush before failed:
+	// then they count as full until these rows are written, or every
+	// failed attempt would let in as much again.
+	s.roomMu.Lock()
+	again := s.flushErr != nil
+	if !again {
+		s.buffered.Add(-size)
+		s.room.Broadcast()
 	}
-	s.flushWrites.Add(1)
-	files, err := s.writeRuns(taken)
-	if err == nil {
-		_, err = s.dir.Commit(files, nil)
+	s.roomMu.Unlock()
+	var err error
+	if len(taken) > 0 {
+		s.flushWrites.Add(1)
+		var files []*PartFile
+		if files, err = s.writeRuns(taken); err == nil {
+			_, err = s.dir.Commit(files, nil)
+		}
+		s.flushWrites.Add(-1)
+		s.countRuns()
 	}
-	s.flushWrites.Add(-1)
-	s.countRuns()
+	s.roomMu.Lock()
+	switch {
+	case err != nil && !again:
+		s.buffered.Add(size)
+	case err == nil && again:
+		s.buffered.Add(-size)
+	}
+	s.flushErr = err
+	s.room.Broadcast()
+	s.roomMu.Unlock()
 	if err != nil {
 		s.unwritten, s.unwrittenBytes = taken, size
-		s.buffered.Add(size)
 
 		return err
 	}
 	for _, b := range taken {
 		shred.Put(b)
 	}
-	s.kick()
+	if len(taken) > 0 {
+		s.kick()
+	}
 
 	return nil
 }
 
-// flushLoop writes buffers that have waited for the flush interval.
+// flushLoop writes the buffers that are full, and those whose rows have
+// waited for the flush interval.
 func (s *Store) flushLoop() {
 	defer close(s.flushing)
 	interval := s.opts.FlushInterval
-	if interval < 0 {
-		<-s.done
-
-		return
+	var tick <-chan time.Time
+	if interval >= 0 {
+		ticker := time.NewTicker(max(interval/4, time.Millisecond))
+		defer ticker.Stop()
+		tick = ticker.C
 	}
-	tick := time.NewTicker(max(interval/4, time.Millisecond))
-	defer tick.Stop()
 	looked := time.Now()
 	for {
 		select {
 		case <-s.done:
 			return
-		case <-tick.C:
+		case <-s.full:
+			// Whoever waits for room learns of a failure from the buffers.
+			_ = s.flushFull()
+		case <-tick:
 			// Partitions close as time passes, with or without new rows.
 			if s.opts.Partition > 0 && time.Since(looked) >= closedLook {
 				looked = time.Now()

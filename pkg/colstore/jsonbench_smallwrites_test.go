@@ -15,8 +15,9 @@ import (
 // LYNXDB_BENCH_SMALL_WRITES is set, from 1, 8, 64 and 256 clients, or from
 // LYNXDB_BENCH_CLIENTS of them, in
 // requests of LYNXDB_BENCH_REQUEST_DOCS lines for LYNXDB_BENCH_SECONDS, each
-// request waiting until its rows are durable, and reports the requests and
-// rows per second, the latency of a request, the parts written and CPU time.
+// request waiting until its rows are durable, or only until they are
+// buffered with LYNXDB_BENCH_BUFFERED set, and reports the requests and rows
+// per second, the latency of a request, the parts written and CPU time.
 func TestJSONBenchSmallWrites(t *testing.T) {
 	path := os.Getenv("LYNXDB_BENCH_NDJSON")
 	if path == "" || os.Getenv("LYNXDB_BENCH_SMALL_WRITES") == "" {
@@ -43,8 +44,13 @@ func TestJSONBenchSmallWrites(t *testing.T) {
 		data = data[end:]
 	}
 	seconds := time.Duration(envInt(t, "LYNXDB_BENCH_SECONDS", 3)) * time.Second
-	t.Logf("%d CPUs; requests of %d lines; every request waits until it is durable", runtime.GOMAXPROCS(0), docs)
-	t.Logf("%7s %9s %10s %9s %9s %9s %7s %7s", "clients", "req/s", "rows/s", "p50 ms", "p99 ms", "CPU ms", "parts", "left")
+	buffered := os.Getenv("LYNXDB_BENCH_BUFFERED") != ""
+	waits := "every request waits until it is durable"
+	if buffered {
+		waits = "a request is answered once its rows are buffered"
+	}
+	t.Logf("%d CPUs; requests of %d lines; %s", runtime.GOMAXPROCS(0), docs, waits)
+	t.Logf("%7s %9s %10s %9s %9s %9s %9s %7s %7s", "clients", "req/s", "rows/s", "p50 ms", "p99 ms", "max ms", "CPU ms", "parts", "left")
 	levels := []int{1, 8, 64, 256}
 	if only := envInt(t, "LYNXDB_BENCH_CLIENTS", 0); only > 0 {
 		levels = []int{only}
@@ -73,7 +79,7 @@ func TestJSONBenchSmallWrites(t *testing.T) {
 					request := requests[int(next.Add(1))%len(requests)]
 					start := time.Now()
 					_, err := store.Append(request)
-					if err == nil {
+					if err == nil && !buffered {
 						err = store.Sync()
 					}
 					if err != nil {
@@ -100,8 +106,8 @@ func TestJSONBenchSmallWrites(t *testing.T) {
 		snap := store.Table().Snapshot()
 		left := len(snap.Parts())
 		snap.Release()
-		t.Logf("%7d %9.0f %10.0f %9.2f %9.2f %9.2f %7d %7d", clients, float64(len(all))/wall.Seconds(), float64(len(all)*docs)/wall.Seconds(),
-			ms(all[len(all)/2]), ms(all[len(all)*99/100]), ms(cpu)/float64(len(all)), written, left)
+		t.Logf("%7d %9.0f %10.0f %9.2f %9.2f %9.2f %9.2f %7d %7d", clients, float64(len(all))/wall.Seconds(), float64(len(all)*docs)/wall.Seconds(),
+			ms(all[len(all)/2]), ms(all[len(all)*99/100]), ms(all[len(all)-1]), ms(cpu)/float64(len(all)), written, left)
 		if err := store.Close(); err != nil {
 			t.Fatal(err)
 		}

@@ -12,6 +12,7 @@ package irplan
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -179,6 +180,10 @@ func (t *translator) node(n ir.Node) error {
 			}
 			t.set(a.Name, e)
 		}
+	case *ir.Extract:
+		return t.extract(n)
+	case *ir.FillNull:
+		return t.fill(n)
 	case *ir.Project:
 		return t.project(n)
 	case *ir.RenameColumns:
@@ -371,6 +376,66 @@ func (t *translator) project(n *ir.Project) error {
 		cols = append(cols, exec.Named{Name: name, Expr: e})
 	}
 	t.cols, t.named = cols, true
+
+	return nil
+}
+
+// fill gives the columns that the node names their own value where they
+// hold one and the node's value where they hold null or nothing.
+func (t *translator) fill(n *ir.FillNull) error {
+	otherwise, ok := ir.LookupFunc("coalesce")
+	if len(n.Fields) == 0 || !ok {
+		return unsupported("%s", n.Label())
+	}
+	cols := make([]*exec.Expr, len(n.Fields))
+	for i, f := range n.Fields {
+		var err error
+		filled := &ir.Call{Func: otherwise, Args: []ir.Expr{&ir.FieldRef{Name: f.Name, T: ir.Any}, f.Expr}, T: ir.Any}
+		if cols[i], err = t.expr(filled); err != nil {
+			return err
+		}
+	}
+	for i, f := range n.Fields {
+		t.set(f.Name, cols[i])
+	}
+
+	return nil
+}
+
+// extract takes the columns that a regular expression captures in a text
+// as functions of the text, one for each column; a text without a match
+// gives them null, or the empty string where the node asks for it.
+func (t *translator) extract(n *ir.Extract) error {
+	if n.Method != ir.ExtractRegex || n.MaxMatches > 1 {
+		return unsupported("%s", n.Label())
+	}
+	re, err := regexp.Compile(n.Pattern)
+	if err != nil {
+		return unsupported("%s: %v", n.Label(), err)
+	}
+	capture, ok := ir.LookupFunc("regexp_extract")
+	otherwise, ok2 := ir.LookupFunc("coalesce")
+	if !ok || !ok2 {
+		return unsupported("%s", n.Label())
+	}
+	// The columns are read from the text as it is before any of them is set.
+	cols := make([]*exec.Expr, len(n.Outputs))
+	for i, c := range n.Outputs {
+		group := re.SubexpIndex(c.Name)
+		if group < 0 {
+			return unsupported("%s, which has no group %s", n.Label(), c.Name)
+		}
+		var e ir.Expr = &ir.Call{Func: capture, Args: []ir.Expr{n.Source, ir.StringLit(n.Pattern), ir.IntLit(int64(group))}, T: ir.String}
+		if n.NoMatchEmpty {
+			e = &ir.Call{Func: otherwise, Args: []ir.Expr{e, ir.StringLit("")}, T: ir.String}
+		}
+		if cols[i], err = t.expr(e); err != nil {
+			return err
+		}
+	}
+	for i, c := range n.Outputs {
+		t.set(c.Name, cols[i])
+	}
 
 	return nil
 }
@@ -617,7 +682,15 @@ func (t *translator) plan() (exec.Node, error) {
 	case t.dedup != nil:
 		node = t.firstRows(scan, cols, false)
 	default:
-		node = &exec.Project{Input: scan, Exprs: cols}
+		// A field that is an object has no value of its own: its members
+		// follow the columns.
+		var objects []string
+		for _, c := range cols {
+			if c.Expr.Op == exec.OpColumn && c.Expr.Path == c.Name && c.Name != part.TimePath {
+				objects = append(objects, c.Name)
+			}
+		}
+		node = &exec.Project{Input: scan, Exprs: cols, Rest: len(objects) > 0, Under: objects}
 	}
 	if t.sort != nil {
 		for _, by := range t.sort.By {

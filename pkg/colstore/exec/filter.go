@@ -605,9 +605,9 @@ func (w *worker) present(c *vec.Column, depth int) verdict {
 func (w *worker) evalStrEq(p *pred, depth int) (verdict, error) {
 	want := p.lit.Bytes
 	// A column of identifiers that is not decoded yet is searched in the
-	// form it is stored in; a value per row is all that is handled here.
+	// form it is stored in.
 	if s := p.path*kindSlots + int(vec.KindString) - 1; w.shared == nil && w.state[s] != slotDecoded {
-		if ref := w.ref(p.path, vec.KindString); ref != nil && ref.Count == w.rows && !ref.Const() {
+		if ref := w.ref(p.path, vec.KindString); ref != nil && !ref.Const() {
 			found, ok, err := w.b.FindEqual(ref, want, w.idx2[:0])
 			if err != nil {
 				return none, err

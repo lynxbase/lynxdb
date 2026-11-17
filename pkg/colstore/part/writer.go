@@ -845,44 +845,60 @@ func (w *Writer) tokenize(kind vec.Kind, val []byte) {
 }
 
 func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
-	distinct, ok := w.dict.build(c)
-	if ok && distinct == 1 {
-		ent.enc = encConst
-		ent.constVal = c.Bytes(0)
-		w.tokenize(c.Kind, ent.constVal)
-
-		return
-	}
-	if !ok {
-		ent.enc = encFlat
-		w.ints = w.ints[:0]
-		stride := len(c.Bytes(0))
-		for i := 0; i < c.Count; i++ {
-			val := c.Bytes(i)
-			if len(val) != stride {
+	// Identifiers, strings of one length, pack: as they are when few of
+	// them repeat, and as a dictionary when up to seven in eight differ.
+	stride := 0
+	if w.packs(c.Kind) && c.Count >= minPackedStrings {
+		stride = len(c.Bytes(0))
+		for i := 1; i < c.Count && stride > 0; i++ {
+			if int(c.Ends[i]-c.Ends[i-1]) != stride {
 				stride = 0
 			}
-			w.ints = append(w.ints, int64(len(val)))
-			w.tokenize(c.Kind, val)
 		}
-		w.block = appendInts(w.block, w.ints, &w.blobs, &w.e)
-		data := c.Data[:c.Ends[c.Count-1]]
-		// Values that repeat are left to the general codec, which finds
-		// the repeats; packing cannot.
-		if stride > 0 && w.packs(c.Kind) && w.dict.fewRepeats(c) {
-			if out, packed := w.values.appendPackedBlob(w.block, data, stride, &w.e.zbuf); packed {
-				w.block = out
-
-				return
-			}
-		}
-		w.appendValues(int(ent.pathID)*kindSlots+int(c.Kind), data, c.Count)
-
-		return
 	}
+	lone := stride > 0 && w.dict.fewRepeats(c)
+	if !lone {
+		distinct, ok := w.dict.build(c, stride > 0)
+		if ok && distinct == 1 {
+			ent.enc = encConst
+			ent.constVal = c.Bytes(0)
+			w.tokenize(c.Kind, ent.constVal)
 
-	ent.enc = encDict
+			return
+		}
+		if ok && w.encodeDict(c, distinct) {
+			ent.enc = encDict
+
+			return
+		}
+	}
+	ent.enc = encFlat
+	w.ints = w.ints[:0]
+	for i := 0; i < c.Count; i++ {
+		val := c.Bytes(i)
+		w.ints = append(w.ints, int64(len(val)))
+		w.tokenize(c.Kind, val)
+	}
+	w.block = appendInts(w.block, w.ints, &w.blobs, &w.e)
+	data := c.Data[:c.Ends[c.Count-1]]
+	// Values that repeat are left to the general codec, which finds the
+	// repeats; packing cannot.
+	if lone {
+		if out, packed := w.values.appendPackedBlob(w.block, data, stride, &w.e.zbuf); packed {
+			w.block = out
+
+			return
+		}
+	}
+	w.appendValues(int(ent.pathID)*kindSlots+int(c.Kind), data, c.Count)
+}
+
+// encodeDict appends the column as the dictionary that the builder holds,
+// and reports whether it did: a dictionary of more than half as many
+// entries as values pays off only packed.
+func (w *Writer) encodeDict(c *shred.Column, distinct int) bool {
 	d := &w.dict
+	mark := len(w.block)
 	w.block = binary.AppendUvarint(w.block, uint64(distinct))
 	w.ints = w.ints[:0]
 	w.dictBytes = w.dictBytes[:0]
@@ -894,7 +910,6 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 		}
 		w.ints = append(w.ints, int64(len(val)))
 		w.dictBytes = append(w.dictBytes, val...)
-		w.tokenize(c.Kind, val)
 	}
 	w.block = appendInts(w.block, w.ints, &w.blobs, &w.e)
 	out, packed := w.block, false
@@ -902,9 +917,17 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 		out, packed = w.blobs.appendPackedBlob(w.block, w.dictBytes, stride, &w.e.zbuf)
 	}
 	if !packed {
+		if distinct > c.Count/2 {
+			w.block = w.block[:mark]
+
+			return false
+		}
 		out = w.blobs.appendBlob(w.block, w.dictBytes, &w.e.zbuf)
 	}
 	w.block = out
+	for _, entry := range d.order {
+		w.tokenize(c.Kind, c.Bytes(int(d.first[entry])))
+	}
 
 	// Codes stay out of the general codec so that reading them costs a few
 	// shifts per row; runs take over when they halve the packed size.
@@ -923,9 +946,11 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 	if len(w.e.tmp) < limit {
 		w.block = append(append(w.block, codesRuns), w.e.tmp...)
 
-		return
+		return true
 	}
 	w.block = appendPacked(append(w.block, codesPacked), d.codes, d.rank, width)
+
+	return true
 }
 
 // packs reports whether strings of kind may be stored as packed sections.
@@ -1222,14 +1247,19 @@ func (d *dictBuilder) Less(i, j int) bool {
 }
 
 // build reports the number of distinct values of c and whether a dictionary
-// pays off: every value equal, or at most half as many entries as values.
-func (d *dictBuilder) build(c *shred.Column) (distinct int, ok bool) {
+// pays off: every value equal, or at most half as many entries as values,
+// or seven in eight when wide is set, for entries that pack. A column whose
+// values repeat too seldom for the wider one is not given to it.
+func (d *dictBuilder) build(c *shred.Column, wide bool) (distinct int, ok bool) {
 	n := c.Count
 	limit := min(n/2, maxDictSize)
+	if wide {
+		limit = min(n-n/8, maxDictSize)
+	}
 	if n < 8 {
 		limit = 1
 	}
-	if n >= 1024 && d.sampleAllDistinct(c) {
+	if !wide && n >= 1024 && d.sampleAllDistinct(c) {
 		return 0, false
 	}
 	size := 64

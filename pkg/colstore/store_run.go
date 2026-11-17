@@ -71,9 +71,9 @@ func (s *Store) writeRuns(batches []*shred.Batch) ([]*PartFile, error) {
 	}
 	files := make([]*PartFile, len(parts))
 	errs := make([]error, len(parts))
-	// Every part in the making holds a copy of its rows, so a quarter of
-	// the CPUs write at a time and the copies stay a fraction of the run.
-	writers := max(2, runtime.GOMAXPROCS(0)/4)
+	// Every part in the making holds a copy of its rows, so half of the
+	// CPUs write at a time and the copies stay a fraction of the run.
+	writers := max(2, runtime.GOMAXPROCS(0)/2)
 	sideBySide(len(parts), writers, func(i int) { files[i], errs[i] = s.writeRunPart(&parts[i]) })
 	if err := errors.Join(errs...); err != nil {
 		for _, pf := range files {

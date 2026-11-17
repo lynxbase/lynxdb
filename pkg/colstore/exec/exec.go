@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"runtime"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -143,6 +144,7 @@ func Each(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options,
 	x.condition = scan.Condition
 	// A plan that takes its first rows as they come ends the scan early.
 	scan.Ramp = q.limit > 0 && len(q.order) == 0
+	scan.Kept = x.kept
 	if _, err := snap.Scan(ctx, scan, x.block); err != nil && !errors.Is(err, errEnough) {
 		return err
 	}
@@ -196,6 +198,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 	}
 	x.condition = scan.Condition
 	scan.Ramp = q.agg == nil && q.limit > 0 && len(q.order) == 0
+	scan.Kept = x.kept
 	if q.byTime != 0 {
 		x.bound = new(atomic.Int64)
 		x.bound.Store(math.MinInt64)
@@ -357,6 +360,41 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 	}
 
 	return nil
+}
+
+// kept returns the rows that the plan has so far of those it keeps, for a
+// scan that starts with few blocks; no worker runs while it is asked.
+func (x *execution) kept() (have, want int) {
+	q := x.q
+	if len(q.order) == 0 {
+		return int(min(x.taken.Load(), int64(q.limit))), q.limit
+	}
+	var times []int64
+	for _, w := range x.workers {
+		if w == nil {
+			continue
+		}
+		for _, row := range w.sink.top.rows {
+			times = append(times, row[q.timeCol].Int)
+		}
+	}
+	if x.bound != nil && len(times) >= q.limit {
+		// The rows that the goroutines hold together reach further than
+		// those of any one of them.
+		slices.Sort(times)
+		at := times[len(times)-q.limit]
+		if q.byTime > 0 {
+			at = times[q.limit-1]
+		}
+		for {
+			bound := x.bound.Load()
+			if (q.byTime < 0 && at <= bound) || (q.byTime > 0 && at >= bound) || x.bound.CompareAndSwap(bound, at) {
+				break
+			}
+		}
+	}
+
+	return min(len(times), q.limit), q.limit
 }
 
 // empty remembers that no row of block b passes the filter, for the scans

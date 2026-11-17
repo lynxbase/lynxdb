@@ -55,7 +55,16 @@ type ScanOptions struct {
 	// for a caller that expects to end the scan after few blocks by an
 	// error from its function.
 	Ramp bool
+	// Kept, when set, tells a scan that starts with few blocks how many
+	// rows its caller has and how many it wants; the scan then takes as
+	// many blocks next as the rows so far say are needed, and at least
+	// twice as many as before. It is asked while no block is scanned.
+	Kept func() (have, want int)
 }
+
+// rampFrom is the most blocks that a scan takes all at once where it could
+// start with one: so few cost less to read than to wait for in turns.
+const rampFrom = 4
 
 // ColumnTokens holds token hashes that the strings of one column of a block
 // must all possibly contain: the string column at Path, or any one column
@@ -322,6 +331,22 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 		}
 		wg.Wait()
 	}
+	// grow returns how many blocks to take after a round of wave blocks did
+	// not end the scan: twice as many, or half again as many as the rows
+	// kept so far say the caller still needs.
+	grow := func(wave int) int {
+		wave *= 2
+		if opts.Kept == nil {
+			return wave
+		}
+		have, want := opts.Kept()
+		if done := next.Load(); have > 0 && want > have && done > 0 {
+			need := int64(want-have)*done/int64(have)*3/2 + 1
+			wave = max(wave, int(min(need, int64(workers))))
+		}
+
+		return wave
+	}
 	// The first blocks in the order of time often hold every row that the
 	// caller keeps, and it then moves the bound past the others. Where some
 	// block lies wholly beyond the first one, a single block is scanned
@@ -331,7 +356,7 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 		return (opts.ByTime < 0 && u.last < bound) || (opts.ByTime > 0 && u.first > bound)
 	}
 	beyond := false
-	if n := len(units); opts.Bound != nil && n > 1 {
+	if n := len(units); opts.Bound != nil && n > rampFrom {
 		beyond = (opts.ByTime < 0 && units[n-1].last < units[0].first) || (opts.ByTime > 0 && units[n-1].first > units[0].last)
 	}
 	if n := len(units); beyond {
@@ -344,7 +369,7 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 			bound := opts.Bound.Load()
 			if bound == unmoved {
 				run(wave, min(at+int64(wave), int64(n)))
-				wave *= 2
+				wave = grow(wave)
 
 				continue
 			}
@@ -358,8 +383,8 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 			run(workers, end)
 		}
 	}
-	if opts.Ramp {
-		for wave := 1; wave < workers && next.Load() < int64(len(units)) && ctx.Err() == nil; wave *= 2 {
+	if opts.Ramp && len(units) > rampFrom {
+		for wave := 1; wave < workers && next.Load() < int64(len(units)) && ctx.Err() == nil; wave = grow(wave) {
 			run(wave, min(next.Load()+int64(wave), int64(len(units))))
 		}
 	}

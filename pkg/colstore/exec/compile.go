@@ -42,8 +42,11 @@ type query struct {
 	names []string
 	// fields marks the named columns that hold a stored field as it is.
 	fields []bool
-	order  []orderSpec
-	limit  int
+	// under, when set, names the objects whose members alone follow the
+	// named columns.
+	under []string
+	order []orderSpec
+	limit int
 	// depth bounds the nesting of the filter and of scalar expressions, and
 	// slots counts the computed nodes of the scalar expressions.
 	depth int
@@ -205,7 +208,7 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 				}
 			}
 		}
-		q.lateRows(prj)
+		q.lateRows(snap, prj)
 	}
 	if srt != nil {
 		for _, name := range srt.Hide {
@@ -226,7 +229,7 @@ const placeName = "\x00place"
 // passes the filter to be read for the rows of the result alone: under a
 // sort with a limit, the columns the sort does not read, and every field
 // that the projection does not name.
-func (q *query) lateRows(prj *Project) {
+func (q *query) lateRows(snap *colstore.Snapshot, prj *Project) {
 	if q.limit > 0 && len(q.order) > 0 {
 		for i, e := range q.rowExprs {
 			sorts := false
@@ -244,6 +247,19 @@ func (q *query) lateRows(prj *Project) {
 	}
 	if !prj.Rest {
 		return
+	}
+	if len(prj.Under) > 0 {
+		// Objects that no part holds members of leave nothing to read.
+		held := false
+		for i := 0; snap != nil && i < len(snap.Parts()); i++ {
+			for _, path := range prj.Under {
+				held = held || snap.Parts()[i].HasObject(path)
+			}
+		}
+		if !held {
+			return
+		}
+		q.under = prj.Under
 	}
 	q.hidden = append(append(q.hidden, q.names...), prj.Except...)
 	q.rowExprs, q.names = append(q.rowExprs, &sexpr{op: opPlace}), append(q.names, placeName)

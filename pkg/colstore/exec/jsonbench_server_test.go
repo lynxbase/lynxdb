@@ -23,6 +23,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
+	"github.com/lynxbase/lynxdb/pkg/mem"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
@@ -400,6 +401,17 @@ func TestJSONBenchServer(t *testing.T) {
 	if addr == "" || dir == "" {
 		t.Skip("set LYNXDB_BENCH_LISTEN and LYNXDB_BENCH_DIR")
 	}
+	// LYNXDB_BENCH_GARBAGE_MB bounds the memory that awaits collection; 0
+	// leaves the collector at its default.
+	garbage := 512
+	if v := os.Getenv("LYNXDB_BENCH_GARBAGE_MB"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			t.Fatalf("LYNXDB_BENCH_GARBAGE_MB=%q", v)
+		}
+		garbage = n
+	}
+	defer mem.BoundGarbage(int64(garbage) << 20)()
 	store, err := colstore.OpenStore(dir, benchStoreOptions(t))
 	if err != nil {
 		t.Fatal(err)
