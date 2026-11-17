@@ -459,10 +459,15 @@ func (d *Dir) open(name string, meta PartMeta) (*Handle, *partFileRef, error) {
 		return nil, nil, err
 	}
 	if readAdvice {
-		// Blocks are read a chunk here and a filter page there, each asked
-		// for in one piece; the directories and the footer behind them are
-		// read side by side and keep the kernel's own read-ahead.
-		adviseRandom(data[:p.BlocksEnd()&^(pageSize-1)])
+		// Blocks are read a chunk here and a chunk there, each asked for in
+		// one piece. The token filters between them, the directories and
+		// the footer are read side by side and keep the kernel's own
+		// read-ahead, as does a page that a filter shares with a block.
+		p.BlockRanges(func(off, n int) {
+			if from, to := (off+pageSize-1)&^(pageSize-1), (off+n)&^(pageSize-1); from < to {
+				adviseRandom(data[from:to])
+			}
+		})
 		p.SetReadAhead(func(off, n int) { adviseWillNeed(data, off, n) })
 	}
 	ref := &partFileRef{name: name, meta: meta, data: data}

@@ -349,3 +349,92 @@ func TestFilterGroupsCloseAtTheirSizeBound(t *testing.T) {
 		t.Fatalf("%d groups closed for their size and %d for their blocks; the test needs both", early, full)
 	}
 }
+
+// The runs of block data and the filter groups between them cover everything
+// before the directories, and lookups read the groups only.
+func TestBlockRangesLeaveOutTheFilterGroups(t *testing.T) {
+	r := rand.New(rand.NewSource(9))
+	for _, opts := range []Options{{}, {NoTokenFilter: true}} {
+		var buf bytes.Buffer
+		w := stripedWriter(&buf, opts, 3, 8)
+		batch := shred.NewBatch(shred.Options{})
+		for i, d := range sampleDocs(1100) {
+			if err := batch.AddJSON([]byte(d), int64(i)); err != nil {
+				t.Fatal(err)
+			}
+			if batch.Rows == 100 {
+				if err := w.WriteBatch(batch); err != nil {
+					t.Fatal(err)
+				}
+				batch.Reset()
+			}
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+		p, err := Open(buf.Bytes())
+		if err != nil {
+			t.Fatal(err)
+		}
+		type run struct{ off, end int }
+		var runs []run
+		end := -1
+		p.BlockRanges(func(off, n int) {
+			if n <= 0 || off <= end {
+				t.Fatalf("run of %d bytes at %d follows one that ends at %d", n, off, end)
+			}
+			runs, end = append(runs, run{off, off + n}), off+n
+		})
+		groups := 0
+		if !opts.NoTokenFilter {
+			groups = (p.NumBlocks() + 2) / 3
+		}
+		if len(runs) != max(groups, 1) || runs[0].off != 0 || len(p.groups) != groups {
+			t.Fatalf("%d runs from %d and %d groups for %d blocks", len(runs), runs[0].off, len(p.groups), p.NumBlocks())
+		}
+		covered := 0
+		for _, run := range runs {
+			covered += run.end - run.off
+		}
+		for g := range p.groups {
+			covered += int(p.groups[g].size)
+		}
+		if covered != p.dirsOff {
+			t.Fatalf("runs and groups cover %d bytes of the %d before the directories", covered, p.dirsOff)
+		}
+		inRun := func(at int) bool {
+			for _, run := range runs {
+				if at >= run.off && at < run.end {
+					return true
+				}
+			}
+
+			return false
+		}
+		for i := 0; i < p.NumBlocks(); i++ {
+			e := p.index[i*indexEntrySize:]
+			start := int(binary.LittleEndian.Uint64(e[20:]))
+			if end := start + int(binary.LittleEndian.Uint32(e[28:])); !inRun(start) || !inRun(end-1) {
+				t.Fatalf("block %d at %d..%d lies outside the runs", i, start, end)
+			}
+			if opts.NoTokenFilter {
+				continue
+			}
+			for n := 0; n < 200; n++ {
+				block, page, end := probeOf(p, i, r.Uint64())
+				for _, at := range []uint64{block, page, end - 1} {
+					if inRun(int(at)) {
+						t.Fatalf("block %d: a lookup reads byte %d of a run of block data", i, at)
+					}
+				}
+			}
+		}
+	}
+}
+
+// probeOf is Part.probe for the first filter of block i.
+func probeOf(p *Part, i int, hash uint64) (block, page, end uint64) {
+	g, f, _ := p.blockFilters(i)
+
+	return p.probe(g, f, hash)
+}

@@ -246,9 +246,22 @@ func (p *Part) KeyRuns(i, depth int) int {
 	return int(p.keyStats[i*(len(p.sortKey)+1)+depth])
 }
 
-// BlocksEnd returns the offset in the part's data at which the blocks end
-// and the block directories begin.
-func (p *Part) BlocksEnd() int { return p.dirsOff }
+// BlockRanges calls fn, in order, with the offset and length in the part's
+// data of every run of bytes before the block directories that holds column
+// chunks and no token filters.
+func (p *Part) BlockRanges(fn func(off, n int)) {
+	at := 0
+	for i := range p.groups {
+		g := &p.groups[i]
+		if start := int(g.off); start > at {
+			fn(at, start-at)
+		}
+		at = int(g.off + g.size)
+	}
+	if at < p.dirsOff {
+		fn(at, p.dirsOff-at)
+	}
+}
 
 // SetReadAhead makes the part announce the bytes it is about to read, as an
 // offset and a length in its data, to fn, which a part mapped from a file
