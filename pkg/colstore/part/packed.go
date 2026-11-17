@@ -255,3 +255,117 @@ func readSymbols(dst, src []byte, rawLen int, s *packScratch) ([]byte, error) {
 
 	return dst, nil
 }
+
+// packedChunk is the number of code bits compared at once: a word read at
+// any byte holds that many whichever bit it starts at.
+const packedChunk = 56
+
+// findPacked appends to dst the numbers of the strings of a packed section
+// body of rawLen bytes that equal want, comparing the codes as they are
+// stored instead of unpacking the strings.
+func findPacked(dst []uint32, src []byte, rawLen int, want []byte) ([]uint32, error) {
+	stride64, used := binary.Uvarint(src)
+	if used <= 0 || stride64 == 0 || stride64 > uint64(rawLen) || uint64(rawLen)%stride64 != 0 || len(src)-used < 1 {
+		return dst, ErrCorrupt
+	}
+	stride, count := int(stride64), rawLen/int(stride64)
+	n := int(src[used])
+	src = src[used+1:]
+	if n < 1 || n > 1<<maxPackedBits || len(src) < n+3*stride {
+		return dst, ErrCorrupt
+	}
+	symbols, template, positions, codes := src[:n], src[n:n+stride], src[n+stride:n+3*stride], src[n+3*stride:]
+	if len(want) != stride {
+		return dst, nil
+	}
+	var codeOf [256]uint8
+	for i := range codeOf {
+		codeOf[i] = 0xFF
+	}
+	for c, b := range symbols {
+		codeOf[b] = uint8(c)
+	}
+	// The codes of want, in chunks as they are compared.
+	var few [8]uint64
+	needle := few[:]
+	if chunks := (maxPackedBits*stride + packedChunk - 1) / packedChunk; chunks > len(few) {
+		needle = make([]uint64, chunks)
+	}
+	const chunkMask = 1<<packedChunk - 1
+	bitsPerString := 0
+	for p := 0; p < stride; p++ {
+		base, width := positions[2*p], uint(positions[2*p+1])
+		if width == 0 {
+			// A position where every string has the byte of the first.
+			if want[p] != template[p] {
+				return dst, nil
+			}
+
+			continue
+		}
+		if width > maxPackedBits || base >= 1<<maxPackedBits {
+			return dst, ErrCorrupt
+		}
+		c := codeOf[want[p]]
+		if c == 0xFF || c < base || uint(c-base) >= 1<<width {
+			return dst, nil
+		}
+		v := uint64(c - base)
+		chunk, at := bitsPerString/packedChunk, uint(bitsPerString%packedChunk)
+		needle[chunk] |= v << at & chunkMask
+		if at+width > packedChunk {
+			needle[chunk+1] |= v >> (packedChunk - at)
+		}
+		bitsPerString += int(width)
+	}
+	if need := (uint64(count)*uint64(bitsPerString) + 7) / 8; bitsPerString == 0 || uint64(len(codes)) < need {
+		return dst, ErrCorrupt
+	}
+	chunks := (bitsPerString + packedChunk - 1) / packedChunk
+	firstMask, lastMask := uint64(chunkMask), uint64(1)<<uint(bitsPerString-packedChunk*(chunks-1))-1
+	if chunks == 1 {
+		firstMask = lastMask
+	}
+	// A word read whole lies inside codes up to this bit.
+	whole := 8*len(codes) - 64
+	for i := 0; i < count; i++ {
+		off := i * bitsPerString
+		var w uint64
+		if off <= whole {
+			w = binary.LittleEndian.Uint64(codes[off>>3:]) >> uint(off&7)
+		} else {
+			w = packedBits(codes, off)
+		}
+		if w&firstMask != needle[0] {
+			continue
+		}
+		equal := true
+		for k := 1; k < chunks && equal; k++ {
+			mask := uint64(chunkMask)
+			if k == chunks-1 {
+				mask = lastMask
+			}
+			equal = packedBits(codes, off+packedChunk*k)&mask == needle[k]
+		}
+		if equal {
+			dst = append(dst, uint32(i))
+		}
+	}
+
+	return dst, nil
+}
+
+// packedBits returns the bits of codes from bit off on, at least
+// packedChunk of them where codes has that many left.
+func packedBits(codes []byte, off int) uint64 {
+	at := off >> 3
+	if at+8 <= len(codes) {
+		return binary.LittleEndian.Uint64(codes[at:]) >> uint(off&7)
+	}
+	var tail [8]byte
+	if at < len(codes) {
+		copy(tail[:], codes[at:])
+	}
+
+	return binary.LittleEndian.Uint64(tail[:]) >> uint(off&7)
+}

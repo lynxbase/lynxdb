@@ -1307,3 +1307,41 @@ func (r *reader) uint64() uint64 {
 
 	return 0
 }
+
+// FindEqual appends to dst the numbers of the values of a string column
+// that equal want, read from the form they are stored in; it reports false
+// for a column stored in a form that has to be decoded to be searched.
+func (b *Block) FindEqual(ref *ColumnRef, want []byte, dst []uint32) ([]uint32, bool, error) {
+	if ref.bad {
+		return dst, false, ErrCorrupt
+	}
+	if ref.Kind != vec.KindString || ref.enc != encFlat {
+		return dst, false, nil
+	}
+	whole := b.data[ref.off : ref.off+ref.length]
+	if b.part.readAhead != nil && ref.length >= minReadAhead {
+		b.part.readAhead(b.start+int(ref.off), int(ref.length))
+	}
+	chunk, ok := whole, true
+	if ref.flags&flagSparse != 0 && len(chunk) > 0 {
+		chunk, _, ok = skipBlob(chunk[1:])
+	}
+	if ok {
+		chunk, ok = skipInts(chunk, ref.Count)
+	}
+	head, n := binary.Uvarint(chunk)
+	if !ok || n <= 0 || head&3 != blobPacked {
+		return dst, false, nil
+	}
+	size := head >> 2
+	rawLen, m := binary.Uvarint(chunk[n:])
+	if m <= 0 || size > uint64(len(chunk)-n-m) || rawLen > maxSectionSize {
+		return dst, false, ErrCorrupt
+	}
+	if crc32.Checksum(whole, castagnoli) != ref.crc {
+		return dst, false, ErrCorrupt
+	}
+	dst, err := findPacked(dst, chunk[n+m:n+m+int(size)], int(rawLen), want)
+
+	return dst, err == nil, err
+}
