@@ -34,7 +34,7 @@ var testEvents = []struct {
 	{400, "info", 200, 1.0, "a", "request served"},
 }
 
-func testSnapshot(t *testing.T) *colstore.Snapshot {
+func testSnapshot(t testing.TB) *colstore.Snapshot {
 	t.Helper()
 	batch := shred.NewBatch(shred.Options{TimeField: "ts"})
 	for _, e := range testEvents {
