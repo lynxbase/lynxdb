@@ -90,6 +90,7 @@ func loadToDir(t testing.TB, d *Dir, data []byte, parts, blockRows int, key []st
 // LYNXDB_BENCH_NDJSON first, with every part fsynced before it is visible;
 // a directory that already holds the table is only reopened, so dropping the
 // page cache before the run makes each query's first run a cold one.
+// LYNXDB_BENCH_NO_ADVICE reads the part files without advice to the kernel.
 // LYNXDB_BENCH_QUERY keeps the queries and searches whose name contains it,
 // LYNXDB_BENCH_PROFILE names a directory that receives one CPU profile per
 // query, and LYNXDB_BENCH_T10_US and LYNXDB_BENCH_T60_US set the windows of
@@ -101,6 +102,10 @@ func TestJSONBenchDisk(t *testing.T) {
 	dir := os.Getenv("LYNXDB_BENCH_DIR")
 	if dir == "" {
 		t.Skip("set LYNXDB_BENCH_DIR to a directory for the table")
+	}
+	if os.Getenv("LYNXDB_BENCH_NO_ADVICE") != "" {
+		readAdvice = false
+		defer func() { readAdvice = true }()
 	}
 	cores := runtime.GOMAXPROCS(0)
 	only := os.Getenv("LYNXDB_BENCH_QUERY")
