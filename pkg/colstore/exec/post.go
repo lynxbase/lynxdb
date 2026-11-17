@@ -132,8 +132,8 @@ func (p *postEval) eval(e *pexpr, in []colVec, n int) *colVec {
 		}
 		out.reset()
 		for i := 0; i < n; i++ {
-			if a.kinds[i] == vec.KindInt {
-				out.appendInt(vec.KindInt, hourOfDay(a.ints[i]))
+			if v := a.value(i); v.Kind == vec.KindInt {
+				out.appendInt(vec.KindInt, hourOfDay(v.Int))
 			} else {
 				out.appendNull()
 			}
@@ -141,8 +141,36 @@ func (p *postEval) eval(e *pexpr, in []colVec, n int) *colVec {
 
 		return out
 	}
-	a, b := p.eval(e.args[0], in, n), p.eval(e.args[1], in, n)
+	a := p.eval(e.args[0], in, n)
 	out := p.buf(e.slot)
+	if lit := e.args[1]; lit.op == OpLiteral && lit.lit.Kind == vec.KindInt && a.kind == vec.KindInt && (e.op != OpDiv || lit.lit.Int != 0) {
+		vals, x, y := out.bulkInts(n), a.ints[:n], lit.lit.Int
+		switch {
+		case e.op == OpAdd:
+			for i := range vals {
+				vals[i] = x[i] + y
+			}
+		case e.op == OpSub:
+			for i := range vals {
+				vals[i] = x[i] - y
+			}
+		case e.op == OpMul:
+			for i := range vals {
+				vals[i] = x[i] * y
+			}
+		case y == -1:
+			for i := range vals {
+				vals[i] = -x[i]
+			}
+		default:
+			for i := range vals {
+				vals[i] = x[i] / y
+			}
+		}
+
+		return out
+	}
+	b := p.eval(e.args[1], in, n)
 	if a.kind == vec.KindInt && b.kind == vec.KindInt && e.op != OpDiv {
 		vals := out.bulkInts(n)
 		x, y := a.ints[:n], b.ints[:n]
