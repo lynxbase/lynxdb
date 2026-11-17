@@ -2,6 +2,7 @@ package exec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"runtime"
 	"sync"
@@ -40,6 +41,8 @@ type execution struct {
 	workers []*worker
 	mergers []merger
 	shared  *sharedGroups
+	// streaming is set while the aggregation runs in key order.
+	streaming bool
 }
 
 // Run executes plan over snap and returns its rows.
@@ -51,6 +54,14 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 	n := opts.Workers
 	if n <= 0 {
 		n = runtime.GOMAXPROCS(0)
+	}
+	if q.ordered != nil {
+		x := &execution{q: q, workers: make([]*worker, n), streaming: true}
+		res, err := x.runOrdered(ctx)
+		x.release()
+		if !errors.Is(err, errUnordered) {
+			return res, err
+		}
 	}
 	x := &execution{q: q, workers: make([]*worker, n)}
 	if q.agg != nil && q.agg.group >= 0 {

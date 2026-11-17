@@ -29,6 +29,8 @@ type query struct {
 	filter  *pred
 	opts    colstore.ScanOptions
 	agg     *aggPlan
+	// ordered is set when the aggregation can run in key order.
+	ordered *orderedPlan
 	// rowExprs are the columns of a plan without an aggregate.
 	rowExprs []*sexpr
 	// post computes the final columns from an aggregate's; nil keeps them.
@@ -87,6 +89,7 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 		if err := q.aggregate(agg); err != nil {
 			return nil, err
 		}
+		q.ordered = q.planOrdered(snap, scan.Filter)
 		q.names = q.agg.names
 		if prj != nil {
 			if err := q.project(prj); err != nil {

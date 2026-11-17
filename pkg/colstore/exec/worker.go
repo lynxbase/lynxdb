@@ -1,6 +1,7 @@
 package exec
 
 import (
+	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/mem"
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -51,6 +52,9 @@ type worker struct {
 	p    *part.Part
 	b    *part.Block
 	rows int
+	// shared, when set, is the block of a range scan that columns come from
+	// instead of b.
+	shared *colstore.SharedBlock
 	// decoded records that the block had a column decoded.
 	decoded bool
 
@@ -187,6 +191,9 @@ func (w *worker) ref(path int, kind vec.Kind) *part.ColumnRef {
 // column decodes the block's column of kind at path once, and returns nil
 // when no row holds such a value.
 func (w *worker) column(path int, kind vec.Kind) (*vec.Column, error) {
+	if w.shared != nil {
+		return w.sharedColumn(path, kind), nil
+	}
 	ref := w.ref(path, kind)
 	if ref == nil {
 		return nil, nil
@@ -201,6 +208,15 @@ func (w *worker) column(path int, kind vec.Kind) (*vec.Column, error) {
 	}
 
 	return c, nil
+}
+
+// has reports whether a row of the open block holds a value of kind at path.
+func (w *worker) has(path int, kind vec.Kind) bool {
+	if w.shared != nil {
+		return w.sharedColumn(path, kind) != nil
+	}
+
+	return w.ref(path, kind) != nil
 }
 
 // mask returns the mask buffer of a filter depth, one byte per row.

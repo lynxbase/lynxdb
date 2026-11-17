@@ -140,6 +140,9 @@ type aggWorker struct {
 	// floats records which arguments read a float.
 	floats []bool
 	one    [1]uint32
+	// streaming is set when groups arrive in key order, which counts
+	// distinct values without logging them.
+	streaming bool
 }
 
 func (a *aggWorker) init(w *worker) {
@@ -147,7 +150,8 @@ func (a *aggWorker) init(w *worker) {
 	a.stride = len(a.plan.words)
 	a.floats = make([]bool, len(a.plan.args))
 	a.s.parts = fit(a.s.parts, len(a.plan.keys))
-	for i := 0; i < a.plan.distinct; i++ {
+	a.streaming = w.x.streaming
+	for i := 0; i < a.plan.distinct && !a.streaming; i++ {
 		a.dlogs = append(a.dlogs, vec.NewKeyPartitions(w.arena, partitionBits))
 	}
 	if len(a.plan.keys) == 0 {
@@ -774,6 +778,9 @@ func (a *aggWorker) feed(t *target, n int, idx []uint32) error {
 		addRows(t.words, a.stride, a.plan.rows, t.gid)
 	}
 	for i := range a.plan.args {
+		if a.streaming && len(a.plan.args[i].words) == 0 {
+			continue
+		}
 		if err := a.feedArg(i, t, n, idx); err != nil {
 			return err
 		}
@@ -799,7 +806,7 @@ func (a *aggWorker) feedArg(i int, t *target, n int, idx []uint32) error {
 		return nil
 	}
 	for kind := vec.KindBool; kind <= vec.KindVariant; kind++ {
-		if arg.kinds&kindBit(kind) == 0 || w.ref(arg.expr.path, kind) == nil {
+		if arg.kinds&kindBit(kind) == 0 || !w.has(arg.expr.path, kind) {
 			continue
 		}
 		if err := a.feedColumn(i, kind, t, n, idx); err != nil {
@@ -816,7 +823,7 @@ func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uin
 	w := a.w
 	arg := &a.plan.args[i]
 	numeric := kind == vec.KindInt || kind == vec.KindFloat
-	if ref := w.ref(arg.expr.path, kind); !numeric && len(arg.distinct) == 0 && ref.Count == w.rows {
+	if w.shared == nil && !numeric && len(arg.distinct) == 0 && w.ref(arg.expr.path, kind).Count == w.rows {
 		// Every row has a value, and only their number is asked for.
 		a.count(arg, t, t.gid, n)
 
@@ -856,7 +863,9 @@ func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uin
 	default:
 		a.count(arg, t, gid, count)
 		for _, d := range arg.distinct {
-			a.distinctBytes(d, t, c, kind, gid, rows, count)
+			if !a.streaming {
+				a.distinctBytes(d, t, c, kind, gid, rows, count)
+			}
 		}
 	}
 
@@ -969,7 +978,9 @@ func (a *aggWorker) feedInts(arg *aggArg, t *target, gid []uint32, vals []int64,
 		}
 	}
 	for _, d := range arg.distinct {
-		a.distinctInts(d, t, gid, vals, rows, n)
+		if !a.streaming {
+			a.distinctInts(d, t, gid, vals, rows, n)
+		}
 	}
 }
 
@@ -1000,6 +1011,9 @@ func (a *aggWorker) feedFloats(arg *aggArg, t *target, gid []uint32, vals []floa
 		}
 	}
 	for _, d := range arg.distinct {
+		if a.streaming {
+			break
+		}
 		log := a.dlogs[d]
 		for j := 0; j < n; j++ {
 			g := t.one

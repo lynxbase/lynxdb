@@ -23,6 +23,8 @@ type Stats struct {
 	// HeldBytes is the memory the query held at its end: arenas, logs and
 	// reusable buffers.
 	HeldBytes int64
+	// Ordered is set when the groups were aggregated in sort key order.
+	Ordered bool
 }
 
 // Column is one column of a result.
