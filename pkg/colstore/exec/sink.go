@@ -306,15 +306,6 @@ func (t *topK) down(i int) {
 
 // columns turns the rows that gather returned into the columns of the
 // result.
-func columns(names []string, out []colVec) []Column {
-	cols := make([]Column, len(out))
-	for c := range out {
-		cols[c] = out[c].column(names[c])
-	}
-
-	return cols
-}
-
 // gather returns the rows of the result that the sinks hold, in the plan's
 // order and within its limit.
 func gather(q *query, sinks []*sink) ([]colVec, int) {

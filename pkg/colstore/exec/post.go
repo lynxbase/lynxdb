@@ -41,11 +41,13 @@ func (q *query) project(p *Project) error {
 	for _, pe := range q.post {
 		q.totals(pe)
 	}
+	q.fields = make([]bool, len(q.post))
 	if q.located != nil {
 		q.final = make([]*sexpr, len(q.post))
 		for i, pe := range q.post {
 			if pe.op == OpColumn {
 				q.final[i] = q.located[pe.col]
+				q.fields[i] = q.final[i] != nil
 			} else if pe.locates(q.located) {
 				q.early = true
 			}

@@ -192,11 +192,7 @@ func rest(snap *colstore.Snapshot, q *query, at *colVec, n, workers int) ([]stri
 			for c.len() < row {
 				c.appendNull()
 			}
-			if cells[i].v.Kind == vec.KindNull {
-				c.appendPresentNull()
-			} else {
-				c.appendValue(cells[i].v)
-			}
+			c.appendValue(cells[i].v)
 		}
 	}
 	for c := range cols {

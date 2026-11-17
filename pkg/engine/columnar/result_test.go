@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/query"
 )
@@ -55,7 +57,7 @@ func TestResultAsJSON(t *testing.T) {
 		{`source=logs | where status = 404 | fields - ts`,
 			`{"_time":"2023-11-14T21:30:00Z","dur":0.25,"host":"b","level":"warn","msg":"not found","status":404}`},
 		{"source=logs | where status >= 500 | sort status | fields status, tags, `http.path`",
-			`{"status":500,"tags":["x","y"],"http.path":null} {"status":503,"tags":null,"http.path":"/x"}`},
+			`{"status":500,"tags":["x","y"]} {"status":503,"http.path":"/x"}`},
 		{`source=logs | stats max(_time) as last, avg(dur) as mean by host | sort host | head 1`,
 			`{"last":"2023-11-15T00:30:00Z","mean":1,"host":"a"}`},
 		{`source=logs | where status = 500 | eval q = concat(msg, ' "', host, '"\n') | fields q`,
@@ -101,6 +103,91 @@ func TestResultAsJSON(t *testing.T) {
 				t.Errorf("%s: row %d\n as JSON %v\n as map  %v", c.text, i, got, want)
 			}
 		}
+	}
+}
+
+// TestRowsHoldOnlyTheirFields requires a row to show the fields its event
+// holds and null only where the event holds null or the plan computed it,
+// whichever engine ran the plan.
+func TestRowsHoldOnlyTheirFields(t *testing.T) {
+	db, err := Open(Config{Dir: t.TempDir(), Store: colstore.StoreOptions{TimeFields: []string{"ts"}, KeepText: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	began := time.Now()
+	events := `{"ts":1700000000,"msg":"a","n":1}
+{"ts":1700000001,"msg":"b","n":null}
+{"ts":1700000002,"other":"c"}
+plain text line
+`
+	if _, err := db.Append("t", []byte(events)); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	ask := func(text string, columnar bool) []string {
+		t.Helper()
+		compiled, err := query.Compile(text)
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		res, err := db.Query(context.Background(), compiled.Plan, Options{})
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		if res.Columnar != columnar {
+			t.Fatalf("%s: columnar %v", text, res.Columnar)
+		}
+		rows := make([]string, res.Len())
+		for i := range rows {
+			rows[i] = string(res.AppendJSON(nil, i))
+		}
+
+		return rows
+	}
+	// The rows in the order of their text, since engines differ in the
+	// order of the members.
+	sorted := func(rows []string) string {
+		for i, row := range rows {
+			var fields map[string]any
+			if err := json.Unmarshal([]byte(row), &fields); err != nil {
+				t.Fatalf("%s: %v", row, err)
+			}
+			text, _ := json.Marshal(fields)
+			rows[i] = string(text)
+		}
+		slices.Sort(rows)
+
+		return strings.Join(rows, " ")
+	}
+	for _, c := range []struct{ rest, want string }{
+		{`fields - ts, _time`, `{"_raw":"plain text line"} {"msg":"a","n":1} {"msg":"b","n":null} {"other":"c"}`},
+		{`eval x = n + 1 | fields - ts, _time`,
+			`{"_raw":"plain text line","x":null} {"msg":"a","n":1,"x":2} {"msg":"b","n":null,"x":null} {"other":"c","x":null}`},
+		{`fields msg, n`, `{"msg":"a","n":1} {"msg":"b","n":null} {} {}`},
+		{`where isnull(n) | fields - ts, _time`, `{"_raw":"plain text line"} {"msg":"b","n":null} {"other":"c"}`},
+	} {
+		if got := sorted(ask(`source=t | `+c.rest, true)); got != c.want {
+			t.Errorf("%s in the executor\n got  %s\n want %s", c.rest, got, c.want)
+		}
+		if got := sorted(ask(`source=t | eval r = rand() | where r >= 0 | fields - r | `+c.rest, false)); got != c.want {
+			t.Errorf("%s in the row operators\n got  %s\n want %s", c.rest, got, c.want)
+		}
+	}
+	if got := ask(`source=t | where isnull(ts) | fields _time`, true); len(got) != 1 {
+		t.Fatalf("events without a time: %v", got)
+	} else {
+		var row struct {
+			Time time.Time `json:"_time"`
+		}
+		if err := json.Unmarshal([]byte(got[0]), &row); err != nil || row.Time.Before(began.Add(-time.Second)) || row.Time.After(time.Now()) {
+			t.Fatalf("an event without a time is at %s (%v), appended after %s", got[0], err, began)
+		}
+	}
+	if got := strings.Join(ask(`describe t`, false), " "); !strings.Contains(got, `"msg"`) || strings.Contains(got, `{}`) {
+		t.Fatalf("describe: %s", got)
 	}
 }
 

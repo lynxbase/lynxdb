@@ -40,8 +40,10 @@ type query struct {
 	// post computes the final columns from an aggregate's; nil keeps them.
 	post  []*pexpr
 	names []string
-	order []orderSpec
-	limit int
+	// fields marks the named columns that hold a stored field as it is.
+	fields []bool
+	order  []orderSpec
+	limit  int
 	// depth bounds the nesting of the filter and of scalar expressions, and
 	// slots counts the computed nodes of the scalar expressions.
 	depth int
@@ -164,7 +166,7 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 				return nil, err
 			}
 			q.rowExprs = append(q.rowExprs, s)
-			q.names = append(q.names, e.Name)
+			q.names, q.fields = append(q.names, e.Name), append(q.fields, e.Expr.Op == OpColumn)
 		}
 	default:
 		return nil, unsupported("a plan without an aggregate needs a projection")

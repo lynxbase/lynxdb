@@ -124,15 +124,16 @@ func (db *DB) store(index string, create bool) (*colstore.Store, error) {
 }
 
 // Append adds the events of lines, one JSON object per line, to an index
-// and returns the number of lines it rejected. The events are durable after
-// Sync or the flush interval of the store.
+// and returns the number of lines it rejected. An event that carries no
+// time gets the time of the call. The events are durable after Sync or the
+// flush interval of the store.
 func (db *DB) Append(index string, lines []byte) (rejected int64, err error) {
 	s, err := db.store(index, true)
 	if err != nil {
 		return 0, err
 	}
 
-	return s.Append(lines)
+	return s.AppendAt(lines, time.Now().UnixNano())
 }
 
 // Sync makes the events appended so far durable.

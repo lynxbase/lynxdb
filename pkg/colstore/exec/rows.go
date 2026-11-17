@@ -88,7 +88,7 @@ func (w *worker) gather(e *sexpr, n int, idx []uint32, dst *colVec) error {
 		return nil
 	}
 	cols := &w.row.cols
-	for kind := vec.KindBool; kind <= vec.KindVariant; kind++ {
+	for kind := vec.KindNull; kind <= vec.KindVariant; kind++ {
 		cols[kind] = nil
 		if e.kind != KindAny && e.kind != kind {
 			continue
@@ -110,14 +110,17 @@ func (w *worker) gather(e *sexpr, n int, idx []uint32, dst *colVec) error {
 	return nil
 }
 
-// rowValue returns the value that the columns of one path hold in row r.
+// rowValue returns the value that the columns of one path hold in row r,
+// the lowest kind for a row that holds several.
 func rowValue(cols *[kindSlots + 1]*vec.Column, r int) Value {
-	for kind := vec.KindBool; kind <= vec.KindVariant; kind++ {
+	for kind := vec.KindNull; kind <= vec.KindVariant; kind++ {
 		c := cols[kind]
 		if c == nil || !c.IsValid(r) {
 			continue
 		}
 		switch kind {
+		case vec.KindNull:
+			return Value{Kind: kind}
 		case vec.KindBool:
 			return Value{Kind: kind, Bool: c.Bool(r)}
 		case vec.KindInt:
