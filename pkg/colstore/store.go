@@ -598,8 +598,8 @@ func (w *Writer) Flush() error {
 	}
 	flushed := s.opts.Part
 	flushed.Level = s.opts.FlushLevel
-	// The buffer that blocks are cut into is needed only now, so writers
-	// share a few of them instead of holding one each.
+	// The buffer that blocks are cut into is needed only during a flush,
+	// so writers share a few of them instead of holding one each.
 	block := shred.Get(shred.Options{})
 	defer shred.Put(block)
 	files := make([]*PartFile, 0, len(w.buckets))

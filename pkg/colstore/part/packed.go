@@ -134,8 +134,8 @@ func appendSymbols(dst, payload []byte, stride int, s *packScratch) ([]byte, boo
 	for p := 0; p < stride; p++ {
 		dst = append(dst, code[lo[p]], byte(bits.Len8(code[hi[p]]-code[lo[p]])))
 	}
-	// lo and differ are done with; they now hold each varying position's
-	// base code and width, in the order of varPos.
+	// lo and differ are reused for each varying position's base code and
+	// width, in the order of varPos.
 	bases, widths := lo[:len(varPos)], differ[:len(varPos)]
 	for k, p := range varPos {
 		bases[k], widths[k] = code[lo[p]], byte(bits.Len8(code[hi[p]]-code[lo[p]]))

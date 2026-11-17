@@ -135,8 +135,8 @@ func TestJSONBenchIngest(t *testing.T) {
 		t.FailNow()
 	}
 	durable, durableCPU := time.Since(start), cpuTime()-cpuStart
-	// LYNXDB_BENCH_HEAP_PROFILE names a file for a heap profile taken now,
-	// while the write buffers are still held and merges run.
+	// LYNXDB_BENCH_HEAP_PROFILE names a file for a heap profile taken at
+	// this point, while the write buffers are still held and merges run.
 	if name := os.Getenv("LYNXDB_BENCH_HEAP_PROFILE"); name != "" {
 		f, err := os.Create(name)
 		if err != nil {
