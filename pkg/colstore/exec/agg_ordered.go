@@ -264,10 +264,13 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 }
 
 // orderedTokenShare is the least share of a key range's blocks that the
-// token filters must admit for the aggregation to run in key order. A block
-// with few passing rows costs a hashing scan the filter's columns alone, and
-// the two ways take the same time when the filters admit every block.
-var orderedTokenShare = 0.5
+// token filters must admit for the aggregation to run in key order; below it
+// a hashing scan runs. Measured on 1m events in 66 blocks: when the tokens
+// rule out no block the two take the same time within 5%, and when 2 blocks
+// are left the hashing scan is 2.4 times faster, because it decodes the
+// filter's columns of a block before any key column. The crossover between
+// those two points is not measured.
+const orderedTokenShare = 0.5
 
 // tokenShare estimates, from a sample of token filters, the share of the
 // plan's blocks that may hold every token.

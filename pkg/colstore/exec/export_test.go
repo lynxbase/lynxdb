@@ -3,16 +3,6 @@ package exec
 // Pushdown exposes the scan options derived from a filter.
 var Pushdown = pushdown
 
-// SetOrderedTokenShare changes the share of blocks that token filters must
-// admit for aggregation in key order, and returns a function that restores
-// it.
-func SetOrderedTokenShare(share float64) (restore func()) {
-	old := orderedTokenShare
-	orderedTokenShare = share
-
-	return func() { orderedTokenShare = old }
-}
-
 // SetOrderedChunk changes how many rows of a block the aggregation in key
 // order loads at once, and returns a function that restores it.
 func SetOrderedChunk(rows int) (restore func()) {

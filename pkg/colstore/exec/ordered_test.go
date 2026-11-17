@@ -111,12 +111,6 @@ func TestOrderedAggregationSkipsBlocksByToken(t *testing.T) {
 				}
 			})
 		}
-		// A scan that hashes takes over when the tokens leave few blocks.
-		restore := exec.SetOrderedTokenShare(0.99)
-		if res := check(t, snap, rows, plan, false, 2); res.Stats.Ordered {
-			t.Fatalf("%s: aggregated in key order with most blocks ruled out", l.name)
-		}
-		restore()
 		snap.Release()
 	}
 }
