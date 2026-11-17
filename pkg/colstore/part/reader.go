@@ -457,6 +457,29 @@ func (b *Block) DecodeValues(ref *ColumnRef, dst *vec.Column) error {
 	return b.decode(ref, dst, true)
 }
 
+// DecodePresence fills dst with which rows hold a value of the column and
+// with nothing else, for counting values and testing presence without
+// decoding them; Valid is nil when every row holds one.
+func (b *Block) DecodePresence(ref *ColumnRef, dst *vec.Column) error {
+	if ref.bad {
+		return ErrCorrupt
+	}
+	chunk := b.data[ref.off : ref.off+ref.length]
+	if b.part.readAhead != nil && ref.length >= minReadAhead {
+		b.part.readAhead(b.start+int(ref.off), int(ref.length))
+	}
+	if crc32.Checksum(chunk, castagnoli) != ref.crc {
+		return ErrCorrupt
+	}
+	dst.Kind, dst.Rows, dst.Layout, dst.Valid = ref.Kind, b.Rows, vec.Flat, nil
+	if ref.flags&flagSparse == 0 {
+		return nil
+	}
+	_, err := b.readPresence(chunk, ref.Count, dst)
+
+	return err
+}
+
 func (b *Block) decode(ref *ColumnRef, dst *vec.Column, byValue bool) error {
 	if ref.bad {
 		return ErrCorrupt

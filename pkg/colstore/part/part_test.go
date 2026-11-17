@@ -676,3 +676,46 @@ func TestWriterTakesTheFasterCodecForLongValuesWithinTheSlack(t *testing.T) {
 		}
 	}
 }
+
+func TestDecodePresenceMarksTheRowsThatDecodeGivesValues(t *testing.T) {
+	p := buildPart(t, sampleDocs(3000), 700, Options{})
+	var b Block
+	var full, presence vec.Column
+	sparse := 0
+	for i := 0; i < p.NumBlocks(); i++ {
+		if err := p.OpenBlock(i, &b); err != nil {
+			t.Fatal(err)
+		}
+		refs := b.Columns()
+		for j := range refs {
+			if err := b.Decode(&refs[j], &full); err != nil {
+				t.Fatal(err)
+			}
+			if err := b.DecodePresence(&refs[j], &presence); err != nil {
+				t.Fatal(err)
+			}
+			if presence.Rows != full.Rows || presence.Kind != full.Kind || (presence.Valid == nil) != (full.Valid == nil) {
+				t.Fatalf("block %d column %d: presence of %d rows, kind %v, valid nil=%v against %d, %v, %v",
+					i, j, presence.Rows, presence.Kind, presence.Valid == nil, full.Rows, full.Kind, full.Valid == nil)
+			}
+			count := 0
+			for row := 0; row < full.Rows; row++ {
+				if presence.IsValid(row) != full.IsValid(row) {
+					t.Fatalf("block %d column %d row %d: presence says %v", i, j, row, presence.IsValid(row))
+				}
+				if presence.IsValid(row) {
+					count++
+				}
+			}
+			if count != refs[j].Count {
+				t.Fatalf("block %d column %d: %d rows marked, the column holds %d values", i, j, count, refs[j].Count)
+			}
+			if presence.Valid != nil {
+				sparse++
+			}
+		}
+	}
+	if sparse == 0 {
+		t.Fatal("no column has gaps")
+	}
+}
