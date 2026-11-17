@@ -595,12 +595,6 @@ func registerDatetimeFuncs() {
 	}
 }
 
-// TimeBucket returns the function assigning an instant to its bucket of
-// count units; it is shared with the aggregation operators.
-func TimeBucket(count int64, unit string) (func(time.Time) time.Time, error) {
-	return timeBucketer(count, unit)
-}
-
 func timeBucketer(count int64, unit string) (func(time.Time) time.Time, error) {
 	fixed := map[string]time.Duration{"ms": time.Millisecond, "s": time.Second, "m": time.Minute, "h": time.Hour, "d": 24 * time.Hour, "w": 7 * 24 * time.Hour}
 	if d, ok := fixed[unit]; ok {

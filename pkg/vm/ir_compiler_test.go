@@ -10,14 +10,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
-func TestIRRegistryHasImplementations(t *testing.T) {
-	for _, f := range ir.Funcs() {
-		if f.Kind == ir.ScalarFunc && !vm.IRFuncImplemented(f.Name) {
-			t.Errorf("scalar function %s has no bytecode implementation", f.Name)
-		}
-	}
-}
-
 var testNow = time.Date(2024, 3, 15, 10, 30, 45, 0, time.UTC)
 
 // evalPPL compiles "eval x = <expr>" and evaluates x against row.

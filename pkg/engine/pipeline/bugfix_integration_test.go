@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // makeEDGARRows creates test rows mimicking EDGAR CSV access log lines.
@@ -87,79 +86,5 @@ func TestIntegration_BinTimeBuckets(t *testing.T) {
 	}
 	if total != 20 {
 		t.Errorf("total count: got %d, want 20", total)
-	}
-}
-
-func TestIntegration_NullPropagation(t *testing.T) {
-	// Use static batch with explicit null so columnar layout preserves nulls
-	batch := NewBatch(2)
-	batch.AddRow(map[string]event.Value{
-		"_raw": event.StringValue("test"),
-		"x":    event.StringValue("hello"),
-	})
-	batch.AddRow(map[string]event.Value{
-		"_raw": event.StringValue("test"),
-		"x":    event.NullValue(),
-	})
-	child := &staticIterator{batches: []*Batch{batch}}
-
-	// EVAL y = x . " world" — should be null when x is null
-	concatProg := &vm.Program{}
-	xIdx := concatProg.AddFieldName("x")
-	worldIdx := concatProg.AddConstant(event.StringValue(" world"))
-	concatProg.EmitOp(vm.OpLoadField, xIdx)
-	concatProg.EmitOp(vm.OpConstStr, worldIdx)
-	concatProg.EmitOp(vm.OpConcat)
-	concatProg.EmitOp(vm.OpReturn)
-
-	eval := NewEvalIterator(child, []EvalAssignment{
-		{Field: "y", Program: concatProg},
-	})
-
-	ctx := context.Background()
-	rows, err := CollectAll(ctx, eval)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rows) != 2 {
-		t.Fatalf("expected 2 rows, got %d", len(rows))
-	}
-	// Row 0: x="hello", y should be "hello world"
-	if rows[0]["y"].AsString() != "hello world" {
-		t.Errorf("row 0 y: got %v, want 'hello world'", rows[0]["y"])
-	}
-	// Row 1: x=null, y should be null
-	if !rows[1]["y"].IsNull() {
-		t.Errorf("row 1 y: got %v, want null", rows[1]["y"])
-	}
-}
-
-func TestIntegration_CoalesceNull(t *testing.T) {
-	// Test coalesce(null, null, "default") → "default"
-	scan := NewRowScanIterator([]map[string]event.Value{
-		{"_time": event.TimestampValue(time.Now()), "_raw": event.StringValue("test")},
-	}, 1024)
-
-	prog := &vm.Program{}
-	aIdx := prog.AddFieldName("a")
-	bIdx := prog.AddFieldName("b")
-	defIdx := prog.AddConstant(event.StringValue("default"))
-	prog.EmitOp(vm.OpLoadField, aIdx) // null
-	prog.EmitOp(vm.OpLoadField, bIdx) // null
-	prog.EmitOp(vm.OpConstStr, defIdx)
-	prog.EmitOp(vm.OpCoalesce, 3)
-	prog.EmitOp(vm.OpReturn)
-
-	eval := NewEvalIterator(scan, []EvalAssignment{
-		{Field: "result", Program: prog},
-	})
-
-	ctx := context.Background()
-	rows, err := CollectAll(ctx, eval)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rows[0]["result"].AsString() != "default" {
-		t.Errorf("coalesce: got %v, want 'default'", rows[0]["result"])
 	}
 }

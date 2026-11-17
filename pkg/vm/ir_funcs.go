@@ -28,13 +28,6 @@ type irEmitter func(c *irCompiler, call *ir.Call) error
 // irFuncs maps every scalar function of the IR registry to its bytecode.
 var irFuncs = map[string]irEmitter{}
 
-// IRFuncImplemented reports whether a registered IR scalar function has a
-// bytecode implementation.
-func IRFuncImplemented(name string) bool {
-	_, ok := irFuncs[name]
-	return ok
-}
-
 func (c *irCompiler) call(n *ir.Call) error {
 	emit, ok := irFuncs[n.Func.Name]
 	if !ok {

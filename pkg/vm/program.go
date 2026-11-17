@@ -1,32 +1,19 @@
 package vm
 
 import (
-	"fmt"
-	"net"
-
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
 // Program holds compiled bytecode for one expression/predicate.
 type Program struct {
-	Instructions  []byte
-	Constants     []event.Value
-	FieldNames    []string
-	RegexPatterns []string
-	// GlobPatterns holds raw glob patterns for OpGlobMatch (case-sensitive
-	// whole-value) and OpHasTokenGlob (case-insensitive whole-token; the
-	// compiler stores those lowercased). They are NOT regexes and must stay
-	// out of RegexPatterns: ensureRegexCache compiles that pool, and a glob
-	// like "*user*" is an invalid regex. ensureGlobCache compiles this pool
-	// via internal/glob.
+	Instructions []byte
+	Constants    []event.Value
+	FieldNames   []string
+	// GlobPatterns holds the lowercased glob patterns of OpHasTokenGlob.
 	GlobPatterns []string
-	CIDRNets     []*net.IPNet // compiled CIDR networks for cidrmatch()
 
-	// SubPrograms stores compiled lambda bodies. OpArrayAny/All/Filter/Map
-	// reference sub-programs by index. Sub-programs share the parent's
-	// Constants, FieldNames, and RegexPatterns pools (they use the parent
-	// program for pool lookups). Each sub-program contains only its own
-	// Instructions.
+	// SubPrograms holds the lambda bodies that the array opcodes run; a
+	// body has instructions of its own and shares the pools of its parent.
 	SubPrograms []*Program
 	// Params is the number of parameters of a lambda body; OpArrayMap
 	// passes the element's 0-based index as the second.
@@ -38,8 +25,6 @@ type Program struct {
 	// NumericStrings makes the strict arithmetic, comparison and IN opcodes
 	// convert a string operand to a number when the other operand is one.
 	NumericStrings bool
-
-	BSIHandledComparisons int
 }
 
 // AddNative registers a native function and returns its index.
@@ -73,18 +58,6 @@ func (p *Program) AddFieldName(name string) int {
 	return len(p.FieldNames) - 1
 }
 
-// AddRegex appends a regex pattern (deduplicating) and returns its index.
-func (p *Program) AddRegex(pattern string) int {
-	for i, r := range p.RegexPatterns {
-		if r == pattern {
-			return i
-		}
-	}
-	p.RegexPatterns = append(p.RegexPatterns, pattern)
-
-	return len(p.RegexPatterns) - 1
-}
-
 // AddGlob appends a glob pattern (deduplicating) and returns its index.
 func (p *Program) AddGlob(pattern string) int {
 	for i, g := range p.GlobPatterns {
@@ -95,22 +68,6 @@ func (p *Program) AddGlob(pattern string) int {
 	p.GlobPatterns = append(p.GlobPatterns, pattern)
 
 	return len(p.GlobPatterns) - 1
-}
-
-// AddCIDR parses a CIDR string, deduplicates, and returns its pool index.
-func (p *Program) AddCIDR(cidr string) (int, error) {
-	for i, n := range p.CIDRNets {
-		if n.String() == cidr {
-			return i, nil
-		}
-	}
-	_, ipNet, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return 0, fmt.Errorf("vm.Program.AddCIDR: invalid CIDR %q: %w", cidr, err)
-	}
-	p.CIDRNets = append(p.CIDRNets, ipNet)
-
-	return len(p.CIDRNets) - 1, nil
 }
 
 // Emit appends raw bytes to the instruction stream.
