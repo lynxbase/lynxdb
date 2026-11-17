@@ -1,11 +1,10 @@
-// genbench generates deterministic benchmark fixture files for query optimization.
+// genbench writes testdata/bench/json_100k.log and text_100k.log, the
+// benchmark and profiling fixtures, from a seeded PRNG so that every run
+// writes the same bytes.
 //
-// Usage:
+// Usage, from the repository root:
 //
-//	go run scripts/genbench.go
-//
-// Generates JSON and text log files at various sizes in testdata/bench/.
-// All output is deterministic (seeded PRNG) for reproducible benchmarks.
+//	go run ./scripts/genbench
 package main
 
 import (
@@ -90,15 +89,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	sizes := []int{1000, 10000, 100000}
-	for _, n := range sizes {
-		suffix := fmt.Sprintf("%dk", n/1000)
-		if n == 100000 {
-			suffix = "100k"
-		}
-		writeJSON(filepath.Join(dir, fmt.Sprintf("json_%s.log", suffix)), n)
-		writeText(filepath.Join(dir, fmt.Sprintf("text_%s.log", suffix)), n)
-	}
+	const events = 100000
+	writeJSON(filepath.Join(dir, "json_100k.log"), events)
+	writeText(filepath.Join(dir, "text_100k.log"), events)
 
 	fmt.Println("done")
 }
