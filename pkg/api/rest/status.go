@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/internal/buildinfo"
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/database"
 	"github.com/lynxbase/lynxdb/pkg/engine/columnar"
 )
@@ -53,6 +54,9 @@ func (s *Server) jobCounts() map[string]int {
 }
 
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeQuery, auth.ScopeAdmin) {
+		return
+	}
 	s.syncForRead()
 	stats := s.db.Stats()
 	totals := sumStats(stats)

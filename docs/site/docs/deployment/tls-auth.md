@@ -117,13 +117,13 @@ lynxdb auth rotate-root
 
 | Scope | Allows |
 |-------|--------|
-| `ingest` | `/api/v1/ingest`, `/api/v1/ingest/raw`, `/api/v1/ingest/hec`, and the `/api/v1/es/` bulk and document routes |
-| `query` | `GET` and `POST /api/v1/query`, `/api/v1/query/stream`, listing, reading and streaming jobs |
-| `admin` | Cancelling jobs, `GET /api/v1/config` |
+| `ingest` | `/api/v1/ingest`, `/api/v1/ingest/raw`, `/api/v1/ingest/hec`, OTLP logs on `/api/v1/otlp/v1/logs`, and the `/api/v1/es/` bulk and document routes |
+| `query` | `GET` and `POST /api/v1/query`, `/api/v1/query/stream`, `/api/v1/query/explain`, listing, reading and streaming jobs, index and field listings, field values, histogram, stats |
+| `admin` | Cancelling jobs, `GET /api/v1/config`, stats, the pprof endpoints |
 | `full` | Everything a scoped key can do |
 | root key | Everything, plus key management and `PATCH /api/v1/config` |
 
-The other API routes accept any valid key regardless of scope: query explain, the PPL catalog, OTLP on `/api/v1/otlp/v1/logs`, index, field and source listings, status, stats, histogram and the pprof endpoints.
+The PPL catalog and `/api/v1/status` accept any valid key regardless of scope.
 
 ### Sending keys over HTTP
 

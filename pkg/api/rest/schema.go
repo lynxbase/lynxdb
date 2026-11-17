@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/engine/columnar"
 )
 
@@ -25,6 +26,9 @@ func indexEntry(ix columnar.IndexStats) map[string]interface{} {
 }
 
 func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeQuery) {
+		return
+	}
 	s.syncForRead()
 	stats := s.db.Stats()
 	indexes := make([]map[string]interface{}, 0, len(stats))

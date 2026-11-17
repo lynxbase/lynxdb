@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/engine/columnar"
 	"github.com/lynxbase/lynxdb/pkg/query"
 	"github.com/lynxbase/lynxdb/pkg/timerange"
@@ -44,6 +45,9 @@ func (s *Server) runInternalQuery(r *http.Request, src string, from, to time.Tim
 // that hold it; ?index= or ?source= narrows them to one index and ?prefix=
 // to the names that start with it.
 func (s *Server) handleListFields(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeQuery) {
+		return
+	}
 	s.syncForRead()
 	names := s.db.Names()
 	if index := firstNonEmpty(r.URL.Query().Get("index"), r.URL.Query().Get("source")); index != "" {
@@ -73,6 +77,9 @@ func (s *Server) handleListFields(w http.ResponseWriter, r *http.Request) {
 // handleFieldValues returns the most frequent values of a field with their
 // counts, among the events that hold it.
 func (s *Server) handleFieldValues(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeQuery) {
+		return
+	}
 	start := time.Now()
 	fieldName, ok := requirePathValue(r, w, "name")
 	if !ok {

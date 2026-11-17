@@ -222,19 +222,22 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 
 	mux.Handle("GET /metrics", promMetrics.Handler())
 
-	// pprof debug endpoints for live CPU/memory profiling.
-	// Authenticated via KeyAuthMiddleware (under /api/v1/ prefix).
-	mux.HandleFunc("GET /api/v1/debug/pprof/", pprof.Index)
-	mux.HandleFunc("GET /api/v1/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("GET /api/v1/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("GET /api/v1/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("GET /api/v1/debug/pprof/trace", pprof.Trace)
-	mux.HandleFunc("GET /api/v1/debug/pprof/heap", pprof.Handler("heap").ServeHTTP)
-	mux.HandleFunc("GET /api/v1/debug/pprof/allocs", pprof.Handler("allocs").ServeHTTP)
-	mux.HandleFunc("GET /api/v1/debug/pprof/goroutine", pprof.Handler("goroutine").ServeHTTP)
-	mux.HandleFunc("GET /api/v1/debug/pprof/mutex", pprof.Handler("mutex").ServeHTTP)
-	mux.HandleFunc("GET /api/v1/debug/pprof/block", pprof.Handler("block").ServeHTTP)
-	mux.HandleFunc("GET /api/v1/debug/pprof/threadcreate", pprof.Handler("threadcreate").ServeHTTP)
+	// Profiles show what the server runs, so they take an admin key.
+	profile := func(h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if s.requireScope(w, r, auth.ScopeAdmin) {
+				h(w, r)
+			}
+		}
+	}
+	mux.HandleFunc("GET /api/v1/debug/pprof/", profile(pprof.Index))
+	mux.HandleFunc("GET /api/v1/debug/pprof/cmdline", profile(pprof.Cmdline))
+	mux.HandleFunc("GET /api/v1/debug/pprof/profile", profile(pprof.Profile))
+	mux.HandleFunc("GET /api/v1/debug/pprof/symbol", profile(pprof.Symbol))
+	mux.HandleFunc("GET /api/v1/debug/pprof/trace", profile(pprof.Trace))
+	for _, name := range []string{"heap", "allocs", "goroutine", "mutex", "block", "threadcreate"} {
+		mux.HandleFunc("GET /api/v1/debug/pprof/"+name, profile(pprof.Handler(name).ServeHTTP))
+	}
 
 	// Query endpoint (three-mode: sync/hybrid/async).
 	mux.HandleFunc("POST /api/v1/query", s.handleQuery)

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/timerange"
 )
 
@@ -49,6 +50,9 @@ func snapInterval(d time.Duration) (time.Duration, string) {
 // handleHistogram counts the events of an index in buckets of time over
 // [from, to), by default the last hour; buckets without events count zero.
 func (s *Server) handleHistogram(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeQuery) {
+		return
+	}
 	start := time.Now()
 
 	bucketCount := parseIntParam(r, "buckets", 60)

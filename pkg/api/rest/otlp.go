@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver"
 )
 
 func (s *Server) handleOTLPLogs(w http.ResponseWriter, r *http.Request) {
+	if !s.requireScope(w, r, auth.ScopeIngest) {
+		return
+	}
 	if ct := r.Header.Get("Content-Type"); ct == "application/x-protobuf" {
 		respondError(w, ErrCodeInvalidRequest, http.StatusUnsupportedMediaType, "protobuf not supported, use application/json")
 

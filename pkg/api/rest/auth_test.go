@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -857,5 +858,51 @@ func TestAuth_ListKeysShowsScope(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected to find a key with scope=ingest in list")
+	}
+}
+
+// TestAuth_RoutesRequireTheirScope requires the routes that read or write
+// data, or show what the server runs, to refuse a key of another scope, and
+// the catalog and status to take any key.
+func TestAuth_RoutesRequireTheirScope(t *testing.T) {
+	srv, ks, _, cleanup := startAuthServer(t)
+	defer cleanup()
+	tokens := map[auth.Scope]string{}
+	for _, scope := range []auth.Scope{auth.ScopeIngest, auth.ScopeQuery, auth.ScopeAdmin} {
+		key, err := ks.CreateKeyWithOpts(auth.CreateKeyOpts{Name: "scoped-" + string(scope), Scope: scope})
+		if err != nil {
+			t.Fatal(err)
+		}
+		tokens[scope] = key.Token
+	}
+	for _, c := range []struct {
+		method, path string
+		allowed      []auth.Scope
+	}{
+		{"POST", "/api/v1/otlp/v1/logs", []auth.Scope{auth.ScopeIngest}},
+		{"GET", "/api/v1/indexes", []auth.Scope{auth.ScopeQuery}},
+		{"GET", "/api/v1/fields", []auth.Scope{auth.ScopeQuery}},
+		{"GET", "/api/v1/fields/host/values", []auth.Scope{auth.ScopeQuery}},
+		{"GET", "/api/v1/histogram", []auth.Scope{auth.ScopeQuery}},
+		{"GET", "/api/v1/stats", []auth.Scope{auth.ScopeQuery, auth.ScopeAdmin}},
+		{"GET", "/api/v1/debug/pprof/cmdline", []auth.Scope{auth.ScopeAdmin}},
+		{"GET", "/api/v1/catalog", []auth.Scope{auth.ScopeIngest, auth.ScopeQuery, auth.ScopeAdmin}},
+		{"GET", "/api/v1/status", []auth.Scope{auth.ScopeIngest, auth.ScopeQuery, auth.ScopeAdmin}},
+	} {
+		for scope, token := range tokens {
+			var body []byte
+			if c.method == "POST" {
+				body = []byte(`{}`)
+			}
+			resp, err := authReq(c.method, fmt.Sprintf("http://%s%s", srv.Addr(), c.path), token, body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			refused := resp.StatusCode == http.StatusForbidden
+			if allowed := slices.Contains(c.allowed, scope); refused == allowed {
+				t.Errorf("%s %s with a key of scope %s: status %d", c.method, c.path, scope, resp.StatusCode)
+			}
+		}
 	}
 }
