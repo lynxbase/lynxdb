@@ -104,7 +104,7 @@ func (e *EventStatsIterator) materialize(ctx context.Context) error {
 				groups[key] = group
 			}
 			for j, agg := range e.aggs {
-				updateEventStatsState(&group.states[j], agg.Name, e.extractValue(agg, row))
+				updateEventStatsState(&group.states[j], agg.Name, aggValue(&e.vmInst, agg, row), row)
 			}
 		}
 	}
@@ -165,18 +165,7 @@ func (e *EventStatsIterator) extractGroupKey(row map[string]event.Value) map[str
 	return key
 }
 
-func (e *EventStatsIterator) extractValue(agg AggFunc, row map[string]event.Value) event.Value {
-	if agg.Field == "" {
-		return event.IntValue(1)
-	}
-	if v, ok := row[agg.Field]; ok {
-		return v
-	}
-
-	return event.NullValue()
-}
-
-func updateEventStatsState(s *aggState, fn string, val event.Value) {
+func updateEventStatsState(s *aggState, fn string, val event.Value, row map[string]event.Value) {
 	switch strings.ToLower(fn) {
 	case aggCount:
 		if !val.IsNull() {
@@ -225,6 +214,27 @@ func updateEventStatsState(s *aggState, fn string, val event.Value) {
 				s.all = append(s.all, f)
 			}
 		}
+	case aggStdev, aggStdevP, aggVar, aggVarP:
+		if f, ok := vm.ValueToFloat(val); ok {
+			if len(s.all) < maxValuesPerGroup {
+				s.all = append(s.all, f)
+			}
+			s.sum += f
+			s.count++
+		}
+	case "first":
+		if !val.IsNull() && !s.hasFirst {
+			s.first = val
+			s.hasFirst = true
+		}
+	case "last":
+		if !val.IsNull() {
+			s.last = val
+		}
+	case "earliest":
+		chronoState(s, val, row, true)
+	case "latest":
+		chronoState(s, val, row, false)
 	}
 }
 
@@ -250,6 +260,18 @@ func finalizeEventStatsAgg(s *aggState, agg AggFunc) event.Value {
 		return event.StringValue(joinAllStrings(s.all, "|||"))
 	case aggPerc:
 		return finalizePercentile(s, agg.Quantile)
+	case aggStdev:
+		return finalizeVarianceState(s, false, true)
+	case aggStdevP:
+		return finalizeVarianceState(s, true, true)
+	case aggVar:
+		return finalizeVarianceState(s, false, false)
+	case aggVarP:
+		return finalizeVarianceState(s, true, false)
+	case "first", "earliest":
+		return s.first
+	case "last", "latest":
+		return s.last
 	}
 
 	return event.NullValue()

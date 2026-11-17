@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -11,8 +12,12 @@ import (
 
 // StreamStatsIterator implements rolling window aggregation with O(N) incremental updates.
 type StreamStatsIterator struct {
-	child     Iterator
-	aggs      []AggFunc
+	child Iterator
+	aggs  []AggFunc
+	// args holds, by position in aggs, the aggregates whose argument is
+	// computed; each row keeps the value under the Field aggs gives it.
+	args      map[int]AggFunc
+	machine   vm.VM
 	groupBy   []string
 	window    int
 	current   bool
@@ -28,6 +33,12 @@ type runningAggState struct {
 	minVal event.Value
 	maxVal event.Value
 	freq   map[string]int64 // for dc: value → frequency
+	// mean and m2 are Welford's running mean and sum of squared deviations.
+	mean, m2 float64
+	// pick holds first, last, earliest or latest; stale asks to recompute it
+	// from the window after a row that may hold it left the window.
+	pick  aggState
+	stale bool
 }
 
 type ringBuffer struct {
@@ -106,10 +117,22 @@ func NewStreamStatsIterator(child Iterator, aggs []AggFunc, groupBy []string, wi
 	if window <= 0 {
 		window = math.MaxInt32
 	}
+	var args map[int]AggFunc
+	if hasComputedArgs(aggs) {
+		aggs = append([]AggFunc(nil), aggs...)
+		args = map[int]AggFunc{}
+		for j, agg := range aggs {
+			if agg.Program != nil || agg.CondProgram != nil {
+				args[j] = agg
+				aggs[j].Field = "\x00arg" + strconv.Itoa(j)
+			}
+		}
+	}
 
 	return &StreamStatsIterator{
 		child:     child,
 		aggs:      aggs,
+		args:      args,
 		groupBy:   groupBy,
 		window:    window,
 		current:   current,
@@ -131,6 +154,9 @@ func (s *StreamStatsIterator) Next(ctx context.Context) (*Batch, error) {
 
 	for i := 0; i < batch.Len; i++ {
 		row := batch.Row(i)
+		for j, agg := range s.args {
+			row[s.aggs[j].Field] = aggValue(&s.machine, agg, row)
+		}
 		key := s.groupKey(row)
 		rb, ok := s.ringBufs[key]
 		if !ok {
@@ -226,9 +252,19 @@ func (s *StreamStatsIterator) Close() error {
 	return s.child.Close()
 }
 
+func hasComputedArgs(aggs []AggFunc) bool {
+	for _, agg := range aggs {
+		if agg.Program != nil || agg.CondProgram != nil {
+			return true
+		}
+	}
+
+	return false
+}
+
 // newRunningAggState creates an initialized running state for the given aggregate.
 func newRunningAggState(aggName string) *runningAggState {
-	st := &runningAggState{}
+	st := &runningAggState{pick: aggState{first: event.NullValue(), last: event.NullValue()}}
 	if strings.EqualFold(aggName, aggDC) {
 		st.freq = make(map[string]int64)
 	}
@@ -275,6 +311,39 @@ func addValueToRunning(st *runningAggState, agg AggFunc, row map[string]event.Va
 		// Values/list aggregates still require full scan for correctness.
 		// Fall through to readRunningAgg which does the scan.
 		st.count++
+	case aggStdev, aggStdevP, aggVar, aggVarP:
+		if v, ok := row[agg.Field]; ok {
+			if f, fok := vm.ValueToFloat(v); fok {
+				st.count++
+				delta := f - st.mean
+				st.mean += delta / float64(st.count)
+				st.m2 += delta * (f - st.mean)
+			}
+		}
+	case "first", "last", "earliest", "latest":
+		if v, ok := row[agg.Field]; ok {
+			pickValue(&st.pick, agg.Name, v, row)
+		}
+	}
+}
+
+// pickValue keeps in s the value that first, last, earliest or latest
+// takes from a row.
+func pickValue(s *aggState, fn string, val event.Value, row map[string]event.Value) {
+	switch strings.ToLower(fn) {
+	case "first":
+		if !val.IsNull() && !s.hasFirst {
+			s.first = val
+			s.hasFirst = true
+		}
+	case "last":
+		if !val.IsNull() {
+			s.last = val
+		}
+	case "earliest":
+		chronoState(s, val, row, true)
+	case "latest":
+		chronoState(s, val, row, false)
 	}
 }
 
@@ -320,6 +389,23 @@ func removeValueFromRunning(st *runningAggState, agg AggFunc, row map[string]eve
 		}
 	case aggValues, aggList:
 		st.count--
+	case aggStdev, aggStdevP, aggVar, aggVarP:
+		if v, ok := row[agg.Field]; ok {
+			if f, fok := vm.ValueToFloat(v); fok {
+				if st.count <= 1 {
+					st.count, st.mean, st.m2 = 0, 0, 0
+					break
+				}
+				st.count--
+				delta := f - st.mean
+				st.mean -= delta / float64(st.count)
+				st.m2 -= delta * (f - st.mean)
+			}
+		}
+	case "first", "last", "earliest", "latest":
+		if v, ok := row[agg.Field]; ok && !v.IsNull() {
+			st.stale = true
+		}
 	}
 }
 
@@ -366,9 +452,54 @@ func readRunningAgg(st *runningAggState, agg AggFunc, rb *ringBuffer) event.Valu
 		return st.maxVal
 	case aggDC:
 		return event.IntValue(int64(len(st.freq)))
+	case aggStdev:
+		return runningVariance(st, false, true)
+	case aggStdevP:
+		return runningVariance(st, true, true)
+	case aggVar:
+		return runningVariance(st, false, false)
+	case aggVarP:
+		return runningVariance(st, true, false)
+	case "first", "earliest":
+		refreshPick(st, agg, rb)
+		return st.pick.first
+	case "last", "latest":
+		refreshPick(st, agg, rb)
+		return st.pick.last
 	}
 
 	return event.NullValue()
+}
+
+func runningVariance(st *runningAggState, population, root bool) event.Value {
+	if st.count == 0 || (!population && st.count < 2) {
+		return event.NullValue()
+	}
+	denom := float64(st.count)
+	if !population {
+		denom--
+	}
+	variance := max(st.m2/denom, 0)
+	if root {
+		return event.FloatValue(math.Sqrt(variance))
+	}
+
+	return event.FloatValue(variance)
+}
+
+// refreshPick recomputes a stale first, last, earliest or latest from the
+// rows of the window.
+func refreshPick(st *runningAggState, agg AggFunc, rb *ringBuffer) {
+	if !st.stale {
+		return
+	}
+	st.pick = aggState{first: event.NullValue(), last: event.NullValue()}
+	for _, item := range rb.items() {
+		if v, ok := item[agg.Field]; ok {
+			pickValue(&st.pick, agg.Name, v, item)
+		}
+	}
+	st.stale = false
 }
 
 // groupKey builds a composite key from the BY-clause fields of a row.

@@ -173,7 +173,7 @@ func (a *AggregateIterator) processBatch(batch *Batch) {
 		group := a.findOrCreateGroup(h, row)
 
 		for j, agg := range a.aggs {
-			a.updateState(&group.states[j], agg.Name, a.extractValue(agg, row), row)
+			a.updateState(&group.states[j], agg.Name, aggValue(&a.vmInst, agg, row), row)
 		}
 	}
 }
@@ -298,10 +298,12 @@ func (a *AggregateIterator) extractGroupKey(row map[string]event.Value) map[stri
 	return key
 }
 
-func (a *AggregateIterator) extractValue(agg AggFunc, row map[string]event.Value) event.Value {
+// aggValue returns the value an aggregate takes from a row: its argument
+// evaluated by machine, or NULL where its condition does not hold.
+func aggValue(machine *vm.VM, agg AggFunc, row map[string]event.Value) event.Value {
 	// Conditional aggregation: a false or NULL predicate skips the row.
 	if agg.CondProgram != nil {
-		condResult, condErr := a.vmInst.Execute(agg.CondProgram, row)
+		condResult, condErr := machine.Execute(agg.CondProgram, row)
 		if condErr != nil {
 			return event.NullValue()
 		}
@@ -314,7 +316,7 @@ func (a *AggregateIterator) extractValue(agg AggFunc, row map[string]event.Value
 	}
 
 	if agg.Program != nil {
-		result, err := a.vmInst.Execute(agg.Program, row)
+		result, err := machine.Execute(agg.Program, row)
 		if err != nil {
 			return event.NullValue()
 		}
@@ -417,9 +419,9 @@ func (a *AggregateIterator) updateState(s *aggState, fn string, val event.Value,
 			s.count++
 		}
 	case "earliest":
-		a.updateChronoState(s, val, row, true)
+		chronoState(s, val, row, true)
 	case "latest":
-		a.updateChronoState(s, val, row, false)
+		chronoState(s, val, row, false)
 	}
 }
 
@@ -431,7 +433,9 @@ func finalizePercentile(s *aggState, quantile float64) event.Value {
 	return percentile(s.all, quantile*100)
 }
 
-func (a *AggregateIterator) updateChronoState(s *aggState, val event.Value, row map[string]event.Value, earliest bool) {
+// chronoState keeps in s the value of the row with the earliest time, or
+// with the latest.
+func chronoState(s *aggState, val event.Value, row map[string]event.Value, earliest bool) {
 	if val.IsNull() {
 		return
 	}

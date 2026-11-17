@@ -366,3 +366,42 @@ func TestSeriesOfAChart(t *testing.T) {
 		}
 	}
 }
+
+// TestWindowStatisticsOfExpressions requires eventstats and streamstats to
+// aggregate computed arguments and conditions, and to give the spread and
+// the positional and timed values of their windows.
+func TestWindowStatisticsOfExpressions(t *testing.T) {
+	tables := testData(t)
+	for _, c := range []struct{ text, want string }{
+		{`source=logs | sort _time | eventstats sum(dur * 2) as s, count(eval(status >= 500)) as e, stddev_samp(status) as sd, ` +
+			`var_pop(dur) as vp, first(dur) as f, last(dur) as l, earliest(dur) as early, latest(dur) as late by host | where host = 'b' | ` +
+			`fields status, s, e, sd, vp, f, l, early, late`,
+			"e=1 early=0.25 f=0.25 l=2.5 late=2.5 s=5.5 sd=70.0035713374682 status=404 vp=1.265625; " +
+				"e=1 early=0.25 f=0.25 l=2.5 late=2.5 s=5.5 sd=70.0035713374682 status=503 vp=1.265625"},
+		{`source=logs | sort _time | streamstats window=2 sum(dur * 2) as s, count(eval(status >= 500)) as e, stddev_pop(dur) as sd, ` +
+			`var_samp(status) as vs, first(status) as f, last(status) as l, earliest(status) as early, latest(status) as late | ` +
+			`fields status, s, e, sd, vs, f, l, early, late`,
+			"e=0 early=200 f=200 l=200 late=200 s=2 sd=0 status=200 vs=<null>; " +
+				"e=0 early=200 f=200 l=404 late=404 s=2.5 sd=0.375 status=404 vs=20808; " +
+				"e=1 early=404 f=404 l=503 late=503 s=5.5 sd=1.125 status=503 vs=4900.5; " +
+				"e=1 early=503 f=503 l=200 late=200 s=6 sd=1 status=200 vs=45904.5; " +
+				"e=1 early=200 f=200 l=500 late=500 s=4 sd=0.5 status=500 vs=45000"},
+		{`source=logs | sort _time | streamstats current=false stddev_samp(dur) as sd, first(status) as f, latest(status) as late, ` +
+			`count(eval(dur > 1)) as e | fields status, sd, f, late, e`,
+			"e=0 f=<null> late=<null> sd=<null> status=200; e=0 f=200 late=200 sd=<null> status=404; " +
+				"e=0 f=200 late=404 sd=0.5303300858899106 status=503; e=1 f=200 late=503 sd=1.14564392373896 status=200; " +
+				"e=1 f=200 late=200 sd=1.0077822185373186 status=500"},
+	} {
+		compiled, err := query.Compile(c.text)
+		if err != nil {
+			t.Fatalf("%s: %v", c.text, err)
+		}
+		res, err := Run(context.Background(), compiled.Plan, tables, Options{Now: testNow})
+		if err != nil {
+			t.Fatalf("%s: %v", c.text, err)
+		}
+		if got := render(res.Maps()); got != c.want {
+			t.Errorf("%s\n got  %s\n want %s", c.text, got, c.want)
+		}
+	}
+}
