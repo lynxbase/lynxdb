@@ -35,6 +35,12 @@ type Node interface {
 	isNode()
 }
 
+// unary is implemented by operators with exactly one input, so traversals
+// can reach it without allocating an input slice.
+type unary interface {
+	input() Node
+}
+
 func one(inputs []Node, op string) Node {
 	if len(inputs) != 1 {
 		panic(fmt.Sprintf("ir: %s takes 1 input, got %d", op, len(inputs)))
@@ -180,6 +186,7 @@ type Filter struct {
 }
 
 func (f *Filter) Inputs() []Node { return []Node{f.Input} }
+func (f *Filter) input() Node    { return f.Input }
 func (f *Filter) WithInputs(in []Node) Node {
 	c := *f
 	c.Input = one(in, "Filter")
@@ -200,6 +207,7 @@ type Project struct {
 }
 
 func (p *Project) Inputs() []Node { return []Node{p.Input} }
+func (p *Project) input() Node    { return p.Input }
 func (p *Project) WithInputs(in []Node) Node {
 	c := *p
 	c.Input = one(in, "Project")
@@ -268,6 +276,7 @@ type RenameColumns struct {
 }
 
 func (r *RenameColumns) Inputs() []Node { return []Node{r.Input} }
+func (r *RenameColumns) input() Node    { return r.Input }
 func (r *RenameColumns) WithInputs(in []Node) Node {
 	c := *r
 	c.Input = one(in, "RenameColumns")
@@ -377,6 +386,7 @@ type Compute struct {
 }
 
 func (c *Compute) Inputs() []Node { return []Node{c.Input} }
+func (c *Compute) input() Node    { return c.Input }
 func (c *Compute) WithInputs(in []Node) Node {
 	cc := *c
 	cc.Input = one(in, "Compute")
@@ -441,6 +451,7 @@ type Aggregate struct {
 }
 
 func (a *Aggregate) Inputs() []Node { return []Node{a.Input} }
+func (a *Aggregate) input() Node    { return a.Input }
 func (a *Aggregate) WithInputs(in []Node) Node {
 	c := *a
 	c.Input = one(in, "Aggregate")
@@ -547,6 +558,7 @@ type Window struct {
 }
 
 func (w *Window) Inputs() []Node { return []Node{w.Input} }
+func (w *Window) input() Node    { return w.Input }
 func (w *Window) WithInputs(in []Node) Node {
 	c := *w
 	c.Input = one(in, "Window")
@@ -634,6 +646,7 @@ type Sort struct {
 }
 
 func (s *Sort) Inputs() []Node { return []Node{s.Input} }
+func (s *Sort) input() Node    { return s.Input }
 func (s *Sort) WithInputs(in []Node) Node {
 	c := *s
 	c.Input = one(in, "Sort")
@@ -652,6 +665,7 @@ type Limit struct {
 }
 
 func (l *Limit) Inputs() []Node { return []Node{l.Input} }
+func (l *Limit) input() Node    { return l.Input }
 func (l *Limit) WithInputs(in []Node) Node {
 	c := *l
 	c.Input = one(in, "Limit")
@@ -675,6 +689,7 @@ type TopN struct {
 }
 
 func (t *TopN) Inputs() []Node { return []Node{t.Input} }
+func (t *TopN) input() Node    { return t.Input }
 func (t *TopN) WithInputs(in []Node) Node {
 	c := *t
 	c.Input = one(in, "TopN")
@@ -696,6 +711,7 @@ type Reverse struct {
 }
 
 func (r *Reverse) Inputs() []Node { return []Node{r.Input} }
+func (r *Reverse) input() Node    { return r.Input }
 func (r *Reverse) WithInputs(in []Node) Node {
 	c := *r
 	c.Input = one(in, "Reverse")
@@ -717,6 +733,7 @@ type Dedup struct {
 }
 
 func (d *Dedup) Inputs() []Node { return []Node{d.Input} }
+func (d *Dedup) input() Node    { return d.Input }
 func (d *Dedup) WithInputs(in []Node) Node {
 	c := *d
 	c.Input = one(in, "Dedup")
@@ -981,6 +998,7 @@ type Extract struct {
 }
 
 func (e *Extract) Inputs() []Node { return []Node{e.Input} }
+func (e *Extract) input() Node    { return e.Input }
 func (e *Extract) WithInputs(in []Node) Node {
 	c := *e
 	c.Input = one(in, "Extract")
@@ -1047,6 +1065,7 @@ type Patterns struct {
 }
 
 func (p *Patterns) Inputs() []Node { return []Node{p.Input} }
+func (p *Patterns) input() Node    { return p.Input }
 func (p *Patterns) WithInputs(in []Node) Node {
 	c := *p
 	c.Input = one(in, "Patterns")
@@ -1101,6 +1120,7 @@ type Unnest struct {
 }
 
 func (u *Unnest) Inputs() []Node { return []Node{u.Input} }
+func (u *Unnest) input() Node    { return u.Input }
 func (u *Unnest) WithInputs(in []Node) Node {
 	c := *u
 	c.Input = one(in, "Unnest")
@@ -1140,6 +1160,7 @@ type FlattenObject struct {
 }
 
 func (f *FlattenObject) Inputs() []Node { return []Node{f.Input} }
+func (f *FlattenObject) input() Node    { return f.Input }
 func (f *FlattenObject) WithInputs(in []Node) Node {
 	c := *f
 	c.Input = one(in, "FlattenObject")
@@ -1172,6 +1193,7 @@ type FillNull struct {
 }
 
 func (f *FillNull) Inputs() []Node { return []Node{f.Input} }
+func (f *FillNull) input() Node    { return f.Input }
 func (f *FillNull) WithInputs(in []Node) Node {
 	c := *f
 	c.Input = one(in, "FillNull")
@@ -1210,6 +1232,7 @@ type Transpose struct {
 }
 
 func (t *Transpose) Inputs() []Node { return []Node{t.Input} }
+func (t *Transpose) input() Node    { return t.Input }
 func (t *Transpose) WithInputs(in []Node) Node {
 	c := *t
 	c.Input = one(in, "Transpose")
@@ -1242,6 +1265,7 @@ type Totals struct {
 }
 
 func (t *Totals) Inputs() []Node { return []Node{t.Input} }
+func (t *Totals) input() Node    { return t.Input }
 func (t *Totals) WithInputs(in []Node) Node {
 	c := *t
 	c.Input = one(in, "Totals")
@@ -1283,6 +1307,7 @@ type CombineValues struct {
 }
 
 func (c *CombineValues) Inputs() []Node { return []Node{c.Input} }
+func (c *CombineValues) input() Node    { return c.Input }
 func (c *CombineValues) WithInputs(in []Node) Node {
 	cc := *c
 	cc.Input = one(in, "CombineValues")
