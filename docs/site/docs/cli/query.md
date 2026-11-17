@@ -36,7 +36,7 @@ Quote the query with single quotes so the shell leaves `|`, `>` and double-quote
 | `--source` | | file path or `stdin` | local | `source` field of the loaded text lines |
 | `--sourcetype` | | | local | `sourcetype` field of the loaded text lines |
 | `--output` | `-o` | | all | Write the result rows to a file instead of stdout |
-| `--analyze` | | | all | Print an execution profile instead of the statistics line |
+| `--analyze` | | `false` | all | Print an execution profile instead of the statistics line |
 | `--fail-on-empty` | | `false` | all | Exit with code 6 when the query returns no rows |
 | `--explain` | | `false` | all | Print the compiled plans and exit without running the query |
 
@@ -131,11 +131,11 @@ To see how the server plans a query, with its result type, cost class and the fi
 
 ## Profiles: `--analyze`
 
-`--analyze` prints an execution profile to stderr after the rows, in place of the statistics line: the time spent in each phase and the total, and for a local query the rows loaded and returned. It accepts a level, `basic` (the bare flag), `full` or `trace`; all three print the same profile. Give a level with `=`, because a bare `--analyze` takes no value and the next word becomes part of the query:
+`--analyze` prints an execution profile to stderr after the rows, in place of the statistics line: the time spent in each phase and the total, and for a local query the rows loaded and returned.
 
 ```bash
 lynxdb query 'source=main level=ERROR | stats count() by host' --analyze
-lynxdb query --file access.log 'source=main level=ERROR | stats count() by host' --analyze=full
+lynxdb query --file access.log 'source=main level=ERROR | stats count() by host' --analyze
 ```
 
 ```

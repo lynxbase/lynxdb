@@ -51,7 +51,7 @@ func newQueryCmd() *cobra.Command {
 		source     string
 		outputFile string
 		timeout    string
-		analyze    string
+		analyze    bool
 		failEmpty  bool
 		copyFlag   bool
 		explain    bool
@@ -134,24 +134,16 @@ or standard input. Local input is loaded into the index main.`,
 	f.StringVar(&source, "source", "", "Set source metadata")
 	f.StringVarP(&outputFile, "output", "o", "", "Write results to file")
 	f.StringVar(&timeout, "timeout", "", "Query timeout (e.g., 10s, 5m)")
-	f.StringVar(&analyze, "analyze", "", "Profile query execution (basic, full, trace)")
+	f.BoolVar(&analyze, "analyze", false, "Profile query execution")
 	f.BoolVar(&failEmpty, "fail-on-empty", false, "Exit with code 6 if no results")
 	f.BoolVar(&copyFlag, "copy", false, "Copy results to clipboard as TSV")
 	f.BoolVar(&explain, "explain", false, "Show query plan without executing")
 	f.BoolVar(&rawMode, "raw", false, "Disable auto-format detection (treat input as plain text)")
 
-	// Allow bare --analyze (no value) to default to "basic".
-	cmd.Flags().Lookup("analyze").NoOptDefVal = "basic"
-
-	// Hidden alias for discoverability: --profile-query works the same as --analyze.
-	f.StringVar(&analyze, "profile-query", "", "Alias for --analyze (profile query execution)")
-	cmd.Flags().Lookup("profile-query").NoOptDefVal = "basic"
-	_ = cmd.Flags().MarkHidden("profile-query")
-
 	return cmd
 }
 
-func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty bool, analyze string, rawMode bool) error {
+func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty bool, analyze, rawMode bool) error {
 	matches, err := filepath.Glob(file)
 	if err != nil {
 		return fmt.Errorf("invalid file pattern: %w", err)
@@ -215,7 +207,7 @@ func loadLocal(db *database.DB, r io.Reader, source, sourcetype, format string) 
 	})
 }
 
-func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool, analyze string, rawMode bool) error {
+func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool, analyze, rawMode bool) error {
 	if err := checkLocalQuery(query); err != nil {
 		return err
 	}
@@ -257,7 +249,7 @@ func checkLocalQuery(q string) error {
 
 // runLocalQuery runs a query over the events loaded into a local database
 // and prints the result.
-func runLocalQuery(db *database.DB, q, outputFile string, failEmpty bool, analyze string, start time.Time) error {
+func runLocalQuery(db *database.DB, q, outputFile string, failEmpty, analyze bool, start time.Time) error {
 	if err := db.Sync(); err != nil {
 		return err
 	}
@@ -376,7 +368,7 @@ func extractedFormat(lines []string) string {
 	return name
 }
 
-func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outputFile, analyze string) error {
+func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outputFile string, analyze bool) error {
 	var w io.Writer = os.Stdout
 	if outputFile != "" {
 		f, err := os.Create(outputFile)
@@ -407,7 +399,7 @@ func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outp
 	st.SerializeDuration = time.Since(serStart)
 	st.ResultRows = int64(len(rows))
 
-	if analyze != "" {
+	if analyze {
 		if isJSONFormat() {
 			return stats.FormatProfileJSON(os.Stderr, st)
 		}
@@ -430,7 +422,7 @@ func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outp
 	return nil
 }
 
-func runQueryServer(query, since, from, to, timeout string, failEmpty bool, analyze string) error {
+func runQueryServer(query, since, from, to, timeout string, failEmpty, analyze bool) error {
 	earliest, latest, err := queryTimeBoundsFromFlags(since, from, to)
 	if err != nil {
 		return err
@@ -489,7 +481,7 @@ func stripVerticalQuerySuffix(query string) (string, bool) {
 	return stripped, true
 }
 
-func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty bool, analyze string) error {
+func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty, analyze bool) error {
 	start := time.Now()
 
 	result, err := apiClient().Query(ctx, client.QueryRequest{
@@ -525,7 +517,7 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 
 	st := buildQueryStatsFromMeta(result.Meta, int64(len(rows)), time.Since(start))
 
-	if analyze != "" {
+	if analyze {
 		if isJSONFormat() {
 			return stats.FormatProfileJSON(os.Stderr, st)
 		}
@@ -626,7 +618,7 @@ func buildQueryStatsFromMeta(meta client.Meta, rowsReturned int64, totalDuration
 	return st
 }
 
-func handleAsyncFallback(ctx context.Context, jobID string, failEmpty bool, analyze string) error {
+func handleAsyncFallback(ctx context.Context, jobID string, failEmpty, analyze bool) error {
 	start := time.Now()
 
 	result, err := apiClient().PollJob(ctx, jobID, nil)
@@ -654,7 +646,7 @@ func handleAsyncFallback(ctx context.Context, jobID string, failEmpty bool, anal
 
 	st := buildQueryStatsFromMeta(result.Meta, int64(len(rows)), time.Since(start))
 
-	if analyze != "" {
+	if analyze {
 		if isJSONFormat() {
 			return stats.FormatProfileJSON(os.Stderr, st)
 		}

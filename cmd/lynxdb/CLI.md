@@ -100,13 +100,11 @@ Alias `q`. Runs a PPL query. Arguments are joined with spaces. A trailing `\G` s
 | `--source` | | | `source` of loaded text lines; local mode |
 | `--output` | `-o` | | Write results to a file |
 | `--timeout` | | `6m` | Query timeout (`10s`, `5m`); server mode |
-| `--analyze` | | | Execution profile in place of the statistics; a level (`basic`, `full`, `trace`) needs `=`, as in `--analyze=full`, and all levels print the same profile |
+| `--analyze` | | `false` | Execution profile in place of the statistics |
 | `--fail-on-empty` | | `false` | Exit with code 6 when there are no rows |
 | `--copy` | | `false` | Copy results to the clipboard as TSV; server mode |
 | `--explain` | | `false` | Print the compiled plans without running the query |
 | `--raw` | | `false` | Disable log format detection; local mode |
-
-`--profile-query` is a hidden alias of `--analyze`.
 
 ```bash
 # Server
@@ -124,7 +122,7 @@ lynxdb query --raw --file app.log 'source=main "connection refused" | head 20'
 
 # Plans and profiles
 lynxdb query --explain 'source=main level=ERROR | stats count() as n by host | sort - n | head 3'
-lynxdb query 'source=main level=ERROR | stats count() by host' --analyze=full
+lynxdb query 'source=main level=ERROR | stats count() by host' --analyze
 
 # Scripting
 lynxdb query 'source=main level=FATAL' --since 15m --fail-on-empty --quiet < /dev/null > /dev/null

@@ -178,7 +178,7 @@ func runRootCommand(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 && !isKnownSubcommand(cmd, args[0]) {
 		query := strings.Join(args, " ")
 		if isStdinPiped() {
-			return runQueryStdin(query, "", "", "", false, "", false)
+			return runQueryStdin(query, "", "", "", false, false, false)
 		}
 
 		if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
@@ -188,7 +188,7 @@ func runRootCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	if isStdinPiped() {
-		return runQueryStdin("source=main | head 10", "", "", "", false, "", false)
+		return runQueryStdin("source=main | head 10", "", "", "", false, false, false)
 	}
 
 	return runWelcome(cmd, args)

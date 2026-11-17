@@ -194,10 +194,10 @@ The `query_id` is the same one that query responses carry in `meta.query_id` and
 
 ## Query Profiling
 
-`--analyze` adds a profile to a query's output. Pass the level with `=`; a bare `--analyze` means `basic`, and a word after it is read as part of the query:
+`--analyze` adds a profile to a query's output:
 
 ```bash
-lynxdb query 'source=main level=ERROR | stats count() by service' --analyze=full
+lynxdb query 'source=main level=ERROR | stats count() by service' --analyze
 ```
 
 ```text
