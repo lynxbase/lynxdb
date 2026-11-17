@@ -128,15 +128,6 @@ func init() {
 		}
 		return intVal(int64(len(elements(a[0]))))
 	})
-	fixed("mvcount", func(_ *ctx, a []val) val {
-		switch a[0].k {
-		case kNull:
-			return null
-		case kArray:
-			return intVal(int64(len(elements(a[0]))))
-		}
-		return intVal(1)
-	})
 	fixed("mvjoin", strict(func(c *ctx, a []val) val {
 		sep, ok := c.str(a[1])
 		if !ok {

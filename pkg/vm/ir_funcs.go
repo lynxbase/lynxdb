@@ -634,22 +634,6 @@ func registerStringFuncs() {
 		}
 		return event.BoolValue(strings.Contains(s, sub))
 	}))
-	irFuncs["starts_with"] = natively(strict(func(a []event.Value) event.Value {
-		s, ok := str(a[0])
-		p, ok2 := str(a[1])
-		if !ok || !ok2 {
-			return event.NullValue()
-		}
-		return event.BoolValue(strings.HasPrefix(s, p))
-	}))
-	irFuncs["ends_with"] = natively(strict(func(a []event.Value) event.Value {
-		s, ok := str(a[0])
-		p, ok2 := str(a[1])
-		if !ok || !ok2 {
-			return event.NullValue()
-		}
-		return event.BoolValue(strings.HasSuffix(s, p))
-	}))
 	irFuncs["wildcard_replace"] = func(c *irCompiler, n *ir.Call) error {
 		pattern, ok := constStringArg(n, 1)
 		repl, ok2 := constStringArg(n, 2)
@@ -969,15 +953,6 @@ func registerCollectionFuncs() {
 		return event.IntValue(int64(len(a[0].AsArray())))
 	}
 	irFuncs["array_length"] = natively(length)
-	irFuncs["mvcount"] = natively(func(a []event.Value) event.Value {
-		switch a[0].Type() {
-		case event.FieldTypeNull:
-			return event.NullValue()
-		case event.FieldTypeArray:
-			return event.IntValue(int64(len(a[0].AsArray())))
-		}
-		return event.IntValue(1)
-	})
 	lambdaOp := func(op Opcode, maxParams int) irEmitter {
 		return func(c *irCompiler, n *ir.Call) error {
 			if err := c.compile(n.Args[0]); err != nil {

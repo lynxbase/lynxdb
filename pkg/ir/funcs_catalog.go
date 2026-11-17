@@ -155,8 +155,6 @@ func registerString() {
 	errs(scalar(c, "regexp_replace", 3, []Param{p("s", String), pc("pattern", String), p("replacement", String)}, Returns(String), "s with every match of the RE2 pattern replaced; $1 or \\1 in the replacement inserts a group."), errPlanTime)
 	errs(scalar(c, "regexp_extract", 2, []Param{p("s", String), pc("pattern", String), pc("group", Int)}, Returns(String), "The text of capture group (default 0, the whole match) of the first match of pattern in s, or NULL."), errPlanTime)
 	scalar(c, "contains", 2, []Param{p("s", String), p("sub", String)}, Returns(Bool), "TRUE when s contains sub (case-sensitive substring).")
-	scalar(c, "starts_with", 2, []Param{p("s", String), p("prefix", String)}, Returns(Bool), "TRUE when s starts with prefix.")
-	scalar(c, "ends_with", 2, []Param{p("s", String), p("suffix", String)}, Returns(Bool), "TRUE when s ends with suffix.")
 }
 
 func registerCondition() {
@@ -283,7 +281,6 @@ func registerCollection() {
 	errs(scalar(c, "mvfind", 2, []Param{p("a", Any), pc("regex", String)}, Returns(Int), "0-based index of the first element matching regex, or NULL."), errPlanTime)
 	scalar(c, "mvindex", 2, []Param{p("a", Any), p("start", Int), p("end", Int)}, Returns(Any), "The element at 0-based start, or with end the inclusive sub-array; negative indexes count from the end.")
 	scalar(c, "mvzip", 2, []Param{p("a", Any), p("b", Any), p("sep", String)}, Returns(strArray), "Pairwise string concatenation of a and b joined by sep (default comma), as long as the shorter.")
-	aware(scalar(c, "mvcount", 1, []Param{p("a", Any)}, Returns(Int), "Number of elements of a; 1 for a non-NULL scalar, NULL for NULL."))
 }
 
 func registerSystem() {

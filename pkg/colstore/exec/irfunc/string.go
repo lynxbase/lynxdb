@@ -313,8 +313,6 @@ func init() {
 		}))
 	}
 	pair("contains", strings.Contains)
-	pair("starts_with", strings.HasPrefix)
-	pair("ends_with", strings.HasSuffix)
 	def("wildcard_replace", func(call *ir.Call) (func() impl, error) {
 		pattern, ok := constString(call, 1)
 		repl, ok2 := constString(call, 2)
