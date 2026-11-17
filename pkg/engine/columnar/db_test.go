@@ -28,7 +28,7 @@ func ask(t *testing.T, db *DB, text string) string {
 		t.Fatalf("%s: %v", text, err)
 	}
 
-	return render(res.Rows)
+	return render(res.Maps())
 }
 
 func lines(index string, from, n int) []byte {

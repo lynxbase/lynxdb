@@ -79,7 +79,7 @@ func TestExecutorOperationsAgainstIR(t *testing.T) {
 		}
 		var machine vm.VM
 		var diffs []string
-		for _, got := range res.Rows {
+		for _, got := range res.Maps() {
 			row := map[string]event.Value{}
 			for _, name := range []string{"a", "b"} {
 				if v, ok := got[name]; ok {
@@ -102,7 +102,7 @@ func TestExecutorOperationsAgainstIR(t *testing.T) {
 		}
 		sort.Strings(diffs)
 		if len(diffs) > 0 {
-			t.Logf("%s differs in %d of %d rows: %s", text, len(diffs), len(res.Rows), strings.Join(diffs, "; "))
+			t.Logf("%s differs in %d of %d rows: %s", text, len(diffs), res.Len(), strings.Join(diffs, "; "))
 		}
 		if _, known := knownDifferences[text]; known != (len(diffs) > 0) {
 			t.Errorf("%s: %d differences, listed as known: %v", text, len(diffs), known)

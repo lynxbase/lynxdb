@@ -50,13 +50,18 @@ type Options struct {
 	BatchSize int
 }
 
-// Result is the rows of a query.
+// Result is the rows of a query. Maps gives them as maps and AppendJSON as
+// JSON objects; a result that the columnar executor produced whole is kept
+// in its columns until one of them asks.
 type Result struct {
 	// Columns names the columns in their order when the plan fixes them.
 	Columns []string
-	Rows    []map[string]event.Value
 	// Columnar is set when the columnar executor ran the whole plan.
 	Columnar bool
+
+	rows   []map[string]event.Value
+	table  *exec.Result
+	schema ir.Schema
 }
 
 // pushedSource starts the name of the source that stands for a part of a
@@ -79,7 +84,7 @@ func Run(ctx context.Context, plan *ir.Plan, tables Tables, opts Options) (*Resu
 		out.Columns = schema.Names()
 	}
 	if scan, ok := root.(*ir.Scan); ok && len(scan.Sources) == 1 && r.ran[scan.Sources[0].Name] != nil {
-		out.Rows, out.Columnar = r.ran[scan.Sources[0].Name].rows, true
+		out.table, out.schema, out.Columnar = r.ran[scan.Sources[0].Name].table, plan.Root.Schema(), true
 
 		return out, nil
 	}
@@ -93,7 +98,7 @@ func Run(ctx context.Context, plan *ir.Plan, tables Tables, opts Options) (*Resu
 	if err != nil {
 		return nil, err
 	}
-	if out.Rows, err = pipeline.CollectAll(ctx, iter); err != nil {
+	if out.rows, err = pipeline.CollectAll(ctx, iter); err != nil {
 		return nil, err
 	}
 
@@ -116,7 +121,7 @@ type run struct {
 // or for a part whose rows the row operators take block by block the plan
 // that gives them and the rows of the tables it reads.
 type pushed struct {
-	rows   []map[string]event.Value
+	table  *exec.Result
 	plan   exec.Node
 	snap   *colstore.Snapshot
 	schema ir.Schema
@@ -213,7 +218,7 @@ func (r *run) columnar(n ir.Node, root bool) (*pushed, error) {
 		return nil, err
 	}
 
-	return &pushed{rows: rowsOf(res, n.Schema())}, nil
+	return &pushed{table: res, schema: n.Schema()}, nil
 }
 
 // snapshot returns the rows of the tables that a scan reads, which stay
@@ -278,7 +283,7 @@ func (r *run) source(scan *ir.Scan) (pipeline.Iterator, error) {
 				return &stream{r: r, snap: part.snap, plan: part.plan, schema: part.schema}, nil
 			}
 
-			return pipeline.NewRowScanIterator(part.rows, r.opts.BatchSize), nil
+			return pipeline.NewRowScanIterator(rowsOf(part.table, part.schema), r.opts.BatchSize), nil
 		}
 	}
 	plan, err := irplan.Rows(scan, irplan.Options{Now: r.opts.Now, Opaque: opaque(r.opts.Now)})

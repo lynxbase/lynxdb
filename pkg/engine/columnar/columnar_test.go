@@ -163,7 +163,7 @@ func TestRun(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s, %s: %v", c.text, name, err)
 				}
-				if got := render(res.Rows); got != c.want || res.Columnar != c.columnar {
+				if got := render(res.Maps()); got != c.want || res.Columnar != c.columnar {
 					t.Fatalf("%s, %s\n got  %s (columnar %v)\n want %s (columnar %v)", c.text, name, got, res.Columnar, c.want, c.columnar)
 				}
 			}
