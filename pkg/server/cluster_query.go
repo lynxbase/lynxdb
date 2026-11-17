@@ -11,9 +11,9 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/cluster/rpc"
 	clusterpb "github.com/lynxbase/lynxdb/pkg/cluster/rpc/proto"
 	"github.com/lynxbase/lynxdb/pkg/cluster/sharding"
+	"github.com/lynxbase/lynxdb/pkg/engine/physical"
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/logical"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/storage"
@@ -104,16 +104,44 @@ type engineShardQueryAdapter struct {
 	engine *Engine
 }
 
-// SubmitShardQuery runs a query scoped to local shard data.
+// SubmitShardQuery runs the shard part of a query over local shard data.
 func (a *engineShardQueryAdapter) SubmitShardQuery(ctx context.Context, params querycluster.ShardQueryParams) ([]map[string]event.Value, error) {
-	prog, err := parseCQQuery(params.Query)
+	rows, err := a.runShardPlan(ctx, params)
 	if err != nil {
-		return nil, fmt.Errorf("engineShardQueryAdapter.SubmitShardQuery: parse: %w", err)
+		return nil, fmt.Errorf("engineShardQueryAdapter.SubmitShardQuery: %w", err)
 	}
+	return rows, nil
+}
 
-	hints := extractCQHints(prog)
+// SubmitShardPartialAgg runs the shard part of a query and aggregates its
+// rows to mergeable partial states.
+func (a *engineShardQueryAdapter) SubmitShardPartialAgg(ctx context.Context, params querycluster.ShardQueryParams) ([]*pipeline.PartialAggGroup, error) {
+	if params.PartialAggSpec == nil {
+		return nil, fmt.Errorf("engineShardQueryAdapter.SubmitShardPartialAgg: nil partial agg spec")
+	}
+	rows, err := a.runShardPlan(ctx, params)
+	if err != nil {
+		return nil, fmt.Errorf("engineShardQueryAdapter.SubmitShardPartialAgg: %w", err)
+	}
+	batch := pipeline.NewBatch(len(rows))
+	for _, row := range rows {
+		batch.AddRow(row)
+	}
+	return pipeline.ComputePartialAggFromBatches([]*pipeline.Batch{batch}, params.PartialAggSpec), nil
+}
 
-	// Apply time bounds from the shard query params.
+// runShardPlan compiles the query, takes the shard prefix of its
+// distributed split and runs it over local data.
+func (a *engineShardQueryAdapter) runShardPlan(ctx context.Context, params querycluster.ShardQueryParams) ([]map[string]event.Value, error) {
+	res, err := planner.New().Plan(planner.PlanRequest{Query: params.Query})
+	if err != nil {
+		return nil, err
+	}
+	split, err := querycluster.PlanDistributedQueryIR(res.Plan)
+	if err != nil {
+		return nil, err
+	}
+	hints := physical.PlanHints(split.ShardPlan, planner.DefaultSource, time.Now())
 	if params.FromNs > 0 || params.ToNs > 0 {
 		tb := &model.TimeBounds{}
 		if params.FromNs > 0 {
@@ -124,16 +152,11 @@ func (a *engineShardQueryAdapter) SubmitShardQuery(ctx context.Context, params q
 		}
 		hints.TimeBounds = tb
 	}
-
-	qp := QueryParams{}
 	noop := func(*SearchProgress) {}
-	result, err := a.engine.runQueryPipeline(
-		ctx, prog, hints, qp, nil, queryAnnotations{}, noop, nil, time.Now())
+	result, err := a.engine.runStandardPipeline(ctx, split.ShardPlan, hints, QueryParams{}, noop, nil, time.Now())
 	if err != nil {
-		return nil, fmt.Errorf("engineShardQueryAdapter.SubmitShardQuery: %w", err)
+		return nil, err
 	}
-
-	// Convert ResultRows to maps.
 	rows := make([]map[string]event.Value, len(result.rows))
 	for i, rr := range result.rows {
 		rows[i] = make(map[string]event.Value, len(rr.Fields))
@@ -141,50 +164,7 @@ func (a *engineShardQueryAdapter) SubmitShardQuery(ctx context.Context, params q
 			rows[i][k] = interfaceToValue(v)
 		}
 	}
-
 	return rows, nil
-}
-
-// SubmitShardPartialAgg runs partial aggregation against local shard data.
-func (a *engineShardQueryAdapter) SubmitShardPartialAgg(ctx context.Context, params querycluster.ShardQueryParams) ([]*pipeline.PartialAggGroup, error) {
-	// Parse the shard query to extract hints for event store building.
-	prog, err := parseCQQuery(params.Query)
-	if err != nil {
-		return nil, fmt.Errorf("engineShardQueryAdapter.SubmitShardPartialAgg: parse: %w", err)
-	}
-
-	hints := extractCQHints(prog)
-
-	// Apply time bounds.
-	if params.FromNs > 0 || params.ToNs > 0 {
-		tb := &model.TimeBounds{}
-		if params.FromNs > 0 {
-			tb.Earliest = time.Unix(0, params.FromNs)
-		}
-		if params.ToNs > 0 {
-			tb.Latest = time.Unix(0, params.ToNs)
-		}
-		hints.TimeBounds = tb
-	}
-
-	store, _, storeErr := a.engine.buildEventStore(ctx, hints, nil)
-	if storeErr != nil {
-		return nil, fmt.Errorf("engineShardQueryAdapter.SubmitShardPartialAgg: build event store: %w", storeErr)
-	}
-
-	// Compute partial aggregation across all events in all indexes.
-	var allEvents []*event.Event
-	for _, evts := range store {
-		allEvents = append(allEvents, evts...)
-	}
-
-	if params.PartialAggSpec == nil {
-		return nil, fmt.Errorf("engineShardQueryAdapter.SubmitShardPartialAgg: nil partial agg spec")
-	}
-
-	groups := pipeline.ComputePartialAgg(allEvents, params.PartialAggSpec)
-
-	return groups, nil
 }
 
 // EventBus returns the engine's event bus for live tail subscriptions.
@@ -217,19 +197,4 @@ func interfaceToValue(v interface{}) event.Value {
 	default:
 		return event.StringValue(fmt.Sprintf("%v", v))
 	}
-}
-
-func parseCQQuery(query string) (*logical.Plan, error) {
-	// RFC-002: delegate to planner shim.
-	p := planner.New()
-	result, err := p.Plan(planner.PlanRequest{Query: query})
-	if err != nil {
-		return nil, err
-	}
-	return result.Program, nil
-}
-
-func extractCQHints(plan *logical.Plan) *model.QueryHints {
-	// RFC-002: hints should be extracted from logical plan.
-	return &model.QueryHints{}
 }

@@ -141,21 +141,6 @@ func formatElapsed(d time.Duration) string {
 	return fmt.Sprintf("%dm %ds", mins, secs)
 }
 
-// ensureFromClause normalizes a query so it always has a FROM clause.
-// Delegates to func(s string) string { return s } which handles all cases (pipe-prefixed,
-// known commands, implicit search) and prepends "FROM main" as needed.
-func ensureFromClause(query string) string {
-	trimmed := strings.TrimSpace(query)
-	upper := strings.ToUpper(trimmed)
-	if strings.HasPrefix(upper, "FROM ") || strings.HasPrefix(upper, "LET ") {
-		return query
-	}
-	if strings.HasPrefix(trimmed, "|") {
-		return "FROM main " + trimmed
-	}
-	return query
-}
-
 // truncateStr truncates s to maxLen runes, appending "..." if truncated.
 func truncateStr(s string, maxLen int) string {
 	runes := []rune(s)
@@ -245,16 +230,15 @@ func fetchFieldTopValues(fieldName string) []string {
 	return values
 }
 
-// extractFilterFields extracts field names from simple filter expressions.
-// E.g., "level=error source=nginx" → map["level"]="error", map["source"]="nginx".
-// Best-effort heuristic, not a full parser.
+// extractFilterFields extracts field=value comparisons written without
+// spaces, skipping the source clause: "search source=web level=error" →
+// map["level"]="error". It is a best-effort heuristic, not a parser.
 func extractFilterFields(query string) map[string]string {
 	fields := make(map[string]string)
 
 	// Look for field=value and field>=value patterns.
 	for _, part := range strings.Fields(query) {
-		// Skip SPL2 commands and pipes.
-		if strings.HasPrefix(part, "|") || strings.HasPrefix(part, "FROM") {
+		if strings.HasPrefix(part, "|") || strings.HasPrefix(part, "source=") {
 			continue
 		}
 

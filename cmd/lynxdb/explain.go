@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
-	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/client"
 	"github.com/lynxbase/lynxdb/pkg/stats"
 )
@@ -22,117 +22,110 @@ func init() {
 
 func newExplainCmd() *cobra.Command {
 	var analyze bool
-	var language string
 
 	cmd := &cobra.Command{
-		Use:   "explain [LynxFlow query]",
-		Short: "Show query execution plan without running",
-		Long:  `Parses and optimizes the query, then prints the execution plan, optimizer rules applied, and estimated cost.`,
-		Example: `  lynxdb explain 'from main | where level == "error" | stats count() by source'
-  lynxdb explain 'from main | where status >= 500 | top 10 uri' --format json
-  lynxdb explain --analyze 'from main | where level == "error" | stats count()'`,
+		Use:   "explain [PPL query]",
+		Short: "Show the query plan without running the query",
+		Long: `Compiles the query on the server and prints its logical IR plan, the
+optimized plan, the optimizer rules that fired and the storage hints the scan uses.`,
+		Example: `  lynxdb explain 'source=main | where level = "error" | stats count() by host'
+  lynxdb explain 'source=main | where status >= 500 | top 10 uri' --format json
+  lynxdb explain --analyze 'source=main | where level = "error" | stats count()'`,
 		Args: cobra.MinimumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if analyze {
-				return runExplainAnalyze(strings.Join(args, " "))
-			}
-			if language != "" {
-				return runExplainWithLanguage(strings.Join(args, " "), language)
-			}
-
-			return runExplain(strings.Join(args, " "))
+			return runExplain(strings.Join(args, " "), analyze)
 		},
 	}
 
-	cmd.Flags().BoolVar(&analyze, "analyze", false, "Execute query and show plan with actual execution stats")
-	cmd.Flags().StringVar(&language, "language", "", "Query language: lynxflow (default; spl2 was removed)")
+	cmd.Flags().BoolVar(&analyze, "analyze", false, "Run the query and add its execution profile")
 
 	return cmd
 }
 
-func runExplainAnalyze(query string) error {
+func runExplain(query string, analyze bool) error {
 	ctx := context.Background()
 	c := apiClient()
 	start := time.Now()
 
-	explainResult, err := c.Explain(ctx, query)
+	result, err := c.Explain(ctx, query)
 	if err != nil {
 		var apiErr *client.APIError
-		if errors.As(err, &apiErr) && apiErr.Code == client.ErrCodeInvalidQuery {
+		if errors.As(err, &apiErr) && client.IsInvalidQuery(apiErr) {
 			renderQueryError(query, -1, 0, apiErr.Message, apiErr.Suggestion)
-
-			return err
 		}
 
 		return err
 	}
 
-	// Execute the query with full profiling.
-	qResult, err := c.Query(ctx, client.QueryRequest{
-		Q:       query,
-		Profile: "full",
-	})
-	if err != nil {
-		return fmt.Errorf("execute for EXPLAIN ANALYZE: %w", err)
+	var st *stats.QueryStats
+	if analyze && result.IsValid {
+		qResult, err := c.Query(ctx, client.QueryRequest{Q: query, Profile: "full"})
+		if err != nil {
+			return &queryError{inner: err, query: query}
+		}
+		rows := queryResultToRows(qResult)
+		st = buildQueryStatsFromMeta(qResult.Meta, int64(len(rows)), time.Since(start))
+		st.Recommendations = stats.GenerateRecommendations(st)
 	}
 
-	rows := queryResultToRows(qResult)
-	st := buildQueryStatsFromMeta(qResult.Meta, int64(len(rows)), time.Since(start))
-	st.Recommendations = stats.GenerateRecommendations(st)
-
 	if isJSONFormat() {
-		combined := map[string]interface{}{
-			"explain": explainResult,
-			"profile": st,
+		out := map[string]interface{}{"explain": result}
+		if st != nil {
+			out["profile"] = st
 		}
-		b, _ := json.MarshalIndent(combined, "", "  ")
+		b, _ := json.MarshalIndent(out, "", "  ")
 		fmt.Println(string(b))
 
 		return nil
 	}
 
-	if err := renderExplainReport(os.Stdout, explainResult, explainReportOptions{
-		Analyze: true,
-		Plain:   explainPlainMode(),
-		Theme:   ui.Stdout,
-	}); err != nil {
-		return err
+	if !result.IsValid {
+		for _, e := range result.Errors {
+			col := 0
+			if e.Position != nil {
+				col = e.Position.Column - 1
+			}
+			renderQueryError(query, col, 1, e.Message, e.Suggestion)
+		}
+
+		return fmt.Errorf("invalid query")
 	}
 
-	// Print the profile from actual execution.
-	stats.FormatProfile(os.Stdout, st)
+	writeExplain(os.Stdout, result.Parsed)
+	if st != nil {
+		stats.FormatProfile(os.Stdout, st)
+	}
 
 	return nil
 }
 
-func runExplain(query string) error {
-	return runExplainLang(query, "")
-}
-
-func runExplainLang(query, language string) error {
-	ctx := context.Background()
-
-	result, err := apiClient().ExplainLang(ctx, query, language)
-	if err != nil {
-		var apiErr *client.APIError
-		if errors.As(err, &apiErr) && apiErr.Code == client.ErrCodeInvalidQuery {
-			renderQueryError(query, -1, 0, apiErr.Message, apiErr.Suggestion)
-
-			return err
+func writeExplain(w io.Writer, p *client.ExplainParsed) {
+	if p == nil {
+		return
+	}
+	fmt.Fprintln(w, "Logical plan:")
+	fmt.Fprint(w, p.LogicalPlan)
+	fmt.Fprintln(w, "\nOptimized plan:")
+	fmt.Fprint(w, p.OptimizedPlan)
+	if len(p.OptimizerRules) > 0 {
+		fmt.Fprintln(w, "\nOptimizer rules:")
+		for _, r := range p.OptimizerRules {
+			fmt.Fprintf(w, "  %s x%d\n", r.Name, r.Count)
 		}
-
-		return err
 	}
-
-	if isJSONFormat() {
-		b, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(b))
-
-		return nil
+	fmt.Fprintln(w, "\nScan:")
+	fmt.Fprintf(w, "  result type   %s\n", p.ResultType)
+	fmt.Fprintf(w, "  cost          %s\n", p.EstimatedCost)
+	if len(p.SearchTerms) > 0 {
+		fmt.Fprintf(w, "  search terms  %s\n", strings.Join(p.SearchTerms, ", "))
 	}
-
-	return renderExplainReport(os.Stdout, result, explainReportOptions{
-		Plain: explainPlainMode(),
-		Theme: ui.Stdout,
-	})
+	if len(p.FieldsRead) > 0 {
+		fmt.Fprintf(w, "  fields read   %s\n", strings.Join(p.FieldsRead, ", "))
+	}
+	if p.SourceScope != nil {
+		fmt.Fprintf(w, "  sources       %s %s%s\n", p.SourceScope.Type, strings.Join(p.SourceScope.Sources, ", "), p.SourceScope.Pattern)
+	}
+	if p.UsesFullScan {
+		fmt.Fprintln(w, "  full scan: add a time range or search terms to skip data")
+	}
 }

@@ -25,7 +25,7 @@ type QueryStats struct {
 
 	// TotalDuration is end-to-end from query parse start to final result written.
 	TotalDuration time.Duration
-	// ParseDuration is the time spent in the SPL2 lexer + parser + AST build.
+	// ParseDuration is the time spent compiling the query to an optimized plan.
 	ParseDuration time.Duration
 	// OptimizeDuration is the time spent applying optimizer rules.
 	OptimizeDuration time.Duration

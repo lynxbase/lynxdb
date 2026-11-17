@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/model"
 )
 
 func startTestServer(t *testing.T) (*Server, func()) {
@@ -39,21 +41,6 @@ func startTestServer(t *testing.T) (*Server, func()) {
 	return srv, func() {
 		cancel()
 		time.Sleep(50 * time.Millisecond)
-	}
-}
-
-func assertLintMeta(t *testing.T, meta map[string]interface{}, wantCode string) {
-	t.Helper()
-	if meta == nil {
-		t.Fatal("missing meta")
-	}
-	lints, _ := meta["lints"].([]interface{})
-	if len(lints) != 1 {
-		t.Fatalf("meta.lints: got %#v, want one lint", meta["lints"])
-	}
-	firstLint, _ := lints[0].(map[string]interface{})
-	if firstLint["code"] != wantCode {
-		t.Fatalf("meta.lints[0].code: got %v, want %s", firstLint["code"], wantCode)
 	}
 }
 
@@ -91,24 +78,6 @@ func startTestServerWithConfig(t *testing.T, cfg Config) (*Server, func()) {
 	return srv, func() {
 		cancel()
 		time.Sleep(50 * time.Millisecond)
-	}
-}
-
-func assertRewriteMeta(t *testing.T, meta map[string]interface{}, wantAfter, wantReason string) {
-	t.Helper()
-	if meta == nil {
-		t.Fatal("missing meta")
-	}
-	rewrites, _ := meta["rewrites"].([]interface{})
-	if len(rewrites) != 1 {
-		t.Fatalf("meta.rewrites: got %#v, want one rewrite", meta["rewrites"])
-	}
-	firstRewrite, _ := rewrites[0].(map[string]interface{})
-	if firstRewrite["after"] != wantAfter {
-		t.Fatalf("meta.rewrites[0].after: got %v, want %s", firstRewrite["after"], wantAfter)
-	}
-	if firstRewrite["reason"] != wantReason {
-		t.Fatalf("meta.rewrites[0].reason: got %v, want %s", firstRewrite["reason"], wantReason)
 	}
 }
 
@@ -185,16 +154,6 @@ func metaLintCodes(meta map[string]interface{}) []string {
 	}
 
 	return codes
-}
-
-func lintCodesContain(codes []string, want string) bool {
-	for _, code := range codes {
-		if code == want {
-			return true
-		}
-	}
-
-	return false
 }
 
 func TestServer_Health(t *testing.T) {
@@ -306,7 +265,7 @@ func TestServer_IngestAndQuery(t *testing.T) {
 
 	// Sync query (no wait param).
 	searchBody, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | where has(_raw, "request") | head 10`,
+		"q": `search source=main request | head 10`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(searchBody))
 	if err != nil {
@@ -339,78 +298,17 @@ func TestServer_IngestAndQuery(t *testing.T) {
 	if _, ok := meta["took_ms"]; !ok {
 		t.Error("missing took_ms in meta")
 	}
-	// Post-RFC-002: query_id may not be in LynxFlow meta; verify took_ms suffices.
 
-	// Verify a query without explicit FROM gets the default source rewritten.
-	rewriteQuery := "stats count()"
-	rewriteBody, _ := json.Marshal(map[string]interface{}{
-		"q": rewriteQuery,
-	})
-	rewriteResp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(rewriteBody))
+	missingSourceBody, _ := json.Marshal(map[string]interface{}{"q": "stats count()"})
+	missingSourceResp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(missingSourceBody))
 	if err != nil {
-		t.Fatalf("POST rewrite query: %v", err)
+		t.Fatalf("POST query without source: %v", err)
 	}
-	defer rewriteResp.Body.Close()
+	defer missingSourceResp.Body.Close()
 
-	if rewriteResp.StatusCode != 200 {
-		b, _ := io.ReadAll(rewriteResp.Body)
-		t.Fatalf("rewrite query status: %d, body: %s", rewriteResp.StatusCode, string(b))
-	}
-
-	lintBody, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | stats count() by host`,
-	})
-	lintResp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(lintBody))
-	if err != nil {
-		t.Fatalf("POST lint query: %v", err)
-	}
-	defer lintResp.Body.Close()
-
-	if lintResp.StatusCode != 200 {
-		b, _ := io.ReadAll(lintResp.Body)
-		t.Fatalf("lint query status: %d, body: %s", lintResp.StatusCode, string(b))
-	}
-
-	var lintResult map[string]interface{}
-	json.NewDecoder(lintResp.Body).Decode(&lintResult)
-	lintMeta, _ := lintResult["meta"].(map[string]interface{})
-	if lintMeta == nil {
-		t.Fatal("missing meta in lint query response")
-	}
-	lints, _ := lintMeta["lints"].([]interface{})
-	if len(lints) == 0 {
-		t.Fatalf("meta.lints: expected at least one lint, got none")
-	}
-	// LynxFlow produces LF03 (no time bound) for queries without time constraints.
-	firstLint, _ := lints[0].(map[string]interface{})
-	if firstLint["code"] == nil {
-		t.Fatalf("meta.lints[0] missing code: %#v", firstLint)
-	}
-
-	disabled := false
-	noLintBody, _ := json.Marshal(map[string]interface{}{
-		"q":    `FROM main | stats count() by host`,
-		"lint": disabled,
-	})
-	noLintResp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(noLintBody))
-	if err != nil {
-		t.Fatalf("POST no-lint query: %v", err)
-	}
-	defer noLintResp.Body.Close()
-
-	if noLintResp.StatusCode != 200 {
-		b, _ := io.ReadAll(noLintResp.Body)
-		t.Fatalf("no-lint query status: %d, body: %s", noLintResp.StatusCode, string(b))
-	}
-
-	var noLintResult map[string]interface{}
-	json.NewDecoder(noLintResp.Body).Decode(&noLintResult)
-	noLintMeta, _ := noLintResult["meta"].(map[string]interface{})
-	if noLintMeta == nil {
-		t.Fatal("missing meta in no-lint query response")
-	}
-	if _, ok := noLintMeta["lints"]; ok {
-		t.Fatalf("meta.lints present despite lint=false: %#v", noLintMeta["lints"])
+	if missingSourceResp.StatusCode != http.StatusBadRequest {
+		b, _ := io.ReadAll(missingSourceResp.Body)
+		t.Fatalf("query without source status: %d, want 400, body: %s", missingSourceResp.StatusCode, string(b))
 	}
 }
 
@@ -447,7 +345,7 @@ func TestServer_IngestJSONArray_PartialSuccessOnMalformedTail(t *testing.T) {
 		t.Fatalf("expected warning on partial success, got %v", data["warning"])
 	}
 
-	if got := queryEventCount(t, srv.Addr(), `{"q":"FROM main"}`); got != 2 {
+	if got := queryEventCount(t, srv.Addr(), `{"q":"source=main"}`); got != 2 {
 		t.Fatalf("query count: got %d, want 2", got)
 	}
 }
@@ -613,7 +511,7 @@ func TestServer_StatsQuery(t *testing.T) {
 
 	// Sync stats query.
 	searchBody, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | stats count() by host`,
+		"q": `source=main | stats count() by host`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(searchBody))
 	if err != nil {
@@ -645,17 +543,18 @@ func TestServer_StatsQuery(t *testing.T) {
 		t.Errorf("total_rows: got %v, want 3 (one per host)", totalRows)
 	}
 
-	// Verify each group has count=10.
+	countCol := -1
+	for j, col := range cols {
+		if fmt.Sprint(col) == "count()" {
+			countCol = j
+		}
+	}
+	if countCol < 0 {
+		t.Fatalf("missing count() column in %v", cols)
+	}
 	for _, row := range rows {
-		arr := row.([]interface{})
-		// Find count column index.
-		for j, col := range cols {
-			if fmt.Sprint(col) == "count" && j < len(arr) {
-				count := arr[j].(float64)
-				if count != 10 {
-					t.Errorf("count=%v, want 10", count)
-				}
-			}
+		if count := row.([]interface{})[countCol].(float64); count != 10 {
+			t.Errorf("count=%v, want 10", count)
 		}
 	}
 }
@@ -683,7 +582,7 @@ func TestServer_StatsAggregateAliases(t *testing.T) {
 	}
 
 	searchBody, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | stats avg(duration_ms) as avg_dur, p50(duration_ms) as p50_dur, dc(user) as users, estdc(user) as estimated_users, mode(user) as common_user`,
+		"q": `source=main | stats avg(duration_ms) as avg_dur, p50(duration_ms) as p50_dur, dc(user) as users, distinct_count_approx(user) as estimated_users`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(searchBody))
 	if err != nil {
@@ -730,9 +629,6 @@ func TestServer_StatsAggregateAliases(t *testing.T) {
 	if got := row[colIndex("estimated_users")].(float64); got != 2 {
 		t.Errorf("estimated_users: got %v, want 2", got)
 	}
-	if got := row[colIndex("common_user")].(string); got != "alice" {
-		t.Errorf("common_user: got %v, want alice", got)
-	}
 }
 
 func TestServer_StatsPercentileSuffixAliases(t *testing.T) {
@@ -755,7 +651,7 @@ func TestServer_StatsPercentileSuffixAliases(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | stats p95(duration_ms) as p95, p99(duration_ms) as p99_dur`,
+		"q": `source=main | stats p95(duration_ms) as p95, p99(duration_ms) as p99_dur`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -795,118 +691,6 @@ func TestServer_StatsPercentileSuffixAliases(t *testing.T) {
 	}
 }
 
-func TestServer_StatsRangeAggregate(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	now := time.Now()
-	durations := []float64{10, 25, 40}
-	events := make([]*event.Event, 0, len(durations))
-	for i, duration := range durations {
-		ev := event.NewEvent(now.Add(time.Duration(i)*time.Second), fmt.Sprintf("duration_ms=%v", duration))
-		ev.Index = "main"
-		ev.Host = "web-00"
-		ev.Source = "/var/log/app.log"
-		ev.SourceType = "json"
-		ev.SetField("duration_ms", event.FloatValue(duration))
-		events = append(events, ev)
-	}
-	if err := srv.engine.Ingest(events); err != nil {
-		t.Fatalf("Ingest: %v", err)
-	}
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | stats range(duration_ms) as duration_range`,
-	})
-	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("POST query: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status: %d, body: %s", resp.StatusCode, string(b))
-	}
-
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	data := result["data"].(map[string]interface{})
-	cols := data["columns"].([]interface{})
-	rows := data["rows"].([]interface{})
-	if len(rows) != 1 {
-		t.Fatalf("rows: got %d, want 1", len(rows))
-	}
-	row := rows[0].([]interface{})
-	for i, col := range cols {
-		if fmt.Sprint(col) == "duration_range" {
-			if got := row[i].(float64); got != 30 {
-				t.Fatalf("duration_range: got %v, want 30", got)
-			}
-			return
-		}
-	}
-	t.Fatalf("missing duration_range column in %v", cols)
-}
-
-func TestServer_StatsSumSqAggregate(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	now := time.Now()
-	durations := []float64{2, 3, 4}
-	events := make([]*event.Event, 0, len(durations))
-	for i, duration := range durations {
-		ev := event.NewEvent(now.Add(time.Duration(i)*time.Second), fmt.Sprintf("duration_ms=%v", duration))
-		ev.Index = "main"
-		ev.Host = "web-00"
-		ev.Source = "/var/log/app.log"
-		ev.SourceType = "json"
-		ev.SetField("duration_ms", event.FloatValue(duration))
-		events = append(events, ev)
-	}
-	if err := srv.engine.Ingest(events); err != nil {
-		t.Fatalf("Ingest: %v", err)
-	}
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | stats sumsq(duration_ms) as duration_squares`,
-	})
-	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("POST query: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status: %d, body: %s", resp.StatusCode, string(b))
-	}
-
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	data := result["data"].(map[string]interface{})
-	cols := data["columns"].([]interface{})
-	rows := data["rows"].([]interface{})
-	if len(rows) != 1 {
-		t.Fatalf("rows: got %d, want 1", len(rows))
-	}
-	row := rows[0].([]interface{})
-	for i, col := range cols {
-		if fmt.Sprint(col) == "duration_squares" {
-			if got := row[i].(float64); got != 29 {
-				t.Fatalf("duration_squares: got %v, want 29", got)
-			}
-			return
-		}
-	}
-	t.Fatalf("missing duration_squares column in %v", cols)
-}
-
 func TestServer_StatsVarianceAggregates(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
@@ -928,7 +712,7 @@ func TestServer_StatsVarianceAggregates(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | stats stdevp(duration_ms) as stdevp_duration, var(duration_ms) as sample_var, varp(duration_ms) as population_var`,
+		"q": `source=main | stats stddev_pop(duration_ms) as stdevp_duration, var_samp(duration_ms) as sample_var, var_pop(duration_ms) as population_var`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -988,7 +772,7 @@ func TestServer_StatsListAggregatePreservesDuplicates(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | stats list(user) as user_list, values(user) as user_values`,
+		"q": `source=main | stats list(user) as user_list, values(user) as user_values`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -1024,8 +808,6 @@ func TestServer_StatsListAggregatePreservesDuplicates(t *testing.T) {
 	}
 }
 
-// New Three-Mode Query Tests
-
 func TestQuery_SyncMode(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
@@ -1033,7 +815,7 @@ func TestQuery_SyncMode(t *testing.T) {
 	ingestTestEvents(t, srv.Addr(), 20, 2)
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | head 5`,
+		"q": `source=main | head 5`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -1085,9 +867,8 @@ func TestQuery_AsyncMode(t *testing.T) {
 
 	ingestTestEvents(t, srv.Addr(), 20, 2)
 
-	query := `stats count() by host`
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": query,
+		"q": `source=main | stats count() by host`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -1095,13 +876,11 @@ func TestQuery_AsyncMode(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	// Post-RFC-002: LynxFlow executes synchronously; accept both 200 and 202.
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusAccepted {
 		b, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status: got %d, want 200 or 202, body: %s", resp.StatusCode, string(b))
 	}
 
-	// Post-RFC-002: LynxFlow queries execute synchronously. Verify the result.
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 	data, ok := result["data"].(map[string]interface{})
@@ -1126,7 +905,7 @@ func TestQuery_HybridFast(t *testing.T) {
 
 	wait := float64(5) // 5 seconds — query should finish well within
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | head 3`, "wait": wait,
+		"q": `source=main | head 3`, "wait": wait,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -1157,13 +936,18 @@ func TestQuery_AggregateResult(t *testing.T) {
 	ingestTestEvents(t, srv.Addr(), 30, 3)
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | stats count() by host`,
+		"q": `source=main | stats count() by host`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
 	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status: %d, body: %s", resp.StatusCode, string(b))
+	}
 
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
@@ -1195,7 +979,7 @@ func TestQuery_TimechartResult(t *testing.T) {
 	ingestTestEvents(t, srv.Addr(), 30, 3)
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | every 1h by host stats count()`,
+		"q": `source=main | timechart span=1h count() by host`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -1255,7 +1039,7 @@ func TestQuery_TimechartPerMinuteAggregate(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | every 1h stats per_second(bytes) as bytes_per_sec`,
+		"q": `source=main | timechart span=1h per_second(bytes) as bytes_per_sec`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -1329,7 +1113,7 @@ func TestQuery_StatsTimeAggregates(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | stats earliest(status) as first_status, latest(status) as last_status, earliest_time(counter) as first_ts, latest_time(counter) as last_ts, rate(counter) as counter_rate`,
+		"q": `source=main | stats earliest(status) as first_status, latest(status) as last_status`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -1370,20 +1154,9 @@ func TestQuery_StatsTimeAggregates(t *testing.T) {
 	if got := row[colIndex("last_status")].(string); got != "late" {
 		t.Errorf("last_status: got %q, want late", got)
 	}
-	if got := row[colIndex("first_ts")].(float64); got != float64(base.Unix()) {
-		t.Errorf("first_ts: got %v, want %v", got, base.Unix())
-	}
-	if got := row[colIndex("last_ts")].(float64); got != float64(base.Add(10*time.Second).Unix()) {
-		t.Errorf("last_ts: got %v, want %v", got, base.Add(10*time.Second).Unix())
-	}
-	if got := row[colIndex("counter_rate")].(float64); got != 1.5 {
-		t.Errorf("counter_rate: got %v, want 1.5", got)
-	}
 }
 
 func TestQuery_CancelJob(t *testing.T) {
-	// Post-RFC-002: LynxFlow queries execute synchronously (no job_id).
-	// Verify that canceling a non-existent job returns 404.
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
@@ -1400,8 +1173,6 @@ func TestQuery_CancelJob(t *testing.T) {
 }
 
 func TestQuery_ListJobs(t *testing.T) {
-	// Post-RFC-002: LynxFlow queries execute synchronously — the job list
-	// endpoint still exists but will be empty since no async jobs are created.
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
@@ -1417,8 +1188,6 @@ func TestQuery_ListJobs(t *testing.T) {
 }
 
 func TestQuery_CancelJob_AlreadyDone(t *testing.T) {
-	// Post-RFC-002: LynxFlow queries execute synchronously — no async job_id.
-	// Verify that DELETE on a non-existent job returns 404.
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
@@ -1435,8 +1204,6 @@ func TestQuery_CancelJob_AlreadyDone(t *testing.T) {
 }
 
 func TestQuery_ListJobs_FilterByStatus(t *testing.T) {
-	// Post-RFC-002: LynxFlow executes synchronously. The filter endpoint
-	// still works but returns an empty list since no async jobs are created.
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
@@ -1474,7 +1241,7 @@ func TestQuery_FieldAliases(t *testing.T) {
 
 	// Test "query" alias for "q", "earliest"/"latest" alias for "from"/"to".
 	body, _ := json.Marshal(map[string]interface{}{
-		"query": `FROM main | head 3`,
+		"query": `source=main | head 3`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -1505,7 +1272,7 @@ func TestQuery_AsyncPollEndpoint(t *testing.T) {
 	// Submit async query via POST /api/v1/query with wait=0.
 	wait := float64(0)
 	searchBody, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | head 5`, "wait": wait,
+		"q": `source=main | head 5`, "wait": wait,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(searchBody))
 	if err != nil {
@@ -1583,35 +1350,6 @@ func TestQuery_ParseError(t *testing.T) {
 	}
 }
 
-func TestQuery_UnsupportedTimeFormat(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	// LynxFlow does not support SPL2 timeformat/starttime syntax.
-	// This query should produce a parse error.
-	body, _ := json.Marshal(map[string]interface{}{
-		"q": `index=main timeformat="%b %d %Y" starttime="Mar 23 2025"`,
-	})
-	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusBadRequest {
-		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status: got %d, want 400, body: %s", resp.StatusCode, string(b))
-	}
-
-	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
-	errObj := result["error"].(map[string]interface{})
-	code, _ := errObj["code"].(string)
-	if code != string(ErrCodeInvalidQuery) {
-		t.Fatalf("code: got %v, want %s", code, ErrCodeInvalidQuery)
-	}
-}
-
 func TestQuery_MissingQuery(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
@@ -1628,129 +1366,6 @@ func TestQuery_MissingQuery(t *testing.T) {
 	}
 }
 
-func TestQuery_LintOutputControls(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	query := `FROM main | where has(_raw, "error") | sort -status, duration_ms`
-	post := func(body map[string]interface{}) map[string]interface{} {
-		t.Helper()
-		raw, _ := json.Marshal(body)
-		resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(raw))
-		if err != nil {
-			t.Fatalf("POST: %v", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			b, _ := io.ReadAll(resp.Body)
-			t.Fatalf("status: got %d, want 200, body: %s", resp.StatusCode, string(b))
-		}
-
-		var result map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&result)
-		meta, _ := result["meta"].(map[string]interface{})
-		if meta == nil {
-			t.Fatal("missing meta")
-		}
-
-		return meta
-	}
-
-	defaultMeta := post(map[string]interface{}{"q": query})
-	defaultLints, _ := defaultMeta["lints"].([]interface{})
-	if len(defaultLints) == 0 {
-		t.Fatalf("default meta.lints: got 0, want at least 1 (%#v)", defaultMeta["lints"])
-	}
-	firstLint, _ := defaultLints[0].(map[string]interface{})
-	// LynxFlow lints use "message" (may also have "reason" but not guaranteed).
-	msg, _ := firstLint["message"].(string)
-	reason, _ := firstLint["reason"].(string)
-	if msg == "" && reason == "" {
-		t.Fatalf("default meta.lints[0] missing message and reason: %#v", firstLint)
-	}
-	if severity, _ := firstLint["severity"].(string); severity == "" {
-		t.Fatalf("default meta.lints[0] missing severity: %#v", firstLint)
-	}
-
-	// The LynxFlow path produces fewer broad-scope lints than SPL2 did.
-	// With lint_limit: the result should be capped to at most that many.
-	limitedMeta := post(map[string]interface{}{"q": query, "lint_limit": 2})
-	limitedLints, _ := limitedMeta["lints"].([]interface{})
-	if len(limitedLints) > 2 {
-		t.Fatalf("limited meta.lints: got %d, want at most 2", len(limitedLints))
-	}
-
-	// lint_full=true should return at least as many as the default.
-	fullMeta := post(map[string]interface{}{"q": query, "lint_full": true})
-	fullLints, _ := fullMeta["lints"].([]interface{})
-	if len(fullLints) < len(defaultLints) {
-		t.Fatalf("full meta.lints: got %d, want at least %d", len(fullLints), len(defaultLints))
-	}
-}
-
-func TestQuery_SuggestionsMetadata(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	post := func(body map[string]interface{}) map[string]interface{} {
-		t.Helper()
-		if _, ok := body["q"]; !ok {
-			// LynxFlow shape (a): stats count() by service | sort -count | head 5
-			// This is the long form of `top 5 service`.
-			body["q"] = `from main | where level == "error" | stats count() by service | sort -count | head 5`
-		}
-		raw, _ := json.Marshal(body)
-		resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(raw))
-		if err != nil {
-			t.Fatalf("POST: %v", err)
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			b, _ := io.ReadAll(resp.Body)
-			t.Fatalf("status: got %d, want 200, body: %s", resp.StatusCode, string(b))
-		}
-
-		var result map[string]interface{}
-		json.NewDecoder(resp.Body).Decode(&result)
-		meta, _ := result["meta"].(map[string]interface{})
-		if meta == nil {
-			t.Fatal("missing meta")
-		}
-		return meta
-	}
-
-	meta := post(map[string]interface{}{})
-	suggestions, _ := meta["suggestions"].([]interface{})
-	if len(suggestions) != 1 {
-		t.Fatalf("meta.suggestions: got %#v, want one suggestion", meta["suggestions"])
-	}
-	first, _ := suggestions[0].(map[string]interface{})
-	if first["text"] != "top 5 service" {
-		t.Fatalf("suggestion text: got %v, want top 5 service", first["text"])
-	}
-	if first["reason"] != "shortcut" || first["source_code"] != "LF09" {
-		t.Fatalf("suggestion metadata: got %#v", first)
-	}
-
-	noLintMeta := post(map[string]interface{}{"lint": false})
-	if _, ok := noLintMeta["lints"]; ok {
-		t.Fatalf("meta.lints present despite lint=false: %#v", noLintMeta["lints"])
-	}
-	if suggestions, _ := noLintMeta["suggestions"].([]interface{}); len(suggestions) != 1 {
-		t.Fatalf("meta.suggestions with lint=false: got %#v, want one suggestion", noLintMeta["suggestions"])
-	}
-
-	noSuggestionMeta := post(map[string]interface{}{"suggestions": false})
-	if _, ok := noSuggestionMeta["suggestions"]; ok {
-		t.Fatalf("meta.suggestions present despite suggestions=false: %#v", noSuggestionMeta["suggestions"])
-	}
-	if lints, _ := noSuggestionMeta["lints"].([]interface{}); len(lints) == 0 {
-		t.Fatalf("meta.lints missing when suggestions=false: %#v", noSuggestionMeta["lints"])
-	}
-}
-
 func TestQuery_ExplainMetadata(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
@@ -1758,7 +1373,7 @@ func TestQuery_ExplainMetadata(t *testing.T) {
 	ingestTestEvents(t, srv.Addr(), 20, 2)
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": `from main | where matches(_raw, r"request") | head 3`,
+		"q": `source=main | regex _raw = 'request' | head 3`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -1825,21 +1440,23 @@ func TestQuery_BroadScopeLints(t *testing.T) {
 		return meta
 	}
 
-	// Post-RFC-002: all queries go through LynxFlow. Verify that LynxFlow
-	// lints (e.g., LF03 for missing time bound) are reported.
-	allSourceMeta := post(map[string]interface{}{"q": `FROM * | head 1`})
-	if codes := metaLintCodes(allSourceMeta); len(codes) == 0 {
-		t.Fatalf("expected some lints for FROM * query, got none")
+	allSourceMeta := post(map[string]interface{}{"q": `source=* | head 1`})
+	if codes := metaLintCodes(allSourceMeta); len(codes) != 1 || codes[0] != model.LintAllSourcesHigh {
+		t.Fatalf("meta.lints for source=*: got %v, want [%s]", codes, model.LintAllSourcesHigh)
 	}
 
-	noLintMeta := post(map[string]interface{}{"q": `FROM * | where has(_raw, "request") | head 1`, "lint": false})
+	searchMeta := post(map[string]interface{}{"q": `search source=* request | head 1`})
+	if codes := metaLintCodes(searchMeta); len(codes) != 1 || codes[0] != model.LintBroadSearch {
+		t.Fatalf("meta.lints for search source=*: got %v, want [%s]", codes, model.LintBroadSearch)
+	}
+
+	noLintMeta := post(map[string]interface{}{"q": `search source=* request | head 1`, "lint": false})
 	if _, ok := noLintMeta["lints"]; ok {
 		t.Fatalf("meta.lints present despite lint=false: %#v", noLintMeta["lints"])
 	}
 
-	// Post-RFC-002: verify sync query completes successfully.
 	raw, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM * | where has(_raw, "request 1") | head 1`,
+		"q": `search source=* "request 1" | head 1`,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(raw))
 	if err != nil {
@@ -1861,8 +1478,7 @@ func TestQuery_BroadScopeLintThresholdConfig(t *testing.T) {
 
 	ingestIndexedTestEvents(t, srv.Addr(), 3)
 
-	// Post-RFC-002: use LynxFlow. Verify lints are generated for FROM *.
-	raw, _ := json.Marshal(map[string]interface{}{"q": `FROM * | head 1`})
+	raw, _ := json.Marshal(map[string]interface{}{"q": `source=* | head 1`})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(raw))
 	if err != nil {
 		t.Fatalf("POST: %v", err)
@@ -1876,9 +1492,8 @@ func TestQuery_BroadScopeLintThresholdConfig(t *testing.T) {
 	var result map[string]interface{}
 	json.NewDecoder(resp.Body).Decode(&result)
 	meta, _ := result["meta"].(map[string]interface{})
-	codes := metaLintCodes(meta)
-	if len(codes) == 0 {
-		t.Fatalf("expected lints for FROM * query, got none")
+	if codes := metaLintCodes(meta); len(codes) != 1 || codes[0] != model.LintAllSourcesHigh {
+		t.Fatalf("meta.lints for source=*: got %v, want [%s]", codes, model.LintAllSourcesHigh)
 	}
 }
 
@@ -1907,8 +1522,11 @@ func TestErrorFormat(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected structured error, got: %v", result["error"])
 		}
-		if errObj["code"] != "INVALID_QUERY" {
-			t.Errorf("code: got %v, want INVALID_QUERY", errObj["code"])
+		if errObj["code"] != string(ErrCodeSyntaxError) {
+			t.Errorf("code: got %v, want %s", errObj["code"], ErrCodeSyntaxError)
+		}
+		if _, ok := errObj["position"].(map[string]interface{}); !ok {
+			t.Errorf("expected error position, got %v", errObj)
 		}
 		if errObj["message"] == nil || errObj["message"] == "" {
 			t.Error("expected non-empty message")
@@ -1950,7 +1568,7 @@ func TestQueryGet_Basic(t *testing.T) {
 	ingestTestEvents(t, srv.Addr(), 20, 2)
 
 	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query?q=%s&limit=5",
-		srv.Addr(), "FROM+main+|+head+5"))
+		srv.Addr(), url.QueryEscape("source=main | head 5")))
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -1993,7 +1611,7 @@ func TestQuery_FormatValidation(t *testing.T) {
 	defer cleanup()
 
 	t.Run("POST rejects unsupported format", func(t *testing.T) {
-		body := strings.NewReader(`{"q":"FROM main","format":"csv"}`)
+		body := strings.NewReader(`{"q":"source=main","format":"csv"}`)
 		resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", body)
 		if err != nil {
 			t.Fatalf("POST: %v", err)
@@ -2006,7 +1624,7 @@ func TestQuery_FormatValidation(t *testing.T) {
 	})
 
 	t.Run("GET rejects unsupported format", func(t *testing.T) {
-		resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query?q=%s&format=csv", srv.Addr(), "FROM+main"))
+		resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query?q=%s&format=csv", srv.Addr(), url.QueryEscape("source=main")))
 		if err != nil {
 			t.Fatalf("GET: %v", err)
 		}
@@ -2063,7 +1681,7 @@ func TestJobStream_Basic(t *testing.T) {
 	// Submit an async job.
 	zero := float64(0)
 	body, _ := json.Marshal(map[string]interface{}{
-		"q":    `FROM main | head 5`,
+		"q":    `source=main | head 5`,
 		"wait": zero,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
@@ -2115,127 +1733,5 @@ func TestJobStream_NotFound(t *testing.T) {
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status: got %d, want 404", resp.StatusCode)
-	}
-}
-
-// Test: parse error columns round-trip through the REST JSON response.
-//
-// Verifies finding [22b]: _error and _error_detail columns produced by
-// `parse json` with malformed rows serialize correctly through the REST
-// query response envelope.
-
-func TestServer_ParseErrorColumns_RoundTrip(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	// Ingest a mix of valid and invalid JSON as _raw.
-	now := time.Now()
-	rawLines := []string{
-		`{"name":"alice","age":30}`,
-		`this is not valid json`,
-		`{"name":"bob","age":25}`,
-	}
-	events := make([]*event.Event, len(rawLines))
-	for i, line := range rawLines {
-		ev := event.NewEvent(now.Add(time.Duration(i)*time.Second), line)
-		ev.Index = "main"
-		ev.Host = "web-01"
-		ev.Source = "test"
-		ev.SourceType = "raw"
-		ev.Fields = make(map[string]event.Value)
-		events[i] = ev
-	}
-	if err := srv.engine.Ingest(events); err != nil {
-		t.Fatalf("Ingest: %v", err)
-	}
-
-	// Query with parse json (default on_error=propagate).
-	body, _ := json.Marshal(map[string]interface{}{
-		"q": `from main | parse json | sort _time`,
-	})
-	resp, err := http.Post(
-		fmt.Sprintf("http://%s/api/v1/query", srv.Addr()),
-		"application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("POST query: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status: %d, body: %s", resp.StatusCode, string(b))
-	}
-
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-
-	data, ok := result["data"].(map[string]interface{})
-	if !ok {
-		t.Fatal("missing 'data' in response")
-	}
-
-	eventsRaw, ok := data["events"].([]interface{})
-	if !ok {
-		t.Fatal("missing 'events' in data")
-	}
-
-	if len(eventsRaw) != 3 {
-		t.Fatalf("expected 3 events, got %d", len(eventsRaw))
-	}
-
-	// Find the error row (the invalid JSON one). Columnar batches pad all
-	// columns to batch length, so even valid rows carry _error as JSON null.
-	// Distinguish by checking whether the value is a non-nil string.
-	var errorRow map[string]interface{}
-	var validRows []map[string]interface{}
-	for _, raw := range eventsRaw {
-		ev, _ := raw.(map[string]interface{})
-		if ev == nil {
-			continue
-		}
-		if errVal, ok := ev["_error"].(string); ok && errVal != "" {
-			errorRow = ev
-		} else {
-			validRows = append(validRows, ev)
-		}
-	}
-
-	// Verify the error row has _error and _error_detail.
-	if errorRow == nil {
-		t.Fatal("expected at least one event with _error column in response")
-	}
-
-	errStr, ok := errorRow["_error"].(string)
-	if !ok || errStr == "" {
-		t.Fatalf("_error should be a non-empty string, got %T: %v", errorRow["_error"], errorRow["_error"])
-	}
-	if !strings.Contains(errStr, "parse:json:") {
-		t.Errorf("_error should contain 'parse:json:', got %q", errStr)
-	}
-
-	// _error_detail should be a JSON object with stage, format, code, message.
-	detail, ok := errorRow["_error_detail"].(map[string]interface{})
-	if !ok {
-		t.Fatalf("_error_detail should be a JSON object, got %T: %v", errorRow["_error_detail"], errorRow["_error_detail"])
-	}
-	for _, key := range []string{"stage", "format", "code", "message"} {
-		if _, exists := detail[key]; !exists {
-			t.Errorf("_error_detail missing key %q, got: %v", key, detail)
-		}
-	}
-	if fmt.Sprint(detail["format"]) != "json" {
-		t.Errorf("_error_detail.format: got %v, want %q", detail["format"], "json")
-	}
-
-	// Verify valid rows do NOT have a non-null _error.
-	if len(validRows) < 2 {
-		t.Fatalf("expected at least 2 valid rows, got %d", len(validRows))
-	}
-	for i, vr := range validRows {
-		if errVal, ok := vr["_error"].(string); ok && errVal != "" {
-			t.Errorf("valid row %d should not have non-null _error, got: %v", i, errVal)
-		}
 	}
 }

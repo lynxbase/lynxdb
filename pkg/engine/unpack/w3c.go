@@ -105,7 +105,7 @@ func (p *W3CParser) Parse(input string, emit func(key string, val event.Value) b
 }
 
 // normalizeW3CField replaces hyphens with underscores in W3C field names.
-// This makes field names valid identifiers for SPL2 queries.
+// This makes field names valid query identifiers.
 func normalizeW3CField(name string) string {
 	return strings.ReplaceAll(name, "-", "_")
 }

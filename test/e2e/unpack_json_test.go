@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -30,9 +29,9 @@ func ingestJSONEvents(t *testing.T, h *Harness, index string, events []string) {
 	}
 }
 
-// TestE2E_ParseJSON_WhereStatsCount ingests JSON logs, extracts with parse json,
-// filters, and aggregates.
-func TestE2E_ParseJSON_WhereStatsCount(t *testing.T) {
+// TestE2E_Spath_WhereStatsCount ingests JSON logs, extracts a field with
+// spath, filters, and aggregates.
+func TestE2E_Spath_WhereStatsCount(t *testing.T) {
 	h := NewHarness(t)
 
 	events := []string{
@@ -44,12 +43,12 @@ func TestE2E_ParseJSON_WhereStatsCount(t *testing.T) {
 	}
 	ingestJSONEvents(t, h, "jsonlogs", events)
 
-	r := h.MustQuery(`from jsonlogs | parse json | where level == "error" | stats count() as count`)
+	r := h.MustQuery(`source=jsonlogs | spath input=_raw path=level | where level = "error" | stats count() as count`)
 	requireAggValue(t, r, "count", 3)
 }
 
-// TestE2E_ParseJSON_StatsByService verifies group-by works on extracted fields.
-func TestE2E_ParseJSON_StatsByService(t *testing.T) {
+// TestE2E_Spath_StatsByService verifies group-by works on extracted fields.
+func TestE2E_Spath_StatsByService(t *testing.T) {
 	h := NewHarness(t)
 
 	events := []string{
@@ -59,7 +58,7 @@ func TestE2E_ParseJSON_StatsByService(t *testing.T) {
 	}
 	ingestJSONEvents(t, h, "svclog", events)
 
-	r := h.MustQuery(`from svclog | parse json | where level == "error" | stats count() as count by service | sort -count`)
+	r := h.MustQuery(`source=svclog | spath input=_raw path=level | spath input=_raw path=service | where level = "error" | stats count() as count by service | sort -count`)
 	rows := AggRows(r)
 	if len(rows) < 2 {
 		t.Fatalf("expected >= 2 rows, got %d", len(rows))
@@ -71,8 +70,9 @@ func TestE2E_ParseJSON_StatsByService(t *testing.T) {
 	}
 }
 
-// TestE2E_ParseLogfmt verifies logfmt extraction works end-to-end.
-func TestE2E_ParseLogfmt_Filter(t *testing.T) {
+// TestE2E_Logfmt_Filter verifies that logfmt fields extracted at ingest are
+// queryable.
+func TestE2E_Logfmt_Filter(t *testing.T) {
 	h := NewHarness(t)
 
 	events := []string{
@@ -82,12 +82,12 @@ func TestE2E_ParseLogfmt_Filter(t *testing.T) {
 	}
 	ingestJSONEvents(t, h, "logfmt_idx", events)
 
-	r := h.MustQuery(`from logfmt_idx | parse logfmt | where level == "error" | stats count() as count`)
+	r := h.MustQuery(`source=logfmt_idx | where level = "error" | stats count() as count`)
 	requireAggValue(t, r, "count", 2)
 }
 
-// TestE2E_ParseCombined verifies combined access log parsing.
-func TestE2E_ParseCombined_StatusFilter(t *testing.T) {
+// TestE2E_GrokCombined_StatusFilter verifies combined access log parsing.
+func TestE2E_GrokCombined_StatusFilter(t *testing.T) {
 	h := NewHarness(t)
 
 	events := []string{
@@ -97,12 +97,12 @@ func TestE2E_ParseCombined_StatusFilter(t *testing.T) {
 	}
 	ingestJSONEvents(t, h, "access_idx", events)
 
-	r := h.MustQuery(`from access_idx | parse combined | where status >= 500 | stats count() as count`)
+	r := h.MustQuery(`source=access_idx | grok _raw "%{COMBINEDAPACHELOG}" | where cast(response as int) >= 500 | stats count() as count`)
 	requireAggValue(t, r, "count", 2)
 }
 
-// TestE2E_ParseJSON_SelectivePaths verifies parse json with object access for specific paths.
-func TestE2E_ParseJSON_SelectivePaths(t *testing.T) {
+// TestE2E_Spath_SelectivePaths verifies spath extraction of a nested path.
+func TestE2E_Spath_SelectivePaths(t *testing.T) {
 	h := NewHarness(t)
 
 	events := []string{
@@ -111,16 +111,15 @@ func TestE2E_ParseJSON_SelectivePaths(t *testing.T) {
 	}
 	ingestJSONEvents(t, h, "json_paths", events)
 
-	// Parse json extracts all fields; then use object access for nested paths.
-	r := h.MustQuery(`from json_paths | parse json | extend uid = user.id | stats count() by uid`)
+	r := h.MustQuery(`source=json_paths | spath input=_raw path=user.id output=uid | stats count() by uid`)
 	rows := AggRows(r)
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows (uid=1 and uid=2), got %d", len(rows))
 	}
 }
 
-// TestE2E_Explode verifies array explosion with explode.
-func TestE2E_Explode_StatsCount(t *testing.T) {
+// TestE2E_Expand_StatsCount verifies array expansion with expand.
+func TestE2E_Expand_StatsCount(t *testing.T) {
 	h := NewHarness(t)
 
 	events := []string{
@@ -129,13 +128,13 @@ func TestE2E_Explode_StatsCount(t *testing.T) {
 	}
 	ingestJSONEvents(t, h, "unroll_idx", events)
 
-	r := h.MustQuery(`from unroll_idx | parse json | explode items | stats count() as count`)
+	r := h.MustQuery(`source=unroll_idx | spath input=_raw output=doc | eval items = doc.items | expand items | stats count() as count`)
 	// 2 items from order A + 1 from order B = 3 rows.
 	requireAggValue(t, r, "count", 3)
 }
 
-// TestE2E_ToJson verifies field assembly into a JSON string using to_json.
-func TestE2E_ToJson_RoundTrip(t *testing.T) {
+// TestE2E_JsonObject_RoundTrip verifies field assembly into a JSON string.
+func TestE2E_JsonObject_RoundTrip(t *testing.T) {
 	h := NewHarness(t)
 
 	ctx := context.Background()
@@ -159,12 +158,12 @@ func TestE2E_ToJson_RoundTrip(t *testing.T) {
 		t.Fatalf("expected 2 accepted, got %d", result.Accepted)
 	}
 
-	r := h.MustQuery(`from main | extend output = to_json({level: level, service: service}) | stats count() as count`)
+	r := h.MustQuery(`source=main | eval output = json_object("level", level, "service", service) | where json_valid(output) | stats count() as count`)
 	requireAggValue(t, r, "count", 2)
 }
 
-// TestE2E_JsonFunctions verifies json_valid and json_keys work end-to-end.
-func TestE2E_JsonFunctions(t *testing.T) {
+// TestE2E_JsonValid verifies json_valid end-to-end.
+func TestE2E_JsonValid(t *testing.T) {
 	h := NewHarness(t)
 
 	events := []string{
@@ -174,14 +173,11 @@ func TestE2E_JsonFunctions(t *testing.T) {
 	}
 	ingestJSONEvents(t, h, "json_fn_idx", events)
 
-	// Count events where _raw is valid JSON. from_json yields null for invalid
-	// JSON, and extend keeps that column present, so exists() now matches all
-	// rows; filter on the value with not is_null instead.
-	r := h.MustQuery(`from json_fn_idx | extend parsed = from_json(_raw) | where not is_null(parsed) | stats count() as count`)
+	r := h.MustQuery(`source=json_fn_idx | where json_valid(_raw) | stats count() as count`)
 	requireAggValue(t, r, "count", 2)
 }
 
-// TestE2E_DotNotation verifies inline dot-notation field access.
+// TestE2E_DotNotation verifies dot-notation access into a parsed object.
 func TestE2E_DotNotation_InlineWhere(t *testing.T) {
 	h := NewHarness(t)
 
@@ -192,6 +188,6 @@ func TestE2E_DotNotation_InlineWhere(t *testing.T) {
 	}
 	ingestJSONEvents(t, h, "dot_idx", events)
 
-	r := h.MustQuery(fmt.Sprintf(`from dot_idx | parse json | where request.method == "POST" | stats count() as count`))
+	r := h.MustQuery(`source=dot_idx | spath input=_raw output=doc | where doc.request.method = "POST" | stats count() as count`)
 	requireAggValue(t, r, "count", 1)
 }

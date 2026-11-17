@@ -47,14 +47,14 @@ func TestServerQuery_MultiIndex_CountPerIndex(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-				"FROM "+tt.index+" | stats count() as count")
+				"source="+tt.index+" | stats count() as count")
 			if err != nil {
 				t.Fatalf("query failed: %v", err)
 			}
 
 			got := jsonCount(t, stdout)
 			if got != tt.want {
-				t.Errorf("FROM %s | stats count = %d, want %d", tt.index, got, tt.want)
+				t.Errorf("source=%s | stats count = %d, want %d", tt.index, got, tt.want)
 			}
 		})
 	}
@@ -64,23 +64,17 @@ func TestServerQuery_MultiIndex_DefaultIndex_IsMain(t *testing.T) {
 	baseURL := newTestServer(t)
 	ingestTestData(t, baseURL, "main", "testdata/logs/access.log")
 
-	// Query without explicit FROM should default to "main".
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		`from main | where level == "ERROR" | stats count() as count`)
+		`source=main | where level = "ERROR" | stats count() as count`)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
 
 	got := jsonCount(t, stdout)
 	if got != 294 {
-		t.Errorf("implicit main index: count = %d, want 294", got)
+		t.Errorf("main index: count = %d, want 294", got)
 	}
 }
-
-// NOTE: TestServerQuery_ShowRewritten_PrintsRewriteMetadata deleted (RFC-002 Phase 10).
-// This test asserted SPL2-specific freehand-search rewrite metadata. The lynxflow
-// desugar path produces different rewrite shapes. The --show-rewritten flag still
-// works but the exact rewrite reasons and "after:" text changed.
 
 func TestServerQuery_WHERE_FilterByLevel_CorrectCount(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
@@ -97,7 +91,7 @@ func TestServerQuery_WHERE_FilterByLevel_CorrectCount(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.level, func(t *testing.T) {
 			stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-				"FROM idx_access | where level==\""+tt.level+"\" | stats count() as count")
+				"source=idx_access | where level = \""+tt.level+"\" | stats count() as count")
 			if err != nil {
 				t.Fatalf("query failed: %v", err)
 			}
@@ -114,7 +108,7 @@ func TestServerQuery_WHERE_NumericFilter_StatusGTE500(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | where status >= 500 | stats count() as count")
+		"source=idx_access | where status >= 500 | stats count() as count")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -131,7 +125,7 @@ func TestServerQuery_WHERE_CombinedFilters(t *testing.T) {
 
 	// Use chained WHERE clauses to combine filters — equivalent to AND.
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		`FROM idx_access | where level=="ERROR" | where status >= 500 | stats count() as count`)
+		`source=idx_access | where level = "ERROR" | where status >= 500 | stats count() as count`)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -149,7 +143,7 @@ func TestServerQuery_SEARCH_FullText_MatchesExpected(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		`FROM idx_access | where has(_raw, "ERROR") | stats count() as count`)
+		`search source=idx_access ERROR | stats count() as count`)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -194,16 +188,13 @@ func toFloat64(t *testing.T, field string, v interface{}) (float64, bool) {
 }
 
 // TestServerQuery_STATS_MultipleAggs_CountAvgMinMax verifies that count, avg,
-// min, and max aggregation functions all return values and that count is correct.
-//
-// Previously broken: min()/max() performed STRING comparison instead of
-// NUMERIC comparison on kv-extracted fields. Fixed via vm.CompareValues()
-// which now performs ParseFloat promotion for string-typed numeric fields.
+// min, and max aggregation functions all return values, that count is correct,
+// and that min and max compare kv-extracted fields numerically.
 func TestServerQuery_STATS_MultipleAggs_CountAvgMinMax(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | stats count() as count, avg(response_time) AS avg_rt, min(response_time) AS min_rt, max(response_time) AS max_rt")
+		"source=idx_access | stats count() as count, avg(response_time) as avg_rt, min(response_time) as min_rt, max(response_time) as max_rt")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -231,8 +222,6 @@ func TestServerQuery_STATS_MultipleAggs_CountAvgMinMax(t *testing.T) {
 		}
 	}
 
-	// Verify the invariant min <= avg <= max holds (previously broken
-	// due to string comparison; now fixed via numeric promotion).
 	minRT, minOK := toFloat64(t, "min_rt", row["min_rt"])
 	avgRT, avgOK := toFloat64(t, "avg_rt", row["avg_rt"])
 	maxRT, maxOK := toFloat64(t, "max_rt", row["max_rt"])
@@ -249,7 +238,7 @@ func TestServerQuery_STATS_GroupBy_CorrectGroups(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | stats count() as count by level | sort level")
+		"source=idx_access | stats count() as count by level | sort level")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -278,7 +267,7 @@ func TestServerQuery_STATS_DistinctCount(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | stats dc(host) AS unique_hosts")
+		"source=idx_access | stats dc(host) as unique_hosts")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -304,7 +293,7 @@ func TestServerQuery_SORT_Descending_OrderVerified(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | stats count() as count by host | sort -count")
+		"source=idx_access | stats count() as count by host | sort - count")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -318,7 +307,7 @@ func TestServerQuery_SORT_Descending_OrderVerified(t *testing.T) {
 		prev := rows[i-1]["count"].(float64)
 		curr := rows[i]["count"].(float64)
 		if prev < curr {
-			t.Errorf("sort -count violated at row %d: %v < %v", i, prev, curr)
+			t.Errorf("sort - count violated at row %d: %v < %v", i, prev, curr)
 		}
 	}
 }
@@ -327,7 +316,7 @@ func TestServerQuery_SORT_Ascending_OrderVerified(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | stats count() as count by host | sort count")
+		"source=idx_access | stats count() as count by host | sort count")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -350,7 +339,7 @@ func TestServerQuery_HEAD_LimitsResults(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | head 7")
+		"source=idx_access | head 7")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -365,7 +354,7 @@ func TestServerQuery_EVAL_ComputedField(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		`FROM idx_access | extend is_error=if(level=="ERROR","yes","no") | stats count() as count by is_error`)
+		`source=idx_access | eval is_error = if(level = "ERROR", "yes", "no") | stats count() as count by is_error`)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -393,7 +382,7 @@ func TestServerQuery_DEDUP_UniqueValues(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | dedup level")
+		"source=idx_access | dedup level")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -417,7 +406,7 @@ func TestServerQuery_RENAME_FieldRenamed(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | stats count() as count by level | rename count AS total")
+		"source=idx_access | stats count() as count by level | rename count as total")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -441,7 +430,7 @@ func TestServerQuery_FIELDS_Projection(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | keep level, host | head 5")
+		"source=idx_access | fields level, host | head 5")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -474,7 +463,7 @@ func TestServerQuery_FILLNULL_NoError(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		`FROM idx_access | head 3`)
+		`source=idx_access | fillnull with 0 in response_time | head 3`)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -488,10 +477,8 @@ func TestServerQuery_FILLNULL_NoError(t *testing.T) {
 func TestServerQuery_TOP_ReturnsTopN(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
-	// RFC-002: top N field desugars to stats count() as count by field | sort -count | head N.
-	// No percent column in lynxflow (RFC-002 §9.1).
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | top 3 level")
+		"source=idx_access | top 3 level")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -501,8 +488,6 @@ func TestServerQuery_TOP_ReturnsTopN(t *testing.T) {
 		t.Fatalf("top 3 level returned %d rows, want 3", len(rows))
 	}
 
-	// Each row should have "level" and "count" fields.
-	// NOTE: "percent" is not produced by lynxflow top (RFC-002 §9.1).
 	for i, row := range rows {
 		if _, ok := row["level"]; !ok {
 			t.Errorf("row %d missing 'level'", i)
@@ -526,7 +511,7 @@ func TestServerQuery_EmptyResult_StatsCountZero(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		`FROM idx_access | where level=="NONEXISTENT" | stats count() as count`)
+		`source=idx_access | where level = "NONEXISTENT" | stats count() as count`)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -541,7 +526,7 @@ func TestServerQuery_NonexistentIndex_CountZero(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_nonexistent_12345 | stats count() as count")
+		"source=idx_nonexistent_12345 | stats count() as count")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -556,7 +541,7 @@ func TestServerQuery_STATS_Sum(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | stats sum(bytes) AS total_bytes")
+		"source=idx_access | stats sum(bytes) as total_bytes")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -581,7 +566,7 @@ func TestServerQuery_GroupByHost_SumsTo1000(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | stats count() as count by host")
+		"source=idx_access | stats count() as count by host")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -607,7 +592,7 @@ func TestServerFormat_JSON_ValidNDJSON(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | head 10")
+		"source=idx_access | head 10")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -633,7 +618,7 @@ func TestServerFormat_JSON_AggregateResult(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | stats count() as count by level")
+		"source=idx_access | stats count() as count by level")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -657,7 +642,7 @@ func TestServerFormat_CSV_ValidRFC4180(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "csv",
-		"FROM idx_access | stats count() as count by level")
+		"source=idx_access | stats count() as count by level")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -686,7 +671,7 @@ func TestServerFormat_CSV_SpecialCharacters(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "csv",
-		"FROM idx_access | keep msg | head 5")
+		"source=idx_access | fields msg | head 5")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -706,7 +691,7 @@ func TestServerFormat_TSV_TabSeparated(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "tsv",
-		"FROM idx_access | stats count() as count by level")
+		"source=idx_access | stats count() as count by level")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -728,7 +713,7 @@ func TestServerFormat_Table_ContainsHeaders(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "table",
-		"FROM idx_access | stats count() as count by level")
+		"source=idx_access | stats count() as count by level")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -754,7 +739,7 @@ func TestServerFormat_Raw_LinesMatchCount(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "raw",
-		"FROM idx_access | head 5")
+		"source=idx_access | head 5")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -773,7 +758,7 @@ func TestServerFormat_Raw_LinesMatchCount(t *testing.T) {
 
 func TestServerFormat_ConsistentAcrossFormats(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
-	query := "FROM idx_access | stats count() as count by level"
+	query := "source=idx_access | stats count() as count by level"
 
 	// JSON.
 	jsonStdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json", query)
@@ -810,7 +795,7 @@ func TestServerFormat_ConsistentAcrossFormats(t *testing.T) {
 
 func TestServerFormat_NDJSON_EqualsJSON(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
-	query := "FROM idx_access | stats count() as count by level | sort level"
+	query := "source=idx_access | stats count() as count by level | sort level"
 
 	jsonStdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json", query)
 	if err != nil {
@@ -842,7 +827,7 @@ func TestServerIngest_FromFile_ThenQueryReturnsData(t *testing.T) {
 	}
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM cli_ingest_test | stats count() as count")
+		"source=cli_ingest_test | stats count() as count")
 	if err != nil {
 		t.Fatalf("query after ingest failed: %v", err)
 	}
@@ -864,26 +849,26 @@ func TestServerIngest_WithIndex_QueriedByIndex(t *testing.T) {
 
 	// Data should be in custom_idx.
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM custom_idx | stats count() as count")
+		"source=custom_idx | stats count() as count")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
 
 	got := jsonCount(t, stdout)
 	if got != 26 {
-		t.Errorf("FROM custom_idx count = %d, want 26", got)
+		t.Errorf("source=custom_idx count = %d, want 26", got)
 	}
 
 	// Data should NOT be in main (nothing ingested there).
 	stdout2, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM main | stats count() as count")
+		"source=main | stats count() as count")
 	if err != nil {
 		t.Fatalf("query main failed: %v", err)
 	}
 
 	gotMain := jsonCount(t, stdout2)
 	if gotMain != 0 {
-		t.Errorf("FROM main count = %d, want 0 (data should be in custom_idx only)", gotMain)
+		t.Errorf("source=main count = %d, want 0 (data should be in custom_idx only)", gotMain)
 	}
 }
 
@@ -898,7 +883,7 @@ func TestServerIngest_WithSourceMetadata(t *testing.T) {
 
 	// Verify data is queryable.
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM meta_test | stats count() as count")
+		"source=meta_test | stats count() as count")
 	if err != nil {
 		t.Fatalf("query after ingest failed: %v", err)
 	}
@@ -1030,36 +1015,38 @@ func TestServerExplain_ValidQuery(t *testing.T) {
 	baseURL := newTestServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "explain", "--format", "json",
-		`from main | where level == "error" | stats count() as count`)
+		`source=main | where level = "error" | stats count() as count`)
 	if err != nil {
 		t.Fatalf("explain failed: %v", err)
 	}
 
-	var result map[string]interface{}
+	var result struct {
+		Explain map[string]interface{} `json:"explain"`
+	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &result); err != nil {
 		t.Fatalf("parse explain JSON: %v\noutput: %q", err, stdout)
 	}
 
-	// LynxFlow explain returns is_valid (parsed is omitted for LynxFlow queries;
-	// the lynxflow_plan is a server-only field not exposed through the Go client).
-	if result["is_valid"] != true {
-		t.Errorf("explain JSON: is_valid != true, got %#v", result)
+	if result.Explain["is_valid"] != true {
+		t.Errorf("explain JSON: is_valid != true, got %#v", result.Explain)
 	}
 }
 
 func TestServerExplain_InvalidQuery(t *testing.T) {
 	baseURL := newTestServer(t)
 
-	stdout, _, _ := runCmd(t, "--server", baseURL, "explain", "--format", "json", "| where")
+	stdout, _, _ := runCmd(t, "--server", baseURL, "explain", "--format", "json", "source=main | where")
 
-	var result map[string]interface{}
+	var result struct {
+		Explain map[string]interface{} `json:"explain"`
+	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &result); err != nil {
 		t.Fatalf("parse explain JSON: %v\noutput: %q", err, stdout)
 	}
 
-	isValid, ok := result["is_valid"].(bool)
+	isValid, ok := result.Explain["is_valid"].(bool)
 	if !ok {
-		t.Fatalf("explain JSON missing 'is_valid', got keys: %v", cliMapKeys(result))
+		t.Fatalf("explain JSON missing 'is_valid', got keys: %v", cliMapKeys(result.Explain))
 	}
 	if isValid {
 		t.Error("expected is_valid=false for incomplete WHERE, got true")
@@ -1072,7 +1059,7 @@ func TestServerQuery_QuietFlag_NoStderr(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	_, stderr, err := runCmd(t, "--server", baseURL, "--quiet", "query", "--format", "json",
-		"FROM idx_access | stats count() as count")
+		"source=idx_access | stats count() as count")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -1087,7 +1074,7 @@ func TestServerQuery_FailOnEmpty_ReturnsError(t *testing.T) {
 
 	_, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
 		"--fail-on-empty",
-		`FROM idx_access | where level=="NONEXISTENT_LEVEL_XYZ"`)
+		`source=idx_access | where level = "NONEXISTENT_LEVEL_XYZ"`)
 	if err == nil {
 		t.Fatal("expected error with --fail-on-empty and zero results, got nil")
 	}
@@ -1099,7 +1086,7 @@ func TestServerQuery_OutputToFile(t *testing.T) {
 
 	_, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
 		"--file", testdataPath("logs/access.log"), "--output", outFile,
-		"| stats count() as count by level")
+		"source=main | stats count() as count by level")
 	if err != nil {
 		t.Fatalf("query with --output failed: %v", err)
 	}
@@ -1120,7 +1107,7 @@ func TestServerQuery_OutputToFile(t *testing.T) {
 func TestServerQuery_ParseError_ReturnsError(t *testing.T) {
 	baseURL := newTestServer(t)
 
-	_, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json", "| where")
+	_, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json", "source=main | where")
 	if err == nil {
 		t.Fatal("expected error for incomplete WHERE clause, got nil")
 	}
@@ -1129,7 +1116,7 @@ func TestServerQuery_ParseError_ReturnsError(t *testing.T) {
 func TestServerQuery_ConnectionRefused_ReturnsError(t *testing.T) {
 	// Port 1 is almost certainly not listening.
 	_, _, err := runCmd(t, "--server", "http://127.0.0.1:1", "query", "--format", "json",
-		"| stats count() as count")
+		"source=main | stats count() as count")
 	if err == nil {
 		t.Fatal("expected connection error, got nil")
 	}
@@ -1141,7 +1128,7 @@ func TestServerQuery_IncompleteFromTo_ReturnsError(t *testing.T) {
 	// --from without --to should fail.
 	_, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
 		"--from", "2026-01-01T00:00:00Z",
-		"| stats count() as count")
+		"source=main | stats count() as count")
 	if err == nil {
 		t.Fatal("expected error for --from without --to, got nil")
 	}
@@ -1154,7 +1141,7 @@ func TestServerQuery_BackendIndex_JSONFields(t *testing.T) {
 
 	// backend_server.log is JSON format with service, level, duration_ms fields.
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_backend | stats count() as count")
+		"source=idx_backend | stats count() as count")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -1168,10 +1155,8 @@ func TestServerQuery_BackendIndex_JSONFields(t *testing.T) {
 func TestServerQuery_NginxIndex_HasEvents(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
-	// Use stats count instead of HEAD to avoid the LimitIterator panic bug
-	// documented in TestServerQuery_HEAD_SmallIndex_Panics below.
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_nginx | stats count() as count")
+		"source=idx_nginx | stats count() as count")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -1182,16 +1167,13 @@ func TestServerQuery_NginxIndex_HasEvents(t *testing.T) {
 	}
 }
 
-// TestServerQuery_HEAD_SmallIndex_Panics verifies that HEAD N on a small index
-// works correctly after the Batch.Slice sparse-column fix.
-//
-// Previously: Batch.Slice panicked with "slice bounds out of range [:5] with capacity 1"
-// when columns had different lengths due to AddRow not padding missing fields.
-func TestServerQuery_HEAD_SmallIndex_Panics(t *testing.T) {
+// TestServerQuery_HEAD_SmallIndex verifies that HEAD N on a small index whose
+// events have sparse columns returns N rows.
+func TestServerQuery_HEAD_SmallIndex(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_nginx | head 5")
+		"source=idx_nginx | head 5")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -1207,7 +1189,7 @@ func TestServerQuery_IndexIsolation_NoLeaks(t *testing.T) {
 
 	// Query idx_access should NOT contain backend events.
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | stats count() as count")
+		"source=idx_access | stats count() as count")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -1218,13 +1200,13 @@ func TestServerQuery_IndexIsolation_NoLeaks(t *testing.T) {
 	}
 }
 
-// Group 8: SPL2 Pipeline Chaining (server mode)
+// Group 8: Pipeline Chaining (server mode)
 
 func TestServerQuery_Pipeline_WhereEvalStats(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		`FROM idx_access | where level=="ERROR" | extend slow=if(response_time>500,"slow","fast") | stats count() as count by slow`)
+		`source=idx_access | where level = "ERROR" | eval slow = if(response_time > 500, "slow", "fast") | stats count() as count by slow`)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -1248,7 +1230,7 @@ func TestServerQuery_Pipeline_SortHeadFields(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | stats count() as count by host | sort -count | head 3 | keep host, count")
+		"source=idx_access | stats count() as count by host | sort - count | head 3 | fields host, count")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -1281,7 +1263,7 @@ func TestServerQuery_Pipeline_StatsGroupByMethod(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		"FROM idx_access | stats count() as count by method | sort level")
+		"source=idx_access | stats count() as count by method | sort method")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
@@ -1319,7 +1301,7 @@ func TestServerQuery_Pipeline_SearchThenStats(t *testing.T) {
 
 	// Full-text search for "web-01" then aggregate.
 	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
-		`FROM idx_access | where has(_raw, "web-01") | stats count() as count`)
+		`search source=idx_access "web-01" | stats count() as count`)
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}

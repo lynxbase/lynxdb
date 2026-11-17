@@ -1,6 +1,7 @@
 package physical
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -177,6 +178,12 @@ type FieldEqual struct {
 // ScanHints derives storage hints from a scan for reference time now.
 func ScanHints(scan *ir.Scan, now time.Time) Hints {
 	h := Hints{Sources: scan.Sources, Columns: scan.Columns, Limit: scan.Limit, Descending: scan.Descending}
+	// A scan of several sources keeps the index column, which tells its
+	// rows apart from those of the other sources a storage engine returns.
+	if h.Columns != nil && (len(scan.Sources) > 1 || (len(scan.Sources) == 1 && scan.Sources[0].Pattern)) &&
+		!slices.Contains(h.Columns, "index") {
+		h.Columns = append(slices.Clip(h.Columns), "index")
+	}
 	h.MinTime, h.MaxTime = scan.Time.Resolve(now)
 	for _, p := range scan.Prune {
 		addPruneHint(&h, p)

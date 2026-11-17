@@ -210,7 +210,6 @@ type QueryRequest struct {
 	Suggestions *bool    `json:"suggestions,omitempty"` // false disables advisory suggestions
 	LintLimit   int      `json:"lint_limit,omitempty"`  // max lints to return; default 5
 	LintFull    bool     `json:"lint_full,omitempty"`   // true returns all advisory lints
-	Language    string   `json:"language,omitempty"`    // "lynxflow" or "spl2"; absent = auto-detect
 }
 
 // QueryResult is the polymorphic response from Query().
@@ -349,44 +348,25 @@ type ExplainResult struct {
 	Errors  []ExplainError `json:"errors"`
 }
 
-// ExplainParsed contains the parsed query analysis.
+// ExplainParsed describes a compiled query: its IR plans and scan hints.
 type ExplainParsed struct {
-	Pipeline        []ExplainStage          `json:"pipeline"`
-	ResultType      string                  `json:"result_type"`
-	EstimatedCost   string                  `json:"estimated_cost"`
-	UsesFullScan    bool                    `json:"uses_full_scan"`
-	FieldsRead      []string                `json:"fields_read"`
-	SearchTerms     []string                `json:"search_terms,omitempty"`
-	HasTimeBounds   bool                    `json:"has_time_bounds,omitempty"`
-	RangePredicates []ExplainRangePredicate `json:"range_predicates,omitempty"`
-
-	// Optimizer details (rich explain output).
-	OptimizerStats    map[string]int       `json:"optimizer_stats,omitempty"`
-	OptimizerMessages []string             `json:"optimizer_messages,omitempty"`
-	OptimizerWarnings []string             `json:"optimizer_warnings,omitempty"`
-	PhysicalPlan      *ExplainPhysicalPlan `json:"physical_plan,omitempty"`
-	ParseMS           float64              `json:"parse_ms,omitempty"`
-	OptimizeMS        float64              `json:"optimize_ms,omitempty"`
-	TotalRules        int                  `json:"total_rules,omitempty"`
-	OptimizerRules    []ExplainRuleDetail  `json:"optimizer_rules,omitempty"`
-	SourceScope       *ExplainSourceScope  `json:"source_scope,omitempty"`
+	ResultType     string              `json:"result_type"`
+	EstimatedCost  string              `json:"estimated_cost"`
+	UsesFullScan   bool                `json:"uses_full_scan"`
+	FieldsRead     []string            `json:"fields_read"`
+	SearchTerms    []string            `json:"search_terms,omitempty"`
+	HasTimeBounds  bool                `json:"has_time_bounds,omitempty"`
+	LogicalPlan    string              `json:"logical_plan"`
+	OptimizedPlan  string              `json:"optimized_plan"`
+	CompileMS      float64             `json:"compile_ms,omitempty"`
+	OptimizerRules []ExplainRuleDetail `json:"optimizer_rules,omitempty"`
+	SourceScope    *ExplainSourceScope `json:"source_scope,omitempty"`
 }
 
-// ExplainPhysicalPlan describes the runtime execution strategy.
-type ExplainPhysicalPlan struct {
-	CountStarOnly       bool   `json:"count_star_only,omitempty"`
-	PartialAgg          bool   `json:"partial_agg,omitempty"`
-	RexLiteralPreFilter bool   `json:"rex_literal_prefilter,omitempty"`
-	TopKAgg             bool   `json:"topk_agg,omitempty"`
-	TopK                int    `json:"topk,omitempty"`
-	JoinStrategy        string `json:"join_strategy,omitempty"`
-}
-
-// ExplainRuleDetail describes a single optimizer rule.
+// ExplainRuleDetail is an optimizer rule and the number of times it fired.
 type ExplainRuleDetail struct {
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Count       int    `json:"count"`
+	Name  string `json:"name"`
+	Count int    `json:"count"`
 }
 
 // ExplainSourceScope describes the resolved source scope.
@@ -397,33 +377,19 @@ type ExplainSourceScope struct {
 	TotalSourcesAvailable int      `json:"total_sources_available,omitempty"`
 }
 
-// ExplainRangePredicate describes how a range predicate is executed.
-type ExplainRangePredicate struct {
-	Field            string `json:"field"`
-	Min              string `json:"min,omitempty"`
-	Max              string `json:"max,omitempty"`
-	LoweredToBSI     bool   `json:"lowered_to_bsi,omitempty"`
-	RGFilterStrategy string `json:"rg_filter_strategy"`
-	RowVMStrategy    string `json:"row_vm_strategy"`
-}
-
-// ExplainStage is a single pipeline stage.
-type ExplainStage struct {
-	Command        string   `json:"command"`
-	Description    string   `json:"description,omitempty"`
-	FieldsAdded    []string `json:"fields_added,omitempty"`
-	FieldsRemoved  []string `json:"fields_removed,omitempty"`
-	FieldsOut      []string `json:"fields_out,omitempty"`
-	FieldsOptional []string `json:"fields_optional,omitempty"`
-	FieldsUnknown  bool     `json:"fields_unknown,omitempty"`
-}
-
-// ExplainError is a parse error returned by Explain().
+// ExplainError is a compile error returned by Explain().
 type ExplainError struct {
-	Position   int    `json:"position,omitempty"`
-	Length     int    `json:"length,omitempty"`
-	Message    string `json:"message"`
-	Suggestion string `json:"suggestion,omitempty"`
+	Kind       string         `json:"kind,omitempty"`
+	Position   *ErrorPosition `json:"position,omitempty"`
+	Expected   []string       `json:"expected,omitempty"`
+	Message    string         `json:"message"`
+	Suggestion string         `json:"suggestion,omitempty"`
+}
+
+// ErrorPosition is the line and column of a compile error, both 1-based.
+type ErrorPosition struct {
+	Line   int `json:"line"`
+	Column int `json:"column"`
 }
 
 // IngestEvent is a single structured event payload for POST /api/v1/ingest.

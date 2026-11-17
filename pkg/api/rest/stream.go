@@ -21,7 +21,6 @@ type queryStreamRequest struct {
 	Format   *string  `json:"format"`
 	Wait     *float64 `json:"wait"`
 	Profile  *string  `json:"profile"`
-	Language string   `json:"language,omitempty"`
 }
 
 func (r queryStreamRequest) toQueryRequest() QueryRequest {
@@ -98,15 +97,7 @@ func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if msg := validateExplicitLanguage(rawReq.Language); msg != "" {
-		respondError(w, ErrCodeValidationError, http.StatusBadRequest, msg,
-			WithSuggestion(`set language="lynxflow" or omit it; SPL2 was removed — see https://lynxdb.dev/docs/migration`))
-		return
-	}
-
-	// Post-RFC-002: all queries route through LynxFlow.
-	lang := detectQueryLanguage(query, rawReq.Language)
-	s.executeLynxFlowStream(w, r, query, req, lang)
+	s.runQueryStream(w, r, query, req)
 }
 
 // rowToInterface converts an event.Value map to a plain map for JSON serialization.

@@ -6,7 +6,7 @@ import (
 
 	enginepipeline "github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/logical"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/server"
 	"github.com/lynxbase/lynxdb/pkg/storage"
@@ -17,7 +17,7 @@ type QueryEngine interface {
 	SubmitQuery(ctx context.Context, params server.QueryParams) (*server.SearchJob, error)
 	ActiveJobCount() int64
 	MaxConcurrent() int32
-	BuildStreamingPipeline(ctx context.Context, prog *logical.Plan,
+	BuildStreamingPipeline(ctx context.Context, prog *ir.Plan,
 		hints *model.QueryHints,
 		externalTB *model.TimeBounds) (enginepipeline.Iterator, server.StreamingStats, error)
 	BuildEventStoreFromHints(hints *model.QueryHints) map[string][]*event.Event
@@ -55,7 +55,7 @@ type EventBusProvider interface {
 // TailEngine is the subset of server.Engine needed by the new TailService.
 type TailEngine interface {
 	EventBusProvider
-	BuildStreamingPipeline(ctx context.Context, prog *logical.Plan,
+	BuildStreamingPipeline(ctx context.Context, prog *ir.Plan,
 		hints *model.QueryHints,
 		externalTB *model.TimeBounds) (enginepipeline.Iterator, server.StreamingStats, error)
 }

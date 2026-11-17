@@ -7,26 +7,23 @@ import (
 	"net/http"
 	"sync"
 
-	"github.com/lynxbase/lynxdb/pkg/lynxflow/registry"
+	"github.com/lynxbase/lynxdb/pkg/ir"
+	"github.com/lynxbase/lynxdb/pkg/ppl"
 )
 
-// catalogCache holds the pre-serialized catalog JSON and its ETag.
-// Computed once on first request; immutable thereafter (the registry is frozen).
+// The catalog is built once from the PPL catalogs, which are fixed at
+// compile time, so it carries a strong ETag.
 var catalogCache struct {
 	once sync.Once
 	body []byte
 	etag string
 }
 
-// handleCatalog serves GET /api/v1/catalog: the full LynxFlow v2 language
-// surface from pkg/lynxflow/registry. The response is cache-friendly with an
-// ETag header (the registry is frozen at compile time).
 func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 	catalogCache.once.Do(func() {
 		catalogCache.body, catalogCache.etag = buildCatalogResponse()
 	})
 
-	// ETag-based conditional GET.
 	if match := r.Header.Get("If-None-Match"); match == catalogCache.etag {
 		w.WriteHeader(http.StatusNotModified)
 		return
@@ -38,98 +35,57 @@ func (s *Server) handleCatalog(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(catalogCache.body)
 }
 
-// buildCatalogResponse serializes the registry into the catalog JSON shape
-// and computes a content-based ETag.
+type catalogCommand struct {
+	Name    string `json:"name"`
+	Support string `json:"support"`
+	Notes   string `json:"notes,omitempty"`
+}
+
+type catalogFunction struct {
+	Name        string `json:"name"`
+	Kind        string `json:"kind"`
+	Category    string `json:"category,omitempty"`
+	Support     string `json:"support"`
+	Lowering    string `json:"lowering,omitempty"`
+	Notes       string `json:"notes,omitempty"`
+	Doc         string `json:"doc,omitempty"`
+	Unsupported string `json:"unsupported,omitempty"`
+}
+
+type catalog struct {
+	Language  string            `json:"language"`
+	Commands  []catalogCommand  `json:"commands"`
+	Functions []catalogFunction `json:"functions"`
+}
+
 func buildCatalogResponse() ([]byte, string) {
-	type catalogOperator struct {
-		Name        string                `json:"name"`
-		Class       string                `json:"class"`
-		Streaming   string                `json:"streaming"`
-		Positionals []registry.Positional `json:"positionals,omitempty"`
-		Options     []registry.Option     `json:"options,omitempty"`
-		DesugarsTo  string                `json:"desugars_to,omitempty"`
-		Doc         string                `json:"doc"`
-		Examples    []string              `json:"examples,omitempty"`
+	c := catalog{Language: "ppl"}
+	for _, cmd := range ppl.Commands() {
+		c.Commands = append(c.Commands, catalogCommand{Name: cmd.Name, Support: string(cmd.Support), Notes: cmd.Notes})
 	}
-
-	type catalogFunction struct {
-		Name          string           `json:"name"`
-		Category      string           `json:"category"`
-		Params        []registry.Param `json:"params,omitempty"`
-		Result        string           `json:"result"`
-		Fallibility   string           `json:"fallibility"`
-		StrictVariant bool             `json:"strict_variant,omitempty"`
-		Doc           string           `json:"doc"`
-	}
-
-	type catalogAggregate struct {
-		Name          string           `json:"name"`
-		Params        []registry.Param `json:"params,omitempty"`
-		SupportsWhere bool             `json:"supports_where,omitempty"`
-		WindowOnly    bool             `json:"window_only,omitempty"`
-		Result        string           `json:"result"`
-		Doc           string           `json:"doc"`
-	}
-
-	type catalog struct {
-		Operators    []catalogOperator  `json:"operators"`
-		Functions    []catalogFunction  `json:"functions"`
-		Aggregates   []catalogAggregate `json:"aggregates"`
-		ParseFormats []string           `json:"parse_formats"`
-	}
-
-	ops := registry.Operators()
-	catOps := make([]catalogOperator, len(ops))
-	for i, op := range ops {
-		catOps[i] = catalogOperator{
-			Name:        op.Name,
-			Class:       string(op.Class),
-			Streaming:   string(op.Streaming),
-			Positionals: op.Positionals,
-			Options:     op.Options,
-			DesugarsTo:  op.DesugarsTo,
-			Doc:         op.Doc,
-			Examples:    op.Examples,
+	for _, f := range ppl.ScalarFunctions() {
+		cf := catalogFunction{Name: f.Name, Kind: "scalar", Lowering: f.Lowering, Unsupported: f.Unsupported, Support: "full"}
+		if f.Unsupported != "" {
+			cf.Support = "unsupported"
 		}
-	}
-
-	fns := registry.Functions()
-	catFns := make([]catalogFunction, len(fns))
-	for i, fn := range fns {
-		catFns[i] = catalogFunction{
-			Name:          fn.Name,
-			Category:      fn.Category,
-			Params:        fn.Params,
-			Result:        string(fn.Result),
-			Fallibility:   string(fn.Fallibility),
-			StrictVariant: fn.StrictVariant,
-			Doc:           fn.Doc,
+		if fn, ok := ir.LookupFunc(f.IR); ok {
+			cf.Category, cf.Doc = fn.Category, fn.Doc
 		}
+		c.Functions = append(c.Functions, cf)
 	}
-
-	aggs := registry.Aggregates()
-	catAggs := make([]catalogAggregate, len(aggs))
-	for i, ag := range aggs {
-		catAggs[i] = catalogAggregate{
-			Name:          ag.Name,
-			Params:        ag.Params,
-			SupportsWhere: ag.SupportsWhere,
-			WindowOnly:    ag.WindowOnly,
-			Result:        string(ag.Result),
-			Doc:           ag.Doc,
+	for _, a := range ppl.AggregateFunctions() {
+		cf := catalogFunction{Name: a.Name, Kind: "aggregate", Notes: a.Note, Unsupported: a.Unsupported, Support: "full"}
+		if a.Unsupported != "" {
+			cf.Support = "unsupported"
 		}
+		if fn, ok := ir.LookupFunc(a.IR); ok {
+			cf.Category, cf.Doc = fn.Category, fn.Doc
+		}
+		c.Functions = append(c.Functions, cf)
 	}
-
-	c := catalog{
-		Operators:    catOps,
-		Functions:    catFns,
-		Aggregates:   catAggs,
-		ParseFormats: registry.ParseFormats(),
+	body, err := json.Marshal(map[string]interface{}{"data": c})
+	if err != nil {
+		body = []byte(`{"data":{}}`)
 	}
-
-	body, _ := json.Marshal(c)
-	hash := sha256.Sum256(body)
-	etag := fmt.Sprintf(`"%x"`, hash[:8])
-
-	return body, etag
+	return body, fmt.Sprintf(`"%x"`, sha256.Sum256(body))
 }

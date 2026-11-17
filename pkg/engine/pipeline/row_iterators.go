@@ -1,8 +1,8 @@
 package pipeline
 
-// Row-level streaming iterators (filter, project, tail) consumed by the
-// LynxFlow physical builder, plus batch/row collection helpers and the
-// IndexStore abstractions used by the server execution paths.
+// Row-level streaming iterators (filter, project, tail) used by the physical
+// planner, plus batch/row collection helpers and the IndexStore abstractions
+// used by the server execution paths.
 
 import (
 	"context"

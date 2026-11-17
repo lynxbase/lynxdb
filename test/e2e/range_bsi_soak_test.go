@@ -359,10 +359,10 @@ func runRangeBSISoakIngest(ctx context.Context, c *client.Client, cfg rangeBSISo
 
 func runRangeBSISoakQueries(ctx context.Context, c *client.Client, cfg rangeBSISoakConfig, errs *rangeBSISoakErrors) {
 	queries := []string{
-		`FROM range_bsi_soak | where status >= 500 AND status <= 599 | stats count`,
-		`FROM range_bsi_soak | where duration_ms between 100 and 1000 | stats count`,
-		`FROM range_bsi_soak | where bytes >= 4096 | stats count`,
-		`FROM range_bsi_soak | where tenant_id >= 10 AND tenant_id < 20 | stats count`,
+		`source=range_bsi_soak | where status >= 500 AND status <= 599 | stats count()`,
+		`source=range_bsi_soak | where duration_ms between 100 and 1000 | stats count()`,
+		`source=range_bsi_soak | where bytes >= 4096 | stats count()`,
+		`source=range_bsi_soak | where tenant_id >= 10 AND tenant_id < 20 | stats count()`,
 	}
 	ticker := time.NewTicker(cfg.queryInterval)
 	defer ticker.Stop()
@@ -406,7 +406,7 @@ func flushRangeBSISoakByQuery(t *testing.T, c *client.Client) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	result, err := c.QuerySync(ctx, `FROM range_bsi_soak | stats count`, "", "")
+	result, err := c.QuerySync(ctx, `source=range_bsi_soak | stats count()`, "", "")
 	if err != nil {
 		t.Fatalf("flush query: %v", err)
 	}
@@ -524,7 +524,7 @@ func makeRangeBSIPartEvents(start int64, n int) []*event.Event {
 func queryRangeBSIMetaStats(t *testing.T, baseURL string) map[string]interface{} {
 	t.Helper()
 	body, err := json.Marshal(map[string]interface{}{
-		"q": `FROM range_bsi_soak | where status >= 500 AND status <= 599 | table status`,
+		"q": `source=range_bsi_soak | where status >= 500 AND status <= 599 | table status`,
 	})
 	if err != nil {
 		t.Fatalf("marshal query: %v", err)

@@ -53,7 +53,7 @@ var (
 var rootCmd = &cobra.Command{
 	Use:           "lynxdb",
 	Short:         "LynxDB - log analytics in a single binary",
-	Long:          `LynxDB is a columnar log storage and search engine with LynxFlow query language.`,
+	Long:          `LynxDB is a columnar log storage and search engine queried with PPL.`,
 	RunE:          runRootCommand,
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -150,7 +150,7 @@ func runWelcome(_ *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stdout, "\n  %s - log analytics in a single binary\n\n",
 		ui.Stdout.Bold.Render(fmt.Sprintf("LynxDB %s", buildinfo.Version)))
 	fmt.Fprint(os.Stdout, `  Quick start:
-    lynxdb query --file app.log 'level=error'    Query a local file
+    lynxdb query --file app.log 'search source=main error'    Query a local file
     lynxdb server                                Start server on :3100
 
   Run 'lynxdb --help' for all commands.
@@ -179,15 +179,14 @@ func runRootCommand(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 && !isKnownSubcommand(cmd, args[0]) {
 		query := strings.Join(args, " ")
 		if isStdinPiped() {
-			return runQueryStdin(query, "", "", "", false, "", "", false, false, "")
+			return runQueryStdin(query, "", "", "", false, "", "", false)
 		}
 
 		return fmt.Errorf("bare query requires piped stdin. Use: cat file | lynxdb '%s'", query)
 	}
 
 	if isStdinPiped() {
-		// Bare pipe mode: cat file | lynxdb → auto-detect and show first 10 events.
-		return runQueryStdin("| take 10", "", "", "", false, "", "", false, false, "")
+		return runQueryStdin("source=main | head 10", "", "", "", false, "", "", false)
 	}
 
 	return runWelcome(cmd, args)

@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,7 +21,7 @@ func TestIntegration_QueryStats_RangeBSICounters_ExposedInMetaStats(t *testing.T
 	ingestRangeBSIRestEvents(t, srv, 1024)
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": `FROM main | where status >= 500 AND status <= 599 | keep status`,
+		"q": rangeBSIQuery,
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -35,7 +38,6 @@ func TestIntegration_QueryStats_RangeBSICounters_ExposedInMetaStats(t *testing.T
 		t.Fatalf("Decode response: %v", err)
 	}
 
-	// Verify meta.took_ms exists (LynxFlow response shape).
 	meta, ok := envelope["meta"].(map[string]interface{})
 	if !ok {
 		t.Fatalf("missing meta in response: %#v", envelope)
@@ -51,16 +53,13 @@ func TestIntegration_QueryStats_RangeBSICounters_ExposedInMetaStats(t *testing.T
 	}
 }
 
-func TestIntegration_QueryExplainAnalyze_RangePredicateReportsBSIStrategy(t *testing.T) {
-	// Post-RFC-002: the LynxFlow explain endpoint does not yet expose
-	// per-predicate BSI strategy details. Verify the explain returns a valid
-	// plan with the range predicate visible.
+func TestIntegration_QueryExplain_RangePredicateInPlan(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 	ingestRangeBSIRestEvents(t, srv, 1024)
 
 	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query/explain?q=%s", srv.Addr(),
-		"FROM+main+%7C+where+status+%3E%3D+500+AND+status+%3C%3D+599+%7C+keep+status"))
+		url.QueryEscape(rangeBSIQuery)))
 	if err != nil {
 		t.Fatalf("GET explain: %v", err)
 	}
@@ -81,28 +80,21 @@ func TestIntegration_QueryExplainAnalyze_RangePredicateReportsBSIStrategy(t *tes
 	if data["is_valid"] != true {
 		t.Fatalf("is_valid = %v, want true", data["is_valid"])
 	}
-	plan, _ := data["lynxflow_plan"].(string)
-	if plan == "" {
-		t.Fatalf("missing lynxflow_plan in explain response")
+	parsed, ok := data["parsed"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing parsed: %#v", data)
 	}
-	// The plan should mention the status field predicate.
-	if !containsString(plan, "status") {
-		t.Fatalf("plan missing 'status' reference: %s", plan)
+	plan, _ := parsed["optimized_plan"].(string)
+	if !strings.Contains(plan, "status") {
+		t.Fatalf("optimized plan missing status predicate: %s", plan)
+	}
+	fieldsRead, _ := parsed["fields_read"].([]interface{})
+	if !slices.Contains(fieldsRead, interface{}("status")) {
+		t.Fatalf("fields_read = %v, want status", fieldsRead)
 	}
 }
 
-func containsString(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsSubstring(s, substr))
-}
-
-func containsSubstring(s, sub string) bool {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
-}
+const rangeBSIQuery = `source=main | where status >= 500 and status <= 599 | fields status`
 
 func ingestRangeBSIRestEvents(t *testing.T, srv *Server, n int) {
 	t.Helper()

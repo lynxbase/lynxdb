@@ -60,7 +60,7 @@ func resetAllFlags(t *testing.T) {
 			f.Changed = false
 			_ = f.Value.Set(f.DefValue)
 		})
-		// Also reset nested subcommands (e.g., mv create, config init).
+		// Also reset nested subcommands.
 		for _, nested := range sub.Commands() {
 			nested.Flags().VisitAll(func(f *pflag.Flag) {
 				f.Changed = false
@@ -215,106 +215,6 @@ func newTestServer(t *testing.T) string {
 	})
 
 	return baseURL
-}
-
-// newTestServerWithDisk starts a disk-backed rest.Server using t.TempDir() and
-// returns the base URL. Required for features that need persistence (e.g., materialized views).
-func newTestServerWithDisk(t *testing.T) string {
-	t.Helper()
-
-	dataDir, err := os.MkdirTemp("", "lynxdb-test-*")
-	if err != nil {
-		t.Fatalf("create temp data dir: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := removeAllWithRetry(dataDir, 2*time.Second); err != nil {
-			t.Fatalf("remove temp data dir %s: %v", dataDir, err)
-		}
-	})
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-
-	storageCfg := config.DefaultConfig().Storage
-	storageCfg.CompactionInterval = 1 * time.Hour
-	storageCfg.TieringInterval = 1 * time.Hour
-
-	srv, err := rest.NewServer(rest.Config{
-		Addr:    "127.0.0.1:0",
-		DataDir: dataDir,
-		Storage: storageCfg,
-		Logger:  logger,
-	})
-	if err != nil {
-		t.Fatalf("NewServer (disk): %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	startDone := make(chan struct{})
-
-	go func() {
-		defer close(startDone)
-		if srvErr := srv.Start(ctx); srvErr != nil {
-			if ctx.Err() == nil {
-				t.Logf("server error: %v", srvErr)
-			}
-		}
-	}()
-
-	srv.WaitReady()
-
-	baseURL := fmt.Sprintf("http://%s", srv.Addr())
-
-	healthCtx, healthCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer healthCancel()
-
-	for {
-		req, _ := http.NewRequestWithContext(healthCtx, http.MethodGet, baseURL+"/health", http.NoBody)
-		resp, reqErr := http.DefaultClient.Do(req)
-		if reqErr == nil {
-			resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				break
-			}
-		}
-
-		if healthCtx.Err() != nil {
-			t.Fatalf("server did not become healthy within 10s")
-		}
-
-		runtime.Gosched()
-	}
-
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case <-startDone:
-		case <-time.After(30 * time.Second):
-			t.Fatal("server did not shut down within 30s")
-		}
-	})
-
-	return baseURL
-}
-
-func removeAllWithRetry(path string, maxWait time.Duration) error {
-	deadline := time.Now().Add(maxWait)
-	var lastErr error
-
-	for {
-		if err := os.RemoveAll(path); err != nil {
-			lastErr = err
-		} else if _, err := os.Stat(path); os.IsNotExist(err) {
-			return nil
-		} else if err != nil {
-			lastErr = err
-		} else {
-			lastErr = fmt.Errorf("path still exists")
-		}
-
-		if time.Now().After(deadline) {
-			return lastErr
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
 }
 
 // ingestTestData reads a file and POSTs its content to the server's raw ingest

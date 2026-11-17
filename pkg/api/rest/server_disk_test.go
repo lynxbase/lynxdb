@@ -129,7 +129,7 @@ func TestServer_DiskFlushAndRecover(t *testing.T) {
 	}
 
 	// Query the recovered data.
-	resultCount := searchAndCount(t, srv2, `FROM main | head 10`)
+	resultCount := searchAndCount(t, srv2, `source=main | head 10`)
 	if resultCount != 10 {
 		t.Errorf("result_count: got %d, want 10", resultCount)
 	}
@@ -166,7 +166,7 @@ func TestServer_DiskMode_IngestAndQuery(t *testing.T) {
 	}
 
 	// Query the data.
-	resultCount := searchAndCount(t, srv, `FROM main | stats count() by host`)
+	resultCount := searchAndCount(t, srv, `source=main | stats count() by host`)
 	if resultCount != 3 {
 		t.Errorf("result_count: got %d, want 3 (one per host)", resultCount)
 	}
@@ -205,7 +205,7 @@ func TestServer_BloomFilterSkip(t *testing.T) {
 	}
 
 	// Search for a term that exists.
-	resultCount := searchAndCount(t, srv, `FROM main | where has(_raw, "hello")`)
+	resultCount := searchAndCount(t, srv, `search source=main hello`)
 	if resultCount != 50 {
 		t.Errorf("search 'hello': got %d results, want 50", resultCount)
 	}
@@ -362,7 +362,7 @@ func TestServer_FlushThenSearch(t *testing.T) {
 	}
 
 	// Search AFTER flush — results should come from segments.
-	postFlushCount := searchAndCount(t, srv, fmt.Sprintf(`FROM main | where has(_raw, %q)`, uniqueTerm))
+	postFlushCount := searchAndCount(t, srv, "search source=main "+uniqueTerm)
 	if postFlushCount != matchCount {
 		t.Fatalf("post-flush: got %d results, want %d", postFlushCount, matchCount)
 	}
@@ -382,7 +382,6 @@ func searchAndCount(t *testing.T, srv *Server, query string) int {
 	json.NewDecoder(resp.Body).Decode(&jobResp)
 	resp.Body.Close()
 
-	// LynxFlow path returns 200 with immediate results.
 	if resp.StatusCode == http.StatusOK {
 		data, ok := jobResp["data"].(map[string]interface{})
 		if !ok {
@@ -488,7 +487,7 @@ func TestServer_MetricsPopulated(t *testing.T) {
 
 	// Query to trigger segment read metrics.
 	// Use stats count by host to avoid countStarOnly metadata-only optimization.
-	_ = searchAndCount(t, srv, `FROM main | stats count() by host`)
+	_ = searchAndCount(t, srv, `source=main | stats count() by host`)
 
 	resp, err = http.Get(fmt.Sprintf("http://%s/api/v1/metrics", srv.Addr()))
 	if err != nil {

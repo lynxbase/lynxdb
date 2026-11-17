@@ -27,7 +27,7 @@ func TestEphemeralQueryNonDefaultIndexSearchesParsedFields(t *testing.T) {
 	}
 
 	result, _, err := eng.Query(context.Background(),
-		`FROM security_logs | where CommandLine == "whoami"`,
+		`source=security_logs | where CommandLine = "whoami"`,
 		QueryOpts{},
 	)
 	if err != nil {

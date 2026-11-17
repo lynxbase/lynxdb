@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lynxbase/lynxdb/pkg/logical"
-	"github.com/lynxbase/lynxdb/pkg/logical/opt"
+	"github.com/lynxbase/lynxdb/pkg/ir"
+	"github.com/lynxbase/lynxdb/pkg/ir/opt"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment/index"
@@ -542,17 +542,16 @@ type SourcesResult struct {
 type ResultType string
 
 const (
-	ResultTypeEvents      ResultType = "events"
-	ResultTypeAggregate   ResultType = "aggregate"
-	ResultTypeTimechart   ResultType = "timechart"
-	ResultTypeGlimpse     ResultType = "schema"
-	ResultTypeViewCreated ResultType = "view_created"
+	ResultTypeEvents    ResultType = "events"
+	ResultTypeAggregate ResultType = "aggregate"
+	ResultTypeTimechart ResultType = "timechart"
+	ResultTypeGlimpse   ResultType = "schema"
 )
 
 // QueryParams holds the parameters needed to submit a query.
 type QueryParams struct {
 	Query              string
-	Program            *logical.Plan
+	Plan               *ir.Plan
 	Hints              *model.QueryHints // pre-extracted by planner; avoids duplicate extraction
 	ExternalTimeBounds *model.TimeBounds
 	SkipResultCache    bool

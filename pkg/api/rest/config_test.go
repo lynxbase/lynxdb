@@ -215,7 +215,7 @@ func TestReloadConfigAppliesQueryMaxLength(t *testing.T) {
 	}
 
 	body, _ := json.Marshal(map[string]interface{}{
-		"q": "FROM main | head 1",
+		"q": "source=main | head 1",
 	})
 	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
 	if err != nil {

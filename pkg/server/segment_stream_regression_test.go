@@ -71,7 +71,7 @@ func TestStreamingPipelineReadsFlushedSegments(t *testing.T) {
 		t.Fatalf("segment count after flush = 0, want > 0")
 	}
 
-	snap := submitAndWait(t, e, "from main | where level == \"error\"")
+	snap := submitAndWait(t, e, "source=main | where level = \"error\"")
 	if snap.Status != JobStatusDone {
 		t.Fatalf("query status = %s, error=%s", snap.Status, snap.Error)
 	}
@@ -83,7 +83,7 @@ func TestStreamingPipelineReadsFlushedSegments(t *testing.T) {
 	}
 
 	// Aggregation over segment-resident data must see every event too.
-	aggSnap := submitAndWait(t, e, "from main | stats count() as c")
+	aggSnap := submitAndWait(t, e, "source=main | stats count() as c")
 	if aggSnap.Status != JobStatusDone {
 		t.Fatalf("agg query status = %s, error=%s", aggSnap.Status, aggSnap.Error)
 	}

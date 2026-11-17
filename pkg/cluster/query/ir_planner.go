@@ -1,354 +1,204 @@
 package query
 
 import (
-	"fmt"
-	"strings"
+	"errors"
+	"slices"
 
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
-	"github.com/lynxbase/lynxdb/pkg/logical"
-	"github.com/lynxbase/lynxdb/pkg/lynxflow/ast"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 )
 
-// IRDistributedPlan describes how a LynxFlow query is split between shards
-// and coordinator using the logical IR.
+// ErrNotDistributable reports a plan that is not a single chain of
+// operators over one scan, which the coordinator cannot split.
+var ErrNotDistributable = errors.New("cluster query: only a single pipeline over one scan runs distributed; joins, unions and subqueries do not")
+
+// IRDistributedPlan describes how a plan is split between shards and the
+// coordinator. Shards compile the same query text and derive the same split,
+// so only the text travels to them.
 type IRDistributedPlan struct {
-	// ShardQuery is the LynxFlow text to execute on each shard.
-	ShardQuery string
-	// ShardNodes are the logical nodes pushed to shards (pipeline order).
-	ShardNodes []logical.Node
-	// CoordNodes are the logical nodes executed on the coordinator after merge.
-	CoordNodes []logical.Node
-	// Strategy determines how shard results are combined.
-	Strategy MergeStrategy
-	// PartialAggSpec describes the partial aggregation (non-nil for MergePartialAgg/MergeTopK).
+	// ShardPlan is the row-local prefix every shard executes.
+	ShardPlan *ir.Plan
+	// CoordNodes are the operators the coordinator applies, in pipeline
+	// order, to the merged shard rows.
+	CoordNodes []ir.Node
+	Strategy   MergeStrategy
+	// PartialAggSpec describes the aggregation shards compute as mergeable
+	// states for MergePartialAgg and MergeTopK.
 	PartialAggSpec *pipeline.PartialAggSpec
-	// TopK is the number of top results to keep (only for MergeTopK).
-	TopK int
-	// TopKSortFields are the sort fields for TopK selection.
+	TopK           int
 	TopKSortFields []pipeline.SortField
-	// SplitIndex is the position in the linearized node list where the split occurs.
+	// SplitIndex is the number of chain operators executed on shards.
 	SplitIndex int
-	// JoinStrategy describes how a distributed join is executed (nil if no join).
-	JoinStrategy *JoinStrategy
 }
 
-// PlanDistributedQueryIR splits a logical plan into shard-level and
-// coordinator-level nodes. It mirrors the semantics of PlanDistributedQuery
-// for the SPL2 path but operates on logical.Node types.
-func PlanDistributedQueryIR(plan *logical.Plan) (*IRDistributedPlan, error) {
+// PlanDistributedQueryIR splits a plan into a shard prefix and coordinator
+// operators.
+func PlanDistributedQueryIR(plan *ir.Plan) (*IRDistributedPlan, error) {
 	if plan == nil || plan.Root == nil {
 		return &IRDistributedPlan{Strategy: MergeConcat}, nil
 	}
-
-	nodes := linearizeIR(plan.Root)
-	if len(nodes) == 0 {
-		return &IRDistributedPlan{Strategy: MergeConcat}, nil
+	nodes, err := linearizeIR(plan.Root)
+	if err != nil {
+		return nil, err
 	}
-
-	splitIdx := findSplitPointIR(nodes)
-
+	split := 1
+	for split < len(nodes) && isRowLocal(nodes[split]) {
+		split++
+	}
 	result := &IRDistributedPlan{
-		SplitIndex: splitIdx,
+		ShardPlan:  &ir.Plan{Root: nodes[split-1]},
+		CoordNodes: nodes[split:],
+		Strategy:   MergeConcat,
+		SplitIndex: split,
 	}
-
-	if splitIdx == 0 {
-		// No pushable nodes -- stream all rows, run full pipeline on coordinator.
-		result.Strategy = MergeConcat
-		result.CoordNodes = nodes
-		result.ShardQuery = renderShardQueryIR(plan, nil)
+	if len(result.CoordNodes) == 0 {
 		return result, nil
 	}
-
-	result.ShardNodes = nodes[:splitIdx]
-	result.CoordNodes = nodes[splitIdx:]
-
-	// Check if the last shard node is Aggregate -- use partial aggregation.
-	lastShard := result.ShardNodes[len(result.ShardNodes)-1]
-	if agg, ok := lastShard.(*logical.Aggregate); ok {
-		spec, err := extractPartialAggSpecFromAggregate(agg)
-		if err != nil {
-			return nil, err
-		}
-		if spec != nil && allPushable(spec) {
-			result.PartialAggSpec = spec
-			result.Strategy = MergePartialAgg
-
-			// Check for TopK pattern: Aggregate followed by TopK node.
-			if topK, sortFields := detectTopKIR(result.CoordNodes); topK > 0 {
-				result.Strategy = MergeTopK
-				result.TopK = topK
-				result.TopKSortFields = sortFields
-				// Remove the TopK node from coord commands since TopK merge handles it.
-				result.CoordNodes = result.CoordNodes[1:]
-			} else if topK, sortFields := detectSortHeadIR(result.CoordNodes); topK > 0 {
-				// Also check for Sort + Limit (head) pattern.
-				result.Strategy = MergeTopK
-				result.TopK = topK
-				result.TopKSortFields = sortFields
-				result.CoordNodes = result.CoordNodes[2:]
-			}
-		} else {
-			result.Strategy = MergeConcat
-		}
-	} else if _, ok := lastShard.(*logical.TopK); ok {
-		// TopK itself is not pushable in the split (handled above).
-		result.Strategy = MergeConcat
-	} else {
-		result.Strategy = MergeConcat
+	agg, ok := result.CoordNodes[0].(*ir.Aggregate)
+	if !ok {
+		return result, nil
 	}
-
-	result.ShardQuery = renderShardQueryIR(plan, result.ShardNodes)
-
-	// Detect join strategy for observability and execution planning.
-	// Join nodes are always coordinator-side (isPushableIR returns false).
-	for _, cn := range result.CoordNodes {
-		if join, ok := cn.(*logical.Join); ok {
-			result.JoinStrategy = PlanDistributedJoin(join)
-			break // only one join per pipeline
+	spec := partialAggSpec(agg)
+	if spec == nil {
+		return result, nil
+	}
+	result.PartialAggSpec = spec
+	result.Strategy = MergePartialAgg
+	rest := result.CoordNodes[1:]
+	result.CoordNodes = rest
+	if len(rest) == 0 {
+		return result, nil
+	}
+	// A column projection between the aggregate and a TopN commutes with
+	// the TopN when it keeps the sort columns.
+	var lead []ir.Node
+	if len(rest) > 1 {
+		if p, ok := rest[0].(*ir.Project); ok && !p.Drop {
+			lead, rest = rest[:1], rest[1:]
 		}
 	}
-
+	if top, ok := rest[0].(*ir.TopN); ok && top.Offset == 0 {
+		if fields, ok := sortFields(top.Keys); ok && keepsColumns(lead, fields) {
+			result.Strategy = MergeTopK
+			result.TopK = int(top.Count)
+			result.TopKSortFields = fields
+			result.CoordNodes = append(append([]ir.Node(nil), lead...), rest[1:]...)
+		}
+	}
 	return result, nil
 }
 
-// linearizeIR walks from root to leaf and returns nodes in pipeline order
-// (leaf first). Same as logical.linearize but exported for this package.
-func linearizeIR(root logical.Node) []logical.Node {
-	if root == nil {
-		return nil
-	}
-	var chain []logical.Node
-	cur := root
-	for cur != nil {
-		chain = append(chain, cur)
-		children := cur.Children()
-		if len(children) == 0 {
-			break
-		}
-		cur = children[0]
-	}
-	// Reverse to get pipeline order (leaf = Scan first).
-	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
-		chain[i], chain[j] = chain[j], chain[i]
-	}
-	return chain
-}
-
-// findSplitPointIR walks nodes forward and returns the index of the first
-// non-pushable node. If all nodes are pushable, returns len(nodes).
-func findSplitPointIR(nodes []logical.Node) int {
-	for i, n := range nodes {
-		if !isPushableIR(n) {
-			return i
-		}
-	}
-	return len(nodes)
-}
-
-// isPushableIR returns true if a logical node can be executed on individual
-// shards. This mirrors the SPL2 isPushable decisions exactly:
-//
-//	Pushable: Scan, Filter, Extend, Parse, Project(keep-mode), Aggregate, Top(implicit), Rare(implicit)
-//	Not pushable: Sort, TopK, Limit, Dedup, Join, Union, StreamStats, EventStats, etc.
-func isPushableIR(n logical.Node) bool {
-	switch n := n.(type) {
-	case *logical.Scan:
-		return true
-	case *logical.Filter:
-		return true
-	case *logical.Extend:
-		return true
-	case *logical.Parse:
-		return true
-	case *logical.Aggregate:
-		// Plain stats is pushable. Eventstats/streamstats are not.
-		return n.Window == nil
-	case *logical.Project:
-		// Only keep-mode is safe to push. Drop-mode (has any ProjectDrop)
-		// could remove fields needed by coordinator. Check: if all cols are
-		// keeps or renames, it is safe.
-		for _, c := range n.Cols {
-			if c.Action == logical.ProjectDrop {
+func keepsColumns(lead []ir.Node, fields []pipeline.SortField) bool {
+	for _, n := range lead {
+		p := n.(*ir.Project)
+		for _, f := range fields {
+			if !slices.Contains(p.Names, f.Name) {
 				return false
 			}
 		}
-		return true
-	default:
-		return false
 	}
-}
-
-// extractPartialAggSpecFromAggregate builds a PartialAggSpec from a logical
-// Aggregate node. This mirrors extractPartialAggSpecFromStats for SPL2.
-func extractPartialAggSpecFromAggregate(agg *logical.Aggregate) (*pipeline.PartialAggSpec, error) {
-	groupBy := make([]string, len(agg.Keys))
-	for i, k := range agg.Keys {
-		groupBy[i] = k.Name
-	}
-
-	funcs := make([]pipeline.PartialAggFunc, len(agg.Aggs))
-	for i, a := range agg.Aggs {
-		funcName := ""
-		field := ""
-		weightField := ""
-
-		if call, ok := a.Func.(*ast.Call); ok {
-			funcName = strings.ToLower(call.Callee)
-			if len(call.Args) > 0 {
-				if ident, ok := call.Args[0].(*ast.Ident); ok {
-					field = ident.Name
-				}
-			}
-			if funcName == "perc_weighted" {
-				if field == "" {
-					return nil, fmt.Errorf("cluster query: perc_weighted value must be a field")
-				}
-				if len(call.Args) > 1 {
-					if ident, ok := call.Args[1].(*ast.Ident); ok {
-						weightField = ident.Name
-					} else {
-						return nil, fmt.Errorf("cluster query: perc_weighted weight must be a field")
-					}
-				}
-			}
-			quantile, err := partialAggQuantile(funcName, call)
-			if err != nil {
-				return nil, err
-			}
-			funcs[i].Quantile = quantile
-		}
-
-		alias := a.Alias
-		if alias == "" {
-			if field != "" {
-				alias = fmt.Sprintf("%s(%s)", funcName, field)
-			} else {
-				alias = funcName
-			}
-		}
-
-		funcs[i].Name = funcName
-		funcs[i].Field = field
-		funcs[i].WeightField = weightField
-		funcs[i].Alias = alias
-	}
-
-	return &pipeline.PartialAggSpec{
-		GroupBy: groupBy,
-		Funcs:   funcs,
-	}, nil
-}
-
-func partialAggQuantile(name string, call *ast.Call) (float64, error) {
-	argIndex := 1
-	switch name {
-	case "perc":
-	case "perc_weighted":
-		argIndex = 2
-	default:
-		return 0, nil
-	}
-	if len(call.Args) <= argIndex {
-		return 0, fmt.Errorf("cluster query: %s requires a percentile", name)
-	}
-	p, err := astNumericLiteral(call.Args[argIndex])
-	if err != nil {
-		return 0, fmt.Errorf("cluster query: %s percentile: %w", name, err)
-	}
-	if p < 0 || p > 100 {
-		return 0, fmt.Errorf("cluster query: %s percentile must be between 0 and 100", name)
-	}
-	return p / 100, nil
-}
-
-func astNumericLiteral(expr ast.Expr) (float64, error) {
-	lit, ok := expr.(*ast.Literal)
-	if !ok {
-		return 0, fmt.Errorf("expected numeric literal, got %T", expr)
-	}
-	switch lit.Kind {
-	case ast.LitInt:
-		n, ok := lit.Value.(int64)
-		if !ok {
-			return 0, fmt.Errorf("int literal has value %T", lit.Value)
-		}
-		return float64(n), nil
-	case ast.LitFloat:
-		f, ok := lit.Value.(float64)
-		if !ok {
-			return 0, fmt.Errorf("float literal has value %T", lit.Value)
-		}
-		return f, nil
-	default:
-		return 0, fmt.Errorf("expected numeric literal, got %s", lit.String())
-	}
-}
-
-// detectTopKIR checks if the first coordinator node is a TopK node.
-func detectTopKIR(coordNodes []logical.Node) (int, []pipeline.SortField) {
-	if len(coordNodes) < 1 {
-		return 0, nil
-	}
-	topk, ok := coordNodes[0].(*logical.TopK)
-	if !ok {
-		return 0, nil
-	}
-	sortFields := make([]pipeline.SortField, len(topk.SortKeys))
-	for i, k := range topk.SortKeys {
-		name := ""
-		if ident, ok := k.Expr.(*ast.Ident); ok {
-			name = ident.Name
-		} else {
-			name = k.Expr.String()
-		}
-		sortFields[i] = pipeline.SortField{Name: name, Desc: k.Desc}
-	}
-	return int(topk.K), sortFields
-}
-
-// detectSortHeadIR checks if coordinator nodes start with Sort + Limit(head).
-func detectSortHeadIR(coordNodes []logical.Node) (int, []pipeline.SortField) {
-	if len(coordNodes) < 2 {
-		return 0, nil
-	}
-	sortN, ok := coordNodes[0].(*logical.Sort)
-	if !ok {
-		return 0, nil
-	}
-	limit, ok := coordNodes[1].(*logical.Limit)
-	if !ok || limit.Tail {
-		return 0, nil
-	}
-	sortFields := make([]pipeline.SortField, len(sortN.Keys))
-	for i, k := range sortN.Keys {
-		name := ""
-		if ident, ok := k.Expr.(*ast.Ident); ok {
-			name = ident.Name
-		} else {
-			name = k.Expr.String()
-		}
-		sortFields[i] = pipeline.SortField{Name: name, Desc: k.Desc}
-	}
-	return int(limit.N), sortFields
-}
-
-// renderShardQueryIR reconstructs LynxFlow text for the shard query.
-// If shardNodes is nil, returns just the source clause for full scan.
-func renderShardQueryIR(plan *logical.Plan, shardNodes []logical.Node) string {
-	if shardNodes == nil {
-		// Full scan: render just the scan node from the plan.
-		nodes := linearizeIR(plan.Root)
-		for _, n := range nodes {
-			if scan, ok := n.(*logical.Scan); ok {
-				return logical.RenderPipeline(scan)
-			}
-		}
-		return "from *"
-	}
-	return logical.RenderPipeline(shardNodes...)
-}
-
-func allPushable(_ interface{}) bool {
-	// RFC-002: stub - all nodes pushable by default
 	return true
+}
+
+// linearizeIR returns the operators from the scan up to the root, or
+// ErrNotDistributable when the plan is not one chain.
+func linearizeIR(root ir.Node) ([]ir.Node, error) {
+	var chain []ir.Node
+	for n := root; ; {
+		for _, e := range ir.NodeExprs(n) {
+			hasSubquery := false
+			ir.WalkExpr(e, func(x ir.Expr) bool {
+				if _, ok := x.(*ir.Subquery); ok {
+					hasSubquery = true
+				}
+				return !hasSubquery
+			})
+			if hasSubquery {
+				return nil, ErrNotDistributable
+			}
+		}
+		chain = append(chain, n)
+		in := n.Inputs()
+		if len(in) == 0 {
+			if _, ok := n.(*ir.Scan); !ok {
+				return nil, ErrNotDistributable
+			}
+			break
+		}
+		if len(in) != 1 {
+			return nil, ErrNotDistributable
+		}
+		n = in[0]
+	}
+	for i, j := 0, len(chain)-1; i < j; i, j = i+1, j-1 {
+		chain[i], chain[j] = chain[j], chain[i]
+	}
+	return chain, nil
+}
+
+// isRowLocal reports whether an operator maps each row independently, so it
+// gives the same result on every shard's rows as on all rows.
+func isRowLocal(n ir.Node) bool {
+	switch n.(type) {
+	case *ir.Filter, *ir.Compute, *ir.Project, *ir.RenameColumns, *ir.Extract,
+		*ir.Unnest, *ir.FlattenObject:
+		return true
+	}
+	return false
+}
+
+// partialAggSpec maps an aggregate onto mergeable partial states, or returns
+// nil when a group key or aggregate has no partial form.
+func partialAggSpec(agg *ir.Aggregate) *pipeline.PartialAggSpec {
+	if agg.Phase != ir.AggComplete || agg.Limit > 0 || agg.DropNullGroups {
+		return nil
+	}
+	spec := &pipeline.PartialAggSpec{}
+	for _, g := range agg.Groups {
+		f, ok := g.Expr.(*ir.FieldRef)
+		if !ok || f.Name != g.Name {
+			return nil
+		}
+		spec.GroupBy = append(spec.GroupBy, g.Name)
+	}
+	for _, a := range agg.Aggs {
+		call := a.Agg
+		if call.Distinct || call.Filter != nil {
+			return nil
+		}
+		fn := pipeline.PartialAggFunc{Name: call.Func.Name, Alias: a.Name}
+		switch call.Func.Name {
+		case "count":
+			if len(call.Args) > 1 {
+				return nil
+			}
+		case "sum", "avg", "min", "max":
+			if len(call.Args) != 1 {
+				return nil
+			}
+		default:
+			return nil
+		}
+		if len(call.Args) == 1 {
+			f, ok := call.Args[0].(*ir.FieldRef)
+			if !ok {
+				return nil
+			}
+			fn.Field = f.Name
+		}
+		spec.Funcs = append(spec.Funcs, fn)
+	}
+	return spec
+}
+
+func sortFields(keys []ir.SortKey) ([]pipeline.SortField, bool) {
+	out := make([]pipeline.SortField, len(keys))
+	for i, k := range keys {
+		f, ok := k.Expr.(*ir.FieldRef)
+		if !ok {
+			return nil, false
+		}
+		out[i] = pipeline.SortField{Name: f.Name, Desc: k.Desc}
+	}
+	return out, true
 }

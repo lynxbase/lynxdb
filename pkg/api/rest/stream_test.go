@@ -18,7 +18,7 @@ func TestQueryStream_Basic(t *testing.T) {
 	resp, err := http.Post(
 		fmt.Sprintf("http://%s/api/v1/query/stream", srv.Addr()),
 		"application/json",
-		strings.NewReader(`{"q":"FROM main"}`),
+		strings.NewReader(`{"q":"source=main"}`),
 	)
 	if err != nil {
 		t.Fatalf("POST: %v", err)
@@ -78,7 +78,7 @@ func TestQueryStream_EmptyResult(t *testing.T) {
 	resp, err := http.Post(
 		fmt.Sprintf("http://%s/api/v1/query/stream", srv.Addr()),
 		"application/json",
-		strings.NewReader(`{"q":"FROM main"}`),
+		strings.NewReader(`{"q":"source=main"}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -115,7 +115,7 @@ func TestQueryStream_StatsQuery(t *testing.T) {
 	resp, err := http.Post(
 		fmt.Sprintf("http://%s/api/v1/query/stream", srv.Addr()),
 		"application/json",
-		strings.NewReader(`{"q":"from main | stats count() as count by host"}`),
+		strings.NewReader(`{"q":"source=main | stats count() as count by host"}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -198,7 +198,7 @@ func TestQueryStream_RejectsUnsupportedFields(t *testing.T) {
 	resp, err := http.Post(
 		fmt.Sprintf("http://%s/api/v1/query/stream", srv.Addr()),
 		"application/json",
-		strings.NewReader(`{"q":"FROM main","limit":10,"offset":0,"wait":0,"profile":"trace","format":"ndjson"}`),
+		strings.NewReader(`{"q":"source=main","limit":10,"offset":0,"wait":0,"profile":"trace","format":"ndjson"}`),
 	)
 	if err != nil {
 		t.Fatal(err)

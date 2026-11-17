@@ -241,7 +241,7 @@ func runFieldDetail(name, since, from, to, source string) error {
 	fmt.Println()
 	printNextSteps(
 		fmt.Sprintf("lynxdb fields %s --values   Full value list", name),
-		fmt.Sprintf("lynxdb query '%s=<value>'    Search by this field", name),
+		fmt.Sprintf("lynxdb query 'source=main | where %s = \"<value>\"'    Search by this field", name),
 	)
 
 	return nil

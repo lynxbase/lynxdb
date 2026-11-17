@@ -167,38 +167,19 @@ func isLogfmtLine(line string) bool {
 	return float64(totalLen)/float64(len(line)) > 0.3
 }
 
-// ParseCommandForFormat returns the parse command to prepend for the given format.
-// Returns empty string for formats already handled by the default ingest pipeline
-// (JSON and logfmt are parsed automatically at ingest time).
-func ParseCommandForFormat(format DetectedFormat) string {
+// ExtractFormatName returns the field extractor to apply while loading
+// events of a detected format, or "" when the default ingest pipeline
+// already extracts its fields (JSON, logfmt) or no extractor exists.
+func ExtractFormatName(format DetectedFormat) string {
 	switch format {
 	case FormatCombined:
-		return "parse combined(_raw)"
+		return "combined"
 	case FormatSyslog:
-		return "parse syslog(_raw)"
+		return "syslog"
 	case FormatDocker:
-		return "parse docker(_raw)"
-	default:
-		// JSON and logfmt are already handled by the default ingest pipeline.
-		// CSV and TSV can be detected, but they do not have parse unpackers yet.
-		return ""
+		return "docker"
 	}
-}
-
-// LynxFlowParseCommandForFormat returns the LynxFlow-syntax parse command
-// for a detected log format. LynxFlow uses bare `parse combined` (no
-// parenthesized _raw argument), unlike SPL2's `parse combined(_raw)`.
-func LynxFlowParseCommandForFormat(format DetectedFormat) string {
-	switch format {
-	case FormatCombined:
-		return "parse combined"
-	case FormatSyslog:
-		return "parse syslog"
-	case FormatDocker:
-		return "parse docker"
-	default:
-		return ""
-	}
+	return ""
 }
 
 // DetectFormatWithRatio analyzes lines and returns the detected format plus

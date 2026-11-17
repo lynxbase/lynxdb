@@ -68,10 +68,9 @@ func NewParser(format string) (FormatParser, error) {
 	}
 }
 
-// IsFormat reports whether name is a registered unpack format. Used by the
-// SPL2 parser to detect the `| <format>(field)` shortcut for `| parse <format>(field)`.
-// Includes "regex" and "pattern" which take extra arguments and are instantiated
-// via dedicated constructors, but are still valid format names in the grammar.
+// IsFormat reports whether name is a registered unpack format, including
+// "regex" and "pattern", which take extra arguments and have dedicated
+// constructors.
 func IsFormat(name string) bool {
 	switch strings.ToLower(name) {
 	case "json", "logfmt", "syslog", "combined", "clf", "nginx_error",
@@ -82,8 +81,7 @@ func IsFormat(name string) bool {
 	return false
 }
 
-// FieldDeclaration describes the fields a parser can produce, used for
-// static analysis in the query explain pipeline (Lynx Flow sidebar).
+// FieldDeclaration describes the fields a parser can produce.
 type FieldDeclaration struct {
 	Known    []string // always produced
 	Optional []string // sometimes produced (input-dependent)

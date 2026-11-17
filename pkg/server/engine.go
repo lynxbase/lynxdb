@@ -913,7 +913,6 @@ func (e *Engine) HasBloomFilter() bool {
 }
 
 func closestSourceMatch(name string, available []string) string {
-	// RFC-002: spl2.ClosestMatch removed; simple prefix match fallback.
 	for _, a := range available {
 		if len(a) > 0 && len(name) > 0 && a[0] == name[0] {
 			return a

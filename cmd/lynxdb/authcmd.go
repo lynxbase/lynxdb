@@ -173,7 +173,7 @@ func printQuerySnippet(t *ui.Theme, created *client.AuthCreatedKey) {
 	fmt.Fprintf(os.Stderr, "  %s Usage %s\n",
 		t.Dim.Render("───"),
 		t.Dim.Render("───────────────────────────────────────────"))
-	fmt.Fprintf(os.Stderr, "  CLI:      lynxdb query 'level=error' --token %s\n", truncateStr(created.Token, 20)+"...")
+	fmt.Fprintf(os.Stderr, "  CLI:      lynxdb query 'search source=main error' --token %s\n", truncateStr(created.Token, 20)+"...")
 	fmt.Fprintf(os.Stderr, "  Header:   Authorization: Bearer %s\n", truncateStr(created.Token, 20)+"...")
 	fmt.Fprintf(os.Stderr, "  %s\n",
 		t.Dim.Render("─────────────────────────────────────────────────────────────"))

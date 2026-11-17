@@ -287,7 +287,7 @@ func NewServer(cfg Config) (*Server, error) {
 	mux.HandleFunc("POST /services/collector/raw", s.handleSplunkHECRaw)
 	mux.HandleFunc("POST /services/collector/ack", s.handleSplunkHECAck)
 	mux.HandleFunc("GET /services/collector/health", s.handleSplunkHECHealth)
-	// LynxFlow language catalog (RFC-002 §12).
+	// PPL command and function catalog.
 	mux.HandleFunc("GET /api/v1/catalog", s.handleCatalog)
 
 	// Field catalog.
@@ -769,7 +769,7 @@ func (s *Server) OTLPGRPCAddr() string {
 	return s.otlpGRPCReceiver.Addr()
 }
 
-// SetIndexStore sets an external IndexStore for full SPL2 queries.
+// SetIndexStore sets an external IndexStore that queries read.
 func (s *Server) SetIndexStore(store *model.IndexStore) {
 	s.engine.SetIndexStore(store)
 }

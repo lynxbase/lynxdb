@@ -6,52 +6,15 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 )
 
-func TestQueryExplain_Valid(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
+// getExplain calls the explain endpoint and returns the data object.
+func getExplain(t *testing.T, srv *Server, query string) map[string]interface{} {
+	t.Helper()
 
-	u := fmt.Sprintf("http://%s/api/v1/query/explain?q=%s", srv.Addr(),
-		url.QueryEscape(`FROM main | where has("error") | head 10`))
-	resp, err := http.Get(u)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status: %d, body: %s", resp.StatusCode, body)
-	}
-
-	var envelope map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&envelope)
-	data := envelope["data"].(map[string]interface{})
-
-	if data["is_valid"] != true {
-		t.Fatal("expected is_valid=true")
-	}
-	plan, ok := data["lynxflow_plan"].(string)
-	if !ok || plan == "" {
-		t.Fatalf("missing lynxflow_plan: %#v", data)
-	}
-	// Plan should mention Scan and Filter/Limit nodes.
-	if !strings.Contains(plan, "Scan") {
-		t.Fatalf("plan missing Scan: %s", plan)
-	}
-}
-
-func TestQueryExplain_Rewrites(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	// "stats count()" without FROM should get a default-source rewrite from
-	// the LynxFlow desugar pass. The explain endpoint includes the desugared
-	// form in lynxflow_plan.
-	query := "stats count()"
 	u := fmt.Sprintf("http://%s/api/v1/query/explain?q=%s", srv.Addr(), url.QueryEscape(query))
 	resp, err := http.Get(u)
 	if err != nil {
@@ -65,16 +28,79 @@ func TestQueryExplain_Rewrites(t *testing.T) {
 	}
 
 	var envelope map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&envelope)
-	data := envelope["data"].(map[string]interface{})
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	data, ok := envelope["data"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing data: %#v", envelope)
+	}
 
+	return data
+}
+
+func explainParsed(t *testing.T, data map[string]interface{}) map[string]interface{} {
+	t.Helper()
 	if data["is_valid"] != true {
 		t.Fatalf("expected is_valid=true, got: %#v", data)
 	}
-	// The plan should reference the default source "main".
-	plan, _ := data["lynxflow_plan"].(string)
-	if !strings.Contains(plan, "main") {
-		t.Fatalf("plan missing default source 'main': %s", plan)
+	parsed, ok := data["parsed"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("missing parsed: %#v", data)
+	}
+
+	return parsed
+}
+
+func TestQueryExplain_Valid(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	parsed := explainParsed(t, getExplain(t, srv, `search source=main error | head 10`))
+
+	for _, key := range []string{"logical_plan", "optimized_plan"} {
+		plan, _ := parsed[key].(string)
+		if !strings.Contains(plan, "Scan(main)") {
+			t.Fatalf("%s missing Scan(main): %s", key, plan)
+		}
+		if !strings.Contains(plan, "Limit(10)") {
+			t.Fatalf("%s missing Limit(10): %s", key, plan)
+		}
+	}
+	terms, _ := parsed["search_terms"].([]interface{})
+	if !slices.Contains(terms, interface{}("error")) {
+		t.Fatalf("search_terms = %v, want error", terms)
+	}
+	if _, ok := parsed["optimizer_rules"].([]interface{}); !ok {
+		t.Fatalf("missing optimizer_rules: %#v", parsed)
+	}
+	if parsed["result_type"] != "events" {
+		t.Fatalf("result_type = %v, want events", parsed["result_type"])
+	}
+}
+
+func TestQueryExplain_MissingSource(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	data := getExplain(t, srv, "stats count()")
+	if data["is_valid"] != false {
+		t.Fatalf("expected is_valid=false, got: %#v", data)
+	}
+	errs, _ := data["errors"].([]interface{})
+	if len(errs) != 1 {
+		t.Fatalf("errors = %#v, want one", data["errors"])
+	}
+	first, _ := errs[0].(map[string]interface{})
+	if first["kind"] != "syntax" {
+		t.Fatalf("kind = %v, want syntax", first["kind"])
+	}
+	if msg, _ := first["message"].(string); msg == "" {
+		t.Fatalf("missing message: %#v", first)
+	}
+	pos, _ := first["position"].(map[string]interface{})
+	if pos["line"] != float64(1) {
+		t.Fatalf("position = %v, want line 1", pos)
 	}
 }
 
@@ -82,22 +108,7 @@ func TestQueryExplain_InvalidQuery(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
-	u := fmt.Sprintf("http://%s/api/v1/query/explain?q=%s", srv.Addr(),
-		url.QueryEscape("INVALID @@@"))
-	resp, err := http.Get(u)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		t.Fatalf("status: %d (explain should return 200 even for invalid queries)", resp.StatusCode)
-	}
-
-	var envelope map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&envelope)
-	data := envelope["data"].(map[string]interface{})
-
+	data := getExplain(t, srv, "INVALID @@@")
 	if data["is_valid"] != false {
 		t.Fatal("expected is_valid=false")
 	}
@@ -126,24 +137,17 @@ func TestQueryExplain_StatsQuery(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
-	u := fmt.Sprintf("http://%s/api/v1/query/explain?q=%s", srv.Addr(),
-		url.QueryEscape("FROM main | stats count() by host"))
-	resp, err := http.Get(u)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
+	parsed := explainParsed(t, getExplain(t, srv, "source=main | stats count() by host"))
 
-	var envelope map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&envelope)
-	data := envelope["data"].(map[string]interface{})
-
-	if data["is_valid"] != true {
-		t.Fatalf("expected is_valid=true, got: %#v", data)
-	}
-	plan, _ := data["lynxflow_plan"].(string)
-	// Stats query plan should mention Aggregate.
+	plan, _ := parsed["optimized_plan"].(string)
 	if !strings.Contains(plan, "Aggregate") {
 		t.Fatalf("plan missing Aggregate node: %s", plan)
+	}
+	if parsed["result_type"] != "aggregate" {
+		t.Fatalf("result_type = %v, want aggregate", parsed["result_type"])
+	}
+	fieldsRead, _ := parsed["fields_read"].([]interface{})
+	if !slices.Contains(fieldsRead, interface{}("host")) {
+		t.Fatalf("fields_read = %v, want host", fieldsRead)
 	}
 }

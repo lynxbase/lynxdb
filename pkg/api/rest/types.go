@@ -1,15 +1,5 @@
 package rest
 
-// QueryLanguage identifies which parser/execution path to use.
-type QueryLanguage string
-
-const (
-	// LangLynxFlow selects the LynxFlow v2 parser and execution path.
-	// This is the only supported language post-RFC-002; "spl2" is rejected
-	// with migration guidance at the API layer.
-	LangLynxFlow QueryLanguage = "lynxflow"
-)
-
 // QueryRequest is the request body for POST /api/v1/query.
 type QueryRequest struct {
 	Q           string   `json:"q"`
@@ -27,7 +17,6 @@ type QueryRequest struct {
 	Suggestions *bool    `json:"suggestions,omitempty"` // false disables advisory suggestions
 	LintLimit   int      `json:"lint_limit,omitempty"`  // max lints to return; default 5
 	LintFull    bool     `json:"lint_full,omitempty"`   // true returns all advisory lints
-	Language    string   `json:"language,omitempty"`    // "lynxflow" (the only supported language; "spl2" is rejected with migration guidance)
 }
 
 func (r *QueryRequest) effectiveQuery() string {

@@ -81,51 +81,36 @@ type ExplainRequest struct {
 
 // ExplainResult is the domain output for query explanation.
 type ExplainResult struct {
-	IsValid  bool
-	Errors   []ExplainError
-	Parsed   *ExplainParsed
-	Rewrites []model.QueryRewrite
+	IsValid bool
+	Errors  []ExplainError
+	Parsed  *ExplainParsed
 }
 
-// ExplainError represents a parse/validation error in an explain response.
+// ExplainError is a compile error in an explain response.
 type ExplainError struct {
+	Kind       string
 	Message    string
 	Suggestion string
+	Line       int
+	Column     int
+	Expected   []string
 }
 
-// ExplainParsed holds the breakdown of a successfully parsed query.
+// ExplainParsed describes a compiled query.
 type ExplainParsed struct {
-	Pipeline        []PipelineStage
-	ResultType      string
-	EstimatedCost   string
-	UsesFullScan    bool
-	FieldsRead      []string
-	SearchTerms     []string
-	HasTimeBounds   bool
-	OptimizerStats  map[string]int
-	PhysicalPlan    *PhysicalPlan // physical plan with optimizer annotations
-	SourceScope     *ExplainSourceScope
-	RangePredicates []ExplainRangePredicate
-
-	// Planner timing and optimizer rule details.
-	ParseMS     float64
-	OptimizeMS  float64
-	RuleDetails []ExplainRuleDetail
-	TotalRules  int
-
-	// Optimizer diagnostic messages and warnings.
-	OptimizerMessages []string
-	OptimizerWarnings []string
-}
-
-// ExplainRangePredicate describes range predicate handling in EXPLAIN output.
-type ExplainRangePredicate struct {
-	Field            string `json:"field"`
-	Min              string `json:"min,omitempty"`
-	Max              string `json:"max,omitempty"`
-	LoweredToBSI     bool   `json:"lowered_to_bsi,omitempty"`
-	RGFilterStrategy string `json:"rg_filter_strategy"`
-	RowVMStrategy    string `json:"row_vm_strategy"`
+	ResultType    string
+	EstimatedCost string
+	UsesFullScan  bool
+	FieldsRead    []string
+	SearchTerms   []string
+	HasTimeBounds bool
+	SourceScope   *ExplainSourceScope
+	// LogicalPlan and OptimizedPlan render the IR before and after
+	// optimization.
+	LogicalPlan   string
+	OptimizedPlan string
+	CompileMS     float64
+	RuleDetails   []ExplainRuleDetail
 }
 
 // ExplainSourceScope describes the resolved source scope in an explain response.
@@ -141,30 +126,6 @@ type ExplainRuleDetail struct {
 	Name        string
 	Description string
 	Count       int
-}
-
-// PhysicalPlan describes the runtime execution strategy chosen by the optimizer.
-// This surfaces information that the logical pipeline stages alone do not show,
-// such as partial aggregation pushdown, count(*) metadata shortcut, or topK heap merge.
-type PhysicalPlan struct {
-	CountStarOnly       bool   `json:"count_star_only,omitempty"`
-	PartialAgg          bool   `json:"partial_agg,omitempty"`
-	RexLiteralPreFilter bool   `json:"rex_literal_prefilter,omitempty"`
-	TopKAgg             bool   `json:"topk_agg,omitempty"`
-	TopK                int    `json:"topk,omitempty"`
-	JoinStrategy        string `json:"join_strategy,omitempty"`
-}
-
-// PipelineStage describes a single command in the query pipeline, including
-// per-stage field metadata for the Lynx Flow sidebar.
-type PipelineStage struct {
-	Command        string   // command name (e.g., "stats", "eval", "where")
-	Description    string   // human-readable summary (e.g., "stats count() by host")
-	FieldsAdded    []string // fields this stage creates
-	FieldsRemoved  []string // fields this stage removes
-	FieldsOut      []string // complete ordered field set after this stage
-	FieldsOptional []string // fields that may or may not be present
-	FieldsUnknown  bool     // true when full set is unknowable (schema-on-read source stage)
 }
 
 // HistogramRequest is the domain input for histogram generation.

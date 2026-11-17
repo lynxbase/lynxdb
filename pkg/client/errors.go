@@ -25,6 +25,14 @@ const (
 	ErrCodeInternalError       ErrorCode = "INTERNAL_ERROR"
 	ErrCodeQueryMemoryExceeded ErrorCode = "QUERY_MEMORY_EXCEEDED"
 	ErrCodeQueryPoolExhausted  ErrorCode = "QUERY_POOL_EXHAUSTED"
+	ErrCodeSyntaxError         ErrorCode = "SYNTAX_ERROR"
+	ErrCodeSemanticError       ErrorCode = "SEMANTIC_ERROR"
+	ErrCodeTypeError           ErrorCode = "TYPE_ERROR"
+	ErrCodeUnsupportedCommand  ErrorCode = "UNSUPPORTED_COMMAND"
+	ErrCodeUnsupportedFunction ErrorCode = "UNSUPPORTED_FUNCTION"
+	ErrCodeUnsupportedFeature  ErrorCode = "UNSUPPORTED_FEATURE"
+	ErrCodePlanningError       ErrorCode = "PLANNING_ERROR"
+	ErrCodeExecutionError      ErrorCode = "EXECUTION_ERROR"
 )
 
 // APIError represents a structured error response from the LynxDB API.
@@ -67,9 +75,18 @@ func IsRateLimited(err error) bool {
 	return hasCode(err, ErrCodeTooManyRequests)
 }
 
-// IsInvalidQuery reports whether the error is an INVALID_QUERY API error.
+// IsInvalidQuery reports whether the server rejected the query text: a
+// syntax, semantic, type, unsupported or planning error.
 func IsInvalidQuery(err error) bool {
-	return hasCode(err, ErrCodeInvalidQuery)
+	for _, code := range []ErrorCode{
+		ErrCodeInvalidQuery, ErrCodeSyntaxError, ErrCodeSemanticError, ErrCodeTypeError,
+		ErrCodeUnsupportedCommand, ErrCodeUnsupportedFunction, ErrCodeUnsupportedFeature, ErrCodePlanningError,
+	} {
+		if hasCode(err, code) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsValidationError reports whether the error is a VALIDATION_ERROR API error.

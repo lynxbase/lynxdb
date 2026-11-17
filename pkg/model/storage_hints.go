@@ -2,9 +2,6 @@ package model
 
 // QueryHints carries storage-level hints extracted from a parsed query.
 // These hints enable segment/row-group pruning during query execution.
-//
-// This type was previously defined in pkg/spl2/hints.go. It was moved here
-// during RFC-002 Phase 10 to decouple storage access from the query parser.
 type QueryHints struct {
 	SearchTerms             []string                 // tokenized search terms (lowercased)
 	TokenGlobs              []string                 // lowercased glob patterns matched against whole _raw tokens (FST expansion; candidate filter only — must never feed bloom MayContainAll)

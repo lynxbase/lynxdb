@@ -22,7 +22,7 @@ func TestE2E_Tail_ReceivesEvents(t *testing.T) {
 
 	tailDone := make(chan error, 1)
 	go func() {
-		err := h.Client().Tail(ctx, `from main`, "", 10, func(ev client.SSEEvent) error {
+		err := h.Client().Tail(ctx, `source=main`, "", 10, func(ev client.SSEEvent) error {
 			if received.Add(1) == 1 {
 				select {
 				case gotFirst <- struct{}{}:

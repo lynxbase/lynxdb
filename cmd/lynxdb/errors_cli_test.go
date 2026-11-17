@@ -78,14 +78,27 @@ func TestIsConnectionError_Nil(t *testing.T) {
 }
 
 func TestIsQueryParseError_APIError(t *testing.T) {
-	err := &client.APIError{
-		HTTPStatus: 400,
-		Code:       client.ErrCodeInvalidQuery,
-		Message:    "parse error: unexpected token",
+	codes := []client.ErrorCode{
+		client.ErrCodeInvalidQuery,
+		client.ErrCodeSyntaxError,
+		client.ErrCodeSemanticError,
+		client.ErrCodeTypeError,
+		client.ErrCodeUnsupportedCommand,
+		client.ErrCodeUnsupportedFunction,
+		client.ErrCodeUnsupportedFeature,
+		client.ErrCodePlanningError,
 	}
-
-	if !isQueryParseError(err) {
-		t.Error("expected INVALID_QUERY APIError to be classified as query parse error")
+	for _, code := range codes {
+		t.Run(string(code), func(t *testing.T) {
+			err := &client.APIError{
+				HTTPStatus: 422,
+				Code:       code,
+				Message:    "query rejected",
+			}
+			if !isQueryParseError(err) {
+				t.Errorf("expected %s APIError to be classified as query parse error", code)
+			}
+		})
 	}
 }
 
