@@ -215,11 +215,24 @@ func (p *parser) query() *ast.Query {
 	return q
 }
 
+// pipelineNode holds a pipeline and room for its first commands in one
+// allocation.
+type pipelineNode struct {
+	pl   ast.Pipeline
+	cmds [4]ast.Command
+}
+
+func newPipeline() *ast.Pipeline {
+	n := &pipelineNode{}
+	n.pl.Commands = n.cmds[:0]
+	return &n.pl
+}
+
 // pipeline parses "[|] source-command (| command)*". When top is false the
 // pipeline ends at a closing bracket.
 func (p *parser) pipeline(top bool) *ast.Pipeline {
 	start := p.peek().Pos
-	pl := &ast.Pipeline{}
+	pl := newPipeline()
 	p.accept(lexer.Pipe)
 	pl.Commands = append(pl.Commands, p.sourceCommand())
 	for p.accept(lexer.Pipe) {
@@ -239,7 +252,7 @@ func (p *parser) pipeline(top bool) *ast.Pipeline {
 // source command.
 func (p *parser) subPipeline() *ast.Pipeline {
 	start := p.peek().Pos
-	pl := &ast.Pipeline{}
+	pl := newPipeline()
 	p.accept(lexer.Pipe)
 	pl.Commands = append(pl.Commands, p.command())
 	for p.accept(lexer.Pipe) {

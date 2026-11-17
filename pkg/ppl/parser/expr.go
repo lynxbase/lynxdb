@@ -286,12 +286,20 @@ func (p *parser) identPart() (string, *lexer.Token) {
 	return "", t
 }
 
+// fieldNode holds a field and its first name segment in one allocation.
+type fieldNode struct {
+	f    ast.Field
+	part [1]string
+}
+
 // field parses a qualified name: segments separated by dots with no
 // surrounding white space.
 func (p *parser) field() *ast.Field {
 	start := p.peek().Pos
 	name, _ := p.identPart()
-	f := &ast.Field{Parts: []string{name}}
+	n := &fieldNode{part: [1]string{name}}
+	f := &n.f
+	f.Parts = n.part[:]
 	for p.at(lexer.Dot) && !p.peek().SpaceBefore && !p.peekAt(1).SpaceBefore {
 		switch p.peekAt(1).Kind {
 		case lexer.Ident, lexer.QuotedIdent, lexer.NumericIdent, lexer.Integer:
@@ -356,12 +364,20 @@ func (p *parser) funcArg() ast.Expr {
 	return p.expr()
 }
 
+// callNode holds a call and room for its first arguments in one allocation.
+type callNode struct {
+	c    ast.Call
+	args [3]ast.Expr
+}
+
 func (p *parser) call() ast.Expr {
 	nameTok := p.next()
 	start := nameTok.Pos
 	name := strings.ToLower(nameTok.Text)
 	p.expect(lexer.LParen)
-	c := &ast.Call{Name: name}
+	cn := &callNode{c: ast.Call{Name: name}}
+	c := &cn.c
+	c.Args = cn.args[:0]
 	switch name {
 	case "cast":
 		x := p.expr()
@@ -394,7 +410,7 @@ func (p *parser) call() ast.Expr {
 		p.expectKw("in")
 		str := p.additive()
 		p.expect(lexer.RParen)
-		c.Args = []ast.Expr{sub, str}
+		c.Args = append(c.Args, sub, str)
 		c.Span = p.span(start)
 		return c
 	case "extract":
@@ -454,6 +470,9 @@ func (p *parser) call() ast.Expr {
 		}
 	}
 	p.expect(lexer.RParen)
+	if len(c.Args) == 0 {
+		c.Args = nil
+	}
 	c.Span = p.span(start)
 	return c
 }

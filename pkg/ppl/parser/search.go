@@ -14,7 +14,8 @@ func (p *parser) search() ast.Command {
 	start := p.peek().Pos
 	explicit := p.acceptKw("search")
 	cmd := &ast.SearchCommand{}
-	var terms []ast.SearchExpr
+	var termBuf [4]ast.SearchExpr
+	terms := termBuf[:0]
 	haveSource := false
 	for !p.at(lexer.EOF) && !p.at(lexer.Pipe) && !p.at(lexer.RBracket) && !p.at(lexer.Semicolon) {
 		if (p.atKw("source") || p.atKw("index")) && p.peekAt(1).Kind == lexer.Eq {
@@ -75,7 +76,9 @@ func (p *parser) sourceRef() ast.SourceRef {
 		p.next()
 		return ast.SourceRef{Base: ast.Base{Span: p.span(start)}, Name: t.Value}
 	}
+	// Without quoted parts the name is the source text the tokens span.
 	var b strings.Builder
+	quoted := false
 	for first := true; ; first = false {
 		t := p.peek()
 		if !first && t.SpaceBefore {
@@ -83,11 +86,17 @@ func (p *parser) sourceRef() ast.SourceRef {
 		}
 		switch t.Kind {
 		case lexer.Ident, lexer.NumericIdent, lexer.Integer, lexer.Decimal, lexer.Dot, lexer.Minus, lexer.Colon, lexer.Star, lexer.Span, lexer.Double, lexer.Float:
-			b.WriteString(t.Text)
+			if quoted {
+				b.WriteString(t.Text)
+			}
 			p.next()
 			continue
 		case lexer.QuotedIdent:
 			if !first {
+				if !quoted {
+					quoted = true
+					b.WriteString(p.src[start.Offset:t.Pos.Offset])
+				}
 				b.WriteString(t.Value)
 				p.next()
 				continue
@@ -95,10 +104,15 @@ func (p *parser) sourceRef() ast.SourceRef {
 		}
 		break
 	}
-	if b.Len() == 0 {
+	end := p.prevEnd().Offset
+	if p.i == 0 || end <= start.Offset {
 		p.fail(p.peek(), "expected an index name", "index name")
 	}
-	return ast.SourceRef{Base: ast.Base{Span: p.span(start)}, Name: b.String()}
+	name := p.src[start.Offset:end]
+	if quoted {
+		name = b.String()
+	}
+	return ast.SourceRef{Base: ast.Base{Span: p.span(start)}, Name: name}
 }
 
 func (p *parser) searchAnd() ast.SearchExpr {
