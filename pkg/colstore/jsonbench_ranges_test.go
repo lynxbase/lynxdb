@@ -33,11 +33,9 @@ var (
 // range, the fewer blocks the ranges in progress keep decoded between them.
 const rangeRows = 1 << 16
 
-// keyRanges cuts a plan into ranges for workers, several per worker so that
-// they balance.
-func keyRanges(plan *KeyPlan, workers int, columns ...ColumnID) *RangeScan {
-	return plan.Ranges(max(4*workers, plan.Rows/rangeRows), columns...)
-}
+// rangeCount is the number of ranges to cut a plan into for workers: several
+// per worker so that they balance.
+func rangeCount(plan *KeyPlan, workers int) int { return max(4*workers, plan.Rows/rangeRows) }
 
 // rangeCursor walks the values of one stream of a key range in key order.
 type rangeCursor struct {
@@ -473,7 +471,9 @@ func (w *rangeWorker) countUsers(kr *KeyRange, b *part.Block) error {
 // eventsWithUsersOrdered is Q2 over parts ordered by the filter paths, the
 // collection and the did.
 func eventsWithUsersOrdered(snap *Snapshot, plan *KeyPlan, workers int) ([]eventCount, error) {
-	scan := keyRanges(plan, workers)
+	// One stream is cut at block borders, so that every block inside one
+	// group can be counted from the index of its part.
+	scan := plan.BlockRanges(rangeCount(plan, workers))
 	ws := newRangeWorkers(scan, workers, len(createdKey.Paths), len(createdKey.Paths)+1, 0)
 	defer freeRangeWorkers(ws)
 	err := scan.Run(context.Background(), workers, func(n int, kr *KeyRange, b *part.Block) error {
@@ -568,7 +568,7 @@ func (w *rangeWorker) mergeSpans(kr *KeyRange, b *part.Block) error {
 // postTimesOrdered is Q4 and Q5 over parts ordered by the filter paths and
 // the did.
 func postTimesOrdered(snap *Snapshot, plan *KeyPlan, workers, limit int) (first, longest []userSpan, err error) {
-	scan := keyRanges(plan, workers, ColumnID{Path: "time_us", Kind: vec.KindInt})
+	scan := plan.Ranges(rangeCount(plan, workers), ColumnID{Path: "time_us", Kind: vec.KindInt})
 	ws := newRangeWorkers(scan, workers, -1, len(postsKey.Paths), limit)
 	defer freeRangeWorkers(ws)
 	err = scan.Run(context.Background(), workers, func(n int, kr *KeyRange, b *part.Block) error {
@@ -621,6 +621,56 @@ func recordRanges(snap *Snapshot, plan *KeyPlan, scan *RangeScan, ws []*rangeWor
 	benchScan.skippedByKey.Store(int64(total - plan.Blocks))
 	benchScan.blocks.Store(blocks)
 	benchScan.rows.Store(rows)
+}
+
+func TestUsersOfOneStreamAreCountedFromTheIndex(t *testing.T) {
+	// Every did has several rows, so most block borders fall inside the rows
+	// of one did.
+	var data bytes.Buffer
+	for i := 0; i < 6000; i++ {
+		collection := []string{"app.bsky.feed.like", "app.bsky.feed.post", "app.bsky.graph.follow"}[i%3]
+		fmt.Fprintf(&data, `{"did":"did:plc:%03d","kind":"commit","commit":{"operation":"create","collection":%q},"time_us":%d}`+"\n",
+			i/3%54, collection, 1_700_000_000_000_000+i)
+	}
+	key := []string{"kind", "commit.operation", "commit.collection", "did"}
+	tbl := orderedTable(t, data.Bytes(), 5, 60, key, true)
+	defer tbl.Close()
+	snap := tbl.Snapshot()
+	defer snap.Release()
+	plan, ok := snap.PlanKeyRanges(createdKey, key[2:])
+	if !ok || plan.Streams() != 1 {
+		t.Fatal("the merged parts are not one stream")
+	}
+	// Only a block that holds several collections has to be read.
+	mixed, inside := int64(0), 0
+	for _, h := range snap.Parts() {
+		for i := 0; i < h.NumBlocks(); i++ {
+			if h.KeyRuns(i, 3) != 1 {
+				mixed++
+			} else if h.KeyShared(i) == len(key) {
+				inside++
+			}
+		}
+	}
+	if mixed > 3 || inside < 40 {
+		t.Fatalf("%d blocks hold several collections, %d start inside the rows of a did", mixed, inside)
+	}
+	want, err := eventsWithUsersHashed(snap, 2, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, workers := range []int{1, 3, 16} {
+		got, err := eventsWithUsersOrdered(snap, plan, workers)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%d workers:\n got  %v\n want %v", workers, got, want)
+		}
+		if read := benchScan.opened.Load(); read != mixed {
+			t.Errorf("%d workers: %d blocks read, %d hold several collections", workers, read, mixed)
+		}
+	}
 }
 
 func TestOrderedQueriesMatchHashed(t *testing.T) {

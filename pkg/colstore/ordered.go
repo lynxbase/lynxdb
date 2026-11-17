@@ -20,6 +20,8 @@ import (
 type BlockSpan struct {
 	Part       *part.Part
 	First, End int
+	// prev is the part before Part in its stream, if any.
+	prev *part.Part
 }
 
 // KeyRange is the rows whose encoded sort key is at least Lo and below Hi,
@@ -127,12 +129,16 @@ func (p *KeyPlan) Ranges(n int, columns ...ColumnID) *RangeScan {
 		held := 0
 		for _, st := range p.streams {
 			var spans []BlockSpan
-			for _, pt := range st {
+			for at, pt := range st {
 				first, end := pt.BlocksInKeyRange(r.Lo, r.Hi)
 				if first == end {
 					continue
 				}
-				spans = append(spans, BlockSpan{Part: pt, First: first, End: end})
+				span := BlockSpan{Part: pt, First: first, End: end}
+				if at > 0 {
+					span.prev = st[at-1]
+				}
+				spans = append(spans, span)
 				for b := first; b < end; b++ {
 					n, _, _ := pt.BlockStats(b)
 					held += n
@@ -159,6 +165,49 @@ func (p *KeyPlan) Ranges(n int, columns ...ColumnID) *RangeScan {
 			continue
 		}
 		scan.expect(r)
+	}
+
+	return scan
+}
+
+// BlockRanges cuts the matching rows of a plan with one stream into at most
+// n ranges of whole blocks, for scans that learn from RangeReader.Shared
+// whether the rows on both sides of a block border belong together; a plan
+// with several streams is cut by key, as Ranges does.
+func (p *KeyPlan) BlockRanges(n int, columns ...ColumnID) *RangeScan {
+	if len(p.streams) != 1 {
+		return p.Ranges(n, columns...)
+	}
+	lo, hi := p.prefix, append(append([]byte(nil), p.prefix...), 0xFF)
+	scan := &RangeScan{columns: columns, keyColumns: p.columns, left: map[blockID]int{}, open: map[blockID]*SharedBlock{}}
+	share := max(1, (p.Rows+n-1)/n)
+	var spans []BlockSpan
+	held := 0
+	flush := func() {
+		if len(spans) > 0 {
+			scan.Ranges = append(scan.Ranges, KeyRange{Lo: lo, Hi: hi, Streams: [][]BlockSpan{spans}})
+			spans, held = nil, 0
+		}
+	}
+	var prev *part.Part
+	for _, pt := range p.streams[0] {
+		first, end := pt.BlocksInKeyRange(lo, hi)
+		for b := first; b < end; b++ {
+			if last := len(spans) - 1; last >= 0 && spans[last].Part == pt {
+				spans[last].End = b + 1
+			} else {
+				spans = append(spans, BlockSpan{Part: pt, First: b, End: b + 1, prev: prev})
+			}
+			rows, _, _ := pt.BlockStats(b)
+			if held += rows; held >= share {
+				flush()
+			}
+		}
+		prev = pt
+	}
+	flush()
+	for i := range scan.Ranges {
+		scan.expect(&scan.Ranges[i])
 	}
 
 	return scan
@@ -316,7 +365,7 @@ func (s *RangeScan) cut(r *KeyRange, b *part.Block) error {
 			for _, span := range spans {
 				first, end := span.Part.BlocksInKeyRange(sub.Lo, sub.Hi)
 				if first, end = max(first, span.First), min(end, span.End); first < end {
-					in = append(in, BlockSpan{Part: span.Part, First: first, End: end})
+					in = append(in, BlockSpan{Part: span.Part, First: first, End: end, prev: span.prev})
 				}
 			}
 			if len(in) > 0 {
@@ -544,17 +593,17 @@ func (r *RangeReader) Peek() (p *part.Part, block int, whole, ok bool) {
 }
 
 // Shared returns how many leading sort key columns the first row of the
-// block that Peek reports shares with the row before it in the stream; it is
-// zero when that row belongs to a part with no rows inside the range.
+// block that Peek reports shares with the row before it in the stream, which
+// can lie in another range.
 func (r *RangeReader) Shared() int {
 	s := &r.spans[r.span]
 	if r.next > 0 {
 		return s.Part.KeyShared(r.next)
 	}
-	if r.span == 0 {
+	if s.prev == nil {
 		return 0
 	}
-	_, last := r.spans[r.span-1].Part.KeyRange()
+	_, last := s.prev.KeyRange()
 
 	return part.SharedKeyColumns(last, s.Part.FirstKey(0))
 }
