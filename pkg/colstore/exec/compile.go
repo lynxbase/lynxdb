@@ -618,37 +618,43 @@ func columnLiteral(e *Expr) (col *Expr, lit Value, op Op, ok bool) {
 	return a, b.Value, op, true
 }
 
-// conjunctTokens appends the token hashes that the block of a row satisfying
-// the conjunct c holds: those of a text match or of a string equality.
-func conjunctTokens(c *Expr, dst []uint64) []uint64 {
+// conjunctTokens appends the tokens that the block of a row satisfying the
+// conjunct c holds in one column: those of a text match or of a string
+// equality, in the column they read, or in any for a match of every column.
+func conjunctTokens(c *Expr, dst []colstore.ColumnTokens) []colstore.ColumnTokens {
+	var set colstore.ColumnTokens
 	switch c.Op {
 	case OpMatchAny:
-		return c.Pattern.Tokens(dst)
+		set.Hashes = c.Pattern.Tokens(nil)
 	case OpMatch:
 		if len(c.Args) == 1 && c.Args[0] != nil && c.Args[0].Op == OpColumn &&
 			(c.Args[0].Kind == vec.KindString || c.Args[0].Kind == KindAny) {
-			return c.Pattern.Tokens(dst)
+			set.Path, set.Hashes = c.Args[0].Path, c.Pattern.Tokens(nil)
 		}
 	case OpEq:
 		col, lit, op, ok := columnLiteral(c)
 		if ok && op == OpEq && lit.Kind == vec.KindString && (col.Kind == vec.KindString || col.Kind == KindAny) {
-			return tokenfilter.AppendHashesLongestFirst(dst, lit.Bytes)
+			set.Path, set.Hashes = col.Path, tokenfilter.AppendHashesLongestFirst(nil, lit.Bytes)
 		}
 	}
+	if len(set.Hashes) == 0 {
+		return dst
+	}
 
-	return dst
+	return append(dst, set)
 }
 
 // pushdown derives what the scan can skip from the conjuncts of the filter:
 // string equalities on the leading sort key paths of the snapshot's ordered
 // parts become a key filter, string equalities and text matches contribute
-// the tokens a block must hold, and comparisons of the row time bound it.
+// the tokens a column of a block must hold, and comparisons of the row time
+// bound it.
 func pushdown(snap *colstore.Snapshot, filter *Expr) colstore.ScanOptions {
 	var opts colstore.ScanOptions
 	minT, maxT := int64(math.MinInt64), int64(math.MaxInt64)
 	equal := map[string][]byte{}
 	for _, c := range conjuncts(filter, nil) {
-		opts.Tokens = conjunctTokens(c, opts.Tokens)
+		opts.ColumnTokens = conjunctTokens(c, opts.ColumnTokens)
 		switch c.Op {
 		case OpEq, OpLt, OpLe, OpGt, OpGe:
 			col, lit, op, ok := columnLiteral(c)

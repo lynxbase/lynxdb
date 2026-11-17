@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -146,6 +147,119 @@ func TestScanPrunesByTimeAndToken(t *testing.T) {
 	rows, _, stats = sumN(t, snap, ScanOptions{Tokens: tokenfilter.AppendHashes(nil, []byte("gamma"))})
 	if rows != 0 || stats.SkippedByToken != 20 {
 		t.Fatalf("absent token read %d rows, skipped %d blocks", rows, stats.SkippedByToken)
+	}
+}
+
+// wordPart builds a part of blocks of blockRows rows whose documents hold a
+// run of words of their own at each of paths, enough of them for every
+// column to get a token filter of its own, and extra[row] at extra[row+1]
+// of the row numbered row.
+func wordPart(t testing.TB, r *rand.Rand, blocks, blockRows int, paths []string, extra map[int][2]string) *part.Part {
+	t.Helper()
+	var buf bytes.Buffer
+	w := part.NewWriter(&buf, part.Options{})
+	batch := shred.NewBatch(shred.Options{})
+	for i := 0; i < blocks*blockRows; i++ {
+		doc := fmt.Sprintf(`{"n":%d`, i)
+		for _, path := range paths {
+			text := fmt.Sprintf("%016x %016x", r.Uint64(), r.Uint64())
+			if e, ok := extra[i]; ok && e[0] == path {
+				text += " " + e[1]
+			}
+			doc += fmt.Sprintf(`,"%s":"%s"`, path, text)
+		}
+		if err := batch.AddJSON([]byte(doc+"}"), int64(i)); err != nil {
+			t.Fatal(err)
+		}
+		if batch.Rows == blockRows {
+			if err := w.WriteBatch(batch); err != nil {
+				t.Fatal(err)
+			}
+			batch.Reset()
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	p, err := part.Open(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range paths {
+		id, _ := p.PathID(path)
+		for i := 0; i < p.NumBlocks(); i++ {
+			if !p.OwnFilter(i, id, vec.KindString) {
+				t.Fatalf("column %s of block %d has no filter of its own", path, i)
+			}
+		}
+	}
+
+	return p
+}
+
+func TestScanPrunesByTheTokensOfAColumn(t *testing.T) {
+	r := rand.New(rand.NewSource(5))
+	const blockRows = 2000
+	// Row 2100 lies in the second block and row 4500 in the third.
+	parts := []*part.Part{
+		wordPart(t, r, 3, blockRows, []string{"a", "b"}, map[int][2]string{2100: {"a", "needle in hay"}, 4500: {"b", "straw"}}),
+		wordPart(t, r, 3, blockRows, []string{"a", "b"}, map[int][2]string{2100: {"b", "needle"}, 2101: {"a", "hay"}}),
+		wordPart(t, r, 2, blockRows, []string{"b"}, map[int][2]string{100: {"b", "needle hay"}}),
+	}
+	tbl := NewTable()
+	defer tbl.Close()
+	var handles []*Handle
+	for _, p := range parts {
+		handles = append(handles, NewHandle(p, nil))
+	}
+	if err := tbl.Apply(handles, nil); err != nil {
+		t.Fatal(err)
+	}
+	snap := tbl.Snapshot()
+	defer snap.Release()
+
+	hashes := func(text string) []uint64 { return tokenfilter.AppendHashes(nil, []byte(text)) }
+	in := func(path, text string) ColumnTokens { return ColumnTokens{Path: path, Hashes: hashes(text)} }
+	for _, c := range []struct {
+		name   string
+		opts   ScanOptions
+		blocks int64
+	}{
+		{"any string of a block", ScanOptions{Tokens: hashes("needle")}, 3},
+		{"tokens of several columns of a block", ScanOptions{Tokens: hashes("needle hay")}, 3},
+		{"a column", ScanOptions{ColumnTokens: []ColumnTokens{in("a", "needle")}}, 1},
+		{"a column of every part", ScanOptions{ColumnTokens: []ColumnTokens{in("b", "needle")}}, 2},
+		{"a column that holds one token of two", ScanOptions{ColumnTokens: []ColumnTokens{in("b", "needle hay")}}, 1},
+		{"any one column", ScanOptions{ColumnTokens: []ColumnTokens{in("", "needle")}}, 3},
+		{"any one column for two tokens", ScanOptions{ColumnTokens: []ColumnTokens{in("", "hay needle")}}, 2},
+		{"two columns", ScanOptions{ColumnTokens: []ColumnTokens{in("a", "hay"), in("b", "needle")}}, 1},
+		{"two columns of blocks apart", ScanOptions{ColumnTokens: []ColumnTokens{in("a", "needle"), in("b", "straw")}}, 0},
+		{"a column no part has", ScanOptions{ColumnTokens: []ColumnTokens{in("c", "needle")}}, 0},
+		{"a column and a time range", ScanOptions{MinTime: 4000, MaxTime: 5999, ColumnTokens: []ColumnTokens{in("b", "needle")}}, 0},
+	} {
+		rows, _, stats := sumN(t, snap, c.opts)
+		total := int64(8)
+		if c.opts.MaxTime != 0 {
+			total = 2
+		}
+		if stats.Blocks != c.blocks || rows != c.blocks*blockRows || stats.SkippedByToken != total-c.blocks {
+			t.Errorf("%s: read %d rows of %d blocks and skipped %d by token, want %d blocks of %d", c.name, rows, stats.Blocks, stats.SkippedByToken, c.blocks, total)
+		}
+		admitted := int64(0)
+		for _, p := range parts {
+			for i := 0; i < p.NumBlocks(); i++ {
+				may, err := BlockMayContain(p, i, c.opts.ColumnTokens)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, lo, hi := p.BlockStats(i); may && (c.opts.MaxTime == 0 || (hi >= c.opts.MinTime && lo <= c.opts.MaxTime)) {
+					admitted++
+				}
+			}
+		}
+		if len(c.opts.Tokens) == 0 && admitted != c.blocks {
+			t.Errorf("%s: %d blocks may hold the tokens, the scan read %d", c.name, admitted, c.blocks)
+		}
 	}
 }
 

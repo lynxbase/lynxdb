@@ -57,9 +57,9 @@ type orderedPlan struct {
 	floats           []bool
 	skipped          int64
 	// residual is what the filter asks beyond the key prefix, or nil, and
-	// tokens the hashes that a block with a row passing it must hold.
+	// tokens what a block with a row passing it must hold.
 	residual *pred
-	tokens   []uint64
+	tokens   []colstore.ColumnTokens
 	// prefix is the number of sort key columns the filter fixes.
 	prefix int
 	// blocks is set when the parts form one stream, which is read in ranges
@@ -163,7 +163,7 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 		rest = append(rest, c)
 	}
 	var residual *pred
-	var tokens []uint64
+	var tokens []colstore.ColumnTokens
 	if len(rest) != 0 {
 		for _, c := range rest {
 			tokens = conjunctTokens(c, tokens)
@@ -290,7 +290,7 @@ const orderedTokenShare = 0.5
 
 // tokenShare estimates, from a sample of token filters, the share of the
 // plan's blocks that may hold every token.
-func tokenShare(key *colstore.KeyPlan, tokens []uint64) float64 {
+func tokenShare(key *colstore.KeyPlan, tokens []colstore.ColumnTokens) float64 {
 	if len(tokens) == 0 || key.Blocks == 0 {
 		return 1
 	}
@@ -315,16 +315,10 @@ func tokenShare(key *colstore.KeyPlan, tokens []uint64) float64 {
 	return float64(kept) / float64(probed)
 }
 
-// mayHold reports whether the token filter of block i of p admits every
-// token.
-func mayHold(p *part.Part, i int, tokens []uint64) (bool, error) {
-	for _, h := range tokens {
-		if ok, err := p.MayContainToken(i, h); !ok || err != nil {
-			return false, err
-		}
-	}
-
-	return true, nil
+// mayHold reports whether the token filters of block i of p admit every
+// set of tokens in its column.
+func mayHold(p *part.Part, i int, tokens []colstore.ColumnTokens) (bool, error) {
+	return colstore.BlockMayContain(p, i, tokens)
 }
 
 // window points the worker at rows from to to of a block of a range scan,

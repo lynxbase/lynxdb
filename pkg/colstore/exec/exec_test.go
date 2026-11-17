@@ -339,10 +339,12 @@ func TestPushdown(t *testing.T) {
 	second := int64(1_000_000_000)
 	start := int64(1_700_000_000_000_000_000)
 	cases := []struct {
-		name            string
-		filter          *exec.Expr
-		key             []string
-		tokens          int
+		name   string
+		filter *exec.Expr
+		key    []string
+		// tokens counts the hashes pushed down, and unbound those of them
+		// that no column is named for.
+		tokens, unbound int
 		minTime, maxTim int64
 	}{
 		{name: "prefix of two", filter: exec.And(eq("op", "create"), eq("kind", "commit")), key: []string{"commit", "create"}, tokens: 2},
@@ -355,6 +357,8 @@ func TestPushdown(t *testing.T) {
 		{name: "typed int", filter: exec.Eq(num("kind"), exec.Int(1))},
 		{name: "match", filter: exec.And(exec.Match(str("msg"), tokenfilter.Word("good morning")), eq("kind", "commit")), key: []string{"commit"}, tokens: 3},
 		{name: "prefix match", filter: exec.Match(str("msg"), tokenfilter.Prefix("crypto"))},
+		{name: "match of every column", filter: exec.And(exec.MatchAny(tokenfilter.Word("good morning")), eq("kind", "commit")),
+			key: []string{"commit"}, tokens: 3, unbound: 2},
 		{name: "time", filter: exec.And(exec.Ge(exec.Time(), exec.Int(start+5*second)), exec.Lt(exec.Time(), exec.Int(start+9*second))),
 			minTime: start + 5*second, maxTim: start + 9*second - 1},
 		{name: "time from", filter: exec.Gt(exec.Int(start), exec.Time()), minTime: -1 << 63, maxTim: start - 1},
@@ -370,8 +374,15 @@ func TestPushdown(t *testing.T) {
 					t.Fatalf("key filter %v=%q, want values %q", opts.Key.Paths, opts.Key.Values, c.key)
 				}
 			}
-			if len(opts.Tokens) != c.tokens {
-				t.Errorf("%d tokens, want %d", len(opts.Tokens), c.tokens)
+			tokens, unbound := 0, 0
+			for _, set := range opts.ColumnTokens {
+				tokens += len(set.Hashes)
+				if set.Path == "" {
+					unbound += len(set.Hashes)
+				}
+			}
+			if tokens != c.tokens || unbound != c.unbound || len(opts.Tokens) != 0 {
+				t.Errorf("%d tokens, %d of them of no column, want %d and %d", tokens, unbound, c.tokens, c.unbound)
 			}
 			if opts.MinTime != c.minTime || opts.MaxTime != c.maxTim {
 				t.Errorf("time %d..%d, want %d..%d", opts.MinTime, opts.MaxTime, c.minTime, c.maxTim)

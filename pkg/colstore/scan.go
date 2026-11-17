@@ -11,6 +11,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/mem"
+	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
 // ScanOptions narrows a scan and sets its parallelism.
@@ -23,12 +24,72 @@ type ScanOptions struct {
 	MaxTime int64
 	// Tokens holds token hashes that a block must all possibly contain.
 	Tokens []uint64
+	// ColumnTokens holds sets of token hashes, each of which a block must
+	// possibly contain in the strings of one column.
+	ColumnTokens []ColumnTokens
 	// Key prunes blocks by sort key; the snapshot's own filter applies when
 	// it is empty.
 	Key KeyFilter
 	// Skip, when set, is asked once per block before the scan starts and
 	// leaves out the blocks it returns true for.
 	Skip func(p *part.Part, block int) bool
+}
+
+// ColumnTokens holds token hashes that the strings of one column of a block
+// must all possibly contain: the string column at Path, or any one column
+// when Path is empty.
+type ColumnTokens struct {
+	Path   string
+	Hashes []uint64
+}
+
+// anyColumn stands for the path id of a token set without a path.
+const anyColumn = ^uint32(0)
+
+// resolveTokens appends the path id that each set has in p and reports
+// whether p holds every path, without which none of its blocks holds a set.
+func resolveTokens(dst []uint32, p *part.Part, sets []ColumnTokens) ([]uint32, bool) {
+	for i := range sets {
+		id := anyColumn
+		if sets[i].Path != "" {
+			var ok bool
+			if id, ok = p.PathID(sets[i].Path); !ok {
+				return dst, false
+			}
+		}
+		dst = append(dst, id)
+	}
+
+	return dst, true
+}
+
+// mayContainSet reports whether the strings of the column of block i of p
+// with the path id, or of any one column, may contain every hash.
+func mayContainSet(p *part.Part, i int, id uint32, hashes []uint64) (bool, error) {
+	if id == anyColumn {
+		return p.MayContainTokens(i, hashes)
+	}
+
+	return p.MayContainTokensIn(i, id, vec.KindString, hashes)
+}
+
+// BlockMayContain reports whether block i of p may hold every set of tokens
+// in the column it names.
+func BlockMayContain(p *part.Part, i int, sets []ColumnTokens) (bool, error) {
+	for s := range sets {
+		id := anyColumn
+		if sets[s].Path != "" {
+			var ok bool
+			if id, ok = p.PathID(sets[s].Path); !ok {
+				return false, nil
+			}
+		}
+		if may, err := mayContainSet(p, i, id, sets[s].Hashes); !may || err != nil {
+			return false, err
+		}
+	}
+
+	return true, nil
 }
 
 // KeyFilter names string values that rows must hold at the leading sort key
@@ -78,9 +139,12 @@ type ScanStats struct {
 // blockPool keeps the decode buffers of scan workers across scans.
 var blockPool mem.Pool[part.Block]
 
+// scanUnit is a block to scan; ids is where the path ids of the scan's token
+// sets in its part start among those of all parts.
 type scanUnit struct {
 	p     *part.Part
-	block int
+	block int32
+	ids   int32
 }
 
 // Scan calls fn from several goroutines, in no particular order, for every
@@ -98,12 +162,17 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 	keyPrefix := key.prefix()
 	var stats ScanStats
 	var units []scanUnit
+	var ids []uint32
+	sets := opts.ColumnTokens
 	for _, h := range s.v.parts {
 		if h.MaxTime < minT || h.MinTime > maxT {
 			stats.SkippedByTime += int64(h.NumBlocks())
 
 			continue
 		}
+		at := len(ids)
+		var named bool
+		ids, named = resolveTokens(ids, h.Part, sets)
 		first, end := 0, h.NumBlocks()
 		if h.Ordered() && key.covers(h.SortKey()) {
 			first, end = h.BlocksWithKeyPrefix(keyPrefix)
@@ -118,7 +187,12 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 			if opts.Skip != nil && opts.Skip(h.Part, i) {
 				continue
 			}
-			units = append(units, scanUnit{p: h.Part, block: i})
+			if !named {
+				stats.SkippedByToken++
+
+				continue
+			}
+			units = append(units, scanUnit{p: h.Part, block: int32(i), ids: int32(at)})
 		}
 	}
 
@@ -152,7 +226,10 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 					return
 				}
 				u := units[i]
-				may, err := mayContainAll(u.p, u.block, opts.Tokens)
+				may, err := mayContainAll(u.p, int(u.block), opts.Tokens)
+				for k := 0; k < len(sets) && may && err == nil; k++ {
+					may, err = mayContainSet(u.p, int(u.block), ids[int(u.ids)+k], sets[k].Hashes)
+				}
 				if err != nil {
 					cancel(err)
 
@@ -163,7 +240,7 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 
 					continue
 				}
-				if err := u.p.OpenBlock(u.block, b); err != nil {
+				if err := u.p.OpenBlock(int(u.block), b); err != nil {
 					cancel(err)
 
 					return
@@ -178,7 +255,7 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 		}(w)
 	}
 	wg.Wait()
-	stats.Blocks, stats.SkippedByToken = read.Load(), skipped.Load()
+	stats.Blocks, stats.SkippedByToken = read.Load(), stats.SkippedByToken+skipped.Load()
 	if err := context.Cause(ctx); err != nil {
 		return stats, err
 	}
