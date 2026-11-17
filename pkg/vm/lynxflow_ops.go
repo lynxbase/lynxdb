@@ -731,15 +731,24 @@ func (vm *VM) execLambdaWithParams(rootProg *Program, subIdx int, params []event
 		Constants:     rootProg.Constants,
 		FieldNames:    rootProg.FieldNames,
 		RegexPatterns: rootProg.RegexPatterns,
+		GlobPatterns:  rootProg.GlobPatterns,
 		CIDRNets:      rootProg.CIDRNets,
 		SubPrograms:   rootProg.SubPrograms,
 	}
 	vm.lambdaParams = append(vm.lambdaParams, params...)
-	// Save and reset SP for sub-program execution
+	// The sub-program runs from the bottom of the stack, so the caller's
+	// operands are saved and restored around it.
 	savedSP := vm.sp
-	vm.sp = 0
-	result, err := vm.ExecuteWithContext(execProg, fields, vm.predicateCtx)
+	var saved []event.Value
+	if savedSP > 0 {
+		saved = make([]event.Value, savedSP)
+		copy(saved, vm.stack[:savedSP])
+	}
+	ctx := vm.predicateCtx
+	result, err := vm.ExecuteWithContext(execProg, fields, ctx)
+	copy(vm.stack[:savedSP], saved)
 	vm.sp = savedSP
+	vm.predicateCtx = ctx
 	vm.lambdaParams = vm.lambdaParams[:len(vm.lambdaParams)-len(params)]
 	return result, err
 }
