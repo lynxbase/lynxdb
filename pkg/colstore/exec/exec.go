@@ -52,6 +52,10 @@ type execution struct {
 	taken atomic.Int64
 }
 
+// running counts the executions that chose their own number of goroutines
+// and have not ended.
+var running atomic.Int32
+
 // errEnough ends a scan whose plan has all the rows it asked for.
 var errEnough = errors.New("exec: enough rows")
 
@@ -63,7 +67,12 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 	}
 	n := opts.Workers
 	if n <= 0 {
-		n = runtime.GOMAXPROCS(0)
+		// Queries that run at once share the CPUs: each takes its part of
+		// twice their number, since goroutines beyond the CPUs only add
+		// switching and a query that finishes early leaves room.
+		cpus := runtime.GOMAXPROCS(0)
+		n = max(1, min(cpus, 2*cpus/int(running.Add(1))))
+		defer running.Add(-1)
 	}
 	var ords map[*part.Part]int
 	if q.located != nil {
