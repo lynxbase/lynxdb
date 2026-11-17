@@ -54,6 +54,9 @@ type execution struct {
 	// taken counts the rows that a plan with a limit and no order has
 	// produced.
 	taken atomic.Int64
+	// emit, when set, takes the rows of a plan of rows block by block in
+	// place of the workers' sinks.
+	emit func(batch []colVec, n int) error
 }
 
 // running counts the executions that chose their own number of goroutines
@@ -62,6 +65,77 @@ var running atomic.Int32
 
 // errEnough ends a scan whose plan has all the rows it asked for.
 var errEnough = errors.New("exec: enough rows")
+
+// Supports reports whether plan is one that the executor runs over snap: nil,
+// or an error that wraps ErrUnsupported.
+func Supports(snap *colstore.Snapshot, plan Node) error {
+	_, err := compile(snap, plan)
+
+	return err
+}
+
+// Each runs a plan of rows that neither aggregates nor sorts, and hands the
+// rows of each block that has any to fn, in no order among blocks. One
+// goroutine calls fn at a time, and the result is the caller's to keep. A
+// limit ends the scan once that many rows were handed over, and so does an
+// error of fn, which Each returns.
+func Each(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options, fn func(*Result) error) error {
+	q, err := compile(snap, plan)
+	if err != nil {
+		return err
+	}
+	if q.agg != nil || len(q.order) != 0 {
+		return unsupported("rows are handed over as they are scanned: without an aggregate or a sort")
+	}
+	n := opts.Workers
+	if n <= 0 {
+		cpus := runtime.GOMAXPROCS(0)
+		n = max(1, min(cpus, 2*cpus/int(running.Add(1))))
+		defer running.Add(-1)
+	}
+	x := &execution{q: q, workers: make([]*worker, n)}
+	if q.places {
+		x.ords = map[*part.Part]int{}
+		for i, h := range snap.Parts() {
+			x.ords[h.Part] = i
+		}
+	}
+	defer x.release()
+	var handing sync.Mutex
+	handed := 0
+	x.emit = func(batch []colVec, rows int) error {
+		if q.limit > 0 {
+			handing.Lock()
+			rows = min(rows, q.limit-handed)
+			handed += rows
+			handing.Unlock()
+			if rows <= 0 {
+				return errEnough
+			}
+		}
+		out := make([]colVec, len(batch))
+		for c := range batch {
+			for i := 0; i < rows; i++ {
+				out[c].appendFrom(&batch[c], i)
+			}
+		}
+		cols, _, err := x.shown(snap, out, rows)
+		if err != nil {
+			return err
+		}
+		handing.Lock()
+		defer handing.Unlock()
+
+		return fn(&Result{Columns: cols, Rows: rows})
+	}
+	scan := q.opts
+	scan.Workers = n
+	if _, err := snap.Scan(ctx, scan, x.block); err != nil && !errors.Is(err, errEnough) {
+		return err
+	}
+
+	return nil
+}
 
 // Run executes plan over snap and returns its rows.
 func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) (*Result, error) {

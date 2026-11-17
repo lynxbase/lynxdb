@@ -28,6 +28,9 @@ func (w *worker) project(n int, idx []uint32) error {
 			return err
 		}
 	}
+	if w.x.emit != nil {
+		return w.x.emit(s.batch, n)
+	}
 	w.sink.add(s.batch)
 
 	return nil
