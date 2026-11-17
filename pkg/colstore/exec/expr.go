@@ -97,6 +97,19 @@ const (
 	OpEndsWith
 	OpReplace
 	OpMatchAny
+	OpAbs
+	OpRound
+	OpFloor
+	OpCeil
+	OpSqrt
+	OpLn
+	OpLog
+	OpExp
+	OpPow
+	OpTrim
+	OpTrimLeft
+	OpTrimRight
+	OpIndexOf
 )
 
 // Expr is a node of an expression tree; which fields it uses depends on Op.
@@ -275,3 +288,50 @@ func EndsWith(s, suffix *Expr) *Expr { return call(OpEndsWith, s, suffix) }
 
 // Replace is s with every occurrence of the string from replaced by to.
 func Replace(s, from, to *Expr) *Expr { return call(OpReplace, s, from, to) }
+
+// Abs is the magnitude of a number, of its kind.
+func Abs(a *Expr) *Expr { return call(OpAbs, a) }
+
+// Round is a number rounded half away from zero, as a float: to an integer,
+// or to the number of decimal digits that args holds.
+func Round(a *Expr, args ...*Expr) *Expr { return call(OpRound, append([]*Expr{a}, args...)...) }
+
+// Floor is the greatest integer that is not above a number.
+func Floor(a *Expr) *Expr { return call(OpFloor, a) }
+
+// Ceil is the least integer that is not below a number.
+func Ceil(a *Expr) *Expr { return call(OpCeil, a) }
+
+// Sqrt is the square root of a number that is not negative.
+func Sqrt(a *Expr) *Expr { return call(OpSqrt, a) }
+
+// Ln is the natural logarithm of a positive number.
+func Ln(a *Expr) *Expr { return call(OpLn, a) }
+
+// Log is the logarithm of a positive number to base ten, or to the base that
+// args holds.
+func Log(a *Expr, args ...*Expr) *Expr { return call(OpLog, append([]*Expr{a}, args...)...) }
+
+// Exp is e raised to a number.
+func Exp(a *Expr) *Expr { return call(OpExp, a) }
+
+// Pow is a raised to b, as a float.
+func Pow(a, b *Expr) *Expr { return call(OpPow, a, b) }
+
+// Trim is a string without the white space at its ends, or without the
+// characters of the string that args holds.
+func Trim(s *Expr, args ...*Expr) *Expr { return call(OpTrim, append([]*Expr{s}, args...)...) }
+
+// TrimLeft is Trim at the start of the string alone.
+func TrimLeft(s *Expr, args ...*Expr) *Expr {
+	return call(OpTrimLeft, append([]*Expr{s}, args...)...)
+}
+
+// TrimRight is Trim at the end of the string alone.
+func TrimRight(s *Expr, args ...*Expr) *Expr {
+	return call(OpTrimRight, append([]*Expr{s}, args...)...)
+}
+
+// IndexOf is how many characters precede the first occurrence of the string
+// needle in s, and has no value when there is none.
+func IndexOf(s, needle *Expr) *Expr { return call(OpIndexOf, s, needle) }

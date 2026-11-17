@@ -110,6 +110,75 @@ func refBool(b bool) exec.Value { return exec.Value{Kind: vec.KindBool, Bool: b}
 
 func refText(s string) exec.Value { return exec.Value{Kind: vec.KindString, Bytes: []byte(s)} }
 
+// refMath applies a function of numbers; a result that is not a finite
+// number is null.
+func refMath(op exec.Op, args []exec.Value) exec.Value {
+	x, ok := refNumber(args[0])
+	if !ok {
+		return exec.Value{}
+	}
+	isInt := args[0].Kind == vec.KindInt
+	var f float64
+	switch op {
+	case exec.OpAbs:
+		if isInt && args[0].Int < 0 {
+			return exec.Value{Kind: vec.KindInt, Int: -args[0].Int}
+		}
+		if isInt {
+			return args[0]
+		}
+		f = math.Abs(x)
+	case exec.OpFloor, exec.OpCeil:
+		if isInt {
+			return args[0]
+		}
+		if f = math.Floor(x); op == exec.OpCeil {
+			f = math.Ceil(x)
+		}
+
+		return exec.Value{Kind: vec.KindInt, Int: int64(f)}
+	case exec.OpSqrt:
+		f = math.Sqrt(x)
+	case exec.OpLn:
+		f = math.Log(x)
+		if x <= 0 {
+			f = math.NaN()
+		}
+	case exec.OpExp:
+		f = math.Exp(x)
+	case exec.OpRound:
+		digits := int64(0)
+		if len(args) > 1 {
+			if args[1].Kind != vec.KindInt {
+				return exec.Value{}
+			}
+			digits = args[1].Int
+		}
+		f = math.Round(x*math.Pow(10, float64(digits))) / math.Pow(10, float64(digits))
+		if digits == 0 {
+			f = math.Round(x)
+		}
+	case exec.OpPow, exec.OpLog:
+		y := 10.0
+		if len(args) > 1 {
+			if y, ok = refNumber(args[1]); !ok {
+				return exec.Value{}
+			}
+		}
+		if f = math.Pow(x, y); op == exec.OpLog {
+			f = math.Log(x) / math.Log(y)
+			if x <= 0 || y <= 0 || y == 1 {
+				f = math.NaN()
+			}
+		}
+	}
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return exec.Value{}
+	}
+
+	return exec.Value{Kind: vec.KindFloat, Float: f}
+}
+
 // refApply applies a scalar function to the values of its arguments.
 func refApply(e *exec.Expr, args []exec.Value) exec.Value {
 	null := exec.Value{}
@@ -120,6 +189,8 @@ func refApply(e *exec.Expr, args []exec.Value) exec.Value {
 		b = args[1]
 	}
 	switch e.Op {
+	case exec.OpAbs, exec.OpRound, exec.OpFloor, exec.OpCeil, exec.OpSqrt, exec.OpLn, exec.OpLog, exec.OpExp, exec.OpPow:
+		return refMath(e.Op, args)
 	case exec.OpHourOfDay:
 		if a.Kind != vec.KindInt {
 			return null
@@ -326,6 +397,23 @@ func refApply(e *exec.Expr, args []exec.Value) exec.Value {
 		}
 
 		return refText(string(runes[start:end]))
+	case exec.OpTrim, exec.OpTrimLeft, exec.OpTrimRight:
+		if len(args) > 1 && !isString(b) {
+			return null
+		}
+		left, right := strings.TrimLeft, strings.TrimRight
+		set := " \t\n\v\f\r\u0085\u00a0"
+		if len(args) > 1 {
+			set = string(b.Bytes)
+		}
+		if e.Op != exec.OpTrimRight {
+			text = left(text, set)
+		}
+		if e.Op != exec.OpTrimLeft {
+			text = right(text, set)
+		}
+
+		return refText(text)
 	case exec.OpConcat:
 		var sb strings.Builder
 		for _, v := range args {
@@ -345,6 +433,12 @@ func refApply(e *exec.Expr, args []exec.Value) exec.Value {
 		return refBool(strings.HasPrefix(text, string(b.Bytes)))
 	case exec.OpEndsWith:
 		return refBool(strings.HasSuffix(text, string(b.Bytes)))
+	case exec.OpIndexOf:
+		if !isString(b) || !strings.Contains(text, string(b.Bytes)) {
+			return null
+		}
+
+		return exec.Value{Kind: vec.KindInt, Int: int64(len([]rune(strings.SplitN(text, string(b.Bytes), 2)[0])))}
 	case exec.OpReplace:
 		if !isString(args[2]) {
 			return null

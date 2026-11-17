@@ -24,10 +24,12 @@ const (
 func arity(op Op) (least, most int) {
 	switch op {
 	case OpHourOfDay, OpToInt, OpToFloat, OpToString, OpToBool, OpExists, OpIsNull, OpIsMissing, OpTypeOf,
-		OpLength, OpLower, OpUpper, OpNot, OpMatch:
+		OpLength, OpLower, OpUpper, OpNot, OpMatch, OpAbs, OpFloor, OpCeil, OpSqrt, OpLn, OpExp:
 		return 1, 1
+	case OpRound, OpLog, OpTrim, OpTrimLeft, OpTrimRight:
+		return 1, 2
 	case OpAdd, OpSub, OpMul, OpDiv, OpMod, OpBin, OpNullIf, OpStartsWith, OpEndsWith,
-		OpEq, OpNe, OpLt, OpLe, OpGt, OpGe:
+		OpEq, OpNe, OpLt, OpLe, OpGt, OpGe, OpPow, OpIndexOf:
 		return 2, 2
 	case OpIf, OpReplace:
 		return 3, 3
@@ -67,11 +69,13 @@ func resultKinds(op Op, args []*sexpr) uint8 {
 		}
 
 		return k
-	case OpMod, OpHourOfDay, OpToInt, OpLength:
+	case OpMod, OpHourOfDay, OpToInt, OpLength, OpFloor, OpCeil, OpIndexOf:
 		return kindBit(vec.KindInt)
-	case OpToFloat:
+	case OpToFloat, OpRound, OpSqrt, OpLn, OpLog, OpExp, OpPow:
 		return kindBit(vec.KindFloat)
-	case OpToString, OpTypeOf, OpLower, OpUpper, OpSubstr, OpConcat, OpReplace:
+	case OpAbs:
+		return args[0].kinds & numericKinds
+	case OpToString, OpTypeOf, OpLower, OpUpper, OpSubstr, OpConcat, OpReplace, OpTrim, OpTrimLeft, OpTrimRight:
 		return kindBit(vec.KindString)
 	case OpIf:
 		return union(1, 1)

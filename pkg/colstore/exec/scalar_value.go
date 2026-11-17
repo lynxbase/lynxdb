@@ -233,6 +233,8 @@ func scalarValue(op Op, pat *tokenfilter.Pattern, args []Value, buf []byte) (Val
 		}
 
 		return Value{Kind: vec.KindInt, Int: a.Int % b.Int}, buf
+	case OpAbs, OpRound, OpFloor, OpCeil, OpSqrt, OpLn, OpLog, OpExp, OpPow:
+		return mathValue(op, args), buf
 	case OpHourOfDay:
 		if a.Kind != vec.KindInt {
 			return Value{}, buf
@@ -429,9 +431,116 @@ func scalarValue(op Op, pat *tokenfilter.Pattern, args []Value, buf []byte) (Val
 		return boolValue(bytes.HasSuffix(a.Bytes, b.Bytes)), buf
 	case OpReplace:
 		buf = appendReplaced(buf, a.Bytes, b.Bytes, args[2].Bytes)
+	case OpTrim, OpTrimLeft, OpTrimRight:
+		return Value{Kind: vec.KindString, Bytes: trimmed(op, a.Bytes, args[1:])}, buf
+	case OpIndexOf:
+		at := bytes.Index(a.Bytes, b.Bytes)
+		if at < 0 {
+			return Value{}, buf
+		}
+
+		return Value{Kind: vec.KindInt, Int: int64(utf8.RuneCount(a.Bytes[:at]))}, buf
 	default:
 		return Value{}, buf
 	}
 
 	return str(start), buf
+}
+
+// trimmed returns s without white space at the ends that op names, or
+// without the characters of the string in chars when it holds one.
+func trimmed(op Op, s []byte, chars []Value) []byte {
+	left, right := op != OpTrimRight, op != OpTrimLeft
+	if len(chars) == 0 {
+		if left {
+			s = bytes.TrimLeftFunc(s, unicode.IsSpace)
+		}
+		if right {
+			s = bytes.TrimRightFunc(s, unicode.IsSpace)
+		}
+
+		return s
+	}
+	set := string(chars[0].Bytes)
+	if left {
+		s = bytes.TrimLeft(s, set)
+	}
+	if right {
+		s = bytes.TrimRight(s, set)
+	}
+
+	return s
+}
+
+// mathValue applies a function of numbers; what has no result as a number,
+// such as the root of a negative one, has no value.
+func mathValue(op Op, args []Value) Value {
+	x, ok := number(args[0])
+	if !ok {
+		return Value{}
+	}
+	float := func(f float64) Value {
+		if f != f || math.IsInf(f, 0) {
+			return Value{}
+		}
+
+		return Value{Kind: vec.KindFloat, Float: f}
+	}
+	whole := func(f float64) Value {
+		if args[0].Kind == vec.KindInt {
+			return args[0]
+		}
+		// Beyond these bounds a float has no integer of 64 bits.
+		if f != f || f >= 1<<63 || f < -(1<<63) {
+			return Value{}
+		}
+
+		return Value{Kind: vec.KindInt, Int: int64(f)}
+	}
+	switch op {
+	case OpAbs:
+		if args[0].Kind == vec.KindInt {
+			return Value{Kind: vec.KindInt, Int: max(args[0].Int, -args[0].Int)}
+		}
+
+		return float(math.Abs(x))
+	case OpFloor:
+		return whole(math.Floor(x))
+	case OpCeil:
+		return whole(math.Ceil(x))
+	case OpSqrt:
+		return float(math.Sqrt(x))
+	case OpLn:
+		if x <= 0 {
+			return Value{}
+		}
+
+		return float(math.Log(x))
+	case OpExp:
+		return float(math.Exp(x))
+	case OpRound:
+		if len(args) == 1 {
+			return float(math.Round(x))
+		}
+		if args[1].Kind != vec.KindInt {
+			return Value{}
+		}
+		scale := math.Pow(10, float64(args[1].Int))
+
+		return float(math.Round(x*scale) / scale)
+	}
+	y := 10.0
+	if len(args) > 1 {
+		if y, ok = number(args[1]); !ok {
+			return Value{}
+		}
+	}
+	if op == OpPow {
+		return float(math.Pow(x, y))
+	}
+	if x <= 0 || y <= 0 || y == 1 {
+		return Value{}
+	}
+
+	return float(math.Log(x) / math.Log(y))
 }
