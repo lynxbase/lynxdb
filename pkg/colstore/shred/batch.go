@@ -32,6 +32,9 @@ type Options struct {
 	// MaxColumns bounds the columns of one batch; members beyond it are
 	// kept in the RestPath column.
 	MaxColumns int
+	// KeepText makes AddNDJSON keep a line that is not a JSON object as a
+	// row of text instead of reporting it.
+	KeepText bool
 }
 
 // Batch is an append-only columnar buffer; one written as a block of a part

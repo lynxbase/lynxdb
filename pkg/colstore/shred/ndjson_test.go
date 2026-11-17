@@ -50,6 +50,29 @@ func TestAddNDJSONReportsBadLinesAndKeepsGoodOnes(t *testing.T) {
 	}
 }
 
+func TestAddNDJSONKeepsLinesThatAreNotObjectsAsText(t *testing.T) {
+	chunk := []byte("{\"a\":1}\nMar  2 06:00:01 node-1 sshd[411]: Failed password\r\n{\"a\":\n\n[1,2]\n{\"a\":4}")
+	b := NewBatch(Options{KeepText: true})
+	if errs := b.AddNDJSON(chunk, 42, nil); len(errs) != 0 {
+		t.Fatalf("errs = %+v", errs)
+	}
+	want := []map[string]any{
+		{"a": int64(1)},
+		{RawPath: "Mar  2 06:00:01 node-1 sshd[411]: Failed password"},
+		{RawPath: `{"a":`},
+		{RawPath: "[1,2]"},
+		{"a": int64(4)},
+	}
+	if got := rowsOf(t, b); !reflect.DeepEqual(got, want) {
+		t.Fatalf("rows = %v", got)
+	}
+	for row, at := range b.Times {
+		if at != 42 {
+			t.Fatalf("row %d has the time %d", row, at)
+		}
+	}
+}
+
 func TestSplitLines(t *testing.T) {
 	data := []byte("a\nb\nc")
 	chunk, rest := SplitLines(data, 2)
