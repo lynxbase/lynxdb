@@ -125,6 +125,7 @@ func TestStages(t *testing.T) {
 		{"dedup", `from logs | dedup host | keep host, status, _time | sort host`,
 			fmt.Sprintf("a 500 %d; b 503 %d", testNow.Add(-30*time.Minute).UnixNano(), testNow.Add(-150*time.Minute).UnixNano())},
 		{"dedup of filtered rows", `from logs | where status < 500 | dedup level, host | extend code = status + 1 | keep level, code | sort level`, "info 201; warn 405"},
+		{"estimated distinct count", `from logs | stats estdc(status) as codes, estdc(host) as hosts by level | sort level`, "error 2 2; info 1 1; warn 1 1"},
 		{"where after stats", `from logs | stats count() as n by host | where n > 2 | sort host`, "a 3"},
 		{"extend after stats", `from logs | stats sum(status) as total, count() as n | extend mean = total / n`, "1807 5 361"},
 		{"count by", `from logs | count by level | sort level`, "error 2; info 2; warn 1"},

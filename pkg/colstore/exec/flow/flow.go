@@ -326,7 +326,7 @@ func (t *translator) set(name string, e *exec.Expr) {
 }
 
 var aggFuncs = map[string]exec.AggFunc{
-	"count": exec.Count, "dc": exec.CountDistinct, "sum": exec.Sum, "avg": exec.Avg,
+	"count": exec.Count, "dc": exec.CountDistinct, "estdc": exec.ApproxDistinct, "sum": exec.Sum, "avg": exec.Avg,
 	"min": exec.Min, "max": exec.Max, "stdev": exec.Stdev, "var": exec.Var,
 	"first": exec.First, "last": exec.Last, "earliest": exec.Earliest, "latest": exec.Latest,
 	"any_value": exec.AnyValue, "arg_min": exec.ArgMin, "arg_max": exec.ArgMax,

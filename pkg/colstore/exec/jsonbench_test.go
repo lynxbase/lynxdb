@@ -72,8 +72,9 @@ func benchTexts(win benchWindows) map[string]string {
 	byCount := ` | stats count() as count by commit.collection | sort -count, commit.collection`
 
 	return map[string]string{
-		"Q1": `from bluesky` + byCount,
-		"Q2": created + ` | stats count() as count, dc(did) as users by commit.collection | sort -count, commit.collection`,
+		"Q1":                 `from bluesky` + byCount,
+		"Q2":                 created + ` | stats count() as count, dc(did) as users by commit.collection | sort -count, commit.collection`,
+		"Q2 estimated users": created + ` | stats count() as count, estdc(did) as users by commit.collection | sort -count, commit.collection`,
 		"Q3": created + ` and commit.collection in ["app.bsky.feed.like", "app.bsky.feed.post", "app.bsky.feed.repost"]` +
 			` | extend hour = date_part(_time, "hour") | stats count() as count by commit.collection, hour | sort hour, commit.collection`,
 		"Q4": created + ` and commit.collection == "app.bsky.feed.post" | stats min(_time) as first by did | sort first, did | head 3`,
@@ -181,6 +182,11 @@ func benchPlans(win benchWindows) []benchPlan {
 			Input: &exec.Scan{Filter: exec.And(created...)},
 			Keys:  []exec.Named{collection},
 			Aggs:  []exec.Agg{count, {Name: "users", Func: exec.CountDistinct, Arg: str("did")}},
+		}, By: byCount}, ordered: true},
+		{name: "Q2 estimated users", plan: &exec.Sort{Input: &exec.Aggregate{
+			Input: &exec.Scan{Filter: exec.And(created...)},
+			Keys:  []exec.Named{collection},
+			Aggs:  []exec.Agg{count, {Name: "users", Func: exec.ApproxDistinct, Arg: str("did")}},
 		}, By: byCount}, ordered: true},
 		{name: "Q3", plan: &exec.Sort{Input: &exec.Aggregate{
 			Input: &exec.Scan{Filter: exec.And(append(created[:2:2], exec.Or(isCollection("app.bsky.feed.like"),
@@ -518,7 +524,7 @@ func answer(name string, res *exec.Result) string {
 		switch name {
 		case "Q1":
 			fmt.Fprintf(&b, "%s=%d", row[0].Bytes, row[1].Int)
-		case "Q2":
+		case "Q2", "Q2 estimated users":
 			fmt.Fprintf(&b, "%s=%d/%d", row[0].Bytes, row[1].Int, row[2].Int)
 		case "Q3":
 			fmt.Fprintf(&b, "%s@%d=%d", row[0].Bytes, row[1].Int, row[2].Int)
