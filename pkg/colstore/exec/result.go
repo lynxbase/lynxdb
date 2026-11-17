@@ -33,6 +33,9 @@ type Stats struct {
 	HeldBytes int64
 	// Ordered is set when the groups were aggregated in sort key order.
 	Ordered bool
+	// HashedFor says what in the rows kept a plan that was laid out for
+	// sort key order from running in it.
+	HashedFor string
 }
 
 // Column is one column of a result.

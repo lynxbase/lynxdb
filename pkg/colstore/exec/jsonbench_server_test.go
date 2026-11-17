@@ -275,6 +275,7 @@ func (s *flowServer) query(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{
 		"rows": res.Rows, "answer": answer, "in_key_order": res.Stats.Ordered, "blocks": res.Stats.Blocks,
+		"counted_from_index": res.Stats.CountedByIndex, "hashed_for": res.Stats.HashedFor,
 	})
 }
 

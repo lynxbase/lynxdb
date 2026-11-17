@@ -72,6 +72,8 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 			ords[h.Part] = i
 		}
 	}
+	// hashedFor says why a plan that could run in key order did not.
+	hashedFor := ""
 	if q.ordered != nil {
 		x := &execution{q: q, workers: make([]*worker, n), streaming: true, ords: ords}
 		res, err := x.runOrdered(ctx, snap)
@@ -79,6 +81,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		if !errors.Is(err, errUnordered) {
 			return res, err
 		}
+		hashedFor = err.Error()
 	}
 	x := &execution{q: q, workers: make([]*worker, n), ords: ords}
 	if q.agg != nil && q.agg.group >= 0 {
@@ -118,6 +121,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		SkippedByToken: stats.SkippedByToken,
 		SkippedByTime:  stats.SkippedByTime,
 		HeldBytes:      x.held(),
+		HashedFor:      hashedFor,
 	}
 	for _, w := range active {
 		res.Stats.SkippedByStats += w.undecoded

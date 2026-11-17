@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
@@ -717,7 +718,13 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 		for p, pos := range o.parts {
 			col := c.r.Block.Keys.Column(pos, vec.KindString)
 			if col == nil || (col.Valid != nil && col.Valid.Rank(to)-col.Valid.Rank(from) != to-from) {
-				return false, errUnordered
+				strings := 0
+				if col != nil {
+					strings = col.Valid.Rank(to) - col.Valid.Rank(from)
+				}
+
+				return false, fmt.Errorf("%w: sort key column %d is a string in %d of the rows %d to %d of a block",
+					errUnordered, pos, strings, from, to)
 			}
 			c.cols[p] = col
 		}
