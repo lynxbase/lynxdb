@@ -233,6 +233,14 @@ func splitLines(data []byte, n int) [][]byte {
 // parts with disjoint key ranges, so that the table is one ordered run.
 func loadOrdered(t testing.TB, data []byte, parts int, key []string) *colstore.Table {
 	t.Helper()
+
+	return mergedTable(t, data, parts, key, benchTimeField, benchBlockRows)
+}
+
+// mergedTable is loadOrdered for documents with the given time field, in
+// blocks of blockRows rows.
+func mergedTable(t testing.TB, data []byte, parts int, key []string, timeField string, blockRows int) *colstore.Table {
+	t.Helper()
 	opts := part.Options{Ordered: true, SortKey: key}
 	chunks := splitLines(data, parts)
 	runs := make([]*part.Part, len(chunks))
@@ -241,16 +249,16 @@ func loadOrdered(t testing.TB, data []byte, parts int, key []string) *colstore.T
 		wg.Add(1)
 		go func(i int, chunk []byte) {
 			defer wg.Done()
-			all := shred.NewBatch(shred.Options{TimeField: benchTimeField})
+			all := shred.NewBatch(shred.Options{TimeField: timeField})
 			all.AddNDJSON(chunk, 0, nil)
 			all.SortBy(key)
 			var buf bytes.Buffer
 			w := part.NewWriter(&buf, opts)
 			block := shred.Get(shred.Options{})
 			defer shred.Put(block)
-			for from := 0; from < all.Rows; from += benchBlockRows {
+			for from := 0; from < all.Rows; from += blockRows {
 				block.Reset()
-				all.CopyRows(block, from, min(from+benchBlockRows, all.Rows))
+				all.CopyRows(block, from, min(from+blockRows, all.Rows))
 				if err := w.WriteBatch(block); err != nil {
 					t.Error(err)
 
@@ -290,7 +298,7 @@ func loadOrdered(t testing.TB, data []byte, parts int, key []string) *colstore.T
 			}
 			var buf bytes.Buffer
 			w := part.NewWriter(&buf, opts)
-			if err := part.MergeRange(w, runs, benchBlockRows, lo, hi); err != nil {
+			if err := part.MergeRange(w, runs, blockRows, lo, hi); err != nil {
 				t.Error(err)
 
 				return
@@ -563,10 +571,10 @@ func TestJSONBenchPlans(t *testing.T) {
 			if s.Ordered {
 				how = "in key order"
 			}
-			t.Logf("%-8s %-22s %8.2f ms on %d cores (median %.2f, cpu %.1f, holds %.1f MB), %d heap allocations (%.2f MB); %s; %d blocks opened, skipped: %d by key, %d by tokens, %d by time, %d by statistics; %d blocks pass the filter with %d rows",
+			t.Logf("%-8s %-22s %8.2f ms on %d cores (median %.2f, cpu %.1f, holds %.1f MB), %d heap allocations (%.2f MB); %s; %d blocks opened, %d counted from the index, skipped: %d by key, %d by tokens, %d by time, %d by statistics; %d blocks pass the filter with %d rows",
 				tbl.name, q.name, millis(took[0]), cores, millis(took[runs/2]), millis(cpu), float64(s.HeldBytes)/1e6,
 				after.Mallocs-before.Mallocs, float64(after.TotalAlloc-before.TotalAlloc)/1e6, how,
-				s.Blocks, s.SkippedByKey, s.SkippedByToken, s.SkippedByTime, s.SkippedByStats, s.BlocksMatched, s.RowsMatched)
+				s.Blocks, s.CountedByIndex, s.SkippedByKey, s.SkippedByToken, s.SkippedByTime, s.SkippedByStats, s.BlocksMatched, s.RowsMatched)
 			got := answer(q.name, res)
 			if want, ok := benchAnswers[q.name]; ok && rows == 1_000_000 && got != want {
 				t.Errorf("%s %s\n got  %s\n want %s", tbl.name, q.name, got, want)

@@ -31,6 +31,10 @@ type scratch struct {
 	cols   []vec.Column
 	// used marks the columns that the query decoded.
 	used []bool
+	// views show the rows of a window of a shared block, a view per column
+	// slot that viewed marks as set for the open window.
+	views  []vec.Window
+	viewed []bool
 
 	sels   []selection
 	ints   [][]int64
@@ -53,8 +57,10 @@ type worker struct {
 	b    *part.Block
 	rows int
 	// shared, when set, is the block of a range scan that columns come from
-	// instead of b.
+	// instead of b: its rows from from on, or all of them when whole is set.
 	shared *colstore.SharedBlock
+	from   int
+	whole  bool
 	// decoded records that the block had a column decoded.
 	decoded bool
 
@@ -104,6 +110,9 @@ func newWorker(x *execution) *worker {
 func (w *worker) release() {
 	w.arena.Free()
 	clear(w.refs)
+	for i := range w.views {
+		w.views[i].Drop()
+	}
 	scratchPool.Put(w.scratch)
 	w.scratch = nil
 }
@@ -146,6 +155,9 @@ func (w *worker) held() int {
 		if w.used[i] {
 			n += w.cols[i].Retained()
 		}
+	}
+	for i := range w.views {
+		n += w.views[i].Retained()
 	}
 	for i := range w.sels {
 		n += used(w.sels[i].mask) + 4*used(w.sels[i].list)

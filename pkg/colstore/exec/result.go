@@ -17,6 +17,9 @@ type Stats struct {
 	// SkippedByStats counts opened blocks that the filter rejected from
 	// column statistics and constants, without decoding a column.
 	SkippedByStats int64
+	// CountedByIndex counts blocks whose rows were aggregated from the part
+	// index without opening them.
+	CountedByIndex int64
 	// BlocksMatched and RowsMatched count what passed the filter.
 	BlocksMatched int64
 	RowsMatched   int64

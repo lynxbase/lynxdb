@@ -16,9 +16,16 @@ import (
 // of a distinct count if there is one, are the rest of the sort key. Whatever
 // else the filter asks is evaluated on the rows of each block, unless it is a
 // text match or another string equality: those rule out blocks through token
-// filters, which a scan in key order does not consult. The rows of a key range then arrive ordered by group, one stream per
-// sorted run, so a merge of the streams finishes one group after another and
-// holds no more than the group it is in.
+// filters, which a scan in key order does not consult. The rows of a key
+// range then arrive ordered by group, one stream per sorted run, so a merge
+// of the streams finishes one group after another and holds no more than the
+// group it is in.
+//
+// Parts that form one stream are read in ranges of whole blocks. For a plan
+// that only counts rows and distinct values, the part index then tells how
+// many groups and distinct values a block holds and whether its first row
+// continues the row before it, so a block inside one group is counted without
+// being read.
 
 // errUnordered reports rows that the ordered aggregation cannot place: a
 // group key or distinct argument that is missing or not a string.
@@ -49,6 +56,12 @@ type orderedPlan struct {
 	skipped          int64
 	// residual is what the filter asks beyond the key prefix, or nil.
 	residual *pred
+	// prefix is the number of sort key columns the filter fixes.
+	prefix int
+	// blocks is set when the parts form one stream, which is read in ranges
+	// of whole blocks: no block is then shared by readers that wait for one
+	// another. byIndex is set when counts can also come from the part index.
+	blocks, byIndex bool
 }
 
 // columns calls need for every column a filter node reads.
@@ -143,7 +156,8 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 		}
 	}
 
-	o := &orderedPlan{groups: len(ap.keys), keyOf: make([]int, len(ap.keys)), floats: make([]bool, len(ap.args)), residual: residual}
+	o := &orderedPlan{groups: len(ap.keys), keyOf: make([]int, len(ap.keys)), floats: make([]bool, len(ap.args)),
+		residual: residual, prefix: prefix}
 	for i, k := range ap.keys {
 		if k.op != OpColumn || (k.kind != vec.KindString && k.kind != KindAny) {
 			return nil
@@ -233,6 +247,11 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 		return nil
 	}
 	o.key = key
+	o.byIndex = residual == nil && key.Streams() == 1
+	for _, w := range ap.words {
+		o.byIndex = o.byIndex && (w.op == wordRows || w.op == wordGroup)
+	}
+	o.blocks = key.Streams() == 1
 	for _, h := range snap.Parts() {
 		o.skipped += int64(h.NumBlocks())
 	}
@@ -241,18 +260,35 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 	return o
 }
 
-// sharedColumn returns the column of a slot from the block of a range scan.
+// window points the worker at rows from to to of a block of a range scan,
+// which the filter and the aggregates then see as rows 0 to to-from.
+func (w *worker) window(sb *colstore.SharedBlock, from, to int) {
+	w.shared, w.rows, w.from, w.whole = sb, to-from, from, from == 0 && to == sb.Rows
+	w.views, w.viewed = fit(w.views, len(w.state)), fit(w.viewed, len(w.state))
+	clear(w.viewed)
+}
+
+// sharedColumn returns the rows of the open window that a column slot holds
+// in the block of a range scan.
 func (w *worker) sharedColumn(path int, kind vec.Kind) *vec.Column {
 	o := w.q.ordered
 	s := path*kindSlots + int(kind) - 1
+	var c *vec.Column
 	if k := o.slotKey[s]; k >= 0 {
-		return w.shared.Keys.Column(int(k), kind)
+		c = w.shared.Keys.Column(int(k), kind)
+	} else if i := o.slotCol[s]; i >= 0 {
+		c = w.shared.Column(int(i))
 	}
-	if c := o.slotCol[s]; c >= 0 {
-		return w.shared.Column(int(c))
+	if c == nil || w.whole {
+		return c
+	}
+	v := &w.views[s]
+	if !w.viewed[s] {
+		v.Set(c, w.from, w.from+w.rows)
+		w.viewed[s] = true
 	}
 
-	return nil
+	return &v.Column
 }
 
 // orderedGroup is a group of the merge: its key values, its state and, for a
@@ -278,8 +314,10 @@ func (g *orderedGroup) copyFrom(src *orderedGroup) {
 // orderedEdges holds the first and the last group of a key range, which may
 // continue in the ranges next to it.
 type orderedEdges struct {
-	// lo is where the range starts, which orders the ranges of a scan.
+	// lo is where the range starts and seq its number among the ranges that
+	// start there, which order the ranges of a scan.
 	lo          []byte
+	seq         int
 	first, last orderedGroup
 }
 
@@ -295,6 +333,14 @@ type orderedCursor struct {
 	words  []int64
 	i, n   int
 	cur    [][]byte
+	// repeat tells that the first row of the block continues the distinct
+	// value of the row before it in the stream.
+	repeat bool
+	// counted is set for a block taken from the part index as one run with
+	// the group in key and values distinct values.
+	counted bool
+	key     [][]byte
+	values  int64
 }
 
 func (c *orderedCursor) load() {
@@ -327,15 +373,19 @@ type orderedWorker struct {
 
 	bound []uint8
 	gid   []uint32
-	idx   []uint32
 	// edges holds the first and last group of every range the worker read.
 	edges []*orderedEdges
+	// byIndex counts the blocks counted from the part index.
+	byIndex int64
 }
 
 func (ow *orderedWorker) held() int {
-	n := 8*(cap(ow.states)+cap(ow.users)) + cap(ow.bound) + 4*(cap(ow.gid)+cap(ow.idx)) + ow.post.held()
+	n := 8*(cap(ow.states)+cap(ow.users)) + cap(ow.bound) + 4*cap(ow.gid) + ow.post.held()
 	for _, c := range ow.cursors {
 		n += 4*(cap(c.starts)+cap(c.group)) + 8*cap(c.words)
+		for _, k := range c.key {
+			n += cap(k)
+		}
 	}
 	for i := range ow.batch {
 		n += ow.batch[i].held()
@@ -376,28 +426,29 @@ func markChanges(bound []uint8, col *vec.Column, from int) {
 	}
 }
 
-// markChangesAt is markChanges for the rows listed in rows.
-func markChangesAt(bound []uint8, col *vec.Column, rows []uint32) {
+// markChangesAt is markChanges for the rows from plus each of rows.
+func markChangesAt(bound []uint8, col *vec.Column, from int, rows []uint32) {
 	switch col.Layout {
 	case vec.Const:
 	case vec.Dict:
 		for j := 1; j < len(rows); j++ {
-			if col.Code(int(rows[j])) != col.Code(int(rows[j-1])) {
+			if col.Code(from+int(rows[j])) != col.Code(from+int(rows[j-1])) {
 				bound[j] = 1
 			}
 		}
 	default:
 		for j := 1; j < len(rows); j++ {
-			if string(col.Bytes(int(rows[j]))) != string(col.Bytes(int(rows[j-1]))) {
+			if string(col.Bytes(from+int(rows[j]))) != string(col.Bytes(from+int(rows[j-1]))) {
 				bound[j] = 1
 			}
 		}
 	}
 }
 
-// selected evaluates the rest of the filter on the open block and returns
-// the rows from from to to that pass it, nil when all of them do.
-func (ow *orderedWorker) selected(from, to int) (rows []uint32, every bool, err error) {
+// selected evaluates the rest of the filter on the open window and returns
+// the rows that pass it, counted from the start of the window; every is set
+// when all of them do.
+func (ow *orderedWorker) selected() (rows []uint32, every bool, err error) {
 	w := ow.w
 	v, err := w.eval(ow.o.residual, 0)
 	if err != nil || v == none {
@@ -412,14 +463,56 @@ func (ow *orderedWorker) selected(from, to int) (rows []uint32, every bool, err 
 		w.idx = vec.MaskIndexes(w.idx[:0], s.mask)
 		rows = w.idx
 	}
-	for len(rows) > 0 && int(rows[0]) < from {
-		rows = rows[1:]
-	}
-	for len(rows) > 0 && int(rows[len(rows)-1]) >= to {
-		rows = rows[:len(rows)-1]
-	}
 
-	return rows, len(rows) == to-from, nil
+	return rows, len(rows) == w.rows, nil
+}
+
+// fromIndex takes block i of p, every row of which is inside the range, from
+// the part index as one run, and reports false unless the index proves that
+// the block holds one group with strings for its keys and distinct values.
+func (ow *orderedWorker) fromIndex(c *orderedCursor, p *part.Part, i int) bool {
+	w, o := ow.w, ow.o
+	depth := o.prefix + o.groups
+	if p.KeyRuns(i, depth) != 1 {
+		return false
+	}
+	first := p.FirstKey(i)
+	for pos := o.prefix; pos < depth; pos++ {
+		if part.KeyKind(first, pos) != vec.KindString {
+			return false
+		}
+	}
+	c.values = 0
+	if len(o.parts) > o.groups {
+		_, last := p.KeyRange()
+		if i+1 < p.NumBlocks() {
+			last = p.FirstKey(i + 1)
+		}
+		// The values between two strings of one group are strings.
+		if part.KeyKind(first, depth) != vec.KindString || part.KeyKind(last, depth) != vec.KindString ||
+			part.SharedKeyColumns(first, last) < depth {
+			return false
+		}
+		c.values = int64(p.KeyRuns(i, depth+1))
+		if c.repeat {
+			c.values--
+		}
+	}
+	c.key = fit(c.key, o.groups)
+	for g := 0; g < o.groups; g++ {
+		c.key[g], _ = part.KeyString(c.key[g][:0], first, o.prefix+g)
+		c.cur[g] = c.key[g]
+	}
+	rows, _, _ := p.BlockStats(i)
+	c.words = append(c.words[:0], w.q.agg.init...)
+	c.words[w.q.agg.rows] = int64(rows)
+	c.starts, c.group = append(c.starts[:0], 0), append(c.group[:0], 0)
+	c.i, c.n, c.counted = 0, 1, true
+	w.blocks++
+	w.matched += int64(rows)
+	ow.byIndex++
+
+	return true
 }
 
 // next loads the next block of c that has rows in the range passing the
@@ -432,12 +525,26 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 	var from, to, n int
 	var picked []uint32
 	for {
-		ok, err := c.r.Next(b)
-		if !ok || err != nil {
+		p, i, whole, ok := c.r.Peek()
+		if !ok {
+			return false, nil
+		}
+		if o.byIndex {
+			c.repeat = c.r.Shared() >= o.prefix+len(o.parts)
+			if whole && ow.fromIndex(c, p, i) {
+				c.r.Skip()
+
+				return true, nil
+			}
+		}
+		if ok, err := c.r.Read(b); err != nil {
 			return false, err
+		} else if !ok {
+			continue
 		}
 		sb = c.r.Block
 		from, to = c.r.From, c.r.To
+		c.counted, c.repeat = false, c.repeat && from == 0
 		n = to - from
 		for p, pos := range o.parts {
 			col := sb.Keys.Column(pos, vec.KindString)
@@ -446,11 +553,11 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 			}
 			c.cols[p] = col
 		}
-		w.shared, w.rows = sb, sb.Rows
+		w.window(sb, from, to)
 		if o.residual == nil {
 			break
 		}
-		rows, every, err := ow.selected(from, to)
+		rows, every, err := ow.selected()
 		if err != nil {
 			return false, err
 		}
@@ -469,7 +576,7 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 	bound[0] = 1
 	for p := 0; p < o.groups; p++ {
 		if picked != nil {
-			markChangesAt(bound, c.cols[p], picked)
+			markChangesAt(bound, c.cols[p], from, picked)
 		} else {
 			markChanges(bound, c.cols[p], from)
 		}
@@ -483,7 +590,7 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 	}
 	if len(o.parts) > o.groups {
 		if picked != nil {
-			markChangesAt(bound, c.cols[o.groups], picked)
+			markChangesAt(bound, c.cols[o.groups], from, picked)
 		} else {
 			markChanges(bound, c.cols[o.groups], from)
 		}
@@ -495,7 +602,7 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 		}
 		row := uint32(from + j)
 		if picked != nil {
-			row = picked[j]
+			row = uint32(from) + picked[j]
 		}
 		c.starts = append(c.starts, row)
 		c.group = append(c.group, gid[j])
@@ -504,17 +611,9 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 	for i := 0; i < int(g); i++ {
 		copy(c.words[i*stride:], w.q.agg.init)
 	}
-	idx := picked
-	if picked == nil && (from != 0 || to != sb.Rows) {
-		ow.idx = sized(ow.idx, n)
-		idx = ow.idx
-		for j := range idx {
-			idx[j] = uint32(from + j)
-		}
-	}
 	w.blocks++
 	w.matched += int64(n)
-	if err := w.agg.feed(&target{words: c.words, gid: gid}, n, idx); err != nil {
+	if err := w.agg.feed(&target{words: c.words, gid: gid}, n, picked); err != nil {
 		return false, err
 	}
 	c.i, c.n = 0, len(c.starts)
@@ -583,7 +682,20 @@ func (ow *orderedWorker) take(c *orderedCursor, edges *orderedEdges) {
 			open.first, open.last = open.first[:0], open.last[:0]
 		}
 	}
-	if len(o.parts) == o.groups {
+	switch {
+	case len(o.parts) == o.groups:
+		return
+	case c.counted:
+		open.users += c.values
+
+		return
+	case o.byIndex:
+		// The index says whether a block starts with a value already counted;
+		// every later run of a stream in key order brings another.
+		if c.i > 0 || !c.repeat {
+			open.users++
+		}
+
 		return
 	}
 	v := c.cur[o.groups]
@@ -754,7 +866,24 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 	q := x.q
 	o := q.ordered
 	workers := len(x.workers)
-	scan := o.key.Ranges(max(4*workers, o.key.Rows/rangeRows), o.columns...)
+	ranges := max(4*workers, o.key.Rows/rangeRows)
+	var scan *colstore.RangeScan
+	// Ranges of whole blocks all start at the same key.
+	var seq map[*colstore.KeyRange]int
+	if o.blocks {
+		// Blocks that are read cost alike, so each is a task of its own;
+		// blocks counted from the index cost next to nothing.
+		if !o.byIndex {
+			ranges = o.key.Blocks
+		}
+		scan = o.key.BlockRanges(ranges, o.columns...)
+		seq = make(map[*colstore.KeyRange]int, len(scan.Ranges))
+		for i := range scan.Ranges {
+			seq[&scan.Ranges[i]] = i
+		}
+	} else {
+		scan = o.key.Ranges(ranges, o.columns...)
+	}
 	ows := make([]*orderedWorker, workers)
 	err := scan.Run(ctx, workers, func(n int, kr *colstore.KeyRange, b *part.Block) error {
 		ow := ows[n]
@@ -763,7 +892,7 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 			ow = &orderedWorker{w: x.workers[n], o: o, scan: scan, turn: n}
 			ows[n] = ow
 		}
-		edges := &orderedEdges{lo: kr.Lo}
+		edges := &orderedEdges{lo: kr.Lo, seq: seq[kr]}
 		ow.edges = append(ow.edges, edges)
 
 		return ow.merge(kr, edges, b)
@@ -787,7 +916,13 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 			edges = append(edges, ow.edges...)
 		}
 	}
-	sort.Slice(edges, func(i, j int) bool { return bytes.Compare(edges[i].lo, edges[j].lo) < 0 })
+	sort.Slice(edges, func(i, j int) bool {
+		if c := bytes.Compare(edges[i].lo, edges[j].lo); c != 0 {
+			return c < 0
+		}
+
+		return edges[i].seq < edges[j].seq
+	})
 	var carry *orderedGroup
 	for i := range edges {
 		for _, e := range []*orderedGroup{&edges[i].first, &edges[i].last} {
@@ -808,7 +943,9 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 			}
 			plan.mergeWords(carry.words, e.words)
 			carry.users += e.users
-			if e.users > 0 && bytes.Equal(carry.last, e.first) {
+			// Counts taken with the index leave out a value that the row
+			// before the range has.
+			if !o.byIndex && e.users > 0 && bytes.Equal(carry.last, e.first) {
 				carry.users--
 			}
 			if e.users > 0 {
@@ -835,6 +972,7 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 		res.Stats.BlocksMatched += w.blocks
 		res.Stats.RowsMatched += w.matched
 		held += w.arena.Size() + w.held() + w.sink.held() + ows[i].held()
+		res.Stats.CountedByIndex += ows[i].byIndex
 	}
 	res.Columns, res.Rows = collect(q, sinks)
 	res.Stats.Blocks, res.Stats.SkippedByKey, res.Stats.HeldBytes = scan.Decoded.Load(), o.skipped, int64(held)

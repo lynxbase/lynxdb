@@ -371,7 +371,23 @@ func (w *worker) evalStr(p *pred, depth int) (verdict, error) {
 
 		return w.present(c, depth), nil
 	case vec.Dict:
-		return w.evalDict(p, c, depth), nil
+		// A window shorter than the dictionary has fewer rows than entries.
+		if c.DictLen() <= w.rows {
+			return w.evalDict(p, c, depth), nil
+		}
+		m := w.mask(depth)
+		for i := range m {
+			var b uint8
+			if p.test(c.DictValue(c.Code(i))) {
+				b = 0xFF
+			}
+			m[i] = b
+		}
+		if c.Valid != nil {
+			vec.MaskAndBitmap(m, c.Valid)
+		}
+
+		return some, nil
 	}
 	if p.op == OpMatch {
 		s := &w.sels[depth]
