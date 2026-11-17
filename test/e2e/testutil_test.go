@@ -29,7 +29,6 @@ type Harness struct {
 	client    *client.Client
 	cancel    context.CancelFunc
 	startDone chan struct{} // closed when srv.Start() returns (engine fully shut down)
-	inMem     bool
 }
 
 // HarnessOption configures a Harness.
@@ -38,16 +37,7 @@ type HarnessOption func(*Harness)
 // WithDisk creates a persistent data directory for the server.
 func WithDisk() HarnessOption {
 	return func(h *Harness) {
-		h.inMem = false
 		h.dataDir = h.t.TempDir()
-	}
-}
-
-// WithInMemory creates a server with no disk persistence (default).
-func WithInMemory() HarnessOption {
-	return func(h *Harness) {
-		h.inMem = true
-		h.dataDir = ""
 	}
 }
 
@@ -56,7 +46,7 @@ func WithInMemory() HarnessOption {
 func NewHarness(t *testing.T, opts ...HarnessOption) *Harness {
 	t.Helper()
 
-	h := &Harness{t: t, inMem: true}
+	h := &Harness{t: t}
 	for _, opt := range opts {
 		opt(h)
 	}

@@ -430,11 +430,6 @@ func testdataLog(name string) string {
 	return filepath.Join(projectRoot, "testdata", "logs", name)
 }
 
-// testdataFile resolves a file name to an absolute path under testdata/.
-func testdataFile(name string) string {
-	return filepath.Join(projectRoot, "testdata", name)
-}
-
 // containsANSI checks if a string contains ANSI escape sequences.
 func containsANSI(s string) bool {
 	return strings.Contains(s, "\033[")

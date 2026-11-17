@@ -4,7 +4,7 @@ Generate manifest.json for LynxDB release distribution.
 
 This script runs in CI after GoReleaser builds all artifacts. It reads the
 checksums.txt file and artifact directory to produce a structured manifest
-that the install.sh script and `lynxdb upgrade` command can consume.
+that the install.sh script can consume.
 
 Usage:
     python3 generate-manifest.py \

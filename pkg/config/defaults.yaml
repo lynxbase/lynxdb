@@ -44,7 +44,7 @@
 #     grpc_max_recv_bytes: 16mb      # OTLP/gRPC max receive message size
 #   splunk_hec:
 #     enabled: true                  # Enable Splunk HEC-compatible routes
-#     require_token: false           # P1 accepts any non-empty Splunk token
+#     require_token: false           # false accepts any non-empty Splunk token
 #   limits:
 #     max_compressed_body_bytes: 32mb   # Max compressed shipper request body
 #     max_decompressed_body_bytes: 256mb # Max decoded shipper request body

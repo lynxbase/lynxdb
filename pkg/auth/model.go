@@ -26,9 +26,9 @@ type Scope string
 const (
 	// ScopeIngest allows POST to ingest endpoints (_bulk, /ingest/*, /otlp/*).
 	ScopeIngest Scope = "ingest"
-	// ScopeQuery allows GET/POST to query, fields, sources, histogram, tail.
+	// ScopeQuery allows running queries and reading their jobs.
 	ScopeQuery Scope = "query"
-	// ScopeAdmin allows access to auth management, config, cache, stats.
+	// ScopeAdmin allows reading the config and canceling jobs.
 	ScopeAdmin Scope = "admin"
 	// ScopeFull allows access to all endpoints (default).
 	ScopeFull Scope = "full"

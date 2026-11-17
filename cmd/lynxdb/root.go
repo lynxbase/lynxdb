@@ -411,7 +411,7 @@ Global Flags:
 
 Use "{{.CommandPath}} [command] --help" for more information about a command.{{end}}
 
-Exit Codes: 0=ok 1=error 2=usage 3=connection 4=parse 5=timeout 6=empty 7=auth 10=aborted 130=interrupted
+Exit Codes: 0=ok 1=error 2=usage 3=connection 4=parse 5=timeout 6=empty 7=auth 130=interrupted
 `
 
 // usageTemplate is the shorter form shown on argument/flag errors.

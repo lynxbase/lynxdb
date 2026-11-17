@@ -330,8 +330,7 @@ func (f *RawFormatter) Format(w io.Writer, rows []map[string]interface{}) error 
 			if s != "" {
 				fmt.Fprintln(w, s)
 			} else {
-				// Fallback for empty _raw (e.g., column pruning missed it
-				// or segment reader returned an empty string for the field).
+				// An empty _raw prints the other fields of the row.
 				writeFieldValueLine(w, row)
 			}
 		} else {
