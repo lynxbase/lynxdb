@@ -120,6 +120,9 @@ type translator struct {
 	// dedup holds the keys of a dedup stage, which keeps the first row of
 	// each of their combinations.
 	dedup []exec.Named
+	// totals is set once a field stands for a total over the groups, which
+	// a later filter of the groups would change.
+	totals bool
 }
 
 func (t *translator) source(src *ast.FromStage) error {
@@ -206,9 +209,28 @@ func (t *translator) stage(s *ast.Stage) error {
 			}
 			t.dedup = append(t.dedup, exec.Named{Name: fmt.Sprintf("\x00key%d", len(t.dedup)), Expr: e})
 		}
+	case s.Eventstats != nil:
+		if t.agg == nil || len(s.Eventstats.By) != 0 {
+			return unsupported("eventstats before stats or by a field")
+		}
+		for _, a := range s.Eventstats.Aggs {
+			call, ok := a.Func.(*ast.Call)
+			if !ok || call.Callee != "sum" || len(call.Args) != 1 || a.WhereCond != nil || a.Alias == "" {
+				return unsupported("eventstats %s; it gives the sum of a column of stats under a name", format.Expr(a.Func))
+			}
+			e, err := t.expr(call.Args[0])
+			if err != nil {
+				return err
+			}
+			if e.Op != exec.OpColumn {
+				return unsupported("eventstats %s; it gives the sum of a column of stats under a name", format.Expr(a.Func))
+			}
+			t.set(a.Alias, exec.Total(e))
+		}
+		t.totals = true
 	case s.Where != nil:
-		if t.dedup != nil {
-			return unsupported("where after dedup")
+		if t.dedup != nil || t.totals {
+			return unsupported("where after dedup or eventstats")
 		}
 		p, err := t.pred(s.Where.Expr, false)
 		if err != nil {
@@ -586,6 +608,9 @@ var scalarCalls = map[string]exec.Op{
 	"len": exec.OpLength, "lower": exec.OpLower, "upper": exec.OpUpper, "substr": exec.OpSubstr,
 	"starts_with": exec.OpStartsWith, "ends_with": exec.OpEndsWith,
 	"int": exec.OpToInt, "float": exec.OpToFloat, "string": exec.OpToString, "bool": exec.OpToBool,
+	"abs": exec.OpAbs, "round": exec.OpRound, "floor": exec.OpFloor, "ceil": exec.OpCeil, "sqrt": exec.OpSqrt,
+	"ln": exec.OpLn, "log": exec.OpLog, "exp": exec.OpExp, "pow": exec.OpPow,
+	"trim": exec.OpTrim, "ltrim": exec.OpTrimLeft, "rtrim": exec.OpTrimRight, "index_of": exec.OpIndexOf,
 }
 
 // expr translates a value expression.

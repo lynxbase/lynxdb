@@ -117,7 +117,7 @@ func TestFlowTimeRangesCountFromNow(t *testing.T) {
 
 func TestFlowRefusesWhatItCannotRun(t *testing.T) {
 	for _, text := range []string{
-		`from logs | top 5 coll`,
+		`from logs | stats count() as n by coll | eventstats avg(n) as m`,
 		`from logs | stats perc(n) by coll`,
 		`from logs | where kind == "commit"`,
 		`from logs | stats count() by coll | stats count()`,
