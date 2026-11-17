@@ -1,0 +1,2 @@
+Compute(evens = filter(array(1, 2, 3, 4), (x) -> ($x % 2) = 0), total = reduce(array(1, 2), 0, (acc, x) -> $acc + $x))
+└─ Scan(logs)

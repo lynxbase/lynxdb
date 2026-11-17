@@ -1,0 +1,1 @@
+source=logs | grok message '%{IP:client} %{WORD:verb} %{NUMBER:code}'

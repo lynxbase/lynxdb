@@ -1,0 +1,2 @@
+Filter((NOT (a = 1) AND (b > 2)) OR ((c < 3) XOR is_null(d)))
+└─ Scan(logs)

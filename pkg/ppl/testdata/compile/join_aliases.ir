@@ -1,0 +1,4 @@
+Project(o.id, c.name)
+└─ Join[left](customer_id = id) qualify=o,c
+   ├─ Scan(orders)
+   └─ Scan(customers)

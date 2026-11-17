@@ -1,0 +1,1 @@
+source=logs | fillnull with 0 in bytes, latency | trendline sort _time sma(3, bytes) as avg3

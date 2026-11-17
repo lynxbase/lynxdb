@@ -1,0 +1,1 @@
+source=logs | lookup users user_id as uid append name as user_name

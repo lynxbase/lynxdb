@@ -1,0 +1,8 @@
+Project(drop __lookup_0, __lookup_match)
+└─ Compute(user_name = coalesce(user_name, __lookup_0))
+   └─ Join[left](uid = user_id) max=1 keep_left
+      ├─ Scan(logs)
+      └─ Compute(__lookup_match = TRUE)
+         └─ Rename(name -> __lookup_0)
+            └─ Project(user_id, name)
+               └─ Scan(users)

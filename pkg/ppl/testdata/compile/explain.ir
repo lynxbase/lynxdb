@@ -1,0 +1,3 @@
+Aggregate(`count()` = count())
+└─ Filter(status = 500)
+   └─ Scan(logs)

@@ -1,0 +1,5 @@
+Window[running rows=3](avg3 = moving_avg(bytes))
+└─ Filter(NOT is_null(bytes))
+   └─ Sort(_time NULLS FIRST)
+      └─ FillNull(bytes = 0, latency = 0)
+         └─ Scan(logs)

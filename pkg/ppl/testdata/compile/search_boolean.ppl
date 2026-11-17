@@ -1,0 +1,1 @@
+search source=logs (error OR warn*) NOT debug host!=web-01

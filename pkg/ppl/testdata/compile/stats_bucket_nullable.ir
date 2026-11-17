@@ -1,0 +1,3 @@
+Project(`sum(bytes)`, host)
+└─ Aggregate(`sum(bytes)` = sum(bytes) BY host) drop_null_groups
+   └─ Scan(logs)

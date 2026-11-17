@@ -1,0 +1,3 @@
+Join[inner](customer_id = customer_id) max=1
+├─ Scan(orders)
+└─ Scan(customers)

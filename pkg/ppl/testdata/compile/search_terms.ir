@@ -1,0 +1,2 @@
+Filter((SEARCH_WORD(_raw, "ERROR") AND SEARCH_PHRASE(_raw, "connection refused")) AND (status = 500))
+└─ Scan(logs) time=[now-1h@h, now)

@@ -1,0 +1,1 @@
+describe logs | where TYPE_NAME = 'string' | fields COLUMN_NAME

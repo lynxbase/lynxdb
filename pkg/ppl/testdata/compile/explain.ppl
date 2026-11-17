@@ -1,0 +1,1 @@
+explain source=logs | where status = 500 | stats count()

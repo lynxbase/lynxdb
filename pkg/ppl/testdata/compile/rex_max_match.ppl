@@ -1,0 +1,1 @@
+source=logs | rex field=message max_match=2 '(?<num>\d+)'

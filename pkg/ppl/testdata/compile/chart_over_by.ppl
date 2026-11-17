@@ -1,0 +1,1 @@
+source=logs | chart avg(latency) over service by status

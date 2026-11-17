@@ -1,0 +1,2 @@
+Window[partition](avg_lat = avg(latency) BY service)
+└─ Scan(logs)

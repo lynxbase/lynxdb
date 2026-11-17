@@ -1,0 +1,2 @@
+Filter(((SEARCH_WORD(_raw, "error") OR SEARCH_PREFIX(_raw, "warn")) AND NOT SEARCH_WORD(_raw, "debug")) AND NOT coalesce(host = "web-01", FALSE))
+└─ Scan(logs)

@@ -1,0 +1,2 @@
+Compute(d = date_add(_time, 1, "month"), h = hour(_time), recent = _time >= TIME(now-1d@d))
+└─ Scan(logs)

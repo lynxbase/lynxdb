@@ -1,0 +1,1 @@
+source=logs | fields - _raw | rename src_* as source_* | fields host, source_*

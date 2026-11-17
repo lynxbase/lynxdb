@@ -1,0 +1,1 @@
+source=a | append [ search source=b | where x > 1 ] | appendpipe [ stats count() as total ]

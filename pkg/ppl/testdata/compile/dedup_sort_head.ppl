@@ -1,0 +1,1 @@
+source=logs | dedup 2 host keepempty=true | sort - status, host | head 5 from 10

@@ -1,0 +1,2 @@
+Compute(bucket = concat(CAST(num_bucket(latency, 100) AS string), "-", CAST(num_bucket(latency, 100) + 100 AS string)))
+└─ Scan(logs)

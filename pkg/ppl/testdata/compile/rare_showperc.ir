@@ -1,0 +1,7 @@
+Project(method, count, percent)
+└─ Limit(10)
+   └─ Sort(count NULLS LAST, method NULLS FIRST)
+      └─ Compute(percent = round((CAST(count AS float) / __total) * 100.0, 2))
+         └─ Window[partition](__total = sum(count))
+            └─ Aggregate(count = count() BY method)
+               └─ Scan(logs)

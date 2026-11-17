@@ -1,0 +1,2 @@
+Extract[regex](message, "(?<user>\\w+)@(?<domain>[\\w.]+)" -> user, domain)
+└─ Scan(logs)

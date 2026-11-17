@@ -147,18 +147,18 @@ func (e *Empty) Schema() Schema { return e.Out }
 func (*Empty) isNode()          {}
 func (*Empty) Label() string    { return "Empty()" }
 
-// SourceSchema produces one row per column observed in a source, describing
-// its name and type.
+// SourceSchema produces one row per column observed in a source.
 type SourceSchema struct {
 	Source Source
 }
 
-// SourceSchemaColumns is the output schema of SourceSchema.
+// SourceSchemaColumns is the output schema of SourceSchema: one row per
+// column with its position and the type name of its observed values.
 var SourceSchemaColumns = ClosedSchema(
+	Column{Name: "TABLE_NAME", Type: String},
 	Column{Name: "COLUMN_NAME", Type: String},
-	Column{Name: "DATA_TYPE", Type: String, Nullable: true},
-	Column{Name: "COUNT", Type: Int},
-	Column{Name: "COVERAGE", Type: Float, Nullable: true},
+	Column{Name: "TYPE_NAME", Type: String},
+	Column{Name: "ORDINAL_POSITION", Type: Int},
 )
 
 func (*SourceSchema) Inputs() []Node { return nil }
@@ -207,10 +207,17 @@ func (p *Project) WithInputs(in []Node) Node {
 }
 func (*Project) isNode() {}
 func (p *Project) Label() string {
-	if p.Drop {
-		return "Project(drop " + strings.Join(p.Names, ", ") + ")"
+	names := make([]string, len(p.Names))
+	for i, n := range p.Names {
+		names[i] = n
+		if !IsNamePattern(n) {
+			names[i] = QuoteName(n)
+		}
 	}
-	return "Project(" + strings.Join(p.Names, ", ") + ")"
+	if p.Drop {
+		return "Project(drop " + strings.Join(names, ", ") + ")"
+	}
+	return "Project(" + strings.Join(names, ", ") + ")"
 }
 func (p *Project) Schema() Schema {
 	in := p.Input.Schema()
@@ -763,6 +770,10 @@ type Join struct {
 	Cond       Expr
 	MaxMatches int64
 	Collision  JoinCollision
+	// LeftQualifier and RightQualifier, when set, make each joined row also
+	// carry every column of that side under "<qualifier>.<column>".
+	LeftQualifier  string
+	RightQualifier string
 }
 
 func (j *Join) Inputs() []Node { return []Node{j.Left, j.Right} }
@@ -794,6 +805,12 @@ func (j *Join) Label() string {
 	if j.MaxMatches > 0 {
 		fmt.Fprintf(&b, " max=%d", j.MaxMatches)
 	}
+	if j.Collision == CollisionLeft {
+		b.WriteString(" keep_left")
+	}
+	if j.LeftQualifier != "" || j.RightQualifier != "" {
+		b.WriteString(" qualify=" + j.LeftQualifier + "," + j.RightQualifier)
+	}
 	return b.String()
 }
 func (j *Join) Schema() Schema {
@@ -821,6 +838,22 @@ func (j *Join) Schema() Schema {
 		cc.Nullable = cc.Nullable || rightNullable
 		out.Columns = append(out.Columns, cc)
 	}
+	qualify := func(q string, s Schema, nullable bool) {
+		if q == "" {
+			return
+		}
+		for _, c := range s.Columns {
+			cc := c
+			cc.Name = q + "." + c.Name
+			cc.Nullable = cc.Nullable || nullable
+			out.Columns = append(out.Columns, cc)
+		}
+		if s.Open {
+			out.Open = true
+		}
+	}
+	qualify(j.LeftQualifier, l, leftNullable)
+	qualify(j.RightQualifier, r, rightNullable)
 	return out
 }
 
@@ -909,8 +942,6 @@ type ExtractMethod uint8
 const (
 	// ExtractRegex applies an RE2 pattern; each named group becomes a column.
 	ExtractRegex ExtractMethod = iota + 1
-	// ExtractGrok applies a grok pattern; each named capture becomes a column.
-	ExtractGrok
 	// ExtractJSON parses the text as JSON. With Path set it extracts the
 	// value at that path into the single output column; without, every
 	// top-level member becomes a column.
@@ -918,24 +949,24 @@ const (
 )
 
 var extractMethodNames = map[ExtractMethod]string{
-	ExtractRegex: "regex", ExtractGrok: "grok", ExtractJSON: "json",
+	ExtractRegex: "regex", ExtractJSON: "json",
 }
 
 func (m ExtractMethod) String() string { return extractMethodNames[m] }
 
 // Extract derives columns from a string expression. A row whose text does
-// not match gets NULL in the outputs it would have produced, unless Keep is
-// set, in which case existing values of those columns are kept. With
-// MaxMatches > 1 a regex output holds an array of up to MaxMatches matches.
+// not match gets NoMatch in the outputs it would have produced: NULL, or the
+// empty string when NoMatchEmpty is set. With MaxMatches > 1 a regex output
+// holds an array of up to MaxMatches matches.
 type Extract struct {
-	Input      Node
-	Source     Expr
-	Method     ExtractMethod
-	Pattern    string
-	Path       string
-	Outputs    []Column
-	MaxMatches int
-	Keep       bool
+	Input        Node
+	Source       Expr
+	Method       ExtractMethod
+	Pattern      string
+	Path         string
+	Outputs      []Column
+	MaxMatches   int
+	NoMatchEmpty bool
 }
 
 func (e *Extract) Inputs() []Node { return []Node{e.Input} }

@@ -1,0 +1,1 @@
+source=logs | stats count() as n, avg(latency) by span(@timestamp, 5m) as ts, host

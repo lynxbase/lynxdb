@@ -1,0 +1,1 @@
+source=logs | timechart span=1h limit=5 count() by host

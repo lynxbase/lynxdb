@@ -1,0 +1,1 @@
+source=logs | bin latency span=100 as bucket

@@ -1,0 +1,1 @@
+source=logs | top 3 status by host

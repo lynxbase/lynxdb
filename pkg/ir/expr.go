@@ -233,9 +233,10 @@ func (op BinaryOp) Commute() BinaryOp {
 
 // Binary applies a binary operator. Arithmetic on two ints is int, on an int
 // and a float is float; timestamp - timestamp is a duration and timestamp ±
-// duration is a timestamp. Comparisons between a string and a number convert
-// the string to a number and yield NULL when it does not parse. Comparisons
-// between other incompatible types yield NULL.
+// duration is a timestamp. Adding two strings concatenates them. Wherever a
+// string meets a number, in arithmetic or in a comparison, the string is
+// converted to a number, and the result is NULL when it does not parse.
+// Comparisons between other incompatible types yield NULL.
 type Binary struct {
 	Op BinaryOp
 	L  Expr

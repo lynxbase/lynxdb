@@ -1,0 +1,3 @@
+Project(COLUMN_NAME)
+└─ Filter(TYPE_NAME = "string")
+   └─ SourceSchema(logs)

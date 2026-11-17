@@ -1,0 +1,3 @@
+Compute(uid = json_extract(payload, "$.user.ids[0]"))
+└─ Filter(NOT regexp_match(host, "^web"))
+   └─ Scan(logs)

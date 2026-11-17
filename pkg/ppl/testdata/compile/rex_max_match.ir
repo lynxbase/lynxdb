@@ -1,0 +1,2 @@
+Extract[regex](message, "(?<num>\\d+)" -> num) max_matches=2
+└─ Scan(logs)

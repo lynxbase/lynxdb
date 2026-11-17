@@ -1,0 +1,1 @@
+source=logs | streamstats current=false window=3 global=false sum(bytes) as s by host

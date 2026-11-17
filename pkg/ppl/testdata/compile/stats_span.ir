@@ -1,0 +1,3 @@
+Project(n, `avg(latency)`, ts, host)
+└─ Aggregate(n = count(), `avg(latency)` = avg(latency) BY ts = time_bucket(_time, 5, "m"), host)
+   └─ Scan(logs)

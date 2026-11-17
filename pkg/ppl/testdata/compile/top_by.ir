@@ -1,0 +1,5 @@
+Project(host, status, count)
+└─ Dedup(host, count=3, keep_null)
+   └─ Sort(host NULLS FIRST, count DESC NULLS LAST, status NULLS FIRST)
+      └─ Aggregate(count = count() BY host, status)
+         └─ Scan(logs)

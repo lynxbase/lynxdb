@@ -1,0 +1,2 @@
+Window[running rows=3 exclude_current](s = sum(bytes) BY host)
+└─ Scan(logs)

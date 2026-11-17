@@ -175,7 +175,7 @@ func (v *validator) node(n Node) {
 		if len(x.Outputs) == 0 && !(x.Method == ExtractJSON && x.Path == "") {
 			v.fail(n, "no output columns")
 		}
-		if (x.Method == ExtractRegex || x.Method == ExtractGrok) && x.Pattern == "" {
+		if x.Method == ExtractRegex && x.Pattern == "" {
 			v.fail(n, "empty pattern")
 		}
 	case *Patterns:

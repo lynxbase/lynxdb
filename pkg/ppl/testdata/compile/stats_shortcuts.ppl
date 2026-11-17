@@ -1,0 +1,1 @@
+source=logs | stats count, dc(user), p95(latency), median(latency), count(eval(status >= 500)) as errors by service

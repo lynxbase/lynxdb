@@ -1,0 +1,229 @@
+package ppl
+
+import (
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/lynxbase/lynxdb/pkg/ir"
+	"github.com/lynxbase/lynxdb/pkg/ppl/ast"
+)
+
+// AggSupport describes how LynxDB executes one PPL aggregation name.
+type AggSupport struct {
+	Name        string
+	IR          string
+	Note        string
+	Unsupported string
+}
+
+// aggregateCatalog maps PPL aggregation names onto IR aggregates.
+var aggregateCatalog = map[string]*AggSupport{
+	"count":                 {IR: "count", Note: "count() and count(*) count rows; count(x) counts non-NULL x; count(eval(cond)) counts rows where cond is TRUE"},
+	"c":                     {IR: "count", Note: "alias of count"},
+	"sum":                   {IR: "sum"},
+	"avg":                   {IR: "avg"},
+	"max":                   {IR: "max"},
+	"min":                   {IR: "min"},
+	"var_samp":              {IR: "var_samp"},
+	"var_pop":               {IR: "var_pop"},
+	"stddev_samp":           {IR: "stddev_samp"},
+	"stddev_pop":            {IR: "stddev_pop"},
+	"distinct_count":        {IR: "distinct_count", Note: "exact"},
+	"dc":                    {IR: "distinct_count", Note: "alias of distinct_count; exact"},
+	"distinct_count_approx": {IR: "distinct_count_approx", Note: "HyperLogLog estimate"},
+	"earliest":              {IR: "earliest", Note: "orders by _time unless a time field is given"},
+	"latest":                {IR: "latest", Note: "orders by _time unless a time field is given"},
+	"take":                  {IR: "take", Note: "default size 10"},
+	"percentile":            {IR: "percentile", Note: "t-digest; the optional compression argument is accepted and not used"},
+	"percentile_approx":     {IR: "percentile", Note: "alias of percentile"},
+	"median":                {IR: "percentile", Note: "percentile(x, 50)"},
+	"first":                 {IR: "first"},
+	"last":                  {IR: "last"},
+	"list":                  {IR: "list"},
+	"values":                {IR: "values"},
+	"per_second":            {Note: "timechart only: sum(x) per second of the span"},
+	"per_minute":            {Note: "timechart only: sum(x) per minute of the span"},
+	"per_hour":              {Note: "timechart only: sum(x) per hour of the span"},
+	"per_day":               {Note: "timechart only: sum(x) per day of the span"},
+}
+
+// Window-only functions accepted by eventstats and streamstats in the
+// official grammar.
+var windowOnlyFuncs = map[string]bool{
+	"row_number": true, "rank": true, "dense_rank": true, "percent_rank": true, "cume_dist": true, "nth": true, "ntile": true,
+}
+
+func init() {
+	for name, a := range aggregateCatalog {
+		a.Name = name
+	}
+}
+
+// AggregateFunctions lists the PPL aggregation catalog sorted by name.
+func AggregateFunctions() []AggSupport {
+	out := make([]AggSupport, 0, len(aggregateCatalog))
+	for _, a := range aggregateCatalog {
+		out = append(out, *a)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func isPercentileName(name string) bool {
+	_, ok := percentileShortcut(name)
+	return ok
+}
+
+// percentileShortcut parses pNN and percNN names.
+func percentileShortcut(name string) (float64, bool) {
+	rest := ""
+	switch {
+	case strings.HasPrefix(name, "perc") && name != "percentile" && name != "percentile_approx":
+		rest = name[4:]
+	case strings.HasPrefix(name, "p"):
+		rest = name[1:]
+	default:
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(rest, 64)
+	if err != nil || v < 0 || v > 100 {
+		return 0, false
+	}
+	return v, true
+}
+
+// aggCall compiles one aggregation term. span is the time-bucket width in
+// seconds for the per_* functions, or 0 when they are not allowed.
+func (x *ectx) aggCall(term ast.AggTerm, window bool, spanSeconds float64) (*ir.AggCall, ir.Expr, error) {
+	n := term.Func
+	if p, ok := percentileShortcut(n.Name); ok {
+		if len(n.Args) != 1 {
+			return nil, nil, typeErr(n, "%s expects 1 argument", n.Name)
+		}
+		v, err := x.expr(n.Args[0])
+		if err != nil {
+			return nil, nil, err
+		}
+		return x.agg(n, "percentile", []ir.Expr{v, ir.FloatLit(p)})
+	}
+	if window && windowOnlyFuncs[n.Name] {
+		return nil, nil, errAt(ErrUnsupportedFunction, n, "window function %s is not supported; LynxDB supports aggregation functions in eventstats and streamstats", n.Name)
+	}
+	spec, ok := aggregateCatalog[n.Name]
+	if !ok {
+		if _, scalar := scalarCatalog[n.Name]; scalar {
+			return nil, nil, semanticErr(n, "%s is not an aggregation function", n.Name)
+		}
+		return nil, nil, errAt(ErrUnsupportedFunction, n, "unknown aggregation %s", n.Name)
+	}
+	switch n.Name {
+	case "count", "c":
+		switch {
+		case len(n.Args) == 0:
+			return x.agg(n, "count", nil)
+		case len(n.Args) > 1:
+			return nil, nil, typeErr(n, "count expects at most 1 argument")
+		}
+		if _, all := n.Args[0].(*ast.AllFields); all {
+			return x.agg(n, "count", nil)
+		}
+		if ev, ok := n.Args[0].(*ast.Call); ok && ev.Name == "eval" {
+			if len(ev.Args) != 1 {
+				return nil, nil, typeErr(ev, "eval expects 1 argument")
+			}
+			cond, err := x.expr(ev.Args[0])
+			if err != nil {
+				return nil, nil, err
+			}
+			if err := requireBool(ev.Args[0], cond); err != nil {
+				return nil, nil, err
+			}
+			call, out, err := x.agg(n, "count", nil)
+			if err == nil {
+				call.Filter = cond
+			}
+			return call, out, err
+		}
+		if lit, ok := n.Args[0].(*ast.Literal); ok && lit.Kind != ast.LitNull {
+			return x.agg(n, "count", nil)
+		}
+	case "median":
+		args, err := x.args(n, 1, 1)
+		if err != nil {
+			return nil, nil, err
+		}
+		return x.agg(n, "percentile", []ir.Expr{args[0], ir.FloatLit(50)})
+	case "percentile", "percentile_approx":
+		args, err := x.args(n, 2, 3)
+		if err != nil {
+			return nil, nil, err
+		}
+		lit, ok := args[1].(*ir.Literal)
+		var pct float64
+		switch v := lit.V.(type) {
+		case int64:
+			pct = float64(v)
+		case float64:
+			pct = v
+		default:
+			ok = false
+		}
+		if !ok || pct < 0 || pct > 100 {
+			return nil, nil, typeErr(n.Args[1], "percentile: the percent must be a number between 0 and 100")
+		}
+		return x.agg(n, "percentile", []ir.Expr{args[0], ir.FloatLit(pct)})
+	case "take":
+		args, err := x.args(n, 1, 2)
+		if err != nil {
+			return nil, nil, err
+		}
+		if len(args) == 1 {
+			args = append(args, ir.IntLit(10))
+		}
+		return x.agg(n, "take", args)
+	case "per_second", "per_minute", "per_hour", "per_day":
+		if spanSeconds <= 0 {
+			return nil, nil, semanticErr(n, "%s is only valid in timechart", n.Name)
+		}
+		args, err := x.args(n, 1, 1)
+		if err != nil {
+			return nil, nil, err
+		}
+		unit := map[string]float64{"per_second": 1, "per_minute": 60, "per_hour": 3600, "per_day": 86400}[n.Name]
+		call, _, err := x.agg(n, "sum", args)
+		if err != nil {
+			return nil, nil, err
+		}
+		call.T = ir.Float
+		return call, ir.FloatLit(unit / spanSeconds), nil
+	}
+	args, err := x.args(n, 0, -1)
+	if err != nil {
+		return nil, nil, err
+	}
+	return x.agg(n, spec.IR, args)
+}
+
+// agg builds an aggregate call; the second result is an optional scale the
+// caller multiplies the aggregate by.
+func (x *ectx) agg(n ast.Node, name string, args []ir.Expr) (*ir.AggCall, ir.Expr, error) {
+	f := ir.MustFunc(name)
+	types := make([]ir.Type, len(args))
+	for i, a := range args {
+		types[i] = a.Type()
+		if prm, ok := f.ParamFor(i); ok && prm.Const {
+			if _, lit := a.(*ir.Literal); !lit {
+				return nil, nil, semanticErr(n, "%s: argument %d must be a constant", name, i+1)
+			}
+		}
+	}
+	t, err := f.Check(types)
+	if err != nil {
+		return nil, nil, typeErr(n, "%v", err)
+	}
+	if (name == "earliest" || name == "latest") && len(args) == 1 {
+		args = append(args, &ir.FieldRef{Name: ir.TimeColumn, T: ir.Timestamp})
+	}
+	return &ir.AggCall{Func: f, Args: args, T: t}, nil, nil
+}

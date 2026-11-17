@@ -1,0 +1,2 @@
+Compute(x = bytes * 2, y = x + 1, s = "a" + "b", t = concat(host, "-", status))
+└─ Scan(logs)

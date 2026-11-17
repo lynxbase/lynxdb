@@ -1,0 +1,1 @@
+source=logs | where not a = 1 and b > 2 or c < 3 xor d is null

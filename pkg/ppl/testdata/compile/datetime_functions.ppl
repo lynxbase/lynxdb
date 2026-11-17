@@ -1,0 +1,1 @@
+source=logs | eval d = date_add(@timestamp, INTERVAL 1 MONTH), h = hour(@timestamp), recent = earliest('-1d@d', @timestamp)

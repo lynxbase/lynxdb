@@ -36,24 +36,33 @@ func loadCorpus(t *testing.T) []corpusEntry {
 	return out
 }
 
-// corpusSyntaxGaps lists documented examples whose syntax the parser does
-// not accept, each with the reason.
-var corpusSyntaxGaps = map[string]string{
-	"source = outer a in [ source = inner | fields b ]":                                                                             searchSubquery,
-	"source = outer a not in [ source = inner | fields b ]":                                                                         searchSubquery,
-	"source = outer exists [ source = inner | where a = c ]":                                                                        searchSubquery,
-	"source = outer not exists [ source = inner | where a = c ]":                                                                    searchSubquery,
-	"source = table as t1 exists [ source = table as t2 | where t1.a = t2.a ]":                                                      searchSubquery,
-	"source = outer a > [ source = inner | stats min(c) ] | fields a":                                                               searchSubquery,
-	"source = outer a = [ source = inner | where b = d | stats max(c) ]":                                                            searchSubquery,
-	"source = outer [ source = inner | where outer.b = inner.d OR inner.d = 1 | stats count() ] > 0 | fields a":                     searchSubquery,
-	"source = table1 | inner join left = l right = r on l.a = r.a AND r.a in [ source = inner | fields d ] | fields l.a, r.a, b, c": "the join has no right-side dataset after its condition",
+// loadGaps reads documented examples that are invalid as written, keyed by
+// query, for the given stage.
+func loadGaps(t *testing.T, stage string) map[string]string {
+	t.Helper()
+	data, err := os.ReadFile("testdata/opensearch_example_gaps.tsv")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]string{}
+	for _, line := range strings.Split(string(data), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.Split(line, "\t")
+		if len(parts) != 3 {
+			t.Fatalf("bad gap line %q", line)
+		}
+		if parts[0] == stage {
+			out[parts[1]] = parts[2]
+		}
+	}
+	return out
 }
-
-const searchSubquery = "the official grammar has no subqueries inside search expressions; use where"
 
 func TestOpenSearchExamplesParse(t *testing.T) {
 	entries := loadCorpus(t)
+	corpusSyntaxGaps := loadGaps(t, "parse")
 	if len(entries) < 500 {
 		t.Fatalf("corpus has %d entries", len(entries))
 	}

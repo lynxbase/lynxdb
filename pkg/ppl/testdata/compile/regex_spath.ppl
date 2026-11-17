@@ -1,0 +1,1 @@
+source=logs | regex host != '^web' | spath input=payload path=user.ids{0} output=uid

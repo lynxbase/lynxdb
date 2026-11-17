@@ -1,0 +1,3 @@
+Project(count, `dc(user)`, `p95(latency)`, `median(latency)`, errors, service)
+└─ Aggregate(count = count(), `dc(user)` = distinct_count(user), `p95(latency)` = percentile(latency, 95.0), `median(latency)` = percentile(latency, 50.0), errors = count() FILTER (WHERE status >= 500) BY service)
+   └─ Scan(logs)

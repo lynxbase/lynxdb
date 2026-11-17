@@ -1,0 +1,1 @@
+source=logs | parse message '(?<user>\w+)@(?<domain>[\w.]+)'

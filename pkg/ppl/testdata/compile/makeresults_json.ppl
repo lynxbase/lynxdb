@@ -1,0 +1,1 @@
+makeresults format=json data='[{"a":1,"b":"x"},{"a":2.5}]' | eval c = a * 2

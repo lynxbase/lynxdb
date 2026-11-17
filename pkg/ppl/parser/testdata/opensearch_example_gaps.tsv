@@ -1,0 +1,17 @@
+# Documented OpenSearch PPL examples that are invalid as written, with the reason.
+# <stage>\t<query>\t<reason>; stage is "parse" for examples the grammar rejects
+# and "compile" for examples that parse but fail semantic analysis.
+compile	makeresults format=csv data='name:string,age:int John,35 Sarah,39'	the example's CSV rows are separated by line breaks the corpus extraction joins into one line
+compile	source=people | eval some_field = 'x' | fields some_field | head 1 | mvexpand tags | fields tags	the documentation shows this query failing because tags is not in the field list
+parse	source = outer a in [ source = inner | fields b ]	the official grammar has no subqueries inside search expressions; use where
+parse	source = outer a not in [ source = inner | fields b ]	the official grammar has no subqueries inside search expressions; use where
+parse	source = table1 | inner join left = l right = r on l.a = r.a AND r.a in [ source = inner | fields d ] | fields l.a, r.a, b, c	the join has no right-side dataset after its condition
+parse	source = outer exists [ source = inner | where a = c ]	the official grammar has no subqueries inside search expressions; use where
+parse	source = outer not exists [ source = inner | where a = c ]	the official grammar has no subqueries inside search expressions; use where
+parse	source = table as t1 exists [ source = table as t2 | where t1.a = t2.a ]	the official grammar has no subqueries inside search expressions; use where
+parse	source = outer a > [ source = inner | stats min(c) ] | fields a	the official grammar has no subqueries inside search expressions; use where
+parse	source = outer a = [ source = inner | where b = d | stats max(c) ]	the official grammar has no subqueries inside search expressions; use where
+parse	source = outer [ source = inner | where outer.b = inner.d OR inner.d = 1 | stats count() ] > 0 | fields a	the official grammar has no subqueries inside search expressions; use where
+compile	source = outer | where a = [ source = inner | stats max(c) | sort c ] OR b = [ source = inner | where c = 1 | stats min(d) | sort d ]	the subquery sorts by c after stats max(c) removed it
+compile	source = outer | where a = [ source = inner | where c = [ source = nested | stats max(e) by f | sort f ] | stats max(d) by c | sort c | head 1 ]	the scalar subquery returns two columns (the aggregate and its group)
+compile	source = [ source = table1 | join left = l right = r [ source = table2 | where d > 10 | head 5 ] | stats count(a) by b ] as outer | head 1	a join with side aliases needs an on or where condition in the official grammar

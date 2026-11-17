@@ -171,6 +171,22 @@ func registerConversion() {
 	const c = "conversion"
 	aware(scalar(c, "tostring", 1, []Param{p("x", Any), pc("format", String)}, Returns(String), "String form of x; formats: hex, binary, commas, duration."))
 	errs(scalar(c, "tonumber", 1, []Param{p("s", Any), pc("base", Int)}, Returns(Any), "s parsed as a number in base (default 10); an int when it has no fraction, else a float."), errNullOnInvalid)
+	errs(scalar(c, "parse_json", 1, []Param{p("s", Any)}, Returns(Any), "The value JSON text s denotes, with objects and arrays as nested values."), errNullOnInvalid)
+	for _, fn := range []struct{ name, doc string }{
+		{"convert_auto", "x as a number when its text parses as one (leading sign, digits, fraction, exponent), else NULL."},
+		{"convert_num", "x as a number after removing thousands separators and a trailing unit, else NULL."},
+		{"rmcomma", "x as a number after removing every comma, else NULL."},
+		{"rmunit", "The leading number of x with any trailing unit text removed, else NULL."},
+		{"memk", "x as kilobytes: a number with an optional k, m or g suffix scaled to KB."},
+		{"dur2sec", "x in [D+]HH:MM:SS form as seconds."},
+		{"mstime", "x in [MM:]SS.SSS form as seconds."},
+	} {
+		errs(scalar(c, fn.name, 1, []Param{p("x", Any)}, Returns(Any), fn.doc), errNullOnInvalid)
+	}
+	errs(scalar(c, "ctime", 2, []Param{p("seconds", Any), p("format", String)}, Returns(String), "Epoch seconds formatted with strftime % specifiers."), errNullOnInvalid)
+	errs(scalar(c, "mktime", 2, []Param{p("s", Any), p("format", String)}, Returns(Float), "s parsed with strftime % specifiers, as epoch seconds."), errNullOnInvalid)
+	scalar("string", "wildcard_replace", 3, []Param{p("s", Any), pc("pattern", String), pc("replacement", String)}, Returns(Any),
+		"Without '*' in pattern, every occurrence of pattern in s replaced; with '*', s replaced when it matches the whole pattern, each '*' of the replacement taking the text the corresponding '*' matched. \\* and \\\\ escape.")
 }
 
 func registerCrypto() {
@@ -223,8 +239,8 @@ func registerDatetime() {
 	errs(scalar(c, "extract", 2, []Param{pc("part", String), p("t", Any)}, Returns(Int), "The named part of t (e.g. YEAR, MONTH, DAY_HOUR, MINUTE_SECOND)."), errPlanTime)
 	scalar(c, "from_days", 1, []Param{p("n", Int)}, Returns(Timestamp), "The date n days after year 0.")
 	scalar(c, "from_unixtime", 1, []Param{p("seconds", numericParam), p("format", String)}, fromUnixtimeResult, "The timestamp seconds after the Unix epoch; formatted with MySQL-style specifiers when format is given.")
-	scalar(c, "makedate", 2, []Param{p("year", Int), p("dayofyear", Int)}, Returns(Timestamp), "The date for a year and day of year.")
-	scalar(c, "maketime", 3, []Param{p("hour", Int), p("minute", Int), p("second", numericParam)}, Returns(Duration), "A time of day from its parts.")
+	scalar(c, "makedate", 2, []Param{p("year", numericParam), p("dayofyear", numericParam)}, Returns(Timestamp), "The date for a year and day of year.")
+	scalar(c, "maketime", 3, []Param{p("hour", numericParam), p("minute", numericParam), p("second", numericParam)}, Returns(Duration), "A time of day from its parts.")
 	scalar(c, "period_add", 2, []Param{p("period", Int), p("n", Int)}, Returns(Int), "Period YYMM or YYYYMM plus n months, as YYYYMM.")
 	scalar(c, "period_diff", 2, []Param{p("a", Int), p("b", Int)}, Returns(Int), "Months from period b to period a.")
 	scalar(c, "sec_to_time", 1, []Param{p("seconds", numericParam)}, Returns(Duration), "seconds as a duration.")

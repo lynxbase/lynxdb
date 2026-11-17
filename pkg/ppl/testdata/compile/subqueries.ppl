@@ -1,0 +1,1 @@
+source=orders | where customer_id in [ source=vip | fields id ] and exists [ source=flags | where active = true ] and amount > [ source=orders | stats avg(amount) ]

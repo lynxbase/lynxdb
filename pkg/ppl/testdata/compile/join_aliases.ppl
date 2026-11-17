@@ -1,0 +1,1 @@
+source=orders | left join left=o right=c on o.customer_id = c.id customers | fields o.id, c.name

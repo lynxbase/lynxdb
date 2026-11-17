@@ -1,0 +1,4 @@
+Limit(5, offset=10)
+└─ Sort(status DESC NULLS LAST, host NULLS FIRST)
+   └─ Dedup(host, count=2, keep_null)
+      └─ Scan(logs)

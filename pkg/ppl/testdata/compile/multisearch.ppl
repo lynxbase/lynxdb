@@ -1,0 +1,1 @@
+multisearch [search source=a | where x = 1] [search source=b | where y = 2] | head 10

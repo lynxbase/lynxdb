@@ -1,0 +1,1 @@
+search source=logs ERROR "connection refused" status=500 earliest=-1h@h latest=now

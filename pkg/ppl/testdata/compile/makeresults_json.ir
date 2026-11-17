@@ -1,0 +1,2 @@
+Compute(c = a * 2)
+└─ Values(rows=2, columns=[a, b])

@@ -1,0 +1,6 @@
+Limit(10)
+└─ Union[by_time](2 inputs)
+   ├─ Filter(x = 1)
+   │  └─ Scan(a)
+   └─ Filter(y = 2)
+      └─ Scan(b)

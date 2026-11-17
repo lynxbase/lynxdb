@@ -1,0 +1,1 @@
+source=logs | stats bucket_nullable=false sum(bytes) by host

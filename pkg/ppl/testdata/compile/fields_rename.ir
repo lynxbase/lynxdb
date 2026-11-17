@@ -1,0 +1,4 @@
+Project(host, source_*)
+└─ Rename(src_* -> source_*)
+   └─ Project(drop _raw)
+      └─ Scan(logs)
