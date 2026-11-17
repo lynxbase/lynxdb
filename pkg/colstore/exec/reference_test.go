@@ -470,6 +470,14 @@ func refTrue(e *exec.Expr, row refRow) bool {
 		return false
 	case exec.OpNot:
 		return !refTrue(e.Args[0], row)
+	case exec.OpMatchAny:
+		for _, v := range row {
+			if v.Kind == vec.KindString && e.Pattern.Match(v.Bytes) {
+				return true
+			}
+		}
+
+		return false
 	case exec.OpColumn:
 		v := refValue(e, row)
 

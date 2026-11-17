@@ -256,6 +256,9 @@ const (
 	// predHas is true where a path holds a value of one of the kinds of a
 	// set, or where it holds none of them when ne is set.
 	predHas
+	// predAny is true where any string column of the block matches a
+	// pattern.
+	predAny
 )
 
 // pred is a filter node bound to the table's paths.
@@ -367,6 +370,8 @@ func (q *query) pred(e *Expr, depth int) (*pred, error) {
 		}
 
 		return &pred{kind: predConst, lit: e.Value}, nil
+	case OpMatchAny:
+		return &pred{kind: predAny, pat: e.Pattern, cost: 64}, nil
 	case OpExists, OpIsNull, OpIsMissing:
 		if len(e.Args) == 1 {
 			if p := q.presence(e); p != nil {
@@ -606,6 +611,8 @@ func columnLiteral(e *Expr) (col *Expr, lit Value, op Op, ok bool) {
 // the conjunct c holds: those of a text match or of a string equality.
 func conjunctTokens(c *Expr, dst []uint64) []uint64 {
 	switch c.Op {
+	case OpMatchAny:
+		return c.Pattern.Tokens(dst)
 	case OpMatch:
 		if len(c.Args) == 1 && c.Args[0] != nil && c.Args[0].Op == OpColumn &&
 			(c.Args[0].Kind == vec.KindString || c.Args[0].Kind == KindAny) {

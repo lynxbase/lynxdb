@@ -182,6 +182,80 @@ func (w *worker) decide(p *pred) verdict {
 	return some
 }
 
+// evalAny selects the rows in which a string column of the block, whatever
+// its path, holds the pattern. It decodes every string column that is not a
+// constant, and tests a dictionary once per entry.
+func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
+	m := w.mask(depth)
+	clear(m)
+	hit := false
+	cols := w.b.Columns()
+	for i := range cols {
+		ref := &cols[i]
+		if ref.Kind != vec.KindString || ref.Count == 0 || (ref.Const() && !p.pat.Match(ref.ConstBytes())) {
+			continue
+		}
+		if ref.Const() && ref.Count == w.rows {
+			return all, nil
+		}
+		c := &w.anyCol
+		if err := w.b.Decode(ref, c); err != nil {
+			return none, err
+		}
+		w.decoded = true
+		switch c.Layout {
+		case vec.Const:
+			if !p.pat.Match(c.DictValue(0)) {
+				continue
+			}
+			if c.Valid == nil {
+				return all, nil
+			}
+			other := w.mask(depth + 1)
+			vec.MaskFromBitmap(other, c.Valid)
+			vec.MaskOr(m, m, other)
+			hit = true
+		case vec.Dict:
+			entries := c.DictLen()
+			w.idx2 = p.pat.AppendMatches(w.idx2[:0], c.Offsets[:entries+1], c.Data)
+			if len(w.idx2) == 0 {
+				continue
+			}
+			w.table = sized(w.table, max(entries, 256))
+			clear(w.table)
+			for _, code := range w.idx2 {
+				w.table[code] = 0xFF
+			}
+			other := w.mask(depth + 1)
+			if len(c.Codes8) != 0 {
+				vec.MaskLookup8(other, c.Codes8, w.table)
+			} else {
+				vec.MaskLookup16(other, c.Codes16, w.table)
+			}
+			// Rows without a value are decoded as code 0.
+			if c.Valid != nil && w.table[0] != 0 {
+				vec.MaskAndBitmap(other, c.Valid)
+			}
+			vec.MaskOr(m, m, other)
+			hit = true
+		default:
+			w.idx2 = p.pat.AppendMatches(w.idx2[:0], c.Offsets[:c.Rows+1], c.Data)
+			if c.Valid != nil {
+				w.idx2 = vec.IndexesAndBitmap(w.idx2, c.Valid)
+			}
+			for _, r := range w.idx2 {
+				m[r] = 0xFF
+			}
+			hit = hit || len(w.idx2) > 0
+		}
+	}
+	if !hit {
+		return none, nil
+	}
+
+	return some, nil
+}
+
 // evalHas selects the rows that hold a value of one of the kinds of p.
 func (w *worker) evalHas(p *pred, depth int) (verdict, error) {
 	m := w.mask(depth)
@@ -286,6 +360,8 @@ func (w *worker) eval(p *pred, depth int) (verdict, error) {
 		return w.evalExpr(p, depth)
 	case predHas:
 		return w.evalHas(p, depth)
+	case predAny:
+		return w.evalAny(p, depth)
 	}
 	if p.lit.Bool {
 		return all, nil

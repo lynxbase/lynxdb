@@ -87,6 +87,7 @@ const (
 	OpStartsWith
 	OpEndsWith
 	OpReplace
+	OpMatchAny
 )
 
 // Expr is a node of an expression tree; which fields it uses depends on Op.
@@ -170,6 +171,10 @@ func Not(a *Expr) *Expr { return &Expr{Op: OpNot, Args: []*Expr{a}} }
 func Match(a *Expr, p tokenfilter.Pattern) *Expr {
 	return &Expr{Op: OpMatch, Pattern: p, Args: []*Expr{a}}
 }
+
+// MatchAny is true when a string that the row holds at any path holds the
+// pattern; strings inside arrays are not looked at.
+func MatchAny(p tokenfilter.Pattern) *Expr { return &Expr{Op: OpMatchAny, Pattern: p} }
 
 // HourOfDay is the UTC hour, 0 to 23, of a time in nanoseconds.
 func HourOfDay(t *Expr) *Expr { return &Expr{Op: OpHourOfDay, Args: []*Expr{t}} }

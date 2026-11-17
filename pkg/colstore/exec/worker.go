@@ -45,6 +45,9 @@ type scratch struct {
 	valids [][]uint8
 	table  []uint8
 	idx    []uint32
+	// anyCol and idx2 serve a match over every string column of a block.
+	anyCol vec.Column
+	idx2   []uint32
 
 	// outs holds the buffers of the computed nodes of scalar expressions,
 	// opers the operands of the nodes being computed and vals the values of
@@ -193,7 +196,7 @@ func (w *worker) held() int {
 		n += 8*used(w.ints[i]) + used(w.valids[i])
 	}
 
-	return n + used(w.table) + 4*used(w.idx) + w.scratch.agg.held() + w.row.held()
+	return n + used(w.table) + 4*used(w.idx) + w.anyCol.Retained() + 4*cap(w.idx2) + w.scratch.agg.held() + w.row.held()
 }
 
 // open points the worker at a block.

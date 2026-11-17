@@ -145,6 +145,8 @@ func benchPlans(win benchWindows) []benchPlan {
 		{"S5 substring", search(exec.Match(text, tokenfilter.Substring("ware"))), true},
 		{"S6 field equals", search(exec.Eq(str("did"), exec.Str("did:plc:yj3sjq3blzpynh27cumnp5ks"))), true},
 		{"S7 unique id", search(exec.Eq(str("commit.cid"), exec.Str("bafyreicsj6qpl6dreic6ekdjxvdjltncngl52x3jddf6dxhg2gwo35iqhi"))), true},
+		{"A1 rare token, any field", search(exec.MatchAny(tokenfilter.Word("sc7btuzqdaepksx43mr74pma"))), true},
+		{"A2 common token, any field", search(exec.MatchAny(tokenfilter.Word("love"))), true},
 		{"S2 any case", search(exec.Match(text, tokenfilter.Word("love").IgnoreCase())), true},
 		{"S3 any case", search(exec.Match(text, tokenfilter.Word("good morning").IgnoreCase())), true},
 		{"S4 any case", search(exec.Match(text, tokenfilter.Prefix("crypto").IgnoreCase())), true},

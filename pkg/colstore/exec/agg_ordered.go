@@ -96,6 +96,17 @@ func (p *pred) columns(need func(path int, kinds uint8), exprs func(e *sexpr)) {
 	}
 }
 
+// anyColumn reports whether a filter node matches over every column.
+func (p *pred) anyColumn() bool {
+	for _, a := range p.args {
+		if a.anyColumn() {
+			return true
+		}
+	}
+
+	return p.kind == predAny
+}
+
 // planOrdered returns how to aggregate in key order, or nil when the plan or
 // the snapshot does not allow it.
 func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan {
@@ -158,7 +169,9 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 			tokens = conjunctTokens(c, tokens)
 		}
 		var err error
-		if residual, err = q.pred(And(rest...), 0); err != nil {
+		// A match over every column needs the block's directory, which a
+		// range scan does not hand out.
+		if residual, err = q.pred(And(rest...), 0); err != nil || residual.anyColumn() {
 			return nil
 		}
 	}
