@@ -608,6 +608,10 @@ type refAgg struct {
 	// with the smallest and the largest time.
 	first, last, earliest, latest exec.Value
 	minTime, maxTime              int64
+	// The value in the row that an ArgMin or an ArgMax chose and what
+	// ordered it, and the value of the group's first row.
+	arg, argBy exec.Value
+	firstRow   exec.Value
 }
 
 // refRun evaluates a plan over rows and returns its output rows and column
@@ -856,8 +860,25 @@ func refAggregate(rows []refRow, agg *exec.Aggregate) ([][]exec.Value, []string)
 				continue
 			}
 			v := refValue(a.Arg, row)
+			if st.rows == 1 {
+				st.firstRow = v
+			}
 			if v.IsNull() {
 				continue
+			}
+			if a.Func == exec.ArgMin || a.Func == exec.ArgMax {
+				by := refValue(a.By, row)
+				if _, ok := refNumber(by); ok {
+					c := 1
+					if !st.argBy.IsNull() {
+						c = refOrder(by, st.argBy, a.Func == exec.ArgMin)
+					}
+					// Of rows that tie, an ArgMin keeps the first and an
+					// ArgMax the last.
+					if c > 0 || (c == 0 && a.Func == exec.ArgMax) {
+						st.arg, st.argBy = v, by
+					}
+				}
 			}
 			st.values++
 			st.distinct[refKey(v)] = struct{}{}
@@ -928,6 +949,12 @@ func refFinish(a exec.Agg, st *refAgg, float bool) exec.Value {
 		return st.earliest
 	case exec.Latest:
 		return st.latest
+	case exec.AnyValue:
+		return st.first
+	case exec.ArgMin, exec.ArgMax:
+		return st.arg
+	case exec.FirstRow:
+		return st.firstRow
 	case exec.Min:
 		// Numbers sort before strings.
 		if n == 0 && st.strs > 0 {

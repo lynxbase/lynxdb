@@ -225,8 +225,8 @@ func (ap *aggPlan) mergeRecord(dst []int64, state []byte) {
 		case wordVarN:
 			src := [3]int64{v, int64(binary.LittleEndian.Uint64(state[8*i+8:])), int64(binary.LittleEndian.Uint64(state[8*i+16:]))}
 			mergeSpread(dst[i:i+3], src[:])
-		case wordFirst, wordLast, wordEarliest, wordLatest:
-			mergePick(dst[i:i+2], v, int64(binary.LittleEndian.Uint64(state[8*i+8:])), w.op == wordFirst || w.op == wordEarliest)
+		case wordFirst, wordLast, wordEarliest, wordLatest, wordArgMin, wordArgMax, wordFirstRow:
+			mergePick(dst[i:i+2], v, int64(binary.LittleEndian.Uint64(state[8*i+8:])), w.op.least())
 		case wordVarMean, wordVarM2, wordPickLoc, wordState:
 		default:
 			dst[i] += v
@@ -257,11 +257,11 @@ func (m *merger) emit(x *execution, table *vec.ByteTable, words []int64, n int, 
 		plan.column(&plan.outs[i], words, &m.heap, n, floats, distinct, &m.batch[keys+i])
 	}
 	out := m.batch
-	if x.q.having != nil {
+	if x.q.having != nil && !x.q.early {
 		out = m.having.run(x.q, out, n)
 		n = out[0].len()
 	}
-	if x.q.post != nil {
+	if x.q.post != nil && !x.q.early {
 		out = m.post.run(x.q, out, n)
 	}
 	m.sink.add(out)

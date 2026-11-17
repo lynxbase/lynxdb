@@ -106,8 +106,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		}
 	}
 	res := &Result{}
-	res.Columns, res.Rows = collect(q, sinks)
-	if err := resolve(snap, q, res); err != nil {
+	if res.Columns, res.Rows, err = x.finish(snap, sinks); err != nil {
 		return nil, err
 	}
 	res.Stats = Stats{

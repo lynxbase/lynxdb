@@ -35,19 +35,33 @@ const (
 	// First and Last are the value of a column in the first and the last
 	// row, in the order the table stores them, that holds one; Earliest and
 	// Latest are its value in the row with the smallest and the largest
-	// time that holds one. Their columns are for output only: a filter, a
-	// function or a sort above the aggregate cannot use them.
+	// time that holds one.
 	First
 	Last
 	Earliest
 	Latest
+	// ArgMin and ArgMax are the value of a column in the row where By is
+	// the least and the greatest number, among the rows where the column
+	// holds a value; of rows that tie, the first and the last in the order
+	// the table stores them. Integers compare exactly unless By can also be
+	// a float, and then as floats.
+	ArgMin
+	ArgMax
+	// AnyValue is a value that a column holds in some row of the group.
+	AnyValue
+	// FirstRow is the value of a column in the first row of the group in
+	// the order the table stores them, null where that row holds none;
+	// every FirstRow of an aggregate reads the same row.
+	FirstRow
 )
 
-// Agg is one aggregate; Arg is nil for a Count of rows.
+// Agg is one aggregate; Arg is nil for a Count of rows, and By orders the
+// rows of an ArgMin or an ArgMax.
 type Agg struct {
 	Name string
 	Func AggFunc
 	Arg  *Expr
+	By   *Expr
 }
 
 // Aggregate groups its input by Keys and computes Aggs per group; its

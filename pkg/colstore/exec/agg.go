@@ -86,6 +86,10 @@ type aggScratch struct {
 	rec   []byte
 	dense []int64
 	fl    []float64
+	// okeys and ohas hold, per order of the plan and row of the block, the
+	// key that orders the row and whether it has one.
+	okeys [][]int64
+	ohas  [][]uint8
 
 	// The groups of a block that goes to the log without the table: the
 	// encoded keys or the rows they start at, their hashes, states and
@@ -106,6 +110,9 @@ func (s *aggScratch) empty() {
 	for i := range s.parts {
 		s.parts[i].buf, s.parts[i].vbuf = s.parts[i].buf[:0], s.parts[i].vbuf[:0]
 	}
+	for i := range s.okeys {
+		s.okeys[i], s.ohas[i] = s.okeys[i][:0], s.ohas[i][:0]
+	}
 }
 
 func (s *aggScratch) held() int {
@@ -114,6 +121,9 @@ func (s *aggScratch) held() int {
 		8*(used(s.dense)+used(s.fl)+used(s.lhash)+used(s.lwords))
 	for i := range s.parts {
 		n += 8*used(s.parts[i].buf) + used(s.parts[i].vbuf)
+	}
+	for i := range s.okeys {
+		n += 8*used(s.okeys[i]) + used(s.ohas[i])
 	}
 
 	return n
@@ -165,6 +175,7 @@ func (a *aggWorker) init(w *worker) {
 	a.heap.init(w.arena)
 	a.floats = make([]bool, len(a.plan.args))
 	a.s.parts = fit(a.s.parts, len(a.plan.keys))
+	a.s.okeys, a.s.ohas = fit(a.s.okeys, len(a.plan.orders)), fit(a.s.ohas, len(a.plan.orders))
 	a.streaming = w.x.streaming
 	for i := 0; i < a.plan.distinct && !a.streaming; i++ {
 		a.dlogs = append(a.dlogs, vec.NewKeyPartitions(w.arena, partitionBits))
@@ -905,6 +916,12 @@ func (a *aggWorker) feed(t *target, n int, idx []uint32) error {
 	} else {
 		addRows(t.words, a.stride, a.plan.rows, t.gid)
 	}
+	if err := a.orderKeys(n, idx); err != nil {
+		return err
+	}
+	if i := a.plan.firstRow; i >= 0 {
+		a.firstRows(t, i, n, idx)
+	}
 	for i := range a.plan.args {
 		if a.streaming && len(a.plan.args[i].words) == 0 {
 			continue
@@ -1016,16 +1033,86 @@ func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uin
 	return nil
 }
 
+// firstRows offers the selected rows, which are listed in their order, to
+// the pick among all rows at word i.
+func (a *aggWorker) firstRows(t *target, i, n int, idx []uint32) {
+	place, stride := a.w.place, a.stride
+	if t.gid == nil {
+		loc := place
+		if idx != nil {
+			loc |= int64(idx[0])
+		}
+		mergePick(t.words[t.one*stride+i:], loc, loc, true)
+
+		return
+	}
+	for j, g := range t.gid[:n] {
+		loc := place | int64(j)
+		if idx != nil {
+			loc = place | int64(idx[j])
+		}
+		mergePick(t.words[int(g)*stride+i:], loc, loc, true)
+	}
+}
+
+// orderKeys computes the keys of the plan's orders for the selected rows of
+// the open block.
+func (a *aggWorker) orderKeys(n int, idx []uint32) error {
+	w, s := a.w, a.s
+	for k := range a.plan.orders {
+		o := &a.plan.orders[k]
+		op, err := w.operand(o.expr, n, idx)
+		if err != nil {
+			return err
+		}
+		s.okeys[k], s.ohas[k] = sized(s.okeys[k], w.rows), sized(s.ohas[k], w.rows)
+		keys, has := s.okeys[k], s.ohas[k]
+		clear(has)
+		for kind := vec.KindInt; kind <= vec.KindFloat; kind++ {
+			c := op.cols[kind]
+			if c == nil {
+				continue
+			}
+			for j := 0; j < n; j++ {
+				r := j
+				if idx != nil {
+					r = int(idx[j])
+				}
+				at := r
+				if op.dense {
+					at = j
+				}
+				switch {
+				case !c.IsValid(at):
+				case kind == vec.KindFloat:
+					keys[r], has[r] = orderedFloat(c.Float(at)), 1
+				case o.floats:
+					keys[r], has[r] = orderedFloat(float64(c.Int(at))), 1
+				default:
+					keys[r], has[r] = c.Int(at), 1
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 // pick offers the n rows that hold a value of an argument, row rows[j] or j
 // of the block for group gid[j], to the picks of their groups.
 func (a *aggWorker) pick(arg *aggArg, t *target, gid, rows []uint32, n int) {
 	place, stride := a.w.place, a.stride
 	for _, i := range arg.words {
 		op := a.plan.words[i].op
-		if op < wordFirst || op > wordLatest {
+		if op < wordFirst || op > wordArgMax {
 			continue
 		}
-		least := op == wordFirst || op == wordEarliest
+		least := op.least()
+		var keys []int64
+		var has []uint8
+		if op >= wordArgMin {
+			keys, has = a.s.okeys[a.plan.words[i].by], a.s.ohas[a.plan.words[i].by]
+		}
 		for j := 0; j < n; j++ {
 			r, g := j, t.one
 			if rows != nil {
@@ -1036,7 +1123,13 @@ func (a *aggWorker) pick(arg *aggArg, t *target, gid, rows []uint32, n int) {
 			}
 			loc := place | int64(r)
 			key := loc
-			if op >= wordEarliest {
+			switch {
+			case keys != nil:
+				if has[r] == 0 {
+					continue
+				}
+				key = keys[r]
+			case op >= wordEarliest:
 				key = a.times.Int(r)
 			}
 			mergePick(t.words[g*stride+i:], key, loc, least)

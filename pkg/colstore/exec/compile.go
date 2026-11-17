@@ -45,9 +45,15 @@ type query struct {
 	// slots counts the computed nodes of the scalar expressions.
 	depth int
 	slots int
-	// located holds, per output column, the aggregate argument whose value
-	// the column locates by row, or -1; nil when no column does.
-	located []int
+	// located holds, per column of the aggregate, the column whose value in
+	// a row that the aggregate picked it stands for, or nil; nil when none
+	// does. The values are read for the rows of the result alone, which
+	// final names by output column, unless a filter, a function or the order
+	// above the aggregate reads one: early is then set, and they are read
+	// for every group before those run.
+	located []*sexpr
+	final   []*sexpr
+	early   bool
 }
 
 type orderSpec struct {
@@ -114,10 +120,8 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 			return nil, err
 		}
 		q.ordered = q.planOrdered(snap, scan.Filter)
-		q.names = q.agg.names
-		if flt != nil && q.located != nil {
-			return nil, unsupported("a filter above first, last, earliest or latest")
-		}
+		q.names, q.final = q.agg.names, q.located
+		q.early = flt != nil && q.located != nil && reads(flt.Cond, q.names, q.located)
 		if flt != nil {
 			if err := q.filterAbove(flt); err != nil {
 				return nil, err
@@ -156,9 +160,7 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 			if col < 0 {
 				return nil, unsupported("sort by unknown column %q", o.Column)
 			}
-			if q.located != nil && q.located[col] >= 0 {
-				return nil, unsupported("sort by %q, the value of a located row", o.Column)
-			}
+			q.early = q.early || (q.final != nil && q.final[col] != nil)
 			q.order = append(q.order, orderSpec{col: col, desc: o.Desc})
 		}
 	}

@@ -13,9 +13,23 @@ type sink struct {
 	q    *query
 	cols []colVec
 	top  topK
+	// raw is set when the sink takes every group as the aggregate leaves
+	// it, for what the plan does above the aggregate to run afterwards.
+	raw bool
 }
 
 func (s *sink) init(q *query) {
+	if q.early {
+		s.q, s.raw = q, true
+		s.cols = make([]colVec, len(q.agg.names))
+
+		return
+	}
+	s.initFinal(q)
+}
+
+// initFinal sets the sink up for the rows of the result.
+func (s *sink) initFinal(q *query) {
 	s.q = q
 	s.cols = make([]colVec, len(q.names))
 	if q.limit > 0 && len(q.order) > 0 {
@@ -41,6 +55,10 @@ func (s *sink) held() int {
 func (s *sink) add(batch []colVec) {
 	n := batch[0].len()
 	switch {
+	case s.raw:
+		for c := range batch {
+			s.cols[c].appendAll(&batch[c])
+		}
 	case s.top.k > 0:
 		s.top.offer(batch, n)
 	case s.q.limit > 0 && s.cols[0].len()+n > s.q.limit:
@@ -267,6 +285,23 @@ func (t *topK) down(i int) {
 
 // collect turns what the sinks hold into the columns of the result.
 func collect(q *query, sinks []*sink) ([]Column, int) {
+	out, n := gather(q, sinks)
+
+	return columns(q, out), n
+}
+
+func columns(q *query, out []colVec) []Column {
+	cols := make([]Column, len(out))
+	for c := range out {
+		cols[c] = out[c].column(q.names[c])
+	}
+
+	return cols
+}
+
+// gather returns the rows of the result that the sinks hold, in the plan's
+// order and within its limit.
+func gather(q *query, sinks []*sink) ([]colVec, int) {
 	out := make([]colVec, len(q.names))
 	switch {
 	case q.limit > 0 && len(q.order) > 0:
@@ -304,12 +339,8 @@ func collect(q *query, sinks []*sink) ([]Column, int) {
 			out[c].truncate(n)
 		}
 	}
-	cols := make([]Column, len(out))
-	for c := range out {
-		cols[c] = out[c].column(q.names[c])
-	}
 
-	return cols, n
+	return out, n
 }
 
 // sorted returns the rows of cols in the query's order.

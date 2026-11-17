@@ -39,6 +39,11 @@ const (
 	wordLast
 	wordEarliest
 	wordLatest
+	// wordArgMin and wordArgMax pick by the key that an order of the plan
+	// computes, and wordFirstRow by place among all rows of the group.
+	wordArgMin
+	wordArgMax
+	wordFirstRow
 	wordPickLoc
 	// wordState holds the stateRef of a state of variable size, which is
 	// fed and merged apart from the words.
@@ -48,6 +53,15 @@ const (
 type wordSpec struct {
 	op  wordOp
 	arg int
+	// by indexes the order of a wordArgMin or a wordArgMax.
+	by int
+}
+
+// pickOrder is an expression whose numbers order the rows of a pick.
+type pickOrder struct {
+	expr *sexpr
+	// floats is set when the keys compare as floats.
+	floats bool
 }
 
 func kindBit(k vec.Kind) uint8 { return 1 << k }
@@ -86,8 +100,10 @@ type aggOut struct {
 	distinct   int
 	// spread is the first of the three words of a variance.
 	spread int
-	// pick is the word with the place of the row a group picked.
-	pick int
+	// pick is the word with the place of the row a group picked, and
+	// located the column whose value in that row is the aggregate.
+	pick    int
+	located *sexpr
 	// state is the state with the extreme string of a Min or a Max whose
 	// argument reads strings.
 	state int
@@ -115,21 +131,50 @@ type aggPlan struct {
 	// the path of the row time when one picks by it, else -1.
 	picks    bool
 	timePath int
+	orders   []pickOrder
+	// firstRow is the word of the pick among all rows, -1 without one.
+	firstRow int
+}
+
+func (ap *aggPlan) order(by *sexpr) int {
+	for i := range ap.orders {
+		if sameExpr(ap.orders[i].expr, by) {
+			return i
+		}
+	}
+	ap.orders = append(ap.orders, pickOrder{expr: by, floats: by.kinds&kindBit(vec.KindFloat) != 0})
+
+	return len(ap.orders) - 1
 }
 
 // pickWord returns the word with the place of the row that op picks for an
 // argument, adding the pair of words when it is not there.
-func (ap *aggPlan) pickWord(op wordOp, arg int) int {
+func (ap *aggPlan) pickWord(op wordOp, arg, by int) int {
 	for i, w := range ap.words {
-		if w.op == op && w.arg == arg {
+		if w.op == op && w.arg == arg && w.by == by {
 			return i + 1
 		}
 	}
-	ap.words = append(ap.words, wordSpec{op: op, arg: arg}, wordSpec{op: wordPickLoc, arg: -1})
-	ap.args[arg].words = append(ap.args[arg].words, len(ap.words)-2)
-	ap.args[arg].picks, ap.picks = true, true
+	ap.words = append(ap.words, wordSpec{op: op, arg: arg, by: by}, wordSpec{op: wordPickLoc, arg: -1})
+	ap.picks = true
+	if arg >= 0 {
+		ap.args[arg].words = append(ap.args[arg].words, len(ap.words)-2)
+		ap.args[arg].picks = true
+	}
 
 	return len(ap.words) - 1
+}
+
+// least reports whether a pick prefers the smaller key.
+func (op wordOp) least() bool {
+	return op == wordFirst || op == wordEarliest || op == wordArgMin || op == wordFirstRow
+}
+
+// orderedFloat maps a float to an integer that orders as the float does.
+func orderedFloat(f float64) int64 {
+	b := int64(math.Float64bits(f))
+
+	return b ^ (b >> 63 & math.MaxInt64)
 }
 
 // mergePick keeps in dst, a key and the place of its row, the better of it
@@ -195,7 +240,7 @@ func (ap *aggPlan) word(op wordOp, arg int) int {
 }
 
 func (q *query) aggregate(a *Aggregate) error {
-	ap := &aggPlan{rows: -1, group: -1, timePath: -1}
+	ap := &aggPlan{rows: -1, group: -1, timePath: -1, firstRow: -1}
 	if len(a.Keys) == 0 && len(a.Aggs) == 0 {
 		return unsupported("an aggregate needs a key or an aggregate function")
 	}
@@ -229,6 +274,17 @@ func (q *query) aggregate(a *Aggregate) error {
 		if e.op == OpLiteral {
 			return unsupported("an aggregate of a literal")
 		}
+		if g.Func == FirstRow {
+			if e.op != OpColumn {
+				return unsupported("aggregate %q takes a column", g.Name)
+			}
+			out.pick, out.located = ap.pickWord(wordFirstRow, -1, -1), e
+			ap.firstRow = out.pick - 1
+			ap.outs = append(ap.outs, out)
+			ap.names = append(ap.names, g.Name)
+
+			continue
+		}
 		out.arg = ap.arg(e)
 		kinds := ap.args[out.arg].kinds
 		var ints, floats wordOp
@@ -245,14 +301,30 @@ func (q *query) aggregate(a *Aggregate) error {
 			ints, floats = wordMinInt, wordMinFloat
 		case Max:
 			ints, floats = wordMaxInt, wordMaxFloat
-		case First, Last, Earliest, Latest:
+		case First, Last, Earliest, Latest, AnyValue:
 			if e.op != OpColumn {
 				return unsupported("aggregate %q takes a column", g.Name)
 			}
-			out.pick = ap.pickWord(wordFirst+wordOp(g.Func-First), out.arg)
-			if g.Func >= Earliest && ap.timePath < 0 {
+			op := wordFirst
+			if g.Func != AnyValue {
+				op += wordOp(g.Func - First)
+			}
+			out.pick, out.located = ap.pickWord(op, out.arg, -1), e
+			if op >= wordEarliest && ap.timePath < 0 {
 				ap.timePath = q.path(part.TimePath)
 			}
+		case ArgMin, ArgMax:
+			if e.op != OpColumn {
+				return unsupported("aggregate %q takes a column", g.Name)
+			}
+			by, err := q.scanExpr(g.By, 0)
+			if err != nil {
+				return err
+			}
+			if by.kinds&numericKinds == 0 {
+				return unsupported("aggregate %q orders by numbers", g.Name)
+			}
+			out.pick, out.located = ap.pickWord(wordArgMin+wordOp(g.Func-ArgMin), out.arg, ap.order(by)), e
 		case Var, Stdev:
 			if kinds&numericKinds == 0 {
 				return unsupported("aggregate %q takes numbers", g.Name)
@@ -298,7 +370,7 @@ func (q *query) aggregate(a *Aggregate) error {
 		for _, w := range arg.words {
 			op := ap.words[w].op
 			arg.counted = arg.counted && op == wordCount
-			arg.placed = arg.placed && (op == wordCount || (op >= wordFirst && op <= wordLatest))
+			arg.placed = arg.placed && (op == wordCount || (op >= wordFirst && op <= wordArgMax))
 		}
 	}
 	for _, w := range ap.words {
@@ -312,9 +384,9 @@ func (q *query) aggregate(a *Aggregate) error {
 			v = int64(math.Float64bits(math.Inf(1)))
 		case wordMaxFloat:
 			v = int64(math.Float64bits(math.Inf(-1)))
-		case wordFirst, wordEarliest:
+		case wordFirst, wordEarliest, wordArgMin, wordFirstRow:
 			v = math.MaxInt64
-		case wordLast, wordLatest:
+		case wordLast, wordLatest, wordArgMax:
 			v = math.MinInt64
 		case wordPickLoc:
 			v = -1
@@ -322,14 +394,9 @@ func (q *query) aggregate(a *Aggregate) error {
 		ap.init = append(ap.init, v)
 	}
 	if ap.picks {
-		q.located = make([]int, len(ap.names))
-		for i := range q.located {
-			q.located[i] = -1
-		}
+		q.located = make([]*sexpr, len(ap.names))
 		for i, o := range ap.outs {
-			if o.pick >= 0 {
-				q.located[len(ap.keys)+i] = o.arg
-			}
+			q.located[len(ap.keys)+i] = o.located
 		}
 	}
 	q.agg = ap
@@ -394,8 +461,8 @@ func (ap *aggPlan) mergeWords(dst, src []int64) {
 			dst[i] = src[i]
 		case wordVarN:
 			mergeSpread(dst[i:i+3], src[i:i+3])
-		case wordFirst, wordLast, wordEarliest, wordLatest:
-			mergePick(dst[i:i+2], src[i], src[i+1], w.op == wordFirst || w.op == wordEarliest)
+		case wordFirst, wordLast, wordEarliest, wordLatest, wordArgMin, wordArgMax, wordFirstRow:
+			mergePick(dst[i:i+2], src[i], src[i+1], w.op.least())
 		case wordVarMean, wordVarM2, wordPickLoc, wordState:
 		default:
 			dst[i] += src[i]
@@ -439,7 +506,7 @@ func (ap *aggPlan) column(o *aggOut, words []int64, h *stateHeap, n int, floats 
 		}
 
 		return
-	case First, Last, Earliest, Latest:
+	case First, Last, Earliest, Latest, ArgMin, ArgMax, AnyValue, FirstRow:
 		// The place of the row; the value is read once the rows are final.
 		out := dst.bulkInts(n)
 		for g := range out {

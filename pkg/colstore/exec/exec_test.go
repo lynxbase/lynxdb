@@ -552,7 +552,7 @@ func TestPickedRows(t *testing.T) {
 			v = `,"v":null`
 		}
 		ts := 1_700_000_000_000_000 + int64(i*7919%3000)*1_000_000
-		docs = append(docs, []byte(fmt.Sprintf(`{"id":%d,"ts":%d,"k":"k%d","rare":%d%s}`, i, ts, i%11, i%400, v)))
+		docs = append(docs, []byte(fmt.Sprintf(`{"id":%d,"ts":%d,"k":"k%d","rare":%d,"w":%d.5%s}`, i, ts, i%11, i%400, i*31%1000, v)))
 	}
 	rows := referenceRows(t, docs, "ts")
 	byTime := []exec.Agg{
@@ -562,9 +562,20 @@ func TestPickedRows(t *testing.T) {
 		{Name: "latest_text", Func: exec.Latest, Arg: str("v")},
 		{Name: "latest_id", Func: exec.Latest, Arg: num("id")},
 		{Name: "none", Func: exec.Earliest, Arg: anyOf("nope")},
+		{Name: "v_of_max_id", Func: exec.ArgMax, Arg: anyOf("v"), By: num("id")},
+		{Name: "id_of_min_time", Func: exec.ArgMin, Arg: num("id"), By: exec.Time()},
+		{Name: "id_of_max_v", Func: exec.ArgMax, Arg: num("id"), By: anyOf("v")},
+		{Name: "k_of_min_v", Func: exec.ArgMin, Arg: str("k"), By: anyOf("v")},
+		{Name: "v_of_max_neg", Func: exec.ArgMax, Arg: anyOf("v"), By: exec.Sub(exec.Float(0.25), exec.ToFloat(num("id")))},
+		{Name: "v_of_none", Func: exec.ArgMin, Arg: anyOf("v"), By: anyOf("k")},
 	}
 	byPlace := append(byTime[:len(byTime):len(byTime)], exec.Agg{Name: "first", Func: exec.First, Arg: anyOf("v")},
-		exec.Agg{Name: "last", Func: exec.Last, Arg: anyOf("v")}, exec.Agg{Name: "last_id", Func: exec.Last, Arg: num("id")})
+		exec.Agg{Name: "last", Func: exec.Last, Arg: anyOf("v")}, exec.Agg{Name: "last_id", Func: exec.Last, Arg: num("id")},
+		exec.Agg{Name: "any", Func: exec.AnyValue, Arg: anyOf("v")},
+		exec.Agg{Name: "row_v", Func: exec.FirstRow, Arg: anyOf("v")}, exec.Agg{Name: "row_id", Func: exec.FirstRow, Arg: num("id")},
+		exec.Agg{Name: "id_of_min_w", Func: exec.ArgMin, Arg: num("id"), By: anyOf("w")},
+		exec.Agg{Name: "id_of_max_rare", Func: exec.ArgMax, Arg: num("id"), By: num("rare")},
+		exec.Agg{Name: "v_of_min_rare", Func: exec.ArgMin, Arg: anyOf("v"), By: num("rare")})
 	filter := exec.Gt(num("id"), exec.Int(500))
 	for _, l := range []layout{
 		{name: "blocks", blockRows: 64, parts: 1},
@@ -584,6 +595,18 @@ func TestPickedRows(t *testing.T) {
 			"top": &exec.Sort{Input: &exec.Project{Input: &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("rare"), Aggs: aggs},
 				Exprs: []exec.Named{named("rare", anyOf("rare")), named("latest", anyOf("latest")), named("double", exec.Mul(anyOf("rows"), exec.Int(2)))}},
 				By: []exec.Order{{Column: "rare", Desc: true}}, Limit: 9},
+			"sorted by": &exec.Sort{Input: &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("rare"), Aggs: aggs},
+				By: []exec.Order{{Column: "latest", Desc: true}, {Column: "rare"}}, Limit: 20},
+			"sorted by all": &exec.Sort{Input: &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("rare"), Aggs: aggs},
+				By: []exec.Order{{Column: "latest_id"}}},
+			"filtered by": &exec.Filter{Input: &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("rare"), Aggs: aggs},
+				Cond: exec.And(exec.Gt(anyOf("latest_id"), exec.Int(2000)), exec.Gt(anyOf("rows"), exec.Int(1)))},
+			"a function of": &exec.Sort{Input: &exec.Project{Input: &exec.Filter{Input: &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("k"), Aggs: aggs},
+				Cond: exec.Lt(anyOf("latest_id"), exec.Int(2990))},
+				Exprs: []exec.Named{named("k", anyOf("k")), named("up", exec.Upper(anyOf("latest_text"))), named("next", exec.Add(anyOf("latest_id"), exec.Int(1))), named("e", anyOf("earliest"))}},
+				By: []exec.Order{{Column: "next"}}},
+			"no group passes": &exec.Filter{Input: &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("k"), Aggs: aggs},
+				Cond: exec.Gt(anyOf("latest_id"), exec.Int(1<<40))},
 		}
 		tbl := buildTable(t, docs, "ts", l)
 		snap := tbl.Snapshot()
@@ -600,12 +623,10 @@ func TestPickedRows(t *testing.T) {
 		snap.Release()
 	}
 	scan := &exec.Scan{}
-	latest := []exec.Agg{{Name: "latest", Func: exec.Latest, Arg: anyOf("v")}}
 	for name, plan := range map[string]exec.Node{
-		"sorted by":     &exec.Sort{Input: &exec.Aggregate{Input: scan, Keys: keys("k"), Aggs: latest}, By: []exec.Order{{Column: "latest"}}},
-		"filtered by":   &exec.Filter{Input: &exec.Aggregate{Input: scan, Keys: keys("k"), Aggs: latest}, Cond: exec.Gt(anyOf("latest"), exec.Int(1))},
-		"a function of": &exec.Project{Input: &exec.Aggregate{Input: scan, Aggs: latest}, Exprs: []exec.Named{named("x", exec.Upper(anyOf("latest")))}},
-		"of a function": &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "x", Func: exec.First, Arg: exec.Upper(anyOf("v"))}}},
+		"of a function":   &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "x", Func: exec.First, Arg: exec.Upper(anyOf("v"))}}},
+		"row of function": &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "x", Func: exec.FirstRow, Arg: exec.Upper(anyOf("v"))}}},
+		"by a string":     &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "x", Func: exec.ArgMax, Arg: anyOf("v"), By: str("k")}}},
 	} {
 		if _, err := exec.Run(context.Background(), colstore.NewTable().Snapshot(), plan, exec.Options{}); !errors.Is(err, exec.ErrUnsupported) {
 			t.Errorf("%s: got %v, want ErrUnsupported", name, err)
