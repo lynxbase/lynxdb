@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,6 +36,10 @@ var readAdvice = true
 var manifestRewriteAfter = 1024
 
 var castagnoli = crc32.MakeTable(crc32.Castagnoli)
+
+// syncFile makes the bytes of a file or the entries of a directory durable;
+// tests replace it to fail or to hold a write.
+var syncFile = (*os.File).Sync
 
 // ErrManifest reports a manifest that is damaged or names a part the
 // directory cannot provide.
@@ -124,7 +129,7 @@ func OpenDir(path string) (*Dir, error) {
 		if meta.Run >= d.nextRun.Load() {
 			d.nextRun.Store(meta.Run + 1)
 		}
-		h, err := d.open(name, meta)
+		h, ref, err := d.open(name, meta)
 		if err != nil {
 			for _, opened := range handles {
 				opened.release()
@@ -133,6 +138,7 @@ func OpenDir(path string) (*Dir, error) {
 			return nil, fmt.Errorf("%w: %s: %v", ErrManifest, name, err)
 		}
 		handles = append(handles, h)
+		d.live[h] = ref
 	}
 	if err := d.table.Apply(handles, nil); err != nil {
 		return nil, err
@@ -312,25 +318,26 @@ func appendRecord(dst []byte, add []string, meta []PartMeta, remove []string) []
 }
 
 // open maps a part file and wraps it in a handle that unmaps it, and
-// deletes it once dead, when its last reader is gone.
-func (d *Dir) open(name string, meta PartMeta) (*Handle, error) {
+// deletes it once dead, when its last reader is gone. The part is live only
+// once a manifest record names it.
+func (d *Dir) open(name string, meta PartMeta) (*Handle, *partFileRef, error) {
 	file := filepath.Join(d.path, name)
 	f, err := os.Open(file)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	data, err := mmap.Map(f, mmap.RDONLY, 0)
 	if err != nil {
 		f.Close()
 
-		return nil, err
+		return nil, nil, err
 	}
 	p, err := part.Open(data)
 	if err != nil {
 		_ = data.Unmap()
 		f.Close()
 
-		return nil, err
+		return nil, nil, err
 	}
 	if readAdvice {
 		// Blocks are read a chunk here and a filter page there, each asked
@@ -348,11 +355,8 @@ func (d *Dir) open(name string, meta PartMeta) (*Handle, error) {
 		}
 	})
 	h.PartMeta = meta
-	d.mu.Lock()
-	d.live[h] = ref
-	d.mu.Unlock()
 
-	return h, nil
+	return h, ref, nil
 }
 
 // NewRun returns a run number no part of the table has.
@@ -410,7 +414,15 @@ var _ io.Writer = (*PartFile)(nil)
 // Commit makes the written parts durable and swaps them for the removed
 // ones in one manifest record, so a crash leaves either all of the change
 // or none of it. It returns the handles of the added parts.
-func (d *Dir) Commit(add []*PartFile, remove []*Handle) ([]*Handle, error) {
+func (d *Dir) Commit(add []*PartFile, remove []*Handle) (handles []*Handle, err error) {
+	defer func() {
+		if err != nil {
+			for _, h := range handles {
+				h.release()
+			}
+			handles = nil
+		}
+	}()
 	names := make([]string, len(add))
 	metas := make([]PartMeta, len(add))
 	sealed := make([]error, len(add))
@@ -430,32 +442,35 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) ([]*Handle, error) {
 	if err := syncDir(d.path); err != nil {
 		return nil, err
 	}
-	handles := make([]*Handle, 0, len(add))
+	refs := make([]*partFileRef, 0, len(add))
 	for i, name := range names {
-		h, err := d.open(name, metas[i])
+		h, ref, err := d.open(name, metas[i])
 		if err != nil {
-			return nil, err
+			return handles, err
 		}
-		handles = append(handles, h)
+		handles, refs = append(handles, h), append(refs, ref)
 	}
 
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	gone := make([]string, 0, len(remove))
-	for _, h := range remove {
+	for i, h := range remove {
 		ref := d.live[h]
-		if ref == nil {
-			return nil, ErrUnknownPart
+		if ref == nil || slices.Contains(remove[:i], h) {
+			return handles, ErrUnknownPart
 		}
 		gone = append(gone, ref.name)
 	}
 	if _, err := d.log.Write(appendRecord(nil, names, metas, gone)); err != nil {
-		return nil, err
+		return handles, err
 	}
-	if err := d.log.Sync(); err != nil {
-		return nil, err
+	if err := syncFile(d.log); err != nil {
+		return handles, err
 	}
 	d.records++
+	for i, h := range handles {
+		d.live[h] = refs[i]
+	}
 	for _, h := range remove {
 		d.live[h].dead.Store(true)
 		delete(d.live, h)
@@ -474,7 +489,7 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) ([]*Handle, error) {
 
 // seal makes the file durable under its final name.
 func (pf *PartFile) seal(name string) error {
-	if err := pf.f.Sync(); err != nil {
+	if err := syncFile(pf.f); err != nil {
 		return err
 	}
 	if err := pf.f.Close(); err != nil {
@@ -499,7 +514,7 @@ func (d *Dir) rewrite() error {
 		return err
 	}
 	if _, err = f.Write(appendRecord(nil, names, metas, nil)); err == nil {
-		err = f.Sync()
+		err = syncFile(f)
 	}
 	if cerr := f.Close(); err == nil {
 		err = cerr
@@ -541,7 +556,7 @@ func syncDir(path string) error {
 	if err != nil {
 		return err
 	}
-	err = f.Sync()
+	err = syncFile(f)
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
