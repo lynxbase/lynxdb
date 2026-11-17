@@ -46,6 +46,12 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'PPL',
+      collapsed: false,
+      items: ['ppl/architecture', 'ppl/search-and-types', 'ppl/ir'],
+    },
+    {
+      type: 'category',
       label: 'LynxFlow v2 Reference',
       collapsed: false,
       link: {
