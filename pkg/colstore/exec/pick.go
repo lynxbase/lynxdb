@@ -26,6 +26,9 @@ type resolver struct {
 	// they are; cur is the chunk being filled.
 	bufs [][]byte
 	cur  int
+	// cells and spans are what the resolver read of whole rows.
+	cells []cell
+	spans []fieldSpan
 }
 
 // keep copies v into memory that stays where it is.
@@ -50,6 +53,8 @@ type resolveScratch struct {
 	picks  []placed
 	starts []int
 	vals   []Value
+	spans  []fieldSpan
+	cells  []cell
 }
 
 var resolvePool mem.Pool[resolveScratch]

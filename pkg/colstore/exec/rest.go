@@ -13,9 +13,15 @@ import (
 
 // cell is the value that a row of the result holds in one field.
 type cell struct {
-	field int32
-	row   int32
-	v     Value
+	row int32
+	v   Value
+}
+
+// fieldSpan is the cells that the rows of one block hold in one field, in
+// the order of the rows' places: cells from to to of a resolver.
+type fieldSpan struct {
+	field, block, slot int32
+	from, to           int32
 }
 
 // fieldNames numbers the fields that the rows of a result hold, as the
@@ -49,13 +55,14 @@ func (f *fieldNames) id(path string) int32 {
 	return id
 }
 
-// fields appends to cells the values that the rows of picks, all of which
-// are in one block, hold in every field that is not hidden.
-func (r *resolver) fields(parts []*colstore.Handle, names *fieldNames, picks []placed, cells []cell) ([]cell, error) {
-	block := picks[0].loc >> 16
-	p := parts[block>>28].Part
-	if err := p.OpenBlock(int(block&(1<<28-1)), &r.b); err != nil {
-		return cells, err
+// fields adds to the resolver's cells the values that the rows of picks,
+// all of which are in block, hold in every field that is not hidden, one
+// span per field.
+func (r *resolver) fields(parts []*colstore.Handle, names *fieldNames, block int32, picks []placed) error {
+	loc := picks[0].loc >> 16
+	p := parts[loc>>28].Part
+	if err := p.OpenBlock(int(loc&(1<<28-1)), &r.b); err != nil {
+		return err
 	}
 	paths := p.Paths()
 	refs := r.b.Columns()
@@ -67,7 +74,7 @@ func (r *resolver) fields(parts []*colstore.Handle, names *fieldNames, picks []p
 		// Most fields of a wide table are in few rows: which rows hold the
 		// field costs less to read than its values.
 		if err := r.b.DecodePresence(ref, &r.col); err != nil {
-			return cells, err
+			return err
 		}
 		held := false
 		for _, pk := range picks {
@@ -82,9 +89,10 @@ func (r *resolver) fields(parts []*colstore.Handle, names *fieldNames, picks []p
 		}
 		if ref.Kind != vec.KindNull {
 			if err := r.b.Decode(ref, &r.col); err != nil {
-				return cells, err
+				return err
 			}
 		}
+		from := len(r.cells)
 		for _, pk := range picks {
 			row := int(pk.loc & 0xFFFF)
 			if !r.col.IsValid(row) {
@@ -102,12 +110,16 @@ func (r *resolver) fields(parts []*colstore.Handle, names *fieldNames, picks []p
 			default:
 				v.Bytes = r.keep(r.col.Bytes(row))
 			}
-			cells = append(cells, cell{id, pk.row, v})
+			r.cells = append(r.cells, cell{pk.row, v})
 		}
+		r.spans = append(r.spans, fieldSpan{field: id, block: block, from: int32(from), to: int32(len(r.cells))})
 	}
 
-	return cells, nil
+	return nil
 }
+
+// keptCells bounds the cells that a resolver keeps for the next query.
+const keptCells = 1 << 18
 
 // rest reads the fields of the n rows whose places at holds and returns
 // them as one column per field, in the order of the fields' names. It opens
@@ -134,23 +146,29 @@ func rest(snap *colstore.Snapshot, q *query, at *colVec, n, workers int) ([]stri
 		}
 	}
 	starts = append(starts, len(picks))
+	blocks := len(starts) - 1
 	names := &fieldNames{ids: map[string]int32{}, hidden: q.hidden}
 	// The blocks and the columns decoded from them serve the next query.
 	scratch := resolvePool.Get()
 	defer resolvePool.Put(scratch)
-	scratch.rs = fit(scratch.rs, max(1, min(workers, len(starts)-1)))
+	scratch.rs = fit(scratch.rs, max(1, min(workers, blocks)))
 	rs := scratch.rs
 	for i := range rs {
 		for j := range rs[i].bufs {
 			rs[i].bufs[j] = rs[i].bufs[j][:0]
 		}
-		rs[i].cur = 0
+		rs[i].cur, rs[i].cells, rs[i].spans = 0, rs[i].cells[:0], rs[i].spans[:0]
 	}
-	found := make([][]cell, len(rs))
+	defer func() {
+		for i := range rs {
+			if cap(rs[i].cells) > keptCells {
+				rs[i].cells = nil
+			}
+		}
+	}()
 	var failed atomic.Pointer[error]
-	err := forEach(len(starts)-1, len(rs), func(slot, i int) {
-		var err error
-		if found[slot], err = rs[slot].fields(parts, names, picks[starts[i]:starts[i+1]], found[slot]); err != nil {
+	err := forEach(blocks, len(rs), func(slot, i int) {
+		if err := rs[slot].fields(parts, names, int32(i), picks[starts[i]:starts[i+1]]); err != nil {
 			failed.CompareAndSwap(nil, &err)
 		}
 	})
@@ -172,28 +190,43 @@ func rest(snap *colstore.Snapshot, q *query, at *colVec, n, workers int) ([]stri
 	for c, id := range order {
 		column[id], sorted[c] = int32(c), names.names[id]
 	}
-	var cells []cell
-	for _, f := range found {
-		cells = append(cells, f...)
+	// The blocks in the order of the first row of the result that each
+	// holds: a result in the order of the scan then has the cells of a
+	// field in the order of its rows.
+	first := make([]int32, blocks)
+	rank := make([]int32, blocks)
+	for i := range first {
+		first[i], rank[i] = picks[starts[i]].row, int32(i)
+		for _, pk := range picks[starts[i]+1 : starts[i+1]] {
+			first[i] = min(first[i], pk.row)
+		}
 	}
-	// A row that holds values of several kinds in a field gives the lowest.
-	slices.SortFunc(cells, func(a, b cell) int {
-		return cmp.Or(cmp.Compare(column[a.field], column[b.field]), cmp.Compare(a.row, b.row), cmp.Compare(a.v.Kind, b.v.Kind))
+	slices.SortFunc(rank, func(a, b int32) int { return cmp.Compare(first[a], first[b]) })
+	for r, i := range rank {
+		first[i] = int32(r)
+	}
+	spans := scratch.spans[:0]
+	for slot := range rs {
+		for _, sp := range rs[slot].spans {
+			sp.field, sp.block, sp.slot = column[sp.field], first[sp.block], int32(slot)
+			spans = append(spans, sp)
+		}
+	}
+	scratch.spans = spans
+	slices.SortFunc(spans, func(a, b fieldSpan) int {
+		return cmp.Or(cmp.Compare(a.field, b.field), cmp.Compare(a.block, b.block), cmp.Compare(a.from, b.from))
 	})
 	cols := make([]colVec, len(order))
-	for i := 0; i < len(cells); {
-		c := &cols[column[cells[i].field]]
-		field := cells[i].field
-		for ; i < len(cells) && cells[i].field == field; i++ {
-			row := int(cells[i].row)
-			if c.len() > row {
-				continue
-			}
-			for c.len() < row {
-				c.appendNull()
-			}
-			c.appendValue(cells[i].v)
+	for i := 0; i < len(spans); {
+		end := i + 1
+		for end < len(spans) && spans[end].field == spans[i].field {
+			end++
 		}
+		scratch.cells = fill(&cols[spans[i].field], rs, spans[i:end], n, scratch.cells)
+		i = end
+	}
+	if cap(scratch.cells) > keptCells {
+		scratch.cells = nil
 	}
 	for c := range cols {
 		for cols[c].len() < n {
@@ -202,4 +235,60 @@ func rest(snap *colstore.Snapshot, q *query, at *colVec, n, workers int) ([]stri
 	}
 
 	return sorted, cols, nil
+}
+
+// fill makes c, which is empty, the column of n rows that hold the values
+// of the cells in spans and nothing where no cell is. It returns tmp, which
+// it uses for cells that are not in the order of their rows.
+func fill(c *colVec, rs []resolver, spans []fieldSpan, n int, tmp []cell) []cell {
+	cells, bytes := 0, 0
+	for _, sp := range spans {
+		cells += int(sp.to - sp.from)
+	}
+	if first := rs[spans[0].slot].cells[spans[0].from]; first.v.Kind == vec.KindString || first.v.Kind == vec.KindVariant {
+		for _, sp := range spans {
+			for _, cl := range rs[sp.slot].cells[sp.from:sp.to] {
+				bytes += len(cl.v.Bytes)
+			}
+		}
+	}
+	c.reserve(n, bytes)
+	last, ascending := int32(-1), true
+	for _, sp := range spans {
+		for _, cl := range rs[sp.slot].cells[sp.from:sp.to] {
+			if ascending = cl.row > last; !ascending {
+				break
+			}
+			for c.len() < int(cl.row) {
+				c.appendNull()
+			}
+			c.appendValue(cl.v)
+			last = cl.row
+		}
+		if !ascending {
+			break
+		}
+	}
+	if ascending {
+		return tmp
+	}
+	// The result is not in the order of the scan, or a row holds values of
+	// several kinds in the field, of which it gives the lowest.
+	c.reset()
+	tmp = slices.Grow(tmp[:0], cells)
+	for _, sp := range spans {
+		tmp = append(tmp, rs[sp.slot].cells[sp.from:sp.to]...)
+	}
+	slices.SortFunc(tmp, func(a, b cell) int { return cmp.Or(cmp.Compare(a.row, b.row), cmp.Compare(a.v.Kind, b.v.Kind)) })
+	for _, cl := range tmp {
+		if c.len() > int(cl.row) {
+			continue
+		}
+		for c.len() < int(cl.row) {
+			c.appendNull()
+		}
+		c.appendValue(cl.v)
+	}
+
+	return tmp
 }
