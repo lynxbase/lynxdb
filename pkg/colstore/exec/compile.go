@@ -57,8 +57,9 @@ type query struct {
 }
 
 type orderSpec struct {
-	col  int
-	desc bool
+	col        int
+	desc       bool
+	nullsFirst bool
 }
 
 // sexpr is a scalar expression over the columns of a block.
@@ -161,7 +162,7 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 				return nil, unsupported("sort by unknown column %q", o.Column)
 			}
 			q.early = q.early || (q.final != nil && q.final[col] != nil)
-			q.order = append(q.order, orderSpec{col: col, desc: o.Desc})
+			q.order = append(q.order, orderSpec{col: col, desc: o.Desc, nullsFirst: o.NullsFirst})
 		}
 	}
 

@@ -101,10 +101,12 @@ type Project struct {
 	Exprs []Named
 }
 
-// Order names a column to sort by; nulls sort last.
+// Order names a column to sort by; nulls sort last, or first with
+// NullsFirst.
 type Order struct {
-	Column string
-	Desc   bool
+	Column     string
+	Desc       bool
+	NullsFirst bool
 }
 
 // Sort orders its input by By and keeps the first Limit rows, every row when

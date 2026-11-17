@@ -149,20 +149,20 @@ func btoi(b bool) int {
 	return 0
 }
 
-// compareOrdered orders two values by one sort column: nulls last, then by
-// value in the column's direction.
-func compareOrdered(a, b Value, desc bool) int {
+// compareOrdered orders two values by one sort column: nulls at their end,
+// then by value in the column's direction.
+func compareOrdered(a, b Value, o orderSpec) int {
 	an, bn := a.IsNull(), b.IsNull()
 	switch {
 	case an && bn:
 		return 0
-	case an:
+	case an != o.nullsFirst && (an || bn):
 		return 1
-	case bn:
+	case an || bn:
 		return -1
 	}
 	c := compareValues(a, b)
-	if desc {
+	if o.desc {
 		return -c
 	}
 
@@ -178,7 +178,7 @@ type topK struct {
 
 func (t *topK) compare(a, b []Value) int {
 	for _, o := range t.order {
-		if c := compareOrdered(a[o.col], b[o.col], o.desc); c != 0 {
+		if c := compareOrdered(a[o.col], b[o.col], o); c != 0 {
 			return c
 		}
 	}
@@ -189,7 +189,7 @@ func (t *topK) compare(a, b []Value) int {
 // before reports whether row i of batch sorts before the kept row.
 func (t *topK) before(batch []colVec, i int, row []Value) bool {
 	for _, o := range t.order {
-		if c := compareOrdered(batch[o.col].value(i), row[o.col], o.desc); c != 0 {
+		if c := compareOrdered(batch[o.col].value(i), row[o.col], o); c != 0 {
 			return c < 0
 		}
 	}
@@ -349,7 +349,7 @@ func sorted(q *query, cols []colVec) []colVec {
 	sort.SliceStable(perm, func(i, j int) bool {
 		a, b := perm[i], perm[j]
 		for _, o := range q.order {
-			if c := compareOrdered(cols[o.col].value(a), cols[o.col].value(b), o.desc); c != 0 {
+			if c := compareOrdered(cols[o.col].value(a), cols[o.col].value(b), o); c != 0 {
 				return c < 0
 			}
 		}

@@ -838,7 +838,7 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 		}
 		sort.SliceStable(out, func(i, j int) bool {
 			for k, o := range srt.By {
-				if c := refOrder(out[i][cols[k]], out[j][cols[k]], o.Desc); c != 0 {
+				if c := refOrder(out[i][cols[k]], out[j][cols[k]], o); c != 0 {
 					return c < 0
 				}
 			}
@@ -919,7 +919,7 @@ func refHaving(e *exec.Expr, row refRow) bool {
 		return false
 	}
 
-	return refCompare(e.Op, refOrder(a, b, false))
+	return refCompare(e.Op, refOrder(a, b, exec.Order{}))
 }
 
 // refPost evaluates a projection over an aggregate's row.
@@ -953,16 +953,20 @@ func refRank(k vec.Kind) int {
 	return 4
 }
 
-// refOrder orders two values for a sort column: nulls last, then booleans,
-// numbers, strings.
-func refOrder(a, b exec.Value, desc bool) int {
+// refOrder orders two values for a sort column: nulls at the end the column
+// asks for, then booleans, numbers, strings.
+func refOrder(a, b exec.Value, o exec.Order) int {
+	desc, null := o.Desc, 1
+	if o.NullsFirst {
+		null = -1
+	}
 	switch {
 	case a.IsNull() && b.IsNull():
 		return 0
 	case a.IsNull():
-		return 1
+		return null
 	case b.IsNull():
-		return -1
+		return -null
 	}
 	c := cmpInt(int64(refRank(a.Kind)), int64(refRank(b.Kind)))
 	if c == 0 {
@@ -1045,7 +1049,7 @@ func refAggregate(rows []refRow, agg *exec.Aggregate) ([][]exec.Value, []string)
 				if _, ok := refNumber(by); ok {
 					c := 1
 					if !st.argBy.IsNull() {
-						c = refOrder(by, st.argBy, a.Func == exec.ArgMin)
+						c = refOrder(by, st.argBy, exec.Order{Desc: a.Func == exec.ArgMin})
 					}
 					// Of rows that tie, an ArgMin keeps the first and an
 					// ArgMax the last.
