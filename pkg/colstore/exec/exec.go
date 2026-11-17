@@ -141,6 +141,8 @@ func Each(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options,
 		scan.Condition = ""
 	}
 	x.condition = scan.Condition
+	// A plan that takes its first rows as they come ends the scan early.
+	scan.Ramp = q.limit > 0 && len(q.order) == 0
 	if _, err := snap.Scan(ctx, scan, x.block); err != nil && !errors.Is(err, errEnough) {
 		return err
 	}
@@ -193,6 +195,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		scan.Condition = ""
 	}
 	x.condition = scan.Condition
+	scan.Ramp = q.agg == nil && q.limit > 0 && len(q.order) == 0
 	if q.byTime != 0 {
 		x.bound = new(atomic.Int64)
 		x.bound.Store(math.MinInt64)

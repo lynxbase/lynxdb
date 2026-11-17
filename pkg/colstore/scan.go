@@ -51,6 +51,10 @@ type ScanOptions struct {
 	// as it learns which rows it will keep.
 	ByTime int
 	Bound  *atomic.Int64
+	// Ramp makes the scan take one block first and twice as many each time,
+	// for a caller that expects to end the scan after few blocks by an
+	// error from its function.
+	Ramp bool
 }
 
 // ColumnTokens holds token hashes that the strings of one column of a block
@@ -352,6 +356,11 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 				break
 			}
 			run(workers, end)
+		}
+	}
+	if opts.Ramp {
+		for wave := 1; wave < workers && next.Load() < int64(len(units)) && ctx.Err() == nil; wave *= 2 {
+			run(wave, min(next.Load()+int64(wave), int64(len(units))))
 		}
 	}
 	run(workers, int64(len(units)))
