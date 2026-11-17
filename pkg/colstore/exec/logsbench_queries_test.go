@@ -11,21 +11,18 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
-	"github.com/lynxbase/lynxdb/pkg/colstore/exec/flow"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 )
 
 const logsTimeField = "ts"
 
-// logQuery is a query over the generated logs as LynxFlow text. When the
-// language refuses the text, restated says the same in words it takes; plan
-// is what the text cannot say, or the nearest the executor has.
+// logQuery is a query over the generated logs as PPL text; plan is what the
+// text cannot say, or the nearest the executor has.
 type logQuery struct {
-	name     string
-	text     string
-	restated string
-	plan     exec.Node
+	name string
+	text string
+	plan exec.Node
 	// ordered is set when the query's sort makes the row order unique.
 	ordered bool
 }
@@ -58,73 +55,77 @@ func logConstantsOf(g *logGen, stream []byte) logConstants {
 
 func logQueries(c logConstants) []logQuery {
 	within := func(lo, hi time.Time) string {
-		return fmt.Sprintf(`_time >= timestamp(%q) and _time < timestamp(%q)`, lo.Format(time.RFC3339), hi.Format(time.RFC3339))
+		return fmt.Sprintf(`_time >= '%s' and _time < '%s'`, lo.Format(time.RFC3339), hi.Format(time.RFC3339))
 	}
-	const failed = `level in ["error", "ERROR", "fatal", "FATAL"]`
+	const failed = `level in ('error', 'ERROR', 'fatal', 'FATAL')`
 	count := []exec.Agg{{Name: "n", Func: exec.Count}}
 	raw := str(shred.RawPath)
 	counted := func(filter *exec.Expr) exec.Node {
 		return &exec.Aggregate{Input: &exec.Scan{Filter: filter}, Aggs: count}
 	}
+	word := func(path, text string) *exec.Expr {
+		return exec.Match(anyOf(path), tokenfilter.Word(text).IgnoreCase())
+	}
 	sshd := regex(`Failed password for invalid user \w+ from 10\.`)
 	posted := regex(`POST /api/v1/\w+/\d+/\w+ HTTP`)
 
 	return []logQuery{
-		{name: "C1 count", text: `from logs | stats count() as n`, ordered: true},
-		{name: "G1 count by level", text: `from logs | stats count() as n by level | sort -n, level`, ordered: true},
+		{name: "C1 count", text: `source=logs | stats count() as n`, ordered: true},
+		{name: "G1 count by level", text: `source=logs | stats count() as n by level | sort - n, level`, ordered: true},
 		{name: "G2 errors per service and minute, 1h", ordered: true,
-			text: `from logs | where ` + within(c.hourLo, c.hourHi) + ` and ` + failed +
-				` | extend minute = bin(_time, 1m) | stats count() as n by service, minute | sort service, minute`},
-		{name: "G3 top 10 routes", text: `from logs | stats count() as n by http.route | sort -n, http.route | head 10`, ordered: true},
+			text: `source=logs | where ` + within(c.hourLo, c.hourHi) + ` and ` + failed +
+				` | stats count() as n by service, span(_time, 1m) as minute | sort service, minute`},
+		{name: "G3 top 10 routes", text: `source=logs | stats count() as n by http.route | sort - n, http.route | head 10`, ordered: true},
 		{name: "G4 latency by service", ordered: true,
-			text: `from logs | stats avg(http.latency_ms) as mean, max(http.latency_ms) as worst, count(http.latency_ms) as n by service | sort service`},
+			text: `source=logs | stats avg(http.latency_ms) as mean, max(http.latency_ms) as worst, count(http.latency_ms) as n by service | sort service`},
 		{name: "G5 latency percentiles by service", ordered: true,
-			text: `from logs | stats p50(http.latency_ms) as p50, p95(http.latency_ms) as p95, p99(http.latency_ms) as p99 by service | sort service`},
-		{name: "G6 distinct users per service", text: `from logs | stats dc(user_id) as users by service | sort -users, service`, ordered: true},
-		{name: "G11 estimated users per service", text: `from logs | stats estdc(user_id) as users by service | sort service`, ordered: true},
+			text: `source=logs | stats p50(http.latency_ms) as p50, p95(http.latency_ms) as p95, p99(http.latency_ms) as p99 by service | sort service`},
+		{name: "G6 distinct users per service", text: `source=logs | stats distinct_count(user_id) as users by service | sort - users, service`, ordered: true},
+		{name: "G11 estimated users per service", text: `source=logs | stats distinct_count_approx(user_id) as users by service | sort service`, ordered: true},
 		{name: "G12 failed requests per service", ordered: true,
-			text: `from logs | stats count(http.status) as n, count(where http.status >= 500) as failed by service | sort -failed, service`},
-		{name: "G13 latest message per service", text: `from logs | stats latest(message) as last, max(_time) as at by service | sort service`, ordered: true},
-		{name: "G7 top 10 users", text: `from logs | stats count() as n by user_id | sort -n, user_id | head 10`, ordered: true},
-		{name: "G8 groups of trace ids", text: `from logs | stats count() as n by trace_id | sort -n, trace_id | head 5`, ordered: true},
-		{name: "G9 top 10 paths", text: `from logs | stats count() as n by http.path | sort -n, http.path | head 10`, ordered: true},
-		{name: "G10 hosts and pods per service", text: `from logs | stats dc(host) as hosts, dc(pod) as pods, count() as n by service, env | sort service, env`, ordered: true},
-		{name: "P1 events of a trace", text: `from logs | where trace_id == "` + c.trace + `" | keep _time, service, level, message | sort _time`, ordered: true},
-		{name: "P2 identifier in any field", text: `from logs | where has(_raw, "` + c.trace + `") | stats count() as n`, ordered: true},
-		{name: "S1 phrase in message", text: `from logs | where has(message, "connection reset by peer") | stats count() as n`, ordered: true},
-		{name: "S2 word in any field", text: `from logs deadlock | stats count() as n`, ordered: true},
-		{name: "S3 regex on message", text: `from logs | where matches(message, r"timeout after \d+ms waiting") | stats count() as n`, ordered: true},
-		{name: "S4 regex on text lines", text: `from logs | where matches(_raw, r"Failed password for invalid user \w+ from 10\.") | stats count() as n`,
+			text: `source=logs | stats count(http.status) as n, count(eval(http.status >= 500)) as failed by service | sort - failed, service`},
+		{name: "G13 latest message per service", text: `source=logs | stats latest(message) as last, max(_time) as at by service | sort service`, ordered: true},
+		{name: "G7 top 10 users", text: `source=logs | stats count() as n by user_id | sort - n, user_id | head 10`, ordered: true},
+		{name: "G8 groups of trace ids", text: `source=logs | stats count() as n by trace_id | sort - n, trace_id | head 5`, ordered: true},
+		{name: "G9 top 10 paths", text: `source=logs | stats count() as n by http.path | sort - n, http.path | head 10`, ordered: true},
+		{name: "G10 hosts and pods per service", ordered: true,
+			text: `source=logs | stats distinct_count(host) as hosts, distinct_count(pod) as pods, count() as n by service, env | sort service, env`},
+		{name: "P1 events of a trace", text: `source=logs | where trace_id = '` + c.trace + `' | fields _time, service, level, message | sort _time`, ordered: true},
+		{name: "P2 identifier in any field", text: `source=logs "` + c.trace + `" | stats count() as n`, ordered: true},
+		{name: "S1 phrase in message", plan: counted(word("message", "connection reset by peer")), ordered: true},
+		{name: "S2 word in any field", text: `source=logs deadlock | stats count() as n`, ordered: true},
+		{name: "S3 regex on message", text: `source=logs | where regexp_match(message, 'timeout after \d+ms waiting') | stats count() as n`, ordered: true},
+		{name: "S4 regex on text lines", text: `source=logs | where regexp_match(_raw, 'Failed password for invalid user \w+ from 10\.') | stats count() as n`,
 			plan: counted(exec.Match(raw, sshd)), ordered: true},
-		{name: "S5 regex of classes on text lines", text: `from logs | where matches(_raw, r"POST /api/v1/\w+/\d+/\w+ HTTP") | stats count() as n`,
+		{name: "S5 regex of classes on text lines", text: `source=logs | where regexp_match(_raw, 'POST /api/v1/\w+/\d+/\w+ HTTP') | stats count() as n`,
 			plan: counted(exec.Match(raw, posted)), ordered: true},
-		{name: "S6 word on text lines", text: `from logs sshd | stats count() as n`,
+		{name: "S6 word on text lines", text: `source=logs sshd | stats count() as n`,
 			plan: counted(exec.Match(raw, tokenfilter.Word("sshd").IgnoreCase())), ordered: true},
-		{name: "S7 word in stack traces", text: `from logs | where has(error.stack, "DeadlockLoserDataAccessException") | stats count() as n by service | sort -n, service`, ordered: true},
-		{name: "S8 substring in message", text: `from logs | where contains(message, "exhaust") | stats count() as n`, ordered: true},
+		{name: "S7 word in stack traces", ordered: true,
+			plan: &exec.Sort{Input: &exec.Aggregate{Input: &exec.Scan{Filter: word("error.stack", "DeadlockLoserDataAccessException")}, Keys: keys("service"), Aggs: count},
+				By: []exec.Order{{Column: "n", Desc: true}, {Column: "service"}}}},
+		{name: "S8 substring in message", text: `source=logs | where like(message, '%exhaust%') | stats count() as n`, ordered: true},
 		{name: "T1 latest 100 errors of a service", ordered: true,
-			text: `from logs | where service == "` + c.service + `" and ` + failed + ` | keep _time, host, message | sort -_time, message | head 100`},
+			text: `source=logs | where service = '` + c.service + `' and ` + failed + ` | fields _time, host, message | sort - _time, message | head 100`},
 		{name: "T2 server errors by service, 1h", ordered: true,
-			text: `from logs | where ` + within(c.hourLo, c.hourHi) + ` and http.status >= 500 | stats count() as n, avg(http.latency_ms) as mean by service | sort -n, service`},
-		{name: "T3 count in 10 minutes", text: `from logs | where ` + within(c.tenLo, c.tenHi) + ` | stats count() as n`, ordered: true},
+			text: `source=logs | where ` + within(c.hourLo, c.hourHi) + ` and http.status >= 500 | stats count() as n, avg(http.latency_ms) as mean by service | sort - n, service`},
+		{name: "T3 count in 10 minutes", text: `source=logs | where ` + within(c.tenLo, c.tenHi) + ` | stats count() as n`, ordered: true},
 		{name: "T4 slowest 10 requests, 1h", ordered: true,
-			text: `from logs | where ` + within(c.hourLo, c.hourHi) + ` and http.latency_ms > 2000 | keep http.latency_ms, service, http.path | sort -http.latency_ms, http.path | head 10`,
-			restated: `from logs | where ` + within(c.hourLo, c.hourHi) + ` and http.latency_ms > 2000 | extend latency = http.latency_ms, path = http.path` +
-				` | keep latency, service, path | sort -latency, path | head 10`},
-		{name: "M1 mixed field equals text", text: `from logs | where code == "E1000" | stats count() as n`, ordered: true},
-		{name: "M2 mixed field equals number", text: `from logs | where code == 1000 | stats count() as n`, ordered: true},
-		{name: "M3 mixed field in a range", text: `from logs | where code >= 1400 | stats count() as n, min(code) as least, max(code) as most`, ordered: true},
-		{name: "M4 kinds of the mixed field", text: `from logs | extend kind = typeof(code) | stats count() as n by kind | sort kind`, ordered: true},
-		{name: "E1 errors by type", text: `from logs | where exists(error.type) | stats count() as n by error.type | sort -n, error.type`, ordered: true},
-		{name: "E2 null users", text: `from logs | where is_null(user_id) | stats count() as n`, ordered: true},
-		{name: "E3 rare member exists", text: `from logs | where exists(` + c.rare + `) | stats count() as n`, ordered: true},
-		{name: "E4 events without a request", text: `from logs | where is_missing(http.status) | stats count() as n by env | sort env`, ordered: true},
+			text: `source=logs | where ` + within(c.hourLo, c.hourHi) + ` and http.latency_ms > 2000 | fields http.latency_ms, service, http.path | sort - http.latency_ms, http.path | head 10`},
+		{name: "M1 mixed field equals text", text: `source=logs | where code = 'E1000' | stats count() as n`, ordered: true},
+		{name: "M2 mixed field equals number", text: `source=logs | where code = 1000 | stats count() as n`, ordered: true},
+		{name: "M3 mixed field in a range", text: `source=logs | where code >= 1400 | stats count() as n, min(code) as least, max(code) as most`, ordered: true},
+		{name: "M4 kinds of the mixed field", text: `source=logs | eval kind = typeof(code) | stats count() as n by kind | sort kind`, ordered: true},
+		{name: "E1 errors by type", text: `source=logs | where isnotnull(error.type) | stats count() as n by error.type | sort - n, error.type`, ordered: true},
+		{name: "E2 no user", text: `source=logs | where isnull(user_id) | stats count() as n`, ordered: true},
+		{name: "E3 rare member is there", text: `source=logs | where isnotnull(` + c.rare + `) | stats count() as n`, ordered: true},
+		{name: "E4 events without a request", text: `source=logs | where isnull(http.status) | stats count() as n by env | sort env`, ordered: true},
 	}
 }
 
 // logRefusal says why the language refused a query, in a few words.
 func logRefusal(err error) string {
-	return strings.TrimPrefix(strings.TrimPrefix(err.Error(), "flow: "), "not supported: ")
+	return strings.TrimPrefix(strings.TrimPrefix(err.Error(), "irplan: "), "not supported: ")
 }
 
 // TestLogsBenchReference requires, for a small stream loaded through a
@@ -161,10 +162,8 @@ func TestLogsBenchReference(t *testing.T) {
 		snap := store.Table().Snapshot()
 		for _, q := range queries {
 			plans := map[string]exec.Node{}
-			for name, text := range map[string]string{"": q.text, ", restated": q.restated} {
-				if plan, err := flow.Compile(text, flow.Options{Now: logsEpoch.Add(opts.Span)}); err == nil {
-					plans[name] = plan
-				}
+			if plan, err := pplPlan(q.text, logsEpoch.Add(opts.Span)); err == nil {
+				plans[""] = plan
 			}
 			if q.plan != nil {
 				plans[", by hand"] = q.plan
