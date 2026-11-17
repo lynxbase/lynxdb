@@ -82,23 +82,33 @@ type dirEntry struct {
 
 // NewWriter starts a part on w.
 func NewWriter(w io.Writer, opts Options) *Writer {
-	pw := &Writer{w: w, opts: opts, ids: make(map[string]uint32, 64)}
-	pw.blobs = blobCodec{codec: CodecZstd, level: opts.Level}
-	pw.values = blobCodec{codec: opts.Codec, level: opts.Level}
+	pw := &Writer{ids: make(map[string]uint32, 64)}
 	pw.addStr = func(s []byte) {
 		pw.hashes = tokenfilter.AppendHashes(pw.hashes[:0], s)
 		pw.tokens.Add(pw.hashes)
 	}
-	pw.pathID(TimePath)
+	pw.Reset(w, opts)
+
+	return pw
+}
+
+// Reset starts another part on w, keeping the writer's buffers.
+func (w *Writer) Reset(out io.Writer, opts Options) {
+	w.w, w.opts, w.off, w.err = out, opts, 0, nil
+	w.paths = w.paths[:0]
+	clear(w.ids)
+	w.index, w.keys, w.lastKey = w.index[:0], w.keys[:0], w.lastKey[:0]
+	w.rows, w.raw, w.minT, w.maxT = 0, 0, 0, 0
+	w.blobs.codec, w.blobs.level = CodecZstd, opts.Level
+	w.values.codec, w.values.level = opts.Codec, opts.Level
+	w.pathID(TimePath)
 	for _, path := range opts.SortKey {
-		pw.pathID(path)
+		w.pathID(path)
 	}
 	var head [headerSize]byte
 	binary.LittleEndian.PutUint32(head[0:], fileMagic)
 	binary.LittleEndian.PutUint32(head[4:], formatVersion)
-	pw.write(head[:])
-
-	return pw
+	w.write(head[:])
 }
 
 func (w *Writer) write(p []byte) {

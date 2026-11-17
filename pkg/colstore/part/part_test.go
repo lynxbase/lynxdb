@@ -470,3 +470,36 @@ func TestCodecChoiceChangesOnlyTheSize(t *testing.T) {
 		t.Fatalf("part sizes %v do not grow from zstd over lz4 to none", sizes)
 	}
 }
+
+func TestWriterResetWritesTheSamePartAgain(t *testing.T) {
+	docs := sampleDocs(1500)
+	write := func(w *Writer, buf *bytes.Buffer, opts Options, docs []string) {
+		t.Helper()
+		batch := shred.NewBatch(shred.Options{})
+		for i, d := range docs {
+			if err := batch.AddJSON([]byte(d), int64(i)); err != nil {
+				t.Fatal(err)
+			}
+			if batch.Rows == 400 || i == len(docs)-1 {
+				if err := w.WriteBatch(batch); err != nil {
+					t.Fatal(err)
+				}
+				batch.Reset()
+			}
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var fresh, first, again bytes.Buffer
+	write(NewWriter(&fresh, Options{}), &fresh, Options{}, docs)
+	// A reused writer must carry nothing over from a part with other paths,
+	// rows and options.
+	w := NewWriter(&first, Options{Codec: CodecLZ4, NoTokenFilter: true})
+	write(w, &first, Options{}, append([]string{`{"only_here":{"x":[1,2,3]},"n":-5}`}, docs[:700]...))
+	w.Reset(&again, Options{})
+	write(w, &again, Options{}, docs)
+	if !bytes.Equal(again.Bytes(), fresh.Bytes()) {
+		t.Fatalf("a reused writer wrote %d bytes that differ from the %d of a new one", again.Len(), fresh.Len())
+	}
+}
