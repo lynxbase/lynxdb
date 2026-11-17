@@ -56,8 +56,25 @@ func appendKeyInt(dst []byte, v int64) []byte {
 	return binary.LittleEndian.AppendUint64(append(dst, tagInt), uint64(v))
 }
 
+// appendKeyFloat appends a float, as the integer it equals when it equals
+// one: a number is one key whichever kind it is stored as.
 func appendKeyFloat(dst []byte, v float64) []byte {
+	if i, ok := whole(v); ok {
+		return appendKeyInt(dst, i)
+	}
+
 	return binary.LittleEndian.AppendUint64(append(dst, tagFloat), math.Float64bits(v))
+}
+
+// whole returns the integer that v equals, if it equals one.
+func whole(v float64) (int64, bool) {
+	if v >= -1<<63 && v < 1<<63 {
+		if i := int64(v); float64(i) == v {
+			return i, true
+		}
+	}
+
+	return 0, false
 }
 
 func appendKeyBool(dst []byte, v bool) []byte {

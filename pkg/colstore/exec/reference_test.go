@@ -712,9 +712,11 @@ func refKeyValue(e *exec.Expr, row refRow) (exec.Value, string) {
 			return exec.Value{}, "missing"
 		}
 
+		v = refWhole(v)
+
 		return v, refKey(v)
 	}
-	v := refValue(e, row)
+	v := refWhole(refValue(e, row))
 	if v.IsNull() {
 		return exec.Value{}, "null"
 	}
@@ -722,8 +724,18 @@ func refKeyValue(e *exec.Expr, row refRow) (exec.Value, string) {
 	return v, refKey(v)
 }
 
+// refWhole gives a float that equals an integer as that integer: a number
+// is one key and one distinct value whichever kind it is stored as.
+func refWhole(v exec.Value) exec.Value {
+	if v.Kind == vec.KindFloat && v.Float >= -1<<63 && v.Float < 1<<63 && float64(int64(v.Float)) == v.Float {
+		return exec.Value{Kind: vec.KindInt, Int: int64(v.Float)}
+	}
+
+	return v
+}
+
 func refKey(v exec.Value) string {
-	switch v.Kind {
+	switch v = refWhole(v); v.Kind {
 	case vec.KindBool:
 		return fmt.Sprintf("b:%v", v.Bool)
 	case vec.KindInt:

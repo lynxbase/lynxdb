@@ -1412,6 +1412,12 @@ func (a *aggWorker) feedFloats(arg *aggArg, t *target, gid []uint32, vals []floa
 			if rows != nil {
 				v = vals[rows[j]]
 			}
+			// A float that equals an integer counts as that integer.
+			if i, ok := whole(v); ok {
+				a.addDistinct(log, t.global[g], vec.Mix64(uint64(i)), vec.Mix64(uint64(i)^kindSeeds[vec.KindInt]))
+
+				continue
+			}
 			a.addDistinct(log, t.global[g], vec.Mix64(math.Float64bits(v)), vec.Mix64(math.Float64bits(v)^kindSeeds[vec.KindFloat]))
 		}
 	}
