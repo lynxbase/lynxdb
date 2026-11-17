@@ -258,7 +258,7 @@ func (x *ectx) field(n *ast.Field) (ir.Expr, error) {
 			return e, nil
 		}
 	}
-	if len(x.c.outer) > 0 && len(n.Parts) > 1 && x.c.outerQualifier(n.Parts[0]) {
+	if x.c.outer != nil && len(n.Parts) > 1 && x.c.outerQualifier(n.Parts[0]) {
 		return nil, correlated(n, "%s of the outer query", name)
 	}
 	return resolve(&ast.Field{Base: n.Base, Parts: []string{name}}, x.schema)
@@ -269,8 +269,8 @@ func (c *compiler) outerQualifier(q string) bool {
 	if qualifies(c.st, q) {
 		return false
 	}
-	for _, p := range c.outer {
-		if qualifies(p, q) {
+	for o := c.outer; o != nil; o = o.next {
+		if qualifies(o.st, q) {
 			return true
 		}
 	}
@@ -647,9 +647,10 @@ func (x *ectx) cast(n *ast.Cast) (ir.Expr, error) {
 
 func (x *ectx) subquery(n *ast.Subquery) (ir.Expr, error) {
 	c := x.c
-	c.outer = append(c.outer, c.st)
+	around := c.outer
+	c.outer = &enclosing{st: c.st, next: around}
 	plan, err := c.pipeline(n.Pipeline)
-	c.outer = c.outer[:len(c.outer)-1]
+	c.outer = around
 	if err != nil {
 		return nil, outerField(err, x.schema)
 	}

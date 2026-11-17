@@ -60,8 +60,13 @@ type compiler struct {
 	sources []string
 	// st is the pipeline whose commands are being compiled.
 	st *pipe
-	// outer holds the pipelines around the subquery being compiled, innermost last.
-	outer []*pipe
+	// outer lists the pipelines around the subquery being compiled, innermost first.
+	outer *enclosing
+}
+
+type enclosing struct {
+	st   *pipe
+	next *enclosing
 }
 
 func (c *compiler) noteSource(name string) {
