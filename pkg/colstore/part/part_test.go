@@ -616,8 +616,10 @@ func TestWriterEncodesFlatValuesAtTheLevelThatWonTheLastTrial(t *testing.T) {
 	// Another level is the caller's choice, and small values are not worth
 	// a trial.
 	compact := NewWriter(&bytes.Buffer{}, Options{Level: LevelCompact})
+	// The block buffer comes from a pool and may hold a block already.
+	start := len(compact.block)
 	compact.appendValues(0, text, 4000)
-	if got, want := len(compact.block), size(LevelCompact, text); got != want || len(compact.trials) != 0 {
+	if got, want := len(compact.block)-start, size(LevelCompact, text); got != want || len(compact.trials) != 0 {
 		t.Fatalf("compact level: section of %d bytes, want %d", got, want)
 	}
 	w.appendValues(7, text[:trialMinSize-1], 1)
