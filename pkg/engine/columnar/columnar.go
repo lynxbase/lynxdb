@@ -160,7 +160,7 @@ func (r *run) columnar(n ir.Node) (rows []map[string]event.Value, ok bool, err e
 			at = ins[0]
 		}
 	}
-	plan, err := irplan.Plan(&ir.Plan{Root: n}, irplan.Options{Now: r.opts.Now})
+	plan, err := irplan.Plan(&ir.Plan{Root: n}, irplan.Options{Now: r.opts.Now, Opaque: opaque(r.opts.Now)})
 	if err != nil {
 		// What the planner does not take, or takes for an error, is for the
 		// row operators to run or to refuse.
