@@ -405,11 +405,10 @@ func (c *compiler) eval(st *pipe, n *ast.EvalCommand) error {
 		return c.unsupportedCommand(n)
 	}
 	comp := &ir.Compute{Input: st.node, Assigns: make([]ir.Assign, 0, len(n.Assigns))}
-	in := st.schema()
-	s := ir.Schema{Columns: make([]ir.Column, len(in.Columns), len(in.Columns)+len(n.Assigns)), Open: in.Open}
-	copy(s.Columns, in.Columns)
+	var s ir.SchemaBuilder
+	s.Init(st.schema(), len(n.Assigns))
 	for _, a := range n.Assigns {
-		x := c.ectx(s)
+		x := c.ectx(s.Schema())
 		v, err := x.expr(a.Expr)
 		if err != nil {
 			return err
@@ -419,26 +418,10 @@ func (c *compiler) eval(st *pipe, n *ast.EvalCommand) error {
 		}
 		name := canonicalField(a.Field.Name())
 		comp.Assigns = append(comp.Assigns, ir.Assign{Name: name, Expr: v})
-		s.Columns = setColumn(s.Columns, ir.Column{Name: name, Type: v.Type(), Nullable: true})
+		s.With(ir.Column{Name: name, Type: v.Type(), Nullable: true})
 	}
 	st.node = comp
 	return nil
-}
-
-// setColumn replaces the columns named c.Name by c in place, or appends c,
-// as ir.Schema.With does on a copy.
-func setColumn(cols []ir.Column, c ir.Column) []ir.Column {
-	replaced := false
-	for i := range cols {
-		if cols[i].Name == c.Name {
-			cols[i] = c
-			replaced = true
-		}
-	}
-	if !replaced {
-		cols = append(cols, c)
-	}
-	return cols
 }
 
 func boolArgValue(a ast.Arg) (bool, error) {

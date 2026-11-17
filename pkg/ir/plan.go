@@ -315,9 +315,25 @@ func (p *Project) schemaFrom(in Schema) Schema {
 		}
 		out.Columns = append(out.Columns, c)
 	}
+	var first map[string]int
+	if len(in.Columns) > wideSchema && len(p.Names) > 4 {
+		first = make(map[string]int, len(in.Columns))
+		for i := len(in.Columns) - 1; i >= 0; i-- {
+			first[in.Columns[i].Name] = i
+		}
+	}
+	lookup := func(name string) (Column, bool) {
+		if first == nil {
+			return in.Lookup(name)
+		}
+		if i, ok := first[name]; ok {
+			return in.Columns[i], true
+		}
+		return Column{}, false
+	}
 	for _, n := range p.Names {
 		if !IsNamePattern(n) {
-			if c, ok := in.Lookup(n); ok {
+			if c, ok := lookup(n); ok {
 				add(c)
 			} else if in.Open {
 				add(Column{Name: n, Type: Any, Nullable: true})
@@ -493,11 +509,12 @@ func (c *Compute) schemaFrom(in Schema) Schema {
 	if len(c.Assigns) == 0 {
 		return in
 	}
-	cols := growColumns(in.Columns, len(c.Assigns))
+	var b SchemaBuilder
+	b.Init(in, len(c.Assigns))
 	for _, a := range c.Assigns {
-		cols = setColumn(cols, Column{Name: a.Name, Type: a.Expr.Type(), Nullable: true})
+		b.With(Column{Name: a.Name, Type: a.Expr.Type(), Nullable: true})
 	}
-	return Schema{Columns: cols, Open: in.Open}
+	return b.Schema()
 }
 
 // NamedExpr is an expression with an output column name.
@@ -704,11 +721,12 @@ func (w *Window) schemaFrom(in Schema) Schema {
 	if len(w.Funcs) == 0 {
 		return in
 	}
-	cols := growColumns(in.Columns, len(w.Funcs))
+	var b SchemaBuilder
+	b.Init(in, len(w.Funcs))
 	for _, f := range w.Funcs {
-		cols = setColumn(cols, Column{Name: f.Name, Type: f.Agg.Type(), Nullable: true})
+		b.With(Column{Name: f.Name, Type: f.Agg.Type(), Nullable: true})
 	}
-	return Schema{Columns: cols, Open: in.Open}
+	return b.Schema()
 }
 
 // SortKey is one ordering key. NULLs sort before all values when NullsFirst
@@ -1129,11 +1147,12 @@ func (e *Extract) Schema() Schema { return e.schemaFrom(e.Input.Schema()) }
 func (e *Extract) schemaFrom(in Schema) Schema {
 	s := in
 	if len(e.Outputs) > 0 {
-		cols := growColumns(in.Columns, len(e.Outputs))
+		var b SchemaBuilder
+		b.Init(in, len(e.Outputs))
 		for _, c := range e.Outputs {
-			cols = setColumn(cols, c)
+			b.With(c)
 		}
-		s = Schema{Columns: cols, Open: in.Open}
+		s = b.Schema()
 	}
 	if e.Method == ExtractJSON && e.Path == "" {
 		s.Open = true
@@ -1295,11 +1314,12 @@ func (f *FlattenObject) Schema() Schema { return f.schemaFrom(f.Input.Schema()) 
 func (f *FlattenObject) schemaFrom(in Schema) Schema {
 	s := in
 	if len(f.Aliases) > 0 {
-		cols := growColumns(in.Columns, len(f.Aliases))
+		var b SchemaBuilder
+		b.Init(in, len(f.Aliases))
 		for _, a := range f.Aliases {
-			cols = setColumn(cols, Column{Name: a, Type: Any, Nullable: true})
+			b.With(Column{Name: a, Type: Any, Nullable: true})
 		}
-		s = Schema{Columns: cols, Open: in.Open}
+		s = b.Schema()
 	}
 	s.Open = true
 	return s
@@ -1338,15 +1358,16 @@ func (f *FillNull) schemaFrom(in Schema) Schema {
 	if len(f.Fields) == 0 {
 		return in
 	}
-	s := Schema{Columns: growColumns(in.Columns, len(f.Fields)), Open: in.Open}
+	var b SchemaBuilder
+	b.Init(in, len(f.Fields))
 	for _, a := range f.Fields {
 		t := a.Expr.Type()
-		if c, ok := s.Lookup(a.Name); ok {
+		if c, ok := b.Lookup(a.Name); ok {
 			t = Unify(c.Type, t)
 		}
-		s.Columns = setColumn(s.Columns, Column{Name: a.Name, Type: t})
+		b.With(Column{Name: a.Name, Type: t})
 	}
-	return s
+	return b.Schema()
 }
 
 // Transpose turns up to MaxRows rows into columns: each input column becomes

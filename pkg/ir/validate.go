@@ -87,21 +87,29 @@ func (v *validator) check(n Node, in Schema, inputs []Schema) {
 		scalarIn(x.Cond)
 		v.boolean(n, x.Cond)
 	case *Compute:
-		s := Schema{Columns: growColumns(in.Columns, len(x.Assigns)), Open: in.Open}
+		var b SchemaBuilder
+		b.Init(in, len(x.Assigns))
 		for _, a := range x.Assigns {
 			if a.Name == "" {
 				v.fail(n, "assignment without a name")
 			}
-			v.expr(n, a.Expr, s, false, nil)
-			s.Columns = setColumn(s.Columns, Column{Name: a.Name, Type: a.Expr.Type(), Nullable: true})
+			v.expr(n, a.Expr, b.Schema(), false, nil)
+			b.With(Column{Name: a.Name, Type: a.Expr.Type(), Nullable: true})
 		}
 	case *Project:
 		if len(x.Names) == 0 {
 			v.fail(n, "no columns")
 		}
 		if !in.Open {
+			var known map[string]bool
+			if len(in.Columns) > wideSchema && len(x.Names) > 8 {
+				known = make(map[string]bool, len(in.Columns))
+				for _, c := range in.Columns {
+					known[c.Name] = true
+				}
+			}
 			for _, name := range x.Names {
-				if !IsNamePattern(name) {
+				if !IsNamePattern(name) && !known[name] {
 					if _, ok := in.Resolve(name); !ok {
 						v.fail(n, "unknown column %s", QuoteName(name))
 					}
