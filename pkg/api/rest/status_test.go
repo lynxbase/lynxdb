@@ -72,8 +72,4 @@ func TestStatus_Unified(t *testing.T) {
 	if queries["active"] == nil {
 		t.Fatal("missing queries.active")
 	}
-	views := data["views"].(map[string]interface{})
-	if views["total"] == nil {
-		t.Fatal("missing views.total")
-	}
 }

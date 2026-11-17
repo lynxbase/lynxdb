@@ -5,7 +5,6 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/server"
-	"github.com/lynxbase/lynxdb/pkg/storage/views"
 )
 
 // QueryMode controls sync/async/hybrid dispatch.
@@ -82,11 +81,10 @@ type ExplainRequest struct {
 
 // ExplainResult is the domain output for query explanation.
 type ExplainResult struct {
-	IsValid    bool
-	Errors     []ExplainError
-	Parsed     *ExplainParsed
-	HasMVAccel bool
-	Rewrites   []model.QueryRewrite
+	IsValid  bool
+	Errors   []ExplainError
+	Parsed   *ExplainParsed
+	Rewrites []model.QueryRewrite
 }
 
 // ExplainError represents a parse/validation error in an explain response.
@@ -239,48 +237,4 @@ type SourceInfo struct {
 // SourcesResult is the domain output for source listing.
 type SourcesResult struct {
 	Sources []SourceInfo
-}
-
-// CreateViewRequest is the domain input for creating a materialized view.
-type CreateViewRequest struct {
-	Name      string
-	Query     string
-	Retention string
-
-	// Language is the explicit language of the query ("spl2" or "lynxflow").
-	// Empty means auto-detect via langdetect.Detect.
-	Language string
-}
-
-// PatchViewRequest is the domain input for updating a materialized view.
-type PatchViewRequest struct {
-	Retention *string
-	Paused    *bool
-
-	// Query, LanguageVersion, and MigratedFrom support the mv migrate --query
-	// workflow: the CLI PATCHes the
-	// definition with the new query text and language version.
-	Query           *string
-	LanguageVersion *string
-	MigratedFrom    *string
-}
-
-// ViewSummary is a brief representation of a materialized view.
-type ViewSummary struct {
-	Name            string
-	Status          views.ViewStatus
-	Query           string
-	Type            views.ViewType
-	LanguageVersion string
-	CreatedAt       time.Time
-	UpdatedAt       time.Time
-}
-
-// ViewDetail is the full representation of a materialized view.
-type ViewDetail struct {
-	ViewSummary
-	Filter           string
-	Columns          []views.ColumnDef
-	Retention        time.Duration
-	BackfillProgress *server.BackfillProgressInfo // non-nil when backfill is active
 }

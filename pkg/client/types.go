@@ -104,10 +104,6 @@ type SearchStats struct {
 	JoinStrategy         string          `json:"join_strategy,omitempty"`
 	ScanMS               float64         `json:"scan_ms,omitempty"`
 	PipelineMS           float64         `json:"pipeline_ms,omitempty"`
-	AcceleratedBy        string          `json:"accelerated_by,omitempty"`
-	MVStatus             string          `json:"mv_status,omitempty"`
-	MVSpeedup            string          `json:"mv_speedup,omitempty"`
-	MVOriginalScan       int64           `json:"mv_original_scan,omitempty"`
 	CacheHit             bool            `json:"cache_hit,omitempty"`
 	PipelineStages       []PipelineStage `json:"pipeline_stages,omitempty"`
 
@@ -243,17 +239,7 @@ type AggregateResult struct {
 	TotalRows int                    `json:"total_rows,omitempty"`
 	Interval  string                 `json:"interval,omitempty"`
 	Partial   bool                   `json:"partial,omitempty"`
-	AccelBy   *AcceleratedBy         `json:"-"`
 	RawData   map[string]interface{} `json:"-"`
-}
-
-// AcceleratedBy indicates MV acceleration was used.
-type AcceleratedBy struct {
-	View            string  `json:"view"`
-	OriginalScan    int64   `json:"original_scan"`
-	Speedup         string  `json:"speedup"`
-	Status          string  `json:"status"`
-	CoveragePercent float64 `json:"coverage_percent,omitempty"`
 }
 
 // JobHandle is returned for async/hybrid queries (HTTP 202).
@@ -358,10 +344,9 @@ type JobSummary struct {
 
 // ExplainResult is the response from Explain().
 type ExplainResult struct {
-	IsValid      bool           `json:"is_valid"`
-	Parsed       *ExplainParsed `json:"parsed,omitempty"`
-	Errors       []ExplainError `json:"errors"`
-	Acceleration *ExplainAccel  `json:"acceleration,omitempty"`
+	IsValid bool           `json:"is_valid"`
+	Parsed  *ExplainParsed `json:"parsed,omitempty"`
+	Errors  []ExplainError `json:"errors"`
 }
 
 // ExplainParsed contains the parsed query analysis.
@@ -439,14 +424,6 @@ type ExplainError struct {
 	Length     int    `json:"length,omitempty"`
 	Message    string `json:"message"`
 	Suggestion string `json:"suggestion,omitempty"`
-}
-
-// ExplainAccel describes MV acceleration availability.
-type ExplainAccel struct {
-	Available        bool   `json:"available"`
-	View             string `json:"view,omitempty"`
-	Reason           string `json:"reason,omitempty"`
-	EstimatedSpeedup string `json:"estimated_speedup,omitempty"`
 }
 
 // IngestEvent is a single structured event payload for POST /api/v1/ingest.
@@ -531,7 +508,6 @@ type ServerStatus struct {
 	Storage       StatusStorage     `json:"storage"`
 	Events        StatusEvents      `json:"events"`
 	Queries       StatusQueries     `json:"queries"`
-	Views         StatusViews       `json:"views"`
 	Retention     *StatusRetention  `json:"retention,omitempty"`
 	Tail          *StatusTail       `json:"tail,omitempty"`
 	MemoryPool    *StatusMemoryPool `json:"memory_pool,omitempty"`
@@ -572,14 +548,6 @@ type StatusEvents struct {
 type StatusQueries struct {
 	Active        int     `json:"active"`
 	AvgDurationMS float64 `json:"avg_duration_ms,omitempty"`
-}
-
-// StatusViews holds MV summary info.
-type StatusViews struct {
-	Total        int   `json:"total"`
-	Active       int   `json:"active"`
-	Backfilling  int   `json:"backfilling,omitempty"`
-	StorageBytes int64 `json:"storage_bytes,omitempty"`
 }
 
 // StatusRetention holds retention policy info.
@@ -816,68 +784,6 @@ type StreamMeta struct {
 	Total   int   `json:"total"`
 	Scanned int64 `json:"scanned"`
 	TookMS  int64 `json:"took_ms"`
-}
-
-// View is a materialized view summary.
-type View struct {
-	Name         string            `json:"name"`
-	Kind         string            `json:"kind"`
-	Query        string            `json:"query"`
-	Retention    string            `json:"retention,omitempty"`
-	Status       string            `json:"status"`
-	Version      int               `json:"version,omitempty"`
-	Rows         int64             `json:"rows,omitempty"`
-	Segments     int               `json:"segments,omitempty"`
-	StorageBytes int64             `json:"storage_bytes,omitempty"`
-	LagMS        *int64            `json:"lag_ms,omitempty"`
-	Backfill     *BackfillProgress `json:"backfill,omitempty"`
-	CreatedAt    string            `json:"created_at,omitempty"`
-	LastEvent    *string           `json:"last_event,omitempty"`
-}
-
-// BackfillProgress tracks MV backfill.
-type BackfillProgress struct {
-	Phase           string  `json:"phase"`
-	SegmentsTotal   int     `json:"segments_total"`
-	SegmentsScanned int     `json:"segments_scanned"`
-	SegmentsSkipped int     `json:"segments_skipped"`
-	RowsScanned     int64   `json:"rows_scanned"`
-	ElapsedMS       float64 `json:"elapsed_ms"`
-}
-
-// ViewDetail extends View with schema info.
-type ViewDetail struct {
-	View
-	Columns      []ViewColumn `json:"columns,omitempty"`
-	GroupBy      []string     `json:"group_by,omitempty"`
-	Aggregations []string     `json:"aggregations,omitempty"`
-	SourceView   *string      `json:"source_view,omitempty"`
-}
-
-// ViewColumn describes a column in a materialized view.
-// Type is serialized as a numeric FieldType by the server (uint8).
-type ViewColumn struct {
-	Name        string      `json:"name"`
-	Type        interface{} `json:"type"`
-	Encoding    string      `json:"encoding,omitempty"`
-	DerivedFrom []string    `json:"derived_from,omitempty"`
-}
-
-// ViewInput is the request body for creating a view.
-type ViewInput struct {
-	Name        string `json:"name"`
-	Q           string `json:"query"`
-	Retention   string `json:"retention,omitempty"`
-	PartitionBy string `json:"partition_by,omitempty"`
-}
-
-// ViewPatchInput is the request body for patching a view.
-type ViewPatchInput struct {
-	Retention       *string `json:"retention,omitempty"`
-	Paused          *bool   `json:"paused,omitempty"`
-	Query           *string `json:"query,omitempty"`
-	LanguageVersion *string `json:"language_version,omitempty"`
-	MigratedFrom    *string `json:"migrated_from,omitempty"`
 }
 
 // SavedQuery is a saved query definition.

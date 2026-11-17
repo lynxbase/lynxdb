@@ -202,7 +202,6 @@ func TestFromSearchStats_ScanType_MetadataOnly(t *testing.T) {
 		"",   // joinStrategy
 		0, 0, // scanMS, pipelineMS
 		nil, // indexesUsed
-		"",  // acceleratedBy
 	)
 
 	if st.ScanType != "metadata_only" {
@@ -239,7 +238,6 @@ func TestFromSearchStats_ScanType_IndexScan(t *testing.T) {
 		"",
 		150.0, 100.0,
 		[]string{"main"},
-		"", // acceleratedBy
 	)
 
 	if st.ScanType != "index_scan" {
@@ -271,7 +269,7 @@ func TestFromSearchStats_ScanType_FilteredScan(t *testing.T) {
 		0,     // invertedIndexHits = 0 → not index_scan
 		false, // countStarOptimized = false
 		false, false, false, false, false,
-		"", 0, 0, nil, "",
+		"", 0, 0, nil,
 	)
 
 	if st.ScanType != "filtered_scan" {
@@ -286,7 +284,7 @@ func TestFromSearchStats_ScanType_FullScan(t *testing.T) {
 		100000, 1000, 500.0,
 		50, 50, 0, 0, 0, 0, 0, 0, 0,
 		0, false, false, false, false, false, false,
-		"", 0, 0, nil, "",
+		"", 0, 0, nil,
 	)
 
 	if st.ScanType != "full_scan" {
@@ -302,7 +300,7 @@ func TestFromSearchStats_ScanType_Default(t *testing.T) {
 		0, 0, 0,
 		0, 0, 0, 0, 0, 0, 0, 0, 0,
 		0, false, false, false, false, false, false,
-		"", 0, 0, nil, "",
+		"", 0, 0, nil,
 	)
 
 	if st.ScanType != "full_scan" {
@@ -320,7 +318,7 @@ func TestFromSearchStats_TotalRowsEstimation(t *testing.T) {
 		100000, 500, 200.0,
 		30, 10, 0, 10, 5, 5, 0, 0, 0,
 		0, false, false, false, false, false, false,
-		"", 0, 0, nil, "",
+		"", 0, 0, nil,
 	)
 
 	// avgRowsPerSegment = 100000/10 = 10000
@@ -339,7 +337,7 @@ func TestFromSearchStats_TotalRowsEstimation_NoScannedSegments(t *testing.T) {
 		5000, 100, 50.0,
 		10, 0, 0, 10, 0, 0, 0, 0, 0,
 		0, false, false, false, false, false, false,
-		"", 0, 0, nil, "",
+		"", 0, 0, nil,
 	)
 
 	if st.TotalRowsInRange != 5000 {
@@ -354,7 +352,7 @@ func TestFromSearchStats_ExecDuration(t *testing.T) {
 		0, 0, 123.456,
 		0, 0, 0, 0, 0, 0, 0, 0, 0,
 		0, false, false, false, false, false, false,
-		"", 0, 0, nil, "",
+		"", 0, 0, nil,
 	)
 
 	// 123.456ms → 123.456 * 1e6 ns = 123456000 ns
@@ -378,7 +376,7 @@ func TestFromSearchStats_AllOptimizations(t *testing.T) {
 		true, // vectorized
 		true, // dict
 		"hash_join",
-		0, 0, nil, "",
+		0, 0, nil,
 	)
 
 	if !st.CountStarOptimized {
@@ -420,7 +418,7 @@ func TestFromSearchStats_SegmentFields(t *testing.T) {
 		15000, // memtableEvents
 		5,     // invertedIndexHits
 		false, false, false, false, false, false,
-		"", 0, 0, nil, "",
+		"", 0, 0, nil,
 	)
 
 	if st.TotalSegments != 200 {

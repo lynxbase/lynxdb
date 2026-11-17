@@ -429,15 +429,6 @@ func (s Sidebar) renderQueryPlanContent(w int) []string {
 			lines = append(lines, dim.Render(fmt.Sprintf("  est: %s", parsed.EstimatedCost)))
 		}
 
-		if s.queryPlan.Acceleration != nil && s.queryPlan.Acceleration.Available {
-			accel := lipgloss.NewStyle().Foreground(ui.ColorSuccess())
-			mvInfo := s.queryPlan.Acceleration.View
-			if s.queryPlan.Acceleration.EstimatedSpeedup != "" {
-				mvInfo += " (" + s.queryPlan.Acceleration.EstimatedSpeedup + ")"
-			}
-			lines = append(lines, accel.Render("  ⚡ "+truncateStr(mvInfo, w-6)))
-		}
-
 		if len(lines) == 0 {
 			return []string{dim.Render("  (empty pipeline)")}
 		}

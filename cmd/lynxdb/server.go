@@ -254,7 +254,6 @@ func runServer(cmd *cobra.Command, args []string) error {
 		HTTP:          cfg.HTTP,
 		Syslog:        cfg.Syslog,
 		Server:        cfg.Server,
-		Views:         cfg.Views,
 		BufferManager: cfg.BufferManager,
 		Cluster:       cfg.Cluster,
 	})

@@ -10,7 +10,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/server"
 	"github.com/lynxbase/lynxdb/pkg/storage"
-	"github.com/lynxbase/lynxdb/pkg/storage/views"
 )
 
 // QueryEngine is the subset of server.Engine needed by QueryService.
@@ -46,17 +45,6 @@ type QueryEngine interface {
 
 	// ListFieldNames returns all known field names from the field catalog.
 	ListFieldNames() []string
-}
-
-// ViewEngine is the subset of server.Engine needed by ViewService.
-type ViewEngine interface {
-	CreateMV(def views.ViewDefinition) error
-	ListMV() []views.ViewDefinition
-	GetMV(name string) (views.ViewDefinition, error)
-	UpdateMV(def views.ViewDefinition) error
-	DeleteMV(name string) error
-	TriggerBackfill(name string) error
-	BackfillProgress(name string) *server.BackfillProgressInfo
 }
 
 // EventBusProvider is the subset of server.Engine needed by TailService.

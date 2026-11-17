@@ -38,7 +38,6 @@ func TestDefaultsYAMLMatchesCompiledDefaults(t *testing.T) {
 		{"HTTP", fromYAML.HTTP, compiled.HTTP, true},
 		{"Tail", fromYAML.Tail, compiled.Tail, true},
 		{"Server", fromYAML.Server, compiled.Server, true},
-		{"Views", fromYAML.Views, compiled.Views, true},
 		{"BufferManager", fromYAML.BufferManager, compiled.BufferManager, true},
 	}
 

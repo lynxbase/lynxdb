@@ -31,7 +31,6 @@ type Config struct {
 	Tail          TailConfig          `yaml:"tail"           json:"tail"`
 	TLS           TLSConfig           `yaml:"tls"            json:"tls"`
 	Auth          AuthConfig          `yaml:"auth"           json:"auth"`
-	Views         ViewsConfig         `yaml:"views"          json:"views"`
 	Server        ServerConfig        `yaml:"server"         json:"server"`
 	BufferManager BufferManagerConfig `yaml:"buffer_manager" json:"buffer_manager"`
 	Cluster       ClusterConfig       `yaml:"cluster"        json:"cluster"`
@@ -348,39 +347,6 @@ type ServerConfig struct {
 	CacheReservePercent int `yaml:"cache_reserve_percent" json:"cache_reserve_percent"`
 }
 
-// ViewsConfig holds materialized view parameters.
-type ViewsConfig struct {
-	// MaxBackfillMemoryBytes is the dedicated memory budget for a single MV backfill.
-	// Default: min(10% of global pool, 2 * max_query_memory_bytes).
-	// 0 means auto-compute from the global pool.
-	MaxBackfillMemoryBytes ByteSize `yaml:"max_backfill_memory_bytes" json:"max_backfill_memory_bytes"`
-
-	// InsertMaxMemoryBytes is the per-view budget for one insert-time MV
-	// pipeline batch. 0 means auto-compute: min(128MB, total pool / 16).
-	InsertMaxMemoryBytes ByteSize `yaml:"insert_max_memory_bytes" json:"insert_max_memory_bytes"`
-
-	// BackfillBackpressureWait is how long a backfill waits when the global pool
-	// is under pressure from interactive queries before retrying.
-	// Default: 5s.
-	BackfillBackpressureWait Duration `yaml:"backfill_backpressure_wait" json:"backfill_backpressure_wait"`
-
-	// BackfillMaxRetries is the maximum number of backpressure retries before
-	// failing the backfill. Default: 60 (5 minutes at 5s intervals).
-	BackfillMaxRetries int `yaml:"backfill_max_retries" json:"backfill_max_retries"`
-
-	// DispatchBatchSize is the maximum number of events buffered per view
-	// before flushing to the events slice. Default: 1000.
-	DispatchBatchSize int `yaml:"dispatch_batch_size" json:"dispatch_batch_size"`
-
-	// DispatchBatchDelay is the maximum time to buffer events before flushing.
-	// Default: 100ms.
-	DispatchBatchDelay Duration `yaml:"dispatch_batch_delay" json:"dispatch_batch_delay"`
-
-	// BackfillTimeout is the maximum duration for a single backfill run.
-	// Default: 4h.
-	BackfillTimeout Duration `yaml:"backfill_timeout" json:"backfill_timeout"`
-}
-
 // BufferManagerConfig configures the unified buffer manager.
 // When Enabled is false (default), the system uses streaming scan with
 // per-operator spill at fixed thresholds.
@@ -534,14 +500,6 @@ func DefaultConfig() *Config {
 
 		Server: ServerConfig{
 			CacheReservePercent: 20,
-		},
-
-		Views: ViewsConfig{
-			BackfillBackpressureWait: Duration(5 * time.Second),
-			BackfillMaxRetries:       60,
-			DispatchBatchSize:        1000,
-			DispatchBatchDelay:       Duration(100 * time.Millisecond),
-			BackfillTimeout:          Duration(4 * time.Hour),
 		},
 
 		Cluster: ClusterConfig{

@@ -161,10 +161,6 @@ type metaStats struct {
 	JoinStrategy         string              `json:"join_strategy,omitempty"`
 	ScanMS               float64             `json:"scan_ms,omitempty"`
 	PipelineMS           float64             `json:"pipeline_ms,omitempty"`
-	AcceleratedBy        string              `json:"accelerated_by,omitempty"`
-	MVStatus             string              `json:"mv_status,omitempty"`
-	MVSpeedup            string              `json:"mv_speedup,omitempty"`
-	MVOriginalScan       int64               `json:"mv_original_scan,omitempty"`
 	CacheHit             bool                `json:"cache_hit,omitempty"`
 	PipelineStages       []metaPipelineStage `json:"pipeline_stages,omitempty"`
 

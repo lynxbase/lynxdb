@@ -68,10 +68,6 @@ func (f *MetaFSM) Apply(log *raft.Log) interface{} {
 		err = f.state.applyUpdateFieldCatalog(cmd.Data)
 	case CmdUpdateSourceRegistry:
 		err = f.state.applyUpdateSourceRegistry(cmd.Data)
-	case CmdRegisterView:
-		err = f.state.applyRegisterView(cmd.Data)
-	case CmdUnregisterView:
-		err = f.state.applyUnregisterView(cmd.Data)
 	case CmdApplyRebalance:
 		err = f.state.applyRebalance(cmd.Data)
 	case CmdProposeSplit:
@@ -139,9 +135,6 @@ func (f *MetaFSM) Restore(rc io.ReadCloser) error {
 	}
 	if state.Sources == nil {
 		state.Sources = make(map[string]*GlobalSourceInfo)
-	}
-	if state.Views == nil {
-		state.Views = make(map[string]*GlobalViewInfo)
 	}
 	if state.Splits == nil {
 		state.Splits = make(map[uint32]*SplitInfo)

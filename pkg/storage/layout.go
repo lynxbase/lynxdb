@@ -13,7 +13,6 @@ import (
 //	<dataDir>/segments/hot/<index_name>/seg-<index>-L<level>-<timestamp_ns>.lsg
 //	<dataDir>/segment-cache/
 //	<dataDir>/query-cache/
-//	<dataDir>/views/<mv_name>/
 type Layout struct {
 	dataDir string
 }
@@ -53,36 +52,6 @@ func (l *Layout) SegmentPath(indexName string, level int, ts time.Time) string {
 // SegmentName generates a segment filename: seg-<index>-L<level>-<timestamp_ns>.lsg.
 func SegmentName(indexName string, level int, ts time.Time) string {
 	return fmt.Sprintf("seg-%s-L%d-%d.lsg", indexName, level, ts.UnixNano())
-}
-
-// ViewsDir returns the directory for materialized view definitions.
-func (l *Layout) ViewsDir() string {
-	return filepath.Join(l.dataDir, "views")
-}
-
-// ViewDir returns the directory for a specific materialized view.
-func (l *Layout) ViewDir(name string) string {
-	return filepath.Join(l.dataDir, "views", name)
-}
-
-// ViewSegmentDir returns the segment directory for a materialized view.
-func (l *Layout) ViewSegmentDir(name string) string {
-	return filepath.Join(l.dataDir, "views", name, "segments")
-}
-
-// EnsureViewDirs creates all directories for a materialized view.
-func (l *Layout) EnsureViewDirs(name string) error {
-	dirs := []string{
-		l.ViewDir(name),
-		l.ViewSegmentDir(name),
-	}
-	for _, dir := range dirs {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return fmt.Errorf("layout: create view dir %s: %w", dir, err)
-		}
-	}
-
-	return nil
 }
 
 // EnsureDirs creates all necessary directories for the layout.

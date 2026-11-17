@@ -16,7 +16,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/planner"
 	"github.com/lynxbase/lynxdb/pkg/server"
-	"github.com/lynxbase/lynxdb/pkg/storage/views"
 	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
@@ -194,18 +193,6 @@ func handlePlanError(w http.ResponseWriter, err error) {
 	if errors.As(err, &nie) {
 		respondError(w, ErrCodeUnsupportedCommand, http.StatusUnprocessableEntity, nie.Error(),
 			WithSuggestion("This feature is not yet available. Check the docs for the current command set."))
-		return
-	}
-
-	// ErrMaterializeNoViewService: server misconfiguration.
-	if errors.Is(err, usecases.ErrMaterializeNoViewService) {
-		respondInternalError(w, err.Error())
-		return
-	}
-
-	// View already exists: from inline | materialize on a duplicate name.
-	if errors.Is(err, views.ErrViewAlreadyExists) {
-		respondError(w, ErrCodeAlreadyExists, http.StatusConflict, err.Error())
 		return
 	}
 
@@ -436,10 +423,6 @@ func searchStatsToMeta(ss *server.SearchStats) *metaStats {
 		JoinStrategy:         ss.JoinStrategy,
 		ScanMS:               ss.ScanMS,
 		PipelineMS:           ss.PipelineMS,
-		AcceleratedBy:        ss.AcceleratedBy,
-		MVStatus:             ss.MVStatus,
-		MVSpeedup:            ss.MVSpeedup,
-		MVOriginalScan:       ss.MVOriginalScan,
 		CacheHit:             ss.CacheHit,
 		PeakMemoryBytes:      ss.PeakMemoryBytes,
 		MemAllocBytes:        ss.MemAllocBytes,

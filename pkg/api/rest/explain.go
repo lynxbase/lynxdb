@@ -278,9 +278,6 @@ func buildExplainResponse(result *usecases.ExplainResult, textPlan string) map[s
 		"is_valid": true,
 		"parsed":   parsed,
 		"errors":   []interface{}{},
-		"acceleration": map[string]interface{}{
-			"available": result.HasMVAccel,
-		},
 	}
 	// Backward compatibility: include the text plan so existing consumers
 	// that read "lynxflow_plan" continue to work.

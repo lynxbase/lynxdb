@@ -19,7 +19,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/stats"
 	"github.com/lynxbase/lynxdb/pkg/storage/segment"
-	"github.com/lynxbase/lynxdb/pkg/storage/views"
 	"github.com/lynxbase/lynxdb/pkg/timerange"
 )
 
@@ -319,10 +318,7 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 	// These relied on spl2 AST annotations which no longer exist.
 	var aggSpec *enginepipeline.PartialAggSpec
 
-	ann := queryAnnotations{
-		acceleratedBy: params.AcceleratedBy,
-		mvStatus:      params.MVStatus,
-	}
+	var ann queryAnnotations
 
 	// Governor handles memory enforcement. No per-query budget monitor needed.
 	cpuBefore := stats.TakeCPUSnapshot()
@@ -423,10 +419,6 @@ func (e *Engine) executeQuery(ctx context.Context, job *SearchJob, params QueryP
 		TopKUsed:             qr.topKUsed,
 		DictFilterUsed:       qr.ss.DictFilterUsed,
 		JoinStrategy:         ann.joinStrategy,
-		AcceleratedBy:        ann.acceleratedBy,
-		MVStatus:             ann.mvStatus,
-		MVSpeedup:            estimateMVSpeedup(ann.mvRows, qr.rowsScanned),
-		MVOriginalScan:       ann.mvRows,
 		PipelineStages:       qr.pipelineStages,
 		Warnings:             qr.warnings,
 		SegmentDetails:       qr.ss.SegmentDetails,
@@ -1066,13 +1058,7 @@ func (e *Engine) buildProgramPipeline(
 	store enginepipeline.IndexStore,
 	_ string,
 ) (*enginepipeline.BuildResult, error) {
-	// Build a view resolver from the engine's view registry when available.
-	// The resolver is a thin closure that delegates to Engine.ResolveView.
-	var vr enginepipeline.ViewResolver
-	if e.viewRegistry != nil {
-		vr = e
-	}
-	source := indexStoreToSource(store, DefaultIndexName, vr)
+	source := indexStoreToSource(store, DefaultIndexName)
 
 	// Create per-query memory coordinator and budget from the engine governor.
 	var coordinator *enginepipeline.MemoryCoordinator
@@ -1132,43 +1118,28 @@ func (e *Engine) buildProgramPipeline(
 //
 // For ColumnarBatchStore, which holds pre-materialized batches, this converts
 // the batches to rows.
-//
-// When vr is non-nil, the returned Source checks whether a scan's source name
-// matches a materialized view BEFORE falling through to index-based scan.
-// This enables `from <viewname>` to query views directly.
-func indexStoreToSource(store enginepipeline.IndexStore, defaultIndex string, vr enginepipeline.ViewResolver) func(*logical.Scan) (enginepipeline.Iterator, error) {
+func indexStoreToSource(store enginepipeline.IndexStore, defaultIndex string) func(*logical.Scan) (enginepipeline.Iterator, error) {
 	// Check if the store is a StreamingServerStore — use its GetEventIterator
 	// which returns a real SegmentStreamIterator reading both buffered and segment data.
 	if ss, ok := store.(*StreamingServerStore); ok {
-		return streamingStoreToSource(ss, defaultIndex, vr)
+		return streamingStoreToSource(ss, defaultIndex)
 	}
 
 	// Check if the store is a ColumnarBatchStore — convert batches to rows.
 	if bs, ok := store.(*enginepipeline.ColumnarBatchStore); ok {
-		return batchStoreToSource(bs, defaultIndex, vr)
+		return batchStoreToSource(bs, defaultIndex)
 	}
 
 	// Generic fallback: use MaterializeEvents.
-	return materializeStoreToSource(store, defaultIndex, vr)
+	return materializeStoreToSource(store, defaultIndex)
 }
 
 // streamingStoreToSource creates a Source from a StreamingServerStore by
 // returning a SegmentStreamIterator that reads both buffered events and
 // flushed segment data through the store's GetEventIterator.
-//
-// When vr is non-nil, the source first checks whether the scan's source name
-// matches a materialized view. If so, the view's finalized events are returned
-// via a FromIterator, bypassing the segment scan entirely.
-func streamingStoreToSource(ss *StreamingServerStore, defaultIndex string, vr enginepipeline.ViewResolver) func(*logical.Scan) (enginepipeline.Iterator, error) {
+func streamingStoreToSource(ss *StreamingServerStore, defaultIndex string) func(*logical.Scan) (enginepipeline.Iterator, error) {
 	return func(scan *logical.Scan) (enginepipeline.Iterator, error) {
 		targetIndex := resolveIndexFromScan(scan, defaultIndex)
-
-		// Check if the target names a materialized view.
-		if vr != nil && targetIndex != "*" && targetIndex != defaultIndex {
-			if iter, ok := tryResolveViewSourceWithRollup(vr, targetIndex, scan.ViewRollup); ok {
-				return iter, nil
-			}
-		}
 
 		// For wildcard queries, pass "" so GetEventIterator includes all indexes.
 		// The SegmentStreamIterator's matchesStreamSourceScope handles "*"
@@ -1183,16 +1154,9 @@ func streamingStoreToSource(ss *StreamingServerStore, defaultIndex string, vr en
 }
 
 // batchStoreToSource creates a Source from a ColumnarBatchStore.
-func batchStoreToSource(bs *enginepipeline.ColumnarBatchStore, defaultIndex string, vr enginepipeline.ViewResolver) func(*logical.Scan) (enginepipeline.Iterator, error) {
+func batchStoreToSource(bs *enginepipeline.ColumnarBatchStore, defaultIndex string) func(*logical.Scan) (enginepipeline.Iterator, error) {
 	return func(scan *logical.Scan) (enginepipeline.Iterator, error) {
 		targetIndex := resolveIndexFromScan(scan, defaultIndex)
-
-		// Check if the target names a materialized view.
-		if vr != nil && targetIndex != "*" && targetIndex != defaultIndex {
-			if iter, ok := tryResolveViewSourceWithRollup(vr, targetIndex, scan.ViewRollup); ok {
-				return iter, nil
-			}
-		}
 
 		var allRows []map[string]event.Value
 		for idxName, batches := range bs.Batches {
@@ -1211,16 +1175,9 @@ func batchStoreToSource(bs *enginepipeline.ColumnarBatchStore, defaultIndex stri
 
 // materializeStoreToSource creates a Source from a generic IndexStore using
 // MaterializeEvents.
-func materializeStoreToSource(store enginepipeline.IndexStore, defaultIndex string, vr enginepipeline.ViewResolver) func(*logical.Scan) (enginepipeline.Iterator, error) {
+func materializeStoreToSource(store enginepipeline.IndexStore, defaultIndex string) func(*logical.Scan) (enginepipeline.Iterator, error) {
 	return func(scan *logical.Scan) (enginepipeline.Iterator, error) {
 		targetIndex := resolveIndexFromScan(scan, defaultIndex)
-
-		// Check if the target names a materialized view.
-		if vr != nil && targetIndex != "*" && targetIndex != defaultIndex {
-			if iter, ok := tryResolveViewSourceWithRollup(vr, targetIndex, scan.ViewRollup); ok {
-				return iter, nil
-			}
-		}
 
 		events, err := store.MaterializeEvents(context.Background(), targetIndex)
 		if err != nil {
@@ -1230,71 +1187,6 @@ func materializeStoreToSource(store enginepipeline.IndexStore, defaultIndex stri
 		return enginepipeline.NewRowScanIterator(rows, enginepipeline.DefaultBatchSize), nil
 	}
 }
-
-// tryResolveViewSource checks whether targetName matches a materialized view
-// and, if so, returns a pipeline Iterator over the view's finalized events.
-// Returns (nil, false) when targetName is not a view — the caller should fall
-// through to index-based scan. Errors from ResolveView (e.g. view needs
-// migration) are propagated by returning (nil, true) — callers type-switch
-// to see whether the Iterator is nil *and* ok is true (indicating an error
-// case that should be raised).
-//
-// Design note: we try ResolveView unconditionally for non-default, non-star
-// names. If the name is not a known view, ResolveView returns ErrViewNotFound
-// and we fall through silently. This avoids needing a separate "view exists?"
-// API.
-func tryResolveViewSource(vr enginepipeline.ViewResolver, targetName string) (enginepipeline.Iterator, bool) {
-	return tryResolveViewSourceWithRollup(vr, targetName, nil)
-}
-
-func tryResolveViewSourceWithRollup(vr enginepipeline.ViewResolver, targetName string, rollup *logical.ViewRollup) (enginepipeline.Iterator, bool) {
-	var (
-		events []*event.Event
-		err    error
-	)
-	if rollup != nil {
-		events, err = vr.ResolveViewRollup(targetName, rollup.GroupBy, viewRollupFuncs(rollup.Aggs))
-	} else {
-		events, err = vr.ResolveView(targetName)
-	}
-	if err != nil {
-		// ErrViewNotFound means this name isn't a view — fall through to index scan.
-		if errors.Is(err, views.ErrViewNotFound) {
-			return nil, false
-		}
-		// Other errors (e.g. ErrViewNeedsMigration) should surface to the user.
-		// Wrap the error in an errorIterator so the pipeline reports it.
-		return &viewErrorIterator{err: fmt.Errorf("from %s: %w", targetName, err)}, true
-	}
-	rows := eventsToValueRows(events)
-	return enginepipeline.NewRowScanIterator(rows, enginepipeline.DefaultBatchSize), true
-}
-
-func viewRollupFuncs(aggs []logical.ViewRollupAgg) []enginepipeline.PartialAggFunc {
-	funcs := make([]enginepipeline.PartialAggFunc, 0, len(aggs))
-	for _, a := range aggs {
-		funcs = append(funcs, enginepipeline.PartialAggFunc{
-			Name:        a.Func,
-			Field:       a.Field,
-			WeightField: a.WeightField,
-			Alias:       a.Alias,
-			Quantile:    a.Quantile,
-		})
-	}
-	return funcs
-}
-
-// viewErrorIterator is a pipeline iterator that returns a stored error on Init.
-// Used to surface view resolution errors (e.g. needs-migration) through the
-// normal pipeline error path.
-type viewErrorIterator struct {
-	err error
-}
-
-func (v *viewErrorIterator) Init(_ context.Context) error                          { return v.err }
-func (v *viewErrorIterator) Next(_ context.Context) (*enginepipeline.Batch, error) { return nil, nil }
-func (v *viewErrorIterator) Close() error                                          { return nil }
-func (v *viewErrorIterator) Schema() []enginepipeline.FieldInfo                    { return nil }
 
 // resolveIndexFromScan extracts the target index name from a logical.Scan node.
 func resolveIndexFromScan(scan *logical.Scan, defaultIndex string) string {
@@ -1416,21 +1308,6 @@ func convertStageStats(stages []stats.StageStats) []PipelineStage {
 	}
 
 	return result
-}
-
-// estimateMVSpeedup returns a human-readable speedup estimate (e.g., "~400x")
-// by comparing the original scan row count to the MV row count. Returns "" if
-// no meaningful estimate can be computed (e.g., no MV rows or no original scan).
-func estimateMVSpeedup(originalRows, mvRows int64) string {
-	if originalRows <= 0 || mvRows <= 0 {
-		return ""
-	}
-	ratio := float64(originalRows) / float64(mvRows)
-	if ratio < 2 {
-		return ""
-	}
-
-	return fmt.Sprintf("~%.0fx", ratio)
 }
 
 // applyBudgetAndCPUDelta populates SearchStats from a governor BudgetAdapter
@@ -1640,10 +1517,7 @@ func walkLogicalNodes(n logical.Node, f func(logical.Node)) {
 }
 
 type queryAnnotations struct {
-	joinStrategy  string
-	acceleratedBy string
-	mvStatus      string
-	mvRows        int64
+	joinStrategy string
 }
 
 func scanSrc(scan *logical.Scan) string {

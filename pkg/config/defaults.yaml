@@ -144,16 +144,6 @@
 #   total_memory_pool_bytes: 0       # Total memory for queries + cache (0 = auto: 40% RAM)
 #   cache_reserve_percent: 20        # Minimum cache floor as % of pool (0-50)
 
-# Materialized views configuration.
-# views:
-#   max_backfill_memory_bytes: 0     # Memory budget per backfill (0 = auto)
-#   insert_max_memory_bytes: 0       # Memory budget per insert-time MV batch (0 = auto)
-#   backfill_backpressure_wait: 5s   # Wait time when pool is under pressure
-#   backfill_max_retries: 60         # Max backpressure retries before failing
-#   dispatch_batch_size: 1000        # Rows per dispatch batch
-#   dispatch_batch_delay: 100ms      # Delay between dispatch batches
-#   backfill_timeout: 4h             # Max time per backfill before aborting
-
 # Unified buffer manager (Phase 3 — opt-in).
 # buffer_manager:
 #   enabled: false                   # Activate unified buffer manager

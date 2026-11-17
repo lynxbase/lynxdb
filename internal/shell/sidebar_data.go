@@ -72,14 +72,6 @@ func buildQueryStats(query string, rows []map[string]interface{}, elapsed time.D
 		qs.RowsScanned = s.RowsScanned
 		qs.Segments = s.SegmentsTotal
 		qs.BloomSkipped = s.SegmentsSkippedBF + s.SegmentsSkippedRange
-
-		if s.AcceleratedBy != "" {
-			accel := s.AcceleratedBy
-			if s.MVSpeedup != "" {
-				accel += " (" + s.MVSpeedup + ")"
-			}
-			qs.Accelerated = accel
-		}
 	}
 
 	return qs

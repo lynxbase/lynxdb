@@ -16,12 +16,10 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/logical/opt"
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/ast"
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/desugar"
-	"github.com/lynxbase/lynxdb/pkg/lynxflow/format"
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/lint"
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/parser"
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/sema"
 	"github.com/lynxbase/lynxdb/pkg/model"
-	"github.com/lynxbase/lynxdb/pkg/storage/views"
 	"github.com/lynxbase/lynxdb/pkg/timerange"
 )
 
@@ -57,17 +55,6 @@ type PlanResult struct {
 
 	// Rewrites carries desugaring rewrites from desugar.Desugar.
 	Rewrites []model.QueryRewrite
-
-	// Accel is non-nil when the optimizer rewrote the query to use a
-	// materialized view. The caller should propagate this to query metadata.
-	Accel *MVAccel
-}
-
-// MVAccel holds MV acceleration metadata produced by the optimizer.
-type MVAccel struct {
-	ViewName string
-	Status   string // "active" or "backfill"
-	Speedup  string // e.g. "~400x"
 }
 
 // ParseError represents a query parse error.
@@ -141,37 +128,12 @@ func QueryUsesDynamicTimeSyntax(_ string) bool {
 	return false
 }
 
-// ViewCatalog is the interface for materialized view lookup.
-// The server.Engine implements this interface via GetView and ListViewDefs.
-type ViewCatalog interface {
-	GetView(name string) (*views.ViewDefinition, bool)
-	ListViewDefs() []*views.ViewDefinition
-}
-
-// Option configures a planner.
-type Option func(*lynxFlowPlanner)
-
-// WithViewCatalog sets the view catalog for MV rewriting.
-// When set, the optimizer attempts to rewrite queries that match a
-// materialized view to scan the view instead of raw data.
-func WithViewCatalog(vc ViewCatalog) Option {
-	return func(p *lynxFlowPlanner) {
-		p.viewCatalog = vc
-	}
-}
-
 // New creates a new Planner backed by the LynxFlow pipeline.
-func New(opts ...Option) Planner {
-	p := &lynxFlowPlanner{}
-	for _, o := range opts {
-		o(p)
-	}
-	return p
+func New() Planner {
+	return &lynxFlowPlanner{}
 }
 
-type lynxFlowPlanner struct {
-	viewCatalog ViewCatalog
-}
+type lynxFlowPlanner struct{}
 
 func (p *lynxFlowPlanner) Plan(req PlanRequest) (*PlanResult, error) {
 	parseStart := time.Now()
@@ -209,24 +171,9 @@ func (p *lynxFlowPlanner) Plan(req PlanRequest) (*PlanResult, error) {
 		}
 	}
 
-	// Detect the result type from the pre-rewrite plan: an MV exact-match
-	// rewrite replaces an Aggregate root with Scan(view)+Project, but the
-	// query is still an aggregation from the caller's perspective and the
-	// response envelope must not change shape under acceleration.
 	rt := detectResultType(plan)
 
-	// Run the optimizer with optional MV rewriting when a view catalog is
-	// configured. The view catalog provides materialized view metadata so the
-	// optimizer can rewrite matching queries to scan the view instead of raw
-	// data (up to ~400x speedup).
-	var applied []opt.Applied
-	var mvAccel *opt.MVAccel
-	if p.viewCatalog != nil {
-		adapter := &viewCatalogAdapter{catalog: p.viewCatalog}
-		plan, applied, mvAccel = opt.OptimizeWithViews(plan, opt.Options{Views: adapter})
-	} else {
-		plan, applied = opt.Optimize(plan)
-	}
+	plan, applied := opt.Optimize(plan)
 	optimizeDuration := time.Since(optStart)
 
 	// Build hints from the logical plan pushdown.
@@ -308,20 +255,7 @@ func (p *lynxFlowPlanner) Plan(req PlanRequest) (*PlanResult, error) {
 		OptimizerStats:     stats,
 		Lints:              lints,
 		Rewrites:           rewrites,
-		Accel:              convertMVAccel(mvAccel),
 	}, nil
-}
-
-// convertMVAccel converts the optimizer's MVAccel to the planner's MVAccel.
-func convertMVAccel(a *opt.MVAccel) *MVAccel {
-	if a == nil {
-		return nil
-	}
-	return &MVAccel{
-		ViewName: a.ViewName,
-		Status:   a.Status,
-		Speedup:  a.Speedup,
-	}
 }
 
 // hintsFromPlan extracts QueryHints from the logical plan's Scan pushdown.
@@ -746,104 +680,6 @@ func detectNodeResultType(n logical.Node) string {
 	default:
 		return "events"
 	}
-}
-
-// ViewCatalog adapter: bridges planner.ViewCatalog to opt.ViewCatalog
-
-// viewCatalogAdapter wraps a planner.ViewCatalog and produces opt.ViewInfo
-// by analyzing each view's query with AnalyzeLynxFlow.
-type viewCatalogAdapter struct {
-	catalog ViewCatalog
-}
-
-func (a *viewCatalogAdapter) ListViewInfos() []opt.ViewInfo {
-	defs := a.catalog.ListViewDefs()
-	if len(defs) == 0 {
-		return nil
-	}
-
-	var result []opt.ViewInfo
-	for _, def := range defs {
-		vi := viewDefToInfo(def)
-		if vi != nil {
-			result = append(result, *vi)
-		}
-	}
-	return result
-}
-
-// viewDefToInfo converts a ViewDefinition to an opt.ViewInfo by analyzing
-// the view's query. Returns nil if the view cannot be analyzed (e.g., SPL2
-// view, parse error, unsupported shape).
-func viewDefToInfo(def *views.ViewDefinition) *opt.ViewInfo {
-	if def == nil || def.Query == "" {
-		return nil
-	}
-
-	// Only LynxFlow views can participate in MV rewriting.
-	if def.EffectiveLanguage() != "lynxflow" {
-		return nil
-	}
-
-	// Analyze the query to extract filter, group-by, and agg metadata.
-	mvAn, err := views.AnalyzeLynxFlow(def.Query)
-	if err != nil {
-		return nil // skip views that fail analysis
-	}
-
-	spec := def.AggSpec
-	if spec == nil {
-		spec = mvAn.AggSpec
-	}
-
-	vi := &opt.ViewInfo{
-		Name:         def.Name,
-		Status:       string(def.Status),
-		Source:       mvAn.SourceIndex,
-		PartialState: spec != nil,
-	}
-
-	// Extract canonical filter from the streaming plan.
-	if mvAn.StreamingPlan != nil && mvAn.StreamingPlan.Root != nil {
-		vi.Filter = extractCanonicalFilter(mvAn.StreamingPlan.Root)
-	}
-
-	vi.GroupBy = mvAn.GroupBy
-
-	// Convert the persisted AggSpec to AggInfo slice. Migrated views may
-	// preserve old aliases and state-column names even after query migration.
-	if spec != nil {
-		for _, fn := range spec.Funcs {
-			if fn.Hidden {
-				continue // skip auto-injected hidden counts
-			}
-			vi.Aggs = append(vi.Aggs, opt.AggInfo{
-				Func:        fn.Name,
-				Arg:         fn.Field,
-				WeightField: fn.WeightField,
-				Alias:       fn.Alias,
-				Quantile:    fn.Quantile,
-			})
-		}
-	}
-
-	return vi
-}
-
-// extractCanonicalFilter walks a plan tree and returns the canonical string
-// representation of the first Filter node's expression. Returns "" if no
-// filter is present.
-func extractCanonicalFilter(root logical.Node) string {
-	var result string
-	walkNodes(root, func(n logical.Node) {
-		if result != "" {
-			return
-		}
-		if f, ok := n.(*logical.Filter); ok && f.Expr != nil {
-			result = format.Expr(f.Expr)
-		}
-	})
-	return result
 }
 
 // Utility for compile-time check.

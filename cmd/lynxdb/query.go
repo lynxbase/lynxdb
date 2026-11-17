@@ -794,15 +794,6 @@ func queryInsightHints(st *stats.QueryStats) []string {
 	if st.CacheHit {
 		hints = append(hints, "served from query cache")
 	}
-	if st.AcceleratedBy != "" {
-		msg := "accelerated by MV " + st.AcceleratedBy
-		if st.MVSpeedup != "" {
-			msg += " (" + st.MVSpeedup + ")"
-		}
-		hints = append(hints, msg)
-	} else if st.MVStatus != "" {
-		hints = append(hints, "materialized view status: "+st.MVStatus)
-	}
 	if st.VectorizedFilterUsed {
 		hints = append(hints, "vectorized filters used")
 	}
@@ -885,14 +876,10 @@ func buildQueryStatsFromMeta(meta client.Meta, rowsReturned int64, totalDuration
 		ss.ScanMS,
 		ss.PipelineMS,
 		ss.IndexesUsed,
-		ss.AcceleratedBy,
 	)
 	st.TotalDuration = totalDuration
 	st.MatchedRows = ss.MatchedRows
 	st.CacheHit = ss.CacheHit
-	st.MVStatus = ss.MVStatus
-	st.MVSpeedup = ss.MVSpeedup
-	st.MVOriginalScan = ss.MVOriginalScan
 
 	// Parse/optimize timing from planner.
 	if ss.ParseMS > 0 {

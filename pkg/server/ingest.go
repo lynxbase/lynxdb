@@ -10,7 +10,7 @@ import (
 )
 
 // Ingest buffers events in the async batcher (which flushes to parts on
-// threshold), publishes to event bus, and dispatches to materialized views.
+// threshold) and publishes to the event bus.
 // Returns ErrShuttingDown if PrepareShutdown has been called.
 func (e *Engine) Ingest(events []*event.Event) error {
 	return e.IngestContext(context.Background(), events)
@@ -94,13 +94,6 @@ func (e *Engine) IngestContext(ctx context.Context, events []*event.Event) error
 	e.metrics.IngestBytes.Add(ingestBytes)
 
 	e.lastIngestTime.Store(time.Now().UnixNano())
-
-	// Dispatch to materialized views (best-effort; don't block ingest on MV errors).
-	if e.mvDispatcher != nil {
-		if err := e.mvDispatcher.Dispatch(events); err != nil {
-			e.logger.Warn("MV dispatch failed", "error", err)
-		}
-	}
 
 	return nil
 }

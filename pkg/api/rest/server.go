@@ -39,7 +39,6 @@ type Server struct {
 	engine             *server.Engine
 	keyStore           *auth.KeyStore // Nil when auth is disabled.
 	queryService       *usecases.QueryService
-	viewService        *usecases.ViewService
 	tailService        *usecases.TailService
 	queryStore         *savedqueries.Store
 	runtimeCfg         *config.Config
@@ -91,7 +90,6 @@ type Config struct {
 	Syslog        config.SyslogConfig
 	Tail          config.TailConfig
 	Server        config.ServerConfig
-	Views         config.ViewsConfig
 	BufferManager config.BufferManagerConfig
 	Cluster       config.ClusterConfig
 }
@@ -105,18 +103,12 @@ func NewServer(cfg Config) (*Server, error) {
 		Logger:        cfg.Logger,
 		Query:         cfg.Query,
 		Server:        cfg.Server,
-		Views:         cfg.Views,
 		BufferManager: cfg.BufferManager,
 		Cluster:       cfg.Cluster,
 	})
 
-	// Build planner, query service, and view service.
-	// Wire the view catalog so the optimizer can rewrite matching queries
-	// to scan materialized views instead of raw data (~400x speedup).
-	p := planner.New(planner.WithViewCatalog(engine))
+	p := planner.New()
 	queryService := usecases.NewQueryService(p, engine, cfg.Query)
-	viewService := usecases.NewViewService(engine)
-	queryService.SetViewService(viewService)
 	tailService := usecases.NewTailService(p, engine)
 
 	// Initialize saved queries store.
@@ -164,7 +156,6 @@ func NewServer(cfg Config) (*Server, error) {
 		engine:          engine,
 		keyStore:        cfg.KeyStore,
 		queryService:    queryService,
-		viewService:     viewService,
 		tailService:     tailService,
 		queryStore:      qStore,
 		runtimeCfg:      runtimeCfg,
@@ -395,15 +386,6 @@ func NewServer(cfg Config) (*Server, error) {
 	// Schema: field values and sources.
 	mux.HandleFunc("GET /api/v1/fields/{name}/values", s.handleFieldValues)
 	mux.HandleFunc("GET /api/v1/sources", s.handleListSources)
-
-	// Views (swagger paths, aliasing existing MV handlers).
-	mux.HandleFunc("GET /api/v1/views", s.handleListMV)
-	mux.HandleFunc("POST /api/v1/views", s.handleCreateMV)
-	mux.HandleFunc("GET /api/v1/views/{name}", s.handleGetMV)
-	mux.HandleFunc("PATCH /api/v1/views/{name}", s.handlePatchView)
-	mux.HandleFunc("DELETE /api/v1/views/{name}", s.handleDeleteMV)
-	mux.HandleFunc("GET /api/v1/views/{name}/backfill", s.handleViewBackfill)
-	mux.HandleFunc("POST /api/v1/views/{name}/backfill", s.handleViewBackfill)
 
 	// Elasticsearch compatibility.
 	mux.Handle("GET /{$}", s.esCompatibilityHandler("root", esHandshake))

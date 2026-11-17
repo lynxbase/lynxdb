@@ -16,7 +16,6 @@ func GenerateRecommendations(s *QueryStats) []Recommendation {
 		ruleNoBloomPruning,
 		ruleLowSkipRate,
 		ruleSortDominates,
-		ruleNoMVAcceleration,
 		ruleSegmentsErrored,
 		ruleCacheMiss,
 		ruleHighMemory,
@@ -101,20 +100,6 @@ func ruleSortDominates(s *QueryStats) *Recommendation {
 					EstimatedSpeedup: fmt.Sprintf("~%.0fx", sortPct/10),
 				}
 			}
-		}
-	}
-
-	return nil
-}
-
-func ruleNoMVAcceleration(s *QueryStats) *Recommendation {
-	if s.AcceleratedBy == "" && s.ScannedRows > 1_000_000 && !s.Ephemeral && hasStatsStage(s) {
-		return &Recommendation{
-			Category:         "performance",
-			Priority:         "info",
-			Message:          "Consider creating a materialized view for this aggregation query",
-			EstimatedSpeedup: "~100-400x",
-			SuggestedAction:  "lynxdb mv create <name> '<query>'",
 		}
 	}
 

@@ -39,26 +39,6 @@ func completeSavedQueryNames(_ *cobra.Command, _ []string, _ string) ([]string, 
 	return names, cobra.ShellCompDirectiveNoFileComp
 }
 
-// completeMVNames returns a ValidArgsFunction that fetches materialized view
-// names from the server for tab completion.
-func completeMVNames(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
-	c := completionClient()
-
-	views, err := c.ListViews(context.Background())
-	if err != nil {
-		return nil, cobra.ShellCompDirectiveNoFileComp
-	}
-
-	names := make([]string, 0, len(views))
-	for _, v := range views {
-		if v.Name != "" {
-			names = append(names, v.Name)
-		}
-	}
-
-	return names, cobra.ShellCompDirectiveNoFileComp
-}
-
 // completeJobIDs returns a ValidArgsFunction that fetches job IDs from the
 // server for tab completion.
 func completeJobIDs(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {

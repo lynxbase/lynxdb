@@ -78,7 +78,6 @@ func startTestServerWithConfig(t *testing.T, cfg Config) (*Server, func()) {
 		Query:         queryCfg,
 		Ingest:        cfg.Ingest,
 		Server:        cfg.Server,
-		Views:         cfg.Views,
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

@@ -257,7 +257,6 @@ func renderTimeoutError() {
 		"lynxdb query '...' --timeout 10m     Increase timeout",
 		"lynxdb query '... | head 1000'       Limit result count",
 		"lynxdb explain '...'                 Check query cost first",
-		"lynxdb mv create <name> '...'        Materialize for repeated queries",
 	)
 }
 

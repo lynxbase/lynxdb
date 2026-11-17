@@ -94,7 +94,6 @@ func renderExplainReportString(result *client.ExplainResult, opts explainReportO
 	b.WriteString(r.renderPhysicalStrategy(parsed))
 	b.WriteString(r.renderOptimizer(parsed))
 	b.WriteString(r.renderScanDetails(parsed))
-	b.WriteString(r.renderAcceleration(result.Acceleration))
 	b.WriteString(r.renderHints(result))
 
 	return strings.TrimRight(b.String(), "\n") + "\n"
@@ -362,28 +361,6 @@ func (r explainRenderer) renderScanDetails(parsed *client.ExplainParsed) string 
 	return b.String()
 }
 
-func (r explainRenderer) renderAcceleration(accel *client.ExplainAccel) string {
-	if accel == nil || (!accel.Available && accel.Reason == "") {
-		return ""
-	}
-
-	var lines []string
-	if accel.Available {
-		line := "available"
-		if accel.View != "" {
-			line += ": " + accel.View
-		}
-		if accel.EstimatedSpeedup != "" {
-			line += " (" + accel.EstimatedSpeedup + ")"
-		}
-		lines = append(lines, line)
-	} else if accel.Reason != "" {
-		lines = append(lines, "not available: "+accel.Reason)
-	}
-
-	return r.renderBulletSection("MV acceleration", lines)
-}
-
 func (r explainRenderer) renderDiagnostics(errors []client.ExplainError) string {
 	var b strings.Builder
 	b.WriteString(r.section("Diagnostics"))
@@ -629,13 +606,6 @@ func explainHints(result *client.ExplainResult) []string {
 	}
 	if parsed.UsesFullScan && len(parsed.SearchTerms) == 0 {
 		hints = append(hints, "Add selective search terms or indexed predicates before expensive pipeline commands.")
-	}
-	if result.Acceleration != nil && result.Acceleration.Available {
-		hint := "Materialized view acceleration is available"
-		if result.Acceleration.View != "" {
-			hint += " via " + result.Acceleration.View
-		}
-		hints = append(hints, hint+".")
 	}
 	hints = append(hints, "Use --analyze to see actual timings, row counts, and runtime optimizations.")
 

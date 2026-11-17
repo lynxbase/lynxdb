@@ -386,25 +386,4 @@ const (
 	// LYNXDB_TLS_KEY_FILE is the path to PEM private key file.
 	// YAML key: tls.key_file. Default: "".
 	LYNXDB_TLS_KEY_FILE = "LYNXDB_TLS_KEY_FILE"
-	// LYNXDB_VIEWS_BACKFILL_BACKPRESSURE_WAIT is the wait time when pool is under pressure.
-	// YAML key: views.backfill_backpressure_wait. Default: 5s.
-	LYNXDB_VIEWS_BACKFILL_BACKPRESSURE_WAIT = "LYNXDB_VIEWS_BACKFILL_BACKPRESSURE_WAIT"
-	// LYNXDB_VIEWS_BACKFILL_MAX_RETRIES is the max backpressure retries before failing.
-	// YAML key: views.backfill_max_retries. Default: 60.
-	LYNXDB_VIEWS_BACKFILL_MAX_RETRIES = "LYNXDB_VIEWS_BACKFILL_MAX_RETRIES"
-	// LYNXDB_VIEWS_BACKFILL_TIMEOUT is the max time per backfill before aborting.
-	// YAML key: views.backfill_timeout. Default: 4h.
-	LYNXDB_VIEWS_BACKFILL_TIMEOUT = "LYNXDB_VIEWS_BACKFILL_TIMEOUT"
-	// LYNXDB_VIEWS_DISPATCH_BATCH_DELAY is the delay between dispatch batches.
-	// YAML key: views.dispatch_batch_delay. Default: 100ms.
-	LYNXDB_VIEWS_DISPATCH_BATCH_DELAY = "LYNXDB_VIEWS_DISPATCH_BATCH_DELAY"
-	// LYNXDB_VIEWS_DISPATCH_BATCH_SIZE is the rows per dispatch batch.
-	// YAML key: views.dispatch_batch_size. Default: 1000.
-	LYNXDB_VIEWS_DISPATCH_BATCH_SIZE = "LYNXDB_VIEWS_DISPATCH_BATCH_SIZE"
-	// LYNXDB_VIEWS_INSERT_MAX_MEMORY_BYTES is the memory budget per insert-time MV batch (0 = auto).
-	// YAML key: views.insert_max_memory_bytes. Default: 0.
-	LYNXDB_VIEWS_INSERT_MAX_MEMORY_BYTES = "LYNXDB_VIEWS_INSERT_MAX_MEMORY_BYTES"
-	// LYNXDB_VIEWS_MAX_BACKFILL_MEMORY_BYTES is the memory budget per backfill (0 = auto).
-	// YAML key: views.max_backfill_memory_bytes. Default: 0.
-	LYNXDB_VIEWS_MAX_BACKFILL_MEMORY_BYTES = "LYNXDB_VIEWS_MAX_BACKFILL_MEMORY_BYTES"
 )
