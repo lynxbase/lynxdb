@@ -193,6 +193,50 @@ plain text line
 	}
 }
 
+// TestANumberIsOneValueWhateverItsKind requires the executor to group and
+// count a number once, whether events hold it as an integer or as a float.
+// The row operators still tell the two kinds apart in groups.
+func TestANumberIsOneValueWhateverItsKind(t *testing.T) {
+	db, err := Open(Config{Dir: t.TempDir(), Store: colstore.StoreOptions{TimeFields: []string{"ts"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	// Two appends, so that the kinds meet inside a block and across blocks.
+	for _, events := range []string{
+		`{"ts":1700000000,"n":1}` + "\n" + `{"ts":1700000001,"n":1.0}` + "\n" + `{"ts":1700000002,"n":1.5}` + "\n",
+		`{"ts":1700000003,"n":2.0}` + "\n" + `{"ts":1700000004,"n":2}` + "\n" + `{"ts":1700000005,"n":1.0}` + "\n",
+	} {
+		if _, err := db.Append("t", []byte(events)); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.Sync(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for text, want := range map[string]string{
+		`stats count() as c by n | sort n`: `{"c":3,"n":1} {"c":1,"n":1.5} {"c":2,"n":2}`,
+		`stats distinct_count(n) as d`:     `{"d":3}`,
+		`dedup n | sort n | fields n`:      `{"n":1} {"n":1.5} {"n":2}`,
+	} {
+		compiled, err := query.Compile(`source=t | ` + text)
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		res, err := db.Query(context.Background(), compiled.Plan, Options{})
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		rows := make([]string, res.Len())
+		for i := range rows {
+			rows[i] = string(res.AppendJSON(nil, i))
+		}
+		if got := strings.Join(rows, " "); got != want || !res.Columnar {
+			t.Errorf("%s\n got  %s (columnar %v)\n want %s", text, got, res.Columnar, want)
+		}
+	}
+}
+
 // TestTimesAsText requires the text of a time to be what the standard
 // library writes for it.
 func TestTimesAsText(t *testing.T) {
