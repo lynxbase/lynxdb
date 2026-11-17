@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/lynxbase/lynxdb/internal/ui"
@@ -33,29 +32,6 @@ func RenderTabular(w io.Writer, cols []string, rows [][]any, format Format, opts
 	default:
 		return renderOrderedTable(w, cols, rows, format, opts)
 	}
-}
-
-// RenderKeyValue renders a map payload as ordered KEY/VALUE rows. JSON keeps
-// the original object shape; other formats use the shared tabular renderer.
-func RenderKeyValue(w io.Writer, values map[string]any, format Format, opts HumanTableOptions) error {
-	format = normalizeFormat(format)
-	if format == FormatJSON || format == FormatNDJSON {
-		enc := json.NewEncoder(w)
-		return enc.Encode(values)
-	}
-
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	rows := make([][]any, 0, len(keys))
-	for _, key := range keys {
-		rows = append(rows, []any{key, values[key]})
-	}
-
-	return RenderTabular(w, []string{"KEY", "VALUE"}, rows, format, opts)
 }
 
 func renderOrderedTable(w io.Writer, cols []string, rows [][]any, format Format, opts HumanTableOptions) error {

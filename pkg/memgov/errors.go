@@ -5,8 +5,12 @@ import (
 	"fmt"
 )
 
-// ErrClosed is returned when a memory account is used after Close.
-var ErrClosed = errors.New("memgov: memory account closed")
+// ErrMemoryPressure is returned when a reservation cannot be satisfied.
+var ErrMemoryPressure = errors.New("memory pressure: unable to reserve requested bytes")
+
+// ErrQueryBudgetExceeded is returned when a query's aggregate allocation
+// would exceed its per-query memory limit.
+var ErrQueryBudgetExceeded = errors.New("query memory budget exceeded")
 
 // BudgetExceededError carries context for diagnostics when an operator
 // exceeds the per-query memory budget.
@@ -28,7 +32,7 @@ func (e *BudgetExceededError) Error() string {
 
 // IsBudgetExceeded reports whether the error indicates a per-query memory
 // budget has been exceeded. Matches both the structured *BudgetExceededError
-// and the sentinel ErrQueryBudgetExceeded from the governor-backed adapter.
+// and the sentinel ErrQueryBudgetExceeded.
 func IsBudgetExceeded(err error) bool {
 	var target *BudgetExceededError
 
@@ -53,7 +57,7 @@ func (e *PoolExhaustedError) Error() string {
 
 // IsPoolExhausted reports whether the error indicates the global memory pool
 // has been exhausted. Matches both the structured *PoolExhaustedError and
-// the sentinel ErrMemoryPressure from the governor.
+// the sentinel ErrMemoryPressure.
 func IsPoolExhausted(err error) bool {
 	var target *PoolExhaustedError
 
@@ -61,18 +65,8 @@ func IsPoolExhausted(err error) bool {
 }
 
 // IsMemoryExhausted reports whether the error indicates any form of memory
-// exhaustion: per-query budget exceeded, global pool exhausted, or governor
-// memory pressure.
+// exhaustion: per-query budget exceeded, global pool exhausted, or memory
+// pressure.
 func IsMemoryExhausted(err error) bool {
 	return IsBudgetExceeded(err) || IsPoolExhausted(err) || errors.Is(err, ErrMemoryPressure) || errors.Is(err, ErrQueryBudgetExceeded)
-}
-
-// NewTestBudget creates a BudgetAdapter backed by a governor with the given
-// total limit. Convenience function for tests that need the old
-// memgov.NewTestBudget("label", limit) pattern.
-func NewTestBudget(label string, limit int64) *BudgetAdapter {
-	gov := NewGovernor(GovernorConfig{TotalLimit: limit})
-	budget := NewQueryBudget(gov, label)
-
-	return NewBudgetAdapterWithLimit(budget, gov, limit)
 }

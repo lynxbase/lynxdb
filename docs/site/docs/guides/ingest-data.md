@@ -10,6 +10,11 @@ commands, the REST API, log shippers that speak the Elasticsearch bulk API,
 OTLP or Splunk HEC, and syslog. Every path ends in the same storage and is
 queried with the same [PPL](../ppl/overview.md) queries.
 
+Each event goes to an index, `main` unless the request names another. An
+index comes into being with its first events. Its events are kept as JSON
+objects: the keys of a JSON event are its fields, and the members of a nested
+object are fields named by their path, such as `http.status`.
+
 ## Prerequisites
 
 Start a server:
@@ -25,7 +30,7 @@ To analyze a file once without storing it, use
 ## Ingest from the CLI
 
 [`lynxdb ingest`](../cli/ingest.md) sends a file or standard input to the
-server, one event per line.
+server as raw log lines.
 
 ```bash
 # A file
@@ -42,51 +47,52 @@ docker logs myapp 2>&1 | lynxdb ingest --source docker-myapp
 ```
 
 Lines are sent in batches of 5000; `--batch-size` changes that. The source
-appears in queries as `_source`, the index as the name after `source=`:
+and source type are stored in the fields `source` and `sourcetype`, and the
+index is the name after `source=` in a query:
 
 ```bash
-lynxdb query 'source=production _source=api-server | stats count() by level'
+lynxdb ingest OpenSSH_2k.log --source sshd-01 --sourcetype sshd --index auth-logs
+lynxdb query 'source=auth-logs | where source = "sshd-01" | stats count() by sourcetype'
+```
+
+```json
+{"count()":2000,"sourcetype":"sshd"}
 ```
 
 ## Ingest through the REST API
 
-- `POST /api/v1/ingest`: a JSON array of structured events
-- `POST /api/v1/ingest/raw`: newline-delimited text or NDJSON, one event per
-  line
+- `POST /api/v1/ingest`: NDJSON, one JSON object per line, stored as sent
+- `POST /api/v1/ingest/raw`: log text, one event per line
 
-See the [Ingest API](../api/ingest.md) for every option.
+Both take the index from `?index=` or the `X-Index` header. See the
+[Ingest API](../api/ingest.md) for every option.
 
-### Structured events
+### JSON events
 
-Each object carries the event text in `event`, optional metadata (`time` in
-epoch seconds, `source`, `sourcetype`, `host`, `index`) and typed `fields`:
+Each line is one event, and its keys are its fields:
 
 ```bash
-curl -X POST localhost:3100/api/v1/ingest \
-  -H "Content-Type: application/json" \
-  -d '[
-    {
-      "event": "user login",
-      "source": "auth-api",
-      "fields": {"user_id": 42, "ip": "10.0.1.5", "level": "info"}
-    },
-    {
-      "event": "connection refused",
-      "source": "api",
-      "fields": {"service": "redis", "level": "error"}
-    }
-  ]'
+curl -X POST 'localhost:3100/api/v1/ingest?index=app' \
+  --data-binary @- <<'EOF'
+{"timestamp":"2026-03-02T09:00:01.000Z","level":"error","service":"checkout","http":{"method":"POST","status":502}}
+{"timestamp":"2026-03-02T09:00:02.000Z","level":"info","service":"catalog","http":{"method":"GET","status":200}}
+EOF
 ```
 
 ```json
 {"data":{"accepted":2,"failed":0}}
 ```
 
+The event time comes from the first of `_time`, `timestamp`, `@timestamp`,
+`time` and `ts` that the event holds (`storage.time_fields`), otherwise from
+the time the event arrived. A line that is not a JSON object is kept as an
+event holding the text in `_raw`.
+
 ### Raw lines
 
 ```bash
-echo '192.168.1.1 - - [14/Feb/2026:14:23:01 +0000] "GET /api HTTP/1.1" 200 1234' \
-  | curl -X POST localhost:3100/api/v1/ingest/raw -H 'X-Source: nginx' --data-binary @-
+echo '2026-11-17T08:00:00.105Z host=web-03 level=ERROR status=502 msg="GET /api/v1/users completed"' \
+  | curl -X POST localhost:3100/api/v1/ingest/raw -H 'X-Source: web-03' --data-binary @-
 
 # A whole file into the index "web"
 curl -X POST localhost:3100/api/v1/ingest/raw \
@@ -96,22 +102,17 @@ curl -X POST localhost:3100/api/v1/ingest/raw \
   --data-binary @access.log
 ```
 
-The `X-Source`, `X-Source-Type` and `X-Index` headers set `_source`
-(default `http`), `_sourcetype` (default `raw`) and the index (default
-`main`).
-
-## What gets extracted
-
-The server's ingest pipeline detects the timestamp of each line, turns
-top-level JSON values into typed fields and extracts `key=value` pairs from
-other lines. Everything else stays in `_raw` and is extracted at query
-time. See [Field Extraction](./field-extraction.md).
+A JSON line passes as it is. Any other line becomes an event with the line
+in `_raw`, its leading timestamp in `_time` and its `key=value` pairs as
+fields. The `X-Source`, `X-Source-Type` and `X-Host` headers set `source`
+(default `http`), `sourcetype` (default `raw`) and `host`. See
+[Field Extraction](./field-extraction.md) for what is extracted.
 
 ## Structured import
 
 [`lynxdb import`](../cli/ingest.md) reads NDJSON, CSV and Elasticsearch bulk
-exports and keeps field types and timestamps. The format is detected from the
-file extension and content, or set with `--format`.
+exports. The format is detected from the file extension and content, or set
+with `--format`.
 
 ```bash
 # NDJSON
@@ -133,7 +134,8 @@ cat events.ndjson | lynxdb import - --format ndjson
 
 For NDJSON and CSV, the event time is read from the first of these fields
 present: `time`, `_time`, `timestamp`, `_timestamp`, `@timestamp`, `ts`,
-`datetime`. Otherwise the server assigns the time as it does for raw lines.
+`datetime`. The scalar values of each record become fields and the record
+itself is kept in `_raw`.
 
 ## Log shippers
 
@@ -168,12 +170,13 @@ sinks:
     mode: bulk
 ```
 
-Each document is stored in the LynxDB index named by the bulk request's
-`_index` (a document without one goes to `default`). Query it with
-`source=<index>`, or `source=filebeat-*` for a family of indexes; `lynxdb
-indexes` lists the names. `POST /_bulk`, `POST /<index>/_bulk`,
-`/api/v1/es/_bulk` and `/api/v1/ingest/bulk` all accept bulk requests. See
-the [compatibility API](../api/compatibility.md).
+Each document is stored as sent, in the LynxDB index named by the bulk
+request's `_index`. A document without one goes to the index in the URL
+(`POST /<index>/_bulk`, `POST /_data_stream/<name>/_bulk`), otherwise to
+`main`. Query it with `source=<index>`, or `source=filebeat-*` for a family
+of indexes; `lynxdb indexes` lists the names. `POST /_bulk`,
+`POST /<index>/_bulk`, `/api/v1/es/_bulk` and `/api/v1/ingest/bulk` all
+accept bulk requests. See the [compatibility API](../api/compatibility.md).
 
 ### OpenTelemetry (OTLP)
 
@@ -260,7 +263,7 @@ for framing, batching and connection limits.
 ## Pipe mode (no server)
 
 To analyze logs without storing them, query them directly. The CLI loads the
-input into an in-process engine, runs the query and exits:
+input into a database of its own, runs the query and exits:
 
 ```bash
 cat app.log | lynxdb query 'source=main | stats count() by level'
@@ -275,22 +278,21 @@ See [Pipe Mode](../getting-started/pipe-mode.md).
 # Server overview: event counts, storage, indexes
 lynxdb status
 
-# Indexes
+# Events, bytes and time range of each index
 lynxdb indexes
 
-# Events received in the last 5 minutes, per index
-lynxdb query 'source=* | stats count() by index' --since 5m
+# A few events
+lynxdb query 'source=main | head 5'
 
-# A few recent events
-lynxdb query 'source=main | head 5' --since 5m
+# Events of the last 5 minutes
+lynxdb query 'source=main | stats count()' --since 5m
 
 # The field catalog
 lynxdb fields
 ```
 
-Shipper data can take a few seconds to appear: the server buffers small
-shipper batches before writing them (`ingest.staging.max_age`, 5 seconds by
-default).
+A query syncs the database before it runs, so it sees every event whose
+ingest request was answered.
 
 ## Next steps
 

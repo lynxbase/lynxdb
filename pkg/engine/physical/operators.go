@@ -12,6 +12,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ir"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -125,12 +126,7 @@ func (b *builder) aggregate(x *ir.Aggregate) (pipeline.Iterator, error) {
 	if err != nil {
 		return nil, err
 	}
-	acct := b.account("Aggregate", pipeline.ReservationAggregate)
-	if b.opts.SpillManager != nil {
-		it = pipeline.NewAggregateIteratorWithSpill(it, aggs, groupBy, acct, b.opts.SpillManager)
-	} else {
-		it = pipeline.NewAggregateIterator(it, aggs, groupBy, acct)
-	}
+	it = pipeline.NewAggregateIterator(it, aggs, groupBy, memgov.NopAccount())
 	if len(renames) > 0 {
 		it = newRenameIterator(it, renames)
 	}
@@ -256,7 +252,7 @@ func (b *builder) window(x *ir.Window) (pipeline.Iterator, error) {
 		return nil, err
 	}
 	if x.Frame.Kind == ir.FramePartition {
-		it = pipeline.NewEventStatsIteratorWithBudget(it, aggs, groupBy, b.batchSize(), b.account("EventStats", pipeline.ReservationEventStats))
+		it = pipeline.NewEventStatsIteratorWithBudget(it, aggs, groupBy, b.batchSize(), memgov.NopAccount())
 	} else {
 		it = pipeline.NewStreamStatsIteratorWithDuration(it, aggs, groupBy, x.Frame.Rows, 0, !x.Frame.ExcludeCurrent)
 	}
@@ -290,7 +286,7 @@ func (b *builder) join(x *ir.Join) (pipeline.Iterator, error) {
 	if err != nil {
 		return nil, err
 	}
-	j := &joinIterator{left: left, right: right, spec: x, batch: b.batchSize(), acct: b.account("Join", pipeline.ReservationJoin)}
+	j := &joinIterator{left: left, right: right, spec: x, batch: b.batchSize(), acct: memgov.NopAccount()}
 	for _, k := range x.LeftKeys {
 		p, err := b.compile(k)
 		if err != nil {

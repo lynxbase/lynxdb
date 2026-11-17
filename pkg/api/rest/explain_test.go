@@ -133,6 +133,40 @@ func TestQueryExplain_MissingQuery(t *testing.T) {
 	}
 }
 
+func TestQueryExplain_Analyze(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	ingestTestEvents(t, srv.Addr(), 5, 1)
+
+	data := getExplain(t, srv, "source=main | head 3")
+	explainParsed(t, data)
+	if _, ok := data["execution"]; ok {
+		t.Fatalf("explain without analyze ran the query: %v", data["execution"])
+	}
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query/explain?analyze=true&q=%s",
+		srv.Addr(), url.QueryEscape("source=main | head 3")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var envelope struct {
+		Data struct {
+			Execution struct {
+				TookMS *float64 `json:"took_ms"`
+				Rows   int      `json:"rows"`
+			} `json:"execution"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if envelope.Data.Execution.Rows != 3 || envelope.Data.Execution.TookMS == nil {
+		t.Fatalf("execution = %+v, want 3 rows and took_ms", envelope.Data.Execution)
+	}
+}
+
 func TestQueryExplain_StatsQuery(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

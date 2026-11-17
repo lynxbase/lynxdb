@@ -15,11 +15,11 @@ This page covers building, testing, and running LynxDB from source.
 | **Go** | 1.26.3 (pinned in `mise.toml`) | `go version` |
 | **Git** | 2.x | `git --version` |
 | **Make** | 3.x | `make --version` |
-| **Docker** | Optional: shipper, conformance and chaos tests | `docker version` |
+| **Docker** | Optional: shipper and conformance tests | `docker version` |
 
 `mise.toml` pins every tool the project uses (Go, golangci-lint, goreleaser, Node for the docs site). With [mise](https://mise.jdx.dev) installed, `mise install` sets them up, and `mise x -- <command>` runs a command with them.
 
-LynxDB needs no C libraries and no JVM. The protobuf code in `pkg/cluster/rpc/proto` is checked in, so building does not need `protoc`.
+LynxDB needs no C libraries and no JVM.
 
 ## Clone and Build
 
@@ -81,7 +81,7 @@ go run ./cmd/lynxdb/ query --explain 'source=main level=ERROR | stats count() by
 
 ### Server Mode
 
-Start a server that keeps its data in memory (lost on exit):
+Start a server that keeps its data in a temporary directory, deleted on exit:
 
 ```bash
 go run ./cmd/lynxdb/ server --data-dir ""
@@ -113,7 +113,6 @@ go test ./...
 # One package tree
 go test ./pkg/ppl/...
 go test ./pkg/ir/...
-go test ./pkg/storage/segment/...
 
 # One test
 go test -v -run TestCompileGolden ./pkg/ppl/
@@ -156,14 +155,11 @@ make test-e2e   # starts servers and exercises the REST API
 make test-cli   # runs the built binary as a subprocess: output, exit codes, goldens
 ```
 
-### Cluster, Regression, Chaos
+### Regression
 
 ```bash
-go test -tags integration ./test/integration/...   # cluster tests
-go test ./test/regression/...                      # query correctness regressions
+go test ./test/regression/...   # query correctness regressions
 ```
-
-`test/chaos` runs Docker-based fault injection; `test/simulation` runs property-based simulations of cluster nodes, the network and S3.
 
 ## Benchmarks
 
@@ -173,11 +169,10 @@ make bench-micro
 
 # One package
 go test -bench=. -benchmem ./pkg/vm/...
-go test -bench=. -benchmem ./pkg/storage/segment/...
 go test -bench=. -benchmem ./pkg/engine/pipeline/...
 ```
 
-The columnar store's JSONBench suite and its results are described in `BENCHMARKS.md` at the repository root.
+`BENCHMARKS.md` at the repository root describes every benchmark suite and how to run it.
 
 ## IDE Setup
 

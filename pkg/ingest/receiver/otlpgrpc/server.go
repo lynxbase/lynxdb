@@ -3,7 +3,6 @@ package otlpgrpc
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -13,7 +12,6 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/otlpcommon"
-	"github.com/lynxbase/lynxdb/pkg/ingest/staging"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 	logscollector "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	metricscollector "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
@@ -155,7 +153,7 @@ func (s *logsService) Export(ctx context.Context, req *logscollector.ExportLogsS
 	if len(events) > 0 {
 		if err := s.receiver.submit(ctx, events); err != nil {
 			s.receiver.recordRequest("logs", "protobuf", "error", 0)
-			if errors.Is(err, staging.ErrBufferOverflow) || memgov.IsMemoryExhausted(err) {
+			if memgov.IsMemoryExhausted(err) {
 				return nil, status.Error(codes.ResourceExhausted, err.Error())
 			}
 			return nil, status.Error(codes.Internal, err.Error())

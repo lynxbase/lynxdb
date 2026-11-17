@@ -17,6 +17,25 @@ func makeBatch(cols map[string][]event.Value) *Batch {
 	return &Batch{Columns: cols, Len: n}
 }
 
+// staticIterator is a test helper that returns pre-built batches.
+type staticIterator struct {
+	batches []*Batch
+	idx     int
+}
+
+func (s *staticIterator) Init(ctx context.Context) error { return nil }
+func (s *staticIterator) Next(ctx context.Context) (*Batch, error) {
+	if s.idx >= len(s.batches) {
+		return nil, nil
+	}
+	b := s.batches[s.idx]
+	s.idx++
+
+	return b, nil
+}
+func (s *staticIterator) Close() error        { return nil }
+func (s *staticIterator) Schema() []FieldInfo { return nil }
+
 func TestProjectIterator_KeepExact(t *testing.T) {
 	batch := makeBatch(map[string][]event.Value{
 		"host":   {event.StringValue("web-01")},

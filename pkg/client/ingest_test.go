@@ -4,61 +4,69 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
 
-func TestIngest_Success(t *testing.T) {
+func TestIngestEvents_SendsNDJSONPerIndex(t *testing.T) {
+	bodies := map[string][]map[string]interface{}{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s, want POST", r.Method)
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/ingest" {
+			t.Errorf("%s %s, want POST /api/v1/ingest", r.Method, r.URL.Path)
 		}
-		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+		if ct := r.Header.Get("Content-Type"); ct != "application/x-ndjson" {
 			t.Errorf("Content-Type = %q", ct)
 		}
-
-		var events []IngestEvent
-		if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
-			t.Fatal(err)
-		}
-		if len(events) != 2 {
-			t.Errorf("len(events) = %d, want 2", len(events))
-		}
-		if events[0].Event != "log line 1" {
-			t.Errorf("events[0].Event = %q, want %q", events[0].Event, "log line 1")
+		index := r.URL.Query().Get("index")
+		dec := json.NewDecoder(r.Body)
+		for dec.More() {
+			var obj map[string]interface{}
+			if err := dec.Decode(&obj); err != nil {
+				t.Fatal(err)
+			}
+			bodies[index] = append(bodies[index], obj)
 		}
 
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"data": map[string]interface{}{
-				"accepted": 2,
-				"failed":   0,
-			},
+			"data": map[string]interface{}{"accepted": len(bodies[index]), "failed": 0},
 		})
 	}))
 	defer srv.Close()
 
+	ts := 1700000000.5
 	c := NewClient(WithBaseURL(srv.URL))
 	result, err := c.IngestEvents(context.Background(), []IngestEvent{
-		{
-			Event:  "log line 1",
-			Fields: map[string]interface{}{"level": "info"},
-		},
-		{
-			Event:  "log line 2",
-			Fields: map[string]interface{}{"level": "error"},
-		},
+		{Event: "log line 1", Time: &ts, Host: "web-01", Fields: map[string]interface{}{"level": "info"}},
+		{Event: "log line 2", Index: "audit", Source: "app.log", Fields: map[string]interface{}{"level": "error"}},
+		{Event: "log line 3", Fields: map[string]interface{}{"level": "warn"}},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if result.Accepted != 2 {
-		t.Errorf("Accepted = %d, want 2", result.Accepted)
+	if result.Accepted != 3 || result.Failed != 0 {
+		t.Errorf("result = %+v, want 3 accepted", result)
 	}
-	if result.Failed != 0 {
-		t.Errorf("Failed = %d, want 0", result.Failed)
+	if len(bodies[""]) != 2 || len(bodies["audit"]) != 1 {
+		t.Fatalf("requests by index = %v", bodies)
+	}
+	first := bodies[""][0]
+	want := map[string]interface{}{
+		"_raw": "log line 1", "_time": "2023-11-14T22:13:20.5Z", "host": "web-01", "level": "info",
+	}
+	for k, v := range want {
+		if first[k] != v {
+			t.Errorf("first[%q] = %v, want %v", k, first[k], v)
+		}
+	}
+	if _, ok := first["event"]; ok {
+		t.Errorf("first event object has an envelope key: %v", first)
+	}
+	if got := bodies["audit"][0]["source"]; got != "app.log" {
+		t.Errorf("audit source = %v, want app.log", got)
 	}
 }
 
@@ -118,25 +126,53 @@ func TestIngest_ServerError(t *testing.T) {
 	}
 }
 
-func TestIngest_RejectsGenericDocuments(t *testing.T) {
-	c := NewClient(WithBaseURL("http://example.invalid"))
+func TestIngest_SendsBodyAsIs(t *testing.T) {
+	const body = "{\"message\":\"a\",\"level\":\"info\"}\n{\"message\":\"b\"}\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("index"); got != "web" {
+			t.Errorf("index = %q, want web", got)
+		}
+		got, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != body {
+			t.Errorf("body = %q, want %q", got, body)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"data": map[string]interface{}{"accepted": 2, "failed": 0},
+		})
+	}))
+	defer srv.Close()
 
-	_, err := c.Ingest(context.Background(), []map[string]interface{}{
-		{"message": "not an ingest envelope", "level": "info"},
-	})
-	if err == nil {
-		t.Fatal("expected validation error")
+	c := NewClient(WithBaseURL(srv.URL))
+	result, err := c.Ingest(context.Background(), "web", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
 	}
+	if result.Accepted != 2 {
+		t.Fatalf("Accepted = %d, want 2", result.Accepted)
+	}
+}
 
+func TestIngest_InvalidIndexIsAPIError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": map[string]interface{}{"code": "VALIDATION_ERROR", "message": "bad index"},
+		})
+	}))
+	defer srv.Close()
+
+	c := NewClient(WithBaseURL(srv.URL))
+	_, err := c.Ingest(context.Background(), ".bad", strings.NewReader("{}\n"))
 	var apiErr *APIError
 	if !errors.As(err, &apiErr) {
-		t.Fatalf("expected *APIError, got %T", err)
+		t.Fatalf("expected *APIError, got %T (%v)", err, err)
 	}
 	if apiErr.Code != ErrCodeValidationError {
 		t.Fatalf("Code = %q, want %q", apiErr.Code, ErrCodeValidationError)
-	}
-	if apiErr.Suggestion == "" {
-		t.Fatal("expected non-empty suggestion")
 	}
 }
 

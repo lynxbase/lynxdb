@@ -49,8 +49,10 @@ func TestLoadFromFile(t *testing.T) {
 listen: "0.0.0.0:3200"
 retention: "30d"
 storage:
-  compression: "zstd"
-  row_group_size: 32768
+  partition: 1h
+  flush_interval: 250ms
+  time_fields: [ts]
+  sort_key: [kind, commit.collection]
 query:
   max_concurrent: 20
 `), 0o644)
@@ -68,11 +70,17 @@ query:
 	if cfg.Retention != Duration(30*24*time.Hour) {
 		t.Errorf("Retention: got %v", cfg.Retention)
 	}
-	if cfg.Storage.Compression != "zstd" {
-		t.Errorf("Compression: got %q", cfg.Storage.Compression)
+	if cfg.Storage.Partition != Duration(time.Hour) {
+		t.Errorf("Partition: got %v", cfg.Storage.Partition)
 	}
-	if cfg.Storage.RowGroupSize != 32768 {
-		t.Errorf("RowGroupSize: got %d", cfg.Storage.RowGroupSize)
+	if cfg.Storage.FlushInterval != Duration(250*time.Millisecond) {
+		t.Errorf("FlushInterval: got %v", cfg.Storage.FlushInterval)
+	}
+	if len(cfg.Storage.TimeFields) != 1 || cfg.Storage.TimeFields[0] != "ts" {
+		t.Errorf("TimeFields: got %v", cfg.Storage.TimeFields)
+	}
+	if got := strings.Join(cfg.Storage.SortKey, ","); got != "kind,commit.collection" {
+		t.Errorf("SortKey: got %q", got)
 	}
 	if cfg.Query.MaxConcurrent != 20 {
 		t.Errorf("MaxConcurrent: got %d", cfg.Query.MaxConcurrent)
@@ -95,12 +103,12 @@ func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("LYNXDB_LISTEN", "0.0.0.0:4000")
 	t.Setenv("LYNXDB_LOG_LEVEL", "debug")
 	t.Setenv("LYNXDB_QUERY_MAX_CONCURRENT", "50")
-	t.Setenv("LYNXDB_QUERY_BROAD_SOURCE_LINT_THRESHOLD", "7")
-	t.Setenv("LYNXDB_QUERY_BROAD_SEGMENT_LINT_THRESHOLD", "77")
-	t.Setenv("LYNXDB_STORAGE_COMPRESSION", "zstd")
+	t.Setenv("LYNXDB_STORAGE_PARTITION", "6h")
+	t.Setenv("LYNXDB_STORAGE_FLUSH_INTERVAL", "2s")
+	t.Setenv("LYNXDB_STORAGE_TIME_FIELDS", "ts, @timestamp")
+	t.Setenv("LYNXDB_STORAGE_SORT_KEY", "kind, did")
 	t.Setenv("LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION", "9.0.1")
 	t.Setenv("LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME", "logs")
-	t.Setenv("LYNXDB_INGEST_ES_COMPAT_STRIP_LOGSTASH_DATE_SUFFIX", "false")
 	t.Setenv("LYNXDB_INGEST_OTLP_HTTP_LISTEN", "127.0.0.1:18318")
 	t.Setenv("LYNXDB_INGEST_OTLP_GRPC_LISTEN", "127.0.0.1:18317")
 	t.Setenv("LYNXDB_INGEST_OTLP_GRPC_MAX_RECV_BYTES", "32mb")
@@ -108,8 +116,6 @@ func TestLoadEnvOverrides(t *testing.T) {
 	t.Setenv("LYNXDB_INGEST_SPLUNK_HEC_REQUIRE_TOKEN", "true")
 	t.Setenv("LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES", "16mb")
 	t.Setenv("LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES", "64mb")
-	t.Setenv("LYNXDB_INGEST_STAGING_MAX_BYTES", "8mb")
-	t.Setenv("LYNXDB_INGEST_STAGING_MAX_AGE", "2s")
 
 	cfg, _, err := Load("")
 	if err != nil {
@@ -124,23 +130,23 @@ func TestLoadEnvOverrides(t *testing.T) {
 	if cfg.Query.MaxConcurrent != 50 {
 		t.Errorf("MaxConcurrent: got %d", cfg.Query.MaxConcurrent)
 	}
-	if cfg.Query.BroadSourceLintThreshold != 7 {
-		t.Errorf("BroadSourceLintThreshold: got %d", cfg.Query.BroadSourceLintThreshold)
+	if cfg.Storage.Partition != Duration(6*time.Hour) {
+		t.Errorf("Partition: got %v", cfg.Storage.Partition)
 	}
-	if cfg.Query.BroadSegmentLintThreshold != 77 {
-		t.Errorf("BroadSegmentLintThreshold: got %d", cfg.Query.BroadSegmentLintThreshold)
+	if cfg.Storage.FlushInterval != Duration(2*time.Second) {
+		t.Errorf("FlushInterval: got %v", cfg.Storage.FlushInterval)
 	}
-	if cfg.Storage.Compression != "zstd" {
-		t.Errorf("Compression: got %q", cfg.Storage.Compression)
+	if got := strings.Join(cfg.Storage.TimeFields, ","); got != "ts,@timestamp" {
+		t.Errorf("TimeFields: got %q", got)
+	}
+	if got := strings.Join(cfg.Storage.SortKey, ","); got != "kind,did" {
+		t.Errorf("SortKey: got %q", got)
 	}
 	if cfg.Ingest.ESCompat.AdvertisedVersion != "9.0.1" {
 		t.Errorf("AdvertisedVersion: got %q", cfg.Ingest.ESCompat.AdvertisedVersion)
 	}
 	if cfg.Ingest.ESCompat.ClusterName != "logs" {
 		t.Errorf("ClusterName: got %q", cfg.Ingest.ESCompat.ClusterName)
-	}
-	if cfg.Ingest.ESCompat.StripLogstashDateSuffix {
-		t.Error("StripLogstashDateSuffix: got true, want false")
 	}
 	if cfg.Ingest.OTLP.HTTPListen != "127.0.0.1:18318" {
 		t.Errorf("OTLP.HTTPListen: got %q", cfg.Ingest.OTLP.HTTPListen)
@@ -162,12 +168,6 @@ func TestLoadEnvOverrides(t *testing.T) {
 	}
 	if cfg.Ingest.Limits.MaxDecompressedBodyBytes != 64*MB {
 		t.Errorf("MaxDecompressedBodyBytes: got %s", cfg.Ingest.Limits.MaxDecompressedBodyBytes)
-	}
-	if cfg.Ingest.Staging.MaxBytes != 8*MB {
-		t.Errorf("Staging.MaxBytes: got %s", cfg.Ingest.Staging.MaxBytes)
-	}
-	if cfg.Ingest.Staging.MaxAge != Duration(2*time.Second) {
-		t.Errorf("Staging.MaxAge: got %s", cfg.Ingest.Staging.MaxAge)
 	}
 }
 
@@ -255,7 +255,7 @@ func TestDefaultsTemplateEmbed(t *testing.T) {
 func TestLoadWithOverrides(t *testing.T) {
 	t.Setenv("LYNXDB_CONFIG", "")
 	t.Setenv("LYNXDB_LISTEN", "0.0.0.0:4000")
-	t.Setenv("LYNXDB_STORAGE_COMPRESSION", "zstd")
+	t.Setenv("LYNXDB_STORAGE_PARTITION", "1h")
 
 	// Change to temp dir so no ./lynxdb.yaml is found.
 	tmpDir := t.TempDir()
@@ -292,10 +292,10 @@ func TestLoadWithOverrides(t *testing.T) {
 			t.Errorf("listen value: got %q", o.value)
 		}
 	}
-	if o, ok := overrideMap["storage.compression"]; !ok {
-		t.Error("missing 'storage.compression' override")
-	} else if o.source != "LYNXDB_STORAGE_COMPRESSION" {
-		t.Errorf("storage.compression source: got %q", o.source)
+	if o, ok := overrideMap["storage.partition"]; !ok {
+		t.Error("missing 'storage.partition' override")
+	} else if o.source != "LYNXDB_STORAGE_PARTITION" {
+		t.Errorf("storage.partition source: got %q", o.source)
 	}
 }
 
@@ -323,7 +323,7 @@ func TestLoadUnknownKeys(t *testing.T) {
 	os.WriteFile(cfgPath, []byte(`
 listen: "localhost:3100"
 stoage:
-  compression: "lz4"
+  partition: 1h
 `), 0o644)
 
 	_, _, _, warnings, err := LoadWithOverrides(cfgPath)
@@ -460,15 +460,15 @@ func TestSetValueInFile(t *testing.T) {
 func TestSetValueInFile_Nested(t *testing.T) {
 	tmpDir := t.TempDir()
 	cfgPath := filepath.Join(tmpDir, "config.yaml")
-	os.WriteFile(cfgPath, []byte("storage:\n  compression: lz4\n"), 0o644)
+	os.WriteFile(cfgPath, []byte("storage:\n  partition: 24h\n"), 0o644)
 
-	if err := SetValueInFile(cfgPath, "storage.compression", "zstd"); err != nil {
+	if err := SetValueInFile(cfgPath, "storage.partition", "1h"); err != nil {
 		t.Fatalf("SetValueInFile: %v", err)
 	}
 
 	data, _ := os.ReadFile(cfgPath)
-	if !strings.Contains(string(data), "zstd") {
-		t.Errorf("expected 'zstd' in file, got:\n%s", string(data))
+	if !strings.Contains(string(data), "partition: 1h") {
+		t.Errorf("expected 'partition: 1h' in file, got:\n%s", string(data))
 	}
 }
 
@@ -528,7 +528,7 @@ func TestKnownKeyNames(t *testing.T) {
 		t.Fatal("expected non-empty list of known keys")
 	}
 
-	expectedKeys := []string{"listen", "data_dir", "retention", "storage.compression", "query.max_concurrent"}
+	expectedKeys := []string{"listen", "data_dir", "retention", "storage.partition", "storage.time_fields", "query.max_concurrent"}
 	for _, ek := range expectedKeys {
 		found := false
 		for _, k := range keys {
@@ -557,7 +557,8 @@ func TestLoadNoUnknownKeysForValidConfig(t *testing.T) {
 	os.WriteFile(cfgPath, []byte(`
 listen: "0.0.0.0:3200"
 storage:
-  compression: "zstd"
+  partition: 1h
+  time_fields: [ts]
 query:
   max_concurrent: 20
 `), 0o644)
@@ -574,7 +575,7 @@ query:
 // F6: Env var parse errors produce warnings instead of being silently swallowed.
 func TestLoadEnvParseErrorProducesWarning(t *testing.T) {
 	t.Setenv("LYNXDB_CONFIG", "")
-	t.Setenv("LYNXDB_STORAGE_FLUSH_THRESHOLD", "garbage")
+	t.Setenv("LYNXDB_STORAGE_PARTITION", "garbage")
 
 	tmpDir := t.TempDir()
 	origDir, _ := os.Getwd()
@@ -586,18 +587,18 @@ func TestLoadEnvParseErrorProducesWarning(t *testing.T) {
 		t.Fatalf("LoadWithOverrides: %v", err)
 	}
 	// Config should still have the default value.
-	if cfg.Storage.FlushThreshold != 512*MB {
-		t.Errorf("FlushThreshold should be default 512mb, got %s", cfg.Storage.FlushThreshold)
+	if cfg.Storage.Partition != Duration(24*time.Hour) {
+		t.Errorf("Partition should be default 24h, got %s", cfg.Storage.Partition)
 	}
 	// There should be a warning about the bad env var.
 	found := false
 	for _, w := range warnings {
-		if strings.Contains(w, "LYNXDB_STORAGE_FLUSH_THRESHOLD") && strings.Contains(w, "garbage") {
+		if strings.Contains(w, "LYNXDB_STORAGE_PARTITION") && strings.Contains(w, "garbage") {
 			found = true
 		}
 	}
 	if !found {
-		t.Errorf("expected warning about bad LYNXDB_STORAGE_FLUSH_THRESHOLD, got: %v", warnings)
+		t.Errorf("expected warning about bad LYNXDB_STORAGE_PARTITION, got: %v", warnings)
 	}
 }
 

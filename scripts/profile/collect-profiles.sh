@@ -56,10 +56,6 @@ curl -sf -o "$OUTDIR/trace.out" "$BASE/trace?seconds=5"
 echo "  [+] Prometheus metrics..."
 curl -sf -o "$OUTDIR/metrics.txt" "http://$ADDR/metrics"
 
-# Storage metrics snapshot
-echo "  [+] Storage metrics..."
-curl -sf -o "$OUTDIR/storage-metrics.json" "http://$ADDR/api/v1/metrics"
-
 # Server stats
 echo "  [+] Server stats..."
 curl -sf -o "$OUTDIR/stats.json" "http://$ADDR/api/v1/stats"

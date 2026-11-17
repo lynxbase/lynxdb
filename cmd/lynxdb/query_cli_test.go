@@ -73,54 +73,6 @@ func TestQueryFile_NDJSONTempFile(t *testing.T) {
 	}
 }
 
-func TestQueryNoSuggestions_SendsServerFlag(t *testing.T) {
-	reqCh := make(chan struct {
-		Lint        *bool `json:"lint"`
-		Suggestions *bool `json:"suggestions"`
-	}, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Errorf("method = %s, want POST", r.Method)
-		}
-		if r.URL.Path != "/api/v1/query" {
-			t.Errorf("path = %s, want /api/v1/query", r.URL.Path)
-		}
-
-		var req struct {
-			Lint        *bool `json:"lint"`
-			Suggestions *bool `json:"suggestions"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			t.Errorf("decode request: %v", err)
-		}
-		reqCh <- req
-
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"data": map[string]interface{}{
-				"type":     "events",
-				"events":   []map[string]interface{}{},
-				"total":    0,
-				"has_more": false,
-			},
-			"meta": map[string]interface{}{},
-		})
-	}))
-	defer srv.Close()
-
-	_, _, err := runCmd(t, "--server", srv.URL, "--quiet", "query", "--format", "json", "--no-suggestions", "search source=main error")
-	if err != nil {
-		t.Fatalf("query failed: %v", err)
-	}
-
-	req := <-reqCh
-	if req.Suggestions == nil || *req.Suggestions {
-		t.Fatalf("suggestions = %v, want pointer to false", req.Suggestions)
-	}
-	if req.Lint != nil {
-		t.Fatalf("lint = %v, want omitted", req.Lint)
-	}
-}
-
 func TestQuerySinceSendsRelativeTimeBounds(t *testing.T) {
 	reqCh := make(chan struct {
 		From string `json:"from"`
@@ -474,22 +426,16 @@ func TestQueryFile_TableFormat_FieldsDoesNotAutoAddEventMetadata(t *testing.T) {
 
 func TestQueryFile_TableFormat_ExplicitEventMetadata(t *testing.T) {
 	stdout, _, err := runCmd(t, "query", "--file", testdataPath("logs/access.log"), "--format", "table",
-		"source=main | fields level, _source, _sourcetype | head 3")
+		"source=main | fields level, source | head 3")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
 
-	if !strings.Contains(stdout, "_source") {
-		t.Error("table output missing explicit '_source' column header")
-	}
-	if !strings.Contains(stdout, "_sourcetype") {
-		t.Error("table output missing explicit '_sourcetype' column header")
+	if !strings.Contains(stdout, "source") {
+		t.Error("table output missing explicit 'source' column header")
 	}
 	if !strings.Contains(stdout, "level") {
 		t.Error("table output missing 'level' column header")
-	}
-	if strings.Contains(stdout, " sourcetype ") || strings.Contains(stdout, " source ") {
-		t.Error("table output should not include source/sourcetype aliases")
 	}
 }
 

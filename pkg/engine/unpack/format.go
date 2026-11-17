@@ -27,8 +27,6 @@ type FormatParser interface {
 // NewParser creates a FormatParser for the given format name.
 // Supported formats: json, logfmt, syslog, combined, clf, nginx_error, cef, kv,
 // docker, redis, apache_error, postgres, mysql_slow, haproxy, leef, w3c.
-// "pattern" and "w3c" (with custom header) require constructor arguments
-// and should be instantiated directly via NewPatternParser / NewW3CParser.
 func NewParser(format string) (FormatParser, error) {
 	switch strings.ToLower(format) {
 	case "json":
@@ -66,19 +64,6 @@ func NewParser(format string) (FormatParser, error) {
 	default:
 		return nil, fmt.Errorf("unpack: unknown format %q (supported: json, logfmt, syslog, combined, clf, nginx_error, cef, kv, docker, redis, apache_error, postgres, mysql_slow, haproxy, leef, w3c)", format)
 	}
-}
-
-// IsFormat reports whether name is a registered unpack format, including
-// "regex" and "pattern", which take extra arguments and have dedicated
-// constructors.
-func IsFormat(name string) bool {
-	switch strings.ToLower(name) {
-	case "json", "logfmt", "syslog", "combined", "clf", "nginx_error",
-		"cef", "kv", "docker", "redis", "apache_error", "postgres",
-		"mysql_slow", "haproxy", "leef", "w3c", "pattern", "regex":
-		return true
-	}
-	return false
 }
 
 // FieldDeclaration describes the fields a parser can produce.

@@ -8,20 +8,20 @@ ADDR="${LYNXDB_ADDR:-localhost:3100}"
 DURATION="${1:-60}"
 
 QUERIES=(
-    # Bloom filter + column scan path
-    '{"q": "source=api-gw status>=500 | stats count, avg(duration_ms) by path | sort -count | head 10"}'
-    # Full-text inverted index path
-    '{"q": "search \"connection refused\" | head 20"}'
-    # Time bucketing + aggregation
-    '{"q": "| bin _time span=5m | stats count by _time"}'
-    # Heavy multi-aggregation (tests aggregation operator memory)
-    '{"q": "| stats count, avg(duration_ms), p99(duration_ms), dc(path) by source"}'
-    # Short-circuit (tests head pushdown)
-    '{"q": "| head 5"}'
-    # Rex extraction (regex engine hot path)
-    '{"q": "| rex field=_raw \"status=(?P<code>\\\\d+)\" | stats count by code"}'
-    # Eval + aggregate combo
-    '{"q": "| eval is_error=if(status>=500,1,0) | stats sum(is_error) as errors, count as total | eval error_rate=round(errors/total*100,2)"}'
+    # Filter and grouped aggregate in the columnar executor
+    '{"q": "source=main status>=500 | stats count() as n, avg(duration) as avg_ms by path | sort - n | head 10"}'
+    # Phrase search through the token filters
+    '{"q": "source=main \"cache miss\" | head 20"}'
+    # Time buckets
+    '{"q": "source=main | stats count() by span(_time, 5m)"}'
+    # Several aggregates, sketches included
+    '{"q": "source=main | stats count(), avg(duration), p99(duration), dc(path) by source"}'
+    # Early stop on a limit
+    '{"q": "source=main | head 5"}'
+    # Regex extraction in the row operators
+    '{"q": "source=main | rex field=path \"/api/v1/(?<resource>[a-z]+)\" | stats count() by resource"}'
+    # Computed columns over an aggregate
+    '{"q": "source=main | eval is_error = if(status >= 500, 1, 0) | stats sum(is_error) as errors, count() as total | eval error_rate = round(errors * 100.0 / total, 2)"}'
 )
 
 NUM_QUERIES=${#QUERIES[@]}

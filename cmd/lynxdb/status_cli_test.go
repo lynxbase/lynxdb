@@ -19,7 +19,7 @@ func TestStatus_JSON_ContainsExpectedKeys(t *testing.T) {
 		t.Fatalf("parse status JSON: %v\noutput: %q", err, stdout)
 	}
 
-	expectedKeys := []string{"uptime_seconds", "total_events", "segment_count", "health"}
+	expectedKeys := []string{"uptime_seconds", "total_events", "part_count", "health"}
 	for _, k := range expectedKeys {
 		if _, ok := result[k]; !ok {
 			t.Errorf("status JSON missing key %q, got keys: %v", k, cliMapKeys(result))

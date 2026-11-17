@@ -13,35 +13,28 @@ type ReloadChanges struct {
 }
 
 var hotReloadableExactFields = map[string]struct{}{
-	"log_level":                                   {},
-	"retention":                                   {},
-	"storage.compaction_rate_limit_mb":            {},
-	"ingest.mode":                                 {},
-	"ingest.max_batch_size":                       {},
-	"ingest.max_line_bytes":                       {},
-	"ingest.es_compat.enabled":                    {},
-	"ingest.es_compat.advertised_version":         {},
-	"ingest.es_compat.strip_logstash_date_suffix": {},
-	"ingest.limits.max_compressed_body_bytes":     {},
-	"ingest.limits.max_decompressed_body_bytes":   {},
-	"ingest.staging.enabled":                      {},
-	"ingest.staging.max_bytes":                    {},
-	"ingest.staging.max_age":                      {},
-	"ingest.staging.max_inflight_events":          {},
-	"ingest.splunk_hec.enabled":                   {},
-	"ingest.splunk_hec.require_token":             {},
-	"http.shutdown_timeout":                       {},
-	"syslog.index":                                {},
-	"syslog.sourcetype":                           {},
-	"syslog.default_timezone":                     {},
-	"syslog.default_hostname":                     {},
-	"syslog.batch_size":                           {},
-	"syslog.batch_timeout":                        {},
+	"log_level":                                 {},
+	"retention":                                 {},
+	"ingest.mode":                               {},
+	"ingest.max_batch_size":                     {},
+	"ingest.max_line_bytes":                     {},
+	"ingest.es_compat.enabled":                  {},
+	"ingest.es_compat.advertised_version":       {},
+	"ingest.limits.max_compressed_body_bytes":   {},
+	"ingest.limits.max_decompressed_body_bytes": {},
+	"ingest.splunk_hec.enabled":                 {},
+	"ingest.splunk_hec.require_token":           {},
+	"http.shutdown_timeout":                     {},
+	"syslog.index":                              {},
+	"syslog.sourcetype":                         {},
+	"syslog.default_timezone":                   {},
+	"syslog.default_hostname":                   {},
+	"syslog.batch_size":                         {},
+	"syslog.batch_timeout":                      {},
 }
 
 var hotReloadablePrefixes = []string{
 	"query.",
-	"tail.",
 }
 
 var nonHotReloadablePrefixes = []string{
@@ -56,12 +49,6 @@ var nonHotReloadableExactFields = map[string]struct{}{
 	"ingest.otlp.grpc_listen":         {},
 	"ingest.otlp.grpc_max_recv_bytes": {},
 	"ingest.max_body_size":            {},
-	"ingest.fsync":                    {},
-	"ingest.dedup_enabled":            {},
-	"ingest.dedup_capacity":           {},
-	"query.global_query_pool_bytes":   {},
-	"query.spill_dir":                 {},
-	"query.max_temp_dir_size_bytes":   {},
 }
 
 // ClassifyReloadChanges returns the changed config fields grouped by whether

@@ -32,18 +32,18 @@ golangci-lint run ./...
 
 ### Naming
 
-- **Exported names**: `PascalCase` -- `SegmentWriter`, `PlanHints`, `EventCount`.
-- **Unexported names**: `camelCase` -- `segmentHandle`, `pruneScan`, `planCache`.
-- **Acronyms** keep one case: `VM`, `FST`, `AST`, `IR`, `PPL`, `HTTP`, `SSE`.
-- **Interfaces**: no `I` prefix. One-method interfaces take the `-er` suffix (`Reader`, `Flusher`); others a descriptive noun (`ObjectStore`, `Iterator`).
-- **Tests**: `TestCompileGolden`, `TestSegmentWriter_RowGroups`, `BenchmarkVMFilter`.
+- **Exported names**: `PascalCase` -- `OpenStore`, `IndexStats`, `KeyPlan`.
+- **Unexported names**: `camelCase` -- `blockBudget`, `pruneScan`, `planCache`.
+- **Acronyms** keep one case: `VM`, `AST`, `IR`, `PPL`, `HTTP`, `JSON`.
+- **Interfaces**: no `I` prefix. One-method interfaces take the `-er` suffix (`Reader`, `Flusher`); others a descriptive noun (`Tables`, `Iterator`).
+- **Tests** name the behavior they check: `TestCompileGolden`, `TestStoreServesReadersWhileItMerges`, `TestPickMergesGroupsRunsByTier`.
 
 ### Package Organization
 
-- Package names are short lowercase nouns: `segment`, `part`, `pipeline`, `vm`, `ppl`, `ir`.
+- Package names are short lowercase nouns: `part`, `shred`, `pipeline`, `vm`, `ppl`, `ir`.
 - No `util`, `helpers`, `common` or `misc` packages; put a function where it belongs.
 - Code not meant for import outside the module goes in `internal/`.
-- The query language stays in `pkg/ppl`. Everything after the frontend (`pkg/ir/opt`, `pkg/engine/physical`, `pkg/engine/pipeline`, `pkg/vm`, `pkg/cluster/query`) works on `pkg/ir` and never imports `pkg/ppl`.
+- The query language stays in `pkg/ppl`. Everything after the frontend (`pkg/ir/opt`, `pkg/engine/columnar`, `pkg/colstore/exec/irplan`, `pkg/engine/physical`, `pkg/engine/pipeline`, `pkg/vm`) works on `pkg/ir` and never imports `pkg/ppl`.
 
 ## Error Handling
 
@@ -70,15 +70,15 @@ Wrap with `fmt.Errorf` and `%w`, naming the operation that failed:
 return fmt.Errorf("error: %w", err)
 
 // Wrong: loses the cause
-return errors.New("failed to read segment")
+return errors.New("failed to open index")
 
 // Right
-return fmt.Errorf("read segment %s: %w", seg.ID, err)
+return fmt.Errorf("columnar: index %s: %w", index, err)
 ```
 
 ### Sentinel and Typed Errors
 
-Define sentinel errors for conditions callers test with `errors.Is`, such as `segment.ErrUnsupportedMajor` or `storageformat.ErrFutureFormat`, and typed errors for conditions that carry data, tested with `errors.As`.
+Define sentinel errors for conditions callers test with `errors.Is`, such as `colstore.ErrManifest` or `database.ErrTooManyQueries`, and typed errors for conditions that carry data, tested with `errors.As`.
 
 Query compile errors are `*ppl.Error` values with a kind (syntax, semantic, type, unsupported command, function or feature), a start and end position, a message, an optional hint and, for syntax errors, the expected tokens. The REST layer maps the kind to an error code (`SYNTAX_ERROR`, `SEMANTIC_ERROR`, ...) and the HTTP status. A compile error should point at the offending token and, where it can, say how to fix it:
 
@@ -103,7 +103,7 @@ Every error response carries a code and a message.
 Functions that do I/O, run queries, or may block take `context.Context` as their first parameter:
 
 ```go
-func (e *Engine) Query(ctx context.Context, q string, opts QueryOpts) (*QueryResult, *stats.QueryStats, error)
+func (db *DB) Query(ctx context.Context, c *query.Compiled, opts QueryOptions) (*columnar.Result, error)
 ```
 
 Iterators receive the context on every `Next(ctx)` call.
@@ -136,24 +136,22 @@ Do not pass data between functions with `context.WithValue`; use parameters. Con
 
 ### Goroutine Lifecycle
 
-Every goroutine has a shutdown path: a context for cancellation and a `sync.WaitGroup` or channel to wait on.
+Every goroutine has a shutdown path: a context or a channel that stops it, and a `sync.WaitGroup` or channel to wait on.
 
 ```go
-func (e *Engine) startCompaction(ctx context.Context) {
-    e.wg.Add(1)
-    go func() {
-        defer e.wg.Done()
-        ticker := time.NewTicker(e.compactionInterval)
-        defer ticker.Stop()
-        for {
-            select {
-            case <-ctx.Done():
-                return
-            case <-ticker.C:
-                e.runCompaction(ctx)
-            }
+// maintain drops expired events and finished jobs until Close.
+func (db *DB) maintain() {
+    defer db.wg.Done()
+    tick := time.NewTicker(time.Minute)
+    defer tick.Stop()
+    for {
+        db.expire(time.Now())
+        select {
+        case <-db.stop:
+            return
+        case <-tick.C:
         }
-    }()
+    }
 }
 ```
 
@@ -165,10 +163,10 @@ func (e *Engine) startCompaction(ctx context.Context) {
 - Say what a mutex protects:
 
 ```go
-type Registry struct {
-    mu       sync.RWMutex // protects segments and meta
-    segments map[string]*segmentHandle
-    meta     *Metadata
+type DB struct {
+    mu     sync.RWMutex // guards stores and closed
+    stores map[string]*colstore.Store
+    closed bool
 }
 ```
 
@@ -178,11 +176,11 @@ Avoid package-level mutable state; state belongs to structs that are passed expl
 
 ## Performance-Sensitive Code
 
-Hot paths are the VM evaluation loop (`pkg/vm`), the scan, filter and aggregation iterators (`pkg/engine/pipeline`), and segment reading (`pkg/storage/segment`). Cold paths are configuration, setup, flush, compaction and API handler wiring.
+Hot paths are the block loops of the columnar executor (`pkg/colstore/exec`), JSON shredding (`pkg/colstore/shred`), part encoding and decoding (`pkg/colstore/part`), the VM evaluation loop (`pkg/vm`) and the row operators (`pkg/engine/pipeline`). Cold paths are configuration, setup, merge selection and API handler wiring.
 
 ### Hot Path Rules
 
-- **No per-row allocations**: no `make`, `new`, growing `append`, `fmt.Sprintf` or interface boxing per row. Allocate per batch or per query and reuse.
+- **No per-row allocations**: no `make`, `new`, growing `append`, `fmt.Sprintf` or interface boxing per row. Allocate per block, batch or query, from an arena or a pool, and reuse.
 - **Concrete types** in inner loops; interface dispatch per row adds up.
 - **No `reflect`**: use type switches.
 - **Work per batch**: process a batch of rows per call, not one row.
@@ -271,7 +269,7 @@ func assertRowCount(t *testing.T, rows []map[string]event.Value, want int) {
 
 ### Independence
 
-Tests do not depend on each other or on global state. Use `t.TempDir()` for files, create fresh engines and stores, and clean up after each test. Run `go test` from the repository root with package paths, since tests read testdata relative to their package.
+Tests do not depend on each other or on global state. Use `t.TempDir()` for files, open fresh databases and stores, and close them after each test. Run `go test` from the repository root with package paths, since tests read testdata relative to their package.
 
 ## Comments and Documentation
 
@@ -289,8 +287,8 @@ package opt
 Exported types and functions have a doc comment that starts with the name and says what it does in one or two sentences:
 
 ```go
-// PlanHints derives the storage hints of a whole plan.
-func PlanHints(plan *ir.Plan, defaultSource string, now time.Time) *model.QueryHints
+// Sync makes the events appended so far durable and visible.
+func (db *DB) Sync() error
 ```
 
 ### Other Comments
@@ -312,7 +310,7 @@ Commit messages use the same types, `<type>: <subject>`, imperative, lowercase a
 ```
 feat: add trendline command
 fix: keep scan time range when merging filters
-perf: skip row groups by column bloom for string equality
+perf: skip blocks by their token filter for string equality
 ```
 
 See `CONTRIBUTING.md` for pull request requirements.

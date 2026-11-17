@@ -1,181 +1,107 @@
 ---
 title: Retention and Data Lifecycle
-description: Configure LynxDB data retention -- partition-based expiration, tiered storage lifecycle, and storage estimates.
+description: Configure LynxDB data retention -- time partitions, whole-partition expiry and measuring storage use.
 ---
 
 # Retention and Data Lifecycle
 
-LynxDB deletes old data on a schedule and, with S3 tiering, moves older segments to cheaper storage. Both run in the background.
+Every index keeps its events in time partitions, and LynxDB deletes whole partitions once they fall out of the retention period.
 
 ## Retention Policy
 
-The global `retention` setting controls how long data is kept.
+The global `retention` setting controls how long events are kept.
 
 | Config Key | `retention` |
 |---|---|
 | **Env Var** | `LYNXDB_RETENTION` |
 | **Default** | `7d` |
-| **Hot-Reloadable** | Yes |
+| **Applies** | At server start |
 
 ```yaml
 retention: "30d"
 ```
 
 ```bash
-# Set through the environment
+# Through the environment
 LYNXDB_RETENTION=30d lynxdb server
 
-# Change at runtime (no restart)
+# In the config file, then restart the server
 lynxdb config set retention 30d
-lynxdb config reload
+sudo systemctl restart lynxdb
 ```
 
-Accepted duration formats:
-
-- `7d` -- 7 days
-- `4w` -- 4 weeks (28 days)
-- `6h` -- 6 hours (for testing)
-- `90d` -- 90 days
-- `365d` -- 1 year
+A duration is a Go duration (`6h`, `90m`) or a number of days (`7d`, `90d`, `365d`). `0` keeps every event.
 
 ## How Retention Works
 
-Retention deletes whole time partitions. Parts are stored in one directory per partition, sized by `storage.partition_by` (`daily` by default; also `hourly`, `weekly`, `monthly`, or `none`).
+Events are partitioned by their time. `storage.partition` sets the span of a partition (`24h` by default); partitions are aligned to the Unix epoch, so with the default each partition covers one UTC day.
 
-1. A retention pass runs every hour.
-2. For each index, it lists the partition directories and parses the start time from each name (`2026-03-01` for daily partitions).
-3. A partition whose start time is older than `now - retention` is removed from the part registry; its files are deleted once no running query holds them open.
+1. A retention pass runs when the server starts and then once a minute.
+2. It removes from every index the partitions that end at or before the cutoff, `now - retention`.
+3. A removed partition's part files are deleted once no running query reads them.
 
 This means:
 
-- Deletion happens at partition granularity. With daily partitions and `retention: 7d`, the partition of a day is deleted once the day started more than 7 days ago.
-- Retention does not depend on compaction.
-- With `partition_by: none`, all parts of an index live in one partition without a time, and retention never deletes them.
-
-## Tiered Storage Lifecycle
-
-When S3 tiering is configured, segments move through tiers by age:
-
-```
-Hot (local disk)  -->  Warm (object store)  -->  Cold (object store / archive policy)
-  Recent data           Older data                 Archive data
-```
-
-### Configuration
-
-LynxDB moves segments from hot to warm on its own. Archive storage classes underneath the cold tier are set with S3 Lifecycle rules:
-
-```yaml
-# LynxDB config -- hot to warm
-storage:
-  s3_bucket: "my-lynxdb-logs"
-  tiering_interval: "5m"      # Check every 5 minutes
-```
-
-```bash
-# AWS S3 Lifecycle -- Glacier after 90 days, delete after 365 days
-aws s3api put-bucket-lifecycle-configuration \
-  --bucket my-lynxdb-logs \
-  --lifecycle-configuration '{
-    "Rules": [
-      {
-        "ID": "GlacierTransition",
-        "Status": "Enabled",
-        "Filter": {},
-        "Transitions": [
-          {"Days": 90, "StorageClass": "GLACIER"}
-        ]
-      },
-      {
-        "ID": "DeleteAfter365",
-        "Status": "Enabled",
-        "Filter": {},
-        "Expiration": {"Days": 365}
-      }
-    ]
-  }'
-```
-
-Segments in Glacier storage classes must be restored before LynxDB can read them. Keep the S3 expiration at least as long as `retention`, or queries over the retention window lose data.
-
-### Example Policies
-
-**Cost-sensitive:**
-
-```yaml
-retention: "30d"
-storage:
-  s3_bucket: "my-logs"
-  # S3 Lifecycle: delete after 30 days
-```
-
-**Compliance:**
-
-```yaml
-retention: "365d"
-storage:
-  s3_bucket: "my-logs"
-  # S3 Lifecycle: Glacier after 90 days, delete after 365 days
-```
-
-**Long-term archive:**
-
-```yaml
-retention: "2555d"  # 7 years
-storage:
-  s3_bucket: "my-logs"
-  # S3 Lifecycle: IA after 30 days, Glacier after 90 days, Deep Archive after 365 days
-```
+- Deletion happens a whole partition at a time. With `retention: 7d` and daily partitions, the events of a day are deleted once that day ended more than 7 days ago, so the oldest events kept are up to 8 days old.
+- A smaller `storage.partition` makes deletion finer, at the cost of more partitions for the store to keep apart.
+- Retention applies to every index alike.
+- Retention goes by the time of each event, not the time it arrived. Events whose own time is already older than the retention period, such as those of an old log file, are removed by the next pass, within about a minute of arriving. Set `retention: 0s` on a server that should keep them.
 
 ## Monitoring Retention
 
-Check the oldest event and storage use:
+Check the oldest event and the storage in use:
 
 ```bash
 lynxdb status
-#   Oldest    2026-02-01T10:30:00Z
+```
 
+```text
+  Oldest         2026-02-10T08:12:03Z
+```
+
+```bash
 lynxdb status --format json | jq '{total_events, storage_bytes, oldest_event}'
 ```
 
+The server logs every index from which a pass removes events, at `WARN`, with the number of events and the cutoff in UTC:
+
+```text
+time=2026-11-17T17:03:37.221+01:00 level=WARN msg="retention removed events older than the cutoff" index=main events=26 cutoff=2026-11-16T16:03:37Z
+```
+
+A pass that fails for an index logs `msg="retention failed"` with the index and the error, and the next pass tries again.
+
 ## Changing Retention
 
-Retention is hot-reloadable. A new value applies from the next retention pass:
+The database reads `retention` when it opens, so a change takes effect after a restart. A `lynxdb config reload` leaves it unapplied and logs it as a change that needs a restart.
 
 ```bash
-# Increase retention
+# Keep more
 lynxdb config set retention 90d
-lynxdb config reload
+sudo systemctl restart lynxdb
 
-# Decrease retention (expired partitions are deleted at the next pass)
+# Keep less (the first pass after the restart deletes the expired partitions)
 lynxdb config set retention 7d
-lynxdb config reload
+sudo systemctl restart lynxdb
 ```
 
 :::caution
-Decreasing retention deletes every partition outside the new window at the next pass. This cannot be undone. Take a backup first if you may need the data.
+Decreasing retention deletes every partition outside the new window at the first pass after the restart. This cannot be undone. Take a backup first if you may need the data.
 :::
 
 ## Estimating Storage Needs
 
-Rule of thumb for storage estimation:
+Compression depends on the data, so measure it on your own logs. Ingest a representative sample into a test index and compare its size with the size of the input:
 
-| Raw Log Size | LynxDB Storage (LZ4) | Compression Ratio |
-|---|---|---|
-| 1 GB/day raw logs | ~200-400 MB/day on disk | 2.5-5x |
-| 10 GB/day raw logs | ~2-4 GB/day on disk | 2.5-5x |
-| 100 GB/day raw logs | ~20-40 GB/day on disk | 2.5-5x |
+```bash
+lynxdb ingest sample.log --index sizing
+lynxdb indexes
+```
 
-**Example**: 10 GB/day raw logs with 30-day retention = ~60-120 GB total disk usage.
-
-With S3 tiering:
-
-- Hot tier (7 days on local disk): ~14-28 GB
-- Warm tier (remaining 23 days in S3): ~46-92 GB at S3 Standard pricing
+`BYTES` is the size of the index's part files. Multiply the bytes per day by the retention period in days, plus one partition, for the disk the data needs.
 
 ## Next Steps
 
-- [S3 Tiering Configuration](/docs/configuration/s3-tiering) -- configure tiered storage
-- [Storage Settings](/docs/configuration/storage) -- `partition_by` and compaction settings
+- [Storage Settings](/docs/configuration/storage) -- `partition`, `flush_interval` and `time_fields`
 - [Backup and Restore](/docs/operations/backup-restore) -- protect against data loss
-- [Performance Tuning](/docs/operations/performance-tuning) -- tune compaction
+- [Performance Tuning](/docs/operations/performance-tuning) -- tune ingest and queries

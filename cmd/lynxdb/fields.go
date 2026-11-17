@@ -31,64 +31,55 @@ func newFieldsCmd() *cobra.Command {
 		Use:     "fields [name]",
 		Aliases: []string{"f"},
 		Short:   "Show field catalog from server",
-		Long: `Lists all known fields with their types, coverage, and top values.
+		Long: `Lists the fields the indexes hold and the indexes that hold each.
 
-When a field name is provided, shows details for that specific field.
-Use --values to see top values for a field.`,
+When a field name is provided, shows the indexes that hold it and its top values.
+Use --values to see top values for a field, optionally within a time range.`,
 		Example: `  lynxdb fields                            All fields
   lynxdb fields status                     Detail for 'status' field
   lynxdb fields status --values            Top values for 'status'
-  lynxdb fields --source nginx             Fields seen from nginx
+  lynxdb fields status --values --since 1h Top values in the last hour
+  lynxdb fields --source nginx             Fields of the index nginx
   lynxdb fields --prefix sta               Autocomplete helper
-  lynxdb fields --since 1h                 Fields seen in last hour
   lynxdb fields --format json              JSON output for scripting`,
 		Args:              cobra.MaximumNArgs(1),
 		ValidArgsFunction: completeFieldNames,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 && values {
+				return runFieldValues(args[0], since, from, to, source)
+			}
+			if since != "" || from != "" || to != "" {
+				return fmt.Errorf("--since, --from and --to apply to --values only")
+			}
 			if len(args) == 1 {
-				if values {
-					return runFieldValues(args[0], since, from, to)
-				}
-
-				return runFieldDetail(args[0], since, from, to, source)
+				return runFieldDetail(args[0], source)
 			}
 
-			return runFieldsList(since, from, to, source, prefix)
+			return runFieldsList(source, prefix)
 		},
 	}
 
 	f := cmd.Flags()
 	f.BoolVar(&values, "values", false, "Show top values for the specified field")
-	f.StringVarP(&since, "since", "s", "", "Restrict stats to time range (e.g., 15m, 1h, 7d)")
-	f.StringVar(&from, "from", "", "Absolute start time (ISO 8601)")
-	f.StringVar(&to, "to", "", "Absolute end time (ISO 8601)")
-	f.StringVar(&source, "source", "", "Filter by source")
+	f.StringVarP(&since, "since", "s", "", "Restrict values to a time range (e.g., 15m, 1h, 7d)")
+	f.StringVar(&from, "from", "", "Absolute start time of values (ISO 8601)")
+	f.StringVar(&to, "to", "", "Absolute end time of values (ISO 8601)")
+	f.StringVar(&source, "source", "", "Restrict to one index")
 	f.StringVar(&prefix, "prefix", "", "Filter fields by name prefix")
 
 	return cmd
 }
 
 type fieldEntry struct {
-	Name       string           `json:"name"`
-	Type       string           `json:"type"`
-	Coverage   float64          `json:"coverage"`
-	TotalCount int64            `json:"total_count"`
-	TopValues  []fieldValuePair `json:"top_values"`
-}
-
-type fieldValuePair struct {
-	Value string `json:"value"`
-	Count int64  `json:"count"`
+	Name    string   `json:"name"`
+	Indexes []string `json:"indexes"`
 }
 
 // runFieldsList lists all fields, with optional filtering.
-func runFieldsList(since, from, to, source, prefix string) error {
+func runFieldsList(source, prefix string) error {
 	ctx := context.Background()
 
 	clientFields, err := apiClient().FieldsFiltered(ctx, client.FieldsOpts{
-		Since:  since,
-		From:   from,
-		To:     to,
 		Source: source,
 		Prefix: prefix,
 	})
@@ -97,10 +88,6 @@ func runFieldsList(since, from, to, source, prefix string) error {
 	}
 
 	fields := clientFieldsToEntries(clientFields)
-
-	if prefix != "" {
-		fields = filterFieldsByPrefix(fields, prefix)
-	}
 
 	if isJSONFormat() {
 		for _, f := range fields {
@@ -113,7 +100,7 @@ func runFieldsList(since, from, to, source, prefix string) error {
 
 	if len(fields) == 0 {
 		if !humanOutputActive() {
-			return renderTabular(os.Stdout, []string{"FIELD", "TYPE", "COVERAGE", "TOP VALUES"}, nil, ui.Stdout)
+			return renderTabular(os.Stdout, []string{"FIELD", "INDEXES"}, nil, ui.Stdout)
 		}
 		fmt.Println(ui.Stdout.EmptyState("No fields found.",
 			"lynxdb ingest <file>           Ingest a log file",
@@ -125,11 +112,10 @@ func runFieldsList(since, from, to, source, prefix string) error {
 	t := ui.Stdout
 	rows := make([][]any, 0, len(fields))
 	for _, f := range fields {
-		topStr := formatTopValues(f.TopValues, f.TotalCount)
-		rows = append(rows, []any{f.Name, f.Type, f.Coverage, topStr})
+		rows = append(rows, []any{f.Name, strings.Join(f.Indexes, ", ")})
 	}
 
-	if err := renderTabular(os.Stdout, []string{"FIELD", "TYPE", "COVERAGE", "TOP VALUES"}, rows, t); err != nil {
+	if err := renderTabular(os.Stdout, []string{"FIELD", "INDEXES"}, rows, t); err != nil {
 		return err
 	}
 
@@ -138,9 +124,6 @@ func runFieldsList(since, from, to, source, prefix string) error {
 		if source != "" {
 			summary += fmt.Sprintf(" (source=%s)", source)
 		}
-		if since != "" {
-			summary += fmt.Sprintf(" (last %s)", since)
-		}
 
 		fmt.Printf("\n%s\n", t.Dim.Render(summary))
 	}
@@ -148,16 +131,11 @@ func runFieldsList(since, from, to, source, prefix string) error {
 	return nil
 }
 
-// runFieldDetail shows details for a single field.
-func runFieldDetail(name, since, from, to, source string) error {
+// runFieldDetail shows the indexes that hold a field and its top values.
+func runFieldDetail(name, source string) error {
 	ctx := context.Background()
 
-	clientFields, err := apiClient().FieldsFiltered(ctx, client.FieldsOpts{
-		Since:  since,
-		From:   from,
-		To:     to,
-		Source: source,
-	})
+	clientFields, err := apiClient().FieldsFiltered(ctx, client.FieldsOpts{Source: source})
 	if err != nil {
 		return err
 	}
@@ -194,46 +172,19 @@ func runFieldDetail(name, since, from, to, source string) error {
 	if !humanOutputActive() {
 		return renderKeyValues(os.Stdout, [][2]any{
 			{"name", field.Name},
-			{"type", field.Type},
-			{"coverage", field.Coverage},
-			{"total_count", field.TotalCount},
+			{"indexes", strings.Join(field.Indexes, ",")},
 		}, ui.Stdout)
 	}
-
-	topValues := fetchFieldTopValuesDetailed(name)
 
 	t := ui.Stdout
 	fmt.Println()
 	fmt.Printf("  %s\n\n", t.Bold.Render(field.Name))
-	fmt.Printf("  Type:       %s\n", field.Type)
-	fmt.Printf("  Coverage:   %.1f%%\n", field.Coverage)
-	fmt.Printf("  Count:      %s\n", formatCount(field.TotalCount))
+	fmt.Printf("  Indexes:    %s\n", strings.Join(field.Indexes, ", "))
 
-	if len(topValues) > 0 {
+	result, err := apiClient().FieldValuesFiltered(ctx, field.Name, client.FieldValuesOpts{Limit: 20, Index: source})
+	if err == nil && len(result.Values) > 0 {
 		fmt.Printf("\n  %s\n", t.Bold.Render("Top Values:"))
-
-		rows := make([][]any, 0, len(topValues))
-		for _, v := range topValues {
-			rows = append(rows, []any{v.Value, v.Count, v.Percent})
-		}
-
-		if err := renderTabular(os.Stdout, []string{"VALUE", "COUNT", "%"}, rows, t); err != nil {
-			return err
-		}
-	} else if len(field.TopValues) > 0 {
-		fmt.Printf("\n  %s\n", t.Bold.Render("Top Values:"))
-
-		rows := make([][]any, 0, len(field.TopValues))
-		for _, v := range field.TopValues {
-			pct := float64(0)
-			if field.TotalCount > 0 {
-				pct = float64(v.Count) / float64(field.TotalCount) * 100
-			}
-
-			rows = append(rows, []any{v.Value, v.Count, pct})
-		}
-
-		if err := renderTabular(os.Stdout, []string{"VALUE", "COUNT", "%"}, rows, t); err != nil {
+		if err := renderTabular(os.Stdout, []string{"VALUE", "COUNT"}, fieldValueRows(result.Values), t); err != nil {
 			return err
 		}
 	}
@@ -247,38 +198,17 @@ func runFieldDetail(name, since, from, to, source string) error {
 	return nil
 }
 
-// fieldValueDetailed holds a field value entry from the API.
-type fieldValueDetailed struct {
-	Value   string  `json:"value"`
-	Count   int     `json:"count"`
-	Percent float64 `json:"percent"`
-}
-
-// fetchFieldTopValuesDetailed fetches detailed top values for a field from the API.
-func fetchFieldTopValuesDetailed(fieldName string) []fieldValueDetailed {
-	ctx := context.Background()
-
-	result, err := apiClient().FieldValuesFiltered(ctx, fieldName, client.FieldValuesOpts{
-		Limit: 20,
-	})
-	if err != nil {
-		return nil
+func fieldValueRows(values []client.FieldValue) [][]any {
+	rows := make([][]any, 0, len(values))
+	for _, v := range values {
+		rows = append(rows, []any{fmt.Sprint(v.Value), v.Count})
 	}
 
-	values := make([]fieldValueDetailed, 0, len(result.Values))
-	for _, v := range result.Values {
-		values = append(values, fieldValueDetailed{
-			Value:   fmt.Sprint(v.Value),
-			Count:   int(v.Count),
-			Percent: v.Percent,
-		})
-	}
-
-	return values
+	return rows
 }
 
 // runFieldValues shows top values for a named field.
-func runFieldValues(name, since, from, to string) error {
+func runFieldValues(name, since, from, to, source string) error {
 	ctx := context.Background()
 
 	result, err := apiClient().FieldValuesFiltered(ctx, name, client.FieldValuesOpts{
@@ -286,6 +216,7 @@ func runFieldValues(name, since, from, to string) error {
 		Since: since,
 		From:  from,
 		To:    to,
+		Index: source,
 	})
 	if err != nil {
 		return err
@@ -300,7 +231,7 @@ func runFieldValues(name, since, from, to string) error {
 
 	if len(result.Values) == 0 {
 		if !humanOutputActive() {
-			return renderTabular(os.Stdout, []string{"VALUE", "COUNT", "%"}, nil, ui.Stdout)
+			return renderTabular(os.Stdout, []string{"VALUE", "COUNT"}, nil, ui.Stdout)
 		}
 		fmt.Printf("No values found for field %q.\n", name)
 
@@ -311,60 +242,17 @@ func runFieldValues(name, since, from, to string) error {
 	fmt.Println()
 	fmt.Printf("  %s — top values\n\n", t.Bold.Render(name))
 
-	rows := make([][]any, 0, len(result.Values))
-	for _, v := range result.Values {
-		rows = append(rows, []any{fmt.Sprint(v.Value), v.Count, v.Percent})
-	}
-
-	if err := renderTabular(os.Stdout, []string{"VALUE", "COUNT", "%"}, rows, t); err != nil {
-		return err
-	}
-
-	if humanOutputActive() {
-		summary := fmt.Sprintf("%s unique values, %s total occurrences",
-			formatCount(int64(result.UniqueCount)),
-			formatCount(int64(result.TotalCount)))
-		fmt.Printf("\n%s\n", t.Dim.Render(summary))
-	}
-
-	return nil
+	return renderTabular(os.Stdout, []string{"VALUE", "COUNT"}, fieldValueRows(result.Values), t)
 }
 
 // clientFieldsToEntries converts []client.FieldInfo to []fieldEntry.
 func clientFieldsToEntries(fields []client.FieldInfo) []fieldEntry {
 	entries := make([]fieldEntry, 0, len(fields))
 	for _, f := range fields {
-		entry := fieldEntry{
-			Name:       f.Name,
-			Type:       f.Type,
-			Coverage:   f.Coverage,
-			TotalCount: f.Count,
-		}
-		for _, tv := range f.TopValues {
-			entry.TopValues = append(entry.TopValues, fieldValuePair{
-				Value: fmt.Sprint(tv.Value),
-				Count: tv.Count,
-			})
-		}
-
-		entries = append(entries, entry)
+		entries = append(entries, fieldEntry{Name: f.Name, Indexes: f.Indexes})
 	}
 
 	return entries
-}
-
-// filterFieldsByPrefix filters fields whose name starts with the given prefix.
-func filterFieldsByPrefix(fields []fieldEntry, prefix string) []fieldEntry {
-	lowerPrefix := strings.ToLower(prefix)
-	var result []fieldEntry
-
-	for _, f := range fields {
-		if strings.HasPrefix(strings.ToLower(f.Name), lowerPrefix) {
-			result = append(result, f)
-		}
-	}
-
-	return result
 }
 
 // findSimilarFields returns field names similar to the given name (Levenshtein distance <= 2).
@@ -430,23 +318,4 @@ func levenshteinDistance(a, b string) int {
 	}
 
 	return row[len(b)]
-}
-
-func formatTopValues(values []fieldValuePair, total int64) string {
-	if len(values) == 0 || total == 0 {
-		return ""
-	}
-
-	parts := make([]string, 0, len(values))
-
-	for _, v := range values {
-		pct := float64(v.Count) / float64(total) * 100
-		if pct >= 1 {
-			parts = append(parts, fmt.Sprintf("%s(%.0f%%)", truncateStr(v.Value, 20), pct))
-		} else {
-			parts = append(parts, truncateStr(v.Value, 20))
-		}
-	}
-
-	return strings.Join(parts, ", ")
 }

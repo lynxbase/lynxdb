@@ -34,6 +34,7 @@ setup.ilm.enabled: false
 		},
 	})
 
-	waitForSourceCount(t, rig, "filebeat-8.15.0", 100, func() string { return containerLogs(t, ctr) })
+	// Filebeat writes each line to the message of a document in its data stream.
+	waitForCount(t, rig, countQuery("filebeat-8.15.0", holds("message", fixtureText)), 100, func() string { return containerLogs(t, ctr) })
 	assertNoShipperErrors(t, containerLogs(t, ctr))
 }

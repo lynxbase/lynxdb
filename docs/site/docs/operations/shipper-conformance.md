@@ -26,14 +26,14 @@ These cells are listed in the test driver with `t.Skip` and a reason. Promoting 
 
 | Cell | Reason |
 |---|---|
-| `filebeat/7.17/none` | Legacy version cell not yet promoted to nightly enforcement. |
-| `filebeat/8.10/none` | Intermediate version cell not yet promoted to nightly enforcement. |
+| `filebeat/7.17/none` | Older Filebeat release, not enforced in the nightly run. |
+| `filebeat/8.10/none` | Intermediate Filebeat release, not enforced in the nightly run. |
 | `filebeat/9.0/none` | Image availability varies by registry state. |
-| `fluent-bit/2.x/gzip` | Legacy version cell not yet promoted to nightly enforcement. |
-| `vector/0.30/zstd_bulk` | Legacy sink config shape differs from the current fixture. |
-| `vector/0.45/zstd_bulk` | Future-version cell pending registry pin. |
+| `fluent-bit/2.x/gzip` | Older Fluent Bit release, not enforced in the nightly run. |
+| `vector/0.30/zstd_bulk` | The sink config of this Vector release differs from the fixture. |
+| `vector/0.45/zstd_bulk` | Waits for a pinned image in the registry. |
 | `vector/latest/zstd_bulk` | `latest` is intentionally tracked outside PR gates. |
-| `otelcol/0.95/http_proto_gzip` | Legacy collector config validation pending. |
+| `otelcol/0.95/http_proto_gzip` | The collector config for this release is not validated. |
 | `otelcol/latest/http_proto_gzip` | `latest` is intentionally tracked outside PR gates. |
 | `splunk-uf/9.x/hec` | Splunk Universal Forwarder image requires license/bootstrap secrets in CI. |
 

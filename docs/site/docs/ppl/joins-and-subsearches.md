@@ -45,8 +45,6 @@ right columns.
   whose residual is TRUE.
 - The right side is held in memory; put the smaller input on the right and
   filter it in the subsearch.
-- The distributed query planner does not split joins; see
-  [Pipeline execution](./pipeline-execution.md#cluster-execution).
 
 ## lookup
 
@@ -105,14 +103,28 @@ source=main | stats count() as n by host
 | `EXISTS [ ... ]` | TRUE when the subquery returns a row |
 | `[ ... ]` as a value | the single value of the subquery's single row and column |
 
-LynxDB supports uncorrelated subqueries: a name inside a subquery always
-refers to the subquery's own rows, never to the outer query's. Each
-subquery runs once, before the outer query, and its rows are held in memory.
-End a subquery with `fields` or `stats` so that its columns are known when
-the query is planned.
+LynxDB supports uncorrelated subqueries. Each subquery runs once, before the
+outer query, and its rows are held in memory; an `IN` subquery of one column
+that returns at most 1024 values becomes a list of those values in the
+outer filter. End a subquery with `fields` or `stats` so that its columns
+are known when the query is planned.
+
+A correlated subquery fails to compile with `UNSUPPORTED_FEATURE`: a
+reference through the outer query's source name or alias, or to a field
+that only the outer query has, is reported at the reference.
+
+```
+source=main as o | where status IN [ source=main | where user = o.user | fields status ]
+```
+
+```
+unsupported_feature error at line 1, column 65: correlated subqueries are not supported: the subquery refers to o.user of the outer query
+```
+
+An unqualified name that the subquery's own rows can also have reads the
+subquery's field.
 
 ## Not supported
 
 - `graphlookup` (recursive traversal) fails with `UNSUPPORTED_COMMAND`.
-- Correlated subqueries (references to outer fields) are not supported.
-- The distributed query planner does not split joins, unions and subqueries.
+- Correlated subqueries fail with `UNSUPPORTED_FEATURE`.

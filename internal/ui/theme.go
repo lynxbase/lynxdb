@@ -167,11 +167,6 @@ func ColorDark() color.Color {
 	return Term.lightDark(lipgloss.Color("#d1d5db"), lipgloss.Color("#4b5563"))
 }
 
-// ColorInputBackground returns the shell editor panel background.
-func ColorInputBackground() color.Color {
-	return Term.lightDark(lipgloss.Color("#f3f4f6"), lipgloss.Color("#262626"))
-}
-
 // ColorJSONStr returns green for JSON string values.
 func ColorJSONStr() color.Color {
 	return Term.lightDark(lipgloss.Color("#15803d"), lipgloss.Color("#86efac"))
@@ -180,19 +175,6 @@ func ColorJSONStr() color.Color {
 // ColorJSONNum returns yellow for JSON number values.
 func ColorJSONNum() color.Color {
 	return Term.lightDark(lipgloss.Color("#b45309"), lipgloss.Color("#fde68a"))
-}
-
-// ColorDuration returns a duration-conditional color.
-// < 1s → green, < 10s → yellow, >= 10s → red.
-func ColorDuration(ms float64) color.Color {
-	switch {
-	case ms < 1000:
-		return ColorSuccess()
-	case ms < 10000:
-		return ColorWarning()
-	default:
-		return ColorError()
-	}
 }
 
 // Theme holds all lipgloss styles for consistent CLI rendering.
@@ -419,12 +401,6 @@ func newNoColorTheme(w io.Writer) *Theme {
 		DiffNew:       s,
 	}
 }
-
-// StyleTableHeader returns the style for table column headers.
-func StyleTableHeader() lipgloss.Style { return lipgloss.NewStyle().Bold(true) }
-
-// StyleTableSeparator returns the style for table separator rules.
-func StyleTableSeparator() lipgloss.Style { return lipgloss.NewStyle().Foreground(ColorDark()) }
 
 // Separator is the short 3-char rule printed before the stats block.
 const Separator = "\u2500\u2500\u2500"

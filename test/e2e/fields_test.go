@@ -4,6 +4,8 @@ package e2e
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/client"
@@ -18,17 +20,23 @@ func TestE2E_Fields_ReturnsFieldCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Fields: %v", err)
 	}
-	if len(fields) == 0 {
-		t.Fatal("expected non-empty field catalog")
-	}
 
-	// Log all discovered fields. The field catalog tracks extracted/indexed
-	// fields, not internal virtual fields like _raw and _time.
-	fieldNames := make([]string, 0, len(fields))
+	byName := make(map[string][]string, len(fields))
 	for _, f := range fields {
-		fieldNames = append(fieldNames, f.Name)
+		byName[f.Name] = f.Indexes
 	}
-	t.Logf("field catalog: %d fields: %v", len(fields), fieldNames)
+	// Text lines hold _raw, _time, source and sourcetype; key=value pairs
+	// such as "uid=0" in the pam_unix lines become fields too.
+	for _, name := range []string{"_raw", "_time", "source", "sourcetype", "uid", "rhost"} {
+		indexes, ok := byName[name]
+		if !ok {
+			t.Errorf("field %q missing from catalog %v", name, fields)
+			continue
+		}
+		if strings.Join(indexes, ",") != "idx_ssh" {
+			t.Errorf("field %q: expected indexes [idx_ssh], got %v", name, indexes)
+		}
+	}
 }
 
 func TestE2E_FieldValues_ReturnsTopValues(t *testing.T) {
@@ -50,13 +58,22 @@ func TestE2E_FieldValues_ReturnsTopValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FieldValues: %v", err)
 	}
-	if result == nil {
-		t.Fatal("expected non-nil FieldValuesResult")
-	}
 	if result.Field != "host" {
 		t.Errorf("expected field=host, got %s", result.Field)
 	}
-	t.Logf("field values: %d unique, %d total", result.UniqueCount, result.TotalCount)
+	if len(result.Values) != 3 {
+		t.Fatalf("expected 3 values, got %d: %+v", len(result.Values), result.Values)
+	}
+	if fmt.Sprint(result.Values[0].Value) != "web-01" || result.Values[0].Count != 2 {
+		t.Errorf("expected top value web-01 with count 2, got %+v", result.Values[0])
+	}
+	rest := map[string]int64{}
+	for _, v := range result.Values[1:] {
+		rest[fmt.Sprint(v.Value)] = v.Count
+	}
+	if rest["web-02"] != 1 || rest["web-03"] != 1 {
+		t.Errorf("expected web-02 and web-03 with count 1, got %+v", result.Values[1:])
+	}
 }
 
 func TestE2E_Sources_ReturnsIngestedSources(t *testing.T) {
@@ -68,6 +85,14 @@ func TestE2E_Sources_ReturnsIngestedSources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Sources: %v", err)
 	}
-	// At minimum we should get one source entry back after ingest.
-	t.Logf("sources: %d entries", len(sources))
+	if len(sources) != 1 {
+		t.Fatalf("expected 1 source, got %d: %+v", len(sources), sources)
+	}
+	src := sources[0]
+	if src.Name != "idx_ssh" || src.EventCount != 2000 {
+		t.Errorf("expected idx_ssh with 2000 events, got %+v", src)
+	}
+	if src.FirstEvent == "" || src.LastEvent == "" || src.FirstEvent > src.LastEvent {
+		t.Errorf("expected first_event <= last_event, got first=%q last=%q", src.FirstEvent, src.LastEvent)
+	}
 }

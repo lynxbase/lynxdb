@@ -61,17 +61,6 @@ func isTTY(f *os.File) bool {
 	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
-// DetectFormat chooses the best format based on context.
-// When theme is non-nil, styled headers and separators are used in table output.
-func DetectFormat(format Format, rows []map[string]interface{}, theme ...*ui.Theme) Formatter {
-	var t *ui.Theme
-	if len(theme) > 0 {
-		t = theme[0]
-	}
-
-	return DetectFormatWithOptions(format, rows, HumanTableOptions{Theme: t})
-}
-
 // DetectFormatWithOptions chooses the best formatter with optional human-output
 // rendering controls. JSON/CSV/TSV/raw remain byte-compatible.
 func DetectFormatWithOptions(format Format, rows []map[string]interface{}, opts HumanTableOptions) Formatter {

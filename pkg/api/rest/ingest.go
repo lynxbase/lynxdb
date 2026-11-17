@@ -1,35 +1,26 @@
 package rest
 
 import (
-	"bufio"
-	"context"
-	"encoding/json"
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"strings"
-	"sync"
-	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
+	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/config"
-	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/database"
+	"github.com/lynxbase/lynxdb/pkg/engine/columnar"
+	"github.com/lynxbase/lynxdb/pkg/ingest/ndjson"
 	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
-	"github.com/lynxbase/lynxdb/pkg/ingest/receiver"
-	"github.com/lynxbase/lynxdb/pkg/ingest/staging"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
-	"github.com/lynxbase/lynxdb/pkg/server"
-	"github.com/lynxbase/lynxdb/pkg/storage/part"
 )
 
-// ingestPipeline returns the ingest pipeline selected by config.
-// When mode is "lightweight", only metadata fields are extracted at ingest time;
-// all other fields stay in _raw for query-time extraction via REX/spath.
-func (s *Server) ingestPipeline() *pipeline.Pipeline {
-	return ingestPipelineForConfig(s.currentIngestConfig())
-}
+// maxHeaderValue bounds the X-Index, X-Source, X-Source-Type and X-Host
+// headers of raw ingest.
+const maxHeaderValue = 256
 
 func ingestPipelineForConfig(cfg config.IngestConfig) *pipeline.Pipeline {
 	if cfg.Mode == "lightweight" {
@@ -38,33 +29,21 @@ func ingestPipelineForConfig(cfg config.IngestConfig) *pipeline.Pipeline {
 	return pipeline.DefaultPipeline()
 }
 
-// scannerBufPool reuses scanner buffers across ingest requests to reduce
-// per-request allocations and GC pressure under high concurrency.
-var scannerBufPool = sync.Pool{
-	New: func() interface{} {
-		buf := make([]byte, 64*1024)
-		return &buf
-	},
-}
-
-const structuredIngestSuggestion = "Use POST /api/v1/ingest with a JSON array of objects containing event. Use /api/v1/ingest/raw for newline-delimited logs or NDJSON, and /api/v1/es/_bulk for Elasticsearch bulk payloads."
-
-// respondIngestError maps engine errors to the appropriate HTTP status and error code.
+// respondIngestError maps database errors to the appropriate HTTP status and error code.
 // Returns true if an error response was written, false if err is nil.
 func respondIngestError(w http.ResponseWriter, err error) bool {
 	if err == nil {
 		return false
 	}
 	switch {
-	case errors.Is(err, server.ErrShuttingDown):
+	case errors.Is(err, columnar.ErrIndexName):
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error())
+	case errors.Is(err, columnar.ErrClosed), errors.Is(err, colstore.ErrClosed):
 		w.Header().Set("Retry-After", "5")
 		respondError(w, ErrCodeShuttingDown, http.StatusServiceUnavailable, "server is shutting down")
-	case errors.Is(err, staging.ErrBufferOverflow), errors.Is(err, staging.ErrClosed), memgov.IsMemoryExhausted(err):
+	case memgov.IsMemoryExhausted(err):
 		w.Header().Set("Retry-After", "5")
-		respondError(w, ErrCodeBackpressure, http.StatusServiceUnavailable, "ingest staging backpressure")
-	case errors.Is(err, part.ErrTooManyParts):
-		w.Header().Set("Retry-After", "1")
-		respondError(w, ErrCodeBackpressure, http.StatusServiceUnavailable, "ingest backpressure: compaction falling behind")
+		respondError(w, ErrCodeBackpressure, http.StatusServiceUnavailable, "ingest backpressure: memory exhausted")
 	default:
 		slog.Warn("ingest: internal error", "error", err)
 		respondInternalError(w, "ingest failed: internal error")
@@ -73,156 +52,77 @@ func respondIngestError(w http.ResponseWriter, err error) bool {
 	return true
 }
 
+// requestIndex returns the index a request names in ?index= or the X-Index
+// header, or the default index.
+func requestIndex(r *http.Request, headerFirst bool) string {
+	query, header := r.URL.Query().Get("index"), r.Header.Get("X-Index")
+	if headerFirst {
+		query, header = header, query
+	}
+	switch {
+	case query != "":
+		return query
+	case header != "":
+		return header
+	}
+
+	return database.DefaultSource
+}
+
+// countLines returns the number of lines of b that hold more than blanks.
+func countLines(b []byte) int {
+	n := 0
+	for len(b) > 0 {
+		line := b
+		if i := bytes.IndexByte(b, '\n'); i >= 0 {
+			line, b = b[:i], b[i+1:]
+		} else {
+			b = nil
+		}
+		if len(bytes.TrimSpace(line)) > 0 {
+			n++
+		}
+	}
+
+	return n
+}
+
+// handleIngestEvents takes NDJSON, one event per line, and appends it to an
+// index as it is.
 func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeIngest) {
 		return
 	}
-
-	decoder := json.NewDecoder(r.Body)
-	ingestCfg := s.currentIngestConfig()
-	batchSize := ingestCfg.MaxBatchSize
-	if batchSize <= 0 {
-		batchSize = 1000
-	}
-	pipe := ingestPipelineForConfig(ingestCfg)
-	batch := make([]*event.Event, 0, batchSize)
-	accepted := 0
-	failed := 0
-
-	tok, err := decoder.Token()
+	index := requestIndex(r, false)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest,
-			fmt.Sprintf("invalid JSON: %s", sanitizeErrorMessage(err.Error())),
-			WithSuggestion(structuredIngestSuggestion))
-
-		return
-	}
-	delim, ok := tok.(json.Delim)
-	if !ok || delim != '[' {
-		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest,
-			"invalid JSON: /api/v1/ingest expects a top-level JSON array of structured event objects",
-			WithSuggestion(structuredIngestSuggestion))
-		return
-	}
-
-	writeSummary := func(warning string) {
-		resp := map[string]interface{}{
-			"accepted": accepted,
-			"failed":   failed,
-		}
-		if warning != "" {
-			resp["warning"] = warning
-		}
-		respondData(w, http.StatusOK, resp)
-	}
-
-	flushBatch := func() bool {
-		if len(batch) == 0 {
-			return true
-		}
-
-		processed, processErr := pipe.Process(batch)
-		if processErr != nil {
-			slog.Warn("ingest: pipeline processing failed", "error", processErr, "batch_size", len(batch))
-			if accepted == 0 && failed == 0 {
-				respondInternalError(w, "ingest processing failed")
-				return false
-			}
-			failed += len(batch)
-			batch = batch[:0]
-
-			return true
-		}
-		if ingestErr := s.engine.IngestContext(r.Context(), processed); ingestErr != nil {
-			if accepted == 0 {
-				if respondIngestError(w, ingestErr) {
-					return false
-				}
-			}
-			failed += len(processed)
-			batch = batch[:0]
-
-			return true
-		}
-
-		accepted += len(processed)
-		batch = batch[:0]
-
-		return true
-	}
-
-	for decoder.More() {
-		var payload receiver.EventPayload
-		if err := decoder.Decode(&payload); err != nil {
-			msg := fmt.Sprintf("invalid JSON: %s", sanitizeErrorMessage(err.Error()))
-			if accepted == 0 && failed == 0 {
-				respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, msg, WithSuggestion(structuredIngestSuggestion))
-
-				return
-			}
-
-			writeSummary("Request body contained invalid JSON after earlier events were already accepted.")
-
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			respondError(w, ErrCodeInvalidRequest, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("request body exceeds %d bytes", tooLarge.Limit),
+				WithSuggestion("Send smaller batches or raise ingest.max_body_size."))
 			return
 		}
-
-		batch = append(batch, payload.ToEvent())
-		if len(batch) >= batchSize && !flushBatch() {
-			return
-		}
+		respondError(w, ErrCodeInvalidRequest, http.StatusBadRequest, "request body read error")
+		return
 	}
-
-	endTok, err := decoder.Token()
+	lines := countLines(body)
+	rejected, err := s.db.Append(index, body)
 	if err != nil {
-		msg := fmt.Sprintf("invalid JSON: %s", sanitizeErrorMessage(err.Error()))
-		if accepted == 0 && failed == 0 {
-			respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, msg, WithSuggestion(structuredIngestSuggestion))
-
-			return
-		}
-
-		writeSummary("Request body ended with invalid JSON after earlier events were already accepted.")
-
+		s.promMetrics.RecordIngestError()
+		respondIngestError(w, err)
 		return
 	}
-	endDelim, ok := endTok.(json.Delim)
-	if !ok || endDelim != ']' {
-		msg := "invalid JSON: expected end of array"
-		if accepted == 0 && failed == 0 {
-			respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, msg, WithSuggestion(structuredIngestSuggestion))
-
-			return
-		}
-
-		writeSummary("Request body ended unexpectedly after earlier events were already accepted.")
-
-		return
-	}
-
-	if !flushBatch() {
-		return
-	}
-
-	var trailing json.RawMessage
-	if err := decoder.Decode(&trailing); err != io.EOF {
-		msg := "invalid JSON: trailing data after array"
-		if err != nil {
-			msg = fmt.Sprintf("invalid JSON: %s", sanitizeErrorMessage(err.Error()))
-		}
-		if accepted == 0 && failed == 0 {
-			respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, msg, WithSuggestion(structuredIngestSuggestion))
-
-			return
-		}
-
-		writeSummary("Request body contained trailing data after earlier events were already accepted.")
-
-		return
-	}
-
-	writeSummary("")
+	accepted := lines - int(rejected)
+	s.promMetrics.RecordIngest(accepted, len(body))
+	respondData(w, http.StatusOK, map[string]interface{}{
+		"accepted": accepted,
+		"failed":   rejected,
+	})
 }
 
+// handleIngestRaw takes lines of log text; the ingest pipeline extracts the
+// time and fields of each line that is not a JSON object.
 func (s *Server) handleIngestRaw(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeIngest) {
 		return
@@ -231,40 +131,57 @@ func (s *Server) handleIngestRaw(w http.ResponseWriter, r *http.Request) {
 	source := r.Header.Get("X-Source")
 	if source == "" {
 		source = "http"
-	} else if len(source) > 256 {
-		respondError(w, ErrCodeValidationError, http.StatusBadRequest,
-			"X-Source header exceeds maximum length of 256 characters")
-		return
 	}
 	sourceType := r.Header.Get("X-Source-Type")
 	if sourceType == "" {
 		sourceType = "raw"
-	} else if len(sourceType) > 256 {
-		respondError(w, ErrCodeValidationError, http.StatusBadRequest,
-			"X-Source-Type header exceeds maximum length of 256 characters")
+	}
+	host := r.Header.Get("X-Host")
+	index := requestIndex(r, true)
+	for name, v := range map[string]string{"X-Source": source, "X-Source-Type": sourceType, "X-Host": host, "X-Index": index} {
+		if len(v) > maxHeaderValue {
+			respondError(w, ErrCodeValidationError, http.StatusBadRequest,
+				fmt.Sprintf("%s header exceeds maximum length of %d characters", name, maxHeaderValue))
+			return
+		}
+	}
+
+	conv, err := ndjson.NewText("")
+	if err != nil {
+		respondInternalError(w, err.Error())
 		return
 	}
-	indexName := r.Header.Get("X-Index")
-	if indexName == "" {
-		indexName = "main"
-	} else if len(indexName) > 256 {
-		respondError(w, ErrCodeValidationError, http.StatusBadRequest,
-			"X-Index header exceeds maximum length of 256 characters")
-		return
+	conv.Source, conv.SourceType, conv.Host = source, sourceType, host
+
+	accepted, failed := 0, 0
+	var appendErr error
+	readErr := conv.Read(r.Body, func(chunk []byte) error {
+		lines := countLines(chunk)
+		rejected, err := s.db.Append(index, chunk)
+		if err != nil {
+			appendErr = err
+			return err
+		}
+		accepted += lines - int(rejected)
+		failed += int(rejected)
+		s.promMetrics.RecordIngest(lines-int(rejected), len(chunk))
+		return nil
+	})
+	if appendErr != nil {
+		s.promMetrics.RecordIngestError()
+		if accepted == 0 {
+			respondIngestError(w, appendErr)
+			return
+		}
 	}
-
-	buildEvent := func(line string) *event.Event {
-		e := event.NewEvent(time.Time{}, line)
-		e.Source = source
-		e.SourceType = sourceType
-		e.Index = indexName
-
-		return e
-	}
-
-	accepted, failed, truncated, err := s.processBatched(w, r, buildEvent)
-	if err != nil && accepted == 0 {
-		return // response already written by processBatched
+	truncated := false
+	if readErr != nil && appendErr == nil {
+		if accepted == 0 {
+			respondError(w, ErrCodeInvalidRequest, http.StatusBadRequest, "request body read error")
+			return
+		}
+		truncated = true
+		slog.Warn("ingest: request body truncated", "accepted_so_far", accepted, "error", readErr.Error()) //nolint:gosec // err is from the body reader, not user-controlled
 	}
 
 	resp := map[string]interface{}{
@@ -284,175 +201,4 @@ func (s *Server) handleIngestHEC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.splunkHECHandler(false).HandleEvent(w, r)
-}
-
-// processBatched reads lines from the request body, builds events using buildEvent,
-// and ingests them in batches. If buildEvent returns nil, the line is skipped.
-//
-// H1 fix: tracks accepted/failed counts across batches. If batch N succeeds but batch N+1
-// fails, the already-committed events from batch N are reported as accepted (not silently lost).
-// Returns (accepted, failed, truncated, error). Truncated is true when the request body
-// exceeded MaxBytesReader and was cut short. On a fatal error with 0 accepted, it writes
-// the HTTP response directly and returns a non-nil error.
-func (s *Server) processBatched(w http.ResponseWriter, r *http.Request, buildEvent func(string) *event.Event) (int, int, bool, error) {
-	ingestCfg := s.currentIngestConfig()
-	batchSize := ingestCfg.MaxBatchSize
-	if batchSize == 0 {
-		batchSize = 1000
-	}
-	scanner := bufio.NewScanner(r.Body)
-	bufp := scannerBufPool.Get().(*[]byte)
-	maxLineBytes := ingestCfg.MaxLineBytes
-	if maxLineBytes <= 0 {
-		maxLineBytes = 1 << 20 // 1 MB default
-	}
-	scanner.Buffer(*bufp, maxLineBytes)
-	defer scannerBufPool.Put(bufp)
-
-	pipe := ingestPipelineForConfig(ingestCfg)
-	batch := make([]*event.Event, 0, batchSize)
-	accepted := 0
-	failed := 0
-
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		ev := buildEvent(line)
-		if ev == nil {
-			continue
-		}
-		batch = append(batch, ev)
-
-		if len(batch) >= batchSize {
-			processed, err := pipe.Process(batch)
-			if err != nil {
-				slog.Warn("ingest: batch processing failed", "error", err.Error(), "batch_size", len(batch)) //nolint:gosec // structured slog key-value, not format string injection
-				failed += len(batch)
-				batch = batch[:0]
-
-				continue // pipeline error: skip this batch, try next
-			}
-			if err := s.engine.IngestContext(r.Context(), processed); err != nil {
-				// Retry on batcher backpressure — the ring buffer may drain within
-				// one flush cycle (100ms). Three retries at 50ms intervals covers
-				// one full flush cycle, turning transient backpressure into a brief
-				// pause instead of permanent data loss.
-				if errors.Is(err, part.ErrTooManyParts) {
-					retried := false
-					for attempt := 0; attempt < 3; attempt++ {
-						backoff := time.Duration(50<<uint(attempt)) * time.Millisecond // 50ms, 100ms, 200ms
-						if sleepErr := sleepWithContext(r.Context(), backoff); sleepErr != nil {
-							return accepted, failed, false, sleepErr
-						}
-						if retryErr := s.engine.IngestContext(r.Context(), processed); retryErr == nil {
-							accepted += len(processed)
-							retried = true
-
-							break
-						}
-					}
-					if retried {
-						batch = batch[:0]
-
-						continue
-					}
-				}
-				failed += len(processed)
-				// H1: if we already accepted some events, don't write an error response.
-				// Instead, continue counting failures and return partial success.
-				if accepted == 0 {
-					// First batch failed — check if it's a fatal error.
-					if respondIngestError(w, err) {
-						return 0, failed, false, err
-					}
-				}
-				batch = batch[:0]
-
-				continue
-			}
-			accepted += len(processed)
-			batch = batch[:0]
-		}
-	}
-
-	truncated := false
-	if err := scanner.Err(); err != nil {
-		if accepted == 0 {
-			respondError(w, ErrCodeInvalidRequest, http.StatusBadRequest, "request body read error")
-
-			return 0, 0, false, err
-		}
-		// Partial success: body was truncated (likely MaxBytesReader limit hit).
-		truncated = true
-		slog.Warn("ingest: request body truncated", //nolint:gosec // err is from bufio.Scanner, not user-controlled
-			"accepted_so_far", accepted,
-			"error", err.Error())
-	}
-
-	// Flush remaining.
-	if len(batch) > 0 {
-		processed, err := pipe.Process(batch)
-		if err != nil {
-			failed += len(batch)
-		} else if ingestErr := s.engine.IngestContext(r.Context(), processed); ingestErr != nil {
-			// Retry on batcher backpressure (same logic as main loop).
-			retried := false
-			if errors.Is(ingestErr, part.ErrTooManyParts) {
-				for attempt := 0; attempt < 3; attempt++ {
-					backoff := time.Duration(50<<uint(attempt)) * time.Millisecond
-					if sleepErr := sleepWithContext(r.Context(), backoff); sleepErr != nil {
-						return accepted, failed, truncated, sleepErr
-					}
-					if retryErr := s.engine.IngestContext(r.Context(), processed); retryErr == nil {
-						accepted += len(processed)
-						retried = true
-
-						break
-					}
-				}
-			}
-			if !retried {
-				failed += len(processed)
-				if accepted == 0 {
-					if respondIngestError(w, ingestErr) {
-						return 0, failed, false, ingestErr
-					}
-				}
-			}
-		} else {
-			accepted += len(processed)
-		}
-	}
-
-	return accepted, failed, truncated, nil
-}
-
-func sleepWithContext(ctx context.Context, d time.Duration) error {
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
-// sanitizeErrorMessage replaces control characters in error messages to prevent
-// log injection. User-provided JSON parse errors may contain arbitrary bytes
-// from the input that could confuse log parsers or terminals.
-func sanitizeErrorMessage(msg string) string {
-	var b strings.Builder
-	b.Grow(len(msg))
-	for _, r := range msg {
-		if r < 0x20 && r != '\n' && r != '\r' && r != '\t' {
-			b.WriteRune('?')
-		} else {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }

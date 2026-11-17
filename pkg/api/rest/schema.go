@@ -1,78 +1,37 @@
 package rest
 
 import (
-	"encoding/json"
 	"net/http"
-	"strings"
 	"time"
 
-	"github.com/lynxbase/lynxdb/pkg/model"
+	"github.com/lynxbase/lynxdb/pkg/engine/columnar"
 )
 
+// indexEntry describes an index from its stats; an index whose events are
+// not yet written has no first or last event.
+func indexEntry(ix columnar.IndexStats) map[string]interface{} {
+	entry := map[string]interface{}{
+		"name":   ix.Name,
+		"events": ix.Rows,
+		"bytes":  ix.Bytes,
+		"parts":  ix.Parts,
+	}
+	if ix.Parts > 0 {
+		entry["first_event"] = ix.First.Format(time.RFC3339Nano)
+		entry["last_event"] = ix.Last.Format(time.RFC3339Nano)
+	}
+
+	return entry
+}
+
 func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
-	indexes := s.engine.ListIndexes()
-	result := make([]map[string]interface{}, len(indexes))
-	for i, idx := range indexes {
-		result[i] = map[string]interface{}{
-			"name":               idx.Name,
-			"retention_period":   idx.RetentionPeriod.String(),
-			"replication_factor": idx.ReplicationFactor,
-		}
+	s.syncForRead()
+	stats := s.db.Stats()
+	indexes := make([]map[string]interface{}, 0, len(stats))
+	for _, ix := range stats {
+		indexes = append(indexes, indexEntry(ix))
 	}
 	respondData(w, http.StatusOK, map[string]interface{}{
-		"indexes": result,
-	})
-}
-
-func (s *Server) handleListFields(w http.ResponseWriter, r *http.Request) {
-	fields := s.engine.ListFields()
-	if prefix := strings.TrimSpace(r.URL.Query().Get("prefix")); prefix != "" {
-		filtered := fields[:0]
-		for _, field := range fields {
-			if strings.HasPrefix(field.Name, prefix) {
-				filtered = append(filtered, field)
-			}
-		}
-		fields = filtered
-	}
-	respondData(w, http.StatusOK, map[string]interface{}{
-		"fields": fields,
-	})
-}
-
-func (s *Server) handleCreateIndex(w http.ResponseWriter, r *http.Request) {
-	if !s.requireRoot(w, r) {
-		return
-	}
-	var req struct {
-		Name              string `json:"name"`
-		RetentionDays     int    `json:"retention_days,omitempty"`
-		ReplicationFactor int    `json:"replication_factor,omitempty"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")
-
-		return
-	}
-
-	cfg := model.DefaultIndexConfig(req.Name)
-	if req.RetentionDays > 0 {
-		cfg.RetentionPeriod = time.Duration(req.RetentionDays) * 24 * time.Hour
-	}
-	if req.ReplicationFactor > 0 {
-		cfg.ReplicationFactor = req.ReplicationFactor
-	}
-
-	if err := cfg.Validate(); err != nil {
-		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error())
-
-		return
-	}
-
-	s.engine.CreateIndex(cfg)
-
-	respondData(w, http.StatusCreated, map[string]interface{}{
-		"name":   cfg.Name,
-		"status": "created",
+		"indexes": indexes,
 	})
 }

@@ -32,7 +32,8 @@ curl -s -X POST localhost:3100/api/v1/query \
   -d '{"q": "source=main | stats count() by level", "from": "-1h"}'
 ```
 
-The examples on this page run over lines such as:
+The examples on this page run over `testdata/logs/access.log` of the
+LynxDB repository, 1000 lines such as:
 
 ```
 2025-01-15T08:00:00.105Z host=web-03 level=ERROR method=GET path=/api/v1/users status=502 user=grace response_time=786 bytes=32228 msg="GET /api/v1/users completed"
@@ -76,14 +77,15 @@ source=main
 | where response_time > 500
 | eval kb = bytes / 1024
 | fields _time, host, path, response_time, kb
+| sort _time
 | head 3
 ```
 
 ```
 _time                     host    path            response_time  kb
-2025-01-15 08:00:00.105   web-03  /api/v1/users   786            31
-2025-01-15 08:00:03.072   web-02  /api/v1/orders  588            21
-2025-01-15 08:00:03.556   web-01  /api/v1/health  776            48
+2025-01-15T08:00:00.105Z  web-03  /api/v1/users   786            31
+2025-01-15T08:00:03.072Z  web-02  /api/v1/orders  588            21
+2025-01-15T08:00:03.556Z  web-01  /api/v1/health  776            48
 ```
 
 Write spaces around `-` and `*`: `bytes-1` and `bytes*8` are field names in
@@ -99,11 +101,11 @@ source=main status>=500
 
 ```
 host    errors  p95
-api-02  48      777.9
-web-02  43      775.5
+api-02  48      781
+web-02  43      782
 web-03  41      784
-web-01  38      792.1
-api-01  34      747.8
+web-01  38      793
+api-01  34      768
 ```
 
 An aggregate without an alias produces a column named after its text, such

@@ -51,16 +51,16 @@ See [Output Formats](../cli/output-formats.md) for the full list.
 
 ### Data on stdout, everything else on stderr
 
-Rows go to stdout. The statistics footer, hints and lint warnings go to
-stderr, so redirection captures only data:
+Rows go to stdout. The statistics footer and hints go to stderr, so
+redirection captures only data:
 
 ```bash
 lynxdb query --file access.log 'source=main | stats count()' > result.json
 ```
 
-When stdout is not a terminal, the statistics are printed to stderr as one
-JSON object; `--no-stats` drops them and `--quiet` (`-q`) drops all non-data
-output.
+On a terminal the statistics are a summary footer; otherwise they are one
+JSON line on stderr. `--no-stats` drops them and `--quiet` (`-q`) drops all
+non-data output.
 
 ## Integration with jq
 
@@ -124,7 +124,7 @@ from the file.
 around to fail a job when errors do appear:
 
 ```bash
-if lynxdb query 'source=main level=FATAL _source=api' --since 10m --fail-on-empty --quiet > /dev/null; then
+if lynxdb query 'source=main level=FATAL | where source = "api"' --since 10m --fail-on-empty --quiet > /dev/null; then
   echo "FATAL events after deployment"
   exit 1
 fi
@@ -167,8 +167,8 @@ set -euo pipefail
 
 sleep 60
 
-ERRORS=$(lynxdb query 'source=main level=ERROR _source=api | stats count() as n' --since 2m --no-stats | jq '.n')
-FATAL=$(lynxdb query 'source=main level=FATAL _source=api | stats count() as n' --since 2m --no-stats | jq '.n')
+ERRORS=$(lynxdb query 'source=main level=ERROR | where source = "api" | stats count() as n' --since 2m --no-stats | jq '.n')
+FATAL=$(lynxdb query 'source=main level=FATAL | where source = "api" | stats count() as n' --since 2m --no-stats | jq '.n')
 
 echo "errors=$ERRORS fatal=$FATAL"
 
@@ -184,7 +184,7 @@ fi
 #!/bin/bash
 # daily-report.sh, run from cron: 0 9 * * * /opt/scripts/daily-report.sh
 DATE=$(date +%Y-%m-%d)
-lynxdb query 'source=main level=ERROR | stats count() as n by _source | sort - n' \
+lynxdb query 'source=main level=ERROR | stats count() as n by source | sort - n' \
   --since 24h --format csv --no-stats > "/reports/errors-${DATE}.csv"
 ```
 
@@ -207,7 +207,7 @@ Set these once instead of passing flags to every command:
 
 ```bash
 export LYNXDB_SERVER=https://lynxdb.example.com:3100
-export LYNXDB_TOKEN=lxk_your_api_key
+export LYNXDB_TOKEN=lynx_ak_your_key_here
 export LYNXDB_PROFILE=production
 ```
 
@@ -242,13 +242,6 @@ QUERY='source=main | stats count() as n, avg(response_time) as avg_ms, p99(respo
 lynxdb query "$QUERY" --since 24h --format csv > report.csv
 lynxdb query "$QUERY" --since 24h --format json > report.json
 lynxdb query "$QUERY" --since 24h --format table
-```
-
-### Tail into jq
-
-```bash
-lynxdb tail 'source=main | where status >= 500' --format json \
-  | jq -r '"\(.path) \(.status)"'
 ```
 
 ## Next steps

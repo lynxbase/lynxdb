@@ -2,18 +2,12 @@ package pipeline
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/binary"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"hash"
 	"hash/fnv"
-	"io"
-	"log/slog"
 	"math"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -44,22 +38,9 @@ type AggFunc struct {
 	CondProgram *vm.Program
 }
 
-// maxInMemoryGroups is a safety valve that prevents degenerate cases where
-// estimateGroupBytes under-estimates. Even if the budget allows it, we cap
-// in-memory groups at this count and force a spill. Configurable per-operator
-// would be ideal, but this constant provides a reasonable default.
-const maxInMemoryGroups = 10_000_000
-
 // maxValuesPerGroup caps the number of distinct values tracked per aggregation
 // group for values() and stdev. Prevents unbounded memory for high-cardinality groups.
 const maxValuesPerGroup = 100_000
-
-// mergePartitionsLegacy is the number of hash partitions used for the legacy
-// (unpartitioned) spill file merge. During merge, K passes are made over the
-// spill files; on pass k only groups with hash(groupKey) % K == k are loaded.
-// This bounds peak merge memory to approximately totalGroups/K instead of
-// loading all groups simultaneously. Must be >= 1.
-const mergePartitionsLegacy = 16
 
 // hllPromotionThreshold is the cardinality at which exact tracking is
 // promoted to HyperLogLog approximation for distinct count.
@@ -148,16 +129,10 @@ type AggregateIterator struct {
 	groups      map[uint64][]*aggGroup // FNV hash → collision chain
 	emitted     bool
 	vmInst      vm.VM
-	needsValues []bool // per-agg: true if dc/values/perc*/stdev need values map/all slice
-	groupCount  int    // total groups across all chains
-	spillFiles  []string
-	spillErr    error                // first spill error; checked in Next() to abort query
+	needsValues []bool               // per-agg: true if dc/values/perc*/stdev need values map/all slice
+	groupCount  int                  // total groups across all chains
 	hasher      hash.Hash64          // persistent FNV-1a hasher, reset per call
 	acct        memgov.MemoryAccount // per-operator memory tracking
-	spillMgr    *SpillManager        // lifecycle manager for spill files (nil = unmanaged)
-	spilledRows int64                // total rows written to spill files (for ResourceReporter)
-	partitions  *aggPartitionSet     // nil until first partitioned spill (lazy init)
-	budgetLimit int64                // query memory budget limit (0 = use default partitions)
 }
 
 type aggGroup struct {
@@ -180,7 +155,7 @@ type aggState struct {
 	lastTS    time.Time
 	hll       *HyperLogLog // for approximate dc when cardinality exceeds threshold
 	tdigest   *TDigest     // for approximate percentiles
-	sumSq     float64      // accumulated M2 (sum of squared deviations) for stdev after spill merge
+	sumSq     float64      // sum of squared values
 	topK      map[string]topKItem
 	weightSum float64
 	sumY2     float64
@@ -229,33 +204,6 @@ func NewAggregateIterator(child Iterator, aggs []AggFunc, groupBy []string, acct
 	}
 }
 
-// NewAggregateIteratorWithSpill creates an aggregation operator with spill support.
-// When the memory budget is exceeded, groups are spilled to disk via the SpillManager.
-func NewAggregateIteratorWithSpill(child Iterator, aggs []AggFunc, groupBy []string, acct memgov.MemoryAccount, mgr *SpillManager) *AggregateIterator {
-	a := NewAggregateIterator(child, aggs, groupBy, acct)
-	a.spillMgr = mgr
-	if ca, ok := a.acct.(*CoordinatedAccount); ok && mgr != nil {
-		ca.SetOnRevoke(func(target int64) int64 {
-			if a.groupCount == 0 {
-				return 0
-			}
-			before := a.acct.Used()
-			a.spillToDisk()
-			if a.spillErr != nil {
-				return 0
-			}
-			freed := before - a.acct.Used()
-			if freed < 0 {
-				return 0
-			}
-
-			return freed
-		})
-	}
-
-	return a
-}
-
 func (a *AggregateIterator) Init(ctx context.Context) error {
 	return a.child.Init(ctx)
 }
@@ -263,11 +211,6 @@ func (a *AggregateIterator) Init(ctx context.Context) error {
 func (a *AggregateIterator) Next(ctx context.Context) (*Batch, error) {
 	if a.emitted {
 		return nil, nil
-	}
-
-	// Transition to building phase — accumulating groups from input.
-	if pn, ok := a.acct.(PhaseNotifier); ok {
-		pn.SetPhase(PhaseBuilding)
 	}
 
 	// Consume all input.
@@ -278,22 +221,7 @@ func (a *AggregateIterator) Next(ctx context.Context) (*Batch, error) {
 
 		batch, err := a.child.Next(ctx)
 		if err != nil {
-			// Bug fix: when the child (e.g., scan) fails because the shared
-			// budget is exhausted, aggregate may hold spillable groups.
-			// Spill those groups to free shared budget capacity, then retry.
-			if memgov.IsMemoryExhausted(err) && a.groupCount > 0 && a.spillMgr != nil {
-				a.spillToDisk()
-				if a.spillErr != nil {
-					return nil, fmt.Errorf("aggregate: spill on child budget pressure: %w", a.spillErr)
-				}
-
-				batch, err = a.child.Next(ctx)
-				if err != nil {
-					return nil, err
-				}
-			} else {
-				return nil, err
-			}
+			return nil, err
 		}
 		if batch == nil {
 			break
@@ -303,56 +231,15 @@ func (a *AggregateIterator) Next(ctx context.Context) (*Batch, error) {
 		}
 	}
 
-	// Check if any spill operation failed — abort with error rather than
-	// returning silently wrong partial results.
-	if a.spillErr != nil {
-		return nil, fmt.Errorf("aggregate: spill failed during execution: %w", a.spillErr)
-	}
-
 	a.emitted = true
 
-	// Transition to probing phase — producing finalized output.
-	if pn, ok := a.acct.(PhaseNotifier); ok {
-		pn.SetPhase(PhaseProbing)
-	}
-
-	result := a.buildResult()
-	// buildResultPartitioned may set spillErr during merge — check after.
-	if a.spillErr != nil {
-		return nil, fmt.Errorf("aggregate: merge failed: %w", a.spillErr)
-	}
-
-	return result, nil
+	return a.emitAllGroups(), nil
 }
 
 func (a *AggregateIterator) Close() error {
-	// Transition to complete phase — memory can be reclaimed by coordinator.
-	if pn, ok := a.acct.(PhaseNotifier); ok {
-		pn.SetPhase(PhaseComplete)
-	}
-
 	a.acct.Close()
-	// Clean up legacy spill files (backward compat for spillMgr == nil path).
-	for _, path := range a.spillFiles {
-		if a.spillMgr != nil {
-			a.spillMgr.Release(path)
-		} else {
-			removeSpillFile(path)
-		}
-	}
-	a.spillFiles = nil
-	// Clean up partitioned spill files.
-	if a.partitions != nil {
-		a.partitions.close()
-		a.partitions = nil
-	}
 
 	return a.child.Close()
-}
-
-// MemoryUsed returns the current tracked memory for this operator.
-func (a *AggregateIterator) MemoryUsed() int64 {
-	return a.acct.Used()
 }
 
 func (a *AggregateIterator) Schema() []FieldInfo {
@@ -437,57 +324,6 @@ func (a *AggregateIterator) estimateGroupBytes(row map[string]event.Value) int64
 	return base
 }
 
-// ResourceStats implements ResourceReporter for per-operator spill metrics.
-func (a *AggregateIterator) ResourceStats() OperatorResourceStats {
-	return OperatorResourceStats{
-		PeakBytes:   a.acct.MaxUsed(),
-		SpilledRows: a.spilledRows,
-	}
-}
-
-// spillToDisk writes current aggregation state to spill files and resets in-memory groups.
-// When a SpillManager is available, groups are distributed across hash-partitioned
-// files so that the merge phase can process one partition at a time, bounding peak
-// merge memory to totalGroups/K instead of loading all groups simultaneously.
-func (a *AggregateIterator) spillToDisk() {
-	if a.spillMgr == nil {
-		return // no spill support
-	}
-
-	// First spill: initialize partition set.
-	if a.partitions == nil {
-		groupBytes := int64(a.groupCount) * (estimatedKeyBytes + estimatedAggStateBytes*int64(len(a.aggs)))
-		a.partitions = newAggPartitionSet(groupBytes, a.budgetLimit, a.spillMgr)
-	}
-
-	// Distribute groups to partition files.
-	count, err := a.partitions.spillToPartitions(a.groups, a.aggs, a.serializeGroup)
-	if err != nil {
-		a.recordSpillError("partitioned spill", err)
-
-		return
-	}
-	a.spilledRows += count
-
-	// Reset in-memory groups and release tracked memory.
-	a.groups = make(map[uint64][]*aggGroup)
-	a.groupCount = 0
-	a.acct.Shrink(a.acct.Used())
-
-	// Notify coordinator that this operator has spilled, allowing rebalancing.
-	if sn, ok := a.acct.(SpillNotifier); ok {
-		sn.NotifySpilled()
-	}
-}
-
-// recordSpillError records the first spill error. The error is checked in
-// Next() to abort the query rather than returning silently wrong results.
-func (a *AggregateIterator) recordSpillError(op string, err error) {
-	if a.spillErr == nil {
-		a.spillErr = fmt.Errorf("aggregate spill %s: %w", op, err)
-	}
-}
-
 // groupKeyHash computes FNV-1a hash of typed group-by values.
 // No string conversion or builder allocation.
 func (a *AggregateIterator) groupKeyHash(row map[string]event.Value) uint64 {
@@ -554,8 +390,6 @@ func (a *AggregateIterator) groupKeyHash(row map[string]event.Value) uint64 {
 
 // findOrCreateGroup looks up or creates an agg group by hash with collision handling.
 // Returns a budget error if creating a new group would exceed the memory limit.
-// When the budget is exceeded, the operator spills to disk and retries. If it
-// still cannot grow, the error is propagated to the caller.
 func (a *AggregateIterator) findOrCreateGroup(h uint64, row map[string]event.Value) (*aggGroup, error) {
 	chain := a.groups[h]
 	for _, g := range chain {
@@ -564,24 +398,8 @@ func (a *AggregateIterator) findOrCreateGroup(h uint64, row map[string]event.Val
 		}
 	}
 
-	// Estimate memory for the new group using actual key sizes.
-	groupBytes := a.estimateGroupBytes(row)
-
-	// Try to grow the budget.
-	if err := a.acct.Grow(groupBytes); err != nil {
-		// Budget exceeded — attempt to spill current groups to free memory.
-		a.spillToDisk()
-
-		// Retry the Grow after spilling.
-		if retryErr := a.acct.Grow(groupBytes); retryErr != nil {
-			return nil, fmt.Errorf("aggregate.findOrCreateGroup: still out of memory after spill: %w", retryErr)
-		}
-	}
-
-	// Safety valve: cap in-memory groups even if budget allows it.
-	// This prevents degenerate cases where estimateGroupBytes under-estimates.
-	if a.groupCount >= maxInMemoryGroups {
-		a.spillToDisk()
+	if err := a.acct.Grow(a.estimateGroupBytes(row)); err != nil {
+		return nil, fmt.Errorf("aggregate.findOrCreateGroup: %w", err)
 	}
 
 	// New group.
@@ -603,36 +421,6 @@ func (a *AggregateIterator) findOrCreateGroup(h uint64, row map[string]event.Val
 	a.groupCount++
 
 	return group, nil
-}
-
-// findOrCreateGroupMerge is a budget-exempt variant of findOrCreateGroup used
-// during the merge phase. It looks up an existing group by hash or creates a new
-// one without enforcing memory budget tracking. See mergeSpillFiles for rationale.
-func (a *AggregateIterator) findOrCreateGroupMerge(h uint64, row map[string]event.Value) *aggGroup {
-	chain := a.groups[h]
-	for _, g := range chain {
-		if a.groupKeysEqual(g.key, row) {
-			return g
-		}
-	}
-
-	group := &aggGroup{
-		key:    a.extractGroupKey(row),
-		states: make([]aggState, len(a.aggs)),
-	}
-	for j := range group.states {
-		group.states[j].min = event.NullValue()
-		group.states[j].max = event.NullValue()
-		group.states[j].first = event.NullValue()
-		group.states[j].last = event.NullValue()
-		if a.needsValues[j] {
-			group.states[j].values = make(map[string]bool)
-		}
-	}
-	a.groups[h] = append(chain, group)
-	a.groupCount++
-
-	return group
 }
 
 // groupKeysEqual checks if a group's stored key matches the current row's group-by fields.
@@ -1196,14 +984,6 @@ func objectSumValue(sums map[string]float64) event.Value {
 	return event.ObjectValue(fields)
 }
 
-func objectCountValue(counts map[string]int64) event.Value {
-	fields := make(map[string]event.Value, len(counts))
-	for key, count := range counts {
-		fields[key] = event.IntValue(count)
-	}
-	return event.ObjectValue(fields)
-}
-
 func finalizeCovar(s *aggState) event.Value {
 	if s.count < 2 {
 		return event.NullValue()
@@ -1436,24 +1216,7 @@ func rowTimestamp(row map[string]event.Value) (time.Time, bool) {
 	}
 }
 
-func (a *AggregateIterator) buildResult() *Batch {
-	// Partitioned path: spill files are distributed across hash partitions.
-	// Process one partition at a time to bound merge memory.
-	if a.partitions != nil {
-		return a.buildResultPartitioned()
-	}
-
-	// Legacy path with spill files: use partitioned merge to bound memory.
-	if len(a.spillFiles) > 0 {
-		return a.mergeSpillFilesPartitioned()
-	}
-
-	// No spill: emit all in-memory groups directly.
-	return a.emitAllGroups()
-}
-
 // emitAllGroups finalizes all in-memory groups into a result batch.
-// Used when no spill files exist (everything fits in memory).
 func (a *AggregateIterator) emitAllGroups() *Batch {
 	// Count total groups across all chains.
 	totalGroups := 0
@@ -1486,795 +1249,6 @@ func (a *AggregateIterator) emitAllGroups() *Batch {
 	}
 
 	return result
-}
-
-// buildResultPartitioned processes partitioned spill files one partition
-// at a time, emitting finalized groups into a result batch. Peak merge
-// memory is bounded to totalGroups/numPartitions.
-func (a *AggregateIterator) buildResultPartitioned() *Batch {
-	// Distribute remaining in-memory groups by partition.
-	inMemPartitions := make([]map[uint64][]*aggGroup, a.partitions.numPartitions)
-	for i := range inMemPartitions {
-		inMemPartitions[i] = make(map[uint64][]*aggGroup)
-	}
-	totalInMem := 0
-	for h, chain := range a.groups {
-		partIdx := a.partitions.partitionOf(h)
-		inMemPartitions[partIdx][h] = chain
-		totalInMem += len(chain)
-	}
-
-	// Estimate total groups for result batch pre-allocation.
-	estimatedTotal := totalInMem + int(a.spilledRows)
-	capLimit := 1_000_000
-	if estimatedTotal < capLimit {
-		capLimit = estimatedTotal
-	}
-	result := NewBatch(capLimit)
-
-	// Process each partition.
-	if err := a.partitions.mergePartitioned(a, inMemPartitions, result); err != nil {
-		a.spillErr = fmt.Errorf("aggregate: partitioned merge: %w", err)
-		// Return partial results collected so far.
-	}
-
-	// Handle no-groups + no-group-by case.
-	if result.Len == 0 && len(a.groupBy) == 0 {
-		row := make(map[string]event.Value, len(a.aggs))
-		for _, agg := range a.aggs {
-			row[agg.Alias] = a.finalizeAgg(&aggState{values: make(map[string]bool)}, agg)
-		}
-		result.AddRow(row)
-	}
-
-	return result
-}
-
-// mergeSpillFilesPartitioned performs a hash-partitioned multi-pass merge of
-// legacy (unpartitioned) spill files. Instead of loading ALL unique groups
-// into memory simultaneously, it makes K passes over the spill files
-// (K = mergePartitionsLegacy). On pass k, only rows whose
-// hash(groupKey) % K == k are loaded and merged. After each pass, finalized
-// groups are emitted to the result batch and the in-memory groups map is
-// cleared. This bounds peak merge memory to approximately totalGroups/K
-// instead of totalGroups.
-//
-// The merge within each partition is budget-exempt (uses findOrCreateGroupMerge).
-// Rationale: partitioning already reduces peak memory by K; enforcing the
-// per-query budget would cause infinite spill-merge-spill loops.
-//
-// For queries with very few spill files or groups, the overhead of K passes
-// is minimal because the I/O is sequential and typically OS-cached after the
-// first pass.
-func (a *AggregateIterator) mergeSpillFilesPartitioned() *Batch {
-	K := mergePartitionsLegacy
-	if K < 1 {
-		K = 1
-	}
-
-	// Pre-partition in-memory groups by hash bucket so we can process them
-	// alongside the spill files on the matching pass.
-	inMemPartitions := make([]map[uint64][]*aggGroup, K)
-	for i := range inMemPartitions {
-		inMemPartitions[i] = make(map[uint64][]*aggGroup)
-	}
-	totalInMem := 0
-	for h, chain := range a.groups {
-		partIdx := int(h % uint64(K))
-		inMemPartitions[partIdx][h] = chain
-		totalInMem += len(chain)
-	}
-
-	// Estimate result size for pre-allocation (capped to avoid huge allocs).
-	estimatedTotal := totalInMem + int(a.spilledRows)
-	capLimit := 1_000_000
-	if estimatedTotal < capLimit {
-		capLimit = estimatedTotal
-	}
-	if capLimit < 64 {
-		capLimit = 64
-	}
-	result := NewBatch(capLimit)
-
-	// Process each partition: load only groups matching this partition,
-	// merge with spill files, emit, then clear.
-	for partition := 0; partition < K; partition++ {
-		// Start with a clean groups map for this partition.
-		a.groups = make(map[uint64][]*aggGroup)
-		a.groupCount = 0
-
-		// Read all spill files, only processing rows in this partition.
-		for _, path := range a.spillFiles {
-			sr, err := NewSpillReader(path)
-			if err != nil {
-				slog.Error("aggregate: failed to open legacy spill file for partitioned merge",
-					"path", path, "error", err, "partition", partition)
-
-				continue
-			}
-			for {
-				row, readErr := sr.ReadRow()
-				if errors.Is(readErr, io.EOF) || row == nil {
-					break
-				}
-				if readErr != nil {
-					break
-				}
-
-				h := a.groupKeyHash(row)
-				if int(h%uint64(K)) != partition {
-					continue // skip rows not in this partition
-				}
-
-				group := a.findOrCreateGroupMerge(h, row)
-				a.mergeAggStateFromSpillRow(group, row)
-			}
-			sr.Close()
-		}
-
-		// Merge the in-memory tail after older spill files to preserve row-order
-		// state for first(), last(), list(), and delta-style aggregates.
-		if len(inMemPartitions[partition]) > 0 {
-			a.mergeInMemoryPartition(inMemPartitions[partition])
-		}
-
-		// Emit finalized groups for this partition into the result batch.
-		emitPartitionGroups(a, result)
-	}
-
-	// Clean up spill files after all partitions are processed.
-	for _, path := range a.spillFiles {
-		if a.spillMgr != nil {
-			a.spillMgr.Release(path)
-		} else {
-			removeSpillFile(path)
-		}
-	}
-	a.spillFiles = nil
-
-	// Clear the groups map (last partition's groups are no longer needed).
-	a.groups = make(map[uint64][]*aggGroup)
-	a.groupCount = 0
-
-	// Handle no-groups + no-group-by case.
-	if result.Len == 0 && len(a.groupBy) == 0 {
-		row := make(map[string]event.Value, len(a.aggs))
-		for _, agg := range a.aggs {
-			row[agg.Alias] = a.finalizeAgg(&aggState{values: make(map[string]bool)}, agg)
-		}
-		result.AddRow(row)
-	}
-
-	return result
-}
-
-// mergeAggStateFromSpillRow merges aggregation state from a legacy spill row
-// into an existing aggGroup. Handles all agg types with their suffixed-key
-// serialization format. This is the legacy counterpart of mergeAggStateFromRow
-// (which is used by the partitioned spill path in aggregate_partition.go).
-func (a *AggregateIterator) mergeAggStateFromSpillRow(group *aggGroup, row map[string]event.Value) {
-	for j, agg := range a.aggs {
-		fn := strings.ToLower(agg.Name)
-		switch fn {
-		case aggAvg:
-			// Read (sum, count) tuple from suffixed keys.
-			sumVal := row[agg.Alias+"__sum"]
-			countVal := row[agg.Alias+"__count"]
-			if sumF, ok := vm.ValueToFloat(sumVal); ok {
-				group.states[j].sum += sumF
-			}
-			if countF, ok := vm.ValueToFloat(countVal); ok {
-				group.states[j].count += int64(countF)
-			}
-		case aggAvgW:
-			a.mergeWeightedAvgFromRow(&group.states[j], row, agg.Alias)
-		case aggCorr, aggCovar, aggLinFit:
-			a.mergePairStatsFromRow(&group.states[j], row, agg.Alias)
-		case aggSumObj:
-			a.mergeObjectSumFromRow(&group.states[j], row, agg.Alias)
-		case aggSkew, aggKurt:
-			a.mergeMomentsFromRow(&group.states[j], row, agg.Alias)
-		case aggMAD:
-			a.mergeMADFromRow(&group.states[j], row, agg.Alias)
-		case aggDeltaSum:
-			a.mergeDeltaSumFromRow(&group.states[j], row, agg.Alias)
-		case aggHist:
-			a.mergeFloatValuesFromRow(&group.states[j], row, agg.Alias, "__histvals")
-		case aggSum, aggSumSq, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
-			// Read raw sum from suffixed key.
-			sumVal := row[agg.Alias+"__sum"]
-			a.mergeSpilledValue(&group.states[j], agg.Name, sumVal)
-		case aggRange:
-			a.mergeRangeFromRow(&group.states[j], row, agg.Alias)
-		case aggDC, aggEstDCE:
-			a.mergeDCFromRow(&group.states[j], row, agg.Alias)
-		case aggValues:
-			a.mergeValuesFromRow(&group.states[j], row, agg.Alias)
-		case aggList:
-			a.mergeListFromRow(&group.states[j], row, agg.Alias)
-		case aggMode:
-			a.mergeModeFromRow(&group.states[j], row, agg.Alias)
-		case aggTopK, aggValCnt, aggEntropy, aggMaxN, aggMinN:
-			a.mergeTopKFromRow(&group.states[j], row, agg.Alias)
-		case aggTopKW:
-			a.mergeWeightedTopKFromRow(&group.states[j], row, agg.Alias)
-		case "earliest":
-			a.mergeEarliestValueFromRow(&group.states[j], row, agg.Alias)
-		case "latest":
-			a.mergeLatestValueFromRow(&group.states[j], row, agg.Alias)
-		case aggArgMax:
-			a.mergeArgValueFromRow(&group.states[j], row, agg.Alias, true)
-		case aggArgMin:
-			a.mergeArgValueFromRow(&group.states[j], row, agg.Alias, false)
-		case aggEarT:
-			a.mergeEarliestTimeFromRow(&group.states[j], row, agg.Alias)
-		case aggLatT:
-			a.mergeLatestTimeFromRow(&group.states[j], row, agg.Alias)
-		case aggRate:
-			a.mergeRateFromRow(&group.states[j], row, agg.Alias)
-		case aggStdev, aggStdevP, aggVar, aggVarP:
-			a.mergeStdevFromRow(&group.states[j], row, agg.Alias)
-		case aggPerc, aggPerc25, aggPerc50, aggPerc75, aggPerc90, aggPerc95, aggPerc99, aggPercW:
-			a.mergePercFromRow(&group.states[j], row, agg.Alias)
-		default:
-			val, ok := row[agg.Alias]
-			if !ok {
-				continue
-			}
-			a.mergeSpilledValue(&group.states[j], agg.Name, val)
-		}
-	}
-}
-
-// mergeSpilledValue merges a finalized aggregate value from a spill file into
-// an existing aggregate state. AVG and SUM are handled directly in mergeSpillFiles
-// using their raw (sum, count) tuple format; this method handles all other agg types.
-func (a *AggregateIterator) mergeSpilledValue(s *aggState, fn string, val event.Value) {
-	if val.IsNull() {
-		return
-	}
-	switch strings.ToLower(fn) {
-	case aggCount:
-		if n, ok := vm.ValueToFloat(val); ok {
-			s.count += int64(n)
-		}
-	case aggSum, aggSumSq, aggPerSec, aggPerMin, aggPerHr, aggPerDay:
-		if f, ok := vm.ValueToFloat(val); ok {
-			s.sum += f
-			s.count++ // track that we have at least one contribution
-		}
-	case aggMin:
-		if s.min.IsNull() || vm.CompareValues(val, s.min) < 0 {
-			s.min = val
-		}
-	case aggMax:
-		if s.max.IsNull() || vm.CompareValues(val, s.max) > 0 {
-			s.max = val
-		}
-	case aggRange:
-		if f, ok := vm.ValueToFloat(val); ok {
-			v := event.FloatValue(f)
-			if s.count == 0 || vm.CompareValues(v, s.min) < 0 {
-				s.min = v
-			}
-			if s.count == 0 || vm.CompareValues(v, s.max) > 0 {
-				s.max = v
-			}
-			s.count++
-		}
-	case "first", "earliest", aggAnyVal:
-		if !s.hasFirst {
-			s.first = val
-			s.hasFirst = true
-		}
-	case "last", "latest":
-		s.last = val
-	case aggEarT:
-		if f, ok := vm.ValueToFloat(val); ok {
-			ts := time.Unix(0, int64(f*float64(time.Second)))
-			if s.firstTS.IsZero() || ts.Before(s.firstTS) {
-				s.firstTS = ts
-			}
-		}
-	case aggLatT:
-		if f, ok := vm.ValueToFloat(val); ok {
-			ts := time.Unix(0, int64(f*float64(time.Second)))
-			if s.lastTS.IsZero() || ts.After(s.lastTS) {
-				s.lastTS = ts
-			}
-		}
-	}
-}
-
-func (a *AggregateIterator) mergeDeltaSumFromRow(s *aggState, row map[string]event.Value, alias string) {
-	countF, ok := vm.ValueToFloat(row[alias+"__count"])
-	if !ok || countF == 0 {
-		return
-	}
-	firstVal := row[alias+"__first_value"]
-	lastVal := row[alias+"__last_value"]
-	firstF, firstOK := vm.ValueToFloat(firstVal)
-	lastF, lastOK := vm.ValueToFloat(lastVal)
-	if !firstOK || !lastOK {
-		return
-	}
-	segmentSum, _ := vm.ValueToFloat(row[alias+"__sum"])
-	segmentCount := int64(countF)
-	if !s.hasFirst {
-		s.sum = segmentSum
-		s.first = event.FloatValue(firstF)
-		s.last = event.FloatValue(lastF)
-		s.count = segmentCount
-		s.hasFirst = true
-
-		return
-	}
-	if currentLast, ok := vm.ValueToFloat(s.last); ok && firstF > currentLast {
-		s.sum += firstF - currentLast
-	}
-	s.sum += segmentSum
-	s.last = event.FloatValue(lastF)
-	s.count += segmentCount
-}
-
-func (a *AggregateIterator) mergeFloatValuesFromRow(s *aggState, row map[string]event.Value, alias, suffix string) {
-	if countF, ok := vm.ValueToFloat(row[alias+"__count"]); ok {
-		s.count += int64(countF)
-	}
-	valuesVal, ok := row[alias+suffix]
-	if !ok || valuesVal.IsNull() {
-		return
-	}
-	valuesStr, _ := valuesVal.TryAsString()
-	for _, part := range strings.Split(valuesStr, "|") {
-		if part == "" || len(s.all) >= maxValuesPerGroup {
-			continue
-		}
-		if f, err := strconv.ParseFloat(part, 64); err == nil {
-			s.all = append(s.all, f)
-		}
-	}
-}
-
-// mergeDCFromRow merges distinct-count state from a spill row's suffixed columns.
-func (a *AggregateIterator) mergeDCFromRow(s *aggState, row map[string]event.Value, alias string) {
-	// Try HLL binary first.
-	if hllVal, ok := row[alias+"__hll"]; ok && !hllVal.IsNull() {
-		hllStr, _ := hllVal.TryAsString()
-		data, err := decodeBase64(hllStr)
-		if err == nil {
-			other := UnmarshalHyperLogLog(data)
-			if other != nil {
-				if s.hll == nil {
-					// Promote exact set to HLL before merging.
-					s.hll = NewHyperLogLog()
-					for k := range s.values {
-						s.hll.Add(k)
-					}
-					s.values = nil
-				}
-				s.hll.Merge(other)
-
-				return
-			}
-		}
-	}
-	// Try exact set.
-	if dcvalsVal, ok := row[alias+"__dcvals"]; ok && !dcvalsVal.IsNull() {
-		dcStr, _ := dcvalsVal.TryAsString()
-		parts := strings.Split(dcStr, "|")
-		for _, p := range parts {
-			if p == "" {
-				continue
-			}
-			if s.hll != nil {
-				s.hll.Add(p)
-			} else {
-				if s.values == nil {
-					s.values = make(map[string]bool)
-				}
-				s.values[p] = true
-				// Promote to HLL if exact set gets too large.
-				if len(s.values) > hllPromotionThreshold {
-					s.hll = NewHyperLogLog()
-					for k := range s.values {
-						s.hll.Add(k)
-					}
-					s.values = nil
-				}
-			}
-		}
-	}
-}
-
-func (a *AggregateIterator) mergeRangeFromRow(s *aggState, row map[string]event.Value, alias string) {
-	minVal := row[alias+"__min"]
-	maxVal := row[alias+"__max"]
-	countVal := row[alias+"__count"]
-	countF, ok := vm.ValueToFloat(countVal)
-	if !ok || countF == 0 {
-		return
-	}
-	if f, ok := vm.ValueToFloat(minVal); ok {
-		v := event.FloatValue(f)
-		if s.count == 0 || vm.CompareValues(v, s.min) < 0 {
-			s.min = v
-		}
-	}
-	if f, ok := vm.ValueToFloat(maxVal); ok {
-		v := event.FloatValue(f)
-		if s.count == 0 || vm.CompareValues(v, s.max) > 0 {
-			s.max = v
-		}
-	}
-	s.count += int64(countF)
-}
-
-// mergeValuesFromRow merges values() state from a spill row's suffixed columns.
-func (a *AggregateIterator) mergeValuesFromRow(s *aggState, row map[string]event.Value, alias string) {
-	valsVal, ok := row[alias+"__vals"]
-	if !ok || valsVal.IsNull() {
-		return
-	}
-	valsStr, _ := valsVal.TryAsString()
-	parts := strings.Split(valsStr, "|||")
-	for _, p := range parts {
-		if p == "" {
-			continue
-		}
-		if len(s.all) >= maxValuesPerGroup {
-			break
-		}
-		if s.values == nil {
-			s.values = make(map[string]bool)
-		}
-		if !s.values[p] {
-			s.values[p] = true
-			s.all = append(s.all, p)
-		}
-	}
-}
-
-func (a *AggregateIterator) mergeListFromRow(s *aggState, row map[string]event.Value, alias string) {
-	valsVal, ok := row[alias+"__listvals"]
-	if !ok || valsVal.IsNull() {
-		return
-	}
-	valsStr, _ := valsVal.TryAsString()
-	parts := strings.Split(valsStr, "|||")
-	for _, p := range parts {
-		if len(s.all) >= maxValuesPerGroup {
-			break
-		}
-		s.all = append(s.all, p)
-	}
-}
-
-func (a *AggregateIterator) mergeModeFromRow(s *aggState, row map[string]event.Value, alias string) {
-	countsVal, ok := row[alias+"__modecounts"]
-	if !ok || countsVal.IsNull() {
-		return
-	}
-	countsStr, _ := countsVal.TryAsString()
-	counts, err := decodeModeCounts(countsStr)
-	if err != nil {
-		return
-	}
-	if s.mode == nil {
-		s.mode = make(map[string]int64, len(counts))
-	}
-	for value, count := range counts {
-		s.mode[value] += count
-	}
-}
-
-func (a *AggregateIterator) mergeWeightedAvgFromRow(s *aggState, row map[string]event.Value, alias string) {
-	if sumF, ok := vm.ValueToFloat(row[alias+"__sum"]); ok {
-		s.sum += sumF
-	}
-	if weightF, ok := vm.ValueToFloat(row[alias+"__weight_sum"]); ok {
-		s.weightSum += weightF
-	}
-}
-
-func (a *AggregateIterator) mergePairStatsFromRow(s *aggState, row map[string]event.Value, alias string) {
-	if countF, ok := vm.ValueToFloat(row[alias+"__count"]); ok {
-		s.count += int64(countF)
-	}
-	if sumX, ok := vm.ValueToFloat(row[alias+"__sum_x"]); ok {
-		s.sum += sumX
-	}
-	if sumY, ok := vm.ValueToFloat(row[alias+"__sum_y"]); ok {
-		s.weightSum += sumY
-	}
-	if sumX2, ok := vm.ValueToFloat(row[alias+"__sum_x2"]); ok {
-		s.sumSq += sumX2
-	}
-	if sumY2, ok := vm.ValueToFloat(row[alias+"__sum_y2"]); ok {
-		s.sumY2 += sumY2
-	}
-	if sumXY, ok := vm.ValueToFloat(row[alias+"__sum_xy"]); ok {
-		s.sumXY += sumXY
-	}
-}
-
-func (a *AggregateIterator) mergeObjectSumFromRow(s *aggState, row map[string]event.Value, alias string) {
-	val, ok := row[alias+"__object_sum"]
-	if !ok || val.IsNull() {
-		return
-	}
-	sums, ok := val.TryAsObject()
-	if !ok {
-		return
-	}
-	counts := map[string]event.Value{}
-	if countVal, ok := row[alias+"__object_count"]; ok && !countVal.IsNull() {
-		counts, _ = countVal.TryAsObject()
-	}
-	if s.objectSum == nil {
-		s.objectSum = make(map[string]float64, len(sums))
-	}
-	if s.objectN == nil {
-		s.objectN = make(map[string]int64, len(sums))
-	}
-	for key, sumVal := range sums {
-		sum, ok := vm.ValueToFloat(sumVal)
-		if !ok {
-			continue
-		}
-		count := int64(1)
-		if countVal, ok := counts[key]; ok {
-			if countF, ok := vm.ValueToFloat(countVal); ok {
-				count = int64(countF)
-			}
-		}
-		s.objectSum[key] += sum
-		s.objectN[key] += count
-	}
-}
-
-func (a *AggregateIterator) mergeMomentsFromRow(s *aggState, row map[string]event.Value, alias string) {
-	if countF, ok := vm.ValueToFloat(row[alias+"__count"]); ok {
-		s.count += int64(countF)
-	}
-	if sumF, ok := vm.ValueToFloat(row[alias+"__sum"]); ok {
-		s.sum += sumF
-	}
-	if sum2F, ok := vm.ValueToFloat(row[alias+"__sum2"]); ok {
-		s.sumSq += sum2F
-	}
-	if sum3F, ok := vm.ValueToFloat(row[alias+"__sum3"]); ok {
-		s.sumCube += sum3F
-	}
-	if sum4F, ok := vm.ValueToFloat(row[alias+"__sum4"]); ok {
-		s.sumFourth += sum4F
-	}
-}
-
-func topKStateValue(s *aggState) event.Value {
-	return finalizeTopK(s, 0)
-}
-
-func weightedTopKStateValue(s *aggState) event.Value {
-	return finalizeWeightedTopK(s, 0)
-}
-
-func (a *AggregateIterator) mergeTopKFromRow(s *aggState, row map[string]event.Value, alias string) {
-	topVal, ok := row[alias+"__topk"]
-	if !ok || topVal.IsNull() {
-		return
-	}
-	entries, ok := topVal.TryAsArray()
-	if !ok {
-		return
-	}
-	for _, entry := range entries {
-		obj, ok := entry.TryAsObject()
-		if !ok {
-			continue
-		}
-		val := obj["value"]
-		count, ok := obj["count"].TryAsInt()
-		if !ok {
-			continue
-		}
-		updateTopKState(s, val, count)
-	}
-}
-
-func (a *AggregateIterator) mergeWeightedTopKFromRow(s *aggState, row map[string]event.Value, alias string) {
-	topVal, ok := row[alias+"__topk_weighted"]
-	if !ok || topVal.IsNull() {
-		return
-	}
-	entries, ok := topVal.TryAsArray()
-	if !ok {
-		return
-	}
-	for _, entry := range entries {
-		obj, ok := entry.TryAsObject()
-		if !ok {
-			continue
-		}
-		updateWeightedTopKState(s, obj["value"], obj["weight"])
-	}
-}
-
-func (a *AggregateIterator) mergeEarliestValueFromRow(s *aggState, row map[string]event.Value, alias string) {
-	val := row[alias+"__first_value"]
-	if val.IsNull() {
-		return
-	}
-	if ts, ok := timeFromSecondsValue(row[alias+"__first_time"]); ok {
-		if !s.hasFirst || s.firstTS.IsZero() || ts.Before(s.firstTS) {
-			s.first = val
-			s.firstTS = ts
-			s.hasFirst = true
-		}
-		return
-	}
-	if !s.hasFirst {
-		s.first = val
-		s.hasFirst = true
-	}
-}
-
-func (a *AggregateIterator) mergeLatestValueFromRow(s *aggState, row map[string]event.Value, alias string) {
-	val := row[alias+"__last_value"]
-	if val.IsNull() {
-		return
-	}
-	if ts, ok := timeFromSecondsValue(row[alias+"__last_time"]); ok {
-		if !s.hasFirst || s.lastTS.IsZero() || ts.After(s.lastTS) {
-			s.last = val
-			s.lastTS = ts
-			s.hasFirst = true
-		}
-		return
-	}
-	s.last = val
-	s.hasFirst = true
-}
-
-func (a *AggregateIterator) mergeArgValueFromRow(s *aggState, row map[string]event.Value, alias string, maxOrder bool) {
-	val := row[alias+"__value"]
-	orderVal := row[alias+"__order"]
-	updateArgState(s, val, orderVal, maxOrder)
-}
-
-func (a *AggregateIterator) mergeEarliestTimeFromRow(s *aggState, row map[string]event.Value, alias string) {
-	if ts, ok := timeFromSecondsValue(row[alias+"__earliest_time"]); ok && (s.firstTS.IsZero() || ts.Before(s.firstTS)) {
-		s.firstTS = ts
-	}
-}
-
-func (a *AggregateIterator) mergeLatestTimeFromRow(s *aggState, row map[string]event.Value, alias string) {
-	if ts, ok := timeFromSecondsValue(row[alias+"__latest_time"]); ok && (s.lastTS.IsZero() || ts.After(s.lastTS)) {
-		s.lastTS = ts
-	}
-}
-
-func (a *AggregateIterator) mergeRateFromRow(s *aggState, row map[string]event.Value, alias string) {
-	if ts, ok := timeFromSecondsValue(row[alias+"__first_time"]); ok && (s.firstTS.IsZero() || ts.Before(s.firstTS)) {
-		s.firstTS = ts
-		s.first = row[alias+"__first_value"]
-	}
-	if ts, ok := timeFromSecondsValue(row[alias+"__last_time"]); ok && (s.lastTS.IsZero() || ts.After(s.lastTS)) {
-		s.lastTS = ts
-		s.last = row[alias+"__last_value"]
-	}
-}
-
-func timeFromSecondsValue(v event.Value) (time.Time, bool) {
-	if v.IsNull() {
-		return time.Time{}, false
-	}
-	f, ok := vm.ValueToFloat(v)
-	if !ok {
-		return time.Time{}, false
-	}
-	sec, frac := math.Modf(f)
-	return time.Unix(int64(sec), int64(frac*1e9)), true
-}
-
-// mergeStdevFromRow merges stdev state from a spill row's suffixed columns.
-// Uses the parallel variance formula: combined variance from (sum, count, sumSq) tuples.
-func (a *AggregateIterator) mergeStdevFromRow(s *aggState, row map[string]event.Value, alias string) {
-	sumVal := row[alias+"__sum"]
-	countVal := row[alias+"__count"]
-	sumsqVal := row[alias+"__sumsq"]
-
-	newSum, sumOk := vm.ValueToFloat(sumVal)
-	newCountF, countOk := vm.ValueToFloat(countVal)
-	newSumSq, sqOk := vm.ValueToFloat(sumsqVal)
-	if !sumOk || !countOk || !sqOk {
-		return
-	}
-	newCount := int64(newCountF)
-	if newCount == 0 {
-		return
-	}
-
-	if s.count == 0 {
-		// First batch — initialize directly.
-		s.sum = newSum
-		s.count = newCount
-		s.sumSq = newSumSq
-		s.all = nil // mark as merged state
-	} else {
-		// If we still have raw values from the in-memory batch, convert to M2 first.
-		if s.sumSq == 0 && len(s.all) > 0 {
-			mean := s.sum / float64(s.count)
-			for _, v := range s.all {
-				f := v.(float64)
-				diff := f - mean
-				s.sumSq += diff * diff
-			}
-			s.all = nil // transition to merged state
-		}
-		// Parallel variance merge (Chan et al.):
-		// M2_combined = M2_a + M2_b + delta^2 * (n_a * n_b / (n_a + n_b))
-		nA := float64(s.count)
-		nB := float64(newCount)
-		delta := (newSum/nB - s.sum/nA)
-		s.sumSq = s.sumSq + newSumSq + delta*delta*(nA*nB/(nA+nB))
-		s.sum += newSum
-		s.count += newCount
-	}
-}
-
-// mergePercFromRow merges percentile state from a spill row's suffixed columns.
-// After merge, s.all is cleared — the t-digest becomes the single source of truth.
-func (a *AggregateIterator) mergePercFromRow(s *aggState, row map[string]event.Value, alias string) {
-	merged := false
-	// Try t-digest binary first.
-	if tdVal, ok := row[alias+"__tdigest"]; ok && !tdVal.IsNull() {
-		tdStr, _ := tdVal.TryAsString()
-		data, err := decodeBase64(tdStr)
-		if err == nil {
-			other := UnmarshalTDigest(data)
-			if other != nil {
-				if s.tdigest == nil {
-					s.tdigest = NewTDigest(defaultTDigestCompression)
-				}
-				s.tdigest.Merge(other)
-				merged = true
-			}
-		}
-	}
-	// Try raw float values.
-	if !merged {
-		if pvVal, ok := row[alias+"__percvals"]; ok && !pvVal.IsNull() {
-			pvStr, _ := pvVal.TryAsString()
-			floats := parseFloatList(pvStr, "|")
-			if s.tdigest == nil {
-				s.tdigest = NewTDigest(defaultTDigestCompression)
-			}
-			for _, f := range floats {
-				s.tdigest.Add(f)
-			}
-			merged = true
-		}
-	}
-	// Clear raw values after merge — tdigest is the source of truth.
-	// In-memory raw values were already added to tdigest during updateState.
-	if merged {
-		s.all = nil
-	}
-}
-
-func (a *AggregateIterator) mergeMADFromRow(s *aggState, row map[string]event.Value, alias string) {
-	if countF, ok := vm.ValueToFloat(row[alias+"__count"]); ok {
-		s.count += int64(countF)
-	}
-	if valuesVal, ok := row[alias+"__madvals"]; ok && !valuesVal.IsNull() {
-		valuesStr, _ := valuesVal.TryAsString()
-		for _, f := range parseFloatList(valuesStr, "|") {
-			if len(s.all) < maxValuesPerGroup {
-				s.all = append(s.all, f)
-			}
-		}
-	}
 }
 
 func (a *AggregateIterator) finalizeState(s *aggState, fn string) event.Value {
@@ -2500,26 +1474,6 @@ func medianSortedFloat64(values []float64) float64 {
 	return (values[mid-1] + values[mid]) / 2
 }
 
-// encodeBase64 encodes binary data to a base64 string for safe spill storage.
-func encodeBase64(data []byte) string {
-	return base64.StdEncoding.EncodeToString(data)
-}
-
-// decodeBase64 decodes a base64 string back to binary data.
-func decodeBase64(s string) ([]byte, error) {
-	return base64.StdEncoding.DecodeString(s)
-}
-
-// joinMapKeys concatenates the keys of a map[string]bool with a separator.
-func joinMapKeys(m map[string]bool, sep string) string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-
-	return strings.Join(keys, sep)
-}
-
 // joinAllStrings joins interface{} values (expected strings) with a separator.
 // Values are emitted as strings; non-string entries fall back to fmt.Sprint to
 // preserve historical behavior while avoiding the format-parsing cost for the
@@ -2553,49 +1507,4 @@ func modeFromCounts(counts map[string]int64) event.Value {
 	}
 
 	return event.StringValue(best)
-}
-
-func encodeModeCounts(counts map[string]int64) string {
-	data, err := json.Marshal(counts)
-	if err != nil {
-		return "{}"
-	}
-
-	return string(data)
-}
-
-func decodeModeCounts(s string) (map[string]int64, error) {
-	counts := make(map[string]int64)
-	if err := json.Unmarshal([]byte(s), &counts); err != nil {
-		return nil, err
-	}
-
-	return counts, nil
-}
-
-// joinAllFloats joins interface{} values (expected float64) with a separator.
-func joinAllFloats(all []interface{}, sep string) string {
-	strs := make([]string, len(all))
-	for i, v := range all {
-		strs[i] = strconv.FormatFloat(v.(float64), 'g', -1, 64)
-	}
-
-	return strings.Join(strs, sep)
-}
-
-// parseFloatList splits a separator-delimited string into float64 values.
-func parseFloatList(s, sep string) []float64 {
-	parts := strings.Split(s, sep)
-	result := make([]float64, 0, len(parts))
-	for _, p := range parts {
-		if p == "" {
-			continue
-		}
-		f, err := strconv.ParseFloat(p, 64)
-		if err == nil {
-			result = append(result, f)
-		}
-	}
-
-	return result
 }

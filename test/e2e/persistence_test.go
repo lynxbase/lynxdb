@@ -8,16 +8,14 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
-// TestE2E_Persistence_DataSurvivesRestart ingests data to disk, restarts the
-// server, and verifies that all queries return identical results.
-//
-// Regression test for persistence bug (fixed). Verifies that batcher flush
-// and atomic part writes preserve all events across restart for multiple indexes.
+// TestE2E_Persistence_DataSurvivesRestart ingests data into two indexes on
+// disk, restarts the server, and verifies that all queries return identical
+// results.
 func TestE2E_Persistence_DataSurvivesRestart(t *testing.T) {
 	h := NewHarness(t, WithDisk())
 	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
 	h.IngestFile("idx_openstack", "testdata/logs/OpenStack_2k.log")
-	h.FlushBatcher()
+	h.Sync()
 
 	// Collect pre-restart reference results.
 	type queryCase struct {
@@ -34,7 +32,6 @@ func TestE2E_Persistence_DataSurvivesRestart(t *testing.T) {
 		{"SSH_TopAttackers", `source=idx_ssh | rex field=_raw "Failed password for (?:invalid user )?(?<user>\w+) from (?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(user) | stats count() as count by user | sort -count, user | head 3`},
 		{"SSH_UniqueIPs", `source=idx_ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | dedup ip | stats count() as count`},
 		{"OpenStack_APILatency", `source=idx_openstack | rex field=_raw "(?<method>GET|POST|DELETE) (?<url_path>/[^\s]+) HTTP" | rex field=_raw "status: (?<status>\d+) len: (?<resp_len>\d+) time: (?<resp_time>[0-9.]+)" | where isnotnull(method) | eval resp_ms = round(cast(resp_time as double) * 1000, 2) | stats count() as requests, avg(resp_ms) as avg_latency by method | sort method`},
-		// Term-index lookups after the flush exercise the persisted tokenization.
 		{"Search_FailedPassword", `search source=idx_ssh "Failed password" | stats count() as count`},
 		{"Search_FailedPrefixRoot", `search source=idx_ssh Failed* root | stats count() as count`},
 		{"Wildcard_InvalidUserFrom", `source=idx_ssh | where regexp_match(_raw, "Invalid user.*from") | stats count() as count`},
@@ -45,6 +42,9 @@ func TestE2E_Persistence_DataSurvivesRestart(t *testing.T) {
 	preResults := make(map[string]*client.QueryResult, len(queries))
 	for _, q := range queries {
 		preResults[q.name] = h.MustQuery(q.query)
+		if EventCount(preResults[q.name]) == 0 {
+			t.Fatalf("[%s] expected rows before the restart, got none", q.name)
+		}
 	}
 
 	// Restart.

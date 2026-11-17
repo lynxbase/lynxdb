@@ -1,22 +1,22 @@
 ---
 title: Ingest Settings
-description: Request limits, parse mode, durability, deduplication, and the Elasticsearch, Splunk HEC and OTLP receivers in the ingest section of the LynxDB config file.
+description: Request limits, parse mode, and the Elasticsearch, Splunk HEC and OTLP receivers in the ingest section of the LynxDB config file.
 ---
 
 # Ingest Settings
 
-The `ingest` section controls the HTTP ingest endpoints, the shipper-compatible receivers, and how accepted events reach the [storage write path](./storage.md#write-path).
+The `ingest` section controls the HTTP ingest endpoints and the shipper-compatible receivers. Every endpoint appends events to the store of the index it names; [Storage Settings](./storage.md#writing-events) describe how they are written.
 
 ## Endpoints
 
-| Endpoint | Format |
-|----------|--------|
-| `POST /api/v1/ingest` | JSON array of events |
-| `POST /api/v1/ingest/raw` | Newline-delimited raw lines or NDJSON |
-| `POST /api/v1/ingest/hec`, `POST /services/collector`, `/services/collector/event`, `/services/collector/raw` | Splunk HEC |
-| `POST /api/v1/es/_bulk`, `POST /api/v1/ingest/bulk`, `POST /_bulk`, `POST /{index}/_bulk` | Elasticsearch bulk API |
-| `POST /api/v1/otlp/v1/logs` on the API port, `POST /v1/logs` on `ingest.otlp.http_listen` | OTLP/HTTP logs |
-| `ingest.otlp.grpc_listen` | OTLP/gRPC logs |
+| Endpoint | Format | Stored as |
+|----------|--------|-----------|
+| `POST /api/v1/ingest` | NDJSON, one event per line | Each line unchanged |
+| `POST /api/v1/ingest/raw` | Log lines | JSON object lines unchanged; any other line as an event with `_raw`, its timestamp and its `key=value` fields |
+| `POST /api/v1/ingest/hec`, `POST /services/collector`, `/services/collector/event`, `/services/collector/raw` | Splunk HEC | One flat JSON object per event |
+| `POST /api/v1/es/_bulk`, `POST /api/v1/ingest/bulk`, `POST /_bulk`, `POST /{index}/_bulk` | Elasticsearch bulk API | Each document line unchanged |
+| `POST /api/v1/otlp/v1/logs` on the API port, `POST /v1/logs` on `ingest.otlp.http_listen` | OTLP/HTTP logs | One flat JSON object per log record |
+| `ingest.otlp.grpc_listen` | OTLP/gRPC logs | One flat JSON object per log record |
 
 See [Ingest API](../api/ingest.md) and [Compatibility API](../api/compatibility.md) for payload formats.
 
@@ -24,43 +24,27 @@ See [Ingest API](../api/ingest.md) and [Compatibility API](../api/compatibility.
 
 | Key | Flag | Env var | Default | Description |
 |-----|------|---------|---------|-------------|
-| `ingest.max_body_size` | none | `LYNXDB_INGEST_MAX_BODY_SIZE` | `100mb` | Maximum request body on the API port. Minimum `1kb`. |
-| `ingest.limits.max_compressed_body_bytes` | `--ingest-max-compressed-body-bytes` | `LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES` | `32mb` | Maximum body bytes on the wire, compressed or not. Requests over it get `413`. |
-| `ingest.limits.max_decompressed_body_bytes` | `--ingest-max-decompressed-body-bytes` | `LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES` | `256mb` | Maximum body after `gzip`, `zstd` or `snappy` decoding. Must be at least the compressed limit. |
-| `ingest.max_line_bytes` | none | `LYNXDB_INGEST_MAX_LINE_BYTES` | `1048576` | Longest single line or NDJSON record. Minimum `1024`. |
-| `ingest.max_batch_size` | none | `LYNXDB_INGEST_MAX_BATCH_SIZE` | `1000` | Events per internal batch while a streaming request is read. It does not cap the events in a request. |
+| `ingest.max_body_size` | none | `LYNXDB_INGEST_MAX_BODY_SIZE` | `100mb` | Maximum request body on the API port, as sent. For `POST /api/v1/ingest` and `/api/v1/ingest/raw` it is the only limit, as sent and after decoding. Minimum `1kb`. |
+| `ingest.limits.max_compressed_body_bytes` | `--ingest-max-compressed-body-bytes` | `LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES` | `32mb` | Maximum body bytes on the wire, compressed or not, on the Elasticsearch, Splunk HEC and OTLP routes. Requests over it get `413`. |
+| `ingest.limits.max_decompressed_body_bytes` | `--ingest-max-decompressed-body-bytes` | `LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES` | `256mb` | Maximum body after `gzip`, `zstd` or `snappy` decoding on the same routes. Must be at least the compressed limit. |
+| `ingest.max_line_bytes` | none | `LYNXDB_INGEST_MAX_LINE_BYTES` | `1048576` | Longest single line of a Splunk HEC or Elasticsearch bulk body. Minimum `1024`. |
+| `ingest.max_batch_size` | none | `LYNXDB_INGEST_MAX_BATCH_SIZE` | `1000` | Events per internal batch while a Splunk HEC request is read. It does not cap the events in a request. |
 
-Both body limits apply to every request on the API port, so with the defaults the effective wire limit is 32 MB. Raise `max_compressed_body_bytes` together with `max_body_size` to accept larger uncompressed bodies.
+`POST /api/v1/ingest` and `/api/v1/ingest/raw` are bounded by `ingest.max_body_size` alone, compressed or not. The Elasticsearch, Splunk HEC and OTLP routes are bounded by the two `ingest.limits` settings, and by `max_body_size` as sent, so with the defaults their wire limit is 32 MB. A `413` names the setting that applies, for example `compressed body exceeds limit 33554432 set by ingest.limits.max_compressed_body_bytes`. The body limits need a restart; `max_line_bytes` and `max_batch_size` take effect on reload.
 
 ## Parse Mode
 
 | Key | Env var | Default | Description |
 |-----|---------|---------|-------------|
-| `ingest.mode` | `LYNXDB_INGEST_MODE` | empty (`full`) | `full` extracts JSON and key=value fields into columns at ingest. `lightweight` extracts only `_time`, `host`, `source`, `sourcetype`, `level` and `index`, and leaves the rest in `_raw` for query-time extraction with `rex`, `parse` or `spath`. |
-
-## Durability
-
-| Key | Env var | Default | Description |
-|-----|---------|---------|-------------|
-| `ingest.fsync` | none | `true` | Fsync each part file before the rename that publishes it. `false` leaves durability to the OS page cache: faster flushes, but a power loss can drop recently flushed parts. |
-
-Events accepted but not yet flushed are held in memory either way. See [Storage Settings](./storage.md#write-path) for when flushes happen.
-
-## Deduplication
-
-| Key | Env var | Default | Description |
-|-----|---------|---------|-------------|
-| `ingest.dedup_enabled` | none | `false` | Drop events whose `_raw` hash (xxhash64) was seen in the same batch or among recent events. Useful for at-least-once shippers that retry. |
-| `ingest.dedup_capacity` | none | `100000` | Number of recent hashes remembered (about 16 bytes each). Must be at least 1 when dedup is on. |
+| `ingest.mode` | `LYNXDB_INGEST_MODE` | empty (`full`) | How Splunk HEC, OTLP and syslog events are parsed before they are written. `full` extracts JSON and `key=value` fields from the event text. `lightweight` extracts only `_time`, `host`, `source`, `sourcetype`, `level` and `index`, and leaves the rest in `_raw` for query-time extraction with `rex`, `parse` or `spath`. |
 
 ## Elasticsearch Compatibility
 
 | Key | Flag | Env var | Default | Description |
 |-----|------|---------|---------|-------------|
-| `ingest.es_compat.enabled` | `--ingest-es-enabled` | `LYNXDB_INGEST_ES_COMPAT_ENABLED` | `true` | Serve the Elasticsearch bulk API and the handshake endpoints that Filebeat, Fluent Bit and Vector call at startup. |
-| `ingest.es_compat.advertised_version` | `--ingest-es-version` | `LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION` | `8.15.0` | Version reported to shippers, in `X.Y.Z` form. |
-| `ingest.es_compat.cluster_name` | none | `LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME` | `lynxdb` | Cluster name in the handshake. Must not be empty when compatibility is on. |
-| `ingest.es_compat.strip_logstash_date_suffix` | none | `LYNXDB_INGEST_ES_COMPAT_STRIP_LOGSTASH_DATE_SUFFIX` | `true` | Map date-suffixed index names such as `logstash-2026.01.15` (Fluent Bit `Logstash_Format`) to one source. |
+| `ingest.es_compat.enabled` | `--ingest-es-enabled` | `LYNXDB_INGEST_ES_COMPAT_ENABLED` | `true` | Accept Elasticsearch bulk requests. When off, they get `503` with `Retry-After: 5`; the handshake endpoints that Filebeat, Fluent Bit and Vector call at startup keep answering. Reloadable. |
+| `ingest.es_compat.advertised_version` | `--ingest-es-version` | `LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION` | `8.15.0` | Version reported to shippers, in `X.Y.Z` form. Needs a restart. |
+| `ingest.es_compat.cluster_name` | none | `LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME` | `lynxdb` | Cluster name in the handshake. Must not be empty when compatibility is on. Needs a restart. |
 
 ## Splunk HEC
 
@@ -81,21 +65,6 @@ Events accepted but not yet flushed are held in memory either way. See [Storage 
 
 The OTLP listeners serve plain HTTP and gRPC without API key checks, and the HTTP listener binds all interfaces by default. On a shared network, restrict port 4318 with a firewall, bind it to a private address, or set `http_listen: ""` and send OTLP to `/api/v1/otlp/v1/logs` on the API port, which uses the server's TLS and auth.
 
-## Staging Buffer
-
-Shipper protocols (Elasticsearch bulk, Splunk HEC, OTLP) often send many small batches. The staging buffer coalesces them before they reach the batcher.
-
-| Key | Flag | Env var | Default | Description |
-|-----|------|---------|---------|-------------|
-| `ingest.staging.enabled` | `--ingest-staging-enabled` | `LYNXDB_INGEST_STAGING_ENABLED` | `true` | Use the staging buffer. |
-| `ingest.staging.max_bytes` | `--ingest-staging-max-bytes` | `LYNXDB_INGEST_STAGING_MAX_BYTES` | `64mb` | Pending bytes before the buffer flushes; when it cannot accept more, requests get `503` with `Retry-After: 5`. |
-| `ingest.staging.max_age` | `--ingest-staging-max-age` | `LYNXDB_INGEST_STAGING_MAX_AGE` | `5s` | Flush the oldest pending batch after this age. |
-| `ingest.staging.max_inflight_events` | none | `LYNXDB_INGEST_STAGING_MAX_INFLIGHT_EVENTS` | `1000000` | Pending events allowed in the buffer. |
-| `ingest.staging.flush_retries` | none | `LYNXDB_INGEST_STAGING_FLUSH_RETRIES` | `3` | Retries of a failed flush before the staged events are dropped. |
-| `ingest.staging.flush_backoff_max` | none | `LYNXDB_INGEST_STAGING_FLUSH_BACKOFF_MAX` | `5s` | Maximum backoff between flush retries. |
-
-When compaction falls behind and an index has too many parts, ingest requests get `503` with `Retry-After: 1` until compaction catches up.
-
 ## Complete Example
 
 ```yaml
@@ -103,9 +72,6 @@ ingest:
   max_body_size: "100mb"
   max_line_bytes: 1048576
   mode: "full"
-  fsync: true
-  dedup_enabled: true
-  dedup_capacity: 200000
   limits:
     max_compressed_body_bytes: "64mb"
     max_decompressed_body_bytes: "512mb"
@@ -115,10 +81,6 @@ ingest:
   otlp:
     http_listen: "127.0.0.1:4318"
     grpc_listen: ""
-  staging:
-    enabled: true
-    max_bytes: "64mb"
-    max_age: "5s"
 ```
 
 ## Related

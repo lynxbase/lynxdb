@@ -6,7 +6,8 @@ description: Worked PPL queries for common log analysis tasks.
 
 # PPL examples
 
-The queries run over access logs in the index `main` with lines such as:
+The queries run over `testdata/logs/access.log` of the LynxDB repository,
+1000 access log lines in the index `main` such as:
 
 ```
 2025-01-15T08:00:00.105Z host=web-03 level=ERROR method=GET path=/api/v1/users status=502 user=grace response_time=786 bytes=32228 msg="GET /api/v1/users completed"
@@ -90,7 +91,7 @@ source=main
 source=main
 | rex field=msg "(?<verb>[A-Z]+) (?<route>\S+)"
 | stats count() as n by verb, route
-| sort - n
+| sort - n, route
 | head 5
 ```
 

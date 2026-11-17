@@ -20,9 +20,10 @@ func TestServer_ForcedCrash_FlushedPartSurvivesRestart(t *testing.T) {
 	ingestFile(t, srv, testdataLog("backend_server.log"))
 	assertServerCount(t, srv, 26)
 
-	partPath := waitForFinalPart(t, dataDir, 5*time.Second)
-	partDir := filepath.Dir(partPath)
-	staleTmpPath := filepath.Join(partDir, "tmp_forced_crash_cleanup.lsg")
+	indexDir := filepath.Join(dataDir, "indexes", "main")
+	partPath := waitForFinalPart(t, indexDir, 5*time.Second)
+	// A part file that was being written when the process died ends in .tmp.
+	staleTmpPath := filepath.Join(indexDir, "forced_crash_cleanup.part.tmp")
 	if err := os.WriteFile(staleTmpPath, []byte("stale"), 0o644); err != nil {
 		t.Fatalf("write stale tmp file: %v", err)
 	}
@@ -56,18 +57,17 @@ func assertServerCount(t *testing.T, srv *Server, want int) {
 	}
 }
 
-func waitForFinalPart(t *testing.T, dataDir string, timeout time.Duration) string {
+func waitForFinalPart(t *testing.T, indexDir string, timeout time.Duration) string {
 	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	hotDir := filepath.Join(dataDir, "segments", "hot")
 	backoff := 10 * time.Millisecond
 	const maxBackoff = 500 * time.Millisecond
 
 	for {
-		partPath, err := findFinalPart(hotDir)
+		partPath, err := findFinalPart(indexDir)
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			t.Fatalf("scan for final part: %v", err)
 		}
@@ -75,7 +75,7 @@ func waitForFinalPart(t *testing.T, dataDir string, timeout time.Duration) strin
 			return partPath
 		}
 		if ctx.Err() != nil {
-			t.Fatalf("final part not visible within %s under %s", timeout, hotDir)
+			t.Fatalf("final part not visible within %s under %s", timeout, indexDir)
 		}
 
 		timer := time.NewTimer(backoff)
@@ -83,7 +83,7 @@ func waitForFinalPart(t *testing.T, dataDir string, timeout time.Duration) strin
 		case <-timer.C:
 		case <-ctx.Done():
 			timer.Stop()
-			t.Fatalf("final part not visible within %s under %s", timeout, hotDir)
+			t.Fatalf("final part not visible within %s under %s", timeout, indexDir)
 		}
 
 		backoff *= 2
@@ -101,12 +101,13 @@ func findFinalPart(root string) (string, error) {
 			return walkErr
 		}
 		if d.IsDir() {
+			if d.Name() == "lost+found" {
+				return filepath.SkipDir
+			}
+
 			return nil
 		}
-		if filepath.Ext(d.Name()) != ".lsg" {
-			return nil
-		}
-		if strings.HasPrefix(d.Name(), "tmp_") {
+		if !strings.HasSuffix(d.Name(), ".part") {
 			return nil
 		}
 

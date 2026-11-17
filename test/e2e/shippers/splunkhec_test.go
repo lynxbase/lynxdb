@@ -32,8 +32,14 @@ func TestE2E_Shipper_SplunkHEC(t *testing.T) {
 		},
 	})
 
-	waitForSourceCount(t, rig, "splunk-hec", 100, func() string { return containerLogs(t, ctr) })
+	waitForCount(t, rig, hecFixtureCount(), 100, func() string { return containerLogs(t, ctr) })
 	assertNoShipperErrors(t, containerLogs(t, ctr))
+}
+
+// hecFixtureCount counts the fixture events: HEC stores them in main with
+// the index they name as their source, and the event object as _raw.
+func hecFixtureCount() string {
+	return countQuery("main", `source = "splunk-hec" and `+holds("_raw", "splunk hec fixture"))
 }
 
 func writeHECFixture(t *testing.T, lines int) string {

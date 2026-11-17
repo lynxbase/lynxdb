@@ -1,95 +1,115 @@
 ---
 sidebar_position: 2
 title: Ingest
-description: Structured JSON event arrays, raw line ingest, Splunk HEC and Elasticsearch bulk ingest, and index management.
+description: NDJSON event ingest, raw log text ingest, Splunk HEC and Elasticsearch bulk ingest, and the list of indexes.
 ---
 
 # Ingest API
 
 | Endpoint | Use it for | Body |
 |---|---|---|
-| `POST /api/v1/ingest` | Structured events | JSON array of event objects |
-| `POST /api/v1/ingest/raw` | Log files and streams | Newline-delimited text, one event per line |
+| `POST /api/v1/ingest` | Structured events | NDJSON, one JSON object per line |
+| `POST /api/v1/ingest/raw` | Log files and streams | Log text, one event per line |
 | `POST /api/v1/ingest/hec` | Splunk HEC senders | One HEC event object per line |
 | `POST /api/v1/ingest/bulk` | Elasticsearch bulk producers | Elasticsearch `_bulk` NDJSON |
 
 Shippers that speak Elasticsearch, Splunk HEC or OTLP can also use the [compatibility endpoints](./compatibility.md). When authentication is on, the ingest endpoints need a key with `ingest` scope.
 
-Every ingest path runs events through the ingest pipeline: it looks for an ISO 8601 or syslog-style timestamp in events that have no time, parses JSON events into fields, and extracts `key=value` pairs. Events whose time is still unknown get the time the server received them.
+## How events are stored
+
+Every index keeps its events in a columnar store of its own. An index comes into being with its first events; there is no call to create one.
+
+- **Time.** An event's time is the value of the first of `storage.time_fields` (`_time`, `timestamp`, `@timestamp`, `time`, `ts`) that it holds. An event without one gets the time it arrived.
+- **Text.** A line that is not a JSON object is kept as an event holding the text in `_raw`. A JSON event has no `_raw`.
+- **Fields.** The members of a nested object are read as columns named by their path, such as `order.id`. A query result holds only the fields an event has: a field the event lacks is absent, not `null`.
+- **Retention.** Events whose own time is older than `retention` (7 days by default) are removed, partition by partition, within about a minute of arriving or when the server starts. Each removal is logged at `WARN` with the index, the event count and the cutoff. `retention: 0s` keeps everything.
+- **Visibility.** Ingested events are written within `storage.flush_interval` (one second by default). The server writes the pending events before it runs a query, so a query sees every event whose ingest request has been answered. The Elasticsearch bulk endpoints, and Splunk HEC requests that carry an acknowledgement channel, make the events durable before they answer.
+
+Index names hold letters, digits, `.`, `-` and `_`, do not start with `.`, and are at most 255 bytes. Any other name answers `400 VALIDATION_ERROR`.
 
 ## POST /ingest
 
-Takes a JSON array. A single object, NDJSON or plain text is rejected with `400 INVALID_JSON`.
-
-| Field | Type | Description |
-|---|---|---|
-| `event` | string | Event text, stored in `_raw` (required) |
-| `time` | number | Unix time in seconds; fractions are kept |
-| `source` | string | Source label |
-| `sourcetype` | string | Source type label |
-| `host` | string | Host name |
-| `index` | string | Target index; `main` when empty |
-| `fields` | object | Extra fields. String, number and boolean values are kept; integral numbers become integers |
+Takes NDJSON and appends it, line by line and unchanged, to one index: the `index` query parameter, else the `X-Index` header, else `main`.
 
 ```bash
-curl -s -X POST localhost:3100/api/v1/ingest \
-  -H 'Content-Type: application/json' \
-  -d '[
-    {
-      "time": 1763370000,
-      "event": "user login",
-      "source": "auth-api",
-      "sourcetype": "app",
-      "host": "web-01",
-      "fields": {"user_id": 42, "level": "info", "ip": "10.0.1.5"}
-    }
-  ]'
+curl -s -X POST 'localhost:3100/api/v1/ingest?index=demo' --data-binary $'{"_time":"2026-11-17T08:00:00Z","level":"info","msg":"user login","user_id":42}
+{"timestamp":"2026-11-17T08:00:05Z","level":"error","msg":"payment failed","order":{"id":7,"total":19.5}}
+plain text line
+'
 ```
 
 ```json
-{"data": {"accepted": 1, "failed": 0}}
+{"data": {"accepted": 3, "failed": 0}}
 ```
 
-Events are written in batches of `ingest.max_batch_size` (default 1000). If a later batch fails after earlier ones were stored, the response is still `200`, with `failed` counting the lost events and a `warning` explaining what happened. The same applies when the body turns out to be malformed after some events were accepted.
-
-A body that is not an array:
-
 ```bash
-curl -s -X POST localhost:3100/api/v1/ingest \
+curl -s localhost:3100/api/v1/query \
   -H 'Content-Type: application/json' \
-  -d '{"event": "not wrapped in an array"}'
+  -d '{"q": "source=demo | sort _time"}'
 ```
 
 ```json
 {
-  "error": {
-    "code": "INVALID_JSON",
-    "message": "invalid JSON: /api/v1/ingest expects a top-level JSON array of structured event objects",
-    "suggestion": "Use POST /api/v1/ingest with a JSON array of objects containing event. Use /api/v1/ingest/raw for newline-delimited logs or NDJSON, and /api/v1/es/_bulk for Elasticsearch bulk payloads."
-  }
+  "data": {
+    "type": "events",
+    "events": [
+      {"_time": "2026-11-17T08:00:00Z", "level": "info", "msg": "user login", "user_id": 42},
+      {"_time": "2026-11-17T08:00:05Z", "level": "error", "msg": "payment failed", "order.id": 7, "order.total": 19.5, "timestamp": "2026-11-17T08:00:05Z"},
+      {"_time": "2026-11-17T15:46:35.786981Z", "_raw": "plain text line"}
+    ],
+    "total": 3,
+    "has_more": false
+  },
+  "meta": {"took_ms": 0.103, "query_id": "qry_f12636a8a2a0b0b4", "rows": 3}
 }
 ```
 
+`accepted` counts the lines that are not blank, less those the store rejected; `failed` counts the rejected ones. Blank lines are skipped.
+
+`POST /ingest` and `POST /ingest/raw` are bounded by `ingest.max_body_size` alone, as sent and after `gzip`, `zstd` or `snappy` decoding. A body over it stores nothing and answers `413`, naming the setting:
+
+```json
+{"error": {"type": "request_body_too_large", "reason": "compressed body exceeds limit 4096 set by ingest.max_body_size"}, "status": 413}
+```
+
+A body sent without `Content-Length` that grows past the limit answers `413 INVALID_REQUEST` instead.
+
 ## POST /ingest/raw
 
-Each non-empty line of the body becomes one event, with the line in `_raw`. Lines longer than `ingest.max_line_bytes` (default 1 MiB) end the request.
+Takes log text, one event per line. The index is the `X-Index` header, else the `index` query parameter, else `main`.
 
 | Header | Default | Description |
 |---|---|---|
-| `X-Source` | `http` | Source label, at most 256 characters |
-| `X-Source-Type` | `raw` | Source type label, at most 256 characters |
-| `X-Index` | `main` | Target index, at most 256 characters |
+| `X-Index` | `main` | Target index |
+| `X-Source` | `http` | `source` of the text lines |
+| `X-Source-Type` | `raw` | `sourcetype` of the text lines |
+| `X-Host` | | `host` of the text lines |
+
+Each header holds at most 256 characters; a longer one answers `400 VALIDATION_ERROR`.
+
+- A line that is a JSON object (its first non-blank character is `{`) passes unchanged, without the labels.
+- Any other line becomes an event with the line in `_raw`, the labels as `source`, `sourcetype` and `host`, and:
+  - its timestamp as `_time`, found at the start of the line or after a space or a double quote within its first 100 characters: RFC 3339 with millisecond or finer precision or a numeric offset (`2026-11-17T08:00:00.123Z`, `2026-11-17T08:00:00+01:00`), `2026-11-17 08:00:00`, or the syslog form `Nov 17 08:00:00`. A line without one gets the time it arrived;
+  - its `key=value` pairs as fields. Integers, decimals and `true`/`false` keep their type, so `status>=500` compares numbers.
+- Blank lines are skipped. A line longer than 1 MiB ends the request.
 
 ```bash
 curl -s -X POST localhost:3100/api/v1/ingest/raw \
-  -H 'Content-Type: text/plain' \
-  -H 'X-Source: nginx' \
-  -H 'X-Source-Type: combined' \
-  --data-binary @/var/log/nginx/access.log
+  -H 'X-Index: rawdemo' \
+  -H 'X-Source: api-gateway' \
+  -H 'X-Host: gw-01' \
+  --data-binary $'2026-11-17T08:00:00.000Z level=warn path=/api/users latency_ms=812 slow request\n{"level":"info","msg":"json passes unchanged"}\n'
 ```
 
 ```json
 {"data": {"accepted": 2, "failed": 0}}
+```
+
+The two events read back as:
+
+```json
+{"_raw": "2026-11-17T08:00:00.000Z level=warn path=/api/users latency_ms=812 slow request", "_time": "2026-11-17T08:00:00Z", "host": "gw-01", "latency_ms": 812, "level": "warn", "path": "/api/users", "source": "api-gateway", "sourcetype": "raw"}
+{"_time": "2026-11-17T15:46:41.906133Z", "level": "info", "msg": "json passes unchanged"}
 ```
 
 Pipe command output the same way:
@@ -101,7 +121,7 @@ kubectl logs deploy/api --since=1h | \
     --data-binary @-
 ```
 
-When the body is cut off by `ingest.max_body_size` after some events were stored, the response is `200` with `truncated: true` and a `warning`. A body that cannot be read before any event is stored answers `400 INVALID_REQUEST`.
+When the body is cut off, by `ingest.max_body_size` or by a line over 1 MiB, after some events were stored, the response is `200` with `truncated: true` and a `warning`. When nothing was stored, it answers `400 INVALID_REQUEST`.
 
 ## POST /ingest/hec
 
@@ -109,18 +129,18 @@ Splunk HEC event ingest. Each line of the body is one HEC event object; lines th
 
 ```bash
 curl -s -X POST localhost:3100/api/v1/ingest/hec \
-  -d '{"event": "user login succeeded", "time": 1763370000, "host": "web-01", "source": "auth-service", "sourcetype": "json", "fields": {"level": "info"}}'
+  -d '{"event": "via api", "host": "web-02"}'
 ```
 
 ```json
 {"code": 0, "text": "Success"}
 ```
 
-This path authenticates like every other `/api/v1` endpoint and does not look at `Authorization: Splunk` tokens. Shippers configured for Splunk usually point at `/services/collector` instead; see [Splunk HEC](./compatibility.md#splunk-hec) for both paths and the field mapping.
+This path authenticates like every other `/api/v1` endpoint and does not read `Authorization: Splunk` tokens. It accepts events whatever `ingest.splunk_hec.enabled` says. Shippers configured for Splunk usually point at `/services/collector`; see [Splunk HEC](./compatibility.md#splunk-hec) for those routes, acknowledgements and the mapping of HEC fields to events.
 
 ## POST /ingest/bulk
 
-An alias of the Elasticsearch bulk handler, with the same request and response format as `POST /api/v1/es/_bulk`:
+The Elasticsearch bulk handler under the native ingest path, with the same request and response as `POST /api/v1/es/_bulk`:
 
 ```bash
 curl -s -X POST localhost:3100/api/v1/ingest/bulk \
@@ -128,55 +148,57 @@ curl -s -X POST localhost:3100/api/v1/ingest/bulk \
   --data-binary $'{"index":{"_index":"logs"}}\n{"message":"hello from filebeat","@timestamp":"2026-11-17T09:00:00Z"}\n'
 ```
 
-See [Elasticsearch compatibility](./compatibility.md#elasticsearch) for the mapping of documents to events.
+See [Elasticsearch](./compatibility.md#elasticsearch) for the format.
 
-## Indexes
+## GET /indexes
 
-`GET /api/v1/indexes` lists the indexes:
-
-```json
-{"data": {"indexes": [{"name": "main", "retention_period": "2160h0m0s", "replication_factor": 1}]}}
-```
-
-`POST /api/v1/indexes` creates one. It needs a root key when authentication is on.
+Lists the indexes with what they hold:
 
 ```bash
-curl -s -X POST localhost:3100/api/v1/indexes \
-  -H 'Content-Type: application/json' \
-  -d '{"name": "audit", "retention_days": 365}'
+curl -s localhost:3100/api/v1/indexes
 ```
 
 ```json
-{"data": {"name": "audit", "status": "created"}}
+{
+  "data": {
+    "indexes": [
+      {"name": "backend", "events": 26, "bytes": 3978, "parts": 1, "first_event": "2026-02-10T08:12:03.045Z", "last_event": "2026-02-10T10:45:00.5Z"},
+      {"name": "main", "events": 1000, "bytes": 46638, "parts": 2, "first_event": "2025-01-15T08:00:00.105Z", "last_event": "2026-11-17T15:43:40.839562Z"}
+    ]
+  }
+}
 ```
 
 | Field | Description |
 |---|---|
-| `name` | Index name (required). Use lowercase letters, digits, `-` and `_`, so the name works unquoted in `source=` |
-| `retention_days` | Retention in days; 90 when omitted |
-| `replication_factor` | Copies in a cluster; 1 when omitted |
+| `name` | Index name |
+| `events` | Events stored |
+| `bytes` | Size of the index's files |
+| `parts` | Columnar files the index holds |
+| `first_event`, `last_event` | Times of the earliest and latest event; absent for an index without stored events |
 
-Ingest endpoints also create an index the first time an event names it. Query an index with `source=<name>`:
+Query an index with `source=<name>`:
 
 ```bash
 curl -s localhost:3100/api/v1/query \
   -H 'Content-Type: application/json' \
-  -d '{"q": "source=audit | stats count() by host"}'
+  -d '{"q": "source=backend | stats count() by level"}'
 ```
 
 ## Errors
 
 | HTTP | Code | When |
 |---|---|---|
-| 400 | `INVALID_JSON` | The body of `POST /ingest` is not a JSON array of event objects |
+| 400 | `VALIDATION_ERROR` | An invalid index name, or an `X-Index`, `X-Source`, `X-Source-Type` or `X-Host` header longer than 256 characters |
 | 400 | `INVALID_REQUEST` | The body could not be read |
-| 400 | `VALIDATION_ERROR` | An `X-Source`, `X-Source-Type` or `X-Index` header is longer than 256 characters, or `POST /indexes` has no `name` |
+| 400 | | The `Content-Encoding` is not `gzip`, `zstd` or `snappy`: `{"error": {"type": "invalid_request", ...}, "status": 400}` |
 | 401 | `AUTH_REQUIRED`, `INVALID_TOKEN` | Missing or wrong credentials |
 | 403 | `FORBIDDEN` | The key lacks `ingest` scope |
-| 413 | | The body is over the compressed or decompressed size limit |
+| 413 | `INVALID_REQUEST` | The body of `POST /ingest`, sent without `Content-Length`, grows past `ingest.max_body_size` |
+| 413 | | The body is over its size limit: `{"error": {"type": "request_body_too_large", ...}, "status": 413}`, with a `reason` that names the setting |
 | 429 | `TOO_MANY_REQUESTS` | The per-IP rate limit (`http.rate_limit`) was hit |
-| 503 | `BACKPRESSURE` | Staging is full or compaction is behind; retry after `Retry-After` |
-| 503 | `SHUTTING_DOWN` | The server is stopping |
+| 503 | `SHUTTING_DOWN` | The server is stopping; retry after `Retry-After` |
+| 500 | `INTERNAL_ERROR` | The events could not be stored |
 
 ## Related
 

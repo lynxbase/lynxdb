@@ -24,11 +24,6 @@ type Options struct {
 	Source func(scan *ir.Scan) (pipeline.Iterator, error)
 	// Describe returns one row per column of a source for SourceSchema.
 	Describe func(src ir.Source) ([]map[string]event.Value, error)
-	// Coordinator and SpillManager enable memory accounting and disk spill
-	// for blocking operators; both may be nil.
-	Coordinator  *pipeline.MemoryCoordinator
-	SpillManager *pipeline.SpillManager
-	GovBudget    *memgov.BudgetAdapter
 	// BatchSize is the number of rows per batch; zero uses the default.
 	BatchSize int
 	// Now is the query's reference time; zero means the time of Build.
@@ -77,17 +72,6 @@ func (b *builder) batchSize() int {
 	return pipeline.DefaultBatchSize
 }
 
-func (b *builder) account(label string, reservation int64) memgov.MemoryAccount {
-	if b.opts.Coordinator == nil {
-		return memgov.NopAccount()
-	}
-	inner := memgov.NopAccount()
-	if b.opts.GovBudget != nil {
-		inner = b.opts.GovBudget.NewSpillableAccount(label)
-	}
-	return b.opts.Coordinator.RegisterOperator(label, inner, reservation)
-}
-
 func (b *builder) temp() string {
 	b.temps++
 	return "__t" + strconv.Itoa(b.temps)
@@ -127,21 +111,11 @@ func (b *builder) runSubquery(sq *ir.Subquery) (*vm.SubqueryResult, error) {
 	if sq.Mode == ir.SubqueryExists {
 		plan = &ir.Limit{Input: plan, Count: 1}
 	}
-	// The coordinator hands out operator budgets only after Build returns,
-	// so a subquery, which runs during Build, cannot draw on it.
-	coordinator := b.opts.Coordinator
-	b.opts.Coordinator = nil
 	iter, err := b.node(plan)
-	b.opts.Coordinator = coordinator
 	if err != nil {
 		return nil, fmt.Errorf("subquery: %w", err)
 	}
-	var rows []map[string]event.Value
-	if b.opts.GovBudget != nil {
-		rows, err = pipeline.CollectAllWithBudget(b.opts.Context, iter, b.opts.GovBudget.NewAccount("subquery"))
-	} else {
-		rows, err = pipeline.CollectAll(b.opts.Context, iter)
-	}
+	rows, err := pipeline.CollectAll(b.opts.Context, iter)
 	if err != nil {
 		return nil, fmt.Errorf("subquery: %w", err)
 	}
@@ -255,7 +229,7 @@ func (b *builder) dispatch(n ir.Node) (pipeline.Iterator, error) {
 		if err != nil {
 			return nil, err
 		}
-		return pipeline.NewReverseIteratorWithBudget(child, b.batchSize(), b.account("Reverse", pipeline.ReservationSort)), nil
+		return pipeline.NewReverseIteratorWithBudget(child, b.batchSize(), memgov.NopAccount()), nil
 	case *ir.Dedup:
 		return b.dedup(x)
 	case *ir.Join:
@@ -404,17 +378,12 @@ func (b *builder) sort(input ir.Node, keys []ir.SortKey, count, offset int64, to
 		}
 	}
 	if top {
-		it = pipeline.NewTopNIteratorWithBudget(it, fields, int(count+offset), b.batchSize(), b.account("TopN", pipeline.ReservationSort))
+		it = pipeline.NewTopNIteratorWithBudget(it, fields, int(count+offset), b.batchSize(), memgov.NopAccount())
 		if offset > 0 {
 			it = pipeline.NewOffsetIterator(it, int(offset))
 		}
 	} else {
-		acct := b.account("Sort", pipeline.ReservationSort)
-		if b.opts.SpillManager != nil {
-			it = pipeline.NewSortIteratorWithSpill(it, fields, b.batchSize(), acct, b.opts.SpillManager)
-		} else {
-			it = pipeline.NewSortIteratorWithBudget(it, fields, b.batchSize(), acct)
-		}
+		it = pipeline.NewSortIteratorWithBudget(it, fields, b.batchSize(), memgov.NopAccount())
 	}
 	return dropTemps(it, temps), nil
 }

@@ -10,12 +10,12 @@ description: The rewrite rules pkg/ir/opt applies to IR plans.
 result. `opt.Optimize` applies its rules bottom-up over the whole plan,
 repeats until no rule fires (at most 8 passes), then records required
 columns on every scan. It returns the rules that fired with their counts;
-`explain` lists them and REST responses report them in
-`meta.stats.optimizer_rules`.
+`explain` lists them, and `GET /api/v1/query/explain` reports them as
+`optimizer_rules`.
 
 Every rule preserves the result. Rules that hand predicates to a scan keep
-the predicates in the filter above it, so a storage engine may use any
-subset of the scan's annotations, or none.
+the predicates in the filter above it, so an executor may use any subset of
+the scan's annotations, or none.
 
 ## Rules
 
@@ -41,17 +41,26 @@ with `_time` folds to a timestamp literal, which then lets
 
 ### prune-scan
 
-A conjunct is indexable when the term index, bloom filters or column
-statistics can answer or narrow it:
+A conjunct is indexable when it is one of:
 
-- a search on the raw text other than regex and substring searches
+- a free-text search other than regex and substring searches
   (`SEARCH_WORD`, `SEARCH_PHRASE`, `SEARCH_PREFIX`, `SEARCH_GLOB` on `_raw`);
 - a column equal to a string literal (`host = "web-01"`);
-- a disjunction of raw-text words (`SEARCH_WORD(_raw, "a") OR
+- a disjunction of free-text words (`SEARCH_WORD(_raw, "a") OR
   SEARCH_WORD(_raw, "b")`).
 
+`GET /api/v1/query/explain` reports these predicates as the plan's search
+terms. When the columnar executor runs the filter above the scan, it
+derives what to skip from the whole filter; when it does not, the scan
+that hands events to the row operators applies the pruning predicates
+first.
+
 ```
-Filter(SEARCH_WORD(_raw, "error") AND (host = "web-01") AND (status >= 500))
+source=main error host="web-01" status>=500
+```
+
+```
+Filter((SEARCH_WORD(_raw, "error") AND (host = "web-01")) AND (status >= 500))
 └─ Scan(main) prune=SEARCH_WORD(_raw, "error") prune=host = "web-01"
 ```
 
@@ -60,6 +69,10 @@ Filter(SEARCH_WORD(_raw, "error") AND (host = "web-01") AND (status >= 500))
 `>` and `>=` raise the earliest bound, `<` and `<=` lower the latest bound
 (`<=` becomes an exclusive bound one nanosecond later). Only absolute bounds
 narrow an existing range; relative bounds from `earliest=` stay as written.
+
+```
+source=main | where _time >= '2025-01-15 08:00:00' AND _time < '2025-01-15 09:00:00'
+```
 
 ```
 Filter((_time >= timestamp("2025-01-15T08:00:00Z")) AND (_time < timestamp("2025-01-15T09:00:00Z")))

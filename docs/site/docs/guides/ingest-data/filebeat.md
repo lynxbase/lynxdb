@@ -21,7 +21,7 @@ Restart Filebeat, then check that events arrive:
 
 ```bash
 lynxdb indexes
-lynxdb query 'source=filebeat-* | stats count() as total by index, _source'
+lynxdb query 'source=filebeat-* | stats count() as total by log.file.path'
 ```
 
 ## Full annotated config
@@ -52,10 +52,14 @@ Filebeat sends at startup. Each document is stored in the LynxDB index named
 by its bulk `_index`, which for Filebeat is usually `filebeat-<version>`.
 `lynxdb indexes` lists the exact names; `source=filebeat-*` reads them all.
 
-The `log.file.path` of each document becomes its `_source`, `@timestamp`
-becomes `_time`, and `host.name` becomes `host`. The other keys are stored
-as fields; nested objects such as `agent` stay objects, which `spath` and
-`flatten` unpack (see [Working with JSON Logs](../json-processing.md)).
+Each document is stored as sent. Its `@timestamp` sets the event time, its
+`message` holds the log line, and the members of nested objects are fields
+named by their path, such as `log.file.path`, `host.name` and `agent.version`
+(see [Working with JSON Logs](../json-processing.md)):
+
+```bash
+lynxdb query 'source=filebeat-* | fields _time, host.name, log.file.path, message | head 2'
+```
 
 ## Troubleshooting
 

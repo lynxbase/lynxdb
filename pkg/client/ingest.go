@@ -1,51 +1,87 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"net/url"
+	"time"
 )
 
-var structuredIngestKeys = map[string]bool{
-	"event":      true,
-	"time":       true,
-	"source":     true,
-	"sourcetype": true,
-	"host":       true,
-	"index":      true,
-	"fields":     true,
-}
-
-// Ingest sends structured event envelopes to the server.
-// Deprecated: use IngestEvents with []IngestEvent for type safety.
-func (c *Client) Ingest(ctx context.Context, events []map[string]interface{}) (*IngestResult, error) {
-	typed := make([]IngestEvent, 0, len(events))
-	for i, raw := range events {
-		ev, err := toIngestEvent(raw)
-		if err != nil {
-			return nil, &APIError{
-				HTTPStatus: 400,
-				Code:       ErrCodeValidationError,
-				Message:    fmt.Sprintf("structured ingest item %d: %v", i, err),
-				Suggestion: "POST /api/v1/ingest expects objects with event plus optional time/source/sourcetype/host/index/fields. Use IngestRaw for arbitrary JSON lines.",
-			}
-		}
-		typed = append(typed, ev)
+// Ingest sends NDJSON, one JSON object per line, to POST /api/v1/ingest;
+// the server appends the lines to index as they are. An empty index means
+// the server's default index.
+func (c *Client) Ingest(ctx context.Context, index string, ndjson io.Reader) (*IngestResult, error) {
+	path := "/ingest"
+	if index != "" {
+		path += "?index=" + url.QueryEscape(index)
 	}
-
-	return c.IngestEvents(ctx, typed)
-}
-
-// IngestEvents sends structured event payloads to POST /api/v1/ingest.
-func (c *Client) IngestEvents(ctx context.Context, events []IngestEvent) (*IngestResult, error) {
-	var result IngestResult
-	if _, err := c.doJSON(ctx, http.MethodPost, "/ingest", events, &result); err != nil {
+	resp, err := c.doRaw(ctx, http.MethodPost, path, ndjson, "application/x-ndjson")
+	if err != nil {
 		return nil, err
 	}
+	defer resp.Body.Close()
 
-	return &result, nil
+	return decodeIngestResult(resp)
+}
+
+// IngestEvents sends events as NDJSON, one request per index: each event
+// becomes an object with its text in _raw, its time in _time, its origin in
+// host, source and sourcetype, and its fields.
+func (c *Client) IngestEvents(ctx context.Context, events []IngestEvent) (*IngestResult, error) {
+	byIndex := map[string]*bytes.Buffer{}
+	var order []string
+	for i, ev := range events {
+		buf, ok := byIndex[ev.Index]
+		if !ok {
+			buf = &bytes.Buffer{}
+			byIndex[ev.Index] = buf
+			order = append(order, ev.Index)
+		}
+		line, err := json.Marshal(ingestObject(ev))
+		if err != nil {
+			return nil, fmt.Errorf("lynxdb: encode event %d: %w", i, err)
+		}
+		buf.Write(line)
+		buf.WriteByte('\n')
+	}
+	total := &IngestResult{}
+	for _, index := range order {
+		res, err := c.Ingest(ctx, index, byIndex[index])
+		if err != nil {
+			return nil, err
+		}
+		total.Accepted += res.Accepted
+		total.Failed += res.Failed
+	}
+
+	return total, nil
+}
+
+// ingestObject returns the JSON object of an event.
+func ingestObject(ev IngestEvent) map[string]interface{} {
+	obj := make(map[string]interface{}, len(ev.Fields)+5)
+	for k, v := range ev.Fields {
+		obj[k] = v
+	}
+	if ev.Event != "" {
+		obj["_raw"] = ev.Event
+	}
+	if ev.Time != nil {
+		sec, frac := math.Modf(*ev.Time)
+		obj["_time"] = time.Unix(int64(sec), int64(frac*1e9)).UTC().Format(time.RFC3339Nano)
+	}
+	for k, v := range map[string]string{"host": ev.Host, "source": ev.Source, "sourcetype": ev.Sourcetype} {
+		if v != "" {
+			obj[k] = v
+		}
+	}
+
+	return obj
 }
 
 // IngestRaw sends raw log data (text/plain, application/json, etc.) to the server.
@@ -85,7 +121,7 @@ func (c *Client) IngestRaw(ctx context.Context, body io.Reader, opts IngestOpts)
 }
 
 // IngestNDJSON sends newline-delimited data to the raw ingest endpoint.
-// Deprecated: use IngestRaw with application/x-ndjson or ESBulk for Elasticsearch bulk payloads.
+// Deprecated: use Ingest, which appends JSON lines as they are.
 func (c *Client) IngestNDJSON(ctx context.Context, body io.Reader, opts IngestOpts) (*IngestResult, error) {
 	opts.ContentType = "application/x-ndjson"
 	if opts.Sourcetype == "" {
@@ -113,60 +149,4 @@ func decodeIngestResult(resp *http.Response) (*IngestResult, error) {
 	}
 
 	return &result, nil
-}
-
-func toIngestEvent(raw map[string]interface{}) (IngestEvent, error) {
-	for key := range raw {
-		if !structuredIngestKeys[key] {
-			return IngestEvent{}, fmt.Errorf("unsupported top-level key %q", key)
-		}
-	}
-
-	msg, ok := raw["event"].(string)
-	if !ok || msg == "" {
-		return IngestEvent{}, fmt.Errorf("missing required string field %q", "event")
-	}
-
-	ev := IngestEvent{Event: msg}
-	if v, ok := raw["time"]; ok {
-		t, err := ingestTimeValue(v)
-		if err != nil {
-			return IngestEvent{}, err
-		}
-		ev.Time = &t
-	}
-	if v, ok := raw["source"].(string); ok {
-		ev.Source = v
-	}
-	if v, ok := raw["sourcetype"].(string); ok {
-		ev.Sourcetype = v
-	}
-	if v, ok := raw["host"].(string); ok {
-		ev.Host = v
-	}
-	if v, ok := raw["index"].(string); ok {
-		ev.Index = v
-	}
-	if v, ok := raw["fields"]; ok {
-		fields, ok := v.(map[string]interface{})
-		if !ok {
-			return IngestEvent{}, fmt.Errorf("field %q must be an object", "fields")
-		}
-		ev.Fields = fields
-	}
-
-	return ev, nil
-}
-
-func ingestTimeValue(v interface{}) (float64, error) {
-	switch tv := v.(type) {
-	case float64:
-		return tv, nil
-	case int:
-		return float64(tv), nil
-	case int64:
-		return float64(tv), nil
-	default:
-		return 0, fmt.Errorf("field %q must be numeric seconds since epoch", "time")
-	}
 }

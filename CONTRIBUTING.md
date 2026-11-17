@@ -47,7 +47,7 @@ Branch off `main`. Name format: `<type>/<short-description>`.
 | `test/`     | Adding or fixing tests                               |
 | `perf/`     | Performance improvement                              |
 
-Examples: `feat/streaming-join`, `fix/batcher-flush-retry`, `chore/bump-go-version`.
+Examples: `feat/streaming-join`, `fix/flush-retry`, `chore/bump-go-version`.
 
 ## Commits
 
@@ -56,8 +56,8 @@ lowercase after the prefix, under 72 characters:
 
 ```
 feat: add trendline command
-fix: batcher flush recovers from interrupted part writes
-chore: update roaring bitmap to v2.4
+fix: retry a flush that a full disk interrupted
+chore: update zstd to v1.18
 ```
 
 One logical change per commit. Keep commits small and reviewable.
@@ -76,11 +76,11 @@ One logical change per commit. Keep commits small and reviewable.
 
 - `go vet ./...` must pass; run `golangci-lint run ./...` with `.golangci.yml`.
 - Exported symbols have doc comments.
-- Errors are wrapped with the failed operation: `fmt.Errorf("read segment %s: %w", id, err)`.
+- Errors are wrapped with the failed operation: `fmt.Errorf("columnar: index %s: %w", index, err)`.
 - `context.Context` is the first parameter of any I/O or blocking function.
 - Avoid mutable package-level state; no `panic` for control flow.
-- The query language stays in `pkg/ppl`; the optimizer, physical planner and
-  executor work on `pkg/ir` only.
+- The query language stays in `pkg/ppl`; the optimizer, the columnar executor
+  and the row operators work on `pkg/ir` only.
 
 See [coding guidelines](docs/site/docs/contributing/coding-guidelines.md).
 
@@ -104,9 +104,7 @@ Test locations:
 - Unit tests: next to the code (`*_test.go` in the same package).
 - E2E tests: `test/e2e/` (shipper compatibility in `test/e2e/shippers/`).
 - CLI tests: `test/cli/`.
-- Cluster integration tests: `test/integration/` (`integration` build tag).
 - Regression tests: `test/regression/`.
-- Chaos and simulation tests: `test/chaos/`, `test/simulation/`.
 
 ## Common Tasks
 
@@ -122,8 +120,7 @@ make clean              # remove local build artifacts
 
 - `cmd/lynxdb/` -- CLI entry point.
 - `pkg/` -- Core packages: PPL frontend (`pkg/ppl`), IR and optimizer
-  (`pkg/ir`), execution (`pkg/engine`, `pkg/vm`), storage, ingest, API,
-  cluster.
+  (`pkg/ir`), execution (`pkg/engine`, `pkg/vm`), storage, ingest, API.
 - `internal/` -- Packages not meant for import outside the module.
 
 See the [project structure guide](docs/site/docs/contributing/project-structure.md).

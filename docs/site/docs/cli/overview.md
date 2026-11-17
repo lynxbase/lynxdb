@@ -19,9 +19,9 @@ lynxdb [command] [flags]
 | Mode | Trigger | What happens |
 |------|---------|--------------|
 | Server | Default | The CLI sends the query to `POST /api/v1/query` on the server named by `--server` and prints the rows it returns. |
-| Local | `--file <path or glob>`, or piped stdin | The CLI loads the input into an in-memory index named `main`, compiles the query and runs the same plan in process. No server is involved. |
+| Local | `--file <path or glob>`, or piped stdin | The CLI opens a database of its own in a temporary directory, loads the input into the index `main`, runs the query in process and removes the directory on exit. No server is involved. |
 
-Both modes compile the same PPL text through the same compiler and optimizer, so a query that works against a file works against the server.
+Both modes compile the same PPL text with the same compiler and run it on the same engine, so a query that works against a file works against the server.
 
 ```bash
 # Server
@@ -34,7 +34,7 @@ lynxdb query --file access.log 'source=main | stats count() by status'
 kubectl logs deploy/api | lynxdb query 'source=main | where response_time > 500 | stats count() by path'
 ```
 
-The [query page](./query.md) covers flags, time ranges and how local input is parsed.
+The [query page](./query.md) covers flags, time ranges and how local input is loaded.
 
 ### Bare stdin
 
@@ -63,8 +63,8 @@ These flags work with every command.
 | `--profile` | `-p` | | `LYNXDB_PROFILE` | Connection profile from the config file |
 | `--config` | | auto | `LYNXDB_CONFIG` | Config file path (server, `config` commands, profiles) |
 | `--format` | `-F` | `auto` | | Output format: `auto`, `json`, `ndjson`, `table`, `box`, `ascii`, `markdown`, `vertical`, `line`, `G`, `csv`, `tsv`, `raw` |
-| `--quiet` | `-q` | `false` | | Print data only: no hints, progress, statistics or error banners |
-| `--verbose` | `-v` | `false` | | Show extra detail, such as the full statistics block after a query |
+| `--quiet` | `-q` | `false` | | Print data only: no hints, progress, statistics or error messages |
+| `--verbose` | `-v` | `false` | | Show extra detail, such as the full statistics block after a query on a terminal |
 | `--no-stats` | | `false` | | Do not print query statistics |
 | `--no-color` | | `false` | | Disable color (`NO_COLOR` with any value does the same) |
 | `--theme` | | `auto` | | Human output theme: `auto`, `dark`, `light`, `plain` |
@@ -84,7 +84,7 @@ See [Output Formats](./output-formats.md) for what each format prints.
 The CLI resolves the server address in this order, first match wins:
 
 1. `--server`
-2. The URL of the profile named by `--profile`, `LYNXDB_PROFILE` or `.lynxdbrc`
+2. The URL of the selected profile (`--profile`, then `profile` in `.lynxdbrc`, then `LYNXDB_PROFILE`)
 3. `server` in the nearest `.lynxdbrc`
 4. `LYNXDB_SERVER`
 5. `http://localhost:3100`
@@ -97,7 +97,7 @@ The CLI looks for a `.lynxdbrc` YAML file in the current directory and each pare
 
 ```yaml
 server: https://logs.example.com
-profile: staging
+profile: prod
 default_format: table
 default_since: 6h
 default_source: web
@@ -117,10 +117,10 @@ default_source: web
 
 | Area | Commands |
 |------|----------|
-| Query | [`query`](./query.md) (`q`), [`explain`](./explain.md), [`tail`](./tail.md) (`t`), [`fields`](./status.md#fields) (`f`) |
+| Query | [`query`](./query.md) (`q`), [`explain`](./explain.md), [`fields`](./status.md#fields) (`f`) |
 | Load data | [`ingest`](./ingest.md) (`i`), [`import`](./ingest.md#import) |
 | Run the server | [`server`](./server.md) |
-| Inspect the server | [`status`](./status.md) (`st`), [`health`](./status.md#health), [`indexes`](./status.md#indexes), [`cache`](./status.md#cache), [`jobs`](./status.md#jobs) |
+| Inspect the server | [`status`](./status.md) (`st`), [`health`](./status.md#health), [`indexes`](./status.md#indexes), [`jobs`](./status.md#jobs) |
 | Authentication | [`login`](./auth.md#login), [`logout`](./auth.md#logout), [`auth`](./auth.md) |
 | Configuration | [`config`](./config-cmd.md) |
 | Utilities | [`version`](./status.md#version), [`completion`](./completion.md) |
@@ -131,21 +131,20 @@ Every command prints its flags and examples with `lynxdb <command> --help`.
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success |
+| 0 | Success, including a confirmation prompt answered with no |
 | 1 | Any other failure: an unknown flag, a missing argument, an execution error on the server, a bad file |
 | 2 | A required flag is missing, for example `lynxdb auth create` without `--name` |
 | 3 | The CLI cannot connect to the server |
-| 4 | The query does not compile: a PPL syntax, semantic, type, planning or unsupported-feature error, reported by the server or by local compilation. Other HTTP 400 rejections, such as `QUERY_TOO_LARGE`, also exit with 4 |
+| 4 | The query does not compile: a PPL syntax, semantic, type, planning or unsupported-feature error, reported by the server or by local compilation. Any other HTTP 400 answer, such as `QUERY_TOO_LARGE` or `VALIDATION_ERROR`, also exits with 4 |
 | 5 | The query timed out (`--timeout`, the CLI's 6-minute default, or a server timeout) |
 | 6 | The query returned no rows and `--fail-on-empty` was set |
 | 7 | The API key is missing, invalid or lacks the scope for the request |
-| 78 | The data directory was written in an on-disk format this binary cannot open |
-| 130 | Interrupted with Ctrl+C |
+| 130 | Interrupted with Ctrl+C (the shell reports a process stopped by `SIGINT` as 130) |
 
 [PPL errors](../ppl/errors.md) lists the compile error codes and their messages.
 
 ```bash
-lynxdb query 'source=main level=FATAL' --since 1h --fail-on-empty --quiet > /dev/null
+lynxdb query 'source=main level=FATAL' --since 1h --fail-on-empty --quiet < /dev/null > /dev/null
 case $? in
   0) echo "fatal errors found" ;;
   6) echo "no fatal errors" ;;

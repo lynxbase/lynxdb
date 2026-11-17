@@ -2,20 +2,16 @@ package rest
 
 import (
 	"bytes"
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
-	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 func startAuthServer(t *testing.T) (*Server, *auth.KeyStore, string, func()) {
@@ -33,36 +29,12 @@ func startAuthServer(t *testing.T) (*Server, *auth.KeyStore, string, func()) {
 		t.Fatal(err)
 	}
 
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-
-	srv, err := NewServer(Config{
-		Addr:     "127.0.0.1:0",
+	srv, cleanup := startTestServerWithConfig(t, Config{
 		DataDir:  dir,
 		KeyStore: ks,
-		Logger:   logger,
-		Query:    config.QueryConfig{SpillDir: t.TempDir()},
 	})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	startErr := make(chan error, 1)
-	go func() {
-		startErr <- srv.Start(ctx)
-	}()
-	select {
-	case err := <-startErr:
-		t.Fatalf("Start: %v", err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("server did not become ready")
-	case <-srv.ready:
-	}
-
-	return srv, ks, root.Token, func() {
-		cancel()
-		time.Sleep(50 * time.Millisecond)
-	}
+	return srv, ks, root.Token, cleanup
 }
 
 func authReq(method, url, token string, body []byte) (*http.Response, error) {
@@ -592,8 +564,7 @@ func TestAuth_ScopeIngest_CanIngest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Ingest should work.
-	body := []byte(`[{"event":"test","source":"test","index":"main"}]`)
+	body := []byte(`{"message":"test","source":"test"}` + "\n")
 	resp, err := authReq("POST",
 		fmt.Sprintf("http://%s/api/v1/ingest", srv.Addr()),
 		ingestKey.Token, body)
@@ -745,8 +716,7 @@ func TestAuth_ScopeQuery_CannotIngest(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Ingest should be forbidden.
-	body := []byte(`[{"event":"test","source":"test","index":"main"}]`)
+	body := []byte(`{"message":"test","source":"test"}` + "\n")
 	resp, err := authReq("POST",
 		fmt.Sprintf("http://%s/api/v1/ingest", srv.Addr()),
 		queryKey.Token, body)

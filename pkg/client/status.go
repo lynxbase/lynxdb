@@ -58,21 +58,6 @@ func (c *Client) Stats(ctx context.Context) (*StatsResult, error) {
 	return &s, nil
 }
 
-// CacheStats returns cache statistics.
-func (c *Client) CacheStats(ctx context.Context) (CacheStatsResult, error) {
-	var s CacheStatsResult
-	if _, err := c.doJSON(ctx, http.MethodGet, "/cache/stats", nil, &s); err != nil {
-		return nil, err
-	}
-
-	return s, nil
-}
-
-// CacheClear clears all caches.
-func (c *Client) CacheClear(ctx context.Context) error {
-	return c.doNoContent(ctx, http.MethodDelete, "/cache")
-}
-
 // indexesResponse wraps the indexes list from the server.
 type indexesResponse struct {
 	Indexes []IndexInfo `json:"indexes"`
@@ -86,14 +71,4 @@ func (c *Client) Indexes(ctx context.Context) ([]IndexInfo, error) {
 	}
 
 	return resp.Indexes, nil
-}
-
-// Metrics returns storage metrics.
-func (c *Client) Metrics(ctx context.Context) (MetricsResult, error) {
-	var m MetricsResult
-	if _, err := c.doJSON(ctx, http.MethodGet, "/metrics", nil, &m); err != nil {
-		return nil, err
-	}
-
-	return m, nil
 }

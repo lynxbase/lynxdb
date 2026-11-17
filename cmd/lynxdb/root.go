@@ -16,8 +16,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/client"
 	"github.com/lynxbase/lynxdb/pkg/config"
-	storageformat "github.com/lynxbase/lynxdb/pkg/storage/format"
-	"github.com/lynxbase/lynxdb/pkg/storage/segment"
 )
 
 // Output format constants to satisfy goconst.
@@ -180,7 +178,7 @@ func runRootCommand(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 && !isKnownSubcommand(cmd, args[0]) {
 		query := strings.Join(args, " ")
 		if isStdinPiped() {
-			return runQueryStdin(query, "", "", "", false, "", "", false)
+			return runQueryStdin(query, "", "", "", false, "", false)
 		}
 
 		if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
@@ -190,7 +188,7 @@ func runRootCommand(cmd *cobra.Command, args []string) error {
 	}
 
 	if isStdinPiped() {
-		return runQueryStdin("source=main | head 10", "", "", "", false, "", "", false)
+		return runQueryStdin("source=main | head 10", "", "", "", false, "", false)
 	}
 
 	return runWelcome(cmd, args)
@@ -239,27 +237,12 @@ func Execute() {
 			code = exitQueryTimeout
 		case isAuthError(err):
 			code = exitAuth
-		case isConfigError(err):
-			code = exitConfig
 		}
 		if !globalQuiet {
 			renderError(err)
 		}
 		os.Exit(code)
 	}
-}
-
-func isConfigError(err error) bool {
-	return errors.Is(err, storageformat.ErrMissingMarker) ||
-		errors.Is(err, storageformat.ErrCorruptMarker) ||
-		errors.Is(err, storageformat.ErrMarkerMismatch) ||
-		errors.Is(err, storageformat.ErrFutureFormat) ||
-		errors.Is(err, storageformat.ErrAncientFormat) ||
-		errors.Is(err, segment.ErrUnsupportedMajor) ||
-		errors.Is(err, segment.ErrUnsupportedCapability) ||
-		errors.Is(err, segment.ErrInvalidMagic) ||
-		errors.Is(err, segment.ErrUnsupportedHeaderRev) ||
-		errors.Is(err, segment.ErrDowngradeForbidden)
 }
 
 // ensureThemeInit initializes ui.Stdout/ui.Stderr if they haven't been set

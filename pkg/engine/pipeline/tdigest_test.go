@@ -101,26 +101,6 @@ func TestTDigestSkewedAccuracy(t *testing.T) {
 	checkQuantiles(t, td, data, 0.01)
 }
 
-func TestTDigestMergeMatchesCombined(t *testing.T) {
-	rng := rand.New(rand.NewSource(99))
-	a, b := NewTDigest(100), NewTDigest(100)
-	data := make([]float64, 50_000)
-	for i := range data {
-		data[i] = rng.Float64() * 500
-		if i%2 == 0 {
-			a.Add(data[i])
-		} else {
-			b.Add(data[i])
-		}
-	}
-	a.Merge(b)
-	if got := a.Count(); got != float64(len(data)) {
-		t.Fatalf("count after merge: got %.0f, want %d", got, len(data))
-	}
-	sort.Float64s(data)
-	checkQuantiles(t, a, data, 0.02)
-}
-
 func TestTDigestDeterministicWithDuplicates(t *testing.T) {
 	build := func() *TDigest {
 		td := NewTDigest(50)
@@ -133,26 +113,6 @@ func TestTDigestDeterministicWithDuplicates(t *testing.T) {
 	for _, q := range []float64{0.1, 0.5, 0.9, 0.99} {
 		if av, bv := a.Quantile(q), b.Quantile(q); av != bv {
 			t.Errorf("q=%.2f: non-deterministic estimates %.6f vs %.6f", q, av, bv)
-		}
-	}
-}
-
-func TestTDigestMarshalRoundTrip(t *testing.T) {
-	rng := rand.New(rand.NewSource(5))
-	td := NewTDigest(100)
-	for i := 0; i < 10_000; i++ {
-		td.Add(rng.Float64() * 100)
-	}
-	got := UnmarshalTDigest(td.MarshalBinary())
-	if got == nil {
-		t.Fatal("round-trip returned nil")
-	}
-	if got.Count() != td.Count() {
-		t.Fatalf("count: got %.0f, want %.0f", got.Count(), td.Count())
-	}
-	for _, q := range []float64{0.05, 0.5, 0.95, 0.99} {
-		if a, b := td.Quantile(q), got.Quantile(q); a != b {
-			t.Errorf("q=%.2f: got %.6f, want %.6f after round-trip", q, b, a)
 		}
 	}
 }

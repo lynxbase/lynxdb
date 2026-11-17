@@ -7,10 +7,9 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
-func TestAggregateArgFunctionsWithSpill(t *testing.T) {
+func TestAggregateArgFunctions(t *testing.T) {
 	const groups = 100
 	const perGroup = 50
 
@@ -35,13 +34,6 @@ func TestAggregateArgFunctionsWithSpill(t *testing.T) {
 	}
 
 	child := NewRowScanIterator(rows, 128)
-	mgr, err := NewSpillManager(t.TempDir(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer mgr.CleanupAll()
-
-	acct := memgov.NewTestBudget("test", 8*1024).NewAccount("agg")
 	aggs := []AggFunc{
 		{Name: "arg_max", Field: "value", OrderField: "score", Alias: "max_value"},
 		{Name: "arg_min", Field: "value", OrderField: "score", Alias: "min_value"},
@@ -63,7 +55,7 @@ func TestAggregateArgFunctionsWithSpill(t *testing.T) {
 		{Name: "mad", Field: "score", Alias: "score_mad"},
 		{Name: "perc_weighted", Field: "score", WeightField: "weight", Quantile: 0.5, Alias: "weighted_p50"},
 	}
-	iter := NewAggregateIteratorWithSpill(child, aggs, []string{"group"}, acct, mgr)
+	iter := NewAggregateIterator(child, aggs, []string{"group"}, nil)
 
 	ctx := context.Background()
 	if err := iter.Init(ctx); err != nil {

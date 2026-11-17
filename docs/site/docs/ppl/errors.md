@@ -22,7 +22,7 @@ approximated.
 | `unsupported_command` | `UNSUPPORTED_COMMAND` | 422 | a PPL command LynxDB does not execute |
 | `unsupported_function` | `UNSUPPORTED_FUNCTION` | 422 | a PPL function LynxDB does not execute, or an unknown function name |
 | `unsupported_feature` | `UNSUPPORTED_FEATURE` | 422 | a command option or language feature LynxDB does not execute |
-| planning | `PLANNING_ERROR` | 400 | the server cannot plan an accepted query, for example an unparsable `from`/`to` |
+| planning | `PLANNING_ERROR` | 400 | the query does not compile for a reason other than the kinds above |
 | execution | `EXECUTION_ERROR` | 500 | the query failed while running |
 
 The source of the mapping is `pkg/api/rest/query_exec.go`.
@@ -83,18 +83,14 @@ source=main | bin response_time bins=10
 
 - **`POST /api/v1/query`, `GET /api/v1/query`**: the error object above,
   with the HTTP status of the table.
-- **`POST /api/v1/query/stream`**: compile errors answer before the stream
-  starts. An error while rows stream ends the stream with
-  `{"__error": {"code": "EXECUTION_ERROR", "message": "..."}}`.
+- **`POST /api/v1/query/stream`**: the query runs before the first row is
+  written, so compile and run-time errors answer with the same error object
+  and status instead of a stream.
 - **`GET /api/v1/query/explain`**: answers 200 with `"is_valid": false` and
   `"errors": [{"kind": "syntax", "message": ..., "position": ...,
   "expected": ..., "suggestion": ...}]`.
-- **`GET /api/v1/tail`**: compile errors as above; a query with a command
-  that needs all its input before producing output (such as `stats` or
-  `sort`) answers 422 `{"error": "Aggregate is not supported in live tail:
-  it needs all input rows before producing output"}`.
 - **CLI**: `lynxdb query` prints the query with a caret under the position,
-  then the message:
+  then the message, and exits with code 4:
 
   ```
     source=main | stats count() by nosuchfield | where bad = 1
@@ -108,20 +104,25 @@ Most problems in data do not fail a query: a value that cannot be converted,
 an invalid date string or a division by zero gives NULL for that row.
 Queries fail at run time when:
 
-- the execution engine cannot run a construct the compiler accepted. The
-  message starts with `not supported by the execution engine:`; for example,
-  `earliest(x, t)` with a time field other than `_time`.
-- a query exceeds its memory budget (`QUERY_MEMORY_EXCEEDED`, 400) or the
-  server's query pool is exhausted (`QUERY_POOL_EXHAUSTED`, 503);
-- it is cancelled or times out.
+- the row operators cannot run a construct the compiler accepted. The
+  message starts with `not supported by the execution engine:` and the REST
+  API answers `422 UNSUPPORTED_FEATURE`, as for `fillnull value=host`, whose
+  fill value is not a constant:
+
+  ```
+  ERROR: not supported by the execution engine: fillnull over all fields with a non-constant value
+  ```
+
+- a `sort` that the row operators run holds more than 10,000,000 rows;
+- the query is cancelled or times out.
 
 ## Other request errors
 
 | Code | HTTP | Meaning |
 | --- | --- | --- |
 | `QUERY_TOO_LARGE` | 400 | the query is longer than `query.max_query_length` |
-| `VALIDATION_ERROR` | 400 | a missing query, an unsupported `format`, invalid bounds |
+| `VALIDATION_ERROR` | 400 | a missing query, an unsupported `format`, an unparsable `from` or `to` |
 | `INVALID_JSON` | 400 | the request body is not valid JSON |
-| `TOO_MANY_REQUESTS` | 429 | the concurrent query limit is reached; retry after `Retry-After` seconds |
+| `TOO_MANY_REQUESTS` | 429 | `query.max_concurrent` queries are running; retry after `Retry-After` seconds |
 
 See the [REST query API](../api/query.md) for the full response format.

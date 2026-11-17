@@ -11,10 +11,8 @@ import (
 )
 
 // maxPollDuration bounds the total wall-clock a PollJob call will wait before
-// giving up. It sits above the server's default MaxQueryRuntime (5m) so a job
-// that runs its full budget still returns, while preventing an unbounded poll
-// loop when the caller supplies no deadline. Pass a context with an earlier
-// deadline (e.g. the CLI --timeout flag) to override it.
+// giving up when the caller supplies no deadline. Pass a context with an
+// earlier deadline (e.g. the CLI --timeout flag) to override it.
 const maxPollDuration = 6 * time.Minute
 
 // GetJob returns the status and results of a query job.
@@ -60,7 +58,7 @@ func (c *Client) PollJob(ctx context.Context, jobID string, progressFn func(*Job
 		switch job.Status {
 		case "complete", "done":
 			return c.jobResultToQueryResult(job)
-		case "failed":
+		case "error", "failed":
 			msg := "query failed"
 			if job.Error != nil {
 				msg = job.Error.Message

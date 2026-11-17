@@ -23,6 +23,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/api/rest"
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/mem"
 )
 
 var (
@@ -30,8 +31,6 @@ var (
 	flagTLSEnabled                     bool
 	flagTLSCert                        string
 	flagTLSKey                         string
-	flagMaxQueryPool                   string
-	flagSpillDir                       string
 	flagProfileRuntime                 bool
 	flagSyslog                         string
 	flagSyslogUDP                      string
@@ -46,16 +45,6 @@ var (
 	flagOTLPGRPCMaxRecvBytes           string
 	flagIngestMaxCompressedBodyBytes   string
 	flagIngestMaxDecompressedBodyBytes string
-	flagIngestStagingEnabled           bool
-	flagIngestStagingMaxBytes          string
-	flagIngestStagingMaxAge            time.Duration
-
-	// Cluster flags.
-	flagClusterEnabled  bool
-	flagClusterNodeID   string
-	flagClusterRoles    string
-	flagClusterSeeds    string
-	flagClusterGRPCPort int
 )
 
 var serverCmd = &cobra.Command{
@@ -67,19 +56,11 @@ var serverCmd = &cobra.Command{
 func init() {
 	serverCmd.Flags().StringVar(&flagAddr, "addr", "", "Listen address (overrides config)")
 	serverCmd.Flags().StringVar(&flagDataDir, "data-dir", "", "Root directory for data storage (overrides config)")
-	serverCmd.Flags().StringVar(&flagS3Bucket, "s3-bucket", "", "S3 bucket for warm/cold storage")
-	serverCmd.Flags().StringVar(&flagS3Region, "s3-region", "", "AWS region")
-	serverCmd.Flags().StringVar(&flagS3Prefix, "s3-prefix", "", "Key prefix in S3")
-	serverCmd.Flags().StringVar(&flagCompactionInterval, "compaction-interval", "", "Compaction check interval")
-	serverCmd.Flags().StringVar(&flagTieringInterval, "tiering-interval", "", "Tier evaluation interval")
-	serverCmd.Flags().StringVar(&flagCacheMaxMB, "cache-max-mb", "", "Max cache size (e.g. 1gb, 512mb)")
 	serverCmd.Flags().StringVar(&flagLogLevel, "log-level", "", "Log level: debug, info, warn, error")
 	serverCmd.Flags().BoolVar(&flagAuthEnabled, "auth", false, "Enable API key authentication")
 	serverCmd.Flags().BoolVar(&flagTLSEnabled, "tls", false, "Enable TLS (auto-generates self-signed cert if no --tls-cert)")
 	serverCmd.Flags().StringVar(&flagTLSCert, "tls-cert", "", "Path to TLS certificate PEM file")
 	serverCmd.Flags().StringVar(&flagTLSKey, "tls-key", "", "Path to TLS private key PEM file")
-	serverCmd.Flags().StringVar(&flagMaxQueryPool, "max-query-pool", "", "Global query memory pool (e.g., 2gb, 4gb)")
-	serverCmd.Flags().StringVar(&flagSpillDir, "spill-dir", "", "Directory for temporary spill files (default: OS temp dir)")
 	serverCmd.Flags().BoolVar(&flagProfileRuntime, "profile-runtime", false, "Enable mutex and block profiling (~2-5% overhead)")
 	serverCmd.Flags().StringVar(&flagSyslog, "syslog", "", "Enable UDP and TCP syslog on address (default port 5514 when omitted)")
 	serverCmd.Flags().StringVar(&flagSyslogUDP, "syslog-udp", "", "Enable UDP syslog on address")
@@ -94,21 +75,12 @@ func init() {
 	serverCmd.Flags().StringVar(&flagOTLPGRPCMaxRecvBytes, "otlp-grpc-max-recv-bytes", "", "OTLP gRPC max receive message size")
 	serverCmd.Flags().StringVar(&flagIngestMaxCompressedBodyBytes, "ingest-max-compressed-body-bytes", "", "Max compressed shipper body size")
 	serverCmd.Flags().StringVar(&flagIngestMaxDecompressedBodyBytes, "ingest-max-decompressed-body-bytes", "", "Max decompressed shipper body size")
-	serverCmd.Flags().BoolVar(&flagIngestStagingEnabled, "ingest-staging-enabled", true, "Enable server-side shipper staging buffer")
-	serverCmd.Flags().StringVar(&flagIngestStagingMaxBytes, "ingest-staging-max-bytes", "", "Staging buffer byte ceiling")
-	serverCmd.Flags().DurationVar(&flagIngestStagingMaxAge, "ingest-staging-max-age", 0, "Staging buffer max age")
-
-	// Cluster flags.
-	serverCmd.Flags().BoolVar(&flagClusterEnabled, "cluster.enabled", false, "Enable cluster mode")
-	serverCmd.Flags().StringVar(&flagClusterNodeID, "cluster.node-id", "", "Unique node identifier")
-	serverCmd.Flags().StringVar(&flagClusterRoles, "cluster.roles", "", "Node roles: meta,ingest,query (comma-separated)")
-	serverCmd.Flags().StringVar(&flagClusterSeeds, "cluster.seeds", "", "Seed node addresses (comma-separated host:port)")
-	serverCmd.Flags().IntVar(&flagClusterGRPCPort, "cluster.grpc-port", 0, "gRPC listen port for inter-node communication")
 
 	rootCmd.AddCommand(serverCmd)
 }
 
 func runServer(cmd *cobra.Command, args []string) error {
+	defer mem.BoundGarbage(garbageAllowance)()
 	cfg, cfgPath, envOverrides, warnings, err := config.LoadWithOverrides(flagConfigPath)
 	if err != nil {
 		return err
@@ -153,28 +125,6 @@ func runServer(cmd *cobra.Command, args []string) error {
 	if cmd.Flags().Changed("syslog-index") {
 		cfg.Syslog.Index = flagSyslogIndex
 		cliOverrides = append(cliOverrides, "--syslog-index")
-	}
-
-	// Apply cluster CLI flag overrides.
-	if cmd.Flags().Changed("cluster.enabled") {
-		cfg.Cluster.Enabled = flagClusterEnabled
-		cliOverrides = append(cliOverrides, "--cluster.enabled")
-	}
-	if cmd.Flags().Changed("cluster.node-id") {
-		cfg.Cluster.NodeID = flagClusterNodeID
-		cliOverrides = append(cliOverrides, "--cluster.node-id")
-	}
-	if cmd.Flags().Changed("cluster.roles") {
-		cfg.Cluster.Roles = strings.Split(flagClusterRoles, ",")
-		cliOverrides = append(cliOverrides, "--cluster.roles")
-	}
-	if cmd.Flags().Changed("cluster.seeds") {
-		cfg.Cluster.Seeds = strings.Split(flagClusterSeeds, ",")
-		cliOverrides = append(cliOverrides, "--cluster.seeds")
-	}
-	if cmd.Flags().Changed("cluster.grpc-port") {
-		cfg.Cluster.GRPCPort = flagClusterGRPCPort
-		cliOverrides = append(cliOverrides, "--cluster.grpc-port")
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -236,16 +186,13 @@ func runServer(cmd *cobra.Command, args []string) error {
 		RuntimeConfig: cfg,
 		KeyStore:      keyStore,
 		TLSConfig:     tlsCfg,
-		Storage:       cfg.Storage,
 		Logger:        logger,
 		LevelVar:      &levelVar,
+		Storage:       cfg.Storage,
 		Query:         cfg.Query,
 		Ingest:        cfg.Ingest,
 		HTTP:          cfg.HTTP,
 		Syslog:        cfg.Syslog,
-		Server:        cfg.Server,
-		BufferManager: cfg.BufferManager,
-		Cluster:       cfg.Cluster,
 	})
 	if err != nil {
 		return fmt.Errorf("server init: %w", err)
@@ -341,7 +288,7 @@ func printStartupBanner(cfgPath string, cfg *config.Config, envOverrides []confi
 	if cfg.DataDir != "" {
 		fmt.Println(t.KeyValue("Data", cfg.DataDir))
 	} else {
-		fmt.Println(t.KeyValue("Data", t.Dim.Render("(in-memory)")))
+		fmt.Println(t.KeyValue("Data", t.Dim.Render("(temporary directory)")))
 	}
 
 	fmt.Println(t.KeyValue("Listen", cfg.Listen))

@@ -19,10 +19,11 @@ request](https://kubernetes.io/docs/reference/access-authn-authz/authentication/
 with the username `system:anonymous` and membership in the
 `system:unauthenticated` group.
 
-Top-level keys such as `auditID`, `verb`, `userAgent` and `requestURI`
-become fields when the file is loaded. The nested `user`, `objectRef` and
-`responseStatus` objects and the `sourceIPs` array stay in `_raw`; the
-queries below unpack them with `spath` and `flatten`.
+Each audit event is stored as the JSON object it is. Top-level keys such as
+`auditID`, `verb`, `userAgent` and `requestURI` are fields, the members of the
+nested `user`, `objectRef` and `responseStatus` objects are fields named by
+their path, such as `user.username` and `objectRef.resource`, and
+`sourceIPs` is an array.
 
 ## Find anonymous API requests
 
@@ -31,12 +32,10 @@ Count anonymous requests per user agent and source IP:
 ```bash
 sudo cat /var/log/kubernetes/audit/audit.log | lynxdb query '
   source=main
-  | spath output=doc
-  | flatten doc
   | where user.username = "system:anonymous"
   | expand sourceIPs
   | stats dc(auditID) as requests by userAgent, sourceIPs
-  | sort - requests'
+  | sort - requests, sourceIPs'
 ```
 
 ```text
@@ -48,12 +47,9 @@ requests,sourceIPs,userAgent
 
 The pipeline does the following:
 
-1. `spath output=doc` parses each event into an object, and `flatten doc`
-   turns its members into columns such as `user.username`,
-   `objectRef.resource`, `responseStatus.code` and `sourceIPs`.
-2. `where` keeps the anonymous requests.
-3. `expand sourceIPs` emits one row per address in the `sourceIPs` array.
-4. `dc(auditID)` counts distinct API requests for each user agent and
+1. `where` keeps the anonymous requests.
+2. `expand sourceIPs` emits one row per address in the `sourceIPs` array.
+3. `dc(auditID)` counts distinct API requests for each user agent and
    address. A request that lists several addresses appears under each of
    them.
 
@@ -62,14 +58,20 @@ To see which resource types anonymous clients asked for:
 ```bash
 sudo cat /var/log/kubernetes/audit/audit.log | lynxdb query '
   source=main
-  | spath output=doc
-  | flatten doc
   | where user.username = "system:anonymous"
-  | stats count() as requests by userAgent, objectRef.resource'
+  | stats count() as requests by userAgent, objectRef.resource
+  | sort userAgent, objectRef.resource'
+```
+
+```text
+objectRef.resource,requests,userAgent
+,1,curl/8.4.0
+secrets,1,curl/8.4.0
+pods,1,python-requests/2.31
 ```
 
 Requests to non-resource URLs such as `/version` have no `objectRef`, so
-their `objectRef.resource` is empty.
+they form the group whose `objectRef.resource` is empty.
 
 :::caution
 Kubernetes documents `auditID` as a unique ID for each request. It also warns
@@ -86,11 +88,9 @@ the response code:
 ```bash
 sudo cat /var/log/kubernetes/audit/audit.log | lynxdb query '
   source=main
-  | spath output=doc
-  | flatten doc
   | where responseStatus.code >= 400
   | stats count() as requests by responseStatus.code, verb, objectRef.resource
-  | sort - requests'
+  | sort - requests, objectRef.resource'
 ```
 
 ```text
@@ -100,18 +100,18 @@ pods,1,403,list
 secrets,1,403,list
 ```
 
-When you need only a few nested values, `spath path=` extracts them without
-flattening the whole event:
+## Keep audit logs on a server
 
-```bash
-sudo cat /var/log/kubernetes/audit/audit.log | lynxdb query '
-  source=main
-  | spath path=responseStatus.code output=code
-  | where cast(code as int) >= 400
-  | spath path=objectRef.resource output=resource
-  | stats count() as requests by code, verb, resource
-  | sort - requests'
+To keep audit events, ship the file to a server, for example with
+`lynxdb ingest --index k8s-audit`, and query `source=k8s-audit`. Audit events
+carry their time in `requestReceivedTimestamp`, which is not one of the
+default time fields; add it to `storage.time_fields` so that time ranges
+select events by it:
+
+```yaml
+storage:
+  time_fields: [requestReceivedTimestamp, _time, timestamp, "@timestamp", time, ts]
 ```
 
-See [Working with JSON Logs](./json-processing.md) for more on `spath`,
-`flatten` and `expand`.
+See [Working with JSON Logs](./json-processing.md) for more on nested fields,
+arrays and `expand`.

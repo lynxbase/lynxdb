@@ -59,13 +59,12 @@ func runExplain(query string, analyze bool) error {
 
 	var st *stats.QueryStats
 	if analyze && result.IsValid {
-		qResult, err := c.Query(ctx, client.QueryRequest{Q: query, Profile: "full"})
+		qResult, err := c.Query(ctx, client.QueryRequest{Q: query})
 		if err != nil {
 			return &queryError{inner: err, query: query}
 		}
 		rows := queryResultToRows(qResult)
 		st = buildQueryStatsFromMeta(qResult.Meta, int64(len(rows)), time.Since(start))
-		st.Recommendations = stats.GenerateRecommendations(st)
 	}
 
 	if isJSONFormat() {

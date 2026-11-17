@@ -21,15 +21,9 @@ var flagInitSystem bool
 
 // Shared CLI override flags — used by both "server" and "config" commands.
 var (
-	flagAddr               string
-	flagDataDir            string
-	flagS3Bucket           string
-	flagS3Region           string
-	flagS3Prefix           string
-	flagCompactionInterval string
-	flagTieringInterval    string
-	flagCacheMaxMB         string
-	flagLogLevel           string
+	flagAddr     string
+	flagDataDir  string
+	flagLogLevel string
 )
 
 var configCmd = &cobra.Command{
@@ -60,7 +54,7 @@ var configGetCmd = &cobra.Command{
 	Use:   "get <key>",
 	Short: "Show a single config value",
 	Example: `  lynxdb config get retention
-  lynxdb config get storage.compression
+  lynxdb config get storage.partition
   lynxdb config get listen`,
 	Args: cobra.ExactArgs(1),
 	RunE: runConfigGet,
@@ -75,7 +69,7 @@ var configSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a config value in the config file",
 	Example: `  lynxdb config set retention 30d
-  lynxdb config set storage.compression zstd
+  lynxdb config set storage.partition 1h
   lynxdb config set log_level debug
   lynxdb config set retention 1d --dry-run`,
 	Args: cobra.ExactArgs(2),
@@ -144,12 +138,6 @@ func init() {
 	// Override flags available on config and its subcommands (show, validate).
 	configCmd.PersistentFlags().StringVar(&flagAddr, "addr", "", "Listen address override")
 	configCmd.PersistentFlags().StringVar(&flagDataDir, "data-dir", "", "Data directory override")
-	configCmd.PersistentFlags().StringVar(&flagS3Bucket, "s3-bucket", "", "S3 bucket override")
-	configCmd.PersistentFlags().StringVar(&flagS3Region, "s3-region", "", "AWS region override")
-	configCmd.PersistentFlags().StringVar(&flagS3Prefix, "s3-prefix", "", "S3 prefix override")
-	configCmd.PersistentFlags().StringVar(&flagCompactionInterval, "compaction-interval", "", "Compaction interval override")
-	configCmd.PersistentFlags().StringVar(&flagTieringInterval, "tiering-interval", "", "Tiering interval override")
-	configCmd.PersistentFlags().StringVar(&flagCacheMaxMB, "cache-max-mb", "", "Cache max size override")
 	configCmd.PersistentFlags().StringVar(&flagLogLevel, "log-level", "", "Log level override")
 
 	configInitCmd.Flags().BoolVar(&flagInitSystem, "system", false, "Write to /etc/lynxdb/config.yaml")
@@ -195,49 +183,7 @@ func applyCLIOverrides(cmd *cobra.Command, cfg *config.Config) ([]config.CLIOver
 
 	checkStr("addr", "listen", flagAddr, func() { cfg.Listen = flagAddr })
 	checkStr("data-dir", "data_dir", flagDataDir, func() { cfg.DataDir = flagDataDir })
-	checkStr("s3-bucket", "storage.s3_bucket", flagS3Bucket, func() { cfg.Storage.S3Bucket = flagS3Bucket })
-	checkStr("s3-region", "storage.s3_region", flagS3Region, func() { cfg.Storage.S3Region = flagS3Region })
-	checkStr("s3-prefix", "storage.s3_prefix", flagS3Prefix, func() { cfg.Storage.S3Prefix = flagS3Prefix })
 	checkStr("log-level", "log_level", flagLogLevel, func() { cfg.LogLevel = flagLogLevel })
-
-	if cmd.Flags().Changed("compaction-interval") {
-		d, err := config.ParseDuration(flagCompactionInterval)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid --compaction-interval: %w", err)
-		}
-		cfg.Storage.CompactionInterval = d.Duration()
-		cli = append(cli, config.CLIOverride{Key: "storage.compaction_interval", Value: d.Duration().String(), Flag: "--compaction-interval"})
-		flags = append(flags, "--compaction-interval")
-	}
-	if cmd.Flags().Changed("tiering-interval") {
-		d, err := config.ParseDuration(flagTieringInterval)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid --tiering-interval: %w", err)
-		}
-		cfg.Storage.TieringInterval = d.Duration()
-		cli = append(cli, config.CLIOverride{Key: "storage.tiering_interval", Value: d.Duration().String(), Flag: "--tiering-interval"})
-		flags = append(flags, "--tiering-interval")
-	}
-	if cmd.Flags().Changed("cache-max-mb") {
-		b, err := config.ParseByteSize(flagCacheMaxMB)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid --cache-max-mb: %w", err)
-		}
-		cfg.Storage.CacheMaxBytes = b
-		cli = append(cli, config.CLIOverride{Key: "storage.cache_max_bytes", Value: b.String(), Flag: "--cache-max-mb"})
-		flags = append(flags, "--cache-max-mb")
-	}
-	if cmd.Flags().Changed("max-query-pool") {
-		b, err := config.ParseByteSize(flagMaxQueryPool)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid --max-query-pool: %w", err)
-		}
-		cfg.Query.GlobalQueryPoolBytes = b
-		cli = append(cli, config.CLIOverride{Key: "query.global_query_pool_bytes", Value: b.String(), Flag: "--max-query-pool"})
-		flags = append(flags, "--max-query-pool")
-	}
-
-	checkStr("spill-dir", "query.spill_dir", flagSpillDir, func() { cfg.Query.SpillDir = flagSpillDir })
 
 	if cmd.Flags().Changed("ingest-es-enabled") {
 		cfg.Ingest.ESCompat.Enabled = flagIngestESEnabled
@@ -279,25 +225,6 @@ func applyCLIOverrides(cmd *cobra.Command, cfg *config.Config) ([]config.CLIOver
 		cfg.Ingest.Limits.MaxDecompressedBodyBytes = b
 		cli = append(cli, config.CLIOverride{Key: "ingest.limits.max_decompressed_body_bytes", Value: b.String(), Flag: "--ingest-max-decompressed-body-bytes"})
 		flags = append(flags, "--ingest-max-decompressed-body-bytes")
-	}
-	if cmd.Flags().Changed("ingest-staging-enabled") {
-		cfg.Ingest.Staging.Enabled = flagIngestStagingEnabled
-		cli = append(cli, config.CLIOverride{Key: "ingest.staging.enabled", Value: strconv.FormatBool(flagIngestStagingEnabled), Flag: "--ingest-staging-enabled"})
-		flags = append(flags, "--ingest-staging-enabled")
-	}
-	if cmd.Flags().Changed("ingest-staging-max-bytes") {
-		b, err := config.ParseByteSize(flagIngestStagingMaxBytes)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid --ingest-staging-max-bytes: %w", err)
-		}
-		cfg.Ingest.Staging.MaxBytes = b
-		cli = append(cli, config.CLIOverride{Key: "ingest.staging.max_bytes", Value: b.String(), Flag: "--ingest-staging-max-bytes"})
-		flags = append(flags, "--ingest-staging-max-bytes")
-	}
-	if cmd.Flags().Changed("ingest-staging-max-age") {
-		cfg.Ingest.Staging.MaxAge = config.Duration(flagIngestStagingMaxAge)
-		cli = append(cli, config.CLIOverride{Key: "ingest.staging.max_age", Value: flagIngestStagingMaxAge.String(), Flag: "--ingest-staging-max-age"})
-		flags = append(flags, "--ingest-staging-max-age")
 	}
 
 	return cli, flags, nil

@@ -56,8 +56,8 @@ See [Installation](./install.md) for all options.
 
 ## Query a local file
 
-`lynxdb query --file` loads a file into an in-process index named `main`,
-runs the query and exits. Nothing is written to disk.
+`lynxdb query --file` loads a file into an index named `main` in a temporary
+directory, runs the query, and deletes the directory when it exits.
 
 Create a small NDJSON file:
 
@@ -115,10 +115,9 @@ lynxdb server
 In another terminal, send some events and query them:
 
 ```bash
-# A structured event through the REST API
+# A structured event through the REST API: one JSON object per line
 curl -X POST localhost:3100/api/v1/ingest \
-  -H 'Content-Type: application/json' \
-  -d '[{"event":"hello from lynxdb","source":"quickstart","fields":{"level":"info","service":"demo"}}]'
+  --data-binary '{"message":"hello from lynxdb","source":"quickstart","level":"info","service":"demo"}'
 
 # A log file through the CLI
 lynxdb ingest access.log --source web-01

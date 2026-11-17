@@ -18,7 +18,7 @@ func TestE2E_Shipper_Vector(t *testing.T) {
 		compression string
 		mode        string
 		extra       string
-		source      string
+		index       string
 	}{
 		{
 			name:        "bulk_none",
@@ -27,7 +27,7 @@ func TestE2E_Shipper_Vector(t *testing.T) {
 			extra: `    bulk:
       index: test-vector
 `,
-			source: "test-vector",
+			index: "test-vector",
 		},
 		{
 			name:        "bulk_zstd",
@@ -36,7 +36,7 @@ func TestE2E_Shipper_Vector(t *testing.T) {
 			extra: `    bulk:
       index: test-vector
 `,
-			source: "test-vector",
+			index: "test-vector",
 		},
 		{
 			name:        "data_stream",
@@ -49,7 +49,7 @@ func TestE2E_Shipper_Vector(t *testing.T) {
       dataset: generic
       namespace: default
 `,
-			source: "logs-generic-default",
+			index: "logs-generic-default",
 		},
 	}
 
@@ -86,7 +86,8 @@ sinks:
 				},
 			})
 
-			waitForSourceCount(t, rig, tt.source, 100, func() string { return containerLogs(t, ctr) })
+			// The file source puts each line in the message field of an event.
+			waitForCount(t, rig, countQuery(tt.index, holds("message", fixtureText)), 100, func() string { return containerLogs(t, ctr) })
 			assertNoShipperErrors(t, containerLogs(t, ctr))
 		})
 	}

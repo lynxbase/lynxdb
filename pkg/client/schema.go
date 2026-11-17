@@ -24,9 +24,7 @@ func (c *Client) Fields(ctx context.Context) ([]FieldInfo, error) {
 
 // FieldsOpts configures the filtered fields listing endpoint.
 type FieldsOpts struct {
-	Since  string
-	From   string
-	To     string
+	// Source narrows the fields to those of one index.
 	Source string
 	Prefix string
 }
@@ -34,15 +32,6 @@ type FieldsOpts struct {
 // FieldsFiltered returns the field catalog with optional filters.
 func (c *Client) FieldsFiltered(ctx context.Context, opts FieldsOpts) ([]FieldInfo, error) {
 	params := url.Values{}
-	if opts.Since != "" {
-		params.Set("since", opts.Since)
-	}
-	if opts.From != "" {
-		params.Set("from", opts.From)
-	}
-	if opts.To != "" {
-		params.Set("to", opts.To)
-	}
 	if opts.Source != "" {
 		params.Set("source", opts.Source)
 	}
@@ -69,6 +58,8 @@ type FieldValuesOpts struct {
 	Since string
 	From  string
 	To    string
+	// Index narrows the values to those of one index; empty means all.
+	Index string
 }
 
 // FieldValuesFiltered returns the top values for a field with optional filters.
@@ -85,6 +76,9 @@ func (c *Client) FieldValuesFiltered(ctx context.Context, fieldName string, opts
 	}
 	if opts.To != "" {
 		params.Set("to", opts.To)
+	}
+	if opts.Index != "" {
+		params.Set("index", opts.Index)
 	}
 
 	path := "/fields/" + url.PathEscape(fieldName) + "/values"

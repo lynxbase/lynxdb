@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 func TestAggregateGroupByObjectPath(t *testing.T) {
@@ -21,7 +20,7 @@ func TestAggregateGroupByObjectPath(t *testing.T) {
 		{"commit.collection": event.StringValue("flat"), "commit": commit("ignored")},
 	}
 
-	acct := memgov.NewTestBudget("test", 1<<30).NewAccount("agg")
+	acct := newTestBudget(1 << 30).NewAccount()
 	iter := NewAggregateIterator(NewRowScanIterator(rows, 4),
 		[]AggFunc{{Name: "count", Alias: "n"}}, []string{"commit.collection"}, acct)
 

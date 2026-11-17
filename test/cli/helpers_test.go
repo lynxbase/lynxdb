@@ -160,7 +160,9 @@ func startServerWithDataDir(t *testing.T, dataDir string) *Server {
 		"--otlp-http-listen=",
 		"--otlp-grpc-listen=",
 	)
-	cmd.Env = cleanEnv()
+	// The fixtures are older than the default retention, which would drop
+	// them when the database opens and every minute after.
+	cmd.Env = append(cleanEnv(), "LYNXDB_RETENTION=0s")
 	cmd.Stdout = os.Stderr // pipe server logs to test stderr for debugging
 	cmd.Stderr = os.Stderr
 

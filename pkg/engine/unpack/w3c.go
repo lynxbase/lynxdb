@@ -10,8 +10,6 @@ import (
 // This format is used by IIS, some CDNs, and other web servers.
 //
 // Field names are defined by a #Fields: directive that precedes the log data.
-// The parser can either receive the fields header through NewW3CParser or
-// parse it from a #Fields: line embedded in the input.
 //
 // W3C field names containing hyphens are normalized to underscores:
 // e.g., "cs-uri-stem" becomes "cs_uri_stem".
@@ -24,24 +22,7 @@ import (
 //
 //	2026-02-14 14:52:01 10.0.0.1 GET /api/health 200
 type W3CParser struct {
-	fields []string // pre-configured field names (normalized)
-}
-
-// NewW3CParser creates a W3CParser with pre-configured field names from a
-// #Fields: directive. The header string should be the value after "#Fields: ".
-// Field names are normalized: hyphens are replaced with underscores.
-func NewW3CParser(header string) *W3CParser {
-	header = strings.TrimSpace(header)
-	if strings.HasPrefix(header, "#Fields:") {
-		header = strings.TrimSpace(header[8:])
-	}
-
-	var fields []string
-	for _, f := range strings.Fields(header) {
-		fields = append(fields, normalizeW3CField(f))
-	}
-
-	return &W3CParser{fields: fields}
+	fields []string // field names from the last #Fields: directive (normalized)
 }
 
 // Name returns the parser format name.
