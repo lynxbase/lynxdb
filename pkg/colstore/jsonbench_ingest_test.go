@@ -16,6 +16,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
+	"github.com/lynxbase/lynxdb/pkg/mem"
 )
 
 // TestJSONBenchIngest times writing LYNXDB_BENCH_NDJSON into a store in the
@@ -42,6 +43,11 @@ func TestJSONBenchIngest(t *testing.T) {
 		t.Skip("set LYNXDB_BENCH_INGEST, LYNXDB_BENCH_DIR and LYNXDB_BENCH_NDJSON")
 	}
 	opts := ingestOptions(t)
+	// LYNXDB_BENCH_GARBAGE_MB bounds the memory that awaits collection; 0
+	// leaves the collector at its default.
+	if os.Getenv("LYNXDB_BENCH_GARBAGE_MB") != "0" {
+		defer mem.BoundGarbage(int64(envInt(t, "LYNXDB_BENCH_GARBAGE_MB", 512)) << 20)()
+	}
 	streams := envInt(t, "LYNXDB_BENCH_STREAMS", runtime.GOMAXPROCS(0))
 	requestDocs := envInt(t, "LYNXDB_BENCH_REQUEST_DOCS", 100000)
 	data := mapFile(t, path)
@@ -67,6 +73,9 @@ func TestJSONBenchIngest(t *testing.T) {
 	var liveMax atomic.Uint64
 	sampling := make(chan struct{})
 	defer close(sampling)
+	// LYNXDB_BENCH_HEAP_PROFILE names a file for the heap profile of the
+	// largest live heap seen.
+	profile, profiled := os.Getenv("LYNXDB_BENCH_HEAP_PROFILE"), uint64(0)
 	go func() {
 		sample := []metrics.Sample{{Name: "/gc/heap/live:bytes"}}
 		for {
@@ -75,8 +84,17 @@ func TestJSONBenchIngest(t *testing.T) {
 				return
 			case <-time.After(10 * time.Millisecond):
 				metrics.Read(sample)
-				if v := sample[0].Value.Uint64(); v > liveMax.Load() {
+				v := sample[0].Value.Uint64()
+				if v > liveMax.Load() {
 					liveMax.Store(v)
+				}
+				if profile == "" || v < profiled+profiled/16 {
+					continue
+				}
+				profiled = v
+				if f, err := os.Create(profile); err == nil {
+					_ = pprof.WriteHeapProfile(f)
+					f.Close()
 				}
 			}
 		}
@@ -139,19 +157,6 @@ func TestJSONBenchIngest(t *testing.T) {
 		t.FailNow()
 	}
 	durable, durableCPU := time.Since(start), cpuTime()-cpuStart
-	// LYNXDB_BENCH_HEAP_PROFILE names a file for a heap profile taken at
-	// this point, while the write buffers are still held and merges run.
-	if name := os.Getenv("LYNXDB_BENCH_HEAP_PROFILE"); name != "" {
-		f, err := os.Create(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		runtime.GC()
-		if err := pprof.WriteHeapProfile(f); err != nil {
-			t.Fatal(err)
-		}
-		f.Close()
-	}
 	t.Logf("durable: %.1f MB of JSON on %d streams in %.2fs wall, %.2fs CPU (%.0f MB/s), %d lines rejected, key %v",
 		megabytes, streams, durable.Seconds(), durableCPU.Seconds(), megabytes/durable.Seconds(), rejected.Load(), opts.SortKey)
 	logStoreShape(t, s, "when durable")
