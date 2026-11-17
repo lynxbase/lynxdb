@@ -1,6 +1,7 @@
 package part
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/binary"
 	"errors"
@@ -1252,7 +1253,7 @@ type dictBuilder struct {
 	codes []uint32 // entry number of every value
 	order []uint32 // entry numbers sorted by value
 	rank  []uint32 // position of each entry in order
-	col   *shred.Column
+	keys  []dictKey
 	seen  []uint64 // hashes of the values fewRepeats has met
 }
 
@@ -1294,10 +1295,43 @@ func (d *dictBuilder) fewRepeats(c *shred.Column) bool {
 	return true
 }
 
-func (d *dictBuilder) Len() int      { return len(d.order) }
-func (d *dictBuilder) Swap(i, j int) { d.order[i], d.order[j] = d.order[j], d.order[i] }
-func (d *dictBuilder) Less(i, j int) bool {
-	return string(d.col.Bytes(int(d.first[d.order[i]]))) < string(d.col.Bytes(int(d.first[d.order[j]])))
+// dictKey is an entry of a dictionary with the bytes of its value that
+// most often tell it from the others: the eight after the bytes that all
+// the values begin with, as a number that orders as they do.
+type dictKey struct {
+	head  uint64
+	entry uint32
+}
+
+// sortEntries puts the entries in order by their values.
+func (d *dictBuilder) sortEntries(c *shred.Column) {
+	value := func(entry uint32) []byte { return c.Bytes(int(d.first[entry])) }
+	shared := value(0)
+	for entry := 1; entry < len(d.first) && len(shared) > 0; entry++ {
+		v := value(uint32(entry))
+		n := 0
+		for n < len(shared) && n < len(v) && v[n] == shared[n] {
+			n++
+		}
+		shared = shared[:n]
+	}
+	d.keys = d.keys[:0]
+	for entry := range d.first {
+		v := value(uint32(entry))[len(shared):]
+		var head [8]byte
+		copy(head[:], v)
+		d.keys = append(d.keys, dictKey{binary.BigEndian.Uint64(head[:]), uint32(entry)})
+	}
+	slices.SortFunc(d.keys, func(a, b dictKey) int {
+		if a.head != b.head {
+			return cmp.Compare(a.head, b.head)
+		}
+
+		return bytes.Compare(value(a.entry), value(b.entry))
+	})
+	for i, k := range d.keys {
+		d.order[i] = k.entry
+	}
 }
 
 // build reports the number of distinct values of c and whether a dictionary
@@ -1357,9 +1391,7 @@ func (d *dictBuilder) build(c *shred.Column, wide bool) (distinct int, ok bool) 
 	for i := 0; i < distinct; i++ {
 		d.order = append(d.order, uint32(i))
 	}
-	d.col = c
-	sort.Sort(d)
-	d.col = nil
+	d.sortEntries(c)
 	if cap(d.rank) < distinct {
 		d.rank = make([]uint32, distinct)
 	}
