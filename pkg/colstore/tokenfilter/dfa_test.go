@@ -58,7 +58,7 @@ func TestAutomatonAgreesWithTheLibrary(t *testing.T) {
 				matches++
 			}
 		}
-		if len(c.sets) >= maxStates {
+		if len(c.sets) >= c.limit {
 			t.Errorf("%s filled the cache with %d states", expr, len(c.sets))
 		}
 		t.Logf("%-28s %5d of %d texts match; %d states, %d classes of runes", expr, matches, len(texts), len(c.sets)-1, c.classes)
@@ -109,7 +109,7 @@ func TestRegexpAnswersWhenTheAutomatonIsFull(t *testing.T) {
 			t.Fatalf("%q: %v, the library says %v", text, got, want)
 		}
 	}
-	if undecided == 0 || len(c.sets) != maxStates {
+	if undecided == 0 || len(c.sets) != c.limit {
 		t.Fatalf("the automaton decided every text with %d states, so the test met no full cache", len(c.sets))
 	}
 }
@@ -138,5 +138,19 @@ func BenchmarkRegexpWithoutLiteral(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+func TestAutomatonBoundsItsTablesForManyClassesOfRunes(t *testing.T) {
+	a := automatonOf(t, `(\p{L}|\p{N})+\p{Greek}{3}\p{Han}`)
+	if a == nil {
+		t.Fatal("no automaton")
+	}
+	c := newStates(a)
+	if c.classes < 500 {
+		t.Fatalf("the expression tells only %d classes of runes apart", c.classes)
+	}
+	if bytes := 4 * c.limit * (1<<7 + c.classes); c.limit < 8 || bytes > maxTableBytes {
+		t.Fatalf("%d states of %d classes may take %d bytes", c.limit, c.classes, bytes)
 	}
 }

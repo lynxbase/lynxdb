@@ -23,9 +23,10 @@ type automaton struct {
 }
 
 const (
-	// maxStates bounds the states of one cache; an expression that needs
-	// more is left to the library.
-	maxStates = 4096
+	// maxStates and maxTableBytes bound the states of one cache and their
+	// tables of moves; an expression that needs more is left to the library.
+	maxStates     = 4096
+	maxTableBytes = 2 << 20
 
 	stateUnknown = 0
 	stateMatched = -1
@@ -89,6 +90,7 @@ type states struct {
 	ascii   []int32
 	wide    []int32
 	classes int
+	limit   int // most states the tables may hold
 	// sets holds the instructions of each state and endMatch whether the
 	// state matches when the text ends there.
 	sets     [][]uint32
@@ -107,6 +109,7 @@ type states struct {
 
 func newStates(a *automaton) *states {
 	c := &states{auto: a, prog: a.prog, classes: len(a.bounds) + 1, ids: map[string]int32{}, seen: make([]uint32, len(a.prog.Inst))}
+	c.limit = max(8, min(maxStates, maxTableBytes/(4*(1<<7+c.classes))))
 	c.ascii = make([]int32, 2<<7)
 	c.wide = make([]int32, 2*c.classes)
 	c.sets = make([][]uint32, 2)
@@ -224,7 +227,7 @@ func (c *states) step(s int32, r rune) int32 {
 	if id, ok := c.ids[key]; ok {
 		return id
 	}
-	if len(c.sets) >= maxStates {
+	if len(c.sets) >= c.limit {
 		return stateFull
 	}
 	id := int32(len(c.sets))
