@@ -151,6 +151,8 @@ type rangeWorker struct {
 	cursors            []*rangeCursor
 	order, heap        []*rangeCursor
 	turn               int
+	// byIndex counts the blocks answered from the index of their part.
+	byIndex int64
 	// lastGroup and last are the latest key the merge has seen, and lo and
 	// hi the first and last time of its rows.
 	lastGroup      int
@@ -246,60 +248,158 @@ func (w *rangeWorker) loadDids(c *rangeCursor, b *part.Block) (bool, error) {
 		if !ok || err != nil {
 			return false, err
 		}
-		from, to := c.r.From, c.r.To
-		w.blocks++
-		w.rows += int64(to - from)
-		keys := &c.r.Block.Keys
-		coll := keys.Column(w.groupPath, vec.KindString)
-		if coll == nil {
-			continue
+		if w.fillDids(c) {
+			return true, nil
 		}
-		did := keys.Column(w.didPath, vec.KindString)
-		c.col, c.i, c.indexed, c.unique = did, 0, true, false
-		c.idx, c.gids = c.idx[:0], c.gids[:0]
-		if coll.Layout != vec.Const || coll.Valid != nil {
-			w.resetCodeGroups(coll)
+	}
+}
+
+// fillDids points c at the dids of the block its reader is at, adds the rows
+// of the block to the counts of their groups, and reports whether the block
+// has a did.
+func (w *rangeWorker) fillDids(c *rangeCursor) bool {
+	from, to := c.r.From, c.r.To
+	w.blocks++
+	w.rows += int64(to - from)
+	keys := &c.r.Block.Keys
+	coll := keys.Column(w.groupPath, vec.KindString)
+	if coll == nil {
+		return false
+	}
+	did := keys.Column(w.didPath, vec.KindString)
+	c.col, c.i, c.end, c.indexed, c.unique = did, 0, 0, true, false
+	c.idx, c.gids = c.idx[:0], c.gids[:0]
+	if coll.Layout != vec.Const || coll.Valid != nil {
+		w.resetCodeGroups(coll)
+		for row := from; row < to; row++ {
+			if !coll.IsValid(row) {
+				continue
+			}
+			g := w.groupOfRow(coll, row)
+			w.counts[g]++
+			if did != nil && did.IsValid(row) {
+				c.idx, c.gids = append(c.idx, uint32(entry(did, row))), append(c.gids, int32(g))
+			}
+		}
+	} else {
+		c.gid = w.group(coll.DictValue(0))
+		w.counts[c.gid] += int64(to - from)
+		switch {
+		case did == nil:
+		case did.Layout == vec.Dict && from == 0 && to == c.r.Block.Rows:
+			// The dictionary lists the dids of the whole block in order.
+			c.indexed, c.unique, c.end = false, true, did.DictLen()
+		case did.Layout == vec.Flat && did.Valid == nil:
+			c.indexed, c.i, c.end = false, from, to
+		default:
+			c.unique = did.Layout != vec.Flat
+			prev := -1
 			for row := from; row < to; row++ {
-				if !coll.IsValid(row) {
-					continue
-				}
-				g := w.groupOfRow(coll, row)
-				w.counts[g]++
-				if did != nil && did.IsValid(row) {
-					c.idx, c.gids = append(c.idx, uint32(entry(did, row))), append(c.gids, int32(g))
-				}
-			}
-		} else {
-			c.gid = w.group(coll.DictValue(0))
-			w.counts[c.gid] += int64(to - from)
-			switch {
-			case did == nil:
-			case did.Layout == vec.Dict && from == 0 && to == c.r.Block.Rows:
-				// The dictionary lists the dids of the whole block in order.
-				c.indexed, c.unique, c.end = false, true, did.DictLen()
-			case did.Layout == vec.Flat && did.Valid == nil:
-				c.indexed, c.i, c.end = false, from, to
-			default:
-				c.unique = did.Layout != vec.Flat
-				prev := -1
-				for row := from; row < to; row++ {
-					if k := entry(did, row); did.IsValid(row) && k != prev {
-						c.idx = append(c.idx, uint32(k))
-						prev = k
-					}
+				if k := entry(did, row); did.IsValid(row) && k != prev {
+					c.idx = append(c.idx, uint32(k))
+					prev = k
 				}
 			}
 		}
+	}
+	for len(w.users) < len(w.counts) {
+		w.users = append(w.users, 0)
+	}
+	if c.indexed {
+		c.end = len(c.idx)
+	}
+	if c.i == c.end {
+		return false
+	}
+	c.set()
+
+	return true
+}
+
+// useKeyStats lets a block inside one group be counted from the part's index
+// alone; tests turn it off to compare the answers.
+var useKeyStats = true
+
+// countByIndex counts block i of p, which lies inside the range, from the
+// part's index when the index says that the block holds one group and only
+// string dids. repeats tells that the block starts with the did of the row
+// before it. It reports false when the block has to be read.
+func (w *rangeWorker) countByIndex(p *part.Part, i int, repeats bool) bool {
+	if p.KeyRuns(i, w.didPath) != 1 {
+		return false
+	}
+	first := p.FirstKey(i)
+	_, last := p.KeyRange()
+	if i+1 < p.NumBlocks() {
+		last = p.FirstKey(i + 1)
+	}
+	rows, _, _ := p.BlockStats(i)
+	if part.KeyKind(first, w.groupPath) == vec.KindString {
+		// The dids between two strings of one group are strings.
+		if part.KeyKind(first, w.didPath) != vec.KindString || part.KeyKind(last, w.didPath) != vec.KindString ||
+			part.SharedKeyColumns(first, last) < w.didPath {
+			return false
+		}
+		w.key, _ = part.KeyString(w.key[:0], first, w.groupPath)
+		g := w.group(w.key)
 		for len(w.users) < len(w.counts) {
 			w.users = append(w.users, 0)
 		}
-		if c.indexed {
-			c.end = len(c.idx)
+		w.counts[g] += int64(rows)
+		w.users[g] += int64(p.KeyRuns(i, w.didPath+1))
+		if repeats {
+			w.users[g]--
 		}
-		if c.i < c.end {
-			c.set()
+	}
+	w.blocks++
+	w.rows += int64(rows)
+	w.byIndex++
 
-			return true, nil
+	return true
+}
+
+// countStream is countUsers for a range with one stream, where equal dids
+// are adjacent and the part's index tells whether a block starts with the
+// did of the row before it.
+func (w *rangeWorker) countStream(c *rangeCursor, b *part.Block) error {
+	for {
+		p, i, whole, ok := c.r.Peek()
+		if !ok {
+			return nil
+		}
+		repeats := c.r.Shared() > w.didPath
+		if whole && useKeyStats && w.countByIndex(p, i, repeats) {
+			c.r.Skip()
+
+			continue
+		}
+		if ok, err := c.r.Read(b); err != nil {
+			return err
+		} else if !ok || !w.fillDids(c) {
+			continue
+		}
+		// The first did is the one of the block's first row when that row
+		// is inside the range and holds a group and a did.
+		keys := &c.r.Block.Keys
+		repeats = repeats && c.r.From == 0 && keys.Column(w.groupPath, vec.KindString).IsValid(0) && c.col.IsValid(0)
+		if c.unique {
+			w.users[c.gid] += int64(c.end - c.i)
+			if repeats {
+				w.users[c.gid]--
+			}
+
+			continue
+		}
+		group, last := -1, []byte(nil)
+		if repeats {
+			group, last = c.gid, c.cur
+		}
+		for ; c.i < c.end; c.i++ {
+			c.set()
+			if c.gid != group || string(c.cur) != string(last) {
+				w.users[c.gid]++
+				group, last = c.gid, c.cur
+			}
 		}
 	}
 }
@@ -307,7 +407,11 @@ func (w *rangeWorker) loadDids(c *rangeCursor, b *part.Block) (bool, error) {
 // countUsers adds to the worker's groups the rows of kr and the distinct
 // dids among them.
 func (w *rangeWorker) countUsers(kr *KeyRange, b *part.Block) error {
-	for _, c := range w.start(kr) {
+	cursors := w.start(kr)
+	if len(cursors) == 1 {
+		return w.countStream(cursors[0], b)
+	}
+	for _, c := range cursors {
 		ok, err := w.loadDids(c, b)
 		if err != nil {
 			return err
@@ -564,12 +668,22 @@ func TestOrderedQueriesMatchHashed(t *testing.T) {
 			}
 			for _, workers := range []int{1, 4} {
 				label := fmt.Sprintf("merged %v, %d runs, %d workers", merged, runs, workers)
-				gotUsers, err := eventsWithUsersOrdered(snap, users, workers)
-				if err != nil {
-					t.Fatal(err)
+				var read [2]int64
+				for i, stats := range []bool{true, false} {
+					useKeyStats = stats
+					gotUsers, err := eventsWithUsersOrdered(snap, users, workers)
+					useKeyStats = true
+					if err != nil {
+						t.Fatal(err)
+					}
+					if !reflect.DeepEqual(gotUsers, wantUsers) {
+						t.Errorf("%s, key statistics %v:\n got  %v\n want %v", label, stats, gotUsers, wantUsers)
+					}
+					read[i] = benchScan.opened.Load()
 				}
-				if !reflect.DeepEqual(gotUsers, wantUsers) {
-					t.Errorf("%s:\n got  %v\n want %v", label, gotUsers, wantUsers)
+				// One stream leaves most blocks to the index.
+				if single := merged || runs == 1; single && read[0] > read[1]/2 || !single && read[0] != read[1] {
+					t.Errorf("%s: %d blocks read with key statistics, %d without", label, read[0], read[1])
 				}
 				gotFirst, gotLongest, err := postTimesOrdered(snap, posts, workers, 5)
 				if err != nil {
