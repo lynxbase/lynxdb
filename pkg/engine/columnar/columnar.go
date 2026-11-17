@@ -18,6 +18,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec/irplan"
+	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/variant"
 	"github.com/lynxbase/lynxdb/pkg/engine/physical"
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
@@ -436,30 +437,94 @@ func batchOf(res *exec.Result, schema ir.Schema) *pipeline.Batch {
 	return batch
 }
 
-// describe returns one row per field that the rows of a table hold.
+// describedBlocks is the most blocks of one part that describe opens to
+// learn the kinds of its fields.
+const describedBlocks = 16
+
+// describe returns one row per field that the rows of a table hold, in the
+// order of the fields' names: the table, the field, the type of its values
+// as far as the blocks looked at tell, and its place in that order.
 func (r *run) describe(src ir.Source) ([]map[string]event.Value, error) {
 	snap, ok := r.tables.Snapshot(src.Name)
 	if !ok {
 		return nil, fmt.Errorf("columnar: no table %q", src.Name)
 	}
 	defer snap.Release()
-	seen := map[string]bool{}
+	kinds := map[string]uint8{}
 	var names []string
+	var b part.Block
 	for _, h := range snap.Parts() {
-		for _, path := range h.Paths() {
-			if !seen[path] {
-				seen[path] = true
+		paths := h.Paths()
+		for _, path := range paths {
+			if _, seen := kinds[path]; !seen {
+				kinds[path] = 0
 				names = append(names, path)
+			}
+		}
+		// The first and the last block, then blocks spread between them.
+		n := h.NumBlocks()
+		for _, i := range spread(n, describedBlocks) {
+			if err := h.OpenBlock(i, &b); err != nil {
+				return nil, err
+			}
+			for _, ref := range b.Columns() {
+				if ref.Count > 0 {
+					kinds[paths[ref.PathID]] |= 1 << ref.Kind
+				}
 			}
 		}
 	}
 	sort.Strings(names)
 	rows := make([]map[string]event.Value, len(names))
 	for i, name := range names {
-		rows[i] = map[string]event.Value{"column": event.StringValue(name)}
+		rows[i] = map[string]event.Value{
+			"TABLE_NAME":       event.StringValue(src.Name),
+			"COLUMN_NAME":      event.StringValue(name),
+			"TYPE_NAME":        event.StringValue(typeName(name, kinds[name])),
+			"ORDINAL_POSITION": event.IntValue(int64(i + 1)),
+		}
 	}
 
 	return rows, nil
+}
+
+// spread returns up to most of the numbers below n, the first and the last
+// among them.
+func spread(n, most int) []int {
+	if n <= most {
+		out := make([]int, n)
+		for i := range out {
+			out[i] = i
+		}
+
+		return out
+	}
+	out := make([]int, most)
+	for i := range out {
+		out[i] = i * (n - 1) / (most - 1)
+	}
+
+	return out
+}
+
+// typeName names the type of a field that holds values of kinds, a bit per
+// kind: numbers of both kinds are doubles, and any other mix is text.
+func typeName(path string, kinds uint8) string {
+	if path == ir.TimeColumn {
+		return "timestamp"
+	}
+	switch kinds &^ (1 << vec.KindNull) {
+	case 1 << vec.KindBool:
+		return "boolean"
+	case 1 << vec.KindInt:
+		return "bigint"
+	case 1 << vec.KindFloat, 1<<vec.KindInt | 1<<vec.KindFloat:
+		return "double"
+	case 1 << vec.KindVariant:
+		return "array"
+	}
+
+	return "string"
 }
 
 // rowsOf turns the columns of a result into rows. A row has no entry for a
