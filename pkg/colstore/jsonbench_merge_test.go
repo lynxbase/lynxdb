@@ -214,7 +214,8 @@ func contentDigest(t testing.TB, parts []*part.Part) (digest uint64, rows, block
 // file named by LYNXDB_BENCH_NDJSON: as one merge on one goroutine, and as
 // range merges on every core. LYNXDB_BENCH_MERGE_RUNS sets the number of
 // source runs, LYNXDB_BENCH_RUNS the timed repetitions, LYNXDB_BENCH_SORT the
-// sort key, LYNXDB_BENCH_MERGE_MODE keeps one of the modes whole, ranges
+// sort key, LYNXDB_BENCH_LEVEL the compression effort of the part that the
+// whole merge writes, LYNXDB_BENCH_MERGE_MODE keeps one of the modes whole, ranges
 // and apart, the last of which merges the parts the range merges wrote, and
 // LYNXDB_BENCH_PROFILE names a directory that receives one CPU profile per
 // mode.
@@ -253,6 +254,15 @@ func TestJSONBenchMerge(t *testing.T) {
 	t.Logf("%d runs ordered by %v: %d rows in %d blocks, %.1f MB", len(runs), key, rows, srcBlocks, float64(srcSize)/1e6)
 
 	opts := part.Options{Ordered: true, SortKey: key}
+	switch v := os.Getenv("LYNXDB_BENCH_LEVEL"); v {
+	case "", "fast":
+	case "fastest":
+		opts.Level = part.LevelFastest
+	case "compact":
+		opts.Level = part.LevelCompact
+	default:
+		t.Fatalf("LYNXDB_BENCH_LEVEL=%q is not fast, fastest or compact", v)
+	}
 	whole := func(sink func(i int) io.Writer) int {
 		w := part.NewWriter(sink(0), opts)
 		if err := part.Merge(w, runs, blockRows); err != nil {
