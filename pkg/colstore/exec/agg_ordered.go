@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
@@ -220,6 +221,8 @@ func (g *orderedGroup) copyFrom(src *orderedGroup) {
 // orderedEdges holds the first and the last group of a key range, which may
 // continue in the ranges next to it.
 type orderedEdges struct {
+	// lo is where the range starts, which orders the ranges of a scan.
+	lo          []byte
 	first, last orderedGroup
 }
 
@@ -267,6 +270,8 @@ type orderedWorker struct {
 	bound []uint8
 	gid   []uint32
 	idx   []uint32
+	// edges holds the first and last group of every range the worker read.
+	edges []*orderedEdges
 }
 
 func (ow *orderedWorker) held() int {
@@ -609,7 +614,6 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 	o := q.ordered
 	workers := len(x.workers)
 	scan := o.key.Ranges(max(4*workers, o.key.Rows/rangeRows), o.columns...)
-	edges := make([]orderedEdges, len(scan.Ranges))
 	ows := make([]*orderedWorker, workers)
 	err := scan.Run(ctx, workers, func(n int, kr *colstore.KeyRange, b *part.Block) error {
 		ow := ows[n]
@@ -618,13 +622,10 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 			ow = &orderedWorker{w: x.workers[n], o: o, scan: scan, turn: n}
 			ows[n] = ow
 		}
-		for i := range scan.Ranges {
-			if &scan.Ranges[i] == kr {
-				return ow.merge(kr, &edges[i], b)
-			}
-		}
+		edges := &orderedEdges{lo: kr.Lo}
+		ow.edges = append(ow.edges, edges)
 
-		return nil
+		return ow.merge(kr, edges, b)
 	})
 	if err != nil {
 		return nil, err
@@ -639,6 +640,13 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 		ows[0] = last
 	}
 	plan := q.agg
+	var edges []*orderedEdges
+	for _, ow := range ows {
+		if ow != nil {
+			edges = append(edges, ow.edges...)
+		}
+	}
+	sort.Slice(edges, func(i, j int) bool { return bytes.Compare(edges[i].lo, edges[j].lo) < 0 })
 	var carry *orderedGroup
 	for i := range edges {
 		for _, e := range []*orderedGroup{&edges[i].first, &edges[i].last} {
