@@ -355,7 +355,6 @@ func iteratorChild(iter Iterator) Iterator {
 		return it.child
 	case *TransactionIterator:
 		return it.child
-	// New Phase 3 P2 operators.
 	case *DescribeIterator:
 		return it.child
 	case *TeeIterator:

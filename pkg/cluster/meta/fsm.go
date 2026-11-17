@@ -128,8 +128,7 @@ func (f *MetaFSM) Restore(rc io.ReadCloser) error {
 	// Rebuild the hash ring from the node list (not serialized).
 	state.Ring = rebuildRing(&state)
 
-	// Ensure new maps are initialized when restoring from older snapshots
-	// that predate Phase 5 distributed subsystems.
+	// Snapshots may lack these maps; restore them empty.
 	if state.FieldCatalog == nil {
 		state.FieldCatalog = make(map[string]*GlobalFieldInfo)
 	}

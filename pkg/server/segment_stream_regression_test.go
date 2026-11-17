@@ -10,11 +10,8 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/event"
 )
 
-// TestStreamingPipelineReadsFlushedSegments is the regression test for the
-// RFC-002 Phase 10 data-loss bug: the streaming scan path built a
-// StreamingServerStore with segment sources but the physical source callback
-// read only buffered events, so any data already flushed to .lsg segments
-// silently vanished from query results (tail catchup, EXPLAIN ANALYZE).
+// TestStreamingPipelineReadsFlushedSegments checks that the streaming scan
+// reads data already flushed to .lsg segments, not only buffered events.
 //
 // The test ingests events, flushes the batcher so the buffer is empty and the
 // data lives only in segments, then runs a query through SubmitQuery and

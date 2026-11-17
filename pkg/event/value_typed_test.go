@@ -117,7 +117,7 @@ func TestNestedRendering(t *testing.T) {
 
 func TestFieldTypeStringsAndStability(t *testing.T) {
 	// The tag values are persisted in spill/segment encodings; they must
-	// never be renumbered (RFC-002 Phase 1).
+	// never be renumbered.
 	stable := map[FieldType]uint8{
 		FieldTypeNull: 0, FieldTypeString: 1, FieldTypeInt: 2, FieldTypeFloat: 3,
 		FieldTypeBool: 4, FieldTypeTimestamp: 5, FieldTypeDuration: 6,
