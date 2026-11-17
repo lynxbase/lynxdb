@@ -332,8 +332,7 @@ func (p *Part) BlocksInKeyRange(lo, hi []byte) (first, end int) {
 // SplitKeysWithPrefix returns up to n-1 ascending encoded sort keys starting
 // with prefix that cut the rows of ordered parts holding that prefix into
 // ranges of similar size. The keys hold columns key columns, so that rows
-// equal in those columns stay in one range, and are taken where a block
-// starts a value of those columns when the index tells.
+// equal in those columns stay in one range.
 func SplitKeysWithPrefix(srcs []*Part, n int, prefix []byte, columns int) [][]byte {
 	type blockKey struct {
 		key  []byte
@@ -348,14 +347,7 @@ func SplitKeysWithPrefix(srcs []*Part, n int, prefix []byte, columns int) [][]by
 		first, end := p.BlocksWithKeyPrefix(prefix)
 		for i := first; i < end; i++ {
 			rows, _, _ := p.BlockStats(i)
-			key := KeyPrefix(p.firstKeys[i], columns)
-			// A block that continues the value of the block before it adds
-			// its rows to that block's key.
-			if len(blocks) > 0 && i > first && !p.startsRun(i, len(key)) {
-				blocks[len(blocks)-1].rows += rows
-			} else {
-				blocks = append(blocks, blockKey{key: key, rows: rows})
-			}
+			blocks = append(blocks, blockKey{key: KeyPrefix(p.firstKeys[i], columns), rows: rows})
 			total += rows
 		}
 	}
