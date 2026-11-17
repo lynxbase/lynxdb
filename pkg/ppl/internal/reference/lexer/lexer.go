@@ -206,11 +206,10 @@ func (l *lexer) skipSpaceAndComments() bool {
 			}
 		default:
 			r, _ := utf8.DecodeRuneInString(l.src[l.off:])
-			if unicode.IsSpace(r) {
-				l.advance(utf8.RuneLen(r))
-				continue
+			if !unicode.IsSpace(r) {
+				return skipped
 			}
-			return skipped
+			l.advance(utf8.RuneLen(r))
 		}
 		skipped = true
 	}

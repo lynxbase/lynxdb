@@ -257,18 +257,17 @@ func (l *lexer) skipSpaceAndComments() bool {
 			}
 		default:
 			if c < utf8.RuneSelf {
-				if c == '\v' {
-					l.advanceASCII(1)
-					continue
+				if c != '\v' {
+					return skipped
 				}
-				return skipped
+				l.advanceASCII(1)
+				break
 			}
 			r, size := utf8.DecodeRuneInString(l.src[l.off:])
-			if unicode.IsSpace(r) {
-				l.advance(size)
-				continue
+			if !unicode.IsSpace(r) {
+				return skipped
 			}
-			return skipped
+			l.advance(size)
 		}
 		skipped = true
 	}
