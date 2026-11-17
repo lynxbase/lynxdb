@@ -7,8 +7,10 @@ description: Time ranges, timechart, bin, span and time functions in PPL.
 # Time series
 
 Every event has a timestamp in the `_time` column (`@timestamp` is an
-alias). LynxDB assigns it at ingest from the event's timestamp field or a
-leading timestamp in the text, and from the ingest time when there is none.
+alias). LynxDB assigns it at ingest: from the first of the fields
+`storage.time_fields` names (`_time`, `timestamp`, `@timestamp`, `time`,
+`ts` by default) that a JSON event holds, from a timestamp at the start of a
+line of text, and otherwise from the time the event arrives.
 
 ## Restricting the time range
 
@@ -21,10 +23,10 @@ source=main | where earliest('-15m', _time)
 ```
 
 A range in the source command, or a comparison of `_time` with a constant
-in a `where` directly after it, narrows the scan; the server then skips
-segments outside it. The REST parameters `from`/`to` and the CLI flags
-`--since`, `--from`, `--to` add a range of their own, and the query reads
-the intersection. Relative times (`-1h`, `@d`) resolve against the query's
+in a `where` directly after it, narrows the scan, which then reads only the
+time partitions and blocks the range meets. The REST parameters `from`/`to`
+and the CLI flags `--since`, `--from`, `--to` add a range of their own, and
+the query reads the intersection. Relative times (`-1h`, `@d`) resolve against the query's
 start time in UTC; snaps round down (`@d` is midnight, `@w1` is Monday,
 `@mon` the first of the month).
 

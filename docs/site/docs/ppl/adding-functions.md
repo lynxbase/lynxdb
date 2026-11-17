@@ -25,7 +25,10 @@ the engine implements, and the PPL catalogs, which map PPL names onto it.
 2. **Implement** it in `pkg/vm/ir_funcs*.go`.
    `TestIRRegistryHasImplementations` fails until every registered scalar
    function has an implementation. Invalid values should produce NULL
-   rather than an error.
+   rather than an error. For the columnar executor, implement it in
+   `pkg/colstore/exec/irfunc` with the same semantics; the executor runs a
+   function missing there through the VM over the fields it reads, and
+   leaves a volatile one to the row operators.
 3. **Map the PPL name** in `pkg/ppl/functions.go`: `direct(name, irName)`
    for a one-to-one mapping or an alias, `lowered(name, construct, f)` for a
    function compiled to IR operators, or `unsupportedFunc(reason, names...)`
@@ -48,10 +51,14 @@ at planning time when all arguments are literals, so they must be pure.
    mark order-dependent aggregates with `ordered`.
 2. Map it to a pipeline aggregator in `pkg/engine/physical/operators.go`
    (`aggregateNames`) and implement the aggregator in `pkg/engine/pipeline`.
+   For the columnar executor, map it in `aggFuncs` of
+   `pkg/colstore/exec/irplan` onto an aggregate of `pkg/colstore/exec`; an
+   aggregate it does not map is run by the row operators.
 3. Add the PPL name to `aggregateCatalog` in `pkg/ppl/aggs.go`, with a note
-   for any deviation from OpenSearch. Special argument handling (such as
-   `percentile`'s constant percent) goes in `ectx.aggCall`.
-4. Test it in `pkg/query/query_test.go` and regenerate the tables.
+   for any deviation from OpenSearch and for any difference between the two
+   executors. Special argument handling (such as `percentile`'s constant
+   percent) goes in `ectx.aggCall`.
+4. Test it in `pkg/database/execute_test.go` and regenerate the tables.
 
 Window-only functions (`row_number`, `rank`, ...) are listed in
 `windowOnlyFuncs` and fail with `UNSUPPORTED_FUNCTION`.

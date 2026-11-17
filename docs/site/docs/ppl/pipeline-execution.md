@@ -1,7 +1,7 @@
 ---
 title: Pipeline execution
 sidebar_label: Pipeline execution
-description: How LynxDB runs a compiled PPL plan, locally and on a server.
+description: How LynxDB runs a compiled PPL plan with the columnar executor and the row operators, locally and on a server.
 ---
 
 # Pipeline execution
@@ -16,21 +16,66 @@ not how it runs.
    and [IR optimizer](./optimizer.md)). Compiling depends on the text alone,
    so LynxDB keeps the plans of the 1024 most recently used queries of up to
    2 KiB and reuses them for a repeated text.
-2. **Plan storage access.** On a server, `pkg/planner` derives storage hints
-   from the plan's scans: sources, time bounds, search terms, field
-   predicates, required columns and a row limit
-   ([Search semantics](./search-and-types.md#how-the-server-uses-search-terms)).
-3. **Build.** `pkg/engine/physical` turns each IR operator into a pipeline
-   iterator and compiles each expression to VM bytecode (`pkg/vm`). Before
-   building the operator that uses it, it runs every subquery once and keeps
-   its rows.
-4. **Run.** The root iterator pulls batches of up to 1024 rows from its
-   inputs, down to the scan, which reads events from storage.
+2. **Narrow.** The time range of a request (`from` and `to` on the REST API,
+   `--since`, `--from` and `--to` in the CLI) narrows every scan of the plan,
+   those of subqueries included.
+3. **Resolve subqueries.** An `IN` subquery of one column runs first; when it
+   returns at most 1024 values, the membership test becomes a list of those
+   values in the outer plan.
+4. **Run on the columnar executor.** Walking down from the root, LynxDB gives
+   the columnar executor (`pkg/engine/columnar`, `pkg/colstore/exec`) the
+   largest part of the plan above a scan that it can run.
+5. **Run the rest on the row operators.** The operators above that part run
+   in `pkg/engine/physical` and `pkg/engine/pipeline`, with expressions
+   compiled to bytecode for the VM (`pkg/vm`). They pull batches of rows from
+   their inputs. A part of the columnar executor that only chooses columns of
+   a scan, with at most a limit above it, hands its rows over block by block
+   as it scans; any other part runs to its end before the row operators read
+   its result.
 
-The plan is the same wherever the query runs; only the scan's event source
-differs.
+A plan that the columnar executor takes whole never meets the row operators;
+its rows stay in columns until the response is written. The plan is the same
+wherever the query runs; the CLI and the server differ only in where the
+indexes are.
 
-## Streaming and blocking operators
+## What the columnar executor takes
+
+`pkg/colstore/exec/irplan` translates a chain of IR operators from a scan
+upwards and refuses the first operator it has no translation for. It takes:
+
+| Operators | Commands |
+| --- | --- |
+| Scan with its time range, Filter | the source command and its search terms, `where`, `regex` |
+| Compute, Extract, FillNull, RenameColumns | `eval`, `parse`, `rex`, `fillnull`, `rename` |
+| Project | `fields`, `table` |
+| one Aggregate, with Filter and Compute above it | `stats`, `top`, `rare`, `timechart`, `chart` and what follows them |
+| Window that sums a column of the aggregate over all its groups | the totals of `top` and `rare` with `showperc=true` |
+| Sort, TopN, Limit | `sort`, `sort ... \| head`, `head` |
+| Dedup of the first row of each key | `dedup` with one row per key |
+
+Expressions run as operations of the executor where it has them; a
+function it has no operation for is computed by the VM over the fields the
+function reads, and a volatile function such as `rand()` leaves its
+operator to the row operators. Any other operator, such as `eventstats`,
+`streamstats`, `join`, `append` or a second `stats`, runs on the row
+operators over the rows of the part below it.
+
+The executor reads a snapshot of each index the scan names, taken when the
+query starts, and works on blocks of up to 16384 rows on every core. Before
+it opens a block it leaves out:
+
+- the time partitions and blocks outside the scan's time range;
+- the blocks whose token filters show that no column can hold a word or
+  phrase that the filter needs, or that a field cannot hold the string it
+  must equal;
+- the blocks in which an earlier query with the same filter found no row.
+
+After it opens a block, the block's column directory (constant columns,
+the bounds of integer columns, absent columns) can reject it before any
+column is decoded. Every condition is then evaluated on the rows read, so
+the skipped blocks never change a result.
+
+## Row operators
 
 | Operators | Commands | Behavior |
 | --- | --- | --- |
@@ -43,54 +88,45 @@ differs.
 | Union, ZipColumns | `append`, `appendpipe`, `appendcol`, `union`, `multisearch` | read their inputs in turn |
 | Transpose, Totals, CombineValues, Patterns | `transpose`, `addtotals`, `mvcombine`, `patterns` | consume all input |
 
-Live tail runs only plans without the blocking operators; see
-[Live tail](#live-tail).
-
 ## Memory
 
-On a server, operators that hold rows register with the query's memory
-budget (`query.max_query_memory_bytes`) and the server-wide query pool
-(`query.global_query_pool_bytes`). Sorts and aggregations spill to disk
-under `query.spill_dir` when they exceed their budget; other operators fail
-the query with `QUERY_MEMORY_EXCEEDED`. Subquery results and the right side
-of a join are held in memory.
+The row operators hold in memory the rows of the operators that consume all
+their input, the right side of a join and the result of every subquery. A
+`sort` that the row operators run fails the query when it holds more than
+10,000,000 rows. The columnar
+executor keeps a state per group of an aggregate; the state of
+`distinct_count_approx` takes at most 4 KB per group and the percentiles of
+one argument at most 32 KB per group.
 
 ## Local execution
 
-`lynxdb query --file` and piped input load the events into an in-process
-index named `main`, then run the compiled plan over it with the same
-physical planner. Formats are detected while loading (combined, syslog,
-docker; `key=value` pairs are always extracted); `--raw` turns detection
-off.
+`lynxdb query --file` and piped input compile the query first, then load
+the input into the index `main` of a database in a temporary directory,
+which the command removes when it exits, and run the compiled plan with the
+same executors as the server. Formats are detected while loading
+(combined, syslog, docker; `key=value` pairs are always extracted); `--raw`
+turns detection off.
 
 ## Server execution
 
-`POST /api/v1/query` runs a query synchronously, as an asynchronous job
-(`"wait": 0`), or synchronously up to a timeout before turning into a job
-(`"wait": N`). `/api/v1/query/stream` writes rows as NDJSON while the query
-runs. The request's `from` and `to` bound event time in addition to the
-query's own bounds; `limit` and `offset` page the result.
-
-The server reads each index's segments. For every segment it first checks
-the time range, column statistics against field predicates and the bloom
-filter against search terms, and skips segments that cannot match; within a
-segment the term index selects candidate rows. Every predicate is then
-evaluated on the rows read, so results do not depend on which indexes a
-segment has.
-
-## Live tail
-
-`lynxdb tail` and `GET /api/v1/tail` replay recent matching events (`from`,
-default `-1h`, up to `count` events), then stream new events as they are
-ingested. The query is compiled like any other; the server rejects plans
-that contain an operator needing all of its input (Aggregate, Sort, TopN,
-Window, Reverse, Join, Union, Transpose, Totals, CombineValues, Patterns,
-SourceSchema) with 422.
+`POST /api/v1/query` runs every query as a job: synchronously, as an
+asynchronous job (`"wait": 0`), or synchronously up to a timeout before
+answering with the job (`"wait": N`). `/api/v1/query/stream` writes the rows
+as NDJSON. Before a query runs, the server makes the events ingested so far
+visible, so a query sees every event ingested before it. The request's
+`from` and `to` bound event time in addition to the query's own bounds;
+`limit` and `offset` page the result. At most `query.max_concurrent` queries
+run at once; a query beyond that answers `429 TOO_MANY_REQUESTS`.
 
 ## Reading a plan
 
 `lynxdb query --explain` prints the plans locally; `lynxdb explain` and
-`GET /api/v1/query/explain` ask the server and add the storage hints.
+`GET /api/v1/query/explain` ask the server, which adds the search terms,
+the fields read and the source scope of the plan.
+
+```bash
+lynxdb query --explain 'source=main status=500 earliest=-1d | eval slow = response_time > 500 | stats count() as n by host, slow | sort - n | head 5'
+```
 
 ```
 Optimized plan:
@@ -104,6 +140,9 @@ TopN(5, n DESC NULLS LAST)
 
 Read the tree from the bottom: the scan reads `main` for the last day, and
 only the four columns the plan uses. `time=`, `columns=`, `limit=` and
-`prune=` on the scan are the storage hints. The optimizer rules that fired
-are listed under the plans. `--analyze` (CLI) or `analyze=true` (REST) also
-runs the query and reports its execution statistics.
+`prune=` on the scan are the annotations of the optimizer. Every operator of
+this plan is one the columnar executor takes, so it runs the whole plan.
+The optimizer rules that fired are listed under the plans.
+`lynxdb explain --analyze` and `analyze=true` on
+`GET /api/v1/query/explain` also run the query and report its time and row
+count.

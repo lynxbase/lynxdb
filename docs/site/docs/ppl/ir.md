@@ -86,29 +86,30 @@ epoch seconds.
 | `InList` | Membership test. |
 | `IsMissing` | Column absence. |
 | `RelativeTime` | An instant relative to the query's reference time (`now-1d@d`). |
-| `Search` | Index-aware text predicate; see below. |
+| `Search` | Text predicate; see below. |
 | `Subquery` | Uncorrelated EXISTS, IN or scalar subquery. |
 | `AggCall` | Aggregate or window function application, only in `Aggregate` and `Window`. |
 
 ### Search predicates
 
-`Search{Mode, Field, Pattern, CaseSensitive}` keeps the distinctions storage
-indexes care about. `Field` empty means the event's raw text.
+`Search{Mode, Field, Pattern, CaseSensitive}` keeps the distinctions that
+let a scan leave out data. `Field` empty means a free-text search of the
+whole event.
 
-| Mode | Matches | Index use |
+| Mode | Matches | Columnar executor |
 | --- | --- | --- |
-| word | every token of the pattern as a whole token | term index lookup |
-| prefix | a token starting with the pattern | term-index range |
-| glob | a token matching `*`/`?` wildcards | bounded term expansion |
-| phrase | the pattern at token boundaries | term index on the phrase's tokens, verified per row |
-| substring | the pattern anywhere | verified per row |
-| regex | an RE2 expression | verified per row |
+| word | every token of the pattern as a whole token | token filters, then per row |
+| prefix | a token starting with the pattern | per row |
+| glob | a token matching `*`/`?` wildcards | a single trailing `*` as a prefix; other patterns run on the row operators |
+| phrase | the pattern at token boundaries | token filters on the phrase's tokens, then per row |
+| substring | the pattern anywhere | per row |
+| regex | an RE2 expression | per row |
 
 ## Operators
 
 | Operator | Semantics |
 | --- | --- |
-| `Scan` | Reads events of sources (names or `*` patterns) within an exact time range. Carries hints: pruning predicates, required columns, a row limit, descending order. Hints never change results. |
+| `Scan` | Reads events of sources (names or `*` patterns) within an exact time range. Carries annotations: pruning predicates, required columns, a row limit, descending order. Annotations never change results. |
 | `Values` | Literal rows. |
 | `Empty` | No rows. |
 | `SourceSchema` | One row per column of a source. |
@@ -116,7 +117,7 @@ indexes care about. `Field` empty means the event's raw text.
 | `Project` | Keeps (in listed order) or drops columns; names may contain `*`. |
 | `RenameColumns` | Renames columns, with `*` captures. |
 | `Compute` | Adds or replaces columns; assignments see earlier ones. |
-| `Aggregate` | Groups by expressions and computes aggregates; output is groups then aggregates; one row without groups. `DropNullGroups` drops rows with NULL group values. `Phase` splits partial and final aggregation. |
+| `Aggregate` | Groups by expressions and computes aggregates; output is groups then aggregates; one row without groups. Rows without a group value form a group whose key is NULL; `DropNullGroups` drops them. |
 | `Window` | Aggregates per row over the whole partition or a running frame (row bound, current-row exclusion). |
 | `Sort`, `TopN`, `Limit`, `Reverse` | Ordering with explicit NULL placement; bounded heap top-N; offset and count; reversal. |
 | `Dedup` | First N rows per key, optional NULL keys, optional consecutive mode. |
@@ -137,8 +138,9 @@ window), category, parameters (type, constant-only, lambda arity), result
 rule, NULL behaviour (strict, aware, skipped), volatility (volatile, query
 constant), merge kind for partial aggregation (exact, approximate, none),
 order sensitivity and documentation. `Foldable` functions with constant
-arguments are folded at planning time; `RowLocal` functions may run at scan
-time. Every scalar function has a VM implementation.
+arguments are folded at planning time. Every scalar function has a VM
+implementation; `pkg/colstore/exec/irfunc` implements them for the columnar
+executor with the same semantics.
 
 ## Validation
 
@@ -153,7 +155,7 @@ arguments, aggregate placement, lambda scoping and subquery shapes.
 - constant folding of deterministic calls, through an evaluator the caller
   supplies;
 - merging adjacent filters and removing `TRUE` filters;
-- copying indexable conjuncts (raw-text searches, column equals string,
+- copying indexable conjuncts (free-text searches, column equals string,
   disjunctions of words) into `Scan.Prune`, keeping the filter;
 - narrowing `Scan.Time` with constant comparisons of the time column;
 - `Sort` + `Limit` into `TopN`;
@@ -163,15 +165,18 @@ arguments, aggregate placement, lambda scoping and subquery shapes.
 
 See [IR optimizer](./optimizer.md) for each rule.
 
-## Storage hints
+## Execution
 
-`physical.PlanHints` (`pkg/engine/physical/hints.go`) converts the scans of
-an optimized plan into the storage engine's hints: sources, the resolved
-time range, search terms and token globs from raw-text `Search` pruning
-predicates, a term tree for disjunctions of words, field predicates for
-columns equal to strings, required columns, the row limit and the scan
-order. A plan with one scan gets all of its hints; a plan with several scans
-gets only the union of their sources and time ranges. The server's planner
-(`pkg/planner`) attaches these hints to every query, and the storage engine
-uses them to skip segments and select rows; the operators above the scan
-still evaluate every predicate.
+The IR plan is what both executors run. The columnar executor
+(`pkg/colstore/exec/irplan` translates the plan) takes the chain of
+operators from a scan upwards that it can run; the row operators
+(`pkg/engine/physical`) run the rest. See
+[Pipeline execution](./pipeline-execution.md).
+
+`physical.PlanHints` (`pkg/engine/physical/hints.go`) summarizes the scans
+of an optimized plan: sources, the resolved time range, search terms and
+token globs from free-text `Search` pruning predicates, field predicates for
+fields equal to strings, required columns, the row limit and the scan
+order. A plan with one scan gets all of them; a plan with several scans
+gets only the union of their sources and time ranges. `GET
+/api/v1/query/explain` reports this summary.

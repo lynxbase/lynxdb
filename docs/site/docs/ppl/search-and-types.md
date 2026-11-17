@@ -18,30 +18,32 @@ The grammar follows OpenSearch PPL: `NOT` binds tightest, then `OR`, then
 `AND`; adjacent terms are joined by an implicit `AND`; parentheses group.
 `error OR warn timeout` reads as `(error OR warn) AND timeout`.
 
-| Search term | LynxDB semantics | Index use |
+| Search term | LynxDB semantics | Narrows the scan |
 | --- | --- | --- |
-| `error` | the raw text contains the token `error`, any case | term index and bloom filters |
-| `api/v1/users`, `web-01` | a term with punctuation is a phrase of its tokens | term index on its tokens; phrase checked per row |
-| `conn*` | a token of the raw text starts with `conn` | term index (token prefix) |
-| `us?r`, `*err*` | a token matches the wildcard pattern | term index (token wildcard) |
-| `"connection refused"` | the phrase occurs at token boundaries, any case | term index on its tokens; phrase checked per row |
-| `level=ERROR`, `host="web-01"` | the column equals the string, case-sensitive | column statistics and column predicates |
-| `status=500` | the column equals 500 (a numeric string matches too) | checked per row |
-| `host=web-*` | the whole column value matches the wildcard, case-sensitive | checked per row |
-| `status!=500` | the column is absent or not 500 | checked per row |
-| `status>=500` | numeric or lexical comparison | checked per row |
-| `level IN (WARN, ERROR)` | any listed value | checked per row |
-| `error OR warn` | either word | term index (any of the words) |
-| `NOT error` | the raw text lacks the token | checked per row |
-| `earliest=-1h latest=now` | the event time is in the range | segment time ranges; enforced exactly |
+| `error` | a field of the event holds the token `error`, any case | token filters |
+| `api/v1/users`, `web-01` | a term with punctuation is a phrase of its tokens | token filters |
+| `conn*` | a token starts with `conn` | no |
+| `us?r`, `*err*` | a token matches the wildcard pattern | no |
+| `"connection refused"` | the phrase occurs at token boundaries, any case | token filters |
+| `level=ERROR`, `host="web-01"` | the field equals the string, case-sensitive | the field's token filter |
+| `status=500` | the field equals 500 (a numeric string matches too) | no |
+| `host=web-*` | the whole field value matches the wildcard, case-sensitive | no |
+| `status!=500` | the field is absent or not 500 | no |
+| `status>=500` | numeric or lexical comparison | no |
+| `level IN (WARN, ERROR)` | any listed value | no |
+| `error OR warn` | either word | no |
+| `NOT error` | no field of the event holds the token | no |
+| `earliest=-1h latest=now` | the event time is in the range | time partitions and blocks; enforced exactly |
 
 Tokens are maximal runs of letters and digits, compared in lower case.
 
 ### LynxDB behavior
 
 - OpenSearch searches free text in every field (`index.query.default_field`
-  defaults to `*`). LynxDB searches the event's raw text `_raw`, which holds
-  every field of the event as ingested.
+  defaults to `*`). LynxDB searches the string values of every field of the
+  event, and its integer values for a term of digits; strings inside arrays
+  are not searched. An event that arrived as a line of text has its text in
+  `_raw`, which free text searches with the fields extracted from it.
 - OpenSearch analyzes text fields, so a field comparison on a text field
   matches individual tokens. LynxDB compares the whole column value, as
   OpenSearch does for keyword fields. Use `match(field, 'text')` for token
@@ -63,11 +65,9 @@ intersection.
 ## The where command
 
 `where` evaluates a boolean expression with three-valued logic (see
-[Expressions](./expressions.md)). It has no index-specific semantics, but the
-optimizer hands its indexable conjuncts (raw-text searches, a column equal
-to a string, disjunctions of raw-text words) to the scan in the same way as
-search terms. `where host = 'web-01'` and `source=main host="web-01"` read
-the same data.
+[Expressions](./expressions.md)). A `where` directly after the source is
+merged with the search terms into one filter, so `where host = 'web-01'`
+and `source=main host="web-01"` read the same blocks.
 
 ## Searching one field
 
@@ -87,30 +87,35 @@ scores, so they are plain filters.
 decides the result when the text has no tokens; the default `none` matches
 nothing. Other options, such as `slop` or `fuzziness`, fail with
 `UNSUPPORTED_FEATURE`. `multi_match`, `simple_query_string`, `query_string`
-and `match_bool_prefix` fail with `UNSUPPORTED_FUNCTION`. Field searches are
-checked per row; the term index covers `_raw` only.
+and `match_bool_prefix` fail with `UNSUPPORTED_FUNCTION`. A field search
+lets the scan leave out the blocks whose token filter for that field rules
+its tokens out.
 
-## How the server uses search terms
+## How search terms narrow a scan
 
-Compilation turns each search into an IR predicate that stays in the plan, so
-results never depend on an index. The optimizer also copies the indexable
-predicates into the scan (`prune=` in a plan), and the server's planner
-(`pkg/planner`) converts the plan's scans into storage hints
-(`pkg/engine/physical/hints.go`) that decide which segments and rows the
-server reads:
+Compilation turns each search into an IR predicate that stays in the plan,
+so results never depend on which blocks a scan leaves out. When the
+columnar executor runs the filter, it reads the blocks of the scan's time
+range and, before it opens one, leaves it out when:
 
-| Hint | From | The server uses it to |
-| --- | --- | --- |
-| time bounds | `earliest`/`latest`, comparisons of `_time` with constants, request `from`/`to` | skip segments outside the range |
-| search terms | words and phrase tokens on `_raw` | skip segments whose bloom filter lacks a term; select rows through the term index |
-| token globs | prefix and wildcard terms on `_raw` | select rows through the term index |
-| term tree | `OR` of single words on `_raw` | select rows through the term index |
-| field predicates | a column equal to a string | skip segments by column statistics; filter rows while reading |
-| required columns | the columns the plan reads | read only those columns |
-| limit | `head` over row-preserving commands | stop reading early |
+- the block lies outside the time range of `earliest`/`latest`, of a
+  comparison of `_time` with a constant, or of the request's `from`/`to`;
+- the token filters of the block show that no string field can hold every
+  token of a free-text word or phrase;
+- the token filter of a field shows that the field cannot hold the string a
+  search term, a `where` equality or a `match` asks for.
 
-A plan with several scans (joins, subsearches, `append`) keeps only the union
-of their sources and time ranges. Predicates the hints do not cover are
-evaluated per row. See [Performance](./performance.md).
+An opened block can still be rejected from its column directory, for
+example by the bounds of an integer field compared with a number. Every
+other condition is evaluated per row. A word of digits and a prefix of one
+word (`conn*`) have no tokens a filter can rule out.
+
+The optimizer also copies the predicates it calls indexable into the scan
+(`prune=` in a plan): free-text searches other than regular expressions and
+substrings, a field equal to a string, and an `OR` of free-text words.
+`lynxdb explain` reports them as the plan's search terms, and when the
+columnar executor does not take the filter above a scan, the scan applies
+them before the row operators evaluate the whole filter. See
+[Performance](./performance.md).
 
 Types and conversions are described in [Data types](./data-types.md).
