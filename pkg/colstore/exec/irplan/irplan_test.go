@@ -173,6 +173,60 @@ func TestQueries(t *testing.T) {
 	}
 }
 
+// TestWholeEvents runs queries that name no columns and requires every
+// field of their rows, each under its name, without the fields a row does
+// not hold.
+func TestWholeEvents(t *testing.T) {
+	snap := testSnapshot(t)
+	at := func(ago int) int64 { return testNow.Add(-time.Duration(ago) * time.Minute).UnixNano() }
+	for _, c := range []struct{ name, text, want string }{
+		{"rows of a filter", `source=logs | where status = 404`,
+			fmt.Sprintf("_time=%d dur=0.25 host=b level=warn msg=not found status=404 ts=%d", at(210), at(210)/1000)},
+		{"the first rows of a sort", `source=logs | sort - status | head 2 | fields - _time, ts, msg`,
+			"status=503 dur=2.5 host=b level=error; status=500 dur=1.5 host=a level=error"},
+		{"computed and dropped fields", `source=logs | eval slow = dur > 1.0, level = upper(level) | fields - msg, _time, ts | sort - status | head 1`,
+			"slow=true level=ERROR status=503 dur=2.5 host=b"},
+		{"a renamed field", `source=logs | rename host as node | where status = 500 | fields - _time, ts, msg`, "node=a dur=1.5 level=error status=500"},
+		{"a dropped field is not there", `source=logs | fields - host | eval h = host, d = dur | where status = 404 | fields - _time, ts, msg, dur`, "d=0.25 level=warn status=404"},
+		{"an aggregate of what is left", `source=logs | fields - host | stats count() as n by level | sort level | head 1`, "n=2 level=error"},
+		{"a limit", `source=logs | head 2 | fields level`, "level=error; level=info"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			plan, err := compile(c.text)
+			if err != nil {
+				t.Fatalf("%s: %v", c.text, err)
+			}
+			res, err := exec.Run(context.Background(), snap, plan, exec.Options{Workers: 2})
+			if err != nil {
+				t.Fatalf("%s: %v", c.text, err)
+			}
+			var rows []string
+			for i := 0; i < res.Rows; i++ {
+				var fields []string
+				for j, v := range res.Row(i, nil) {
+					name := res.Columns[j].Name + "="
+					switch v.Kind {
+					case vec.KindString:
+						fields = append(fields, name+string(v.Bytes))
+					case vec.KindInt:
+						fields = append(fields, name+fmt.Sprint(v.Int))
+					case vec.KindFloat:
+						fields = append(fields, name+fmt.Sprint(v.Float))
+					case vec.KindBool:
+						fields = append(fields, name+fmt.Sprint(v.Bool))
+					case vec.KindNull:
+						fields = append(fields, name+"null")
+					}
+				}
+				rows = append(rows, strings.Join(fields, " "))
+			}
+			if got := strings.Join(rows, "; "); got != c.want {
+				t.Fatalf("%s\n got  %s\n want %s", c.text, got, c.want)
+			}
+		})
+	}
+}
+
 // TestPercentiles requires the percentiles of the durations, which a sketch
 // gives within one percent.
 func TestPercentiles(t *testing.T) {
@@ -220,14 +274,13 @@ func TestRefusedPlans(t *testing.T) {
 		`source=logs | stats count() as n by host | eventstats avg(n) as m`:                   "the window function avg(n)",
 		`source=logs | stats count() as n by host | eventstats sum(n) as all by host`:         "a window gives the sum of a column of an aggregate over all of its groups",
 		`source=logs | stats count() as n by host | eventstats sum(n) as all | where all > 1`: "a filter above the first rows of keys or above a total",
-		`source=logs | where status > 400`:                                                    "rows without named columns",
 		`source=logs | stats count() by host | stats count()`:                                 "above an aggregate",
 		`source=logs | dedup host | stats count()`:                                            "above the first rows of keys",
 		`source=logs | dedup 2 host | fields host`:                                            "Dedup(host, count=2)",
 		`source=logs | dedup host | where status > 1 | fields host`:                           "a filter above the first rows of keys",
 		`source=logs | where md5(msg) = 'is' | stats count()`:                                 "the function md5",
 		`source=logs | stats count() as n by host | sort - n | fields host`:                   "above a sort or a limit",
-		`source=logs | fields - host | stats count()`:                                         "before the columns are named",
+		`source=logs | dedup host`:                                                            "the first rows of keys as whole events",
 		`source=logs | eval ns = cast(_time as long) | fields ns`:                             "a cast of the time _time",
 		`source=logs | fields h* | head 1`:                                                    "the column pattern h*",
 	} {

@@ -1,7 +1,8 @@
 // Package irplan plans queries in the canonical IR onto the columnar
 // executor. It takes the plans that executor can run: a scan with filters,
 // computed columns, one aggregate with a filter and computed columns above
-// it, a choice of columns, a sort, a limit, and the first row of each key.
+// it, a choice of columns or whole events, a sort, a limit, and the first
+// row of each key.
 // Anything else is refused with ErrUnsupported and a name of what it met.
 //
 // Values keep the executor's rules where the IR's differ: a comparison of a
@@ -11,6 +12,7 @@ package irplan
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -72,12 +74,16 @@ type translator struct {
 	// over the table's paths below an aggregate, over the aggregate's
 	// columns above it.
 	env map[string]*exec.Expr
-	// cols lists the output columns once an operator has named them.
-	cols   []exec.Named
-	named  bool
-	agg    *exec.Aggregate
-	having []*exec.Expr
-	sort   *exec.Sort
+	// cols lists the output columns once an operator has named them. Until
+	// then the rows are whole events: every stored field less gone, with
+	// the fields of assigned as env defines them.
+	cols     []exec.Named
+	named    bool
+	assigned []string
+	gone     []string
+	agg      *exec.Aggregate
+	having   []*exec.Expr
+	sort     *exec.Sort
 	// dedup holds the keys whose every combination keeps its first row.
 	dedup []exec.Named
 	// totals is set once a column stands for a total over the groups, which
@@ -277,17 +283,8 @@ func (t *translator) project(n *ir.Project) error {
 		}
 	}
 	if n.Drop {
-		if !t.named {
-			return unsupported("%s before the columns are named", n.Label())
-		}
 		for _, name := range n.Names {
-			kept := t.cols[:0]
-			for _, c := range t.cols {
-				if c.Name != name {
-					kept = append(kept, c)
-				}
-			}
-			t.cols = kept
+			t.drop(name)
 		}
 
 		return nil
@@ -314,13 +311,19 @@ func (t *translator) rename(n *ir.RenameColumns) error {
 		if err != nil {
 			return err
 		}
+		if !t.named {
+			t.drop(r.From)
+			t.set(r.To, e)
+
+			continue
+		}
 		renamed := false
 		for i := range t.cols {
 			if t.cols[i].Name == r.From {
 				t.cols[i].Name, renamed = r.To, true
 			}
 		}
-		if !renamed && t.named {
+		if !renamed {
 			return unsupported("the rename of %s, which is not among the columns", r.From)
 		}
 		delete(t.env, r.From)
@@ -330,10 +333,29 @@ func (t *translator) rename(n *ir.RenameColumns) error {
 	return nil
 }
 
+// drop removes the column name from the output.
+func (t *translator) drop(name string) {
+	if t.named {
+		t.cols = slices.DeleteFunc(t.cols, func(c exec.Named) bool { return c.Name == name })
+
+		return
+	}
+	delete(t.env, name)
+	t.assigned = slices.DeleteFunc(t.assigned, func(a string) bool { return a == name })
+	if !slices.Contains(t.gone, name) {
+		t.gone = append(t.gone, name)
+	}
+}
+
 // set defines the column name as e and adds it to the named columns.
 func (t *translator) set(name string, e *exec.Expr) {
 	t.env[name] = e
 	if !t.named {
+		t.gone = slices.DeleteFunc(t.gone, func(g string) bool { return g == name })
+		if !slices.Contains(t.assigned, name) {
+			t.assigned = append(t.assigned, name)
+		}
+
 		return
 	}
 	for i := range t.cols {
@@ -490,8 +512,31 @@ func (t *translator) plan() (exec.Node, error) {
 		if !same {
 			node = &exec.Project{Input: node, Exprs: t.cols}
 		}
-	case !t.named || len(t.cols) == 0:
-		return nil, unsupported("rows without named columns: name the fields to return")
+	case t.named && len(t.cols) == 0:
+		return nil, unsupported("rows without a column")
+	case !t.named && t.dedup != nil:
+		return nil, unsupported("the first rows of keys as whole events: name the fields to return")
+	case !t.named:
+		// Whole events: what the sort reads and what the query computed,
+		// then every other field.
+		whole := &exec.Project{Input: scan, Rest: true, Except: t.gone}
+		names := t.assigned
+		if t.sort != nil {
+			for _, by := range t.sort.By {
+				if !slices.Contains(names, by.Column) {
+					names = append(names[:len(names):len(names)], by.Column)
+				}
+			}
+		}
+		for _, name := range names {
+			e, err := t.field(name)
+			if err != nil {
+				return nil, err
+			}
+			whole.Exprs = append(whole.Exprs, exec.Named{Name: name, Expr: e})
+			t.cols = append(t.cols, exec.Named{Name: name, Expr: e})
+		}
+		node = whole
 	case t.dedup != nil:
 		node = t.firstRows(scan)
 	default:
@@ -556,6 +601,8 @@ func (t *translator) field(name string) (*exec.Expr, error) {
 	switch {
 	case t.agg != nil:
 		return nil, unsupported("the column %s, which the aggregate does not have", name)
+	case slices.Contains(t.gone, name):
+		return &exec.Expr{Op: exec.OpLiteral}, nil
 	case name == part.TimePath:
 		return exec.Time(), nil
 	}
