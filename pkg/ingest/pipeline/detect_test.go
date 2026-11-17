@@ -6,7 +6,6 @@ func TestExtractFormatName(t *testing.T) {
 	cases := map[DetectedFormat]string{
 		FormatCombined: "combined",
 		FormatSyslog:   "syslog",
-		FormatDocker:   "docker",
 		FormatJSON:     "",
 		FormatCSV:      "",
 		FormatTSV:      "",

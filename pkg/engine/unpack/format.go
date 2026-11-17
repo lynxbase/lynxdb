@@ -20,63 +20,21 @@ type FormatParser interface {
 	// If emit returns false, parsing stops early (short-circuit for fields filtering).
 	Parse(input string, emit func(key string, val event.Value) bool) error
 
-	// Name returns the parser format name (e.g., "json", "logfmt", "syslog", "combined").
+	// Name returns the parser format name: "syslog" or "combined".
 	Name() string
 }
 
-// NewParser creates a FormatParser for the given format name.
-// Supported formats: json, logfmt, syslog, combined, clf, nginx_error, cef, kv,
-// docker, redis, apache_error, postgres, mysql_slow, haproxy, leef, w3c.
+// NewParser creates a FormatParser for the given format name: syslog or
+// combined.
 func NewParser(format string) (FormatParser, error) {
 	switch strings.ToLower(format) {
-	case "json":
-		return &JSONParser{}, nil
-	case "logfmt":
-		return &LogfmtParser{}, nil
 	case "syslog":
 		return &SyslogParser{}, nil
 	case "combined":
 		return &CombinedParser{}, nil
-	case "clf":
-		return &CLFParser{}, nil
-	case "nginx_error":
-		return &NginxErrorParser{}, nil
-	case "cef":
-		return &CEFParser{}, nil
-	case "kv":
-		return &KVParser{}, nil
-	case "docker":
-		return &DockerParser{}, nil
-	case "redis":
-		return &RedisParser{}, nil
-	case "apache_error":
-		return &ApacheErrorParser{}, nil
-	case "postgres":
-		return &PostgresParser{}, nil
-	case "mysql_slow":
-		return &MySQLSlowParser{}, nil
-	case "haproxy":
-		return &HAProxyParser{}, nil
-	case "leef":
-		return &LEEFParser{}, nil
-	case "w3c":
-		return &W3CParser{}, nil
 	default:
-		return nil, fmt.Errorf("unpack: unknown format %q (supported: json, logfmt, syslog, combined, clf, nginx_error, cef, kv, docker, redis, apache_error, postgres, mysql_slow, haproxy, leef, w3c)", format)
+		return nil, fmt.Errorf("unpack: unknown format %q (supported: syslog, combined)", format)
 	}
-}
-
-// FieldDeclaration describes the fields a parser can produce.
-type FieldDeclaration struct {
-	Known    []string // always produced
-	Optional []string // sometimes produced (input-dependent)
-	Dynamic  bool     // can produce arbitrary additional fields
-}
-
-// FieldDeclarer is an optional interface that FormatParsers can implement
-// to declare which fields they produce without needing to run Parse().
-type FieldDeclarer interface {
-	DeclareFields() FieldDeclaration
 }
 
 // InferValue auto-detects the type of a string value and returns a typed event.Value.

@@ -104,7 +104,7 @@ one argument at most 32 KB per group.
 the input into the index `main` of a database in a temporary directory,
 which the command removes when it exits, and run the compiled plan with the
 same executors as the server. Formats are detected while loading
-(combined, syslog, docker; `key=value` pairs are always extracted); `--raw`
+(combined, syslog; `key=value` pairs are always extracted); `--raw`
 turns detection off.
 
 ## Server execution

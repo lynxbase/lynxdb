@@ -14,7 +14,6 @@ const (
 	FormatLogfmt   DetectedFormat = "logfmt"
 	FormatCombined DetectedFormat = "combined"
 	FormatSyslog   DetectedFormat = "syslog"
-	FormatDocker   DetectedFormat = "docker"
 	FormatCSV      DetectedFormat = "csv"
 	FormatTSV      DetectedFormat = "tsv"
 	FormatPlain    DetectedFormat = "plain"
@@ -26,7 +25,6 @@ type FormatConfidence struct {
 	Logfmt   float64
 	Combined float64
 	Syslog   float64
-	Docker   float64
 	CSV      float64
 	TSV      float64
 }
@@ -47,7 +45,7 @@ func DetectFormatConfidence(lines []string) FormatConfidence {
 		return FormatConfidence{}
 	}
 
-	var jsonOk, logfmtOk, combinedOk, syslogOk, dockerOk, csvOk, tsvOk float64
+	var jsonOk, logfmtOk, combinedOk, syslogOk, csvOk, tsvOk float64
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -58,10 +56,6 @@ func DetectFormatConfidence(lines []string) FormatConfidence {
 
 		if json.Valid([]byte(line)) {
 			jsonOk++
-			// Check for Docker JSON envelope (has "log" and "stream" fields).
-			if isDockerJSONLine(line) {
-				dockerOk++
-			}
 		}
 
 		if isLogfmtLine(line) {
@@ -94,7 +88,6 @@ func DetectFormatConfidence(lines []string) FormatConfidence {
 		Logfmt:   logfmtOk / n,
 		Combined: combinedOk / n,
 		Syslog:   syslogOk / n,
-		Docker:   dockerOk / n,
 		CSV:      csvOk / n,
 		TSV:      tsvOk / n,
 	}
@@ -132,8 +125,6 @@ func ExtractFormatName(format DetectedFormat) string {
 		return "combined"
 	case FormatSyslog:
 		return "syslog"
-	case FormatDocker:
-		return "docker"
 	}
 	return ""
 }
@@ -162,10 +153,6 @@ func DetectFormatWithRatio(sampleLines []string) (DetectedFormat, float64) {
 		bestScore = conf.Syslog
 		best = FormatSyslog
 	}
-	if conf.Docker > bestScore {
-		bestScore = conf.Docker
-		best = FormatDocker
-	}
 	if conf.CSV > bestScore {
 		bestScore = conf.CSV
 		best = FormatCSV
@@ -193,8 +180,6 @@ func FormatDisplayName(format DetectedFormat) string {
 		return "Combined"
 	case FormatSyslog:
 		return "Syslog"
-	case FormatDocker:
-		return "Docker JSON"
 	case FormatCSV:
 		return "CSV"
 	case FormatTSV:
@@ -204,25 +189,6 @@ func FormatDisplayName(format DetectedFormat) string {
 	default:
 		return string(format)
 	}
-}
-
-// isDockerJSONLine checks if a JSON line has Docker container envelope fields.
-func isDockerJSONLine(line string) bool {
-	if len(line) < 20 || line[0] != '{' {
-		return false
-	}
-	// Quick substring check before parsing: Docker JSON always has "log" and "stream".
-	if !strings.Contains(line, `"log"`) || !strings.Contains(line, `"stream"`) {
-		return false
-	}
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(line), &obj); err != nil {
-		return false
-	}
-	_, hasLog := obj["log"]
-	_, hasStream := obj["stream"]
-
-	return hasLog && hasStream
 }
 
 // isCSVLine checks if a line looks like CSV (comma-separated with 2+ fields).

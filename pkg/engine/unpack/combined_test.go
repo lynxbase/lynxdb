@@ -104,3 +104,35 @@ func TestCombinedParser_Name(t *testing.T) {
 		t.Errorf("Name: got %q, want %q", p.Name(), "combined")
 	}
 }
+
+func assertStringValue(t *testing.T, fields map[string]event.Value, key, want string) {
+	t.Helper()
+	v, ok := fields[key]
+	if !ok {
+		t.Errorf("missing field: %s", key)
+		return
+	}
+	if v.Type() != event.FieldTypeString {
+		t.Errorf("%s type: got %s, want string", key, v.Type())
+		return
+	}
+	if v.String() != want {
+		t.Errorf("%s: got %q, want %q", key, v.String(), want)
+	}
+}
+
+func assertIntValue(t *testing.T, fields map[string]event.Value, key string, want int64) {
+	t.Helper()
+	v, ok := fields[key]
+	if !ok {
+		t.Errorf("missing field: %s", key)
+		return
+	}
+	if v.Type() != event.FieldTypeInt {
+		t.Errorf("%s type: got %s, want int", key, v.Type())
+		return
+	}
+	if v.AsInt() != want {
+		t.Errorf("%s: got %d, want %d", key, v.AsInt(), want)
+	}
+}
