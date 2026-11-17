@@ -27,23 +27,6 @@ type QueryHints struct {
 	RexPreFilters           []RexPreFilter           // safe literal prefilters for rex-generated field predicates
 	SkipRaw                 bool                     // true when _raw is not needed
 	Warnings                []string                 // user-facing warnings about the query
-
-	sourceIndexSet map[string]struct{} // lazy cache for O(1) list lookups
-}
-
-// SourceIndexSet returns a lazily-built set for O(1) SourceIndices lookups.
-func (h *QueryHints) SourceIndexSet() map[string]struct{} {
-	if h.sourceIndexSet != nil {
-		return h.sourceIndexSet
-	}
-	if len(h.SourceIndices) == 0 {
-		return nil
-	}
-	h.sourceIndexSet = make(map[string]struct{}, len(h.SourceIndices))
-	for _, idx := range h.SourceIndices {
-		h.sourceIndexSet[idx] = struct{}{}
-	}
-	return h.sourceIndexSet
 }
 
 // SearchTermTree is a structured boolean tree for inverted index OR/AND queries.

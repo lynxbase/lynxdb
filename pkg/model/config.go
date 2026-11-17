@@ -32,27 +32,3 @@ func DefaultIndexConfig(name string) IndexConfig {
 		Compression:       "lz4",
 	}
 }
-
-// Validate returns an error if the config is invalid.
-func (c IndexConfig) Validate() error {
-	if c.Name == "" {
-		return ErrEmptyIndexName
-	}
-	if c.RetentionPeriod <= 0 {
-		return ErrInvalidRetention
-	}
-	if c.ReplicationFactor < 1 {
-		return ErrInvalidReplication
-	}
-	if c.PartitionCount < 1 {
-		return ErrInvalidPartitionCount
-	}
-	switch c.Compression {
-	case "", "lz4", "zstd", "none":
-		// valid
-	default:
-		return ErrInvalidCompression
-	}
-
-	return nil
-}
