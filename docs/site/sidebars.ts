@@ -155,7 +155,6 @@ const sidebars: SidebarsConfig = {
         'cli/shortcuts',
         'cli/auth',
         'cli/config-cmd',
-        'cli/shell',
         'cli/bench-demo',
         'cli/output-formats',
         'cli/completion',
