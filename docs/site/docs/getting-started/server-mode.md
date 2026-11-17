@@ -22,7 +22,7 @@ lynxdb server --data-dir /var/lib/lynxdb
 # Listen on all interfaces
 lynxdb server --addr 0.0.0.0:3100
 
-# In-memory: nothing is persisted (for tests)
+# A temporary data directory, deleted when the server exits (for tests)
 lynxdb server --data-dir ""
 ```
 
@@ -33,15 +33,21 @@ On startup the server prints where its settings come from:
   Data    /var/lib/lynxdb
   Listen  localhost:3100
 
-time=2026-01-15T10:00:00.000Z level=INFO msg="starting LynxDB" version=0.5.0 addr=localhost:3100 ...
+time=2026-11-17T16:41:03.285+01:00 level=INFO msg="starting LynxDB" version=dev addr=localhost:3100 config=/home/user/.config/lynxdb/config.yaml
+time=2026-11-17T16:41:03.287+01:00 level=INFO msg="API server started" addr=127.0.0.1:3100
 ```
 
-It also starts an OTLP/HTTP log receiver on port 4318. See
+An `Overrides` line lists the environment variables and flags that changed
+settings. The server also starts an OTLP/HTTP log receiver on port 4318. See
 [Server configuration](../configuration/server.md) for every flag and setting.
 
+Each index is a directory under the data directory, created with the
+index's first events. See [Storage](../architecture/storage.md) for what the
+files hold.
+
 :::caution
-`--auth` needs a persistent data directory: API keys are stored there and
-are not created for an in-memory server.
+`--auth` needs a data directory: API keys are stored in it. With
+`--data-dir ""` the server runs without authentication.
 :::
 
 ## Ingest data
@@ -65,13 +71,11 @@ kubectl logs deploy/api --since=1h | lynxdb ingest --source k8s-api
 ### From the REST API
 
 ```bash
-# Structured events: a JSON array of objects with an "event" text
-curl -X POST localhost:3100/api/v1/ingest \
-  -H 'Content-Type: application/json' \
-  -d '[
-    {"event":"user login","source":"auth-api","fields":{"user_id":42,"level":"info"}},
-    {"event":"connection refused","source":"api","fields":{"service":"redis","level":"error"}}
-  ]'
+# Structured events: NDJSON, one JSON object per line, stored as they are
+printf '%s\n' \
+  '{"message":"user login","source":"auth-api","user_id":42,"level":"info"}' \
+  '{"message":"connection refused","source":"api","service":"redis","level":"error"}' |
+  curl -X POST localhost:3100/api/v1/ingest --data-binary @-
 
 # Raw lines, one event per line
 echo '192.168.1.1 - - [14/Feb/2026:14:23:01 +0000] "GET /api HTTP/1.1" 200 1234' | \
@@ -83,6 +87,12 @@ echo '192.168.1.1 - - [14/Feb/2026:14:23:01 +0000] "GET /api HTTP/1.1" 200 1234'
 ```json
 {"data":{"accepted":2,"failed":0}}
 ```
+
+`/api/v1/ingest` writes to the index in `?index=` or the `X-Index` header,
+`main` by default. `/api/v1/ingest/raw` extracts the leading timestamp and
+`key=value` pairs of text lines and keeps the text in `_raw`. The server
+writes ingested events to disk within a second (`storage.flush_interval`),
+and before every query, so a query sees every event ingested before it.
 
 Log shippers connect through the Elasticsearch `_bulk` API, OTLP, Splunk HEC
 or syslog. See [Ingest Data](../guides/ingest-data.md).
@@ -114,11 +124,11 @@ lynxdb query 'source=main level=ERROR | stats count() by host' --format csv > re
 ```bash
 curl -s -X POST localhost:3100/api/v1/query \
   -H 'Content-Type: application/json' \
-  -d '{"q": "source=main level=ERROR | stats count() as errors by host | sort - errors | head 3", "from": "-1h"}'
+  -d '{"q": "source=main level=ERROR | stats count() as errors by host | sort - errors | head 3"}'
 ```
 
 ```json
-{"data":{"columns":["host","errors"],"rows":[["api-02",67],["web-02",58],["web-03",57]],"total_rows":3,"has_more":false,"type":"aggregate"},"meta":{"took_ms":0,"scanned":294,"query_id":"qry_f2a8494fc0969fd9", ...}}
+{"data":{"type":"aggregate","columns":["errors","host"],"rows":[[67,"api-02"],[58,"web-02"],[57,"web-03"]],"total_rows":3,"has_more":false},"meta":{"took_ms":0.1,"query_id":"qry_a3938b4846474ae2","rows":3}}
 ```
 
 `POST /api/v1/query/stream` returns one JSON object per row, then a
@@ -127,35 +137,36 @@ curl -s -X POST localhost:3100/api/v1/query \
 ```bash
 curl -s -X POST localhost:3100/api/v1/query/stream \
   -H 'Content-Type: application/json' \
-  -d '{"q": "source=main level=ERROR | fields _time, host, status | head 2"}'
+  -d '{"q": "source=main level=ERROR | sort _time | fields _time, host, status | head 2"}'
 ```
 
 ```json
 {"_time":"2025-01-15T08:00:00.105Z","host":"web-03","status":502}
 {"_time":"2025-01-15T08:00:00.543Z","host":"api-02","status":502}
-{"__meta":{"scanned":294,"took_ms":0,"total":2}}
+{"__meta":{"total":2,"took_ms":0}}
 ```
 
-See the [Query API](../api/query.md) for jobs, errors and profiling.
+See the [Query API](../api/query.md) for jobs and errors.
 
 ## Inspect the server
 
 ```bash
-lynxdb status        # uptime, storage, event counts
+lynxdb status        # uptime, storage, events, parts, indexes
 lynxdb health        # health check, for scripts and load balancers
-lynxdb indexes       # indexes and their retention
-lynxdb fields        # field catalog: name, type, coverage
-lynxdb cache stats   # query cache statistics
+lynxdb indexes       # indexes with their events, bytes, parts and time span
+lynxdb fields        # field catalog: each field and the indexes that hold it
 ```
 
 ```text
-  LynxDB 0.5.0 — uptime 6m — healthy
+  LynxDB dev — uptime 0m — healthy
 
-  Storage   258.0 KB
-  Events    1,043 total  38 today
-  Segments  7  buffer: 0 events
-  Indexes   4
-  Oldest    2025-01-15T08:00:00Z
+  Storage  48.6 KB
+  Events  1,036 total
+  Parts  3
+  Indexes  2
+  Indexes main (97%), web (3%)
+  Oldest  2025-01-15T08:00:00Z
+  Newest  2026-11-17T15:54:45Z
 ```
 
 ## Run as a service
@@ -216,7 +227,7 @@ retention: "7d"
 log_level: "info"
 
 storage:
-  compression: "lz4"
+  partition: "24h"
 ```
 
 `lynxdb config validate` checks the file and `lynxdb config reload` applies
