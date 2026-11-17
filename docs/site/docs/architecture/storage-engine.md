@@ -1,12 +1,12 @@
 ---
 sidebar_position: 2
 title: Storage Engine
-description: Deep dive into the LynxDB storage engine -- AsyncBatcher buffering, immutable part files, compaction, and S3-backed tiering.
+description: Deep dive into the LynxDB storage engine -- AsyncBatcher buffering, immutable part files and compaction.
 ---
 
 # Storage Engine
 
-The LynxDB storage engine manages the lifecycle of log data: ingest buffering, immutable `.lsg` part writes, background compaction, retention, and optional remote tiering. Writes go directly to parts through the `AsyncBatcher` and atomic file renames; there is no write-ahead log.
+The LynxDB storage engine manages the lifecycle of log data: ingest buffering, immutable `.lsg` part writes, background compaction and retention. Writes go directly to parts through the `AsyncBatcher` and atomic file renames; there is no write-ahead log.
 
 ## Architecture
 
@@ -19,7 +19,6 @@ flowchart TD
     E --> F["L1 Parts"]
     F --> G[Compaction]
     G --> H["L2 Parts (~1 GB target)"]
-    H --> I["Optional S3 / object-store tiering"]
 ```
 
 ## AsyncBatcher and Part Writer
@@ -102,26 +101,6 @@ The in-memory registry is rebuilt from disk on startup and tracks:
 
 This keeps crash recovery simple: if the part is present on disk and readable, it can be re-registered.
 
-## Tiered Storage
-
-When object storage is configured, the background tiering loop evaluates segment age on `storage.tiering_interval` and promotes data across storage tiers:
-
-```
-Hot (local disk)  →  Warm (object store)  →  Cold (object store / archive policy)
-```
-
-What is automated:
-
-- age-based evaluation of eligible segments
-- upload from hot to warm object storage
-- warm-to-cold key migration in the object store
-- lazy fetch into the local segment cache for remote reads
-
-What remains operator-controlled:
-
-- the object-store backend itself
-- optional bucket lifecycle rules if you want S3 Glacier or Deep Archive underneath the cold tier
-
 ## Partitions and Retention
 
 Parts are stored in one directory per index and time partition (`storage.partition_by`: `daily` by default, or `hourly`, `weekly`, `monthly`, `none`). Compaction merges parts within a partition. An hourly retention pass deletes whole partitions whose start time is older than the `retention` setting; the files are removed once no running query holds them open. See [Retention](/docs/operations/retention).
@@ -138,8 +117,6 @@ storage:
   l0_threshold: 4
   l1_threshold: 4
   l2_target_size: 1gb
-  s3_bucket: my-logs-bucket
-  s3_region: us-east-1
 
 ingest:
   fsync: true
@@ -147,11 +124,10 @@ ingest:
   max_batch_size: 1000
 ```
 
-See [Storage Settings](/docs/configuration/storage), [Ingest Settings](/docs/configuration/ingest), and [S3 Tiering](/docs/configuration/s3-tiering) for the full operator-facing configuration surface.
+See [Storage Settings](/docs/configuration/storage) and [Ingest Settings](/docs/configuration/ingest) for the full operator-facing configuration surface.
 
 ## Related
 
 - [Segment Format](/docs/architecture/segment-format)
 - [Indexing](/docs/architecture/indexing)
 - [Query Engine](/docs/architecture/query-engine)
-- [S3 Tiering](/docs/configuration/s3-tiering)

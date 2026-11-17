@@ -180,8 +180,6 @@ A reload re-reads the config file and environment and applies `log_level`, `rete
 - Disk: parts are compressed columnar files. Put `data_dir` and `spill_dir` on SSD. Retention deletes whole time partitions (`storage.partition_by`).
 - CPU: compaction uses `storage.compaction_workers` cores; queries use the rest.
 
-For long retention on cheaper storage, add [S3 tiering](./s3-setup.md).
-
 ## Logs
 
 The server writes its log to stdout (text format, level from `log_level`); under systemd it goes to the journal. Queries slower than `query.slow_query_threshold_ms` are logged at `WARN`.
@@ -201,7 +199,6 @@ See [Backup and Restore](../operations/backup-restore.md) for other strategies.
 ## Next Steps
 
 - [Docker Deployment](./docker.md)
-- [S3/MinIO Storage Backend](./s3-setup.md)
 - [TLS and Authentication](./tls-auth.md)
 - [Monitoring](../operations/monitoring.md)
 - [PPL overview](../ppl/overview.md)

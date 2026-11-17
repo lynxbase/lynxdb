@@ -305,27 +305,6 @@ func TestFindServerPID_NoPIDFile(t *testing.T) {
 	}
 }
 
-func TestConfigShow_InvalidDuration(t *testing.T) {
-	resetConfigFlags(t)
-	t.Setenv("LYNXDB_CONFIG", "")
-
-	tmpDir := t.TempDir()
-	origDir, _ := os.Getwd()
-	os.Chdir(tmpDir)
-	defer os.Chdir(origDir)
-
-	cmd := rootCmd
-	cmd.SetArgs([]string{"config", "--tiering-interval", "not-a-duration"})
-
-	_, err := captureStdout(t, cmd.Execute)
-	if err == nil {
-		t.Fatal("expected error for invalid duration flag")
-	}
-	if !strings.Contains(err.Error(), "invalid --tiering-interval") {
-		t.Errorf("error %q should mention 'invalid --tiering-interval'", err.Error())
-	}
-}
-
 func TestConfigInit_AlreadyExists(t *testing.T) {
 	resetConfigFlags(t)
 	tmpDir := t.TempDir()

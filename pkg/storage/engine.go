@@ -47,7 +47,7 @@ type EngineConfig struct {
 }
 
 // Engine is the unified storage engine for LynxDB.
-// It supports three profiles — Ephemeral, Persistent, and Tiered —
+// It supports two profiles, Ephemeral and Persistent,
 // with feature flags controlling which subsystems are active.
 //
 // In Ephemeral mode (DataDir=""), events are held purely in memory
@@ -69,7 +69,7 @@ type Engine struct {
 // NewEngine creates a StorageEngine configured by the given config.
 // The storage profile is auto-detected from the config.
 func NewEngine(cfg EngineConfig) (*Engine, error) {
-	profile := ResolveProfile(cfg.DataDir, cfg.Storage.S3Bucket)
+	profile := ResolveProfile(cfg.DataDir)
 	features := Features(profile)
 
 	maxEv := cfg.MaxEvents

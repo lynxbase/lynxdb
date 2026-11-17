@@ -55,15 +55,6 @@ lynxdb query 'source=main level=ERROR | stats count() by host'
 | `LYNXDB_STORAGE_L0_THRESHOLD` | `storage.l0_threshold` | `4` |
 | `LYNXDB_STORAGE_L1_THRESHOLD` | `storage.l1_threshold` | `4` |
 | `LYNXDB_STORAGE_L2_TARGET_SIZE` | `storage.l2_target_size` | `1gb` |
-| `LYNXDB_STORAGE_S3_BUCKET` | `storage.s3_bucket` | empty |
-| `LYNXDB_STORAGE_S3_REGION` | `storage.s3_region` | `us-east-1` |
-| `LYNXDB_STORAGE_S3_PREFIX` | `storage.s3_prefix` | `lynxdb/` |
-| `LYNXDB_STORAGE_S3_ENDPOINT` | `storage.s3_endpoint` | empty |
-| `LYNXDB_STORAGE_S3_FORCE_PATH_STYLE` | `storage.s3_force_path_style` | `false` |
-| `LYNXDB_STORAGE_TIERING_INTERVAL` | `storage.tiering_interval` | `5m` |
-| `LYNXDB_STORAGE_TIERING_PARALLELISM` | `storage.tiering_parallelism` | `3` |
-| `LYNXDB_STORAGE_SEGMENT_CACHE_SIZE` | `storage.segment_cache_size` | `10gb` |
-| `LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT` | `storage.remote_fetch_timeout` | `30s` |
 | `LYNXDB_STORAGE_CACHE_MAX_BYTES` | `storage.cache_max_bytes` | `1gb` |
 | `LYNXDB_STORAGE_CACHE_TTL` | `storage.cache_ttl` | `5m` |
 
@@ -151,20 +142,12 @@ lynxdb query 'source=main level=ERROR | stats count() by host'
 | `LYNXDB_SYSLOG_BATCH_SIZE` | `syslog.batch_size` | `1000` |
 | `LYNXDB_SYSLOG_BATCH_TIMEOUT` | `syslog.batch_timeout` | `200ms` |
 
-### Memory Pool and Buffer Manager
+### Memory Pool
 
 | Variable | Key | Default |
 |----------|-----|---------|
 | `LYNXDB_SERVER_TOTAL_MEMORY_POOL_BYTES` | `server.total_memory_pool_bytes` | `0` (40% of RAM) |
 | `LYNXDB_SERVER_CACHE_RESERVE_PERCENT` | `server.cache_reserve_percent` | `20` |
-| `LYNXDB_BUFFER_MANAGER_ENABLED` | `buffer_manager.enabled` | `false` |
-| `LYNXDB_BUFFER_MANAGER_MAX_MEMORY_BYTES` | `buffer_manager.max_memory_bytes` | `0` |
-| `LYNXDB_BUFFER_MANAGER_PAGE_SIZE` | `buffer_manager.page_size` | `65536` |
-| `LYNXDB_BUFFER_MANAGER_ENABLE_OFF_HEAP` | `buffer_manager.enable_off_heap` | `true` |
-| `LYNXDB_BUFFER_MANAGER_CACHE_TARGET_PERCENT` | `buffer_manager.cache_target_percent` | `60` |
-| `LYNXDB_BUFFER_MANAGER_QUERY_TARGET_PERCENT` | `buffer_manager.query_target_percent` | `30` |
-| `LYNXDB_BUFFER_MANAGER_BATCHER_TARGET_PERCENT` | `buffer_manager.batcher_target_percent` | `10` |
-| `LYNXDB_BUFFER_MANAGER_MAX_PINNED_PAGES_PER_QUERY` | `buffer_manager.max_pinned_pages_per_query` | `1024` |
 
 ## Keys Without a Variable
 
@@ -174,10 +157,6 @@ These keys are read from the config file only:
 - `ingest.fsync`, `ingest.dedup_enabled`, `ingest.dedup_capacity`
 - `http.read_header_timeout`
 - `profiles.*`
-
-## AWS Variables
-
-The S3 client reads the standard AWS SDK variables: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`, `AWS_PROFILE`, `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, and `AWS_WEB_IDENTITY_TOKEN_FILE` with `AWS_ROLE_ARN`. The bucket region always comes from `storage.s3_region`.
 
 ## Install Script Variables
 
@@ -215,18 +194,6 @@ env:
     value: "0.0.0.0:3100"
   - name: LYNXDB_DATA_DIR
     value: "/data"
-  - name: LYNXDB_STORAGE_S3_BUCKET
-    value: "example-lynxdb-logs"
-  - name: AWS_ACCESS_KEY_ID
-    valueFrom:
-      secretKeyRef:
-        name: lynxdb-s3-credentials
-        key: access-key-id
-  - name: AWS_SECRET_ACCESS_KEY
-    valueFrom:
-      secretKeyRef:
-        name: lynxdb-s3-credentials
-        key: secret-access-key
 ```
 
 ## Related

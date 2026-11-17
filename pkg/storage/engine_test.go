@@ -5,8 +5,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 func TestEngine_EphemeralIngestAndQuery(t *testing.T) {
@@ -272,14 +270,6 @@ func TestEngine_ProfileResolution(t *testing.T) {
 				DataDir: t.TempDir(),
 			},
 			profile: Persistent,
-		},
-		{
-			name: "tiered",
-			cfg: EngineConfig{
-				DataDir: t.TempDir(),
-				Storage: config.StorageConfig{S3Bucket: "my-bucket"},
-			},
-			profile: Tiered,
 		},
 	}
 

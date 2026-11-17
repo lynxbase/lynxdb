@@ -1014,7 +1014,7 @@ paths:
       summary: Storage metrics as JSON
       responses:
         '200':
-          description: Metrics with `ingest`, `flush`, `segment`, `compaction`, `compaction_levels`, `tiering`, `cache`, `query`, `pruning`, `system_write_amplification`, `uptime_seconds` and optional `adaptive_compaction`
+          description: Metrics with `ingest`, `flush`, `segment`, `compaction`, `compaction_levels`, `cache`, `query`, `pruning`, `system_write_amplification`, `uptime_seconds` and optional `adaptive_compaction`
           content:
             application/json:
               schema:
@@ -1078,7 +1078,7 @@ paths:
       operationId: getConfig
       tags: [Server]
       summary: Running configuration
-      description: Needs `admin` scope. Top-level keys are `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tail`, `tls`, `auth`, `server`, `buffer_manager`, `profiles`.
+      description: Needs `admin` scope. Top-level keys are `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tail`, `tls`, `auth`, `server`, `profiles`.
       responses:
         '200':
           description: Configuration

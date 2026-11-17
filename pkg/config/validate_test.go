@@ -65,7 +65,6 @@ func TestValidateStorage(t *testing.T) {
 		{"negative partition", func(s *StorageConfig) { s.Partition = Duration(-time.Hour) }, "storage.partition"},
 		{"negative flush_interval", func(s *StorageConfig) { s.FlushInterval = Duration(-time.Second) }, "storage.flush_interval"},
 		{"empty time field", func(s *StorageConfig) { s.TimeFields = []string{"ts", ""} }, "storage.time_fields"},
-		{"negative remote_fetch_timeout", func(s *StorageConfig) { s.RemoteFetchTimeout = -time.Second }, "storage.remote_fetch_timeout"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

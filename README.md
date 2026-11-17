@@ -149,7 +149,7 @@ Write spaces around `-` and `*` in arithmetic: as in the official PPL grammar,
 - **Columnar storage:** custom `.lsg` segments with delta-varint timestamps,
   dictionary encoding, Gorilla XOR, and LZ4 compression.
 - **Operational modes:** stdin/file mode, local server, REST API, live tail,
-  S3 tiering, syslog, and shipper-compatible ingest.
+  syslog, and shipper-compatible ingest.
 
 ## Comparison
 

@@ -5,7 +5,7 @@ description: Configure part writing, partitioning, and compaction in the storage
 
 # Storage Settings
 
-The `storage` section controls how LynxDB writes parts, lays them out on disk, and compacts them. Object storage and tiering keys (`storage.s3_*`, `storage.tiering_*`, `storage.segment_cache_size`, `storage.remote_fetch_timeout`) are described in [S3 Tiering](./s3-tiering.md).
+The `storage` section controls how LynxDB writes parts, lays them out on disk, and compacts them.
 
 ## Write Path
 
@@ -70,6 +70,5 @@ storage:
 ## Related
 
 - [Ingest Settings](./ingest.md)
-- [S3 Tiering](./s3-tiering.md)
 - [Storage Engine](../architecture/storage-engine.md)
 - [Performance Tuning](../operations/performance-tuning.md)

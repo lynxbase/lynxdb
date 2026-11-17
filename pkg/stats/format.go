@@ -262,9 +262,6 @@ func FormatJSON(w io.Writer, s *QueryStats) error {
 	if s.DiskBytesRead > 0 {
 		js.DiskBytesRead = &s.DiskBytesRead
 	}
-	if s.S3BytesRead > 0 {
-		js.S3BytesRead = &s.S3BytesRead
-	}
 	if s.CacheBytesRead > 0 {
 		js.CacheBytesRead = &s.CacheBytesRead
 	}
@@ -330,7 +327,6 @@ type jsonStats struct {
 	SegmentsErrored *int     `json:"segments_errored,omitempty"`
 	CacheHit        *bool    `json:"cache_hit,omitempty"`
 	DiskBytesRead   *int64   `json:"disk_bytes_read,omitempty"`
-	S3BytesRead     *int64   `json:"s3_bytes_read,omitempty"`
 	CacheBytesRead  *int64   `json:"cache_bytes_read,omitempty"`
 	CPUUserMS       *float64 `json:"cpu_user_ms,omitempty"`
 	CPUSysMS        *float64 `json:"cpu_sys_ms,omitempty"`
@@ -339,20 +335,17 @@ type jsonStats struct {
 }
 
 func writeIOLine(w io.Writer, s *QueryStats) {
-	totalBytes := s.DiskBytesRead + s.CacheBytesRead + s.S3BytesRead
+	totalBytes := s.DiskBytesRead + s.CacheBytesRead
 	if totalBytes == 0 {
 		return
 	}
 
-	fmt.Fprintf(w, "  %-15s %s from disk", "io", formatBytesHuman(s.DiskBytesRead+s.CacheBytesRead))
+	fmt.Fprintf(w, "  %-15s %s from disk", "io", formatBytesHuman(totalBytes))
 	if s.CacheBytesRead > 0 && s.DiskBytesRead > 0 {
 		ratio := float64(s.CacheBytesRead) / float64(s.CacheBytesRead+s.DiskBytesRead) * 100
 		fmt.Fprintf(w, "  cache: %.0f%% hit", ratio)
 	}
 	fmt.Fprintln(w)
-	if s.S3BytesRead > 0 {
-		fmt.Fprintf(w, "    s3:      %s fetched\n", formatBytesHuman(s.S3BytesRead))
-	}
 }
 
 func writeSkipBreakdown(w io.Writer, s *QueryStats, verbose bool) {

@@ -526,28 +526,6 @@ func TestFormatTTY_IOLine(t *testing.T) {
 	}
 }
 
-func TestFormatTTY_IOLine_WithS3(t *testing.T) {
-	t.Parallel()
-
-	var buf bytes.Buffer
-	s := &QueryStats{
-		ResultRows:    10,
-		TotalDuration: 500 * time.Millisecond,
-		ScannedRows:   100_000,
-		DiskBytesRead: 5_242_880,
-		S3BytesRead:   10_485_760,
-	}
-	FormatTTY(&buf, s, false, false)
-	out := buf.String()
-
-	if !strings.Contains(out, "s3:") {
-		t.Errorf("should show s3 line: %q", out)
-	}
-	if !strings.Contains(out, "10.0 MB") {
-		t.Errorf("should show S3 bytes: %q", out)
-	}
-}
-
 func TestFormatTTY_IOLine_Hidden_WhenNoBytes(t *testing.T) {
 	t.Parallel()
 
@@ -602,7 +580,6 @@ func TestFormatJSON_NewFields(t *testing.T) {
 		TotalDuration: 10 * time.Millisecond,
 		ScannedRows:   1000,
 		DiskBytesRead: 1_048_576,
-		S3BytesRead:   2_097_152,
 		CPUTimeUser:   25 * time.Millisecond,
 	}
 	if err := FormatJSON(&buf, s); err != nil {
@@ -620,9 +597,6 @@ func TestFormatJSON_NewFields(t *testing.T) {
 
 	if v, ok := js["disk_bytes_read"].(float64); !ok || v != 1_048_576 {
 		t.Errorf("disk_bytes_read = %v, want 1048576", js["disk_bytes_read"])
-	}
-	if v, ok := js["s3_bytes_read"].(float64); !ok || v != 2_097_152 {
-		t.Errorf("s3_bytes_read = %v, want 2097152", js["s3_bytes_read"])
 	}
 	if _, ok := js["cpu_user_ms"]; !ok {
 		t.Error("should include cpu_user_ms")

@@ -213,7 +213,6 @@ lynxdb cache clear --force
 **Long-term fixes:**
 
 - Increase disk size
-- Configure S3 tiering to move old data off local disk
 - Reduce the retention period
 - Switch compression to `zstd`
 

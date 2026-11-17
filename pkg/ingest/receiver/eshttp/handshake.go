@@ -16,7 +16,6 @@ type Config struct {
 	AdvertisedVersion string
 	ClusterName       string
 	DataDir           string
-	S3Bucket          string
 }
 
 var versionRE = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
@@ -99,10 +98,6 @@ func nodeName() string {
 }
 
 func deriveClusterUUID(cfg Config) string {
-	seed := "fs:" + cfg.DataDir
-	if cfg.S3Bucket != "" {
-		seed = "s3:" + cfg.S3Bucket
-	}
-	sum := sha256.Sum256([]byte(seed))
+	sum := sha256.Sum256([]byte("fs:" + cfg.DataDir))
 	return base64.RawURLEncoding.EncodeToString(sum[:])[:22]
 }

@@ -89,8 +89,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flushes immutable `.lsg` parts via atomic rename; configurable `fsync`
   policy per part write.
 - **Compaction**: size-tiered compaction (L0 -> L1 -> L2) with rate limiting.
-- **Tiered storage**: hot (SSD), warm (S3) and cold (Glacier) tiers with
-  policy-driven tiering and a local segment cache.
 - **Ingest compatibility**: Elasticsearch `_bulk` API, OpenTelemetry
   OTLP/HTTP and gRPC, Splunk HEC receivers, and syslog.
 - **File and pipe queries**: query local files and standard input with the

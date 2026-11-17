@@ -61,12 +61,6 @@ type Metrics struct {
 	CacheEvictions atomic.Int64
 	CacheSizeBytes atomic.Int64
 
-	// Tiering metrics.
-	TieringUploads       atomic.Int64
-	TieringUploadBytes   atomic.Int64
-	TieringDownloads     atomic.Int64
-	TieringDownloadBytes atomic.Int64
-
 	// Pruning observability.
 	PruningBloomSkips atomic.Int64 // segments skipped by bloom filter
 	PruningTimeSkips  atomic.Int64 // segments skipped by time range
@@ -192,13 +186,6 @@ type MetricsSnapshot struct {
 		HitRate   float64 `json:"hit_rate"`
 	} `json:"cache"`
 
-	Tiering struct {
-		Uploads       int64 `json:"uploads"`
-		UploadBytes   int64 `json:"upload_bytes"`
-		Downloads     int64 `json:"downloads"`
-		DownloadBytes int64 `json:"download_bytes"`
-	} `json:"tiering"`
-
 	Pruning struct {
 		BloomSkips int64 `json:"bloom_skips"`
 		TimeSkips  int64 `json:"time_skips"`
@@ -315,11 +302,6 @@ func (m *Metrics) Snapshot() *MetricsSnapshot {
 	if total > 0 {
 		snap.Cache.HitRate = float64(snap.Cache.Hits) / float64(total)
 	}
-
-	snap.Tiering.Uploads = m.TieringUploads.Load()
-	snap.Tiering.UploadBytes = m.TieringUploadBytes.Load()
-	snap.Tiering.Downloads = m.TieringDownloads.Load()
-	snap.Tiering.DownloadBytes = m.TieringDownloadBytes.Load()
 
 	snap.Pruning.BloomSkips = m.PruningBloomSkips.Load()
 	snap.Pruning.TimeSkips = m.PruningTimeSkips.Load()

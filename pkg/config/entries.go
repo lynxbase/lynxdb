@@ -82,22 +82,11 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("storage.partition", cfg.Storage.Partition.String(), dflt.Storage.Partition.String(), fileCfg.Storage.Partition.String(), LYNXDB_STORAGE_PARTITION)
 	add("storage.flush_interval", cfg.Storage.FlushInterval.String(), dflt.Storage.FlushInterval.String(), fileCfg.Storage.FlushInterval.String(), LYNXDB_STORAGE_FLUSH_INTERVAL)
 	add("storage.time_fields", strings.Join(cfg.Storage.TimeFields, ","), strings.Join(dflt.Storage.TimeFields, ","), strings.Join(fileCfg.Storage.TimeFields, ","), LYNXDB_STORAGE_TIME_FIELDS)
-	add("storage.s3_bucket", cfg.Storage.S3Bucket, dflt.Storage.S3Bucket, fileCfg.Storage.S3Bucket, LYNXDB_STORAGE_S3_BUCKET)
-	add("storage.s3_region", cfg.Storage.S3Region, dflt.Storage.S3Region, fileCfg.Storage.S3Region, LYNXDB_STORAGE_S3_REGION)
-	add("storage.s3_prefix", cfg.Storage.S3Prefix, dflt.Storage.S3Prefix, fileCfg.Storage.S3Prefix, LYNXDB_STORAGE_S3_PREFIX)
-	add("storage.s3_endpoint", cfg.Storage.S3Endpoint, dflt.Storage.S3Endpoint, fileCfg.Storage.S3Endpoint, LYNXDB_STORAGE_S3_ENDPOINT)
-	add("storage.s3_force_path_style", strconv.FormatBool(cfg.Storage.S3ForcePathStyle), strconv.FormatBool(dflt.Storage.S3ForcePathStyle), strconv.FormatBool(fileCfg.Storage.S3ForcePathStyle), LYNXDB_STORAGE_S3_FORCE_PATH_STYLE)
-	add("storage.tiering_interval", cfg.Storage.TieringInterval.String(), dflt.Storage.TieringInterval.String(), fileCfg.Storage.TieringInterval.String(), LYNXDB_STORAGE_TIERING_INTERVAL)
-	add("storage.tiering_parallelism", fmt.Sprintf("%d", cfg.Storage.TieringParallelism), fmt.Sprintf("%d", dflt.Storage.TieringParallelism), fmt.Sprintf("%d", fileCfg.Storage.TieringParallelism), LYNXDB_STORAGE_TIERING_PARALLELISM)
-	add("storage.segment_cache_size", cfg.Storage.SegmentCacheSize.String(), dflt.Storage.SegmentCacheSize.String(), fileCfg.Storage.SegmentCacheSize.String(), LYNXDB_STORAGE_SEGMENT_CACHE_SIZE)
 
 	// Helper for duration fields.
 	durationEntry := func(key string, val, dfltVal, fileVal time.Duration, envVar string) {
 		add(key, val.String(), dfltVal.String(), fileVal.String(), envVar)
 	}
-
-	// Storage — additional fields.
-	durationEntry("storage.remote_fetch_timeout", cfg.Storage.RemoteFetchTimeout, dflt.Storage.RemoteFetchTimeout, fileCfg.Storage.RemoteFetchTimeout, LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT)
 
 	// Query.
 	durationEntry("query.sync_timeout", cfg.Query.SyncTimeout, dflt.Query.SyncTimeout, fileCfg.Query.SyncTimeout, LYNXDB_QUERY_SYNC_TIMEOUT)

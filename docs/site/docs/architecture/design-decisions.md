@@ -95,7 +95,7 @@ The key factors:
 
 1. **Single static binary**: `go build` produces one file with no runtime, shared libraries or JVM, which the single-binary model needs.
 2. **Fast compilation**: short builds keep contributor iteration and CI fast.
-3. **Concurrency**: goroutines fit concurrent ingest, streaming query execution and background work (compaction, tiering, retention).
+3. **Concurrency**: goroutines fit concurrent ingest, streaming query execution and background work (compaction, retention).
 4. **Performance**: the hot paths avoid per-row allocations: the VM runs on a fixed-size stack, and batches and buffers are reused.
 5. **Contributor accessibility**: Go has a gentler learning curve than Rust.
 

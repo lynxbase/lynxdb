@@ -62,17 +62,6 @@ type StorageConfig struct {
 	FlushInterval Duration `yaml:"flush_interval" json:"flush_interval"`
 	// TimeFields name the fields whose value becomes the event time, tried in order.
 	TimeFields []string `yaml:"time_fields" json:"time_fields"`
-
-	S3Bucket         string `yaml:"s3_bucket"           json:"s3_bucket"`
-	S3Region         string `yaml:"s3_region"           json:"s3_region"`
-	S3Prefix         string `yaml:"s3_prefix"           json:"s3_prefix"`
-	S3Endpoint       string `yaml:"s3_endpoint"         json:"s3_endpoint"`
-	S3ForcePathStyle bool   `yaml:"s3_force_path_style" json:"s3_force_path_style"`
-
-	TieringInterval    time.Duration `yaml:"tiering_interval"    json:"tiering_interval"`
-	TieringParallelism int           `yaml:"tiering_parallelism" json:"tiering_parallelism"`
-	SegmentCacheSize   ByteSize      `yaml:"segment_cache_size"  json:"segment_cache_size"`
-	RemoteFetchTimeout time.Duration `yaml:"remote_fetch_timeout" json:"remote_fetch_timeout"`
 }
 
 // QueryConfig holds query execution parameters.
@@ -174,14 +163,6 @@ func DefaultConfig() *Config {
 		Storage: StorageConfig{
 			Partition:  Duration(24 * time.Hour),
 			TimeFields: []string{"_time", "timestamp", "@timestamp", "time", "ts"},
-
-			S3Region: "us-east-1",
-			S3Prefix: "lynxdb/",
-
-			TieringInterval:    5 * time.Minute,
-			TieringParallelism: 3,
-			SegmentCacheSize:   10 * GB,
-			RemoteFetchTimeout: 30 * time.Second,
 		},
 
 		Query: QueryConfig{

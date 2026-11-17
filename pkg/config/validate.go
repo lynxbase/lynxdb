@@ -85,12 +85,6 @@ func (s *StorageConfig) validate() error {
 			return validationErr("storage", "time_fields", strings.Join(s.TimeFields, ","), "must not name an empty field")
 		}
 	}
-	if s.TieringParallelism < 1 {
-		return validationErr("storage", "tiering_parallelism", fmt.Sprintf("%d", s.TieringParallelism), "must be at least 1")
-	}
-	if s.RemoteFetchTimeout < 0 {
-		return validationErr("storage", "remote_fetch_timeout", s.RemoteFetchTimeout.String(), "must not be negative")
-	}
 
 	return nil
 }

@@ -36,11 +36,7 @@ Settings resolve in this order, highest first: `lynxdb server` flags, `LYNXDB_*`
 |------|-----------|
 | `--addr` | `listen` |
 | `--data-dir` | `data_dir` |
-| `--s3-bucket` | `storage.s3_bucket` |
-| `--s3-region` | `storage.s3_region` |
-| `--s3-prefix` | `storage.s3_prefix` |
 | `--compaction-interval` | `storage.compaction_interval` |
-| `--tiering-interval` | `storage.tiering_interval` |
 | `--cache-max-mb` | `storage.cache_max_bytes` |
 | `--log-level` | `log_level` |
 

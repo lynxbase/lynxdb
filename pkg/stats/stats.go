@@ -109,8 +109,6 @@ type QueryStats struct {
 	CacheBytesRead int64
 	// DiskBytesRead is the number of bytes read from local disk.
 	DiskBytesRead int64
-	// S3BytesRead is the number of bytes fetched from object storage.
-	S3BytesRead int64
 
 	// Resources
 
@@ -229,7 +227,7 @@ func ComputeExclusiveTiming(stages []StageStats) {
 // SegmentDetail holds per-segment I/O metrics collected during trace-level profiling.
 type SegmentDetail struct {
 	SegmentID       string
-	Source          string // "disk", "cache", "s3", "mmap"
+	Source          string // "disk", "cache", "mmap"
 	Rows            int64
 	RowsAfterFilter int64
 	BloomHit        bool

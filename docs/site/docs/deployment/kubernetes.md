@@ -1,6 +1,6 @@
 ---
 title: Kubernetes Deployment
-description: Run LynxDB on Kubernetes as a StatefulSet with a persistent volume, a ConfigMap, probes, S3 credentials and Prometheus scraping.
+description: Run LynxDB on Kubernetes as a StatefulSet with a persistent volume, a ConfigMap, probes and Prometheus scraping.
 ---
 
 # Kubernetes Deployment
@@ -163,55 +163,6 @@ spec:
 
 Buffering off and a long read timeout keep live tail (SSE) and NDJSON streaming responses flowing. The body size matches `ingest.limits.max_compressed_body_bytes`.
 
-## S3 Tiering
-
-Static credentials from a Secret:
-
-```yaml
-apiVersion: v1
-kind: Secret
-metadata:
-  name: lynxdb-s3-credentials
-  namespace: lynxdb
-type: Opaque
-stringData:
-  access-key-id: "AKIAIOSFODNN7EXAMPLE"
-  secret-access-key: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
-```
-
-```yaml
-# container spec
-env:
-  - name: LYNXDB_STORAGE_S3_BUCKET
-    value: "example-lynxdb-logs"
-  - name: LYNXDB_STORAGE_S3_REGION
-    value: "us-east-1"
-  - name: AWS_ACCESS_KEY_ID
-    valueFrom:
-      secretKeyRef:
-        name: lynxdb-s3-credentials
-        key: access-key-id
-  - name: AWS_SECRET_ACCESS_KEY
-    valueFrom:
-      secretKeyRef:
-        name: lynxdb-s3-credentials
-        key: secret-access-key
-```
-
-On EKS, use IAM Roles for Service Accounts instead; the AWS SDK picks up the web identity token:
-
-```yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: lynxdb
-  namespace: lynxdb
-  annotations:
-    eks.amazonaws.com/role-arn: arn:aws:iam::123456789012:role/lynxdb-s3
-```
-
-Add `serviceAccountName: lynxdb` to the pod spec. See [S3/MinIO Storage Backend](./s3-setup.md) for the IAM policy.
-
 ## Prometheus
 
 `/metrics` serves Prometheus metrics without authentication:
@@ -235,6 +186,5 @@ spec:
 ## Next Steps
 
 - [Docker Deployment](./docker.md)
-- [S3/MinIO Storage Backend](./s3-setup.md)
 - [TLS and Authentication](./tls-auth.md)
 - [Monitoring](../operations/monitoring.md)

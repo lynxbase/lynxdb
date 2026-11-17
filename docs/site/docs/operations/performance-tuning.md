@@ -108,17 +108,6 @@ query:
 
 Each running query holds its own memory budget (`query.max_query_memory_bytes`, default 1gb), so raise concurrency together with the memory pool.
 
-### Segment Cache for S3 Tiering
-
-With S3 tiering, a larger local segment cache avoids object-store round trips:
-
-```yaml
-storage:
-  segment_cache_size: "50gb"  # Default: 10gb
-```
-
-Size it to hold the warm-tier data you query most often.
-
 ### Reading a Profile
 
 ```bash
@@ -236,9 +225,6 @@ storage:
 ```yaml
 query:
   max_query_runtime: "30m"    # Default: 5m
-
-storage:
-  segment_cache_size: "50gb"
 ```
 
 ```bash

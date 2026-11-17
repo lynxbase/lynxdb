@@ -128,7 +128,7 @@ pkg/colstore/
 
 ### `pkg/server/` -- Engine
 
-The server `Engine`: ingest into the batcher, part flush and registration, segment handles, query execution over segments (`query.go`, `store.go`), async jobs, compaction and tiering loops, retention and system status.
+The server `Engine`: ingest into the batcher, part flush and registration, segment handles, query execution over segments (`query.go`, `store.go`), async jobs, compaction loops, retention and system status.
 
 ### `pkg/usecases/` -- Application Services
 
@@ -146,7 +146,6 @@ pkg/storage/
 ├── part/         # AsyncBatcher, part writer, filesystem-scanned registry, retention
 ├── segment/      # .lsg reader and writer; column/ encodings; index/ blooms, term index, range bitmaps
 ├── compaction/   # Leveled compaction planning and merging
-├── tiering/      # Hot/warm/cold tiering with S3 and the local segment cache
 ├── format/       # FORMAT marker reading and writing
 └── sources/      # Registry of source names for multi-source and glob queries
 ```
@@ -171,7 +170,6 @@ pkg/ingest/
 | `pkg/model` | Shared types: storage hints, segment metadata, time bounds |
 | `pkg/config` | Configuration cascade (flags > env > file > defaults), validation, hot reload |
 | `pkg/memgov` | Process-wide memory governor with memory classes and per-query budgets |
-| `pkg/bufmgr` | Opt-in unified buffer manager (`buffer_manager.enabled`) |
 | `pkg/stats` | Query execution statistics for the CLI, API and metrics |
 | `pkg/auth` | API keys, credential files, TLS helpers |
 | `pkg/client` | Typed Go client for the REST API, used by the CLI |
@@ -182,7 +180,6 @@ pkg/ingest/
 | Package | Purpose |
 |---------|---------|
 | `internal/docgen` | Writes the generated PPL reference pages (`docs/site/docs/ppl/commands.md`, `functions.md`, `aggregations.md`) from the catalogs; run `go run ./internal/docgen` or `make docs-gen` |
-| `internal/objstore` | `ObjectStore` interface with in-memory and S3 implementations |
 | `internal/output` | Result formatters for the CLI (JSON, NDJSON, table, CSV, TSV, raw, ...) |
 | `internal/ui` | CLI theme and rendering components |
 | `internal/buildinfo` | Version, commit and build date injected with `-ldflags` |
@@ -231,9 +228,7 @@ flowchart TD
     SERVER --> PART["pkg/storage/part"]
     SERVER --> SEGMENT["pkg/storage/segment"]
     SERVER --> COMPACTION["pkg/storage/compaction"]
-    SERVER --> TIERING["pkg/storage/tiering"]
     PIPELINE --> SEGMENT
-    TIERING --> OBJSTORE["internal/objstore"]
 ```
 
 ## Related

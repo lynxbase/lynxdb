@@ -53,7 +53,7 @@ A compact snapshot of the server:
 }
 ```
 
-`retention` appears when the oldest event is known. `memory.governor` and `memory.buffer_manager` appear when those components are active.
+`retention` appears when the oldest event is known. `memory.governor` appears when the memory governor is active.
 
 ## GET /api/v1/stats
 
@@ -77,7 +77,7 @@ Storage and event counters, as used by `lynxdb status`:
 
 ## GET /api/v1/metrics
 
-Storage metrics as JSON, separate from the Prometheus endpoint. The top-level keys are `uptime_seconds`, `ingest`, `flush`, `segment`, `compaction`, `compaction_levels`, `tiering`, `cache`, `query`, `pruning` and `system_write_amplification`, plus `adaptive_compaction` when adaptive compaction is on.
+Storage metrics as JSON, separate from the Prometheus endpoint. The top-level keys are `uptime_seconds`, `ingest`, `flush`, `segment`, `compaction`, `compaction_levels`, `cache`, `query`, `pruning` and `system_write_amplification`, plus `adaptive_compaction` when adaptive compaction is on.
 
 ## GET /api/v1/compaction/history
 
@@ -111,7 +111,7 @@ Returns the running configuration. Needs `admin` scope when authentication is on
 curl -s localhost:3100/api/v1/config
 ```
 
-The top-level keys of `data` are `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tail`, `tls`, `auth`, `server`, `buffer_manager` and `profiles`. See [Configuration](../configuration/overview.md) for each section.
+The top-level keys of `data` are `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tail`, `tls`, `auth`, `server` and `profiles`. See [Configuration](../configuration/overview.md) for each section.
 
 ## PATCH /api/v1/config
 

@@ -25,9 +25,6 @@ func TestStorageMetrics_Snapshot(t *testing.T) {
 	m.CacheEvictions.Add(5)
 	m.CacheSizeBytes.Store(32768)
 
-	m.TieringUploads.Add(1)
-	m.TieringUploadBytes.Add(1 << 20)
-
 	snap := m.Snapshot()
 
 	if snap.Flush.Flushes != 3 {
@@ -41,9 +38,6 @@ func TestStorageMetrics_Snapshot(t *testing.T) {
 	}
 	if snap.Cache.HitRate < 0.79 || snap.Cache.HitRate > 0.81 {
 		t.Errorf("Cache.HitRate: %f", snap.Cache.HitRate)
-	}
-	if snap.Tiering.Uploads != 1 {
-		t.Errorf("Tiering.Uploads: %d", snap.Tiering.Uploads)
 	}
 	if snap.UptimeSeconds <= 0 {
 		t.Error("UptimeSeconds should be > 0")
@@ -68,7 +62,7 @@ func TestStorageMetrics_JSON(t *testing.T) {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 
-	for _, key := range []string{"uptime_seconds", "flush", "segment", "compaction", "compaction_levels", "cache", "tiering", "pruning", "ingest", "query"} {
+	for _, key := range []string{"uptime_seconds", "flush", "segment", "compaction", "compaction_levels", "cache", "pruning", "ingest", "query"} {
 		if _, ok := result[key]; !ok {
 			t.Errorf("missing top-level key: %s", key)
 		}

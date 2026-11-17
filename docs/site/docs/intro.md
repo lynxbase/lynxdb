@@ -70,7 +70,6 @@ features it does not implement.
   query time.
 - **Ingest compatibility**: Elasticsearch `_bulk`, OpenTelemetry OTLP,
   Splunk HEC, syslog, and a native JSON API.
-- **Tiered storage** on S3-compatible object stores.
 
 ## How LynxDB compares
 

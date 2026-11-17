@@ -21,13 +21,9 @@ var flagInitSystem bool
 
 // Shared CLI override flags — used by both "server" and "config" commands.
 var (
-	flagAddr            string
-	flagDataDir         string
-	flagS3Bucket        string
-	flagS3Region        string
-	flagS3Prefix        string
-	flagTieringInterval string
-	flagLogLevel        string
+	flagAddr     string
+	flagDataDir  string
+	flagLogLevel string
 )
 
 var configCmd = &cobra.Command{
@@ -142,10 +138,6 @@ func init() {
 	// Override flags available on config and its subcommands (show, validate).
 	configCmd.PersistentFlags().StringVar(&flagAddr, "addr", "", "Listen address override")
 	configCmd.PersistentFlags().StringVar(&flagDataDir, "data-dir", "", "Data directory override")
-	configCmd.PersistentFlags().StringVar(&flagS3Bucket, "s3-bucket", "", "S3 bucket override")
-	configCmd.PersistentFlags().StringVar(&flagS3Region, "s3-region", "", "AWS region override")
-	configCmd.PersistentFlags().StringVar(&flagS3Prefix, "s3-prefix", "", "S3 prefix override")
-	configCmd.PersistentFlags().StringVar(&flagTieringInterval, "tiering-interval", "", "Tiering interval override")
 	configCmd.PersistentFlags().StringVar(&flagLogLevel, "log-level", "", "Log level override")
 
 	configInitCmd.Flags().BoolVar(&flagInitSystem, "system", false, "Write to /etc/lynxdb/config.yaml")
@@ -191,20 +183,8 @@ func applyCLIOverrides(cmd *cobra.Command, cfg *config.Config) ([]config.CLIOver
 
 	checkStr("addr", "listen", flagAddr, func() { cfg.Listen = flagAddr })
 	checkStr("data-dir", "data_dir", flagDataDir, func() { cfg.DataDir = flagDataDir })
-	checkStr("s3-bucket", "storage.s3_bucket", flagS3Bucket, func() { cfg.Storage.S3Bucket = flagS3Bucket })
-	checkStr("s3-region", "storage.s3_region", flagS3Region, func() { cfg.Storage.S3Region = flagS3Region })
-	checkStr("s3-prefix", "storage.s3_prefix", flagS3Prefix, func() { cfg.Storage.S3Prefix = flagS3Prefix })
 	checkStr("log-level", "log_level", flagLogLevel, func() { cfg.LogLevel = flagLogLevel })
 
-	if cmd.Flags().Changed("tiering-interval") {
-		d, err := config.ParseDuration(flagTieringInterval)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid --tiering-interval: %w", err)
-		}
-		cfg.Storage.TieringInterval = d.Duration()
-		cli = append(cli, config.CLIOverride{Key: "storage.tiering_interval", Value: d.Duration().String(), Flag: "--tiering-interval"})
-		flags = append(flags, "--tiering-interval")
-	}
 	if cmd.Flags().Changed("ingest-es-enabled") {
 		cfg.Ingest.ESCompat.Enabled = flagIngestESEnabled
 		cli = append(cli, config.CLIOverride{Key: "ingest.es_compat.enabled", Value: strconv.FormatBool(flagIngestESEnabled), Flag: "--ingest-es-enabled"})

@@ -9,9 +9,6 @@ const (
 
 	// Persistent: local disk persistence. DataDir set, direct-to-part persistence.
 	Persistent
-
-	// Tiered: local disk + remote object storage. DataDir + S3Bucket set.
-	Tiered
 )
 
 // String returns the human-readable name of the storage profile.
@@ -21,20 +18,15 @@ func (p Profile) String() string {
 		return "ephemeral"
 	case Persistent:
 		return "persistent"
-	case Tiered:
-		return "tiered"
 	default:
 		return "unknown"
 	}
 }
 
 // ResolveProfile determines the storage profile from the configuration.
-func ResolveProfile(dataDir, s3Bucket string) Profile {
+func ResolveProfile(dataDir string) Profile {
 	if dataDir == "" {
 		return Ephemeral
-	}
-	if s3Bucket != "" {
-		return Tiered
 	}
 
 	return Persistent
@@ -44,7 +36,6 @@ func ResolveProfile(dataDir, s3Bucket string) Profile {
 type ProfileFeatures struct {
 	PartWriter bool // direct-to-part persistence
 	Compaction bool // background compaction
-	Tiering    bool // remote tier management
 	Cache      bool // query result cache
 }
 
@@ -55,21 +46,12 @@ func Features(profile Profile) ProfileFeatures {
 		return ProfileFeatures{
 			PartWriter: false,
 			Compaction: false,
-			Tiering:    false,
 			Cache:      true, // cache still useful for repeated queries
 		}
 	case Persistent:
 		return ProfileFeatures{
 			PartWriter: true,
 			Compaction: true,
-			Tiering:    false,
-			Cache:      true,
-		}
-	case Tiered:
-		return ProfileFeatures{
-			PartWriter: true,
-			Compaction: true,
-			Tiering:    true,
 			Cache:      true,
 		}
 	default:

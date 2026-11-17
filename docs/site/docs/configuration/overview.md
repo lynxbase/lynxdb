@@ -69,7 +69,7 @@ lynxdb config reload                   # send SIGHUP to the running server
 
 `init`, `set`, `edit`, `reset` and `path` act on `--config` when given, otherwise on the user config path (`$XDG_CONFIG_HOME/lynxdb/config.yaml` or `~/.config/lynxdb/config.yaml`). That is not necessarily the file the search order above finds. `set` and `reset` change the file only; a running server picks the change up on reload or restart.
 
-`lynxdb config` and `lynxdb config validate` accept the same override flags as the server for the shared keys: `--addr`, `--data-dir`, `--s3-bucket`, `--s3-region`, `--s3-prefix`, `--compaction-interval`, `--tiering-interval`, `--cache-max-mb`, `--log-level`.
+`lynxdb config` and `lynxdb config validate` accept the same override flags as the server for the shared keys: `--addr`, `--data-dir`, `--compaction-interval`, `--cache-max-mb`, `--log-level`.
 
 See [config command](../cli/config-cmd.md) for the full CLI reference.
 
@@ -125,7 +125,7 @@ Applied on reload:
 - `http.shutdown_timeout`
 - `syslog.index`, `syslog.sourcetype`, `syslog.default_timezone`, `syslog.default_hostname`, `syslog.batch_size`, `syslog.batch_timeout`
 
-Every other setting needs a restart, including `listen`, `data_dir`, `tls.*`, `auth.*`, all other `storage.*` keys, `http.idle_timeout`, `http.read_header_timeout`, `http.rate_limit`, `ingest.max_body_size`, `ingest.fsync`, `ingest.dedup_*`, `ingest.otlp.*`, syslog listeners and connection limits, `server.*` and `buffer_manager.*`.
+Every other setting needs a restart, including `listen`, `data_dir`, `tls.*`, `auth.*`, all other `storage.*` keys, `http.idle_timeout`, `http.read_header_timeout`, `http.rate_limit`, `ingest.max_body_size`, `ingest.fsync`, `ingest.dedup_*`, `ingest.otlp.*`, syslog listeners and connection limits, and `server.*`.
 
 `PATCH /api/v1/config` applies a JSON patch to the running configuration with the same rules and returns the keys that still need a restart in `restart_required`. When auth is on, it needs the root key.
 
@@ -179,5 +179,4 @@ default_source: web
 - [Query Settings](./query.md)
 - [Ingest Settings](./ingest.md)
 - [Syslog Receiver](./syslog.md)
-- [S3 Tiering](./s3-tiering.md)
 - [Environment Variables](./environment-variables.md)

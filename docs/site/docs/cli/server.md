@@ -22,11 +22,7 @@ The server loads its config file (see [config](./config-cmd.md) for the search o
 |------|-------------|
 | `--addr` | Listen address, for example `0.0.0.0:3100` |
 | `--data-dir` | Data directory; `""` keeps everything in memory |
-| `--s3-bucket` | S3 bucket for warm and cold storage |
-| `--s3-region` | AWS region of the bucket |
-| `--s3-prefix` | Key prefix in the bucket |
 | `--compaction-interval` | How often compaction checks for work, for example `30s` |
-| `--tiering-interval` | How often tiering evaluates segments, for example `5m` |
 | `--cache-max-mb` | Query result cache size, for example `512mb`, `1gb` |
 | `--max-query-pool` | Memory pool shared by all queries, for example `4gb` |
 | `--spill-dir` | Directory for spill files (default: the OS temp directory) |
@@ -78,9 +74,6 @@ lynxdb server --addr 0.0.0.0:3100 --data-dir /var/lib/lynxdb
 
 # In memory, nothing written to disk
 lynxdb server --data-dir ""
-
-# Tier old segments to S3
-lynxdb server --data-dir /var/lib/lynxdb --s3-bucket my-logs --s3-region eu-west-1
 
 # HTTPS with a self-signed certificate and API keys
 lynxdb server --data-dir /var/lib/lynxdb --tls --auth

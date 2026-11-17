@@ -102,8 +102,6 @@ lynxdb status --format json
 | `lynxdb_compaction_runs_total`, `lynxdb_compaction_errors_total` | Compaction runs and failures | Any errors |
 | `lynxdb_compaction_input_bytes_total`, `lynxdb_compaction_output_bytes_total` | Bytes read and written by compaction | Write amplification |
 | `lynxdb_compaction_duration_seconds_total` | Cumulative compaction time | |
-| `lynxdb_tiering_uploads_total`, `lynxdb_tiering_upload_bytes_total` | Segments and bytes uploaded to the warm/cold tier | Object-store costs |
-| `lynxdb_tiering_downloads_total`, `lynxdb_tiering_download_bytes_total` | Segments and bytes fetched from the warm/cold tier | High download rates mean the segment cache is too small |
 
 ### Queries
 

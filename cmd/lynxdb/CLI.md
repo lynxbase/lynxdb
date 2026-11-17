@@ -363,7 +363,7 @@ lynxdb auth revoke ak_7fA3mNpQ --yes
 lynxdb config [subcommand] [flags]
 ```
 
-Without a subcommand, prints every setting with its value and origin. `config` and `config validate` accept the override flags `--addr`, `--data-dir`, `--s3-bucket`, `--s3-region`, `--s3-prefix`, `--tiering-interval`, `--log-level`.
+Without a subcommand, prints every setting with its value and origin. `config` and `config validate` accept the override flags `--addr`, `--data-dir`, `--log-level`.
 
 Config file search, when `--config` is unset: `LYNXDB_CONFIG`, `./lynxdb.yaml`, `$XDG_CONFIG_HOME/lynxdb/config.yaml` (or `~/.config/lynxdb/config.yaml`), `~/.lynxdb/config.yaml`, `/etc/lynxdb/config.yaml`.
 

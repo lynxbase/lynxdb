@@ -200,7 +200,7 @@ func ruleHotSegment(s *QueryStats) *Recommendation {
 		return &Recommendation{
 			Category: "performance",
 			Priority: "medium",
-			Message: fmt.Sprintf("Hot segment %s took %.0f%% of scan time (%s); check for skew or cold-tier latency",
+			Message: fmt.Sprintf("Hot segment %s took %.0f%% of scan time (%s); check for skew",
 				hotSeg.SegmentID, hotPct, formatDur(maxDur)),
 		}
 	}

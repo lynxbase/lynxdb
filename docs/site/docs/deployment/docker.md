@@ -1,6 +1,6 @@
 ---
 title: Docker Deployment
-description: Run LynxDB with Docker and Docker Compose - image tags, volumes, environment variables, health checks and a MinIO example.
+description: Run LynxDB with Docker and Docker Compose - image tags, volumes, environment variables and health checks.
 ---
 
 # Docker Deployment
@@ -124,65 +124,6 @@ volumes:
 
 The health check runs the `lynxdb` binary itself, since the image has no shell or `curl`. With TLS on, use `--server https://localhost:3100 --tls-skip-verify`. On Linux the automatic memory pool is 40% of the cgroup memory limit when one is set, so a container limit is enough to size it; set `server.total_memory_pool_bytes` to choose a different share.
 
-### With MinIO for S3 tiering
-
-```yaml
-# compose.yaml
-services:
-  lynxdb:
-    image: ghcr.io/lynxbase/lynxdb:latest
-    ports:
-      - "3100:3100"
-    volumes:
-      - lynxdb-data:/data
-    environment:
-      LYNXDB_LISTEN: "0.0.0.0:3100"
-      LYNXDB_DATA_DIR: "/data"
-      LYNXDB_RETENTION: "90d"
-      LYNXDB_STORAGE_S3_BUCKET: "lynxdb"
-      LYNXDB_STORAGE_S3_REGION: "us-east-1"
-      LYNXDB_STORAGE_S3_ENDPOINT: "http://minio:9000"
-      LYNXDB_STORAGE_S3_FORCE_PATH_STYLE: "true"
-      AWS_ACCESS_KEY_ID: "minioadmin"
-      AWS_SECRET_ACCESS_KEY: "minioadmin"
-    depends_on:
-      minio-init:
-        condition: service_completed_successfully
-    restart: unless-stopped
-
-  minio:
-    image: minio/minio:latest
-    command: server /data --console-address ":9001"
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio-data:/data
-    environment:
-      MINIO_ROOT_USER: "minioadmin"
-      MINIO_ROOT_PASSWORD: "minioadmin"
-    healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    entrypoint: >
-      /bin/sh -c "
-      mc alias set local http://minio:9000 minioadmin minioadmin &&
-      mc mb --ignore-existing local/lynxdb
-      "
-
-volumes:
-  lynxdb-data:
-  minio-data:
-```
-
 ### Log shippers
 
 Shippers such as Filebeat, Fluent Bit and Vector send to the Elasticsearch bulk API (`http://lynxdb:3100/api/v1/es/_bulk`), Splunk HEC or OTLP. See the [Ingest Data guides](../guides/ingest-data.md) for shipper configs.
@@ -219,6 +160,5 @@ docker compose pull && docker compose up -d
 ## Next Steps
 
 - [Kubernetes Deployment](./kubernetes.md)
-- [S3/MinIO Storage Backend](./s3-setup.md)
 - [Environment Variables](../configuration/environment-variables.md)
 - [TLS and Authentication](./tls-auth.md)

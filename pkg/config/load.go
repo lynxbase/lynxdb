@@ -176,78 +176,6 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return strings.Join(c.Storage.TimeFields, ",") }},
-	{LYNXDB_STORAGE_S3_BUCKET, "storage.s3_bucket",
-		func(c *Config, v string) error {
-			c.Storage.S3Bucket = v
-
-			return nil
-		},
-		func(c *Config) string { return c.Storage.S3Bucket }},
-	{LYNXDB_STORAGE_S3_REGION, "storage.s3_region",
-		func(c *Config, v string) error {
-			c.Storage.S3Region = v
-
-			return nil
-		},
-		func(c *Config) string { return c.Storage.S3Region }},
-	{LYNXDB_STORAGE_S3_PREFIX, "storage.s3_prefix",
-		func(c *Config, v string) error {
-			c.Storage.S3Prefix = v
-
-			return nil
-		},
-		func(c *Config) string { return c.Storage.S3Prefix }},
-	{LYNXDB_STORAGE_S3_ENDPOINT, "storage.s3_endpoint",
-		func(c *Config, v string) error {
-			c.Storage.S3Endpoint = v
-
-			return nil
-		},
-		func(c *Config) string { return c.Storage.S3Endpoint }},
-	{LYNXDB_STORAGE_S3_FORCE_PATH_STYLE, "storage.s3_force_path_style",
-		func(c *Config, v string) error {
-			b, err := strconv.ParseBool(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.S3ForcePathStyle = b
-
-			return nil
-		},
-		func(c *Config) string { return strconv.FormatBool(c.Storage.S3ForcePathStyle) }},
-	{LYNXDB_STORAGE_TIERING_INTERVAL, "storage.tiering_interval",
-		func(c *Config, v string) error {
-			d, err := time.ParseDuration(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.TieringInterval = d
-
-			return nil
-		},
-		func(c *Config) string { return c.Storage.TieringInterval.String() }},
-	{LYNXDB_STORAGE_TIERING_PARALLELISM, "storage.tiering_parallelism",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.TieringParallelism = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.Storage.TieringParallelism) }},
-	{LYNXDB_STORAGE_SEGMENT_CACHE_SIZE, "storage.segment_cache_size",
-		func(c *Config, v string) error {
-			b, err := ParseByteSize(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.SegmentCacheSize = b
-
-			return nil
-		},
-		func(c *Config) string { return c.Storage.SegmentCacheSize.String() }},
 
 	// Query
 	{LYNXDB_QUERY_SYNC_TIMEOUT, "query.sync_timeout",
@@ -629,19 +557,6 @@ var envBindings = []envBinding{
 			return nil
 		},
 		func(c *Config) string { return c.Syslog.BatchTimeout.String() }},
-
-	// Storage — additional bindings
-	{LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT, "storage.remote_fetch_timeout",
-		func(c *Config, v string) error {
-			d, err := time.ParseDuration(v)
-			if err != nil {
-				return err
-			}
-			c.Storage.RemoteFetchTimeout = d
-
-			return nil
-		},
-		func(c *Config) string { return c.Storage.RemoteFetchTimeout.String() }},
 
 	// TLS
 	{LYNXDB_TLS_ENABLED, "tls.enabled",

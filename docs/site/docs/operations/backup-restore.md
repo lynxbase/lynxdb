@@ -1,11 +1,11 @@
 ---
 title: Backup and Restore
-description: Backup and restore strategies for LynxDB -- filesystem snapshots, S3-based backups, and disaster recovery.
+description: Backup and restore strategies for LynxDB -- filesystem snapshots and disaster recovery.
 ---
 
 # Backup and Restore
 
-LynxDB stores its data in the `data_dir` directory, plus the S3 bucket when tiering is enabled. Backups are simple because parts are immutable, self-contained files and there is no distributed state to coordinate.
+LynxDB stores its data in the `data_dir` directory. Backups are simple because parts are immutable, self-contained files and there is no distributed state to coordinate.
 
 ## What to Back Up
 
@@ -79,39 +79,6 @@ Set up as a cron job:
 ```bash
 # /etc/cron.d/lynxdb-backup
 0 2 * * * root rsync -avz --delete /var/lib/lynxdb/ /backups/lynxdb-latest/ 2>&1 | logger -t lynxdb-backup
-```
-
-## S3-Based Backup
-
-With S3 tiering enabled, segments that moved to the warm or cold tier live in the S3 bucket, and their local files are deleted. A complete backup therefore covers both:
-
-- the data directory: hot parts, the `FORMAT` marker, manifests and the `auth/` directory with API keys
-- the S3 bucket: tiered segments
-- config files
-
-### S3 Bucket Backup
-
-Turn on versioning, and replication to a second bucket, for disaster recovery:
-
-```bash
-# Turn on versioning (required for replication)
-aws s3api put-bucket-versioning \
-  --bucket my-lynxdb-logs \
-  --versioning-configuration Status=Enabled
-
-# Set up cross-region replication
-aws s3api put-bucket-replication \
-  --bucket my-lynxdb-logs \
-  --replication-configuration '{
-    "Role": "arn:aws:iam::123456789012:role/replication-role",
-    "Rules": [{
-      "Status": "Enabled",
-      "Destination": {
-        "Bucket": "arn:aws:s3:::my-lynxdb-logs-dr",
-        "StorageClass": "STANDARD_IA"
-      }
-    }]
-  }'
 ```
 
 ### Backup Script
@@ -208,6 +175,5 @@ docker rm -f lynxdb-restore-test
 ## Next Steps
 
 - [Retention Policies](/docs/operations/retention) -- manage data lifecycle
-- [S3 Storage Setup](/docs/deployment/s3-setup) -- S3-based storage
 - [Upgrading](/docs/operations/upgrading) -- safe upgrade procedures
 - [Troubleshooting](/docs/operations/troubleshooting) -- diagnose issues

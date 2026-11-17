@@ -18,17 +18,6 @@
 #   partition: 24h                   # Span of time whose events are kept apart
 #   flush_interval: 0s               # Longest wait before ingested events are written (0 = store default)
 #   time_fields: [_time, timestamp, "@timestamp", time, ts]  # Fields that set the event time, in order
-#
-#   s3_bucket:                      # S3 bucket for warm/cold storage
-#   s3_region: us-east-1             # AWS region
-#   s3_prefix: lynxdb/               # Key prefix in S3
-#   s3_endpoint:                     # S3-compatible endpoint (for MinIO, etc.)
-#   s3_force_path_style: false       # Use path-style addressing
-#
-#   tiering_interval: 5m             # Tier evaluation interval
-#   tiering_parallelism: 3           # Concurrent tier uploads
-#   segment_cache_size: 10gb         # Local disk cache for remote segments
-#   remote_fetch_timeout: 30s        # Timeout for fetching remote segments
 
 # Query execution configuration.
 # query:

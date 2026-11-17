@@ -5,7 +5,7 @@ description: Top-level server settings, TLS, auth, HTTP, live tail and memory po
 
 # Server Settings
 
-This page covers the top-level keys of the server config file, the `tls`, `auth`, `http`, `tail`, `server` and `buffer_manager` sections, and the flags of `lynxdb server`.
+This page covers the top-level keys of the server config file, the `tls`, `auth`, `http`, `tail` and `server` sections, and the flags of `lynxdb server`.
 
 ## Top-Level Keys
 
@@ -27,7 +27,7 @@ LYNXDB_RETENTION=30d lynxdb server
 lynxdb server --data-dir ""
 ```
 
-With an empty `data_dir` nothing is persisted, and the features that store files are unavailable: API key authentication (the server runs without auth even when `--auth` is set), the self-signed certificate, compaction and tiering. The PID file goes to `$XDG_RUNTIME_DIR` or the system temp directory.
+With an empty `data_dir` nothing is persisted, and the features that store files are unavailable: API key authentication (the server runs without auth even when `--auth` is set), the self-signed certificate and compaction. The PID file goes to `$XDG_RUNTIME_DIR` or the system temp directory.
 
 ## TLS
 
@@ -81,23 +81,6 @@ Both are reloadable.
 
 Per-query limits and spill settings live under `query.*`; see [Query Settings](./query.md#memory-and-spill).
 
-## Buffer Manager
-
-The buffer manager is an optional page pool for the segment cache. It is off by default.
-
-| Key | Env var | Default | Description |
-|-----|---------|---------|-------------|
-| `buffer_manager.enabled` | `LYNXDB_BUFFER_MANAGER_ENABLED` | `false` | Start the buffer manager. |
-| `buffer_manager.max_memory_bytes` | `LYNXDB_BUFFER_MANAGER_MAX_MEMORY_BYTES` | `0` | Pool size. `0` sizes it automatically. |
-| `buffer_manager.page_size` | `LYNXDB_BUFFER_MANAGER_PAGE_SIZE` | `65536` | Page size in bytes: a power of two, at least 4096. |
-| `buffer_manager.enable_off_heap` | `LYNXDB_BUFFER_MANAGER_ENABLE_OFF_HEAP` | `true` | Allocate pages with mmap instead of the Go heap. |
-| `buffer_manager.cache_target_percent` | `LYNXDB_BUFFER_MANAGER_CACHE_TARGET_PERCENT` | `60` | Validated, not read by the server. |
-| `buffer_manager.query_target_percent` | `LYNXDB_BUFFER_MANAGER_QUERY_TARGET_PERCENT` | `30` | Validated, not read by the server. |
-| `buffer_manager.batcher_target_percent` | `LYNXDB_BUFFER_MANAGER_BATCHER_TARGET_PERCENT` | `10` | Validated, not read by the server. |
-| `buffer_manager.max_pinned_pages_per_query` | `LYNXDB_BUFFER_MANAGER_MAX_PINNED_PAGES_PER_QUERY` | `1024` | Validated, not read by the server. |
-
-The three target percentages must not add up to more than 100.
-
 ## Server Flags
 
 Every flag of `lynxdb server`, with the config key it sets:
@@ -111,9 +94,7 @@ Every flag of `lynxdb server`, with the config key it sets:
 | `--tls` | `tls.enabled` |
 | `--tls-cert`, `--tls-key` | `tls.cert_file`, `tls.key_file` |
 | `--auth` | `auth.enabled` |
-| `--s3-bucket`, `--s3-region`, `--s3-prefix` | `storage.s3_bucket`, `storage.s3_region`, `storage.s3_prefix` |
 | `--compaction-interval` | `storage.compaction_interval` |
-| `--tiering-interval` | `storage.tiering_interval` |
 | `--cache-max-mb` | `storage.cache_max_bytes` (takes a byte size such as `512mb`) |
 | `--max-query-pool` | `query.global_query_pool_bytes` |
 | `--spill-dir` | `query.spill_dir` |

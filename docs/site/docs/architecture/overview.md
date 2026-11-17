@@ -30,11 +30,11 @@ LynxDB is a columnar log analytics database written in Go. The storage engine, q
 ┌───────────┴───────────────────────────────────────────────┐
 │                    Storage Engine                          │
 │                                                           │
-│  ┌──────────────┐  ┌───────────┐  ┌──────────┐            │
-│  │ AsyncBatcher │→ │ Part      │→ │  S3 Tier │            │
-│  │ (per-index   │  │ Writer    │  │  (warm/  │            │
-│  │  buffering)  │  │  (.lsg)   │  │   cold)  │            │
-│  └──────────────┘  └─────┬─────┘  └──────────┘            │
+│  ┌──────────────┐  ┌───────────┐                          │
+│  │ AsyncBatcher │→ │ Part      │                          │
+│  │ (per-index   │  │ Writer    │                          │
+│  │  buffering)  │  │  (.lsg)   │                          │
+│  └──────────────┘  └─────┬─────┘                          │
 │                          │                                │
 │  ┌───────────────────────┴────────┐                       │
 │  │         Per-segment indexes    │  ┌─────────────────┐  │
@@ -91,16 +91,14 @@ Server mode starts a long-running process that:
 2. Scans the data directory, removes stale temporary files, and rebuilds the in-memory part registry.
 3. Starts the HTTP API on port 3100 (configurable).
 4. Accepts ingest requests, buffers events in the `AsyncBatcher`, and flushes immutable `.lsg` parts.
-5. Runs background compaction (L0 → L1 → L2), retention, and optional S3 tiering.
-6. Serves queries over buffered events, local parts and tiered segments.
-
-Optional S3 tiering moves older segments to object storage and keeps them queryable through a local segment cache.
+5. Runs background compaction (L0 → L1 → L2) and retention.
+6. Serves queries over buffered events and local parts.
 
 ## Major Subsystems
 
 ### Storage Engine
 
-The storage engine handles the data lifecycle: ingest → buffering → part flush → compaction → tiering → retention.
+The storage engine handles the data lifecycle: ingest → buffering → part flush → compaction → retention.
 
 ```mermaid
 flowchart LR
@@ -109,14 +107,13 @@ flowchart LR
     C --> D[".lsg Segments"]
     D --> E[Compaction]
     E --> D
-    D -->|age policy| F[S3 Tier]
 ```
 
 - **AsyncBatcher**: per-index in-memory buffering that flushes on event count, size or idle time.
 - **Part writer**: writes `tmp_*.lsg`, optionally `fsync`s, then renames the file into place.
 - **Segments**: columnar `.lsg` files, row groups of up to 65536 rows. Timestamps are delta-encoded, strings dictionary- or LZ4-encoded, floats Gorilla-encoded, with LZ4 or ZSTD block compression. Each segment embeds per-row-group bloom filters, column statistics and an FST term index over `_raw`.
 - **Compaction**: three levels (L0 overlapping → L1 merged → L2 near the target size of 1 GB), rate-limited.
-- **Tiering and retention**: hot (local disk) → warm (S3) → cold (S3 or archive policy); time partitions older than the retention period are deleted.
+- **Retention**: time partitions older than the retention period are deleted.
 
 See [Storage Engine](/docs/architecture/storage-engine) and [Segment Format](/docs/architecture/segment-format).
 
@@ -174,7 +171,6 @@ HTTP POST /api/v1/ingest, /api/v1/ingest/raw, /_bulk, /services/collector, or /a
     → Register part metadata
   → [Background]
     → Compaction merges L0 → L1 → L2
-    → Tiering moves aged segments to S3
     → Retention deletes expired time partitions
 ```
 
@@ -198,7 +194,7 @@ PPL query text
 
 ## Next Steps
 
-- [Storage Engine](/docs/architecture/storage-engine) -- buffering, part flush, compaction, tiering
+- [Storage Engine](/docs/architecture/storage-engine) -- buffering, part flush, compaction
 - [Segment Format](/docs/architecture/segment-format) -- the columnar `.lsg` format
 - [Query Engine](/docs/architecture/query-engine) -- compiler, optimizer, physical planning, execution
 - [Indexing](/docs/architecture/indexing) -- bloom filters, term index, column statistics

@@ -98,33 +98,6 @@ const (
 	// LYNXDB_STORAGE_PARTITION is the span of time whose events are kept apart.
 	// YAML key: storage.partition. Default: 24h.
 	LYNXDB_STORAGE_PARTITION = "LYNXDB_STORAGE_PARTITION"
-	// LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT is the timeout for fetching remote segments.
-	// YAML key: storage.remote_fetch_timeout. Default: 30s.
-	LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT = "LYNXDB_STORAGE_REMOTE_FETCH_TIMEOUT"
-	// LYNXDB_STORAGE_S3_BUCKET is the S3 bucket for warm/cold storage.
-	// YAML key: storage.s3_bucket. Default: "".
-	LYNXDB_STORAGE_S3_BUCKET = "LYNXDB_STORAGE_S3_BUCKET"
-	// LYNXDB_STORAGE_S3_ENDPOINT is the S3-compatible endpoint (for MinIO, etc.).
-	// YAML key: storage.s3_endpoint. Default: "".
-	LYNXDB_STORAGE_S3_ENDPOINT = "LYNXDB_STORAGE_S3_ENDPOINT"
-	// LYNXDB_STORAGE_S3_FORCE_PATH_STYLE is the use path-style addressing for S3.
-	// YAML key: storage.s3_force_path_style. Default: false.
-	LYNXDB_STORAGE_S3_FORCE_PATH_STYLE = "LYNXDB_STORAGE_S3_FORCE_PATH_STYLE"
-	// LYNXDB_STORAGE_S3_PREFIX is the key prefix in S3.
-	// YAML key: storage.s3_prefix. Default: lynxdb/.
-	LYNXDB_STORAGE_S3_PREFIX = "LYNXDB_STORAGE_S3_PREFIX"
-	// LYNXDB_STORAGE_S3_REGION is the AWS region for S3.
-	// YAML key: storage.s3_region. Default: us-east-1.
-	LYNXDB_STORAGE_S3_REGION = "LYNXDB_STORAGE_S3_REGION"
-	// LYNXDB_STORAGE_SEGMENT_CACHE_SIZE is the local disk cache for remote segments.
-	// YAML key: storage.segment_cache_size. Default: 10gb.
-	LYNXDB_STORAGE_SEGMENT_CACHE_SIZE = "LYNXDB_STORAGE_SEGMENT_CACHE_SIZE"
-	// LYNXDB_STORAGE_TIERING_INTERVAL is the tier evaluation interval.
-	// YAML key: storage.tiering_interval. Default: 5m.
-	LYNXDB_STORAGE_TIERING_INTERVAL = "LYNXDB_STORAGE_TIERING_INTERVAL"
-	// LYNXDB_STORAGE_TIERING_PARALLELISM is the concurrent tier uploads.
-	// YAML key: storage.tiering_parallelism. Default: 3.
-	LYNXDB_STORAGE_TIERING_PARALLELISM = "LYNXDB_STORAGE_TIERING_PARALLELISM"
 	// LYNXDB_STORAGE_TIME_FIELDS is the comma-separated list of fields that set the event time, in order.
 	// YAML key: storage.time_fields. Default: _time,timestamp,@timestamp,time,ts.
 	LYNXDB_STORAGE_TIME_FIELDS = "LYNXDB_STORAGE_TIME_FIELDS"
