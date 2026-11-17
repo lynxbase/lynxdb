@@ -127,7 +127,12 @@ func (b *builder) runSubquery(sq *ir.Subquery) (*vm.SubqueryResult, error) {
 	if sq.Mode == ir.SubqueryExists {
 		plan = &ir.Limit{Input: plan, Count: 1}
 	}
+	// The coordinator hands out operator budgets only after Build returns,
+	// so a subquery, which runs during Build, cannot draw on it.
+	coordinator := b.opts.Coordinator
+	b.opts.Coordinator = nil
 	iter, err := b.node(plan)
+	b.opts.Coordinator = coordinator
 	if err != nil {
 		return nil, fmt.Errorf("subquery: %w", err)
 	}
