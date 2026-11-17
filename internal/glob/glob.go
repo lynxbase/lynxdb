@@ -7,48 +7,14 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"sync"
 )
-
-// globRegexCache is a process-wide cache of compiled glob regexes.
-// Soft-capped to avoid unbounded growth from pathological inputs;
-// once full, additional patterns compile every call but are not stored.
-var globRegexCache = struct {
-	mu  sync.RWMutex
-	m   map[string]*regexp.Regexp
-	max int
-}{m: make(map[string]*regexp.Regexp), max: 4096}
-
-func compileGlobCached(key string, compile func() *regexp.Regexp) *regexp.Regexp {
-	globRegexCache.mu.RLock()
-	if re, ok := globRegexCache.m[key]; ok {
-		globRegexCache.mu.RUnlock()
-
-		return re
-	}
-	globRegexCache.mu.RUnlock()
-
-	re := compile()
-	globRegexCache.mu.Lock()
-	if existing, ok := globRegexCache.m[key]; ok {
-		globRegexCache.mu.Unlock()
-
-		return existing
-	}
-	if len(globRegexCache.m) < globRegexCache.max {
-		globRegexCache.m[key] = re
-	}
-	globRegexCache.mu.Unlock()
-
-	return re
-}
 
 // ToRegex converts a glob pattern to a compiled regular expression.
 // The result is anchored with ^ and $. Single * matches any character except
 // /, while ** matches anything including /. When caseInsensitive is true the
 // regex uses the (?i) flag.
 func ToRegex(pattern string, caseInsensitive bool) *regexp.Regexp {
-	return toRegex(pattern, caseInsensitive, true)
+	return regexp.MustCompile(buildRegexString(pattern, caseInsensitive))
 }
 
 // Compile is like ToRegex but rejects malformed patterns instead of silently
@@ -59,7 +25,7 @@ func Compile(pattern string, caseInsensitive bool) (*regexp.Regexp, error) {
 	if err := validateClasses(pattern); err != nil {
 		return nil, err
 	}
-	return regexp.Compile(buildRegexString(pattern, caseInsensitive, true, false))
+	return regexp.Compile(buildRegexString(pattern, caseInsensitive))
 }
 
 // validateClasses rejects unterminated [ character classes. Other malformed
@@ -103,38 +69,12 @@ func Match(pattern, text string, caseInsensitive bool) bool {
 	return ToRegex(pattern, caseInsensitive).MatchString(text)
 }
 
-// MatchCached reports whether text matches a glob pattern, using a
-// process-wide regex cache keyed on (pattern, caseInsensitive).
-func MatchCached(pattern, text string, caseInsensitive bool) bool {
-	key := "s:" + pattern
-	if caseInsensitive {
-		key = "i:" + pattern
-	}
-
-	ci := caseInsensitive
-	compiled := compileGlobCached(key, func() *regexp.Regexp {
-		return ToRegex(pattern, ci)
-	})
-
-	return compiled.MatchString(text)
-}
-
-func toRegex(pattern string, caseInsensitive bool, anchored bool) *regexp.Regexp {
-	return toRegexWithMode(pattern, caseInsensitive, anchored, false)
-}
-
-func toRegexWithMode(pattern string, caseInsensitive bool, anchored bool, wildcardMatchesSlash bool) *regexp.Regexp {
-	return regexp.MustCompile(buildRegexString(pattern, caseInsensitive, anchored, wildcardMatchesSlash))
-}
-
-func buildRegexString(pattern string, caseInsensitive bool, anchored bool, wildcardMatchesSlash bool) string {
+func buildRegexString(pattern string, caseInsensitive bool) string {
 	var buf strings.Builder
 	if caseInsensitive {
 		buf.WriteString("(?i)")
 	}
-	if anchored {
-		buf.WriteString("^")
-	}
+	buf.WriteString("^")
 	for i := 0; i < len(pattern); i++ {
 		ch := pattern[i]
 		switch ch {
@@ -142,17 +82,11 @@ func buildRegexString(pattern string, caseInsensitive bool, anchored bool, wildc
 			if i+1 < len(pattern) && pattern[i+1] == '*' {
 				buf.WriteString(".*")
 				i++
-			} else if wildcardMatchesSlash {
-				buf.WriteString(".*")
 			} else {
 				buf.WriteString("[^/]*")
 			}
 		case '?':
-			if wildcardMatchesSlash {
-				buf.WriteByte('.')
-			} else {
-				buf.WriteString("[^/]")
-			}
+			buf.WriteString("[^/]")
 		case '[':
 			next, ok := appendGlobClass(&buf, pattern, i)
 			if ok {
@@ -186,17 +120,9 @@ func buildRegexString(pattern string, caseInsensitive bool, anchored bool, wildc
 			buf.WriteByte(ch)
 		}
 	}
-	if anchored {
-		buf.WriteString("$")
-	}
+	buf.WriteString("$")
 
 	return buf.String()
-}
-
-// ToContainsRegex converts a glob pattern to a regex without anchoring
-// (substring match).
-func ToContainsRegex(pattern string, caseInsensitive bool) *regexp.Regexp {
-	return toRegexWithMode(pattern, caseInsensitive, false, true)
 }
 
 // LiteralPrefix returns the leading literal run of a glob pattern: the

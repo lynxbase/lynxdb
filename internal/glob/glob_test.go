@@ -37,14 +37,3 @@ func TestMatch(t *testing.T) {
 		}
 	}
 }
-
-func TestMatchCached(t *testing.T) {
-	// Same cases, exercises the cache path.
-	if !MatchCached("foo*", "foobar", false) {
-		t.Error("expected match")
-	}
-	// Second call should hit cache.
-	if !MatchCached("foo*", "foobaz", false) {
-		t.Error("expected match on cached regex")
-	}
-}
