@@ -6,6 +6,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -127,4 +128,183 @@ func TestFailedCommitStaysOutOfARewrittenManifest(t *testing.T) {
 	if rows, sum := rowsAndSum(t, d); rows != 400 || sum != 399*400/2 {
 		t.Fatalf("after reopen: %d rows, sum %d; the failed commit holds 100 rows", rows, sum)
 	}
+}
+
+var errInjected = errors.New("injected failure")
+
+// checkDirMatchesManifest requires the files of a directory to be the parts
+// its table holds, and its manifest to name exactly those.
+func checkDirMatchesManifest(t testing.TB, d *Dir, when string) {
+	t.Helper()
+	live := liveNames(d)
+	files := partFiles(t, d.path)
+	if len(files) != len(live) {
+		t.Fatalf("%s: files %v beside %d live parts", when, files, len(live))
+	}
+	for _, name := range files {
+		if _, ok := live[name]; !ok {
+			t.Fatalf("%s: file %s is not a live part", when, name)
+		}
+	}
+	log, err := os.ReadFile(filepath.Join(d.path, manifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	named, _, valid, err := parseManifest(log)
+	if err != nil || valid != len(log) {
+		t.Fatalf("%s: the manifest reads %d of %d bytes: %v", when, valid, len(log), err)
+	}
+	if len(named) != len(live) {
+		t.Fatalf("%s: the manifest names %d parts, %d are live", when, len(named), len(live))
+	}
+	for name := range named {
+		if _, ok := live[name]; !ok {
+			t.Fatalf("%s: the manifest names %s, which is not live", when, name)
+		}
+	}
+}
+
+func TestCommitThatFailsLeavesNothingBehind(t *testing.T) {
+	cases := []struct {
+		name string
+		// arrange makes the commit of add fail and returns what it removes.
+		arrange func(d *Dir, add []*PartFile, base, gone []*Handle, failing *atomic.Bool) []*Handle
+	}{
+		{"a part file cannot be made durable", func(d *Dir, add []*PartFile, base, gone []*Handle, failing *atomic.Bool) []*Handle {
+			replaceSyncFile(t, func(f *os.File) error {
+				if failing.Load() && f.Name() == add[1].tmp {
+					return errInjected
+				}
+
+				return f.Sync()
+			})
+
+			return base[:1]
+		}},
+		{"a part file was closed", func(d *Dir, add []*PartFile, base, gone []*Handle, failing *atomic.Bool) []*Handle {
+			add[1].f.Close()
+
+			return nil
+		}},
+		{"the directory cannot be made durable", func(d *Dir, add []*PartFile, base, gone []*Handle, failing *atomic.Bool) []*Handle {
+			replaceSyncFile(t, func(f *os.File) error {
+				if failing.Load() && f.Name() == d.path {
+					return errInjected
+				}
+
+				return f.Sync()
+			})
+
+			return base[:1]
+		}},
+		{"a part file does not hold a part", func(d *Dir, add []*PartFile, base, gone []*Handle, failing *atomic.Bool) []*Handle {
+			if err := add[1].f.Truncate(20); err != nil {
+				t.Fatal(err)
+			}
+
+			return base[:1]
+		}},
+		{"a removed part is gone", func(d *Dir, add []*PartFile, base, gone []*Handle, failing *atomic.Bool) []*Handle {
+			return []*Handle{base[0], gone[0]}
+		}},
+		{"a part is removed twice", func(d *Dir, add []*PartFile, base, gone []*Handle, failing *atomic.Bool) []*Handle {
+			return []*Handle{base[0], base[1], base[0]}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "table")
+			d, err := OpenDir(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			base, err := d.Commit([]*PartFile{writePartFile(t, d, 0, 100, "a"), writePartFile(t, d, 100, 100, "b")}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gone, err := d.Commit([]*PartFile{writePartFile(t, d, 9000, 10, "gone")}, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := d.Commit(nil, gone); err != nil {
+				t.Fatal(err)
+			}
+			add := []*PartFile{writePartFile(t, d, 200, 100, "c"), writePartFile(t, d, 300, 100, "d"), writePartFile(t, d, 400, 100, "e")}
+			var failing atomic.Bool
+			failing.Store(true)
+			remove := c.arrange(d, add, base, gone, &failing)
+			if hs, err := d.Commit(add, remove); err == nil || hs != nil {
+				t.Fatalf("the commit returned %d handles and %v", len(hs), err)
+			}
+			failing.Store(false)
+			if rows, sum := rowsAndSum(t, d); rows != 200 || sum != 199*200/2 {
+				t.Fatalf("after the failed commit: %d rows, sum %d", rows, sum)
+			}
+			checkDirMatchesManifest(t, d, "after the failed commit")
+
+			// The directory takes the next change, and both outlast a reopen.
+			if _, err := d.Commit([]*PartFile{writePartFile(t, d, 200, 100, "c")}, base[:1]); err != nil {
+				t.Fatalf("the commit after the failed one: %v", err)
+			}
+			checkDirMatchesManifest(t, d, "after the next commit")
+			if err := d.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if d, err = OpenDir(path); err != nil {
+				t.Fatal(err)
+			}
+			defer d.Close()
+			if rows, sum := rowsAndSum(t, d); rows != 200 || sum != 100*199/2+100*499/2+50*100 {
+				t.Fatalf("after reopen: %d rows, sum %d", rows, sum)
+			}
+			checkDirMatchesManifest(t, d, "after reopen")
+		})
+	}
+}
+
+func TestCommitInAReadOnlyDirectoryLeavesFilesForTheNextOpen(t *testing.T) {
+	if os.Geteuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("the directory cannot be made read-only for this user")
+	}
+	path := filepath.Join(t.TempDir(), "table")
+	d, err := OpenDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Commit([]*PartFile{writePartFile(t, d, 0, 100, "a")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	add := []*PartFile{writePartFile(t, d, 100, 100, "b"), writePartFile(t, d, 200, 100, "c")}
+	if err := os.Chmod(path, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	_, commitErr := d.Commit(add, nil)
+	_, createErr := d.Create()
+	if err := os.Chmod(path, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if commitErr == nil || createErr == nil {
+		t.Fatalf("in a read-only directory a commit returned %v and a new part file %v", commitErr, createErr)
+	}
+	if rows, sum := rowsAndSum(t, d); rows != 100 || sum != 99*100/2 {
+		t.Fatalf("after the failed commit: %d rows, sum %d", rows, sum)
+	}
+	// The files could be neither renamed nor removed.
+	if got := partFiles(t, path); len(got) != 3 {
+		t.Fatalf("files %v", got)
+	}
+	if _, err := d.Commit([]*PartFile{writePartFile(t, d, 100, 100, "b")}, nil); err != nil {
+		t.Fatalf("the commit after the failed one: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if d, err = OpenDir(path); err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+	if rows, sum := rowsAndSum(t, d); rows != 200 || sum != 199*200/2 {
+		t.Fatalf("after reopen: %d rows, sum %d", rows, sum)
+	}
+	checkDirMatchesManifest(t, d, "after reopen")
 }

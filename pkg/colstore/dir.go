@@ -413,14 +413,25 @@ var _ io.Writer = (*PartFile)(nil)
 
 // Commit makes the written parts durable and swaps them for the removed
 // ones in one manifest record, so a crash leaves either all of the change
-// or none of it. It returns the handles of the added parts.
+// or none of it. It returns the handles of the added parts; when it fails,
+// the table is unchanged and the files of the added parts are gone.
 func (d *Dir) Commit(add []*PartFile, remove []*Handle) (handles []*Handle, err error) {
+	// Files a record may name stay for the next open to judge.
+	recorded := false
 	defer func() {
-		if err != nil {
-			for _, h := range handles {
-				h.release()
+		if err == nil {
+			return
+		}
+		for _, h := range handles {
+			h.release()
+		}
+		handles = nil
+		for _, pf := range add {
+			pf.f.Close()
+			if !recorded {
+				os.Remove(pf.tmp)
+				os.Remove(filepath.Join(d.path, pf.name))
 			}
-			handles = nil
 		}
 	}()
 	names := make([]string, len(add))
@@ -461,6 +472,7 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) (handles []*Handle, err 
 		}
 		gone = append(gone, ref.name)
 	}
+	recorded = true
 	if _, err := d.log.Write(appendRecord(nil, names, metas, gone)); err != nil {
 		return handles, err
 	}
