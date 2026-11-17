@@ -54,6 +54,20 @@ func TestOptimizerKeepsVolatileCalls(t *testing.T) {
 	}
 }
 
+// TestOptionsNoEngineRunsFailToCompile pins options that parse but that no
+// engine executes: they fail in Compile, before explain or a run.
+func TestOptionsNoEngineRunsFailToCompile(t *testing.T) {
+	for q, option := range map[string]string{
+		"source=logs | patterns _raw method=brain": "method=brain",
+	} {
+		_, err := Compile(q)
+		pe, ok := ppl.AsError(err)
+		if !ok || pe.Kind != ppl.ErrUnsupportedFeature || !strings.Contains(pe.Msg, option) || !strings.Contains(pe.Msg, "not supported") {
+			t.Errorf("%s: got %v, want an unsupported_feature error naming %s", q, err, option)
+		}
+	}
+}
+
 func TestUnsupportedCommandsFailExplicitly(t *testing.T) {
 	queries := map[string]string{
 		"fieldformat":      "source=t | fieldformat x = 1",

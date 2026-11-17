@@ -157,10 +157,10 @@ cd2a82fdb0b78b3e	source=otellogs | where severityText = 'ERROR' | patterns body 
 f25736dd8bdc1862	source=apache | patterns message method=simple_pattern new_field='no_numbers' pattern='[0-9]' | fields message, no_numbers
 d007ac31430958df	source=apache | patterns message method=simple_pattern mode=aggregation | fields patterns_field, pattern_count, sample_logs
 015b06daf08ad54d	source=apache | patterns message method=simple_pattern mode=aggregation show_numbered_token=true | fields patterns_field, pattern_count, tokens | head 1
-ccc618956ddbd6a3	source=apache | patterns message method=brain | fields message, patterns_field
-520a047998a1dca4	source=apache | patterns message method=brain variable_count_threshold=2 | fields message, patterns_field
-a39bec0de1f8e3fd	source=apache | patterns message method=brain mode=aggregation variable_count_threshold=2 | fields patterns_field, pattern_count, sample_logs
-69281d247fa96f00	source=apache | patterns message method=brain mode=aggregation show_numbered_token=true variable_count_threshold=2 | fields patterns_field, pattern_count, tokens
+72ac7286fad221ab	source=apache | patterns message method=brain | fields message, patterns_field
+27b964131bbebac6	source=apache | patterns message method=brain variable_count_threshold=2 | fields message, patterns_field
+4459284e0807ffbf	source=apache | patterns message method=brain mode=aggregation variable_count_threshold=2 | fields patterns_field, pattern_count, sample_logs
+e6d7102277c092ec	source=apache | patterns message method=brain mode=aggregation show_numbered_token=true variable_count_threshold=2 | fields patterns_field, pattern_count, tokens
 cb7350b1c92b30ec	source=otellogs | rare showcount=false severityText
 7c20be0acf89417b	source=otellogs | rare showcount=false severityText by `resource.attributes.service.name`
 4e68f99f3527dd06	source=otellogs | rare severityText

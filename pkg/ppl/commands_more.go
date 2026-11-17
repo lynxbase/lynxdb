@@ -358,7 +358,7 @@ func (c *compiler) patterns(st *pipe, n *ast.PatternsCommand) error {
 			switch strings.ToLower(v) {
 			case "simple_pattern":
 			case "brain":
-				p.Method, p.Threshold = ir.PatternCluster, 0.3
+				return unsupportedFeature(a.Value, "patterns method=brain is not supported; use method=simple_pattern")
 			default:
 				return semanticErr(a.Value, "patterns method must be simple_pattern or brain")
 			}

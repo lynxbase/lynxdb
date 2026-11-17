@@ -82,6 +82,8 @@ func TestCompileErrors(t *testing.T) {
 		{"source=t | stats count() as c, avg(x) as c", ErrSemantic, "duplicate aggregation name"},
 		{"source=t | stats percentile(x, y)", ErrType, "percent must be a number"},
 		{"sourCe=0|stAts perCentile(0,A)", ErrType, "percent must be a number"},
+		{"source=t | patterns body method=brain", ErrUnsupportedFeature, "patterns method=brain is not supported"},
+		{"source=t | patterns body method=BRAIN mode=aggregation", ErrUnsupportedFeature, "patterns method=brain is not supported"},
 	}
 	for _, c := range cases {
 		_, err := Compile(c.q)
