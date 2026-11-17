@@ -404,7 +404,7 @@ func batchOf(res *exec.Result, schema ir.Schema) *pipeline.Batch {
 		for i := range vals {
 			v := res.Value(i, c)
 			switch {
-			case v.Kind == exec.KindAny && !listed:
+			case v.Kind == exec.KindAny && res.Columns[c].Field:
 				if present == nil {
 					present = make([]bool, res.Rows)
 					for j := 0; j < i; j++ {
@@ -477,7 +477,7 @@ func rowsOf(res *exec.Result, schema ir.Schema) []map[string]event.Value {
 		for i := range rows {
 			v := res.Value(i, c)
 			switch {
-			case v.Kind == exec.KindAny && !listed:
+			case v.Kind == exec.KindAny && res.Columns[c].Field:
 			case v.IsNull():
 				rows[i][name] = event.NullValue()
 			case at && v.Kind == vec.KindInt:

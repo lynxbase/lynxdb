@@ -1,6 +1,7 @@
 package columnar
 
 import (
+	"slices"
 	"sort"
 	"strconv"
 	"time"
@@ -45,7 +46,7 @@ func (r *Result) AppendJSON(dst []byte, i int) []byte {
 			name := r.table.Columns[c].Name
 			col, listed := r.schema.Lookup(name)
 			v := r.table.Value(i, c)
-			if v.Kind == exec.KindAny && !listed {
+			if v.Kind == exec.KindAny && r.table.Columns[c].Field {
 				continue
 			}
 			if len(dst) > first {
@@ -77,23 +78,31 @@ func (r *Result) AppendJSON(dst []byte, i int) []byte {
 		return append(dst, '}')
 	}
 	row := r.rows[i]
-	names := r.Columns
-	if names == nil {
-		names = make([]string, 0, len(row))
-		for name := range row {
-			names = append(names, name)
-		}
-		sort.Strings(names)
-	}
-	for _, name := range names {
-		v, ok := row[name]
-		if !ok {
-			continue
-		}
+	member := func(name string) {
 		if len(dst) > first {
 			dst = append(dst, ',')
 		}
-		dst = appendValue(append(variant.AppendJSONString(dst, []byte(name)), ':'), v)
+		dst = appendValue(append(variant.AppendJSONString(dst, []byte(name)), ':'), row[name])
+	}
+	listed := 0
+	for _, name := range r.Columns {
+		if _, ok := row[name]; ok {
+			member(name)
+			listed++
+		}
+	}
+	if listed == len(row) {
+		return append(dst, '}')
+	}
+	others := make([]string, 0, len(row)-listed)
+	for name := range row {
+		if !slices.Contains(r.Columns, name) {
+			others = append(others, name)
+		}
+	}
+	sort.Strings(others)
+	for _, name := range others {
+		member(name)
 	}
 
 	return append(dst, '}')
