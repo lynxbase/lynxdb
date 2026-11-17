@@ -269,6 +269,9 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 	rows, minT, maxT := src.BlockStats(i)
 	start := binary.LittleEndian.Uint64(e[20:])
 	data := src.data[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
+	if src.readAhead != nil {
+		src.readAhead(int(start), len(data))
+	}
 	filterOff, dirOff := binary.LittleEndian.Uint32(e[32:]), binary.LittleEndian.Uint32(e[40:])
 	dir := src.dirs[dirOff : dirOff+binary.LittleEndian.Uint32(e[44:])]
 	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {

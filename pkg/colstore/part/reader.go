@@ -20,7 +20,11 @@ type Part struct {
 	// dirs holds the column directories of all blocks, side by side, so
 	// that opening blocks reads one region of the part and not one place
 	// per block.
-	dirs []byte
+	dirs    []byte
+	dirsOff int
+	// readAhead, when set, is told which bytes of data are about to be
+	// read.
+	readAhead func(off, n int)
 
 	ordered bool
 	sortKey []string
@@ -96,7 +100,7 @@ func Open(data []byte) (*Part, error) {
 	if r.bad || dirsOff < headerSize || dirsOff > off || dirsLen > off-dirsOff {
 		return nil, ErrCorrupt
 	}
-	p.dirs = data[dirsOff : dirsOff+dirsLen]
+	p.dirs, p.dirsOff = data[dirsOff:dirsOff+dirsLen], int(dirsOff)
 	if p.ordered {
 		p.firstKeys = make([][]byte, 0, nBlocks)
 		for i := uint64(0); i < nBlocks; i++ {
@@ -171,6 +175,21 @@ func (p *Part) KeyRuns(i, depth int) int {
 	return int(p.keyStats[i*(len(p.sortKey)+1)+depth])
 }
 
+// SetReadAhead makes the part announce the bytes it is about to read, as an
+// offset and a length in its data, to fn, which a part mapped from a file
+// uses to have them read in one request. It announces the block directories
+// at once.
+func (p *Part) SetReadAhead(fn func(off, n int)) {
+	p.readAhead = fn
+	if fn != nil && len(p.dirs) > 0 {
+		fn(p.dirsOff, len(p.dirs))
+	}
+}
+
+// minReadAhead is the size from which a chunk is announced; smaller ones
+// are a fault or two either way.
+const minReadAhead = 8 << 10
+
 // Ordered reports whether the rows are ordered by SortKey and then by
 // timestamp.
 func (p *Part) Ordered() bool { return p.ordered }
@@ -241,6 +260,7 @@ type Block struct {
 	MaxTime int64
 
 	part   *Part
+	start  int // offset of data in the part
 	data   []byte
 	chunks uint32 // size of the column chunks at the start of data
 	// filter is the token filter followed by its page checksums.
@@ -261,7 +281,7 @@ func (p *Part) OpenBlock(i int, b *Block) error {
 	e := p.index[i*indexEntrySize:]
 	b.Rows, b.MinTime, b.MaxTime = p.BlockStats(i)
 	start := binary.LittleEndian.Uint64(e[20:])
-	b.part = p
+	b.part, b.start = p, int(start)
 	b.data = p.data[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
 	filterOff, dirOff := binary.LittleEndian.Uint32(e[32:]), binary.LittleEndian.Uint32(e[40:])
 	b.chunks = filterOff
@@ -432,6 +452,9 @@ func (b *Block) Decode(ref *ColumnRef, dst *vec.Column) error {
 		return ErrCorrupt
 	}
 	chunk := b.data[ref.off : ref.off+ref.length]
+	if b.part.readAhead != nil && ref.length >= minReadAhead {
+		b.part.readAhead(b.start+int(ref.off), int(ref.length))
+	}
 	if crc32.Checksum(chunk, castagnoli) != ref.crc {
 		return ErrCorrupt
 	}
