@@ -149,7 +149,7 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 // Table returns the table of live parts.
 func (s *Store) Table() *Table { return s.dir.Table() }
 
-// Lost is Dir.Lost for the store\x27s directory.
+// Lost is Dir.Lost for the store's directory.
 func (s *Store) Lost() []string { return s.dir.Lost() }
 
 // ReleasePages is Dir.ReleasePages for the store's directory.
