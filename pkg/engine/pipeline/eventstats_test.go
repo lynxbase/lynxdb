@@ -19,11 +19,10 @@ func TestEventStatsEnrichesRows(t *testing.T) {
 	}
 
 	child := NewRowScanIterator(rows, 64)
-	acct := newTestBudget(1 * 1024 * 1024).NewAccount()
 	aggs := []AggFunc{
 		{Name: "count", Alias: "cnt"},
 	}
-	iter := NewEventStatsIteratorWithBudget(child, aggs, []string{"group"}, 128, acct)
+	iter := NewEventStatsIterator(child, aggs, []string{"group"}, 128)
 
 	ctx := context.Background()
 	if err := iter.Init(ctx); err != nil {
@@ -45,32 +44,5 @@ func TestEventStatsEnrichesRows(t *testing.T) {
 		if cnt.AsInt() != 20 {
 			t.Errorf("expected count=20 for group %v, got %d", row["group"], cnt.AsInt())
 		}
-	}
-}
-
-func TestEventStatsBudgetExceeded(t *testing.T) {
-	n := 500
-	rows := make([]map[string]event.Value, n)
-	for i := 0; i < n; i++ {
-		rows[i] = map[string]event.Value{
-			"key": event.StringValue(fmt.Sprintf("val%d", i)),
-		}
-	}
-
-	child := NewRowScanIterator(rows, 64)
-	acct := newTestBudget(2 * 1024).NewAccount()
-	aggs := []AggFunc{
-		{Name: "count", Alias: "cnt"},
-	}
-	iter := NewEventStatsIteratorWithBudget(child, aggs, []string{"key"}, 128, acct)
-
-	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	_, err := CollectAll(ctx, iter)
-	if err == nil {
-		t.Fatal("expected budget exceeded error, got nil")
 	}
 }

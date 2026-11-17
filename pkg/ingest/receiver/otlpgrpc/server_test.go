@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 	logscollector "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	metricscollector "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	tracecollector "go.opentelemetry.io/proto/otlp/collector/trace/v1"
@@ -34,19 +33,6 @@ func TestReceiver_ExportLogs_SubmitsEvents(t *testing.T) {
 	}
 	if submitted != 1 {
 		t.Fatalf("submitted = %d, want 1", submitted)
-	}
-}
-
-func TestReceiver_ExportLogs_OverflowResourceExhausted(t *testing.T) {
-	r := startTestReceiver(t, func(context.Context, []*event.Event) error {
-		return memgov.ErrMemoryPressure
-	})
-	conn := dialReceiver(t, r)
-	defer conn.Close()
-
-	_, err := logscollector.NewLogsServiceClient(conn).Export(context.Background(), testLogsRequest("hello"))
-	if status.Code(err) != codes.ResourceExhausted {
-		t.Fatalf("code = %v, want ResourceExhausted; err=%v", status.Code(err), err)
 	}
 }
 

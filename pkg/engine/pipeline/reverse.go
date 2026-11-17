@@ -2,10 +2,8 @@ package pipeline
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
 
 // ReverseIterator materializes input rows and emits them in reverse order.
@@ -15,17 +13,16 @@ type ReverseIterator struct {
 	emitted   bool
 	offset    int
 	batchSize int
-	acct      memgov.MemoryAccount
 }
 
-func NewReverseIteratorWithBudget(child Iterator, batchSize int, acct memgov.MemoryAccount) *ReverseIterator {
+// NewReverseIterator creates an operator that emits its input in reverse order.
+func NewReverseIterator(child Iterator, batchSize int) *ReverseIterator {
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
 	}
 	return &ReverseIterator{
 		child:     child,
 		batchSize: batchSize,
-		acct:      memgov.EnsureAccount(acct),
 	}
 }
 
@@ -63,11 +60,7 @@ func (r *ReverseIterator) materialize(ctx context.Context) error {
 			break
 		}
 		for i := 0; i < batch.Len; i++ {
-			row := batch.Row(i)
-			if growErr := r.acct.Grow(EstimateRowBytes(row)); growErr != nil {
-				return fmt.Errorf("reverse: memory budget exceeded: %w", growErr)
-			}
-			r.rows = append(r.rows, row)
+			r.rows = append(r.rows, batch.Row(i))
 		}
 	}
 	reverseRows(r.rows)
@@ -82,8 +75,6 @@ func reverseRows(rows []map[string]event.Value) {
 }
 
 func (r *ReverseIterator) Close() error {
-	r.acct.Close()
-
 	return r.child.Close()
 }
 

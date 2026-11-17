@@ -55,7 +55,7 @@ func TestAggregateArgFunctions(t *testing.T) {
 		{Name: "mad", Field: "score", Alias: "score_mad"},
 		{Name: "perc_weighted", Field: "score", WeightField: "weight", Quantile: 0.5, Alias: "weighted_p50"},
 	}
-	iter := NewAggregateIterator(child, aggs, []string{"group"}, nil)
+	iter := NewAggregateIterator(child, aggs, []string{"group"})
 
 	ctx := context.Background()
 	if err := iter.Init(ctx); err != nil {

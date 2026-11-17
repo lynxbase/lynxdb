@@ -16,11 +16,10 @@ func TestAggregateDistinctCountAcrossHLLPromotion(t *testing.T) {
 				rows = append(rows, map[string]event.Value{"x": event.StringValue(fmt.Sprintf("v%d", i))})
 			}
 
-			acct := newTestBudget(1 << 30).NewAccount()
 			iter := NewAggregateIterator(NewRowScanIterator(rows, 512), []AggFunc{
 				{Name: "dc", Field: "x", Alias: "d"},
 				{Name: "estdc_error", Field: "x", Alias: "e"},
-			}, nil, acct)
+			}, nil)
 
 			ctx := context.Background()
 			if err := iter.Init(ctx); err != nil {

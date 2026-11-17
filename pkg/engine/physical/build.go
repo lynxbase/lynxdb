@@ -14,7 +14,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ir"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -229,7 +228,7 @@ func (b *builder) dispatch(n ir.Node) (pipeline.Iterator, error) {
 		if err != nil {
 			return nil, err
 		}
-		return pipeline.NewReverseIteratorWithBudget(child, b.batchSize(), memgov.NopAccount()), nil
+		return pipeline.NewReverseIterator(child, b.batchSize()), nil
 	case *ir.Dedup:
 		return b.dedup(x)
 	case *ir.Join:
@@ -378,12 +377,12 @@ func (b *builder) sort(input ir.Node, keys []ir.SortKey, count, offset int64, to
 		}
 	}
 	if top {
-		it = pipeline.NewTopNIteratorWithBudget(it, fields, int(count+offset), b.batchSize(), memgov.NopAccount())
+		it = pipeline.NewTopNIterator(it, fields, int(count+offset), b.batchSize())
 		if offset > 0 {
 			it = pipeline.NewOffsetIterator(it, int(offset))
 		}
 	} else {
-		it = pipeline.NewSortIteratorWithBudget(it, fields, b.batchSize(), memgov.NopAccount())
+		it = pipeline.NewSortIterator(it, fields, b.batchSize())
 	}
 	return dropTemps(it, temps), nil
 }

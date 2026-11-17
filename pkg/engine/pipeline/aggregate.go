@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -49,13 +48,6 @@ const hllPromotionThreshold = 10_000
 // defaultTDigestCompression is the compression parameter for t-digest
 // percentile estimation. Higher values = more accurate but more memory.
 const defaultTDigestCompression = 100.0
-
-// Memory estimation constants for operator tracking.
-// These are deliberately conservative (over-estimates) to avoid under-counting.
-const (
-	estimatedKeyBytes      int64 = 48 // per group-by key map entry (string key + Value + map overhead)
-	estimatedAggStateBytes int64 = 64 // per aggState struct (count/sum/min/max/pointers)
-)
 
 // Aggregation function name constants.
 const (
@@ -129,10 +121,9 @@ type AggregateIterator struct {
 	groups      map[uint64][]*aggGroup // FNV hash → collision chain
 	emitted     bool
 	vmInst      vm.VM
-	needsValues []bool               // per-agg: true if dc/values/perc*/stdev need values map/all slice
-	groupCount  int                  // total groups across all chains
-	hasher      hash.Hash64          // persistent FNV-1a hasher, reset per call
-	acct        memgov.MemoryAccount // per-operator memory tracking
+	needsValues []bool      // per-agg: true if dc/values/perc*/stdev need values map/all slice
+	groupCount  int         // total groups across all chains
+	hasher      hash.Hash64 // persistent FNV-1a hasher, reset per call
 }
 
 type aggGroup struct {
@@ -173,8 +164,7 @@ type topKItem struct {
 }
 
 // NewAggregateIterator creates a streaming hash aggregation operator.
-// The acct parameter is optional (nil = no memory tracking).
-func NewAggregateIterator(child Iterator, aggs []AggFunc, groupBy []string, acct memgov.MemoryAccount) *AggregateIterator {
+func NewAggregateIterator(child Iterator, aggs []AggFunc, groupBy []string) *AggregateIterator {
 	needsValues := make([]bool, len(aggs))
 	for i, a := range aggs {
 		switch strings.ToLower(a.Name) {
@@ -200,7 +190,6 @@ func NewAggregateIterator(child Iterator, aggs []AggFunc, groupBy []string, acct
 		groups:      make(map[uint64][]*aggGroup),
 		needsValues: needsValues,
 		hasher:      fnv.New64a(),
-		acct:        memgov.EnsureAccount(acct),
 	}
 }
 
@@ -226,9 +215,7 @@ func (a *AggregateIterator) Next(ctx context.Context) (*Batch, error) {
 		if batch == nil {
 			break
 		}
-		if err := a.processBatch(batch); err != nil {
-			return nil, err
-		}
+		a.processBatch(batch)
 	}
 
 	a.emitted = true
@@ -237,8 +224,6 @@ func (a *AggregateIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (a *AggregateIterator) Close() error {
-	a.acct.Close()
-
 	return a.child.Close()
 }
 
@@ -278,7 +263,7 @@ func aggResultType(name string) string {
 	}
 }
 
-func (a *AggregateIterator) processBatch(batch *Batch) error {
+func (a *AggregateIterator) processBatch(batch *Batch) {
 	row := make(map[string]event.Value, len(batch.Columns))
 	for i := 0; i < batch.Len; i++ {
 		batch.RowInto(i, row)
@@ -291,10 +276,7 @@ func (a *AggregateIterator) processBatch(batch *Batch) error {
 		}
 
 		h := a.groupKeyHash(row)
-		group, err := a.findOrCreateGroup(h, row)
-		if err != nil {
-			return err
-		}
+		group := a.findOrCreateGroup(h, row)
 
 		for j, agg := range a.aggs {
 			val := a.extractValue(agg, row)
@@ -303,25 +285,6 @@ func (a *AggregateIterator) processBatch(batch *Batch) error {
 			a.updateState(&group.states[j], agg.Name, val, orderVal, weightVal, row)
 		}
 	}
-
-	return nil
-}
-
-// estimateGroupBytes returns the estimated memory for a new aggregation group,
-// including the key map entries and aggregation state structs. For string
-// group-by fields with values longer than 8 bytes, actual string length is added.
-func (a *AggregateIterator) estimateGroupBytes(row map[string]event.Value) int64 {
-	base := int64(len(a.groupBy))*estimatedKeyBytes + int64(len(a.aggs))*estimatedAggStateBytes
-	for _, g := range a.groupBy {
-		v, ok := row[g]
-		if ok {
-			if s, ok := v.TryAsString(); ok && len(s) > 8 {
-				base += int64(len(s))
-			}
-		}
-	}
-
-	return base
 }
 
 // groupKeyHash computes FNV-1a hash of typed group-by values.
@@ -389,17 +352,12 @@ func (a *AggregateIterator) groupKeyHash(row map[string]event.Value) uint64 {
 }
 
 // findOrCreateGroup looks up or creates an agg group by hash with collision handling.
-// Returns a budget error if creating a new group would exceed the memory limit.
-func (a *AggregateIterator) findOrCreateGroup(h uint64, row map[string]event.Value) (*aggGroup, error) {
+func (a *AggregateIterator) findOrCreateGroup(h uint64, row map[string]event.Value) *aggGroup {
 	chain := a.groups[h]
 	for _, g := range chain {
 		if a.groupKeysEqual(g.key, row) {
-			return g, nil
+			return g
 		}
-	}
-
-	if err := a.acct.Grow(a.estimateGroupBytes(row)); err != nil {
-		return nil, fmt.Errorf("aggregate.findOrCreateGroup: %w", err)
 	}
 
 	// New group.
@@ -420,7 +378,7 @@ func (a *AggregateIterator) findOrCreateGroup(h uint64, row map[string]event.Val
 	a.groups[h] = append(chain, group)
 	a.groupCount++
 
-	return group, nil
+	return group
 }
 
 // groupKeysEqual checks if a group's stored key matches the current row's group-by fields.

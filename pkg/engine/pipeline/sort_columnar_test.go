@@ -38,11 +38,6 @@ func TestSortColumnarPath_Basic(t *testing.T) {
 		t.Fatalf("expected %d rows, got %d", n, len(result))
 	}
 
-	// Verify the columnar path was used (no spill, no row fallback).
-	if !iter.useColumnar {
-		t.Error("expected columnar fast path to be used")
-	}
-
 	// Verify ascending order.
 	for i := 0; i < n; i++ {
 		got := result[i]["key"].AsInt()
@@ -239,10 +234,6 @@ func TestSortColumnarPath_MultipleBatches(t *testing.T) {
 
 	if len(result) != n {
 		t.Fatalf("expected %d rows, got %d", n, len(result))
-	}
-
-	if !iter.useColumnar {
-		t.Error("expected columnar fast path to be used")
 	}
 
 	for i := 0; i < n; i++ {

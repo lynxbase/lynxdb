@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -20,7 +19,6 @@ type EventStatsIterator struct {
 	emitted   bool
 	batchSize int
 	offset    int
-	acct      memgov.MemoryAccount // per-operator memory tracking
 }
 
 // NewEventStatsIterator creates a two-pass eventstats operator.
@@ -34,16 +32,7 @@ func NewEventStatsIterator(child Iterator, aggs []AggFunc, groupBy []string, bat
 		aggs:      aggs,
 		groupBy:   groupBy,
 		batchSize: batchSize,
-		acct:      memgov.NopAccount(),
 	}
-}
-
-// NewEventStatsIteratorWithBudget creates an eventstats operator with memory budget tracking.
-func NewEventStatsIteratorWithBudget(child Iterator, aggs []AggFunc, groupBy []string, batchSize int, acct memgov.MemoryAccount) *EventStatsIterator {
-	e := NewEventStatsIterator(child, aggs, groupBy, batchSize)
-	e.acct = memgov.EnsureAccount(acct)
-
-	return e
 }
 
 // Init delegates to the child iterator.
@@ -74,10 +63,8 @@ func (e *EventStatsIterator) Next(ctx context.Context) (*Batch, error) {
 	return batch, nil
 }
 
-// Close releases the memory budget account and closes the child.
+// Close closes the child.
 func (e *EventStatsIterator) Close() error {
-	e.acct.Close()
-
 	return e.child.Close()
 }
 
@@ -102,19 +89,11 @@ func (e *EventStatsIterator) materialize(ctx context.Context) error {
 
 		for i := 0; i < batch.Len; i++ {
 			row := batch.Row(i)
-			if growErr := e.acct.Grow(EstimateRowBytes(row)); growErr != nil {
-				return fmt.Errorf("eventstats.materialize: %w", growErr)
-			}
 			e.rows = append(e.rows, row)
 
 			key := e.groupKey(row)
 			group, ok := groups[key]
 			if !ok {
-				// Track memory for new group.
-				groupBytes := int64(len(e.groupBy))*estimatedKeyBytes + int64(len(e.aggs))*estimatedAggStateBytes
-				if growErr := e.acct.Grow(groupBytes); growErr != nil {
-					return fmt.Errorf("eventstats.materialize: too many groups: %w", growErr)
-				}
 				group = &aggGroup{
 					key:    e.extractGroupKey(row),
 					states: make([]aggState, len(e.aggs)),

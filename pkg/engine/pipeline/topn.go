@@ -5,7 +5,6 @@ import (
 	"context"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -16,7 +15,6 @@ type TopNIterator struct {
 	fields    []SortField
 	limit     int
 	batchSize int
-	acct      memgov.MemoryAccount // per-operator memory tracking
 
 	h      *topNHeap
 	result []map[string]event.Value
@@ -35,17 +33,7 @@ func NewTopNIterator(child Iterator, fields []SortField, limit, batchSize int) *
 		fields:    fields,
 		limit:     limit,
 		batchSize: batchSize,
-		acct:      memgov.NopAccount(),
 	}
-}
-
-// NewTopNIteratorWithBudget creates a top-N selection operator with memory
-// budget tracking. Each row pushed into the heap is tracked via the account.
-func NewTopNIteratorWithBudget(child Iterator, fields []SortField, limit, batchSize int, acct memgov.MemoryAccount) *TopNIterator {
-	t := NewTopNIterator(child, fields, limit, batchSize)
-	t.acct = memgov.EnsureAccount(acct)
-
-	return t
 }
 
 func (t *TopNIterator) Init(ctx context.Context) error {
@@ -72,8 +60,6 @@ func (t *TopNIterator) Next(ctx context.Context) (*Batch, error) {
 }
 
 func (t *TopNIterator) Close() error {
-	t.acct.Close()
-
 	return t.child.Close()
 }
 
@@ -104,28 +90,11 @@ func (t *TopNIterator) buildTopN(ctx context.Context) error {
 		for i := 0; i < batch.Len; i++ {
 			batch.RowInto(i, scratch) // fills scratch, reuses map — zero alloc
 			if t.h.Len() < t.limit {
-				// Growing the heap: track memory for the new row.
-				rowBytes := EstimateRowBytes(scratch)
-				if growErr := t.acct.Grow(rowBytes); growErr != nil {
-					// TopN is bounded by limit, so budget exceeded is unusual.
-					// Continue without tracking rather than failing the query.
-					break
-				}
 				heap.Push(t.h, cloneRow(scratch)) // copy only when keeping
 			} else if t.h.Len() > 0 {
 				// Compare with the "worst" element (heap root).
 				// The heap keeps the worst element at top (min-heap by reverse sort order).
-				// Replacement is memory-neutral (swap one row for another).
 				if t.isBetter(scratch, t.h.rows[0]) {
-					oldBytes := EstimateRowBytes(t.h.rows[0])
-					newBytes := EstimateRowBytes(scratch)
-					if newBytes > oldBytes {
-						if growErr := t.acct.Grow(newBytes - oldBytes); growErr != nil {
-							continue
-						}
-					} else if oldBytes > newBytes {
-						t.acct.Shrink(oldBytes - newBytes)
-					}
 					t.h.rows[0] = cloneRow(scratch)
 					heap.Fix(t.h, 0)
 				}

@@ -20,9 +20,8 @@ func TestAggregateGroupByObjectPath(t *testing.T) {
 		{"commit.collection": event.StringValue("flat"), "commit": commit("ignored")},
 	}
 
-	acct := newTestBudget(1 << 30).NewAccount()
 	iter := NewAggregateIterator(NewRowScanIterator(rows, 4),
-		[]AggFunc{{Name: "count", Alias: "n"}}, []string{"commit.collection"}, acct)
+		[]AggFunc{{Name: "count", Alias: "n"}}, []string{"commit.collection"})
 
 	ctx := context.Background()
 	if err := iter.Init(ctx); err != nil {

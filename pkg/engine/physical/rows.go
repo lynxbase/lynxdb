@@ -10,7 +10,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ir"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -251,7 +250,6 @@ type joinIterator struct {
 	leftKeys, rightKeys []*vm.Program
 	cond                *vm.Program
 	batch               int
-	acct                memgov.MemoryAccount
 
 	machine  vm.VM
 	table    map[string][]int
@@ -287,9 +285,6 @@ func (j *joinIterator) build(ctx context.Context) error {
 	j.matched = make([]bool, len(rows))
 	j.table = make(map[string][]int, len(rows))
 	for i, r := range rows {
-		if err := j.acct.Grow(int64(len(r)) * 64); err != nil {
-			return fmt.Errorf("join: right side exceeds the memory budget: %w", err)
-		}
 		k, null := keyOf(&j.machine, j.rightKeys, r)
 		if null {
 			continue

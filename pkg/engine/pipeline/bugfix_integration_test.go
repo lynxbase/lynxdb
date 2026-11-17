@@ -64,7 +64,7 @@ func TestIntegration_BinTimeBuckets(t *testing.T) {
 	bin := NewBinIterator(scan, "_time", "_time", 100*time.Millisecond)
 
 	aggs := []AggFunc{{Name: "count", Alias: "count"}}
-	agg := NewAggregateIterator(bin, aggs, []string{"_time"}, nil)
+	agg := NewAggregateIterator(bin, aggs, []string{"_time"})
 
 	ctx := context.Background()
 	rows, err := CollectAll(ctx, agg)

@@ -7,7 +7,6 @@ import (
 	"sort"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -27,27 +26,19 @@ type SortField struct {
 	Desc bool
 }
 
-// SortIterator fully materializes input, sorts, then streams output.
-//
-// Fast path: the sort operates directly on columnar batches using a
-// permutation index. This avoids materializing row maps
-// (map[string]event.Value per row) and eliminates per-comparison hash
-// lookups. When the memory budget rejects a whole batch, the sort falls back
-// to accumulating row maps, accounted row by row.
+// SortIterator fully materializes input, sorts, then streams output. It
+// merges the input batches into one and sorts a permutation index over it,
+// which avoids building a row map per row and a map lookup per comparison.
 type SortIterator struct {
 	child       Iterator
 	fields      []SortField
-	rows        []map[string]event.Value
 	sorted      bool
 	offset      int
 	batchSize   int
 	maxSortRows int
-	acct        memgov.MemoryAccount // per-operator memory tracking
 
-	// Columnar fast path state.
 	mergedBatch   *Batch // accumulated columnar data from child batches
 	sortedIndices []int  // permutation index after sort
-	useColumnar   bool   // true when columnar path is active
 
 	// tiebreakCols is the sorted list of column names NOT in the sort fields.
 	// Used as a deterministic tiebreaker when all explicit sort keys are equal.
@@ -56,7 +47,6 @@ type SortIterator struct {
 }
 
 // NewSortIterator creates a full-materialization sort operator.
-// The acct parameter is optional (nil = no memory tracking).
 func NewSortIterator(child Iterator, fields []SortField, batchSize int) *SortIterator {
 	if batchSize <= 0 {
 		batchSize = DefaultBatchSize
@@ -67,16 +57,7 @@ func NewSortIterator(child Iterator, fields []SortField, batchSize int) *SortIte
 		fields:      fields,
 		batchSize:   batchSize,
 		maxSortRows: DefaultMaxSortRows,
-		acct:        memgov.NopAccount(),
 	}
-}
-
-// NewSortIteratorWithBudget creates a sort operator with memory budget tracking.
-func NewSortIteratorWithBudget(child Iterator, fields []SortField, batchSize int, acct memgov.MemoryAccount) *SortIterator {
-	s := NewSortIterator(child, fields, batchSize)
-	s.acct = memgov.EnsureAccount(acct)
-
-	return s
 }
 
 func (s *SortIterator) Init(ctx context.Context) error {
@@ -89,52 +70,27 @@ func (s *SortIterator) Next(ctx context.Context) (*Batch, error) {
 			return nil, err
 		}
 	}
-
-	// Columnar fast path: emit slices of the sorted permutation.
-	if s.useColumnar {
-		if s.offset >= len(s.sortedIndices) {
-			return nil, nil
-		}
-		end := s.offset + s.batchSize
-		if end > len(s.sortedIndices) {
-			end = len(s.sortedIndices)
-		}
-		batch := s.mergedBatch.PermuteSlice(s.sortedIndices[s.offset:end])
-		s.offset = end
-
-		return batch, nil
-	}
-
-	// Row-based path (fallback after columnar→row degradation).
-	if s.offset >= len(s.rows) {
+	if s.offset >= len(s.sortedIndices) {
 		return nil, nil
 	}
 	end := s.offset + s.batchSize
-	if end > len(s.rows) {
-		end = len(s.rows)
+	if end > len(s.sortedIndices) {
+		end = len(s.sortedIndices)
 	}
-	batch := BatchFromRows(s.rows[s.offset:end])
+	batch := s.mergedBatch.PermuteSlice(s.sortedIndices[s.offset:end])
 	s.offset = end
 
 	return batch, nil
 }
 
 func (s *SortIterator) Close() error {
-	s.acct.Close()
-
 	return s.child.Close()
 }
 
 func (s *SortIterator) Schema() []FieldInfo { return s.child.Schema() }
 
 func (s *SortIterator) materialize(ctx context.Context) error {
-	// Start in columnar mode. We accumulate child batches directly into a
-	// merged columnar buffer. If the budget rejects a batch, we degrade to
-	// the row-based path.
-	columnarMode := true
 	s.mergedBatch = NewBatch(0)
-	var columnarRows int // total rows accumulated in columnar mode
-
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -147,68 +103,18 @@ func (s *SortIterator) materialize(ctx context.Context) error {
 		if batch == nil {
 			break
 		}
-
-		if columnarMode {
-			if growErr := s.acct.Grow(EstimateBatchBytes(batch)); growErr != nil {
-				// Budget exceeded — handle the current batch in row mode below.
-				s.degradeToRowPath()
-				columnarMode = false
-			} else {
-				if columnarRows+batch.Len > s.maxSortRows {
-					return fmt.Errorf("%w (limit %d rows)", ErrSortLimitExceeded, s.maxSortRows)
-				}
-				s.mergedBatch.AppendBatch(batch)
-				columnarRows += batch.Len
-				continue
-			}
+		if s.mergedBatch.Len+batch.Len > s.maxSortRows {
+			return fmt.Errorf("%w (limit %d rows)", ErrSortLimitExceeded, s.maxSortRows)
 		}
-
-		for i := 0; i < batch.Len; i++ {
-			row := batch.Row(i)
-			if err := s.acct.Grow(estimateRowMapBytes(row)); err != nil {
-				return fmt.Errorf("sort.materialize: %w", err)
-			}
-			if len(s.rows)+1 > s.maxSortRows {
-				return fmt.Errorf("%w (limit %d rows)", ErrSortLimitExceeded, s.maxSortRows)
-			}
-			s.rows = append(s.rows, row)
-		}
+		s.mergedBatch.AppendBatch(batch)
 	}
 
-	// All input consumed. Choose sort strategy.
-	if columnarMode && columnarRows > 0 {
-		// Columnar fast path: sort via permutation index.
-		if err := s.sortColumnar(ctx); err != nil {
-			return err
-		}
-		s.sorted = true
-
-		return nil
-	}
-
-	// Clean up unused columnar state.
-	s.mergedBatch = nil
-
-	if err := s.sortInPlaceCtx(ctx); err != nil {
+	if err := s.sortColumnar(ctx); err != nil {
 		return err
 	}
 	s.sorted = true
 
 	return nil
-}
-
-// degradeToRowPath converts accumulated columnar data to row maps and
-// resets the columnar state. Called when the budget rejects a whole batch.
-func (s *SortIterator) degradeToRowPath() {
-	if s.mergedBatch == nil || s.mergedBatch.Len == 0 {
-		s.mergedBatch = nil
-		return
-	}
-	s.rows = make([]map[string]event.Value, 0, s.mergedBatch.Len)
-	for i := 0; i < s.mergedBatch.Len; i++ {
-		s.rows = append(s.rows, s.mergedBatch.Row(i))
-	}
-	s.mergedBatch = nil
 }
 
 // sortColumnar sorts the accumulated columnar data using a permutation index.
@@ -258,72 +164,7 @@ func (s *SortIterator) sortColumnar(ctx context.Context) error {
 		return ctx.Err()
 	}
 
-	s.useColumnar = true
-	s.sorted = true
-
 	return nil
-}
-
-// sortInPlaceCtx sorts s.rows with periodic context cancellation checks.
-// Every 1024 comparisons the context is polled; if canceled the sort
-// exits early and ctx.Err() is returned.
-func (s *SortIterator) sortInPlaceCtx(ctx context.Context) error {
-	var canceled bool
-	var comparisons int64
-	sort.SliceStable(s.rows, func(i, j int) bool {
-		if canceled {
-			return false
-		}
-		comparisons++
-		if comparisons&0x3FF == 0 {
-			select {
-			case <-ctx.Done():
-				canceled = true
-
-				return false
-			default:
-			}
-		}
-		for _, sf := range s.fields {
-			a := s.rows[i][sf.Name]
-			b := s.rows[j][sf.Name]
-			cmp := vm.CompareValues(a, b)
-			if cmp == 0 {
-				continue
-			}
-			if sf.Desc {
-				return cmp > 0
-			}
-
-			return cmp < 0
-		}
-
-		// Tiebreaker: all explicit sort keys are equal.
-		return s.tiebreakRowLess(s.rows[i], s.rows[j])
-	})
-	if canceled {
-		return ctx.Err()
-	}
-
-	return nil
-}
-
-// buildTiebreakCols computes the sorted list of column names not already
-// in the explicit sort fields. Called lazily on the first tiebreaker
-// comparison — the cost is O(C log C) where C is the number of columns,
-// which is negligible compared to the sort itself.
-func (s *SortIterator) buildTiebreakColsFromRow(row map[string]event.Value) {
-	sortSet := make(map[string]bool, len(s.fields))
-	for _, sf := range s.fields {
-		sortSet[sf.Name] = true
-	}
-	s.tiebreakCols = make([]string, 0, len(row))
-	for k := range row {
-		if !sortSet[k] {
-			s.tiebreakCols = append(s.tiebreakCols, k)
-		}
-	}
-	sort.Strings(s.tiebreakCols)
 }
 
 func (s *SortIterator) buildTiebreakColsFromBatch() {
@@ -338,24 +179,6 @@ func (s *SortIterator) buildTiebreakColsFromBatch() {
 		}
 	}
 	sort.Strings(s.tiebreakCols)
-}
-
-// tiebreakRowLess compares two rows by non-sort columns in alphabetical
-// order. Returns true if a < b. Used as a deterministic tiebreaker when
-// all explicit sort keys are equal — ensures query output is identical
-// across runs regardless of Go map iteration randomness.
-func (s *SortIterator) tiebreakRowLess(a, b map[string]event.Value) bool {
-	if s.tiebreakCols == nil {
-		s.buildTiebreakColsFromRow(a)
-	}
-	for _, col := range s.tiebreakCols {
-		cmp := vm.CompareValues(a[col], b[col])
-		if cmp != 0 {
-			return cmp < 0
-		}
-	}
-
-	return false
 }
 
 // tiebreakMapLess is a standalone tiebreaker for row maps used by both

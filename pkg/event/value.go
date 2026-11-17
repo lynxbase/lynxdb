@@ -488,56 +488,6 @@ func (v Value) String() string {
 	}
 }
 
-// MemSize returns an approximation of the in-memory byte cost of this Value.
-// Scalar types (null, int, float, bool, timestamp, duration) return a fixed
-// size. Strings add the string payload length. Arrays and objects recurse to
-// include the refPayload overhead and all nested elements.
-//
-// The scalar path is O(1) and allocation-free. Used by memory accounting to
-// charge operators for the full deep size of array/object payloads.
-func (v Value) MemSize() int {
-	const (
-		// valueBase is sizeof(Value): typ(1) + padding(7) + str header(16) + num(8) + ref pointer(8) = 40.
-		valueBase = 40
-		// refPayloadBase is sizeof(refPayload): slice header(24) + map header(8) = 32.
-		refPayloadBase = 32
-		// mapEntryOverhead is the approximate per-entry overhead of a Go map: bucket + key header.
-		mapEntryOverhead = 56
-	)
-
-	switch v.typ {
-	case FieldTypeString:
-		return valueBase + len(v.str)
-	case FieldTypeArray:
-		if v.ref == nil {
-			return valueBase
-		}
-		size := valueBase + refPayloadBase + len(v.ref.arr)*valueBase
-		for _, e := range v.ref.arr {
-			// Only add extra cost for variable-size elements (avoid double-counting valueBase).
-			extra := e.MemSize() - valueBase
-			if extra > 0 {
-				size += extra
-			}
-		}
-
-		return size
-	case FieldTypeObject:
-		if v.ref == nil {
-			return valueBase
-		}
-		size := valueBase + refPayloadBase
-		for k, e := range v.ref.obj {
-			size += mapEntryOverhead + len(k)
-			size += e.MemSize()
-		}
-
-		return size
-	default:
-		return valueBase
-	}
-}
-
 // appendJSONLike renders the value in compact JSON-like form. Object keys are
 // sorted so the rendering is deterministic: group and dedup keys render
 // through String, and equal objects must produce equal strings.
