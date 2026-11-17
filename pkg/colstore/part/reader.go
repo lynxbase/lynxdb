@@ -89,6 +89,9 @@ type filterGroup struct {
 	// turn counts the entries replaced.
 	ahead [4]atomic.Uint64
 	turn  atomic.Uint32
+	// sound has a bit for every page of the group whose checksum was seen
+	// to match since the pages were last let go of.
+	sound []atomic.Uint64
 }
 
 // asked reports whether the pages that key names were asked for before, and
@@ -189,7 +192,7 @@ func Open(data []byte) (*Part, error) {
 			return nil, ErrCorrupt
 		}
 		end = start + size
-		p.groups[g] = filterGroup{off: start, size: size, stripes: stripes, stripe: blocks / stripes}
+		p.groups[g] = filterGroup{off: start, size: size, stripes: stripes, stripe: blocks / stripes, sound: make([]atomic.Uint64, (pages+63)/64)}
 	}
 	if p.ordered {
 		p.firstKeys = make([][]byte, 0, nBlocks)
@@ -695,12 +698,11 @@ func (b *Block) ColumnsMayContain(dst vec.Bitmap, hashes []uint64) (vec.Bitmap, 
 	}
 	g, first, end := p.blockFilters(b.index)
 	p.aheadStripe(p.groupOf(b.index), hashes)
-	sound := ^uint64(0)
 	for f := first; f < end; f++ {
 		if binary.LittleEndian.Uint32(p.filters[f*filterEntrySize:]) != noPath {
 			continue
 		}
-		may, err := p.holds(g, f, hashes, &sound)
+		may, err := p.holds(g, f, hashes)
 		if err != nil {
 			return dst, err
 		}
@@ -719,7 +721,7 @@ func (b *Block) ColumnsMayContain(dst vec.Bitmap, hashes []uint64) (vec.Bitmap, 
 		if i == len(b.cols) || b.dirKey(i) != key {
 			continue
 		}
-		may, err := p.holds(g, f, hashes, &sound)
+		may, err := p.holds(g, f, hashes)
 		if err != nil {
 			return dst, err
 		}
@@ -755,17 +757,20 @@ func (p *Part) MayContainTokensIn(i int, pathID uint32, kind vec.Kind, hashes []
 	if len(hashes) > 0 && p.readAhead != nil {
 		p.aheadColumn(p.groupOf(i), pathID, kind, hashes[0])
 	}
-	sound := ^uint64(0)
 
-	return p.holds(g, f, hashes, &sound)
+	return p.holds(g, f, hashes)
 }
 
 // ForgetReadAhead makes the lookups in the token filters ask for their
-// pages again, after the pages of the part were let go of.
+// pages again and check them again, after the pages of the part were let
+// go of.
 func (p *Part) ForgetReadAhead() {
 	for i := range p.groups {
 		for j := range p.groups[i].ahead {
 			p.groups[i].ahead[j].Store(0)
+		}
+		for j := range p.groups[i].sound {
+			p.groups[i].sound[j].Store(0)
 		}
 	}
 }
@@ -857,17 +862,17 @@ func (p *Part) columnFilter(first, end int, pathID uint32, kind vec.Kind) (f int
 }
 
 // holds reports whether filter f of group g may hold every token of hashes.
-// sound is the page of the part whose checksum the caller has seen to match.
-func (p *Part) holds(g *filterGroup, f int, hashes []uint64, sound *uint64) (bool, error) {
+// A page is checked against its checksum the first time it is read.
+func (p *Part) holds(g *filterGroup, f int, hashes []uint64) (bool, error) {
 	// The view of the part that reads the pages asked for and no others.
 	data := p.blocks
 	for _, h := range hashes {
 		block, page, end := p.probe(g, f, h)
-		if page != *sound {
+		if n := (page - g.off) / filterPage; g.sound[n>>6].Load()>>(n&63)&1 == 0 {
 			if crc32.Checksum(data[page+4:end], castagnoli) != binary.LittleEndian.Uint32(data[page:]) {
 				return false, ErrCorrupt
 			}
-			*sound = page
+			g.sound[n>>6].Or(1 << (n & 63))
 		}
 		if !tokenfilter.BlockMayContain(data[block:], h) {
 			return false, nil
@@ -915,8 +920,8 @@ func (p *Part) MayContainTokens(i int, hashes []uint64) (bool, error) {
 	}
 	g, f, end := p.blockFilters(i)
 	p.aheadStripe(p.groupOf(i), hashes)
-	for sound := ^uint64(0); f < end; f++ {
-		if may, err := p.holds(g, f, hashes, &sound); may || err != nil {
+	for ; f < end; f++ {
+		if may, err := p.holds(g, f, hashes); may || err != nil {
 			return may, err
 		}
 	}

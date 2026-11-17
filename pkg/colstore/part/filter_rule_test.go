@@ -341,12 +341,11 @@ func TestRealDataColumnFilterAnswers(t *testing.T) {
 				stats[name] = s
 			}
 			s.filters, s.tokens, s.blocks = s.filters+1, s.tokens+len(held[f-first]), s.blocks+p.filterBlocks(g, f)
-			sound := ^uint64(0)
 			probe := func(h uint64, asked, passed *int) {
 				if held[f-first][h] {
 					return
 				}
-				may, err := p.holds(g, f, []uint64{h}, &sound)
+				may, err := p.holds(g, f, []uint64{h})
 				if err != nil {
 					t.Fatal(err)
 				}
