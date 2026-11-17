@@ -17,7 +17,7 @@ func testConfig(dir string) Config {
 	return Config{Dir: dir, Store: colstore.StoreOptions{TimeField: "ts", SortKey: []string{"host"}, Partition: time.Hour, FlushInterval: -1}}
 }
 
-func query(t *testing.T, db *DB, text string) string {
+func ask(t *testing.T, db *DB, text string) string {
 	t.Helper()
 	compiled, err := ppl.Compile(text)
 	if err != nil {
@@ -68,7 +68,7 @@ func TestDatabaseKeepsIndexesAcrossOpens(t *testing.T) {
 		`source=nope | stats count() as n`:                    "n=0",
 	}
 	for text, rows := range want {
-		if got := query(t, db, text); got != rows {
+		if got := ask(t, db, text); got != rows {
 			t.Errorf("%s\n got  %s\n want %s", text, got, rows)
 		}
 	}
@@ -90,7 +90,7 @@ func TestDatabaseKeepsIndexesAcrossOpens(t *testing.T) {
 	}
 	defer db.Close()
 	for text, rows := range want {
-		if got := query(t, db, text); got != rows {
+		if got := ask(t, db, text); got != rows {
 			t.Errorf("after reopening: %s\n got  %s\n want %s", text, got, rows)
 		}
 	}
@@ -99,7 +99,7 @@ func TestDatabaseKeepsIndexesAcrossOpens(t *testing.T) {
 	if err != nil || removed == 0 {
 		t.Fatalf("dropped %d events, %v", removed, err)
 	}
-	if got := query(t, db, "source=`*` | stats count() as n, max(n) as top"); got != fmt.Sprintf("n=%d top=%d", 500-removed, (500-int(removed))/2-1) {
+	if got := ask(t, db, "source=`*` | stats count() as n, max(n) as top"); got != fmt.Sprintf("n=%d top=%d", 500-removed, (500-int(removed))/2-1) {
 		t.Errorf("after dropping %d events: %s", removed, got)
 	}
 	if dropped, err := db.Drop("db"); err != nil || !dropped {
@@ -111,7 +111,7 @@ func TestDatabaseKeepsIndexesAcrossOpens(t *testing.T) {
 	if got := fmt.Sprint(db.Names()); got != "[web]" {
 		t.Fatalf("indexes after a drop: %s", got)
 	}
-	if got := query(t, db, `source=db | stats count() as n`); got != "n=0" {
+	if got := ask(t, db, `source=db | stats count() as n`); got != "n=0" {
 		t.Errorf("a dropped index holds %s", got)
 	}
 }
@@ -134,7 +134,7 @@ func TestDatabaseTakesAppendsAndQueriesAtOnce(t *testing.T) {
 					if err := db.Sync(); err != nil {
 						t.Error(err)
 					}
-					query(t, db, "source=`i*` | stats count() as n")
+					ask(t, db, "source=`i*` | stats count() as n")
 				}
 			}
 		}(w)
@@ -143,7 +143,7 @@ func TestDatabaseTakesAppendsAndQueriesAtOnce(t *testing.T) {
 	if err := db.Sync(); err != nil {
 		t.Fatal(err)
 	}
-	if got := query(t, db, "source=`i*` | stats count() as n"); got != "n=1200" {
+	if got := ask(t, db, "source=`i*` | stats count() as n"); got != "n=1200" {
 		t.Fatalf("after the appends: %s", got)
 	}
 	if err := db.Close(); err != nil {

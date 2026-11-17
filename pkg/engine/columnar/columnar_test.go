@@ -13,7 +13,8 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/ppl"
+	"github.com/lynxbase/lynxdb/pkg/ir"
+	"github.com/lynxbase/lynxdb/pkg/query"
 )
 
 var testNow = time.Unix(1_700_010_000, 0).UTC()
@@ -146,16 +147,20 @@ func TestRun(t *testing.T) {
 		{"the fields of a table", `describe hosts`, "column=_time; column=dc; column=host; column=ts", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			compiled, err := ppl.Compile(c.text)
+			compiled, err := query.Compile(c.text)
 			if err != nil {
 				t.Fatalf("%s: %v", c.text, err)
 			}
-			res, err := Run(context.Background(), compiled.Plan, tables, Options{Now: testNow})
-			if err != nil {
-				t.Fatalf("%s: %v", c.text, err)
-			}
-			if got := render(res.Rows); got != c.want || res.Columnar != c.columnar {
-				t.Fatalf("%s\n got  %s (columnar %v)\n want %s (columnar %v)", c.text, got, res.Columnar, c.want, c.columnar)
+			// The plan as the language states it, and as the optimizer
+			// leaves it.
+			for name, plan := range map[string]*ir.Plan{"stated": compiled.Logical, "optimized": compiled.Plan} {
+				res, err := Run(context.Background(), plan, tables, Options{Now: testNow})
+				if err != nil {
+					t.Fatalf("%s, %s: %v", c.text, name, err)
+				}
+				if got := render(res.Rows); got != c.want || res.Columnar != c.columnar {
+					t.Fatalf("%s, %s\n got  %s (columnar %v)\n want %s (columnar %v)", c.text, name, got, res.Columnar, c.want, c.columnar)
+				}
 			}
 		})
 	}
