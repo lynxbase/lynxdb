@@ -332,29 +332,46 @@ var aggFuncs = map[string]exec.AggFunc{
 	"any_value": exec.AnyValue, "arg_min": exec.ArgMin, "arg_max": exec.ArgMax,
 }
 
-// aggregate translates one aggregate of a stats stage.
+// percentiles maps the aggregates that are a percentile to its percentage.
+var percentiles = map[string]float64{"p50": 50, "p75": 75, "p90": 90, "p95": 95, "p99": 99}
+
+// aggregate translates one aggregate of a stats stage. A condition on it,
+// f(x, where p), makes the argument absent in the rows where p is not true.
 func (t *translator) aggregate(a *ast.AggExpr) (exec.Agg, error) {
+	refused := unsupported("aggregate %s", format.Expr(a.Func))
 	call, ok := a.Func.(*ast.Call)
 	if !ok || call.Receiver != nil {
-		return exec.Agg{}, unsupported("aggregate %s", format.Expr(a.Func))
+		return exec.Agg{}, refused
 	}
 	out := exec.Agg{Name: a.Alias}
 	if out.Name == "" {
 		out.Name = format.Expr(a.Func)
 	}
+	args, want := call.Args, 1
 	fn, ok := aggFuncs[call.Callee]
-	args := 1
-	switch fn {
-	case exec.Count:
-		args = len(call.Args)
-	case exec.ArgMin, exec.ArgMax:
-		args = 2
+	p, aliased := percentiles[call.Callee]
+	switch {
+	case aliased:
+		fn, ok, out.P = exec.Percentile, true, p
+	case call.Callee == "perc" && len(args) == 2:
+		lit, isLit := args[1].(*ast.Literal)
+		if !isLit || (lit.Kind != ast.LitInt && lit.Kind != ast.LitFloat) {
+			return exec.Agg{}, refused
+		}
+		if out.P, ok = lit.Value.(float64); !ok {
+			out.P = float64(lit.Value.(int64))
+		}
+		fn, ok, args = exec.Percentile, true, args[:1]
+	case fn == exec.Count:
+		want = min(len(args), 1)
+	case fn == exec.ArgMin || fn == exec.ArgMax:
+		want = 2
 	}
-	if !ok || a.WhereCond != nil || len(call.Args) != args || args > 2 {
-		return exec.Agg{}, unsupported("aggregate %s", format.Expr(a.Func))
+	if !ok || len(args) != want {
+		return exec.Agg{}, refused
 	}
 	out.Func = fn
-	for i, arg := range call.Args {
+	for i, arg := range args {
 		e, err := t.expr(arg)
 		if err != nil {
 			return exec.Agg{}, err
@@ -364,6 +381,17 @@ func (t *translator) aggregate(a *ast.AggExpr) (exec.Agg, error) {
 		} else {
 			out.By = e
 		}
+	}
+	if a.WhereCond != nil {
+		cond, err := t.expr(a.WhereCond)
+		if err != nil {
+			return exec.Agg{}, err
+		}
+		// Rows are counted where a constant is present.
+		if out.Arg == nil {
+			out.Arg = exec.Bool(true)
+		}
+		out.Arg = exec.If(cond, out.Arg, &exec.Expr{Op: exec.OpLiteral})
 	}
 
 	return out, nil

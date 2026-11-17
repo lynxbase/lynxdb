@@ -126,6 +126,8 @@ func TestStages(t *testing.T) {
 			fmt.Sprintf("a 500 %d; b 503 %d", testNow.Add(-30*time.Minute).UnixNano(), testNow.Add(-150*time.Minute).UnixNano())},
 		{"dedup of filtered rows", `from logs | where status < 500 | dedup level, host | extend code = status + 1 | keep level, code | sort level`, "info 201; warn 405"},
 		{"estimated distinct count", `from logs | stats estdc(status) as codes, estdc(host) as hosts by level | sort level`, "error 2 2; info 1 1; warn 1 1"},
+		{"conditional aggregates", `from logs | stats count(where status >= 500) as errors, sum(dur, where level == "info") as calm, count() as n, dc(msg, where status < 500) as texts by host | sort host`,
+			"a 1 1.5 3 1; b 1 null 2 1"},
 		{"where after stats", `from logs | stats count() as n by host | where n > 2 | sort host`, "a 3"},
 		{"extend after stats", `from logs | stats sum(status) as total, count() as n | extend mean = total / n`, "1807 5 361"},
 		{"count by", `from logs | count by level | sort level`, "error 2; info 2; warn 1"},
@@ -137,6 +139,34 @@ func TestStages(t *testing.T) {
 				t.Fatalf("%s\n got  %s\n want %s", c.text, got, c.want)
 			}
 		})
+	}
+}
+
+// TestPercentiles requires the percentiles of the durations, which a sketch
+// gives within one percent.
+func TestPercentiles(t *testing.T) {
+	snap := testSnapshot(t)
+	plan, err := Compile(`from logs | stats p50(dur) as mid, perc(dur, 100) as top, p95(dur, where status < 500) as calm, p99(nope) as none by host | sort host`, Options{Now: testNow})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := exec.Run(context.Background(), snap, plan, exec.Options{Workers: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [][]float64{{1, 1.5, 0.5}, {0.25, 2.5, 0.25}}
+	if res.Rows != len(want) {
+		t.Fatalf("got %d rows, want %d", res.Rows, len(want))
+	}
+	for r, row := range want {
+		for c, exact := range row {
+			if v := res.Value(r, c+1); v.Kind != vec.KindFloat || v.Float < 0.99*exact || v.Float > 1.01*exact {
+				t.Errorf("row %d, column %d: got %v, want %g within one percent", r, c+1, v, exact)
+			}
+		}
+		if v := res.Value(r, 4); !v.IsNull() {
+			t.Errorf("row %d: a percentile of no values is %v", r, v)
+		}
 	}
 }
 
@@ -158,8 +188,10 @@ func TestTimeRangesCountFromNow(t *testing.T) {
 func TestRefusedQueries(t *testing.T) {
 	for text, want := range map[string]string{
 		`from logs | top 5 host`:                                       "stage eventstats",
-		`from logs | stats p95(dur) by host`:                           "aggregate p95(dur)",
-		`from logs | stats count(where status > 400) by host`:          "aggregate count",
+		`from logs | stats perc(dur) by host`:                          "aggregate perc(dur)",
+		`from logs | stats perc(dur, status) by host`:                  "aggregate perc(dur, status)",
+		`from logs | stats count(status, host)`:                        "aggregate count(status, host)",
+		`from logs | stats mode(status) by host`:                       "aggregate mode(status)",
 		`from logs | where status > 400`:                               "events without keep",
 		`from logs | stats count() by host | stats count()`:            "stats after stats",
 		`from logs | dedup host | count`:                               "stats after dedup",
