@@ -160,6 +160,7 @@ const sidebars: SidebarsConfig = {
       label: 'Architecture',
       items: [
         'architecture/overview',
+        'architecture/storage',
         'architecture/query-engine',
         'architecture/es-stubs',
         'architecture/design-decisions',

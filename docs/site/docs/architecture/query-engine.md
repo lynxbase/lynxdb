@@ -1,12 +1,12 @@
 ---
-sidebar_position: 4
+sidebar_position: 3
 title: Query Engine
-description: How LynxDB runs a query -- PPL compilation to a language-independent IR, rule-based optimization, storage hints, physical planning onto pipeline iterators and bytecode VM programs, and server-side execution.
+description: How LynxDB runs a query -- PPL compiled to a language-independent IR and optimized, then run by the columnar executor over the stores and by the row operators over what the executor does not take.
 ---
 
 # Query Engine
 
-LynxDB compiles OpenSearch Piped Processing Language (PPL) into a language-independent intermediate representation (IR), optimizes the IR plan, and turns it into a tree of pull-based iterators that read from the storage engine. This page follows a query through those stages and through the server around them. The PPL pages cover the compiler in detail: [architecture](../ppl/architecture.md), [compilation](../ppl/compilation.md), [IR](../ppl/ir.md), [optimizer](../ppl/optimizer.md) and [performance](../ppl/performance.md).
+LynxDB compiles OpenSearch Piped Processing Language (PPL) into a language-independent intermediate representation (IR) and optimizes the plan. Two executors run it: the **columnar executor** runs every part of the plan it can, straight over the column blocks of the stores, and the **row operators** run the rest over rows. This page follows a query through those stages. The PPL pages cover the compiler in detail: [architecture](../ppl/architecture.md), [compilation](../ppl/compilation.md), [IR](../ppl/ir.md) and [optimizer](../ppl/optimizer.md).
 
 ## Query Path
 
@@ -15,78 +15,79 @@ flowchart TD
     A["PPL text"] --> B["pkg/ppl<br/>lexer, parser, semantic analysis, lowering"]
     B --> C["pkg/ir plan"]
     C --> D["pkg/ir/opt<br/>rewrite rules, column pruning"]
-    D --> E["pkg/planner<br/>plan + storage hints"]
-    E --> F["pkg/engine/physical<br/>IR operators to iterators,<br/>expressions to pkg/vm bytecode"]
-    F --> G["pkg/engine/pipeline<br/>batch iterators over storage"]
-    G --> H["Results"]
+    D --> E["pkg/database<br/>job, time range of the request"]
+    E --> F["pkg/engine/columnar<br/>splits the plan"]
+    F --> G["pkg/colstore/exec<br/>columnar executor over blocks"]
+    F --> H["pkg/engine/physical, pkg/engine/pipeline, pkg/vm<br/>row operators over the rest"]
+    G --> H
+    H --> I["Rows"]
+    G --> I
 ```
 
 | Stage | Package | Output |
 |-------|---------|--------|
-| Lexing and parsing | `pkg/ppl/lexer`, `pkg/ppl/parser`, `pkg/ppl/ast` | Syntax tree with source spans |
+| Lexing and parsing | `pkg/ppl/lexer`, `pkg/ppl/parser`, `pkg/ppl/ast` | Syntax tree with source positions |
 | Semantic analysis and lowering | `pkg/ppl` | Validated IR plan |
-| Optimization | `pkg/ir/opt` | Equivalent, cheaper IR plan and the list of rules that fired |
-| Planning | `pkg/planner`, `pkg/engine/physical/hints.go` | Plan plus storage hints for segment selection |
-| Physical planning | `pkg/engine/physical`, `pkg/vm` | Iterator tree with compiled bytecode programs |
-| Execution | `pkg/engine/pipeline` | Batches of rows |
+| Optimization | `pkg/ir/opt` | Equivalent, cheaper IR plan and the rules that fired |
+| Running | `pkg/database`, `pkg/engine/columnar` | The plan split between the two executors |
+| Columnar execution | `pkg/colstore/exec`, `pkg/colstore/exec/irplan` | Columns of result rows |
+| Row execution | `pkg/engine/physical`, `pkg/engine/pipeline`, `pkg/vm` | Batches of rows |
 
-`pkg/query` is the single entry point that compiles query text. `query.Compile` runs the frontend and the optimizer and validates the optimized plan. Everything that runs a query goes through `query.Compile`:
+## Compilation
 
-- **Server**: `pkg/planner` compiles with `query.Compile`, adds storage hints, and the server builds the plan over its segment store.
+`query.Compile` in `pkg/query` is the single entry point that turns query text into a plan. The server, pipe mode and `explain` all call it. It runs the frontend, the optimizer and `ir.Validate` over the optimized plan.
 
-Compiling depends only on the query text: relative times stay symbolic until execution, and source schemas are discovered when rows are read. `pkg/query` therefore caches compiled plans by text (up to 1024 plans, for queries up to 2 KiB) and hands each caller its own copy of the immutable plan.
+Compiling depends only on the query text: relative times stay symbolic until the query runs, and the fields of an index are discovered when rows are read. `pkg/query` therefore keeps the plans of the 1024 most recent queries of up to 2 KiB, and hands each caller its own copy of the immutable plan.
 
-## Frontend: PPL to IR
+### Frontend: PPL to IR
 
-`pkg/ppl` turns PPL text into an IR plan:
+1. **Lexer** (`pkg/ppl/lexer`): tokens with line and column.
+2. **Parser** (`pkg/ppl/parser`): a hand-written recursive-descent parser that builds the syntax tree (`pkg/ppl/ast`). It reports the first syntax error with its position and the expected tokens, and refuses queries over 256 KiB, nesting deeper than 256 levels and pipelines of more than 1000 commands.
+3. **Semantic analysis**: every field reference is resolved against the schema the previous command produces. Index scans have open schemas (any field may exist); `stats`, `fields`, `top` and similar commands produce closed schemas, where an unknown field is a `SEMANTIC_ERROR` that lists the available fields. Functions resolve through the PPL catalogs onto the IR function registry, and static types are checked.
+4. **Lowering**: each command becomes IR operators. Search terms in the source command become a `Filter`; `eval` becomes `Compute`; `stats` becomes `Aggregate`; `sort ... | head` becomes `Sort` and `Limit`.
 
-1. **Lexer** (`pkg/ppl/lexer`): tokens with line and column. Identifiers may contain `-` and `*`, as in the official PPL grammar, so `a-b` is one identifier.
-2. **Parser** (`pkg/ppl/parser`): a hand-written recursive-descent parser that builds the syntax tree (`pkg/ppl/ast`). It reports the first syntax error with its position and the expected tokens, and rejects queries over 256 KiB, nesting deeper than 256 levels and pipelines over 1000 commands.
-3. **Semantic analysis**: every field reference is resolved against the schema the previous command produces. Index scans have open schemas (any field may exist); `stats`, `fields`, `top` and similar commands produce closed schemas, where an unknown field is a `SEMANTIC_ERROR` that lists the available fields. Functions resolve through the PPL catalogs (`pkg/ppl/functions.go`, `pkg/ppl/aggs.go`) onto the IR function registry, and static types are checked.
-4. **Lowering**: each command becomes IR operators. Search terms in the source command become a `Filter` over `_raw` and field comparisons; `eval` becomes `Compute`; `stats` becomes `Aggregate`; `sort ... | head` becomes `Sort` and `Limit`.
+A command, function or option that the catalogs mark unsupported fails with `UNSUPPORTED_COMMAND`, `UNSUPPORTED_FUNCTION` or `UNSUPPORTED_FEATURE`, and so does a correlated subquery. See [PPL compilation](../ppl/compilation.md) and [PPL errors](../ppl/errors.md).
 
-Commands the catalog marks unsupported fail with `UNSUPPORTED_COMMAND`, `UNSUPPORTED_FUNCTION` or `UNSUPPORTED_FEATURE`. See [PPL compilation](../ppl/compilation.md) and [PPL errors](../ppl/errors.md).
+### IR
 
-## IR
+The IR in `pkg/ir` is a tree of logical operators, each with typed expressions and an output schema, and knows nothing about PPL syntax. Its operators are `Scan`, `Values`, `Empty`, `SourceSchema`, `Filter`, `Compute`, `Project`, `RenameColumns`, `Aggregate`, `Window`, `Sort`, `TopN`, `Limit`, `Reverse`, `Dedup`, `Join`, `Union`, `ZipColumns`, `Extract`, `Patterns`, `Unnest`, `FlattenObject`, `FillNull`, `Transpose`, `Totals` and `CombineValues`.
 
-The IR in `pkg/ir` is a tree of logical operators, each with typed expressions and an output schema, and knows nothing about PPL syntax. Its operators are `Scan`, `Values`, `Empty`, `SourceSchema`, `Filter`, `Compute`, `Project`, `RenameColumns`, `Aggregate`, `Window`, `Sort`, `TopN`, `Limit`, `Reverse`, `Dedup`, `Join`, `Union`, `ZipColumns`, `Extract`, `Patterns`, `Unnest`, `FlattenObject`, `FillNull`, `Transpose`, `Totals` and `CombineValues`. `ir.Validate` checks every plan the frontend and the optimizer produce.
+A `Scan` carries, besides its sources, what the optimizer learns about the rows it must produce: a time range, pruning predicates, the columns read and a row limit. See [PPL IR](../ppl/ir.md).
 
-A `Scan` carries, besides its sources, everything the optimizer learns about the rows it must produce: a time range, pruning predicates, the columns read, a row limit and a scan direction. See [PPL IR](../ppl/ir.md).
+### Optimizer
 
-## Optimizer
-
-`pkg/ir/opt` applies rewrite rules bottom-up over the plan until no rule fires (at most 8 passes), then runs column pruning once. Every rule preserves the result. Rules that hand predicates to a scan keep them in the `Filter` above it, so a storage engine may use any subset of them.
+`pkg/ir/opt` applies rewrite rules over the plan until no rule fires (at most 8 passes), then runs column pruning once. Every rule preserves the result: rules that hand predicates to a scan keep them in the `Filter` above it, so an executor may use any subset of them.
 
 | Rule | Rewrite |
 |------|---------|
 | `fold-constants` | Evaluates deterministic expressions over literals with the VM: `status >= 400 + 100` becomes `status >= 500` |
 | `merge-filters` | Merges adjacent `Filter` operators into one conjunction |
 | `remove-true-filter` | Drops a `Filter` whose condition is the literal `true` |
-| `prune-scan` | Copies the indexable conjuncts of a `Filter` directly above a `Scan` into the scan's pruning predicates: raw-text word, phrase, prefix and glob searches, disjunctions of words, and a column equal to a string literal |
-| `time-range-to-scan` | Narrows the scan's time range with comparisons of `_time` against constant timestamps in the `Filter` above it |
-| `sort-limit-to-topn` | Replaces `Limit` over `Sort` with `TopN`, a bounded heap |
+| `prune-scan` | Copies the conjuncts of a `Filter` directly above a `Scan` that can skip data into the scan's pruning predicates |
+| `time-range-to-scan` | Narrows the scan's time range with comparisons of `_time` against constant times in the `Filter` above it |
+| `sort-limit-to-topn` | Replaces `Limit` over `Sort` with `TopN` |
 | `limit-into-scan` | Tells a scan how many rows the plan reads when only `Compute`, `Project` or `RenameColumns` separate a `Limit` from it |
 | column pruning | Records on each scan the columns the plan above it reads |
 
 For example:
 
-```
-source=main | where _time >= timestamp('2025-01-15 08:00:00') | where status >= 400 + 100 | eval kb = bytes / 1024 | head 5
+```bash
+lynxdb query --explain 'source=main | where _time >= timestamp("2026-02-10 09:00:00") | where status >= 400 + 100 | eval kb = duration_ms / 1024 | head 5'
 ```
 
 ```
 Logical plan:
 Limit(5)
-└─ Compute(kb = bytes / 1024)
+└─ Compute(kb = duration_ms / 1024)
    └─ Filter(status >= (400 + 100))
-      └─ Filter(_time >= timestamp("2025-01-15 08:00:00"))
+      └─ Filter(_time >= timestamp("2026-02-10 09:00:00"))
          └─ Scan(main)
 
 Optimized plan:
 Limit(5)
-└─ Compute(kb = bytes / 1024)
-   └─ Filter((_time >= timestamp("2025-01-15T08:00:00Z")) AND (status >= 500))
-      └─ Scan(main) time=[2025-01-15T08:00:00Z, +inf)
+└─ Compute(kb = duration_ms / 1024)
+   └─ Filter((_time >= timestamp("2026-02-10T09:00:00Z")) AND (status >= 500))
+      └─ Scan(main) time=[2026-02-10T09:00:00Z, +inf)
 
 Optimizer rules:
   fold-constants x2
@@ -96,98 +97,72 @@ Optimizer rules:
 
 `lynxdb query --explain` prints both plans and the rules locally; `lynxdb explain` and `GET /api/v1/query/explain` ask the server. See [PPL optimizer](../ppl/optimizer.md) for each rule's conditions.
 
-## Planner and Storage Hints
+## Running a Query
 
-On the server, `pkg/planner` wraps compilation. `Plan` returns:
+On the server every query is a job of `pkg/database` (see the [Query API](../api/query.md) for the synchronous, asynchronous and hybrid modes). Before it starts a job, the server syncs the stores, so that the query sees every event ingested before it. A job holds one of the `query.max_concurrent` query slots; when all are taken, the query is refused with `429 TOO_MANY_REQUESTS`.
 
-- the compiled and optimized plan and the applied rules
-- **storage hints** (`model.QueryHints`) from `physical.PlanHints` in `pkg/engine/physical/hints.go`
-- the request's `from`/`to` bounds, parsed separately and intersected with the plan's time range at execution
-- `SkipResultCache` when the result depends on the time of execution: relative time bounds, `now()` or another non-deterministic function
+`DB.Query` narrows every scan of the plan, those of subqueries included, to the `from` and `to` of the request, intersected with the time range the query sets itself. It then hands the plan to `pkg/engine/columnar`, which runs it in three steps.
 
-`physical.ScanHints` translates one `Scan` into hints:
+### 1. Subqueries as lists of values
 
-| Scan property | Hint | Used for |
-|---------------|------|----------|
-| Sources | Source scope (single index, list, glob, all) | Selecting segments of the queried indexes |
-| Time range, resolved against the current time | `TimeBounds` | Skipping segments and row groups by time |
-| Word and phrase searches | `SearchTerms`, tokenized to lower-case letter and digit runs | Bloom filters and term index lookups |
-| Disjunctions of single-word searches | `SearchTermTree` (`AND` of `OR` groups) | Term index lookups |
-| Prefix and glob searches | `TokenGlobs` | Term dictionary (FST) expansion; never bloom filters |
-| Column equal to a string literal | `FieldPredicates` with `=` | Column min/max skipping, per-row-group filters, row filtering during the read |
-| Columns read | `RequiredCols` | Reading only those columns |
-| Row limit, direction | `Limit`, `ReverseScan` | Stopping the scan early |
+A test for membership among the rows of a subquery (`where x in [ ... ]`) whose subquery gives one column of at most 1024 scalar values runs first, and the test becomes a test against that list. The columnar executor can then take the filter. Other subqueries are left to the row operators, which run each uncorrelated subquery once, before the operators that use it.
 
-A plan with one scan gets all of its hints. A plan with several scans (`join`, `append`, `multisearch`, subsearches) keeps only the union of their sources and time ranges, because each data-skipping hint belongs to one scan.
+### 2. The columnar executor
 
-## Server Execution
+`pkg/engine/columnar` walks the plan from the root down. For each subtree that ends in a scan, it asks `pkg/colstore/exec/irplan` to plan the subtree onto the columnar executor. The planner takes:
 
-`pkg/server` runs a planned query in these steps:
+- a scan with filters and computed columns,
+- one aggregate, with a filter and computed columns above it,
+- a choice of columns or of whole events,
+- a sort, a limit, and the first row of each key.
 
-1. **Result cache**: the cache key is the query hash, the ingest generation (a counter that changes on every ingest) and the effective time range. A hit returns the cached rows; queries with `SkipResultCache`, or with request `from`/`to`, bypass the cache.
-2. **Segment selection**: the server pins the current set of segments so compaction cannot unmap them during the query, orders them newest first, and drops segments outside the source scope or time bounds, segments whose column min/max excludes a string equality predicate, and segments whose bloom filter lacks a search term.
-3. **Scan source**: the physical planner's `Source` hook opens a `SegmentStreamIterator` for each `Scan`. It reads events still in the ingest batcher first, then the selected segments one row group at a time, applying the term index, per-row-group filters and the required columns. Only one row group's events are in memory at a time.
-4. **Physical planning**: `physical.Build` turns the plan into iterators with a per-query memory coordinator and the server's spill manager.
-5. **Collection**: the root iterator is drained into result rows. Event queries without a `head` are capped at `query.max_result_limit` rows.
+It refuses anything else, and the walk goes on below. The largest subtree it takes from each scan up runs on the columnar executor (`pkg/colstore/exec`) over a snapshot of the stores the scan names:
 
-## Physical Planning
+- The snapshot is the union of the parts of those indexes, taken when the query starts; merges do not change what the query reads.
+- Workers on every core take one block at a time. A block is skipped when its time range, its column directory or its token filters rule out the filter, or when an earlier scan of the same filter found no match in it.
+- Filters and expressions run over the block's columns. A dictionary column is tested once per dictionary entry; a constant column once per block.
+- Aggregates keep the state of each group in a row of 64-bit words, with sketches and sets beside it for the aggregates that need them; the workers' states are merged at the end.
+- A sort by `_time` with a limit takes the blocks in time order and skips those whose times keep them out of the result.
 
-`pkg/engine/physical` maps each IR operator onto one or more pipeline iterators and compiles every IR expression into a VM program:
+A subtree that only selects columns of the events it scans hands its rows to the operators above it block by block, as it reads them. The executor computes a function it has no kernel of its own for with the expression compiled for the VM, once per distinct argument.
+
+When the executor takes the whole plan, its columns are the result and no row is built until the rows are written out.
+
+### 3. The row operators
+
+Every part of the plan the columnar executor did not take runs on the row operators. `pkg/engine/physical` maps each IR operator onto pipeline iterators and compiles every expression into a VM program; their input is the rows of the subtrees the columnar executor ran, or the events of a scan it did not take.
 
 | IR operator | Iterator |
 |-------------|----------|
-| `Scan` | Storage source from the `Source` hook, plus a time filter that enforces the scan's time range exactly |
-| `Filter` | Filter iterator running a boolean VM program per row |
-| `Compute` | Eval iterator running one VM program per assignment |
+| `Scan` | Rows from the columnar executor |
+| `Filter` | Runs a boolean VM program per row |
+| `Compute` | Runs one VM program per assignment |
 | `Project`, `RenameColumns` | Column selection and renaming |
-| `Aggregate` | Hash aggregation; spills partial state to disk under memory pressure |
-| `Sort` | Sort; spills sorted runs to disk under memory pressure |
+| `Aggregate` | Hash aggregation |
+| `Sort` | Sort of up to 10,000,000 rows; a larger input fails the query |
 | `TopN` | Bounded heap of N (+ offset) rows |
-| `Limit` | Offset and limit iterators that stop pulling from their input when done |
-| `Window` | `eventstats`, `streamstats` and `trendline` iterators |
+| `Limit` | Offset and limit; stops pulling from its input when done |
+| `Window` | `eventstats`, `streamstats` and `trendline` |
 | `Dedup`, `Reverse`, `FillNull` | Dedicated iterators |
 | `Join` | Hash join; the right side is held in memory |
-| `Union` | Concatenation, or a newest-first merge for `multisearch` |
+| `Union` | Concatenation, or for `multisearch` all rows sorted by time, latest first |
 | `Extract`, `Patterns`, `Unnest`, `FlattenObject` | Row-mapping iterators for `parse`/`grok`/`rex`, `patterns`, `expand`, `flatten` |
 | `Transpose`, `Totals`, `CombineValues`, `ZipColumns` | Iterators that collect their input first |
 | `SourceSchema` | Rows describing the fields of an index (`describe`) |
 
-Uncorrelated subqueries (`where x in [ ... ]`, `exists`, scalar subsearches) run once while the plan is built, and their rows become constants of the VM programs that use them. A subquery's columns must be known before execution, so it ends with `fields` or `stats`.
+`pkg/engine/pipeline` uses the Volcano model: each iterator's `Next()` pulls the next batch of up to 1024 rows from its input. `head 10` stops pulling once it has 10 rows. A subquery's columns must be known before execution, so it ends with `fields` or `stats`.
 
-Operators that hold rows register a memory account with the per-query coordinator. Aggregation and sort spill to disk when their share runs out; the others fail the query with `QUERY_MEMORY_EXCEEDED`.
+### Bytecode VM
 
-## Pipeline Execution
+`pkg/vm` evaluates the expressions of the row operators: filter conditions, `eval` assignments, aggregation arguments, sort and join keys. `vm.CompileExpr` compiles an IR expression into a program of one-byte opcodes with a constant pool, run on a fixed stack of values, so evaluating a row allocates no stack. The optimizer's constant folding uses the same VM, so a folded constant has exactly the value the expression has at run time.
 
-`pkg/engine/pipeline` uses the Volcano model: each iterator's `Next()` pulls the next batch from its input. Batches hold up to 1024 rows.
+## Results
 
-```
-Output
-  ↑ Next()
-TopN(10)
-  ↑ Next()
-Aggregate(count() BY path)
-  ↑ Next()
-Filter(status >= 500)
-  ↑ Next()
-Scan (buffered events, then segments row group by row group)
-```
-
-- **Early stop**: `head 10` stops pulling once it has 10 rows, so the scan reads no further segments.
-- **Bounded memory for streaming operators**: filters, evals and projections hold one batch at a time. Blocking operators (aggregation, sort, joins, `eventstats`) hold their state under the memory coordinator.
-- **Statistics**: each iterator records rows in and out and time spent; `--analyze` and the `profile` request field report them.
-
-## Bytecode VM
-
-`pkg/vm` evaluates every expression: filter conditions, `eval` assignments, aggregation arguments, sort keys and join keys. `vm.CompileExpr` compiles an IR expression into a program of one-byte opcodes with a constant pool. The VM runs on a fixed 256-slot stack of values, so evaluating a row allocates no stack. Every function in the IR registry has a native Go implementation in `pkg/vm`. The optimizer's constant folding uses the same VM, so a folded constant has exactly the value the expression has at run time.
-
-`where status >= 500` compiles to four instructions: `OpLoadPath` pushes the row's `status` value, a constant instruction pushes `500` from the constant pool, `OpGteStrict` compares them with null-aware semantics (a missing or null operand yields null, which a filter treats as false), and `OpReturn` ends the program. `AND`, `OR` and `NOT` compile to three-valued opcodes and conditional jumps, so the right side of `AND` runs only when the left side does not decide the result.
-
-## Live Tail
-
-`GET /api/v1/tail` and `lynxdb tail` compile the query with the same planner, then reject plans containing an operator that needs all of its input before producing output (`Aggregate`, `Sort`, `TopN`, `Window`, `Reverse`, `Transpose`, `Totals`, `Join`, `Union`, `ZipColumns`, `CombineValues`, `Patterns`, `SourceSchema`) with `422`. Filters, `eval`, `fields`, `rename`, extraction commands, `dedup` and `head` run over the live event stream.
+A result is written as JSON objects: the columns the plan fixes in their order, any others in the order of their names, times as RFC 3339 text in UTC, and no member for a field the row does not hold. The server returns a page of the result: `limit` rows (`query.default_result_limit` when the request sets none, at most `query.max_result_limit`) from `offset` on, with `has_more` set when more rows follow.
 
 ## Related
 
-- [Architecture Overview](/docs/architecture/overview) -- system-level view
+- [Architecture Overview](./overview.md) -- system-level view
+- [Storage](./storage.md) -- what the columnar executor reads
 - [PPL architecture](../ppl/architecture.md) -- the compiler in detail
-- [PPL performance](../ppl/performance.md) -- writing queries that use the plan rewrites
+- [PPL performance](../ppl/performance.md) -- writing queries that the columnar executor takes
