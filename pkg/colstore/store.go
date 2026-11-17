@@ -422,8 +422,7 @@ func (s *Store) keepSpare(written []*shred.Batch) {
 }
 
 // dropSpare gives the spare batches up once no buffer has taken one for
-// spareIdle, so that a store that is no longer written to holds no memory
-// for it.
+// spareIdle, so that a store nobody writes to holds no memory for writes.
 func (s *Store) dropSpare() {
 	s.spareMu.Lock()
 	defer s.spareMu.Unlock()
