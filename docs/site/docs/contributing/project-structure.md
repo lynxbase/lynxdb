@@ -12,12 +12,12 @@ LynxDB follows the standard Go project layout. This page describes each package 
 
 ```
 lynxdb/
-├── cmd/            # Binaries: the lynxdb CLI
+├── cmd/            # Binaries: the lynxdb CLI and server
 ├── pkg/            # Core packages
 ├── internal/       # Packages private to the module
 ├── test/           # End-to-end, CLI and regression tests
 ├── testdata/       # Sample logs and fixtures
-├── scripts/        # Install, release and benchmark helper scripts
+├── scripts/        # Install, release, profiling and benchmark helper scripts
 ├── docs/           # Documentation site (Docusaurus)
 ├── go.mod, go.sum  # Module definition
 ├── mise.toml       # Pinned toolchain (Go, golangci-lint, goreleaser, ...)
@@ -26,7 +26,7 @@ lynxdb/
 
 ## `cmd/`
 
-### `cmd/lynxdb/` -- CLI
+### `cmd/lynxdb/` -- CLI and Server
 
 The `main` package and the CLI commands, built with Cobra:
 
@@ -36,19 +36,18 @@ The `main` package and the CLI commands, built with Cobra:
 | `server.go` | `lynxdb server` |
 | `query.go` | `lynxdb query` (server mode, and file and pipe mode in process) |
 | `explain.go` | `lynxdb explain` |
-| `tail.go` | `lynxdb tail` |
 | `fields.go` | `lynxdb fields` |
 | `ingest.go`, `import.go` | `lynxdb ingest`, `lynxdb import` |
-| `status.go` | `lynxdb status`, `health`, `indexes`, `cache` |
+| `status.go` | `lynxdb status`, `health`, `indexes` |
 | `jobs.go` | `lynxdb jobs` |
 | `config.go` | `lynxdb config` and its subcommands |
 | `authcmd.go`, `login.go`, `logout.go` | `lynxdb auth`, `login`, `logout` |
 | `completion.go`, `completions.go` | Shell completion |
 | `version.go` | `lynxdb version` |
 
-This layer parses flags, loads configuration, and calls into `pkg/`. `CLI.md` in the directory documents the CLI conventions.
+This layer parses flags, loads configuration, and calls into `pkg/`. `CLI.md` in the directory is the reference of every command and flag.
 
-## `pkg/` -- Query Language and Planning
+## `pkg/` -- Query Language
 
 ### `pkg/ppl/` -- PPL Frontend
 
@@ -79,23 +78,45 @@ The typed, language-independent plan: operators, expressions, schemas, types, th
 
 Rule-based rewrites over IR plans (`fold-constants`, `merge-filters`, `remove-true-filter`, `prune-scan`, `time-range-to-scan`, `sort-limit-to-topn`, `limit-into-scan`) and column pruning. See [PPL optimizer](../ppl/optimizer.md).
 
-### `pkg/query/` -- Compile and Run
+### `pkg/query/` -- Compile
 
-The single entry point that turns query text into results: `Compile` (frontend, optimizer, plan cache), `Run` over an in-memory event store, and `Explain`.
+The single entry point that turns query text into an optimized plan: `Compile` (frontend, optimizer, validation, a cache of recent plans), `Fold` for constant folding with the VM, and `Explain`.
 
-### `pkg/planner/` -- Server-Side Planning
+## `pkg/` -- Storage and Execution
 
-Wraps `query.Compile` for the server: storage hints, request time bounds, result-cache eligibility, and validation of live tail plans.
+### `pkg/database/` -- Database
 
-## `pkg/` -- Execution
+The database of a server and of pipe mode: one columnar store per index under the data directory, `Append`, `Sync` and `Query`, query jobs (`jobs.go`) with their states and time to live, and retention. See [Storage](../architecture/storage.md).
+
+### `pkg/engine/columnar/` -- Running Plans
+
+Opens the store of every index (`db.go`) and runs IR plans over them: it hands every part of a plan that the columnar executor takes to `pkg/colstore/exec`, turns small subqueries into lists of values, and runs the rest with the row operators. See [Query Engine](../architecture/query-engine.md).
+
+### `pkg/colstore/` -- Columnar Store
+
+```
+pkg/colstore/
+├── store.go, store_run.go  # Store: buffers, flushes into sorted runs, merges, partitions, retention
+├── dir.go                  # Part files and the manifest of a store's directory; recovery
+├── table.go, scan.go       # Snapshots of the live parts and parallel block scans
+├── ordered.go              # Key ranges over parts sorted by a key
+├── part/                   # Immutable columnar parts: blocks, encodings, footer, token filter pages
+├── shred/                  # JSON documents parsed straight into typed column builders
+├── variant/                # Binary encoding for JSON values without a column of their own
+├── tokenfilter/            # Search tokens and split-block Bloom filters per block
+└── exec/                   # Columnar executor over snapshots; exec/irplan plans IR onto it,
+                            # exec/irfunc implements IR functions over columns
+```
+
+`pkg/vec` holds typed column vectors and the kernels over them; `pkg/mem` holds region allocators, pools and the bound on garbage awaiting collection.
 
 ### `pkg/engine/physical/` -- Physical Planner
 
-Turns IR operators into pipeline iterators, compiles IR expressions to VM programs, evaluates uncorrelated subqueries, and derives storage hints from scans (`hints.go`, `source.go`).
+Turns IR operators into pipeline iterators, compiles IR expressions to VM programs, and evaluates uncorrelated subqueries before the operators that use them.
 
-### `pkg/engine/pipeline/` -- Volcano Iterators
+### `pkg/engine/pipeline/` -- Row Operators
 
-The iterator interface (`Init`, `Next`, `Close`) and the operators: scans (`segment_stream.go` for server segments, `rowscan.go`, `livescan.go` for live tail), filter and eval, aggregation with spill (`aggregate.go`, `spill*.go`), sort and top-N, joins, unions, dedup, window operators (`eventstats.go`, `streamstats.go`), extraction, and the memory coordinator. Batches hold up to 1024 rows.
+The iterator interface (`Init`, `Next`, `Close`) and the operators: row scans, filter and eval, aggregation, sort and top-N, joins, unions, dedup, window operators (`eventstats.go`, `streamstats.go`), time buckets and extraction. Batches hold up to 1024 rows.
 
 ### `pkg/vm/` -- Bytecode VM
 
@@ -103,44 +124,21 @@ Compiles IR expressions to bytecode (`ir_compiler.go`) and runs them on a fixed 
 
 ### `pkg/engine/unpack/` -- Log Format Parsers
 
-Field extractors for common log formats (combined, syslog, docker, JSON, logfmt, key=value, CEF, LEEF, W3C, and others), used by the CLI's ephemeral engine while loading files and by the pipeline's unpack iterator.
+Field extractors for common log formats (combined, syslog, docker, JSON, logfmt, key=value, CEF, LEEF, W3C, and others), used when log text becomes events, in pipe mode and in raw ingest.
 
-### `pkg/engine/columnar/`, `pkg/colstore/`, `pkg/vec/`, `pkg/mem/` -- Columnar Store
-
-A columnar table store and a block-at-a-time executor for IR plans:
-
-```
-pkg/colstore/
-├── part/         # Immutable columnar parts: blocks plus an indexing footer
-├── shred/        # JSON documents parsed straight into typed column builders
-├── variant/      # Binary encoding for JSON values without a column of their own
-├── tokenfilter/  # Search tokens and split-block Bloom filters per block
-└── exec/         # Executor over table snapshots; exec/irplan plans IR onto it
-```
-
-`pkg/engine/columnar` runs IR plans over these tables, handing the parts it cannot run to the row operators of `pkg/engine/physical`. `pkg/vec` holds typed column vectors and kernels; `pkg/mem` holds region allocators and pools. The server and the CLI do not use this store; the JSONBench benchmarks in `pkg/colstore` exercise it.
-
-## `pkg/` -- Server, Storage and Ingest
-
-### `pkg/server/` -- Engine
-
-The server `Engine`: ingest into the batcher, part flush and registration, segment handles, query execution over segments (`query.go`, `store.go`), async jobs, compaction loops, retention and system status.
-
-### `pkg/usecases/` -- Application Services
-
-Query and tail services between the REST handlers and the engine: planning, sync/async execution, result shaping, metadata queries.
+## `pkg/` -- Server and Ingest
 
 ### `pkg/api/rest/` -- HTTP API
 
-The HTTP server: route registration (`server.go`), handlers for query, explain, jobs, tail, ingest, the Elasticsearch, OTLP and Splunk HEC protocols, fields, status, cache, config and auth, plus middleware and the response envelope. `pkg/api/apicontracts` holds request and response constants shared with the client.
+The HTTP server: route registration (`server.go`), handlers for query, explain, jobs, ingest, the Elasticsearch, OTLP and Splunk HEC protocols, fields, histogram, status, config and auth, plus middleware and the response envelope. `pkg/api/apicontracts` holds query request constants that the handlers use and a test checks against the docs.
 
 ### `pkg/ingest/` -- Ingest Path
 
 ```
 pkg/ingest/
-├── pipeline/     # Ingest stages: format detection, field extraction, timestamps, dedup
-├── receiver/     # HTTP, Elasticsearch (eshttp), OTLP (otlphttp, otlpgrpc, otlpcommon), Splunk HEC, syslog
-├── staging/      # Coalesces small shipper batches before the engine
+├── ndjson/       # Events and log text written as NDJSON lines for the database
+├── pipeline/     # Ingest stages: format detection, field extraction, timestamps
+├── receiver/     # Elasticsearch (eshttp), OTLP (otlphttp, otlpgrpc, otlpcommon), Splunk HEC, syslog
 └── limits/       # Request body size limits for shipper endpoints
 ```
 
@@ -149,10 +147,10 @@ pkg/ingest/
 | Package | Purpose |
 |---------|---------|
 | `pkg/event` | The `Event` type and typed `Value` |
-| `pkg/model` | Shared types: storage hints, time bounds |
+| `pkg/model` | Shared types between layers |
 | `pkg/config` | Configuration cascade (flags > env > file > defaults), validation, hot reload |
-| `pkg/memgov` | Memory accounts that operators charge, and memory exhaustion errors |
-| `pkg/stats` | Query execution statistics for the CLI, API and metrics |
+| `pkg/memgov` | Memory accounts of the row operators and memory exhaustion errors |
+| `pkg/stats` | Query statistics for the CLI |
 | `pkg/auth` | API keys, credential files, TLS helpers |
 | `pkg/client` | Typed Go client for the REST API, used by the CLI |
 | `pkg/timerange` | Parsing of relative and absolute time ranges |
@@ -187,24 +185,25 @@ flowchart TD
     CMD["cmd/lynxdb"] --> API["pkg/api/rest"]
     CMD --> CLIENT["pkg/client"]
     CMD --> CONFIG["pkg/config"]
+    CMD --> DB["pkg/database"]
 
-    API --> USECASES["pkg/usecases"]
-    USECASES --> SERVER["pkg/server"]
-    USECASES --> PLANNER["pkg/planner"]
+    API --> DB
+    API --> QUERY["pkg/query"]
+    API --> RECV["pkg/ingest/receiver"]
 
-    PLANNER --> QUERY["pkg/query"]
+    DB --> COLUMNAR["pkg/engine/columnar"]
     QUERY --> PPL["pkg/ppl"]
     QUERY --> OPT["pkg/ir/opt"]
-    QUERY --> PHYSICAL["pkg/engine/physical"]
+    QUERY --> VM["pkg/vm"]
     PPL --> IR["pkg/ir"]
     OPT --> IR
-    PHYSICAL --> IR
-    PHYSICAL --> PIPELINE["pkg/engine/pipeline"]
-    PHYSICAL --> VM["pkg/vm"]
 
-    SERVER --> PLANNER
-    SERVER --> PHYSICAL
-    SERVER --> PIPELINE
+    COLUMNAR --> COLSTORE["pkg/colstore"]
+    COLUMNAR --> EXEC["pkg/colstore/exec"]
+    COLUMNAR --> PHYSICAL["pkg/engine/physical"]
+    PHYSICAL --> PIPELINE["pkg/engine/pipeline"]
+    PHYSICAL --> VM
+    EXEC --> COLSTORE
 ```
 
 ## Related

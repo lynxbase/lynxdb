@@ -81,7 +81,7 @@ go run ./cmd/lynxdb/ query --explain 'source=main level=ERROR | stats count() by
 
 ### Server Mode
 
-Start a server that keeps its data in memory (lost on exit):
+Start a server that keeps its data in a temporary directory, deleted on exit:
 
 ```bash
 go run ./cmd/lynxdb/ server --data-dir ""
@@ -172,7 +172,7 @@ go test -bench=. -benchmem ./pkg/vm/...
 go test -bench=. -benchmem ./pkg/engine/pipeline/...
 ```
 
-The columnar store's JSONBench suite and its results are described in `BENCHMARKS.md` at the repository root.
+`BENCHMARKS.md` at the repository root describes every benchmark suite and how to run it.
 
 ## IDE Setup
 
