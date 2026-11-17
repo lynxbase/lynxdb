@@ -165,7 +165,7 @@ lynxdb query 'source=main | stats count() by host' --timeout 15m
 - `from` or `earliest`
 - `to` or `latest`
 
-A request that also sends `limit`, `offset`, `wait`, `profile`, or `format` is rejected.
+A request that also sends `limit`, `offset`, `wait`, or `format` is rejected.
 
 ```bash
 # Wrong for /query/stream

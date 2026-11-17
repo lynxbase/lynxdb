@@ -252,7 +252,7 @@ paths:
         answers with the normal error envelope and status. Needs `query` scope.
 
         Accepts `q`/`query`, `from`/`earliest` and `to`/`latest`.
-        `limit`, `offset`, `wait`, `profile`, and `format` are rejected with `400 VALIDATION_ERROR`.
+        `limit`, `offset`, `wait`, and `format` are rejected with `400 VALIDATION_ERROR`.
         No row cap applies; use `head` in the query.
         Closing the connection while the query runs cancels it.
       requestBody:
@@ -1904,7 +1904,7 @@ components:
           description: '`json` or empty. Any other value is a `400 VALIDATION_ERROR`'
     QueryStreamRequest:
       type: object
-      description: '`limit`, `offset`, `wait`, `profile`, and `format` are rejected with `400 VALIDATION_ERROR`.'
+      description: '`limit`, `offset`, `wait`, and `format` are rejected with `400 VALIDATION_ERROR`.'
       properties:
         q:
           type: string

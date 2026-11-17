@@ -199,7 +199,7 @@ func TestQueryStream_RejectsUnsupportedFields(t *testing.T) {
 	resp, err := http.Post(
 		fmt.Sprintf("http://%s/api/v1/query/stream", srv.Addr()),
 		"application/json",
-		strings.NewReader(`{"q":"source=main","limit":10,"offset":0,"wait":0,"profile":"trace","format":"ndjson"}`),
+		strings.NewReader(`{"q":"source=main","limit":10,"offset":0,"wait":0,"format":"ndjson"}`),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +216,7 @@ func TestQueryStream_RejectsUnsupportedFields(t *testing.T) {
 	}
 	errObj := result["error"].(map[string]interface{})
 	msg := errObj["message"].(string)
-	for _, field := range []string{"limit", "offset", "wait", "profile", "format"} {
+	for _, field := range []string{"limit", "offset", "wait", "format"} {
 		if !strings.Contains(msg, field) {
 			t.Fatalf("message %q missing field %q", msg, field)
 		}

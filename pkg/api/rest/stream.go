@@ -22,7 +22,6 @@ type queryStreamRequest struct {
 	Offset   *int     `json:"offset"`
 	Format   *string  `json:"format"`
 	Wait     *float64 `json:"wait"`
-	Profile  *string  `json:"profile"`
 }
 
 func (r queryStreamRequest) toQueryRequest() QueryRequest {
@@ -50,10 +49,6 @@ func (r queryStreamRequest) unsupportedFields() []string {
 			}
 		case "offset":
 			if r.Offset != nil {
-				fields = append(fields, field)
-			}
-		case "profile":
-			if r.Profile != nil {
 				fields = append(fields, field)
 			}
 		case "format":

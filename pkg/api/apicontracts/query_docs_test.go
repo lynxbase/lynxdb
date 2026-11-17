@@ -30,7 +30,6 @@ func TestQueryContractsStayInDocsAndOpenAPI(t *testing.T) {
 				"`limit`",
 				"`offset`",
 				"`wait`",
-				"`profile`",
 				"`format`",
 			},
 		},

@@ -15,7 +15,6 @@ var QueryStreamUnsupportedFields = []string{
 	"limit",
 	"offset",
 	"wait",
-	"profile",
 	"format",
 }
 
