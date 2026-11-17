@@ -89,8 +89,11 @@ type Dir struct {
 type partFileRef struct {
 	name string
 	meta PartMeta
-	data []byte // the mapping of the part file
-	dead atomic.Bool
+	// data maps the part file, and blocks maps it once more for the
+	// column chunks when they have advice of their own.
+	data   []byte
+	blocks []byte
+	dead   atomic.Bool
 }
 
 // PartMeta is what the manifest records about a part besides its name. Parts
@@ -458,21 +461,30 @@ func (d *Dir) open(name string, meta PartMeta) (*Handle, *partFileRef, error) {
 
 		return nil, nil, err
 	}
+	var blocks mmap.MMap
 	if readAdvice {
-		// Blocks are read a chunk here and a chunk there, each asked for in
-		// one piece. The token filters between them, the directories and
-		// the footer are read side by side and keep the kernel's own
-		// read-ahead, as does a page that a filter shares with a block.
-		p.BlockRanges(func(off, n int) {
-			if from, to := (off+pageSize-1)&^(pageSize-1), (off+n)&^(pageSize-1); from < to {
-				adviseRandom(data[from:to])
-			}
-		})
-		p.SetReadAhead(func(off, n int) { adviseWillNeed(data, off, n) })
+		// Column chunks are read one here and one there, each asked for in
+		// one piece, through a mapping of their own. The token filters, the
+		// directories and the footer are read side by side and keep the
+		// kernel's own read-ahead. Advice for runs of blocks within one
+		// mapping would split it at every filter group, and the kernel
+		// bounds the mappings of a process.
+		if blocks, err = mmap.Map(f, mmap.RDONLY, 0); err != nil {
+			_ = data.Unmap()
+			f.Close()
+
+			return nil, nil, err
+		}
+		adviseRandom(blocks)
+		p.SetBlockData(blocks)
+		p.SetReadAhead(func(off, n int) { adviseWillNeed(blocks, off, n) })
 	}
-	ref := &partFileRef{name: name, meta: meta, data: data}
+	ref := &partFileRef{name: name, meta: meta, data: data, blocks: blocks}
 	h := NewHandle(p, func() {
 		_ = data.Unmap()
+		if blocks != nil {
+			_ = blocks.Unmap()
+		}
 		f.Close()
 		if ref.dead.Load() {
 			os.Remove(file)
@@ -498,6 +510,7 @@ func (d *Dir) ReleasePages() {
 	defer d.mu.Unlock()
 	for _, ref := range d.live {
 		adviseDontNeed(ref.data)
+		adviseDontNeed(ref.blocks)
 	}
 }
 

@@ -410,7 +410,7 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 	e := src.index[i*indexEntrySize:]
 	rows, minT, maxT := src.BlockStats(i)
 	start := binary.LittleEndian.Uint64(e[20:])
-	data := src.data[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
+	data := src.blocks[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
 	if src.readAhead != nil {
 		src.readAhead(int(start), len(data))
 	}

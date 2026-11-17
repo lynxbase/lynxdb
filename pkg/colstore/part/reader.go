@@ -13,10 +13,12 @@ import (
 // Part is an opened, immutable part that reads only the bytes it was opened
 // on, which must stay valid and unchanged while it is in use.
 type Part struct {
-	data  []byte
-	paths []string
-	ids   map[string]uint32
-	index []byte
+	data []byte
+	// blocks holds the bytes of data; the column chunks are read from it.
+	blocks []byte
+	paths  []string
+	ids    map[string]uint32
+	index  []byte
 	// dirs holds the column directories of all blocks, side by side, so
 	// that opening blocks reads one region of the part and not one place
 	// per block.
@@ -86,7 +88,7 @@ func Open(data []byte) (*Part, error) {
 		return nil, ErrCorrupt
 	}
 
-	p := &Part{data: data}
+	p := &Part{data: data, blocks: data}
 	r := reader{buf: footer}
 	nPaths := r.uvarint()
 	if nPaths > uint64(len(footer)) {
@@ -246,20 +248,13 @@ func (p *Part) KeyRuns(i, depth int) int {
 	return int(p.keyStats[i*(len(p.sortKey)+1)+depth])
 }
 
-// BlockRanges calls fn, in order, with the offset and length in the part's
-// data of every run of bytes before the block directories that holds column
-// chunks and no token filters.
-func (p *Part) BlockRanges(fn func(off, n int)) {
-	at := 0
-	for i := range p.groups {
-		g := &p.groups[i]
-		if start := int(g.off); start > at {
-			fn(at, start-at)
-		}
-		at = int(g.off + g.size)
-	}
-	if at < p.dirsOff {
-		fn(at, p.dirsOff-at)
+// SetBlockData makes the part read the column chunks of its blocks from
+// data, which holds the same bytes as the data it was opened on; a part
+// mapped from a file gives the two mappings advice of their own, since
+// chunks are read one here and one there and everything else side by side.
+func (p *Part) SetBlockData(data []byte) {
+	if len(data) == len(p.data) {
+		p.blocks = data
 	}
 }
 
@@ -368,7 +363,7 @@ func (p *Part) OpenBlock(i int, b *Block) error {
 	b.Rows, b.MinTime, b.MaxTime = p.BlockStats(i)
 	start := binary.LittleEndian.Uint64(e[20:])
 	b.part, b.index, b.start = p, i, int(start)
-	b.data = p.data[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
+	b.data = p.blocks[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
 	dirOff := binary.LittleEndian.Uint32(e[40:])
 	dir := p.dirs[dirOff : dirOff+binary.LittleEndian.Uint32(e[44:])]
 	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {

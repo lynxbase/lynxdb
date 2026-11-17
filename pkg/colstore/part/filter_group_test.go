@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
+	"reflect"
 	"strconv"
 	"testing"
 
@@ -350,85 +351,46 @@ func TestFilterGroupsCloseAtTheirSizeBound(t *testing.T) {
 	}
 }
 
-// The runs of block data and the filter groups between them cover everything
-// before the directories, and lookups read the groups only.
-func TestBlockRangesLeaveOutTheFilterGroups(t *testing.T) {
+// A part with block data of its own reads column chunks from it and
+// everything else from the bytes it was opened on.
+func TestPartReadsChunksFromItsBlockData(t *testing.T) {
 	r := rand.New(rand.NewSource(9))
-	for _, opts := range []Options{{}, {NoTokenFilter: true}} {
-		var buf bytes.Buffer
-		w := stripedWriter(&buf, opts, 3, 8)
-		batch := shred.NewBatch(shred.Options{})
-		for i, d := range sampleDocs(1100) {
-			if err := batch.AddJSON([]byte(d), int64(i)); err != nil {
-				t.Fatal(err)
-			}
-			if batch.Rows == 100 {
-				if err := w.WriteBatch(batch); err != nil {
-					t.Fatal(err)
-				}
-				batch.Reset()
-			}
-		}
-		if err := w.Close(); err != nil {
-			t.Fatal(err)
-		}
-		p, err := Open(buf.Bytes())
-		if err != nil {
-			t.Fatal(err)
-		}
-		type run struct{ off, end int }
-		var runs []run
-		end := -1
-		p.BlockRanges(func(off, n int) {
-			if n <= 0 || off <= end {
-				t.Fatalf("run of %d bytes at %d follows one that ends at %d", n, off, end)
-			}
-			runs, end = append(runs, run{off, off + n}), off+n
-		})
-		groups := 0
-		if !opts.NoTokenFilter {
-			groups = (p.NumBlocks() + 2) / 3
-		}
-		if len(runs) != max(groups, 1) || runs[0].off != 0 || len(p.groups) != groups {
-			t.Fatalf("%d runs from %d and %d groups for %d blocks", len(runs), runs[0].off, len(p.groups), p.NumBlocks())
-		}
-		covered := 0
-		for _, run := range runs {
-			covered += run.end - run.off
-		}
-		for g := range p.groups {
-			covered += int(p.groups[g].size)
-		}
-		if covered != p.dirsOff {
-			t.Fatalf("runs and groups cover %d bytes of the %d before the directories", covered, p.dirsOff)
-		}
-		inRun := func(at int) bool {
-			for _, run := range runs {
-				if at >= run.off && at < run.end {
-					return true
-				}
-			}
-
-			return false
-		}
-		for i := 0; i < p.NumBlocks(); i++ {
-			e := p.index[i*indexEntrySize:]
-			start := int(binary.LittleEndian.Uint64(e[20:]))
-			if end := start + int(binary.LittleEndian.Uint32(e[28:])); !inRun(start) || !inRun(end-1) {
-				t.Fatalf("block %d at %d..%d lies outside the runs", i, start, end)
-			}
-			if opts.NoTokenFilter {
-				continue
-			}
-			for n := 0; n < 200; n++ {
-				block, page, end := probeOf(p, i, r.Uint64())
-				for _, at := range []uint64{block, page, end - 1} {
-					if inRun(int(at)) {
-						t.Fatalf("block %d: a lookup reads byte %d of a run of block data", i, at)
-					}
-				}
-			}
-		}
+	whole := wordySource(t, r, 0, 11*60, 60, 3, 3, 8)
+	want, _ := readAll(t, whole)
+	// One copy keeps the column chunks only, the other all but them.
+	chunks := make([]byte, len(whole.data))
+	rest := append([]byte(nil), whole.data...)
+	for i := 0; i < whole.NumBlocks(); i++ {
+		e := whole.index[i*indexEntrySize:]
+		start := binary.LittleEndian.Uint64(e[20:])
+		end := start + uint64(binary.LittleEndian.Uint32(e[28:]))
+		copy(chunks[start:end], rest[start:end])
+		clear(rest[start:end])
+	}
+	p, err := Open(rest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetBlockData(chunks[:len(chunks)-1])
+	if _, err := p.MayContainToken(0, 1); err != nil {
+		t.Fatalf("block data of another length took the place of the part's: %v", err)
+	}
+	p.SetBlockData(chunks)
+	if got, _ := readAll(t, p); !reflect.DeepEqual(got, want) {
+		t.Fatal("rows read from the block data differ")
+	}
+	sameAnswers(t, p, r, 8)
+	var buf bytes.Buffer
+	w := stripedWriter(&buf, Options{Ordered: true, SortKey: mergeKey}, 4, 8)
+	if err := Merge(w, []*Part{p}, 60); err != nil || w.Close() != nil || w.copied != p.NumBlocks() {
+		t.Fatalf("%d of %d blocks copied: %v", w.copied, p.NumBlocks(), err)
+	}
+	merged, err := Open(buf.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := readAll(t, merged); !reflect.DeepEqual(got, want) {
+		t.Fatal("rows copied from the block data differ")
 	}
 }
 
