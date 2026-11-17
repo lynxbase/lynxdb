@@ -33,9 +33,31 @@ func (q *query) project(p *Project) error {
 	if len(q.post) == 0 {
 		return unsupported("a projection without columns")
 	}
+	if q.located != nil {
+		located := make([]int, len(q.post))
+		for i, pe := range q.post {
+			if located[i] = -1; pe.op == OpColumn {
+				located[i] = q.located[pe.col]
+			} else if pe.locates(q.located) {
+				return unsupported("a function of first, last, earliest or latest")
+			}
+		}
+		q.located = located
+	}
 	q.names = names
 
 	return nil
+}
+
+// locates reports whether the expression reads a column that locates a row.
+func (e *pexpr) locates(located []int) bool {
+	for _, a := range e.args {
+		if a.locates(located) {
+			return true
+		}
+	}
+
+	return e.op == OpColumn && located[e.col] >= 0
 }
 
 func postExpr(e *Expr, in []string, slots *int) (*pexpr, error) {

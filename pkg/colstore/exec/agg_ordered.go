@@ -111,7 +111,7 @@ func (p *pred) anyColumn() bool {
 // the snapshot does not allow it.
 func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan {
 	ap := q.agg
-	if snap == nil || filter == nil || len(snap.Parts()) == 0 {
+	if snap == nil || filter == nil || len(snap.Parts()) == 0 || ap.picks {
 		return nil
 	}
 	first := snap.Parts()[0]

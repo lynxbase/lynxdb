@@ -78,6 +78,9 @@ type worker struct {
 	whole  bool
 	// decoded records that the block had a column decoded.
 	decoded bool
+	// place is the place of the open block's first row in the table, for
+	// plans that locate rows.
+	place int64
 
 	blocks, matched, undecoded int64
 
@@ -206,6 +209,9 @@ func (w *worker) open(p *part.Part, b *part.Block) {
 		for i, name := range w.q.paths {
 			w.pathID[i], w.pathOK[i] = p.PathID(name)
 		}
+	}
+	if w.x.ords != nil {
+		w.place = int64(w.x.ords[p])<<44 | int64(b.Index())<<16
 	}
 	w.b, w.rows, w.decoded = b, b.Rows, false
 	clear(w.state)

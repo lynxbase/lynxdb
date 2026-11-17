@@ -152,6 +152,8 @@ type aggWorker struct {
 	// streaming is set when groups arrive in key order, which counts
 	// distinct values without logging them.
 	streaming bool
+	// times is the time column of the open block for picks by time.
+	times *vec.Column
 }
 
 func (a *aggWorker) init(w *worker) {
@@ -950,7 +952,7 @@ func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uin
 	w := a.w
 	arg := &a.plan.args[i]
 	numeric := kind == vec.KindInt || kind == vec.KindFloat
-	if w.shared == nil && len(arg.distinct) == 0 && (!numeric || arg.counted) {
+	if w.shared == nil && len(arg.distinct) == 0 && !arg.picks && (!numeric || arg.counted) {
 		// Only the number of values is asked for, which needs none of them.
 		ref := w.ref(arg.expr.path, kind)
 		switch {
@@ -968,6 +970,28 @@ func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uin
 
 		return nil
 	}
+	if arg.picks && a.plan.timePath >= 0 {
+		var err error
+		if a.times, err = w.column(a.plan.timePath, vec.KindInt); err != nil {
+			return err
+		}
+	}
+	if w.shared == nil && arg.placed {
+		// The rows that hold a value are all a pick and a count need.
+		gid, rows, count := t.gid, idx, n
+		if w.ref(arg.expr.path, kind).Count != w.rows {
+			valid, err := w.presence(arg.expr.path, kind)
+			if err != nil {
+				return err
+			}
+			gid, rows = a.compactValid(valid, t.gid, n, idx)
+			count = len(rows)
+		}
+		a.count(arg, t, gid, count)
+		a.pick(arg, t, gid, rows, count)
+
+		return nil
+	}
 	c, err := w.column(arg.expr.path, kind)
 	if err != nil {
 		return err
@@ -975,6 +999,34 @@ func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uin
 	a.feedValues(i, kind, c, t, n, idx)
 
 	return nil
+}
+
+// pick offers the n rows that hold a value of an argument, row rows[j] or j
+// of the block for group gid[j], to the picks of their groups.
+func (a *aggWorker) pick(arg *aggArg, t *target, gid, rows []uint32, n int) {
+	place, stride := a.w.place, a.stride
+	for _, i := range arg.words {
+		op := a.plan.words[i].op
+		if op < wordFirst || op > wordLatest {
+			continue
+		}
+		least := op == wordFirst || op == wordEarliest
+		for j := 0; j < n; j++ {
+			r, g := j, t.one
+			if rows != nil {
+				r = int(rows[j])
+			}
+			if t.gid != nil {
+				g = int(gid[j])
+			}
+			loc := place | int64(r)
+			key := loc
+			if op >= wordEarliest {
+				key = a.times.Int(r)
+			}
+			mergePick(t.words[g*stride+i:], key, loc, least)
+		}
+	}
 }
 
 // feedValues adds the values that column c of an argument holds in the
@@ -985,6 +1037,9 @@ func (a *aggWorker) feedValues(i int, kind vec.Kind, c *vec.Column, t *target, n
 	if c.Valid != nil {
 		gid, rows = a.compactValid(c.Valid, t.gid, n, idx)
 		count = len(rows)
+	}
+	if arg.picks {
+		a.pick(arg, t, gid, rows, count)
 	}
 	switch kind {
 	case vec.KindInt:

@@ -32,6 +32,15 @@ const (
 	// for fewer than two values.
 	Var
 	Stdev
+	// First and Last are the value of a column in the first and the last
+	// row, in the order the table stores them, that holds one; Earliest and
+	// Latest are its value in the row with the smallest and the largest
+	// time that holds one. Their columns are for output only: a filter, a
+	// function or a sort above the aggregate cannot use them.
+	First
+	Last
+	Earliest
+	Latest
 )
 
 // Agg is one aggregate; Arg is nil for a Count of rows.

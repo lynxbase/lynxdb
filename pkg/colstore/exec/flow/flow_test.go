@@ -113,6 +113,7 @@ func TestStages(t *testing.T) {
 		{"drop", `from logs | keep level, status, host | drop host | sort status, level | head 1`, "info 200"},
 		{"rename", `from logs | keep level, status | rename status as code | sort -code | head 1`, "error 503"},
 		{"stats", `from logs | stats count() as n, avg(dur) as mean, max(status) as top by level | sort level`, "error 2 2 503; info 2 0.75 200; warn 1 0.25 404"},
+		{"picked rows", `from logs | stats latest(msg) as last, earliest(status) as first by host | sort host`, "a disk full on node 200; b Disk failure 404"},
 		{"where after stats", `from logs | stats count() as n by host | where n > 2 | sort host`, "a 3"},
 		{"extend after stats", `from logs | stats sum(status) as total, count() as n | extend mean = total / n`, "1807 5 361"},
 		{"count by", `from logs | count by level | sort level`, "error 2; info 2; warn 1"},

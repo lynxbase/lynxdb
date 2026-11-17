@@ -532,3 +532,83 @@ func TestCountsOfValues(t *testing.T) {
 		}
 	})
 }
+
+// TestPickedRows covers First, Last, Earliest and Latest over documents whose
+// times are all different and do not follow the order of the documents.
+func TestPickedRows(t *testing.T) {
+	var docs [][]byte
+	for i := 0; i < 3000; i++ {
+		var v string
+		switch i % 7 {
+		case 0, 1:
+			v = fmt.Sprintf(`,"v":"s%d"`, i)
+		case 2:
+			v = fmt.Sprintf(`,"v":%d`, i)
+		case 3:
+			v = fmt.Sprintf(`,"v":%d.5`, i)
+		case 4:
+			v = fmt.Sprintf(`,"v":%v`, i%2 == 0)
+		case 5:
+			v = `,"v":null`
+		}
+		ts := 1_700_000_000_000_000 + int64(i*7919%3000)*1_000_000
+		docs = append(docs, []byte(fmt.Sprintf(`{"id":%d,"ts":%d,"k":"k%d","rare":%d%s}`, i, ts, i%11, i%400, v)))
+	}
+	rows := referenceRows(t, docs, "ts")
+	byTime := []exec.Agg{
+		{Name: "rows", Func: exec.Count},
+		{Name: "earliest", Func: exec.Earliest, Arg: anyOf("v")},
+		{Name: "latest", Func: exec.Latest, Arg: anyOf("v")},
+		{Name: "latest_text", Func: exec.Latest, Arg: str("v")},
+		{Name: "latest_id", Func: exec.Latest, Arg: num("id")},
+		{Name: "none", Func: exec.Earliest, Arg: anyOf("nope")},
+	}
+	byPlace := append(byTime[:len(byTime):len(byTime)], exec.Agg{Name: "first", Func: exec.First, Arg: anyOf("v")},
+		exec.Agg{Name: "last", Func: exec.Last, Arg: anyOf("v")}, exec.Agg{Name: "last_id", Func: exec.Last, Arg: num("id")})
+	filter := exec.Gt(num("id"), exec.Int(500))
+	for _, l := range []layout{
+		{name: "blocks", blockRows: 64, parts: 1},
+		{name: "parts", blockRows: 100, parts: 3},
+		{name: "one block", blockRows: 1 << 16, parts: 1},
+		{name: "ordered", blockRows: 128, parts: 2, sortKey: []string{"k", "rare"}},
+	} {
+		aggs := byPlace
+		if l.sortKey != nil {
+			aggs = byTime
+		}
+		plans := map[string]exec.Node{
+			"all":      &exec.Aggregate{Input: &exec.Scan{}, Aggs: aggs},
+			"by key":   &exec.Aggregate{Input: &exec.Scan{Filter: filter}, Keys: keys("k"), Aggs: aggs},
+			"by many":  &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("rare", "k"), Aggs: aggs},
+			"filtered": &exec.Aggregate{Input: &exec.Scan{Filter: exec.Eq(str("k"), exec.Str("k3"))}, Keys: keys("rare"), Aggs: aggs},
+			"top": &exec.Sort{Input: &exec.Project{Input: &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("rare"), Aggs: aggs},
+				Exprs: []exec.Named{named("rare", anyOf("rare")), named("latest", anyOf("latest")), named("double", exec.Mul(anyOf("rows"), exec.Int(2)))}},
+				By: []exec.Order{{Column: "rare", Desc: true}}, Limit: 9},
+		}
+		tbl := buildTable(t, docs, "ts", l)
+		snap := tbl.Snapshot()
+		restore := exec.SetLimits(64, 1)
+		for name, plan := range plans {
+			for _, workers := range []int{1, 4} {
+				t.Run(fmt.Sprintf("%s/%s/%d", l.name, name, workers), func(t *testing.T) {
+					_, sorted := plan.(*exec.Sort)
+					check(t, snap, rows, plan, sorted, workers)
+				})
+			}
+		}
+		restore()
+		snap.Release()
+	}
+	scan := &exec.Scan{}
+	latest := []exec.Agg{{Name: "latest", Func: exec.Latest, Arg: anyOf("v")}}
+	for name, plan := range map[string]exec.Node{
+		"sorted by":     &exec.Sort{Input: &exec.Aggregate{Input: scan, Keys: keys("k"), Aggs: latest}, By: []exec.Order{{Column: "latest"}}},
+		"filtered by":   &exec.Filter{Input: &exec.Aggregate{Input: scan, Keys: keys("k"), Aggs: latest}, Cond: exec.Gt(anyOf("latest"), exec.Int(1))},
+		"a function of": &exec.Project{Input: &exec.Aggregate{Input: scan, Aggs: latest}, Exprs: []exec.Named{named("x", exec.Upper(anyOf("latest")))}},
+		"of a function": &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "x", Func: exec.First, Arg: exec.Upper(anyOf("v"))}}},
+	} {
+		if _, err := exec.Run(context.Background(), colstore.NewTable().Snapshot(), plan, exec.Options{}); !errors.Is(err, exec.ErrUnsupported) {
+			t.Errorf("%s: got %v, want ErrUnsupported", name, err)
+		}
+	}
+}

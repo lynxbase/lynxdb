@@ -43,6 +43,8 @@ type execution struct {
 	shared  *sharedGroups
 	// streaming is set while the aggregation runs in key order.
 	streaming bool
+	// ords numbers the parts of the snapshot for a plan that locates rows.
+	ords map[*part.Part]int
 	// taken counts the rows that a plan with a limit and no order has
 	// produced.
 	taken atomic.Int64
@@ -70,6 +72,12 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		}
 	}
 	x := &execution{q: q, workers: make([]*worker, n)}
+	if q.located != nil {
+		x.ords = map[*part.Part]int{}
+		for i, h := range snap.Parts() {
+			x.ords[h.Part] = i
+		}
+	}
 	if q.agg != nil && q.agg.group >= 0 {
 		a := mem.NewArena()
 		x.shared = &sharedGroups{arena: a, table: vec.NewByteTable(a)}
@@ -99,6 +107,9 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 	}
 	res := &Result{}
 	res.Columns, res.Rows = collect(q, sinks)
+	if err := resolve(snap, q, res); err != nil {
+		return nil, err
+	}
 	res.Stats = Stats{
 		Blocks:         stats.Blocks,
 		SkippedByKey:   stats.SkippedByKey,

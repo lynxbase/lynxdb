@@ -213,7 +213,9 @@ func (ap *aggPlan) mergeRecord(dst []int64, state []byte) {
 		case wordVarN:
 			src := [3]int64{v, int64(binary.LittleEndian.Uint64(state[8*i+8:])), int64(binary.LittleEndian.Uint64(state[8*i+16:]))}
 			mergeSpread(dst[i:i+3], src[:])
-		case wordVarMean, wordVarM2:
+		case wordFirst, wordLast, wordEarliest, wordLatest:
+			mergePick(dst[i:i+2], v, int64(binary.LittleEndian.Uint64(state[8*i+8:])), w.op == wordFirst || w.op == wordEarliest)
+		case wordVarMean, wordVarM2, wordPickLoc:
 		default:
 			dst[i] += v
 		}

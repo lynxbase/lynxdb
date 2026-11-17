@@ -3,6 +3,7 @@ package exec
 import (
 	"math"
 
+	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
@@ -30,6 +31,15 @@ const (
 	wordVarN
 	wordVarMean
 	wordVarM2
+	// wordFirst, wordLast, wordEarliest and wordLatest hold the key of the
+	// row a group picked, its place in the table or its time, and are each
+	// followed by a wordPickLoc with the place of that row: part, block and
+	// row. The two are fed and merged together.
+	wordFirst
+	wordLast
+	wordEarliest
+	wordLatest
+	wordPickLoc
 )
 
 type wordSpec struct {
@@ -52,6 +62,10 @@ type aggArg struct {
 	distinct []int
 	// counted is set when only the number of values is asked for.
 	counted bool
+	// picks is set when a group picks a row of the argument, and placed
+	// when the argument's words need which rows hold a value but no value.
+	picks  bool
+	placed bool
 }
 
 // aggOut describes how an aggregate's column comes from the state words;
@@ -68,6 +82,8 @@ type aggOut struct {
 	distinct   int
 	// spread is the first of the three words of a variance.
 	spread int
+	// pick is the word with the place of the row a group picked.
+	pick int
 }
 
 // aggPlan is an aggregation bound to the table: a group's state is a row of
@@ -86,6 +102,40 @@ type aggPlan struct {
 	group int
 	// rowsOnly is set when the groups only count their rows.
 	rowsOnly bool
+	// picks is set when an aggregate picks a row per group, and timePath is
+	// the path of the row time when one picks by it, else -1.
+	picks    bool
+	timePath int
+}
+
+// pickWord returns the word with the place of the row that op picks for an
+// argument, adding the pair of words when it is not there.
+func (ap *aggPlan) pickWord(op wordOp, arg int) int {
+	for i, w := range ap.words {
+		if w.op == op && w.arg == arg {
+			return i + 1
+		}
+	}
+	ap.words = append(ap.words, wordSpec{op: op, arg: arg}, wordSpec{op: wordPickLoc, arg: -1})
+	ap.args[arg].words = append(ap.args[arg].words, len(ap.words)-2)
+	ap.args[arg].picks, ap.picks = true, true
+
+	return len(ap.words) - 1
+}
+
+// mergePick keeps in dst, a key and the place of its row, the better of it
+// and another pick; least prefers the smaller key.
+func mergePick(dst []int64, key, loc int64, least bool) {
+	switch {
+	case loc < 0:
+		return
+	case dst[1] < 0:
+	case least && (key < dst[0] || (key == dst[0] && loc < dst[1])):
+	case !least && (key > dst[0] || (key == dst[0] && loc > dst[1])):
+	default:
+		return
+	}
+	dst[0], dst[1] = key, loc
 }
 
 func sameExpr(a, b *sexpr) bool {
@@ -136,7 +186,7 @@ func (ap *aggPlan) word(op wordOp, arg int) int {
 }
 
 func (q *query) aggregate(a *Aggregate) error {
-	ap := &aggPlan{rows: -1, group: -1}
+	ap := &aggPlan{rows: -1, group: -1, timePath: -1}
 	if len(a.Keys) == 0 && len(a.Aggs) == 0 {
 		return unsupported("an aggregate needs a key or an aggregate function")
 	}
@@ -152,7 +202,7 @@ func (q *query) aggregate(a *Aggregate) error {
 		ap.names = append(ap.names, k.Name)
 	}
 	for _, g := range a.Aggs {
-		out := aggOut{fn: g.Func, arg: -1, rows: -1, count: -1, countInt: -1, countFloat: -1, ints: -1, floats: -1, distinct: -1, spread: -1}
+		out := aggOut{fn: g.Func, arg: -1, rows: -1, count: -1, countInt: -1, countFloat: -1, ints: -1, floats: -1, distinct: -1, spread: -1, pick: -1}
 		if g.Arg == nil {
 			if g.Func != Count {
 				return unsupported("aggregate %q needs an argument", g.Name)
@@ -186,6 +236,14 @@ func (q *query) aggregate(a *Aggregate) error {
 			ints, floats = wordMinInt, wordMinFloat
 		case Max:
 			ints, floats = wordMaxInt, wordMaxFloat
+		case First, Last, Earliest, Latest:
+			if e.op != OpColumn {
+				return unsupported("aggregate %q takes a column", g.Name)
+			}
+			out.pick = ap.pickWord(wordFirst+wordOp(g.Func-First), out.arg)
+			if g.Func >= Earliest && ap.timePath < 0 {
+				ap.timePath = q.path(part.TimePath)
+			}
 		case Var, Stdev:
 			if kinds&numericKinds == 0 {
 				return unsupported("aggregate %q takes numbers", g.Name)
@@ -219,8 +277,11 @@ func (q *query) aggregate(a *Aggregate) error {
 	for i := range ap.args {
 		arg := &ap.args[i]
 		arg.counted = len(arg.distinct) == 0
+		arg.placed = arg.picks && len(arg.distinct) == 0
 		for _, w := range arg.words {
-			arg.counted = arg.counted && ap.words[w].op == wordCount
+			op := ap.words[w].op
+			arg.counted = arg.counted && op == wordCount
+			arg.placed = arg.placed && (op == wordCount || (op >= wordFirst && op <= wordLatest))
 		}
 	}
 	for _, w := range ap.words {
@@ -234,8 +295,25 @@ func (q *query) aggregate(a *Aggregate) error {
 			v = int64(math.Float64bits(math.Inf(1)))
 		case wordMaxFloat:
 			v = int64(math.Float64bits(math.Inf(-1)))
+		case wordFirst, wordEarliest:
+			v = math.MaxInt64
+		case wordLast, wordLatest:
+			v = math.MinInt64
+		case wordPickLoc:
+			v = -1
 		}
 		ap.init = append(ap.init, v)
+	}
+	if ap.picks {
+		q.located = make([]int, len(ap.names))
+		for i := range q.located {
+			q.located[i] = -1
+		}
+		for i, o := range ap.outs {
+			if o.pick >= 0 {
+				q.located[len(ap.keys)+i] = o.arg
+			}
+		}
 	}
 	q.agg = ap
 
@@ -290,7 +368,9 @@ func (ap *aggPlan) mergeWords(dst, src []int64) {
 			dst[i] = src[i]
 		case wordVarN:
 			mergeSpread(dst[i:i+3], src[i:i+3])
-		case wordVarMean, wordVarM2:
+		case wordFirst, wordLast, wordEarliest, wordLatest:
+			mergePick(dst[i:i+2], src[i], src[i+1], w.op == wordFirst || w.op == wordEarliest)
+		case wordVarMean, wordVarM2, wordPickLoc:
 		default:
 			dst[i] += src[i]
 		}
@@ -330,6 +410,17 @@ func (ap *aggPlan) column(o *aggOut, words []int64, n int, floats []bool, distin
 				id = int(words[g*stride+ap.group])
 			}
 			out[g] = counts[id]
+		}
+
+		return
+	case First, Last, Earliest, Latest:
+		// The place of the row; the value is read once the rows are final.
+		out := dst.bulkInts(n)
+		for g := range out {
+			if out[g] = words[g*stride+o.pick]; out[g] < 0 {
+				out[g] = 0
+				dst.setNull(g)
+			}
 		}
 
 		return

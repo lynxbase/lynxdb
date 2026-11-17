@@ -307,6 +307,7 @@ func (t *translator) set(name string, e *exec.Expr) {
 var aggFuncs = map[string]exec.AggFunc{
 	"count": exec.Count, "dc": exec.CountDistinct, "sum": exec.Sum, "avg": exec.Avg,
 	"min": exec.Min, "max": exec.Max, "stdev": exec.Stdev, "var": exec.Var,
+	"first": exec.First, "last": exec.Last, "earliest": exec.Earliest, "latest": exec.Latest,
 }
 
 func (t *translator) stats(s *ast.StatsPayload) error {

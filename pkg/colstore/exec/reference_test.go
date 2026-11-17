@@ -602,6 +602,10 @@ type refAgg struct {
 	sumFloat, minFloat, maxFlt float64
 	distinct                   map[string]struct{}
 	numbers                    []float64
+	// The values of the first and the last row with one, and of the rows
+	// with the smallest and the largest time.
+	first, last, earliest, latest exec.Value
+	minTime, maxTime              int64
 }
 
 // refRun evaluates a plan over rows and returns its output rows and column
@@ -855,6 +859,14 @@ func refAggregate(rows []refRow, agg *exec.Aggregate) ([][]exec.Value, []string)
 			}
 			st.values++
 			st.distinct[refKey(v)] = struct{}{}
+			if at := row[part.TimePath].Int; st.values == 1 {
+				st.first, st.earliest, st.latest, st.minTime, st.maxTime = v, v, v, at, at
+			} else if at < st.minTime {
+				st.earliest, st.minTime = v, at
+			} else if at > st.maxTime {
+				st.latest, st.maxTime = v, at
+			}
+			st.last = v
 			switch v.Kind {
 			case vec.KindInt:
 				st.numbers = append(st.numbers, float64(v.Int))
@@ -899,6 +911,14 @@ func refFinish(a exec.Agg, st *refAgg, float bool) exec.Value {
 		return intValue(st.values)
 	case exec.CountDistinct:
 		return intValue(int64(len(st.distinct)))
+	case exec.First:
+		return st.first
+	case exec.Last:
+		return st.last
+	case exec.Earliest:
+		return st.earliest
+	case exec.Latest:
+		return st.latest
 	}
 	if n == 0 {
 		return exec.Value{}

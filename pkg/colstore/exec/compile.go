@@ -45,6 +45,9 @@ type query struct {
 	// slots counts the computed nodes of the scalar expressions.
 	depth int
 	slots int
+	// located holds, per output column, the aggregate argument whose value
+	// the column locates by row, or -1; nil when no column does.
+	located []int
 }
 
 type orderSpec struct {
@@ -112,6 +115,9 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 		}
 		q.ordered = q.planOrdered(snap, scan.Filter)
 		q.names = q.agg.names
+		if flt != nil && q.located != nil {
+			return nil, unsupported("a filter above first, last, earliest or latest")
+		}
 		if flt != nil {
 			if err := q.filterAbove(flt); err != nil {
 				return nil, err
@@ -149,6 +155,9 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 			}
 			if col < 0 {
 				return nil, unsupported("sort by unknown column %q", o.Column)
+			}
+			if q.located != nil && q.located[col] >= 0 {
+				return nil, unsupported("sort by %q, the value of a located row", o.Column)
 			}
 			q.order = append(q.order, orderSpec{col: col, desc: o.Desc})
 		}
