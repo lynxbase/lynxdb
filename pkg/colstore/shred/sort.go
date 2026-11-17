@@ -262,36 +262,38 @@ func (b *Batch) permute() {
 				}
 			}
 			c.Sparse = true
-			c.RowIDs, s.rows = s.rows, c.RowIDs
+			c.RowIDs = append(c.RowIDs[:0], s.rows...)
 		}
 		c.lastRow = -1
+		// The values are gathered in scratch and copied back, so that every
+		// column keeps a buffer of its own size from batch to batch.
 		switch c.Kind {
 		case vec.KindBool:
 			s.bools = s.bools[:0]
 			for _, i := range s.order {
 				s.bools = append(s.bools, c.Bools[i])
 			}
-			c.Bools, s.bools = s.bools, c.Bools
+			copy(c.Bools, s.bools)
 		case vec.KindInt:
 			s.ints = s.ints[:0]
 			for _, i := range s.order {
 				s.ints = append(s.ints, c.Ints[i])
 			}
-			c.Ints, s.ints = s.ints, c.Ints
+			copy(c.Ints, s.ints)
 		case vec.KindFloat:
 			s.floats = s.floats[:0]
 			for _, i := range s.order {
 				s.floats = append(s.floats, c.Floats[i])
 			}
-			c.Floats, s.floats = s.floats, c.Floats
+			copy(c.Floats, s.floats)
 		case vec.KindString, vec.KindVariant:
 			s.data, s.ends = s.data[:0], s.ends[:0]
 			for _, i := range s.order {
 				s.data = append(s.data, c.Bytes(int(i))...)
 				s.ends = append(s.ends, uint32(len(s.data)))
 			}
-			c.Data, s.data = s.data, c.Data
-			c.Ends, s.ends = s.ends, c.Ends
+			copy(c.Data, s.data)
+			copy(c.Ends, s.ends)
 		}
 	}
 }
