@@ -14,6 +14,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
+	"github.com/lynxbase/lynxdb/pkg/colstore/variant"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
@@ -568,6 +569,13 @@ func refTrue(e *exec.Expr, row refRow) bool {
 		for _, v := range row {
 			if v.Kind == vec.KindString && e.Pattern.Match(v.Bytes) {
 				return true
+			}
+			if v.Kind == vec.KindVariant {
+				found := false
+				variant.ForEachString(v.Bytes, func(s []byte) { found = found || e.Pattern.Match(s) })
+				if found {
+					return true
+				}
 			}
 		}
 

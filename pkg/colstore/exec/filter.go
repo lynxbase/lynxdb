@@ -3,6 +3,7 @@ package exec
 import (
 	"bytes"
 
+	"github.com/lynxbase/lynxdb/pkg/colstore/variant"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
@@ -186,6 +187,32 @@ func (w *worker) decide(p *pred) verdict {
 // its path, holds the pattern. It decodes the values of every string column
 // that is not a constant and whose token filter admits the pattern, tests a
 // dictionary once per entry, and finds the rows of the values that match.
+// holds reports whether a value holds the pattern: a string as it is, a
+// variant in one of the strings inside it.
+func (w *worker) holds(p *pred, inside bool, value []byte) bool {
+	if !inside {
+		return p.pat.Match(value)
+	}
+	w.anyPat, w.anyHit = &p.pat, false
+	variant.ForEachString(value, w.anyString)
+
+	return w.anyHit
+}
+
+// holders appends the numbers of the values that hold the pattern.
+func (w *worker) holders(p *pred, inside bool, dst, offsets []uint32, data []byte) []uint32 {
+	if !inside {
+		return p.pat.AppendMatches(dst, offsets, data)
+	}
+	for i := 0; i+1 < len(offsets); i++ {
+		if w.holds(p, true, data[offsets[i]:offsets[i+1]]) {
+			dst = append(dst, uint32(i))
+		}
+	}
+
+	return dst
+}
+
 func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
 	m := w.mask(depth)
 	clear(m)
@@ -199,10 +226,13 @@ func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
 	}
 	for i := range cols {
 		ref := &cols[i]
-		if ref.Kind != vec.KindString || ref.Count == 0 || (ref.Const() && !p.pat.Match(ref.ConstBytes())) {
+		// A variant holds strings too: the elements of an array, the
+		// members of an object.
+		inside := ref.Kind == vec.KindVariant
+		if (ref.Kind != vec.KindString && !inside) || ref.Count == 0 || (!inside && ref.Const() && !p.pat.Match(ref.ConstBytes())) {
 			continue
 		}
-		if ref.Const() && ref.Count == w.rows {
+		if !inside && ref.Const() && ref.Count == w.rows {
 			return all, nil
 		}
 		if len(p.tokens) != 0 && !w.anyMay.Get(i) {
@@ -218,7 +248,7 @@ func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
 		w.decoded = true
 		switch c.Layout {
 		case vec.Const:
-			if !p.pat.Match(c.DictValue(0)) {
+			if !w.holds(p, inside, c.DictValue(0)) {
 				continue
 			}
 			if c.Valid == nil {
@@ -230,7 +260,7 @@ func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
 			hit = true
 		case vec.Dict:
 			entries := c.DictLen()
-			w.idx2 = p.pat.AppendMatches(w.idx2[:0], c.Offsets[:entries+1], c.Data)
+			w.idx2 = w.holders(p, inside, w.idx2[:0], c.Offsets[:entries+1], c.Data)
 			if len(w.idx2) == 0 {
 				continue
 			}
@@ -258,7 +288,7 @@ func (w *worker) evalAny(p *pred, depth int) (verdict, error) {
 			}
 			vec.MaskOr(m, m, other)
 		default:
-			w.idx2 = p.pat.AppendMatches(w.idx2[:0], c.Offsets[:ref.Count+1], c.Data)
+			w.idx2 = w.holders(p, inside, w.idx2[:0], c.Offsets[:ref.Count+1], c.Data)
 			if len(w.idx2) == 0 {
 				continue
 			}

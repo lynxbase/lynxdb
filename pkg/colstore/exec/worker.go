@@ -3,6 +3,7 @@ package exec
 import (
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
+	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 	"github.com/lynxbase/lynxdb/pkg/mem"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
@@ -52,6 +53,12 @@ type scratch struct {
 	idx2    []uint32
 	anyMay  vec.Bitmap
 	anyRows []uint32
+	// anyString tests one string inside a variant against anyPat and
+	// notes a match in anyHit; it is made once, so a value costs no
+	// closure.
+	anyString func(s []byte)
+	anyPat    *tokenfilter.Pattern
+	anyHit    bool
 
 	// outs holds the buffers of the computed nodes of scalar expressions,
 	// opers the operands of the nodes being computed and vals the values of
@@ -125,6 +132,9 @@ func newWorker(x *execution) *worker {
 		s.row.batch[i].reset()
 	}
 	w := &worker{scratch: s, q: q, x: x, arena: mem.NewArena()}
+	if s.anyString == nil {
+		s.anyString = func(v []byte) { s.anyHit = s.anyHit || s.anyPat.Match(v) }
+	}
 	w.sink.init(q)
 	if q.agg != nil {
 		w.agg.init(w)
