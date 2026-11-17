@@ -220,7 +220,7 @@ var cursorPool = mem.Pool[mergeCursor]{Reset: func(c *mergeCursor) bool {
 	}
 	c.part, c.key, c.times, c.refs, c.done, c.state = nil, nil, nil, nil, false, cursorBound
 	clear(c.cols)
-	c.blk.part, c.blk.data, c.blk.filter, c.blk.dir, c.blk.stats = nil, nil, nil, nil, nil
+	c.blk.part, c.blk.data, c.blk.dir, c.blk.stats = nil, nil, nil, nil
 	clear(c.outs)
 	clear(c.slots)
 	for i := range c.dense {

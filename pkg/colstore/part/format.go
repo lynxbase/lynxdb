@@ -1,28 +1,61 @@
 package part
 
-import "hash/crc32"
+import (
+	"hash/crc32"
+
+	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
+)
 
 // File layout:
 //
 //	header   magic, version
-//	blocks   each: column chunks, token filter
+//	blocks   each: column chunks; behind the last block of a filter group,
+//	         the group's token filters in stripes
 //	dirs     the column directory of every block
-//	footer   path names, sort key, block index, first keys, totals
+//	footer   path names, sort key, block index, filters, filter groups,
+//	         first keys, totals
 //	trailer  footer offset, footer length, footer checksum, version, magic
+//
+// A token's probe reads one bloom block of a filter, and which n-th of the
+// filter holds it depends on the token alone when n divides the filter's
+// bloom blocks. A group cuts each of its filters into as many pieces as it
+// has stripes and stores stripe after stripe, stripe k being piece k of
+// every filter in block order, so that one token's probes of the whole group
+// read one stripe. The bloom blocks fill pages of filterPage bytes, each
+// behind the checksum of its page, and a group of more than one page starts
+// on a page of the file, so that a probe reads one page of the file. A block
+// has one filter or several, each for a column of its own or for all the
+// columns that have none.
 const (
 	fileMagic     = 0x5450584c // "LXPT"
-	formatVersion = 5
+	formatVersion = 6
 
 	headerSize  = 8
 	trailerSize = 28
-	// rows, min time, max time, block offset, block length, filter offset,
-	// filter length, the directory's offset among the directories, its
-	// length and its checksum; column chunks and filter pages carry their
-	// own checksums.
+	// rows, min time, max time, block offset, block length, filter group,
+	// the first of the block's filters among the part's, the directory's
+	// offset among the directories, its length and its checksum; column
+	// chunks and filter pages carry their own checksums.
 	indexEntrySize = 52
-	// A filter is followed by one checksum per filterPage of its bytes, so
-	// a probe verifies the page it reads and not the whole filter.
+	// path id or noPath for the columns without a filter of their own,
+	// kind, three zero bytes, bloom blocks per stripe, those of the group's
+	// earlier filters.
+	filterEntrySize = 16
+	// offset and length of the group's stripes, and their number.
+	groupEntrySize = 20
+	// A filter page begins with its checksum, in the room of a bloom block,
+	// and holds pageBlocks bloom blocks; a probe verifies the page it reads
+	// and nothing else.
 	filterPage = 4096
+	pageBlocks = filterPage/tokenfilter.BlockBytes - 1
+	// A group takes blocks until their filters reach filterGroupBytes, the
+	// most a writer holds, and at most filterGroupBlocks. A page fault on a
+	// mapped file reads 64 KiB to either side by default, which a stripe is
+	// to fit in: filterGroupBytes over filterStripes is 48 KiB. Rounding to
+	// filterStripes bloom blocks adds 2 KiB to a filter on average.
+	filterGroupBlocks = 128
+	filterGroupBytes  = 6 << 20
+	filterStripes     = 128
 	// path id, kind, encoding, flags, a zero byte, value count, chunk
 	// offset, chunk length, chunk checksum, and the offset of the entry's
 	// statistics and constant value among those that follow the entries.

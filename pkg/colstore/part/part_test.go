@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/crc32"
 	"math"
 	"math/rand"
 	"reflect"
@@ -266,75 +267,137 @@ func TestBlockFindsEachColumnWithoutReadingTheOthers(t *testing.T) {
 }
 
 func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
+	// Groups of three blocks in four stripes of several pages each, the
+	// last group short.
+	const group, stripes, blocks = 3, 4, 8
 	var buf bytes.Buffer
 	w := NewWriter(&buf, Options{})
+	w.groupBlocks, w.stripes = group, stripes
 	batch := shred.NewBatch(shred.Options{})
-	docs := sampleDocs(400)
-	// Enough distinct tokens for a filter of several pages.
-	for i := 0; i < 8000; i++ {
-		docs = append(docs, fmt.Sprintf(`{"id":"request%dx"}`, i))
-	}
-	for _, d := range docs {
-		if err := batch.AddJSON([]byte(d), 5); err != nil {
+	var pieces [blocks]int
+	for i := 0; i < blocks; i++ {
+		docs := sampleDocs(200)
+		for k := 0; k < 9000+1500*i; k++ {
+			docs = append(docs, fmt.Sprintf(`{"id":"request%dx%d"}`, i, k))
+		}
+		batch.Reset()
+		for _, d := range docs {
+			if err := batch.AddJSON([]byte(d), 5); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := w.WriteBatch(batch); err != nil {
 			t.Fatal(err)
 		}
+		pieces[i] = len(tokenfilter.Append(nil, tokensOf(t, docs), stripes)) / tokenfilter.BlockBytes / stripes
 	}
-	if err := w.WriteBatch(batch); err != nil || w.Close() != nil {
-		t.Fatal("write failed")
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
 	}
 	data := buf.Bytes()
 	p, err := Open(data)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// Where every lookup reads, worked out from the layout: the stripes of
+	// a group follow its last block from the next page of the file on,
+	// each the pieces of its blocks in order, in pages of a checksum and
+	// pageBlocks bloom blocks.
+	type place struct{ group, page int }
+	type section struct{ off, size, stripe int }
+	var sections []section
+	var before [blocks]int
+	for first := 0; first < blocks; first += group {
+		last := min(first+group, blocks) - 1
+		stripe := 0
+		for i := first; i <= last; i++ {
+			before[i] = stripe
+			stripe += pieces[i]
+		}
+		e := p.index[last*indexEntrySize:]
+		off := int(binary.LittleEndian.Uint64(e[20:])) + int(binary.LittleEndian.Uint32(e[28:]))
+		pages := (stripes*stripe + pageBlocks - 1) / pageBlocks
+		if stripe < 3*pageBlocks {
+			t.Fatalf("a stripe of %d bloom blocks is too short to tell its pages apart", stripe)
+		}
+		off = (off + filterPage - 1) &^ (filterPage - 1)
+		sections = append(sections, section{off, (stripes*stripe + pages) * tokenfilter.BlockBytes, stripe})
+	}
+	r := rand.New(rand.NewSource(6))
+	hashes := make([]uint64, 400)
+	for i := range hashes {
+		hashes[i] = r.Uint64()
+	}
+	read := func(i int, h uint64) place {
+		stripe := tokenfilter.Block(h, stripes)
+		n := stripe*sections[i/group].stripe + before[i] + tokenfilter.Block(h, pieces[i]*stripes) - stripe*pieces[i]
+
+		return place{i / group, n / pageBlocks}
+	}
+	// lookups fails the test unless exactly the lookups that read the
+	// damaged place fail, and returns how many did.
+	lookups := func(damaged place) (failed int) {
+		var b Block
+		for i := 0; i < blocks; i++ {
+			if err := p.OpenBlock(i, &b); err != nil {
+				t.Fatalf("OpenBlock read the filter: %v", err)
+			}
+			for _, h := range hashes {
+				_, err := p.MayContainToken(i, h)
+				if _, berr := b.MayContainToken(h); berr != err {
+					t.Fatalf("block %d: the part and the block disagree: %v, %v", i, err, berr)
+				}
+				if want := read(i, h) == damaged; (err == ErrCorrupt) != want || (err != nil && err != ErrCorrupt) {
+					t.Fatalf("block %d reads %+v, damage at %+v: %v", i, read(i, h), damaged, err)
+				}
+				if err != nil {
+					failed++
+				}
+			}
+		}
+
+		return failed
+	}
+	if lookups(place{group: -1}) != 0 {
+		t.Fatal("lookups of an intact part failed")
+	}
+	total := 0
+	for trial := 0; trial < 150; trial++ {
+		g := r.Intn(len(sections))
+		sec := sections[g]
+		at := r.Intn(sec.size)
+		bit := byte(1) << r.Intn(8)
+		data[sec.off+at] ^= bit
+		total += lookups(place{g, at / filterPage})
+		data[sec.off+at] ^= bit
+	}
+	if total == 0 {
+		t.Fatal("no lookup read a damaged page")
+	}
+	// What fills the file up to the page a group starts on is zero.
+	for g, sec := range sections {
+		e := p.index[(min((g+1)*group, blocks)-1)*indexEntrySize:]
+		end := int(binary.LittleEndian.Uint64(e[20:])) + int(binary.LittleEndian.Uint32(e[28:]))
+		if pad := data[end:sec.off]; len(pad) >= filterPage || !bytes.Equal(pad, make([]byte, len(pad))) {
+			t.Fatalf("group %d: %d bytes before its page, not all zero", g, len(pad))
+		}
+	}
+
+	// Columns are read without their filters.
+	for _, sec := range sections {
+		data[sec.off+r.Intn(sec.size)] ^= 0x10
+	}
 	var b Block
-	if err := p.OpenBlock(0, &b); err != nil {
-		t.Fatal(err)
-	}
-	pages := (len(b.filter) + filterPage + 3) / (filterPage + 4)
-	size := len(b.filter) - 4*pages
-	if pages < 2 {
-		t.Fatalf("the filter must span several pages to test them apart, has %d bytes", size)
-	}
-	// One token per page, found by trying hashes.
-	probe := make([]uint64, pages)
-	for h, found := uint64(1), 0; found < pages; h += 0x9e3779b97f4a7c15 {
-		if page := tokenfilter.ProbeOffset(size, h) / filterPage; probe[page] == 0 {
-			probe[page] = h
-			found++
+	for i := 0; i < blocks; i++ {
+		if err := p.OpenBlock(i, &b); err != nil {
+			t.Fatal(err)
 		}
-	}
-	for page, h := range probe {
-		if _, err := p.MayContainToken(0, h); err != nil {
-			t.Fatalf("page %d of an intact filter: %v", page, err)
-		}
-	}
-	damaged := pages / 2
-	b.filter[damaged*filterPage+100] ^= 0x10
-	if err := p.OpenBlock(0, &b); err != nil {
-		t.Fatalf("OpenBlock read the filter: %v", err)
-	}
-	refs := b.Columns()
-	for j := range refs {
-		if err := b.Decode(&refs[j], new(vec.Column)); err != nil {
-			t.Fatalf("column %d: %v", j, err)
-		}
-	}
-	for page, h := range probe {
-		_, err := b.MayContainToken(h)
-		if _, perr := p.MayContainToken(0, h); perr != err {
-			t.Fatalf("page %d: the part and the block disagree: %v, %v", page, perr, err)
-		}
-		if want := page == damaged; (err == ErrCorrupt) != want || (err != nil && err != ErrCorrupt) {
-			t.Fatalf("page %d, damaged page %d: %v", page, damaged, err)
-		}
-	}
-	// A damaged checksum fails the probes of its own page only.
-	b.filter[damaged*filterPage+100] ^= 0x10
-	b.filter[size+4*(pages-1)] ^= 1
-	for page, h := range probe {
-		if _, err := b.MayContainToken(h); (err == ErrCorrupt) != (page == pages-1) {
-			t.Fatalf("page %d with the last checksum damaged: %v", page, err)
+		refs := b.Columns()
+		for j := range refs {
+			if err := b.Decode(&refs[j], new(vec.Column)); err != nil {
+				t.Fatalf("block %d column %d: %v", i, j, err)
+			}
 		}
 	}
 }
@@ -400,10 +463,18 @@ func corruptPartsFail(t *testing.T, opts Options) {
 	t.Helper()
 	var buf bytes.Buffer
 	w := NewWriter(&buf, opts)
+	// Two filter groups, the second short.
+	w.groupBlocks, w.stripes = 2, 8
 	batch := shred.NewBatch(shred.Options{})
-	for _, d := range sampleDocs(400) {
+	for i, d := range sampleDocs(400) {
 		if err := batch.AddJSON([]byte(d), 5); err != nil {
 			t.Fatal(err)
+		}
+		if i%150 == 149 {
+			if err := w.WriteBatch(batch); err != nil {
+				t.Fatal(err)
+			}
+			batch.Reset()
 		}
 	}
 	if err := w.WriteBatch(batch); err != nil || w.Close() != nil {
@@ -414,6 +485,10 @@ func corruptPartsFail(t *testing.T, opts Options) {
 	decodeAll := func(data []byte) (failed bool) {
 		p, err := Open(data)
 		if err != nil {
+			if err != ErrCorrupt {
+				t.Fatalf("Open: %v", err)
+			}
+
 			return true
 		}
 		var b Block
@@ -421,8 +496,14 @@ func corruptPartsFail(t *testing.T, opts Options) {
 			if err := p.OpenBlock(i, &b); err != nil {
 				return true
 			}
-			if _, err := b.MayContainToken(1); err != nil {
-				failed = true
+			// One lookup in every bloom block of the filter.
+			n := uint64(filterSize(p, i))
+			for k := uint64(0); k < n; k++ {
+				if _, err := b.MayContainToken((k<<32 + n - 1) / n << 32); err == ErrCorrupt {
+					failed = true
+				} else if err != nil {
+					t.Fatalf("block %d: %v", i, err)
+				}
 			}
 			refs := b.Columns()
 			for j := range refs {
@@ -449,6 +530,47 @@ func corruptPartsFail(t *testing.T, opts Options) {
 		bad[at] ^= byte(1 + r.Intn(255))
 		if !decodeAll(bad) {
 			t.Fatalf("flipping byte %d of %d went unnoticed", at, len(bad))
+		}
+	}
+
+	// Garbage in what locates the filters, under a checksum that vouches
+	// for it, fails Open or the lookups it misleads.
+	p, err := Open(good)
+	if err != nil || len(p.groups) != 2 {
+		t.Fatalf("%d filter groups: %v", len(p.groups), err)
+	}
+	index := bytes.Index(good, p.index)
+	footer := int(binary.LittleEndian.Uint64(good[len(good)-trailerSize:]))
+	// The counts of filters and of groups take a byte each.
+	table := index + len(p.index) + 2
+	var places []int
+	for i := 0; i < p.NumBlocks(); i++ {
+		for at := 32; at < 40; at++ {
+			places = append(places, index+i*indexEntrySize+at)
+		}
+	}
+	for at := table - 2; at < table+len(p.filters)+len(p.groups)*groupEntrySize; at++ {
+		places = append(places, at)
+	}
+	for trial := 0; trial < 3000; trial++ {
+		bad := append([]byte(nil), good...)
+		var changed []int
+		for n := 1 + r.Intn(3); n > 0; n-- {
+			at := places[r.Intn(len(places))]
+			changed = append(changed, at-index)
+			switch r.Intn(3) {
+			case 0:
+				bad[at] = byte(r.Intn(256))
+			case 1:
+				bad[at] ^= 1 << r.Intn(8)
+			default:
+				bad[at] = [...]byte{0, 1, 0x7f, 0x80, 0xff}[r.Intn(5)]
+			}
+		}
+		sum := crc32.Checksum(bad[footer:len(bad)-trailerSize], castagnoli)
+		binary.LittleEndian.PutUint32(bad[len(bad)-trailerSize+16:], sum)
+		if !bytes.Equal(bad, good) && !decodeAll(bad) {
+			t.Fatalf("trial %d: garbage at bytes %v of the index, which the filters follow at %d, went unnoticed", trial, changed, len(p.index)+2)
 		}
 	}
 }

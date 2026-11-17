@@ -205,12 +205,13 @@ func TestMergeCopiesBlocksOfSourcesThatDoNotInterleave(t *testing.T) {
 		t.Fatalf("%d of %d blocks copied without filters", n, total)
 	}
 	sameRows(t, bare, want)
+	if len(bare.groups) != 0 || bare.Size() >= got.Size() {
+		t.Fatalf("%d filter groups kept in %d bytes, %d with filters", len(bare.groups), bare.Size(), got.Size())
+	}
+	absent := tokenfilter.AppendHashes(nil, []byte("nosuchtokenanywhere"))[0]
 	for i := 0; i < bare.NumBlocks(); i++ {
-		if err := bare.OpenBlock(i, &b); err != nil {
-			t.Fatal(err)
-		}
-		if len(b.filter) != 0 {
-			t.Fatalf("block %d kept a filter of %d bytes", i, len(b.filter))
+		if may, err := bare.MayContainToken(i, absent); !may || err != nil {
+			t.Fatalf("block %d without a filter excludes a token: %v, %v", i, may, err)
 		}
 	}
 

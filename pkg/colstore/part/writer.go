@@ -64,6 +64,25 @@ type Writer struct {
 	maxT     int64
 	// copied counts the blocks taken over from other parts as stored.
 	copied int
+	// groups holds the offset, length and stripe count of every filter
+	// group written.
+	groups []byte
+	// filters holds an entry for every filter of the part, the last
+	// groupFilters of them for the group being built. That group has
+	// grouped blocks, whose filters take stripe bloom blocks in every
+	// stripe; a group has stripes stripes and closes at groupBlocks blocks
+	// or groupBytes of filters.
+	filters      []byte
+	groupFilters int
+	grouped      int
+	stripe       uint32
+	groupBlocks  int
+	groupBytes   int
+	stripes      int
+	// verified marks the filter pages of group verifiedGroup, a group of
+	// a part being merged, that copyBlock has checked.
+	verified      vec.Bitmap
+	verifiedGroup *filterGroup
 	// trials holds, per path and kind, how the values of a flat column are
 	// encoded.
 	trials []trial
@@ -111,6 +130,8 @@ type writerBuffers struct {
 	dict      dictBuilder
 	tokens    tokenfilter.Set
 	hashes    []uint64
+	// blooms holds the filters of the group being built, end to end.
+	blooms []byte
 }
 
 // maxWriterBytes bounds the block and compression buffers a pooled
@@ -121,7 +142,7 @@ var writerPool = mem.Pool[writerBuffers]{Reset: func(b *writerBuffers) bool {
 	// Directory entries alias the values of the last batch.
 	clear(b.ents[:cap(b.ents)])
 
-	return cap(b.block)+cap(b.e.tmp)+cap(b.e.zbuf)+cap(b.dictBytes) <= maxWriterBytes
+	return cap(b.block)+cap(b.e.tmp)+cap(b.e.zbuf)+cap(b.dictBytes)+cap(b.blooms) <= maxWriterBytes
 }}
 
 // errClosed reports a write to a writer after Close.
@@ -168,6 +189,9 @@ func (w *Writer) Reset(out io.Writer, opts Options) {
 	clear(w.ids)
 	w.index, w.dirs, w.keys, w.lastKey, w.keyStats = w.index[:0], w.dirs[:0], w.keys[:0], w.lastKey[:0], w.keyStats[:0]
 	w.rows, w.raw, w.minT, w.maxT = 0, 0, 0, 0
+	w.groups, w.filters, w.blooms = w.groups[:0], w.filters[:0], w.blooms[:0]
+	w.groupFilters, w.grouped, w.stripe, w.verifiedGroup = 0, 0, 0, nil
+	w.groupBlocks, w.groupBytes, w.stripes = filterGroupBlocks, filterGroupBytes, filterStripes
 	w.blobs.codec, w.blobs.level = CodecZstd, opts.Level
 	w.values.codec, w.values.level = opts.Codec, opts.Level
 	w.pathID(TimePath)
@@ -229,14 +253,6 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 		return a.kind < b.kind
 	})
 
-	filterOff := len(w.block)
-	if !w.opts.NoTokenFilter {
-		w.block = tokenfilter.Append(w.block, w.tokens.Keys(), 1)
-		for at, end := filterOff, len(w.block); at < end; at += filterPage {
-			sum := crc32.Checksum(w.block[at:min(at+filterPage, end)], castagnoli)
-			w.block = binary.LittleEndian.AppendUint32(w.block, sum)
-		}
-	}
 	// The directory is built at the end of the block buffer and moved to
 	// the part's directory section, which is written after the last block.
 	blockLen := len(w.block)
@@ -249,8 +265,12 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	binary.LittleEndian.PutUint64(entry[12:], uint64(maxT))
 	binary.LittleEndian.PutUint64(entry[20:], w.off)
 	binary.LittleEndian.PutUint32(entry[28:], uint32(blockLen))
-	binary.LittleEndian.PutUint32(entry[32:], uint32(filterOff))
-	binary.LittleEndian.PutUint32(entry[36:], uint32(blockLen-filterOff))
+	if !w.opts.NoTokenFilter {
+		w.startFilters(entry[:])
+		start := len(w.blooms)
+		w.blooms = tokenfilter.Append(w.blooms, w.tokens.Keys(), w.stripes)
+		w.addFilter(noPath, 0, (len(w.blooms)-start)/tokenfilter.BlockBytes)
+	}
 	binary.LittleEndian.PutUint32(entry[40:], uint32(len(w.dirs)))
 	binary.LittleEndian.PutUint32(entry[44:], uint32(len(dir)))
 	binary.LittleEndian.PutUint32(entry[48:], crc32.Checksum(dir, castagnoli))
@@ -274,8 +294,86 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	w.rows += uint64(rows)
 	w.raw += uint64(b.Bytes)
 	w.write(w.block)
+	w.closeGroup(false)
 
 	return w.err
+}
+
+// startFilters names in a block's index entry the group being built and the
+// filter that the next call of addFilter records.
+func (w *Writer) startFilters(entry []byte) {
+	binary.LittleEndian.PutUint32(entry[32:], uint32(len(w.groups)/groupEntrySize))
+	binary.LittleEndian.PutUint32(entry[36:], uint32(len(w.filters)/filterEntrySize))
+	w.grouped++
+}
+
+// addFilter records the filter of blocks bloom blocks that was appended to
+// w.blooms as the one of a column of the block being written, or with noPath
+// as the one of its columns that have none.
+func (w *Writer) addFilter(path uint32, kind vec.Kind, blocks int) {
+	pieces := uint32(blocks / w.stripes)
+	w.filters = binary.LittleEndian.AppendUint32(w.filters, path)
+	w.filters = append(w.filters, byte(kind), 0, 0, 0)
+	w.filters = binary.LittleEndian.AppendUint32(w.filters, pieces)
+	w.filters = binary.LittleEndian.AppendUint32(w.filters, w.stripe)
+	w.stripe += pieces
+	w.groupFilters++
+}
+
+// groupFlush is the size from which closeGroup hands pages on to the file.
+const groupFlush = 1 << 20
+
+var filterPad [filterPage]byte
+
+// closeGroup writes the filters of the group being built, striped, once the
+// group is full or, with last set, whatever it holds.
+func (w *Writer) closeGroup(last bool) {
+	if w.grouped == 0 || (!last && w.grouped < w.groupBlocks && len(w.blooms) < w.groupBytes) {
+		return
+	}
+	blocks := int(w.stripe) * w.stripes
+	size := (blocks + (blocks+pageBlocks-1)/pageBlocks) * tokenfilter.BlockBytes
+	if size > filterPage {
+		w.write(filterPad[:-w.off&(filterPage-1)])
+	}
+	w.groups = binary.LittleEndian.AppendUint64(w.groups, w.off)
+	w.groups = binary.LittleEndian.AppendUint64(w.groups, uint64(size))
+	w.groups = binary.LittleEndian.AppendUint32(w.groups, uint32(w.stripes))
+
+	entries := w.filters[len(w.filters)-w.groupFilters*filterEntrySize:]
+	pages, placed := w.block[:0], 0
+	for k := 0; k < w.stripes; k++ {
+		at := 0
+		for e := entries; len(e) > 0; e = e[filterEntrySize:] {
+			piece := int(binary.LittleEndian.Uint32(e[8:])) * tokenfilter.BlockBytes
+			src := w.blooms[at+k*piece : at+(k+1)*piece]
+			at += w.stripes * piece
+			for len(src) > 0 {
+				if placed%pageBlocks == 0 {
+					if len(pages) >= groupFlush {
+						w.writePages(pages)
+						pages = pages[:0]
+					}
+					pages = append(pages, filterPad[:tokenfilter.BlockBytes]...)
+				}
+				n := min(len(src), (pageBlocks-placed%pageBlocks)*tokenfilter.BlockBytes)
+				pages = append(pages, src[:n]...)
+				src, placed = src[n:], placed+n/tokenfilter.BlockBytes
+			}
+		}
+	}
+	w.writePages(pages)
+	w.block, w.blooms, w.groupFilters, w.grouped, w.stripe = pages[:0], w.blooms[:0], 0, 0, 0
+}
+
+// writePages writes filter pages after putting the checksum of each at its
+// start.
+func (w *Writer) writePages(pages []byte) {
+	for at := 0; at < len(pages); at += filterPage {
+		page := pages[at:min(at+filterPage, len(pages))]
+		binary.LittleEndian.PutUint32(page, crc32.Checksum(page[4:], castagnoli))
+	}
+	w.write(pages)
 }
 
 // copies reports whether block i of src can become a block of w as it is
@@ -283,10 +381,21 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 // that asks for the compact level or another codec than the default one
 // encodes every block itself.
 func (w *Writer) copies(src *Part, i int) bool {
-	e := src.index[i*indexEntrySize:]
-
 	return w.opts.Level != LevelCompact && w.opts.Codec == CodecZstd &&
-		(w.opts.NoTokenFilter || binary.LittleEndian.Uint32(e[36:]) != 0)
+		(w.opts.NoTokenFilter || (len(src.groups) > 0 && w.stripesDivide(src, i)))
+}
+
+// stripesDivide reports whether every filter of block i of src can be cut
+// into the stripes of w.
+func (w *Writer) stripesDivide(src *Part, i int) bool {
+	g, f, end := src.blockFilters(i)
+	for ; f < end; f++ {
+		if src.filterBlocks(g, f)%w.stripes != 0 {
+			return false
+		}
+	}
+
+	return true
 }
 
 // copyBlock appends block i of src without decoding its columns. pathMap
@@ -305,7 +414,7 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 	if src.readAhead != nil {
 		src.readAhead(int(start), len(data))
 	}
-	filterOff, dirOff := binary.LittleEndian.Uint32(e[32:]), binary.LittleEndian.Uint32(e[40:])
+	dirOff := binary.LittleEndian.Uint32(e[40:])
 	dir := src.dirs[dirOff : dirOff+binary.LittleEndian.Uint32(e[44:])]
 	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
 		return ErrCorrupt
@@ -316,10 +425,7 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 	}
 	entries := size + int(n)*dirEntrySize
 
-	w.block = append(w.block[:0], data[:filterOff]...)
-	if !w.opts.NoTokenFilter {
-		w.block = append(w.block, data[filterOff:]...)
-	}
+	w.block = append(w.block[:0], data...)
 	newDir := len(w.block)
 	w.block = append(w.block, dir[:entries]...)
 	// Path ids are per part, and entries stay ordered by id and kind.
@@ -345,11 +451,37 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 	w.block = append(w.block, dir[entries:]...)
 
 	var entry [indexEntrySize]byte
+	if !w.opts.NoTokenFilter {
+		g, first, end := src.blockFilters(i)
+		// The pages of the source are checked here because the group
+		// being built gets checksums of its own.
+		if w.verifiedGroup != g {
+			w.verifiedGroup = g
+			w.verified = grow(w.verified, vec.BitmapWords(g.pages()))
+			clear(w.verified)
+		}
+		start := len(w.blooms)
+		for f := first; f < end; f++ {
+			path, ok := binary.LittleEndian.Uint32(src.filters[f*filterEntrySize:]), false
+			if w.blooms, ok = src.appendFilter(w.blooms, g, f, w.verified); !ok ||
+				(path != noPath && (uint64(path) >= uint64(len(pathMap)) || pathMap[path] == noPath)) {
+				w.blooms = w.blooms[:start]
+
+				return ErrCorrupt
+			}
+		}
+		w.startFilters(entry[:])
+		for f := first; f < end; f++ {
+			path := binary.LittleEndian.Uint32(src.filters[f*filterEntrySize:])
+			if path != noPath {
+				path = pathMap[path]
+			}
+			w.addFilter(path, vec.Kind(src.filters[f*filterEntrySize+4]), src.filterBlocks(g, f))
+		}
+	}
 	copy(entry[:20], e[:20])
 	binary.LittleEndian.PutUint64(entry[20:], w.off)
 	binary.LittleEndian.PutUint32(entry[28:], uint32(newDir))
-	binary.LittleEndian.PutUint32(entry[32:], filterOff)
-	binary.LittleEndian.PutUint32(entry[36:], uint32(newDir)-filterOff)
 	binary.LittleEndian.PutUint32(entry[40:], uint32(len(w.dirs)))
 	binary.LittleEndian.PutUint32(entry[44:], uint32(len(w.block)-newDir))
 	binary.LittleEndian.PutUint32(entry[48:], crc32.Checksum(w.block[newDir:], castagnoli))
@@ -385,6 +517,7 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 	w.raw += uint64(raw)
 	w.copied++
 	w.write(w.block)
+	w.closeGroup(false)
 
 	return w.err
 }
@@ -828,8 +961,13 @@ func (w *Writer) Close() error {
 			footer = binary.AppendUvarint(footer, uint64(w.ids[path]))
 		}
 	}
+	w.closeGroup(true)
 	footer = binary.AppendUvarint(footer, uint64(len(w.index)/indexEntrySize))
 	footer = append(footer, w.index...)
+	footer = binary.AppendUvarint(footer, uint64(len(w.filters)/filterEntrySize))
+	footer = binary.AppendUvarint(footer, uint64(len(w.groups)/groupEntrySize))
+	footer = append(footer, w.filters...)
+	footer = append(footer, w.groups...)
 	footer = binary.AppendUvarint(footer, w.off)
 	footer = binary.AppendUvarint(footer, uint64(len(w.dirs)))
 	w.write(w.dirs)
@@ -854,7 +992,7 @@ func (w *Writer) Close() error {
 	binary.LittleEndian.PutUint32(trailer[24:], fileMagic)
 	w.write(trailer[:])
 	writerPool.Put(w.writerBuffers)
-	w.writerBuffers = nil
+	w.writerBuffers, w.verifiedGroup = nil, nil
 	err := w.err
 	if err == nil {
 		w.err = errClosed

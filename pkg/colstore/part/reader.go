@@ -22,6 +22,11 @@ type Part struct {
 	// per block.
 	dirs    []byte
 	dirsOff int
+	// filters holds an entry for every token filter, block after block,
+	// and groups locates them; every block names its group and its first
+	// filter, and a part without filters has neither.
+	filters []byte
+	groups  []filterGroup
 	// readAhead, when set, is told which bytes of data are about to be
 	// read.
 	readAhead func(off, n int)
@@ -45,6 +50,19 @@ type Part struct {
 	MinTime int64
 	MaxTime int64
 }
+
+// filterGroup locates the token filters of a run of blocks: size bytes at
+// off, which hold stripes stripes of stripe bloom blocks each.
+type filterGroup struct {
+	off     uint64
+	size    uint64
+	stripes uint64
+	stripe  uint64
+}
+
+// maxFilterBlocks bounds the bloom blocks of one filter so that scaling a
+// hash to them stays within 64 bits.
+const maxFilterBlocks = 1 << 32
 
 // Open validates the footer of a part held in data.
 func Open(data []byte) (*Part, error) {
@@ -96,11 +114,34 @@ func Open(data []byte) (*Part, error) {
 		return nil, ErrCorrupt
 	}
 	p.index = r.bytes(nBlocks * indexEntrySize)
+	nFilters, nGroups := r.uvarint(), r.uvarint()
+	if nFilters > uint64(len(footer))/filterEntrySize || nGroups > nBlocks || (nFilters > 0) != (nGroups > 0) {
+		return nil, ErrCorrupt
+	}
+	p.filters = r.bytes(nFilters * filterEntrySize)
+	groups := r.bytes(nGroups * groupEntrySize)
 	dirsOff, dirsLen := r.uvarint(), r.uvarint()
 	if r.bad || dirsOff < headerSize || dirsOff > off || dirsLen > off-dirsOff {
 		return nil, ErrCorrupt
 	}
 	p.dirs, p.dirsOff = data[dirsOff:dirsOff+dirsLen], int(dirsOff)
+	p.groups = make([]filterGroup, nGroups)
+	for g, end := 0, uint64(headerSize); g < len(p.groups); g++ {
+		e := groups[g*groupEntrySize:]
+		start, size := binary.LittleEndian.Uint64(e), binary.LittleEndian.Uint64(e[8:])
+		stripes := uint64(binary.LittleEndian.Uint32(e[16:]))
+		// Every page spends the room of one bloom block on its checksum
+		// and holds at least one bloom block.
+		slots, pages := size/tokenfilter.BlockBytes, (size+filterPage-1)/filterPage
+		blocks := slots - pages
+		if start < end || start > dirsOff || size > dirsOff-start || size%tokenfilter.BlockBytes != 0 ||
+			slots <= pages || (blocks+pageBlocks-1)/pageBlocks != pages ||
+			stripes == 0 || blocks%stripes != 0 || blocks >= maxFilterBlocks {
+			return nil, ErrCorrupt
+		}
+		end = start + size
+		p.groups[g] = filterGroup{off: start, size: size, stripes: stripes, stripe: blocks / stripes}
+	}
 	if p.ordered {
 		p.firstKeys = make([][]byte, 0, nBlocks)
 		for i := uint64(0); i < nBlocks; i++ {
@@ -118,15 +159,45 @@ func Open(data []byte) (*Part, error) {
 	if r.bad || len(p.paths) == 0 || p.paths[0] != TimePath {
 		return nil, ErrCorrupt
 	}
+	// The filters of a group's blocks follow one another in every stripe
+	// and fill it; group, filter and filled walk them to check that.
+	group, filter, filled := 0, 0, uint64(0)
 	for i := 0; i < p.NumBlocks(); i++ {
 		e := p.index[i*indexEntrySize:]
 		start, size := binary.LittleEndian.Uint64(e[20:]), uint64(binary.LittleEndian.Uint32(e[28:]))
-		filterOff, filterLen := uint64(binary.LittleEndian.Uint32(e[32:])), uint64(binary.LittleEndian.Uint32(e[36:]))
 		dirOff, dirLen := uint64(binary.LittleEndian.Uint32(e[40:])), uint64(binary.LittleEndian.Uint32(e[44:]))
 		if start < headerSize || start > dirsOff || size > dirsOff-start ||
-			filterOff+filterLen != size || dirOff > dirsLen || dirLen > dirsLen-dirOff {
+			dirOff > dirsLen || dirLen > dirsLen-dirOff {
 			return nil, ErrCorrupt
 		}
+		if len(p.groups) == 0 {
+			continue
+		}
+		if filled == p.groups[group].stripe && group+1 < len(p.groups) {
+			group, filled = group+1, 0
+		}
+		g, end := &p.groups[group], len(p.filters)/filterEntrySize
+		if len(e) > indexEntrySize {
+			end = min(end, int(binary.LittleEndian.Uint32(e[indexEntrySize+36:])))
+		}
+		if int(binary.LittleEndian.Uint32(e[32:])) != group || int(binary.LittleEndian.Uint32(e[36:])) != filter || end <= filter {
+			return nil, ErrCorrupt
+		}
+		for ; filter < end; filter++ {
+			f := p.filters[filter*filterEntrySize:]
+			path, pieces := binary.LittleEndian.Uint32(f), uint64(binary.LittleEndian.Uint32(f[8:]))
+			kind := binary.LittleEndian.Uint32(f[4:])
+			own := uint64(path) < uint64(len(p.paths)) && (kind == uint32(vec.KindString) || kind == uint32(vec.KindVariant))
+			if (!own && (path != noPath || kind != 0)) || pieces == 0 ||
+				uint64(binary.LittleEndian.Uint32(f[12:])) != filled || pieces > g.stripe-filled {
+				return nil, ErrCorrupt
+			}
+			filled += pieces
+		}
+	}
+	if len(p.groups) > 0 && (group != len(p.groups)-1 || filled != p.groups[group].stripe ||
+		filter != len(p.filters)/filterEntrySize) {
+		return nil, ErrCorrupt
 	}
 
 	return p, nil
@@ -263,13 +334,10 @@ type Block struct {
 	MinTime int64
 	MaxTime int64
 
-	part   *Part
-	index  int
-	start  int // offset of data in the part
-	data   []byte
-	chunks uint32 // size of the column chunks at the start of data
-	// filter is the token filter followed by its page checksums.
-	filter []byte
+	part  *Part
+	index int // of the block in the part
+	start int // offset of data in the part
+	data  []byte
 	// dir holds one entry per column, ordered by path id and kind, and stats
 	// the statistics and constant values the entries point to.
 	dir   []byte
@@ -288,9 +356,7 @@ func (p *Part) OpenBlock(i int, b *Block) error {
 	start := binary.LittleEndian.Uint64(e[20:])
 	b.part, b.index, b.start = p, i, int(start)
 	b.data = p.data[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
-	filterOff, dirOff := binary.LittleEndian.Uint32(e[32:]), binary.LittleEndian.Uint32(e[40:])
-	b.chunks = filterOff
-	b.filter = b.data[filterOff:]
+	dirOff := binary.LittleEndian.Uint32(e[40:])
 	dir := p.dirs[dirOff : dirOff+binary.LittleEndian.Uint32(e[44:])]
 	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
 		return ErrCorrupt
@@ -366,7 +432,7 @@ func (b *Block) col(i int) *ColumnRef {
 	if c.enc == encConst && c.Kind != vec.KindInt {
 		c.constVal = r.bytes(r.uvarint())
 	}
-	if r.bad || c.Count <= 0 || c.Count > b.Rows || uint64(c.off)+uint64(c.length) > uint64(b.chunks) ||
+	if r.bad || c.Count <= 0 || c.Count > b.Rows || uint64(c.off)+uint64(c.length) > uint64(len(b.data)) ||
 		int(c.PathID) >= len(b.part.paths) || (c.flags&flagSparse == 0) != (c.Count == b.Rows) {
 		*c = ColumnRef{PathID: c.PathID, Kind: c.Kind, bad: true}
 	}
@@ -413,36 +479,93 @@ func (b *Block) Column(pathID uint32, kind vec.Kind) (*ColumnRef, bool) {
 // token with this hash, which is always true for a block written without a
 // filter, and fails when the filter is damaged.
 func (b *Block) MayContainToken(hash uint64) (bool, error) {
-	return filterMayContain(b.filter, hash)
+	return b.part.MayContainToken(b.index, hash)
 }
 
 // MayContainToken is Block.MayContainToken for block i, without opening it.
 func (p *Part) MayContainToken(i int, hash uint64) (bool, error) {
-	e := p.index[i*indexEntrySize:]
-	start := binary.LittleEndian.Uint64(e[20:]) + uint64(binary.LittleEndian.Uint32(e[32:]))
-
-	return filterMayContain(p.data[start:start+uint64(binary.LittleEndian.Uint32(e[36:]))], hash)
-}
-
-// filterMayContain probes a filter stored with its page checksums, verifying
-// the one page the probe reads.
-func filterMayContain(region []byte, hash uint64) (bool, error) {
-	if len(region) == 0 {
+	if len(p.groups) == 0 {
 		return true, nil
 	}
-	pages := (len(region) + filterPage + 3) / (filterPage + 4)
-	size := len(region) - 4*pages
-	if size <= 0 || (size+filterPage-1)/filterPage != pages {
-		return false, ErrCorrupt
-	}
-	filter, sums := region[:size], region[size:]
-	page := tokenfilter.ProbeOffset(size, hash) / filterPage
-	read := filter[page*filterPage : min((page+1)*filterPage, size)]
-	if crc32.Checksum(read, castagnoli) != binary.LittleEndian.Uint32(sums[4*page:]) {
-		return false, ErrCorrupt
+	g, f, end := p.blockFilters(i)
+	// Filters of one block lie side by side, so most share a page.
+	for sound := ^uint64(0); f < end; f++ {
+		block, page, pageEnd := p.probe(g, f, hash)
+		if page != sound {
+			if crc32.Checksum(p.data[page+4:pageEnd], castagnoli) != binary.LittleEndian.Uint32(p.data[page:]) {
+				return false, ErrCorrupt
+			}
+			sound = page
+		}
+		if tokenfilter.BlockMayContain(p.data[block:], hash) {
+			return true, nil
+		}
 	}
 
-	return tokenfilter.MayContain(filter, hash), nil
+	return false, nil
+}
+
+// blockFilters returns the filter group of block i and the range of its
+// filters among the part's.
+func (p *Part) blockFilters(i int) (g *filterGroup, first, end int) {
+	e := p.index[i*indexEntrySize:]
+	end = len(p.filters) / filterEntrySize
+	if len(e) > indexEntrySize {
+		end = int(binary.LittleEndian.Uint32(e[indexEntrySize+36:]))
+	}
+
+	return &p.groups[binary.LittleEndian.Uint32(e[32:])], int(binary.LittleEndian.Uint32(e[36:])), end
+}
+
+// probe locates what a lookup of hash in filter f of group g reads, as
+// offsets in the part's data: the bloom block and the page it lies in, which
+// begins with its checksum.
+func (p *Part) probe(g *filterGroup, f int, hash uint64) (block, page, end uint64) {
+	e := p.filters[f*filterEntrySize:]
+	pieces, before := uint64(binary.LittleEndian.Uint32(e[8:])), uint64(binary.LittleEndian.Uint32(e[12:]))
+	stripe := uint64(tokenfilter.Block(hash, int(g.stripes)))
+	// The bloom block's place in the filter, less the pieces of the
+	// stripes before its own, is its place in the piece.
+	n := stripe*g.stripe + before + uint64(tokenfilter.Block(hash, int(pieces*g.stripes))) - stripe*pieces
+	at := n / pageBlocks * filterPage
+	page = g.off + at
+
+	return page + (1+n%pageBlocks)*tokenfilter.BlockBytes, page, g.off + min(at+filterPage, g.size)
+}
+
+// filterBlocks returns the number of bloom blocks of filter f of group g.
+func (p *Part) filterBlocks(g *filterGroup, f int) int {
+	return int(uint64(binary.LittleEndian.Uint32(p.filters[f*filterEntrySize+8:])) * g.stripes)
+}
+
+// pages returns the number of pages of the group.
+func (g *filterGroup) pages() int { return int((g.size + filterPage - 1) / filterPage) }
+
+// appendFilter appends filter f of group g, put together from its pieces,
+// to dst and reports whether the pages it read match their checksums.
+// verified marks the pages of the group that are known to match.
+func (p *Part) appendFilter(dst []byte, g *filterGroup, f int, verified vec.Bitmap) ([]byte, bool) {
+	e := p.filters[f*filterEntrySize:]
+	pieces, before := uint64(binary.LittleEndian.Uint32(e[8:])), uint64(binary.LittleEndian.Uint32(e[12:]))
+	group := p.data[g.off : g.off+g.size]
+	for k := uint64(0); k < g.stripes; k++ {
+		for n, end := k*g.stripe+before, k*g.stripe+before+pieces; n < end; {
+			page := n / pageBlocks
+			read := group[page*filterPage : min((page+1)*filterPage, g.size)]
+			if !verified.Get(int(page)) {
+				if crc32.Checksum(read[4:], castagnoli) != binary.LittleEndian.Uint32(read) {
+					return dst, false
+				}
+				verified.Set(int(page))
+			}
+			from := (1 + n%pageBlocks) * tokenfilter.BlockBytes
+			take := min(end-n, pageBlocks-n%pageBlocks)
+			dst = append(dst, read[from:from+take*tokenfilter.BlockBytes]...)
+			n += take
+		}
+	}
+
+	return dst, true
 }
 
 func grow[T any](s []T, n int) []T {
