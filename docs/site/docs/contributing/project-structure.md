@@ -122,10 +122,6 @@ The iterator interface (`Init`, `Next`, `Close`) and the operators: row scans, f
 
 Compiles IR expressions to bytecode (`ir_compiler.go`) and runs them on a fixed 256-slot stack, with native implementations of every function in the IR registry.
 
-### `pkg/engine/unpack/` -- Log Format Parsers
-
-Field extractors for common log formats (combined, syslog, docker, JSON, logfmt, key=value, CEF, LEEF, W3C, and others), used when log text becomes events, in pipe mode and in raw ingest.
-
 ## `pkg/` -- Server and Ingest
 
 ### `pkg/api/rest/` -- HTTP API
@@ -147,9 +143,7 @@ pkg/ingest/
 | Package | Purpose |
 |---------|---------|
 | `pkg/event` | The `Event` type and typed `Value` |
-| `pkg/model` | Shared types between layers |
 | `pkg/config` | Configuration cascade (flags > env > file > defaults), validation, hot reload |
-| `pkg/memgov` | Memory accounts of the row operators and memory exhaustion errors |
 | `pkg/stats` | Query statistics for the CLI |
 | `pkg/auth` | API keys, credential files, TLS helpers |
 | `pkg/client` | Typed Go client for the REST API, used by the CLI |
