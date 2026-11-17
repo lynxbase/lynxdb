@@ -53,7 +53,7 @@ Send events in batches rather than one request per event. For the CLI, the batch
 lynxdb ingest huge.log --batch-size 10000  # Default: 5000
 ```
 
-Over HTTP, a request body may be up to `ingest.max_body_size` (default `100mb`). Shippers that compress their bodies are bounded by `ingest.limits.max_compressed_body_bytes` and `ingest.limits.max_decompressed_body_bytes`.
+Over HTTP, a body sent to `/api/v1/ingest` or `/api/v1/ingest/raw` may be up to `ingest.max_body_size` (default `100mb`), compressed or decompressed. The shipper routes (Elasticsearch bulk, Splunk HEC, OTLP) are also bounded by `ingest.limits.max_compressed_body_bytes` (default `32mb`) and `ingest.limits.max_decompressed_body_bytes` (default `256mb`).
 
 ### Flush Interval
 
