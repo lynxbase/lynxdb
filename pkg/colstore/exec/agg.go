@@ -89,12 +89,22 @@ type aggScratch struct {
 	lglobal []uint32
 }
 
-func (s *aggScratch) held() int {
-	n := 4*(cap(s.gid)+cap(s.gid2)+cap(s.idx2)+cap(s.hist)+cap(s.cache)+cap(s.lends)+cap(s.lrows)+cap(s.lglobal)) +
-		2*(cap(s.codes)+cap(s.tmp)) + cap(s.key) + cap(s.rec) + cap(s.lkeys) +
-		8*(cap(s.dense)+cap(s.fl)+cap(s.lhash)+cap(s.lwords))
+// empty truncates every buffer, so that held counts the ones a query fills.
+func (s *aggScratch) empty() {
+	s.gid, s.gid2, s.idx2, s.hist, s.cache = s.gid[:0], s.gid2[:0], s.idx2[:0], s.hist[:0], s.cache[:0]
+	s.codes, s.tmp, s.key, s.rec, s.dense, s.fl = s.codes[:0], s.tmp[:0], s.key[:0], s.rec[:0], s.dense[:0], s.fl[:0]
+	s.lkeys, s.lends, s.lrows, s.lhash, s.lwords, s.lglobal = s.lkeys[:0], s.lends[:0], s.lrows[:0], s.lhash[:0], s.lwords[:0], s.lglobal[:0]
 	for i := range s.parts {
-		n += 8*cap(s.parts[i].buf) + cap(s.parts[i].vbuf)
+		s.parts[i].buf, s.parts[i].vbuf = s.parts[i].buf[:0], s.parts[i].vbuf[:0]
+	}
+}
+
+func (s *aggScratch) held() int {
+	n := 4*(used(s.gid)+used(s.gid2)+used(s.idx2)+used(s.hist)+used(s.cache)+used(s.lends)+used(s.lrows)+used(s.lglobal)) +
+		2*(used(s.codes)+used(s.tmp)) + used(s.key) + used(s.rec) + used(s.lkeys) +
+		8*(used(s.dense)+used(s.fl)+used(s.lhash)+used(s.lwords))
+	for i := range s.parts {
+		n += 8*used(s.parts[i].buf) + used(s.parts[i].vbuf)
 	}
 
 	return n

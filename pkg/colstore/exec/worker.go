@@ -76,6 +76,16 @@ func newWorker(x *execution) *worker {
 	s.sels = fit(s.sels, q.depth+3)
 	s.ints = fit(s.ints, q.depth+3)
 	s.valids = fit(s.valids, q.depth+3)
+	// Emptied buffers tell held which of them the query went on to use.
+	for i := range s.sels {
+		s.sels[i].mask, s.sels[i].list = s.sels[i].mask[:0], s.sels[i].list[:0]
+		s.ints[i], s.valids[i] = s.ints[i][:0], s.valids[i][:0]
+	}
+	s.table, s.idx = s.table[:0], s.idx[:0]
+	s.agg.empty()
+	for i := range s.row.batch {
+		s.row.batch[i].reset()
+	}
 	w := &worker{scratch: s, q: q, x: x, arena: mem.NewArena()}
 	w.sink.init(q)
 	if q.agg != nil {
@@ -115,7 +125,17 @@ func sized[T any](s []T, n int) []T {
 	return s[:n]
 }
 
-// held returns the bytes of the buffers the worker keeps.
+// used returns the capacity of a buffer that holds something, which a
+// buffer emptied when the query began does only if the query filled it.
+func used[T any](s []T) int {
+	if len(s) == 0 {
+		return 0
+	}
+
+	return cap(s)
+}
+
+// held returns the bytes of the buffers the query used.
 func (w *worker) held() int {
 	n := 0
 	for i := range w.cols {
@@ -124,13 +144,13 @@ func (w *worker) held() int {
 		}
 	}
 	for i := range w.sels {
-		n += cap(w.sels[i].mask) + 4*cap(w.sels[i].list)
+		n += used(w.sels[i].mask) + 4*used(w.sels[i].list)
 	}
 	for i := range w.ints {
-		n += 8*cap(w.ints[i]) + cap(w.valids[i])
+		n += 8*used(w.ints[i]) + used(w.valids[i])
 	}
 
-	return n + cap(w.table) + 4*cap(w.idx) + w.scratch.agg.held() + w.row.held()
+	return n + used(w.table) + 4*used(w.idx) + w.scratch.agg.held() + w.row.held()
 }
 
 // open points the worker at a block.
