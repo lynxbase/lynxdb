@@ -4,8 +4,7 @@
 // via the REST API, and logged for observability.
 //
 // QueryStats is populated incrementally by the engine and read by the
-// CLI formatter at the end. For server-mode queries, use FromSearchStats
-// to convert from the server.SearchStats struct.
+// CLI formatter at the end.
 package stats
 
 import "time"
@@ -156,11 +155,6 @@ type QueryStats struct {
 	// Recommendations holds actionable suggestions based on profile analysis.
 	Recommendations []Recommendation
 
-	// OperatorBudgets holds per-operator memory budget statistics from the
-	// MemoryCoordinator. Populated when --analyze is used and the query has
-	// multiple spillable operators with coordinator-managed budgets.
-	OperatorBudgets []OperatorBudgetStats
-
 	// Trace-level profiling (populated when --analyze=trace)
 
 	// SegmentDetails holds per-segment I/O breakdown (trace level only).
@@ -191,17 +185,6 @@ type Recommendation struct {
 	Message          string
 	EstimatedSpeedup string // e.g., "~10x" (optional, trace-level)
 	SuggestedAction  string // optional command to run
-}
-
-// OperatorBudgetStats holds per-operator memory budget statistics from the
-// MemoryCoordinator, providing visibility into how the query memory budget
-// was distributed and consumed across spillable operators.
-type OperatorBudgetStats struct {
-	Name      string `json:"name"`
-	SoftLimit int64  `json:"soft_limit"`
-	PeakBytes int64  `json:"peak_bytes"`
-	Phase     string `json:"phase"`
-	Spilled   bool   `json:"spilled"`
 }
 
 // StageStats holds per-operator metrics for the pipeline breakdown.
@@ -253,86 +236,6 @@ type SegmentDetail struct {
 	InvertedUsed    bool
 	ReadDuration    time.Duration
 	BytesRead       int64
-}
-
-// FromSearchStats converts a server.SearchStats into a QueryStats for CLI display.
-// This bridges the server-side statistics collected during disk-backed query execution
-// with the unified CLI formatting. The caller should set TotalDuration separately
-// (it includes network round-trip which the server doesn't know about).
-func FromSearchStats(
-	rowsScanned int64,
-	rowsReturned int64,
-	elapsedMS float64,
-	segmentsTotal int,
-	segmentsScanned int,
-	segmentsSkippedIdx int,
-	segmentsSkippedTime int,
-	segmentsSkippedStat int,
-	segmentsSkippedBF int,
-	segmentsSkippedRange int,
-	segmentsErrored int,
-	memtableEvents int,
-	invertedIndexHits int,
-	countStarOptimized bool,
-	partialAggUsed bool,
-	topKUsed bool,
-	prefetchUsed bool,
-	vectorizedFilterUsed bool,
-	dictFilterUsed bool,
-	joinStrategy string,
-	scanMS float64,
-	pipelineMS float64,
-	indexesUsed []string,
-) *QueryStats {
-	st := &QueryStats{
-		ExecDuration:         timeDurFromMS(elapsedMS),
-		ScannedRows:          rowsScanned,
-		ResultRows:           rowsReturned,
-		TotalSegments:        segmentsTotal,
-		ScannedSegments:      segmentsScanned,
-		IndexSkippedSegments: segmentsSkippedIdx,
-		TimeSkippedSegments:  segmentsSkippedTime,
-		StatSkippedSegments:  segmentsSkippedStat,
-		BloomSkippedSegments: segmentsSkippedBF,
-		RangeSkippedSegments: segmentsSkippedRange,
-		SegmentsErrored:      segmentsErrored,
-		BufferedRowsScanned:  int64(memtableEvents),
-		InvertedIndexHits:    invertedIndexHits,
-		CountStarOptimized:   countStarOptimized,
-		PartialAggUsed:       partialAggUsed,
-		TopKUsed:             topKUsed,
-		PrefetchUsed:         prefetchUsed,
-		VectorizedFilterUsed: vectorizedFilterUsed,
-		DictFilterUsed:       dictFilterUsed,
-		JoinStrategy:         joinStrategy,
-		IndexesUsed:          indexesUsed,
-	}
-
-	// Derive scan type from available information.
-	switch {
-	case countStarOptimized:
-		st.ScanType = ScanTypeMetadataOnly
-	case invertedIndexHits > 0:
-		st.ScanType = ScanTypeIndexScan
-	case segmentsSkippedBF > 0 || segmentsSkippedTime > 0 || segmentsSkippedStat > 0:
-		st.ScanType = ScanTypeFilteredScan
-	case segmentsTotal > 0:
-		st.ScanType = ScanTypeFullScan
-	default:
-		st.ScanType = ScanTypeFullScan
-	}
-
-	// TotalRowsInRange = scanned + skipped segment event estimates.
-	// Skipped segments are assumed to have similar density to scanned ones.
-	st.TotalRowsInRange = rowsScanned
-	if segmentsScanned > 0 {
-		totalSkipped := segmentsSkippedIdx + segmentsSkippedTime + segmentsSkippedStat +
-			segmentsSkippedBF + segmentsSkippedRange
-		avgRowsPerSegment := rowsScanned / int64(segmentsScanned)
-		st.TotalRowsInRange += int64(totalSkipped) * avgRowsPerSegment
-	}
-
-	return st
 }
 
 // FromMeta is a simplified constructor for building QueryStats from REST API

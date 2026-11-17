@@ -81,12 +81,6 @@ func FormatProfile(w io.Writer, s *QueryStats) {
 		writeResources(w, s)
 	}
 
-	// Per-operator memory budgets (coordinator-managed queries only).
-	if len(s.OperatorBudgets) > 0 {
-		fmt.Fprintln(w)
-		writeOperatorBudgets(w, s)
-	}
-
 	// Per-segment I/O details (trace level only).
 	if len(s.SegmentDetails) > 0 {
 		fmt.Fprintln(w)
@@ -162,10 +156,6 @@ func buildProfileJSON(s *QueryStats) profileJSON {
 			Desc:  r.Description,
 			Count: r.Count,
 		})
-	}
-
-	for _, b := range s.OperatorBudgets {
-		p.Budgets = append(p.Budgets, budgetJSON(b))
 	}
 
 	for _, r := range s.Recommendations {
@@ -417,28 +407,6 @@ func writeVMMetrics(w io.Writer, s *QueryStats) {
 	fmt.Fprintf(w, "  %s total\n", formatDur(s.VMTotalTime))
 }
 
-// writeOperatorBudgets renders a per-operator memory budget table showing how
-// the coordinator distributed memory across spillable operators.
-func writeOperatorBudgets(w io.Writer, s *QueryStats) {
-	fmt.Fprintln(w, "  Memory Budget:")
-	fmt.Fprintf(w, "    %-14s %10s %10s  %-10s  %s\n",
-		"OPERATOR", "BUDGET", "PEAK", "PHASE", "SPILLED")
-	fmt.Fprintf(w, "    %s\n", strings.Repeat("─", 56))
-
-	for _, b := range s.OperatorBudgets {
-		spilled := "no"
-		if b.Spilled {
-			spilled = "yes"
-		}
-		fmt.Fprintf(w, "    %-14s %10s %10s  %-10s  %s\n",
-			b.Name,
-			formatBytesHuman(b.SoftLimit),
-			formatBytesHuman(b.PeakBytes),
-			b.Phase,
-			spilled)
-	}
-}
-
 func writeRecommendations(w io.Writer, s *QueryStats) {
 	fmt.Fprintln(w, "  Recommendations:")
 	for _, r := range s.Recommendations {
@@ -474,19 +442,10 @@ type profileJSON struct {
 	Segments   *segmentsJSON   `json:"segments,omitempty"`
 	Pipeline   []stageJSON     `json:"pipeline,omitempty"`
 	Optimizer  []ruleJSON      `json:"optimizer,omitempty"`
-	Budgets    []budgetJSON    `json:"budgets,omitempty"`
 	Recs       []recJSON       `json:"recommendations,omitempty"`
 	Resources  *resourcesJSON  `json:"resources,omitempty"`
 	SegDetails []segDetailJSON `json:"segment_details,omitempty"`
 	VM         *vmJSON         `json:"vm,omitempty"`
-}
-
-type budgetJSON struct {
-	Name      string `json:"name"`
-	SoftLimit int64  `json:"soft_limit"`
-	PeakBytes int64  `json:"peak_bytes"`
-	Phase     string `json:"phase"`
-	Spilled   bool   `json:"spilled"`
 }
 
 type segmentsJSON struct {
