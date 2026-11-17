@@ -22,15 +22,15 @@ func TestFindEqualGivesTheRowsOfAColumnWithGaps(t *testing.T) {
 		"all but a few":   func(row int) bool { return row%97 != 3 },
 		"every other row": func(row int) bool { return row%2 == 1 },
 	}
-	// pick returns the number of the identifier of the i-th value.
+	// pick returns the number of the identifier of the i-th of n values.
 	values := map[string]struct {
 		enc  uint8
-		pick func(rng *rand.Rand, i int) int
+		pick func(rng *rand.Rand, i, n int) int
 	}{
-		"distinct but for a few": {encFlat, func(_ *rand.Rand, i int) int { return i - i%61/60 }},
-		"six in ten distinct":    {encDict, func(rng *rand.Rand, i int) int { return rng.IntN(i*6/10 + 1) }},
-		"of forty":               {encDict, func(rng *rand.Rand, _ int) int { return rng.IntN(40) }},
-		"in runs":                {encDict, func(_ *rand.Rand, i int) int { return i / 9 }},
+		"distinct but for a few": {encFlat, func(_ *rand.Rand, i, _ int) int { return i - i%61/60 }},
+		"six in ten distinct":    {encDict, func(rng *rand.Rand, i, _ int) int { return rng.IntN(i*6/10 + 1) }},
+		"of forty":               {encDict, func(rng *rand.Rand, _, _ int) int { return rng.IntN(40) }},
+		"in twenty runs":         {encDict, func(_ *rand.Rand, i, n int) int { return i * 20 / n }},
 	}
 	for vname, v := range values {
 		for pname, holds := range presence {
@@ -45,11 +45,17 @@ func TestFindEqualGivesTheRowsOfAColumnWithGaps(t *testing.T) {
 					return ids[n]
 				}
 				docs := make([]string, rows)
+				n := 0
+				for row := range docs {
+					if holds(row) {
+						n++
+					}
+				}
 				var held []string
 				for row := range docs {
 					docs[row] = fmt.Sprintf(`{"n":%d}`, row)
 					if holds(row) {
-						held = append(held, id(v.pick(rng, len(held))))
+						held = append(held, id(v.pick(rng, len(held), n)))
 						docs[row] = fmt.Sprintf(`{"n":%d,"id":%q}`, row, held[len(held)-1])
 					}
 				}

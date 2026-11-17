@@ -113,6 +113,11 @@ type trial struct {
 	// left counts the blocks until the ways are compared again.
 	left   uint8
 	choice uint8
+	// wide tells whether identifiers that repeat go into a dictionary of
+	// more than half as many entries, and wideLeft counts the blocks until
+	// that is compared again with storing them as they are.
+	wideLeft uint8
+	wide     bool
 }
 
 // The ways the values of a flat column are encoded.
@@ -131,6 +136,9 @@ const (
 	trialEvery = 16
 	// trialMinSize is the size under which values are not worth comparing.
 	trialMinSize = 4096
+	// wideDictShare bounds what a dictionary of identifiers may cost over
+	// the general codec: one part in this many of its size.
+	wideDictShare = 16
 )
 
 // writerBuffers holds what a writer reuses from block to block.
@@ -845,8 +853,23 @@ func (w *Writer) tokenize(kind vec.Kind, val []byte) {
 }
 
 func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
+	distinct, ok := w.dict.build(c, false)
+	if ok && distinct == 1 {
+		ent.enc = encConst
+		ent.constVal = c.Bytes(0)
+		w.tokenize(c.Kind, ent.constVal)
+
+		return
+	}
+	if ok && w.encodeDict(c, distinct) {
+		ent.enc = encDict
+		w.tokenizeEntries(c)
+
+		return
+	}
 	// Identifiers, strings of one length, pack: as they are when few of
-	// them repeat, and as a dictionary when up to seven in eight differ.
+	// them repeat, and as a dictionary when more do and that costs little
+	// more than the general codec, which reads several times slower.
 	stride := 0
 	if w.packs(c.Kind) && c.Count >= minPackedStrings {
 		stride = len(c.Bytes(0))
@@ -856,41 +879,75 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 			}
 		}
 	}
+	slot := int(ent.pathID)*kindSlots + int(c.Kind)
 	lone := stride > 0 && w.dict.fewRepeats(c)
-	if !lone {
-		distinct, ok := w.dict.build(c, stride > 0)
-		if ok && distinct == 1 {
-			ent.enc = encConst
-			ent.constVal = c.Bytes(0)
-			w.tokenize(c.Kind, ent.constVal)
-
-			return
+	if stride > 0 && !lone {
+		for len(w.trials) <= slot {
+			w.trials = append(w.trials, trial{})
 		}
-		if ok && w.encodeDict(c, distinct) {
-			ent.enc = encDict
+		tr := &w.trials[slot]
+		if tr.wideLeft == 0 {
+			tr.wideLeft, tr.wide = trialEvery, false
+			start := len(w.block)
+			if distinct, ok := w.dict.build(c, true); ok && w.encodeDict(c, distinct) {
+				dict := len(w.block)
+				w.appendFlat(slot, c, 0)
+				if flat := len(w.block) - dict; (dict-start)*wideDictShare <= flat*(wideDictShare+1) {
+					tr.wide, ent.enc, w.block = true, encDict, w.block[:dict]
+				} else {
+					ent.enc, w.block = encFlat, w.block[:start+copy(w.block[start:], w.block[dict:])]
+				}
+				// The entries are all the values there are.
+				w.tokenizeEntries(c)
 
-			return
+				return
+			}
+		} else if tr.wideLeft--; tr.wide {
+			if distinct, ok := w.dict.build(c, true); ok && w.encodeDict(c, distinct) {
+				ent.enc = encDict
+				w.tokenizeEntries(c)
+
+				return
+			}
 		}
 	}
 	ent.enc = encFlat
+	for i := 0; i < c.Count; i++ {
+		w.tokenize(c.Kind, c.Bytes(i))
+	}
+	if !lone {
+		stride = 0
+	}
+	w.appendFlat(slot, c, stride)
+}
+
+// appendFlat appends the values of the column one after another, packed
+// when stride, their length, is set and packing suits them.
+func (w *Writer) appendFlat(slot int, c *shred.Column, stride int) {
 	w.ints = w.ints[:0]
 	for i := 0; i < c.Count; i++ {
-		val := c.Bytes(i)
-		w.ints = append(w.ints, int64(len(val)))
-		w.tokenize(c.Kind, val)
+		w.ints = append(w.ints, int64(len(c.Bytes(i))))
 	}
 	w.block = appendInts(w.block, w.ints, &w.blobs, &w.e)
 	data := c.Data[:c.Ends[c.Count-1]]
 	// Values that repeat are left to the general codec, which finds the
 	// repeats; packing cannot.
-	if lone {
+	if stride > 0 {
 		if out, packed := w.values.appendPackedBlob(w.block, data, stride, &w.e.zbuf); packed {
 			w.block = out
 
 			return
 		}
 	}
-	w.appendValues(int(ent.pathID)*kindSlots+int(c.Kind), data, c.Count)
+	w.appendValues(slot, data, c.Count)
+}
+
+// tokenizeEntries adds the tokens of the entries of the dictionary that
+// the builder holds.
+func (w *Writer) tokenizeEntries(c *shred.Column) {
+	for _, entry := range w.dict.order {
+		w.tokenize(c.Kind, c.Bytes(int(w.dict.first[entry])))
+	}
 }
 
 // encodeDict appends the column as the dictionary that the builder holds,
@@ -925,9 +982,6 @@ func (w *Writer) encodeDict(c *shred.Column, distinct int) bool {
 		out = w.blobs.appendBlob(w.block, w.dictBytes, &w.e.zbuf)
 	}
 	w.block = out
-	for _, entry := range d.order {
-		w.tokenize(c.Kind, c.Bytes(int(d.first[entry])))
-	}
 
 	// Codes stay out of the general codec so that reading them costs a few
 	// shifts per row; runs take over when they halve the packed size.
