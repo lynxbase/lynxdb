@@ -323,7 +323,9 @@ func (s *benchServer) handler() http.Handler {
 // time partitions of LYNXDB_BENCH_PARTITION when set, and the buffers of
 // Append, the merge fan-in and the backlog below which merges give way to
 // flushes from LYNXDB_BENCH_BUFFER_MB, LYNXDB_BENCH_FANIN and
-// LYNXDB_BENCH_MERGE_BACKLOG.
+// LYNXDB_BENCH_MERGE_BACKLOG. LYNXDB_BENCH_VALUE_SLACK is the percentage by
+// which long values may grow for the codec that reads faster, "off" for
+// none.
 func benchStoreOptions(t testing.TB) colstore.StoreOptions {
 	t.Helper()
 	opts := colstore.StoreOptions{TimeField: benchTimeField, BlockRows: benchBlockRows, SortKey: benchSortKey}
@@ -358,6 +360,17 @@ func benchStoreOptions(t testing.TB) colstore.StoreOptions {
 			t.Fatalf("LYNXDB_BENCH_BUFFER_MB=%q is not a positive number", v)
 		}
 		opts.BufferBytes = n << 20
+	}
+	switch v := os.Getenv("LYNXDB_BENCH_VALUE_SLACK"); v {
+	case "":
+	case "off":
+		opts.Part.ValueSlack = -1
+	default:
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			t.Fatalf("LYNXDB_BENCH_VALUE_SLACK=%q is not a positive number or off", v)
+		}
+		opts.Part.ValueSlack = n
 	}
 
 	return opts
