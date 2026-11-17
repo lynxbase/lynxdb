@@ -271,69 +271,13 @@ func renderAuthError(err error) {
 }
 
 // renderAPIError prints an API error with code, message, and optional suggestion.
-// For a rejected query, attempts field name fuzzy matching.
 func renderAPIError(ae *client.APIError) {
 	code := string(ae.Code)
 	if code == "" {
 		code = fmt.Sprintf("HTTP_%d", ae.HTTPStatus)
 	}
 
-	suggestion := ae.Suggestion
-
-	// Fuzzy-match field names when the server returns an invalid-query error without a suggestion.
-	if suggestion == "" && client.IsInvalidQuery(ae) {
-		if fieldSuggestion := tryFieldNameSuggestion(ae.Message); fieldSuggestion != "" {
-			suggestion = fieldSuggestion
-		}
-	}
-
-	ui.Stderr.RenderServerError(code, ae.Message, suggestion)
-}
-
-// tryFieldNameSuggestion attempts to extract a field name from an error message
-// and suggest a similar known field name via fuzzy matching.
-func tryFieldNameSuggestion(message string) string {
-	// Look for patterns like "unknown field 'xyz'" or "field 'xyz' not found".
-	fieldName := extractFieldFromError(message)
-	if fieldName == "" {
-		return ""
-	}
-
-	fields := fetchFieldCatalog()
-	if len(fields) == 0 {
-		return ""
-	}
-
-	suggestion := suggestFieldName(fieldName, fields)
-	if suggestion == "" {
-		return ""
-	}
-
-	return fmt.Sprintf("Did you mean: %s? Run 'lynxdb fields' to see all known fields", suggestion)
-}
-
-// extractFieldFromError tries to extract a field name from a parse error message.
-func extractFieldFromError(message string) string {
-	lower := strings.ToLower(message)
-
-	// Common patterns: "unknown field 'X'", "field 'X' not found", "no such field 'X'".
-	patterns := []string{"unknown field '", "field '", "no such field '"}
-
-	for _, p := range patterns {
-		idx := strings.Index(lower, p)
-		if idx < 0 {
-			continue
-		}
-
-		start := idx + len(p)
-		end := strings.IndexByte(message[start:], '\'')
-
-		if end > 0 {
-			return message[start : start+end]
-		}
-	}
-
-	return ""
+	ui.Stderr.RenderServerError(code, ae.Message, ae.Suggestion)
 }
 
 // renderQueryError prints a query parse error with caret positioning.
@@ -345,13 +289,7 @@ func renderQueryError(query string, position, length int, message, suggestion st
 // a caret under the position named in its message.
 func renderQueryParseError(ae *client.APIError, query string) {
 	pos := extractPositionFromError(ae.Message)
-
-	suggestion := ae.Suggestion
-	if suggestion == "" {
-		suggestion = tryFieldNameSuggestion(ae.Message)
-	}
-
-	ui.Stderr.RenderQueryErrorWithCode(query, pos, 1, ae.Message, suggestion, string(ae.Code))
+	ui.Stderr.RenderQueryErrorWithCode(query, pos, 1, ae.Message, ae.Suggestion, string(ae.Code))
 }
 
 // isRequiredFlagError reports whether err is a cobra "required flag(s) not set" error.

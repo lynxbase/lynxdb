@@ -142,28 +142,6 @@ func TestIsQueryParseError_Nil(t *testing.T) {
 	}
 }
 
-func TestExtractFieldFromError(t *testing.T) {
-	tests := []struct {
-		msg  string
-		want string
-	}{
-		{"unknown field 'status'", "status"},
-		{"field 'host' not found", "host"},
-		{"no such field 'src_ip'", "src_ip"},
-		{"some other message", ""},
-		{"field '' is empty", ""},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.msg, func(t *testing.T) {
-			got := extractFieldFromError(tt.msg)
-			if got != tt.want {
-				t.Errorf("extractFieldFromError(%q) = %q, want %q", tt.msg, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestIsTimeoutError_StringMatch(t *testing.T) {
 	tests := []struct {
 		msg  string
