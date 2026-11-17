@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -89,6 +90,11 @@ func (b *builder) aggregate(x *ir.Aggregate) (pipeline.Iterator, error) {
 	for i, g := range x.Groups {
 		if fr, ok := g.Expr.(*ir.FieldRef); ok && fr.Name == g.Name {
 			groupBy[i] = g.Name
+		} else if field, span, ok := fixedTimeBucket(g.Expr); ok {
+			t := b.temp()
+			child = pipeline.NewBinIterator(child, field, t, span)
+			groupBy[i] = t
+			renames = append(renames, ir.Rename{From: t, To: g.Name})
 		} else {
 			t := b.temp()
 			temps = append(temps, ir.Assign{Name: t, Expr: g.Expr})
@@ -130,6 +136,30 @@ func (b *builder) aggregate(x *ir.Aggregate) (pipeline.Iterator, error) {
 		return b.compute(it, post)
 	}
 	return it, nil
+}
+
+var bucketUnits = map[string]time.Duration{
+	"ms": time.Millisecond, "s": time.Second, "m": time.Minute, "h": time.Hour, "d": 24 * time.Hour, "w": 7 * 24 * time.Hour,
+}
+
+// fixedTimeBucket recognizes time_bucket over a timestamp column with a
+// fixed-length unit, which the pipeline's bin operator computes directly.
+func fixedTimeBucket(e ir.Expr) (string, time.Duration, bool) {
+	c, ok := e.(*ir.Call)
+	if !ok || c.Func.Name != "time_bucket" {
+		return "", 0, false
+	}
+	f, ok := c.Args[0].(*ir.FieldRef)
+	if !ok || f.T.Kind != ir.KindTimestamp {
+		return "", 0, false
+	}
+	n, ok1 := c.Args[1].(*ir.Literal).V.(int64)
+	unit, ok2 := c.Args[2].(*ir.Literal).V.(string)
+	d, ok3 := bucketUnits[unit]
+	if !ok1 || !ok2 || !ok3 || n <= 0 {
+		return "", 0, false
+	}
+	return f.Name, time.Duration(n) * d, true
 }
 
 func (b *builder) window(x *ir.Window) (pipeline.Iterator, error) {
