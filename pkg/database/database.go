@@ -275,10 +275,16 @@ func (db *DB) maintain() {
 // finished longer than JobTTL before now.
 func (db *DB) expire(now time.Time) {
 	if db.cfg.Retention > 0 {
-		if n, err := db.core.DropBefore(now.Add(-db.cfg.Retention)); err != nil {
-			db.log.Warn("retention failed", "error", err)
-		} else if n > 0 {
-			db.log.Info("retention dropped events", "events", n)
+		cutoff := now.Add(-db.cfg.Retention)
+		for _, index := range db.core.Names() {
+			n, err := db.core.DropIndexBefore(index, cutoff)
+			if err != nil {
+				db.log.Warn("retention failed", "index", index, "error", err)
+			}
+			if n > 0 {
+				db.log.Warn("retention removed events older than the cutoff",
+					"index", index, "events", n, "cutoff", cutoff.UTC().Format(time.RFC3339))
+			}
 		}
 	}
 	db.jobs.expire(now.Add(-db.cfg.JobTTL))

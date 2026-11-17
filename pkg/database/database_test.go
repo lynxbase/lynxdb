@@ -1,8 +1,10 @@
 package database
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -123,7 +125,8 @@ func TestQueryTimeRangeSubquery(t *testing.T) {
 }
 
 func TestRetention(t *testing.T) {
-	db := openTest(t, Config{Retention: 48 * time.Hour})
+	var logs bytes.Buffer
+	db := openTest(t, Config{Retention: 48 * time.Hour, Logger: slog.New(slog.NewTextHandler(&logs, nil))})
 	now := time.Now().UTC()
 	lines := `{"_time":"` + now.Add(-10*24*time.Hour).Format(time.RFC3339) + `"}
 {"_time":"` + now.Format(time.RFC3339) + `"}
@@ -137,6 +140,12 @@ func TestRetention(t *testing.T) {
 	db.expire(now)
 	if got := run(t, db, "source=main | stats count()", QueryOptions{}); got[0] != `{"count()":1}` {
 		t.Fatalf("after retention: %v", got)
+	}
+	cutoff := "cutoff=" + now.Add(-48*time.Hour).UTC().Format(time.RFC3339)
+	for _, want := range []string{"level=WARN", "index=main", "events=1", cutoff} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("retention log lacks %s: %s", want, logs.String())
+		}
 	}
 }
 
