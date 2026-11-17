@@ -18,11 +18,12 @@ import (
 	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/client"
 	"github.com/lynxbase/lynxdb/pkg/config"
+	"github.com/lynxbase/lynxdb/pkg/database"
+	"github.com/lynxbase/lynxdb/pkg/ingest/ndjson"
 	ingestpipeline "github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/ppl"
 	"github.com/lynxbase/lynxdb/pkg/query"
 	"github.com/lynxbase/lynxdb/pkg/stats"
-	"github.com/lynxbase/lynxdb/pkg/storage"
 	"github.com/lynxbase/lynxdb/pkg/timerange"
 )
 
@@ -203,8 +204,11 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 		return err
 	}
 
-	eng := storage.NewEphemeralEngine()
-	defer eng.Close()
+	db, err := database.Open(database.Config{})
+	if err != nil {
+		return err
+	}
+	defer db.Close()
 	start := time.Now()
 
 	format := ""
@@ -212,7 +216,6 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 		format = detectFileFormat(matches[0])
 	}
 
-	ctx := context.Background()
 	for _, path := range matches {
 		src := source
 		if src == "" {
@@ -222,11 +225,7 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 		if err != nil {
 			return fmt.Errorf("open %s: %w", path, err)
 		}
-		_, err = eng.IngestReader(ctx, f, storage.IngestOpts{
-			Source:     src,
-			SourceType: sourcetype,
-			Format:     format,
-		})
+		err = loadLocal(db, f, src, sourcetype, format)
 		if closeErr := f.Close(); closeErr != nil && err == nil {
 			err = closeErr
 		}
@@ -235,7 +234,21 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 		}
 	}
 
-	return runLocalQuery(eng, query, outputFile, failEmpty, analyze, start)
+	return runLocalQuery(db, query, outputFile, failEmpty, analyze, start)
+}
+
+// loadLocal appends the lines of r to the index main of a local database.
+func loadLocal(db *database.DB, r io.Reader, source, sourcetype, format string) error {
+	conv, err := ndjson.NewText(format)
+	if err != nil {
+		return err
+	}
+	conv.Source, conv.SourceType = source, sourcetype
+
+	return conv.Read(r, func(b []byte) error {
+		_, err := db.Append(database.DefaultSource, b)
+		return err
+	})
 }
 
 func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool, analyze, maxMemory string, rawMode bool) error {
@@ -246,8 +259,11 @@ func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool,
 		return err
 	}
 
-	eng := storage.NewEphemeralEngine()
-	defer eng.Close()
+	db, err := database.Open(database.Config{})
+	if err != nil {
+		return err
+	}
+	defer db.Close()
 	start := time.Now()
 
 	src := source
@@ -261,15 +277,11 @@ func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool,
 		format, reader = detectReaderFormat(os.Stdin)
 	}
 
-	if _, err := eng.IngestReader(context.Background(), reader, storage.IngestOpts{
-		Source:     src,
-		SourceType: sourcetype,
-		Format:     format,
-	}); err != nil {
+	if err := loadLocal(db, reader, src, sourcetype, format); err != nil {
 		return fmt.Errorf("load stdin: %w", err)
 	}
 
-	return runLocalQuery(eng, query, outputFile, failEmpty, analyze, start)
+	return runLocalQuery(db, query, outputFile, failEmpty, analyze, start)
 }
 
 // checkLocalQuery compiles a query before any input is read, so a bad query
@@ -281,15 +293,39 @@ func checkLocalQuery(q string) error {
 	return nil
 }
 
-// runLocalQuery runs a query over the events loaded into an ephemeral
-// engine and prints the result.
-func runLocalQuery(eng *storage.Engine, q, outputFile string, failEmpty bool, analyze string, start time.Time) error {
-	result, st, err := eng.Query(context.Background(), q, storage.QueryOpts{})
+// runLocalQuery runs a query over the events loaded into a local database
+// and prints the result.
+func runLocalQuery(db *database.DB, q, outputFile string, failEmpty bool, analyze string, start time.Time) error {
+	if err := db.Sync(); err != nil {
+		return err
+	}
+	st := &stats.QueryStats{ScanType: "ephemeral"}
+	for _, ix := range db.Stats() {
+		st.ScannedRows += int64(ix.Rows)
+	}
+	compileStart := time.Now()
+	c, err := query.Compile(q)
 	if err != nil {
 		return compileError(q, err)
 	}
+	st.ParseDuration = time.Since(compileStart)
+	execStart := time.Now()
+	res, err := db.Query(context.Background(), c, database.QueryOptions{})
+	if err != nil {
+		return compileError(q, err)
+	}
+	st.ExecDuration = time.Since(execStart)
 	st.TotalDuration = time.Since(start)
-	if len(result.Rows) == 0 {
+	maps := res.Maps()
+	rows := make([]map[string]interface{}, len(maps))
+	for i, m := range maps {
+		row := make(map[string]interface{}, len(m))
+		for k, v := range m {
+			row[k] = v.Interface()
+		}
+		rows[i] = row
+	}
+	if len(rows) == 0 {
 		if failEmpty {
 			printMeta("No results found.")
 			return noResultsError{}
@@ -297,7 +333,7 @@ func runLocalQuery(eng *storage.Engine, q, outputFile string, failEmpty bool, an
 		printHint("No results. Try a broader query.")
 	}
 
-	return printLocalResults(result.Rows, st, outputFile, analyze)
+	return printLocalResults(rows, st, outputFile, analyze)
 }
 
 // compileError renders a PPL compile error with a caret under its

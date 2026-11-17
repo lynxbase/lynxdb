@@ -1,6 +1,0 @@
-# file: mixed_json.log
-# format: json
-source=main
-| where json_valid(_raw)
-| spath input=_raw path=name output=name
-| fields name
