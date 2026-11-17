@@ -411,6 +411,9 @@ func (w *rangeWorker) countUsers(kr *KeyRange, b *part.Block) error {
 		return w.countStream(cursors[0], b)
 	}
 	for _, c := range cursors {
+		c.r.Prepare(b)
+	}
+	for _, c := range cursors {
 		ok, err := w.loadDids(c, b)
 		if err != nil {
 			return err
@@ -528,7 +531,13 @@ func (w *rangeWorker) offerSpan() {
 
 // mergeSpans offers every did of kr with its first and last post time.
 func (w *rangeWorker) mergeSpans(kr *KeyRange, b *part.Block) error {
-	for _, c := range w.start(kr) {
+	cursors := w.start(kr)
+	if len(cursors) > 1 {
+		for _, c := range cursors {
+			c.r.Prepare(b)
+		}
+	}
+	for _, c := range cursors {
 		ok, err := w.loadSpans(c, b)
 		if err != nil {
 			return err

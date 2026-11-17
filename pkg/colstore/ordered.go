@@ -388,9 +388,20 @@ func (s *RangeScan) cut(r *KeyRange, b *part.Block) error {
 // acquire returns the decoded block id, decoding it through b unless another
 // reader has.
 func (s *RangeScan) acquire(id blockID, b *part.Block) (*SharedBlock, error) {
+	return s.acquireFor(id, b, true)
+}
+
+// acquireFor is acquire that, without wait, leaves a block that another
+// reader is decoding and returns nil.
+func (s *RangeScan) acquireFor(id blockID, b *part.Block, wait bool) (*SharedBlock, error) {
 	s.mu.Lock()
 	sb := s.open[id]
 	owner := sb == nil
+	if !owner && !wait {
+		s.mu.Unlock()
+
+		return nil, nil
+	}
 	if owner {
 		if n := len(s.free); n > 0 {
 			sb, s.free = s.free[n-1], s.free[:n-1]
@@ -444,6 +455,18 @@ func (s *RangeScan) decode(id blockID, b *part.Block, sb *SharedBlock) error {
 	}
 
 	return nil
+}
+
+// prepare decodes block id through b unless a reader has or is doing so, and
+// never waits for another reader.
+func (s *RangeScan) prepare(id blockID, b *part.Block) {
+	s.mu.Lock()
+	idle := s.open[id] == nil
+	s.mu.Unlock()
+	if idle {
+		// A failure stays with the block for the reader that takes it.
+		_, _ = s.acquireFor(id, b, false)
+	}
 }
 
 // release ends one reader's use of a block.
@@ -590,6 +613,15 @@ func (r *RangeReader) Peek() (p *part.Part, block int, whole, ok bool) {
 	}
 
 	return nil, 0, false, false
+}
+
+// Prepare decodes the block that Peek reports through b unless a reader has
+// or is doing so; a worker that calls it for all its streams before it reads
+// them decodes what is missing instead of waiting for one block at a time.
+func (r *RangeReader) Prepare(b *part.Block) {
+	if _, _, _, ok := r.Peek(); ok {
+		r.scan.prepare(blockID{r.spans[r.span].Part, r.next}, b)
+	}
 }
 
 // Shared returns how many leading sort key columns the first row of the
