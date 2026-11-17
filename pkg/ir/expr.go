@@ -305,32 +305,6 @@ func (c *Cast) String() string {
 	return "CAST(" + c.X.String() + " AS " + c.To.String() + ")"
 }
 
-// ArrayExpr builds an array from element expressions.
-type ArrayExpr struct {
-	Elems []Expr
-	T     Type
-}
-
-func (a *ArrayExpr) Type() Type     { return a.T }
-func (*ArrayExpr) isExpr()          {}
-func (a *ArrayExpr) String() string { return "[" + joinExprs(a.Elems) + "]" }
-
-// ObjectExpr builds an object from key/value pairs.
-type ObjectExpr struct {
-	Keys   []string
-	Values []Expr
-}
-
-func (*ObjectExpr) Type() Type { return Object }
-func (*ObjectExpr) isExpr()    {}
-func (o *ObjectExpr) String() string {
-	parts := make([]string, len(o.Keys))
-	for i, k := range o.Keys {
-		parts[i] = strconv.Quote(k) + ": " + o.Values[i].String()
-	}
-	return "{" + strings.Join(parts, ", ") + "}"
-}
-
 // Index reads an array element (0-based; negative counts from the end) or an
 // object member by key. An out-of-range index or absent key yields NULL.
 type Index struct {
@@ -399,16 +373,6 @@ func (in *InList) String() string {
 	}
 	return paren(in.X) + op + joinExprs(in.List) + ")"
 }
-
-// IsMissing is TRUE when the referenced column is absent from the row and
-// FALSE otherwise, including when it is present with a NULL value.
-type IsMissing struct {
-	Field *FieldRef
-}
-
-func (*IsMissing) Type() Type       { return Bool }
-func (*IsMissing) isExpr()          {}
-func (m *IsMissing) String() string { return "IS_MISSING(" + m.Field.String() + ")" }
 
 // SearchMode selects how a Search predicate matches text.
 type SearchMode uint8

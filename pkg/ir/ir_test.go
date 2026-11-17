@@ -138,7 +138,7 @@ func TestValidateRejectsMisplacedAggregate(t *testing.T) {
 
 func TestValidateLambdaScope(t *testing.T) {
 	x := &LambdaParam{Name: "x", T: Any}
-	arr := &ArrayExpr{Elems: []Expr{IntLit(1), IntLit(2)}, T: ArrayOf(Int)}
+	arr := call(t, "array", IntLit(1), IntLit(2))
 	good := call(t, "filter", arr, &Lambda{Params: []*LambdaParam{x}, Body: &Binary{Op: OpGt, L: x, R: IntLit(1), T: Bool}})
 	if err := Validate(&Plan{Root: &Compute{Input: scan(), Assigns: []Assign{{Name: "a", Expr: good}}}}); err != nil {
 		t.Fatal(err)

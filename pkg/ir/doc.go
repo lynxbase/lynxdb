@@ -12,8 +12,7 @@
 // sources whose type is not known before execution have type Any, and
 // operations on Any values follow the runtime coercion rules documented on
 // each function. Every value may be NULL. A reference to a column that is
-// absent from a row evaluates to NULL; the IsMissing predicate is the only
-// construct that observes absence directly.
+// absent from a row evaluates to NULL.
 //
 // Three-valued logic. Comparisons and boolean operators follow SQL
 // three-valued logic: a comparison with a NULL operand is NULL, AND/OR/NOT

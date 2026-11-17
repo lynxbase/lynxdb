@@ -914,7 +914,7 @@ func (t *translator) operations(e ir.Expr) (*exec.Expr, error) {
 		}
 
 		return t.native(newFunc, []ir.Expr{e.X})
-	case *ir.InList, *ir.IsMissing, *ir.Search:
+	case *ir.InList, *ir.Search:
 		return t.pred(e, false)
 	case *ir.Call:
 		return t.call(e)
@@ -1353,16 +1353,6 @@ func (t *translator) pred(e ir.Expr, not bool) (*exec.Expr, error) {
 		}
 
 		return exec.Or(any...), nil
-	case *ir.IsMissing:
-		field, err := t.field(e.Field.Name)
-		if err != nil {
-			return nil, err
-		}
-		if not {
-			return exec.Not(exec.IsMissing(field)), nil
-		}
-
-		return exec.IsMissing(field), nil
 	case *ir.Search:
 		p, err := t.search(e)
 		if err != nil || !not {

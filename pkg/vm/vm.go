@@ -339,31 +339,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (result even
 			vm.stack[vm.sp] = event.ArrayValue(elems)
 			vm.sp++
 
-		case OpObjectBuild:
-			operand, opErr := readOperandSafe(ins, ip)
-			if opErr != nil {
-				return event.NullValue(), opErr
-			}
-			entryCount := int(operand)
-			ip += 2
-			pairCount := entryCount * 2
-			if pairCount > vm.sp {
-				return event.NullValue(), fmt.Errorf("%w: ObjectBuild entry count %d requires %d stack slots, have %d", ErrInvalidBytecode, entryCount, pairCount, vm.sp)
-			}
-			obj := make(map[string]event.Value, entryCount)
-			base := vm.sp - pairCount
-			for i := 0; i < entryCount; i++ {
-				key := vm.stack[base+i*2]
-				val := vm.stack[base+i*2+1]
-				obj[valueToString(key)] = val
-			}
-			vm.sp -= pairCount
-			if vm.sp >= StackSize {
-				return event.NullValue(), ErrStackOverflow
-			}
-			vm.stack[vm.sp] = event.ObjectValue(obj)
-			vm.sp++
-
 		case OpIndex:
 			// Stack: [..., container, index] → [..., result]
 			idx := vm.stack[vm.sp-1]
@@ -567,20 +542,6 @@ func (vm *VM) Execute(prog *Program, fields map[string]event.Value) (result even
 			ip += 2
 			path := valueToString(prog.Constants[constIdx])
 			vm.stack[vm.sp] = execLoadPath(fields, path)
-			vm.sp++
-
-		case OpFieldMissing:
-			if vm.sp >= StackSize {
-				return event.NullValue(), ErrStackOverflow
-			}
-			fieldIdx, fmErr := readIndexSafe(ins, ip, len(prog.FieldNames), "field")
-			if fmErr != nil {
-				return event.NullValue(), fmErr
-			}
-			ip += 2
-			name := prog.FieldNames[fieldIdx]
-			_, present := fields[name]
-			vm.stack[vm.sp] = event.BoolValue(!present)
 			vm.sp++
 
 		case OpNegStrict:

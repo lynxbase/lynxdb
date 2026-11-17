@@ -103,19 +103,6 @@ func (c *irCompiler) compile(e ir.Expr) error {
 			return err
 		}
 		c.native(castFunc(n.To), 1)
-	case *ir.ArrayExpr:
-		if err := c.compileAll(n.Elems); err != nil {
-			return err
-		}
-		c.prog.EmitOp(OpArrayBuild, len(n.Elems))
-	case *ir.ObjectExpr:
-		for i, k := range n.Keys {
-			c.constant(event.StringValue(k))
-			if err := c.compile(n.Values[i]); err != nil {
-				return err
-			}
-		}
-		c.prog.EmitOp(OpObjectBuild, len(n.Keys))
 	case *ir.Index:
 		if err := c.compile(n.X); err != nil {
 			return err
@@ -135,9 +122,6 @@ func (c *irCompiler) compile(e ir.Expr) error {
 		if n.Not {
 			c.prog.EmitOp(OpNot3VL)
 		}
-	case *ir.IsMissing:
-		idx := c.prog.AddFieldName(n.Field.Name)
-		c.prog.EmitOp(OpFieldMissing, idx)
 	case *ir.Search:
 		return c.search(n)
 	case *ir.RelativeTime:

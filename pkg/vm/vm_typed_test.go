@@ -23,20 +23,6 @@ func TestVMArrayBuild_Empty(t *testing.T) {
 	}
 }
 
-func TestVMObjectBuild_Empty(t *testing.T) {
-	p := &Program{}
-	p.EmitOp(OpObjectBuild, 0)
-	p.EmitOp(OpReturn)
-
-	result := runProgram(t, p, nil)
-	if result.Type() != event.FieldTypeObject {
-		t.Fatalf("expected object, got %s", result.Type())
-	}
-	if len(result.AsObject()) != 0 {
-		t.Errorf("expected empty object, got len %d", len(result.AsObject()))
-	}
-}
-
 func TestVMDeepEquality_Arrays(t *testing.T) {
 	tests := []struct {
 		name string

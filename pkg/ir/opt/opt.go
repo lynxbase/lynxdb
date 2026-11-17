@@ -137,7 +137,7 @@ func hasFoldable(e ir.Expr) bool {
 // that is not already a literal.
 func foldable(e ir.Expr) bool {
 	switch x := e.(type) {
-	case *ir.Literal, *ir.FieldRef, *ir.LambdaParam, *ir.Lambda, *ir.Subquery, *ir.AggCall, *ir.Search, *ir.IsMissing, *ir.RelativeTime:
+	case *ir.Literal, *ir.FieldRef, *ir.LambdaParam, *ir.Lambda, *ir.Subquery, *ir.AggCall, *ir.Search, *ir.RelativeTime:
 		return false
 	case *ir.Call:
 		if !x.Func.Foldable() {

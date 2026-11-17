@@ -46,9 +46,8 @@ const (
 	OpIsNull     Opcode = 0xB1
 
 	// Typed-value opcodes (duration, array, object).
-	OpArrayBuild  Opcode = 0xE1 // 2-byte operand: element count N; pop N values, push array
-	OpObjectBuild Opcode = 0xE2 // 2-byte operand: entry count N; pop 2N values (key,val pairs), push object
-	OpIndex       Opcode = 0xE3 // pop index, pop container; arr[i] / obj["k"]; OOB/missing/null → null
+	OpArrayBuild Opcode = 0xE1 // 2-byte operand: element count N; pop N values, push array
+	OpIndex      Opcode = 0xE3 // pop index, pop container; arr[i] / obj["k"]; OOB/missing/null → null
 
 	// Strict comparison opcodes.
 	// Same-type: typed comparison. int vs float: cross-promote (both are "number").
@@ -75,10 +74,9 @@ const (
 	OpModStrict Opcode = 0xF5 // int%int only; non-int→null+warn; %0→null
 
 	// Field-path and search opcodes.
-	OpLoadPath     Opcode = 0xF6 // 2-byte operand: constant-pool index of dotted path string; flat column first, then object walk, no _raw fallback
-	OpFieldMissing Opcode = 0xF7 // 2-byte operand: field name index; pushes true if field absent from row
-	OpNegStrict    Opcode = 0xF8 // pop 1; negate int/float/duration; non-numeric→null+warn
-	OpInStrict     Opcode = 0xF9 // 2-byte operand: count N; pop N items + 1 value; strict equality check; null-aware
+	OpLoadPath  Opcode = 0xF6 // 2-byte operand: constant-pool index of dotted path string; flat column first, then object walk, no _raw fallback
+	OpNegStrict Opcode = 0xF8 // pop 1; negate int/float/duration; non-numeric→null+warn
+	OpInStrict  Opcode = 0xF9 // 2-byte operand: count N; pop N items + 1 value; strict equality check; null-aware
 
 	// Function opcodes.
 	OpHasToken   Opcode = 0xFA // pop 2 (field, term); case-insensitive whole-token match
@@ -134,9 +132,8 @@ var definitions = map[Opcode]*Definition{
 	OpCallNative: {"OpCallNative", []int{2, 2}},
 	OpIsNull:     {"OpIsNull", nil},
 
-	OpArrayBuild:  {"OpArrayBuild", []int{2}},
-	OpObjectBuild: {"OpObjectBuild", []int{2}},
-	OpIndex:       {"OpIndex", nil},
+	OpArrayBuild: {"OpArrayBuild", []int{2}},
+	OpIndex:      {"OpIndex", nil},
 
 	// Strict comparison
 	OpEqStrict:  {"OpEqStrict", nil},
@@ -160,10 +157,9 @@ var definitions = map[Opcode]*Definition{
 	OpModStrict: {"OpModStrict", nil},
 
 	// Field paths and search
-	OpLoadPath:     {"OpLoadPath", []int{2}},
-	OpFieldMissing: {"OpFieldMissing", []int{2}},
-	OpNegStrict:    {"OpNegStrict", nil},
-	OpInStrict:     {"OpInStrict", []int{2}},
+	OpLoadPath:  {"OpLoadPath", []int{2}},
+	OpNegStrict: {"OpNegStrict", nil},
+	OpInStrict:  {"OpInStrict", []int{2}},
 
 	// Functions
 	OpHasToken:   {"OpHasToken", nil},

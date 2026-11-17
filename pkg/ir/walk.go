@@ -6,10 +6,6 @@ func ExprChildren(e Expr) []Expr {
 	switch x := e.(type) {
 	case *Call:
 		return x.Args
-	case *ArrayExpr:
-		return x.Elems
-	case *ObjectExpr:
-		return x.Values
 	case *Subquery:
 		return x.Args
 	}
@@ -36,18 +32,12 @@ func AppendExprChildren(dst []Expr, e Expr) []Expr {
 		return dst
 	case *Cast:
 		return append(dst, x.X)
-	case *ArrayExpr:
-		return append(dst, x.Elems...)
-	case *ObjectExpr:
-		return append(dst, x.Values...)
 	case *Index:
 		return append(dst, x.X, x.Key)
 	case *Lambda:
 		return append(dst, x.Body)
 	case *InList:
 		return append(append(dst, x.X), x.List...)
-	case *IsMissing:
-		return append(dst, x.Field)
 	case *Subquery:
 		return append(dst, x.Args...)
 	case *AggCall:
@@ -139,14 +129,6 @@ func withChildren(e Expr, f func(Expr) Expr) Expr {
 	case *Cast:
 		if nx := f(x.X); nx != x.X {
 			return &Cast{X: nx, To: x.To}
-		}
-	case *ArrayExpr:
-		if elems, ok := mapExprs(x.Elems, f); ok {
-			return &ArrayExpr{Elems: elems, T: x.T}
-		}
-	case *ObjectExpr:
-		if vals, ok := mapExprs(x.Values, f); ok {
-			return &ObjectExpr{Keys: x.Keys, Values: vals}
 		}
 	case *Index:
 		nx, nk := f(x.X), f(x.Key)
