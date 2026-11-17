@@ -1551,7 +1551,7 @@ func (b *Block) FindEqual(ref *ColumnRef, want []byte, dst []uint32) ([]uint32, 
 	if ref.bad {
 		return dst, false, ErrCorrupt
 	}
-	if ref.Kind != vec.KindString || ref.enc != encFlat {
+	if ref.Kind != vec.KindString || (ref.enc != encFlat && ref.enc != encDict) {
 		return dst, false, nil
 	}
 	whole := b.data[ref.off : ref.off+ref.length]
@@ -1563,8 +1563,17 @@ func (b *Block) FindEqual(ref *ColumnRef, want []byte, dst []uint32) ([]uint32, 
 	if sparse && len(chunk) > 0 {
 		chunk, _, ok = skipBlob(chunk[1:])
 	}
+	// The strings are the values, or the entries of their dictionary.
+	texts := ref.Count
+	if ok && ref.enc == encDict {
+		entries, n := binary.Uvarint(chunk)
+		if n <= 0 || entries < 2 || entries > maxDictSize {
+			return dst, false, ErrCorrupt
+		}
+		chunk, texts = chunk[n:], int(entries)
+	}
 	if ok {
-		chunk, ok = skipInts(chunk, ref.Count)
+		chunk, ok = skipInts(chunk, texts)
 	}
 	head, n := binary.Uvarint(chunk)
 	if !ok || n <= 0 || head&3 != blobPacked {
@@ -1580,8 +1589,17 @@ func (b *Block) FindEqual(ref *ColumnRef, want []byte, dst []uint32) ([]uint32, 
 	}
 	from := len(dst)
 	dst, err := findPacked(dst, chunk[n+m:n+m+int(size)], int(rawLen), want)
-	if err != nil || !sparse || len(dst) == from {
+	if err != nil || len(dst) == from {
 		return dst, err == nil, err
+	}
+	if ref.enc == encDict {
+		entry := dst[from]
+		if dst, ok = b.findCode(dst[:from], chunk[n+m+int(size):], entry, texts, ref.Count); !ok {
+			return dst[:from], false, ErrCorrupt
+		}
+	}
+	if !sparse {
+		return dst, true, nil
 	}
 	// The values found are numbered among the rows that hold one.
 	if _, err := b.readPresence(whole, ref.Count, &b.present); err != nil {
@@ -1596,4 +1614,62 @@ func (b *Block) FindEqual(ref *ColumnRef, want []byte, dst []uint32) ([]uint32, 
 	}
 
 	return dst, true, nil
+}
+
+// findCode appends to dst the numbers of the values, count in all, whose
+// code in the codes section src of a dictionary of size entries is code,
+// and reports whether the section is sound.
+func (b *Block) findCode(dst []uint32, src []byte, code uint32, size, count int) ([]uint32, bool) {
+	if len(src) == 0 {
+		return dst, false
+	}
+	mode, codes := src[0], src[1:]
+	width := uint(bits.Len(uint(size - 1)))
+	switch {
+	case mode == codesRuns:
+		at := 0
+		for len(codes) > 0 {
+			c, a := binary.Uvarint(codes)
+			if a <= 0 {
+				return dst, false
+			}
+			run, r := binary.Uvarint(codes[a:])
+			if r <= 0 || c >= uint64(size) || run == 0 || run > uint64(count-at) {
+				return dst, false
+			}
+			codes = codes[a+r:]
+			if c == uint64(code) {
+				for i := at; i < at+int(run); i++ {
+					dst = append(dst, uint32(i))
+				}
+			}
+			at += int(run)
+		}
+
+		return dst, at == count
+	case mode != codesPacked || len(codes) != packedSize(count, width):
+		return dst, false
+	case size <= 256:
+		b.d.codes8 = grow(b.d.codes8, count)
+		if !unpack8(b.d.codes8, codes, width, size) {
+			return dst, false
+		}
+		for i, c := range b.d.codes8 {
+			if uint32(c) == code {
+				dst = append(dst, uint32(i))
+			}
+		}
+	default:
+		b.d.codes16 = grow(b.d.codes16, count)
+		if !unpack16(b.d.codes16, codes, width, size) {
+			return dst, false
+		}
+		for i, c := range b.d.codes16 {
+			if uint32(c) == code {
+				dst = append(dst, uint32(i))
+			}
+		}
+	}
+
+	return dst, true
 }
