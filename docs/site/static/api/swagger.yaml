@@ -246,8 +246,9 @@ paths:
         `{"__error": {"code": "EXECUTION_ERROR", "message": "..."}}` and no `__meta` line follows.
         Compile errors answer with the normal error envelope before any row.
 
-        Accepts `q`/`query`, `from`/`earliest` and `to`/`latest`. `limit`, `offset`, `wait`, `profile`
-        and `format` are rejected with `400 VALIDATION_ERROR`. No row cap applies; use `head` in the query.
+        Accepts `q`/`query`, `from`/`earliest` and `to`/`latest`.
+        `limit`, `offset`, `wait`, `profile`, and `format` are rejected with `400 VALIDATION_ERROR`.
+        No row cap applies; use `head` in the query.
         Closing the connection cancels the query.
       requestBody:
         required: true

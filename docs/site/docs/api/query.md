@@ -267,7 +267,7 @@ curl -s -G localhost:3100/api/v1/query \
 
 Runs a query and writes one JSON object per row as NDJSON (`Content-Type: application/x-ndjson`).
 
-The body accepts `q` or `query`, `from` or `earliest`, and `to` or `latest`. `limit`, `offset`, `wait`, `profile` and `format` are rejected with `400 VALIDATION_ERROR`. There is no row cap: limit the output with `head` in the query.
+The body accepts `q` or `query`, `from` or `earliest`, and `to` or `latest`. `limit`, `offset`, `wait`, `profile`, and `format` are rejected with `400 VALIDATION_ERROR`. There is no row cap: limit the output with `head` in the query.
 
 ```bash
 curl -s localhost:3100/api/v1/query/stream \
