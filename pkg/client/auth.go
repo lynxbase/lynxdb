@@ -44,11 +44,6 @@ type CreateKeyInput struct {
 	ExpiresIn   string `json:"expires_in,omitempty"`
 }
 
-// AuthCreateKey creates a new API key with default options. Requires a root key.
-func (c *Client) AuthCreateKey(ctx context.Context, name string) (*AuthCreatedKey, error) {
-	return c.AuthCreateKeyWithOpts(ctx, CreateKeyInput{Name: name})
-}
-
 // AuthCreateKeyWithOpts creates a new API key with full options. Requires a root key.
 func (c *Client) AuthCreateKeyWithOpts(ctx context.Context, input CreateKeyInput) (*AuthCreatedKey, error) {
 	var result AuthCreatedKey

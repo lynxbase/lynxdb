@@ -302,11 +302,8 @@ type ConfigResult map[string]interface{}
 
 // ConfigPatch is the request body for PatchConfig().
 type ConfigPatch struct {
-	Retention     *string `json:"retention,omitempty"`
-	Listen        *string `json:"listen,omitempty"`
-	AuthEnabled   *bool   `json:"auth_enabled,omitempty"`
-	OTLPEnabled   *bool   `json:"otlp_enabled,omitempty"`
-	SyslogEnabled *bool   `json:"syslog_enabled,omitempty"`
+	Retention *string `json:"retention,omitempty"`
+	Listen    *string `json:"listen,omitempty"`
 }
 
 // ESBulkResult is the response from ESBulk().

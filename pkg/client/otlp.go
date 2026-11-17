@@ -6,8 +6,7 @@ import (
 	"net/http"
 )
 
-// OTLPIngestLogs sends OTLP-formatted log data to the server.
-// The body should be a protobuf or JSON-encoded OTLP LogsData payload.
+// OTLPIngestLogs sends a JSON-encoded OTLP LogsData payload to /api/v1/otlp/v1/logs.
 func (c *Client) OTLPIngestLogs(ctx context.Context, body io.Reader, contentType string) (*http.Response, error) {
 	if contentType == "" {
 		contentType = "application/json"

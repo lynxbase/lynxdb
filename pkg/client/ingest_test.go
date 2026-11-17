@@ -175,34 +175,3 @@ func TestIngest_InvalidIndexIsAPIError(t *testing.T) {
 		t.Fatalf("Code = %q, want %q", apiErr.Code, ErrCodeValidationError)
 	}
 }
-
-func TestIngestNDJSON_UsesRawEndpoint(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/v1/ingest/raw" {
-			t.Fatalf("path = %s, want /api/v1/ingest/raw", r.URL.Path)
-		}
-		if ct := r.Header.Get("Content-Type"); ct != "application/x-ndjson" {
-			t.Fatalf("Content-Type = %q, want application/x-ndjson", ct)
-		}
-		if st := r.Header.Get("X-Source-Type"); st != "json" {
-			t.Fatalf("X-Source-Type = %q, want json", st)
-		}
-
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"data": map[string]interface{}{
-				"accepted": 2,
-				"failed":   0,
-			},
-		})
-	}))
-	defer srv.Close()
-
-	c := NewClient(WithBaseURL(srv.URL))
-	result, err := c.IngestNDJSON(context.Background(), strings.NewReader("{\"a\":1}\n{\"a\":2}\n"), IngestOpts{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Accepted != 2 {
-		t.Fatalf("Accepted = %d, want 2", result.Accepted)
-	}
-}

@@ -120,23 +120,6 @@ func (c *Client) IngestRaw(ctx context.Context, body io.Reader, opts IngestOpts)
 	return decodeIngestResult(resp)
 }
 
-// IngestNDJSON sends newline-delimited data to the raw ingest endpoint.
-// Deprecated: use Ingest, which appends JSON lines as they are.
-func (c *Client) IngestNDJSON(ctx context.Context, body io.Reader, opts IngestOpts) (*IngestResult, error) {
-	opts.ContentType = "application/x-ndjson"
-	if opts.Sourcetype == "" {
-		opts.Sourcetype = "json"
-	}
-
-	return c.IngestRaw(ctx, body, opts)
-}
-
-// IngestBulk sends data in Elasticsearch bulk format.
-// Deprecated: use ESBulk, which targets the preferred /api/v1/es/_bulk path.
-func (c *Client) IngestBulk(ctx context.Context, body io.Reader) (*http.Response, error) {
-	return c.doRaw(ctx, http.MethodPost, "/es/_bulk", body, "application/x-ndjson")
-}
-
 func decodeIngestResult(resp *http.Response) (*IngestResult, error) {
 	var env envelope
 	if err := json.NewDecoder(resp.Body).Decode(&env); err != nil {
