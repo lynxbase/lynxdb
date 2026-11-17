@@ -161,15 +161,17 @@ func (x *ectx) aggCall(term ast.AggTerm, window bool, spanSeconds float64) (*ir.
 		if err != nil {
 			return nil, nil, err
 		}
-		lit, ok := args[1].(*ir.Literal)
 		var pct float64
-		switch v := lit.V.(type) {
-		case int64:
-			pct = float64(v)
-		case float64:
-			pct = v
-		default:
-			ok = false
+		lit, ok := args[1].(*ir.Literal)
+		if ok {
+			switch v := lit.V.(type) {
+			case int64:
+				pct = float64(v)
+			case float64:
+				pct = v
+			default:
+				ok = false
+			}
 		}
 		if !ok || pct < 0 || pct > 100 {
 			return nil, nil, typeErr(n.Args[1], "percentile: the percent must be a number between 0 and 100")

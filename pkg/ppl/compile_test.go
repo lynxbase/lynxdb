@@ -76,6 +76,8 @@ func TestCompileErrors(t *testing.T) {
 		{"source=t | where abs('x') > 1", ErrType, "abs"},
 		{"source=t earliest=-7x", ErrSemantic, "invalid time modifier"},
 		{"source=t | stats count() as c, avg(x) as c", ErrSemantic, "duplicate aggregation name"},
+		{"source=t | stats percentile(x, y)", ErrType, "percent must be a number"},
+		{"sourCe=0|stAts perCentile(0,A)", ErrType, "percent must be a number"},
 	}
 	for _, c := range cases {
 		_, err := Compile(c.q)
