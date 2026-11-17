@@ -1,73 +1,90 @@
 ---
 title: Storage Settings
-description: Configure part writing, partitioning, and compaction in the storage section of the LynxDB config file.
+description: Configure the data directory, time partitions, flushing, event time and retention of the LynxDB columnar store.
 ---
 
 # Storage Settings
 
-The `storage` section controls how LynxDB writes parts, lays them out on disk, and compacts them.
-
-## Write Path
-
-There is no write-ahead log. Accepted events go into an in-memory batcher. A flush writes the batch to a temporary `.lsg` part file, optionally fsyncs it (`ingest.fsync`), and renames it into place, which makes the events durable and visible to queries. Events accepted but not yet flushed are lost if the process crashes.
+The `storage` section, together with the top-level `data_dir` and `retention`, controls how the server keeps events.
 
 | Key | Env var | Default | Description |
 |-----|---------|---------|-------------|
-| `storage.flush_threshold` | `LYNXDB_STORAGE_FLUSH_THRESHOLD` | `512mb` | Buffered size that triggers a flush. Minimum `1mb`. |
-| `storage.flush_idle_timeout` | `LYNXDB_STORAGE_FLUSH_IDLE_TIMEOUT` | `200ms` | Flush after this long without incoming events. `0` disables the idle flush. |
-| `storage.row_group_size` | `LYNXDB_STORAGE_ROW_GROUP_SIZE` | `65536` | Rows per row group in a part. |
-| `storage.max_columns_per_part` | `LYNXDB_STORAGE_MAX_COLUMNS_PER_PART` | `256` | Maximum user fields stored as columns in one part. When a batch has more distinct fields, the most frequent ones become columns and the rest stay searchable through `_raw`. `0` removes the cap. |
-| `storage.compression` | `LYNXDB_STORAGE_COMPRESSION` | `lz4` | Validated (`lz4` or `zstd`), but parts are always written with LZ4. |
+| `data_dir` | `LYNXDB_DATA_DIR` | `$XDG_DATA_HOME/lynxdb` or `~/.local/share/lynxdb` | Root directory of the indexes. Empty keeps them in a temporary directory that is removed at shutdown. |
+| `retention` | `LYNXDB_RETENTION` | `7d` | How long events are kept. `0` keeps them all. |
+| `storage.partition` | `LYNXDB_STORAGE_PARTITION` | `24h` (shown as `1d`) | Span of event time whose events are kept apart. `0` means `24h`. |
+| `storage.flush_interval` | `LYNXDB_STORAGE_FLUSH_INTERVAL` | `0s` | Longest time ingested events wait in memory before they are written. `0` means one second. |
+| `storage.time_fields` | `LYNXDB_STORAGE_TIME_FIELDS` | `[_time, timestamp, "@timestamp", time, ts]` | Fields whose value becomes the event time, tried in this order. In the environment variable, a comma-separated list. |
 
-## Partitioning
+None of these settings change on reload; they take effect at the next start.
 
-| Key | Env var | Default | Description |
-|-----|---------|---------|-------------|
-| `storage.partition_by` | `LYNXDB_STORAGE_PARTITION_BY` | `daily` | Time partition of part directories: `daily`, `hourly`, `weekly`, `monthly` or `none`. Retention deletes whole partitions, and queries skip partitions outside their time range. |
+## Indexes
 
-## Compaction
+Every index has a store of its own: a directory under `data_dir` named after the index. An index comes into being with its first events, and its name holds letters, digits, dots, dashes and underscores, does not start with a dot, and is at most 255 characters long. Ingest that names another index is rejected with `400 VALIDATION_ERROR`.
 
-Compaction merges small parts into larger ones. L0 parts come from flushes; when an index has `l0_threshold` L0 parts they merge into L1, and `l1_threshold` L1 parts merge into L2 parts of about `l2_target_size`.
+A store keeps its events in immutable column files, called parts, grouped into sorted runs. `lynxdb indexes` and `GET /api/v1/stats` report the events, bytes and parts of each index.
 
-| Key | Env var | Default | Description |
-|-----|---------|---------|-------------|
-| `storage.compaction_interval` | `LYNXDB_STORAGE_COMPACTION_INTERVAL` | `30s` | How often the compaction scheduler runs. Minimum `1s`. |
-| `storage.compaction_workers` | `LYNXDB_STORAGE_COMPACTION_WORKERS` | `2` | Parallel compaction workers. |
-| `storage.compaction_rate_limit_mb` | `LYNXDB_STORAGE_COMPACTION_RATE_LIMIT_MB` | `100` | Upper bound of the compaction rate in MB/s. The rate adapts below this bound (down to 10 MB/s) when slow queries or GC load increase. `0` uses a 200 MB/s bound. Reloadable. |
-| `storage.l0_threshold` | `LYNXDB_STORAGE_L0_THRESHOLD` | `4` | L0 parts that trigger L0 to L1 compaction. |
-| `storage.l1_threshold` | `LYNXDB_STORAGE_L1_THRESHOLD` | `4` | L1 parts that trigger L1 to L2 compaction. |
-| `storage.l2_target_size` | `LYNXDB_STORAGE_L2_TARGET_SIZE` | `1gb` | Target size of L2 parts. Minimum `1mb`. |
-| `storage.compaction_disable_bsi_on_output` | `LYNXDB_STORAGE_COMPACTION_DISABLE_BSI_ON_OUTPUT` | `false` | Skip writing range indexes (BSI) into compacted parts. |
+## Writing events
 
-Besides the scheduled runs, a flush that leaves an index with `l0_threshold` or more L0 parts triggers compaction for that index right away.
+Ingested events wait in memory, then the store writes them as a sorted run. A write happens when the oldest waiting event has waited `storage.flush_interval`, sooner when the buffers fill, on a sync, and at shutdown. A written run is durable on disk, and from then on queries see it.
 
-## Query Result Cache
+The server syncs before it runs a query and before it answers `/api/v1/stats`, `/api/v1/status` and the field catalog, so a query sees every event ingested before it. Events that wait in memory when the process is killed are lost; a graceful shutdown (`SIGINT`, `SIGTERM`) writes them first.
 
-| Key | Env var | Default | Description |
-|-----|---------|---------|-------------|
-| `storage.cache_max_bytes` | `LYNXDB_STORAGE_CACHE_MAX_BYTES` | `1gb` | Validated but not read: the query result cache is sized by the server (256 MB, 30 s entry lifetime) and shrinks under memory pressure from `server.total_memory_pool_bytes`. |
-| `storage.cache_ttl` | `LYNXDB_STORAGE_CACHE_TTL` | `5m` | Validated but not read. |
+The store merges runs in the background, so that a query meets few of them. A partition that ended an hour ago, or its own span ago when that is shorter, is merged into one run.
 
-`lynxdb cache stats` shows cache usage and `lynxdb cache clear` empties it.
+## Event time
+
+The time of an event is the value of the first field in `storage.time_fields` that the event holds as a time:
+
+- a number: seconds, milliseconds, microseconds or nanoseconds since the Unix epoch, told apart by its size;
+- text: a date, `T` or a space, a time of day with or without a fraction of a second, and a zone as `Z` or an offset such as `+02:00`; without a zone the time is in UTC. Text that holds only digits is read as an epoch number.
+
+A field that holds something else is skipped, and the next one is tried. An event without any of the fields gets the time of its arrival. The time is returned as `_time`, and the field it came from keeps its value:
+
+```bash
+lynxdb query --file backend_server.log 'source=main | head 1 | fields _time, timestamp, service'
+```
+
+```json
+{"_time":"2026-02-10T08:12:03.045Z","service":"user-service","timestamp":"2026-02-10T08:12:03.045Z"}
+```
+
+`time_fields` are paths: a member of an object is named like `http.request_time`.
+
+## Partitions
+
+The store sorts events into partitions by their time. A partition covers `storage.partition` of event time, counted from the Unix epoch, so with the default each partition is one UTC day. Runs never mix events of two partitions, which gives two benefits:
+
+- a query with a time range reads only the partitions it meets;
+- retention drops whole partitions.
+
+Smaller partitions let retention drop data in smaller steps; larger ones keep fewer, larger runs. Choose the span before an index holds events and keep it: the store records each part's partition by number, and a server started with another span reads those numbers with that span, so retention can drop recent events.
+
+## Retention
+
+Once a minute the server drops, in every index, the partitions that ended more than `retention` ago. An event is kept for at least `retention`, and goes with its partition once the whole partition is older than that, so with the defaults events live for at most about 8 days. `retention: 0` keeps everything.
+
+```yaml
+retention: "30d"
+storage:
+  partition: "24h"
+```
+
+See [Retention](../operations/retention.md) for planning disk use.
 
 ## Complete Example
 
 ```yaml
+data_dir: "/var/lib/lynxdb"
+retention: "30d"
+
 storage:
-  flush_threshold: "512mb"
-  flush_idle_timeout: "200ms"
-  row_group_size: 65536
-  max_columns_per_part: 256
-  partition_by: "daily"
-  compaction_interval: "30s"
-  compaction_workers: 4
-  compaction_rate_limit_mb: 200
-  l0_threshold: 4
-  l1_threshold: 4
-  l2_target_size: "1gb"
+  partition: "24h"
+  flush_interval: "1s"
+  time_fields: ["_time", "timestamp", "@timestamp", "time", "ts", "event.created"]
 ```
 
 ## Related
 
 - [Ingest Settings](./ingest.md)
+- [Server Settings](./server.md)
 - [Performance Tuning](../operations/performance-tuning.md)
