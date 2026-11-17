@@ -355,7 +355,8 @@ func (c *colVec) appendAll(src *colVec) {
 	}
 }
 
-// column turns the built rows into a result column that owns its memory.
+// column turns the built rows into a result column, which takes over their
+// memory: c must not be appended to afterwards.
 func (c *colVec) column(name string) Column {
 	n := c.len()
 	out := Column{Name: name, Kind: c.kind}
@@ -389,7 +390,7 @@ func (c *colVec) column(name string) Column {
 		}
 	}
 	if len(c.ints) != 0 {
-		v.Ints = append([]int64(nil), c.ints...)
+		v.Ints = c.ints
 	}
 	if bools {
 		v.Bools = make(vec.Bitmap, vec.BitmapWords(n))
@@ -400,12 +401,12 @@ func (c *colVec) column(name string) Column {
 		}
 	}
 	if len(c.floats) != 0 {
-		v.Floats = append([]float64(nil), c.floats...)
+		v.Floats = c.floats
 	}
 	if len(c.ends) != 0 {
 		v.Offsets = make([]uint32, n+1)
 		copy(v.Offsets[1:], c.ends)
-		v.Data = append([]byte(nil), c.data...)
+		v.Data = c.data
 	}
 
 	return out
