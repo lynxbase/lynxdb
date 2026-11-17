@@ -18,6 +18,14 @@ type CompileOptions struct {
 	// Now is the query's reference time; query-constant expressions such as
 	// now() and relative time bounds evaluate against it.
 	Now time.Time
+	// Subqueries holds the rows each subquery of the expression returned.
+	Subqueries map[*ir.Subquery]*SubqueryResult
+}
+
+// SubqueryResult is the evaluated result of an uncorrelated subquery: its
+// rows, each holding the subquery's columns in schema order.
+type SubqueryResult struct {
+	Rows [][]event.Value
 }
 
 // CompileExpr compiles a canonical IR expression to a bytecode program.
@@ -26,7 +34,7 @@ func CompileExpr(e ir.Expr, opts CompileOptions) (*Program, error) {
 	if opts.Now.IsZero() {
 		opts.Now = time.Now()
 	}
-	c := &irCompiler{prog: &Program{NumericStrings: true}, now: opts.Now.UTC()}
+	c := &irCompiler{prog: &Program{NumericStrings: true}, now: opts.Now.UTC(), subqueries: opts.Subqueries}
 	if err := c.compile(e); err != nil {
 		return nil, err
 	}
@@ -35,9 +43,10 @@ func CompileExpr(e ir.Expr, opts CompileOptions) (*Program, error) {
 }
 
 type irCompiler struct {
-	prog   *Program
-	now    time.Time
-	params []*ir.LambdaParam
+	prog       *Program
+	now        time.Time
+	params     []*ir.LambdaParam
+	subqueries map[*ir.Subquery]*SubqueryResult
 }
 
 func (c *irCompiler) constant(v event.Value) {
@@ -136,7 +145,7 @@ func (c *irCompiler) compile(e ir.Expr) error {
 	case *ir.Lambda:
 		return fmt.Errorf("vm: a lambda is only valid as a function argument")
 	case *ir.Subquery:
-		return fmt.Errorf("vm: subquery %s was not resolved before compilation", n)
+		return c.subquery(n)
 	case *ir.AggCall:
 		return fmt.Errorf("vm: aggregate %s cannot be compiled as a scalar expression", n)
 	default:
@@ -358,4 +367,92 @@ func LiteralValue(v any) event.Value {
 		return event.ObjectValue(out)
 	}
 	return event.StringValue(fmt.Sprint(v))
+}
+
+// subquery compiles an evaluated subquery: EXISTS and scalar subqueries
+// become constants, IN becomes a hash-set membership test with IN-list NULL
+// semantics.
+func (c *irCompiler) subquery(n *ir.Subquery) error {
+	res, ok := c.subqueries[n]
+	if !ok {
+		return fmt.Errorf("vm: subquery %s was not evaluated before compilation", n)
+	}
+	switch n.Mode {
+	case ir.SubqueryExists:
+		c.constant(event.BoolValue((len(res.Rows) > 0) != n.Not))
+		return nil
+	case ir.SubqueryScalar:
+		switch len(res.Rows) {
+		case 0:
+			c.prog.EmitOp(OpConstNull)
+		case 1:
+			c.constant(res.Rows[0][0])
+		default:
+			return fmt.Errorf("scalar subquery returned %d rows; it must return at most one", len(res.Rows))
+		}
+		return nil
+	}
+	set := make(map[string]struct{}, len(res.Rows))
+	hasNull := false
+	for _, r := range res.Rows {
+		key, null := tupleKey(r)
+		if null {
+			hasNull = true
+			continue
+		}
+		set[key] = struct{}{}
+	}
+	if err := c.compileAll(n.Args); err != nil {
+		return err
+	}
+	not := n.Not
+	c.native(func(a []event.Value) event.Value {
+		key, null := tupleKey(a)
+		var r event.Value
+		switch {
+		case null:
+			r = event.NullValue()
+		default:
+			if _, ok := set[key]; ok {
+				r = event.BoolValue(true)
+			} else if hasNull {
+				r = event.NullValue()
+			} else {
+				r = event.BoolValue(false)
+			}
+		}
+		if not && !r.IsNull() {
+			r = event.BoolValue(!r.AsBool())
+		}
+		return r
+	}, len(n.Args))
+	return nil
+}
+
+// tupleKey encodes values for set membership; numbers compare by numeric
+// value and numeric strings match numbers, as = does.
+func tupleKey(vals []event.Value) (string, bool) {
+	var b strings.Builder
+	for _, v := range vals {
+		if v.IsNull() {
+			return "", true
+		}
+		switch v.Type() {
+		case event.FieldTypeInt, event.FieldTypeFloat:
+			f, _ := numFloat(v)
+			b.WriteString("n" + formatFloat(f))
+		case event.FieldTypeString:
+			if n, ok := parseNumber(v.AsString()); ok {
+				f, _ := numFloat(n)
+				b.WriteString("n" + formatFloat(f))
+			} else {
+				b.WriteString("s" + v.AsString())
+			}
+		default:
+			s, _ := str(v)
+			b.WriteString("o" + s)
+		}
+		b.WriteByte(0)
+	}
+	return b.String(), false
 }
