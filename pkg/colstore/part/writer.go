@@ -515,10 +515,9 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 	if src.readAhead != nil {
 		src.readAhead(int(start), len(data))
 	}
-	dirOff := binary.LittleEndian.Uint32(e[40:])
-	dir := src.directories()[dirOff : dirOff+binary.LittleEndian.Uint32(e[44:])]
-	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
-		return ErrCorrupt
+	dir, err := src.directory(i, e)
+	if err != nil {
+		return err
 	}
 	n, size := binary.Uvarint(dir)
 	if size <= 0 || n > uint64(len(dir)-size)/dirEntrySize {

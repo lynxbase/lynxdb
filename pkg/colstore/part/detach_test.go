@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"reflect"
+	"sync"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
@@ -40,14 +41,31 @@ func TestDetachedPartFindsItsBlocksWithoutItsFooterAndDirectories(t *testing.T) 
 		t.Fatal(err)
 	}
 	p.Detach()
-	// The directories are copied at their first use.
-	var b Block
-	if err := p.OpenBlock(0, &b); err != nil {
-		t.Fatal(err)
+	// The directory of a block is kept from the first time it is opened,
+	// on whichever goroutine that is.
+	var opening sync.WaitGroup
+	for g := 0; g < 4; g++ {
+		opening.Add(1)
+		go func() {
+			defer opening.Done()
+			var b Block
+			for i := 0; i < p.NumBlocks()-1; i++ {
+				if err := p.OpenBlock(i, &b); err != nil {
+					t.Error(err)
+				}
+			}
+		}()
 	}
+	opening.Wait()
 	footer := int(binary.LittleEndian.Uint64(data[len(data)-trailerSize:]))
 	clear(data[footer:])
 	clear(data[p.dirsOff : p.dirsOff+len(p.dirs)])
+	// The last block was not opened: its directory is still read from the
+	// data, where it is damaged by now.
+	var b Block
+	if err := p.OpenBlock(p.NumBlocks()-1, &b); err != ErrCorrupt {
+		t.Fatalf("a block whose directory was cleared before it was opened: %v", err)
+	}
 
 	if p.NumBlocks() != whole.NumBlocks() || p.NumBlocks() < 4 {
 		t.Fatalf("%d blocks, the whole part has %d", p.NumBlocks(), whole.NumBlocks())
@@ -57,7 +75,7 @@ func TestDetachedPartFindsItsBlocksWithoutItsFooterAndDirectories(t *testing.T) 
 	}
 	token := tokenfilter.AppendHashes(nil, []byte("alpha"))[0]
 	var wb Block
-	for i := 0; i < p.NumBlocks(); i++ {
+	for i := 0; i < p.NumBlocks()-1; i++ {
 		if err := p.OpenBlock(i, &b); err != nil {
 			t.Fatalf("block %d: %v", i, err)
 		}

@@ -7,6 +7,7 @@ import (
 	"math"
 	"math/bits"
 	"sync"
+	"sync/atomic"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -26,10 +27,14 @@ type Part struct {
 	// per block.
 	dirs    []byte
 	dirsOff int
-	// detached is set once the index is held apart from data; dirsCopied
-	// guards the copy of dirs that follows.
-	detached   bool
-	dirsCopied sync.Once
+	// detached is set once the index is held apart from data. The
+	// directory of a block then moves to dirHeap, at its place in dirs,
+	// when the block is first opened: dirHeld has a bit per block that
+	// did, and dirMu guards the moving.
+	detached bool
+	dirMu    sync.Mutex
+	dirHeap  []byte
+	dirHeld  []atomic.Uint64
 	// filters holds an entry for every token filter, block after block,
 	// and groups locates them; every block names its group and its first
 	// filter, and a part without filters has neither.
@@ -265,9 +270,9 @@ func (p *Part) SetBlockData(data []byte) {
 }
 
 // Detach copies what locates blocks, filters and keys out of the part's
-// data, and the block directories at their first use, so that finding a
-// block reads the data no more; a part mapped from a file then keeps its
-// index in memory whatever becomes of the file's pages.
+// data, and the directory of each block when it is first opened, so that
+// finding a block reads the data no more; a part mapped from a file then
+// keeps its index in memory whatever becomes of the file's pages.
 func (p *Part) Detach() {
 	p.index, p.filters = bytes.Clone(p.index), bytes.Clone(p.filters)
 	size := len(p.lastKey)
@@ -281,16 +286,40 @@ func (p *Part) Detach() {
 	}
 	keys = append(keys, p.lastKey...)
 	p.lastKey = keys[len(keys)-len(p.lastKey):]
+	p.dirHeld = make([]atomic.Uint64, (p.NumBlocks()+63)/64)
 	p.detached = true
 }
 
-// directories returns the column directories of all blocks.
-func (p *Part) directories() []byte {
-	if p.detached {
-		p.dirsCopied.Do(func() { p.dirs = bytes.Clone(p.dirs) })
+// directory returns the column directory of block i, whose index entry is
+// e, once its checksum holds. A detached part reads the directory of a
+// block from its data the first time only.
+func (p *Part) directory(i int, e []byte) ([]byte, error) {
+	off := binary.LittleEndian.Uint32(e[40:])
+	end := off + binary.LittleEndian.Uint32(e[44:])
+	if !p.detached {
+		if crc32.Checksum(p.dirs[off:end], castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
+			return nil, ErrCorrupt
+		}
+
+		return p.dirs[off:end], nil
+	}
+	held, bit := &p.dirHeld[i>>6], uint64(1)<<(uint(i)&63)
+	if held.Load()&bit == 0 {
+		p.dirMu.Lock()
+		defer p.dirMu.Unlock()
+		if held.Load()&bit == 0 {
+			if crc32.Checksum(p.dirs[off:end], castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
+				return nil, ErrCorrupt
+			}
+			if p.dirHeap == nil {
+				p.dirHeap = make([]byte, len(p.dirs))
+			}
+			copy(p.dirHeap[off:end], p.dirs[off:end])
+			held.Or(bit)
+		}
 	}
 
-	return p.dirs
+	return p.dirHeap[off:end], nil
 }
 
 // SetReadAhead makes the part announce the bytes it is about to read, as an
@@ -402,10 +431,9 @@ func (p *Part) OpenBlock(i int, b *Block) error {
 	start := binary.LittleEndian.Uint64(e[20:])
 	b.part, b.index, b.start = p, i, int(start)
 	b.data = p.blocks[start : start+uint64(binary.LittleEndian.Uint32(e[28:]))]
-	dirOff := binary.LittleEndian.Uint32(e[40:])
-	dir := p.directories()[dirOff : dirOff+binary.LittleEndian.Uint32(e[44:])]
-	if crc32.Checksum(dir, castagnoli) != binary.LittleEndian.Uint32(e[48:]) {
-		return ErrCorrupt
+	dir, err := p.directory(i, e)
+	if err != nil {
+		return err
 	}
 	n, size := binary.Uvarint(dir)
 	if size <= 0 || n > uint64(len(dir)-size)/dirEntrySize || b.Rows == 0 || b.Rows > 1<<16 {
