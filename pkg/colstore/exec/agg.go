@@ -726,16 +726,16 @@ func appendRowKey(dst []byte, p *keyPart, j, r int, last bool) []byte {
 		return appendKeyBytes(dst, bytesTag(p.kind), p.col.Bytes(r), last)
 	case partInts:
 		switch {
-		case p.one:
-			return appendKeyInt(dst, p.lo)
 		case p.dense:
 			if p.valid != nil && p.valid[j] == 0 {
 				return append(dst, tagNull)
 			}
 
 			return appendKeyInt(dst, p.ints[j])
-		case p.col.Valid != nil && !p.col.Valid.Get(r):
+		case p.nullable && !p.col.Valid.Get(r):
 			return append(dst, tagNull)
+		case p.one:
+			return appendKeyInt(dst, p.lo)
 		}
 
 		return appendKeyInt(dst, p.col.Int(r))

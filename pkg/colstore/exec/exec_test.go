@@ -477,3 +477,22 @@ func TestTimeColumnIsTheRowTime(t *testing.T) {
 		t.Fatalf("got %s", got)
 	}
 }
+
+func TestConstantKeyMissingInSomeRows(t *testing.T) {
+	var docs [][]byte
+	for i := 0; i < 500; i++ {
+		c := ""
+		if i%3 != 0 {
+			c = `,"c":7`
+		}
+		docs = append(docs, []byte(fmt.Sprintf(`{"id":%d,"u":"user-%d"%s}`, i, i, c)))
+	}
+	rows := referenceRows(t, docs, "")
+	plan := &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("u", "c"), Aggs: []exec.Agg{{Name: "rows", Func: exec.Count}}}
+	for _, blockRows := range []int{64, 1 << 16} {
+		tbl := buildTable(t, docs, "", layout{blockRows: blockRows, parts: 1})
+		snap := tbl.Snapshot()
+		check(t, snap, rows, plan, false, 2)
+		snap.Release()
+	}
+}
