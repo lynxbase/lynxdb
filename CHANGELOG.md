@@ -77,7 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `status`, `health`, `indexes`, `jobs`, `config`, `auth`, `login`, `logout`,
   `completion` and `version`.
 - **REST API**: query (sync, async jobs and hybrid), NDJSON streaming,
-  explain, catalog, jobs, fields, sources, histogram, ingest, indexes, stats,
+  explain, catalog, jobs, fields, histogram, ingest, indexes, stats,
   config, status, API keys and Prometheus metrics. Query responses carry
   `took_ms`, `query_id` and `rows` in `meta`.
 

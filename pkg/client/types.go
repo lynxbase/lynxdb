@@ -203,14 +203,6 @@ type FieldValue struct {
 	Count int64       `json:"count"`
 }
 
-// SourceInfo describes an index as a source of events.
-type SourceInfo struct {
-	Name       string `json:"name"`
-	EventCount int64  `json:"event_count"`
-	FirstEvent string `json:"first_event,omitempty"`
-	LastEvent  string `json:"last_event,omitempty"`
-}
-
 // ServerStatus is the response from Status().
 type ServerStatus struct {
 	Version       string           `json:"version"`

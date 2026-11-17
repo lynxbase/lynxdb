@@ -554,26 +554,6 @@ paths:
         '400':
           $ref: '#/components/responses/ValidationError'
 
-  /api/v1/sources:
-    get:
-      operationId: listSources
-      tags: [Schema]
-      summary: Indexes with their event counts
-      description: Any valid key can call it.
-      parameters:
-        - name: pattern
-          in: query
-          description: Glob on the index name
-          schema:
-            type: string
-      responses:
-        '200':
-          description: Indexes
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/SourcesResponse'
-
   /api/v1/indexes:
     get:
       operationId: listIndexes
@@ -2244,31 +2224,6 @@ components:
                   value: {}
                   count:
                     type: integer
-        meta:
-          $ref: '#/components/schemas/Meta'
-    SourcesResponse:
-      type: object
-      properties:
-        data:
-          type: object
-          properties:
-            pattern:
-              type: string
-            sources:
-              type: array
-              items:
-                type: object
-                properties:
-                  name:
-                    type: string
-                  event_count:
-                    type: integer
-                  first_event:
-                    type: string
-                    format: date-time
-                  last_event:
-                    type: string
-                    format: date-time
         meta:
           $ref: '#/components/schemas/Meta'
     Index:

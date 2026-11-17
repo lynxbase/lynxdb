@@ -75,24 +75,3 @@ func TestE2E_FieldValues_ReturnsTopValues(t *testing.T) {
 		t.Errorf("expected web-02 and web-03 with count 1, got %+v", result.Values[1:])
 	}
 }
-
-func TestE2E_Sources_ReturnsIngestedSources(t *testing.T) {
-	h := NewHarness(t)
-	h.IngestFile("idx_ssh", "testdata/logs/OpenSSH_2k.log")
-
-	ctx := context.Background()
-	sources, err := h.Client().Sources(ctx)
-	if err != nil {
-		t.Fatalf("Sources: %v", err)
-	}
-	if len(sources) != 1 {
-		t.Fatalf("expected 1 source, got %d: %+v", len(sources), sources)
-	}
-	src := sources[0]
-	if src.Name != "idx_ssh" || src.EventCount != 2000 {
-		t.Errorf("expected idx_ssh with 2000 events, got %+v", src)
-	}
-	if src.FirstEvent == "" || src.LastEvent == "" || src.FirstEvent > src.LastEvent {
-		t.Errorf("expected first_event <= last_event, got first=%q last=%q", src.FirstEvent, src.LastEvent)
-	}
-}

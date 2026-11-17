@@ -152,9 +152,8 @@ Paths below are relative to `/api/v1` unless they start with `/health`, `/metric
 | `DELETE` | `/query/jobs/{id}` | Cancel a job | [Query](./query.md#delete-queryjobsid) |
 | `GET` | `/query/jobs/{id}/stream` | Job state and result over SSE | [Query](./query.md#get-queryjobsidstream) |
 | `GET` | `/histogram` | Event counts per time bucket | [Histogram](./histogram.md) |
-| `GET` | `/fields` | Field catalog | [Fields & Sources](./fields.md) |
-| `GET` | `/fields/{name}/values` | Top values of a field | [Fields & Sources](./fields.md#get-fieldsnamevalues) |
-| `GET` | `/sources` | Indexes with event counts | [Fields & Sources](./fields.md#get-sources) |
+| `GET` | `/fields` | Field catalog | [Fields](./fields.md) |
+| `GET` | `/fields/{name}/values` | Top values of a field | [Fields](./fields.md#get-fieldsnamevalues) |
 | `POST` | `/ingest` | Ingest NDJSON events | [Ingest](./ingest.md) |
 | `POST` | `/ingest/raw` | Ingest log text | [Ingest](./ingest.md#post-ingestraw) |
 | `POST` | `/ingest/hec` | Ingest Splunk HEC events | [Ingest](./ingest.md#post-ingesthec) |

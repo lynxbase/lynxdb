@@ -263,7 +263,6 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 
 	mux.HandleFunc("GET /api/v1/fields", s.handleListFields)
 	mux.HandleFunc("GET /api/v1/fields/{name}/values", s.handleFieldValues)
-	mux.HandleFunc("GET /api/v1/sources", s.handleListSources)
 
 	mux.HandleFunc("GET /api/v1/stats", s.handleStats)
 

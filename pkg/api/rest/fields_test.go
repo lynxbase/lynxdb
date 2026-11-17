@@ -96,37 +96,3 @@ func TestFields_List(t *testing.T) {
 		t.Errorf("prefix=pa = %v, want only path", prefixed)
 	}
 }
-
-func TestSources_Basic(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	ingestTestEvents(t, srv.Addr(), 20, 4)
-
-	data := getData(t, fmt.Sprintf("http://%s/api/v1/sources", srv.Addr()))
-	sources := data["sources"].([]interface{})
-	if len(sources) != 1 {
-		t.Fatalf("sources = %v, want main", sources)
-	}
-	src := sources[0].(map[string]interface{})
-	if src["name"] != "main" {
-		t.Fatalf("source name: %v", src["name"])
-	}
-	if int(src["event_count"].(float64)) != 20 {
-		t.Fatalf("event_count: %v", src["event_count"])
-	}
-	if src["first_event"] == nil || src["last_event"] == nil {
-		t.Fatalf("source = %v, want first_event and last_event", src)
-	}
-}
-
-func TestSources_Empty(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	data := getData(t, fmt.Sprintf("http://%s/api/v1/sources", srv.Addr()))
-	sources := data["sources"].([]interface{})
-	if len(sources) != 0 {
-		t.Fatalf("expected 0 sources, got %d", len(sources))
-	}
-}

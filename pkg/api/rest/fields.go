@@ -3,7 +3,6 @@ package rest
 import (
 	"fmt"
 	"net/http"
-	"path"
 	"sort"
 	"strings"
 	"time"
@@ -143,40 +142,6 @@ func sinceParam(since string) string {
 	}
 
 	return "-" + since
-}
-
-// handleListSources lists the indexes with their event counts and the times
-// of their earliest and latest events; ?pattern= keeps the names it matches.
-func (s *Server) handleListSources(w http.ResponseWriter, r *http.Request) {
-	start := time.Now()
-	pattern := r.URL.Query().Get("pattern")
-
-	s.syncForRead()
-	sources := make([]map[string]interface{}, 0)
-	for _, ix := range s.db.Stats() {
-		if pattern != "" {
-			if matched, _ := path.Match(pattern, ix.Name); !matched {
-				continue
-			}
-		}
-		entry := map[string]interface{}{
-			"name":        ix.Name,
-			"event_count": ix.Rows,
-		}
-		if ix.Parts > 0 {
-			entry["first_event"] = ix.First.Format(time.RFC3339)
-			entry["last_event"] = ix.Last.Format(time.RFC3339)
-		}
-		sources = append(sources, entry)
-	}
-
-	resp := map[string]interface{}{
-		"sources": sources,
-	}
-	if pattern != "" {
-		resp["pattern"] = pattern
-	}
-	respondData(w, http.StatusOK, resp, WithTook(time.Since(start)))
 }
 
 func firstNonEmpty(values ...string) string {

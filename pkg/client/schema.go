@@ -114,18 +114,3 @@ func (c *Client) FieldValues(ctx context.Context, fieldName string, limit int) (
 
 	return &result, nil
 }
-
-// sourcesResponse wraps the sources list from the server.
-type sourcesResponse struct {
-	Sources []SourceInfo `json:"sources"`
-}
-
-// Sources returns all known data sources.
-func (c *Client) Sources(ctx context.Context) ([]SourceInfo, error) {
-	var resp sourcesResponse
-	if _, err := c.doJSON(ctx, http.MethodGet, "/sources", nil, &resp); err != nil {
-		return nil, err
-	}
-
-	return resp.Sources, nil
-}
