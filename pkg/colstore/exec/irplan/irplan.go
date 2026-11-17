@@ -81,9 +81,12 @@ type translator struct {
 	named    bool
 	assigned []string
 	gone     []string
-	agg      *exec.Aggregate
-	having   []*exec.Expr
-	sort     *exec.Sort
+	// unseen holds the columns that order the rows and that an operator
+	// above the sort left out of the output.
+	unseen []exec.Named
+	agg    *exec.Aggregate
+	having []*exec.Expr
+	sort   *exec.Sort
 	// dedup holds the keys whose every combination keeps its first row.
 	dedup []exec.Named
 	// totals is set once a column stands for a total over the groups, which
@@ -193,25 +196,29 @@ func (t *translator) aboveSort(n ir.Node) error {
 	case *ir.Limit:
 		return t.limit(n)
 	case *ir.Project:
-		if n.Drop {
-			for _, name := range n.Names {
-				if sorts(name) {
-					return refused
-				}
+		// What the sort reads keeps ordering the rows when the choice of
+		// columns leaves it out.
+		ordering := make([]exec.Named, 0, len(t.sort.By))
+		for _, by := range t.sort.By {
+			if slices.ContainsFunc(t.unseen, func(c exec.Named) bool { return c.Name == by.Column }) {
+				continue
 			}
-		} else {
-			for _, by := range t.sort.By {
-				kept := false
-				for _, name := range n.Names {
-					kept = kept || name == by.Column
-				}
-				if !kept {
-					return refused
-				}
+			e, err := t.shown(by.Column)
+			if err != nil {
+				return err
+			}
+			ordering = append(ordering, exec.Named{Name: by.Column, Expr: e})
+		}
+		if err := t.project(n); err != nil {
+			return err
+		}
+		for _, c := range ordering {
+			if _, err := t.shown(c.Name); err != nil || (!t.named && slices.Contains(t.gone, c.Name)) {
+				t.unseen = append(t.unseen, c)
 			}
 		}
 
-		return t.project(n)
+		return nil
 	case *ir.Compute:
 		for _, a := range n.Assigns {
 			if sorts(a.Name) {
@@ -230,6 +237,21 @@ func (t *translator) aboveSort(n ir.Node) error {
 	}
 
 	return refused
+}
+
+// shown returns what the output column name holds; it is an error for a
+// name that the named columns do not have.
+func (t *translator) shown(name string) (*exec.Expr, error) {
+	if !t.named {
+		return t.field(name)
+	}
+	for _, c := range t.cols {
+		if c.Name == name {
+			return c.Expr, nil
+		}
+	}
+
+	return nil, unsupported("a sort by %s, which is not among the columns", name)
 }
 
 // total translates the sum of a column of an aggregate over all of its
@@ -489,6 +511,8 @@ func (t *translator) plan() (exec.Node, error) {
 	default:
 		scan.Filter = exec.And(t.filter...)
 	}
+	// The columns of the plan: the output, then what only orders it.
+	cols := append(t.cols[:len(t.cols):len(t.cols)], t.unseen...)
 	var node exec.Node
 	switch {
 	case t.agg != nil:
@@ -498,59 +522,60 @@ func (t *translator) plan() (exec.Node, error) {
 			node = &exec.Filter{Input: node, Cond: exec.And(t.having...)}
 		}
 		// The aggregate's own columns in their order need no projection.
-		same := len(t.cols) == len(t.agg.Keys)+len(t.agg.Aggs)
-		for i := 0; same && i < len(t.cols); i++ {
+		same := len(cols) == len(t.agg.Keys)+len(t.agg.Aggs)
+		for i := 0; same && i < len(cols); i++ {
 			name := ""
 			if i < len(t.agg.Keys) {
 				name = t.agg.Keys[i].Name
 			} else {
 				name = t.agg.Aggs[i-len(t.agg.Keys)].Name
 			}
-			c := t.cols[i]
+			c := cols[i]
 			same = c.Name == name && c.Expr.Op == exec.OpColumn && c.Expr.Path == name
 		}
 		if !same {
-			node = &exec.Project{Input: node, Exprs: t.cols}
+			node = &exec.Project{Input: node, Exprs: cols}
 		}
-	case t.named && len(t.cols) == 0:
+	case t.named && len(cols) == 0:
 		return nil, unsupported("rows without a column")
-	case !t.named && t.dedup != nil:
-		return nil, unsupported("the first rows of keys as whole events: name the fields to return")
 	case !t.named:
 		// Whole events: what the sort reads and what the query computed,
 		// then every other field.
-		whole := &exec.Project{Input: scan, Rest: true, Except: t.gone}
 		names := t.assigned
 		if t.sort != nil {
 			for _, by := range t.sort.By {
-				if !slices.Contains(names, by.Column) {
+				if !slices.Contains(names, by.Column) && !slices.ContainsFunc(t.unseen, func(c exec.Named) bool { return c.Name == by.Column }) {
 					names = append(names[:len(names):len(names)], by.Column)
 				}
 			}
 		}
+		cols = cols[:0:0]
 		for _, name := range names {
 			e, err := t.field(name)
 			if err != nil {
 				return nil, err
 			}
-			whole.Exprs = append(whole.Exprs, exec.Named{Name: name, Expr: e})
-			t.cols = append(t.cols, exec.Named{Name: name, Expr: e})
+			cols = append(cols, exec.Named{Name: name, Expr: e})
 		}
-		node = whole
+		cols = append(cols, t.unseen...)
+		if t.dedup != nil {
+			node = t.firstRows(scan, cols, true)
+		} else {
+			node = &exec.Project{Input: scan, Exprs: cols, Rest: true, Except: t.gone}
+		}
 	case t.dedup != nil:
-		node = t.firstRows(scan)
+		node = t.firstRows(scan, cols, false)
 	default:
-		node = &exec.Project{Input: scan, Exprs: t.cols}
+		node = &exec.Project{Input: scan, Exprs: cols}
 	}
 	if t.sort != nil {
 		for _, by := range t.sort.By {
-			known := false
-			for _, c := range t.cols {
-				known = known || c.Name == by.Column
-			}
-			if !known {
+			if !slices.ContainsFunc(cols, func(c exec.Named) bool { return c.Name == by.Column }) {
 				return nil, unsupported("a sort by %s, which is not among the columns", by.Column)
 			}
+		}
+		for _, c := range t.unseen {
+			t.sort.Hide = append(t.sort.Hide, c.Name)
 		}
 		t.sort.Input = node
 		node = t.sort
@@ -559,10 +584,10 @@ func (t *translator) plan() (exec.Node, error) {
 	return node, nil
 }
 
-// firstRows returns the output columns computed over the first row of each
-// combination of the dedup keys: an aggregate that reads, from that row,
-// every field the columns use.
-func (t *translator) firstRows(scan *exec.Scan) exec.Node {
+// firstRows returns cols computed over the first row of each combination of
+// the dedup keys: an aggregate that reads, from that row, every field the
+// columns use, and with whole every other field of the row after them.
+func (t *translator) firstRows(scan *exec.Scan, cols []exec.Named, whole bool) exec.Node {
 	agg := &exec.Aggregate{Input: scan, Keys: t.dedup}
 	var over func(e *exec.Expr) *exec.Expr
 	over = func(e *exec.Expr) *exec.Expr {
@@ -585,12 +610,19 @@ func (t *translator) firstRows(scan *exec.Scan) exec.Node {
 
 		return &out
 	}
-	cols := make([]exec.Named, len(t.cols))
-	for i, c := range t.cols {
-		cols[i] = exec.Named{Name: c.Name, Expr: over(c.Expr)}
+	first := &exec.Project{Input: agg, Exprs: make([]exec.Named, len(cols))}
+	for i, c := range cols {
+		first.Exprs[i] = exec.Named{Name: c.Name, Expr: over(c.Expr)}
+	}
+	if whole {
+		// A pick of its own: its column stays the place of the row.
+		const row = "\x00row"
+		agg.Aggs = append(agg.Aggs, exec.Agg{Name: row, Func: exec.FirstRow, Arg: exec.Time()})
+		first.Exprs = append(first.Exprs, exec.Named{Name: row, Expr: exec.Col(row, exec.KindAny)})
+		first.Rest, first.Except = true, t.gone
 	}
 
-	return &exec.Project{Input: agg, Exprs: cols}
+	return first
 }
 
 // field returns what a column name stands for.

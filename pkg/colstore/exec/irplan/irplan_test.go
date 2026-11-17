@@ -190,6 +190,14 @@ func TestWholeEvents(t *testing.T) {
 		{"a dropped field is not there", `source=logs | fields - host | eval h = host, d = dur | where status = 404 | fields - _time, ts, msg, dur`, "d=0.25 level=warn status=404"},
 		{"an aggregate of what is left", `source=logs | fields - host | stats count() as n by level | sort level | head 1`, "n=2 level=error"},
 		{"a limit", `source=logs | head 2 | fields level`, "level=error; level=info"},
+		{"groups in an order that is not shown", `source=logs | stats count() as n by host | sort - n | fields host`, "host=a; host=b"},
+		{"rows in an order that is not shown", `source=logs | sort - status | head 2 | fields host`, "host=b; host=a"},
+		{"events in an order that is not shown", `source=logs | sort - status | head 2 | fields - status, _time, ts, msg`,
+			"dur=2.5 host=b level=error; dur=1.5 host=a level=error"},
+		{"the first event of every key", `source=logs | dedup host | sort host | fields - _time, ts, msg`,
+			"host=a dur=1.5 level=error status=500; host=b dur=2.5 level=error status=503"},
+		{"the first event of every key, computed on", `source=logs | where status < 500 | dedup level | eval code = status + 1 | sort - code | fields - _time, ts, msg, dur`,
+			"code=405 host=b level=warn status=404; code=201 host=a level=info status=200"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			plan, err := compile(c.text)
@@ -279,8 +287,7 @@ func TestRefusedPlans(t *testing.T) {
 		`source=logs | dedup 2 host | fields host`:                                            "Dedup(host, count=2)",
 		`source=logs | dedup host | where status > 1 | fields host`:                           "a filter above the first rows of keys",
 		`source=logs | where md5(msg) = 'is' | stats count()`:                                 "the function md5",
-		`source=logs | stats count() as n by host | sort - n | fields host`:                   "above a sort or a limit",
-		`source=logs | dedup host`:                                                            "the first rows of keys as whole events",
+		`source=logs | sort - status | head 2 | where status > 1`:                             "above a sort or a limit",
 		`source=logs | eval ns = cast(_time as long) | fields ns`:                             "a cast of the time _time",
 		`source=logs | fields h* | head 1`:                                                    "the column pattern h*",
 	} {

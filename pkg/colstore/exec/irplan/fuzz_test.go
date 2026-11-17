@@ -31,6 +31,8 @@ func FuzzPlan(f *testing.F) {
 		`source=logs | stats latest(msg) as last, percentile(dur, 50) as mid by host | where mid > 1 | eval up = upper(last)`,
 		`source=logs | dedup host | fields host, status, _time | sort host`,
 		`source=logs | rename host as node | eval slow = dur > 1.0 | fields - msg | sort - status | head 3`,
+		`source=logs | dedup host | eval code = status + 1 | sort - code | fields - msg, code`,
+		`source=logs | stats count() as n by host | sort - n | head 1 | fields host`,
 		`source=logs | stats count() as n by level | eventstats sum(n) as all | eval share = round(n * 100.0 / all, 1) | sort level`,
 		`source=logs earliest=-4h latest=-1h | where regexp_match(msg, '[Dd]isk f(ull|ailure)') | top 2 host`,
 		`source=logs | stats count() as n by span(_time, 2h) as at, span(status, 100) as code | sort at | head 1`,
