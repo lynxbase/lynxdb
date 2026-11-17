@@ -1,0 +1,174 @@
+package ast
+
+// LiteralKind classifies literals.
+type LiteralKind uint8
+
+const (
+	LitNull LiteralKind = iota
+	LitBool
+	LitInt
+	LitDecimal
+	LitDouble
+	LitFloat
+	LitString
+	// LitDate, LitTime and LitTimestamp are DATE '...', TIME '...' and
+	// TIMESTAMP '...' literals; Text holds the quoted text.
+	LitDate
+	LitTime
+	LitTimestamp
+)
+
+// Literal is a constant. Text is the literal's value text: digits for
+// numbers (with sign), the unescaped content for strings, "true"/"false".
+type Literal struct {
+	Base
+	Kind LiteralKind
+	Text string
+}
+
+// Interval is INTERVAL <value> <unit>; Unit is lower case.
+type Interval struct {
+	Base
+	Value Expr
+	Unit  string
+}
+
+// Field is a field reference written as a dotted name; Parts holds the
+// segments with backtick quoting removed.
+type Field struct {
+	Base
+	Parts []string
+}
+
+// Name returns the dotted field name.
+func (f *Field) Name() string {
+	n := ""
+	for i, p := range f.Parts {
+		if i > 0 {
+			n += "."
+		}
+		n += p
+	}
+	return n
+}
+
+// Unary is NOT x or -x; Op is "not" or "-".
+type Unary struct {
+	Base
+	Op string
+	X  Expr
+}
+
+// Binary is a binary operator application. Op is one of + - * / % = == !=
+// < <= > >= and or xor regexp like ilike contains.
+type Binary struct {
+	Base
+	Op string
+	L  Expr
+	R  Expr
+}
+
+// In is x [NOT] IN (list).
+type In struct {
+	Base
+	X    Expr
+	List []Expr
+	Not  bool
+}
+
+// Between is x [NOT] BETWEEN lo AND hi.
+type Between struct {
+	Base
+	X   Expr
+	Lo  Expr
+	Hi  Expr
+	Not bool
+}
+
+// IsNull is x IS [NOT] NULL.
+type IsNull struct {
+	Base
+	X   Expr
+	Not bool
+}
+
+// Call is a function call. Name is lower case. Args may hold Lambda
+// expressions.
+type Call struct {
+	Base
+	Name string
+	Args []Expr
+	// NamedArgs holds name=value arguments of table functions and
+	// relevance functions.
+	NamedArgs []Arg
+}
+
+// Case is case(cond1, val1, ..., [else default]).
+type Case struct {
+	Base
+	Conds []Expr
+	Vals  []Expr
+	Else  Expr
+}
+
+// Cast is CAST(x AS type); Type is lower case.
+type Cast struct {
+	Base
+	X    Expr
+	Type string
+}
+
+// Lambda is x -> body or (x, y) -> body.
+type Lambda struct {
+	Base
+	Params []string
+	Body   Expr
+}
+
+// SubqueryKind classifies subquery expressions.
+type SubqueryKind uint8
+
+const (
+	SubqueryScalar SubqueryKind = iota + 1
+	SubqueryIn
+	SubqueryExists
+)
+
+// Subquery is [ subsearch ] used as a scalar, after IN, or with EXISTS.
+type Subquery struct {
+	Base
+	Kind     SubqueryKind
+	Values   []Expr
+	Not      bool
+	Pipeline *Pipeline
+}
+
+// DatePart is EXTRACT(part FROM x), TIMESTAMPADD(unit, n, t) and
+// TIMESTAMPDIFF(unit, a, b); Part is lower case.
+type DatePart struct {
+	Base
+	Func string
+	Part string
+	Args []Expr
+}
+
+// AllFields is the '*' argument, as in count(*).
+type AllFields struct {
+	Base
+}
+
+func (*Literal) isExpr()   {}
+func (*Interval) isExpr()  {}
+func (*Field) isExpr()     {}
+func (*Unary) isExpr()     {}
+func (*Binary) isExpr()    {}
+func (*In) isExpr()        {}
+func (*Between) isExpr()   {}
+func (*IsNull) isExpr()    {}
+func (*Call) isExpr()      {}
+func (*Case) isExpr()      {}
+func (*Cast) isExpr()      {}
+func (*Lambda) isExpr()    {}
+func (*Subquery) isExpr()  {}
+func (*DatePart) isExpr()  {}
+func (*AllFields) isExpr() {}
