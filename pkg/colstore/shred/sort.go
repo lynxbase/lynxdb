@@ -32,6 +32,51 @@ type sortScratch struct {
 	ids    []uint32
 }
 
+// reserve gives the buffers that hold one column at a time the room of the
+// largest column of b, so that none of them grows while the rows move.
+func (s *sortScratch) reserve(b *Batch) {
+	var data, strs, ints, floats, bools, sparse int
+	for _, c := range b.cols {
+		switch c.Kind {
+		case vec.KindBool:
+			bools = max(bools, c.Count)
+		case vec.KindInt:
+			ints = max(ints, c.Count)
+		case vec.KindFloat:
+			floats = max(floats, c.Count)
+		case vec.KindString, vec.KindVariant:
+			data, strs = max(data, len(c.Data)), max(strs, c.Count)
+		}
+		if c.Count < b.Rows {
+			sparse = max(sparse, c.Count)
+		}
+	}
+	if cap(s.data) < data {
+		s.data = make([]byte, 0, data)
+	}
+	if cap(s.ends) < strs {
+		s.ends = make([]uint32, 0, strs)
+	}
+	if cap(s.ints) < ints {
+		s.ints = make([]int64, 0, ints)
+	}
+	if cap(s.floats) < floats {
+		s.floats = make([]float64, 0, floats)
+	}
+	if cap(s.bools) < bools {
+		s.bools = make([]uint8, 0, bools)
+	}
+	if cap(s.rows) < sparse {
+		s.rows = make([]uint32, 0, sparse)
+	}
+	if cap(s.order) < b.Rows {
+		s.order = make([]uint32, 0, b.Rows)
+	}
+	if cap(s.times) < b.Rows {
+		s.times = make([]int64, 0, b.Rows)
+	}
+}
+
 // sortPool shares the buffers of sorting between batches: a batch needs
 // them only while it is being sorted, and they are as large as its largest
 // column.
@@ -434,6 +479,7 @@ func (b *Batch) permuteRuns() bool {
 
 // permute moves every row perm[i] to position i.
 func (b *Batch) permute() {
+	b.sort.reserve(b)
 	if b.permuteRuns() {
 		return
 	}

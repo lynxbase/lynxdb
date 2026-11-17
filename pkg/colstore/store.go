@@ -127,10 +127,9 @@ type Store struct {
 	room     *sync.Cond
 	flushErr error
 	// spare holds the batches of written buffers for the buffers to take
-	// again; spareUsed is when one was last asked for.
-	spareMu   sync.Mutex
-	spare     []*shred.Batch
-	spareUsed time.Time
+	// again, joined the batches that the rows of a part are brought
+	// together in, and cut those that the blocks of a part are cut into.
+	spare, joined, cut spareBatches
 	// flushMu lets one flush of the buffers run at a time. buffered counts
 	// the input bytes in the buffers and in unwritten, the batches that a
 	// failed flush took and the next one writes first.
@@ -370,7 +369,7 @@ func (s *Store) appendPiece(lines []byte, at int64) (rejected int64, err error) 
 	}
 	defer sh.mu.Unlock()
 	if sh.batch == nil {
-		sh.batch = s.spareBatch()
+		sh.batch = s.spare.take(s.shredOptions())
 	}
 	sh.errs = sh.batch.AddNDJSON(lines, at, sh.errs[:0])
 	if sh.buffered == 0 {
@@ -382,54 +381,65 @@ func (s *Store) appendPiece(lines []byte, at int64) (rejected int64, err error) 
 	return int64(len(sh.errs)), nil
 }
 
-// spareBatch returns a batch for a buffer: one that a flush wrote, with
-// the room it grew to, when there is one.
-func (s *Store) spareBatch() *shred.Batch {
-	s.spareMu.Lock()
-	defer s.spareMu.Unlock()
-	s.spareUsed = time.Now()
-	if n := len(s.spare); n > 0 {
-		b := s.spare[n-1]
-		s.spare[n-1] = nil
-		s.spare = s.spare[:n-1]
+// spareBatches keeps batches between the uses a store has for them. The
+// pool lets go of what a collection finds in it, and a batch that grew to
+// the size of its use is costly to grow again.
+type spareBatches struct {
+	mu   sync.Mutex
+	held []*shred.Batch
+	// used is when a batch was last asked for.
+	used time.Time
+}
+
+// take returns a kept batch, with the room it grew to, or one of the pool.
+func (sp *spareBatches) take(opts shred.Options) *shred.Batch {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	sp.used = time.Now()
+	if n := len(sp.held); n > 0 {
+		b := sp.held[n-1]
+		sp.held[n-1] = nil
+		sp.held = sp.held[:n-1]
 
 		return b
 	}
 
-	return shred.Get(s.shredOptions())
+	return shred.Get(opts)
 }
 
-// keepSpare keeps the batches that a flush wrote for the buffers to fill
-// again, a batch per buffer at most. The pool lets go of what a collection
-// finds in it, and a batch that grew to the size of a buffer is costly to
-// grow again.
-func (s *Store) keepSpare(written []*shred.Batch) {
-	s.spareMu.Lock()
-	defer s.spareMu.Unlock()
-	for _, b := range written {
-		if len(s.spare) == len(s.shards) {
-			shred.Put(b)
+// keep takes a batch back, emptied, unless it holds most already.
+func (sp *spareBatches) keep(b *shred.Batch, most int) {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if len(sp.held) >= most {
+		shred.Put(b)
 
-			continue
-		}
-		b.Reset()
-		s.spare = append(s.spare, b)
-	}
-}
-
-// dropSpare gives the spare batches up once no buffer has taken one for
-// spareIdle, so that a store nobody writes to holds no memory for writes.
-func (s *Store) dropSpare() {
-	s.spareMu.Lock()
-	defer s.spareMu.Unlock()
-	if len(s.spare) == 0 || time.Since(s.spareUsed) < spareIdle {
 		return
 	}
-	for i, b := range s.spare {
-		shred.Put(b)
-		s.spare[i] = nil
+	b.Reset()
+	sp.held = append(sp.held, b)
+}
+
+// drop gives the batches up once none was asked for during idle.
+func (sp *spareBatches) drop(idle time.Duration) {
+	sp.mu.Lock()
+	defer sp.mu.Unlock()
+	if len(sp.held) == 0 || time.Since(sp.used) < idle {
+		return
 	}
-	s.spare = s.spare[:0]
+	for i, b := range sp.held {
+		shred.Put(b)
+		sp.held[i] = nil
+	}
+	sp.held = sp.held[:0]
+}
+
+// dropSpare gives the kept batches up once the store has not used them for
+// spareIdle, so that a store nobody writes to holds no memory for writes.
+func (s *Store) dropSpare() {
+	s.spare.drop(spareIdle)
+	s.joined.drop(spareIdle)
+	s.cut.drop(spareIdle)
 }
 
 func (s *Store) shredOptions() shred.Options {
@@ -554,7 +564,9 @@ func (s *Store) writeBuffers(age time.Duration) error {
 
 		return err
 	}
-	s.keepSpare(taken)
+	for _, b := range taken {
+		s.spare.keep(b, len(s.shards))
+	}
 	if len(taken) > 0 {
 		s.kick()
 	}
@@ -1214,8 +1226,8 @@ func (w *Writer) write() ([]*PartFile, error) {
 	flushed.Level = s.opts.FlushLevel
 	// The buffer that blocks are cut into is needed only during a flush,
 	// so writers share a few of them instead of holding one each.
-	block := shred.Get(shred.Options{})
-	defer shred.Put(block)
+	block := s.cut.take(shred.Options{})
+	defer s.cut.keep(block, runtime.GOMAXPROCS(0))
 	files := make([]*PartFile, 0, len(w.buckets))
 	abort := func(err error) ([]*PartFile, error) {
 		for _, pf := range files {

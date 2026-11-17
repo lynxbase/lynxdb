@@ -16,10 +16,10 @@ func TestWrittenBatchesAreFilledAgain(t *testing.T) {
 	}
 	defer s.Close()
 	spare := func() int {
-		s.spareMu.Lock()
-		defer s.spareMu.Unlock()
+		s.spare.mu.Lock()
+		defer s.spare.mu.Unlock()
 
-		return len(s.spare)
+		return len(s.spare.held)
 	}
 	for round := 0; round < 3*len(s.shards); round++ {
 		if _, err := s.Append(storeDocs(round*100, 100)); err != nil {
@@ -36,9 +36,9 @@ func TestWrittenBatchesAreFilledAgain(t *testing.T) {
 	if n := spare(); n != 1 {
 		t.Fatalf("%d spare batches right after an append", n)
 	}
-	s.spareMu.Lock()
-	s.spareUsed = time.Now().Add(-2 * spareIdle)
-	s.spareMu.Unlock()
+	s.spare.mu.Lock()
+	s.spare.used = time.Now().Add(-2 * spareIdle)
+	s.spare.mu.Unlock()
 	s.dropSpare()
 	if n := spare(); n != 0 {
 		t.Fatalf("%d spare batches in a store that has been idle", n)
