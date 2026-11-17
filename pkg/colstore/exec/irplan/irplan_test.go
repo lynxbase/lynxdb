@@ -287,14 +287,60 @@ func TestRefusedPlans(t *testing.T) {
 		`source=logs | dedup host | stats count()`:                                            "above the first rows of keys",
 		`source=logs | dedup 2 host | fields host`:                                            "Dedup(host, count=2)",
 		`source=logs | dedup host | where status > 1 | fields host`:                           "a filter above the first rows of keys",
-		`source=logs | where md5(msg) = 'is' | stats count()`:                                 "the function md5",
+		`source=logs | where rand() > 2 | stats count()`:                                      "the function rand",
 		`source=logs | sort - status | head 2 | where status > 1`:                             "above a sort or a limit",
-		`source=logs | eval ns = cast(_time as long) | fields ns`:                             "a cast of the time _time",
 		`source=logs | fields h* | head 1`:                                                    "the column pattern h*",
 	} {
 		_, err := compile(text)
 		if !errors.Is(err, ErrUnsupported) || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: got %v, want an unsupported error naming %q", text, err, want)
+		}
+	}
+}
+
+// TestNativeFunctions requires that functions without operations of the
+// executor, and casts, run as native functions without a caller's help.
+func TestNativeFunctions(t *testing.T) {
+	snap := testSnapshot(t)
+	for text, want := range map[string]string{
+		`source=logs | eval r = upper(reverse(level)) | stats count() as n by r | sort r`:                         "1 NRAW; 2 OFNI; 2 RORRE",
+		`source=logs | where reverse(level) = 'nraw' | stats count() as n`:                                        "1",
+		`source=logs | stats count() as n by level | eval r = reverse(level) | sort level | fields r`:             "rorre; ofni; nraw",
+		`source=logs | eval d = cast(dur as string) | stats count() as n by d | sort d | head 2`:                  "1 0.25; 1 0.5",
+		`source=logs | eval m = minute(_time) | stats count() as n by m | sort m | head 1`:                        "1 20",
+		`source=logs | where status = 404 | eval s = cast(left(cast(status as string), 2) as long) | fields s`:    "40",
+		`source=logs | where status = 404 | eval d = date_format(_time, '%Y-%m-%d %H:%i') | fields d`:             "2023-11-14 21:30",
+		`source=logs | where status = 404 | eval w = cast(cast(_time as string) as timestamp) = _time | fields w`: "true",
+	} {
+		res, err := ppl.Compile(text)
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		plan, err := Plan(res.Plan, Options{Now: testNow})
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		out, err := exec.Run(context.Background(), snap, plan, exec.Options{Workers: 2})
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		var rows []string
+		for i := 0; i < out.Rows; i++ {
+			var vals []string
+			for _, v := range out.Row(i, nil) {
+				switch v.Kind {
+				case vec.KindInt:
+					vals = append(vals, fmt.Sprint(v.Int))
+				case vec.KindBool:
+					vals = append(vals, fmt.Sprint(v.Bool))
+				default:
+					vals = append(vals, string(v.Bytes))
+				}
+			}
+			rows = append(rows, strings.Join(vals, " "))
+		}
+		if got := strings.Join(rows, "; "); got != want {
+			t.Errorf("%s\n got  %s\n want %s", text, got, want)
 		}
 	}
 }
@@ -307,7 +353,7 @@ func TestOpaqueExpressions(t *testing.T) {
 	asked := 0
 	opaque := func(e ir.Expr, fields []*ir.FieldRef) (func() exec.Func, bool) {
 		call, ok := e.(*ir.Call)
-		if !ok || call.Func.Name != "reverse" || len(fields) != 1 {
+		if !ok || call.Func.Name != "reduce" || len(fields) != 1 {
 			return nil, false
 		}
 		asked++
@@ -326,9 +372,9 @@ func TestOpaqueExpressions(t *testing.T) {
 		}, true
 	}
 	for text, want := range map[string]string{
-		`source=logs | eval r = upper(reverse(level)) | stats count() as n by r | sort r`:             "1 NRAW; 2 OFNI; 2 RORRE",
-		`source=logs | where reverse(level) = 'nraw' | stats count() as n`:                            "1",
-		`source=logs | stats count() as n by level | eval r = reverse(level) | sort level | fields r`: "rorre; ofni; nraw",
+		`source=logs | eval r = upper(reduce(split(level, ''), '', (acc, x) -> concat(x, acc))) | stats count() as n by r | sort r`:             "1 NRAW; 2 OFNI; 2 RORRE",
+		`source=logs | where reduce(split(level, ''), '', (acc, x) -> concat(x, acc)) = 'nraw' | stats count() as n`:                            "1",
+		`source=logs | stats count() as n by level | eval r = reduce(split(level, ''), '', (acc, x) -> concat(x, acc)) | sort level | fields r`: "rorre; ofni; nraw",
 	} {
 		res, err := ppl.Compile(text)
 		if err != nil {

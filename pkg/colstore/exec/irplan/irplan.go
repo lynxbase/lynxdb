@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
+	"github.com/lynxbase/lynxdb/pkg/colstore/exec/irfunc"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 	"github.com/lynxbase/lynxdb/pkg/ir"
@@ -838,26 +839,14 @@ func (t *translator) operations(e ir.Expr) (*exec.Expr, error) {
 
 		return exec.Case(args...), nil
 	case *ir.Cast:
-		if e.X.Type().Kind == ir.KindTimestamp {
-			// A time is held as a count of nanoseconds, which a cast is not.
-			return nil, unsupported("a cast of the time %s", e.X)
-		}
-		a, err := t.expr(e.X)
+		// The executor's conversions differ from the IR's, which the native
+		// cast follows.
+		newFunc, err := irfunc.Cast(e)
 		if err != nil {
-			return nil, err
-		}
-		switch e.To.Kind {
-		case ir.KindInt:
-			return exec.ToInt(a), nil
-		case ir.KindFloat:
-			return exec.ToFloat(a), nil
-		case ir.KindString:
-			return exec.ToString(a), nil
-		case ir.KindBool:
-			return exec.ToBool(a), nil
+			return nil, unsupported("a cast to %s", e.To)
 		}
 
-		return nil, unsupported("a cast to %s", e.To)
+		return t.native(newFunc, []ir.Expr{e.X})
 	case *ir.InList, *ir.IsMissing, *ir.Search:
 		return t.pred(e, false)
 	case *ir.Call:
@@ -877,7 +866,44 @@ func text(e ir.Expr) (string, bool) {
 	return s, ok
 }
 
+// call translates a call into the executor's operations, or else into the
+// native implementation of its function.
 func (t *translator) call(c *ir.Call) (*exec.Expr, error) {
+	out, err := t.operationCall(c)
+	if err == nil || !errors.Is(err, ErrUnsupported) {
+		return out, err
+	}
+	b, ok := irfunc.Lookup(c.Func.Name)
+	if !ok {
+		return nil, err
+	}
+	newFunc, buildErr := b(c)
+	if buildErr != nil {
+		return nil, err
+	}
+
+	return t.native(newFunc, c.Args)
+}
+
+// native translates the arguments of a native function.
+func (t *translator) native(newFunc func() exec.Func, in []ir.Expr) (*exec.Expr, error) {
+	args := make([]*exec.Expr, 0, max(len(in), 1))
+	for _, a := range in {
+		e, err := t.expr(a)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, e)
+	}
+	if len(args) == 0 {
+		// A function takes an argument: a constant stands in for none.
+		args = append(args, exec.Bool(true))
+	}
+
+	return exec.Call(newFunc, args...), nil
+}
+
+func (t *translator) operationCall(c *ir.Call) (*exec.Expr, error) {
 	refused := unsupported("the function %s", c)
 	name := c.Func.Name
 	switch {
