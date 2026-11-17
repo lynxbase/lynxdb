@@ -31,6 +31,10 @@ type scratch struct {
 	cols   []vec.Column
 	// used marks the columns that the query decoded.
 	used []bool
+	// seen holds, per column slot, which rows of the open block hold a value
+	// when that was decoded without the values, as seenOK marks.
+	seen   []vec.Column
+	seenOK []bool
 	// views show the rows of a window of a shared block, a view per column
 	// slot that viewed marks as set for the open window.
 	views  []vec.Window
@@ -83,6 +87,8 @@ func newWorker(x *execution) *worker {
 	s.cols = fit(s.cols, slots)
 	s.used = fit(s.used, slots)
 	clear(s.used)
+	s.seen, s.seenOK = fit(s.seen, slots), fit(s.seenOK, slots)
+	clear(s.seenOK)
 	s.sels = fit(s.sels, q.depth+3)
 	s.ints = fit(s.ints, q.depth+3)
 	s.valids = fit(s.valids, q.depth+3)
@@ -159,6 +165,9 @@ func (w *worker) held() int {
 	for i := range w.views {
 		n += w.views[i].Retained()
 	}
+	for i := range w.seen {
+		n += w.seen[i].Retained()
+	}
 	for i := range w.sels {
 		n += used(w.sels[i].mask) + 4*used(w.sels[i].list)
 	}
@@ -179,6 +188,7 @@ func (w *worker) open(p *part.Part, b *part.Block) {
 	}
 	w.b, w.rows, w.decoded = b, b.Rows, false
 	clear(w.state)
+	clear(w.seenOK)
 }
 
 // ref returns the block's column of kind at path, or nil when no row holds
@@ -220,6 +230,23 @@ func (w *worker) column(path int, kind vec.Kind) (*vec.Column, error) {
 	}
 
 	return c, nil
+}
+
+// presence returns which rows of the open block hold a value of kind at
+// path, some of which do and some do not, without decoding the values.
+func (w *worker) presence(path int, kind vec.Kind) (vec.Bitmap, error) {
+	s := path*kindSlots + int(kind) - 1
+	if w.state[s] == slotDecoded {
+		return w.cols[s].Valid, nil
+	}
+	if !w.seenOK[s] {
+		if err := w.b.DecodePresence(w.refs[s], &w.seen[s]); err != nil {
+			return nil, err
+		}
+		w.seenOK[s], w.decoded = true, true
+	}
+
+	return w.seen[s].Valid, nil
 }
 
 // has reports whether a row of the open block holds a value of kind at path.

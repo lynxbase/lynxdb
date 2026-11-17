@@ -44,6 +44,8 @@ type aggArg struct {
 	// the argument feeds.
 	words    []int
 	distinct []int
+	// counted is set when only the number of values is asked for.
+	counted bool
 }
 
 // aggOut describes how an aggregate's column comes from the state words;
@@ -201,6 +203,13 @@ func (q *query) aggregate(a *Aggregate) error {
 	// A state has at least one word, so that groups without aggregates exist.
 	ap.rows = ap.word(wordRows, -1)
 	ap.rowsOnly = len(ap.words) == 1 && ap.distinct == 0
+	for i := range ap.args {
+		arg := &ap.args[i]
+		arg.counted = len(arg.distinct) == 0
+		for _, w := range arg.words {
+			arg.counted = arg.counted && ap.words[w].op == wordCount
+		}
+	}
 	for _, w := range ap.words {
 		v := int64(0)
 		switch w.op {

@@ -823,9 +823,21 @@ func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uin
 	w := a.w
 	arg := &a.plan.args[i]
 	numeric := kind == vec.KindInt || kind == vec.KindFloat
-	if w.shared == nil && !numeric && len(arg.distinct) == 0 && w.ref(arg.expr.path, kind).Count == w.rows {
-		// Every row has a value, and only their number is asked for.
-		a.count(arg, t, t.gid, n)
+	if w.shared == nil && len(arg.distinct) == 0 && (!numeric || arg.counted) {
+		// Only the number of values is asked for, which needs none of them.
+		ref := w.ref(arg.expr.path, kind)
+		switch {
+		case ref.Count == w.rows:
+			a.count(arg, t, t.gid, n)
+		case t.gid == nil && idx == nil:
+			a.count(arg, t, nil, ref.Count)
+		default:
+			valid, err := w.presence(arg.expr.path, kind)
+			if err != nil {
+				return err
+			}
+			a.countPresent(arg, t, valid, n, idx)
+		}
 
 		return nil
 	}
@@ -936,6 +948,36 @@ func (a *aggWorker) count(arg *aggArg, t *target, gid []uint32, n int) {
 			t.words[t.one*a.stride+i] += int64(n)
 		} else {
 			addRows(t.words, a.stride, i, gid[:n])
+		}
+	}
+}
+
+// countPresent adds the selected rows that valid marks to the argument's
+// count words.
+func (a *aggWorker) countPresent(arg *aggArg, t *target, valid vec.Bitmap, n int, idx []uint32) {
+	stride := a.stride
+	for _, i := range arg.words {
+		if a.plan.words[i].op != wordCount {
+			continue
+		}
+		switch {
+		case t.gid == nil && idx == nil:
+			t.words[t.one*stride+i] += int64(valid.Rank(n))
+		case t.gid == nil:
+			var c uint64
+			for _, r := range idx {
+				c += valid[r>>6] >> (r & 63) & 1
+			}
+			t.words[t.one*stride+i] += int64(c)
+		case idx == nil:
+			for j, g := range t.gid[:n] {
+				t.words[int(g)*stride+i] += int64(valid[j>>6] >> (uint(j) & 63) & 1)
+			}
+		default:
+			for j, g := range t.gid[:n] {
+				r := idx[j]
+				t.words[int(g)*stride+i] += int64(valid[r>>6] >> (r & 63) & 1)
+			}
 		}
 	}
 }

@@ -496,3 +496,29 @@ func TestConstantKeyMissingInSomeRows(t *testing.T) {
 		snap.Release()
 	}
 }
+
+func TestCountsOfValues(t *testing.T) {
+	aggs := []exec.Agg{{Name: "rows", Func: exec.Count}}
+	for _, path := range []string{"n", "big", "msg", "flag", "score", "op", "tags", "nested.x"} {
+		for name, arg := range map[string]*exec.Expr{"any": anyOf(path), "int": num(path), "str": str(path),
+			"float": exec.Col(path, vec.KindFloat), "bool": exec.Col(path, vec.KindBool)} {
+			aggs = append(aggs, exec.Agg{Name: path + " " + name, Func: exec.Count, Arg: arg})
+		}
+	}
+	filter := exec.Or(exec.Gt(num("id"), exec.Int(1500)), exec.Eq(str("kind"), exec.Str("identity")))
+	plans := map[string]exec.Node{
+		"all":               &exec.Aggregate{Input: &exec.Scan{}, Aggs: aggs},
+		"filtered":          &exec.Aggregate{Input: &exec.Scan{Filter: filter}, Aggs: aggs},
+		"by kind":           &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("kind"), Aggs: aggs},
+		"by kind, filtered": &exec.Aggregate{Input: &exec.Scan{Filter: filter}, Keys: keys("kind", "op"), Aggs: aggs},
+		"by user, filtered": &exec.Aggregate{Input: &exec.Scan{Filter: filter}, Keys: keys("user"), Aggs: aggs},
+		"with the values": &exec.Aggregate{Input: &exec.Scan{Filter: filter}, Keys: keys("kind"),
+			Aggs: append(aggs[:len(aggs):len(aggs)], exec.Agg{Name: "sum", Func: exec.Sum, Arg: num("n")},
+				exec.Agg{Name: "distinct", Func: exec.CountDistinct, Arg: anyOf("big")})},
+	}
+	eachLayout(t, 3000, func(t *testing.T, snap *colstore.Snapshot, rows []refRow, workers int) {
+		for name, plan := range plans {
+			t.Run(name, func(t *testing.T) { check(t, snap, rows, plan, false, workers) })
+		}
+	})
+}
