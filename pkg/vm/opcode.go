@@ -182,10 +182,7 @@ const (
 	OpDateDiff    Opcode = 0xCE
 	OpStrftimeTZ  Opcode = 0xCF
 	OpTimeOfDayTZ Opcode = 0x84
-	// OpSearchMatch is RESERVED (0xC9). The handler was removed; the opcode
-	// constant is kept so that append-only numbering is preserved and any
-	// residual persisted bytecode (e.g. in materialized-view caches) gets a
-	// clean error instead of a silent misinterpretation.
+	// OpSearchMatch reserves 0xC9 and has no handler.
 	OpSearchMatch Opcode = 0xC9
 
 	// Network (operand: 2-byte CIDR pool index).
