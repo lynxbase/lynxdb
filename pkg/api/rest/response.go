@@ -93,6 +93,8 @@ func respondQueryError(w http.ResponseWriter, msg, code string) {
 	case ErrCodeQueryPoolExhausted:
 		respondError(w, ErrCodeQueryPoolExhausted, http.StatusServiceUnavailable, msg,
 			WithSuggestion("Wait for other queries to complete, or increase query.global_query_pool_bytes."))
+	case ErrCodeUnsupportedFeature:
+		respondError(w, ErrCodeUnsupportedFeature, http.StatusUnprocessableEntity, msg)
 	default:
 		respondError(w, ErrCodeExecutionError, http.StatusInternalServerError, msg)
 	}

@@ -1438,6 +1438,10 @@ func classifyQueryError(err error) string {
 	if memgov.IsMemoryExhausted(err) {
 		return "QUERY_MEMORY_EXCEEDED"
 	}
+	var ue *physical.UnsupportedError
+	if errors.As(err, &ue) {
+		return "UNSUPPORTED_FEATURE"
+	}
 
 	return ""
 }
