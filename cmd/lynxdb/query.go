@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,7 +24,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/desugar"
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/parser"
 	"github.com/lynxbase/lynxdb/pkg/lynxflow/run"
-	"github.com/lynxbase/lynxdb/pkg/sigmaqueries"
 	"github.com/lynxbase/lynxdb/pkg/stats"
 	"github.com/lynxbase/lynxdb/pkg/storage"
 	"github.com/lynxbase/lynxdb/pkg/timerange"
@@ -65,7 +63,6 @@ func newQueryCmd() *cobra.Command {
 		noLint        bool
 		noSuggestions bool
 		showRewritten bool
-		queriesFile   string
 		queryParams   []string
 	)
 
@@ -81,17 +78,8 @@ func newQueryCmd() *cobra.Command {
   cat app.log | lynxdb query '| where duration_ms > 1000'             Pipe from stdin`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if queriesFile == "" && len(args) == 0 {
-				return fmt.Errorf("requires a LynxFlow query or --queries-file")
-			}
-			if queriesFile != "" && len(args) > 0 {
-				return fmt.Errorf("--queries-file cannot be used with a positional query")
-			}
-			if queriesFile != "" && explain {
-				return fmt.Errorf("--queries-file cannot be used with --explain")
-			}
-			if queriesFile != "" && showRewritten {
-				return fmt.Errorf("--queries-file cannot be used with --show-rewritten")
+			if len(args) == 0 {
+				return fmt.Errorf("requires a LynxFlow query")
 			}
 			if msg := langdetect.ValidateExplicitLanguage(language); msg != "" {
 				return fmt.Errorf("%s", msg)
@@ -117,10 +105,6 @@ func newQueryCmd() *cobra.Command {
 				}
 			}
 			stdinPiped := isStdinPiped()
-
-			if queriesFile != "" {
-				return runQueriesFile(queriesFile, stdinPiped, file, source, sourcetype, outputFile, since, from, to, timeout, failEmpty, analyze, maxMemory, rawMode, noLint, noSuggestions)
-			}
 
 			if explain {
 				return runExplainWithLanguage(query, language)
@@ -165,7 +149,6 @@ func newQueryCmd() *cobra.Command {
 	f.StringVar(&timeout, "timeout", "", "Query timeout (e.g., 10s, 5m)")
 	f.StringVar(&analyze, "analyze", "", "Profile query execution (basic, full, trace)")
 	f.StringVar(&maxMemory, "max-memory", "", "Max memory for ephemeral query (e.g., 512mb, 1gb)")
-	f.StringVar(&queriesFile, "queries-file", "", "Run one LynxFlow query per non-empty line from a file, or '-' for stdin")
 	f.BoolVar(&failEmpty, "fail-on-empty", false, "Exit with code 6 if no results")
 	f.BoolVar(&copyFlag, "copy", false, "Copy results to clipboard as TSV")
 	f.BoolVar(&explain, "explain", false, "Show query plan without executing")
@@ -185,75 +168,6 @@ func newQueryCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("profile-query")
 
 	return cmd
-}
-
-type queriesFileEnvelope struct {
-	Query      string                   `json:"query"`
-	LineNumber int                      `json:"line_number"`
-	SourceFile string                   `json:"source_file"`
-	Results    []map[string]interface{} `json:"results"`
-	Error      string                   `json:"error"`
-}
-
-func runQueriesFile(path string, stdinPiped bool, file, source, sourcetype, outputFile, since, from, to, timeout string, failEmpty bool, analyze, maxMemory string, rawMode, noLint, noSuggestions bool) error {
-	queries, err := readQueriesFile(path)
-	if err != nil {
-		return err
-	}
-	if len(queries) == 0 {
-		return fmt.Errorf("no queries found in %s", path)
-	}
-
-	var stdinData []byte
-	useStdinData := stdinPiped && path != "-" && file == ""
-	switch {
-	case path != "-" && file != "" && stdinPiped:
-		return fmt.Errorf("cannot use --file and stdin simultaneously")
-	case useStdinData:
-		stdinData, err = io.ReadAll(os.Stdin)
-		if err != nil {
-			return fmt.Errorf("read stdin: %w", err)
-		}
-	}
-
-	var w io.Writer = os.Stdout
-	if outputFile != "" {
-		f, err := os.Create(outputFile)
-		if err != nil {
-			return fmt.Errorf("create output file: %w", err)
-		}
-		defer f.Close()
-		w = f
-	}
-
-	enc := json.NewEncoder(w)
-	for _, q := range queries {
-		rows, runErr := runSingleQueryFromFileInput(q.Line, file, source, sourcetype, since, from, to, timeout, analyze, maxMemory, rawMode, noLint, noSuggestions, stdinData)
-		env := queriesFileEnvelope{
-			Query:      q.Line,
-			LineNumber: q.LineNumber,
-			SourceFile: q.Source,
-			Results:    rows,
-		}
-		if runErr != nil {
-			env.Error = runErr.Error()
-		} else if failEmpty && len(rows) == 0 {
-			env.Error = noResultsError{}.Error()
-		}
-		if err := enc.Encode(env); err != nil {
-			return fmt.Errorf("encode query envelope: %w", err)
-		}
-	}
-
-	return nil
-}
-
-func readQueriesFile(path string) ([]sigmaqueries.Query, error) {
-	if path == "-" {
-		return sigmaqueries.ReadReader(os.Stdin, "stdin")
-	}
-
-	return sigmaqueries.ReadFile(path)
 }
 
 func lintRequestValue(noLint bool) *bool {

@@ -66,8 +66,6 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeQuery) {
 		return
 	}
-	s.logSigmaSource(r, "query request")
-
 	var req QueryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")
@@ -81,18 +79,6 @@ func (s *Server) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.executeQuery(w, r, req)
-}
-
-func (s *Server) logSigmaSource(r *http.Request, message string) {
-	source := r.Header.Get("Sigma-Source")
-	if source == "" || s.logger == nil {
-		return
-	}
-	s.logger.Info(message,
-		"sigma_source", source,
-		"method", r.Method,
-		"path", r.URL.Path,
-	)
 }
 
 // executeQuery is the shared execution logic for POST and GET /query.

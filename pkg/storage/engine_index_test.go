@@ -8,8 +8,8 @@ import (
 func TestEphemeralQueryNonDefaultIndexSearchesParsedFields(t *testing.T) {
 	eng := NewEphemeralEngine()
 	lines := []string{
-		`{"CommandLine":"whoami","__sigma_index":0}`,
-		`{"CommandLine":"hostname","__sigma_index":1}`,
+		`{"CommandLine":"whoami","row_id":0}`,
+		`{"CommandLine":"hostname","row_id":1}`,
 	}
 	n, err := eng.IngestLines(context.Background(), lines, IngestOpts{
 		Source:     "test",
@@ -36,7 +36,7 @@ func TestEphemeralQueryNonDefaultIndexSearchesParsedFields(t *testing.T) {
 	if len(result.Rows) != 1 {
 		t.Fatalf("result row count = %d, want 1; rows=%#v", len(result.Rows), result.Rows)
 	}
-	if got := result.Rows[0]["__sigma_index"]; got != int64(0) {
-		t.Fatalf("__sigma_index = %T(%v), want int64(0)", got, got)
+	if got := result.Rows[0]["row_id"]; got != int64(0) {
+		t.Fatalf("row_id = %T(%v), want int64(0)", got, got)
 	}
 }

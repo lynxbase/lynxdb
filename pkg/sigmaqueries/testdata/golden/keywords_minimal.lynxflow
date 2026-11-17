@@ -1,1 +1,0 @@
-from main | where has(_raw, "error") or has(_raw, "timeout") or has(_raw, "refused")

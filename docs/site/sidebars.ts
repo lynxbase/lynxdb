@@ -118,32 +118,6 @@ const sidebars: SidebarsConfig = {
     // The generated LynxFlow reference (lynxflow/) is the canonical documentation.
     {
       type: 'category',
-      label: 'Sigma',
-      link: {type: 'doc', id: 'sigma/index'},
-      items: [
-        'sigma/compat',
-        'sigma/spl2-mapping',
-        'sigma/pipelines',
-        'sigma/cookbook',
-        'sigma/troubleshooting',
-        'sigma/limitations',
-        'sigma/drift-runbook',
-        {
-          type: 'category',
-          label: 'Tutorials',
-          items: [
-            'sigma/tutorials/quickstart',
-            'sigma/tutorials/bulk-conversion',
-            'sigma/tutorials/windows-evtx',
-            'sigma/tutorials/cloudtrail',
-            'sigma/tutorials/pipelines',
-            'sigma/tutorials/scheduled-detection',
-          ],
-        },
-      ],
-    },
-    {
-      type: 'category',
       label: 'CLI Reference',
       items: [
         'cli/overview',

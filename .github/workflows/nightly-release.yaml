@@ -89,21 +89,12 @@ jobs:
             exit 1
           fi
 
-      - name: Generate rsigma compatibility manifest
-        run: make compat-manifest VERSION="${{ steps.meta.outputs.version }}"
-
-      - name: Attach rsigma compatibility manifest
-        run: gh release upload "${{ steps.meta.outputs.version }}" pkg/sigmaqueries/compat_manifest.json --clobber
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
       - name: Stage artifacts for CDN sync
         run: |
           mkdir -p cdn-artifacts
           cp dist/*.tar.gz cdn-artifacts/
           cp dist/*.zip cdn-artifacts/
           cp dist/checksums.txt cdn-artifacts/
-          cp pkg/sigmaqueries/compat_manifest.json cdn-artifacts/
 
       - name: Upload artifacts for CDN sync
         uses: actions/upload-artifact@v4

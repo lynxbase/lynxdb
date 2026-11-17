@@ -18,9 +18,6 @@ bun    = "1.2.8"
 "aqua:rclone/rclone"          = "1.69.3"
 "aqua:cli/cli"                = "2.92.0"
 
-# rsigma-cli is built from the upstream git tag. The binary is named `rsigma`.
-"cargo:https://github.com/timescale/rsigma" = { version = "tag:v0.9.0", crate = "rsigma" }
-
 [env]
 DO_NOT_TRACK = "1"
 
@@ -39,10 +36,6 @@ run = "make webui"
 [tasks.lint]
 description = "Build the custom golangci-lint and run it"
 run = "make lint"
-
-[tasks.sync-rsigma]
-description = "Refresh the pinned rsigma golden corpus"
-run = "scripts/sync_rsigma_golden.sh"
 
 [tasks.bench]
 description = "Run benchmark suite"
