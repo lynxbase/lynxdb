@@ -69,7 +69,8 @@ func Run(ctx context.Context, plan *ir.Plan, tables Tables, opts Options) (*Resu
 		opts.Now = time.Now()
 	}
 	r := &run{ctx: ctx, tables: tables, opts: opts}
-	root, err := r.push(plan.Root)
+	defer r.release()
+	root, err := r.push(plan.Root, true)
 	if err != nil {
 		return nil, err
 	}
@@ -78,10 +79,7 @@ func Run(ctx context.Context, plan *ir.Plan, tables Tables, opts Options) (*Resu
 		out.Columns = schema.Names()
 	}
 	if scan, ok := root.(*ir.Scan); ok && len(scan.Sources) == 1 && r.ran[scan.Sources[0].Name] != nil {
-		out.Rows, out.Columnar = r.ran[scan.Sources[0].Name], true
-		if out.Rows == nil {
-			out.Rows = []map[string]event.Value{}
-		}
+		out.Rows, out.Columnar = r.ran[scan.Sources[0].Name].rows, true
 
 		return out, nil
 	}
@@ -107,25 +105,56 @@ type run struct {
 	ctx    context.Context
 	tables Tables
 	opts   Options
-	// ran holds the rows of the parts of the plan that the columnar
-	// executor ran, by the name of the source that stands for each.
-	ran map[string][]map[string]event.Value
+	// ran holds the parts of the plan that the columnar executor runs, by
+	// the name of the source that stands for each.
+	ran map[string]*pushed
+	// snaps are the tables' rows that the query reads until it ends.
+	snaps []*colstore.Snapshot
+}
+
+// pushed is a part of the plan that the columnar executor runs: its rows,
+// or for a part whose rows the row operators take block by block the plan
+// that gives them and the rows of the tables it reads.
+type pushed struct {
+	rows   []map[string]event.Value
+	plan   exec.Node
+	snap   *colstore.Snapshot
+	schema ir.Schema
+}
+
+func (r *run) release() {
+	for _, snap := range r.snaps {
+		snap.Release()
+	}
+}
+
+// handsOver reports whether plan gives rows as it scans them: a projection
+// of a scan, with at most a limit above it.
+func handsOver(plan exec.Node) bool {
+	if limit, ok := plan.(*exec.Sort); ok && len(limit.By) == 0 {
+		plan = limit.Input
+	}
+	rows, ok := plan.(*exec.Project)
+	if !ok {
+		return false
+	}
+	_, scans := rows.Input.(*exec.Scan)
+
+	return scans
 }
 
 // push returns the plan under n with every part that the columnar executor
-// can run, from a scan upwards, replaced by a scan of that part's rows.
-func (r *run) push(n ir.Node) (ir.Node, error) {
-	if rows, ok, err := r.columnar(n); err != nil {
+// can run, from a scan upwards, replaced by a scan of that part's rows; root
+// is set for the whole plan, whose rows are the result.
+func (r *run) push(n ir.Node, root bool) (ir.Node, error) {
+	if part, err := r.columnar(n, root); err != nil {
 		return nil, err
-	} else if ok {
+	} else if part != nil {
 		name := pushedSource + strconv.Itoa(len(r.ran))
 		if r.ran == nil {
-			r.ran = map[string][]map[string]event.Value{}
+			r.ran = map[string]*pushed{}
 		}
-		if rows == nil {
-			rows = []map[string]event.Value{}
-		}
-		r.ran[name] = rows
+		r.ran[name] = part
 
 		return &ir.Scan{Sources: []ir.Source{{Name: name}}, Out: n.Schema()}, nil
 	}
@@ -135,7 +164,7 @@ func (r *run) push(n ir.Node) (ir.Node, error) {
 	}
 	outs := make([]ir.Node, len(ins))
 	for i, in := range ins {
-		out, err := r.push(in)
+		out, err := r.push(in, false)
 		if err != nil {
 			return nil, err
 		}
@@ -145,9 +174,11 @@ func (r *run) push(n ir.Node) (ir.Node, error) {
 	return n.WithInputs(outs), nil
 }
 
-// columnar runs the plan under n in the columnar executor and returns its
-// rows; ok is false for a plan that the executor does not take.
-func (r *run) columnar(n ir.Node) (rows []map[string]event.Value, ok bool, err error) {
+// columnar gives the plan under n to the columnar executor, or returns nil
+// for a plan that the executor does not take. A part of a larger plan that
+// gives rows as it scans them is left to hand them over block by block;
+// anything else runs here.
+func (r *run) columnar(n ir.Node, root bool) (*pushed, error) {
 	var scan *ir.Scan
 	for at := n; scan == nil; {
 		ins := at.Inputs()
@@ -155,7 +186,7 @@ func (r *run) columnar(n ir.Node) (rows []map[string]event.Value, ok bool, err e
 		case isScan:
 			scan = s
 		case len(ins) != 1:
-			return nil, false, nil
+			return nil, nil
 		default:
 			at = ins[0]
 		}
@@ -164,23 +195,29 @@ func (r *run) columnar(n ir.Node) (rows []map[string]event.Value, ok bool, err e
 	if err != nil {
 		// What the planner does not take, or takes for an error, is for the
 		// row operators to run or to refuse.
-		return nil, false, nil
+		return nil, nil
 	}
 	snap := r.snapshot(scan)
-	defer snap.Release()
+	if !root && handsOver(plan) {
+		if exec.Supports(snap, plan) != nil {
+			return nil, nil
+		}
+
+		return &pushed{plan: plan, snap: snap, schema: n.Schema()}, nil
+	}
 	res, err := exec.Run(r.ctx, snap, plan, exec.Options{Workers: r.opts.Workers})
 	switch {
 	case errors.Is(err, exec.ErrUnsupported):
-		return nil, false, nil
+		return nil, nil
 	case err != nil:
-		return nil, false, err
+		return nil, err
 	}
 
-	return rowsOf(res, n.Schema()), true, nil
+	return &pushed{rows: rowsOf(res, n.Schema())}, nil
 }
 
-// snapshot returns the rows of the tables that a scan reads, for the caller
-// to release. A table that is not there holds no rows.
+// snapshot returns the rows of the tables that a scan reads, which stay
+// until the query ends. A table that is not there holds no rows.
 func (r *run) snapshot(scan *ir.Scan) *colstore.Snapshot {
 	var snaps []*colstore.Snapshot
 	for _, name := range r.sources(scan) {
@@ -188,13 +225,11 @@ func (r *run) snapshot(scan *ir.Scan) *colstore.Snapshot {
 			snaps = append(snaps, snap)
 		}
 	}
-	if len(snaps) == 1 {
-		return snaps[0]
-	}
 	all := colstore.Union(snaps...)
 	for _, snap := range snaps {
 		snap.Release()
 	}
+	r.snaps = append(r.snaps, all)
 
 	return all
 }
@@ -234,32 +269,166 @@ func (r *run) sources(scan *ir.Scan) []string {
 }
 
 // source gives the row operators the rows of a scan: those of a part of the
-// plan that the columnar executor ran, or the events of the scan's tables
-// within its time range.
+// plan that the columnar executor runs, or the events of the scan's tables
+// as its hints ask for them. Rows that need no order come block by block.
 func (r *run) source(scan *ir.Scan) (pipeline.Iterator, error) {
 	if len(scan.Sources) == 1 {
-		if rows, ok := r.ran[scan.Sources[0].Name]; ok {
-			return pipeline.NewRowScanIterator(rows, r.opts.BatchSize), nil
+		if part, ok := r.ran[scan.Sources[0].Name]; ok {
+			if part.plan != nil {
+				return &stream{r: r, snap: part.snap, plan: part.plan, schema: part.schema}, nil
+			}
+
+			return pipeline.NewRowScanIterator(part.rows, r.opts.BatchSize), nil
 		}
 	}
-	plan, err := irplan.Plan(&ir.Plan{Root: &ir.Scan{Time: scan.Time}}, irplan.Options{Now: r.opts.Now})
+	plan, err := irplan.Rows(scan, irplan.Options{Now: r.opts.Now, Opaque: opaque(r.opts.Now)})
 	if err != nil {
 		return nil, err
 	}
 	snap := r.snapshot(scan)
+	if handsOver(plan) {
+		return &stream{r: r, snap: snap, plan: plan, schema: ir.Schema{Open: true}}, nil
+	}
 	res, err := exec.Run(r.ctx, snap, plan, exec.Options{Workers: r.opts.Workers})
-	snap.Release()
 	if err != nil {
 		return nil, err
 	}
-	rows := rowsOf(res, ir.Schema{Open: true})
-	if scan.Descending {
-		sort.SliceStable(rows, func(i, j int) bool {
-			return rows[i][ir.TimeColumn].AsTimestamp().After(rows[j][ir.TimeColumn].AsTimestamp())
+
+	return pipeline.NewRowScanIterator(rowsOf(res, ir.Schema{Open: true}), r.opts.BatchSize), nil
+}
+
+// stream hands the rows of a plan to the row operators as the columnar
+// executor scans them.
+type stream struct {
+	r      *run
+	snap   *colstore.Snapshot
+	plan   exec.Node
+	schema ir.Schema
+
+	batches chan *pipeline.Batch
+	cancel  context.CancelFunc
+	done    chan struct{}
+	err     error
+}
+
+// Init starts the scan; the row operators may call it again, and Close more
+// than once.
+func (s *stream) Init(ctx context.Context) error {
+	if s.cancel != nil {
+		return nil
+	}
+	ctx, s.cancel = context.WithCancel(ctx)
+	s.batches, s.done = make(chan *pipeline.Batch, 2), make(chan struct{})
+	size := s.r.opts.BatchSize
+	if size <= 0 {
+		size = pipeline.DefaultBatchSize
+	}
+	go func() {
+		defer close(s.done)
+		defer close(s.batches)
+		s.err = exec.Each(ctx, s.snap, s.plan, exec.Options{Workers: s.r.opts.Workers}, func(res *exec.Result) error {
+			batch := batchOf(res, s.schema)
+			for from := 0; from < batch.Len; from += size {
+				select {
+				case s.batches <- batch.Slice(from, min(from+size, batch.Len)):
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+
+			return nil
 		})
+	}()
+
+	return nil
+}
+
+func (s *stream) Next(ctx context.Context) (*pipeline.Batch, error) {
+	if s.batches == nil {
+		if err := s.Init(ctx); err != nil {
+			return nil, err
+		}
+	}
+	select {
+	case batch, ok := <-s.batches:
+		if ok {
+			return batch, nil
+		}
+		<-s.done
+		if s.err != nil && !errors.Is(s.err, context.Canceled) {
+			return nil, s.err
+		}
+
+		return nil, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (s *stream) Close() error {
+	if s.cancel == nil {
+		// A scan that never started has nothing to end, and does not
+		// start afterwards.
+		s.cancel = func() {}
+		s.batches, s.done = make(chan *pipeline.Batch), make(chan struct{})
+		close(s.batches)
+		close(s.done)
+
+		return nil
+	}
+	s.cancel()
+	for range s.batches {
+	}
+	<-s.done
+
+	return nil
+}
+
+func (s *stream) Schema() []pipeline.FieldInfo { return nil }
+
+// batchOf turns the columns of a result into a batch of the row operators,
+// by the rules of rowsOf.
+func batchOf(res *exec.Result, schema ir.Schema) *pipeline.Batch {
+	batch := &pipeline.Batch{Columns: make(map[string][]event.Value, len(res.Columns)), Len: res.Rows}
+	for c := range res.Columns {
+		name := res.Columns[c].Name
+		col, listed := schema.Lookup(name)
+		at := name == ir.TimeColumn || (listed && col.Type.Kind == ir.KindTimestamp)
+		vals := make([]event.Value, res.Rows)
+		var present []bool
+		for i := range vals {
+			v := res.Value(i, c)
+			switch {
+			case v.Kind == exec.KindAny && !listed:
+				if present == nil {
+					present = make([]bool, res.Rows)
+					for j := 0; j < i; j++ {
+						present[j] = true
+					}
+				}
+
+				continue
+			case v.IsNull():
+				vals[i] = event.NullValue()
+			case at && v.Kind == vec.KindInt:
+				vals[i] = event.TimestampValue(time.Unix(0, v.Int).UTC())
+			default:
+				vals[i] = valueOf(v)
+			}
+			if present != nil {
+				present[i] = true
+			}
+		}
+		batch.Columns[name] = vals
+		if present != nil {
+			if batch.Present == nil {
+				batch.Present = map[string][]bool{}
+			}
+			batch.Present[name] = present
+		}
 	}
 
-	return pipeline.NewRowScanIterator(rows, r.opts.BatchSize), nil
+	return batch
 }
 
 // describe returns one row per field that the rows of a table hold.

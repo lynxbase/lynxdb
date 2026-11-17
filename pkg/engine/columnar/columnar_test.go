@@ -147,6 +147,9 @@ func TestRun(t *testing.T) {
 		{"a field taken out of text", `source=logs | rex field=msg "(?<first>\w+)" | stats count() as n by first | sort - n, first | head 2`,
 			"first=request n=2; first=Disk n=1", false},
 		{"the fields of a table", `describe hosts`, "column=_time; column=dc; column=host; column=ts", false},
+		{"rows numbered as they come and cut short", `source=logs | where status < 500 | streamstats count() as i | where i <= 2 | stats count() as n`, "n=2", false},
+		{"a field taken out of text and a limit", `source=logs | rex field=msg "(?<first>\\w+)" | where first = 'request' | head 1 | fields first, status`,
+			"first=request status=200", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			compiled, err := query.Compile(c.text)
