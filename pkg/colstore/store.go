@@ -541,7 +541,6 @@ type Writer struct {
 
 	s        *Store
 	batch    *shred.Batch
-	block    *shred.Batch
 	part     *part.Writer // reused from run to run for its buffers
 	buffered int          // input bytes in batch
 	buckets  []shred.TimeBucket
@@ -553,7 +552,6 @@ func (s *Store) NewWriter() *Writer {
 	return &Writer{
 		s:     s,
 		batch: shred.NewBatch(shred.Options{TimeField: s.opts.TimeField}),
-		block: shred.NewBatch(shred.Options{}),
 	}
 }
 
@@ -600,6 +598,10 @@ func (w *Writer) Flush() error {
 	}
 	flushed := s.opts.Part
 	flushed.Level = s.opts.FlushLevel
+	// The buffer that blocks are cut into is needed only now, so writers
+	// share a few of them instead of holding one each.
+	block := shred.Get(shred.Options{})
+	defer shred.Put(block)
 	files := make([]*PartFile, 0, len(w.buckets))
 	abort := func(err error) error {
 		for _, pf := range files {
@@ -624,9 +626,9 @@ func (w *Writer) Flush() error {
 			pw.Reset(pf, flushed)
 		}
 		for end := from + bucket.Rows; from < end; from += min(s.opts.BlockRows, end-from) {
-			w.block.Reset()
-			w.batch.CopyRows(w.block, from, min(from+s.opts.BlockRows, end))
-			if err := pw.WriteBatch(w.block); err != nil {
+			block.Reset()
+			w.batch.CopyRows(block, from, min(from+s.opts.BlockRows, end))
+			if err := pw.WriteBatch(block); err != nil {
 				return abort(err)
 			}
 		}
