@@ -214,9 +214,10 @@ func contentDigest(t testing.TB, parts []*part.Part) (digest uint64, rows, block
 // file named by LYNXDB_BENCH_NDJSON: as one merge on one goroutine, and as
 // range merges on every core. LYNXDB_BENCH_MERGE_RUNS sets the number of
 // source runs, LYNXDB_BENCH_RUNS the timed repetitions, LYNXDB_BENCH_SORT the
-// sort key, LYNXDB_BENCH_MERGE_MODE keeps one of the modes whole and ranges,
-// and LYNXDB_BENCH_PROFILE names a directory that receives one CPU profile
-// per mode.
+// sort key, LYNXDB_BENCH_MERGE_MODE keeps one of the modes whole, ranges
+// and apart, the last of which merges the parts the range merges wrote, and
+// LYNXDB_BENCH_PROFILE names a directory that receives one CPU profile per
+// mode.
 func TestJSONBenchMerge(t *testing.T) {
 	path := os.Getenv("LYNXDB_BENCH_NDJSON")
 	if path == "" {
@@ -268,6 +269,7 @@ func TestJSONBenchMerge(t *testing.T) {
 	}
 
 	// Both ways of merging hold the same rows in the same order.
+	var apart []*part.Part
 	for i, fn := range []func(func(int) io.Writer) int{whole, ranges} {
 		bufs := make([]bytes.Buffer, cores)
 		n := fn(func(i int) io.Writer { return &bufs[i] })
@@ -289,6 +291,20 @@ func TestJSONBenchMerge(t *testing.T) {
 			t.Errorf("range merges hold other rows than the whole merge: digest %016x, want %016x", digest, want)
 		}
 		t.Logf("merged content digest %016x, %d parts, %d blocks", digest, n, blocks)
+		apart = merged
+	}
+	// The parts of the range merges do not overlap, so merging them takes
+	// their blocks over as they are stored.
+	disjoint := func(sink func(i int) io.Writer) int {
+		w := part.NewWriter(sink(0), opts)
+		if err := part.Merge(w, apart, blockRows); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		return 1
 	}
 
 	report := func(label, name string, fn func(func(int) io.Writer) int) {
@@ -304,4 +320,5 @@ func TestJSONBenchMerge(t *testing.T) {
 	}
 	report("whole, one goroutine", "whole", whole)
 	report(fmt.Sprintf("ranges, %d cores", cores), "ranges", ranges)
+	report("parts apart by key", "apart", disjoint)
 }
