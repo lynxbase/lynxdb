@@ -206,57 +206,6 @@ func TestServer_ListIndexes(t *testing.T) {
 	}
 }
 
-func TestServer_CreateIndex(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"name":           "security",
-		"retention_days": 30,
-	})
-	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/indexes", srv.Addr()), "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusCreated {
-		t.Fatalf("status: %d", resp.StatusCode)
-	}
-
-	// Verify index exists.
-	resp2, err2 := http.Get(fmt.Sprintf("http://%s/api/v1/indexes", srv.Addr()))
-	if err2 != nil {
-		t.Fatalf("GET indexes: %v", err2)
-	}
-	defer resp2.Body.Close()
-	var result map[string]interface{}
-	json.NewDecoder(resp2.Body).Decode(&result)
-	data2 := result["data"].(map[string]interface{})
-	indexes := data2["indexes"].([]interface{})
-	if len(indexes) != 2 {
-		t.Errorf("expected 2 indexes, got %d", len(indexes))
-	}
-}
-
-func TestServer_ClusterStatus(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/cluster/status", srv.Addr()))
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
-	data := result["data"].(map[string]interface{})
-	if data["status"] != "healthy" {
-		t.Errorf("status: %v", data["status"])
-	}
-}
-
 func TestServer_IngestAndQuery(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

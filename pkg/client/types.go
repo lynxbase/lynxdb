@@ -547,12 +547,6 @@ type IndexInfo struct {
 	ReplicationFactor int    `json:"replication_factor,omitempty"`
 }
 
-// CacheStatsResult is the response from CacheStats().
-type CacheStatsResult map[string]interface{}
-
-// MetricsResult is the response from Metrics().
-type MetricsResult map[string]interface{}
-
 // HistogramResult is the response from Histogram().
 type HistogramResult struct {
 	Interval string            `json:"interval"`

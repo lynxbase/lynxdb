@@ -265,10 +265,6 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// Index management.
 	mux.HandleFunc("GET /api/v1/indexes", s.handleListIndexes)
-	mux.HandleFunc("POST /api/v1/indexes", s.handleCreateIndex)
-
-	// Cluster status.
-	mux.HandleFunc("GET /api/v1/cluster/status", s.handleClusterStatus)
 
 	// Ingest endpoints (new paths).
 	mux.HandleFunc("POST /api/v1/ingest", s.handleIngestEvents)
@@ -288,16 +284,6 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// Server stats.
 	mux.HandleFunc("GET /api/v1/stats", s.handleStats)
-
-	// Cache management.
-	mux.HandleFunc("DELETE /api/v1/cache", s.handleCacheClear)
-	mux.HandleFunc("GET /api/v1/cache/stats", s.handleCacheStats)
-
-	// Storage metrics.
-	mux.HandleFunc("GET /api/v1/metrics", s.handleMetrics)
-
-	// Compaction history.
-	mux.HandleFunc("GET /api/v1/compaction/history", s.handleCompactionHistory)
 
 	// Config API.
 	mux.HandleFunc("GET /api/v1/config", s.handleGetConfig)

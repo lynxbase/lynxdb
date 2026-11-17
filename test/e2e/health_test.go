@@ -51,16 +51,3 @@ func TestE2E_Stats_ReturnsNonNil(t *testing.T) {
 		t.Fatal("expected non-nil stats result")
 	}
 }
-
-func TestE2E_Metrics_ReturnsNonNil(t *testing.T) {
-	h := NewHarness(t)
-	ctx := context.Background()
-
-	metrics, err := h.Client().Metrics(ctx)
-	if err != nil {
-		t.Fatalf("Metrics: %v", err)
-	}
-	if metrics == nil {
-		t.Fatal("expected non-nil metrics result")
-	}
-}

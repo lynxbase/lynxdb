@@ -16,7 +16,7 @@ User documentation lives in `docs/site/docs/cli/`; the query language is describ
 - Query: [query](#query), [explain](#explain), [fields](#fields)
 - Load data: [ingest](#ingest), [import](#import)
 - Server: [server](#server)
-- Inspect: [status](#status), [health](#health), [indexes](#indexes), [cache](#cache), [jobs](#jobs)
+- Inspect: [status](#status), [health](#health), [indexes](#indexes), [jobs](#jobs)
 - Authentication: [login](#login), [logout](#logout), [auth](#auth)
 - Configuration: [config](#config)
 - Utilities: [version](#version), [completion](#completion)
@@ -314,15 +314,6 @@ lynxdb indexes
 ```
 
 Lists indexes with retention and replication factor.
-
-## cache
-
-```
-lynxdb cache stats
-lynxdb cache clear [--force]
-```
-
-`stats` prints hits, misses, hit rate, entries, size and evictions of the query cache. `clear` empties it after confirmation; `--force` skips the prompt.
 
 ## jobs
 

@@ -211,28 +211,6 @@ func TestServer_BloomFilterSkip(t *testing.T) {
 	}
 }
 
-func TestServer_DiskMode_ClusterStatus(t *testing.T) {
-	srv, dir, cleanup := startDiskTestServer(t)
-	defer cleanup()
-
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/cluster/status", srv.Addr()))
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
-	data := result["data"].(map[string]interface{})
-
-	if data["status"] != "healthy" {
-		t.Errorf("status: %v", data["status"])
-	}
-	if data["data_dir"] != dir {
-		t.Errorf("data_dir: got %v, want %v", data["data_dir"], dir)
-	}
-}
-
 func TestServer_BatcherPersistence(t *testing.T) {
 	dir, err := os.MkdirTemp("", "lynxdb-test-batcher-*")
 	if err != nil {
@@ -453,71 +431,4 @@ func searchAndCount(t *testing.T, srv *Server, query string) int {
 	t.Fatal("timeout waiting for query job")
 
 	return 0
-}
-
-func TestServer_MetricsPopulated(t *testing.T) {
-	srv, _, cleanup := startDiskTestServer(t)
-	defer cleanup()
-
-	// Ingest events via API (batcher path).
-	now := float64(time.Now().Unix())
-	metricEvents := make([]map[string]interface{}, 10)
-	for i := 0; i < 10; i++ {
-		metricEvents[i] = map[string]interface{}{
-			"time":       now + float64(i),
-			"event":      fmt.Sprintf("host=web-01 level=INFO msg=\"request %d\"", i),
-			"host":       "web-01",
-			"source":     "test",
-			"sourcetype": "raw",
-			"index":      "main",
-		}
-	}
-
-	body, _ := json.Marshal(metricEvents)
-	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/ingest", srv.Addr()), "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("POST events: %v", err)
-	}
-	resp.Body.Close()
-
-	// Flush batcher to disk to trigger flush metrics.
-	if err := srv.engine.FlushBatcher(); err != nil {
-		t.Fatalf("FlushBatcher: %v", err)
-	}
-
-	// Query to trigger segment read metrics.
-	// Use stats count by host to avoid countStarOnly metadata-only optimization.
-	_ = searchAndCount(t, srv, `source=main | stats count() by host`)
-
-	resp, err = http.Get(fmt.Sprintf("http://%s/api/v1/metrics", srv.Addr()))
-	if err != nil {
-		t.Fatalf("GET metrics: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var envelope map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
-		t.Fatalf("decode metrics: %v", err)
-	}
-	metrics := envelope["data"].(map[string]interface{})
-
-	// Verify flush metrics are populated.
-	flushMetrics := metrics["flush"].(map[string]interface{})
-	if flushMetrics["flushes"].(float64) == 0 {
-		t.Error("flush.flushes should be > 0 after flush")
-	}
-
-	// Verify segment metrics.
-	segMetrics := metrics["segment"].(map[string]interface{})
-	if segMetrics["count"].(float64) == 0 {
-		t.Error("segment.count should be > 0 after flush")
-	}
-	if segMetrics["reads"].(float64) == 0 {
-		t.Error("segment.reads should be > 0 after query")
-	}
-
-	// Verify uptime.
-	if metrics["uptime_seconds"].(float64) <= 0 {
-		t.Error("uptime_seconds should be > 0")
-	}
 }

@@ -240,9 +240,6 @@ func (h *Harness) MustQuery(q string) *client.QueryResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	// Clear cache for deterministic results.
-	_ = h.client.CacheClear(ctx)
-
 	result, err := h.client.QuerySync(ctx, q, "", "")
 	if err != nil {
 		h.t.Fatalf("QuerySync %q: %v", q, err)

@@ -19,7 +19,6 @@ func init() {
 	rootCmd.AddCommand(newStatusCmd())
 	rootCmd.AddCommand(newHealthCmd())
 	rootCmd.AddCommand(newIndexesCmd())
-	rootCmd.AddCommand(newCacheCmd())
 }
 
 func newStatusCmd() *cobra.Command {
@@ -46,39 +45,6 @@ func newIndexesCmd() *cobra.Command {
 		Use:   "indexes",
 		Short: "List all indexes",
 		RunE:  runIndexes,
-	}
-}
-
-func newCacheCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "cache",
-		Short: "Cache management",
-	}
-	cmd.AddCommand(newCacheClearCmd(), newCacheStatsCmd())
-
-	return cmd
-}
-
-func newCacheClearCmd() *cobra.Command {
-	var force bool
-
-	cmd := &cobra.Command{
-		Use:   "clear",
-		Short: "Clear the query cache",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runCacheClear(force)
-		},
-	}
-	cmd.Flags().BoolVar(&force, "force", false, "Skip confirmation prompt")
-
-	return cmd
-}
-
-func newCacheStatsCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "stats",
-		Short: "Show cache statistics",
-		RunE:  runCacheStats,
 	}
 }
 
@@ -379,79 +345,6 @@ func runIndexes(_ *cobra.Command, _ []string) error {
 	if humanOutputActive() {
 		fmt.Printf("\n%s\n", t.Dim.Render(fmt.Sprintf("%d indexes", len(indexes))))
 	}
-
-	return nil
-}
-
-func runCacheClear(force bool) error {
-	if !force {
-		if !confirmAction("Clear the entire query cache?") {
-			printHint("Aborted.")
-
-			return nil
-		}
-	}
-
-	ctx := context.Background()
-	if err := apiClient().CacheClear(ctx); err != nil {
-		return err
-	}
-
-	printSuccess("Cache cleared")
-
-	return nil
-}
-
-func runCacheStats(_ *cobra.Command, _ []string) error {
-	ctx := context.Background()
-
-	stats, err := apiClient().CacheStats(ctx)
-	if err != nil {
-		return err
-	}
-
-	if isJSONFormat() {
-		b, _ := json.MarshalIndent(stats, "", "  ")
-		fmt.Println(string(b))
-
-		return nil
-	}
-
-	if !humanOutputActive() {
-		rows := [][2]any{}
-		for _, key := range []string{"hits", "misses", "hit_rate", "entries", "size_bytes", "evictions"} {
-			if value, ok := stats[key]; ok {
-				rows = append(rows, [2]any{key, value})
-			}
-		}
-		return renderKeyValues(os.Stdout, rows, ui.Stdout)
-	}
-
-	t := ui.Stdout
-	fmt.Printf("\n  %s\n\n", t.Bold.Render("Cache Statistics"))
-
-	if v, ok := stats["hits"].(float64); ok {
-		fmt.Println(t.KeyValue("Hits", formatCount(int64(v))))
-	}
-	if v, ok := stats["misses"].(float64); ok {
-		fmt.Println(t.KeyValue("Misses", formatCount(int64(v))))
-	}
-	if v, ok := stats["hit_rate"]; ok {
-		if rate, ok := v.(float64); ok {
-			fmt.Println(t.KeyValue("Hit Rate", fmt.Sprintf("%.1f%%", rate*100)))
-		}
-	}
-	if v, ok := stats["entries"].(float64); ok {
-		fmt.Println(t.KeyValue("Entries", formatCount(int64(v))))
-	}
-	if v, ok := stats["size_bytes"].(float64); ok {
-		fmt.Println(t.KeyValue("Size", formatBytes(int64(v))))
-	}
-	if v, ok := stats["evictions"].(float64); ok {
-		fmt.Println(t.KeyValue("Evictions", formatCount(int64(v))))
-	}
-
-	fmt.Println()
 
 	return nil
 }
