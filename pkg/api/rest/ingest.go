@@ -69,6 +69,26 @@ func requestIndex(r *http.Request, headerFirst bool) string {
 	return database.DefaultSource
 }
 
+// maxBodyHint is the largest declared length that a body is given room for
+// before it is read.
+const maxBodyHint = 1 << 30
+
+// readBody reads the body of a request into room for its declared length:
+// read in growing steps, a body of tens of megabytes is copied again and
+// again and leaves twice its size to collect.
+func readBody(r *http.Request) ([]byte, error) {
+	n := r.ContentLength
+	if n <= 0 || n > maxBodyHint {
+		return io.ReadAll(r.Body)
+	}
+	// The buffer asks for MinRead of room before every read, the one that
+	// meets the end too.
+	buf := bytes.NewBuffer(make([]byte, 0, n+bytes.MinRead))
+	_, err := buf.ReadFrom(r.Body)
+
+	return buf.Bytes(), err
+}
+
 // countLines returns the number of lines of b that hold more than blanks.
 func countLines(b []byte) int {
 	n := 0
@@ -94,7 +114,7 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	index := requestIndex(r, false)
-	body, err := io.ReadAll(r.Body)
+	body, err := readBody(r)
 	if err != nil {
 		var tooLarge *http.MaxBytesError
 		if errors.As(err, &tooLarge) {
