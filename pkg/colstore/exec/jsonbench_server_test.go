@@ -160,8 +160,16 @@ func (s *benchServer) benchPlan(snap *colstore.Snapshot, short string) (benchPla
 		s.plans = map[string]benchPlan{}
 		for _, q := range benchPlans(*win) {
 			name := strings.Fields(q.name)[0]
-			if strings.HasPrefix(name, "S") && strings.HasSuffix(q.name, "any case") {
+			switch {
+			case strings.HasPrefix(name, "S") && strings.HasSuffix(q.name, "any case"):
 				name += "i"
+			case strings.HasSuffix(q.name, "estimated users"):
+				name += "e"
+			}
+			if _, taken := s.plans[name]; taken {
+				s.plansFail = fmt.Errorf("two benchmark queries are named %s", name)
+
+				return
 			}
 			s.plans[name] = q
 		}
@@ -511,7 +519,7 @@ func TestBenchServerTakesInsertsAndAnswersQueries(t *testing.T) {
 	if code, body := get("/query?q=Q1&workers=0"); code != http.StatusBadRequest {
 		t.Errorf("no workers answered %d: %s", code, body)
 	}
-	for _, target := range []string{"/query?q=Q1", "/query?q=Q1&form=text&workers=2", "/query?q=S2i&form=text", "/query?q=S2", "/query?q=T4"} {
+	for _, target := range []string{"/query?q=Q1", "/query?q=Q1&form=text&workers=2", "/query?q=S2i&form=text", "/query?q=S2", "/query?q=T4", "/query?q=Q2", "/query?q=Q2e&form=text", "/query?q=N1"} {
 		if code, body := get(target); code != http.StatusOK {
 			t.Errorf("%s answered %d: %s", target, code, body)
 		}
