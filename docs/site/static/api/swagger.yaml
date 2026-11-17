@@ -359,10 +359,9 @@ paths:
       parameters:
         - name: status
           in: query
-          description: '`complete`, `failed` and `cancelled` are aliases of `done`, `error` and `canceled`'
           schema:
             type: string
-            enum: [running, done, error, canceled, complete, failed, cancelled]
+            enum: [running, done, error, canceled]
       responses:
         '200':
           description: Jobs

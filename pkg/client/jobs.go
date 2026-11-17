@@ -56,9 +56,9 @@ func (c *Client) PollJob(ctx context.Context, jobID string, progressFn func(*Job
 		}
 
 		switch job.Status {
-		case "complete", "done":
+		case "done":
 			return c.jobResultToQueryResult(job)
-		case "error", "failed":
+		case "error":
 			msg := "query failed"
 			if job.Error != nil {
 				msg = job.Error.Message
@@ -108,7 +108,7 @@ func (c *Client) jobResultToQueryResult(job *JobResult) (*QueryResult, error) {
 	result := &QueryResult{Meta: job.Meta}
 
 	switch QueryResultType(typed.Type) {
-	case ResultTypeEvents, ResultTypeSchema:
+	case ResultTypeEvents:
 		var events EventsResult
 		if err := json.Unmarshal(*job.Results, &events); err != nil {
 			return nil, fmt.Errorf("lynxdb: decode job events: %w", err)
@@ -116,7 +116,7 @@ func (c *Client) jobResultToQueryResult(job *JobResult) (*QueryResult, error) {
 
 		result.Type = QueryResultType(typed.Type)
 		result.Events = &events
-	case ResultTypeAggregate, ResultTypeTimechart:
+	case ResultTypeAggregate:
 		var agg AggregateResult
 		if err := json.Unmarshal(*job.Results, &agg); err != nil {
 			return nil, fmt.Errorf("lynxdb: decode job aggregate: %w", err)

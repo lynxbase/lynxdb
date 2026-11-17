@@ -19,17 +19,14 @@ func normalizeJobStatusFilter(raw string) (database.JobState, error) {
 		return "", nil
 	case "running":
 		return database.JobRunning, nil
-	case "done", "complete":
+	case "done":
 		return database.JobDone, nil
-	case "error", "failed":
+	case "error":
 		return database.JobFailed, nil
-	case "canceled", "cancelled":
+	case "canceled":
 		return database.JobCanceled, nil
 	default:
-		return "", fmt.Errorf(
-			"invalid job status %q; expected one of running, done, error, canceled, complete, failed, cancelled",
-			raw,
-		)
+		return "", fmt.Errorf("invalid job status %q; expected one of running, done, error, canceled", raw)
 	}
 }
 

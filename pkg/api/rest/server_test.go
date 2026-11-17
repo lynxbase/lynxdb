@@ -1114,7 +1114,7 @@ func TestQuery_ListJobs_FilterByStatus(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query/jobs?status=complete", srv.Addr()))
+	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query/jobs?status=done", srv.Addr()))
 	if err != nil {
 		t.Fatalf("GET jobs: %v", err)
 	}

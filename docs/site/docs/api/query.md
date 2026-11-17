@@ -421,7 +421,7 @@ Lists the jobs, the latest first. Every query run through `POST` or `GET /query`
 
 | Parameter | Description |
 |---|---|
-| `status` | `running`, `done`, `error` or `canceled`. `complete`, `failed` and `cancelled` are aliases |
+| `status` | `running`, `done`, `error` or `canceled` |
 
 ```bash
 curl -s 'localhost:3100/api/v1/query/jobs?status=running'

@@ -93,10 +93,7 @@ var pplErrorCodes = map[ppl.ErrorKind]ErrorCode{
 // query compiled or ran into.
 func queryErrorCode(err error) (ErrorCode, int) {
 	if pe, ok := ppl.AsError(err); ok {
-		code, ok := pplErrorCodes[pe.Kind]
-		if !ok {
-			code = ErrCodeInvalidQuery
-		}
+		code := pplErrorCodes[pe.Kind]
 		switch pe.Kind {
 		case ppl.ErrUnsupportedCommand, ppl.ErrUnsupportedFunction, ppl.ErrUnsupportedFeature:
 			return code, http.StatusUnprocessableEntity

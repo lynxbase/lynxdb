@@ -69,7 +69,7 @@ func TestExtractPositionFromError(t *testing.T) {
 func TestQueryErrorUnwrap(t *testing.T) {
 	inner := &client.APIError{
 		HTTPStatus: 400,
-		Code:       client.ErrCodeInvalidQuery,
+		Code:       client.ErrCodeSyntaxError,
 		Message:    "parse error",
 	}
 	qe := &queryError{inner: inner, query: "bad query"}
@@ -84,8 +84,8 @@ func TestQueryErrorUnwrap(t *testing.T) {
 	if !errors.As(qe, &apiErr) {
 		t.Fatal("errors.As should find *client.APIError through queryError")
 	}
-	if apiErr.Code != client.ErrCodeInvalidQuery {
-		t.Errorf("Code = %q, want %q", apiErr.Code, client.ErrCodeInvalidQuery)
+	if apiErr.Code != client.ErrCodeSyntaxError {
+		t.Errorf("Code = %q, want %q", apiErr.Code, client.ErrCodeSyntaxError)
 	}
 }
 

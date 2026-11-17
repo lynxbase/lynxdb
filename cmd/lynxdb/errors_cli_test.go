@@ -79,7 +79,6 @@ func TestIsConnectionError_Nil(t *testing.T) {
 
 func TestIsQueryParseError_APIError(t *testing.T) {
 	codes := []client.ErrorCode{
-		client.ErrCodeInvalidQuery,
 		client.ErrCodeSyntaxError,
 		client.ErrCodeSemanticError,
 		client.ErrCodeTypeError,
@@ -105,13 +104,13 @@ func TestIsQueryParseError_APIError(t *testing.T) {
 func TestIsQueryParseError_WrappedInQueryError(t *testing.T) {
 	inner := &client.APIError{
 		HTTPStatus: 400,
-		Code:       client.ErrCodeInvalidQuery,
+		Code:       client.ErrCodeSyntaxError,
 		Message:    "parse error",
 	}
 	qe := &queryError{inner: inner, query: "bad query"}
 
 	if !isQueryParseError(qe) {
-		t.Error("expected queryError wrapping INVALID_QUERY to be parse error")
+		t.Error("expected queryError wrapping SYNTAX_ERROR to be parse error")
 	}
 }
 
@@ -222,7 +221,7 @@ func TestIsAuthError_APIError(t *testing.T) {
 		{"INVALID_TOKEN", client.ErrCodeInvalidToken, true},
 		{"FORBIDDEN", client.ErrCodeForbidden, true},
 		{"NOT_FOUND", client.ErrCodeNotFound, false},
-		{"INVALID_QUERY", client.ErrCodeInvalidQuery, false},
+		{"SYNTAX_ERROR", client.ErrCodeSyntaxError, false},
 	}
 
 	for _, tt := range tests {

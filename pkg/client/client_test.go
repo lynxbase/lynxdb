@@ -144,10 +144,9 @@ func TestErrorPredicates(t *testing.T) {
 		name string
 	}{
 		{ErrCodeNotFound, IsNotFound, "IsNotFound"},
-		{ErrCodeAlreadyExists, IsAlreadyExists, "IsAlreadyExists"},
 		{ErrCodeAuthRequired, IsAuthRequired, "IsAuthRequired"},
 		{ErrCodeTooManyRequests, IsRateLimited, "IsRateLimited"},
-		{ErrCodeInvalidQuery, IsInvalidQuery, "IsInvalidQuery"},
+		{ErrCodeSyntaxError, IsInvalidQuery, "IsInvalidQuery"},
 		{ErrCodeValidationError, IsValidationError, "IsValidationError"},
 	}
 

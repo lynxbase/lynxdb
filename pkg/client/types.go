@@ -19,8 +19,6 @@ type QueryResultType string
 const (
 	ResultTypeEvents    QueryResultType = "events"
 	ResultTypeAggregate QueryResultType = "aggregate"
-	ResultTypeTimechart QueryResultType = "timechart"
-	ResultTypeSchema    QueryResultType = "schema"
 	ResultTypeJob       QueryResultType = "job"
 )
 
@@ -50,18 +48,14 @@ type EventsResult struct {
 	Events  []map[string]interface{} `json:"events"`
 	Total   int                      `json:"total"`
 	HasMore bool                     `json:"has_more"`
-	Partial bool                     `json:"partial,omitempty"`
 }
 
-// AggregateResult holds aggregate/timechart query results.
+// AggregateResult holds aggregate query results.
 type AggregateResult struct {
-	Type      string                 `json:"type"`
-	Columns   []string               `json:"columns"`
-	Rows      [][]interface{}        `json:"rows"`
-	TotalRows int                    `json:"total_rows,omitempty"`
-	Interval  string                 `json:"interval,omitempty"`
-	Partial   bool                   `json:"partial,omitempty"`
-	RawData   map[string]interface{} `json:"-"`
+	Type      string          `json:"type"`
+	Columns   []string        `json:"columns"`
+	Rows      [][]interface{} `json:"rows"`
+	TotalRows int             `json:"total_rows,omitempty"`
 }
 
 // JobHandle is returned for async/hybrid queries (HTTP 202).
@@ -92,34 +86,10 @@ type JobResult struct {
 }
 
 // JobError is the error detail for a failed job.
-// It supports unmarshaling from both a structured object
-// ({"code":"...","message":"..."}) and a plain JSON string.
 type JobError struct {
 	Code       string `json:"code"`
 	Message    string `json:"message"`
 	Suggestion string `json:"suggestion,omitempty"`
-}
-
-// UnmarshalJSON handles both structured error objects and plain strings.
-func (e *JobError) UnmarshalJSON(data []byte) error {
-	// Try plain string first (e.g. "error": "something went wrong").
-	var s string
-	if json.Unmarshal(data, &s) == nil {
-		e.Code = "QUERY_ERROR"
-		e.Message = s
-
-		return nil
-	}
-
-	// Structured object — use an alias to avoid infinite recursion.
-	type alias JobError
-	var a alias
-	if err := json.Unmarshal(data, &a); err != nil {
-		return err
-	}
-	*e = JobError(a)
-
-	return nil
 }
 
 // JobListResult is the response from ListJobs().

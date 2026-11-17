@@ -147,7 +147,7 @@ func renderErrorWithLynx(err error, showLynx bool) {
 		return
 	}
 
-	if isMemoryError(err) {
+	if client.IsQueryMemoryExceeded(err) {
 		renderMemoryError(err)
 
 		return
@@ -221,24 +221,16 @@ func renderNoFilesMatchingError(err noFilesMatchingError) {
 	fmt.Fprintln(os.Stderr)
 }
 
-// isMemoryError reports whether err is a query memory or pool exhaustion error.
-func isMemoryError(err error) bool {
-	return client.IsQueryMemoryExceeded(err) || client.IsQueryPoolExhausted(err)
-}
-
-// renderMemoryError prints a memory-related query error with actionable next steps.
+// renderMemoryError prints a query memory error with actionable next steps.
 func renderMemoryError(err error) {
 	var apiErr *client.APIError
 	if errors.As(err, &apiErr) {
 		renderAPIError(apiErr)
-
-		if client.IsQueryMemoryExceeded(err) {
-			printNextSteps(
-				"lynxdb query '... | head 1000'         Limit results",
-				"lynxdb query '...' --since 1h          Narrow time range",
-				"lynxdb explain '...'                    Check query cost",
-			)
-		}
+		printNextSteps(
+			"lynxdb query '... | head 1000'         Limit results",
+			"lynxdb query '...' --since 1h          Narrow time range",
+			"lynxdb explain '...'                    Check query cost",
+		)
 
 		return
 	}
@@ -279,7 +271,7 @@ func renderAuthError(err error) {
 }
 
 // renderAPIError prints an API error with code, message, and optional suggestion.
-// For INVALID_QUERY errors, attempts field name fuzzy matching.
+// For a rejected query, attempts field name fuzzy matching.
 func renderAPIError(ae *client.APIError) {
 	code := string(ae.Code)
 	if code == "" {

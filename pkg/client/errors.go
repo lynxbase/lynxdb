@@ -13,10 +13,7 @@ const (
 	ErrCodeInvalidJSON         ErrorCode = "INVALID_JSON"
 	ErrCodeInvalidRequest      ErrorCode = "INVALID_REQUEST"
 	ErrCodeValidationError     ErrorCode = "VALIDATION_ERROR"
-	ErrCodeInvalidQuery        ErrorCode = "INVALID_QUERY"
 	ErrCodeNotFound            ErrorCode = "NOT_FOUND"
-	ErrCodeAlreadyExists       ErrorCode = "ALREADY_EXISTS"
-	ErrCodeHasDependents       ErrorCode = "HAS_DEPENDENTS"
 	ErrCodeTooManyRequests     ErrorCode = "TOO_MANY_REQUESTS"
 	ErrCodeAuthRequired        ErrorCode = "AUTH_REQUIRED"
 	ErrCodeInvalidToken        ErrorCode = "INVALID_TOKEN"
@@ -24,7 +21,6 @@ const (
 	ErrCodeLastRootKey         ErrorCode = "LAST_ROOT_KEY"
 	ErrCodeInternalError       ErrorCode = "INTERNAL_ERROR"
 	ErrCodeQueryMemoryExceeded ErrorCode = "QUERY_MEMORY_EXCEEDED"
-	ErrCodeQueryPoolExhausted  ErrorCode = "QUERY_POOL_EXHAUSTED"
 	ErrCodeSyntaxError         ErrorCode = "SYNTAX_ERROR"
 	ErrCodeSemanticError       ErrorCode = "SEMANTIC_ERROR"
 	ErrCodeTypeError           ErrorCode = "TYPE_ERROR"
@@ -60,11 +56,6 @@ func IsNotFound(err error) bool {
 	return hasCode(err, ErrCodeNotFound)
 }
 
-// IsAlreadyExists reports whether the error is an ALREADY_EXISTS API error.
-func IsAlreadyExists(err error) bool {
-	return hasCode(err, ErrCodeAlreadyExists)
-}
-
 // IsAuthRequired reports whether the error is an AUTH_REQUIRED API error.
 func IsAuthRequired(err error) bool {
 	return hasCode(err, ErrCodeAuthRequired)
@@ -79,7 +70,7 @@ func IsRateLimited(err error) bool {
 // syntax, semantic, type, unsupported or planning error.
 func IsInvalidQuery(err error) bool {
 	for _, code := range []ErrorCode{
-		ErrCodeInvalidQuery, ErrCodeSyntaxError, ErrCodeSemanticError, ErrCodeTypeError,
+		ErrCodeSyntaxError, ErrCodeSemanticError, ErrCodeTypeError,
 		ErrCodeUnsupportedCommand, ErrCodeUnsupportedFunction, ErrCodeUnsupportedFeature, ErrCodePlanningError,
 	} {
 		if hasCode(err, code) {
@@ -97,11 +88,6 @@ func IsValidationError(err error) bool {
 // IsQueryMemoryExceeded reports whether the error is a QUERY_MEMORY_EXCEEDED API error.
 func IsQueryMemoryExceeded(err error) bool {
 	return hasCode(err, ErrCodeQueryMemoryExceeded)
-}
-
-// IsQueryPoolExhausted reports whether the error is a QUERY_POOL_EXHAUSTED API error.
-func IsQueryPoolExhausted(err error) bool {
-	return hasCode(err, ErrCodeQueryPoolExhausted)
 }
 
 func hasCode(err error, code ErrorCode) bool {

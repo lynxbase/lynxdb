@@ -596,7 +596,7 @@ func queryResultToRows(result *client.QueryResult) []map[string]interface{} {
 		if result.Events != nil {
 			return result.Events.Events
 		}
-	case client.ResultTypeAggregate, client.ResultTypeTimechart:
+	case client.ResultTypeAggregate:
 		if result.Aggregate != nil {
 			rows := make([]map[string]interface{}, 0, len(result.Aggregate.Rows))
 			for _, row := range result.Aggregate.Rows {

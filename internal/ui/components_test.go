@@ -206,8 +206,8 @@ func TestRenderQueryError(t *testing.T) {
 	theme.RenderQueryError("| stats count by", 17, 2, "unexpected end", "add a field name")
 	got := buf.String()
 
-	if !strings.Contains(got, "INVALID_QUERY") {
-		t.Errorf("RenderQueryError should contain 'INVALID_QUERY', got: %q", got)
+	if !strings.Contains(got, "unexpected end") {
+		t.Errorf("RenderQueryError should contain the message, got: %q", got)
 	}
 
 	if !strings.Contains(got, "Did you mean:") {

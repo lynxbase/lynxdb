@@ -132,36 +132,6 @@ func TestQuery_Async(t *testing.T) {
 	}
 }
 
-func TestQuery_Timechart(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"data": map[string]interface{}{
-				"type":     "timechart",
-				"interval": "5m",
-				"columns":  []string{"_time", "count"},
-				"rows":     [][]interface{}{{"2024-01-01T00:00:00Z", 10}},
-			},
-		})
-	}))
-	defer srv.Close()
-
-	c := NewClient(WithBaseURL(srv.URL))
-	result, err := c.QuerySync(context.Background(), "source=main | timechart span=5m count()", "-1h", "now")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if result.Type != ResultTypeTimechart {
-		t.Fatalf("Type = %q, want timechart", result.Type)
-	}
-	if result.Aggregate == nil {
-		t.Fatal("Aggregate is nil")
-	}
-	if result.Aggregate.Interval != "5m" {
-		t.Errorf("Interval = %q, want 5m", result.Aggregate.Interval)
-	}
-}
-
 func TestQueryGet(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
