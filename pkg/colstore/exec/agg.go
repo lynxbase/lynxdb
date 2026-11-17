@@ -926,7 +926,7 @@ func (a *aggWorker) feed(t *target, n int, idx []uint32) error {
 		a.firstRows(t, i, n, idx)
 	}
 	for i := range a.plan.args {
-		if a.streaming && len(a.plan.args[i].words) == 0 {
+		if a.streaming && len(a.plan.args[i].words) == 0 && len(a.plan.args[i].states) == 0 {
 			continue
 		}
 		if err := a.feedArg(i, t, n, idx); err != nil {
@@ -1011,14 +1011,19 @@ func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uin
 			return err
 		}
 	}
-	if w.shared == nil && arg.placed {
+	if arg.placed {
 		// The rows that hold a value are all a pick and a count need.
 		gid, rows, count := t.gid, idx, n
-		if w.ref(arg.expr.path, kind).Count != w.rows {
-			valid, err := w.presence(arg.expr.path, kind)
-			if err != nil {
+		var valid vec.Bitmap
+		if w.shared != nil {
+			valid = w.sharedColumn(arg.expr.path, kind).Valid
+		} else if w.ref(arg.expr.path, kind).Count != w.rows {
+			var err error
+			if valid, err = w.presence(arg.expr.path, kind); err != nil {
 				return err
 			}
+		}
+		if valid != nil {
 			gid, rows = a.compactValid(valid, t.gid, n, idx)
 			count = len(rows)
 		}
@@ -1043,16 +1048,16 @@ func (a *aggWorker) firstRows(t *target, i, n int, idx []uint32) {
 	if t.gid == nil {
 		loc := place
 		if idx != nil {
-			loc |= int64(idx[0])
+			loc += int64(idx[0])
 		}
 		mergePick(t.words[t.one*stride+i:], loc, loc, true)
 
 		return
 	}
 	for j, g := range t.gid[:n] {
-		loc := place | int64(j)
+		loc := place + int64(j)
 		if idx != nil {
-			loc = place | int64(idx[j])
+			loc = place + int64(idx[j])
 		}
 		mergePick(t.words[int(g)*stride+i:], loc, loc, true)
 	}
@@ -1124,7 +1129,7 @@ func (a *aggWorker) pick(arg *aggArg, t *target, gid, rows []uint32, n int) {
 			if t.gid != nil {
 				g = int(gid[j])
 			}
-			loc := place | int64(r)
+			loc := place + int64(r)
 			key := loc
 			switch {
 			case keys != nil:

@@ -283,13 +283,8 @@ func (t *topK) down(i int) {
 	}
 }
 
-// collect turns what the sinks hold into the columns of the result.
-func collect(q *query, sinks []*sink) ([]Column, int) {
-	out, n := gather(q, sinks)
-
-	return columns(q, out), n
-}
-
+// columns turns the rows that gather returned into the columns of the
+// result.
 func columns(q *query, out []colVec) []Column {
 	cols := make([]Column, len(out))
 	for c := range out {

@@ -26,6 +26,26 @@ func TestOrderedAggregation(t *testing.T) {
 		{Name: "var_time", Func: exec.Var, Arg: exec.ToFloat(exec.HourOfDay(exec.Time()))},
 	}
 	users := exec.Agg{Name: "users", Func: exec.CountDistinct, Arg: str("user")}
+	stateful := []exec.Agg{
+		{Name: "rows", Func: exec.Count},
+		{Name: "min_msg", Func: exec.Min, Arg: str("msg")},
+		{Name: "max_y", Func: exec.Max, Arg: str("nested.y")},
+		{Name: "texts", Func: exec.ApproxDistinct, Arg: anyOf("msg")},
+		{Name: "ids", Func: exec.ApproxDistinct, Arg: num("id")},
+		{Name: "p50_score", Func: exec.Percentile, Arg: float("score"), P: 50},
+		{Name: "p99_score", Func: exec.Percentile, Arg: float("score"), P: 99},
+		{Name: "p100_n", Func: exec.Percentile, Arg: anyOf("n"), P: 100},
+		{Name: "sum_x", Func: exec.Sum, Arg: num("nested.x")},
+	}
+	picked := []exec.Agg{
+		{Name: "rows", Func: exec.Count},
+		{Name: "latest_msg", Func: exec.Latest, Arg: str("msg")},
+		{Name: "latest_n", Func: exec.Latest, Arg: anyOf("n")},
+		{Name: "earliest_id", Func: exec.Earliest, Arg: num("id")},
+		{Name: "id_of_max_big", Func: exec.ArgMax, Arg: num("id"), By: num("big")},
+		{Name: "msg_of_min_id", Func: exec.ArgMin, Arg: anyOf("msg"), By: exec.Mul(num("id"), exec.Int(3))},
+		{Name: "max_y", Func: exec.Max, Arg: str("nested.y")},
+	}
 	byUser := &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: times}
 	cases := []struct {
 		name    string
@@ -39,6 +59,15 @@ func TestOrderedAggregation(t *testing.T) {
 		{"projected", &exec.Sort{Input: &exec.Project{Input: byUser, Exprs: []exec.Named{named("user", anyOf("user")),
 			named("span", exec.Sub(anyOf("last"), anyOf("first")))}}, By: []exec.Order{{Column: "span", Desc: true}, {Column: "user"}}, Limit: 7}, true, true},
 		{"two keys", &exec.Aggregate{Input: &exec.Scan{Filter: created}, Keys: keys("user", "coll"), Aggs: times}, true, false},
+		{"states of variable size", &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: stateful}, true, false},
+		{"states of two keys", &exec.Aggregate{Input: &exec.Scan{Filter: created}, Keys: keys("user", "coll"), Aggs: stateful}, true, false},
+		{"states of three keys", &exec.Aggregate{Input: &exec.Scan{Filter: eq("kind", "commit")}, Keys: keys("op", "coll", "user"), Aggs: stateful}, true, false},
+		{"picked rows", &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: picked}, true, false},
+		{"picked rows of two keys", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(created, exec.Gt(num("n"), exec.Int(5)))}, Keys: keys("coll", "user"), Aggs: picked}, true, false},
+		{"sorted by a picked value", &exec.Sort{Input: &exec.Filter{Input: &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: picked},
+			Cond: exec.Gt(anyOf("earliest_id"), exec.Int(100))}, By: []exec.Order{{Column: "earliest_id", Desc: true}}, Limit: 9}, true, true},
+		{"top with picked values", &exec.Sort{Input: &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: picked},
+			By: []exec.Order{{Column: "rows", Desc: true}, {Column: "user"}}, Limit: 6}, true, true},
 		{"three keys", &exec.Aggregate{Input: &exec.Scan{Filter: eq("kind", "commit")}, Keys: keys("op", "coll", "user"), Aggs: times}, true, false},
 		{"two keys and distinct", &exec.Aggregate{Input: &exec.Scan{Filter: eq("kind", "commit")}, Keys: keys("coll", "op"), Aggs: []exec.Agg{users, times[0]}}, true, false},
 		{"distinct alone", &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Aggs: []exec.Agg{users, times[0], times[2]}}, true, false},

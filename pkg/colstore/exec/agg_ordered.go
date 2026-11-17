@@ -52,8 +52,10 @@ type orderedPlan struct {
 	keyOf   []int
 	columns []colstore.ColumnID
 	// slotKey and slotCol map a column slot to its sort key position or its
-	// position in columns, -1 when it has none.
+	// position in columns, -1 when it has none; rowsOnly marks the slots of
+	// columns read for which rows hold a value, without the values.
 	slotKey, slotCol []int16
+	rowsOnly         []bool
 	floats           []bool
 	skipped          int64
 	// residual is what the filter asks beyond the key prefix, or nil, and
@@ -111,7 +113,7 @@ func (p *pred) anyColumn() bool {
 // the snapshot does not allow it.
 func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan {
 	ap := q.agg
-	if snap == nil || filter == nil || len(snap.Parts()) == 0 || ap.picks || len(ap.states) != 0 {
+	if snap == nil || filter == nil || len(snap.Parts()) == 0 {
 		return nil
 	}
 	first := snap.Parts()[0]
@@ -213,6 +215,10 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 		// The kind of a numeric aggregate must not depend on rows that a
 		// group handed on earlier has not seen.
 		for _, w := range arg.words {
+			// A pick keeps the place of a row, whatever the row holds.
+			if op := ap.words[w].op; op >= wordFirst && op <= wordArgMax {
+				continue
+			}
 			if ap.words[w].op != wordCount && arg.kinds != kindBit(vec.KindInt) && arg.kinds != kindBit(vec.KindFloat) {
 				return nil
 			}
@@ -252,8 +258,27 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 		residual.columns(slot, need)
 	}
 	for i := range ap.args {
-		if len(ap.args[i].words) != 0 {
-			need(ap.args[i].expr)
+		if arg := &ap.args[i]; (len(arg.words) != 0 || len(arg.states) != 0) && !arg.placed {
+			need(arg.expr)
+		}
+	}
+	for i := range ap.orders {
+		need(ap.orders[i].expr)
+	}
+	if ap.timePath >= 0 {
+		slot(ap.timePath, kindBit(vec.KindInt))
+	}
+	// A pick and a count need the rows that hold a value, not the values.
+	o.rowsOnly = make([]bool, len(o.slotCol))
+	for i := range ap.args {
+		arg := &ap.args[i]
+		for kind := vec.KindBool; arg.placed && kind <= vec.KindVariant; kind++ {
+			s := arg.expr.path*kindSlots + int(kind) - 1
+			if arg.kinds&kindBit(kind) == 0 || o.slotKey[s] >= 0 || o.slotCol[s] >= 0 {
+				continue
+			}
+			o.slotCol[s], o.rowsOnly[s] = int16(len(o.columns)), true
+			o.columns = append(o.columns, colstore.ColumnID{Path: q.paths[arg.expr.path], Kind: kind, Presence: true})
 		}
 	}
 
@@ -345,7 +370,11 @@ func (w *worker) sharedColumn(path int, kind vec.Kind) *vec.Column {
 	}
 	v := &w.views[s]
 	if !w.viewed[s] {
-		v.Set(c, w.from, w.from+w.rows)
+		if o.rowsOnly[s] {
+			v.SetPresence(c, w.from, w.from+w.rows)
+		} else {
+			v.Set(c, w.from, w.from+w.rows)
+		}
 		w.viewed[s] = true
 	}
 
@@ -380,6 +409,8 @@ type orderedEdges struct {
 	lo          []byte
 	seq         int
 	first, last orderedGroup
+	// heap holds the states of variable size of the two groups.
+	heap *stateHeap
 }
 
 // orderedCursor walks one stream of a key range run by run.
@@ -399,6 +430,9 @@ type orderedCursor struct {
 	// repeat tells that the first row loaded continues the distinct value
 	// of the row before it in the stream.
 	repeat bool
+	// place is the place in the table of the first row of the block, for
+	// plans that locate rows.
+	place int64
 	// counted is set for a block taken from the part index as one run with
 	// the group in key and values distinct values.
 	counted bool
@@ -502,6 +536,7 @@ func (ow *orderedWorker) edgesOf(kr *colstore.KeyRange, seq int) *orderedEdges {
 	e := ow.edges[ow.ranges]
 	ow.ranges++
 	e.lo, e.seq, e.first.set, e.last.set = kr.Lo, seq, false, false
+	e.heap = &ow.w.agg.heap
 
 	return e
 }
@@ -680,6 +715,9 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 		}
 		c.at, c.to = from, to
 		c.counted, c.repeat = false, c.repeat && from == 0
+		if ords := ow.w.x.ords; ords != nil {
+			c.place = int64(ords[p])<<44 | int64(i)<<16
+		}
 		ow.w.blocks++
 	}
 }
@@ -718,6 +756,7 @@ func (ow *orderedWorker) chunk(c *orderedCursor) (bool, error) {
 	c.at = to
 	n := to - from
 	w.window(c.r.Block, from, to)
+	w.place = c.place + int64(from)
 	var picked []uint32
 	if o.residual != nil {
 		rows, every, err := ow.selected()
@@ -824,7 +863,9 @@ func (ow *orderedWorker) take(c *orderedCursor, edges *orderedEdges) {
 		}
 		state := c.words[int(run)*stride : (int(run)+1)*stride]
 		if same {
-			plan.mergeWords(open.words, state)
+			heap := &ow.w.agg.heap
+			plan.merge(heap, open.words, heap, state)
+			plan.releaseStates(heap, state)
 		} else {
 			if open.set {
 				ow.close(edges)
@@ -932,14 +973,20 @@ func (ow *orderedWorker) flush() {
 		plan.column(&plan.outs[i], ow.states, &ow.w.agg.heap, ow.count, ow.o.floats, distinct, &ow.batch[keys+i])
 	}
 	out, n := ow.batch, ow.count
-	if q.having != nil {
+	if q.having != nil && !q.early {
 		out = ow.having.run(q, out, n)
 		n = out[0].len()
 	}
-	if q.post != nil {
+	if q.post != nil && !q.early {
 		out = ow.post.run(q, out, n)
 	}
 	ow.w.sink.add(out)
+	if len(plan.states) != 0 {
+		stride := len(plan.words)
+		for g := 0; g < ow.count; g++ {
+			plan.releaseStates(&ow.w.agg.heap, ow.states[g*stride:(g+1)*stride])
+		}
+	}
 	for i := range ow.batch[:keys] {
 		ow.batch[i].reset()
 	}
@@ -1014,7 +1061,7 @@ func (ow *orderedWorker) merge(kr *colstore.KeyRange, edges *orderedEdges, b *pa
 
 // runOrdered executes an aggregation in key order; it fails with errUnordered
 // when the rows turn out not to allow it.
-func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
+func (x *execution) runOrdered(ctx context.Context, snap *colstore.Snapshot) (*Result, error) {
 	q := x.q
 	o := q.ordered
 	workers := len(x.workers)
@@ -1074,6 +1121,21 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 		return edges[i].seq < edges[j].seq
 	})
 	var carry *orderedGroup
+	var carried *stateHeap
+	// A group is emitted from the heap of the worker that emits it.
+	emit := func() {
+		if carried != &last.w.agg.heap {
+			for i := range plan.states {
+				at := plan.states[i].word
+				ref := stateRef(0)
+				if b := carried.get(stateRef(carry.words[at])); len(b) != 0 {
+					ref = last.w.agg.heap.set(0, b)
+				}
+				carry.words[at] = int64(ref)
+			}
+		}
+		last.emit(carry)
+	}
 	for i := range edges {
 		for _, e := range []*orderedGroup{&edges[i].first, &edges[i].last} {
 			if !e.set {
@@ -1085,13 +1147,13 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 			}
 			if !same {
 				if carry != nil {
-					last.emit(carry)
+					emit()
 				}
-				carry = e
+				carry, carried = e, edges[i].heap
 
 				continue
 			}
-			plan.mergeWords(carry.words, e.words)
+			plan.merge(carried, carry.words, edges[i].heap, e.words)
 			carry.users += e.users
 			// Counts taken with the index leave out a value that the row
 			// before the range has.
@@ -1105,7 +1167,7 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 	}
 	switch {
 	case carry != nil:
-		last.emit(carry)
+		emit()
 	case len(plan.keys) == 0:
 		last.emit(&orderedGroup{words: append([]int64(nil), plan.init...)})
 	}
@@ -1125,7 +1187,9 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 		res.Stats.CountedByIndex += ows[i].byIndex
 		res.Stats.SkippedByToken += ows[i].byToken
 	}
-	res.Columns, res.Rows = collect(q, sinks)
+	if res.Columns, res.Rows, err = x.finish(snap, sinks); err != nil {
+		return nil, err
+	}
 	res.Stats.Blocks, res.Stats.SkippedByKey, res.Stats.HeldBytes = scan.Decoded.Load(), o.skipped, int64(held)
 	res.Stats.Ordered = true
 

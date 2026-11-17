@@ -63,21 +63,22 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 	if n <= 0 {
 		n = runtime.GOMAXPROCS(0)
 	}
+	var ords map[*part.Part]int
+	if q.located != nil {
+		ords = map[*part.Part]int{}
+		for i, h := range snap.Parts() {
+			ords[h.Part] = i
+		}
+	}
 	if q.ordered != nil {
-		x := &execution{q: q, workers: make([]*worker, n), streaming: true}
-		res, err := x.runOrdered(ctx)
+		x := &execution{q: q, workers: make([]*worker, n), streaming: true, ords: ords}
+		res, err := x.runOrdered(ctx, snap)
 		x.release()
 		if !errors.Is(err, errUnordered) {
 			return res, err
 		}
 	}
-	x := &execution{q: q, workers: make([]*worker, n)}
-	if q.located != nil {
-		x.ords = map[*part.Part]int{}
-		for i, h := range snap.Parts() {
-			x.ords[h.Part] = i
-		}
-	}
+	x := &execution{q: q, workers: make([]*worker, n), ords: ords}
 	if q.agg != nil && q.agg.group >= 0 {
 		a := mem.NewArena()
 		x.shared = &sharedGroups{arena: a, table: vec.NewByteTable(a)}

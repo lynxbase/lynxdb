@@ -82,8 +82,8 @@ type worker struct {
 	whole  bool
 	// decoded records that the block had a column decoded.
 	decoded bool
-	// place is the place of the open block's first row in the table, for
-	// plans that locate rows.
+	// place is the place in the table of the first row that the worker sees
+	// of the open block, for plans that locate rows.
 	place int64
 
 	blocks, matched, undecoded int64
