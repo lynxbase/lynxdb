@@ -1,7 +1,7 @@
 ---
 sidebar_position: 10
 title: Server
-description: Health checks, Prometheus and JSON metrics, status snapshots, cache, compaction history, runtime configuration, API keys and profiling endpoints.
+description: Health checks, Prometheus metrics, status and stats snapshots, runtime configuration, API keys and profiling endpoints.
 ---
 
 # Server API
@@ -15,83 +15,103 @@ curl -s localhost:3100/health
 ```
 
 ```json
-{"data": {"status": "healthy", "degraded": false, "version": "0.4.0"}}
+{"data": {"status": "healthy", "version": "dev"}}
 ```
 
-`status` is `degraded` and `degraded` is `true` when a persistent store fell back to memory.
+A server that answers is healthy; `status` is always `healthy`. `version` is the version of the binary, `dev` for a build from source.
 
 ## GET /metrics
 
-Prometheus text metrics, outside `/api/v1` and without authentication. Metric names start with `lynxdb_`: ingest counters and staging gauges, query duration, scan and memory histograms, segment skip counters, cache, compaction and spill metrics. See [Monitoring](../operations/monitoring.md).
+Prometheus text metrics, outside `/api/v1` and without authentication. Besides the Go runtime and process metrics, LynxDB exports:
+
+| Metric | Labels | Description |
+|---|---|---|
+| `lynxdb_query_duration_seconds` | `result_type` | Histogram of query durations |
+| `lynxdb_query_errors_total` | `type` | Failed queries by error code |
+| `lynxdb_ingest_events_total` | | Events ingested |
+| `lynxdb_ingest_batches_total` | | Ingest batches |
+| `lynxdb_ingest_bytes_total` | | Bytes of NDJSON ingested |
+| `lynxdb_ingest_errors_total` | | Failed ingest batches |
+| `lynxdb_ingest_es_bulk_requests_total` | `result` | Elasticsearch bulk requests: `success`, `partial`, `error` |
+| `lynxdb_ingest_es_bulk_items_total` | `action`, `result` | Elasticsearch bulk items: `ok`, `rejected` |
+| `lynxdb_ingest_es_bulk_duration_seconds` | | Histogram of bulk request times |
+| `lynxdb_ingest_es_handshake_total` | `kind` | Elasticsearch handshake and setup probes |
+| `lynxdb_ingest_otlp_requests_total` | `signal`, `encoding`, `result` | OTLP requests |
+| `lynxdb_ingest_otlp_records_total` | `signal`, `result` | OTLP log records accepted or dropped |
+| `lynxdb_ingest_otlp_request_bytes` | | Histogram of decoded OTLP body sizes |
+| `lynxdb_ingest_dropped_records_total` | `source`, `reason` | Records dropped at ingest |
+| `lynxdb_ingest_decompression_rejected_total` | `stage`, `encoding` | Bodies rejected by the compressed or decompressed size limit |
+| `lynxdb_ingest_listener_up` | `listener` | `1` while the `es`, `otlp_http` or `otlp_grpc` listener is bound |
+| `lynxdb_syslog_messages_received_total`, `lynxdb_syslog_messages_dropped_total`, `lynxdb_syslog_parse_errors_total`, `lynxdb_syslog_active_connections` | | Syslog receiver, when it runs |
+
+See [Monitoring](../operations/monitoring.md).
 
 ## GET /api/v1/status
 
 A compact snapshot of the server:
 
+```bash
+curl -s localhost:3100/api/v1/status
+```
+
 ```json
 {
   "data": {
-    "version": "0.4.0",
-    "uptime_seconds": 485,
+    "version": "dev",
+    "uptime_seconds": 137,
     "health": "healthy",
-    "storage": {"used_bytes": 246702},
-    "events": {"total": 1007, "today": 116},
+    "storage": {"used_bytes": 53424},
+    "events": {"total": 1060},
     "queries": {"active": 0},
-    "tail": {"active_sessions": 0, "subscriber_count": 0, "total_dropped_events": 0},
     "retention": {"oldest_event": "2025-01-15T08:00:00Z"}
   }
 }
 ```
 
-`retention` appears when the oldest event is known.
+| Field | Description |
+|---|---|
+| `storage.used_bytes` | Size of the files of every index |
+| `events.total` | Events stored |
+| `queries.active` | Jobs running |
+| `retention.policy` | The `retention` setting, when events expire |
+| `retention.oldest_event` | Time of the oldest event, when there is one |
 
 ## GET /api/v1/stats
 
-Storage and event counters, as used by `lynxdb status`:
+The indexes, their totals and the jobs, as used by `lynxdb status`:
+
+```bash
+curl -s localhost:3100/api/v1/stats
+```
 
 ```json
 {
   "data": {
-    "uptime_seconds": 485,
-    "storage_bytes": 246702,
-    "total_events": 1007,
-    "events_today": 116,
-    "index_count": 2,
-    "segment_count": 7,
-    "buffered_events": 0,
-    "sources": [],
-    "oldest_event": "2025-01-15T08:00:00Z"
+    "uptime_seconds": 137,
+    "storage_bytes": 53424,
+    "total_events": 1060,
+    "index_count": 3,
+    "part_count": 4,
+    "oldest_event": "2025-01-15T08:00:00Z",
+    "newest_event": "2026-11-17T15:43:40Z",
+    "indexes": [
+      {"name": "backend", "events": 26, "bytes": 3978, "parts": 1, "first_event": "2026-02-10T08:12:03.045Z", "last_event": "2026-02-10T10:45:00.5Z"},
+      {"name": "main", "events": 1000, "bytes": 46638, "parts": 2, "first_event": "2025-01-15T08:00:00.105Z", "last_event": "2026-11-17T15:43:40.839562Z"},
+      {"name": "nginx", "events": 34, "bytes": 2808, "parts": 1, "first_event": "2026-11-17T15:43:40.867817Z", "last_event": "2026-11-17T15:43:40.867817Z"}
+    ],
+    "jobs": {"running": 0, "done": 8, "error": 0, "canceled": 0}
   }
 }
 ```
 
-## GET /api/v1/metrics
-
-Storage metrics as JSON, separate from the Prometheus endpoint. The top-level keys are `uptime_seconds`, `ingest`, `flush`, `segment`, `compaction`, `compaction_levels`, `cache`, `query`, `pruning` and `system_write_amplification`, plus `adaptive_compaction` when adaptive compaction is on.
-
-## GET /api/v1/compaction/history
-
-Recorded compactions.
-
-| Parameter | Description |
+| Field | Description |
 |---|---|
-| `since` | Only compactions at or after this RFC 3339 time. Any other format answers `400 INVALID_REQUEST` |
+| `storage_bytes`, `total_events`, `part_count` | Totals over the indexes |
+| `oldest_event`, `newest_event` | Times of the oldest and newest event, in whole seconds; absent without events |
+| `indexes` | One entry per index, as in [`GET /api/v1/indexes`](./ingest.md#get-indexes) |
+| `jobs` | Jobs the server keeps, by state |
 
-```json
-{"data": {"compactions": [], "count": 0}}
-```
-
-## Cache
-
-`GET /api/v1/cache/stats` returns the query result cache counters:
-
-```json
-{"data": {"hits": 2, "misses": 26, "hit_rate": 0.0714, "entries": 25, "size_bytes": 1110668, "evictions": 0}}
-```
-
-`DELETE /api/v1/cache` empties the cache and answers `{"data": {"status": "cleared"}}`. It needs `admin` scope when authentication is on.
-
-Queries sent with a `from` or `to` request field skip the result cache.
+Like a query, `status` and `stats` first write the events ingested so far, so the counts include them.
 
 ## GET /api/v1/config
 
@@ -101,27 +121,29 @@ Returns the running configuration. Needs `admin` scope when authentication is on
 curl -s localhost:3100/api/v1/config
 ```
 
-The top-level keys of `data` are `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tail`, `tls`, `auth`, `server` and `profiles`. See [Configuration](../configuration/overview.md) for each section.
+The top-level keys of `data` are `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tls`, `auth` and `profiles`. Durations in `query` (`sync_timeout`, `job_ttl`) and `http` are integer nanoseconds; the others are text such as `30d` or `5m0s`. See [Configuration](../configuration/overview.md) for each section.
 
 ## PATCH /api/v1/config
 
-Merges a JSON patch into the running configuration, validates it and applies it the same way a `SIGHUP` reload does. Needs a root key when authentication is on.
+Merges a JSON object into the running configuration, validates the result and applies it the same way a `SIGHUP` reload does. Needs a root key when authentication is on.
 
-Accepted top-level keys: `retention`, `log_level`, `listen`, `query`, `ingest`, `storage`, `http`, `syslog`. Any other key, an empty patch, or a config that fails validation answers `400 VALIDATION_ERROR`.
+Accepted top-level keys: `retention`, `log_level`, `listen`, `query`, `ingest`, `storage`, `http`, `syslog`. Nested objects merge member by member. Any other key, an empty patch, a value of the wrong type, or a config that fails validation answers `400 VALIDATION_ERROR`.
 
 ```bash
 curl -s -X PATCH localhost:3100/api/v1/config \
   -H 'Content-Type: application/json' \
-  -d '{"log_level": "debug", "query": {"max_query_runtime": "10m"}}'
+  -d '{"log_level": "debug", "query": {"default_result_limit": 500}}'
 ```
 
-The response holds the resulting configuration in `data.config` and, when some changed settings take effect only after a restart (such as `listen`), lists them in `data.restart_required`.
+The response holds the resulting configuration in `data.config`. When a changed setting takes effect only after a restart, `data.restart_required` names it: a patch of `{"retention": "30d", "listen": "0.0.0.0:3100"}` answers with `"restart_required": ["listen", "retention"]`.
+
+These settings take effect at once: `log_level`, `query.sync_timeout`, `query.default_result_limit`, `query.max_result_limit`, `query.max_query_length`, `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`, `ingest.es_compat.enabled`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`, `http.shutdown_timeout`, and the syslog `index`, `sourcetype`, `default_timezone`, `default_hostname`, `batch_size` and `batch_timeout`. `ingest.limits.*` and `ingest.es_compat.advertised_version` are accepted without a restart notice but take effect at the next start. Every other change is listed in `restart_required`.
 
 The change lives only in the running process. Edit the config file as well to keep it after a restart.
 
 ## API keys
 
-These endpoints exist only when authentication is on; otherwise they answer `404 NOT_FOUND`. They all need a root key.
+These endpoints exist only when authentication is on; otherwise they answer `404 NOT_FOUND`. They all need a root key; any other key answers `403 FORBIDDEN`.
 
 ### POST /api/v1/auth/keys
 
@@ -139,11 +161,31 @@ curl -s -X POST localhost:3100/api/v1/auth/keys \
 | `expires_in` | A Go duration (`720h`) or a count of days, weeks or years (`30d`, `4w`, `1y`); `never` or empty for no expiry |
 | `description` | Free text |
 
-The response (`201`) holds `id`, `name`, `prefix`, `scope`, `description`, `expires_at`, `is_root`, `created_at`, the plaintext `token`, and `api_key` (`id:token`, for the `ApiKey` scheme). The token is shown only once.
+The response (`201`) holds the key and its plaintext token, which is shown only this once:
+
+```json
+{
+  "data": {
+    "id": "ak_EQcWtLGOrPfq",
+    "name": "filebeat",
+    "prefix": "lynx_ak_oGOl",
+    "scope": "ingest",
+    "description": "edge shipper",
+    "expires_at": "2027-02-15T16:47:01.300723+01:00",
+    "is_root": false,
+    "created_at": "2026-11-17T15:47:01.326646Z",
+    "last_used_at": "0001-01-01T00:00:00Z",
+    "token": "lynx_ak_oGOlzEijPa2K594bYWZcLmkvVZaeEnuv",
+    "api_key": "ak_EQcWtLGOrPfq:lynx_ak_oGOlzEijPa2K594bYWZcLmkvVZaeEnuv"
+  }
+}
+```
+
+`api_key` is `id:token`, the value to base64-encode for the `ApiKey` scheme. A key without expiry has `expires_at` `0001-01-01T00:00:00Z`, and a key never used has that `last_used_at`. A missing `name`, an unknown `scope` or an unparsable `expires_in` answers `400 VALIDATION_ERROR`.
 
 ### GET /api/v1/auth/keys
 
-Lists keys as `{"data": {"keys": [...]}}` with the same fields minus `token` and `api_key`, plus `last_used_at`.
+Lists keys as `{"data": {"keys": [...]}}` with the same fields minus `token` and `api_key`.
 
 ### DELETE /api/v1/auth/keys/\{id\}
 
@@ -151,17 +193,35 @@ Revokes a key and answers `204`. An unknown ID answers `404 NOT_FOUND`; revoking
 
 ### POST /api/v1/auth/rotate-root
 
-Replaces the root key used to call it. The response holds the replacement key's `id`, `name`, `prefix`, `token`, `is_root` and `created_at`, and `revoked_key_id`.
+Replaces the root key used to call it:
+
+```json
+{
+  "data": {
+    "id": "rk_9EB9RHIWv61H",
+    "name": "root",
+    "prefix": "lynx_rk_rAQg",
+    "token": "lynx_rk_rAQg54faOY891uz4SE3hoLZXuvHQD7eb",
+    "is_root": true,
+    "created_at": "2026-11-17T15:47:21.381866Z",
+    "revoked_key_id": "rk_kZCEAKYUaACk"
+  }
+}
+```
+
+The token of the replaced key stops working at once.
 
 See [`lynxdb auth`](../cli/auth.md) for the CLI and [TLS & Authentication](../deployment/tls-auth.md) for setup.
 
 ## Profiling
 
-The Go runtime profiles are served under `/api/v1/debug/pprof/`: `profile`, `trace`, `heap`, `allocs`, `goroutine`, `mutex`, `block`, `threadcreate`, `cmdline` and `symbol`. They follow API authentication like other `/api/v1` routes.
+The Go runtime profiles are served under `/api/v1/debug/pprof/`: the index, `profile`, `trace`, `heap`, `allocs`, `goroutine`, `mutex`, `block`, `threadcreate`, `cmdline` and `symbol`. They follow API authentication like other `/api/v1` routes; any valid key can read them.
 
 ```bash
 go tool pprof http://localhost:3100/api/v1/debug/pprof/profile?seconds=30
 ```
+
+`mutex` and `block` profiles hold samples only when the server runs with `--profile-runtime`.
 
 ## Related
 

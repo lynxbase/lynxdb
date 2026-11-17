@@ -8,20 +8,19 @@ description: GET /histogram returns event counts per time bucket.
 
 ## GET /histogram
 
-Returns event counts per time bucket. Counts come from segment metadata and timestamps without running a query, so the endpoint is cheap enough to call on every change of a time picker. It counts every event in the range; it takes no query.
+Returns the number of events per time bucket over a time range, the shape a time picker or an event-volume chart needs. It counts every event of the range; it takes no query. Any valid key can call it when authentication is on.
 
 | Parameter | Default | Description |
 |---|---|---|
-| `from` | `-1h` | Start of the range: relative or ISO 8601 |
-| `to` | `now` | End of the range |
-| `buckets` | `60` | Number of buckets, at most 1000 |
+| `from` | `-1h` | Start of the range, inclusive: relative (`-30m`) or absolute (`2026-11-17T08:00:00Z`) |
+| `to` | `now` | End of the range, exclusive |
+| `buckets` | `60` | Number of buckets asked for, at most 1000; zero or less means 60 |
 | `index` | all indexes | Count only this index |
-| `group_by` | | Split each bucket by the values of this field |
 
-The interval is the range divided by `buckets`, rounded to the nearest of 1s, 5s, 30s, 1m, 5m, 15m, 1h, 6h and 24h, and reported as a Go duration (`15m0s`). Bucket `i` starts at `from + i × interval`; events between the end of the last bucket and `to` are counted in the last bucket.
+The interval is the range divided by `buckets`, snapped to the nearest of 1s, 5s, 30s, 1m, 5m, 15m, 1h, 6h and 1d; an interval above a day becomes a whole number of days. It is reported as a Go duration (`15m0s`). Buckets start at multiples of the interval since the Unix epoch: the first is the one that holds `from`, the last is the last one that starts before `to`, and buckets without events count zero. Snapping can make the interval shorter than asked, so a response can hold more buckets than `buckets`.
 
 ```bash
-curl -s 'localhost:3100/api/v1/histogram?from=-2h&buckets=4&index=main'
+curl -s 'localhost:3100/api/v1/histogram?from=2025-01-15T08:00:00Z&to=2025-01-15T09:00:00Z&buckets=4'
 ```
 
 ```json
@@ -29,40 +28,22 @@ curl -s 'localhost:3100/api/v1/histogram?from=-2h&buckets=4&index=main'
   "data": {
     "interval": "15m0s",
     "buckets": [
-      {"time": "2026-11-17T08:48:00Z", "count": 0},
-      {"time": "2026-11-17T09:03:00Z", "count": 0},
-      {"time": "2026-11-17T09:18:00Z", "count": 0},
-      {"time": "2026-11-17T09:33:00Z", "count": 113}
+      {"time": "2025-01-15T08:00:00Z", "count": 889},
+      {"time": "2025-01-15T08:15:00Z", "count": 0},
+      {"time": "2025-01-15T08:30:00Z", "count": 0},
+      {"time": "2025-01-15T08:45:00Z", "count": 0}
     ],
-    "total": 113
+    "total": 889
   },
-  "meta": {"took_ms": 0}
+  "meta": {"took_ms": 0.109}
 }
 ```
 
-With `group_by`, each bucket has `counts` keyed by field value instead of `count`. Events without the field are counted under `other`:
+The server answers by running `source=<index> | stats count() as count by span(_time, <interval>) as _time` over the range, so the counts match a query.
 
-```bash
-curl -s 'localhost:3100/api/v1/histogram?from=-2h&buckets=4&index=main&group_by=level'
-```
-
-```json
-{
-  "data": {
-    "interval": "15m0s",
-    "buckets": [
-      {"time": "2026-11-17T08:48:00Z", "counts": {}},
-      {"time": "2026-11-17T09:03:00Z", "counts": {}},
-      {"time": "2026-11-17T09:18:00Z", "counts": {}},
-      {"time": "2026-11-17T09:33:00Z", "counts": {"ERROR": 33, "INFO": 35, "WARN": 43, "other": 2}}
-    ],
-    "total": 113
-  },
-  "meta": {"took_ms": 0}
-}
-```
-
-An unparsable `from` or `to`, or `from` not before `to`, answers `400 VALIDATION_ERROR`.
+| Error | When |
+|---|---|
+| `400 VALIDATION_ERROR` | An unparsable `from` or `to`, `from` not before `to`, or an `index` that holds a backtick or a line break |
 
 For counts filtered by a query, run a PPL query instead:
 
@@ -72,7 +53,7 @@ curl -s localhost:3100/api/v1/query \
   -d '{"q": "source=main level=ERROR | stats count() as n by span(_time, 5m), host", "from": "-1h"}'
 ```
 
-The result is an aggregate table with the columns `host`, `n` and `span(_time,5m)`.
+The result is an aggregate table with the columns `n`, `span(_time,5m)` and `host`.
 
 ## Related
 
