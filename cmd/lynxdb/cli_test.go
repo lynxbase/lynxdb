@@ -43,7 +43,6 @@ func resetAllFlags(t *testing.T) {
 	globalTLSSkipVerify = false
 	globalHTTPClient = nil
 	flagConfigPath = ""
-	flagBenchEvents = 100000
 
 	// Reset root persistent flags.
 	rootCmd.PersistentFlags().VisitAll(func(f *pflag.Flag) {

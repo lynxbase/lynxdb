@@ -1026,37 +1026,6 @@ func TestServerFields_HasTypeInfo(t *testing.T) {
 	}
 }
 
-func TestServerCount_AllEvents(t *testing.T) {
-	baseURL := newTestServer(t)
-	ingestTestData(t, baseURL, "main", "testdata/logs/access.log")
-
-	stdout, _, err := runCmd(t, "--server", baseURL, "count", "--format", "json")
-	if err != nil {
-		t.Fatalf("count command failed: %v", err)
-	}
-
-	got := jsonCount(t, stdout)
-	if got != 1000 {
-		t.Errorf("count = %d, want 1000", got)
-	}
-}
-
-func TestServerCount_WithFilter(t *testing.T) {
-	baseURL := newTestServer(t)
-	ingestTestData(t, baseURL, "main", "testdata/logs/access.log")
-
-	stdout, _, err := runCmd(t, "--server", baseURL, "count", "--format", "json",
-		`where level=="ERROR"`)
-	if err != nil {
-		t.Fatalf("count with filter failed: %v", err)
-	}
-
-	got := jsonCount(t, stdout)
-	if got != 294 {
-		t.Errorf("filtered count = %d, want 294", got)
-	}
-}
-
 func TestServerExplain_ValidQuery(t *testing.T) {
 	baseURL := newTestServer(t)
 
@@ -1094,40 +1063,6 @@ func TestServerExplain_InvalidQuery(t *testing.T) {
 	}
 	if isValid {
 		t.Error("expected is_valid=false for incomplete WHERE, got true")
-	}
-}
-
-func TestServerSample_ReturnsSubset(t *testing.T) {
-	baseURL := newTestServer(t)
-	ingestTestData(t, baseURL, "main", "testdata/logs/access.log")
-
-	stdout, _, err := runCmd(t, "--server", baseURL, "sample", "--format", "json", "3")
-	if err != nil {
-		t.Fatalf("sample 3 failed: %v", err)
-	}
-
-	rows := mustParseJSON(t, stdout)
-	if len(rows) != 3 {
-		t.Errorf("sample 3 returned %d rows, want 3", len(rows))
-	}
-}
-
-func TestServerSample_EventsHaveFields(t *testing.T) {
-	baseURL := newTestServer(t)
-	ingestTestData(t, baseURL, "main", "testdata/logs/access.log")
-
-	stdout, _, err := runCmd(t, "--server", baseURL, "sample", "--format", "json", "1")
-	if err != nil {
-		t.Fatalf("sample 1 failed: %v", err)
-	}
-
-	rows := mustParseJSON(t, stdout)
-	if len(rows) != 1 {
-		t.Fatalf("expected 1 sampled event, got %d", len(rows))
-	}
-
-	if len(rows[0]) == 0 {
-		t.Error("sampled event has no fields")
 	}
 }
 

@@ -210,7 +210,6 @@ func runStatus(_ *cobra.Command, _ []string) error {
 
 	if stats.TotalEvents == 0 {
 		printNextSteps(
-			"lynxdb demo                              Generate sample data",
 			"lynxdb ingest <file>                     Ingest a log file",
 			"cat app.log | lynxdb ingest              Pipe from stdin",
 		)
@@ -364,7 +363,6 @@ func runIndexes(_ *cobra.Command, _ []string) error {
 		fmt.Println("No indexes found.")
 		printNextSteps(
 			"lynxdb ingest <file>                     Ingest data to create an index",
-			"lynxdb demo                              Generate sample data",
 		)
 
 		return nil

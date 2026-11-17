@@ -117,7 +117,6 @@ func runFieldsList(since, from, to, source, prefix string) error {
 		}
 		fmt.Println(ui.Stdout.EmptyState("No fields found.",
 			"lynxdb ingest <file>           Ingest a log file",
-			"lynxdb demo                    Run demo with sample data",
 		))
 
 		return nil

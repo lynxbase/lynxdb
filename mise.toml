@@ -33,4 +33,4 @@ run = "make lint"
 
 [tasks.bench]
 description = "Run benchmark suite"
-run = "make bench-macro"
+run = "make bench-micro"

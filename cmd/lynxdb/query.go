@@ -123,8 +123,6 @@ func newQueryCmd() *cobra.Command {
 				return runQueryStdin(query, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode, showRewritten, language)
 			}
 
-			SaveLastQuery(query, since, from, to)
-
 			err := runQueryServer(query, since, from, to, timeout, failEmpty, analyze, noLint, noSuggestions, showRewritten, language)
 			if err != nil {
 				return err

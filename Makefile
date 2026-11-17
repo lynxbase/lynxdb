@@ -63,7 +63,7 @@ $(CUSTOM_GCL): .custom-gcl.yml
 clean:
 	rm -f lynxdb custom-gcl
 
-.PHONY: bench-micro bench-fixtures bench-macro
+.PHONY: bench-micro bench-fixtures
 
 bench-micro:
 	@mkdir -p artifacts
@@ -75,8 +75,3 @@ bench-micro:
 
 bench-fixtures:
 	go run scripts/genbench/main.go
-
-bench-macro: build
-	@mkdir -p artifacts
-	./lynxdb bench --events 1000000 | tee artifacts/bench-macro.txt
-

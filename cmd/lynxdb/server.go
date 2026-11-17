@@ -287,7 +287,6 @@ func runServer(cmd *cobra.Command, args []string) error {
 	}()
 
 	printNextSteps(
-		"lynxdb demo                      Generate sample data",
 		"lynxdb ingest access.log         Ingest a log file",
 	)
 

@@ -150,13 +150,11 @@ func runWelcome(_ *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stdout, "\n  %s - log analytics in a single binary\n\n",
 		ui.Stdout.Bold.Render(fmt.Sprintf("LynxDB %s", buildinfo.Version)))
 	fmt.Fprint(os.Stdout, `  Quick start:
-    lynxdb demo                                  Run demo with sample data
     lynxdb query --file app.log 'level=error'    Query a local file
     lynxdb server                                Start server on :3100
 
   Run 'lynxdb --help' for all commands.
   Run 'lynxdb <command> --help' for command details.
-  Run 'lynxdb examples' for a query cookbook.
 `)
 
 	return nil
