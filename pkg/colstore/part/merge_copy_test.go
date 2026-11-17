@@ -9,6 +9,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
+	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
 // orderedBlocks shreds docs, sorts them by mergeKey and writes blocks of
@@ -208,11 +209,26 @@ func TestMergeCopiesBlocksOfSourcesThatDoNotInterleave(t *testing.T) {
 	if len(bare.groups) != 0 || bare.Size() >= got.Size() {
 		t.Fatalf("%d filter groups kept in %d bytes, %d with filters", len(bare.groups), bare.Size(), got.Size())
 	}
-	absent := tokenfilter.AppendHashes(nil, []byte("nosuchtokenanywhere"))[0]
+	absent := tokenfilter.AppendHashes(nil, []byte("nosuchtokenanywhere"))
 	for i := 0; i < bare.NumBlocks(); i++ {
-		if may, err := bare.MayContainToken(i, absent); !may || err != nil {
+		if may, err := bare.MayContainToken(i, absent[0]); !may || err != nil {
 			t.Fatalf("block %d without a filter excludes a token: %v, %v", i, may, err)
 		}
+		if err := bare.OpenBlock(i, &b); err != nil {
+			t.Fatal(err)
+		}
+		refs := b.Columns()
+		bits, err := b.ColumnsMayContain(nil, absent)
+		if err != nil || bits.Count() != len(refs) {
+			t.Fatalf("block %d without a filter excludes a token from %d of %d columns: %v", i, len(refs)-bits.Count(), len(refs), err)
+		}
+		for j := range refs {
+			may, err := b.MayContainTokensIn(refs[j].PathID, refs[j].Kind, absent)
+			if !may || err != nil || b.OwnFilter(refs[j].PathID, refs[j].Kind) {
+				t.Fatalf("block %d without a filter excludes a token from a column: %v, %v", i, may, err)
+			}
+		}
+		b.FilterColumns(func(uint32, vec.Kind) { t.Fatalf("block %d without a filter lists one", i) })
 	}
 
 	// Sections of another level are written again, as those of another

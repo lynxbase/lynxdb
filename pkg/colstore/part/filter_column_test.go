@@ -114,9 +114,60 @@ func columnAnswers(t testing.TB, p *Part, own int, r *rand.Rand) float64 {
 				t.Fatalf("block %d, token %x: the block says %v, %v, its columns %v, their values %v", i, h, got, err, any, held)
 			}
 		}
+		columnSets(t, p, &b, filtered, hashes, r)
 	}
 
 	return float64(passed) / float64(absent)
+}
+
+// columnSets requires lookups of several tokens at once in the columns of
+// the open block b to answer as lookups of each token do, and every way of
+// asking which columns have a filter of their own to name those of filtered.
+func columnSets(t testing.TB, p *Part, b *Block, filtered map[column]bool, hashes []uint64, r *rand.Rand) {
+	t.Helper()
+	i := b.Index()
+	listed := 0
+	b.FilterColumns(func(path uint32, kind vec.Kind) {
+		if listed++; !filtered[column{path, kind}] {
+			t.Fatalf("block %d lists a filter of column %s/%s", i, p.Paths()[path], kind)
+		}
+	})
+	if listed != len(filtered) {
+		t.Fatalf("block %d lists %d filters of %d", i, listed, len(filtered))
+	}
+	refs := b.Columns()
+	var bits vec.Bitmap
+	for n := 0; n < 200; n++ {
+		set := []uint64{hashes[r.Intn(len(hashes))], hashes[r.Intn(len(hashes))], hashes[r.Intn(len(hashes))]}[:1+n%3]
+		var err error
+		if bits, err = b.ColumnsMayContain(bits, set); err != nil {
+			t.Fatal(err)
+		}
+		any := false
+		for j := range refs {
+			ref := &refs[j]
+			if own := b.OwnFilter(ref.PathID, ref.Kind); own != filtered[column{ref.PathID, ref.Kind}] || own != p.OwnFilter(i, ref.PathID, ref.Kind) {
+				t.Fatalf("block %d: column %s/%s has a filter of its own: %v", i, p.Paths()[ref.PathID], ref.Kind, own)
+			}
+			each := true
+			for _, h := range set {
+				may, err := p.MayContainTokenIn(i, ref.PathID, ref.Kind, h)
+				if err != nil {
+					t.Fatal(err)
+				}
+				each = each && may
+			}
+			got, err := p.MayContainTokensIn(i, ref.PathID, ref.Kind, set)
+			if again, berr := b.MayContainTokensIn(ref.PathID, ref.Kind, set); err != nil || berr != nil || got != each || again != each || bits.Get(j) != each {
+				t.Fatalf("block %d, column %s/%s, %d tokens: %v, %v from the part, %v, %v from the block and %v among its columns, %v one by one",
+					i, p.Paths()[ref.PathID], ref.Kind, len(set), got, err, again, berr, bits.Get(j), each)
+			}
+			any = any || each
+		}
+		if got, err := p.MayContainTokens(i, set); err != nil || got != any {
+			t.Fatalf("block %d, %d tokens: the block says %v, %v, its columns %v", i, len(set), got, err, any)
+		}
+	}
 }
 
 // columnSource returns an ordered part of rows rows in blocks of blockRows,

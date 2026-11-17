@@ -497,37 +497,138 @@ func (b *Block) MayContainTokenIn(pathID uint32, kind vec.Kind, hash uint64) (bo
 	return b.part.MayContainTokenIn(b.index, pathID, kind, hash)
 }
 
+// MayContainTokensIn reports whether the strings of the block's column with
+// this path and kind may contain every token of hashes.
+func (b *Block) MayContainTokensIn(pathID uint32, kind vec.Kind, hashes []uint64) (bool, error) {
+	return b.part.MayContainTokensIn(b.index, pathID, kind, hashes)
+}
+
+// FilterColumns calls fn with the path id and kind of every column of the
+// block that has a token filter of its own.
+func (b *Block) FilterColumns(fn func(pathID uint32, kind vec.Kind)) {
+	b.part.FilterColumns(b.index, fn)
+}
+
+// OwnFilter reports whether the block's column with this path and kind has
+// a token filter of its own, which the footer of the part tells.
+func (b *Block) OwnFilter(pathID uint32, kind vec.Kind) bool {
+	return b.part.OwnFilter(b.index, pathID, kind)
+}
+
+// ColumnsMayContain returns dst, resized to a bit for every column of the
+// block in the order of Columns, with the bit set of each column whose
+// strings may contain every token of hashes.
+func (b *Block) ColumnsMayContain(dst vec.Bitmap, hashes []uint64) (vec.Bitmap, error) {
+	p := b.part
+	dst = grow(dst, vec.BitmapWords(len(b.cols)))
+	clear(dst)
+	if len(p.groups) == 0 {
+		dst.SetAll(len(b.cols))
+
+		return dst, nil
+	}
+	g, first, end := p.blockFilters(b.index)
+	sound := ^uint64(0)
+	for f := first; f < end; f++ {
+		if binary.LittleEndian.Uint32(p.filters[f*filterEntrySize:]) != noPath {
+			continue
+		}
+		may, err := p.holds(g, f, hashes, &sound)
+		if err != nil {
+			return dst, err
+		}
+		if may {
+			dst.SetAll(len(b.cols))
+		}
+	}
+	for f := first; f < end; f++ {
+		e := p.filters[f*filterEntrySize:]
+		path := binary.LittleEndian.Uint32(e)
+		if path == noPath {
+			continue
+		}
+		key := uint64(path)<<8 | uint64(e[4])
+		i := b.seek(key)
+		if i == len(b.cols) || b.dirKey(i) != key {
+			continue
+		}
+		may, err := p.holds(g, f, hashes, &sound)
+		if err != nil {
+			return dst, err
+		}
+		if may {
+			dst.Set(i)
+		} else {
+			dst[i>>6] &^= 1 << (uint(i) & 63)
+		}
+	}
+
+	return dst, nil
+}
+
 // MayContainTokenIn is Block.MayContainTokenIn for block i, without opening
 // it.
 func (p *Part) MayContainTokenIn(i int, pathID uint32, kind vec.Kind, hash uint64) (bool, error) {
+	hashes := [1]uint64{hash}
+
+	return p.MayContainTokensIn(i, pathID, kind, hashes[:])
+}
+
+// MayContainTokensIn is Block.MayContainTokensIn for block i, without
+// opening it.
+func (p *Part) MayContainTokensIn(i int, pathID uint32, kind vec.Kind, hashes []uint64) (bool, error) {
 	if len(p.groups) == 0 {
 		return true, nil
 	}
-	g, f, end := p.blockFilters(i)
-	shared := -1
-	for ; f < end; f++ {
-		switch e := p.filters[f*filterEntrySize:]; binary.LittleEndian.Uint32(e) {
+	g, first, end := p.blockFilters(i)
+	f, _ := p.columnFilter(first, end, pathID, kind)
+	if f < 0 {
+		return false, nil
+	}
+	sound := ^uint64(0)
+
+	return p.holds(g, f, hashes, &sound)
+}
+
+// columnFilter returns which of the filters first to end of a block holds
+// the tokens of the column with this path and kind, and whether it is the
+// column's own; a block whose every column has its own has none for others.
+func (p *Part) columnFilter(first, end int, pathID uint32, kind vec.Kind) (f int, own bool) {
+	f = -1
+	for ; first < end; first++ {
+		switch e := p.filters[first*filterEntrySize:]; binary.LittleEndian.Uint32(e) {
 		case noPath:
-			shared = f
+			f = first
 		case pathID:
 			if vec.Kind(e[4]) == kind {
-				shared, end = f, f
+				return first, true
 			}
 		}
 	}
-	if shared < 0 {
-		return false, nil
-	}
-	block, page, pageEnd := p.probe(g, shared, hash)
-	if crc32.Checksum(p.data[page+4:pageEnd], castagnoli) != binary.LittleEndian.Uint32(p.data[page:]) {
-		return false, ErrCorrupt
-	}
 
-	return tokenfilter.BlockMayContain(p.data[block:], hash), nil
+	return f, false
 }
 
-// FilterColumns calls fn with the path id and kind of every column of block
-// i that has a token filter of its own.
+// holds reports whether filter f of group g may hold every token of hashes.
+// sound is the page of the part whose checksum the caller has seen to match.
+func (p *Part) holds(g *filterGroup, f int, hashes []uint64, sound *uint64) (bool, error) {
+	for _, h := range hashes {
+		block, page, end := p.probe(g, f, h)
+		if page != *sound {
+			if crc32.Checksum(p.data[page+4:end], castagnoli) != binary.LittleEndian.Uint32(p.data[page:]) {
+				return false, ErrCorrupt
+			}
+			*sound = page
+		}
+		if !tokenfilter.BlockMayContain(p.data[block:], h) {
+			return false, nil
+		}
+	}
+
+	return true, nil
+}
+
+// FilterColumns is Block.FilterColumns for block i, without opening it.
 func (p *Part) FilterColumns(i int, fn func(pathID uint32, kind vec.Kind)) {
 	if len(p.groups) == 0 {
 		return
@@ -539,23 +640,35 @@ func (p *Part) FilterColumns(i int, fn func(pathID uint32, kind vec.Kind)) {
 	}
 }
 
+// OwnFilter is Block.OwnFilter for block i, without opening it.
+func (p *Part) OwnFilter(i int, pathID uint32, kind vec.Kind) bool {
+	if len(p.groups) == 0 {
+		return false
+	}
+	_, first, end := p.blockFilters(i)
+	_, own := p.columnFilter(first, end, pathID, kind)
+
+	return own
+}
+
 // MayContainToken is Block.MayContainToken for block i, without opening it.
 func (p *Part) MayContainToken(i int, hash uint64) (bool, error) {
+	hashes := [1]uint64{hash}
+
+	return p.MayContainTokens(i, hashes[:])
+}
+
+// MayContainTokens reports whether the strings of one column of block i may
+// contain every token of hashes, as far as its filters tell columns apart.
+func (p *Part) MayContainTokens(i int, hashes []uint64) (bool, error) {
 	if len(p.groups) == 0 {
 		return true, nil
 	}
 	g, f, end := p.blockFilters(i)
 	// Filters of one block lie side by side, so most share a page.
 	for sound := ^uint64(0); f < end; f++ {
-		block, page, pageEnd := p.probe(g, f, hash)
-		if page != sound {
-			if crc32.Checksum(p.data[page+4:pageEnd], castagnoli) != binary.LittleEndian.Uint32(p.data[page:]) {
-				return false, ErrCorrupt
-			}
-			sound = page
-		}
-		if tokenfilter.BlockMayContain(p.data[block:], hash) {
-			return true, nil
+		if may, err := p.holds(g, f, hashes, &sound); may || err != nil {
+			return may, err
 		}
 	}
 
