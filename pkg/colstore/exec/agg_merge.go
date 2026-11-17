@@ -27,9 +27,10 @@ type merger struct {
 
 // mergeScratch is the memory a merger keeps between queries.
 type mergeScratch struct {
-	words []int64
-	batch []colVec
-	post  postEval
+	words  []int64
+	batch  []colVec
+	post   postEval
+	having havingEval
 }
 
 var mergeScratchPool mem.Pool[mergeScratch]
@@ -38,7 +39,7 @@ func (m *merger) held() int {
 	if m.arena == nil {
 		return 0
 	}
-	n := 8*used(m.words) + m.post.held() + m.sink.held() + m.arena.Size()
+	n := 8*used(m.words) + m.post.held() + m.having.held() + m.sink.held() + m.arena.Size()
 	for i := range m.users {
 		n += 8 * cap(m.users[i])
 	}
@@ -238,8 +239,12 @@ func (m *merger) emit(x *execution, table *vec.ByteTable, words []int64, n int, 
 		plan.column(&plan.outs[i], words, n, floats, distinct, &m.batch[keys+i])
 	}
 	out := m.batch
+	if x.q.having != nil {
+		out = m.having.run(x.q, out, n)
+		n = out[0].len()
+	}
 	if x.q.post != nil {
-		out = m.post.run(x.q, m.batch, n)
+		out = m.post.run(x.q, out, n)
 	}
 	m.sink.add(out)
 }

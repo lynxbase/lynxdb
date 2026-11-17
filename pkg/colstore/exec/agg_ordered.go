@@ -266,6 +266,7 @@ type orderedWorker struct {
 	count  int
 	batch  []colVec
 	post   postEval
+	having havingEval
 
 	bound []uint8
 	gid   []uint32
@@ -528,9 +529,13 @@ func (ow *orderedWorker) flush() {
 	for i := range plan.outs {
 		plan.column(&plan.outs[i], ow.states, ow.count, ow.o.floats, distinct, &ow.batch[keys+i])
 	}
-	out := ow.batch
+	out, n := ow.batch, ow.count
+	if q.having != nil {
+		out = ow.having.run(q, out, n)
+		n = out[0].len()
+	}
 	if q.post != nil {
-		out = ow.post.run(q, ow.batch, ow.count)
+		out = ow.post.run(q, out, n)
 	}
 	ow.w.sink.add(out)
 	for i := range ow.batch[:keys] {

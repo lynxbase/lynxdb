@@ -317,6 +317,10 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 	if prj != nil {
 		plan = prj.Input
 	}
+	flt, _ := plan.(*exec.Filter)
+	if flt != nil {
+		plan = flt.Input
+	}
 	agg, _ := plan.(*exec.Aggregate)
 	if agg != nil {
 		plan = agg.Input
@@ -334,6 +338,19 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 	switch {
 	case agg != nil:
 		out, names = refAggregate(kept, agg)
+		if flt != nil {
+			var passed [][]exec.Value
+			for _, row := range out {
+				named := refRow{}
+				for i, name := range names {
+					named[name] = row[i]
+				}
+				if refHaving(flt.Cond, named) {
+					passed = append(passed, row)
+				}
+			}
+			out = passed
+		}
 		if prj != nil {
 			in, inNames := out, names
 			out, names = nil, nil
@@ -391,6 +408,36 @@ func refRun(rows []refRow, plan exec.Node) ([][]exec.Value, []string) {
 	}
 
 	return out, names
+}
+
+// refHaving evaluates a filter over an aggregate's row.
+func refHaving(e *exec.Expr, row refRow) bool {
+	switch e.Op {
+	case exec.OpAnd:
+		for _, a := range e.Args {
+			if !refHaving(a, row) {
+				return false
+			}
+		}
+
+		return true
+	case exec.OpOr:
+		for _, a := range e.Args {
+			if refHaving(a, row) {
+				return true
+			}
+		}
+
+		return false
+	case exec.OpNot:
+		return !refHaving(e.Args[0], row)
+	}
+	a, b := refPost(e.Args[0], row), refPost(e.Args[1], row)
+	if a.IsNull() || b.IsNull() || refRank(a.Kind) != refRank(b.Kind) || a.Kind == vec.KindVariant {
+		return false
+	}
+
+	return refCompare(e.Op, refOrder(a, b, false))
 }
 
 // refPost evaluates a projection over an aggregate's row.

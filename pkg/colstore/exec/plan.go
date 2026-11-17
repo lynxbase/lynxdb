@@ -1,9 +1,9 @@
 package exec
 
-// Node is an operator of a logical plan: *Scan, *Aggregate, *Project or
-// *Sort. A plan is a chain that starts at a Scan, optionally aggregates, then
-// optionally projects and sorts; a chain without an aggregate needs a
-// projection to name its columns.
+// Node is an operator of a logical plan: *Scan, *Aggregate, *Filter, *Project
+// or *Sort. A plan is a chain that starts at a Scan, optionally aggregates and
+// filters the groups, then optionally projects and sorts; a chain without an
+// aggregate needs a projection to name its columns.
 type Node interface{ node() }
 
 // Scan reads the rows for which Filter is true, every row when it is nil.
@@ -46,6 +46,14 @@ type Aggregate struct {
 	Aggs  []Agg
 }
 
+// Filter keeps the rows of an aggregate for which Cond is true: an And, Or
+// or Not of comparisons between expressions over the aggregate's columns. A
+// comparison with a null, or between a number and a string, is false.
+type Filter struct {
+	Input Node
+	Cond  *Expr
+}
+
 // Project computes Exprs over the columns of its input and replaces them.
 type Project struct {
 	Input Node
@@ -68,5 +76,6 @@ type Sort struct {
 
 func (*Scan) node()      {}
 func (*Aggregate) node() {}
+func (*Filter) node()    {}
 func (*Project) node()   {}
 func (*Sort) node()      {}

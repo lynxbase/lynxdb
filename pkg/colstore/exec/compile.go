@@ -33,6 +33,9 @@ type query struct {
 	ordered *orderedPlan
 	// rowExprs are the columns of a plan without an aggregate.
 	rowExprs []*sexpr
+	// having filters the rows of the aggregate, with havingIDs comparisons.
+	having    *hpred
+	havingIDs int
 	// post computes the final columns from an aggregate's; nil keeps them.
 	post  []*pexpr
 	names []string
@@ -67,9 +70,16 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 	if prj != nil {
 		n = prj.Input
 	}
+	flt, _ := n.(*Filter)
+	if flt != nil {
+		n = flt.Input
+	}
 	agg, _ := n.(*Aggregate)
 	if agg != nil {
 		n = agg.Input
+	}
+	if flt != nil && agg == nil {
+		return nil, unsupported("a filter node goes above an aggregate; a scan carries its own")
 	}
 	scan, ok := n.(*Scan)
 	if !ok || scan == nil {
@@ -91,6 +101,11 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 		}
 		q.ordered = q.planOrdered(snap, scan.Filter)
 		q.names = q.agg.names
+		if flt != nil {
+			if err := q.filterAbove(flt); err != nil {
+				return nil, err
+			}
+		}
 		if prj != nil {
 			if err := q.project(prj); err != nil {
 				return nil, err
