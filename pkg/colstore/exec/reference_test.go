@@ -602,6 +602,8 @@ type refAgg struct {
 	sumFloat, minFloat, maxFlt float64
 	distinct                   map[string]struct{}
 	numbers                    []float64
+	strs                       int64
+	minStr, maxStr             string
 	// The values of the first and the last row with one, and of the rows
 	// with the smallest and the largest time.
 	first, last, earliest, latest exec.Value
@@ -879,6 +881,13 @@ func refAggregate(rows []refRow, agg *exec.Aggregate) ([][]exec.Value, []string)
 				st.floats++
 				st.sumFloat += v.Float
 				st.minFloat, st.maxFlt = min(st.minFloat, v.Float), max(st.maxFlt, v.Float)
+			case vec.KindString:
+				s := string(v.Bytes)
+				if st.strs == 0 {
+					st.minStr, st.maxStr = s, s
+				}
+				st.strs++
+				st.minStr, st.maxStr = min(st.minStr, s), max(st.maxStr, s)
 			}
 		}
 	}
@@ -919,6 +928,15 @@ func refFinish(a exec.Agg, st *refAgg, float bool) exec.Value {
 		return st.earliest
 	case exec.Latest:
 		return st.latest
+	case exec.Min:
+		// Numbers sort before strings.
+		if n == 0 && st.strs > 0 {
+			return refText(st.minStr)
+		}
+	case exec.Max:
+		if st.strs > 0 {
+			return refText(st.maxStr)
+		}
 	}
 	if n == 0 {
 		return exec.Value{}

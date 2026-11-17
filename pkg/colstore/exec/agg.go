@@ -142,6 +142,9 @@ type aggWorker struct {
 	words  []int64
 	global []uint32
 	groups int
+	// heap holds the states of variable size of the groups the worker has
+	// in memory.
+	heap stateHeap
 	// log holds the states of spilled groups and of blocks that bypassed
 	// the table; dlogs hold the values of each distinct count.
 	log   *vec.KeyPartitions
@@ -159,6 +162,7 @@ type aggWorker struct {
 func (a *aggWorker) init(w *worker) {
 	a.w, a.s, a.plan = w, &w.scratch.agg, w.q.agg
 	a.stride = len(a.plan.words)
+	a.heap.init(w.arena)
 	a.floats = make([]bool, len(a.plan.args))
 	a.s.parts = fit(a.s.parts, len(a.plan.keys))
 	a.streaming = w.x.streaming
@@ -206,13 +210,24 @@ func (a *aggWorker) spill() {
 	}
 	log := a.openLog()
 	for g := 0; g < a.groups; g++ {
-		rec := append(a.s.rec[:0], a.table.Key(g)...)
-		rec = appendWords(rec, a.words[g*a.stride:(g+1)*a.stride])
-		a.s.rec = rec
-		log.Add(a.table.KeyHash(g), rec)
+		a.s.rec = a.record(a.s.rec[:0], a.table.Key(g), a.words[g*a.stride:(g+1)*a.stride])
+		log.Add(a.table.KeyHash(g), a.s.rec)
 	}
+	// Every state the heap holds belonged to a group of the table.
+	a.heap.reset()
 	a.table.Clear()
 	a.words, a.global, a.groups = a.words[:0], a.global[:0], 0
+}
+
+// record appends what the log keeps of a group: its key, its words and its
+// states of variable size.
+func (a *aggWorker) record(dst, key []byte, words []int64) []byte {
+	dst = appendWords(append(dst, key...), words)
+	if len(a.plan.states) != 0 {
+		dst = a.plan.appendStates(dst, &a.heap, words)
+	}
+
+	return dst
 }
 
 func appendWords(dst []byte, words []int64) []byte {
@@ -716,10 +731,10 @@ func (a *aggWorker) byRow(n int, idx []uint32) error {
 	}
 	log := a.openLog()
 	for g := 0; g < groups; g++ {
-		rec := append(s.rec[:0], a.localKey(p, inPlace, g)...)
-		rec = appendWords(rec, s.lwords[g*a.stride:(g+1)*a.stride])
-		s.rec = rec
-		log.Add(s.lhash[g], rec)
+		state := s.lwords[g*a.stride : (g+1)*a.stride]
+		s.rec = a.record(s.rec[:0], a.localKey(p, inPlace, g), state)
+		log.Add(s.lhash[g], s.rec)
+		a.plan.releaseStates(&a.heap, state)
 	}
 
 	return nil
@@ -952,7 +967,7 @@ func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uin
 	w := a.w
 	arg := &a.plan.args[i]
 	numeric := kind == vec.KindInt || kind == vec.KindFloat
-	if w.shared == nil && len(arg.distinct) == 0 && !arg.picks && (!numeric || arg.counted) {
+	if w.shared == nil && len(arg.distinct) == 0 && !arg.picks && (!numeric || arg.counted) && (len(arg.states) == 0 || kind != vec.KindString) {
 		// Only the number of values is asked for, which needs none of them.
 		ref := w.ref(arg.expr.path, kind)
 		switch {
@@ -1069,6 +1084,9 @@ func (a *aggWorker) feedValues(i int, kind vec.Kind, c *vec.Column, t *target, n
 			if !a.streaming {
 				a.distinctBytes(d, t, c, kind, gid, rows, count)
 			}
+		}
+		if kind == vec.KindString && len(arg.states) != 0 {
+			a.feedStrings(arg, t, c, gid, rows, count)
 		}
 	}
 }

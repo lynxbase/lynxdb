@@ -31,7 +31,14 @@
 // 128-bit hash. Sum, Min, Max, Avg, Var and Stdev read integers and floats
 // and skip values of every other kind; the result of the first three is an
 // integer when every value read was one, a float otherwise, and the others
-// are always floats. An aggregate that read no value is null.
+// are always floats. Min and Max read strings too, which order after every
+// number as in a sort: the Min of a group is a string only when the group
+// holds no number, and its Max is a string when it holds one. An aggregate
+// that read no value is null.
+//
+// A group's state is a row of 64-bit words, and for the aggregates that need
+// more, states of variable size that the words refer to: the extreme string
+// of a Min or a Max, as long as that string.
 package exec
 
 import (

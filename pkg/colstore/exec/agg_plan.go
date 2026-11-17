@@ -40,6 +40,9 @@ const (
 	wordEarliest
 	wordLatest
 	wordPickLoc
+	// wordState holds the stateRef of a state of variable size, which is
+	// fed and merged apart from the words.
+	wordState
 )
 
 type wordSpec struct {
@@ -60,6 +63,7 @@ type aggArg struct {
 	// the argument feeds.
 	words    []int
 	distinct []int
+	states   []int
 	// counted is set when only the number of values is asked for.
 	counted bool
 	// picks is set when a group picks a row of the argument, and placed
@@ -84,6 +88,9 @@ type aggOut struct {
 	spread int
 	// pick is the word with the place of the row a group picked.
 	pick int
+	// state is the state with the extreme string of a Min or a Max whose
+	// argument reads strings.
+	state int
 }
 
 // aggPlan is an aggregation bound to the table: a group's state is a row of
@@ -95,6 +102,8 @@ type aggPlan struct {
 	words []wordSpec
 	init  []int64
 	outs  []aggOut
+	// states are the states of variable size.
+	states []stateSpec
 	// distinct is the number of distinct counts.
 	distinct int
 	// rows and group index the words of those kinds, -1 without one.
@@ -202,7 +211,7 @@ func (q *query) aggregate(a *Aggregate) error {
 		ap.names = append(ap.names, k.Name)
 	}
 	for _, g := range a.Aggs {
-		out := aggOut{fn: g.Func, arg: -1, rows: -1, count: -1, countInt: -1, countFloat: -1, ints: -1, floats: -1, distinct: -1, spread: -1, pick: -1}
+		out := aggOut{fn: g.Func, arg: -1, rows: -1, count: -1, countInt: -1, countFloat: -1, ints: -1, floats: -1, distinct: -1, spread: -1, pick: -1, state: -1}
 		if g.Arg == nil {
 			if g.Func != Count {
 				return unsupported("aggregate %q needs an argument", g.Name)
@@ -255,8 +264,16 @@ func (q *query) aggregate(a *Aggregate) error {
 			return unsupported("unknown aggregate function")
 		}
 		if ints != 0 {
-			if kinds&numericKinds == 0 {
+			extreme := g.Func == Min || g.Func == Max
+			switch {
+			case extreme && kinds&(numericKinds|kindBit(vec.KindString)) == 0:
+				return unsupported("aggregate %q takes numbers or strings", g.Name)
+			case !extreme && kinds&numericKinds == 0:
 				return unsupported("aggregate %q takes numbers", g.Name)
+			case g.Func == Min && kinds&kindBit(vec.KindString) != 0:
+				out.state = ap.state(stateMinBytes, out.arg)
+			case g.Func == Max && kinds&kindBit(vec.KindString) != 0:
+				out.state = ap.state(stateMaxBytes, out.arg)
 			}
 			if kinds&kindBit(vec.KindInt) != 0 {
 				out.countInt, out.ints = ap.word(wordCountInt, out.arg), ap.word(ints, out.arg)
@@ -276,8 +293,8 @@ func (q *query) aggregate(a *Aggregate) error {
 	ap.rowsOnly = len(ap.words) == 1 && ap.distinct == 0
 	for i := range ap.args {
 		arg := &ap.args[i]
-		arg.counted = len(arg.distinct) == 0
-		arg.placed = arg.picks && len(arg.distinct) == 0
+		arg.counted = len(arg.distinct) == 0 && len(arg.states) == 0
+		arg.placed = arg.picks && len(arg.distinct) == 0 && len(arg.states) == 0
 		for _, w := range arg.words {
 			op := ap.words[w].op
 			arg.counted = arg.counted && op == wordCount
@@ -350,7 +367,16 @@ func mergeSpread(dst, src []int64) {
 
 func floatWord(f float64) int64 { return int64(math.Float64bits(f)) }
 
-// mergeWords folds the state src into dst.
+// merge folds the group src, whose states of variable size are in from, into
+// dst, whose are in h.
+func (ap *aggPlan) merge(h *stateHeap, dst []int64, from *stateHeap, src []int64) {
+	ap.mergeWords(dst, src)
+	if len(ap.states) != 0 {
+		ap.mergeStates(h, dst, &stateSource{heap: from, words: src})
+	}
+}
+
+// mergeWords folds the words of the state src into dst.
 func (ap *aggPlan) mergeWords(dst, src []int64) {
 	for i, w := range ap.words {
 		switch w.op {
@@ -370,7 +396,7 @@ func (ap *aggPlan) mergeWords(dst, src []int64) {
 			mergeSpread(dst[i:i+3], src[i:i+3])
 		case wordFirst, wordLast, wordEarliest, wordLatest:
 			mergePick(dst[i:i+2], src[i], src[i+1], w.op == wordFirst || w.op == wordEarliest)
-		case wordVarMean, wordVarM2, wordPickLoc:
+		case wordVarMean, wordVarM2, wordPickLoc, wordState:
 		default:
 			dst[i] += src[i]
 		}
@@ -378,9 +404,9 @@ func (ap *aggPlan) mergeWords(dst, src []int64) {
 }
 
 // column computes the column of aggregate o for n groups whose states are in
-// words; floats says which arguments read a float anywhere, and distinct
-// holds the distinct counts by shared group id.
-func (ap *aggPlan) column(o *aggOut, words []int64, n int, floats []bool, distinct [][]int64, dst *colVec) {
+// words and in h; floats says which arguments read a float anywhere, and
+// distinct holds the distinct counts by shared group id.
+func (ap *aggPlan) column(o *aggOut, words []int64, h *stateHeap, n int, floats []bool, distinct [][]int64, dst *colVec) {
 	stride := len(ap.words)
 	word := func(g, i int) int64 {
 		if i < 0 {
@@ -440,6 +466,9 @@ func (ap *aggPlan) column(o *aggOut, words []int64, n int, floats []bool, distin
 
 		return
 	}
+	if o.state >= 0 && ap.extremes(o, words, h, n, floats[o.arg], dst) {
+		return
+	}
 	if o.fn != Avg && !floats[o.arg] {
 		out := dst.bulkInts(n)
 		for g := range out {
@@ -479,4 +508,54 @@ func (ap *aggPlan) column(o *aggOut, words []int64, n int, floats []bool, distin
 			out[g] = max(i, f)
 		}
 	}
+}
+
+// extremes computes the column of a Min or a Max whose argument reads
+// strings, and reports false when no group holds one, which leaves the
+// column to the numbers.
+func (ap *aggPlan) extremes(o *aggOut, words []int64, h *stateHeap, n int, float bool, dst *colVec) bool {
+	stride := len(ap.words)
+	at := ap.states[o.state].word
+	found := false
+	for g := 0; g < n && !found; g++ {
+		found = words[g*stride+at] != 0
+	}
+	if !found {
+		return false
+	}
+	word := func(g, i int) int64 {
+		if i < 0 {
+			return 0
+		}
+
+		return words[g*stride+i]
+	}
+	dst.reset()
+	for g := 0; g < n; g++ {
+		s := h.get(stateRef(words[g*stride+at]))
+		ni, nf := word(g, o.countInt), word(g, o.countFloat)
+		// Numbers sort before strings.
+		switch {
+		case len(s) != 0 && (o.fn == Max || ni+nf == 0):
+			dst.appendBytes(vec.KindString, s[1:])
+		case ni+nf == 0:
+			dst.appendNull()
+		case !float:
+			dst.appendInt(vec.KindInt, word(g, o.ints))
+		default:
+			i, f := float64(word(g, o.ints)), wordFloat(word(g, o.floats))
+			switch {
+			case ni == 0:
+				dst.appendFloat(f)
+			case nf == 0:
+				dst.appendFloat(i)
+			case o.fn == Min:
+				dst.appendFloat(min(i, f))
+			default:
+				dst.appendFloat(max(i, f))
+			}
+		}
+	}
+
+	return true
 }

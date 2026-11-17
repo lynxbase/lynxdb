@@ -19,7 +19,9 @@ type merger struct {
 	arena *mem.Arena
 	table *vec.ByteTable
 	set   *vec.HashSet128
-	n     int
+	// heap holds the states of variable size of the groups being merged.
+	heap stateHeap
+	n    int
 	// users counts the distinct values per distinct count and shared group.
 	users [][]int64
 	sink  sink
@@ -63,6 +65,7 @@ func (x *execution) merger(slot int) *merger {
 			m.post.tmp[i].reset()
 		}
 		m.arena = mem.NewArena()
+		m.heap.init(m.arena)
 		m.table = vec.NewByteTable(m.arena)
 		m.sink.init(x.q)
 	}
@@ -99,7 +102,7 @@ func (x *execution) finishAggregate(ws []*worker) ([]*sink, error) {
 	case len(plan.keys) == 0:
 		words := append([]int64(nil), plan.init...)
 		for _, w := range ws {
-			plan.mergeWords(words, w.agg.words[:stride])
+			plan.merge(&m.heap, words, &w.agg.heap, w.agg.words[:stride])
 		}
 		m.emit(x, nil, words, 1, floats, distinct)
 	case !logged && total <= serialGroups && x.shared != nil:
@@ -112,7 +115,7 @@ func (x *execution) finishAggregate(ws []*worker) ([]*sink, error) {
 		for _, w := range ws {
 			for g := 0; g < w.agg.groups; g++ {
 				id := int(w.agg.global[g])
-				plan.mergeWords(words[id*stride:(id+1)*stride], w.agg.words[g*stride:(g+1)*stride])
+				plan.merge(&m.heap, words[id*stride:(id+1)*stride], &w.agg.heap, w.agg.words[g*stride:(g+1)*stride])
 			}
 		}
 		if groups > 0 {
@@ -126,10 +129,13 @@ func (x *execution) finishAggregate(ws []*worker) ([]*sink, error) {
 				if id == m.n {
 					m.n++
 					m.words = append(m.words, state...)
+					if len(plan.states) != 0 {
+						plan.adoptStates(&m.heap, m.words[id*stride:], &stateSource{heap: &w.agg.heap, words: state})
+					}
 
 					continue
 				}
-				plan.mergeWords(m.words[id*stride:(id+1)*stride], state)
+				plan.merge(&m.heap, m.words[id*stride:(id+1)*stride], &w.agg.heap, state)
 			}
 		}
 		if m.n > 0 {
@@ -165,6 +171,7 @@ func (x *execution) finishAggregate(ws []*worker) ([]*sink, error) {
 func (m *merger) partition(plan *aggPlan, partition int, ws []*worker) {
 	stride := len(plan.words)
 	m.table.Clear()
+	m.heap.reset()
 	records := 0
 	for _, w := range ws {
 		if w.agg.log != nil {
@@ -177,18 +184,23 @@ func (m *merger) partition(plan *aggPlan, partition int, ws []*worker) {
 			continue
 		}
 		w.agg.log.Each(partition, func(h uint64, rec []byte) {
-			k := len(rec) - 8*stride
-			state := rec[k:]
-			g := m.table.IDHashed(rec[:k], h)
+			key, state, tail := plan.splitRecord(rec)
+			g := m.table.IDHashed(key, h)
 			if g == m.n {
 				m.n++
 				for i := 0; i < stride; i++ {
 					m.words = append(m.words, int64(binary.LittleEndian.Uint64(state[8*i:])))
 				}
+				if len(plan.states) != 0 {
+					plan.adoptStates(&m.heap, m.words[g*stride:], &stateSource{tail: tail})
+				}
 
 				return
 			}
 			plan.mergeRecord(m.words[g*stride:(g+1)*stride], state)
+			if len(plan.states) != 0 {
+				plan.mergeStates(&m.heap, m.words[g*stride:(g+1)*stride], &stateSource{tail: tail})
+			}
 		})
 	}
 }
@@ -215,7 +227,7 @@ func (ap *aggPlan) mergeRecord(dst []int64, state []byte) {
 			mergeSpread(dst[i:i+3], src[:])
 		case wordFirst, wordLast, wordEarliest, wordLatest:
 			mergePick(dst[i:i+2], v, int64(binary.LittleEndian.Uint64(state[8*i+8:])), w.op == wordFirst || w.op == wordEarliest)
-		case wordVarMean, wordVarM2, wordPickLoc:
+		case wordVarMean, wordVarM2, wordPickLoc, wordState:
 		default:
 			dst[i] += v
 		}
@@ -242,7 +254,7 @@ func (m *merger) emit(x *execution, table *vec.ByteTable, words []int64, n int, 
 		}
 	}
 	for i := range plan.outs {
-		plan.column(&plan.outs[i], words, n, floats, distinct, &m.batch[keys+i])
+		plan.column(&plan.outs[i], words, &m.heap, n, floats, distinct, &m.batch[keys+i])
 	}
 	out := m.batch
 	if x.q.having != nil {

@@ -111,7 +111,7 @@ func (p *pred) anyColumn() bool {
 // the snapshot does not allow it.
 func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan {
 	ap := q.agg
-	if snap == nil || filter == nil || len(snap.Parts()) == 0 || ap.picks {
+	if snap == nil || filter == nil || len(snap.Parts()) == 0 || ap.picks || len(ap.states) != 0 {
 		return nil
 	}
 	first := snap.Parts()[0]
@@ -935,7 +935,7 @@ func (ow *orderedWorker) flush() {
 		distinct[i] = ow.users
 	}
 	for i := range plan.outs {
-		plan.column(&plan.outs[i], ow.states, ow.count, ow.o.floats, distinct, &ow.batch[keys+i])
+		plan.column(&plan.outs[i], ow.states, &ow.w.agg.heap, ow.count, ow.o.floats, distinct, &ow.batch[keys+i])
 	}
 	out, n := ow.batch, ow.count
 	if q.having != nil {
