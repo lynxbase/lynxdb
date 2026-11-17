@@ -9,9 +9,9 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
-// makeEDGAREvents creates test events mimicking EDGAR CSV access log lines.
-// Each event has _time (parsed timestamp), _raw (CSV line), and uri_path field.
-func makeEDGAREvents() []*event.Event {
+// makeEDGARRows creates test rows mimicking EDGAR CSV access log lines.
+// Each row has _time (parsed timestamp), _raw (CSV line), and uri_path field.
+func makeEDGARRows() []map[string]event.Value {
 	// 20 events across 2 time buckets (~300ms apart), various CIK, file types
 	baseTime := time.Date(2025, 6, 30, 23, 59, 57, 0, time.FixedZone("EDT", -4*3600))
 	type row struct {
@@ -45,22 +45,23 @@ func makeEDGAREvents() []*event.Event {
 		{390, "7890", "0007890123-25-000003", "txt", "/archives/edgar/data/7890/0007890123-25-000003.txt"},
 	}
 
-	events := make([]*event.Event, len(rows))
+	out := make([]map[string]event.Value, len(rows))
 	for i, r := range rows {
 		ts := baseTime.Add(time.Duration(r.offsetMs) * time.Millisecond)
 		rawCSV := ts.Format("2006-01-02T15:04:05.000-0700") + "," + r.cik + "," + r.uriPath
-		e := event.NewEvent(ts, rawCSV)
-		e.SetField("uri_path", event.StringValue(r.uriPath))
-		events[i] = e
+		out[i] = map[string]event.Value{
+			"_time":    event.TimestampValue(ts),
+			"_raw":     event.StringValue(rawCSV),
+			"uri_path": event.StringValue(r.uriPath),
+		}
 	}
 
-	return events
+	return out
 }
 
 func TestIntegration_BinTimeBuckets(t *testing.T) {
 	// BIN _time span=100ms + STATS count BY _time → should have 2+ buckets
-	events := makeEDGAREvents()
-	scan := NewScanIterator(events, 1024)
+	scan := NewRowScanIterator(makeEDGARRows(), 1024)
 	bin := NewBinIterator(scan, "_time", "_time", 100*time.Millisecond)
 
 	aggs := []AggFunc{{Name: "count", Alias: "count"}}
@@ -135,10 +136,9 @@ func TestIntegration_NullPropagation(t *testing.T) {
 
 func TestIntegration_CoalesceNull(t *testing.T) {
 	// Test coalesce(null, null, "default") → "default"
-	events := []*event.Event{
-		{Time: time.Now(), Raw: "test", Fields: map[string]event.Value{}},
-	}
-	scan := NewScanIterator(events, 1024)
+	scan := NewRowScanIterator([]map[string]event.Value{
+		{"_time": event.TimestampValue(time.Now()), "_raw": event.StringValue("test")},
+	}, 1024)
 
 	prog := &vm.Program{}
 	aIdx := prog.AddFieldName("a")

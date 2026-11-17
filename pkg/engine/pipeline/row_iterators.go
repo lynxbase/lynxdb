@@ -1,8 +1,7 @@
 package pipeline
 
 // Row-level streaming iterators (filter, project) used by the physical
-// planner, plus batch/row collection helpers and the IndexStore abstractions
-// used by the server execution paths.
+// planner, plus batch/row collection helpers.
 
 import (
 	"context"
@@ -161,19 +160,6 @@ func NewProjectIterator(child Iterator, fields []string, remove bool) *ProjectIt
 	return &ProjectIterator{child: child, fields: fields, remove: remove, hasGlob: hasGlob}
 }
 
-func copyBSIMetadataFilter(dst, src *Batch, mask []bool) {
-	if dst == nil || src == nil || len(mask) == 0 {
-		return
-	}
-	var indices []int
-	for i, keep := range mask {
-		if keep {
-			indices = append(indices, i)
-		}
-	}
-	copyBSIMetadataPermutation(dst, src, indices)
-}
-
 func compactBatch(batch *Batch, mask []bool, matchCount int) *Batch {
 	result := &Batch{Columns: make(map[string][]event.Value, len(batch.Columns)), Len: matchCount}
 	for k, col := range batch.Columns {
@@ -195,7 +181,6 @@ func compactBatch(batch *Batch, mask []bool, matchCount int) *Batch {
 			setPresenceIfSparse(result, k, outPres)
 		}
 	}
-	copyBSIMetadataFilter(result, batch, mask)
 	return result
 }
 
@@ -228,19 +213,4 @@ func CollectAll(ctx context.Context, iter Iterator, opts ...CollectOptions) (row
 		}
 	}
 	return rows, nil
-}
-
-type IndexStore interface {
-	MaterializeEvents(ctx context.Context, index string) ([]*event.Event, error)
-}
-type ServerIndexStore struct{ Events map[string][]*event.Event }
-
-func (s *ServerIndexStore) MaterializeEvents(_ context.Context, index string) ([]*event.Event, error) {
-	return s.Events[index], nil
-}
-
-type ColumnarBatchStore struct{ Batches map[string][]*Batch }
-
-func (s *ColumnarBatchStore) MaterializeEvents(_ context.Context, _ string) ([]*event.Event, error) {
-	return nil, nil
 }
