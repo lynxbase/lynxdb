@@ -127,6 +127,11 @@ type Store struct {
 	roomMu   sync.Mutex
 	room     *sync.Cond
 	flushErr error
+	// spare holds the batches of written buffers for the buffers to take
+	// again; spareUsed is when one was last asked for.
+	spareMu   sync.Mutex
+	spare     []*shred.Batch
+	spareUsed time.Time
 	// flushMu lets one flush of the buffers run at a time. buffered counts
 	// the input bytes in the buffers and in unwritten, the batches that a
 	// failed flush took and the next one writes first.
@@ -369,7 +374,7 @@ func (s *Store) appendPiece(lines []byte, at int64) (rejected int64, err error) 
 	}
 	defer sh.mu.Unlock()
 	if sh.batch == nil {
-		sh.batch = shred.Get(s.shredOptions())
+		sh.batch = s.spareBatch()
 	}
 	sh.errs = sh.batch.AddNDJSON(lines, at, sh.errs[:0])
 	if sh.buffered == 0 {
@@ -379,6 +384,57 @@ func (s *Store) appendPiece(lines []byte, at int64) (rejected int64, err error) 
 	s.buffered.Add(int64(len(lines)))
 
 	return int64(len(sh.errs)), nil
+}
+
+// spareBatch returns a batch for a buffer: one that a flush wrote, with
+// the room it grew to, when there is one.
+func (s *Store) spareBatch() *shred.Batch {
+	s.spareMu.Lock()
+	defer s.spareMu.Unlock()
+	s.spareUsed = time.Now()
+	if n := len(s.spare); n > 0 {
+		b := s.spare[n-1]
+		s.spare[n-1] = nil
+		s.spare = s.spare[:n-1]
+
+		return b
+	}
+
+	return shred.Get(s.shredOptions())
+}
+
+// keepSpare keeps the batches that a flush wrote for the buffers to fill
+// again, a batch per buffer at most. The pool lets go of what a collection
+// finds in it, and a batch that grew to the size of a buffer is costly to
+// grow again.
+func (s *Store) keepSpare(written []*shred.Batch) {
+	s.spareMu.Lock()
+	defer s.spareMu.Unlock()
+	for _, b := range written {
+		if len(s.spare) == len(s.shards) {
+			shred.Put(b)
+
+			continue
+		}
+		b.Reset()
+		s.spare = append(s.spare, b)
+	}
+}
+
+// dropSpare gives the spare batches up once no buffer has taken one for
+// spareIdle, so that a store that is no longer written to holds no memory
+// for it.
+func (s *Store) dropSpare() {
+	s.spareMu.Lock()
+	defer s.spareMu.Unlock()
+	if len(s.spare) == 0 || time.Since(s.spareUsed) < spareIdle {
+		return
+	}
+	for i, b := range s.spare {
+		shred.Put(b)
+		s.spare[i] = nil
+	}
+	s.spare = s.spare[:0]
 }
 
 func (s *Store) shredOptions() shred.Options {
@@ -503,9 +559,7 @@ func (s *Store) writeBuffers(age time.Duration) error {
 
 		return err
 	}
-	for _, b := range taken {
-		shred.Put(b)
-	}
+	s.keepSpare(taken)
 	if len(taken) > 0 {
 		s.kick()
 	}
@@ -533,6 +587,7 @@ func (s *Store) flushLoop() {
 			// Whoever waits for room learns of a failure from the buffers.
 			_ = s.flushFull()
 		case <-tick:
+			s.dropSpare()
 			// Partitions close as time passes, with or without new rows.
 			if s.opts.Partition > 0 && time.Since(looked) >= closedLook {
 				looked = time.Now()
@@ -801,6 +856,10 @@ var timeNow = time.Now
 // closedLook is how often a store with partitions looks for ones that have
 // closed while no rows arrived.
 const closedLook = time.Minute
+
+// spareIdle is how long the batches of written buffers wait to be filled
+// again before they are given up.
+const spareIdle = 10 * time.Second
 
 // closedSet returns all the runs of the earliest partition that has closed,
 // that neither a merge under way nor a set of taken reads and of which no
