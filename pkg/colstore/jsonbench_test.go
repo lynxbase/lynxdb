@@ -1189,6 +1189,45 @@ func TestJSONBench(t *testing.T) {
 	}
 }
 
+// answerCounts writes the groups of Q1, or of Q2 with their users, in the
+// form of the reference answers.
+func answerCounts(es []eventCount, users bool) string {
+	var b strings.Builder
+	for i, e := range es {
+		fmt.Fprintf(&b, "%s%s=%d", sep(i), e.event, e.count)
+		if users {
+			fmt.Fprintf(&b, "/%d", e.users)
+		}
+	}
+
+	return b.String()
+}
+
+// answerHours writes the groups of Q3 in the form of the reference answers.
+func answerHours(hs []hourCount) string {
+	var b strings.Builder
+	for i, h := range hs {
+		fmt.Fprintf(&b, "%s%s@%d=%d", sep(i), h.event, h.hour, h.count)
+	}
+
+	return b.String()
+}
+
+// answerSpans writes the users of Q4, or of Q5 when length is set, in the
+// form of the reference answers.
+func answerSpans(spans []userSpan, length bool) string {
+	var b strings.Builder
+	for i, s := range spans {
+		if length {
+			fmt.Fprintf(&b, "%s%s=%d", sep(i), s.did, spanMillis(s.min, s.max))
+		} else {
+			fmt.Fprintf(&b, "%s%s@%d", sep(i), s.did, s.min)
+		}
+	}
+
+	return b.String()
+}
+
 func sep(i int) string {
 	if i == 0 {
 		return ""

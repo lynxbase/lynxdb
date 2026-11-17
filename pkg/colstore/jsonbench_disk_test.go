@@ -91,7 +91,9 @@ func loadToDir(t testing.TB, d *Dir, data []byte, parts, blockRows int, key []st
 // a directory that already holds the table is only reopened, so dropping the
 // page cache before the run makes each query's first run a cold one.
 // LYNXDB_BENCH_NO_ADVICE reads the part files without advice to the kernel.
-// LYNXDB_BENCH_QUERY keeps the queries and searches whose name contains it,
+// LYNXDB_BENCH_ANSWERS names a file that receives the answers of Q1 to Q5,
+// one line per query, for the plans of pkg/colstore/exec to be checked
+// against. LYNXDB_BENCH_QUERY keeps the queries and searches whose name contains it,
 // LYNXDB_BENCH_PROFILE names a directory that receives one CPU profile per
 // query, and LYNXDB_BENCH_T10_US and LYNXDB_BENCH_T60_US set the windows of
 // the time-bounded queries as "lo,hi" in microseconds.
@@ -166,21 +168,40 @@ func TestJSONBenchDisk(t *testing.T) {
 		name string
 		run  func() (string, error)
 	}{
-		{"Q1", func() (string, error) { _, err := queryTopEvents(snap, cores); return "", err }},
-		{"Q2", func() (string, error) { _, err := queryEventsWithUsers(created, cores, false); return "", err }},
+		{"Q1", func() (string, error) {
+			res, err := queryTopEvents(snap, cores)
+
+			return "Q1\t" + answerCounts(res, false) + "\n", err
+		}},
+		{"Q2", func() (string, error) {
+			res, err := queryEventsWithUsers(created, cores, false)
+
+			return "Q2\t" + answerCounts(res, true) + "\n", err
+		}},
 		{"Q2 hash", func() (string, error) { _, err := queryEventsWithUsers(created, cores, true); return "", err }},
-		{"Q3", func() (string, error) { _, err := queryEventsByHour(created, cores); return "", err }},
-		{"Q4/Q5", func() (string, error) { _, _, err := queryPostTimes(posts, cores, 3); return "", err }},
+		{"Q3", func() (string, error) {
+			res, err := queryEventsByHour(created, cores)
+
+			return "Q3\t" + answerHours(res) + "\n", err
+		}},
+		{"Q4/Q5", func() (string, error) {
+			first, longest, err := queryPostTimes(posts, cores, 3)
+
+			return "Q4\t" + answerSpans(first, false) + "\nQ5\t" + answerSpans(longest, true) + "\n", err
+		}},
 	}
+	var answers strings.Builder
 	for _, q := range queries {
 		if !strings.Contains(q.name, only) {
 			continue
 		}
 		begin := time.Now()
-		if _, err := q.run(); err != nil {
+		answer, err := q.run()
+		if err != nil {
 			t.Fatalf("%s: %v", q.name, err)
 		}
 		first := time.Since(begin)
+		answers.WriteString(answer)
 		profile := ""
 		if profileDir != "" {
 			profile = filepath.Join(profileDir, strings.ToLower(strings.NewReplacer(" ", "", "/", "").Replace(q.name))+".prof")
@@ -193,6 +214,11 @@ func TestJSONBenchDisk(t *testing.T) {
 			q.name, ms(first), runs, ms(took[0]), cores, ms(cpu),
 			float64(benchMemory.arenas.Load()+benchMemory.buffers.Load())/1e6,
 			benchScan.opened.Load(), benchScan.skippedByKey.Load())
+	}
+	if path := os.Getenv("LYNXDB_BENCH_ANSWERS"); path != "" {
+		if err := os.WriteFile(path, []byte(answers.String()), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, q := range benchSearches {
 		if !strings.Contains(q.name, only) {
