@@ -49,6 +49,8 @@ type killConfig struct {
 	RewriteAfter int
 	// NoSync leaves out the syncs, so that far more commits meet the kill.
 	NoSync bool
+	// Bench asks for the layout and the documents of the benchmark.
+	Bench bool
 }
 
 func killStoreOptions() StoreOptions {
@@ -56,6 +58,23 @@ func killStoreOptions() StoreOptions {
 		SortKey: []string{"k"}, TimeField: "ts", BlockRows: 64, FlushBytes: 4 << 10,
 		MergeFanIn: 2, FlushInterval: 3 * time.Millisecond, Partition: time.Hour,
 	}
+}
+
+// killBenchOptions is the layout the benchmark loads, with runs small enough
+// for many of them to be flushed and merged between two kills.
+func killBenchOptions() StoreOptions {
+	return StoreOptions{
+		SortKey:   []string{"kind", "commit.operation", "commit.collection", "did"},
+		TimeField: "time_us", FlushBytes: 4 << 20, MergeFanIn: 8,
+	}
+}
+
+func (cfg killConfig) options() StoreOptions {
+	if cfg.Bench {
+		return killBenchOptions()
+	}
+
+	return killStoreOptions()
 }
 
 type killDocID struct{ w, n int64 }
@@ -89,6 +108,80 @@ func (id killDocID) appendJSON(dst []byte) []byte {
 		id.w, id.n, id.time()/1000, id.key(), id.check(), id.pad())
 }
 
+var (
+	killCollections = []string{
+		"app.bsky.feed.like", "app.bsky.graph.follow", "app.bsky.feed.post", "app.bsky.feed.repost",
+		"app.bsky.graph.block", "app.bsky.actor.profile",
+	}
+	killOperations = []string{"create", "create", "create", "create", "update", "delete"}
+	killWords      = strings.Fields("the sky was blue and nobody on the timeline could agree whether that was good news " +
+		"because every reply quoted another thread about columnar storage merges and late night deploys")
+)
+
+// killEvent is what a document shaped like an event of the benchmark holds
+// in the paths the checks read; a path that is not there is empty.
+type killEvent struct {
+	kind, did string
+	op, coll  string
+	text      string
+}
+
+func (id killDocID) event() killEvent {
+	x := uint64(id.check())
+	e := killEvent{did: "did:plc:" + strconv.FormatUint(x>>20%200000*0x9e3779b97f4a7c15, 32)}
+	switch x % 50 {
+	case 0:
+		e.kind = "identity"
+	case 1:
+		e.kind = "account"
+	default:
+		e.kind, e.op, e.coll = "commit", killOperations[x>>8%6], killCollections[x>>12%6]
+		if e.coll == "app.bsky.feed.post" && e.op != "delete" {
+			var text []byte
+			for i, h := uint64(0), x; i < 6+x>>16%40; i, h = i+1, h*0x9e3779b97f4a7c15+1 {
+				text = append(append(text, killWords[h>>40%uint64(len(killWords))]...), ' ')
+			}
+			e.text = string(text)
+		}
+	}
+
+	return e
+}
+
+// eventTime is the time of the event in microseconds.
+func (id killDocID) eventTime() int64 { return 1700000000000000 + id.n*1000 + id.w }
+
+func (id killDocID) appendEvent(dst []byte) []byte {
+	e, x := id.event(), uint64(id.check())
+	rev, cid := strconv.FormatUint(x*0xbf58476d1ce4e5b9, 32), fmt.Sprintf("bafyrei%x%x%x", x, x*31, x*131)
+	dst = fmt.Appendf(dst, `{"did":"%s","time_us":%d,"kind":"%s",`, e.did, id.eventTime(), e.kind)
+	switch {
+	case e.kind != "commit":
+		dst = fmt.Appendf(dst, `"%s":{"did":"%s","active":%t,"handle":"u%d.bsky.social","seq":%d,"time":"2024-11-21T16:09:27.095Z"},`,
+			e.kind, e.did, x%2 == 0, x%100000, id.n)
+	case e.op == "delete":
+		dst = fmt.Appendf(dst, `"commit":{"rev":"%s","operation":"delete","collection":"%s","rkey":"%s"},`, rev, e.coll, rev[1:])
+	case e.text != "":
+		dst = fmt.Appendf(dst, `"commit":{"rev":"%s","operation":"%s","collection":"%s","rkey":"%s","record":{"$type":"%s",`+
+			`"createdAt":"2024-11-21T16:09:27.095Z","langs":["en"],"text":"%s"},"cid":"%s"},`, rev, e.op, e.coll, rev[1:], e.coll, e.text, cid)
+	default:
+		dst = fmt.Appendf(dst, `"commit":{"rev":"%s","operation":"%s","collection":"%s","rkey":"%s","record":{"$type":"%s",`+
+			`"createdAt":"2024-11-21T16:09:27.095Z","subject":{"cid":"%s","uri":"at://%s/%s/%s"}},"cid":"%s"},`,
+			rev, e.op, e.coll, rev[1:], e.coll, cid, e.did, e.coll, rev, cid)
+	}
+
+	return fmt.Appendf(dst, `"w":%d,"n":%d,"v":%d}`+"\n", id.w, id.n, id.check())
+}
+
+// appendDoc appends the document in the shape the store of cfg takes.
+func (cfg killConfig) appendDoc(dst []byte, id killDocID) []byte {
+	if cfg.Bench {
+		return id.appendEvent(dst)
+	}
+
+	return id.appendJSON(dst)
+}
+
 // say writes one line with one write, so that a kill leaves whole lines.
 func say(format string, args ...any) {
 	_, _ = os.Stdout.WriteString(fmt.Sprintf(format, args...) + "\n")
@@ -110,7 +203,7 @@ func TestStoreKillChild(t *testing.T) {
 	if cfg.NoSync {
 		syncFile = func(*os.File) error { return nil }
 	}
-	s, err := OpenStore(cfg.Dir, killStoreOptions())
+	s, err := OpenStore(cfg.Dir, cfg.options())
 	if err != nil {
 		say("error open: %v", err)
 		os.Exit(3)
@@ -126,10 +219,21 @@ func TestStoreKillChild(t *testing.T) {
 		go killAppend(s, w, cfg, &acked[w])
 	}
 	go killWrite(s, killAppenders, cfg, &acked[killAppenders])
-	go killDrop(s, cfg, acked)
+	if !cfg.Bench {
+		go killDrop(s, cfg, acked)
+	}
 	go killCompact(s, cfg)
 	go killRead(s, cfg)
 	select {}
+}
+
+// batch scales the number of documents of a request to the flush size.
+func (cfg killConfig) batch(n int) int {
+	if cfg.Bench {
+		return n * 100
+	}
+
+	return n
 }
 
 func killAppend(s *Store, w int64, cfg killConfig, acked *atomic.Int64) {
@@ -138,8 +242,8 @@ func killAppend(s *Store, w int64, cfg killConfig, acked *atomic.Int64) {
 	var buf []byte
 	for {
 		buf = buf[:0]
-		for i := 1 + rng.Intn(30); i > 0; i-- {
-			buf = killDocID{w, n}.appendJSON(buf)
+		for i := 1 + rng.Intn(cfg.batch(30)); i > 0; i-- {
+			buf = cfg.appendDoc(buf, killDocID{w, n})
 			n++
 		}
 		if rejected, err := s.Append(buf); err != nil || rejected != 0 {
@@ -157,7 +261,7 @@ func killAppend(s *Store, w int64, cfg killConfig, acked *atomic.Int64) {
 			say("ack %d %d", w, sent)
 			acked.Store(sent)
 		}
-		time.Sleep(time.Duration(rng.Intn(1500)) * time.Microsecond)
+		time.Sleep(time.Duration(rng.Intn(1500)*cfg.batch(1)) * time.Microsecond)
 	}
 }
 
@@ -169,11 +273,11 @@ func killWrite(s *Store, w int64, cfg killConfig, acked *atomic.Int64) {
 	for {
 		// Less than the flush size, so that the writer flushes only when
 		// told to.
-		last := n + 4 + int64(rng.Intn(20))
+		last := n + 4 + int64(rng.Intn(cfg.batch(20)))
 		say("intent %d %d", w, last)
 		buf = buf[:0]
 		for ; n <= last; n++ {
-			buf = killDocID{w, n}.appendJSON(buf)
+			buf = cfg.appendDoc(buf, killDocID{w, n})
 		}
 		err := wr.AddNDJSON(buf)
 		if err == nil {
@@ -186,7 +290,7 @@ func killWrite(s *Store, w int64, cfg killConfig, acked *atomic.Int64) {
 		}
 		say("ack %d %d", w, last)
 		acked.Store(last)
-		time.Sleep(time.Duration(rng.Intn(3000)) * time.Microsecond)
+		time.Sleep(time.Duration(rng.Intn(3000)*cfg.batch(1)) * time.Microsecond)
 	}
 }
 
@@ -217,7 +321,7 @@ func killDrop(s *Store, cfg killConfig, acked []atomic.Int64) {
 func killCompact(s *Store, cfg killConfig) {
 	rng := rand.New(rand.NewSource(cfg.Seed + 101))
 	for {
-		time.Sleep(time.Duration(100+rng.Intn(300)) * time.Millisecond)
+		time.Sleep(time.Duration(100+rng.Intn(300)) * time.Millisecond * time.Duration(cfg.batch(1)/10+1))
 		if err := s.Compact(); err != nil {
 			say("error compact: %v", err)
 
@@ -307,6 +411,9 @@ type killStats struct {
 	DropsDone, DropsCut, DropsKept   int
 	FlushesCut, FlushesKept          int
 	MergedParts, Compactions         int
+	// TopTier, RunsOfManyParts and MostDocs tell how far the merges got,
+	// and Fresh how often a store that had grown large was begun again.
+	TopTier, RunsOfManyParts, MostDocs, Fresh int
 }
 
 func (s *killStats) add(o killStats) {
@@ -326,6 +433,10 @@ func (s *killStats) add(o killStats) {
 	s.FlushesKept += o.FlushesKept
 	s.MergedParts += o.MergedParts
 	s.Compactions += o.Compactions
+	s.TopTier = max(s.TopTier, o.TopTier)
+	s.RunsOfManyParts += o.RunsOfManyParts
+	s.MostDocs = max(s.MostDocs, o.MostDocs)
+	s.Fresh += o.Fresh
 }
 
 // runAndKill starts a child on the store and kills it at a moment drawn
@@ -371,6 +482,8 @@ func runAndKill(t *testing.T, cfg killConfig, rng *rand.Rand, stats *killStats) 
 		delay = time.Duration(rng.Intn(20000)) * time.Microsecond
 	case mode < 40:
 		reached, delay = started, time.Duration(rng.Intn(6000))*time.Microsecond
+	case cfg.Bench:
+		reached, delay = opened, time.Duration(rng.Intn(4000))*time.Millisecond
 	default:
 		reached, delay = opened, time.Duration(rng.Intn(400000))*time.Microsecond
 	}
@@ -408,81 +521,179 @@ func runAndKill(t *testing.T, cfg killConfig, rng *rand.Rand, stats *killStats) 
 	return r
 }
 
-// scanKillDocs decodes every column of every block of every part, checks
-// the rows against what their numbers say and the statistics of blocks and
-// parts against the rows, and returns how often each document is there.
+// killBlock is what the rows of one block say about it.
+type killBlock struct {
+	first, last []byte
+	lo, hi      int64
+	ids         []killDocID
+}
+
+// killReader reads one block at a time into buffers of its own.
+type killReader struct {
+	b                          part.Block
+	scratch, ws, ns, vs, times vec.Column
+	texts                      [5]vec.Column
+	there                      [5]bool
+	key, prev                  []byte
+}
+
+// read decodes every column of block i of h, checks the rows against what
+// their numbers say and the statistics of the block against the rows.
+func (r *killReader) read(h *Handle, i int, out *killBlock) error {
+	b := &r.b
+	if err := h.OpenBlock(i, b); err != nil {
+		return err
+	}
+	cols := b.Columns()
+	for c := range cols {
+		if err := b.Decode(&cols[c], &r.scratch); err != nil {
+			return fmt.Errorf("column %s: %w", h.Paths()[cols[c].PathID], err)
+		}
+	}
+	if _, err := h.MayContainToken(i, uint64(i)*0x9e3779b97f4a7c15); err != nil {
+		return fmt.Errorf("token filter: %w", err)
+	}
+	for _, c := range []struct {
+		path string
+		dst  *vec.Column
+	}{{"w", &r.ws}, {"n", &r.ns}, {"v", &r.vs}, {part.TimePath, &r.times}} {
+		ref, err := column(h.Part, b, c.path, vec.KindInt, c.dst)
+		if err != nil || ref == nil || ref.Count != b.Rows {
+			return fmt.Errorf("column %s does not hold every row: %v", c.path, err)
+		}
+	}
+	// The paths of the sort key come first; one that a row does not hold
+	// reads as empty.
+	bench := len(h.SortKey()) == 4
+	paths := []string{"k", "pad"}
+	if bench {
+		paths = []string{"kind", "commit.operation", "commit.collection", "did", "commit.record.text"}
+	}
+	for j, path := range paths {
+		ref, err := column(h.Part, b, path, vec.KindString, &r.texts[j])
+		if err != nil {
+			return fmt.Errorf("column %s: %w", path, err)
+		}
+		r.there[j] = ref != nil
+	}
+	out.lo, out.hi = math.MaxInt64, math.MinInt64
+	out.ids = make([]killDocID, 0, b.Rows)
+	r.prev = r.prev[:0]
+	for row := 0; row < b.Rows; row++ {
+		id := killDocID{r.ws.Int(row), r.ns.Int(row)}
+		want, when := [5]string{id.key(), id.pad()}, id.time()
+		if bench {
+			e := id.event()
+			want, when = [5]string{e.kind, e.op, e.coll, e.did, e.text}, id.eventTime()*1000
+		}
+		if r.vs.Int(row) != id.check() || r.times.Int(row) != when {
+			return fmt.Errorf("document %v holds v=%d time=%d", id, r.vs.Int(row), r.times.Int(row))
+		}
+		if bench && h.Partition != 0 || !bench && h.Partition != id.hour() {
+			return fmt.Errorf("document %v is in partition %d", id, h.Partition)
+		}
+		r.key = r.key[:0]
+		for j, path := range paths {
+			got := ""
+			if r.there[j] && r.texts[j].IsValid(row) {
+				got = string(r.texts[j].Bytes(row))
+			}
+			if got != want[j] {
+				return fmt.Errorf("document %v holds %q at %s, want %q", id, got, path, want[j])
+			}
+			switch {
+			case j >= len(h.SortKey()):
+			case got == "":
+				r.key = append(r.key, 0)
+			default:
+				r.key = part.AppendKeyString(r.key, []byte(got))
+			}
+		}
+		if bytes.Compare(r.key, r.prev) < 0 {
+			return fmt.Errorf("key %x follows %x", r.key, r.prev)
+		}
+		if row == 0 {
+			if !bytes.Equal(r.key, h.FirstKey(i)) {
+				return fmt.Errorf("the first key is %x, the statistics say %x", r.key, h.FirstKey(i))
+			}
+			out.first = append([]byte(nil), r.key...)
+		}
+		r.prev = append(r.prev[:0], r.key...)
+		out.ids = append(out.ids, id)
+		out.lo, out.hi = min(out.lo, when), max(out.hi, when)
+	}
+	out.last = append([]byte(nil), r.prev...)
+	if rows, lo, hi := h.BlockStats(i); rows != b.Rows || lo != out.lo || hi != out.hi {
+		return fmt.Errorf("%d rows of times %d..%d, the statistics say %d rows of %d..%d", b.Rows, out.lo, out.hi, rows, lo, hi)
+	}
+
+	return nil
+}
+
+// scanKillDocs reads every block of every part with killReader, checks the
+// statistics of the parts against their blocks, and returns how often each
+// document is there.
 func scanKillDocs(snap *Snapshot) (map[killDocID]int, error) {
+	type unit struct{ part, block int }
+	parts := snap.Parts()
+	blocks := make([][]killBlock, len(parts))
+	var units []unit
+	for i, h := range parts {
+		if key := h.SortKey(); !h.Ordered() || len(key) != 1 && len(key) != 4 || h.NumBlocks() == 0 {
+			return nil, fmt.Errorf("a part of run %d has %d blocks ordered by %v", h.Run, h.NumBlocks(), key)
+		}
+		blocks[i] = make([]killBlock, h.NumBlocks())
+		for j := range blocks[i] {
+			units = append(units, unit{i, j})
+		}
+	}
+	var next atomic.Int64
+	var failed atomic.Pointer[error]
+	var wg sync.WaitGroup
+	for range min(runtime.GOMAXPROCS(0), 8) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var r killReader
+			for failed.Load() == nil {
+				i := int(next.Add(1)) - 1
+				if i >= len(units) {
+					return
+				}
+				u := units[i]
+				if err := r.read(parts[u.part], u.block, &blocks[u.part][u.block]); err != nil {
+					err = fmt.Errorf("block %d of a part of run %d: %w", u.block, parts[u.part].Run, err)
+					failed.CompareAndSwap(nil, &err)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if err := failed.Load(); err != nil {
+		return nil, *err
+	}
 	counts := map[killDocID]int{}
-	var b part.Block
-	var scratch, ws, ns, vs, ks, pads, times vec.Column
-	for _, h := range snap.Parts() {
-		if key := h.SortKey(); !h.Ordered() || len(key) != 1 || key[0] != "k" {
-			return nil, fmt.Errorf("part of run %d is ordered by %v", h.Run, key)
-		}
+	for i, h := range parts {
 		var rows uint64
-		minTime, maxTime := int64(math.MaxInt64), int64(math.MinInt64)
-		var key, prev []byte
-		first, last := h.KeyRange()
-		for i := 0; i < h.NumBlocks(); i++ {
-			if err := h.OpenBlock(i, &b); err != nil {
-				return nil, fmt.Errorf("block %d of a part of run %d: %v", i, h.Run, err)
+		lo, hi := int64(math.MaxInt64), int64(math.MinInt64)
+		for j := range blocks[i] {
+			b := &blocks[i][j]
+			if j > 0 && bytes.Compare(b.first, blocks[i][j-1].last) < 0 {
+				return nil, fmt.Errorf("block %d of a part of run %d starts below the end of the block before it", j, h.Run)
 			}
-			cols := b.Columns()
-			for c := range cols {
-				if err := b.Decode(&cols[c], &scratch); err != nil {
-					return nil, fmt.Errorf("column %s of block %d of a part of run %d: %v", h.Paths()[cols[c].PathID], i, h.Run, err)
-				}
-			}
-			if _, err := h.MayContainToken(i, uint64(i)*0x9e3779b97f4a7c15); err != nil {
-				return nil, fmt.Errorf("token filter of block %d of a part of run %d: %v", i, h.Run, err)
-			}
-			for _, c := range []struct {
-				path string
-				kind vec.Kind
-				dst  *vec.Column
-			}{
-				{"w", vec.KindInt, &ws}, {"n", vec.KindInt, &ns}, {"v", vec.KindInt, &vs},
-				{"k", vec.KindString, &ks}, {"pad", vec.KindString, &pads}, {part.TimePath, vec.KindInt, &times},
-			} {
-				ref, err := column(h.Part, &b, c.path, c.kind, c.dst)
-				if err != nil || ref == nil || ref.Count != b.Rows {
-					return nil, fmt.Errorf("column %s of block %d of a part of run %d does not hold every row: %v", c.path, i, h.Run, err)
-				}
-			}
-			blockRows, blockMin, blockMax := h.BlockStats(i)
-			lo, hi := int64(math.MaxInt64), int64(math.MinInt64)
-			for row := 0; row < b.Rows; row++ {
-				id := killDocID{ws.Int(row), ns.Int(row)}
-				if vs.Int(row) != id.check() || string(ks.Bytes(row)) != id.key() || string(pads.Bytes(row)) != id.pad() || times.Int(row) != id.time() {
-					return nil, fmt.Errorf("document %v holds v=%d k=%s pad=%s time=%d", id, vs.Int(row), ks.Bytes(row), pads.Bytes(row), times.Int(row))
-				}
-				if id.hour() != h.Partition {
-					return nil, fmt.Errorf("document %v of hour %d is in partition %d", id, id.hour(), h.Partition)
-				}
+			rows += uint64(len(b.ids))
+			lo, hi = min(lo, b.lo), max(hi, b.hi)
+			for _, id := range b.ids {
 				counts[id]++
-				lo, hi = min(lo, id.time()), max(hi, id.time())
-				key = part.AppendKeyString(key[:0], ks.Bytes(row))
-				if bytes.Compare(key, prev) < 0 {
-					return nil, fmt.Errorf("key %x follows %x in a part of run %d", key, prev, h.Run)
-				}
-				if row == 0 && !bytes.Equal(key, h.FirstKey(i)) {
-					return nil, fmt.Errorf("block %d of a part of run %d starts with key %x, its statistics say %x", i, h.Run, key, h.FirstKey(i))
-				}
-				prev = append(prev[:0], key...)
 			}
-			if blockRows != b.Rows || blockMin != lo || blockMax != hi {
-				return nil, fmt.Errorf("block %d of a part of run %d holds %d rows of times %d..%d, its statistics say %d rows of %d..%d",
-					i, h.Run, b.Rows, lo, hi, blockRows, blockMin, blockMax)
-			}
-			rows += uint64(b.Rows)
-			minTime, maxTime = min(minTime, lo), max(maxTime, hi)
 		}
-		if rows != h.Rows || rows == 0 || minTime != h.MinTime || maxTime != h.MaxTime {
+		if rows != h.Rows || lo != h.MinTime || hi != h.MaxTime {
 			return nil, fmt.Errorf("a part of run %d holds %d rows of times %d..%d, its footer says %d rows of %d..%d",
-				h.Run, rows, minTime, maxTime, h.Rows, h.MinTime, h.MaxTime)
+				h.Run, rows, lo, hi, h.Rows, h.MinTime, h.MaxTime)
 		}
-		if !bytes.Equal(first, h.FirstKey(0)) || !bytes.Equal(last, prev) {
-			return nil, fmt.Errorf("a part of run %d has key range %x..%x, its rows %x..%x", h.Run, first, last, h.FirstKey(0), prev)
+		first, last := h.KeyRange()
+		if end := blocks[i][len(blocks[i])-1].last; !bytes.Equal(first, blocks[i][0].first) || !bytes.Equal(last, end) {
+			return nil, fmt.Errorf("a part of run %d has key range %x..%x, its rows %x..%x", h.Run, first, last, blocks[i][0].first, end)
 		}
 	}
 
@@ -611,8 +822,9 @@ func has(set map[killDocID]struct{}, id killDocID) bool {
 }
 
 // check opens the store a kill left and holds it against the contract.
-func (m *killModel) check(t *testing.T, dir string, r killReport, rng *rand.Rand, stats *killStats) {
+func (m *killModel) check(t *testing.T, cfg killConfig, r killReport, rng *rand.Rand, stats *killStats) {
 	t.Helper()
+	dir := cfg.Dir
 	log, err := os.ReadFile(filepath.Join(dir, manifestName))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
@@ -642,7 +854,7 @@ func (m *killModel) check(t *testing.T, dir string, r killReport, rng *rand.Rand
 		}
 	}
 
-	opts := killStoreOptions()
+	opts := cfg.options()
 	opts.MergeFanIn, opts.FlushInterval = -1, -1
 	s, err := OpenStore(dir, opts)
 	if err != nil {
@@ -659,10 +871,15 @@ func (m *killModel) check(t *testing.T, dir string, r killReport, rng *rand.Rand
 		if shape.tier > 0 {
 			stats.MergedParts += shape.parts
 		}
+		if shape.parts > 1 {
+			stats.RunsOfManyParts++
+		}
+		stats.TopTier = max(stats.TopTier, shape.tier)
 	}
 	snap.Release()
 	m.judge(t, counts, r, stats)
-	if rng.Intn(4) == 0 {
+	stats.MostDocs = max(stats.MostDocs, len(counts))
+	if rng.Intn(4*cfg.batch(1)/10+4) == 0 {
 		if err := s.Compact(); err != nil {
 			t.Fatalf("compacting the store a kill left: %v", err)
 		}
@@ -680,9 +897,13 @@ func (m *killModel) check(t *testing.T, dir string, r killReport, rng *rand.Rand
 	}
 }
 
+// killMostDocs is the size at which a store of the benchmark layout is
+// begun again, which bounds what every cycle reads back.
+const killMostDocs = 1_500_000
+
 // runKillCycles kills children on one store until the time is up, each
 // starting on what the one before left.
-func runKillCycles(t *testing.T, seed int64, budget time.Duration) killStats {
+func runKillCycles(t *testing.T, seed int64, budget time.Duration, bench bool) killStats {
 	t.Helper()
 	dir, err := os.MkdirTemp("", "lynxdb-store-kill-")
 	if err != nil {
@@ -697,12 +918,28 @@ func runKillCycles(t *testing.T, seed int64, budget time.Duration) killStats {
 		os.RemoveAll(dir)
 	}()
 	rng := rand.New(rand.NewSource(seed))
-	m := &killModel{present: map[killDocID]struct{}{}, next: make([]int64, killWriters)}
+	fresh := func() *killModel {
+		return &killModel{present: map[killDocID]struct{}{}, next: make([]int64, killWriters)}
+	}
+	m := fresh()
 	var stats killStats
 	for deadline := time.Now().Add(budget); time.Now().Before(deadline); stats.Cycles++ {
-		cfg := killConfig{Dir: dir, Seed: seed*1000 + int64(stats.Cycles), Next: m.next, RewriteAfter: 1 + rng.Intn(12), NoSync: rng.Intn(2) == 0}
+		if len(m.present) > killMostDocs {
+			if err := os.RemoveAll(dir); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			m = fresh()
+			stats.Fresh++
+		}
+		cfg := killConfig{
+			Dir: dir, Seed: seed*1000 + int64(stats.Cycles), Next: m.next,
+			RewriteAfter: 1 + rng.Intn(12), NoSync: rng.Intn(2) == 0, Bench: bench,
+		}
 		r := runAndKill(t, cfg, rng, &stats)
-		m.check(t, dir, r, rng, &stats)
+		m.check(t, cfg, r, rng, &stats)
 	}
 
 	return stats
@@ -712,18 +949,35 @@ func TestStoreSurvivesKills(t *testing.T) {
 	if testing.Short() {
 		t.Skip("kills child processes for some seconds")
 	}
+	surviveKills(t, false, os.Getenv("LYNXDB_STORE_SOAK"), 3*time.Second)
+}
+
+// TestStoreOfBenchmarkLayoutSurvivesKills kills a store that has the layout
+// of the benchmark and takes documents shaped like its events. A cycle of it
+// writes and reads back many megabytes, so it runs only as a soak.
+func TestStoreOfBenchmarkLayoutSurvivesKills(t *testing.T) {
+	soak := os.Getenv("LYNXDB_STORE_SOAK_BENCH")
+	if soak == "" {
+		t.Skip("runs for the duration LYNXDB_STORE_SOAK_BENCH names")
+	}
+	surviveKills(t, true, soak, 0)
+}
+
+// surviveKills runs kill cycles for the duration soak names, or for budget
+// without one.
+func surviveKills(t *testing.T, bench bool, soak string, budget time.Duration) {
+	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("needs a signal that cannot be caught")
 	}
 	// The parent kills nothing of its own.
 	skipSyncs(t)
-	budget, soak := 3*time.Second, false
-	if v := os.Getenv("LYNXDB_STORE_SOAK"); v != "" {
-		d, err := time.ParseDuration(v)
+	if soak != "" {
+		d, err := time.ParseDuration(soak)
 		if err != nil {
-			t.Fatalf("LYNXDB_STORE_SOAK: %v", err)
+			t.Fatalf("the duration of the soak: %v", err)
 		}
-		budget, soak = d, true
+		budget = d
 	}
 	seed := time.Now().UnixNano() % 1e9
 	if v := os.Getenv("LYNXDB_STORE_SEED"); v != "" {
@@ -733,15 +987,18 @@ func TestStoreSurvivesKills(t *testing.T) {
 		}
 		seed = n
 	}
-	// Two stores side by side double the kills of a run.
-	const stores = 2
+	// Two small stores side by side double the kills of a run.
+	stores := int64(2)
+	if bench {
+		stores = 1
+	}
 	var total killStats
 	var mu sync.Mutex
 	t.Run("stores", func(t *testing.T) {
 		for i := int64(0); i < stores; i++ {
 			t.Run(strconv.FormatInt(seed+i, 10), func(t *testing.T) {
 				t.Parallel()
-				stats := runKillCycles(t, seed+i, budget)
+				stats := runKillCycles(t, seed+i, budget, bench)
 				mu.Lock()
 				total.add(stats)
 				mu.Unlock()
@@ -755,7 +1012,10 @@ func TestStoreSurvivesKills(t *testing.T) {
 	if total.KilledRunning == 0 || total.Acked == 0 {
 		t.Fatalf("no child was killed at work: %+v", total)
 	}
-	if soak && (total.KilledStarting == 0 || total.KilledOpening == 0 || total.Leftovers == 0 ||
+	if bench && total.MergedParts == 0 {
+		t.Fatalf("no kill met a merged run: %+v", total)
+	}
+	if soak != "" && !bench && (total.KilledStarting == 0 || total.KilledOpening == 0 || total.Leftovers == 0 ||
 		total.Rewrites == 0 || total.MergedParts == 0 || total.DropsDone == 0 || total.FlushesCut == 0 || total.FlushesKept == 0) {
 		t.Fatalf("a soak did not meet every kind of kill: %+v", total)
 	}
