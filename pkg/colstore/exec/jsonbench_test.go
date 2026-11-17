@@ -38,7 +38,65 @@ type benchPlan struct {
 	ordered bool
 }
 
-func benchPlans() []benchPlan {
+// benchWindows holds the time windows of the time-bounded queries, inclusive
+// ranges of row timestamps in nanoseconds.
+type benchWindows struct {
+	tenLo, tenHi, hourLo, hourHi int64
+}
+
+// benchWindow returns the window named by env as "lo,hi" in microseconds, lo
+// inclusive and hi exclusive, or else a window of the given width around the
+// time that half of the snapshot's rows precede.
+func benchWindow(t testing.TB, snap *colstore.Snapshot, env string, width time.Duration) (lo, hi int64) {
+	t.Helper()
+	if v := os.Getenv(env); v != "" {
+		a, b, ok := strings.Cut(v, ",")
+		from, err1 := strconv.ParseInt(a, 10, 64)
+		to, err2 := strconv.ParseInt(b, 10, 64)
+		if !ok || err1 != nil || err2 != nil || to <= from {
+			t.Fatalf("%s=%q is not lo,hi in microseconds", env, v)
+		}
+
+		return from * 1000, to*1000 - 1
+	}
+	type span struct {
+		at   int64
+		rows int
+	}
+	var spans []span
+	total := 0
+	for _, h := range snap.Parts() {
+		for i := 0; i < h.NumBlocks(); i++ {
+			rows, first, last := h.BlockStats(i)
+			spans = append(spans, span{at: first/2 + last/2, rows: rows})
+			total += rows
+		}
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i].at < spans[j].at })
+	mid, seen := int64(0), 0
+	for _, s := range spans {
+		if seen += s.rows; seen >= total/2 {
+			mid = s.at
+
+			break
+		}
+	}
+	// Whole minutes, so that the same window can be asked of other systems.
+	mid -= mid % int64(time.Minute)
+
+	return mid - int64(width)/2, mid + int64(width)/2 - 1
+}
+
+func windowsOf(t testing.TB, snap *colstore.Snapshot) benchWindows {
+	t.Helper()
+	var w benchWindows
+	w.tenLo, w.tenHi = benchWindow(t, snap, "LYNXDB_BENCH_T10_US", 10*time.Minute)
+	w.hourLo, w.hourHi = benchWindow(t, snap, "LYNXDB_BENCH_T60_US", time.Hour)
+
+	return w
+}
+
+func benchPlans(win benchWindows) []benchPlan {
 	collection := named("event", str("commit.collection"))
 	created := []*exec.Expr{exec.Eq(str("kind"), exec.Str("commit")), exec.Eq(str("commit.operation"), exec.Str("create"))}
 	isCollection := func(name string) *exec.Expr { return exec.Eq(str("commit.collection"), exec.Str(name)) }
@@ -49,6 +107,9 @@ func benchPlans() []benchPlan {
 		return &exec.Aggregate{Input: &exec.Scan{Filter: filter}, Aggs: []exec.Agg{count}}
 	}
 	text := str("commit.record.text")
+	within := func(lo, hi int64) []*exec.Expr {
+		return []*exec.Expr{exec.Ge(exec.Time(), exec.Int(lo)), exec.Le(exec.Time(), exec.Int(hi))}
+	}
 
 	return []benchPlan{
 		{"Q1", &exec.Sort{Input: &exec.Aggregate{Input: &exec.Scan{}, Keys: []exec.Named{collection}, Aggs: []exec.Agg{count}}, By: byCount}, true},
@@ -84,6 +145,18 @@ func benchPlans() []benchPlan {
 		{"S5 substring", search(exec.Match(text, tokenfilter.Substring("ware"))), true},
 		{"S6 field equals", search(exec.Eq(str("did"), exec.Str("did:plc:yj3sjq3blzpynh27cumnp5ks"))), true},
 		{"S7 unique id", search(exec.Eq(str("commit.cid"), exec.Str("bafyreicsj6qpl6dreic6ekdjxvdjltncngl52x3jddf6dxhg2gwo35iqhi"))), true},
+		{"S2 any case", search(exec.Match(text, tokenfilter.Word("love").IgnoreCase())), true},
+		{"S3 any case", search(exec.Match(text, tokenfilter.Word("good morning").IgnoreCase())), true},
+		{"S4 any case", search(exec.Match(text, tokenfilter.Prefix("crypto").IgnoreCase())), true},
+		{"S5 any case", search(exec.Match(text, tokenfilter.Substring("ware").IgnoreCase())), true},
+		{"T1 count in 10 minutes", search(exec.And(within(win.tenLo, win.tenHi)...)), true},
+		{"T2 token in 10 minutes", search(exec.And(append(within(win.tenLo, win.tenHi), exec.Match(text, tokenfilter.Word("love")))...)), true},
+		{"T3 groups in 1 hour", &exec.Sort{Input: &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(within(win.hourLo, win.hourHi)...)},
+			Keys: []exec.Named{collection}, Aggs: []exec.Agg{count}}, By: byCount}, true},
+		{"T4 latest 20 of a user", &exec.Sort{Input: &exec.Project{
+			Input: &exec.Scan{Filter: exec.Eq(str("did"), exec.Str("did:plc:yj3sjq3blzpynh27cumnp5ks"))},
+			Exprs: []exec.Named{named("time", exec.Time()), collection},
+		}, By: []exec.Order{{Column: "time", Desc: true}, {Column: "event"}}, Limit: 20}, true},
 	}
 }
 
@@ -296,7 +369,7 @@ func TestJSONBenchReference(t *testing.T) {
 	}
 	for name, tbl := range tables {
 		snap := tbl.Snapshot()
-		for _, q := range benchPlans() {
+		for _, q := range benchPlans(windowsOf(t, snap)) {
 			for _, workers := range []int{cores, 1} {
 				t.Run(fmt.Sprintf("%s/%s/%d", name, q.name, workers), func(t *testing.T) {
 					check(t, snap, rows, q.plan, q.ordered, workers)
@@ -316,6 +389,16 @@ func answer(name string, res *exec.Result) string {
 			b.WriteByte(' ')
 		}
 		row := res.Row(i, nil)
+		switch {
+		case strings.HasPrefix(name, "T3"):
+			fmt.Fprintf(&b, "%s=%d", row[0].Bytes, row[1].Int)
+
+			continue
+		case strings.HasPrefix(name, "T4"):
+			fmt.Fprintf(&b, "%d:%s", row[0].Int/1000, row[1].Bytes)
+
+			continue
+		}
 		switch name {
 		case "Q1":
 			fmt.Fprintf(&b, "%s=%d", row[0].Bytes, row[1].Int)
@@ -375,13 +458,19 @@ func millis(d time.Duration) float64 { return float64(d.Microseconds()) / 1e3 }
 
 // TestJSONBenchPlans times the benchmark plans on every core over the file
 // named by LYNXDB_BENCH_NDJSON, loaded in arrival order and ordered by the
-// sort key, and over the table in LYNXDB_BENCH_DIR when that is set. It
-// prints the best of LYNXDB_BENCH_RUNS runs (7 by default) and the answers.
+// sort key, and over the table in LYNXDB_BENCH_DIR when that is set; with
+// the directory alone it needs no file. It prints the best of
+// LYNXDB_BENCH_RUNS runs (7 by default) and the answers. LYNXDB_BENCH_T10_US
+// and LYNXDB_BENCH_T60_US set the windows of the time-bounded plans as
+// "lo,hi" in microseconds; by default they lie around the middle of the data.
 // LYNXDB_BENCH_QUERY keeps the plans whose name contains it,
 // LYNXDB_BENCH_LAYOUT the layouts whose name does, and LYNXDB_BENCH_PROFILE
 // names a directory that receives one CPU profile per plan and layout.
 func TestJSONBenchPlans(t *testing.T) {
-	data := benchData(t)
+	var data []byte
+	if os.Getenv("LYNXDB_BENCH_DIR") == "" || os.Getenv("LYNXDB_BENCH_NDJSON") != "" {
+		data = benchData(t)
+	}
 	cores := runtime.GOMAXPROCS(0)
 	runs := 7
 	if s := os.Getenv("LYNXDB_BENCH_RUNS"); s != "" {
@@ -408,8 +497,10 @@ func TestJSONBenchPlans(t *testing.T) {
 		t.Cleanup(snap.Release)
 		tables = append(tables, table{name, snap})
 	}
-	add("arrival", func() *colstore.Table { return loadArrival(t, data, cores) })
-	add("ordered", func() *colstore.Table { return loadOrdered(t, data, cores, benchSortKey) })
+	if data != nil {
+		add("arrival", func() *colstore.Table { return loadArrival(t, data, cores) })
+		add("ordered", func() *colstore.Table { return loadOrdered(t, data, cores, benchSortKey) })
+	}
 	if dir := os.Getenv("LYNXDB_BENCH_DIR"); dir != "" && strings.Contains("disk", onlyLayout) {
 		d, err := colstore.OpenDir(dir)
 		if err != nil {
@@ -421,6 +512,11 @@ func TestJSONBenchPlans(t *testing.T) {
 		tables = append(tables, table{"disk", snap})
 	}
 
+	if len(tables) == 0 {
+		t.Skip("no layout selected")
+	}
+	win := windowsOf(t, tables[0].snap)
+	t.Logf("10-minute window %d..%d us, 1-hour window %d..%d us", win.tenLo/1000, (win.tenHi+1)/1000, win.hourLo/1000, (win.hourHi+1)/1000)
 	answers := map[string]string{}
 	for _, tbl := range tables {
 		var rows uint64
@@ -430,7 +526,7 @@ func TestJSONBenchPlans(t *testing.T) {
 			blocks += h.NumBlocks()
 		}
 		t.Logf("%s: %d rows in %d parts / %d blocks", tbl.name, rows, len(tbl.snap.Parts()), blocks)
-		for _, q := range benchPlans() {
+		for _, q := range benchPlans(win) {
 			if !strings.Contains(q.name, only) {
 				continue
 			}
@@ -463,9 +559,13 @@ func TestJSONBenchPlans(t *testing.T) {
 			}
 			runtime.ReadMemStats(&after)
 			s := res.Stats
-			t.Logf("%-8s %-16s %8.2f ms on %d cores (median %.2f, cpu %.1f, holds %.1f MB), %d heap allocations (%.2f MB); %d blocks opened, skipped: %d by key, %d by tokens, %d by time, %d by statistics; %d blocks pass the filter with %d rows",
+			how := "hashed"
+			if s.Ordered {
+				how = "in key order"
+			}
+			t.Logf("%-8s %-22s %8.2f ms on %d cores (median %.2f, cpu %.1f, holds %.1f MB), %d heap allocations (%.2f MB); %s; %d blocks opened, skipped: %d by key, %d by tokens, %d by time, %d by statistics; %d blocks pass the filter with %d rows",
 				tbl.name, q.name, millis(took[0]), cores, millis(took[runs/2]), millis(cpu), float64(s.HeldBytes)/1e6,
-				after.Mallocs-before.Mallocs, float64(after.TotalAlloc-before.TotalAlloc)/1e6,
+				after.Mallocs-before.Mallocs, float64(after.TotalAlloc-before.TotalAlloc)/1e6, how,
 				s.Blocks, s.SkippedByKey, s.SkippedByToken, s.SkippedByTime, s.SkippedByStats, s.BlocksMatched, s.RowsMatched)
 			got := answer(q.name, res)
 			if want, ok := benchAnswers[q.name]; ok && rows == 1_000_000 && got != want {
@@ -475,7 +575,7 @@ func TestJSONBenchPlans(t *testing.T) {
 				t.Errorf("%s %s answers %s, another layout %s", tbl.name, q.name, got, prev)
 			}
 			if _, ok := answers[q.name]; !ok {
-				t.Logf("%-8s %-16s answer: %s", "", q.name, got)
+				t.Logf("%-8s %-22s answer: %s", "", q.name, got)
 			}
 			answers[q.name] = got
 		}
