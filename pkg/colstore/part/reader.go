@@ -597,6 +597,99 @@ func (b *Block) decodeBytes(ref *ColumnRef, chunk []byte, sparse bool, dst *vec.
 	return ErrCorrupt
 }
 
+// dataSize returns the bytes Decode puts in Data for a string or variant
+// column, or 0 when the chunk does not say.
+func (b *Block) dataSize(ref *ColumnRef) uint32 {
+	if ref.bad || ref.Kind != vec.KindString && ref.Kind != vec.KindVariant {
+		return 0
+	}
+	if ref.enc == encConst {
+		return uint32(len(ref.constVal))
+	}
+	chunk := b.data[ref.off : ref.off+ref.length]
+	ok := true
+	if ref.flags&flagSparse != 0 && len(chunk) > 0 {
+		chunk, _, ok = skipBlob(chunk[1:])
+	}
+	values := ref.Count
+	if ok && ref.enc == encDict {
+		size, n := binary.Uvarint(chunk)
+		if ok = n > 0 && size <= maxDictSize; ok {
+			chunk, values = chunk[n:], int(size)
+		}
+	}
+	if ok {
+		chunk, ok = skipInts(chunk, values)
+	}
+	if !ok {
+		return 0
+	}
+	_, size, _ := skipBlob(chunk)
+
+	return size
+}
+
+// skipBlob returns the bytes after the section at the start of src and the
+// size of its payload once decoded.
+func skipBlob(src []byte) (rest []byte, rawLen uint32, ok bool) {
+	head, n := binary.Uvarint(src)
+	if n <= 0 {
+		return nil, 0, false
+	}
+	src = src[n:]
+	size, raw := head>>2, head>>2
+	if head&3 != blobStored {
+		if raw, n = binary.Uvarint(src); n <= 0 {
+			return nil, 0, false
+		}
+		src = src[n:]
+	}
+	if size > uint64(len(src)) || raw > maxSectionSize {
+		return nil, 0, false
+	}
+
+	return src[size:], uint32(raw), true
+}
+
+// skipInts returns the bytes after the integer section of count values at
+// the start of src.
+func skipInts(src []byte, count int) ([]byte, bool) {
+	if len(src) == 0 {
+		return nil, false
+	}
+	mode := src[0]
+	src = src[1:]
+	switch mode {
+	case intConst, intBytes8, intBytes16:
+		_, n := binary.Uvarint(src)
+		if n <= 0 {
+			return nil, false
+		}
+		if mode == intConst {
+			return src[n:], true
+		}
+		rest, _, ok := skipBlob(src[n:])
+
+		return rest, ok
+	case intFrames, intDeltaFrames:
+		for start := 0; start < count; start += frameLen {
+			_, n := binary.Uvarint(src)
+			if n <= 0 || len(src) <= n {
+				return nil, false
+			}
+			need := (min(frameLen, count-start)*int(src[n]) + 7) / 8
+			if src[n] > 64 || need > len(src)-n-1 {
+				return nil, false
+			}
+			src = src[n+1+need:]
+		}
+
+		return src, true
+	}
+
+	return nil, false
+}
+
 func nonNegative(vals []int64) bool {
 	for _, v := range vals {
 		if v < 0 {
