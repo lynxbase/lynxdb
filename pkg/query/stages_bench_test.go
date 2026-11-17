@@ -111,6 +111,13 @@ func benchStages(b *testing.B, srcs []string) {
 	})
 	b.Run("Compile", func(b *testing.B) {
 		per(b, func(s stageInput) {
+			if _, err := compile(s.src); err != nil {
+				b.Fatal(err)
+			}
+		})
+	})
+	b.Run("Cached", func(b *testing.B) {
+		per(b, func(s stageInput) {
 			if _, err := Compile(s.src); err != nil {
 				b.Fatal(err)
 			}

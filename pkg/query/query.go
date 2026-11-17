@@ -37,8 +37,32 @@ type Compiled struct {
 	Sources []string
 }
 
-// Compile parses, analyzes and optimizes a PPL query.
+// Compile parses, analyzes and optimizes a PPL query. Plans of recent
+// queries are reused; each call returns its own Compiled, whose plans are
+// immutable and may be shared.
 func Compile(src string) (*Compiled, error) {
+	c, ok := plans.get(src)
+	if !ok {
+		var err error
+		if c, err = compile(src); err != nil {
+			return nil, err
+		}
+		c.Applied = c.Applied[:len(c.Applied):len(c.Applied)]
+		c.Sources = c.Sources[:len(c.Sources):len(c.Sources)]
+		plans.put(src, c)
+	}
+	return c.copy(), nil
+}
+
+// copy returns a Compiled that shares only immutable values with c.
+func (c *Compiled) copy() *Compiled {
+	cp := *c
+	logical, plan := *c.Logical, *c.Plan
+	cp.Logical, cp.Plan = &logical, &plan
+	return &cp
+}
+
+func compile(src string) (*Compiled, error) {
 	res, err := ppl.Compile(src)
 	if err != nil {
 		return nil, err
