@@ -124,7 +124,7 @@ func (c *colVec) len() int {
 }
 
 func (c *colVec) held() int {
-	return cap(c.kinds) + 8*cap(c.ints) + 8*cap(c.floats) + 4*cap(c.ends) + cap(c.data)
+	return used(c.kinds) + 8*used(c.ints) + 8*used(c.floats) + 4*used(c.ends) + used(c.data)
 }
 
 // push adds a row of kind and keeps the buffers in use aligned.

@@ -38,7 +38,7 @@ func (m *merger) held() int {
 	if m.arena == nil {
 		return 0
 	}
-	n := 8*cap(m.words) + m.post.held() + m.sink.held() + m.arena.Size()
+	n := 8*used(m.words) + m.post.held() + m.sink.held() + m.arena.Size()
 	for i := range m.users {
 		n += 8 * cap(m.users[i])
 	}
@@ -55,6 +55,12 @@ func (x *execution) merger(slot int) *merger {
 	if m.arena == nil {
 		m.mergeScratch = mergeScratchPool.Get()
 		m.words = m.words[:0]
+		for i := range m.batch {
+			m.batch[i].reset()
+		}
+		for i := range m.post.tmp {
+			m.post.tmp[i].reset()
+		}
 		m.arena = mem.NewArena()
 		m.table = vec.NewByteTable(m.arena)
 		m.sink.init(x.q)
