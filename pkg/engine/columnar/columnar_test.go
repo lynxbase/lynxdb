@@ -226,6 +226,29 @@ func TestFieldsTakenOutOfText(t *testing.T) {
 	}
 }
 
+// TestGroupsOfEventsWithoutTheKey requires both engines to give the events
+// that do not hold a group key one group whose key is null.
+func TestGroupsOfEventsWithoutTheKey(t *testing.T) {
+	tables := testData(t)
+	for prefix, columnar := range map[string]bool{`source=logs | `: true, `source=logs | eval r = rand() | where r >= 0 | `: false} {
+		compiled, err := query.Compile(prefix + "stats count() as n by `http.path` | sort n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := Run(context.Background(), compiled.Plan, tables, Options{Now: testNow})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rows := make([]string, res.Len())
+		for i := range rows {
+			rows[i] = string(res.AppendJSON(nil, i))
+		}
+		if got, want := strings.Join(rows, " "), `{"n":1,"http.path":"/x"} {"n":4,"http.path":null}`; got != want || res.Columnar != columnar {
+			t.Errorf("columnar %v: %s, want %s", res.Columnar, got, want)
+		}
+	}
+}
+
 // TestNullsFilledInNamedColumns requires the executor to fill the nulls of
 // named columns as the row operators do: where an event holds a null and
 // where it does not hold the field.

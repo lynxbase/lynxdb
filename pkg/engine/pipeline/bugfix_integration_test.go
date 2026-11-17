@@ -85,12 +85,15 @@ func TestIntegration_RexCikStats(t *testing.T) {
 		t.Errorf("expected at least 5 groups, got %d", len(rows))
 	}
 
-	// Verify null cik group uses "" not null
+	// The events whose path holds no number form one group with a null key.
+	nulls := 0
 	for _, row := range rows {
-		cik := row["cik"]
-		if cik.IsNull() {
-			t.Error("cik should not be null in result — should be empty string")
+		if row["cik"].IsNull() {
+			nulls++
 		}
+	}
+	if nulls != 1 {
+		t.Errorf("%d groups with a null key, want 1", nulls)
 	}
 }
 

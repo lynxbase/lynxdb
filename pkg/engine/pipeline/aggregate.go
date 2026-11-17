@@ -1476,11 +1476,7 @@ func (a *AggregateIterator) emitAllGroups() *Batch {
 		for _, group := range chain {
 			row := make(map[string]event.Value, len(a.groupBy)+len(a.aggs))
 			for k, v := range group.key {
-				if v.IsNull() {
-					row[k] = event.StringValue("")
-				} else {
-					row[k] = v
-				}
+				row[k] = v
 			}
 			for j, agg := range a.aggs {
 				row[agg.Alias] = a.finalizeAgg(&group.states[j], agg)
