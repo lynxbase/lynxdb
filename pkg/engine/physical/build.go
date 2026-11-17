@@ -178,7 +178,11 @@ func (b *builder) dispatch(n ir.Node) (pipeline.Iterator, error) {
 		if b.opts.Source == nil {
 			return nil, fmt.Errorf("physical: no source for %s", x.Label())
 		}
-		return b.opts.Source(x)
+		it, err := b.opts.Source(x)
+		if err != nil || x.Time.IsZero() {
+			return it, err
+		}
+		return b.timeFilter(it, x.Time)
 	case *ir.Values:
 		return b.values(x)
 	case *ir.Empty:
@@ -314,6 +318,24 @@ func (b *builder) dispatch(n ir.Node) (pipeline.Iterator, error) {
 		return nil, unsupported("pivot")
 	}
 	return nil, fmt.Errorf("physical: unknown operator %T", n)
+}
+
+// timeFilter enforces a scan's time range on its source's rows, so the
+// range holds exactly whatever pruning the storage applied.
+func (b *builder) timeFilter(it pipeline.Iterator, tr *ir.TimeRange) (pipeline.Iterator, error) {
+	ts := &ir.FieldRef{Name: ir.TimeColumn, T: ir.Timestamp}
+	var conds []ir.Expr
+	if tr.Earliest != nil {
+		conds = append(conds, &ir.Binary{Op: ir.OpGe, L: ts, R: &ir.RelativeTime{Bound: tr.Earliest}, T: ir.Bool})
+	}
+	if tr.Latest != nil {
+		conds = append(conds, &ir.Binary{Op: ir.OpLt, L: ts, R: &ir.RelativeTime{Bound: tr.Latest}, T: ir.Bool})
+	}
+	prog, err := b.compile(ir.And(conds...))
+	if err != nil {
+		return nil, err
+	}
+	return pipeline.NewFilterIterator(it, prog), nil
 }
 
 func (b *builder) compute(child pipeline.Iterator, assigns []ir.Assign) (pipeline.Iterator, error) {
