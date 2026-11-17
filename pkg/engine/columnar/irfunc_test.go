@@ -36,10 +36,6 @@ var notNative = map[string]string{
 	"reduce":    "takes a lambda",
 }
 
-// pendingNative lists the categories whose functions may still lack a
-// native implementation; those run through the bridge to the row engine.
-var pendingNative = map[string]bool{"collection": true}
-
 func strValue(s string) exec.Value { return exec.Value{Kind: vec.KindString, Bytes: []byte(s)} }
 func intValue(n int64) exec.Value  { return exec.Value{Kind: vec.KindInt, Int: n} }
 func fltValue(f float64) exec.Value {
@@ -638,9 +634,6 @@ func TestNativeFunctions(t *testing.T) {
 					t.Fatalf("listed as not native (%s) but has a builder", reason)
 				}
 				t.Skip(reason)
-			}
-			if !ok && pendingNative[f.Category] {
-				t.Skip("pending")
 			}
 			if !ok {
 				t.Fatal("no native implementation and not listed in notNative")
