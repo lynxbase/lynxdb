@@ -5,8 +5,7 @@
 // Anything else is refused with ErrUnsupported and a name of what it met.
 //
 // Values keep the executor's rules where the IR's differ: a comparison of a
-// number with a string is false and not a conversion, and nulls sort last in
-// either direction.
+// number with a string is false and not a conversion.
 package irplan
 
 import (
@@ -265,7 +264,7 @@ func (t *translator) order(keys []ir.SortKey, limit int64) error {
 		if !ok {
 			return unsupported("a sort by %s; compute it as a column first", k.Expr)
 		}
-		t.sort.By = append(t.sort.By, exec.Order{Column: ref.Name, Desc: k.Desc})
+		t.sort.By = append(t.sort.By, exec.Order{Column: ref.Name, Desc: k.Desc, NullsFirst: k.NullsFirst})
 	}
 
 	return nil
@@ -665,6 +664,10 @@ func (t *translator) expr(e ir.Expr) (*exec.Expr, error) {
 
 		return exec.Case(args...), nil
 	case *ir.Cast:
+		if e.X.Type().Kind == ir.KindTimestamp {
+			// A time is held as a count of nanoseconds, which a cast is not.
+			return nil, unsupported("a cast of the time %s", e.X)
+		}
 		a, err := t.expr(e.X)
 		if err != nil {
 			return nil, err
@@ -748,6 +751,22 @@ func (t *translator) call(c *ir.Call) (*exec.Expr, error) {
 		return exec.Bin(a, exec.Int(int64(width))), nil
 	case name == "substring":
 		return t.substring(c)
+	case name == "timestampdiff" && len(c.Args) == 3:
+		unit, _ := text(c.Args[0])
+		width, ok := diffUnits[unit]
+		if !ok {
+			return nil, refused
+		}
+		from, err := t.expr(c.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		to, err := t.expr(c.Args[2])
+		if err != nil {
+			return nil, err
+		}
+
+		return exec.Div(exec.Sub(to, from), exec.Int(int64(width))), nil
 	case name == "regexp_replace" && len(c.Args) == 3:
 		// A pattern without regular expression syntax is a plain string.
 		from, ok := text(c.Args[1])
@@ -836,6 +855,12 @@ func (t *translator) substring(c *ir.Call) (*exec.Expr, error) {
 	}
 
 	return exec.Substr(s, exec.Int(start), count), nil
+}
+
+// diffUnits holds the units of a difference of times that have one length.
+var diffUnits = map[string]time.Duration{
+	"microsecond": time.Microsecond, "millisecond": time.Millisecond, "second": time.Second,
+	"minute": time.Minute, "hour": time.Hour, "day": 24 * time.Hour, "week": 7 * 24 * time.Hour,
 }
 
 // bucketWidth returns the nanoseconds of n units for the units whose
@@ -1020,6 +1045,21 @@ func (t *translator) search(s *ir.Search) (*exec.Expr, error) {
 	return exec.And(out...), nil
 }
 
+// join returns the conjunction or disjunction of a and b as one node over
+// the terms of both, which lets the executor order all of them by cost.
+func join(op exec.Op, a, b *exec.Expr) *exec.Expr {
+	out := &exec.Expr{Op: op}
+	for _, e := range []*exec.Expr{a, b} {
+		if e.Op == op {
+			out.Args = append(out.Args, e.Args...)
+		} else {
+			out.Args = append(out.Args, e)
+		}
+	}
+
+	return out
+}
+
 // pred translates a condition; not asks for the rows where it is false.
 func (t *translator) pred(e ir.Expr, not bool) (*exec.Expr, error) {
 	switch e := e.(type) {
@@ -1039,10 +1079,10 @@ func (t *translator) pred(e ir.Expr, not bool) (*exec.Expr, error) {
 				return nil, err
 			}
 			if (e.Op == ir.OpAnd) != not {
-				return exec.And(a, b), nil
+				return join(exec.OpAnd, a, b), nil
 			}
 
-			return exec.Or(a, b), nil
+			return join(exec.OpOr, a, b), nil
 		}
 		if op, ok := opposite[e.Op]; ok && not {
 			return t.expr(&ir.Binary{Op: op, L: e.L, R: e.R, T: e.T})

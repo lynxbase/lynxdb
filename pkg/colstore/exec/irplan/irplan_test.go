@@ -155,6 +155,7 @@ func TestQueries(t *testing.T) {
 			"bad B 12 Disk 503; bad A 17 disk 500"},
 		{"math", `source=logs | eval r = round(dur * 3, 1), f = floor(dur), c = ceil(dur), p = pow(status - 500, 2), q = sqrt(abs(status - 504)) | fields r, f, c, p, q | sort - r | head 1`,
 			"7.5 2 3 9 1"},
+		{"difference of times", `source=logs | stats min(_time) as first, max(_time) as last by host | eval span = timestampdiff(MINUTE, first, last) | fields host, span | sort host`, "a 370; b 60"},
 		{"where after stats", `source=logs | stats count() as n by host | where n > 2 | sort host`, "3 a"},
 		{"eval after stats", `source=logs | stats sum(status) as total, count() as n | eval mean = total / n`, "1807 5 361"},
 		{"buckets of a number", `source=logs | stats count() as n by span(status, 100) as code | sort code`, "2 200; 1 400; 2 500"},
@@ -227,6 +228,7 @@ func TestRefusedPlans(t *testing.T) {
 		`source=logs | where md5(msg) = 'is' | stats count()`:                                 "the function md5",
 		`source=logs | stats count() as n by host | sort - n | fields host`:                   "above a sort or a limit",
 		`source=logs | fields - host | stats count()`:                                         "before the columns are named",
+		`source=logs | eval ns = cast(_time as long) | fields ns`:                             "a cast of the time _time",
 		`source=logs | fields h* | head 1`:                                                    "the column pattern h*",
 	} {
 		_, err := compile(text)
