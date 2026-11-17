@@ -2,6 +2,7 @@ package shred
 
 import (
 	"cmp"
+	"math/bits"
 	"slices"
 
 	"github.com/lynxbase/lynxdb/pkg/mem"
@@ -14,6 +15,8 @@ type sortScratch struct {
 
 	perm   []uint32
 	inv    []uint32
+	packed []uint64
+	spare  []uint64
 	ranks  [][]uint32
 	slot   []uint32
 	order  []uint32
@@ -118,21 +121,23 @@ func (b *Batch) sortBy(buckets []int64, keys []string) {
 		s.perm = append(s.perm, uint32(i))
 	}
 	times := b.Times
-	slices.SortFunc(s.perm, func(x, y uint32) int {
-		if buckets != nil && buckets[x] != buckets[y] {
-			return cmp.Compare(buckets[x], buckets[y])
-		}
-		for _, r := range ranks {
-			if r[x] != r[y] {
-				return cmp.Compare(r[x], r[y])
+	if !b.sortPacked(buckets, ranks) {
+		slices.SortFunc(s.perm, func(x, y uint32) int {
+			if buckets != nil && buckets[x] != buckets[y] {
+				return cmp.Compare(buckets[x], buckets[y])
 			}
-		}
-		if times[x] != times[y] {
-			return cmp.Compare(times[x], times[y])
-		}
+			for _, r := range ranks {
+				if r[x] != r[y] {
+					return cmp.Compare(r[x], r[y])
+				}
+			}
+			if times[x] != times[y] {
+				return cmp.Compare(times[x], times[y])
+			}
 
-		return cmp.Compare(x, y)
-	})
+			return cmp.Compare(x, y)
+		})
+	}
 	sorted := true
 	for i, p := range s.perm {
 		if p != uint32(i) {
@@ -145,6 +150,98 @@ func (b *Batch) sortBy(buckets []int64, keys []string) {
 		return
 	}
 	b.permute()
+}
+
+// digitBits is the width of the digits that sortPacked sorts by.
+const digitBits = 11
+
+// sortPacked orders perm, which lists the rows as they are, by the bucket
+// and the ranks of a row packed into one number, sorted digit by digit,
+// then by time. It reports false, with perm untouched, when a number does
+// not hold them.
+func (b *Batch) sortPacked(buckets []int64, ranks [][]uint32) bool {
+	s := b.sort
+	n := b.Rows
+	var widths [8]uint
+	if len(ranks) > len(widths) {
+		return false
+	}
+	total, lo := uint(0), int64(0)
+	if buckets != nil {
+		hi := buckets[0]
+		lo = hi
+		for _, v := range buckets {
+			lo, hi = min(lo, v), max(hi, v)
+		}
+		total = uint(bits.Len64(uint64(hi) - uint64(lo)))
+	}
+	for k, r := range ranks {
+		widths[k] = uint(bits.Len32(slices.Max(r)))
+		total += widths[k]
+	}
+	if total > 64 {
+		return false
+	}
+	if cap(s.packed) < n {
+		s.packed, s.spare = make([]uint64, n), make([]uint64, n)
+	}
+	if cap(s.inv) < n {
+		s.inv = make([]uint32, n)
+	}
+	keys, perm := s.packed[:n], s.perm
+	for i := range keys {
+		key := uint64(0)
+		if buckets != nil {
+			key = uint64(buckets[i]) - uint64(lo)
+		}
+		for k, r := range ranks {
+			key = key<<widths[k] | uint64(r[i])
+		}
+		keys[i] = key
+	}
+	// Each pass keeps the order of rows whose digits are equal, so the
+	// last leaves rows of one number in the order they came in.
+	otherKeys, otherPerm := s.spare[:n], s.inv[:n]
+	var counts [1 << digitBits]uint32
+	for shift := uint(0); shift < total; shift += digitBits {
+		clear(counts[:])
+		for _, key := range keys {
+			counts[key>>shift&(1<<digitBits-1)]++
+		}
+		if counts[keys[0]>>shift&(1<<digitBits-1)] == uint32(n) {
+			continue
+		}
+		at := uint32(0)
+		for d, c := range counts {
+			counts[d], at = at, at+c
+		}
+		for i, key := range keys {
+			d := key >> shift & (1<<digitBits - 1)
+			otherKeys[counts[d]], otherPerm[counts[d]] = key, perm[i]
+			counts[d]++
+		}
+		keys, otherKeys, perm, otherPerm = otherKeys, keys, otherPerm, perm
+	}
+	s.packed, s.spare, s.perm, s.inv = keys, otherKeys, perm, otherPerm
+	times := b.Times
+	for from := 0; from < n; {
+		to, ordered := from+1, true
+		for ; to < n && keys[to] == keys[from]; to++ {
+			ordered = ordered && times[perm[to]] >= times[perm[to-1]]
+		}
+		if !ordered {
+			slices.SortFunc(perm[from:to], func(x, y uint32) int {
+				if times[x] != times[y] {
+					return cmp.Compare(times[x], times[y])
+				}
+
+				return cmp.Compare(x, y)
+			})
+		}
+		from = to
+	}
+
+	return true
 }
 
 // rank assigns every row a number that orders it by its value at path;

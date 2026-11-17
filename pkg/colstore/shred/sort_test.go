@@ -217,3 +217,60 @@ func TestSortByTimeBucketsGroupsRowsByBucketThenKey(t *testing.T) {
 		t.Fatalf("an empty batch has buckets %v", got)
 	}
 }
+
+// TestSortByOrdersKeysOfManyValues requires the order of the reference for
+// keys with about as many values as rows: few enough of them that their
+// ranks pack into one number of several digits, and too many for that.
+func TestSortByOrdersKeysOfManyValues(t *testing.T) {
+	for _, nkeys := range []int{1, 3, 7} {
+		t.Run(fmt.Sprintf("%d keys", nkeys), func(t *testing.T) {
+			r := rand.New(rand.NewSource(int64(nkeys)))
+			b := NewBatch(Options{})
+			var keys []string
+			for k := 0; k < nkeys; k++ {
+				keys = append(keys, fmt.Sprintf("k%d", k))
+			}
+			const rows = 6000
+			for i := 0; i < rows; i++ {
+				doc := fmt.Sprintf(`{"seq":%d`, i)
+				for k, key := range keys {
+					// The first key repeats, so that the later ones and
+					// the time decide among its rows.
+					span := rows
+					if k == 0 {
+						span = 40
+					}
+					if r.Intn(20) != 0 {
+						doc += fmt.Sprintf(`,"%s":"v%05d"`, key, r.Intn(span))
+					}
+				}
+				if err := b.AddJSON([]byte(doc+"}"), int64(r.Intn(8))); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := rowsOf(t, b)
+			times := append([]int64(nil), b.Times...)
+			index := make([]int, len(want))
+			for i := range index {
+				index[i] = i
+			}
+			sort.SliceStable(index, func(x, y int) bool {
+				a, c := index[x], index[y]
+				for _, k := range keys {
+					if d := compareKey(want[a], want[c], k); d != 0 {
+						return d < 0
+					}
+				}
+
+				return times[a] < times[c]
+			})
+			b.SortBy(keys)
+			got := rowsOf(t, b)
+			for at, from := range index {
+				if !reflect.DeepEqual(got[at], want[from]) || b.Times[at] != times[from] {
+					t.Fatalf("row %d after sorting\n got  %v @%d\n want %v @%d", at, got[at], b.Times[at], want[from], times[from])
+				}
+			}
+		})
+	}
+}
