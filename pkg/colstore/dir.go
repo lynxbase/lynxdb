@@ -75,7 +75,8 @@ type PartMeta struct {
 }
 
 // OpenDir opens the table stored in path, creating the directory when it
-// does not exist and removing files no manifest record names.
+// does not exist and removing files no manifest record names. An open that
+// fails with ErrManifest leaves every file as it found it.
 func OpenDir(path string) (*Dir, error) {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		return nil, err
@@ -83,7 +84,12 @@ func OpenDir(path string) (*Dir, error) {
 	d := &Dir{path: path, table: NewTable(), live: map[*Handle]*partFileRef{}}
 	// Run 0 is left to parts without a run.
 	d.nextRun.Store(1)
-	names, records, err := d.replay()
+	file := filepath.Join(path, manifestName)
+	log, err := os.ReadFile(file)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	names, records, valid, err := parseManifest(log)
 	if err != nil {
 		return nil, err
 	}
@@ -93,6 +99,7 @@ func OpenDir(path string) (*Dir, error) {
 	if err != nil {
 		return nil, err
 	}
+	var unnamed []string
 	for _, e := range entries {
 		name := e.Name()
 		if !strings.HasSuffix(name, partSuffix) && !strings.HasSuffix(name, tmpSuffix) {
@@ -102,9 +109,7 @@ func OpenDir(path string) (*Dir, error) {
 			d.nextID.Store(id + 1)
 		}
 		if _, ok := names[name]; !ok {
-			if err := os.Remove(filepath.Join(path, name)); err != nil {
-				return nil, err
-			}
+			unnamed = append(unnamed, name)
 		}
 	}
 
@@ -126,11 +131,22 @@ func OpenDir(path string) (*Dir, error) {
 	if err := d.table.Apply(handles, nil); err != nil {
 		return nil, err
 	}
-	if d.log, err = os.OpenFile(filepath.Join(path, manifestName), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644); err != nil {
+	// Files are cut and removed only once every live part has opened: when
+	// one is missing, an unnamed file may hold the only copy of its rows.
+	if err := tidy(path, unnamed, valid, len(log)); err != nil {
+		d.table.Close()
+
+		return nil, err
+	}
+	if d.log, err = os.OpenFile(file, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644); err != nil {
+		d.table.Close()
+
 		return nil, err
 	}
 	if d.records > manifestRewriteAfter {
 		if err := d.rewrite(); err != nil {
+			d.table.Close()
+
 			return nil, err
 		}
 	}
@@ -138,32 +154,28 @@ func OpenDir(path string) (*Dir, error) {
 	return d, nil
 }
 
+// tidy cuts the manifest to the size of its whole records and removes the
+// files it does not name.
+func tidy(path string, unnamed []string, valid, size int) error {
+	if valid < size {
+		if err := os.Truncate(filepath.Join(path, manifestName), int64(valid)); err != nil {
+			return err
+		}
+	}
+	for _, name := range unnamed {
+		if err := os.Remove(filepath.Join(path, name)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func partID(name string) (uint64, bool) {
 	name = strings.TrimSuffix(strings.TrimSuffix(name, tmpSuffix), partSuffix)
 	id, err := strconv.ParseUint(name, 16, 64)
 
 	return id, err == nil
-}
-
-// replay returns the live part names the manifest describes and the number
-// of records it holds, cutting off a record torn by a crash.
-func (d *Dir) replay() (names map[string]PartMeta, records int, err error) {
-	file := filepath.Join(d.path, manifestName)
-	data, err := os.ReadFile(file)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return nil, 0, err
-	}
-	names, records, valid, err := parseManifest(data)
-	if err != nil {
-		return nil, 0, err
-	}
-	if valid < len(data) {
-		if err := os.Truncate(file, int64(valid)); err != nil {
-			return nil, 0, err
-		}
-	}
-
-	return names, records, nil
 }
 
 // parseManifest returns the live part names the records of data describe,
