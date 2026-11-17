@@ -76,12 +76,6 @@ func TestEventStatsSpillTransition(t *testing.T) {
 	if ei.spilledRows == 0 {
 		t.Error("expected spilledRows > 0")
 	}
-
-	// ResourceStats should report spill.
-	rs := ei.ResourceStats()
-	if rs.SpilledRows == 0 {
-		t.Error("ResourceStats.SpilledRows should be > 0")
-	}
 }
 
 func TestEventStatsNoSpillSmallDataset(t *testing.T) {
@@ -284,8 +278,6 @@ func findEventStatsIterator(iter Iterator) *EventStatsIterator {
 	switch it := iter.(type) {
 	case *EventStatsIterator:
 		return it
-	case *InstrumentedIterator:
-		return findEventStatsIterator(it.inner)
 	default:
 		return nil
 	}

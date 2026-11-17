@@ -34,10 +34,6 @@ type ReverseIterator struct {
 	spillBytesTotal int64
 }
 
-func NewReverseIterator(child Iterator, batchSize int) *ReverseIterator {
-	return NewReverseIteratorWithSpill(child, batchSize, memgov.NopAccount(), nil)
-}
-
 func NewReverseIteratorWithBudget(child Iterator, batchSize int, acct memgov.MemoryAccount) *ReverseIterator {
 	return NewReverseIteratorWithSpill(child, batchSize, acct, nil)
 }
@@ -194,15 +190,6 @@ func (r *ReverseIterator) loadNextChunk() error {
 func reverseRows(rows []map[string]event.Value) {
 	for i, j := 0, len(rows)-1; i < j; i, j = i+1, j-1 {
 		rows[i], rows[j] = rows[j], rows[i]
-	}
-}
-
-// ResourceStats implements ResourceReporter for per-operator spill metrics.
-func (r *ReverseIterator) ResourceStats() OperatorResourceStats {
-	return OperatorResourceStats{
-		PeakBytes:   r.acct.MaxUsed(),
-		SpilledRows: r.spilledRows,
-		SpillBytes:  r.spillBytesTotal,
 	}
 }
 

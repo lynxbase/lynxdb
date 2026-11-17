@@ -437,14 +437,6 @@ func (a *AggregateIterator) estimateGroupBytes(row map[string]event.Value) int64
 	return base
 }
 
-// ResourceStats implements ResourceReporter for per-operator spill metrics.
-func (a *AggregateIterator) ResourceStats() OperatorResourceStats {
-	return OperatorResourceStats{
-		PeakBytes:   a.acct.MaxUsed(),
-		SpilledRows: a.spilledRows,
-	}
-}
-
 // spillToDisk writes current aggregation state to spill files and resets in-memory groups.
 // When a SpillManager is available, groups are distributed across hash-partitioned
 // files so that the merge phase can process one partition at a time, bounding peak

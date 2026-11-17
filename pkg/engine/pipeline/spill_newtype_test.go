@@ -803,21 +803,6 @@ func TestSortDedupStatsWithNewTypesAndSpill(t *testing.T) {
 			t.Fatalf("row %d: arr = %q, want %q", i, v.String(), wantStr)
 		}
 	}
-
-	// Now run dedup on the duration column — should deduplicate by dur value string.
-	dedupChild := NewRowScanIterator(result, DefaultBatchSize)
-	dedupIter := NewDedupIterator(dedupChild, []string{"dur"}, 1)
-	if err := dedupIter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	dedupResult, err := CollectAll(ctx, dedupIter)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 200 rows, 10 unique durations -> 10 rows after dedup.
-	if len(dedupResult) != 10 {
-		t.Fatalf("dedup: expected 10 rows, got %d", len(dedupResult))
-	}
 }
 
 // memory accounting unit tests

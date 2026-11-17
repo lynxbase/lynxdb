@@ -219,3 +219,13 @@ func (h *topNHeap) Pop() interface{} {
 
 	return item
 }
+
+// cloneRow creates a shallow copy of a row.
+func cloneRow(row map[string]event.Value) map[string]event.Value {
+	clone := make(map[string]event.Value, len(row))
+	for k, v := range row {
+		clone[k] = v
+	}
+
+	return clone
+}

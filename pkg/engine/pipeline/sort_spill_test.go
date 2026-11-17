@@ -1496,9 +1496,7 @@ func TestSortRowByRowAccumulationWithSpill(t *testing.T) {
 		}
 	}
 
-	// Verify spill occurred — ResourceStats should show spilled rows.
-	rs := iter.ResourceStats()
-	if rs.SpilledRows == 0 {
+	if iter.spilledRows == 0 {
 		t.Error("expected spilled rows > 0 with 50KB budget for 100×10KB rows")
 	}
 }

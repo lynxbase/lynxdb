@@ -168,23 +168,6 @@ func (e *EventStatsIterator) MemoryUsed() int64 {
 	return e.acct.Used()
 }
 
-// ResourceStats implements ResourceReporter for per-operator spill metrics.
-// Safe to call after Close() — spill metrics are persisted before cleanup.
-func (e *EventStatsIterator) ResourceStats() OperatorResourceStats {
-	spillBytes := e.spillBytesTotal
-	if e.spillPath != "" {
-		if info, err := os.Stat(e.spillPath); err == nil {
-			spillBytes = info.Size()
-		}
-	}
-
-	return OperatorResourceStats{
-		PeakBytes:   e.acct.MaxUsed(),
-		SpilledRows: e.spilledRows,
-		SpillBytes:  spillBytes,
-	}
-}
-
 // Schema delegates to the child iterator.
 func (e *EventStatsIterator) Schema() []FieldInfo { return e.child.Schema() }
 
@@ -469,10 +452,6 @@ func (e *EventStatsIterator) extractWeightValue(agg AggFunc, row map[string]even
 		return event.NullValue()
 	}
 	return event.NullValue()
-}
-
-func updateAggState(s *aggState, fn string, val event.Value) {
-	updateAggStateWithOrder(s, fn, val, event.NullValue(), event.NullValue())
 }
 
 func updateAggStateWithOrder(s *aggState, fn string, val, orderVal, weightVal event.Value) {

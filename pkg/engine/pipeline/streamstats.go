@@ -123,11 +123,6 @@ func (r *ringBuffer) items() []map[string]event.Value {
 	return result
 }
 
-// NewStreamStatsIterator creates a streaming rolling window aggregation.
-func NewStreamStatsIterator(child Iterator, aggs []AggFunc, groupBy []string, window int, current bool) *StreamStatsIterator {
-	return NewStreamStatsIteratorWithDuration(child, aggs, groupBy, window, 0, current)
-}
-
 // NewStreamStatsIteratorWithDuration creates a streaming rolling window
 // aggregation with either a row-count window or a _time-based duration window.
 func NewStreamStatsIteratorWithDuration(
@@ -157,17 +152,6 @@ func NewStreamStatsIteratorWithDuration(
 		running:    make(map[string][]*runningAggState),
 		storeRows:  timeWindow > 0 || streamStatsNeedsRows(aggs, window),
 	}
-}
-
-// NewStreamStatsIteratorWithBudget creates a streaming rolling window aggregation
-// with memory budget tracking. The account tracks ring buffer allocations for
-// observability — streamstats has no spill support, so tracking is best-effort.
-func NewStreamStatsIteratorWithBudget(child Iterator, aggs []AggFunc, groupBy []string,
-	window int, current bool, acct memgov.MemoryAccount) *StreamStatsIterator {
-	s := NewStreamStatsIterator(child, aggs, groupBy, window, current)
-	s.acct = memgov.EnsureAccount(acct)
-
-	return s
 }
 
 func (s *StreamStatsIterator) Init(ctx context.Context) error {

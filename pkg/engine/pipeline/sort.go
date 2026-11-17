@@ -416,14 +416,6 @@ func (s *SortIterator) sortColumnar(ctx context.Context) error {
 	return nil
 }
 
-// ResourceStats implements ResourceReporter for per-operator spill metrics.
-func (s *SortIterator) ResourceStats() OperatorResourceStats {
-	return OperatorResourceStats{
-		PeakBytes:   s.acct.MaxUsed(),
-		SpilledRows: s.spilledRows,
-	}
-}
-
 // growOrSpill attempts to reserve rowBytes in the memory budget. If the budget
 // is exceeded, it spills accumulated rows to free capacity and retries. If the
 // row still cannot fit after spilling (e.g., a single row exceeds the entire

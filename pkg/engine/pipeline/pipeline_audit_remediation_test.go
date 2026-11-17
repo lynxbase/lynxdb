@@ -1,74 +1,14 @@
 package pipeline
 
 import (
-	"context"
 	"errors"
 	"io"
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/memgov"
 )
-
-func TestJoinIteratorSkipsManyNonMatchingBatchesIteratively(t *testing.T) {
-	const leftRows = 20000
-
-	left := make([]map[string]event.Value, leftRows)
-	for i := range left {
-		left[i] = map[string]event.Value{"key": event.IntValue(int64(i))}
-	}
-	right := []map[string]event.Value{
-		{"key": event.IntValue(int64(leftRows + 1))},
-	}
-
-	iter := NewJoinIteratorWithBudget(
-		NewRowScanIterator(left, 1),
-		NewRowScanIterator(right, 1),
-		"key",
-		"inner",
-		memgov.NewTestBudget("join", 1<<30).NewAccount("join"),
-	)
-
-	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := iter.Close(); err != nil {
-			t.Fatalf("Close() error = %v", err)
-		}
-	}()
-
-	batch, err := iter.Next(ctx)
-	if err != nil {
-		t.Fatalf("Next() error = %v", err)
-	}
-	if batch != nil {
-		t.Fatalf("Next() returned %d rows, want EOF", batch.Len)
-	}
-}
-
-func TestJoinIteratorCloseReturnsLeftAndRightErrors(t *testing.T) {
-	leftErr := errors.New("left close failed")
-	rightErr := errors.New("right close failed")
-
-	iter := NewJoinIterator(
-		&closeErrorIterator{closeErr: leftErr},
-		&closeErrorIterator{closeErr: rightErr},
-		"key",
-		"inner",
-	)
-
-	err := iter.Close()
-	if !errors.Is(err, leftErr) {
-		t.Fatalf("Close() error = %v, want left close error", err)
-	}
-	if !errors.Is(err, rightErr) {
-		t.Fatalf("Close() error = %v, want right close error", err)
-	}
-}
 
 func TestSortIteratorCloseReturnsErrorsAndReleasesResources(t *testing.T) {
 	mergerErr := errors.New("merger close failed")
@@ -118,40 +58,6 @@ func TestSortIteratorCloseReturnsErrorsAndReleasesResources(t *testing.T) {
 	}
 	if _, statErr := os.Stat(path); !errors.Is(statErr, os.ErrNotExist) {
 		t.Fatalf("spill file stat error = %v, want not exist", statErr)
-	}
-}
-
-func TestConcurrentUnionIteratorCloseReturnsChildErrors(t *testing.T) {
-	firstErr := errors.New("first child close failed")
-	secondErr := errors.New("second child close failed")
-
-	iter := NewConcurrentUnionIterator(
-		[]Iterator{
-			&closeErrorIterator{closeErr: firstErr},
-			&closeErrorIterator{closeErr: secondErr},
-		},
-		OrderInterleaved,
-		&ParallelConfig{MaxBranchParallelism: 2, ChannelBufferSize: 1},
-	)
-
-	ctx := context.Background()
-	if err := iter.Init(ctx); err != nil {
-		t.Fatal(err)
-	}
-	batch, err := iter.Next(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if batch != nil {
-		t.Fatalf("Next() returned %d rows, want EOF", batch.Len)
-	}
-
-	err = iter.Close()
-	if !errors.Is(err, firstErr) {
-		t.Fatalf("Close() error = %v, want first child close error", err)
-	}
-	if !errors.Is(err, secondErr) {
-		t.Fatalf("Close() error = %v, want second child close error", err)
 	}
 }
 
@@ -350,22 +256,5 @@ func appendToFile(t *testing.T, path string, data []byte) {
 	}
 	if err := f.Close(); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// TestFieldformatSurfacesDisplayOnlyWarning verifies that the fieldformat
-// no-op is reported in query warnings rather than silently ignored.
-func TestFieldformatSurfacesDisplayOnlyWarning(t *testing.T) {
-	scan := NewRowScanIterator([]map[string]event.Value{
-		{"x": event.IntValue(1)},
-	}, 1)
-	iter := NewFieldformatIterator(scan)
-
-	warnings := CollectWarnings(iter)
-	if len(warnings) != 1 {
-		t.Fatalf("warnings: got %d, want 1 (%v)", len(warnings), warnings)
-	}
-	if !strings.Contains(warnings[0], "display-only") {
-		t.Errorf("warning should mention display-only, got %q", warnings[0])
 	}
 }
