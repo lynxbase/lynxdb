@@ -25,19 +25,22 @@ func AppendEvent(dst []byte, ev *event.Event) []byte {
 		dst = appendString(dst, k)
 		dst = append(dst, ':')
 	}
+	written := map[string]bool{}
 	if !ev.Time.IsZero() {
 		key("_time")
 		dst = appendString(dst, ev.Time.UTC().Format(time.RFC3339Nano))
+		written["_time"] = true
 	}
 	for _, f := range [...]struct{ k, v string }{{"_raw", ev.Raw}, {"host", ev.Host}, {"source", ev.Source}, {"sourcetype", ev.SourceType}} {
 		if f.v != "" {
 			key(f.k)
 			dst = appendString(dst, f.v)
+			written[f.k] = true
 		}
 	}
 	names := make([]string, 0, len(ev.Fields))
 	for k, v := range ev.Fields {
-		if !v.IsNull() && !reserved(k) {
+		if !v.IsNull() && !written[k] {
 			names = append(names, k)
 		}
 	}
@@ -48,15 +51,6 @@ func AppendEvent(dst []byte, ev *event.Event) []byte {
 	}
 
 	return append(dst, '}')
-}
-
-func reserved(k string) bool {
-	switch k {
-	case "_time", "_raw", "host", "source", "sourcetype", "index":
-		return true
-	}
-
-	return false
 }
 
 func appendValue(dst []byte, v event.Value) []byte {
