@@ -118,7 +118,7 @@ A merge writes its run, then commits one manifest record that adds the merged pa
 
 ## Retention
 
-Once a minute, and when the server starts, the database drops from every index the partitions that end at or before the current time minus `retention`. A partition goes as a whole, so an event stays until the whole span it falls in has passed the retention period: with the defaults (`retention: 7d`, `storage.partition: 24h`) an event is dropped between seven and eight days after its time, plus up to a minute. `retention: 0` keeps everything. Events older than the retention period that arrive late are dropped by the next pass.
+Once a minute, and when the server starts, the database drops from every index the partitions that end at or before the current time minus `retention`. A partition goes as a whole, so an event stays until the whole span it falls in has passed the retention period: with the defaults (`retention: 7d`, `storage.partition: 24h`) an event is dropped between seven and eight days after its time, plus up to a minute. `retention: 0s` keeps everything. Events older than the retention period that arrive late are dropped by the next pass. Each pass logs, at `WARN`, every index it removed events from, with the number of events and the cutoff.
 
 ## Recovery
 

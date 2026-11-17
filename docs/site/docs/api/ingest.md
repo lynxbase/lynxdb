@@ -22,6 +22,7 @@ Every index keeps its events in a columnar store of its own. An index comes into
 - **Time.** An event's time is the value of the first of `storage.time_fields` (`_time`, `timestamp`, `@timestamp`, `time`, `ts`) that it holds. An event without one gets the time it arrived.
 - **Text.** A line that is not a JSON object is kept as an event holding the text in `_raw`. A JSON event has no `_raw`.
 - **Fields.** The members of a nested object are read as columns named by their path, such as `order.id`. A query result holds only the fields an event has: a field the event lacks is absent, not `null`.
+- **Retention.** Events whose own time is older than `retention` (7 days by default) are removed, partition by partition, within about a minute of arriving or when the server starts. Each removal is logged at `WARN` with the index, the event count and the cutoff. `retention: 0s` keeps everything.
 - **Visibility.** Ingested events are written within `storage.flush_interval` (one second by default). The server writes the pending events before it runs a query, so a query sees every event whose ingest request has been answered. The Elasticsearch bulk endpoints, and Splunk HEC requests that carry an acknowledgement channel, make the events durable before they answer.
 
 Index names hold letters, digits, `.`, `-` and `_`, do not start with `.`, and are at most 255 bytes. Any other name answers `400 VALIDATION_ERROR`.
@@ -65,7 +66,13 @@ curl -s localhost:3100/api/v1/query \
 
 `accepted` counts the lines that are not blank, less those the store rejected; `failed` counts the rejected ones. Blank lines are skipped.
 
-A body over `ingest.max_body_size` answers `413 INVALID_REQUEST` and stores nothing.
+`POST /ingest` and `POST /ingest/raw` are bounded by `ingest.max_body_size` alone, as sent and after `gzip`, `zstd` or `snappy` decoding. A body over it stores nothing and answers `413`, naming the setting:
+
+```json
+{"error": {"type": "request_body_too_large", "reason": "compressed body exceeds limit 4096 set by ingest.max_body_size"}, "status": 413}
+```
+
+A body sent without `Content-Length` that grows past the limit answers `413 INVALID_REQUEST` instead.
 
 ## POST /ingest/raw
 
@@ -187,8 +194,8 @@ curl -s localhost:3100/api/v1/query \
 | 400 | | The `Content-Encoding` is not `gzip`, `zstd` or `snappy`: `{"error": {"type": "invalid_request", ...}, "status": 400}` |
 | 401 | `AUTH_REQUIRED`, `INVALID_TOKEN` | Missing or wrong credentials |
 | 403 | `FORBIDDEN` | The key lacks `ingest` scope |
-| 413 | `INVALID_REQUEST` | The body of `POST /ingest` is over `ingest.max_body_size` |
-| 413 | | The body is over the compressed or decompressed size limit: `{"error": {"type": "request_body_too_large", ...}, "status": 413}` |
+| 413 | `INVALID_REQUEST` | The body of `POST /ingest`, sent without `Content-Length`, grows past `ingest.max_body_size` |
+| 413 | | The body is over its size limit: `{"error": {"type": "request_body_too_large", ...}, "status": 413}`, with a `reason` that names the setting |
 | 429 | `TOO_MANY_REQUESTS` | The per-IP rate limit (`http.rate_limit`) was hit |
 | 503 | `SHUTTING_DOWN` | The server is stopping; retry after `Retry-After` |
 | 500 | `INTERNAL_ERROR` | The events could not be stored |

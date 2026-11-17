@@ -24,13 +24,13 @@ See [Ingest API](../api/ingest.md) and [Compatibility API](../api/compatibility.
 
 | Key | Flag | Env var | Default | Description |
 |-----|------|---------|---------|-------------|
-| `ingest.max_body_size` | none | `LYNXDB_INGEST_MAX_BODY_SIZE` | `100mb` | Maximum request body on the API port. Minimum `1kb`. |
-| `ingest.limits.max_compressed_body_bytes` | `--ingest-max-compressed-body-bytes` | `LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES` | `32mb` | Maximum body bytes on the wire, compressed or not. Requests over it get `413`. |
-| `ingest.limits.max_decompressed_body_bytes` | `--ingest-max-decompressed-body-bytes` | `LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES` | `256mb` | Maximum body after `gzip`, `zstd` or `snappy` decoding. Must be at least the compressed limit. |
+| `ingest.max_body_size` | none | `LYNXDB_INGEST_MAX_BODY_SIZE` | `100mb` | Maximum request body on the API port, as sent. For `POST /api/v1/ingest` and `/api/v1/ingest/raw` it is the only limit, as sent and after decoding. Minimum `1kb`. |
+| `ingest.limits.max_compressed_body_bytes` | `--ingest-max-compressed-body-bytes` | `LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES` | `32mb` | Maximum body bytes on the wire, compressed or not, on the Elasticsearch, Splunk HEC and OTLP routes. Requests over it get `413`. |
+| `ingest.limits.max_decompressed_body_bytes` | `--ingest-max-decompressed-body-bytes` | `LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES` | `256mb` | Maximum body after `gzip`, `zstd` or `snappy` decoding on the same routes. Must be at least the compressed limit. |
 | `ingest.max_line_bytes` | none | `LYNXDB_INGEST_MAX_LINE_BYTES` | `1048576` | Longest single line of a Splunk HEC or Elasticsearch bulk body. Minimum `1024`. |
 | `ingest.max_batch_size` | none | `LYNXDB_INGEST_MAX_BATCH_SIZE` | `1000` | Events per internal batch while a Splunk HEC request is read. It does not cap the events in a request. |
 
-Both body limits apply to every request on the API port, so with the defaults the effective wire limit is 32 MB. Raise `max_compressed_body_bytes` together with `max_body_size` to accept larger uncompressed bodies. The body limits need a restart; `max_line_bytes` and `max_batch_size` take effect on reload.
+`POST /api/v1/ingest` and `/api/v1/ingest/raw` are bounded by `ingest.max_body_size` alone, compressed or not. The Elasticsearch, Splunk HEC and OTLP routes are bounded by the two `ingest.limits` settings, and by `max_body_size` as sent, so with the defaults their wire limit is 32 MB. A `413` names the setting that applies, for example `compressed body exceeds limit 33554432 set by ingest.limits.max_compressed_body_bytes`. The body limits need a restart; `max_line_bytes` and `max_batch_size` take effect on reload.
 
 ## Parse Mode
 

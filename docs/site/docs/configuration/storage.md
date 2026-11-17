@@ -61,7 +61,13 @@ Smaller partitions let retention drop data in smaller steps; larger ones keep fe
 
 ## Retention
 
-Once a minute the server drops, in every index, the partitions that ended more than `retention` ago. An event is kept for at least `retention`, and goes with its partition once the whole partition is older than that, so with the defaults events live for at most about 8 days. `retention: 0` keeps everything.
+When it starts and once a minute after, the server drops, in every index, the partitions that ended more than `retention` ago. An event is kept for at least `retention` after its own time, and goes with its partition once the whole partition is older than that, so with the defaults events live for at most about 8 days. Events whose own time is already older than `retention` when they arrive are removed within about a minute. `retention: 0s` keeps everything.
+
+Each removal is logged at `WARN`, with the index, the number of events and the cutoff:
+
+```text
+level=WARN msg="retention removed events older than the cutoff" index=main events=8 cutoff=2026-11-10T16:03:47Z
+```
 
 ```yaml
 retention: "30d"

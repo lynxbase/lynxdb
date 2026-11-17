@@ -118,9 +118,9 @@ See [TLS & Authentication](../deployment/tls-auth.md) for setup and [`lynxdb aut
 
 | Setting | Default | Applies to |
 |---|---|---|
-| `ingest.max_body_size` | 100 MB | Every request body |
-| `ingest.limits.max_compressed_body_bytes` | 32 MB | Body as sent |
-| `ingest.limits.max_decompressed_body_bytes` | 256 MB | Body after `Content-Encoding` decoding |
+| `ingest.max_body_size` | 100 MB | Every request body as sent; for `POST /ingest` and `POST /ingest/raw` also after `Content-Encoding` decoding |
+| `ingest.limits.max_compressed_body_bytes` | 32 MB | Body as sent, on every route other than `POST /ingest` and `POST /ingest/raw` |
+| `ingest.limits.max_decompressed_body_bytes` | 256 MB | Body after `Content-Encoding` decoding, on the same routes |
 | `ingest.max_line_bytes` | 1 MiB | One line of an Elasticsearch bulk or Splunk HEC body |
 | `query.max_query_length` | 1 MiB | Query text |
 
@@ -130,7 +130,11 @@ A body over the compressed or decompressed limit, or with an encoding the server
 {"error": {"type": "invalid_request", "reason": "unsupported content encoding \"br\""}, "status": 400}
 ```
 
-The `type` is `request_body_too_large` with status `413` for a body over a limit.
+The `type` is `request_body_too_large` with status `413` for a body over a limit, and the `reason` names the setting that applies:
+
+```json
+{"error": {"type": "request_body_too_large", "reason": "compressed body exceeds limit 2048 set by ingest.limits.max_compressed_body_bytes"}, "status": 413}
+```
 
 ## Endpoint map
 

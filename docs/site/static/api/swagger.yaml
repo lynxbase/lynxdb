@@ -24,10 +24,12 @@ info:
 
     ## Bodies
 
-    `Content-Encoding: gzip`, `zstd` or `snappy` bodies are decoded on every route. A body over
-    `ingest.limits.max_compressed_body_bytes` or `ingest.limits.max_decompressed_body_bytes` answers `413`
-    with `{"error": {"type": "request_body_too_large", "reason"}, "status": 413}`; an unknown encoding answers
-    `400` with `type` `invalid_request`.
+    `Content-Encoding: gzip`, `zstd` or `snappy` bodies are decoded on every route. `POST /api/v1/ingest`
+    and `/api/v1/ingest/raw` are bounded by `ingest.max_body_size` alone, as sent and decoded; every other
+    route by `ingest.limits.max_compressed_body_bytes` as sent and `ingest.limits.max_decompressed_body_bytes`
+    decoded, and by `ingest.max_body_size` as sent. A body over its limit answers `413` with
+    `{"error": {"type": "request_body_too_large", "reason"}, "status": 413}`, the reason naming the setting;
+    an unknown encoding answers `400` with `type` `invalid_request`.
   contact:
     name: LynxDB
     url: https://lynxdb.io
@@ -1703,7 +1705,7 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     PayloadTooLarge:
-      description: The body is over `ingest.max_body_size` (`INVALID_REQUEST`) or over a body size limit
+      description: The body is over its size limit (`request_body_too_large`, the reason naming the setting), or a body sent without `Content-Length` grows past `ingest.max_body_size` (`INVALID_REQUEST`)
       content:
         application/json:
           schema:
