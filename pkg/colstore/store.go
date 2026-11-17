@@ -15,8 +15,8 @@ import (
 
 // StoreOptions configures a Store.
 type StoreOptions struct {
-	// SortKey orders the rows of every part; empty keeps arrival order,
-	// and parts are then never merged.
+	// SortKey orders the rows of every run, rows equal in it by their
+	// time; empty orders them by time alone.
 	SortKey []string
 	// TimeField is the path whose value becomes the row timestamp, and
 	// TimeFields further paths tried in their order for a row without one
@@ -166,7 +166,7 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	if opts.Part.ValueSlack == 0 {
 		opts.Part.ValueSlack = defaultValueSlack
 	}
-	opts.Part.Ordered, opts.Part.SortKey = len(opts.SortKey) > 0, opts.SortKey
+	opts.Part.Ordered, opts.Part.SortKey = true, opts.SortKey
 	dir, err := OpenDir(path)
 	if err != nil {
 		return nil, err
@@ -673,9 +673,6 @@ func pickMerges(parts []*Handle, fanIn int, compact bool) [][]sortedRun {
 // mergeOnce runs the merges that are due, side by side, and reports whether
 // there were any.
 func (s *Store) mergeOnce(compact bool) (bool, error) {
-	if !s.opts.Part.Ordered {
-		return false, nil
-	}
 	s.merging.Lock()
 	defer s.merging.Unlock()
 	snap := s.Table().Snapshot()
@@ -885,13 +882,10 @@ func (w *Writer) write() ([]*PartFile, error) {
 	}
 	s := w.s
 	w.buckets = w.buckets[:0]
-	switch {
-	case s.opts.Partition > 0:
+	if s.opts.Partition > 0 {
 		w.buckets = w.batch.SortByTimeBuckets(w.buckets, int64(s.opts.Partition), s.opts.SortKey)
-	case s.opts.Part.Ordered:
+	} else {
 		w.batch.SortBy(s.opts.SortKey)
-	}
-	if len(w.buckets) == 0 {
 		w.buckets = append(w.buckets, shred.TimeBucket{Rows: w.batch.Rows})
 	}
 	flushed := s.opts.Part

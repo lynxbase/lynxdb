@@ -2,6 +2,7 @@ package colstore
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"runtime"
 	"slices"
@@ -48,9 +49,7 @@ func (s *Store) writeRuns(batches []*shred.Batch) ([]*PartFile, error) {
 
 			return
 		}
-		if s.opts.Part.Ordered {
-			b.SortBy(s.opts.SortKey)
-		}
+		b.SortBy(s.opts.SortKey)
 		buckets[i] = []shred.TimeBucket{{Rows: b.Rows}}
 	})
 	segments := map[int64][]segment{}
@@ -91,18 +90,11 @@ func (s *Store) writeRuns(batches []*shred.Batch) ([]*PartFile, error) {
 
 // cutRun appends the parts of the run that the sorted segments of one
 // partition make: ranges of the sort key of similar size, so that no key is
-// in two parts. Without a sort key every segment is a run of its own.
+// in two parts, or ranges of time for rows that have no sort key.
 func (s *Store) cutRun(parts []runPart, partition int64, segs []segment) []runPart {
 	rows := 0
 	for _, sg := range segs {
 		rows += sg.to - sg.from
-	}
-	if !s.opts.Part.Ordered {
-		for _, sg := range segs {
-			parts = append(parts, runPart{partition, s.dir.NewRun(), []segment{sg}, sg.to - sg.from})
-		}
-
-		return parts
 	}
 	run := s.dir.NewRun()
 	n := min(4*runtime.GOMAXPROCS(0), rows/(runPartBlocks*s.opts.BlockRows))
@@ -110,11 +102,19 @@ func (s *Store) cutRun(parts []runPart, partition int64, segs []segment) []runPa
 		return append(parts, runPart{partition, run, segs, rows})
 	}
 	key := s.opts.SortKey
+	position := func(dst []byte, b *shred.Batch, row int) []byte {
+		if len(key) == 0 {
+			// The sign bit flipped orders times as bytes.
+			return binary.BigEndian.AppendUint64(dst, uint64(b.Times[row])^1<<63)
+		}
+
+		return part.AppendRowKey(dst, b, key, row)
+	}
 	var samples [][]byte
 	step := max(1, rows/(n*runSamples))
 	for _, sg := range segs {
 		for row := sg.from + step/2; row < sg.to; row += step {
-			samples = append(samples, part.AppendRowKey(nil, sg.b, key, row))
+			samples = append(samples, position(nil, sg.b, row))
 		}
 	}
 	slices.SortFunc(samples, bytes.Compare)
@@ -137,7 +137,7 @@ func (s *Store) cutRun(parts []runPart, partition int64, segs []segment) []runPa
 				// The first row at or above the cut; rows of one key stay
 				// in one part.
 				to = from[i] + sort.Search(sg.to-from[i], func(k int) bool {
-					scratch = part.AppendRowKey(scratch[:0], sg.b, key, from[i]+k)
+					scratch = position(scratch[:0], sg.b, from[i]+k)
 
 					return bytes.Compare(scratch, cuts[c]) >= 0
 				})
@@ -169,9 +169,7 @@ func (s *Store) writeRunPart(p *runPart) (*PartFile, error) {
 		for _, sg := range p.segs {
 			sg.b.CopyRows(local, sg.from, sg.to)
 		}
-		if s.opts.Part.Ordered {
-			local.SortBy(s.opts.SortKey)
-		}
+		local.SortBy(s.opts.SortKey)
 		src, from, to = local, 0, local.Rows
 	}
 	pf, err := s.dir.Create()

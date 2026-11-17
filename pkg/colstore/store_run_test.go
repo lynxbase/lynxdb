@@ -194,8 +194,8 @@ func TestAppendHoldsNoMoreThanItsBuffersAndARunBeingWritten(t *testing.T) {
 	}
 }
 
-func TestAppendWithoutASortKeyKeepsEveryBufferARunOfItsOwn(t *testing.T) {
-	store, err := OpenStore(t.TempDir(), StoreOptions{BufferBytes: 256 << 10, MergeFanIn: -1, FlushInterval: -1})
+func TestAppendWithoutASortKeyCutsARunByTime(t *testing.T) {
+	store, err := OpenStore(t.TempDir(), StoreOptions{TimeField: "ts", BufferBytes: 256 << 10, BlockRows: 64, MergeFanIn: -1, FlushInterval: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,17 +222,15 @@ func TestAppendWithoutASortKeyKeepsEveryBufferARunOfItsOwn(t *testing.T) {
 	}
 	snap := store.Table().Snapshot()
 	defer snap.Release()
+	checkTimeOrder(t, snap)
 	runs := map[uint64]int{}
+	most := 0
 	for _, h := range snap.Parts() {
 		runs[h.Run]++
-		if h.Ordered() {
-			t.Fatal("a part of a store without a sort key is ordered")
-		}
+		most = max(most, runs[h.Run])
 	}
-	for run, parts := range runs {
-		if parts != 1 {
-			t.Fatalf("run %d has %d parts", run, parts)
-		}
+	if most < 2 {
+		t.Fatalf("no run of %d is cut into parts", len(runs))
 	}
 }
 
