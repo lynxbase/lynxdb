@@ -66,6 +66,9 @@ type Dir struct {
 	table   *Table
 	nextID  atomic.Uint64
 	nextRun atomic.Uint64
+	// flushed and merged count the bytes of the part files committed
+	// without and with parts they replace.
+	flushed, merged atomic.Int64
 
 	mu      sync.Mutex
 	log     *os.File
@@ -523,6 +526,7 @@ type PartFile struct {
 	f    *os.File
 	name string
 	tmp  string
+	size int64
 }
 
 // Create starts a part file that is a run of its own. Any number of them can
@@ -539,7 +543,12 @@ func (d *Dir) Create() (*PartFile, error) {
 }
 
 // Write appends part bytes to the file.
-func (pf *PartFile) Write(p []byte) (int, error) { return pf.f.Write(p) }
+func (pf *PartFile) Write(p []byte) (int, error) {
+	n, err := pf.f.Write(p)
+	pf.size += int64(n)
+
+	return n, err
+}
 
 // Abort discards the file.
 func (pf *PartFile) Abort() {
@@ -633,9 +642,20 @@ func (d *Dir) Commit(add []*PartFile, remove []*Handle) (handles []*Handle, err 
 		return nil, d.failed
 	}
 	d.trim()
+	written := &d.flushed
+	if len(remove) > 0 {
+		written = &d.merged
+	}
+	for _, pf := range add {
+		written.Add(pf.size)
+	}
 
 	return handles, nil
 }
+
+// Written returns the bytes of the part files committed so far: those that
+// added rows and those that replaced other parts.
+func (d *Dir) Written() (flushed, merged int64) { return d.flushed.Load(), d.merged.Load() }
 
 // appendLog makes record the last of the manifest and durable. When it
 // cannot, it cuts the log back to the records before; when that fails as

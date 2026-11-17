@@ -262,6 +262,10 @@ func logStoreShape(t testing.TB, s *Store, when string) {
 		fmt.Fprintf(&shape, " tier %d: %d runs;", tier, len(runs[tier]))
 	}
 	t.Logf("%s: %d rows, %.1f MB in %d parts of %d partitions;%s", when, rows, float64(size)/1e6, len(snap.Parts()), len(partitions), shape.String())
+	if flushed, merged := s.dir.Written(); size > 0 {
+		t.Logf("%s: %.1f MB written by flushes and %.1f MB by merges, %.2f times the size of the table",
+			when, float64(flushed)/1e6, float64(merged)/1e6, float64(flushed+merged)/float64(size))
+	}
 }
 
 // TestJSONBenchStoreLayouts requires the benchmark queries to give one
