@@ -143,7 +143,7 @@ func TestRun(t *testing.T) {
 			`source=logs | eval r = rand() | where r >= 0 and status = 503 | fields - http, ts, _time, tags, r`,
 			"dur=2.5 host=b level=error msg=Disk failure status=503", false},
 		{"a count over time for each value of a field", `source=logs | where status >= 500 | timechart span=1h limit=1 count() as n by level`,
-			"_time=" + event.TimestampValue(testNow.Add(-3*time.Hour)).String() + " level=error n=1; _time=" + event.TimestampValue(testNow.Add(-time.Hour)).String() + " level=error n=1", true},
+			"_time=" + event.TimestampValue(testNow.Add(-3*time.Hour)).String() + " level=error n=1; _time=" + event.TimestampValue(testNow.Add(-time.Hour)).String() + " level=error n=1", false},
 		{"rows whose field is among the rows of another query", `source=logs | where host in [ source=hosts | where dc = 'east' | fields host ] | stats count() as n`, "n=3", true},
 		{"rows whose field is not among them", `source=logs | where host not in [ source=hosts | where dc = 'east' | fields host ] | stats count() as n`, "n=2", true},
 		{"rows whose field is among the rows of an aggregate", `source=logs | where status in [ source=logs | stats max(status) as top | fields top ] | fields msg`, "msg=Disk failure", true},
@@ -310,6 +310,44 @@ func TestValuesCollectedFromCounts(t *testing.T) {
 		`source=logs | stats avg(status) as mean, values(host) as hosts, avg(nope) as none by level | sort level`: `{"mean":501.5,"hosts":["a","b"],"none":null,"level":"error"} ` +
 			`{"mean":200,"hosts":["a"],"none":null,"level":"info"} {"mean":404,"hosts":["b"],"none":null,"level":"warn"}`,
 		`source=logs | stats values(level) as levels, list(host) as hosts by host | sort host`: `{"levels":["error","info"],"hosts":["a","a","a"],"host":"a"} {"levels":["error","warn"],"hosts":["b","b"],"host":"b"}`,
+	} {
+		compiled, err := query.Compile(text)
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		res, err := Run(context.Background(), compiled.Plan, tables, Options{Now: testNow})
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		rows := make([]string, res.Len())
+		for i := range rows {
+			rows[i] = string(res.AppendJSON(nil, i))
+		}
+		if got := strings.Join(rows, " "); got != want {
+			t.Errorf("%s\n got  %s\n want %s", text, got, want)
+		}
+	}
+}
+
+// TestSeriesOfAChart requires a chart over time for each value of a field
+// to give its series, the one for the values beyond its limit and the one
+// for events without the field, though the executor aggregates by the field
+// as it is stored and the labels are set on its rows.
+func TestSeriesOfAChart(t *testing.T) {
+	tables := testData(t)
+	for text, want := range map[string]string{
+		`source=logs | timechart span=1h count() by level`: `{"_time":"2023-11-14T18:00:00Z","level":"info","count()":1} {"_time":"2023-11-14T21:00:00Z","level":"warn","count()":1} ` +
+			`{"_time":"2023-11-14T22:00:00Z","level":"error","count()":1} {"_time":"2023-11-14T23:00:00Z","level":"info","count()":1} {"_time":"2023-11-15T00:00:00Z","level":"error","count()":1}`,
+		`source=logs | timechart span=1h limit=1 count() by level`: `{"_time":"2023-11-14T18:00:00Z","level":"OTHER","count()":1} {"_time":"2023-11-14T21:00:00Z","level":"OTHER","count()":1} ` +
+			`{"_time":"2023-11-14T22:00:00Z","level":"error","count()":1} {"_time":"2023-11-14T23:00:00Z","level":"OTHER","count()":1} {"_time":"2023-11-15T00:00:00Z","level":"error","count()":1}`,
+		"source=logs | timechart span=1d avg(dur) as mean by `http.path`": `{"_time":"2023-11-14T00:00:00Z","http.path":"/x","mean":2.5} ` +
+			`{"_time":"2023-11-14T00:00:00Z","http.path":"NULL","mean":0.5833333333333334} {"_time":"2023-11-15T00:00:00Z","http.path":"NULL","mean":1.5}`,
+		"source=logs | timechart span=1d max(status) as top by host": `{"_time":"2023-11-14T00:00:00Z","host":"a","top":200} ` +
+			`{"_time":"2023-11-14T00:00:00Z","host":"b","top":503} {"_time":"2023-11-15T00:00:00Z","host":"a","top":500}`,
+		// A label that differs from call to call is computed for every event.
+		`source=logs | eval host = if(rand() >= 0, host, "") | stats count() as n by host | sort host`: `{"n":3,"host":"a"} {"n":2,"host":"b"}`,
+		`source=logs | eval host = upper(host), level = substr(level, 1, 1) | stats count() as n, sum(status) as total by host, level | sort host, level`: `{"n":1,"total":500,"host":"A","level":"e"} ` +
+			`{"n":2,"total":400,"host":"A","level":"i"} {"n":1,"total":503,"host":"B","level":"e"} {"n":1,"total":404,"host":"B","level":"w"}`,
 	} {
 		compiled, err := query.Compile(text)
 		if err != nil {

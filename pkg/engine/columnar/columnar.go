@@ -80,7 +80,7 @@ func Run(ctx context.Context, plan *ir.Plan, tables Tables, opts Options) (*Resu
 	if err != nil {
 		return nil, err
 	}
-	if root, err = r.push(ir.Transform(root, collected), true); err != nil {
+	if root, err = r.push(ir.Transform(ir.Transform(root, collected), premapped), true); err != nil {
 		return nil, err
 	}
 	out := &Result{}
