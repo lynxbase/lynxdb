@@ -86,7 +86,8 @@ func OpenDir(path string) (*Dir, error) {
 	d.nextRun.Store(1)
 	file := filepath.Join(path, manifestName)
 	log, err := os.ReadFile(file)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
+	missing := errors.Is(err, os.ErrNotExist)
+	if err != nil && !missing {
 		return nil, err
 	}
 	names, records, valid, err := parseManifest(log)
@@ -109,6 +110,11 @@ func OpenDir(path string) (*Dir, error) {
 			d.nextID.Store(id + 1)
 		}
 		if _, ok := names[name]; !ok {
+			// A finished part is written after the manifest exists, so one
+			// without a manifest lost it and may be live.
+			if missing && strings.HasSuffix(name, partSuffix) {
+				return nil, fmt.Errorf("%w: part %s has no manifest", ErrManifest, name)
+			}
 			unnamed = append(unnamed, name)
 		}
 	}

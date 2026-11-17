@@ -437,3 +437,67 @@ func TestOpenDirKeepsEveryFileWhenANamedPartIsMissingOrDamaged(t *testing.T) {
 		t.Fatalf("%d rows, sum %d after the part came back; want %d rows, sum %d", got, gotSum, rows, sum)
 	}
 }
+
+func TestOpenDirRefusesPartsThatLostTheirManifest(t *testing.T) {
+	path, _, _, _ := crashedDir(t)
+	if err := os.Remove(filepath.Join(path, manifestName)); err != nil {
+		t.Fatal(err)
+	}
+	before := dirContents(t, path)
+	if d, err := OpenDir(path); !errors.Is(err, ErrManifest) {
+		if err == nil {
+			d.Close()
+		}
+		t.Fatalf("opening parts without a manifest: %v", err)
+	}
+	if after := dirContents(t, path); !sameContents(before, after) {
+		t.Fatalf("a refused open changed the directory: %v, was %v", fileNames(after), fileNames(before))
+	}
+
+	// A kill before the first record leaves an empty manifest beside the
+	// files of the change that was under way, and those go.
+	fresh := filepath.Join(t.TempDir(), "table")
+	d, err := OpenDir(fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed := writePartFile(t, d, 0, 10, "renamed")
+	if err := renamed.f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(renamed.tmp, filepath.Join(fresh, renamed.name)); err != nil {
+		t.Fatal(err)
+	}
+	written := writePartFile(t, d, 10, 10, "written")
+	if err := written.f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	killed := copyDir(t, fresh)
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if d, err = OpenDir(killed); err != nil {
+		t.Fatal(err)
+	}
+	if got := partFiles(t, killed); len(got) != 0 {
+		t.Fatalf("files of a change without a record survived: %v", got)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	// Temporary files alone need no manifest to be told apart from parts.
+	if err := os.WriteFile(filepath.Join(killed, written.name+tmpSuffix), []byte("half"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(killed, manifestName)); err != nil {
+		t.Fatal(err)
+	}
+	again, err := OpenDir(killed)
+	if err != nil {
+		t.Fatalf("opening temporary files without a manifest: %v", err)
+	}
+	defer again.Close()
+	if got := partFiles(t, killed); len(got) != 0 {
+		t.Fatalf("a temporary file survived: %v", got)
+	}
+}
