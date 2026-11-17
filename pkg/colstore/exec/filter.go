@@ -79,6 +79,10 @@ func compareFloat(op Op, a, b float64) bool {
 // decide settles a filter node from the block's column directory alone:
 // constant values, integer bounds and absent columns.
 func (w *worker) decide(p *pred) verdict {
+	// The block of a range scan comes without a column directory.
+	if w.shared != nil && p.kind >= predStrEq {
+		return some
+	}
 	switch p.kind {
 	case predConst:
 		if p.lit.Bool {
@@ -466,16 +470,22 @@ func (w *worker) evalNum(p *pred, depth int) (verdict, error) {
 }
 
 func (w *worker) evalIntColumn(p *pred, depth int) (verdict, error) {
-	ref := w.ref(p.path, vec.KindInt)
-	if ref == nil {
+	v := some
+	switch {
+	case p.none:
 		return none, nil
-	}
-	v := p.ints(ref.MinInt, ref.MaxInt)
-	if v == none || (v == all && ref.Count == w.rows) {
-		return v, nil
+	case w.shared == nil:
+		ref := w.ref(p.path, vec.KindInt)
+		if ref == nil {
+			return none, nil
+		}
+		v = p.ints(ref.MinInt, ref.MaxInt)
+		if v == none || (v == all && ref.Count == w.rows) {
+			return v, nil
+		}
 	}
 	c, err := w.column(p.path, vec.KindInt)
-	if err != nil {
+	if err != nil || c == nil {
 		return none, err
 	}
 	if c.Layout == vec.Const {

@@ -11,10 +11,12 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
-// Ordered aggregation serves a plan whose filter is an And of string
-// equalities on the leading sort key paths and whose group keys, followed by
-// the argument of a distinct count if there is one, are the rest of the sort
-// key. The rows of a key range then arrive ordered by group, one stream per
+// Ordered aggregation serves a plan whose filter holds string equalities on
+// the leading sort key paths and whose group keys, followed by the argument
+// of a distinct count if there is one, are the rest of the sort key. Whatever
+// else the filter asks is evaluated on the rows of each block, unless it is a
+// text match or another string equality: those rule out blocks through token
+// filters, which a scan in key order does not consult. The rows of a key range then arrive ordered by group, one stream per
 // sorted run, so a merge of the streams finishes one group after another and
 // holds no more than the group it is in.
 
@@ -45,6 +47,31 @@ type orderedPlan struct {
 	slotKey, slotCol []int16
 	floats           []bool
 	skipped          int64
+	// residual is what the filter asks beyond the key prefix, or nil.
+	residual *pred
+}
+
+// columns calls need for every column a filter node reads.
+func (p *pred) columns(need func(path int, kinds uint8), exprs func(e *sexpr)) {
+	switch p.kind {
+	case predStrEq, predStr:
+		need(p.path, kindBit(vec.KindString))
+	case predNum:
+		if p.onInt {
+			need(p.path, kindBit(vec.KindInt))
+		}
+		if p.onFloat {
+			need(p.path, kindBit(vec.KindFloat))
+		}
+	case predBool:
+		need(p.path, kindBit(vec.KindBool))
+	case predInts:
+		exprs(p.left)
+		exprs(p.right)
+	}
+	for _, a := range p.args {
+		a.columns(need, exprs)
+	}
 }
 
 // planOrdered returns how to aggregate in key order, or nil when the plan or
@@ -69,30 +96,54 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 		return -1
 	}
 	equal := map[string][]byte{}
+	source := map[string]*Expr{}
+	var rest []*Expr
 	for _, c := range conjuncts(filter, nil) {
 		col, lit, op, ok := columnLiteral(c)
 		if !ok || c.Op != OpEq || op != OpEq || lit.Kind != vec.KindString || (col.Kind != vec.KindString && col.Kind != KindAny) {
-			return nil
+			rest = append(rest, c)
+
+			continue
 		}
-		if old, dup := equal[col.Path]; dup && !bytes.Equal(old, lit.Bytes) {
-			return nil
+		if _, dup := equal[col.Path]; dup {
+			rest = append(rest, c)
+
+			continue
 		}
-		equal[col.Path] = lit.Bytes
+		equal[col.Path], source[col.Path] = lit.Bytes, c
 	}
-	prefix := len(equal)
-	if prefix > len(sortKey) {
+	prefix := 0
+	filterKey := colstore.KeyFilter{}
+	for prefix < len(sortKey) {
+		v, ok := equal[sortKey[prefix]]
+		if !ok {
+			break
+		}
+		filterKey.Paths, filterKey.Values = append(filterKey.Paths, sortKey[prefix]), append(filterKey.Values, v)
+		delete(source, sortKey[prefix])
+		prefix++
+	}
+	if prefix == 0 {
 		return nil
 	}
-	filterKey := colstore.KeyFilter{Paths: sortKey[:prefix]}
-	for _, path := range sortKey[:prefix] {
-		v, ok := equal[path]
-		if !ok {
+	for _, c := range source {
+		rest = append(rest, c)
+	}
+	var residual *pred
+	if len(rest) != 0 {
+		for _, c := range rest {
+			if c.Op == OpMatch || (c.Op == OpEq && len(c.Args) == 2 && c.Args[0] != nil && c.Args[1] != nil &&
+				(c.Args[0].Value.Kind == vec.KindString || c.Args[1].Value.Kind == vec.KindString)) {
+				return nil
+			}
+		}
+		var err error
+		if residual, err = q.pred(And(rest...), 0); err != nil {
 			return nil
 		}
-		filterKey.Values = append(filterKey.Values, v)
 	}
 
-	o := &orderedPlan{groups: len(ap.keys), keyOf: make([]int, len(ap.keys)), floats: make([]bool, len(ap.args))}
+	o := &orderedPlan{groups: len(ap.keys), keyOf: make([]int, len(ap.keys)), floats: make([]bool, len(ap.args)), residual: residual}
 	for i, k := range ap.keys {
 		if k.op != OpColumn || (k.kind != vec.KindString && k.kind != KindAny) {
 			return nil
@@ -143,6 +194,16 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 	for s := range o.slotKey {
 		o.slotKey[s], o.slotCol[s] = int16(position(q.paths[s/kindSlots])), -1
 	}
+	slot := func(path int, kinds uint8) {
+		for kind := vec.KindBool; kind <= vec.KindVariant; kind++ {
+			s := path*kindSlots + int(kind) - 1
+			if kinds&kindBit(kind) == 0 || o.slotKey[s] >= 0 || o.slotCol[s] >= 0 {
+				continue
+			}
+			o.slotCol[s] = int16(len(o.columns))
+			o.columns = append(o.columns, colstore.ColumnID{Path: q.paths[path], Kind: kind})
+		}
+	}
 	var need func(e *sexpr, kinds uint8)
 	need = func(e *sexpr, kinds uint8) {
 		if e.op != OpColumn {
@@ -152,14 +213,10 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 
 			return
 		}
-		for kind := vec.KindBool; kind <= vec.KindVariant; kind++ {
-			s := e.path*kindSlots + int(kind) - 1
-			if kinds&kindBit(kind) == 0 || o.slotKey[s] >= 0 || o.slotCol[s] >= 0 {
-				continue
-			}
-			o.slotCol[s] = int16(len(o.columns))
-			o.columns = append(o.columns, colstore.ColumnID{Path: q.paths[e.path], Kind: kind})
-		}
+		slot(e.path, kinds)
+	}
+	if residual != nil {
+		residual.columns(slot, func(e *sexpr) { need(e, kindBit(vec.KindInt)) })
 	}
 	for i := range ap.args {
 		if len(ap.args[i].words) != 0 {
@@ -319,32 +376,103 @@ func markChanges(bound []uint8, col *vec.Column, from int) {
 	}
 }
 
-// next loads the next block of c that has rows in the range, splits them
-// into runs and computes the states of their groups; it reports false at the
-// end of the stream.
+// markChangesAt is markChanges for the rows listed in rows.
+func markChangesAt(bound []uint8, col *vec.Column, rows []uint32) {
+	switch col.Layout {
+	case vec.Const:
+	case vec.Dict:
+		for j := 1; j < len(rows); j++ {
+			if col.Code(int(rows[j])) != col.Code(int(rows[j-1])) {
+				bound[j] = 1
+			}
+		}
+	default:
+		for j := 1; j < len(rows); j++ {
+			if string(col.Bytes(int(rows[j]))) != string(col.Bytes(int(rows[j-1]))) {
+				bound[j] = 1
+			}
+		}
+	}
+}
+
+// selected evaluates the rest of the filter on the open block and returns
+// the rows from from to to that pass it, nil when all of them do.
+func (ow *orderedWorker) selected(from, to int) (rows []uint32, every bool, err error) {
+	w := ow.w
+	v, err := w.eval(ow.o.residual, 0)
+	if err != nil || v == none {
+		return nil, false, err
+	}
+	if v == all {
+		return nil, true, nil
+	}
+	s := &w.sels[0]
+	rows = s.list
+	if !s.listed {
+		w.idx = vec.MaskIndexes(w.idx[:0], s.mask)
+		rows = w.idx
+	}
+	for len(rows) > 0 && int(rows[0]) < from {
+		rows = rows[1:]
+	}
+	for len(rows) > 0 && int(rows[len(rows)-1]) >= to {
+		rows = rows[:len(rows)-1]
+	}
+
+	return rows, len(rows) == to-from, nil
+}
+
+// next loads the next block of c that has rows in the range passing the
+// filter, splits them into runs and computes the states of their groups; it
+// reports false at the end of the stream.
 func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 	w, o := ow.w, ow.o
 	stride := w.agg.stride
-	ok, err := c.r.Next(b)
-	if !ok || err != nil {
-		return false, err
-	}
-	sb := c.r.Block
-	from, to := c.r.From, c.r.To
-	n := to - from
-	for p, pos := range o.parts {
-		col := sb.Keys.Column(pos, vec.KindString)
-		if col == nil || (col.Valid != nil && col.Valid.Rank(to)-col.Valid.Rank(from) != n) {
-			return false, errUnordered
+	var sb *colstore.SharedBlock
+	var from, to, n int
+	var picked []uint32
+	for {
+		ok, err := c.r.Next(b)
+		if !ok || err != nil {
+			return false, err
 		}
-		c.cols[p] = col
+		sb = c.r.Block
+		from, to = c.r.From, c.r.To
+		n = to - from
+		for p, pos := range o.parts {
+			col := sb.Keys.Column(pos, vec.KindString)
+			if col == nil || (col.Valid != nil && col.Valid.Rank(to)-col.Valid.Rank(from) != n) {
+				return false, errUnordered
+			}
+			c.cols[p] = col
+		}
+		w.shared, w.rows = sb, sb.Rows
+		if o.residual == nil {
+			break
+		}
+		rows, every, err := ow.selected(from, to)
+		if err != nil {
+			return false, err
+		}
+		if every {
+			break
+		}
+		if len(rows) > 0 {
+			picked, n = rows, len(rows)
+
+			break
+		}
 	}
 	ow.bound = sized(ow.bound, n)
 	bound := ow.bound
 	clear(bound)
 	bound[0] = 1
 	for p := 0; p < o.groups; p++ {
-		markChanges(bound, c.cols[p], from)
+		if picked != nil {
+			markChangesAt(bound, c.cols[p], picked)
+		} else {
+			markChanges(bound, c.cols[p], from)
+		}
 	}
 	ow.gid = sized(ow.gid, n)
 	gid := ow.gid
@@ -354,28 +482,36 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 		gid[j] = g - 1
 	}
 	if len(o.parts) > o.groups {
-		markChanges(bound, c.cols[o.groups], from)
+		if picked != nil {
+			markChangesAt(bound, c.cols[o.groups], picked)
+		} else {
+			markChanges(bound, c.cols[o.groups], from)
+		}
 	}
 	c.starts, c.group = c.starts[:0], c.group[:0]
 	for j, m := range bound {
-		if m != 0 {
-			c.starts = append(c.starts, uint32(from+j))
-			c.group = append(c.group, gid[j])
+		if m == 0 {
+			continue
 		}
+		row := uint32(from + j)
+		if picked != nil {
+			row = picked[j]
+		}
+		c.starts = append(c.starts, row)
+		c.group = append(c.group, gid[j])
 	}
 	c.words = sized(c.words, int(g)*stride)
 	for i := 0; i < int(g); i++ {
 		copy(c.words[i*stride:], w.q.agg.init)
 	}
-	var idx []uint32
-	if from != 0 || to != sb.Rows {
+	idx := picked
+	if picked == nil && (from != 0 || to != sb.Rows) {
 		ow.idx = sized(ow.idx, n)
 		idx = ow.idx
 		for j := range idx {
 			idx[j] = uint32(from + j)
 		}
 	}
-	w.shared, w.rows = sb, sb.Rows
 	w.blocks++
 	w.matched += int64(n)
 	if err := w.agg.feed(&target{words: c.words, gid: gid}, n, idx); err != nil {

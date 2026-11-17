@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
+	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 )
 
 func TestOrderedAggregation(t *testing.T) {
@@ -42,7 +43,17 @@ func TestOrderedAggregation(t *testing.T) {
 		{"distinct of no rows", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(eq("kind", "commit"), eq("op", "nope"), eq("coll", "x"))}, Aggs: []exec.Agg{users}}, true, false},
 		{"missing group keys", &exec.Aggregate{Input: &exec.Scan{Filter: eq("kind", "identity")}, Keys: keys("op", "coll", "user"), Aggs: times}, false, false},
 		{"not the whole key", &exec.Aggregate{Input: &exec.Scan{Filter: created}, Keys: keys("coll"), Aggs: times}, false, false},
-		{"other filter", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, exec.Gt(num("n"), exec.Int(5)))}, Keys: keys("user"), Aggs: times}, false, false},
+		{"and a range", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, exec.Gt(num("n"), exec.Int(5)))}, Keys: keys("user"), Aggs: times}, true, false},
+		{"and a time window", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(created, exec.Ge(exec.Time(), exec.Int(1_700_030_000_000_000_000)),
+			exec.Lt(exec.Time(), exec.Int(1_700_090_000_000_000_000)))}, Keys: keys("coll"), Aggs: []exec.Agg{times[0], users, times[2]}}, true, false},
+		{"and logic", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, exec.Or(exec.Not(exec.Col("flag", exec.KindAny)),
+			exec.Lt(exec.Add(num("n"), num("nested.x")), exec.Int(40)), exec.Gt(exec.Col("score", exec.KindAny), exec.Float(900))))},
+			Keys: keys("user"), Aggs: times}, true, false},
+		{"and nothing", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, exec.Lt(num("id"), exec.Int(0)))}, Keys: keys("user"), Aggs: times}, true, false},
+		{"and a key gap", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(eq("kind", "commit"), exec.Ne(str("op"), exec.Str("delete")))},
+			Keys: keys("op", "coll", "user"), Aggs: times}, true, false},
+		{"and a text match", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, exec.Match(str("msg"), tokenfilter.Word("love")))}, Keys: keys("user"), Aggs: times}, false, false},
+		{"and a string equality", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, eq("nested.y", "y1"))}, Keys: keys("user"), Aggs: times}, false, false},
 		{"untyped numbers", &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: []exec.Agg{{Name: "s", Func: exec.Sum, Arg: anyOf("n")}}}, false, false},
 		{"untyped distinct", &exec.Aggregate{Input: &exec.Scan{Filter: created}, Keys: keys("coll"), Aggs: []exec.Agg{{Name: "u", Func: exec.CountDistinct, Arg: anyOf("user")}}}, false, false},
 	}
