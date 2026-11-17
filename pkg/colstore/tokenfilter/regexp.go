@@ -24,9 +24,35 @@ func Regexp(expr string) (Pattern, error) {
 	if fold {
 		p = p.IgnoreCase()
 	}
-	p.re = re
+	p.re, p.auto = re, newAutomaton(tree)
 
 	return p, nil
+}
+
+// states returns the automaton states of the calling goroutine, nil when
+// the expression has no automaton.
+func (p Pattern) states() *states {
+	if p.auto == nil {
+		return nil
+	}
+
+	return p.auto.caches.Get().(*states)
+}
+
+func (p Pattern) release(c *states) {
+	if c != nil {
+		p.auto.caches.Put(c)
+	}
+}
+
+func (p Pattern) matchRegexp(c *states, text []byte) bool {
+	if c != nil {
+		if matched, decided := c.match(text); decided {
+			return matched
+		}
+	}
+
+	return p.re.Match(text)
 }
 
 type literalRune struct {
@@ -116,9 +142,11 @@ func requiredRuns(re *syntax.Regexp, runs *[][]literalRune) {
 
 func (p Pattern) appendRegexpMatches(dst, offsets []uint32, data []byte) []uint32 {
 	n := len(offsets) - 1
+	c := p.states()
+	defer p.release(c)
 	if len(p.needle) == 0 {
 		for i := 0; i < n; i++ {
-			if p.re.Match(data[offsets[i]:offsets[i+1]]) {
+			if p.matchRegexp(c, data[offsets[i]:offsets[i+1]]) {
 				dst = append(dst, uint32(i))
 			}
 		}
@@ -142,7 +170,7 @@ func (p Pattern) appendRegexpMatches(dst, offsets []uint32, data []byte) []uint3
 
 			continue
 		}
-		if p.re.Match(data[lo:hi]) {
+		if p.matchRegexp(c, data[lo:hi]) {
 			dst = append(dst, uint32(entry))
 		}
 		pos = hi

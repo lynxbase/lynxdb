@@ -16,8 +16,10 @@ import (
 // letter case, or a regular expression.
 type Pattern struct {
 	// re, when set, decides a match; the needle is then a string that
-	// every match holds, or empty when the expression requires none.
-	re *regexp.Regexp
+	// every match holds, or empty when the expression requires none. auto
+	// answers for re faster where it can.
+	re   *regexp.Regexp
+	auto *automaton
 
 	needle []byte
 	// startInToken and endInToken say whether the needle's first and last
@@ -209,7 +211,13 @@ func (p Pattern) bounded(text []byte, at int) bool {
 // Match reports whether text holds the pattern.
 func (p Pattern) Match(text []byte) bool {
 	if p.re != nil {
-		return (len(p.needle) == 0 || p.index(text, 0) >= 0) && p.re.Match(text)
+		if len(p.needle) != 0 && p.index(text, 0) < 0 {
+			return false
+		}
+		c := p.states()
+		defer p.release(c)
+
+		return p.matchRegexp(c, text)
 	}
 	if len(p.needle) == 0 {
 		return false
