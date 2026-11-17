@@ -88,6 +88,16 @@ type Store struct {
 	shards   []appendShard
 	next     atomic.Uint32
 	flushing chan struct{}
+	flushMu  sync.Mutex
+
+	// Callers of Sync share flushes: one flush runs at a time, and all who
+	// asked while it ran are served by the next. syncBegun and syncEnded
+	// count the flushes begun and ended, syncErr is the result of the last.
+	syncMu               sync.Mutex
+	synced               *sync.Cond
+	syncing              bool
+	syncBegun, syncEnded uint64
+	syncErr              error
 
 	// closed is set when Close begins; closing runs it once.
 	closed   atomic.Bool
@@ -138,6 +148,7 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	s.blocks.init(opts.MergeBlocks)
 	s.idle = sync.NewCond(&s.mu)
 	s.shards = make([]appendShard, runtime.GOMAXPROCS(0))
+	s.synced = sync.NewCond(&s.syncMu)
 	s.flushing = make(chan struct{})
 	go s.mergeLoop()
 	go s.flushLoop()
@@ -226,17 +237,47 @@ func (s *Store) Append(lines []byte) (rejected int64, err error) {
 }
 
 // Sync writes everything Append has buffered and returns once it is durable.
+// Concurrent callers share a flush, so many small synchronous writes cost
+// one part and one wait for the disk per flush, not one per caller.
 func (s *Store) Sync() error {
-	if s.closed.Load() {
-		return ErrClosed
-	}
+	s.syncMu.Lock()
+	defer s.syncMu.Unlock()
+	// A flush under way may have passed a buffer before this caller's rows
+	// reached it, so only one that begins from here on vouches for them.
+	want := s.syncBegun + 1
+	for s.syncEnded < want {
+		if s.closed.Load() {
+			return ErrClosed
+		}
+		if s.syncing {
+			s.synced.Wait()
 
-	return s.flushShards(0)
+			continue
+		}
+		s.syncing = true
+		s.syncBegun++
+		flush := s.syncBegun
+		s.syncMu.Unlock()
+		err := s.flushShards(0)
+		s.syncMu.Lock()
+		s.syncing, s.syncEnded, s.syncErr = false, flush, err
+		s.synced.Broadcast()
+	}
+	// A later flush that succeeded has written what an earlier one left.
+	return s.syncErr
 }
 
 // flushShards writes the buffers whose oldest row is at least age old.
 func (s *Store) flushShards(age time.Duration) error {
-	errs := make([]error, len(s.shards))
+	// Every buffer that is due is written at once and all of them are
+	// committed together, so a flush waits for the disk once however many
+	// buffers it finds. Their locks are held until then, which two flushes
+	// at once would take in conflicting orders.
+	s.flushMu.Lock()
+	defer s.flushMu.Unlock()
+	errs := make([]error, len(s.shards)+1)
+	written := make([][]*PartFile, len(s.shards))
+	held := make([]bool, len(s.shards))
 	var wg sync.WaitGroup
 	for i := range s.shards {
 		sh := &s.shards[i]
@@ -244,15 +285,37 @@ func (s *Store) flushShards(age time.Duration) error {
 		go func() {
 			defer wg.Done()
 			sh.mu.Lock()
-			defer sh.mu.Unlock()
 			if sh.w == nil || sh.w.buffered == 0 || time.Since(sh.since) < age {
+				sh.mu.Unlock()
+
 				return
 			}
-			errs[i] = sh.w.flush()
-			sh.since = time.Time{}
+			held[i] = true
+			written[i], errs[i] = sh.w.write()
 		}()
 	}
 	wg.Wait()
+	var files []*PartFile
+	for _, of := range written {
+		files = append(files, of...)
+	}
+	if len(files) > 0 {
+		_, errs[len(s.shards)] = s.dir.Commit(files, nil)
+	}
+	for i := range s.shards {
+		if !held[i] {
+			continue
+		}
+		sh := &s.shards[i]
+		if errs[i] == nil && errs[len(s.shards)] == nil {
+			sh.w.committed()
+			sh.since = time.Time{}
+		}
+		sh.mu.Unlock()
+	}
+	if len(files) > 0 && errs[len(s.shards)] == nil {
+		s.kick()
+	}
 
 	return errors.Join(errs...)
 }
@@ -658,8 +721,25 @@ func (w *Writer) Flush() error {
 }
 
 func (w *Writer) flush() error {
+	files, err := w.write()
+	if err != nil || len(files) == 0 {
+		return err
+	}
+	if _, err := w.s.dir.Commit(files, nil); err != nil {
+		return err
+	}
+	w.committed()
+	w.s.kick()
+
+	return nil
+}
+
+// write writes the buffered rows as one run per partition they fall in and
+// returns the files, which the caller commits; the rows stay buffered until
+// committed is called.
+func (w *Writer) write() ([]*PartFile, error) {
 	if w.batch.Rows == 0 {
-		return nil
+		return nil, nil
 	}
 	s := w.s
 	w.buckets = w.buckets[:0]
@@ -679,12 +759,12 @@ func (w *Writer) flush() error {
 	block := shred.Get(shred.Options{})
 	defer shred.Put(block)
 	files := make([]*PartFile, 0, len(w.buckets))
-	abort := func(err error) error {
+	abort := func(err error) ([]*PartFile, error) {
 		for _, pf := range files {
 			pf.Abort()
 		}
 
-		return err
+		return nil, err
 	}
 	from := 0
 	for _, bucket := range w.buckets {
@@ -712,14 +792,14 @@ func (w *Writer) flush() error {
 			return abort(err)
 		}
 	}
-	if _, err := s.dir.Commit(files, nil); err != nil {
-		return err
-	}
+
+	return files, nil
+}
+
+// committed empties the buffer once the files written from it are durable.
+func (w *Writer) committed() {
 	w.batch.Reset()
 	w.buffered = 0
-	s.kick()
-
-	return nil
 }
 
 // Close flushes the buffer.

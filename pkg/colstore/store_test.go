@@ -2,7 +2,9 @@ package colstore
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"sync/atomic"
@@ -636,5 +638,83 @@ func TestBlockBudgetBoundsWhatIsHeldAtOnce(t *testing.T) {
 	}
 	if b.free != 10 {
 		t.Fatalf("%d units are free after every release", b.free)
+	}
+}
+
+func TestSyncCallersShareFlushesAndSeeTheirRows(t *testing.T) {
+	// A slow disk, so that callers arrive while a flush is under way.
+	replaceSyncFile(t, func(*os.File) error {
+		time.Sleep(time.Millisecond)
+
+		return nil
+	})
+	store, err := OpenStore(t.TempDir(), StoreOptions{SortKey: []string{"svc"}, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	const callers, rounds, docs = 24, 12, 5
+	var acked atomic.Int64
+	var wg sync.WaitGroup
+	for c := range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for r := range rounds {
+				if _, err := store.Append(storeDocs((c*rounds+r)*docs, docs)); err != nil {
+					t.Error(err)
+
+					return
+				}
+				if err := store.Sync(); err != nil {
+					t.Error(err)
+
+					return
+				}
+				// Every row a Sync has vouched for is in the table.
+				want := acked.Add(docs)
+				snap := store.Table().Snapshot()
+				var rows int64
+				for _, h := range snap.Parts() {
+					rows += int64(h.Rows)
+				}
+				snap.Release()
+				if rows < want {
+					t.Errorf("%d rows in the table after syncs of %d", rows, want)
+
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	const total = callers * rounds * docs
+	if rows, sum := rowsAndSumOf(t, store.Table()); rows != total || sum != (total-1)*total/2 {
+		t.Fatalf("%d rows, sum %d; want %d rows", rows, sum, total)
+	}
+	store.syncMu.Lock()
+	flushes := store.syncBegun
+	store.syncMu.Unlock()
+	if flushes == 0 || flushes > callers*rounds/2 {
+		t.Fatalf("%d syncs took %d flushes", callers*rounds, flushes)
+	}
+}
+
+func TestSyncAfterCloseIsRefused(t *testing.T) {
+	store, err := OpenStore(t.TempDir(), StoreOptions{FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Append(storeDocs(0, 3)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Sync(); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Sync after Close: %v", err)
 	}
 }
