@@ -101,6 +101,9 @@ func benchTexts(win benchWindows) map[string]string {
 			` | stats latest(commit.record.text) as text, max(_time) as at by did | sort -at, did | head 5`,
 		"P1 percentiles by collection": `from bluesky | extend ms = _time % 60000000000 / 1000000` +
 			` | stats p50(ms) as p50, p95(ms) as p95, p99(ms) as p99 by commit.collection | sort commit.collection`,
+		"K1 top 10 users by events": `from bluesky | stats count() as count by did | sort -count, did | head 10`,
+		"K2 top 10 users and their share": `from bluesky | stats count() as count by did | eventstats sum(count) as total` +
+			` | extend percent = round(count * 100.0 / total, 2) | drop total | sort -count, did | head 10`,
 		"L2 latest post of every user": created + ` and commit.collection == "app.bsky.feed.post"` +
 			` | stats latest(commit.record.text) as text by did`,
 		"T4 latest 20 of a user": `from bluesky | where did == "did:plc:yj3sjq3blzpynh27cumnp5ks" | extend event = commit.collection | keep _time, event | sort -_time, event | head 20`,
@@ -239,6 +242,8 @@ func benchPlans(win benchWindows) []benchPlan {
 		}, By: []exec.Order{{Column: "time", Desc: true}, {Column: "event"}}, Limit: 20}, ordered: true},
 	}
 	latestText := exec.Agg{Name: "text", Func: exec.Latest, Arg: text}
+	byUser := &exec.Aggregate{Input: &exec.Scan{}, Keys: []exec.Named{named("did", str("did"))}, Aggs: []exec.Agg{count}}
+	topUsers := []exec.Order{{Column: "count", Desc: true}, {Column: "did"}}
 	// The milliseconds of a row's time within its minute.
 	withinMinute := exec.Div(exec.Mod(exec.Time(), exec.Int(60_000_000_000)), exec.Int(1_000_000))
 	plans = append(plans,
@@ -249,6 +254,11 @@ func benchPlans(win benchWindows) []benchPlan {
 			Aggs: []exec.Agg{{Name: "p50", Func: exec.Percentile, Arg: withinMinute, P: 50}, {Name: "p95", Func: exec.Percentile, Arg: withinMinute, P: 95},
 				{Name: "p99", Func: exec.Percentile, Arg: withinMinute, P: 99}}},
 			By: []exec.Order{{Column: "event"}}}, ordered: true},
+		benchPlan{name: "K1 top 10 users by events", plan: &exec.Sort{Input: byUser, By: topUsers, Limit: 10}, ordered: true},
+		benchPlan{name: "K2 top 10 users and their share", plan: &exec.Sort{Input: &exec.Project{Input: byUser, Exprs: []exec.Named{
+			named("did", exec.Col("did", exec.KindAny)), named("count", exec.Col("count", exec.KindAny)),
+			named("percent", exec.Round(exec.Div(exec.Mul(exec.Col("count", exec.KindAny), exec.Float(100)), exec.Total(exec.Col("count", exec.KindAny))), exec.Int(2))),
+		}}, By: topUsers, Limit: 10}, ordered: true},
 		benchPlan{name: "L2 latest post of every user", plan: &exec.Aggregate{Input: posts, Keys: []exec.Named{named("did", str("did"))},
 			Aggs: []exec.Agg{latestText}}},
 	)
@@ -524,6 +534,14 @@ func answer(name string, res *exec.Result) string {
 			continue
 		case strings.HasPrefix(name, "T4"):
 			fmt.Fprintf(&b, "%d:%s", row[0].Int/1000, row[1].Bytes)
+
+			continue
+		case strings.HasPrefix(name, "K1"):
+			fmt.Fprintf(&b, "%s=%d", row[0].Bytes, row[1].Int)
+
+			continue
+		case strings.HasPrefix(name, "K2"):
+			fmt.Fprintf(&b, "%s=%d/%.2f%%", row[0].Bytes, row[1].Int, row[2].Float)
 
 			continue
 		case strings.HasPrefix(name, "P1"):
