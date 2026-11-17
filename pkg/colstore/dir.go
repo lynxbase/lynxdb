@@ -691,6 +691,11 @@ func (d *Dir) rewrite() error {
 		// The mark of the rewritten manifest is there before the manifest
 		// is, in the slot that the manifest in use leaves alone.
 		d.mark(1-d.slot, next)
+		// A manifest that begins like the one in use cannot be told from
+		// it, so no mark of that beginning may claim more than it holds.
+		if next.first == d.first {
+			d.mark(d.slot, endMark{size: min(next.size, d.size), first: d.first})
+		}
 		err = os.Rename(tmp, file)
 	}
 	if err != nil {

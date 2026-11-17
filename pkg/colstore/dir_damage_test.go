@@ -710,3 +710,57 @@ func TestKillBetweenManifestAndMarkLeavesAManifestThatCountsAsWhole(t *testing.T
 		}
 	}
 }
+
+func TestRewriteToTheSameRecordLeavesAManifestThatOpens(t *testing.T) {
+	skipSyncs(t)
+	defer func(n int) { manifestRewriteAfter = n }(manifestRewriteAfter)
+	manifestRewriteAfter = 2
+	path := filepath.Join(t.TempDir(), "table")
+	d, err := OpenDir(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Commit([]*PartFile{writePartFile(t, d, 0, 100, "kept")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.ReadFile(filepath.Join(path, manifestName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A part that comes and goes leaves the live parts as they were, so
+	// every rewrite writes the bytes the manifest began with: a manifest
+	// that is shorter than the one it replaces and has the same first record.
+	same := 0
+	for round := 0; round < 6; round++ {
+		added, err := d.Commit([]*PartFile{writePartFile(t, d, 1000, 10, "passing")}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := d.Commit(nil, added); err != nil {
+			t.Fatal(err)
+		}
+		if now, err := os.ReadFile(filepath.Join(path, manifestName)); err != nil {
+			t.Fatal(err)
+		} else if bytes.Equal(now, first) {
+			same++
+		}
+		if err := d.Close(); err != nil {
+			t.Fatal(err)
+		}
+		if d, err = OpenDir(path); err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		if rows, sum := rowsAndSum(t, d); rows != 100 || sum != 99*100/2 {
+			t.Fatalf("round %d: %d rows, sum %d", round, rows, sum)
+		}
+		if lost := d.Lost(); len(lost) != 0 {
+			t.Fatalf("round %d: parts %v were set aside", round, lost)
+		}
+	}
+	if err := d.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if same == 0 {
+		t.Fatal("no rewrite left the record the manifest began with")
+	}
+}
