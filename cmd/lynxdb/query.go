@@ -43,22 +43,20 @@ func init() {
 
 func newQueryCmd() *cobra.Command {
 	var (
-		since         string
-		from          string
-		to            string
-		file          string
-		sourcetype    string
-		source        string
-		outputFile    string
-		timeout       string
-		analyze       string
-		maxMemory     string
-		failEmpty     bool
-		copyFlag      bool
-		explain       bool
-		rawMode       bool
-		noLint        bool
-		noSuggestions bool
+		since      string
+		from       string
+		to         string
+		file       string
+		sourcetype string
+		source     string
+		outputFile string
+		timeout    string
+		analyze    string
+		maxMemory  string
+		failEmpty  bool
+		copyFlag   bool
+		explain    bool
+		rawMode    bool
 	)
 
 	cmd := &cobra.Command{
@@ -115,7 +113,7 @@ or standard input. Local input is loaded into the index main.`,
 				return runQueryStdin(query, source, sourcetype, outputFile, failEmpty, analyze, maxMemory, rawMode)
 			}
 
-			err := runQueryServer(query, since, from, to, timeout, failEmpty, analyze, noLint, noSuggestions)
+			err := runQueryServer(query, since, from, to, timeout, failEmpty, analyze)
 			if err != nil {
 				return err
 			}
@@ -143,8 +141,6 @@ or standard input. Local input is loaded into the index main.`,
 	f.BoolVar(&copyFlag, "copy", false, "Copy results to clipboard as TSV")
 	f.BoolVar(&explain, "explain", false, "Show query plan without executing")
 	f.BoolVar(&rawMode, "raw", false, "Disable auto-format detection (treat input as plain text)")
-	f.BoolVar(&noLint, "no-lint", false, "Disable advisory query lints in server mode")
-	f.BoolVar(&noSuggestions, "no-suggestions", false, "Disable advisory query suggestions in server mode")
 
 	// Allow bare --analyze (no value) to default to "basic".
 	cmd.Flags().Lookup("analyze").NoOptDefVal = "basic"
@@ -155,26 +151,6 @@ or standard input. Local input is loaded into the index main.`,
 	_ = cmd.Flags().MarkHidden("profile-query")
 
 	return cmd
-}
-
-func lintRequestValue(noLint bool) *bool {
-	if !noLint {
-		return nil
-	}
-
-	lint := false
-
-	return &lint
-}
-
-func suggestionsRequestValue(noSuggestions bool) *bool {
-	if !noSuggestions {
-		return nil
-	}
-
-	suggestions := false
-
-	return &suggestions
 }
 
 func parseMaxMemory(maxMemory string) (int64, error) {
@@ -470,7 +446,7 @@ func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outp
 	return nil
 }
 
-func runQueryServer(query, since, from, to, timeout string, failEmpty bool, analyze string, noLint, noSuggestions bool) error {
+func runQueryServer(query, since, from, to, timeout string, failEmpty bool, analyze string) error {
 	earliest, latest, err := queryTimeBoundsFromFlags(since, from, to)
 	if err != nil {
 		return err
@@ -491,7 +467,7 @@ func runQueryServer(query, since, from, to, timeout string, failEmpty bool, anal
 		defer cancel()
 	}
 
-	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze, noLint, noSuggestions)
+	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze)
 }
 
 func queryTimeBoundsFromFlags(since, from, to string) (string, string, error) {
@@ -529,16 +505,13 @@ func stripVerticalQuerySuffix(query string) (string, bool) {
 	return stripped, true
 }
 
-func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty bool, analyze string, noLint, noSuggestions bool) error {
+func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty bool, analyze string) error {
 	start := time.Now()
 
 	result, err := apiClient().Query(ctx, client.QueryRequest{
-		Q:           query,
-		From:        earliest,
-		To:          latest,
-		Profile:     analyze,
-		Lint:        lintRequestValue(noLint),
-		Suggestions: suggestionsRequestValue(noSuggestions),
+		Q:    query,
+		From: earliest,
+		To:   latest,
 	})
 	if err != nil {
 		return &queryError{inner: err, query: query}
@@ -550,7 +523,6 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 	}
 
 	rows := queryResultToRows(result)
-	printQueryLints(result.Meta.Lints)
 	if len(rows) == 0 {
 		printEmptyResultGuidance(query, since)
 
@@ -719,133 +691,11 @@ func queryResultToRows(result *client.QueryResult) []map[string]interface{} {
 	return nil
 }
 
-// buildQueryStatsFromMeta converts client.Meta (from a REST API response) into
-// a *stats.QueryStats suitable for FormatTTY / FormatJSON display.
+// buildQueryStatsFromMeta turns the meta of a REST API response into a
+// *stats.QueryStats for FormatTTY / FormatJSON display.
 func buildQueryStatsFromMeta(meta client.Meta, rowsReturned int64, totalDuration time.Duration) *stats.QueryStats {
-	ss := meta.Stats
-	if ss == nil {
-		// Minimal stats from basic meta fields.
-		st := stats.FromMeta(meta.TookMS, meta.Scanned, rowsReturned)
-		st.TotalDuration = totalDuration
-
-		return st
-	}
-
-	st := stats.FromSearchStats(
-		ss.RowsScanned,
-		rowsReturned,
-		meta.TookMS,
-		ss.SegmentsTotal,
-		ss.SegmentsScanned,
-		ss.SegmentsSkippedIdx,
-		ss.SegmentsSkippedTime,
-		ss.SegmentsSkippedStat,
-		ss.SegmentsSkippedBF,
-		ss.SegmentsSkippedRange,
-		meta.SegmentsErrored,
-		ss.BufferedEvents,
-		ss.InvertedIndexHits,
-		ss.CountStarOptimized,
-		ss.PartialAggUsed,
-		ss.TopKUsed,
-		ss.PrefetchUsed,
-		ss.VectorizedFilterUsed,
-		ss.DictFilterUsed,
-		ss.JoinStrategy,
-		ss.ScanMS,
-		ss.PipelineMS,
-		ss.IndexesUsed,
-	)
+	st := stats.FromMeta(meta.TookMS, 0, rowsReturned)
 	st.TotalDuration = totalDuration
-	st.MatchedRows = ss.MatchedRows
-	st.CacheHit = ss.CacheHit
-
-	// Parse/optimize timing from planner.
-	if ss.ParseMS > 0 {
-		st.ParseDuration = time.Duration(ss.ParseMS * float64(time.Millisecond))
-	}
-	if ss.OptimizeMS > 0 {
-		st.OptimizeDuration = time.Duration(ss.OptimizeMS * float64(time.Millisecond))
-	}
-
-	// Optimizer rule details.
-	for _, r := range ss.OptimizerRules {
-		st.OptimizerRules = append(st.OptimizerRules, stats.OptimizerRuleDetail{
-			Name:        r.Name,
-			Description: r.Description,
-			Count:       r.Count,
-		})
-	}
-	st.OptimizerTotalRules = ss.TotalRules
-
-	// Total processed bytes for throughput display.
-	st.ProcessedBytes = ss.ProcessedBytes
-
-	// I/O bytes breakdown.
-	st.DiskBytesRead = ss.DiskBytesRead
-	st.S3BytesRead = ss.S3BytesRead
-	st.CacheBytesRead = ss.CacheBytesRead
-
-	// Scan/pipeline timing breakdown (server-side).
-	if ss.ScanMS > 0 {
-		st.ScanDuration = time.Duration(ss.ScanMS * float64(time.Millisecond))
-	}
-	if ss.PipelineMS > 0 {
-		st.PipelineDuration = time.Duration(ss.PipelineMS * float64(time.Millisecond))
-	}
-
-	// Server-side resource usage.
-	st.PeakMemoryBytes = ss.PeakMemoryBytes
-	st.MemAllocBytes = ss.MemAllocBytes
-	st.SpilledToDisk = ss.SpilledToDisk
-	st.SpillBytes = ss.SpillBytes
-	st.SpillFiles = ss.SpillFiles
-	st.PoolUtilization = ss.PoolUtilization
-	st.Warnings = ss.Warnings
-	if ss.CPUUserMS > 0 {
-		st.CPUTimeUser = time.Duration(ss.CPUUserMS * float64(time.Millisecond))
-	}
-	if ss.CPUSysMS > 0 {
-		st.CPUTimeSys = time.Duration(ss.CPUSysMS * float64(time.Millisecond))
-	}
-	for _, ps := range ss.PipelineStages {
-		st.Stages = append(st.Stages, stats.StageStats{
-			Name:        ps.Name,
-			InputRows:   ps.InputRows,
-			OutputRows:  ps.OutputRows,
-			Duration:    time.Duration(ps.DurationMS * float64(time.Millisecond)),
-			MemoryBytes: ps.MemoryBytes,
-			SpilledRows: ps.SpilledRows,
-			SpillBytes:  ps.SpillBytes,
-		})
-	}
-
-	// Per-operator memory budget statistics from coordinator.
-	for _, b := range ss.OperatorBudgets {
-		st.OperatorBudgets = append(st.OperatorBudgets, stats.OperatorBudgetStats{
-			Name:      b.Label,
-			SoftLimit: b.SoftLimit,
-			PeakBytes: b.PeakBytes,
-			Phase:     b.Phase,
-			Spilled:   b.Spilled,
-		})
-	}
-
-	// Trace-level profiling fields.
-	st.VMCalls = ss.VMCalls
-	st.VMTotalTime = time.Duration(ss.VMTotalNS)
-	for _, sd := range ss.SegmentDetails {
-		st.SegmentDetails = append(st.SegmentDetails, stats.SegmentDetail{
-			SegmentID:       sd.SegmentID,
-			Source:          sd.Source,
-			Rows:            sd.Rows,
-			RowsAfterFilter: sd.RowsAfterFilter,
-			BloomHit:        sd.BloomHit,
-			InvertedUsed:    sd.InvertedUsed,
-			ReadDuration:    time.Duration(sd.ReadDurationNS),
-			BytesRead:       sd.BytesRead,
-		})
-	}
 
 	return st
 }
@@ -864,7 +714,6 @@ func handleAsyncFallback(ctx context.Context, jobID string, failEmpty bool, anal
 	}
 
 	rows := queryResultToRows(result)
-	printQueryLints(result.Meta.Lints)
 	if failEmpty && len(rows) == 0 {
 		printMeta("No results found.")
 
@@ -905,19 +754,4 @@ func handleAsyncFallback(ctx context.Context, jobID string, failEmpty bool, anal
 	}
 
 	return nil
-}
-
-func printQueryLints(lints []client.QueryLint) {
-	if globalQuiet || len(lints) == 0 {
-		return
-	}
-
-	fmt.Fprintln(os.Stderr)
-	for _, lint := range lints {
-		location := ""
-		if lint.Position >= 0 {
-			location = fmt.Sprintf(" at %d", lint.Position)
-		}
-		ui.Stderr.PrintWarning(false, "%s%s: %s", lint.Code, location, lint.Message)
-	}
 }

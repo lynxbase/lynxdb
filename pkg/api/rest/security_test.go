@@ -2,16 +2,12 @@ package rest
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
-	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
@@ -21,30 +17,7 @@ import (
 func startTestServerWithQueryConfig(t *testing.T, qcfg config.QueryConfig) (*Server, func()) {
 	t.Helper()
 
-	// Ensure SpillDir is set to a test-local directory so that
-	// CleanupOrphans does not walk the global /tmp.
-	if qcfg.SpillDir == "" {
-		qcfg.SpillDir = t.TempDir()
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	srv, err := NewServer(Config{
-		Addr:   "127.0.0.1:0",
-		Logger: logger,
-		Query:  qcfg,
-	})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go srv.Start(ctx)
-	srv.WaitReady()
-
-	return srv, func() {
-		cancel()
-		time.Sleep(50 * time.Millisecond)
-	}
+	return startTestServerWithConfig(t, Config{Query: qcfg})
 }
 
 // decodeErrorResponse parses the structured error envelope from a response body.
@@ -424,81 +397,6 @@ func TestTokenRedaction_InvalidToken_Returns401(t *testing.T) {
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status: got %d, want 401", resp.StatusCode)
-	}
-}
-
-// --- sanitizeErrorMessage Unit Tests ---
-
-func TestSanitizeErrorMessage(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		{
-			name:  "no control chars",
-			input: "invalid JSON: unexpected end of input",
-			want:  "invalid JSON: unexpected end of input",
-		},
-		{
-			name:  "preserves newline",
-			input: "line one\nline two",
-			want:  "line one\nline two",
-		},
-		{
-			name:  "preserves carriage return",
-			input: "line one\r\nline two",
-			want:  "line one\r\nline two",
-		},
-		{
-			name:  "preserves tab",
-			input: "field:\tvalue",
-			want:  "field:\tvalue",
-		},
-		{
-			name:  "replaces null byte",
-			input: "before\x00after",
-			want:  "before?after",
-		},
-		{
-			name:  "replaces bell character",
-			input: "alert\x07here",
-			want:  "alert?here",
-		},
-		{
-			name:  "replaces backspace",
-			input: "back\x08space",
-			want:  "back?space",
-		},
-		{
-			name:  "replaces escape",
-			input: "esc\x1b[31mred\x1b[0m",
-			want:  "esc?[31mred?[0m",
-		},
-		{
-			name:  "multiple control chars",
-			input: "\x01\x02\x03normal\x04\x05",
-			want:  "???normal??",
-		},
-		{
-			name:  "empty string",
-			input: "",
-			want:  "",
-		},
-		{
-			name:  "unicode preserved",
-			input: "日本語テスト",
-			want:  "日本語テスト",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := sanitizeErrorMessage(tt.input)
-			if got != tt.want {
-				t.Errorf("sanitizeErrorMessage(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
 	}
 }
 

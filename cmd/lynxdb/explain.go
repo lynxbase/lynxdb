@@ -59,7 +59,7 @@ func runExplain(query string, analyze bool) error {
 
 	var st *stats.QueryStats
 	if analyze && result.IsValid {
-		qResult, err := c.Query(ctx, client.QueryRequest{Q: query, Profile: "full"})
+		qResult, err := c.Query(ctx, client.QueryRequest{Q: query})
 		if err != nil {
 			return &queryError{inner: err, query: query}
 		}

@@ -1,139 +1,82 @@
 package rest
 
 import (
-	"encoding/json"
+	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/database"
 	"github.com/lynxbase/lynxdb/pkg/engine/physical"
-	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
-	"github.com/lynxbase/lynxdb/pkg/planner"
+	"github.com/lynxbase/lynxdb/pkg/memgov"
 	"github.com/lynxbase/lynxdb/pkg/ppl"
-	"github.com/lynxbase/lynxdb/pkg/usecases"
+	"github.com/lynxbase/lynxdb/pkg/query"
+	"github.com/lynxbase/lynxdb/pkg/timerange"
 )
 
-// runQuery submits a query to the QueryService and writes its result, a job
-// handle, or a structured error.
-func (s *Server) runQuery(w http.ResponseWriter, r *http.Request, req QueryRequest) {
-	query := req.effectiveQuery()
-	mode, wait := mapQueryMode(req.Wait)
-	queryCfg := s.currentQueryConfig()
-	limit := clampLimit(req.Limit, queryCfg)
-
-	result, err := s.queryService.Submit(r.Context(), usecases.SubmitRequest{
-		Query:           query,
-		From:            req.effectiveFrom(),
-		To:              req.effectiveTo(),
-		Limit:           limit,
-		Offset:          req.Offset,
-		Mode:            mode,
-		Wait:            wait,
-		Profile:         req.Profile,
-		NoLint:          req.Lint != nil && !*req.Lint,
-		NoSuggestions:   req.Suggestions != nil && !*req.Suggestions,
-		LintLimit:       req.LintLimit,
-		LintFull:        req.LintFull,
-		SkipResultCache: planner.DynamicTimeBounds(req.effectiveFrom(), req.effectiveTo()),
-	})
-	if err != nil {
-		handlePlanError(w, err)
-		return
-	}
-
-	if !result.Done {
-		writeJobHandleFromUsecase(w, result)
-		return
-	}
-	if result.Error != "" {
-		respondQueryError(w, result.Error, result.ErrorCode)
-		return
-	}
-	lintsEnabled := req.Lint == nil || *req.Lint
-	writeSyncResultFromUsecase(w, result, limit, req.Offset, query, queryCfg,
-		lintsEnabled, req.LintLimit, req.LintFull)
+// compiledQuery is a query ready to run with the time range of its request.
+type compiledQuery struct {
+	src  string
+	c    *query.Compiled
+	opts database.QueryOptions
 }
 
-// runQueryStream runs a query as a streaming NDJSON response.
-func (s *Server) runQueryStream(w http.ResponseWriter, r *http.Request, query string, req QueryRequest) {
-	start := time.Now()
-
-	iter, stats, err := s.queryService.Stream(r.Context(), usecases.StreamRequest{
-		Query: query,
-		From:  req.effectiveFrom(),
-		To:    req.effectiveTo(),
-	})
+// compileQuery compiles src and parses the from and to of its request; it
+// writes the error response and reports false when either fails.
+func compileQuery(w http.ResponseWriter, src, from, to string) (*compiledQuery, bool) {
+	c, err := query.Compile(src)
 	if err != nil {
-		handlePlanError(w, err)
-		return
+		if _, ok := ppl.AsError(err); ok {
+			respondQueryFailure(w, err)
+		} else {
+			respondError(w, ErrCodePlanningError, http.StatusBadRequest, err.Error())
+		}
+		return nil, false
 	}
-	defer iter.Close()
-
-	w.Header().Set("Content-Type", "application/x-ndjson")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusOK)
-
-	flusher, _ := w.(http.Flusher)
-	enc := json.NewEncoder(w)
-	total := 0
-
-	for {
-		if err := r.Context().Err(); err != nil {
-			return
-		}
-
-		batch, err := iter.Next(r.Context())
-		if err != nil {
-			if encErr := enc.Encode(map[string]interface{}{
-				"__error": map[string]interface{}{
-					"code":    string(ErrCodeExecutionError),
-					"message": err.Error(),
-				},
-			}); encErr != nil {
-				slog.Warn("rest: stream json encode failed", "error", encErr)
-			}
-			if flusher != nil {
-				flusher.Flush()
-			}
-			return
-		}
-		if batch == nil {
-			break
-		}
-
-		for i := 0; i < batch.Len; i++ {
-			if encErr := enc.Encode(rowToInterface(batch.Row(i))); encErr != nil {
-				slog.Warn("rest: stream json encode failed", "error", encErr)
-			}
-			total++
-		}
-		if flusher != nil {
-			flusher.Flush()
-		}
+	opts, err := queryTimeRange(from, to)
+	if err != nil {
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error())
+		return nil, false
 	}
 
-	scanned := stats.RowsScanned
-	if ss, ok := iter.(interface {
-		ScanStats() *pipeline.SegmentStreamStats
-	}); ok {
-		if segStats := ss.ScanStats(); segStats != nil {
-			scanned = segStats.EventsScanned
-		}
+	return &compiledQuery{src: src, c: c, opts: opts}, true
+}
+
+// queryTimeRange parses the from and to of a request into query options.
+func queryTimeRange(from, to string) (database.QueryOptions, error) {
+	now := time.Now()
+	tr, err := timerange.ParseOptionalRange(from, to, now)
+	if err != nil || tr == nil {
+		return database.QueryOptions{Now: now}, err
 	}
 
-	if encErr := enc.Encode(map[string]interface{}{
-		"__meta": map[string]interface{}{
-			"total":   total,
-			"scanned": scanned,
-			"took_ms": time.Since(start).Milliseconds(),
-		},
-	}); encErr != nil {
-		slog.Warn("rest: stream json encode failed", "error", encErr)
+	return database.QueryOptions{From: tr.Earliest, To: tr.Latest, Now: now}, nil
+}
+
+// submit starts a query as a job and records its duration when it ends. It
+// syncs the database first, so that a query sees every event ingested before
+// it.
+func (s *Server) submit(cq *compiledQuery) (*database.Job, error) {
+	if err := s.db.Sync(); err != nil {
+		return nil, err
 	}
-	if flusher != nil {
-		flusher.Flush()
+	job, err := s.db.Submit(cq.c, cq.src, cq.opts)
+	if err != nil {
+		return nil, err
 	}
+	rt := DetectResultType(cq.c.Plan)
+	go func() {
+		<-job.Done()
+		st := job.Status()
+		errType := ""
+		if st.Err != nil && !errors.Is(st.Err, context.Canceled) {
+			code, _ := queryErrorCode(st.Err)
+			errType = string(code)
+		}
+		s.promMetrics.RecordQuery(string(rt), st.Elapsed, errType)
+	}()
+
+	return job, nil
 }
 
 // pplErrorCodes maps PPL compile error kinds to API error codes.
@@ -146,18 +89,56 @@ var pplErrorCodes = map[ppl.ErrorKind]ErrorCode{
 	ppl.ErrUnsupportedFeature:  ErrCodeUnsupportedFeature,
 }
 
+// queryErrorCode returns the API code and HTTP status of an error that a
+// query compiled or ran into.
+func queryErrorCode(err error) (ErrorCode, int) {
+	if pe, ok := ppl.AsError(err); ok {
+		code, ok := pplErrorCodes[pe.Kind]
+		if !ok {
+			code = ErrCodeInvalidQuery
+		}
+		switch pe.Kind {
+		case ppl.ErrUnsupportedCommand, ppl.ErrUnsupportedFunction, ppl.ErrUnsupportedFeature:
+			return code, http.StatusUnprocessableEntity
+		}
+		return code, http.StatusBadRequest
+	}
+	var ue *physical.UnsupportedError
+	switch {
+	case errors.As(err, &ue):
+		return ErrCodeUnsupportedFeature, http.StatusUnprocessableEntity
+	case errors.Is(err, database.ErrTooManyQueries):
+		return ErrCodeTooManyRequests, http.StatusTooManyRequests
+	case memgov.IsMemoryExhausted(err):
+		return ErrCodeQueryMemoryExceeded, http.StatusBadRequest
+	}
+
+	return ErrCodeExecutionError, http.StatusInternalServerError
+}
+
+// respondQueryFailure writes the error response for an error a query
+// compiled or ran into.
+func respondQueryFailure(w http.ResponseWriter, err error) {
+	if pe, ok := ppl.AsError(err); ok {
+		respondCompileError(w, pe)
+		return
+	}
+	code, status := queryErrorCode(err)
+	var opts []ErrorOpt
+	switch code {
+	case ErrCodeTooManyRequests:
+		// A query slot frees the instant any running query finishes.
+		w.Header().Set("Retry-After", "1")
+	case ErrCodeQueryMemoryExceeded:
+		opts = append(opts, WithSuggestion("Narrow the time range or add filters."))
+	}
+	respondError(w, code, status, err.Error(), opts...)
+}
+
 // respondCompileError writes a PPL compile error with its kind, position,
 // expected tokens and hint; unsupported features answer 422, the others 400.
 func respondCompileError(w http.ResponseWriter, pe *ppl.Error) {
-	code, ok := pplErrorCodes[pe.Kind]
-	if !ok {
-		code = ErrCodeInvalidQuery
-	}
-	status := http.StatusBadRequest
-	switch pe.Kind {
-	case ppl.ErrUnsupportedCommand, ppl.ErrUnsupportedFunction, ppl.ErrUnsupportedFeature:
-		status = http.StatusUnprocessableEntity
-	}
+	code, status := queryErrorCode(pe)
 	errObj := map[string]interface{}{
 		"code":    string(code),
 		"message": pe.Error(),
@@ -172,24 +153,4 @@ func respondCompileError(w http.ResponseWriter, pe *ppl.Error) {
 		errObj["suggestion"] = pe.Hint
 	}
 	respondJSON(w, status, map[string]interface{}{"error": errObj})
-}
-
-// respondQueryCompileError writes compile, planning and unsupported-plan
-// errors; it reports whether err was one of them.
-func respondQueryCompileError(w http.ResponseWriter, err error) bool {
-	if pe, ok := ppl.AsError(err); ok {
-		respondCompileError(w, pe)
-		return true
-	}
-	var ue *physical.UnsupportedError
-	if errors.As(err, &ue) {
-		respondError(w, ErrCodeUnsupportedFeature, http.StatusUnprocessableEntity, ue.Error())
-		return true
-	}
-	var pe *planner.PlanningError
-	if errors.As(err, &pe) {
-		respondError(w, ErrCodePlanningError, http.StatusBadRequest, pe.Error())
-		return true
-	}
-	return false
 }

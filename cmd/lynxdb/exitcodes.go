@@ -10,5 +10,4 @@ const (
 	exitNoResults    = 6  // Query returned 0 results (with --fail-on-empty).
 	exitAuth         = 7  // Missing or invalid authentication token.
 	exitAborted      = 10 // User declined destructive action confirmation.
-	exitConfig       = 78 // Configuration or on-disk format incompatibility.
 )

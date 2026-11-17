@@ -59,11 +59,20 @@ func TestServer_OTLPIngest(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status: got %d, want 200, body: %s", resp.StatusCode, string(body))
 	}
+
+	ev := requireSingleEvent(t, srv, "hello from OTLP")
+	if ev["host"] != "host-01" || ev["source"] != "test-svc" || ev["sourcetype"] != "otlp" {
+		t.Fatalf("event = %v, want host host-01, source test-svc, sourcetype otlp", ev)
+	}
+	if ev["_time"] != time.Unix(0, ts).UTC().Format(time.RFC3339Nano) {
+		t.Fatalf("_time = %v, want the record time", ev["_time"])
+	}
 }
 
 func TestServer_OTLPHTTPReceiver_Protobuf(t *testing.T) {
 	ingestCfg := config.DefaultConfig().Ingest
 	ingestCfg.OTLP.HTTPListen = "127.0.0.1:0"
+	ingestCfg.OTLP.GRPCListen = ""
 	srv, cleanup := startTestServerWithConfig(t, Config{Ingest: ingestCfg})
 	defer cleanup()
 
@@ -81,7 +90,7 @@ func TestServer_OTLPHTTPReceiver_Protobuf(t *testing.T) {
 	}
 
 	resp, err := http.Post(
-		fmt.Sprintf("http://%s/v1/logs", srv.otlpHTTPReceiver.Addr()),
+		fmt.Sprintf("http://%s/v1/logs", srv.OTLPHTTPAddr()),
 		"application/x-protobuf",
 		bytes.NewReader(body),
 	)
@@ -93,6 +102,7 @@ func TestServer_OTLPHTTPReceiver_Protobuf(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status: got %d, want 200, body: %s", resp.StatusCode, body)
 	}
+	requireSingleEvent(t, srv, "canonical otlp")
 }
 
 func TestServer_OTLPHTTPReceiver_SnappyProtobuf(t *testing.T) {
@@ -116,7 +126,7 @@ func TestServer_OTLPHTTPReceiver_SnappyProtobuf(t *testing.T) {
 	}
 
 	req, _ := http.NewRequest(http.MethodPost,
-		fmt.Sprintf("http://%s/v1/logs", srv.otlpHTTPReceiver.Addr()),
+		fmt.Sprintf("http://%s/v1/logs", srv.OTLPHTTPAddr()),
 		encodeTestBody(t, "snappy", body),
 	)
 	req.Header.Set("Content-Type", "application/x-protobuf")
@@ -130,9 +140,7 @@ func TestServer_OTLPHTTPReceiver_SnappyProtobuf(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status: got %d, want 200, body: %s", resp.StatusCode, body)
 	}
-	if srv.engine.SegmentCount() == 0 {
-		t.Fatal("expected segments after snappy OTLP HTTP ingest")
-	}
+	requireSingleEvent(t, srv, "canonical otlp snappy")
 }
 
 func TestServer_OTLPGRPCReceiver_Protobuf(t *testing.T) {
@@ -170,9 +178,7 @@ func TestServer_OTLPGRPCReceiver_Protobuf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
-	if srv.engine.SegmentCount() == 0 {
-		t.Fatal("expected segments after OTLP gRPC ingest")
-	}
+	requireSingleEvent(t, srv, "canonical otlp grpc")
 }
 
 func TestServer_OTLPGRPCReceiver_GzipProtobuf(t *testing.T) {
@@ -206,9 +212,7 @@ func TestServer_OTLPGRPCReceiver_GzipProtobuf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Export: %v", err)
 	}
-	if srv.engine.SegmentCount() == 0 {
-		t.Fatal("expected segments after gzip OTLP gRPC ingest")
-	}
+	requireSingleEvent(t, srv, "canonical otlp grpc gzip")
 }
 
 func TestServer_OTLPIngest_InvalidJSON(t *testing.T) {
@@ -339,12 +343,6 @@ func TestServer_OTLPIngestAndQuery(t *testing.T) {
 		t.Fatalf("ingest status: %d", resp.StatusCode)
 	}
 
-	// In-memory mode: events are immediately flushed to segments (no batcher).
-	if srv.engine.SegmentCount() == 0 {
-		t.Fatal("expected segments after OTLP ingest in in-memory mode")
-	}
-
-	// Query for the OTLP events.
 	searchBody, _ := json.Marshal(map[string]interface{}{
 		"q": `search source=main OTLP | head 10`,
 	})
@@ -376,7 +374,6 @@ func TestServer_OTLPIngestAndQuery(t *testing.T) {
 func TestServer_OTLPIngest_RespectsConfiguredBodyLimitAbove10MiB(t *testing.T) {
 	srv, cleanup := startTestServerWithConfig(t, Config{
 		DataDir: t.TempDir(),
-		Storage: config.DefaultConfig().Storage,
 		Ingest: config.IngestConfig{
 			MaxBodySize: config.ByteSize(13 << 20),
 		},

@@ -59,14 +59,16 @@ func TestQueryStream_Basic(t *testing.T) {
 	if meta["took_ms"] == nil {
 		t.Fatal("missing took_ms")
 	}
-	if meta["scanned"] == nil {
-		t.Fatal("missing scanned")
+	if len(lines) != 51 {
+		t.Fatalf("lines: got %d, want 50 events and meta", len(lines))
 	}
 
-	// Event lines should have _raw.
 	for _, line := range lines[:len(lines)-1] {
 		if _, hasRaw := line["_raw"]; !hasRaw {
 			t.Fatalf("event line missing _raw: %v", line)
+		}
+		if line["source"] != "/var/log/app.log" {
+			t.Fatalf("event line source = %v, want /var/log/app.log", line["source"])
 		}
 	}
 }
@@ -134,9 +136,8 @@ func TestQueryStream_StatsQuery(t *testing.T) {
 		lines = append(lines, obj)
 	}
 
-	// Should have 3 data lines + 1 meta line.
-	if len(lines) < 2 {
-		t.Fatalf("expected at least 2 lines, got %d", len(lines))
+	if len(lines) != 4 {
+		t.Fatalf("lines: got %d, want 3 hosts and meta", len(lines))
 	}
 	last := lines[len(lines)-1]
 	if _, ok := last["__meta"]; !ok {

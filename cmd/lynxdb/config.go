@@ -227,18 +227,6 @@ func applyCLIOverrides(cmd *cobra.Command, cfg *config.Config) ([]config.CLIOver
 		cli = append(cli, config.CLIOverride{Key: "storage.cache_max_bytes", Value: b.String(), Flag: "--cache-max-mb"})
 		flags = append(flags, "--cache-max-mb")
 	}
-	if cmd.Flags().Changed("max-query-pool") {
-		b, err := config.ParseByteSize(flagMaxQueryPool)
-		if err != nil {
-			return nil, nil, fmt.Errorf("invalid --max-query-pool: %w", err)
-		}
-		cfg.Query.GlobalQueryPoolBytes = b
-		cli = append(cli, config.CLIOverride{Key: "query.global_query_pool_bytes", Value: b.String(), Flag: "--max-query-pool"})
-		flags = append(flags, "--max-query-pool")
-	}
-
-	checkStr("spill-dir", "query.spill_dir", flagSpillDir, func() { cfg.Query.SpillDir = flagSpillDir })
-
 	if cmd.Flags().Changed("ingest-es-enabled") {
 		cfg.Ingest.ESCompat.Enabled = flagIngestESEnabled
 		cli = append(cli, config.CLIOverride{Key: "ingest.es_compat.enabled", Value: strconv.FormatBool(flagIngestESEnabled), Flag: "--ingest-es-enabled"})

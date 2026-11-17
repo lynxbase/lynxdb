@@ -934,7 +934,7 @@ func TestServerStatus_ContainsAllKeys(t *testing.T) {
 		t.Fatalf("parse status JSON: %v", err)
 	}
 
-	required := []string{"uptime_seconds", "total_events", "segment_count", "health"}
+	required := []string{"uptime_seconds", "total_events", "part_count", "health"}
 	for _, key := range required {
 		if _, ok := result[key]; !ok {
 			t.Errorf("status JSON missing required key %q, got keys: %v", key, cliMapKeys(result))
@@ -983,7 +983,7 @@ func TestServerFields_AfterIngest_DiscoveredFields(t *testing.T) {
 	}
 }
 
-func TestServerFields_HasTypeInfo(t *testing.T) {
+func TestServerFields_HasIndexes(t *testing.T) {
 	baseURL := newTestServer(t)
 	ingestTestData(t, baseURL, "main", "testdata/logs/access.log")
 
@@ -997,17 +997,19 @@ func TestServerFields_HasTypeInfo(t *testing.T) {
 		t.Fatal("no fields returned")
 	}
 
-	// Check first field entry has name and type.
-	var first map[string]interface{}
+	var first struct {
+		Name    string   `json:"name"`
+		Indexes []string `json:"indexes"`
+	}
 	if err := json.Unmarshal([]byte(strings.TrimSpace(lines[0])), &first); err != nil {
 		t.Fatalf("parse first field: %v", err)
 	}
 
-	if _, ok := first["name"]; !ok {
+	if first.Name == "" {
 		t.Error("field entry missing 'name'")
 	}
-	if _, ok := first["type"]; !ok {
-		t.Error("field entry missing 'type'")
+	if len(first.Indexes) != 1 || first.Indexes[0] != "main" {
+		t.Errorf("field %q indexes = %v, want [main]", first.Name, first.Indexes)
 	}
 }
 

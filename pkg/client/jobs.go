@@ -60,7 +60,7 @@ func (c *Client) PollJob(ctx context.Context, jobID string, progressFn func(*Job
 		switch job.Status {
 		case "complete", "done":
 			return c.jobResultToQueryResult(job)
-		case "failed":
+		case "error", "failed":
 			msg := "query failed"
 			if job.Error != nil {
 				msg = job.Error.Message

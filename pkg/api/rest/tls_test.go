@@ -1,20 +1,15 @@
 package rest
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
-	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 // startTLSServer starts a server with a self-signed TLS certificate.
@@ -23,7 +18,6 @@ func startTLSServer(t *testing.T) (*Server, *x509.Certificate, func()) {
 	t.Helper()
 
 	dir := t.TempDir()
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	tlsCert, fp, err := auth.LoadOrGenerateCert(dir)
 	if err != nil {
@@ -45,25 +39,12 @@ func startTLSServer(t *testing.T) (*Server, *x509.Certificate, func()) {
 		MinVersion:   tls.VersionTLS12,
 	}
 
-	srv, err := NewServer(Config{
-		Addr:      "127.0.0.1:0",
+	srv, cleanup := startTestServerWithConfig(t, Config{
 		DataDir:   dir,
 		TLSConfig: tlsCfg,
-		Logger:    logger,
-		Query:     config.QueryConfig{SpillDir: t.TempDir()},
 	})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	go srv.Start(ctx)
-	srv.WaitReady()
-
-	return srv, leaf, func() {
-		cancel()
-		time.Sleep(50 * time.Millisecond)
-	}
+	return srv, leaf, cleanup
 }
 
 func TestTLS_ServerListensHTTPS(t *testing.T) {
@@ -192,7 +173,6 @@ func TestTLS_WrongFingerprint_Rejected(t *testing.T) {
 
 func TestTLS_WithAuth(t *testing.T) {
 	dir := t.TempDir()
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	// Generate TLS cert.
 	tlsCert, _, err := auth.LoadOrGenerateCert(dir)
@@ -215,26 +195,12 @@ func TestTLS_WithAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv, err := NewServer(Config{
-		Addr:      "127.0.0.1:0",
+	srv, cleanup := startTestServerWithConfig(t, Config{
 		DataDir:   dir,
 		TLSConfig: tlsCfg,
 		KeyStore:  ks,
-		Logger:    logger,
-		Query:     config.QueryConfig{SpillDir: t.TempDir()},
 	})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	defer func() {
-		cancel()
-		time.Sleep(50 * time.Millisecond)
-	}()
-
-	go srv.Start(ctx)
-	srv.WaitReady()
+	defer cleanup()
 
 	httpClient := &http.Client{
 		Transport: &http.Transport{
@@ -243,6 +209,7 @@ func TestTLS_WithAuth(t *testing.T) {
 			},
 		},
 	}
+	defer httpClient.CloseIdleConnections()
 
 	// Health should work without auth.
 	resp, err := httpClient.Get(fmt.Sprintf("https://%s/health", srv.Addr()))
@@ -295,9 +262,10 @@ func TestTLS_IngestAndQuery(t *testing.T) {
 			},
 		},
 	}
+	defer httpClient.CloseIdleConnections()
 
-	// Ingest an event over TLS.
-	ingestBody := `[{"event":"test TLS event","level":"error","source":"tls-test"}]`
+	ingestBody := `{"message":"test TLS event","level":"error","source":"tls-test"}` + "\n" +
+		`{"message":"other TLS event","level":"info","source":"tls-test"}` + "\n"
 	resp, err := httpClient.Post(
 		fmt.Sprintf("https://%s/api/v1/ingest", srv.Addr()),
 		"application/json",
@@ -317,10 +285,6 @@ func TestTLS_IngestAndQuery(t *testing.T) {
 		t.Errorf("ingest status = %d, want 200", resp.StatusCode)
 	}
 
-	// Give the engine time to process.
-	time.Sleep(100 * time.Millisecond)
-
-	// Query over TLS.
 	queryBody := `{"q": "source=main | where level = \"error\""}`
 	resp, err = httpClient.Post(
 		fmt.Sprintf("https://%s/api/v1/query", srv.Addr()),
@@ -342,15 +306,17 @@ func TestTLS_IngestAndQuery(t *testing.T) {
 	}
 
 	var result struct {
-		Data json.RawMessage `json:"data"`
+		Data struct {
+			Events []map[string]interface{} `json:"events"`
+		} `json:"data"`
 	}
 
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("decode query response: %v", err)
 	}
 
-	if len(result.Data) == 0 {
-		t.Error("expected non-empty query results")
+	if len(result.Data.Events) != 1 || result.Data.Events[0]["message"] != "test TLS event" {
+		t.Errorf("events = %v, want the error event", result.Data.Events)
 	}
 }
 

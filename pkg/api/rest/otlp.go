@@ -28,8 +28,7 @@ func (s *Server) handleOTLPLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pipe := s.ingestPipeline()
-	processed, err := pipe.Process(events)
+	processed, err := ingestPipelineForConfig(s.currentIngestConfig()).Process(events)
 	if err != nil {
 		respondInternalError(w, err.Error())
 

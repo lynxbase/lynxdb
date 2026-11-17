@@ -357,30 +357,19 @@ func fetchFieldCatalog() []fieldEntry {
 		return nil
 	}
 
-	entries := make([]fieldEntry, 0, len(fields))
-	for _, f := range fields {
-		entries = append(entries, fieldEntry{
-			Name:     f.Name,
-			Type:     f.Type,
-			Coverage: f.Coverage,
-		})
-	}
-
-	return entries
+	return clientFieldsToEntries(fields)
 }
 
 // suggestFieldName finds the closest known field name using fuzzy matching.
-// Returns a formatted suggestion string, or empty if no close match found.
+// Returns the field name, or empty if no close match found.
 func suggestFieldName(name string, knownFields []fieldEntry) string {
 	if len(knownFields) == 0 {
 		return ""
 	}
 
 	type match struct {
-		name     string
-		typ      string
-		coverage float64
-		dist     int
+		name string
+		dist int
 	}
 
 	lowerName := strings.ToLower(name)
@@ -393,12 +382,7 @@ func suggestFieldName(name string, knownFields []fieldEntry) string {
 		}
 
 		if best == nil || d < best.dist {
-			best = &match{
-				name:     f.Name,
-				typ:      f.Type,
-				coverage: f.Coverage,
-				dist:     d,
-			}
+			best = &match{name: f.Name, dist: d}
 		}
 	}
 
@@ -406,7 +390,7 @@ func suggestFieldName(name string, knownFields []fieldEntry) string {
 		return ""
 	}
 
-	return fmt.Sprintf("%s (%s, %.0f%% coverage)", best.name, best.typ, best.coverage)
+	return best.name
 }
 
 // suggestWiderTimeRange suggests a wider time range based on the current one.

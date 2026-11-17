@@ -2,36 +2,36 @@ package rest
 
 import (
 	"net/http"
-	"strings"
+	"time"
+
+	"github.com/lynxbase/lynxdb/pkg/engine/columnar"
 )
 
-func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
-	indexes := s.engine.ListIndexes()
-	result := make([]map[string]interface{}, len(indexes))
-	for i, idx := range indexes {
-		result[i] = map[string]interface{}{
-			"name":               idx.Name,
-			"retention_period":   idx.RetentionPeriod.String(),
-			"replication_factor": idx.ReplicationFactor,
-		}
+// indexEntry describes an index from its stats; an index whose events are
+// not yet written has no first or last event.
+func indexEntry(ix columnar.IndexStats) map[string]interface{} {
+	entry := map[string]interface{}{
+		"name":   ix.Name,
+		"events": ix.Rows,
+		"bytes":  ix.Bytes,
+		"parts":  ix.Parts,
 	}
-	respondData(w, http.StatusOK, map[string]interface{}{
-		"indexes": result,
-	})
+	if ix.Parts > 0 {
+		entry["first_event"] = ix.First.Format(time.RFC3339Nano)
+		entry["last_event"] = ix.Last.Format(time.RFC3339Nano)
+	}
+
+	return entry
 }
 
-func (s *Server) handleListFields(w http.ResponseWriter, r *http.Request) {
-	fields := s.engine.ListFields()
-	if prefix := strings.TrimSpace(r.URL.Query().Get("prefix")); prefix != "" {
-		filtered := fields[:0]
-		for _, field := range fields {
-			if strings.HasPrefix(field.Name, prefix) {
-				filtered = append(filtered, field)
-			}
-		}
-		fields = filtered
+func (s *Server) handleListIndexes(w http.ResponseWriter, r *http.Request) {
+	s.syncForRead()
+	stats := s.db.Stats()
+	indexes := make([]map[string]interface{}, 0, len(stats))
+	for _, ix := range stats {
+		indexes = append(indexes, indexEntry(ix))
 	}
 	respondData(w, http.StatusOK, map[string]interface{}{
-		"fields": fields,
+		"indexes": indexes,
 	})
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
@@ -127,15 +128,22 @@ func (s *Server) ReloadConfig(updated *config.Config) ([]string, error) {
 		}
 	}
 
-	if s.engine != nil {
-		s.engine.ReloadConfig(updated)
-	}
-	if s.queryService != nil {
-		s.queryService.ReloadConfig(updated.Query)
-	}
 	if s.syslogReceiver != nil {
 		if err := s.syslogReceiver.ReloadConfig(updated.Syslog); err != nil {
 			return nil, fmt.Errorf("reload syslog config: %w", err)
+		}
+	}
+	// The database takes these settings only when it opens.
+	for _, f := range []struct {
+		key     string
+		changed bool
+	}{
+		{"retention", old.Retention != updated.Retention},
+		{"query.max_concurrent", old.Query.MaxConcurrent != updated.Query.MaxConcurrent},
+		{"query.job_ttl", old.Query.JobTTL != updated.Query.JobTTL},
+	} {
+		if f.changed && !slices.Contains(changes.RestartRequired, f.key) {
+			changes.RestartRequired = append(changes.RestartRequired, f.key)
 		}
 	}
 	if s.logger != nil {

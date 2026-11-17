@@ -2,14 +2,10 @@ package rest
 
 import (
 	"encoding/json"
-	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
-
-	"github.com/lynxbase/lynxdb/pkg/model"
-	"github.com/lynxbase/lynxdb/pkg/usecases"
 )
 
 // ErrorCode is a machine-readable SCREAMING_SNAKE error code.
@@ -32,7 +28,6 @@ const (
 	ErrCodeLastRootKey         ErrorCode = "LAST_ROOT_KEY"
 	ErrCodeInternalError       ErrorCode = "INTERNAL_ERROR"
 	ErrCodeQueryMemoryExceeded ErrorCode = "QUERY_MEMORY_EXCEEDED"
-	ErrCodeQueryPoolExhausted  ErrorCode = "QUERY_POOL_EXHAUSTED"
 	ErrCodeQueryTooLarge       ErrorCode = "QUERY_TOO_LARGE"
 	ErrCodeUnsupportedCommand  ErrorCode = "UNSUPPORTED_COMMAND"
 	ErrCodeSyntaxError         ErrorCode = "SYNTAX_ERROR"
@@ -81,182 +76,15 @@ func respondInternalError(w http.ResponseWriter, msg string) {
 	respondError(w, ErrCodeInternalError, http.StatusInternalServerError, msg)
 }
 
-// respondQueryError maps a query error with a machine-readable code to the
-// appropriate HTTP status. QUERY_MEMORY_EXCEEDED → 400 (client can narrow the
-// query); QUERY_POOL_EXHAUSTED → 503 (server-wide resource contention).
-// Unknown or empty codes fall back to 500 INTERNAL_ERROR.
-func respondQueryError(w http.ResponseWriter, msg, code string) {
-	switch ErrorCode(code) {
-	case ErrCodeQueryMemoryExceeded:
-		respondError(w, ErrCodeQueryMemoryExceeded, http.StatusBadRequest, msg,
-			WithSuggestion("Narrow the time range, add filters, or increase query.max_query_memory_bytes."))
-	case ErrCodeQueryPoolExhausted:
-		respondError(w, ErrCodeQueryPoolExhausted, http.StatusServiceUnavailable, msg,
-			WithSuggestion("Wait for other queries to complete, or increase query.global_query_pool_bytes."))
-	case ErrCodeUnsupportedFeature:
-		respondError(w, ErrCodeUnsupportedFeature, http.StatusUnprocessableEntity, msg)
-	default:
-		respondError(w, ErrCodeExecutionError, http.StatusInternalServerError, msg)
-	}
-}
-
 // metaFields holds optional metadata for success responses.
 type metaFields struct {
-	TookMS          *float64                `json:"took_ms,omitempty"`
-	Scanned         *int64                  `json:"scanned,omitempty"`
-	QueryID         string                  `json:"query_id,omitempty"`
-	SegmentsErrored *int                    `json:"segments_errored,omitempty"` // E7: surface segment read errors
-	SearchStats     *metaStats              `json:"stats,omitempty"`            // rich query stats for CLI display
-	Warnings        []string                `json:"warnings,omitempty"`         // user-facing warnings about the query
-	Lints           []model.QueryLint       `json:"lints,omitempty"`            // stable post-parse query lint warnings
-	Suggestions     []model.QuerySuggestion `json:"suggestions,omitempty"`      // advisory edits/templates
-	Rewrites        []model.QueryRewrite    `json:"rewrites,omitempty"`         // visible query normalizer rewrites
-	Explain         *metaExplain            `json:"explain,omitempty"`          // advisory planning/execution explanation
+	TookMS  *float64 `json:"took_ms,omitempty"`
+	QueryID string   `json:"query_id,omitempty"`
+	// Rows is the number of rows a query returned.
+	Rows *int `json:"rows,omitempty"`
 }
 
-type metaExplain struct {
-	SourceScope       *metaExplainSourceScope `json:"source_scope,omitempty"`
-	Segments          *metaExplainSegments    `json:"segments,omitempty"`
-	CandidateRows     *int64                  `json:"candidate_rows,omitempty"`
-	RegexEngine       string                  `json:"regex_engine,omitempty"`
-	LiteralExtraction *bool                   `json:"literal_extraction,omitempty"`
-	WallClockMS       float64                 `json:"wall_clock_ms,omitempty"`
-	ScannedBytes      int64                   `json:"scanned_bytes,omitempty"`
-}
-
-type metaExplainSourceScope struct {
-	Selected []string `json:"selected,omitempty"`
-	Count    int      `json:"count"`
-}
-
-type metaExplainSegments struct {
-	Total        int `json:"total"`
-	Scanned      int `json:"scanned"`
-	Skipped      int `json:"skipped"`
-	SkippedIndex int `json:"skipped_index,omitempty"`
-	SkippedTime  int `json:"skipped_time,omitempty"`
-	SkippedStats int `json:"skipped_stats,omitempty"`
-	SkippedBloom int `json:"skipped_bloom,omitempty"`
-	SkippedRange int `json:"skipped_range,omitempty"`
-}
-
-// metaStats holds detailed query execution statistics returned in the
-// response meta block. Clients use these to display query performance
-// information (segment skips, scan type, optimizations applied, etc.).
-type metaStats struct {
-	RowsScanned          int64               `json:"rows_scanned"`
-	RowsReturned         int64               `json:"rows_returned"`
-	MatchedRows          int64               `json:"matched_rows,omitempty"`
-	SegmentsTotal        int                 `json:"segments_total,omitempty"`
-	SegmentsScanned      int                 `json:"segments_scanned,omitempty"`
-	SegmentsSkippedIdx   int                 `json:"segments_skipped_index,omitempty"`
-	SegmentsSkippedTime  int                 `json:"segments_skipped_time,omitempty"`
-	SegmentsSkippedStat  int                 `json:"segments_skipped_stats,omitempty"`
-	SegmentsSkippedBF    int                 `json:"segments_skipped_bloom,omitempty"`
-	SegmentsSkippedRange int                 `json:"segments_skipped_range,omitempty"`
-	BufferedEvents       int                 `json:"buffered_events,omitempty"`
-	InvertedIndexHits    int                 `json:"inverted_index_hits,omitempty"`
-	RangeBSIChecks       int                 `json:"range_bsi_checks,omitempty"`
-	RangeBSISkips        int                 `json:"range_bsi_skips,omitempty"`
-	RangeBSIMaskBytes    int64               `json:"range_bsi_mask_bytes,omitempty"`
-	IndexesUsed          []string            `json:"indexes_used,omitempty"`
-	CountStarOptimized   bool                `json:"count_star_optimized,omitempty"`
-	PartialAggUsed       bool                `json:"partial_agg_used,omitempty"`
-	TopKUsed             bool                `json:"topk_used,omitempty"`
-	PrefetchUsed         bool                `json:"prefetch_used,omitempty"`
-	VectorizedFilterUsed bool                `json:"vectorized_filter_used,omitempty"`
-	DictFilterUsed       bool                `json:"dict_filter_used,omitempty"`
-	JoinStrategy         string              `json:"join_strategy,omitempty"`
-	ScanMS               float64             `json:"scan_ms,omitempty"`
-	PipelineMS           float64             `json:"pipeline_ms,omitempty"`
-	CacheHit             bool                `json:"cache_hit,omitempty"`
-	PipelineStages       []metaPipelineStage `json:"pipeline_stages,omitempty"`
-
-	// Parse/optimize timing from planner.
-	ParseMS    float64 `json:"parse_ms,omitempty"`
-	OptimizeMS float64 `json:"optimize_ms,omitempty"`
-
-	// Optimizer rule details from planner.
-	OptimizerRules []metaOptimizerRule `json:"optimizer_rules,omitempty"`
-	TotalRules     int                 `json:"total_rules,omitempty"`
-
-	// ProcessedBytes is the total bytes of segment data touched by the query.
-	ProcessedBytes int64 `json:"processed_bytes,omitempty"`
-
-	// I/O bytes breakdown by source.
-	DiskBytesRead  int64 `json:"disk_bytes_read,omitempty"`
-	S3BytesRead    int64 `json:"s3_bytes_read,omitempty"`
-	CacheBytesRead int64 `json:"cache_bytes_read,omitempty"`
-
-	// Resource usage (server-side, captured via BudgetAdapter + getrusage).
-	PeakMemoryBytes int64    `json:"peak_memory_bytes,omitempty"`
-	MemAllocBytes   int64    `json:"mem_alloc_bytes,omitempty"`
-	SpilledToDisk   bool     `json:"spilled_to_disk,omitempty"`
-	SpillBytes      int64    `json:"spill_bytes,omitempty"`
-	SpillFiles      int      `json:"spill_files,omitempty"`
-	SpillNote       string   `json:"spill_note,omitempty"` // human-readable recommendation when spill occurs
-	PoolUtilization float64  `json:"pool_utilization,omitempty"`
-	Warnings        []string `json:"warnings,omitempty"`
-	CPUUserMS       float64  `json:"cpu_user_ms,omitempty"`
-	CPUSysMS        float64  `json:"cpu_sys_ms,omitempty"`
-
-	// Multi-source query metadata.
-	SourcesScanned []string `json:"sources_scanned,omitempty"`
-	SourcesSkipped int      `json:"sources_skipped,omitempty"`
-
-	// Query funnel: rows surviving each pipeline phase.
-	RowsInRange    int64 `json:"rows_in_range,omitempty"`    // total rows in time range before filtering
-	RowsAfterDedup int64 `json:"rows_after_dedup,omitempty"` // rows surviving dedup stage
-
-	// Search selectivity: fraction of scanned rows that passed the search filter.
-	// 1.0 means 100% of rows matched (low selectivity). 0.01 means 1% matched (high selectivity).
-	SearchSelectivity float64 `json:"search_selectivity,omitempty"`
-	// Suggestion is an actionable recommendation based on query execution analysis.
-	Suggestion string `json:"suggestion,omitempty"`
-
-	// Distributed query shard metadata (populated only in cluster mode).
-	ShardsTotal    int  `json:"shards_total,omitempty"`
-	ShardsSuccess  int  `json:"shards_success,omitempty"`
-	ShardsFailed   int  `json:"shards_failed,omitempty"`
-	ShardsTimedOut int  `json:"shards_timed_out,omitempty"`
-	ShardsPartial  bool `json:"shards_partial,omitempty"`
-
-	// Trace-level profiling (populated when profile=trace).
-	SegmentDetails []metaSegmentDetail `json:"segment_details,omitempty"`
-	VMCalls        int64               `json:"vm_calls,omitempty"`
-	VMTotalNS      int64               `json:"vm_total_ns,omitempty"`
-}
-
-// metaSegmentDetail holds per-segment I/O metrics for trace-level profiling.
-type metaSegmentDetail struct {
-	SegmentID       string `json:"segment_id"`
-	Source          string `json:"source"`
-	Rows            int64  `json:"rows"`
-	RowsAfterFilter int64  `json:"rows_after_filter"`
-	BloomHit        bool   `json:"bloom_hit,omitempty"`
-	InvertedUsed    bool   `json:"inverted_used,omitempty"`
-	ReadDurationNS  int64  `json:"read_duration_ns"`
-	BytesRead       int64  `json:"bytes_read,omitempty"`
-}
-
-// metaOptimizerRule describes a single optimizer rule that fired during planning.
-type metaOptimizerRule struct {
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Count       int    `json:"count"`
-}
-
-// metaPipelineStage is a single operator in the pipeline breakdown.
-type metaPipelineStage struct {
-	Name        string  `json:"name"`
-	InputRows   int64   `json:"input_rows"`
-	OutputRows  int64   `json:"output_rows"`
-	DurationMS  float64 `json:"duration_ms"`
-	ExclusiveMS float64 `json:"exclusive_ms,omitempty"` // self time excluding children
-	MemoryBytes int64   `json:"memory_bytes,omitempty"`
-	SpilledRows int64   `json:"spilled_rows,omitempty"`
-	SpillBytes  int64   `json:"spill_bytes,omitempty"`
-}
+func (m metaFields) empty() bool { return m.TookMS == nil && m.QueryID == "" && m.Rows == nil }
 
 // MetaOpt configures optional metadata fields.
 type MetaOpt func(*metaFields)
@@ -264,22 +92,8 @@ type MetaOpt func(*metaFields)
 // WithTook adds took_ms to the meta.
 func WithTook(d time.Duration) MetaOpt {
 	return func(m *metaFields) {
-		ms := float64(d.Milliseconds())
+		ms := durationMS(d)
 		m.TookMS = &ms
-	}
-}
-
-// WithTookMS adds took_ms directly from a float64.
-func WithTookMS(ms float64) MetaOpt {
-	return func(m *metaFields) {
-		m.TookMS = &ms
-	}
-}
-
-// WithScanned adds scanned count to the meta.
-func WithScanned(n int64) MetaOpt {
-	return func(m *metaFields) {
-		m.Scanned = &n
 	}
 }
 
@@ -290,84 +104,35 @@ func WithQueryID(id string) MetaOpt {
 	}
 }
 
-// WithSegmentsErrored adds segment error count to the meta (E7).
-func WithSegmentsErrored(n int) MetaOpt {
+// WithRows adds the row count of a query to the meta.
+func WithRows(n int) MetaOpt {
 	return func(m *metaFields) {
-		if n > 0 {
-			m.SegmentsErrored = &n
-		}
+		m.Rows = &n
 	}
 }
 
-// WithSearchStats adds rich query execution statistics to the response meta.
-// This enables CLI clients to display detailed segment/scan/optimization info.
-func WithSearchStats(ss *metaStats) MetaOpt {
-	return func(m *metaFields) {
-		if ss != nil {
-			m.SearchStats = ss
-		}
-	}
+func durationMS(d time.Duration) float64 {
+	return float64(d.Microseconds()) / 1000
 }
 
-// WithWarnings adds user-facing warnings to the response meta.
-func WithWarnings(warnings []string) MetaOpt {
-	return func(m *metaFields) {
-		if len(warnings) > 0 {
-			m.Warnings = warnings
-		}
+func buildMeta(opts []MetaOpt) metaFields {
+	var meta metaFields
+	for _, o := range opts {
+		o(&meta)
 	}
-}
 
-// WithLints adds stable post-parse query lints to the response meta.
-func WithLints(lints []model.QueryLint) MetaOpt {
-	return func(m *metaFields) {
-		if len(lints) > 0 {
-			m.Lints = lints
-		}
-	}
-}
-
-// WithSuggestions adds advisory query suggestions to the response meta.
-func WithSuggestions(suggestions []model.QuerySuggestion) MetaOpt {
-	return func(m *metaFields) {
-		if len(suggestions) > 0 {
-			m.Suggestions = suggestions
-		}
-	}
-}
-
-// WithRewrites adds visible query normalizer rewrites to the response meta.
-func WithRewrites(rewrites []model.QueryRewrite) MetaOpt {
-	return func(m *metaFields) {
-		if len(rewrites) > 0 {
-			m.Rewrites = rewrites
-		}
-	}
-}
-
-// WithExplain adds advisory planning/execution explanation metadata.
-func WithExplain(explain *metaExplain) MetaOpt {
-	return func(m *metaFields) {
-		if explain != nil {
-			m.Explain = explain
-		}
-	}
+	return meta
 }
 
 // respondData writes {"data": payload, "meta": {...}}.
 // When a query_id is present, it is also set as an X-Query-ID response header
-// so the logging middleware can correlate HTTP requests with query execution (O1).
+// so the logging middleware can correlate HTTP requests with query execution.
 func respondData(w http.ResponseWriter, httpStatus int, data interface{}, opts ...MetaOpt) {
-	meta := metaFields{}
-	for _, o := range opts {
-		o(&meta)
-	}
+	meta := buildMeta(opts)
 	envelope := map[string]interface{}{"data": data}
-	// Only include meta if it has content.
-	if meta.TookMS != nil || meta.Scanned != nil || meta.QueryID != "" || meta.SegmentsErrored != nil || meta.SearchStats != nil || len(meta.Warnings) > 0 || len(meta.Lints) > 0 || len(meta.Suggestions) > 0 || len(meta.Rewrites) > 0 {
+	if !meta.empty() {
 		envelope["meta"] = meta
 	}
-	// Expose query_id as a response header for logging middleware correlation.
 	if meta.QueryID != "" {
 		w.Header().Set("X-Query-ID", meta.QueryID)
 	}
@@ -377,6 +142,31 @@ func respondData(w http.ResponseWriter, httpStatus int, data interface{}, opts .
 	}
 	if err := json.NewEncoder(w).Encode(envelope); err != nil {
 		slog.Warn("rest: json encode failed", "error", err)
+	}
+}
+
+// respondRawData writes {"data": data, "meta": {...}} where data is JSON
+// already encoded.
+func respondRawData(w http.ResponseWriter, httpStatus int, data []byte, opts ...MetaOpt) {
+	meta := buildMeta(opts)
+	buf := make([]byte, 0, len(data)+96)
+	buf = append(append(append(buf, `{"data":`...), data...), ',')
+	if !meta.empty() {
+		m, err := json.Marshal(meta)
+		if err != nil {
+			slog.Warn("rest: json encode failed", "error", err)
+		} else {
+			buf = append(append(append(buf, `"meta":`...), m...), ',')
+		}
+	}
+	buf = append(buf[:len(buf)-1], '}', '\n')
+	if meta.QueryID != "" {
+		w.Header().Set("X-Query-ID", meta.QueryID)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(httpStatus)
+	if _, err := w.Write(buf); err != nil {
+		slog.Warn("rest: write failed", "error", err)
 	}
 }
 
@@ -393,15 +183,6 @@ func parseIntParam(r *http.Request, name string, defaultVal int) int {
 	}
 
 	return n
-}
-
-// isValidationError returns true if the error is a user input validation failure
-// (bad parameters) rather than an internal server error. Uses errors.Is with
-// sentinel errors for reliable detection instead of string-prefix matching (U3).
-func isValidationError(err error) bool {
-	return errors.Is(err, usecases.ErrInvalidFrom) ||
-		errors.Is(err, usecases.ErrInvalidTo) ||
-		errors.Is(err, usecases.ErrFromBeforeTo)
 }
 
 // respondJSON writes raw JSON without an envelope (for HEC Splunk-compat).

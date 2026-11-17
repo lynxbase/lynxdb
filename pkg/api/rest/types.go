@@ -2,21 +2,16 @@ package rest
 
 // QueryRequest is the request body for POST /api/v1/query.
 type QueryRequest struct {
-	Q           string   `json:"q"`
-	Query       string   `json:"query"` // alias for q
-	From        string   `json:"from"`  // "-1h", "now", ISO 8601
-	To          string   `json:"to"`
-	Earliest    string   `json:"earliest"` // legacy alias for from
-	Latest      string   `json:"latest"`   // legacy alias for to
-	Limit       int      `json:"limit"`
-	Offset      int      `json:"offset"`
-	Format      string   `json:"format"`                // json (default)
-	Wait        *float64 `json:"wait"`                  // nil=sync, 0=async, N=hybrid
-	Profile     string   `json:"profile"`               // "basic", "full", "trace" — enables profiling in response
-	Lint        *bool    `json:"lint,omitempty"`        // false disables advisory query lints
-	Suggestions *bool    `json:"suggestions,omitempty"` // false disables advisory suggestions
-	LintLimit   int      `json:"lint_limit,omitempty"`  // max lints to return; default 5
-	LintFull    bool     `json:"lint_full,omitempty"`   // true returns all advisory lints
+	Q        string   `json:"q"`
+	Query    string   `json:"query"` // alias for q
+	From     string   `json:"from"`  // "-1h", "now", ISO 8601
+	To       string   `json:"to"`
+	Earliest string   `json:"earliest"` // alias for from
+	Latest   string   `json:"latest"`   // alias for to
+	Limit    int      `json:"limit"`
+	Offset   int      `json:"offset"`
+	Format   string   `json:"format"` // json (default)
+	Wait     *float64 `json:"wait"`   // nil=sync, 0=async, N=hybrid
 }
 
 func (r *QueryRequest) effectiveQuery() string {

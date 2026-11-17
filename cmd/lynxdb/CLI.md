@@ -87,7 +87,7 @@ Alias `q`. Runs a PPL query. Arguments are joined with spaces. A trailing `\G` s
 **Modes**
 
 - **Server** (default): `POST /api/v1/query` to `--server`. A query the server promotes to an asynchronous job (HTTP 202) is polled until it finishes or `--timeout` expires (default 6 minutes).
-- **Local** (`--file`, or stdin is a pipe): the query is compiled first, then the input is loaded into an in-memory index `main` and the same compiled plan runs in process. Each line is one event. JSON objects and `key=value` pairs become fields, and a recognized timestamp becomes `_time`. The first 20 lines are checked for combined (Apache/Nginx), syslog and Docker JSON log formats, whose fields are extracted while loading; `--raw` disables that detection. `_source` is the file path, `stdin` or `--source`. `--file` and piped stdin together are an error.
+- **Local** (`--file`, or stdin is a pipe): the query is compiled first, then the input is loaded into an in-memory index `main` and the same compiled plan runs in process. Each line is one event. JSON objects and `key=value` pairs become fields, and a recognized timestamp becomes `_time`. The first 20 lines are checked for combined (Apache/Nginx), syslog and Docker JSON log formats, whose fields are extracted while loading; `--raw` disables that detection. The field `source` of a text line is the file path, `stdin` or `--source`. `--file` and piped stdin together are an error.
 - **Plan only** (`--explain`): compiles in the CLI and prints the logical plan, optimized plan and optimizer rules. Reads no input, needs no server.
 
 | Flag | Short | Default | Description |
@@ -96,8 +96,8 @@ Alias `q`. Runs a PPL query. Arguments are joined with spaces. A trailing `\G` s
 | `--from` | | | Absolute start time (ISO 8601); needs `--to`; server mode |
 | `--to` | | | Absolute end time (ISO 8601); needs `--from`; server mode |
 | `--file` | `-f` | | Query a local file or glob instead of the server |
-| `--sourcetype` | | | `_sourcetype` of loaded events; local mode |
-| `--source` | | | `_source` of loaded events; local mode |
+| `--sourcetype` | | | `sourcetype` of loaded text lines; local mode |
+| `--source` | | | `source` of loaded text lines; local mode |
 | `--output` | `-o` | | Write results to a file |
 | `--timeout` | | `6m` | Query timeout (`10s`, `5m`); server mode |
 | `--analyze` | | | Execution profile: `basic` (bare flag), `full`, `trace` |
@@ -106,8 +106,6 @@ Alias `q`. Runs a PPL query. Arguments are joined with spaces. A trailing `\G` s
 | `--copy` | | `false` | Copy results to the clipboard as TSV; server mode |
 | `--explain` | | `false` | Print the compiled plans without running the query |
 | `--raw` | | `false` | Disable log format detection; local mode |
-| `--no-lint` | | `false` | Disable advisory query lints; server mode |
-| `--no-suggestions` | | `false` | Disable advisory query suggestions; server mode |
 
 `--profile-query` is a hidden alias of `--analyze`.
 
@@ -121,7 +119,7 @@ lynxdb query 'source=main | stats p95(response_time) as p95, dc(user) as users b
 
 # Local
 lynxdb query --file access.log 'source=main | stats count() by status'
-lynxdb query --file '/var/log/app/*.log' 'source=main level=ERROR | stats count() by _source'
+lynxdb query --file '/var/log/app/*.log' 'source=main level=ERROR | stats count() by source'
 cat app.log | lynxdb query 'source=main | where response_time > 500 | stats count() by path'
 lynxdb query --raw --file app.log 'source=main "connection refused" | head 20'
 
@@ -136,7 +134,7 @@ lynxdb query 'source=main status>=500 | fields _raw' --since 1h --format raw \
   | lynxdb query 'source=main | stats count() by path'
 ```
 
-Output: rows go to stdout, statistics and lints to stderr. On a terminal the statistics are a summary footer (rows, time, scanned, skipped segments, bytes read); otherwise one JSON line. A query that does not compile prints the query with a caret under the error position and exits with 4.
+Output: rows go to stdout, statistics to stderr. On a terminal the statistics are a summary footer (rows, time); otherwise one JSON line. A query that does not compile prints the query with a caret under the error position and exits with 4.
 
 ## explain
 
@@ -148,7 +146,7 @@ Compiles the query on the server (`GET /api/v1/query/explain`) and prints the lo
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--analyze` | `false` | Run the query with full profiling and print the profile after the plan |
+| `--analyze` | `false` | Run the query and print its time and rows after the plan |
 
 ```bash
 lynxdb explain 'source=main level=ERROR | stats count() by host'
@@ -162,21 +160,21 @@ lynxdb explain --analyze 'source=main level=ERROR | stats count()'
 lynxdb fields [name] [flags]
 ```
 
-Alias `f`. Field catalog from the server: name, type, coverage and top values. With a name, details for that field; with `--values`, its top 50 values.
+Alias `f`. Field catalog from the server: each field and the indexes that hold it. With a name, its indexes and top 20 values; with `--values`, its top 50 values and their counts.
 
 | Flag | Short | Description |
 |------|-------|-------------|
 | `--values` | | Top values for the named field |
-| `--since` | `-s` | Relative time range |
-| `--from` | | Absolute start time (ISO 8601) |
-| `--to` | | Absolute end time (ISO 8601) |
-| `--source` | | Only fields seen from this source |
+| `--since` | `-s` | Relative time range of `--values` |
+| `--from` | | Absolute start time of `--values` (ISO 8601) |
+| `--to` | | Absolute end time of `--values` (ISO 8601) |
+| `--source` | | Only this index |
 | `--prefix` | | Only fields whose names start with this prefix |
 
 ```bash
 lynxdb fields
-lynxdb fields status --values
-lynxdb fields --prefix st --since 1h
+lynxdb fields status --values --since 1h
+lynxdb fields --prefix st
 ```
 
 ---
@@ -243,19 +241,11 @@ Starts the server. Settings come from the config file, then `LYNXDB_*` environme
 |------|---------|-------------|
 | `--addr` | `localhost:3100` | Listen address |
 | `--data-dir` | `~/.local/share/lynxdb` | Data directory; `""` for in-memory |
-| `--s3-bucket` | | S3 bucket for warm/cold storage |
-| `--s3-region` | | AWS region |
-| `--s3-prefix` | | Key prefix in S3 |
-| `--compaction-interval` | | Compaction check interval |
-| `--tiering-interval` | | Tier evaluation interval |
-| `--cache-max-mb` | | Query cache size (`512mb`, `1gb`) |
 | `--log-level` | | `debug`, `info`, `warn`, `error` |
 | `--auth` | `false` | Require API keys (needs a data directory) |
 | `--tls` | `false` | Serve HTTPS; self-signed certificate in `<data-dir>/tls/` without `--tls-cert` |
 | `--tls-cert` | | Certificate PEM file |
 | `--tls-key` | | Private key PEM file |
-| `--max-query-pool` | | Global query memory pool (`2gb`, `4gb`) |
-| `--spill-dir` | OS temp dir | Directory for spill files |
 | `--profile-runtime` | `false` | Mutex and block profiling (about 2-5% overhead) |
 | `--syslog` | | UDP and TCP syslog address (port 5514 when omitted) |
 | `--syslog-udp` | | UDP syslog address |
@@ -270,11 +260,6 @@ Starts the server. Settings come from the config file, then `LYNXDB_*` environme
 | `--otlp-grpc-max-recv-bytes` | | Largest OTLP/gRPC message |
 | `--ingest-max-compressed-body-bytes` | | Largest compressed shipper body |
 | `--ingest-max-decompressed-body-bytes` | | Largest decompressed shipper body |
-| `--cluster.enabled` | `false` | Cluster mode |
-| `--cluster.node-id` | | Node ID |
-| `--cluster.roles` | | `meta`, `ingest`, `query` (comma-separated) |
-| `--cluster.seeds` | | Seed addresses (`host:port`, comma-separated) |
-| `--cluster.grpc-port` | | Node-to-node gRPC port |
 
 With `--auth` and no keys, the server generates a root key and prints it once. The PID is written to `<data-dir>/lynxdb.pid` (in-memory mode: `$XDG_RUNTIME_DIR` or the temp directory).
 
@@ -294,7 +279,7 @@ lynxdb server --syslog :514 --otlp-grpc-listen :4317
 lynxdb status
 ```
 
-Alias `st`. Version, uptime, health, storage, event counts, segments, buffered events, indexes, top sources, oldest event and the query memory pool. `--format json` prints `uptime_seconds`, `storage_bytes`, `total_events`, `events_today`, `index_count`, `segment_count`, `buffered_events`, `oldest_event`, `health` and `sources`.
+Alias `st`. Version, uptime, health, storage, event count, parts, indexes with their share of events, and the times of the oldest and newest events. `--format json` prints `uptime_seconds`, `storage_bytes`, `total_events`, `index_count`, `part_count`, `oldest_event`, `newest_event`, `health` and `indexes`.
 
 ## health
 
@@ -310,7 +295,7 @@ Calls `GET /health` and prints the status (`healthy`, `degraded`, `unhealthy`).
 lynxdb indexes
 ```
 
-Lists indexes with retention and replication factor.
+Lists indexes with their events, bytes, parts and the times of their first and last events.
 
 ## jobs
 
@@ -448,7 +433,7 @@ Completes commands, flags, config keys, and field names and job IDs fetched from
 | `tsv` | TSV with header |
 | `raw` | `_raw` per row, or tab-separated `field=value` pairs |
 
-Data goes to stdout; statistics, hints, lints and errors go to stderr. `NO_COLOR` disables color.
+Data goes to stdout; statistics, hints and errors go to stderr. `NO_COLOR` disables color.
 
 ## Exit codes
 

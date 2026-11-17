@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/config"
 )
@@ -37,6 +36,16 @@ func decodeESBulkResponse(t *testing.T, resp *http.Response) esBulkResponse {
 	}
 
 	return result
+}
+
+// esClusterInfo is the handshake document of the Elasticsearch root route.
+type esClusterInfo struct {
+	Name        string `json:"name"`
+	ClusterName string `json:"cluster_name"`
+	Version     struct {
+		Number                          string `json:"number"`
+		MinimumWireCompatibilityVersion string `json:"minimum_wire_compatibility_version"`
+	} `json:"version"`
 }
 
 func TestESBulk_BasicIndex(t *testing.T) {
@@ -78,8 +87,6 @@ func TestESBulk_BasicIndex(t *testing.T) {
 		}
 	}
 
-	// Verify ES _index routes to the physical LynxDB index.
-	time.Sleep(200 * time.Millisecond)
 	n := queryEventCount(t, srv.Addr(), `{"q":"source=logs"}`)
 	if n != 2 {
 		t.Fatalf("logs events: got %d, want 2", n)
@@ -90,15 +97,7 @@ func TestESBulk_BasicIndex(t *testing.T) {
 }
 
 func TestESBulk_DurableBeforeSuccess(t *testing.T) {
-	ingestCfg := config.DefaultConfig().Ingest
-	ingestCfg.OTLP.HTTPListen = ""
-	ingestCfg.OTLP.GRPCListen = ""
-
-	srv, cleanup := startTestServerWithConfig(t, Config{
-		DataDir: t.TempDir(),
-		Storage: config.DefaultConfig().Storage,
-		Ingest:  ingestCfg,
-	})
+	srv, cleanup := startTestServerWithConfig(t, Config{DataDir: t.TempDir()})
 	defer cleanup()
 
 	body := `{"index":{"_index":"logs"}}
@@ -112,11 +111,9 @@ func TestESBulk_DurableBeforeSuccess(t *testing.T) {
 	if result.Errors {
 		t.Fatal("expected errors=false")
 	}
-	if got := srv.engine.BufferedEventCount(); got != 0 {
-		t.Fatalf("buffered events after successful bulk: got %d, want 0", got)
-	}
-	if got := srv.engine.SegmentCount(); got != 1 {
-		t.Fatalf("segment count after successful bulk: got %d, want 1", got)
+	ix, ok := indexStats(srv, "logs")
+	if !ok || ix.Rows != 1 || ix.Parts == 0 {
+		t.Fatalf("logs after successful bulk: %+v, want 1 row written", ix)
 	}
 	if n := queryEventCount(t, srv.Addr(), `{"q":"source=logs"}`); n != 1 {
 		t.Fatalf("logs events immediately after bulk: got %d, want 1", n)
@@ -154,7 +151,7 @@ func TestESBulk_PathIndexFallback(t *testing.T) {
 	resp, err := http.Post(
 		fmt.Sprintf("http://%s/path-index/_bulk", srv.Addr()),
 		"application/x-ndjson",
-		strings.NewReader("{\"index\":{}}\n{\"message\":\"from path\"}\n"),
+		strings.NewReader("{\"index\":{}}\n{\"message\":\"from path\"}\n{\"index\":{\"_index\":\"action-index\"}}\n{\"message\":\"from action\"}\n"),
 	)
 	if err != nil {
 		t.Fatalf("POST: %v", err)
@@ -166,45 +163,24 @@ func TestESBulk_PathIndexFallback(t *testing.T) {
 	if result.Items[0].Index.Index != "path-index" {
 		t.Fatalf("_index = %q, want path-index", result.Items[0].Index.Index)
 	}
-}
-
-func TestESBulk_TargetIndexFallback(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	resp := postESBulk(t, srv.Addr(), "{\"index\":{}}\n{\"message\":\"from target\",\"target_index\":\"doc-target\"}\n")
-	result := decodeESBulkResponse(t, resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status: %d", resp.StatusCode)
+	if result.Items[1].Index.Index != "action-index" {
+		t.Fatalf("_index = %q, want action-index", result.Items[1].Index.Index)
 	}
-	if result.Errors {
-		t.Fatal("expected errors=false")
-	}
-	if result.Items[0].Index.Index != "doc-target" {
-		t.Fatalf("_index = %q, want doc-target", result.Items[0].Index.Index)
-	}
-
-	time.Sleep(200 * time.Millisecond)
-	events := queryEvents(t, srv.Addr(), `{"q":"source=doc-target | fields target_index | head 1"}`)
-	if len(events) != 1 {
-		t.Fatalf("events: got %d, want 1", len(events))
-	}
-	if got := events[0]["target_index"]; got != "doc-target" {
-		t.Fatalf("target_index = %v, want doc-target", got)
+	for _, index := range []string{"path-index", "action-index"} {
+		if n := queryEventCount(t, srv.Addr(), fmt.Sprintf(`{"q":"source=%s"}`, index)); n != 1 {
+			t.Fatalf("%s events: got %d, want 1", index, n)
+		}
 	}
 }
 
 func TestESBulk_DataStreamRouteUsesPathName(t *testing.T) {
-	ingestCfg := config.DefaultConfig().Ingest
-	ingestCfg.OTLP.HTTPListen = ""
-	ingestCfg.OTLP.GRPCListen = ""
-	srv, cleanup := startTestServerWithConfig(t, Config{Ingest: ingestCfg})
+	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
 	resp, err := http.Post(
 		fmt.Sprintf("http://%s/_data_stream/logs-generic-default/_bulk", srv.Addr()),
 		"application/x-ndjson",
-		strings.NewReader("{\"index\":{\"_index\":\"ignored-meta\"}}\n{\"message\":\"from data stream\"}\n"),
+		strings.NewReader("{\"create\":{}}\n{\"message\":\"from data stream\"}\n{\"create\":{\"_index\":\"named-meta\"}}\n{\"message\":\"from action\"}\n"),
 	)
 	if err != nil {
 		t.Fatalf("POST: %v", err)
@@ -213,8 +189,17 @@ func TestESBulk_DataStreamRouteUsesPathName(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status: %d", resp.StatusCode)
 	}
-	if result.Items[0].Index.Index != "logs-generic-default" {
-		t.Fatalf("_index = %q, want logs-generic-default", result.Items[0].Index.Index)
+	if result.Errors || len(result.Items) != 2 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	if result.Items[0].Create.Index != "logs-generic-default" {
+		t.Fatalf("_index = %q, want logs-generic-default", result.Items[0].Create.Index)
+	}
+	if result.Items[1].Create.Index != "named-meta" {
+		t.Fatalf("_index = %q, want named-meta", result.Items[1].Create.Index)
+	}
+	if n := queryEventCount(t, srv.Addr(), `{"q":"source=logs-generic-default"}`); n != 1 {
+		t.Fatalf("logs-generic-default events: got %d, want 1", n)
 	}
 }
 
@@ -265,20 +250,20 @@ func TestESBulk_UpdateRejected(t *testing.T) {
 	if len(result.Items) != 3 {
 		t.Fatalf("items: got %d, want 3", len(result.Items))
 	}
-	// First and third should succeed.
 	if result.Items[0].Index == nil || result.Items[0].Index.Status != 201 {
 		t.Fatalf("item 0: expected 201")
 	}
-	// Second (update) should fail.
 	if result.Items[1].Index == nil || result.Items[1].Index.Status != 400 {
 		t.Fatalf("item 1: expected 400, got %+v", result.Items[1])
 	}
 	if result.Items[1].Index.Error == nil || result.Items[1].Index.Error.Type != "action_request_validation_exception" {
 		t.Fatalf("item 1: wrong error type")
 	}
-	// Third should succeed.
 	if result.Items[2].Index == nil || result.Items[2].Index.Status != 201 {
 		t.Fatalf("item 2: expected 201")
+	}
+	if n := queryEventCount(t, srv.Addr(), `{"q":"source=logs"}`); n != 2 {
+		t.Fatalf("logs events: got %d, want 2 (the update's document is not stored)", n)
 	}
 }
 
@@ -332,6 +317,9 @@ func TestESBulk_MalformedAction(t *testing.T) {
 	if result.Items[1].Index.Status != 201 {
 		t.Fatalf("item 1: expected 201")
 	}
+	if n := queryEventCount(t, srv.Addr(), `{"q":"source=logs"}`); n != 1 {
+		t.Fatalf("logs events: got %d, want 1", n)
+	}
 }
 
 func TestESBulk_MalformedData(t *testing.T) {
@@ -340,6 +328,8 @@ func TestESBulk_MalformedData(t *testing.T) {
 
 	body := `{"index":{"_index":"logs"}}
 not-valid-json
+{"index":{"_index":"logs"}}
+["an","array"]
 `
 	resp := postESBulk(t, srv.Addr(), body)
 	result := decodeESBulkResponse(t, resp)
@@ -347,11 +337,19 @@ not-valid-json
 	if !result.Errors {
 		t.Fatal("expected errors=true")
 	}
-	if len(result.Items) != 1 {
-		t.Fatalf("items: got %d, want 1", len(result.Items))
+	if len(result.Items) != 2 {
+		t.Fatalf("items: got %d, want 2", len(result.Items))
 	}
-	if result.Items[0].Index.Status != 400 {
-		t.Fatalf("expected 400")
+	for i, item := range result.Items {
+		if item.Index.Status != 400 {
+			t.Fatalf("item %d: status %d, want 400", i, item.Index.Status)
+		}
+		if item.Index.Error == nil || item.Index.Error.Type != "mapper_parsing_exception" {
+			t.Fatalf("item %d: error = %+v, want mapper_parsing_exception", i, item.Index.Error)
+		}
+	}
+	if n := queryEventCount(t, srv.Addr(), `{"q":"source=logs"}`); n != 0 {
+		t.Fatalf("logs events: got %d, want 0", n)
 	}
 }
 
@@ -399,9 +397,11 @@ func TestESBulk_InvalidIndexNames(t *testing.T) {
 		t.Fatalf("item 5 = %+v, want created", result.Items[5])
 	}
 
-	time.Sleep(200 * time.Millisecond)
 	if n := queryEventCount(t, srv.Addr(), `{"q":"source=valid-index"}`); n != 1 {
 		t.Fatalf("valid-index events: got %d, want 1", n)
+	}
+	if names := srv.DB().Names(); len(names) != 1 || names[0] != "valid-index" {
+		t.Fatalf("indexes = %v, want only valid-index", names)
 	}
 }
 
@@ -443,12 +443,14 @@ func TestESBulk_EmptyBody(t *testing.T) {
 	}
 }
 
-func TestESBulk_TimestampMapping(t *testing.T) {
+func TestESBulk_TimestampIsEventTime(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
 	body := `{"index":{"_index":"logs"}}
 {"@timestamp":"2026-02-14T14:00:00Z","message":"ts test"}
+{"index":{"_index":"logs"}}
+{"timestamp":"2026-02-14T15:00:00Z","message":"timestamp test"}
 `
 	resp := postESBulk(t, srv.Addr(), body)
 	result := decodeESBulkResponse(t, resp)
@@ -456,26 +458,19 @@ func TestESBulk_TimestampMapping(t *testing.T) {
 	if result.Errors {
 		t.Fatal("expected errors=false")
 	}
-	if len(result.Items) != 1 {
-		t.Fatalf("items: got %d, want 1", len(result.Items))
+	if len(result.Items) != 2 {
+		t.Fatalf("items: got %d, want 2", len(result.Items))
 	}
-	if result.Items[0].Index.Status != 201 {
-		t.Fatalf("status: %d", result.Items[0].Index.Status)
+
+	events := queryEvents(t, srv.Addr(), `{"q":"source=logs | sort _time"}`)
+	if len(events) != 2 {
+		t.Fatalf("events: got %d, want 2", len(events))
 	}
-}
-
-func TestESBulk_TimestampEpoch(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	body := `{"index":{"_index":"logs"}}
-{"@timestamp":1739538000.123,"message":"epoch ts"}
-`
-	resp := postESBulk(t, srv.Addr(), body)
-	result := decodeESBulkResponse(t, resp)
-
-	if result.Errors {
-		t.Fatal("expected errors=false")
+	if events[0]["_time"] != "2026-02-14T14:00:00Z" || events[0]["@timestamp"] != "2026-02-14T14:00:00Z" {
+		t.Fatalf("event 0 = %v, want _time and @timestamp 2026-02-14T14:00:00Z", events[0])
+	}
+	if events[1]["_time"] != "2026-02-14T15:00:00Z" || events[1]["timestamp"] != "2026-02-14T15:00:00Z" {
+		t.Fatalf("event 1 = %v, want _time and timestamp 2026-02-14T15:00:00Z", events[1])
 	}
 }
 
@@ -492,8 +487,6 @@ func TestESBulk_IndexMapping(t *testing.T) {
 		t.Fatal("expected errors=false")
 	}
 
-	// Verify event was routed to the ES index, not main.
-	time.Sleep(200 * time.Millisecond)
 	n := queryEventCount(t, srv.Addr(), `{"q":"source=filebeat-2026.02.17"}`)
 	if n != 1 {
 		t.Fatalf("filebeat-2026.02.17 events: got %d, want 1", n)
@@ -503,103 +496,41 @@ func TestESBulk_IndexMapping(t *testing.T) {
 	}
 }
 
-func TestESBulk_FilebeatPathMapsToSource(t *testing.T) {
+func TestESBulk_DocumentKeepsItsFields(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
 	body := `{"index":{"_index":"filebeat-2026.05.17"}}
-{"@timestamp":"2026-05-17T10:00:00Z","message":"filebeat path","log":{"file":{"path":"/var/log/app/nginx_access.log"}}}
+{"@timestamp":"2026-05-17T10:00:00Z","message":"filebeat path","host":{"name":"web-01"},"source":"/var/log/app/app.log","target_index":"elsewhere","log":{"file":{"path":"/var/log/app/nginx_access.log"}}}
 `
 	resp := postESBulk(t, srv.Addr(), body)
 	result := decodeESBulkResponse(t, resp)
 	if result.Errors {
 		t.Fatal("expected errors=false")
 	}
+	if got := result.Items[0].Index.Index; got != "filebeat-2026.05.17" {
+		t.Fatalf("_index = %q, want filebeat-2026.05.17", got)
+	}
 
-	time.Sleep(200 * time.Millisecond)
-	events := queryEvents(t, srv.Addr(), `{"q":"source=filebeat-2026.05.17 | fields _source | head 1"}`)
+	events := queryEvents(t, srv.Addr(),
+		`{"q":"source=filebeat-2026.05.17 | fields message, host.name, source, target_index, log.file.path"}`)
 	if len(events) != 1 {
 		t.Fatalf("events: got %d, want 1", len(events))
 	}
-	if got := events[0]["_source"]; got != "/var/log/app/nginx_access.log" {
-		t.Fatalf("_source = %v, want /var/log/app/nginx_access.log", got)
+	want := map[string]interface{}{
+		"message":       "filebeat path",
+		"host.name":     "web-01",
+		"source":        "/var/log/app/app.log",
+		"target_index":  "elsewhere",
+		"log.file.path": "/var/log/app/nginx_access.log",
 	}
-}
-
-func TestESBulk_TopLevelSourceMapsToSource(t *testing.T) {
-	ev := esDocToEventWithMapping(
-		map[string]interface{}{"message": "top source", "source": "/var/log/app/app.log"},
-		"filebeat-2026.05.17",
-		esFieldMapping{TimeField: "@timestamp"},
-	)
-	if ev.Source != "/var/log/app/app.log" {
-		t.Fatalf("Source = %q, want /var/log/app/app.log", ev.Source)
+	for k, v := range want {
+		if events[0][k] != v {
+			t.Errorf("%s = %v, want %v", k, events[0][k], v)
+		}
 	}
-	if ev.Index != "filebeat-2026.05.17" {
-		t.Fatalf("Index = %q, want filebeat-2026.05.17", ev.Index)
-	}
-	if _, ok := ev.Fields["source"]; ok {
-		t.Fatal("source user field should be consumed into Event.Source")
-	}
-}
-
-func TestESBulk_LogFilePathPreservedAsField(t *testing.T) {
-	ev := esDocToEventWithMapping(
-		map[string]interface{}{
-			"message": "filebeat path",
-			"log": map[string]interface{}{
-				"file": map[string]interface{}{
-					"path": "/var/log/app/nginx_access.log",
-				},
-			},
-		},
-		"filebeat-2026.05.17",
-		esFieldMapping{TimeField: "@timestamp"},
-	)
-	if ev.Source != "/var/log/app/nginx_access.log" {
-		t.Fatalf("Source = %q, want /var/log/app/nginx_access.log", ev.Source)
-	}
-	path, ok := ev.Fields["log.file.path"]
-	if !ok {
-		t.Fatal("log.file.path field missing")
-	}
-	if got := path.AsString(); got != "/var/log/app/nginx_access.log" {
-		t.Fatalf("log.file.path = %q, want /var/log/app/nginx_access.log", got)
-	}
-}
-
-func TestESBulk_LogstashFormat_DateStripped(t *testing.T) {
-	ev := esDocToEventWithMapping(
-		map[string]interface{}{"message": "logstash format"},
-		"fluent-bit-2026.05.04",
-		esFieldMapping{TimeField: "@timestamp", StripLogstashDateSuffix: true},
-	)
-	if ev.Source != "" {
-		t.Fatalf("Source = %q, want empty", ev.Source)
-	}
-	if ev.Index != "fluent-bit-2026.05.04" {
-		t.Fatalf("Index = %q, want fluent-bit-2026.05.04", ev.Index)
-	}
-}
-
-func TestESBulk_LogstashFormat_NoStripWhenDisabled(t *testing.T) {
-	ev := esDocToEventWithMapping(
-		map[string]interface{}{"message": "logstash format"},
-		"fluent-bit-2026.05.04",
-		esFieldMapping{TimeField: "@timestamp"},
-	)
-	if ev.Source != "" {
-		t.Fatalf("Source = %q, want empty", ev.Source)
-	}
-	if ev.Index != "fluent-bit-2026.05.04" {
-		t.Fatalf("Index = %q, want fluent-bit-2026.05.04", ev.Index)
-	}
-}
-
-func TestESBulk_LogstashFormat_NonDateSuffixUnchanged(t *testing.T) {
-	got := stripLogstashDateSuffix("fluent-bit-2026.99")
-	if got != "fluent-bit-2026.99" {
-		t.Fatalf("stripLogstashDateSuffix = %q, want original", got)
+	if n := queryEventCount(t, srv.Addr(), `{"q":"source=elsewhere"}`); n != 0 {
+		t.Fatalf("elsewhere events: got %d, want 0", n)
 	}
 }
 
@@ -617,118 +548,20 @@ func TestESBulk_NestedHost(t *testing.T) {
 		t.Fatal("expected errors=false")
 	}
 
-	// Verify event was ingested into its ES index.
-	time.Sleep(200 * time.Millisecond)
-	n := queryEventCount(t, srv.Addr(), `{"q":"source=logs"}`)
-	if n != 1 {
-		t.Fatalf("logs events: got %d, want 1", n)
+	events := queryEvents(t, srv.Addr(), `{"q":"source=logs | where host.name = \"web-01\""}`)
+	if len(events) != 1 {
+		t.Fatalf("logs events with host.name web-01: got %d, want 1", len(events))
 	}
 }
 
-func TestESBulk_FilebeatTargetIndexRoutesDocuments(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	body := `{"index":{}}
-{"@timestamp":"2026-05-17T10:00:00Z","message":"apache access","target_index":"apache-access","log":{"file":{"path":"/var/log/app/apache_access.log"}}}
-{"index":{}}
-{"@timestamp":"2026-05-17T10:01:00Z","message":"nginx error","target_index":"nginx-error","log":{"file":{"path":"/var/log/app/nginx_error.log"}}}
-`
-	resp := postESBulk(t, srv.Addr(), body)
-	result := decodeESBulkResponse(t, resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status: %d", resp.StatusCode)
-	}
-	if result.Errors {
-		t.Fatal("expected errors=false")
-	}
-	if got := result.Items[0].Index.Index; got != "apache-access" {
-		t.Fatalf("item 0 _index = %q, want apache-access", got)
-	}
-	if got := result.Items[1].Index.Index; got != "nginx-error" {
-		t.Fatalf("item 1 _index = %q, want nginx-error", got)
-	}
-
-	time.Sleep(200 * time.Millisecond)
-	apache := queryEvents(t, srv.Addr(), `{"q":"source=apache-access | fields index, target_index, _source | head 10"}`)
-	if len(apache) != 1 {
-		t.Fatalf("apache-access events: got %d, want 1", len(apache))
-	}
-	if apache[0]["target_index"] != "apache-access" {
-		t.Fatalf("apache target_index = %v, want apache-access", apache[0]["target_index"])
-	}
-	if apache[0]["_source"] != "/var/log/app/apache_access.log" {
-		t.Fatalf("apache _source = %v, want /var/log/app/apache_access.log", apache[0]["_source"])
-	}
-
-	nginx := queryEvents(t, srv.Addr(), `{"q":"source=nginx-error | fields index, target_index, _source | head 10"}`)
-	if len(nginx) != 1 {
-		t.Fatalf("nginx-error events: got %d, want 1", len(nginx))
-	}
-	if nginx[0]["target_index"] != "nginx-error" {
-		t.Fatalf("nginx target_index = %v, want nginx-error", nginx[0]["target_index"])
-	}
-	if nginx[0]["_source"] != "/var/log/app/nginx_error.log" {
-		t.Fatalf("nginx _source = %v, want /var/log/app/nginx_error.log", nginx[0]["_source"])
-	}
-	bySource := queryEvents(t, srv.Addr(), `{"q":"source=nginx-error | where _source = \"/var/log/app/nginx_error.log\" | fields index, target_index, _source | head 10"}`)
-	if len(bySource) != 1 {
-		t.Fatalf("nginx-error _source filter events: got %d, want 1", len(bySource))
-	}
-	if bySource[0]["index"] != "nginx-error" {
-		t.Fatalf("filtered index = %v, want nginx-error", bySource[0]["index"])
-	}
-	if n := queryEventCount(t, srv.Addr(), `{"q":"source=main"}`); n != 0 {
-		t.Fatalf("main events: got %d, want 0", n)
-	}
-}
-
-func TestESBulk_OtelCollectorElasticsearchTemplateIndex(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	body := `{"index":{"_index":"${target_index}"}}
-{"@timestamp":"2026-05-17T10:00:00Z","body":"nginx access","target_index":"nginx-access","log.file.path":"/var/log/app/nginx_access.log"}
-{"index":{"_index":"prefix-${target_index}"}}
-{"@timestamp":"2026-05-17T10:01:00Z","body":"postgres","target_index":"postgres","log.file.path":"/var/log/app/postgres.log"}
-`
-	resp := postESBulk(t, srv.Addr(), body)
-	result := decodeESBulkResponse(t, resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status: %d", resp.StatusCode)
-	}
-	if result.Errors {
-		t.Fatal("expected errors=false")
-	}
-	if got := result.Items[0].Index.Index; got != "nginx-access" {
-		t.Fatalf("item 0 _index = %q, want nginx-access", got)
-	}
-	if got := result.Items[1].Index.Index; got != "prefix-postgres" {
-		t.Fatalf("item 1 _index = %q, want prefix-postgres", got)
-	}
-
-	time.Sleep(200 * time.Millisecond)
-	nginx := queryEvents(t, srv.Addr(), `{"q":"source=nginx-access | fields target_index, _source | head 1"}`)
-	if len(nginx) != 1 {
-		t.Fatalf("nginx-access events: got %d, want 1", len(nginx))
-	}
-	if nginx[0]["target_index"] != "nginx-access" {
-		t.Fatalf("nginx target_index = %v, want nginx-access", nginx[0]["target_index"])
-	}
-	if nginx[0]["_source"] != "/var/log/app/nginx_access.log" {
-		t.Fatalf("nginx _source = %v, want /var/log/app/nginx_access.log", nginx[0]["_source"])
-	}
-	if n := queryEventCount(t, srv.Addr(), `{"q":"source=prefix-postgres"}`); n != 1 {
-		t.Fatalf("prefix-postgres events: got %d, want 1", n)
-	}
-}
-
-func TestESBulk_SourcePathFilterBeforeParse(t *testing.T) {
+func TestESBulk_FieldFilterBeforeParse(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
 	body := `{"index":{"_index":"nginx-access"}}
-{"@timestamp":"2026-05-17T21:45:56Z","message":"192.168.1.203 - - [17/May/2026:21:45:56 +0000] \"OPTIONS /static/style.css HTTP/1.1\" 404 109 \"https://google.com/search?q=test\" \"kube-probe/1.30\" 0.752 0.747","target_index":"nginx-access","log":{"file":{"path":"/var/log/app/nginx_access.log"}}}
+{"@timestamp":"2026-05-17T21:45:56Z","message":"192.168.1.203 - - [17/May/2026:21:45:56 +0000] \"OPTIONS /static/style.css HTTP/1.1\" 404 109 \"https://google.com/search?q=test\" \"kube-probe/1.30\" 0.752 0.747","log":{"file":{"path":"/var/log/app/nginx_access.log"}}}
+{"index":{"_index":"nginx-access"}}
+{"@timestamp":"2026-05-17T21:45:57Z","message":"other file","log":{"file":{"path":"/var/log/app/other.log"}}}
 `
 	resp := postESBulk(t, srv.Addr(), body)
 	result := decodeESBulkResponse(t, resp)
@@ -739,8 +572,7 @@ func TestESBulk_SourcePathFilterBeforeParse(t *testing.T) {
 		t.Fatal("expected errors=false")
 	}
 
-	time.Sleep(200 * time.Millisecond)
-	const parsed = `source=nginx-access | where _source = "/var/log/app/nginx_access.log" | parse message '.* "(?<referer>[^"]*)" "(?<user_agent>[^"]*)" .*' | head 1`
+	const parsed = `source=nginx-access | where log.file.path = "/var/log/app/nginx_access.log" | parse message '.* "(?<referer>[^"]*)" "(?<user_agent>[^"]*)" .*' | head 1`
 	queryBody := func(q string) string {
 		b, _ := json.Marshal(map[string]string{"q": q})
 		return string(b)
@@ -750,93 +582,25 @@ func TestESBulk_SourcePathFilterBeforeParse(t *testing.T) {
 	if len(events) != 1 {
 		t.Fatalf("events: got %d, want 1", len(events))
 	}
-	if events[0]["index"] != "nginx-access" {
-		t.Fatalf("index = %v, want nginx-access", events[0]["index"])
+	if events[0]["log.file.path"] != "/var/log/app/nginx_access.log" {
+		t.Fatalf("log.file.path = %v, want /var/log/app/nginx_access.log", events[0]["log.file.path"])
 	}
-	if events[0]["_source"] != "/var/log/app/nginx_access.log" {
-		t.Fatalf("_source = %v, want /var/log/app/nginx_access.log", events[0]["_source"])
+	if events[0]["referer"] != "https://google.com/search?q=test" {
+		t.Fatalf("referer = %v, want https://google.com/search?q=test", events[0]["referer"])
 	}
 
 	tableOnly := queryEvents(t, srv.Addr(), queryBody(parsed+" | fields referer, user_agent"))
 	if len(tableOnly) != 1 {
 		t.Fatalf("table-only events: got %d, want 1", len(tableOnly))
 	}
-	if _, ok := tableOnly[0]["_source"]; ok {
-		t.Fatal("table-only result should not auto-add _source")
-	}
-	if _, ok := tableOnly[0]["_sourcetype"]; ok {
-		t.Fatal("table-only result should not auto-add _sourcetype")
+	if len(tableOnly[0]) != 2 {
+		t.Fatalf("table-only event = %v, want only referer and user_agent", tableOnly[0])
 	}
 	if tableOnly[0]["referer"] != "https://google.com/search?q=test" {
 		t.Fatalf("table-only referer = %v, want https://google.com/search?q=test", tableOnly[0]["referer"])
 	}
 	if tableOnly[0]["user_agent"] != "kube-probe/1.30" {
 		t.Fatalf("table-only user_agent = %v, want kube-probe/1.30", tableOnly[0]["user_agent"])
-	}
-}
-
-func TestESBulk_OtelCollectorAttributesTargetIndexFallback(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	body := `{"index":{}}
-{"body":"postgres","attributes":{"target_index":"postgres","log.file.path":"/var/log/app/postgres.log"}}
-`
-	resp := postESBulk(t, srv.Addr(), body)
-	result := decodeESBulkResponse(t, resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status: %d", resp.StatusCode)
-	}
-	if result.Errors {
-		t.Fatal("expected errors=false")
-	}
-	if got := result.Items[0].Index.Index; got != "postgres" {
-		t.Fatalf("_index = %q, want postgres", got)
-	}
-
-	time.Sleep(200 * time.Millisecond)
-	events := queryEvents(t, srv.Addr(), `{"q":"source=postgres | fields target_index, _source | head 1"}`)
-	if len(events) != 1 {
-		t.Fatalf("events: got %d, want 1", len(events))
-	}
-	if events[0]["target_index"] != "postgres" {
-		t.Fatalf("target_index = %v, want postgres", events[0]["target_index"])
-	}
-	if events[0]["_source"] != "/var/log/app/postgres.log" {
-		t.Fatalf("_source = %v, want /var/log/app/postgres.log", events[0]["_source"])
-	}
-}
-
-func TestESBulk_FluentdTargetIndexKeyRoutesDocuments(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	body := `{"index":{}}
-{"message":"fluentd nginx","target_index":"nginx-access","tag":"nginx-access"}
-{"index":{"_index":"postgres"}}
-{"message":"fluentd postgres","tag":"postgres"}
-`
-	resp := postESBulk(t, srv.Addr(), body)
-	result := decodeESBulkResponse(t, resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status: %d", resp.StatusCode)
-	}
-	if result.Errors {
-		t.Fatal("expected errors=false")
-	}
-	if got := result.Items[0].Index.Index; got != "nginx-access" {
-		t.Fatalf("item 0 _index = %q, want nginx-access", got)
-	}
-	if got := result.Items[1].Index.Index; got != "postgres" {
-		t.Fatalf("item 1 _index = %q, want postgres", got)
-	}
-
-	time.Sleep(200 * time.Millisecond)
-	if n := queryEventCount(t, srv.Addr(), `{"q":"source=nginx-access"}`); n != 1 {
-		t.Fatalf("nginx-access events: got %d, want 1", n)
-	}
-	if n := queryEventCount(t, srv.Addr(), `{"q":"source=postgres"}`); n != 1 {
-		t.Fatalf("postgres events: got %d, want 1", n)
 	}
 }
 
@@ -863,6 +627,9 @@ func TestESBulk_LargeBatch(t *testing.T) {
 		if item.Index == nil || item.Index.Status != 201 {
 			t.Fatal("expected all 201")
 		}
+	}
+	if ix, ok := indexStats(srv, "bench"); !ok || ix.Rows != 5000 {
+		t.Fatalf("bench: %+v, want 5000 rows", ix)
 	}
 }
 
@@ -891,22 +658,41 @@ also-not-json
 		t.Fatalf("items: got %d, want 5", len(result.Items))
 	}
 
-	successes := 0
-	failures := 0
-	for _, item := range result.Items {
-		if item.Index != nil {
-			if item.Index.Status == 201 {
-				successes++
-			} else {
-				failures++
-			}
+	wantStatus := []int{201, 400, 201, 400, 201}
+	for i, item := range result.Items {
+		if item.Index == nil || item.Index.Status != wantStatus[i] {
+			t.Fatalf("item %d = %+v, want status %d", i, item.Index, wantStatus[i])
 		}
 	}
-	if successes != 3 {
-		t.Fatalf("successes: got %d, want 3", successes)
+	if n := queryEventCount(t, srv.Addr(), `{"q":"source=logs"}`); n != 3 {
+		t.Fatalf("logs events: got %d, want 3", n)
 	}
-	if failures != 2 {
-		t.Fatalf("failures: got %d, want 2", failures)
+}
+
+func TestESBulk_ItemsKeepRequestOrderAcrossIndexes(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	body := `{"index":{"_index":"a","_id":"1"}}
+{"n":1}
+{"index":{"_index":"b","_id":"2"}}
+{"n":2}
+{"index":{"_index":"a","_id":"3"}}
+{"n":3}
+{"create":{"_index":"c","_id":"4"}}
+{"n":4}
+`
+	result := decodeESBulkResponse(t, postESBulk(t, srv.Addr(), body))
+	if result.Errors || len(result.Items) != 4 {
+		t.Fatalf("unexpected result: %+v", result)
+	}
+	for i, want := range []struct{ id, index string }{{"1", "a"}, {"2", "b"}, {"3", "a"}} {
+		if got := result.Items[i].Index; got == nil || got.ID != want.id || got.Index != want.index {
+			t.Fatalf("item %d = %+v, want _id %s in %s", i, got, want.id, want.index)
+		}
+	}
+	if got := result.Items[3].Create; got == nil || got.ID != "4" || got.Index != "c" {
+		t.Fatalf("item 3 = %+v, want create _id 4 in c", got)
 	}
 }
 
@@ -950,11 +736,95 @@ func TestESBulk_BlankLinesBetweenPairs(t *testing.T) {
 	}
 }
 
+func TestESBulk_RejectsUnsupportedContentType(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	resp, err := http.Post(fmt.Sprintf("http://%s/_bulk", srv.Addr()), "text/plain",
+		strings.NewReader("{\"index\":{\"_index\":\"logs\"}}\n{\"message\":\"text\"}\n"))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if errObj, _ := result["error"].(map[string]interface{}); errObj["type"] != "content_type_exception" {
+		t.Fatalf("error = %v, want content_type_exception", result["error"])
+	}
+	if names := srv.DB().Names(); len(names) != 0 {
+		t.Fatalf("indexes = %v, want none", names)
+	}
+}
+
+func TestESBulk_BodyOverLimit_Returns413(t *testing.T) {
+	srv, cleanup := startTestServerWithConfig(t, Config{Ingest: config.IngestConfig{
+		Limits: config.IngestLimitsConfig{MaxCompressedBodyBytes: 1024},
+	}})
+	defer cleanup()
+
+	var buf bytes.Buffer
+	for buf.Len() <= 4096 {
+		buf.WriteString("{\"index\":{\"_index\":\"logs\"}}\n{\"message\":\"filler\"}\n")
+	}
+	resp := postESBulk(t, srv.Addr(), buf.String())
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", resp.StatusCode)
+	}
+	if names := srv.DB().Names(); len(names) != 0 {
+		t.Fatalf("indexes = %v, want none", names)
+	}
+}
+
+func TestESBulk_RecordsMetrics(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	body := `{"index":{"_index":"logs"}}
+{"message":"ok"}
+{"create":{"_index":"logs"}}
+{"message":"created"}
+{"index":{"_index":"logs"}}
+not-json
+`
+	result := decodeESBulkResponse(t, postESBulk(t, srv.Addr(), body))
+	if !result.Errors {
+		t.Fatal("expected errors=true")
+	}
+
+	families := gatherMetrics(t, srv.promMetrics)
+	assertCounterVecLabelValue(t, families, "lynxdb_ingest_es_bulk_requests_total", "result", "partial", 1)
+	assertHistogramCount(t, families, "lynxdb_ingest_es_bulk_duration_seconds", 1)
+	items := map[string]float64{}
+	for _, m := range families["lynxdb_ingest_es_bulk_items_total"].GetMetric() {
+		labels := map[string]string{}
+		for _, lp := range m.GetLabel() {
+			labels[lp.GetName()] = lp.GetValue()
+		}
+		items[labels["action"]+"/"+labels["result"]] = m.GetCounter().GetValue()
+	}
+	want := map[string]float64{"index/ok": 1, "create/ok": 1, "index/rejected": 1}
+	if fmt.Sprint(items) != fmt.Sprint(want) {
+		t.Fatalf("bulk items = %v, want %v", items, want)
+	}
+	assertCounterValue(t, families, "lynxdb_ingest_events_total", 2)
+}
+
 func TestESIndexDoc_Basic(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
-	body := `{"message":"hello doc","level":"info"}`
+	body := `{
+  "message": "hello doc",
+  "level": "info"
+}`
 	resp, err := http.Post(
 		fmt.Sprintf("http://%s/api/v1/es/logs/_doc", srv.Addr()),
 		"application/json",
@@ -982,11 +852,9 @@ func TestESIndexDoc_Basic(t *testing.T) {
 		t.Fatalf("result: got %q", result.Result)
 	}
 
-	// Verify queryable from the route index.
-	time.Sleep(200 * time.Millisecond)
-	n := queryEventCount(t, srv.Addr(), `{"q":"source=logs"}`)
-	if n != 1 {
-		t.Fatalf("logs events: got %d, want 1", n)
+	events := queryEvents(t, srv.Addr(), `{"q":"source=logs"}`)
+	if len(events) != 1 || events[0]["message"] != "hello doc" || events[0]["level"] != "info" {
+		t.Fatalf("logs events = %v, want the document", events)
 	}
 	if n := queryEventCount(t, srv.Addr(), `{"q":"source=main"}`); n != 0 {
 		t.Fatalf("main events: got %d, want 0", n)
@@ -1062,8 +930,6 @@ func TestESIndexDoc_PathIndex(t *testing.T) {
 		t.Fatalf("status: %d", resp.StatusCode)
 	}
 
-	// Verify queryable from the path index.
-	time.Sleep(200 * time.Millisecond)
 	n := queryEventCount(t, srv.Addr(), `{"q":"source=myapp"}`)
 	if n != 1 {
 		t.Fatalf("myapp events: got %d, want 1", n)
@@ -1087,7 +953,7 @@ func TestESClusterInfo_Basic(t *testing.T) {
 		t.Fatalf("status: %d", resp.StatusCode)
 	}
 
-	var result esClusterInfoResponse
+	var result esClusterInfo
 	json.NewDecoder(resp.Body).Decode(&result)
 	if !strings.HasPrefix(result.Name, "lynxdb-") {
 		t.Fatalf("name: %q", result.Name)
@@ -1117,7 +983,7 @@ func TestESClusterInfo_NoTrailingSlash(t *testing.T) {
 		t.Fatalf("status: %d", resp.StatusCode)
 	}
 
-	var result esClusterInfoResponse
+	var result esClusterInfo
 	json.NewDecoder(resp.Body).Decode(&result)
 	if !strings.HasPrefix(result.Name, "lynxdb-") {
 		t.Fatalf("name: %q", result.Name)
@@ -1140,7 +1006,7 @@ func TestESClusterInfo_UnprefixedRoot(t *testing.T) {
 	if got := resp.Header.Get("X-Elastic-Product"); got != "Elasticsearch" {
 		t.Fatalf("X-Elastic-Product: got %q, want Elasticsearch", got)
 	}
-	var result esClusterInfoResponse
+	var result esClusterInfo
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -1190,8 +1056,7 @@ func TestESBulk_QueryAfterIngest(t *testing.T) {
 		t.Fatal("ingest failed")
 	}
 
-	time.Sleep(200 * time.Millisecond)
-	n := queryEventCount(t, srv.Addr(), `{"q":"source=nginx"}`)
+	n := queryEventCount(t, srv.Addr(), `{"q":"source=nginx | where level = \"error\""}`)
 	if n != 10 {
 		t.Fatalf("nginx events: got %d, want 10", n)
 	}
@@ -1246,8 +1111,6 @@ func TestESBulk_GzipCompressed(t *testing.T) {
 		}
 	}
 
-	// Verify events queryable from the ES index.
-	time.Sleep(200 * time.Millisecond)
 	n := queryEventCount(t, srv.Addr(), `{"q":"source=logs"}`)
 	if n != 2 {
 		t.Fatalf("logs events: got %d, want 2", n)
@@ -1291,6 +1154,9 @@ func TestESBulk_ZstdCompressed(t *testing.T) {
 	}
 	if len(result.Items) != 2 {
 		t.Fatalf("items: got %d, want 2", len(result.Items))
+	}
+	if n := queryEventCount(t, srv.Addr(), `{"q":"source=logs"}`); n != 2 {
+		t.Fatalf("logs events: got %d, want 2", n)
 	}
 }
 
@@ -1557,62 +1423,6 @@ func TestESClusterInfo_XElasticProductHeader(t *testing.T) {
 	}
 }
 
-func TestESBulk_MsgFieldParam(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	body := `{"index":{"_index":"logs"}}
-{"@timestamp":"2026-03-05T10:00:00Z","message":"hello msg field","extra":"data"}
-`
-	resp, err := http.Post(
-		fmt.Sprintf("http://%s/api/v1/es/_bulk?_msg_field=message", srv.Addr()),
-		"application/x-ndjson",
-		strings.NewReader(body),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		t.Fatalf("status: %d", resp.StatusCode)
-	}
-
-	var result esBulkResponse
-	json.NewDecoder(resp.Body).Decode(&result)
-	if result.Errors {
-		t.Fatal("expected errors=false")
-	}
-}
-
-func TestESBulk_TimeFieldParam(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	body := `{"index":{"_index":"logs"}}
-{"ts":"2026-03-05T10:00:00Z","message":"custom time field"}
-`
-	resp, err := http.Post(
-		fmt.Sprintf("http://%s/api/v1/es/_bulk?_time_field=ts", srv.Addr()),
-		"application/x-ndjson",
-		strings.NewReader(body),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		t.Fatalf("status: %d", resp.StatusCode)
-	}
-
-	var result esBulkResponse
-	json.NewDecoder(resp.Body).Decode(&result)
-	if result.Errors {
-		t.Fatal("expected errors=false")
-	}
-}
-
 func TestESIndexDoc_GzipCompressed(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
@@ -1646,6 +1456,10 @@ func TestESIndexDoc_GzipCompressed(t *testing.T) {
 	if result.ID == "" {
 		t.Fatal("empty _id")
 	}
+	events := queryEvents(t, srv.Addr(), `{"q":"source=logs"}`)
+	if len(events) != 1 || events[0]["message"] != "gzip doc" {
+		t.Fatalf("logs events = %v, want the gzip document", events)
+	}
 }
 
 // postQuery is a helper for querying.
@@ -1668,6 +1482,9 @@ func queryEvents(t *testing.T, addr, body string) []map[string]interface{} {
 	resp := postQuery(t, addr, body)
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("query status: %d, body: %s", resp.StatusCode, raw)
+	}
 	var qr map[string]interface{}
 	if err := json.Unmarshal(raw, &qr); err != nil {
 		t.Fatalf("decode query response: %v (body: %s)", err, raw)
@@ -1695,82 +1512,6 @@ func queryEvents(t *testing.T, addr, body string) []map[string]interface{} {
 // queryEventCount runs a query and returns the count of events.
 func queryEventCount(t *testing.T, addr, body string) int {
 	t.Helper()
-	resp := postQuery(t, addr, body)
-	defer resp.Body.Close()
-	raw, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("query status: %d, body: %s", resp.StatusCode, raw)
-	}
-	var qr map[string]interface{}
-	if err := json.Unmarshal(raw, &qr); err != nil {
-		t.Fatalf("decode query response: %v (body: %s)", err, raw)
-	}
-	data, ok := qr["data"].(map[string]interface{})
-	if !ok {
-		return 0
-	}
-	events, ok := data["events"].([]interface{})
-	if !ok {
-		return 0
-	}
 
-	return len(events)
-}
-
-func TestESBulk_TimeFieldEpochUnitInferredFromMagnitude(t *testing.T) {
-	want := time.Date(2024, 11, 21, 16, 25, 49, 0, time.UTC)
-	cases := []struct {
-		name  string
-		value float64
-		want  time.Time
-	}{
-		{"seconds", 1732206349, want},
-		{"fractional seconds", 1732206349.5, want.Add(500 * time.Millisecond)},
-		{"milliseconds", 1732206349123, want.Add(123 * time.Millisecond)},
-		{"microseconds", 1732206349000167, want.Add(167 * time.Microsecond)},
-		{"nanoseconds", 1732206349000000000, want},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			ev := esDocToEventWithMapping(
-				map[string]interface{}{"time_us": tc.value, "x": float64(1)},
-				"tf",
-				esFieldMapping{TimeField: "time_us"},
-			)
-			if !ev.Time.Equal(tc.want) {
-				t.Fatalf("Time = %s, want %s", ev.Time.UTC().Format(time.RFC3339Nano), tc.want.Format(time.RFC3339Nano))
-			}
-			if got := ev.Fields["time_us"]; got.IsNull() {
-				t.Fatal("custom time field should stay queryable")
-			}
-		})
-	}
-}
-
-func TestESBulk_ConventionalTimestampFieldIsConsumed(t *testing.T) {
-	ev := esDocToEventWithMapping(
-		map[string]interface{}{"@timestamp": "2024-11-21T16:25:49Z", "x": float64(1)},
-		"tf",
-		esFieldMapping{TimeField: "@timestamp"},
-	)
-	if ev.Time.IsZero() {
-		t.Fatal("Time not parsed")
-	}
-	if _, ok := ev.Fields["@timestamp"]; ok {
-		t.Fatal("@timestamp should be consumed into _time")
-	}
-}
-
-func TestESBulk_UnparsableTimeFieldIsKept(t *testing.T) {
-	ev := esDocToEventWithMapping(
-		map[string]interface{}{"ts": "not a time", "x": float64(1)},
-		"tf",
-		esFieldMapping{TimeField: "ts"},
-	)
-	if got := ev.Fields["ts"].AsString(); got != "not a time" {
-		t.Fatalf("ts field = %q, want it preserved", got)
-	}
-	if !strings.Contains(ev.Raw, `"ts":"not a time"`) {
-		t.Fatalf("Raw = %q, want ts preserved", ev.Raw)
-	}
+	return len(queryEvents(t, addr, body))
 }

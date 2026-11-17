@@ -20,6 +20,31 @@ func startHECTestServer(t *testing.T) (*Server, func()) {
 	return startTestServerWithConfig(t, Config{Ingest: ingestCfg})
 }
 
+// storedRows returns the rows the indexes hold now, without a Sync.
+func storedRows(srv *Server) uint64 {
+	var rows uint64
+	for _, ix := range srv.DB().Stats() {
+		rows += ix.Rows
+	}
+
+	return rows
+}
+
+// requireSingleEvent queries every index and checks that it holds one event
+// with the text raw.
+func requireSingleEvent(t *testing.T, srv *Server, raw string) map[string]interface{} {
+	t.Helper()
+	events := queryEvents(t, srv.Addr(), `{"q":"source=*"}`)
+	if len(events) != 1 {
+		t.Fatalf("events = %v, want one", events)
+	}
+	if events[0]["_raw"] != raw {
+		t.Fatalf("_raw = %v, want %q", events[0]["_raw"], raw)
+	}
+
+	return events[0]
+}
+
 func TestIntegration_HEC_Health_Returns200(t *testing.T) {
 	srv, cleanup := startHECTestServer(t)
 	defer cleanup()
@@ -82,11 +107,9 @@ func TestIntegration_HEC_CanonicalIngestsWithSplunkToken(t *testing.T) {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d, want 200, body=%s", resp.StatusCode, body)
 	}
-	if err := srv.engine.FlushBatcher(); err != nil {
-		t.Fatalf("flush: %v", err)
-	}
-	if srv.engine.SegmentCount() == 0 {
-		t.Fatal("expected segment after HEC ingest")
+	ev := requireSingleEvent(t, srv, "hello")
+	if ev["code"] != float64(200) {
+		t.Fatalf("code = %v, want 200", ev["code"])
 	}
 }
 
@@ -114,12 +137,7 @@ func TestIntegration_HEC_CompressedBodies_Decoded(t *testing.T) {
 				body, _ := io.ReadAll(resp.Body)
 				t.Fatalf("status = %d, want 200, body=%s", resp.StatusCode, body)
 			}
-			if err := srv.engine.FlushBatcher(); err != nil {
-				t.Fatalf("flush: %v", err)
-			}
-			if srv.engine.SegmentCount() == 0 {
-				t.Fatal("expected segment after compressed HEC ingest")
-			}
+			requireSingleEvent(t, srv, "hello compressed")
 		})
 	}
 }
@@ -142,6 +160,7 @@ func TestIntegration_HEC_LegacyAlias_StillWorksWithoutSplunkToken(t *testing.T) 
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("status = %d, want 200, body=%s", resp.StatusCode, body)
 	}
+	requireSingleEvent(t, srv, "hello legacy")
 }
 
 func TestIntegration_HEC_AckMode_RoundTrip(t *testing.T) {
@@ -172,8 +191,8 @@ func TestIntegration_HEC_AckMode_RoundTrip(t *testing.T) {
 	if !ok || ackID == 0 {
 		t.Fatalf("ackId = %#v, want positive number", eventBody["ackId"])
 	}
-	if srv.engine.SegmentCount() == 0 {
-		t.Fatal("expected HEC ack response after a flush")
+	if got := storedRows(srv); got != 1 {
+		t.Fatalf("stored rows when the ack is issued = %d, want 1", got)
 	}
 
 	ackReq, _ := http.NewRequest(http.MethodPost,

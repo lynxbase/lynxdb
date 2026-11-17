@@ -18,7 +18,6 @@ import (
 
 	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/api/rest"
-	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 // resetAllFlags clears the Changed state and resets values of all global vars
@@ -154,15 +153,9 @@ func newTestServer(t *testing.T) string {
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	storageCfg := config.DefaultConfig().Storage
-	storageCfg.CompactionInterval = 1 * time.Hour // disable auto-compaction
-	storageCfg.TieringInterval = 1 * time.Hour    // disable auto-tiering
-
 	srv, err := rest.NewServer(rest.Config{
-		Addr:    "127.0.0.1:0",
-		DataDir: "", // in-memory
-		Storage: storageCfg,
-		Logger:  logger,
+		Addr:   "127.0.0.1:0",
+		Logger: logger,
 	})
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)

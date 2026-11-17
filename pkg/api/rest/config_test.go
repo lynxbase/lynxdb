@@ -2,12 +2,12 @@ package rest
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"testing"
 	"time"
 
@@ -114,23 +114,11 @@ func TestConfig_PatchAppliesLogLevel(t *testing.T) {
 	levelVar.Set(slog.LevelInfo)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: &levelVar}))
-	srv, err := NewServer(Config{
-		Addr:     "127.0.0.1:0",
+	srv, cleanup := startTestServerWithConfig(t, Config{
 		Logger:   logger,
 		LevelVar: &levelVar,
-		Query:    config.QueryConfig{SpillDir: t.TempDir()},
 	})
-	if err != nil {
-		t.Fatalf("NewServer: %v", err)
-	}
-
-	ctx, cancel := context.WithCancel(context.Background())
-	go srv.Start(ctx)
-	srv.WaitReady()
-	defer func() {
-		cancel()
-		time.Sleep(50 * time.Millisecond)
-	}()
+	defer cleanup()
 
 	body, _ := json.Marshal(map[string]interface{}{"log_level": "debug"})
 	req, _ := http.NewRequest("PATCH", fmt.Sprintf("http://%s/api/v1/config", srv.Addr()), bytes.NewReader(body))
@@ -197,6 +185,29 @@ func TestReloadConfigReportsStartupTimeFields(t *testing.T) {
 		}
 		if !found {
 			t.Fatalf("restart_required missing %q in %v", field, restartRequired)
+		}
+	}
+}
+
+func TestReloadConfigReportsDatabaseFields(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	srv.cfgMu.RLock()
+	updated := *srv.runtimeCfg
+	srv.cfgMu.RUnlock()
+
+	updated.Retention += config.Duration(time.Hour)
+	updated.Query.MaxConcurrent++
+	updated.Query.JobTTL *= 2
+
+	restartRequired, err := srv.ReloadConfig(&updated)
+	if err != nil {
+		t.Fatalf("ReloadConfig: %v", err)
+	}
+	for _, field := range []string{"retention", "query.max_concurrent", "query.job_ttl"} {
+		if !slices.Contains(restartRequired, field) {
+			t.Errorf("restart_required missing %q in %v", field, restartRequired)
 		}
 	}
 }
