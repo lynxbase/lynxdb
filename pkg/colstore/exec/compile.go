@@ -221,7 +221,7 @@ func (q *query) scanExpr(e *Expr, depth int) (*sexpr, error) {
 	s := &sexpr{op: e.Op, pat: e.Pattern, depth: depth, slot: q.slots}
 	q.slots++
 	switch e.Op {
-	case OpHourOfDay, OpAdd, OpSub, OpMul, OpDiv:
+	case OpHourOfDay, OpAdd, OpSub, OpMul, OpDiv, OpMod:
 		s.ints = true
 	}
 	for i, a := range e.Args {

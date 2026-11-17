@@ -383,31 +383,34 @@ func (w *worker) evalInt(e *sexpr, n int, idx []uint32, depth int) (vals []int64
 			out[i] = a[i] * b[i]
 		}
 	case OpDiv:
-		valid = w.divide(out, a, b, valid, depth)
+		valid = w.divide(out, a, b, valid, depth, false)
+	case OpMod:
+		valid = w.divide(out, a, b, valid, depth, true)
 	}
 
 	return out, valid, nil
 }
 
-// divide stores a/b into out and returns valid without the rows that divide
-// by zero.
-func (w *worker) divide(out, a, b []int64, valid []uint8, depth int) []uint8 {
+// divide stores a/b into out, or its remainder when mod is set, and returns
+// valid without the rows that divide by zero.
+func (w *worker) divide(out, a, b []int64, valid []uint8, depth int, mod bool) []uint8 {
 	zero := false
 	for i := range out {
 		d := b[i]
-		if d == 0 {
+		switch {
+		case d == 0:
 			zero = true
 			out[i] = 0
-
-			continue
-		}
-		// The quotient of the smallest integer and -1 does not fit.
-		if d == -1 {
+		case d == -1 && mod:
+			out[i] = 0
+		case d == -1:
+			// The quotient of the smallest integer and -1 does not fit.
 			out[i] = -a[i]
-
-			continue
+		case mod:
+			out[i] = a[i] % d
+		default:
+			out[i] = a[i] / d
 		}
-		out[i] = a[i] / d
 	}
 	if !zero {
 		return valid
