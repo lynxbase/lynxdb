@@ -475,7 +475,6 @@ type ServerStatus struct {
 	Events        StatusEvents      `json:"events"`
 	Queries       StatusQueries     `json:"queries"`
 	Retention     *StatusRetention  `json:"retention,omitempty"`
-	Tail          *StatusTail       `json:"tail,omitempty"`
 	MemoryPool    *StatusMemoryPool `json:"memory_pool,omitempty"`
 }
 
@@ -489,11 +488,6 @@ type StatusMemoryPool struct {
 	CacheEvictions    int64 `json:"cache_eviction_count"`
 	CacheEvictedBytes int64 `json:"cache_eviction_bytes"`
 	QueryRejections   int64 `json:"query_rejections"`
-}
-
-// StatusTail holds live tail session info.
-type StatusTail struct {
-	ActiveSessions int `json:"active_sessions"`
 }
 
 // StatusStorage holds storage usage info.

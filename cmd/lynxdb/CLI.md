@@ -13,7 +13,7 @@ User documentation lives in `docs/site/docs/cli/`; the query language is describ
 - [Global flags](#global-flags)
 - [Connection settings](#connection-settings)
 - [Root command](#root-command)
-- Query: [query](#query), [explain](#explain), [tail](#tail), [fields](#fields)
+- Query: [query](#query), [explain](#explain), [fields](#fields)
 - Load data: [ingest](#ingest), [import](#import)
 - Server: [server](#server)
 - Inspect: [status](#status), [health](#health), [indexes](#indexes), [cache](#cache), [jobs](#jobs)
@@ -154,29 +154,6 @@ Compiles the query on the server (`GET /api/v1/query/explain`) and prints the lo
 lynxdb explain 'source=main level=ERROR | stats count() by host'
 lynxdb explain 'source=main status>=500 | top 10 path' --format json
 lynxdb explain --analyze 'source=main level=ERROR | stats count()'
-```
-
-## tail
-
-```
-lynxdb tail ['<PPL query>'] [flags]
-```
-
-Alias `t`. Streams matching events over Server-Sent Events (`GET /api/v1/tail`). The argument is a full PPL query; without one the CLI tails `source=*`. The query is compiled on the server first. The server sends up to `--count` historical events, a catch-up marker, then live events.
-
-Only row-by-row commands are allowed: search terms and comparisons in the source command, `where`, `eval`, `fields`, `rename`, `parse`, `rex`, `grok`, `spath`, `dedup`, `head`. Commands that need all input rows (`stats`, `timechart`, `chart`, `top`, `rare`, `sort`, `reverse`, `eventstats`, `streamstats`, `trendline`, `join`, `lookup`, `append`, `union`, `multisearch`, `appendcol`, `transpose`, `addtotals`, `addcoltotals`, `mvcombine`, `patterns`, `describe`) are rejected with HTTP 422.
-
-| Flag | Short | Default | Description |
-|------|-------|---------|-------------|
-| `--count` | `-n` | `100` | Historical events before live streaming (server cap 10000) |
-| `--from` | | `-1h` | Historical lookback |
-
-```bash
-lynxdb tail
-lynxdb tail 'source=main level=ERROR'
-lynxdb tail 'source=main host=web-* status>=500 | fields _time, host, path, status'
-lynxdb tail 'source=main | where response_time > 500' --count 50 --from -15m
-lynxdb tail 'source=main level=ERROR' --format json
 ```
 
 ## fields
@@ -440,7 +417,7 @@ lynxdb config add-profile prod --url https://logs.example.com --token "$PROD_KEY
 lynxdb query 'source=main level=ERROR | stats count() by host' --profile prod
 ```
 
-A reload applies `log_level`, `retention`, `query.*` and `tail.*` (except `query.global_query_pool_bytes`, `query.spill_dir`, `query.max_temp_dir_size_bytes`), `storage.compaction_rate_limit_mb`, `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`, `ingest.es_compat.*`, `ingest.limits.*`, `ingest.staging.*`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`, `http.shutdown_timeout` and the `syslog` index, sourcetype, timezone, hostname and batch settings. Other changes need a restart.
+A reload applies `log_level`, `retention`, `query.*` (except `query.global_query_pool_bytes`, `query.spill_dir`, `query.max_temp_dir_size_bytes`), `storage.compaction_rate_limit_mb`, `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`, `ingest.es_compat.*`, `ingest.limits.*`, `ingest.staging.*`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`, `http.shutdown_timeout` and the `syslog` index, sourcetype, timezone, hostname and batch settings. Other changes need a restart.
 
 ---
 

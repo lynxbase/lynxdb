@@ -61,11 +61,6 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 		"queries": map[string]interface{}{
 			"active": s.engine.ActiveJobs(),
 		},
-		"tail": map[string]interface{}{
-			"active_sessions":      s.activeTailSessions.Load(),
-			"subscriber_count":     s.engine.EventBus().SubscriberCount(),
-			"total_dropped_events": s.engine.EventBus().DroppedEvents(),
-		},
 	}
 	if stats.OldestEvent != "" {
 		data["retention"] = map[string]interface{}{

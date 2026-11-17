@@ -947,7 +947,6 @@ func printImportSummary(stats importStats, elapsed time.Duration, dryRun bool) {
 	printNextSteps(
 		"lynxdb query 'source=main | stats count() by source'   Query imported data",
 		"lynxdb fields                             Explore field names",
-		"lynxdb tail                               Live tail events",
 	)
 }
 

@@ -124,11 +124,6 @@
 #   batch_size: 1000                  # Flush after this many events
 #   batch_timeout: 200ms              # Flush after this much idle time
 
-# Live tail session configuration.
-# tail:
-#   max_concurrent_sessions: 100     # Max concurrent tail sessions (0 = unlimited)
-#   max_session_duration: 24h        # Max duration per tail session (0 = unlimited)
-
 # TLS/HTTPS configuration.
 # tls:
 #   enabled: false                   # Enable TLS (auto self-signed if no cert/key)

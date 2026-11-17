@@ -368,12 +368,6 @@ const (
 	// LYNXDB_SYSLOG_USE_PEER_AS_SOURCE is the set source to udp://peer or tcp://peer.
 	// YAML key: syslog.use_peer_as_source. Default: true.
 	LYNXDB_SYSLOG_USE_PEER_AS_SOURCE = "LYNXDB_SYSLOG_USE_PEER_AS_SOURCE"
-	// LYNXDB_TAIL_MAX_CONCURRENT_SESSIONS is the max concurrent tail sessions (0 = unlimited).
-	// YAML key: tail.max_concurrent_sessions. Default: 100.
-	LYNXDB_TAIL_MAX_CONCURRENT_SESSIONS = "LYNXDB_TAIL_MAX_CONCURRENT_SESSIONS"
-	// LYNXDB_TAIL_MAX_SESSION_DURATION is the max duration per tail session (0 = unlimited).
-	// YAML key: tail.max_session_duration. Default: 24h.
-	LYNXDB_TAIL_MAX_SESSION_DURATION = "LYNXDB_TAIL_MAX_SESSION_DURATION"
 	// LYNXDB_TLS_CERT_FILE is the path to PEM certificate file.
 	// YAML key: tls.cert_file. Default: "".
 	LYNXDB_TLS_CERT_FILE = "LYNXDB_TLS_CERT_FILE"

@@ -1,7 +1,6 @@
 package planner
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/model"
@@ -94,16 +93,5 @@ func TestUsesCurrentTime(t *testing.T) {
 	}
 	if !plan(t, "source=main | eval t = now()").SkipResultCache {
 		t.Error("now() makes the result depend on the time of execution")
-	}
-}
-
-func TestValidateForTail(t *testing.T) {
-	if err := ValidateForTail(plan(t, "source=main | where level = \"error\" | fields _time, level").Plan); err != nil {
-		t.Errorf("streaming query rejected: %v", err)
-	}
-	err := ValidateForTail(plan(t, "source=main | stats count() by host").Plan)
-	var tve *TailValidationError
-	if !errors.As(err, &tve) {
-		t.Fatalf("err = %v, want a TailValidationError", err)
 	}
 }

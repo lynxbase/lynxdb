@@ -41,7 +41,6 @@ var hotReloadableExactFields = map[string]struct{}{
 
 var hotReloadablePrefixes = []string{
 	"query.",
-	"tail.",
 }
 
 var nonHotReloadablePrefixes = []string{

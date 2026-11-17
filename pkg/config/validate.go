@@ -69,9 +69,6 @@ func (c *Config) Validate() error {
 	if err := c.Syslog.validate(); err != nil {
 		return err
 	}
-	if err := c.Tail.validate(); err != nil {
-		return err
-	}
 	if err := c.Server.validate(); err != nil {
 		return err
 	}
@@ -410,19 +407,6 @@ func (s *ServerConfig) validate() error {
 	if s.CacheReservePercent < 0 || s.CacheReservePercent > 50 {
 		return validationErr("server", "cache_reserve_percent",
 			fmt.Sprintf("%d", s.CacheReservePercent), "must be between 0 and 50")
-	}
-
-	return nil
-}
-
-func (t *TailConfig) validate() error {
-	if t.MaxConcurrentSessions < 0 {
-		return validationErr("tail", "max_concurrent_sessions",
-			fmt.Sprintf("%d", t.MaxConcurrentSessions), "must not be negative (0 = unlimited)")
-	}
-	if t.MaxSessionDuration < 0 {
-		return validationErr("tail", "max_session_duration",
-			t.MaxSessionDuration.String(), "must not be negative (0 = unlimited)")
 	}
 
 	return nil

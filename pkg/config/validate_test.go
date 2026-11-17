@@ -199,41 +199,6 @@ func TestValidateHTTP(t *testing.T) {
 	}
 }
 
-// F14: Tests for Tail, Server, Views, TLS, BufferManager validation.
-
-func TestValidateTail(t *testing.T) {
-	tests := []struct {
-		name    string
-		modify  func(*TailConfig)
-		wantErr string
-	}{
-		{"negative max_concurrent_sessions", func(tc *TailConfig) { tc.MaxConcurrentSessions = -5 }, "tail.max_concurrent_sessions"},
-		{"negative max_session_duration", func(tc *TailConfig) { tc.MaxSessionDuration = -time.Hour }, "tail.max_session_duration"},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := DefaultConfig()
-			tt.modify(&cfg.Tail)
-			err := cfg.Validate()
-			if err == nil {
-				t.Fatal("expected error")
-			}
-			if !strings.Contains(err.Error(), tt.wantErr) {
-				t.Errorf("error %q should contain %q", err.Error(), tt.wantErr)
-			}
-		})
-	}
-}
-
-func TestValidateTail_ZeroIsUnlimited(t *testing.T) {
-	cfg := DefaultConfig()
-	cfg.Tail.MaxConcurrentSessions = 0
-	cfg.Tail.MaxSessionDuration = 0
-	if err := cfg.Validate(); err != nil {
-		t.Fatalf("zero (unlimited) should be valid: %v", err)
-	}
-}
-
 func TestValidateServer(t *testing.T) {
 	tests := []struct {
 		name    string

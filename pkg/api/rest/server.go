@@ -33,33 +33,30 @@ import (
 
 // Server is the main LynxDB API server.
 type Server struct {
-	engine             *server.Engine
-	keyStore           *auth.KeyStore // Nil when auth is disabled.
-	queryService       *usecases.QueryService
-	tailService        *usecases.TailService
-	runtimeCfg         *config.Config
-	cfgMu              sync.RWMutex
-	httpServer         *http.Server
-	listenAddr         atomic.Value  // stores resolved listen address (string)
-	ready              chan struct{} // closed when server is ready to accept requests
-	queryCfg           config.QueryConfig
-	ingestCfg          config.IngestConfig
-	shutdownTimeout    time.Duration
-	rateLimiter        *RateLimiter // nil if rate limiting is disabled
-	tailCfg            config.TailConfig
-	activeTailSessions atomic.Int64 // current number of active tail SSE sessions
-	degraded           atomic.Bool  // true when a persistent store fell back to in-memory
-	tlsConfig          *tls.Config  // non-nil when TLS is enabled
-	syslogReceiver     *syslogrecv.Receiver
-	otlpHTTPReceiver   *otlphttp.Receiver
-	otlpGRPCReceiver   *otlpgrpc.Receiver
-	stagingBuffer      *staging.Buffer
-	esHandshake        *eshttp.Handshake
-	esStubs            *eshttp.Stubs
-	promMetrics        *PrometheusMetrics
-	splunkAckStore     *splunkhec.AckStore
-	levelVar           *slog.LevelVar
-	logger             *slog.Logger
+	engine           *server.Engine
+	keyStore         *auth.KeyStore // Nil when auth is disabled.
+	queryService     *usecases.QueryService
+	runtimeCfg       *config.Config
+	cfgMu            sync.RWMutex
+	httpServer       *http.Server
+	listenAddr       atomic.Value  // stores resolved listen address (string)
+	ready            chan struct{} // closed when server is ready to accept requests
+	queryCfg         config.QueryConfig
+	ingestCfg        config.IngestConfig
+	shutdownTimeout  time.Duration
+	rateLimiter      *RateLimiter // nil if rate limiting is disabled
+	degraded         atomic.Bool  // true when a persistent store fell back to in-memory
+	tlsConfig        *tls.Config  // non-nil when TLS is enabled
+	syslogReceiver   *syslogrecv.Receiver
+	otlpHTTPReceiver *otlphttp.Receiver
+	otlpGRPCReceiver *otlpgrpc.Receiver
+	stagingBuffer    *staging.Buffer
+	esHandshake      *eshttp.Handshake
+	esStubs          *eshttp.Stubs
+	promMetrics      *PrometheusMetrics
+	splunkAckStore   *splunkhec.AckStore
+	levelVar         *slog.LevelVar
+	logger           *slog.Logger
 }
 
 // Config configures the API server.
@@ -78,7 +75,6 @@ type Config struct {
 	Ingest        config.IngestConfig
 	HTTP          config.HTTPConfig
 	Syslog        config.SyslogConfig
-	Tail          config.TailConfig
 	Server        config.ServerConfig
 	BufferManager config.BufferManagerConfig
 	Cluster       config.ClusterConfig
@@ -99,7 +95,6 @@ func NewServer(cfg Config) (*Server, error) {
 
 	p := planner.New()
 	queryService := usecases.NewQueryService(p, engine, cfg.Query)
-	tailService := usecases.NewTailService(p, engine)
 
 	shutdownTimeout := cfg.HTTP.ShutdownTimeout
 	shutdownTimeout = defaultShutdownTimeout(shutdownTimeout)
@@ -130,13 +125,11 @@ func NewServer(cfg Config) (*Server, error) {
 		engine:          engine,
 		keyStore:        cfg.KeyStore,
 		queryService:    queryService,
-		tailService:     tailService,
 		runtimeCfg:      runtimeCfg,
 		ready:           make(chan struct{}),
 		queryCfg:        cfg.Query,
 		ingestCfg:       cfg.Ingest,
 		shutdownTimeout: shutdownTimeout,
-		tailCfg:         cfg.Tail,
 		tlsConfig:       cfg.TLSConfig,
 		splunkAckStore:  splunkhec.NewAckStore(10000),
 		levelVar:        cfg.LevelVar,
@@ -370,9 +363,6 @@ func NewServer(cfg Config) (*Server, error) {
 
 	// OTLP HTTP Logs ingestion.
 	mux.HandleFunc("POST /api/v1/otlp/v1/logs", s.handleOTLPLogs)
-
-	// Live tail (SSE).
-	mux.HandleFunc("GET /api/v1/tail", s.handleTail)
 
 	// Unified status.
 	mux.HandleFunc("GET /api/v1/status", s.handleStatus)
@@ -820,13 +810,6 @@ func (s *Server) currentIngestConfig() config.IngestConfig {
 	defer s.cfgMu.RUnlock()
 
 	return s.ingestCfg
-}
-
-func (s *Server) currentTailConfig() config.TailConfig {
-	s.cfgMu.RLock()
-	defer s.cfgMu.RUnlock()
-
-	return s.tailCfg
 }
 
 func (s *Server) currentShutdownTimeout() time.Duration {

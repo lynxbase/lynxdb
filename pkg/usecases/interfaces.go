@@ -9,7 +9,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/model"
 	"github.com/lynxbase/lynxdb/pkg/server"
-	"github.com/lynxbase/lynxdb/pkg/storage"
 )
 
 // QueryEngine is the subset of server.Engine needed by QueryService.
@@ -45,17 +44,4 @@ type QueryEngine interface {
 
 	// ListFieldNames returns all known field names from the field catalog.
 	ListFieldNames() []string
-}
-
-// EventBusProvider is the subset of server.Engine needed by TailService.
-type EventBusProvider interface {
-	EventBus() *storage.EventBus
-}
-
-// TailEngine is the subset of server.Engine needed by the new TailService.
-type TailEngine interface {
-	EventBusProvider
-	BuildStreamingPipeline(ctx context.Context, prog *ir.Plan,
-		hints *model.QueryHints,
-		externalTB *model.TimeBounds) (enginepipeline.Iterator, server.StreamingStats, error)
 }

@@ -5,7 +5,6 @@ package planner
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/engine/physical"
@@ -56,13 +55,6 @@ type PlanningError struct {
 
 func (e *PlanningError) Error() string { return "planning error: " + e.Err.Error() }
 func (e *PlanningError) Unwrap() error { return e.Err }
-
-// TailValidationError reports a query that cannot run on a live stream.
-type TailValidationError struct {
-	Message string
-}
-
-func (e *TailValidationError) Error() string { return e.Message }
 
 // New returns the PPL planner.
 func New() Planner { return pplPlanner{} }
@@ -134,33 +126,6 @@ func UsesCurrentTime(plan *ir.Plan) bool {
 // be relative to the current time.
 func DynamicTimeBounds(from, to string) bool {
 	return from != "" || to != ""
-}
-
-// ValidateForTail rejects plans with operators that need all input rows
-// before producing output, which a live stream never completes.
-func ValidateForTail(plan *ir.Plan) error {
-	if plan == nil || plan.Root == nil {
-		return nil
-	}
-	var blocking ir.Node
-	ir.WalkPlan(plan.Root, func(n ir.Node) bool {
-		switch n.(type) {
-		case *ir.Aggregate, *ir.Sort, *ir.TopN, *ir.Window, *ir.Reverse, *ir.Transpose,
-			*ir.Totals, *ir.Join, *ir.Union, *ir.ZipColumns, *ir.CombineValues,
-			*ir.Patterns, *ir.SourceSchema:
-			if blocking == nil {
-				blocking = n
-			}
-		}
-		return blocking == nil
-	})
-	if blocking == nil {
-		return nil
-	}
-	op, _, _ := strings.Cut(blocking.Label(), "(")
-	return &TailValidationError{
-		Message: fmt.Sprintf("%s is not supported in live tail: it needs all input rows before producing output", op),
-	}
 }
 
 // IsQueryError reports whether err is a compile or planning error rather

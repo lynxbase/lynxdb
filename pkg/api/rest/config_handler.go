@@ -117,7 +117,6 @@ func (s *Server) ReloadConfig(updated *config.Config) ([]string, error) {
 	s.runtimeCfg = updated
 	s.queryCfg = updated.Query
 	s.ingestCfg = updated.Ingest
-	s.tailCfg = updated.Tail
 	s.shutdownTimeout = defaultShutdownTimeout(updated.HTTP.ShutdownTimeout)
 	s.cfgMu.Unlock()
 

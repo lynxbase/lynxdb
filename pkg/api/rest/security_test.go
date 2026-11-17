@@ -170,35 +170,6 @@ func TestQueryLength_POST_Stream(t *testing.T) {
 	}
 }
 
-func TestQueryLength_GET_Tail(t *testing.T) {
-	srv, cleanup := startTestServerWithQueryConfig(t, config.QueryConfig{
-		MaxQueryLength: 50,
-	})
-	defer cleanup()
-
-	longQuery := strings.Repeat("d", 100)
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
-	defer cancel()
-
-	req, _ := http.NewRequestWithContext(ctx, "GET",
-		fmt.Sprintf("http://%s/api/v1/tail?q=%s", srv.Addr(), longQuery),
-		http.NoBody)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusBadRequest {
-		t.Fatalf("status: got %d, want 400", resp.StatusCode)
-	}
-
-	code, _ := decodeErrorResponse(t, resp)
-	if code != "QUERY_TOO_LARGE" {
-		t.Errorf("error code: got %q, want QUERY_TOO_LARGE", code)
-	}
-}
-
 func TestQueryLength_UnderLimit_Succeeds(t *testing.T) {
 	srv, cleanup := startTestServerWithQueryConfig(t, config.QueryConfig{
 		MaxQueryLength: 1000,

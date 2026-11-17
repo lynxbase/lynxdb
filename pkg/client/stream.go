@@ -40,26 +40,6 @@ func (c *Client) QueryStream(ctx context.Context, req QueryRequest, fn func(json
 	return readNDJSON(resp.Body, fn)
 }
 
-// Tail opens a live tail SSE stream. Events are delivered to fn until the
-// context is canceled or the server closes the connection.
-func (c *Client) Tail(ctx context.Context, q, from string, count int, fn func(SSEEvent) error) error {
-	params := url.Values{"q": {q}}
-	if from != "" {
-		params.Set("from", from)
-	}
-	if count > 0 {
-		params.Set("count", fmt.Sprintf("%d", count))
-	}
-
-	resp, err := c.doRaw(ctx, http.MethodGet, "/tail?"+params.Encode(), nil, "")
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	return readSSE(resp.Body, fn)
-}
-
 // StreamJobProgress opens an SSE stream for job progress updates.
 func (c *Client) StreamJobProgress(ctx context.Context, jobID string, fn func(SSEEvent) error) error {
 	path := "/query/jobs/" + url.PathEscape(jobID) + "/stream"

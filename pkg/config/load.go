@@ -976,30 +976,6 @@ var envBindings = []envBinding{
 		},
 		func(c *Config) string { return c.Storage.RemoteFetchTimeout.String() }},
 
-	// Tail
-	{LYNXDB_TAIL_MAX_CONCURRENT_SESSIONS, "tail.max_concurrent_sessions",
-		func(c *Config, v string) error {
-			n, err := strconv.Atoi(v)
-			if err != nil {
-				return err
-			}
-			c.Tail.MaxConcurrentSessions = n
-
-			return nil
-		},
-		func(c *Config) string { return strconv.Itoa(c.Tail.MaxConcurrentSessions) }},
-	{LYNXDB_TAIL_MAX_SESSION_DURATION, "tail.max_session_duration",
-		func(c *Config, v string) error {
-			d, err := time.ParseDuration(v)
-			if err != nil {
-				return err
-			}
-			c.Tail.MaxSessionDuration = d
-
-			return nil
-		},
-		func(c *Config) string { return c.Tail.MaxSessionDuration.String() }},
-
 	// TLS
 	{LYNXDB_TLS_ENABLED, "tls.enabled",
 		func(c *Config, v string) error {

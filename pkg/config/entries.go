@@ -192,10 +192,6 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("syslog.batch_size", strconv.Itoa(cfg.Syslog.BatchSize), strconv.Itoa(dflt.Syslog.BatchSize), strconv.Itoa(fileCfg.Syslog.BatchSize), LYNXDB_SYSLOG_BATCH_SIZE)
 	add("syslog.batch_timeout", cfg.Syslog.BatchTimeout.String(), dflt.Syslog.BatchTimeout.String(), fileCfg.Syslog.BatchTimeout.String(), LYNXDB_SYSLOG_BATCH_TIMEOUT)
 
-	// Tail.
-	add("tail.max_concurrent_sessions", strconv.Itoa(cfg.Tail.MaxConcurrentSessions), strconv.Itoa(dflt.Tail.MaxConcurrentSessions), strconv.Itoa(fileCfg.Tail.MaxConcurrentSessions), LYNXDB_TAIL_MAX_CONCURRENT_SESSIONS)
-	durationEntry("tail.max_session_duration", cfg.Tail.MaxSessionDuration, dflt.Tail.MaxSessionDuration, fileCfg.Tail.MaxSessionDuration, LYNXDB_TAIL_MAX_SESSION_DURATION)
-
 	// TLS.
 	add("tls.enabled", strconv.FormatBool(cfg.TLS.Enabled), strconv.FormatBool(dflt.TLS.Enabled), strconv.FormatBool(fileCfg.TLS.Enabled), LYNXDB_TLS_ENABLED)
 	add("tls.cert_file", cfg.TLS.CertFile, dflt.TLS.CertFile, fileCfg.TLS.CertFile, LYNXDB_TLS_CERT_FILE)

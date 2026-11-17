@@ -27,7 +27,6 @@ type Config struct {
 	Ingest        IngestConfig        `yaml:"ingest"         json:"ingest"`
 	HTTP          HTTPConfig          `yaml:"http"           json:"http"`
 	Syslog        SyslogConfig        `yaml:"syslog"         json:"syslog"`
-	Tail          TailConfig          `yaml:"tail"           json:"tail"`
 	TLS           TLSConfig           `yaml:"tls"            json:"tls"`
 	Auth          AuthConfig          `yaml:"auth"           json:"auth"`
 	Server        ServerConfig        `yaml:"server"         json:"server"`
@@ -324,12 +323,6 @@ type HTTPConfig struct {
 	RateLimit         float64       `yaml:"rate_limit"                json:"rate_limit"` // requests per second; 0 = unlimited
 }
 
-// TailConfig holds live tail session parameters.
-type TailConfig struct {
-	MaxConcurrentSessions int           `yaml:"max_concurrent_sessions" json:"max_concurrent_sessions"` // 0 = unlimited
-	MaxSessionDuration    time.Duration `yaml:"max_session_duration"    json:"max_session_duration"`    // 0 = unlimited
-}
-
 // ServerConfig holds unified memory pool parameters.
 type ServerConfig struct {
 	// TotalMemoryPoolBytes is the total memory for queries + cache combined.
@@ -490,11 +483,6 @@ func DefaultConfig() *Config {
 			TCPMaxConns:     1000,
 			BatchSize:       1000,
 			BatchTimeout:    Duration(200 * time.Millisecond),
-		},
-
-		Tail: TailConfig{
-			MaxConcurrentSessions: 100,
-			MaxSessionDuration:    24 * time.Hour,
 		},
 
 		Server: ServerConfig{
