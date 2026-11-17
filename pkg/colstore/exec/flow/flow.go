@@ -1,6 +1,6 @@
 // Package flow translates LynxFlow queries into plans of the columnar
 // executor. It covers a source with time ranges and search terms, where,
-// extend, keep, drop, rename, stats, sort and head, with the scalar and
+// extend, keep, drop, rename, dedup, stats, sort and head, with the scalar and
 // aggregate functions the executor has; everything else fails with
 // ErrUnsupported and the name of what is missing.
 //
@@ -117,6 +117,9 @@ type translator struct {
 	agg    *exec.Aggregate
 	having []*exec.Expr
 	sort   *exec.Sort
+	// dedup holds the keys of a dedup stage, which keeps the first row of
+	// each of their combinations.
+	dedup []exec.Named
 }
 
 func (t *translator) source(src *ast.FromStage) error {
@@ -192,7 +195,21 @@ func (t *translator) stage(s *ast.Stage) error {
 		return unsupported("%s after sort or head", s.Name)
 	}
 	switch {
+	case s.Dedup != nil:
+		if s.Dedup.N > 1 || t.agg != nil || t.dedup != nil {
+			return unsupported("dedup of more than one row per key, after stats or after dedup")
+		}
+		for _, k := range s.Dedup.Fields {
+			e, err := t.expr(k)
+			if err != nil {
+				return err
+			}
+			t.dedup = append(t.dedup, exec.Named{Name: fmt.Sprintf("\x00key%d", len(t.dedup)), Expr: e})
+		}
 	case s.Where != nil:
+		if t.dedup != nil {
+			return unsupported("where after dedup")
+		}
 		p, err := t.pred(s.Where.Expr, false)
 		if err != nil {
 			return err
@@ -261,6 +278,10 @@ func (t *translator) stage(s *ast.Stage) error {
 			t.cols = kept
 		}
 	case s.Stats != nil:
+		if t.dedup != nil {
+			return unsupported("stats after dedup")
+		}
+
 		return t.stats(s.Stats)
 	case s.Sort != nil:
 		t.sort = &exec.Sort{}
@@ -308,6 +329,44 @@ var aggFuncs = map[string]exec.AggFunc{
 	"count": exec.Count, "dc": exec.CountDistinct, "sum": exec.Sum, "avg": exec.Avg,
 	"min": exec.Min, "max": exec.Max, "stdev": exec.Stdev, "var": exec.Var,
 	"first": exec.First, "last": exec.Last, "earliest": exec.Earliest, "latest": exec.Latest,
+	"any_value": exec.AnyValue, "arg_min": exec.ArgMin, "arg_max": exec.ArgMax,
+}
+
+// aggregate translates one aggregate of a stats stage.
+func (t *translator) aggregate(a *ast.AggExpr) (exec.Agg, error) {
+	call, ok := a.Func.(*ast.Call)
+	if !ok || call.Receiver != nil {
+		return exec.Agg{}, unsupported("aggregate %s", format.Expr(a.Func))
+	}
+	out := exec.Agg{Name: a.Alias}
+	if out.Name == "" {
+		out.Name = format.Expr(a.Func)
+	}
+	fn, ok := aggFuncs[call.Callee]
+	args := 1
+	switch fn {
+	case exec.Count:
+		args = len(call.Args)
+	case exec.ArgMin, exec.ArgMax:
+		args = 2
+	}
+	if !ok || a.WhereCond != nil || len(call.Args) != args || args > 2 {
+		return exec.Agg{}, unsupported("aggregate %s", format.Expr(a.Func))
+	}
+	out.Func = fn
+	for i, arg := range call.Args {
+		e, err := t.expr(arg)
+		if err != nil {
+			return exec.Agg{}, err
+		}
+		if i == 0 {
+			out.Arg = e
+		} else {
+			out.By = e
+		}
+	}
+
+	return out, nil
 }
 
 func (t *translator) stats(s *ast.StatsPayload) error {
@@ -333,29 +392,13 @@ func (t *translator) stats(s *ast.StatsPayload) error {
 		agg.Keys = append(agg.Keys, exec.Named{Name: name, Expr: e})
 		add(name)
 	}
-	for _, a := range s.Aggs {
-		call, ok := a.Func.(*ast.Call)
-		if !ok || call.Receiver != nil {
-			return unsupported("aggregate %s", format.Expr(a.Func))
-		}
-		fn, ok := aggFuncs[call.Callee]
-		if !ok || a.WhereCond != nil || len(call.Args) > 1 || (len(call.Args) == 0 && fn != exec.Count) {
-			return unsupported("aggregate %s", format.Expr(a.Func))
-		}
-		name := a.Alias
-		if name == "" {
-			name = format.Expr(a.Func)
-		}
-		out := exec.Agg{Name: name, Func: fn}
-		if len(call.Args) == 1 {
-			e, err := t.expr(call.Args[0])
-			if err != nil {
-				return err
-			}
-			out.Arg = e
+	for i := range s.Aggs {
+		out, err := t.aggregate(&s.Aggs[i])
+		if err != nil {
+			return err
 		}
 		agg.Aggs = append(agg.Aggs, out)
-		add(name)
+		add(out.Name)
 	}
 	t.agg, t.env, t.cols, t.named = agg, env, cols, true
 
@@ -397,6 +440,8 @@ func (t *translator) plan() (exec.Node, error) {
 		}
 	case !t.named || len(t.cols) == 0:
 		return nil, unsupported("events without keep: name the fields to return")
+	case t.dedup != nil:
+		node = t.firstRows(scan)
 	default:
 		node = &exec.Project{Input: scan, Exprs: t.cols}
 	}
@@ -406,6 +451,40 @@ func (t *translator) plan() (exec.Node, error) {
 	}
 
 	return node, nil
+}
+
+// firstRows returns the output columns computed over the first row of each
+// combination of the dedup keys: an aggregate that reads, from that row,
+// every field the columns use.
+func (t *translator) firstRows(scan *exec.Scan) exec.Node {
+	agg := &exec.Aggregate{Input: scan, Keys: t.dedup}
+	var over func(e *exec.Expr) *exec.Expr
+	over = func(e *exec.Expr) *exec.Expr {
+		if e.Op == exec.OpColumn {
+			for i, a := range agg.Aggs {
+				if a.Arg.Path == e.Path && a.Arg.Kind == e.Kind {
+					return exec.Col(agg.Aggs[i].Name, exec.KindAny)
+				}
+			}
+			name := fmt.Sprintf("\x00field%d", len(agg.Aggs))
+			agg.Aggs = append(agg.Aggs, exec.Agg{Name: name, Func: exec.FirstRow, Arg: e})
+
+			return exec.Col(name, exec.KindAny)
+		}
+		out := *e
+		out.Args = make([]*exec.Expr, len(e.Args))
+		for i, a := range e.Args {
+			out.Args[i] = over(a)
+		}
+
+		return &out
+	}
+	cols := make([]exec.Named, len(t.cols))
+	for i, c := range t.cols {
+		cols[i] = exec.Named{Name: c.Name, Expr: over(c.Expr)}
+	}
+
+	return &exec.Project{Input: agg, Exprs: cols}
 }
 
 // path returns the dotted path of a field reference.
