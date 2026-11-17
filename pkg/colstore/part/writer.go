@@ -79,6 +79,9 @@ type Writer struct {
 	groupBlocks  int
 	groupBytes   int
 	stripes      int
+	// columnTokens is the number of distinct tokens from which a column
+	// of a block gets a filter of its own.
+	columnTokens int
 	// verified marks the filter pages of group verifiedGroup, a group of
 	// a part being merged, that copyBlock has checked.
 	verified      vec.Bitmap
@@ -128,8 +131,11 @@ type writerBuffers struct {
 	ints      []int64
 	dictBytes []byte // the integer codec owns e.tmp
 	dict      dictBuilder
-	tokens    tokenfilter.Set
-	hashes    []uint64
+	// column holds the tokens of the column being encoded, and tokens
+	// those of the block's columns without a filter of their own.
+	column tokenfilter.Set
+	tokens tokenfilter.Set
+	hashes []uint64
 	// blooms holds the filters of the group being built, end to end.
 	blooms []byte
 }
@@ -171,7 +177,7 @@ func NewWriter(w io.Writer, opts Options) *Writer {
 	pw := &Writer{ids: make(map[string]uint32, 64)}
 	pw.addStr = func(s []byte) {
 		pw.hashes = tokenfilter.AppendHashes(pw.hashes[:0], s)
-		pw.tokens.Add(pw.hashes)
+		pw.column.Add(pw.hashes)
 	}
 	pw.Reset(w, opts)
 
@@ -192,6 +198,7 @@ func (w *Writer) Reset(out io.Writer, opts Options) {
 	w.groups, w.filters, w.blooms = w.groups[:0], w.filters[:0], w.blooms[:0]
 	w.groupFilters, w.grouped, w.stripe, w.verifiedGroup = 0, 0, 0, nil
 	w.groupBlocks, w.groupBytes, w.stripes = filterGroupBlocks, filterGroupBytes, filterStripes
+	w.columnTokens = filterColumnTokens
 	w.blobs.codec, w.blobs.level = CodecZstd, opts.Level
 	w.values.codec, w.values.level = opts.Codec, opts.Level
 	w.pathID(TimePath)
@@ -233,6 +240,7 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	w.block = w.block[:0]
 	w.ents = w.ents[:0]
 	w.tokens.Reset()
+	firstFilter := len(w.filters) / filterEntrySize
 
 	minT, maxT := vec.MinMaxInt64(b.Times)
 	ent := dirEntry{pathID: 0, kind: vec.KindInt, count: rows}
@@ -266,10 +274,13 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	binary.LittleEndian.PutUint64(entry[20:], w.off)
 	binary.LittleEndian.PutUint32(entry[28:], uint32(blockLen))
 	if !w.opts.NoTokenFilter {
-		w.startFilters(entry[:])
-		start := len(w.blooms)
-		w.blooms = tokenfilter.Append(w.blooms, w.tokens.Keys(), w.stripes)
-		w.addFilter(noPath, 0, (len(w.blooms)-start)/tokenfilter.BlockBytes)
+		// A block without tokens has an empty filter, so that it has one.
+		if keys := w.tokens.Keys(); len(keys) > 0 || len(w.filters)/filterEntrySize == firstFilter {
+			start := len(w.blooms)
+			w.blooms = tokenfilter.Append(w.blooms, keys, w.stripes)
+			w.addFilter(noPath, 0, (len(w.blooms)-start)/tokenfilter.BlockBytes)
+		}
+		w.startFilters(entry[:], firstFilter)
 	}
 	binary.LittleEndian.PutUint32(entry[40:], uint32(len(w.dirs)))
 	binary.LittleEndian.PutUint32(entry[44:], uint32(len(dir)))
@@ -300,11 +311,26 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 }
 
 // startFilters names in a block's index entry the group being built and the
-// filter that the next call of addFilter records.
-func (w *Writer) startFilters(entry []byte) {
+// first of the block's filters.
+func (w *Writer) startFilters(entry []byte, first int) {
 	binary.LittleEndian.PutUint32(entry[32:], uint32(len(w.groups)/groupEntrySize))
-	binary.LittleEndian.PutUint32(entry[36:], uint32(len(w.filters)/filterEntrySize))
+	binary.LittleEndian.PutUint32(entry[36:], uint32(first))
 	w.grouped++
+}
+
+// filterColumn gives the column whose tokens w.column holds a filter of its
+// own when they are many, and leaves them to the filter of the block's other
+// columns when they are few.
+func (w *Writer) filterColumn(path uint32, kind vec.Kind) {
+	keys := w.column.Keys()
+	if len(keys) < w.columnTokens {
+		w.tokens.Add(keys)
+
+		return
+	}
+	start := len(w.blooms)
+	w.blooms = tokenfilter.Append(w.blooms, keys, w.stripes)
+	w.addFilter(path, kind, (len(w.blooms)-start)/tokenfilter.BlockBytes)
 }
 
 // addFilter records the filter of blocks bloom blocks that was appended to
@@ -470,7 +496,7 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 				return ErrCorrupt
 			}
 		}
-		w.startFilters(entry[:])
+		w.startFilters(entry[:], len(w.filters)/filterEntrySize)
 		for f := first; f < end; f++ {
 			path := binary.LittleEndian.Uint32(src.filters[f*filterEntrySize:])
 			if path != noPath {
@@ -565,7 +591,11 @@ func (w *Writer) encodeColumn(c *shred.Column, rows int) {
 	case vec.KindFloat:
 		w.encodeFloats(&ent, c.Floats)
 	case vec.KindString, vec.KindVariant:
+		w.column.Reset()
 		w.encodeBytes(&ent, c)
+		if !w.opts.NoTokenFilter {
+			w.filterColumn(ent.pathID, c.Kind)
+		}
 	}
 	w.finish(&ent, start)
 }
@@ -677,7 +707,7 @@ func (w *Writer) tokenize(kind vec.Kind, val []byte) {
 		return
 	}
 	w.hashes = tokenfilter.AppendHashes(w.hashes[:0], val)
-	w.tokens.Add(w.hashes)
+	w.column.Add(w.hashes)
 }
 
 func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {

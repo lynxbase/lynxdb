@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"reflect"
 	"strconv"
@@ -15,11 +16,12 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
-// stripedWriter returns a writer whose filter groups take group blocks,
-// whatever the size of their filters, and have stripes stripes.
+// stripedWriter returns a writer that gives a block one filter for all its
+// columns and whose filter groups take group blocks, whatever the size of
+// their filters, and have stripes stripes.
 func stripedWriter(buf *bytes.Buffer, opts Options, group, stripes int) *Writer {
 	w := NewWriter(buf, opts)
-	w.groupBlocks, w.groupBytes, w.stripes = group, 1<<40, stripes
+	w.groupBlocks, w.groupBytes, w.stripes, w.columnTokens = group, 1<<40, stripes, math.MaxInt
 
 	return w
 }
@@ -429,11 +431,13 @@ func wordBatch(t testing.TB, r *rand.Rand, rows, words, pad int) (*shred.Batch, 
 	return batch, len(tokensOf(t, docs))
 }
 
-// repeatedBlocks writes batch as every one of blocks blocks.
+// repeatedBlocks writes batch as every one of blocks blocks, each with one
+// filter for all its columns.
 func repeatedBlocks(t testing.TB, batch *shred.Batch, blocks int, opts Options) *Part {
 	t.Helper()
 	var buf bytes.Buffer
 	w := NewWriter(&buf, opts)
+	w.columnTokens = math.MaxInt
 	for i := 0; i < blocks; i++ {
 		if err := w.WriteBatch(batch); err != nil {
 			t.Fatal(err)
@@ -499,19 +503,22 @@ func newFileReads() *fileReads {
 	return &fileReads{cached: map[uint64]bool{}, pages: map[uint64]bool{}}
 }
 
-// lookup reads what looking hash up in blocks first to last of p reads.
+// lookup reads what looking hash up in every filter of blocks first to last
+// of p reads.
 func (f *fileReads) lookup(p *Part, hash uint64, first, last int) {
 	const half = readWindow / kernelPage / 2
 	for i := first; i <= last; i++ {
-		_, page, end := probeOf(p, i, hash)
-		for at := page / kernelPage; at <= (end-1)/kernelPage; at++ {
-			f.pages[at] = true
-			if f.cached[at] {
-				continue
-			}
-			f.faults++
-			for near := max(at, half) - half; near < at+half; near++ {
-				f.cached[near] = true
+		for g, filter, end := p.blockFilters(i); filter < end; filter++ {
+			_, page, pageEnd := p.probe(g, filter, hash)
+			for at := page / kernelPage; at <= (pageEnd-1)/kernelPage; at++ {
+				f.pages[at] = true
+				if f.cached[at] {
+					continue
+				}
+				f.faults++
+				for near := max(at, half) - half; near < at+half; near++ {
+					f.cached[near] = true
+				}
 			}
 		}
 	}

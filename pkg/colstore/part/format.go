@@ -56,6 +56,10 @@ const (
 	filterGroupBlocks = 128
 	filterGroupBytes  = 6 << 20
 	filterStripes     = 128
+	// filterColumnTokens is the number of distinct tokens in a block from
+	// which a column gets a filter of its own, so that a search can tell
+	// which columns to read; the filter of the other columns holds theirs.
+	filterColumnTokens = 4096
 	// path id, kind, encoding, flags, a zero byte, value count, chunk
 	// offset, chunk length, chunk checksum, and the offset of the entry's
 	// statistics and constant value among those that follow the entries.

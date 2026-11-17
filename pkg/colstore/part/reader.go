@@ -490,6 +490,55 @@ func (b *Block) MayContainToken(hash uint64) (bool, error) {
 	return b.part.MayContainToken(b.index, hash)
 }
 
+// MayContainTokenIn reports whether a string of the block's column with this
+// path and kind may contain the token: the answer of the column's own filter,
+// or of the one that the columns without a filter of their own share.
+func (b *Block) MayContainTokenIn(pathID uint32, kind vec.Kind, hash uint64) (bool, error) {
+	return b.part.MayContainTokenIn(b.index, pathID, kind, hash)
+}
+
+// MayContainTokenIn is Block.MayContainTokenIn for block i, without opening
+// it.
+func (p *Part) MayContainTokenIn(i int, pathID uint32, kind vec.Kind, hash uint64) (bool, error) {
+	if len(p.groups) == 0 {
+		return true, nil
+	}
+	g, f, end := p.blockFilters(i)
+	shared := -1
+	for ; f < end; f++ {
+		switch e := p.filters[f*filterEntrySize:]; binary.LittleEndian.Uint32(e) {
+		case noPath:
+			shared = f
+		case pathID:
+			if vec.Kind(e[4]) == kind {
+				shared, end = f, f
+			}
+		}
+	}
+	if shared < 0 {
+		return false, nil
+	}
+	block, page, pageEnd := p.probe(g, shared, hash)
+	if crc32.Checksum(p.data[page+4:pageEnd], castagnoli) != binary.LittleEndian.Uint32(p.data[page:]) {
+		return false, ErrCorrupt
+	}
+
+	return tokenfilter.BlockMayContain(p.data[block:], hash), nil
+}
+
+// FilterColumns calls fn with the path id and kind of every column of block
+// i that has a token filter of its own.
+func (p *Part) FilterColumns(i int, fn func(pathID uint32, kind vec.Kind)) {
+	if len(p.groups) == 0 {
+		return
+	}
+	for _, f, end := p.blockFilters(i); f < end; f++ {
+		if e := p.filters[f*filterEntrySize:]; binary.LittleEndian.Uint32(e) != noPath {
+			fn(binary.LittleEndian.Uint32(e), vec.Kind(e[4]))
+		}
+	}
+}
+
 // MayContainToken is Block.MayContainToken for block i, without opening it.
 func (p *Part) MayContainToken(i int, hash uint64) (bool, error) {
 	if len(p.groups) == 0 {
