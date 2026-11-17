@@ -43,6 +43,7 @@ type KeyPlan struct {
 	columns int
 	parts   []*part.Part
 	streams [][]*part.Part
+	spans   []BlockSpan
 	// Blocks and Rows count the blocks that can hold matching rows.
 	Blocks int
 	Rows   int
@@ -77,6 +78,7 @@ func (s *Snapshot) PlanKeyRanges(key KeyFilter, group []string) (*KeyPlan, bool)
 			plan.Rows += rows
 		}
 		plan.parts = append(plan.parts, h.Part)
+		plan.spans = append(plan.spans, BlockSpan{Part: h.Part, First: first, End: end})
 	}
 	sort.SliceStable(plan.parts, func(i, j int) bool {
 		a, _ := plan.parts[i].KeyRange()
@@ -106,6 +108,9 @@ func (s *Snapshot) PlanKeyRanges(key KeyFilter, group []string) (*KeyPlan, bool)
 
 // Streams returns the largest number of streams a range can hold.
 func (p *KeyPlan) Streams() int { return len(p.streams) }
+
+// Spans returns the blocks that can hold matching rows, one run per part.
+func (p *KeyPlan) Spans() []BlockSpan { return p.spans }
 
 // ColumnID names the column of a path that holds values of one kind.
 type ColumnID struct {

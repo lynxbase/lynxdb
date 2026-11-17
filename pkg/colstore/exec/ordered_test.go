@@ -52,8 +52,10 @@ func TestOrderedAggregation(t *testing.T) {
 		{"and nothing", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, exec.Lt(num("id"), exec.Int(0)))}, Keys: keys("user"), Aggs: times}, true, false},
 		{"and a key gap", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(eq("kind", "commit"), exec.Ne(str("op"), exec.Str("delete")))},
 			Keys: keys("op", "coll", "user"), Aggs: times}, true, false},
-		{"and a text match", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, exec.Match(str("msg"), tokenfilter.Word("love")))}, Keys: keys("user"), Aggs: times}, false, false},
-		{"and a string equality", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, eq("nested.y", "y1"))}, Keys: keys("user"), Aggs: times}, false, false},
+		{"and a text match", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, exec.Match(str("msg"), tokenfilter.Word("love")))}, Keys: keys("user"), Aggs: times}, true, false},
+		{"and a string equality", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, eq("nested.y", "y1"))}, Keys: keys("user"), Aggs: times}, true, false},
+		{"and a token of no block", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, exec.Match(str("msg"), tokenfilter.Word("absent")))}, Keys: keys("user"), Aggs: times}, false, false},
+		{"and a value of no block", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(created, eq("nested.y", "y9"))}, Keys: keys("coll"), Aggs: []exec.Agg{times[0], users}}, false, false},
 		{"untyped numbers", &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: []exec.Agg{{Name: "s", Func: exec.Sum, Arg: anyOf("n")}}}, false, false},
 		{"untyped distinct", &exec.Aggregate{Input: &exec.Scan{Filter: created}, Keys: keys("coll"), Aggs: []exec.Agg{{Name: "u", Func: exec.CountDistinct, Arg: anyOf("user")}}}, false, false},
 	}
@@ -75,6 +77,40 @@ func TestOrderedAggregation(t *testing.T) {
 				})
 			}
 		}
+		snap.Release()
+	}
+}
+
+func TestOrderedAggregationSkipsBlocksByToken(t *testing.T) {
+	docs := synthDocs(6000, 5)
+	rows := referenceRows(t, docs, "ts")
+	plan := &exec.Aggregate{
+		Input: &exec.Scan{Filter: exec.And(exec.Eq(str("kind"), exec.Str("commit")), exec.Eq(str("op"), exec.Str("create")),
+			exec.Eq(str("n"), exec.Str("s3")))},
+		Keys: keys("coll"),
+		Aggs: []exec.Agg{{Name: "rows", Func: exec.Count}, {Name: "users", Func: exec.CountDistinct, Arg: str("user")}},
+	}
+	key := []string{"kind", "op", "coll", "user"}
+	for _, l := range []layout{
+		{name: "one stream", blockRows: 100, parts: 1, sortKey: key},
+		{name: "streams", blockRows: 100, parts: 3, sortKey: key},
+	} {
+		tbl := buildTable(t, docs, "ts", l)
+		snap := tbl.Snapshot()
+		for _, workers := range []int{1, 4} {
+			t.Run(fmt.Sprintf("%s/%d", l.name, workers), func(t *testing.T) {
+				res := check(t, snap, rows, plan, false, workers)
+				if !res.Stats.Ordered || res.Stats.SkippedByToken == 0 {
+					t.Fatalf("in key order: %v, with %d blocks skipped by token", res.Stats.Ordered, res.Stats.SkippedByToken)
+				}
+			})
+		}
+		// A scan that hashes takes over when the tokens leave few blocks.
+		restore := exec.SetOrderedTokenShare(0.99)
+		if res := check(t, snap, rows, plan, false, 2); res.Stats.Ordered {
+			t.Fatalf("%s: aggregated in key order with most blocks ruled out", l.name)
+		}
+		restore()
 		snap.Release()
 	}
 }

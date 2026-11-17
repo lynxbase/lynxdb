@@ -14,12 +14,10 @@ import (
 // Ordered aggregation serves a plan whose filter holds string equalities on
 // the leading sort key paths and whose group keys, followed by the argument
 // of a distinct count if there is one, are the rest of the sort key. Whatever
-// else the filter asks is evaluated on the rows of each block, unless it is a
-// text match or another string equality: those rule out blocks through token
-// filters, which a scan in key order does not consult. The rows of a key
-// range then arrive ordered by group, one stream per sorted run, so a merge
-// of the streams finishes one group after another and holds no more than the
-// group it is in.
+// else the filter asks is evaluated on the rows of each block that the token
+// filters do not rule out. The rows of a key range then arrive ordered by
+// group, one stream per sorted run, so a merge of the streams finishes one
+// group after another and holds no more than the group it is in.
 //
 // Parts that form one stream are read in ranges of whole blocks. For a plan
 // that only counts rows and distinct values, the part index then tells how
@@ -54,13 +52,16 @@ type orderedPlan struct {
 	slotKey, slotCol []int16
 	floats           []bool
 	skipped          int64
-	// residual is what the filter asks beyond the key prefix, or nil.
+	// residual is what the filter asks beyond the key prefix, or nil, and
+	// tokens the hashes that a block with a row passing it must hold.
 	residual *pred
+	tokens   []uint64
 	// prefix is the number of sort key columns the filter fixes.
 	prefix int
 	// blocks is set when the parts form one stream, which is read in ranges
 	// of whole blocks: no block is then shared by readers that wait for one
-	// another. byIndex is set when counts can also come from the part index.
+	// another, and the token filters rule a block out before it is decoded.
+	// byIndex is set when counts can also come from the part index.
 	blocks, byIndex bool
 }
 
@@ -143,12 +144,10 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 		rest = append(rest, c)
 	}
 	var residual *pred
+	var tokens []uint64
 	if len(rest) != 0 {
 		for _, c := range rest {
-			if c.Op == OpMatch || (c.Op == OpEq && len(c.Args) == 2 && c.Args[0] != nil && c.Args[1] != nil &&
-				(c.Args[0].Value.Kind == vec.KindString || c.Args[1].Value.Kind == vec.KindString)) {
-				return nil
-			}
+			tokens = conjunctTokens(c, tokens)
 		}
 		var err error
 		if residual, err = q.pred(And(rest...), 0); err != nil {
@@ -157,7 +156,7 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 	}
 
 	o := &orderedPlan{groups: len(ap.keys), keyOf: make([]int, len(ap.keys)), floats: make([]bool, len(ap.args)),
-		residual: residual, prefix: prefix}
+		residual: residual, tokens: tokens, prefix: prefix}
 	for i, k := range ap.keys {
 		if k.op != OpColumn || (k.kind != vec.KindString && k.kind != KindAny) {
 			return nil
@@ -243,7 +242,7 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 		group[i] = sortKey[pos]
 	}
 	key, ok := snap.PlanKeyRanges(filterKey, group)
-	if !ok {
+	if !ok || tokenShare(key, tokens) < orderedTokenShare {
 		return nil
 	}
 	o.key = key
@@ -258,6 +257,51 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 	o.skipped -= int64(key.Blocks)
 
 	return o
+}
+
+// orderedTokenShare is the least share of a key range's blocks that the
+// token filters must admit for the aggregation to run in key order. A block
+// with few passing rows costs a hashing scan the filter's columns alone, and
+// the two ways take the same time when the filters admit every block.
+var orderedTokenShare = 0.5
+
+// tokenShare estimates, from a sample of token filters, the share of the
+// plan's blocks that may hold every token.
+func tokenShare(key *colstore.KeyPlan, tokens []uint64) float64 {
+	if len(tokens) == 0 || key.Blocks == 0 {
+		return 1
+	}
+	const sample = 64
+	step := max(1, key.Blocks/sample)
+	probed, kept, skip := 0, 0, 0
+	for _, s := range key.Spans() {
+		b := s.First + skip
+		for ; b < s.End; b += step {
+			probed++
+			// A filter that cannot be read fails the query when its block is.
+			if ok, err := mayHold(s.Part, b, tokens); ok || err != nil {
+				kept++
+			}
+		}
+		skip = b - s.End
+	}
+	if probed == 0 {
+		return 1
+	}
+
+	return float64(kept) / float64(probed)
+}
+
+// mayHold reports whether the token filter of block i of p admits every
+// token.
+func mayHold(p *part.Part, i int, tokens []uint64) (bool, error) {
+	for _, h := range tokens {
+		if ok, err := p.MayContainToken(i, h); !ok || err != nil {
+			return false, err
+		}
+	}
+
+	return true, nil
 }
 
 // window points the worker at rows from to to of a block of a range scan,
@@ -375,8 +419,9 @@ type orderedWorker struct {
 	gid   []uint32
 	// edges holds the first and last group of every range the worker read.
 	edges []*orderedEdges
-	// byIndex counts the blocks counted from the part index.
-	byIndex int64
+	// byIndex and byToken count the blocks counted from the part index and
+	// the ones the token filters ruled out.
+	byIndex, byToken int64
 }
 
 func (ow *orderedWorker) held() int {
@@ -535,6 +580,18 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 				c.r.Skip()
 
 				return true, nil
+			}
+		}
+		if len(o.tokens) != 0 {
+			may, err := mayHold(p, i, o.tokens)
+			if err != nil {
+				return false, err
+			}
+			if !may {
+				ow.byToken++
+				c.r.Skip()
+
+				continue
 			}
 		}
 		if ok, err := c.r.Read(b); err != nil {
@@ -973,6 +1030,7 @@ func (x *execution) runOrdered(ctx context.Context) (*Result, error) {
 		res.Stats.RowsMatched += w.matched
 		held += w.arena.Size() + w.held() + w.sink.held() + ows[i].held()
 		res.Stats.CountedByIndex += ows[i].byIndex
+		res.Stats.SkippedByToken += ows[i].byToken
 	}
 	res.Columns, res.Rows = collect(q, sinks)
 	res.Stats.Blocks, res.Stats.SkippedByKey, res.Stats.HeldBytes = scan.Decoded.Load(), o.skipped, int64(held)

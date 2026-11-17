@@ -530,6 +530,25 @@ func columnLiteral(e *Expr) (col *Expr, lit Value, op Op, ok bool) {
 	return a, b.Value, op, true
 }
 
+// conjunctTokens appends the token hashes that the block of a row satisfying
+// the conjunct c holds: those of a text match or of a string equality.
+func conjunctTokens(c *Expr, dst []uint64) []uint64 {
+	switch c.Op {
+	case OpMatch:
+		if len(c.Args) == 1 && c.Args[0] != nil && c.Args[0].Op == OpColumn &&
+			(c.Args[0].Kind == vec.KindString || c.Args[0].Kind == KindAny) {
+			return c.Pattern.Tokens(dst)
+		}
+	case OpEq:
+		col, lit, op, ok := columnLiteral(c)
+		if ok && op == OpEq && lit.Kind == vec.KindString && (col.Kind == vec.KindString || col.Kind == KindAny) {
+			return tokenfilter.AppendHashes(dst, lit.Bytes)
+		}
+	}
+
+	return dst
+}
+
 // pushdown derives what the scan can skip from the conjuncts of the filter:
 // string equalities on the leading sort key paths of the snapshot's ordered
 // parts become a key filter, string equalities and text matches contribute
@@ -539,12 +558,8 @@ func pushdown(snap *colstore.Snapshot, filter *Expr) colstore.ScanOptions {
 	minT, maxT := int64(math.MinInt64), int64(math.MaxInt64)
 	equal := map[string][]byte{}
 	for _, c := range conjuncts(filter, nil) {
+		opts.Tokens = conjunctTokens(c, opts.Tokens)
 		switch c.Op {
-		case OpMatch:
-			if len(c.Args) == 1 && c.Args[0] != nil && c.Args[0].Op == OpColumn &&
-				(c.Args[0].Kind == vec.KindString || c.Args[0].Kind == KindAny) {
-				opts.Tokens = c.Pattern.Tokens(opts.Tokens)
-			}
 		case OpEq, OpLt, OpLe, OpGt, OpGe:
 			col, lit, op, ok := columnLiteral(c)
 			if !ok {
@@ -552,7 +567,6 @@ func pushdown(snap *colstore.Snapshot, filter *Expr) colstore.ScanOptions {
 			}
 			switch {
 			case lit.Kind == vec.KindString && op == OpEq && (col.Kind == vec.KindString || col.Kind == KindAny):
-				opts.Tokens = tokenfilter.AppendHashes(opts.Tokens, lit.Bytes)
 				if _, dup := equal[col.Path]; !dup {
 					equal[col.Path] = lit.Bytes
 				}
