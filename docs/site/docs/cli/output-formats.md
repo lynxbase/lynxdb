@@ -6,7 +6,7 @@ description: The --format values of the LynxDB CLI, what auto chooses, and the f
 
 # Output Formats
 
-The global `--format` (`-F`) flag picks how commands print rows. It applies to `query`, `tail` and the inspection commands; `lynxdb import` uses its own `--format` for the input format.
+The global `--format` (`-F`) flag picks how commands print rows. It applies to `query` and the inspection commands; `lynxdb import` uses its own `--format` for the input format.
 
 ```bash
 lynxdb query 'source=main level=ERROR | stats count() as errors by host' --format csv
@@ -105,10 +105,10 @@ lynxdb query 'source=main level=ERROR | fields host, path, status, response_time
 
 ```
   record 1
-           host  web-03
-           path  /api/v1/users
-  response_time  786
-         status  502
+           host  api-02
+           path  /static/app.js
+  response_time  11
+         status  200
 ```
 
 `raw` prints the original lines, ready for another tool or for a local query:
@@ -118,11 +118,11 @@ lynxdb query 'source=main status>=500 | head 2' --format raw
 ```
 
 ```
-2026-01-15T08:00:00.105Z host=web-03 level=ERROR method=GET path=/api/v1/users status=502 user=grace response_time=786 bytes=32228 msg="GET /api/v1/users completed"
-2026-01-15T08:00:00.543Z host=api-02 level=ERROR method=DELETE path=/api/v1/search status=502 user=grace response_time=462 bytes=46701 msg="DELETE /api/v1/search completed"
+2025-01-15T08:00:45.63Z host=api-02 level=ERROR method=DELETE path=/api/v1/orders status=500 user=bob response_time=42 bytes=10811 msg="DELETE /api/v1/orders completed"
+2025-01-15T08:01:10.09Z host=web-01 level=ERROR method=POST path=/api/v1/users status=503 user=alice response_time=344 bytes=45705 msg="POST /api/v1/users completed"
 ```
 
-Columns come in a fixed order, not the order of the query's `fields` or `stats` clause: built-in fields such as `_time`, `_raw`, `index`, `_source`, `_sourcetype` and `host` first, then the other fields alphabetically. JSON objects list their keys alphabetically.
+The table, CSV and vertical formats order columns the same way, not in the order of the query's `fields` or `stats` clause: the fields `_time`, `_raw`, `index`, `source`, `sourcetype` and `host` first, then the other fields alphabetically. JSON objects list their keys alphabetically.
 
 ## Human table flags
 
@@ -139,24 +139,18 @@ These global flags shape `table`, `box`, `ascii`, `markdown`, `vertical` and ter
 
 ## Data on stdout, everything else on stderr
 
-Rows go to stdout. Statistics, hints, warnings, lints and errors go to stderr, so a redirect or a pipe receives only data:
+Rows go to stdout. Statistics, hints, warnings and errors go to stderr, so a redirect or a pipe receives only data:
 
 ```bash
 lynxdb query 'source=main | stats count() by host' --format csv > hosts.csv
 lynxdb query 'source=main level=ERROR | fields host, path' --since 1h | jq -r .path | sort | uniq -c
 ```
 
-When stdout is not a terminal, a query also writes its statistics as one JSON line to stderr:
-
-```json
-{"stats":{"total_ms":1,"scanned_rows":294,"result_rows":5,"scanned_segments":2,"total_segments":4,"scan_type":"full_scan","skip_ratio":0.5,"processed_bytes":238997}}
-```
-
-`--no-stats` drops it and `--quiet` drops everything except data.
+When stdout is not a terminal, a query also writes its statistics to stderr as one JSON line, `{"stats":{...}}`, with the total and execution times in milliseconds (`total_ms`, `exec_ms`) and the rows returned (`result_rows`). `--no-stats` drops it and `--quiet` drops everything except data.
 
 ## Commands other than query
 
-`status`, `health`, `indexes`, `cache stats`, `jobs`, `fields`, `auth list`, `config get` and `config list-profiles` print a styled view on a terminal and plain rows otherwise. `--format json` gives each command's JSON document or one JSON object per item; `csv`, `tsv`, `markdown` and the table formats print the same data as rows.
+`status`, `health`, `indexes`, `jobs`, `fields`, `auth list`, `config get` and `config list-profiles` print a styled view on a terminal and plain rows otherwise. `--format json` gives each command's JSON document or one JSON object per item; `csv`, `tsv`, `markdown` and the table formats print the same data as rows.
 
 ## See also
 

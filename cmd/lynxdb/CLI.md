@@ -59,7 +59,7 @@ API key: `--token`, then `LYNXDB_TOKEN`, then the credentials file written by `l
 
 ```yaml
 server: https://logs.example.com
-profile: staging
+profile: prod
 default_format: table
 default_since: 6h         # lynxdb query --since
 default_source: web       # --source on query, ingest, import
@@ -87,7 +87,7 @@ Alias `q`. Runs a PPL query. Arguments are joined with spaces. A trailing `\G` s
 **Modes**
 
 - **Server** (default): `POST /api/v1/query` to `--server`. A query the server promotes to an asynchronous job (HTTP 202) is polled until it finishes or `--timeout` expires (default 6 minutes).
-- **Local** (`--file`, or stdin is a pipe): the query is compiled first, then the input is loaded into an in-memory index `main` and the same compiled plan runs in process. Each line is one event. JSON objects and `key=value` pairs become fields, and a recognized timestamp becomes `_time`. The first 20 lines are checked for combined (Apache/Nginx), syslog and Docker JSON log formats, whose fields are extracted while loading; `--raw` disables that detection. The field `source` of a text line is the file path, `stdin` or `--source`. `--file` and piped stdin together are an error.
+- **Local** (`--file`, or stdin is a pipe): the query is compiled first, then the input is loaded into the index `main` of a database the CLI opens in a temporary directory, the query runs in process, and the directory is removed. Each line is one event. A JSON object line is stored as it is; any other line keeps its text in `_raw`, its timestamp as the event time and its `key=value` pairs as fields. The first 20 lines are checked for combined (Apache/Nginx), syslog and Docker JSON log formats, whose fields are extracted while loading; `--raw` disables that detection. The fields `source` and `sourcetype` of a text line are the file path, `stdin` or `--source`, and `--sourcetype`. `--file` and piped stdin together are an error.
 - **Plan only** (`--explain`): compiles in the CLI and prints the logical plan, optimized plan and optimizer rules. Reads no input, needs no server.
 
 | Flag | Short | Default | Description |
@@ -100,7 +100,7 @@ Alias `q`. Runs a PPL query. Arguments are joined with spaces. A trailing `\G` s
 | `--source` | | | `source` of loaded text lines; local mode |
 | `--output` | `-o` | | Write results to a file |
 | `--timeout` | | `6m` | Query timeout (`10s`, `5m`); server mode |
-| `--analyze` | | | Execution profile: `basic` (bare flag), `full`, `trace` |
+| `--analyze` | | | Execution profile in place of the statistics; a level (`basic`, `full`, `trace`) needs `=`, as in `--analyze=full`, and all levels print the same profile |
 | `--fail-on-empty` | | `false` | Exit with code 6 when there are no rows |
 | `--copy` | | `false` | Copy results to the clipboard as TSV; server mode |
 | `--explain` | | `false` | Print the compiled plans without running the query |
@@ -124,7 +124,7 @@ lynxdb query --raw --file app.log 'source=main "connection refused" | head 20'
 
 # Plans and profiles
 lynxdb query --explain 'source=main level=ERROR | stats count() as n by host | sort - n | head 3'
-lynxdb query 'source=main level=ERROR | stats count() by host' --analyze full
+lynxdb query 'source=main level=ERROR | stats count() by host' --analyze=full
 
 # Scripting
 lynxdb query 'source=main level=FATAL' --since 15m --fail-on-empty --quiet < /dev/null > /dev/null
@@ -134,6 +134,8 @@ lynxdb query 'source=main status>=500 | fields _raw' --since 1h --format raw \
 ```
 
 Output: rows go to stdout, statistics to stderr. On a terminal the statistics are a summary footer (rows, time); otherwise one JSON line. A query that does not compile prints the query with a caret under the error position and exits with 4.
+
+The server syncs the events ingested so far before a query, and runs every query as a job; `lynxdb jobs` lists them.
 
 ## explain
 
@@ -145,7 +147,7 @@ Compiles the query on the server (`GET /api/v1/query/explain`) and prints the lo
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--analyze` | `false` | Run the query and print its time and rows after the plan |
+| `--analyze` | `false` | Run the query and print its execution profile after the plan |
 
 ```bash
 lynxdb explain 'source=main level=ERROR | stats count() by host'
@@ -153,13 +155,15 @@ lynxdb explain 'source=main status>=500 | top 10 path' --format json
 lynxdb explain --analyze 'source=main level=ERROR | stats count()'
 ```
 
+A query that does not compile prints the error under the query and exits with 1.
+
 ## fields
 
 ```
 lynxdb fields [name] [flags]
 ```
 
-Alias `f`. Field catalog from the server: each field and the indexes that hold it. With a name, its indexes and top 20 values; with `--values`, its top 50 values and their counts.
+Alias `f`. Field catalog from the server: each field and the indexes that hold it. With a name, its indexes and top 20 values; with `--values`, its top 50 values and their counts. `--since`, `--from` and `--to` apply to `--values` only.
 
 | Flag | Short | Description |
 |------|-------|-------------|
@@ -184,7 +188,7 @@ lynxdb fields --prefix st
 lynxdb ingest [file] [flags]
 ```
 
-Alias `i`. Sends raw lines from a file, or stdin, to `POST /api/v1/ingest/raw` in batches. Empty lines are skipped.
+Alias `i`. Sends raw lines from a file, or stdin, to `POST /api/v1/ingest/raw` in batches. Empty lines are skipped. A JSON object line is stored unchanged; `--source` and `--sourcetype` apply to the other lines.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -206,8 +210,8 @@ lynxdb import <file> [flags]
 
 Imports structured data. `-` reads stdin and needs `--format`. With `auto`, the extension decides (`.csv`/`.tsv` CSV, `.ndjson`/`.jsonl` NDJSON); for `.json`, `.log` and no extension, the first line decides.
 
-- `ndjson`: one object per line; an `event` envelope (`event`, `time`, `source`, `sourcetype`, `host`, `index`, `fields`) or a flat object (`_raw` or the line as raw text; timestamp from `time`, `_time`, `timestamp`, `_timestamp`, `@timestamp`, `ts` or `datetime`; scalar values as fields). Sent to `POST /api/v1/ingest`.
-- `csv`: header row, then one event per row; numbers are typed, `_time` and `_raw` columns are recognized. Sent to `POST /api/v1/ingest`.
+- `ndjson`: one object per line; an `event` envelope (`event`, `time`, `source`, `sourcetype`, `host`, `index`, `fields`) or a flat object (`_raw` or the line as raw text; timestamp from `time`, `_time`, `timestamp`, `_timestamp`, `@timestamp`, `ts` or `datetime`; scalar values as fields). Sent to `POST /api/v1/ingest`, one request per index.
+- `csv`: header row, then one event per row; numbers are typed, `_time` and `_raw` columns are recognized, and a row without `_raw` keeps the row as a JSON object in `_raw`. Sent to `POST /api/v1/ingest`.
 - `esbulk`: Elasticsearch `_bulk` action and document pairs, sent to `POST /api/v1/es/_bulk`. `--index` is rejected; `--source` replaces each action's `_index`.
 
 | Flag | Default | Description |
@@ -239,7 +243,7 @@ Starts the server. Settings come from the config file, then `LYNXDB_*` environme
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--addr` | `localhost:3100` | Listen address |
-| `--data-dir` | `~/.local/share/lynxdb` | Data directory; `""` for in-memory |
+| `--data-dir` | `~/.local/share/lynxdb` | Data directory, one directory per index; `""` keeps the indexes in a temporary directory removed at shutdown |
 | `--log-level` | | `debug`, `info`, `warn`, `error` |
 | `--auth` | `false` | Require API keys (needs a data directory) |
 | `--tls` | `false` | Serve HTTPS; self-signed certificate in `<data-dir>/tls/` without `--tls-cert` |
@@ -260,7 +264,7 @@ Starts the server. Settings come from the config file, then `LYNXDB_*` environme
 | `--ingest-max-compressed-body-bytes` | | Largest compressed shipper body |
 | `--ingest-max-decompressed-body-bytes` | | Largest decompressed shipper body |
 
-With `--auth` and no keys, the server generates a root key and prints it once. The PID is written to `<data-dir>/lynxdb.pid` (in-memory mode: `$XDG_RUNTIME_DIR` or the temp directory).
+With `--auth` and no keys, the server generates a root key and prints it once. The PID is written to `<data-dir>/lynxdb.pid` (with `--data-dir ""`: `$XDG_RUNTIME_DIR` or the temp directory).
 
 ```bash
 lynxdb server
@@ -302,11 +306,11 @@ Lists indexes with their events, bytes, parts and the times of their first and l
 lynxdb jobs [job_id] [flags]
 ```
 
-Lists asynchronous query jobs, shows one, or cancels one.
+Lists query jobs, the latest first, shows one, or cancels one. Every server query runs as a job, kept for `query.job_ttl` after it finishes.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--status` | | Filter: `running`, `done`, `error` |
+| `--status` | | Filter: `running`, `done`, `error`, `canceled` |
 | `--cancel` | `false` | Cancel the given job |
 
 ```bash
@@ -339,13 +343,13 @@ Removes saved credentials for `--server`; `--all` removes them for every server.
 
 ## auth
 
-Manage API keys on the server; needs an `admin` or `full` key.
+Manage API keys on the server. `create`, `list`, `revoke` and `rotate-root` need the root key.
 
 | Subcommand | Flags | Description |
 |------------|-------|-------------|
 | `auth create` | `--name` (required), `--scope` (`full`; `ingest`, `query`, `admin`), `--expires` (`never`; `30d`, `90d`, `1y`, Go durations), `--description` | Create a key; the token is shown once |
-| `auth list` (alias `ls`) | | List keys: ID, name, scope, expiry, last use, age |
-| `auth revoke <id>` | `--yes`/`-y` | Revoke a key |
+| `auth list` (aliases `ls`, `list-keys`) | | List keys: ID, name, scope, expiry, last use, age |
+| `auth revoke <id>` (alias `revoke-key`) | `--yes`/`-y` | Revoke a key |
 | `auth rotate-root` | `--yes`/`-y` | Replace the root key and update saved credentials |
 | `auth status` | | Server, TLS mode and whether the current key authenticates |
 
@@ -377,7 +381,7 @@ Config file search, when `--config` is unset: `LYNXDB_CONFIG`, `./lynxdb.yaml`, 
 | `config edit` | | Open the config file in `$EDITOR` or `$VISUAL` |
 | `config path` | | Print the config file path that `init`, `set`, `edit` and `reset` use |
 | `config reset` | `--dry-run` | Overwrite the config file with defaults after typed confirmation |
-| `config add-profile <name>` | `--url` (required), `--token` | Add or update a connection profile |
+| `config add-profile <name>` | `--url` (required), `--token` | Add or update a connection profile; writes every effective setting back to the file |
 | `config list-profiles` | | List profiles |
 | `config remove-profile <name>` | | Remove a profile |
 
@@ -389,7 +393,7 @@ lynxdb config add-profile prod --url https://logs.example.com --token "$PROD_KEY
 lynxdb query 'source=main level=ERROR | stats count() by host' --profile prod
 ```
 
-A reload applies `log_level`, `query.*` (except `query.max_concurrent` and `query.job_ttl`), `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`, `ingest.es_compat.*`, `ingest.limits.*`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`, `http.shutdown_timeout` and the `syslog` index, sourcetype, timezone, hostname and batch settings. Other changes need a restart.
+A reload reads the config file and the environment, not the server's flags. It applies `log_level`, `query.*` (except `query.max_concurrent` and `query.job_ttl`), `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`, `ingest.es_compat.enabled`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`, `http.shutdown_timeout` and the `syslog` index, sourcetype, timezone, hostname and batch settings. Other changes, `retention` and `storage.*` among them, need a restart.
 
 ---
 
@@ -440,7 +444,7 @@ Defined in `exitcodes.go` and mapped in `root.go`:
 
 | Code | Meaning |
 |------|---------|
-| 0 | Success |
+| 0 | Success, including a confirmation prompt answered with no |
 | 1 | Other failure |
 | 2 | Required flag missing |
 | 3 | Cannot connect to the server |
@@ -448,8 +452,7 @@ Defined in `exitcodes.go` and mapped in `root.go`:
 | 5 | Query timeout |
 | 6 | No rows with `--fail-on-empty` |
 | 7 | Missing, invalid or insufficient API key |
-| 78 | Data directory on-disk format incompatible with this binary |
-| 130 | Interrupted (SIGINT) |
+| 130 | Interrupted (SIGINT; the shell's code for a process stopped by the signal) |
 
 ## Signals
 
