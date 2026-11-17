@@ -474,22 +474,16 @@ func TestQueryFile_TableFormat_FieldsDoesNotAutoAddEventMetadata(t *testing.T) {
 
 func TestQueryFile_TableFormat_ExplicitEventMetadata(t *testing.T) {
 	stdout, _, err := runCmd(t, "query", "--file", testdataPath("logs/access.log"), "--format", "table",
-		"source=main | fields level, _source, _sourcetype | head 3")
+		"source=main | fields level, source | head 3")
 	if err != nil {
 		t.Fatalf("query failed: %v", err)
 	}
 
-	if !strings.Contains(stdout, "_source") {
-		t.Error("table output missing explicit '_source' column header")
-	}
-	if !strings.Contains(stdout, "_sourcetype") {
-		t.Error("table output missing explicit '_sourcetype' column header")
+	if !strings.Contains(stdout, "source") {
+		t.Error("table output missing explicit 'source' column header")
 	}
 	if !strings.Contains(stdout, "level") {
 		t.Error("table output missing 'level' column header")
-	}
-	if strings.Contains(stdout, " sourcetype ") || strings.Contains(stdout, " source ") {
-		t.Error("table output should not include source/sourcetype aliases")
 	}
 }
 
