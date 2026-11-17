@@ -18,8 +18,11 @@ type StoreOptions struct {
 	// SortKey orders the rows of every part; empty keeps arrival order,
 	// and parts are then never merged.
 	SortKey []string
-	// TimeField is the path whose value becomes the row timestamp.
-	TimeField string
+	// TimeField is the path whose value becomes the row timestamp, and
+	// TimeFields further paths tried in their order for a row without one
+	// there; shred.Options says which values are times.
+	TimeField  string
+	TimeFields []string
 	// KeepText keeps a line that is not a JSON object as a row holding its
 	// text; without it such a line is rejected.
 	KeepText bool
@@ -319,7 +322,7 @@ func (s *Store) appendPiece(lines []byte, at int64) (rejected int64, err error) 
 }
 
 func (s *Store) shredOptions() shred.Options {
-	return shred.Options{TimeField: s.opts.TimeField, KeepText: s.opts.KeepText}
+	return shred.Options{TimeField: s.opts.TimeField, TimeFields: s.opts.TimeFields, KeepText: s.opts.KeepText}
 }
 
 // Sync writes everything Append has buffered and returns once it is durable.
@@ -801,7 +804,7 @@ type Writer struct {
 func (s *Store) NewWriter() *Writer {
 	return &Writer{
 		s:     s,
-		batch: shred.NewBatch(shred.Options{TimeField: s.opts.TimeField, KeepText: s.opts.KeepText}),
+		batch: shred.NewBatch(s.shredOptions()),
 	}
 }
 
