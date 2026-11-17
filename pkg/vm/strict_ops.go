@@ -5,8 +5,6 @@ package vm
 // case-sensitive string comparison.
 
 import (
-	"encoding/binary"
-	"math"
 	"strings"
 	"time"
 	"unicode"
@@ -318,8 +316,6 @@ func isNumericType(t event.FieldType) bool {
 	return t == event.FieldTypeInt || t == event.FieldTypeFloat
 }
 
-// OpLoadPath: flat-column first, then object walk, no _raw fallback (D25)
-
 // LoadPath resolves a dotted path against fields: the flat column named by the
 // full path first, then an object walk from the root member.
 func LoadPath(fields map[string]event.Value, path string) event.Value {
@@ -361,8 +357,6 @@ func execLoadPath(fields map[string]event.Value, path string) event.Value {
 	}
 	return val
 }
-
-// OpHasToken: case-insensitive whole-token match
 
 // hasToken checks if the field string contains the search term as a whole token,
 // case-insensitively. A token is a run of ASCII alphanumerics and Unicode
@@ -421,10 +415,6 @@ func tokenize(s string) []string {
 	return tokens
 }
 
-// OpExtract / OpExtractAll
-
-// OpInStrict: strict equality in-list check with null awareness
-
 // inStrict checks if val is in the list using strict equality.
 // If val is null → result is null.
 // If any item comparison is null (incompatible types), accumulate null.
@@ -451,8 +441,6 @@ func inStrict(val event.Value, items []event.Value, warnings *WarningCounters) e
 	}
 	return event.BoolValue(false)
 }
-
-// Lambda execution: any, all, filter, map
 
 // execLambdaForElement runs a sub-program against the current row with a
 // lambda parameter value pushed onto the lambda param stack. Pool lookups
@@ -641,8 +629,6 @@ func (vm *VM) execArrayReduce(prog *Program, subIdx int, arrVal, init event.Valu
 	return acc, nil
 }
 
-// Slice, ArrayConcat, ArrayDistinct, ArraySort, Flatten
-
 // execArrayDistinct returns order-preserving first-wins deduplicated array.
 func execArrayDistinct(v event.Value) event.Value {
 	if v.IsNull() {
@@ -672,11 +658,3 @@ func execArrayDistinct(v event.Value) event.Value {
 	}
 	return event.ArrayValue(result)
 }
-
-// Object functions: keys, values, merge, has_key
-
-// url_parse, ip_parse, from_json (native)
-
-// Ensure unused imports are referenced.
-var _ = binary.BigEndian
-var _ = math.Pi

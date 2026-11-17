@@ -9,8 +9,6 @@ import (
 
 // OpConstDuration
 
-// OpArrayBuild
-
 func TestVMArrayBuild_Empty(t *testing.T) {
 	p := &Program{}
 	p.EmitOp(OpArrayBuild, 0)
@@ -25,8 +23,6 @@ func TestVMArrayBuild_Empty(t *testing.T) {
 	}
 }
 
-// OpObjectBuild
-
 func TestVMObjectBuild_Empty(t *testing.T) {
 	p := &Program{}
 	p.EmitOp(OpObjectBuild, 0)
@@ -40,18 +36,6 @@ func TestVMObjectBuild_Empty(t *testing.T) {
 		t.Errorf("expected empty object, got len %d", len(result.AsObject()))
 	}
 }
-
-// OpIndex
-
-// OpMember
-
-// OpLen
-
-// Duration arithmetic matrix
-
-// Timestamp +/- duration
-
-// Deep equality
 
 func TestVMDeepEquality_Arrays(t *testing.T) {
 	tests := []struct {
@@ -205,10 +189,6 @@ func TestVMDeepEquality_Duration(t *testing.T) {
 	}
 }
 
-// Duration comparison (ordering)
-
-// Array comparison (ordering)
-
 func TestVMArray_Compare(t *testing.T) {
 	tests := []struct {
 		name string
@@ -244,8 +224,6 @@ func TestVMArray_Compare(t *testing.T) {
 		})
 	}
 }
-
-// Truthiness for new types
 
 func TestVMTruthiness_Duration(t *testing.T) {
 	tests := []struct {
@@ -300,17 +278,3 @@ func TestVMTruthiness_Object(t *testing.T) {
 		})
 	}
 }
-
-// Nesting: array of objects
-
-// IsArray / IsObject with native types
-
-// Duration + Add commutative (duration + timestamp)
-
-// Opcode encoding tests for new opcodes
-
-// Cross-type: duration vs non-matching types yield null/false
-
-// Opcode definitions completeness: every new opcode has a definition entry
-
-// TypeOf for new types

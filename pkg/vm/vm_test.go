@@ -95,12 +95,6 @@ func TestVMStackOverflow(t *testing.T) {
 	}
 }
 
-// Opcode encoding tests
-
-// Benchmarks
-
-// helpers
-
 func TestCompareValues_NumericStrings(t *testing.T) {
 	tests := []struct {
 		name string

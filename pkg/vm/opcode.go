@@ -68,7 +68,6 @@ const (
 
 	// Strict arithmetic opcodes: int+int→int, int+float→float, string+string→concat
 	// (+ only), division by zero→null, no string-to-number promotion.
-	// Timestamp/duration algebra same as existing opcodes.
 	OpAddStrict Opcode = 0xF1 // string+string=concat, int+int=int, int+float=float, ts/dur algebra; string+num→null+warn
 	OpSubStrict Opcode = 0xF2 // no string sub; int-int=int, int-float=float, ts/dur algebra
 	OpMulStrict Opcode = 0xF3 // int*int=int, int*float=float, dur*num, no string
