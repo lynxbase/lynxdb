@@ -10,29 +10,6 @@ import (
 	"github.com/lynxbase/lynxdb/internal/ui"
 )
 
-// formatValueTTY formats a value for human-friendly TTY display.
-// Integers get comma separators; large floats that are whole get commas too.
-func formatValueTTY(v interface{}) string {
-	if !isTTY() {
-		return fmt.Sprint(v)
-	}
-
-	switch val := v.(type) {
-	case float64:
-		if val == float64(int64(val)) {
-			return formatCount(int64(val))
-		}
-
-		return fmt.Sprintf("%.4g", val)
-	case int64:
-		return formatCount(val)
-	case int:
-		return formatCount(int64(val))
-	default:
-		return fmt.Sprint(v)
-	}
-}
-
 // isTTY reports whether stdout is connected to a terminal.
 func isTTY() bool {
 	fi, err := os.Stdout.Stat()
