@@ -4,8 +4,27 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/ir"
-	"github.com/lynxbase/lynxdb/pkg/model"
 )
+
+// QueryHints are the storage-level facts of a whole plan, as Hints describes
+// them for one scan, with the sources the plan reads described as a scope.
+type QueryHints struct {
+	SearchTerms     []string
+	TokenGlobs      []string
+	FieldPredicates []FieldEqual
+	RequiredCols    []string
+	TimeBounds      *TimeBounds
+	// SourceScopeType is "all", "single", "list" or "glob".
+	SourceScopeType    string
+	SourceScopeSources []string
+	SourceScopePattern string
+}
+
+// TimeBounds is the range of event times a plan keeps; a zero bound is open.
+type TimeBounds struct {
+	Earliest time.Time
+	Latest   time.Time
+}
 
 // Scans returns the scans of a plan, including those of subqueries.
 func Scans(plan *ir.Plan) []*ir.Scan {
@@ -26,13 +45,13 @@ func Scans(plan *ir.Plan) []*ir.Scan {
 // gets all of its hints; with several scans only the union of their sources
 // and time ranges is kept, since each data-skipping hint belongs to one scan.
 // A scan without sources reads defaultSource.
-func PlanHints(plan *ir.Plan, defaultSource string, now time.Time) *model.QueryHints {
+func PlanHints(plan *ir.Plan, defaultSource string, now time.Time) *QueryHints {
 	scans := Scans(plan)
 	switch len(scans) {
 	case 0:
-		return &model.QueryHints{}
+		return &QueryHints{}
 	case 1:
-		return ScanHints(scans[0], now).QueryHints()
+		return ScanHints(scans[0], now).queryHints()
 	}
 	var union Hints
 	bounded := true
@@ -56,49 +75,31 @@ func PlanHints(plan *ir.Plan, defaultSource string, now time.Time) *model.QueryH
 	if !bounded {
 		union.MinTime, union.MaxTime = time.Time{}, time.Time{}
 	}
-	return union.QueryHints()
+	return union.queryHints()
 }
 
-// QueryHints converts scan hints to the storage engine's hint structure.
-func (h Hints) QueryHints() *model.QueryHints {
-	q := &model.QueryHints{
-		SearchTerms: append([]string(nil), h.Terms...),
-		TokenGlobs:  append([]string(nil), h.TokenGlobs...),
-		Limit:       int(h.Limit),
+func (h Hints) queryHints() *QueryHints {
+	q := &QueryHints{
+		SearchTerms:     append([]string(nil), h.Terms...),
+		TokenGlobs:      append([]string(nil), h.TokenGlobs...),
+		FieldPredicates: append([]FieldEqual(nil), h.FieldEquals...),
 	}
 	if h.Columns != nil {
 		q.RequiredCols = append([]string(nil), h.Columns...)
 	}
 	if !h.MinTime.IsZero() || !h.MaxTime.IsZero() {
-		q.TimeBounds = &model.TimeBounds{Earliest: h.MinTime, Latest: h.MaxTime}
-	}
-	for _, f := range h.FieldEquals {
-		q.FieldPredicates = append(q.FieldPredicates, model.FieldPredicate{Field: f.Field, Op: "=", Value: f.Value})
-	}
-	if len(h.AnyTerms) > 0 {
-		tree := &model.SearchTermTree{Op: "AND"}
-		for _, t := range h.Terms {
-			tree.Children = append(tree.Children, &model.SearchTermTree{Op: "TERM", Term: t})
-		}
-		for _, group := range h.AnyTerms {
-			or := &model.SearchTermTree{Op: "OR"}
-			for _, t := range group {
-				or.Children = append(or.Children, &model.SearchTermTree{Op: "TERM", Term: t})
-			}
-			tree.Children = append(tree.Children, or)
-		}
-		q.SearchTermTree = tree
+		q.TimeBounds = &TimeBounds{Earliest: h.MinTime, Latest: h.MaxTime}
 	}
 	setSourceScope(h.Sources, q)
 	return q
 }
 
-func setSourceScope(sources []ir.Source, q *model.QueryHints) {
+func setSourceScope(sources []ir.Source, q *QueryHints) {
 	var names, globs []string
 	for _, s := range sources {
 		switch {
 		case s.Name == "*":
-			q.SourceScopeType = model.SourceScopeAll
+			q.SourceScopeType = "all"
 			return
 		case s.Pattern:
 			globs = append(globs, s.Name)
@@ -107,27 +108,17 @@ func setSourceScope(sources []ir.Source, q *model.QueryHints) {
 		}
 	}
 	switch {
-	case len(globs) == 1 && len(names) == 0:
-		q.SourceScopeType = model.SourceScopeGlob
-		q.SourceScopePattern = globs[0]
-		q.SourceGlob = globs[0]
+	case len(globs) > 0 && len(names) > 0:
+		q.SourceScopeType = "list"
+		q.SourceScopeSources = names
 	case len(globs) > 0:
-		q.SourceIncludeGlobs = globs
-		if len(names) > 0 {
-			q.SourceScopeType = model.SourceScopeList
-			q.SourceScopeSources = names
-			q.SourceIndices = names
-		} else {
-			q.SourceScopeType = model.SourceScopeGlob
-			q.SourceScopePattern = globs[0]
-		}
+		q.SourceScopeType = "glob"
+		q.SourceScopePattern = globs[0]
 	case len(names) == 1:
-		q.IndexName = names[0]
-		q.SourceScopeType = model.SourceScopeSingle
+		q.SourceScopeType = "single"
 		q.SourceScopeSources = names
 	case len(names) > 1:
-		q.SourceScopeType = model.SourceScopeList
+		q.SourceScopeType = "list"
 		q.SourceScopeSources = names
-		q.SourceIndices = names
 	}
 }
