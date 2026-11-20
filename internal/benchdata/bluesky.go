@@ -105,18 +105,59 @@ func appendTID(dst []byte, us int64, clock uint64) []byte {
 }
 
 // clock returns the clock identifier that an account mints keys of one kind
-// with.
-func clock(account, kind uint64) uint64 {
-	return (account*0x9e3779b97f4a7c15 + kind*0xbf58476d1ce4e5b9) >> 54
+// with, one of ids.
+func clock(account, kind, ids uint64) uint64 {
+	return ((account*0x9e3779b97f4a7c15 + kind*0xbf58476d1ce4e5b9) >> 32 % ids) * 0x2f1 & 1023
+}
+
+// uniform returns a draw in [0, 1).
+func (g *Generator) uniform() float64 { return float64(g.next()>>11) / (1 << 53) }
+
+// normal returns a draw of the standard normal law.
+func (g *Generator) normal() float64 {
+	return math.Sqrt(-2*math.Log(1-g.uniform())) * math.Cos(2*math.Pi*g.uniform())
+}
+
+// between returns a draw whose power of ten is uniform between from and to.
+func (g *Generator) between(from, to float64) int64 {
+	return int64(math.Pow(10, from+(to-from)*g.uniform()))
 }
 
 // age draws how long before now a record was made, between a second and a
 // month, as many of each order of magnitude as of any other.
-func (g *Generator) age() int64 {
-	const least, most = 1e6, 30 * 24 * 3600 * 1e6
-	f := float64(g.next()>>11) / (1 << 53)
+func (g *Generator) age() int64 { return g.between(6, math.Log10(30*24*3600*1e6)) }
 
-	return int64(least * math.Exp(f*math.Log(most/least)))
+// lag draws how long before the event its commit was made, in microseconds:
+// a median of 47 s, a tenth under 3 s and a tenth over 20 min, and all but
+// a thousandth within an hour, as on the network.
+func (g *Generator) lag() int64 {
+	return int64(math.Pow(10, min(max(7.67+1.05*g.normal(), 4.5), 9.55)))
+}
+
+// skew draws how long before its commit the client made a record key, in
+// microseconds: a second or two, a few minutes for one client in fifty.
+func (g *Generator) skew() int64 {
+	if g.next()%50 == 0 {
+		return g.between(6, 8.5)
+	}
+
+	return int64(math.Pow(10, 6.2+0.5*g.normal()))
+}
+
+// deletedAge draws the age of a record that a delete names, in
+// microseconds: under an hour for three in ten, under a day for half, and
+// over a year for one in a hundred.
+func (g *Generator) deletedAge() int64 {
+	switch u := g.uniform(); {
+	case u < 0.30:
+		return g.between(4, 9.56)
+	case u < 0.53:
+		return g.between(9.56, 10.94)
+	case u < 0.99:
+		return g.between(10.94, 13.2)
+	default:
+		return g.between(13.5, 14)
+	}
 }
 
 func (g *Generator) text(dst []byte) []byte {
@@ -168,24 +209,29 @@ func (g *Generator) Append(dst []byte, n int) []byte {
 		case op < 5:
 			operation = "update"
 		}
-		// A revision is minted with its commit, shortly before the event is
-		// seen; a record key when its record is made, a little earlier, and a
-		// deleted record was made long before.
+		// A revision is minted with its commit by the server, a record key a
+		// little before by the client that makes the record, with its time
+		// of creation; a deleted record was made long before. A few keys
+		// are names or of other alphabets.
 		dst = append(dst, `,"kind":"commit","commit":{"rev":"`...)
-		dst = appendTID(dst, g.time-int64(g.next()%300000), clock(author, 1))
+		committed := g.time - g.lag()
+		dst = appendTID(dst, committed, clock(author, 1, 32))
 		dst = append(dst, `","operation":"`...)
 		dst = append(dst, operation...)
 		dst = append(dst, `","collection":"`...)
 		dst = append(dst, collection...)
 		dst = append(dst, `","rkey":"`...)
-		created := g.time - int64(g.next()%2000000)
-		switch {
-		case collection == "app.bsky.actor.profile":
+		created := committed - g.skew()
+		switch named := g.next() % 1000; {
+		case collection == "app.bsky.actor.profile", operation == "update" && named < 938, named < 5:
 			dst = append(dst, "self"...)
+		case named == 5:
+			dst = g.id(dst, 9, g.next())
+			dst = strconv.AppendUint(dst, 1000+g.next()%9000, 10)
 		case operation == "delete":
-			dst = appendTID(dst, g.time-g.age(), clock(author, 2))
+			dst = appendTID(dst, g.time-g.deletedAge(), clock(author, 2, 63))
 		default:
-			dst = appendTID(dst, created, clock(author, 2))
+			dst = appendTID(dst, created, clock(author, 2, 63))
 		}
 		if operation == "delete" {
 			dst = append(dst, "\"}}\n"...)
@@ -209,7 +255,7 @@ func (g *Generator) Append(dst []byte, n int) []byte {
 			dst = append(dst, `","uri":"at://`...)
 			dst = g.appendDID(dst, poster)
 			dst = append(dst, `/app.bsky.feed.post/`...)
-			dst = appendTID(dst, g.time-g.age(), clock(poster, 2))
+			dst = appendTID(dst, g.time-g.age(), clock(poster, 2, 63))
 			dst = append(dst, `"}`...)
 		default:
 			dst = append(dst, `,"subject":"`...)
