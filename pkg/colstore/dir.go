@@ -528,8 +528,9 @@ type PartFile struct {
 	size int64
 	// begun is how much of the file the device was asked to start on.
 	begun int64
-	// before, when set, runs ahead of every write.
-	before func()
+	// before, when set, runs ahead of every write, which fails with what it
+	// returns.
+	before func() error
 }
 
 // writebackStep is the bytes written to a part file between requests to
@@ -552,7 +553,9 @@ func (d *Dir) Create() (*PartFile, error) {
 // Write appends part bytes to the file.
 func (pf *PartFile) Write(p []byte) (int, error) {
 	if pf.before != nil {
-		pf.before()
+		if err := pf.before(); err != nil {
+			return 0, err
+		}
 	}
 	n, err := pf.f.Write(p)
 	pf.size += int64(n)
@@ -565,8 +568,9 @@ func (pf *PartFile) Write(p []byte) (int, error) {
 }
 
 // BeforeWrite makes fn run ahead of every write to the file, which lets a
-// writer of less urgent parts wait its turn at the disk.
-func (pf *PartFile) BeforeWrite(fn func()) { pf.before = fn }
+// writer of less urgent parts wait its turn at the disk or give up: a write
+// fails with the error fn returns.
+func (pf *PartFile) BeforeWrite(fn func() error) { pf.before = fn }
 
 // Abort discards the file.
 func (pf *PartFile) Abort() {

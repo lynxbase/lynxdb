@@ -245,11 +245,13 @@ func (s *Store) ReleasePages() { s.dir.ReleasePages() }
 
 // Close writes what Append buffered, stops the merger and closes the
 // directory; writers must be closed first. Rows of an Append that returned
-// nil are written, and from then on the store returns ErrClosed. Closing
-// again returns what the first Close returned.
+// nil are written, and from then on the store returns ErrClosed. Merges under
+// way give up their output and leave their runs as they were. Closing again
+// returns what the first Close returned.
 func (s *Store) Close() error {
 	s.closing.Do(func() {
 		s.closed.Store(true)
+		s.blocks.close()
 		s.appending.Lock()
 		//nolint:staticcheck // The lock is taken only to wait for the calls of Append under way.
 		s.appending.Unlock()
@@ -787,10 +789,11 @@ func (s *Store) mergeLoop() {
 // blockBudget hands out a fixed number of units to callers that wait until
 // enough are free.
 type blockBudget struct {
-	mu    sync.Mutex
-	freed *sync.Cond
-	total int
-	free  int
+	mu     sync.Mutex
+	freed  *sync.Cond
+	total  int
+	free   int
+	closed bool
 }
 
 func (b *blockBudget) init(total int) {
@@ -798,15 +801,29 @@ func (b *blockBudget) init(total int) {
 	b.freed = sync.NewCond(&b.mu)
 }
 
-// acquire takes n units, or the whole budget when n exceeds it.
-func (b *blockBudget) acquire(n int) {
+// acquire takes n units, or the whole budget when n exceeds it, and reports
+// whether it did: once the budget is closed it takes none.
+func (b *blockBudget) acquire(n int) bool {
 	n = min(n, b.total)
 	b.mu.Lock()
-	for b.free < n {
+	defer b.mu.Unlock()
+	for b.free < n && !b.closed {
 		b.freed.Wait()
 	}
+	if b.closed {
+		return false
+	}
 	b.free -= n
+
+	return true
+}
+
+// close makes the callers that wait, and all later ones, take nothing.
+func (b *blockBudget) close() {
+	b.mu.Lock()
+	b.closed = true
 	b.mu.Unlock()
+	b.freed.Broadcast()
 }
 
 func (b *blockBudget) release(n int) {
@@ -1092,7 +1109,7 @@ func (s *Store) startMerges(compact bool) bool {
 			if i == settles {
 				s.settling = false
 			}
-			if err != nil && s.err == nil {
+			if err != nil && !errors.Is(err, errStopped) && s.err == nil {
 				s.err = err
 			}
 			// A drop may wait for this merge.
@@ -1127,10 +1144,22 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 	errs := make([]error, len(files))
 	var wg sync.WaitGroup
 	for i := range files {
-		wg.Add(1)
 		// Each range merge holds one decoded block per run.
-		s.blocks.acquire(len(runs))
-		s.cores <- struct{}{}
+		if !s.blocks.acquire(len(runs)) {
+			errs[i] = errStopped
+
+			break
+		}
+		select {
+		case s.cores <- struct{}{}:
+		case <-s.done:
+			s.blocks.release(len(runs))
+			errs[i] = errStopped
+		}
+		if errs[i] != nil {
+			break
+		}
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer func() { <-s.cores; s.blocks.release(len(runs)) }()
@@ -1148,9 +1177,7 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 				return
 			}
 			pf.Meta = meta
-			if s.opts.MergeBacklog > 0 {
-				pf.BeforeWrite(s.giveWay)
-			}
+			pf.BeforeWrite(s.giveWay)
 			files[i] = pf
 			w := part.NewWriter(pf, s.opts.Part)
 			if err := part.MergeRange(w, srcs, s.opts.BlockRows, lo, hi); err != nil {
@@ -1162,7 +1189,11 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 		}()
 	}
 	wg.Wait()
-	if err := errors.Join(errs...); err != nil {
+	err := errors.Join(errs...)
+	if err == nil && s.closed.Load() {
+		err = errStopped
+	}
+	if err != nil {
 		for _, pf := range files {
 			if pf != nil {
 				pf.Abort()
@@ -1174,7 +1205,7 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 	if beforeMergeCommit != nil {
 		beforeMergeCommit(meta)
 	}
-	_, err := s.dir.Commit(files, inputs)
+	_, err = s.dir.Commit(files, inputs)
 	s.countRuns()
 
 	return err
@@ -1195,13 +1226,22 @@ func (s *Store) countRuns() {
 // near enough for merges to leave it the disk.
 const pressingBytes = 16 << 20
 
-// giveWay holds a merge back while rows wait in the buffers for a flush or
-// a flush is writing them, and fewer runs are due to be merged than the
-// backlog that merges may not let grow.
-func (s *Store) giveWay() {
+// errStopped is what a merge returns when the store closed while it ran.
+var errStopped = errors.New("colstore: merge stopped by Close")
+
+// giveWay runs before every write of a merge: it holds the merge back while
+// rows wait in the buffers for a flush or a flush is writing them, and fewer
+// runs are due to be merged than the backlog that merges may not let grow,
+// and it stops the merge once the store closes.
+func (s *Store) giveWay() error {
 	for (s.flushWrites.Load() > 0 || s.buffered.Load() >= pressingBytes) && int(s.due.Load()) < s.opts.MergeBacklog && !s.closed.Load() {
 		time.Sleep(2 * time.Millisecond)
 	}
+	if s.closed.Load() {
+		return errStopped
+	}
+
+	return nil
 }
 
 // Writer buffers documents and writes them to the store as sorted runs. It
