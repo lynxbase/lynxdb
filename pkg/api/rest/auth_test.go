@@ -205,7 +205,6 @@ func TestAuth_CreateKey(t *testing.T) {
 		t.Errorf("name = %q, want ci-pipeline", result.Data.Name)
 	}
 
-	// New key should work for queries.
 	resp2, err := authReq("GET",
 		fmt.Sprintf("http://%s/api/v1/stats", srv.Addr()),
 		result.Data.Token, nil)
@@ -411,7 +410,6 @@ func TestAuth_RotateRoot(t *testing.T) {
 		t.Errorf("old token status = %d, want 401", resp2.StatusCode)
 	}
 
-	// New token should work.
 	resp3, err := authReq("GET",
 		fmt.Sprintf("http://%s/api/v1/stats", srv.Addr()),
 		result.Data.Token, nil)

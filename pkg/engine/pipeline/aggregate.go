@@ -251,7 +251,6 @@ func (a *AggregateIterator) findOrCreateGroup(h uint64, row map[string]event.Val
 		}
 	}
 
-	// New group.
 	group := &aggGroup{
 		key:    a.extractGroupKey(row),
 		states: make([]aggState, len(a.aggs)),

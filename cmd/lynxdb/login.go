@@ -79,8 +79,6 @@ func runLogin(_ *cobra.Command, _ []string) error {
 		return fmt.Errorf("connect to %s: %w", globalServer, statusErr)
 	}
 
-	// Check if auth is even enabled — if we got 200 without needing a token,
-	// the server doesn't require auth.
 	if token == "" && status != nil {
 		printMeta("Auth is not enabled on this server. No login needed.")
 

@@ -160,7 +160,6 @@ func TestKeyStoreRotateRoot(t *testing.T) {
 		t.Error("old root token should not verify after rotation")
 	}
 
-	// New token should verify.
 	if ks.Verify(rotated.Token) == nil {
 		t.Error("new root token should verify")
 	}

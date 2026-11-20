@@ -1,15 +1,6 @@
-// Package ui provides a unified TUI theme and reusable rendering components
-// for the LynxDB CLI. All styles are defined in one place; individual CLI
-// commands import this package instead of using raw ANSI escape codes.
-//
-// The package exposes a single Env that is initialized once via InitEnv().
-// Two backward-compatible Theme instances (Stdout, Stderr) are kept so that
-// existing callers (components, JSON highlighter, confirm, table, etc.) work
-// without modification. Under the hood they both delegate to the shared Env
-// for color decisions.
-//
-// All lipgloss.Color() calls are centralized here — no other file in the
-// codebase should construct colors directly.
+// Package ui renders LynxDB's CLI output. Stdout and Stderr use the shared
+// Env initialized by InitEnv for color decisions. Construct Lip Gloss
+// colors here so CLI commands respect the configured color profile.
 package ui
 
 import (

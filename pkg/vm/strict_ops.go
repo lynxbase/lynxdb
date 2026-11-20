@@ -323,14 +323,11 @@ func LoadPath(fields map[string]event.Value, path string) event.Value {
 }
 
 func execLoadPath(fields map[string]event.Value, path string) event.Value {
-	// 1. Flat column lookup (the full dotted path as a literal column name)
 	if val, ok := fields[path]; ok {
 		return val
 	}
-	// 2. Object walk: split on '.', load root, walk members
 	dot := strings.IndexByte(path, '.')
 	if dot <= 0 {
-		// No dot or leading dot — field simply missing
 		return event.NullValue()
 	}
 	root := path[:dot]
@@ -339,7 +336,6 @@ func execLoadPath(fields map[string]event.Value, path string) event.Value {
 	if !ok || rootVal.IsNull() {
 		return event.NullValue()
 	}
-	// Walk the chain
 	val := rootVal
 	for _, part := range strings.Split(rest, ".") {
 		if val.IsNull() {
