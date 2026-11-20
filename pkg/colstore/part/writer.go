@@ -332,7 +332,9 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 		}
 		w.encodeColumn(c, rows)
 	}
-	sort.Slice(w.ents, func(i, j int) bool {
+	// The row times stay ahead of a member at the time path, which lookups
+	// of the path would otherwise find instead.
+	sort.SliceStable(w.ents, func(i, j int) bool {
 		a, b := &w.ents[i], &w.ents[j]
 		if a.pathID != b.pathID {
 			return a.pathID < b.pathID
