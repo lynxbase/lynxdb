@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
+	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/engine/columnar"
 	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/query"
@@ -93,6 +94,8 @@ func Open(cfg Config) (*DB, error) {
 		KeepText:      true,
 		Partition:     cfg.Partition,
 		FlushInterval: cfg.FlushInterval,
+		// Merges rewrite flushed runs soon, at the level of merged parts.
+		FlushLevel: part.LevelFastest,
 	}})
 	if err != nil {
 		return nil, err
