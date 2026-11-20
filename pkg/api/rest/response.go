@@ -99,6 +99,7 @@ type queryStats struct {
 	SkippedByStats        int64  `json:"skipped_by_stats"`
 	CountedByIndex        int64  `json:"counted_by_index"`
 	CountedByEntries      int64  `json:"counted_by_entries"`
+	CountedByTime         int64  `json:"counted_by_time"`
 	ColumnsSearched       int64  `json:"columns_searched"`
 	ColumnsSkippedByToken int64  `json:"columns_skipped_by_token"`
 	BlocksMatched         int64  `json:"blocks_matched"`
@@ -139,7 +140,7 @@ func WithStats(st exec.Stats) MetaOpt {
 		m.Stats = &queryStats{
 			Blocks: st.Blocks, SkippedByKey: st.SkippedByKey, SkippedByToken: st.SkippedByToken,
 			SkippedByTime: st.SkippedByTime, SkippedAsEmpty: st.SkippedAsEmpty, SkippedByStats: st.SkippedByStats,
-			CountedByIndex: st.CountedByIndex, CountedByEntries: st.CountedByEntries,
+			CountedByIndex: st.CountedByIndex, CountedByEntries: st.CountedByEntries, CountedByTime: st.CountedByTime,
 			ColumnsSearched: st.ColumnsSearched, ColumnsSkippedByToken: st.ColumnsSkippedByToken,
 			BlocksMatched: st.BlocksMatched, RowsMatched: st.RowsMatched, HeldBytes: st.HeldBytes,
 			Ordered: st.Ordered, HashedFor: st.HashedFor,

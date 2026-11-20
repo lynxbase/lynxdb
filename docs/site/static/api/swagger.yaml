@@ -1943,7 +1943,7 @@ components:
             counted once each: opened (`blocks`), ruled out before that (`skipped_by_key`,
             `skipped_by_token`, `skipped_by_time`, `skipped_as_empty`), rejected from statistics
             (`skipped_by_stats`), or answered from the part index (`counted_by_index`,
-            `counted_by_entries`).
+            `counted_by_entries`, `counted_by_time`).
           properties:
             blocks: {type: integer}
             skipped_by_key: {type: integer}
@@ -1953,6 +1953,7 @@ components:
             skipped_by_stats: {type: integer}
             counted_by_index: {type: integer}
             counted_by_entries: {type: integer}
+            counted_by_time: {type: integer}
             columns_searched: {type: integer}
             columns_skipped_by_token: {type: integer}
             blocks_matched: {type: integer}
