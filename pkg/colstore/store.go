@@ -295,12 +295,21 @@ func (s *Store) Append(lines []byte) (rejected int64, err error) {
 // AppendAt is Append for lines that arrived at the time at, in unix
 // nanoseconds, which becomes the time of every row that carries none.
 func (s *Store) AppendAt(lines []byte, at int64) (rejected int64, err error) {
+	_, rejected, err = s.AppendRows(lines, at)
+
+	return rejected, err
+}
+
+// AppendRows is AppendAt that also returns the number of rows the lines
+// became, which with the rejected lines makes every line that holds more
+// than blanks.
+func (s *Store) AppendRows(lines []byte, at int64) (rows, rejected int64, err error) {
 	// Close waits for the calls under way, so that it writes all the rows
 	// of a call or refuses the call whole.
 	s.appending.RLock()
 	defer s.appending.RUnlock()
 	if s.closed.Load() {
-		return 0, ErrClosed
+		return 0, 0, ErrClosed
 	}
 	for len(lines) > 0 {
 		// Full buffers, or rows that a failed flush left, are written
@@ -309,7 +318,7 @@ func (s *Store) AppendAt(lines []byte, at int64) (rejected int64, err error) {
 		room := int64(s.opts.BufferBytes) - s.buffered.Load()
 		if room <= 0 {
 			if err := s.makeRoom(); err != nil {
-				return rejected, err
+				return rows, rejected, err
 			}
 
 			continue
@@ -321,11 +330,9 @@ func (s *Store) AppendAt(lines []byte, at int64) (rejected int64, err error) {
 				piece = piece[:at+nl+1]
 			}
 		}
-		n, err := s.appendPiece(piece, at)
+		taken, n := s.appendPiece(piece, at)
+		rows += taken
 		rejected += n
-		if err != nil {
-			return rejected, err
-		}
 		lines = lines[len(piece):]
 	}
 	// Full buffers are written by the flusher; the caller does not wait.
@@ -333,7 +340,7 @@ func (s *Store) AppendAt(lines []byte, at int64) (rejected int64, err error) {
 		s.askFlush()
 	}
 
-	return rejected, nil
+	return rows, rejected, nil
 }
 
 // askFlush has the flusher write the buffers that are full.
@@ -362,7 +369,7 @@ func (s *Store) makeRoom() error {
 	return nil
 }
 
-func (s *Store) appendPiece(lines []byte, at int64) (rejected int64, err error) {
+func (s *Store) appendPiece(lines []byte, at int64) (rows, rejected int64) {
 	var sh *appendShard
 	// The first free buffer in a fixed order, so that a light load fills
 	// one buffer and not all of them.
@@ -381,6 +388,7 @@ func (s *Store) appendPiece(lines []byte, at int64) (rejected int64, err error) 
 	if sh.batch == nil {
 		sh.batch = s.spare.take(s.shredOptions())
 	}
+	before := sh.batch.Rows
 	sh.errs = sh.batch.AddNDJSON(lines, at, sh.errs[:0])
 	if sh.buffered == 0 {
 		sh.since = time.Now()
@@ -389,7 +397,7 @@ func (s *Store) appendPiece(lines []byte, at int64) (rejected int64, err error) 
 	s.buffered.Add(int64(len(lines)))
 	s.appended.Add(1)
 
-	return int64(len(sh.errs)), nil
+	return int64(sh.batch.Rows - before), int64(len(sh.errs))
 }
 
 // spareBatches keeps batches between the uses a store has for them. The

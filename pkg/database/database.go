@@ -112,11 +112,19 @@ func Open(cfg Config) (*DB, error) {
 // a line that is not a JSON object becomes an event holding the text in
 // _raw. It returns the number of lines rejected.
 func (db *DB) Append(index string, ndjson []byte) (int64, error) {
+	_, rejected, err := db.AppendRows(index, ndjson)
+
+	return rejected, err
+}
+
+// AppendRows is Append that also returns the number of events the lines
+// became.
+func (db *DB) AppendRows(index string, ndjson []byte) (rows, rejected int64, err error) {
 	if index == "" {
 		index = DefaultSource
 	}
 
-	return db.core.Append(index, ndjson)
+	return db.core.AppendRows(index, ndjson)
 }
 
 // Sync makes the events appended so far durable and visible.

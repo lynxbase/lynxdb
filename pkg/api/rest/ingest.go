@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
+	"sync"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/colstore"
@@ -65,72 +67,95 @@ func requestIndex(r *http.Request, headerFirst bool) string {
 	return database.DefaultSource
 }
 
-// maxBodyHint is the largest declared length that a body is given room for
-// before it is read.
-const maxBodyHint = 1 << 30
+// bodyPiece is the input that a body is read in before it is appended.
+const bodyPiece = 1 << 20
 
-// readBody reads the body of a request into room for its declared length:
-// read in growing steps, a body of tens of megabytes is copied again and
-// again and leaves twice its size to collect.
-func readBody(r *http.Request) ([]byte, error) {
-	n := r.ContentLength
-	if n <= 0 || n > maxBodyHint {
-		return io.ReadAll(r.Body)
-	}
-	// The buffer asks for MinRead of room before every read, the one that
-	// meets the end too.
-	buf := bytes.NewBuffer(make([]byte, 0, n+bytes.MinRead))
-	_, err := buf.ReadFrom(r.Body)
+// pieces holds the buffers that bodies are read into.
+var pieces = sync.Pool{New: func() any {
+	b := make([]byte, bodyPiece)
 
-	return buf.Bytes(), err
-}
+	return &b
+}}
 
-// countLines returns the number of lines of b that hold more than blanks.
-func countLines(b []byte) int {
+// readLines reads r in pieces of whole lines, the last of which may lack its
+// newline, and calls fn with each. A line longer than a piece grows the
+// piece until it holds the line.
+func readLines(r io.Reader, fn func(lines []byte) error) error {
+	held := pieces.Get().(*[]byte)
+	buf := *held
+	defer func() {
+		if cap(buf) == bodyPiece {
+			*held = buf
+			pieces.Put(held)
+		}
+	}()
 	n := 0
-	for len(b) > 0 {
-		line := b
-		if i := bytes.IndexByte(b, '\n'); i >= 0 {
-			line, b = b[:i], b[i+1:]
-		} else {
-			b = nil
-		}
-		if len(bytes.TrimSpace(line)) > 0 {
-			n++
-		}
-	}
+	for {
+		read, err := io.ReadFull(r, buf[n:])
+		n += read
+		switch {
+		case err == io.EOF || err == io.ErrUnexpectedEOF:
+			if n == 0 {
+				return nil
+			}
 
-	return n
+			return fn(buf[:n])
+		case err != nil:
+			return err
+		}
+		end := bytes.LastIndexByte(buf, '\n') + 1
+		if end == 0 {
+			buf = slices.Grow(buf, len(buf))[:2*len(buf)]
+
+			continue
+		}
+		if err := fn(buf[:end]); err != nil {
+			return err
+		}
+		n = copy(buf, buf[end:])
+	}
 }
 
 // handleIngestEvents takes NDJSON, one event per line, and appends it to an
-// index as it is.
+// index as it is. The body is appended as it is read, so the lines before a
+// body that turns out too large are taken.
 func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeIngest) {
 		return
 	}
 	index := requestIndex(r, false)
-	body, err := readBody(r)
-	if err != nil {
+	var accepted, rejected int64
+	size := 0
+	var appendErr error
+	readErr := readLines(r.Body, func(lines []byte) error {
+		rows, failed, err := s.db.AppendRows(index, lines)
+		accepted, rejected, size = accepted+rows, rejected+failed, size+len(lines)
+		appendErr = err
+
+		return err
+	})
+	if accepted > 0 {
+		s.promMetrics.RecordIngest(int(accepted), size)
+	}
+	if appendErr != nil {
+		s.promMetrics.RecordIngestError()
+		respondIngestError(w, appendErr)
+		return
+	}
+	if readErr != nil {
 		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
-			respondError(w, ErrCodeInvalidRequest, http.StatusRequestEntityTooLarge,
-				fmt.Sprintf("request body exceeds %d bytes", tooLarge.Limit),
+		if errors.As(readErr, &tooLarge) {
+			msg := fmt.Sprintf("request body exceeds %d bytes", tooLarge.Limit)
+			if accepted+rejected > 0 {
+				msg += fmt.Sprintf("; the %d lines before the limit were taken", accepted+rejected)
+			}
+			respondError(w, ErrCodeInvalidRequest, http.StatusRequestEntityTooLarge, msg,
 				WithSuggestion("Send smaller batches or raise ingest.max_body_size."))
 			return
 		}
 		respondError(w, ErrCodeInvalidRequest, http.StatusBadRequest, "request body read error")
 		return
 	}
-	lines := countLines(body)
-	rejected, err := s.db.Append(index, body)
-	if err != nil {
-		s.promMetrics.RecordIngestError()
-		respondIngestError(w, err)
-		return
-	}
-	accepted := lines - int(rejected)
-	s.promMetrics.RecordIngest(accepted, len(body))
 	respondData(w, http.StatusOK, map[string]interface{}{
 		"accepted": accepted,
 		"failed":   rejected,
@@ -172,15 +197,14 @@ func (s *Server) handleIngestRaw(w http.ResponseWriter, r *http.Request) {
 	accepted, failed := 0, 0
 	var appendErr error
 	readErr := conv.Read(r.Body, func(chunk []byte) error {
-		lines := countLines(chunk)
-		rejected, err := s.db.Append(index, chunk)
+		rows, rejected, err := s.db.AppendRows(index, chunk)
 		if err != nil {
 			appendErr = err
 			return err
 		}
-		accepted += lines - int(rejected)
+		accepted += int(rows)
 		failed += int(rejected)
-		s.promMetrics.RecordIngest(lines-int(rejected), len(chunk))
+		s.promMetrics.RecordIngest(int(rows), len(chunk))
 		return nil
 	})
 	if appendErr != nil {

@@ -394,6 +394,53 @@ func TestServer_IngestKeepsMalformedLineAsText(t *testing.T) {
 	}
 }
 
+func TestServer_IngestCountsLinesAcrossPieces(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	// Lines straddle the pieces the body is read in, one is longer than a
+	// piece, and blank lines count for nothing.
+	var body bytes.Buffer
+	want, longs := 0, 0
+	for i := 0; body.Len() < 3*bodyPiece; i++ {
+		switch i % 1000 {
+		case 7:
+			fmt.Fprintf(&body, `{"n":%d,"long":"%s"}`+"\r\n", i, strings.Repeat("y", 2*bodyPiece))
+			longs++
+		case 8:
+			body.WriteString(" \n\n")
+
+			continue
+		default:
+			fmt.Fprintf(&body, `{"n":%d,"msg":"%s"}`+"\n", i, strings.Repeat("x", i%300))
+		}
+		want++
+	}
+	body.WriteString(`{"last":true}`)
+	want++
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/ingest?index=pieces", srv.Addr()), "application/x-ndjson",
+		struct{ io.Reader }{&body})
+	if err != nil {
+		t.Fatalf("POST ingest: %v", err)
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Data struct {
+			Accepted int `json:"accepted"`
+			Failed   int `json:"failed"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || result.Data.Accepted != want || result.Data.Failed != 0 {
+		t.Fatalf("status %d, accepted %d, failed %d; want 200, %d, 0", resp.StatusCode, result.Data.Accepted, result.Data.Failed, want)
+	}
+	if events := queryEvents(t, srv.Addr(), `{"q":"source=pieces | where isnotnull(long) | fields n"}`); len(events) != longs {
+		t.Fatalf("%d of the %d lines longer than a piece were taken", len(events), longs)
+	}
+}
+
 func TestServer_IngestRoutesToIndex(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

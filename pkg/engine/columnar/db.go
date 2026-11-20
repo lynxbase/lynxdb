@@ -129,12 +129,20 @@ func (db *DB) store(index string, create bool) (*colstore.Store, error) {
 // time gets the time of the call. The events are durable after Sync or the
 // flush interval of the store.
 func (db *DB) Append(index string, lines []byte) (rejected int64, err error) {
+	_, rejected, err = db.AppendRows(index, lines)
+
+	return rejected, err
+}
+
+// AppendRows is Append that also returns the number of events the lines
+// became.
+func (db *DB) AppendRows(index string, lines []byte) (rows, rejected int64, err error) {
 	s, err := db.store(index, true)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
-	return s.AppendAt(lines, time.Now().UnixNano())
+	return s.AppendRows(lines, time.Now().UnixNano())
 }
 
 // Sync makes the events appended so far durable.
