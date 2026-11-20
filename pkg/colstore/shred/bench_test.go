@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"os"
 	"testing"
+
+	"github.com/lynxbase/lynxdb/internal/benchdata"
 )
 
 // benchLines returns the documents of the NDJSON file named by
@@ -88,4 +90,53 @@ func benchNDJSON(b *testing.B, add func(batch *Batch, chunk []byte)) {
 
 func BenchmarkAddNDJSON(b *testing.B) {
 	benchNDJSON(b, func(batch *Batch, chunk []byte) { batch.AddNDJSON(chunk, 0, nil) })
+}
+
+// blueskyLines returns n generated events, one per line.
+func blueskyLines(n int) []byte {
+	return benchdata.New(1, 1<<20).Append(nil, n)
+}
+
+// BenchmarkShredBluesky shreds 64 MB of generated events into one batch in
+// pieces of 4 MiB, as the buffers of a store take a request.
+func BenchmarkShredBluesky(b *testing.B) {
+	data := blueskyLines(150000)
+	batch := NewBatch(Options{TimeField: "time_us"})
+	b.SetBytes(int64(len(data)))
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		for rest := data; len(rest) > 0; {
+			piece := rest[:min(len(rest), 4<<20)]
+			if nl := bytes.LastIndexByte(piece, '\n'); nl >= 0 && len(piece) < len(rest) {
+				piece = piece[:nl+1]
+			}
+			if errs := batch.AddNDJSON(piece, 0, nil); len(errs) != 0 {
+				b.Fatal(errs[0].Err)
+			}
+			rest = rest[len(piece):]
+		}
+		batch.Reset()
+	}
+}
+
+// BenchmarkSortCutBluesky sorts a batch of generated events by the sort key
+// of JSONBench and cuts it into blocks, as a flush does.
+func BenchmarkSortCutBluesky(b *testing.B) {
+	data := blueskyLines(300000)
+	key := []string{"kind", "commit.operation", "commit.collection", "did"}
+	batch, block := NewBatch(Options{TimeField: "time_us"}), NewBatch(Options{})
+	b.SetBytes(int64(len(data)))
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		batch.Reset()
+		batch.AddNDJSON(data, 0, nil)
+		b.StartTimer()
+		batch.SortBy(key)
+		for from := 0; from < batch.Rows; from += 16384 {
+			block.Reset()
+			batch.CopyRows(block, from, min(from+16384, batch.Rows))
+		}
+	}
 }
