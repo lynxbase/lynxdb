@@ -101,29 +101,44 @@ func appendDecodedKey(dst []byte, c *vec.Column, row int) []byte {
 }
 
 // SplitKeys returns up to n-1 ascending encoded sort keys that cut the rows
-// of ordered parts into ranges of similar size. It reads the keys of rows at
-// one stride over the rows of every part, so that each run is sampled in
-// proportion to its rows wherever its blocks begin, and cuts at quantiles of
-// the samples; when a block cannot be read, the first keys of the blocks
-// stand for their rows instead.
+// of ordered parts into ranges of similar size; see SampleKeys.
 func SplitKeys(srcs []*Part, n int) [][]byte {
 	if n < 2 {
 		return nil
 	}
+
+	return SampleKeys(srcs, n).Cuts(n)
+}
+
+// KeySamples holds keys of rows of ordered parts in key order, each standing
+// for the rows around it, from which ranges of similar size are cut.
+type KeySamples struct {
+	samples []keySample
+	// before holds, for each sample, the rows the samples before it stand
+	// for.
+	before []int
+	total  int
+}
+
+// SampleKeys reads the keys of rows at one stride over the rows of every
+// ordered part of srcs, enough to cut them into n ranges, so that each run is
+// sampled in proportion to its rows wherever its blocks begin; when a block
+// cannot be read, the first keys of the blocks stand for their rows instead.
+func SampleKeys(srcs []*Part, n int) *KeySamples {
 	var parts []*Part
-	total := 0
+	k := &KeySamples{}
 	for _, p := range srcs {
 		if len(p.firstKeys) == 0 || len(p.firstKeys) != p.NumBlocks() {
 			continue
 		}
 		parts = append(parts, p)
-		total += int(p.Rows)
+		k.total += int(p.Rows)
 	}
-	if total == 0 {
-		return nil
+	if k.total == 0 {
+		return k
 	}
-	want := splitSamples(n, len(parts))
-	samples, ok := sampleRows(parts, max(1, (total+want-1)/want))
+	want := splitSamples(max(n, 2), len(parts))
+	samples, ok := sampleRows(parts, max(1, (k.total+want-1)/want))
 	if !ok {
 		samples = samples[:0]
 		for _, p := range parts {
@@ -134,23 +149,59 @@ func SplitKeys(srcs []*Part, n int) [][]byte {
 		}
 	}
 	slices.SortFunc(samples, func(a, b keySample) int { return bytes.Compare(a.key, b.key) })
+	k.samples = samples
+	k.before = make([]int, len(samples))
+	sum := 0
+	for i, s := range samples {
+		k.before[i] = sum
+		sum += s.rows
+	}
+
+	return k
+}
+
+// Cuts returns up to n-1 ascending keys that cut the sampled rows into n
+// ranges of similar size.
+func (k *KeySamples) Cuts(n int) [][]byte {
 	var cuts [][]byte
-	before := 0
-	for _, s := range samples {
-		if len(cuts) == n-1 {
+	for i := 1; i < n; i++ {
+		cut := k.KeyAt(i * k.total / n)
+		if cut == nil {
 			break
 		}
-		// A sample stands for rows around its key, half of them below it. A
-		// cut at the smallest key would leave an empty first range.
-		target := (len(cuts) + 1) * total / n
-		if 2*before+s.rows >= 2*target && bytes.Compare(s.key, samples[0].key) > 0 &&
-			(len(cuts) == 0 || bytes.Compare(s.key, cuts[len(cuts)-1]) > 0) {
-			cuts = append(cuts, s.key)
+		if len(cuts) == 0 || bytes.Compare(cut, cuts[len(cuts)-1]) > 0 {
+			cuts = append(cuts, cut)
 		}
-		before += s.rows
 	}
 
 	return cuts
+}
+
+// KeyAt returns the first sampled key below which about rows rows lie, nil
+// when there is none or when it is the smallest key, below which no row
+// lies.
+func (k *KeySamples) KeyAt(rows int) []byte {
+	// A sample stands for rows around its key, half of them below it.
+	i := sort.Search(len(k.samples), func(i int) bool { return 2*k.before[i]+k.samples[i].rows >= 2*rows })
+	if i == len(k.samples) || bytes.Equal(k.samples[i].key, k.samples[0].key) {
+		return nil
+	}
+
+	return k.samples[i].key
+}
+
+// RowsBelow returns about how many of the sampled rows have keys below key;
+// a nil key stands above every row.
+func (k *KeySamples) RowsBelow(key []byte) int {
+	if key == nil {
+		return k.total
+	}
+	i := sort.Search(len(k.samples), func(i int) bool { return bytes.Compare(k.samples[i].key, key) >= 0 })
+	if i == len(k.samples) {
+		return k.total
+	}
+
+	return k.before[i]
 }
 
 // splitSamples returns how many row keys SplitKeys reads to cut the rows of

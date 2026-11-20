@@ -6,6 +6,8 @@ import (
 	"math/bits"
 	"slices"
 	"sort"
+	"sync"
+	"sync/atomic"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 	"github.com/lynxbase/lynxdb/pkg/mem"
@@ -27,6 +29,70 @@ func Merge(w *Writer, srcs []*Part, blockRows int) error {
 // MergeRange is Merge restricted to the rows whose encoded sort key is at
 // least lo and below hi; a nil bound is open.
 func MergeRange(w *Writer, srcs []*Part, blockRows int, lo, hi []byte) error {
+	return MergeRangeLimit(w, srcs, blockRows, lo, hi, nil)
+}
+
+// RangeLimit lets another goroutine take the end of the range of a merge
+// under way: Lower moves the merge's upper bound down to a key that it has
+// not reached, and the caller merges the rest of the range itself.
+type RangeLimit struct {
+	rows    atomic.Int64
+	pending atomic.Bool
+	mu      sync.Mutex
+	offer   []byte
+	answer  chan bool
+	ended   bool
+}
+
+// Rows returns the rows that the merge has written so far.
+func (l *RangeLimit) Rows() int64 { return l.rows.Load() }
+
+// Lower asks the merge to end below key and reports whether it will; it
+// refuses once it has passed key or has ended.
+func (l *RangeLimit) Lower(key []byte) bool {
+	answer := make(chan bool, 1)
+	l.mu.Lock()
+	if l.ended || l.offer != nil {
+		l.mu.Unlock()
+
+		return false
+	}
+	l.offer, l.answer = key, answer
+	l.pending.Store(true)
+	l.mu.Unlock()
+
+	return <-answer
+}
+
+// take answers the offer with what lower makes of it.
+func (l *RangeLimit) take(lower func(key []byte) bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.offer != nil {
+		l.answer <- lower(l.offer)
+		l.offer, l.answer = nil, nil
+	}
+	l.pending.Store(false)
+}
+
+// end refuses every offer from now on.
+func (l *RangeLimit) end() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.ended = true
+	if l.offer != nil {
+		l.answer <- false
+		l.offer, l.answer = nil, nil
+	}
+	l.pending.Store(false)
+}
+
+// MergeRangeLimit is MergeRange whose upper bound limit, when not nil, can
+// lower while it runs.
+func MergeRangeLimit(w *Writer, srcs []*Part, blockRows int, lo, hi []byte, limit *RangeLimit) error {
+	if limit != nil {
+		defer limit.end()
+	}
 	if blockRows <= 0 || blockRows > shred.MaxRows {
 		blockRows = defaultBlockRows
 	}
@@ -40,7 +106,7 @@ func MergeRange(w *Writer, srcs []*Part, blockRows int, lo, hi []byte) error {
 	}
 	m := mergerPool.Get()
 	defer mergerPool.Put(m)
-	m.w, m.lo, m.hi, m.blockRows = w, lo, hi, blockRows
+	m.w, m.lo, m.hi, m.blockRows, m.limit = w, lo, hi, blockRows, limit
 	m.out = shred.Get(shred.Options{})
 	for i, p := range srcs {
 		// A part whose keys all lie outside the range is not read at all.
@@ -88,6 +154,7 @@ const noPath = ^uint32(0)
 type merger struct {
 	w         *Writer
 	lo, hi    []byte
+	limit     *RangeLimit
 	blockRows int
 	out       *shred.Batch
 	cursors   []*mergeCursor
@@ -735,6 +802,10 @@ func (m *merger) run() error {
 	m.build()
 	streak := int32(-1)
 	for len(m.cursors) > 0 {
+		if m.limit != nil && m.limit.pending.Load() {
+			m.limit.take(m.lower)
+			streak = -1
+		}
 		wi := m.tree[0]
 		c := m.cursors[wi]
 		if c.done {
@@ -804,9 +875,45 @@ func (m *merger) flush() error {
 	}
 	m.copied = nil
 	err := m.w.WriteBatch(m.out)
+	if m.limit != nil {
+		m.limit.rows.Add(int64(m.out.Rows))
+	}
 	m.out.Reset()
 
 	return err
+}
+
+// lower makes key the upper bound of the merge when no row at or above it
+// has been taken yet, and reports whether it did.
+func (m *merger) lower(key []byte) bool {
+	if (m.hi != nil && bytes.Compare(key, m.hi) >= 0) || (m.lo != nil && bytes.Compare(key, m.lo) <= 0) {
+		return false
+	}
+	// A copied block leaves a bound on its last key, which is as good.
+	last := m.w.lastKey
+	if m.out.Rows > 0 {
+		last = AppendRowKey(nil, m.out, m.w.opts.SortKey, m.out.Rows-1)
+	}
+	if (m.out.Rows > 0 || m.w.rows > 0) && bytes.Compare(last, key) >= 0 {
+		return false
+	}
+	m.hi = key
+	for i, c := range m.cursors {
+		if c.done {
+			continue
+		}
+		if c.state != cursorBound && bytes.Compare(c.part.upperKey(c.block), key) >= 0 {
+			// Every row before pos is below key, so the end stays at or
+			// after it.
+			c.end = max(c.pos, c.search(m, key))
+		}
+		if (c.state == cursorBound && bytes.Compare(c.key, key) >= 0) || (c.state != cursorBound && c.pos == c.end) {
+			m.advance(int32(i), c)
+		}
+	}
+	m.build()
+
+	return true
 }
 
 // copyBlock writes the block a cursor stands before as it is stored, when
@@ -867,6 +974,9 @@ func (m *merger) copyBlock(wi int32, c *mergeCursor) (bool, error) {
 	m.blocks++
 	if rows < half {
 		m.short++
+	}
+	if m.limit != nil {
+		m.limit.rows.Add(int64(rows))
 	}
 	m.copied, m.copiedBlock = p, b
 
