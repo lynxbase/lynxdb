@@ -1227,6 +1227,46 @@ func (b *Block) DecodePresence(ref *ColumnRef, dst *vec.Column) error {
 	return err
 }
 
+// DecodeEntries fills dst with the distinct values of a string or variant
+// column held as a dictionary or a constant, in byte order, one per row of
+// a flat column, without reading which rows hold which; it reports false,
+// leaving dst as it was, for a column held otherwise.
+func (b *Block) DecodeEntries(ref *ColumnRef, dst *vec.Column) (bool, error) {
+	if ref.bad {
+		return false, ErrCorrupt
+	}
+	if (ref.Kind != vec.KindString && ref.Kind != vec.KindVariant) || (ref.enc != encConst && ref.enc != encDict) {
+		return false, nil
+	}
+	dst.Kind, dst.Layout, dst.Valid = ref.Kind, vec.Flat, nil
+	dst.Codes8, dst.Codes16 = dst.Codes8[:0], dst.Codes16[:0]
+	if ref.enc == encConst {
+		dst.Rows = 1
+		dst.Data = append(dst.Data[:0], ref.constVal...)
+		dst.Offsets = append(dst.Offsets[:0], 0, uint32(len(dst.Data)))
+
+		return true, nil
+	}
+	chunk := b.data[ref.off : ref.off+ref.length]
+	if !b.checked(ref, chunk) {
+		return false, ErrCorrupt
+	}
+	if ref.flags&flagSparse != 0 {
+		rest, _, ok := skipBlob(chunk[min(1, len(chunk)):])
+		if !ok || len(chunk) == 0 {
+			return false, ErrCorrupt
+		}
+		chunk = rest
+	}
+	size, _, err := b.readEntries(chunk, dst)
+	if err != nil {
+		return false, err
+	}
+	dst.Rows, dst.Layout = int(size), vec.Flat
+
+	return true, nil
+}
+
 // decodeTimes fills dst with the times of the rows in the unit whose power
 // of ten is the chunk.
 func (b *Block) decodeTimes(chunk []byte, sparse bool, dst *vec.Column) error {
