@@ -593,8 +593,11 @@ type Block struct {
 	// cols[i] is decoded from entry i once bit i of parsed is set.
 	cols   []ColumnRef
 	parsed vec.Bitmap
-	d      decodeScratch
-	pos    []uint32
+	// d is the scratch of decoding, the block's own unless blocks that
+	// decode one at a time share one.
+	d    *decodeScratch
+	ownD decodeScratch
+	pos  []uint32
 	// slot numbers the block's first column among the columns of the part.
 	slot uint32
 	// present holds the rows of a sparse column searched as it is stored.
@@ -603,12 +606,11 @@ type Block struct {
 	spans [][2]uint32
 	// times holds the time of every row once timesRead is set, and anchors
 	// the numbers of the columns that timed columns follow, as they are
-	// read; space decodes the anchors, the block's own unless blocks that
-	// decode one at a time share one, and depth is the depth of following
-	// of the column being decoded.
+	// read, which space holds, the block's own unless blocks that decode
+	// one at a time share one; depth is the depth of following of the
+	// column being decoded.
 	times     vec.Column
 	timesRead bool
-	anchors   []anchorRead
 	space     *anchorSpace
 	ownSpace  anchorSpace
 	depth     int
@@ -635,7 +637,13 @@ func (p *Part) OpenBlock(i int, b *Block) error {
 	b.cols = grow(b.cols, int(n))
 	b.parsed = grow(b.parsed, vec.BitmapWords(int(n)))
 	clear(b.parsed)
-	b.timesRead, b.anchors, b.depth = false, b.anchors[:0], 0
+	b.timesRead, b.depth = false, 0
+	if b.d == nil {
+		b.d = &b.ownD
+	}
+	if space := b.anchorSpace(); space.owner == b {
+		space.anchors = space.anchors[:0]
+	}
 
 	return nil
 }
@@ -1379,12 +1387,12 @@ func (b *Block) decode(ref *ColumnRef, dst *vec.Column, byValue bool) error {
 			return b.decodeTimes(chunk, sparse, dst)
 		}
 		if !sparse {
-			vals, _, err := readInts(dst.Ints, chunk, count, &b.d)
+			vals, _, err := readInts(dst.Ints, chunk, count, b.d)
 			dst.Ints = vals
 
 			return err
 		}
-		vals, _, err := readInts(b.d.ints, chunk, count, &b.d)
+		vals, _, err := readInts(b.d.ints, chunk, count, b.d)
 		if err != nil {
 			return err
 		}
@@ -1538,7 +1546,7 @@ func (b *Block) decodeBytes(ref *ColumnRef, chunk []byte, sparse bool, rows int,
 
 		return nil
 	case encFlat:
-		lens, rest, err := readInts(b.d.ints, chunk, count, &b.d)
+		lens, rest, err := readInts(b.d.ints, chunk, count, b.d)
 		if err != nil {
 			return err
 		}
@@ -1708,7 +1716,7 @@ func (b *Block) readEntries(chunk []byte, dst *vec.Column) (size uint64, rest []
 	if n <= 0 || size < 2 || size > maxDictSize {
 		return 0, nil, ErrCorrupt
 	}
-	lens, rest, err := readInts(b.d.ints, chunk[n:], int(size), &b.d)
+	lens, rest, err := readInts(b.d.ints, chunk[n:], int(size), b.d)
 	if err != nil {
 		return 0, nil, err
 	}

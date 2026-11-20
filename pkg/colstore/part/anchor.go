@@ -432,11 +432,32 @@ func valueAt(c *shred.Column, row int) ([]byte, bool) {
 	return c.Bytes(lo), true
 }
 
-// anchorSpace holds the scratch and the column that reading an anchor takes
-// at each depth of following.
+// anchorSpace holds what decoding the columns of a block takes beyond the
+// columns: the scratch of decoding, and the numbers of the anchors that the
+// block's owner has read with the scratch and the column that reading one
+// takes at each depth of following, which stay where they are however deep
+// a read goes.
 type anchorSpace struct {
-	scratch []decodeScratch
-	cols    []vec.Column
+	d       decodeScratch
+	owner   *Block
+	anchors []anchorRead
+	scratch [maxTimedDepth + 1]decodeScratch
+	cols    [maxTimedDepth + 1]vec.Column
+}
+
+// anchorSpace returns the space the block reads anchors with.
+func (b *Block) anchorSpace() *anchorSpace {
+	if b.space != nil {
+		return b.space
+	}
+
+	return &b.ownSpace
+}
+
+// share makes the block decode with the scratch and space of s, which other
+// blocks that decode one at a time share.
+func (b *Block) share(s *anchorSpace) {
+	b.space, b.d = s, &s.d
 }
 
 // anchorRead holds the numbers by row of an anchor of the block, read for a
@@ -452,8 +473,12 @@ type anchorRead struct {
 // that a follower at depth reads in the shape whose bytes raw are, reading
 // them the first time with scratch of their own.
 func (b *Block) anchorNumbers(pathID uint32, shape *anchorShape, raw []byte, depth int) (*anchorRead, error) {
-	for i := range b.anchors {
-		if a := &b.anchors[i]; a.pathID == pathID && string(a.shape) == string(raw) {
+	space := b.anchorSpace()
+	if space.owner != b {
+		space.owner, space.anchors = b, space.anchors[:0]
+	}
+	for i := range space.anchors {
+		if a := &space.anchors[i]; a.pathID == pathID && string(a.shape) == string(raw) {
 			return a, nil
 		}
 	}
@@ -461,20 +486,12 @@ func (b *Block) anchorNumbers(pathID uint32, shape *anchorShape, raw []byte, dep
 	if !ok || ref.bad || depth > maxTimedDepth {
 		return nil, ErrCorrupt
 	}
-	space := b.space
-	if space == nil {
-		space = &b.ownSpace
-	}
-	for len(space.scratch) <= depth {
-		space.scratch = append(space.scratch, decodeScratch{})
-		space.cols = append(space.cols, vec.Column{})
-	}
 	col := &space.cols[depth]
 	// The shape may lie in the scratch that reading the anchor swaps out.
 	want := *shape
 	shape = &want
 	held, outer := b.d, b.depth
-	b.d, b.depth = space.scratch[depth], depth
+	b.d, b.depth = &space.scratch[depth], depth
 	// A timed anchor of the shape gives its numbers as they are read; any
 	// other is read as strings, whose numbers are parsed.
 	v := &b.d.timed
@@ -492,12 +509,12 @@ func (b *Block) anchorNumbers(pathID uint32, shape *anchorShape, raw []byte, dep
 	}
 	var a *anchorRead
 	if err == nil {
-		if len(b.anchors) == cap(b.anchors) {
-			b.anchors = append(b.anchors, anchorRead{})
+		if len(space.anchors) == cap(space.anchors) {
+			space.anchors = append(space.anchors, anchorRead{})
 		} else {
-			b.anchors = b.anchors[:len(b.anchors)+1]
+			space.anchors = space.anchors[:len(space.anchors)+1]
 		}
-		a = &b.anchors[len(b.anchors)-1]
+		a = &space.anchors[len(space.anchors)-1]
 		a.pathID, a.shape = pathID, raw
 		a.vals = grow(a.vals, b.Rows)
 		a.valid = grow(a.valid, vec.BitmapWords(b.Rows))
@@ -515,7 +532,7 @@ func (b *Block) anchorNumbers(pathID uint32, shape *anchorShape, raw []byte, dep
 			}
 		}
 	}
-	space.scratch[depth], b.d, b.depth = b.d, held, outer
+	b.d, b.depth = held, outer
 	if err != nil {
 		return nil, err
 	}

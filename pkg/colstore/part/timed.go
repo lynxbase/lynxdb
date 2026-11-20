@@ -1312,7 +1312,7 @@ func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
 	}
 	count := v.kept
 	var err error
-	if v.parts, rest, err = readInts(v.parts, rest, count, &b.d); err != nil {
+	if v.parts, rest, err = readInts(v.parts, rest, count, b.d); err != nil {
 		return err
 	}
 	for k, at := range v.farIndex {
@@ -1320,7 +1320,7 @@ func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
 	}
 	v.lowCoded = false
 	if v.shift > 0 {
-		if rest, err = v.readLow(rest, count, &b.d); err != nil {
+		if rest, err = v.readLow(rest, count, b.d); err != nil {
 			return err
 		}
 	}
@@ -1329,7 +1329,7 @@ func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
 		if tails == len(v.tails) {
 			v.tails = append(v.tails, nil)
 		}
-		if v.tails[tails], rest, err = readInts(v.tails[tails], rest, count, &b.d); err != nil {
+		if v.tails[tails], rest, err = readInts(v.tails[tails], rest, count, b.d); err != nil {
 			return err
 		}
 		tails++
