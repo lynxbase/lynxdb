@@ -2,7 +2,9 @@ package shred
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
+	"math/bits"
 	"strconv"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -27,7 +29,8 @@ func (b *Batch) syntax(msg string) error { return &SyntaxError{Offset: b.pos, Ms
 func (b *Batch) skipSpace() {
 	src, i := b.src, b.pos
 	for i < len(src) {
-		if c := src[i]; c != ' ' && c != '\n' && c != '\t' && c != '\r' {
+		// Every blank is at most a space, so one comparison passes the rest.
+		if c := src[i]; c > ' ' || c != ' ' && c != '\n' && c != '\t' && c != '\r' {
 			break
 		}
 		i++
@@ -340,22 +343,54 @@ func (b *Batch) literal(word string) error {
 	return nil
 }
 
+const (
+	lowBits  = 0x0101010101010101
+	highBits = 0x8080808080808080
+)
+
+// quoteOrEscape sets the high bit of the bytes of w that are a quote or a
+// backslash; above the lowest such byte it may set others.
+func quoteOrEscape(w uint64) uint64 {
+	q, e := w^(lowBits*'"'), w^(lowBits*'\\')
+
+	return (q-lowBits)&^q&highBits | (e-lowBits)&^e&highBits
+}
+
+// wordScan is how far scanString looks eight bytes at a time before it
+// leaves a long string to bytes.IndexByte.
+const wordScan = 64
+
 // scanString returns the bytes between the opening quote, already consumed,
 // and the closing one, and whether they contain escapes.
 func (b *Batch) scanString() (s []byte, escaped bool, err error) {
 	src, start := b.src, b.pos
 	i := start
-	// Most keys and values are short; a plain loop beats a call for them.
-	limit := min(start+24, len(src))
-	for ; i < limit; i++ {
-		switch src[i] {
-		case '"':
+	// Most keys and values are short; words of eight bytes beat a call for
+	// them.
+	for limit := min(start+wordScan, len(src)-8); i <= limit; i += 8 {
+		if m := quoteOrEscape(binary.LittleEndian.Uint64(src[i:])); m != 0 {
+			i += bits.TrailingZeros64(m) >> 3
+			if src[i] == '\\' {
+				return b.scanEscapedString(start, i)
+			}
 			b.pos = i + 1
 
 			return src[start:i], false, nil
-		case '\\':
-			return b.scanEscapedString(start, i)
 		}
+	}
+	if i > len(src)-8 {
+		for ; i < len(src); i++ {
+			switch src[i] {
+			case '"':
+				b.pos = i + 1
+
+				return src[start:i], false, nil
+			case '\\':
+				return b.scanEscapedString(start, i)
+			}
+		}
+
+		return nil, false, b.syntax("unterminated string")
 	}
 	end := bytes.IndexByte(src[i:], '"')
 	if end < 0 {
