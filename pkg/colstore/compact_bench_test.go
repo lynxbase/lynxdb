@@ -22,32 +22,19 @@ import (
 // partition, as a load that ends with a compaction does, and reports rows per
 // second, CPU seconds, the cores that were busy on average, the bytes the
 // merges wrote and the peak of the heap. The store is set up as a server sets
-// it up for the Bluesky
-// benchmark. LYNXDB_BENCH_MERGE_ROWS sets the events (1Mi by default),
-// LYNXDB_BENCH_MERGE_RUNS the runs they are written in (16 by default),
-// LYNXDB_BENCH_PARTITION the span of a partition (24h by default; the events
-// cover about 200 s per million) and LYNXDB_BENCH_MERGE_BLOCKS the merge
-// budget of the store; LYNXDB_BENCH_BACKGROUND leaves the merge to the
-// background merger of the reopened store, whose closed partitions count as
-// quiet, instead of calling Compact.
+// it up for the Bluesky benchmark. LYNXDB_BENCH_MERGE_ROWS sets the events
+// (1Mi by default), LYNXDB_BENCH_MERGE_RUNS the runs they are written in (16
+// by default), LYNXDB_BENCH_PARTITION the span of a partition (24h by
+// default; the events cover about 200 s per million) and
+// LYNXDB_BENCH_MERGE_BLOCKS the merge budget of the store;
+// LYNXDB_BENCH_BACKGROUND leaves the merge to the background merger of the
+// reopened store, whose closed partitions count as quiet, instead of calling
+// Compact.
 func BenchmarkCompact(b *testing.B) {
 	background := os.Getenv("LYNXDB_BENCH_BACKGROUND") != ""
 	rows := envInt(b, "LYNXDB_BENCH_MERGE_ROWS", 1<<20)
 	runs := envInt(b, "LYNXDB_BENCH_MERGE_RUNS", 16)
-	opts := StoreOptions{
-		SortKey:     []string{"kind", "commit.operation", "commit.collection", "did"},
-		TimeFields:  []string{"time_us"},
-		KeepText:    true,
-		Partition:   24 * time.Hour,
-		MergeBlocks: envInt(b, "LYNXDB_BENCH_MERGE_BLOCKS", 0),
-	}
-	if v := os.Getenv("LYNXDB_BENCH_PARTITION"); v != "" {
-		width, err := time.ParseDuration(v)
-		if err != nil || width <= 0 {
-			b.Fatalf("LYNXDB_BENCH_PARTITION=%q is not a positive duration", v)
-		}
-		opts.Partition = width
-	}
+	opts := blueskyStoreOptions(b)
 	template := filepath.Join(b.TempDir(), "runs")
 	size := writeRunsOnly(b, template, opts, rows, runs)
 	want := storeSum(b, template, opts)
@@ -101,6 +88,108 @@ func BenchmarkCompact(b *testing.B) {
 	b.ReportMetric(float64(written)/n/1e6, "MB-written/op")
 	b.ReportMetric(float64(size)/1e6, "MB-runs")
 	b.ReportMetric(float64(peak)/1e6, "MB-heap-peak")
+}
+
+// blueskyStoreOptions returns the options of a store as a server sets it up
+// for the Bluesky benchmark, with LYNXDB_BENCH_PARTITION and
+// LYNXDB_BENCH_MERGE_BLOCKS applied.
+func blueskyStoreOptions(b *testing.B) StoreOptions {
+	b.Helper()
+	opts := StoreOptions{
+		SortKey:     []string{"kind", "commit.operation", "commit.collection", "did"},
+		TimeFields:  []string{"time_us"},
+		KeepText:    true,
+		Partition:   24 * time.Hour,
+		FlushLevel:  part.LevelFastest,
+		MergeBlocks: envInt(b, "LYNXDB_BENCH_MERGE_BLOCKS", 0),
+	}
+	if v := os.Getenv("LYNXDB_BENCH_PARTITION"); v != "" {
+		width, err := time.ParseDuration(v)
+		if err != nil || width <= 0 {
+			b.Fatalf("LYNXDB_BENCH_PARTITION=%q is not a positive duration", v)
+		}
+		opts.Partition = width
+	}
+
+	return opts
+}
+
+// BenchmarkLoadAndCompact writes events into a store as a bulk load does, one
+// run per flush while the background merger works, and then compacts it. It
+// reports what flushes and merges wrote in multiples of the size of the
+// compacted store, the share of it that merges wrote before the compaction,
+// and the seconds of the load and of the compaction. LYNXDB_BENCH_MERGE_ROWS
+// and LYNXDB_BENCH_MERGE_RUNS set the events and the flushes as for
+// BenchmarkCompact.
+func BenchmarkLoadAndCompact(b *testing.B) {
+	rows := envInt(b, "LYNXDB_BENCH_MERGE_ROWS", 1<<21)
+	runs := envInt(b, "LYNXDB_BENCH_MERGE_RUNS", 100)
+	opts := blueskyStoreOptions(b)
+	g := benchdata.New(1, max(rows/8, 1))
+	chunks := make([][]byte, runs)
+	for i := range chunks {
+		n := rows / runs
+		if i == runs-1 {
+			n = rows - i*n
+		}
+		chunks[i] = g.Append(nil, n)
+	}
+	var load, compact time.Duration
+	var flushed, merged, before, final int64
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		b.StopTimer()
+		dir := filepath.Join(b.TempDir(), "store")
+		b.StartTimer()
+		begin := time.Now()
+		s, err := OpenStore(dir, opts)
+		if err != nil {
+			b.Fatal(err)
+		}
+		for _, chunk := range chunks {
+			if _, err := s.Append(chunk); err != nil {
+				b.Fatal(err)
+			}
+			if err := s.Sync(); err != nil {
+				b.Fatal(err)
+			}
+		}
+		loaded := time.Now()
+		load += loaded.Sub(begin)
+		_, early := s.Written()
+		if err := s.Compact(); err != nil {
+			b.Fatal(err)
+		}
+		compact += time.Since(loaded)
+		b.StopTimer()
+		f, m := s.Written()
+		flushed, merged, before = flushed+f, merged+m, before+early
+		final += storeBytes(s)
+		if err := s.Close(); err != nil {
+			b.Fatal(err)
+		}
+		if err := os.RemoveAll(dir); err != nil {
+			b.Fatal(err)
+		}
+		b.StartTimer()
+	}
+	n := float64(b.N)
+	b.ReportMetric(float64(flushed+merged)/float64(final), "x-written")
+	b.ReportMetric(float64(before)/float64(final), "x-merged-in-load")
+	b.ReportMetric(load.Seconds()/n, "load-s")
+	b.ReportMetric(compact.Seconds()/n, "compact-s")
+}
+
+// storeBytes returns the bytes of the parts of a store's table.
+func storeBytes(s *Store) int64 {
+	snap := s.Table().Snapshot()
+	defer snap.Release()
+	var size int64
+	for _, h := range snap.Parts() {
+		size += int64(h.Size())
+	}
+
+	return size
 }
 
 // writeRunsOnly writes rows events of benchdata into a store in path as runs
