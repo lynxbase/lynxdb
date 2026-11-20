@@ -100,6 +100,10 @@ type queryStats struct {
 	CountedByIndex        int64  `json:"counted_by_index"`
 	CountedByEntries      int64  `json:"counted_by_entries"`
 	CountedByTime         int64  `json:"counted_by_time"`
+	TimeMissedFilter      int64  `json:"time_missed_filter"`
+	TimeMissedRecord      int64  `json:"time_missed_record"`
+	TimeMissedKeys        int64  `json:"time_missed_keys"`
+	TimeMissedNulls       int64  `json:"time_missed_nulls"`
 	ColumnsSearched       int64  `json:"columns_searched"`
 	ColumnsSkippedByToken int64  `json:"columns_skipped_by_token"`
 	BlocksMatched         int64  `json:"blocks_matched"`
@@ -141,6 +145,8 @@ func WithStats(st exec.Stats) MetaOpt {
 			Blocks: st.Blocks, SkippedByKey: st.SkippedByKey, SkippedByToken: st.SkippedByToken,
 			SkippedByTime: st.SkippedByTime, SkippedAsEmpty: st.SkippedAsEmpty, SkippedByStats: st.SkippedByStats,
 			CountedByIndex: st.CountedByIndex, CountedByEntries: st.CountedByEntries, CountedByTime: st.CountedByTime,
+			TimeMissedFilter: st.TimeMissedFilter, TimeMissedRecord: st.TimeMissedRecord,
+			TimeMissedKeys: st.TimeMissedKeys, TimeMissedNulls: st.TimeMissedNulls,
 			ColumnsSearched: st.ColumnsSearched, ColumnsSkippedByToken: st.ColumnsSkippedByToken,
 			BlocksMatched: st.BlocksMatched, RowsMatched: st.RowsMatched, HeldBytes: st.HeldBytes,
 			Ordered: st.Ordered, HashedFor: st.HashedFor,

@@ -1943,7 +1943,11 @@ components:
             counted once each: opened (`blocks`), ruled out before that (`skipped_by_key`,
             `skipped_by_token`, `skipped_by_time`, `skipped_as_empty`), rejected from statistics
             (`skipped_by_stats`), or answered from the part index (`counted_by_index`,
-            `counted_by_entries`, `counted_by_time`).
+            `counted_by_entries`, `counted_by_time`). The blocks of a count by buckets of time
+            that were counted row by row are counted by why: the filter passed only some of their
+            rows (`time_missed_filter`), they kept no rows by time in buckets that divide those of
+            the query (`time_missed_record`), a column key held several values in the block
+            (`time_missed_keys`), or a value in some of its rows only (`time_missed_nulls`).
           properties:
             blocks: {type: integer}
             skipped_by_key: {type: integer}
@@ -1954,6 +1958,10 @@ components:
             counted_by_index: {type: integer}
             counted_by_entries: {type: integer}
             counted_by_time: {type: integer}
+            time_missed_filter: {type: integer}
+            time_missed_record: {type: integer}
+            time_missed_keys: {type: integer}
+            time_missed_nulls: {type: integer}
             columns_searched: {type: integer}
             columns_skipped_by_token: {type: integer}
             blocks_matched: {type: integer}

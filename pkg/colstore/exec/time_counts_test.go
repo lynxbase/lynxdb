@@ -124,6 +124,17 @@ func TestCountsByTimeAnswerAsTheTimesOfTheRowsDo(t *testing.T) {
 		{"hours by user", `source=x | eval h = hour(_time) | stats count() as count by did, h | sort did, h`, any, time.Time{}, time.Time{}},
 		{"hours of rows a filter reads", `source=x | where length(commit.rkey) > 12 | eval h = hour(_time) | stats count() as count by h | sort h`, any, time.Time{}, time.Time{}},
 	}
+	// why names, for a case whose blocks are counted row by row, the count
+	// of the reason they are.
+	why := map[string]func(exec.Stats) int64{
+		"spans of 90 seconds":          func(s exec.Stats) int64 { return s.TimeMissedRecord },
+		"a histogram in seconds":       func(s exec.Stats) int64 { return s.TimeMissedRecord },
+		"hours by user":                func(s exec.Stats) int64 { return s.TimeMissedKeys },
+		"hours of rows a filter reads": func(s exec.Stats) int64 { return s.TimeMissedFilter },
+	}
+	missed := func(s exec.Stats) int64 {
+		return s.TimeMissedFilter + s.TimeMissedRecord + s.TimeMissedKeys + s.TimeMissedNulls
+	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			plan, err := pplPlan(c.text, time.Now())
@@ -146,6 +157,16 @@ func TestCountsByTimeAnswerAsTheTimesOfTheRowsDo(t *testing.T) {
 			}
 			if counted := got.Stats.CountedByTime; want.Stats.CountedByTime != 0 || (c.byTime == some && counted == 0) || (c.byTime == none && counted != 0) {
 				t.Fatalf("%d of %d blocks counted by time, of the reference %d", counted, got.Stats.BlocksMatched, want.Stats.CountedByTime)
+			}
+			// A block whose rows match is counted by time or counted row by
+			// row for a reason; a block that a range cuts can be counted by
+			// time and match no row.
+			st, by := got.Stats, got.Stats.CountedByTime+missed(got.Stats)
+			if missed(want.Stats) != 0 || (by != 0 && by != st.BlocksMatched && (c.from.IsZero() || by < st.BlocksMatched)) {
+				t.Fatalf("of %d blocks matched, %d were counted by time and %d row by row", st.BlocksMatched, st.CountedByTime, missed(st))
+			}
+			if reason := why[c.name]; reason != nil && reason(st) == 0 {
+				t.Fatalf("blocks counted row by row for no reason given: %+v", st)
 			}
 			if want.Rows == 0 {
 				t.Fatal("the query has no rows")

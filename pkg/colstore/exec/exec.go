@@ -260,6 +260,10 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		res.Stats.BlocksMatched += w.blocks
 		res.Stats.RowsMatched += w.matched
 		res.Stats.CountedByTime += w.byTime
+		res.Stats.TimeMissedFilter += w.timeMissed[missFilter]
+		res.Stats.TimeMissedRecord += w.timeMissed[missRecord]
+		res.Stats.TimeMissedKeys += w.timeMissed[missKeys]
+		res.Stats.TimeMissedNulls += w.timeMissed[missNulls]
 	}
 
 	return res, nil
@@ -312,8 +316,10 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 	}
 	w.open(p, b)
 	q := x.q
-	if q.cut != nil {
-		if counted, err := x.cutByTime(w, p, b); counted || err != nil {
+	cut, miss := x.cuts(p, b), missFilter
+	if cut && q.timeKeys != nil {
+		var err error
+		if miss, err = x.cutByTime(w, p, b); miss == timeCounted || err != nil {
 			return err
 		}
 	}
@@ -366,16 +372,20 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 	}
 	w.blocks++
 	w.matched += int64(count)
-	if q.timeKeys != nil && idx == nil {
-		_, counted, err := w.agg.byTime(p, b.Index(), math.MinInt64, math.MaxInt64)
-		if err != nil {
-			return err
-		}
-		if counted {
-			w.byTime++
+	if q.timeKeys != nil {
+		if idx == nil && !cut {
+			_, why, err := w.agg.byTime(p, b.Index(), math.MinInt64, math.MaxInt64)
+			if err != nil {
+				return err
+			}
+			if why == timeCounted {
+				w.byTime++
 
-			return nil
+				return nil
+			}
+			miss = why
 		}
+		w.timeMissed[miss]++
 	}
 	if q.agg != nil && x.least != nil {
 		return x.leastBlock(w, n, count, idx)

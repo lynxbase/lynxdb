@@ -17,6 +17,25 @@ type timeKey struct {
 	granule int64
 }
 
+// timeMiss says why a block of a count by buckets of time was counted row
+// by row, or, as timeCounted, that its record counted it.
+type timeMiss uint8
+
+const (
+	timeCounted timeMiss = iota
+	// missFilter: the filter passes only some of the block's rows.
+	missFilter
+	// missRecord: the block has no record in buckets that divide the
+	// granule of the time keys.
+	missRecord
+	// missKeys: a column key holds several values in the block.
+	missKeys
+	// missNulls: a column key holds a value in some of the block's rows
+	// only.
+	missNulls
+	timeMisses
+)
+
 // timeScratch holds what byTime reuses: the rows of a block by bucket of
 // time, and the values of the time keys of the buckets being added up and
 // of the next bucket.
@@ -116,48 +135,58 @@ func (q *query) planTimeCut(filter *Expr) error {
 	return nil
 }
 
-// cutByTime counts the rows of the open block b of p, when the time range
-// of the query cuts through it, from its rows by bucket of time: every
-// other conjunct of the filter must pass every row. It reports whether it
-// did.
-func (x *execution) cutByTime(w *worker, p *part.Part, b *part.Block) (bool, error) {
+// cuts reports whether the time range of the query cuts through block b of
+// p.
+func (x *execution) cuts(p *part.Part, b *part.Block) bool {
 	cut := x.q.cut
-	if _, minT, maxT := p.BlockStats(b.Index()); minT >= cut.lo && maxT <= cut.hi {
-		return false, nil
+	if cut == nil {
+		return false
 	}
+	_, minT, maxT := p.BlockStats(b.Index())
+
+	return minT < cut.lo || maxT > cut.hi
+}
+
+// cutByTime counts the rows of the open block b of p, which the time range
+// of the query cuts through, from its rows by bucket of time: every other
+// conjunct of the filter must pass every row. It returns timeCounted when
+// it did, and why not otherwise.
+func (x *execution) cutByTime(w *worker, p *part.Part, b *part.Block) (timeMiss, error) {
+	cut := x.q.cut
 	if cut.untimed != nil {
 		if v, err := w.eval(cut.untimed, 0); err != nil || v != all {
-			return false, err
+			return missFilter, err
 		}
 	}
-	rows, counted, err := w.agg.byTime(p, b.Index(), cut.lo, cut.hi)
-	if !counted || err != nil {
-		return false, err
+	rows, miss, err := w.agg.byTime(p, b.Index(), cut.lo, cut.hi)
+	if miss != timeCounted || err != nil {
+		return miss, err
 	}
 	w.byTime++
 	if rows == 0 {
 		x.empty(p, b)
 
-		return true, nil
+		return timeCounted, nil
 	}
 	w.blocks++
 	w.matched += int64(rows)
 
-	return true, nil
+	return timeCounted, nil
 }
 
 // byTime adds every row of the open block, block i of p, whose time is from
 // lo to hi to its group from the block's rows by bucket of time, and
 // returns their number; the row times are read only when the range cuts a
-// bucket. It reports whether it could: the block must count its rows in
-// buckets that divide the granule of every time key, and every column key
-// must hold one value in every row of the block, or none in any.
-func (a *aggWorker) byTime(p *part.Part, i int, lo, hi int64) (uint64, bool, error) {
+// bucket. It returns timeCounted when it could, and why not otherwise: the
+// block must count its rows in buckets that divide the granule of every
+// time key, and every column key must hold one value in every row of the
+// block, or none in any.
+func (a *aggWorker) byTime(p *part.Part, i int, lo, hi int64) (uint64, timeMiss, error) {
 	s, ts := a.s, &a.s.time
 	var width int64
 	ts.counts, width = p.TimeCounts(i, a.w.q.timeGranule, ts.counts[:0])
 	if width == 0 {
-		return 0, false, nil
+		return 0, missRecord, nil
 	}
 	keys := a.w.q.timeKeys
 	for k, e := range a.plan.keys {
@@ -166,14 +195,14 @@ func (a *aggWorker) byTime(p *part.Part, i int, lo, hi int64) (uint64, bool, err
 		}
 		pt := &s.parts[k]
 		if err := a.classifyKey(e, pt, a.w.rows, nil); err != nil {
-			return 0, false, err
+			return 0, missKeys, err
 		}
 		switch {
 		case pt.nullable:
-			return 0, false, nil
+			return 0, missNulls, nil
 		case pt.mode == partNull, pt.mode == partConst, pt.mode == partInts && pt.one:
 		default:
-			return 0, false, nil
+			return 0, missKeys, nil
 		}
 	}
 	// Buckets come in order, and those next to one another often give the
@@ -190,7 +219,7 @@ func (a *aggWorker) byTime(p *part.Part, i int, lo, hi int64) (uint64, bool, err
 			// The rows of a bucket share their time keys, whatever their time.
 			var err error
 			if n, err = a.w.timesWithin(max(lo, start), min(hi, end)); err != nil {
-				return 0, false, err
+				return 0, missRecord, err
 			}
 			if n == 0 {
 				continue
@@ -224,7 +253,7 @@ func (a *aggWorker) byTime(p *part.Part, i int, lo, hi int64) (uint64, bool, err
 		a.spill()
 	}
 
-	return total, true, nil
+	return total, timeCounted, nil
 }
 
 // timeKey encodes the key of rows whose time keys take vals, the column

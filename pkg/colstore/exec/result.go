@@ -29,6 +29,16 @@ type Stats struct {
 	// CountedByTime counts blocks whose rows were counted by groups from
 	// their rows by bucket of time, without the time of each row.
 	CountedByTime int64
+	// TimeMissedFilter, TimeMissedRecord, TimeMissedKeys and
+	// TimeMissedNulls count the blocks of a count by buckets of time that
+	// were counted row by row: the filter passed only some of their rows,
+	// they had no record in buckets that divide the granule of the time
+	// keys, a column key held several values, or a column key held a value
+	// in some rows only.
+	TimeMissedFilter int64
+	TimeMissedRecord int64
+	TimeMissedKeys   int64
+	TimeMissedNulls  int64
 	// ColumnsSearched counts the columns that matches over every string
 	// column decoded, and ColumnsSkippedByToken those whose token filter
 	// ruled the pattern out.
