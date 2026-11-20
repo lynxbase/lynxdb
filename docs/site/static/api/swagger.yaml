@@ -10,7 +10,7 @@ info:
 
     ## Envelopes
 
-    Successful JSON responses wrap the payload in `data`, with a `meta` object (`took_ms`, `query_id`, `rows`)
+    Successful JSON responses wrap the payload in `data`, with a `meta` object (`took_ms`, `query_id`, `rows`, `stats`)
     when there is something to report. Errors use `{"error": {"code", "message", "suggestion"}}`; query compile
     errors add `position` (`line`, `column`) and `expected`.
 
@@ -1936,6 +1936,34 @@ components:
         rows:
           type: integer
           description: Rows the query produced, before `offset` and `limit`
+        stats:
+          type: object
+          description: >-
+            What the query read, present when the columnar executor ran the whole plan. Blocks are
+            counted once each: opened (`blocks`), ruled out before that (`skipped_by_key`,
+            `skipped_by_token`, `skipped_by_time`, `skipped_as_empty`), rejected from statistics
+            (`skipped_by_stats`), or answered from the part index (`counted_by_index`,
+            `counted_by_entries`).
+          properties:
+            blocks: {type: integer}
+            skipped_by_key: {type: integer}
+            skipped_by_token: {type: integer}
+            skipped_by_time: {type: integer}
+            skipped_as_empty: {type: integer}
+            skipped_by_stats: {type: integer}
+            counted_by_index: {type: integer}
+            counted_by_entries: {type: integer}
+            columns_searched: {type: integer}
+            columns_skipped_by_token: {type: integer}
+            blocks_matched: {type: integer}
+            rows_matched: {type: integer}
+            held_bytes: {type: integer}
+            ordered:
+              type: boolean
+              description: The groups were aggregated in sort key order
+            hashed_for:
+              type: string
+              description: What kept a plan laid out for sort key order from running in it
     QueryRequest:
       type: object
       properties:

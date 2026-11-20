@@ -22,6 +22,16 @@ func (r *Result) Len() int {
 	return len(r.rows)
 }
 
+// Stats reports what the columnar executor read to produce the rows; ok is
+// false when it did not run the whole plan.
+func (r *Result) Stats() (stats exec.Stats, ok bool) {
+	if r.table == nil {
+		return exec.Stats{}, false
+	}
+
+	return r.table.Stats, true
+}
+
 // Maps returns the rows as maps of their fields; a row has no entry for a
 // field it does not hold.
 func (r *Result) Maps() []map[string]event.Value {

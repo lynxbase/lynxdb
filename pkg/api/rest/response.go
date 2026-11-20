@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 )
 
 // ErrorCode is a machine-readable SCREAMING_SNAKE error code.
@@ -78,9 +80,33 @@ type metaFields struct {
 	QueryID string   `json:"query_id,omitempty"`
 	// Rows is the number of rows a query returned.
 	Rows *int `json:"rows,omitempty"`
+	// Stats says what a query read; a query that the columnar executor ran
+	// only in part has none.
+	Stats *queryStats `json:"stats,omitempty"`
 }
 
-func (m metaFields) empty() bool { return m.TookMS == nil && m.QueryID == "" && m.Rows == nil }
+func (m metaFields) empty() bool {
+	return m.TookMS == nil && m.QueryID == "" && m.Rows == nil && m.Stats == nil
+}
+
+// queryStats is exec.Stats as a reply shows it.
+type queryStats struct {
+	Blocks                int64  `json:"blocks"`
+	SkippedByKey          int64  `json:"skipped_by_key"`
+	SkippedByToken        int64  `json:"skipped_by_token"`
+	SkippedByTime         int64  `json:"skipped_by_time"`
+	SkippedAsEmpty        int64  `json:"skipped_as_empty"`
+	SkippedByStats        int64  `json:"skipped_by_stats"`
+	CountedByIndex        int64  `json:"counted_by_index"`
+	CountedByEntries      int64  `json:"counted_by_entries"`
+	ColumnsSearched       int64  `json:"columns_searched"`
+	ColumnsSkippedByToken int64  `json:"columns_skipped_by_token"`
+	BlocksMatched         int64  `json:"blocks_matched"`
+	RowsMatched           int64  `json:"rows_matched"`
+	HeldBytes             int64  `json:"held_bytes"`
+	Ordered               bool   `json:"ordered"`
+	HashedFor             string `json:"hashed_for,omitempty"`
+}
 
 // MetaOpt configures optional metadata fields.
 type MetaOpt func(*metaFields)
@@ -104,6 +130,20 @@ func WithQueryID(id string) MetaOpt {
 func WithRows(n int) MetaOpt {
 	return func(m *metaFields) {
 		m.Rows = &n
+	}
+}
+
+// WithStats adds what a query read to the meta.
+func WithStats(st exec.Stats) MetaOpt {
+	return func(m *metaFields) {
+		m.Stats = &queryStats{
+			Blocks: st.Blocks, SkippedByKey: st.SkippedByKey, SkippedByToken: st.SkippedByToken,
+			SkippedByTime: st.SkippedByTime, SkippedAsEmpty: st.SkippedAsEmpty, SkippedByStats: st.SkippedByStats,
+			CountedByIndex: st.CountedByIndex, CountedByEntries: st.CountedByEntries,
+			ColumnsSearched: st.ColumnsSearched, ColumnsSkippedByToken: st.ColumnsSkippedByToken,
+			BlocksMatched: st.BlocksMatched, RowsMatched: st.RowsMatched, HeldBytes: st.HeldBytes,
+			Ordered: st.Ordered, HashedFor: st.HashedFor,
+		}
 	}
 }
 
