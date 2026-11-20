@@ -1,7 +1,7 @@
 ---
 sidebar_position: 2
 title: Ingest
-description: NDJSON event ingest, raw log text ingest, Splunk HEC and Elasticsearch bulk ingest, and the list of indexes.
+description: NDJSON event ingest, raw log text ingest, Splunk HEC and Elasticsearch bulk ingest, and the calls that create, describe and list indexes.
 ---
 
 # Ingest API
@@ -16,9 +16,9 @@ Shippers that speak Elasticsearch, Splunk HEC or OTLP can also use the [compatib
 
 ## How events are stored
 
-Every index keeps its events in a columnar store of its own. An index comes into being with its first events; there is no call to create one.
+Every index keeps its events in a columnar store of its own. An index comes into being with its first events, taking the server's `storage.sort_key`, `storage.time_fields` and `storage.partition` as its settings, or with [`PUT /indexes/{index}`](#put-indexesindex), which gives it settings of its own. The settings are written to the index's directory before it takes events, and the index keeps them: changing the `storage` settings affects only indexes created afterwards.
 
-- **Time.** An event's time is the value of the first of `storage.time_fields` (`_time`, `timestamp`, `@timestamp`, `time`, `ts`) that it holds. An event without one gets the time it arrived.
+- **Time.** An event's time is the value of the first of the index's time fields that it holds; `storage.time_fields` gives `_time`, `timestamp`, `@timestamp`, `time` and `ts`. An event without one gets the time it arrived.
 - **Text.** A line that is not a JSON object is kept as an event holding the text in `_raw`. A JSON event has no `_raw`.
 - **Fields.** The members of a nested object are read as columns named by their path, such as `order.id`. A query result holds only the fields an event has: a field the event lacks is absent, not `null`.
 - **Retention.** Events whose own time is older than `retention` (7 days by default) are removed, partition by partition, within about a minute of arriving or when the server starts. Each removal is logged at `WARN` with the index, the event count and the cutoff. `retention: 0s` keeps everything.
@@ -149,8 +149,8 @@ curl -s localhost:3100/api/v1/indexes
 {
   "data": {
     "indexes": [
-      {"name": "backend", "events": 26, "bytes": 3978, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2026-02-10T08:12:03.045Z", "last_event": "2026-02-10T10:45:00.5Z"},
-      {"name": "main", "events": 1000, "bytes": 46638, "parts": 2, "merges_running": 0, "runs_to_merge": 2, "first_event": "2025-01-15T08:00:00.105Z", "last_event": "2026-11-17T15:43:40.839562Z"}
+      {"name": "backend", "events": 26, "bytes": 3978, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2026-02-10T08:12:03.045Z", "last_event": "2026-02-10T10:45:00.5Z", "sort_key": [], "time_fields": ["_time", "timestamp", "@timestamp", "time", "ts"], "partition": "1d"},
+      {"name": "main", "events": 1000, "bytes": 46638, "parts": 2, "merges_running": 0, "runs_to_merge": 2, "first_event": "2025-01-15T08:00:00.105Z", "last_event": "2026-11-17T15:43:40.839562Z", "sort_key": [], "time_fields": ["_time", "timestamp", "@timestamp", "time", "ts"], "partition": "1d"}
     ]
   }
 }
@@ -165,6 +165,7 @@ curl -s localhost:3100/api/v1/indexes
 | `merges_running` | Merges of the index's files under way |
 | `runs_to_merge` | Sorted runs that background merging is still to merge, those of a past partition that waits for events to stop arriving included; the index is quiet when this and `merges_running` are both 0 |
 | `first_event`, `last_event` | Times of the earliest and latest event; absent for an index without stored events |
+| `sort_key`, `time_fields`, `partition` | The settings of the index, see [`PUT /indexes/{index}`](#put-indexesindex) |
 
 Query an index with `source=<name>`:
 
@@ -173,6 +174,50 @@ curl -s localhost:3100/api/v1/query \
   -H 'Content-Type: application/json' \
   -d '{"q": "source=backend | stats count() by level"}'
 ```
+
+## GET /indexes/\{index\}
+
+Describes one index as an entry of [`GET /indexes`](#get-indexes) does:
+
+```bash
+curl -s localhost:3100/api/v1/indexes/bluesky
+```
+
+```json
+{"data": {"name": "bluesky", "events": 2, "bytes": 889, "filter_bytes": 32, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2024-11-21T16:25:49.000167Z", "last_event": "2024-11-21T16:25:49.00028Z", "sort_key": ["kind", "commit.operation", "commit.collection", "did"], "time_fields": ["time_us"], "partition": "1d"}}
+```
+
+An index that does not exist answers `404 NOT_FOUND`.
+
+## PUT /indexes/\{index\}
+
+Creates an index with settings of its own, before any event arrives. Declare as the sort key the fields that the queries of the index filter and group by, the most selective last, so that its files are written in that order:
+
+```bash
+curl -s -X PUT localhost:3100/api/v1/indexes/bluesky \
+  -H 'Content-Type: application/json' \
+  -d '{"sort_key": ["kind", "commit.operation", "commit.collection", "did"], "time_fields": ["time_us"], "partition": "1d"}'
+```
+
+```json
+{"data": {"name": "bluesky", "events": 0, "bytes": 0, "filter_bytes": 0, "parts": 0, "merges_running": 0, "runs_to_merge": 0, "sort_key": ["kind", "commit.operation", "commit.collection", "did"], "time_fields": ["time_us"], "partition": "1d"}}
+```
+
+| Setting | Default | Value |
+|---|---|---|
+| `sort_key` | `storage.sort_key` | Up to 32 field paths whose values order the rows of the index, the first the most significant; `[]` orders them by time |
+| `time_fields` | `storage.time_fields` | Up to 32 field paths whose value becomes the time of an event, tried in their order |
+| `partition` | `storage.partition` | The span of time whose events are kept apart, from `1m` to `366d`, such as `1h` or `1d`; retention drops whole partitions |
+
+Every setting is optional, and the body may be left out. A field path names a nested member by its path, such as `commit.collection`; it has no empty segment and no control character, and a list names it once.
+
+The call answers `201` when it creates the index. The settings of an index do not change: on an index that exists, the call answers `200` with the index when the index has every setting the body gives, and `409 CONFLICT`, naming the first setting that differs, otherwise:
+
+```json
+{"error": {"code": "CONFLICT", "message": "columnar: the index exists with other settings: index bluesky has sort_key [kind commit.operation commit.collection did], not [did]", "suggestion": "The settings of an index do not change; create another index for another design."}}
+```
+
+It needs `ingest` or `admin` scope when authentication is on.
 
 ## POST /indexes/\{index\}/compact
 
@@ -198,11 +243,14 @@ An index that does not exist answers `404 NOT_FOUND`; a server that is shutting 
 
 | HTTP | Code | When |
 |---|---|---|
-| 400 | `VALIDATION_ERROR` | An invalid index name, or an `X-Index`, `X-Source`, `X-Source-Type` or `X-Host` header longer than 256 characters |
+| 400 | `VALIDATION_ERROR` | An invalid index name or index setting, or an `X-Index`, `X-Source`, `X-Source-Type` or `X-Host` header longer than 256 characters |
+| 400 | `INVALID_JSON` | The body of `PUT /indexes/{index}` is not a JSON object of the settings |
 | 400 | `INVALID_REQUEST` | The body could not be read |
 | 400 | | The `Content-Encoding` is not `gzip`, `zstd` or `snappy`: `{"error": {"type": "invalid_request", ...}, "status": 400}` |
 | 401 | `AUTH_REQUIRED`, `INVALID_TOKEN` | Missing or wrong credentials |
 | 403 | `FORBIDDEN` | The key lacks `ingest` scope |
+| 404 | `NOT_FOUND` | `GET /indexes/{index}` or `POST /indexes/{index}/compact` names an index that does not exist |
+| 409 | `CONFLICT` | `PUT /indexes/{index}` asks for other settings than the index has |
 | 413 | `INVALID_REQUEST` | The body of `POST /ingest`, sent without `Content-Length`, grows past `ingest.max_body_size` |
 | 413 | | The body is over its size limit: `{"error": {"type": "request_body_too_large", ...}, "status": 413}`, with a `reason` that names the setting |
 | 429 | `TOO_MANY_REQUESTS` | The per-IP rate limit (`http.rate_limit`) was hit |

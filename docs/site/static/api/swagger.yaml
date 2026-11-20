@@ -568,6 +568,70 @@ paths:
               schema:
                 $ref: '#/components/schemas/IndexesResponse'
 
+  /api/v1/indexes/{index}:
+    parameters:
+      - name: index
+        in: path
+        required: true
+        schema:
+          type: string
+    get:
+      operationId: getIndex
+      tags: [Schema]
+      summary: Describe an index with its settings
+      description: Any valid key can call it.
+      responses:
+        '200':
+          description: The index
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: createIndex
+      tags: [Schema]
+      summary: Create an index with its own settings
+      description: |
+        Creates the index with the sort key, time fields and partition span of the body; a setting left out
+        takes the server's `storage.*` setting. The settings are written to the index's directory before the
+        index takes events and stay with the index across restarts and changes to the configuration.
+        Repeating the call answers `200` with the index when it has every setting the body gives, and `409`
+        when it has another; the settings of an index do not change. Needs `ingest` or `admin` scope.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/IndexSettingsRequest'
+            example:
+              sort_key: [kind, commit.operation, commit.collection, did]
+              time_fields: [time_us]
+              partition: 1d
+      responses:
+        '201':
+          description: The index was created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexResponse'
+        '200':
+          description: The index exists with every setting the body gives
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ShuttingDown'
+
   /api/v1/indexes/{index}/compact:
     post:
       operationId: compactIndex
@@ -1693,7 +1757,13 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     NotFound:
-      description: No such job or key, or authentication is off on an `/auth` route (`NOT_FOUND`)
+      description: No such job, key or index, or authentication is off on an `/auth` route (`NOT_FOUND`)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    Conflict:
+      description: The index exists with other settings than the request gives (`CONFLICT`); the message names the first that differs
       content:
         application/json:
           schema:
@@ -1818,6 +1888,7 @@ components:
                 - INVALID_TOKEN
                 - FORBIDDEN
                 - NOT_FOUND
+                - CONFLICT
                 - LAST_ROOT_KEY
                 - SHUTTING_DOWN
                 - INTERNAL_ERROR
@@ -2280,6 +2351,43 @@ components:
         last_event:
           type: string
           format: date-time
+        sort_key:
+          type: array
+          items:
+            type: string
+          description: Fields whose values order the rows of the index; empty orders them by time
+        time_fields:
+          type: array
+          items:
+            type: string
+          description: Fields whose value becomes the time of an event, tried in their order
+        partition:
+          type: string
+          description: Span of time whose events the index keeps apart, such as `1d` or `1h0m0s`
+    IndexResponse:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/Index'
+    IndexSettingsRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        sort_key:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+          description: Field paths, such as `commit.collection`, that order the rows; `[]` orders them by time. Default `storage.sort_key`
+        time_fields:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+          description: Field paths whose value becomes the time of an event, tried in their order. Default `storage.time_fields`
+        partition:
+          type: string
+          description: A span from one minute to 366 days, such as `1h` or `1d`. Default `storage.partition`
     CompactResponse:
       type: object
       properties:

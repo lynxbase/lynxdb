@@ -98,9 +98,9 @@ curl -s localhost:3100/api/v1/stats
     "oldest_event": "2025-01-15T08:00:00Z",
     "newest_event": "2026-11-17T15:43:40Z",
     "indexes": [
-      {"name": "backend", "events": 26, "bytes": 3978, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2026-02-10T08:12:03.045Z", "last_event": "2026-02-10T10:45:00.5Z"},
-      {"name": "main", "events": 1000, "bytes": 46638, "parts": 2, "merges_running": 0, "runs_to_merge": 0, "first_event": "2025-01-15T08:00:00.105Z", "last_event": "2026-11-17T15:43:40.839562Z"},
-      {"name": "nginx", "events": 34, "bytes": 2808, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2026-11-17T15:43:40.867817Z", "last_event": "2026-11-17T15:43:40.867817Z"}
+      {"name": "backend", "events": 26, "bytes": 3978, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2026-02-10T08:12:03.045Z", "last_event": "2026-02-10T10:45:00.5Z", "sort_key": [], "time_fields": ["_time", "timestamp", "@timestamp", "time", "ts"], "partition": "1d"},
+      {"name": "main", "events": 1000, "bytes": 46638, "parts": 2, "merges_running": 0, "runs_to_merge": 0, "first_event": "2025-01-15T08:00:00.105Z", "last_event": "2026-11-17T15:43:40.839562Z", "sort_key": [], "time_fields": ["_time", "timestamp", "@timestamp", "time", "ts"], "partition": "1d"},
+      {"name": "nginx", "events": 34, "bytes": 2808, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2026-11-17T15:43:40.867817Z", "last_event": "2026-11-17T15:43:40.867817Z", "sort_key": [], "time_fields": ["_time", "timestamp", "@timestamp", "time", "ts"], "partition": "1d"}
     ],
     "jobs": {"running": 0, "done": 8, "error": 0, "canceled": 0}
   }
