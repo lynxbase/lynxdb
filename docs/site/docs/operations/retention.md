@@ -34,18 +34,16 @@ A duration is a Go duration (`6h`, `90m`) or a number of days (`7d`, `90d`, `365
 
 ## How Retention Works
 
-Events are partitioned by their time. `storage.partition` sets the span of a partition (`24h` by default); partitions are aligned to the Unix epoch, so with the default each partition covers one UTC day.
+Events are partitioned by event time. The saved partition width can differ by index. `storage.partition` defaults to `24h` for new indexes, so each partition with that width covers one UTC day.
 
 1. A retention pass runs when the server starts and then once a minute.
 2. It removes from every index the partitions that end at or before the cutoff, `now - retention`.
 3. A removed partition's part files are deleted once no running query reads them.
 
-This means:
-
-- Deletion happens a whole partition at a time. With `retention: 7d` and daily partitions, the events of a day are deleted once that day ended more than 7 days ago, so the oldest events kept are up to 8 days old.
-- A smaller `storage.partition` makes deletion finer, at the cost of more partitions for the store to keep apart.
-- Retention applies to every index alike.
-- Retention goes by the time of each event, not the time it arrived. Events whose own time is already older than the retention period, such as those of an old log file, are removed by the next pass, within about a minute of arriving. Set `retention: 0s` on a server that should keep them.
+- Deletion happens a whole partition at a time. With `retention: 7d` and daily partitions, the events of a day are deleted on the first pass after that day ended at least seven days ago. A row becomes eligible for removal approximately seven to eight days after its event time.
+- A smaller partition width makes deletion finer and can produce more partitions.
+- Every index uses the same retention period and its own partition width.
+- The event timestamp assigns the partition even when a log arrives late. A pass can remove it once the row is committed and the partition is eligible. Set `retention: 0s` on a server that should keep all partitions.
 
 ## Monitoring Retention
 

@@ -11,7 +11,7 @@ LynxDB keeps everything it stores in the `data_dir` directory, one subdirectory 
 
 | Component | Location | Contains |
 |-----------|----------|----------|
-| Indexes | `<data_dir>/indexes/<index>/` | The index's `MANIFEST`, `MANIFEST.end` and `.part` files |
+| Indexes | `<data_dir>/indexes/<index>/` | The index's `settings.json`, `MANIFEST`, `MANIFEST.end` and `.part` files |
 | API keys | `<data_dir>/auth/keys.json` | Keys, when authentication is on |
 | TLS certificate | `<data_dir>/tls/` | The self-signed certificate and key, when `--tls` generated them |
 | Config file | `/etc/lynxdb/config.yaml` or `~/.config/lynxdb/config.yaml` | Server configuration |
@@ -22,16 +22,18 @@ LynxDB keeps everything it stores in the `data_dir` directory, one subdirectory 
 ### Inside an index directory
 
 ```text
-/var/lib/lynxdb/main/
+/var/lib/lynxdb/indexes/main/
 ├── 0000000000000000.part
 ├── 0000000000000001.part
 ├── MANIFEST
-└── MANIFEST.end
+├── MANIFEST.end
+└── settings.json
 ```
 
 - A `.part` file is immutable once written. New events and merges add part files; a merge then deletes the parts it replaced.
 - `MANIFEST` is an append-only log of the changes to the set of live parts. A change is visible only after its record is on disk.
-- `MANIFEST.end` records how far the manifest reached, so that a manifest that lost records is detected.
+- `MANIFEST.end` helps detect a manifest that lost records.
+- `settings.json` records the saved sort key, timestamp fields and partition width.
 
 When a store opens, it reads the manifest, opens every part it names, and deletes the files no record names: temporary files of writes that did not finish, and parts a merge replaced. A part file that no record names while the manifest may have lost records is moved to `lost+found/` in the index directory instead of being deleted. A manifest that names a missing or damaged part, or that is shorter than its end mark, stops the server at startup and leaves every file as it was.
 
@@ -57,7 +59,7 @@ The server is down for the time of the copy.
 
 ### Filesystem Snapshot
 
-A snapshot that captures the whole data directory at one instant (LVM, ZFS, Btrfs, cloud volume snapshots) is a consistent copy of a running server. It is what the server would find after a power cut: the events of the last flush interval may be missing (see [Durability](#durability)).
+A snapshot that captures the whole data directory at one instant (LVM, ZFS, Btrfs, cloud volume snapshots) is a consistent copy of a running server. The restored server recovers the committed part set from that instant. Uncommitted events can be absent from the copy. See [Durability](#durability).
 
 ```bash
 # LVM snapshot
@@ -110,7 +112,7 @@ ls -t "${BACKUP_DIR}"/lynxdb-*.tar.gz | tail -n +8 | xargs -r rm
 
 ## Durability
 
-An ingest request is answered once its events are in the server's buffers. The store writes buffered events to part files within `storage.flush_interval` (one second by default) and syncs them before a query, a stats request or a Splunk HEC acknowledgement. Events that were answered but not yet written are lost if the process or the machine stops abruptly; shippers that retry unacknowledged batches send them again. A clean stop writes every buffered event.
+Native ingest can acknowledge events still in memory. An abrupt stop can lose them until the store commits their parts. Graceful shutdown attempts to flush outstanding writes. Successful Elasticsearch bulk items and Splunk HEC indexer acknowledgements wait for sync. See [Acknowledgements and visibility](../architecture/storage.md#acknowledgements-and-visibility).
 
 ## Restoring from Backup
 
@@ -133,13 +135,13 @@ Every index lives in its own directory, so one index can be restored on its own.
 
 ```bash
 sudo systemctl stop lynxdb
-sudo rm -rf /var/lib/lynxdb/web
-sudo tar xzf /backups/lynxdb-20260301-020000.tar.gz -C / var/lib/lynxdb/web
-sudo chown -R lynxdb:lynxdb /var/lib/lynxdb/web
+sudo rm -rf /var/lib/lynxdb/indexes/web
+sudo tar xzf /backups/lynxdb-20260301-020000.tar.gz -C / var/lib/lynxdb/indexes/web
+sudo chown -R lynxdb:lynxdb /var/lib/lynxdb/indexes/web
 sudo systemctl start lynxdb
 ```
 
-The server opens every index directory it finds at startup, so an index directory copied from another server appears under its directory name.
+On startup the server opens the restored directory under its index name and uses the saved settings. Use a binary that supports the restored part format.
 
 ### Restore to a Different Server
 

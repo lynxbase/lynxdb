@@ -90,7 +90,7 @@ The database of a server and of pipe mode: one columnar store per index under th
 
 ### `pkg/engine/columnar/` -- Running Plans
 
-Opens the store of every index (`db.go`) and runs IR plans over them: it hands every part of a plan that the columnar executor takes to `pkg/colstore/exec`, turns small subqueries into lists of values, and runs the rest with the row operators. See [Query Engine](../architecture/query-engine.md).
+Opens each index with its saved settings (`db.go`, `settings.go`) and runs IR plans over the stores: it hands every part of a plan that the columnar executor takes to `pkg/colstore/exec`, turns small subqueries into lists of values, and runs the rest with the row operators. See [Query Engine](../architecture/query-engine.md).
 
 ### `pkg/colstore/` -- Columnar Store
 
@@ -103,7 +103,7 @@ pkg/colstore/
 ├── part/                   # Immutable columnar parts: blocks, encodings, footer, token filter pages
 ├── shred/                  # JSON documents parsed straight into typed column builders
 ├── variant/                # Binary encoding for JSON values without a column of their own
-├── tokenfilter/            # Search tokens and split-block Bloom filters per block
+├── tokenfilter/            # Search tokens and per-block token fingerprints
 └── exec/                   # Columnar executor over snapshots; exec/irplan plans IR onto it,
                             # exec/irfunc implements IR functions over columns
 ```

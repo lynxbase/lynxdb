@@ -57,14 +57,14 @@ Over HTTP, a body sent to `/api/v1/ingest` or `/api/v1/ingest/raw` may be up to 
 
 ### Flush Interval
 
-`storage.flush_interval` bounds how long ingested events wait in memory before the store writes them as a sorted run of parts. The default, `0s`, means the store's own interval of one second.
+`storage.flush_interval` sets the age at which buffered events become due for a flush. The default, `0s`, means the store's own interval of one second.
 
 ```yaml
 storage:
   flush_interval: 5s
 ```
 
-A longer interval writes fewer, larger runs under a light, steady load, and leaves more events in memory, where an abrupt stop loses them. Queries see buffered events either way: a query syncs the database before it runs.
+A longer interval writes fewer, larger runs under a light, steady load, and leaves more events in memory, where an abrupt stop loses them. An HTTP query syncs the database before execution, so increasing the interval can also leave more data for a query to flush.
 
 ### Ingest Mode
 
@@ -72,14 +72,14 @@ For Splunk HEC, OTLP and syslog events, `ingest.mode: lightweight` extracts only
 
 ## Partitions
 
-`storage.partition` (default `24h`) is the span of time whose events the store keeps and merges apart from the others. A query with a time range reads only the partitions it meets, and retention deletes whole partitions.
+`storage.partition` supplies the default partition width for new indexes. Each index saves its own width. Queries prune parts by their stored time bounds, and retention deletes whole partitions.
 
 ```yaml
 storage:
   partition: 6h
 ```
 
-A shorter partition makes time ranges and retention finer and gives the store more partitions to keep apart. A partition that ended an hour ago is merged into one run. The setting applies at server start.
+A shorter partition makes retention finer and gives the store more partitions to keep apart. See [Time partitions](../architecture/storage.md#time-partitions) before choosing the width for an index.
 
 ## Concurrent Queries
 
