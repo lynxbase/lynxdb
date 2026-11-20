@@ -20,8 +20,9 @@ import (
 
 // BenchmarkCompact merges the sorted runs that ingest leaves into one run per
 // partition, as a load that ends with a compaction does, and reports rows per
-// second, CPU seconds, the cores that were busy on average and the bytes the
-// merges wrote. The store is set up as a server sets it up for the Bluesky
+// second, CPU seconds, the cores that were busy on average, the bytes the
+// merges wrote and the peak of the heap. The store is set up as a server sets
+// it up for the Bluesky
 // benchmark. LYNXDB_BENCH_MERGE_ROWS sets the events (1Mi by default),
 // LYNXDB_BENCH_MERGE_RUNS the runs they are written in (16 by default),
 // LYNXDB_BENCH_PARTITION the span of a partition (24h by default; the events
@@ -53,6 +54,7 @@ func BenchmarkCompact(b *testing.B) {
 
 	var wall, cpu time.Duration
 	var written int64
+	var peak uint64
 	work := b.TempDir()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -60,6 +62,7 @@ func BenchmarkCompact(b *testing.B) {
 		dir := filepath.Join(work, "store")
 		linkStore(b, template, dir)
 		b.StartTimer()
+		watch := heapWatch()
 		cpuBefore, begin := cpuTime(), time.Now()
 		s, err := OpenStore(dir, opts)
 		if err != nil {
@@ -73,6 +76,7 @@ func BenchmarkCompact(b *testing.B) {
 			b.Fatal(err)
 		}
 		wall, cpu = wall+time.Since(begin), cpu+cpuTime()-cpuBefore
+		peak = max(peak, watch())
 		b.StopTimer()
 		_, merged := s.Written()
 		written += merged
@@ -96,6 +100,7 @@ func BenchmarkCompact(b *testing.B) {
 	b.ReportMetric(cpu.Seconds()/wall.Seconds(), "cores")
 	b.ReportMetric(float64(written)/n/1e6, "MB-written/op")
 	b.ReportMetric(float64(size)/1e6, "MB-runs")
+	b.ReportMetric(float64(peak)/1e6, "MB-heap-peak")
 }
 
 // writeRunsOnly writes rows events of benchdata into a store in path as runs
