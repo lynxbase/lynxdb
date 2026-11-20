@@ -149,8 +149,8 @@ curl -s localhost:3100/api/v1/indexes
 {
   "data": {
     "indexes": [
-      {"name": "backend", "events": 26, "bytes": 3978, "parts": 1, "first_event": "2026-02-10T08:12:03.045Z", "last_event": "2026-02-10T10:45:00.5Z"},
-      {"name": "main", "events": 1000, "bytes": 46638, "parts": 2, "first_event": "2025-01-15T08:00:00.105Z", "last_event": "2026-11-17T15:43:40.839562Z"}
+      {"name": "backend", "events": 26, "bytes": 3978, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2026-02-10T08:12:03.045Z", "last_event": "2026-02-10T10:45:00.5Z"},
+      {"name": "main", "events": 1000, "bytes": 46638, "parts": 2, "merges_running": 0, "runs_to_merge": 2, "first_event": "2025-01-15T08:00:00.105Z", "last_event": "2026-11-17T15:43:40.839562Z"}
     ]
   }
 }
@@ -162,6 +162,8 @@ curl -s localhost:3100/api/v1/indexes
 | `events` | Events stored |
 | `bytes` | Size of the index's files |
 | `parts` | Columnar files the index holds |
+| `merges_running` | Merges of the index's files under way |
+| `runs_to_merge` | Sorted runs that background merging is still to merge, those of a past partition that waits for events to stop arriving included; the index is quiet when this and `merges_running` are both 0 |
 | `first_event`, `last_event` | Times of the earliest and latest event; absent for an index without stored events |
 
 Query an index with `source=<name>`:
@@ -171,6 +173,26 @@ curl -s localhost:3100/api/v1/query \
   -H 'Content-Type: application/json' \
   -d '{"q": "source=backend | stats count() by level"}'
 ```
+
+## POST /indexes/\{index\}/compact
+
+Writes the events ingested so far, merges the files of every partition of the index into one sorted run, and answers when that is done. Background merging gets there too, but only after a partition has gone without new events for a while; call this at the end of a bulk load so that the queries that follow read merged files. The request takes as long as the merge; queries that run meanwhile read the files as they were until the merge commits. It needs `ingest` or `admin` scope when authentication is on.
+
+```bash
+curl -s -X POST localhost:3100/api/v1/indexes/main/compact
+```
+
+```json
+{"data": {"index": "main", "parts_before": 6, "parts": 1, "bytes_before": 48210, "bytes": 46638, "seconds": 0.08}}
+```
+
+| Field | Description |
+|---|---|
+| `parts_before`, `bytes_before` | Files and their size once the pending events were written |
+| `parts`, `bytes` | Files and their size after the merge |
+| `seconds` | Time the request took, the write of the pending events included |
+
+An index that does not exist answers `404 NOT_FOUND`; a server that is shutting down answers `503 SHUTTING_DOWN` and leaves the files as they were.
 
 ## Errors
 

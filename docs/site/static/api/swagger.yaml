@@ -568,6 +568,37 @@ paths:
               schema:
                 $ref: '#/components/schemas/IndexesResponse'
 
+  /api/v1/indexes/{index}/compact:
+    post:
+      operationId: compactIndex
+      tags: [Schema]
+      summary: Merge an index into one sorted run per partition
+      description: |
+        Writes the events ingested so far, merges the parts of every partition of the index into one sorted run,
+        and answers when that is done, which takes as long as the merge. Queries that run meanwhile read the parts
+        as they were until the merge commits. Needs `ingest` or `admin` scope.
+      parameters:
+        - name: index
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: What the merge did
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CompactResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ShuttingDown'
+
   # INGEST
 
   /api/v1/ingest:
@@ -2237,12 +2268,37 @@ components:
           type: integer
         parts:
           type: integer
+        merges_running:
+          type: integer
+          description: Merges of the index's parts under way
+        runs_to_merge:
+          type: integer
+          description: Sorted runs that background merging is still to merge; with merges_running at zero the index is quiet
         first_event:
           type: string
           format: date-time
         last_event:
           type: string
           format: date-time
+    CompactResponse:
+      type: object
+      properties:
+        data:
+          type: object
+          properties:
+            index:
+              type: string
+            parts_before:
+              type: integer
+            parts:
+              type: integer
+            bytes_before:
+              type: integer
+            bytes:
+              type: integer
+            seconds:
+              type: number
+              description: Time the request took, the write of pending events included
     IndexesResponse:
       type: object
       properties:
@@ -2423,6 +2479,10 @@ components:
             index_count:
               type: integer
             part_count:
+              type: integer
+            merges_running:
+              type: integer
+            runs_to_merge:
               type: integer
             oldest_event:
               type: string

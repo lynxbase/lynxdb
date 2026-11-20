@@ -93,12 +93,14 @@ curl -s localhost:3100/api/v1/stats
     "total_events": 1060,
     "index_count": 3,
     "part_count": 4,
+    "merges_running": 0,
+    "runs_to_merge": 0,
     "oldest_event": "2025-01-15T08:00:00Z",
     "newest_event": "2026-11-17T15:43:40Z",
     "indexes": [
-      {"name": "backend", "events": 26, "bytes": 3978, "parts": 1, "first_event": "2026-02-10T08:12:03.045Z", "last_event": "2026-02-10T10:45:00.5Z"},
-      {"name": "main", "events": 1000, "bytes": 46638, "parts": 2, "first_event": "2025-01-15T08:00:00.105Z", "last_event": "2026-11-17T15:43:40.839562Z"},
-      {"name": "nginx", "events": 34, "bytes": 2808, "parts": 1, "first_event": "2026-11-17T15:43:40.867817Z", "last_event": "2026-11-17T15:43:40.867817Z"}
+      {"name": "backend", "events": 26, "bytes": 3978, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2026-02-10T08:12:03.045Z", "last_event": "2026-02-10T10:45:00.5Z"},
+      {"name": "main", "events": 1000, "bytes": 46638, "parts": 2, "merges_running": 0, "runs_to_merge": 0, "first_event": "2025-01-15T08:00:00.105Z", "last_event": "2026-11-17T15:43:40.839562Z"},
+      {"name": "nginx", "events": 34, "bytes": 2808, "parts": 1, "merges_running": 0, "runs_to_merge": 0, "first_event": "2026-11-17T15:43:40.867817Z", "last_event": "2026-11-17T15:43:40.867817Z"}
     ],
     "jobs": {"running": 0, "done": 8, "error": 0, "canceled": 0}
   }
@@ -108,6 +110,7 @@ curl -s localhost:3100/api/v1/stats
 | Field | Description |
 |---|---|
 | `storage_bytes`, `total_events`, `part_count` | Totals over the indexes |
+| `merges_running`, `runs_to_merge` | Merges under way and sorted runs still to be merged, over the indexes; the store is quiet when both are 0. [`POST /api/v1/indexes/{index}/compact`](./ingest.md#post-indexesindexcompact) merges an index at once |
 | `filter_bytes` | The part of `storage_bytes` that the token filters take; each index entry has it too |
 | `oldest_event`, `newest_event` | Times of the oldest and newest event, in whole seconds; absent without events |
 | `indexes` | One entry per index, as in [`GET /api/v1/indexes`](./ingest.md#get-indexes) |
