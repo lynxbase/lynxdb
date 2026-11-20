@@ -49,6 +49,10 @@ const (
 	// maxExceptionShare bounds the exceptions, one in this many values,
 	// beyond which differences far from the others stay in their frames.
 	maxExceptionShare = 16
+	// maxIrregularShare bounds the values that do not fit the shape or lack
+	// a reference, one in this many, which are exceptions whatever they
+	// cost.
+	maxIrregularShare = 4
 	// minTimedGain is the bits a value is to save over its digits for the
 	// form to be worth its tables.
 	minTimedGain = 2
@@ -175,7 +179,7 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 	if n < minTimed || !s.promising(c, times, w.timedRefs) {
 		return false
 	}
-	if s.scan(c); s.irregular > n/maxExceptionShare {
+	if s.scan(c); s.irregular > n/maxIrregularShare {
 		return false
 	}
 	// The reference that the sample found of the fewest bits.
@@ -315,7 +319,7 @@ func (s *timedScratch) follow(c *shred.Column, times []int64, refs []timedRef, k
 		}
 	}
 
-	return s.irregular+s.refIrregular <= n/maxExceptionShare
+	return s.irregular+s.refIrregular <= n/maxIrregularShare
 }
 
 // addTimedRef makes the timed column just written, of path, one that later
@@ -478,7 +482,7 @@ func (s *timedScratch) shape(c *shred.Column, idx []int) bool {
 		}
 		k = j
 	}
-	if run < timedSample-timedSample/maxExceptionShare || best < 2 || best > 255 {
+	if run < timedSample-timedSample/maxIrregularShare || best < 2 || best > 255 {
 		return false
 	}
 	s.stride = best
