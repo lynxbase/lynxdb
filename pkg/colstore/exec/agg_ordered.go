@@ -645,19 +645,9 @@ func markChanges(bound []uint8, col *vec.Column, from int) {
 	switch {
 	case col.Layout == vec.Const:
 	case col.Layout == vec.Dict && len(col.Codes8) != 0:
-		codes := col.Codes8[from : from+len(bound)]
-		for j := 1; j < len(codes); j++ {
-			if codes[j] != codes[j-1] {
-				bound[j] = 1
-			}
-		}
+		markCodeChanges(bound, col.Codes8[from:from+len(bound)])
 	case col.Layout == vec.Dict:
-		codes := col.Codes16[from : from+len(bound)]
-		for j := 1; j < len(codes); j++ {
-			if codes[j] != codes[j-1] {
-				bound[j] = 1
-			}
-		}
+		markCodeChanges(bound, col.Codes16[from:from+len(bound)])
 	default:
 		offs, data := col.Offsets[from:from+len(bound)+1], col.Data
 		prev := data[offs[0]:offs[1]]
@@ -669,6 +659,23 @@ func markChanges(bound []uint8, col *vec.Column, from int) {
 			prev = v
 		}
 	}
+}
+
+// markCodeChanges marks in bound the codes that differ from the one before
+// them, without a branch a code: groups change every few rows.
+func markCodeChanges[T uint8 | uint16](bound []uint8, codes []T) {
+	bound = bound[:len(codes)]
+	for j := 1; j < len(codes); j++ {
+		bound[j] |= differs(codes[j], codes[j-1])
+	}
+}
+
+func differs[T uint8 | uint16](a, b T) uint8 {
+	if a != b {
+		return 1
+	}
+
+	return 0
 }
 
 // markChangesAt is markChanges for the rows from plus each of rows.
