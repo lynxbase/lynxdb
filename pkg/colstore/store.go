@@ -1341,16 +1341,28 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 			rows += h.Rows
 		}
 	}
-	cores := runtime.GOMAXPROCS(0)
-	cuts := part.SplitKeys(srcs, int(min(uint64(cores), max(1, rows/mergedPartRows))))
-	meta := PartMeta{Run: s.dir.NewRun(), Tier: tier + 1, Partition: runs[0].partition}
-	files := make([]*PartFile, len(cuts)+1)
-	errs := make([]error, len(files))
+	n := int(min(uint64(runtime.GOMAXPROCS(0)), max(1, rows/mergedPartRows)))
+	rm := &rangeMerges{s: s, srcs: srcs, runs: len(runs), samples: part.SampleKeys(srcs, n)}
+	rm.meta = PartMeta{Run: s.dir.NewRun(), Tier: tier + 1, Partition: runs[0].partition}
+	cuts := rm.samples.Cuts(n)
+	for i := 0; i <= len(cuts); i++ {
+		r := &mergeRange{limit: &part.RangeLimit{}}
+		if i > 0 {
+			r.lo = cuts[i-1]
+		}
+		if i < len(cuts) {
+			r.hi = cuts[i]
+		}
+		r.end = r.hi
+		rm.ranges = append(rm.ranges, r)
+	}
+	first := slices.Clone(rm.ranges)
 	var wg sync.WaitGroup
-	for i := range files {
+	var stopped error
+	for _, r := range first {
 		// Each range merge holds one decoded block per run.
 		if !s.blocks.acquire(len(runs)) {
-			errs[i] = errStopped
+			stopped = errStopped
 
 			break
 		}
@@ -1358,61 +1370,163 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 		case s.cores <- struct{}{}:
 		case <-s.done:
 			s.blocks.release(len(runs))
-			errs[i] = errStopped
+			stopped = errStopped
 		}
-		if errs[i] != nil {
+		if stopped != nil {
 			break
 		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			defer func() { <-s.cores; s.blocks.release(len(runs)) }()
-			var lo, hi []byte
-			if i > 0 {
-				lo = cuts[i-1]
-			}
-			if i < len(cuts) {
-				hi = cuts[i]
-			}
-			pf, err := s.dir.Create()
-			if err != nil {
-				errs[i] = err
-
-				return
-			}
-			pf.Meta = meta
-			pf.BeforeWrite(s.giveWay)
-			files[i] = pf
-			w := part.NewWriter(pf, s.opts.Part)
-			if err := part.MergeRange(w, srcs, s.opts.BlockRows, lo, hi); err != nil {
-				errs[i] = err
-
-				return
-			}
-			errs[i] = w.Close()
+			rm.work(r)
 		}()
 	}
+	rm.mu.Lock()
+	rm.started = true
+	rm.mu.Unlock()
 	wg.Wait()
-	err := errors.Join(errs...)
+	err := errors.Join(append(rm.errs, stopped)...)
 	if err == nil && s.closed.Load() {
 		err = errStopped
 	}
 	if err != nil {
-		for _, pf := range files {
-			if pf != nil {
-				pf.Abort()
-			}
+		for _, pf := range rm.files {
+			pf.Abort()
 		}
 
 		return err
 	}
 	if beforeMergeCommit != nil {
-		beforeMergeCommit(meta)
+		beforeMergeCommit(rm.meta)
 	}
-	_, err = s.dir.Commit(files, inputs)
+	_, err = s.dir.Commit(rm.files, inputs)
 	s.countRuns()
 
 	return err
+}
+
+// minStolenRows is the least a range merge takes from another: as much as
+// the least part of a merged run holds, in halves.
+const minStolenRows = mergedPartRows / 2
+
+// mergeRange is a range of keys that one range merge covers: from lo to hi
+// as it began, and up to end once others have taken the rest.
+type mergeRange struct {
+	lo, hi, end []byte
+	limit       *part.RangeLimit
+}
+
+// rangeMerges is the range merges of one merge. A range merge that ends
+// while no range is left to start takes the end of what the range merge with
+// the most rows left still has to do, so that no core waits for the last
+// range.
+type rangeMerges struct {
+	s       *Store
+	srcs    []*part.Part
+	runs    int
+	samples *part.KeySamples
+	meta    PartMeta
+
+	// mu guards ranges, the ends of the ranges and started, which is set
+	// once every first range has begun. A thief holds it while the range
+	// merge it takes from answers, so a range merge does not take it before
+	// it ends.
+	mu      sync.Mutex
+	ranges  []*mergeRange
+	started bool
+
+	filesMu sync.Mutex
+	files   []*PartFile
+	errs    []error
+}
+
+// work merges r and then the ranges it takes from others.
+func (rm *rangeMerges) work(r *mergeRange) {
+	for r != nil {
+		if err := rm.merge(r); err != nil {
+			rm.filesMu.Lock()
+			rm.errs = append(rm.errs, err)
+			rm.filesMu.Unlock()
+
+			return
+		}
+		r = rm.steal()
+	}
+}
+
+// merge writes the rows of r to a part of its own.
+func (rm *rangeMerges) merge(r *mergeRange) error {
+	pf, err := rm.s.dir.Create()
+	if err != nil {
+		return err
+	}
+	pf.Meta = rm.meta
+	pf.BeforeWrite(rm.s.giveWay)
+	rm.filesMu.Lock()
+	rm.files = append(rm.files, pf)
+	rm.filesMu.Unlock()
+	w := part.NewWriter(pf, rm.s.opts.Part)
+	if err := part.MergeRangeLimit(w, rm.srcs, rm.s.opts.BlockRows, r.lo, r.hi, r.limit); err != nil {
+		return err
+	}
+
+	return w.Close()
+}
+
+// steal returns the end of the rows left to the range merge that has the
+// most of them, which it gives up, sized so that both finish together, or
+// nil when every first range has not begun yet or none has rows enough left.
+func (rm *rangeMerges) steal() *mergeRange {
+	rm.mu.Lock()
+	defer rm.mu.Unlock()
+	if !rm.started {
+		return nil
+	}
+	below := func(key []byte) int {
+		if key == nil {
+			return 0
+		}
+
+		return rm.samples.RowsBelow(key)
+	}
+	// A range merge refuses a key it has passed, and has passed more of its
+	// range at the next try.
+	for range len(rm.ranges) {
+		if rm.s.closed.Load() {
+			return nil
+		}
+		var victim *mergeRange
+		most := 0
+		for _, r := range rm.ranges {
+			left := rm.samples.RowsBelow(r.end) - below(r.lo) - int(r.limit.Rows())
+			if left > most {
+				victim, most = r, left
+			}
+		}
+		if victim == nil {
+			return nil
+		}
+		// A range merge begins by decoding a block of every run, which costs
+		// about what merging an eighth of a block's rows does.
+		take := (most - rm.runs*rm.s.opts.BlockRows/8) / 2
+		if take < minStolenRows {
+			return nil
+		}
+		key := rm.samples.KeyAt(below(victim.lo) + int(victim.limit.Rows()) + most - take)
+		if key == nil || (victim.lo != nil && bytes.Compare(key, victim.lo) <= 0) || (victim.end != nil && bytes.Compare(key, victim.end) >= 0) {
+			return nil
+		}
+		if victim.limit.Lower(key) {
+			r := &mergeRange{lo: key, hi: victim.end, end: victim.end, limit: &part.RangeLimit{}}
+			victim.end = key
+			rm.ranges = append(rm.ranges, r)
+
+			return r
+		}
+	}
+
+	return nil
 }
 
 // countRuns notes the number of runs in the table that merges are to take.
