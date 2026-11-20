@@ -1123,6 +1123,27 @@ func pickMerges(parts []*Handle, fanIn int, compact bool) [][]sortedRun {
 	return sets
 }
 
+// widest returns the most runs one merge reads: so many that its range
+// merges, each holding a decoded block of every run, fit on every core side
+// by side under the block budget.
+func (s *Store) widest() int {
+	return max(s.opts.MergeFanIn, 4, s.opts.MergeBlocks/runtime.GOMAXPROCS(0))
+}
+
+// narrowed cuts every set of more than most runs into sets of about equal
+// size that merge side by side; the runs those write are merged next.
+func narrowed(sets [][]sortedRun, most int) [][]sortedRun {
+	var out [][]sortedRun
+	for _, set := range sets {
+		k := (len(set) + most - 1) / most
+		for i := range k {
+			out = append(out, set[i*len(set)/k:(i+1)*len(set)/k])
+		}
+	}
+
+	return out
+}
+
 // beforeMergeCommit, when set, runs before a merge commits its run.
 var beforeMergeCommit func(meta PartMeta)
 
@@ -1223,8 +1244,9 @@ const spareIdle = 10 * time.Second
 
 // closedSet returns, for every partition that has closed and gone quiet,
 // that neither a merge under way nor a set of taken reads and of which no
-// single run holds seven eighths of the rows, all of its runs. They are
-// merged side by side, under the block budget of all merges.
+// single run holds seven eighths of the rows, all of its runs, in sets of at
+// most the widest a merge reads. They are merged side by side, under the
+// block budget of all merges.
 func (s *Store) closedSet(free []*Handle, taken [][]sortedRun) [][]sortedRun {
 	width := int64(s.opts.Partition)
 	if width <= 0 || s.opts.MergeFanIn < 2 {
@@ -1258,7 +1280,7 @@ func (s *Store) closedSet(free []*Handle, taken [][]sortedRun) [][]sortedRun {
 		}
 	}
 
-	return pickMerges(open, s.opts.MergeFanIn, true)
+	return narrowed(pickMerges(open, s.opts.MergeFanIn, true), s.widest())
 }
 
 // startMerges starts the merges that are due among the runs that no merge
@@ -1287,7 +1309,9 @@ func (s *Store) startMerges(compact bool) bool {
 		}
 	}
 	sets := pickMerges(free, s.opts.MergeFanIn, compact)
-	if !compact {
+	if compact {
+		sets = narrowed(sets, s.widest())
+	} else {
 		// A partition some of whose runs a merge reads waits for it.
 		whole := free[:0:0]
 		partial := map[int64]bool{}
