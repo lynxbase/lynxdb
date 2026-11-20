@@ -44,12 +44,22 @@ type Generator struct {
 	state uint64
 	users uint64
 	time  int64
+	// step is the mean number of microseconds from one event to the next.
+	step uint64
 }
 
 // New returns a generator of events spread over users accounts; active
 // accounts write far more than the rest, as on the network.
 func New(seed uint64, users int) *Generator {
-	return &Generator{state: seed*0x9e3779b97f4a7c15 + 1, users: uint64(max(users, 1)), time: 1732206349000167}
+	return &Generator{state: seed*0x9e3779b97f4a7c15 + 1, users: uint64(max(users, 1)), time: 1732206349000167, step: 200}
+}
+
+// Spread makes the events that follow lie about step microseconds apart, 200
+// unless set, so that a few million of them can cover several days.
+func (g *Generator) Spread(step int64) *Generator {
+	g.step = uint64(max(step, 1))
+
+	return g
 }
 
 func (g *Generator) next() uint64 {
@@ -196,7 +206,7 @@ func (g *Generator) appendCreatedAt(dst []byte, us int64, post bool) []byte {
 // Append adds n events to dst, one JSON object per line.
 func (g *Generator) Append(dst []byte, n int) []byte {
 	for ; n > 0; n-- {
-		g.time += int64(g.next() % 400)
+		g.time += int64(g.next() % (2 * g.step))
 		r := g.next()
 		author := g.account()
 		dst = append(dst, `{"did":"`...)
