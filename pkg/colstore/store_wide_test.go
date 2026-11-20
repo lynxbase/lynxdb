@@ -9,7 +9,7 @@ import (
 // TestACompactionOfMoreRunsThanTheBudgetTakesMergesThemInTurns requires a
 // partition of more runs than one merge may read under the block budget on
 // every core to end as one run with all its rows, merged in sets of two up
-// to the widest a merge reads.
+// to the widest a merge reads until twice that many runs are left.
 func TestACompactionOfMoreRunsThanTheBudgetTakesMergesThemInTurns(t *testing.T) {
 	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(4))
 	skipSyncs(t)
@@ -41,9 +41,13 @@ func TestACompactionOfMoreRunsThanTheBudgetTakesMergesThemInTurns(t *testing.T) 
 	}
 	// Each turn writes the runs one tier up.
 	turns := 0
-	for n := runs; n > 1; n = (n + widest - 1) / widest {
-		turns++
+	for n := runs; n > 1; turns++ {
+		if n <= 2*widest {
+			break
+		}
+		n = (n + widest - 1) / widest
 	}
+	turns++
 	snap := s.Table().Snapshot()
 	if tier := snap.Parts()[0].Tier; tier != turns {
 		t.Fatalf("the compacted run is of tier %d, want %d after merges of at most %d runs", tier, turns, widest)

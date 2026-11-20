@@ -1130,11 +1130,19 @@ func (s *Store) widest() int {
 	return max(s.opts.MergeFanIn, 4, s.opts.MergeBlocks/runtime.GOMAXPROCS(0))
 }
 
-// narrowed cuts every set of more than most runs into sets of about equal
-// size that merge side by side; the runs those write are merged next.
+// narrowed cuts every set of more than twice most runs into sets of at most
+// most runs of about equal size, which merge side by side; the runs those
+// write are merged next. A set of up to twice most runs stays whole: one
+// merge of it on half the cores or more writes the rows once, which takes no
+// longer than writing them twice on every core.
 func narrowed(sets [][]sortedRun, most int) [][]sortedRun {
 	var out [][]sortedRun
 	for _, set := range sets {
+		if len(set) <= 2*most {
+			out = append(out, set)
+
+			continue
+		}
 		k := (len(set) + most - 1) / most
 		for i := range k {
 			out = append(out, set[i*len(set)/k:(i+1)*len(set)/k])
