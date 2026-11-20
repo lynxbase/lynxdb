@@ -46,6 +46,21 @@ type Generator struct {
 	time  int64
 	// step is the mean number of microseconds from one event to the next.
 	step uint64
+	// batch is the commit of several records whose events come next.
+	batch batch
+}
+
+// batch is a commit of several records of one account, collection and
+// operation, whose events follow one another.
+type batch struct {
+	left                  int
+	author                uint64
+	collection, operation string
+	committed, created    int64
+	// jitter is the offset of the records' createdAt from their keys' time,
+	// and sameTime tells that the records share their time of creation.
+	jitter   int64
+	sameTime bool
 }
 
 // New returns a generator of events spread over users accounts; active
@@ -139,20 +154,43 @@ func (g *Generator) age() int64 { return g.between(6, math.Log10(30*24*3600*1e6)
 
 // lag draws how long before the event its commit was made, in microseconds:
 // a median of 47 s, a tenth under 3 s and a tenth over 20 min, and all but
-// a thousandth within an hour, as on the network.
+// a thousandth within an hour, as on the network; but one event in five
+// comes from a delivery late by one to forty hours, as after an outage.
 func (g *Generator) lag() int64 {
+	if g.next()%5 == 0 {
+		return g.between(9.55, 11.15)
+	}
+
 	return int64(math.Pow(10, min(max(7.67+1.05*g.normal(), 4.5), 9.55)))
 }
 
 // skew draws how long before its commit the client made a record key, in
-// microseconds: a second or two, a few minutes for one client in fifty.
+// microseconds: a second or two, under a few minutes for all but a few, and
+// up to days for one client in two thousand.
 func (g *Generator) skew() int64 {
-	if g.next()%50 == 0 {
-		return g.between(6, 8.5)
+	if g.next()%2000 == 0 {
+		return g.between(8, 11.4)
 	}
 
-	return int64(math.Pow(10, 6.2+0.5*g.normal()))
+	return int64(math.Pow(10, 6.2+0.8*g.normal()))
 }
+
+// jitter draws how far, in microseconds, a client's createdAt lies from the
+// time of its record key: tens of milliseconds, a few seconds at most for
+// all but a few, either way.
+func (g *Generator) jitter() int64 {
+	j := int64(math.Pow(10, 4.5+0.7*g.normal()))
+	if g.next()%2 == 0 {
+		return -j
+	}
+
+	return j
+}
+
+// batchOdds is one in how many commits holds several records; their events
+// make about a sixth of the revisions repeat the one before, as on the
+// network.
+const batchOdds = 14
 
 // deletedAge draws the age of a record that a delete names, in
 // microseconds: under an hour for three in ten, under a day for half, and
@@ -209,11 +247,16 @@ func (g *Generator) Append(dst []byte, n int) []byte {
 		g.time += int64(g.next() % (2 * g.step))
 		r := g.next()
 		author := g.account()
+		member := g.batch.left > 0
+		if member {
+			author = g.batch.author
+			g.batch.left--
+		}
 		dst = append(dst, `{"did":"`...)
 		dst = g.appendDID(dst, author)
 		dst = append(dst, `","time_us":`...)
 		dst = strconv.AppendInt(dst, g.time, 10)
-		if r%100 == 0 {
+		if !member && r%100 == 0 {
 			dst = append(dst, `,"kind":"identity","identity":{"did":"`...)
 			dst = g.did(dst)
 			dst = append(dst, `","handle":"`...)
@@ -240,19 +283,34 @@ func (g *Generator) Append(dst []byte, n int) []byte {
 		case op < 5:
 			operation = "update"
 		}
+		committed, created, jitter := g.time-g.lag(), int64(0), g.jitter()
+		created = committed - g.skew()
+		switch {
+		case member:
+			collection, operation, committed, jitter = g.batch.collection, g.batch.operation, g.batch.committed, g.batch.jitter
+			created = committed - g.skew()
+			if g.batch.sameTime {
+				// Records made at once take keys a few microseconds apart.
+				g.batch.created += 1 + int64(g.next()%8)
+				created = g.batch.created
+			}
+		case collection != "app.bsky.actor.profile" && g.next()%batchOdds == 0:
+			g.batch = batch{
+				left: 1 + int(g.next()%5), author: author, collection: collection, operation: operation,
+				committed: committed, created: created, jitter: jitter, sameTime: g.next()%2 == 0,
+			}
+		}
 		// A revision is minted with its commit by the server, a record key a
 		// little before by the client that makes the record, with its time
 		// of creation; a deleted record was made long before. A few keys
 		// are names or of other alphabets.
 		dst = append(dst, `,"kind":"commit","commit":{"rev":"`...)
-		committed := g.time - g.lag()
 		dst = appendTID(dst, committed, clock(author, 1, 32))
 		dst = append(dst, `","operation":"`...)
 		dst = append(dst, operation...)
 		dst = append(dst, `","collection":"`...)
 		dst = append(dst, collection...)
 		dst = append(dst, `","rkey":"`...)
-		created := committed - g.skew()
 		switch named := g.next() % 1000; {
 		case collection == "app.bsky.actor.profile", operation == "update" && named < 938, named < 5:
 			dst = append(dst, "self"...)
@@ -272,7 +330,7 @@ func (g *Generator) Append(dst []byte, n int) []byte {
 		dst = append(dst, `","record":{"$type":"`...)
 		dst = append(dst, collection...)
 		dst = append(dst, `","createdAt":"`...)
-		dst = g.appendCreatedAt(dst, created, collection == "app.bsky.feed.post")
+		dst = g.appendCreatedAt(dst, created+jitter, collection == "app.bsky.feed.post")
 		dst = append(dst, '"')
 		switch collection {
 		case "app.bsky.feed.post":
