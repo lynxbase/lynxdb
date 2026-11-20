@@ -112,6 +112,57 @@ func (b *Batch) init() {
 // Columns returns every column, including ones without values in this batch.
 func (b *Batch) Columns() []*Column { return b.cols }
 
+// ColumnSize is the number of values and payload bytes a column held.
+type ColumnSize struct {
+	Path          string
+	Kind          vec.Kind
+	Values, Bytes int
+	Sparse        bool
+}
+
+// Sizes appends the sizes of the columns that hold values, and the rows, to
+// dst.
+func (b *Batch) Sizes(dst []ColumnSize) []ColumnSize {
+	dst = append(dst, ColumnSize{Values: b.Rows})
+	for _, c := range b.cols {
+		if c.Count > 0 {
+			dst = append(dst, ColumnSize{c.Path, c.Kind, c.Count, len(c.Data), c.Sparse})
+		}
+	}
+
+	return dst
+}
+
+// Reserve gives an empty batch room for the rows and the columns of sizes,
+// as Sizes reported them, so that rows like those fill it without its
+// buffers growing step by step.
+func (b *Batch) Reserve(sizes []ColumnSize) {
+	if len(sizes) == 0 || b.Rows != 0 {
+		return
+	}
+	b.Times = slices.Grow(b.Times, sizes[0].Values)
+	for _, s := range sizes[1:] {
+		if b.paths[s.Path] == nil && len(b.paths) >= b.opts.MaxColumns {
+			continue
+		}
+		c := b.Col(s.Path, s.Kind)
+		switch s.Kind {
+		case vec.KindBool:
+			c.Bools = slices.Grow(c.Bools, s.Values)
+		case vec.KindInt:
+			c.Ints = slices.Grow(c.Ints, s.Values)
+		case vec.KindFloat:
+			c.Floats = slices.Grow(c.Floats, s.Values)
+		case vec.KindString, vec.KindVariant:
+			c.Ends = slices.Grow(c.Ends, s.Values)
+			c.Data = slices.Grow(c.Data, s.Bytes)
+		}
+		if s.Sparse {
+			c.RowIDs = slices.Grow(c.RowIDs, s.Values)
+		}
+	}
+}
+
 // Full reports whether the batch cannot take another row.
 func (b *Batch) Full() bool { return b.Rows >= MaxRows }
 

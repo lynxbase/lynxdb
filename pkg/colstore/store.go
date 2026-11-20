@@ -271,13 +271,15 @@ func (s *Store) Close() error {
 }
 
 // appendShard is one buffer of Append; since is when its oldest unwritten
-// row arrived.
+// row arrived, and sizes what the columns of the last batch written from it
+// held, for the next to reserve.
 type appendShard struct {
 	mu       sync.Mutex
 	batch    *shred.Batch
 	buffered int // input bytes in batch
 	since    time.Time
 	errs     []shred.LineError
+	sizes    []shred.ColumnSize
 }
 
 // appendPiece is the most input Append shreds before it looks at the
@@ -387,6 +389,7 @@ func (s *Store) appendPiece(lines []byte, at int64) (rows, rejected int64) {
 	defer sh.mu.Unlock()
 	if sh.batch == nil {
 		sh.batch = s.spare.take(s.shredOptions())
+		sh.batch.Reserve(sh.sizes)
 	}
 	before := sh.batch.Rows
 	sh.errs = sh.batch.AddNDJSON(lines, at, sh.errs[:0])
@@ -546,6 +549,7 @@ func (s *Store) writeBuffers(age time.Duration) error {
 		if sh.buffered > 0 {
 			size += int64(sh.buffered)
 			if sh.batch.Rows > 0 {
+				sh.sizes = sh.batch.Sizes(sh.sizes[:0])
 				taken = append(taken, sh.batch)
 				sh.batch = nil
 			}
