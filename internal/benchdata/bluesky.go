@@ -3,7 +3,9 @@
 package benchdata
 
 import (
+	"math"
 	"strconv"
+	"time"
 )
 
 // collections are the commit collections with their share of events in
@@ -32,6 +34,10 @@ var words = []string{
 }
 
 const base32 = "abcdefghijklmnopqrstuvwxyz234567"
+
+// sortable is the alphabet of record keys and revisions, in the order of
+// its bytes so that the keys sort as the times they hold.
+const sortable = "234567abcdefghijklmnopqrstuvwxyz"
 
 // Generator yields the same events for the same seed.
 type Generator struct {
@@ -68,13 +74,49 @@ func (g *Generator) id(dst []byte, n int, v uint64) []byte {
 }
 
 func (g *Generator) did(dst []byte) []byte {
-	// The square of a uniform draw favours the low account numbers.
-	r := g.next() >> 11
-	f := float64(r) / (1 << 53)
-	account := uint64(f * f * float64(g.users))
+	return g.appendDID(dst, g.account())
+}
+
+// account draws an account; the square of a uniform draw favours the low
+// account numbers.
+func (g *Generator) account() uint64 {
+	f := float64(g.next()>>11) / (1 << 53)
+
+	return uint64(f * f * float64(g.users))
+}
+
+func (g *Generator) appendDID(dst []byte, account uint64) []byte {
 	dst = append(dst, "did:plc:"...)
 
 	return g.id(dst, 24, account*0xd6e8feb86659fd93+0x2545f4914f6cdd1d)
+}
+
+// appendTID appends the 13 characters that a microsecond time and a clock
+// identifier of 10 bits make, the time in the high bits.
+func appendTID(dst []byte, us int64, clock uint64) []byte {
+	v := uint64(us)<<10 | clock&1023
+	var buf [13]byte
+	for i := len(buf) - 1; i >= 0; i-- {
+		buf[i] = sortable[v&31]
+		v >>= 5
+	}
+
+	return append(dst, buf[:]...)
+}
+
+// clock returns the clock identifier that an account mints keys of one kind
+// with.
+func clock(account, kind uint64) uint64 {
+	return (account*0x9e3779b97f4a7c15 + kind*0xbf58476d1ce4e5b9) >> 54
+}
+
+// age draws how long before now a record was made, between a second and a
+// month, as many of each order of magnitude as of any other.
+func (g *Generator) age() int64 {
+	const least, most = 1e6, 30 * 24 * 3600 * 1e6
+	f := float64(g.next()>>11) / (1 << 53)
+
+	return int64(least * math.Exp(f*math.Log(most/least)))
 }
 
 func (g *Generator) text(dst []byte) []byte {
@@ -94,8 +136,9 @@ func (g *Generator) Append(dst []byte, n int) []byte {
 	for ; n > 0; n-- {
 		g.time += int64(g.next() % 400)
 		r := g.next()
+		author := g.account()
 		dst = append(dst, `{"did":"`...)
-		dst = g.did(dst)
+		dst = g.appendDID(dst, author)
 		dst = append(dst, `","time_us":`...)
 		dst = strconv.AppendInt(dst, g.time, 10)
 		if r%100 == 0 {
@@ -125,14 +168,25 @@ func (g *Generator) Append(dst []byte, n int) []byte {
 		case op < 5:
 			operation = "update"
 		}
+		// A revision is minted with its commit, shortly before the event is
+		// seen; a record key when its record is made, a little earlier, and a
+		// deleted record was made long before.
 		dst = append(dst, `,"kind":"commit","commit":{"rev":"`...)
-		dst = g.id(dst, 13, g.next())
+		dst = appendTID(dst, g.time-int64(g.next()%300000), clock(author, 1))
 		dst = append(dst, `","operation":"`...)
 		dst = append(dst, operation...)
 		dst = append(dst, `","collection":"`...)
 		dst = append(dst, collection...)
 		dst = append(dst, `","rkey":"`...)
-		dst = g.id(dst, 13, g.next())
+		created := g.time - int64(g.next()%2000000)
+		switch {
+		case collection == "app.bsky.actor.profile":
+			dst = append(dst, "self"...)
+		case operation == "delete":
+			dst = appendTID(dst, g.time-g.age(), clock(author, 2))
+		default:
+			dst = appendTID(dst, created, clock(author, 2))
+		}
 		if operation == "delete" {
 			dst = append(dst, "\"}}\n"...)
 
@@ -140,13 +194,9 @@ func (g *Generator) Append(dst []byte, n int) []byte {
 		}
 		dst = append(dst, `","record":{"$type":"`...)
 		dst = append(dst, collection...)
-		dst = append(dst, `","createdAt":"2024-11-21T16:`...)
-		dst = strconv.AppendUint(dst, 10+g.next()%50, 10)
-		dst = append(dst, ':')
-		dst = strconv.AppendUint(dst, 10+g.next()%50, 10)
-		dst = append(dst, '.')
-		dst = strconv.AppendUint(dst, 100+g.next()%900, 10)
-		dst = append(dst, `Z"`...)
+		dst = append(dst, `","createdAt":"`...)
+		dst = time.UnixMicro(created).UTC().AppendFormat(dst, "2006-01-02T15:04:05.000Z")
+		dst = append(dst, '"')
 		switch collection {
 		case "app.bsky.feed.post":
 			dst = append(dst, `,"langs":["en"],"text":"`...)
@@ -155,10 +205,11 @@ func (g *Generator) Append(dst []byte, n int) []byte {
 		case "app.bsky.feed.like", "app.bsky.feed.repost":
 			dst = append(dst, `,"subject":{"cid":"bafyrei`...)
 			dst = g.id(dst, 52, g.next())
+			poster := g.account()
 			dst = append(dst, `","uri":"at://`...)
-			dst = g.did(dst)
+			dst = g.appendDID(dst, poster)
 			dst = append(dst, `/app.bsky.feed.post/`...)
-			dst = g.id(dst, 13, g.next())
+			dst = appendTID(dst, g.time-g.age(), clock(poster, 2))
 			dst = append(dst, `"}`...)
 		default:
 			dst = append(dst, `,"subject":"`...)
