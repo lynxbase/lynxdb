@@ -3,6 +3,7 @@
 package colstore
 
 import (
+	"runtime"
 	"syscall"
 	"time"
 )
@@ -16,4 +17,17 @@ func cpuTime() time.Duration {
 	}
 
 	return time.Duration(ru.Utime.Nano() + ru.Stime.Nano())
+}
+
+// peakRSS returns the most memory the process has held resident.
+func peakRSS() uint64 {
+	var ru syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &ru); err != nil {
+		return 0
+	}
+	if runtime.GOOS == "darwin" {
+		return uint64(ru.Maxrss)
+	}
+
+	return uint64(ru.Maxrss) << 10
 }
