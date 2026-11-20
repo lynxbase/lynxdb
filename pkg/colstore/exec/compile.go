@@ -90,6 +90,10 @@ type query struct {
 	// and leaves out those that the rows kept so far rule out.
 	byTime  int
 	timeCol int
+	// ranked is the order that a sort with a limit keeps its rows in: the
+	// sort's, then for an aggregate its other columns in turn, so that the
+	// groups kept do not depend on the order they are found in.
+	ranked []orderSpec
 }
 
 type orderSpec struct {
@@ -218,6 +222,10 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 			q.order = append(q.order, orderSpec{col: col, desc: o.Desc, nullsFirst: o.NullsFirst})
 		}
 	}
+	q.ranked = q.order
+	if agg != nil && q.limit > 0 && len(q.order) > 0 {
+		q.ranked = tiesBroken(q.order, len(q.names))
+	}
 	if agg == nil {
 		if q.limit > 0 && len(q.order) > 0 {
 			by := q.order[0]
@@ -240,6 +248,18 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 	}
 
 	return q, nil
+}
+
+// tiesBroken returns order followed by the other columns of n, ascending.
+func tiesBroken(order []orderSpec, n int) []orderSpec {
+	out := append([]orderSpec(nil), order...)
+	for c := 0; c < n; c++ {
+		if !slices.ContainsFunc(order, func(o orderSpec) bool { return o.col == c }) {
+			out = append(out, orderSpec{col: c})
+		}
+	}
+
+	return out
 }
 
 // placeName names the column of places, which no result shows.

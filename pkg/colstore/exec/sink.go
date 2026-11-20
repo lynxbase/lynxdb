@@ -37,7 +37,7 @@ func (s *sink) initFinal(q *query) {
 	s.q = q
 	s.cols = make([]colVec, len(q.names))
 	if q.limit > 0 && len(q.order) > 0 {
-		s.top = topK{k: q.limit, order: q.order}
+		s.top = topK{k: q.limit, order: q.ranked}
 	}
 }
 
@@ -312,7 +312,7 @@ func gather(q *query, sinks []*sink) ([]colVec, int) {
 	out := make([]colVec, len(q.names))
 	switch {
 	case q.limit > 0 && len(q.order) > 0:
-		top := topK{k: q.limit, order: q.order}
+		top := topK{k: q.limit, order: q.ranked}
 		for _, s := range sinks {
 			for _, row := range s.top.rows {
 				top.offerRow(row)
