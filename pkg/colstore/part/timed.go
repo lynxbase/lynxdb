@@ -982,10 +982,8 @@ type timedValues struct {
 	prefix, suffix []byte
 	refKind        uint8
 	reference      []byte
-	template       [255]byte
-	// pairs holds the bytes of every pair of digits, high digit first.
-	pairs   [1 << 12]uint16
-	speller stampSpeller
+	words          wordSpeller
+	speller        stampSpeller
 	// parts holds the shifted head number of every value, a nonsense one
 	// for an exception.
 	parts, low []int64
@@ -997,6 +995,13 @@ type timedValues struct {
 	// those differences.
 	farIndex []int32
 	farDiff  []int64
+	// lowCoded tells that low holds numbers in lowDict; refs, refValid and
+	// rows are the references of the rows and the rows of the values,
+	// until resolve adds them.
+	lowCoded bool
+	refs     []int64
+	refValid vec.Bitmap
+	rows     []uint32
 	size     uint64
 	next     int
 }
@@ -1112,9 +1117,9 @@ func (v *timedValues) readRest(r *reader, count int, keep bool) ([]byte, bool) {
 		if v.headDigits < 1 || v.headDigits > min(v.to-v.from, maxHead) {
 			return nil, false
 		}
-		copy(v.template[:], v.prefix)
-		v.makePairs()
-		copy(v.template[v.to:], v.suffix)
+		if v.radixBits != 0 && !v.words.set(v.alphabet, v.radixBits) {
+			return nil, false
+		}
 	}
 	v.excIndex, v.excValue, v.next = v.excIndex[:0], v.excValue[:0], 0
 	v.farIndex, v.farDiff = v.farIndex[:0], v.farDiff[:0]
@@ -1161,6 +1166,7 @@ func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
 	for k, at := range v.farIndex {
 		v.parts[at] = v.farDiff[k]
 	}
+	v.lowCoded = false
 	if v.shift > 0 {
 		if rest, err = v.readLow(rest, count, &b.d); err != nil {
 			return err
@@ -1181,14 +1187,14 @@ func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
 		return ErrCorrupt
 	}
 
-	// The references of the values, those of their rows.
-	var refs []int64
-	var valid vec.Bitmap
+	// The references of the values, those of their rows, which resolve or
+	// the spelling adds.
+	v.refs, v.refValid, v.rows = nil, nil, nil
 	switch v.refKind {
 	case refNone:
 		return nil
 	case refTime:
-		if refs, err = b.rowTimes(); err != nil {
+		if v.refs, err = b.rowTimes(); err != nil {
 			return err
 		}
 	default:
@@ -1200,29 +1206,48 @@ func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
 		if err != nil {
 			return err
 		}
-		refs, valid = followed.vals, followed.valid
+		v.refs, v.refValid = followed.vals, followed.valid
 	}
-	var at []uint32
 	if ref.flags&flagSparse != 0 {
-		if at, err = b.valueRows(ref); err != nil {
+		if v.rows, err = b.valueRows(ref); err != nil {
 			return err
 		}
 	}
-	for i, next := 0, 0; i < count; i++ {
+
+	return nil
+}
+
+// resolve turns the differences of v into the shifted head numbers and its
+// numbers of shifted-out bits into the bits.
+func (v *timedValues) resolve() error {
+	if v.lowCoded {
+		for i, code := range v.low {
+			if uint64(code) >= uint64(len(v.lowDict)) {
+				return ErrCorrupt
+			}
+			v.low[i] = v.lowDict[code]
+		}
+		v.lowCoded = false
+	}
+	if v.refs == nil {
+		return nil
+	}
+	for i, next := 0, 0; i < len(v.parts); i++ {
 		if next < len(v.excIndex) && int(v.excIndex[next]) == i {
 			next++
 
 			continue
 		}
 		row := i
-		if at != nil {
-			row = int(at[i])
+		if v.rows != nil {
+			row = int(v.rows[i])
 		}
-		if valid != nil && !valid.Get(row) {
+		if v.refValid != nil && !v.refValid.Get(row) {
 			return ErrCorrupt
 		}
-		v.parts[i] += unitDiv(refs[row], v.unit)
+		v.parts[i] += unitDiv(v.refs[row], v.unit)
 	}
+	v.refs = nil
 
 	return nil
 }
@@ -1251,12 +1276,7 @@ func (v *timedValues) readLow(src []byte, count int, d *decodeScratch) ([]byte, 
 	if v.low, src, err = readInts(v.low, src, count, d); err != nil {
 		return nil, err
 	}
-	for i, code := range v.low {
-		if uint64(code) >= size {
-			return nil, ErrCorrupt
-		}
-		v.low[i] = v.lowDict[code]
-	}
+	v.lowCoded = true
 
 	return src, nil
 }
@@ -1295,7 +1315,11 @@ func (b *Block) followTimed(pathID uint32, depth int) (*timedFollowed, error) {
 	}
 	f := &b.followed[len(b.followed)-1]
 	f.pathID = ^uint32(0)
-	if err := b.readTimed(ref, &f.read, depth); err != nil {
+	err := b.readTimed(ref, &f.read, depth)
+	if err == nil {
+		err = f.read.resolve()
+	}
+	if err != nil {
 		b.followed = b.followed[:len(b.followed)-1]
 
 		return nil, err
@@ -1406,54 +1430,114 @@ func (v *timedValues) put(dst []byte, i int) int {
 	return v.stride
 }
 
-// spell writes num into out in the chunk's alphabet, its last digit last,
-// two digits at a time from the table of pairs.
+// spell writes num into out in the chunk's alphabet, its last digit last.
 func (v *timedValues) spell(out []byte, num uint64) {
-	if v.radixBits == 0 {
-		spellDigits(out, num, v.alphabet, 0)
+	if v.radixBits != 0 {
+		v.words.spell(out, num)
 
 		return
 	}
-	pair, mask := 2*v.radixBits, uint64(1)<<(2*v.radixBits)-1
-	pairs := &v.pairs
-	j := len(out)
-	for ; j >= 2; j -= 2 {
-		p := pairs[num&mask&uint64(len(pairs)-1)]
-		out[j-2], out[j-1] = byte(p>>8), byte(p)
-		num >>= pair
-	}
-	if j == 1 {
-		out[0] = v.alphabet[num&(1<<v.radixBits-1)]
-	}
-}
-
-// makePairs fills the table of the pairs of digits of the alphabet.
-func (v *timedValues) makePairs() {
-	if v.radixBits == 0 {
-		return
-	}
-	size := len(v.alphabet)
-	for hi := 0; hi < size; hi++ {
-		for lo := 0; lo < size; lo++ {
-			v.pairs[hi<<v.radixBits|lo] = uint16(v.alphabet[hi])<<8 | uint16(v.alphabet[lo])
-		}
-	}
-}
-
-// spellDigits writes num into out, its last digit last.
-func spellDigits(out []byte, num uint64, alphabet []byte, radixBits uint) {
-	if radixBits == 0 {
-		for j := len(out) - 1; j >= 0; j-- {
-			out[j] = alphabet[num%10]
-			num /= 10
-		}
-
-		return
-	}
-	mask := uint64(len(alphabet) - 1)
 	for j := len(out) - 1; j >= 0; j-- {
-		out[j] = alphabet[num&mask]
-		num >>= radixBits
+		out[j] = v.alphabet[num%10]
+		num /= 10
+	}
+}
+
+// wordSpeller spells numbers in an alphabet of a power of two, in byte
+// order, eight digits a word: it spreads the digits one a byte and adds to
+// each the letter its run of consecutive letters begins with.
+type wordSpeller struct {
+	radix uint
+	// eight holds the bits of eight digits, m2 and m1 those of the low two
+	// digits of every four and the low digit of every two.
+	eight, m2, m1 uint64
+	first         uint64
+	// runs holds the first two runs after the first letter's, empty ones
+	// when there are fewer, and more any others.
+	runs [2]letterRun
+	more []letterRun
+}
+
+// letterRun is a run of the alphabet after its first: digits from the run
+// on are step letters further from the first letter than their own number.
+type letterRun struct{ over, step uint64 }
+
+const (
+	everyByte = 0x0101010101010101
+	byteHighs = 0x8080808080808080
+)
+
+// set readies s for alphabet, whose letters ascend, and reports whether
+// they do.
+func (s *wordSpeller) set(alphabet []byte, radix uint) bool {
+	s.radix, s.runs, s.more = radix, [2]letterRun{}, s.more[:0]
+	s.eight = 1<<(8*radix) - 1
+	s.m2 = (1<<(2*radix) - 1) * (1<<32 | 1)
+	s.m1 = (1<<radix - 1) * (1<<48 | 1<<32 | 1<<16 | 1)
+	s.first = uint64(alphabet[0]) * everyByte
+	for d := 1; d < len(alphabet); d++ {
+		gap := int(alphabet[d]) - int(alphabet[d-1])
+		if gap <= 0 {
+			return false
+		}
+		if gap == 1 {
+			continue
+		}
+		r := letterRun{over: uint64(0x80-d) * everyByte, step: uint64(gap - 1)}
+		switch {
+		case s.runs[0].step == 0:
+			s.runs[0] = r
+		case s.runs[1].step == 0:
+			s.runs[1] = r
+		default:
+			s.more = append(s.more, r)
+		}
+	}
+
+	return true
+}
+
+// word spells the eight digits of x, the first at the lowest address.
+func (s *wordSpeller) word(x uint64) uint64 {
+	x = s.spread(x)
+	out := s.letters(x)
+	for _, r := range s.more {
+		out += (x + r.over) & byteHighs >> 7 * r.step
+	}
+
+	return out
+}
+
+// spread puts the eight digits of x one a byte, the first at the lowest
+// address.
+func (s *wordSpeller) spread(x uint64) uint64 {
+	b := s.radix & 7
+	x = x&(1<<(4*b)-1) | x>>(4*b)<<32
+	x = x&s.m2 | x>>(2*b)&s.m2<<16
+	x = x&s.m1 | x>>b&s.m1<<8
+
+	return bits.ReverseBytes64(x)
+}
+
+// letters turns the digits spread over the bytes of x into letters of the
+// first three runs.
+func (s *wordSpeller) letters(x uint64) uint64 {
+	// A byte's high bit tells whether its digit is in a run or after it.
+	return x + s.first + (x+s.runs[0].over)&byteHighs>>7*s.runs[0].step +
+		(x+s.runs[1].over)&byteHighs>>7*s.runs[1].step
+}
+
+// spell writes num into out, its last digit last.
+func (s *wordSpeller) spell(out []byte, num uint64) {
+	b := s.radix & 7
+	var word [8]byte
+	for at := 0; at < len(out); at += 8 {
+		x := num << (uint(at+8-len(out)) * b & 63)
+		if rest := len(out) - at - 8; rest >= 0 {
+			x = num >> (uint(rest) * b & 63)
+		}
+		binary.LittleEndian.PutUint64(word[:], s.word(x&s.eight))
+		copy(out[at:], word[:])
 	}
 }
 
@@ -1466,8 +1550,26 @@ func (b *Block) decodeTimed(ref *ColumnRef, sparse bool, rows int, dst *vec.Colu
 		return err
 	}
 	count := ref.Count
-	dst.Data = grow(dst.Data, int(v.size))
 	dst.Offsets = grow(dst.Offsets, rows+1)
+	if !sparse && v.form == formDigits && len(v.tails) == 0 && v.radixBits != 0 && v.headDigits <= 16 {
+		// The fast path writes 16 bytes a value, past the value's own end.
+		dst.Data = grow(dst.Data, int(v.size)+16)
+		off, err := v.putAll(dst, count)
+		if err != nil {
+			return err
+		}
+		dst.Data = dst.Data[:off]
+		dst.Offsets[rows] = uint32(off)
+		if off != int(v.size) {
+			return ErrCorrupt
+		}
+
+		return nil
+	}
+	if err := v.resolve(); err != nil {
+		return err
+	}
+	dst.Data = grow(dst.Data, int(v.size))
 	off := 0
 	if sparse {
 		i := 0
@@ -1484,8 +1586,6 @@ func (b *Block) decodeTimed(ref *ColumnRef, sparse bool, rows int, dst *vec.Colu
 		if i != count {
 			return ErrCorrupt
 		}
-	} else if v.form == formDigits && len(v.tails) == 0 && v.radixBits != 0 {
-		off = v.putAll(dst, count)
 	} else {
 		for i := 0; i < count; i++ {
 			dst.Offsets[i] = uint32(off)
@@ -1500,47 +1600,85 @@ func (b *Block) decodeTimed(ref *ColumnRef, sparse bool, rows int, dst *vec.Colu
 	return nil
 }
 
-// putAll writes the count values of a chunk whose span is all head, in an
-// alphabet of a power of two of digits, one after another into dst, and
-// returns their bytes; it is put over every value, in one loop.
-func (v *timedValues) putAll(dst *vec.Column, count int) int {
-	stride, from, to := v.stride, v.from, v.to
-	shift, lowMask := v.shift, uint64(1)<<v.shift-1
-	pairBits, pairMask := 2*v.radixBits, uint64(1)<<(2*v.radixBits)-1
-	digitMask := uint64(1)<<v.radixBits - 1
-	pairs := &v.pairs
-	parts, low := v.parts[:count], v.low
+// putAll writes the count values of a chunk of digits whose span is all
+// head, of at most 16 digits of a power of two, one after another into dst,
+// and returns their bytes. It adds the references and looks the shifted-out
+// bits up as it goes, and writes the digits a word at a time, past the end
+// of each value into where the next one goes; dst.Data has 16 bytes of room
+// past the values.
+func (v *timedValues) putAll(dst *vec.Column, count int) (int, error) {
+	stride, from, to, digits := v.stride, v.from, v.to, v.headDigits
+	shift, lowMask := v.shift&63, uint64(1)<<(v.shift&63)-1
+	words := v.words
+	b, many := words.radix&7, len(words.more) > 0
+	// The first eight digits are a word, and any after them another.
+	right, left := uint(max(digits-8, 0))*b&63, uint(max(8-digits, 0))*b&63
+	second := uint(max(16-digits, 0)) * b & 63
+	parts, low, dict := v.parts[:count], v.low, v.lowDict
 	if shift == 0 {
 		low = nil
 	}
-	off, exc := 0, 0
+	coded := v.lowCoded
+	excIndex, excValue := v.excIndex, v.excValue
+	prefix, suffix := v.prefix, v.suffix
+	refs, valid, rows, unit := v.refs, v.refValid, v.rows, v.unit
+	data, offsets := dst.Data, dst.Offsets[:len(parts)]
+	off, exc, nextExc := 0, 0, -1
+	if len(excIndex) > 0 {
+		nextExc = int(excIndex[0])
+	}
 	for i, part := range parts {
-		dst.Offsets[i] = uint32(off)
-		if exc < len(v.excIndex) && int(v.excIndex[exc]) == i {
-			off += copy(dst.Data[off:], v.excValue[exc])
+		offsets[i] = uint32(off)
+		if i == nextExc {
+			off += copy(data[off:], excValue[exc])
 			exc++
+			nextExc = -1
+			if exc < len(excIndex) {
+				nextExc = int(excIndex[exc])
+			}
 
 			continue
 		}
-		out := dst.Data[off : off+stride : off+stride]
-		copy(out[:from], v.prefix)
-		copy(out[to:], v.suffix)
+		if refs != nil {
+			row := i
+			if rows != nil {
+				row = int(rows[i])
+			}
+			if valid != nil && !valid.Get(row) {
+				return 0, ErrCorrupt
+			}
+			part += unitDiv(refs[row], unit)
+		}
 		num := uint64(part) << shift
 		if low != nil {
-			num |= uint64(low[i]) & lowMask
+			bits := uint64(low[i])
+			if coded {
+				if bits >= uint64(len(dict)) {
+					return 0, ErrCorrupt
+				}
+				bits = uint64(dict[bits])
+			}
+			num |= bits & lowMask
 		}
-		head := out[from:to]
-		j := len(head)
-		for ; j >= 2; j -= 2 {
-			pair := pairs[num&pairMask&uint64(len(pairs)-1)]
-			head[j-2], head[j-1] = byte(pair>>8), byte(pair)
-			num >>= pairBits
+		if from > 0 {
+			copy(data[off:off+from], prefix)
 		}
-		if j == 1 {
-			head[0] = v.alphabet[num&digitMask]
+		if many {
+			binary.LittleEndian.PutUint64(data[off+from:], words.word(num>>right<<left))
+			if digits > 8 {
+				binary.LittleEndian.PutUint64(data[off+from+8:], words.word(num<<second&words.eight))
+			}
+		} else {
+			binary.LittleEndian.PutUint64(data[off+from:], words.letters(words.spread(num>>right<<left)))
+			if digits > 8 {
+				binary.LittleEndian.PutUint64(data[off+from+8:], words.letters(words.spread(num<<second&words.eight)))
+			}
+		}
+		if to < stride {
+			copy(data[off+to:off+stride], suffix)
 		}
 		off += stride
 	}
 
-	return off
+	return off, nil
 }
