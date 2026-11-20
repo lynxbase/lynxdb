@@ -135,32 +135,56 @@ func (b *Batch) Sizes(dst []ColumnSize) []ColumnSize {
 
 // Reserve gives an empty batch room for the rows and the columns of sizes,
 // as Sizes reported them, so that rows like those fill it without its
-// buffers growing step by step.
+// buffers growing step by step. It lets go of room beyond twice that, which
+// a batch kept for reuse would otherwise carry from its largest use on.
 func (b *Batch) Reserve(sizes []ColumnSize) {
 	if len(sizes) == 0 || b.Rows != 0 {
 		return
 	}
-	b.Times = slices.Grow(b.Times, sizes[0].Values)
+	b.Times = fit(b.Times, sizes[0].Values)
 	for _, s := range sizes[1:] {
 		if b.paths[s.Path] == nil && len(b.paths) >= b.opts.MaxColumns {
 			continue
 		}
 		c := b.Col(s.Path, s.Kind)
+		c.fitted = true
 		switch s.Kind {
 		case vec.KindBool:
-			c.Bools = slices.Grow(c.Bools, s.Values)
+			c.Bools = fit(c.Bools, s.Values)
 		case vec.KindInt:
-			c.Ints = slices.Grow(c.Ints, s.Values)
+			c.Ints = fit(c.Ints, s.Values)
 		case vec.KindFloat:
-			c.Floats = slices.Grow(c.Floats, s.Values)
+			c.Floats = fit(c.Floats, s.Values)
 		case vec.KindString, vec.KindVariant:
-			c.Ends = slices.Grow(c.Ends, s.Values)
-			c.Data = slices.Grow(c.Data, s.Bytes)
+			c.Ends = fit(c.Ends, s.Values)
+			c.Data = fit(c.Data, s.Bytes)
 		}
 		if s.Sparse {
-			c.RowIDs = slices.Grow(c.RowIDs, s.Values)
+			c.RowIDs = fit(c.RowIDs, s.Values)
+		} else {
+			c.RowIDs = fit(c.RowIDs, 0)
 		}
 	}
+	for _, c := range b.cols {
+		if !c.fitted {
+			c.Bools, c.Ints, c.Floats = fit(c.Bools, 0), fit(c.Ints, 0), fit(c.Floats, 0)
+			c.Ends, c.Data, c.RowIDs = fit(c.Ends, 0), fit(c.Data, 0), fit(c.RowIDs, 0)
+		}
+		c.fitted = false
+	}
+}
+
+// slackRoom is the room a buffer keeps beyond twice what it is fitted to.
+const slackRoom = 1024
+
+// fit returns s emptied, with room for n elements and at most about twice
+// that.
+func fit[T any](s []T, n int) []T {
+	if cap(s) > 2*n+slackRoom {
+		return make([]T, 0, n)
+	}
+
+	return slices.Grow(s[:0], n)
 }
 
 // Full reports whether the batch cannot take another row.

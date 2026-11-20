@@ -21,6 +21,7 @@ type Column struct {
 	Data   []byte
 
 	lastRow int32
+	fitted  bool // set while Reserve fits the batch's buffers
 }
 
 // place records that the next appended value belongs to row.
