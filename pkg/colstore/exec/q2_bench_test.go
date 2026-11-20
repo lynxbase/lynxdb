@@ -21,6 +21,14 @@ import (
 // Bluesky benchmark, and compacts it into one run per day.
 func blueskyDays(b *testing.B, dir string, rows, days, users int) *colstore.Store {
 	b.Helper()
+
+	return blueskyStore(b, dir, rows, users, int64(days)*int64(24*time.Hour/time.Microsecond)/int64(max(rows, 1)))
+}
+
+// blueskyStore is blueskyDays for events whose times step by step
+// microseconds on average.
+func blueskyStore(b *testing.B, dir string, rows, users int, step int64) *colstore.Store {
+	b.Helper()
 	s, err := colstore.OpenStore(dir, colstore.StoreOptions{
 		SortKey:    []string{"kind", "commit.operation", "commit.collection", "did"},
 		TimeFields: []string{"time_us"},
@@ -31,7 +39,7 @@ func blueskyDays(b *testing.B, dir string, rows, days, users int) *colstore.Stor
 	if err != nil {
 		b.Fatal(err)
 	}
-	g := benchdata.New(1, users).Spread(int64(days) * int64(24*time.Hour/time.Microsecond) / int64(max(rows, 1)))
+	g := benchdata.New(1, users).Spread(step)
 	const chunk = 100_000
 	var lines []byte
 	for left := rows; left > 0; left -= chunk {
