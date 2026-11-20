@@ -36,6 +36,10 @@ type Config struct {
 	Dir string
 	// Retention is how long events are kept; zero keeps them all.
 	Retention time.Duration
+	// Partition, TimeFields and SortKey are the settings that an index
+	// created by ingest, or with a request that leaves them out, takes; an
+	// index keeps its settings from then on.
+	//
 	// Partition is the span of time whose events are kept apart; zero
 	// means DefaultPartition.
 	Partition time.Duration
@@ -45,8 +49,8 @@ type Config struct {
 	// TimeFields name the fields whose value becomes the time of an event;
 	// nil means DefaultTimeFields.
 	TimeFields []string
-	// SortKey names the fields that order the rows of the parts written
-	// from then on; empty keeps the order of time.
+	// SortKey names the fields that order the rows of an index; empty
+	// keeps the order of time.
 	SortKey []string
 	// MaxConcurrent bounds the queries that run at once; zero means no
 	// bound.
@@ -135,6 +139,15 @@ func (db *DB) Sync() error { return db.core.Sync() }
 
 // Stats describes every index in the order of their names.
 func (db *DB) Stats() []columnar.IndexStats { return db.core.Stats() }
+
+// Index describes an index; it reports false when there is no such index.
+func (db *DB) Index(name string) (columnar.IndexStats, bool) { return db.core.Index(name) }
+
+// CreateIndex is columnar.DB.Create: the settings that want leaves unset
+// are the database's Partition, TimeFields and SortKey.
+func (db *DB) CreateIndex(index string, want columnar.Settings) (columnar.Settings, bool, error) {
+	return db.core.Create(index, want)
+}
 
 // Usage is columnar.DB.Usage.
 func (db *DB) Usage(index string, sections bool) (columnar.IndexUsage, bool, error) {

@@ -254,6 +254,8 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 	mux.HandleFunc("GET /api/v1/query/jobs", s.handleListJobs)
 
 	mux.HandleFunc("GET /api/v1/indexes", s.handleListIndexes)
+	mux.HandleFunc("GET /api/v1/indexes/{index}", s.handleGetIndex)
+	mux.HandleFunc("PUT /api/v1/indexes/{index}", s.handleCreateIndex)
 	mux.HandleFunc("GET /api/v1/indexes/{index}/columns", s.handleIndexColumns)
 	mux.HandleFunc("POST /api/v1/indexes/{index}/compact", s.handleCompactIndex)
 
