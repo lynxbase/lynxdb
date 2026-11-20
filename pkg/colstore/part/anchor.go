@@ -2,6 +2,7 @@ package part
 
 import (
 	"encoding/binary"
+	"math"
 	"math/bits"
 	"slices"
 
@@ -344,7 +345,7 @@ func chooseParents(refs []timedRef, cost []int) {
 		return
 	}
 	var parent, best [maxAnchors]int
-	bestTotal := 1 << 62
+	bestTotal := math.MaxInt
 	var try func(i, total int)
 	try = func(i, total int) {
 		if total >= bestTotal {

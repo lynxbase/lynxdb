@@ -3,6 +3,7 @@ package part
 import (
 	"encoding/binary"
 	"io"
+	"math"
 	"math/bits"
 	"strings"
 
@@ -280,7 +281,7 @@ func (e *ColumnExplain) explainBlock(w *Writer, b *Block, ref *ColumnRef, c *shr
 	}
 	s.forced = false
 
-	best, smallest := "", 1<<62
+	best, smallest := "", math.MaxInt
 	for form, size := range sizes {
 		if size < smallest || size == smallest && form < best {
 			best, smallest = form, size
