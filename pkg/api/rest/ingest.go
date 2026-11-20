@@ -77,42 +77,100 @@ var pieces = sync.Pool{New: func() any {
 	return &b
 }}
 
+// piece is lines read from a body into the buffer held.
+type piece struct {
+	held  *[]byte
+	lines []byte
+}
+
 // readLines reads r in pieces of whole lines, the last of which may lack its
-// newline, and calls fn with each. A line longer than a piece grows the
-// piece until it holds the line.
+// newline, and calls fn with each while it reads the next, so that reading
+// and decoding a body take a core of their own. A line longer than a piece
+// grows the piece until it holds the line. It returns the first error of
+// fn, or else of reading, once it has stopped reading r.
 func readLines(r io.Reader, fn func(lines []byte) error) error {
-	held := pieces.Get().(*[]byte)
-	buf := *held
-	defer func() {
-		if cap(buf) == bodyPiece {
-			*held = buf
+	free := make(chan *[]byte, 2)
+	free <- pieces.Get().(*[]byte)
+	free <- pieces.Get().(*[]byte)
+	full, stop := make(chan piece), make(chan struct{})
+	var readErr error
+	go func() {
+		defer close(full)
+		readErr = fillPieces(r, free, full, stop)
+	}()
+	var err error
+	for p := range full {
+		if err == nil {
+			if err = fn(p.lines); err != nil {
+				close(stop)
+			}
+		}
+		free <- p.held
+	}
+	for range 2 {
+		if held := <-free; cap(*held) == bodyPiece {
 			pieces.Put(held)
 		}
+	}
+	if err != nil {
+		return err
+	}
+
+	return readErr
+}
+
+// fillPieces reads r into the buffers of free and sends the lines of each to
+// full, keeping the line a buffer ends inside for the next; every buffer it
+// takes goes back to free or to full.
+func fillPieces(r io.Reader, free chan *[]byte, full chan<- piece, stop <-chan struct{}) error {
+	cur, n := <-free, 0
+	defer func() {
+		if cur != nil {
+			free <- cur
+		}
 	}()
-	n := 0
 	for {
+		buf := *cur
 		read, err := io.ReadFull(r, buf[n:])
 		n += read
 		switch {
 		case err == io.EOF || err == io.ErrUnexpectedEOF:
-			if n == 0 {
-				return nil
+			if n > 0 {
+				select {
+				case full <- piece{cur, buf[:n]}:
+					cur = nil
+				case <-stop:
+				}
 			}
 
-			return fn(buf[:n])
+			return nil
 		case err != nil:
 			return err
 		}
 		end := bytes.LastIndexByte(buf, '\n') + 1
 		if end == 0 {
-			buf = slices.Grow(buf, len(buf))[:2*len(buf)]
+			*cur = slices.Grow(buf, len(buf))[:2*len(buf)]
 
 			continue
 		}
-		if err := fn(buf[:end]); err != nil {
-			return err
+		var next *[]byte
+		select {
+		case next = <-free:
+		case <-stop:
+			return nil
 		}
-		n = copy(buf, buf[end:])
+		if tail := len(buf) - end; tail >= len(*next) {
+			*next = slices.Grow((*next)[:0], 2*tail)[:2*tail]
+		}
+		n = copy(*next, buf[end:])
+		select {
+		case full <- piece{cur, buf[:end]}:
+			cur = next
+		case <-stop:
+			free <- next
+
+			return nil
+		}
 	}
 }
 
