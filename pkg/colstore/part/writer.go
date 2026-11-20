@@ -74,7 +74,7 @@ type Writer struct {
 	groups []byte
 	// filters holds an entry for every filter of the part, the last
 	// groupFilters of them for the group being built. That group has
-	// grouped blocks, whose filters take stripe bloom blocks in every
+	// grouped blocks, whose filters take stripe filter blocks in every
 	// stripe, and stripes stripes; it closes at groupBlocks blocks or at
 	// the share of groupBytes of filters that its stripes are of
 	// filterStripes. fixedStripes, when set, is the number of stripes of
@@ -84,7 +84,7 @@ type Writer struct {
 	grouped      int
 	stripe       uint32
 	// order and starts serve closeGroup: the filters of the group by
-	// column, and where each begins in blooms.
+	// column, and where each begins in filterData.
 	order        []int32
 	starts       []int
 	groupBlocks  int
@@ -170,10 +170,11 @@ type writerBuffers struct {
 	hashes    []uint64
 	tokenKeys []uint64
 	owned     []ownedTokens
-	// blooms holds the filters of the group being built, end to end, and
+	// filterData holds the filters of the group being built, end to end, and
 	// pages the group as it is written.
-	blooms []byte
-	pages  []byte
+	filterData []byte
+	pages      []byte
+	cells      tokenfilter.Scratch
 }
 
 // ownedTokens names a column that gets a filter of its own and the end of
@@ -192,7 +193,7 @@ var writerPool = mem.Pool[writerBuffers]{Reset: func(b *writerBuffers) bool {
 	// Directory entries alias the values of the last batch.
 	clear(b.ents[:cap(b.ents)])
 
-	return cap(b.block)+cap(b.e.tmp)+cap(b.e.zbuf)+cap(b.dictBytes)+cap(b.blooms)+cap(b.pages)+8*cap(b.tokenKeys) <= maxWriterBytes
+	return cap(b.block)+cap(b.e.tmp)+cap(b.e.zbuf)+cap(b.dictBytes)+cap(b.filterData)+cap(b.pages)+8*cap(b.tokenKeys) <= maxWriterBytes
 }}
 
 // errClosed reports a write to a writer after Close.
@@ -241,7 +242,7 @@ func (w *Writer) Reset(out io.Writer, opts Options) {
 	w.rows, w.raw, w.minT, w.maxT = 0, 0, 0, 0
 	clear(w.sums)
 	w.sums = w.sums[:0]
-	w.groups, w.filters, w.blooms = w.groups[:0], w.filters[:0], w.blooms[:0]
+	w.groups, w.filters, w.filterData = w.groups[:0], w.filters[:0], w.filterData[:0]
 	w.groupFilters, w.grouped, w.stripe, w.verifiedGroup = 0, 0, 0, nil
 	w.groupBlocks, w.groupBytes, w.stripes, w.fixedStripes = filterGroupBlocks, filterGroupBytes, 0, 0
 	w.columnBytes = filterColumnBytes
@@ -384,15 +385,17 @@ func (w *Writer) filterBlock(entry []byte) {
 	rest := len(shared) > 0 || len(w.owned) == 0
 	total, start := 0, 0
 	if rest {
-		total = tokenfilter.Blocks(len(shared), tokenfilter.SharedBits)
+		total = singleStripe(len(shared), tokenfilter.SharedFalse)
 	}
 	for _, o := range w.owned {
-		total += tokenfilter.Blocks(o.end-start, tokenfilter.ColumnBits)
+		total += singleStripe(o.end-start, tokenfilter.ColumnFalse)
 		start = o.end
 	}
-	stripes := w.fixedStripes
-	if stripes == 0 {
-		stripes = min(1<<(bits.Len(uint(total/filterRounding|1))-1), filterStripes)
+	// The cells of a filter are a power of two, and so are the stripes
+	// that cut them.
+	stripes := min(1<<(bits.Len(uint(total/filterRounding|1))-1), filterStripes)
+	if w.fixedStripes > 0 {
+		stripes = 1 << (bits.Len(uint(w.fixedStripes)) - 1)
 	}
 	if w.grouped > 0 && (stripes > 2*w.stripes || w.stripes > 2*stripes) {
 		w.closeGroup(true)
@@ -411,25 +414,34 @@ func (w *Writer) filterBlock(entry []byte) {
 	}
 }
 
+// singleStripe returns the filter blocks of a filter of tokens hashes at
+// rate in a group of one stripe.
+func singleStripe(tokens int, rate float64) int {
+	cells := tokenfilter.Cells(tokens, 1)
+
+	return cells * tokenfilter.Blocks(tokens, cells, rate)
+}
+
 // appendFilter adds the filter of keys to the group being built, as that of
 // a column of the block being written or with noPath as that of its columns
 // that have none.
 func (w *Writer) appendFilter(path uint32, kind vec.Kind, keys []uint64) {
-	start := len(w.blooms)
-	bits := tokenfilter.ColumnBits
+	rate := tokenfilter.ColumnFalse
 	if path == noPath {
-		bits = tokenfilter.SharedBits
+		rate = tokenfilter.SharedFalse
 	}
-	w.blooms = tokenfilter.Append(w.blooms, keys, w.stripes, bits)
-	w.addFilter(path, kind, (len(w.blooms)-start)/tokenfilter.BlockBytes)
+	cells := tokenfilter.Cells(len(keys), w.stripes)
+	per := tokenfilter.Blocks(len(keys), cells, rate)
+	w.filterData = tokenfilter.AppendFilter(w.filterData, keys, cells, per, &w.cells)
+	w.addFilter(path, kind, uint8(bits.TrailingZeros(uint(cells))), cells*per)
 }
 
-// addFilter records the filter of blocks bloom blocks that was appended to
-// w.blooms for the block being written.
-func (w *Writer) addFilter(path uint32, kind vec.Kind, blocks int) {
+// addFilter records the filter of 1<<cells cells and blocks filter blocks
+// that was appended to w.filterData for the block being written.
+func (w *Writer) addFilter(path uint32, kind vec.Kind, cells uint8, blocks int) {
 	pieces := uint32(blocks / w.stripes)
 	w.filters = binary.LittleEndian.AppendUint32(w.filters, path)
-	w.filters = append(w.filters, byte(kind), 0, 0, 0)
+	w.filters = append(w.filters, byte(kind), cells, 0, 0)
 	w.filters = binary.LittleEndian.AppendUint32(w.filters, pieces)
 	w.filters = binary.LittleEndian.AppendUint32(w.filters, w.stripe)
 	w.stripe += pieces
@@ -444,7 +456,7 @@ var filterPad [filterPage]byte
 // closeGroup writes the filters of the group being built, striped, once the
 // group is full or, with last set, whatever it holds.
 func (w *Writer) closeGroup(last bool) {
-	if w.grouped == 0 || (!last && w.grouped < w.groupBlocks && len(w.blooms) < w.groupBytes/filterStripes*w.stripes) {
+	if w.grouped == 0 || (!last && w.grouped < w.groupBlocks && len(w.filterData) < w.groupBytes/filterStripes*w.stripes) {
 		return
 	}
 	blocks := int(w.stripe) * w.stripes
@@ -481,7 +493,7 @@ func (w *Writer) closeGroup(last bool) {
 	for k := 0; k < w.stripes; k++ {
 		for _, i := range order {
 			piece := int(binary.LittleEndian.Uint32(entries[int(i)*filterEntrySize+8:])) * tokenfilter.BlockBytes
-			src := w.blooms[starts[i]+k*piece : starts[i]+(k+1)*piece]
+			src := w.filterData[starts[i]+k*piece : starts[i]+(k+1)*piece]
 			for len(src) > 0 {
 				if placed%pageBlocks == 0 {
 					if len(pages) >= groupFlush {
@@ -497,7 +509,7 @@ func (w *Writer) closeGroup(last bool) {
 		}
 	}
 	w.writePages(pages)
-	w.pages, w.blooms, w.groupFilters, w.grouped, w.stripe = pages[:0], w.blooms[:0], 0, 0, 0
+	w.pages, w.filterData, w.groupFilters, w.grouped, w.stripe = pages[:0], w.filterData[:0], 0, 0, 0
 }
 
 // writePages writes filter pages after putting the checksum of each at its
@@ -520,12 +532,12 @@ func (w *Writer) copies(src *Part, i int) bool {
 }
 
 // joinGroup makes the group being built one that the filters first to end
-// of group g of src can be copied into: one whose stripes cut every filter
-// at bloom block boundaries, into pieces not much larger than they need be.
-func (w *Writer) joinGroup(src *Part, g *filterGroup, first, end int) {
+// of src can be copied into: one whose stripes cut every filter at cell
+// boundaries, into pieces not much larger than they need be.
+func (w *Writer) joinGroup(src *Part, first, end int) {
 	common := 0
 	for f := first; f < end; f++ {
-		a := src.filterBlocks(g, f)
+		a := src.filterCells(f)
 		for common != 0 {
 			a, common = common, a%common
 		}
@@ -601,7 +613,7 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 	var entry [indexEntrySize]byte
 	if !w.opts.NoTokenFilter {
 		g, first, end := src.blockFilters(i)
-		w.joinGroup(src, g, first, end)
+		w.joinGroup(src, first, end)
 		// The pages of the source are checked here because the group
 		// being built gets checksums of its own.
 		if w.verifiedGroup != g {
@@ -609,12 +621,12 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 			w.verified = grow(w.verified, vec.BitmapWords(g.pages()))
 			clear(w.verified)
 		}
-		start := len(w.blooms)
+		start := len(w.filterData)
 		for f := first; f < end; f++ {
 			path, ok := binary.LittleEndian.Uint32(src.filters[f*filterEntrySize:]), false
-			if w.blooms, ok = src.appendFilter(w.blooms, g, f, w.verified); !ok ||
+			if w.filterData, ok = src.appendFilter(w.filterData, g, f, w.verified); !ok ||
 				(path != noPath && (uint64(path) >= uint64(len(pathMap)) || pathMap[path] == noPath)) {
-				w.blooms = w.blooms[:start]
+				w.filterData = w.filterData[:start]
 
 				return ErrCorrupt
 			}
@@ -625,7 +637,7 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 			if path != noPath {
 				path = pathMap[path]
 			}
-			w.addFilter(path, vec.Kind(src.filters[f*filterEntrySize+4]), src.filterBlocks(g, f))
+			w.addFilter(path, vec.Kind(src.filters[f*filterEntrySize+4]), src.filters[f*filterEntrySize+5], src.filterBlocks(g, f))
 		}
 	}
 	copy(entry[:20], e[:20])

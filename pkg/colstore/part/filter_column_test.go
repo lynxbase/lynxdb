@@ -257,8 +257,8 @@ func TestColumnFiltersAnswerAsTheValuesOfTheirColumns(t *testing.T) {
 	}
 }
 
-// The filters of all columns of all blocks of a group have the bloom blocks
-// of one token in one stripe.
+// The filters of all columns of all blocks of a group have the cells of one
+// token in one stripe.
 func TestTokenLookupInEveryColumnReadsOneStripe(t *testing.T) {
 	r := rand.New(rand.NewSource(13))
 	p := columnSource(t, r, 0, 40*400, 400, 250)

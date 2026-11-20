@@ -1,5 +1,6 @@
 // Package tokenfilter splits text into case-folded search tokens and tests
-// whether a block may contain one, using a split-block Bloom filter.
+// whether a block may contain one, using a filter of the hashes of its
+// tokens.
 package tokenfilter
 
 import (

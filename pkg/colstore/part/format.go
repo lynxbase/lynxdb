@@ -16,20 +16,20 @@ import (
 //	         first keys, totals, the rows of the values of counted paths
 //	trailer  footer offset, footer length, footer checksum, version, magic
 //
-// A token's probe reads one bloom block of a filter, and which n-th of the
-// filter holds it depends on the token alone when n divides the filter's
-// bloom blocks. A group cuts each of its filters into as many pieces as it
-// has stripes and stores stripe after stripe, stripe k being piece k of
-// every filter in block order, so that one token's probes of the whole group
-// read one stripe. The bloom blocks fill pages of filterPage bytes, each
-// behind the checksum of its page, and a group of filterAligned bytes or
-// more starts on a page of the file, so that a probe reads one page of the
-// file. A block has one filter or several, each for a column of its own or
-// for all the columns that have none. A group has as many stripes as suit
-// the filters of its blocks, so that rounding a filter to them costs little.
+// A token's probe reads one cell of a filter, and which n-th of the filter
+// holds it depends on the token alone when n divides the filter's cells. A
+// group cuts each of its filters into as many pieces as it has stripes and
+// stores stripe after stripe, stripe k being piece k of every filter in
+// block order, so that one token's probes of the whole group read one
+// stripe. The filter blocks, the units of the size of a cell, fill pages of
+// filterPage bytes, each behind the checksum of its page, and a group of
+// filterAligned bytes or more starts on a page of the file. A block has one
+// filter or several, each for a column of its own or for all the columns
+// that have none, with as many cells as the stripes of the group it was
+// written in.
 const (
 	fileMagic     = 0x5450584c // "LXPT"
-	formatVersion = 7
+	formatVersion = 8
 
 	headerSize  = 8
 	trailerSize = 28
@@ -39,14 +39,14 @@ const (
 	// chunks and filter pages carry their own checksums.
 	indexEntrySize = 52
 	// path id or noPath for the columns without a filter of their own,
-	// kind, three zero bytes, bloom blocks per stripe, those of the group's
-	// earlier filters.
+	// kind, the power of two of its cells, two zero bytes, filter blocks
+	// per stripe, those of the group's earlier filters.
 	filterEntrySize = 16
 	// offset and length of the group's stripes, and their number.
 	groupEntrySize = 20
-	// A filter page begins with its checksum, in the room of a bloom block,
-	// and holds pageBlocks bloom blocks; a probe verifies the page it reads
-	// and nothing else.
+	// A filter page begins with its checksum, in the room of a filter block,
+	// and holds pageBlocks filter blocks; a probe verifies the pages it
+	// reads and nothing else.
 	filterPage = 4096
 	pageBlocks = filterPage/tokenfilter.BlockBytes - 1
 	// A group of filterStripes stripes takes blocks until their filters
@@ -59,10 +59,9 @@ const (
 	filterGroupBytes  = 6 << 20
 	filterStripes     = 128
 	// A block asks for the largest power of two of stripes that is at most
-	// one in filterRounding of the bloom blocks of its filters, and at most
-	// filterStripes: rounding a filter to them then adds less than that
-	// share of the block's filters, and 2 KiB on average to a filter of a
-	// block that gets filterStripes.
+	// one in filterRounding of the filter blocks of its filters, and at
+	// most filterStripes: rounding the cells of a filter to whole blocks
+	// then adds less than that share of the block's filters.
 	filterRounding = 16
 	// Padding a smaller group to a page of the file would cost more than
 	// the page that a probe of it may read beyond its own.

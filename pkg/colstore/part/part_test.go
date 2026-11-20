@@ -274,10 +274,10 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 	w := NewWriter(&buf, Options{})
 	w.groupBlocks, w.fixedStripes, w.columnBytes = group, stripes, math.MaxInt
 	batch := shred.NewBatch(shred.Options{})
-	var pieces [blocks]int
+	var pieces, cells, per [blocks]int
 	for i := 0; i < blocks; i++ {
 		docs := sampleDocs(200)
-		for k := 0; k < 9000+1500*i; k++ {
+		for k := 0; k < 14000+1500*i; k++ {
 			docs = append(docs, fmt.Sprintf(`{"id":"request%dx%d"}`, i, k))
 		}
 		batch.Reset()
@@ -289,7 +289,10 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 		if err := w.WriteBatch(batch); err != nil {
 			t.Fatal(err)
 		}
-		pieces[i] = len(tokenfilter.Append(nil, tokensOf(t, docs), stripes, tokenfilter.SharedBits)) / tokenfilter.BlockBytes / stripes
+		tokens := len(tokensOf(t, docs))
+		cells[i] = tokenfilter.Cells(tokens, stripes)
+		per[i] = tokenfilter.Blocks(tokens, cells[i], tokenfilter.SharedFalse)
+		pieces[i] = cells[i] * per[i] / stripes
 	}
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
@@ -303,7 +306,7 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 	// Where every lookup reads, worked out from the layout: the stripes of
 	// a group follow its last block, from the next page of the file on when
 	// the group is large, each the pieces of its blocks in order, in pages
-	// of a checksum and pageBlocks bloom blocks.
+	// of a checksum and pageBlocks filter blocks.
 	type place struct{ group, page int }
 	type section struct{ off, size, stripe int }
 	var sections []section
@@ -319,7 +322,7 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 		off := int(binary.LittleEndian.Uint64(e[20:])) + int(binary.LittleEndian.Uint32(e[28:]))
 		pages := (stripes*stripe + pageBlocks - 1) / pageBlocks
 		if stripe < 3*pageBlocks {
-			t.Fatalf("a stripe of %d bloom blocks is too short to tell its pages apart", stripe)
+			t.Fatalf("a stripe of %d filter blocks is too short to tell its pages apart", stripe)
 		}
 		size := (stripes*stripe + pages) * tokenfilter.BlockBytes
 		if size >= filterAligned {
@@ -332,11 +335,13 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 	for i := range hashes {
 		hashes[i] = r.Uint64()
 	}
-	read := func(i int, h uint64) place {
+	// read returns the first and the last page of the cell of h.
+	read := func(i int, h uint64) (first, last place) {
 		stripe := tokenfilter.Block(h, stripes)
-		n := stripe*sections[i/group].stripe + before[i] + tokenfilter.Block(h, pieces[i]*stripes) - stripe*pieces[i]
+		cell := tokenfilter.Block(h, cells[i])
+		n := stripe*sections[i/group].stripe + before[i] + (cell-stripe*(cells[i]/stripes))*per[i]
 
-		return place{i / group, n / pageBlocks}
+		return place{i / group, n / pageBlocks}, place{i / group, (n + per[i] - 1) / pageBlocks}
 	}
 	// lookups fails the test unless exactly the lookups that read the
 	// damaged place fail, and returns how many did.
@@ -351,8 +356,10 @@ func TestDamagedFilterFailsOnlyTokenLookups(t *testing.T) {
 				if _, berr := b.MayContainToken(h); berr != err {
 					t.Fatalf("block %d: the part and the block disagree: %v, %v", i, err, berr)
 				}
-				if want := read(i, h) == damaged; (err == ErrCorrupt) != want || (err != nil && err != ErrCorrupt) {
-					t.Fatalf("block %d reads %+v, damage at %+v: %v", i, read(i, h), damaged, err)
+				first, last := read(i, h)
+				want := damaged.group == first.group && first.page <= damaged.page && damaged.page <= last.page
+				if (err == ErrCorrupt) != want || (err != nil && err != ErrCorrupt) {
+					t.Fatalf("block %d reads %+v to %+v, damage at %+v: %v", i, first, last, damaged, err)
 				}
 				if err != nil {
 					failed++
@@ -503,7 +510,7 @@ func corruptPartsFail(t *testing.T, opts Options) {
 			if err := p.OpenBlock(i, &b); err != nil {
 				return true
 			}
-			// One lookup in every bloom block of the filter.
+			// Lookups that reach every cell of the filter.
 			n := uint64(filterSize(p, i))
 			for k := uint64(0); k < n; k++ {
 				if _, err := b.MayContainToken((k<<32 + n - 1) / n << 32); err == ErrCorrupt {

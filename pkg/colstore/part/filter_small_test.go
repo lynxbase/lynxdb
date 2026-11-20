@@ -197,7 +197,7 @@ func TestMergeGroupsCopiedBlocksByTheirStripes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	counts := groupStripes(t, p, largestDivisor)
+	counts := groupStripes(t, p, func(cells int) int { return min(cells, filterStripes) })
 	least, most := filterStripes, 1
 	for stripes := range counts {
 		least, most = min(least, stripes), max(most, stripes)
