@@ -1180,15 +1180,17 @@ func (s *Store) wholeDue(parts []*Handle) map[int64]int {
 
 // leaveToWhole drops the merges by tier in the partitions that are due to
 // be merged whole, which would write their rows twice. A partition that
-// holds fanIn runs for each of fanIn keeps one at a time, so that its runs
-// stay few while rows keep arriving; merging names the partitions that a
-// merge under way reads.
+// holds more runs than its whole merge can take on every core under the
+// block budget, and at least fanIn for each of fanIn, keeps one at a time:
+// past that the whole merge runs on fewer cores the more runs it reads, and
+// runs stay few while rows keep arriving. merging names the partitions that
+// a merge under way reads.
 func (s *Store) leaveToWhole(sets [][]sortedRun, parts []*Handle, merging map[int64]bool) [][]sortedRun {
 	due := s.wholeDue(parts)
 	if len(due) == 0 {
 		return sets
 	}
-	most := s.opts.MergeFanIn * s.opts.MergeFanIn
+	most := max(s.opts.MergeFanIn*s.opts.MergeFanIn, s.opts.MergeBlocks/runtime.GOMAXPROCS(0))
 	out, kept := sets[:0], map[int64]bool{}
 	for _, set := range sets {
 		p := set[0].partition

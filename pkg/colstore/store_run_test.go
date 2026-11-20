@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"runtime"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -468,8 +469,8 @@ func TestClosedPartitionsAreMergedIntoOneRun(t *testing.T) {
 // TestAClosedPartitionWaitsForQuietAndSkipsItsTiers requires that a closed
 // partition keeps its runs while rows arrive in it, without the merges by
 // tier that its whole merge would repeat, that it is merged by tier once it
-// holds as many runs as two tiers take, and that it is merged whole when
-// rows have stopped arriving.
+// holds as many runs as two tiers take and its whole merge can take on every
+// core, and that it is merged whole when rows have stopped arriving.
 func TestAClosedPartitionWaitsForQuietAndSkipsItsTiers(t *testing.T) {
 	skipSyncs(t)
 	hour := int64(time.Hour)
@@ -477,7 +478,9 @@ func TestAClosedPartitionWaitsForQuietAndSkipsItsTiers(t *testing.T) {
 	timeNow = func() time.Time { return time.Unix(0, now.Load()) }
 	defer func() { timeNow = time.Now }()
 	now.Store((firstTimedHour+2)*hour + hour/2)
-	s, err := OpenStore(t.TempDir(), StoreOptions{TimeField: "ts", Partition: time.Hour, MergeFanIn: 3, FlushInterval: -1})
+	s, err := OpenStore(t.TempDir(), StoreOptions{
+		TimeField: "ts", Partition: time.Hour, MergeFanIn: 3, FlushInterval: -1, MergeBlocks: 9 * runtime.GOMAXPROCS(0),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
