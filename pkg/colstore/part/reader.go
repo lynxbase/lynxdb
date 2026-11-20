@@ -603,14 +603,15 @@ type Block struct {
 	spans [][2]uint32
 	// times holds the time of every row once timesRead is set, and anchors
 	// the numbers of the columns that timed columns follow, as they are
-	// read; anchorScratch and anchorCols decode the anchors read at each
-	// depth of following, the depth of the column being decoded.
-	times         vec.Column
-	timesRead     bool
-	anchors       []anchorRead
-	anchorScratch []decodeScratch
-	anchorCols    []vec.Column
-	depth         int
+	// read; space decodes the anchors, the block's own unless blocks that
+	// decode one at a time share one, and depth is the depth of following
+	// of the column being decoded.
+	times     vec.Column
+	timesRead bool
+	anchors   []anchorRead
+	space     *anchorSpace
+	ownSpace  anchorSpace
+	depth     int
 }
 
 // OpenBlock points b at block i of p.

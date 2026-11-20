@@ -119,6 +119,7 @@ func MergeRangeLimit(w *Writer, srcs []*Part, blockRows int, lo, hi []byte, limi
 		}
 		c := cursorPool.Get()
 		c.src, c.part, c.block, c.taken = i, p, -1, 0
+		c.blk.space = &m.space
 		c.pathMap = grow(c.pathMap, len(p.paths))
 		for j := range c.pathMap {
 			c.pathMap[j] = noPath
@@ -181,6 +182,9 @@ type merger struct {
 	unsorted []uint64
 	last     Block
 	lastCols []vec.Column
+	// space reads the anchors of the cursors' blocks, which decode one at a
+	// time.
+	space anchorSpace
 }
 
 var mergerPool = mem.Pool[merger]{Reset: func(m *merger) bool {
@@ -196,7 +200,7 @@ var mergerPool = mem.Pool[merger]{Reset: func(m *merger) bool {
 	*m = merger{
 		cursors: m.cursors[:0], tree: m.tree[:0], winners: m.winners[:0],
 		keyBuf: m.keyBuf[:0], times: m.times[:0], lastCols: m.lastCols,
-		counts: m.counts[:0], unsorted: m.unsorted[:0],
+		counts: m.counts[:0], unsorted: m.unsorted[:0], space: m.space,
 	}
 
 	return true
@@ -297,7 +301,7 @@ var cursorPool = mem.Pool[mergeCursor]{Reset: func(c *mergeCursor) bool {
 	}
 	c.part, c.key, c.times, c.refs, c.done, c.state = nil, nil, nil, nil, false, cursorBound
 	clear(c.cols)
-	c.blk.part, c.blk.data, c.blk.dir, c.blk.stats = nil, nil, nil, nil
+	c.blk.part, c.blk.data, c.blk.dir, c.blk.stats, c.blk.space = nil, nil, nil, nil, nil
 	clear(c.outs)
 	clear(c.slots)
 	clear(c.lazy)

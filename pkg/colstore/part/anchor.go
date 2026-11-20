@@ -432,6 +432,13 @@ func valueAt(c *shred.Column, row int) ([]byte, bool) {
 	return c.Bytes(lo), true
 }
 
+// anchorSpace holds the scratch and the column that reading an anchor takes
+// at each depth of following.
+type anchorSpace struct {
+	scratch []decodeScratch
+	cols    []vec.Column
+}
+
 // anchorRead holds the numbers by row of an anchor of the block, read for a
 // follower and kept for the others.
 type anchorRead struct {
@@ -454,16 +461,20 @@ func (b *Block) anchorNumbers(pathID uint32, shape *anchorShape, raw []byte, dep
 	if !ok || ref.bad || depth > maxTimedDepth {
 		return nil, ErrCorrupt
 	}
-	for len(b.anchorScratch) <= depth {
-		b.anchorScratch = append(b.anchorScratch, decodeScratch{})
-		b.anchorCols = append(b.anchorCols, vec.Column{})
+	space := b.space
+	if space == nil {
+		space = &b.ownSpace
 	}
-	col := &b.anchorCols[depth]
+	for len(space.scratch) <= depth {
+		space.scratch = append(space.scratch, decodeScratch{})
+		space.cols = append(space.cols, vec.Column{})
+	}
+	col := &space.cols[depth]
 	// The shape may lie in the scratch that reading the anchor swaps out.
 	want := *shape
 	shape = &want
 	held, outer := b.d, b.depth
-	b.d, b.depth = b.anchorScratch[depth], depth
+	b.d, b.depth = space.scratch[depth], depth
 	// A timed anchor of the shape gives its numbers as they are read; any
 	// other is read as strings, whose numbers are parsed.
 	v := &b.d.timed
@@ -504,7 +515,7 @@ func (b *Block) anchorNumbers(pathID uint32, shape *anchorShape, raw []byte, dep
 			}
 		}
 	}
-	b.anchorScratch[depth], b.d, b.depth = b.d, held, outer
+	space.scratch[depth], b.d, b.depth = b.d, held, outer
 	if err != nil {
 		return nil, err
 	}
