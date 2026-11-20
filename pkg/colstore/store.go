@@ -49,7 +49,8 @@ type StoreOptions struct {
 	FlushInterval time.Duration
 	// MergeBlocks bounds the memory of merging: a range merge holds one
 	// decoded block per run it reads, and the merges running at once hold
-	// at most this many blocks together; zero means 96.
+	// at most this many blocks together; zero means 64 per core and at
+	// least 96, so that a whole merge of up to 64 runs keeps every core busy.
 	MergeBlocks int
 	// MergeBacklog makes merges give way to the rows that wait in Append's
 	// buffers and to their flushes, which the callers of Append and Sync
@@ -82,9 +83,11 @@ const (
 	// that are narrower decode the blocks at their borders several times
 	// over and scatter the rows over many files.
 	mergedPartRows = 1 << 17
-	// defaultMergeBlocks bounds the decoded blocks that all range merges
-	// hold together, each several megabytes of column values.
-	defaultMergeBlocks = 96
+	// mergeBlocksPerCore and leastMergeBlocks set the default bound of the
+	// decoded blocks that all range merges hold together, each several
+	// megabytes of column values.
+	mergeBlocksPerCore = 64
+	leastMergeBlocks   = 96
 	// defaultMergeBacklog lets a burst of rows be written before the runs
 	// it leaves are merged, and bounds the runs that queries then meet.
 	defaultMergeBacklog = 64
@@ -219,7 +222,7 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 		opts.FlushInterval = defaultFlushInterval
 	}
 	if opts.MergeBlocks <= 0 {
-		opts.MergeBlocks = defaultMergeBlocks
+		opts.MergeBlocks = max(leastMergeBlocks, mergeBlocksPerCore*runtime.GOMAXPROCS(0))
 	}
 	if opts.MergeBacklog == 0 {
 		opts.MergeBacklog = defaultMergeBacklog
