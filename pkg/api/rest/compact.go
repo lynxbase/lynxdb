@@ -21,7 +21,27 @@ func (s *Server) handleCompactIndex(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	c, found, err := s.db.Compact(index)
+	// A compaction takes as long as the index is large: the request ends when
+	// shutdown begins, and closing the database then stops the merges.
+	type outcome struct {
+		c     columnar.Compaction
+		found bool
+		err   error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		c, found, err := s.db.Compact(index)
+		done <- outcome{c, found, err}
+	}()
+	var c columnar.Compaction
+	var found bool
+	var err error
+	select {
+	case o := <-done:
+		c, found, err = o.c, o.found, o.err
+	case <-s.stopping:
+		err = columnar.ErrClosed
+	}
 	switch {
 	case errors.Is(err, columnar.ErrClosed), errors.Is(err, colstore.ErrClosed):
 		w.Header().Set("Retry-After", "5")

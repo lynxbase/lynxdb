@@ -37,6 +37,7 @@ type Server struct {
 	httpServer       *http.Server
 	listenAddr       atomic.Value  // stores resolved listen address (string)
 	ready            chan struct{} // closed when server is ready to accept requests
+	stopping         chan struct{} // closed when shutdown begins
 	queryCfg         config.QueryConfig
 	ingestCfg        config.IngestConfig
 	shutdownTimeout  time.Duration
@@ -130,6 +131,7 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 		keyStore:        cfg.KeyStore,
 		runtimeCfg:      runtimeCfg,
 		ready:           make(chan struct{}),
+		stopping:        make(chan struct{}),
 		queryCfg:        cfg.Query,
 		ingestCfg:       cfg.Ingest,
 		shutdownTimeout: defaultShutdownTimeout(cfg.HTTP.ShutdownTimeout),
@@ -508,6 +510,7 @@ func (s *Server) stopReceivers() {
 // shutdown stops the receivers, drains the HTTP requests in flight and
 // closes the database.
 func (s *Server) shutdown() {
+	close(s.stopping)
 	if s.rateLimiter != nil {
 		s.rateLimiter.Stop()
 	}
