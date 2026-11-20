@@ -1480,7 +1480,9 @@ type dictBuilder struct {
 const maxRepeats = 32
 
 // fewRepeats reports whether nearly every value of c differs from all
-// values before it.
+// values before it. When none of the first eighth of the values repeats, it
+// takes the rest to repeat as little: a column at the limit would show
+// repeats there but for a chance of about e^-(limit/64).
 func (d *dictBuilder) fewRepeats(c *shred.Column) bool {
 	size := 64
 	for size < 2*c.Count {
@@ -1493,7 +1495,11 @@ func (d *dictBuilder) fewRepeats(c *shred.Column) bool {
 	clear(seen)
 	mask := uint64(size - 1)
 	repeats, limit := 0, c.Count/maxRepeats
+	sample := max(c.Count/8, 1)
 	for i := 0; i < c.Count; i++ {
+		if i == sample && repeats == 0 && limit >= 64 {
+			return true
+		}
 		// Zero marks an empty slot.
 		h := xxhash.Sum64(c.Bytes(i)) | 1
 		slot := h & mask
