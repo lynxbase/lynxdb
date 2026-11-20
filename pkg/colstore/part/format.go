@@ -29,7 +29,7 @@ import (
 // written in.
 const (
 	fileMagic     = 0x5450584c // "LXPT"
-	formatVersion = 10
+	formatVersion = 11
 
 	headerSize  = 8
 	trailerSize = 28

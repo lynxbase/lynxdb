@@ -21,7 +21,9 @@ import (
 // numbers of a block are read as integers whatever their reference, which
 // packed digits cannot, and with exceptions, which they lack. The chunk keeps
 // the differences and the shifted-out bits as integer sections, the digits
-// past the head as more, and every other string as it is, as an exception.
+// past the head as more, and every other string as it is, as an exception;
+// a value that fits but whose difference lies far from the others' keeps
+// its difference among the exceptions instead.
 // Decoding it reads the time column of its block and the integer sections
 // of the column it follows, never their strings. The strings may also be
 // stamps, times in one RFC 3339 layout, whose head number is their time;
@@ -39,7 +41,9 @@ import (
 //	reference   byte, refNone, refTime or refColumn, then for a column
 //	            the uvarint length and the path of the column followed
 //	exceptions  uvarint count, then for each the uvarint number of values
-//	            since the last, the uvarint length and the bytes
+//	            since the last and either the uvarint length plus one and
+//	            the bytes of the string, or a zero and the zigzag uvarint
+//	            of a far difference
 //	differences integer section, one a value, an exception's that of the
 //	            value before it
 //	low         when shift is set, the shifted-out bits: a byte, lowPlain or
@@ -51,9 +55,13 @@ const (
 	minTimed = 64
 	// timedSample is the number of values the shape is judged on.
 	timedSample = 64
-	// maxExceptionShare bounds the exceptions, one in this many values,
-	// beyond which differences far from the others stay in their frames.
+	// maxExceptionShare bounds the values whose differences lie far from
+	// the others', one in this many, beyond which the rest stay in their
+	// frames.
 	maxExceptionShare = 16
+	// rareShare is the share, one in this many values, under which a byte
+	// at a position or in the digits is taken for an exception's.
+	rareShare = 16
 	// maxIrregularShare bounds the values that do not fit the shape or lack
 	// a reference, one in this many, which are exceptions whatever they
 	// cost.
@@ -151,6 +159,8 @@ type timedScratch struct {
 	diffs, low []int64
 	tail       []int64
 	exceptions []int32
+	far        []bool
+	farDiffs   []int64
 	lowDict    []int64
 	lowCodes   []int64
 	lowCode    []int32
@@ -253,12 +263,18 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 	}
 	w.block = binary.AppendUvarint(w.block, uint64(len(s.exceptions)))
 	prev := -1
-	for _, e := range s.exceptions {
-		v := c.Bytes(int(e))
+	for k, e := range s.exceptions {
 		w.block = binary.AppendUvarint(w.block, uint64(int(e)-prev-1))
-		w.block = binary.AppendUvarint(w.block, uint64(len(v)))
-		w.block = append(w.block, v...)
 		prev = int(e)
+		if s.far[k] {
+			w.block = append(w.block, 0)
+			w.block = binary.AppendUvarint(w.block, zigzag(s.farDiffs[k]))
+
+			continue
+		}
+		v := c.Bytes(int(e))
+		w.block = binary.AppendUvarint(w.block, uint64(len(v))+1)
+		w.block = append(w.block, v...)
 	}
 	w.block = appendInts(w.block, s.diffs[:n], &w.blobs, &w.e)
 	if s.shift > 0 {
@@ -366,14 +382,11 @@ func (w *Writer) addTimedRef(c *shred.Column, path string, rows int) {
 	r.path = path
 	r.vals, r.valid = grow(r.vals, rows), grow(r.valid, rows)
 	clear(r.valid)
-	for i, next := 0, 0; i < c.Count; i++ {
-		if next < len(s.exceptions) && int(s.exceptions[next]) == i {
-			next++
-
-			continue
+	for i := 0; i < c.Count; i++ {
+		if s.regular[i] && s.refOK[i] {
+			row := c.Row(i)
+			r.vals[row], r.valid[row] = int64(s.heads[i]>>s.shift), true
 		}
-		row := c.Row(i)
-		r.vals[row], r.valid[row] = int64(s.heads[i]>>s.shift), true
 	}
 }
 
@@ -384,34 +397,36 @@ func (w *Writer) addTimedRef(c *shred.Column, path string, rows int) {
 // frame.
 func (s *timedScratch) pickExceptions(n int) {
 	lo, hi := s.window(n)
-	s.exceptions = s.exceptions[:0]
+	s.exceptions, s.far, s.farDiffs = s.exceptions[:0], s.far[:0], s.farDiffs[:0]
 	for i := 0; i < n; i++ {
-		if !s.regular[i] || !s.refOK[i] || s.diffs[i] < lo || s.diffs[i] > hi {
-			s.exceptions = append(s.exceptions, int32(i))
+		switch fits := s.regular[i] && s.refOK[i]; {
+		case !fits:
+			s.exceptions, s.far, s.farDiffs = append(s.exceptions, int32(i)), append(s.far, false), append(s.farDiffs, 0)
+		case s.diffs[i] < lo || s.diffs[i] > hi:
+			s.exceptions, s.far, s.farDiffs = append(s.exceptions, int32(i)), append(s.far, true), append(s.farDiffs, s.diffs[i])
 		}
 	}
-	if len(s.exceptions) > n/maxExceptionShare {
-		s.exceptions = s.exceptions[:0]
-		for i := 0; i < n; i++ {
-			if !s.regular[i] || !s.refOK[i] {
-				s.exceptions = append(s.exceptions, int32(i))
-			}
+	if len(s.exceptions) == 0 {
+		return
+	}
+	// The values before the first one kept take its difference and low
+	// bits; a far value keeps its low bits.
+	first := -1
+	for i := 0; i < n && first < 0; i++ {
+		if s.regular[i] && s.refOK[i] && s.diffs[i] >= lo && s.diffs[i] <= hi {
+			first = i
 		}
 	}
-	first := 0
-	for _, e := range s.exceptions {
-		if int(e) != first {
-			break
-		}
-		first++
-	}
-	if first == n || len(s.exceptions) == 0 {
+	if first < 0 {
 		return
 	}
 	prevDiff, prevLow := s.diffs[first], s.low[first]
 	for i, next := 0, 0; i < n; i++ {
 		if next < len(s.exceptions) && int(s.exceptions[next]) == i {
-			s.diffs[i], s.low[i] = prevDiff, prevLow
+			s.diffs[i] = prevDiff
+			if !s.far[next] {
+				s.low[i] = prevLow
+			}
 			next++
 
 			continue
@@ -419,6 +434,10 @@ func (s *timedScratch) pickExceptions(n int) {
 		prevDiff, prevLow = s.diffs[i], s.low[i]
 	}
 }
+
+// farBits is about what a far difference of bits bits costs among the
+// exceptions: its place, its tag and its bytes.
+func farBits(bits int) int { return 8 * (2 + (bits+7)/7) }
 
 // promising reports whether an even sample of the column's values, whose
 // times are those of their batch's rows, has the shape and follows nothing,
@@ -566,10 +585,10 @@ func (s *timedScratch) shape(c *shred.Column, idx []int) bool {
 		}
 	}
 	s.from, s.to = 0, best
-	for s.from < best && int(misses[s.from]) <= n/maxExceptionShare {
+	for s.from < best && int(misses[s.from]) <= n/rareShare {
 		s.from++
 	}
-	for s.to > s.from && int(misses[s.to-1]) <= n/maxExceptionShare {
+	for s.to > s.from && int(misses[s.to-1]) <= n/rareShare {
 		s.to--
 	}
 	if s.from == s.to {
@@ -591,7 +610,7 @@ func (s *timedScratch) shape(c *shred.Column, idx []int) bool {
 	}
 	s.alphabet = s.alphabet[:0]
 	for b, k := range holders {
-		if k > 0 && int(k)*maxExceptionShare >= n {
+		if k > 0 && int(k)*rareShare >= n {
 			s.alphabet = append(s.alphabet, byte(b))
 		}
 	}
@@ -832,7 +851,7 @@ func (s *timedScratch) lowBits(k int, shift uint) int {
 
 // trimmed is the number of the lowest and of the highest values of a
 // sample that a spread leaves out, as exceptions may lie there.
-const trimmed = timedSample / maxExceptionShare
+const trimmed = timedSample / rareShare
 
 // trimmedSpread returns the spread of vals but for the trimmed lowest and
 // the trimmed highest.
@@ -898,13 +917,14 @@ func (s *timedScratch) window(n int) (lo, hi int64) {
 	}
 	// A width of 2^w bits holds the values whose distance has fewer than w
 	// bits.
-	best, cost, outside := 64, 64*n, 0
+	best, cost, outside, outCost := 64, 64*n, 0, 0
 	for w := 63; w >= 0; w-- {
 		outside += far[w+1]
+		outCost += far[w+1] * farBits(w+1)
 		if outside > n/maxExceptionShare {
 			break
 		}
-		if c := (n-outside)*(w+1) + outside*exceptionBits; c < cost {
+		if c := (n-outside)*(w+1) + outCost; c < cost {
 			best, cost = w, c
 		}
 	}
@@ -933,8 +953,12 @@ type timedValues struct {
 	tails      [][]int64
 	excIndex   []int32
 	excValue   [][]byte
-	size       uint64
-	next       int
+	// farIndex and farDiff hold the values whose differences are far, and
+	// those differences.
+	farIndex []int32
+	farDiff  []int64
+	size     uint64
+	next     int
 }
 
 // timedFollowed is a timed column of a block that another follows: the
@@ -1053,18 +1077,27 @@ func (v *timedValues) readRest(r *reader, count int, keep bool) ([]byte, bool) {
 		copy(v.template[v.to:], v.suffix)
 	}
 	v.excIndex, v.excValue, v.next = v.excIndex[:0], v.excValue[:0], 0
-	v.size = (uint64(count) - exceptions) * uint64(v.stride)
+	v.farIndex, v.farDiff = v.farIndex[:0], v.farDiff[:0]
+	strings, size := uint64(0), uint64(0)
 	for i, at := 0, -1; i < int(exceptions); i++ {
 		at += int(r.uvarint()) + 1
-		value := r.bytes(r.uvarint())
+		if tag := r.uvarint(); tag == 0 {
+			if diff := unzigzag(r.uvarint()); keep {
+				v.farIndex, v.farDiff = append(v.farIndex, int32(at)), append(v.farDiff, diff)
+			}
+		} else {
+			value := r.bytes(tag - 1)
+			if keep {
+				v.excIndex, v.excValue = append(v.excIndex, int32(at)), append(v.excValue, value)
+			}
+			strings++
+			size += uint64(len(value))
+		}
 		if r.bad || at >= count {
 			return nil, false
 		}
-		if keep {
-			v.excIndex, v.excValue = append(v.excIndex, int32(at)), append(v.excValue, value)
-		}
-		v.size += uint64(len(value))
 	}
+	v.size = size + (uint64(count)-strings)*uint64(v.stride)
 
 	return r.buf, !r.bad && v.size <= maxSectionSize
 }
@@ -1084,6 +1117,9 @@ func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
 	var err error
 	if v.parts, rest, err = readInts(v.parts, rest, count, &b.d); err != nil {
 		return err
+	}
+	for k, at := range v.farIndex {
+		v.parts[at] = v.farDiff[k]
 	}
 	if v.shift > 0 {
 		if rest, err = v.readLow(rest, count, &b.d); err != nil {
