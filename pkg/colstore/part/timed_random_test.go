@@ -155,8 +155,10 @@ type timedColumn struct {
 	family  timedFamily
 	density float64
 	odd     float64
-	// lag is how far before the row's time its value was made, in ns.
-	lag int64
+	// lag is how far before the row's time its value was made, in ns, and
+	// repeat the share of values that repeat the row before's.
+	lag    int64
+	repeat float64
 }
 
 // randomTimes returns row times before or after 1970, rising, falling or jumping.
@@ -200,6 +202,7 @@ func timedTrial(r *rand.Rand) (docs []string, times []int64, values []map[string
 			density: []float64{1, 1, 0.99, 0.9, 0.75, 0.5}[r.Intn(6)],
 			odd:     []float64{0, 0, 0.003, 0.02, 0.06, 0.2, 0.3}[r.Intn(7)],
 			lag:     []int64{0, 1e6, 1e9, 1e12}[r.Intn(4)],
+			repeat:  []float64{0, 0, 0.05, 0.3}[r.Intn(4)],
 		}
 		if chain {
 			c.family, c.lag = family, []int64{1e6, 1e8}[r.Intn(2)]
@@ -228,6 +231,9 @@ func timedTrial(r *rand.Rand) (docs []string, times []int64, values []map[string
 			if r.Float64() < c.odd {
 				v = oddValue(r, c.family, at, i)
 			}
+			if before, ok := values[max(i-1, 0)][c.path]; ok && r.Float64() < c.repeat {
+				v = before
+			}
 			values[i][c.path] = v
 			fmt.Fprintf(&sb, `,%q:%q`, c.path, v)
 		}
@@ -248,10 +254,16 @@ func (s timedStats) add(b *Block, ref *ColumnRef) {
 	s["timed"]++
 	chunk, _ := b.timedChunk(ref)
 	var v timedValues
-	_, ok := readTimedHead(chunk, ref.Count, &v, true)
+	rest, ok := readTimedHead(chunk, ref.Count, &v, true)
 	if !ok {
 		s["unreadable"]++
 		return
+	}
+	if len(v.runStart) > 0 {
+		s["with runs"]++
+	}
+	if len(rest) > 0 && rest[0] == intPlanes {
+		s["in byte planes"]++
 	}
 	s[[]string{"digits", "stamps"}[v.form]]++
 	s[[]string{"against nothing", "against the time", "against a column"}[v.refKind]]++
@@ -401,7 +413,8 @@ func TestTimedColumnsRoundTripAtTheEdgesOfTheirShapes(t *testing.T) {
 		return
 	}
 	for _, kind := range []string{"timed", "stamps", "digits", "against nothing", "against the time", "against a column",
-		"with exceptions", "with far values", "with low bits", "with tails", "sparse", "in a chain", "against an untimed column", "of one word", "of two words"} {
+		"with exceptions", "with far values", "with low bits", "with tails", "sparse", "in a chain", "against an untimed column", "of one word", "of two words",
+		"with runs", "in byte planes"} {
 		if stats[kind] == 0 {
 			t.Errorf("no chunk %s was written", kind)
 		}
