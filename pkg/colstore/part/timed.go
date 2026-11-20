@@ -16,16 +16,18 @@ import (
 // span's first digits, shifted right by some bits, less the reference in a
 // unit of a power of ten, takes few bits. Such are keys that begin with
 // their time and end with a counter or noise. The reference is nothing, the
-// time of the row in nanoseconds, or the shifted head number of the row's
-// value of another timed column of the block, named in the chunk; the head
-// numbers of a block are read as integers whatever their reference, which
-// packed digits cannot, and with exceptions, which they lack. The chunk keeps
+// time of the row in nanoseconds, or the number that the row's value of
+// another column of the block spells, whatever form that column is stored
+// in, named in the chunk with the shape its values have; the head numbers
+// of a block are read as integers whatever their reference, which packed
+// digits cannot, and with exceptions, which they lack. The chunk keeps
 // the differences and the shifted-out bits as integer sections, the digits
 // past the head as more, and every other string as it is, as an exception;
 // a value that fits but whose difference lies far from the others' keeps
 // its difference among the exceptions instead.
-// Decoding it reads the time column of its block and the integer sections
-// of the column it follows, never their strings. The strings may also be
+// Decoding it reads the time column of its block and the column it
+// follows: the integer sections of a timed one, the strings of any other,
+// whose numbers it parses. The strings may also be
 // stamps, times in one RFC 3339 layout, whose head number is their time;
 // see stamps.go.
 //
@@ -39,7 +41,11 @@ import (
 //	head        byte, the digits of the head number
 //	unit, shift bytes, the unit's power of ten and the bits shifted out
 //	reference   byte, refNone, refTime or refColumn, then for a column
-//	            the uvarint length and the path of the column followed
+//	            the uvarint length and the path of the column followed and
+//	            the shape of its values: the form, then the stride, span,
+//	            template, alphabet and head digits of digits or the
+//	            fraction digits and zone of stamps, as above, and a byte of
+//	            the bits below the number followed
 //	exceptions  uvarint count, then for each the uvarint number of values
 //	            since the last and either the uvarint length plus one and
 //	            the bytes of the string, or a zero and the zigzag uvarint
@@ -129,15 +135,6 @@ func (h *timedShape) tailDigits() int {
 	return 63 / int(h.radixBits)
 }
 
-// timedRef is a timed column of the block being written, which later timed
-// columns may follow: the shifted head number of its value in every row
-// that holds one that is not an exception.
-type timedRef struct {
-	path  string
-	vals  []int64
-	valid []bool
-}
-
 // timedScratch holds what encoding a timed chunk reuses between columns.
 type timedScratch struct {
 	timedShape
@@ -166,6 +163,9 @@ type timedScratch struct {
 	lowCode    []int32
 	lowCost    [64]int8
 	tried      []uint
+	// self is the column's place among the anchors, -1 when it is none, and
+	// allowed the anchor it may follow, followNone for none.
+	self, allowed int
 	// best, unit, shift and cost are what the sample found: the reference,
 	// followNone, followTime or a column that may be followed, and the
 	// bits a value takes against it.
@@ -217,13 +217,19 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 
 		return false
 	}
-	switch {
-	case s.promising(c, times, w.timedRefs):
-		s.scan(c)
-	case s.promisingStamps(c, times, w.timedRefs):
-		s.scanStamps(c)
-	default:
+	s.self, s.allowed = -1, followNone
+	for i := range w.timedRefs {
+		if w.timedRefs[i].col == c {
+			s.self, s.allowed = i, w.timedRefs[i].parent
+		}
+	}
+	if !s.promising(c, times, w.timedRefs) {
 		return false
+	}
+	if s.form == formStamp {
+		s.scanStamps(c)
+	} else {
+		s.scan(c)
 	}
 	if s.irregular > n/maxIrregularShare {
 		s.reason = "too many values off the shape"
@@ -279,6 +285,7 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 	if s.refKind == refColumn {
 		w.block = binary.AppendUvarint(w.block, uint64(len(s.reference)))
 		w.block = append(w.block, s.reference...)
+		w.block = w.timedRefs[best].shape.appendTo(w.block)
 	}
 	w.block = binary.AppendUvarint(w.block, uint64(len(s.exceptions)))
 	prev := -1
@@ -396,27 +403,6 @@ func (s *timedScratch) follow(c *shred.Column, times []int64, refs []timedRef, k
 	return s.irregular+s.refIrregular <= n/maxIrregularShare
 }
 
-// addTimedRef makes the timed column just written, of path, one that later
-// timed columns of the block may follow.
-func (w *Writer) addTimedRef(c *shred.Column, path string, rows int) {
-	s := &w.timedBuf
-	if len(w.timedRefs) == cap(w.timedRefs) {
-		w.timedRefs = append(w.timedRefs, timedRef{})
-	} else {
-		w.timedRefs = w.timedRefs[:len(w.timedRefs)+1]
-	}
-	r := &w.timedRefs[len(w.timedRefs)-1]
-	r.path = path
-	r.vals, r.valid = grow(r.vals, rows), grow(r.valid, rows)
-	clear(r.valid)
-	for i := 0; i < c.Count; i++ {
-		if s.regular[i] && s.refOK[i] {
-			row := c.Row(i)
-			r.vals[row], r.valid[row] = int64(s.heads[i]>>s.shift), true
-		}
-	}
-}
-
 // pickExceptions lists the values of the n that the chunk keeps as they
 // are: those that do not fit the shape or lack a reference, and those whose
 // differences lie far from the sample's while they are few. Each takes the
@@ -467,10 +453,49 @@ func (s *timedScratch) pickExceptions(n int) {
 func farBits(bits int) int { return 8 * (2 + (bits+7)/7) }
 
 // promising reports whether an even sample of the column's values, whose
-// times are those of their batch's rows, has the shape and follows nothing,
-// the times or one of refs closely enough for the whole column to be looked
-// at.
+// times are those of their batch's rows, has a shape and follows nothing,
+// the times or the anchor of refs it may closely enough for the whole
+// column to be looked at.
 func (s *timedScratch) promising(c *shred.Column, times []int64, refs []timedRef) bool {
+	k, ok := s.sampleShape(c)
+	if !ok {
+		return false
+	}
+	s.relate(k, times, refs)
+	switch {
+	case s.cost >= 1<<30:
+		s.reason = "no reference in the sample"
+
+		return false
+	case s.cost+minTimedGain > s.headPacked:
+		s.reason = "no reference saves bits over packing in the sample"
+
+		return false
+	}
+
+	return true
+}
+
+// sampleShape finds the shape of an even sample of the column's values, as
+// digits or else as stamps, and the head numbers of the k of them that have
+// it, the first k of the sample.
+func (s *timedScratch) sampleShape(c *shred.Column) (int, bool) {
+	if k, ok := s.sampleDigits(c); ok {
+		return k, true
+	}
+	reason := s.reason
+	if k, ok := s.sampleStamps(c); ok {
+		return k, true
+	}
+	if s.reason == "" {
+		s.reason = reason
+	}
+
+	return 0, false
+}
+
+// sampleDigits is sampleShape for digits.
+func (s *timedScratch) sampleDigits(c *shred.Column) (int, bool) {
 	n := c.Count
 	for j := range s.picked {
 		s.picked[j] = j * (n - 1) / (timedSample - 1)
@@ -480,7 +505,7 @@ func (s *timedScratch) promising(c *shred.Column, times []int64, refs []timedRef
 			s.reason = "no shape in the sample"
 		}
 
-		return false
+		return 0, false
 	}
 	k := 0
 	for _, i := range s.picked {
@@ -492,16 +517,10 @@ func (s *timedScratch) promising(c *shred.Column, times []int64, refs []timedRef
 	if k < timedSample/2 {
 		s.reason = "few sample values fit the shape"
 
-		return false
-	}
-	s.relate(k, times, refs)
-	if s.cost+minTimedGain > s.headPacked {
-		s.reason = "no reference saves bits over packing in the sample"
-
-		return false
+		return 0, false
 	}
 
-	return true
+	return k, true
 }
 
 // relate finds the relation to nothing, then to the times and to every
@@ -531,6 +550,9 @@ func (s *timedScratch) relate(k int, times []int64, refs []timedRef) {
 	// in order after.
 	copy(s.heldHeads[:k], s.sample[:k])
 	for r := range refs {
+		if r == s.self || !refs[r].filled || (s.forced && r != s.only) || (!s.forced && r != s.allowed) {
+			continue
+		}
 		held := 0
 		for j := 0; j < k; j++ {
 			if row := s.sampleRows[j]; refs[r].valid[row] {
@@ -987,8 +1009,12 @@ type timedValues struct {
 	prefix, suffix []byte
 	refKind        uint8
 	reference      []byte
-	words          wordSpeller
-	speller        stampSpeller
+	// refShape is how the values of the column referred to spell numbers,
+	// and refRaw its bytes.
+	refShape anchorShape
+	refRaw   []byte
+	words    wordSpeller
+	speller  stampSpeller
 	// parts holds the shifted head number of every value, a nonsense one
 	// for an exception.
 	parts, low []int64
@@ -1014,13 +1040,6 @@ type timedValues struct {
 // timedFollowed is a timed column of a block that another follows: the
 // shifted head number of its value in every row that holds one that is not
 // an exception.
-type timedFollowed struct {
-	pathID uint32
-	vals   []int64
-	valid  vec.Bitmap
-	read   timedValues
-}
-
 // timedChunk returns the chunk of the timed column ref after its presence.
 func (b *Block) timedChunk(ref *ColumnRef) ([]byte, bool) {
 	chunk := b.data[ref.off : ref.off+ref.length]
@@ -1095,9 +1114,12 @@ func (v *timedValues) readRest(r *reader, count int, keep bool) ([]byte, bool) {
 	if r.bad || kind[0] > refColumn {
 		return nil, false
 	}
-	v.refKind, v.reference = kind[0], nil
+	v.refKind, v.reference, v.refRaw = kind[0], nil, nil
 	if v.refKind == refColumn {
 		v.reference = r.bytes(r.uvarint())
+		if v.refRaw = readAnchorShape(r, &v.refShape); v.refRaw == nil {
+			return nil, false
+		}
 	}
 	exceptions := r.uvarint()
 	if r.bad || exceptions > uint64(count) {
@@ -1207,11 +1229,11 @@ func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
 		if !ok || depth >= maxTimedDepth {
 			return ErrCorrupt
 		}
-		followed, err := b.followTimed(id, depth+1)
+		anchor, err := b.anchorNumbers(id, &v.refShape, v.refRaw, depth+1)
 		if err != nil {
 			return err
 		}
-		v.refs, v.refValid = followed.vals, followed.valid
+		v.refs, v.refValid = anchor.vals, anchor.valid
 	}
 	if ref.flags&flagSparse != 0 {
 		if v.rows, err = b.valueRows(ref); err != nil {
@@ -1299,64 +1321,6 @@ func (b *Block) valueRows(ref *ColumnRef) ([]uint32, error) {
 	}
 
 	return rows, nil
-}
-
-// followTimed returns the shifted head numbers by row of the timed string
-// column with the path id, reading them the first time.
-func (b *Block) followTimed(pathID uint32, depth int) (*timedFollowed, error) {
-	for i := range b.followed {
-		if b.followed[i].pathID == pathID {
-			return &b.followed[i], nil
-		}
-	}
-	ref, ok := b.Column(pathID, vec.KindString)
-	if !ok || ref.bad || ref.enc != encTimed {
-		return nil, ErrCorrupt
-	}
-	if len(b.followed) == cap(b.followed) {
-		b.followed = append(b.followed, timedFollowed{})
-	} else {
-		b.followed = b.followed[:len(b.followed)+1]
-	}
-	f := &b.followed[len(b.followed)-1]
-	f.pathID = ^uint32(0)
-	err := b.readTimed(ref, &f.read, depth)
-	if err == nil {
-		err = f.read.resolve()
-	}
-	if err != nil {
-		b.followed = b.followed[:len(b.followed)-1]
-
-		return nil, err
-	}
-	var at []uint32
-	if ref.flags&flagSparse != 0 {
-		var err error
-		if at, err = b.valueRows(ref); err != nil {
-			b.followed = b.followed[:len(b.followed)-1]
-
-			return nil, err
-		}
-	}
-	f.vals = grow(f.vals, b.Rows)
-	f.valid = grow(f.valid, vec.BitmapWords(b.Rows))
-	clear(f.valid)
-	for i, next := 0, 0; i < ref.Count; i++ {
-		if next < len(f.read.excIndex) && int(f.read.excIndex[next]) == i {
-			next++
-
-			continue
-		}
-		row := i
-		if at != nil {
-			row = int(at[i])
-		}
-		f.vals[row] = f.read.parts[i]
-		f.valid.Set(row)
-	}
-	f.pathID = pathID
-
-	return f, nil
 }
 
 // rowTimes returns the time of every row of the block, decoding its time
@@ -1551,7 +1515,7 @@ func (s *wordSpeller) spell(out []byte, num uint64) {
 // is set, and one for every value otherwise.
 func (b *Block) decodeTimed(ref *ColumnRef, sparse bool, rows int, dst *vec.Column) error {
 	v := &b.d.timed
-	if err := b.readTimed(ref, v, 0); err != nil {
+	if err := b.readTimed(ref, v, b.depth); err != nil {
 		return err
 	}
 	count := ref.Count

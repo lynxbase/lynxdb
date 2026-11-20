@@ -193,10 +193,12 @@ type writerBuffers struct {
 	filterData []byte
 	pages      []byte
 	cells      tokenfilter.Scratch
-	// timedBuf serves the timed chunks of a block, and timedRefs holds
-	// those written so far that the others may follow.
-	timedBuf  timedScratch
-	timedRefs []timedRef
+	// timedBuf serves the timed chunks of a block, timedRefs holds the
+	// columns of the block that timed columns may follow, and anchorCost
+	// the bits of each following each other.
+	timedBuf   timedScratch
+	timedRefs  []timedRef
+	anchorCost []int
 }
 
 // ownedTokens names a column that gets a filter of its own and the end of
@@ -323,6 +325,7 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	w.encodeInts(&ent, b.Times)
 	w.finish(&ent, 0)
 	w.times = b.Times
+	w.findAnchors(b.Columns(), b.Times)
 	for _, c := range b.Columns() {
 		if c.Count == 0 {
 			continue
@@ -1021,8 +1024,6 @@ func (w *Writer) appendTimedOrFlat(slot int, c *shred.Column, stride int) bool {
 		tr.timedLeft--
 		if !tr.untimed && w.appendTimed(c, w.times) {
 			if size := len(w.block) - start; size*flatScale < c.Count*int(tr.flatSize) {
-				w.addTimedRef(c, c.Path, len(w.times))
-
 				return true
 			}
 			w.block = w.block[:start]
@@ -1044,7 +1045,6 @@ func (w *Writer) appendTimedOrFlat(slot int, c *shred.Column, stride int) bool {
 	tr.flatSize = uint16(min(flat*flatScale/c.Count+1, 1<<16-1))
 	if timed-start <= flat {
 		w.block = w.block[:timed]
-		w.addTimedRef(c, c.Path, len(w.times))
 
 		return true
 	}

@@ -198,11 +198,9 @@ func (s *stampSpeller) put(out []byte, x int64) {
 	copy(out[at:], s.zone)
 }
 
-// promisingStamps reports whether most of an even sample of the column's
-// values are stamps of one layout, finds the reference, among nothing, the
-// times and refs, that their head numbers follow most closely, and sets the
-// shape of the column to the layout.
-func (s *timedScratch) promisingStamps(c *shred.Column, times []int64, refs []timedRef) bool {
+// sampleStamps is sampleShape for stamps: most of the sample must be stamps
+// of one layout, which becomes the shape.
+func (s *timedScratch) sampleStamps(c *shred.Column) (int, bool) {
 	n := c.Count
 	type layout struct {
 		frac int
@@ -218,7 +216,7 @@ func (s *timedScratch) promisingStamps(c *shred.Column, times []int64, refs []ti
 		}
 	}
 	if m < timedSample-timedSample/maxIrregularShare {
-		return false
+		return 0, false
 	}
 	s.reason = ""
 	best, run := seen[0], 0
@@ -236,7 +234,7 @@ func (s *timedScratch) promisingStamps(c *shred.Column, times []int64, refs []ti
 	if run < timedSample-timedSample/maxIrregularShare {
 		s.reason = "times of several layouts in the sample"
 
-		return false
+		return 0, false
 	}
 	s.form, s.frac, s.zone = formStamp, best.frac, append(s.zone[:0], best.zone...)
 	s.stride = stampDate + len(best.zone)
@@ -254,19 +252,13 @@ func (s *timedScratch) promisingStamps(c *shred.Column, times []int64, refs []ti
 	if k < timedSample/2 {
 		s.reason = "few sample times parse"
 
-		return false
-	}
-	s.relate(k, times, refs)
-	if s.cost >= 1<<30 {
-		s.reason = "no reference in the sample"
-
-		return false
+		return 0, false
 	}
 	// What the general codec would take is not known here; the trials
 	// compare the forms.
 	s.headPacked = 64
 
-	return s.cost+minTimedGain <= s.headPacked
+	return k, true
 }
 
 // scanStamps reads the head number of every value of the column that is a

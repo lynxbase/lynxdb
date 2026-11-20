@@ -95,7 +95,9 @@ func (p *Part) ExplainColumn(e *ColumnExplain, pick func() bool) error {
 	w := NewWriter(io.Discard, Options{})
 	defer w.Close()
 	var b Block
-	var col, other vec.Column
+	var decoded []vec.Column
+	var shreds []*shred.Column
+	var cols []*shred.Column
 	for i := 0; i < p.NumBlocks(); i++ {
 		if !pick() {
 			continue
@@ -112,35 +114,37 @@ func (p *Part) ExplainColumn(e *ColumnExplain, pick func() bool) error {
 			return err
 		}
 		w.times = times
-		// The timed columns before this one, as the writer would have them
-		// to follow.
-		w.timedRefs = w.timedRefs[:0]
+		// The string columns of the block, which the writer weighs as
+		// columns to follow.
+		cols = cols[:0]
+		var self *shred.Column
 		refs := b.Columns()
 		for j := range refs {
 			r := &refs[j]
-			if r.PathID >= id || r.Kind != vec.KindString || r.enc != encTimed {
+			if r.Kind != vec.KindString || r.Count == 0 {
 				continue
 			}
-			if err := b.DecodeValues(r, &other); err != nil {
+			k := len(cols)
+			if k == len(decoded) {
+				decoded, shreds = append(decoded, vec.Column{}), append(shreds, new(shred.Column))
+			}
+			if err := b.DecodeValues(r, &decoded[k]); err != nil {
 				return err
 			}
-			var oc shred.Column
-			if err := b.toShred(r, &other, &oc); err != nil {
+			if err := b.toShred(r, &decoded[k], shreds[k]); err != nil {
 				return err
 			}
-			w.block = w.block[:0]
-			if w.appendTimed(&oc, times) {
-				w.addTimedRef(&oc, p.paths[r.PathID], b.Rows)
+			shreds[k].Path = p.paths[r.PathID]
+			if r.PathID == id {
+				self = shreds[k]
 			}
+			cols = append(cols, shreds[k])
 		}
-		if err := b.DecodeValues(ref, &col); err != nil {
-			return err
+		w.findAnchors(cols, times)
+		for k := range w.timedRefs {
+			w.timedRefs[k].fill(b.Rows)
 		}
-		var c shred.Column
-		if err := b.toShred(ref, &col, &c); err != nil {
-			return err
-		}
-		e.explainBlock(w, &b, ref, &c, times)
+		e.explainBlock(w, &b, ref, self, times)
 	}
 
 	return nil
@@ -268,6 +272,9 @@ func (e *ColumnExplain) explainBlock(w *Writer, b *Block, ref *ColumnRef, c *shr
 	// The timed form against each reference alone.
 	s.forced = true
 	for k := followNone; k < len(w.timedRefs); k++ {
+		if k >= 0 && w.timedRefs[k].col == c {
+			continue
+		}
 		s.only = k
 		try("timed."+referenceName(k, w.timedRefs), func() bool { return w.appendTimed(c, times) })
 	}

@@ -194,8 +194,10 @@ func TestUntimedKeysKeepTheirEncoding(t *testing.T) {
 	}
 }
 
-// A timed column may follow another one of its block, and the generator's
-// record keys follow their revisions.
+// A timed column may follow another column of its block whatever form that
+// one is stored in: the generator's record keys follow their revisions,
+// which late deliveries leave far from the row times, and the times of
+// creation follow the record keys.
 func TestTimedColumnsFollowEachOther(t *testing.T) {
 	data := benchdata.New(2, 3000).Append(nil, 30000)
 	key := []string{"kind", "commit.operation", "commit.collection", "did"}
@@ -237,7 +239,7 @@ func TestTimedColumnsFollowEachOther(t *testing.T) {
 	if err := p.AddUsage(&u, anyPath); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"commit.rev", "commit.rkey"} {
+	for _, path := range []string{"commit.rkey", "commit.record.createdAt"} {
 		c := u.Columns[ColumnKey{path, vec.KindString}]
 		t.Logf("%s: %.2f bytes a value, encodings %v", path, float64(c.ChunkBytes)/float64(c.Values), c.Encodings["timed"])
 		if c.Encodings["timed"] == nil {

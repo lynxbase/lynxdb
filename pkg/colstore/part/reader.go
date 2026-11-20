@@ -601,12 +601,16 @@ type Block struct {
 	present vec.Column
 	// spans is the scratch of Ahead.
 	spans [][2]uint32
-	// times holds the time of every row once timesRead is set, and followed
-	// the numbers of the timed columns that others follow, as they are
-	// read.
-	times     vec.Column
-	timesRead bool
-	followed  []timedFollowed
+	// times holds the time of every row once timesRead is set, and anchors
+	// the numbers of the columns that timed columns follow, as they are
+	// read; anchorScratch and anchorCols decode the anchors read at each
+	// depth of following, the depth of the column being decoded.
+	times         vec.Column
+	timesRead     bool
+	anchors       []anchorRead
+	anchorScratch []decodeScratch
+	anchorCols    []vec.Column
+	depth         int
 }
 
 // OpenBlock points b at block i of p.
@@ -630,7 +634,7 @@ func (p *Part) OpenBlock(i int, b *Block) error {
 	b.cols = grow(b.cols, int(n))
 	b.parsed = grow(b.parsed, vec.BitmapWords(int(n)))
 	clear(b.parsed)
-	b.timesRead, b.followed = false, b.followed[:0]
+	b.timesRead, b.anchors, b.depth = false, b.anchors[:0], 0
 
 	return nil
 }

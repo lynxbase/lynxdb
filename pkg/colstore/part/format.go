@@ -93,8 +93,8 @@ const (
 	encDict  = 3 // sorted dictionary and one code per present row
 	encTime  = 4 // the time of every row in a coarser unit, whose power of ten is the chunk
 	// encTimed strings are numbers kept as integers, against nothing, the
-	// row time or another timed column of the block, which decoding them
-	// reads.
+	// row time or the numbers of another column of the block in any form,
+	// which decoding them reads.
 	encTimed = 5
 )
 
