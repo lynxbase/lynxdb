@@ -5,6 +5,8 @@ import (
 	"math/bits"
 	"slices"
 
+	"github.com/klauspost/compress/huff0"
+
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
@@ -16,6 +18,7 @@ const (
 	intBytes16     = 3 // two bytes per value above the minimum, then a blob
 	intConst       = 4 // one value shared by all
 	intScaled      = 5 // a factor, a base, and a section of how many factors each value is above the base
+	intPlanes      = 6 // distances from a center in byte planes, see planes.go
 )
 
 // minScaled is the number of values from which a common factor is worth
@@ -29,6 +32,9 @@ type encodeScratch struct {
 	tmp    []byte
 	zbuf   []byte
 	scaled []int64
+	plane  []byte
+	dists  []uint64
+	huff   *huff0.Scratch
 }
 
 // decodeScratch holds the buffers reused while decoding one column.
@@ -38,6 +44,7 @@ type decodeScratch struct {
 	codes8  []uint8
 	codes16 []uint16
 	timed   timedValues
+	huff    *huff0.Scratch
 	// kept holds the values that a timed chunk keeps, before its runs
 	// repeat them.
 	kept vec.Column
@@ -276,6 +283,8 @@ func readSection(dst []int64, src []byte, d *decodeScratch, base, factor uint64)
 		}
 
 		return dst, rest, nil
+	case intPlanes:
+		return readPlanes(dst, src, d, base, factor)
 	case intFrames, intDeltaFrames:
 		prev := int64(0)
 		for start := 0; start < count; start += frameLen {

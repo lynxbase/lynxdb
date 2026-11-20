@@ -58,7 +58,7 @@ var (
 	codesNames    = [...]string{codesPacked: "dict.codes.packed", codesRuns: "dict.codes.runs"}
 	intNames      = [...]string{
 		intFrames: "frames", intDeltaFrames: "delta_frames", intBytes8: "bytes8",
-		intBytes16: "bytes16", intConst: "const", intScaled: "scaled",
+		intBytes16: "bytes16", intConst: "const", intScaled: "scaled", intPlanes: "planes",
 	}
 )
 

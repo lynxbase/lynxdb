@@ -1656,6 +1656,8 @@ func skipInts(src []byte, count int) ([]byte, bool) {
 		rest, _, ok := skipBlob(src[n:])
 
 		return rest, ok
+	case intPlanes:
+		return skipPlanes(src, count)
 	case intFrames, intDeltaFrames:
 		for start := 0; start < count; start += frameLen {
 			_, n := binary.Uvarint(src)

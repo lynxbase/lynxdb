@@ -329,6 +329,17 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 	}
 	s.sections[0] = len(w.block) - start
 	w.block = appendInts(w.block, s.diffs[:n], &w.blobs, &w.e)
+	// Differences wider than a byte a value in their frames may take fewer
+	// in byte planes, when their widths spread.
+	if frames := len(w.block) - start - s.sections[0]; frames > n {
+		at := len(w.block)
+		w.block = appendPlanes(w.block, s.diffs[:n], &w.e)
+		if planes := len(w.block) - at; planes < frames {
+			w.block = w.block[:at-frames+copy(w.block[at-frames:], w.block[at:])]
+		} else {
+			w.block = w.block[:at]
+		}
+	}
 	s.sections[1] = len(w.block) - start - s.sections[0]
 	if s.shift > 0 {
 		w.block = s.appendLow(w.block, n, &w.blobs, &w.e)
@@ -475,6 +486,12 @@ func (s *timedScratch) follow(c *shred.Column, times []int64, refs []timedRef, k
 // frame.
 func (s *timedScratch) pickExceptions(n int) {
 	lo, hi := s.window(n)
+	if width := bits.Len64(uint64(hi) - uint64(lo)); width > 8 {
+		// Wide differences go to byte planes, where one a byte longer than
+		// the window costs about a byte more, less than an exception.
+		mid, reach := lo/2+hi/2, uint64(1)<<min(width+7, 62)
+		lo, hi = mid-int64(reach), mid+int64(reach)
+	}
 	s.exceptions, s.far, s.farDiffs = s.exceptions[:0], s.far[:0], s.farDiffs[:0]
 	for i := 0; i < n; i++ {
 		switch fits := s.regular[i] && s.refOK[i]; {
