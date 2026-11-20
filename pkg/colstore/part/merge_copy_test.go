@@ -238,6 +238,13 @@ func TestMergeCopiesBlocksOfSourcesThatDoNotInterleave(t *testing.T) {
 		t.Fatalf("%d blocks copied into a part of another level", n)
 	}
 	sameRows(t, compact, want)
+	// So are those of the sources a writer is told were written at another
+	// level.
+	others := mergeWith(t, srcs, 256, nil, nil, Options{Stored: func(p *Part) bool { return p != srcs[0] }})
+	if n := copiedBlocks(t, others); n != total-srcs[0].NumBlocks() {
+		t.Fatalf("%d blocks copied, want the %d of the sources at the writer's level", n, total-srcs[0].NumBlocks())
+	}
+	sameRows(t, others, want)
 	// So is a block of a source written without filters.
 	plain := []*Part{mergeWith(t, srcs[:1], 256, nil, nil, Options{NoTokenFilter: true}), srcs[1]}
 	p := mergeWith(t, plain, 256, nil, nil, Options{})

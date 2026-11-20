@@ -1358,7 +1358,17 @@ func (s *Store) mergeRuns(runs []sortedRun) error {
 		}
 	}
 	n := int(min(uint64(runtime.GOMAXPROCS(0)), max(1, rows/mergedPartRows)))
-	rm := &rangeMerges{s: s, srcs: srcs, runs: len(runs), samples: part.SampleKeys(srcs, n)}
+	rm := &rangeMerges{s: s, srcs: srcs, runs: len(runs), samples: part.SampleKeys(srcs, n), opts: s.opts.Part}
+	if s.opts.FlushLevel != s.opts.Part.Level {
+		// Flushed runs are at another level, which their blocks would keep.
+		flushed := map[*part.Part]bool{}
+		for _, r := range runs {
+			for _, h := range r.parts {
+				flushed[h.Part] = r.tier == 0
+			}
+		}
+		rm.opts.Stored = func(p *part.Part) bool { return !flushed[p] }
+	}
 	rm.meta = PartMeta{Run: s.dir.NewRun(), Tier: tier + 1, Partition: runs[0].partition}
 	cuts := rm.samples.Cuts(n)
 	for i := 0; i <= len(cuts); i++ {
@@ -1442,6 +1452,7 @@ type rangeMerges struct {
 	srcs    []*part.Part
 	runs    int
 	samples *part.KeySamples
+	opts    part.Options
 	meta    PartMeta
 
 	// mu guards ranges, the ends of the ranges and started, which is set
@@ -1482,7 +1493,7 @@ func (rm *rangeMerges) merge(r *mergeRange) error {
 	rm.filesMu.Lock()
 	rm.files = append(rm.files, pf)
 	rm.filesMu.Unlock()
-	w := part.NewWriter(pf, rm.s.opts.Part)
+	w := part.NewWriter(pf, rm.opts)
 	if err := part.MergeRangeLimit(w, rm.srcs, rm.s.opts.BlockRows, r.lo, r.hi, r.limit); err != nil {
 		return err
 	}

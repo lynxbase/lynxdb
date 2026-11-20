@@ -40,6 +40,10 @@ type Options struct {
 	// SortKey paths and then by timestamp; the writer records it unchecked.
 	Ordered bool
 	SortKey []string
+	// Stored, when set, tells whether the blocks of a source part of a merge
+	// are encoded at this writer's level, so that the merge may take them
+	// over as they are stored; unset, those of every part are.
+	Stored func(src *Part) bool
 }
 
 // Writer encodes batches into a part, one block per batch.
@@ -525,10 +529,11 @@ func (w *Writer) writePages(pages []byte) {
 // copies reports whether block i of src can become a block of w as it is
 // stored. The level and codec of its sections are not recorded, so a writer
 // that asks for the compact level or another codec than the default one
-// encodes every block itself.
+// encodes every block itself, and so does one told that src was written at
+// another level.
 func (w *Writer) copies(src *Part, i int) bool {
 	return w.opts.Level != LevelCompact && w.opts.Codec == CodecZstd &&
-		(w.opts.NoTokenFilter || len(src.groups) > 0)
+		(w.opts.NoTokenFilter || len(src.groups) > 0) && (w.opts.Stored == nil || w.opts.Stored(src))
 }
 
 // joinGroup makes the group being built one that the filters first to end
