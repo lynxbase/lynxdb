@@ -248,11 +248,6 @@ func (w *worker) open(p *part.Part, b *part.Block) {
 			}
 		}
 	}
-	if w.q.filter != nil {
-		b.Ahead(w.ahead[:w.filtered])
-	} else {
-		b.Ahead(w.ahead)
-	}
 	if w.x.ords != nil {
 		w.place = int64(w.x.ords[p])<<44 | int64(b.Index())<<16
 	}

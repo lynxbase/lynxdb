@@ -325,6 +325,11 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 	}
 	count, idx := w.rows, []uint32(nil)
 	if q.filter != nil {
+		// Columns are asked for only when the column directory leaves the
+		// filter undecided.
+		if w.decide(q.filter) == some {
+			b.Ahead(w.ahead[:w.filtered])
+		}
 		v, err := w.eval(q.filter, 0)
 		if err != nil {
 			return err
@@ -367,9 +372,6 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 			idx = nil
 		}
 	}
-	if q.filter != nil {
-		b.Ahead(w.ahead[w.filtered:])
-	}
 	w.blocks++
 	w.matched += int64(count)
 	if q.timeKeys != nil {
@@ -387,6 +389,9 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 		}
 		w.timeMissed[miss]++
 	}
+	// What the block's rows read beyond the filter is asked for once the
+	// block is known to decode them.
+	b.Ahead(w.ahead[w.filtered:])
 	if q.agg != nil && x.least != nil {
 		return x.leastBlock(w, n, count, idx)
 	}

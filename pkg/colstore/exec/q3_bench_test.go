@@ -128,6 +128,12 @@ func BenchmarkQ3Days(b *testing.B) {
 			}
 		}
 	}
+	a := askedOf(b, snap)
+	if _, err := exec.Run(context.Background(), snap, plan, exec.Options{Forgetful: true}); err != nil {
+		b.Fatal(err)
+	}
+	requests, bytes := a.total()
+	b.Logf("cold, the query asks for %.1f MB in %d requests of %d blocks", float64(bytes)/1e6, requests, a.blocks())
 	counts := u.Regions["footer.time_counts"]
 	b.Logf("%d events in %d blocks of %d parts, %.1f MB; the rows by time take %d bytes, %.0f a block, %.3f a row, buckets of seconds:blocks %v; %+v",
 		rows, blocks, len(snap.Parts()), float64(u.Bytes)/1e6, counts, float64(counts)/float64(blocks), float64(counts)/float64(rows), widths, res.Stats)

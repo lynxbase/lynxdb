@@ -154,6 +154,9 @@ func (x *execution) cuts(p *part.Part, b *part.Block) bool {
 func (x *execution) cutByTime(w *worker, p *part.Part, b *part.Block) (timeMiss, error) {
 	cut := x.q.cut
 	if cut.untimed != nil {
+		if w.decide(cut.untimed) == some {
+			b.Ahead(w.ahead[:w.filtered])
+		}
 		if v, err := w.eval(cut.untimed, 0); err != nil || v != all {
 			return missFilter, err
 		}
