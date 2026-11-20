@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"encoding/binary"
 	"math"
+	"runtime"
+	"slices"
 	"sort"
+	"sync"
+	"sync/atomic"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -97,37 +101,140 @@ func appendDecodedKey(dst []byte, c *vec.Column, row int) []byte {
 }
 
 // SplitKeys returns up to n-1 ascending encoded sort keys that cut the rows
-// of ordered parts into ranges of similar size.
+// of ordered parts into ranges of similar size. It reads the keys of rows at
+// one stride over the rows of every part, so that each run is sampled in
+// proportion to its rows wherever its blocks begin, and cuts at quantiles of
+// the samples; when a block cannot be read, the first keys of the blocks
+// stand for their rows instead.
 func SplitKeys(srcs []*Part, n int) [][]byte {
-	type blockKey struct {
-		key  []byte
-		rows int
+	if n < 2 {
+		return nil
 	}
-	var blocks []blockKey
+	var parts []*Part
 	total := 0
 	for _, p := range srcs {
-		for i, key := range p.firstKeys {
-			rows, _, _ := p.BlockStats(i)
-			blocks = append(blocks, blockKey{key: key, rows: rows})
-			total += rows
+		if len(p.firstKeys) == 0 || len(p.firstKeys) != p.NumBlocks() {
+			continue
+		}
+		parts = append(parts, p)
+		total += int(p.Rows)
+	}
+	if total == 0 {
+		return nil
+	}
+	want := splitSamples(n, len(parts))
+	samples, ok := sampleRows(parts, max(1, (total+want-1)/want))
+	if !ok {
+		samples = samples[:0]
+		for _, p := range parts {
+			for i, key := range p.firstKeys {
+				rows, _, _ := p.BlockStats(i)
+				samples = append(samples, keySample{key: key, rows: rows / 2}, keySample{key: p.upperKey(i), rows: rows - rows/2})
+			}
 		}
 	}
-	sort.Slice(blocks, func(i, j int) bool { return bytes.Compare(blocks[i].key, blocks[j].key) < 0 })
+	slices.SortFunc(samples, func(a, b keySample) int { return bytes.Compare(a.key, b.key) })
 	var cuts [][]byte
-	seen := 0
-	for _, b := range blocks {
+	before := 0
+	for _, s := range samples {
 		if len(cuts) == n-1 {
 			break
 		}
-		// A cut at the smallest key would leave an empty first range.
-		if next := (len(cuts) + 1) * total / n; seen >= next && bytes.Compare(b.key, blocks[0].key) > 0 &&
-			(len(cuts) == 0 || bytes.Compare(b.key, cuts[len(cuts)-1]) > 0) {
-			cuts = append(cuts, b.key)
+		// A sample stands for rows around its key, half of them below it. A
+		// cut at the smallest key would leave an empty first range.
+		target := (len(cuts) + 1) * total / n
+		if 2*before+s.rows >= 2*target && bytes.Compare(s.key, samples[0].key) > 0 &&
+			(len(cuts) == 0 || bytes.Compare(s.key, cuts[len(cuts)-1]) > 0) {
+			cuts = append(cuts, s.key)
 		}
-		seen += b.rows
+		before += s.rows
 	}
 
 	return cuts
+}
+
+// splitSamples returns how many row keys SplitKeys reads to cut the rows of
+// parts into n ranges. Runs of like sizes are sampled at like quantiles, so
+// a cut can be off by half a stride for every run: 64 samples per part and
+// range hold that to about a percent of a range.
+func splitSamples(n, parts int) int {
+	return min(maxSplitSamples, 64*n*parts)
+}
+
+// maxSplitSamples bounds the keys SplitKeys reads and holds.
+const maxSplitSamples = 1 << 18
+
+// keySample is the key of a row and the rows around it that it stands for.
+type keySample struct {
+	key  []byte
+	rows int
+}
+
+// sampledBlock is a block and where its samples begin: first numbers its
+// first sample among those of its part, which lies offset rows into it.
+type sampledBlock struct {
+	p             *Part
+	block         int
+	first, offset int
+}
+
+// sampleRows returns the keys of the rows at the middle of every stride rows
+// of each part, each standing for the rows of its stride, reading the blocks
+// on all cores; it reports false when a block cannot be read.
+func sampleRows(parts []*Part, stride int) ([]keySample, bool) {
+	var work []sampledBlock
+	for _, p := range parts {
+		start := 0
+		for i := range p.firstKeys {
+			rows, _, _ := p.BlockStats(i)
+			j := (start - stride/2 + stride - 1) / stride
+			if at := j*stride + stride/2; at < start+rows {
+				work = append(work, sampledBlock{p: p, block: i, first: j, offset: at - start})
+			}
+			start += rows
+		}
+	}
+	out := make([][]keySample, len(work))
+	var next atomic.Int64
+	var failed atomic.Bool
+	var wg sync.WaitGroup
+	for range min(runtime.GOMAXPROCS(0), len(work)) {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			var blk Block
+			var keys BlockKeys
+			var ends []int
+			for w := int(next.Add(1)) - 1; w < len(work) && !failed.Load(); w = int(next.Add(1)) - 1 {
+				sb := work[w]
+				if sb.p.OpenBlock(sb.block, &blk) != nil || keys.Load(&blk) != nil {
+					failed.Store(true)
+
+					return
+				}
+				var arena []byte
+				ends = ends[:0]
+				for row := sb.offset; row < blk.Rows; row += stride {
+					arena = keys.AppendKey(arena, row)
+					ends = append(ends, len(arena))
+				}
+				samples := make([]keySample, len(ends))
+				from := 0
+				for k, end := range ends {
+					chunk := (sb.first + k) * stride
+					samples[k] = keySample{key: arena[from:end:end], rows: min(stride, int(sb.p.Rows)-chunk)}
+					from = end
+				}
+				out[w] = samples
+			}
+		}()
+	}
+	wg.Wait()
+	if failed.Load() {
+		return nil, false
+	}
+
+	return slices.Concat(out...), true
 }
 
 // AppendRowKey appends the encoded sort key of a row of b.
