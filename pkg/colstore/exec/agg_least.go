@@ -35,8 +35,9 @@ func (q *query) planLeast() *leastPlan {
 	if e.op != OpColumn || q.paths[e.path] != part.TimePath || (e.kind != vec.KindInt && e.kind != KindAny) {
 		return nil
 	}
+	// Every row has a time, so no group's time is null wherever nulls sort.
 	by := q.order[0]
-	if by.desc != (out.fn == Max) || by.nullsFirst {
+	if by.desc != (out.fn == Max) {
 		return nil
 	}
 	col := len(ap.keys)

@@ -98,15 +98,17 @@ func TestEarliestGroupsLeaveBlocksOut(t *testing.T) {
 			filter *exec.Expr
 			limit  int
 			desc   bool
+			nulls  bool
 		}{
-			{"the earliest", exec.Min, nil, 5, false},
-			{"the earliest commits", exec.Min, commits, 3, false},
-			{"the latest", exec.Max, nil, 7, true},
-			{"the earliest of many", exec.Min, nil, 200, false},
+			{"the earliest", exec.Min, nil, 5, false, false},
+			{"the earliest commits", exec.Min, commits, 3, false, false},
+			{"the earliest, nulls first", exec.Min, nil, 4, false, true},
+			{"the latest", exec.Max, nil, 7, true, false},
+			{"the earliest of many", exec.Min, nil, 200, false, false},
 		} {
 			for _, workers := range []int{1, 4} {
 				t.Run(fmt.Sprintf("%s/%s/%d", l.name, c.name, workers), func(t *testing.T) {
-					at := exec.Order{Column: "at", Desc: c.desc}
+					at := exec.Order{Column: "at", Desc: c.desc, NullsFirst: c.nulls}
 					plan := by(c.fn, exec.Time(), c.filter, c.limit, at, exec.Order{Column: "user"})
 					res := check(t, snap, rows, plan, true, workers)
 					if blocks := snap.Parts()[0].NumBlocks() * len(snap.Parts()); workers == 1 && l.sortKey == nil && c.limit < 10 &&
