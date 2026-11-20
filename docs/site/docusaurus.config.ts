@@ -4,11 +4,11 @@ import type * as Preset from '@docusaurus/preset-classic';
 
 const config: Config = {
   title: 'LynxDB',
-  tagline: 'Log analytics in a single binary. Zero dependencies. OpenSearch PPL queries.',
+  tagline: 'Log analytics in one binary',
   favicon: 'img/favicon.ico',
   url: 'https://docs.lynxdb.org',
   baseUrl: '/',
-  organizationName: 'lynxdb',
+  organizationName: 'lynxbase',
   projectName: 'lynxdb',
   onBrokenLinks: 'throw',
 
@@ -34,9 +34,6 @@ const config: Config = {
         docs: {
           sidebarPath: './sidebars.ts',
           editUrl: 'https://github.com/lynxbase/lynxdb/edit/main/docs/site/',
-          // Enable once docs are committed to git:
-          // showLastUpdateTime: true,
-          // showLastUpdateAuthor: true,
         },
         blog: {
           showReadingTime: true,
@@ -65,21 +62,15 @@ const config: Config = {
   ],
 
   themeConfig: {
-    image: 'img/og-image.png',
+    image: 'img/lynxdb-icon.png',
     colorMode: {
       defaultMode: 'light',
       respectPrefersColorScheme: true,
     },
-    announcementBar: {
-      id: 'star-us',
-      content:
-        'If you like LynxDB, give us a <a href="https://github.com/lynxbase/lynxdb">star on GitHub</a>!',
-      isCloseable: true,
-    },
     navbar: {
       title: 'LynxDB',
       logo: {
-        alt: 'LynxDB Logo',
+        alt: '',
         src: 'img/lynxdb-icon.png',
         srcDark: 'img/lynxdb-icon.png',
         style: {height: '32px'},
@@ -116,11 +107,11 @@ const config: Config = {
           title: 'Docs',
           items: [
             {
-              label: 'Quick Start',
+              label: 'Quick start',
               to: '/docs/getting-started/quickstart',
             },
             {
-              label: 'PPL Reference',
+              label: 'PPL guide',
               to: '/docs/ppl/overview',
             },
             {
@@ -128,7 +119,7 @@ const config: Config = {
               to: '/docs/api/overview',
             },
             {
-              label: 'CLI Reference',
+              label: 'CLI reference',
               to: '/docs/cli/overview',
             },
           ],

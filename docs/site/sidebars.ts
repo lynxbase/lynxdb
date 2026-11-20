@@ -5,7 +5,7 @@ const sidebars: SidebarsConfig = {
     'intro',
     {
       type: 'category',
-      label: 'Getting Started',
+      label: 'Getting started',
       collapsed: false,
       items: [
         'getting-started/quickstart',
@@ -18,7 +18,6 @@ const sidebars: SidebarsConfig = {
     {
       type: 'category',
       label: 'PPL',
-      collapsed: false,
       link: {type: 'doc', id: 'ppl/overview'},
       items: [
         'ppl/getting-started',
@@ -74,7 +73,7 @@ const sidebars: SidebarsConfig = {
       items: [
         {
           type: 'category',
-          label: 'Ingest Data',
+          label: 'Ingest data',
           link: {type: 'doc', id: 'guides/ingest-data'},
           items: [
             'guides/ingest-data/filebeat',
@@ -92,7 +91,7 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'CLI Reference',
+      label: 'CLI reference',
       items: [
         'cli/overview',
         'cli/query',
