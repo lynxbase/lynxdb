@@ -498,11 +498,13 @@ func (sp *spareBatches) drop(idle time.Duration) {
 }
 
 // dropSpare gives the kept batches up once the store has not used them for
-// spareIdle, so that a store nobody writes to holds no memory for writes.
+// spareIdle, and the buffers of sorting once no sort began for as long, so
+// that a store nobody writes to holds no memory for writes.
 func (s *Store) dropSpare() {
 	s.spare.drop(spareIdle)
 	s.joined.drop(spareIdle)
 	s.cut.drop(spareIdle)
+	shred.ReleaseSorting(spareIdle)
 }
 
 func (s *Store) shredOptions() shred.Options {

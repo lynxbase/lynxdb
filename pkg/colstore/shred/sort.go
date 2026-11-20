@@ -5,7 +5,10 @@ import (
 	"cmp"
 	"encoding/binary"
 	"math/bits"
+	"runtime"
 	"slices"
+	"sync"
+	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/mem"
 	"github.com/lynxbase/lynxdb/pkg/vec"
@@ -33,6 +36,9 @@ type sortScratch struct {
 	times  []int64
 	ids    []uint32
 	heads  []headID
+	// table finds the distinct values of a byte column, in arena.
+	arena *mem.Arena
+	table *vec.ByteTable
 }
 
 // headID is a distinct value of a byte column with the eight bytes of it
@@ -88,10 +94,57 @@ func (s *sortScratch) reserve(b *Batch) {
 	}
 }
 
-// sortPool shares the buffers of sorting between batches: a batch needs
-// them only while it is being sorted, and they are as large as its largest
-// column.
-var sortPool mem.Pool[sortScratch]
+// sorters keeps the buffers of sorting between batches: a batch needs them
+// only while it is being sorted, and they are as large as its largest
+// column. A sync.Pool loses them to every collection, of which a store
+// under load runs many between two flushes; ReleaseSorting lets them go.
+var sorters struct {
+	mu    sync.Mutex
+	held  []*sortScratch
+	taken time.Time
+}
+
+func takeSorter() *sortScratch {
+	sorters.mu.Lock()
+	defer sorters.mu.Unlock()
+	sorters.taken = time.Now()
+	if n := len(sorters.held); n > 0 {
+		s := sorters.held[n-1]
+		sorters.held[n-1] = nil
+		sorters.held = sorters.held[:n-1]
+
+		return s
+	}
+
+	return &sortScratch{}
+}
+
+func keepSorter(s *sortScratch) {
+	sorters.mu.Lock()
+	defer sorters.mu.Unlock()
+	if len(sorters.held) < runtime.GOMAXPROCS(0) {
+		sorters.held = append(sorters.held, s)
+	} else if s.arena != nil {
+		s.arena.Free()
+	}
+}
+
+// ReleaseSorting lets go of the buffers that sorting keeps between batches
+// once no sort has begun for idle.
+func ReleaseSorting(idle time.Duration) {
+	sorters.mu.Lock()
+	defer sorters.mu.Unlock()
+	if len(sorters.held) == 0 || time.Since(sorters.taken) < idle {
+		return
+	}
+	for i, s := range sorters.held {
+		if s.arena != nil {
+			s.arena.Free()
+		}
+		sorters.held[i] = nil
+	}
+	sorters.held = sorters.held[:0]
+}
 
 // SortBy reorders the rows of a complete batch by their values at the key
 // paths, then by timestamp, keeping the arrival order of equal rows.
@@ -99,9 +152,9 @@ var sortPool mem.Pool[sortScratch]
 // At one path a missing value sorts first, then values in kind order (null,
 // bool, int, float, string, variant) and by value within a kind.
 func (b *Batch) SortBy(keys []string) {
-	b.sort = sortPool.Get()
+	b.sort = takeSorter()
 	b.sortBy(nil, keys)
-	sortPool.Put(b.sort)
+	keepSorter(b.sort)
 	b.sort = nil
 }
 
@@ -118,9 +171,9 @@ func (b *Batch) SortByTimeBuckets(dst []TimeBucket, width int64, keys []string) 
 	if b.Rows == 0 {
 		return dst
 	}
-	b.sort = sortPool.Get()
+	b.sort = takeSorter()
 	defer func() {
-		sortPool.Put(b.sort)
+		keepSorter(b.sort)
 		b.sort = nil
 	}()
 	s := b.sort
@@ -363,9 +416,12 @@ func (b *Batch) rank(path string, dst []uint32) []uint32 {
 // and returns the number of distinct values.
 func (b *Batch) rankBytes(c *Column, dst []uint32, base uint32) uint32 {
 	s := b.sort
-	arena := mem.NewArena()
-	defer arena.Free()
-	table := vec.NewByteTable(arena)
+	if s.table == nil {
+		s.arena = mem.NewArena()
+		s.table = vec.NewByteTable(s.arena)
+	}
+	table := s.table
+	table.Clear()
 	s.ids = s.ids[:0]
 	var prev []byte
 	id := uint32(0)
