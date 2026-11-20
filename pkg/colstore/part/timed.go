@@ -330,7 +330,7 @@ func (s *timedScratch) appendLow(dst []byte, n int, bc *blobCodec, e *encodeScra
 	if s.shift > maxLowDictBits {
 		dst = append(dst, lowPlain, intFrames)
 
-		return appendFrames(dst, s.low[:n], false, e)
+		return appendFrames(dst, s.low[:n], false)
 	}
 	// The number of a value is its place among the distinct ones.
 	codes := grow(s.lowCode, 1<<s.shift)
@@ -349,7 +349,7 @@ func (s *timedScratch) appendLow(dst []byte, n int, bc *blobCodec, e *encodeScra
 	if len(s.lowDict) > maxLowDict || len(s.lowDict) == 1 {
 		dst = append(dst, lowPlain, intFrames)
 
-		return appendFrames(dst, s.low[:n], false, e)
+		return appendFrames(dst, s.low[:n], false)
 	}
 	s.lowDictSize = len(s.lowDict)
 	dst = append(dst, lowDict)
@@ -361,7 +361,7 @@ func (s *timedScratch) appendLow(dst []byte, n int, bc *blobCodec, e *encodeScra
 	}
 	dst = append(dst, intFrames)
 
-	return appendFrames(dst, s.lowCodes[:n], false, e)
+	return appendFrames(dst, s.lowCodes[:n], false)
 }
 
 // follow fills s.refs with the reference of every value, nothing for k of

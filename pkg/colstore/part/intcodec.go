@@ -3,6 +3,7 @@ package part
 import (
 	"encoding/binary"
 	"math/bits"
+	"slices"
 )
 
 // Integer section modes.
@@ -25,7 +26,6 @@ const frameLen = 128
 type encodeScratch struct {
 	tmp    []byte
 	zbuf   []byte
-	frame  []uint64
 	scaled []int64
 }
 
@@ -41,32 +41,25 @@ type decodeScratch struct {
 func zigzag(v int64) uint64   { return uint64(v<<1) ^ uint64(v>>63) }
 func unzigzag(u uint64) int64 { return int64(u>>1) ^ -int64(u&1) }
 
-// framesSize returns the encoded size of vals as frames, or of their
-// consecutive differences when delta is set.
-func framesSize(vals []int64, delta bool) int {
-	size := 0
+// framesSizes returns the encoded sizes of vals as frames and as frames of
+// their consecutive differences.
+func framesSizes(vals []int64) (plain, delta int) {
 	prev := int64(0)
 	for start := 0; start < len(vals); start += frameLen {
 		frame := vals[start:min(start+frameLen, len(vals))]
-		lo, hi := int64(0), int64(0)
-		for i, v := range frame {
-			x := v
-			if delta {
-				x = v - prev
-				prev = v
-			}
-			if i == 0 || x < lo {
-				lo = x
-			}
-			if i == 0 || x > hi {
-				hi = x
-			}
+		lo, hi := int64(1<<63-1), int64(-1<<63)
+		dlo, dhi := lo, hi
+		for _, v := range frame {
+			lo, hi = min(lo, v), max(hi, v)
+			d := v - prev
+			prev = v
+			dlo, dhi = min(dlo, d), max(dhi, d)
 		}
-		width := bits.Len64(uint64(hi) - uint64(lo))
-		size += 10 + 1 + (len(frame)*width+7)/8
+		plain += 10 + 1 + (len(frame)*bits.Len64(uint64(hi)-uint64(lo))+7)/8
+		delta += 10 + 1 + (len(frame)*bits.Len64(uint64(dhi)-uint64(dlo))+7)/8
 	}
 
-	return size
+	return plain, delta
 }
 
 // appendInts appends the integer section for vals.
@@ -96,7 +89,7 @@ func appendInts(dst []byte, vals []int64, bc *blobCodec, e *encodeScratch) []byt
 			return appendInts(dst, e.scaled, bc, e)
 		}
 	}
-	plain, delta := framesSize(vals, false), framesSize(vals, true)
+	plain, delta := framesSizes(vals)
 	best := min(plain, delta)
 
 	// Narrow ranges keep byte alignment so the general codec can exploit
@@ -126,11 +119,11 @@ func appendInts(dst []byte, vals []int64, bc *blobCodec, e *encodeScratch) []byt
 	if delta < plain {
 		dst = append(dst, intDeltaFrames)
 
-		return appendFrames(dst, vals, true, e)
+		return appendFrames(dst, vals, true)
 	}
 	dst = append(dst, intFrames)
 
-	return appendFrames(dst, vals, false, e)
+	return appendFrames(dst, vals, false)
 }
 
 // commonFactor returns the largest number that divides the distance of
@@ -158,54 +151,50 @@ func commonFactor(vals []int64, lo int64) uint64 {
 	return factor
 }
 
-func appendFrames(dst []byte, vals []int64, delta bool, e *encodeScratch) []byte {
+func appendFrames(dst []byte, vals []int64, delta bool) []byte {
 	prev := int64(0)
 	for start := 0; start < len(vals); start += frameLen {
 		frame := vals[start:min(start+frameLen, len(vals))]
-		e.frame = e.frame[:0]
-		lo, hi := int64(0), int64(0)
-		for i, v := range frame {
+		lo, hi := int64(1<<63-1), int64(-1<<63)
+		p := prev
+		for _, v := range frame {
 			x := v
 			if delta {
-				x = v - prev
-				prev = v
+				x, p = v-p, v
 			}
-			if i == 0 || x < lo {
-				lo = x
-			}
-			if i == 0 || x > hi {
-				hi = x
-			}
-			e.frame = append(e.frame, uint64(x))
+			lo, hi = min(lo, x), max(hi, x)
 		}
 		width := uint(bits.Len64(uint64(hi) - uint64(lo)))
 		dst = binary.AppendUvarint(dst, zigzag(lo))
 		dst = append(dst, byte(width))
 		if width == 0 {
+			prev = p
+
 			continue
 		}
-		var acc uint64
-		var filled uint
-		for _, x := range e.frame {
-			off := x - uint64(lo)
-			acc |= off << filled
-			if filled+width >= 64 {
-				dst = binary.LittleEndian.AppendUint64(dst, acc)
-				// The part of off that did not fit starts the next word.
-				acc = 0
-				if spill := filled + width - 64; spill > 0 {
-					acc = off >> (width - spill)
-				}
-				filled = filled + width - 64
-
-				continue
+		// Every value stores the word it ends in, which leaves the bits
+		// past it zero, and moves to the next word when it fills one.
+		at, size := len(dst), (len(frame)*int(width)+7)/8
+		dst = slices.Grow(dst, size+8)[:at+size+8]
+		w, acc, filled := at, uint64(0), uint(0)
+		for _, v := range frame {
+			x := v
+			if delta {
+				x, prev = v-prev, v
 			}
+			off := uint64(x) - uint64(lo)
+			acc |= off << filled
+			binary.LittleEndian.PutUint64(dst[w:], acc)
+			// The bits of off past the word, none when it starts one.
+			carry := off >> (64 - filled)
 			filled += width
+			full := -uint64(filled >> 6)
+			w += int(full & 8)
+			acc = acc&^full | carry&full
+			filled &= 63
 		}
-		for ; filled > 0; filled -= min(filled, 8) {
-			dst = append(dst, byte(acc))
-			acc >>= 8
-		}
+		binary.LittleEndian.PutUint64(dst[w:], acc)
+		dst = dst[:at+size]
 	}
 
 	return dst
