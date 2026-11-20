@@ -49,8 +49,10 @@ type StoreOptions struct {
 	FlushInterval time.Duration
 	// MergeBlocks bounds the memory of merging: a range merge holds one
 	// decoded block per run it reads, and the merges running at once hold
-	// at most this many blocks together; zero means 64 per core and at
-	// least 96, so that a whole merge of up to 64 runs keeps every core busy.
+	// at most this many blocks together. Zero means 128 per core, so that a
+	// whole merge of up to 128 runs keeps every core busy, but no more than
+	// a quarter of the machine's memory holds at 8 MiB a block, and at least
+	// 96.
 	MergeBlocks int
 	// MergeBacklog makes merges give way to the rows that wait in Append's
 	// buffers and to their flushes, which the callers of Append and Sync
@@ -83,11 +85,15 @@ const (
 	// that are narrower decode the blocks at their borders several times
 	// over and scatter the rows over many files.
 	mergedPartRows = 1 << 17
-	// mergeBlocksPerCore and leastMergeBlocks set the default bound of the
-	// decoded blocks that all range merges hold together, each several
-	// megabytes of column values.
-	mergeBlocksPerCore = 64
+	// mergeBlocksPerCore, mergeBlockBytes and leastMergeBlocks set the
+	// default bound of the decoded blocks that all range merges hold
+	// together; a block of Bluesky events takes about 7 MB decoded.
+	mergeBlocksPerCore = 128
+	mergeBlockBytes    = 8 << 20
 	leastMergeBlocks   = 96
+	// unknownMemoryPerCore stands in for the memory of a machine that does
+	// not tell it.
+	unknownMemoryPerCore = 2 << 30
 	// defaultMergeBacklog lets a burst of rows be written before the runs
 	// it leaves are merged, and bounds the runs that queries then meet.
 	defaultMergeBacklog = 64
@@ -219,7 +225,7 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 		opts.FlushInterval = defaultFlushInterval
 	}
 	if opts.MergeBlocks <= 0 {
-		opts.MergeBlocks = max(leastMergeBlocks, mergeBlocksPerCore*runtime.GOMAXPROCS(0))
+		opts.MergeBlocks = defaultMergeBlocks(runtime.GOMAXPROCS(0), physicalMemory())
 	}
 	if opts.MergeBacklog == 0 {
 		opts.MergeBacklog = defaultMergeBacklog
@@ -1047,6 +1053,16 @@ func (b *blockBudget) release(n int) {
 	b.free += min(n, b.total)
 	b.mu.Unlock()
 	b.freed.Broadcast()
+}
+
+// defaultMergeBlocks returns the merge budget of a store on cores cores of a
+// machine with memory bytes, zero when unknown.
+func defaultMergeBlocks(cores int, memory uint64) int {
+	if memory == 0 {
+		memory = uint64(cores) * unknownMemoryPerCore
+	}
+
+	return max(leastMergeBlocks, min(mergeBlocksPerCore*cores, int(memory/4/mergeBlockBytes)))
 }
 
 // sortedRun is the parts of one run.
