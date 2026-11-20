@@ -176,6 +176,7 @@ type timedScratch struct {
 	// equal to the one before them, and distinctCol the values that begin
 	// no run, which values is when there are runs and the column otherwise.
 	runs        []int32
+	repeats     []bool
 	distinctCol shred.Column
 	values      *shred.Column
 	// best, unit, shift and cost are what the sample found: the reference,
@@ -376,8 +377,10 @@ const runShare = 64
 func (s *timedScratch) distinct(c *shred.Column) *shred.Column {
 	s.runs = s.runs[:0]
 	n, repeats := c.Count, 0
+	s.repeats = grow(s.repeats, n)
 	for i := 1; i < n; i++ {
-		if string(c.Bytes(i)) == string(c.Bytes(i-1)) {
+		s.repeats[i] = string(c.Bytes(i)) == string(c.Bytes(i-1))
+		if s.repeats[i] {
 			repeats++
 		}
 	}
@@ -388,13 +391,12 @@ func (s *timedScratch) distinct(c *shred.Column) *shred.Column {
 	d.Path, d.Kind, d.Count, d.Sparse = c.Path, c.Kind, 0, true
 	d.Data, d.Ends, d.RowIDs = d.Data[:0], d.Ends[:0], d.RowIDs[:0]
 	for i := 0; i < n; {
-		v := c.Bytes(i)
-		d.Data = append(d.Data, v...)
+		d.Data = append(d.Data, c.Bytes(i)...)
 		d.Ends = append(d.Ends, uint32(len(d.Data)))
 		d.RowIDs = append(d.RowIDs, uint32(c.Row(i)))
 		d.Count++
 		j := i + 1
-		for j < n && string(c.Bytes(j)) == string(v) {
+		for j < n && s.repeats[j] {
 			j++
 		}
 		if j > i+1 {
