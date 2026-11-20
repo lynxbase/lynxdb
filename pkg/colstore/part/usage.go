@@ -380,6 +380,7 @@ func (s *sectionWalk) timed(count int) {
 	}
 	head := len(s.src) - len(rest)
 	s.take("timed.head", head, count, int64(v.size))
+	count = v.kept
 	s.ints("timed.differences", count, 0)
 	if v.shift > 0 && len(s.src) > 0 {
 		form := s.src[0]

@@ -246,7 +246,7 @@ func (e *ColumnExplain) explainBlock(w *Writer, b *Block, ref *ColumnRef, c *shr
 		t.Unit[int(s.unit)]++
 		t.Shift[int(s.shift)]++
 		lo, hi := int64(1<<63-1), int64(-1<<63)
-		for _, d := range s.diffs[:n] {
+		for _, d := range s.diffs[:s.values.Count] {
 			lo, hi = min(lo, d), max(hi, d)
 		}
 		t.DifferenceBits[bits.Len64(uint64(hi)-uint64(lo))]++
@@ -257,7 +257,8 @@ func (e *ColumnExplain) explainBlock(w *Writer, b *Block, ref *ColumnRef, c *shr
 				t.FarBytes += int64(1 + uvarintLen(zigzag(s.farDiffs[k])))
 			} else {
 				t.Strings++
-				t.StringBytes += int64(uvarintLen(uint64(len(c.Bytes(int(at))))+1) + len(c.Bytes(int(at))))
+				v := s.values.Bytes(int(at))
+				t.StringBytes += int64(uvarintLen(uint64(len(v))+1) + len(v))
 			}
 		}
 		for k, name := range [...]string{"head", "differences", "low", "tail"} {

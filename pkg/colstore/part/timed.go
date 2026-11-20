@@ -46,6 +46,12 @@ import (
 //	            template, alphabet and head digits of digits or the
 //	            fraction digits and zone of stamps, as above, and a byte of
 //	            the bits below the number followed
+//	runs        uvarint count, then for each run of values equal to the
+//	            one before them the uvarint of the values from the end of
+//	            the last run to its start times four plus its length less
+//	            one, three for four or more, and for those the uvarint of
+//	            the length less four; the values that begin no run are the
+//	            ones that the exceptions and the sections below hold
 //	exceptions  uvarint count, then for each the uvarint number of values
 //	            since the last and either the uvarint length plus one and
 //	            the bytes of the string, or a zero and the zigzag uvarint
@@ -166,6 +172,12 @@ type timedScratch struct {
 	// self is the column's place among the anchors, -1 when it is none, and
 	// allowed the anchor it may follow, followNone for none.
 	self, allowed int
+	// runs holds the first value and the length of every run of values
+	// equal to the one before them, and distinctCol the values that begin
+	// no run, which values is when there are runs and the column otherwise.
+	runs        []int32
+	distinctCol shred.Column
+	values      *shred.Column
 	// best, unit, shift and cost are what the sample found: the reference,
 	// followNone, followTime or a column that may be followed, and the
 	// bits a value takes against it.
@@ -223,6 +235,9 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 			s.self, s.allowed = i, w.timedRefs[i].parent
 		}
 	}
+	all := n
+	c = s.distinct(c)
+	s.values, n = c, c.Count
 	if !s.promising(c, times, w.timedRefs) {
 		return false
 	}
@@ -287,6 +302,16 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 		w.block = append(w.block, s.reference...)
 		w.block = w.timedRefs[best].shape.appendTo(w.block)
 	}
+	w.block = binary.AppendUvarint(w.block, uint64(len(s.runs)/2))
+	for k, end := 0, 0; k < len(s.runs); k += 2 {
+		at, length := int(s.runs[k]), int(s.runs[k+1])
+		short := min(length-1, 3)
+		w.block = binary.AppendUvarint(w.block, uint64(at-end)<<2|uint64(short))
+		if short == 3 {
+			w.block = binary.AppendUvarint(w.block, uint64(length-4))
+		}
+		end = at + length
+	}
 	w.block = binary.AppendUvarint(w.block, uint64(len(s.exceptions)))
 	prev := -1
 	for k, e := range s.exceptions {
@@ -320,7 +345,7 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 		}
 		w.block = appendInts(w.block, s.tail[:n], &w.blobs, &w.e)
 	}
-	if len(w.block)-start >= s.stride*n {
+	if len(w.block)-start >= s.stride*all {
 		w.block = w.block[:start]
 		s.reason = "larger than the strings"
 
@@ -328,6 +353,46 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 	}
 
 	return true
+}
+
+// runShare is the share of values, one in this many, that must repeat the
+// one before them for runs to be kept apart from the other values.
+const runShare = 64
+
+// distinct lists in s.runs the runs of the column's values equal to the one
+// before them and returns the column of the values that begin none, with
+// their rows, or c itself when few values repeat.
+func (s *timedScratch) distinct(c *shred.Column) *shred.Column {
+	s.runs = s.runs[:0]
+	n, repeats := c.Count, 0
+	for i := 1; i < n; i++ {
+		if string(c.Bytes(i)) == string(c.Bytes(i-1)) {
+			repeats++
+		}
+	}
+	if repeats == 0 || repeats*runShare < n {
+		return c
+	}
+	d := &s.distinctCol
+	d.Path, d.Kind, d.Count, d.Sparse = c.Path, c.Kind, 0, true
+	d.Data, d.Ends, d.RowIDs = d.Data[:0], d.Ends[:0], d.RowIDs[:0]
+	for i := 0; i < n; {
+		v := c.Bytes(i)
+		d.Data = append(d.Data, v...)
+		d.Ends = append(d.Ends, uint32(len(d.Data)))
+		d.RowIDs = append(d.RowIDs, uint32(c.Row(i)))
+		d.Count++
+		j := i + 1
+		for j < n && string(c.Bytes(j)) == string(v) {
+			j++
+		}
+		if j > i+1 {
+			s.runs = append(s.runs, int32(i+1), int32(j-i-1))
+		}
+		i = j
+	}
+
+	return d
 }
 
 // appendLow appends the shifted-out bits of the n values: as numbers in a
@@ -1033,8 +1098,18 @@ type timedValues struct {
 	refs     []int64
 	refValid vec.Bitmap
 	rows     []uint32
-	size     uint64
-	next     int
+	// runStart and runLen hold the first value and the length of every run
+	// of values equal to the one before them, kept the values that begin
+	// none, which the sections hold, and keptSize their bytes; allRows holds
+	// the row of every value of a sparse column, and keptRows the rows of
+	// the kept values when there are runs.
+	runStart, runLen []int32
+	kept             int
+	keptSize         uint64
+	allRows          []uint32
+	keptRows         []uint32
+	size             uint64
+	next             int
 }
 
 // timedFollowed is a timed column of a block that another follows: the
@@ -1121,6 +1196,28 @@ func (v *timedValues) readRest(r *reader, count int, keep bool) ([]byte, bool) {
 			return nil, false
 		}
 	}
+	runs := r.uvarint()
+	if r.bad || runs > uint64(count) {
+		return nil, false
+	}
+	v.runStart, v.runLen = v.runStart[:0], v.runLen[:0]
+	repeats := 0
+	for k, end := 0, 0; k < int(runs); k++ {
+		x := r.uvarint()
+		length := uint64(x&3) + 1
+		if length == 4 {
+			length += r.uvarint()
+		}
+		at := uint64(end) + x>>2
+		if r.bad || x>>2 == 0 || length > uint64(count) || at+length > uint64(count) {
+			return nil, false
+		}
+		v.runStart, v.runLen = append(v.runStart, int32(at)), append(v.runLen, int32(length))
+		end = int(at + length)
+		repeats += int(length)
+	}
+	v.kept = count - repeats
+	count = v.kept
 	exceptions := r.uvarint()
 	if r.bad || exceptions > uint64(count) {
 		return nil, false
@@ -1150,7 +1247,11 @@ func (v *timedValues) readRest(r *reader, count int, keep bool) ([]byte, bool) {
 	}
 	v.excIndex, v.excValue, v.next = v.excIndex[:0], v.excValue[:0], 0
 	v.farIndex, v.farDiff = v.farIndex[:0], v.farDiff[:0]
+	// A run repeats the value before it, whose number among the kept ones
+	// is that of its first value less the runs before it; one that repeats
+	// a string takes the string's bytes, the others the stride's.
 	strings, size := uint64(0), uint64(0)
+	repeated, run, before := int64(repeats)*int64(v.stride), 0, 0
 	for i, at := 0, -1; i < int(exceptions); i++ {
 		at += int(r.uvarint()) + 1
 		if tag := r.uvarint(); tag == 0 {
@@ -1164,14 +1265,21 @@ func (v *timedValues) readRest(r *reader, count int, keep bool) ([]byte, bool) {
 			}
 			strings++
 			size += uint64(len(value))
+			for ; run < len(v.runStart) && int(v.runStart[run])-1-before <= at; run++ {
+				if int(v.runStart[run])-1-before == at {
+					repeated += int64(v.runLen[run]) * int64(len(value)-v.stride)
+				}
+				before += int(v.runLen[run])
+			}
 		}
 		if r.bad || at >= count {
 			return nil, false
 		}
 	}
-	v.size = size + (uint64(count)-strings)*uint64(v.stride)
+	v.keptSize = size + (uint64(count)-strings)*uint64(v.stride)
+	v.size = v.keptSize + uint64(repeated)
 
-	return r.buf, !r.bad && v.size <= maxSectionSize
+	return r.buf, !r.bad && repeated >= 0 && v.size <= maxSectionSize
 }
 
 // readTimed reads the timed column ref into v, following depth columns
@@ -1181,11 +1289,11 @@ func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
 	if !ok || !b.checked(ref, b.data[ref.off:ref.off+ref.length]) {
 		return ErrCorrupt
 	}
-	count := ref.Count
-	rest, ok := readTimedHead(chunk, count, v, true)
+	rest, ok := readTimedHead(chunk, ref.Count, v, true)
 	if !ok {
 		return ErrCorrupt
 	}
+	count := v.kept
 	var err error
 	if v.parts, rest, err = readInts(v.parts, rest, count, &b.d); err != nil {
 		return err
@@ -1216,10 +1324,9 @@ func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
 
 	// The references of the values, those of their rows, which resolve or
 	// the spelling adds.
-	v.refs, v.refValid, v.rows = nil, nil, nil
+	v.refs, v.refValid, v.rows, v.allRows = nil, nil, nil, nil
 	switch v.refKind {
 	case refNone:
-		return nil
 	case refTime:
 		if v.refs, err = b.rowTimes(); err != nil {
 			return err
@@ -1236,12 +1343,36 @@ func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
 		v.refs, v.refValid = anchor.vals, anchor.valid
 	}
 	if ref.flags&flagSparse != 0 {
-		if v.rows, err = b.valueRows(ref); err != nil {
+		if v.allRows, err = b.valueRows(ref); err != nil {
 			return err
 		}
 	}
+	v.rows = v.allRows
+	if len(v.runStart) > 0 {
+		v.rows = v.keptRowsOf(ref.Count)
+	}
 
 	return nil
+}
+
+// keptRowsOf returns the rows of the kept values of the count.
+func (v *timedValues) keptRowsOf(count int) []uint32 {
+	v.keptRows = grow(v.keptRows, v.kept)[:0]
+	for i, run := 0, 0; i < count; i++ {
+		if run < len(v.runStart) && int(v.runStart[run]) == i {
+			i += int(v.runLen[run]) - 1
+			run++
+
+			continue
+		}
+		row := uint32(i)
+		if v.allRows != nil {
+			row = v.allRows[i]
+		}
+		v.keptRows = append(v.keptRows, row)
+	}
+
+	return v.keptRows
 }
 
 // resolve turns the differences of v into the shifted head numbers and its
@@ -1518,55 +1649,94 @@ func (b *Block) decodeTimed(ref *ColumnRef, sparse bool, rows int, dst *vec.Colu
 	if err := b.readTimed(ref, v, b.depth); err != nil {
 		return err
 	}
-	count := ref.Count
 	dst.Offsets = grow(dst.Offsets, rows+1)
-	if !sparse && v.form == formDigits && len(v.tails) == 0 && v.radixBits != 0 && v.headDigits <= 16 {
-		// The fast path writes 16 bytes a value, past the value's own end.
-		dst.Data = grow(dst.Data, int(v.size)+16)
-		off, err := v.putAll(dst, count)
+	if !sparse && len(v.runStart) == 0 {
+		off, err := v.putValues(dst)
 		if err != nil {
 			return err
 		}
-		dst.Data = dst.Data[:off]
-		dst.Offsets[rows] = uint32(off)
 		if off != int(v.size) {
 			return ErrCorrupt
 		}
 
 		return nil
 	}
-	if err := v.resolve(); err != nil {
+	// The kept values one after another, laid out over the slots with the
+	// runs that repeat them.
+	kv := &b.d.kept
+	kv.Offsets = grow(kv.Offsets, v.kept+1)
+	koff, err := v.putValues(kv)
+	if err != nil {
 		return err
 	}
+	if uint64(koff) != v.keptSize {
+		return ErrCorrupt
+	}
 	dst.Data = grow(dst.Data, int(v.size))
-	off := 0
-	if sparse {
-		i := 0
-		for row := 0; row < rows; row++ {
-			dst.Offsets[row] = uint32(off)
-			if dst.Valid.Get(row) {
-				if i == count {
-					return ErrCorrupt
-				}
-				off += v.put(dst.Data[off:], i)
-				i++
-			}
+	count := ref.Count
+	off, i, j, run, left := 0, 0, 0, 0, 0
+	for slot := 0; slot < rows; slot++ {
+		dst.Offsets[slot] = uint32(off)
+		if sparse && !dst.Valid.Get(slot) {
+			continue
 		}
-		if i != count {
+		if i == count {
 			return ErrCorrupt
 		}
-	} else {
-		for i := 0; i < count; i++ {
-			dst.Offsets[i] = uint32(off)
-			off += v.put(dst.Data[off:], i)
+		if left == 0 && run < len(v.runStart) && int(v.runStart[run]) == i {
+			left = int(v.runLen[run])
+			run++
 		}
+		k := j
+		if left > 0 {
+			k, left = j-1, left-1
+		} else {
+			j++
+		}
+		if k < 0 || k >= v.kept {
+			return ErrCorrupt
+		}
+		off += copy(dst.Data[off:], kv.Data[kv.Offsets[k]:kv.Offsets[k+1]])
+		i++
 	}
 	dst.Offsets[rows] = uint32(off)
-	if off != int(v.size) {
+	dst.Data = dst.Data[:off]
+	if i != count || j != v.kept || off != int(v.size) {
 		return ErrCorrupt
 	}
 
 	return nil
+}
+
+// putValues writes the kept values of the chunk one after another into dst,
+// their offsets into dst.Offsets, which has room for them, and returns their
+// bytes.
+func (v *timedValues) putValues(dst *vec.Column) (int, error) {
+	n := v.kept
+	if v.form == formDigits && len(v.tails) == 0 && v.radixBits != 0 && v.headDigits <= 16 {
+		// The fast path writes 16 bytes a value, past the value's own end.
+		dst.Data = grow(dst.Data, int(v.keptSize)+16)
+		off, err := v.putAll(dst, n)
+		if err != nil {
+			return 0, err
+		}
+		dst.Data = dst.Data[:off]
+		dst.Offsets[n] = uint32(off)
+
+		return off, nil
+	}
+	if err := v.resolve(); err != nil {
+		return 0, err
+	}
+	dst.Data = grow(dst.Data, int(v.keptSize))
+	off := 0
+	for i := 0; i < n; i++ {
+		dst.Offsets[i] = uint32(off)
+		off += v.put(dst.Data[off:], i)
+	}
+	dst.Offsets[n] = uint32(off)
+
+	return off, nil
 }
 
 // putAll writes the count values of a chunk of digits whose span is all

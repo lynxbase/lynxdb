@@ -4,6 +4,8 @@ import (
 	"encoding/binary"
 	"math/bits"
 	"slices"
+
+	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
 // Integer section modes.
@@ -36,6 +38,9 @@ type decodeScratch struct {
 	codes8  []uint8
 	codes16 []uint16
 	timed   timedValues
+	// kept holds the values that a timed chunk keeps, before its runs
+	// repeat them.
+	kept vec.Column
 }
 
 func zigzag(v int64) uint64   { return uint64(v<<1) ^ uint64(v>>63) }

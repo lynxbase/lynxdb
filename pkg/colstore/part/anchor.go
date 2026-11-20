@@ -474,9 +474,6 @@ func (b *Block) anchorNumbers(pathID uint32, shape *anchorShape, raw []byte, dep
 			if timed = shape.matches(v); timed {
 				err = v.resolve()
 			}
-			if timed && err == nil && ref.flags&flagSparse != 0 {
-				v.rows, err = b.valueRows(ref)
-			}
 		}
 	}
 	if err == nil && !timed {
@@ -495,7 +492,7 @@ func (b *Block) anchorNumbers(pathID uint32, shape *anchorShape, raw []byte, dep
 		a.valid = grow(a.valid, vec.BitmapWords(b.Rows))
 		clear(a.valid)
 		if timed {
-			a.fromTimed(v, shape)
+			a.fromTimed(v, shape, ref.Count)
 		} else {
 			for row := 0; row < b.Rows; row++ {
 				if col.IsValid(row) {
@@ -515,31 +512,41 @@ func (b *Block) anchorNumbers(pathID uint32, shape *anchorShape, raw []byte, dep
 	return a, nil
 }
 
-// fromTimed fills a from the values of a timed chunk read into v whose
-// shape is shape: the numbers that the chunk holds, and those that its
-// values kept as strings spell.
-func (a *anchorRead) fromTimed(v *timedValues, shape *anchorShape) {
+// fromTimed fills a from the count values of a timed chunk read into v
+// whose shape is shape: the numbers that the chunk holds, those that its
+// values kept as strings spell, and those of the values before runs again.
+func (a *anchorRead) fromTimed(v *timedValues, shape *anchorShape, count int) {
 	mask := uint64(1)<<v.shift - 1
-	for i, next := 0, 0; i < len(v.parts); i++ {
+	j, run, left, next := 0, 0, 0, 0
+	last, ok := int64(0), false
+	for i := 0; i < count; i++ {
 		row := i
-		if v.rows != nil {
-			row = int(v.rows[i])
+		if v.allRows != nil {
+			row = int(v.allRows[i])
 		}
-		if next < len(v.excIndex) && int(v.excIndex[next]) == i {
-			if n, ok := shape.number(v.excValue[next]); ok {
-				a.vals[row] = n
-				a.valid.Set(row)
+		if left == 0 && run < len(v.runStart) && int(v.runStart[run]) == i {
+			left = int(v.runLen[run])
+			run++
+		}
+		if left > 0 {
+			left--
+		} else {
+			if next < len(v.excIndex) && int(v.excIndex[next]) == j {
+				last, ok = shape.number(v.excValue[next])
+				next++
+			} else {
+				head := uint64(v.parts[j]) << v.shift
+				if v.shift > 0 {
+					head |= uint64(v.low[j]) & mask
+				}
+				last, ok = int64(head>>shape.shift), true
 			}
-			next++
-
-			continue
+			j++
 		}
-		head := uint64(v.parts[i]) << v.shift
-		if v.shift > 0 {
-			head |= uint64(v.low[i]) & mask
+		if ok {
+			a.vals[row] = last
+			a.valid.Set(row)
 		}
-		a.vals[row] = int64(head >> shape.shift)
-		a.valid.Set(row)
 	}
 }
 
