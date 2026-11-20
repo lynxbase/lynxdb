@@ -172,6 +172,27 @@ func (g *Generator) text(dst []byte) []byte {
 	return dst
 }
 
+// appendCreatedAt appends the time a client says it made a record at, its
+// clock's time of the record key: in milliseconds and UTC for all but a few,
+// which some clients write without a fraction, with more digits or with an
+// offset, and one in a hundred dated long before, as imported records are.
+func (g *Generator) appendCreatedAt(dst []byte, us int64, post bool) []byte {
+	if g.next()%100 == 0 {
+		us -= g.between(13.3, 14.2)
+	}
+	t := time.UnixMicro(us).UTC()
+	switch r := g.next() % 1000; {
+	case post && r < 43:
+		return t.AppendFormat(dst, "2006-01-02T15:04:05Z")
+	case r == 990:
+		return t.AppendFormat(dst, "2006-01-02T15:04:05.000000Z")
+	case r == 991:
+		return t.AppendFormat(dst, "2006-01-02T15:04:05.000+00:00")
+	}
+
+	return t.AppendFormat(dst, "2006-01-02T15:04:05.000Z")
+}
+
 // Append adds n events to dst, one JSON object per line.
 func (g *Generator) Append(dst []byte, n int) []byte {
 	for ; n > 0; n-- {
@@ -241,7 +262,7 @@ func (g *Generator) Append(dst []byte, n int) []byte {
 		dst = append(dst, `","record":{"$type":"`...)
 		dst = append(dst, collection...)
 		dst = append(dst, `","createdAt":"`...)
-		dst = time.UnixMicro(created).UTC().AppendFormat(dst, "2006-01-02T15:04:05.000Z")
+		dst = g.appendCreatedAt(dst, created, collection == "app.bsky.feed.post")
 		dst = append(dst, '"')
 		switch collection {
 		case "app.bsky.feed.post":
