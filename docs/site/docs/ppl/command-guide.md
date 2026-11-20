@@ -6,11 +6,10 @@ description: How to use the main PPL commands in LynxDB, with LynxDB-specific be
 
 # Command guide
 
-This page shows the commands most queries use. The [command support
-table](./commands.md) lists every OpenSearch PPL command with LynxDB's
-support level; the [grammar](./grammar.md) lists every option. Examples run
-over access logs with the fields `host`, `level`, `method`, `path`, `status`,
-`user`, `response_time`, `bytes` and `msg`.
+The [command support table](./commands.md) lists LynxDB's support level for
+each OpenSearch PPL command. The [grammar](./grammar.md) lists the options.
+Examples use access logs with the fields `host`, `level`, `method`, `path`,
+`status`, `user`, `response_time`, `bytes`, and `msg`.
 
 ## Source commands
 

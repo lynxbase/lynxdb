@@ -6,8 +6,6 @@ description: Go coding standards, error handling, context usage, testing, query-
 
 # Coding Guidelines
 
-This page describes the conventions of the LynxDB codebase.
-
 ## Go Version and Style
 
 LynxDB builds with the Go version pinned in `mise.toml` (1.26.3). Use current Go idioms.

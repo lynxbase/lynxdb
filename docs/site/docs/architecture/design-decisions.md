@@ -6,8 +6,6 @@ description: Key design decisions behind LynxDB -- columnar storage, a store per
 
 # Design Decisions
 
-This page explains the reasoning behind the major design decisions in LynxDB: the decision, the alternatives, and why the chosen approach fits log analytics.
-
 ## Columnar Storage
 
 **Decision**: Store events in columns: every field path, and every kind of value it holds, is a column of its own with an encoding that suits it.

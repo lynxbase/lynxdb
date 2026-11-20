@@ -5,7 +5,8 @@ description: Troubleshoot common LynxDB issues -- connectivity, query errors, in
 
 # Troubleshooting
 
-This page covers common issues and how to resolve them. Start with `lynxdb health` and `lynxdb status`: they show whether the server is reachable, healthy, and holding the data you expect.
+Run `lynxdb health` to check whether the server is reachable and healthy. Run
+`lynxdb status` to inspect indexes, event counts, and storage.
 
 ```bash
 lynxdb health

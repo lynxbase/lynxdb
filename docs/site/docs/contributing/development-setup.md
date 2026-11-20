@@ -6,8 +6,6 @@ description: Clone, build, test, and run LynxDB from source. Toolchain, make tar
 
 # Development Setup
 
-This page covers building, testing, and running LynxDB from source.
-
 ## Prerequisites
 
 | Requirement | Version | Check |

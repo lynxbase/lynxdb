@@ -1,9 +1,9 @@
 # Contributing to LynxDB
 
-## Setup
+## Build and test locally
 
-LynxDB pins every local and CI toolchain in `mise.toml`: Go, Node (docs site),
-Python (release scripts), GoReleaser, golangci-lint, rclone and the GitHub CLI.
+Use [mise](https://mise.jdx.dev/) to install the toolchain pinned in
+[`mise.toml`](mise.toml).
 
 ```bash
 git clone https://github.com/lynxbase/lynxdb.git
@@ -35,7 +35,7 @@ for running a local server, golden files and benchmarks.
 
 ## Branches
 
-Branch off `main`. Name format: `<type>/<short-description>`.
+Branch off `main` and name the branch `<type>/<short-description>`.
 
 | Prefix      | When to use                                          |
 |-------------|------------------------------------------------------|
@@ -62,17 +62,15 @@ chore: update zstd to v1.18
 
 One logical change per commit. Keep commits small and reviewable.
 
-## Pull Requests
+## Pull requests
 
-1. One PR = one logical change.
-2. The PR title follows the same `type: description` format.
-3. All checks must pass: `make build`, `make test`, `make vet`.
-4. Add tests for new code. No exceptions.
-5. For a PPL command or function, update its catalog entry in `pkg/ppl`, add
-   compile goldens under `pkg/ppl/testdata/compile/` and execution tests, and
-   regenerate the reference pages with `go run ./internal/docgen`.
+- Keep each PR to one logical change and use `type: description` in the title.
+- Run `make build`, `make test`, and `make vet`. Add tests for new code.
+- For a PPL command or function, update its catalog entry in `pkg/ppl`. Add
+  compile goldens under `pkg/ppl/testdata/compile/` and execution tests, then
+  regenerate the reference pages with `make docs-gen`.
 
-## Code Style
+## Code style
 
 - `go vet ./...` must pass; run `golangci-lint run ./...` with `.golangci.yml`.
 - Exported symbols have doc comments.
@@ -106,7 +104,7 @@ Test locations:
 - CLI tests: `test/cli/`.
 - Regression tests: `test/regression/`.
 
-## Common Tasks
+## Common tasks
 
 ```bash
 mise run build          # make build
@@ -116,7 +114,7 @@ make docs-gen           # regenerate the PPL reference pages from the catalogs
 make clean              # remove local build artifacts
 ```
 
-## Project Structure
+## Project structure
 
 - `cmd/lynxdb/` -- CLI entry point.
 - `pkg/` -- Core packages: PPL frontend (`pkg/ppl`), IR and optimizer
@@ -127,14 +125,27 @@ See the [project structure guide](docs/site/docs/contributing/project-structure.
 
 ## Documentation
 
-- User-facing docs site: `docs/site/` (Docusaurus).
-- Generated PPL reference pages: `docs/site/docs/ppl/commands.md`,
-  `functions.md`, `aggregations.md` (`go run ./internal/docgen`).
-- Changelog: `CHANGELOG.md`.
+Edit user-facing pages under [`docs/site/docs/`](docs/site/docs/) and build
+the Docusaurus site before submitting changes.
 
-## Reporting Issues
+```bash
+cd docs/site
+npm ci
+npm run build
+```
 
-Open a GitHub issue. Include:
+Start a guide with the task and its prerequisites. Show a command the reader
+can run and how to recognize a successful result. Link to the CLI, API, or
+PPL reference for flags and options.
+
+The PPL command, function, and aggregation references come from the catalogs
+in `pkg/ppl`. Run `make docs-gen` from the repository root after editing the
+catalogs. Record release changes in [CHANGELOG.md](CHANGELOG.md).
+
+## Report an issue
+
+Open a [GitHub issue](https://github.com/lynxbase/lynxdb/issues/new) and include
+the following details.
 
 - What you did (query, config, input data).
 - What you expected.

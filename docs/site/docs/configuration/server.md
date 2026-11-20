@@ -5,8 +5,6 @@ description: Top-level server settings, TLS, auth and HTTP settings, and every l
 
 # Server Settings
 
-This page covers the top-level keys of the server config file, the `tls`, `auth` and `http` sections, and the flags of `lynxdb server`.
-
 ## Top-Level Keys
 
 | Key | Flag | Env var | Default | Description |
