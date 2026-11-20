@@ -27,10 +27,17 @@ func (e *SyntaxError) Error() string {
 func (b *Batch) syntax(msg string) error { return &SyntaxError{Offset: b.pos, Msg: msg} }
 
 func (b *Batch) skipSpace() {
+	// Every blank is at most a space; most JSON has none between tokens.
+	if b.pos < len(b.src) && b.src[b.pos] > ' ' {
+		return
+	}
+	b.skipBlanks()
+}
+
+func (b *Batch) skipBlanks() {
 	src, i := b.src, b.pos
 	for i < len(src) {
-		// Every blank is at most a space, so one comparison passes the rest.
-		if c := src[i]; c > ' ' || c != ' ' && c != '\n' && c != '\t' && c != '\r' {
+		if c := src[i]; c != ' ' && c != '\n' && c != '\t' && c != '\r' {
 			break
 		}
 		i++
