@@ -82,7 +82,7 @@ func TestStampsRoundTripAndFollowTheirKeys(t *testing.T) {
 		}
 	}
 	var u Usage
-	if err := p.AddUsage(&u, true); err != nil {
+	if err := p.AddUsage(&u, anyPath); err != nil {
 		t.Fatal(err)
 	}
 	c := u.Columns[ColumnKey{"stamp", vec.KindString}]

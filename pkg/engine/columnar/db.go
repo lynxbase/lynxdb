@@ -345,7 +345,7 @@ type TierUsage struct {
 
 // Usage tells where the bytes of the parts of an index go, see
 // part.Part.AddUsage for sections; ok is false when there is no such index.
-func (db *DB) Usage(index string, sections bool) (u IndexUsage, ok bool, err error) {
+func (db *DB) Usage(index string, sections func(path string) bool) (u IndexUsage, ok bool, err error) {
 	snap, ok := db.Snapshot(index)
 	if !ok {
 		return u, false, nil

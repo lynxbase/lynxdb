@@ -64,13 +64,16 @@ type indexUsage struct {
 
 // handleIndexColumns tells where the bytes of an index go, by column and by
 // region of the part files, from the footers and directories of its parts
-// and, unless sections=false, the heads of the sections of every chunk; with
-// explain set to a path, it explains the coding of that column instead.
+// and, with sections=true, from the heads of the sections of every chunk, or
+// with path set, of the chunks of those paths only; with explain set to a
+// path, it explains the coding of that column instead. The heads take a read
+// of every chunk, which a store on disk pays in seconds per gigabyte.
 func (s *Server) handleIndexColumns(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeQuery, auth.ScopeAdmin) {
 		return
 	}
-	sections := true
+	paths := r.URL.Query()["path"]
+	sections := len(paths) > 0
 	if v := r.URL.Query().Get("sections"); v != "" {
 		b, err := strconv.ParseBool(v)
 		if err != nil {
@@ -87,7 +90,14 @@ func (s *Server) handleIndexColumns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.syncForRead()
-	u, ok, err := s.db.Usage(index, sections)
+	var pick func(string) bool
+	switch {
+	case sections && len(paths) > 0:
+		pick = func(path string) bool { return slices.Contains(paths, path) }
+	case sections:
+		pick = func(string) bool { return true }
+	}
+	u, ok, err := s.db.Usage(index, pick)
 	switch {
 	case err != nil:
 		respondInternalError(w, err.Error())

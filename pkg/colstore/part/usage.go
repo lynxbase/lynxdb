@@ -63,9 +63,10 @@ var (
 )
 
 // AddUsage adds the bytes of the part to u, from its footer and directories
-// and, with sections set, the heads of the sections of every chunk, which
-// it reads without decoding any.
-func (p *Part) AddUsage(u *Usage, sections bool) error {
+// and from the heads of the sections of the chunks of the paths that
+// sections picks, none when it is nil; it decodes no chunk, but reading the
+// heads touches the pages of every chunk picked.
+func (p *Part) AddUsage(u *Usage, sections func(path string) bool) error {
 	if u.Regions == nil {
 		u.Regions = map[string]int64{}
 	}
@@ -83,6 +84,10 @@ func (p *Part) AddUsage(u *Usage, sections bool) error {
 	placed := int64(headerSize+trailerSize+footer) + int64(len(p.dirs))
 
 	cols := make([]*ColumnUsage, len(p.paths)*kindSlots)
+	walk := make([]bool, len(p.paths))
+	for id, path := range p.paths {
+		walk[id] = sections != nil && sections(path)
+	}
 	column := func(pathID uint32, kind vec.Kind) *ColumnUsage {
 		slot := int(pathID)*kindSlots + int(kind)%kindSlots
 		if cols[slot] == nil {
@@ -132,7 +137,7 @@ func (p *Part) AddUsage(u *Usage, sections bool) error {
 			}
 			c.Encodings[name] = c.Encodings[name].add(1, count, int64(length), 0)
 			chunks += int64(length)
-			if sections {
+			if walk[pathID] {
 				walkChunk(c, kind, enc, flags, count, data[off:off+length])
 			}
 		}

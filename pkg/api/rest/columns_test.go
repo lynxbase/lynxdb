@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/lynxbase/lynxdb/internal/benchdata"
@@ -18,16 +20,7 @@ func TestIndexColumnsAddUpToTheIndexSize(t *testing.T) {
 	defer cleanup()
 	ingestNDJSON(t, srv.Addr(), "bsky", string(benchdata.New(1, 2000).Append(nil, 20000)))
 
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/indexes/bsky/columns", srv.Addr()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	var body struct{ Data indexUsage }
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || resp.StatusCode != http.StatusOK {
-		t.Fatalf("status %d, decode: %v", resp.StatusCode, err)
-	}
-	u := body.Data
+	u := getColumns(t, fmt.Sprintf("http://%s/api/v1/indexes/bsky/columns?sections=true", srv.Addr()))
 	if u.Rows != 20000 || u.Bytes <= 0 || len(u.Columns) == 0 {
 		t.Fatalf("rows %d, bytes %d, columns %d", u.Rows, u.Bytes, len(u.Columns))
 	}
@@ -53,6 +46,14 @@ func TestIndexColumnsAddUpToTheIndexSize(t *testing.T) {
 		}
 	}
 
+	for query, want := range map[string]string{"": "", "?path=commit.rev&path=did": "commit.rev did"} {
+		for _, c := range getColumns(t, fmt.Sprintf("http://%s/api/v1/indexes/bsky/columns%s", srv.Addr(), query)).Columns {
+			if walked := len(c.Sections) > 0; walked != slices.Contains(strings.Fields(want), c.Path) {
+				t.Errorf("query %q: %s %s has %d sections", query, c.Path, c.Kind, len(c.Sections))
+			}
+		}
+	}
+
 	missing, err := http.Get(fmt.Sprintf("http://%s/api/v1/indexes/nothing/columns", srv.Addr()))
 	if err != nil {
 		t.Fatal(err)
@@ -61,4 +62,19 @@ func TestIndexColumnsAddUpToTheIndexSize(t *testing.T) {
 	if missing.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown index: status %d", missing.StatusCode)
 	}
+}
+
+func getColumns(t *testing.T, url string) indexUsage {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var body struct{ Data indexUsage }
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("%s: status %d, decode: %v", url, resp.StatusCode, err)
+	}
+
+	return body.Data
 }

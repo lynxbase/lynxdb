@@ -92,7 +92,7 @@ func TestTimedKeysRoundTripInTheirShapes(t *testing.T) {
 			}
 		}
 		var u Usage
-		if err := p.AddUsage(&u, true); err != nil {
+		if err := p.AddUsage(&u, anyPath); err != nil {
 			t.Fatal(err)
 		}
 		// A block takes the timed form when it is the smaller one.
@@ -186,7 +186,7 @@ func TestUntimedKeysKeepTheirEncoding(t *testing.T) {
 		t.Fatal(err)
 	}
 	var u Usage
-	if err := p.AddUsage(&u, true); err != nil {
+	if err := p.AddUsage(&u, anyPath); err != nil {
 		t.Fatal(err)
 	}
 	if timed := u.Columns[ColumnKey{"key", vec.KindString}].Encodings["timed"]; timed != nil {
@@ -234,7 +234,7 @@ func TestTimedColumnsFollowEachOther(t *testing.T) {
 		}
 	}
 	var u Usage
-	if err := p.AddUsage(&u, true); err != nil {
+	if err := p.AddUsage(&u, anyPath); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range []string{"commit.rev", "commit.rkey"} {

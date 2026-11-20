@@ -6,6 +6,8 @@ import (
 	"github.com/lynxbase/lynxdb/internal/benchdata"
 )
 
+func anyPath(string) bool { return true }
+
 func TestUsageAddsUpToThePartSize(t *testing.T) {
 	data := benchdata.New(1, 5000).Append(nil, 40000)
 	key := []string{"kind", "commit.operation", "commit.collection", "did"}
@@ -14,7 +16,7 @@ func TestUsageAddsUpToThePartSize(t *testing.T) {
 		t.Fatal(err)
 	}
 	var u Usage
-	if err := p.AddUsage(&u, true); err != nil {
+	if err := p.AddUsage(&u, anyPath); err != nil {
 		t.Fatal(err)
 	}
 	total := int64(0)

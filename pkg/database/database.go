@@ -150,7 +150,7 @@ func (db *DB) CreateIndex(index string, want columnar.Settings) (columnar.Settin
 }
 
 // Usage is columnar.DB.Usage.
-func (db *DB) Usage(index string, sections bool) (columnar.IndexUsage, bool, error) {
+func (db *DB) Usage(index string, sections func(path string) bool) (columnar.IndexUsage, bool, error) {
 	return db.core.Usage(index, sections)
 }
 
