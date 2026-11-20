@@ -63,8 +63,10 @@
 
 .command :global(.theme-code-block) {
   margin: 0;
-  --prism-background-color: #111e19 !important;
-  --prism-color: #e0eae3 !important;
+}
+
+.command pre {
+  background: #111e19 !important;
 }
 
 .command pre,
