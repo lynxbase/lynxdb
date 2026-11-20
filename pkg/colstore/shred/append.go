@@ -1,6 +1,10 @@
 package shred
 
-import "github.com/lynxbase/lynxdb/pkg/vec"
+import (
+	"slices"
+
+	"github.com/lynxbase/lynxdb/pkg/vec"
+)
 
 // Col returns the column holding values of kind at path, creating it when
 // the batch has none.
@@ -110,6 +114,20 @@ func (c *Column) AppendByteRun(row int, data []byte, offsets []uint32) {
 	for _, end := range offsets[1:] {
 		c.Ends = append(c.Ends, end+shift)
 	}
+}
+
+// ReserveRun appends payloads of width bytes for the n consecutive rows
+// starting at row and returns their bytes, end to end, for the caller to
+// fill.
+func (c *Column) ReserveRun(row, n, width int) []byte {
+	c.placeRun(row, n)
+	start := len(c.Data)
+	c.Data = slices.Grow(c.Data, n*width)[:start+n*width]
+	for end := start + width; end <= start+n*width; end += width {
+		c.Ends = append(c.Ends, uint32(end))
+	}
+
+	return c.Data[start:]
 }
 
 // CopyRows appends rows from to to-1 of b to dst.

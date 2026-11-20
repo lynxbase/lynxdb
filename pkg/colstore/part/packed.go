@@ -306,15 +306,43 @@ func squeeze(v uint64, width uint) uint64 {
 // readSymbols appends the strings of a packed section body, rawLen bytes in
 // all.
 func readSymbols(dst, src []byte, rawLen int, s *packScratch) ([]byte, error) {
+	var r packedReader
+	if err := r.open(src, rawLen, s); err != nil {
+		return dst, err
+	}
+	start := len(dst)
+	if cap(dst)-start < rawLen {
+		grown := make([]byte, start, start+rawLen)
+		copy(grown, dst)
+		dst = grown
+	}
+	dst = dst[:start+rawLen]
+	r.put(dst[start:], 0, r.count)
+
+	return dst, nil
+}
+
+// packedReader writes the strings of a packed section body from where the
+// body lies, any run of them at a time.
+type packedReader struct {
+	stride, count, bitsPerString int
+	template, codes              []byte
+	schedule                     []packStep
+	table                        []byte
+}
+
+// open readies r for a packed section body of rawLen bytes, whose tables it
+// keeps in s.
+func (r *packedReader) open(src []byte, rawLen int, s *packScratch) error {
 	stride64, used := binary.Uvarint(src)
 	if used <= 0 || stride64 == 0 || stride64 > uint64(rawLen) || uint64(rawLen)%stride64 != 0 || len(src)-used < 1 {
-		return dst, ErrCorrupt
+		return ErrCorrupt
 	}
 	stride, count := int(stride64), rawLen/int(stride64)
 	n := int(src[used])
 	src = src[used+1:]
 	if n < 1 || n > 1<<maxPackedBits || len(src) < n+3*stride {
-		return dst, ErrCorrupt
+		return ErrCorrupt
 	}
 	var symbols [2 << maxPackedBits]byte
 	copy(symbols[:], src[:n])
@@ -328,16 +356,16 @@ func readSymbols(dst, src []byte, rawLen int, s *packScratch) ([]byte, error) {
 		}
 		// A code is a base below 64 plus up to 6 bits, inside symbols.
 		if width > maxPackedBits || base >= 1<<maxPackedBits {
-			return dst, ErrCorrupt
+			return ErrCorrupt
 		}
 		s.varPos = append(s.varPos, p)
 		s.width = append(s.width, width)
 		s.table = append(s.table, symbols[base:int(base)+1<<maxPackedBits]...)
 		bitsPerString += int(width)
 	}
-	varPos, widths, table := s.varPos, s.width, s.table
+	varPos, widths := s.varPos, s.width
 	if need := (uint64(count)*uint64(bitsPerString) + 7) / 8; len(varPos) == 0 || uint64(len(codes)) < need {
-		return dst, ErrCorrupt
+		return ErrCorrupt
 	}
 	// One word of codes yields at least 57 bits wherever it starts. A step
 	// ends where the width changes or the bytes stop being adjacent, so
@@ -353,21 +381,24 @@ func readSymbols(dst, src []byte, rawLen int, s *packScratch) ([]byte, error) {
 		step.count = k - step.first
 		s.schedule = append(s.schedule, step)
 	}
-
-	start := len(dst)
-	if cap(dst)-start < rawLen {
-		grown := make([]byte, start, start+rawLen)
-		copy(grown, dst)
-		dst = grown
+	*r = packedReader{
+		stride: stride, count: count, bitsPerString: bitsPerString,
+		template: template, codes: codes, schedule: s.schedule, table: s.table,
 	}
-	dst = dst[:start+rawLen]
-	out := dst[start:]
+
+	return nil
+}
+
+// put writes the strings from from to to, below count, one after another
+// into out.
+func (r *packedReader) put(out []byte, from, to int) {
+	stride, codes, table := r.stride, r.codes, r.table
 	var tail [16]byte
-	bitPos := uint64(0)
-	for i := 0; i < count; i++ {
+	bitPos := uint64(from) * uint64(r.bitsPerString)
+	for i := 0; i < to-from; i++ {
 		val := out[i*stride : (i+1)*stride]
-		copy(val, template)
-		for _, step := range s.schedule {
+		copy(val, r.template)
+		for _, step := range r.schedule {
 			var w uint64
 			if at := int(bitPos >> 3); at+8 <= len(codes) {
 				w = binary.LittleEndian.Uint64(codes[at:]) >> (bitPos & 7)
@@ -387,8 +418,6 @@ func readSymbols(dst, src []byte, rawLen int, s *packScratch) ([]byte, error) {
 			bitPos += uint64(step.count) * uint64(width)
 		}
 	}
-
-	return dst, nil
 }
 
 // packedChunk is the number of code bits compared at once: a word read at

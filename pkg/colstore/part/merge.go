@@ -249,6 +249,11 @@ type mergeCursor struct {
 	slots []*shred.Column
 	// next is the slot of the next value of each column decoded by value.
 	next []uint32
+	// lazy holds the reader of each column read lazily, nil for the others,
+	// taken from lazyBufs.
+	lazy     []*lazyColumn
+	lazyBufs []*lazyColumn
+	lazyUsed int
 	// pathMap gives the destination's id of each path of the part.
 	pathMap []uint32
 }
@@ -257,6 +262,7 @@ type mergeCursor struct {
 type densePlan struct {
 	col  *vec.Column
 	out  *shred.Column
+	lazy *lazyColumn
 	mode uint8
 }
 
@@ -265,6 +271,7 @@ const (
 	denseInts
 	denseFloats
 	denseBytes
+	denseLazy
 )
 
 // exhausted stands in for a cursor that gave its buffers back.
@@ -289,6 +296,7 @@ var cursorPool = mem.Pool[mergeCursor]{Reset: func(c *mergeCursor) bool {
 	c.blk.part, c.blk.data, c.blk.dir, c.blk.stats = nil, nil, nil, nil
 	clear(c.outs)
 	clear(c.slots)
+	clear(c.lazy)
 	for i := range c.dense {
 		c.dense[i] = densePlan{}
 	}
@@ -527,6 +535,9 @@ func (c *mergeCursor) decodeRows(m *merger) error {
 	c.outs = grow(c.outs, n)
 	clear(c.outs)
 	c.next = grow(c.next, n)
+	c.lazy = grow(c.lazy, n)
+	clear(c.lazy)
+	c.lazyUsed = 0
 	for i := range c.dense {
 		c.dense[i] = densePlan{}
 	}
@@ -541,7 +552,11 @@ func (c *mergeCursor) decodeRows(m *merger) error {
 		}
 		col := &c.cols[j].Column
 		if !c.isKey[j] {
-			if err := c.decode(j); err != nil {
+			lazy, err := c.openLazy(j)
+			if err == nil && !lazy {
+				err = c.decode(j)
+			}
+			if err != nil {
 				return err
 			}
 		}
@@ -553,8 +568,10 @@ func (c *mergeCursor) decodeRows(m *merger) error {
 		}
 		c.outs[j] = oc
 		if col.Valid == nil {
-			plan := densePlan{col: col, out: oc}
+			plan := densePlan{col: col, out: oc, lazy: c.lazy[j]}
 			switch {
+			case plan.lazy != nil:
+				plan.mode = denseLazy
 			case col.Layout != vec.Flat:
 			case col.Kind == vec.KindInt:
 				plan.mode = denseInts
@@ -647,6 +664,8 @@ func (c *mergeCursor) emit(m *merger, n int) error {
 			oc.AppendFloats(o, col.Floats[a:a+n])
 		case denseBytes:
 			oc.AppendByteRun(o, col.Data, col.Offsets[a:a+n+1])
+		case denseLazy:
+			p.lazy.put(oc, a, o, n)
 		default:
 			for i := 0; i < n; i++ {
 				copyValue(oc, col, a+i, o+i)
@@ -661,6 +680,11 @@ func (c *mergeCursor) emit(m *merger, n int) error {
 		if !c.isKey[j] {
 			at = int(c.next[j])
 			c.next[j]++
+		}
+		if l := c.lazy[j]; l != nil {
+			l.put(c.outs[j], at, row+shift, 1)
+
+			continue
 		}
 		copyValue(c.outs[j], &c.cols[j].Column, at, row+shift)
 	}
