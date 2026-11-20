@@ -1,7 +1,9 @@
 package shred
 
 import (
+	"bytes"
 	"cmp"
+	"encoding/binary"
 	"math/bits"
 	"slices"
 
@@ -30,6 +32,15 @@ type sortScratch struct {
 	data   []byte
 	times  []int64
 	ids    []uint32
+	heads  []headID
+}
+
+// headID is a distinct value of a byte column with the eight bytes of it
+// that most often tell it from the others, as a number that orders as they
+// do.
+type headID struct {
+	head uint64
+	id   uint32
 }
 
 // reserve gives the buffers that hold one column at a time the room of the
@@ -356,23 +367,46 @@ func (b *Batch) rankBytes(c *Column, dst []uint32, base uint32) uint32 {
 	defer arena.Free()
 	table := vec.NewByteTable(arena)
 	s.ids = s.ids[:0]
+	var prev []byte
+	id := uint32(0)
 	for i := 0; i < c.Count; i++ {
-		s.ids = append(s.ids, uint32(table.ID(c.Bytes(i))))
+		// Rows of few values often repeat the one before.
+		if v := c.Bytes(i); i == 0 || !bytes.Equal(v, prev) {
+			id, prev = uint32(table.ID(v)), v
+		}
+		s.ids = append(s.ids, id)
 	}
 	distinct := table.Len()
-	s.order = s.order[:0]
-	for i := 0; i < distinct; i++ {
-		s.order = append(s.order, uint32(i))
+	// The values are ordered by the eight bytes after the prefix they all
+	// share, and by all their bytes only where those are equal.
+	shared := table.Key(0)
+	for i := 1; i < distinct && len(shared) > 0; i++ {
+		k := table.Key(i)
+		n := 0
+		for n < len(shared) && n < len(k) && k[n] == shared[n] {
+			n++
+		}
+		shared = shared[:n]
 	}
-	slices.SortFunc(s.order, func(x, y uint32) int {
-		return cmp.Compare(string(table.Key(int(x))), string(table.Key(int(y))))
+	s.heads = s.heads[:0]
+	for i := 0; i < distinct; i++ {
+		var head [8]byte
+		copy(head[:], table.Key(i)[len(shared):])
+		s.heads = append(s.heads, headID{binary.BigEndian.Uint64(head[:]), uint32(i)})
+	}
+	slices.SortFunc(s.heads, func(x, y headID) int {
+		if x.head != y.head {
+			return cmp.Compare(x.head, y.head)
+		}
+
+		return bytes.Compare(table.Key(int(x.id)), table.Key(int(y.id)))
 	})
 	if cap(s.slot) < distinct {
 		s.slot = make([]uint32, distinct)
 	}
 	rank := s.slot[:distinct]
-	for pos, id := range s.order {
-		rank[id] = uint32(pos)
+	for pos, h := range s.heads {
+		rank[h.id] = uint32(pos)
 	}
 	for i, id := range s.ids {
 		dst[c.Row(i)] = base + rank[id]
