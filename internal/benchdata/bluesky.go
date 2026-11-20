@@ -46,6 +46,8 @@ type Generator struct {
 	time  int64
 	// step is the mean number of microseconds from one event to the next.
 	step uint64
+	// favour is the power of the uniform draw that picks an account.
+	favour int
 	// batch is the commit of several records whose events come next.
 	batch batch
 }
@@ -66,7 +68,16 @@ type batch struct {
 // New returns a generator of events spread over users accounts; active
 // accounts write far more than the rest, as on the network.
 func New(seed uint64, users int) *Generator {
-	return &Generator{state: seed*0x9e3779b97f4a7c15 + 1, users: uint64(max(users, 1)), time: 1732206349000167, step: 200}
+	return &Generator{state: seed*0x9e3779b97f4a7c15 + 1, users: uint64(max(users, 1)), time: 1732206349000167, step: 200, favour: 2}
+}
+
+// Favour makes the events that follow draw their account as a power of a
+// uniform draw, 2 unless set: the higher the power, the more of the events
+// the most active accounts write, as bots do on the network.
+func (g *Generator) Favour(power int) *Generator {
+	g.favour = max(power, 1)
+
+	return g
 }
 
 // Spread makes the events that follow lie about step microseconds apart, 200
@@ -102,12 +113,16 @@ func (g *Generator) did(dst []byte) []byte {
 	return g.appendDID(dst, g.account())
 }
 
-// account draws an account; the square of a uniform draw favours the low
+// account draws an account; a power of a uniform draw favours the low
 // account numbers.
 func (g *Generator) account() uint64 {
 	f := float64(g.next()>>11) / (1 << 53)
+	p := f
+	for range g.favour - 1 {
+		p *= f
+	}
 
-	return uint64(f * f * float64(g.users))
+	return uint64(p * float64(g.users))
 }
 
 func (g *Generator) appendDID(dst []byte, account uint64) []byte {
