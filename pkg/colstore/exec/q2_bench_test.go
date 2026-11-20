@@ -80,10 +80,16 @@ func q2(res *exec.Result) string {
 // users by collection of the created commits, over a store of daily
 // partitions, which a user active on several days spans; its answer must be
 // that of a scan that hashes the groups. LYNXDB_BENCH_Q2_ROWS sets the events
-// (2Mi by default) and LYNXDB_BENCH_Q2_DAYS the days they cover (3).
+// (2Mi by default), LYNXDB_BENCH_Q2_DAYS the days they cover (3),
+// LYNXDB_BENCH_Q2_USERS the accounts that write them (one per 64 events) and
+// LYNXDB_BENCH_Q2_WORKERS the goroutines of the query (one per CPU).
 func BenchmarkQ2Days(b *testing.B) {
 	rows := envOr(b, "LYNXDB_BENCH_Q2_ROWS", 1<<21)
 	days := envOr(b, "LYNXDB_BENCH_Q2_DAYS", 3)
+	opts := exec.Options{}
+	if os.Getenv("LYNXDB_BENCH_Q2_WORKERS") != "" {
+		opts.Workers = envOr(b, "LYNXDB_BENCH_Q2_WORKERS", 0)
+	}
 	s := blueskyDays(b, filepath.Join(b.TempDir(), "store"), rows, days, envOr(b, "LYNXDB_BENCH_Q2_USERS", rows/64))
 	defer s.Close()
 	snap := s.Table().Snapshot()
@@ -103,7 +109,7 @@ func BenchmarkQ2Days(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	res, err := exec.Run(context.Background(), snap, plan, exec.Options{})
+	res, err := exec.Run(context.Background(), snap, plan, opts)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -125,7 +131,7 @@ func BenchmarkQ2Days(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		before := cpuTime()
-		if _, err := exec.Run(context.Background(), snap, plan, exec.Options{}); err != nil {
+		if _, err := exec.Run(context.Background(), snap, plan, opts); err != nil {
 			b.Fatal(err)
 		}
 		cpu += cpuTime() - before
