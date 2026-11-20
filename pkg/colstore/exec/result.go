@@ -26,6 +26,9 @@ type Stats struct {
 	// rows they are in.
 	CountedByIndex   int64
 	CountedByEntries int64
+	// CountedByTime counts blocks whose rows were counted by groups from
+	// their rows by bucket of time, without the time of each row.
+	CountedByTime int64
 	// ColumnsSearched counts the columns that matches over every string
 	// column decoded, and ColumnsSkippedByToken those whose token filter
 	// ruled the pattern out.

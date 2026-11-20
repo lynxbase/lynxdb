@@ -80,6 +80,7 @@ type keyPart struct {
 // aggScratch is the aggregation memory a worker keeps between queries.
 type aggScratch struct {
 	parts []keyPart
+	time  timeScratch
 	gid   []uint32
 	gid2  []uint32
 	idx2  []uint32

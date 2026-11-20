@@ -253,6 +253,7 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 		res.Stats.ColumnsSkippedByToken += w.unsearched
 		res.Stats.BlocksMatched += w.blocks
 		res.Stats.RowsMatched += w.matched
+		res.Stats.CountedByTime += w.byTime
 	}
 
 	return res, nil
@@ -305,6 +306,11 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 	}
 	w.open(p, b)
 	q := x.q
+	if q.cut != nil {
+		if counted, err := x.cutByTime(w, p, b); counted || err != nil {
+			return err
+		}
+	}
 	count, idx := w.rows, []uint32(nil)
 	if q.filter != nil {
 		v, err := w.eval(q.filter, 0)
@@ -354,6 +360,17 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 	}
 	w.blocks++
 	w.matched += int64(count)
+	if q.timeKeys != nil && idx == nil {
+		_, counted, err := w.agg.byTime(p, b.Index(), math.MinInt64, math.MaxInt64)
+		if err != nil {
+			return err
+		}
+		if counted {
+			w.byTime++
+
+			return nil
+		}
+	}
 	if q.agg != nil {
 		return w.agg.block(count, idx)
 	}

@@ -38,6 +38,14 @@ type query struct {
 	agg        *aggPlan
 	// ordered is set when the aggregation can run in key order.
 	ordered *orderedPlan
+	// timeKeys is set when a block whose rows all pass the filter can count
+	// them from its rows by bucket of time, and cut when the filter limits
+	// the row time.
+	timeKeys []timeKey
+	cut      *timeCut
+	// timeGranule is what the buckets of time that count the rows must
+	// divide, the greatest divisor of the granules of the time keys.
+	timeGranule int64
 	// rowExprs are the columns of a plan without an aggregate.
 	rowExprs []*sexpr
 	// having filters the rows of the aggregate, with havingIDs comparisons.
@@ -158,6 +166,11 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 			return nil, err
 		}
 		q.ordered = q.planOrdered(snap, scan.Filter)
+		if q.timeKeys = timeKeysOf(q); q.timeKeys != nil {
+			if err := q.planTimeCut(scan.Filter); err != nil {
+				return nil, err
+			}
+		}
 		q.names, q.final = q.agg.names, q.located
 		q.early = flt != nil && ((q.located != nil && reads(flt.Cond, q.names, q.located)) || uses(flt.Cond, OpTotal))
 		if flt != nil {

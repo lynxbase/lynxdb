@@ -105,6 +105,9 @@ type worker struct {
 	// searched and unsearched count the columns that matches over every
 	// string column decoded and those that a token filter spared them.
 	searched, unsearched int64
+	// byTime counts the blocks whose rows were counted from their rows by
+	// bucket of time.
+	byTime int64
 
 	agg  aggWorker
 	sink sink
