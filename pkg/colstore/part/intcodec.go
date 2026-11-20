@@ -6,8 +6,6 @@ import (
 	"slices"
 
 	"github.com/klauspost/compress/huff0"
-
-	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
 // Integer section modes.
@@ -45,9 +43,9 @@ type decodeScratch struct {
 	codes16 []uint16
 	timed   timedValues
 	huff    *huff0.Scratch
-	// kept holds the values that a timed chunk keeps, before its runs
-	// repeat them.
-	kept vec.Column
+	// valueOffsets holds the offsets of the values of a sparse timed chunk
+	// before they are spread over its rows.
+	valueOffsets []uint32
 }
 
 func zigzag(v int64) uint64   { return uint64(v<<1) ^ uint64(v>>63) }

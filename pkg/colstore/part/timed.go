@@ -329,8 +329,8 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 	}
 	s.sections[0] = len(w.block) - start
 	w.block = appendInts(w.block, s.diffs[:n], &w.blobs, &w.e)
-	// Differences wider than a byte a value in their frames may take fewer
-	// in byte planes, when their widths spread.
+	// Differences wider than two bytes a value in their frames may take
+	// fewer in byte planes, when their widths spread.
 	if frames := len(w.block) - start - s.sections[0]; frames > n {
 		at := len(w.block)
 		w.block = appendPlanes(w.block, s.diffs[:n], &w.e)
@@ -1372,24 +1372,29 @@ func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
 	return nil
 }
 
-// keptRowsOf returns the rows of the kept values of the count.
+// keptRowsOf returns the rows of the kept values of the count, the values
+// between runs a span at a time.
 func (v *timedValues) keptRowsOf(count int) []uint32 {
-	v.keptRows = grow(v.keptRows, v.kept)[:0]
-	for i, run := 0, 0; i < count; i++ {
-		if run < len(v.runStart) && int(v.runStart[run]) == i {
-			i += int(v.runLen[run]) - 1
-			run++
-
-			continue
+	rows := grow(v.keptRows, v.kept)[:0]
+	from := 0
+	for run := 0; run <= len(v.runStart); run++ {
+		to, next := count, count
+		if run < len(v.runStart) {
+			to = int(v.runStart[run])
+			next = to + int(v.runLen[run])
 		}
-		row := uint32(i)
 		if v.allRows != nil {
-			row = v.allRows[i]
+			rows = append(rows, v.allRows[from:to]...)
+		} else {
+			for i := from; i < to; i++ {
+				rows = append(rows, uint32(i))
+			}
 		}
-		v.keptRows = append(v.keptRows, row)
+		from = next
 	}
+	v.keptRows = rows
 
-	return v.keptRows
+	return rows
 }
 
 // resolve turns the differences of v into the shifted head numbers and its
@@ -1666,103 +1671,99 @@ func (b *Block) decodeTimed(ref *ColumnRef, sparse bool, rows int, dst *vec.Colu
 	if err := b.readTimed(ref, v, b.depth); err != nil {
 		return err
 	}
+	count := ref.Count
 	dst.Offsets = grow(dst.Offsets, rows+1)
-	if !sparse && len(v.runStart) == 0 {
-		off, err := v.putValues(dst)
-		if err != nil {
-			return err
-		}
-		if off != int(v.size) {
-			return ErrCorrupt
-		}
-
-		return nil
+	offsets := dst.Offsets
+	if sparse {
+		// The values one after another, whose offsets are then spread over
+		// the rows.
+		offsets = grow(b.d.valueOffsets, count+1)
+		b.d.valueOffsets = offsets
 	}
-	// The kept values one after another, laid out over the slots with the
-	// runs that repeat them.
-	kv := &b.d.kept
-	kv.Offsets = grow(kv.Offsets, v.kept+1)
-	koff, err := v.putValues(kv)
-	if err != nil {
+	var off int
+	var err error
+	if dst.Data, off, err = v.putValues(dst.Data, offsets[:count+1]); err != nil {
 		return err
 	}
-	if uint64(koff) != v.keptSize {
+	if off != int(v.size) {
 		return ErrCorrupt
 	}
-	dst.Data = grow(dst.Data, int(v.size))
-	count := ref.Count
-	off, i, j, run, left := 0, 0, 0, 0, 0
-	for slot := 0; slot < rows; slot++ {
-		dst.Offsets[slot] = uint32(off)
-		if sparse && !dst.Valid.Get(slot) {
-			continue
+	if sparse {
+		i := 0
+		for row := 0; row < rows; row++ {
+			dst.Offsets[row] = offsets[i]
+			if dst.Valid.Get(row) {
+				if i == count {
+					return ErrCorrupt
+				}
+				i++
+			}
 		}
-		if i == count {
+		if i != count {
 			return ErrCorrupt
 		}
-		if left == 0 && run < len(v.runStart) && int(v.runStart[run]) == i {
-			left = int(v.runLen[run])
-			run++
-		}
-		k := j
-		if left > 0 {
-			k, left = j-1, left-1
-		} else {
-			j++
-		}
-		if k < 0 || k >= v.kept {
-			return ErrCorrupt
-		}
-		off += copy(dst.Data[off:], kv.Data[kv.Offsets[k]:kv.Offsets[k+1]])
-		i++
-	}
-	dst.Offsets[rows] = uint32(off)
-	dst.Data = dst.Data[:off]
-	if i != count || j != v.kept || off != int(v.size) {
-		return ErrCorrupt
+		dst.Offsets[rows] = uint32(off)
 	}
 
 	return nil
 }
 
-// putValues writes the kept values of the chunk one after another into dst,
-// their offsets into dst.Offsets, which has room for them, and returns their
-// bytes.
-func (v *timedValues) putValues(dst *vec.Column) (int, error) {
-	n := v.kept
+// putValues writes the values of the chunk one after another into data,
+// grown, and their offsets into offsets, one for every value and one past
+// them, and returns data and their bytes.
+func (v *timedValues) putValues(data []byte, offsets []uint32) ([]byte, int, error) {
 	if v.form == formDigits && len(v.tails) == 0 && v.radixBits != 0 && v.headDigits <= 16 {
 		// The fast path writes 16 bytes a value, past the value's own end.
-		dst.Data = grow(dst.Data, int(v.keptSize)+16)
-		off, err := v.putAll(dst, n)
+		data = grow(data, int(v.size)+16)
+		off, err := v.putAll(data, offsets)
 		if err != nil {
-			return 0, err
+			return data, 0, err
 		}
-		dst.Data = dst.Data[:off]
-		dst.Offsets[n] = uint32(off)
 
-		return off, nil
+		return data[:off], off, nil
 	}
 	if err := v.resolve(); err != nil {
-		return 0, err
+		return data, 0, err
 	}
-	dst.Data = grow(dst.Data, int(v.keptSize))
-	off := 0
-	for i := 0; i < n; i++ {
-		dst.Offsets[i] = uint32(off)
-		off += v.put(dst.Data[off:], i)
+	data = grow(data, int(v.size))
+	off, at, run := 0, 0, 0
+	for i := 0; i < v.kept; i++ {
+		offsets[at] = uint32(off)
+		start := off
+		off += v.put(data[off:], i)
+		at++
+		if run < len(v.runStart) && int(v.runStart[run]) == at {
+			off, at = repeat(data, offsets, start, off, at, int(v.runLen[run]))
+			run++
+		}
 	}
-	dst.Offsets[n] = uint32(off)
+	offsets[at] = uint32(off)
 
-	return off, nil
+	return data[:off], off, nil
 }
 
-// putAll writes the count values of a chunk of digits whose span is all
-// head, of at most 16 digits of a power of two, one after another into dst,
-// and returns their bytes. It adds the references and looks the shifted-out
-// bits up as it goes, and writes the digits a word at a time, past the end
-// of each value into where the next one goes; dst.Data has 16 bytes of room
-// past the values.
-func (v *timedValues) putAll(dst *vec.Column, count int) (int, error) {
+// repeat writes the value at data[start:end] again length times after it,
+// the first of them value at, and returns the end of the last and the value
+// after it.
+func repeat(data []byte, offsets []uint32, start, end, at, length int) (int, int) {
+	n := end - start
+	for range length {
+		offsets[at] = uint32(end)
+		end += copy(data[end:end+n], data[start:start+n])
+		at++
+	}
+
+	return end, at
+}
+
+// putAll writes the values of a chunk of digits whose span is all head, of
+// at most 16 digits of a power of two, one after another into data, their
+// offsets into offsets, one for every value and one past them, and returns
+// their bytes. It adds the references and looks the shifted-out bits up as
+// it goes, writes the digits a word at a time, past the end of each value
+// into where the next one goes, and repeats a value before a run as it
+// goes; data has 16 bytes of room past the values.
+func (v *timedValues) putAll(data []byte, offsets []uint32) (int, error) {
 	stride, from, to, digits := v.stride, v.from, v.to, v.headDigits
 	shift, lowMask := v.shift&63, uint64(1)<<(v.shift&63)-1
 	words := v.words
@@ -1770,7 +1771,7 @@ func (v *timedValues) putAll(dst *vec.Column, count int) (int, error) {
 	// The first eight digits are a word, and any after them another.
 	right, left := uint(max(digits-8, 0))*b&63, uint(max(8-digits, 0))*b&63
 	second := uint(max(16-digits, 0)) * b & 63
-	parts, low, dict := v.parts[:count], v.low, v.lowDict
+	parts, low, dict := v.parts[:v.kept], v.low, v.lowDict
 	if shift == 0 {
 		low = nil
 	}
@@ -1778,13 +1779,17 @@ func (v *timedValues) putAll(dst *vec.Column, count int) (int, error) {
 	excIndex, excValue := v.excIndex, v.excValue
 	prefix, suffix := v.prefix, v.suffix
 	refs, valid, rows, unit := v.refs, v.refValid, v.rows, v.unit
-	data, offsets := dst.Data, dst.Offsets[:len(parts)]
-	off, exc, nextExc := 0, 0, -1
+	runStart, runLen := v.runStart, v.runLen
+	off, exc, nextExc, at, run, nextRun := 0, 0, -1, 0, 0, -1
 	if len(excIndex) > 0 {
 		nextExc = int(excIndex[0])
 	}
+	if len(runStart) > 0 {
+		nextRun = int(runStart[0])
+	}
 	for i, part := range parts {
-		offsets[i] = uint32(off)
+		offsets[at] = uint32(off)
+		start := off
 		if i == nextExc {
 			off += copy(data[off:], excValue[exc])
 			exc++
@@ -1792,49 +1797,58 @@ func (v *timedValues) putAll(dst *vec.Column, count int) (int, error) {
 			if exc < len(excIndex) {
 				nextExc = int(excIndex[exc])
 			}
-
-			continue
-		}
-		if refs != nil {
-			row := i
-			if rows != nil {
-				row = int(rows[i])
-			}
-			if valid != nil && !valid.Get(row) {
-				return 0, ErrCorrupt
-			}
-			part += unitDiv(refs[row], unit)
-		}
-		num := uint64(part) << shift
-		if low != nil {
-			bits := uint64(low[i])
-			if coded {
-				if bits >= uint64(len(dict)) {
+		} else {
+			if refs != nil {
+				row := i
+				if rows != nil {
+					row = int(rows[i])
+				}
+				if valid != nil && !valid.Get(row) {
 					return 0, ErrCorrupt
 				}
-				bits = uint64(dict[bits])
+				part += unitDiv(refs[row], unit)
 			}
-			num |= bits & lowMask
-		}
-		if from > 0 {
-			copy(data[off:off+from], prefix)
-		}
-		if many {
-			binary.LittleEndian.PutUint64(data[off+from:], words.word(num>>right<<left))
-			if digits > 8 {
-				binary.LittleEndian.PutUint64(data[off+from+8:], words.word(num<<second&words.eight))
+			num := uint64(part) << shift
+			if low != nil {
+				bits := uint64(low[i])
+				if coded {
+					if bits >= uint64(len(dict)) {
+						return 0, ErrCorrupt
+					}
+					bits = uint64(dict[bits])
+				}
+				num |= bits & lowMask
 			}
-		} else {
-			binary.LittleEndian.PutUint64(data[off+from:], words.letters(words.spread(num>>right<<left)))
-			if digits > 8 {
-				binary.LittleEndian.PutUint64(data[off+from+8:], words.letters(words.spread(num<<second&words.eight)))
+			if from > 0 {
+				copy(data[off:off+from], prefix)
+			}
+			if many {
+				binary.LittleEndian.PutUint64(data[off+from:], words.word(num>>right<<left))
+				if digits > 8 {
+					binary.LittleEndian.PutUint64(data[off+from+8:], words.word(num<<second&words.eight))
+				}
+			} else {
+				binary.LittleEndian.PutUint64(data[off+from:], words.letters(words.spread(num>>right<<left)))
+				if digits > 8 {
+					binary.LittleEndian.PutUint64(data[off+from+8:], words.letters(words.spread(num<<second&words.eight)))
+				}
+			}
+			if to < stride {
+				copy(data[off+to:off+stride], suffix)
+			}
+			off += stride
+		}
+		at++
+		if at == nextRun {
+			off, at = repeat(data, offsets, start, off, at, int(runLen[run]))
+			run++
+			nextRun = -1
+			if run < len(runStart) {
+				nextRun = int(runStart[run])
 			}
 		}
-		if to < stride {
-			copy(data[off+to:off+stride], suffix)
-		}
-		off += stride
 	}
+	offsets[at] = uint32(off)
 
 	return off, nil
 }
