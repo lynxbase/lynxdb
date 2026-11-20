@@ -97,7 +97,9 @@ func DualLimitMiddleware(cfg Config, hook Hook) func(http.Handler) http.Handler 
 
 			rw := newCaptureResponseWriter(w)
 			next.ServeHTTP(rw, r)
-			if tooLarge := state.tooLarge(); tooLarge != nil {
+			// A handler that answered the limit itself keeps its reply,
+			// which may say what it took of the body before the limit.
+			if tooLarge := state.tooLarge(); tooLarge != nil && rw.code != http.StatusRequestEntityTooLarge {
 				writeError(w, http.StatusRequestEntityTooLarge, tooLarge.Error())
 				return
 			}

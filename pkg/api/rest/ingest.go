@@ -15,6 +15,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/config"
 	"github.com/lynxbase/lynxdb/pkg/database"
 	"github.com/lynxbase/lynxdb/pkg/engine/columnar"
+	"github.com/lynxbase/lynxdb/pkg/ingest/limits"
 	"github.com/lynxbase/lynxdb/pkg/ingest/ndjson"
 	"github.com/lynxbase/lynxdb/pkg/ingest/pipeline"
 )
@@ -33,21 +34,38 @@ func ingestPipelineForConfig(cfg config.IngestConfig) *pipeline.Pipeline {
 // respondIngestError maps database errors to the appropriate HTTP status and error code.
 // Returns true if an error response was written, false if err is nil.
 func respondIngestError(w http.ResponseWriter, err error) bool {
+	return respondIngestErrorAfter(w, err, "")
+}
+
+// respondIngestErrorAfter is respondIngestError for a body that was appended
+// as it was read: taken ends the message with the lines appended before err.
+func respondIngestErrorAfter(w http.ResponseWriter, err error, taken string) bool {
 	if err == nil {
 		return false
 	}
 	switch {
 	case errors.Is(err, columnar.ErrIndexName):
-		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error())
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error()+taken)
 	case errors.Is(err, columnar.ErrClosed), errors.Is(err, colstore.ErrClosed):
 		w.Header().Set("Retry-After", "5")
-		respondError(w, ErrCodeShuttingDown, http.StatusServiceUnavailable, "server is shutting down")
+		respondError(w, ErrCodeShuttingDown, http.StatusServiceUnavailable, "server is shutting down"+taken)
 	default:
 		slog.Warn("ingest: internal error", "error", err)
-		respondInternalError(w, "ingest failed: internal error")
+		respondInternalError(w, "ingest failed: internal error"+taken)
 	}
 
 	return true
+}
+
+// linesTaken says how many lines of a body were appended before what
+// stopped it, for the message of the error; a client that sends the body
+// again repeats those lines.
+func linesTaken(lines int64, before string) string {
+	if lines == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("; the %d lines before %s were taken", lines, before)
 }
 
 // requestIndex returns the index a request names in ?index= or the X-Index
@@ -87,7 +105,9 @@ type piece struct {
 // newline, and calls fn with each while it reads the next, so that reading
 // and decoding a body take a core of their own. A line longer than a piece
 // grows the piece until it holds the line. It returns the first error of
-// fn, or else of reading, once it has stopped reading r.
+// fn, or else of reading, once it has stopped reading r; the lines read
+// since the last piece are dropped when reading fails, because the last of
+// them may be cut.
 func readLines(r io.Reader, fn func(lines []byte) error) error {
 	free := make(chan *[]byte, 2)
 	free <- pieces.Get().(*[]byte)
@@ -131,10 +151,17 @@ func fillPieces(r io.Reader, free chan *[]byte, full chan<- piece, stop <-chan s
 	}()
 	for {
 		buf := *cur
-		read, err := io.ReadFull(r, buf[n:])
-		n += read
+		// io.ReadFull would turn the end of r inside a piece into
+		// io.ErrUnexpectedEOF, which is also what a body cut short of its
+		// length or of its compressed stream gives.
+		var err error
+		for n < len(buf) && err == nil {
+			var read int
+			read, err = r.Read(buf[n:])
+			n += read
+		}
 		switch {
-		case err == io.EOF || err == io.ErrUnexpectedEOF:
+		case err == io.EOF:
 			if n > 0 {
 				select {
 				case full <- piece{cur, buf[:n]}:
@@ -176,7 +203,8 @@ func fillPieces(r io.Reader, free chan *[]byte, full chan<- piece, stop <-chan s
 
 // handleIngestEvents takes NDJSON, one event per line, and appends it to an
 // index as it is. The body is appended as it is read, so the lines before a
-// body that turns out too large are taken.
+// body turns out too large, cut short or not to decode are taken, and the
+// error says how many.
 func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeIngest) {
 		return
@@ -197,21 +225,25 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	if appendErr != nil {
 		s.promMetrics.RecordIngestError()
-		respondIngestError(w, appendErr)
+		respondIngestErrorAfter(w, appendErr, linesTaken(accepted+rejected, "the error"))
 		return
 	}
 	if readErr != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(readErr, &tooLarge) {
-			msg := fmt.Sprintf("request body exceeds %d bytes", tooLarge.Limit)
-			if accepted+rejected > 0 {
-				msg += fmt.Sprintf("; the %d lines before the limit were taken", accepted+rejected)
-			}
-			respondError(w, ErrCodeInvalidRequest, http.StatusRequestEntityTooLarge, msg,
+		var wire *http.MaxBytesError
+		var decoded *limits.TooLargeError
+		switch {
+		case errors.As(readErr, &wire):
+			respondError(w, ErrCodeInvalidRequest, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("request body exceeds %d bytes", wire.Limit)+linesTaken(accepted+rejected, "the limit"),
 				WithSuggestion("Send smaller batches or raise ingest.max_body_size."))
-			return
+		case errors.As(readErr, &decoded):
+			respondError(w, ErrCodeInvalidRequest, http.StatusRequestEntityTooLarge,
+				decoded.Error()+linesTaken(accepted+rejected, "the limit"),
+				WithSuggestion("Send smaller batches or raise ingest.max_body_size."))
+		default:
+			respondError(w, ErrCodeInvalidRequest, http.StatusBadRequest,
+				"request body is cut short or does not decode"+linesTaken(accepted+rejected, "that"))
 		}
-		respondError(w, ErrCodeInvalidRequest, http.StatusBadRequest, "request body read error")
 		return
 	}
 	respondData(w, http.StatusOK, map[string]interface{}{

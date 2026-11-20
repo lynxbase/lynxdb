@@ -71,7 +71,13 @@ curl -s localhost:3100/api/v1/query \
 {"error": {"type": "request_body_too_large", "reason": "compressed body exceeds limit 4096 set by ingest.max_body_size"}, "status": 413}
 ```
 
-A body sent without `Content-Length` that grows past the limit answers `413 INVALID_REQUEST` instead.
+A body sent without `Content-Length`, and a compressed body, is appended as it is read. When it grows past the limit the reply is `413 INVALID_REQUEST`; when it is cut short or does not decode the reply is `400 INVALID_REQUEST`. Either message ends with the lines taken before that point:
+
+```json
+{"error": {"code": "INVALID_REQUEST", "message": "request body is cut short or does not decode; the 17371 lines before that were taken"}}
+```
+
+Sending such a body again repeats the lines already taken.
 
 ## POST /ingest/raw
 
