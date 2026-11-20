@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime/debug"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -39,7 +39,7 @@ func runTimeQueries(b *testing.B, snap *colstore.Snapshot, queries []timeQuery) 
 		}
 		want := rendered(ref)
 		b.Run(tq.name, func(b *testing.B) {
-			b.Run("rewritten", func(b *testing.B) { timeQueryRuns(b, snap, tq.plan, opts, want) })
+			b.Run("query", func(b *testing.B) { timeQueryRuns(b, snap, tq.plan, opts, want) })
 			b.Run("reference", func(b *testing.B) { timeQueryRuns(b, snap, tq.ref, opts, want) })
 		})
 	}
@@ -56,13 +56,14 @@ func timeQueryRuns(b *testing.B, snap *colstore.Snapshot, plan exec.Node, opts e
 	}
 	b.Logf("%d of %d blocks read, %d rows, in key order %v: %s",
 		res.Stats.Blocks, res.Stats.Blocks+res.Stats.SkippedByTime, res.Stats.RowsMatched, res.Stats.Ordered, head)
-	var cpu time.Duration
 	rows := int64(0)
 	b.ResetTimer()
+	// The clock of the process is read around the runs, not each of them:
+	// one reading costs as much as a short query where the process has
+	// many threads.
+	before := cpuTime()
 	for i := 0; i < b.N; i++ {
-		before := cpuTime()
 		res, err := exec.Run(context.Background(), snap, plan, opts)
-		cpu += cpuTime() - before
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -71,6 +72,7 @@ func timeQueryRuns(b *testing.B, snap *colstore.Snapshot, plan exec.Node, opts e
 		}
 		rows += res.Stats.RowsMatched
 	}
+	cpu := cpuTime() - before
 	b.StopTimer()
 	b.ReportMetric(cpu.Seconds()/float64(b.N)*1e3, "cpu-ms/op")
 	b.ReportMetric(cpu.Seconds()/b.Elapsed().Seconds(), "cores")
@@ -148,9 +150,9 @@ func BenchmarkQ4Days(b *testing.B) {
 		if store.name == "ties" {
 			queries = append(queries, earliestQueries("ties, one goroutine,", 1)...)
 		}
-		// What the writes left to collect and to return would count as the
-		// time of the queries.
-		debug.FreeOSMemory()
+		// What the writes left to collect would count as the time of the
+		// queries.
+		runtime.GC()
 		runTimeQueries(b, snap, queries)
 		snap.Release()
 		if err := s.Close(); err != nil {
