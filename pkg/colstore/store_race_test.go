@@ -194,13 +194,28 @@ func TestStoreKeepsItsRowsWhileEverythingRunsAtOnce(t *testing.T) {
 		}()
 	}
 
-	// Long enough for a drop and some scans; a soak gives it more.
+	// Long enough for a drop, a merge and some scans; a soak gives it more.
+	// A loaded machine may finish no merge in the least time, and a drop may
+	// take the merged run away again, so the merge is looked for as it runs.
 	least := 500 * time.Millisecond
 	if os.Getenv("LYNXDB_STORE_SOAK") != "" {
 		least = 10 * time.Second
 	}
+	mergedRun := func() bool {
+		snap := s.Table().Snapshot()
+		defer snap.Release()
+		for _, h := range snap.Parts() {
+			if h.Tier > 0 {
+				return true
+			}
+		}
+
+		return false
+	}
+	sawMerge := false
 	for begun := time.Now(); time.Since(begun) < 20*time.Second; time.Sleep(10 * time.Millisecond) {
-		if time.Since(begun) >= least && dropped.Load() > 0 && scans.Load() > 2 {
+		sawMerge = sawMerge || mergedRun()
+		if time.Since(begun) >= least && dropped.Load() > 0 && scans.Load() > 2 && sawMerge {
 			break
 		}
 	}
@@ -254,7 +269,7 @@ func TestStoreKeepsItsRowsWhileEverythingRunsAtOnce(t *testing.T) {
 	if len(counts) != want {
 		t.Fatalf("%d documents, %d of them are what the store took", len(counts), want)
 	}
-	if scans.Load() == 0 || floor == 0 || merged == 0 || want == 0 {
+	if scans.Load() == 0 || floor == 0 || (merged == 0 && !sawMerge) || want == 0 {
 		t.Fatalf("%d scans, drops up to hour %d, %d merged runs, %d documents: not everything ran", scans.Load(), floor, merged, want)
 	}
 }
