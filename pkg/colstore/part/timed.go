@@ -23,8 +23,13 @@ import (
 // the differences and the shifted-out bits as integer sections, the digits
 // past the head as more, and every other string as it is, as an exception.
 // Decoding it reads the time column of its block and the integer sections
-// of the column it follows, never their strings.
+// of the column it follows, never their strings. The strings may also be
+// stamps, times in one RFC 3339 layout, whose head number is their time;
+// see stamps.go.
 //
+//	form        byte, formDigits or formStamp; a stamp's chunk then holds
+//	            the fraction digits and the zone, a byte for its length and
+//	            its bytes, in place of all up to the unit
 //	stride      uvarint, the length of the strings
 //	from, to    uvarint, the span
 //	template    the from bytes before the span and the stride-to after it
@@ -71,6 +76,12 @@ const (
 	maxLowDictBits = 16
 )
 
+// The forms of the strings of a timed chunk.
+const (
+	formDigits = 0
+	formStamp  = 1
+)
+
 // The references of a timed chunk.
 const (
 	refNone   = 0
@@ -87,13 +98,17 @@ const (
 
 // timedShape is the shape that the values of a timed chunk share.
 type timedShape struct {
+	form             uint8
 	stride, from, to int
 	alphabet         []byte
 	// radixBits is the bits of a digit, zero for decimal digits.
 	radixBits  uint
 	headDigits int
-	unit       uint8
-	shift      uint
+	// frac and zone are the layout of stamps.
+	frac  int
+	zone  []byte
+	unit  uint8
+	shift uint
 }
 
 // tailDigits returns the digits past the head that one integer section of
@@ -127,6 +142,7 @@ type timedScratch struct {
 	unitRefs   [timedSample]int64
 	lows       [timedSample]int64
 	picked     [timedSample]int
+	heldHeads  [timedSample]uint64
 	sampleRows [timedSample]int
 	heads      []uint64
 	regular    []bool
@@ -176,10 +192,18 @@ var timedUnits = [...]uint8{0, 3, 6, 9}
 func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 	s := &w.timedBuf
 	n := c.Count
-	if n < minTimed || !s.promising(c, times, w.timedRefs) {
+	if n < minTimed {
 		return false
 	}
-	if s.scan(c); s.irregular > n/maxIrregularShare {
+	switch {
+	case s.promising(c, times, w.timedRefs):
+		s.scan(c)
+	case s.promisingStamps(c, times, w.timedRefs):
+		s.scanStamps(c)
+	default:
+		return false
+	}
+	if s.irregular > n/maxIrregularShare {
 		return false
 	}
 	// The reference that the sample found of the fewest bits.
@@ -207,14 +231,21 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 	}
 
 	start := len(w.block)
-	w.block = binary.AppendUvarint(w.block, uint64(s.stride))
-	w.block = binary.AppendUvarint(w.block, uint64(s.from))
-	w.block = binary.AppendUvarint(w.block, uint64(s.to))
-	w.block = append(w.block, s.template[:s.from]...)
-	w.block = append(w.block, s.template[s.to:]...)
-	w.block = append(w.block, byte(len(s.alphabet)))
-	w.block = append(w.block, s.alphabet...)
-	w.block = append(w.block, byte(s.headDigits), s.unit, byte(s.shift))
+	w.block = append(w.block, s.form)
+	if s.form == formStamp {
+		w.block = append(w.block, byte(s.frac), byte(len(s.zone)))
+		w.block = append(w.block, s.zone...)
+		w.block = append(w.block, s.unit, byte(s.shift))
+	} else {
+		w.block = binary.AppendUvarint(w.block, uint64(s.stride))
+		w.block = binary.AppendUvarint(w.block, uint64(s.from))
+		w.block = binary.AppendUvarint(w.block, uint64(s.to))
+		w.block = append(w.block, s.template[:s.from]...)
+		w.block = append(w.block, s.template[s.to:]...)
+		w.block = append(w.block, byte(len(s.alphabet)))
+		w.block = append(w.block, s.alphabet...)
+		w.block = append(w.block, byte(s.headDigits), s.unit, byte(s.shift))
+	}
 	w.block = append(w.block, s.refKind)
 	if s.refKind == refColumn {
 		w.block = binary.AppendUvarint(w.block, uint64(len(s.reference)))
@@ -234,7 +265,7 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 		w.block = s.appendLow(w.block, n, &w.blobs, &w.e)
 	}
 	s.tail = grow(s.tail, n)
-	for at := s.from + s.headDigits; at < s.to; at += s.tailDigits() {
+	for at := s.from + s.headDigits; s.form == formDigits && at < s.to; at += s.tailDigits() {
 		end := min(at+s.tailDigits(), s.to)
 		for i := 0; i < n; i++ {
 			s.tail[i] = 0
@@ -398,11 +429,9 @@ func (s *timedScratch) promising(c *shred.Column, times []int64, refs []timedRef
 	for j := range s.picked {
 		s.picked[j] = j * (n - 1) / (timedSample - 1)
 	}
-	if !s.shape(c, s.picked[:]) {
+	if s.form = formDigits; !s.shape(c, s.picked[:]) {
 		return false
 	}
-	// The relation to nothing, then to the times and to every column that
-	// may be followed, over the values of the sample that fit the shape.
 	k := 0
 	for _, i := range s.picked {
 		if h, ok := s.head(c.Bytes(i)); ok {
@@ -413,6 +442,15 @@ func (s *timedScratch) promising(c *shred.Column, times []int64, refs []timedRef
 	if k < timedSample/2 {
 		return false
 	}
+	s.relate(k, times, refs)
+
+	return s.cost+minTimedGain <= s.headPacked
+}
+
+// relate finds the relation to nothing, then to the times and to every
+// column of refs that may be followed, of the first k values of the sample
+// that fit the shape, and keeps the one of the fewest bits.
+func (s *timedScratch) relate(k int, times []int64, refs []timedRef) {
 	for sh := range s.lowCost {
 		s.lowCost[sh] = -1
 	}
@@ -431,21 +469,35 @@ func (s *timedScratch) promising(c *shred.Column, times []int64, refs []timedRef
 	clear(s.sampleRefs[:k])
 	u, sh, b = s.sampleRelation(k, true)
 	keep(followNone, u, sh, b)
+	// A column is followed by the values of the sample whose rows it holds
+	// a value in, the others becoming exceptions; the sample is put back
+	// in order after.
+	copy(s.heldHeads[:k], s.sample[:k])
 	for r := range refs {
-		valid := 0
+		held := 0
 		for j := 0; j < k; j++ {
-			if refs[r].valid[s.sampleRows[j]] {
-				s.sampleRefs[j] = refs[r].vals[s.sampleRows[j]]
-				valid++
+			if row := s.sampleRows[j]; refs[r].valid[row] {
+				s.sample[held], s.sampleRefs[held] = s.heldHeads[j], refs[r].vals[row]
+				held++
 			}
 		}
-		if valid == k {
-			u, sh, b = s.sampleRelation(k, false)
-			keep(r, u, sh, b)
+		if held < k-k/maxIrregularShare {
+			continue
+		}
+		if held < k {
+			for sh := range s.lowCost {
+				s.lowCost[sh] = -1
+			}
+		}
+		u, sh, b = s.sampleRelation(held, false)
+		keep(r, u, sh, b+(k-held)*exceptionBits/k)
+		if held < k {
+			for sh := range s.lowCost {
+				s.lowCost[sh] = -1
+			}
 		}
 	}
-
-	return s.cost+minTimedGain <= s.headPacked
+	copy(s.sample[:k], s.heldHeads[:k])
 }
 
 // sampleStep returns the step between the values of an even sample of n.
@@ -872,7 +924,8 @@ type timedValues struct {
 	reference      []byte
 	template       [255]byte
 	// pairs holds the bytes of every pair of digits, high digit first.
-	pairs [1 << 12]uint16
+	pairs   [1 << 12]uint16
+	speller stampSpeller
 	// parts holds the shifted head number of every value, a nonsense one
 	// for an exception.
 	parts, low []int64
@@ -913,6 +966,13 @@ func (b *Block) timedChunk(ref *ColumnRef) ([]byte, bool) {
 // set, and returns what follows them.
 func readTimedHead(chunk []byte, count int, v *timedValues, keep bool) ([]byte, bool) {
 	r := reader{buf: chunk}
+	form := r.bytes(1)
+	if r.bad || form[0] > formStamp {
+		return nil, false
+	}
+	if v.form = form[0]; v.form == formStamp {
+		return readStampHead(&r, count, v, keep)
+	}
 	v.stride, v.from, v.to = int(r.uvarint()), int(r.uvarint()), int(r.uvarint())
 	if r.bad || v.stride < 2 || v.stride > 255 || v.from >= v.to || v.to > v.stride {
 		return nil, false
@@ -924,6 +984,39 @@ func readTimedHead(chunk []byte, count int, v *timedValues, keep bool) ([]byte, 
 	}
 	v.alphabet = r.bytes(uint64(size[0]))
 	params := r.bytes(3)
+	if r.bad {
+		return nil, false
+	}
+	v.headDigits, v.unit, v.shift = int(params[0]), params[1], uint(params[2])
+
+	return v.readRest(&r, count, keep)
+}
+
+// readStampHead is readTimedHead for a chunk of stamps, past the form.
+func readStampHead(r *reader, count int, v *timedValues, keep bool) ([]byte, bool) {
+	layout := r.bytes(2)
+	if r.bad || layout[0] > 9 || int(layout[1]) > maxStampZone {
+		return nil, false
+	}
+	v.frac, v.zone = int(layout[0]), r.bytes(uint64(layout[1]))
+	params := r.bytes(2)
+	if r.bad || !stampsZone(v.zone) {
+		return nil, false
+	}
+	v.stride = stampDate + len(v.zone)
+	if v.frac > 0 {
+		v.stride += 1 + v.frac
+	}
+	v.from, v.to, v.prefix, v.suffix, v.alphabet, v.radixBits, v.headDigits = 0, v.stride, nil, nil, nil, 0, 0
+	v.unit, v.shift = params[0], uint(params[1])
+	v.speller = stampSpeller{frac: v.frac, zone: v.zone}
+
+	return v.readRest(r, count, keep)
+}
+
+// readRest reads the reference and the exceptions of a timed chunk, after
+// its shape.
+func (v *timedValues) readRest(r *reader, count int, keep bool) ([]byte, bool) {
 	kind := r.bytes(1)
 	if r.bad || kind[0] > refColumn {
 		return nil, false
@@ -936,26 +1029,29 @@ func readTimedHead(chunk []byte, count int, v *timedValues, keep bool) ([]byte, 
 	if r.bad || exceptions > uint64(count) {
 		return nil, false
 	}
-	switch n := len(v.alphabet); {
-	case n == 10:
-		v.radixBits = 0
-	case n >= 2 && n <= 64 && n&(n-1) == 0:
-		v.radixBits = uint(bits.TrailingZeros(uint(n)))
-	default:
+	if v.shift > 63 || (v.unit != 0 && v.unit != 3 && v.unit != 6 && v.unit != 9) {
 		return nil, false
 	}
-	v.headDigits, v.unit, v.shift = int(params[0]), params[1], uint(params[2])
-	maxHead := 19
-	if v.radixBits != 0 {
-		maxHead = 64/int(v.radixBits) + 1
+	if v.form == formDigits {
+		switch n := len(v.alphabet); {
+		case n == 10:
+			v.radixBits = 0
+		case n >= 2 && n <= 64 && n&(n-1) == 0:
+			v.radixBits = uint(bits.TrailingZeros(uint(n)))
+		default:
+			return nil, false
+		}
+		maxHead := 19
+		if v.radixBits != 0 {
+			maxHead = 64/int(v.radixBits) + 1
+		}
+		if v.headDigits < 1 || v.headDigits > min(v.to-v.from, maxHead) {
+			return nil, false
+		}
+		copy(v.template[:], v.prefix)
+		v.makePairs()
+		copy(v.template[v.to:], v.suffix)
 	}
-	if v.headDigits < 1 || v.headDigits > min(v.to-v.from, maxHead) || v.shift > 63 ||
-		(v.unit != 0 && v.unit != 3 && v.unit != 6 && v.unit != 9) {
-		return nil, false
-	}
-	copy(v.template[:], v.prefix)
-	v.makePairs()
-	copy(v.template[v.to:], v.suffix)
 	v.excIndex, v.excValue, v.next = v.excIndex[:0], v.excValue[:0], 0
 	v.size = (uint64(count) - exceptions) * uint64(v.stride)
 	for i, at := 0, -1; i < int(exceptions); i++ {
@@ -995,7 +1091,7 @@ func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
 		}
 	}
 	tails := 0
-	for at := v.from + v.headDigits; at < v.to; at += v.tailDigits() {
+	for at := v.from + v.headDigits; v.form == formDigits && at < v.to; at += v.tailDigits() {
 		if tails == len(v.tails) {
 			v.tails = append(v.tails, nil)
 		}
@@ -1211,12 +1307,17 @@ func (v *timedValues) put(dst []byte, i int) int {
 		return n
 	}
 	out := dst[:v.stride]
-	copy(out[:v.from], v.prefix)
-	copy(out[v.to:], v.suffix)
 	num := uint64(v.parts[i]) << v.shift
 	if v.shift > 0 {
 		num |= uint64(v.low[i]) & (1<<v.shift - 1)
 	}
+	if v.form == formStamp {
+		v.speller.put(out, int64(num))
+
+		return v.stride
+	}
+	copy(out[:v.from], v.prefix)
+	copy(out[v.to:], v.suffix)
 	v.spell(out[v.from:v.from+v.headDigits], num)
 	if len(v.tails) > 0 {
 		per := v.tailDigits()
@@ -1307,7 +1408,7 @@ func (b *Block) decodeTimed(ref *ColumnRef, sparse bool, rows int, dst *vec.Colu
 		if i != count {
 			return ErrCorrupt
 		}
-	} else if len(v.tails) == 0 && v.radixBits != 0 {
+	} else if v.form == formDigits && len(v.tails) == 0 && v.radixBits != 0 {
 		off = v.putAll(dst, count)
 	} else {
 		for i := 0; i < count; i++ {

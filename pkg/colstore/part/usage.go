@@ -384,7 +384,7 @@ func (s *sectionWalk) timed(count int) {
 		}
 		s.ints("timed.low", count, 0)
 	}
-	for at := v.from + v.headDigits; at < v.to && s.ok; at += v.tailDigits() {
+	for at := v.from + v.headDigits; v.form == formDigits && at < v.to && s.ok; at += v.tailDigits() {
 		s.ints("timed.tail", count, 0)
 	}
 }
