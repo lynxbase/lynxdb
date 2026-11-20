@@ -858,15 +858,23 @@ func timeRange(filter *Expr) (minT, maxT int64, only bool) {
 
 // pushdown derives what the scan can skip from the conjuncts of the filter:
 // string equalities on the leading sort key paths of the snapshot's ordered
-// parts become a key filter, string equalities and text matches contribute
-// the tokens a column of a block must hold, and comparisons of the row time
-// bound it.
+// parts, and a list of strings on the path after them, become a key filter,
+// string equalities and text matches contribute the tokens a column of a
+// block must hold, and comparisons of the row time bound it.
 func pushdown(snap *colstore.Snapshot, filter *Expr) colstore.ScanOptions {
 	var opts colstore.ScanOptions
 	minT, maxT := int64(math.MinInt64), int64(math.MaxInt64)
 	equal := map[string][]byte{}
+	lists := map[string][][]byte{}
 	for _, c := range conjuncts(filter, nil) {
 		opts.ColumnTokens = conjunctTokens(c, opts.ColumnTokens)
+		if path, values, ok := stringList(c); ok {
+			if _, dup := lists[path]; !dup {
+				lists[path] = values
+			}
+
+			continue
+		}
 		switch c.Op {
 		case OpEq, OpLt, OpLe, OpGt, OpGe:
 			col, lit, op, ok := columnLiteral(c)
@@ -887,10 +895,12 @@ func pushdown(snap *colstore.Snapshot, filter *Expr) colstore.ScanOptions {
 	if minT != math.MinInt64 || maxT != math.MaxInt64 {
 		opts.MinTime, opts.MaxTime = minT, maxT
 	}
-	if len(equal) == 0 || snap == nil {
+	if (len(equal) == 0 && len(lists) == 0) || snap == nil {
 		return opts
 	}
-	// The longest sort key prefix that the equalities cover prunes the most.
+	// The longest sort key prefix that the equalities cover prunes the most,
+	// and more with a list on the path after it.
+	best := 0
 	for _, h := range snap.Parts() {
 		if !h.Ordered() {
 			continue
@@ -903,14 +913,65 @@ func pushdown(snap *colstore.Snapshot, filter *Expr) colstore.ScanOptions {
 			}
 			n++
 		}
-		if n <= len(opts.Key.Paths) {
+		var in [][]byte
+		if n < len(key) {
+			in = lists[key[n]]
+		}
+		score := 2 * n
+		if in != nil {
+			score++
+		}
+		if score <= best {
 			continue
 		}
+		best = score
 		opts.Key = colstore.KeyFilter{Paths: key[:n]}
 		for _, path := range key[:n] {
 			opts.Key.Values = append(opts.Key.Values, equal[path])
 		}
+		if in != nil {
+			opts.Key.InPath, opts.Key.In = key[n], in
+		}
 	}
 
 	return opts
+}
+
+// stringList returns the path and the strings of a conjunct that holds only
+// where the string at the path is one of them: string equalities on one
+// column joined by or, as a list of values becomes.
+func stringList(c *Expr) (path string, values [][]byte, ok bool) {
+	if c == nil || c.Op != OpOr {
+		return "", nil, false
+	}
+	seen := false
+	var walk func(e *Expr) bool
+	walk = func(e *Expr) bool {
+		if e == nil {
+			return false
+		}
+		if e.Op == OpOr {
+			for _, a := range e.Args {
+				if !walk(a) {
+					return false
+				}
+			}
+
+			return len(e.Args) > 0
+		}
+		col, lit, op, ok := columnLiteral(e)
+		if !ok || e.Op != OpEq || op != OpEq || lit.Kind != vec.KindString ||
+			(col.Kind != vec.KindString && col.Kind != KindAny) || (seen && col.Path != path) {
+			return false
+		}
+		path, seen = col.Path, true
+		values = append(values, lit.Bytes)
+
+		return true
+	}
+	if !walk(c) {
+		return "", nil, false
+	}
+
+	return path, values, true
 }

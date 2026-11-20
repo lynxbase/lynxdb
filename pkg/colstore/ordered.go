@@ -51,7 +51,8 @@ type KeyPlan struct {
 
 // PlanKeyRanges lays out the rows matching key for aggregation in key order,
 // and reports false unless every part is ordered by the paths of key followed
-// by group.
+// by group. It lays out every row that holds the values of key at its paths,
+// whatever key.In lists.
 func (s *Snapshot) PlanKeyRanges(key KeyFilter, group []string) (*KeyPlan, bool) {
 	if len(key.Paths) != len(key.Values) {
 		return nil, false

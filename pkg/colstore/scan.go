@@ -156,13 +156,18 @@ func BlockMayContain(p *part.Part, i int, sets []ColumnTokens) (bool, error) {
 	return true, nil
 }
 
-// KeyFilter names string values that rows must hold at the leading sort key
-// paths; it prunes blocks of parts ordered by those paths and nothing else,
-// so callers still filter rows.
+// KeyFilter names what rows must hold at the leading sort key paths: the
+// string Values at Paths and, when In is not empty, one of the strings it
+// lists at InPath, the path that follows them. It prunes blocks of parts
+// ordered by those paths and nothing else, so callers still filter rows.
 type KeyFilter struct {
 	Paths  []string
 	Values [][]byte
+	InPath string
+	In     [][]byte
 }
+
+func (k KeyFilter) empty() bool { return len(k.Paths) == 0 && len(k.In) == 0 }
 
 func (k KeyFilter) prefix() []byte {
 	var out []byte
@@ -175,7 +180,8 @@ func (k KeyFilter) prefix() []byte {
 
 // covers reports whether a part ordered by key can be pruned with k.
 func (k KeyFilter) covers(key []string) bool {
-	if len(k.Paths) == 0 || len(k.Paths) > len(key) || len(k.Paths) != len(k.Values) {
+	n := len(k.Paths)
+	if k.empty() || n != len(k.Values) || n > len(key) || (len(k.In) > 0 && (n == len(key) || key[n] != k.InPath)) {
 		return false
 	}
 	for i, p := range k.Paths {
@@ -185,6 +191,63 @@ func (k KeyFilter) covers(key []string) bool {
 	}
 
 	return true
+}
+
+// keyRange is the encoded sort keys from lo up to hi, hi excluded.
+type keyRange struct{ lo, hi []byte }
+
+// ranges returns the encoded sort keys of the rows that the strings of
+// k.In allow, as ranges in ascending order that do not overlap.
+func (k KeyFilter) ranges() []keyRange {
+	prefix := k.prefix()
+	keys := make([][]byte, 0, len(k.In))
+	for _, v := range k.In {
+		keys = append(keys, part.AppendKeyString(append([]byte(nil), prefix...), v))
+	}
+	slices.SortFunc(keys, bytes.Compare)
+	keys = slices.CompactFunc(keys, bytes.Equal)
+	// The encoding of a string ends with two bytes that end no other, so no
+	// key of one value starts with the key of another.
+	out := make([]keyRange, len(keys))
+	for i, key := range keys {
+		out[i] = keyRange{key, successor(key)}
+	}
+
+	return out
+}
+
+// successor returns the shortest key above every key that starts with key;
+// a key that starts with the encoding of a value has one.
+func successor(key []byte) []byte {
+	out := append([]byte(nil), key...)
+	for i := len(out) - 1; i >= 0; i-- {
+		if out[i] != 0xFF {
+			out[i]++
+
+			return out[:i+1]
+		}
+	}
+
+	return nil
+}
+
+// keyBlocks appends to dst the runs of blocks, first to end, of an ordered
+// part that can hold rows in ranges, in order and apart from one another.
+func keyBlocks(dst [][2]int, p *part.Part, ranges []keyRange) [][2]int {
+	for _, r := range ranges {
+		first, end := p.BlocksInKeyRange(r.lo, r.hi)
+		if first == end {
+			continue
+		}
+		if last := len(dst) - 1; last >= 0 && first <= dst[last][1] {
+			dst[last][1] = max(dst[last][1], end)
+
+			continue
+		}
+		dst = append(dst, [2]int{first, end})
+	}
+
+	return dst
 }
 
 // BlockFunc handles one block, valid only during the call; worker numbers the
@@ -224,6 +287,8 @@ type scanLists struct {
 	ordered []scanUnit
 	ids     []uint32
 	empties []*part.Misses
+	// runs holds the runs of blocks of one part that the key leaves.
+	runs [][2]int
 }
 
 var scanListsPool = sync.Pool{New: func() any { return new(scanLists) }}
@@ -237,10 +302,10 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 		minT, maxT = math.MinInt64, math.MaxInt64
 	}
 	key := opts.Key
-	if len(key.Paths) == 0 {
+	if key.empty() {
 		key = s.key
 	}
-	keyPrefix := key.prefix()
+	keyPrefix, keyRanges := key.prefix(), key.ranges()
 	var stats ScanStats
 	lists := scanListsPool.Get().(*scanLists)
 	defer func() {
@@ -273,32 +338,43 @@ func (s *Snapshot) Scan(ctx context.Context, opts ScanOptions, fn BlockFunc) (Sc
 			empty = h.Misses(opts.Condition)
 			empties[n] = empty
 		}
-		first, end := 0, h.NumBlocks()
+		runs := append(lists.runs[:0], [2]int{0, h.NumBlocks()})
 		if h.Ordered() && key.covers(h.SortKey()) {
-			first, end = h.BlocksWithKeyPrefix(keyPrefix)
-			stats.SkippedByKey += int64(h.NumBlocks() - (end - first))
+			if len(key.In) == 0 {
+				first, end := h.BlocksWithKeyPrefix(keyPrefix)
+				runs[0] = [2]int{first, end}
+			} else {
+				runs = keyBlocks(runs[:0], h.Part, keyRanges)
+			}
+			stats.SkippedByKey += int64(h.NumBlocks())
+			for _, r := range runs {
+				stats.SkippedByKey -= int64(r[1] - r[0])
+			}
 		}
-		for i := first; i < end; i++ {
-			_, lo, hi := h.BlockStats(i)
-			if hi < minT || lo > maxT {
-				stats.SkippedByTime++
+		lists.runs = runs
+		for _, run := range runs {
+			for i := run[0]; i < run[1]; i++ {
+				_, lo, hi := h.BlockStats(i)
+				if hi < minT || lo > maxT {
+					stats.SkippedByTime++
 
-				continue
-			}
-			if empty != nil && empty.Has(i) {
-				stats.SkippedAsEmpty++
+					continue
+				}
+				if empty != nil && empty.Has(i) {
+					stats.SkippedAsEmpty++
 
-				continue
-			}
-			if opts.Skip != nil && opts.Skip(h.Part, i) {
-				continue
-			}
-			if !named {
-				stats.SkippedByToken++
+					continue
+				}
+				if opts.Skip != nil && opts.Skip(h.Part, i) {
+					continue
+				}
+				if !named {
+					stats.SkippedByToken++
 
-				continue
+					continue
+				}
+				units = append(units, scanUnit{part: int32(n), block: int32(i), ids: int32(at), first: lo, last: hi})
 			}
-			units = append(units, scanUnit{part: int32(n), block: int32(i), ids: int32(at), first: lo, last: hi})
 		}
 	}
 	lists.units, lists.ids, lists.empties = units, ids, empties

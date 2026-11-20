@@ -3,6 +3,7 @@ package colstore
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -18,7 +19,8 @@ func orderedByTag(t testing.TB, rows, blockRows int, tags []string) *part.Part {
 	opts := part.Options{Ordered: true, SortKey: []string{"tag"}}
 	batch := shred.NewBatch(shred.Options{})
 	for i := 0; i < rows; i++ {
-		doc := fmt.Sprintf(`{"tag":%q,"n":%d}`, tags[i%len(tags)], i)
+		tag, _ := json.Marshal(tags[i%len(tags)])
+		doc := fmt.Sprintf(`{"tag":%s,"n":%d}`, tag, i)
 		if err := batch.AddJSON([]byte(doc), int64(i)); err != nil {
 			t.Fatal(err)
 		}
@@ -109,5 +111,65 @@ func TestScanPrunesBlocksBySortKey(t *testing.T) {
 	}
 	if _, stats = count(snap, ScanOptions{Key: KeyFilter{Paths: []string{"n"}, Values: [][]byte{[]byte("1")}}}, "gamma"); stats.SkippedByKey != 0 {
 		t.Fatalf("a filter on a path the parts are not ordered by pruned blocks: %+v", stats)
+	}
+}
+
+func TestScanKeepsTheBlocksOfEveryListedKey(t *testing.T) {
+	// Values that start with one another and hold the byte the key encoding
+	// escapes sort next to one another.
+	tags := []string{"a", "a\x00", "a\x00b", "ab", "b", "b\u00ff", "c"}
+	tbl := NewTable()
+	defer tbl.Close()
+	if err := tbl.Apply([]*Handle{
+		NewHandle(orderedByTag(t, 7000, 50, tags), nil),
+		NewHandle(orderedByTag(t, 1400, 50, tags[2:]), nil),
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	snap := tbl.Snapshot()
+	defer snap.Release()
+	rowsOf := func(opts ScanOptions) (map[string]int, ScanStats) {
+		t.Helper()
+		opts.Workers = 1
+		got := map[string]int{}
+		var col vec.Column
+		stats, err := snap.Scan(context.Background(), opts, func(_ int, p *part.Part, b *part.Block) error {
+			id, _ := p.PathID("tag")
+			ref, ok := b.Column(id, vec.KindString)
+			if !ok {
+				return nil
+			}
+			if err := b.Decode(ref, &col); err != nil {
+				return err
+			}
+			for r := 0; r < b.Rows; r++ {
+				got[string(col.Bytes(r))]++
+			}
+
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		return got, stats
+	}
+	all, _ := rowsOf(ScanOptions{})
+	for _, in := range [][]string{
+		{"a"}, {"a\x00"}, {"ab", "a"}, {"c", "a", "c"}, {"b"}, {"b\u00ff", "zz"}, {"none", ""}, tags,
+	} {
+		key := KeyFilter{InPath: "tag"}
+		for _, v := range in {
+			key.In = append(key.In, []byte(v))
+		}
+		got, stats := rowsOf(ScanOptions{Key: key})
+		for _, v := range in {
+			if got[v] != all[v] {
+				t.Fatalf("list %q: %d rows of %q, want %d", in, got[v], v, all[v])
+			}
+		}
+		if len(in) < len(tags) && stats.SkippedByKey == 0 {
+			t.Fatalf("list %q pruned no block: %+v", in, stats)
+		}
 	}
 }
