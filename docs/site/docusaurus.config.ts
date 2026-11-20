@@ -136,8 +136,8 @@ const config: Config = {
               href: 'https://github.com/lynxbase/lynxdb',
             },
             {
-              label: 'Twitter',
-              href: 'https://twitter.com/lynxdb',
+              label: 'X (@o3vgeny)',
+              href: 'https://x.com/o3vgeny',
             },
           ],
         },
