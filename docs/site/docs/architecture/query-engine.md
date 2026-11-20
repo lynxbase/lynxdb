@@ -1,5 +1,5 @@
 ---
-sidebar_position: 3
+sidebar_position: 4
 title: Query Engine
 description: How LynxDB runs a query -- PPL compiled to a language-independent IR and optimized, then run by the columnar executor over the stores and by the row operators over what the executor does not take.
 ---
@@ -99,9 +99,9 @@ Optimizer rules:
 
 ## Running a Query
 
-On the server every query is a job of `pkg/database` (see the [Query API](../api/query.md) for the synchronous, asynchronous and hybrid modes). Before it starts a job, the server syncs the stores, so that the query sees every event ingested before it. A job holds one of the `query.max_concurrent` query slots; when all are taken, the query is refused with `429 TOO_MANY_REQUESTS`.
+The standard HTTP query endpoint syncs the open stores and submits a job to `pkg/database`. The [Query API](../api/query.md) describes how synchronous, asynchronous and hybrid requests wait for that job. The NDJSON endpoint syncs and calls `DB.Query` in the request context, then writes the result. Both execution paths use the `query.max_concurrent` slots and return `429 TOO_MANY_REQUESTS` when all slots are occupied.
 
-`DB.Query` narrows every scan of the plan, those of subqueries included, to the `from` and `to` of the request, intersected with the time range the query sets itself. It then hands the plan to `pkg/engine/columnar`, which runs it in three steps.
+The database intersects each scan's time range, including scans in subqueries, with the request's `[from, to)` interval. It then passes the plan to `pkg/engine/columnar`.
 
 ### 1. Subqueries as lists of values
 
@@ -118,8 +118,8 @@ A test for membership among the rows of a subquery (`where x in [ ... ]`) whose 
 
 It refuses anything else, and the walk goes on below. The largest subtree it takes from each scan up runs on the columnar executor (`pkg/colstore/exec`) over a snapshot of the stores the scan names:
 
-- The snapshot is the union of the parts of those indexes, taken when the query starts; merges do not change what the query reads.
-- Workers on every core take one block at a time. A block is skipped when its time range, its column directory or its token filters rule out the filter, or when an earlier scan of the same filter found no match in it.
+- A scan combines snapshots from the indexes it names. Each snapshot pins the parts of its store until the reader releases it.
+- Scan workers take candidate blocks in parallel. The default worker count is bounded by the available CPUs and is shared among concurrent columnar executions. See [Indexing and Pruning](./indexing.md) for the metadata checks and specialized scans.
 - Filters and expressions run over the block's columns. A dictionary column is tested once per dictionary entry; a constant column once per block.
 - Aggregates keep the state of each group in a row of 64-bit words, with sketches and sets beside it for the aggregates that need them; the workers' states are merged at the end.
 - A sort by `_time` with a limit takes the blocks in time order and skips those whose times keep them out of the result.
@@ -158,11 +158,14 @@ Every part of the plan the columnar executor did not take runs on the row operat
 
 ## Results
 
-A result is written as JSON objects: the columns the plan fixes in their order, any others in the order of their names, times as RFC 3339 text in UTC, and no member for a field the row does not hold. The server returns a page of the result: `limit` rows (`query.default_result_limit` when the request sets none, at most `query.max_result_limit`) from `offset` on, with `has_more` set when more rows follow.
+In JSON event results, specified columns appear in plan order and other fields appear in name order. Times use RFC 3339 in UTC. An absent stored field is omitted. The standard query endpoint returns up to `limit` rows starting at `offset` and sets `has_more` if more rows follow. The server uses `query.default_result_limit` when the request omits the limit and caps it at `query.max_result_limit`.
+
+For a completed columnar result returned by the standard query endpoint, `meta.stats` reports scan and aggregation counters. See [Inspecting a scan](./indexing.md#inspecting-a-scan).
 
 ## Related
 
 - [Architecture Overview](./overview.md) -- system-level view
-- [Storage](./storage.md) -- what the columnar executor reads
+- [Storage](./storage.md)
+- [Indexing and Pruning](./indexing.md)
 - [PPL architecture](../ppl/architecture.md) -- the compiler in detail
 - [PPL performance](../ppl/performance.md) -- writing queries that the columnar executor takes

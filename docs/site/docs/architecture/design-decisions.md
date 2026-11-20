@@ -27,16 +27,16 @@ Columns also compress and evaluate well: a column of few distinct values is a di
 
 ## A Store per Index, Partitioned by Time
 
-**Decision**: Each index is a store of its own in a directory of its own, and its rows are kept apart by time partition (`storage.partition`, 24 hours by default).
+**Decision**: Each index has its own directory and persists the settings for its sort key, time fields and partition width. The default partition width is 24 hours.
 
 **Alternatives**: One table for all indexes with the index as a column; one time-ordered set of files per index without partitions.
 
 **Reasoning**:
 
-- **Retention is a file operation.** Log data is append-only; the only deletion is age. Dropping a whole partition deletes its files and touches nothing else.
-- **Time ranges read only their partitions.** Nearly every log query is bounded in time.
-- **Merges stay small and local.** A merge never mixes rows of two partitions, so a partition that has closed is merged once into one run and then left alone.
-- **Indexes are independent.** An index that takes a burst of events does not slow the merges of another, and its directory can be copied or deleted on its own.
+- **Retention works on files.** The store removes whole partitions from the manifest and deletes their files after readers release them.
+- **Time bounds skip parts.** The scan can rule out parts and blocks using their stored time bounds.
+- **Merges stay small and local.** A merge never mixes rows of two partitions, so the store can compact a quiet partition on its own. Late arrivals can make that partition eligible again.
+- **Indexes own their parts.** Each index has its own manifest, buffers and merge scheduler. The stores share the process and its disk and CPU resources.
 
 ## Buffered Writes and a Manifest, without a Write-Ahead Log
 
@@ -46,25 +46,24 @@ Columns also compress and evaluate well: a column of few distinct values is a di
 
 **Reasoning**:
 
-- **One write per event.** Events go to disk once, already in columns, and not first to a log and later to a table.
-- **Batching.** A flush writes everything that arrived within the flush interval as one run per partition, and concurrent syncs share one flush, so many small requests cost one write and one wait for the disk.
-- **A clear durability point.** Rows are durable once their manifest record is on disk. The server syncs before it answers an Elasticsearch `_bulk` request and before every query; plain ingest requests rely on the flush interval, and a crash can lose at most that long of their events. Shippers that retry resend them.
-- **Recovery is reading the manifest.** There is nothing to replay: the manifest names the live parts, and files it does not name are left behind by writes that did not commit.
+- **Columnar writes.** A flush encodes rows directly into parts. Merges can rewrite those rows later.
+- **Batching.** A flush collects pending batches and commits one run per partition represented in them. Concurrent syncs can share a flush.
+- **Durability at commit.** The store syncs the part files, their directory and the manifest. Native ingest can acknowledge buffered rows that a process crash can lose. See [Acknowledgements and visibility](./storage.md#acknowledgements-and-visibility) for the protocol boundaries.
+- **Recovery uses the manifest.** The store replays the part-set records and opens the live files. It can set aside unreferenced parts when it cannot establish that the manifest is whole.
 
 ## Token Filters per Block
 
-**Decision**: Give every block of a part token filters, split-block Bloom filters over the case-folded words of its strings, and answer searches by scanning the blocks that the filters admit.
+**Decision**: Store per-block token fingerprints and scan the columns in candidate blocks to verify matches.
 
 **Alternatives**: An inverted index with posting lists per term; embedding Lucene.
 
 **Reasoning**:
 
-- **Writes stay one pass.** A block's filters are built while the block is written and rebuilt by every merge; there is no term dictionary to maintain or merge.
-- **Small and local.** A probe for one word reads one page of a part's filters for a whole group of blocks.
-- **Scans are fast anyway.** A block the filters admit is read column by column on every core, so the cost of a false positive is one block.
-- **Not Lucene**: Lucene is Java. Embedding it needs a JVM or a sidecar process, which breaks the single-binary model.
+- **Writes stay one pass.** The writer builds a block's filters as it encodes the columns. Merges can transfer filter data from blocks they copy.
+- **Small and local.** The writer arranges filter data in stripes so the probes for one token in a group of blocks stay close together.
+- **Column-level skipping.** A dedicated filter can rule out a column even when another column in the same block needs to be searched.
 
-The trade-off: a word that appears in most blocks skips little, and a search then reads the strings of those blocks.
+A word that appears in most blocks skips little. See [Indexing and Pruning](./indexing.md) for how token filters combine with other metadata.
 
 ## Two Executors
 

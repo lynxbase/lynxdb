@@ -160,6 +160,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'architecture/overview',
         'architecture/storage',
+        'architecture/indexing',
         'architecture/query-engine',
         'architecture/es-stubs',
         'architecture/design-decisions',

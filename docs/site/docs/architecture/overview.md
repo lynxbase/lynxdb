@@ -1,151 +1,105 @@
 ---
 sidebar_position: 1
 title: Architecture Overview
-description: How LynxDB fits together -- the columnar store, the query compiler and executors, the database that joins them, and the two ways to run it.
+description: How the LynxDB CLI, HTTP server, PPL compiler, query executors and per-index columnar stores fit together.
 ---
 
 # Architecture Overview
 
-LynxDB is a log analytics database written in Go. One binary holds the storage engine, the query engine, the HTTP API and the command-line client; there is no embedded third-party database. Queries are written in OpenSearch Piped Processing Language (PPL). This page maps the system and how its parts fit together.
+LynxDB is a single-node log analytics database written in Go. The `lynxdb` binary runs queries locally over files or stdin, starts a persistent HTTP server, and acts as a client for that server. Both local and server queries use the same PPL compiler, query executors and disk-backed columnar store.
 
-## System Diagram
+The database organizes events into named indexes such as `main` or `web`. Each index owns its files, storage settings, buffers and background merges. Queries name indexes with `source=`, and a scan can read more than one index. Within an index, the engine keeps events in immutable columnar parts. The [storage guide](./storage.md) follows a write to disk, and [Indexing and Pruning](./indexing.md) shows how a query skips work inside those files.
 
-```
-   lynxdb CLI                                   log shippers
-   query · ingest · import · status · config    _bulk · OTLP · HEC · syslog
-        │                        │                     │
-        │ pipe mode              │ HTTP                │
-        │                        ▼                     ▼
-        │            ┌──────────────────────────────────────┐
-        │            │  REST API and receivers              │
-        │            │  pkg/api/rest, pkg/ingest/receiver   │
-        │            └──────────────────┬───────────────────┘
-        ▼                               ▼
-┌────────────────────────────────────────────────────────────────┐
-│  pkg/database                                                  │
-│  indexes, query jobs, retention                                │
-└───────┬──────────────────────────────────────────┬─────────────┘
-        │ query text                               │ NDJSON, plans
-        ▼                                          ▼
-┌──────────────────────────┐    ┌────────────────────────────────┐
-│  pkg/query               │    │  pkg/engine/columnar           │
-│  PPL → IR → optimizer    │    │  runs IR plans over the stores │
-│  pkg/ppl, pkg/ir/opt     │    │                                │
-└──────────────────────────┘    │  columnar executor             │
-                                │    pkg/colstore/exec           │
-                                │  row operators                 │
-                                │    pkg/engine/physical,        │
-                                │    pkg/engine/pipeline, pkg/vm │
-                                └───────────────┬────────────────┘
-                                                ▼
-                                ┌────────────────────────────────┐
-                                │  pkg/colstore                  │
-                                │  one store per index:          │
-                                │  time partitions, sorted runs, │
-                                │  immutable parts, merges       │
-                                └────────────────────────────────┘
+## Process and package boundaries {#system-diagram}
+
+```mermaid
+flowchart TD
+    Files["Files or stdin"] --> Local["lynxdb query in process"]
+    Client["lynxdb CLI or API client"] --> HTTP["HTTP API<br/>pkg/api/rest"]
+    Shippers["Elasticsearch bulk, HEC, OTLP, syslog"] --> Ingest["HTTP handlers and receiver adapters"]
+    Ingest --> DB["Database<br/>pkg/database"]
+    HTTP --> DB
+    Local --> DB
+    HTTP --> Compile["PPL compiler and IR optimizer<br/>pkg/query, pkg/ppl, pkg/ir/opt"]
+    Local --> Compile
+    Compile -->|"Compiled plan"| DB
+    DB --> Core["Index settings, registry and plan execution<br/>pkg/engine/columnar"]
+    Core --> Blocks["Columnar executor<br/>pkg/colstore/exec"]
+    Core --> Rows["Row operators<br/>pkg/engine/physical, pipeline, pkg/vm"]
+    Blocks -->|"Rows when needed"| Rows
+    Core -->|"Append and Sync"| Store["One pkg/colstore.Store per index"]
+    Blocks -->|"Scan immutable parts"| Store
 ```
 
-## Two Ways to Run
+| Package | Responsibility |
+| --- | --- |
+| `cmd/lynxdb`, `pkg/client` | CLI commands, local input and output, HTTP client, server startup |
+| `pkg/api/rest`, `pkg/ingest` | Request handling, protocol decoding, ingest conversion, query and job responses |
+| `pkg/database` | Default index, query slots and jobs, request time bounds, retention |
+| `pkg/ppl`, `pkg/query`, `pkg/ir/opt` | PPL parsing and lowering, optimized plan cache and IR rewrites |
+| `pkg/engine/columnar` | Store registry, source resolution, snapshots and selection of an executor for each subtree |
+| `pkg/colstore`, `pkg/colstore/exec`, `pkg/vec` | Column storage, block scans, vector operations and columnar aggregation |
+| `pkg/engine/physical`, `pkg/engine/pipeline`, `pkg/vm` | Physical row plan, batched iterators and expression bytecode |
 
-Both ways open the same database and run queries with the same compiler and executors.
+See [Project Structure](../contributing/project-structure.md) for the package and test layout.
 
-### Pipe Mode
+## Local queries and the server {#two-ways-to-run}
+
+### Files and stdin {#pipe-mode}
 
 ```bash
-lynxdb query --file testdata/logs/backend_server.log 'source=main level=ERROR | stats count() by service'
-cat app.log | lynxdb query 'source=main | stats count() by level'
+printf '%s\n' '{"level":"ERROR"}' '{"level":"INFO"}' '{"level":"ERROR"}' |
+  lynxdb query 'source=main | stats count() as n by level | sort - n'
 ```
 
-The CLI:
+The CLI compiles the query before reading input. It creates a temporary database, converts input to NDJSON, and appends it to `main`. JSON object lines pass through to the store. For text input, the CLI can detect a log format and extract fields before writing. It calls `Sync`, executes the plan in process, prints the result, and removes the temporary directory on close. This path uses part files on disk and requires no running server.
 
-1. Compiles the query, so a query that does not compile fails before any input is read.
-2. Opens a database in a temporary directory.
-3. Loads stdin or the given files into the index `main`. A line that is a JSON object is kept as it is; any other line gets its leading timestamp and `key=value` pairs extracted, and the fields of combined, syslog and Docker logs when the first lines are in one of those formats (`--raw` turns that detection off).
-4. Runs the query, prints the result and deletes the temporary directory.
-
-There is no daemon, no config file and no network I/O.
-
-### Server Mode
+### Server {#server-mode}
 
 ```bash
 lynxdb server --data-dir /var/lib/lynxdb
 ```
 
-The server:
+The server opens existing stores under `data_dir/indexes/` and recovers each store's live part set before serving requests. The default HTTP address is `localhost:3100`. The main listener serves the native API and configured protocol routes. The server also starts separate OTLP HTTP, OTLP gRPC and syslog listeners when configured.
 
-1. Opens the data directory and the store of every index in it.
-2. Serves the HTTP API on port 3100, and starts the OTLP and syslog receivers that are configured.
-3. Appends ingested events to the stores, which write them within the flush interval.
-4. Runs queries as jobs; before a query starts, the server makes every event ingested so far visible.
-5. Drops partitions older than the retention period once a minute.
+The server process owns the stores, query jobs and retention passes. Run the CLI against the server to ingest and query the same indexes from a different process. Authentication, TLS and listener configuration live at this boundary. The [REST API](../api/overview.md) describes the public request and response formats.
 
-## Packages
+## Write path
 
-| Package | Role |
-|---------|------|
-| `cmd/lynxdb` | The binary: the CLI commands, pipe mode and `lynxdb server` |
-| `pkg/api/rest` | HTTP routes: ingest, query, jobs, fields, stats, configuration, API keys, Elasticsearch and Splunk HEC compatibility |
-| `pkg/ingest` | Receivers for syslog, OTLP (HTTP and gRPC) and Splunk HEC; conversion of log text to NDJSON |
-| `pkg/database` | The database of a server: one columnar store per index, PPL queries run as jobs, retention |
-| `pkg/query` | `query.Compile`: PPL text to an optimized IR plan, with a cache of recent plans |
-| `pkg/ppl` | The PPL frontend: lexer, parser, semantic analysis, lowering to the IR, the command and function catalogs |
-| `pkg/ir`, `pkg/ir/opt` | The language-independent plan and its rewrite rules |
-| `pkg/engine/columnar` | Runs a plan: hands what it can to the columnar executor and the rest to the row operators |
-| `pkg/colstore` | The store of an index, its parts and the columnar executor (`pkg/colstore/exec`) |
-| `pkg/engine/physical`, `pkg/engine/pipeline`, `pkg/vm` | The row operators and the bytecode VM that evaluates expressions over rows |
-| `pkg/auth`, `pkg/config` | API keys and TLS; settings from files, environment and flags |
+| Entry point | What reaches the store |
+| --- | --- |
+| `POST /api/v1/ingest` | The handler appends whole lines in chunks as the body arrives. The store parses JSON objects and keeps other nonempty lines as text. |
+| `POST /api/v1/ingest/raw` | Log text passes through the text converter for timestamp and field extraction. Object lines pass through to the store. |
+| Elasticsearch `_bulk` | The handler reads action and document lines, groups supported writes by target index and appends the documents. |
+| Splunk HEC and OTLP | The receivers map payloads to events and run them through the ingest pipeline. Both write to `main`. HEC can use the sender's index name as event metadata. |
+| Syslog | The receiver parses the message and runs it through the ingest pipeline before writing to `syslog.index` (`main` by default). |
 
-## Data Flow
+These paths converge on the same per-index append buffers. A native request can leave an appended prefix if a later chunk fails. The store parses each JSON object into typed columns, chooses the event time, and assigns the row to a time partition when it flushes. A flush sorts the rows, writes parts, and publishes them after a manifest commit. The server can create an index with its own sort key, time fields and partition width before the first ingest. Native ingest can acknowledge buffered data. Successful Elasticsearch bulk items and HEC indexer acknowledgements wait for [sync](./storage.md#acknowledgements-and-visibility).
 
-### Write Path
+## Read path
 
-```
-POST /api/v1/ingest          NDJSON, appended as it is
-POST /api/v1/ingest/raw      log text: JSON lines as they are; other lines get
-                             their leading timestamp, key=value fields and _raw
-POST /_bulk                  Elasticsearch bulk: document lines as they are
-HEC, OTLP, syslog            decoded into one flat JSON object per event
-  → pkg/database: Append(index, lines)
-  → the store of the index, created with its first events
-      → each line parsed once into typed columns by field path;
-        the time from the first of storage.time_fields the event holds,
-        else the time of arrival
-      → buffered; written as one sorted run per time partition
-        within storage.flush_interval, when the buffers are full, or on sync
-      → a manifest record makes the run durable and visible
-  → in the background:
-      → runs of one tier are merged into a run of the next
-      → a partition that has closed is merged into one run
-      → partitions that end before the retention period are dropped
+```mermaid
+flowchart TD
+    Text["PPL text"] --> Plan["Parse, analyze, lower to IR, optimize"]
+    Plan --> Bounds["Resolve request time bounds and sources"]
+    Bounds --> Choose["Find the subtrees the columnar executor can run"]
+    Choose --> Scan["Acquire snapshots and scan candidate blocks"]
+    Scan --> Cols["Filter, project, compute or aggregate over columns"]
+    Cols -->|"Columnar result"| Encode["Encode the result"]
+    Cols -->|"Input for remaining operators"| Row["Batched row iterators and expression VM"]
+    Row --> Encode
 ```
 
-See [Storage](./storage.md) for each of these steps.
+`query.Compile` is shared by the server, local queries and explain. The cache holds compiled plans by query text. Source resolution, the clock for relative times and the contents of stores belong to execution. The request's `from` and `to` bounds intersect the query's time range as a half-open interval `[from, to)`.
 
-### Read Path
+For the standard HTTP query endpoint, the server syncs all currently open stores before submitting a job. The synchronous, asynchronous and hybrid responses differ in how long the request waits for that job. A call to `/api/v1/query/stream` uses the request context directly and writes the completed result as NDJSON. The HTTP response format and the engine's internal block-by-block handoff are separate parts of the read path.
 
-```
-PPL text
-  → query.Compile: parse, analyze, lower to an IR plan, optimize
-    (plans of recent queries are reused)
-  → the server syncs the stores and starts the query as a job
-  → pkg/database: narrows every scan to the request's from and to
-  → pkg/engine/columnar:
-      → membership tests against small subqueries become lists of values
-      → the columnar executor takes every part of the plan it can,
-        from a scan up: filters, computed columns, one aggregate,
-        a choice of columns, a sort, a limit, the first row of each key;
-        it reads only the blocks that the time range, the token filters
-        and the column statistics admit, on every core
-      → the row operators run the rest of the plan over those rows
-  → rows as JSON
-```
+At execution time, the engine takes a snapshot of each store a scan needs. It resolves literal and wildcard source names and can combine several snapshots for one scan. A snapshot pins a store's parts while they are read. Each store publishes its own versions, so the combination is assembled from per-store snapshots.
 
-See [Query Engine](./query-engine.md).
+The columnar planner attempts to run each supported subtree from a scan upward. For example, predicate evaluation and aggregation can stay in columns, while a join above those scans runs as a row operator. Simple columnar scans can hand batches to row operators as they read them. Other subtrees complete first, for example when their output needs a final aggregation or sort. See [Query Engine](./query-engine.md) for the plan split and [Indexing and Pruning](./indexing.md) for the block scan.
 
-## Next Steps
+## Code entry points
 
-- [Storage](./storage.md) -- per-index stores, partitions, runs, parts, flush and sync, retention
-- [Query Engine](./query-engine.md) -- compilation, the columnar executor and the row operators
-- [Elasticsearch Compatibility Stubs](./es-stubs.md) -- what log shippers see
-- [Design Decisions](./design-decisions.md) -- why columnar, why PPL, why Go, why a single binary
+- Server setup and protocol routing. [pkg/api/rest/server.go](https://github.com/lynxbase/lynxdb/blob/main/pkg/api/rest/server.go)
+- Database configuration, query entry points and retention. [pkg/database/database.go](https://github.com/lynxbase/lynxdb/blob/main/pkg/database/database.go)
+- Compilation and the executor handoff. [pkg/query/query.go](https://github.com/lynxbase/lynxdb/blob/main/pkg/query/query.go), [pkg/engine/columnar/columnar.go](https://github.com/lynxbase/lynxdb/blob/main/pkg/engine/columnar/columnar.go)
