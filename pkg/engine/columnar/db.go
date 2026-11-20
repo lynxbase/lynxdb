@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +21,9 @@ type Config struct {
 	// Dir holds one directory per index; an empty Dir keeps the database in
 	// a temporary directory that Close removes.
 	Dir string
-	// Store configures the store of every index.
+	// Store configures the store of every index; its sort key, time fields
+	// and partition span are the settings of an index created without its
+	// own.
 	Store colstore.StoreOptions
 }
 
@@ -32,19 +35,20 @@ var ErrIndexName = errors.New("columnar: index names hold letters, digits, dots,
 
 // DB is a database: indexes that each keep their events in a store of
 // their own under one directory. An index comes into being with its first
-// events.
+// events or with Create; its directory holds its settings.
 type DB struct {
 	cfg       Config
 	temporary bool
 
-	mu     sync.RWMutex
-	stores map[string]*colstore.Store
-	closed bool
+	mu       sync.RWMutex
+	stores   map[string]*colstore.Store
+	settings map[string]Settings
+	closed   bool
 }
 
 // Open opens the database in cfg.Dir with the indexes it holds.
 func Open(cfg Config) (*DB, error) {
-	db := &DB{cfg: cfg, stores: map[string]*colstore.Store{}}
+	db := &DB{cfg: cfg, stores: map[string]*colstore.Store{}, settings: map[string]Settings{}}
 	if cfg.Dir == "" {
 		dir, err := os.MkdirTemp("", "lynxdb-")
 		if err != nil {
@@ -60,10 +64,24 @@ func Open(cfg Config) (*DB, error) {
 		return nil, err
 	}
 	for _, e := range entries {
-		if !e.IsDir() || !validIndex(e.Name()) {
+		name := e.Name()
+		if !e.IsDir() {
 			continue
 		}
-		if _, err := db.open(e.Name()); err != nil {
+		if hidden, ok := strings.CutPrefix(name, "."); ok {
+			// An index whose creation did not finish.
+			if index, ok := strings.CutSuffix(hidden, newSuffix); ok && validIndex(index) {
+				if err := os.RemoveAll(filepath.Join(db.cfg.Dir, name)); err != nil {
+					return nil, errors.Join(err, db.Close())
+				}
+			}
+
+			continue
+		}
+		if !validIndex(name) {
+			continue
+		}
+		if _, err := db.open(name); err != nil {
 			return nil, errors.Join(err, db.Close())
 		}
 	}
@@ -86,16 +104,67 @@ func validIndex(name string) bool {
 	return true
 }
 
-// open opens the store of an index; the caller holds the lock for writing
-// or is the only user of the database.
+// open opens the store of an index with the settings its directory holds;
+// a directory without them is not an index. The caller holds the lock for
+// writing or is the only user of the database.
 func (db *DB) open(index string) (*colstore.Store, error) {
-	s, err := colstore.OpenStore(filepath.Join(db.cfg.Dir, index), db.cfg.Store)
+	dir := filepath.Join(db.cfg.Dir, index)
+	settings, err := readSettings(dir)
 	if err != nil {
 		return nil, fmt.Errorf("columnar: index %s: %w", index, err)
 	}
-	db.stores[index] = s
+	s, err := colstore.OpenStore(dir, settings.options(db.cfg.Store))
+	if err != nil {
+		return nil, fmt.Errorf("columnar: index %s: %w", index, err)
+	}
+	db.stores[index], db.settings[index] = s, settings
 
 	return s, nil
+}
+
+// create makes an index with the settings of want, those that want leaves
+// unset taken from the store options, and opens it: its directory comes
+// into being with the settings in it, made durable, or not at all. The
+// caller holds the lock for writing.
+func (db *DB) create(index string, want Settings) (*colstore.Store, error) {
+	if err := makeIndexDir(db.cfg.Dir, index, want.fill(storeSettings(db.cfg.Store))); err != nil {
+		return nil, fmt.Errorf("columnar: index %s: %w", index, err)
+	}
+
+	return db.open(index)
+}
+
+// Create creates an index with the settings of want, those that want
+// leaves unset taken from the store options, and returns its settings and
+// whether it created it. An index that exists keeps its settings: Create
+// returns them when they agree with every setting that want sets, else an
+// error wrapping ErrSettingsConflict. Settings that an index cannot take
+// return an error wrapping ErrSettings.
+func (db *DB) Create(index string, want Settings) (Settings, bool, error) {
+	if err := want.Validate(); err != nil {
+		return Settings{}, false, err
+	}
+	if !validIndex(index) {
+		return Settings{}, false, fmt.Errorf("%w: %q", ErrIndexName, index)
+	}
+	db.mu.Lock()
+	defer db.mu.Unlock()
+	if db.closed {
+		return Settings{}, false, ErrClosed
+	}
+	if db.stores[index] != nil {
+		has := db.settings[index]
+		if c := want.conflict(has); c != "" {
+			return has, false, fmt.Errorf("%w: index %s has %s", ErrSettingsConflict, index, c)
+		}
+
+		return has, false, nil
+	}
+	if _, err := db.create(index, want); err != nil {
+		return Settings{}, false, err
+	}
+
+	return db.settings[index], true, nil
 }
 
 // store returns the store of an index, which it creates when create is set
@@ -121,7 +190,7 @@ func (db *DB) store(index string, create bool) (*colstore.Store, error) {
 		return s, nil
 	}
 
-	return db.open(index)
+	return db.create(index, Settings{})
 }
 
 // Append adds the events of lines, one JSON object per line, to an index
@@ -211,6 +280,7 @@ type IndexStats struct {
 	// of sorted runs still to be merged; the index is quiet when both are
 	// zero.
 	Merges, RunsToMerge int
+	Settings            Settings
 }
 
 // Stats describes every index, in the order of their names.
@@ -218,34 +288,44 @@ func (db *DB) Stats() []IndexStats {
 	names := db.Names()
 	out := make([]IndexStats, 0, len(names))
 	for _, name := range names {
-		s, err := db.store(name, false)
-		if err != nil || s == nil {
-			continue
+		if st, ok := db.Index(name); ok {
+			out = append(out, st)
 		}
-		snap := s.Table().Snapshot()
-		st := IndexStats{Name: name}
-		st.Merges, st.RunsToMerge = s.MergeState()
-		first, last := int64(0), int64(0)
-		for i, h := range snap.Parts() {
-			st.Rows += h.Rows
-			st.Bytes += int64(h.Size())
-			st.FilterBytes += h.FilterBytes()
-			st.Parts++
-			if i == 0 || h.MinTime < first {
-				first = h.MinTime
-			}
-			if i == 0 || h.MaxTime > last {
-				last = h.MaxTime
-			}
-		}
-		if st.Parts != 0 {
-			st.First, st.Last = time.Unix(0, first).UTC(), time.Unix(0, last).UTC()
-		}
-		snap.Release()
-		out = append(out, st)
 	}
 
 	return out
+}
+
+// Index describes an index; it reports false when there is no such index.
+func (db *DB) Index(name string) (IndexStats, bool) {
+	db.mu.RLock()
+	s, settings, closed := db.stores[name], db.settings[name], db.closed
+	db.mu.RUnlock()
+	if closed || s == nil {
+		return IndexStats{}, false
+	}
+	snap := s.Table().Snapshot()
+	defer snap.Release()
+	st := IndexStats{Name: name, Settings: settings}
+	st.Merges, st.RunsToMerge = s.MergeState()
+	first, last := int64(0), int64(0)
+	for i, h := range snap.Parts() {
+		st.Rows += h.Rows
+		st.Bytes += int64(h.Size())
+		st.FilterBytes += h.FilterBytes()
+		st.Parts++
+		if i == 0 || h.MinTime < first {
+			first = h.MinTime
+		}
+		if i == 0 || h.MaxTime > last {
+			last = h.MaxTime
+		}
+	}
+	if st.Parts != 0 {
+		st.First, st.Last = time.Unix(0, first).UTC(), time.Unix(0, last).UTC()
+	}
+
+	return st, true
 }
 
 // IndexUsage tells where the bytes of an index go.
@@ -388,6 +468,7 @@ func (db *DB) Drop(index string) (bool, error) {
 		return false, nil
 	}
 	delete(db.stores, index)
+	delete(db.settings, index)
 
 	return true, errors.Join(s.Close(), os.RemoveAll(filepath.Join(db.cfg.Dir, index)))
 }
@@ -404,7 +485,7 @@ func (db *DB) Close() error {
 	for _, s := range db.stores {
 		errs = append(errs, s.Close())
 	}
-	db.stores = nil
+	db.stores, db.settings = nil, nil
 	if db.temporary {
 		errs = append(errs, os.RemoveAll(db.cfg.Dir))
 	}
