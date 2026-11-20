@@ -19,8 +19,11 @@ import (
 // LYNXDB_BENCH_MERGE_RUNS the runs they are written in (16 by default),
 // LYNXDB_BENCH_PARTITION the span of a partition (24h by default; the events
 // cover about 200 s per million) and LYNXDB_BENCH_MERGE_BLOCKS the merge
-// budget of the store.
+// budget of the store; LYNXDB_BENCH_BACKGROUND leaves the merge to the
+// background merger of the reopened store, whose closed partitions count as
+// quiet, instead of calling Compact.
 func BenchmarkCompact(b *testing.B) {
+	background := os.Getenv("LYNXDB_BENCH_BACKGROUND") != ""
 	rows := envInt(b, "LYNXDB_BENCH_MERGE_ROWS", 1<<20)
 	runs := envInt(b, "LYNXDB_BENCH_MERGE_RUNS", 16)
 	opts := StoreOptions{
@@ -54,7 +57,11 @@ func BenchmarkCompact(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := s.Compact(); err != nil {
+		settle := s.Compact
+		if background {
+			settle = s.Settle
+		}
+		if err := settle(); err != nil {
 			b.Fatal(err)
 		}
 		wall, cpu = wall+time.Since(begin), cpu+cpuTime()-cpuBefore

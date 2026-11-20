@@ -190,12 +190,9 @@ type Store struct {
 	// over is set when the merger has stopped for good.
 	over bool
 	// busy holds the runs that the merges under way read, with the
-	// partition of each, and running is the number of those merges;
-	// settling is set while one of them merges a closed partition into one
-	// run.
-	busy     map[uint64]int64
-	running  int
-	settling bool
+	// partition of each, and running is the number of those merges.
+	busy    map[uint64]int64
+	running int
 	// arrived holds, by partition, when rows were last flushed to it.
 	arrived map[int64]int64
 	// drops is set while the partitions that end at or before dropTo are
@@ -1208,13 +1205,13 @@ func (s *Store) recheck() {
 // again before they are given up.
 const spareIdle = 10 * time.Second
 
-// closedSet returns all the runs of the earliest partition that has closed
-// and gone quiet, that neither a merge under way nor a set of taken reads
-// and of which no single run holds seven eighths of the rows. One such
-// partition is merged at a time.
+// closedSet returns, for every partition that has closed and gone quiet,
+// that neither a merge under way nor a set of taken reads and of which no
+// single run holds seven eighths of the rows, all of its runs. They are
+// merged side by side, under the block budget of all merges.
 func (s *Store) closedSet(free []*Handle, taken [][]sortedRun) [][]sortedRun {
 	width := int64(s.opts.Partition)
-	if width <= 0 || s.settling || s.opts.MergeFanIn < 2 {
+	if width <= 0 || s.opts.MergeFanIn < 2 {
 		return nil
 	}
 	now, grace := timeNow().UnixNano(), min(width, int64(time.Hour))
@@ -1245,11 +1242,7 @@ func (s *Store) closedSet(free []*Handle, taken [][]sortedRun) [][]sortedRun {
 		}
 	}
 
-	if sets := pickMerges(open, s.opts.MergeFanIn, true); len(sets) > 0 {
-		return sets[:1]
-	}
-
-	return nil
+	return pickMerges(open, s.opts.MergeFanIn, true)
 }
 
 // startMerges starts the merges that are due among the runs that no merge
@@ -1278,8 +1271,6 @@ func (s *Store) startMerges(compact bool) bool {
 		}
 	}
 	sets := pickMerges(free, s.opts.MergeFanIn, compact)
-	// settles is the set that merges a closed partition, if there is one.
-	settles := -1
 	if !compact {
 		// A partition some of whose runs a merge reads waits for it.
 		whole := free[:0:0]
@@ -1295,10 +1286,7 @@ func (s *Store) startMerges(compact bool) bool {
 				whole = append(whole, h)
 			}
 		}
-		if closed := s.closedSet(whole, sets); len(closed) > 0 {
-			sets, settles = append(sets, closed...), len(sets)
-			s.settling = true
-		}
+		sets = append(sets, s.closedSet(whole, sets)...)
 	}
 	for _, runs := range sets {
 		for _, r := range runs {
@@ -1307,7 +1295,7 @@ func (s *Store) startMerges(compact bool) bool {
 	}
 	s.running += len(sets)
 	s.mu.Unlock()
-	for i, runs := range sets {
+	for _, runs := range sets {
 		// A merge keeps the parts it reads; the others go as soon as the
 		// merges that replace them commit.
 		var parts []*Handle
@@ -1325,9 +1313,6 @@ func (s *Store) startMerges(compact bool) bool {
 				delete(s.busy, r.id)
 			}
 			s.running--
-			if i == settles {
-				s.settling = false
-			}
 			if err != nil && !errors.Is(err, errStopped) && s.err == nil {
 				s.err = err
 			}
