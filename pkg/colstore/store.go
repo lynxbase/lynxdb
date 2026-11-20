@@ -732,6 +732,35 @@ func (s *Store) mergesBefore(t int64) bool {
 	return false
 }
 
+// MergeState returns the number of merges under way and of the runs that no
+// merge reads yet and that the merger is still to merge, closed partitions
+// that wait to go quiet included; the store is quiet when both are zero.
+func (s *Store) MergeState() (running, due int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Under the lock the table holds no part that a committed merge
+	// replaced, as in startMerges.
+	snap := s.Table().Snapshot()
+	defer snap.Release()
+	free := make([]*Handle, 0, len(snap.Parts()))
+	for _, h := range snap.Parts() {
+		if _, busy := s.busy[h.Run]; !busy {
+			free = append(free, h)
+		}
+	}
+	whole := s.wholeDue(free)
+	for _, set := range pickMerges(free, s.opts.MergeFanIn, false) {
+		if _, ok := whole[set[0].partition]; !ok {
+			due += len(set)
+		}
+	}
+	for _, runs := range whole {
+		due += runs
+	}
+
+	return s.running, due
+}
+
 // Compact merges the runs of every partition into one and waits for it.
 func (s *Store) Compact() error {
 	s.mu.Lock()

@@ -199,6 +199,10 @@ type IndexStats struct {
 	// First and Last are the times of the earliest and the latest event;
 	// both are zero for an index without events.
 	First, Last time.Time
+	// Merges is the number of merges under way and RunsToMerge the number
+	// of sorted runs still to be merged; the index is quiet when both are
+	// zero.
+	Merges, RunsToMerge int
 }
 
 // Stats describes every index, in the order of their names.
@@ -206,11 +210,13 @@ func (db *DB) Stats() []IndexStats {
 	names := db.Names()
 	out := make([]IndexStats, 0, len(names))
 	for _, name := range names {
-		snap, ok := db.Snapshot(name)
-		if !ok {
+		s, err := db.store(name, false)
+		if err != nil || s == nil {
 			continue
 		}
+		snap := s.Table().Snapshot()
 		st := IndexStats{Name: name}
+		st.Merges, st.RunsToMerge = s.MergeState()
 		first, last := int64(0), int64(0)
 		for i, h := range snap.Parts() {
 			st.Rows += h.Rows

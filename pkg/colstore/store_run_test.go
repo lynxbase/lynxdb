@@ -628,3 +628,41 @@ func TestADropWaitsOnlyForMergesOfItsPartitions(t *testing.T) {
 		})
 	}
 }
+
+// TestMergeStateCountsTheRunsOfAPartitionThatWaitsForQuiet requires that the
+// runs of a closed partition that rows still reach count as due to be
+// merged, and that a compaction leaves nothing due and nothing running.
+func TestMergeStateCountsTheRunsOfAPartitionThatWaitsForQuiet(t *testing.T) {
+	skipSyncs(t)
+	hour := int64(time.Hour)
+	var now atomic.Int64
+	timeNow = func() time.Time { return time.Unix(0, now.Load()) }
+	defer func() { timeNow = time.Now }()
+	now.Store((firstTimedHour+2)*hour + hour/2)
+	s, err := OpenStore(t.TempDir(), StoreOptions{TimeField: "ts", Partition: time.Hour, FlushInterval: -1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for i := range 3 {
+		w := s.NewWriter()
+		if err := w.AddNDJSON(timedDocs(i*50, 50, 1)); err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Settle(); err != nil {
+		t.Fatal(err)
+	}
+	if running, due := s.MergeState(); running != 0 || due != 3 {
+		t.Fatalf("%d merges running and %d runs due while rows arrive, want none and three", running, due)
+	}
+	if err := s.Compact(); err != nil {
+		t.Fatal(err)
+	}
+	if running, due := s.MergeState(); running != 0 || due != 0 {
+		t.Fatalf("%d merges running and %d runs due after Compact, want none", running, due)
+	}
+}

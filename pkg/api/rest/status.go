@@ -15,6 +15,7 @@ type storeTotals struct {
 	events         uint64
 	bytes, filters int64
 	parts          int
+	merges, runs   int
 	oldest, newest time.Time
 }
 
@@ -25,6 +26,8 @@ func sumStats(stats []columnar.IndexStats) storeTotals {
 		t.bytes += ix.Bytes
 		t.filters += ix.FilterBytes
 		t.parts += ix.Parts
+		t.merges += ix.Merges
+		t.runs += ix.RunsToMerge
 		if ix.Parts == 0 {
 			continue
 		}
@@ -72,6 +75,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"total_events":   totals.events,
 		"index_count":    len(stats),
 		"part_count":     totals.parts,
+		"merges_running": totals.merges,
+		"runs_to_merge":  totals.runs,
 		"indexes":        indexes,
 		"jobs":           s.jobCounts(),
 	}
