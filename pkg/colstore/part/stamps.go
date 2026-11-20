@@ -220,6 +220,7 @@ func (s *timedScratch) promisingStamps(c *shred.Column, times []int64, refs []ti
 	if m < timedSample-timedSample/maxIrregularShare {
 		return false
 	}
+	s.reason = ""
 	best, run := seen[0], 0
 	for _, l := range seen[:m] {
 		k := 0
@@ -233,6 +234,8 @@ func (s *timedScratch) promisingStamps(c *shred.Column, times []int64, refs []ti
 		}
 	}
 	if run < timedSample-timedSample/maxIrregularShare {
+		s.reason = "times of several layouts in the sample"
+
 		return false
 	}
 	s.form, s.frac, s.zone = formStamp, best.frac, append(s.zone[:0], best.zone...)
@@ -249,9 +252,16 @@ func (s *timedScratch) promisingStamps(c *shred.Column, times []int64, refs []ti
 		}
 	}
 	if k < timedSample/2 {
+		s.reason = "few sample times parse"
+
 		return false
 	}
 	s.relate(k, times, refs)
+	if s.cost >= 1<<30 {
+		s.reason = "no reference in the sample"
+
+		return false
+	}
 	// What the general codec would take is not known here; the trials
 	// compare the forms.
 	s.headPacked = 64

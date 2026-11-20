@@ -141,6 +141,11 @@ func (db *DB) Usage(index string, sections bool) (columnar.IndexUsage, bool, err
 	return db.core.Usage(index, sections)
 }
 
+// ExplainColumn is columnar.DB.ExplainColumn.
+func (db *DB) ExplainColumn(index, path string, blocks int) (part.ColumnExplain, bool, error) {
+	return db.core.ExplainColumn(index, path, blocks)
+}
+
 // Names lists the indexes in the order of their names.
 func (db *DB) Names() []string { return db.core.Names() }
 

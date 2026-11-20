@@ -330,6 +330,37 @@ func partsAndBytes(s *colstore.Store) (parts int, bytes int64) {
 	return parts, bytes
 }
 
+// ExplainColumn tells, for the string column of path, what an even sample
+// of at most blocks blocks of an index takes in every form the writer has
+// and why the writer chose as it did, see part.Part.ExplainColumn; ok is
+// false when there is no such index.
+func (db *DB) ExplainColumn(index, path string, blocks int) (e part.ColumnExplain, ok bool, err error) {
+	snap, ok := db.Snapshot(index)
+	if !ok {
+		return e, false, nil
+	}
+	defer snap.Release()
+	total := 0
+	for _, h := range snap.Parts() {
+		total += h.NumBlocks()
+	}
+	every := max((total+blocks-1)/max(blocks, 1), 1)
+	seen := 0
+	pick := func() bool {
+		seen++
+
+		return (seen-1)%every == 0
+	}
+	e.Path = path
+	for _, h := range snap.Parts() {
+		if err := h.ExplainColumn(&e, pick); err != nil {
+			return e, true, fmt.Errorf("columnar: index %s: %w", index, err)
+		}
+	}
+
+	return e, true, nil
+}
+
 // DropBefore removes from every index the partitions that end at or before
 // t and returns the number of events removed. Indexes that are not
 // partitioned by time keep everything.

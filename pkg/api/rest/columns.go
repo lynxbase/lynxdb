@@ -64,7 +64,8 @@ type indexUsage struct {
 
 // handleIndexColumns tells where the bytes of an index go, by column and by
 // region of the part files, from the footers and directories of its parts
-// and, unless sections=false, the heads of the sections of every chunk.
+// and, unless sections=false, the heads of the sections of every chunk; with
+// explain set to a path, it explains the coding of that column instead.
 func (s *Server) handleIndexColumns(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeQuery, auth.ScopeAdmin) {
 		return
@@ -80,6 +81,11 @@ func (s *Server) handleIndexColumns(w http.ResponseWriter, r *http.Request) {
 		sections = b
 	}
 	index := r.PathValue("index")
+	if path := r.URL.Query().Get("explain"); path != "" {
+		s.handleExplainColumn(w, r, index, path)
+
+		return
+	}
 	s.syncForRead()
 	u, ok, err := s.db.Usage(index, sections)
 	switch {

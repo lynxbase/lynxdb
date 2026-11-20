@@ -173,6 +173,15 @@ type timedScratch struct {
 	cost      int
 	refKind   uint8
 	reference string
+	// forced makes only the one reference the codec may take.
+	forced bool
+	only   int
+	// reason tells why the last column was not timed; lowDictSize and
+	// sections tell of the last one that was: the bytes of its head, its
+	// differences, its low bits and its tail.
+	reason      string
+	lowDictSize int
+	sections    [4]int
 	// headPacked is the bits that packing the head digits would take, by
 	// the ranges of their digits.
 	headPacked   int
@@ -202,7 +211,10 @@ var timedUnits = [...]uint8{0, 3, 6, 9}
 func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 	s := &w.timedBuf
 	n := c.Count
+	s.reason, s.lowDictSize, s.sections = "", 0, [4]int{}
 	if n < minTimed {
+		s.reason = "few values"
+
 		return false
 	}
 	switch {
@@ -214,12 +226,16 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 		return false
 	}
 	if s.irregular > n/maxIrregularShare {
+		s.reason = "too many values off the shape"
+
 		return false
 	}
 	// The reference that the sample found of the fewest bits.
 	best := s.best
 	s.refs, s.refOK = grow(s.refs, n), grow(s.refOK, n)
 	if !s.follow(c, times, w.timedRefs, best) {
+		s.reason = "too many values without the reference"
+
 		return false
 	}
 	s.refKind, s.reference = refNone, ""
@@ -237,6 +253,8 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 	}
 	s.pickExceptions(n)
 	if len(s.exceptions) == n {
+		s.reason = "all values exceptions"
+
 		return false
 	}
 
@@ -276,10 +294,13 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 		w.block = binary.AppendUvarint(w.block, uint64(len(v))+1)
 		w.block = append(w.block, v...)
 	}
+	s.sections[0] = len(w.block) - start
 	w.block = appendInts(w.block, s.diffs[:n], &w.blobs, &w.e)
+	s.sections[1] = len(w.block) - start - s.sections[0]
 	if s.shift > 0 {
 		w.block = s.appendLow(w.block, n, &w.blobs, &w.e)
 	}
+	s.sections[2] = len(w.block) - start - s.sections[0] - s.sections[1]
 	s.tail = grow(s.tail, n)
 	for at := s.from + s.headDigits; s.form == formDigits && at < s.to; at += s.tailDigits() {
 		end := min(at+s.tailDigits(), s.to)
@@ -293,6 +314,7 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 	}
 	if len(w.block)-start >= s.stride*n {
 		w.block = w.block[:start]
+		s.reason = "larger than the strings"
 
 		return false
 	}
@@ -329,6 +351,7 @@ func (s *timedScratch) appendLow(dst []byte, n int, bc *blobCodec, e *encodeScra
 
 		return appendFrames(dst, s.low[:n], false, e)
 	}
+	s.lowDictSize = len(s.lowDict)
 	dst = append(dst, lowDict)
 	dst = binary.AppendUvarint(dst, uint64(len(s.lowDict)))
 	dst = appendInts(dst, s.lowDict, bc, e)
@@ -449,6 +472,10 @@ func (s *timedScratch) promising(c *shred.Column, times []int64, refs []timedRef
 		s.picked[j] = j * (n - 1) / (timedSample - 1)
 	}
 	if s.form = formDigits; !s.shape(c, s.picked[:]) {
+		if s.reason == "" {
+			s.reason = "no shape in the sample"
+		}
+
 		return false
 	}
 	k := 0
@@ -459,11 +486,18 @@ func (s *timedScratch) promising(c *shred.Column, times []int64, refs []timedRef
 		}
 	}
 	if k < timedSample/2 {
+		s.reason = "few sample values fit the shape"
+
 		return false
 	}
 	s.relate(k, times, refs)
+	if s.cost+minTimedGain > s.headPacked {
+		s.reason = "no reference saves bits over packing in the sample"
 
-	return s.cost+minTimedGain <= s.headPacked
+		return false
+	}
+
+	return true
 }
 
 // relate finds the relation to nothing, then to the times and to every
@@ -475,7 +509,7 @@ func (s *timedScratch) relate(k int, times []int64, refs []timedRef) {
 	}
 	s.tried = s.tried[:0]
 	keep := func(k int, unit uint8, shift uint, bits int) {
-		if bits < s.cost {
+		if bits < s.cost && (!s.forced || s.only == k) {
 			s.best, s.unit, s.shift, s.cost = k, unit, shift, bits
 		}
 	}
@@ -554,6 +588,8 @@ func (s *timedScratch) shape(c *shred.Column, idx []int) bool {
 		k = j
 	}
 	if run < timedSample-timedSample/maxIrregularShare || best < 2 || best > 255 {
+		s.reason = "lengths differ in the sample"
+
 		return false
 	}
 	s.stride = best
@@ -592,6 +628,8 @@ func (s *timedScratch) shape(c *shred.Column, idx []int) bool {
 		s.to--
 	}
 	if s.from == s.to {
+		s.reason = "values alike in the sample"
+
 		return false
 	}
 	// The alphabet is every byte that the spans of many values hold; a
@@ -620,6 +658,8 @@ func (s *timedScratch) shape(c *shred.Column, idx []int) bool {
 	case size >= 2 && size <= 64 && size&(size-1) == 0:
 		s.radixBits = uint(bits.TrailingZeros(uint(size)))
 	default:
+		s.reason = "alphabet of the sample neither ten nor a power of two"
+
 		return false
 	}
 	for i := range s.digit {
