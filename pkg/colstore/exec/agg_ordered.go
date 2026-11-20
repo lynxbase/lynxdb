@@ -35,6 +35,9 @@ const (
 	rangeRows = 1 << 16
 	// orderedBatch is the number of finished groups handed on at once.
 	orderedBatch = 4096
+	// entriesRangeBlocks is the number of blocks of each stream that a key
+	// range spans when blocks are read for their distinct values.
+	entriesRangeBlocks = 8
 )
 
 // orderedChunk is the number of rows of a block that are split into groups
@@ -74,6 +77,12 @@ type orderedPlan struct {
 	// another, and the token filters rule a block out before it is decoded.
 	// byIndex is set when counts can also come from the part index.
 	blocks, byIndex bool
+	// entries is set when a plan with several streams only counts rows and
+	// distinct values: a block inside one group then gives its rows from the
+	// part index and its distinct values from the dictionary of the column
+	// at the path distinct, without the codes of the rows.
+	entries  bool
+	distinct string
 }
 
 // columns calls need for every column a filter node reads.
@@ -300,9 +309,13 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 		return nil
 	}
 	o.key = key
-	o.byIndex = residual == nil && key.Streams() == 1
+	counts := residual == nil
 	for i, w := range ap.words {
-		o.byIndex = o.byIndex && (w.op == wordRows || w.op == wordGroup || (o.estimated >= 0 && i == ap.hllWord(o.estimated)))
+		counts = counts && (w.op == wordRows || w.op == wordGroup || (o.estimated >= 0 && i == ap.hllWord(o.estimated)))
+	}
+	o.byIndex = counts && key.Streams() == 1
+	if o.entries = counts && key.Streams() > 1 && len(o.parts) > o.groups; o.entries {
+		o.distinct = sortKey[prefix+o.groups]
 	}
 	o.blocks = key.Streams() == 1
 	for _, h := range snap.Parts() {
@@ -447,9 +460,21 @@ type orderedCursor struct {
 	counted bool
 	key     [][]byte
 	values  int64
+	// listed is set for a block taken as the distinct values in vals of one
+	// group in key: run i is value base+i.
+	listed bool
+	vals   vec.Column
+	base   int
+	// lo and hi bound the keys of the range the cursor reads.
+	lo, hi []byte
 }
 
 func (c *orderedCursor) load() {
+	if c.listed {
+		c.cur[len(c.cur)-1] = c.vals.Bytes(c.base + c.i)
+
+		return
+	}
 	row := int(c.starts[c.i])
 	for p, col := range c.cols {
 		c.cur[p] = col.Bytes(row)
@@ -474,8 +499,9 @@ type orderedScratch struct {
 	post   postEval
 	having havingEval
 
-	bound []uint8
-	gid   []uint32
+	bound  []uint8
+	gid    []uint32
+	keyBuf []byte
 	// edges holds the first and last group of every range the worker read,
 	// ranges of them in this query.
 	edges  []*orderedEdges
@@ -517,9 +543,10 @@ type orderedWorker struct {
 	o    *orderedPlan
 	scan *colstore.RangeScan
 	turn int
-	// byIndex and byToken count the blocks counted from the part index and
-	// the ones the token filters ruled out.
-	byIndex, byToken int64
+	// byIndex, byEntries and byToken count the blocks counted from the part
+	// index, those taken from their distinct values and the ones the token
+	// filters ruled out.
+	byIndex, byEntries, byToken int64
 }
 
 func newOrderedWorker(w *worker, o *orderedPlan, scan *colstore.RangeScan, turn int) *orderedWorker {
@@ -663,12 +690,92 @@ func (ow *orderedWorker) fromIndex(c *orderedCursor, p *part.Part, i int) bool {
 	c.words = append(c.words[:0], w.q.agg.init...)
 	c.words[w.q.agg.rows] = int64(rows)
 	c.starts, c.group = append(c.starts[:0], 0), append(c.group[:0], 0)
-	c.i, c.n, c.counted = 0, 1, true
+	c.i, c.n, c.counted, c.listed = 0, 1, true, false
 	w.blocks++
 	w.matched += int64(rows)
 	ow.byIndex++
 
 	return true
+}
+
+// fromEntries takes block i of p as one run for each distinct value of the
+// distinct argument inside the range lo to hi, reading through b only the
+// dictionary of the argument's column, and reports false unless the part
+// index proves that the block holds one group with strings for its keys,
+// every row holds a string for its value and the column has a dictionary.
+// The rows of
+// such a block count in the range where the block begins, whatever range the
+// later ones lie in, since they all belong to its one group; a block with no
+// value inside the range leaves c with no run.
+func (ow *orderedWorker) fromEntries(c *orderedCursor, p *part.Part, i int, b *part.Block, lo, hi []byte) (bool, error) {
+	w, o := ow.w, ow.o
+	depth := o.prefix + o.groups
+	if p.KeyRuns(i, depth) != 1 {
+		return false, nil
+	}
+	first := p.FirstKey(i)
+	for pos := o.prefix; pos < depth; pos++ {
+		if part.KeyKind(first, pos) != vec.KindString {
+			return false, nil
+		}
+	}
+	id, ok := p.PathID(o.distinct)
+	if !ok {
+		return false, nil
+	}
+	if err := p.OpenBlock(i, b); err != nil {
+		return false, err
+	}
+	ref, ok := b.Column(id, vec.KindString)
+	if !ok || ref.Count != b.Rows {
+		return false, nil
+	}
+	// A column held otherwise is decoded whole once for all the ranges that
+	// read the block, as the rows of other blocks are.
+	if listed, err := b.DecodeEntries(ref, &c.vals); err != nil || !listed {
+		return false, err
+	}
+	// A value's row has the key of the block's group followed by the value.
+	group := part.KeyPrefix(first, depth)
+	below := func(bound []byte) int {
+		return sort.Search(c.vals.Rows, func(j int) bool {
+			ow.keyBuf = part.AppendKeyString(append(ow.keyBuf[:0], group...), c.vals.Bytes(j))
+
+			return bytes.Compare(ow.keyBuf, bound) >= 0
+		})
+	}
+	from, to := 0, c.vals.Rows
+	if bytes.Compare(first, lo) < 0 {
+		from = below(lo)
+	}
+	if !p.BlockBelowKey(i, hi) {
+		to = below(hi)
+	}
+	c.base = from
+	rows := 0
+	if bytes.Compare(first, lo) >= 0 {
+		rows = b.Rows
+	}
+	c.key = fit(c.key, o.groups)
+	for g := 0; g < o.groups; g++ {
+		c.key[g], _ = part.KeyString(c.key[g][:0], first, o.prefix+g)
+		c.cur[g] = c.key[g]
+	}
+	n := max(0, to-from)
+	c.words = append(c.words[:0], w.q.agg.init...)
+	c.words[w.q.agg.rows] = int64(rows)
+	c.group = sized(c.group, n)
+	clear(c.group)
+	c.at, c.to = 0, 0
+	c.i, c.n, c.counted, c.listed = 0, n, false, true
+	if n > 0 {
+		c.load()
+	}
+	w.blocks++
+	w.matched += int64(rows)
+	ow.byEntries++
+
+	return true, nil
 }
 
 // next loads the next rows of c that are in the range and pass the filter,
@@ -693,6 +800,20 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 			c.repeat = c.r.Shared() >= o.prefix+len(o.parts)
 			if whole && ow.fromIndex(c, p, i) {
 				c.r.Skip()
+
+				return true, nil
+			}
+		}
+		if o.entries {
+			ok, err := ow.fromEntries(c, p, i, b, c.lo, c.hi)
+			if err != nil {
+				return false, err
+			}
+			if ok {
+				c.r.Skip()
+				if c.n == 0 {
+					continue
+				}
 
 				return true, nil
 			}
@@ -729,7 +850,7 @@ func (ow *orderedWorker) next(c *orderedCursor, b *part.Block) (bool, error) {
 			c.cols[p] = col
 		}
 		c.at, c.to = from, to
-		c.counted, c.repeat = false, c.repeat && from == 0
+		c.counted, c.listed, c.repeat = false, false, c.repeat && from == 0
 		if ords := ow.w.x.ords; ords != nil {
 			c.place = int64(ords[p])<<44 | int64(i)<<16
 		}
@@ -1030,6 +1151,7 @@ func (ow *orderedWorker) merge(kr *colstore.KeyRange, edges *orderedEdges, b *pa
 		c := ow.cursors[(s+ow.turn)%streams]
 		c.cols, c.cur = fit(c.cols, len(ow.o.parts)), fit(c.cur, len(ow.o.parts))
 		c.r.Reset(ow.scan, kr, (s+ow.turn)%streams)
+		c.lo, c.hi = kr.Lo, kr.Hi
 		c.at, c.to = 0, 0
 		ok, err := ow.next(c, b)
 		if err != nil {
@@ -1086,6 +1208,12 @@ func (x *execution) runOrdered(ctx context.Context, snap *colstore.Snapshot) (*R
 	o := q.ordered
 	workers := len(x.workers)
 	ranges := max(4*workers, o.key.Rows/rangeRows)
+	if o.entries {
+		// A block read for its distinct values costs about what a row of a
+		// block read whole does, and one that a range edge cuts is read by
+		// both ranges, so ranges span several blocks of every stream.
+		ranges = max(4*workers, o.key.Blocks/(entriesRangeBlocks*o.key.Streams()))
+	}
 	var scan *colstore.RangeScan
 	// Ranges of whole blocks all start at the same key.
 	var seq map[*colstore.KeyRange]int
@@ -1205,6 +1333,7 @@ func (x *execution) runOrdered(ctx context.Context, snap *colstore.Snapshot) (*R
 		res.Stats.RowsMatched += w.matched
 		held += w.arena.Size() + w.held() + w.sink.held() + ows[i].held()
 		res.Stats.CountedByIndex += ows[i].byIndex
+		res.Stats.CountedByEntries += ows[i].byEntries
 		res.Stats.SkippedByToken += ows[i].byToken
 	}
 	if res.Columns, res.Rows, err = x.finish(snap, sinks); err != nil {

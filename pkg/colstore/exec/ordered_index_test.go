@@ -139,6 +139,12 @@ func TestCountsFromThePartIndex(t *testing.T) {
 						if got := res.Stats.CountedByIndex > 0; got != want {
 							t.Fatalf("%d blocks counted from the index, want some: %v", res.Stats.CountedByIndex, want)
 						}
+						// Overlapping parts take the users of a block from its
+						// dictionary.
+						want = q.index && !tbl.oneStream && q.name != "rows of the last key"
+						if got := res.Stats.CountedByEntries > 0; got != want {
+							t.Fatalf("%d blocks read for their distinct values, want some: %v", res.Stats.CountedByEntries, want)
+						}
 						if res.Stats.CountedByIndex+res.Stats.Blocks > blocksOf(tbl.snap) {
 							t.Fatalf("%d blocks counted and %d opened of %d", res.Stats.CountedByIndex, res.Stats.Blocks, blocksOf(tbl.snap))
 						}

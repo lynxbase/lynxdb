@@ -21,8 +21,11 @@ type Stats struct {
 	// column statistics and constants, without decoding a column.
 	SkippedByStats int64
 	// CountedByIndex counts blocks whose rows were aggregated from the part
-	// index without opening them.
-	CountedByIndex int64
+	// index without opening them, and CountedByEntries those whose rows were
+	// counted from the index and whose distinct values were read without the
+	// rows they are in.
+	CountedByIndex   int64
+	CountedByEntries int64
 	// ColumnsSearched counts the columns that matches over every string
 	// column decoded, and ColumnsSkippedByToken those whose token filter
 	// ruled the pattern out.
