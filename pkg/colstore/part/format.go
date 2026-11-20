@@ -29,7 +29,7 @@ import (
 // written in.
 const (
 	fileMagic     = 0x5450584c // "LXPT"
-	formatVersion = 11
+	formatVersion = 12
 
 	headerSize  = 8
 	trailerSize = 28
@@ -77,6 +77,10 @@ const (
 	// path id, kind, encoding, flags, a zero byte, value count, chunk
 	// offset, chunk length, chunk checksum, and the offset of the entry's
 	// statistics and constant value among those that follow the entries.
+	// The chunk of a dictionary column is checked in two pieces, so that the
+	// dictionary is read without the codes: its statistics hold the length
+	// and the checksum of the chunk up to the codes, and the chunk checksum
+	// is that of the codes.
 	dirEntrySize = 28
 )
 

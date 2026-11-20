@@ -193,6 +193,10 @@ func statSize(stats []byte, at uint32, kind vec.Kind, enc uint8) int {
 		r.uint64()
 		r.uint64()
 	}
+	if enc == encDict {
+		r.uvarint()
+		r.bytes(4)
+	}
 	if enc == encConst && kind != vec.KindInt {
 		r.bytes(r.uvarint())
 	}

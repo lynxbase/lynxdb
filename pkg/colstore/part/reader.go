@@ -40,12 +40,14 @@ type Part struct {
 	// directory entry, that is set once the bytes of the column were seen
 	// to match their checksum, until Recheck clears it; advised has one
 	// that is set once the kernel was asked for the bytes ahead of a read,
-	// until the pages of the part are let go of.
-	sound   []atomic.Uint64
-	advised []atomic.Uint64
-	dirMu   sync.Mutex
-	dirHeap []byte
-	dirHeld []atomic.Uint64
+	// until the pages of the part are let go of. soundHead and advisedHead
+	// are the same for the dictionary of a dictionary column, which is read
+	// without its codes.
+	sound, soundHead     []atomic.Uint64
+	advised, advisedHead []atomic.Uint64
+	dirMu                sync.Mutex
+	dirHeap              []byte
+	dirHeld              []atomic.Uint64
 	// filters holds an entry for every token filter, block after block,
 	// and groups locates them; every block names its group and its first
 	// filter, and a part without filters has neither.
@@ -221,7 +223,9 @@ func Open(data []byte) (*Part, error) {
 	}
 	p.dirs, p.dirsOff = data[dirsOff:dirsOff+dirsLen], int(dirsOff)
 	p.sound = make([]atomic.Uint64, len(p.dirs)/dirEntrySize/64+1)
+	p.soundHead = make([]atomic.Uint64, len(p.sound))
 	p.advised = make([]atomic.Uint64, len(p.sound))
+	p.advisedHead = make([]atomic.Uint64, len(p.sound))
 	p.groups = make([]filterGroup, nGroups)
 	for g, end := 0, uint64(headerSize); g < len(p.groups); g++ {
 		e := groups[g*groupEntrySize:]
@@ -547,12 +551,15 @@ type ColumnRef struct {
 	enc   uint8
 	flags uint8
 	// bad marks a directory entry that does not describe a column.
-	bad      bool
-	off      uint32
-	length   uint32
-	crc      uint32
-	slot     uint32
-	constVal []byte
+	bad    bool
+	off    uint32
+	length uint32
+	crc    uint32
+	// head and headCRC are the bytes of the chunk of a dictionary column up
+	// to its codes and their checksum, and zero for other columns.
+	head, headCRC uint32
+	slot          uint32
+	constVal      []byte
 }
 
 // Size returns the number of bytes the column takes in its block.
@@ -679,6 +686,14 @@ func (b *Block) col(i int) *ColumnRef {
 	case vec.KindNull, vec.KindBool, vec.KindString, vec.KindVariant:
 	default:
 		r.bad = true
+	}
+	if c.enc == encDict {
+		head := r.uvarint()
+		if crc := r.bytes(4); crc != nil && head > 0 && head <= uint64(c.length) {
+			c.head, c.headCRC = uint32(head), binary.LittleEndian.Uint32(crc)
+		} else {
+			r.bad = true
+		}
 	}
 	if c.enc == encConst && c.Kind != vec.KindInt {
 		c.constVal = r.bytes(r.uvarint())
@@ -846,6 +861,7 @@ func (p *Part) ForgetReadAhead() {
 	}
 	for i := range p.advised {
 		p.advised[i].Store(0)
+		p.advisedHead[i].Store(0)
 	}
 	p.Recheck()
 }
@@ -858,6 +874,7 @@ func (p *Part) ForgetReadAhead() {
 func (p *Part) Recheck() {
 	for i := range p.sound {
 		p.sound[i].Store(0)
+		p.soundHead[i].Store(0)
 	}
 	for i := range p.groups {
 		for j := range p.groups[i].sound {
@@ -874,7 +891,33 @@ func (b *Block) checked(ref *ColumnRef, chunk []byte) bool {
 		return true
 	}
 	b.ahead(ref)
-	if crc32.Checksum(chunk, castagnoli) != ref.crc {
+	if ref.head > 0 && !b.checkedHead(ref, chunk) {
+		return false
+	}
+	if crc32.Checksum(chunk[ref.head:], castagnoli) != ref.crc {
+		return false
+	}
+	word.Or(bit)
+
+	return true
+}
+
+// checkedHead reports whether the dictionary at the start of the chunk of a
+// dictionary column matches its checksum, which it takes when it was not
+// seen to since the last Recheck, asking for those bytes alone ahead.
+func (b *Block) checkedHead(ref *ColumnRef, chunk []byte) bool {
+	p := b.part
+	word, bit := &p.soundHead[ref.slot>>6], uint64(1)<<(ref.slot&63)
+	if word.Load()&bit != 0 {
+		return true
+	}
+	if p.readAhead != nil && ref.head >= minReadAhead && p.advised[ref.slot>>6].Load()&bit == 0 {
+		if asked := &p.advisedHead[ref.slot>>6]; asked.Load()&bit == 0 {
+			asked.Or(bit)
+			p.readAhead(b.start+int(ref.off), int(ref.head))
+		}
+	}
+	if crc32.Checksum(chunk[:ref.head], castagnoli) != ref.headCRC {
 		return false
 	}
 	word.Or(bit)
@@ -1248,9 +1291,10 @@ func (b *Block) DecodeEntries(ref *ColumnRef, dst *vec.Column) (bool, error) {
 		return true, nil
 	}
 	chunk := b.data[ref.off : ref.off+ref.length]
-	if !b.checked(ref, chunk) {
+	if !b.checkedHead(ref, chunk) {
 		return false, ErrCorrupt
 	}
+	chunk = chunk[:ref.head]
 	if ref.flags&flagSparse != 0 {
 		rest, _, ok := skipBlob(chunk[min(1, len(chunk)):])
 		if !ok || len(chunk) == 0 {
@@ -1748,9 +1792,10 @@ func (b *Block) DecodeCounts(ref *ColumnRef, dst *vec.Column, counts []uint32) (
 		return counts, ErrCorrupt
 	}
 	chunk := b.data[ref.off : ref.off+ref.length]
-	if !b.checked(ref, chunk) {
+	if !b.checkedHead(ref, chunk) {
 		return counts, ErrCorrupt
 	}
+	chunk = chunk[:ref.head]
 	if ref.flags&flagSparse != 0 {
 		ok := len(chunk) > 0
 		if ok {

@@ -162,8 +162,10 @@ type writerBuffers struct {
 	ints      []int64
 	dictBytes []byte // the integer codec owns e.tmp
 	// counted is set when the dictionary last written holds the rows of
-	// its entries, which dictRows then holds too.
+	// its entries, which dictRows then holds too; dictEnd is where its codes
+	// begin in the block.
 	counted  bool
+	dictEnd  int
 	dictRows [maxCounted]uint32
 	// sums holds, by path, the rows of every string value that all blocks
 	// so far count; the copied fields read those of a block copied as stored.
@@ -223,10 +225,15 @@ type dirEntry struct {
 	off    uint32
 	length uint32
 	crc    uint32
-	minI   int64
-	maxI   int64
-	minF   float64
-	maxF   float64
+	// head and headCRC are, for a dictionary column, the bytes of its chunk
+	// up to the codes and their checksum, crc then that of the codes;
+	// dictEnd is where the codes begin in the block being built.
+	head, headCRC uint32
+	dictEnd       int
+	minI          int64
+	maxI          int64
+	minF          float64
+	maxF          float64
 	// constVal aliases batch memory, which outlives the block being built.
 	constVal  []byte
 	constBits uint64
@@ -722,7 +729,12 @@ func sortEntries(dst, ents []byte) []byte {
 func (w *Writer) finish(ent *dirEntry, start int) {
 	ent.off = uint32(start)
 	ent.length = uint32(len(w.block) - start)
-	ent.crc = crc32.Checksum(w.block[start:], castagnoli)
+	codes := start
+	if ent.enc == encDict {
+		codes = ent.dictEnd
+		ent.head, ent.headCRC = uint32(codes-start), crc32.Checksum(w.block[start:codes], castagnoli)
+	}
+	ent.crc = crc32.Checksum(w.block[codes:], castagnoli)
 	w.ents = append(w.ents, *ent)
 }
 
@@ -1059,7 +1071,7 @@ func (w *Writer) appendFlat(slot int, c *shred.Column, stride int) {
 
 // asDict marks the column of ent as the dictionary that encodeDict wrote.
 func (w *Writer) asDict(ent *dirEntry, c *shred.Column) {
-	ent.enc = encDict
+	ent.enc, ent.dictEnd = encDict, w.dictEnd
 	if w.counted {
 		ent.flags |= flagCounts
 	}
@@ -1237,6 +1249,7 @@ func (w *Writer) encodeDict(c *shred.Column, distinct int) bool {
 			w.block = binary.AppendUvarint(w.block, uint64(n))
 		}
 	}
+	w.dictEnd = len(w.block)
 
 	// Codes stay out of the general codec so that reading them costs a few
 	// shifts per row; runs take over when they halve the packed size.
@@ -1342,6 +1355,10 @@ func (w *Writer) appendDirectory() {
 		case vec.KindFloat:
 			w.stats = binary.LittleEndian.AppendUint64(w.stats, math.Float64bits(e.minF))
 			w.stats = binary.LittleEndian.AppendUint64(w.stats, math.Float64bits(e.maxF))
+		}
+		if e.enc == encDict {
+			w.stats = binary.AppendUvarint(w.stats, uint64(e.head))
+			w.stats = binary.LittleEndian.AppendUint32(w.stats, e.headCRC)
 		}
 		switch {
 		case e.enc != encConst || e.kind == vec.KindInt:
