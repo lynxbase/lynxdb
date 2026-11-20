@@ -75,6 +75,10 @@ func (l *RangeLimit) take(lower func(key []byte) bool) {
 	l.pending.Store(false)
 }
 
+// End refuses every offer from now on, for a merge that ends without
+// running.
+func (l *RangeLimit) End() { l.end() }
+
 // end refuses every offer from now on.
 func (l *RangeLimit) end() {
 	l.mu.Lock()

@@ -1486,6 +1486,9 @@ func (rm *rangeMerges) work(r *mergeRange) {
 func (rm *rangeMerges) merge(r *mergeRange) error {
 	pf, err := rm.s.dir.Create()
 	if err != nil {
+		// A steal waits on the limit for an answer.
+		r.limit.End()
+
 		return err
 	}
 	pf.Meta = rm.meta
