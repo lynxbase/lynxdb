@@ -12,6 +12,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
+	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
 // segment is rows of a batch that follow one another in sort key order.
@@ -39,10 +40,14 @@ const (
 
 // writeRuns writes the rows of batches as one run per partition they fall
 // in, cut into parts of disjoint key ranges that are written side by side,
-// and returns the files, which the caller commits. It sorts the batches.
+// and returns the files, which the caller commits. It sorts the batches; a
+// part merges the sorted rows of several by key.
 func (s *Store) writeRuns(batches []*shred.Batch) ([]*PartFile, error) {
 	buckets := make([][]shred.TimeBucket, len(batches))
-	sideBySide(len(batches), runtime.GOMAXPROCS(0), func(i int) {
+	// Each of the flushes that write at once sorts and writes on half of
+	// the CPUs, which bounds the buffers of sorting and encoding they hold.
+	workers := max(2, runtime.GOMAXPROCS(0)/2)
+	sideBySide(len(batches), workers, func(i int) {
 		b := batches[i]
 		if s.opts.Partition > 0 {
 			buckets[i] = b.SortByTimeBuckets(nil, int64(s.opts.Partition), s.opts.SortKey)
@@ -71,11 +76,7 @@ func (s *Store) writeRuns(batches []*shred.Batch) ([]*PartFile, error) {
 	}
 	files := make([]*PartFile, len(parts))
 	errs := make([]error, len(parts))
-	// Every part in the making holds a copy of its rows, so half of the
-	// CPUs write for each of the flushes that write at once, and the copies
-	// stay a fraction of the run.
-	writers := max(2, runtime.GOMAXPROCS(0)/2)
-	sideBySide(len(parts), writers, func(i int) { files[i], errs[i] = s.writeRunPart(&parts[i]) })
+	sideBySide(len(parts), workers, func(i int) { files[i], errs[i] = s.writeRunPart(&parts[i]) })
 	if err := errors.Join(errs...); err != nil {
 		for _, pf := range files {
 			if pf != nil {
@@ -160,19 +161,10 @@ func (s *Store) cutRun(parts []runPart, partition int64, segs []segment) []runPa
 // runWriters keeps part writers between flushes for their buffers.
 var runWriters sync.Pool
 
-// writeRunPart writes one part of a run and returns its file.
+// writeRunPart writes one part of a run and returns its file: the rows of
+// its segments in the order of their keys and times, and those equal in
+// both in the order of the segments.
 func (s *Store) writeRunPart(p *runPart) (*PartFile, error) {
-	src, from, to := p.segs[0].b, p.segs[0].from, p.segs[0].to
-	if len(p.segs) > 1 {
-		// Rows of several batches are brought together and into order.
-		local := s.joined.take(s.shredOptions())
-		defer s.joined.keep(local, runtime.GOMAXPROCS(0))
-		for _, sg := range p.segs {
-			sg.b.CopyRows(local, sg.from, sg.to)
-		}
-		local.SortBy(s.opts.SortKey)
-		src, from, to = local, 0, local.Rows
-	}
 	pf, err := s.dir.Create()
 	if err != nil {
 		return nil, err
@@ -189,22 +181,181 @@ func (s *Store) writeRunPart(p *runPart) (*PartFile, error) {
 	defer runWriters.Put(pw)
 	block := s.cut.take(shred.Options{})
 	defer s.cut.keep(block, runtime.GOMAXPROCS(0))
-	for ; from < to; from += min(s.opts.BlockRows, to-from) {
-		block.Reset()
-		src.CopyRows(block, from, min(from+s.opts.BlockRows, to))
-		if err := pw.WriteBatch(block); err != nil {
-			pf.Abort()
-
-			return nil, err
-		}
-	}
-	if err := pw.Close(); err != nil {
+	fail := func(err error) (*PartFile, error) {
 		pf.Abort()
 
 		return nil, err
 	}
+	if len(p.segs) == 1 {
+		sg := p.segs[0]
+		for from := sg.from; from < sg.to; from += min(s.opts.BlockRows, sg.to-from) {
+			block.Reset()
+			sg.b.CopyRows(block, from, min(from+s.opts.BlockRows, sg.to))
+			if err := pw.WriteBatch(block); err != nil {
+				return fail(err)
+			}
+		}
+	} else {
+		runs := make([]shred.Run, len(p.segs))
+		for i, sg := range p.segs {
+			runs[i] = shred.Run{Batch: sg.b, From: sg.from, To: sg.to}
+		}
+		picks := make([]uint32, 0, s.opts.BlockRows)
+		m := s.newSegmentMerge(p.segs)
+		for {
+			src, ok := m.next()
+			if ok {
+				picks = append(picks, uint32(src))
+			}
+			if len(picks) == s.opts.BlockRows || !ok && len(picks) > 0 {
+				block.Reset()
+				block.Interleave(runs, picks)
+				picks = picks[:0]
+				if err := pw.WriteBatch(block); err != nil {
+					return fail(err)
+				}
+			}
+			if !ok {
+				break
+			}
+		}
+	}
+	if err := pw.Close(); err != nil {
+		return fail(err)
+	}
 
 	return pf, nil
+}
+
+// segmentMerge yields the rows of sorted segments in the order of their
+// keys, then times, then segments: heap holds the segments that have rows
+// left, the one whose next row comes first on top, and at, keys and times
+// the next row of each.
+type segmentMerge struct {
+	segs    []segment
+	cursors []keyCursor
+	at      []int
+	keys    [][]byte
+	times   []int64
+	heap    []int
+}
+
+func (s *Store) newSegmentMerge(segs []segment) *segmentMerge {
+	m := &segmentMerge{segs: segs, cursors: make([]keyCursor, len(segs)), at: make([]int, len(segs)),
+		keys: make([][]byte, len(segs)), times: make([]int64, len(segs))}
+	for i, sg := range segs {
+		m.cursors[i] = newKeyCursor(sg.b, s.opts.SortKey, sg.from)
+		m.at[i] = sg.from
+		if sg.to > sg.from {
+			m.load(i)
+			m.heap = append(m.heap, i)
+		}
+	}
+	for i := len(m.heap)/2 - 1; i >= 0; i-- {
+		m.down(i)
+	}
+
+	return m
+}
+
+// load reads the key and the time of the next row of segment i.
+func (m *segmentMerge) load(i int) {
+	row := m.at[i]
+	m.keys[i] = m.cursors[i].appendKey(m.keys[i][:0], row)
+	m.times[i] = m.segs[i].b.Times[row]
+}
+
+func (m *segmentMerge) less(a, b int) bool {
+	if c := bytes.Compare(m.keys[a], m.keys[b]); c != 0 {
+		return c < 0
+	}
+	if m.times[a] != m.times[b] {
+		return m.times[a] < m.times[b]
+	}
+
+	return a < b
+}
+
+func (m *segmentMerge) down(i int) {
+	h := m.heap
+	for {
+		least, l := i, 2*i+1
+		if l < len(h) && m.less(h[l], h[least]) {
+			least = l
+		}
+		if r := l + 1; r < len(h) && m.less(h[r], h[least]) {
+			least = r
+		}
+		if least == i {
+			return
+		}
+		h[i], h[least] = h[least], h[i]
+		i = least
+	}
+}
+
+// next returns the segment whose next row comes next, and false once every
+// row was taken.
+func (m *segmentMerge) next() (int, bool) {
+	if len(m.heap) == 0 {
+		return 0, false
+	}
+	i := m.heap[0]
+	if m.at[i]++; m.at[i] < m.segs[i].to {
+		m.load(i)
+	} else {
+		last := len(m.heap) - 1
+		m.heap[0] = m.heap[last]
+		m.heap = m.heap[:last]
+	}
+	if len(m.heap) > 1 {
+		m.down(0)
+	}
+
+	return i, true
+}
+
+// keyCursor appends the encoded sort keys of rows of a batch in ascending
+// order of rows: cols holds per path the columns of its values, by kind,
+// and next the first value of each at or after the last row asked for.
+type keyCursor struct {
+	cols [][]*shred.Column
+	next [][]int
+}
+
+func newKeyCursor(b *shred.Batch, key []string, from int) keyCursor {
+	k := keyCursor{cols: make([][]*shred.Column, len(key)), next: make([][]int, len(key))}
+	for p, path := range key {
+		for kind := vec.KindNull; kind <= vec.KindVariant; kind++ {
+			if c := b.Lookup(path, kind); c != nil && c.Count > 0 {
+				i, _ := c.ValueAt(from)
+				k.cols[p], k.next[p] = append(k.cols[p], c), append(k.next[p], i)
+			}
+		}
+	}
+
+	return k
+}
+
+func (k *keyCursor) appendKey(dst []byte, row int) []byte {
+	for p, cols := range k.cols {
+		found := false
+		for j, c := range cols {
+			i := k.next[p][j]
+			for i < c.Count && c.Row(i) < row {
+				i++
+			}
+			k.next[p][j] = i
+			if !found && i < c.Count && c.Row(i) == row {
+				dst, found = part.AppendKeyValue(dst, c, i), true
+			}
+		}
+		if !found {
+			dst = append(dst, 0)
+		}
+	}
+
+	return dst
 }
 
 // sideBySide calls fn for every i below n on workers goroutines at most.

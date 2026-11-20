@@ -65,13 +65,14 @@ type Batch struct {
 	// timeCols holds the columns of the time paths that the batch has met,
 	// in the order they are tried, and timePaths the number of paths the
 	// batch had when the others were last looked for.
-	timeCols  []*pathCols
-	timePaths int
-	sort      *sortScratch // held only while the batch is being sorted
-	seq       uint64
-	rest      []byte
-	restMark  int
-	scratch   []byte
+	timeCols   []*pathCols
+	timePaths  int
+	sort       *sortScratch // held only while the batch is being sorted
+	interleave *interleaveScratch
+	seq        uint64
+	rest       []byte
+	restMark   int
+	scratch    []byte
 }
 
 type pathCols struct {

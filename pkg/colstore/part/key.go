@@ -42,6 +42,10 @@ func appendKeyBytes(dst, s []byte) []byte {
 	return append(append(dst, s...), 0x00, 0x00)
 }
 
+// AppendKeyValue appends the encoding of value i of column c as one column
+// of a sort key.
+func AppendKeyValue(dst []byte, c *shred.Column, i int) []byte { return appendKeyValue(dst, c, i) }
+
 // appendKeyValue appends the encoding of value i of column c.
 func appendKeyValue(dst []byte, c *shred.Column, i int) []byte {
 	dst = append(dst, byte(c.Kind))

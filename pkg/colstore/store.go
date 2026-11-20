@@ -33,9 +33,9 @@ type StoreOptions struct {
 	// before they are written as one run; zero means eight times
 	// FlushBytes. While runs are written Append takes as much again, theirs
 	// and the buffers' together, before it waits, and a second run is
-	// written beside the first once the buffers fill again. The rows of a
-	// run are copied once into key ranges, so the buffers take at most
-	// about three times this input in memory.
+	// written beside the first once the buffers fill again. The buffers
+	// and the runs being written take about twice this input in memory,
+	// and sorting and encoding the runs on many cores about as much again.
 	BufferBytes int
 	// FlushBytes is the input a writer buffers before it writes a run;
 	// zero means 128 MiB.
@@ -139,9 +139,8 @@ type Store struct {
 	roomWait *sync.Cond
 	flushErr error
 	// spare holds the batches of written buffers for the buffers to take
-	// again, joined the batches that the rows of a part are brought
-	// together in, and cut those that the blocks of a part are cut into.
-	spare, joined, cut spareBatches
+	// again, and cut those that the blocks of a part are gathered into.
+	spare, cut spareBatches
 	// Two flushes of the buffers write at once, one sorting and encoding
 	// while the other waits for the disk; slots holds their turns, and
 	// launched counts those the flusher started. takeMu orders them: each
@@ -508,7 +507,6 @@ func (sp *spareBatches) drop(idle time.Duration) {
 // that a store nobody writes to holds no memory for writes.
 func (s *Store) dropSpare() {
 	s.spare.drop(spareIdle)
-	s.joined.drop(spareIdle)
 	s.cut.drop(spareIdle)
 	shred.ReleaseSorting(spareIdle)
 }
