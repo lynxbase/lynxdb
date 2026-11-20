@@ -104,7 +104,7 @@ func (p *Part) ExplainColumn(e *ColumnExplain, pick func() bool) error {
 			return err
 		}
 		ref, ok := b.Column(id, vec.KindString)
-		if !ok {
+		if !ok || ref.Count == 0 {
 			continue
 		}
 		times, err := b.rowTimes()
@@ -147,12 +147,25 @@ func (p *Part) ExplainColumn(e *ColumnExplain, pick func() bool) error {
 }
 
 // toShred makes c the column of the block's rows that ref holds, whose
-// values col holds one after another.
+// values col holds by value in any layout.
 func (b *Block) toShred(ref *ColumnRef, col *vec.Column, c *shred.Column) error {
-	c.Path, c.Kind, c.Count = "", vec.KindString, ref.Count
-	c.Data, c.Ends = col.Data, c.Ends[:0]
-	for i := 0; i < ref.Count; i++ {
-		c.Ends = append(c.Ends, col.Offsets[i+1])
+	n := ref.Count
+	c.Path, c.Kind, c.Count, c.Ends = "", vec.KindString, n, c.Ends[:0]
+	switch {
+	case col.Layout == vec.Flat && len(col.Offsets) > n:
+		c.Data = col.Data
+		for i := 0; i < n; i++ {
+			c.Ends = append(c.Ends, col.Offsets[i+1])
+		}
+	case col.Layout == vec.Flat:
+		return ErrCorrupt
+	default:
+		// A dictionary or a constant, spelled out into bytes of c's own.
+		c.Data = nil
+		for i := 0; i < n; i++ {
+			c.Data = append(c.Data, col.Bytes(i)...)
+			c.Ends = append(c.Ends, uint32(len(c.Data)))
+		}
 	}
 	c.Sparse, c.RowIDs = ref.flags&flagSparse != 0, c.RowIDs[:0]
 	if c.Sparse {
