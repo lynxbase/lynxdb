@@ -246,10 +246,11 @@ func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
 		s.refKind, s.reference = refColumn, w.timedRefs[best].path
 	}
 	s.diffs, s.low = grow(s.diffs, n), grow(s.low, n)
-	mask := uint64(1)<<s.shift - 1
-	for i := 0; i < n; i++ {
-		s.diffs[i] = int64(s.heads[i]>>s.shift) - unitDiv(s.refs[i], s.unit)
-		s.low[i] = int64(s.heads[i] & mask)
+	shift, unit := s.shift&63, s.unit
+	mask := uint64(1)<<shift - 1
+	for i, head := range s.heads[:n] {
+		s.diffs[i] = int64(head>>shift) - unitDiv(s.refs[i], unit)
+		s.low[i] = int64(head & mask)
 	}
 	s.pickExceptions(n)
 	if len(s.exceptions) == n {
@@ -371,21 +372,24 @@ func (s *timedScratch) appendLow(dst []byte, n int, bc *blobCodec, e *encodeScra
 func (s *timedScratch) follow(c *shred.Column, times []int64, refs []timedRef, k int) bool {
 	n := c.Count
 	s.refIrregular = 0
-	for i := 0; i < n; i++ {
-		row := c.Row(i)
-		switch k {
-		case followNone:
-			s.refs[i], s.refOK[i] = 0, true
-
-			continue
-		case followTime:
-			s.refs[i], s.refOK[i] = times[row], true
-
-			continue
+	switch k {
+	case followNone:
+		clear(s.refs[:n])
+		for i := range n {
+			s.refOK[i] = true
 		}
-		s.refs[i], s.refOK[i] = refs[k].vals[row], refs[k].valid[row]
-		if !s.refOK[i] && s.regular[i] {
-			s.refIrregular++
+	case followTime:
+		for i := range n {
+			s.refs[i], s.refOK[i] = times[c.Row(i)], true
+		}
+	default:
+		vals, valid := refs[k].vals, refs[k].valid
+		for i := range n {
+			row := c.Row(i)
+			s.refs[i], s.refOK[i] = vals[row], valid[row]
+			if !valid[row] && s.regular[i] {
+				s.refIrregular++
+			}
 		}
 	}
 
@@ -718,14 +722,14 @@ func (s *timedScratch) scan(c *shred.Column) {
 	s.heads, s.regular = grow(s.heads, n), grow(s.regular, n)
 	s.irregular = 0
 	over := int(s.radixBits)*s.headDigits - 64
-	radix := s.radixBits
+	radix := s.radixBits & 7
 	from, to, headEnd := s.from, s.to, s.from+s.headDigits
 	prefix, suffix := s.template[:from], s.template[to:s.stride]
 	digit := &s.digit
 	for i := 0; i < n; i++ {
 		v := c.Bytes(i)
-		s.heads[i], s.regular[i] = 0, false
 		if len(v) != s.stride || (from > 0 && string(v[:from]) != string(prefix)) || (to < len(v) && string(v[to:]) != string(suffix)) {
+			s.heads[i], s.regular[i] = 0, false
 			s.irregular++
 
 			continue
@@ -750,6 +754,7 @@ func (s *timedScratch) scan(c *shred.Column) {
 		// A byte outside the alphabet has the digit 0xFF, and digits are
 		// below 64.
 		if bad&0x80 != 0 || (over > 0 && int(digit[v[from]])>>(int(radix)-over) != 0) {
+			s.heads[i], s.regular[i] = 0, false
 			s.irregular++
 
 			continue
@@ -946,13 +951,13 @@ func (s *timedScratch) window(n int) (lo, hi int64) {
 	slices.Sort(vals)
 	mid := vals[k/2]
 	var far [65]int
-	for i := 0; i < n; i++ {
-		if s.regular[i] && s.refOK[i] {
-			d := s.diffs[i] - mid
-			if d < 0 {
-				d = -d
-			}
-			far[bits.Len64(uint64(d))]++
+	regular, refOK := s.regular[:n], s.refOK[:n]
+	for i, d := range s.diffs[:n] {
+		if regular[i] && refOK[i] {
+			// The distance from mid without a branch, as its sign is a coin.
+			d -= mid
+			sign := d >> 63
+			far[bits.Len64(uint64(d^sign-sign))]++
 		}
 	}
 	// A width of 2^w bits holds the values whose distance has fewer than w
