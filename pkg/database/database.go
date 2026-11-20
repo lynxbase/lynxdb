@@ -163,6 +163,17 @@ func (db *DB) Snapshot(index string) (*colstore.Snapshot, bool) { return db.core
 // Drop removes an index and its events; it reports whether there was one.
 func (db *DB) Drop(index string) (bool, error) { return db.core.Drop(index) }
 
+// Compact makes the events appended to an index durable and merges each of
+// its partitions into one sorted run, and returns once that is done; it
+// reports false when there is no such index.
+func (db *DB) Compact(index string) (columnar.Compaction, bool, error) {
+	if index == "" {
+		index = DefaultSource
+	}
+
+	return db.core.Compact(index)
+}
+
 // QueryOptions sets how a query runs.
 type QueryOptions struct {
 	// From and To narrow every scan of the query to [From, To); a zero

@@ -281,6 +281,47 @@ func (db *DB) Usage(index string, sections bool) (u IndexUsage, ok bool, err err
 	return u, true, nil
 }
 
+// Compaction describes what Compact did to an index.
+type Compaction struct {
+	PartsBefore, Parts int
+	BytesBefore, Bytes int64
+	Took               time.Duration
+}
+
+// Compact makes the events appended to an index durable and merges each of
+// its partitions into one sorted run, and returns once that is done; it
+// reports false when there is no such index.
+func (db *DB) Compact(index string) (Compaction, bool, error) {
+	s, err := db.store(index, false)
+	if err != nil || s == nil {
+		return Compaction{}, false, err
+	}
+	begin := time.Now()
+	if err := s.Sync(); err != nil {
+		return Compaction{}, true, err
+	}
+	var c Compaction
+	c.PartsBefore, c.BytesBefore = partsAndBytes(s)
+	if err := s.Compact(); err != nil {
+		return Compaction{}, true, err
+	}
+	c.Parts, c.Bytes = partsAndBytes(s)
+	c.Took = time.Since(begin)
+
+	return c, true, nil
+}
+
+func partsAndBytes(s *colstore.Store) (parts int, bytes int64) {
+	snap := s.Table().Snapshot()
+	defer snap.Release()
+	for _, h := range snap.Parts() {
+		parts++
+		bytes += int64(h.Size())
+	}
+
+	return parts, bytes
+}
+
 // DropBefore removes from every index the partitions that end at or before
 // t and returns the number of events removed. Indexes that are not
 // partitioned by time keep everything.
