@@ -1,6 +1,7 @@
 package shred
 
 import (
+	"bytes"
 	"errors"
 	"slices"
 
@@ -84,6 +85,7 @@ type node struct {
 	key      string
 	path     string
 	ord      int
+	plain    bool // key holds no quote and no backslash
 	cols     *pathCols
 	children []*node
 	index    map[string]*node
@@ -194,6 +196,26 @@ func (b *Batch) pathCols(path string) *pathCols {
 	return pc
 }
 
+// nextKey returns the child of n at the hint when the object key at the
+// cursor, past its opening quote, is that child's key, and moves past it
+// and its closing quote; otherwise it returns nil and moves nothing.
+func (b *Batch) nextKey(n *node, hint *int) *node {
+	h := *hint
+	if h >= len(n.children) {
+		return nil
+	}
+	c := n.children[h]
+	end := b.pos + len(c.key)
+	// A key without quotes or backslashes matches its bytes as they are.
+	if !c.plain || end >= len(b.src) || b.src[end] != '"' || string(b.src[b.pos:end]) != c.key {
+		return nil
+	}
+	b.pos = end + 1
+	*hint = h + 1
+
+	return c
+}
+
 // child returns the node for key under n, or nil when the batch has no room
 // for another path.
 func (b *Batch) child(n *node, key []byte, hint *int) *node {
@@ -222,7 +244,7 @@ func (b *Batch) child(n *node, key []byte, hint *int) *node {
 	if len(b.paths) >= b.opts.MaxColumns {
 		return nil
 	}
-	c := &node{key: string(key), ord: len(ch)}
+	c := &node{key: string(key), ord: len(ch), plain: bytes.IndexByte(key, '"') < 0 && bytes.IndexByte(key, '\\') < 0}
 	if n.path == "" && n != b.root {
 		c.path = "." + c.key
 	} else if n == b.root {

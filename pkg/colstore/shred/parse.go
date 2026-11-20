@@ -59,17 +59,22 @@ func (b *Batch) object(n *node, depth int) error {
 			return b.syntax("expected an object key")
 		}
 		b.pos++
-		key, escaped, err := b.scanString()
-		if err != nil {
-			return err
-		}
-		if escaped {
-			if b.scratch, err = unescape(b.scratch[:0], key); err != nil {
-				return b.syntax(err.Error())
+		var err error
+		var key []byte
+		child := b.nextKey(n, &hint)
+		if child == nil {
+			var escaped bool
+			if key, escaped, err = b.scanString(); err != nil {
+				return err
 			}
-			key = b.scratch
+			if escaped {
+				if b.scratch, err = unescape(b.scratch[:0], key); err != nil {
+					return b.syntax(err.Error())
+				}
+				key = b.scratch
+			}
+			child = b.child(n, key, &hint)
 		}
-		child := b.child(n, key, &hint)
 		b.skipSpace()
 		if b.pos >= len(b.src) || b.src[b.pos] != ':' {
 			return b.syntax("expected ':' after an object key")
