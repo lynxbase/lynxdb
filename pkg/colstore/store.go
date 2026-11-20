@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"runtime"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -30,9 +31,11 @@ type StoreOptions struct {
 	BlockRows int
 	// BufferBytes is the input that the buffers of Append hold together
 	// before they are written as one run; zero means eight times
-	// FlushBytes. While a run is written Append takes as much again before
-	// it waits, and the run's rows are copied once into key ranges, so the
-	// buffers take at most about three times this input in memory.
+	// FlushBytes. While runs are written Append takes as much again, theirs
+	// and the buffers' together, before it waits, and a second run is
+	// written beside the first once the buffers fill again. The rows of a
+	// run are copied once into key ranges, so the buffers take at most
+	// about three times this input in memory.
 	BufferBytes int
 	// FlushBytes is the input a writer buffers before it writes a run;
 	// zero means 128 MiB.
@@ -118,29 +121,46 @@ type Store struct {
 	// due the runs in the table that merges are to take.
 	flushWrites atomic.Int32
 	due         atomic.Int32
-	// full asks the flusher to write buffers that hold their budget. room
-	// tells the callers of Append that wait for it that the buffers were
-	// taken or that a flush ended; flushErr is what the last flush of the
-	// buffers returned.
+	// full asks the flusher to write buffers that hold their budget.
+	// roomWait tells the callers of Append that wait for room that the
+	// buffers were taken or that a flush ended; flushErr is the error of the
+	// first flush of the buffers whose rows are not durable.
 	full     chan struct{}
 	roomMu   sync.Mutex
-	room     *sync.Cond
+	roomWait *sync.Cond
 	flushErr error
 	// spare holds the batches of written buffers for the buffers to take
 	// again, joined the batches that the rows of a part are brought
 	// together in, and cut those that the blocks of a part are cut into.
 	spare, joined, cut spareBatches
-	// flushMu lets one flush of the buffers run at a time. buffered counts
-	// the input bytes in the buffers and in unwritten, the batches that a
-	// failed flush took and the next one writes first.
-	flushMu        sync.Mutex
-	buffered       atomic.Int64
+	// Two flushes of the buffers write at once, one sorting and encoding
+	// while the other waits for the disk; slots holds their turns, and
+	// launched counts those the flusher started. takeMu orders them: each
+	// takes the batches of the buffers and of unwritten, those that failed
+	// flushes left for the next one, under it and gets the next number.
+	// buffered counts the input bytes in the buffers and in unwritten, and
+	// inflight those that flushes write.
+	slots          chan struct{}
+	launched       atomic.Int32
+	loopFlushes    sync.WaitGroup
+	takeMu         sync.Mutex
+	flushSeq       uint64
 	unwritten      []*shred.Batch
 	unwrittenBytes int64
+	unwrittenSeqs  []uint64
+	buffered       atomic.Int64
+	inflight       atomic.Int64
+	// pending holds the flushes, by number, from the first whose rows are
+	// not durable yet; pendingMu guards it and ended tells of a flush that
+	// ended.
+	pendingMu sync.Mutex
+	ended     *sync.Cond
+	pending   []*flushRecord
 
 	// appended counts the calls of Append that buffered rows, and written
-	// is the count that the last flush to take the buffers found and has
-	// made durable: while the two are equal a Sync has nothing to wait for.
+	// is the count that the flushes up to the last one durable together
+	// with all before it found: while the two are equal a Sync has nothing
+	// to wait for.
 	appended, written atomic.Uint64
 
 	// Callers of Sync share flushes: one flush runs at a time, and all who
@@ -221,7 +241,9 @@ func OpenStore(path string, opts StoreOptions) (*Store, error) {
 	s.shards = make([]appendShard, runtime.GOMAXPROCS(0))
 	s.countRuns()
 	s.synced = sync.NewCond(&s.syncMu)
-	s.room = sync.NewCond(&s.roomMu)
+	s.roomWait = sync.NewCond(&s.roomMu)
+	s.ended = sync.NewCond(&s.pendingMu)
+	s.slots = make(chan struct{}, flushSlots)
 	s.full = make(chan struct{}, 1)
 	s.flushing = make(chan struct{})
 	go s.mergeLoop()
@@ -317,7 +339,7 @@ func (s *Store) AppendRows(lines []byte, at int64) (rows, rejected int64, err er
 		// Full buffers, or rows that a failed flush left, are written
 		// before more lines are taken, so that a caller told of a failure
 		// can send all again.
-		room := int64(s.opts.BufferBytes) - s.buffered.Load()
+		room := s.room()
 		if room <= 0 {
 			if err := s.makeRoom(); err != nil {
 				return rows, rejected, err
@@ -338,7 +360,7 @@ func (s *Store) AppendRows(lines []byte, at int64) (rows, rejected int64, err er
 		lines = lines[len(piece):]
 	}
 	// Full buffers are written by the flusher; the caller does not wait.
-	if s.buffered.Load() >= int64(s.opts.BufferBytes) {
+	if s.flushDue() {
 		s.askFlush()
 	}
 
@@ -353,19 +375,38 @@ func (s *Store) askFlush() {
 	}
 }
 
+// room returns the input the buffers take before Append waits: up to their
+// budget, and up to twice that together with the runs being written.
+func (s *Store) room() int64 {
+	budget, buffered := int64(s.opts.BufferBytes), s.buffered.Load()
+
+	return min(budget-buffered, 2*budget-buffered-s.inflight.Load())
+}
+
+// flushDue reports whether the buffers are full: they hold their budget,
+// or half of it while the runs being written leave them no more room.
+func (s *Store) flushDue() bool {
+	budget, buffered := int64(s.opts.BufferBytes), s.buffered.Load()
+
+	return buffered >= budget || buffered >= budget/2 && s.room() <= 0
+}
+
 // makeRoom waits until the flusher has taken the full buffers, which it
-// does before it writes them. Rows that a flush could not write fill the
-// buffers until one can: no more are taken then, and the caller is told so
-// that it can send its lines again.
+// does before it writes them, and until the runs being written leave room.
+// Rows that a flush could not write fill the buffers until one can: no more
+// are taken then, and the caller is told so that it can send its lines
+// again.
 func (s *Store) makeRoom() error {
 	s.roomMu.Lock()
 	defer s.roomMu.Unlock()
-	for s.buffered.Load() >= int64(s.opts.BufferBytes) {
-		s.askFlush()
+	for s.room() <= 0 {
+		if s.flushDue() {
+			s.askFlush()
+		}
 		if s.flushErr != nil {
 			return s.flushErr
 		}
-		s.room.Wait()
+		s.roomWait.Wait()
 	}
 
 	return nil
@@ -502,31 +543,97 @@ func (s *Store) Sync() error {
 	return s.syncErr
 }
 
+// flushSlots is the number of flushes of the buffers that write at once.
+const flushSlots = 2
+
+// flushRecord follows a flush of the buffers until its rows are durable:
+// found is the count of the calls of Append whose rows it or a flush before
+// it took. durable is set once its rows are, by it or by a later flush that
+// took them over; err is what it met while they are not.
+type flushRecord struct {
+	seq     uint64
+	found   uint64
+	ended   bool
+	durable bool
+	err     error
+}
+
 // flushFull writes the buffers when they hold their budget; a caller that
 // waited for another flush may find them written.
-func (s *Store) flushFull() error {
-	s.flushMu.Lock()
-	defer s.flushMu.Unlock()
-	if s.buffered.Load() < int64(s.opts.BufferBytes) {
-		return nil
-	}
-
-	return s.writeBuffers(0)
-}
+func (s *Store) flushFull() error { return s.writeBuffers(0, true) }
 
 // flush writes the rows that Append has buffered when one of them has
-// waited for age, and returns once they are durable.
-func (s *Store) flush(age time.Duration) error {
-	s.flushMu.Lock()
-	defer s.flushMu.Unlock()
+// waited for age, and returns once they and the rows that every flush
+// before it took are durable.
+func (s *Store) flush(age time.Duration) error { return s.writeBuffers(age, false) }
 
-	return s.writeBuffers(age)
+// writeBuffers takes the batch of every buffer, and those that failed
+// flushes left, and writes them all as one run per partition, committed in
+// one manifest record. The buffers are free for Append while the run is
+// written, and another flush may take them again meanwhile. Unless full is
+// set it returns once the flushes that took the buffers before it have
+// ended too, with the error of the first whose rows are not durable.
+func (s *Store) writeBuffers(age time.Duration, full bool) error {
+	s.slots <- struct{}{}
+	rec, taken, covers, size, again := s.takeBuffers(age, full)
+	if rec == nil {
+		<-s.slots
+
+		return nil
+	}
+	var err error
+	if len(taken) > 0 {
+		s.flushWrites.Add(1)
+		var files []*PartFile
+		if files, err = s.writeRuns(taken); err == nil {
+			if _, err = s.dir.Commit(files, nil); err == nil {
+				s.noteArrival(files)
+			}
+		}
+		s.flushWrites.Add(-1)
+		s.countRuns()
+	}
+	if err != nil {
+		s.takeMu.Lock()
+		s.unwritten = append(s.unwritten, taken...)
+		s.unwrittenBytes += size
+		s.unwrittenSeqs = append(append(s.unwrittenSeqs, covers...), rec.seq)
+		s.takeMu.Unlock()
+	} else {
+		for _, b := range taken {
+			s.spare.keep(b, len(s.shards))
+		}
+		if len(taken) > 0 {
+			s.kick()
+		}
+	}
+	s.endFlush(rec, covers, err, size, again)
+	<-s.slots
+	// A flush that failed is tried again when Append, Sync or the flush
+	// interval asks, not at once over and over.
+	if err == nil && s.flushDue() {
+		s.askFlush()
+	}
+	if full {
+		return err
+	}
+
+	return s.awaitFlushes(rec)
 }
 
-// writeBuffers takes the batch of every buffer and writes them all as one
-// run per partition, committed in one manifest record. The buffers are free
-// for Append while the run is written. The caller holds flushMu.
-func (s *Store) writeBuffers(age time.Duration) error {
+// takeBuffers takes the batches of the buffers and of unwritten for a
+// flush and numbers it, or returns a nil record when there is nothing to
+// write: full buffers when full is set, or rows that waited for age. covers
+// lists the failed flushes whose rows it takes over, and again is set while
+// a flush has failed and its rows are not durable: the rows then count as
+// buffered until they are written, or every failed attempt would let in as
+// much again.
+func (s *Store) takeBuffers(age time.Duration, full bool) (rec *flushRecord, taken []*shred.Batch, covers []uint64, size int64, again bool) {
+	s.takeMu.Lock()
+	defer s.takeMu.Unlock()
+	if full && !s.flushDue() {
+		return nil, nil, nil, 0, false
+	}
 	if age > 0 {
 		due := len(s.unwritten) > 0
 		for i := range s.shards {
@@ -536,13 +643,14 @@ func (s *Store) writeBuffers(age time.Duration) error {
 			sh.mu.Unlock()
 		}
 		if !due {
-			return nil
+			return nil, nil, nil, 0, false
 		}
 	}
-	// Rows of the calls counted so far are in the buffers taken below.
-	found := s.appended.Load()
-	taken, size := s.unwritten, s.unwrittenBytes
-	s.unwritten, s.unwrittenBytes = nil, 0
+	// Rows of the calls counted so far are in the buffers taken below or in
+	// those of the flushes before.
+	rec = &flushRecord{found: s.appended.Load()}
+	taken, size, covers = s.unwritten, s.unwrittenBytes, s.unwrittenSeqs
+	s.unwritten, s.unwrittenBytes, s.unwrittenSeqs = nil, 0, nil
 	for i := range s.shards {
 		sh := &s.shards[i]
 		sh.mu.Lock()
@@ -557,58 +665,105 @@ func (s *Store) writeBuffers(age time.Duration) error {
 		}
 		sh.mu.Unlock()
 	}
-	// The buffers are free again at once, unless the flush before failed:
-	// then they count as full until these rows are written, or every
-	// failed attempt would let in as much again.
+	s.flushSeq++
+	rec.seq = s.flushSeq
+	s.pendingMu.Lock()
+	s.pending = append(s.pending, rec)
+	s.pendingMu.Unlock()
 	s.roomMu.Lock()
-	again := s.flushErr != nil
-	if !again {
+	if again = s.flushErr != nil; !again {
 		s.buffered.Add(-size)
-		s.room.Broadcast()
 	}
+	s.inflight.Add(size)
+	s.roomWait.Broadcast()
 	s.roomMu.Unlock()
-	var err error
-	if len(taken) > 0 {
-		s.flushWrites.Add(1)
-		var files []*PartFile
-		if files, err = s.writeRuns(taken); err == nil {
-			if _, err = s.dir.Commit(files, nil); err == nil {
-				s.noteArrival(files)
+
+	return rec, taken, covers, size, again
+}
+
+// endFlush records how a flush of size input bytes ended, and the rows of
+// the calls that are durable once every flush up to one has made its rows
+// durable. It gives the buffers back the room that the flush held, unless
+// its rows come back to them, and sets flushErr to the error of the first
+// flush whose rows are not durable.
+func (s *Store) endFlush(rec *flushRecord, covers []uint64, err error, size int64, again bool) {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	rec.ended, rec.err = true, err
+	if err == nil {
+		rec.durable = true
+		for _, r := range s.pending {
+			if slices.Contains(covers, r.seq) {
+				r.durable, r.err = true, nil
 			}
 		}
-		s.flushWrites.Add(-1)
-		s.countRuns()
+	}
+	n := 0
+	for n < len(s.pending) && s.pending[n].durable {
+		s.written.Store(s.pending[n].found)
+		n++
+	}
+	s.pending = append(s.pending[:0], s.pending[n:]...)
+	var failed error
+	for _, r := range s.pending {
+		if r.err != nil && !r.durable {
+			failed = r.err
+
+			break
+		}
 	}
 	s.roomMu.Lock()
+	s.inflight.Add(-size)
 	switch {
 	case err != nil && !again:
 		s.buffered.Add(size)
 	case err == nil && again:
 		s.buffered.Add(-size)
 	}
-	s.flushErr = err
-	s.room.Broadcast()
+	s.flushErr = failed
+	s.roomWait.Broadcast()
 	s.roomMu.Unlock()
-	if err != nil {
-		s.unwritten, s.unwrittenBytes = taken, size
+	s.ended.Broadcast()
+}
 
-		return err
-	}
-	s.written.Store(found)
-	for _, b := range taken {
-		s.spare.keep(b, len(s.shards))
-	}
-	if len(taken) > 0 {
-		s.kick()
-	}
+// awaitFlushes waits until the flushes up to rec have ended and returns the
+// error of rec, or else of the first of them whose rows are not durable.
+func (s *Store) awaitFlushes(rec *flushRecord) error {
+	s.pendingMu.Lock()
+	defer s.pendingMu.Unlock()
+	for {
+		var first error
+		waiting := false
+		for _, r := range s.pending {
+			if r.seq > rec.seq {
+				break
+			}
+			if !r.ended && !r.durable {
+				waiting = true
 
-	return nil
+				break
+			}
+			if first == nil && !r.durable {
+				first = r.err
+			}
+		}
+		if !waiting {
+			if rec.err != nil {
+				return rec.err
+			}
+
+			return first
+		}
+		s.ended.Wait()
+	}
 }
 
 // flushLoop writes the buffers that are full, and those whose rows have
-// waited for the flush interval.
+// waited for the flush interval, in flushes that it starts flushSlots at a
+// time at most.
 func (s *Store) flushLoop() {
 	defer close(s.flushing)
+	defer s.loopFlushes.Wait()
 	interval := s.opts.FlushInterval
 	var tick <-chan time.Time
 	if interval >= 0 {
@@ -624,7 +779,7 @@ func (s *Store) flushLoop() {
 			return
 		case <-s.full:
 			// Whoever waits for room learns of a failure from the buffers.
-			_ = s.flushFull()
+			s.launch(func() { _ = s.flushFull() })
 		case <-tick:
 			s.dropSpare()
 			if time.Since(rechecked) >= recheckEvery {
@@ -636,16 +791,34 @@ func (s *Store) flushLoop() {
 				looked = time.Now()
 				s.kick()
 			}
-			if err := s.flush(interval); err != nil {
-				s.mu.Lock()
-				if s.err == nil {
-					s.err = err
+			s.launch(func() {
+				if err := s.flush(interval); err != nil {
+					s.mu.Lock()
+					if s.err == nil {
+						s.err = err
+					}
+					s.idle.Broadcast()
+					s.mu.Unlock()
 				}
-				s.idle.Broadcast()
-				s.mu.Unlock()
-			}
+			})
 		}
 	}
+}
+
+// launch runs a flush of the flusher on its own, unless flushSlots of them
+// run already: one that ends asks for another while the buffers are full,
+// and the next tick brings the timed one again.
+func (s *Store) launch(flush func()) {
+	if s.launched.Load() >= flushSlots {
+		return
+	}
+	s.launched.Add(1)
+	s.loopFlushes.Add(1)
+	go func() {
+		defer s.loopFlushes.Done()
+		defer s.launched.Add(-1)
+		flush()
+	}()
 }
 
 // kick asks the merger to look for work.
