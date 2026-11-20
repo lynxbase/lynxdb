@@ -260,7 +260,10 @@ func (p *Part) addFooter(u *Usage) int {
 	if r.bad {
 		u.Regions["footer.unparsed"] += int64(mark)
 	} else {
-		u.Regions["footer.counted_values"] += int64(mark)
+		// The rows of the blocks by time close the footer.
+		times := len(p.timeCounts) + len(binary.AppendUvarint(nil, uint64(len(p.timeCounts))))
+		u.Regions["footer.counted_values"] += int64(mark - times)
+		u.Regions["footer.time_counts"] += int64(times)
 	}
 
 	return size

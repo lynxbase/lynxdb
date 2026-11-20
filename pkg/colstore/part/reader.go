@@ -76,6 +76,10 @@ type Part struct {
 	// shares with the row before it, then the number of distinct key
 	// prefixes of every length.
 	keyStats []uint32
+	// timeCounts holds the records of the blocks' rows by bucket of time,
+	// and timeCountAt where the record of each begins and ends.
+	timeCounts  []byte
+	timeCountAt []uint32
 
 	// Rows is the number of rows in the part.
 	Rows uint64
@@ -260,7 +264,7 @@ func Open(data []byte) (*Part, error) {
 	p.RawBytes = r.uvarint()
 	p.MinTime = unzigzag(r.uvarint())
 	p.MaxTime = unzigzag(r.uvarint())
-	if r.bad || len(p.paths) == 0 || p.paths[0] != TimePath || !p.readCounts(&r) {
+	if r.bad || len(p.paths) == 0 || p.paths[0] != TimePath || !p.readCounts(&r) || !p.readTimeCounts(&r) {
 		return nil, ErrCorrupt
 	}
 	// The filters of a group's blocks fill every stripe, those of one
@@ -411,7 +415,7 @@ func (p *Part) SetBlockData(data []byte) {
 // finding a block reads the data no more; a part mapped from a file then
 // keeps its index in memory whatever becomes of the file's pages.
 func (p *Part) Detach() {
-	p.index, p.filters = bytes.Clone(p.index), bytes.Clone(p.filters)
+	p.index, p.filters, p.timeCounts = bytes.Clone(p.index), bytes.Clone(p.filters), bytes.Clone(p.timeCounts)
 	size := len(p.lastKey)
 	for _, k := range p.firstKeys {
 		size += len(k)

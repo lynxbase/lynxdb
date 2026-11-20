@@ -13,7 +13,8 @@ import (
 //	         the group's token filters in stripes
 //	dirs     the column directory of every block
 //	footer   path names, sort key, block index, filters, filter groups,
-//	         first keys, totals, the rows of the values of counted paths
+//	         first keys, totals, the rows of the values of counted paths,
+//	         the rows of every block by bucket of time
 //	trailer  footer offset, footer length, footer checksum, version, magic
 //
 // A token's probe reads one cell of a filter, and which n-th of the filter

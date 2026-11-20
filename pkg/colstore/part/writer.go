@@ -60,6 +60,11 @@ type Writer struct {
 	keys  []byte // first sort key of each block, length-prefixed
 	// lastKey is the sort key of the last row written.
 	lastKey []byte
+	// timeCounts holds the records of every block's rows by bucket of
+	// time, length-prefixed; timeRecord and timeBuckets are its scratch.
+	timeCounts  []byte
+	timeRecord  []byte
+	timeBuckets bucketScratch
 	// keyStats holds, per block, the leading key columns its first row
 	// shares with the row before it, then the number of distinct key
 	// prefixes of every length.
@@ -261,6 +266,7 @@ func (w *Writer) Reset(out io.Writer, opts Options) {
 	w.paths = w.paths[:0]
 	clear(w.ids)
 	w.index, w.dirs, w.keys, w.lastKey, w.keyStats = w.index[:0], w.dirs[:0], w.keys[:0], w.lastKey[:0], w.keyStats[:0]
+	w.timeCounts = w.timeCounts[:0]
 	w.rows, w.raw, w.minT, w.maxT = 0, 0, 0, 0
 	clear(w.sums)
 	w.sums = w.sums[:0]
@@ -361,6 +367,7 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 		w.appendKeyStats(b, w.e.tmp)
 		w.lastKey = appendEdgeKey(w.lastKey[:0], b, w.opts.SortKey, true)
 	}
+	w.addTimeCounts(b.Times, minT, maxT)
 
 	if w.rows == 0 || minT < w.minT {
 		w.minT = minT
@@ -691,6 +698,7 @@ func (w *Writer) copyBlock(src *Part, i int, pathMap []uint32, raw int, follows 
 		}
 	}
 	w.lastKey = append(w.lastKey[:0], src.upperKey(i)...)
+	w.copyTimeCounts(src, i)
 
 	if w.rows == 0 || minT < w.minT {
 		w.minT = minT
@@ -1497,6 +1505,8 @@ func (w *Writer) Close() error {
 	footer = binary.AppendUvarint(footer, zigzag(w.minT))
 	footer = binary.AppendUvarint(footer, zigzag(w.maxT))
 	footer = w.appendSums(footer)
+	footer = binary.AppendUvarint(footer, uint64(len(w.timeCounts)))
+	footer = append(footer, w.timeCounts...)
 
 	footerOff := w.off
 	w.write(footer)
