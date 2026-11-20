@@ -76,7 +76,7 @@ const (
 	// form to be worth its tables.
 	minTimedGain = 2
 	// maxTimedDepth bounds the columns a timed column follows one through
-	// another.
+	// another: the writer makes no longer chain, and the reader refuses one.
 	maxTimedDepth = 8
 )
 

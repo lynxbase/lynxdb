@@ -320,18 +320,25 @@ func (s *timedScratch) followCost(f, a *timedRef) int {
 
 // chooseParents sets whom every column of refs follows, by the fewest bits
 // over them all that cost gives, column by column against each other, so
-// that no column follows itself however far.
+// that no column follows itself however far and none follows more than
+// maxTimedDepth columns one through another.
 func chooseParents(refs []timedRef, cost []int) {
 	m := len(refs)
 	if m > maxAnchors {
+		// links counts the columns that each one follows one through
+		// another.
+		links := make([]int, m)
 		for i := range refs {
 			best, c := followNone, refs[i].root
 			for j := 0; j < i; j++ {
-				if cost[i*m+j] < c {
+				if links[j] < maxTimedDepth && cost[i*m+j] < c {
 					best, c = j, cost[i*m+j]
 				}
 			}
 			refs[i].parent = best
+			if best >= 0 {
+				links[i] = links[best] + 1
+			}
 		}
 
 		return
@@ -344,7 +351,7 @@ func chooseParents(refs []timedRef, cost []int) {
 			return
 		}
 		if i == m {
-			if acyclic(parent[:m]) {
+			if bounded(parent[:m]) {
 				bestTotal = total
 				best = parent
 			}
@@ -366,12 +373,13 @@ func chooseParents(refs []timedRef, cost []int) {
 	}
 }
 
-// acyclic reports whether following parents from any column ends.
-func acyclic(parent []int) bool {
+// bounded reports whether following parents from any column ends within
+// maxTimedDepth of them.
+func bounded(parent []int) bool {
 	for i := range parent {
 		at := i
-		for steps := 0; parent[at] >= 0; steps++ {
-			if steps == len(parent) {
+		for links := 0; parent[at] >= 0; links++ {
+			if links == maxTimedDepth {
 				return false
 			}
 			at = parent[at]
