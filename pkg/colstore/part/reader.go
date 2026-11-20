@@ -590,6 +590,12 @@ type Block struct {
 	present vec.Column
 	// spans is the scratch of Ahead.
 	spans [][2]uint32
+	// times holds the time of every row once timesRead is set, and followed
+	// the numbers of the timed columns that others follow, as they are
+	// read.
+	times     vec.Column
+	timesRead bool
+	followed  []timedFollowed
 }
 
 // OpenBlock points b at block i of p.
@@ -613,6 +619,7 @@ func (p *Part) OpenBlock(i int, b *Block) error {
 	b.cols = grow(b.cols, int(n))
 	b.parsed = grow(b.parsed, vec.BitmapWords(int(n)))
 	clear(b.parsed)
+	b.timesRead, b.followed = false, b.followed[:0]
 
 	return nil
 }
@@ -1471,6 +1478,10 @@ func (b *Block) decodeBytes(ref *ColumnRef, chunk []byte, sparse bool, rows int,
 		return nil
 	case encDict:
 		return b.decodeDict(chunk, count, sparse, rows, ref.flags&flagCounts != 0, dst)
+	case encTimed:
+		if ref.Kind == vec.KindString {
+			return b.decodeTimed(ref, sparse, rows, dst)
+		}
 	}
 
 	return ErrCorrupt
@@ -1482,8 +1493,11 @@ func (b *Block) dataSize(ref *ColumnRef) uint32 {
 	if ref.bad || ref.Kind != vec.KindString && ref.Kind != vec.KindVariant {
 		return 0
 	}
-	if ref.enc == encConst {
+	switch ref.enc {
+	case encConst:
 		return uint32(len(ref.constVal))
+	case encTimed:
+		return b.timedDataSize(ref)
 	}
 	chunk := b.data[ref.off : ref.off+ref.length]
 	ok := true

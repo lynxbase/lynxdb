@@ -29,7 +29,7 @@ import (
 // written in.
 const (
 	fileMagic     = 0x5450584c // "LXPT"
-	formatVersion = 8
+	formatVersion = 9
 
 	headerSize  = 8
 	trailerSize = 28
@@ -87,6 +87,10 @@ const (
 	encFlat  = 2 // one value per present row
 	encDict  = 3 // sorted dictionary and one code per present row
 	encTime  = 4 // the time of every row in a coarser unit, whose power of ten is the chunk
+	// encTimed strings are numbers kept as integers, against nothing, the
+	// row time or another timed column of the block, which decoding them
+	// reads.
+	encTimed = 5
 )
 
 const (

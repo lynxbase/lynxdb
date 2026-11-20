@@ -52,7 +52,7 @@ type Amount struct {
 }
 
 var (
-	encodingNames = [...]string{encNone: "presence", encConst: "const", encFlat: "flat", encDict: "dict", encTime: "time"}
+	encodingNames = [...]string{encNone: "presence", encConst: "const", encFlat: "flat", encDict: "dict", encTime: "time", encTimed: "timed"}
 	blobNames     = [...]string{blobStored: "stored", blobZstd: "zstd", blobLZ4: "lz4", blobPacked: "packed"}
 	presenceNames = [...]string{presenceBitmap: "bitmap", presenceList: "list", presenceHoles: "holes"}
 	codesNames    = [...]string{codesPacked: "dict.codes.packed", codesRuns: "dict.codes.runs"}
@@ -285,6 +285,8 @@ func walkChunk(c *ColumnUsage, kind vec.Kind, enc, flags uint8, count int, chunk
 	case enc == encFlat:
 		s.ints("lengths", count, 0)
 		s.blob("values", count, 0)
+	case enc == encTimed:
+		s.timed(count)
 	case enc == encDict:
 		entries, n := binary.Uvarint(s.src)
 		if n <= 0 || entries > maxDictSize {
@@ -352,6 +354,38 @@ func (s *sectionWalk) ints(role string, count, extra int) {
 	if s.ok = ok; ok {
 		s.add(role+"."+form, extra+n, count, 8*int64(count))
 		s.src = s.src[n:]
+	}
+}
+
+// timed steps over the sections of a timed chunk of count values.
+func (s *sectionWalk) timed(count int) {
+	var v timedValues
+	rest, ok := readTimedHead(s.src, count, &v, false)
+	if !ok {
+		s.ok = false
+
+		return
+	}
+	head := len(s.src) - len(rest)
+	s.take("timed.head", head, count, int64(v.size))
+	s.ints("timed.differences", count, 0)
+	if v.shift > 0 && len(s.src) > 0 {
+		form := s.src[0]
+		s.take("timed.low", 1, count, 0)
+		if form == lowDict {
+			entries, n := binary.Uvarint(s.src)
+			if n <= 0 || entries > maxLowDict {
+				s.ok = false
+
+				return
+			}
+			s.src = s.src[n:]
+			s.ints("timed.low.dict", int(entries), n)
+		}
+		s.ints("timed.low", count, 0)
+	}
+	for at := v.from + v.headDigits; at < v.to && s.ok; at += v.tailDigits() {
+		s.ints("timed.tail", count, 0)
 	}
 }
 

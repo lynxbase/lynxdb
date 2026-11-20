@@ -123,6 +123,13 @@ type trial struct {
 	// that is compared again with storing them as they are.
 	wideLeft uint8
 	wide     bool
+	// untimed tells that the values could not go into a timed chunk at the
+	// last trial and flatSize what they took a value as flat values, in
+	// parts of flatScale of a byte; timedLeft counts the blocks until the
+	// next trial.
+	timedLeft uint8
+	untimed   bool
+	flatSize  uint16
 }
 
 // The ways the values of a flat column are encoded.
@@ -179,6 +186,10 @@ type writerBuffers struct {
 	filterData []byte
 	pages      []byte
 	cells      tokenfilter.Scratch
+	// timedBuf serves the timed chunks of a block, and timedRefs holds
+	// those written so far that the others may follow.
+	timedBuf  timedScratch
+	timedRefs []timedRef
 }
 
 // ownedTokens names a column that gets a filter of its own and the end of
@@ -292,6 +303,7 @@ func (w *Writer) WriteBatch(b *shred.Batch) error {
 	w.ents = w.ents[:0]
 	w.tokens.Reset()
 	w.tokenKeys, w.owned = w.tokenKeys[:0], w.owned[:0]
+	w.timedRefs = w.timedRefs[:0]
 
 	minT, maxT := vec.MinMaxInt64(b.Times)
 	ent := dirEntry{pathID: 0, kind: vec.KindInt, count: rows}
@@ -963,8 +975,66 @@ func (w *Writer) encodeBytes(ent *dirEntry, c *shred.Column) {
 	if !lone {
 		stride = 0
 	}
-	w.appendFlat(slot, c, stride)
+	if w.appendTimedOrFlat(slot, c, stride) {
+		ent.enc = encTimed
+	}
 }
+
+// appendTimedOrFlat appends the values of the column as a timed chunk when
+// that is the smaller form and as flat values otherwise, and reports which.
+// The forms are compared every trialEvery blocks, and in between the one
+// that won is taken when it can be.
+func (w *Writer) appendTimedOrFlat(slot int, c *shred.Column, stride int) bool {
+	if !w.packs(c.Kind) || c.Count < minTimed {
+		w.appendFlat(slot, c, stride)
+
+		return false
+	}
+	for len(w.trials) <= slot {
+		w.trials = append(w.trials, trial{})
+	}
+	tr := &w.trials[slot]
+	start := len(w.block)
+	if tr.timedLeft > 0 {
+		// Between trials a timed chunk is kept when it takes fewer bytes a
+		// value than the flat values did at the last trial.
+		tr.timedLeft--
+		if !tr.untimed && w.appendTimed(c, w.times) {
+			if size := len(w.block) - start; size*flatScale < c.Count*int(tr.flatSize) {
+				w.addTimedRef(c, c.Path, len(w.times))
+
+				return true
+			}
+			w.block = w.block[:start]
+		}
+		w.appendFlat(slot, c, stride)
+
+		return false
+	}
+	tr.timedLeft, tr.untimed = trialEvery, false
+	if !w.appendTimed(c, w.times) {
+		tr.untimed = true
+		w.appendFlat(slot, c, stride)
+
+		return false
+	}
+	timed := len(w.block)
+	w.appendFlat(slot, c, stride)
+	flat := len(w.block) - timed
+	tr.flatSize = uint16(min(flat*flatScale/c.Count+1, 1<<16-1))
+	if timed-start <= flat {
+		w.block = w.block[:timed]
+		w.addTimedRef(c, c.Path, len(w.times))
+
+		return true
+	}
+	w.block = w.block[:start+copy(w.block[start:], w.block[timed:])]
+
+	return false
+}
+
+// flatScale is the unit of trial.flatSize, a part of a byte.
+const flatScale = 64
 
 // appendFlat appends the values of the column one after another, packed
 // when stride, their length, is set and packing suits them.
@@ -1049,7 +1119,7 @@ func (w *Writer) sumCopied(src *Part, i int, pathMap []uint32) error {
 			for entry, n := range rows {
 				w.sum(id, w.copiedDict.DictValue(entry), uint64(n))
 			}
-		case ref.enc == encFlat && !w.pathSum(id).off:
+		case (ref.enc == encFlat || ref.enc == encTimed) && !w.pathSum(id).off:
 			col := &w.copiedDict
 			if err := b.Decode(ref, col); err != nil {
 				return err

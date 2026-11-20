@@ -35,6 +35,7 @@ type decodeScratch struct {
 	ints    []int64
 	codes8  []uint8
 	codes16 []uint16
+	timed   timedValues
 }
 
 func zigzag(v int64) uint64   { return uint64(v<<1) ^ uint64(v>>63) }

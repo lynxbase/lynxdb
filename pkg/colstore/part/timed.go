@@ -1,0 +1,1365 @@
+package part
+
+import (
+	"encoding/binary"
+	"math/bits"
+	"slices"
+
+	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
+	"github.com/lynxbase/lynxdb/pkg/vec"
+)
+
+// A timed chunk holds strings most of which have one length, share their
+// bytes outside a span, and spell inside it a number in an alphabet of a
+// power of two of symbols or of ten, digit order being byte order, whose
+// leading digits follow a reference of their row: the head number, the
+// span's first digits, shifted right by some bits, less the reference in a
+// unit of a power of ten, takes few bits. Such are keys that begin with
+// their time and end with a counter or noise. The reference is nothing, the
+// time of the row in nanoseconds, or the shifted head number of the row's
+// value of another timed column of the block, named in the chunk; the head
+// numbers of a block are read as integers whatever their reference, which
+// packed digits cannot, and with exceptions, which they lack. The chunk keeps
+// the differences and the shifted-out bits as integer sections, the digits
+// past the head as more, and every other string as it is, as an exception.
+// Decoding it reads the time column of its block and the integer sections
+// of the column it follows, never their strings.
+//
+//	stride      uvarint, the length of the strings
+//	from, to    uvarint, the span
+//	template    the from bytes before the span and the stride-to after it
+//	alphabet    count byte, then the symbols in digit order
+//	head        byte, the digits of the head number
+//	unit, shift bytes, the unit's power of ten and the bits shifted out
+//	reference   byte, refNone, refTime or refColumn, then for a column
+//	            the uvarint length and the path of the column followed
+//	exceptions  uvarint count, then for each the uvarint number of values
+//	            since the last, the uvarint length and the bytes
+//	differences integer section, one a value, an exception's that of the
+//	            value before it
+//	low         when shift is set, the shifted-out bits: a byte, lowPlain or
+//	            lowDict, then their frames, or the integer section of their
+//	            distinct values in order and the frames of their numbers
+//	tail        an integer section for every tailDigits digits past the head
+const (
+	// minTimed is the fewest values that a timed chunk is tried for.
+	minTimed = 64
+	// timedSample is the number of values the shape is judged on.
+	timedSample = 64
+	// maxExceptionShare bounds the exceptions, one in this many values,
+	// beyond which differences far from the others stay in their frames.
+	maxExceptionShare = 16
+	// minTimedGain is the bits a value is to save over its digits for the
+	// form to be worth its tables.
+	minTimedGain = 2
+	// maxTimedDepth bounds the columns a timed column follows one through
+	// another.
+	maxTimedDepth = 8
+)
+
+// The forms of the shifted-out bits of a timed chunk.
+const (
+	lowPlain = 0
+	lowDict  = 1
+	// maxLowDict is the most distinct shifted-out values that a dictionary
+	// is made of, and maxLowDictBits the most bits shifted out for one.
+	maxLowDict     = 256
+	maxLowDictBits = 16
+)
+
+// The references of a timed chunk.
+const (
+	refNone   = 0
+	refTime   = 1
+	refColumn = 2
+)
+
+// The candidates of follow for no reference and for the row time; others
+// number the columns of the block that may be followed.
+const (
+	followNone = -2
+	followTime = -1
+)
+
+// timedShape is the shape that the values of a timed chunk share.
+type timedShape struct {
+	stride, from, to int
+	alphabet         []byte
+	// radixBits is the bits of a digit, zero for decimal digits.
+	radixBits  uint
+	headDigits int
+	unit       uint8
+	shift      uint
+}
+
+// tailDigits returns the digits past the head that one integer section of
+// the tail holds.
+func (h *timedShape) tailDigits() int {
+	if h.radixBits == 0 {
+		return 18
+	}
+
+	return 63 / int(h.radixBits)
+}
+
+// timedRef is a timed column of the block being written, which later timed
+// columns may follow: the shifted head number of its value in every row
+// that holds one that is not an exception.
+type timedRef struct {
+	path  string
+	vals  []int64
+	valid []bool
+}
+
+// timedScratch holds what encoding a timed chunk reuses between columns.
+type timedScratch struct {
+	timedShape
+	template   []byte
+	digit      [256]uint8
+	misses     []int32
+	sample     [timedSample]uint64
+	sampleRefs [timedSample]int64
+	trial      [timedSample]int64
+	unitRefs   [timedSample]int64
+	lows       [timedSample]int64
+	picked     [timedSample]int
+	sampleRows [timedSample]int
+	heads      []uint64
+	regular    []bool
+	refs       []int64
+	refOK      []bool
+	diffs, low []int64
+	tail       []int64
+	exceptions []int32
+	lowDict    []int64
+	lowCodes   []int64
+	lowCode    []int32
+	lowCost    [64]int8
+	tried      []uint
+	// best, unit, shift and cost are what the sample found: the reference,
+	// followNone, followTime or a column that may be followed, and the
+	// bits a value takes against it.
+	best      int
+	cost      int
+	refKind   uint8
+	reference string
+	// headPacked is the bits that packing the head digits would take, by
+	// the ranges of their digits.
+	headPacked   int
+	irregular    int
+	refIrregular int
+}
+
+// unitDiv returns t in units of 10^power of its own.
+func unitDiv(t int64, power uint8) int64 {
+	switch power {
+	case 3:
+		return t / 1e3
+	case 6:
+		return t / 1e6
+	case 9:
+		return t / 1e9
+	}
+
+	return t
+}
+
+var timedUnits = [...]uint8{0, 3, 6, 9}
+
+// appendTimed appends the column, the rows of whose batch have times, as a
+// timed chunk and reports whether it did; when it did not, w.block is
+// unchanged.
+func (w *Writer) appendTimed(c *shred.Column, times []int64) bool {
+	s := &w.timedBuf
+	n := c.Count
+	if n < minTimed || !s.promising(c, times, w.timedRefs) {
+		return false
+	}
+	if s.scan(c); s.irregular > n/maxExceptionShare {
+		return false
+	}
+	// The reference that the sample found of the fewest bits.
+	best := s.best
+	s.refs, s.refOK = grow(s.refs, n), grow(s.refOK, n)
+	if !s.follow(c, times, w.timedRefs, best) {
+		return false
+	}
+	s.refKind, s.reference = refNone, ""
+	switch {
+	case best == followTime:
+		s.refKind = refTime
+	case best >= 0:
+		s.refKind, s.reference = refColumn, w.timedRefs[best].path
+	}
+	s.diffs, s.low = grow(s.diffs, n), grow(s.low, n)
+	mask := uint64(1)<<s.shift - 1
+	for i := 0; i < n; i++ {
+		s.diffs[i] = int64(s.heads[i]>>s.shift) - unitDiv(s.refs[i], s.unit)
+		s.low[i] = int64(s.heads[i] & mask)
+	}
+	s.pickExceptions(n)
+	if len(s.exceptions) == n {
+		return false
+	}
+
+	start := len(w.block)
+	w.block = binary.AppendUvarint(w.block, uint64(s.stride))
+	w.block = binary.AppendUvarint(w.block, uint64(s.from))
+	w.block = binary.AppendUvarint(w.block, uint64(s.to))
+	w.block = append(w.block, s.template[:s.from]...)
+	w.block = append(w.block, s.template[s.to:]...)
+	w.block = append(w.block, byte(len(s.alphabet)))
+	w.block = append(w.block, s.alphabet...)
+	w.block = append(w.block, byte(s.headDigits), s.unit, byte(s.shift))
+	w.block = append(w.block, s.refKind)
+	if s.refKind == refColumn {
+		w.block = binary.AppendUvarint(w.block, uint64(len(s.reference)))
+		w.block = append(w.block, s.reference...)
+	}
+	w.block = binary.AppendUvarint(w.block, uint64(len(s.exceptions)))
+	prev := -1
+	for _, e := range s.exceptions {
+		v := c.Bytes(int(e))
+		w.block = binary.AppendUvarint(w.block, uint64(int(e)-prev-1))
+		w.block = binary.AppendUvarint(w.block, uint64(len(v)))
+		w.block = append(w.block, v...)
+		prev = int(e)
+	}
+	w.block = appendInts(w.block, s.diffs[:n], &w.blobs, &w.e)
+	if s.shift > 0 {
+		w.block = s.appendLow(w.block, n, &w.blobs, &w.e)
+	}
+	s.tail = grow(s.tail, n)
+	for at := s.from + s.headDigits; at < s.to; at += s.tailDigits() {
+		end := min(at+s.tailDigits(), s.to)
+		for i := 0; i < n; i++ {
+			s.tail[i] = 0
+			if s.regular[i] {
+				s.tail[i] = int64(s.number(c.Bytes(i)[at:end]))
+			}
+		}
+		w.block = appendInts(w.block, s.tail[:n], &w.blobs, &w.e)
+	}
+	if len(w.block)-start >= s.stride*n {
+		w.block = w.block[:start]
+
+		return false
+	}
+
+	return true
+}
+
+// appendLow appends the shifted-out bits of the n values: as numbers in a
+// dictionary of their distinct values when there are few, and as they are
+// otherwise. Neither goes through the general codec, which costs more time
+// than it saves on bits that are a counter, a clock or noise.
+func (s *timedScratch) appendLow(dst []byte, n int, bc *blobCodec, e *encodeScratch) []byte {
+	if s.shift > maxLowDictBits {
+		dst = append(dst, lowPlain, intFrames)
+
+		return appendFrames(dst, s.low[:n], false, e)
+	}
+	// The number of a value is its place among the distinct ones.
+	codes := grow(s.lowCode, 1<<s.shift)
+	clear(codes)
+	for _, v := range s.low[:n] {
+		codes[v] = 1
+	}
+	s.lowDict = s.lowDict[:0]
+	for v, seen := range codes {
+		if seen != 0 {
+			codes[v] = int32(len(s.lowDict))
+			s.lowDict = append(s.lowDict, int64(v))
+		}
+	}
+	s.lowCode = codes
+	if len(s.lowDict) > maxLowDict || len(s.lowDict) == 1 {
+		dst = append(dst, lowPlain, intFrames)
+
+		return appendFrames(dst, s.low[:n], false, e)
+	}
+	dst = append(dst, lowDict)
+	dst = binary.AppendUvarint(dst, uint64(len(s.lowDict)))
+	dst = appendInts(dst, s.lowDict, bc, e)
+	s.lowCodes = grow(s.lowCodes, n)
+	for i, v := range s.low[:n] {
+		s.lowCodes[i] = int64(codes[v])
+	}
+	dst = append(dst, intFrames)
+
+	return appendFrames(dst, s.lowCodes[:n], false, e)
+}
+
+// follow fills s.refs with the reference of every value, nothing for k of
+// followNone, the row time for followTime and the values of refs[k]
+// otherwise, and reports whether the values without one, which become
+// exceptions, are few.
+func (s *timedScratch) follow(c *shred.Column, times []int64, refs []timedRef, k int) bool {
+	n := c.Count
+	s.refIrregular = 0
+	for i := 0; i < n; i++ {
+		row := c.Row(i)
+		switch k {
+		case followNone:
+			s.refs[i], s.refOK[i] = 0, true
+
+			continue
+		case followTime:
+			s.refs[i], s.refOK[i] = times[row], true
+
+			continue
+		}
+		s.refs[i], s.refOK[i] = refs[k].vals[row], refs[k].valid[row]
+		if !s.refOK[i] && s.regular[i] {
+			s.refIrregular++
+		}
+	}
+
+	return s.irregular+s.refIrregular <= n/maxExceptionShare
+}
+
+// addTimedRef makes the timed column just written, of path, one that later
+// timed columns of the block may follow.
+func (w *Writer) addTimedRef(c *shred.Column, path string, rows int) {
+	s := &w.timedBuf
+	if len(w.timedRefs) == cap(w.timedRefs) {
+		w.timedRefs = append(w.timedRefs, timedRef{})
+	} else {
+		w.timedRefs = w.timedRefs[:len(w.timedRefs)+1]
+	}
+	r := &w.timedRefs[len(w.timedRefs)-1]
+	r.path = path
+	r.vals, r.valid = grow(r.vals, rows), grow(r.valid, rows)
+	clear(r.valid)
+	for i, next := 0, 0; i < c.Count; i++ {
+		if next < len(s.exceptions) && int(s.exceptions[next]) == i {
+			next++
+
+			continue
+		}
+		row := c.Row(i)
+		r.vals[row], r.valid[row] = int64(s.heads[i]>>s.shift), true
+	}
+}
+
+// pickExceptions lists the values of the n that the chunk keeps as they
+// are: those that do not fit the shape or lack a reference, and those whose
+// differences lie far from the sample's while they are few. Each takes the
+// difference and the low bits of the value before it, so that it widens no
+// frame.
+func (s *timedScratch) pickExceptions(n int) {
+	lo, hi := s.window(n)
+	s.exceptions = s.exceptions[:0]
+	for i := 0; i < n; i++ {
+		if !s.regular[i] || !s.refOK[i] || s.diffs[i] < lo || s.diffs[i] > hi {
+			s.exceptions = append(s.exceptions, int32(i))
+		}
+	}
+	if len(s.exceptions) > n/maxExceptionShare {
+		s.exceptions = s.exceptions[:0]
+		for i := 0; i < n; i++ {
+			if !s.regular[i] || !s.refOK[i] {
+				s.exceptions = append(s.exceptions, int32(i))
+			}
+		}
+	}
+	first := 0
+	for _, e := range s.exceptions {
+		if int(e) != first {
+			break
+		}
+		first++
+	}
+	if first == n || len(s.exceptions) == 0 {
+		return
+	}
+	prevDiff, prevLow := s.diffs[first], s.low[first]
+	for i, next := 0, 0; i < n; i++ {
+		if next < len(s.exceptions) && int(s.exceptions[next]) == i {
+			s.diffs[i], s.low[i] = prevDiff, prevLow
+			next++
+
+			continue
+		}
+		prevDiff, prevLow = s.diffs[i], s.low[i]
+	}
+}
+
+// promising reports whether an even sample of the column's values, whose
+// times are those of their batch's rows, has the shape and follows nothing,
+// the times or one of refs closely enough for the whole column to be looked
+// at.
+func (s *timedScratch) promising(c *shred.Column, times []int64, refs []timedRef) bool {
+	n := c.Count
+	for j := range s.picked {
+		s.picked[j] = j * (n - 1) / (timedSample - 1)
+	}
+	if !s.shape(c, s.picked[:]) {
+		return false
+	}
+	// The relation to nothing, then to the times and to every column that
+	// may be followed, over the values of the sample that fit the shape.
+	k := 0
+	for _, i := range s.picked {
+		if h, ok := s.head(c.Bytes(i)); ok {
+			s.sample[k], s.sampleRows[k] = h, c.Row(i)
+			k++
+		}
+	}
+	if k < timedSample/2 {
+		return false
+	}
+	for sh := range s.lowCost {
+		s.lowCost[sh] = -1
+	}
+	s.tried = s.tried[:0]
+	keep := func(k int, unit uint8, shift uint, bits int) {
+		if bits < s.cost {
+			s.best, s.unit, s.shift, s.cost = k, unit, shift, bits
+		}
+	}
+	s.cost = 1 << 30
+	for j := 0; j < k; j++ {
+		s.sampleRefs[j] = times[s.sampleRows[j]]
+	}
+	u, sh, b := s.sampleRelation(k, false)
+	keep(followTime, u, sh, b)
+	clear(s.sampleRefs[:k])
+	u, sh, b = s.sampleRelation(k, true)
+	keep(followNone, u, sh, b)
+	for r := range refs {
+		valid := 0
+		for j := 0; j < k; j++ {
+			if refs[r].valid[s.sampleRows[j]] {
+				s.sampleRefs[j] = refs[r].vals[s.sampleRows[j]]
+				valid++
+			}
+		}
+		if valid == k {
+			u, sh, b = s.sampleRelation(k, false)
+			keep(r, u, sh, b)
+		}
+	}
+
+	return s.cost+minTimedGain <= s.headPacked
+}
+
+// sampleStep returns the step between the values of an even sample of n.
+func sampleStep(n int) int { return max(n/timedSample, 1) }
+
+// shape finds the length, the span, the template and the alphabet of the
+// column's values, or of those that idx numbers when it is set, and reports
+// whether they suit a timed chunk.
+func (s *timedScratch) shape(c *shred.Column, idx []int) bool {
+	n := c.Count
+	if idx != nil {
+		n = len(idx)
+	}
+	value := func(j int) []byte {
+		if idx != nil {
+			return c.Bytes(idx[j])
+		}
+
+		return c.Bytes(j)
+	}
+	var lens [timedSample]int
+	for k := range lens {
+		lens[k] = len(c.Bytes(k * (c.Count - 1) / (timedSample - 1)))
+	}
+	slices.Sort(lens[:])
+	best, run := 0, 0
+	for k := 0; k < len(lens); {
+		j := k
+		for j < len(lens) && lens[j] == lens[k] {
+			j++
+		}
+		if j-k > run {
+			best, run = lens[k], j-k
+		}
+		k = j
+	}
+	if run < timedSample-timedSample/maxExceptionShare || best < 2 || best > 255 {
+		return false
+	}
+	s.stride = best
+	// The template holds at every position the byte that most of a sample
+	// of the values have there; the span runs from the first position to
+	// the last where more than the exceptions differ from it.
+	s.template = grow(s.template, best)
+	var votes [timedSample]byte
+	for k := 0; k < best; k++ {
+		m := 0
+		for j := 0; j < timedSample; j++ {
+			if v := c.Bytes(j * (c.Count - 1) / (timedSample - 1)); len(v) == best {
+				votes[m] = v[k]
+				m++
+			}
+		}
+		s.template[k] = majority(votes[:m])
+	}
+	s.misses = grow(s.misses, best)
+	misses := s.misses
+	clear(misses)
+	for j := 0; j < n; j++ {
+		if v := value(j); len(v) == best {
+			for k := range v {
+				if v[k] != s.template[k] {
+					misses[k]++
+				}
+			}
+		}
+	}
+	s.from, s.to = 0, best
+	for s.from < best && int(misses[s.from]) <= n/maxExceptionShare {
+		s.from++
+	}
+	for s.to > s.from && int(misses[s.to-1]) <= n/maxExceptionShare {
+		s.to--
+	}
+	if s.from == s.to {
+		return false
+	}
+	// The alphabet is every byte that the spans of many values hold; a
+	// value with a byte that few hold is an exception.
+	var holders [256]int32
+	var seen [256]int32
+	for j := 0; j < n; j++ {
+		if v := value(j); len(v) == best {
+			for _, b := range v[s.from:s.to] {
+				if seen[b] != int32(j+1) {
+					seen[b] = int32(j + 1)
+					holders[b]++
+				}
+			}
+		}
+	}
+	s.alphabet = s.alphabet[:0]
+	for b, k := range holders {
+		if k > 0 && int(k)*maxExceptionShare >= n {
+			s.alphabet = append(s.alphabet, byte(b))
+		}
+	}
+	switch size := len(s.alphabet); {
+	case size == 10:
+		s.radixBits = 0
+	case size >= 2 && size <= 64 && size&(size-1) == 0:
+		s.radixBits = uint(bits.TrailingZeros(uint(size)))
+	default:
+		return false
+	}
+	for i := range s.digit {
+		s.digit[i] = 0xFF
+	}
+	for d, b := range s.alphabet {
+		s.digit[b] = uint8(d)
+	}
+	// The number begins with the digits that all values share, so that the
+	// head numbers of columns of one kind are alike and one may follow
+	// another.
+	for s.from > 0 && s.digit[s.template[s.from-1]] != 0xFF {
+		s.from--
+	}
+	digits := s.to - s.from
+	if s.radixBits == 0 {
+		s.headDigits = min(digits, 19)
+	} else {
+		s.headDigits = min(digits, 64/int(s.radixBits))
+		// One digit more fits when the leading digit leaves room for it;
+		// the values whose leading digit does not are exceptions.
+		if spare := 64 - int(s.radixBits)*s.headDigits; s.headDigits < digits && spare > 0 && int(s.digit[s.template[s.from]])>>spare == 0 {
+			s.headDigits++
+		}
+	}
+	// What packing the head digits would take, by the range of the digits
+	// at each position.
+	var lo, hi [64]uint8
+	for k := range lo {
+		lo[k] = 0xFF
+	}
+	head := min(s.headDigits, len(lo))
+	for j := 0; j < n; j++ {
+		if v := value(j); len(v) == best {
+			for k, b := range v[s.from : s.from+head] {
+				if d := s.digit[b]; d != 0xFF {
+					lo[k], hi[k] = min(lo[k], d), max(hi[k], d)
+				}
+			}
+		}
+	}
+	s.headPacked = 0
+	for k := 0; k < head; k++ {
+		if hi[k] > lo[k] {
+			s.headPacked += bits.Len8(hi[k] - lo[k])
+		}
+	}
+
+	return true
+}
+
+// scan reads the head number of every value of the column that fits the
+// shape, which the sample found.
+func (s *timedScratch) scan(c *shred.Column) {
+	n := c.Count
+	s.heads, s.regular = grow(s.heads, n), grow(s.regular, n)
+	s.irregular = 0
+	over := int(s.radixBits)*s.headDigits - 64
+	radix := s.radixBits
+	from, to, headEnd := s.from, s.to, s.from+s.headDigits
+	prefix, suffix := s.template[:from], s.template[to:s.stride]
+	digit := &s.digit
+	for i := 0; i < n; i++ {
+		v := c.Bytes(i)
+		s.heads[i], s.regular[i] = 0, false
+		if len(v) != s.stride || (from > 0 && string(v[:from]) != string(prefix)) || (to < len(v) && string(v[to:]) != string(suffix)) {
+			s.irregular++
+
+			continue
+		}
+		num, bad := uint64(0), uint8(0)
+		if radix == 0 {
+			for _, b := range v[from:headEnd] {
+				d := digit[b]
+				bad |= d
+				num = num*10 + uint64(d)
+			}
+		} else {
+			for _, b := range v[from:headEnd] {
+				d := digit[b]
+				bad |= d
+				num = num<<radix | uint64(d)
+			}
+		}
+		for _, b := range v[headEnd:to] {
+			bad |= digit[b]
+		}
+		// A byte outside the alphabet has the digit 0xFF, and digits are
+		// below 64.
+		if bad&0x80 != 0 || (over > 0 && int(digit[v[from]])>>(int(radix)-over) != 0) {
+			s.irregular++
+
+			continue
+		}
+		s.heads[i], s.regular[i] = num, true
+	}
+}
+
+// majority returns the byte that most of votes hold, which it sorts.
+func majority(votes []byte) byte {
+	slices.Sort(votes)
+	best, run := byte(0), 0
+	for k := 0; k < len(votes); {
+		j := k
+		for j < len(votes) && votes[j] == votes[k] {
+			j++
+		}
+		if j-k > run {
+			best, run = votes[k], j-k
+		}
+		k = j
+	}
+
+	return best
+}
+
+// head returns the head number of v, and false when v does not fit the
+// shape.
+func (s *timedScratch) head(v []byte) (uint64, bool) {
+	if len(v) != s.stride || string(v[:s.from]) != string(s.template[:s.from]) || string(v[s.to:]) != string(s.template[s.to:]) {
+		return 0, false
+	}
+	for _, b := range v[s.from:s.to] {
+		if s.digit[b] == 0xFF {
+			return 0, false
+		}
+	}
+	digits := v[s.from : s.from+s.headDigits]
+	if over := int(s.radixBits)*s.headDigits - 64; over > 0 && int(s.digit[digits[0]])>>(int(s.radixBits)-over) != 0 {
+		return 0, false
+	}
+
+	return s.number(digits), true
+}
+
+// number returns the number that digits, all of the alphabet, spell.
+func (s *timedScratch) number(digits []byte) uint64 {
+	n := uint64(0)
+	if s.radixBits == 0 {
+		for _, b := range digits {
+			n = n*10 + uint64(s.digit[b])
+		}
+
+		return n
+	}
+	for _, b := range digits {
+		n = n<<s.radixBits | uint64(s.digit[b])
+	}
+
+	return n
+}
+
+// sampleRelation returns the unit and the shift that make the differences
+// of the first k values of the sample from their references take the
+// fewest bits, with those bits and the shifted-out bits', per value. Without
+// references, when none is set, it tries no shift and those that the times
+// were tried with.
+func (s *timedScratch) sampleRelation(k int, none bool) (unit uint8, shift uint, cost int) {
+	cost = 1 << 30
+	if k == 0 {
+		return 0, 0, cost
+	}
+	if none {
+		for _, sh := range append(s.tried, 0) {
+			for j := 0; j < k; j++ {
+				s.trial[j] = int64(s.sample[j] >> sh)
+			}
+			if b := bits.Len64(trimmedSpread(s.trial[:k])) + s.lowBits(k, sh); b < cost {
+				shift, cost = sh, b
+			}
+		}
+
+		return 0, shift, cost
+	}
+	top := bits.Len64(slices.Max(s.sample[:k]))
+	for _, u := range timedUnits {
+		for j := 0; j < k; j++ {
+			s.unitRefs[j] = unitDiv(s.sampleRefs[j], u)
+		}
+		// The time in the number is about as wide as the reference.
+		near := top - bits.Len64(uint64(max(slices.Max(s.unitRefs[:k]), 0)))
+		last := -1
+		for d := -3; d <= 3; d++ {
+			sh := min(max(near+d, 0), 63)
+			if sh == last {
+				continue
+			}
+			last = sh
+			for j := 0; j < k; j++ {
+				s.trial[j] = int64(s.sample[j]>>uint(sh)) - s.unitRefs[j]
+			}
+			if !slices.Contains(s.tried, uint(sh)) {
+				s.tried = append(s.tried, uint(sh))
+			}
+			if b := bits.Len64(trimmedSpread(s.trial[:k])) + s.lowBits(k, uint(sh)); b < cost {
+				unit, shift, cost = u, uint(sh), b
+			}
+		}
+	}
+
+	return unit, shift, cost
+}
+
+// lowBits returns the bits per value that the low shift bits of the first k
+// values of the sample take: those of their distinct values when most
+// repeat, shift otherwise.
+func (s *timedScratch) lowBits(k int, shift uint) int {
+	if shift == 0 {
+		return 0
+	}
+	if s.lowCost[shift] >= 0 {
+		return int(s.lowCost[shift])
+	}
+	mask := uint64(1)<<shift - 1
+	tmp := s.lows[:k]
+	for j, n := range s.sample[:k] {
+		tmp[j] = int64(n & mask)
+	}
+	slices.Sort(tmp)
+	distinct := len(slices.Compact(tmp))
+	b := int(shift)
+	if 2*distinct <= k {
+		b = min(bits.Len(uint(distinct)), int(shift))
+	}
+	s.lowCost[shift] = int8(b)
+
+	return b
+}
+
+// trimmed is the number of the lowest and of the highest values of a
+// sample that a spread leaves out, as exceptions may lie there.
+const trimmed = timedSample / maxExceptionShare
+
+// trimmedSpread returns the spread of vals but for the trimmed lowest and
+// the trimmed highest.
+func trimmedSpread(vals []int64) uint64 {
+	if len(vals) <= 4*trimmed {
+		return uint64(slices.Max(vals)) - uint64(slices.Min(vals))
+	}
+	var lo, hi [trimmed + 1]int64
+	for i := range lo {
+		lo[i], hi[i] = 1<<63-1, -1<<63
+	}
+	for _, v := range vals {
+		if v < lo[trimmed] {
+			i := trimmed
+			for ; i > 0 && lo[i-1] > v; i-- {
+				lo[i] = lo[i-1]
+			}
+			lo[i] = v
+		}
+		if v > hi[trimmed] {
+			i := trimmed
+			for ; i > 0 && hi[i-1] < v; i-- {
+				hi[i] = hi[i-1]
+			}
+			hi[i] = v
+		}
+	}
+
+	return uint64(hi[trimmed]) - uint64(lo[trimmed])
+}
+
+// exceptionBits is about what an exception costs over a value kept in the
+// frames: its bytes, its place and its slot in the frames.
+const exceptionBits = 8 * 16
+
+// window returns the bounds outside which a difference is cheaper kept as
+// an exception: around the median of a sample of the n values, the width
+// whose values cost the fewest bits, a value inside it costing the bits of
+// the width and one outside it an exception's.
+func (s *timedScratch) window(n int) (lo, hi int64) {
+	k := 0
+	for i := 0; i < n && k < timedSample; i += sampleStep(n) {
+		if s.regular[i] && s.refOK[i] {
+			s.trial[k] = s.diffs[i]
+			k++
+		}
+	}
+	if k == 0 {
+		return -1 << 63, 1<<63 - 1
+	}
+	vals := s.trial[:k]
+	slices.Sort(vals)
+	mid := vals[k/2]
+	var far [65]int
+	for i := 0; i < n; i++ {
+		if s.regular[i] && s.refOK[i] {
+			d := s.diffs[i] - mid
+			if d < 0 {
+				d = -d
+			}
+			far[bits.Len64(uint64(d))]++
+		}
+	}
+	// A width of 2^w bits holds the values whose distance has fewer than w
+	// bits.
+	best, cost, outside := 64, 64*n, 0
+	for w := 63; w >= 0; w-- {
+		outside += far[w+1]
+		if outside > n/maxExceptionShare {
+			break
+		}
+		if c := (n-outside)*(w+1) + outside*exceptionBits; c < cost {
+			best, cost = w, c
+		}
+	}
+	if best >= 62 {
+		return -1 << 63, 1<<63 - 1
+	}
+	reach := int64(1)<<best - 1
+
+	return mid - reach, mid + reach
+}
+
+// timedValues is a timed chunk read but for its strings.
+type timedValues struct {
+	timedShape
+	prefix, suffix []byte
+	refKind        uint8
+	reference      []byte
+	template       [255]byte
+	// pairs holds the bytes of every pair of digits, high digit first.
+	pairs [1 << 12]uint16
+	// parts holds the shifted head number of every value, a nonsense one
+	// for an exception.
+	parts, low []int64
+	lowDict    []int64
+	tails      [][]int64
+	excIndex   []int32
+	excValue   [][]byte
+	size       uint64
+	next       int
+}
+
+// timedFollowed is a timed column of a block that another follows: the
+// shifted head number of its value in every row that holds one that is not
+// an exception.
+type timedFollowed struct {
+	pathID uint32
+	vals   []int64
+	valid  vec.Bitmap
+	read   timedValues
+}
+
+// timedChunk returns the chunk of the timed column ref after its presence.
+func (b *Block) timedChunk(ref *ColumnRef) ([]byte, bool) {
+	chunk := b.data[ref.off : ref.off+ref.length]
+	if ref.flags&flagSparse == 0 {
+		return chunk, true
+	}
+	if len(chunk) == 0 {
+		return nil, false
+	}
+	chunk, _, ok := skipBlob(chunk[1:])
+
+	return chunk, ok
+}
+
+// readTimedHead reads the shape, the reference and the exceptions of a
+// timed chunk of count values into v, the exceptions only when keep is
+// set, and returns what follows them.
+func readTimedHead(chunk []byte, count int, v *timedValues, keep bool) ([]byte, bool) {
+	r := reader{buf: chunk}
+	v.stride, v.from, v.to = int(r.uvarint()), int(r.uvarint()), int(r.uvarint())
+	if r.bad || v.stride < 2 || v.stride > 255 || v.from >= v.to || v.to > v.stride {
+		return nil, false
+	}
+	v.prefix, v.suffix = r.bytes(uint64(v.from)), r.bytes(uint64(v.stride-v.to))
+	size := r.bytes(1)
+	if r.bad {
+		return nil, false
+	}
+	v.alphabet = r.bytes(uint64(size[0]))
+	params := r.bytes(3)
+	kind := r.bytes(1)
+	if r.bad || kind[0] > refColumn {
+		return nil, false
+	}
+	v.refKind, v.reference = kind[0], nil
+	if v.refKind == refColumn {
+		v.reference = r.bytes(r.uvarint())
+	}
+	exceptions := r.uvarint()
+	if r.bad || exceptions > uint64(count) {
+		return nil, false
+	}
+	switch n := len(v.alphabet); {
+	case n == 10:
+		v.radixBits = 0
+	case n >= 2 && n <= 64 && n&(n-1) == 0:
+		v.radixBits = uint(bits.TrailingZeros(uint(n)))
+	default:
+		return nil, false
+	}
+	v.headDigits, v.unit, v.shift = int(params[0]), params[1], uint(params[2])
+	maxHead := 19
+	if v.radixBits != 0 {
+		maxHead = 64/int(v.radixBits) + 1
+	}
+	if v.headDigits < 1 || v.headDigits > min(v.to-v.from, maxHead) || v.shift > 63 ||
+		(v.unit != 0 && v.unit != 3 && v.unit != 6 && v.unit != 9) {
+		return nil, false
+	}
+	copy(v.template[:], v.prefix)
+	v.makePairs()
+	copy(v.template[v.to:], v.suffix)
+	v.excIndex, v.excValue, v.next = v.excIndex[:0], v.excValue[:0], 0
+	v.size = (uint64(count) - exceptions) * uint64(v.stride)
+	for i, at := 0, -1; i < int(exceptions); i++ {
+		at += int(r.uvarint()) + 1
+		value := r.bytes(r.uvarint())
+		if r.bad || at >= count {
+			return nil, false
+		}
+		if keep {
+			v.excIndex, v.excValue = append(v.excIndex, int32(at)), append(v.excValue, value)
+		}
+		v.size += uint64(len(value))
+	}
+
+	return r.buf, !r.bad && v.size <= maxSectionSize
+}
+
+// readTimed reads the timed column ref into v, following depth columns
+// already.
+func (b *Block) readTimed(ref *ColumnRef, v *timedValues, depth int) error {
+	chunk, ok := b.timedChunk(ref)
+	if !ok || !b.checked(ref, b.data[ref.off:ref.off+ref.length]) {
+		return ErrCorrupt
+	}
+	count := ref.Count
+	rest, ok := readTimedHead(chunk, count, v, true)
+	if !ok {
+		return ErrCorrupt
+	}
+	var err error
+	if v.parts, rest, err = readInts(v.parts, rest, count, &b.d); err != nil {
+		return err
+	}
+	if v.shift > 0 {
+		if rest, err = v.readLow(rest, count, &b.d); err != nil {
+			return err
+		}
+	}
+	tails := 0
+	for at := v.from + v.headDigits; at < v.to; at += v.tailDigits() {
+		if tails == len(v.tails) {
+			v.tails = append(v.tails, nil)
+		}
+		if v.tails[tails], rest, err = readInts(v.tails[tails], rest, count, &b.d); err != nil {
+			return err
+		}
+		tails++
+	}
+	v.tails = v.tails[:tails]
+	if len(rest) != 0 {
+		return ErrCorrupt
+	}
+
+	// The references of the values, those of their rows.
+	var refs []int64
+	var valid vec.Bitmap
+	switch v.refKind {
+	case refNone:
+		return nil
+	case refTime:
+		if refs, err = b.rowTimes(); err != nil {
+			return err
+		}
+	default:
+		id, ok := b.part.PathID(string(v.reference))
+		if !ok || depth >= maxTimedDepth {
+			return ErrCorrupt
+		}
+		followed, err := b.followTimed(id, depth+1)
+		if err != nil {
+			return err
+		}
+		refs, valid = followed.vals, followed.valid
+	}
+	var at []uint32
+	if ref.flags&flagSparse != 0 {
+		if at, err = b.valueRows(ref); err != nil {
+			return err
+		}
+	}
+	for i, next := 0, 0; i < count; i++ {
+		if next < len(v.excIndex) && int(v.excIndex[next]) == i {
+			next++
+
+			continue
+		}
+		row := i
+		if at != nil {
+			row = int(at[i])
+		}
+		if valid != nil && !valid.Get(row) {
+			return ErrCorrupt
+		}
+		v.parts[i] += unitDiv(refs[row], v.unit)
+	}
+
+	return nil
+}
+
+// readLow reads the shifted-out bits of count values from the start of src
+// and returns what follows them.
+func (v *timedValues) readLow(src []byte, count int, d *decodeScratch) ([]byte, error) {
+	if len(src) == 0 || src[0] > lowDict {
+		return nil, ErrCorrupt
+	}
+	form, src := src[0], src[1:]
+	if form == lowPlain {
+		var err error
+		v.low, src, err = readInts(v.low, src, count, d)
+
+		return src, err
+	}
+	size, n := binary.Uvarint(src)
+	if n <= 0 || size == 0 || size > maxLowDict {
+		return nil, ErrCorrupt
+	}
+	var err error
+	if v.lowDict, src, err = readInts(v.lowDict, src[n:], int(size), d); err != nil {
+		return nil, err
+	}
+	if v.low, src, err = readInts(v.low, src, count, d); err != nil {
+		return nil, err
+	}
+	for i, code := range v.low {
+		if uint64(code) >= size {
+			return nil, ErrCorrupt
+		}
+		v.low[i] = v.lowDict[code]
+	}
+
+	return src, nil
+}
+
+// valueRows returns the row of every value of the column ref, which has
+// gaps.
+func (b *Block) valueRows(ref *ColumnRef) ([]uint32, error) {
+	chunk := b.data[ref.off : ref.off+ref.length]
+	if _, err := b.readPresence(chunk, ref.Count, &b.present); err != nil {
+		return nil, err
+	}
+	rows := b.positions(b.present.Valid)
+	if len(rows) != ref.Count {
+		return nil, ErrCorrupt
+	}
+
+	return rows, nil
+}
+
+// followTimed returns the shifted head numbers by row of the timed string
+// column with the path id, reading them the first time.
+func (b *Block) followTimed(pathID uint32, depth int) (*timedFollowed, error) {
+	for i := range b.followed {
+		if b.followed[i].pathID == pathID {
+			return &b.followed[i], nil
+		}
+	}
+	ref, ok := b.Column(pathID, vec.KindString)
+	if !ok || ref.bad || ref.enc != encTimed {
+		return nil, ErrCorrupt
+	}
+	if len(b.followed) == cap(b.followed) {
+		b.followed = append(b.followed, timedFollowed{})
+	} else {
+		b.followed = b.followed[:len(b.followed)+1]
+	}
+	f := &b.followed[len(b.followed)-1]
+	f.pathID = ^uint32(0)
+	if err := b.readTimed(ref, &f.read, depth); err != nil {
+		b.followed = b.followed[:len(b.followed)-1]
+
+		return nil, err
+	}
+	var at []uint32
+	if ref.flags&flagSparse != 0 {
+		var err error
+		if at, err = b.valueRows(ref); err != nil {
+			b.followed = b.followed[:len(b.followed)-1]
+
+			return nil, err
+		}
+	}
+	f.vals = grow(f.vals, b.Rows)
+	f.valid = grow(f.valid, vec.BitmapWords(b.Rows))
+	clear(f.valid)
+	for i, next := 0, 0; i < ref.Count; i++ {
+		if next < len(f.read.excIndex) && int(f.read.excIndex[next]) == i {
+			next++
+
+			continue
+		}
+		row := i
+		if at != nil {
+			row = int(at[i])
+		}
+		f.vals[row] = f.read.parts[i]
+		f.valid.Set(row)
+	}
+	f.pathID = pathID
+
+	return f, nil
+}
+
+// rowTimes returns the time of every row of the block, decoding its time
+// column the first time.
+func (b *Block) rowTimes() ([]int64, error) {
+	if b.timesRead {
+		return b.times.Ints, nil
+	}
+	ref, ok := b.Column(0, vec.KindInt)
+	if !ok || ref.bad || ref.enc == encTime || ref.flags&flagSparse != 0 {
+		return nil, ErrCorrupt
+	}
+	if err := b.decode(ref, &b.times, false); err != nil {
+		return nil, err
+	}
+	if b.times.Layout == vec.Const {
+		t := b.times.Ints[0]
+		b.times.Ints = grow(b.times.Ints, b.Rows)
+		for i := range b.times.Ints {
+			b.times.Ints[i] = t
+		}
+		b.times.Layout = vec.Flat
+	}
+	if len(b.times.Ints) != b.Rows {
+		return nil, ErrCorrupt
+	}
+	b.timesRead = true
+
+	return b.times.Ints, nil
+}
+
+// timedDataSize returns the bytes that the values of the timed column ref
+// take, or 0 when the chunk does not say.
+func (b *Block) timedDataSize(ref *ColumnRef) uint32 {
+	chunk, ok := b.timedChunk(ref)
+	if !ok {
+		return 0
+	}
+	v := &b.d.timed
+	if _, ok := readTimedHead(chunk, ref.Count, v, false); !ok {
+		return 0
+	}
+
+	return uint32(v.size)
+}
+
+// put writes value i at the start of dst and returns its length.
+func (v *timedValues) put(dst []byte, i int) int {
+	if v.next < len(v.excIndex) && int(v.excIndex[v.next]) == i {
+		n := copy(dst, v.excValue[v.next])
+		v.next++
+
+		return n
+	}
+	out := dst[:v.stride]
+	copy(out[:v.from], v.prefix)
+	copy(out[v.to:], v.suffix)
+	num := uint64(v.parts[i]) << v.shift
+	if v.shift > 0 {
+		num |= uint64(v.low[i]) & (1<<v.shift - 1)
+	}
+	v.spell(out[v.from:v.from+v.headDigits], num)
+	if len(v.tails) > 0 {
+		per := v.tailDigits()
+		for k, tail := range v.tails {
+			from := v.from + v.headDigits + k*per
+			v.spell(out[from:min(from+per, v.to)], uint64(tail[i]))
+		}
+	}
+
+	return v.stride
+}
+
+// spell writes num into out in the chunk's alphabet, its last digit last,
+// two digits at a time from the table of pairs.
+func (v *timedValues) spell(out []byte, num uint64) {
+	if v.radixBits == 0 {
+		spellDigits(out, num, v.alphabet, 0)
+
+		return
+	}
+	pair, mask := 2*v.radixBits, uint64(1)<<(2*v.radixBits)-1
+	pairs := &v.pairs
+	j := len(out)
+	for ; j >= 2; j -= 2 {
+		p := pairs[num&mask&uint64(len(pairs)-1)]
+		out[j-2], out[j-1] = byte(p>>8), byte(p)
+		num >>= pair
+	}
+	if j == 1 {
+		out[0] = v.alphabet[num&(1<<v.radixBits-1)]
+	}
+}
+
+// makePairs fills the table of the pairs of digits of the alphabet.
+func (v *timedValues) makePairs() {
+	if v.radixBits == 0 {
+		return
+	}
+	size := len(v.alphabet)
+	for hi := 0; hi < size; hi++ {
+		for lo := 0; lo < size; lo++ {
+			v.pairs[hi<<v.radixBits|lo] = uint16(v.alphabet[hi])<<8 | uint16(v.alphabet[lo])
+		}
+	}
+}
+
+// spellDigits writes num into out, its last digit last.
+func spellDigits(out []byte, num uint64, alphabet []byte, radixBits uint) {
+	if radixBits == 0 {
+		for j := len(out) - 1; j >= 0; j-- {
+			out[j] = alphabet[num%10]
+			num /= 10
+		}
+
+		return
+	}
+	mask := uint64(len(alphabet) - 1)
+	for j := len(out) - 1; j >= 0; j-- {
+		out[j] = alphabet[num&mask]
+		num >>= radixBits
+	}
+}
+
+// decodeTimed fills dst from the timed column ref, laid out over rows
+// slots: one for every row, whether dst.Valid marks it or not, when sparse
+// is set, and one for every value otherwise.
+func (b *Block) decodeTimed(ref *ColumnRef, sparse bool, rows int, dst *vec.Column) error {
+	v := &b.d.timed
+	if err := b.readTimed(ref, v, 0); err != nil {
+		return err
+	}
+	count := ref.Count
+	dst.Data = grow(dst.Data, int(v.size))
+	dst.Offsets = grow(dst.Offsets, rows+1)
+	off := 0
+	if sparse {
+		i := 0
+		for row := 0; row < rows; row++ {
+			dst.Offsets[row] = uint32(off)
+			if dst.Valid.Get(row) {
+				if i == count {
+					return ErrCorrupt
+				}
+				off += v.put(dst.Data[off:], i)
+				i++
+			}
+		}
+		if i != count {
+			return ErrCorrupt
+		}
+	} else if len(v.tails) == 0 && v.radixBits != 0 {
+		off = v.putAll(dst, count)
+	} else {
+		for i := 0; i < count; i++ {
+			dst.Offsets[i] = uint32(off)
+			off += v.put(dst.Data[off:], i)
+		}
+	}
+	dst.Offsets[rows] = uint32(off)
+	if off != int(v.size) {
+		return ErrCorrupt
+	}
+
+	return nil
+}
+
+// putAll writes the count values of a chunk whose span is all head, in an
+// alphabet of a power of two of digits, one after another into dst, and
+// returns their bytes; it is put over every value, in one loop.
+func (v *timedValues) putAll(dst *vec.Column, count int) int {
+	stride, from, to := v.stride, v.from, v.to
+	shift, lowMask := v.shift, uint64(1)<<v.shift-1
+	pairBits, pairMask := 2*v.radixBits, uint64(1)<<(2*v.radixBits)-1
+	digitMask := uint64(1)<<v.radixBits - 1
+	pairs := &v.pairs
+	parts, low := v.parts[:count], v.low
+	if shift == 0 {
+		low = nil
+	}
+	off, exc := 0, 0
+	for i, part := range parts {
+		dst.Offsets[i] = uint32(off)
+		if exc < len(v.excIndex) && int(v.excIndex[exc]) == i {
+			off += copy(dst.Data[off:], v.excValue[exc])
+			exc++
+
+			continue
+		}
+		out := dst.Data[off : off+stride : off+stride]
+		copy(out[:from], v.prefix)
+		copy(out[to:], v.suffix)
+		num := uint64(part) << shift
+		if low != nil {
+			num |= uint64(low[i]) & lowMask
+		}
+		head := out[from:to]
+		j := len(head)
+		for ; j >= 2; j -= 2 {
+			pair := pairs[num&pairMask&uint64(len(pairs)-1)]
+			head[j-2], head[j-1] = byte(pair>>8), byte(pair)
+			num >>= pairBits
+		}
+		if j == 1 {
+			head[0] = v.alphabet[num&digitMask]
+		}
+		off += stride
+	}
+
+	return off
+}
