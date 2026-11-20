@@ -29,11 +29,18 @@ func blueskyDays(b *testing.B, dir string, rows, days, users int) *colstore.Stor
 // microseconds on average.
 func blueskyStore(b *testing.B, dir string, rows, users int, step int64) *colstore.Store {
 	b.Helper()
+
+	return blueskyPartitions(b, dir, rows, users, step, 24*time.Hour)
+}
+
+// blueskyPartitions is blueskyStore with partitions of the given length.
+func blueskyPartitions(b testing.TB, dir string, rows, users int, step int64, partition time.Duration) *colstore.Store {
+	b.Helper()
 	s, err := colstore.OpenStore(dir, colstore.StoreOptions{
 		SortKey:    []string{"kind", "commit.operation", "commit.collection", "did"},
 		TimeFields: []string{"time_us"},
 		KeepText:   true,
-		Partition:  24 * time.Hour,
+		Partition:  partition,
 		FlushLevel: part.LevelFastest,
 	})
 	if err != nil {

@@ -79,15 +79,18 @@ func rendered(res *exec.Result) string {
 }
 
 // BenchmarkQ3Days times the benchmark's third query, created posts, reposts
-// and likes by collection and hour of the day, over a store of daily
-// partitions compacted as the server compacts them; its answer must be that
-// of the same query computed from the time of every row.
-// LYNXDB_BENCH_Q3_ROWS sets the events (2Mi by default) and
-// LYNXDB_BENCH_Q3_DAYS the days they cover (3).
+// and likes by collection and hour of the day, over a store compacted as the
+// server compacts it; its answer must be that of the same query computed
+// from the time of every row. LYNXDB_BENCH_Q3_ROWS sets the events (2Mi by
+// default), LYNXDB_BENCH_Q3_DAYS the days they cover (2) and
+// LYNXDB_BENCH_Q3_PARTITION the days of a partition (366, as the benchmark
+// declares its index).
 func BenchmarkQ3Days(b *testing.B) {
 	rows := envOr(b, "LYNXDB_BENCH_Q3_ROWS", 1<<21)
-	days := envOr(b, "LYNXDB_BENCH_Q3_DAYS", 3)
-	s := blueskyDays(b, filepath.Join(b.TempDir(), "store"), rows, days, envOr(b, "LYNXDB_BENCH_Q3_USERS", rows/64))
+	days := envOr(b, "LYNXDB_BENCH_Q3_DAYS", 2)
+	partition := time.Duration(envOr(b, "LYNXDB_BENCH_Q3_PARTITION", 366)) * 24 * time.Hour
+	step := int64(days) * int64(24*time.Hour/time.Microsecond) / int64(rows)
+	s := blueskyPartitions(b, filepath.Join(b.TempDir(), "store"), rows, envOr(b, "LYNXDB_BENCH_Q3_USERS", rows/64), step, partition)
 	defer s.Close()
 	snap := s.Table().Snapshot()
 	defer snap.Release()
