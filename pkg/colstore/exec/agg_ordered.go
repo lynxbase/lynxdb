@@ -461,17 +461,28 @@ type orderedCursor struct {
 	key     [][]byte
 	values  int64
 	// listed is set for a block taken as the distinct values in vals of one
-	// group in key: run i is value base+i.
+	// group in key: run i is value base+i, or the value of row runs[i] when
+	// vals holds a value for every row.
 	listed bool
 	vals   vec.Column
 	base   int
+	runs   []uint32
 	// lo and hi bound the keys of the range the cursor reads.
 	lo, hi []byte
 }
 
+// value returns the distinct value of run i of a listed block.
+func (c *orderedCursor) value(i int) []byte {
+	if len(c.runs) != 0 {
+		return c.vals.Bytes(int(c.runs[i]))
+	}
+
+	return c.vals.Bytes(c.base + i)
+}
+
 func (c *orderedCursor) load() {
 	if c.listed {
-		c.cur[len(c.cur)-1] = c.vals.Bytes(c.base + c.i)
+		c.cur[len(c.cur)-1] = c.value(c.i)
 
 		return
 	}
@@ -700,13 +711,13 @@ func (ow *orderedWorker) fromIndex(c *orderedCursor, p *part.Part, i int) bool {
 
 // fromEntries takes block i of p as one run for each distinct value of the
 // distinct argument inside the range lo to hi, reading through b only the
-// dictionary of the argument's column, and reports false unless the part
-// index proves that the block holds one group with strings for its keys,
-// every row holds a string for its value and the column has a dictionary.
-// The rows of
-// such a block count in the range where the block begins, whatever range the
-// later ones lie in, since they all belong to its one group; a block with no
-// value inside the range leaves c with no run.
+// argument's column, and only its dictionary when it has one, and reports
+// false unless the part index proves that the block holds one group with
+// strings for its keys and every row holds a string for its value, or when
+// the column has no dictionary and the block is not whole inside the range.
+// The rows of such a block count in the range where the block begins,
+// whatever range the later ones lie in, since they all belong to its one
+// group; a block with no value inside the range leaves c with no run.
 func (ow *orderedWorker) fromEntries(c *orderedCursor, p *part.Part, i int, b *part.Block, lo, hi []byte) (bool, error) {
 	w, o := ow.w, ow.o
 	depth := o.prefix + o.groups
@@ -730,28 +741,49 @@ func (ow *orderedWorker) fromEntries(c *orderedCursor, p *part.Part, i int, b *p
 	if !ok || ref.Count != b.Rows {
 		return false, nil
 	}
-	// A column held otherwise is decoded whole once for all the ranges that
-	// read the block, as the rows of other blocks are.
-	if listed, err := b.DecodeEntries(ref, &c.vals); err != nil || !listed {
+	listed, err := b.DecodeEntries(ref, &c.vals)
+	if err != nil {
 		return false, err
 	}
-	// A value's row has the key of the block's group followed by the value.
-	group := part.KeyPrefix(first, depth)
-	below := func(bound []byte) int {
-		return sort.Search(c.vals.Rows, func(j int) bool {
-			ow.keyBuf = part.AppendKeyString(append(ow.keyBuf[:0], group...), c.vals.Bytes(j))
-
-			return bytes.Compare(ow.keyBuf, bound) >= 0
-		})
-	}
+	whole := bytes.Compare(first, lo) >= 0 && p.BlockBelowKey(i, hi)
+	c.base, c.runs = 0, c.runs[:0]
 	from, to := 0, c.vals.Rows
-	if bytes.Compare(first, lo) < 0 {
-		from = below(lo)
+	switch {
+	case listed:
+		// A value's row has the key of the block's group followed by the
+		// value.
+		group := part.KeyPrefix(first, depth)
+		below := func(bound []byte) int {
+			return sort.Search(c.vals.Rows, func(j int) bool {
+				ow.keyBuf = part.AppendKeyString(append(ow.keyBuf[:0], group...), c.vals.Bytes(j))
+
+				return bytes.Compare(ow.keyBuf, bound) >= 0
+			})
+		}
+		if bytes.Compare(first, lo) < 0 {
+			from = below(lo)
+		}
+		if !p.BlockBelowKey(i, hi) {
+			to = below(hi)
+		}
+		c.base = from
+	case whole:
+		// Without a dictionary only the column's values are decoded, and its
+		// runs are where a value differs from the one before. A block that
+		// ranges share is decoded once for all of them instead.
+		if err := b.Decode(ref, &c.vals); err != nil {
+			return false, err
+		}
+		c.runs = append(c.runs, 0)
+		for r := 1; r < c.vals.Rows; r++ {
+			if string(c.vals.Bytes(r)) != string(c.vals.Bytes(r-1)) {
+				c.runs = append(c.runs, uint32(r))
+			}
+		}
+		to = len(c.runs)
+	default:
+		return false, nil
 	}
-	if !p.BlockBelowKey(i, hi) {
-		to = below(hi)
-	}
-	c.base = from
 	rows := 0
 	if bytes.Compare(first, lo) >= 0 {
 		rows = b.Rows
