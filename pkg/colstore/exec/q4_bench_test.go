@@ -20,16 +20,6 @@ func postsScan() *exec.Scan {
 		exec.Eq(str("commit.collection"), exec.Str("app.bsky.feed.post")))}
 }
 
-// rendered renders the rows of a result.
-func rendered(res *exec.Result) string {
-	var out []string
-	for i := 0; i < res.Rows; i++ {
-		out = append(out, renderRow(res.Row(i, nil)))
-	}
-
-	return strings.Join(out, " ")
-}
-
 // timeQuery is a query whose answer is checked against that of a reference
 // plan, which the executor runs another way.
 type timeQuery struct {
