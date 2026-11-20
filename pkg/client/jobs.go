@@ -49,9 +49,17 @@ func (c *Client) PollJob(ctx context.Context, jobID string, progressFn func(*Job
 	interval := 100 * time.Millisecond
 	maxInterval := 1 * time.Second
 
+	late := func() error {
+		return fmt.Errorf("lynxdb: job %s did not complete before the poll deadline (raise --timeout if the query needs longer)", jobID)
+	}
 	for {
 		job, err := c.GetJob(ctx, jobID)
 		if err != nil {
+			// The deadline may pass while a request is on its way.
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return nil, late()
+			}
+
 			return nil, err
 		}
 
@@ -76,7 +84,7 @@ func (c *Client) PollJob(ctx context.Context, jobID string, progressFn func(*Job
 		select {
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-				return nil, fmt.Errorf("lynxdb: job %s did not complete before the poll deadline (raise --timeout if the query needs longer)", jobID)
+				return nil, late()
 			}
 
 			return nil, ctx.Err()
