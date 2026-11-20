@@ -111,7 +111,7 @@ func BenchmarkQ3Days(b *testing.B) {
 	widths := map[int64]int{}
 	for _, h := range snap.Parts() {
 		blocks += h.NumBlocks()
-		if err := h.AddUsage(&u, false); err != nil {
+		if err := h.AddUsage(&u, nil); err != nil {
 			b.Fatal(err)
 		}
 		for i := 0; i < h.NumBlocks(); i++ {
