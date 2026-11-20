@@ -29,11 +29,13 @@ const (
 
 // packScratch holds what packing reuses between sections.
 type packScratch struct {
-	differ   []byte
-	lo, hi   []byte
-	varPos   []int
-	width    []uint8
-	schedule []packStep
+	differ           []byte
+	lo, hi           []byte
+	loWords, hiWords []uint64
+	varPos           []int
+	width            []uint8
+	schedule         []packStep
+	steps            []codeStep
 	// table holds, for every varying position, the byte of each of its 64
 	// possible codes.
 	table []byte
@@ -48,12 +50,41 @@ type packStep struct {
 	at           int
 }
 
+// codeStep packs, into one word, the codes of count varying positions from
+// the first on, which take bits bits: when width is set, eight adjacent
+// positions from byte at on whose base codes are the bytes of base, and
+// otherwise any positions, one at a time.
+type codeStep struct {
+	first, count, at, bits int
+	width                  uint8
+	base                   uint64
+}
+
 func growBytes(b []byte, n int) []byte {
 	if cap(b) < n {
 		return make([]byte, n)
 	}
 
 	return b[:n]
+}
+
+func growWords(b []uint64, n int) []uint64 {
+	if cap(b) < n {
+		return make([]uint64, n)
+	}
+
+	return b[:n]
+}
+
+// lessBytes returns, in each of the eight bytes of the result, 0x80 where
+// the byte of x is below the byte of y as unsigned numbers and 0 elsewhere.
+func lessBytes(x, y uint64) uint64 {
+	const high = 0x8080808080808080
+	// Bit 7 of each byte of low is set where the low seven bits of x are at
+	// least those of y; setting them in x keeps borrows within each byte.
+	low := (x | high) - (y &^ high)
+
+	return (^x&y | ^(x^y)&^low) & high
 }
 
 // appendSymbols appends payload, strings of length stride laid end to end,
@@ -89,19 +120,60 @@ func appendSymbols(dst, payload []byte, stride int, s *packScratch) ([]byte, boo
 		return dst, false
 	}
 
-	// The alphabet and each position's range of bytes.
+	// The alphabet: the bytes of every position are counted in one pass over
+	// the payload, four tables taking turns so that equal neighbours do not
+	// wait on each other, and those of the positions that hold one byte are
+	// taken back out.
+	var hists [4][256]uint32
+	i := 0
+	for ; i+4 <= len(payload); i += 4 {
+		b := payload[i : i+4 : i+4]
+		hists[0][b[0]]++
+		hists[1][b[1]]++
+		hists[2][b[2]]++
+		hists[3][b[3]]++
+	}
+	for ; i < len(payload); i++ {
+		hists[0][payload[i]]++
+	}
 	var hist [256]uint32
+	for c := range hist {
+		hist[c] = hists[0][c] + hists[1][c] + hists[2][c] + hists[3][c]
+	}
+	for p, d := range differ {
+		if d == 0 {
+			hist[first[p]] -= uint32(count)
+		}
+	}
+	// Each position's range of bytes, eight positions to a word.
 	s.lo, s.hi = growBytes(s.lo, stride), growBytes(s.hi, stride)
 	lo, hi := s.lo, s.hi
 	copy(lo, first)
 	copy(hi, first)
+	words := stride / 8
+	s.loWords, s.hiWords = growWords(s.loWords, words), growWords(s.hiWords, words)
+	loW, hiW := s.loWords[:words], s.hiWords[:words]
+	for w := range loW {
+		loW[w] = binary.LittleEndian.Uint64(first[8*w:])
+		hiW[w] = loW[w]
+	}
 	for at := 0; at < len(payload); at += stride {
-		val := payload[at : at+stride]
-		for _, p := range varPos {
+		val := payload[at : at+stride : at+stride]
+		for w := range loW {
+			x := binary.LittleEndian.Uint64(val[8*w:])
+			below := (lessBytes(x, loW[w]) >> 7) * 0xFF
+			above := (lessBytes(hiW[w], x) >> 7) * 0xFF
+			loW[w] = x&below | loW[w]&^below
+			hiW[w] = x&above | hiW[w]&^above
+		}
+		for p := 8 * words; p < stride; p++ {
 			c := val[p]
-			hist[c]++
 			lo[p], hi[p] = min(lo[p], c), max(hi[p], c)
 		}
+	}
+	for w := range loW {
+		binary.LittleEndian.PutUint64(lo[8*w:], loW[w])
+		binary.LittleEndian.PutUint64(hi[8*w:], hiW[w])
 	}
 	var code [256]uint8
 	var symbols [1 << maxPackedBits]byte
@@ -140,6 +212,7 @@ func appendSymbols(dst, payload []byte, stride int, s *packScratch) ([]byte, boo
 	for k, p := range varPos {
 		bases[k], widths[k] = code[lo[p]], byte(bits.Len8(code[hi[p]]-code[lo[p]]))
 	}
+	s.steps = packSchedule(s.steps[:0], varPos, bases, widths)
 	need := (count*bitsPerString+7)/8 + 8
 	start := len(dst)
 	if cap(dst)-start < need {
@@ -148,24 +221,86 @@ func appendSymbols(dst, payload []byte, stride int, s *packScratch) ([]byte, boo
 		dst = grown
 	}
 	out := dst[start : start+need]
-	var acc uint64
-	var held uint
-	n = 0
+	clear(out)
+	bitPos := 0
 	for at := 0; at < len(payload); at += stride {
-		val := payload[at : at+stride]
-		for k, p := range varPos {
-			acc |= uint64(code[val[p]]-bases[k]) << held
-			if held += uint(widths[k]); held >= 32 {
-				binary.LittleEndian.PutUint32(out[n:], uint32(acc))
-				n += 4
-				acc >>= 32
-				held -= 32
+		val := payload[at : at+stride : at+stride]
+		for _, step := range s.steps {
+			var v uint64
+			if step.width != 0 {
+				b := val[step.at : step.at+8 : step.at+8]
+				v = uint64(code[b[0]]) | uint64(code[b[1]])<<8 | uint64(code[b[2]])<<16 | uint64(code[b[3]])<<24 |
+					uint64(code[b[4]])<<32 | uint64(code[b[5]])<<40 | uint64(code[b[6]])<<48 | uint64(code[b[7]])<<56
+				v = squeeze(v-step.base, uint(step.width))
+			} else {
+				shift := uint(0)
+				for k := step.first; k < step.first+step.count; k++ {
+					v |= uint64(code[val[varPos[k]]]-bases[k]) << shift
+					shift += uint(widths[k])
+				}
 			}
+			word := out[bitPos>>3:]
+			binary.LittleEndian.PutUint64(word, binary.LittleEndian.Uint64(word)|v<<(bitPos&7))
+			bitPos += step.bits
 		}
 	}
-	binary.LittleEndian.PutUint64(out[n:], acc)
 
-	return dst[:start+n+int(held+7)/8], true
+	return dst[:start+(bitPos+7)/8], true
+}
+
+// packSchedule appends the steps that pack the codes of a string: eight
+// adjacent varying positions of one width at a time where there are, and
+// the others a few at a time.
+func packSchedule(dst []codeStep, varPos []int, bases, widths []byte) []codeStep {
+	for k := 0; k < len(varPos); {
+		run := 1
+		for run < 8 && k+run < len(varPos) && varPos[k+run] == varPos[k]+run && widths[k+run] == widths[k] {
+			run++
+		}
+		if run == 8 {
+			step := codeStep{first: k, count: 8, width: widths[k], at: varPos[k], bits: 8 * int(widths[k])}
+			for j := range 8 {
+				step.base |= uint64(bases[k+j]) << (8 * j)
+			}
+			dst = append(dst, step)
+			k += 8
+
+			continue
+		}
+		step := codeStep{first: k}
+		for k < len(varPos) && step.bits+int(widths[k]) <= 57 && (k == step.first || !startsEight(varPos, widths, k)) {
+			step.bits += int(widths[k])
+			k++
+		}
+		step.count = k - step.first
+		dst = append(dst, step)
+	}
+
+	return dst
+}
+
+// startsEight reports whether eight adjacent varying positions of one width
+// begin at the k-th.
+func startsEight(varPos []int, widths []byte, k int) bool {
+	if k+8 > len(varPos) {
+		return false
+	}
+	for j := 1; j < 8; j++ {
+		if varPos[k+j] != varPos[k]+j || widths[k+j] != widths[k] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// squeeze packs the eight bytes of v, each below 1<<width, into the low
+// 8*width bits of the result, the lowest byte lowest.
+func squeeze(v uint64, width uint) uint64 {
+	v = v&0x00FF00FF00FF00FF | (v>>8&0x00FF00FF00FF00FF)<<width
+	v = v&0x0000FFFF0000FFFF | (v>>16&0x0000FFFF0000FFFF)<<(2*width)
+
+	return v&0x00000000FFFFFFFF | (v>>32)<<(4*width)
 }
 
 // readSymbols appends the strings of a packed section body, rawLen bytes in
