@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"os"
@@ -248,8 +249,26 @@ func runServer(cmd *cobra.Command, args []string) error {
 		logAttrs = append(logAttrs, "auth", true)
 	}
 	logger.Info("starting LynxDB", logAttrs...)
+	loadProgram()
 
 	return srv.Start(ctx)
+}
+
+// loadProgram reads the executable into the page cache before the server
+// listens. The code and tables that the first requests run are then mapped
+// from memory; read on demand they cost a request tens of reads from the
+// disk, one per fault.
+func loadProgram() {
+	path, err := os.Executable()
+	if err != nil {
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = io.Copy(io.Discard, f)
 }
 
 func writePIDFile(path string) error {
