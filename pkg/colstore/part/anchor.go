@@ -249,6 +249,12 @@ func (w *Writer) findAnchors(cols []*shred.Column, times []int64) {
 	}
 	cost := grow(w.anchorCost, m*m)
 	for i := range refs {
+		// The bits of a follower's low bits do not depend on whom it
+		// follows, nor do the shifts tried without a reference.
+		for sh := range s.lowCost {
+			s.lowCost[sh] = -1
+		}
+		s.tried = s.tried[:0]
 		for j := range refs {
 			cost[i*m+j] = 1 << 30
 			if i != j {
@@ -310,10 +316,6 @@ func (s *timedScratch) followCost(f, a *timedRef) int {
 	if held < f.k-f.k/maxIrregularShare {
 		return 1 << 30
 	}
-	for sh := range s.lowCost {
-		s.lowCost[sh] = -1
-	}
-	s.tried = s.tried[:0]
 	_, _, b := s.sampleRelation(held, false)
 
 	return b + (f.k-held)*exceptionBits/f.k
