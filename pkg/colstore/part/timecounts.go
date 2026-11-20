@@ -101,6 +101,9 @@ func appendTimeCounts(dst []byte, times []int64, minT, maxT int64, s *bucketScra
 	var room [binary.MaxVarintLen64]byte
 	for c := len(timeWidths) - 1; c >= code; c-- {
 		buckets := b[at[c]:at[c+1]]
+		if w := timeWidths[c]; buckets[0].Bucket < math.MinInt64/w || buckets[len(buckets)-1].Bucket >= math.MaxInt64/w {
+			continue
+		}
 		// The record is built behind room for its length.
 		start := len(dst) + len(room)
 		record := append(append(dst, room[:]...), byte(c))
