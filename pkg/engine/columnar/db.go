@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
+	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/ir"
 )
 
@@ -231,6 +232,47 @@ func (db *DB) Stats() []IndexStats {
 	}
 
 	return out
+}
+
+// IndexUsage tells where the bytes of an index go.
+type IndexUsage struct {
+	part.Usage
+	// Tiers holds by merge tier the parts, rows and bytes; tier 0 holds the
+	// runs as flushed.
+	Tiers map[int]*TierUsage
+}
+
+// TierUsage sums the parts of one merge tier.
+type TierUsage struct {
+	Parts int
+	Rows  uint64
+	Bytes int64
+}
+
+// Usage tells where the bytes of the parts of an index go, see
+// part.Part.AddUsage for sections; ok is false when there is no such index.
+func (db *DB) Usage(index string, sections bool) (u IndexUsage, ok bool, err error) {
+	snap, ok := db.Snapshot(index)
+	if !ok {
+		return u, false, nil
+	}
+	defer snap.Release()
+	u.Tiers = map[int]*TierUsage{}
+	for _, h := range snap.Parts() {
+		if err := h.AddUsage(&u.Usage, sections); err != nil {
+			return u, true, fmt.Errorf("columnar: index %s: %w", index, err)
+		}
+		t := u.Tiers[h.Tier]
+		if t == nil {
+			t = &TierUsage{}
+			u.Tiers[h.Tier] = t
+		}
+		t.Parts++
+		t.Rows += h.Rows
+		t.Bytes += int64(h.Size())
+	}
+
+	return u, true, nil
 }
 
 // DropBefore removes from every index the partitions that end at or before

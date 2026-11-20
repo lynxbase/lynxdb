@@ -252,6 +252,7 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 	mux.HandleFunc("GET /api/v1/query/jobs", s.handleListJobs)
 
 	mux.HandleFunc("GET /api/v1/indexes", s.handleListIndexes)
+	mux.HandleFunc("GET /api/v1/indexes/{index}/columns", s.handleIndexColumns)
 
 	mux.HandleFunc("POST /api/v1/ingest", s.handleIngestEvents)
 	mux.HandleFunc("POST /api/v1/ingest/raw", s.handleIngestRaw)

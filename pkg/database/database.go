@@ -125,6 +125,11 @@ func (db *DB) Sync() error { return db.core.Sync() }
 // Stats describes every index in the order of their names.
 func (db *DB) Stats() []columnar.IndexStats { return db.core.Stats() }
 
+// Usage is columnar.DB.Usage.
+func (db *DB) Usage(index string, sections bool) (columnar.IndexUsage, bool, error) {
+	return db.core.Usage(index, sections)
+}
+
 // Names lists the indexes in the order of their names.
 func (db *DB) Names() []string { return db.core.Names() }
 
