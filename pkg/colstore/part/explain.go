@@ -316,6 +316,8 @@ func lostReason(stored, best string, sizes map[string]int, reason string, dictOK
 		return "the trial state kept them flat"
 	case stored == "flat" && best == "flat.packed":
 		return "values repeat, so they are not packed"
+	case stored == "timed" && toTimed && best != "timed":
+		return "the block's columns, weighed together, follow each other otherwise than " + best[len("timed."):]
 	case stored == "timed":
 		return "the trial state kept them timed"
 	case stored == best || strings.HasPrefix(best, stored+"."):
