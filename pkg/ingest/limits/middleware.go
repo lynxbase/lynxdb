@@ -1,7 +1,6 @@
 package limits
 
 import (
-	"compress/gzip"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +9,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/klauspost/compress/gzip"
 	"github.com/klauspost/compress/snappy"
 	"github.com/klauspost/compress/zstd"
 )
