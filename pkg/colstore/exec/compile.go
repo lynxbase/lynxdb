@@ -90,6 +90,9 @@ type query struct {
 	// and leaves out those that the rows kept so far rule out.
 	byTime  int
 	timeCol int
+	// least is set for an aggregate that a sort with a limit orders by its
+	// groups' earliest or latest times.
+	least *leastPlan
 	// ranked is the order that a sort with a limit keeps its rows in: the
 	// sort's, then for an aggregate its other columns in turn, so that the
 	// groups kept do not depend on the order they are found in.
@@ -225,6 +228,9 @@ func compile(snap *colstore.Snapshot, plan Node) (*query, error) {
 	q.ranked = q.order
 	if agg != nil && q.limit > 0 && len(q.order) > 0 {
 		q.ranked = tiesBroken(q.order, len(q.names))
+		if q.least = q.planLeast(); q.least != nil {
+			q.ordered = nil
+		}
 	}
 	if agg == nil {
 		if q.limit > 0 && len(q.order) > 0 {

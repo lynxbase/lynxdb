@@ -56,6 +56,8 @@ type execution struct {
 	// bound is the time that a row must reach to be among the first rows by
 	// time that the plan keeps, once some goroutine holds that many.
 	bound *atomic.Int64
+	// least holds the groups that a leastPlan found so far.
+	least *leastScan
 	// taken counts the rows that a plan with a limit and no order has
 	// produced.
 	taken atomic.Int64
@@ -206,6 +208,10 @@ func Run(ctx context.Context, snap *colstore.Snapshot, plan Node, opts Options) 
 			x.bound.Store(math.MaxInt64)
 		}
 		scan.ByTime, scan.Bound = q.byTime, x.bound
+	}
+	if q.least != nil {
+		x.least = newLeastScan(q.least, n)
+		scan.ByTime, scan.Bound = x.least.byTime(), &x.least.bound
 	}
 	counted := x.countParts(snap)
 	if counted != nil {
@@ -371,6 +377,9 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 			return nil
 		}
 	}
+	if q.agg != nil && x.least != nil {
+		return x.leastBlock(w, n, count, idx)
+	}
 	if q.agg != nil {
 		return w.agg.block(count, idx)
 	}
@@ -387,6 +396,27 @@ func (x *execution) block(n int, p *part.Part, b *part.Block) error {
 	}
 
 	return nil
+}
+
+// leastBlock takes the times of the rows of a block of a leastPlan, and
+// aggregates those that the bound they give leaves in.
+func (x *execution) leastBlock(w *worker, slot, count int, idx []uint32) error {
+	l := x.least
+	count, idx, err := l.narrow(w, slot, count, idx)
+	if err != nil || count == 0 {
+		return err
+	}
+	if _, _, err := w.agg.classify(count, idx); err != nil {
+		return err
+	}
+	if err := l.offer(w, slot, count, idx); err != nil {
+		return err
+	}
+	if count, idx, err = l.narrow(w, slot, count, idx); err != nil || count == 0 {
+		return err
+	}
+
+	return w.agg.block(count, idx)
 }
 
 // kept returns the rows that the plan has so far of those it keeps, for a
