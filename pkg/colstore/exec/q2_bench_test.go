@@ -36,6 +36,13 @@ func blueskyStore(b *testing.B, dir string, rows, users int, step int64) *colsto
 // blueskyPartitions is blueskyStore with partitions of the given length.
 func blueskyPartitions(b testing.TB, dir string, rows, users int, step int64, partition time.Duration) *colstore.Store {
 	b.Helper()
+
+	return blueskyFrom(b, dir, rows, benchdata.New(1, users).Spread(step), partition)
+}
+
+// blueskyFrom is blueskyPartitions for the events of g.
+func blueskyFrom(b testing.TB, dir string, rows int, g *benchdata.Generator, partition time.Duration) *colstore.Store {
+	b.Helper()
 	s, err := colstore.OpenStore(dir, colstore.StoreOptions{
 		SortKey:    []string{"kind", "commit.operation", "commit.collection", "did"},
 		TimeFields: []string{"time_us"},
@@ -46,7 +53,6 @@ func blueskyPartitions(b testing.TB, dir string, rows, users int, step int64, pa
 	if err != nil {
 		b.Fatal(err)
 	}
-	g := benchdata.New(1, users).Spread(step)
 	const chunk = 100_000
 	var lines []byte
 	for left := rows; left > 0; left -= chunk {
