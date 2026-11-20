@@ -265,6 +265,7 @@ func TestMergeRangesCutOneOrderedRunIntoDisjointParts(t *testing.T) {
 		}
 		var joined []mergedRow
 		sizes := make([]int, 0, len(cuts)+1)
+		raw, want := uint64(0), uint64(0)
 		for i := 0; i <= len(cuts); i++ {
 			var lo, hi []byte
 			if i > 0 {
@@ -273,9 +274,19 @@ func TestMergeRangesCutOneOrderedRunIntoDisjointParts(t *testing.T) {
 			if i < len(cuts) {
 				hi = cuts[i]
 			}
-			rows := decodeRows(t, mergeRange(t, srcs, 512, lo, hi))
+			p := mergeRange(t, srcs, 512, lo, hi)
+			raw += p.RawBytes
+			rows := decodeRows(t, p)
 			sizes = append(sizes, len(rows))
 			joined = append(joined, rows...)
+		}
+		// The ranges share the input of the sources by their rows, up to a
+		// byte a source and range.
+		for _, src := range srcs {
+			want += src.RawBytes
+		}
+		if raw > want || raw+uint64(len(srcs)*(len(cuts)+1)) < want {
+			t.Fatalf("%d ranges account for %d input bytes of %d", n, raw, want)
 		}
 		if len(joined) != len(whole) {
 			t.Fatalf("%d ranges hold %d rows, the whole merge %d", n, len(joined), len(whole))

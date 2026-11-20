@@ -43,13 +43,12 @@ func MergeRange(w *Writer, srcs []*Part, blockRows int, lo, hi []byte) error {
 	m.w, m.lo, m.hi, m.blockRows = w, lo, hi, blockRows
 	m.out = shred.Get(shred.Options{})
 	for i, p := range srcs {
-		m.raw += int(p.RawBytes)
 		// A part whose keys all lie outside the range is not read at all.
 		if first, last := p.KeyRange(); (hi != nil && bytes.Compare(first, hi) >= 0) || (lo != nil && bytes.Compare(last, lo) < 0) {
 			continue
 		}
 		c := cursorPool.Get()
-		c.src, c.part, c.block = i, p, -1
+		c.src, c.part, c.block, c.taken = i, p, -1, 0
 		c.pathMap = grow(c.pathMap, len(p.paths))
 		for j := range c.pathMap {
 			c.pathMap[j] = noPath
@@ -97,8 +96,6 @@ type merger struct {
 	// with cursor i entering at node len(cursors)+i.
 	tree    []int32
 	winners []int32
-	// raw is the input size not yet accounted to an output block.
-	raw int
 	// blocks and short count the blocks written and those of them under
 	// half of blockRows.
 	blocks, short int
@@ -155,6 +152,8 @@ type mergeCursor struct {
 	time int64
 	pos  int
 	end  int // rows of the block inside the merged range
+	// taken counts the rows of the part written to the output.
+	taken uint64
 
 	blk  Block
 	refs []ColumnRef
@@ -546,6 +545,22 @@ func appendValid(dst []uint64, valid vec.Bitmap, a, n int, tag uint64) []uint64 
 	return dst
 }
 
+// raw returns the input size of the next n rows the cursor writes, the
+// share of its part's that they are of its rows.
+func (c *mergeCursor) raw(n int) int {
+	p := c.part
+	share := func(rows uint64) uint64 {
+		hi, lo := bits.Mul64(p.RawBytes, min(rows, p.Rows))
+		q, _ := bits.Div64(hi, lo, p.Rows)
+
+		return q
+	}
+	before := share(c.taken)
+	c.taken += uint64(n)
+
+	return int(share(c.taken) - before)
+}
+
 // emit appends the next n rows of the cursor to the output block.
 func (c *mergeCursor) emit(m *merger, n int) error {
 	out := m.out
@@ -583,15 +598,14 @@ func (c *mergeCursor) emit(m *merger, n int) error {
 		copyValue(c.outs[j], &c.cols[j].Column, at, row+shift)
 	}
 	if c.times.Layout == vec.Flat {
-		out.AppendRows(c.times.Ints[a:a+n], m.raw)
+		out.AppendRows(c.times.Ints[a:a+n], c.raw(n))
 	} else {
 		m.times = m.times[:0]
 		for i := 0; i < n; i++ {
 			m.times = append(m.times, c.times.Ints[0])
 		}
-		out.AppendRows(m.times, m.raw)
+		out.AppendRows(m.times, c.raw(n))
 	}
-	m.raw = 0
 
 	return nil
 }
@@ -847,10 +861,9 @@ func (m *merger) copyBlock(wi int32, c *mergeCursor) (bool, error) {
 			return false, err
 		}
 	}
-	if err := m.w.copyBlock(p, b, c.pathMap, m.raw, follows); err != nil {
+	if err := m.w.copyBlock(p, b, c.pathMap, c.raw(rows), follows); err != nil {
 		return false, err
 	}
-	m.raw = 0
 	m.blocks++
 	if rows < half {
 		m.short++
