@@ -63,6 +63,8 @@ func TestOrderedAggregation(t *testing.T) {
 		{"times of runs", &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: spans}, true, false},
 		{"times of runs of two keys and a range", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(created, exec.Gt(num("n"), exec.Int(5)))},
 			Keys: keys("coll", "user"), Aggs: spans[1:3]}, true, false},
+		// The rows of a key before the last follow the keys after it, not time.
+		{"times of a key before the last", &exec.Aggregate{Input: &exec.Scan{Filter: created}, Keys: keys("coll"), Aggs: spans}, false, false},
 		{"the longest spans", &exec.Sort{Input: &exec.Project{Input: &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: spans},
 			Exprs: []exec.Named{named("user", anyOf("user")), named("span", exec.Sub(anyOf("last"), anyOf("first")))}},
 			By: []exec.Order{{Column: "span", Desc: true}, {Column: "user"}}, Limit: 4}, true, true},
