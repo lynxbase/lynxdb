@@ -83,6 +83,54 @@ type orderedPlan struct {
 	// at the path distinct, without the codes of the rows.
 	entries  bool
 	distinct string
+	// times is set when the aggregates count rows and take the earliest and
+	// latest time alone: the rows of one sort key follow in the order of
+	// time, so the first and the last row of a group's run give its times.
+	times *runTimes
+}
+
+// runTimes says which words of a group its run gives: counts add the rows,
+// earliest and latest take the time of its first and last row, -1 for none.
+type runTimes struct {
+	path             int
+	counts           []int
+	earliest, latest int
+}
+
+// planRunTimes returns the runTimes of the aggregates, or nil when a word
+// needs more of a run than its length and its first and last time.
+func (q *query) planRunTimes(o *orderedPlan) *runTimes {
+	ap := q.agg
+	if len(o.parts) != o.groups || len(ap.states) != 0 || ap.distinct != 0 || ap.picks {
+		return nil
+	}
+	rt := &runTimes{path: -1, earliest: -1, latest: -1}
+	for i, w := range ap.words {
+		switch w.op {
+		case wordRows:
+			rt.counts = append(rt.counts, i)
+
+			continue
+		case wordCount, wordCountInt:
+			rt.counts = append(rt.counts, i)
+		case wordMinInt:
+			rt.earliest = i
+		case wordMaxInt:
+			rt.latest = i
+		default:
+			return nil
+		}
+		e := ap.args[w.arg].expr
+		if e.op != OpColumn || q.paths[e.path] != part.TimePath {
+			return nil
+		}
+		rt.path = e.path
+	}
+	if rt.path < 0 {
+		return nil
+	}
+
+	return rt
 }
 
 // columns calls need for every column a filter node reads.
@@ -318,6 +366,7 @@ func (q *query) planOrdered(snap *colstore.Snapshot, filter *Expr) *orderedPlan 
 		o.distinct = sortKey[prefix+o.groups]
 	}
 	o.blocks = key.Streams() == 1
+	o.times = q.planRunTimes(o)
 	for _, h := range snap.Parts() {
 		o.skipped += int64(h.NumBlocks())
 	}
@@ -510,8 +559,10 @@ type orderedScratch struct {
 	post   postEval
 	having havingEval
 
-	bound  []uint8
-	gid    []uint32
+	bound []uint8
+	gid   []uint32
+	// runs holds the selected row each run of a chunk starts at.
+	runs   []uint32
 	keyBuf []byte
 	// edges holds the first and last group of every range the worker read,
 	// ranges of them in this query.
@@ -960,11 +1011,12 @@ func (ow *orderedWorker) chunk(c *orderedCursor) (bool, error) {
 			markChanges(bound, c.cols[o.groups], from)
 		}
 	}
-	c.starts, c.group = c.starts[:0], c.group[:0]
+	c.starts, c.group, ow.runs = c.starts[:0], c.group[:0], ow.runs[:0]
 	for j, m := range bound {
 		if m == 0 {
 			continue
 		}
+		ow.runs = append(ow.runs, uint32(j))
 		row := uint32(from + j)
 		if picked != nil {
 			row = uint32(from) + picked[j]
@@ -977,13 +1029,62 @@ func (ow *orderedWorker) chunk(c *orderedCursor) (bool, error) {
 		copy(c.words[i*stride:], w.q.agg.init)
 	}
 	w.matched += int64(n)
-	if err := w.agg.feed(&target{words: c.words, gid: gid}, n, picked); err != nil {
-		return false, err
+	fed := false
+	if rt := o.times; rt != nil {
+		times, err := w.column(rt.path, vec.KindInt)
+		if err != nil {
+			return false, err
+		}
+		if fed = times != nil && times.Valid == nil; fed {
+			rt.feed(c.words, len(w.q.agg.words), ow.runs, n, picked, times)
+		}
+	}
+	if !fed {
+		if err := w.agg.feed(&target{words: c.words, gid: gid}, n, picked); err != nil {
+			return false, err
+		}
 	}
 	c.i, c.n = 0, len(c.starts)
 	c.load()
 
 	return true, nil
+}
+
+// feed sets the words of the groups whose runs start at the selected rows
+// runs of n from times, in which each group's rows ascend; picked lists the
+// rows of the window that passed the filter, or is nil for all of them.
+func (rt *runTimes) feed(words []int64, stride int, runs []uint32, n int, picked []uint32, times *vec.Column) {
+	ts := times.Ints
+	if times.Layout == vec.Const {
+		ts = nil
+	}
+	at := func(row uint32) int64 {
+		if ts == nil {
+			return times.Ints[0]
+		}
+
+		return ts[row]
+	}
+	for g, from := range runs {
+		to := uint32(n)
+		if g+1 < len(runs) {
+			to = runs[g+1]
+		}
+		lo, hi := from, to-1
+		if picked != nil {
+			lo, hi = picked[lo], picked[hi]
+		}
+		state := words[g*stride : (g+1)*stride]
+		for _, i := range rt.counts {
+			state[i] += int64(to - from)
+		}
+		if rt.earliest >= 0 {
+			state[rt.earliest] = min(state[rt.earliest], at(lo))
+		}
+		if rt.latest >= 0 {
+			state[rt.latest] = max(state[rt.latest], at(hi))
+		}
+	}
 }
 
 func (ow *orderedWorker) less(a, b *orderedCursor) bool {
