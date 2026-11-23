@@ -164,7 +164,6 @@ Paths below are relative to `/api/v1` unless they start with `/health`, `/metric
 | `POST` | `/services/collector`, `/services/collector/event`, `/services/collector/raw` | Splunk HEC ingest | [Compatibility](./compatibility.md#splunk-hec) |
 | `POST` | `/services/collector/ack` | Splunk HEC acknowledgements | [Compatibility](./compatibility.md#splunk-hec) |
 | `GET` | `/services/collector/health` | Splunk HEC health | [Compatibility](./compatibility.md#splunk-hec) |
-| `POST` | `/otlp/v1/logs` | OTLP/HTTP JSON logs | [Compatibility](./compatibility.md#post-apiv1otlpv1logs) |
 | `GET` | `/health` | Health check | [Server](./server.md) |
 | `GET` | `/metrics` | Prometheus metrics | [Server](./server.md#get-metrics) |
 | `GET` | `/status` | Server snapshot | [Server](./server.md#get-apiv1status) |

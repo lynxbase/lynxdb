@@ -877,7 +877,7 @@ func TestAuth_RoutesRequireTheirScope(t *testing.T) {
 		method, path string
 		allowed      []auth.Scope
 	}{
-		{"POST", "/api/v1/otlp/v1/logs", []auth.Scope{auth.ScopeIngest}},
+		{"POST", "/api/v1/ingest", []auth.Scope{auth.ScopeIngest}},
 		{"GET", "/api/v1/indexes", []auth.Scope{auth.ScopeQuery}},
 		{"GET", "/api/v1/fields", []auth.Scope{auth.ScopeQuery}},
 		{"GET", "/api/v1/fields/host/values", []auth.Scope{auth.ScopeQuery}},

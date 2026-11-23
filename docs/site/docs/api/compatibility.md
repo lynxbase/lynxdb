@@ -209,7 +209,7 @@ The OTLP/HTTP listener runs on its own port, `ingest.otlp.http_listen` (default 
 
 | Route | Behavior |
 |---|---|
-| `POST /v1/logs` | Stores log records. Protobuf (`application/x-protobuf`) or JSON (`application/json`); any other content type answers `415` |
+| `POST /v1/logs` | Stores log records. Protobuf (`application/x-protobuf`) or OTLP/JSON (`application/json`); any other content type answers `415`. The answer is an `ExportLogsServiceResponse` in the encoding of the request |
 | `POST /v1/traces`, `POST /v1/metrics` | Accepted and discarded, so mixed pipelines do not fail |
 
 An OTLP/gRPC listener runs when `ingest.otlp.grpc_listen` is set (empty by default). Requests are limited by `ingest.limits` and `ingest.otlp.grpc_max_recv_bytes`.
@@ -243,25 +243,24 @@ Records go to the `main` index as one flat JSON object each:
 | Every resource attribute | `resource.<key>`, as text |
 | Log record attributes | Fields of the same name, as text |
 
-### POST /api/v1/otlp/v1/logs
-
-The same logs signal on the main API port, for setups that can only reach port 3100. It takes OTLP JSON only; `Content-Type: application/x-protobuf` answers `415 INVALID_REQUEST` and a body that does not decode answers `400 INVALID_JSON`. A successful request answers `200` with `{}`. With authentication on, any valid key can send to it.
+A JSON body follows the OTLP/JSON encoding: field names in lowerCamelCase, trace and span IDs in hex, 64-bit integers as decimal strings, and enums as integers. Fields the protocol version does not know are ignored; an ID that is not hex answers `400`.
 
 ```bash
-curl -s -X POST localhost:3100/api/v1/otlp/v1/logs \
+curl -s -X POST localhost:4318/v1/logs \
   -H 'Content-Type: application/json' \
   -d '{
     "resourceLogs": [{
       "resource": {"attributes": [
-        {"key": "service.name", "value": {"stringValue": "api-gateway"}},
-        {"key": "deployment.environment", "value": {"stringValue": "prod"}}
+        {"key": "service.name", "value": {"stringValue": "api-gateway"}}
       ]},
       "scopeLogs": [{
         "scope": {"name": "app.logger"},
         "logRecords": [{
           "timeUnixNano": "1763370000000000000",
           "body": {"stringValue": "GET /api/users 200 12ms"},
-          "severityText": "INFO",
+          "severityNumber": 9,
+          "traceId": "5b8efff798038103d269b633813fc60c",
+          "spanId": "eee19b7ec3c1b174",
           "attributes": [
             {"key": "http.method", "value": {"stringValue": "GET"}},
             {"key": "http.status", "value": {"intValue": "200"}}
@@ -272,27 +271,16 @@ curl -s -X POST localhost:3100/api/v1/otlp/v1/logs \
   }'
 ```
 
-The record lands in the index `prod` and reads back as:
-
 ```json
-{"_raw": "GET /api/users 200 12ms", "_time": "2025-11-17T09:00:00Z", "http.method": "GET", "http.status": 200, "level": "info", "otel.scope.name": "app.logger", "source": "api-gateway", "sourcetype": "otlp"}
+{}
 ```
 
-This route maps records differently from the OTLP listener:
+The record reads back as:
 
-| OTLP | Event |
-|---|---|
-| `timeUnixNano` | `_time`; without it, a timestamp in the body text, else the time of arrival |
-| `body` | `_raw`, records with an empty body included |
-| `resource.attributes["service.name"]` | `source` |
-| `resource.attributes["host.name"]` | `host` |
-| `resource.attributes["deployment.environment"]` | The target index; `main` without it |
-| Other resource attributes | `resource.<key>`, with their OTLP types |
-| | `sourcetype` `otlp` |
-| `severityText` (lower-cased), else `severityNumber` | `level`; a non-zero `severityNumber` is also kept as `severity_number` |
-| `traceId`, `spanId`, `flags` | `trace_id`, `span_id`, `flags` |
-| Scope name and version | `otel.scope.name`, `otel.scope.version` |
-| Log record attributes | Fields of the same name, with their OTLP types |
+```json
+{"_raw": "GET /api/users 200 12ms", "_time": "2025-11-17T09:00:00Z", "http.method": "GET", "http.status": "200", "level": "info", "resource.service.name": "api-gateway", "scope.name": "app.logger", "source": "api-gateway", "sourcetype": "otlp", "span_id": "eee19b7ec3c1b174", "trace_id": "5b8efff798038103d269b633813fc60c"}
+```
+
 
 See the [OpenTelemetry guide](../guides/ingest-data/opentelemetry.md).
 

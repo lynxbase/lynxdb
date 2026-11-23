@@ -2,6 +2,8 @@ package otlphttp
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,9 +16,11 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/limits"
+	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/otlpcommon"
 	logscollector "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	metricscollector "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	tracecollector "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -127,12 +131,18 @@ func (r *Receiver) markReady(err error) {
 func (r *Receiver) handleLogs(w http.ResponseWriter, req *http.Request) {
 	var export logscollector.ExportLogsServiceRequest
 	encoding, bytes, ok := decodeRequest(w, req, &export)
+	if ok && encoding == "json" {
+		if err := idsFromHex(export.GetResourceLogs()); err != nil {
+			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+			ok = false
+		}
+	}
 	if !ok {
 		r.recordRequest("logs", encoding, "error", bytes)
 		return
 	}
-	total := countLogRecords(export.GetResourceLogs())
-	events := LogsToEvents(export.GetResourceLogs())
+	total := otlpcommon.CountLogRecords(export.GetResourceLogs())
+	events := otlpcommon.LogsToEvents(export.GetResourceLogs())
 	dropped := total - len(events)
 	r.recordRecords("logs", "accepted", len(events))
 	r.recordRecords("logs", "dropped", dropped)
@@ -186,7 +196,7 @@ func decodeRequest(w http.ResponseWriter, req *http.Request, msg proto.Message) 
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return encoding, len(data), false
 		}
-		if err := protojson.Unmarshal(data, msg); err != nil {
+		if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(data, msg); err != nil {
 			http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
 			return encoding, len(data), false
 		}
@@ -195,6 +205,35 @@ func decodeRequest(w http.ResponseWriter, req *http.Request, msg proto.Message) 
 		http.Error(w, "unsupported content type", http.StatusUnsupportedMediaType)
 		return encoding, 0, false
 	}
+}
+
+// idsFromHex sets the trace and span IDs of records read from OTLP/JSON to
+// the bytes their text names. OTLP/JSON writes these IDs in hex, where the
+// JSON mapping of protobuf that protojson reads writes bytes in base64. Hex
+// text is valid base64, so protojson decoded it as such; encoding those
+// bytes in base64 again gives back the hex text.
+func idsFromHex(resourceLogs []*logspb.ResourceLogs) error {
+	for _, rl := range resourceLogs {
+		for _, sl := range rl.GetScopeLogs() {
+			for _, rec := range sl.GetLogRecords() {
+				var err error
+				if rec.TraceId, err = hexID(rec.TraceId); err != nil {
+					return fmt.Errorf("traceId: %w", err)
+				}
+				if rec.SpanId, err = hexID(rec.SpanId); err != nil {
+					return fmt.Errorf("spanId: %w", err)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func hexID(decoded []byte) ([]byte, error) {
+	if len(decoded) == 0 {
+		return decoded, nil
+	}
+	return hex.DecodeString(base64.StdEncoding.EncodeToString(decoded))
 }
 
 func (r *Receiver) recordRequest(signal, encoding, result string, bytes int) {
@@ -232,9 +271,9 @@ func writeProtoResponse(w http.ResponseWriter, encoding string, msg proto.Messag
 func requestEncoding(req *http.Request) string {
 	ct := strings.ToLower(strings.TrimSpace(strings.Split(req.Header.Get("Content-Type"), ";")[0]))
 	switch ct {
-	case "application/x-protobuf", "application/protobuf":
+	case "application/x-protobuf":
 		return "protobuf"
-	case "application/json", "":
+	case "application/json":
 		return "json"
 	default:
 		return "unsupported"

@@ -17,6 +17,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/api/rest"
 	"github.com/lynxbase/lynxdb/pkg/client"
+	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
 // Harness
@@ -25,6 +26,7 @@ import (
 type Harness struct {
 	t         *testing.T
 	dataDir   string
+	ingest    config.IngestConfig
 	srv       *rest.Server
 	client    *client.Client
 	cancel    context.CancelFunc
@@ -38,6 +40,13 @@ type HarnessOption func(*Harness)
 func WithDisk() HarnessOption {
 	return func(h *Harness) {
 		h.dataDir = h.t.TempDir()
+	}
+}
+
+// WithOTLPHTTP starts the OTLP/HTTP listener on a random port.
+func WithOTLPHTTP() HarnessOption {
+	return func(h *Harness) {
+		h.ingest.OTLP.HTTPListen = "127.0.0.1:0"
 	}
 }
 
@@ -70,6 +79,7 @@ func (h *Harness) startServer() {
 		Addr:    "127.0.0.1:0",
 		DataDir: h.dataDir,
 		Logger:  logger,
+		Ingest:  h.ingest,
 	})
 	if err != nil {
 		h.t.Fatalf("NewServer: %v", err)
@@ -159,6 +169,11 @@ func (h *Harness) Client() *client.Client {
 // BaseURL returns the server base URL.
 func (h *Harness) BaseURL() string {
 	return fmt.Sprintf("http://%s", h.srv.Addr())
+}
+
+// OTLPHTTPURL returns the base URL of the OTLP/HTTP listener.
+func (h *Harness) OTLPHTTPURL() string {
+	return fmt.Sprintf("http://%s", h.srv.OTLPHTTPAddr())
 }
 
 // Data helpers

@@ -332,9 +332,6 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 	// to avoid Go 1.22+ ServeMux wildcard-vs-specific conflicts.
 	mux.HandleFunc("PUT /api/v1/es/{index}", esStub)
 
-	// OTLP HTTP Logs ingestion.
-	mux.HandleFunc("POST /api/v1/otlp/v1/logs", s.handleOTLPLogs)
-
 	mux.HandleFunc("GET /api/v1/status", s.handleStatus)
 
 	// Auth management — only registered when auth is enabled, 404 otherwise.

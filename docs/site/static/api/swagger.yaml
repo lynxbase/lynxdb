@@ -1495,40 +1495,6 @@ paths:
 
   # OTLP
 
-  /api/v1/otlp/v1/logs:
-    post:
-      operationId: otlpLogsJSON
-      tags: [OTLP]
-      summary: OTLP/HTTP JSON logs on the API port
-      description: |
-        Takes OTLP JSON only. `resource.attributes["deployment.environment"]` names the target index, else `main`.
-        Any valid key can call it.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-      responses:
-        '200':
-          description: '`{}`'
-          content:
-            application/json:
-              schema:
-                type: object
-        '400':
-          description: The body is not valid OTLP JSON (`INVALID_JSON`)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-        '415':
-          description: '`application/x-protobuf` is not accepted on this route (`INVALID_REQUEST`)'
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-
   /v1/logs:
     servers:
       - url: http://localhost:4318
@@ -1537,7 +1503,7 @@ paths:
       operationId: otlpLogs
       tags: [OTLP]
       summary: OTLP/HTTP logs
-      description: Protobuf or JSON. Records go to the `main` index; records with an empty body are dropped.
+      description: Protobuf or OTLP/JSON. Records go to the `main` index; records with an empty body are dropped.
       security: []
       requestBody:
         required: true

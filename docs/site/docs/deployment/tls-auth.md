@@ -117,7 +117,7 @@ lynxdb auth rotate-root
 
 | Scope | Allows |
 |-------|--------|
-| `ingest` | `/api/v1/ingest`, `/api/v1/ingest/raw`, `/api/v1/ingest/hec`, OTLP logs on `/api/v1/otlp/v1/logs`, and the `/api/v1/es/` bulk and document routes |
+| `ingest` | `/api/v1/ingest`, `/api/v1/ingest/raw`, `/api/v1/ingest/hec`, and the `/api/v1/es/` bulk and document routes |
 | `query` | `GET` and `POST /api/v1/query`, `/api/v1/query/stream`, `/api/v1/query/explain`, listing, reading and streaming jobs, index and field listings, field values, histogram, stats |
 | `admin` | Cancelling jobs, `GET /api/v1/config`, stats, the pprof endpoints |
 | `full` | Everything a scoped key can do |
@@ -152,7 +152,7 @@ API key checks apply to paths under `/api/`. The other routes behave as follows 
 | `/health`, `/metrics` | Open, for probes and Prometheus. |
 | `/_bulk`, `/{index}/_bulk` and other root-level Elasticsearch routes | Bulk requests are rejected with `401`; point shippers at `/api/v1/es/_bulk` with a key. |
 | `/services/collector*` (Splunk HEC) | Not checked against API keys: any non-empty `Authorization: Splunk <token>` is accepted. Use `/api/v1/ingest/hec` for authenticated HEC ingest, or block these paths at a proxy. |
-| OTLP listener (`ingest.otlp.http_listen`, `grpc_listen`) | Separate plain listeners without auth or TLS. Disable them or keep them on a private network; `/api/v1/otlp/v1/logs` on the API port is authenticated. |
+| OTLP listener (`ingest.otlp.http_listen`, `grpc_listen`) | Separate plain listeners without auth or TLS. Disable them or keep them on a private network. |
 
 ## TLS and Auth Together
 
