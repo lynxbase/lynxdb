@@ -59,6 +59,9 @@ type Result struct {
 	Columns []string
 	// Columnar is set when the columnar executor ran the whole plan.
 	Columnar bool
+	// Warnings tells the caller what the query could not know to be an
+	// error, such as a field that none of the indexes it reads holds.
+	Warnings []string
 
 	rows   []map[string]event.Value
 	table  *exec.Result
