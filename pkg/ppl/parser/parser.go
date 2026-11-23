@@ -255,7 +255,14 @@ func (p *parser) pipeline(top bool) *ast.Pipeline {
 	defer func() { p.depth-- }()
 	start := p.peek().Pos
 	pl := newPipeline()
-	p.accept(lexer.Pipe)
+	// A pipe that opens a pipeline is followed by a command, never by
+	// search terms.
+	if p.accept(lexer.Pipe) && !p.atSourceCommand() {
+		if p.atCommandName() {
+			p.failAt(start, missingSource)
+		}
+		p.command()
+	}
 	pl.Commands = append(pl.Commands, p.sourceCommand())
 	for p.accept(lexer.Pipe) {
 		if p.at(lexer.EOF) || p.at(lexer.RBracket) || p.at(lexer.Pipe) || p.at(lexer.Semicolon) {
@@ -330,6 +337,36 @@ func (p *parser) sourceCommand() ast.Command {
 	return p.search()
 }
 
+// atSourceCommand reports whether the next tokens start a command that may
+// open a pipeline.
+func (p *parser) atSourceCommand() bool {
+	t := p.peek()
+	switch {
+	case t.Is("search"), t.Is("describe"), t.Is("makeresults"), t.Is("multisearch"), t.Is("graphlookup"):
+		return true
+	case t.Is("union"):
+		return !p.isArgStart(1)
+	case t.Is("show"):
+		return p.peekAt(1).Is("datasources")
+	case t.Is("rest"):
+		return p.peekAt(1).Kind == lexer.String
+	case t.Is("source"), t.Is("index"):
+		return p.isArgStart(1)
+	}
+	return false
+}
+
+// atCommandName reports whether the next token names a command that
+// follows a pipe.
+func (p *parser) atCommandName() bool {
+	t := p.peek()
+	if t.Kind != lexer.Ident {
+		return false
+	}
+	name := strings.ToLower(t.Text)
+	return commandNames[name] || unsupportedCommands[name]
+}
+
 func (p *parser) isArgStart(n int) bool { return p.peekAt(n).Kind == lexer.Eq }
 
 // skipToPipe consumes tokens up to the next top-level pipe, honoring
@@ -362,6 +399,23 @@ func (p *parser) skipToPipe() {
 var unsupportedCommands = map[string]bool{
 	"kmeans": true, "ad": true, "ml": true, "graphlookup": true, "foreach": true, "timewrap": true,
 }
+
+// commandNames lists the names command parses.
+var commandNames = map[string]bool{
+	"where": true, "fields": true, "table": true, "rename": true, "replace": true, "eval": true,
+	"fieldformat": true, "stats": true, "eventstats": true, "streamstats": true, "dedup": true,
+	"sort": true, "reverse": true, "head": true, "bin": true, "top": true, "rare": true,
+	"parse": true, "grok": true, "rex": true, "regex": true, "spath": true, "patterns": true,
+	"lookup": true, "fillnull": true, "convert": true, "trendline": true, "expand": true,
+	"mvexpand": true, "flatten": true, "nomv": true, "mvcombine": true, "append": true,
+	"appendcol": true, "appendpipe": true, "join": true, "inner": true, "left": true,
+	"right": true, "full": true, "cross": true, "outer": true, "semi": true, "anti": true,
+	"addtotals": true, "addcoltotals": true, "chart": true, "timechart": true,
+	"transpose": true, "xyseries": true, "union": true,
+}
+
+// missingSource is the error of a query that names no source.
+const missingSource = "missing source: a query starts with source=<index> or search source=<index>"
 
 func (p *parser) command() ast.Command {
 	t := p.peek()

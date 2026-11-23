@@ -38,7 +38,7 @@ func (p *parser) search() ast.Command {
 		if !explicit && len(terms) == 0 {
 			p.fail(p.peek(), "expected a query", "source=<index>", "search")
 		}
-		p.failAt(start, "missing source: a query starts with source=<index> or search source=<index>")
+		p.failAt(start, missingSource)
 	}
 	for _, t := range terms {
 		if cmd.Filter == nil {

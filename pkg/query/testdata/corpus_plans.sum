@@ -136,10 +136,10 @@ b77c35d3aaee3bff	makeresults format=json data='[{"name":"John","age":35},{"name"
 2685c4dbeec67619	source=nyc_taxi | fields value | ml action='train' algorithm='rcf' | where value=10844.0
 47bb98d9528ba757	source=nyc_taxi | fields category, value | ml action='train' algorithm='rcf' category_field='category' | where value=10844.0 or value=6526.0
 278477ab4f00e2df	source=iris_data | fields sepal_length_in_cm, sepal_width_in_cm, petal_length_in_cm, petal_width_in_cm | ml action='train' algorithm='kmeans' centroids=3
-5b3062d677ac7431	| multisearch [search source=otellogs | where severityText = 'ERROR' | eval env = 'errors' | fields env, `resource.attributes.service.name`, body] [search source=otellogs | where severityText = 'DEBUG' | eval env = 'debug' | fields env, `resource.attributes.service.name`, body] | sort env, `resource.attributes.service.name`
-c823542a1fb3ccc5	| multisearch [search source=otellogs | where severityNumber >= 17 | eval tier = "critical" | fields severityText, severityNumber, tier] [search source=otellogs | where severityNumber < 17 AND severityNumber >= 13 | eval tier = "warning" | fields severityText, severityNumber, tier] | sort - severityNumber
-275cc93e2af756c2	| multisearch [search source=time_data | where category IN ("A", "B")] [search source=time_data2 | where category IN ("E", "F")] | fields @timestamp, category, value, timestamp | head 5
-47174a0dd85ba4b3	| multisearch [search source=otellogs | where severityText = 'ERROR' | eval needs_page = "yes" | fields severityText, `resource.attributes.service.name`, needs_page] [search source=otellogs | where severityText = 'WARN' | fields severityText, `resource.attributes.service.name`] | sort `resource.attributes.service.name` | head 5
+681952ee930c42ac	| multisearch [search source=otellogs | where severityText = 'ERROR' | eval env = 'errors' | fields env, `resource.attributes.service.name`, body] [search source=otellogs | where severityText = 'DEBUG' | eval env = 'debug' | fields env, `resource.attributes.service.name`, body] | sort env, `resource.attributes.service.name`
+2affa7d6b84f0ff4	| multisearch [search source=otellogs | where severityNumber >= 17 | eval tier = "critical" | fields severityText, severityNumber, tier] [search source=otellogs | where severityNumber < 17 AND severityNumber >= 13 | eval tier = "warning" | fields severityText, severityNumber, tier] | sort - severityNumber
+d606ac65d2fee525	| multisearch [search source=time_data | where category IN ("A", "B")] [search source=time_data2 | where category IN ("E", "F")] | fields @timestamp, category, value, timestamp | head 5
+48c3c8f9171517be	| multisearch [search source=otellogs | where severityText = 'ERROR' | eval needs_page = "yes" | fields severityText, `resource.attributes.service.name`, needs_page] [search source=otellogs | where severityText = 'WARN' | fields severityText, `resource.attributes.service.name`] | sort `resource.attributes.service.name` | head 5
 b98d1038e3465d57	source=mvcombine_data | where ip='10.0.0.1' and bytes=100 and tags='t1' | fields ip, bytes, tags, packets_str | mvcombine packets_str
 1bb70f35735194c8	source=mvcombine_data | where bytes=700 and tags='t7' | fields ip, bytes, tags, packets_str | sort ip, packets_str | mvcombine packets_str | sort ip
 17db51158c46491b	source=mvcombine_data | where ip='10.0.0.3' and bytes=300 and tags='t3' | fields ip, bytes, tags, packets_str | mvcombine packets_str
@@ -191,7 +191,7 @@ b35ba0ca2e119ee4	source=accounts | replace "* *" WITH "*_*" IN address | fields 
 59dee1b6a1c574e5	source=accounts | replace "*IL*" WITH "Illinois" IN state | fields state
 ef873873dfae690b	source=accounts | eval note = 'price: *sale*' | replace 'price: \*sale\*' WITH 'DISCOUNTED' IN note | fields note
 d98b2f3ef2dea27f	source=accounts | eval label = 'file123.txt' | replace 'file*.*' WITH '\**.*' IN label | fields label
-7652b8849c9f73a9	| rest '/_cluster/health' | eval status = json_extract(response, 'status'), number_of_nodes = json_extract(response, 'number_of_nodes') | fields status, number_of_nodes
+5b88108c3497cd9d	| rest '/_cluster/health' | eval status = json_extract(response, 'status'), number_of_nodes = json_extract(response, 'number_of_nodes') | fields status, number_of_nodes
 887b82a25d76a6b8	source=otellogs | fields severityText, `resource.attributes.service.name` | head 5 | reverse
 415255b93b19c84e	source=otellogs | sort severityNumber | fields severityText, severityNumber | head 5 | reverse
 80630b852c3d5603	source=otellogs | reverse | head 2 | fields severityText, `resource.attributes.service.name`
@@ -348,11 +348,11 @@ ed880dda2ec1233b	source=otellogs | top usenull=false instrumentationScope.name
 0e8553fae92ce216	source=otellogs | stats count() as log_count by severityText | sort severityText | transpose 3
 ae8667277a6b4b37	source=otellogs | sort `@timestamp` | trendline sma(3, severityNumber) as sev_trend | fields severityText, severityNumber, sev_trend | head 6
 9cfa9ec64788d7e1	source=otellogs | sort `@timestamp` | trendline wma(3, severityNumber) as wma_trend | fields severityText, severityNumber, wma_trend | head 6
-a979c20095704757	| union [search source=accounts | where age < 30 | eval age_group = "young" | fields firstname, age, age_group] [search source=accounts | where age >= 30 | eval age_group = "adult" | fields firstname, age, age_group] | sort age
-18d0ef08273a0ace	| union [search source=accounts | where balance > 30000] [search source=accounts | where age < 30] | fields firstname, age, balance | sort balance desc
+b4cddd94a2541760	| union [search source=accounts | where age < 30 | eval age_group = "young" | fields firstname, age, age_group] [search source=accounts | where age >= 30 | eval age_group = "adult" | fields firstname, age, age_group] | sort age
+17944b1e9a659393	| union [search source=accounts | where balance > 30000] [search source=accounts | where age < 30] | fields firstname, age, balance | sort balance desc
 ff66663e1436fb1c	search source=accounts | where age > 30 | union [search source=accounts | where age < 30] | fields firstname, age | sort age
-40d1565898c52010	| union maxout=3 [search source=accounts | where balance > 20000] [search source=accounts | where age > 30] | fields firstname, age, balance
-1f13af3900fe402e	| union [search source=accounts | where balance > 20000 | eval query_type = "high_balance" | fields firstname, balance, query_type] [search source=accounts | where balance > 0 AND balance <= 20000 | eval query_type = "regular" | fields firstname, balance, query_type] | sort balance desc
+9e1f3ef464e75295	| union maxout=3 [search source=accounts | where balance > 20000] [search source=accounts | where age > 30] | fields firstname, age, balance
+fb319d4dadb2af01	| union [search source=accounts | where balance > 20000 | eval query_type = "high_balance" | fields firstname, balance, query_type] [search source=accounts | where balance > 0 AND balance <= 20000 | eval query_type = "regular" | fields firstname, balance, query_type] | sort balance desc
 57d0ef4ecb67e509	source=otellogs | where severityNumber > 9 | sort severityNumber, `resource.attributes.service.name` | fields severityText, severityNumber, `resource.attributes.service.name`
 e67f17c740892f13	source=otellogs | where severityNumber >= 17 AND `resource.attributes.service.name` = 'payment' | fields severityText, severityNumber, `resource.attributes.service.name`
 ff3eaf0603bb1206	source=otellogs | where severityText = 'WARN' or severityText = 'ERROR' | fields severityText, `resource.attributes.service.name`, body | head 5
