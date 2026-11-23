@@ -206,3 +206,8 @@ func KeyValue(key []byte) (Value, []byte) {
 // Number returns the number that a value is, or holds as a string, as a
 // float.
 func Number(v Value) (float64, bool) { return number(v) }
+
+// NumberText reads text that holds a number, with white space around it, as
+// arithmetic and comparisons read a string: an integer when it is one, else
+// a float.
+func NumberText(s []byte) (Value, bool) { return numberText(s) }

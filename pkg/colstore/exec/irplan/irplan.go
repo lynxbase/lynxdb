@@ -1335,6 +1335,9 @@ func (t *translator) pred(e ir.Expr, not bool) (*exec.Expr, error) {
 			return nil, unsupported("%s", e)
 		}
 		negated := e.Not != not
+		if in, err := t.inList(e.X, e.List, negated); err != nil || in != nil {
+			return in, err
+		}
 		any := make([]*exec.Expr, 0, len(e.List))
 		for _, v := range e.List {
 			op := ir.OpEq
