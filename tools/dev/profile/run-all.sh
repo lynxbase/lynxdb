@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Master profiling orchestrator.
 # Builds, starts server, seeds data, runs load, collects profiles, analyzes.
-# Usage: scripts/profile/run-all.sh
+# Usage: tools/dev/profile/run-all.sh
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 cd "$PROJECT_ROOT"
 
 ADDR="${LYNXDB_ADDR:-localhost:3100}"
@@ -36,13 +36,13 @@ if curl -sf "$BASE/health" >/dev/null 2>&1; then
 fi
 
 echo "=== Build ==="
-make build
+mise run build
 echo ""
 
 # Generate fixtures if missing
 if [ ! -f testdata/bench/json_100k.log ]; then
     echo "=== Generate bench fixtures ==="
-    make bench-fixtures
+    mise run bench:fixtures
     echo ""
 fi
 
@@ -139,7 +139,7 @@ echo "  Profiling complete: $OUTDIR"
 echo "========================================="
 echo ""
 echo "Files:"
-ls -lh "$OUTDIR/" | grep -v '^total'
+ls -lh "$OUTDIR/" | tail -n +2
 echo ""
 echo "Interactive exploration:"
 echo "  go tool pprof -http=:8080 $OUTDIR/cpu.pb.gz"

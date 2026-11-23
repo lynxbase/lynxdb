@@ -4,7 +4,7 @@
 //
 // Usage, from the repository root:
 //
-//	go run ./scripts/genbench
+//	go run ./tools/dev/genbench
 package main
 
 import (

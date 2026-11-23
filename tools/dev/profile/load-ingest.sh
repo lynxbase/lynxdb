@@ -10,7 +10,7 @@ FIXTURE="${3:-testdata/bench/json_100k.log}"
 
 if [ ! -f "$FIXTURE" ]; then
     echo "ERROR: fixture not found: $FIXTURE" >&2
-    echo "Run: make bench-fixtures" >&2
+    echo "Run: mise run bench:fixtures" >&2
     exit 1
 fi
 

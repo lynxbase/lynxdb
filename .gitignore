@@ -16,23 +16,10 @@ coverage.html
 # OS
 .DS_Store
 
-# Build artifacts
-custom-gcl
-release-tmp
-
 # Locally built tool binaries (use `go run ./internal/docgen`, etc.)
 /docgen
-/lynxdb-compat-manifest
 
-# Python
-__pycache__/
-*.pyc
-
-# Local comment lint helper
-lint-comm
-.lint-comm-memory.json
-
-# GoReleaser
+# Release binaries, archives and the download site
 /dist/
 /docs/site/node_modules/
 /docs/site/build/
@@ -43,8 +30,6 @@ lynxdb
 # Profiling artifacts
 /artifacts/
 
-
 # mise local overrides
-mise.local.toml
-.mise/
-mise.lock
+/mise.local.toml
+/mise.local.lock
