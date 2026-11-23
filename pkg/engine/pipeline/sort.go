@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"slices"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -26,6 +26,34 @@ type SortField struct {
 	Name       string
 	Desc       bool
 	NullsFirst bool
+}
+
+// sortKeys holds the values of the sort fields of rows as the executor
+// compares them, converted once per row, row after row.
+type sortKeys struct {
+	fields []SortField
+	vals   []exec.Value
+	// buf holds the bytes of the arrays and objects among the values.
+	buf []byte
+}
+
+// add appends the value of the next field of the row being added.
+func (k *sortKeys) add(v event.Value) {
+	var x exec.Value
+	x, k.buf = ExecValue(v, k.buf)
+	k.vals = append(k.vals, x)
+}
+
+// compare orders the rows a and b by the sort fields.
+func (k *sortKeys) compare(a, b int) int {
+	n := len(k.fields)
+	for f, field := range k.fields {
+		if c := exec.Compare(k.vals[a*n+f], k.vals[b*n+f], field.Desc, field.NullsFirst); c != 0 {
+			return c
+		}
+	}
+
+	return 0
 }
 
 // compareRows orders two rows by the sort fields; buf serves the values
@@ -127,24 +155,32 @@ func (s *SortIterator) materialize(ctx context.Context) error {
 	return nil
 }
 
-// sortColumnar sorts the accumulated columnar data using a permutation index.
-// Direct column access (Batch.Value) replaces per-comparison map lookups,
-// reducing sort overhead from ~30-50ns/lookup to ~5ns/lookup for 1.5M+ rows.
+// sortColumnar sorts the accumulated columnar data using a permutation
+// index, over the sort fields of each row converted once.
 func (s *SortIterator) sortColumnar(ctx context.Context) error {
 	n := s.mergedBatch.Len
+	keys := &sortKeys{fields: s.fields, vals: make([]exec.Value, 0, n*len(s.fields))}
+	cols := make([][]event.Value, len(s.fields))
+	for f, field := range s.fields {
+		cols[f] = s.mergedBatch.Columns[field.Name]
+	}
 	s.sortedIndices = make([]int, n)
 	for i := range s.sortedIndices {
 		s.sortedIndices[i] = i
+		for _, col := range cols {
+			var v event.Value
+			if i < len(col) {
+				v = col[i]
+			}
+			keys.add(v)
+		}
 	}
 
 	var canceled bool
 	var comparisons int64
-	var buf []byte
-	a := make(map[string]event.Value, len(s.fields))
-	b := make(map[string]event.Value, len(s.fields))
-	sort.SliceStable(s.sortedIndices, func(i, j int) bool {
+	slices.SortStableFunc(s.sortedIndices, func(a, b int) int {
 		if canceled {
-			return false
+			return 0
 		}
 		comparisons++
 		if comparisons&0x3FF == 0 {
@@ -152,18 +188,12 @@ func (s *SortIterator) sortColumnar(ctx context.Context) error {
 			case <-ctx.Done():
 				canceled = true
 
-				return false
+				return 0
 			default:
 			}
 		}
-		for _, f := range s.fields {
-			a[f.Name] = s.mergedBatch.Value(f.Name, s.sortedIndices[i])
-			b[f.Name] = s.mergedBatch.Value(f.Name, s.sortedIndices[j])
-		}
-		var c int
-		c, buf = compareRows(s.fields, a, b, buf)
 
-		return c < 0
+		return keys.compare(a, b)
 	})
 	if canceled {
 		return ctx.Err()
