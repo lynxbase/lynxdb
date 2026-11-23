@@ -303,29 +303,7 @@ func (q *query) aggregate(a *Aggregate) error {
 			continue
 		}
 		out.arg = ap.arg(e)
-		kinds := ap.args[out.arg].kinds
-		var ints, floats wordOp
 		switch g.Func {
-		case Count:
-			out.count = ap.word(wordCount, out.arg)
-		case ApproxDistinct:
-			out.state = ap.state(stateHLL, out.arg)
-		case Percentile:
-			if kinds&textKinds == 0 || g.P != g.P || g.P < 0 || g.P > 100 {
-				return unsupported("aggregate %q takes numbers and a percentage from 0 to 100", g.Name)
-			}
-			ap.sketch(out.arg)
-			out.p = g.P
-		case CountDistinct:
-			out.distinct = ap.distinct
-			ap.args[out.arg].distinct = append(ap.args[out.arg].distinct, ap.distinct)
-			ap.distinct++
-		case Sum, Avg:
-			ints, floats = wordSumInt, wordSumFloat
-		case Min:
-			ints, floats = wordMinInt, wordMinFloat
-		case Max:
-			ints, floats = wordMaxInt, wordMaxFloat
 		case First, Last, Earliest, Latest, AnyValue:
 			if e.op != OpColumn {
 				return unsupported("aggregate %q takes a column", g.Name)
@@ -350,39 +328,91 @@ func (q *query) aggregate(a *Aggregate) error {
 				return unsupported("aggregate %q orders by numbers", g.Name)
 			}
 			out.pick, out.located = ap.pickWord(wordArgMin+wordOp(g.Func-ArgMin), out.arg, ap.order(by)), e
-		case Var, Stdev, VarPop, StdevPop:
-			if kinds&textKinds == 0 {
-				return unsupported("aggregate %q takes numbers", g.Name)
-			}
-			out.spread = ap.word(wordVarN, out.arg)
-			ap.word(wordVarMean, out.arg)
-			ap.word(wordVarM2, out.arg)
 		default:
-			return unsupported("unknown aggregate function")
-		}
-		if ints != 0 {
-			extreme := g.Func == Min || g.Func == Max
-			switch {
-			case extreme && kinds&(numericKinds|kindBit(vec.KindString)) == 0:
-				return unsupported("aggregate %q takes numbers or strings", g.Name)
-			case !extreme && kinds&textKinds == 0:
-				return unsupported("aggregate %q takes numbers", g.Name)
-			case g.Func == Min && kinds&kindBit(vec.KindString) != 0:
-				out.state = ap.state(stateMinBytes, out.arg)
-			case g.Func == Max && kinds&kindBit(vec.KindString) != 0:
-				out.state = ap.state(stateMaxBytes, out.arg)
-			}
-			// A string may hold a number of either kind.
-			if kinds&(kindBit(vec.KindInt)|kindBit(vec.KindString)) != 0 {
-				out.countInt, out.ints = ap.word(wordCountInt, out.arg), ap.word(ints, out.arg)
-			}
-			if kinds&(kindBit(vec.KindFloat)|kindBit(vec.KindString)) != 0 {
-				out.countFloat, out.floats = ap.word(wordCountFloat, out.arg), ap.word(floats, out.arg)
+			if err := ap.allocate(&out, g); err != nil {
+				return err
 			}
 		}
 		ap.outs = append(ap.outs, out)
 		ap.names = append(ap.names, g.Name)
 	}
+	ap.finish()
+	if ap.picks {
+		q.located = make([]*sexpr, len(ap.names))
+		for i, o := range ap.outs {
+			q.located[len(ap.keys)+i] = o.located
+		}
+	}
+	q.agg = ap
+
+	return nil
+}
+
+// allocate gives aggregate g of argument out.arg the words and the states
+// that its function keeps; the functions that pick a row have theirs.
+func (ap *aggPlan) allocate(out *aggOut, g Agg) error {
+	kinds := ap.args[out.arg].kinds
+	var ints, floats wordOp
+	switch g.Func {
+	case Count:
+		out.count = ap.word(wordCount, out.arg)
+	case ApproxDistinct:
+		out.state = ap.state(stateHLL, out.arg)
+	case Percentile:
+		if kinds&textKinds == 0 || g.P != g.P || g.P < 0 || g.P > 100 {
+			return unsupported("aggregate %q takes numbers and a percentage from 0 to 100", g.Name)
+		}
+		ap.sketch(out.arg)
+		out.p = g.P
+	case CountDistinct:
+		out.distinct = ap.distinct
+		ap.args[out.arg].distinct = append(ap.args[out.arg].distinct, ap.distinct)
+		ap.distinct++
+	case Sum, Avg:
+		ints, floats = wordSumInt, wordSumFloat
+	case Min:
+		ints, floats = wordMinInt, wordMinFloat
+	case Max:
+		ints, floats = wordMaxInt, wordMaxFloat
+	case Var, Stdev, VarPop, StdevPop:
+		if kinds&textKinds == 0 {
+			return unsupported("aggregate %q takes numbers", g.Name)
+		}
+		out.spread = ap.word(wordVarN, out.arg)
+		ap.word(wordVarMean, out.arg)
+		ap.word(wordVarM2, out.arg)
+	default:
+		return unsupported("aggregate %q of a function the executor does not compute", g.Name)
+	}
+	if ints == 0 {
+		return nil
+	}
+	extreme := g.Func == Min || g.Func == Max
+	switch {
+	case extreme && kinds&(numericKinds|kindBit(vec.KindString)) == 0:
+		return unsupported("aggregate %q takes numbers or strings", g.Name)
+	case !extreme && kinds&textKinds == 0:
+		return unsupported("aggregate %q takes numbers", g.Name)
+	case g.Func == Min && kinds&kindBit(vec.KindString) != 0:
+		out.state = ap.state(stateMinBytes, out.arg)
+	case g.Func == Max && kinds&kindBit(vec.KindString) != 0:
+		out.state = ap.state(stateMaxBytes, out.arg)
+	}
+	// A string may hold a number of either kind.
+	if kinds&(kindBit(vec.KindInt)|kindBit(vec.KindString)) != 0 {
+		out.countInt, out.ints = ap.word(wordCountInt, out.arg), ap.word(ints, out.arg)
+	}
+	if kinds&(kindBit(vec.KindFloat)|kindBit(vec.KindString)) != 0 {
+		out.countFloat, out.floats = ap.word(wordCountFloat, out.arg), ap.word(floats, out.arg)
+	}
+
+	return nil
+}
+
+// finish completes a plan whose aggregates have their words: the words
+// every plan has, what each argument needs and the first value of every
+// word.
+func (ap *aggPlan) finish() {
 	if ap.distinct > 0 && len(ap.keys) > 0 {
 		ap.group = ap.word(wordGroup, -1)
 	}
@@ -421,15 +451,6 @@ func (q *query) aggregate(a *Aggregate) error {
 		}
 		ap.init = append(ap.init, v)
 	}
-	if ap.picks {
-		q.located = make([]*sexpr, len(ap.names))
-		for i, o := range ap.outs {
-			q.located[len(ap.keys)+i] = o.located
-		}
-	}
-	q.agg = ap
-
-	return nil
 }
 
 func wordFloat(w int64) float64 { return math.Float64frombits(uint64(w)) }

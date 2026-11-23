@@ -68,17 +68,28 @@ const (
 	// 100, read from a sketch of at most 32 KB per group. Every Percentile of one argument shares the
 	// sketch.
 	Percentile
+	// List is the array of the values of the argument in the order the
+	// rows come, at most MaxListed of them; Take is the array of the first
+	// Size of them. Values is the array of its distinct values in the order
+	// of a sort, the first MaxListed of them. An Accumulator computes them.
+	List
+	Take
+	Values
 )
 
+// MaxListed is the most values that a List or a Values holds.
+const MaxListed = 100
+
 // Agg is one aggregate; Arg is nil for a Count of rows, By orders the rows
-// of an ArgMin or an ArgMax, and P is the percentage of a Percentile, from 0
-// to 100.
+// of an ArgMin or an ArgMax, P is the percentage of a Percentile, from 0
+// to 100, and Size the most values of a Take.
 type Agg struct {
 	Name string
 	Func AggFunc
 	Arg  *Expr
 	By   *Expr
 	P    float64
+	Size int
 }
 
 // Aggregate groups its input by Keys and computes Aggs per group; its
