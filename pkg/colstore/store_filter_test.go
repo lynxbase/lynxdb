@@ -153,7 +153,7 @@ func TestStoreKeepsColumnFiltersThroughFlushesAndMerges(t *testing.T) {
 	skipSyncs(t)
 	path := filepath.Join(t.TempDir(), "store")
 	// The runs stay as flushed until the store is opened again to merge.
-	opts := StoreOptions{SortKey: []string{"svc"}, TimeField: "ts", BlockRows: 1024, FlushBytes: 1 << 20, MergeFanIn: -1, FlushInterval: -1}
+	opts := StoreOptions{SortKey: []string{"svc"}, TimeField: "ts", BlockRows: 1024, BufferBytes: 1 << 20, MergeFanIn: -1, FlushInterval: -1}
 	s, err := OpenStore(path, opts)
 	if err != nil {
 		t.Fatal(err)
@@ -165,13 +165,12 @@ func TestStoreKeepsColumnFiltersThroughFlushesAndMerges(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			r := rand.New(rand.NewSource(int64(w)))
-			wr := s.NewWriter()
 			for i := 0; i < perWriter; i += 500 {
-				if err := wr.AddNDJSON(filterDocs(r, w, w*perWriter+i, 500)); err != nil {
+				if _, err := s.Append(filterDocs(r, w, w*perWriter+i, 500)); err != nil {
 					t.Error(err)
 				}
 			}
-			if err := wr.Close(); err != nil {
+			if err := s.Sync(); err != nil {
 				t.Error(err)
 			}
 		}()

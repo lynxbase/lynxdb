@@ -11,25 +11,24 @@ import (
 )
 
 // writeInterleavedRuns writes rows rows to s as runs runs whose keys
-// interleave, row i going to run i%runs.
+// interleave, row i going to run i%runs; s writes its buffers only on Sync.
 func writeInterleavedRuns(t *testing.T, s *Store, rows, runs int) {
 	t.Helper()
 	for r := 0; r < runs; r++ {
-		w := s.NewWriter()
 		var buf bytes.Buffer
 		for i := r; i < rows; i += runs {
 			fmt.Fprintf(&buf, `{"k":"%08d","n":%d}`+"\n", i, i)
 			if buf.Len() > 1<<20 {
-				if err := w.AddNDJSON(buf.Bytes()); err != nil {
+				if _, err := s.Append(buf.Bytes()); err != nil {
 					t.Fatal(err)
 				}
 				buf.Reset()
 			}
 		}
-		if err := w.AddNDJSON(buf.Bytes()); err != nil {
+		if _, err := s.Append(buf.Bytes()); err != nil {
 			t.Fatal(err)
 		}
-		if err := w.Close(); err != nil {
+		if err := s.Sync(); err != nil {
 			t.Fatal(err)
 		}
 	}

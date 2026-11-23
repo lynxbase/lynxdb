@@ -37,10 +37,6 @@ func TestClosedStoreTakesNothing(t *testing.T) {
 	if _, err := s.Append(storeDocs(0, 100)); err != nil {
 		t.Fatal(err)
 	}
-	w := s.NewWriter()
-	if err := w.AddNDJSON(storeDocs(100, 5)); err != nil {
-		t.Fatal(err)
-	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -50,13 +46,6 @@ func TestClosedStoreTakesNothing(t *testing.T) {
 	}
 	if err := s.Sync(); !errors.Is(err, ErrClosed) {
 		t.Fatalf("Sync after Close: %v", err)
-	}
-	// A writer that was left open cannot reach the directory either.
-	if err := w.Flush(); !errors.Is(err, ErrClosed) {
-		t.Fatalf("Flush of a writer after Close: %v", err)
-	}
-	if err := s.NewWriter().AddNDJSON(storeDocs(300, 100)); !errors.Is(err, ErrClosed) {
-		t.Fatalf("a writer made after Close: %v", err)
 	}
 	if _, err := s.DropBefore(1 << 62); !errors.Is(err, ErrClosed) {
 		t.Fatalf("DropBefore after Close: %v", err)
@@ -239,11 +228,10 @@ func TestDropBeforeThatMeetsACloseDropsOrReturnsErrClosed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := s.NewWriter()
-	if err := w.AddNDJSON(timedDocs(0, total, hours)); err != nil {
+	if _, err := s.Append(timedDocs(0, total, hours)); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(); err != nil {
+	if err := s.Sync(); err != nil {
 		t.Fatal(err)
 	}
 	// The drop is held where it waits for its turn, and the store is closed

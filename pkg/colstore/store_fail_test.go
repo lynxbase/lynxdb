@@ -85,26 +85,20 @@ func TestFlushThatFailsKeepsItsRowsForTheNextTry(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			w := s.NewWriter()
-			if err := w.AddNDJSON(timedDocs(0, 300, hours)); err != nil {
+			if _, err := s.Append(timedDocs(0, 300, hours)); err != nil {
 				t.Fatal(err)
 			}
-			if err := w.Flush(); err != nil {
+			if err := s.Sync(); err != nil {
 				t.Fatal(err)
 			}
 			repair := c.arrange(path)
-			// A buffer that falls into three partitions, by a writer of its
-			// own and through Append.
-			if err := w.AddNDJSON(timedDocs(300, 300, hours)); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := s.Append(timedDocs(600, 300, hours)); err != nil {
-				t.Fatal(err)
+			// Buffered rows that fall into three partitions, from two calls.
+			for first := 300; first < 900; first += 300 {
+				if _, err := s.Append(timedDocs(first, 300, hours)); err != nil {
+					t.Fatal(err)
+				}
 			}
 			for try := 0; try < 2; try++ {
-				if err := w.Flush(); err == nil {
-					t.Fatal("a flush that could not be written returned no error")
-				}
 				if err := s.Sync(); err == nil {
 					t.Fatal("a Sync that could not be written returned no error")
 				}
@@ -114,9 +108,6 @@ func TestFlushThatFailsKeepsItsRowsForTheNextTry(t *testing.T) {
 			}
 			repair()
 			checkDirMatchesManifest(t, s.dir, "after the failed flushes")
-			if err := w.Flush(); err != nil {
-				t.Fatalf("the flush after the failed ones: %v", err)
-			}
 			if err := s.Sync(); err != nil {
 				t.Fatalf("the Sync after the failed ones: %v", err)
 			}
@@ -215,12 +206,11 @@ func TestStoreReportsAFailedMergeAndMergesAgain(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			w := s.NewWriter()
 			for i := 0; i < 4; i++ {
-				if err := w.AddNDJSON(storeDocs(i*100, 100)); err != nil {
+				if _, err := s.Append(storeDocs(i*100, 100)); err != nil {
 					t.Fatal(err)
 				}
-				if err := w.Flush(); err != nil {
+				if err := s.Sync(); err != nil {
 					t.Fatal(err)
 				}
 			}
