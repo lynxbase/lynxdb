@@ -340,3 +340,106 @@ func WalkPlan(n Node, visit func(Node) bool) {
 		WalkPlan(in, visit)
 	}
 }
+
+// RewriteNodeExprs returns n with every expression of NodeExprs rewritten
+// by RewriteExpr, a copy when any changed; its inputs stay as they are.
+func RewriteNodeExprs(n Node, rewrite func(Expr) Expr) Node {
+	changed := false
+	f := func(e Expr) Expr {
+		if e == nil {
+			return nil
+		}
+		out := RewriteExpr(e, rewrite)
+		changed = changed || out != e
+		return out
+	}
+	named := func(es []NamedExpr) []NamedExpr {
+		out := make([]NamedExpr, len(es))
+		for i, e := range es {
+			out[i] = NamedExpr{Name: e.Name, Expr: f(e.Expr)}
+		}
+		return out
+	}
+	aggs := func(as []NamedAgg) []NamedAgg {
+		out := make([]NamedAgg, len(as))
+		for i, a := range as {
+			call, _ := f(a.Agg).(*AggCall)
+			out[i] = NamedAgg{Name: a.Name, Agg: call}
+		}
+		return out
+	}
+	keys := func(ks []SortKey) []SortKey {
+		out := make([]SortKey, len(ks))
+		for i, k := range ks {
+			out[i] = SortKey{Expr: f(k.Expr), Desc: k.Desc, NullsFirst: k.NullsFirst}
+		}
+		return out
+	}
+	exprs := func(es []Expr) []Expr {
+		out := make([]Expr, len(es))
+		for i, e := range es {
+			out[i] = f(e)
+		}
+		return out
+	}
+	var out Node
+	switch x := n.(type) {
+	case *Filter:
+		c := *x
+		c.Cond = f(x.Cond)
+		out = &c
+	case *Compute:
+		c := *x
+		c.Assigns = make([]Assign, len(x.Assigns))
+		for i, a := range x.Assigns {
+			c.Assigns[i] = Assign{Name: a.Name, Expr: f(a.Expr)}
+		}
+		out = &c
+	case *Aggregate:
+		c := *x
+		c.Groups, c.Aggs = named(x.Groups), aggs(x.Aggs)
+		out = &c
+	case *Window:
+		c := *x
+		c.PartitionBy, c.Funcs = named(x.PartitionBy), aggs(x.Funcs)
+		out = &c
+	case *Sort:
+		c := *x
+		c.Keys = keys(x.Keys)
+		out = &c
+	case *TopN:
+		c := *x
+		c.Keys = keys(x.Keys)
+		out = &c
+	case *Dedup:
+		c := *x
+		c.Keys = exprs(x.Keys)
+		out = &c
+	case *Join:
+		c := *x
+		c.LeftKeys, c.RightKeys, c.Cond = exprs(x.LeftKeys), exprs(x.RightKeys), f(x.Cond)
+		out = &c
+	case *Extract:
+		c := *x
+		c.Source = f(x.Source)
+		out = &c
+	case *Patterns:
+		c := *x
+		c.Source, c.GroupBy = f(x.Source), exprs(x.GroupBy)
+		out = &c
+	case *FillNull:
+		c := *x
+		c.Fields = make([]Assign, len(x.Fields))
+		for i, a := range x.Fields {
+			c.Fields[i] = Assign{Name: a.Name, Expr: f(a.Expr)}
+		}
+		c.Default = f(x.Default)
+		out = &c
+	default:
+		return n
+	}
+	if !changed {
+		return n
+	}
+	return out
+}
