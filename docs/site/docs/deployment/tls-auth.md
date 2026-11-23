@@ -118,7 +118,7 @@ lynxdb auth rotate-root
 | Scope | Allows |
 |-------|--------|
 | `ingest` | `/api/v1/ingest`, `/api/v1/ingest/raw`, OTLP logs on the OTLP listeners, the Elasticsearch bulk and document routes, and the Splunk HEC routes |
-| `query` | `GET` and `POST /api/v1/query`, `/api/v1/query/stream`, `/api/v1/query/explain`, listing, reading and streaming jobs, index and field listings, field values, histogram, stats |
+| `query` | `GET` and `POST /api/v1/query`, `/api/v1/query/stream`, `/api/v1/query/explain`, listing and reading jobs, index and field listings, field values, histogram, stats |
 | `admin` | Cancelling jobs, `GET /api/v1/config`, stats, the pprof endpoints |
 | `full` | Everything a scoped key can do |
 | root key | Everything, plus key management and `PATCH /api/v1/config` |

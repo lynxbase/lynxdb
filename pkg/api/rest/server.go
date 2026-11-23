@@ -267,7 +267,6 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 
 	// Job management (for async/hybrid jobs).
 	mux.HandleFunc("GET /api/v1/query/jobs/{id}", s.handleGetJob)
-	mux.HandleFunc("GET /api/v1/query/jobs/{id}/stream", s.handleJobStream)
 	mux.HandleFunc("DELETE /api/v1/query/jobs/{id}", s.handleCancelJob)
 	mux.HandleFunc("GET /api/v1/query/jobs", s.handleListJobs)
 

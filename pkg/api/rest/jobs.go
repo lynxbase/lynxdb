@@ -3,7 +3,6 @@ package rest
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -155,86 +154,4 @@ func (s *Server) handleListJobs(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	respondData(w, http.StatusOK, map[string]interface{}{"jobs": entries})
-}
-
-// handleJobStream sends SSE progress events with the state and elapsed time
-// of a job every second, then its result or error.
-func (s *Server) handleJobStream(w http.ResponseWriter, r *http.Request) {
-	if !s.requireScope(w, r, auth.ScopeQuery) {
-		return
-	}
-	jobID, ok := requirePathValue(r, w, "id")
-	if !ok {
-		return
-	}
-	job, ok := s.db.Job(jobID)
-	if !ok {
-		respondError(w, ErrCodeNotFound, http.StatusNotFound, "job not found")
-
-		return
-	}
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		respondInternalError(w, "streaming not supported")
-
-		return
-	}
-
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no")
-	flusher.Flush()
-
-	writeSSE := func(event string, data []byte) {
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
-		flusher.Flush()
-	}
-	writeSSEJSON := func(event string, v interface{}) {
-		data, err := json.Marshal(v)
-		if err != nil {
-			slog.Warn("rest: job stream json encode failed", "error", err)
-			return
-		}
-		writeSSE(event, data)
-	}
-
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-
-	for {
-		st := job.Status()
-		switch st.State {
-		case database.JobRunning:
-			writeSSEJSON("progress", jobProgress(st))
-		case database.JobDone:
-			res, _ := job.Result()
-			meta, err := json.Marshal(buildMeta([]MetaOpt{WithTook(st.Elapsed), WithQueryID(st.ID), WithRows(st.Rows)}))
-			if err != nil {
-				slog.Warn("rest: job stream json encode failed", "error", err)
-				return
-			}
-			out := append([]byte(`{"data":`), appendResultData(nil, res, jobResultType(job), s.jobResultLimit(), 0)...)
-			out = append(append(append(out, `,"meta":`...), meta...), '}')
-			writeSSE("complete", out)
-
-			return
-		case database.JobFailed:
-			writeSSEJSON("failed", jobError(st.Err))
-
-			return
-		case database.JobCanceled:
-			writeSSEJSON("canceled", jobProgress(st))
-
-			return
-		}
-
-		select {
-		case <-job.Done():
-		case <-ticker.C:
-		case <-r.Context().Done():
-			return
-		}
-	}
 }

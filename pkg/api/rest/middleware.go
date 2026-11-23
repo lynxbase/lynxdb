@@ -35,7 +35,7 @@ func (sw *statusWriter) WriteHeader(code int) {
 }
 
 // Flush forwards to the underlying ResponseWriter if it supports http.Flusher.
-// This is required for SSE (Server-Sent Events) streaming endpoints like the job stream.
+// The NDJSON stream of /api/v1/query/stream needs it.
 func (sw *statusWriter) Flush() {
 	if f, ok := sw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()

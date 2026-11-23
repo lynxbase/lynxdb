@@ -81,7 +81,7 @@ Keys have one of four scopes: `ingest`, `query`, `admin`, `full`. Root keys and 
 | Endpoints | Required |
 |---|---|
 | `POST /ingest`, `/ingest/raw`; at the root `/_bulk`, `/{index}/_bulk`, `/_data_stream/{name}/_bulk`, `/{index}/_doc` and the Splunk HEC routes; the OTLP listeners | `ingest` |
-| `POST` and `GET /query`, `POST /query/stream`, `GET /query/jobs`, `GET /query/jobs/{id}`, `GET /query/jobs/{id}/stream` | `query` |
+| `POST` and `GET /query`, `POST /query/stream`, `GET /query/jobs`, `GET /query/jobs/{id}` | `query` |
 | `DELETE /query/jobs/{id}`, `GET /config` | `admin` |
 | `PATCH /config`, `/auth/...` | a root key |
 | Everything else, including the Elasticsearch handshake and stubs | any valid key |
@@ -148,7 +148,6 @@ Paths below are relative to `/api/v1` unless they start with `/health`, `/metric
 | `GET` | `/query/jobs` | List jobs | [Query](./query.md#get-queryjobs) |
 | `GET` | `/query/jobs/{id}` | Job status and result | [Query](./query.md#get-queryjobsid) |
 | `DELETE` | `/query/jobs/{id}` | Cancel a job | [Query](./query.md#delete-queryjobsid) |
-| `GET` | `/query/jobs/{id}/stream` | Job state and result over SSE | [Query](./query.md#get-queryjobsidstream) |
 | `GET` | `/histogram` | Event counts per time bucket | [Histogram](./histogram.md) |
 | `GET` | `/fields` | Field catalog | [Fields](./fields.md) |
 | `GET` | `/fields/{name}/values` | Top values of a field | [Fields](./fields.md#get-fieldsnamevalues) |

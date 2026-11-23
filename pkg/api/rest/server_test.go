@@ -1450,75 +1450,11 @@ func TestQuery_FormatValidation(t *testing.T) {
 	})
 }
 
-func TestJobStream_Basic(t *testing.T) {
+func TestJobs_StreamRouteIsGone(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
-	ingestTestEvents(t, srv.Addr(), 10, 2)
-
-	zero := float64(0)
-	body, _ := json.Marshal(map[string]interface{}{
-		"q":    `source=main | head 5`,
-		"wait": zero,
-	})
-	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("POST query: %v", err)
-	}
-	defer resp.Body.Close()
-
-	var jobResp map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&jobResp)
-	data := jobResp["data"].(map[string]interface{})
-	jobID := data["job_id"].(string)
-
-	sseResp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query/jobs/%s/stream", srv.Addr(), jobID))
-	if err != nil {
-		t.Fatalf("GET stream: %v", err)
-	}
-	defer sseResp.Body.Close()
-
-	if sseResp.StatusCode != 200 {
-		b, _ := io.ReadAll(sseResp.Body)
-		t.Fatalf("SSE status: %d, body: %s", sseResp.StatusCode, string(b))
-	}
-	if ct := sseResp.Header.Get("Content-Type"); ct != "text/event-stream" {
-		t.Errorf("Content-Type: got %s, want text/event-stream", ct)
-	}
-
-	sseBody, _ := io.ReadAll(sseResp.Body)
-	sseStr := string(sseBody)
-	_, completeData, ok := strings.Cut(sseStr, "event: complete\ndata: ")
-	if !ok {
-		t.Fatalf("SSE body missing complete event: %s", sseStr)
-	}
-	completeData, _, _ = strings.Cut(completeData, "\n")
-	var complete struct {
-		Data struct {
-			Type   string        `json:"type"`
-			Events []interface{} `json:"events"`
-		} `json:"data"`
-		Meta struct {
-			QueryID string `json:"query_id"`
-			Rows    int    `json:"rows"`
-		} `json:"meta"`
-	}
-	if err := json.Unmarshal([]byte(completeData), &complete); err != nil {
-		t.Fatalf("decode complete event %q: %v", completeData, err)
-	}
-	if complete.Data.Type != "events" || len(complete.Data.Events) != 5 {
-		t.Errorf("complete data = %+v, want 5 events", complete.Data)
-	}
-	if complete.Meta.QueryID != jobID || complete.Meta.Rows != 5 {
-		t.Errorf("complete meta = %+v, want query_id %s and 5 rows", complete.Meta, jobID)
-	}
-}
-
-func TestJobStream_NotFound(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query/jobs/nonexistent/stream", srv.Addr()))
+	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/query/jobs/qry_0000000000000000/stream", srv.Addr()))
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}

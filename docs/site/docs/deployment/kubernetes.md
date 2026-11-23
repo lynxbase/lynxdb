@@ -159,7 +159,7 @@ spec:
                   number: 3100
 ```
 
-Buffering off and a long read timeout keep job progress streams (SSE) and NDJSON exports flowing. The body size matches `ingest.limits.max_compressed_body_bytes`.
+Buffering off and a long read timeout keep NDJSON exports from `/api/v1/query/stream` flowing. The body size matches `ingest.limits.max_compressed_body_bytes`.
 
 ## Prometheus
 

@@ -169,7 +169,7 @@ paths:
                       query_id: qry_ff9a60bb26c70c81
                       rows: 3
         '202':
-          description: The query runs as a job; poll `/api/v1/query/jobs/{id}` or follow its SSE stream
+          description: The query runs as a job; poll `/api/v1/query/jobs/{id}`
           headers:
             X-Query-ID:
               schema:
@@ -406,38 +406,6 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/CancelJobResponse'
-        '404':
-          $ref: '#/components/responses/NotFound'
-
-  /api/v1/query/jobs/{id}/stream:
-    parameters:
-      - $ref: '#/components/parameters/JobID'
-    get:
-      operationId: streamJob
-      tags: [Query]
-      summary: Follow a job over Server-Sent Events
-      description: |
-        | Event | Data |
-        |---|---|
-        | `progress` | `{"status", "elapsed_ms"}`, once a second while the job runs |
-        | `complete` | `{"data": <result>, "meta": {"took_ms", "query_id", "rows"}}` |
-        | `failed` | `{"code", "message"}` |
-        | `canceled` | `{"status", "elapsed_ms"}` |
-
-        Needs `query` scope.
-      responses:
-        '200':
-          description: Event stream
-          content:
-            text/event-stream:
-              schema:
-                type: string
-              example: |
-                event: progress
-                data: {"elapsed_ms":52,"status":"running"}
-
-                event: complete
-                data: {"data":{"type":"aggregate","columns":["n"],"rows":[[1010025]],"total_rows":1,"has_more":false},"meta":{"took_ms":4049.035,"query_id":"qry_cfb13bcc9a82770c","rows":1}}
         '404':
           $ref: '#/components/responses/NotFound'
 

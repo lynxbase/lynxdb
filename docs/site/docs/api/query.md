@@ -18,7 +18,6 @@ Queries are written in [OpenSearch PPL](../ppl/overview.md). Every query starts 
 | `GET` | `/api/v1/query/jobs` | List jobs |
 | `GET` | `/api/v1/query/jobs/{id}` | Get a job's state and result |
 | `DELETE` | `/api/v1/query/jobs/{id}` | Cancel a job |
-| `GET` | `/api/v1/query/jobs/{id}/stream` | Follow a job over Server-Sent Events |
 
 When authentication is on, these endpoints need a key with `query` scope, except `DELETE /query/jobs/{id}`, which needs `admin` scope, and `GET /query/explain` and `GET /catalog`, which accept any valid key.
 
@@ -142,7 +141,7 @@ curl -s localhost:3100/api/v1/query \
 }
 ```
 
-Poll [`GET /query/jobs/{id}`](#get-queryjobsid) or follow [`GET /query/jobs/{id}/stream`](#get-queryjobsidstream) for the result. A job keeps running after its handle is returned, whether or not the client stays connected. A client that disconnects while a sync or hybrid query is still waiting cancels the job.
+Poll [`GET /query/jobs/{id}`](#get-queryjobsid) for the result. A job keeps running after its handle is returned, whether or not the client stays connected. A client that disconnects while a sync or hybrid query is still waiting cancels the job.
 
 ### Limits and pagination
 
@@ -521,32 +520,6 @@ curl -s -X DELETE localhost:3100/api/v1/query/jobs/qry_1dc74244284168b9
 ```
 
 `canceled` is `true` when the job was running when the request came. The job stops at the next point where its operators check for cancellation; the server waits up to a second for that and reports the state it sees then, with `completed_at` once the job has ended. For a job that had already finished, `canceled` is `false` and `status` is its final state.
-
-## GET /query/jobs/\{id\}/stream
-
-Follows a job over Server-Sent Events until it finishes.
-
-| Event | When | Data |
-|---|---|---|
-| `progress` | Once a second while the job runs | `{"status", "elapsed_ms"}` |
-| `complete` | The job finished | `{"data": <result>, "meta": {"took_ms", "query_id", "rows"}}`, the result limited as in `GET /query/jobs/{id}` |
-| `failed` | The job failed | `{"code", "message"}` |
-| `canceled` | The job was canceled | `{"status", "elapsed_ms"}` |
-
-```bash
-curl -N localhost:3100/api/v1/query/jobs/qry_cfb13bcc9a82770c/stream
-```
-
-```text
-event: progress
-data: {"elapsed_ms":52,"status":"running"}
-
-event: progress
-data: {"elapsed_ms":1052,"status":"running"}
-
-event: complete
-data: {"data":{"type":"aggregate","columns":["n"],"rows":[[1010025]],"total_rows":1,"has_more":false},"meta":{"took_ms":4049.035,"query_id":"qry_cfb13bcc9a82770c","rows":1}}
-```
 
 ## Related
 
