@@ -202,10 +202,10 @@ ef3d22c7915847ca	source=otellogs | reverse | reverse | fields severityText, `res
 6870e24d6271bdf8	source=otellogs | where LIKE(body, '%authenticated%') OR LIKE(body, '%credentials%') | rex field=body mode=sed "s/[0-9]+\\.[0-9]+\\.[0-9]+\\.[0-9]+/xxx.xxx.xxx.xxx/" | fields body
 68eae660a8bfd544	source=otellogs | where severityText = 'ERROR' | where NOT ISNULL(errtype) | fields body, errtype, pos
 b84c0bb161dca102	source=otellogs | head 3
-7fafbd33fca0b631	search ERROR source=otellogs | sort `resource.attributes.service.name` | fields severityText, body | head 1
-cceb56a3175ffb18	search "Payment failed" source=otellogs | sort `resource.attributes.service.name` | fields body | head 1
-7b1755247a5a1f30	search connection timeout source=otellogs | fields body
-25a16c7931cae8ff	search "connection timeout" OR "heap space" source=otellogs | sort `resource.attributes.service.name` | fields body
+02bae12c73fb2c61	search ERROR source=otellogs | sort `resource.attributes.service.name` | fields severityText, body | head 1
+91eed6543b208b88	search "Payment failed" source=otellogs | sort `resource.attributes.service.name` | fields body | head 1
+9843229c56414575	search connection timeout source=otellogs | fields body
+8fb9c6b9b287f89b	search "connection timeout" OR "heap space" source=otellogs | sort `resource.attributes.service.name` | fields body
 25ca2e9bdbdf6c75	search severityText="ERROR" OR severityText="WARN" source=otellogs | sort severityNumber, `resource.attributes.service.name` | fields severityText, `resource.attributes.service.name`
 92d8990fcdec025a	search severityText="INFO" AND `resource.attributes.service.name`="cart" source=otellogs | fields body | head 1
 e9af77eab1a4eba4	search severityText="ERROR" OR severityText="WARN" AND severityNumber>15 source=otellogs | fields severityText, severityNumber | head 2

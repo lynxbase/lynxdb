@@ -22,24 +22,29 @@ type colSet map[string]bool
 
 func (s colSet) all() bool { return s == nil }
 
-// addCols adds the columns e reads, the names ir.ColumnsRead lists.
+// addCols adds the columns e reads and returns the set, which is every
+// column for a search of free text: it reads every field.
 func (s colSet) addCols(e ir.Expr) colSet {
 	if s == nil || e == nil {
 		return s
 	}
+	all := false
 	ir.WalkExpr(e, func(x ir.Expr) bool {
 		switch v := x.(type) {
 		case *ir.FieldRef:
 			s[v.Name] = true
 		case *ir.Search:
 			if v.Field == "" {
-				s[ir.RawColumn] = true
+				all = true
 			} else {
 				s[v.Field] = true
 			}
 		}
-		return true
+		return !all
 	})
+	if all {
+		return nil
+	}
 	return s
 }
 
@@ -86,10 +91,10 @@ func prune(n ir.Node, req colSet) ir.Node {
 	case *ir.Aggregate:
 		in = colSet{}
 		for _, g := range x.Groups {
-			in.addCols(g.Expr)
+			in = in.addCols(g.Expr)
 		}
 		for _, a := range x.Aggs {
-			in.addCols(a.Agg)
+			in = in.addCols(a.Agg)
 		}
 	case *ir.Filter:
 		in = req.addCols(x.Cond)
@@ -99,26 +104,26 @@ func prune(n ir.Node, req colSet) ir.Node {
 				delete(req, a.Name)
 			}
 			for _, a := range x.Assigns {
-				req.addCols(a.Expr)
+				req = req.addCols(a.Expr)
 			}
 			in = req
 		}
 	case *ir.Sort:
 		in = req
 		for _, k := range x.Keys {
-			in.addCols(k.Expr)
+			in = in.addCols(k.Expr)
 		}
 	case *ir.TopN:
 		in = req
 		for _, k := range x.Keys {
-			in.addCols(k.Expr)
+			in = in.addCols(k.Expr)
 		}
 	case *ir.Limit, *ir.Reverse:
 		in = req
 	case *ir.Dedup:
 		in = req
 		for _, k := range x.Keys {
-			in.addCols(k)
+			in = in.addCols(k)
 		}
 	case *ir.RenameColumns:
 		if !req.all() && !hasPatternRename(x.Renames) {

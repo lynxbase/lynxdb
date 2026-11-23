@@ -27,7 +27,8 @@ func TestPlanHints(t *testing.T) {
 	if q.SourceScopeType != "glob" || q.SourceScopePattern != "web-*" {
 		t.Errorf("scope = %s %s", q.SourceScopeType, q.SourceScopePattern)
 	}
-	if !reflect.DeepEqual(q.RequiredCols, []string{"_raw", "_time", "host", "index"}) {
+	// A search of free text reads every field.
+	if len(q.RequiredCols) != 0 {
 		t.Errorf("required columns = %v", q.RequiredCols)
 	}
 }
