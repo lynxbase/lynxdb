@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/lynxbase/lynxdb/internal/buildinfo"
+	"github.com/lynxbase/lynxdb/internal/output"
 	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/client"
 )
@@ -75,27 +75,37 @@ func runStatus(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
+// statusJSON is the JSON object lynxdb status prints.
+type statusJSON struct {
+	UptimeSeconds int                `json:"uptime_seconds"`
+	StorageBytes  int64              `json:"storage_bytes"`
+	TotalEvents   int64              `json:"total_events"`
+	IndexCount    int                `json:"index_count"`
+	PartCount     int                `json:"part_count"`
+	OldestEvent   string             `json:"oldest_event"`
+	NewestEvent   string             `json:"newest_event"`
+	Health        string             `json:"health"`
+	Indexes       []client.IndexInfo `json:"indexes"`
+}
+
 // printStatus prints the statistics and health of the server.
 func printStatus(stats *client.StatsResult, healthStatus string) error {
-	if isJSONFormat() {
-		out := map[string]interface{}{
-			"uptime_seconds": stats.UptimeSeconds,
-			"storage_bytes":  stats.StorageBytes,
-			"total_events":   stats.TotalEvents,
-			"index_count":    stats.IndexCount,
-			"part_count":     stats.PartCount,
-			"oldest_event":   stats.OldestEvent,
-			"newest_event":   stats.NewestEvent,
-			"health":         healthStatus,
+	if jsonOutput() {
+		indexes := stats.Indexes
+		if indexes == nil {
+			indexes = []client.IndexInfo{}
 		}
-		if len(stats.Indexes) > 0 {
-			out["indexes"] = stats.Indexes
-		}
-
-		b, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Println(string(b))
-
-		return nil
+		return printJSON(statusJSON{
+			UptimeSeconds: stats.UptimeSeconds,
+			StorageBytes:  stats.StorageBytes,
+			TotalEvents:   stats.TotalEvents,
+			IndexCount:    stats.IndexCount,
+			PartCount:     stats.PartCount,
+			OldestEvent:   stats.OldestEvent,
+			NewestEvent:   stats.NewestEvent,
+			Health:        healthStatus,
+			Indexes:       indexes,
+		})
 	}
 
 	if !humanOutputActive() {
@@ -271,7 +281,14 @@ func runIndexes(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
-	header := []string{"NAME", "EVENTS", "BYTES", "PARTS", "FIRST", "LAST"}
+	header := []output.Column{
+		{Key: "name", Header: "NAME"},
+		{Key: "events", Header: "EVENTS"},
+		{Key: "bytes", Header: "BYTES"},
+		{Key: "parts", Header: "PARTS"},
+		{Key: "first_event", Header: "FIRST"},
+		{Key: "last_event", Header: "LAST"},
+	}
 	if len(indexes) == 0 {
 		if !humanOutputActive() {
 			return renderTabular(os.Stdout, header, nil, ui.Stdout)
@@ -299,9 +316,7 @@ func runIndexes(_ *cobra.Command, _ []string) error {
 	return nil
 }
 
-// isJSONFormat reports whether the current output format is JSON or NDJSON.
-// Commands keep their richer structured JSON paths for these formats; row-like
-// machine formats are handled by renderTabular/renderKeyValues.
+// isJSONFormat reports whether --format is json or ndjson.
 func isJSONFormat() bool {
 	return globalFormat == formatJSON || globalFormat == formatNDJSON
 }

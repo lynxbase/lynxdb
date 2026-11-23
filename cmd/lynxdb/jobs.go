@@ -2,12 +2,12 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
 
+	"github.com/lynxbase/lynxdb/internal/output"
 	"github.com/lynxbase/lynxdb/internal/ui"
 )
 
@@ -59,10 +59,11 @@ func runJobsList(statusFilter string) error {
 		return err
 	}
 
-	if isJSONFormat() {
+	if jsonOutput() {
 		for _, j := range result.Jobs {
-			b, _ := json.Marshal(j)
-			fmt.Println(string(b))
+			if err := printJSON(j); err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -70,7 +71,7 @@ func runJobsList(statusFilter string) error {
 
 	if len(result.Jobs) == 0 {
 		if !humanOutputActive() {
-			return renderTabular(os.Stdout, []string{"ID", "STATUS", "CREATED", "QUERY"}, nil, ui.Stdout)
+			return renderTabular(os.Stdout, jobColumns, nil, ui.Stdout)
 		}
 		fmt.Println("No jobs found.")
 
@@ -82,8 +83,14 @@ func runJobsList(statusFilter string) error {
 		rows = append(rows, []any{j.JobID, j.Status, j.CreatedAt, j.Query})
 	}
 
-	return renderTabular(os.Stdout, []string{"ID", "STATUS", "CREATED", "QUERY"}, rows, ui.Stdout)
+	return renderTabular(os.Stdout, jobColumns, rows, ui.Stdout)
+}
 
+var jobColumns = []output.Column{
+	{Key: "job_id", Header: "ID"},
+	{Key: "status", Header: "STATUS"},
+	{Key: "created_at", Header: "CREATED"},
+	{Key: "query", Header: "QUERY"},
 }
 
 func runJobDetail(jobID string) error {
@@ -94,11 +101,8 @@ func runJobDetail(jobID string) error {
 		return err
 	}
 
-	if isJSONFormat() {
-		b, _ := json.MarshalIndent(job, "", "  ")
-		fmt.Println(string(b))
-
-		return nil
+	if jsonOutput() {
+		return printJSON(job)
 	}
 
 	if !humanOutputActive() {

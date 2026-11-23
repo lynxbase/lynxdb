@@ -11,24 +11,36 @@ import (
 	"github.com/lynxbase/lynxdb/internal/ui"
 )
 
+// Column is a column of tabular output: JSON names it by Key, a lowercase
+// snake_case name, and every other format by Header.
+type Column struct {
+	Key    string
+	Header string
+}
+
 // RenderTabular renders explicitly ordered row data using the same format
-// selection as query results.
-func RenderTabular(w io.Writer, cols []string, rows [][]any, format Format, opts HumanTableOptions) error {
+// selection as query results: JSON and NDJSON print one object per row.
+func RenderTabular(w io.Writer, cols []Column, rows [][]any, format Format, opts HumanTableOptions) error {
 	format = normalizeFormat(format)
 	if format == FormatAuto && !isTTY(os.Stdout) {
-		return renderOrderedJSON(w, cols, rows)
+		format = FormatJSON
+	}
+	keys := make([]string, len(cols))
+	headers := make([]string, len(cols))
+	for i, c := range cols {
+		keys[i], headers[i] = c.Key, c.Header
 	}
 	switch format {
 	case FormatJSON, FormatNDJSON:
-		return renderOrderedJSON(w, cols, rows)
+		return renderOrderedJSON(w, keys, rows)
 	case FormatCSV:
-		return renderDelimited(w, cols, rows, ",")
+		return renderDelimited(w, headers, rows, ",")
 	case FormatTSV:
-		return renderDelimited(w, cols, rows, "\t")
+		return renderDelimited(w, headers, rows, "\t")
 	case FormatRaw:
 		return renderRaw(w, rows)
 	default:
-		return renderOrderedTable(w, cols, rows, format, opts)
+		return renderOrderedTable(w, headers, rows, format, opts)
 	}
 }
 

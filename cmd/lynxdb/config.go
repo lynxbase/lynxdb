@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/lynxbase/lynxdb/internal/output"
 	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/config"
 )
@@ -542,9 +543,27 @@ func runConfigListProfiles(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
+	// Collect and sort names for stable output.
+	names := make([]string, 0, len(profiles))
+	for name := range profiles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	if jsonOutput() {
+		for _, name := range names {
+			p := profiles[name]
+			if err := printJSON(profileJSON{Name: name, URL: p.URL, Auth: p.Token != ""}); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
 	if len(profiles) == 0 {
 		if !humanOutputActive() {
-			return renderTabular(os.Stdout, []string{"NAME", "URL", "AUTH"}, nil, ui.Stdout)
+			return renderTabular(os.Stdout, profileColumns, nil, ui.Stdout)
 		}
 		fmt.Println("No profiles configured.")
 		printNextSteps(
@@ -553,21 +572,6 @@ func runConfigListProfiles(_ *cobra.Command, _ []string) error {
 
 		return nil
 	}
-
-	if isJSONFormat() {
-		for name, p := range profiles {
-			fmt.Printf("{\"name\":%q,\"url\":%q}\n", name, p.URL)
-		}
-
-		return nil
-	}
-
-	// Collect and sort names for stable output.
-	var names []string
-	for name := range profiles {
-		names = append(names, name)
-	}
-	sort.Strings(names)
 
 	t := ui.Stdout
 	rows := make([][]any, 0, len(names))
@@ -581,8 +585,17 @@ func runConfigListProfiles(_ *cobra.Command, _ []string) error {
 		rows = append(rows, []any{name, p.URL, authHint})
 	}
 
-	return renderTabular(os.Stdout, []string{"NAME", "URL", "AUTH"}, rows, t)
+	return renderTabular(os.Stdout, profileColumns, rows, t)
+}
 
+var profileColumns = []output.Column{{Key: "name", Header: "NAME"}, {Key: "url", Header: "URL"}, {Key: "auth", Header: "AUTH"}}
+
+// profileJSON is a profile as list-profiles prints it in JSON: whether it
+// holds a token, never the token.
+type profileJSON struct {
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	Auth bool   `json:"auth"`
 }
 
 func runConfigRemoveProfile(_ *cobra.Command, args []string) error {

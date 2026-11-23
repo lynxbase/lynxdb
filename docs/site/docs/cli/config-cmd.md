@@ -180,7 +180,7 @@ LYNXDB_PROFILE=prod lynxdb jobs --status running
 lynxdb config list-profiles
 ```
 
-Lists profiles with their URL and whether they hold a key.
+Lists profiles with their URL and whether they hold a key. In JSON, each profile is one object, `{"name":"prod","url":"https://logs.example.com","auth":true}`, in name order; the key itself is never printed.
 
 ## config remove-profile
 

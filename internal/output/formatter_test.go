@@ -245,7 +245,7 @@ func TestParseFormat(t *testing.T) {
 func TestRenderTabular_PreservesColumnOrder(t *testing.T) {
 	var buf bytes.Buffer
 	err := RenderTabular(&buf,
-		[]string{"zeta", "alpha", "middle"},
+		[]Column{{"zeta", "ZETA"}, {"alpha", "ALPHA"}, {"middle", "MIDDLE"}},
 		[][]any{{1, 2, 3}},
 		FormatCSV,
 		HumanTableOptions{},
@@ -255,25 +255,26 @@ func TestRenderTabular_PreservesColumnOrder(t *testing.T) {
 	}
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
-	if got, want := lines[0], "zeta,alpha,middle"; got != want {
+	if got, want := lines[0], "ZETA,ALPHA,MIDDLE"; got != want {
 		t.Fatalf("header = %q, want %q", got, want)
 	}
 }
 
-func TestRenderTabular_AutoNonTTYUsesJSON(t *testing.T) {
-	var buf bytes.Buffer
-	err := RenderTabular(&buf,
-		[]string{"zeta", "alpha"},
-		[][]any{{1, 2}},
-		FormatAuto,
-		HumanTableOptions{},
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
+func TestRenderTabular_JSONUsesKeys(t *testing.T) {
+	for _, format := range []Format{FormatAuto, FormatJSON, FormatNDJSON} {
+		var buf bytes.Buffer
+		err := RenderTabular(&buf,
+			[]Column{{"zeta", "ZETA"}, {"first_event", "FIRST"}},
+			[][]any{{1, "x"}, {2, nil}},
+			format,
+			HumanTableOptions{},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
 
-	got := strings.TrimSpace(buf.String())
-	if want := `{"zeta":1,"alpha":2}`; got != want {
-		t.Fatalf("auto non-TTY output = %q, want %q", got, want)
+		if got, want := buf.String(), `{"zeta":1,"first_event":"x"}`+"\n"+`{"zeta":2,"first_event":null}`+"\n"; got != want {
+			t.Fatalf("%s output = %q, want %q", format, got, want)
+		}
 	}
 }

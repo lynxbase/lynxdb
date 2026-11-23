@@ -123,7 +123,7 @@ When stdout is not a terminal, a query also writes its statistics to stderr as o
 
 ## Commands other than query
 
-`status`, `indexes`, `jobs`, `fields`, `auth list`, `config get` and `config list-profiles` print a styled view on a terminal and plain rows otherwise. `--format json` gives each command's JSON document or one JSON object per item; `csv`, `tsv`, `markdown` and the table formats print the same data as rows.
+`status`, `indexes`, `jobs`, `fields`, `auth list` and `config list-profiles` print a styled view on a terminal and JSON otherwise. In `json` and `ndjson`, `status` prints one object, and the lists print one object per item, keyed by lowercase snake_case names such as `first_event`; `csv`, `tsv`, `markdown` and `table` print the same data as rows under the table headers.
 
 ## See also
 

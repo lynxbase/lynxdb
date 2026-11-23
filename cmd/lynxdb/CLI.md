@@ -265,7 +265,7 @@ lynxdb server --syslog :514 --otlp-grpc-listen :4317
 lynxdb status
 ```
 
-Alias `st`. Version, uptime, health, storage, event count, parts, indexes with their share of events, and the times of the oldest and newest events. `--format json` prints `uptime_seconds`, `storage_bytes`, `total_events`, `index_count`, `part_count`, `oldest_event`, `newest_event`, `health` and `indexes`. Exits 3 when the server cannot be reached and 1, after printing, when its health is not `healthy`.
+Alias `st`. Version, uptime, health, storage, event count, parts, indexes with their share of events, and the times of the oldest and newest events. `--format json`, `ndjson`, or stdout that is not a terminal prints one JSON object with `uptime_seconds`, `storage_bytes`, `total_events`, `index_count`, `part_count`, `oldest_event`, `newest_event`, `health` and `indexes`. Exits 3 when the server cannot be reached and 1, after printing, when its health is not `healthy`.
 
 ## indexes
 
@@ -273,7 +273,7 @@ Alias `st`. Version, uptime, health, storage, event count, parts, indexes with t
 lynxdb indexes
 ```
 
-Lists indexes with their events, bytes, parts and the times of their first and last events.
+Lists indexes with their events, bytes, parts and the times of their first and last events. In JSON, one object per index with `name`, `events`, `bytes`, `parts`, `first_event` and `last_event`; `fields`, `jobs`, `auth list` and `config list-profiles` likewise print one object per item with lowercase snake_case keys.
 
 ## jobs
 

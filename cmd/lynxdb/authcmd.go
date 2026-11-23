@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/lynxbase/lynxdb/internal/output"
 	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/client"
@@ -177,6 +178,15 @@ func printQuerySnippet(t *ui.Theme, created *client.AuthCreatedKey) {
 		t.Dim.Render("─────────────────────────────────────────────────────────────"))
 }
 
+var authKeyColumns = []output.Column{
+	{Key: "id", Header: "ID"},
+	{Key: "name", Header: "NAME"},
+	{Key: "scope", Header: "SCOPE"},
+	{Key: "expires", Header: "EXPIRES"},
+	{Key: "last_used", Header: "LAST USED"},
+	{Key: "created", Header: "CREATED"},
+}
+
 func runAuthListKeys(_ *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -186,9 +196,19 @@ func runAuthListKeys(_ *cobra.Command, _ []string) error {
 		return err
 	}
 
+	if jsonOutput() {
+		for _, k := range keys {
+			if err := printJSON(k); err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}
+
 	if len(keys) == 0 {
 		if !humanOutputActive() {
-			return renderTabular(os.Stdout, []string{"ID", "NAME", "SCOPE", "EXPIRES", "LAST USED", "CREATED"}, nil, ui.Stdout)
+			return renderTabular(os.Stdout, authKeyColumns, nil, ui.Stdout)
 		}
 		printMeta("No API keys configured.")
 
@@ -241,7 +261,7 @@ func runAuthListKeys(_ *cobra.Command, _ []string) error {
 			age,
 		})
 	}
-	if err := renderTabular(os.Stdout, []string{"ID", "NAME", "SCOPE", "EXPIRES", "LAST USED", "CREATED"}, rows, t); err != nil {
+	if err := renderTabular(os.Stdout, authKeyColumns, rows, t); err != nil {
 		return err
 	}
 

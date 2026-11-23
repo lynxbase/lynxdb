@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/lynxbase/lynxdb/internal/output"
 	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/client"
 )
@@ -75,6 +75,11 @@ type fieldEntry struct {
 	Indexes []string `json:"indexes"`
 }
 
+var (
+	fieldColumns      = []output.Column{{Key: "name", Header: "FIELD"}, {Key: "indexes", Header: "INDEXES"}}
+	fieldValueColumns = []output.Column{{Key: "value", Header: "VALUE"}, {Key: "count", Header: "COUNT"}}
+)
+
 // runFieldsList lists all fields, with optional filtering.
 func runFieldsList(source, prefix string) error {
 	ctx := context.Background()
@@ -89,10 +94,11 @@ func runFieldsList(source, prefix string) error {
 
 	fields := clientFieldsToEntries(clientFields)
 
-	if isJSONFormat() {
+	if jsonOutput() {
 		for _, f := range fields {
-			b, _ := json.Marshal(f)
-			fmt.Println(string(b))
+			if err := printJSON(f); err != nil {
+				return err
+			}
 		}
 
 		return nil
@@ -100,7 +106,7 @@ func runFieldsList(source, prefix string) error {
 
 	if len(fields) == 0 {
 		if !humanOutputActive() {
-			return renderTabular(os.Stdout, []string{"FIELD", "INDEXES"}, nil, ui.Stdout)
+			return renderTabular(os.Stdout, fieldColumns, nil, ui.Stdout)
 		}
 		fmt.Println(ui.Stdout.EmptyState("No fields found.",
 			"lynxdb ingest <file>           Ingest a log file",
@@ -115,7 +121,7 @@ func runFieldsList(source, prefix string) error {
 		rows = append(rows, []any{f.Name, strings.Join(f.Indexes, ", ")})
 	}
 
-	if err := renderTabular(os.Stdout, []string{"FIELD", "INDEXES"}, rows, t); err != nil {
+	if err := renderTabular(os.Stdout, fieldColumns, rows, t); err != nil {
 		return err
 	}
 
@@ -162,11 +168,8 @@ func runFieldDetail(name, source string) error {
 		return fmt.Errorf("unknown field %q. Run 'lynxdb fields' to see all known fields", name)
 	}
 
-	if isJSONFormat() {
-		b, _ := json.MarshalIndent(field, "", "  ")
-		fmt.Println(string(b))
-
-		return nil
+	if jsonOutput() {
+		return printJSON(field)
 	}
 
 	if !humanOutputActive() {
@@ -184,7 +187,7 @@ func runFieldDetail(name, source string) error {
 	result, err := apiClient().FieldValuesFiltered(ctx, field.Name, client.FieldValuesOpts{Limit: 20, Index: source})
 	if err == nil && len(result.Values) > 0 {
 		fmt.Printf("\n  %s\n", t.Bold.Render("Top Values:"))
-		if err := renderTabular(os.Stdout, []string{"VALUE", "COUNT"}, fieldValueRows(result.Values), t); err != nil {
+		if err := renderTabular(os.Stdout, fieldValueColumns, fieldValueRows(result.Values), t); err != nil {
 			return err
 		}
 	}
@@ -222,16 +225,19 @@ func runFieldValues(name, since, from, to, source string) error {
 		return err
 	}
 
-	if isJSONFormat() {
-		b, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(b))
+	if jsonOutput() {
+		for _, v := range result.Values {
+			if err := printJSON(v); err != nil {
+				return err
+			}
+		}
 
 		return nil
 	}
 
 	if len(result.Values) == 0 {
 		if !humanOutputActive() {
-			return renderTabular(os.Stdout, []string{"VALUE", "COUNT"}, nil, ui.Stdout)
+			return renderTabular(os.Stdout, fieldValueColumns, nil, ui.Stdout)
 		}
 		fmt.Printf("No values found for field %q.\n", name)
 
@@ -242,7 +248,7 @@ func runFieldValues(name, since, from, to, source string) error {
 	fmt.Println()
 	fmt.Printf("  %s — top values\n\n", t.Bold.Render(name))
 
-	return renderTabular(os.Stdout, []string{"VALUE", "COUNT"}, fieldValueRows(result.Values), t)
+	return renderTabular(os.Stdout, fieldValueColumns, fieldValueRows(result.Values), t)
 }
 
 // clientFieldsToEntries converts []client.FieldInfo to []fieldEntry.

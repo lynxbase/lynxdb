@@ -12,10 +12,10 @@ type AuthKeyInfo struct {
 	Prefix      string    `json:"prefix"`
 	Scope       string    `json:"scope"`
 	Description string    `json:"description,omitempty"`
-	ExpiresAt   time.Time `json:"expires_at,omitempty"`
+	ExpiresAt   time.Time `json:"expires_at,omitzero"`
 	IsRoot      bool      `json:"is_root"`
 	CreatedAt   time.Time `json:"created_at"`
-	LastUsedAt  time.Time `json:"last_used_at,omitempty"`
+	LastUsedAt  time.Time `json:"last_used_at,omitzero"`
 }
 
 // AuthCreatedKey is returned when a new key is created, including the one-time token.

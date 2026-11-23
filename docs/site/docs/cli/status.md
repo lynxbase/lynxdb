@@ -6,7 +6,7 @@ description: Inspect a LynxDB server - status and health, indexes, query jobs, t
 
 # status, fields, jobs & more
 
-Short commands that read state from the server named by `--server`. All of them accept `--format json` for scripts; the table formats (`table`, `csv`, `tsv`, ...) print plain rows.
+Short commands that read state from the server named by `--server`. With `--format json` or `ndjson`, and when stdout is not a terminal, `status` and a single field or job print one JSON object, and the lists (`indexes`, `fields`, `jobs`, `auth list`, `config list-profiles`) print one JSON object per item, keyed by lowercase snake_case names. `table` and `markdown` print tables, and `csv` and `tsv` rows under the table headers.
 
 ## status
 
@@ -24,47 +24,14 @@ Server version, uptime and health, then the storage size, the number of events, 
 lynxdb status --quiet > /dev/null || echo "lynxdb is down"
 ```
 
+With `--format json` or `ndjson`, and when stdout is not a terminal, it prints one JSON object:
+
 ```bash
 lynxdb status --format json
 ```
 
 ```json
-{
-  "health": "healthy",
-  "index_count": 3,
-  "indexes": [
-    {
-      "name": "backend",
-      "events": 26,
-      "bytes": 5959,
-      "parts": 1,
-      "first_event": "2026-02-10T08:12:03.044999837Z",
-      "last_event": "2026-02-10T10:45:00.5Z"
-    },
-    {
-      "name": "main",
-      "events": 1000,
-      "bytes": 46640,
-      "parts": 2,
-      "first_event": "2025-01-15T08:00:00.105Z",
-      "last_event": "2026-11-17T15:45:41.513196Z"
-    },
-    {
-      "name": "nginx",
-      "events": 34,
-      "bytes": 2806,
-      "parts": 1,
-      "first_event": "2026-11-17T15:45:41.536077Z",
-      "last_event": "2026-11-17T15:45:41.536077Z"
-    }
-  ],
-  "newest_event": "2026-11-17T15:45:41Z",
-  "oldest_event": "2025-01-15T08:00:00Z",
-  "part_count": 4,
-  "storage_bytes": 55405,
-  "total_events": 1060,
-  "uptime_seconds": 84
-}
+{"uptime_seconds":1,"storage_bytes":66407,"total_events":1002,"index_count":2,"part_count":3,"oldest_event":"2025-01-15T08:00:00Z","newest_event":"2026-11-23T11:19:25Z","health":"healthy","indexes":[{"name":"main","events":1000,"bytes":65772,"parts":2,"first_event":"2025-01-15T08:00:00.105Z","last_event":"2026-11-23T11:19:25.207039Z"},{"name":"web","events":2,"bytes":635,"parts":1,"first_event":"2026-01-15T08:00:00Z","last_event":"2026-01-15T08:00:05Z"}]}
 ```
 
 `parts` counts the immutable column files that hold an index's events on disk; see [Storage settings](../configuration/storage.md).
@@ -75,7 +42,16 @@ lynxdb status --format json
 lynxdb indexes
 ```
 
-Lists the indexes with their events, bytes, parts and the times of their first and last events.
+Lists the indexes with their events, bytes, parts and the times of their first and last events. In JSON, each index is an object with the keys `name`, `events`, `bytes`, `parts`, `first_event` and `last_event`:
+
+```bash
+lynxdb indexes --format json
+```
+
+```json
+{"name":"main","events":1000,"bytes":65772,"parts":2,"first_event":"2025-01-15T08:00:00.105Z","last_event":"2026-11-23T11:19:25.207039Z"}
+{"name":"web","events":2,"bytes":635,"parts":1,"first_event":"2026-01-15T08:00:00Z","last_event":"2026-01-15T08:00:05Z"}
+```
 
 ```
 ┌─────────┬────────┬─────────┬───────┬────────────────────────────────┬─────────────────────────────┐
@@ -120,7 +96,7 @@ lynxdb jobs qry_4a30e10b34a4d6a5 --cancel
 (3 rows)
 ```
 
-A single job shows its state, its query, the time it has run and its error, if any. A job's progress is its state and elapsed time; a finished job also has its rows. With `--format json`, a single job prints the server's job document, results included, and the list prints one JSON object per job. Canceling a job needs a key with the `admin` or `full` scope when auth is on. Job IDs tab-complete when [shell completion](./completion.md) is set up.
+A single job shows its state, its query, the time it has run and its error, if any. A job's progress is its state and elapsed time; a finished job also has its rows. In JSON, a single job prints the server's job document, results included, and the list prints one object per job with the keys `job_id`, `status`, `query` and `created_at`. Canceling a job needs a key with the `admin` or `full` scope when auth is on. Job IDs tab-complete when [shell completion](./completion.md) is set up.
 
 ## fields
 

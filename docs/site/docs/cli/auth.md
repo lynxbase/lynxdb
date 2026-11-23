@@ -121,6 +121,18 @@ Lists keys with ID, name, scope, expiry, last use and age. The root key shows as
 └─────────────────┴─────────┴────────┴────────────┴───────────┴──────────┘
 ```
 
+In JSON, each key is one object with the times in RFC 3339; a key that never expires has no `expires_at`, and a key never used has no `last_used_at`:
+
+```bash
+lynxdb auth list --format json
+```
+
+```json
+{"id":"rk_jjBwGH7upBvo","name":"root","prefix":"lynx_rk_JtTz","scope":"full","is_root":true,"created_at":"2026-11-23T11:19:49.263371Z","last_used_at":"2026-11-23T11:19:56.281651Z"}
+{"id":"ak_PCKXbUcnufYI","name":"shipper","prefix":"lynx_ak_CYP9","scope":"ingest","is_root":false,"created_at":"2026-11-23T11:19:56.190776Z"}
+{"id":"ak_1rmwTr1qNmNk","name":"dash","prefix":"lynx_ak_2fjt","scope":"query","expires_at":"2027-02-21T12:19:56.238484+01:00","is_root":false,"created_at":"2026-11-23T11:19:56.265577Z"}
+```
+
 ### auth revoke
 
 ```
