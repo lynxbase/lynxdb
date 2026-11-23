@@ -49,7 +49,10 @@ func (q *query) project(p *Project) error {
 		for i, pe := range q.post {
 			if pe.op == OpColumn {
 				q.final[i] = q.located[pe.col]
-				q.fields[i] = q.final[i] != nil
+				// The first rows of keys are events, whose fields are
+				// sparse; what an aggregate picks is null where it has no
+				// value.
+				q.fields[i] = q.final[i] != nil && q.agg.outs[pe.col-len(q.agg.keys)].fn == FirstRow
 			} else if pe.locates(q.located) {
 				q.early = true
 			}
