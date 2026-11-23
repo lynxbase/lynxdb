@@ -337,3 +337,18 @@ source=events | where k = [ source=events | stats min(k) as m ] | fields k
 # Indexes that are not there.
 source=nope | stats count() as c
 source=events | lookup nope k OUTPUT level | fields k
+
+# Long lists of constants.
+source=events | where v IN (1, 'x', true, 3, 4, 5, 6, 7, 8, 9, 11, 12, 13, 14, 15, 16, 17, 18) | fields k
+source=events | where s IN ('10', '9', 'abc', '1z', 2.5, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31) | fields k, s
+source=events | where s NOT IN ('10', '9', 'abc', 2.5, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32) | fields k, s
+source=events | eval x = n IN (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, null) | fields k, x
+source=events | eval x = host IN ('web-01', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o', 'p') | fields k, x
+source=events | where k in [ source=events | where n > 0 | fields k ] | fields k
+
+# Numbers held as text through the row operators.
+source=events | eventstats sum(s) as t, avg(ms) as a, max(s) as m by level | fields k, t, a, m
+source=events | sort k | streamstats sum(ms) as t, count(s) as c window=2 | fields k, t, c
+source=text | rex field=_raw "took (?<ms>\d+)ms" | eventstats avg(ms) as a | where ms > a | fields ms
+source=events | dedup s | sort s | fields s
+source=events | join left=l right=r ON l.v = r.v [ source=events | fields v, k ] | stats count() as c
