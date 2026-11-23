@@ -3,6 +3,7 @@ package columnar
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -157,7 +158,8 @@ func TestRun(t *testing.T) {
 		{"events of two tables", "source=logs-old, hosts | eval h = md5(host) | stats count() as n by h | sort h | head 1", "h=0cc175b9c0f1b6a831c399e269772661 n=1", true},
 		{"a number searched in every field", `source=logs 404 | fields msg`, "msg=not found", true},
 		{"a number and a word searched in every field", `source=logs 200 served NOT 500 | stats count() as n`, "n=2", true},
-		{"a table that is not there", `source=nope | stats count() as n`, "n=0", true},
+		{"the default index before its first event", `source=main | stats count() as n`, "n=0", true},
+		{"a pattern of no table", "source=`nope*` | stats count() as n", "n=0", true},
 		{"a join of two tables", `source=logs | join left=l right=r ON l.host = r.host hosts | stats count() as n by dc | sort dc`, "dc=east n=3; dc=west n=2", false},
 		{"a lookup in another table", `source=logs | lookup hosts host OUTPUT dc | stats count() as n by dc | sort dc`, "dc=east n=3; dc=west n=2", false},
 		{"a statistic of every event's group", `source=logs | eventstats avg(dur) as mean by host | where dur > mean | fields host, dur, mean`,
@@ -304,7 +306,7 @@ func TestValuesCollectedFromCounts(t *testing.T) {
 		`source=logs | stats values(dur) as durs by host | sort host`:                            `{"durs":[0.5,1,1.5],"host":"a"} {"durs":[0.25,2.5],"host":"b"}`,
 		`source=logs | stats values(nope) as none, count() as n by host | sort host`:             `{"none":[],"n":3,"host":"a"} {"none":[],"n":2,"host":"b"}`,
 		`source=logs, logs-old | stats values(host) as hosts by level | sort level`:              `{"hosts":["a","b","c"],"level":"error"} {"hosts":["a"],"level":"info"} {"hosts":["b"],"level":"warn"}`,
-		`source=nope | stats values(level) as levels`:                                            `{"levels":[]}`,
+		`source=main | stats values(level) as levels`:                                            `{"levels":[]}`,
 		`source=logs | where status > 999 | stats values(level) as levels, count() as n by host`: ``,
 		`source=logs | stats values(level) as levels, avg(dur) as mean by host | sort host`:      `{"levels":["error","info"],"mean":1,"host":"a"} {"levels":["error","warn"],"mean":1.375,"host":"b"}`,
 		`source=logs | stats avg(status) as mean, values(host) as hosts, avg(nope) as none by level | sort level`: `{"mean":501.5,"hosts":["a","b"],"none":null,"level":"error"} ` +
@@ -432,6 +434,29 @@ func TestBooleanArgumentsOfAggregates(t *testing.T) {
 		}
 		if got := render(res.Maps()); got != c.want || res.Columnar != c.columnar {
 			t.Errorf("%s\n got  %s (columnar %v)\n want %s (columnar %v)", c.text, got, res.Columnar, c.want, c.columnar)
+		}
+	}
+}
+
+// TestIndexThatIsNotThere requires a query that names an index there is not
+// to fail with an error that names it, wherever the query names it.
+func TestIndexThatIsNotThere(t *testing.T) {
+	tables := testData(t)
+	for _, text := range []string{
+		`source=nope | stats count() as n`,
+		`source=logs, nope | stats count() as n`,
+		`source=logs | lookup nope host OUTPUT dc`,
+		`source=logs | join left=l right=r ON l.host = r.host nope | stats count() as n`,
+		`source=logs | where host in [ source=nope | fields host ] | stats count() as n`,
+		`describe nope`,
+	} {
+		compiled, err := query.Compile(text)
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		_, err = Run(context.Background(), compiled.Plan, tables, Options{Now: testNow})
+		if !errors.Is(err, ErrNoIndex) || !strings.Contains(err.Error(), "nope") {
+			t.Errorf("%s: %v", text, err)
 		}
 	}
 }

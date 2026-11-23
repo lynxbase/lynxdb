@@ -522,18 +522,13 @@ func TestServerQuery_EmptyResult_StatsCountZero(t *testing.T) {
 	}
 }
 
-func TestServerQuery_NonexistentIndex_CountZero(t *testing.T) {
+func TestServerQuery_NonexistentIndex_NotFound(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 
-	stdout, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
+	_, _, err := runCmd(t, "--server", baseURL, "query", "--format", "json",
 		"source=idx_nonexistent_12345 | stats count() as count")
-	if err != nil {
-		t.Fatalf("query failed: %v", err)
-	}
-
-	got := jsonCount(t, stdout)
-	if got != 0 {
-		t.Errorf("nonexistent index: count = %d, want 0", got)
+	if err == nil || !strings.Contains(err.Error(), "no such index: idx_nonexistent_12345") {
+		t.Fatalf("query of an index that is not there: %v", err)
 	}
 }
 

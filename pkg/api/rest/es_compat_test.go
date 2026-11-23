@@ -324,8 +324,11 @@ not-valid-json
 			t.Fatalf("item %d: error = %+v, want mapper_parsing_exception", i, item.Index.Error)
 		}
 	}
-	if n := queryEventCount(t, srv.Addr(), `{"q":"source=logs"}`); n != 0 {
-		t.Fatalf("logs events: got %d, want 0", n)
+	// No document made the index.
+	query := postQuery(t, srv.Addr(), `{"q":"source=logs"}`)
+	query.Body.Close()
+	if query.StatusCode != http.StatusNotFound {
+		t.Fatalf("query of logs: status %d, want 404", query.StatusCode)
 	}
 }
 
@@ -505,8 +508,10 @@ func TestESBulk_DocumentKeepsItsFields(t *testing.T) {
 			t.Errorf("%s = %v, want %v", k, events[0][k], v)
 		}
 	}
-	if n := queryEventCount(t, srv.Addr(), `{"q":"source=elsewhere"}`); n != 0 {
-		t.Fatalf("elsewhere events: got %d, want 0", n)
+	query := postQuery(t, srv.Addr(), `{"q":"source=elsewhere"}`)
+	query.Body.Close()
+	if query.StatusCode != http.StatusNotFound {
+		t.Fatalf("query of elsewhere: status %d, want 404", query.StatusCode)
 	}
 }
 

@@ -72,6 +72,13 @@ type Result struct {
 // plan the columnar executor ran.
 const pushedSource = "\x00columnar"
 
+// ErrNoIndex reports a source that names an index there is not; a pattern
+// of names that matches none is not one.
+var ErrNoIndex = errors.New("no such index")
+
+// defaultIndex is the index that is there before its first event.
+const defaultIndex = "main"
+
 // Run executes plan over tables and returns its rows.
 func Run(ctx context.Context, plan *ir.Plan, tables Tables, opts Options) (*Result, error) {
 	if opts.Now.IsZero() {
@@ -211,7 +218,10 @@ func (r *run) columnar(n ir.Node, root bool) (*pushed, error) {
 		// row operators to run or to refuse.
 		return nil, nil
 	}
-	snap := r.snapshot(scan)
+	snap, err := r.snapshot(scan)
+	if err != nil {
+		return nil, err
+	}
 	if !root && handsOver(plan) {
 		if exec.Supports(snap, plan) != nil {
 			return nil, nil
@@ -231,33 +241,45 @@ func (r *run) columnar(n ir.Node, root bool) (*pushed, error) {
 }
 
 // snapshot returns the rows of the tables that a scan reads, which stay
-// until the query ends. A table that is not there holds no rows.
-func (r *run) snapshot(scan *ir.Scan) *colstore.Snapshot {
+// until the query ends; it fails for a name of a table that is not there.
+func (r *run) snapshot(scan *ir.Scan) (*colstore.Snapshot, error) {
 	var snaps []*colstore.Snapshot
-	for _, name := range r.sources(scan) {
-		if snap, ok := r.tables.Snapshot(name); ok {
+	release := func() {
+		for _, snap := range snaps {
+			snap.Release()
+		}
+	}
+	names, named := r.sources(scan)
+	for _, name := range names {
+		snap, ok := r.tables.Snapshot(name)
+		switch {
+		case ok:
 			snaps = append(snaps, snap)
+		case named[name] && name != defaultIndex:
+			release()
+
+			return nil, fmt.Errorf("%w: %s", ErrNoIndex, name)
 		}
 	}
 	all := colstore.Union(snaps...)
-	for _, snap := range snaps {
-		snap.Release()
-	}
+	release()
 	r.snaps = append(r.snaps, all)
 
-	return all
+	return all, nil
 }
 
-// sources returns the names of the tables that a scan reads.
-func (r *run) sources(scan *ir.Scan) []string {
+// sources returns the names of the tables that a scan reads, and which of
+// them it names as they are rather than by a pattern.
+func (r *run) sources(scan *ir.Scan) ([]string, map[string]bool) {
 	if len(scan.Sources) == 0 {
 		name := r.opts.DefaultSource
 		if name == "" {
-			name = "main"
+			name = defaultIndex
 		}
 
-		return []string{name}
+		return []string{name}, map[string]bool{name: true}
 	}
+	named := map[string]bool{}
 	var out []string
 	seen := map[string]bool{}
 	add := func(name string) {
@@ -269,6 +291,7 @@ func (r *run) sources(scan *ir.Scan) []string {
 	for _, s := range scan.Sources {
 		if !s.Pattern && s.Name != "*" {
 			add(s.Name)
+			named[s.Name] = true
 
 			continue
 		}
@@ -279,7 +302,7 @@ func (r *run) sources(scan *ir.Scan) []string {
 		}
 	}
 
-	return out
+	return out, named
 }
 
 // source gives the row operators the rows of a scan: those of a part of the
@@ -299,7 +322,10 @@ func (r *run) source(scan *ir.Scan) (pipeline.Iterator, error) {
 	if err != nil {
 		return nil, err
 	}
-	snap := r.snapshot(scan)
+	snap, err := r.snapshot(scan)
+	if err != nil {
+		return nil, err
+	}
 	if handsOver(plan) {
 		return &stream{r: r, snap: snap, plan: plan, schema: ir.Schema{Open: true}}, nil
 	}
@@ -448,7 +474,7 @@ const describedBlocks = 16
 func (r *run) describe(src ir.Source) ([]map[string]event.Value, error) {
 	snap, ok := r.tables.Snapshot(src.Name)
 	if !ok {
-		return nil, fmt.Errorf("columnar: no table %q", src.Name)
+		return nil, fmt.Errorf("%w: %s", ErrNoIndex, src.Name)
 	}
 	defer snap.Release()
 	kinds := map[string]uint8{}

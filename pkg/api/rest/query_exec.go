@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/database"
+	"github.com/lynxbase/lynxdb/pkg/engine/columnar"
 	"github.com/lynxbase/lynxdb/pkg/engine/physical"
 	"github.com/lynxbase/lynxdb/pkg/ppl"
 	"github.com/lynxbase/lynxdb/pkg/query"
@@ -100,6 +101,8 @@ func queryErrorCode(err error) (ErrorCode, int) {
 		return ErrCodeUnsupportedFeature, http.StatusUnprocessableEntity
 	case errors.Is(err, database.ErrTooManyQueries):
 		return ErrCodeTooManyRequests, http.StatusTooManyRequests
+	case errors.Is(err, columnar.ErrNoIndex):
+		return ErrCodeNotFound, http.StatusNotFound
 	}
 
 	return ErrCodeExecutionError, http.StatusInternalServerError

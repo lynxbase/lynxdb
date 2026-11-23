@@ -11,6 +11,7 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/ppl"
+	"github.com/lynxbase/lynxdb/pkg/query"
 )
 
 func testConfig(dir string) Config {
@@ -65,7 +66,7 @@ func TestDatabaseKeepsIndexesAcrossOpens(t *testing.T) {
 		`source=web | stats count() as n by host | sort host`: "host=h0 n=100; host=h1 n=100; host=h2 n=100",
 		"source=`*` | stats count() as n, max(n) as top":      "n=500 top=299",
 		`source=db | where n < 2 | fields n, index | sort n`:  "index=db n=0; index=db n=1",
-		`source=nope | stats count() as n`:                    "n=0",
+		`source=main | stats count() as n`:                    "n=0",
 	}
 	for text, rows := range want {
 		if got := ask(t, db, text); got != rows {
@@ -111,8 +112,12 @@ func TestDatabaseKeepsIndexesAcrossOpens(t *testing.T) {
 	if got := fmt.Sprint(db.Names()); got != "[web]" {
 		t.Fatalf("indexes after a drop: %s", got)
 	}
-	if got := ask(t, db, `source=db | stats count() as n`); got != "n=0" {
-		t.Errorf("a dropped index holds %s", got)
+	compiled, err := query.Compile(`source=db | stats count() as n`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Query(context.Background(), compiled.Plan, Options{Now: testNow}); !errors.Is(err, ErrNoIndex) {
+		t.Errorf("a query of a dropped index: %v", err)
 	}
 }
 

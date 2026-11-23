@@ -68,7 +68,7 @@ func TestResultAsJSON(t *testing.T) {
 			`{"host":"a","dur":1.5,"mean":1} {"host":"b","dur":2.5,"mean":1.375}`},
 		{`source=logs | eval r = rand() | where r >= 0 and status = 500 | fields _time, tags, status`,
 			`{"_time":"2023-11-15T00:30:00Z","tags":["x","y"],"status":500}`},
-		{`source=nope | stats count() as n`, `{"n":0}`},
+		{`source=main | stats count() as n`, `{"n":0}`},
 		{`source=logs | where status = 1`, ``},
 	} {
 		compiled, err := query.Compile(c.text)
