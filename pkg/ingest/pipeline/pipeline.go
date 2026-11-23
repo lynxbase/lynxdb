@@ -134,9 +134,10 @@ func kvTypedValue(s string) event.Value {
 }
 
 // setBuiltinTagField writes v to the event's built-in tag slot (host, source,
-// sourcetype, index) when k names one of them AND the slot is currently empty.
+// sourcetype) when k names one of them AND the slot is currently empty.
 // Returns true if k matched a built-in tag — regardless of whether the slot
-// was updated — so callers can skip the fallback SetField path.
+// was updated — so callers can skip the fallback SetField path. The index is
+// not among them: the sender chooses it, not the text of the event.
 func setBuiltinTagField(e *event.Event, k, v string) bool {
 	switch k {
 	case "host":
@@ -150,10 +151,6 @@ func setBuiltinTagField(e *event.Event, k, v string) bool {
 	case "sourcetype":
 		if e.SourceType == "" {
 			e.SourceType = v
-		}
-	case "index":
-		if e.Index == "" {
-			e.Index = v
 		}
 	default:
 		return false
@@ -265,7 +262,6 @@ var metadataFields = map[string]bool{
 	"source":     true,
 	"sourcetype": true,
 	"level":      true,
-	"index":      true,
 	"timestamp":  true,
 	"_timestamp": true,
 	"@timestamp": true,

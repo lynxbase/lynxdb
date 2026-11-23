@@ -185,6 +185,20 @@ func TestMetadataOnlyParser(t *testing.T) {
 	}
 }
 
+func TestMetadataOnlyParserLeavesTheIndexToTheSender(t *testing.T) {
+	e := event.NewEvent(time.Now(), `{"index":"jsonrouted","host":"web-01"}`)
+	events, err := (&MetadataOnlyParser{}).Process([]*event.Event{e})
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if events[0].Index != "" {
+		t.Errorf("index: got %q, want none", events[0].Index)
+	}
+	if v, ok := events[0].Fields["index"]; ok {
+		t.Errorf("index field: got %v, want absent", v)
+	}
+}
+
 func TestMetadataOnlyParser_NonJSON(t *testing.T) {
 	e := event.NewEvent(time.Now(), "this is not JSON")
 	parser := &MetadataOnlyParser{}

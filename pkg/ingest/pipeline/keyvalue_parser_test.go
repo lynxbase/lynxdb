@@ -60,3 +60,22 @@ func TestKeyValueParserStillParsesPlainText(t *testing.T) {
 		t.Errorf("user: got %v, want bob", v)
 	}
 }
+
+func TestKeyValueParserLeavesTheIndexToTheSender(t *testing.T) {
+	e := event.NewEvent(time.Now(), `index=kvrouted host=web-01 status=500`)
+
+	out, err := DefaultPipeline().Process([]*event.Event{e})
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+
+	if out[0].Index != "main" {
+		t.Errorf("index: got %q, want main", out[0].Index)
+	}
+	if v := out[0].Fields["index"]; v.AsString() != "kvrouted" {
+		t.Errorf("index field: got %v, want kvrouted", v)
+	}
+	if out[0].Host != "web-01" {
+		t.Errorf("host: got %q, want web-01", out[0].Host)
+	}
+}

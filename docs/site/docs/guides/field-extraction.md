@@ -51,7 +51,9 @@ The ingest pipeline processes each line in this order:
 2. **`key=value` pairs.** Every `key=value` and `key="quoted value"` pair
    becomes a field. Values that look like integers, floats or `true`/`false`
    are stored with that type, so `status >= 500` compares numbers. A key never
-   overwrites a field the event already has.
+   overwrites a field the event already has. `host`, `source` and
+   `sourcetype` fill those labels when the sender left them empty; an
+   `index` pair is an ordinary field, as the sender alone chooses the index.
 
 A line such as
 
@@ -76,8 +78,8 @@ that is a JSON object. See [Ingest Data](./ingest-data.md).
 
 With `ingest.mode: lightweight`, the pipeline of Splunk HEC, OTLP and syslog
 events skips full JSON and `key=value` extraction. It keeps only `host`,
-`source`, `sourcetype`, `index`, `level` and the timestamp keys of JSON
-event text; everything else stays in `_raw` for query-time extraction. See
+`source`, `sourcetype`, `level` and the timestamp keys of JSON event text;
+everything else stays in `_raw` for query-time extraction. See
 [Ingest configuration](../configuration/ingest.md).
 
 ### Pipe mode

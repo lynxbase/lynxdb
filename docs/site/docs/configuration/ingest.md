@@ -36,7 +36,7 @@ See [Ingest API](../api/ingest.md) and [Compatibility API](../api/compatibility.
 
 | Key | Env var | Default | Description |
 |-----|---------|---------|-------------|
-| `ingest.mode` | `LYNXDB_INGEST_MODE` | empty (`full`) | How Splunk HEC, OTLP and syslog events are parsed before they are written. `full` extracts JSON and `key=value` fields from the event text. `lightweight` extracts only `_time`, `host`, `source`, `sourcetype`, `level` and `index`, and leaves the rest in `_raw` for query-time extraction with `rex`, `parse` or `spath`. |
+| `ingest.mode` | `LYNXDB_INGEST_MODE` | empty (`full`) | How Splunk HEC, OTLP and syslog events are parsed before they are written. `full` extracts JSON and `key=value` fields from the event text. `lightweight` extracts only `_time`, `host`, `source`, `sourcetype` and `level`, and leaves the rest in `_raw` for query-time extraction with `rex`, `parse` or `spath`. |
 
 ## Elasticsearch Compatibility
 
