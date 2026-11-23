@@ -74,34 +74,34 @@ func runShapes(t testing.TB, snap *Snapshot) map[uint64]*runShape {
 func TestStoreFlushesSortedRunsAndMergesThemByTier(t *testing.T) {
 	skipSyncs(t)
 	path := filepath.Join(t.TempDir(), "store")
-	opts := StoreOptions{SortKey: []string{"svc"}, BlockRows: 64, FlushBytes: 4 << 10, MergeFanIn: 3}
+	// Buffers this small are written as many runs while the callers append.
+	opts := StoreOptions{SortKey: []string{"svc"}, BlockRows: 64, BufferBytes: 4 << 10, MergeFanIn: 3}
 	s, err := OpenStore(path, opts)
 	if err != nil {
 		t.Fatal(err)
 	}
-	const writers, perWriter = 4, 3000
+	const callers, perCaller = 4, 3000
 	var wg sync.WaitGroup
-	for w := 0; w < writers; w++ {
+	for c := 0; c < callers; c++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			wr := s.NewWriter()
-			for i := 0; i < perWriter; i += 50 {
-				if err := wr.AddNDJSON(storeDocs(w*perWriter+i, 50)); err != nil {
+			for i := 0; i < perCaller; i += 50 {
+				if _, err := s.Append(storeDocs(c*perCaller+i, 50)); err != nil {
 					t.Error(err)
 				}
 			}
-			if err := wr.Close(); err != nil {
+			if err := s.Sync(); err != nil {
 				t.Error(err)
 			}
 		}()
 	}
 	wg.Wait()
-	total := int64(writers * perWriter)
+	total := int64(callers * perCaller)
 	wantSum := (total - 1) * total / 2
-	// Everything is visible once the writers are closed, merged or not.
+	// Everything is visible once every caller has synced, merged or not.
 	if rows, sum := rowsAndSumOf(t, s.Table()); rows != total || sum != wantSum {
-		t.Fatalf("after the writers closed: %d rows, sum %d", rows, sum)
+		t.Fatalf("after the callers synced: %d rows, sum %d", rows, sum)
 	}
 	if err := s.Settle(); err != nil {
 		t.Fatal(err)
@@ -210,7 +210,7 @@ func checkOrderedBySvc(t testing.TB, snap *Snapshot) {
 func TestStoreServesReadersWhileItMerges(t *testing.T) {
 	skipSyncs(t)
 	s, err := OpenStore(filepath.Join(t.TempDir(), "store"), StoreOptions{
-		SortKey: []string{"svc"}, BlockRows: 32, FlushBytes: 2 << 10, MergeFanIn: 2,
+		SortKey: []string{"svc"}, BlockRows: 32, MergeFanIn: 2, FlushInterval: -1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -247,13 +247,12 @@ func TestStoreServesReadersWhileItMerges(t *testing.T) {
 			}
 		}()
 	}
-	w := s.NewWriter()
 	for i := 0; i < 4000; i += 20 {
-		if err := w.AddNDJSON(storeDocs(i, 20)); err != nil {
+		if _, err := s.Append(storeDocs(i, 20)); err != nil {
 			t.Fatal(err)
 		}
 		// One flush per batch keeps the visible rows a prefix of the input.
-		if err := w.Flush(); err != nil {
+		if err := s.Sync(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -312,22 +311,24 @@ func fallingDocs(first, count int) []byte {
 
 func TestStoreWithoutASortKeyOrdersRowsByTimeAndMergesItsRuns(t *testing.T) {
 	skipSyncs(t)
-	s, err := OpenStore(filepath.Join(t.TempDir(), "store"), StoreOptions{TimeField: "ts", FlushBytes: 1 << 10, MergeFanIn: 2, BlockRows: 64})
+	s, err := OpenStore(filepath.Join(t.TempDir(), "store"), StoreOptions{TimeField: "ts", MergeFanIn: 2, BlockRows: 64, FlushInterval: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	w := s.NewWriter()
+	var rejected int64
 	for i := 0; i < 1000; i += 100 {
-		if err := w.AddNDJSON(append(fallingDocs(i, 100), "not json\n"...)); err != nil {
+		n, err := s.Append(append(fallingDocs(i, 100), "not json\n"...))
+		if err != nil {
+			t.Fatal(err)
+		}
+		rejected += n
+		if err := s.Sync(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if w.Rejected != 10 {
-		t.Fatalf("%d lines rejected, want 10", w.Rejected)
+	if rejected != 10 {
+		t.Fatalf("%d lines rejected, want 10", rejected)
 	}
 	before := s.Table().Snapshot()
 	runs := map[uint64]bool{}
@@ -355,34 +356,43 @@ func TestStoreWithoutASortKeyOrdersRowsByTimeAndMergesItsRuns(t *testing.T) {
 	}
 }
 
-func TestWriterCutsALargeRequestIntoRunsOfTheFlushSize(t *testing.T) {
+func TestAppendCutsALargeRequestIntoRunsOfTheBufferSize(t *testing.T) {
 	skipSyncs(t)
+	const budget = 8 << 10
 	s, err := OpenStore(filepath.Join(t.TempDir(), "store"), StoreOptions{
-		SortKey: []string{"svc"}, FlushBytes: 8 << 10, MergeFanIn: -1,
+		SortKey: []string{"svc"}, BufferBytes: budget, MergeFanIn: -1, FlushInterval: -1,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
 	docs := storeDocs(0, 2000)
-	w := s.NewWriter()
-	if err := w.AddNDJSON(docs); err != nil {
+	if _, err := s.Append(docs); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(); err != nil {
+	if err := s.Sync(); err != nil {
 		t.Fatal(err)
 	}
 	snap := s.Table().Snapshot()
 	defer snap.Release()
-	want := (len(docs) + 8<<10 - 1) / (8 << 10)
-	if got := len(snap.Parts()); got < want-1 || got > want+1 {
-		t.Fatalf("%d bytes became %d runs, want about %d", len(docs), got, want)
-	}
+	input := map[uint64]uint64{}
 	for _, h := range snap.Parts() {
-		// A run exceeds the flush size by less than one line.
-		if h.RawBytes > 8<<10+128 {
-			t.Fatalf("a run holds %d input bytes", h.RawBytes)
+		input[h.Run] += h.RawBytes
+	}
+	small := 0
+	for _, raw := range input {
+		// A run exceeds the budget by less than one line.
+		if raw > budget+128 {
+			t.Fatalf("a run holds %d input bytes", raw)
 		}
+		// The flusher writes the buffers once they hold at least half the
+		// budget; what the Sync writes may be less.
+		if raw < budget/2 {
+			small++
+		}
+	}
+	if want := (len(docs) + budget - 1) / budget; small > 1 || len(input) < want || len(input) > 2*want {
+		t.Fatalf("%d bytes became %d runs, %d of them small, want about %d", len(docs), len(input), small, want)
 	}
 	if rows, sum := rowsAndSumOf(t, s.Table()); rows != 2000 || sum != 1999*2000/2 {
 		t.Fatalf("%d rows, sum %d", rows, sum)
@@ -452,7 +462,7 @@ func TestStoreKeepsPartitionsApartAndDropsOldOnes(t *testing.T) {
 	const hours = 5
 	hour, base := int64(time.Hour), int64(firstTimedHour)
 	opts := StoreOptions{
-		SortKey: []string{"svc"}, TimeField: "ts", BlockRows: 64, FlushBytes: 16 << 10, MergeFanIn: 2, Partition: time.Hour,
+		SortKey: []string{"svc"}, TimeField: "ts", BlockRows: 64, BufferBytes: 16 << 10, MergeFanIn: 2, Partition: time.Hour,
 	}
 	path := filepath.Join(t.TempDir(), "store")
 	s, err := OpenStore(path, opts)
@@ -460,11 +470,10 @@ func TestStoreKeepsPartitionsApartAndDropsOldOnes(t *testing.T) {
 		t.Fatal(err)
 	}
 	const total = 6000
-	w := s.NewWriter()
-	if err := w.AddNDJSON(timedDocs(0, total, hours)); err != nil {
+	if _, err := s.Append(timedDocs(0, total, hours)); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(); err != nil {
+	if err := s.Sync(); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Settle(); err != nil {
