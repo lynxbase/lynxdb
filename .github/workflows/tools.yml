@@ -1,0 +1,58 @@
+name: Tools
+
+# Moves mise.lock to the newest tool versions mise.toml allows, and the jobs to
+# the mise that wrote it, and proposes the result.
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: tools
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    name: Bump the pinned tools
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write # pushes the branch with the new lockfile
+      pull-requests: write # opens the pull request
+      actions: write # starts the checks on that branch
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The branch with the new lockfile is pushed with this token.
+          persist-credentials: true # zizmor: ignore[artipacked]
+      - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+        with:
+          install: false
+          cache: false
+      - name: Open a pull request when a tool moved
+        run: |
+          MISE_SAFE=1 mise lock --bump
+          current=$(mise version | cut -d' ' -f1)
+          sed -i "s/^\( *version: \)[0-9.]*$/\1$current/" .github/actions/mise/action.yml
+          if git diff --quiet -- mise.lock .github/actions/mise/action.yml; then
+              exit 0
+          fi
+          branch=chore/bump-tools
+          git switch --create "$branch"
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit --quiet --message "chore: bump the pinned tools" \
+              mise.lock .github/actions/mise/action.yml
+          git push --quiet --force origin "$branch"
+          if ! gh pr view "$branch" >/dev/null 2>&1; then
+              gh pr create --base main --head "$branch" --title "chore: bump the pinned tools" \
+                  --body "Newer versions of the tools in mise.toml, as recorded by mise lock --bump, and of mise itself."
+          fi
+          # A pull request opened with this token starts no workflow by itself.
+          gh workflow run ci.yml --ref "$branch"
