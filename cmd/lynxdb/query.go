@@ -81,8 +81,8 @@ main, and a local query that names no source reads main.`,
 			}
 
 			if file == "" {
-				// A project's default time range is one of its server's
-				// data, not of local files.
+				// default_since of .lynxdbrc bounds server queries only:
+				// local files hold data of any age.
 				if projectRC != nil && projectRC.DefaultSince != "" && !cmd.Flags().Changed("since") {
 					since = projectRC.DefaultSince
 				}
