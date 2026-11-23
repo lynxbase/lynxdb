@@ -22,13 +22,15 @@ import (
 // TestJSONBenchIngest times writing LYNXDB_BENCH_NDJSON into a store in the
 // empty directory LYNXDB_BENCH_DIR: until every row is durable, until the
 // background merges have settled and, with LYNXDB_BENCH_COMPACT set, until
-// everything is one sorted run. LYNXDB_BENCH_STREAMS writers (one per core by
-// default) each take requests of LYNXDB_BENCH_REQUEST_DOCS lines (100000 by
+// everything is one sorted run. LYNXDB_BENCH_STREAMS streams (one per core by
+// default) share the store's buffers through Append, as request handlers of
+// a server do, each in requests of LYNXDB_BENCH_REQUEST_DOCS lines (100000 by
 // default); LYNXDB_BENCH_SORT orders the table ("default" for the benchmark's
-// key), LYNXDB_BENCH_RUN_MB sets the input a writer buffers per run (128 by
-// default), LYNXDB_BENCH_FANIN the runs merged at once (8 by default), and
-// LYNXDB_BENCH_FLUSH_LEVEL and LYNXDB_BENCH_LEVEL the compression effort of
-// flushed runs (fastest by default) and of merged parts (fast by default);
+// key), LYNXDB_BENCH_RUN_MB sets FlushBytes, an eighth of the input the
+// buffers hold (128 by default), LYNXDB_BENCH_FANIN the runs merged at once
+// (8 by default), and LYNXDB_BENCH_FLUSH_LEVEL and LYNXDB_BENCH_LEVEL the
+// compression effort of flushed runs (fastest by default) and of merged parts
+// (fast by default);
 // compact is the third choice. LYNXDB_BENCH_PARTITION, a duration such as
 // 1h, partitions the table by time, LYNXDB_BENCH_MERGE_BLOCKS bounds the
 // decoded blocks that merges hold at once, LYNXDB_BENCH_MERGE_BACKLOG the
@@ -64,10 +66,6 @@ func TestJSONBenchIngest(t *testing.T) {
 		snap.Release()
 	}
 
-	// With LYNXDB_BENCH_APPEND the streams share the store's buffers through
-	// Append, as request handlers of a server do; otherwise each stream has
-	// a writer of its own.
-	shared := os.Getenv("LYNXDB_BENCH_APPEND") != ""
 	// The heap that survives a collection is what the store really holds;
 	// the rest of what the runtime obtains is garbage awaiting collection.
 	var liveMax atomic.Uint64
@@ -110,10 +108,6 @@ func TestJSONBenchIngest(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			var w *Writer
-			if !shared {
-				w = s.NewWriter()
-			}
 			region, left := piece, repeat-1
 			for len(region) > 0 || left > 0 {
 				if len(region) == 0 {
@@ -121,37 +115,19 @@ func TestJSONBenchIngest(t *testing.T) {
 				}
 				var request []byte
 				request, region = shred.SplitLines(region, requestDocs)
-				if shared {
-					n, err := s.Append(request)
-					if err != nil {
-						t.Error(err)
-
-						return
-					}
-					rejected.Add(n)
-
-					continue
-				}
-				if err := w.AddNDJSON(request); err != nil {
+				n, err := s.Append(request)
+				if err != nil {
 					t.Error(err)
 
 					return
 				}
+				rejected.Add(n)
 			}
-			if shared {
-				return
-			}
-			if err := w.Close(); err != nil {
-				t.Error(err)
-			}
-			rejected.Add(w.Rejected)
 		}()
 	}
 	wg.Wait()
-	if shared {
-		if err := s.Sync(); err != nil {
-			t.Error(err)
-		}
+	if err := s.Sync(); err != nil {
+		t.Error(err)
 	}
 	if t.Failed() {
 		t.FailNow()
