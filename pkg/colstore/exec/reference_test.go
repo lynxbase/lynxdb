@@ -1148,21 +1148,37 @@ func refOrder(a, b exec.Value, o exec.Order) int {
 	case b.IsNull():
 		return -null
 	}
-	c := cmpInt(int64(refRank(a.Kind)), int64(refRank(b.Kind)))
+	// A string that holds a number sorts as that number, after a number
+	// of the same value.
+	na, nb := a, b
+	ra, rb := refRank(a.Kind), refRank(b.Kind)
+	if n, ok := refNumeric(a); ok && a.Kind == vec.KindString {
+		na, ra = n, 2
+	}
+	if n, ok := refNumeric(b); ok && b.Kind == vec.KindString {
+		nb, rb = n, 2
+	}
+	c := cmpInt(int64(ra), int64(rb))
 	if c == 0 {
-		switch refRank(a.Kind) {
+		switch ra {
 		case 1:
 			c = cmpInt(boolInt(a.Bool), boolInt(b.Bool))
 		case 2:
-			x, _ := refNumber(a)
-			y, _ := refNumber(b)
+			x, _ := refNumber(na)
+			y, _ := refNumber(nb)
 			switch {
-			case a.Kind == vec.KindInt && b.Kind == vec.KindInt:
-				c = cmpInt(a.Int, b.Int)
+			case na.Kind == vec.KindInt && nb.Kind == vec.KindInt:
+				c = cmpInt(na.Int, nb.Int)
 			case x < y:
 				c = -1
 			case x > y:
 				c = 1
+			}
+			if c == 0 {
+				c = cmpInt(boolInt(a.Kind == vec.KindString), boolInt(b.Kind == vec.KindString))
+			}
+			if c == 0 && a.Kind == vec.KindString {
+				c = bytes.Compare(a.Bytes, b.Bytes)
 			}
 		default:
 			c = bytes.Compare(a.Bytes, b.Bytes)

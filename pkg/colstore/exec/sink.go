@@ -97,7 +97,7 @@ func (s *sink) tighten() {
 }
 
 // kindRank orders values of different kinds: booleans, numbers, strings,
-// variants.
+// variants; a string that holds a number ranks with the numbers.
 func kindRank(k vec.Kind) int {
 	switch k {
 	case vec.KindBool:
@@ -124,9 +124,27 @@ func order[T int | int64 | float64](a, b T) int {
 	return 0
 }
 
-// compareValues orders two values that are not null.
+// compareValues orders two values that are not null, in the one order of
+// every sort, extreme and pick: booleans, false first; then numbers and the
+// strings that hold one, by the number, a number before a string of the
+// same number and such strings by their bytes; then other strings by their
+// bytes; then variants by their bytes. It is a total order.
 func compareValues(a, b Value) int {
+	if a.Kind == vec.KindInt && b.Kind == vec.KindInt {
+		return order(a.Int, b.Int)
+	}
+	na, nb := a, b
 	ra, rb := kindRank(a.Kind), kindRank(b.Kind)
+	if a.Kind == vec.KindString {
+		if n, ok := numberText(a.Bytes); ok {
+			na, ra = n, 2
+		}
+	}
+	if b.Kind == vec.KindString {
+		if n, ok := numberText(b.Bytes); ok {
+			nb, rb = n, 2
+		}
+	}
 	if ra != rb {
 		return order(ra, rb)
 	}
@@ -141,25 +159,38 @@ func compareValues(a, b Value) int {
 
 		return 1
 	case 2:
-		if a.Kind == vec.KindInt && b.Kind == vec.KindInt {
-			return order(a.Int, b.Int)
+		if c := compareNumbers(na, nb); c != 0 {
+			return c
 		}
-		x, y := a.Float, b.Float
-		if a.Kind == vec.KindInt {
-			x = float64(a.Int)
+		sa, sb := a.Kind == vec.KindString, b.Kind == vec.KindString
+		if sa != sb {
+			return order(btoi(sa), btoi(sb))
 		}
-		if b.Kind == vec.KindInt {
-			y = float64(b.Int)
+		if !sa {
+			return 0
 		}
-		// NaN orders after every number.
-		if x != x || y != y {
-			return order(btoi(x != x), btoi(y != y))
-		}
-
-		return order(x, y)
 	}
 
 	return bytes.Compare(a.Bytes, b.Bytes)
+}
+
+// compareNumbers orders two numbers; NaN orders after every other number.
+func compareNumbers(a, b Value) int {
+	if a.Kind == vec.KindInt && b.Kind == vec.KindInt {
+		return order(a.Int, b.Int)
+	}
+	x, y := a.Float, b.Float
+	if a.Kind == vec.KindInt {
+		x = float64(a.Int)
+	}
+	if b.Kind == vec.KindInt {
+		y = float64(b.Int)
+	}
+	if x != x || y != y {
+		return order(btoi(x != x), btoi(y != y))
+	}
+
+	return order(x, y)
 }
 
 func btoi(b bool) int {
