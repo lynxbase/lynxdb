@@ -1,0 +1,46 @@
+version: 2
+
+updates:
+  - package-ecosystem: github-actions
+    directories:
+      - /
+      - /.github/actions/mise
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+    groups:
+      modules:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directories:
+      - /packaging/docker
+      - /test/packaging/images
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: chore
+    groups:
+      images:
+        patterns: ["*"]
+    # Moving to another release of a distribution is a decision, not an update.
+    ignore:
+      - dependency-name: alpine
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]

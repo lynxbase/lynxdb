@@ -1,0 +1,24 @@
+name: Bug report
+description: Something works differently from what the documentation says
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The query, configuration and input you used, what you expected and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: version
+    attributes:
+      label: lynxdb version
+      description: The output of `lynxdb version --json`.
+      render: json
+    validations:
+      required: true
+  - type: input
+    id: install
+    attributes:
+      label: How it was installed
+      placeholder: install.sh, Homebrew, the container image, a release archive, built from source

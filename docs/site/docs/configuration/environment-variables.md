@@ -124,9 +124,8 @@ These keys are read from the config file only:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `LYNXDB_VERSION` | latest | Version to install |
-| `LYNXDB_CHANNEL` | `stable` | `stable` or `nightly` |
-| `LYNXDB_ALLOW_PRERELEASE` | empty | Required for nightly and other prerelease versions |
+| `LYNXDB_VERSION` | newest of the channel | Version to install, such as `26.11.1.80` |
+| `LYNXDB_CHANNEL` | `stable` | `stable` or `lts` |
 | `LYNXDB_INSTALL_DIR` | auto-detected | Installation directory |
 | `LYNXDB_BASE_URL` | `https://dl.lynxdb.org` | Download base URL |
 | `LYNXDB_NO_MODIFY_PATH` | empty | Do not edit shell profiles to add the directory to `PATH` |

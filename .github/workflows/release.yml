@@ -1,0 +1,300 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      type:
+        description: A new line cut from main, or a patch of an existing line
+        required: true
+        type: choice
+        options:
+          - new
+          - patch
+      ref:
+        description: Branch, tag or commit to release
+        required: true
+        default: main
+        type: string
+      channel:
+        description: default is stable for a new line and the line's own channel for a patch
+        required: true
+        default: default
+        type: choice
+        options:
+          - default
+          - lts
+          - prestable
+      dry_run:
+        description: Build and check everything, publish nothing
+        required: true
+        default: false
+        type: boolean
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.next.outputs.version }}
+      tag: ${{ steps.next.outputs.tag }}
+      channel: ${{ steps.next.outputs.channel }}
+      line: ${{ steps.next.outputs.line }}
+      commit: ${{ steps.next.outputs.commit }}
+      previous: ${{ steps.next.outputs.previous }}
+      latest: ${{ steps.next.outputs.latest }}
+      prerelease: ${{ steps.next.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Compute the version
+        id: next
+        env:
+          TYPE: ${{ inputs.type }}
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -- next "$TYPE" --ref HEAD
+          [ "$CHANNEL" = default ] || set -- "$@" --channel "$CHANNEL"
+          # Behind a pipe, a refusal of version.sh would not stop the step.
+          planned=$(tools/release/version.sh "$@")
+          printf '%s\n' "$planned" | tee -a "$GITHUB_OUTPUT"
+      - name: Require the commit to be on the branch it is released from
+        env:
+          TYPE: ${{ inputs.type }}
+          LINE: ${{ steps.next.outputs.line }}
+        run: |
+          branch=main
+          [ "$TYPE" = new ] || branch=$LINE
+          if ! git merge-base --is-ancestor HEAD "origin/$branch"; then
+              echo "::error::the commit is not on $branch"
+              exit 1
+          fi
+
+  checks:
+    name: Checks
+    needs: plan
+    uses: $/.github/workflows/ci.yml
+    with:
+      ref: ${{ needs.plan.outputs.commit }}
+      version: ${{ needs.plan.outputs.version }}
+
+  publish:
+    name: Publish
+    needs: [plan, checks]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    permissions:
+      contents: write # tags the commit and publishes the release
+      packages: write # pushes the container image
+      id-token: write # signs the attestations
+      attestations: write # stores the attestations
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      LINE: ${{ needs.plan.outputs.line }}
+      COMMIT: ${{ needs.plan.outputs.commit }}
+      PREVIOUS: ${{ needs.plan.outputs.previous }}
+      LATEST: ${{ needs.plan.outputs.latest }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+      IMAGE: ghcr.io/${{ github.repository }}
+      HOSTED: ${{ secrets.CF_ACCOUNT_ID != '' && secrets.R2_ACCESS_KEY_ID != '' && secrets.R2_SECRET_ACCESS_KEY != '' }}
+      TAPPED: ${{ secrets.HOMEBREW_TAP_KEY != '' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.commit }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: stage
+          path: dist/stage
+      - uses: $/.github/actions/mise
+        with:
+          go-cache: false
+
+      # A release that is public is final: running the job again goes straight
+      # to what follows from it.
+      - name: Look for the release
+        id: release
+        run: |
+          if [ "$(gh release view "$TAG" --json isDraft --jq .isDraft 2>/dev/null)" = false ]; then
+              echo "published=true" >>"$GITHUB_OUTPUT"
+          fi
+
+      # The archives and the installer are the files the checks installed.
+      - name: Check the files against their checksums
+        if: steps.release.outputs.published != 'true'
+        working-directory: dist
+        run: sha256sum --check --strict SHA256SUMS
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        if: steps.release.outputs.published != 'true'
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Write the release notes
+        if: steps.release.outputs.published != 'true'
+        run: tools/release/notes.sh "$TAG" "$PREVIOUS" "$COMMIT" >"$RUNNER_TEMP/notes.md"
+
+      - name: Tag the commit
+        run: |
+          if tagged=$(gh api "repos/$GH_REPO/commits/$TAG" --jq .sha 2>/dev/null); then
+              if [ "$tagged" != "$COMMIT" ]; then
+                  echo "::error::$TAG already names $tagged"
+                  exit 1
+              fi
+              exit 0
+          fi
+          object=$(gh api "repos/$GH_REPO/git/tags" -f tag="$TAG" -f message="LynxDB $VERSION" \
+              -f object="$COMMIT" -f type=commit --jq .sha)
+          gh api "repos/$GH_REPO/git/refs" -f ref="refs/tags/$TAG" -f sha="$object" --silent
+
+      # A candidate is named by its version alone, a release also by its line,
+      # and the newest release is the one latest names.
+      - name: Push the container image
+        id: image
+        if: steps.release.outputs.published != 'true'
+        env:
+          LYNXDB_IMAGE: ${{ env.IMAGE }}
+          LYNXDB_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          printf '%s\n' "$GH_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          set -- "$VERSION"
+          [ "$PRERELEASE" = true ] || set -- "$@" "$LINE"
+          [ "$LATEST" != true ] || set -- "$@" latest
+          digest=$(tools/dist/image.sh --push "$@")
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        if: steps.release.outputs.published != 'true'
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+
+      # Assets cannot change once a release is public, so it is filled as a draft.
+      - name: Publish the release
+        if: steps.release.outputs.published != 'true'
+        run: |
+          set -- --latest=false
+          [ "$LATEST" != true ] || set -- --latest
+          [ "$PRERELEASE" != true ] || set -- "$@" --prerelease
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+              gh release create "$TAG" --verify-tag --draft --title "LynxDB $VERSION" \
+                  --notes-file "$RUNNER_TEMP/notes.md" "$@"
+          fi
+          gh release upload "$TAG" --clobber dist/*.tar.gz dist/*.zip dist/install.sh \
+              dist/SHA256SUMS
+          gh release edit "$TAG" --draft=false "$@"
+
+      - name: Open the branch of a new line
+        if: inputs.type == 'new' && needs.plan.outputs.prerelease != 'true'
+        run: |
+          if ! gh api "repos/$GH_REPO/git/ref/heads/$LINE" --silent 2>/dev/null; then
+              gh api "repos/$GH_REPO/git/refs" -f ref="refs/heads/$LINE" -f sha="$COMMIT" --silent
+          fi
+
+      # The site is built from what is public, so it serves the very files of the release.
+      - name: Publish the download site
+        if: env.HOSTED == 'true'
+        uses: $/.github/actions/site
+        with:
+          r2-account-id: ${{ secrets.CF_ACCOUNT_ID }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          tag: ${{ needs.plan.outputs.tag }}
+      - name: Warn about a download site left as it is
+        if: env.HOSTED != 'true'
+        run: echo "::warning::the R2 credentials are not set, so the download site is left as it is"
+
+      # The formulae name the files of the public release and take their checksums from it.
+      - name: Check out the Homebrew tap
+        if: env.TAPPED == 'true' && needs.plan.outputs.prerelease != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository_owner }}/homebrew-tap
+          ssh-key: ${{ secrets.HOMEBREW_TAP_KEY }}
+          path: tap
+          # The key reaches the tap alone and is needed for the push below.
+          persist-credentials: true # zizmor: ignore[artipacked]
+      - name: Update the Homebrew formulae
+        if: env.TAPPED == 'true' && needs.plan.outputs.prerelease != 'true'
+        run: |
+          mkdir -p tap/Formula
+          tools/release/formula.sh --line "$VERSION" "$TAG" dist/SHA256SUMS >"tap/Formula/lynxdb@$LINE.rb"
+          # A patch of an older line leaves lynxdb on the newest release.
+          if [ "$LATEST" = true ]; then
+              tools/release/formula.sh "$VERSION" "$TAG" dist/SHA256SUMS >tap/Formula/lynxdb.rb
+          fi
+          cd tap
+          git add Formula
+          if ! git diff --cached --quiet; then
+              git -c user.name='github-actions[bot]' \
+                  -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+                  commit --quiet --message "lynxdb $VERSION"
+              git push --quiet
+          fi
+      - name: Warn about formulae left as they are
+        if: env.TAPPED != 'true' && needs.plan.outputs.prerelease != 'true'
+        run: echo "::warning::HOMEBREW_TAP_KEY is not set, so the Homebrew formulae are left as they are"
+
+  changelog:
+    name: Propose the changelog entry
+    needs: [plan, publish]
+    if: needs.plan.outputs.prerelease != 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write # pushes the branch with the entry
+      pull-requests: write # opens the pull request
+      actions: write # starts the checks on that branch
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      VERSION: ${{ needs.plan.outputs.version }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      COMMIT: ${{ needs.plan.outputs.commit }}
+      PREVIOUS: ${{ needs.plan.outputs.previous }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          # The branch with the entry is pushed with this token.
+          persist-credentials: true # zizmor: ignore[artipacked]
+      - uses: $/.github/actions/mise
+        with:
+          go-cache: false
+      - name: Open a pull request with the entry
+        run: |
+          branch=docs/changelog-$VERSION
+          git switch --create "$branch"
+          tools/release/notes.sh "$TAG" "$PREVIOUS" "$COMMIT" CHANGELOG.md
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit --quiet --message "docs: record the $VERSION changelog" CHANGELOG.md
+          git push --quiet --force origin "$branch"
+          if ! gh pr view "$branch" >/dev/null 2>&1; then
+              gh pr create --base main --head "$branch" \
+                  --title "docs: record the $VERSION changelog" \
+                  --body "Adds the notes of [$TAG](https://github.com/$GH_REPO/releases/tag/$TAG) to CHANGELOG.md."
+          fi
+          # A pull request opened with this token starts no workflow by itself.
+          gh workflow run ci.yml --ref "$branch"

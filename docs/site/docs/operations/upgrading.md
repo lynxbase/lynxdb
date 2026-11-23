@@ -13,7 +13,7 @@ Back up the data directory before upgrading a production server (see [Backup and
 
 ### Install Script
 
-Re-run the install script. It reads the stable manifest at `https://dl.lynxdb.org/manifest.json`, downloads the release for your platform, verifies its checksum, and replaces the installed binary:
+Re-run the install script. It reads the newest version of the stable channel from `https://dl.lynxdb.org/channels/stable`, downloads the release for your platform, verifies its checksum, and replaces the installed binary:
 
 ```bash
 curl -fsSL https://lynxdb.org/install.sh | sh
@@ -22,9 +22,9 @@ curl -fsSL https://lynxdb.org/install.sh | sh
 Install a specific version:
 
 ```bash
-curl -fsSL https://lynxdb.org/install.sh | sh -s -- --version v0.5.0
+curl -fsSL https://lynxdb.org/install.sh | sh -s -- --version 26.11.1.80
 # or
-LYNXDB_VERSION=v0.5.0 curl -fsSL https://lynxdb.org/install.sh | sh
+curl -fsSL https://lynxdb.org/install.sh | LYNXDB_VERSION=26.11.1.80 sh
 ```
 
 Install into a custom directory with `--dir /opt/lynxdb/bin` or `LYNXDB_INSTALL_DIR`.
@@ -43,7 +43,10 @@ brew upgrade lynxbase/tap/lynxdb
 docker pull ghcr.io/lynxbase/lynxdb:latest
 
 # A specific version
-docker pull ghcr.io/lynxbase/lynxdb:0.5.0
+docker pull ghcr.io/lynxbase/lynxdb:26.11.1.80
+
+# The newest patch of one line
+docker pull ghcr.io/lynxbase/lynxdb:26.11
 ```
 
 With Docker Compose, update the image tag and recreate the container:
@@ -55,25 +58,38 @@ docker compose up -d
 
 ### GitHub Releases
 
-Every release publishes archives and checksums on the [GitHub releases page](https://github.com/lynxbase/lynxdb/releases).
+Every release publishes archives and `SHA256SUMS` on the [GitHub releases page](https://github.com/lynxbase/lynxdb/releases), with a build attestation for each file:
 
-## Nightly Builds
+```bash
+gh attestation verify lynxdb-26.11.1.80-linux-amd64.tar.gz --repo lynxbase/lynxdb
+```
 
-Nightly builds are prereleases built from `main` for testing. They may contain regressions and are not meant for production. Their versions look like `v0.2.6-nightly.20261116.g403d8ad`.
+## Versions and Lines
+
+A version reads `year.month.patch.build`. `26.11` is a line, named after the month it was cut from `main`. `26.11.1.80` is its first release and `26.11.2.12` its first patch. The build number counts the commits since the release before.
+
+The `stable` channel of the install script, the `lynxdb` Homebrew formula and the `latest` image follow the newest release, whatever its line. To stay on one line and take only its patches, use the formula or the image tag of the line:
+
+```bash
+brew install lynxbase/tap/lynxdb@26.11
+docker pull ghcr.io/lynxbase/lynxdb:26.11
+```
+
+A line marked lts keeps receiving patches after newer lines open. `--channel lts` of the install script follows the newest lts release.
+
+## Release Candidates
+
+A candidate is published as a pre-release for testing before the release it precedes. It may contain regressions and is not meant for production. No channel, formula or `latest` tag follows it. Install one by its version:
 
 ```bash
 # Install script
-curl -fsSL https://lynxdb.org/install.sh | sh -s -- --channel nightly --allow-prerelease
-
-# Homebrew (a separate formula that installs the same lynxdb binary name)
-brew install lynxbase/tap/lynxdb-nightly
-brew upgrade lynxbase/tap/lynxdb-nightly
+curl -fsSL https://lynxdb.org/install.sh | sh -s -- --version 26.12.1.45
 
 # Docker
-docker pull ghcr.io/lynxbase/lynxdb:nightly
+docker pull ghcr.io/lynxbase/lynxdb:26.12.1.45
 ```
 
-The install script reads the nightly manifest (`https://dl.lynxdb.org/nightly/manifest.json`) only when both `--channel nightly` and `--allow-prerelease` are given. To return to stable, re-run the install script without those flags, or `brew uninstall lynxdb-nightly && brew install lynxbase/tap/lynxdb`.
+To return to stable, re-run the install script without `--version`.
 
 ## Single-Node Upgrade
 
@@ -110,7 +126,7 @@ Stopping the server writes the events it holds in memory and closes every index.
 ### Kubernetes
 
 ```bash
-kubectl -n lynxdb set image statefulset/lynxdb lynxdb=ghcr.io/lynxbase/lynxdb:0.5.0
+kubectl -n lynxdb set image statefulset/lynxdb lynxdb=ghcr.io/lynxbase/lynxdb:26.11.2.12
 kubectl -n lynxdb rollout status statefulset/lynxdb
 ```
 
@@ -152,14 +168,14 @@ To roll back, stop the server, install the older version, and start it again:
 
 ```bash
 sudo systemctl stop lynxdb
-curl -fsSL https://lynxdb.org/install.sh | sudo sh -s -- --version v0.4.0
+curl -fsSL https://lynxdb.org/install.sh | sudo sh -s -- --version 26.11.1.80
 sudo systemctl start lynxdb
 ```
 
 With Docker, pin the older tag:
 
 ```bash
-docker pull ghcr.io/lynxbase/lynxdb:0.4.0
+docker pull ghcr.io/lynxbase/lynxdb:26.11.1.80
 docker compose up -d
 ```
 

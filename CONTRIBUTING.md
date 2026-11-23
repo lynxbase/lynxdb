@@ -2,28 +2,21 @@
 
 ## Build and test locally
 
-Use [mise](https://mise.jdx.dev/) to install the toolchain pinned in
-[`mise.toml`](mise.toml).
+[mise](https://mise.jdx.dev/) installs the tools at the versions
+[`mise.lock`](mise.lock) records and names the commands used day to day.
 
 ```bash
 git clone https://github.com/lynxbase/lynxdb.git
 cd lynxdb
 curl https://mise.run | sh
+mise trust
 mise install
+mise tasks
 mise run build
 mise run test
 ```
 
-If you already have the toolchains installed, the plain `make` targets are
-equivalent:
-
-```bash
-make build
-make test
-make vet
-```
-
-For quick local Go-only checks:
+For quick local Go-only checks, with Go 1.26 or later:
 
 ```bash
 go build -o lynxdb ./cmd/lynxdb/
@@ -65,14 +58,36 @@ One logical change per commit. Keep commits small and reviewable.
 ## Pull requests
 
 - Keep each PR to one logical change and use `type: description` in the title.
-- Run `make build`, `make test`, and `make vet`. Add tests for new code.
+- Run `mise run ci`, which is the linters and the unit tests. Add tests for
+  new code.
 - For a PPL command or function, update its catalog entry in `pkg/ppl`. Add
   compile goldens under `pkg/ppl/testdata/compile/` and execution tests, then
-  regenerate the reference pages with `make docs-gen`.
+  regenerate the reference pages with `mise run gen`.
+- A change to the installer, the archives or the container image is checked
+  by `mise run dist`, `mise run package`, then `mise run test:package` and
+  `mise run test:image`, which need Docker.
+
+The subjects are what users read: the notes of a release are the `feat`,
+`perf` and `fix` subjects since the release before, and the changes marked
+with `!` after the type. `mise run changelog` shows what the next release
+would say.
+
+## Continuous integration
+
+Every pull request and every push to `main` runs the linters, the unit tests
+on Linux for x86-64 and arm64 and on macOS, the unit tests under the race
+detector, the end-to-end, command line and shipper compatibility tests, and
+the documentation build. It also builds the release binaries of every
+platform, packs the archives, installs from them with the installer on the
+runner and in containers, and builds and starts the container image. The
+check named `CI` passes when all of that did. The shipper conformance matrix
+runs nightly.
 
 ## Code style
 
-- `go vet ./...` must pass; run `golangci-lint run ./...` with `.golangci.yml`.
+- `mise run lint` must pass: golangci-lint with `.golangci.yml`, `gofmt`
+  formatting (`mise run fmt` fixes it), a tidy `go.mod`, shellcheck, the
+  workflow linters and the commit subjects.
 - Exported symbols have doc comments.
 - Errors are wrapped with the failed operation: `fmt.Errorf("columnar: index %s: %w", index, err)`.
 - `context.Context` is the first parameter of any I/O or blocking function.
@@ -85,13 +100,13 @@ See [coding guidelines](docs/site/docs/contributing/coding-guidelines.md).
 ## Testing
 
 ```bash
-make test                                   # unit + e2e + CLI tests
-make test-unit                              # Go unit tests with the race detector
-make test-e2e                               # end-to-end server tests
-make test-cli                               # tests against the built binary
+mise run test                               # Go unit tests
+mise run test:race                          # the same under the race detector
+mise run test:e2e                           # end-to-end server tests
+mise run test:cli                           # tests against the built binary
 go test ./pkg/ppl/ -run TestCompileGolden   # one package and test
 go test ./pkg/ppl/ -run TestCompileGolden -update   # rewrite compile goldens
-go test ./pkg/vm/... -bench . -benchmem     # benchmarks
+go test -run '^$' -bench . -benchmem ./pkg/vec/...  # benchmarks
 ```
 
 Run tests from the repository root with package paths; tests read testdata
@@ -103,16 +118,21 @@ Test locations:
 - E2E tests: `test/e2e/` (shipper compatibility in `test/e2e/shippers/`).
 - CLI tests: `test/cli/`.
 - Regression tests: `test/regression/`.
+- Installer and container image tests: `test/packaging/`.
 
 ## Common tasks
 
 ```bash
-mise run build          # make build
-mise run test           # make test
-mise run bench          # make bench-micro
-make docs-gen           # regenerate the PPL reference pages from the catalogs
-make clean              # remove local build artifacts
+mise run build          # build ./lynxdb, stamped with the version git reports
+mise run ci             # every linter and the unit tests
+mise run fmt            # format the Go sources
+mise run bench          # micro benchmarks into artifacts/bench-micro.txt
+mise run gen            # regenerate the PPL reference pages from the catalogs
+mise run version        # the version this tree builds as
 ```
+
+`mise tasks` lists the rest. [RELEASING.md](RELEASING.md) describes versions
+and how a release is cut.
 
 ## Project structure
 
@@ -129,9 +149,7 @@ Edit user-facing pages under [`docs/site/docs/`](docs/site/docs/) and build
 the Docusaurus site before submitting changes.
 
 ```bash
-cd docs/site
-npm ci
-npm run build
+mise run docs
 ```
 
 Start a guide with the task and its prerequisites. Show a command the reader
@@ -139,8 +157,9 @@ can run and how to recognize a successful result. Link to the CLI, API, or
 PPL reference for flags and options.
 
 The PPL command, function, and aggregation references come from the catalogs
-in `pkg/ppl`. Run `make docs-gen` from the repository root after editing the
-catalogs. Record release changes in [CHANGELOG.md](CHANGELOG.md).
+in `pkg/ppl`. Run `mise run gen` after editing the catalogs.
+[CHANGELOG.md](CHANGELOG.md) is written from the commit subjects when a
+release is cut.
 
 ## Report an issue
 
@@ -150,4 +169,4 @@ the following details.
 - What you did (query, config, input data).
 - What you expected.
 - What happened instead.
-- LynxDB version (`lynxdb version`).
+- LynxDB version (`lynxdb version --json`).

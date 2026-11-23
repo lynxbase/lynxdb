@@ -1,11 +1,11 @@
 # Changelog
 
-All notable changes to LynxDB will be documented in this file.
+Every release of LynxDB, newest first. A version reads year.month.patch.build.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## Since 0.2.5
 
-## [Unreleased]
+What changed between 0.2.5, the last release numbered major.minor.patch, and
+the first release numbered by date.
 
 ### Query language
 
@@ -112,8 +112,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Distribution
 
+- **Versions**: a version reads year.month.patch.build, such as
+  `26.11.1.80`, and release tags carry a channel, `v26.11.1.80-stable`.
+  Nightly builds are replaced by release candidates, published as
+  pre-releases.
 - **Install script**: `curl -fsSL https://lynxdb.org/install.sh | sh` with
-  platform detection and checksum verification.
+  platform detection and mandatory checksum verification. `--channel` takes
+  `stable` or `lts`; `--allow-prerelease` and the `nightly` channel are gone.
+- **Archives**: named `lynxdb-<version>-<os>-<arch>`, with the binary in a
+  directory of that name. `SHA256SUMS` replaces `checksums.txt`, every file
+  carries a build attestation, and the `-musl` archives are gone: the Linux
+  binary is static.
 - **Container images**: multi-arch (`amd64`/`arm64`) images on
-  `ghcr.io/lynxbase/lynxdb`.
-- **Homebrew tap**: `brew install lynxbase/tap/lynxdb`.
+  `ghcr.io/lynxbase/lynxdb`, tagged with the version, the line and `latest`.
+- **Homebrew tap**: `brew install lynxbase/tap/lynxdb`, and
+  `lynxdb@<line>` to stay on one line.

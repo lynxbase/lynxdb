@@ -1,0 +1,271 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - "[0-9][0-9].[0-9]*"
+  workflow_dispatch:
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit to check
+        required: true
+        type: string
+      version:
+        description: Version the binaries and archives report
+        required: true
+        type: string
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || inputs.ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    name: Version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.resolve.outputs.version }}
+      commit: ${{ steps.resolve.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - id: resolve
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          version=${REQUESTED:-$(tools/release/version.sh current)}
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+          echo "commit=$(git rev-parse --short=12 HEAD)" >>"$GITHUB_OUTPUT"
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: $/.github/actions/mise
+      - name: Choose the commits to check the subjects of
+        env:
+          BASE: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -n "$BASE" ]; then
+              echo "LYNXDB_COMMIT_RANGE=origin/$BASE..HEAD" >>"$GITHUB_ENV"
+          elif [ -n "$BEFORE" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              echo "LYNXDB_COMMIT_RANGE=$BEFORE..HEAD" >>"$GITHUB_ENV"
+          fi
+      - run: mise run lint
+
+  test:
+    name: Test (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux amd64
+            runner: ubuntu-24.04
+          - platform: linux arm64
+            runner: ubuntu-24.04-arm
+          - platform: macos
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: $/.github/actions/mise
+      - run: mise run test
+
+  race:
+    name: Race detector
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: $/.github/actions/mise
+      - run: mise run test:race
+
+  test-e2e:
+    name: End to end (${{ matrix.platform }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux
+            runner: ubuntu-24.04
+          - platform: macos
+            runner: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: $/.github/actions/mise
+      - run: mise run test:e2e
+
+  test-cli:
+    name: Command line
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: $/.github/actions/mise
+      - run: mise run test:cli
+
+  test-compat:
+    name: Shippers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: $/.github/actions/mise
+      - run: mise run test:compat
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: $/.github/actions/mise
+        with:
+          go-cache: false
+      - run: mise run docs
+
+  dist:
+    name: Build
+    needs: version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      LYNXDB_VERSION: ${{ needs.version.outputs.version }}
+      LYNXDB_COMMIT: ${{ needs.version.outputs.commit }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      # What is released is built from the sources and go.sum alone.
+      - uses: $/.github/actions/mise
+        with:
+          go-cache: false
+      - run: mise run dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: stage
+          path: dist/stage
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: Package
+    needs: [version, dist]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      LYNXDB_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: stage
+          path: dist/stage
+      - uses: $/.github/actions/mise
+        with:
+          go-cache: false
+      - run: mise run package
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages
+          path: |
+            dist/*.tar.gz
+            dist/*.zip
+            dist/install.sh
+            dist/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  test-packages:
+    name: Test packages (${{ matrix.arch }})
+    needs: [version, package]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      LYNXDB_VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: stage
+          path: dist/stage
+      - uses: $/.github/actions/mise
+        with:
+          go-cache: false
+      - run: mise run test:package
+      - run: mise run test:image
+
+  ci-ok:
+    name: CI
+    if: always()
+    needs: [lint, test, race, test-e2e, test-cli, test-compat, docs, dist, package, test-packages]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to have passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for result in $RESULTS; do
+              if [ "$result" != success ]; then
+                  echo "a job ended as: $result"
+                  exit 1
+              fi
+          done

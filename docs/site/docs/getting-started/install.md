@@ -21,11 +21,11 @@ import TabItem from '@theme/TabItem';
 curl -fsSL https://lynxdb.org/install.sh | sh
 ```
 
-The script detects the architecture (amd64, arm64, armv7) and the C library
-(glibc or musl), downloads the matching release archive, checks it against
-the release's SHA-256 checksums when `sha256sum` or `shasum` is available,
-and installs to `/usr/local/bin`, or to `~/.local/bin` when `/usr/local/bin`
-is not writable.
+The script detects the architecture (amd64, arm64, armv7), downloads the
+matching release archive, checks it against the release's `SHA256SUMS` with
+`sha256sum` or `shasum`, and installs to `/usr/local/bin`, or to
+`~/.local/bin` when `/usr/local/bin` is not writable. The binary is static,
+so the same archive runs on glibc and musl systems.
 
 </TabItem>
 <TabItem value="macos" label="macOS">
@@ -42,11 +42,11 @@ brew install lynxbase/tap/lynxdb
 <TabItem value="windows" label="Windows">
 
 Download the `windows-amd64` zip archive from
-[GitHub Releases](https://github.com/lynxbase/lynxdb/releases), or build it
-with Go:
+[GitHub Releases](https://github.com/lynxbase/lynxdb/releases), or build the
+tip of `main` with Go:
 
 ```powershell
-go install github.com/lynxbase/lynxdb/cmd/lynxdb@latest
+go install github.com/lynxbase/lynxdb/cmd/lynxdb@main
 ```
 
 The install script also runs under Git Bash and MSYS2.
@@ -60,41 +60,42 @@ Pass options after `sh -s --`, or set the matching environment variable:
 
 | Option | Variable | Default | Description |
 |--------|----------|---------|-------------|
-| `--version <v>` | `LYNXDB_VERSION` | latest | Install a specific version, such as `v0.5.0` |
-| `--channel <c>` | `LYNXDB_CHANNEL` | `stable` | Release channel: `stable` or `nightly` |
-| `--allow-prerelease` | `LYNXDB_ALLOW_PRERELEASE` | unset | Required for nightly and prerelease versions |
+| `--version <v>` | `LYNXDB_VERSION` | newest of the channel | Install a specific version, such as `26.11.1.80` |
+| `--channel <c>` | `LYNXDB_CHANNEL` | `stable` | Release channel: `stable` or `lts` |
 | `--dir <path>` | `LYNXDB_INSTALL_DIR` | auto | Installation directory |
 | `--no-modify-path` | `LYNXDB_NO_MODIFY_PATH` | unset | Do not add the directory to `PATH` |
 | `--force` | `LYNXDB_FORCE` | unset | Skip confirmation prompts |
-| | `LYNXDB_BASE_URL` | `https://dl.lynxdb.org` | Download from another base URL (GitHub Releases is the fallback) |
+| | `LYNXDB_BASE_URL` | `https://dl.lynxdb.org` | Download from a mirror of the download site |
 
 ```bash
 # A specific version
-curl -fsSL https://lynxdb.org/install.sh | sh -s -- --version v0.5.0
+curl -fsSL https://lynxdb.org/install.sh | sh -s -- --version 26.11.1.80
 
 # A custom directory
 curl -fsSL https://lynxdb.org/install.sh | LYNXDB_INSTALL_DIR=~/bin sh
 ```
 
-### Nightly builds
+### Versions and channels
 
-Nightly builds are prerelease builds of `main` for testing. They need an
-explicit opt-in.
+A version reads `year.month.patch.build`: `26.11.1.80` is the first release
+of the line cut in November 2026. The `stable` channel follows the newest
+release. The `lts` channel follows the newest release of a line that keeps
+receiving patches.
+
+A release candidate is published as a pre-release on
+[GitHub Releases](https://github.com/lynxbase/lynxdb/releases) and belongs to
+no channel. Install one by its version:
 
 ```bash
-# Install script
-curl -fsSL https://lynxdb.org/install.sh | sh -s -- --channel nightly --allow-prerelease
-
-# Homebrew
-brew install lynxbase/tap/lynxdb-nightly
+curl -fsSL https://lynxdb.org/install.sh | sh -s -- --version 26.12.1.45
 ```
 
-To return to the stable channel, run the plain install script again, or
-swap the Homebrew formula:
+To return to the stable channel, run the plain install script again.
+
+Homebrew also keeps one formula per line, for staying on it:
 
 ```bash
-brew uninstall lynxdb-nightly
-brew install lynxbase/tap/lynxdb
+brew install lynxbase/tap/lynxdb@26.11
 ```
 
 ## Docker
@@ -117,10 +118,12 @@ echo '{"level":"error","msg":"test"}' | \
   docker run -i --rm ghcr.io/lynxbase/lynxdb query 'source=main | stats count() by level'
 ```
 
-The `nightly` tag follows the nightly builds:
+`latest` follows the newest release. A version tag such as `26.11.1.80`
+names one release, and a line tag such as `26.11` follows the patches of that
+line:
 
 ```bash
-docker pull ghcr.io/lynxbase/lynxdb:nightly
+docker pull ghcr.io/lynxbase/lynxdb:26.11
 ```
 
 ### Docker Compose
@@ -146,14 +149,18 @@ See [Docker deployment](../deployment/docker.md) for more examples.
 Requires Go 1.26 or later:
 
 ```bash
-# go install
-go install github.com/lynxbase/lynxdb/cmd/lynxdb@latest
+# The tip of main
+go install github.com/lynxbase/lynxdb/cmd/lynxdb@main
 
 # Or clone and build
 git clone https://github.com/lynxbase/lynxdb.git
 cd lynxdb
 go build -o lynxdb ./cmd/lynxdb/
 ```
+
+Release tags are not Go module versions, so `@latest` does not name the
+newest release. A binary built this way reports the version `dev`;
+`mise run build` in a clone stamps it with the version the tags give.
 
 ## Verify the installation
 
@@ -162,9 +169,9 @@ lynxdb version
 ```
 
 ```text
-  Version        v0.5.0
-  Commit         abc1234
-  Built          2026-03-01T10:00:00Z
+  Version        26.11.1.80
+  Commit         abc1234def56
+  Built          2026-11-24T10:00:00Z
   Go             go1.26.3 linux/amd64
 ```
 
@@ -194,14 +201,16 @@ PowerShell is supported too: `lynxdb completion powershell`.
 
 ## Supported platforms
 
-| OS | Architecture | Archives |
-|----|-------------|----------|
-| Linux | x86_64 (amd64) | glibc and musl |
-| Linux | arm64 | glibc and musl |
-| Linux | armv7 | glibc |
-| macOS | Intel (amd64) | |
-| macOS | Apple Silicon (arm64) | |
-| Windows | x86_64 (amd64) | zip |
+| OS | Architecture | Archive |
+|----|-------------|---------|
+| Linux | x86_64 (amd64) | `linux-amd64.tar.gz` |
+| Linux | arm64 | `linux-arm64.tar.gz` |
+| Linux | armv7 | `linux-armv7.tar.gz` |
+| macOS | Intel (amd64) | `darwin-amd64.tar.gz` |
+| macOS | Apple Silicon (arm64) | `darwin-arm64.tar.gz` |
+| Windows | x86_64 (amd64) | `windows-amd64.zip` |
+
+The Linux binaries are static and run on glibc and musl systems alike.
 
 ## Next steps
 

@@ -1,36 +1,135 @@
-# mise-en-place - https://mise.jdx.dev
-# Single source of truth for every binary LynxDB needs locally and in CI.
-# Install: curl https://mise.run | sh
-# Then:    mise install
-# Run:     mise x -- <command>   (or `mise activate` in your shell)
+min_version = "2026.11.0"
+
+[settings]
+lockfile = true
+lockfile_platforms = ["linux-arm64", "linux-x64", "macos-arm64", "macos-x64"]
 
 [tools]
-# Core language toolchains.
-go     = "1.26.3"
-node   = "20.19.0"
-python = "3.13.7"
-
-# Release and distribution tooling.
-"aqua:goreleaser/goreleaser"  = "2.15.2"
-"aqua:golangci/golangci-lint" = "2.12.2"
-"aqua:rclone/rclone"          = "1.69.3"
-"aqua:cli/cli"                = "2.92.0"
+actionlint = "1"
+gh = "2"
+git-cliff = "2"
+go = "1.26"
+# Findings differ between releases, so the exact version is part of the lint.
+golangci-lint = "2.12.2"
+node = "20"
+rclone = "1"
+shellcheck = "0.11"
+zizmor = "1"
 
 [env]
 DO_NOT_TRACK = "1"
+# The toolchain is the one mise.lock records: go.mod asking for a newer one
+# fails the build instead of downloading it.
+GOTOOLCHAIN = "local"
 
 [tasks.build]
-description = "Build the lynxdb binary"
-run = "make build"
+description = "Build the lynxdb binary, stamped with the version git reports"
+run = 'go build -ldflags "$(tools/dist/ldflags.sh)" -o lynxdb ./cmd/lynxdb'
 
 [tasks.test]
-description = "Run all tests (unit + e2e + cli)"
-run = "make test"
+description = "Run the unit tests"
+run = "go test -count=1 -timeout 600s ./..."
 
-[tasks.lint]
-description = "Build the custom golangci-lint and run it"
-run = "make lint"
+[tasks."test:race"]
+description = "Run the unit tests under the race detector"
+run = "go test -race -count=1 -timeout 1800s ./..."
+
+[tasks."test:e2e"]
+description = "Run the end-to-end tests of the server"
+run = "go test -tags e2e -count=1 -timeout 180s ./test/e2e/"
+
+[tasks."test:cli"]
+description = "Run the command line tests against a binary they build, golden files included"
+run = "go test -tags clitest -count=1 -timeout 600s ./test/cli/"
+
+[tasks."test:compat"]
+description = "Run the shipper compatibility tests; needs Docker"
+run = "go test -tags e2e -count=1 -timeout 5m -run '^TestE2E_Shipper' ./test/e2e/shippers/..."
+
+[tasks."test:conformance"]
+description = "Run the shipper conformance matrix; needs Docker"
+run = "go test -tags e2e,e2e_matrix -count=1 -timeout 30m -run '^TestE2E_ConformanceMatrix$' ./test/e2e/shippers/..."
 
 [tasks.bench]
-description = "Run benchmark suite"
-run = "make bench-micro"
+description = "Run the micro benchmarks into artifacts/bench-micro.txt"
+run = "tools/dev/bench.sh"
+
+[tasks."bench:fixtures"]
+description = "Regenerate the benchmark fixtures under testdata/bench"
+run = "go run ./tools/dev/genbench"
+
+[tasks.fmt]
+description = "Format the Go sources"
+run = "golangci-lint fmt"
+
+[tasks.gen]
+description = "Regenerate the PPL reference pages from the catalogs"
+run = "go run ./internal/docgen"
+
+[tasks."lint:go"]
+description = "Lint the Go sources and check their formatting"
+run = "golangci-lint run ./..."
+
+[tasks."lint:mod"]
+description = "Check that go.mod and go.sum are tidy"
+run = "go mod tidy -diff"
+
+[tasks."lint:shell"]
+description = "Lint the shell scripts"
+run = "git ls-files -z '*.sh' | xargs -0 shellcheck --severity=warning"
+
+[tasks."lint:commits"]
+description = "Check the commit subjects on this branch"
+run = "tools/lint/commits.sh"
+
+[tasks."lint:actions"]
+description = "Lint the GitHub Actions workflows"
+run = ["actionlint", "zizmor --offline .github"]
+
+[tasks.lint]
+description = "Run every linter"
+depends = ["lint:go", "lint:mod", "lint:shell", "lint:commits", "lint:actions"]
+
+[tasks.ci]
+description = "Run the linters and the unit tests"
+depends = ["lint", "test"]
+
+[tasks.docs]
+description = "Build the documentation site into docs/site/build"
+run = ["npm --prefix docs/site ci", "npm --prefix docs/site run build"]
+
+[tasks.dist]
+description = "Build the release binaries of every platform into dist/stage"
+run = "tools/dist/build.sh"
+
+[tasks.package]
+description = "Pack the staged binaries into the release archives in dist/"
+run = "tools/dist/package.sh"
+
+[tasks."test:package"]
+description = "Install from the archives in dist/ with the installer and check the result"
+run = "test/packaging/run.sh"
+
+[tasks.image]
+description = "Build the container image from the staged Linux binaries; needs Docker"
+run = "tools/dist/image.sh"
+
+[tasks."test:image"]
+description = "Build the container image for this machine and check what it runs; needs Docker"
+run = "test/packaging/image.sh"
+
+[tasks.version]
+description = "Print the version this tree builds as"
+run = "tools/release/version.sh current"
+
+[tasks.changelog]
+description = "Preview the notes of a release cut from this commit"
+run = "tools/release/notes.sh"
+
+[tasks.site]
+description = "Build the download site from the releases under dist/releases into dist/site"
+run = "tools/release/site.sh dist/releases dist/site"
+
+[tasks.release]
+description = "Start the release workflow: new or patch, with --ref, --lts, --prestable, --dry-run"
+run = "tools/release/dispatch.sh"

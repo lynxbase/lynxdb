@@ -1,0 +1,27 @@
+name: Set up mise
+description: Installs the tools pinned in mise.lock, reusing downloads that mise verifies against it, and restores what Go downloaded and built for the same go.sum
+
+inputs:
+  go-cache:
+    description: Whether to reuse the Go module and build caches. The job that builds what is released turns it off.
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.os == 'macOS' && '~/Library/Caches/mise/downloads-cas' || '~/.cache/mise/downloads-cas' }}
+        key: mise-downloads-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('mise.lock') }}
+    - uses: jdx/mise-action@b44d12e7d0d8ee7461bb893e1b1993500433185b # v5.2.7
+      with:
+        # The Tools workflow moves this version together with mise.lock.
+        version: 2026.11.12
+        cache: false
+    - if: inputs.go-cache == 'true'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          ~/go/pkg/mod
+          ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
+        key: go-${{ github.job }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('go.sum') }}

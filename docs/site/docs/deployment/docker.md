@@ -31,12 +31,11 @@ docker run -d ... ghcr.io/lynxbase/lynxdb:latest server --addr 0.0.0.0:3100 --da
 
 | Tag | Contents |
 |-----|----------|
-| `latest` | Latest stable release |
-| `<version>`, for example `0.5.0` | A specific release |
-| `nightly` | Latest nightly prerelease |
-| `<version>-nightly.<date>.g<sha>`, `sha-<commit>` | A specific nightly build |
+| `latest` | The newest release |
+| `<line>`, for example `26.11` | The newest release of one line |
+| `<version>`, for example `26.11.1.80` | A specific release or release candidate |
 
-Images are published for `linux/amd64` and `linux/arm64`. Nightly builds come from `main` and are not meant for production.
+Images are published for `linux/amd64` and `linux/arm64`. A release candidate has only its version tag and is not meant for production. Each image carries a build attestation: `gh attestation verify oci://ghcr.io/lynxbase/lynxdb:26.11.1.80 --repo lynxbase/lynxdb`.
 
 ## docker run Examples
 
