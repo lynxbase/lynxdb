@@ -27,8 +27,9 @@ lynxdb
 !/cmd/lynxdb/
 /tmp/
 
-# Profiling artifacts
+# Profiling artifacts and the fixtures that scripts/genbench writes
 /artifacts/
+/testdata/bench/
 
 # mise local overrides
 /mise.local.toml

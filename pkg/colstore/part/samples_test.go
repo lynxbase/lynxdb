@@ -3,21 +3,24 @@ package part
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/klauspost/compress/zstd"
 
+	"github.com/lynxbase/lynxdb/internal/benchdata"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 )
 
-// The sample logs cover shapes unlike each other: flat JSON application
-// logs, syslog-style text, real OpenSSH and OpenStack lines, access logs
-// and files that mix JSON with text.
+// The sample logs cover shapes unlike each other: real OpenSSH and OpenStack
+// lines, access logs and files that mix JSON with text, and with the two
+// generated samples flat JSON application logs and syslog-style text of
+// many blocks each.
 var sampleFiles = []string{
-	"bench/json_100k.log", "bench/text_100k.log",
 	"logs/OpenSSH_2k.log", "logs/OpenStack_2k.log", "logs/nginx_access.log", "logs/access.log",
 	"logs/mixed_json.log", "logs/audit_security.log", "logs/audit_transactions.log",
 	"logs/backend_server.log", "logs/frontend_console.log",
@@ -26,11 +29,19 @@ var sampleFiles = []string{
 func TestSampleLogsRoundTrip(t *testing.T) {
 	root := filepath.Join("..", "..", "..", "testdata")
 	zenc, _ := zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
+	samples := map[string][]byte{
+		"generated JSON logs": benchdata.AppendJSONLogs(nil, 100000),
+		"generated text logs": benchdata.AppendTextLogs(nil, 100000),
+	}
 	for _, name := range sampleFiles {
 		data, err := os.ReadFile(filepath.Join(root, name))
 		if err != nil {
 			t.Fatal(err)
 		}
+		samples[name] = data
+	}
+	for _, name := range slices.Sorted(maps.Keys(samples)) {
+		data := samples[name]
 		lines := bytes.Split(bytes.TrimRight(data, "\n"), []byte{'\n'})
 
 		start := time.Now()

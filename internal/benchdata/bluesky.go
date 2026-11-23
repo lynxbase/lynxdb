@@ -1,5 +1,6 @@
-// Package benchdata generates events shaped like the Bluesky firehose that
-// JSONBench loads, for benchmarks that must not depend on a dataset file.
+// Package benchdata generates the data of benchmarks and tests that must
+// not depend on a dataset file: events shaped like the Bluesky firehose that
+// JSONBench loads, and application logs as JSON and as text.
 package benchdata
 
 import (

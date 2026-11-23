@@ -119,7 +119,8 @@ profiling in a fresh data directory under `artifacts/profiles/<time>/`, loads
 `testdata/bench/json_100k.log` twenty times, runs a minute of concurrent
 ingest and PPL queries, collects CPU, heap, allocation, goroutine, mutex,
 block and trace profiles, and writes `FINDINGS.md` with the top functions and
-GC pauses. `mise run bench:fixtures` generates the fixtures when they are missing.
+GC pauses. The fixtures are not checked in: `mise run bench:fixtures` writes
+them, the same bytes every time, and the script runs it when they are missing.
 
 ```bash
 tools/dev/profile/run-all.sh
