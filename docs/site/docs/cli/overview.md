@@ -114,7 +114,7 @@ default_source: web
 | Query | [`query`](./query.md) (`q`), [`explain`](./explain.md), [`fields`](./status.md#fields) (`f`) |
 | Load data | [`ingest`](./ingest.md) (`i`) |
 | Run the server | [`server`](./server.md) |
-| Inspect the server | [`status`](./status.md) (`st`), [`health`](./status.md#health), [`indexes`](./status.md#indexes), [`jobs`](./status.md#jobs) |
+| Inspect the server | [`status`](./status.md) (`st`), [`indexes`](./status.md#indexes), [`jobs`](./status.md#jobs) |
 | Authentication | [`login`](./auth.md#login), [`logout`](./auth.md#logout), [`auth`](./auth.md) |
 | Configuration | [`config`](./config-cmd.md) |
 | Utilities | [`version`](./status.md#version), [`completion`](./completion.md) |

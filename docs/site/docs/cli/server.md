@@ -182,6 +182,6 @@ journalctl -u lynxdb -f
 ## See also
 
 - [Server settings](../configuration/server.md)
-- [status, health and other inspection commands](./status.md)
+- [status and other inspection commands](./status.md)
 - [config](./config-cmd.md)
 - [Single-node deployment](../deployment/single-node.md)

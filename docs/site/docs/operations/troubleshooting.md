@@ -5,11 +5,11 @@ description: Troubleshoot common LynxDB issues -- connectivity, query errors, in
 
 # Troubleshooting
 
-Run `lynxdb health` to check whether the server is reachable and healthy. Run
-`lynxdb status` to inspect indexes, event counts, and storage.
+Run `lynxdb status` to check whether the server is reachable and healthy and
+to inspect indexes, event counts, and storage. It exits with code 3 when the
+server cannot be reached and with code 1 when it is not healthy.
 
 ```bash
-lynxdb health
 lynxdb status
 ```
 

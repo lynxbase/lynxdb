@@ -1,7 +1,7 @@
 ---
 sidebar_position: 7
 title: status, fields, jobs & more
-description: Inspect a LynxDB server - status, health, indexes, query jobs, the field catalog and the CLI version.
+description: Inspect a LynxDB server - status and health, indexes, query jobs, the field catalog and the CLI version.
 ---
 
 # status, fields, jobs & more
@@ -17,6 +17,12 @@ lynxdb status
 **Alias:** `st`
 
 Server version, uptime and health, then the storage size, the number of events, parts and indexes, each index with its share of the events, and the times of the oldest and newest events. The server writes the events ingested so far before it answers, so the counts include them.
+
+`status` exits with code 3 when the server cannot be reached, and with code 1, after printing the status, when the server reports a health other than `healthy`. That makes it a readiness check for scripts:
+
+```bash
+lynxdb status --quiet > /dev/null || echo "lynxdb is down"
+```
 
 ```bash
 lynxdb status --format json
@@ -62,24 +68,6 @@ lynxdb status --format json
 ```
 
 `parts` counts the immutable column files that hold an index's events on disk; see [Storage settings](../configuration/storage.md).
-
-## health
-
-```
-lynxdb health
-```
-
-Calls `GET /health` and prints `Server is healthy`, or the reported status. Use it in readiness checks:
-
-```bash
-lynxdb health --format json
-```
-
-```json
-{
-  "status": "healthy"
-}
-```
 
 ## indexes
 

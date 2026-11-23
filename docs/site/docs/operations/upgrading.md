@@ -109,7 +109,6 @@ lynxdb version --short
 sudo systemctl start lynxdb
 
 # 5. Check health
-lynxdb health
 lynxdb status
 ```
 
@@ -120,7 +119,7 @@ Stopping the server writes the events it holds in memory and closes every index.
 1. Remove the node from the load balancer, or let its health check fail.
 2. Wait for in-flight requests to finish.
 3. Stop the server, replace the binary, start the server.
-4. Check `lynxdb health`.
+4. Check `lynxdb status`; it exits non-zero while the server is unreachable or not healthy.
 5. Add the node back.
 
 ### Kubernetes
@@ -139,7 +138,7 @@ for host in lynxdb-1 lynxdb-2 lynxdb-3; do
   ssh "$host" "sudo systemctl stop lynxdb"
   ssh "$host" "curl -fsSL https://lynxdb.org/install.sh | sudo sh"
   ssh "$host" "sudo systemctl start lynxdb"
-  ssh "$host" "lynxdb health"
+  ssh "$host" "lynxdb status --quiet"
 done
 ```
 

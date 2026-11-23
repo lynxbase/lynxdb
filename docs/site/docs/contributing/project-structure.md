@@ -38,7 +38,7 @@ The `main` package and the CLI commands, built with Cobra:
 | `explain.go` | `lynxdb explain` |
 | `fields.go` | `lynxdb fields` |
 | `ingest.go` | `lynxdb ingest` |
-| `status.go` | `lynxdb status`, `health`, `indexes` |
+| `status.go` | `lynxdb status`, `indexes` |
 | `jobs.go` | `lynxdb jobs` |
 | `config.go` | `lynxdb config` and its subcommands |
 | `authcmd.go`, `login.go`, `logout.go` | `lynxdb auth`, `login`, `logout` |

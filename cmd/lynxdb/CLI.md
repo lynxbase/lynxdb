@@ -16,7 +16,7 @@ User documentation lives in `docs/site/docs/cli/`; the query language is describ
 - Query: [query](#query), [explain](#explain), [fields](#fields)
 - Load data: [ingest](#ingest)
 - Server: [server](#server)
-- Inspect: [status](#status), [health](#health), [indexes](#indexes), [jobs](#jobs)
+- Inspect: [status](#status), [indexes](#indexes), [jobs](#jobs)
 - Authentication: [login](#login), [logout](#logout), [auth](#auth)
 - Configuration: [config](#config)
 - Utilities: [version](#version), [completion](#completion)
@@ -265,15 +265,7 @@ lynxdb server --syslog :514 --otlp-grpc-listen :4317
 lynxdb status
 ```
 
-Alias `st`. Version, uptime, health, storage, event count, parts, indexes with their share of events, and the times of the oldest and newest events. `--format json` prints `uptime_seconds`, `storage_bytes`, `total_events`, `index_count`, `part_count`, `oldest_event`, `newest_event`, `health` and `indexes`.
-
-## health
-
-```
-lynxdb health
-```
-
-Calls `GET /health` and prints the status (`healthy`, `degraded`, `unhealthy`).
+Alias `st`. Version, uptime, health, storage, event count, parts, indexes with their share of events, and the times of the oldest and newest events. `--format json` prints `uptime_seconds`, `storage_bytes`, `total_events`, `index_count`, `part_count`, `oldest_event`, `newest_event`, `health` and `indexes`. Exits 3 when the server cannot be reached and 1, after printing, when its health is not `healthy`.
 
 ## indexes
 

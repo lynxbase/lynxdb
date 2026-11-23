@@ -942,15 +942,6 @@ func TestServerStatus_ContainsAllKeys(t *testing.T) {
 	}
 }
 
-func TestServerHealth_Returns_OK(t *testing.T) {
-	baseURL := newTestServer(t)
-
-	_, _, err := runCmd(t, "--server", baseURL, "health")
-	if err != nil {
-		t.Fatalf("health check failed: %v", err)
-	}
-}
-
 func TestServerFields_AfterIngest_DiscoveredFields(t *testing.T) {
 	baseURL := setupMultiIndexServer(t)
 

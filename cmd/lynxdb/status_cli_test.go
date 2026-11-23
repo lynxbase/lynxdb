@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -44,11 +46,25 @@ func TestStatus_Table_ContainsLabels(t *testing.T) {
 	}
 }
 
-func TestHealth_OK(t *testing.T) {
-	baseURL := newTestServer(t)
+// TestStatus_FailsWhenNotHealthy pins that status prints what it learned
+// and then fails when the server is not healthy.
+func TestStatus_FailsWhenNotHealthy(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/v1/stats", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"uptime_seconds": 14, "total_events": 3}})
+	})
+	mux.HandleFunc("GET /health", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"status": "degraded"}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
 
-	_, _, err := runCmd(t, "--server", baseURL, "health")
-	if err != nil {
-		t.Fatalf("health check failed: %v", err)
+	stdout, _, err := runCmd(t, "--server", srv.URL, "status", "--format", "json")
+	if err == nil || !strings.Contains(err.Error(), "server is degraded") {
+		t.Fatalf("got %v, want a degraded server error", err)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil || result["health"] != "degraded" {
+		t.Errorf("status printed no status before failing: %q", stdout)
 	}
 }

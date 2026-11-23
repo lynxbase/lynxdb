@@ -110,7 +110,6 @@ With `auth.enabled: true`, the first start prints a root key to the journal once
 
 ```bash
 lynxdb login --server http://localhost:3100
-lynxdb health
 lynxdb status
 lynxdb query 'source=main | stats count() by host'
 ```

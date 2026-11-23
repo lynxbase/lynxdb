@@ -13,11 +13,11 @@ import (
 
 	"github.com/lynxbase/lynxdb/internal/buildinfo"
 	"github.com/lynxbase/lynxdb/internal/ui"
+	"github.com/lynxbase/lynxdb/pkg/client"
 )
 
 func init() {
 	rootCmd.AddCommand(newStatusCmd())
-	rootCmd.AddCommand(newHealthCmd())
 	rootCmd.AddCommand(newIndexesCmd())
 }
 
@@ -26,17 +26,12 @@ func newStatusCmd() *cobra.Command {
 		Use:     "status",
 		Aliases: []string{"st"},
 		Short:   "Show server status",
+		Long: `Show the server's version, uptime, health, storage and indexes. Exits
+non-zero when the server cannot be reached or is not healthy.`,
 		Example: `  lynxdb status
-  lynxdb status --format json`,
+  lynxdb status --format json
+  lynxdb status --quiet > /dev/null || echo "server down"`,
 		RunE: runStatus,
-	}
-}
-
-func newHealthCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:   "health",
-		Short: "Check server health",
-		RunE:  runHealth,
 	}
 }
 
@@ -61,12 +56,27 @@ func runStatus(_ *cobra.Command, _ []string) error {
 	}
 
 	healthStatus := "unknown"
-	if h, err := c.Health(ctx); err == nil {
+	h, healthErr := c.Health(ctx)
+	if healthErr == nil {
 		healthStatus = h.Status
 	}
 
 	stopAnimation()
+	if err := printStatus(stats, healthStatus); err != nil {
+		return err
+	}
+	if healthErr != nil {
+		return fmt.Errorf("health check: %w", healthErr)
+	}
+	if healthStatus != "healthy" {
+		return fmt.Errorf("server is %s", healthStatus)
+	}
 
+	return nil
+}
+
+// printStatus prints the statistics and health of the server.
+func printStatus(stats *client.StatsResult, healthStatus string) error {
 	if isJSONFormat() {
 		out := map[string]interface{}{
 			"uptime_seconds": stats.UptimeSeconds,
@@ -251,35 +261,6 @@ func colorizeHealthStatus(t *ui.Theme, status string) string {
 	default:
 		return t.Dim.Render(status)
 	}
-}
-
-func runHealth(_ *cobra.Command, _ []string) error {
-	ctx := context.Background()
-
-	result, err := apiClient().Health(ctx)
-	if err != nil {
-		return err
-	}
-
-	if isJSONFormat() {
-		b, _ := json.MarshalIndent(result, "", "  ")
-		fmt.Println(string(b))
-
-		return nil
-	}
-
-	if !humanOutputActive() {
-		return renderKeyValues(os.Stdout, [][2]any{{"status", result.Status}}, ui.Stdout)
-	}
-
-	if result.Status == "healthy" {
-		printSuccess("Server is healthy")
-	} else {
-		t := ui.Stdout
-		fmt.Println(t.KeyValue("Status", colorizeHealthStatus(t, result.Status)))
-	}
-
-	return nil
 }
 
 func runIndexes(_ *cobra.Command, _ []string) error {

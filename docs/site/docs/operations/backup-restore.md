@@ -125,7 +125,6 @@ sudo tar xzf /backups/lynxdb-20260301-020000.tar.gz -C /
 sudo chown -R lynxdb:lynxdb /var/lib/lynxdb
 sudo systemctl start lynxdb
 
-lynxdb health
 lynxdb status
 ```
 

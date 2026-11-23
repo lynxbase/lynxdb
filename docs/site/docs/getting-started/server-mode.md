@@ -151,8 +151,7 @@ See the [Query API](../api/query.md) for jobs and errors.
 ## Inspect the server
 
 ```bash
-lynxdb status        # uptime, storage, events, parts, indexes
-lynxdb health        # health check, for scripts and load balancers
+lynxdb status        # uptime, health, storage, events, parts, indexes; non-zero exit when unhealthy
 lynxdb indexes       # indexes with their events, bytes, parts and time span
 lynxdb fields        # field catalog: each field and the indexes that hold it
 ```

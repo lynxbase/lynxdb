@@ -19,10 +19,10 @@ curl http://localhost:3100/health
 {"data":{"status":"healthy","version":"dev"}}
 ```
 
-It answers `200 OK` while the server accepts requests. Use it for load balancer health checks, Kubernetes liveness and readiness probes, and uptime monitoring. The CLI calls the same endpoint:
+It answers `200 OK` while the server accepts requests. Use it for load balancer health checks, Kubernetes liveness and readiness probes, and uptime monitoring. `lynxdb status` calls the same endpoint and exits non-zero when the server is unreachable or not healthy:
 
 ```bash
-lynxdb health
+lynxdb status --quiet > /dev/null || echo "lynxdb is down"
 ```
 
 ## Server Status
