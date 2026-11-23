@@ -133,7 +133,7 @@ The top-level keys of `data` are `listen`, `data_dir`, `retention`, `log_level`,
 
 Merges a JSON object into the running configuration, validates the result and applies it the same way a `SIGHUP` reload does. Needs a root key when authentication is on.
 
-Accepted top-level keys: `retention`, `log_level`, `listen`, `query`, `ingest`, `storage`, `http`, `syslog`. Nested objects merge member by member. Any other key, an empty patch, a value of the wrong type, or a config that fails validation answers `400 VALIDATION_ERROR`.
+Accepted top-level keys: `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`, `tls`, `auth`. Nested objects merge member by member. Any other key, nested ones included, an empty patch, a value of the wrong type, or a config that fails validation answers `400 VALIDATION_ERROR`.
 
 ```bash
 curl -s -X PATCH localhost:3100/api/v1/config \
@@ -141,9 +141,13 @@ curl -s -X PATCH localhost:3100/api/v1/config \
   -d '{"log_level": "debug", "query": {"default_result_limit": 500}}'
 ```
 
-The response holds the resulting configuration in `data.config`. When a changed setting takes effect only after a restart, `data.restart_required` names it: a patch of `{"retention": "30d", "listen": "0.0.0.0:3100"}` answers with `"restart_required": ["listen", "retention"]`.
+The response holds the resulting configuration in `data.config`.
 
-These settings take effect at once: `log_level`, `query.sync_timeout`, `query.default_result_limit`, `query.max_result_limit`, `query.max_query_length`, `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`, `ingest.es_compat.enabled`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`, `http.shutdown_timeout`, and the syslog `index`, `sourcetype`, `default_timezone`, `default_hostname`, `batch_size` and `batch_timeout`. `ingest.limits.*` and `ingest.es_compat.advertised_version` are accepted without a restart notice but take effect at the next start. Every other change is listed in `restart_required`.
+A patch may change only the settings that take effect at once: `log_level`, `query.sync_timeout`, `query.default_result_limit`, `query.max_result_limit`, `query.max_query_length`, `ingest.max_batch_size`, `ingest.max_line_bytes`, `ingest.es_compat.enabled`, `ingest.splunk_hec.enabled`, `http.shutdown_timeout`, and the syslog `index`, `sourcetype`, `default_timezone`, `default_hostname`, `batch_size` and `batch_timeout`. A patch that changes any other setting answers `400 VALIDATION_ERROR` naming it and changes nothing, so `GET /api/v1/config` reports only settings in effect:
+
+```json
+{"error": {"code": "VALIDATION_ERROR", "message": "these settings take effect only at startup: listen, retention", "suggestion": "Change them in the config file and restart the server"}}
+```
 
 The change lives only in the running process. Edit the config file as well to keep it after a restart.
 

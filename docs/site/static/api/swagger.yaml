@@ -818,8 +818,9 @@ paths:
       summary: Change the running configuration
       description: |
         Merges the body into the running configuration, validates it and applies it like a `SIGHUP` reload.
-        Accepted top-level keys: `retention`, `log_level`, `listen`, `query`, `ingest`, `storage`, `http`, `syslog`.
-        Settings that take effect only after a restart are listed in `restart_required`. Needs a root key.
+        Top-level keys: `listen`, `data_dir`, `retention`, `log_level`, `storage`, `query`, `ingest`, `http`, `syslog`,
+        `tls`, `auth`; unknown keys, nested ones included, answer `400`. A patch that changes a setting read only at
+        startup answers `400` naming it and changes nothing. Needs a root key.
       requestBody:
         required: true
         content:
@@ -2495,10 +2496,6 @@ components:
           properties:
             config:
               type: object
-            restart_required:
-              type: array
-              items:
-                type: string
     CreateKeyRequest:
       type: object
       required: [name]

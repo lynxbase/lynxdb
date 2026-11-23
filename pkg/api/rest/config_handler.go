@@ -1,11 +1,11 @@
 package rest
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
@@ -22,11 +22,14 @@ func (s *Server) handleGetConfig(w http.ResponseWriter, r *http.Request) {
 	respondData(w, http.StatusOK, cfg)
 }
 
+// handlePatchConfig applies a JSON patch of the settings that take effect
+// at once. A patch that changes a setting read only at startup is refused,
+// so that GET /config reports only settings in effect.
 func (s *Server) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 	if !s.requireRoot(w, r) {
 		return
 	}
-	var patch map[string]interface{}
+	var patch map[string]json.RawMessage
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		respondError(w, ErrCodeInvalidJSON, http.StatusBadRequest, "invalid JSON")
 
@@ -41,12 +44,7 @@ func (s *Server) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 
 	for key := range patch {
 		switch key {
-		case "retention", "log_level":
-			// Runtime adjustable, no restart needed.
-		case "listen":
-			// Known key but requires restart — will be flagged in the response.
-		case "query", "ingest", "storage", "http", "syslog":
-			// Sub-configs are runtime adjustable.
+		case "listen", "data_dir", "retention", "log_level", "storage", "query", "ingest", "http", "syslog", "tls", "auth":
 		default:
 			respondError(w, ErrCodeValidationError, http.StatusBadRequest, "unknown config key: "+key)
 
@@ -54,9 +52,10 @@ func (s *Server) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Apply patches to a copy of the current runtime config.
+	// Apply the patch to a copy of the current runtime config.
 	s.cfgMu.RLock()
-	raw, err := json.Marshal(s.runtimeCfg)
+	current := s.runtimeCfg
+	raw, err := json.Marshal(current)
 	s.cfgMu.RUnlock()
 	if err != nil {
 		respondError(w, ErrCodeInternalError, http.StatusInternalServerError, "failed to marshal config: "+err.Error())
@@ -77,30 +76,37 @@ func (s *Server) handlePatchConfig(w http.ResponseWriter, r *http.Request) {
 
 		return
 	}
-	if err := json.Unmarshal(patchRaw, &updated); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(patchRaw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&updated); err != nil {
 		respondError(w, ErrCodeValidationError, http.StatusBadRequest, "failed to apply patch: "+err.Error())
 
 		return
 	}
 
-	restartRequired, err := s.ReloadConfig(&updated)
-	if err != nil {
+	if restart := config.ClassifyReloadChanges(current, &updated).RestartRequired; len(restart) > 0 {
+		respondError(w, ErrCodeValidationError, http.StatusBadRequest,
+			"these settings take effect only at startup: "+strings.Join(restart, ", "),
+			WithSuggestion("Change them in the config file and restart the server"))
+
+		return
+	}
+
+	if _, err := s.ReloadConfig(&updated); err != nil {
 		respondError(w, ErrCodeValidationError, http.StatusBadRequest, err.Error())
 
 		return
 	}
 
-	result := map[string]interface{}{
-		"config": updated,
-	}
-	if len(restartRequired) > 0 {
-		result["restart_required"] = restartRequired
-	}
-	respondData(w, http.StatusOK, result)
+	s.cfgMu.RLock()
+	applied := s.runtimeCfg
+	s.cfgMu.RUnlock()
+	respondData(w, http.StatusOK, map[string]interface{}{"config": applied})
 }
 
-// ReloadConfig validates the supplied config, applies the runtime-safe subset,
-// and returns the fields that changed but still require a restart.
+// ReloadConfig validates the supplied config, applies the settings that
+// take effect at once, and returns the changed settings that need a restart.
+// Those keep their running values, which GET /config reports.
 func (s *Server) ReloadConfig(updated *config.Config) ([]string, error) {
 	if updated == nil {
 		return nil, fmt.Errorf("nil config")
@@ -109,41 +115,31 @@ func (s *Server) ReloadConfig(updated *config.Config) ([]string, error) {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
 
-	snapshot := *updated
-	updated = &snapshot
-
 	s.cfgMu.Lock()
 	old := s.runtimeCfg
-	changes := config.ClassifyReloadChanges(old, updated)
-	s.runtimeCfg = updated
-	s.queryCfg = updated.Query
-	s.ingestCfg = updated.Ingest
-	s.shutdownTimeout = defaultShutdownTimeout(updated.HTTP.ShutdownTimeout)
+	applied, changes := config.Reload(old, updated)
+	if err := applied.Validate(); err != nil {
+		s.cfgMu.Unlock()
+
+		return nil, fmt.Errorf("invalid config without the settings that need a restart (%s): %w",
+			strings.Join(changes.RestartRequired, ", "), err)
+	}
+	s.runtimeCfg = applied
+	s.queryCfg = applied.Query
+	s.ingestCfg = applied.Ingest
+	s.shutdownTimeout = defaultShutdownTimeout(applied.HTTP.ShutdownTimeout)
 	s.cfgMu.Unlock()
 
-	if s.levelVar != nil && old.LogLevel != updated.LogLevel {
-		s.levelVar.Set(parseLogLevel(updated.LogLevel))
+	if s.levelVar != nil && old.LogLevel != applied.LogLevel {
+		s.levelVar.Set(parseLogLevel(applied.LogLevel))
 		if s.logger != nil {
-			s.logger.Info("reloaded log_level", "old", old.LogLevel, "new", updated.LogLevel)
+			s.logger.Info("reloaded log_level", "old", old.LogLevel, "new", applied.LogLevel)
 		}
 	}
 
 	if s.syslogReceiver != nil {
-		if err := s.syslogReceiver.ReloadConfig(updated.Syslog); err != nil {
+		if err := s.syslogReceiver.ReloadConfig(applied.Syslog); err != nil {
 			return nil, fmt.Errorf("reload syslog config: %w", err)
-		}
-	}
-	// The database takes these settings only when it opens.
-	for _, f := range []struct {
-		key     string
-		changed bool
-	}{
-		{"retention", old.Retention != updated.Retention},
-		{"query.max_concurrent", old.Query.MaxConcurrent != updated.Query.MaxConcurrent},
-		{"query.job_ttl", old.Query.JobTTL != updated.Query.JobTTL},
-	} {
-		if f.changed && !slices.Contains(changes.RestartRequired, f.key) {
-			changes.RestartRequired = append(changes.RestartRequired, f.key)
 		}
 	}
 	if s.logger != nil {

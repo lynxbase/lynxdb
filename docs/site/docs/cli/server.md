@@ -145,12 +145,12 @@ A reload reads the config file and the environment again; it does not re-apply t
 
 - `log_level`
 - `query.sync_timeout`, `query.default_result_limit`, `query.max_result_limit`, `query.max_query_length`
-- `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`
+- `ingest.max_batch_size`, `ingest.max_line_bytes`
 - `ingest.es_compat.enabled`, `ingest.splunk_hec.enabled`
 - `http.shutdown_timeout`
 - `syslog.index`, `syslog.sourcetype`, `syslog.default_timezone`, `syslog.default_hostname`, `syslog.batch_size`, `syslog.batch_timeout`
 
-Any other change, such as `listen`, `data_dir`, `retention`, `storage.*`, `query.max_concurrent`, `query.job_ttl`, TLS, auth, the OTLP listeners or the body limits, needs a restart; the server logs the fields it left unapplied.
+Any other change, such as `listen`, `data_dir`, `retention`, `storage.*`, `query.max_concurrent`, `query.job_ttl`, `ingest.mode`, TLS, auth, the OTLP listeners or the body limits, needs a restart; the server logs the fields it left unapplied and keeps running with their old values.
 
 ## systemd
 

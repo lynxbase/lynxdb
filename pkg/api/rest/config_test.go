@@ -102,31 +102,69 @@ func TestConfig_Patch(t *testing.T) {
 	}
 }
 
-func TestConfig_PatchRestartRequired(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(map[string]interface{}{
-		"listen": "0.0.0.0:4000",
-	})
-	req, _ := http.NewRequest("PATCH", fmt.Sprintf("http://%s/api/v1/config", srv.Addr()), bytes.NewReader(body))
+// patchConfig sends a PATCH /api/v1/config and returns the status and the
+// decoded body.
+func patchConfig(t *testing.T, srv *Server, body string) (int, map[string]interface{}) {
+	t.Helper()
+	req, _ := http.NewRequest("PATCH", fmt.Sprintf("http://%s/api/v1/config", srv.Addr()), strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		t.Fatalf("status: %d", resp.StatusCode)
+	var result map[string]interface{}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
 	}
 
-	var result map[string]interface{}
-	json.NewDecoder(resp.Body).Decode(&result)
-	data := result["data"].(map[string]interface{})
-	restart, ok := data["restart_required"].([]interface{})
-	if !ok || len(restart) == 0 {
-		t.Fatal("expected restart_required")
+	return resp.StatusCode, result
+}
+
+func TestConfig_PatchRestartRequiredRejected(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	for _, tt := range []struct{ body, field string }{
+		{`{"listen": "0.0.0.0:1"}`, "listen"},
+		{`{"retention": "1h"}`, "retention"},
+		{`{"query": {"max_concurrent": 1}}`, "query.max_concurrent"},
+		{`{"ingest": {"limits": {"max_compressed_body_bytes": "1mb"}}}`, "ingest.limits.max_compressed_body_bytes"},
+		{`{"ingest": {"es_compat": {"advertised_version": "8.17.0"}}}`, "ingest.es_compat.advertised_version"},
+		{`{"log_level": "debug", "auth": {"enabled": true}}`, "auth.enabled"},
+	} {
+		status, result := patchConfig(t, srv, tt.body)
+		if status != http.StatusBadRequest {
+			t.Fatalf("PATCH %s: status %d, want 400", tt.body, status)
+		}
+		msg, _ := result["error"].(map[string]interface{})["message"].(string)
+		if !strings.Contains(msg, "startup") || !strings.Contains(msg, tt.field) {
+			t.Errorf("PATCH %s: message %q, want one that names %s and says it needs a restart", tt.body, msg, tt.field)
+		}
+	}
+
+	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/config", srv.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var got struct {
+		Data config.Config `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Data.Listen != "127.0.0.1:0" || got.Data.LogLevel != "info" || got.Data.Auth.Enabled {
+		t.Errorf("config after rejected patches: listen %q, log_level %q, auth %v", got.Data.Listen, got.Data.LogLevel, got.Data.Auth.Enabled)
+	}
+}
+
+func TestConfig_PatchUnknownNestedKey(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	if status, _ := patchConfig(t, srv, `{"query": {"sync_timeot": 1}}`); status != http.StatusBadRequest {
+		t.Fatalf("status: %d, want 400", status)
 	}
 }
 
@@ -293,6 +331,15 @@ func TestReloadConfigReportsDatabaseFields(t *testing.T) {
 		if !slices.Contains(restartRequired, field) {
 			t.Errorf("restart_required missing %q in %v", field, restartRequired)
 		}
+	}
+
+	// The running config keeps the values in effect.
+	srv.cfgMu.RLock()
+	running := *srv.runtimeCfg
+	srv.cfgMu.RUnlock()
+	if running.Retention == updated.Retention || running.Query.MaxConcurrent == updated.Query.MaxConcurrent ||
+		running.Query.JobTTL == updated.Query.JobTTL {
+		t.Errorf("running config took settings that need a restart: %+v", running)
 	}
 }
 

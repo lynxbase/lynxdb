@@ -126,15 +126,15 @@ Applied on reload:
 
 - `log_level`
 - `query.sync_timeout`, `query.default_result_limit`, `query.max_result_limit`, `query.max_query_length`
-- `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`
+- `ingest.max_batch_size`, `ingest.max_line_bytes`
 - `ingest.es_compat.enabled`
 - `ingest.splunk_hec.enabled`
 - `http.shutdown_timeout`
 - `syslog.index`, `syslog.sourcetype`, `syslog.default_timezone`, `syslog.default_hostname`, `syslog.batch_size`, `syslog.batch_timeout`
 
-Every other setting needs a restart, including `listen`, `data_dir`, `retention`, `storage.*`, `query.max_concurrent`, `query.job_ttl`, `tls.*`, `auth.*`, `http.idle_timeout`, `http.read_header_timeout`, `http.rate_limit`, `ingest.max_body_size`, `ingest.limits.*`, `ingest.es_compat.advertised_version`, `ingest.es_compat.cluster_name`, `ingest.otlp.*`, and the syslog listeners, parser and connection limits.
+Every other setting needs a restart, including `listen`, `data_dir`, `retention`, `storage.*`, `query.max_concurrent`, `query.job_ttl`, `tls.*`, `auth.*`, `http.idle_timeout`, `http.read_header_timeout`, `http.rate_limit`, `ingest.mode`, `ingest.max_body_size`, `ingest.limits.*`, `ingest.es_compat.advertised_version`, `ingest.es_compat.cluster_name`, `ingest.otlp.*`, and the syslog listeners, parser and connection limits.
 
-`PATCH /api/v1/config` applies a JSON patch to the running configuration with the same rules and returns the keys that still need a restart in `restart_required`. When auth is on, it needs the root key.
+A setting that needs a restart keeps its running value until then, and `GET /api/v1/config` reports that value. `PATCH /api/v1/config` applies a JSON patch of the settings applied on reload; a patch that changes any other setting answers `400 VALIDATION_ERROR` naming it and changes nothing. When auth is on, it needs the root key.
 
 ## Connection Profiles
 
