@@ -80,7 +80,7 @@ Rule-based rewrites over IR plans (`fold-constants`, `merge-filters`, `remove-tr
 
 ### `pkg/query/` -- Compile
 
-The single entry point that turns query text into an optimized plan: `Compile` (frontend, optimizer, validation, a cache of recent plans), `Fold` for constant folding with the VM, and `Explain`.
+The single entry point that turns query text into an optimized plan: `Compile` (frontend, optimizer, validation, a cache of recent plans), `Fold` for constant folding as the executor computes, and `Explain`.
 
 ## `pkg/` -- Storage and Execution
 
@@ -112,15 +112,11 @@ pkg/colstore/
 
 ### `pkg/engine/physical/` -- Physical Planner
 
-Turns IR operators into pipeline iterators, compiles IR expressions to VM programs, and evaluates uncorrelated subqueries before the operators that use them.
+Turns IR operators into pipeline iterators whose expressions, comparisons and aggregates are those of the columnar executor.
 
 ### `pkg/engine/pipeline/` -- Row Operators
 
-The iterator interface (`Init`, `Next`, `Close`) and the operators: row scans, filter and eval, aggregation, sort and top-N, joins, unions, dedup, window operators (`eventstats.go`, `streamstats.go`), time buckets and extraction. Batches hold up to 1024 rows.
-
-### `pkg/vm/` -- Bytecode VM
-
-Compiles IR expressions to bytecode (`ir_compiler.go`) and runs them on a fixed 256-slot stack, with native implementations of every function in the IR registry.
+The iterator interface (`Init`, `Next`, `Close`) and the operators: row scans, filter and eval, aggregation, `eventstats` and `streamstats` over `exec.Accumulator` states (`aggregate.go`), sort and top-N, unions and limits. `expr.go` computes an IR expression for one row at a time with `exec.RowExpr`. Batches hold up to 1024 rows.
 
 ## `pkg/` -- Server and Ingest
 
@@ -190,7 +186,7 @@ flowchart TD
     DB --> COLUMNAR["pkg/engine/columnar"]
     QUERY --> PPL["pkg/ppl"]
     QUERY --> OPT["pkg/ir/opt"]
-    QUERY --> VM["pkg/vm"]
+    QUERY --> PIPELINE
     PPL --> IR["pkg/ir"]
     OPT --> IR
 
@@ -198,7 +194,7 @@ flowchart TD
     COLUMNAR --> EXEC["pkg/colstore/exec"]
     COLUMNAR --> PHYSICAL["pkg/engine/physical"]
     PHYSICAL --> PIPELINE["pkg/engine/pipeline"]
-    PHYSICAL --> VM
+    PIPELINE --> EXEC
     EXEC --> COLSTORE
 ```
 

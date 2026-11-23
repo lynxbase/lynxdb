@@ -45,8 +45,8 @@ pkg/engine/columnar  gives the columnar executor (pkg/colstore/exec, plans
     |
     v
 pkg/engine/physical  row operators for the rest: IR operators to pipeline
-pkg/engine/pipeline  iterators, IR expressions to VM bytecode (pkg/vm),
-                     subquery evaluation
+pkg/engine/pipeline  iterators that compute with the executor's
+                     expressions, comparator and aggregate states
     |
     v
 results
@@ -68,7 +68,6 @@ the same `pkg/database`; they differ only in where the indexes are.
 | `pkg/ppl` | Semantic analysis and lowering to IR; the PPL command catalog (`Commands`), scalar function catalog (`ScalarFunctions`) and aggregation catalog (`AggregateFunctions`); structured errors. |
 | `pkg/ir` | IR types, schemas, expressions, operators, function registry, validation and rendering. |
 | `pkg/ir/opt` | Optimizer rules over IR. |
-| `pkg/vm` | Bytecode VM; `vm.CompileExpr` compiles IR expressions, with native implementations of every registry function. |
 | `pkg/query` | Compile (with a cache of recent plans), optimize and explain. |
 | `pkg/database` | Runs compiled queries over the indexes, as calls or as jobs. |
 | `pkg/engine/columnar` | Splits a plan between the columnar executor and the row operators and collects the result. |

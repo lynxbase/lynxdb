@@ -25,7 +25,7 @@ flowchart TD
     Compile -->|"Compiled plan"| DB
     DB --> Core["Index settings, registry and plan execution<br/>pkg/engine/columnar"]
     Core --> Blocks["Columnar executor<br/>pkg/colstore/exec"]
-    Core --> Rows["Row operators<br/>pkg/engine/physical, pipeline, pkg/vm"]
+    Core --> Rows["Row operators<br/>pkg/engine/physical, pipeline"]
     Blocks -->|"Rows when needed"| Rows
     Core -->|"Append and Sync"| Store["One pkg/colstore.Store per index"]
     Blocks -->|"Scan immutable parts"| Store
@@ -39,7 +39,7 @@ flowchart TD
 | `pkg/ppl`, `pkg/query`, `pkg/ir/opt` | PPL parsing and lowering, optimized plan cache and IR rewrites |
 | `pkg/engine/columnar` | Store registry, source resolution, snapshots and selection of an executor for each subtree |
 | `pkg/colstore`, `pkg/colstore/exec`, `pkg/vec` | Column storage, block scans, vector operations and columnar aggregation |
-| `pkg/engine/physical`, `pkg/engine/pipeline`, `pkg/vm` | Physical row plan, batched iterators and expression bytecode |
+| `pkg/engine/physical`, `pkg/engine/pipeline` | Physical row plan and batched iterators that compute with the columnar executor's expressions and aggregate states |
 
 See [Project Structure](../contributing/project-structure.md) for the package and test layout.
 
@@ -86,7 +86,7 @@ flowchart TD
     Choose --> Scan["Acquire snapshots and scan candidate blocks"]
     Scan --> Cols["Filter, project, compute or aggregate over columns"]
     Cols -->|"Columnar result"| Encode["Encode the result"]
-    Cols -->|"Input for remaining operators"| Row["Batched row iterators and expression VM"]
+    Cols -->|"Input for remaining operators"| Row["Batched row iterators"]
     Row --> Encode
 ```
 

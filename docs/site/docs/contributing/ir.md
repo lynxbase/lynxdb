@@ -138,9 +138,10 @@ window), category, parameters (type, constant-only, lambda arity), result
 rule, NULL behaviour (strict, aware, skipped), volatility (volatile, query
 constant), merge kind for partial aggregation (exact, approximate, none),
 order sensitivity and documentation. `Foldable` functions with constant
-arguments are folded at planning time. Every scalar function has a VM
-implementation; `pkg/colstore/exec/irfunc` implements them for the columnar
-executor with the same semantics.
+arguments are folded at planning time. Every scalar function has one
+implementation, in `pkg/colstore/exec/irfunc`, which the columnar executor
+and the row operators both run; the functions that take a lambda are
+computed by `pkg/colstore/exec/irplan`.
 
 ## Validation
 

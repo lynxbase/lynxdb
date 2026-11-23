@@ -19,19 +19,23 @@ not how it runs.
 2. **Narrow.** The time range of a request (`from` and `to` on the REST API,
    `--since`, `--from` and `--to` in the CLI) narrows every scan of the plan,
    those of subqueries included.
-3. **Resolve subqueries.** An `IN` subquery of one column runs first; when it
-   returns at most 1024 values, the membership test becomes a list of those
-   values in the outer plan.
-4. **Run on the columnar executor.** Walking down from the root, LynxDB gives
+3. **Resolve subqueries.** Every subquery runs once, before the outer
+   query: an `EXISTS` becomes TRUE or FALSE, a scalar subquery its value, and
+   an `IN` subquery the list of the values of its rows.
+4. **Check the sources.** A source that names an index there is not fails
+   the query with `no such index: <name>` (`404 NOT_FOUND` on the REST API);
+   a pattern may match no index, and `main` is there before its first event.
+   A field that the query reads from a scan and that no event of the scanned
+   indexes holds gives a warning that names the field and the indexes.
+5. **Run on the columnar executor.** Walking down from the root, LynxDB gives
    the columnar executor (`pkg/engine/columnar`, `pkg/colstore/exec`) the
    largest part of the plan above a scan that it can run.
-5. **Run the rest on the row operators.** The operators above that part run
-   in `pkg/engine/physical` and `pkg/engine/pipeline`, with expressions
-   compiled to bytecode for the VM (`pkg/vm`). They pull batches of rows from
-   their inputs. A part of the columnar executor that only chooses columns of
-   a scan, with at most a limit above it, hands its rows over block by block
-   as it scans; any other part runs to its end before the row operators read
-   its result.
+6. **Run the rest on the row operators.** The operators above that part run
+   in `pkg/engine/physical` and `pkg/engine/pipeline`. They pull batches of
+   rows from their inputs. A part of the columnar executor that only chooses
+   columns of a scan, with at most a limit above it, hands its rows over
+   block by block as it scans; any other part runs to its end before the row
+   operators read its result.
 
 A plan that the columnar executor takes whole never meets the row operators;
 its rows stay in columns until the response is written. The plan is the same
@@ -53,12 +57,14 @@ upwards and refuses the first operator it has no translation for. It takes:
 | Sort, TopN, Limit | `sort`, `sort ... \| head`, `head` |
 | Dedup of the first row of each key | `dedup` with one row per key |
 
-Expressions run as operations of the executor where it has them; a
-function it has no operation for is computed by the VM over the fields the
-function reads, and a volatile function such as `rand()` leaves its
-operator to the row operators. Any other operator, such as `eventstats`,
-`streamstats`, `join`, `append` or a second `stats`, runs on the row
-operators over the rows of the part below it.
+`irplan` lowers every expression of the IR onto the executor: operators
+and comparisons onto its operations, which run vectorized over typed
+columns, and the scalar functions onto their implementations in
+`pkg/colstore/exec/irfunc`. A volatile function such as `rand()` leaves its
+operator to the row operators, which compute it row by row in input order.
+`list`, `values` and `take` and any other operator, such as `eventstats`,
+`streamstats`, `join`, `append` or a second `stats`, run on the row
+operators over the rows of the part below them.
 
 The executor reads a snapshot of each index the scan names, taken when the
 query starts, and works on blocks of up to 16384 rows on every core. Before
@@ -77,6 +83,14 @@ the skipped blocks never change a result.
 
 ## Row operators
 
+The row operators have no semantics of their own. They lower their
+expressions with the same `irplan` code and compute them row by row with the
+executor's per-value functions (`exec.RowExpr`), aggregate with the
+executor's aggregate states (`exec.Accumulator`), order rows with its
+comparator and group, deduplicate and join by its keys. A query gives the
+same rows whichever part of it runs where; a test runs a corpus of queries
+both ways and requires that.
+
 | Operators | Commands | Behavior |
 | --- | --- | --- |
 | Filter, Compute, Project, RenameColumns, Extract, Unnest, FlattenObject, FillNull | `where`, `eval`, `fields`, `rename`, `parse`, `grok`, `rex`, `spath`, `expand`, `flatten`, `fillnull`, ... | stream: each batch flows through |
@@ -93,10 +107,11 @@ the skipped blocks never change a result.
 The row operators hold in memory the rows of the operators that consume all
 their input, the right side of a join and the result of every subquery. A
 `sort` that the row operators run fails the query when it holds more than
-10,000,000 rows. The columnar
-executor keeps a state per group of an aggregate; the state of
+10,000,000 rows. Both keep a state per group of an aggregate; the state of
 `distinct_count_approx` takes at most 4 KB per group and the percentiles of
-one argument at most 32 KB per group.
+one argument at most 32 KB per group, while `distinct_count` keeps a hash of
+every distinct value. A `streamstats` with a `window` aggregates the rows of
+the window anew for every row.
 
 ## Local execution
 

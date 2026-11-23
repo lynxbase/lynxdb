@@ -41,7 +41,7 @@ mise run lint:go   # golangci-lint run ./...
 - Package names are short lowercase nouns: `part`, `shred`, `pipeline`, `vm`, `ppl`, `ir`.
 - No `util`, `helpers`, `common` or `misc` packages; put a function where it belongs.
 - Code not meant for import outside the module goes in `internal/`.
-- The query language stays in `pkg/ppl`. Everything after the frontend (`pkg/ir/opt`, `pkg/engine/columnar`, `pkg/colstore/exec/irplan`, `pkg/engine/physical`, `pkg/engine/pipeline`, `pkg/vm`) works on `pkg/ir` and never imports `pkg/ppl`.
+- The query language stays in `pkg/ppl`. Everything after the frontend (`pkg/ir/opt`, `pkg/engine/columnar`, `pkg/colstore/exec/irplan`, `pkg/engine/physical`, `pkg/engine/pipeline`) works on `pkg/ir` and never imports `pkg/ppl`.
 
 ## Error Handling
 
@@ -174,7 +174,7 @@ Avoid package-level mutable state; state belongs to structs that are passed expl
 
 ## Performance-Sensitive Code
 
-Hot paths are the block loops of the columnar executor (`pkg/colstore/exec`), JSON shredding (`pkg/colstore/shred`), part encoding and decoding (`pkg/colstore/part`), the VM evaluation loop (`pkg/vm`) and the row operators (`pkg/engine/pipeline`). Cold paths are configuration, setup, merge selection and API handler wiring.
+Hot paths are the block loops of the columnar executor (`pkg/colstore/exec`), JSON shredding (`pkg/colstore/shred`), part encoding and decoding (`pkg/colstore/part`), and the row operators (`pkg/engine/pipeline`). Cold paths are configuration, setup, merge selection and API handler wiring.
 
 ### Hot Path Rules
 

@@ -32,8 +32,8 @@ the scan's annotations, or none.
 
 ### fold-constants
 
-Folding evaluates the expression with the VM through `Options.Fold`
-(`query.Fold`); without it, folding is skipped. Volatile and query-constant
+Folding evaluates the expression as the executor computes it through
+`Options.Fold` (`query.Fold`); without it, folding is skipped. Volatile and query-constant
 functions (`rand`, `now`) are not folded, nor are field references,
 searches, subqueries and aggregate calls. `'2025-01-15 08:00:00'` compared
 with `_time` folds to a timestamp literal, which then lets

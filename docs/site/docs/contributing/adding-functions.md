@@ -22,22 +22,20 @@ the engine implements, and the PPL catalogs, which map PPL names onto it.
    such as `now`), and `errs` to document how invalid arguments are
    reported. The `Doc` sentence appears in the generated function table and
    in `GET /api/v1/catalog`.
-2. **Implement** it in `pkg/vm/ir_funcs*.go`.
-   `TestIRRegistryHasImplementations` fails until every registered scalar
-   function has an implementation. Invalid values should produce NULL
-   rather than an error. For the columnar executor, implement it in
-   `pkg/colstore/exec/irfunc` with the same semantics; the executor runs a
-   function missing there through the VM over the fields it reads, and
-   leaves a volatile one to the row operators.
+2. **Implement** it in `pkg/colstore/exec/irfunc`, the one implementation
+   that the columnar executor and the row operators both run.
+   `TestNativeFunctions` in `pkg/engine/columnar` fails until every
+   registered scalar function has one. Invalid values should produce NULL
+   rather than an error. The executor leaves a volatile function to the row
+   operators, which compute it row by row.
 3. **Map the PPL name** in `pkg/ppl/functions.go`: `direct(name, irName)`
    for a one-to-one mapping or an alias, `lowered(name, construct, f)` for a
    function compiled to IR operators, or `unsupportedFunc(reason, names...)`
    for a PPL function LynxDB does not execute. Functions with named
    arguments are registered like the relevance functions in
    `pkg/ppl/relevance.go`.
-4. **Test** evaluation in `pkg/vm/ir_compiler_test.go` and, when the PPL
-   mapping is not direct, add a compile golden under
-   `pkg/ppl/testdata/compile`.
+4. **Test** evaluation in `pkg/engine/columnar` and, when the PPL mapping
+   is not direct, add a compile golden under `pkg/ppl/testdata/compile`.
 5. **Regenerate** the reference tables with `go run ./internal/docgen`.
 
 Foldable functions (scalar, not volatile, not query-constant) are evaluated

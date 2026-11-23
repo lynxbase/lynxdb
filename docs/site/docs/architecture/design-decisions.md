@@ -139,7 +139,7 @@ The key factors:
 1. **Single static binary**: `go build` produces one file with no runtime, shared libraries or JVM.
 2. **Fast compilation**: short builds keep contributor iteration and CI fast.
 3. **Concurrency**: goroutines fit concurrent ingest, scans on every core and background work (flushes, merges, retention).
-4. **Performance under a GC**: the hot paths keep garbage low: column buffers and batches are reused, query state lives in arenas, and the VM runs on a fixed-size stack.
+4. **Performance under a GC**: the hot paths keep garbage low: column buffers and batches are reused, query state lives in arenas, and aggregate states share a heap per query.
 5. **Contributor accessibility**: Go has a gentler learning curve than Rust.
 
 **Why not Rust?** Better raw performance and no GC pauses, at the cost of slower builds and a steeper learning curve.

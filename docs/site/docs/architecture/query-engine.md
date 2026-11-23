@@ -6,7 +6,7 @@ description: How LynxDB runs a query -- PPL compiled to a language-independent I
 
 # Query Engine
 
-LynxDB compiles OpenSearch Piped Processing Language (PPL) into a language-independent intermediate representation (IR) and optimizes the plan. Two executors run it: the **columnar executor** runs every part of the plan it can, straight over the column blocks of the stores, and the **row operators** run the rest over rows. This page follows a query through those stages. The PPL pages cover the compiler in detail: [architecture](../contributing/ppl-architecture.md), [compilation](../contributing/ppl-compilation.md), [IR](../contributing/ir.md) and [optimizer](../contributing/ir-optimizer.md).
+LynxDB compiles OpenSearch Piped Processing Language (PPL) into a language-independent intermediate representation (IR) and optimizes the plan. Two executors run it: the **columnar executor** runs every part of the plan it can, straight over the column blocks of the stores, and the **row operators** run the rest over rows. Both compute with one implementation of every operator, function, comparison and aggregate, the executor's, so a query gives the same rows wherever its parts run. This page follows a query through those stages. The PPL pages cover the compiler in detail: [architecture](../contributing/ppl-architecture.md), [compilation](../contributing/ppl-compilation.md), [IR](../contributing/ir.md) and [optimizer](../contributing/ir-optimizer.md).
 
 ## Query Path
 
@@ -18,7 +18,7 @@ flowchart TD
     D --> E["pkg/database<br/>job, time range of the request"]
     E --> F["pkg/engine/columnar<br/>splits the plan"]
     F --> G["pkg/colstore/exec<br/>columnar executor over blocks"]
-    F --> H["pkg/engine/physical, pkg/engine/pipeline, pkg/vm<br/>row operators over the rest"]
+    F --> H["pkg/engine/physical, pkg/engine/pipeline<br/>row operators over the rest"]
     G --> H
     H --> I["Rows"]
     G --> I
@@ -31,7 +31,7 @@ flowchart TD
 | Optimization | `pkg/ir/opt` | Equivalent, cheaper IR plan and the rules that fired |
 | Running | `pkg/database`, `pkg/engine/columnar` | The plan split between the two executors |
 | Columnar execution | `pkg/colstore/exec`, `pkg/colstore/exec/irplan` | Columns of result rows |
-| Row execution | `pkg/engine/physical`, `pkg/engine/pipeline`, `pkg/vm` | Batches of rows |
+| Row execution | `pkg/engine/physical`, `pkg/engine/pipeline` | Batches of rows |
 
 ## Compilation
 
@@ -60,7 +60,7 @@ A `Scan` carries, besides its sources, what the optimizer learns about the rows 
 
 | Rule | Rewrite |
 |------|---------|
-| `fold-constants` | Evaluates deterministic expressions over literals with the VM: `status >= 400 + 100` becomes `status >= 500` |
+| `fold-constants` | Evaluates deterministic expressions over literals as the executor computes them: `status >= 400 + 100` becomes `status >= 500` |
 | `merge-filters` | Merges adjacent `Filter` operators into one conjunction |
 | `remove-true-filter` | Drops a `Filter` whose condition is the literal `true` |
 | `prune-scan` | Copies the conjuncts of a `Filter` directly above a `Scan` that can skip data into the scan's pruning predicates |
@@ -103,9 +103,9 @@ The standard HTTP query endpoint syncs the open stores and submits a job to `pkg
 
 The database intersects each scan's time range, including scans in subqueries, with the request's `[from, to)` interval. It then passes the plan to `pkg/engine/columnar`.
 
-### 1. Subqueries as lists of values
+### 1. Subqueries and sources
 
-A test for membership among the rows of a subquery (`where x in [ ... ]`) whose subquery gives one column of at most 1024 scalar values runs first, and the test becomes a test against that list. The columnar executor can then take the filter. Other subqueries are left to the row operators, which run each uncorrelated subquery once, before the operators that use it.
+Every uncorrelated subquery runs once, first: an `EXISTS` becomes a boolean, a scalar subquery its value and an `IN` subquery the list of the values of its rows, so no executor meets a subquery. A source that names an index there is not fails the query with `columnar.ErrNoIndex`, which the API answers with `404 NOT_FOUND`; a pattern may match none, and `main` is there before its first event. A field that the plan reads from a scan and that no event of the scanned indexes holds adds a warning to the result.
 
 ### 2. The columnar executor
 
@@ -124,23 +124,27 @@ It refuses anything else, and the walk goes on below. The largest subtree it tak
 - Aggregates keep the state of each group in a row of 64-bit words, with sketches and sets beside it for the aggregates that need them; the workers' states are merged at the end.
 - A sort by `_time` with a limit takes the blocks in time order and skips those whose times keep them out of the result.
 
-A subtree that only selects columns of the events it scans hands its rows to the operators above it block by block, as it reads them. The executor computes a function it has no kernel of its own for with the expression compiled for the VM, once per distinct argument.
+A subtree that only selects columns of the events it scans hands its rows to the operators above it block by block, as it reads them. `irplan` lowers every IR expression: comparisons, arithmetic and logic onto the executor's operations, which run as loops over typed columns where both sides hold numbers of one kind and value by value otherwise, and every scalar function onto its implementation in `pkg/colstore/exec/irfunc`, computed once per dictionary entry where it can be.
 
 When the executor takes the whole plan, its columns are the result and no row is built until the rows are written out.
 
 ### 3. The row operators
 
-Every part of the plan the columnar executor did not take runs on the row operators. `pkg/engine/physical` maps each IR operator onto pipeline iterators and compiles every expression into a VM program; their input is the rows of the subtrees the columnar executor ran, or the events of a scan it did not take.
+Every part of the plan the columnar executor did not take runs on the row operators. `pkg/engine/physical` maps each IR operator onto pipeline iterators; their input is the rows of the subtrees the columnar executor ran, or the events of a scan it did not take. They hold no semantics of their own:
+
+- an expression is lowered by the same `irplan` code and computed row by row by `exec.RowExpr`, with the executor's per-value operations and the `irfunc` functions; a condition passes a row as the filter of a scan would;
+- `stats`, `eventstats` and `streamstats` aggregate with `exec.Accumulator`, which keeps the executor's aggregate states and results, and computes `list`, `values` and `take`;
+- sorts order with the executor's comparator, and grouping, `dedup` and join keys use its key encoding.
 
 | IR operator | Iterator |
 |-------------|----------|
 | `Scan` | Rows from the columnar executor |
-| `Filter` | Runs a boolean VM program per row |
-| `Compute` | Runs one VM program per assignment |
+| `Filter` | Tests a condition per row |
+| `Compute` | Computes one expression per assignment |
 | `Project`, `RenameColumns` | Column selection and renaming |
-| `Aggregate` | Hash aggregation |
-| `Sort` | Sort of up to 10,000,000 rows; a larger input fails the query |
-| `TopN` | Bounded heap of N (+ offset) rows |
+| `Aggregate` | Hash aggregation over accumulator states |
+| `Sort` | Stable sort of up to 10,000,000 rows; a larger input fails the query |
+| `TopN` | Bounded heap of N (+ offset) rows; the groups of an aggregate break ties by their other columns |
 | `Limit` | Offset and limit; stops pulling from its input when done |
 | `Window` | `eventstats`, `streamstats` and `trendline` |
 | `Dedup`, `Reverse`, `FillNull` | Dedicated iterators |
@@ -152,9 +156,7 @@ Every part of the plan the columnar executor did not take runs on the row operat
 
 `pkg/engine/pipeline` uses the Volcano model: each iterator's `Next()` pulls the next batch of up to 1024 rows from its input. `head 10` stops pulling once it has 10 rows. A subquery's columns must be known before execution, so it ends with `fields` or `stats`.
 
-### Bytecode VM
-
-`pkg/vm` evaluates the expressions of the row operators: filter conditions, `eval` assignments, aggregation arguments, sort and join keys. `vm.CompileExpr` compiles an IR expression into a program of one-byte opcodes with a constant pool, run on a fixed stack of values, so evaluating a row allocates no stack. The optimizer's constant folding uses the same VM, so a folded constant has exactly the value the expression has at run time.
+A test in `pkg/engine/columnar` runs a corpus of queries and random expressions once as the executor splits them and once with every operator above the scans on the row operators, and requires the same rows.
 
 ## Results
 
