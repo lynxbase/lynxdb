@@ -3,6 +3,7 @@ package physical
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
@@ -88,11 +89,20 @@ func (b *blockingIterator) Next(ctx context.Context) (*pipeline.Batch, error) {
 }
 
 func sortByTimeDesc(rows []map[string]event.Value) []map[string]event.Value {
-	sort.SliceStable(rows, func(i, j int) bool {
-		a, _ := pipeline.ExecValue(rows[i][ir.TimeColumn], nil)
-		b, _ := pipeline.ExecValue(rows[j][ir.TimeColumn], nil)
-		return exec.Compare(a, b, true, false) < 0
-	})
+	// The times are converted once per row, and the rows sorted with them.
+	type timed struct {
+		at  exec.Value
+		row map[string]event.Value
+	}
+	byTime := make([]timed, len(rows))
+	for i, r := range rows {
+		byTime[i].at, _ = pipeline.ExecValue(r[ir.TimeColumn], nil)
+		byTime[i].row = r
+	}
+	slices.SortStableFunc(byTime, func(a, b timed) int { return exec.Compare(a.at, b.at, true, false) })
+	for i := range byTime {
+		rows[i] = byTime[i].row
+	}
 	return rows
 }
 
