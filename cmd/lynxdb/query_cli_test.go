@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -692,5 +693,22 @@ func TestQueryFile_LevelValues_Exhaustive(t *testing.T) {
 		if levels[i] != expected[i] {
 			t.Errorf("level[%d] = %q, want %q", i, levels[i], expected[i])
 		}
+	}
+}
+
+// TestCLI_BareWordIsACommandName requires arguments that name no command to
+// fail as such, whatever standard input is: read as a query, a mistyped or
+// removed command would search standard input for its own name and succeed.
+func TestCLI_BareWordIsACommandName(t *testing.T) {
+	for _, args := range [][]string{{"health"}, {"staus"}, {"import", "events.json"}} {
+		_, _, err := runCmd(t, args...)
+		var unknown unknownCommandError
+		if !errors.As(err, &unknown) {
+			t.Errorf("lynxdb %s: error %v, want an unknown command", strings.Join(args, " "), err)
+		}
+	}
+	_, _, err := runCmd(t, "staus")
+	if err == nil || !strings.Contains(err.Error(), "did you mean status") {
+		t.Errorf("lynxdb staus: error %v, want a suggestion of status", err)
 	}
 }

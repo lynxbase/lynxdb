@@ -38,13 +38,13 @@ The [query page](./query.md) covers flags, time ranges and how local input is lo
 
 ### Bare queries
 
-When the first argument is not a command name, the arguments form a query over standard input, like `lynxdb query --file -`:
+A single quoted argument that is not a command name is a query over standard input, like `lynxdb query --file -`:
 
 ```bash
 cat app.log | lynxdb 'stats count() by level'
 ```
 
-With standard input on a terminal, a bare query fails with a hint to pipe input. Plain `lynxdb` prints a short welcome screen and does not read standard input.
+A lone word is always read as a command name, so `lynxdb staus` fails with `unknown command` instead of searching standard input for the word; search for one word with `lynxdb 'search staus'`. With standard input on a terminal, a bare query fails with a hint to pipe input. Plain `lynxdb` prints a short welcome screen and does not read standard input.
 
 ## Global flags
 

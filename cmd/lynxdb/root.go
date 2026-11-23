@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -186,23 +187,37 @@ func shouldAnimateLynx() bool {
 		os.Getenv("TERM") != "dumb"
 }
 
-// runRootCommand handles bare `lynxdb` invocation: with arguments that name
-// no command, it runs them as a query over standard input; without
-// arguments, it shows the welcome message.
+// runRootCommand handles bare `lynxdb` invocation: without arguments it
+// shows the welcome message, and with one argument that is a query it runs
+// the query over standard input.
 func runRootCommand(cmd *cobra.Command, args []string) error {
 	if len(args) == 0 {
 		return runWelcome(cmd, args)
 	}
-	query := strings.Join(args, " ")
-	if isStdinTTY() {
+	// A lone word, or several arguments, is a command name that does not
+	// exist: read as a query it would search standard input for the word and
+	// succeed, whatever the caller meant.
+	if len(args) > 1 || commandWord.MatchString(args[0]) {
 		if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
-			return fmt.Errorf("unknown command %q for \"lynxdb\"; did you mean %s?", args[0], strings.Join(s, ", "))
+			return unknownCommandError(fmt.Sprintf("unknown command %q for \"lynxdb\"; did you mean %s?", args[0], strings.Join(s, ", ")))
 		}
-		return fmt.Errorf("bare query requires piped stdin. Use: cat file | lynxdb '%s'", query)
+		return unknownCommandError(fmt.Sprintf("unknown command %q for \"lynxdb\"; a query over standard input is one quoted argument", args[0]))
+	}
+	if isStdinTTY() {
+		return fmt.Errorf("bare query requires piped stdin. Use: cat file | lynxdb '%s'", args[0])
 	}
 
-	return runQueryStdin(localQuery{query: query})
+	return runQueryStdin(localQuery{query: args[0]})
 }
+
+// commandWord matches an argument that has the shape of a command name.
+var commandWord = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
+
+// unknownCommandError reports arguments that name no command; it exits with
+// the usage code, not with that of a query that does not compile.
+type unknownCommandError string
+
+func (e unknownCommandError) Error() string { return string(e) }
 
 // Execute runs the root command and exits with an appropriate code.
 func Execute() {
@@ -219,8 +234,9 @@ func Execute() {
 		}
 
 		code := exitGeneral
+		var unknown unknownCommandError
 		switch {
-		case isRequiredFlagError(err):
+		case isRequiredFlagError(err), errors.As(err, &unknown):
 			code = exitUsage
 		case isConnectionError(err):
 			code = exitConnection

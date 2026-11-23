@@ -15,7 +15,7 @@ import (
 func TestServer_StartAndHealth(t *testing.T) {
 	srv := startServer(t)
 
-	r := runLynxDB(t, "--server", srv.BaseURL, "health")
+	r := runLynxDB(t, "--server", srv.BaseURL, "status")
 	if r.ExitCode != 0 {
 		t.Errorf("expected exit 0, got %d\nstderr: %s", r.ExitCode, r.Stderr)
 	}
@@ -332,7 +332,7 @@ func TestServer_GracefulShutdown(t *testing.T) {
 	srv := startServer(t)
 
 	// Verify server is up.
-	r := runLynxDB(t, "--server", srv.BaseURL, "health")
+	r := runLynxDB(t, "--server", srv.BaseURL, "status")
 	if r.ExitCode != 0 {
 		t.Fatalf("server not healthy: exit %d", r.ExitCode)
 	}

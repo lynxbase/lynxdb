@@ -73,6 +73,7 @@ A `server` key in `.lynxdbrc` is ignored with a warning on stderr: the file can 
 | `lynxdb` | Welcome screen with quick-start hints; never reads stdin |
 | `cat app.log \| lynxdb '<PPL query>'` | Loads stdin and runs the query, like `lynxdb query --file -` |
 | `lynxdb '<PPL query>'` with stdin on a terminal | Error: a bare query needs piped stdin |
+| `lynxdb <word>`, or several arguments, naming no command | Error: unknown command; a lone word is never read as a query |
 
 ---
 
