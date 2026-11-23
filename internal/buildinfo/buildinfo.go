@@ -2,10 +2,14 @@
 // injected via -ldflags at compile time. All other packages should import
 // this package instead of maintaining their own version variables.
 //
-//	go build -ldflags "-X github.com/lynxbase/lynxdb/internal/buildinfo.Version=1.0.0
-//	  -X github.com/lynxbase/lynxdb/internal/buildinfo.Commit=abc1234
-//	  -X github.com/lynxbase/lynxdb/internal/buildinfo.Date=2026-02-25T12:00:00Z"
+//	go build -ldflags "-X github.com/lynxbase/lynxdb/internal/buildinfo.Version=26.11.1.80
+//	  -X github.com/lynxbase/lynxdb/internal/buildinfo.Commit=abc1234def56
+//	  -X github.com/lynxbase/lynxdb/internal/buildinfo.Date=2026-11-24T12:00:00Z"
 //	  ./cmd/lynxdb/
+//
+// tools/dist/ldflags.sh prints these flags for the current tree. A version
+// reads year.month.patch.build; a build between releases adds its distance
+// from the last one and its commit: 26.11.1.80+5.gabc1234.
 package buildinfo
 
 import (

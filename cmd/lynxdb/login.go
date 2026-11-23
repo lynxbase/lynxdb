@@ -111,7 +111,7 @@ func runLogin(_ *cobra.Command, _ []string) error {
 		events = formatCountHuman(status.Events.Total)
 	}
 
-	printSuccess("Authenticated to %s (v%s, %s events)", globalServer, version, events)
+	printSuccess("Authenticated to %s (%s, %s events)", globalServer, version, events)
 
 	if fingerprint != "" {
 		printMeta("TLS fingerprint saved.")
