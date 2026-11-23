@@ -76,8 +76,6 @@ Accepted `Authorization` schemes:
 - `ApiKey <base64(id:token)>`, the format Filebeat and other Elasticsearch clients send
 - `Basic <base64(user:token)>`; the user name is ignored
 
-Clients that cannot set headers, such as a browser `EventSource` following a job stream, can pass the token as the `_token` query parameter. The server removes it from the URL before the request is logged.
-
 Keys have one of four scopes: `ingest`, `query`, `admin`, `full`. Root keys and `full` keys pass every check.
 
 | Endpoints | Required |

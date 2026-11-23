@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/config"
 )
 
@@ -327,69 +326,13 @@ func TestHeaderValidation_Default_Succeeds(t *testing.T) {
 	}
 }
 
-// --- Token Redaction Tests ---
+// --- Query parameter tokens ---
 
-func TestTokenRedaction_QueryParam(t *testing.T) {
-	srv, ks, rootToken, cleanup := startAuthServer(t)
-	defer cleanup()
-	_ = ks
-
-	// Make a request with _token as a query parameter. After KeyAuthMiddleware
-	// processes it, the _token should be stripped from r.URL.RawQuery so it
-	// doesn't leak into proxy logs, Referer headers, or browser history.
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/stats?_token=%s&extra=1", srv.Addr(), rootToken))
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// The request should succeed (authenticated via _token).
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status: got %d, want 200, body: %s", resp.StatusCode, string(b))
-	}
-}
-
-func TestTokenRedaction_BearerHeaderNotAffected(t *testing.T) {
+func TestAuth_QueryParamTokenRejected(t *testing.T) {
 	srv, _, rootToken, cleanup := startAuthServer(t)
 	defer cleanup()
 
-	// Request with Authorization header should still work (no _token in URL).
-	resp, err := authReq("GET",
-		fmt.Sprintf("http://%s/api/v1/stats", srv.Addr()),
-		rootToken, nil)
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status: got %d, want 200", resp.StatusCode)
-	}
-}
-
-func TestTokenRedaction_MissingToken_Returns401(t *testing.T) {
-	srv, _, _, cleanup := startAuthServer(t)
-	defer cleanup()
-
-	// No _token and no Authorization header — should get 401.
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/stats?extra=1", srv.Addr()))
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status: got %d, want 401", resp.StatusCode)
-	}
-}
-
-func TestTokenRedaction_InvalidToken_Returns401(t *testing.T) {
-	srv, _, _, cleanup := startAuthServer(t)
-	defer cleanup()
-
-	// Invalid _token — should get 401.
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/stats?_token=invalid_token_value", srv.Addr()))
+	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/stats?_token=%s", srv.Addr(), rootToken))
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -463,54 +406,3 @@ func TestExtractToken(t *testing.T) {
 		})
 	}
 }
-
-// --- Token Redaction via KeyAuthMiddleware (unit-level) ---
-
-func TestKeyAuthMiddleware_RedactsTokenFromURL(t *testing.T) {
-	dir := t.TempDir()
-	ks, err := auth.OpenKeyStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	root, err := ks.CreateKey("root", true)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	var capturedRawQuery string
-	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		capturedRawQuery = r.URL.RawQuery
-		w.WriteHeader(http.StatusOK)
-	})
-
-	handler := KeyAuthMiddleware(ks, inner)
-
-	// Simulate a request with _token in query params.
-	req, _ := http.NewRequest("GET", "/api/v1/stats?_token="+root.Token+"&extra=value", http.NoBody)
-	rr := &fakeResponseWriter{headers: http.Header{}}
-	handler.ServeHTTP(rr, req)
-
-	if rr.code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200", rr.code)
-	}
-
-	// Verify _token was stripped from the URL.
-	if strings.Contains(capturedRawQuery, "_token") {
-		t.Errorf("_token was not redacted from URL: %q", capturedRawQuery)
-	}
-	// Verify other params are preserved.
-	if !strings.Contains(capturedRawQuery, "extra=value") {
-		t.Errorf("other query params should be preserved: %q", capturedRawQuery)
-	}
-}
-
-// fakeResponseWriter is a minimal http.ResponseWriter for unit tests.
-type fakeResponseWriter struct {
-	headers http.Header
-	body    bytes.Buffer
-	code    int
-}
-
-func (f *fakeResponseWriter) Header() http.Header         { return f.headers }
-func (f *fakeResponseWriter) Write(b []byte) (int, error) { return f.body.Write(b) }
-func (f *fakeResponseWriter) WriteHeader(code int)        { f.code = code }

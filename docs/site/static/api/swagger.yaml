@@ -19,8 +19,7 @@ info:
     ## Authentication
 
     Off by default. When on, every `/api/...` route needs `Authorization: Bearer <token>`,
-    `ApiKey <base64(id:token)>` or `Basic <base64(user:token)>`. Clients that cannot set headers may pass `_token`
-    as a query parameter. `/health`, `/metrics` and routes outside `/api/` are not checked by the API key middleware.
+    `ApiKey <base64(id:token)>` or `Basic <base64(user:token)>`. `/health`, `/metrics` and routes outside `/api/` are not checked by the API key middleware.
 
     ## Bodies
 
@@ -423,11 +422,7 @@ paths:
         | `failed` | `{"code", "message"}` |
         | `canceled` | `{"status", "elapsed_ms"}` |
 
-        Needs `query` scope; `_token` carries the key for `EventSource` clients.
-      security:
-        - BearerAuth: []
-        - TokenQuery: []
-        - {}
+        Needs `query` scope.
       responses:
         '200':
           description: Event stream
@@ -1540,11 +1535,6 @@ components:
       in: header
       name: Authorization
       description: '`ApiKey <base64(id:token)>`, as sent by Elasticsearch clients.'
-    TokenQuery:
-      type: apiKey
-      in: query
-      name: _token
-      description: For clients that cannot set headers, such as `EventSource`.
     SplunkToken:
       type: apiKey
       in: header

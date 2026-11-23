@@ -139,9 +139,8 @@ curl -s https://lynxdb.example.com/api/v1/query \
 | Bearer | `Authorization: Bearer <token>` | CLI, scripts |
 | ApiKey | `Authorization: ApiKey <base64(id:token)>`, the ID being that of the key | Filebeat, Elasticsearch clients |
 | Basic | `Authorization: Basic <base64(user:token)>`, user name ignored | Fluent Bit, Vector |
-| Query parameter | `?_token=<token>` | Browser `EventSource` for job progress streams |
 
-The server strips the `_token` parameter from the URL before logging, but it can still appear in proxy logs; prefer headers.
+The server reads keys only from the `Authorization` header.
 
 ### Routes outside API key authentication
 

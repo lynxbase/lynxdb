@@ -548,8 +548,6 @@ event: complete
 data: {"data":{"type":"aggregate","columns":["n"],"rows":[[1010025]],"total_rows":1,"has_more":false},"meta":{"took_ms":4049.035,"query_id":"qry_cfb13bcc9a82770c","rows":1}}
 ```
 
-A browser `EventSource` cannot set headers; pass the API key as the `_token` query parameter instead.
-
 ## Related
 
 - [API overview](./overview.md): authentication, envelopes, endpoint map
