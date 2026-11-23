@@ -15,13 +15,13 @@ lynxdb/
 ├── cmd/            # Binaries: the lynxdb CLI and server
 ├── pkg/            # Core packages
 ├── internal/       # Packages private to the module
-├── test/           # End-to-end, CLI and regression tests
+├── test/           # End-to-end, CLI, regression and packaging tests
 ├── testdata/       # Sample logs and fixtures
-├── scripts/        # Install, release, profiling and benchmark helper scripts
+├── tools/          # Scripts behind the mise tasks: dev, dist, lint, release
+├── packaging/      # The installer and the container image
 ├── docs/           # Documentation site (Docusaurus)
 ├── go.mod, go.sum  # Module definition
-├── mise.toml       # Pinned toolchain (Go, golangci-lint, goreleaser, ...)
-└── Makefile        # Build, test and lint targets
+└── mise.toml       # Pinned toolchain and the build, test, lint and release tasks
 ```
 
 ## `cmd/`
@@ -153,7 +153,7 @@ pkg/ingest/
 
 | Package | Purpose |
 |---------|---------|
-| `internal/docgen` | Writes the generated PPL reference pages (`docs/site/docs/ppl/commands.md`, `functions.md`, `aggregations.md`) from the catalogs; run `go run ./internal/docgen` or `make docs-gen` |
+| `internal/docgen` | Writes the generated PPL reference pages (`docs/site/docs/ppl/commands.md`, `functions.md`, `aggregations.md`) from the catalogs; run `go run ./internal/docgen` or `mise run gen` |
 | `internal/output` | Result formatters for the CLI (JSON, NDJSON, table, CSV, TSV, raw, ...) |
 | `internal/ui` | CLI theme and rendering components |
 | `internal/buildinfo` | Version, commit and build date injected with `-ldflags` |
@@ -165,11 +165,13 @@ pkg/ingest/
 test/
 ├── e2e/          # Server tests over the REST API; e2e/shippers runs real shippers in containers
 ├── cli/          # Tests against the built binary: pipe and file mode, exit codes, goldens
-└── regression/   # Query correctness regressions
+├── regression/   # Query correctness regressions
+└── packaging/    # The installer run against the release archives, and the container image
 ```
 
-- **E2E**: `make test-e2e`; shipper compatibility with `make test-compat` and the nightly [conformance matrix](/docs/operations/shipper-conformance).
-- **CLI**: `make test-cli` builds the binary and runs `test/cli` with the `clitest` tag.
+- **E2E**: `mise run test:e2e`; shipper compatibility with `mise run test:compat` and the nightly [conformance matrix](/docs/operations/shipper-conformance).
+- **CLI**: `mise run test:cli` builds the binary and runs `test/cli` with the `clitest` tag.
+- **Packaging**: `mise run test:package` and `mise run test:image`, after `mise run dist` and `mise run package`.
 - **Regression**: each test pins a fixed bug.
 
 ## Dependency Graph

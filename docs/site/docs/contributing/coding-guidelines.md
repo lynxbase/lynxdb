@@ -22,10 +22,10 @@ goimports -w .
 
 ### Linting
 
-`go vet ./...` must pass; CI runs it on every push. `.golangci.yml` turns on `errcheck`, `govet`, `ineffassign`, `staticcheck` and `unused`:
+`mise run lint` must pass; CI runs it on every push and pull request. `.golangci.yml` turns on `errcheck`, `govet`, `ineffassign`, `staticcheck` and `unused`, and checks `gofmt` formatting:
 
 ```bash
-golangci-lint run ./...
+mise run lint:go   # golangci-lint run ./...
 ```
 
 ### Naming

@@ -9,13 +9,15 @@ machine, the data size and the store layout with every number you publish.
 ## Micro Benchmarks
 
 ```bash
-make bench-micro   # pipeline, VM and ingest; writes artifacts/bench-micro.txt
-go test -run '^$' -bench . -benchmem ./pkg/vm/...
+mise run bench   # row and ingest pipelines; writes artifacts/bench-micro.txt
+mise run bench -- ./pkg/vec/...   # the same for other packages
+go test -run '^$' -bench . -benchmem ./pkg/vec/...
 ```
 
-Packages with `Benchmark` functions: `pkg/vec`, `pkg/colstore/part`,
-`pkg/colstore/shred`, `pkg/colstore/tokenfilter`, `pkg/engine/columnar`,
-`pkg/engine/pipeline`, `pkg/vm`, `pkg/query`, `pkg/mem` and
+Packages with `Benchmark` functions: `pkg/vec`, `pkg/colstore`,
+`pkg/colstore/exec`, `pkg/colstore/part`, `pkg/colstore/shred`,
+`pkg/colstore/tokenfilter`, `pkg/engine/columnar`, `pkg/engine/pipeline`,
+`pkg/query`, `pkg/mem`, `pkg/api/rest`, `pkg/ingest/limits` and
 `pkg/ingest/pipeline`. Compare runs with `benchstat`, and use `-count` of 5 or
 more.
 
@@ -112,14 +114,14 @@ Example queries (`logQueries` in `logsbench_queries_test.go`):
 
 ## Server Profiling
 
-`scripts/profile/run-all.sh` builds the binary, starts a server with runtime
+`tools/dev/profile/run-all.sh` builds the binary, starts a server with runtime
 profiling in a fresh data directory under `artifacts/profiles/<time>/`, loads
 `testdata/bench/json_100k.log` twenty times, runs a minute of concurrent
 ingest and PPL queries, collects CPU, heap, allocation, goroutine, mutex,
 block and trace profiles, and writes `FINDINGS.md` with the top functions and
-GC pauses. `make bench-fixtures` generates the fixtures when they are missing.
+GC pauses. `mise run bench:fixtures` generates the fixtures when they are missing.
 
 ```bash
-scripts/profile/run-all.sh
-LYNXDB_ADDR=localhost:3200 scripts/profile/run-all.sh
+tools/dev/profile/run-all.sh
+LYNXDB_ADDR=localhost:3200 tools/dev/profile/run-all.sh
 ```

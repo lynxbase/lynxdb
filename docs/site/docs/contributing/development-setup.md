@@ -1,7 +1,7 @@
 ---
 sidebar_position: 1
 title: Development Setup
-description: Clone, build, test, and run LynxDB from source. Toolchain, make targets, and development workflow.
+description: Clone, build, test, and run LynxDB from source. Toolchain, mise tasks, and development workflow.
 ---
 
 # Development Setup
@@ -10,12 +10,12 @@ description: Clone, build, test, and run LynxDB from source. Toolchain, make tar
 
 | Requirement | Version | Check |
 |------------|---------|-------|
-| **Go** | 1.26.3 (pinned in `mise.toml`) | `go version` |
+| **Go** | 1.26 (the exact release is in `mise.lock`) | `go version` |
 | **Git** | 2.x | `git --version` |
-| **Make** | 3.x | `make --version` |
-| **Docker** | Optional: shipper and conformance tests | `docker version` |
+| **mise** | 2026.11 or later | `mise --version` |
+| **Docker** | Optional: shipper, conformance, installer and image tests | `docker version` |
 
-`mise.toml` pins every tool the project uses (Go, golangci-lint, goreleaser, Node for the docs site). With [mise](https://mise.jdx.dev) installed, `mise install` sets them up, and `mise x -- <command>` runs a command with them.
+`mise.toml` names every tool the project uses (Go, golangci-lint, shellcheck, the workflow linters, Node for the docs site) and `mise.lock` records their exact versions and checksums. With [mise](https://mise.jdx.dev) installed, `mise install` sets them up, `mise tasks` lists the project's commands, and `mise x -- <command>` runs any command with the pinned tools.
 
 LynxDB needs no C libraries and no JVM.
 
@@ -26,7 +26,7 @@ git clone https://github.com/lynxbase/lynxdb.git
 cd lynxdb
 
 # Build the binary with version metadata (output: ./lynxdb)
-make build
+mise run build
 
 # Or a plain build
 go build -o lynxdb ./cmd/lynxdb/
@@ -36,27 +36,35 @@ go build -o lynxdb ./cmd/lynxdb/
 
 The binary is a static executable; copy it to any machine with the same OS and architecture.
 
-## Make Targets
+## Tasks
 
 ```bash
-make build             # Build ./lynxdb with version, commit and date
-make test              # Unit + e2e + CLI tests
-make test-unit         # go test ./... with the race detector
-make test-e2e          # Server tests over the REST API (e2e build tag)
-make test-cli          # Build, then run test/cli against the binary (clitest build tag)
-make test-compat       # Shipper compatibility tests (Filebeat, Fluent Bit, Vector, OTel Collector, HEC); needs Docker
-make test-conformance  # Full shipper conformance matrix; needs Docker
-make bench-micro       # Micro benchmarks for pipeline, VM and ingest; writes artifacts/bench-micro.txt
-make bench-fixtures    # Generate benchmark fixtures (scripts/genbench)
-make vet               # go vet ./...
-make docs-gen          # Regenerate the PPL reference pages from the catalogs
-make clean             # Remove build artifacts
+mise run build             # Build ./lynxdb with version, commit and date
+mise run ci                # Every linter and the unit tests
+mise run lint              # golangci-lint, go.mod tidiness, shellcheck, commit subjects, workflow linters
+mise run fmt               # Format the Go sources
+mise run test              # go test ./...
+mise run test:race         # The same under the race detector
+mise run test:e2e          # Server tests over the REST API (e2e build tag)
+mise run test:cli          # test/cli against a binary it builds (clitest build tag), goldens included
+mise run test:compat       # Shipper compatibility tests (Filebeat, Fluent Bit, Vector, OTel Collector, HEC); needs Docker
+mise run test:conformance  # Full shipper conformance matrix; needs Docker
+mise run bench             # Micro benchmarks of the row and ingest pipelines; writes artifacts/bench-micro.txt
+mise run bench:fixtures    # Generate benchmark fixtures (tools/dev/genbench)
+mise run gen               # Regenerate the PPL reference pages from the catalogs
+mise run docs              # Build the documentation site
 ```
 
-Lint with the pinned golangci-lint and `.golangci.yml`:
+Arguments after `--` go to the command of the task: `mise run test -- -run TestCompileGolden`.
+
+The release binaries, archives and container image are built by tasks too, which is also how continuous integration builds them:
 
 ```bash
-golangci-lint run ./...
+mise run dist              # Cross-compile every platform into dist/stage
+mise run package           # Archives, install.sh and SHA256SUMS in dist/
+mise run test:package      # Install from those archives on this machine and in containers; needs Docker
+mise run test:image        # Build the container image and check the server in it; needs Docker
+mise run version           # The version this tree builds as
 ```
 
 ## Running Locally
@@ -135,7 +143,7 @@ go test ./pkg/query/ -run TestCorpusPlansGolden -update
 `docs/site/docs/ppl/commands.md`, `functions.md` and `aggregations.md` are generated from the catalogs in `pkg/ppl` and the IR function registry. After changing a catalog entry, regenerate them:
 
 ```bash
-go run ./internal/docgen   # or: make docs-gen
+go run ./internal/docgen   # or: mise run gen
 ```
 
 `TestGeneratedPagesAreCurrent` in `internal/docgen` fails when the committed pages differ from the catalogs.
@@ -149,8 +157,8 @@ go test -race ./...
 ### End-to-End and CLI Tests
 
 ```bash
-make test-e2e   # starts servers and exercises the REST API
-make test-cli   # runs the built binary as a subprocess: output, exit codes, goldens
+mise run test:e2e   # starts servers and exercises the REST API
+mise run test:cli   # runs the built binary as a subprocess: output, exit codes, goldens
 ```
 
 ### Regression
@@ -162,12 +170,12 @@ go test ./test/regression/...   # query correctness regressions
 ## Benchmarks
 
 ```bash
-# Micro benchmarks (pipeline, VM, ingest)
-make bench-micro
+# Micro benchmarks (row pipeline, ingest pipeline)
+mise run bench
 
 # One package
-go test -bench=. -benchmem ./pkg/vm/...
-go test -bench=. -benchmem ./pkg/engine/pipeline/...
+go test -run '^$' -bench . -benchmem ./pkg/vec/...
+go test -run '^$' -bench . -benchmem ./pkg/engine/pipeline/...
 ```
 
 `BENCHMARKS.md` at the repository root describes every benchmark suite and how to run it.
@@ -200,8 +208,8 @@ go test -bench=. -benchmem ./pkg/engine/pipeline/...
 2. **Change code** in `pkg/`, `cmd/` or `internal/`.
 3. **Run the package tests**: `go test ./pkg/path/to/package/...`
 4. **Update goldens and generated pages** if plans or catalogs changed.
-5. **Lint**: `go vet ./...` and `golangci-lint run ./...`
-6. **Run the suite**: `make test`
+5. **Lint**: `mise run lint`
+6. **Run the suite**: `mise run test`, then `mise run test:e2e` and `mise run test:cli`
 7. **Try it**: `lynxdb query --file ...` or `lynxdb server`.
 8. **Commit** small, single-purpose commits and open a pull request.
 
@@ -212,6 +220,8 @@ GOOS=linux GOARCH=amd64 go build -o lynxdb-linux-amd64 ./cmd/lynxdb/
 GOOS=linux GOARCH=arm64 go build -o lynxdb-linux-arm64 ./cmd/lynxdb/
 GOOS=darwin GOARCH=arm64 go build -o lynxdb-darwin-arm64 ./cmd/lynxdb/
 ```
+
+`mise run dist` builds every released platform this way, stamped with the version.
 
 ## Related
 
