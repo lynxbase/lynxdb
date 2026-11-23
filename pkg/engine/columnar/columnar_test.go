@@ -460,3 +460,36 @@ func TestIndexThatIsNotThere(t *testing.T) {
 		}
 	}
 }
+
+// TestFieldsNoIndexHolds requires a warning for every field that a query
+// reads from a scan whose indexes hold none of it, and none for the fields
+// that the query makes.
+func TestFieldsNoIndexHolds(t *testing.T) {
+	tables := testData(t)
+	tables["empty"] = tableOf(t)
+	for text, want := range map[string]string{
+		`source=logs | where nope > 1 | stats count() as n`:                                 "no event of the index logs holds the field nope",
+		`source=logs, hosts | stats count() as n by nope, host`:                             "no event of the indexes logs, hosts holds the field nope",
+		`source=logs | eval made = 1 | where made > 0 | fields made, host`:                  "",
+		`source=logs | rex field=msg "(?<word>\w+)" | stats count() as n by word`:           "",
+		`source=logs | stats count() as n by host | where n > 1`:                            "",
+		`source=logs | where http.path = '/x' | fields http`:                                "",
+		`source=empty | where nope > 1`:                                                     "",
+		`source=logs | where host in [ source=hosts | where nada = 1 | fields host ]`:       "no event of the index hosts holds the field nada",
+		`source=logs | join left=l right=r ON l.host = r.nohost hosts | stats count() as n`: "no event of the index hosts holds the field nohost",
+	} {
+		compiled, err := query.Compile(text)
+		if err != nil {
+			t.Fatalf("%s: %v", text, err)
+		}
+		for _, rows := range []bool{false, true} {
+			res, err := Run(context.Background(), compiled.Plan, tables, Options{Now: testNow, rows: rows})
+			if err != nil {
+				t.Fatalf("%s: %v", text, err)
+			}
+			if got := strings.Join(res.Warnings, "; "); got != want {
+				t.Errorf("%s\n got  %q\n want %q", text, got, want)
+			}
+		}
+	}
+}

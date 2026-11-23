@@ -86,14 +86,15 @@ func Run(ctx context.Context, plan *ir.Plan, tables Tables, opts Options) (*Resu
 	}
 	r := &run{ctx: ctx, tables: tables, opts: opts}
 	defer r.release()
-	root, err := resolved(ctx, plan.Root, tables, opts)
+	root, warnings, err := resolved(ctx, plan.Root, tables, opts)
 	if err != nil {
 		return nil, err
 	}
+	warnings = append(warnings, r.absentFields(root)...)
 	if root, err = r.push(ir.Transform(ir.Transform(root, collected), premapped), true); err != nil {
 		return nil, err
 	}
-	out := &Result{}
+	out := &Result{Warnings: warnings}
 	if schema := plan.Root.Schema(); !schema.Open {
 		out.Columns = schema.Names()
 	}
