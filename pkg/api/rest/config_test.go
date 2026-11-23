@@ -37,6 +37,43 @@ func TestConfig_Get(t *testing.T) {
 	}
 }
 
+func TestConfig_GetReportsAuth(t *testing.T) {
+	srv, _, rootToken, cleanup := startAuthServer(t)
+	defer cleanup()
+
+	resp, err := authReq("GET", fmt.Sprintf("http://%s/api/v1/config", srv.Addr()), rootToken, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		Data struct {
+			Auth struct {
+				Enabled bool `json:"enabled"`
+			} `json:"auth"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Data.Auth.Enabled {
+		t.Error("auth.enabled = false, want true")
+	}
+}
+
+func TestNewServer_AuthWithoutKeyStoreFails(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = true
+	cfg.DataDir = t.TempDir()
+
+	srv, err := NewServer(Config{Addr: "127.0.0.1:0", DataDir: cfg.DataDir, RuntimeConfig: cfg, Logger: testLogger()})
+	if err == nil {
+		srv.closeDB()
+		t.Fatal("NewServer with auth on and no key store should fail")
+	}
+}
+
 func TestConfig_Patch(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
@@ -169,6 +206,7 @@ func TestReloadConfigReportsStartupTimeFields(t *testing.T) {
 
 	updated.TLS.Enabled = !updated.TLS.Enabled
 	updated.Auth.Enabled = !updated.Auth.Enabled
+	updated.DataDir = t.TempDir()
 	updated.Storage.Partition = config.Duration(time.Hour)
 	updated.Storage.FlushInterval = config.Duration(time.Second)
 	updated.Storage.TimeFields = []string{"ts"}

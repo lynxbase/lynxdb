@@ -46,7 +46,7 @@ docker run -d --name lynxdb -p 3100:3100 \
   ghcr.io/lynxbase/lynxdb:latest server --addr 0.0.0.0:3100 --data-dir ""
 ```
 
-With an empty data directory the server keeps its indexes in a temporary directory that it removes when it stops. Nothing outlives the container, and authentication is unavailable in this mode.
+With an empty data directory the server keeps its indexes in a temporary directory that it removes when it stops. Nothing outlives the container, and the server refuses to start in this mode with `--auth`.
 
 ### Persistent, with TLS and auth
 

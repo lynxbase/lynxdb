@@ -69,6 +69,10 @@ func (c *Config) Validate() error {
 	if err := c.Syslog.validate(); err != nil {
 		return err
 	}
+	// The keys live under data_dir; without one the server would run open.
+	if c.Auth.Enabled && c.DataDir == "" {
+		return validationErr("auth", "enabled", "true", "requires data_dir, which holds the API keys")
+	}
 
 	return c.TLS.validate()
 }

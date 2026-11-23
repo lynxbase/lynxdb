@@ -123,6 +123,10 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 			runtimeCfg.HTTP = cfg.HTTP
 		}
 		runtimeCfg.Syslog = cfg.Syslog
+		runtimeCfg.Auth.Enabled = cfg.KeyStore != nil
+	}
+	if runtimeCfg.Auth.Enabled && cfg.KeyStore == nil {
+		return nil, errors.New("auth is enabled but the server has no key store")
 	}
 
 	s := &Server{

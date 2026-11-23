@@ -25,7 +25,7 @@ LYNXDB_RETENTION=30d lynxdb server
 lynxdb server --data-dir ""
 ```
 
-With an empty `data_dir` the server keeps its indexes in a temporary directory and removes it at shutdown, so nothing outlives the process. The features that keep files next to the data are unavailable: API key authentication (the server runs without auth even when `--auth` is set) and the self-signed certificate (`--tls` without a certificate refuses to start). The PID file goes to `$XDG_RUNTIME_DIR` or the system temp directory.
+With an empty `data_dir` the server keeps its indexes in a temporary directory and removes it at shutdown, so nothing outlives the process. The features that keep files next to the data are unavailable: with `--auth` (or `auth.enabled: true`) or with `--tls` and no certificate, the server refuses to start. The PID file goes to `$XDG_RUNTIME_DIR` or the system temp directory.
 
 ## TLS
 
@@ -48,7 +48,7 @@ lynxdb server --tls-cert /etc/lynxdb/tls/server.crt --tls-key /etc/lynxdb/tls/se
 |-----|------|---------|---------|
 | `auth.enabled` | `--auth` | `LYNXDB_AUTH_ENABLED` | `false` |
 
-With auth on, API routes under `/api/` require an API key. Keys are stored in `<data_dir>/auth/`. On the first start with no keys, the server generates a root key and prints it once to stderr. Manage keys with `lynxdb auth create`, `list`, `revoke` and `rotate-root`, which take the root key; scopes are `ingest`, `query`, `admin` and `full`.
+With auth on, API routes under `/api/` require an API key. Keys are stored in `<data_dir>/auth/`, so auth needs a `data_dir`: with an empty one the server refuses to start. `GET /api/v1/config` reports `auth.enabled: true` whether auth came from the flag, the environment or the file. On the first start with no keys, the server generates a root key and prints it once to stderr. Manage keys with `lynxdb auth create`, `list`, `revoke` and `rotate-root`, which take the root key; scopes are `ingest`, `query`, `admin` and `full`.
 
 See [TLS and Authentication](../deployment/tls-auth.md) for the request schemes, the routes that stay open, and the client setup.
 

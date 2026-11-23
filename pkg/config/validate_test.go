@@ -40,6 +40,11 @@ func TestValidateTopLevel(t *testing.T) {
 			func(c *Config) { c.LogLevel = "verbose" },
 			"log_level: must be debug, info, warn, or error",
 		},
+		{
+			"auth without a data directory",
+			func(c *Config) { c.Auth.Enabled = true; c.DataDir = "" },
+			"auth.enabled: requires data_dir",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -128,13 +128,17 @@ func runServer(cmd *cobra.Command, args []string) error {
 		cliOverrides = append(cliOverrides, "--syslog-index")
 	}
 
+	if flagAuthEnabled {
+		cfg.Auth.Enabled = true
+	}
+	if cmd.Flags().Changed("auth") {
+		cliOverrides = append(cliOverrides, "--auth")
+	}
+
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
 
-	if cmd.Flags().Changed("auth") {
-		cliOverrides = append(cliOverrides, "--auth")
-	}
 	if cmd.Flags().Changed("tls") {
 		cliOverrides = append(cliOverrides, "--tls")
 	}
@@ -155,8 +159,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 
 	var keyStore *auth.KeyStore
 
-	authEnabled := flagAuthEnabled || cfg.Auth.Enabled
-	if authEnabled && cfg.DataDir != "" {
+	if cfg.Auth.Enabled {
 		keyStore, err = bootstrapAuth(cfg.DataDir)
 		if err != nil {
 			return fmt.Errorf("auth init: %w", err)
@@ -250,7 +253,7 @@ func runServer(cmd *cobra.Command, args []string) error {
 	if tlsCfg != nil {
 		logAttrs = append(logAttrs, "tls", true)
 	}
-	if authEnabled {
+	if cfg.Auth.Enabled {
 		logAttrs = append(logAttrs, "auth", true)
 	}
 	logger.Info("starting LynxDB", logAttrs...)

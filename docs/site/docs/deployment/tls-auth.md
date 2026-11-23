@@ -5,7 +5,7 @@ description: Serve LynxDB over HTTPS, turn on API key authentication, manage key
 
 # TLS and Authentication
 
-TLS and API key authentication are independent; production servers should use both. Authentication needs a data directory, because keys are stored in `<data_dir>/auth/`.
+TLS and API key authentication are independent; production servers should use both. Authentication needs a data directory, because keys are stored in `<data_dir>/auth/`; with auth on and an empty `data_dir` the server refuses to start.
 
 ## TLS
 
