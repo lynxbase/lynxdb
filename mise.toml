@@ -110,6 +110,14 @@ run = "tools/dist/package.sh"
 description = "Install from the archives in dist/ with the installer and check the result"
 run = "test/packaging/run.sh"
 
+[tasks.image]
+description = "Build the container image from the staged Linux binaries; needs Docker"
+run = "tools/dist/image.sh"
+
+[tasks."test:image"]
+description = "Build the container image for this machine and check what it runs; needs Docker"
+run = "test/packaging/image.sh"
+
 [tasks.version]
 description = "Print the version this tree builds as"
 run = "tools/release/version.sh current"
