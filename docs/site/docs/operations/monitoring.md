@@ -118,6 +118,7 @@ lynxdb indexes                # one row per index: events, bytes, parts, first a
 | Metric | Labels | Description |
 |--------|--------|-------------|
 | `lynxdb_ingest_events_total` | | Events ingested |
+| `lynxdb_ingest_events_expired_total` | | Events refused for being older than the retention |
 | `lynxdb_ingest_batches_total` | | Batches ingested |
 | `lynxdb_ingest_bytes_total` | | NDJSON bytes taken by `/api/v1/ingest`, `/api/v1/ingest/raw` and the bulk routes |
 | `lynxdb_ingest_errors_total` | | Batches the database refused |

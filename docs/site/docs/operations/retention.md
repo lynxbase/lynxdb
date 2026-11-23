@@ -43,7 +43,23 @@ Events are partitioned by event time. The saved partition width can differ by in
 - Deletion happens a whole partition at a time. With `retention: 7d` and daily partitions, the events of a day are deleted on the first pass after that day ended at least seven days ago. A row becomes eligible for removal approximately seven to eight days after its event time.
 - A smaller partition width makes deletion finer and can produce more partitions.
 - Every index uses the same retention period and its own partition width.
-- The event timestamp assigns the partition even when a log arrives late. A pass can remove it once the row is committed and the partition is eligible. Set `retention: 0s` on a server that should keep all partitions.
+- The event timestamp assigns the partition even when a log arrives late. Set `retention: 0s` on a server that should keep all partitions.
+
+## Events older than the retention
+
+An event whose partition the next pass would remove is not stored. With `retention: 7d`, a log file from last month sent to the server stores nothing: raise `retention`, or set it to `0s`, before loading old data.
+
+`POST /api/v1/ingest` and `POST /api/v1/ingest/raw` count such events as `expired` in their answer, and `lynxdb ingest` prints the count:
+
+```json
+{"data": {"accepted": 1, "failed": 0, "expired": 1}}
+```
+
+Every protocol counts them in the `lynxdb_ingest_events_expired_total` metric, and the server logs the count at `WARN` once a minute while it grows:
+
+```text
+time=2026-11-23T11:49:10.180+01:00 level=WARN msg="ingest refused events older than the retention" events=889 retention=168h0m0s
+```
 
 ## Monitoring Retention
 

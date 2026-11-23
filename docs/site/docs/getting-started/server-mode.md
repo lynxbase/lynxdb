@@ -85,7 +85,7 @@ echo '192.168.1.1 - - [14/Feb/2026:14:23:01 +0000] "GET /api HTTP/1.1" 200 1234'
 ```
 
 ```json
-{"data":{"accepted":2,"failed":0}}
+{"data":{"accepted":2,"failed":0,"expired":0}}
 ```
 
 `/api/v1/ingest` writes to the index in `?index=` or the `X-Index` header,

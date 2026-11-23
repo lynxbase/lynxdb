@@ -29,6 +29,7 @@ Prometheus text metrics, outside `/api/v1` and without authentication. Besides t
 | `lynxdb_query_duration_seconds` | `result_type` | Histogram of query durations |
 | `lynxdb_query_errors_total` | `type` | Failed queries by error code |
 | `lynxdb_ingest_events_total` | | Events ingested |
+| `lynxdb_ingest_events_expired_total` | | Events refused for being older than the retention |
 | `lynxdb_ingest_batches_total` | | Ingest batches |
 | `lynxdb_ingest_bytes_total` | | Bytes of NDJSON ingested |
 | `lynxdb_ingest_errors_total` | | Failed ingest batches |

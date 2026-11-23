@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
@@ -72,6 +73,10 @@ type DB struct {
 
 	slots chan struct{}
 	jobs  jobs
+	// expired counts the events refused for being older than the
+	// retention, and told how many of them the log has reported.
+	expired atomic.Int64
+	told    int64
 
 	stop chan struct{}
 	wg   sync.WaitGroup
@@ -116,7 +121,8 @@ func Open(cfg Config) (*DB, error) {
 
 // AppendObjects adds the events of ndjson, one JSON object per line, to an
 // index and returns what became of the lines; a line that is not a JSON
-// object is rejected.
+// object is rejected. An event whose partition the retention would drop at
+// once is not stored and counts as expired.
 func (db *DB) AppendObjects(index string, ndjson []byte) (colstore.Appended, error) {
 	return db.appendRows(index, ndjson, colstore.Intake{})
 }
@@ -131,9 +137,20 @@ func (db *DB) appendRows(index string, lines []byte, in colstore.Intake) (colsto
 	if index == "" {
 		index = DefaultSource
 	}
+	if db.cfg.Retention > 0 {
+		in.Since = time.Now().Add(-db.cfg.Retention).UnixNano()
+	}
+	done, err := db.core.AppendRows(index, lines, in)
+	if done.Expired > 0 {
+		db.expired.Add(done.Expired)
+	}
 
-	return db.core.AppendRows(index, lines, in)
+	return done, err
 }
+
+// Expired returns the number of events refused since the database opened
+// for being older than the retention.
+func (db *DB) Expired() int64 { return db.expired.Load() }
 
 // Sync makes the events appended so far durable and visible.
 func (db *DB) Sync() error { return db.core.Sync() }
@@ -326,8 +343,14 @@ func (db *DB) maintain() {
 }
 
 // expire drops the events older than the retention and the jobs that
-// finished longer than JobTTL before now.
+// finished longer than JobTTL before now, and reports the events that
+// ingest refused since the last call.
 func (db *DB) expire(now time.Time) {
+	if n := db.expired.Load(); n > db.told {
+		db.log.Warn("ingest refused events older than the retention",
+			"events", n-db.told, "retention", db.cfg.Retention.String())
+		db.told = n
+	}
 	if db.cfg.Retention > 0 {
 		cutoff := now.Add(-db.cfg.Retention)
 		for _, index := range db.core.Names() {

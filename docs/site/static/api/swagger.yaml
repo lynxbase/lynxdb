@@ -2465,13 +2465,17 @@ components:
               type: integer
             failed:
               type: integer
+              description: Lines that are not JSON objects; not stored
+            expired:
+              type: integer
+              description: Events older than the retention; not stored
             truncated:
               type: boolean
               description: '`/ingest/raw` only: the body was cut off after some events were stored'
             warning:
               type: string
       example:
-        data: {accepted: 3, failed: 0}
+        data: {accepted: 3, failed: 0, expired: 0}
     HECEvent:
       type: object
       properties:

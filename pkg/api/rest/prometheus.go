@@ -151,6 +151,15 @@ func (pm *PrometheusMetrics) RecordIngest(events, bytes int) {
 	pm.ingestBytesTotal.Add(float64(bytes))
 }
 
+// CountExpired exposes the events that ingest refused for being older than
+// the retention, as total gives them.
+func (pm *PrometheusMetrics) CountExpired(total func() int64) {
+	pm.registry.MustRegister(prometheus.NewCounterFunc(prometheus.CounterOpts{
+		Name: "lynxdb_ingest_events_expired_total",
+		Help: "Total events refused at ingest for being older than the retention.",
+	}, func() float64 { return float64(total()) }))
+}
+
 // RecordIngestError counts a batch the database refused.
 func (pm *PrometheusMetrics) RecordIngestError() {
 	pm.ingestErrorsTotal.Inc()

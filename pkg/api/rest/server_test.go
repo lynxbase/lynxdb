@@ -1528,3 +1528,39 @@ func TestJobStream_NotFound(t *testing.T) {
 		t.Fatalf("status: got %d, want 404", resp.StatusCode)
 	}
 }
+
+func TestServer_IngestRefusesEventsOlderThanTheRetention(t *testing.T) {
+	srv, cleanup := startTestServerWithConfig(t, Config{Retention: 7 * 24 * time.Hour})
+	defer cleanup()
+
+	now := time.Now().UTC()
+	body := fmt.Sprintf("{\"_time\":%q,\"n\":1}\n{\"_time\":%q,\"n\":2}\n",
+		now.Add(-30*24*time.Hour).Format(time.RFC3339), now.Format(time.RFC3339))
+	for _, path := range []string{"/api/v1/ingest", "/api/v1/ingest/raw"} {
+		resp, err := http.Post(fmt.Sprintf("http://%s%s", srv.Addr(), path), "application/x-ndjson", bytes.NewBufferString(body))
+		if err != nil {
+			t.Fatalf("POST %s: %v", path, err)
+		}
+		var result map[string]map[string]interface{}
+		err = json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != http.StatusOK {
+			t.Fatalf("POST %s: status %d, decode %v", path, resp.StatusCode, err)
+		}
+		if data := result["data"]; data["accepted"] != float64(1) || data["expired"] != float64(1) || data["failed"] != float64(0) {
+			t.Fatalf("POST %s answered %v, want 1 accepted and 1 expired", path, data)
+		}
+	}
+	if events := queryEvents(t, srv.Addr(), `{"q":"source=main"}`); len(events) != 2 {
+		t.Fatalf("stored %v, want the two events inside the retention", events)
+	}
+	resp, err := http.Get(fmt.Sprintf("http://%s/metrics", srv.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	metrics, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(metrics), "lynxdb_ingest_events_expired_total 2") {
+		t.Fatalf("metrics lack lynxdb_ingest_events_expired_total 2")
+	}
+}

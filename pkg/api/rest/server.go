@@ -142,6 +142,7 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 	}
 
 	promMetrics := NewPrometheusMetrics()
+	promMetrics.CountExpired(db.Expired)
 	s.promMetrics = promMetrics
 	promMetrics.SetListenerUp("es", false)
 	promMetrics.SetListenerUp("otlp_http", false)

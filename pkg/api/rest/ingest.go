@@ -211,12 +211,13 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	index := requestIndex(r, false)
-	var accepted, rejected int64
+	var accepted, rejected, expired int64
 	size := 0
 	var appendErr error
 	readErr := readLines(r.Body, func(lines []byte) error {
 		done, err := s.db.AppendObjects(index, lines)
-		accepted, rejected, size = accepted+done.Rows, rejected+done.Rejected, size+len(lines)
+		accepted, rejected, expired = accepted+done.Rows, rejected+done.Rejected, expired+done.Expired
+		size += len(lines)
 		appendErr = err
 
 		return err
@@ -226,7 +227,7 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	if appendErr != nil {
 		s.promMetrics.RecordIngestError()
-		respondIngestErrorAfter(w, appendErr, linesTaken(accepted+rejected, "the error"))
+		respondIngestErrorAfter(w, appendErr, linesTaken(accepted+rejected+expired, "the error"))
 		return
 	}
 	if readErr != nil {
@@ -235,15 +236,15 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.As(readErr, &wire):
 			respondError(w, ErrCodeInvalidRequest, http.StatusRequestEntityTooLarge,
-				fmt.Sprintf("request body exceeds %d bytes", wire.Limit)+linesTaken(accepted+rejected, "the limit"),
+				fmt.Sprintf("request body exceeds %d bytes", wire.Limit)+linesTaken(accepted+rejected+expired, "the limit"),
 				WithSuggestion("Send smaller batches or raise ingest.max_body_size."))
 		case errors.As(readErr, &decoded):
 			respondError(w, ErrCodeInvalidRequest, http.StatusRequestEntityTooLarge,
-				decoded.Error()+linesTaken(accepted+rejected, "the limit"),
+				decoded.Error()+linesTaken(accepted+rejected+expired, "the limit"),
 				WithSuggestion("Send smaller batches or raise ingest.max_body_size."))
 		default:
 			respondError(w, ErrCodeInvalidRequest, http.StatusBadRequest,
-				"request body is cut short or does not decode"+linesTaken(accepted+rejected, "that"))
+				"request body is cut short or does not decode"+linesTaken(accepted+rejected+expired, "that"))
 		}
 		return
 	}
@@ -256,6 +257,7 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	respondData(w, http.StatusOK, map[string]interface{}{
 		"accepted": accepted,
 		"failed":   rejected,
+		"expired":  expired,
 	})
 }
 
@@ -291,7 +293,7 @@ func (s *Server) handleIngestRaw(w http.ResponseWriter, r *http.Request) {
 	}
 	conv.Source, conv.SourceType, conv.Host = source, sourceType, host
 
-	accepted, failed := 0, 0
+	accepted, failed, expired := 0, 0, 0
 	var appendErr error
 	readErr := conv.Read(r.Body, func(chunk []byte) error {
 		done, err := s.db.AppendLines(index, chunk)
@@ -301,6 +303,7 @@ func (s *Server) handleIngestRaw(w http.ResponseWriter, r *http.Request) {
 		}
 		accepted += int(done.Rows)
 		failed += int(done.Rejected)
+		expired += int(done.Expired)
 		s.promMetrics.RecordIngest(int(done.Rows), len(chunk))
 		return nil
 	})
@@ -324,6 +327,7 @@ func (s *Server) handleIngestRaw(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]interface{}{
 		"accepted": accepted,
 		"failed":   failed,
+		"expired":  expired,
 	}
 	if truncated {
 		resp["truncated"] = true

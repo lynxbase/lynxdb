@@ -80,7 +80,7 @@ EOF
 ```
 
 ```json
-{"data":{"accepted":2,"failed":0}}
+{"data":{"accepted":2,"failed":0,"expired":0}}
 ```
 
 The event time comes from the first of `_time`, `timestamp`, `@timestamp`,

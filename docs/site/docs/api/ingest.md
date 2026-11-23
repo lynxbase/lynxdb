@@ -21,7 +21,7 @@ Every index keeps its events in a columnar store of its own. An index comes into
 - **Time.** An event's time is the value of the first of the index's time fields that it holds; `storage.time_fields` gives `_time`, `timestamp`, `@timestamp`, `time` and `ts`. An event without one gets the time it arrived.
 - **Text.** `POST /ingest` takes JSON objects only and counts any other line as failed. `POST /ingest/raw` keeps a line of text as an event holding it in `_raw`. A JSON event has no `_raw`.
 - **Fields.** The members of a nested object are read as columns named by their path, such as `order.id`. A query result holds only the fields an event has: a field the event lacks is absent, not `null`.
-- **Retention.** Events whose own time is older than `retention` (7 days by default) are removed, partition by partition, within about a minute of arriving or when the server starts. Each removal is logged at `WARN` with the index, the event count and the cutoff. `retention: 0s` keeps everything.
+- **Retention.** Events are removed, partition by partition, once their partition ended longer ago than `retention` (7 days by default). An event that arrives for such a partition is not stored: the answer counts it as `expired`, and the `lynxdb_ingest_events_expired_total` metric counts it for every protocol. `retention: 0s` keeps everything. See [Retention](../operations/retention.md).
 - **Visibility.** Ingested events are written within `storage.flush_interval` (one second by default). The server writes the pending events before it runs a query, so a query sees every event whose ingest request has been answered. The Elasticsearch bulk endpoints, and Splunk HEC requests that carry an acknowledgement channel, make the events durable before they answer.
 
 Index names hold letters, digits, `.`, `-` and `_`, do not start with `.`, and are at most 255 bytes. Any other name answers `400 VALIDATION_ERROR`.
@@ -38,7 +38,7 @@ plain text line
 ```
 
 ```json
-{"data": {"accepted": 2, "failed": 1}}
+{"data": {"accepted": 2, "failed": 1, "expired": 0}}
 ```
 
 ```bash
@@ -62,7 +62,7 @@ curl -s localhost:3100/api/v1/query \
 }
 ```
 
-`accepted` counts the lines stored as events; `failed` counts the lines that are not JSON objects, which are not stored. Blank lines are skipped. A body in which no line is a JSON object answers `400 INVALID_REQUEST`; send log text to [`POST /ingest/raw`](#post-ingestraw).
+`accepted` counts the lines stored as events; `failed` counts the lines that are not JSON objects and `expired` the events older than the retention, neither of which is stored. Blank lines are skipped. A body in which no line is a JSON object answers `400 INVALID_REQUEST`; send log text to [`POST /ingest/raw`](#post-ingestraw).
 
 `POST /ingest` and `POST /ingest/raw` are bounded by `ingest.max_body_size` alone, as sent and after `gzip`, `zstd` or `snappy` decoding. A body over it stores nothing and answers `413`, naming the setting:
 
@@ -106,7 +106,7 @@ curl -s -X POST localhost:3100/api/v1/ingest/raw \
 ```
 
 ```json
-{"data": {"accepted": 2, "failed": 0}}
+{"data": {"accepted": 2, "failed": 0, "expired": 0}}
 ```
 
 The two events read back as:

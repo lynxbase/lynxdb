@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -128,20 +129,23 @@ func TestRetention(t *testing.T) {
 	var logs bytes.Buffer
 	db := openTest(t, Config{Retention: 48 * time.Hour, Logger: slog.New(slog.NewTextHandler(&logs, nil))})
 	now := time.Now().UTC()
-	lines := `{"_time":"` + now.Add(-10*24*time.Hour).Format(time.RFC3339) + `"}
+	// The older event is inside the retention when it arrives, and its
+	// day has ended by the time of the pass two days later.
+	lines := `{"_time":"` + now.Add(-40*time.Hour).Format(time.RFC3339) + `"}
 {"_time":"` + now.Format(time.RFC3339) + `"}
 `
-	if _, err := db.AppendLines("main", []byte(lines)); err != nil {
-		t.Fatal(err)
+	if done, err := db.AppendLines("main", []byte(lines)); err != nil || done.Rows != 2 {
+		t.Fatalf("appended %+v, error %v", done, err)
 	}
 	if err := db.Sync(); err != nil {
 		t.Fatal(err)
 	}
-	db.expire(now)
+	later := now.Add(48 * time.Hour)
+	db.expire(later)
 	if got := run(t, db, "source=main | stats count()", QueryOptions{}); got[0] != `{"count()":1}` {
 		t.Fatalf("after retention: %v", got)
 	}
-	cutoff := "cutoff=" + now.Add(-48*time.Hour).UTC().Format(time.RFC3339)
+	cutoff := "cutoff=" + later.Add(-48*time.Hour).UTC().Format(time.RFC3339)
 	for _, want := range []string{"level=WARN", "index=main", "events=1", cutoff} {
 		if !strings.Contains(logs.String(), want) {
 			t.Fatalf("retention log lacks %s: %s", want, logs.String())
@@ -260,5 +264,39 @@ func TestTooManyQueries(t *testing.T) {
 	c, _ := query.Compile("source=main | head 1")
 	if _, err := db.Query(context.Background(), c, QueryOptions{}); !errors.Is(err, ErrTooManyQueries) {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// TestAppendRefusesEventsOlderThanTheRetention requires an event whose
+// partition the retention would drop at once to be counted and not stored,
+// and an event of a partition still kept to be stored.
+func TestAppendRefusesEventsOlderThanTheRetention(t *testing.T) {
+	db, err := Open(Config{Dir: t.TempDir(), Retention: 7 * 24 * time.Hour})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC()
+	lines := fmt.Sprintf("{\"_time\":%q,\"n\":1}\n{\"_time\":%q,\"n\":2}\n{\"_time\":%q,\"n\":3}\n{\"n\":4}\nold text 2020\n",
+		now.Add(-30*24*time.Hour).Format(time.RFC3339),
+		now.Add(-9*24*time.Hour).Format(time.RFC3339),
+		now.Add(-time.Hour).Format(time.RFC3339))
+	done, err := db.AppendLines("web", []byte(lines))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if done.Rows != 3 || done.Expired != 2 || done.Rejected != 0 {
+		t.Fatalf("appended %+v, want 3 rows and 2 expired", done)
+	}
+	if got := db.Expired(); got != 2 {
+		t.Fatalf("Expired() = %d, want 2", got)
+	}
+	if err := db.Sync(); err != nil {
+		t.Fatal(err)
+	}
+	db.expire(time.Now())
+	st, ok := db.Index("web")
+	if !ok || st.Rows != 3 {
+		t.Fatalf("index holds %+v after a retention pass, want the 3 events", st)
 	}
 }
