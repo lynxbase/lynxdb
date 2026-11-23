@@ -19,8 +19,12 @@ With `--file` or piped standard input, the CLI:
    index `main`.
 3. Keeps a line that is a JSON object as it is, with its members as fields.
    Any other line becomes an event holding the text in `_raw`, with its
-   leading timestamp, its `key=value` pairs, and the fields of combined
-   access logs and syslog lines extracted.
+   timestamp, its `key=value` pairs, and the fields of combined access logs
+   and syslog lines extracted. The timestamp is the first time near the
+   start of the line in RFC 3339, syslog or access log form
+   (`2026-01-15T08:00:00.1Z`, `Jan 15 08:00:00`,
+   `15/Jan/2026:08:00:00 +0000`); see
+   [raw ingest](../api/ingest.md#post-ingestraw) for the forms.
 4. Runs the same compiled plan a server would run, prints the rows, deletes
    the temporary directory and exits.
 

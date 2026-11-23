@@ -3,14 +3,13 @@ package pipeline
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/timestamp"
 )
 
 // Stage is a processing stage in the ingestion pipeline.
@@ -218,154 +217,25 @@ func isKVKeyByte(b byte) bool {
 		b == '_'
 }
 
-// Sentinel errors for tryParseTime — avoid fmt.Errorf allocations on hot path.
-var (
-	errTSTooShort = errors.New("input too short")
-	errTSNoMatch  = errors.New("no match")
-)
-
-// TimestampNormalizer extracts and normalizes timestamps from events.
-type TimestampNormalizer struct {
-	Formats []string // time formats to try
-	hint    atomic.Value
-}
-
-type timestampHint struct {
-	fmtIdx int
-	pos    int
-	length int
-}
-
-// DefaultTimestampNormalizer creates a normalizer with common formats.
-func DefaultTimestampNormalizer() *TimestampNormalizer {
-	return &TimestampNormalizer{
-		Formats: []string{
-			time.RFC3339Nano,
-			time.RFC3339,
-			"2006-01-02T15:04:05.000-0700",
-			"2006-01-02T15:04:05-0700",
-			"2006-01-02T15:04:05.000Z",
-			"2006-01-02 15:04:05",
-			"2006-01-02 15:04:05.000",
-			"Jan 02 15:04:05",
-		},
-	}
-}
+// TimestampNormalizer gives each event without a time the first time its
+// text holds, as timestamp.Find reads it, or else the time it is processed.
+type TimestampNormalizer struct{}
 
 func (t *TimestampNormalizer) Process(events []*event.Event) ([]*event.Event, error) {
-	// Snapshot the current year once per batch — year-zero timestamps
-	// (e.g. syslog "Jan 02 15:04:05") would otherwise call time.Now() per event.
 	now := time.Now()
-	currentYear := now.Year()
+	year := now.Year()
 	for _, e := range events {
 		if !e.Time.IsZero() {
 			continue
 		}
-		// Fast path: try the cached (format, position, length) hint first.
-		if v := t.hint.Load(); v != nil {
-			h := v.(timestampHint)
-			if h.fmtIdx >= 0 && h.fmtIdx < len(t.Formats) {
-				if ts, ok := tryParseExact(e.Raw, h.pos, h.length, t.Formats[h.fmtIdx], currentYear); ok {
-					e.Time = ts
-					continue
-				}
-			}
-		}
-		// Slow path: scan all formats and positions.
-		for fi, format := range t.Formats {
-			if ts, pos, length, err := tryParseTime(e.Raw, format, currentYear); err == nil {
-				e.Time = ts
-				t.hint.Store(timestampHint{fmtIdx: fi, pos: pos, length: length})
-				break
-			}
-		}
-		if e.Time.IsZero() {
+		if ns, ok := timestamp.Find(e.Raw, year); ok {
+			e.Time = time.Unix(0, ns).UTC()
+		} else {
 			e.Time = now
 		}
 	}
 
 	return events, nil
-}
-
-// tryParseExact tries a single time.Parse at an exact (position, length) — the cached hint path.
-func tryParseExact(raw string, pos, length int, format string, currentYear int) (time.Time, bool) {
-	end := pos + length
-	if pos < 0 || end > len(raw) {
-		return time.Time{}, false
-	}
-	t, err := time.Parse(format, raw[pos:end])
-	if err != nil {
-		return time.Time{}, false
-	}
-	if t.Year() == 0 {
-		t = t.AddDate(currentYear, 0, 0)
-	}
-	return t, true
-}
-
-// looksLikeTimestamp does a cheap single-byte check to avoid calling time.Parse
-// on positions that clearly aren't timestamps.
-func looksLikeTimestamp(raw string, start int, format string) bool {
-	if start >= len(raw) {
-		return false
-	}
-	c := raw[start]
-	switch format[0] {
-	case '2': // "2006-..." ISO formats — must start with digit
-		return c >= '0' && c <= '9'
-	case 'J': // "Jan 02..." — must start with uppercase letter
-		return c >= 'A' && c <= 'Z'
-	}
-	return true
-}
-
-func tryParseTime(raw, format string, currentYear int) (time.Time, int, int, error) {
-	fmtLen := len(format)
-	if len(raw) < fmtLen {
-		return time.Time{}, 0, 0, errTSTooShort
-	}
-	// Try at position 0 first (fast path).
-	if looksLikeTimestamp(raw, 0, format) {
-		if t, length, ok := tryParseAt(raw, 0, format, fmtLen, currentYear); ok {
-			return t, 0, length, nil
-		}
-	}
-	// Try at each word boundary (space/quote delimited) within the first 100 chars.
-	limit := len(raw) - fmtLen
-	if limit > 100 {
-		limit = 100
-	}
-	for i := 0; i < limit; i++ {
-		if raw[i] == ' ' || raw[i] == '"' {
-			pos := i + 1
-			if looksLikeTimestamp(raw, pos, format) {
-				if t, length, ok := tryParseAt(raw, pos, format, fmtLen, currentYear); ok {
-					return t, pos, length, nil
-				}
-			}
-		}
-	}
-
-	return time.Time{}, 0, 0, errTSNoMatch
-}
-
-func tryParseAt(raw string, start int, format string, fmtLen, currentYear int) (time.Time, int, bool) {
-	maxEnd := start + fmtLen + 10
-	if maxEnd > len(raw) {
-		maxEnd = len(raw)
-	}
-	// Try exact format length first (most common case), then expand.
-	for end := start + fmtLen; end <= maxEnd; end++ {
-		t, err := time.Parse(format, raw[start:end])
-		if err == nil {
-			if t.Year() == 0 {
-				t = t.AddDate(currentYear, 0, 0)
-			}
-			return t, end - start, true
-		}
-	}
-
-	return time.Time{}, 0, false
 }
 
 // Router sets the index of each event that names none.
@@ -447,18 +317,16 @@ func (p *MetadataOnlyParser) Process(events []*event.Event) ([]*event.Event, err
 // This reduces ingest CPU by ~30-40% compared to DefaultPipeline.
 func LightweightPipeline() *Pipeline {
 	return New(
-		DefaultTimestampNormalizer(),
+		&TimestampNormalizer{},
 		&MetadataOnlyParser{},
 		&Router{DefaultIndex: "main"},
 	)
 }
 
 // DefaultPipeline returns a standard ingestion pipeline.
-// Each call gets its own TimestampNormalizer because it keeps advisory parse
-// hints that are mutated while events are processed.
 func DefaultPipeline() *Pipeline {
 	return New(
-		DefaultTimestampNormalizer(),
+		&TimestampNormalizer{},
 		&JSONParser{},
 		&KeyValueParser{},
 		&Router{DefaultIndex: "main"},

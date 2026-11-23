@@ -18,7 +18,7 @@ Shippers that speak Elasticsearch, Splunk HEC or OTLP can also use the [compatib
 
 Every index keeps its events in a columnar store of its own. An index comes into being with its first events, taking the server's `storage.sort_key`, `storage.time_fields` and `storage.partition` as its settings, or with [`PUT /indexes/{index}`](#put-indexesindex), which gives it settings of its own. The settings are written to the index's directory before it takes events, and the index keeps them: changing the `storage` settings affects only indexes created afterwards.
 
-- **Time.** An event's time is the value of the first of the index's time fields that it holds; `storage.time_fields` gives `_time`, `timestamp`, `@timestamp`, `time` and `ts`. An event without one gets the time it arrived.
+- **Time.** An event's time is the value of the first of the index's time fields that it holds; `storage.time_fields` gives `_time`, `timestamp`, `@timestamp`, `time` and `ts`. The value is a number of seconds, milliseconds, microseconds or nanoseconds since the Unix epoch, told apart by its size, or text in one of the [forms that raw ingest reads](#post-ingestraw). An event without one gets the time it arrived.
 - **Text.** `POST /ingest` takes JSON objects only and counts any other line as failed. `POST /ingest/raw` keeps a line of text as an event holding it in `_raw`. A JSON event has no `_raw`.
 - **Fields.** The members of a nested object are read as columns named by their path, such as `order.id`. A query result holds only the fields an event has: a field the event lacks is absent, not `null`.
 - **Retention.** Events are removed, partition by partition, once their partition ended longer ago than `retention` (7 days by default). An event that arrives for such a partition is not stored: the answer counts it as `expired`, and the `lynxdb_ingest_events_expired_total` metric counts it for every protocol. `retention: 0s` keeps everything. See [Retention](../operations/retention.md).
@@ -93,7 +93,12 @@ Each header holds at most 256 characters; a longer one answers `400 VALIDATION_E
 
 - A line that is a JSON object (its first non-blank character is `{`) passes unchanged, without the labels.
 - Any other line becomes an event with the line in `_raw`, the labels as `source`, `sourcetype` and `host`, and:
-  - its timestamp as `_time`, found at the start of the line or after a space or a double quote within its first 100 characters: RFC 3339 with millisecond or finer precision or a numeric offset (`2026-11-17T08:00:00.123Z`, `2026-11-17T08:00:00+01:00`), `2026-11-17 08:00:00`, or the syslog form `Nov 17 08:00:00`. A line without one gets the time it arrived;
+  - its timestamp as `_time`: the first time that starts at the beginning of the line or after a space, tab, quote, `[`, `(`, `>` or `=` within its first 100 bytes. A time is written in one of three forms, its seconds with or without a fraction after a point or a comma:
+    - RFC 3339, with `T` or a space between date and time, and `Z`, an offset with or without a colon, or no zone, which is UTC: `2026-11-17T08:00:00Z`, `2026-11-17T08:00:00.123+01:00`, `2026-11-17 08:00:00,123`;
+    - syslog, in the current year and UTC: `Nov 17 08:00:00`, `Nov  7 08:00:00`;
+    - access log: `17/Nov/2026:08:00:00 +0000`.
+
+    A line without one gets the time it arrived;
   - its `key=value` pairs as fields. Integers, decimals and `true`/`false` keep their type, so `status>=500` compares numbers.
 - Blank lines are skipped. A line longer than 1 MiB ends the request.
 

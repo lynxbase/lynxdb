@@ -46,57 +46,59 @@ func TestKeyValueParser(t *testing.T) {
 }
 
 func TestTimestampNormalizer(t *testing.T) {
-	norm := DefaultTimestampNormalizer()
-
+	at := time.Date(2025, 1, 15, 8, 0, 0, 0, time.UTC)
+	year := time.Now().Year()
 	tests := []struct {
-		name string
 		raw  string
+		want time.Time
 	}{
-		{"RFC3339", "2024-01-15T10:30:00Z some log message"},
-		{"RFC3339Nano", "2024-01-15T10:30:00.123456789Z some log message"},
+		{"2025-01-15T08:00:00Z level=a", at},
+		{"2025-01-15T08:00:00.1Z level=a", at.Add(100 * time.Millisecond)},
+		{"2025-01-15T08:00:00.12Z level=a", at.Add(120 * time.Millisecond)},
+		{"2025-01-15T08:00:00.123456789Z some log message", at.Add(123456789)},
+		{"2025-01-15 08:00:00,250 INFO started", at.Add(250 * time.Millisecond)},
+		{`"2025-01-15T04:00:00.337-0400" some log line`, at.Add(337 * time.Millisecond)},
+		{"2025-01-15T01:00:00-0700 event data", at},
+		{`" 2025-01-15T04:00:00.337-04:00",field2,field3`, at.Add(337 * time.Millisecond)},
+		{`{"ts":"2025-01-15T08:00:00Z","msg":"json"}`, at},
+		{"time=2025-01-15T08:00:00Z level=info", at},
+		{`10.0.0.1 - - [15/Jan/2025:09:00:00 +0100] "GET / HTTP/1.1" 200 5`, at},
+		{"Jan 15 08:00:00 web-01 sshd[42]: accepted", time.Date(year, 1, 15, 8, 0, 0, 0, time.UTC)},
+		{"Jan  5 08:00:00 web-01 cron[7]: ran", time.Date(year, 1, 5, 8, 0, 0, 0, time.UTC)},
 	}
-
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := event.NewEvent(time.Time{}, tt.raw)
-			events, err := norm.Process([]*event.Event{e})
-			if err != nil {
-				t.Fatalf("Process: %v", err)
-			}
-			if events[0].Time.IsZero() {
-				t.Error("timestamp not extracted")
-			}
-		})
+		e := event.NewEvent(time.Time{}, tt.raw)
+		events, err := (&TimestampNormalizer{}).Process([]*event.Event{e})
+		if err != nil {
+			t.Fatalf("Process: %v", err)
+		}
+		if !events[0].Time.Equal(tt.want) {
+			t.Errorf("%q: time %v, want %v", tt.raw, events[0].Time, tt.want)
+		}
 	}
 }
 
-func TestTimestampNormalizerEDGARFormat(t *testing.T) {
-	norm := DefaultTimestampNormalizer()
-
-	tests := []struct {
-		name string
-		raw  string
-	}{
-		{"minus0400_millis", `"2025-06-30T23:59:57.337-0400" some log line`},
-		{"minus0700_no_millis", `2025-06-30T12:00:00-0700 event data`},
-		{"quoted_with_space", `" 2025-06-30T23:59:57.337-0400",field2,field3`},
+func TestTimestampNormalizerGivesTextWithoutATimeTheArrivalTime(t *testing.T) {
+	before := time.Now()
+	e := event.NewEvent(time.Time{}, "plain words")
+	events, err := (&TimestampNormalizer{}).Process([]*event.Event{e})
+	if err != nil {
+		t.Fatalf("Process: %v", err)
 	}
+	if got := events[0].Time; got.Before(before) || got.After(time.Now()) {
+		t.Fatalf("time %v, want the arrival time", got)
+	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			e := event.NewEvent(time.Time{}, tt.raw)
-			events, err := norm.Process([]*event.Event{e})
-			if err != nil {
-				t.Fatalf("Process: %v", err)
-			}
-			if events[0].Time.IsZero() {
-				t.Error("timestamp not extracted from EDGAR format")
-			}
-			// Verify the year is correct
-			if events[0].Time.Year() != 2025 {
-				t.Errorf("year: got %d, want 2025", events[0].Time.Year())
-			}
-		})
+func TestTimestampNormalizerKeepsATimeTheEventHas(t *testing.T) {
+	at := time.Date(2020, 5, 1, 0, 0, 0, 0, time.UTC)
+	e := event.NewEvent(at, "2025-01-15T08:00:00Z text")
+	events, err := (&TimestampNormalizer{}).Process([]*event.Event{e})
+	if err != nil {
+		t.Fatalf("Process: %v", err)
+	}
+	if !events[0].Time.Equal(at) {
+		t.Fatalf("time %v, want %v", events[0].Time, at)
 	}
 }
 

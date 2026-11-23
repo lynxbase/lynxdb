@@ -55,7 +55,7 @@ func BenchmarkDefaultPipeline_JSONBatch100(b *testing.B) {
 
 // BenchmarkTimestampNormalize benchmarks timestamp extraction alone.
 func BenchmarkTimestampNormalize(b *testing.B) {
-	tn := DefaultTimestampNormalizer()
+	tn := &TimestampNormalizer{}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -66,7 +66,7 @@ func BenchmarkTimestampNormalize(b *testing.B) {
 
 // BenchmarkTimestampNormalize_Text benchmarks timestamp extraction on syslog-style text.
 func BenchmarkTimestampNormalize_Text(b *testing.B) {
-	tn := DefaultTimestampNormalizer()
+	tn := &TimestampNormalizer{}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

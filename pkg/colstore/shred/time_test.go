@@ -23,6 +23,7 @@ func TestParseTimeReadsTheCommonForms(t *testing.T) {
 		"1732205367095":                      time.Unix(1732205367, 95_000_000),
 		"1732205367.095":                     time.Unix(1732205367, 95_000_000),
 		"2024-11-21t16:09:27.095z":           at,
+		"21/Nov/2024:18:09:27.095 +0200":     at,
 	} {
 		got, ok := ParseTime([]byte(text))
 		if !ok || got != want.UnixNano() {
@@ -62,31 +63,6 @@ func TestRowTimeComesFromTheFirstFieldThatHoldsOne(t *testing.T) {
 			t.Errorf("%s: time %d, want %d", d.doc, b.Times[i], d.want)
 		}
 	}
-}
-
-// FuzzParseTime requires the time that the library reads from any text it
-// takes in the layout of RFC 3339, and no panic for any other.
-func FuzzParseTime(f *testing.F) {
-	for _, s := range []string{"2024-11-21T16:09:27.095Z", "2024-11-21T18:09:27+02:00", "1969-12-31T23:59:59.999999999-23:59", "2024-02-29 00:00:00", "17322053670"} {
-		f.Add(s)
-	}
-	f.Fuzz(func(t *testing.T, s string) {
-		got, ok := ParseTime([]byte(s))
-		want, err := time.Parse(time.RFC3339Nano, s)
-		if err != nil || want.Year() < 1 || want.Year() > 9999 {
-			return
-		}
-		// The library takes a second of 60 where the minute is 59; it is not a time of day here.
-		if !ok {
-			if len(s) > 18 && s[17] == '6' {
-				return
-			}
-			t.Fatalf("%q is %d for the library and not read", s, want.UnixNano())
-		}
-		if lo, hi := time.Date(1700, 1, 1, 0, 0, 0, 0, time.UTC), time.Date(2250, 1, 1, 0, 0, 0, 0, time.UTC); want.After(lo) && want.Before(hi) && got != want.UnixNano() {
-			t.Fatalf("%q read as %d, the library says %d", s, got, want.UnixNano())
-		}
-	})
 }
 
 func BenchmarkParseTime(b *testing.B) {

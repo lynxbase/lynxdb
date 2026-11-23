@@ -39,12 +39,15 @@ is not a JSON object into an event:
 
 The ingest pipeline processes each line in this order:
 
-1. **Timestamp.** LynxDB looks for a timestamp at the start of the line or
-   after a space or quote within its first 100 characters. It recognizes RFC
-   3339 with a numeric offset, UTC timestamps with milliseconds
-   (`2026-01-15T08:00:00.105Z`), `2026-01-15 08:00:00[.000]` and syslog-style
-   `Jan 15 08:00:00`. When none is found, the event gets the time it was
-   received.
+1. **Timestamp.** LynxDB takes the first time that starts at the beginning
+   of the line or after a space, tab, quote, `[`, `(`, `>` or `=` within its
+   first 100 bytes. It reads RFC 3339 with any fraction and zone
+   (`2026-01-15T08:00:00Z`, `2026-01-15T08:00:00.105+01:00`,
+   `2026-01-15 08:00:00,105`, UTC when the zone is missing), syslog times
+   (`Jan 15 08:00:00`, in the current year) and access log times
+   (`15/Jan/2026:08:00:00 +0000`); the
+   [raw ingest reference](../api/ingest.md#post-ingestraw) lists the forms.
+   When none is found, the event gets the time it was received.
 2. **`key=value` pairs.** Every `key=value` and `key="quoted value"` pair
    becomes a field. Values that look like integers, floats or `true`/`false`
    are stored with that type, so `status >= 500` compares numbers. A key never
