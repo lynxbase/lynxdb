@@ -29,9 +29,12 @@ const (
 	Max
 	Avg
 	// Var is the sample variance and Stdev its square root; both are null
-	// for fewer than two values.
+	// for fewer than two values. VarPop and StdevPop are the population
+	// variance and its square root, null for no value.
 	Var
 	Stdev
+	VarPop
+	StdevPop
 	// First and Last are the value of a column in the first and the last
 	// row, in the order the table stores them, that holds one; Earliest and
 	// Latest are its value in the row with the smallest and the largest

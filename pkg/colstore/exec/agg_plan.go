@@ -350,7 +350,7 @@ func (q *query) aggregate(a *Aggregate) error {
 				return unsupported("aggregate %q orders by numbers", g.Name)
 			}
 			out.pick, out.located = ap.pickWord(wordArgMin+wordOp(g.Func-ArgMin), out.arg, ap.order(by)), e
-		case Var, Stdev:
+		case Var, Stdev, VarPop, StdevPop:
 			if kinds&textKinds == 0 {
 				return unsupported("aggregate %q takes numbers", g.Name)
 			}
@@ -441,6 +441,25 @@ func addSpread(w []int64, x float64) {
 	d := x - mean
 	mean += d / float64(n)
 	w[0], w[1], w[2] = n, floatWord(mean), floatWord(wordFloat(w[2])+d*(x-mean))
+}
+
+// spreadValue returns the variance or the standard deviation that fn asks
+// for of the values that the three words w of a variance describe; ok is
+// false for too few values.
+func spreadValue(fn AggFunc, w []int64) (v float64, ok bool) {
+	n := w[0]
+	if fn == Var || fn == Stdev {
+		// The sample variance divides by one less than the values.
+		n--
+	}
+	if n < 1 {
+		return 0, false
+	}
+	if v = wordFloat(w[2]) / float64(n); fn == Stdev || fn == StdevPop {
+		v = math.Sqrt(v)
+	}
+
+	return v, true
 }
 
 // mergeSpread folds the three words src of a variance into dst.
@@ -566,17 +585,12 @@ func (ap *aggPlan) column(o *aggOut, words []int64, h *stateHeap, n int, floats 
 		}
 
 		return
-	case Var, Stdev:
+	case Var, Stdev, VarPop, StdevPop:
 		out := dst.bulkFloats(n)
 		for g := range out {
-			w := words[g*stride+o.spread:]
-			if out[g] = 0; w[0] < 2 {
+			v, ok := spreadValue(o.fn, words[g*stride+o.spread:])
+			if out[g] = v; !ok {
 				dst.setNull(g)
-
-				continue
-			}
-			if out[g] = wordFloat(w[2]) / float64(w[0]-1); o.fn == Stdev {
-				out[g] = math.Sqrt(out[g])
 			}
 		}
 

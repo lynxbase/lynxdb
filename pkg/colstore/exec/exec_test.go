@@ -450,6 +450,8 @@ func TestMixedKinds(t *testing.T) {
 		{Name: "distinct", Func: exec.CountDistinct, Arg: anyOf("v")},
 		{Name: "distinct_str", Func: exec.CountDistinct, Arg: str("v")},
 		{Name: "var", Func: exec.Var, Arg: anyOf("v")},
+		{Name: "var_pop", Func: exec.VarPop, Arg: anyOf("v")},
+		{Name: "stdev_pop", Func: exec.StdevPop, Arg: num("v")},
 		{Name: "stdev_int", Func: exec.Stdev, Arg: num("v")},
 		{Name: "stdev_expr", Func: exec.Stdev, Arg: exec.Mul(anyOf("v"), exec.Float(2.5))},
 	}

@@ -498,7 +498,7 @@ func (t *translator) set(name string, e *exec.Expr) {
 
 var aggFuncs = map[string]exec.AggFunc{
 	"count": exec.Count, "sum": exec.Sum, "avg": exec.Avg, "min": exec.Min, "max": exec.Max,
-	"var_samp": exec.Var, "stddev_samp": exec.Stdev,
+	"var_samp": exec.Var, "stddev_samp": exec.Stdev, "var_pop": exec.VarPop, "stddev_pop": exec.StdevPop,
 	"distinct_count": exec.CountDistinct, "distinct_count_approx": exec.ApproxDistinct,
 	"percentile": exec.Percentile,
 	"earliest":   exec.Earliest, "latest": exec.Latest, "first": exec.First, "last": exec.Last,
