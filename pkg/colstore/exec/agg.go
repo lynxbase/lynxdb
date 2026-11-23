@@ -92,6 +92,12 @@ type aggScratch struct {
 	rec   []byte
 	dense []int64
 	fl    []float64
+	// textInts and textFloats hold the numbers that strings of a block
+	// hold, for the groups in textIntGroups and textFloatGroups.
+	textInts        []int64
+	textFloats      []float64
+	textIntGroups   []uint32
+	textFloatGroups []uint32
 	// hashes holds the hash of each entry of a dictionary.
 	hashes []uint64
 	// added holds, for every entry of a dictionary, the group that last
@@ -1024,7 +1030,7 @@ func (a *aggWorker) feedArg(i int, t *target, n int, idx []uint32) error {
 func (a *aggWorker) feedColumn(i int, kind vec.Kind, t *target, n int, idx []uint32) error {
 	w := a.w
 	arg := &a.plan.args[i]
-	numeric := kind == vec.KindInt || kind == vec.KindFloat
+	numeric := kind == vec.KindInt || kind == vec.KindFloat || (kind == vec.KindString && arg.numbers)
 	if w.shared == nil && len(arg.distinct) == 0 && !arg.picks && (!numeric || arg.counted) && arg.stateKinds&kindBit(kind) == 0 {
 		// Only the number of values is asked for, which needs none of them.
 		ref := w.ref(arg.expr.path, kind)
@@ -1224,6 +1230,9 @@ func (a *aggWorker) feedValues(i int, kind vec.Kind, c *vec.Column, t *target, n
 				a.distinctBytes(d, t, c, kind, gid, rows, count)
 			}
 		}
+		if kind == vec.KindString && arg.numbers {
+			a.feedText(i, t, c, gid, rows, count)
+		}
 		if len(arg.states) != 0 {
 			if kind == vec.KindString {
 				a.feedStrings(arg, t, c, gid, rows, count)
@@ -1331,15 +1340,77 @@ func (a *aggWorker) countPresent(arg *aggArg, t *target, valid vec.Bitmap, n int
 	}
 }
 
+// feedText adds the numbers that the strings of c hold in the n rows listed
+// in rows, or the first n rows when it is nil, to the words of argument i
+// that read numbers.
+func (a *aggWorker) feedText(i int, t *target, c *vec.Column, gid, rows []uint32, n int) {
+	arg, s := &a.plan.args[i], a.s
+	ints, floats := s.textInts[:0], s.textFloats[:0]
+	intGroups, floatGroups := s.textIntGroups[:0], s.textFloatGroups[:0]
+	for j := 0; j < n; j++ {
+		g, r := uint32(t.one), j
+		if t.gid != nil {
+			g = gid[j]
+		}
+		if rows != nil {
+			r = int(rows[j])
+		}
+		v, ok := numberText(columnBytes(c, r))
+		switch {
+		case !ok:
+		case v.Kind == vec.KindInt:
+			ints, intGroups = append(ints, v.Int), append(intGroups, g)
+		default:
+			floats, floatGroups = append(floats, v.Float), append(floatGroups, g)
+		}
+	}
+	s.textInts, s.textFloats, s.textIntGroups, s.textFloatGroups = ints, floats, intGroups, floatGroups
+	a.intWords(arg, t, intGroups, ints, nil, len(ints), true)
+	if arg.sketched {
+		a.feedSketch(arg, t, ints, nil, intGroups, nil, len(ints))
+	}
+	if len(floats) != 0 {
+		a.floats[i] = true
+		a.floatWords(arg, t, floatGroups, floats, nil, len(floats), true)
+		if arg.sketched {
+			a.feedSketch(arg, t, nil, floats, floatGroups, nil, len(floats))
+		}
+	}
+}
+
 // feedInts adds n integers to the argument's words: vals[rows[j]], or
 // vals[j] when rows is nil, belongs to group gid[j].
 func (a *aggWorker) feedInts(arg *aggArg, t *target, gid []uint32, vals []int64, rows []uint32, n int) {
 	if n == 0 {
 		return
 	}
+	a.intWords(arg, t, gid, vals, rows, n, false)
+	for _, d := range arg.distinct {
+		if !a.streaming {
+			a.distinctInts(d, t, gid, vals, rows, n)
+		}
+	}
+	if len(arg.states) != 0 {
+		a.feedHashes(arg, t, vec.KindInt, nil, vals, nil, gid, rows, n)
+	}
+	if arg.sketched {
+		a.feedSketch(arg, t, vals, nil, gid, rows, n)
+	}
+}
+
+// intWords adds n integers to the argument's words; text says that they are
+// the numbers of strings, which the words that count values of every kind
+// counted already.
+func (a *aggWorker) intWords(arg *aggArg, t *target, gid []uint32, vals []int64, rows []uint32, n int, text bool) {
+	if n == 0 {
+		return
+	}
 	stride := a.stride
 	for _, i := range arg.words {
 		op := a.plan.words[i].op
+		if text && op == wordCount {
+			continue
+		}
 		if t.gid == nil {
 			word := &t.words[t.one*stride+i]
 			switch op {
@@ -1384,29 +1455,28 @@ func (a *aggWorker) feedInts(arg *aggArg, t *target, gid []uint32, vals []int64,
 			maxInts(t.words, stride, i, gid[:n], vals, rows)
 		}
 	}
-	for _, d := range arg.distinct {
-		if !a.streaming {
-			a.distinctInts(d, t, gid, vals, rows, n)
-		}
-	}
-	if len(arg.states) != 0 {
-		a.feedHashes(arg, t, vec.KindInt, nil, vals, nil, gid, rows, n)
-	}
-	if arg.sketched {
-		a.feedSketch(arg, t, vals, nil, gid, rows, n)
-	}
 }
 
 func (a *aggWorker) feedFloats(arg *aggArg, t *target, gid []uint32, vals []float64, rows []uint32, n int) {
-	stride := a.stride
 	if len(arg.states) != 0 {
 		a.feedHashes(arg, t, vec.KindFloat, nil, nil, vals, gid, rows, n)
 	}
 	if arg.sketched {
 		a.feedSketch(arg, t, nil, vals, gid, rows, n)
 	}
+	a.floatWords(arg, t, gid, vals, rows, n, false)
+	a.distinctFloats(arg, t, gid, vals, rows, n)
+}
+
+// floatWords adds n floats to the argument's words, as intWords does
+// integers.
+func (a *aggWorker) floatWords(arg *aggArg, t *target, gid []uint32, vals []float64, rows []uint32, n int, text bool) {
+	stride := a.stride
 	for _, i := range arg.words {
 		op := a.plan.words[i].op
+		if text && op == wordCount {
+			continue
+		}
 		for j := 0; j < n; j++ {
 			g := t.one
 			if t.gid != nil {
@@ -1431,6 +1501,10 @@ func (a *aggWorker) feedFloats(arg *aggArg, t *target, gid []uint32, vals []floa
 			}
 		}
 	}
+}
+
+// distinctFloats logs n floats for the distinct counts of an argument.
+func (a *aggWorker) distinctFloats(arg *aggArg, t *target, gid []uint32, vals []float64, rows []uint32, n int) {
 	for _, d := range arg.distinct {
 		if a.streaming {
 			break

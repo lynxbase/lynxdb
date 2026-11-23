@@ -55,7 +55,7 @@ func resultKinds(op Op, args []*sexpr) uint8 {
 		return k &^ nullBit
 	}
 	switch op {
-	case OpAdd, OpSub, OpMul, OpDiv, OpBin:
+	case OpAdd, OpSub, OpMul, OpDiv, OpMod, OpBin:
 		a, b := args[0].kinds, args[1].kinds
 		var k uint8
 		if a&b&kindBit(vec.KindInt) != 0 {
@@ -64,12 +64,17 @@ func resultKinds(op Op, args []*sexpr) uint8 {
 		if (a|b)&kindBit(vec.KindFloat) != 0 && a&numericKinds != 0 && b&numericKinds != 0 {
 			k |= kindBit(vec.KindFloat)
 		}
+		// A string reads as either kind of number.
+		text := numericKinds | kindBit(vec.KindString)
+		if (a|b)&kindBit(vec.KindString) != 0 && a&text != 0 && b&text != 0 {
+			k |= numericKinds
+		}
 		if op == OpAdd {
 			k |= a & b & kindBit(vec.KindString)
 		}
 
 		return k
-	case OpMod, OpHourOfDay, OpToInt, OpLength, OpFloor, OpCeil, OpIndexOf:
+	case OpHourOfDay, OpToInt, OpLength, OpFloor, OpCeil, OpIndexOf:
 		return kindBit(vec.KindInt)
 	case OpToFloat, OpRound, OpSqrt, OpLn, OpLog, OpExp, OpPow:
 		return kindBit(vec.KindFloat)
@@ -707,8 +712,9 @@ func (w *worker) numeric(e *sexpr, args []operand, n int, idx []uint32) (o opera
 	default:
 		return o, false
 	}
-	// Strings on both sides are joined or compared as strings.
-	if args[0].cols[vec.KindString] != nil && args[1].cols[vec.KindString] != nil {
+	// Strings are joined, compared as strings or read as numbers value by
+	// value.
+	if args[0].cols[vec.KindString] != nil || args[1].cols[vec.KindString] != nil {
 		return o, false
 	}
 	s := &w.outs[e.slot]

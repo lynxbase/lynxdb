@@ -163,7 +163,8 @@ func columnBytes(c *vec.Column, r int) []byte {
 }
 
 // feedStrings offers the strings of c in the n rows listed in rows, or the
-// first n rows when it is nil, to the extremes of an argument.
+// first n rows when it is nil, to the extremes of an argument; a string
+// that holds a number is a number to them.
 func (a *aggWorker) feedStrings(arg *aggArg, t *target, c *vec.Column, gid, rows []uint32, n int) {
 	for _, i := range arg.states {
 		st := &a.plan.states[i]
@@ -182,6 +183,10 @@ func (a *aggWorker) feedStrings(arg *aggArg, t *target, c *vec.Column, gid, rows
 				r = int(rows[j])
 			}
 			v := columnBytes(c, r)
+			if _, number := numberText(v); number && arg.numbers {
+				// The words of numbers hold it.
+				continue
+			}
 			word := &t.words[g*a.stride+st.word]
 			// Rows of one group in a row compare with the string kept
 			// without looking the state up again.

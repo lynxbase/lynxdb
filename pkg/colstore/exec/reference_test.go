@@ -503,6 +503,15 @@ func refSameSort(a, b exec.Value) (int, bool) {
 	case a.Kind == vec.KindInt && b.Kind == vec.KindInt:
 		return cmpInt(a.Int, b.Int), true
 	}
+	if n, ok := refNumeric(a); ok {
+		a = n
+	}
+	if n, ok := refNumeric(b); ok {
+		b = n
+	}
+	if a.Kind == vec.KindInt && b.Kind == vec.KindInt {
+		return cmpInt(a.Int, b.Int), true
+	}
 	x, okx := refNumber(a)
 	y, oky := refNumber(b)
 	switch {
@@ -517,7 +526,36 @@ func refSameSort(a, b exec.Value) (int, bool) {
 	return 0, true
 }
 
+// refNumeric reads a string that holds a number, with white space around
+// it, as that number.
+func refNumeric(v exec.Value) (exec.Value, bool) {
+	switch v.Kind {
+	case vec.KindInt, vec.KindFloat:
+		return v, true
+	case vec.KindString:
+		s := strings.TrimSpace(string(v.Bytes))
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return exec.Value{Kind: vec.KindInt, Int: n}, true
+		}
+		if strings.ContainsFunc(s, func(r rune) bool { return !strings.ContainsRune("0123456789+-.eE", r) }) {
+			return exec.Value{}, false
+		}
+		if f, err := strconv.ParseFloat(s, 64); err == nil {
+			return exec.Value{Kind: vec.KindFloat, Float: f}, true
+		}
+	}
+
+	return exec.Value{}, false
+}
+
 func refArith(op exec.Op, a, b exec.Value) exec.Value {
+	var ok bool
+	if a, ok = refNumeric(a); !ok {
+		return exec.Value{}
+	}
+	if b, ok = refNumeric(b); !ok {
+		return exec.Value{}
+	}
 	if a.Kind == vec.KindInt && b.Kind == vec.KindInt {
 		switch op {
 		case exec.OpAdd:
@@ -664,6 +702,16 @@ func refTrue(e *exec.Expr, row refRow) bool {
 	case lit.Kind == vec.KindBool && v.Kind == vec.KindBool:
 		return (v.Bool == lit.Bool) == (op == exec.OpEq)
 	case lit.Kind == vec.KindInt && v.Kind == vec.KindInt:
+		return refCompare(op, cmpInt(v.Int, lit.Int))
+	}
+	// A string compared with a number is the number it holds.
+	if n, ok := refNumeric(v); ok {
+		v = n
+	}
+	if n, ok := refNumeric(lit); ok {
+		lit = n
+	}
+	if v.Kind == vec.KindInt && lit.Kind == vec.KindInt {
 		return refCompare(op, cmpInt(v.Int, lit.Int))
 	}
 	x, okx := refNumber(v)
@@ -1220,6 +1268,22 @@ func refAggregate(rows []refRow, agg *exec.Aggregate) ([][]exec.Value, []string)
 				st.minFloat, st.maxFlt = min(st.minFloat, v.Float), max(st.maxFlt, v.Float)
 			case vec.KindString:
 				s := string(v.Bytes)
+				if n, ok := refNumeric(v); ok && n.Kind == vec.KindInt {
+					st.numbers = append(st.numbers, float64(n.Int))
+					st.ints++
+					st.sumInt += n.Int
+					st.minInt, st.maxInt = min(st.minInt, n.Int), max(st.maxInt, n.Int)
+
+					break
+				} else if ok {
+					st.numbers = append(st.numbers, n.Float)
+					floats[i] = true
+					st.floats++
+					st.sumFloat += n.Float
+					st.minFloat, st.maxFlt = min(st.minFloat, n.Float), max(st.maxFlt, n.Float)
+
+					break
+				}
 				if st.strs == 0 {
 					st.minStr, st.maxStr = s, s
 				}

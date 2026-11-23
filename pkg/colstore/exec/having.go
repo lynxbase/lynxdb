@@ -141,24 +141,8 @@ func (h *havingEval) test(e *hpred, i int) bool {
 	case OpNot:
 		return !h.test(e.args[0], i)
 	}
-	a, b := h.left[e.id].value(i), h.right[e.id].value(i)
-	// Values compare within one class of kinds, as in a scan filter.
-	if a.IsNull() || b.IsNull() || kindRank(a.Kind) != kindRank(b.Kind) || a.Kind == vec.KindVariant {
-		return false
-	}
-	c := compareValues(a, b)
-	switch e.op {
-	case OpEq:
-		return c == 0
-	case OpNe:
-		return c != 0
-	case OpLt:
-		return c < 0
-	case OpLe:
-		return c <= 0
-	case OpGt:
-		return c > 0
-	}
+	// Values compare as in a scan filter.
+	c, ok := compareScalar(h.left[e.id].value(i), h.right[e.id].value(i))
 
-	return c >= 0
+	return ok && holds(e.op, c)
 }

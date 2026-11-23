@@ -28,8 +28,6 @@ func TestOrderedAggregation(t *testing.T) {
 	users := exec.Agg{Name: "users", Func: exec.CountDistinct, Arg: str("user")}
 	stateful := []exec.Agg{
 		{Name: "rows", Func: exec.Count},
-		{Name: "min_msg", Func: exec.Min, Arg: str("msg")},
-		{Name: "max_y", Func: exec.Max, Arg: str("nested.y")},
 		{Name: "texts", Func: exec.ApproxDistinct, Arg: anyOf("msg")},
 		{Name: "ids", Func: exec.ApproxDistinct, Arg: num("id")},
 		{Name: "p50_score", Func: exec.Percentile, Arg: float("score"), P: 50},
@@ -44,6 +42,11 @@ func TestOrderedAggregation(t *testing.T) {
 		{Name: "earliest_id", Func: exec.Earliest, Arg: num("id")},
 		{Name: "id_of_max_big", Func: exec.ArgMax, Arg: num("id"), By: num("big")},
 		{Name: "msg_of_min_id", Func: exec.ArgMin, Arg: anyOf("msg"), By: exec.Mul(num("id"), exec.Int(3))},
+	}
+	// A string may hold a number, which makes the kind of an extreme depend
+	// on every row of the group.
+	extremes := []exec.Agg{
+		{Name: "min_msg", Func: exec.Min, Arg: str("msg")},
 		{Name: "max_y", Func: exec.Max, Arg: str("nested.y")},
 	}
 	byUser := &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: times}
@@ -70,6 +73,7 @@ func TestOrderedAggregation(t *testing.T) {
 			By: []exec.Order{{Column: "span", Desc: true}, {Column: "user"}}, Limit: 4}, true, true},
 		{"two keys", &exec.Aggregate{Input: &exec.Scan{Filter: created}, Keys: keys("user", "coll"), Aggs: times}, true, false},
 		{"states of variable size", &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: stateful}, true, false},
+		{"extremes of strings", &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: extremes}, false, false},
 		{"states of two keys", &exec.Aggregate{Input: &exec.Scan{Filter: created}, Keys: keys("user", "coll"), Aggs: stateful}, true, false},
 		{"states of three keys", &exec.Aggregate{Input: &exec.Scan{Filter: eq("kind", "commit")}, Keys: keys("op", "coll", "user"), Aggs: stateful}, true, false},
 		{"picked rows", &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: picked}, true, false},

@@ -649,28 +649,31 @@ func (q *query) comparison(op Op, a, b *Expr, depth int) (*pred, error) {
 	any := a.Kind == KindAny
 	switch b.Value.Kind {
 	case vec.KindString:
-		if a.Kind != vec.KindString && !any {
-			return &pred{kind: predConst}, nil
+		var p *pred
+		if a.Kind == vec.KindString || any {
+			p = &pred{kind: predStr, op: op, path: q.path(a.Path), lit: b.Value, cost: 4}
+			if op == OpEq {
+				p.kind, p.cost = predStrEq, 1
+			}
 		}
-		p := &pred{kind: predStr, op: op, path: q.path(a.Path), lit: b.Value, cost: 4}
-		if op == OpEq {
-			p.kind, p.cost = predStrEq, 1
+		// The numbers of the column compare with the number the string
+		// holds.
+		if n, ok := numberText(b.Value.Bytes); ok {
+			p = either(p, q.numberComparison(op, a, n))
+		}
+		if p == nil {
+			return &pred{kind: predConst}, nil
 		}
 
 		return p, nil
 	case vec.KindInt, vec.KindFloat:
-		p := &pred{kind: predNum, op: op, path: q.path(a.Path), cost: 3}
-		p.onInt = a.Kind == vec.KindInt || any
-		p.onFloat = a.Kind == vec.KindFloat || any
-		if !p.onInt && !p.onFloat {
-			return &pred{kind: predConst}, nil
+		p := q.numberComparison(op, a, b.Value)
+		// The strings of the column compare as the numbers they hold.
+		if a.Kind == vec.KindString || any {
+			p = either(p, &pred{kind: predStr, op: op, path: q.path(a.Path), lit: b.Value, cost: 5})
 		}
-		if b.Value.Kind == vec.KindInt {
-			p.f = float64(b.Value.Int)
-			p.intRange(op, b.Value.Int)
-		} else {
-			p.f = b.Value.Float
-			p.floatRange(op, b.Value.Float)
+		if p == nil {
+			return &pred{kind: predConst}, nil
 		}
 
 		return p, nil
@@ -686,6 +689,40 @@ func (q *query) comparison(op Op, a, b *Expr, depth int) (*pred, error) {
 	}
 
 	return nil, unsupported("comparison with a literal of kind %s", b.Value.Kind)
+}
+
+// numberComparison returns the filter node that compares the integers and
+// floats of a column with a number, or nil for a column of another kind.
+func (q *query) numberComparison(op Op, col *Expr, v Value) *pred {
+	any := col.Kind == KindAny
+	p := &pred{kind: predNum, op: op, path: q.path(col.Path), cost: 3}
+	p.onInt = col.Kind == vec.KindInt || any
+	p.onFloat = col.Kind == vec.KindFloat || any
+	if !p.onInt && !p.onFloat {
+		return nil
+	}
+	if v.Kind == vec.KindInt {
+		p.f = float64(v.Int)
+		p.intRange(op, v.Int)
+	} else {
+		p.f = v.Float
+		p.floatRange(op, v.Float)
+	}
+
+	return p
+}
+
+// either returns the filter node that holds where a or b does; a row holds a
+// value of one kind, so the two never both hold. Either may be nil.
+func either(a, b *pred) *pred {
+	switch {
+	case a == nil:
+		return b
+	case b == nil:
+		return a
+	}
+
+	return &pred{kind: predOr, args: []*pred{a, b}, cost: a.cost + b.cost}
 }
 
 // intRange states x op v as lo <= x <= hi, negated when ne is set.
@@ -793,6 +830,18 @@ func columnLiteral(e *Expr) (col *Expr, lit Value, op Op, ok bool) {
 	return a, b.Value, op, true
 }
 
+// textEquality reports whether a column equals a literal only where it
+// holds the literal's string: a string that holds a number also equals the
+// numbers of a column that reads them.
+func textEquality(col *Expr, lit Value) bool {
+	if lit.Kind != vec.KindString || (col.Kind != vec.KindString && col.Kind != KindAny) {
+		return false
+	}
+	_, number := numberText(lit.Bytes)
+
+	return col.Kind == vec.KindString || !number
+}
+
 // conjunctTokens appends the tokens that the block of a row satisfying the
 // conjunct c holds in one column: those of a text match or of a string
 // equality, in the column they read, or in any for a match of every column.
@@ -812,7 +861,7 @@ func conjunctTokens(c *Expr, dst []colstore.ColumnTokens) []colstore.ColumnToken
 		}
 	case OpEq:
 		col, lit, op, ok := columnLiteral(c)
-		if ok && op == OpEq && lit.Kind == vec.KindString && (col.Kind == vec.KindString || col.Kind == KindAny) {
+		if ok && op == OpEq && textEquality(col, lit) {
 			set.Path, set.Hashes, set.Value = col.Path, tokenfilter.AppendHashesLongestFirst(nil, lit.Bytes), lit.Bytes
 		}
 	}
@@ -882,7 +931,7 @@ func pushdown(snap *colstore.Snapshot, filter *Expr) colstore.ScanOptions {
 				continue
 			}
 			switch {
-			case lit.Kind == vec.KindString && op == OpEq && (col.Kind == vec.KindString || col.Kind == KindAny):
+			case op == OpEq && textEquality(col, lit):
 				if _, dup := equal[col.Path]; !dup {
 					equal[col.Path] = lit.Bytes
 				}
@@ -960,8 +1009,7 @@ func stringList(c *Expr) (path string, values [][]byte, ok bool) {
 			return len(e.Args) > 0
 		}
 		col, lit, op, ok := columnLiteral(e)
-		if !ok || e.Op != OpEq || op != OpEq || lit.Kind != vec.KindString ||
-			(col.Kind != vec.KindString && col.Kind != KindAny) || (seen && col.Path != path) {
+		if !ok || e.Op != OpEq || op != OpEq || !textEquality(col, lit) || (seen && col.Path != path) {
 			return false
 		}
 		path, seen = col.Path, true

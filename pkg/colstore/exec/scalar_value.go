@@ -31,7 +31,9 @@ var (
 func boolValue(b bool) Value { return Value{Kind: vec.KindBool, Bool: b} }
 
 // compareScalar orders two values of one sort: numbers, strings or
-// booleans; ok is false for any other pair and for a NaN.
+// booleans, where a string compared with a number is read as the number it
+// holds; ok is false for any other pair, for a string that holds no number
+// and for a NaN.
 func compareScalar(a, b Value) (c int, ok bool) {
 	switch {
 	case a.Kind == vec.KindInt && b.Kind == vec.KindInt:
@@ -41,13 +43,54 @@ func compareScalar(a, b Value) (c int, ok bool) {
 	case a.Kind == vec.KindBool && b.Kind == vec.KindBool:
 		return btoi(a.Bool) - btoi(b.Bool), true
 	}
-	x, okA := number(a)
-	y, okB := number(b)
-	if !okA || !okB || x != x || y != y {
+	if a, ok = numeric(a); !ok {
+		return 0, false
+	}
+	if b, ok = numeric(b); !ok {
+		return 0, false
+	}
+	if a.Kind == vec.KindInt && b.Kind == vec.KindInt {
+		return order(a.Int, b.Int), true
+	}
+	x, _ := number(a)
+	y, _ := number(b)
+	if x != x || y != y {
 		return 0, false
 	}
 
 	return order(x, y), true
+}
+
+// numberText reads text that holds a number, with white space around it: an
+// integer when it is one, else a float.
+func numberText(s []byte) (Value, bool) {
+	for len(s) > 0 && (s[0] == ' ' || s[0] == '\t' || s[0] == '\n' || s[0] == '\r') {
+		s = s[1:]
+	}
+	for len(s) > 0 && (s[len(s)-1] == ' ' || s[len(s)-1] == '\t' || s[len(s)-1] == '\n' || s[len(s)-1] == '\r') {
+		s = s[:len(s)-1]
+	}
+	if n, ok := parseInt(s); ok {
+		return Value{Kind: vec.KindInt, Int: n}, true
+	}
+	if f, ok := parseFloat(s); ok {
+		return Value{Kind: vec.KindFloat, Float: f}, true
+	}
+
+	return Value{}, false
+}
+
+// numeric returns a value as a number: an integer or a float as it is, and a
+// string as the number it holds.
+func numeric(v Value) (Value, bool) {
+	switch v.Kind {
+	case vec.KindInt, vec.KindFloat:
+		return v, true
+	case vec.KindString:
+		return numberText(v.Bytes)
+	}
+
+	return Value{}, false
 }
 
 func holds(op Op, c int) bool {
@@ -225,14 +268,7 @@ func scalarValue(op Op, pat *tokenfilter.Pattern, args []Value, buf []byte) (Val
 	case OpSub, OpMul, OpDiv:
 		return arith(op, a, b), buf
 	case OpMod:
-		if a.Kind != vec.KindInt || b.Kind != vec.KindInt || b.Int == 0 {
-			return Value{}, buf
-		}
-		if b.Int == -1 {
-			return Value{Kind: vec.KindInt}, buf
-		}
-
-		return Value{Kind: vec.KindInt, Int: a.Int % b.Int}, buf
+		return arith(op, a, b), buf
 	case OpAbs, OpRound, OpFloor, OpCeil, OpSqrt, OpLn, OpLog, OpExp, OpPow:
 		return mathValue(op, args), buf
 	case OpHourOfDay:
@@ -242,6 +278,12 @@ func scalarValue(op Op, pat *tokenfilter.Pattern, args []Value, buf []byte) (Val
 
 		return Value{Kind: vec.KindInt, Int: hourOfDay(a.Int)}, buf
 	case OpBin:
+		if x, ok := numeric(a); ok {
+			a = x
+		}
+		if w, ok := numeric(b); ok {
+			b = w
+		}
 		if a.Kind == vec.KindInt && b.Kind == vec.KindInt {
 			if b.Int <= 0 {
 				return Value{}, buf

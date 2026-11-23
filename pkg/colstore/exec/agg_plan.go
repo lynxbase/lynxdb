@@ -68,7 +68,11 @@ type pickOrder struct {
 
 func kindBit(k vec.Kind) uint8 { return 1 << k }
 
-const numericKinds = 1<<vec.KindInt | 1<<vec.KindFloat
+const (
+	numericKinds = 1<<vec.KindInt | 1<<vec.KindFloat
+	// textKinds are the kinds whose values may be numbers.
+	textKinds = numericKinds | 1<<vec.KindString
+)
 
 // aggArg is an expression that one or more aggregates read.
 type aggArg struct {
@@ -86,8 +90,11 @@ type aggArg struct {
 	// words of sketch hold.
 	sketched bool
 	sketch   sketchWords
-	// counted is set when only the number of values is asked for.
+	// counted is set when only the number of values is asked for, and
+	// numbers when a word reads the numbers of the values, which strings
+	// hold too.
 	counted bool
+	numbers bool
 	// picks is set when a group picks a row of the argument, and placed
 	// when the argument's words need which rows hold a value but no value.
 	picks  bool
@@ -304,7 +311,7 @@ func (q *query) aggregate(a *Aggregate) error {
 		case ApproxDistinct:
 			out.state = ap.state(stateHLL, out.arg)
 		case Percentile:
-			if kinds&numericKinds == 0 || g.P != g.P || g.P < 0 || g.P > 100 {
+			if kinds&textKinds == 0 || g.P != g.P || g.P < 0 || g.P > 100 {
 				return unsupported("aggregate %q takes numbers and a percentage from 0 to 100", g.Name)
 			}
 			ap.sketch(out.arg)
@@ -344,7 +351,7 @@ func (q *query) aggregate(a *Aggregate) error {
 			}
 			out.pick, out.located = ap.pickWord(wordArgMin+wordOp(g.Func-ArgMin), out.arg, ap.order(by)), e
 		case Var, Stdev:
-			if kinds&numericKinds == 0 {
+			if kinds&textKinds == 0 {
 				return unsupported("aggregate %q takes numbers", g.Name)
 			}
 			out.spread = ap.word(wordVarN, out.arg)
@@ -358,17 +365,18 @@ func (q *query) aggregate(a *Aggregate) error {
 			switch {
 			case extreme && kinds&(numericKinds|kindBit(vec.KindString)) == 0:
 				return unsupported("aggregate %q takes numbers or strings", g.Name)
-			case !extreme && kinds&numericKinds == 0:
+			case !extreme && kinds&textKinds == 0:
 				return unsupported("aggregate %q takes numbers", g.Name)
 			case g.Func == Min && kinds&kindBit(vec.KindString) != 0:
 				out.state = ap.state(stateMinBytes, out.arg)
 			case g.Func == Max && kinds&kindBit(vec.KindString) != 0:
 				out.state = ap.state(stateMaxBytes, out.arg)
 			}
-			if kinds&kindBit(vec.KindInt) != 0 {
+			// A string may hold a number of either kind.
+			if kinds&(kindBit(vec.KindInt)|kindBit(vec.KindString)) != 0 {
 				out.countInt, out.ints = ap.word(wordCountInt, out.arg), ap.word(ints, out.arg)
 			}
-			if kinds&kindBit(vec.KindFloat) != 0 {
+			if kinds&(kindBit(vec.KindFloat)|kindBit(vec.KindString)) != 0 {
 				out.countFloat, out.floats = ap.word(wordCountFloat, out.arg), ap.word(floats, out.arg)
 			}
 		}
@@ -385,10 +393,12 @@ func (q *query) aggregate(a *Aggregate) error {
 		arg := &ap.args[i]
 		arg.counted = len(arg.distinct) == 0 && len(arg.states) == 0
 		arg.placed = arg.picks && len(arg.distinct) == 0 && len(arg.states) == 0
+		arg.numbers = arg.sketched
 		for _, w := range arg.words {
 			op := ap.words[w].op
 			arg.counted = arg.counted && op == wordCount
 			arg.placed = arg.placed && (op == wordCount || (op >= wordFirst && op <= wordArgMax))
+			arg.numbers = arg.numbers || (op >= wordCountInt && op <= wordMaxFloat) || op == wordVarN
 		}
 	}
 	for _, w := range ap.words {

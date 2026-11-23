@@ -1,6 +1,8 @@
 package exec
 
 import (
+	"math"
+
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
@@ -344,8 +346,12 @@ func (p *postEval) eval(e *pexpr, in []colVec, n int) *colVec {
 		return out
 	}
 	out.reset()
+	var args [2]Value
 	for i := 0; i < n; i++ {
-		out.appendValue(arith(e.op, a.value(i), b.value(i)))
+		args[0], args[1] = a.value(i), b.value(i)
+		var v Value
+		v, p.text = scalarValue(e.op, nil, args[:], p.text[:0])
+		out.appendValue(v)
 	}
 
 	return out
@@ -391,10 +397,18 @@ func (p *postEval) byValue(e *pexpr, in []colVec, n int) *colVec {
 	return out
 }
 
-// arith applies an arithmetic operation to two values: integers stay
-// integers, a float makes the result a float, and anything else, like a
-// division of integers by zero, gives null.
+// arith applies an arithmetic operation to two values, a string read as
+// the number it holds: integers stay integers, a float makes the result a
+// float, and anything else, like a division or a remainder by zero, gives
+// null.
 func arith(op Op, a, b Value) Value {
+	var ok bool
+	if a, ok = numeric(a); !ok {
+		return Value{}
+	}
+	if b, ok = numeric(b); !ok {
+		return Value{}
+	}
 	if a.Kind == vec.KindInt && b.Kind == vec.KindInt {
 		x, y := a.Int, b.Int
 		switch op {
@@ -409,19 +423,25 @@ func arith(op Op, a, b Value) Value {
 			case 0:
 				return Value{}
 			case -1:
-				x = -x
+				// The quotient of the least integer overflows.
+				if op == OpMod {
+					x = 0
+				} else {
+					x = -x
+				}
 			default:
-				x /= y
+				if op == OpMod {
+					x %= y
+				} else {
+					x /= y
+				}
 			}
 		}
 
 		return Value{Kind: vec.KindInt, Int: x}
 	}
-	x, ok := number(a)
-	y, ok2 := number(b)
-	if !ok || !ok2 {
-		return Value{}
-	}
+	x, _ := number(a)
+	y, _ := number(b)
 	switch op {
 	case OpAdd:
 		x += y
@@ -429,6 +449,11 @@ func arith(op Op, a, b Value) Value {
 		x -= y
 	case OpMul:
 		x *= y
+	case OpMod:
+		if y == 0 {
+			return Value{}
+		}
+		x = math.Mod(x, y)
 	default:
 		if y == 0 {
 			return Value{}
@@ -439,12 +464,17 @@ func arith(op Op, a, b Value) Value {
 	return Value{Kind: vec.KindFloat, Float: x}
 }
 
+// number returns the number a value is or holds as a float.
 func number(v Value) (float64, bool) {
 	switch v.Kind {
 	case vec.KindInt:
 		return float64(v.Int), true
 	case vec.KindFloat:
 		return v.Float, true
+	case vec.KindString:
+		if n, ok := numberText(v.Bytes); ok {
+			return number(n)
+		}
 	}
 
 	return 0, false

@@ -25,6 +25,12 @@ func (p *pred) test(v []byte) bool {
 	if p.op == OpMatch {
 		return p.pat.Match(v)
 	}
+	if p.lit.Kind != vec.KindString {
+		// A string compared with a number reads as the number it holds.
+		c, ok := compareScalar(Value{Kind: vec.KindString, Bytes: v}, p.lit)
+
+		return ok && holds(p.op, c)
+	}
 	c := bytes.Compare(v, p.lit.Bytes)
 	switch p.op {
 	case OpEq:
