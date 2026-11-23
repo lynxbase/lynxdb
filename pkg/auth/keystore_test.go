@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -430,11 +431,14 @@ func TestKeyStoreVerifyWhileKeysChange(t *testing.T) {
 
 	done := make(chan struct{})
 	var verified atomic.Int64
-	var wg sync.WaitGroup
+	var wg, running sync.WaitGroup
 	for range 8 {
 		wg.Add(1)
+		running.Add(1)
 		go func() {
 			defer wg.Done()
+			first := sync.OnceFunc(running.Done)
+			defer first()
 			for {
 				select {
 				case <-done:
@@ -446,9 +450,16 @@ func TestKeyStoreVerifyWhileKeysChange(t *testing.T) {
 					return
 				}
 				verified.Add(1)
+				first()
+				// A verifier that never yields keeps the only processor
+				// of a small machine from the changes below.
+				runtime.Gosched()
 			}
 		}()
 	}
+	// The keys change once every verifier runs: twenty changes can end
+	// before a goroutine started above is scheduled.
+	running.Wait()
 	for i := range 20 {
 		k, err := ks.CreateKey(fmt.Sprintf("k%d", i), false)
 		if err != nil {
