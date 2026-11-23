@@ -4,7 +4,10 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -97,12 +100,35 @@ func TestE2E_QuerySync_InvalidQuery_ReturnsError(t *testing.T) {
 	t.Logf("invalid query correctly returned error: %v", err)
 }
 
+// TestE2E_QuerySync_NonexistentIndex_NotFound requires a query of an index
+// that is not there to answer 404 NOT_FOUND with a message that names it.
 func TestE2E_QuerySync_NonexistentIndex_NotFound(t *testing.T) {
 	h := NewHarness(t)
 
 	_, err := h.Client().Query(context.Background(), client.QueryRequest{Q: `source=nonexistent_idx_12345 | stats count() as count`})
-	if !client.IsNotFound(err) || !strings.Contains(err.Error(), "no such index: nonexistent_idx_12345") {
+	var apiErr *client.APIError
+	if !errors.As(err, &apiErr) || apiErr.HTTPStatus != http.StatusNotFound || apiErr.Code != "NOT_FOUND" ||
+		!strings.Contains(apiErr.Message, "no such index: nonexistent_idx_12345") {
 		t.Errorf("query of an index that is not there: %v", err)
+	}
+}
+
+// TestE2E_QuerySync_FieldNoIndexHolds_Warns requires the response to warn of
+// a field that the query reads and that no event of the index holds.
+func TestE2E_QuerySync_FieldNoIndexHolds_Warns(t *testing.T) {
+	h := NewHarness(t)
+
+	ctx := context.Background()
+	if _, err := h.Client().IngestEvents(ctx, []client.IngestEvent{{Event: `{"host":"a"}`, Host: "a"}}); err != nil {
+		t.Fatal(err)
+	}
+	result := h.MustQuery(`source=main | where nosuchfield > 1 | stats count() as n`)
+	want := "no event of the index main holds the field nosuchfield"
+	if !slices.Contains(result.Meta.Warnings, want) {
+		t.Errorf("warnings %q, want %q", result.Meta.Warnings, want)
+	}
+	if result := h.MustQuery(`source=main | eval made = 1 | where made > 0 | stats count() as n`); len(result.Meta.Warnings) != 0 {
+		t.Errorf("warnings for a field the query makes: %q", result.Meta.Warnings)
 	}
 }
 
