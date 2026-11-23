@@ -428,13 +428,29 @@ func unnestRow(x *ir.Unnest) func(map[string]event.Value) []map[string]event.Val
 }
 
 func flattenRow(x *ir.FlattenObject) func(map[string]event.Value) []map[string]event.Value {
+	prefix := x.Field + "."
 	return func(row map[string]event.Value) []map[string]event.Value {
 		v, ok := row[x.Field]
-		if !ok || v.Type() != event.FieldTypeObject {
+		var obj map[string]event.Value
+		switch {
+		case ok && v.Type() == event.FieldTypeObject:
+			obj = v.AsObject()
+			delete(row, x.Field)
+		case !ok:
+			// A stored object comes as the columns of its members.
+			for k, m := range row {
+				if member, found := strings.CutPrefix(k, prefix); found {
+					if obj == nil {
+						obj = map[string]event.Value{}
+					}
+					obj[member] = m
+					delete(row, k)
+				}
+			}
+		}
+		if obj == nil {
 			return []map[string]event.Value{row}
 		}
-		obj := v.AsObject()
-		delete(row, x.Field)
 		if len(x.Aliases) > 0 {
 			keys := make([]string, 0, len(obj))
 			for k := range obj {

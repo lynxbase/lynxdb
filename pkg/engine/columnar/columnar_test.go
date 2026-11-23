@@ -136,6 +136,7 @@ func TestRun(t *testing.T) {
 		{"a function with a function of its own", `source=logs | where status = 500 | eval loud = transform(tags, x -> upper(x)) | fields loud`, `loud=["X","Y"]`, true},
 		{"a function that differs each time", `source=logs | eval r = rand() | where r >= 0 | stats count() as n`, "n=5", false},
 		{"the members of an object", `source=logs | where status >= 500 | sort status | fields host, http`, "host=a; host=b http.path=/x", true},
+		{"the members of a stored object as columns", `source=logs | where status >= 500 | sort status | flatten http | fields host, path`, "host=a; host=b path=/x", false},
 		{"the members of an object in the row operators",
 			`source=logs | eval r = rand() | where r >= 0 and status >= 500 | sort status | fields host, http`, "host=a; host=b http.path=/x", false},
 		{"events without an object", `source=logs | where status = 503 | fields - http, ts, _time, tags`,
