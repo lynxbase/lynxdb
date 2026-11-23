@@ -69,10 +69,9 @@ default_source: web       # --source on query, ingest, import
 
 | Invocation | Behavior |
 |------------|----------|
-| `lynxdb` | Welcome screen with quick-start hints |
-| `cat app.log \| lynxdb` | Loads stdin into index `main` and runs `source=main \| head 10` |
-| `cat app.log \| lynxdb '<PPL query>'` | Loads stdin and runs the query, like `lynxdb query` in stdin mode |
-| `lynxdb '<PPL query>'` without piped stdin | Error: a bare query needs piped stdin |
+| `lynxdb` | Welcome screen with quick-start hints; never reads stdin |
+| `cat app.log \| lynxdb '<PPL query>'` | Loads stdin and runs the query, like `lynxdb query --file -` |
+| `lynxdb '<PPL query>'` with stdin on a terminal | Error: a bare query needs piped stdin |
 
 ---
 
@@ -86,8 +85,8 @@ Alias `q`. Runs a PPL query. Arguments are joined with spaces. A trailing `\G` s
 
 **Modes**
 
-- **Server** (default): `POST /api/v1/query` to `--server`. A query the server promotes to an asynchronous job (HTTP 202) is polled until it finishes or `--timeout` expires (default 6 minutes).
-- **Local** (`--file`, or stdin is a pipe): the query is compiled first, then the input is loaded into the index `main` of a database the CLI opens in a temporary directory, the query runs in process, and the directory is removed. Each line is one event. A JSON object line is stored as it is; any other line keeps its text in `_raw`, its timestamp as the event time and its `key=value` pairs as fields. The first 20 lines are checked for combined (Apache/Nginx), syslog and Docker JSON log formats, whose fields are extracted while loading; `--raw` disables that detection. The fields `source` and `sourcetype` of a text line are the file path, `stdin` or `--source`, and `--sourcetype`. `--file` and piped stdin together are an error.
+- **Server** (default): `POST /api/v1/query` to `--server`, whatever stdin is. A query the server promotes to an asynchronous job (HTTP 202) is polled until it finishes or `--timeout` expires (default 6 minutes). When the server is unreachable and stdin is not a terminal, the connection error suggests `--file -`.
+- **Local** (`--file <path|glob>`, `--file -` for stdin): the query is compiled first, then the input is loaded into the index `main` of a database the CLI opens in a temporary directory, the query runs in process, and the directory is removed. Each line is one event. A JSON object line is stored as it is; any other line keeps its text in `_raw`, its timestamp as the event time and its `key=value` pairs as fields. The first 20 lines are checked for combined (Apache/Nginx), syslog and Docker JSON log formats, whose fields are extracted while loading; `--raw` disables that detection. The fields `source` and `sourcetype` of a text line are the file path, `stdin` or `--source`, and `--sourcetype`. A local query that names no source reads `main`: `| where x > 1` and `where x > 1` run as `source=main | where x > 1`, and leading search terms, as in `error | stats count()`, run as `search source=main error | stats count()`. In every mode a leading `|` must be followed by a command.
 - **Plan only** (`--explain`): compiles in the CLI and prints the logical plan, optimized plan and optimizer rules. Reads no input, needs no server.
 
 | Flag | Short | Default | Description |
@@ -95,7 +94,7 @@ Alias `q`. Runs a PPL query. Arguments are joined with spaces. A trailing `\G` s
 | `--since` | `-s` | | Relative time range (`15m`, `1h`, `7d`); server mode |
 | `--from` | | | Absolute start time (ISO 8601); needs `--to`; server mode |
 | `--to` | | | Absolute end time (ISO 8601); needs `--from`; server mode |
-| `--file` | `-f` | | Query a local file or glob instead of the server |
+| `--file` | `-f` | | Query a local file or glob instead of the server; `-` reads stdin |
 | `--sourcetype` | | | `sourcetype` of loaded text lines; local mode |
 | `--source` | | | `source` of loaded text lines; local mode |
 | `--output` | `-o` | | Write results to a file |
@@ -115,20 +114,21 @@ lynxdb q 'source=main | timechart span=5m count() by level' --since 1h
 lynxdb query 'source=main | stats p95(response_time) as p95, dc(user) as users by host' --format table
 
 # Local
-lynxdb query --file access.log 'source=main | stats count() by status'
-lynxdb query --file '/var/log/app/*.log' 'source=main level=ERROR | stats count() by source'
-cat app.log | lynxdb query 'source=main | where response_time > 500 | stats count() by path'
-lynxdb query --raw --file app.log 'source=main "connection refused" | head 20'
+lynxdb query --file access.log 'stats count() by status'
+lynxdb query --file '/var/log/app/*.log' 'level=ERROR | stats count() by source'
+cat app.log | lynxdb query --file - 'where response_time > 500 | stats count() by path'
+cat app.log | lynxdb 'where response_time > 500 | stats count() by path'
+lynxdb query --raw --file app.log '"connection refused" | head 20'
 
 # Plans and profiles
 lynxdb query --explain 'source=main level=ERROR | stats count() as n by host | sort - n | head 3'
 lynxdb query 'source=main level=ERROR | stats count() by host' --analyze
 
 # Scripting
-lynxdb query 'source=main level=FATAL' --since 15m --fail-on-empty --quiet < /dev/null > /dev/null
+lynxdb query 'source=main level=FATAL' --since 15m --fail-on-empty --quiet > /dev/null
 lynxdb query 'source=main | stats count() by host' --format csv > hosts.csv
 lynxdb query 'source=main status>=500 | fields _raw' --since 1h --format raw \
-  | lynxdb query 'source=main | stats count() by path'
+  | lynxdb 'stats count() by path'
 ```
 
 Output: rows go to stdout, statistics to stderr. On a terminal the statistics are a summary footer (rows, time); otherwise one JSON line. A query that does not compile prints the query with a caret under the error position and exits with 4.

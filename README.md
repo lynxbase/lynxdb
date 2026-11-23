@@ -27,17 +27,17 @@ For downloadable binaries, Homebrew, and Docker, see the
 
 ## Query logs locally
 
-Count HTTP 5xx responses by service. Piped input and files passed with
-`--file` are available as the temporary index `main`.
+Count HTTP 5xx responses by service. `--file` loads files, or standard
+input for `-`, into the temporary index `main`, which a local query reads
+when it names no source.
 
 ```bash
 printf '%s\n' \
   '{"status":200,"service":"api"}' \
   '{"status":503,"service":"api"}' \
   '{"status":502,"service":"api"}' |
-  ./lynxdb query '
-    source=main
-    | where status >= 500
+  ./lynxdb query --file - '
+    where status >= 500
     | stats count() as errors by service' \
     --format csv --no-stats
 ```

@@ -22,7 +22,7 @@ The same text runs everywhere a query is accepted:
 | Entry point | What runs the query |
 | --- | --- |
 | `lynxdb query '<query>'` | the server, over REST |
-| `lynxdb query --file app.log '<query>'`, `cat app.log \| lynxdb query '<query>'` | the CLI process, over the input loaded into the index `main` |
+| `lynxdb query --file app.log '<query>'`, `cat app.log \| lynxdb query --file - '<query>'` | the CLI process, over the input loaded into the index `main` |
 | `POST /api/v1/query`, `/api/v1/query/stream` | the server |
 | `lynxdb explain '<query>'`, `GET /api/v1/query/explain` | the server's compiler, without running the query |
 

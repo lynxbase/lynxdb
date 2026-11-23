@@ -62,13 +62,14 @@ func newQueryCmd() *cobra.Command {
 		Use:     "query [PPL query]",
 		Aliases: []string{"q"},
 		Short:   "Run a PPL query",
-		Long: `Run a PPL query against a running LynxDB server, or against local files
-or standard input. Local input is loaded into the index main.`,
+		Long: `Run a PPL query against a LynxDB server, or with --file against local
+files. --file - reads standard input. Local input is loaded into the index
+main, and a local query that names no source reads main.`,
 		Example: `  lynxdb query 'source=main | where level = "error"'                     Search errors
   lynxdb query 'source=main | where level = "error" | stats count() by host'
   lynxdb query 'source=main | where status >= 500 | top 10 uri' --since 1h
-  lynxdb query --file app.log 'source=main | stats count() by level'      Query a local file
-  cat app.log | lynxdb query 'source=main | where duration_ms > 1000'     Query standard input`,
+  lynxdb query --file app.log 'stats count() by level'                    Query a local file
+  cat app.log | lynxdb query --file - 'where duration_ms > 1000'          Query standard input`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
@@ -93,35 +94,40 @@ or standard input. Local input is loaded into the index main.`,
 					source = projectRC.DefaultSource
 				}
 			}
-			stdinPiped := isStdinPiped()
 
-			if explain {
-				return runLocalExplain(query)
-			}
-
-			if file != "" && stdinPiped {
-				return fmt.Errorf("cannot use --file and stdin simultaneously")
-			}
-			if (file != "" || stdinPiped) && copyFlag {
-				return fmt.Errorf("--copy is only supported in server mode")
-			}
-			if file != "" {
-				return runQueryFile(query, file, source, sourcetype, outputFile, failEmpty, analyze, rawMode)
-			}
-			if stdinPiped {
-				return runQueryStdin(query, source, sourcetype, outputFile, failEmpty, analyze, rawMode)
-			}
-
-			err := runQueryServer(query, since, from, to, timeout, failEmpty, analyze)
-			if err != nil {
-				return err
+			if file == "" {
+				if explain {
+					return runLocalExplain(query, serverQueryOptions)
+				}
+				err := runQueryServer(query, since, from, to, timeout, failEmpty, analyze)
+				if err != nil {
+					return err
+				}
+				if copyFlag {
+					return copyLastResultToClipboard()
+				}
+				return nil
 			}
 
 			if copyFlag {
-				return copyLastResultToClipboard()
+				return fmt.Errorf("--copy is only supported in server mode")
 			}
-
-			return nil
+			if explain {
+				return runLocalExplain(query, localQueryOptions)
+			}
+			lq := localQuery{
+				query:      query,
+				source:     source,
+				sourcetype: sourcetype,
+				outputFile: outputFile,
+				failEmpty:  failEmpty,
+				analyze:    analyze,
+				raw:        rawMode,
+			}
+			if file == "-" {
+				return runQueryStdin(lq)
+			}
+			return runQueryFile(lq, file)
 		},
 	}
 
@@ -129,7 +135,7 @@ or standard input. Local input is loaded into the index main.`,
 	f.StringVarP(&since, "since", "s", "", "Relative time range (e.g., 15m, 1h, 7d)")
 	f.StringVar(&from, "from", "", "Absolute start time (ISO 8601)")
 	f.StringVar(&to, "to", "", "Absolute end time (ISO 8601)")
-	f.StringVarP(&file, "file", "f", "", "Query a local file instead of server")
+	f.StringVarP(&file, "file", "f", "", "Query local files (path or glob) instead of the server; - reads standard input")
 	f.StringVar(&sourcetype, "sourcetype", "", "Override source type detection")
 	f.StringVar(&source, "source", "", "Set source metadata")
 	f.StringVarP(&outputFile, "output", "o", "", "Write results to file")
@@ -143,7 +149,27 @@ or standard input. Local input is loaded into the index main.`,
 	return cmd
 }
 
-func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty bool, analyze, rawMode bool) error {
+// serverQueryOptions compiles a query as the server does.
+var serverQueryOptions = query.Options{}
+
+// localQueryOptions compiles a query over local input: a query that names no
+// source reads the index the input is loaded into.
+var localQueryOptions = query.Options{DefaultSource: database.DefaultSource}
+
+// localQuery is a query over local files or standard input.
+type localQuery struct {
+	query string
+	// source and sourcetype are the metadata of the loaded events.
+	source     string
+	sourcetype string
+	outputFile string
+	failEmpty  bool
+	analyze    bool
+	// raw loads lines as text without extracting fields.
+	raw bool
+}
+
+func runQueryFile(lq localQuery, file string) error {
 	matches, err := filepath.Glob(file)
 	if err != nil {
 		return fmt.Errorf("invalid file pattern: %w", err)
@@ -151,7 +177,7 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 	if len(matches) == 0 {
 		return noFilesMatchingError{pattern: file}
 	}
-	if err := checkLocalQuery(query); err != nil {
+	if err := checkLocalQuery(lq.query); err != nil {
 		return err
 	}
 
@@ -164,12 +190,12 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 	start := time.Now()
 
 	format := ""
-	if !rawMode {
+	if !lq.raw {
 		format = detectFileFormat(matches[0])
 	}
 
 	for _, path := range matches {
-		src := source
+		src := lq.source
 		if src == "" {
 			src = path
 		}
@@ -177,7 +203,7 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 		if err != nil {
 			return fmt.Errorf("open %s: %w", path, err)
 		}
-		err = loadLocal(db, f, src, sourcetype, format)
+		err = loadLocal(db, f, src, lq.sourcetype, format)
 		if closeErr := f.Close(); closeErr != nil && err == nil {
 			err = closeErr
 		}
@@ -186,7 +212,7 @@ func runQueryFile(query, file, source, sourcetype, outputFile string, failEmpty 
 		}
 	}
 
-	return runLocalQuery(db, query, outputFile, failEmpty, analyze, start)
+	return runLocalQuery(db, lq, start)
 }
 
 // garbageAllowance bounds the heap awaiting collection in a process that
@@ -207,8 +233,8 @@ func loadLocal(db *database.DB, r io.Reader, source, sourcetype, format string) 
 	})
 }
 
-func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool, analyze, rawMode bool) error {
-	if err := checkLocalQuery(query); err != nil {
+func runQueryStdin(lq localQuery) error {
+	if err := checkLocalQuery(lq.query); err != nil {
 		return err
 	}
 
@@ -220,28 +246,28 @@ func runQueryStdin(query, source, sourcetype, outputFile string, failEmpty bool,
 	defer db.Close()
 	start := time.Now()
 
-	src := source
+	src := lq.source
 	if src == "" {
 		src = "stdin"
 	}
 
 	var reader io.Reader = os.Stdin
 	format := ""
-	if !rawMode {
+	if !lq.raw {
 		format, reader = detectReaderFormat(os.Stdin)
 	}
 
-	if err := loadLocal(db, reader, src, sourcetype, format); err != nil {
+	if err := loadLocal(db, reader, src, lq.sourcetype, format); err != nil {
 		return fmt.Errorf("load stdin: %w", err)
 	}
 
-	return runLocalQuery(db, query, outputFile, failEmpty, analyze, start)
+	return runLocalQuery(db, lq, start)
 }
 
-// checkLocalQuery compiles a query before any input is read, so a bad query
-// fails fast with its position and hint.
+// checkLocalQuery compiles a local query before any input is read, so a bad
+// query fails fast with its position and hint.
 func checkLocalQuery(q string) error {
-	if _, err := query.Compile(q); err != nil {
+	if _, err := query.CompileWith(q, localQueryOptions); err != nil {
 		return compileError(q, err)
 	}
 	return nil
@@ -249,7 +275,7 @@ func checkLocalQuery(q string) error {
 
 // runLocalQuery runs a query over the events loaded into a local database
 // and prints the result.
-func runLocalQuery(db *database.DB, q, outputFile string, failEmpty, analyze bool, start time.Time) error {
+func runLocalQuery(db *database.DB, lq localQuery, start time.Time) error {
 	if err := db.Sync(); err != nil {
 		return err
 	}
@@ -258,15 +284,15 @@ func runLocalQuery(db *database.DB, q, outputFile string, failEmpty, analyze boo
 		st.ScannedRows += int64(ix.Rows)
 	}
 	compileStart := time.Now()
-	c, err := query.Compile(q)
+	c, err := query.CompileWith(lq.query, localQueryOptions)
 	if err != nil {
-		return compileError(q, err)
+		return compileError(lq.query, err)
 	}
 	st.ParseDuration = time.Since(compileStart)
 	execStart := time.Now()
 	res, err := db.Query(context.Background(), c, database.QueryOptions{})
 	if err != nil {
-		return compileError(q, err)
+		return compileError(lq.query, err)
 	}
 	st.ExecDuration = time.Since(execStart)
 	st.TotalDuration = time.Since(start)
@@ -280,14 +306,14 @@ func runLocalQuery(db *database.DB, q, outputFile string, failEmpty, analyze boo
 		rows[i] = row
 	}
 	if len(rows) == 0 {
-		if failEmpty {
+		if lq.failEmpty {
 			printMeta("No results found.")
 			return noResultsError{}
 		}
 		printHint("No results. Try a broader query.")
 	}
 
-	return printLocalResults(rows, st, outputFile, analyze)
+	return printLocalResults(rows, st, lq.outputFile, lq.analyze)
 }
 
 // compileError renders a PPL compile error with a caret under its
@@ -308,8 +334,8 @@ func compileError(q string, err error) error {
 
 // runLocalExplain prints the logical and optimized plans of a query without
 // running it.
-func runLocalExplain(q string) error {
-	c, err := query.Compile(q)
+func runLocalExplain(q string, opts query.Options) error {
+	c, err := query.CompileWith(q, opts)
 	if err != nil {
 		return compileError(q, err)
 	}

@@ -210,17 +210,29 @@ func (t *Theme) RenderError(err error) {
 }
 
 // RenderConnectionError prints a connection error with helpful suggestions.
-func (t *Theme) RenderConnectionError(server string) {
-	t.print(t.Diagnostic(Diagnostic{
+// A non-empty stdinQuery is a query that ran while standard input was not a
+// terminal; the error then shows how to run it over standard input.
+func (t *Theme) RenderConnectionError(server, stdinQuery string) {
+	d := Diagnostic{
 		Code:       "CONNECTION",
 		Message:    "Cannot connect to " + server,
 		Suggestion: "Start the server, check the environment, or point --server at the right endpoint.",
 		Commands: []string{
 			"lynxdb server",
-			"lynxdb query --file app.log 'search source=main error'",
+			"lynxdb query --file app.log 'search error'",
 			"lynxdb query --server http://logs:3100 'search source=main error'",
 		},
-	}))
+	}
+	if stdinQuery != "" {
+		d.Suggestion = "lynxdb query queries the server. To query standard input, add --file -."
+		d.Commands = append([]string{"lynxdb query --file - " + shellQuote(stdinQuery)}, d.Commands...)
+	}
+	t.print(t.Diagnostic(d))
+}
+
+// shellQuote quotes s as one POSIX shell word.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // RenderServerError prints a server error with code, message, and optional suggestion.

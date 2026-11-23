@@ -126,7 +126,7 @@ func TestRenderConnectionError(t *testing.T) {
 	var buf bytes.Buffer
 	theme := NewTheme(&buf, true)
 
-	theme.RenderConnectionError("http://localhost:3100")
+	theme.RenderConnectionError("http://localhost:3100", "")
 	got := buf.String()
 
 	if !strings.Contains(got, "Cannot connect to http://localhost:3100") {
@@ -135,6 +135,21 @@ func TestRenderConnectionError(t *testing.T) {
 
 	if !strings.Contains(got, "lynxdb server") {
 		t.Errorf("RenderConnectionError should contain suggestion, got: %q", got)
+	}
+	if strings.Contains(got, "--file -") {
+		t.Errorf("RenderConnectionError without a query on standard input mentions --file -: %q", got)
+	}
+}
+
+func TestRenderConnectionErrorWithStdinQuery(t *testing.T) {
+	var buf bytes.Buffer
+	theme := NewTheme(&buf, true)
+
+	theme.RenderConnectionError("http://localhost:3100", "search it's")
+	got := buf.String()
+
+	if want := `lynxdb query --file - 'search it'\''s'`; !strings.Contains(got, want) {
+		t.Errorf("RenderConnectionError should show %s, got: %q", want, got)
 	}
 }
 

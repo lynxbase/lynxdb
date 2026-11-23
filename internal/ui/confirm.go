@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 // Confirm prompts the user for a yes/no confirmation on the theme's writer,
@@ -44,12 +46,7 @@ func (t *Theme) ConfirmDestructive(message, confirmValue string) bool {
 	return strings.TrimSpace(response) == confirmValue
 }
 
-// isStdinTTY reports whether stdin is connected to a terminal.
+// isStdinTTY reports whether stdin is a terminal.
 func isStdinTTY() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-
-	return (fi.Mode() & os.ModeCharDevice) != 0
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }

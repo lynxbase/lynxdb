@@ -10,25 +10,31 @@ prints one JSON object per line, writes statistics and hints to stderr, and
 reports the outcome through its exit code. This guide collects patterns for
 scripts, pipelines and CI jobs.
 
+`lynxdb query '<query>'` always asks the server, also under cron, CI or ssh,
+where standard input is not a terminal. Local input is queried only when the
+command says so, with `--file`.
+
 ## Pipe mode: no server required
 
-The CLI queries local files and standard input in process:
+The CLI queries local files and standard input in process. `--file -`
+reads standard input, and `lynxdb '<query>'` is short for it. A local query
+that names no source reads `main`, the index the input is loaded into:
 
 ```bash
 # Any log source through PPL
-cat /var/log/app.log | lynxdb query 'source=main level=ERROR | stats count() by service'
+cat /var/log/app.log | lynxdb query --file - 'level=ERROR | stats count() by service'
 
 # A local file
-lynxdb query --file access.log 'source=main | stats count() by status'
+lynxdb query --file access.log 'stats count() by status'
 
 # Several files
-lynxdb query --file '/var/log/nginx/*.log' 'source=main status>=500 | top 10 uri'
+lynxdb query --file '/var/log/nginx/*.log' 'status>=500 | top 10 uri'
 
 # Compressed input
-zcat archive.log.gz | lynxdb query 'source=main | where status >= 500 | top 10 path'
+zcat archive.log.gz | lynxdb 'where status >= 500 | top 10 path'
 
 # kubectl output
-kubectl logs deploy/api --since=1h | lynxdb query 'source=main | stats avg(duration_ms), p99(duration_ms) by endpoint'
+kubectl logs deploy/api --since=1h | lynxdb 'stats avg(duration_ms), p99(duration_ms) by endpoint'
 ```
 
 See [Pipe Mode](../getting-started/pipe-mode.md) for format detection and
@@ -55,7 +61,7 @@ Rows go to stdout. The statistics footer and hints go to stderr, so
 redirection captures only data:
 
 ```bash
-lynxdb query --file access.log 'source=main | stats count()' > result.json
+lynxdb query --file access.log 'stats count()' > result.json
 ```
 
 On a terminal the statistics are a summary footer; otherwise they are one
@@ -88,7 +94,7 @@ lynxdb query 'source=main | stats count() as n, avg(response_time) as avg_ms by 
   --format csv > report.csv
 
 # Sort with standard tools
-lynxdb query --file access.log 'source=main | stats count() as n by status' --format csv | sort -t, -k2 -rn
+lynxdb query --file access.log 'stats count() as n by status' --format csv | sort -t, -k2 -rn
 
 # Tab-separated
 lynxdb query 'source=main | stats count() by host' --format tsv > data.tsv
@@ -100,7 +106,7 @@ Pull rows from the server, then aggregate them locally in pipe mode:
 
 ```bash
 lynxdb query 'source=main status>=500 | fields host, path, status' --since 1h --format ndjson \
-  | lynxdb query 'source=main | stats count() as errors by path | sort - errors | head 5'
+  | lynxdb 'stats count() as errors by path | sort - errors | head 5'
 ```
 
 ## Write results to a file

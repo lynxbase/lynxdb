@@ -6,15 +6,16 @@ description: Run PPL queries against a LynxDB server, local files or standard in
 
 # query
 
-Run a [PPL](../ppl/overview.md) query against a server, local files or standard input.
+Run a [PPL](../ppl/overview.md) query against a server, or with `--file` against local files or standard input.
 
 ```
 lynxdb query '<PPL query>' [flags]
+lynxdb query --file <path|glob|-> '<PPL query>' [flags]
 ```
 
 **Alias:** `q`
 
-Every query starts with a source, for example `source=main`, and continues with `| command` stages:
+A server query starts with a source, for example `source=main`, and continues with `| command` stages:
 
 ```bash
 lynxdb query 'source=main level=ERROR | stats count() as errors by host | sort - errors'
@@ -31,7 +32,7 @@ Quote the query with single quotes so the shell leaves `|`, `>` and double-quote
 | `--to` | | | server | Absolute end time (ISO 8601); needs `--from` |
 | `--timeout` | | `6m` | server | Client-side limit for the whole query, as a Go duration: `30s`, `10m` |
 | `--copy` | | `false` | server | Copy the result rows to the clipboard as TSV |
-| `--file` | `-f` | | local | Load a file or glob pattern and query it in process |
+| `--file` | `-f` | | local | Load a file or glob pattern, or standard input for `-`, and query it in process |
 | `--raw` | | `false` | local | Do not detect a log format while loading |
 | `--source` | | file path or `stdin` | local | `source` field of the loaded text lines |
 | `--sourcetype` | | | local | `sourcetype` field of the loaded text lines |
@@ -50,7 +51,7 @@ lynxdb query 'source=main level=ERROR | head 1 \G'
 
 ## Server mode
 
-Without `--file` and with stdin attached to a terminal, `lynxdb query` sends the query to `POST /api/v1/query` on the server named by `--server` (see [Query API](../api/query.md)).
+Without `--file`, `lynxdb query` sends the query to `POST /api/v1/query` on the server named by `--server` (see [Query API](../api/query.md)). It never reads standard input, so it behaves the same in a terminal, a pipeline, a CI step or a cron job.
 
 ```bash
 lynxdb query 'source=main status>=500 | top 10 path' --since 24h
@@ -61,24 +62,32 @@ lynxdb q 'source=main | timechart span=5m count() by level' --since 1h
 
 The server syncs the events ingested so far before it runs the query, so a query sees everything ingested before it. Every query runs on the server as a job. The server answers inline when the job finishes within its `query.sync_timeout`; otherwise it answers with the job handle, and the CLI polls the job and prints the result when it finishes, until `--timeout` expires. `lynxdb jobs` lists the jobs.
 
-The CLI picks local mode whenever stdin is a pipe. A script that runs under a pipe, such as a CI step, keeps server mode by redirecting stdin: `lynxdb query '...' < /dev/null`.
+When the server cannot be reached and standard input is not a terminal, the connection error also shows the same query with `--file -`, in case the input was meant to be queried.
 
 ## Local mode: files and stdin
 
-With `--file`, or when stdin is a pipe, the CLI runs the query without a server:
+With `--file`, the CLI runs the query without a server; `--file -` reads standard input:
 
 1. It compiles the query first, so a query that does not compile fails before any input is read.
 2. It opens a database of its own in a temporary directory and loads every line of the input into the index `main`.
 3. It runs the query in process with the same engine the server uses, prints the result, and removes the directory.
 
 ```bash
-lynxdb query --file access.log 'source=main | stats count() by status'
-lynxdb query --file '/var/log/app/*.log' 'source=main level=ERROR | stats count() by source'
-cat app.log | lynxdb query 'source=main | where response_time > 500 | stats count() by path'
-zcat archive.log.gz | lynxdb query 'source=main status>=500 | top 10 path'
+lynxdb query --file access.log 'stats count() by status'
+lynxdb query --file '/var/log/app/*.log' 'level=ERROR | stats count() by source'
+cat app.log | lynxdb query --file - 'where response_time > 500 | stats count() by path'
+zcat archive.log.gz | lynxdb 'status>=500 | top 10 path'
 ```
 
-`--file` takes a path or a glob pattern; quote a glob so the shell does not expand it. Using `--file` and piped stdin together is an error.
+`--file` takes a path, a glob pattern or `-`; quote a glob so the shell does not expand it. `lynxdb '<query>'`, a query with no command, is short for `lynxdb query --file - '<query>'`; it fails when standard input is a terminal.
+
+A local query may leave out the source; it then reads `main`, the index the input is loaded into:
+
+- A query that starts with `|`, such as `| where status >= 500`, runs as `source=main | where status >= 500`.
+- A query whose first word names a command, such as `stats count() by host`, runs as `source=main | stats count() by host`.
+- Otherwise the leading words are search terms: `level=ERROR timeout | stats count()` runs as `search source=main level=ERROR timeout | stats count()`.
+
+A server query has no such default, and a `|` at the start of any query must be followed by a command: `| tstats count` fails with `unknown command "tstats"`.
 
 Lines load the way [`POST /api/v1/ingest/raw`](../api/ingest.md) takes them:
 
@@ -95,7 +104,7 @@ Lines load the way [`POST /api/v1/ingest/raw`](../api/ingest.md) takes them:
 A local query prints statistics to stderr, so stdout carries only rows:
 
 ```bash
-lynxdb query --file access.log --format csv 'source=main | stats count() by level' > levels.csv
+lynxdb query --file access.log --format csv 'stats count() by level' > levels.csv
 ```
 
 ## Plans: `--explain`
@@ -135,7 +144,7 @@ To see how the server plans a query, with its result type, cost class and the fi
 
 ```bash
 lynxdb query 'source=main level=ERROR | stats count() by host' --analyze
-lynxdb query --file access.log 'source=main level=ERROR | stats count() by host' --analyze
+lynxdb query --file access.log 'level=ERROR | stats count() by host' --analyze
 ```
 
 ```
@@ -189,12 +198,12 @@ lynxdb query 'source=main | stats count() as n by status | sort - n' --format ta
 
 ```bash
 # Fail a CI step when errors appear
-lynxdb query 'source=main level=ERROR' --since 15m --fail-on-empty --quiet < /dev/null > /dev/null \
+lynxdb query 'source=main level=ERROR' --since 15m --fail-on-empty --quiet > /dev/null \
   && echo "errors in the last 15 minutes"
 
 # Pull rows from the server, then aggregate them locally
-lynxdb query 'source=main status>=500 | fields _raw' --since 1h --format raw < /dev/null \
-  | lynxdb query 'source=main | stats count() by path'
+lynxdb query 'source=main status>=500 | fields _raw' --since 1h --format raw \
+  | lynxdb 'stats count() by path'
 
 # Copy a result to paste into a spreadsheet
 lynxdb query 'source=main | stats count() by host' --copy

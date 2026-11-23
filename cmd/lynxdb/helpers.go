@@ -7,27 +7,19 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/lynxbase/lynxdb/internal/ui"
 )
 
-// isTTY reports whether stdout is connected to a terminal.
+// isTTY reports whether stdout is a terminal.
 func isTTY() bool {
-	fi, err := os.Stdout.Stat()
-	if err != nil {
-		return false
-	}
-
-	return (fi.Mode() & os.ModeCharDevice) != 0
+	return term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-// isStdinPiped reports whether stdin is piped (not a terminal).
-func isStdinPiped() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-
-	return fi != nil && (fi.Mode()&os.ModeCharDevice) == 0
+// isStdinTTY reports whether stdin is a terminal.
+func isStdinTTY() bool {
+	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
 // formatCount returns a human-readable count string with commas.
@@ -163,16 +155,6 @@ func printNextSteps(steps ...string) {
 	}
 
 	ui.Stderr.PrintNextSteps(globalQuiet, steps...)
-}
-
-// isStdinTTY reports whether stdin is connected to a terminal.
-func isStdinTTY() bool {
-	fi, err := os.Stdin.Stat()
-	if err != nil {
-		return false
-	}
-
-	return (fi.Mode() & os.ModeCharDevice) != 0
 }
 
 // confirmAction prompts the user for confirmation on stderr/stdin.

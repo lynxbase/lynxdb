@@ -82,14 +82,14 @@ func TestComplex_Subquery_InFilter_MatchesDirectWhere(t *testing.T) {
 	// subquery selects exactly the ERROR level: n/5 events.
 	input := generateBackendEvents(50)
 
-	direct := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	direct := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | where level = "ERROR" | stats count() as n`)
 	if direct.ExitCode != 0 {
 		t.Fatalf("direct query exit %d, stderr: %s", direct.ExitCode, direct.Stderr)
 	}
 	directN := int(jsonFieldFloat(t, direct.Stdout, "n"))
 
-	sub := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	sub := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | where level in [ source=main | where status = 500 | fields level ] | stats count() as n`)
 	if sub.ExitCode != 0 {
 		t.Fatalf("subquery exit %d, stderr: %s", sub.ExitCode, sub.Stderr)
@@ -107,13 +107,13 @@ func TestComplex_Subquery_InFilter_MatchesDirectWhere(t *testing.T) {
 func TestComplex_Subquery_Scalar_MatchesEventstats(t *testing.T) {
 	input := generateBackendEvents(50)
 
-	sub := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	sub := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | where duration_ms > [ source=main | stats avg(duration_ms) ] | stats count() as n`)
 	if sub.ExitCode != 0 {
 		t.Fatalf("scalar subquery exit %d, stderr: %s", sub.ExitCode, sub.Stderr)
 	}
 
-	es := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	es := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | eventstats avg(duration_ms) as avg_dur | where duration_ms > avg_dur | stats count() as n`)
 	if es.ExitCode != 0 {
 		t.Fatalf("eventstats exit %d, stderr: %s", es.ExitCode, es.Stderr)
@@ -137,7 +137,7 @@ func TestComplex_Join_ByField_Count(t *testing.T) {
 	// events, so the inner join keeps all four services.
 	input := generateBackendEvents(50)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | stats count() as total by service | join type=inner service [ source=main | where level = "ERROR" | stats count() as errs by service ] | stats count() as n`)
 
 	if r.ExitCode != 0 {
@@ -156,7 +156,7 @@ func TestComplex_Append_TotalIsSum(t *testing.T) {
 	// Two one-row aggregates concatenated via append must emit both rows.
 	input := generateBackendEvents(50)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | where level = "ERROR" | stats count() as n | append [ source=main | where level = "WARN" | stats count() as n ]`)
 
 	if r.ExitCode != 0 {
@@ -179,7 +179,7 @@ func TestComplex_Append_TotalIsSum(t *testing.T) {
 func TestComplex_Union_CountIsSum(t *testing.T) {
 	input := generateBackendEvents(50)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`union [ search source=main | where level = "ERROR" ] [ search source=main | where level = "WARN" ] | stats count() as n`)
 
 	if r.ExitCode != 0 {
@@ -199,7 +199,7 @@ func TestComplex_DeepPipeline_CountsAddUp(t *testing.T) {
 	// the non-INFO events must add up to the 40 WARN and ERROR events.
 	input := generateBackendEvents(100)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | where level != "INFO" | eval bucket = case(duration_ms < 50, "fast", duration_ms < 500, "medium" else "slow") | stats count() as count by level, bucket | sort - count | head 20 | eval total_group = count | fields level, bucket, total_group`)
 
 	if r.ExitCode != 0 {
@@ -233,7 +233,7 @@ func TestComplex_DeepPipeline_SortOrderCorrect(t *testing.T) {
 	// stats -> eval -> sort desc -> head: error_rate must come out descending.
 	input := generateBackendEvents(50)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | eval is_error = if(level = "ERROR", 1, 0) | stats sum(is_error) as errors, count() as total by service | eval error_rate = round(errors * 100.0 / total, 1) | sort - error_rate | head 10`)
 
 	if r.ExitCode != 0 {
@@ -263,7 +263,7 @@ func TestComplex_NestedAgg_TwoPhaseConsistent(t *testing.T) {
 	// stats -> eval -> stats: the second stats groups the services of the first.
 	input := generateBackendEvents(50)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | stats count() as events, avg(duration_ms) as avg_dur by service | eval is_slow = if(avg_dur > 500, "slow", "fast") | stats count() as group_count by is_slow`)
 
 	if r.ExitCode != 0 {
@@ -290,7 +290,7 @@ func TestComplex_NestedAgg_TwoPhaseConsistent(t *testing.T) {
 func TestComplex_EvalReplace_OutputIsValid(t *testing.T) {
 	input := generateBackendEvents(20)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | eval clean = replace(message, "[^a-zA-Z0-9 ]", "") | fields clean | head 5`)
 
 	if r.ExitCode != 0 {
@@ -319,7 +319,7 @@ func TestComplex_EvalReplace_OutputIsValid(t *testing.T) {
 func TestComplex_EvalLike_PrefixAndSubstring(t *testing.T) {
 	input := generateBackendEvents(20)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | eval is_request = if(like(message, "request%"), "yes", "no"), has_dash = if(like(message, "%-%"), "yes", "no") | stats count() by is_request, has_dash | sort is_request, has_dash`)
 
 	if r.ExitCode != 0 {
@@ -343,7 +343,7 @@ func TestComplex_EvalIsNotNull_NullHandling(t *testing.T) {
 	// Some events have error/amount_cents, others don't.
 	input := generateBackendEvents(20)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | eval has_error = if(isnotnull(error), "yes", "no"), has_amount = if(isnotnull(amount_cents), "yes", "no") | stats count() as count by has_error, has_amount | sort has_error, has_amount`)
 
 	if r.ExitCode != 0 {
@@ -367,7 +367,7 @@ func TestComplex_EvalIsNotNull_NullHandling(t *testing.T) {
 func TestComplex_EvalCoalesce(t *testing.T) {
 	input := generateBackendEvents(20)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | eval err = coalesce(error, "none"), amt = coalesce(amount_cents, 0) | stats count() by err | sort err`)
 
 	if r.ExitCode != 0 {
@@ -395,7 +395,7 @@ func TestComplex_EvalCoalesce(t *testing.T) {
 func TestComplex_Percentiles_Ordered(t *testing.T) {
 	input := generateBackendEvents(100)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | stats percentile(duration_ms, 25) as p25, p50(duration_ms) as p50, p75(duration_ms) as p75, p90(duration_ms) as p90, p99(duration_ms) as p99`)
 
 	if r.ExitCode != 0 {
@@ -419,13 +419,13 @@ func TestComplex_Percentiles_Ordered(t *testing.T) {
 func TestComplex_SearchTerms_CountMatchesRegexpWhere(t *testing.T) {
 	input := generateBackendEvents(50)
 
-	searchResult := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	searchResult := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`search source=main request processed | stats count() as count`)
 	if searchResult.ExitCode != 0 {
 		t.Fatalf("search exit %d: %s", searchResult.ExitCode, searchResult.Stderr)
 	}
 
-	whereResult := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	whereResult := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | where regexp_match(message, "request") and regexp_match(message, "processed") | stats count() as count`)
 	if whereResult.ExitCode != 0 {
 		t.Fatalf("where exit %d: %s", whereResult.ExitCode, whereResult.Stderr)
@@ -445,14 +445,14 @@ func TestComplex_SearchTerms_CountMatchesRegexpWhere(t *testing.T) {
 func TestComplex_SearchOR_ReturnsAtLeastOnePart(t *testing.T) {
 	input := generateBackendEvents(50)
 
-	onlyErrors := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	onlyErrors := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | where level = "ERROR" | stats count() as count`)
 	if onlyErrors.ExitCode != 0 {
 		t.Fatalf("exit %d: %s", onlyErrors.ExitCode, onlyErrors.Stderr)
 	}
 	errorCount := jsonCount(t, onlyErrors.Stdout)
 
-	orResult := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	orResult := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`search source=main ERROR OR WARN | stats count() as count`)
 	if orResult.ExitCode != 0 {
 		t.Fatalf("search OR exit %d: %s", orResult.ExitCode, orResult.Stderr)
@@ -469,7 +469,7 @@ func TestComplex_SearchOR_ReturnsAtLeastOnePart(t *testing.T) {
 func TestComplex_WhereBetween_MinMaxInRange(t *testing.T) {
 	input := generateBackendEvents(50)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | where duration_ms between 50 and 2000 | stats min(duration_ms) as min_dur, max(duration_ms) as max_dur, count()`)
 
 	if r.ExitCode != 0 {
@@ -492,7 +492,7 @@ func TestComplex_WhereBetween_MinMaxInRange(t *testing.T) {
 func TestComplex_Streamstats_CumulativeMonotonic(t *testing.T) {
 	input := generateBackendEvents(20)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | sort duration_ms | streamstats sum(duration_ms) as cum_dur | fields duration_ms, cum_dur | head 15`)
 
 	if r.ExitCode != 0 {
@@ -522,13 +522,13 @@ func TestComplex_Streamstats_CumulativeMonotonic(t *testing.T) {
 func TestComplex_DedupMulti_CountMatchesDistinctGroups(t *testing.T) {
 	input := generateBackendEvents(50)
 
-	dedupResult := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	dedupResult := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | dedup level, service | stats count() as unique_pairs`)
 	if dedupResult.ExitCode != 0 {
 		t.Fatalf("dedup exit %d: %s", dedupResult.ExitCode, dedupResult.Stderr)
 	}
 
-	dcResult := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	dcResult := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | stats dc(level) as levels, dc(service) as services`)
 	if dcResult.ExitCode != 0 {
 		t.Fatalf("dc exit %d: %s", dcResult.ExitCode, dcResult.Stderr)
@@ -554,7 +554,7 @@ func TestComplex_EvalCase_NoNullBuckets(t *testing.T) {
 	// CASE with an else branch puts every event in a bucket.
 	input := generateBackendEvents(50)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | eval bucket = case(duration_ms < 50, "fast", duration_ms < 500, "medium" else "slow") | stats count() as count by bucket`)
 
 	if r.ExitCode != 0 {
@@ -585,7 +585,7 @@ func TestComplex_EvalCase_NoNullBuckets(t *testing.T) {
 func TestComplex_EarliestLatest_ByGroup(t *testing.T) {
 	input := generateBackendEvents(50)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | stats earliest(level) as first_level, latest(level) as last_level by service | sort service`)
 
 	if r.ExitCode != 0 {
@@ -615,7 +615,7 @@ func TestComplex_EarliestLatest_ByGroup(t *testing.T) {
 func TestComplex_LargeInput_5000Events_DeepPipeline(t *testing.T) {
 	input := generateBackendEvents(5000)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | where level != "INFO" | stats count() as count, avg(duration_ms) as avg_dur, max(duration_ms) as max_dur by level, service | sort - count | head 20`)
 
 	if r.ExitCode != 0 {
@@ -648,7 +648,7 @@ func TestComplex_LargeInput_5000Events_DeepPipeline(t *testing.T) {
 func TestComplex_EvalStringFunctions_Chained(t *testing.T) {
 	input := generateBackendEvents(30)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | eval msg_upper = upper(message) | eval msg_len = length(msg_upper) | eval msg_short = substring(msg_upper, 1, 10) | fields msg_short, msg_len | head 5`)
 
 	if r.ExitCode != 0 {
@@ -678,7 +678,7 @@ func TestComplex_EvalStringFunctions_Chained(t *testing.T) {
 func TestComplex_EvalStrftime_HourExtraction(t *testing.T) {
 	input := generateBackendEvents(30)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | eval hour = strftime(_time, "%H") | stats count() by hour | sort hour`)
 
 	if r.ExitCode != 0 {
@@ -705,7 +705,7 @@ func TestComplex_EvalStrftime_HourExtraction(t *testing.T) {
 func TestComplex_EvalCIDRMatch(t *testing.T) {
 	input := generateBackendEvents(20)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | eval is_internal = if(cidrmatch(client_ip, "10.0.0.0/8"), "yes", "no") | stats count() by is_internal`)
 
 	if r.ExitCode != 0 {
@@ -728,7 +728,7 @@ func TestComplex_EvalCIDRMatch(t *testing.T) {
 func TestComplex_EvalTypeof(t *testing.T) {
 	input := generateBackendEvents(20)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | eval dur_type = typeof(duration_ms), status_type = typeof(status) | stats count() by dur_type, status_type`)
 
 	if r.ExitCode != 0 {
@@ -750,7 +750,7 @@ func TestComplex_EvalTypeof(t *testing.T) {
 func TestComplex_EvalTypeof_MessageIsString(t *testing.T) {
 	input := generateBackendEvents(20)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | eval msg_type = typeof(message) | stats count() by msg_type | sort msg_type`)
 
 	if r.ExitCode != 0 {
@@ -766,7 +766,7 @@ func TestComplex_EvalTypeof_MessageIsString(t *testing.T) {
 func TestComplex_EvalConcat(t *testing.T) {
 	input := generateBackendEvents(20)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | eval label = concat(level, ":", service) | fields label | head 5`)
 
 	if r.ExitCode != 0 {
@@ -794,7 +794,7 @@ func TestComplex_EvalConcat(t *testing.T) {
 func TestComplex_SlowestServices(t *testing.T) {
 	input := generateBackendEvents(50)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | stats max(duration_ms) as max_duration_ms by service | sort - max_duration_ms | head 5`)
 
 	if r.ExitCode != 0 {
@@ -815,7 +815,7 @@ func TestComplex_SlowestServices(t *testing.T) {
 func TestComplex_ErrorsByService(t *testing.T) {
 	input := generateBackendEvents(50)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | where lower(level) in ("error", "fatal") | stats count() as count by service`)
 
 	if r.ExitCode != 0 {
@@ -834,7 +834,7 @@ func TestComplex_ErrorsByService(t *testing.T) {
 func TestComplex_Describe(t *testing.T) {
 	input := generateBackendEvents(30)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json", `describe main`)
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json", `describe main`)
 
 	if r.ExitCode != 0 {
 		t.Fatalf("describe: exit %d, stderr: %s", r.ExitCode, r.Stderr)
@@ -854,7 +854,7 @@ func TestComplex_Describe(t *testing.T) {
 func TestComplex_XYseries_AllCellsPresent(t *testing.T) {
 	input := generateBackendEvents(50)
 
-	r := runLynxDBWithStdin(t, input, "query", "--format", "json",
+	r := runLynxDBWithStdin(t, input, "query", "--file", "-", "--format", "json",
 		`source=main | stats count() as c by level, service | xyseries level service in ("api-service", "auth-service", "gateway-service", "payment-service") c | sort level`)
 
 	if r.ExitCode != 0 {

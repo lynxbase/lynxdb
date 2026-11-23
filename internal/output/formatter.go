@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/lynxbase/lynxdb/internal/ui"
 )
 
@@ -51,14 +53,9 @@ type HumanTableOptions struct {
 	NullValue string
 }
 
-// isTTY returns true if f is a terminal.
+// isTTY reports whether f is a terminal.
 func isTTY(f *os.File) bool {
-	fi, err := f.Stat()
-	if err != nil {
-		return false
-	}
-
-	return (fi.Mode() & os.ModeCharDevice) != 0
+	return term.IsTerminal(int(f.Fd()))
 }
 
 // DetectFormatWithOptions chooses the best formatter with optional human-output

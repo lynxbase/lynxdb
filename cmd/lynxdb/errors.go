@@ -140,6 +140,12 @@ func renderErrorWithLynx(err error, showLynx bool) {
 			return
 		}
 
+		if isConnectionError(qe.inner) {
+			renderQueryConnectionError(qe.query)
+
+			return
+		}
+
 		// Not a parse error — fall through to standard rendering
 		// with the inner error (unwrap the queryError wrapper).
 		renderErrorWithLynx(qe.inner, false)
@@ -209,15 +215,25 @@ func renderNoFilesMatchingError(err noFilesMatchingError) {
 	fmt.Fprintf(os.Stderr, "    Directory: %s\n", t.Dim.Render(cwd))
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintf(os.Stderr, "    %s\n", t.Dim.Render("Try:"))
-	fmt.Fprintf(os.Stderr, "      %s\n", t.Info.Render("lynxdb query --file './*.log' 'search source=main error'"))
-	fmt.Fprintf(os.Stderr, "      %s\n", t.Info.Render("cat app.log | lynxdb query 'search source=main error'"))
+	fmt.Fprintf(os.Stderr, "      %s\n", t.Info.Render("lynxdb query --file './*.log' 'search error'"))
+	fmt.Fprintf(os.Stderr, "      %s\n", t.Info.Render("cat app.log | lynxdb query --file - 'search error'"))
 	fmt.Fprintf(os.Stderr, "      %s\n", t.Info.Render("ls -la"))
 	fmt.Fprintln(os.Stderr)
 }
 
 // renderConnectionError prints a connection error with helpful suggestions.
 func renderConnectionError() {
-	ui.Stderr.RenderConnectionError(globalServer)
+	ui.Stderr.RenderConnectionError(globalServer, "")
+}
+
+// renderQueryConnectionError prints the connection error of a server query;
+// when standard input is not a terminal, it shows how to query that input
+// instead.
+func renderQueryConnectionError(q string) {
+	if isStdinTTY() {
+		q = ""
+	}
+	ui.Stderr.RenderConnectionError(globalServer, q)
 }
 
 // renderTimeoutError prints a timeout error with actionable next steps.

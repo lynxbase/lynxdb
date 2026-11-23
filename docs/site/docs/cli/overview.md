@@ -14,43 +14,37 @@ lynxdb [command] [flags]
 
 ## Where a query runs
 
-`lynxdb query` runs a query in one of two places.
+`lynxdb query` runs a query in one of two places, chosen by its flags and never by what standard input is.
 
 | Mode | Trigger | What happens |
 |------|---------|--------------|
 | Server | Default | The CLI sends the query to `POST /api/v1/query` on the server named by `--server` and prints the rows it returns. |
-| Local | `--file <path or glob>`, or piped stdin | The CLI opens a database of its own in a temporary directory, loads the input into the index `main`, runs the query in process and removes the directory on exit. No server is involved. |
+| Local | `--file <path or glob>`, or `--file -` for standard input | The CLI opens a database of its own in a temporary directory, loads the input into the index `main`, runs the query in process and removes the directory on exit. No server is involved. |
 
-Both modes compile the same PPL text with the same compiler and run it on the same engine, so a query that works against a file works against the server.
+Both modes compile the same PPL text with the same compiler and run it on the same engine. A local query may leave out the source and then reads `main`; a server query names its source.
 
 ```bash
 # Server
 lynxdb query 'source=main level=ERROR | stats count() as errors by host'
 
 # Local file
-lynxdb query --file access.log 'source=main | stats count() by status'
+lynxdb query --file access.log 'stats count() by status'
 
 # Standard input
-kubectl logs deploy/api | lynxdb query 'source=main | where response_time > 500 | stats count() by path'
+kubectl logs deploy/api | lynxdb query --file - 'where response_time > 500 | stats count() by path'
 ```
 
 The [query page](./query.md) covers flags, time ranges and how local input is loaded.
 
-### Bare stdin
+### Bare queries
 
-Run `lynxdb` without a subcommand and with piped stdin to load the input and print its first ten events (`source=main | head 10`):
-
-```bash
-cat app.log | lynxdb
-```
-
-When the first argument is not a command name, the arguments form a query over stdin:
+When the first argument is not a command name, the arguments form a query over standard input, like `lynxdb query --file -`:
 
 ```bash
-cat app.log | lynxdb 'source=main | stats count() by level'
+cat app.log | lynxdb 'stats count() by level'
 ```
 
-Without piped stdin, a bare query fails with a hint to pipe input, and plain `lynxdb` prints a short welcome screen.
+With standard input on a terminal, a bare query fails with a hint to pipe input. Plain `lynxdb` prints a short welcome screen and does not read standard input.
 
 ## Global flags
 
@@ -144,7 +138,7 @@ Every command prints its flags and examples with `lynxdb <command> --help`.
 [PPL errors](../ppl/errors.md) lists the compile error codes and their messages.
 
 ```bash
-lynxdb query 'source=main level=FATAL' --since 1h --fail-on-empty --quiet < /dev/null > /dev/null
+lynxdb query 'source=main level=FATAL' --since 1h --fail-on-empty --quiet > /dev/null
 case $? in
   0) echo "fatal errors found" ;;
   6) echo "no fatal errors" ;;

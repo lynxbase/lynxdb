@@ -6,13 +6,14 @@ description: Query local files and standard input with LynxDB without running a 
 
 # Pipe Mode (No Server)
 
-`lynxdb query` runs without a server when you give it a file or pipe data
-into it. It works like `grep` or `jq`: read the input, run a
-[PPL](../ppl/overview.md) query, print the result, exit.
+`lynxdb query --file` runs a query over local files without a server;
+`--file -` reads standard input. It works like `grep` or `jq`: read the
+input, run a [PPL](../ppl/overview.md) query, print the result, exit.
+Without `--file`, `lynxdb query` always sends the query to a server.
 
 ## How it works
 
-With `--file` or piped standard input, the CLI:
+With `--file`, the CLI:
 
 1. Compiles the query first, so a bad query fails before any input is read.
 2. Opens a database in a temporary directory and loads every line into the
@@ -28,17 +29,27 @@ With `--file` or piped standard input, the CLI:
 4. Runs the same compiled plan a server would run, prints the rows, deletes
    the temporary directory and exits.
 
-No daemon or config file is involved. Queries start with `source=main`, as
-on a server.
+No daemon or config file is involved. A local query may leave out the
+source, and then reads `main`:
+
+| Query | Runs as |
+|-------|---------|
+| `where status >= 500 \| stats count()` | `source=main \| where status >= 500 \| stats count()` |
+| `\| where status >= 500` | `source=main \| where status >= 500` |
+| `level=ERROR timeout \| stats count()` | `search source=main level=ERROR timeout \| stats count()` |
+
+A query whose first word names a command reads `main` and runs that command;
+otherwise its leading words are search terms. A query that names a source,
+such as `source=main level=ERROR`, runs as written.
 
 ## Query local files
 
 ```bash
 # One file
-lynxdb query --file access.log 'source=main | stats count() by status'
+lynxdb query --file access.log 'stats count() by status'
 
 # A glob (quote it so the shell does not expand it)
-lynxdb query --file '/var/log/nginx/*.log' 'source=main status>=500 | top 10 uri'
+lynxdb query --file '/var/log/nginx/*.log' 'status>=500 | top 10 uri'
 ```
 
 A text line's `source` field is the path of the file it came from;
@@ -47,28 +58,35 @@ their own fields only.
 
 ## Pipe from standard input
 
+`--file -` reads standard input. `lynxdb '<query>'`, with a query and no
+command, is the short form:
+
 ```bash
 # Kubernetes logs
-kubectl logs deploy/api | lynxdb query 'source=main | stats avg(duration_ms), p99(duration_ms) by service'
+kubectl logs deploy/api | lynxdb query --file - 'stats avg(duration_ms), p99(duration_ms) by service'
 
 # Docker logs
-docker logs myapp 2>&1 | lynxdb query 'source=main OOM | fields _time, _raw | head 20'
+docker logs myapp 2>&1 | lynxdb 'OOM | fields _time, _raw | head 20'
 
 # Compressed files
-zcat archive.log.gz | lynxdb query 'source=main | where status >= 500 | top 10 path'
+zcat archive.log.gz | lynxdb 'where status >= 500 | top 10 path'
 
 # Pre-filter with grep
-grep "2026-01-15" /var/log/app.log | lynxdb query 'source=main | stats count() by level'
+grep "2026-01-15" /var/log/app.log | lynxdb 'stats count() by level'
 ```
 
-Piped text lines get the `source` `stdin` unless `--source` is set. `--file` and
-piped input cannot be combined in one command.
+Piped text lines get the `source` `stdin` unless `--source` is set. The short
+form fails when standard input is a terminal, and `lynxdb` with no arguments
+prints a welcome message without reading standard input.
 
-Piping into `lynxdb` with no command prints the first ten events, which is a
-quick way to see which fields were extracted:
+`head` shows which fields were extracted:
 
 ```bash
-cat app.log | lynxdb
+head -5 access.log | lynxdb 'head 1' --format json --no-stats
+```
+
+```json
+{"_raw":"2025-01-15T08:00:00.105Z host=web-03 level=ERROR method=GET path=/api/v1/users status=502 user=grace response_time=786 bytes=32228 msg=\"GET /api/v1/users completed\"","_time":"2025-01-15T08:00:00.105Z","bytes":32228,"host":"web-03","level":"ERROR","method":"GET","msg":"GET /api/v1/users completed","path":"/api/v1/users","response_time":786,"source":"stdin","status":502,"user":"grace"}
 ```
 
 ## Format detection
@@ -95,17 +113,17 @@ Results go to stdout; the statistics footer and hints go to stderr.
 
 ```bash
 # CSV, sorted by the shell
-lynxdb query --file access.log 'source=main | stats count() as n by status' --format csv | sort -t, -k1 -rn
+lynxdb query --file access.log 'stats count() as n by status' --format csv | sort -t, -k1 -rn
 
 # JSON lines into jq
-lynxdb query --file app.json 'source=main | stats count() as n by endpoint' --format json | jq '.n'
+lynxdb query --file app.json 'stats count() as n by endpoint' --format json | jq '.n'
 
 # Pull rows from a server, aggregate them locally
 lynxdb query 'source=main status>=500 | fields host, path, status' --since 1h --format ndjson \
-  | lynxdb query 'source=main | stats count() as errors by path | sort - errors'
+  | lynxdb 'stats count() as errors by path | sort - errors'
 
 # Write the result to a file
-lynxdb query --file access.log 'source=main level=ERROR' --format json --output errors.json
+lynxdb query --file access.log 'level=ERROR' --format json --output errors.json
 ```
 
 ## Output
@@ -119,10 +137,10 @@ The default format depends on where stdout goes:
 
 ```bash
 # Table on the terminal
-lynxdb query --file access.log 'source=main | stats count() by status'
+lynxdb query --file access.log 'stats count() by status'
 
 # JSON lines for jq
-lynxdb query --file access.log 'source=main | stats count() by status' --no-stats | jq .
+lynxdb query --file access.log 'stats count() by status' --no-stats | jq .
 ```
 
 `--format` picks any other format: `table`, `csv`, `tsv`, `vertical`,
@@ -135,7 +153,7 @@ and the optimizer rules that fired, without reading any input or contacting
 a server:
 
 ```bash
-lynxdb query --explain 'source=main level=ERROR | stats count() as errors by host | sort - errors | head 3'
+lynxdb query --file access.log --explain 'level=ERROR | stats count() as errors by host | sort - errors | head 3'
 ```
 
 ```text
@@ -164,8 +182,8 @@ Optimizer rules:
 ### Find the most common errors
 
 ```bash
-tail -n 100000 /var/log/app.log | lynxdb query '
-  source=main level=ERROR
+tail -n 100000 /var/log/app.log | lynxdb '
+  level=ERROR
   | stats count() as n by msg
   | sort - n
   | head 10'
@@ -175,8 +193,7 @@ tail -n 100000 /var/log/app.log | lynxdb query '
 
 ```bash
 lynxdb query --file /var/log/nginx/access.log '
-  source=main
-  | stats count() as total, count(eval(status >= 500)) as errors by uri
+  stats count() as total, count(eval(status >= 500)) as errors by uri
   | eval error_pct = round(errors * 100.0 / total, 1)
   | where error_pct > 5
   | sort - error_pct
@@ -186,9 +203,8 @@ lynxdb query --file /var/log/nginx/access.log '
 ### Kubernetes pods
 
 ```bash
-kubectl logs -l app=api --all-containers --since=1h | lynxdb query '
-  source=main
-  | stats count() as total, count(eval(level = "error")) as errors by service
+kubectl logs -l app=api --all-containers --since=1h | lynxdb '
+  stats count() as total, count(eval(level = "error")) as errors by service
   | eval error_pct = round(errors * 100.0 / total, 1)
   | sort - error_pct'
 ```

@@ -19,7 +19,7 @@ log formats, extracts `key=value` pairs and the fields of combined, syslog
 and docker lines, and runs the query. Piped input works the same way:
 
 ```bash
-cat access.log | lynxdb query 'source=main | where status >= 500 | top 5 path'
+cat access.log | lynxdb query --file - 'source=main | where status >= 500 | top 5 path'
 ```
 
 On a server (default `http://localhost:3100`), the same text queries the

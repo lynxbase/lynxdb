@@ -100,8 +100,8 @@ one argument at most 32 KB per group.
 
 ## Local execution
 
-`lynxdb query --file` and piped input compile the query first, then load
-the input into the index `main` of a database in a temporary directory,
+`lynxdb query --file`, and `--file -` for standard input, compile the
+query first, then load the input into the index `main` of a database in a temporary directory,
 which the command removes when it exits, and run the compiled plan with the
 same executors as the server. Formats are detected while loading
 (combined, syslog; `key=value` pairs are always extracted); `--raw`

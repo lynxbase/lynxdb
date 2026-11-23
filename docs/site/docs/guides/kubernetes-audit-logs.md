@@ -30,7 +30,7 @@ their path, such as `user.username` and `objectRef.resource`, and
 Count anonymous requests per user agent and source IP:
 
 ```bash
-sudo cat /var/log/kubernetes/audit/audit.log | lynxdb query '
+sudo cat /var/log/kubernetes/audit/audit.log | lynxdb query --file - '
   source=main
   | where user.username = "system:anonymous"
   | expand sourceIPs
@@ -56,7 +56,7 @@ The pipeline does the following:
 To see which resource types anonymous clients asked for:
 
 ```bash
-sudo cat /var/log/kubernetes/audit/audit.log | lynxdb query '
+sudo cat /var/log/kubernetes/audit/audit.log | lynxdb query --file - '
   source=main
   | where user.username = "system:anonymous"
   | stats count() as requests by userAgent, objectRef.resource
@@ -86,7 +86,7 @@ To see which API operations and resources produce error responses, group by
 the response code:
 
 ```bash
-sudo cat /var/log/kubernetes/audit/audit.log | lynxdb query '
+sudo cat /var/log/kubernetes/audit/audit.log | lynxdb query --file - '
   source=main
   | where responseStatus.code >= 400
   | stats count() as requests by responseStatus.code, verb, objectRef.resource

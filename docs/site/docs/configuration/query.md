@@ -18,7 +18,7 @@ The `query` section controls how the server runs queries. Every query runs as a 
 
 A job keeps running when its request returns, until it finishes, `DELETE /api/v1/query/jobs/{id}` cancels it, or the server shuts down. The result limits shape the response only: a query computes all its rows, and the response pages through them with `limit` and `offset` and reports `has_more`. To export many rows at once, use `POST /api/v1/query/stream`, which writes NDJSON rows without a limit.
 
-`lynxdb query --file` and piped input run the query in the CLI process, not on the server, so these settings do not apply to them.
+`lynxdb query --file`, including `--file -` for standard input, runs the query in the CLI process, not on the server, so these settings do not apply to it.
 
 ## Complete Example
 

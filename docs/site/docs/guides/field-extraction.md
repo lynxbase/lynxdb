@@ -84,7 +84,7 @@ everything else stays in `_raw` for query-time extraction. See
 
 ### Pipe mode
 
-`lynxdb query --file` and piped input load lines like raw ingest. In addition,
+`lynxdb query --file`, and `--file -` for standard input, load lines like raw ingest. In addition,
 when most of the first 20 lines are combined access logs, syslog lines or
 Docker JSON log lines, the CLI extracts those formats' fields while loading
 (`client_ip`, `method`, `uri`, `status`, ... for combined). The server does

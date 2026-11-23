@@ -149,7 +149,8 @@ func runWelcome(_ *cobra.Command, _ []string) error {
 	fmt.Fprintf(os.Stdout, "\n  %s - log analytics in a single binary\n\n",
 		ui.Stdout.Bold.Render(fmt.Sprintf("LynxDB %s", buildinfo.Version)))
 	fmt.Fprint(os.Stdout, `  Quick start:
-    lynxdb query --file app.log 'search source=main error'    Query a local file
+    lynxdb query --file app.log 'search error'   Query a local file
+    cat app.log | lynxdb 'stats count()'         Query standard input
     lynxdb server                                Start server on :3100
 
   Run 'lynxdb --help' for all commands.
@@ -171,44 +172,22 @@ func shouldAnimateLynx() bool {
 		os.Getenv("TERM") != "dumb"
 }
 
-// runRootCommand handles bare `lynxdb` invocation. When stdin is piped, it
-// defaults to query mode with auto-detection (like `cat file | lynxdb`).
-// Otherwise, it shows the welcome message.
+// runRootCommand handles bare `lynxdb` invocation: with arguments that name
+// no command, it runs them as a query over standard input; without
+// arguments, it shows the welcome message.
 func runRootCommand(cmd *cobra.Command, args []string) error {
-	if len(args) > 0 && !isKnownSubcommand(cmd, args[0]) {
-		query := strings.Join(args, " ")
-		if isStdinPiped() {
-			return runQueryStdin(query, "", "", "", false, false, false)
-		}
-
+	if len(args) == 0 {
+		return runWelcome(cmd, args)
+	}
+	query := strings.Join(args, " ")
+	if isStdinTTY() {
 		if s := cmd.SuggestionsFor(args[0]); len(s) > 0 {
 			return fmt.Errorf("unknown command %q for \"lynxdb\"; did you mean %s?", args[0], strings.Join(s, ", "))
 		}
 		return fmt.Errorf("bare query requires piped stdin. Use: cat file | lynxdb '%s'", query)
 	}
 
-	if isStdinPiped() {
-		return runQueryStdin("source=main | head 10", "", "", "", false, false, false)
-	}
-
-	return runWelcome(cmd, args)
-}
-
-// isKnownSubcommand returns true if name matches a registered subcommand name or alias.
-func isKnownSubcommand(cmd *cobra.Command, name string) bool {
-	for _, c := range cmd.Commands() {
-		if c.Name() == name {
-			return true
-		}
-
-		for _, alias := range c.Aliases {
-			if alias == name {
-				return true
-			}
-		}
-	}
-
-	return false
+	return runQueryStdin(localQuery{query: query})
 }
 
 // Execute runs the root command and exits with an appropriate code.

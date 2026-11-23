@@ -269,8 +269,8 @@ To analyze logs without storing them, query them directly. The CLI loads the
 input into a database of its own, runs the query and exits:
 
 ```bash
-cat app.log | lynxdb query 'source=main | stats count() by level'
-lynxdb query --file '/var/log/nginx/*.log' 'source=main status>=500 | top 10 uri'
+cat app.log | lynxdb query --file - 'stats count() by level'
+lynxdb query --file '/var/log/nginx/*.log' 'status>=500 | top 10 uri'
 ```
 
 See [Pipe Mode](../getting-started/pipe-mode.md).
