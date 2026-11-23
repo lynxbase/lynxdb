@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -79,5 +81,27 @@ func TestIngestWarnsOfFailedAndExpiredEvents(t *testing.T) {
 		if strings.Contains(stderr, "not stored") {
 			t.Errorf("--quiet printed a warning:\n%s", stderr)
 		}
+	}
+}
+
+func TestServerQueryWritesOutputFile(t *testing.T) {
+	url := respondJSON(t, map[string]any{
+		"data": map[string]any{"type": "aggregate", "columns": []string{"n"}, "rows": [][]any{{3}}},
+	})
+	path := filepath.Join(t.TempDir(), "out.csv")
+
+	stdout, _, err := runCmd(t, "--server", url, "--format", "csv", "query", "--output", path, "source=main | stats count() as n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stdout != "" {
+		t.Errorf("rows went to stdout: %q", stdout)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "n\n3\n" {
+		t.Errorf("file holds %q, want the CSV rows", got)
 	}
 }

@@ -117,9 +117,8 @@ lynxdb query 'source=main level=ERROR' --since 24h --format json > errors.json
 lynxdb query 'source=main level=ERROR' --since 24h --format csv > errors.csv
 ```
 
-For local queries, `--output <file>` writes the rows to a file; set
-`--format` with it, since `auto` picks the format from the terminal, not
-from the file.
+`--output <file>` writes the rows to a file instead; set `--format` with
+it, since `auto` picks the format from the terminal, not from the file.
 
 ## CI/CD
 

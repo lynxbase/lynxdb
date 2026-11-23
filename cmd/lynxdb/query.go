@@ -89,7 +89,7 @@ main, and a local query that names no source reads main.`,
 				if explain {
 					return runLocalExplain(query, serverQueryOptions)
 				}
-				err := runQueryServer(query, since, from, to, timeout, failEmpty, analyze)
+				err := runQueryServer(query, since, from, to, timeout, outputFile, failEmpty, analyze)
 				if err != nil {
 					return err
 				}
@@ -484,7 +484,7 @@ func printLocalResults(rows []map[string]interface{}, warnings []string, st *sta
 	return nil
 }
 
-func runQueryServer(query, since, from, to, timeout string, failEmpty, analyze bool) error {
+func runQueryServer(query, since, from, to, timeout, outputFile string, failEmpty, analyze bool) error {
 	earliest, latest, err := queryTimeBoundsFromFlags(since, from, to)
 	if err != nil {
 		return err
@@ -505,7 +505,7 @@ func runQueryServer(query, since, from, to, timeout string, failEmpty, analyze b
 		defer cancel()
 	}
 
-	return doQueryPlain(ctx, query, since, earliest, latest, failEmpty, analyze)
+	return doQueryPlain(ctx, query, since, earliest, latest, outputFile, failEmpty, analyze)
 }
 
 func queryTimeBoundsFromFlags(since, from, to string) (string, string, error) {
@@ -532,7 +532,7 @@ func queryTimeBoundsFromFlags(since, from, to string) (string, string, error) {
 	return "", "", nil
 }
 
-func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty, analyze bool) error {
+func doQueryPlain(ctx context.Context, query, since, earliest, latest, outputFile string, failEmpty, analyze bool) error {
 	start := time.Now()
 
 	result, err := apiClient().Query(ctx, client.QueryRequest{
@@ -546,7 +546,7 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 
 	// Handle async fallback (HTTP 202 → job).
 	if result.Type == client.ResultTypeJob && result.Job != nil {
-		return handleAsyncFallback(ctx, result.Job.JobID, failEmpty, analyze)
+		return handleAsyncFallback(ctx, result.Job.JobID, outputFile, failEmpty, analyze)
 	}
 
 	rows := queryResultToRows(result)
@@ -563,7 +563,7 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 
 	setClipboardRows(rows)
 
-	if err := printFormattedRows(rows); err != nil {
+	if err := printFormattedRows(rows, outputFile); err != nil {
 		return err
 	}
 	printQueryWarnings(result.Meta.Warnings)
@@ -593,12 +593,25 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 	return nil
 }
 
-// printFormattedRows formats rows using the global --format flag and writes to stdout.
-// Single point of output formatting for all commands that produce row data.
-func printFormattedRows(rows []map[string]interface{}) error {
-	f := output.DetectFormatWithOptions(output.Format(globalFormat), rows, humanOutputOptions(ui.Stdout))
+// printFormattedRows formats the rows of a server query with --format and
+// writes them to stdout, or to outputFile when it is set.
+func printFormattedRows(rows []map[string]interface{}, outputFile string) error {
+	if outputFile == "" {
+		f := output.DetectFormatWithOptions(output.Format(globalFormat), rows, humanOutputOptions(ui.Stdout))
 
-	return f.Format(os.Stdout, rows)
+		return f.Format(os.Stdout, rows)
+	}
+	file, err := os.Create(outputFile)
+	if err != nil {
+		return fmt.Errorf("create output file: %w", err)
+	}
+	f := output.DetectFormatWithOptions(output.Format(globalFormat), rows, humanOutputOptions(nil))
+	if err := f.Format(file, rows); err != nil {
+		file.Close()
+		return fmt.Errorf("format output: %w", err)
+	}
+
+	return file.Close()
 }
 
 func printQueryInsightFooter(st *stats.QueryStats) {
@@ -670,7 +683,7 @@ func buildQueryStatsFromMeta(meta client.Meta, rowsReturned int64, totalDuration
 	return st
 }
 
-func handleAsyncFallback(ctx context.Context, jobID string, failEmpty, analyze bool) error {
+func handleAsyncFallback(ctx context.Context, jobID, outputFile string, failEmpty, analyze bool) error {
 	start := time.Now()
 
 	result, err := apiClient().PollJob(ctx, jobID, nil)
@@ -693,7 +706,7 @@ func handleAsyncFallback(ctx context.Context, jobID string, failEmpty, analyze b
 
 	setClipboardRows(rows)
 
-	if err := printFormattedRows(rows); err != nil {
+	if err := printFormattedRows(rows, outputFile); err != nil {
 		return err
 	}
 	printQueryWarnings(result.Meta.Warnings)
