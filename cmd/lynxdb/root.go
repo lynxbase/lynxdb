@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/lynxbase/lynxdb/internal/buildinfo"
+	"github.com/lynxbase/lynxdb/internal/output"
 	"github.com/lynxbase/lynxdb/internal/ui"
 	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/client"
@@ -49,13 +50,26 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:           "lynxdb",
-	Short:         "LynxDB - log analytics in a single binary",
-	Long:          `LynxDB is a columnar log storage and search engine queried with PPL.`,
-	RunE:          runRootCommand,
-	Args:          cobra.ArbitraryArgs,
-	SilenceUsage:  true,
-	SilenceErrors: true,
+	Use:               "lynxdb",
+	Short:             "LynxDB - log analytics in a single binary",
+	Long:              `LynxDB is a columnar log storage and search engine queried with PPL.`,
+	RunE:              runRootCommand,
+	PersistentPreRunE: checkOutputFormat,
+	Args:              cobra.ArbitraryArgs,
+	SilenceUsage:      true,
+	SilenceErrors:     true,
+}
+
+// checkOutputFormat rejects an unknown --format, or default_format of
+// .lynxdbrc, before any command runs.
+func checkOutputFormat(_ *cobra.Command, _ []string) error {
+	f, err := output.ParseFormat(globalFormat)
+	if err != nil {
+		return err
+	}
+	globalFormat = string(f)
+
+	return nil
 }
 
 func init() {
@@ -72,7 +86,7 @@ func init() {
 	pf.StringVar(&globalServer, "server", envOrDefault("LYNXDB_SERVER", "http://localhost:3100"), "LynxDB server address")
 	pf.StringVar(&globalToken, "token", envOrDefault("LYNXDB_TOKEN", ""), "API key for authentication")
 	pf.StringVarP(&globalProfile, "profile", "p", envOrDefault("LYNXDB_PROFILE", ""), "Connection profile name")
-	pf.StringVarP(&globalFormat, "format", "F", "auto", "Output format: auto, json, ndjson, table, box, ascii, markdown, vertical, line, G, csv, tsv, raw")
+	pf.StringVarP(&globalFormat, "format", "F", "auto", "Output format: auto, json, ndjson, table, markdown, csv, tsv, raw")
 	pf.BoolVarP(&globalQuiet, "quiet", "q", false, "Suppress non-data output")
 	pf.BoolVarP(&globalVerbose, "verbose", "v", false, "Show extra detail")
 	pf.BoolVar(&globalNoStats, "no-stats", false, "Suppress query statistics")

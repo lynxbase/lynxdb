@@ -29,13 +29,28 @@ const (
 	FormatCSV      Format = "csv"
 	FormatTSV      Format = "tsv"
 	FormatRaw      Format = "raw"
-	FormatBox      Format = "box"
 	FormatMarkdown Format = "markdown"
-	FormatASCII    Format = "ascii"
-	FormatVertical Format = "vertical"
-	FormatLine     Format = "line"
-	FormatG        Format = "G"
 )
+
+// Formats lists every output format.
+var Formats = []Format{FormatAuto, FormatJSON, FormatNDJSON, FormatTable, FormatMarkdown, FormatCSV, FormatTSV, FormatRaw}
+
+// ParseFormat returns the output format named s, matched regardless of
+// case; an empty s is auto.
+func ParseFormat(s string) (Format, error) {
+	f := normalizeFormat(Format(s))
+	for _, known := range Formats {
+		if f == known {
+			return f, nil
+		}
+	}
+	names := make([]string, len(Formats))
+	for i, known := range Formats {
+		names[i] = string(known)
+	}
+
+	return "", fmt.Errorf("unknown output format %q; use %s", s, strings.Join(names, ", "))
+}
 
 // Formatter writes query results to an output writer.
 type Formatter interface {
@@ -81,7 +96,7 @@ func DetectFormatWithOptions(format Format, rows []map[string]interface{}, opts 
 	}
 
 	switch format {
-	case FormatTable, FormatBox, FormatASCII, FormatMarkdown:
+	case FormatTable, FormatMarkdown:
 		if len(rows) == 1 && len(rows[0]) == 1 {
 			if _, ok := rows[0]["_raw"]; ok {
 				return &SingleValueFormatter{}
@@ -104,8 +119,6 @@ func DetectFormatWithOptions(format Format, rows []map[string]interface{}, opts 
 		return &TSVFormatter{}
 	case FormatRaw:
 		return &RawFormatter{}
-	case FormatVertical, FormatLine, FormatG:
-		return &VerticalFormatter{Theme: t, Compact: opts.Compact, MaxRows: opts.MaxRows, NullValue: opts.NullValue}
 	default: // auto
 		if !isTTY(os.Stdout) {
 			return &JSONFormatter{}
@@ -126,51 +139,19 @@ func DetectFormatWithOptions(format Format, rows []map[string]interface{}, opts 
 }
 
 func normalizeFormat(format Format) Format {
-	switch strings.ToLower(string(format)) {
-	case "", string(FormatAuto):
+	if format == "" {
 		return FormatAuto
-	case string(FormatTable):
-		return FormatTable
-	case string(FormatBox):
-		return FormatBox
-	case string(FormatMarkdown):
-		return FormatMarkdown
-	case string(FormatASCII):
-		return FormatASCII
-	case string(FormatJSON):
-		return FormatJSON
-	case string(FormatNDJSON):
-		return FormatNDJSON
-	case string(FormatCSV):
-		return FormatCSV
-	case string(FormatTSV):
-		return FormatTSV
-	case string(FormatRaw):
-		return FormatRaw
-	case string(FormatVertical):
-		return FormatVertical
-	case string(FormatLine):
-		return FormatLine
-	case "g":
-		return FormatG
-	default:
-		return format
 	}
+
+	return Format(strings.ToLower(string(format)))
 }
 
 func tableStyleForFormat(format Format, fallback ui.TableStyle) ui.TableStyle {
-	switch format {
-	case FormatASCII:
-		return ui.StyleASCII
-	case FormatMarkdown:
+	if format == FormatMarkdown {
 		return ui.StyleMarkdown
-	default:
-		if fallback != ui.StyleBox {
-			return fallback
-		}
-
-		return ui.StyleBox
 	}
+
+	return fallback
 }
 
 func (opts HumanTableOptions) effectiveWidth() int {
@@ -358,70 +339,6 @@ func (f *SingleValueFormatter) Format(w io.Writer, rows []map[string]interface{}
 	}
 	for _, v := range rows[0] {
 		fmt.Fprintln(w, formatValue(v))
-	}
-
-	return nil
-}
-
-// VerticalFormatter outputs results in vertical format (one field per line).
-// Best for wide tables with few rows.
-type VerticalFormatter struct {
-	Theme     *ui.Theme
-	Compact   bool
-	MaxRows   int
-	NullValue string
-}
-
-func (f *VerticalFormatter) Format(w io.Writer, rows []map[string]interface{}) error {
-	if len(rows) == 0 {
-		fmt.Fprintln(w, "No results.")
-
-		return nil
-	}
-
-	theme := f.Theme
-	if theme == nil {
-		theme = ui.NewTheme(w, true)
-	}
-
-	allKeys := collectColumns(rows)
-	kinds := inferColumnKinds(rows, allKeys)
-	kindByKey := make(map[string]ui.ColumnKind, len(allKeys))
-	maxLen := 0
-	for i, k := range allKeys {
-		kindByKey[k] = kinds[i]
-		if len(k) > maxLen {
-			maxLen = len(k)
-		}
-	}
-
-	shownRows := rows
-	if f.MaxRows > 0 && f.MaxRows < len(shownRows) {
-		shownRows = shownRows[:f.MaxRows]
-	}
-	for i, row := range shownRows {
-		fmt.Fprintf(w, "  %s\n", theme.Rule.Render(fmt.Sprintf("record %d", i+1)))
-		keys := collectColumns([]map[string]interface{}{row})
-		for _, k := range keys {
-			label := theme.Label.Render(fmt.Sprintf("%*s", maxLen, k))
-			value := formatHumanValue(row[k], kindByKey[k], theme, f.NullValue)
-			fmt.Fprintf(w, "  %s  %s\n", label, value)
-		}
-		if i < len(shownRows)-1 {
-			if f.Compact {
-				fmt.Fprintln(w)
-			} else {
-				fmt.Fprintln(w)
-				fmt.Fprintln(w)
-			}
-		}
-	}
-	if f.MaxRows > 0 && len(shownRows) < len(rows) {
-		word := "rows"
-		if len(rows) == 1 {
-			word = "row"
-		}
-		fmt.Fprintf(w, "\n(%d %s, %d shown — use --max-rows to see more)\n", len(rows), word, len(shownRows))
 	}
 
 	return nil

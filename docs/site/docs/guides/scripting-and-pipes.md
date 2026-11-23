@@ -48,8 +48,7 @@ loading details.
 |--------|--------|
 | `auto` | Table on a terminal, JSON lines otherwise (default) |
 | `json`, `ndjson` | One JSON object per line |
-| `table`, `box`, `ascii`, `markdown` | Tables |
-| `vertical` | One block per row |
+| `table`, `markdown` | Tables |
 | `csv`, `tsv` | Header row, then one line per row |
 | `raw` | The `_raw` text of each row |
 

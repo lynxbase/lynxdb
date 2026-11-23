@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/lynxbase/lynxdb/internal/ui"
 )
 
 // detectFormat picks a formatter with default human-output options.
@@ -207,14 +209,13 @@ func TestDetectFormat_Table_MultiColumn_NotSingleRaw(t *testing.T) {
 	}
 }
 
-func TestDetectFormat_TableAliases(t *testing.T) {
+func TestDetectFormat_TableStyles(t *testing.T) {
 	tests := []struct {
 		format Format
-		style  int
+		style  ui.TableStyle
 	}{
-		{FormatBox, 0},
-		{FormatMarkdown, 2},
-		{FormatASCII, 1},
+		{FormatTable, ui.StyleBox},
+		{FormatMarkdown, ui.StyleMarkdown},
 	}
 	for _, tt := range tests {
 		f := DetectFormatWithOptions(tt.format, []map[string]interface{}{{"a": 1}}, HumanTableOptions{})
@@ -222,30 +223,22 @@ func TestDetectFormat_TableAliases(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s: expected TableFormatter, got %T", tt.format, f)
 		}
-		if int(tf.Style) != tt.style {
+		if tf.Style != tt.style {
 			t.Fatalf("%s: style = %d, want %d", tt.format, tf.Style, tt.style)
 		}
 	}
 }
 
-func TestDetectFormat_VerticalAliases(t *testing.T) {
-	for _, format := range []Format{FormatVertical, FormatLine, FormatG, Format("g")} {
-		f := DetectFormatWithOptions(format, []map[string]interface{}{{"a": 1}}, HumanTableOptions{})
-		if _, ok := f.(*VerticalFormatter); !ok {
-			t.Fatalf("%s: expected VerticalFormatter, got %T", format, f)
+func TestParseFormat(t *testing.T) {
+	for _, s := range []string{"", "auto", "JSON", "ndjson", "table", "Markdown", "csv", "tsv", "raw"} {
+		if _, err := ParseFormat(s); err != nil {
+			t.Errorf("%q: %v", s, err)
 		}
 	}
-}
-
-func TestDetectFormat_AutoDoesNotUseWideVerticalHeuristic(t *testing.T) {
-	rows := []map[string]interface{}{{}}
-	for i := 0; i < 40; i++ {
-		rows[0][strings.Repeat("x", i+1)] = i
-	}
-
-	f := DetectFormatWithOptions(FormatTable, rows, HumanTableOptions{})
-	if _, ok := f.(*VerticalFormatter); ok {
-		t.Fatalf("table format should not route wide rows to vertical")
+	for _, s := range []string{"box", "ascii", "vertical", "line", "G", "yaml"} {
+		if _, err := ParseFormat(s); err == nil || !strings.Contains(err.Error(), "unknown output format") {
+			t.Errorf("%q: got %v, want an unknown output format error", s, err)
+		}
 	}
 }
 

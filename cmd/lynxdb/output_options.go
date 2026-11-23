@@ -35,7 +35,7 @@ func humanOutputActive() bool {
 	switch strings.ToLower(globalFormat) {
 	case "", "auto":
 		return isTTY()
-	case "table", "box", "ascii", "markdown", "vertical", "line", "g":
+	case "table", "markdown":
 		return true
 	default:
 		return false

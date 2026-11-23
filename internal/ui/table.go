@@ -8,9 +8,8 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-// Table is a styled table renderer for CLI output. It stays tabular by default
-// and truncates over-wide cells to fit the terminal; callers can explicitly set
-// StyleVertical for record-oriented output.
+// Table is a styled table renderer for CLI output. It truncates over-wide
+// cells to fit the terminal.
 //
 // For interactive scrolling tables, use bubbles/table instead.
 type Table struct {
@@ -30,9 +29,7 @@ type TableStyle int
 
 const (
 	StyleBox TableStyle = iota
-	StyleASCII
 	StyleMarkdown
-	StyleVertical
 )
 
 // ColumnKind controls per-column styling and alignment.
@@ -117,10 +114,6 @@ func (t *Table) AddRow(values ...string) *Table {
 func (t *Table) String() string {
 	if len(t.columns) == 0 {
 		return ""
-	}
-
-	if t.style == StyleVertical {
-		return t.renderRecords()
 	}
 
 	return t.renderTable()
@@ -311,13 +304,6 @@ type tableChars struct {
 
 func tableCharsForStyle(style TableStyle) tableChars {
 	switch style {
-	case StyleASCII:
-		return tableChars{
-			topLeft: "+", topSep: "+", topRight: "+",
-			midLeft: "+", midSep: "+", midRight: "+",
-			bottomLeft: "+", bottomSep: "+", bottomRight: "+",
-			horizontal: "-", vertical: "|",
-		}
 	case StyleMarkdown:
 		return tableChars{
 			midLeft: "|", midSep: "|", midRight: "|",
@@ -365,79 +351,4 @@ func widestColumn(widths []int) int {
 	}
 
 	return idx
-}
-
-// renderRecords renders rows as vertical key-value records. This layout is used
-// when the terminal is too narrow for a readable table. Every value is
-// preserved in full — nothing is ever truncated.
-//
-// Example output:
-//
-//	host:    web-01.prod.example.com
-//	status:  200
-//	message: Connection established
-func (t *Table) renderRecords() string {
-	var b strings.Builder
-
-	labelStyle := t.theme.Label
-	ruleStyle := t.theme.Rule
-
-	// Find the longest column name for alignment.
-	maxLabel := 0
-	for _, col := range t.columns {
-		if len(col) > maxLabel {
-			maxLabel = len(col)
-		}
-	}
-
-	for i, row := range t.rows {
-		header := fmt.Sprintf(" record %d ", i+1)
-		remaining := t.termWidth - len(header) - 1
-		if remaining < 0 {
-			remaining = 0
-		}
-
-		line := header + strings.Repeat("\u2500", remaining)
-		b.WriteString(ruleStyle.Render(line))
-		b.WriteByte('\n')
-
-		// Key-value pairs.
-		for j, col := range t.columns {
-			val := ""
-			if j < len(row) {
-				val = row[j]
-			}
-
-			label := labelStyle.Render(fmt.Sprintf("  %-*s", maxLabel, col))
-			prefix := label + "  "
-			prefixWidth := ansi.StringWidth(prefix)
-			valueWidth := t.termWidth - prefixWidth
-			if valueWidth < 1 {
-				valueWidth = 1
-			}
-			wrappedValue := ansi.Wrap(val, valueWidth, " ")
-			wrappedLines := strings.Split(wrappedValue, "\n")
-			if len(wrappedLines) == 0 {
-				wrappedLines = []string{""}
-			}
-
-			b.WriteString(label)
-			b.WriteString("  ")
-			b.WriteString(wrappedLines[0])
-			b.WriteByte('\n')
-			continuationPrefix := strings.Repeat(" ", prefixWidth)
-			for _, line := range wrappedLines[1:] {
-				b.WriteString(continuationPrefix)
-				b.WriteString(line)
-				b.WriteByte('\n')
-			}
-		}
-
-		// Blank line between records (but not after the last one).
-		if i < len(t.rows)-1 {
-			b.WriteByte('\n')
-		}
-	}
-
-	return b.String()
 }

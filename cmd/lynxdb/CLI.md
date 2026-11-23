@@ -34,7 +34,7 @@ Persistent flags on the root command (`root.go`):
 | `--token` | | | `LYNXDB_TOKEN` | API key for authentication |
 | `--profile` | `-p` | | `LYNXDB_PROFILE` | Connection profile name |
 | `--config` | | | | Config file path (`LYNXDB_CONFIG` when unset) |
-| `--format` | `-F` | `auto` | | `auto`, `json`, `ndjson`, `table`, `box`, `ascii`, `markdown`, `vertical`, `line`, `G`, `csv`, `tsv`, `raw` |
+| `--format` | `-F` | `auto` | | `auto`, `json`, `ndjson`, `table`, `markdown`, `csv`, `tsv`, `raw` |
 | `--quiet` | `-q` | `false` | | Suppress non-data output, including error messages |
 | `--verbose` | `-v` | `false` | | Show extra detail |
 | `--no-stats` | | `false` | | Suppress query statistics |
@@ -81,7 +81,7 @@ default_source: web       # --source on query, ingest
 lynxdb query '<PPL query>' [flags]
 ```
 
-Alias `q`. Runs a PPL query. Arguments are joined with spaces. A trailing `\G` switches `--format auto` to vertical output.
+Alias `q`. Runs a PPL query. Arguments are joined with spaces.
 
 **Modes**
 
@@ -411,15 +411,13 @@ Completes commands, flags, config keys, and field names and job IDs fetched from
 |--------|--------|
 | `auto` | Terminal: table, or a bare value for a 1x1 result. Not a terminal: `json` |
 | `json`, `ndjson` | One JSON object per row |
-| `table`, `box` | Box-drawn table |
-| `ascii` | ASCII table |
+| `table` | Box-drawn table |
 | `markdown` | Markdown table |
-| `vertical`, `line`, `G` | One block per row, one line per field |
 | `csv` | CSV with header |
 | `tsv` | TSV with header |
 | `raw` | `_raw` per row, or tab-separated `field=value` pairs |
 
-Data goes to stdout; statistics, hints and errors go to stderr. `NO_COLOR` disables color.
+Data goes to stdout; statistics, hints and errors go to stderr. `NO_COLOR` disables color. Another `--format` name is an error.
 
 ## Exit codes
 

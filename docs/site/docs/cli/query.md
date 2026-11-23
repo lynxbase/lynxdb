@@ -43,12 +43,6 @@ Quote the query with single quotes so the shell leaves `|`, `>` and double-quote
 
 `--timeout` has no effect on a local query, and `--copy` fails with an error there. `--since`, `--from` and `--to` select events by their time, in `[from, to)`; on a local query, `--since` counts back from the moment the input finished loading, so lines without a timestamp, which take their load time, fall inside it. With all three absent, a query covers all time unless it sets its own range with `earliest=` and `latest=`.
 
-A `\G` at the end of the query switches `--format auto` to vertical output, one field per line:
-
-```bash
-lynxdb query 'source=main level=ERROR | head 1 \G'
-```
-
 ## Server mode
 
 Without `--file`, `lynxdb query` sends the query to `POST /api/v1/query` on the server named by `--server` (see [Query API](../api/query.md)). It never reads standard input, so it behaves the same in a terminal, a pipeline, a CI step or a cron job.

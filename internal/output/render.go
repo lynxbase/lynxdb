@@ -27,8 +27,6 @@ func RenderTabular(w io.Writer, cols []string, rows [][]any, format Format, opts
 		return renderDelimited(w, cols, rows, "\t")
 	case FormatRaw:
 		return renderRaw(w, rows)
-	case FormatVertical, FormatLine, FormatG:
-		return renderOrderedVertical(w, cols, rows, opts)
 	default:
 		return renderOrderedTable(w, cols, rows, format, opts)
 	}
@@ -68,15 +66,6 @@ func renderOrderedTable(w io.Writer, cols []string, rows [][]any, format Format,
 	_, err := fmt.Fprint(w, tbl.String())
 
 	return err
-}
-
-func renderOrderedVertical(w io.Writer, cols []string, rows [][]any, opts HumanTableOptions) error {
-	return (&VerticalFormatter{
-		Theme:     opts.Theme,
-		Compact:   opts.Compact,
-		MaxRows:   opts.MaxRows,
-		NullValue: opts.NullValue,
-	}).Format(w, rowsToMaps(cols, rows))
 }
 
 func renderOrderedJSON(w io.Writer, cols []string, rows [][]any) error {

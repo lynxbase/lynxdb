@@ -149,8 +149,8 @@ lynxdb query --file access.log 'stats count() by status'
 lynxdb query --file access.log 'stats count() by status' --no-stats | jq .
 ```
 
-`--format` picks any other format: `table`, `csv`, `tsv`, `vertical`,
-`markdown`, `raw` and more. See [Output Formats](../cli/output-formats.md).
+`--format` picks another format: `table`, `markdown`, `csv`, `tsv` or `raw`.
+See [Output Formats](../cli/output-formats.md).
 
 ## See the plan
 

@@ -28,19 +28,6 @@ func TestTable_BoxRender(t *testing.T) {
 	}
 }
 
-func TestTable_ASCIIStyle(t *testing.T) {
-	got := NewTable(testTheme()).
-		SetTerminalWidth(80).
-		SetStyle(StyleASCII).
-		SetColumns("A", "B").
-		AddRow("1", "2").
-		String()
-
-	if !strings.Contains(got, "+---+---+") {
-		t.Fatalf("ASCII table missing +-+ border:\n%s", got)
-	}
-}
-
 func TestTable_MarkdownStyle(t *testing.T) {
 	got := NewTable(testTheme()).
 		SetTerminalWidth(80).
@@ -52,8 +39,8 @@ func TestTable_MarkdownStyle(t *testing.T) {
 	if !strings.Contains(got, "|---|---|") {
 		t.Fatalf("markdown table missing separator:\n%s", got)
 	}
-	if strings.Contains(got, "┌") || strings.Contains(got, "+") {
-		t.Fatalf("markdown table should not use box/ascii borders:\n%s", got)
+	if strings.Contains(got, "┌") {
+		t.Fatalf("markdown table should not use box borders:\n%s", got)
 	}
 }
 
@@ -102,21 +89,6 @@ func TestTable_NullValue(t *testing.T) {
 
 	if !strings.Contains(got, "∅") {
 		t.Fatalf("missing null placeholder:\n%s", got)
-	}
-}
-
-func TestTable_VerticalStyle(t *testing.T) {
-	got := NewTable(testTheme()).
-		SetTerminalWidth(40).
-		SetStyle(StyleVertical).
-		SetColumns("HOST", "MESSAGE").
-		AddRow("web-01", "full message value").
-		String()
-
-	for _, want := range []string{"record 1", "HOST", "web-01", "full message value"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("vertical output missing %q:\n%s", want, got)
-		}
 	}
 }
 

@@ -20,19 +20,19 @@ lynxdb query 'source=main level=ERROR | stats count() as errors by host' --forma
 | `json` | One JSON object per row, one row per line |
 | `ndjson` | Same as `json` |
 | `table` | Table with box-drawing borders and a row count |
-| `box` | Same layout as `table` |
-| `ascii` | Table drawn with plain ASCII characters, for terminals without box drawing |
 | `markdown` | Markdown table |
-| `vertical` | One block per row, one `field  value` line per field |
-| `line`, `G` | Same as `vertical` |
 | `csv` | RFC 4180 CSV with a header row |
 | `tsv` | Tab-separated values with a header row |
 | `raw` | The `_raw` text of each row; rows without `_raw` print as tab-separated `field=value` pairs |
 
-A `\G` at the end of a query switches `auto` to `vertical`, as in a MySQL client:
+Format names are matched regardless of case. Any other name fails the command before it runs:
 
 ```bash
-lynxdb query 'source=main level=ERROR | head 1 \G'
+lynxdb status --format yaml
+```
+
+```
+  ✖ ERROR: unknown output format "yaml"; use auto, json, ndjson, table, markdown, csv, tsv, raw
 ```
 
 ## Examples
@@ -64,19 +64,6 @@ lynxdb query 'source=main level=ERROR | stats count() as errors by host | sort -
 (3 rows)
 ```
 
-`ascii`:
-
-```
-+--------+--------+
-| host   | errors |
-+--------+--------+
-| api-02 |     67 |
-| web-02 |     58 |
-| web-03 |     57 |
-+--------+--------+
-(3 rows)
-```
-
 `markdown`:
 
 ```
@@ -97,20 +84,6 @@ web-02,58
 web-03,57
 ```
 
-`vertical`, for wide event rows:
-
-```bash
-lynxdb query 'source=main level=ERROR | fields host, path, status, response_time | head 1' --format vertical
-```
-
-```
-  record 1
-           host  api-02
-           path  /static/app.js
-  response_time  11
-         status  200
-```
-
 `raw` prints the original lines, ready for another tool or for a local query:
 
 ```bash
@@ -122,11 +95,11 @@ lynxdb query 'source=main status>=500 | head 2' --format raw
 2025-01-15T08:01:10.09Z host=web-01 level=ERROR method=POST path=/api/v1/users status=503 user=alice response_time=344 bytes=45705 msg="POST /api/v1/users completed"
 ```
 
-The table, CSV and vertical formats order columns the same way, not in the order of the query's `fields` or `stats` clause: the fields `_time`, `_raw`, `index`, `source`, `sourcetype` and `host` first, then the other fields alphabetically. JSON objects list their keys alphabetically.
+The table and CSV formats order columns the same way, not in the order of the query's `fields` or `stats` clause: the fields `_time`, `_raw`, `index`, `source`, `sourcetype` and `host` first, then the other fields alphabetically. JSON objects list their keys alphabetically.
 
 ## Human table flags
 
-These global flags shape `table`, `box`, `ascii`, `markdown`, `vertical` and terminal `auto` output:
+These global flags shape `table`, `markdown` and terminal `auto` output:
 
 | Flag | Description |
 |------|-------------|

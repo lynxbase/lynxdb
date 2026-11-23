@@ -76,16 +76,6 @@ main, and a local query that names no source reads main.`,
 				return fmt.Errorf("requires a PPL query")
 			}
 			query := strings.Join(args, " ")
-			if stripped, ok := stripVerticalQuerySuffix(query); ok {
-				query = stripped
-				if output.Format(globalFormat) == output.FormatAuto {
-					previousFormat := globalFormat
-					globalFormat = string(output.FormatVertical)
-					defer func() {
-						globalFormat = previousFormat
-					}()
-				}
-			}
 			if projectRC != nil && projectRC.DefaultSource != "" && !cmd.Flags().Changed("source") {
 				source = projectRC.DefaultSource
 			}
@@ -540,17 +530,6 @@ func queryTimeBoundsFromFlags(since, from, to string) (string, string, error) {
 	}
 
 	return "", "", nil
-}
-
-func stripVerticalQuerySuffix(query string) (string, bool) {
-	trimmed := strings.TrimRight(query, " \t\r\n;")
-	trimmed = strings.TrimRight(trimmed, " \t\r\n")
-	if !strings.HasSuffix(trimmed, `\G`) {
-		return query, false
-	}
-
-	stripped := strings.TrimRight(strings.TrimSuffix(trimmed, `\G`), " \t\r\n;")
-	return stripped, true
 }
 
 func doQueryPlain(ctx context.Context, query, since, earliest, latest string, failEmpty, analyze bool) error {

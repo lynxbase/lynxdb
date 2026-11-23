@@ -56,7 +56,7 @@ These flags work with every command.
 | `--token` | | | `LYNXDB_TOKEN` | API key sent as a bearer token |
 | `--profile` | `-p` | | `LYNXDB_PROFILE` | Connection profile from the config file |
 | `--config` | | auto | `LYNXDB_CONFIG` | Config file path (server, `config` commands, profiles) |
-| `--format` | `-F` | `auto` | | Output format: `auto`, `json`, `ndjson`, `table`, `box`, `ascii`, `markdown`, `vertical`, `line`, `G`, `csv`, `tsv`, `raw` |
+| `--format` | `-F` | `auto` | | Output format: `auto`, `json`, `ndjson`, `table`, `markdown`, `csv`, `tsv`, `raw` |
 | `--quiet` | `-q` | `false` | | Print data only: no hints, progress, statistics or error messages |
 | `--verbose` | `-v` | `false` | | Show extra detail, such as the full statistics block after a query on a terminal |
 | `--no-stats` | | `false` | | Do not print query statistics |
