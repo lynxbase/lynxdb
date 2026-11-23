@@ -111,7 +111,7 @@ Queries that start with `explain` (`explain source=main | stats count() by host`
 | `took_ms` | Time the query ran, in milliseconds |
 | `query_id` | Job ID, also sent as the `X-Query-ID` header |
 | `rows` | Rows the query produced, before `offset` and `limit` |
-| `warnings` | Present when the query has something to tell that is not an error, for example that the latest events of an index could not be written and are not in the result |
+| `warnings` | Present when the query has something to tell that is not an error: a field that the query reads and that no event of the indexes it scans holds (`no event of the index main holds the field nosuchfield`), or that the latest events of an index could not be written and are not in the result |
 
 ### Execution modes
 
@@ -219,6 +219,7 @@ That second error comes from `source=main | stats count() as n by host | where s
 | `UNSUPPORTED_COMMAND` | 422 | A PPL command LynxDB does not run, such as `ml` or `kmeans` |
 | `UNSUPPORTED_FUNCTION` | 422 | A PPL function LynxDB does not run, such as `geoip` |
 | `UNSUPPORTED_FEATURE` | 422 | A command option or language feature LynxDB does not run, such as `patterns method=brain` or `bin ... bins=10`. A construct that compiles but that the executor cannot run answers the same when it runs |
+| `NOT_FOUND` | 404 | A source of the query names an index there is not: `no such index: <name>`. A pattern such as `logs-*` may match no index, and `main` is there before its first event |
 | `EXECUTION_ERROR` | 500 | The query failed while running |
 | `QUERY_TOO_LARGE` | 400 | The query is longer than `query.max_query_length` bytes |
 | `TOO_MANY_REQUESTS` | 429 | `query.max_concurrent` queries are already running, or the per-IP rate limit was hit. The `Retry-After` header says when to retry |
