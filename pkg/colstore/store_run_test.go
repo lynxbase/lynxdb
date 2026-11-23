@@ -271,11 +271,10 @@ func TestMergesGiveWayToFlushesBelowTheBacklog(t *testing.T) {
 				// The flush or the rows are there all along.
 				hold(s, 1)
 				for i := range 2 {
-					w := s.NewWriter()
-					if err := w.AddNDJSON(storeDocs(i*500, 500)); err != nil {
+					if _, err := s.Append(storeDocs(i*500, 500)); err != nil {
 						t.Fatal(err)
 					}
-					if err := w.Close(); err != nil {
+					if err := s.Sync(); err != nil {
 						t.Fatal(err)
 					}
 				}
@@ -328,11 +327,10 @@ func TestMergesDoNotWaitForEachOther(t *testing.T) {
 	defer s.Close()
 	write := func(first int) {
 		t.Helper()
-		w := s.NewWriter()
-		if err := w.AddNDJSON(storeDocs(first, 500)); err != nil {
+		if _, err := s.Append(storeDocs(first, 500)); err != nil {
 			t.Fatal(err)
 		}
-		if err := w.Close(); err != nil {
+		if err := s.Sync(); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -400,11 +398,10 @@ func TestClosedPartitionsAreMergedIntoOneRun(t *testing.T) {
 	defer s.Close()
 	write := func(docs []byte) {
 		t.Helper()
-		w := s.NewWriter()
-		if err := w.AddNDJSON(docs); err != nil {
+		if _, err := s.Append(docs); err != nil {
 			t.Fatal(err)
 		}
-		if err := w.Close(); err != nil {
+		if err := s.Sync(); err != nil {
 			t.Fatal(err)
 		}
 		now.Add(int64(closedQuiet))
@@ -509,11 +506,10 @@ func TestAClosedPartitionWaitsForQuietAndSkipsItsTiers(t *testing.T) {
 			fmt.Fprintf(&buf, `{"n":%d,"ts":%d}`+"\n", i, int64(firstTimedHour)*3600e6+int64(i))
 		}
 		rows += 50
-		w := s.NewWriter()
-		if err := w.AddNDJSON(buf.Bytes()); err != nil {
+		if _, err := s.Append(buf.Bytes()); err != nil {
 			t.Fatal(err)
 		}
-		if err := w.Close(); err != nil {
+		if err := s.Sync(); err != nil {
 			t.Fatal(err)
 		}
 		// Rows keep arriving: less than the quiet time passes.
@@ -580,11 +576,10 @@ func TestADropWaitsOnlyForMergesOfItsPartitions(t *testing.T) {
 			}
 			defer s.Close()
 			for i := range 2 {
-				w := s.NewWriter()
-				if err := w.AddNDJSON(timedDocs(i*300, 300, 3)); err != nil {
+				if _, err := s.Append(timedDocs(i*300, 300, 3)); err != nil {
 					t.Fatal(err)
 				}
-				if err := w.Close(); err != nil {
+				if err := s.Sync(); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -648,11 +643,10 @@ func TestMergeStateCountsTheRunsOfAPartitionThatWaitsForQuiet(t *testing.T) {
 	}
 	defer s.Close()
 	for i := range 3 {
-		w := s.NewWriter()
-		if err := w.AddNDJSON(timedDocs(i*50, 50, 1)); err != nil {
+		if _, err := s.Append(timedDocs(i*50, 50, 1)); err != nil {
 			t.Fatal(err)
 		}
-		if err := w.Close(); err != nil {
+		if err := s.Sync(); err != nil {
 			t.Fatal(err)
 		}
 	}
