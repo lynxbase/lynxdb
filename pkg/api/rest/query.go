@@ -177,7 +177,7 @@ func (s *Server) executeQuery(w http.ResponseWriter, r *http.Request, req QueryR
 		return
 	}
 	st := job.Status()
-	meta := []MetaOpt{WithTook(st.Elapsed), WithQueryID(job.ID), WithRows(res.Len())}
+	meta := []MetaOpt{WithTook(st.Elapsed), WithQueryID(job.ID), WithRows(res.Len()), WithWarnings(res.Warnings)}
 	if stats, ok := res.Stats(); ok {
 		meta = append(meta, WithStats(stats))
 	}

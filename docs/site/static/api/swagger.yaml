@@ -1937,6 +1937,11 @@ components:
         rows:
           type: integer
           description: Rows the query produced, before `offset` and `limit`
+        warnings:
+          type: array
+          items:
+            type: string
+          description: What the query has to tell that is not an error; absent when there is nothing
         stats:
           type: object
           description: >-

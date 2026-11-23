@@ -147,6 +147,10 @@ func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {
 	buf = strconv.AppendInt(buf, int64(n), 10)
 	buf = append(buf, `,"took_ms":`...)
 	buf = strconv.AppendInt(buf, took.Milliseconds(), 10)
+	if len(res.Warnings) > 0 {
+		warnings, _ := json.Marshal(res.Warnings)
+		buf = append(append(buf, `,"warnings":`...), warnings...)
+	}
 	buf = append(buf, "}}\n"...)
 	write()
 }

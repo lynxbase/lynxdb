@@ -83,10 +83,12 @@ type metaFields struct {
 	// Stats says what a query read; a query that the columnar executor ran
 	// only in part has none.
 	Stats *queryStats `json:"stats,omitempty"`
+	// Warnings tell what a query could not know to be an error.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 func (m metaFields) empty() bool {
-	return m.TookMS == nil && m.QueryID == "" && m.Rows == nil && m.Stats == nil
+	return m.TookMS == nil && m.QueryID == "" && m.Rows == nil && m.Stats == nil && len(m.Warnings) == 0
 }
 
 // queryStats is exec.Stats as a reply shows it.
@@ -135,6 +137,13 @@ func WithQueryID(id string) MetaOpt {
 func WithRows(n int) MetaOpt {
 	return func(m *metaFields) {
 		m.Rows = &n
+	}
+}
+
+// WithWarnings adds the warnings of a query to the meta.
+func WithWarnings(warnings []string) MetaOpt {
+	return func(m *metaFields) {
+		m.Warnings = warnings
 	}
 }
 
