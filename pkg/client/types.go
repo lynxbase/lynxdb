@@ -11,6 +11,9 @@ type Meta struct {
 	QueryID string  `json:"query_id,omitempty"`
 	// Rows is the number of rows a query returned.
 	Rows int `json:"rows,omitempty"`
+	// Warnings tells what a query could not know to be an error, such as a
+	// field that none of the indexes it reads holds.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // QueryResultType identifies the kind of query result.
@@ -170,8 +173,11 @@ type IngestEvent struct {
 
 // IngestResult is the response from the ingest endpoints.
 type IngestResult struct {
-	Accepted  int    `json:"accepted"`
-	Failed    int    `json:"failed"`
+	Accepted int `json:"accepted"`
+	Failed   int `json:"failed"`
+	// Expired counts the events older than the server's retention, which
+	// it did not store.
+	Expired   int    `json:"expired"`
 	Truncated bool   `json:"truncated,omitempty"`
 	Warning   string `json:"warning,omitempty"`
 }

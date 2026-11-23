@@ -341,13 +341,22 @@ func runLocalQuery(db *database.DB, lq localQuery, start time.Time) error {
 	}
 	if len(rows) == 0 {
 		if lq.failEmpty {
+			printQueryWarnings(res.Warnings)
 			printMeta("No results found.")
 			return noResultsError{}
 		}
 		printHint("No results. Try a broader query.")
 	}
 
-	return printLocalResults(rows, st, lq.outputFile, lq.analyze)
+	return printLocalResults(rows, res.Warnings, st, lq.outputFile, lq.analyze)
+}
+
+// printQueryWarnings prints, on stderr, what a query could not know to be
+// an error.
+func printQueryWarnings(warnings []string) {
+	for _, w := range warnings {
+		printWarning("%s", w)
+	}
 }
 
 // compileError renders a PPL compile error with a caret under its
@@ -428,7 +437,9 @@ func extractedFormat(lines []string) string {
 	return name
 }
 
-func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outputFile string, analyze bool) error {
+// printLocalResults prints rows, then the warnings of the query, then its
+// statistics.
+func printLocalResults(rows []map[string]interface{}, warnings []string, st *stats.QueryStats, outputFile string, analyze bool) error {
 	var w io.Writer = os.Stdout
 	if outputFile != "" {
 		f, err := os.Create(outputFile)
@@ -458,6 +469,7 @@ func printLocalResults(rows []map[string]interface{}, st *stats.QueryStats, outp
 
 	st.SerializeDuration = time.Since(serStart)
 	st.ResultRows = int64(len(rows))
+	printQueryWarnings(warnings)
 
 	if analyze {
 		if isJSONFormat() {
@@ -560,6 +572,7 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 
 	rows := queryResultToRows(result)
 	if len(rows) == 0 {
+		printQueryWarnings(result.Meta.Warnings)
 		printEmptyResultGuidance(query, since)
 
 		if failEmpty {
@@ -574,6 +587,7 @@ func doQueryPlain(ctx context.Context, query, since, earliest, latest string, fa
 	if err := printFormattedRows(rows); err != nil {
 		return err
 	}
+	printQueryWarnings(result.Meta.Warnings)
 
 	st := buildQueryStatsFromMeta(result.Meta, int64(len(rows)), time.Since(start))
 
@@ -692,6 +706,7 @@ func handleAsyncFallback(ctx context.Context, jobID string, failEmpty, analyze b
 
 	rows := queryResultToRows(result)
 	if failEmpty && len(rows) == 0 {
+		printQueryWarnings(result.Meta.Warnings)
 		printMeta("No results found.")
 
 		return noResultsError{}
@@ -702,6 +717,7 @@ func handleAsyncFallback(ctx context.Context, jobID string, failEmpty, analyze b
 	if err := printFormattedRows(rows); err != nil {
 		return err
 	}
+	printQueryWarnings(result.Meta.Warnings)
 
 	st := buildQueryStatsFromMeta(result.Meta, int64(len(rows)), time.Since(start))
 

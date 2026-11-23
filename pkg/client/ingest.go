@@ -57,6 +57,7 @@ func (c *Client) IngestEvents(ctx context.Context, events []IngestEvent) (*Inges
 		}
 		total.Accepted += res.Accepted
 		total.Failed += res.Failed
+		total.Expired += res.Expired
 	}
 
 	return total, nil

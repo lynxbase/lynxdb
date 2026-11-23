@@ -181,7 +181,9 @@ Unsupported commands and functions fail the same way, with a message that names 
 
 ## Output
 
-Rows go to stdout in the format chosen by `--format`; statistics and hints go to stderr.
+Rows go to stdout in the format chosen by `--format`; statistics, hints and warnings go to stderr.
+
+A query can come back with warnings: what the query could not know to be an error, such as a field that none of the indexes it reads holds. The CLI prints each on its own `⚠` line after the rows, in server and local mode, unless `--quiet` is set. Warnings do not change the exit code.
 
 - On a terminal, `auto` prints a table, or a bare value for a single-column, single-row result, followed by a footer with the row count and the time the query took. `--verbose` adds the full statistics block.
 - When stdout is not a terminal, `auto` prints one JSON object per row and the statistics as one JSON line on stderr. `--no-stats` drops the statistics.

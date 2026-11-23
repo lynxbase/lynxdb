@@ -140,7 +140,7 @@ func TestIngest_SendsBodyAsIs(t *testing.T) {
 			t.Errorf("body = %q, want %q", got, body)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]interface{}{
-			"data": map[string]interface{}{"accepted": 2, "failed": 0},
+			"data": map[string]interface{}{"accepted": 2, "failed": 1, "expired": 3},
 		})
 	}))
 	defer srv.Close()
@@ -150,8 +150,8 @@ func TestIngest_SendsBodyAsIs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Accepted != 2 {
-		t.Fatalf("Accepted = %d, want 2", result.Accepted)
+	if result.Accepted != 2 || result.Failed != 1 || result.Expired != 3 {
+		t.Fatalf("result = %+v, want 2 accepted, 1 failed and 3 expired", result)
 	}
 }
 

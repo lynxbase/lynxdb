@@ -115,14 +115,16 @@ lynxdb ingest dump.json --format esbulk
 lynxdb ingest dump.json --index archive
 ```
 
-## Partial batches
+## Events that were not stored
 
-The server reports, per batch, how many events it accepted. The CLI warns when:
+The server reports, per batch, how many events it accepted, how many failed, such as an NDJSON line that is not a JSON object, and how many expired: events older than the server's [retention](../configuration/storage.md), which it does not store. The summary line counts accepted events. When any failed or expired, a warning on stderr follows it:
 
-- the server cut a request body at `ingest.max_body_size`: reduce `--batch-size` or raise the limit;
-- the server reports events it did not accept: reduce `--batch-size` or check the server log.
+```text
+  ✔ Ingested 997 events in 3ms (277,178 events/sec)
+  ⚠  3 of 1,000 events were not stored: 1 failed, 2 expired (older than the server's retention).
+```
 
-The summary line counts accepted events only.
+A second warning counts the events dropped when the server cut a request body at `ingest.max_body_size`; reduce `--batch-size` or raise the limit. `--quiet` drops the summary and the warnings; the exit code is 0 either way.
 
 ## See also
 

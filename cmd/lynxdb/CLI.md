@@ -131,7 +131,7 @@ lynxdb query 'source=main status>=500 | fields _raw' --since 1h --format raw \
   | lynxdb 'stats count() by path'
 ```
 
-Output: rows go to stdout, statistics to stderr. On a terminal the statistics are a summary footer (rows, time); otherwise one JSON line. A query that does not compile prints the query with a caret under the error position and exits with 4.
+Output: rows go to stdout, statistics and the query's warnings to stderr. On a terminal the statistics are a summary footer (rows, time); otherwise one JSON line. A query that does not compile prints the query with a caret under the error position and exits with 4.
 
 The server syncs the events ingested so far before a query, and runs every query as a job; `lynxdb jobs` lists them.
 
@@ -194,7 +194,7 @@ Alias `i`. Sends a file, or stdin when the file is `-` or absent, to the server 
 - `esbulk`: an Elasticsearch bulk body to `POST /_bulk`, or `POST /{index}/_bulk` with `--index`. `--source` and `--sourcetype` are rejected.
 - `auto` (default): `.ndjson`/`.jsonl` NDJSON, `.csv` CSV, `.tsv` CSV with tabs; otherwise the first non-empty line: a bulk action line `esbulk`, a JSON object `ndjson`, else `text`.
 
-The server picks each event's time from `storage.time_fields`; the CLI parses no timestamps.
+The server picks each event's time from `storage.time_fields`; the CLI parses no timestamps. When the server reports events that failed or expired (older than its retention, so not stored), a warning on stderr gives the counts.
 
 | Flag | Default | Description |
 |------|---------|-------------|

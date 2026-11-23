@@ -30,7 +30,7 @@ func TestQuery_SyncEvents(t *testing.T) {
 				"total":    1,
 				"has_more": false,
 			},
-			"meta": map[string]interface{}{"took_ms": 42.0, "query_id": "qry_1", "rows": 1},
+			"meta": map[string]interface{}{"took_ms": 42.0, "query_id": "qry_1", "rows": 1, "warnings": []string{"field status is in no index"}},
 		})
 	}))
 	defer srv.Close()
@@ -42,6 +42,9 @@ func TestQuery_SyncEvents(t *testing.T) {
 	}
 	if result.Meta.QueryID != "qry_1" || result.Meta.Rows != 1 {
 		t.Errorf("Meta = %+v, want query_id qry_1 and 1 row", result.Meta)
+	}
+	if len(result.Meta.Warnings) != 1 || result.Meta.Warnings[0] != "field status is in no index" {
+		t.Errorf("Warnings = %q, want the warning of the response", result.Meta.Warnings)
 	}
 
 	if result.Type != ResultTypeEvents {

@@ -254,8 +254,7 @@ type ingester struct {
 	fileSize int64
 	start    time.Time
 
-	sent, accepted, failed, dropped int
-	batches                         int
+	sent, accepted, failed, expired, dropped int
 }
 
 // lines sends the non-empty lines of r in batches of --batch-size.
@@ -293,12 +292,13 @@ func (in *ingester) flush(n int, send func() (*client.IngestResult, error)) erro
 	if err != nil {
 		return fmt.Errorf("send batch: %w", err)
 	}
-	in.batches++
 	in.sent += n
 	in.accepted += result.Accepted
-	reportBatchResult(result, n, in.batches)
+	in.expired += result.Expired
+	// The server stops reading a body it cuts short, so what it neither
+	// accepted nor expired was dropped.
 	if result.Truncated {
-		in.dropped += n - result.Accepted
+		in.dropped += n - result.Accepted - result.Expired
 	} else {
 		in.failed += result.Failed
 	}
@@ -544,37 +544,22 @@ func (in *ingester) summary() {
 		printSuccess("Ingested %s events", formatCount(int64(in.accepted)))
 	}
 
-	if in.dropped > 0 {
-		printWarning("%s of %s events were dropped (body truncated). "+
-			"Reduce --batch-size or increase server's ingest.max_body_size.",
-			formatCount(int64(in.dropped)), formatCount(int64(in.sent)))
+	if in.failed > 0 || in.expired > 0 {
+		printWarning("%s of %s events were not stored: %s failed, %s expired (older than the server's retention).",
+			formatCount(int64(in.failed+in.expired)), formatCount(int64(in.sent)),
+			formatCount(int64(in.failed)), formatCount(int64(in.expired)))
 	}
 
-	if in.failed > 0 {
-		printWarning("%s of %s events failed to ingest (backpressure). "+
-			"Reduce --batch-size or check server logs.",
-			formatCount(int64(in.failed)), formatCount(int64(in.sent)))
+	if in.dropped > 0 {
+		printWarning("%s of %s events were dropped: the server cut a request body short. "+
+			"Reduce --batch-size or raise the server's ingest.max_body_size.",
+			formatCount(int64(in.dropped)), formatCount(int64(in.sent)))
 	}
 
 	printNextSteps(
 		"lynxdb query 'source=main | stats count() by level'   Query your data",
 		"lynxdb fields                            Explore field names",
 	)
-}
-
-// reportBatchResult prints a per-batch warning when events were truncated or failed.
-// Truncation means the server's MaxBytesReader cut the request body short.
-// Failures mean events were rejected (e.g., batcher backpressure) but the body was intact.
-func reportBatchResult(result *client.IngestResult, sent, batchNum int) {
-	if result.Truncated {
-		printWarning("Server truncated request body in batch %d: accepted %s of %s events. "+
-			"Reduce --batch-size or increase server's ingest.max_body_size.",
-			batchNum, formatCount(int64(result.Accepted)), formatCount(int64(sent)))
-	} else if result.Failed > 0 {
-		printWarning("Server failed to ingest %s of %s events in batch %d (backpressure). "+
-			"Reduce --batch-size or check server logs.",
-			formatCount(int64(result.Failed)), formatCount(int64(sent)), batchNum)
-	}
 }
 
 // countingReader counts the bytes read through it.
