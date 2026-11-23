@@ -53,18 +53,6 @@ const sidebars: SidebarsConfig = {
           label: 'Using PPL',
           items: ['ppl/examples', 'ppl/pipeline-execution', 'ppl/performance'],
         },
-        {
-          type: 'category',
-          label: 'Internals',
-          items: [
-            'ppl/architecture',
-            'ppl/compilation',
-            'ppl/ir',
-            'ppl/optimizer',
-            'ppl/adding-commands',
-            'ppl/adding-functions',
-          ],
-        },
       ],
     },
     {
@@ -173,6 +161,18 @@ const sidebars: SidebarsConfig = {
         'contributing/development-setup',
         'contributing/project-structure',
         'contributing/coding-guidelines',
+        {
+          type: 'category',
+          label: 'Query language internals',
+          items: [
+            'contributing/ppl-architecture',
+            'contributing/ppl-compilation',
+            'contributing/ir',
+            'contributing/ir-optimizer',
+            'contributing/adding-commands',
+            'contributing/adding-functions',
+          ],
+        },
       ],
     },
   ],

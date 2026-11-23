@@ -1,6 +1,6 @@
 ---
 title: PPL architecture
-sidebar_label: Architecture
+sidebar_label: PPL architecture
 description: How a PPL query becomes canonical IR, an optimized plan and a pipeline of operators.
 ---
 
@@ -101,7 +101,7 @@ IR operators (for example `if` becomes `CASE`, `isnull` becomes `is_null`,
 Aggregations resolve through the aggregation catalog. Static types are
 checked against the registry's parameter types; values whose types are only
 known per row are converted at run time by the rules in the
-[IR specification](./ir.md). [PPL-to-IR compilation](./compilation.md)
+[IR specification](./ir.md). [PPL-to-IR compilation](./ppl-compilation.md)
 shows how each command lowers.
 
 ## Errors
@@ -121,7 +121,7 @@ The row operators report the few constructs they cannot run with
 `physical.UnsupportedError`, whose message starts with `not supported by
 the execution engine:`; nothing unsupported is silently approximated. A
 construct the columnar executor does not take is not an error: the row
-operators run it. [Error handling](./errors.md) maps the kinds to API
+operators run it. [Error handling](../ppl/errors.md) maps the kinds to API
 codes.
 
 ## Limits and plan reuse

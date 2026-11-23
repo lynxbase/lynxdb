@@ -293,7 +293,7 @@ func (c *Case) String() string {
 
 // Cast converts a value to another type. A value that cannot be converted
 // yields NULL; NULL stays NULL. Conversion rules are listed in
-// docs/site/docs/ppl/ir.md.
+// docs/site/docs/contributing/ir.md.
 type Cast struct {
 	X  Expr
 	To Type

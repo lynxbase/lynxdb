@@ -66,8 +66,8 @@ The PPL pages keep three things apart:
 | Error codes and positions | [Error handling](./errors.md) |
 | Worked queries | [Examples](./examples.md) |
 | How a plan runs; making queries fast | [Pipeline execution](./pipeline-execution.md), [Performance](./performance.md) |
-| Compiler internals | [Architecture](./architecture.md), [PPL-to-IR compilation](./compilation.md), [IR specification](./ir.md), [IR optimizer](./optimizer.md) |
-| Extending the language | [Adding commands](./adding-commands.md), [Adding functions](./adding-functions.md) |
+| Compiler internals | [Architecture](../contributing/ppl-architecture.md), [PPL-to-IR compilation](../contributing/ppl-compilation.md), [IR specification](../contributing/ir.md), [IR optimizer](../contributing/ir-optimizer.md) |
+| Extending the language | [Adding commands](../contributing/adding-commands.md), [Adding functions](../contributing/adding-functions.md) |
 
 The command, function and aggregation tables are generated from the
 catalogs in `pkg/ppl` by `go run ./internal/docgen`. `GET /api/v1/catalog`

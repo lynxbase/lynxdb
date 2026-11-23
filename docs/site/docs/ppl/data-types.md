@@ -78,7 +78,7 @@ Explicit conversions:
 A value that cannot be converted becomes NULL; conversions never fail a
 query.
 
-Implicit conversions happen only where the [IR specification](./ir.md#run-time-conversions)
+Implicit conversions happen only where the [IR specification](../contributing/ir.md#run-time-conversions)
 defines them:
 
 - int with int is int (`7 / 2` is 3); int with float is float (`7.0 / 2` is 3.5).

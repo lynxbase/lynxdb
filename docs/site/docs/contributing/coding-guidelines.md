@@ -203,7 +203,7 @@ When you add or change a command or function:
 3. Add golden cases under `pkg/ppl/testdata/compile/` and execution tests.
 4. Regenerate the reference pages with `go run ./internal/docgen`.
 
-See [Adding commands](../ppl/adding-commands.md) and [Adding functions](../ppl/adding-functions.md).
+See [Adding commands](./adding-commands.md) and [Adding functions](./adding-functions.md).
 
 Optimizer rules in `pkg/ir/opt` must preserve the plan's result; rules that hand predicates to a scan keep them in the filter above it. Cover each rule in `TestOptimizerRules` and check the plan corpus golden (`pkg/query/testdata/corpus_plans.sum`).
 

@@ -118,7 +118,7 @@ See [Query Engine](./query-engine.md).
 - **Testable rewrites**: every optimizer rule is a plan-to-plan function, checked by `ir.Validate` and visible in `explain`.
 - **Cheap compilation**: compilation depends only on the query text, so plans are cached by text and reused across requests.
 
-See [PPL IR](../ppl/ir.md).
+See [PPL IR](../contributing/ir.md).
 
 ## Go
 

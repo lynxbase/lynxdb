@@ -6,7 +6,7 @@ description: How LynxDB runs a query -- PPL compiled to a language-independent I
 
 # Query Engine
 
-LynxDB compiles OpenSearch Piped Processing Language (PPL) into a language-independent intermediate representation (IR) and optimizes the plan. Two executors run it: the **columnar executor** runs every part of the plan it can, straight over the column blocks of the stores, and the **row operators** run the rest over rows. This page follows a query through those stages. The PPL pages cover the compiler in detail: [architecture](../ppl/architecture.md), [compilation](../ppl/compilation.md), [IR](../ppl/ir.md) and [optimizer](../ppl/optimizer.md).
+LynxDB compiles OpenSearch Piped Processing Language (PPL) into a language-independent intermediate representation (IR) and optimizes the plan. Two executors run it: the **columnar executor** runs every part of the plan it can, straight over the column blocks of the stores, and the **row operators** run the rest over rows. This page follows a query through those stages. The PPL pages cover the compiler in detail: [architecture](../contributing/ppl-architecture.md), [compilation](../contributing/ppl-compilation.md), [IR](../contributing/ir.md) and [optimizer](../contributing/ir-optimizer.md).
 
 ## Query Path
 
@@ -46,13 +46,13 @@ Compiling depends only on the query text: relative times stay symbolic until the
 3. **Semantic analysis**: every field reference is resolved against the schema the previous command produces. Index scans have open schemas (any field may exist); `stats`, `fields`, `top` and similar commands produce closed schemas, where an unknown field is a `SEMANTIC_ERROR` that lists the available fields. Functions resolve through the PPL catalogs onto the IR function registry, and static types are checked.
 4. **Lowering**: each command becomes IR operators. Search terms in the source command become a `Filter`; `eval` becomes `Compute`; `stats` becomes `Aggregate`; `sort ... | head` becomes `Sort` and `Limit`.
 
-A command, function or option that the catalogs mark unsupported fails with `UNSUPPORTED_COMMAND`, `UNSUPPORTED_FUNCTION` or `UNSUPPORTED_FEATURE`, and so does a correlated subquery. See [PPL compilation](../ppl/compilation.md) and [PPL errors](../ppl/errors.md).
+A command, function or option that the catalogs mark unsupported fails with `UNSUPPORTED_COMMAND`, `UNSUPPORTED_FUNCTION` or `UNSUPPORTED_FEATURE`, and so does a correlated subquery. See [PPL compilation](../contributing/ppl-compilation.md) and [PPL errors](../ppl/errors.md).
 
 ### IR
 
 The IR in `pkg/ir` is a tree of logical operators, each with typed expressions and an output schema, and knows nothing about PPL syntax. Its operators are `Scan`, `Values`, `Empty`, `SourceSchema`, `Filter`, `Compute`, `Project`, `RenameColumns`, `Aggregate`, `Window`, `Sort`, `TopN`, `Limit`, `Reverse`, `Dedup`, `Join`, `Union`, `ZipColumns`, `Extract`, `Patterns`, `Unnest`, `FlattenObject`, `FillNull`, `Transpose`, `Totals` and `CombineValues`.
 
-A `Scan` carries, besides its sources, what the optimizer learns about the rows it must produce: a time range, pruning predicates, the columns read and a row limit. See [PPL IR](../ppl/ir.md).
+A `Scan` carries, besides its sources, what the optimizer learns about the rows it must produce: a time range, pruning predicates, the columns read and a row limit. See [PPL IR](../contributing/ir.md).
 
 ### Optimizer
 
@@ -95,7 +95,7 @@ Optimizer rules:
   time-range-to-scan x1
 ```
 
-`lynxdb query --explain` prints both plans and the rules locally; `lynxdb explain` and `GET /api/v1/query/explain` ask the server. See [PPL optimizer](../ppl/optimizer.md) for each rule's conditions.
+`lynxdb query --explain` prints both plans and the rules locally; `lynxdb explain` and `GET /api/v1/query/explain` ask the server. See [PPL optimizer](../contributing/ir-optimizer.md) for each rule's conditions.
 
 ## Running a Query
 
@@ -167,5 +167,5 @@ For a completed columnar result returned by the standard query endpoint, `meta.s
 - [Architecture Overview](./overview.md) -- system-level view
 - [Storage](./storage.md)
 - [Indexing and Pruning](./indexing.md)
-- [PPL architecture](../ppl/architecture.md) -- the compiler in detail
+- [PPL architecture](../contributing/ppl-architecture.md) -- the compiler in detail
 - [PPL performance](../ppl/performance.md) -- writing queries that the columnar executor takes

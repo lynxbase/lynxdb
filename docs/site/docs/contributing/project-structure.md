@@ -68,15 +68,15 @@ pkg/ppl/
 └── errors.go     # Structured errors with codes, positions and hints
 ```
 
-See [PPL architecture](../ppl/architecture.md), [Adding commands](../ppl/adding-commands.md) and [Adding functions](../ppl/adding-functions.md).
+See [PPL architecture](./ppl-architecture.md), [Adding commands](./adding-commands.md) and [Adding functions](./adding-functions.md).
 
 ### `pkg/ir/` -- Intermediate Representation
 
-The typed, language-independent plan: operators, expressions, schemas, types, the function registry, validation (`ir.Validate`), walking, and rendering for `explain`. See [PPL IR](../ppl/ir.md).
+The typed, language-independent plan: operators, expressions, schemas, types, the function registry, validation (`ir.Validate`), walking, and rendering for `explain`. See [PPL IR](./ir.md).
 
 ### `pkg/ir/opt/` -- Optimizer
 
-Rule-based rewrites over IR plans (`fold-constants`, `merge-filters`, `remove-true-filter`, `prune-scan`, `time-range-to-scan`, `sort-limit-to-topn`, `limit-into-scan`) and column pruning. See [PPL optimizer](../ppl/optimizer.md).
+Rule-based rewrites over IR plans (`fold-constants`, `merge-filters`, `remove-true-filter`, `prune-scan`, `time-range-to-scan`, `sort-limit-to-topn`, `limit-into-scan`) and column pruning. See [PPL optimizer](./ir-optimizer.md).
 
 ### `pkg/query/` -- Compile
 

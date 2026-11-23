@@ -12,8 +12,8 @@ not how it runs.
 ## From text to rows
 
 1. **Compile.** `query.Compile` parses the text, analyzes it and lowers it to
-   an IR plan, then optimizes the plan (see [PPL-to-IR compilation](./compilation.md)
-   and [IR optimizer](./optimizer.md)). Compiling depends on the text alone,
+   an IR plan, then optimizes the plan (see [PPL-to-IR compilation](../contributing/ppl-compilation.md)
+   and [IR optimizer](../contributing/ir-optimizer.md)). Compiling depends on the text alone,
    so LynxDB keeps the plans of the 1024 most recently used queries of up to
    2 KiB and reuses them for a repeated text.
 2. **Narrow.** The time range of a request (`from` and `to` on the REST API,

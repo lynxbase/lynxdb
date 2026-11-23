@@ -163,7 +163,7 @@ arguments, aggregate placement, lambda scoping and subquery shapes.
   `RenameColumns`;
 - recording the required columns on each scan.
 
-See [IR optimizer](./optimizer.md) for each rule.
+See [IR optimizer](./ir-optimizer.md) for each rule.
 
 ## Execution
 
@@ -171,7 +171,7 @@ The IR plan is what both executors run. The columnar executor
 (`pkg/colstore/exec/irplan` translates the plan) takes the chain of
 operators from a scan upwards that it can run; the row operators
 (`pkg/engine/physical`) run the rest. See
-[Pipeline execution](./pipeline-execution.md).
+[Pipeline execution](../ppl/pipeline-execution.md).
 
 `physical.PlanHints` (`pkg/engine/physical/hints.go`) summarizes the scans
 of an optimized plan: sources, the resolved time range, search terms and

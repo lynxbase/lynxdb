@@ -39,7 +39,7 @@ engine through IR operators, so most commands need no engine change.
    `pkg/ppl/parser/corpus_test.go`.
 6. **Documentation.** Regenerate the reference tables with
    `go run ./internal/docgen` and describe the command in the
-   [command guide](./command-guide.md) when it is commonly used.
+   [command guide](../ppl/command-guide.md) when it is commonly used.
 
 An unsupported command still needs a parse rule (often skipping to the next
 `|`) so that it fails with `UNSUPPORTED_COMMAND` and its catalog reason

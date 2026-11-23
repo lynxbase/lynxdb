@@ -94,7 +94,7 @@ A query that does not compile prints the server's error code and message, the qu
 
 ## See also
 
-- [PPL optimizer](../ppl/optimizer.md) for the rules that appear in the plan
-- [PPL IR](../ppl/ir.md) for the plan operators
+- [PPL optimizer](../contributing/ir-optimizer.md) for the rules that appear in the plan
+- [PPL IR](../contributing/ir.md) for the plan operators
 - [Pipeline execution](../ppl/pipeline-execution.md)
 - [query --analyze](./query.md#profiles---analyze)
