@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
+	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
@@ -31,7 +32,7 @@ const (
 	// killChildEnv carries the killConfig of a child process.
 	killChildEnv = "LYNXDB_STORE_KILL_CHILD"
 	// killAppenders write through Append and Sync; the one writer behind
-	// them flushes a Writer of its own, whose flushes have known borders.
+	// them buffers each request whole, so that one flush writes all of it.
 	killAppenders = 3
 	killWriters   = killAppenders + 1
 	// killPerHour is how many documents of a writer start in one partition.
@@ -55,7 +56,7 @@ type killConfig struct {
 
 func killStoreOptions() StoreOptions {
 	return StoreOptions{
-		SortKey: []string{"k"}, TimeField: "ts", BlockRows: 64, FlushBytes: 4 << 10, BufferBytes: 8 << 10,
+		SortKey: []string{"k"}, TimeField: "ts", BlockRows: 64, BufferBytes: 8 << 10,
 		MergeFanIn: 2, FlushInterval: 3 * time.Millisecond, Partition: time.Hour,
 	}
 }
@@ -268,23 +269,20 @@ func killAppend(s *Store, w int64, cfg killConfig, acked *atomic.Int64) {
 func killWrite(s *Store, w int64, cfg killConfig, acked *atomic.Int64) {
 	rng := rand.New(rand.NewSource(cfg.Seed + w))
 	n := cfg.Next[w]
-	wr := s.NewWriter()
 	var buf []byte
 	for {
-		// Less than the flush size, so that the writer flushes only when
-		// told to.
 		last := n + 4 + int64(rng.Intn(cfg.batch(20)))
 		say("intent %d %d", w, last)
 		buf = buf[:0]
 		for ; n <= last; n++ {
 			buf = cfg.appendDoc(buf, killDocID{w, n})
 		}
-		err := wr.AddNDJSON(buf)
-		if err == nil {
-			err = wr.Flush()
-		}
-		if err != nil || wr.Rejected != 0 {
-			say("error flush: %d lines rejected, %v", wr.Rejected, err)
+		// AppendRows cuts a request where the buffers run out of room, and a
+		// flush may take what comes before the cut alone. One piece is in one
+		// buffer, which one flush takes and commits whole.
+		done := s.appendPiece(buf, 0, shred.Intake{})
+		if err := s.Sync(); err != nil || done.Rejected != 0 {
+			say("error flush: %d lines rejected, %v", done.Rejected, err)
 
 			return
 		}
@@ -357,7 +355,7 @@ type killReport struct {
 	// acked holds, per writer, the last number it reported durable, -1
 	// without a report.
 	acked []int64
-	// intent is the last number of the flush the Writer announced last.
+	// intent is the last number of the request the writer announced last.
 	intent int64
 	// drop and dropped are the hours of the last drop announced and of the
 	// last one reported done.

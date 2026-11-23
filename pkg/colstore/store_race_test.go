@@ -73,9 +73,9 @@ func TestStoreKeepsItsRowsWhileEverythingRunsAtOnce(t *testing.T) {
 			}
 		})
 	}
+	// The last writer syncs every request.
 	start(func(rng *rand.Rand) {
 		const w = killAppenders
-		wr := s.NewWriter()
 		var buf []byte
 		for n := int64(0); ; {
 			buf = buf[:0]
@@ -83,14 +83,13 @@ func TestStoreKeepsItsRowsWhileEverythingRunsAtOnce(t *testing.T) {
 				buf = killDocID{w, n}.appendJSON(buf)
 				n++
 			}
-			err := wr.AddNDJSON(buf)
-			if err == nil {
-				err = wr.Flush()
-			}
-			if closed("Flush", err) {
+			if _, err := s.Append(buf); closed("Append", err) {
 				return
 			}
 			taken[w].Store(n - 1)
+			if closed("Sync", s.Sync()) {
+				return
+			}
 			acked[w].Store(n - 1)
 			time.Sleep(time.Duration(rng.Intn(300)) * time.Microsecond)
 		}
