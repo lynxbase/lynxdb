@@ -17,7 +17,7 @@ func stateAggs() []exec.Agg {
 		{Name: "max_n", Func: exec.Max, Arg: anyOf("n")},
 		{Name: "max_y", Func: exec.Max, Arg: str("nested.y")},
 		{Name: "min_coll", Func: exec.Min, Arg: str("coll")},
-		{Name: "max_lower", Func: exec.Max, Arg: exec.Lower(str("user"))},
+		{Name: "max_lower", Func: exec.Max, Arg: fn("lower", str("user"))},
 		{Name: "min_nope", Func: exec.Min, Arg: anyOf("nope")},
 		{Name: "users", Func: exec.ApproxDistinct, Arg: str("user")},
 		{Name: "ids", Func: exec.ApproxDistinct, Arg: num("id")},

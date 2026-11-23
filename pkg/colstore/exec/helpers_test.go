@@ -13,8 +13,10 @@ import (
 
 	"github.com/lynxbase/lynxdb/pkg/colstore"
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
+	"github.com/lynxbase/lynxdb/pkg/colstore/exec/irfunc"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
@@ -261,3 +263,53 @@ func referenceRows(t testing.TB, docs [][]byte, timeField string) []refRow {
 
 	return rows
 }
+
+// fn calls the function of the IR of a name with args, which it reads as of
+// no declared type, or as the constants that literals hold.
+func fn(name string, args ...*exec.Expr) *exec.Expr {
+	call := &ir.Call{Func: ir.MustFunc(name), T: ir.Any}
+	for _, a := range args {
+		var arg ir.Expr = &ir.FieldRef{Name: "x", T: ir.Any}
+		if a.Op == exec.OpLiteral {
+			switch v := a.Value; v.Kind {
+			case vec.KindInt:
+				arg = ir.IntLit(v.Int)
+			case vec.KindFloat:
+				arg = ir.FloatLit(v.Float)
+			case vec.KindString:
+				arg = ir.StringLit(string(v.Bytes))
+			case vec.KindBool:
+				arg = ir.BoolLit(v.Bool)
+			}
+		}
+		call.Args = append(call.Args, arg)
+	}
+	build, ok := irfunc.Lookup(name)
+	if !ok {
+		panic("no function " + name)
+	}
+	newFunc, err := build(call, irfunc.Env{})
+	if err != nil {
+		panic(err)
+	}
+
+	return exec.Call(newFunc, args...)
+}
+
+// cast converts a to the IR type to.
+func cast(to ir.Type, a *exec.Expr) *exec.Expr {
+	newFunc, err := irfunc.Cast(&ir.Cast{X: &ir.FieldRef{Name: "x", T: ir.Any}, To: to})
+	if err != nil {
+		panic(err)
+	}
+
+	return exec.Call(newFunc, a)
+}
+
+// nullIf is a unless it equals b.
+func nullIf(a, b *exec.Expr) *exec.Expr {
+	return exec.Case(exec.Eq(a, b), &exec.Expr{Op: exec.OpLiteral}, a)
+}
+
+// exists is true where a holds a value or a null.
+func exists(a *exec.Expr) *exec.Expr { return exec.Not(exec.IsMissing(a)) }

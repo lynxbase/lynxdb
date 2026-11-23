@@ -85,7 +85,7 @@ func TestPPLQueries(t *testing.T) {
 			`| fields size, label, hour, count, mean, spread | sort - count, label, size, hour | head 40`,
 			&exec.Sort{Input: &exec.Filter{Input: &exec.Aggregate{Input: &exec.Scan{}, Keys: []exec.Named{
 				named("size", exec.Case(exec.Lt(n, exec.Int(10)), exec.Str("low"), exec.And(exec.Ge(n, exec.Int(10)), exec.Le(n, exec.Int(60))), exec.Str("mid"), exec.Str("high"))),
-				named("label", exec.Concat(exec.Upper(anyOf("kind")), exec.Str(":"), exec.Coalesce(anyOf("coll"), exec.Str("-")))),
+				named("label", fn("concat", fn("upper", anyOf("kind")), exec.Str(":"), exec.Coalesce(anyOf("coll"), exec.Str("-")))),
 				named("hour", exec.Bin(exec.Time(), exec.Int(int64(time.Hour))))},
 				Aggs: []exec.Agg{count, {Name: "mean", Func: exec.Avg, Arg: exec.Mul(n, exec.Float(1.5))}, {Name: "spread", Func: exec.Stdev, Arg: n}}},
 				Cond: exec.Gt(anyOf("count"), exec.Int(2))}, By: []exec.Order{desc("count"), asc("label"), asc("size"), asc("hour")}, Limit: 40}},

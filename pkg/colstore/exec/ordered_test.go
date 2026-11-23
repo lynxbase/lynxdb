@@ -23,7 +23,7 @@ func TestOrderedAggregation(t *testing.T) {
 		{Name: "count_msg", Func: exec.Count, Arg: anyOf("msg")},
 		{Name: "max_expr", Func: exec.Max, Arg: exec.Mul(num("n"), num("nested.x"))},
 		{Name: "spread", Func: exec.Stdev, Arg: num("n")},
-		{Name: "var_time", Func: exec.Var, Arg: exec.ToFloat(exec.HourOfDay(exec.Time()))},
+		{Name: "var_time", Func: exec.Var, Arg: exec.Add(exec.HourOfDay(exec.Time()), exec.Float(0))},
 	}
 	users := exec.Agg{Name: "users", Func: exec.CountDistinct, Arg: str("user")}
 	stateful := []exec.Agg{
@@ -102,15 +102,15 @@ func TestOrderedAggregation(t *testing.T) {
 		{"and a string equality", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, eq("nested.y", "y1"))}, Keys: keys("user"), Aggs: times}, true, false},
 		{"and a token of no block", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, exec.Match(str("msg"), tokenfilter.Word("absent")))}, Keys: keys("user"), Aggs: times}, false, false},
 		{"and a value of no block", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(created, eq("nested.y", "y9"))}, Keys: keys("coll"), Aggs: []exec.Agg{times[0], users}}, false, false},
-		{"and functions of rows", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, exec.Or(exec.StartsWith(anyOf("msg"), exec.Str("good")),
+		{"and functions of rows", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(posts, exec.Or(fn("like", anyOf("msg"), exec.Str("good%"), exec.Bool(true)),
 			exec.IsNull(anyOf("n")), exec.Gt(exec.Mul(anyOf("n"), exec.Float(1.5)), exec.Float(120)), exec.IsMissing(anyOf("flag"))))},
 			Keys: keys("user"), Aggs: times}, true, false},
-		{"and a key that exists", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(created, exec.Exists(anyOf("coll")), exec.Not(exec.Exists(anyOf("tags"))))},
+		{"and a key that exists", &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(created, exists(anyOf("coll")), exec.Not(exists(anyOf("tags"))))},
 			Keys: keys("coll"), Aggs: []exec.Agg{times[0], users}}, true, false},
 		{"functions as arguments", &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: []exec.Agg{
-			{Name: "chars", Func: exec.Sum, Arg: exec.Length(exec.Lower(anyOf("msg")))},
-			{Name: "top", Func: exec.Max, Arg: exec.ToFloat(exec.Bin(num("n"), exec.Int(7)))},
-			{Name: "typed", Func: exec.Count, Arg: exec.NullIf(exec.TypeOf(anyOf("n")), exec.Str("missing"))}}}, true, false},
+			{Name: "chars", Func: exec.Count, Arg: fn("length", fn("lower", anyOf("msg")))},
+			{Name: "top", Func: exec.Max, Arg: exec.Add(exec.Bin(num("n"), exec.Int(7)), exec.Float(0))},
+			{Name: "typed", Func: exec.Count, Arg: nullIf(fn("typeof", anyOf("n")), exec.Str("null"))}}}, true, false},
 		{"untyped numbers", &exec.Aggregate{Input: &exec.Scan{Filter: posts}, Keys: keys("user"), Aggs: []exec.Agg{{Name: "s", Func: exec.Sum, Arg: anyOf("n")}}}, false, false},
 		{"untyped distinct", &exec.Aggregate{Input: &exec.Scan{Filter: created}, Keys: keys("coll"), Aggs: []exec.Agg{{Name: "u", Func: exec.CountDistinct, Arg: anyOf("user")}}}, true, false},
 	}

@@ -23,21 +23,15 @@ const (
 // unbounded when negative, and zero for an operation that is not one.
 func arity(op Op) (least, most int) {
 	switch op {
-	case OpHourOfDay, OpToInt, OpToFloat, OpToString, OpToBool, OpExists, OpIsNull, OpIsMissing, OpTypeOf,
-		OpLength, OpLower, OpUpper, OpNot, OpMatch, OpAbs, OpFloor, OpCeil, OpSqrt, OpLn, OpExp:
+	case OpHourOfDay, OpIsNull, OpIsMissing, OpNot, OpMatch:
 		return 1, 1
-	case OpRound, OpLog, OpTrim, OpTrimLeft, OpTrimRight:
-		return 1, 2
-	case OpAdd, OpSub, OpMul, OpDiv, OpMod, OpBin, OpNullIf, OpStartsWith, OpEndsWith,
-		OpEq, OpNe, OpLt, OpLe, OpGt, OpGe, OpPow, OpIndexOf:
+	case OpAdd, OpSub, OpMul, OpDiv, OpMod, OpBin, OpEq, OpNe, OpLt, OpLe, OpGt, OpGe, OpIndexOf:
 		return 2, 2
-	case OpIf, OpReplace:
+	case OpIf:
 		return 3, 3
-	case OpSubstr:
-		return 2, 3
 	case OpCase:
 		return 2, -1
-	case OpCoalesce, OpConcat, OpAnd, OpOr:
+	case OpCoalesce, OpAnd, OpOr:
 		return 1, -1
 	}
 
@@ -74,22 +68,14 @@ func resultKinds(op Op, args []*sexpr) uint8 {
 		}
 
 		return k
-	case OpHourOfDay, OpToInt, OpLength, OpFloor, OpCeil, OpIndexOf:
+	case OpHourOfDay, OpIndexOf:
 		return kindBit(vec.KindInt)
-	case OpToFloat, OpRound, OpSqrt, OpLn, OpLog, OpExp, OpPow:
-		return kindBit(vec.KindFloat)
-	case OpAbs:
-		return args[0].kinds & numericKinds
-	case OpToString, OpTypeOf, OpLower, OpUpper, OpSubstr, OpConcat, OpReplace, OpTrim, OpTrimLeft, OpTrimRight:
-		return kindBit(vec.KindString)
 	case OpIf:
 		return union(1, 1)
 	case OpCase:
 		return union(1, 2) | args[len(args)-1].kinds&^nullBit
 	case OpCoalesce:
 		return union(0, 1)
-	case OpNullIf:
-		return args[0].kinds &^ nullBit
 	}
 
 	return kindBit(vec.KindBool)
@@ -99,23 +85,12 @@ func resultKinds(op Op, args []*sexpr) uint8 {
 // none.
 func strict(op Op) bool {
 	switch op {
-	case OpIf, OpCase, OpCoalesce, OpNullIf, OpExists, OpIsNull, OpIsMissing, OpTypeOf, OpAnd, OpOr, OpFunc:
+	case OpIf, OpCase, OpCoalesce, OpIsNull, OpIsMissing, OpAnd, OpOr, OpFunc:
 		return false
 	}
 
 	return true
 }
-
-// typeDict is the dictionary of type names, addressed by kind.
-var typeDict = func() (d vec.Column) {
-	d.Offsets = []uint32{0}
-	for _, name := range typeNames {
-		d.Data = append(d.Data, name...)
-		d.Offsets = append(d.Offsets, uint32(len(d.Data)))
-	}
-
-	return d
-}()
 
 // operand is what an expression holds in the selected rows of a block: at
 // most one column per kind, a row having a value in at most one of them.
@@ -350,7 +325,7 @@ func (w *worker) operand(e *sexpr, n int, idx []uint32) (operand, error) {
 	case e.ints:
 		return w.intOperand(e, n, idx)
 	case w.shared == nil && e.args[0].op == OpColumn &&
-		(e.op == OpExists || e.op == OpIsNull || e.op == OpIsMissing || e.op == OpTypeOf):
+		(e.op == OpIsNull || e.op == OpIsMissing):
 		return w.kindOperand(e)
 	}
 	base := len(w.opers)
@@ -406,12 +381,6 @@ func (w *worker) kindOperand(e *sexpr) (operand, error) {
 		}
 	}
 	c := &s.dict
-	if e.op == OpTypeOf {
-		*c = vec.Column{Kind: vec.KindString, Layout: vec.Dict, Rows: rows, Offsets: typeDict.Offsets, Data: typeDict.Data, Codes8: codes}
-		o.cols[vec.KindString], o.computed = c, true
-
-		return o, nil
-	}
 	mask := sized(s.valid[2], rows)
 	s.valid[2] = mask
 	want := uint8(KindAny)
@@ -419,9 +388,6 @@ func (w *worker) kindOperand(e *sexpr) (operand, error) {
 		want = uint8(vec.KindNull)
 	}
 	vec.MaskEq8(mask, codes, want)
-	if e.op == OpExists {
-		vec.MaskNot(mask, mask)
-	}
 	s.bools = sized(s.bools, vec.BitmapWords(rows))
 	vec.BitmapFromMask(s.bools, mask)
 	*c = vec.Column{Kind: vec.KindBool, Rows: rows, Bools: s.bools}

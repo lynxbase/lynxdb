@@ -125,7 +125,7 @@ func BenchmarkQ2Days(b *testing.B) {
 	plan := q(str("commit.collection"))
 	// Lower case leaves the collections as they are and keeps the groups from
 	// the order of the rows.
-	ref, err := exec.Run(context.Background(), snap, q(exec.Lower(str("commit.collection"))), exec.Options{})
+	ref, err := exec.Run(context.Background(), snap, q(fn("lower", str("commit.collection"))), exec.Options{})
 	if err != nil {
 		b.Fatal(err)
 	}

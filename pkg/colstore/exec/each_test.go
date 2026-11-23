@@ -34,7 +34,7 @@ func namedRows(res *exec.Result) []string {
 func TestEachHandsOverTheRowsOfRun(t *testing.T) {
 	eq := func(path, v string) *exec.Expr { return exec.Eq(anyOf(path), exec.Str(v)) }
 	cases := map[string]exec.Node{
-		"columns":              &exec.Project{Input: &exec.Scan{Filter: eq("kind", "commit")}, Exprs: []exec.Named{named("id", num("id")), named("m", exec.Upper(anyOf("msg")))}},
+		"columns":              &exec.Project{Input: &exec.Scan{Filter: eq("kind", "commit")}, Exprs: []exec.Named{named("id", num("id")), named("m", fn("upper", anyOf("msg")))}},
 		"whole rows":           &exec.Project{Input: &exec.Scan{Filter: exec.Lt(num("id"), exec.Int(700))}, Rest: true, Except: []string{"big"}},
 		"columns and the rest": &exec.Project{Input: &exec.Scan{}, Exprs: []exec.Named{named("who", anyOf("user"))}, Rest: true},
 		"no row":               &exec.Project{Input: &exec.Scan{Filter: eq("kind", "nope")}, Rest: true},

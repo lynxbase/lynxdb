@@ -7,15 +7,17 @@
 // referenced kind is missing for that reference; a JSON null is missing too.
 //
 // Filters are two-valued: a comparison or a text match with a missing value
-// is false, and Not inverts that. A string literal compares with string
-// values only, a numeric literal with integers and floats, a boolean literal
-// with booleans.
+// is false, and Not inverts that. A string compared with a number is read as
+// the number it holds, and the comparison is false for a string that holds
+// none; a boolean literal compares with booleans.
 //
 // Scalar functions compute a value per row. A function of a value it cannot
-// take, of a null or of a missing one gives a null, which Exists, IsNull,
-// IsMissing, TypeOf, Coalesce, If and Case tell apart from a value as their
-// comments say. Arithmetic keeps integers, gives a float when either side is
-// one, and gives no value when dividing by zero; Add joins two strings.
+// take, of a null or of a missing one gives a null, which IsNull, IsMissing,
+// Coalesce, If and Case tell apart from a value as their comments say; the
+// functions of the IR come as Funcs. Arithmetic reads a string as the number
+// it holds, keeps integers, gives a float when either side is one, and gives
+// no value when dividing by zero or for a string that holds no number; Add
+// joins two strings.
 // Inside a scalar function, comparisons, And, Or and Not are three-valued:
 // they give no value where the outcome depends on a value that is not there.
 //
@@ -26,14 +28,15 @@
 //
 // Aggregates: Count without an argument counts rows; with one it counts the
 // rows where the argument has a value. CountDistinct counts the distinct
-// values of the argument, telling kinds apart and identifying a value by its
-// 128-bit hash. Sum, Min, Max, Avg, Var and Stdev read integers and floats
+// values of the argument, telling kinds apart as group keys do and
+// identifying a value by its 128-bit hash. Sum, Min, Max, Avg, Var, Stdev
+// and Percentile read integers, floats and the numbers that strings hold,
 // and skip values of every other kind; the result of the first three is an
-// integer when every value read was one, a float otherwise, and the others
-// are always floats. Min and Max read strings too, which order after every
-// number as in a sort: the Min of a group is a string only when the group
-// holds no number, and its Max is a string when it holds one. An aggregate
-// that read no value is null.
+// integer when every number read was one, a float otherwise, and the others
+// are always floats. Min and Max read the other strings too, which order
+// after every number as in a sort: the Min of a group is a string only when
+// the group holds no number, and its Max is a string when it holds one. An
+// aggregate that read no value is null.
 //
 // A group's state is a row of 64-bit words, and for the aggregates that need
 // more, states of variable size that the words refer to: the extreme string
@@ -75,39 +78,12 @@ const (
 	OpDiv
 	OpMod
 	OpBin
-	OpToInt
-	OpToFloat
-	OpToString
-	OpToBool
 	OpIf
 	OpCase
 	OpCoalesce
-	OpNullIf
-	OpExists
 	OpIsNull
 	OpIsMissing
-	OpTypeOf
-	OpLength
-	OpLower
-	OpUpper
-	OpSubstr
-	OpConcat
-	OpStartsWith
-	OpEndsWith
-	OpReplace
 	OpMatchAny
-	OpAbs
-	OpRound
-	OpFloor
-	OpCeil
-	OpSqrt
-	OpLn
-	OpLog
-	OpExp
-	OpPow
-	OpTrim
-	OpTrimLeft
-	OpTrimRight
 	OpIndexOf
 	OpTotal
 	OpFunc
@@ -216,8 +192,10 @@ func Match(a *Expr, p tokenfilter.Pattern) *Expr {
 	return &Expr{Op: OpMatch, Pattern: p, Args: []*Expr{a}}
 }
 
-// MatchAny is true when a string that the row holds at any path holds the
-// pattern; strings inside arrays are not looked at.
+// MatchAny is true when a string that the row holds at any path, also inside
+// an array or an object, holds the pattern, or for a pattern of a word of
+// digits, when a number of the row is that number or has it as its whole
+// part.
 func MatchAny(p tokenfilter.Pattern) *Expr { return &Expr{Op: OpMatchAny, Pattern: p} }
 
 // HourOfDay is the UTC hour, 0 to 23, of a time in nanoseconds.
@@ -244,20 +222,6 @@ func call(op Op, args ...*Expr) *Expr { return &Expr{Op: op, Args: args} }
 // largest multiple of width that is not above x.
 func Bin(x, width *Expr) *Expr { return call(OpBin, x, width) }
 
-// ToInt converts a number, a boolean or the decimal text of a number to an
-// integer, truncating a fraction.
-func ToInt(a *Expr) *Expr { return call(OpToInt, a) }
-
-// ToFloat converts a number, a boolean or the text of a number to a float.
-func ToFloat(a *Expr) *Expr { return call(OpToFloat, a) }
-
-// ToString is the text of a string, a number or a boolean.
-func ToString(a *Expr) *Expr { return call(OpToString, a) }
-
-// ToBool converts a boolean, a number, which is true unless zero, or the
-// text true or false.
-func ToBool(a *Expr) *Expr { return call(OpToBool, a) }
-
 // If is a where cond is true and b where it is false.
 func If(cond, a, b *Expr) *Expr { return call(OpIf, cond, a, b) }
 
@@ -268,91 +232,11 @@ func Case(args ...*Expr) *Expr { return call(OpCase, args...) }
 // Coalesce is the first argument that has a value.
 func Coalesce(args ...*Expr) *Expr { return call(OpCoalesce, args...) }
 
-// NullIf is a unless it equals b.
-func NullIf(a, b *Expr) *Expr { return call(OpNullIf, a, b) }
-
-// Exists is true where a holds a value or a null.
-func Exists(a *Expr) *Expr { return call(OpExists, a) }
-
 // IsNull is true where a holds a null.
 func IsNull(a *Expr) *Expr { return call(OpIsNull, a) }
 
 // IsMissing is true where a holds neither a value nor a null.
 func IsMissing(a *Expr) *Expr { return call(OpIsMissing, a) }
-
-// TypeOf names what a holds: string, int, float, bool, array, null or
-// missing.
-func TypeOf(a *Expr) *Expr { return call(OpTypeOf, a) }
-
-// Length is the number of characters of a string.
-func Length(a *Expr) *Expr { return call(OpLength, a) }
-
-// Lower is a string in lower case.
-func Lower(a *Expr) *Expr { return call(OpLower, a) }
-
-// Upper is a string in upper case.
-func Upper(a *Expr) *Expr { return call(OpUpper, a) }
-
-// Substr is the characters of s from start, counted from zero or, when
-// negative, from the end; args may hold how many characters to take.
-func Substr(s, start *Expr, args ...*Expr) *Expr {
-	return call(OpSubstr, append([]*Expr{s, start}, args...)...)
-}
-
-// Concat joins strings.
-func Concat(args ...*Expr) *Expr { return call(OpConcat, args...) }
-
-// StartsWith is true where the string s begins with prefix.
-func StartsWith(s, prefix *Expr) *Expr { return call(OpStartsWith, s, prefix) }
-
-// EndsWith is true where the string s ends with suffix.
-func EndsWith(s, suffix *Expr) *Expr { return call(OpEndsWith, s, suffix) }
-
-// Replace is s with every occurrence of the string from replaced by to.
-func Replace(s, from, to *Expr) *Expr { return call(OpReplace, s, from, to) }
-
-// Abs is the magnitude of a number, of its kind.
-func Abs(a *Expr) *Expr { return call(OpAbs, a) }
-
-// Round is a number rounded half away from zero, as a float: to an integer,
-// or to the number of decimal digits that args holds.
-func Round(a *Expr, args ...*Expr) *Expr { return call(OpRound, append([]*Expr{a}, args...)...) }
-
-// Floor is the greatest integer that is not above a number.
-func Floor(a *Expr) *Expr { return call(OpFloor, a) }
-
-// Ceil is the least integer that is not below a number.
-func Ceil(a *Expr) *Expr { return call(OpCeil, a) }
-
-// Sqrt is the square root of a number that is not negative.
-func Sqrt(a *Expr) *Expr { return call(OpSqrt, a) }
-
-// Ln is the natural logarithm of a positive number.
-func Ln(a *Expr) *Expr { return call(OpLn, a) }
-
-// Log is the logarithm of a positive number to base ten, or to the base that
-// args holds.
-func Log(a *Expr, args ...*Expr) *Expr { return call(OpLog, append([]*Expr{a}, args...)...) }
-
-// Exp is e raised to a number.
-func Exp(a *Expr) *Expr { return call(OpExp, a) }
-
-// Pow is a raised to b, as a float.
-func Pow(a, b *Expr) *Expr { return call(OpPow, a, b) }
-
-// Trim is a string without the white space at its ends, or without the
-// characters of the string that args holds.
-func Trim(s *Expr, args ...*Expr) *Expr { return call(OpTrim, append([]*Expr{s}, args...)...) }
-
-// TrimLeft is Trim at the start of the string alone.
-func TrimLeft(s *Expr, args ...*Expr) *Expr {
-	return call(OpTrimLeft, append([]*Expr{s}, args...)...)
-}
-
-// TrimRight is Trim at the end of the string alone.
-func TrimRight(s *Expr, args ...*Expr) *Expr {
-	return call(OpTrimRight, append([]*Expr{s}, args...)...)
-}
 
 // IndexOf is how many characters precede the first occurrence of the string
 // needle in s, and has no value when there is none.

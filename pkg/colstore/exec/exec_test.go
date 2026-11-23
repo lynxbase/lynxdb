@@ -10,6 +10,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/tokenfilter"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
 
@@ -577,7 +578,7 @@ func TestPickedRows(t *testing.T) {
 		{Name: "id_of_min_time", Func: exec.ArgMin, Arg: num("id"), By: exec.Time()},
 		{Name: "id_of_max_v", Func: exec.ArgMax, Arg: num("id"), By: anyOf("v")},
 		{Name: "k_of_min_v", Func: exec.ArgMin, Arg: str("k"), By: anyOf("v")},
-		{Name: "v_of_max_neg", Func: exec.ArgMax, Arg: anyOf("v"), By: exec.Sub(exec.Float(0.25), exec.ToFloat(num("id")))},
+		{Name: "v_of_max_neg", Func: exec.ArgMax, Arg: anyOf("v"), By: exec.Sub(exec.Float(0.25), cast(ir.Float, num("id")))},
 		{Name: "v_of_none", Func: exec.ArgMin, Arg: anyOf("v"), By: anyOf("k")},
 	}
 	byPlace := append(byTime[:len(byTime):len(byTime)], exec.Agg{Name: "first", Func: exec.First, Arg: anyOf("v")},
@@ -614,7 +615,7 @@ func TestPickedRows(t *testing.T) {
 				Cond: exec.And(exec.Gt(anyOf("latest_id"), exec.Int(2000)), exec.Gt(anyOf("rows"), exec.Int(1)))},
 			"a function of": &exec.Sort{Input: &exec.Project{Input: &exec.Filter{Input: &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("k"), Aggs: aggs},
 				Cond: exec.Lt(anyOf("latest_id"), exec.Int(2990))},
-				Exprs: []exec.Named{named("k", anyOf("k")), named("up", exec.Upper(anyOf("latest_text"))), named("next", exec.Add(anyOf("latest_id"), exec.Int(1))), named("e", anyOf("earliest"))}},
+				Exprs: []exec.Named{named("k", anyOf("k")), named("up", fn("upper", anyOf("latest_text"))), named("next", exec.Add(anyOf("latest_id"), exec.Int(1))), named("e", anyOf("earliest"))}},
 				By: []exec.Order{{Column: "next"}}},
 			"no group passes": &exec.Filter{Input: &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("k"), Aggs: aggs},
 				Cond: exec.Gt(anyOf("latest_id"), exec.Int(1<<40))},
@@ -635,8 +636,8 @@ func TestPickedRows(t *testing.T) {
 	}
 	scan := &exec.Scan{}
 	for name, plan := range map[string]exec.Node{
-		"of a function":   &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "x", Func: exec.First, Arg: exec.Upper(anyOf("v"))}}},
-		"row of function": &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "x", Func: exec.FirstRow, Arg: exec.Upper(anyOf("v"))}}},
+		"of a function":   &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "x", Func: exec.First, Arg: fn("upper", anyOf("v"))}}},
+		"row of function": &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "x", Func: exec.FirstRow, Arg: fn("upper", anyOf("v"))}}},
 		"by a string":     &exec.Aggregate{Input: scan, Aggs: []exec.Agg{{Name: "x", Func: exec.ArgMax, Arg: anyOf("v"), By: str("k")}}},
 	} {
 		if _, err := exec.Run(context.Background(), colstore.NewTable().Snapshot(), plan, exec.Options{}); !errors.Is(err, exec.ErrUnsupported) {

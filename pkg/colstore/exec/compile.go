@@ -396,7 +396,7 @@ func (q *query) scanExpr(e *Expr, depth int) (*sexpr, error) {
 		}
 		s.ints = s.ints && arg.ints
 		switch e.Op {
-		case OpExists, OpIsNull, OpIsMissing, OpTypeOf:
+		case OpIsNull, OpIsMissing:
 			// A reference to every kind sees nulls apart from missing values.
 			if arg.op == OpColumn && arg.kind == KindAny {
 				arg.kinds |= nullBit
@@ -558,7 +558,7 @@ func (q *query) pred(e *Expr, depth int) (*pred, error) {
 		p.number, p.numbered = e.Pattern.Number()
 
 		return p, nil
-	case OpExists, OpIsNull, OpIsMissing:
+	case OpIsNull, OpIsMissing:
 		if len(e.Args) == 1 {
 			if p := q.presence(e); p != nil {
 				return p, nil

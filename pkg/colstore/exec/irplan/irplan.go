@@ -1386,7 +1386,7 @@ func (t *translator) pred(e ir.Expr, not bool) (*exec.Expr, error) {
 		return p, err
 	}
 	switch p.Op {
-	case exec.OpIsNull, exec.OpIsMissing, exec.OpExists:
+	case exec.OpIsNull, exec.OpIsMissing:
 		// These are true or false for every row.
 		return exec.Not(p), nil
 	}

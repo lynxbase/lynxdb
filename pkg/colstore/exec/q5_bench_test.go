@@ -51,7 +51,7 @@ func BenchmarkQ5(b *testing.B) {
 		// What the writes left to collect would count as the time of the
 		// queries.
 		runtime.GC()
-		plan, ref := spanPlan(str("did")), spanPlan(exec.Lower(str("did")))
+		plan, ref := spanPlan(str("did")), spanPlan(fn("lower", str("did")))
 		runTimeQueries(b, snap, []timeQuery{
 			{name: store.name, plan: plan, ref: ref, workers: workers},
 			{name: store.name + ", one goroutine", plan: plan, ref: ref, workers: 1},

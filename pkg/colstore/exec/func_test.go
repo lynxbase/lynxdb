@@ -63,7 +63,7 @@ func TestFunctionsOfTheCaller(t *testing.T) {
 		"a key of a column of many values": &exec.Aggregate{Input: &exec.Scan{Filter: exec.Lt(num("id"), exec.Int(400))},
 			Keys: []exec.Named{named("k", exec.Call(shout(nil), anyOf("user"), exec.Str("x")))}, Aggs: count},
 		"a key of a column of several kinds": &exec.Aggregate{Input: &exec.Scan{}, Keys: []exec.Named{named("k", exec.Call(shout(nil), anyOf("n")))}, Aggs: count},
-		"an argument that is a function":     &exec.Aggregate{Input: &exec.Scan{}, Keys: []exec.Named{named("k", exec.Call(shout(nil), exec.Upper(anyOf("coll")), anyOf("op")))}, Aggs: count},
+		"an argument that is a function":     &exec.Aggregate{Input: &exec.Scan{}, Keys: []exec.Named{named("k", exec.Call(shout(nil), fn("upper", anyOf("coll")), anyOf("op")))}, Aggs: count},
 		"rows": &exec.Sort{Input: &exec.Project{Input: &exec.Scan{}, Exprs: []exec.Named{named("id", num("id")), named("m", exec.Call(shout(nil), anyOf("msg")))}},
 			By: []exec.Order{{Column: "id"}}, Limit: 50},
 		"a filter":                  &exec.Aggregate{Input: &exec.Scan{Filter: exec.And(exec.Call(longer, anyOf("msg"), exec.Int(20)), exec.Eq(anyOf("kind"), exec.Str("commit")))}, Aggs: count},

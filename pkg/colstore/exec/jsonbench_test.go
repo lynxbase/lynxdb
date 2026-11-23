@@ -258,7 +258,7 @@ func benchPlans(win benchWindows) []benchPlan {
 		benchPlan{name: "K1 top 10 users by events", plan: &exec.Sort{Input: byUser, By: topUsers, Limit: 10}, ordered: true},
 		benchPlan{name: "K2 top 10 users and their share", plan: &exec.Sort{Input: &exec.Project{Input: byUser, Exprs: []exec.Named{
 			named("did", exec.Col("did", exec.KindAny)), named("count", exec.Col("count", exec.KindAny)),
-			named("percent", exec.Round(exec.Div(exec.Mul(exec.Col("count", exec.KindAny), exec.Float(100)), exec.Total(exec.Col("count", exec.KindAny))), exec.Int(2))),
+			named("percent", fn("round", exec.Div(exec.Mul(exec.Col("count", exec.KindAny), exec.Float(100)), exec.Total(exec.Col("count", exec.KindAny))), exec.Int(2))),
 		}}, By: topUsers, Limit: 10}, ordered: true},
 		benchPlan{name: "L2 latest post of every user", plan: &exec.Aggregate{Input: posts, Keys: []exec.Named{named("did", str("did"))},
 			Aggs: []exec.Agg{latestText}}},

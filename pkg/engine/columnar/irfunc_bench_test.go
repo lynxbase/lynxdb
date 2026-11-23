@@ -127,12 +127,9 @@ func BenchmarkFunctions(b *testing.B) {
 		used := processCPU() - cpu
 		b.ReportMetric(float64(used.Nanoseconds())/float64(b.N)/benchRows, "cpu-ns/row")
 	}
-	// The executor's own operations over the same columns are the floor.
+	// The executor's own operation over the time is the floor.
 	for name, e := range map[string]*exec.Expr{
-		"length_msg_operation":     exec.Length(exec.Col("msg", exec.KindAny)),
-		"substr_msg_operation":     exec.Substr(exec.Col("msg", exec.KindAny), exec.Int(0), exec.Int(7)),
-		"length_payload_operation": exec.Length(exec.Col("payload", exec.KindAny)),
-		"hour_time_operation":      exec.HourOfDay(exec.Time()),
+		"hour_time_operation": exec.HourOfDay(exec.Time()),
 	} {
 		plan := &exec.Aggregate{Input: &exec.Scan{}, Aggs: []exec.Agg{{Name: "n", Func: exec.Count, Arg: e}}}
 		b.Run(name, func(b *testing.B) { run(b, plan) })
