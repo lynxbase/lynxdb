@@ -101,3 +101,7 @@ run = ["npm --prefix docs/site ci", "npm --prefix docs/site run build"]
 [tasks.version]
 description = "Print the version this tree builds as"
 run = "tools/release/version.sh current"
+
+[tasks.site]
+description = "Build the download site from the releases under dist/releases into dist/site"
+run = "tools/release/site.sh dist/releases dist/site"

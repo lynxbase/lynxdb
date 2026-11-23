@@ -4,14 +4,13 @@
 #
 # Usage:
 #   curl -fsSL https://lynxdb.org/install.sh | sh
-#   curl -fsSL https://lynxdb.org/install.sh | sh -s -- --version v0.5.0
+#   curl -fsSL https://lynxdb.org/install.sh | sh -s -- --version 26.11.1.80
 #   curl -fsSL https://lynxdb.org/install.sh | LYNXDB_INSTALL_DIR=/opt/lynxdb sh
 #
 # Environment variables:
 #   LYNXDB_INSTALL_DIR  - Installation directory (default: /usr/local/bin or ~/.local/bin)
-#   LYNXDB_VERSION      - Specific version to install (default: latest)
-#   LYNXDB_CHANNEL      - Release channel: stable or nightly (default: stable)
-#   LYNXDB_ALLOW_PRERELEASE - Required for nightly and prerelease versions
+#   LYNXDB_VERSION      - Specific version to install (default: the newest of the channel)
+#   LYNXDB_CHANNEL      - Release channel: stable or lts (default: stable)
 #   LYNXDB_BASE_URL     - Override download base URL
 #   LYNXDB_NO_MODIFY_PATH - If set, skip PATH modification
 #
@@ -23,11 +22,8 @@
 set -eu
 
 
-GITHUB_REPO="lynxbase/Lynxdb"
 DEFAULT_BASE_URL="https://dl.lynxdb.org"
-FALLBACK_BASE_URL="https://github.com/${GITHUB_REPO}/releases/download"
-STABLE_MANIFEST_PATH="/manifest.json"
-NIGHTLY_MANIFEST_PATH="/nightly/manifest.json"
+RELEASES_URL="https://github.com/lynxbase/lynxdb/releases"
 
 
 setup_colors() {
@@ -38,13 +34,12 @@ setup_colors() {
         RED="$(tput setaf 1 2>/dev/null || printf '')"
         GREEN="$(tput setaf 2 2>/dev/null || printf '')"
         YELLOW="$(tput setaf 3 2>/dev/null || printf '')"
-        BLUE="$(tput setaf 4 2>/dev/null || printf '')"
         MAGENTA="$(tput setaf 5 2>/dev/null || printf '')"
         CYAN="$(tput setaf 6 2>/dev/null || printf '')"
         RESET="$(tput sgr0 2>/dev/null || printf '')"
     else
         BOLD="" DIM="" UNDERLINE=""
-        RED="" GREEN="" YELLOW="" BLUE="" MAGENTA="" CYAN="" RESET=""
+        RED="" GREEN="" YELLOW="" MAGENTA="" CYAN="" RESET=""
     fi
 }
 
@@ -57,14 +52,6 @@ debug()     { [ -z "${VERBOSE:-}" ] || printf '%s\n' "${DIM}  $*${RESET}"; }
 
 
 has() { command -v "$1" >/dev/null 2>&1; }
-
-need() {
-    if ! has "$1"; then
-        error "Required command '$1' not found."
-        error "Please install '$1' and try again."
-        exit 1
-    fi
-}
 
 # Detect available HTTP client
 detect_http_client() {
@@ -151,138 +138,67 @@ detect_arch() {
     debug "Detected architecture: $ARCH"
 }
 
-detect_libc() {
-    LIBC=""
-    if [ "$OS" = "linux" ]; then
-        if has ldd; then
-            case "$(ldd --version 2>&1 || true)" in
-                *musl*) LIBC="musl" ;;
-                *)      LIBC="gnu" ;;
-            esac
-        elif [ -f /etc/alpine-release ]; then
-            LIBC="musl"
-        else
-            LIBC="gnu"
-        fi
-        debug "Detected libc: $LIBC"
-    fi
-}
-
-allow_prerelease_enabled() {
-    case "${ALLOW_PRERELEASE:-}" in
-        1|true|TRUE|yes|YES) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-version_is_prerelease() {
-    case "$1" in
-        *-*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-normalize_version() {
-    if [ -n "${VERSION:-}" ]; then
-        case "$VERSION" in
-            v*) ;;
-            *) VERSION="v${VERSION}" ;;
-        esac
-    fi
-}
-
-resolve_manifest_url() {
-    case "$CHANNEL" in
-        stable) MANIFEST_URL="${BASE_URL}${STABLE_MANIFEST_PATH}" ;;
-        nightly) MANIFEST_URL="${BASE_URL}${NIGHTLY_MANIFEST_PATH}" ;;
-    esac
-}
-
 validate_channel_request() {
     case "$CHANNEL" in
-        stable|nightly) ;;
+        stable|lts) ;;
         *)
             error "Invalid channel: $CHANNEL"
-            error "Use --channel stable or --channel nightly."
+            error "Use --channel stable or --channel lts."
             exit 1
             ;;
     esac
-
-    if [ "$CHANNEL" = "nightly" ] && ! allow_prerelease_enabled; then
-        error "Nightly installs require explicit prerelease consent."
-        error "Re-run with: --channel nightly --allow-prerelease"
-        exit 1
-    fi
-
-    normalize_version
-    if [ -n "${VERSION:-}" ] && version_is_prerelease "$VERSION" && ! allow_prerelease_enabled; then
-        error "Prerelease versions require explicit consent."
-        error "Re-run with: --allow-prerelease"
-        exit 1
-    fi
 }
 
-validate_resolved_version() {
-    if version_is_prerelease "$VERSION" && ! allow_prerelease_enabled; then
-        error "Resolved prerelease version without explicit consent: $VERSION"
-        error "Re-run with: --allow-prerelease"
-        exit 1
-    fi
-
+# A version reads year.month.patch.build. A release tag, v26.11.1.80-stable,
+# is accepted in its place.
+normalize_version() {
+    VERSION="${VERSION#v}"
     case "$VERSION" in
-        *-nightly.*) RESOLVED_CHANNEL="nightly" ;;
-        *) RESOLVED_CHANNEL="$CHANNEL" ;;
+        *-stable|*-lts|*-prestable) VERSION="${VERSION%-*}" ;;
     esac
 }
 
+# The newest version of the channel, unless one was asked for, and the release
+# tag that holds its files.
 resolve_version() {
     if [ -n "${VERSION:-}" ]; then
         normalize_version
         debug "Using specified version: $VERSION"
-        return
-    fi
-
-    info "Resolving latest ${CHANNEL} version..."
-    resolve_manifest_url
-
-    # Try primary manifest first, then fallback
-    manifest=""
-    if manifest="$(http_get "$MANIFEST_URL" 2>/dev/null)"; then
-        debug "Fetched manifest from primary CDN"
-    fi
-
-    if [ -n "$manifest" ]; then
-        # Extract version from JSON without jq dependency
-        # Manifest format: {"version":"v0.5.0","channel":"stable",...}
-        VERSION="$(printf '%s' "$manifest" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-        if [ -n "$VERSION" ]; then
-            debug "Latest version from manifest: $VERSION"
-            return
+    else
+        info "Resolving latest ${CHANNEL} version..."
+        if ! VERSION="$(http_get "${BASE_URL}/channels/${CHANNEL}" 2>/dev/null)"; then
+            error "Could not read ${BASE_URL}/channels/${CHANNEL}."
+            error "The ${CHANNEL} channel has no release yet, or the download site cannot be reached."
+            error "Please specify a version manually: --version 26.11.1.80"
+            exit 1
         fi
+        debug "Latest version of the channel: $VERSION"
     fi
 
-    if [ "$CHANNEL" = "nightly" ]; then
-        error "Could not determine the latest nightly version from the nightly manifest."
-        error "Please specify a nightly version manually with --version and --allow-prerelease."
+    # A build between releases adds its distance and commit: 26.11.1.80+5.gabc1234.
+    case "$VERSION" in
+        ''|*[!0-9a-z.+]*)
+            error "Not a LynxDB version: ${VERSION}"
+            error "A version reads year.month.patch.build, for example 26.11.1.80."
+            exit 1
+            ;;
+    esac
+
+    if ! TAG="$(http_get "${BASE_URL}/versions/${VERSION}" 2>/dev/null)"; then
+        error "Version ${VERSION} is not published."
+        error "Releases: ${UNDERLINE}${RELEASES_URL}${RESET}"
         exit 1
     fi
 
-    # Final fallback: GitHub API
-    if has curl; then
-        VERSION="$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" 2>/dev/null \
-            | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-    elif has wget; then
-        VERSION="$(wget -qO- "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" 2>/dev/null \
-            | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
-    fi
-
-    if [ -z "${VERSION:-}" ]; then
-        error "Could not determine the latest version."
-        error "Please specify a version manually: --version v0.5.0"
-        exit 1
-    fi
-
-    debug "Latest version from GitHub API: $VERSION"
+    case "$TAG" in
+        "v${VERSION}-stable"|"v${VERSION}-lts"|"v${VERSION}-prestable") ;;
+        *)
+            error "${BASE_URL}/versions/${VERSION} does not name a release of ${VERSION}."
+            exit 1
+            ;;
+    esac
+    RESOLVED_CHANNEL="${TAG##*-}"
+    debug "Release tag: $TAG"
 }
 
 
@@ -308,26 +224,20 @@ resolve_install_dir() {
 
 
 build_download_url() {
-    # Construct artifact name: lynxdb-{version}-{os}-{arch}[.musl].tar.gz
-    artifact="lynxdb-${VERSION}-${OS}-${ARCH}"
-    if [ "$LIBC" = "musl" ]; then
-        artifact="${artifact}-musl"
-    fi
-
+    # Archive name: lynxdb-{version}-{os}-{arch}.tar.gz, .zip on Windows
+    name="lynxdb-${VERSION}-${OS}-${ARCH}"
     if [ "$OS" = "windows" ]; then
-        artifact="${artifact}.zip"
+        artifact="${name}.zip"
+        binary="lynxdb.exe"
     else
-        artifact="${artifact}.tar.gz"
+        artifact="${name}.tar.gz"
+        binary="lynxdb"
     fi
 
-    # Try CDN first, then GitHub Releases as fallback
-    DOWNLOAD_URL="${BASE_URL}/${VERSION}/${artifact}"
-    FALLBACK_DOWNLOAD_URL="${FALLBACK_BASE_URL}/${VERSION}/${artifact}"
-    CHECKSUM_URL="${BASE_URL}/${VERSION}/checksums.txt"
-    FALLBACK_CHECKSUM_URL="${FALLBACK_BASE_URL}/${VERSION}/checksums.txt"
+    DOWNLOAD_URL="${BASE_URL}/dist/${TAG}/${artifact}"
+    CHECKSUM_URL="${BASE_URL}/dist/${TAG}/SHA256SUMS"
 
     debug "Download URL: $DOWNLOAD_URL"
-    debug "Artifact: $artifact"
 }
 
 create_tmp_dir() {
@@ -344,42 +254,35 @@ download_and_verify() {
 
     info "Downloading ${BOLD}lynxdb ${VERSION}${RESET} for ${OS}/${ARCH}..."
 
-    # Try CDN first, then fallback to GitHub Releases
-    if ! http_download "$DOWNLOAD_URL" "$archive_path" 2>/dev/null; then
-        debug "CDN download failed, trying GitHub Releases..."
-        if ! http_download "$FALLBACK_DOWNLOAD_URL" "$archive_path"; then
-            error "Download failed."
-            printf '\n' >&2
-            error "This could mean:"
-            error "  • Version ${VERSION} doesn't exist"
-            error "  • No build for ${OS}/${ARCH}${LIBC:+ ($LIBC)}"
-            error "  • Network connectivity issues"
-            printf '\n' >&2
-            error "Available builds: ${UNDERLINE}https://github.com/${GITHUB_REPO}/releases/${VERSION}${RESET}"
-            exit 1
-        fi
+    if ! http_download "$DOWNLOAD_URL" "$archive_path"; then
+        error "Download failed."
+        printf '\n' >&2
+        error "This could mean:"
+        error "  • No build of ${VERSION} for ${OS}/${ARCH}"
+        error "  • Network connectivity issues"
+        printf '\n' >&2
+        error "Available builds: ${UNDERLINE}${RELEASES_URL}/tag/${TAG}${RESET}"
+        exit 1
     fi
 
-    # Verify checksum if available
-    verify_checksum "$archive_path" || true
+    verify_checksum "$archive_path"
 }
 
 verify_checksum() {
     archive_path="$1"
 
     if ! has sha256sum && ! has shasum; then
-        warn "Neither sha256sum nor shasum found — skipping checksum verification."
-        return 0
+        error "Neither 'sha256sum' nor 'shasum' found, so the download cannot be verified."
+        error "Please install one of them and try again."
+        exit 1
     fi
 
     info "Verifying checksum..."
 
-    checksum_path="${TMP_DIR}/checksums.txt"
+    checksum_path="${TMP_DIR}/SHA256SUMS"
     if ! http_get "$CHECKSUM_URL" > "$checksum_path" 2>/dev/null; then
-        if ! http_get "$FALLBACK_CHECKSUM_URL" > "$checksum_path" 2>/dev/null; then
-            warn "Could not download checksums — skipping verification."
-            return 0
-        fi
+        error "Could not download ${CHECKSUM_URL}."
+        exit 1
     fi
 
     # Compute hash of downloaded file
@@ -390,11 +293,11 @@ verify_checksum() {
     fi
 
     # Look up expected hash
-    expected_hash="$(grep "${artifact}" "$checksum_path" | head -1 | cut -d' ' -f1)"
+    expected_hash="$(awk -v name="$artifact" '$2 == name { print $1 }' "$checksum_path")"
 
     if [ -z "$expected_hash" ]; then
-        warn "Artifact not found in checksums file — skipping verification."
-        return 0
+        error "SHA256SUMS of ${TAG} does not list ${artifact}."
+        exit 1
     fi
 
     if [ "$actual_hash" != "$expected_hash" ]; then
@@ -458,29 +361,18 @@ extract_and_install() {
             ;;
     esac
 
-    # Find the binary (might be in a subdirectory)
-    binary_path=""
-    if [ -f "${extract_dir}/lynxdb" ]; then
-        binary_path="${extract_dir}/lynxdb"
-    elif [ -f "${extract_dir}/lynxdb.exe" ]; then
-        binary_path="${extract_dir}/lynxdb.exe"
-    else
-        # Search one level deep
-        binary_path="$(find "$extract_dir" -name 'lynxdb' -o -name 'lynxdb.exe' | head -1)"
-    fi
-
-    if [ -z "$binary_path" ]; then
-        error "Could not find lynxdb binary in archive."
+    # The archive holds one directory, named after itself.
+    binary_path="${extract_dir}/${name}/${binary}"
+    if [ ! -f "$binary_path" ]; then
+        error "Could not find ${binary} in the archive."
         exit 1
     fi
 
-    chmod +x "$binary_path"
-
     # Move into place
-    $SUDO cp -f "$binary_path" "${BIN_DIR}/lynxdb"
-    $SUDO chmod 755 "${BIN_DIR}/lynxdb"
+    $SUDO cp -f "$binary_path" "${BIN_DIR}/${binary}"
+    $SUDO chmod 755 "${BIN_DIR}/${binary}"
 
-    success "Installed ${BOLD}lynxdb${RESET} to ${GREEN}${BIN_DIR}/lynxdb${RESET}"
+    success "Installed ${BOLD}lynxdb${RESET} to ${GREEN}${BIN_DIR}/${binary}${RESET}"
 }
 
 
@@ -582,7 +474,7 @@ print_banner() {
     if [ -t 1 ] && [ -z "${QUIET:-}" ]; then
         printf '\n'
         printf '  %s\n' "${BOLD}${CYAN}LynxDB Installer${RESET}"
-        printf '  %s\n' "${DIM}The open-source Splunk alternative${RESET}"
+        printf '  %s\n' "${DIM}A log analytics database in one binary${RESET}"
         printf '\n'
     fi
 }
@@ -592,10 +484,10 @@ print_summary() {
     printf '  %s\n' "${UNDERLINE}Configuration${RESET}"
     info "${BOLD}Version${RESET}:     ${GREEN}${VERSION}${RESET}"
     info "${BOLD}Channel${RESET}:     ${GREEN}${RESOLVED_CHANNEL}${RESET}"
-    info "${BOLD}Platform${RESET}:    ${GREEN}${OS}/${ARCH}${LIBC:+ (${LIBC})}${RESET}"
+    info "${BOLD}Platform${RESET}:    ${GREEN}${OS}/${ARCH}${RESET}"
     info "${BOLD}Install dir${RESET}: ${GREEN}${BIN_DIR}${RESET}"
-    if [ "$RESOLVED_CHANNEL" = "nightly" ]; then
-        warn "You are installing a nightly prerelease build. It may contain regressions."
+    if [ "$RESOLVED_CHANNEL" = "prestable" ]; then
+        warn "You are installing a release candidate. It may contain regressions."
     fi
     printf '\n'
 }
@@ -626,9 +518,8 @@ ${UNDERLINE}Usage${RESET}
   curl -fsSL https://lynxdb.org/install.sh | sh -s -- [OPTIONS]
 
 ${UNDERLINE}Options${RESET}
-  -v, --version VERSION   Install a specific version (e.g. v0.5.0)
-      --channel CHANNEL   Release channel: stable or nightly
-      --allow-prerelease  Allow nightly and explicit prerelease versions
+  -v, --version VERSION   Install a specific version (e.g. 26.11.1.80)
+      --channel CHANNEL   Release channel: stable or lts
   -d, --dir DIRECTORY     Custom installation directory
   -f, --force             Skip confirmation prompts
   -V, --verbose           Enable verbose output
@@ -639,8 +530,7 @@ ${UNDERLINE}Options${RESET}
 ${UNDERLINE}Environment Variables${RESET}
   LYNXDB_INSTALL_DIR      Installation directory
   LYNXDB_VERSION          Version to install
-  LYNXDB_CHANNEL          Release channel: stable or nightly
-  LYNXDB_ALLOW_PRERELEASE Required for nightly and prerelease versions
+  LYNXDB_CHANNEL          Release channel: stable or lts
   LYNXDB_BASE_URL         Override download base URL
   LYNXDB_NO_MODIFY_PATH   Skip PATH modification
 
@@ -649,16 +539,15 @@ ${UNDERLINE}Examples${RESET}
   curl -fsSL https://lynxdb.org/install.sh | sh
 
   # Install specific version
-  curl -fsSL https://lynxdb.org/install.sh | sh -s -- --version v0.5.0
+  curl -fsSL https://lynxdb.org/install.sh | sh -s -- --version 26.11.1.80
 
-  # Install latest nightly
-  curl -fsSL https://lynxdb.org/install.sh | sh -s -- --channel nightly --allow-prerelease
+  # Install the newest release of the lts channel
+  curl -fsSL https://lynxdb.org/install.sh | sh -s -- --channel lts
 
   # Install to custom directory
   curl -fsSL https://lynxdb.org/install.sh | LYNXDB_INSTALL_DIR=~/bin sh
 
 EOF
-    exit 0
 }
 
 parse_args() {
@@ -668,8 +557,6 @@ parse_args() {
     BASE_URL="${LYNXDB_BASE_URL:-$DEFAULT_BASE_URL}"
     BASE_URL="${BASE_URL%/}"
     CHANNEL="${LYNXDB_CHANNEL:-stable}"
-    ALLOW_PRERELEASE="${LYNXDB_ALLOW_PRERELEASE:-}"
-    RESOLVED_CHANNEL="$CHANNEL"
     VERBOSE="${LYNXDB_VERBOSE:-}"
     QUIET="${LYNXDB_QUIET:-}"
     FORCE="${LYNXDB_FORCE:-}"
@@ -680,18 +567,18 @@ parse_args() {
             -v=*|--version=*) VERSION="${1#*=}"; shift ;;
             --channel)      CHANNEL="$2"; shift 2 ;;
             --channel=*)    CHANNEL="${1#*=}"; shift ;;
-            --allow-prerelease) ALLOW_PRERELEASE=1; shift ;;
             -d|--dir)       INSTALL_DIR="$2"; shift 2 ;;
             -d=*|--dir=*)   INSTALL_DIR="${1#*=}"; shift ;;
             -f|--force)     FORCE=1; shift ;;
             -V|--verbose)   VERBOSE=1; shift ;;
             -q|--quiet)     QUIET=1; shift ;;
             --no-modify-path) LYNXDB_NO_MODIFY_PATH=1; shift ;;
-            -h|--help)      usage ;;
+            -h|--help)      usage; exit 0 ;;
             *)
                 error "Unknown option: $1"
                 printf '\n' >&2
-                usage
+                usage >&2
+                exit 2
                 ;;
         esac
     done
@@ -706,16 +593,8 @@ main() {
     detect_http_client
     detect_os
     detect_arch
-    detect_libc
     resolve_version
-    validate_resolved_version
     resolve_install_dir
-    if [ "${LYNXDB_INSTALL_TEST_MODE:-}" = "resolve" ]; then
-        printf 'VERSION=%s\n' "$VERSION"
-        printf 'CHANNEL=%s\n' "$RESOLVED_CHANNEL"
-        printf 'MANIFEST_URL=%s\n' "${MANIFEST_URL:-}"
-        exit 0
-    fi
     check_existing_installation
     print_summary
     build_download_url
