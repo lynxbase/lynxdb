@@ -19,7 +19,8 @@ while [ $# -gt 0 ]; do
 done
 
 repo=$(gh repo view --json nameWithOwner --jq .nameWithOwner)
-tap=${repo%/*}/homebrew-tap
+org=${repo%/*}
+tap=$org/homebrew-tap
 
 echo "This changes the settings of $repo and adds a deploy key to $tap."
 if [ "$assume_yes" -eq 0 ]; then
@@ -48,8 +49,17 @@ ruleset()
     say "rules: $1"
 }
 
-gh api --silent -X PUT "repos/$repo/actions/permissions/workflow" \
-    -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true
+# A repository cannot allow what its organization forbids, and only an owner
+# of the organization can change that.
+if ! gh api --silent -X PUT "repos/$repo/actions/permissions/workflow" \
+    -f default_workflow_permissions=read -F can_approve_pull_request_reviews=true; then
+    cat >&2 <<EOF
+Allow it for the organization first, then run this again:
+  https://github.com/organizations/$org/settings/actions
+  Workflow permissions: Allow GitHub Actions to create and approve pull requests
+EOF
+    exit 1
+fi
 say 'workflows may open pull requests'
 
 gh api --silent -X PUT "repos/$repo/immutable-releases"
@@ -117,8 +127,15 @@ if ! gh repo deploy-key list --repo "$tap" | grep -q 'lynxdb release'; then
     keys=$(mktemp -d)
     trap 'rm -rf "$keys"' EXIT
     ssh-keygen -q -t ed25519 -N '' -C 'lynxdb release' -f "$keys/tap_key"
-    gh repo deploy-key add "$keys/tap_key.pub" --repo "$tap" --allow-write \
-        --title 'lynxdb release' >/dev/null
+    if ! gh repo deploy-key add "$keys/tap_key.pub" --repo "$tap" --allow-write \
+        --title 'lynxdb release' >/dev/null; then
+        cat >&2 <<EOF
+If deploy keys are disabled, enable them for the organization first, then run this again:
+  https://github.com/organizations/$org/settings/member_privileges
+  Deploy keys: Enabled
+EOF
+        exit 1
+    fi
     gh secret set HOMEBREW_TAP_KEY --env release <"$keys/tap_key"
 fi
 say "the release workflow can push to $tap"

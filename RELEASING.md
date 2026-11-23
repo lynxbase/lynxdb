@@ -140,6 +140,13 @@ again:
 - a deploy key with write access to `lynxbase/homebrew-tap`, stored as the
   secret `HOMEBREW_TAP_KEY` of the `release` environment.
 
+Two of these need the organization to allow them first, and a new
+organization allows neither. An owner sets both in the organization's
+settings: under Actions, General, Workflow permissions, "Allow GitHub Actions
+to create and approve pull requests"; and under Member privileges, "Deploy
+keys", Enabled. The script stops with the link to the setting when one is
+off.
+
 These secrets, of the repository or of its `release` environment, are what
 the workflow publishes with:
 
