@@ -203,14 +203,13 @@ func TestE2E_MultiSource_Explain_ReportsScope(t *testing.T) {
 
 // Nonexistent source
 
-func TestE2E_MultiSource_NonexistentSource_ReturnsResults(t *testing.T) {
+func TestE2E_MultiSource_NonexistentSource_NotFound(t *testing.T) {
 	h := setupMultiSource(t)
 
-	// Query a nonexistent source - should return 0 results without error.
-	r := h.MustQuery(`source=nonexistent | stats count() as count`)
-	got := GetInt(r, "count")
-	if got != 0 {
-		t.Errorf("expected 0 events from nonexistent source, got %d", got)
+	// A source that names no index fails the query.
+	_, err := h.Client().Query(context.Background(), client.QueryRequest{Q: `source=nonexistent | stats count() as count`})
+	if !client.IsNotFound(err) || !strings.Contains(err.Error(), "no such index: nonexistent") {
+		t.Errorf("query of a source that names no index: %v", err)
 	}
 }
 

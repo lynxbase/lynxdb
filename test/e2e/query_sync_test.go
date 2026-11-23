@@ -5,6 +5,7 @@ package e2e
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -96,13 +97,12 @@ func TestE2E_QuerySync_InvalidQuery_ReturnsError(t *testing.T) {
 	t.Logf("invalid query correctly returned error: %v", err)
 }
 
-func TestE2E_QuerySync_NonexistentIndex_ReturnsZeroCount(t *testing.T) {
+func TestE2E_QuerySync_NonexistentIndex_NotFound(t *testing.T) {
 	h := NewHarness(t)
 
-	result := h.MustQuery(`source=nonexistent_idx_12345 | stats count() as count`)
-	total := GetInt(result, "count")
-	if total != 0 {
-		t.Errorf("expected 0 events in nonexistent index, got %d", total)
+	_, err := h.Client().Query(context.Background(), client.QueryRequest{Q: `source=nonexistent_idx_12345 | stats count() as count`})
+	if !client.IsNotFound(err) || !strings.Contains(err.Error(), "no such index: nonexistent_idx_12345") {
+		t.Errorf("query of an index that is not there: %v", err)
 	}
 }
 

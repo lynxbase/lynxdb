@@ -53,13 +53,13 @@ func TestE2E_QueryStream_EmptyResult_ZeroTotal(t *testing.T) {
 
 	var count int
 	meta, err := h.Client().QueryStream(ctx, client.QueryRequest{
-		Q: `source=nonexistent_stream_idx | head 10`,
+		Q: `source=main | head 10`,
 	}, func(msg json.RawMessage) error {
 		count++
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("QueryStream on a nonexistent index: %v", err)
+		t.Fatalf("QueryStream on an empty index: %v", err)
 	}
 	if meta == nil || meta.Total != 0 {
 		t.Errorf("expected stream meta total=0, got %+v", meta)
