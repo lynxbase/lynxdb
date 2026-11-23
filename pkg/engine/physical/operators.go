@@ -22,19 +22,17 @@ func (b *builder) aggFuncs(aggs []ir.NamedAgg) ([]pipeline.AggFunc, error) {
 		f := pipeline.AggFunc{Alias: a.Name, Agg: exec.RowAgg{Func: fn}, Kind: call.Type().Kind}
 		args := call.Args
 		switch call.Func.Name {
-		case "percentile":
-			lit, _ := args[1].(*ir.Literal)
-			switch p := lit.V.(type) {
-			case int64:
-				f.Agg.P = float64(p)
-			case float64:
-				f.Agg.P = p
+		case "percentile", "take":
+			lit, ok := args[1].(*ir.Literal)
+			if !ok {
+				return nil, unsupported("%s with a second argument that is not a constant", call.Func.Name)
 			}
-			args = args[:1]
-		case "take":
-			lit, _ := args[1].(*ir.Literal)
-			n, _ := lit.V.(int64)
-			f.Agg.Size = int(n)
+			switch v := lit.V.(type) {
+			case int64:
+				f.Agg.P, f.Agg.Size = float64(v), int(v)
+			case float64:
+				f.Agg.P, f.Agg.Size = v, int(v)
+			}
 			args = args[:1]
 		case "earliest", "latest":
 			if len(args) > 1 {
