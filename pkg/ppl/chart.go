@@ -155,16 +155,17 @@ func (c *compiler) splitKey(f *ast.Field, args []ast.Arg, s ir.Schema) (ir.Named
 	if err != nil {
 		return ir.NamedExpr{}, err
 	}
-	for _, a := range args {
-		if a.Name != "span" {
-			return ir.NamedExpr{}, unsupportedFeature(a.Value, "chart split option %s= is not supported; use span=", a.Name)
-		}
-		v, _ := stringArgValue(a)
-		spn, err := parseSpan(a.Value, v)
-		if err != nil {
-			return ir.NamedExpr{}, err
-		}
-		return ir.NamedExpr{Name: ref.Name, Expr: bucketExpr(ref, spn)}, nil
+	if len(args) == 0 {
+		return ir.NamedExpr{Name: ref.Name, Expr: ref}, nil
 	}
-	return ir.NamedExpr{Name: ref.Name, Expr: ref}, nil
+	a := args[0]
+	if a.Name != "span" {
+		return ir.NamedExpr{}, unsupportedFeature(a.Value, "chart split option %s= is not supported; use span=", a.Name)
+	}
+	v, _ := stringArgValue(a)
+	spn, err := parseSpan(a.Value, v)
+	if err != nil {
+		return ir.NamedExpr{}, err
+	}
+	return ir.NamedExpr{Name: ref.Name, Expr: bucketExpr(ref, spn)}, nil
 }
