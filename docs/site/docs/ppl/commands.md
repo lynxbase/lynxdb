@@ -52,7 +52,7 @@ Every PPL command of the OpenSearch command reference and how LynxDB executes it
 | `rest` | unsupported | it reads OpenSearch cluster management endpoints; use the LynxDB REST API |
 | `reverse` | full |  |
 | `rex` | partial | extract mode and sed s/regex/replacement/[g]; offset_field unsupported; RE2 syntax |
-| `search` | partial | free-text terms match whole tokens of the event's raw text through the term index (OpenSearch searches all fields); quoted phrases match at token boundaries; field comparisons are exact and case-sensitive; field wildcards match the whole value; time modifiers supported; cross-cluster prefixes are read as part of the index name |
+| `search` | partial | free-text terms match whole tokens of the string values of every field of the event, also inside arrays and objects, and a term of digits matches numbers; wildcards match within a token; quoted phrases match at token boundaries; field comparisons are exact and case-sensitive; field wildcards match the whole value; time modifiers supported; cross-cluster prefixes are read as part of the index name |
 | `show datasources` | unsupported | LynxDB has no external data sources; every index is local |
 | `sort` | full | ip(field) sorts by the text form of the address |
 | `spath` | partial | auto-extract keeps JSON value types; a JSON null stays NULL |

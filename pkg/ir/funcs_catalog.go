@@ -290,24 +290,24 @@ func registerSystem() {
 func registerAggregates() {
 	x := []Param{p("x", Any)}
 	aggregate("count", 0, x, Returns(Int), MergeExact, "Number of rows, or with an argument the number of rows where it is not NULL.")
-	aggregate("sum", 1, x, numOrAny, MergeExact, "Sum of the numeric values.")
-	aggregate("avg", 1, x, Returns(Float), MergeExact, "Arithmetic mean of the numeric values.")
-	aggregate("min", 1, x, SameAs(0), MergeExact, "Smallest value; numbers order before strings.")
-	aggregate("max", 1, x, SameAs(0), MergeExact, "Largest value; numbers order before strings.")
+	aggregate("sum", 1, x, numOrAny, MergeExact, "Sum of the numeric values; a string that holds a number counts as the number.")
+	aggregate("avg", 1, x, Returns(Float), MergeExact, "Arithmetic mean of the numeric values; a string that holds a number counts as the number.")
+	aggregate("min", 1, x, SameAs(0), MergeExact, "Smallest value; numbers, and strings that hold one as that number, order before other strings.")
+	aggregate("max", 1, x, SameAs(0), MergeExact, "Largest value; numbers, and strings that hold one as that number, order before other strings.")
 	aggregate("var_samp", 1, x, Returns(Float), MergeExact, "Sample variance of the numeric values; NULL for fewer than two.")
 	aggregate("var_pop", 1, x, Returns(Float), MergeExact, "Population variance of the numeric values.")
 	aggregate("stddev_samp", 1, x, Returns(Float), MergeExact, "Sample standard deviation of the numeric values; NULL for fewer than two.")
 	aggregate("stddev_pop", 1, x, Returns(Float), MergeExact, "Population standard deviation of the numeric values.")
-	aggregate("distinct_count", 1, x, Returns(Int), MergeExact, "Number of distinct non-NULL values.")
+	aggregate("distinct_count", 1, x, Returns(Int), MergeExact, "Number of distinct non-NULL values, counted exactly.")
 	aggregate("distinct_count_approx", 1, x, Returns(Int), MergeApprox, "HyperLogLog estimate of the number of distinct non-NULL values.")
-	aggregate("percentile", 2, []Param{p("x", Any), pc("percent", Float)}, Returns(Float), MergeApprox, "t-digest estimate of the percent-th percentile (0-100) of the numeric values.")
+	aggregate("percentile", 2, []Param{p("x", Any), pc("percent", Float)}, Returns(Float), MergeApprox, "Estimate of the percent-th percentile (0-100) of the numeric values, from a sketch.")
 	aggregate("earliest", 1, []Param{p("x", Any), p("time", Timestamp)}, SameAs(0), MergeExact, "The value of the row with the smallest time (the time column by default).")
 	aggregate("latest", 1, []Param{p("x", Any), p("time", Timestamp)}, SameAs(0), MergeExact, "The value of the row with the largest time (the time column by default).")
 	ordered(aggregate("first", 1, x, SameAs(0), MergeNone, "The first non-NULL value in input order."))
 	ordered(aggregate("last", 1, x, SameAs(0), MergeNone, "The last non-NULL value in input order."))
 	ordered(aggregate("take", 1, []Param{p("x", Any), pc("size", Int)}, ArrayOfArg(0), MergeNone, "Array of the first size (default 10) non-NULL values in input order."))
 	ordered(aggregate("list", 1, x, ArrayOfArg(0), MergeNone, "Array of the non-NULL values in input order, at most 100."))
-	aggregate("values", 1, x, ArrayOfArg(0), MergeExact, "Sorted array of the distinct non-NULL values, at most 100.")
+	aggregate("values", 1, x, ArrayOfArg(0), MergeExact, "Array of the distinct non-NULL values in sort order, the first 100 of them.")
 }
 
 func registerWindow() {

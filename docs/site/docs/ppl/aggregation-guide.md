@@ -48,23 +48,22 @@ source=main
 | `distinct_count(x)`, `dc(x)` | number of distinct values |
 | `distinct_count_approx(x)` | number of distinct values |
 
-LynxDB behavior: the two executors count distinct values differently. The
-columnar executor, which runs a `stats` that only filters and computed
-columns separate from the index, counts
-`distinct_count` exactly and tells kinds apart, so `1`, `1.0` and `'1'` are
-three values; its `distinct_count_approx` is exact up to 383 values per group
-and estimates beyond with a standard error of 1.6%. The row operators compare
-values by their text, so `1`, `1.0` and `'1'` are one value; in `stats` they
-count exactly up to 10,000 values per group and estimate with HyperLogLog
-beyond, and they count `distinct_count_approx` as `distinct_count`.
-[Pipeline execution](./pipeline-execution.md) says which executor runs
-what.
+LynxDB behavior: `distinct_count` counts exactly, and tells values apart as
+`stats ... by` tells groups apart: a number is one value whether it is stored
+as an integer or a float, a string is another value than a number, and NULL
+is no value. Over `1`, `1.0` and `'1'` it counts two values.
+`distinct_count_approx` is exact up to 383 values per group and estimates
+beyond with a standard error of 1.6%.
 
 ## Numbers
 
 `sum`, `avg`, `min`, `max`, `var_samp`, `var_pop`, `stddev_samp`,
-`stddev_pop`. `min` and `max` also order strings; numbers order before
-strings. The sample variants are NULL for fewer than two values.
+`stddev_pop` and the percentiles read numbers, and a string that holds a
+number as that number, so the fields that `rex`, `parse` and `grok` take out
+of text add up: `rex field=_raw "took (?<ms>\d+)ms" | stats avg(ms)`. `min`
+and `max` also order the other strings, after every number, as `sort` does.
+The sample variants are NULL for fewer than two values, the population
+variants for none.
 
 ## Percentiles
 
@@ -91,10 +90,8 @@ p25  p50  p100
 2    3    4
 ```
 
-The columnar executor reads percentiles from a sketch per group: exact while
-the group holds at most 63 distinct non-zero numbers, and beyond that within
-1% of the value. The row operators keep the values and are exact up to
-10,000 values per group, then estimate with a t-digest.
+Percentiles come from a sketch per group: exact while the group holds at
+most 63 distinct non-zero numbers, and beyond that within 1% of the value.
 
 ## Time-ordered values
 
@@ -120,9 +117,13 @@ unsupported_feature error at line 1, column 35: earliest ordered by response_tim
 
 | Function | Result |
 | --- | --- |
-| `values(x)` | the distinct non-NULL values, sorted, at most 100 |
-| `list(x)` | the non-NULL values in input order, at most 100 |
-| `take(x [, n])` | the first `n` values (default 10) |
+| `values(x)` | array of the distinct non-NULL values in the order of `sort`, the first 100 |
+| `list(x)` | array of the non-NULL values in input order, at most 100 |
+| `take(x [, n])` | array of the first `n` non-NULL values (default 10) |
+
+The arrays hold the values as they are, numbers as numbers, in `stats`,
+`eventstats` and `streamstats` alike; a group without a value has an empty
+array.
 
 ## Rates in timechart
 

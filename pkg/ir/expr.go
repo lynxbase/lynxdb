@@ -406,10 +406,11 @@ var searchModeNames = map[SearchMode]string{
 
 func (m SearchMode) String() string { return searchModeNames[m] }
 
-// Search is a text-search predicate over one column or over the event's raw
-// text. Field "" means the raw text of the event, which contains every field
-// of the event as ingested. The result is NULL when the searched column is
-// NULL or not a string.
+// Search is a text-search predicate over one column or over the whole
+// event. Field "" searches the string values of every field of the event,
+// also inside arrays and objects, and for a word of digits its numbers too;
+// the result is then TRUE or FALSE. Over one column, the result is NULL when
+// the column is NULL or not a string.
 type Search struct {
 	Mode    SearchMode
 	Field   string

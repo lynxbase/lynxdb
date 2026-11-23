@@ -47,15 +47,16 @@ entry of the [aggregation table](./aggregations.md).
 
 | Feature | LynxDB behavior |
 | --- | --- |
-| `search` free text | matches whole tokens of the string values of the event's fields, and of integer values for a numeric term; a line of text that is not JSON is searched through `_raw`; quoted phrases match at token boundaries |
+| `search` free text | matches whole tokens of the string values of every field of the event, also inside arrays and objects, and numbers for a term of digits; wildcards match within a token (`*fused`, `us?r`); a line of text that is not JSON is searched through `_raw` and the fields extracted from it; quoted phrases match at token boundaries |
 | `search` field terms | exact and case-sensitive; wildcards match the whole value; a term is two-valued (`NOT`, `!=` match events without the field) |
 | `search` sources | a cross-cluster prefix is read as part of the index name |
 | relevance functions | plain filters on one field's tokens; no scores; `boost` ignored |
-| `stats` | `bucket_nullable` supported; rows that lack a `by` field group under a NULL key; `partitions`, `allnum` and `delim` accepted without effect; output row order is unspecified |
-| `distinct_count`, `dc` | the columnar executor counts exactly and tells kinds apart (`1`, `1.0` and `'1'` are three values); the row operators compare values by their text and, in `stats`, estimate with HyperLogLog beyond 10,000 values per group |
-| `sort` | `ip(field)` sorts by the text form of the address |
+| `stats` | `bucket_nullable` supported; rows whose `by` field is NULL or absent form one group under a NULL key; `partitions`, `allnum` and `delim` accepted without effect; output row order is unspecified |
+| `distinct_count`, `dc` | counts exactly; a number is one value whether stored as an integer or a float (`1` and `1.0`), and a string is another value than a number (`'1'`), so `1`, `1.0` and `'1'` are two values; `distinct_count_approx` estimates with HyperLogLog |
+| `sort` | one order of values for `sort`, `top`, `min`, `max` and `values`: booleans, then numbers and the strings that hold a number by value, then other strings by their bytes, then arrays and objects; `ip(field)` sorts by the text form of the address |
+| `list`, `values`, `take` | return arrays of the values as they are, in `stats`, `eventstats` and `streamstats` |
 | `fillnull` | without a field list, fills NULL values of the columns each row has |
-| `flatten` | aliases are assigned to members in key order |
+| `flatten` | the members of a stored object and of a computed one become columns; aliases are assigned to members in key order |
 | `spath` | auto-extract parses the input into an object in place, keeping JSON value types; a JSON null stays NULL |
 | `parse`, `regex`, `rex` | RE2 regular expressions: no lookaround or backreferences |
 | `grok` | built-in pattern library (`pkg/ppl/grok`) |
@@ -65,7 +66,7 @@ entry of the [aggregation table](./aggregations.md).
 | `subquery` | uncorrelated; evaluated once before the outer query; a reference to the outer query fails to compile |
 | `describe` | types derived from the values stored in the index; columns `TABLE_NAME`, `COLUMN_NAME`, `TYPE_NAME`, `ORDINAL_POSITION` |
 | `explain` | returns LynxDB's logical and optimized IR plans; all modes render the same plans |
-| `percentile` | the value that has `floor(p/100*n)` of the `n` values before it, without interpolation; the columnar executor reads it from a sketch that is exact while a group holds at most 63 distinct non-zero numbers and within 1% of the value beyond; the row operators are exact up to 10,000 values per group and use a t-digest beyond; the compression argument is accepted and not used |
+| `percentile` | the value that has `floor(p/100*n)` of the `n` values before it, without interpolation, read from a sketch that is exact while a group holds at most 63 distinct non-zero numbers and within 1% of the value beyond; the compression argument is accepted and not used |
 | `earliest`, `latest` | order by `_time`; another time field fails to compile |
 | `fields` | the members of an object are columns named by their path (`http.path`); naming the object keeps all of them |
 | `transform` | the lambda takes the element, or the element and its 0-based index |

@@ -29,7 +29,7 @@ The grammar follows OpenSearch PPL: `NOT` binds tightest, then `OR`, then
 | `status=500` | the field equals 500 (a numeric string matches too) | no |
 | `host=web-*` | the whole field value matches the wildcard, case-sensitive | no |
 | `status!=500` | the field is absent or not 500 | no |
-| `status>=500` | numeric or lexical comparison | no |
+| `status>=500` | numeric comparison; a string that holds a number compares as the number | no |
 | `level IN (WARN, ERROR)` | any listed value | no |
 | `error OR warn` | either word | no |
 | `NOT error` | no field of the event holds the token | no |
@@ -40,10 +40,12 @@ Tokens are maximal runs of letters and digits, compared in lower case.
 ### LynxDB behavior
 
 - OpenSearch searches free text in every field (`index.query.default_field`
-  defaults to `*`). LynxDB searches the string values of every field of the
-  event, and its integer values for a term of digits; strings inside arrays
-  are not searched. An event that arrived as a line of text has its text in
-  `_raw`, which free text searches with the fields extracted from it.
+  defaults to `*`). LynxDB searches the tokens of the string values of every
+  field of the event, also those inside arrays and objects, and its numbers
+  for a term of digits. An event that arrived as a line of text has its text
+  in `_raw`, which free text searches with the fields extracted from it.
+- A wildcard in a free-text term matches within one token: `conn*` matches
+  `connection`, `*fused` matches `refused`, `us?r` matches `user`.
 - OpenSearch analyzes text fields, so a field comparison on a text field
   matches individual tokens. LynxDB compares the whole column value, as
   OpenSearch does for keyword fields. Use `match(field, 'text')` for token

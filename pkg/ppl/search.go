@@ -11,8 +11,8 @@ import (
 
 // Search expressions follow Lucene query-string semantics: a term matches or
 // does not, so NOT, != and missing fields are two-valued. Free-text terms
-// search the event's raw text through the term index, case-insensitively;
-// field comparisons compare values exactly.
+// search the tokens of the string values of every field of the event,
+// case-insensitively; field comparisons compare values exactly.
 
 func (c *compiler) search(cmd *ast.SearchCommand) (*pipe, error) {
 	var node ir.Node
@@ -180,8 +180,8 @@ func (c *compiler) searchPredicate(e ast.SearchExpr, s ir.Schema) (ir.Expr, erro
 	return nil, semanticErr(e, "unsupported search expression")
 }
 
-// textSearch maps a free-text term to an index-aware search predicate on
-// the raw text.
+// textSearch maps a free-text term to a search predicate over every field
+// of the event, which token filters can narrow.
 func textSearch(n *ast.SearchText) ir.Expr {
 	text := n.Text
 	if n.Quoted {

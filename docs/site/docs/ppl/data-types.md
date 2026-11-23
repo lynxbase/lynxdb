@@ -83,7 +83,11 @@ defines them:
 
 - int with int is int (`7 / 2` is 3); int with float is float (`7.0 / 2` is 3.5).
 - A string meeting a number in arithmetic or a comparison is read as a
-  number; it yields NULL when it does not parse.
+  number, white space around it allowed: `'10' + 1` is 11 and `'10' > 9` is
+  TRUE. It yields NULL when it does not parse. Two strings compare as
+  strings: `'10' < '9'` is TRUE.
+- The numeric aggregations read a string that holds a number as that
+  number; see [Aggregations](./aggregation-guide.md#numbers).
 - A string compared with a timestamp is read as a timestamp:
   `where _time >= '2025-01-15 08:05:00'`.
 - `+` on two strings concatenates them.
@@ -93,6 +97,29 @@ defines them:
   `concat_ws` and `mvjoin`, which convert them; other functions reject a
   mismatched static type with a `TYPE_ERROR` (`lower(5)`), while a value of
   type `any` is checked per row.
+
+## Order of values
+
+`sort`, `min`, `max` and `values` order the values of one
+field in one order, whatever their types:
+
+1. booleans, FALSE before TRUE;
+2. numbers and the strings that hold a number, by the number; a number
+   comes before a string of the same number, and two such strings compare
+   by their bytes;
+3. other strings, by their bytes;
+4. arrays and objects.
+
+So `'9'`, `'10'` and `'100'` sort as 9, 10, 100, and `'1z'` after all of
+them. NULL sorts first in ascending order and last in descending order.
+
+## Equal values and groups
+
+`stats ... by`, `dedup`, `distinct_count`, `values` and join keys tell
+values apart one way: a number is one value whether it is stored as an
+integer or a float (`1` and `1.0`), a string is never the same value as a
+number (`'1'` and `1` are two), and a row where the field is NULL or absent
+has the NULL key: `stats count() by x` gives one group for both.
 
 ## Output formats
 

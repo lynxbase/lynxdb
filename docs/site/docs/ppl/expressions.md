@@ -29,9 +29,12 @@ a `SEMANTIC_ERROR` at compile time.
 | `a % b` | modulo |
 | `-a` | negation |
 
-Integer division and modulo by zero yield NULL. A timestamp plus or minus a
-duration (`_time - INTERVAL 1 HOUR`) is a timestamp. `add`, `subtract`,
-`multiply` and `divide` are function forms of the same operators.
+Integer division and modulo by zero yield NULL, and so do division and
+modulo of floats by zero; `%` of floats is the remainder of truncated
+division. A string is read as the number it holds, and two strings
+concatenate only with `+`. A timestamp plus or minus a duration
+(`_time - INTERVAL 1 HOUR`) is a timestamp. `add`, `subtract`, `multiply`
+and `divide` are function forms of the same operators.
 
 ## Comparisons
 
@@ -39,7 +42,7 @@ duration (`_time - INTERVAL 1 HOUR`) is a timestamp. `add`, `subtract`,
 | --- | --- |
 | `=`, `==` | equal |
 | `!=`, `<>` | not equal |
-| `<`, `<=`, `>`, `>=` | ordering; numbers numerically, strings lexically, timestamps by time |
+| `<`, `<=`, `>`, `>=` | ordering; numbers numerically, strings lexically, a string and a number numerically, timestamps by time |
 | `x LIKE 'a%b_'` | SQL pattern: `%` any run, `_` one character; case-insensitive |
 | `x ILIKE 'a%'` | case-insensitive `LIKE` |
 | `x REGEXP 're'` | RE2 regular expression matches anywhere in `x` |

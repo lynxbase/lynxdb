@@ -27,7 +27,7 @@ type CommandSupport struct {
 
 // commandCatalog is the PPL command inventory with LynxDB's support level.
 var commandCatalog = map[string]CommandSupport{
-	"search":           {Support: Partial, Notes: "free-text terms match whole tokens of the event's raw text through the term index (OpenSearch searches all fields); quoted phrases match at token boundaries; field comparisons are exact and case-sensitive; field wildcards match the whole value; time modifiers supported; cross-cluster prefixes are read as part of the index name"},
+	"search":           {Support: Partial, Notes: "free-text terms match whole tokens of the string values of every field of the event, also inside arrays and objects, and a term of digits matches numbers; wildcards match within a token; quoted phrases match at token boundaries; field comparisons are exact and case-sensitive; field wildcards match the whole value; time modifiers supported; cross-cluster prefixes are read as part of the index name"},
 	"where":            {Support: Full},
 	"subquery":         {Support: Partial, Notes: "uncorrelated IN, EXISTS and scalar subqueries; a subquery is evaluated once before the outer query; correlated subqueries are not supported: a reference through the outer source name or alias (outer.b), or to a field only the outer query has, fails to compile, and an unqualified name the subquery can also have reads the subquery's own field"},
 	"fields":           {Support: Full},

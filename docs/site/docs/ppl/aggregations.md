@@ -11,30 +11,30 @@ Aggregation functions of `stats`, `eventstats`, `streamstats`, `timechart` and `
 
 | Function | Support | Merge | Notes |
 |---|---|---|---|
-| `avg` | full | exact | Arithmetic mean of the numeric values. |
+| `avg` | full | exact | Arithmetic mean of the numeric values; a string that holds a number counts as the number. |
 | `c` | full | exact | alias of count |
 | `count` | full | exact | count() and count(*) count rows; count(x) counts non-NULL x; count(eval(cond)) counts rows where cond is TRUE |
-| `dc` | full | exact | alias of distinct_count, which counts differently in the columnar executor and the row operators |
-| `distinct_count` | full | exact | number of distinct non-NULL values; the columnar executor counts exactly and tells kinds apart (1, 1.0 and '1' are three values); the row operators compare values by their text (1, 1.0 and '1' are one value) and, in stats, estimate with HyperLogLog beyond 10,000 values per group |
-| `distinct_count_approx` | full | approximate | the columnar executor counts exactly up to 383 values per group and estimates beyond with a 1.6% standard error; the row operators count it as distinct_count |
+| `dc` | full | exact | alias of distinct_count |
+| `distinct_count` | full | exact | number of distinct non-NULL values, counted exactly; a number is one value whether it is an integer or a float (1 and 1.0), and a string is another value than a number ('1') |
+| `distinct_count_approx` | full | approximate | exact up to 383 values per group, an estimate with a 1.6% standard error beyond; tells values apart as distinct_count does |
 | `earliest` | full | exact | the value of the row with the earliest _time; a time field other than _time or @timestamp is not supported |
 | `first` | full | none | The first non-NULL value in input order. |
 | `last` | full | none | The last non-NULL value in input order. |
 | `latest` | full | exact | the value of the row with the latest _time; a time field other than _time or @timestamp is not supported |
 | `list` | full | none | Array of the non-NULL values in input order, at most 100. |
-| `max` | full | exact | Largest value; numbers order before strings. |
+| `max` | full | exact | Largest value; numbers, and strings that hold one as that number, order before other strings. |
 | `median` | full | approximate | percentile(x, 50) |
-| `min` | full | exact | Smallest value; numbers order before strings. |
+| `min` | full | exact | Smallest value; numbers, and strings that hold one as that number, order before other strings. |
 | `per_day` | full |  | timechart only: sum(x) per day of the span |
 | `per_hour` | full |  | timechart only: sum(x) per hour of the span |
 | `per_minute` | full |  | timechart only: sum(x) per minute of the span |
 | `per_second` | full |  | timechart only: sum(x) per second of the span |
-| `percentile` | full | approximate | t-digest; the optional compression argument is accepted and not used |
+| `percentile` | full | approximate | the value that has floor(p/100*n) of the n values before it, read from a sketch: exact while a group holds at most 63 distinct non-zero numbers, within 1% beyond; the optional compression argument is accepted and not used |
 | `percentile_approx` | full | approximate | alias of percentile |
 | `stddev_pop` | full | exact | Population standard deviation of the numeric values. |
 | `stddev_samp` | full | exact | Sample standard deviation of the numeric values; NULL for fewer than two. |
-| `sum` | full | exact | Sum of the numeric values. |
-| `take` | full | none | default size 10 |
-| `values` | full | exact | Sorted array of the distinct non-NULL values, at most 100. |
+| `sum` | full | exact | Sum of the numeric values; a string that holds a number counts as the number. |
+| `take` | full | none | array of the first size (default 10) non-NULL values in input order |
+| `values` | full | exact | Array of the distinct non-NULL values in sort order, the first 100 of them. |
 | `var_pop` | full | exact | Population variance of the numeric values. |
 | `var_samp` | full | exact | Sample variance of the numeric values; NULL for fewer than two. |
