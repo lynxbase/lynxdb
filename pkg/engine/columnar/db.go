@@ -273,42 +273,28 @@ func (db *DB) Query(ctx context.Context, plan *ir.Plan, opts Options) (*Result, 
 func (db *DB) syncSources(plan *ir.Plan, defaultSource string) []string {
 	var warnings []string
 	var done []string
-	sync := func(name string) {
-		if slices.Contains(done, name) {
-			return
-		}
-		done = append(done, name)
-		s, err := db.store(name, false)
-		if err != nil || s == nil {
-			return
-		}
-		if err := s.Sync(); err != nil {
-			warnings = append(warnings, fmt.Sprintf("index %s: its latest events are not searchable yet: %v", name, err))
-		}
-	}
-	source := func(src ir.Source) {
-		if !src.Pattern && src.Name != "*" {
-			sync(src.Name)
-
-			return
-		}
-		for _, name := range db.Names() {
-			if src.Name == "*" || ir.MatchName(src.Name, name) {
-				sync(name)
+	sync := func(sources []ir.Source) {
+		names, _ := sourceNames(sources, defaultSource, db.Names)
+		for _, name := range names {
+			if slices.Contains(done, name) {
+				continue
+			}
+			done = append(done, name)
+			s, err := db.store(name, false)
+			if err != nil || s == nil {
+				continue
+			}
+			if err := s.Sync(); err != nil {
+				warnings = append(warnings, fmt.Sprintf("index %s: its latest events are not searchable yet: %v", name, err))
 			}
 		}
 	}
 	ir.WalkPlan(plan.Root, func(n ir.Node) bool {
 		switch x := n.(type) {
 		case *ir.Scan:
-			if len(x.Sources) == 0 {
-				sync(defaultSource)
-			}
-			for _, src := range x.Sources {
-				source(src)
-			}
+			sync(x.Sources)
 		case *ir.SourceSchema:
-			source(x.Source)
+			sync([]ir.Source{x.Source})
 		}
 
 		return true

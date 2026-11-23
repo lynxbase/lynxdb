@@ -272,8 +272,15 @@ func (r *run) snapshot(scan *ir.Scan) (*colstore.Snapshot, error) {
 // sources returns the names of the tables that a scan reads, and which of
 // them it names as they are rather than by a pattern.
 func (r *run) sources(scan *ir.Scan) ([]string, map[string]bool) {
-	if len(scan.Sources) == 0 {
-		name := r.opts.DefaultSource
+	return sourceNames(scan.Sources, r.opts.DefaultSource, r.tables.Names)
+}
+
+// sourceNames returns the names of the tables that sources name, those of
+// tables that match a pattern among them, or the default source for none;
+// and which of the names sources give as they are.
+func sourceNames(sources []ir.Source, defaultSource string, tables func() []string) ([]string, map[string]bool) {
+	if len(sources) == 0 {
+		name := defaultSource
 		if name == "" {
 			name = defaultIndex
 		}
@@ -289,14 +296,18 @@ func (r *run) sources(scan *ir.Scan) ([]string, map[string]bool) {
 			out = append(out, name)
 		}
 	}
-	for _, s := range scan.Sources {
+	var all []string
+	for _, s := range sources {
 		if !s.Pattern && s.Name != "*" {
 			add(s.Name)
 			named[s.Name] = true
 
 			continue
 		}
-		for _, name := range r.tables.Names() {
+		if all == nil {
+			all = tables()
+		}
+		for _, name := range all {
 			if s.Name == "*" || ir.MatchName(s.Name, name) {
 				add(name)
 			}
