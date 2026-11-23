@@ -1,10 +1,11 @@
 // Package auth implements API key authentication for LynxDB.
 //
-// Keys use the format: lynx_{type}_{32 alphanumeric chars}
-// where type is "rk" (root key) or "ak" (regular API key).
+// Keys use the format lynx_{type}_{12 alphanumeric chars}_{32 alphanumeric chars},
+// where type is "rk" (root key) or "ak" (regular API key) and the part before
+// the last "_" (without "lynx_") is the ID of the key.
 // Root keys can manage other keys; regular keys can only query/ingest.
 //
-// Keys are stored server-side as argon2id hashes in {data_dir}/auth/keys.json.
+// Keys are stored server-side as SHA-256 digests in {data_dir}/auth/keys.json.
 // The plaintext key is shown only once at creation time.
 package auth
 
@@ -44,39 +45,27 @@ func ValidScope(s string) bool {
 	}
 }
 
-// APIKey represents a stored API key with its argon2id hash.
+// APIKey is a stored API key.
 type APIKey struct {
-	// ID is a unique identifier for the key (e.g. "ak_7fA3mNpQ9xKv").
+	// ID is a unique identifier for the key (e.g. "ak_7fA3mNpQ9xKv"), also part of its token.
 	ID string `json:"id"`
-	// Prefix is the first 12 characters of the full key (for display).
-	Prefix string `json:"prefix"`
-	// Hash is the argon2id hash of the full key.
-	Hash string `json:"hash"`
+	// SHA256 is the hex SHA-256 digest of the token.
+	SHA256 string `json:"sha256"`
 	// Name is a human-readable label for the key.
 	Name string `json:"name"`
 	// Scope controls what operations this key can perform.
-	// Empty or missing defaults to "full" for backward compatibility.
-	Scope Scope `json:"scope,omitempty"`
+	Scope Scope `json:"scope"`
 	// Description is an optional human-readable description of the key's purpose.
 	Description string `json:"description,omitempty"`
 	// ExpiresAt is when the key expires. Zero value means never.
-	ExpiresAt time.Time `json:"expires_at,omitempty"`
+	ExpiresAt time.Time `json:"expires_at,omitzero"`
 	// CreatedAt is when the key was created.
 	CreatedAt time.Time `json:"created_at"`
 	// LastUsedAt is the last time the key was used for authentication.
 	// Zero value means never used.
-	LastUsedAt time.Time `json:"last_used_at,omitempty"`
+	LastUsedAt time.Time `json:"last_used_at,omitzero"`
 	// IsRoot indicates whether this is a root key that can manage other keys.
 	IsRoot bool `json:"is_root"`
-}
-
-// EffectiveScope returns the key's scope, defaulting to ScopeFull when empty.
-// This ensures backward compatibility with keys created before scopes existed.
-func (k *APIKey) EffectiveScope() Scope {
-	if k.Scope == "" {
-		return ScopeFull
-	}
-	return k.Scope
 }
 
 // KeyInfo is the public representation of an API key (no hash, no token).
@@ -93,13 +82,19 @@ type KeyInfo struct {
 	LastUsedAt  time.Time `json:"last_used_at,omitempty"`
 }
 
+// Allows reports whether the key may perform operations of the given scope.
+// Root keys and full-scope keys may perform all of them.
+func (k *KeyInfo) Allows(scope Scope) bool {
+	return k.IsRoot || k.Scope == ScopeFull || k.Scope == scope
+}
+
 // CreatedKey is returned when a new key is created. It includes the plaintext
 // token which is shown only once and never stored.
 type CreatedKey struct {
 	KeyInfo
 	// Token is the full plaintext API key. Only returned at creation time.
 	Token string `json:"token"`
-	// APIKeyComposite is "id:token" for Elasticsearch/Filebeat ApiKey header compatibility.
+	// APIKeyComposite is "id:token" for the Elasticsearch ApiKey header of shippers.
 	APIKeyComposite string `json:"api_key"`
 }
 
@@ -117,8 +112,8 @@ func (k *APIKey) Info() KeyInfo {
 	return KeyInfo{
 		ID:          k.ID,
 		Name:        k.Name,
-		Prefix:      k.Prefix,
-		Scope:       k.EffectiveScope(),
+		Prefix:      keyPrefix + k.ID,
+		Scope:       k.Scope,
 		Description: k.Description,
 		ExpiresAt:   k.ExpiresAt,
 		IsRoot:      k.IsRoot,

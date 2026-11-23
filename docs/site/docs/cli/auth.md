@@ -88,12 +88,12 @@ lynxdb auth create --name web-01 --scope ingest --format json | jq -r .token
   Expires        never
 
   Token (shown once — save it now):
-    lynx_ak_LDIFHYYuqEwOqAAiI59gHFdtPyex41uY
+    lynx_ak_apc9c7MczIzS_hGAkWvj7FAc9QeWJKY40uvSwMFLZDe1f
 
   ─── filebeat.yml ─────────────────────────────────────────
   output.elasticsearch:
     hosts: ["https://logs.example.com/api/v1/es"]
-    api_key: "ak_apc9c7MczIzS:lynx_ak_LDIFHYYuqEwOqAAiI59gHFdtPyex41uY"
+    api_key: "ak_apc9c7MczIzS:lynx_ak_apc9c7MczIzS_hGAkWvj7FAc9QeWJKY40uvSwMFLZDe1f"
     allow_older_versions: true
 
   setup.ilm.enabled: false
@@ -149,7 +149,7 @@ Shows the server URL, the TLS mode (off, CA-verified, pinned fingerprint, or ver
   Server    https://logs.example.com
   TLS       TOFU (fingerprint saved)
   Fingerprint  SHA-256:4a:1f:...
-  Your key  lynx_ak_7fA3...
+  Your key  lynx_ak_7fA3mNpQ9xKv...
   Status    authenticated
 ```
 

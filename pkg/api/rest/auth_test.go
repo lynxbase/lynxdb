@@ -25,6 +25,12 @@ func startAuthServer(t *testing.T) (*Server, *auth.KeyStore, string, func()) {
 		t.Fatal(err)
 	}
 
+	t.Cleanup(func() {
+		if err := ks.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+
 	root, err := ks.CreateKey("root", true)
 	if err != nil {
 		t.Fatal(err)
@@ -774,37 +780,29 @@ func TestAuth_ScopeQuery_CannotESBulk(t *testing.T) {
 	}
 }
 
-func TestAuth_VerifyByID(t *testing.T) {
-	dir := t.TempDir()
-	ks, err := auth.OpenKeyStore(dir)
+func TestAuth_ApiKeyFormat_IDOfAnotherKey(t *testing.T) {
+	srv, ks, _, cleanup := startAuthServer(t)
+	defer cleanup()
+
+	a, err := ks.CreateKey("a", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ks.CreateKey("b", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	created, err := ks.CreateKey("test", false)
+	req, _ := http.NewRequest("GET", fmt.Sprintf("http://%s/api/v1/stats", srv.Addr()), http.NoBody)
+	req.Header.Set("Authorization", "ApiKey "+base64.StdEncoding.EncodeToString([]byte(b.ID+":"+a.Token)))
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
+	resp.Body.Close()
 
-	// VerifyByID with correct ID + token should succeed.
-	info := ks.VerifyByID(created.ID, created.Token)
-	if info == nil {
-		t.Fatal("VerifyByID returned nil for valid ID+token")
-	}
-	if info.ID != created.ID {
-		t.Errorf("info.ID = %q, want %q", info.ID, created.ID)
-	}
-
-	// Wrong ID should fail.
-	info = ks.VerifyByID("nonexistent", created.Token)
-	if info != nil {
-		t.Error("VerifyByID should return nil for wrong ID")
-	}
-
-	// Wrong token should fail.
-	info = ks.VerifyByID(created.ID, "wrong_token")
-	if info != nil {
-		t.Error("VerifyByID should return nil for wrong token")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
 	}
 }
 

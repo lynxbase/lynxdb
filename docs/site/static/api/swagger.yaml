@@ -2638,6 +2638,7 @@ components:
           type: string
         prefix:
           type: string
+          description: '`lynx_` and the ID, the part of the token before its secret'
         scope:
           type: string
         description:

@@ -1,43 +1,77 @@
 package auth
 
 import (
-	"crypto/rand"
+	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
-
-	"golang.org/x/crypto/argon2"
 )
 
-// Argon2id parameters — tuned for server-side key verification.
-// Memory=64MB, iterations=3, parallelism=4 gives ~50ms per verify on modern hardware.
-const (
-	argon2Time    = 3
-	argon2Memory  = 64 * 1024 // 64 MB.
-	argon2Threads = 4
-	argon2KeyLen  = 32
-	argon2SaltLen = 16
-)
+// keysFileVersion is the format version of keys.json.
+const keysFileVersion = 1
 
-// KeyStore manages API keys on disk with argon2id hashing.
-// All methods are safe for concurrent use.
+// lastUsedFlushInterval bounds how often the use of keys alone rewrites keys.json.
+const lastUsedFlushInterval = time.Minute
+
+// KeyStore manages API keys on disk. A token carries the ID of its key, so
+// verification looks the key up by ID and compares the SHA-256 digest of
+// the token with the stored one; tokens are random, which makes a slow
+// password hash unnecessary.
+//
+// The time a key was last used is kept in memory and written with the
+// other changes to the keys, at most once a minute after a use, and on
+// Close. All methods are safe for concurrent use.
 type KeyStore struct {
-	mu   sync.RWMutex
-	path string   // Path to keys.json.
-	keys []APIKey // In-memory copy.
-	seq  int      // Monotonic sequence for key IDs.
+	// mu guards keys, byID and closed. Writers of keys.json hold it: changes
+	// to the keys exclusively, last-used flushes shared with saveMu.
+	mu     sync.RWMutex
+	saveMu sync.Mutex
+	path   string
+	keys   []*storedKey // In creation order.
+	byID   map[string]*storedKey
+	closed bool
+	// dirty is set when a key was used since keys.json was last written.
+	dirty atomic.Bool
 }
 
-// File format for keys.json.
+// storedKey is a key with its digest decoded and its last use updated
+// without the write lock.
+type storedKey struct {
+	APIKey
+	digest   [sha256.Size]byte
+	lastUsed atomic.Int64 // Unix nanoseconds; zero means never used.
+}
+
+func (k *storedKey) info() KeyInfo {
+	info := k.Info()
+	if ns := k.lastUsed.Load(); ns != 0 {
+		info.LastUsedAt = time.Unix(0, ns).UTC()
+	}
+
+	return info
+}
+
+func (k *storedKey) record() APIKey {
+	rec := k.APIKey
+	if ns := k.lastUsed.Load(); ns != 0 {
+		rec.LastUsedAt = time.Unix(0, ns).UTC()
+	}
+
+	return rec
+}
+
+// keysFile is the format of keys.json.
 type keysFile struct {
-	Keys []APIKey `json:"keys"`
-	Seq  int      `json:"seq"`
+	Version int      `json:"version"`
+	Keys    []APIKey `json:"keys"`
 }
 
 // OpenKeyStore opens or creates a key store at the given directory.
@@ -45,7 +79,7 @@ type keysFile struct {
 func OpenKeyStore(dir string) (*KeyStore, error) {
 	path := filepath.Join(dir, "keys.json")
 
-	ks := &KeyStore{path: path}
+	ks := &KeyStore{path: path, byID: map[string]*storedKey{}}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -60,11 +94,49 @@ func OpenKeyStore(dir string) (*KeyStore, error) {
 	if err := json.Unmarshal(data, &f); err != nil {
 		return nil, fmt.Errorf("auth.OpenKeyStore: parse %s: %w", path, err)
 	}
+	if f.Version != keysFileVersion {
+		return nil, fmt.Errorf("auth.OpenKeyStore: %s has an unsupported format: "+
+			"delete it, start the server with auth on to generate a new root key, and create the other keys again", path)
+	}
 
-	ks.keys = f.Keys
-	ks.seq = f.Seq
+	for _, rec := range f.Keys {
+		k, err := loadKey(rec)
+		if err != nil {
+			return nil, fmt.Errorf("auth.OpenKeyStore: %s: %w", path, err)
+		}
+		if ks.byID[k.ID] != nil {
+			return nil, fmt.Errorf("auth.OpenKeyStore: %s: duplicate key %q", path, k.ID)
+		}
+		ks.keys = append(ks.keys, k)
+		ks.byID[k.ID] = k
+	}
 
 	return ks, nil
+}
+
+func loadKey(rec APIKey) (*storedKey, error) {
+	if !validKeyID(rec.ID) {
+		return nil, fmt.Errorf("invalid key id %q", rec.ID)
+	}
+	if rec.IsRoot != (KeyType(rec.ID[:2]) == KeyTypeRoot) {
+		return nil, fmt.Errorf("key %q: is_root does not match its id", rec.ID)
+	}
+	if !ValidScope(string(rec.Scope)) {
+		return nil, fmt.Errorf("key %q: invalid scope %q", rec.ID, rec.Scope)
+	}
+	k := &storedKey{APIKey: rec}
+	if len(rec.SHA256) != hex.EncodedLen(sha256.Size) {
+		return nil, fmt.Errorf("key %q: invalid sha256 digest", rec.ID)
+	}
+	if _, err := hex.Decode(k.digest[:], []byte(rec.SHA256)); err != nil {
+		return nil, fmt.Errorf("key %q: invalid sha256 digest", rec.ID)
+	}
+	if !rec.LastUsedAt.IsZero() {
+		k.lastUsed.Store(rec.LastUsedAt.UnixNano())
+	}
+	k.LastUsedAt = time.Time{}
+
+	return k, nil
 }
 
 // Len returns the number of stored keys.
@@ -80,7 +152,7 @@ func (ks *KeyStore) IsEmpty() bool {
 	return ks.Len() == 0
 }
 
-// CreateKey generates a new API key, hashes it, stores it, and returns the
+// CreateKey generates a new API key, stores its digest, and returns the
 // plaintext token. The token is never stored and cannot be retrieved later.
 func (ks *KeyStore) CreateKey(name string, isRoot bool) (*CreatedKey, error) {
 	return ks.CreateKeyWithOpts(CreateKeyOpts{
@@ -93,132 +165,120 @@ func (ks *KeyStore) CreateKey(name string, isRoot bool) (*CreatedKey, error) {
 // CreateKeyWithOpts generates a new API key with full configuration options.
 // The plaintext token is returned once and never stored.
 func (ks *KeyStore) CreateKeyWithOpts(opts CreateKeyOpts) (*CreatedKey, error) {
-	keyType := KeyTypeRegular
-	if opts.IsRoot {
-		keyType = KeyTypeRoot
-	}
-
-	token, err := GenerateKey(keyType)
-	if err != nil {
-		return nil, fmt.Errorf("auth.CreateKey: %w", err)
-	}
-
-	hash, err := hashToken(token)
-	if err != nil {
-		return nil, fmt.Errorf("auth.CreateKey: %w", err)
-	}
-
 	scope := opts.Scope
 	if scope == "" {
 		scope = ScopeFull
 	}
+	k, token, err := newKey(opts.Name, opts.IsRoot, scope)
+	if err != nil {
+		return nil, fmt.Errorf("auth.CreateKey: %w", err)
+	}
+	k.Description = opts.Description
+	k.ExpiresAt = opts.ExpiresAt
 
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
-	id, err := generateKeyID(opts.IsRoot)
-	if err != nil {
-		return nil, fmt.Errorf("auth.CreateKey: %w", err)
+	if ks.byID[k.ID] != nil {
+		return nil, fmt.Errorf("auth.CreateKey: key id %q is taken", k.ID)
 	}
-
-	key := APIKey{
-		ID:          id,
-		Prefix:      KeyPrefix(token),
-		Hash:        hash,
-		Name:        opts.Name,
-		Scope:       scope,
-		Description: opts.Description,
-		ExpiresAt:   opts.ExpiresAt,
-		CreatedAt:   time.Now().UTC(),
-		IsRoot:      opts.IsRoot,
-	}
-
-	ks.keys = append(ks.keys, key)
-
-	if err := ks.saveLocked(); err != nil {
-		// Roll back.
-		ks.keys = ks.keys[:len(ks.keys)-1]
-
+	if err := ks.replaceLocked(append(slices.Clip(ks.keys), k)); err != nil {
 		return nil, fmt.Errorf("auth.CreateKey: %w", err)
 	}
 
 	return &CreatedKey{
-		KeyInfo:         key.Info(),
+		KeyInfo:         k.info(),
 		Token:           token,
-		APIKeyComposite: id + ":" + token,
+		APIKeyComposite: k.ID + ":" + token,
 	}, nil
 }
 
-// generateKeyID creates a new key ID with format "ak_<12 random>" or "rk_<12 random>".
-func generateKeyID(isRoot bool) (string, error) {
-	prefix := "ak"
+// newKey generates a key and its token.
+func newKey(name string, isRoot bool, scope Scope) (*storedKey, string, error) {
+	keyType := KeyTypeRegular
 	if isRoot {
-		prefix = "rk"
+		keyType = KeyTypeRoot
 	}
-	random, err := randomAlphanumeric(12)
+	id, token, err := GenerateKey(keyType)
 	if err != nil {
-		return "", fmt.Errorf("generate key ID: %w", err)
+		return nil, "", err
 	}
-	return prefix + "_" + random, nil
+	k := &storedKey{
+		APIKey: APIKey{
+			ID:        id,
+			Name:      name,
+			Scope:     scope,
+			CreatedAt: time.Now().UTC(),
+			IsRoot:    isRoot,
+		},
+		digest: sha256.Sum256([]byte(token)),
+	}
+	k.SHA256 = hex.EncodeToString(k.digest[:])
+
+	return k, token, nil
 }
 
-// Verify checks a plaintext token against all stored key hashes.
-// Returns the matching key info on success, or nil if no key matches.
-// Expired keys are skipped. Updates last_used_at on the matched key.
+// Verify returns the key a token names, or nil when the token names no
+// stored key, does not match it, or the key has expired.
 func (ks *KeyStore) Verify(token string) *KeyInfo {
+	id, ok := KeyIDFromToken(token)
+	if !ok {
+		return nil
+	}
+	digest := sha256.Sum256([]byte(token))
+
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+
+	k := ks.byID[id]
+	if k == nil || subtle.ConstantTimeCompare(digest[:], k.digest[:]) != 1 {
+		return nil
+	}
+	now := time.Now()
+	if !k.ExpiresAt.IsZero() && now.After(k.ExpiresAt) {
+		return nil
+	}
+	k.lastUsed.Store(now.UnixNano())
+	if !ks.dirty.Swap(true) && !ks.closed {
+		time.AfterFunc(lastUsedFlushInterval, ks.flushLastUsed)
+	}
+	info := k.info()
+
+	return &info
+}
+
+// flushLastUsed writes the last use of the keys, unless the store is closed.
+func (ks *KeyStore) flushLastUsed() {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	if ks.closed {
+		return
+	}
+	ks.saveMu.Lock()
+	defer ks.saveMu.Unlock()
+	ks.dirty.Store(false)
+	if err := writeKeys(ks.path, ks.keys); err != nil {
+		slog.Error("keystore: failed to persist last_used_at", "path", ks.path, "error", err)
+	}
+}
+
+// Close writes the last use of the keys if it changed since keys.json was
+// last written; uses after Close are not written.
+func (ks *KeyStore) Close() error {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
-
-	now := time.Now()
-	for i := range ks.keys {
-		// Skip expired keys.
-		if !ks.keys[i].ExpiresAt.IsZero() && now.After(ks.keys[i].ExpiresAt) {
-			continue
-		}
-		if verifyToken(token, ks.keys[i].Hash) {
-			ks.keys[i].LastUsedAt = now.UTC()
-			// Best-effort persist last_used_at — don't fail auth on write error.
-			if err := ks.saveLocked(); err != nil {
-				slog.Error("keystore: failed to persist last_used_at update", "key_id", ks.keys[i].ID, "error", err)
-			}
-
-			info := ks.keys[i].Info()
-
-			return &info
-		}
+	if ks.closed {
+		return nil
+	}
+	ks.closed = true
+	if !ks.dirty.Swap(false) {
+		return nil
+	}
+	if err := writeKeys(ks.path, ks.keys); err != nil {
+		return fmt.Errorf("auth.KeyStore.Close: %w", err)
 	}
 
 	return nil
-}
-
-// VerifyByID checks a token against a specific key identified by ID.
-// This is O(1) lookup + single argon2id computation instead of O(N) scan,
-// used when the client provides both key ID and token (e.g. ES ApiKey format).
-// Returns nil if the ID is not found, the token is wrong, or the key is expired.
-func (ks *KeyStore) VerifyByID(keyID, token string) *KeyInfo {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-
-	now := time.Now()
-	for i := range ks.keys {
-		if ks.keys[i].ID == keyID {
-			// Check expiration first (cheap) before argon2id (expensive).
-			if !ks.keys[i].ExpiresAt.IsZero() && now.After(ks.keys[i].ExpiresAt) {
-				return nil
-			}
-			if verifyToken(token, ks.keys[i].Hash) {
-				ks.keys[i].LastUsedAt = now.UTC()
-				if err := ks.saveLocked(); err != nil {
-					slog.Error("keystore: failed to persist last_used_at update", "key_id", ks.keys[i].ID, "error", err)
-				}
-
-				info := ks.keys[i].Info()
-				return &info
-			}
-			return nil // ID matched but token wrong.
-		}
-	}
-	return nil // ID not found.
 }
 
 // List returns public info for all stored keys.
@@ -227,8 +287,8 @@ func (ks *KeyStore) List() []KeyInfo {
 	defer ks.mu.RUnlock()
 
 	infos := make([]KeyInfo, len(ks.keys))
-	for i := range ks.keys {
-		infos[i] = ks.keys[i].Info()
+	for i, k := range ks.keys {
+		infos[i] = k.info()
 	}
 
 	return infos
@@ -239,53 +299,35 @@ func (ks *KeyStore) Revoke(id string) error {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
-	idx := -1
-
-	for i := range ks.keys {
-		if ks.keys[i].ID == id {
-			idx = i
-
-			break
-		}
-	}
-
-	if idx < 0 {
+	k := ks.byID[id]
+	if k == nil {
 		return fmt.Errorf("auth.Revoke: key %q not found", id)
 	}
-
-	// Prevent revoking the last root key.
-	if ks.keys[idx].IsRoot {
-		rootCount := 0
-
-		for i := range ks.keys {
-			if ks.keys[i].IsRoot {
-				rootCount++
-			}
-		}
-
-		if rootCount <= 1 {
-			return ErrLastRootKey
-		}
+	if k.IsRoot && ks.rootCountLocked() <= 1 {
+		return ErrLastRootKey
 	}
-
-	ks.keys = append(ks.keys[:idx], ks.keys[idx+1:]...)
-
-	if err := ks.saveLocked(); err != nil {
+	if err := ks.replaceLocked(slices.DeleteFunc(slices.Clone(ks.keys), func(o *storedKey) bool { return o == k })); err != nil {
 		return fmt.Errorf("auth.Revoke: %w", err)
 	}
 
 	return nil
 }
 
+func (ks *KeyStore) rootCountLocked() int {
+	n := 0
+	for _, k := range ks.keys {
+		if k.IsRoot {
+			n++
+		}
+	}
+
+	return n
+}
+
 // RotateRoot creates a new root key and revokes the old one identified by oldID.
 // Returns the new key with its plaintext token.
 func (ks *KeyStore) RotateRoot(oldID string) (*CreatedKey, error) {
-	token, err := GenerateKey(KeyTypeRoot)
-	if err != nil {
-		return nil, fmt.Errorf("auth.RotateRoot: %w", err)
-	}
-
-	hash, err := hashToken(token)
+	k, token, err := newKey("root", true, ScopeFull)
 	if err != nil {
 		return nil, fmt.Errorf("auth.RotateRoot: %w", err)
 	}
@@ -293,57 +335,50 @@ func (ks *KeyStore) RotateRoot(oldID string) (*CreatedKey, error) {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
 
-	oldIdx := -1
-
-	for i := range ks.keys {
-		if ks.keys[i].ID == oldID {
-			if !ks.keys[i].IsRoot {
-				return nil, fmt.Errorf("auth.RotateRoot: key %q is not a root key", oldID)
-			}
-
-			oldIdx = i
-
-			break
-		}
-	}
-
-	if oldIdx < 0 {
+	old := ks.byID[oldID]
+	if old == nil {
 		return nil, fmt.Errorf("auth.RotateRoot: key %q not found", oldID)
 	}
-
-	newID, err := generateKeyID(true)
-	if err != nil {
-		return nil, fmt.Errorf("auth.RotateRoot: %w", err)
+	if !old.IsRoot {
+		return nil, fmt.Errorf("auth.RotateRoot: key %q is not a root key", oldID)
 	}
-	newKey := APIKey{
-		ID:        newID,
-		Prefix:    KeyPrefix(token),
-		Hash:      hash,
-		Name:      "root",
-		Scope:     ScopeFull,
-		CreatedAt: time.Now().UTC(),
-		IsRoot:    true,
+	if ks.byID[k.ID] != nil {
+		return nil, fmt.Errorf("auth.RotateRoot: key id %q is taken", k.ID)
 	}
-
-	ks.keys = append(ks.keys, newKey)
-	ks.keys = append(ks.keys[:oldIdx], ks.keys[oldIdx+1:]...)
-
-	if err := ks.saveLocked(); err != nil {
+	keys := slices.DeleteFunc(slices.Clone(ks.keys), func(o *storedKey) bool { return o == old })
+	if err := ks.replaceLocked(append(keys, k)); err != nil {
 		return nil, fmt.Errorf("auth.RotateRoot: %w", err)
 	}
 
 	return &CreatedKey{
-		KeyInfo:         newKey.Info(),
+		KeyInfo:         k.info(),
 		Token:           token,
-		APIKeyComposite: newKey.ID + ":" + token,
+		APIKeyComposite: k.ID + ":" + token,
 	}, nil
 }
 
-// saveLocked persists the key store to disk. Caller must hold ks.mu.
-func (ks *KeyStore) saveLocked() error {
-	f := keysFile{
-		Keys: ks.keys,
-		Seq:  ks.seq,
+// replaceLocked writes keys to disk and, once they are written, makes them
+// the stored keys. Caller must hold ks.mu exclusively.
+func (ks *KeyStore) replaceLocked(keys []*storedKey) error {
+	wasDirty := ks.dirty.Swap(false)
+	if err := writeKeys(ks.path, keys); err != nil {
+		ks.dirty.Store(wasDirty)
+		return err
+	}
+	ks.keys = keys
+	ks.byID = make(map[string]*storedKey, len(keys))
+	for _, k := range keys {
+		ks.byID[k.ID] = k
+	}
+
+	return nil
+}
+
+// writeKeys atomically replaces the file at path with keys.
+func writeKeys(path string, keys []*storedKey) error {
+	f := keysFile{Version: keysFileVersion, Keys: make([]APIKey, len(keys))}
+	for i, k := range keys {
+		f.Keys[i] = k.record()
 	}
 
 	data, err := json.MarshalIndent(f, "", "  ")
@@ -352,7 +387,7 @@ func (ks *KeyStore) saveLocked() error {
 	}
 
 	// Atomic write: write to temp file, then rename.
-	dir := filepath.Dir(ks.path)
+	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".keys-*.tmp")
 	if err != nil {
 		return fmt.Errorf("create temp: %w", err)
@@ -374,87 +409,16 @@ func (ks *KeyStore) saveLocked() error {
 	}
 
 	if err := os.Chmod(tmpName, 0o600); err != nil {
-		os.Remove(tmpName)
+		_ = os.Remove(tmpName)
 
 		return fmt.Errorf("chmod temp: %w", err)
 	}
 
-	if err := os.Rename(tmpName, ks.path); err != nil {
-		os.Remove(tmpName)
+	if err := os.Rename(tmpName, path); err != nil {
+		_ = os.Remove(tmpName)
 
 		return fmt.Errorf("rename temp: %w", err)
 	}
 
 	return nil
-}
-
-// hashToken produces an argon2id hash string for a plaintext token.
-func hashToken(token string) (string, error) {
-	salt := make([]byte, argon2SaltLen)
-	if _, err := rand.Read(salt); err != nil {
-		return "", fmt.Errorf("generate salt: %w", err)
-	}
-
-	hash := argon2.IDKey([]byte(token), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
-
-	// Encode as: $argon2id$v=19$m=65536,t=3,p=4$<salt>$<hash>.
-	b64Salt := base64.RawStdEncoding.EncodeToString(salt)
-	b64Hash := base64.RawStdEncoding.EncodeToString(hash)
-
-	return fmt.Sprintf("$argon2id$v=19$m=%d,t=%d,p=%d$%s$%s",
-		argon2Memory, argon2Time, argon2Threads, b64Salt, b64Hash), nil
-}
-
-// verifyToken checks a plaintext token against an argon2id hash string.
-func verifyToken(token, encoded string) bool {
-	// Parse: $argon2id$v=19$m=65536,t=3,p=4$<salt>$<hash>.
-	var memory uint32
-	var iterations uint32
-	var parallelism uint8
-	var b64Salt, b64Hash string
-
-	_, err := fmt.Sscanf(encoded, "$argon2id$v=19$m=%d,t=%d,p=%d$", &memory, &iterations, &parallelism)
-	if err != nil {
-		return false
-	}
-
-	// Extract salt and hash from the tail.
-	parts := splitDollar(encoded)
-	if len(parts) < 6 {
-		return false
-	}
-
-	b64Salt = parts[4]
-	b64Hash = parts[5]
-
-	salt, err := base64.RawStdEncoding.DecodeString(b64Salt)
-	if err != nil {
-		return false
-	}
-
-	expectedHash, err := base64.RawStdEncoding.DecodeString(b64Hash)
-	if err != nil {
-		return false
-	}
-
-	computedHash := argon2.IDKey([]byte(token), salt, iterations, memory, parallelism, uint32(len(expectedHash)))
-
-	return subtle.ConstantTimeCompare(computedHash, expectedHash) == 1
-}
-
-// splitDollar splits s on '$' characters, keeping empty initial element.
-func splitDollar(s string) []string {
-	var parts []string
-	start := 0
-
-	for i := range len(s) {
-		if s[i] == '$' {
-			parts = append(parts, s[start:i])
-			start = i + 1
-		}
-	}
-
-	parts = append(parts, s[start:])
-
-	return parts
 }

@@ -114,7 +114,7 @@ With `--auth` (or `auth.enabled: true`) the server keeps API keys in `<data-dir>
 ```
   ⚠  Auth enabled — no API keys exist. Generated root key:
 
-    lynx_rk_7fA3mNpQ9xKvL2wB8cD4eF6gH1jR5tY
+    lynx_rk_7fA3mNpQ9xKv_d6GncfBAepfJBd0Kh8oOOL8dKLzdocJ2
 
   Save this key now. It will NOT be shown again.
   Use it to authenticate:  lynxdb login
@@ -124,7 +124,7 @@ With `--auth` (or `auth.enabled: true`) the server keeps API keys in `<data-dir>
 Log in with it and create narrower keys:
 
 ```bash
-lynxdb login --token lynx_rk_7fA3mNpQ9xKvL2wB8cD4eF6gH1jR5tY
+lynxdb login --token lynx_rk_7fA3mNpQ9xKv_d6GncfBAepfJBd0Kh8oOOL8dKLzdocJ2
 lynxdb auth create --name shipper --scope ingest
 ```
 

@@ -161,6 +161,11 @@ func runServer(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("auth init: %w", err)
 		}
+		defer func() {
+			if err := keyStore.Close(); err != nil {
+				slog.Warn("failed to close the key store", "error", err)
+			}
+		}()
 	}
 
 	var tlsCfg *tls.Config

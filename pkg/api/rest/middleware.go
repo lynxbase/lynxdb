@@ -98,8 +98,8 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 //   - ApiKey <base64(id:secret)> — Elasticsearch/Filebeat compatible
 //   - Basic <base64(user:pass)>  — password is used as token, username informational
 //
-// Verifies the token against stored argon2id hashes and attaches the
-// authenticated key info to the request context.
+// Verifies the token with the key store and attaches the authenticated key
+// info to the request context.
 //
 // When ks is nil, auth is disabled and all requests pass through.
 func KeyAuthMiddleware(ks *auth.KeyStore, next http.Handler) http.Handler {
@@ -149,15 +149,8 @@ func KeyAuthMiddleware(ks *auth.KeyStore, next http.Handler) http.Handler {
 			return
 		}
 
-		// When keyID is available (ApiKey scheme), use O(1) ID lookup.
-		var info *auth.KeyInfo
-		if keyID != "" {
-			info = ks.VerifyByID(keyID, token)
-		} else {
-			info = ks.Verify(token)
-		}
-
-		if info == nil {
+		info := ks.Verify(token)
+		if info == nil || (keyID != "" && keyID != info.ID) {
 			respondError(w, ErrCodeInvalidToken, http.StatusUnauthorized, "Invalid API key")
 
 			return
@@ -170,7 +163,8 @@ func KeyAuthMiddleware(ks *auth.KeyStore, next http.Handler) http.Handler {
 }
 
 // extractToken parses the Authorization header and returns (keyID, token, ok).
-// keyID is non-empty only for the ApiKey scheme (enables O(1) lookup).
+// keyID is non-empty only for the ApiKey scheme, whose id must name the key
+// of the token.
 func extractToken(header string) (keyID, token string, ok bool) {
 	switch {
 	case strings.HasPrefix(header, "Bearer "):
@@ -220,13 +214,8 @@ func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, required .
 		return false
 	}
 
-	// Root keys and full-scope keys have access to everything.
-	if info.IsRoot || info.Scope == auth.ScopeFull {
-		return true
-	}
-
 	for _, req := range required {
-		if info.Scope == req {
+		if info.Allows(req) {
 			return true
 		}
 	}

@@ -174,15 +174,15 @@ The response (`201`) holds the key and its plaintext token, which is shown only 
   "data": {
     "id": "ak_EQcWtLGOrPfq",
     "name": "filebeat",
-    "prefix": "lynx_ak_oGOl",
+    "prefix": "lynx_ak_EQcWtLGOrPfq",
     "scope": "ingest",
     "description": "edge shipper",
     "expires_at": "2027-02-15T16:47:01.300723+01:00",
     "is_root": false,
     "created_at": "2026-11-17T15:47:01.326646Z",
     "last_used_at": "0001-01-01T00:00:00Z",
-    "token": "lynx_ak_oGOlzEijPa2K594bYWZcLmkvVZaeEnuv",
-    "api_key": "ak_EQcWtLGOrPfq:lynx_ak_oGOlzEijPa2K594bYWZcLmkvVZaeEnuv"
+    "token": "lynx_ak_EQcWtLGOrPfq_R0CsTy4Qwb8DwkNhFdnXsiVpzz63FfkC",
+    "api_key": "ak_EQcWtLGOrPfq:lynx_ak_EQcWtLGOrPfq_R0CsTy4Qwb8DwkNhFdnXsiVpzz63FfkC"
   }
 }
 ```
@@ -206,8 +206,8 @@ Replaces the root key used to call it:
   "data": {
     "id": "rk_9EB9RHIWv61H",
     "name": "root",
-    "prefix": "lynx_rk_rAQg",
-    "token": "lynx_rk_rAQg54faOY891uz4SE3hoLZXuvHQD7eb",
+    "prefix": "lynx_rk_9EB9RHIWv61H",
+    "token": "lynx_rk_9EB9RHIWv61H_wR4y9ojfljoQoaF1LlqsajAIxNKu8iS2",
     "is_root": true,
     "created_at": "2026-11-17T15:47:21.381866Z",
     "revoked_key_id": "rk_kZCEAKYUaACk"

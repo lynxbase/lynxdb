@@ -78,20 +78,20 @@ On the first start with no keys, the server generates a root key and prints it o
 ```text
   ⚠  Auth enabled — no API keys exist. Generated root key:
 
-    lynx_rk_7fA3mNpQ9xKvL2wB8cD4eF6gH1jR5tY
+    lynx_rk_7fA3mNpQ9xKv_d6GncfBAepfJBd0Kh8oOOL8dKLzdocJ2
 
   Save this key now. It will NOT be shown again.
   Use it to authenticate:  lynxdb login
   Or generate new keys:    lynxdb auth create
 ```
 
-Root keys start with `lynx_rk_`, other keys with `lynx_ak_`.
+Root keys start with `lynx_rk_`, other keys with `lynx_ak_`. A key is `lynx_`, its ID (`rk_7fA3mNpQ9xKv`, as `lynxdb auth list` shows it), `_` and a 32-character secret. The server keeps only the ID and a SHA-256 digest of each key in `<data_dir>/auth/keys.json`, and refuses to start when it cannot read that file; delete it and start the server again to generate a new root key, then create the other keys again.
 
 ### Log in
 
 ```bash
 lynxdb login                                    # prompts for the key
-lynxdb login --server https://lynxdb.example.com --token lynx_rk_7fA3mNpQ9xKvL2wB8cD4eF6gH1jR5tY
+lynxdb login --server https://lynxdb.example.com --token lynx_rk_7fA3mNpQ9xKv_d6GncfBAepfJBd0Kh8oOOL8dKLzdocJ2
 lynxdb auth status
 lynxdb logout                                   # this server
 lynxdb logout --all                             # every saved server
@@ -129,7 +129,7 @@ The PPL catalog and `/api/v1/status` accept any valid key regardless of scope.
 
 ```bash
 curl -s https://lynxdb.example.com/api/v1/query \
-  -H "Authorization: Bearer lynx_ak_Q2wE4rT6yU8iO0pA1sD3fG5hJ7kL9zX" \
+  -H "Authorization: Bearer lynx_ak_isAjIhKtJ0Rl_gLKOmxgJTeKdNnFRIBXuDL7DxtpYlSXp" \
   -H "Content-Type: application/json" \
   -d '{"q": "source=main level=ERROR | stats count() by host"}'
 ```
@@ -137,7 +137,7 @@ curl -s https://lynxdb.example.com/api/v1/query \
 | Scheme | Header | Typical client |
 |--------|--------|----------------|
 | Bearer | `Authorization: Bearer <token>` | CLI, scripts |
-| ApiKey | `Authorization: ApiKey <base64(id:token)>` | Filebeat, Elasticsearch clients |
+| ApiKey | `Authorization: ApiKey <base64(id:token)>`, the ID being that of the key | Filebeat, Elasticsearch clients |
 | Basic | `Authorization: Basic <base64(user:token)>`, user name ignored | Fluent Bit, Vector |
 | Query parameter | `?_token=<token>` | Browser `EventSource` for job progress streams |
 
@@ -173,7 +173,7 @@ ingest:
 ```
 
 ```bash
-lynxdb login --server https://lynxdb.example.com --token lynx_rk_7fA3mNpQ9xKvL2wB8cD4eF6gH1jR5tY
+lynxdb login --server https://lynxdb.example.com --token lynx_rk_7fA3mNpQ9xKv_d6GncfBAepfJBd0Kh8oOOL8dKLzdocJ2
 lynxdb query 'source=main level=ERROR | stats count() as errors by host | sort - errors'
 ```
 
