@@ -56,21 +56,6 @@ func (k *sortKeys) compare(a, b int) int {
 	return 0
 }
 
-// compareRows orders two rows by the sort fields; buf serves the values
-// that the comparison converts, and is returned for the next call.
-func compareRows(fields []SortField, a, b map[string]event.Value, buf []byte) (int, []byte) {
-	for _, f := range fields {
-		var x, y exec.Value
-		x, buf = ExecValue(a[f.Name], buf[:0])
-		y, buf = ExecValue(b[f.Name], buf)
-		if c := exec.Compare(x, y, f.Desc, f.NullsFirst); c != 0 {
-			return c, buf
-		}
-	}
-
-	return 0, buf
-}
-
 // SortIterator fully materializes input, sorts, then streams output. It
 // merges the input batches into one and sorts a permutation index over it,
 // which avoids building a row map per row and a map lookup per comparison.
