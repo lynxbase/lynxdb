@@ -283,12 +283,6 @@ type HistogramBucket struct {
 	Count int64     `json:"count"`
 }
 
-// SSEEvent is a parsed Server-Sent Event.
-type SSEEvent struct {
-	Event string
-	Data  json.RawMessage
-}
-
 // StreamMeta is the __meta line from NDJSON streaming.
 type StreamMeta struct {
 	Total  int   `json:"total"`

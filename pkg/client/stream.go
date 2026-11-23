@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"strings"
 )
 
 const ndjsonScanBufSize = 1 << 20 // 1MB
@@ -38,19 +37,6 @@ func (c *Client) QueryStream(ctx context.Context, req QueryRequest, fn func(json
 	defer resp.Body.Close()
 
 	return readNDJSON(resp.Body, fn)
-}
-
-// StreamJobProgress opens an SSE stream for job progress updates.
-func (c *Client) StreamJobProgress(ctx context.Context, jobID string, fn func(SSEEvent) error) error {
-	path := "/query/jobs/" + url.PathEscape(jobID) + "/stream"
-
-	resp, err := c.doRaw(ctx, http.MethodGet, path, nil, "")
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	return readSSE(resp.Body, fn)
 }
 
 // Histogram returns event count histogram buckets.
@@ -140,68 +126,6 @@ func readNDJSON(r io.Reader, fn func(json.RawMessage) error) (*StreamMeta, error
 	}
 
 	return meta, nil
-}
-
-// readSSE reads Server-Sent Events from r, calling fn for each event.
-func readSSE(r io.Reader, fn func(SSEEvent) error) error {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, ndjsonScanBufSize), ndjsonScanBufSize)
-
-	var eventType string
-	var dataBuf strings.Builder
-
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		if line == "" {
-			// Empty line = end of event.
-			if eventType != "" || dataBuf.Len() > 0 {
-				data := strings.TrimSpace(dataBuf.String())
-				evt := SSEEvent{
-					Event: eventType,
-					Data:  json.RawMessage(data),
-				}
-
-				if err := fn(evt); err != nil {
-					return err
-				}
-
-				eventType = ""
-				dataBuf.Reset()
-			}
-
-			continue
-		}
-
-		if strings.HasPrefix(line, "event: ") {
-			eventType = strings.TrimPrefix(line, "event: ")
-		} else if strings.HasPrefix(line, "data: ") {
-			if dataBuf.Len() > 0 {
-				dataBuf.WriteByte('\n')
-			}
-
-			dataBuf.WriteString(strings.TrimPrefix(line, "data: "))
-		} else if line == "data:" {
-			if dataBuf.Len() > 0 {
-				dataBuf.WriteByte('\n')
-			}
-		}
-	}
-
-	// Flush any remaining event.
-	if eventType != "" || dataBuf.Len() > 0 {
-		data := strings.TrimSpace(dataBuf.String())
-		evt := SSEEvent{
-			Event: eventType,
-			Data:  json.RawMessage(data),
-		}
-
-		if err := fn(evt); err != nil {
-			return err
-		}
-	}
-
-	return scanner.Err()
 }
 
 // marshalReader encodes v as JSON into a buffer from the pool and returns a reader.
