@@ -37,7 +37,7 @@ The `main` package and the CLI commands, built with Cobra:
 | `query.go` | `lynxdb query` (server mode, and file and pipe mode in process) |
 | `explain.go` | `lynxdb explain` |
 | `fields.go` | `lynxdb fields` |
-| `ingest.go`, `import.go` | `lynxdb ingest`, `lynxdb import` |
+| `ingest.go` | `lynxdb ingest` |
 | `status.go` | `lynxdb status`, `health`, `indexes` |
 | `jobs.go` | `lynxdb jobs` |
 | `config.go` | `lynxdb config` and its subcommands |

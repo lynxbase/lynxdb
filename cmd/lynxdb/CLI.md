@@ -14,7 +14,7 @@ User documentation lives in `docs/site/docs/cli/`; the query language is describ
 - [Connection settings](#connection-settings)
 - [Root command](#root-command)
 - Query: [query](#query), [explain](#explain), [fields](#fields)
-- Load data: [ingest](#ingest), [import](#import)
+- Load data: [ingest](#ingest)
 - Server: [server](#server)
 - Inspect: [status](#status), [health](#health), [indexes](#indexes), [jobs](#jobs)
 - Authentication: [login](#login), [logout](#logout), [auth](#auth)
@@ -47,7 +47,7 @@ Persistent flags on the root command (`root.go`):
 | `--debug` | | `false` | | Debug logging to stderr |
 | `--tls-skip-verify` | | `false` | `LYNXDB_TLS_SKIP_VERIFY` | Skip TLS certificate verification (`true`, `1`, `yes`) |
 
-`import` defines its own `--format` (input format) and `login` its own `--token`; they shadow the global flags on those commands.
+`ingest` defines its own `--format` (input format) and `login` its own `--token`; they shadow the global flags on those commands.
 
 ## Connection settings
 
@@ -62,7 +62,7 @@ server: https://logs.example.com
 profile: prod
 default_format: table
 default_since: 6h         # lynxdb query --since, server queries
-default_source: web       # --source on query, ingest, import
+default_source: web       # --source on query, ingest
 ```
 
 ## Root command
@@ -186,46 +186,31 @@ lynxdb fields --prefix st
 lynxdb ingest [file] [flags]
 ```
 
-Alias `i`. Sends raw lines from a file, or stdin, to `POST /api/v1/ingest/raw` in batches. Empty lines are skipped. A JSON object line is stored unchanged; `--source` and `--sourcetype` apply to the other lines.
+Alias `i`. Sends a file, or stdin when the file is `-` or absent, to the server in batches. `--format` names the input:
+
+- `text`: log lines to `POST /api/v1/ingest/raw`; the server extracts each line's time and fields and keeps a JSON object line as it is. `--source`, `--sourcetype` and `--index` go as the `X-Source`, `X-Source-Type` and `X-Index` headers.
+- `ndjson`: JSON object lines, sent as they are to `POST /api/v1/ingest`; `--source` and `--sourcetype` are added to objects that lack them.
+- `csv`: a header row, then one JSON object per row to `POST /api/v1/ingest`, keyed by the header, with JSON-number values as numbers and empty values left out.
+- `esbulk`: an Elasticsearch bulk body to `POST /_bulk`, or `POST /{index}/_bulk` with `--index`. `--source` and `--sourcetype` are rejected.
+- `auto` (default): `.ndjson`/`.jsonl` NDJSON, `.csv` CSV, `.tsv` CSV with tabs; otherwise the first non-empty line: a bulk action line `esbulk`, a JSON object `ndjson`, else `text`.
+
+The server picks each event's time from `storage.time_fields`; the CLI parses no timestamps.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--source` | | Source of the events (server default `http`) |
-| `--sourcetype` | | Sourcetype of the events (server default `raw`) |
+| `--format` | `auto` | `auto`, `text`, `ndjson`, `csv`, `esbulk` |
+| `--source` | | Source of the events (server default `http` for text) |
+| `--sourcetype` | | Sourcetype of the events (server default `raw` for text) |
 | `--index` | | Target index (server default `main`) |
-| `--batch-size` | `5000` | Lines per batch, 1 to 1,000,000 |
+| `--delimiter` | `,` | CSV delimiter, one character or `'\t'`; rejected for other formats |
+| `--batch-size` | `5000` | Lines, rows or bulk actions per batch, 1 to 1,000,000 |
 
 ```bash
 lynxdb ingest access.log --source web-01 --sourcetype nginx
 cat app.log | lynxdb ingest --index production
-```
-
-## import
-
-```
-lynxdb import <file> [flags]
-```
-
-Imports structured data. `-` reads stdin and needs `--format`. With `auto`, the extension decides (`.csv`/`.tsv` CSV, `.ndjson`/`.jsonl` NDJSON); for `.json`, `.log` and no extension, the first line decides.
-
-- `ndjson`: one object per line; an `event` envelope (`event`, `time`, `source`, `sourcetype`, `host`, `index`, `fields`) or a flat object (`_raw` or the line as raw text; timestamp from `time`, `_time`, `timestamp`, `_timestamp`, `@timestamp`, `ts` or `datetime`; scalar values as fields). Sent to `POST /api/v1/ingest`, one request per index.
-- `csv`: header row, then one event per row; numbers are typed, `_time` and `_raw` columns are recognized, and a row without `_raw` keeps the row as a JSON object in `_raw`. Sent to `POST /api/v1/ingest`.
-- `esbulk`: Elasticsearch `_bulk` action and document pairs, sent to `POST /api/v1/es/_bulk`. `--index` is rejected; `--source` replaces each action's `_index`.
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--format` | `auto` | `auto`, `ndjson`, `csv`, `esbulk` |
-| `--source` | | Source for events that have none |
-| `--index` | | Index for events that have none |
-| `--batch-size` | `5000` | Events per batch |
-| `--dry-run` | `false` | Validate and count without sending |
-| `--delimiter` | `,` | CSV delimiter (`'\t'` for tab) |
-
-```bash
-lynxdb import events.ndjson
-lynxdb import export.csv --source web-01 --index nginx
-lynxdb import es_dump.json --format esbulk
-cat events.ndjson | lynxdb import - --format ndjson
+lynxdb ingest events.ndjson --index web
+lynxdb ingest export.csv --index orders
+lynxdb ingest dump.json --format esbulk
 ```
 
 ---

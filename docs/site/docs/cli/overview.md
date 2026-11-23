@@ -69,7 +69,7 @@ These flags work with every command.
 | `--debug` | | `false` | | Debug logging to stderr |
 | `--tls-skip-verify` | | `false` | `LYNXDB_TLS_SKIP_VERIFY` | Skip TLS certificate verification (`true`, `1` or `yes` in the env var) |
 
-`lynxdb import` uses `--format` for its input format, and `lynxdb login` uses `--token` for the key to save; on those two commands the global flag of the same name is not available.
+`lynxdb ingest` uses `--format` for its input format, and `lynxdb login` uses `--token` for the key to save; on those two commands the global flag of the same name is not available.
 
 See [Output Formats](./output-formats.md) for what each format prints.
 
@@ -103,7 +103,7 @@ default_source: web
 | `profile` | `--profile` |
 | `default_format` | `--format` |
 | `default_since` | `lynxdb query --since` on server queries |
-| `default_source` | `--source` on `query`, `ingest` and `import` |
+| `default_source` | `--source` on `query` and `ingest` |
 
 `.lynxdbrc` holds client defaults only. Server settings live in the config file; see [config](./config-cmd.md).
 
@@ -112,7 +112,7 @@ default_source: web
 | Area | Commands |
 |------|----------|
 | Query | [`query`](./query.md) (`q`), [`explain`](./explain.md), [`fields`](./status.md#fields) (`f`) |
-| Load data | [`ingest`](./ingest.md) (`i`), [`import`](./ingest.md#import) |
+| Load data | [`ingest`](./ingest.md) (`i`) |
 | Run the server | [`server`](./server.md) |
 | Inspect the server | [`status`](./status.md) (`st`), [`health`](./status.md#health), [`indexes`](./status.md#indexes), [`jobs`](./status.md#jobs) |
 | Authentication | [`login`](./auth.md#login), [`logout`](./auth.md#logout), [`auth`](./auth.md) |

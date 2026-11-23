@@ -305,9 +305,20 @@ type ESBulkResult struct {
 	Items  []ESBulkItem `json:"items"`
 }
 
-// ESBulkItem is a single item result from ES bulk.
+// ESBulkItem is the result of one action of a bulk request, under the name
+// of the action.
 type ESBulkItem struct {
-	Index ESBulkItemDetail `json:"index"`
+	Index  ESBulkItemDetail `json:"index"`
+	Create ESBulkItemDetail `json:"create"`
+}
+
+// Status returns the HTTP status of the action.
+func (it ESBulkItem) Status() int {
+	if it.Create.Status != 0 {
+		return it.Create.Status
+	}
+
+	return it.Index.Status
 }
 
 // ESBulkItemDetail is the detail of a bulk item result.

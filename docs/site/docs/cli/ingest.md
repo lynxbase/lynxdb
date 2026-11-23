@@ -1,19 +1,12 @@
 ---
 sidebar_position: 5
-title: ingest & import
-description: Send raw log lines or structured NDJSON, CSV and Elasticsearch bulk files to a LynxDB server.
+title: ingest
+description: Send log lines, NDJSON, CSV and Elasticsearch bulk files to a LynxDB server.
 ---
 
-# ingest & import
+# ingest
 
-Two commands send data to a running server:
-
-- `ingest` sends log lines. The server keeps each JSON object line as it is and turns every other line into an event with its text in `_raw`, its timestamp and its `key=value` fields.
-- `import` reads structured files (NDJSON, CSV, Elasticsearch `_bulk`) and keeps their field values, timestamps and metadata.
-
-To query a file without a server, use [`lynxdb query --file`](./query.md#local-mode-files-and-stdin) instead.
-
-## ingest
+`lynxdb ingest` sends a file, or standard input, to a running server in batches.
 
 ```
 lynxdb ingest [file] [flags]
@@ -21,128 +14,115 @@ lynxdb ingest [file] [flags]
 
 **Alias:** `i`
 
-Reads a file, or stdin when no file is given, and sends the lines to `POST /api/v1/ingest/raw` in batches. Empty lines are skipped. On a terminal it shows a progress bar for a file and a running count for stdin.
+With no file, or with `-`, it reads standard input. On a terminal it shows a progress bar for a file and a running count for standard input. To query a file without a server, use [`lynxdb query --file`](./query.md#local-mode-files-and-stdin) instead.
 
-### Flags
+## Formats
+
+`--format` names the input format:
+
+| Format | Input | Sent to |
+|--------|-------|---------|
+| `text` | Log lines. The server keeps a JSON object line as it is and turns every other line into an event with its text in `_raw`, its timestamp and its `key=value` fields. | `POST /api/v1/ingest/raw` |
+| `ndjson` | One JSON object per line, stored as it is. | `POST /api/v1/ingest` |
+| `csv` | A header row, then one row per event. | `POST /api/v1/ingest`, one JSON object per row |
+| `esbulk` | An Elasticsearch bulk request body: action and document lines. | `POST /_bulk` |
+| `auto` | The default: picks one of the above. | |
+
+`auto` goes by the file extension first: `.ndjson` and `.jsonl` are NDJSON, `.csv` is CSV, and `.tsv` is CSV with a tab delimiter. Otherwise the first non-empty line decides: an Elasticsearch bulk action line, such as `{"index":{"_index":"web"}}`, means `esbulk`, a JSON object means `ndjson`, and anything else means `text`. On a terminal the CLI says which format it picked.
+
+The server takes the time of an NDJSON, CSV or bulk event from the first of its [time fields](../configuration/storage.md#event-time) the event holds; the CLI does not parse timestamps.
+
+## Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--index` | `main` | Target index; it is created by its first events |
-| `--source` | `http` | `source` field of every text line (`default_source` in `.lynxdbrc` applies when the flag is absent) |
-| `--sourcetype` | `raw` | `sourcetype` field of every text line |
-| `--batch-size` | `5000` | Lines per request, from 1 to 1,000,000 |
+| `--format` | `auto` | Input format: `auto`, `text`, `ndjson`, `csv`, `esbulk` |
+| `--index` | `main` | Target index; it is created by its first events. For `esbulk`, the index of the actions that name none |
+| `--source` | | `source` of the events: every text line, and each NDJSON or CSV event that has no `source` (`default_source` in `.lynxdbrc` applies when the flag is absent) |
+| `--sourcetype` | | `sourcetype` of the events, applied like `--source` |
+| `--delimiter` | `,` | CSV field delimiter, one character; `'\t'` for tab |
+| `--batch-size` | `5000` | Lines, rows or bulk actions per request, from 1 to 1,000,000 |
 
-The CLI sends `--index`, `--source` and `--sourcetype` as the `X-Index`, `X-Source` and `X-Source-Type` headers; the defaults above are the server's when a header is absent. `--source` and `--sourcetype` apply to text lines only: a JSON object line is stored unchanged.
+A flag that does not apply to the input fails the command: `--delimiter` on input that is not CSV, and `--source` or `--sourcetype` on Elasticsearch bulk input. On `ingest`, `--format` names the input format; the global output `--format` does not apply.
 
-### Examples
+## Text
+
+Empty lines are skipped. The CLI sends `--index`, `--source` and `--sourcetype` as the `X-Index`, `X-Source` and `X-Source-Type` headers; without them the server uses `main`, `http` and `raw`. A JSON object line is stored unchanged, without `source` or `sourcetype`.
 
 ```bash
 lynxdb ingest access.log
 lynxdb ingest access.log --source web-01 --sourcetype nginx
-lynxdb ingest app.log --index production
 cat app.log | lynxdb ingest --source app
 zcat archive.log.gz | lynxdb ingest --sourcetype nginx
 kubectl logs deploy/api --since=1h | lynxdb ingest --source k8s-api
 lynxdb ingest huge.log --batch-size 20000
 ```
 
-After the upload, query the data:
+## NDJSON
 
-```bash
-lynxdb query 'source=main | stats count() by level'
-```
-
-### Partial batches
-
-The server reports, per batch, how many lines it accepted. The CLI warns when:
-
-- the server cut a request body at `ingest.max_body_size`: reduce `--batch-size` or raise the limit;
-- the server reports lines it did not accept: reduce `--batch-size` or check the server log.
-
-The summary line counts accepted events only.
-
-## import
-
-```
-lynxdb import <file> [flags]
-```
-
-Reads a structured file and sends its events in batches. Use `-` as the file to read stdin; stdin needs an explicit `--format`.
-
-### Flags
-
-| Flag | Default | Description |
-|------|---------|-------------|
-| `--format` | `auto` | Input format: `auto`, `ndjson`, `csv`, `esbulk` |
-| `--index` | | Target index for events that do not name one (`main` when none does) |
-| `--source` | | `source` for events that do not name one |
-| `--batch-size` | `5000` | Events per request |
-| `--delimiter` | `,` | CSV field delimiter; `'\t'` for tab |
-| `--dry-run` | `false` | Parse and count events without sending them |
-
-On `import`, `--format` names the input format; the global output `--format` does not apply.
-
-### Format detection
-
-With `--format auto` the file extension decides: `.csv` and `.tsv` are CSV, `.ndjson` and `.jsonl` are NDJSON. For `.json`, `.log` and files without an extension, the first line decides: an Elasticsearch bulk action line (`{"index":{"_index":...}}` or `{"create":{...}}`) means `esbulk`, a JSON object means NDJSON, a line with commas means CSV. Anything else is read as NDJSON. The CLI prints the format it picked.
-
-### NDJSON
-
-One JSON object per line. Two shapes are accepted:
-
-- **Envelope.** An object whose keys are only `event`, `time`, `source`, `sourcetype`, `host`, `index` and `fields`, with a string `event`. `event` becomes `_raw`, `time` the event time, and the scalar values of `fields` become fields.
-- **Flat object.** `_raw` becomes `_raw`; without one, the whole line does. The first of `time`, `_time`, `timestamp`, `_timestamp`, `@timestamp`, `ts`, `datetime` that holds epoch seconds or an RFC 3339 / `2006-01-02 15:04:05` time becomes the event time. `source`, `sourcetype`, `host` and `index` become metadata, and every other scalar value (string, number, boolean) becomes a field. Nested objects and arrays are not fields; they stay in `_raw` when it holds the whole line.
-
-Lines that are not valid JSON are skipped and counted in the summary. The events go to `POST /api/v1/ingest`, one request per index, as JSON objects with `_raw`, `_time`, `host`, `source`, `sourcetype` and the fields.
+Each line is sent as it is. With `--source` or `--sourcetype`, the CLI adds those members to each object that lacks them. A line that is not a JSON object is counted as failed by the server.
 
 With this `events.ndjson`:
 
 ```json
-{"event":"user login","time":1768464000,"host":"web-01","source":"auth","fields":{"user":"alice","ok":true}}
-{"_raw":"GET /x 200","@timestamp":"2026-01-15T08:00:00Z","status":200,"tags":["a"]}
-not json
+{"timestamp":"2026-01-15T08:00:00Z","host":"web-01","status":200,"user":"alice"}
+{"timestamp":"2026-01-15T08:00:05Z","host":"web-02","status":503,"user":"bob","source":"lb"}
 ```
 
 ```bash
-lynxdb import events.ndjson --index demo
-lynxdb query 'source=demo | head 2'
+lynxdb ingest events.ndjson --index demo --source api
+lynxdb query 'source=demo | fields _time, host, status, source'
 ```
-
-the import reports 2 events and 1 skipped line, and the query returns:
 
 ```json
-{"_raw":"user login","_time":"2026-01-15T08:00:00Z","host":"web-01","ok":true,"source":"auth","user":"alice"}
-{"_raw":"GET /x 200","_time":"2026-01-15T08:00:00Z","status":200}
+{"_time":"2026-01-15T08:00:00Z","host":"web-01","source":"api","status":200}
+{"_time":"2026-01-15T08:00:05Z","host":"web-02","source":"lb","status":503}
 ```
 
-### CSV
+## CSV
 
-The first row is the header. Each later row becomes an event with one field per non-empty column. Numeric values are stored as numbers. A `_time` column becomes the event time and a `_raw` column becomes `_raw`; a row without a `_raw` column keeps the row, as a JSON object, in `_raw`. Rows that fail to parse are skipped and counted.
+The first row names the fields. Each later row becomes a JSON object with one member per non-empty column: a value written as a JSON number, such as `19.90` or `-3`, is a number, and any other value, including `02134`, is a string. `--source` and `--sourcetype` set those members on rows without such a column. A row that does not parse stops the command with an error.
 
-### Elasticsearch bulk
+With this `orders.csv`:
 
-Action and document line pairs, as written by the Elasticsearch `_bulk` API or by tools that export from it. The CLI forwards them to the server's Elasticsearch-compatible endpoint, `POST /api/v1/es/_bulk`, which stores each document unchanged. Each action's `_index` names the target index, so `--index` is rejected with this format; `--source` replaces the `_index` of every action. The import fails when the server reports item errors.
-
-### Examples
+```text
+timestamp,order_id,amount,country,note
+2026-01-15T08:00:00Z,1001,19.90,DE,
+2026-01-15T08:01:00Z,1002,5,US,"gift, wrapped"
+```
 
 ```bash
-lynxdb import events.ndjson
-lynxdb import export.csv --source web-01 --index nginx
-lynxdb import data.tsv --format csv --delimiter '\t'
-lynxdb import es_dump.json --format esbulk
-lynxdb import events.json --dry-run
-cat events.ndjson | lynxdb import - --format ndjson
+lynxdb ingest orders.csv --index orders --sourcetype shop
+lynxdb query 'source=orders | fields _time, order_id, amount, country, note, sourcetype'
 ```
 
-## ingest compared with import
+```json
+{"_time":"2026-01-15T08:00:00Z","amount":19.9,"country":"DE","order_id":1001,"sourcetype":"shop"}
+{"_time":"2026-01-15T08:01:00Z","amount":5,"country":"US","note":"gift, wrapped","order_id":1002,"sourcetype":"shop"}
+```
 
-| | `ingest` | `import` |
-|---|---|---|
-| Input | Log lines | NDJSON, CSV, Elasticsearch bulk |
-| Fields | JSON object members, or `key=value` pairs of a text line | Taken from the structured record |
-| Timestamp | The time field of a JSON line, or the timestamp found in a text line | Read from the record's time field |
-| Endpoint | `/api/v1/ingest/raw` | `/api/v1/ingest`, or `/api/v1/es/_bulk` for `esbulk` |
-| Stdin | Default when no file is given | File argument `-` with `--format` |
+```bash
+lynxdb ingest export.tsv
+lynxdb ingest export.txt --format csv --delimiter ';'
+```
+
+## Elasticsearch bulk
+
+Action and document lines, as the Elasticsearch `_bulk` API takes them or as tools export them, go to the server's [Elasticsearch-compatible endpoint](../api/ingest.md). Each `index` or `create` action's `_index` names the index of its document; `--index` names the index of the actions that name none (`POST /{index}/_bulk`), and `main` is used without it. The server stores each document unchanged and rejects `update` and `delete` actions; the CLI counts rejected actions as failed.
+
+```bash
+lynxdb ingest dump.json --format esbulk
+lynxdb ingest dump.json --index archive
+```
+
+## Partial batches
+
+The server reports, per batch, how many events it accepted. The CLI warns when:
+
+- the server cut a request body at `ingest.max_body_size`: reduce `--batch-size` or raise the limit;
+- the server reports events it did not accept: reduce `--batch-size` or check the server log.
+
+The summary line counts accepted events only.
 
 ## See also
 

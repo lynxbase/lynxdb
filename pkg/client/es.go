@@ -8,9 +8,15 @@ import (
 	"net/url"
 )
 
-// ESBulk sends data in Elasticsearch bulk format and returns the parsed result.
-func (c *Client) ESBulk(ctx context.Context, body io.Reader) (*ESBulkResult, error) {
-	resp, err := c.doRaw(ctx, http.MethodPost, "/es/_bulk", body, "application/x-ndjson")
+// ESBulk sends an Elasticsearch bulk request body to POST /_bulk, or to
+// POST /{index}/_bulk when index is set, which names the index of the
+// actions that name none.
+func (c *Client) ESBulk(ctx context.Context, index string, body io.Reader) (*ESBulkResult, error) {
+	path := "/_bulk"
+	if index != "" {
+		path = "/" + url.PathEscape(index) + "/_bulk"
+	}
+	resp, err := c.doRawAt(ctx, http.MethodPost, c.baseURL+path, body, "application/x-ndjson")
 	if err != nil {
 		return nil, err
 	}
@@ -24,14 +30,9 @@ func (c *Client) ESBulk(ctx context.Context, body io.Reader) (*ESBulkResult, err
 	return &result, nil
 }
 
-// ESIndexDoc indexes a single document in ES-compatible format.
-func (c *Client) ESIndexDoc(ctx context.Context, index string, doc io.Reader) (*http.Response, error) {
-	return c.doRaw(ctx, http.MethodPost, "/es/"+url.PathEscape(index)+"/_doc", doc, "application/json")
-}
-
-// ESClusterInfo returns ES-compatible cluster info.
+// ESClusterInfo returns the Elasticsearch cluster info of GET /.
 func (c *Client) ESClusterInfo(ctx context.Context) (*ESClusterInfoResult, error) {
-	resp, err := c.doRaw(ctx, http.MethodGet, "/es/", nil, "")
+	resp, err := c.doRawAt(ctx, http.MethodGet, c.baseURL+"/", nil, "")
 	if err != nil {
 		return nil, err
 	}

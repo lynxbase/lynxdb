@@ -198,10 +198,15 @@ func (c *Client) doJSONWithStatus(ctx context.Context, method, path string, reqB
 	return resp.StatusCode, env.Data, env.Meta, nil
 }
 
-// doRaw sends a request and returns the raw *http.Response.
+// doRaw sends a request to an API path and returns the raw *http.Response.
 // The caller is responsible for closing resp.Body.
 func (c *Client) doRaw(ctx context.Context, method, path string, body io.Reader, contentType string) (*http.Response, error) {
-	req, err := c.newRequest(ctx, method, c.url(path), body)
+	return c.doRawAt(ctx, method, c.url(path), body, contentType)
+}
+
+// doRawAt is doRaw with a full URL.
+func (c *Client) doRawAt(ctx context.Context, method, url string, body io.Reader, contentType string) (*http.Response, error) {
+	req, err := c.newRequest(ctx, method, url, body)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +217,7 @@ func (c *Client) doRaw(ctx context.Context, method, path string, body io.Reader,
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("lynxdb: %s %s: %w", method, path, err)
+		return nil, fmt.Errorf("lynxdb: %s %s: %w", method, req.URL.Path, err)
 	}
 
 	if resp.StatusCode >= 400 {

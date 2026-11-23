@@ -1,12 +1,11 @@
 ---
 title: Ingest Data
-description: Get logs into LynxDB with the CLI, the REST API, structured import, log shippers and the syslog receiver.
+description: Get logs into LynxDB with the CLI, the REST API, log shippers and the syslog receiver.
 ---
 
 # Ingest Data
 
-A LynxDB server accepts data from the `lynxdb ingest` and `lynxdb import`
-commands, the REST API, log shippers that speak the Elasticsearch bulk API,
+A LynxDB server accepts data from the `lynxdb ingest` command, the REST API, log shippers that speak the Elasticsearch bulk API,
 OTLP or Splunk HEC, and syslog. Every path ends in the same storage and is
 queried with the same [PPL](../ppl/overview.md) queries.
 
@@ -30,7 +29,8 @@ To analyze a file once without storing it, use
 ## Ingest from the CLI
 
 [`lynxdb ingest`](../cli/ingest.md) sends a file or standard input to the
-server as raw log lines.
+server: log lines, NDJSON, CSV or an Elasticsearch bulk export. `--format`
+names the format; by default the file extension or the first line decides.
 
 ```bash
 # A file
@@ -108,34 +108,30 @@ fields. The `X-Source`, `X-Source-Type` and `X-Host` headers set `source`
 (default `http`), `sourcetype` (default `raw`) and `host`. See
 [Field Extraction](./field-extraction.md) for what is extracted.
 
-## Structured import
+## Structured files
 
-[`lynxdb import`](../cli/ingest.md) reads NDJSON, CSV and Elasticsearch bulk
-exports. The format is detected from the file extension and content, or set
-with `--format`.
+`lynxdb ingest` sends NDJSON as it is, each CSV row as a JSON object keyed by
+the header row, and an Elasticsearch bulk export to the server's bulk
+endpoint:
 
 ```bash
 # NDJSON
-lynxdb import events.ndjson
+lynxdb ingest events.ndjson
 
 # CSV with a header row
-lynxdb import export.csv
-lynxdb import data.csv --source web-01 --index nginx
+lynxdb ingest export.csv
+lynxdb ingest data.csv --source web-01 --index nginx
 
 # Elasticsearch bulk export
-lynxdb import es_dump.json --format esbulk
-
-# Check a file without importing it
-lynxdb import events.json --dry-run
+lynxdb ingest es_dump.json --format esbulk
 
 # Standard input
-cat events.ndjson | lynxdb import - --format ndjson
+cat events.ndjson | lynxdb ingest --format ndjson
 ```
 
-For NDJSON and CSV, the event time is read from the first of these fields
-present: `time`, `_time`, `timestamp`, `_timestamp`, `@timestamp`, `ts`,
-`datetime`. The scalar values of each record become fields and the record
-itself is kept in `_raw`.
+The server takes the event time from the first of its time fields
+(`storage.time_fields`) that the event holds. See
+[ingest](../cli/ingest.md) for how each format is read.
 
 ## Log shippers
 

@@ -6,7 +6,7 @@ description: The --format values of the LynxDB CLI, what auto chooses, and the f
 
 # Output Formats
 
-The global `--format` (`-F`) flag picks how commands print rows. It applies to `query` and the inspection commands; `lynxdb import` uses its own `--format` for the input format.
+The global `--format` (`-F`) flag picks how commands print rows. It applies to `query` and the inspection commands; `lynxdb ingest` uses its own `--format` for the input format.
 
 ```bash
 lynxdb query 'source=main level=ERROR | stats count() as errors by host' --format csv
