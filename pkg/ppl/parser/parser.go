@@ -41,6 +41,8 @@ type parser struct {
 	toks  []lexer.Token
 	i     int
 	depth int
+	// defaultSource is the index a query naming none reads.
+	defaultSource string
 }
 
 // MaxQueryBytes bounds the length of a query, and with it the time and
@@ -82,19 +84,30 @@ func (p *parser) release() {
 	if cap(p.toks) > maxPooledTokens {
 		p.toks = nil
 	}
-	p.toks, p.src, p.i, p.depth = p.toks[:0], "", 0, 0
+	p.toks, p.src, p.i, p.depth, p.defaultSource = p.toks[:0], "", 0, 0, ""
 	parsers.Put(p)
 }
 
+// Options changes the queries ParseWith accepts.
+type Options struct {
+	// DefaultSource is the index a query reads when it names none. A query
+	// may then start with a command, with a pipe and a command, or with
+	// search terms; it reads DefaultSource first.
+	DefaultSource string
+}
+
 // Parse parses one PPL statement.
-func Parse(src string) (q *ast.Query, err error) {
+func Parse(src string) (*ast.Query, error) { return ParseWith(src, Options{}) }
+
+// ParseWith parses one PPL statement with opts.
+func ParseWith(src string, opts Options) (q *ast.Query, err error) {
 	if len(src) > MaxQueryBytes {
 		start := lexer.Pos{Line: 1, Col: 1}
 		return nil, &SyntaxError{Pos: start, End: start, Msg: "the query is longer than " + strconv.Itoa(MaxQueryBytes) + " bytes"}
 	}
 	p := parsers.Get().(*parser)
 	toks, lexErrs := lexer.AppendTokens(p.toks[:0], src)
-	p.toks, p.src = toks, src
+	p.toks, p.src, p.defaultSource = toks, src, opts.DefaultSource
 	if len(lexErrs) > 0 {
 		e := lexErrs[0]
 		p.release()
@@ -255,15 +268,28 @@ func (p *parser) pipeline(top bool) *ast.Pipeline {
 	defer func() { p.depth-- }()
 	start := p.peek().Pos
 	pl := newPipeline()
-	// A pipe that opens a pipeline is followed by a command, never by
-	// search terms.
-	if p.accept(lexer.Pipe) && !p.atSourceCommand() {
-		if p.atCommandName() {
-			p.failAt(start, missingSource)
-		}
-		p.command()
+	def := ""
+	if top {
+		def = p.defaultSource
 	}
-	pl.Commands = append(pl.Commands, p.sourceCommand())
+	lead := p.accept(lexer.Pipe)
+	switch {
+	case p.atSourceCommand():
+		pl.Commands = append(pl.Commands, p.sourceCommand(def))
+	case lead || def != "" && p.atCommandName() && !p.isSearchFieldStart():
+		// A pipe that opens a pipeline is followed by a command, never by
+		// search terms.
+		if def == "" {
+			if p.atCommandName() {
+				p.failAt(start, missingSource)
+			}
+			p.command() // fails: no command has this name
+		}
+		pl.Commands = append(pl.Commands, defaultSearch(start, def))
+		p.addCommand(pl)
+	default:
+		pl.Commands = append(pl.Commands, p.sourceCommand(def))
+	}
 	for p.accept(lexer.Pipe) {
 		if p.at(lexer.EOF) || p.at(lexer.RBracket) || p.at(lexer.Pipe) || p.at(lexer.Semicolon) {
 			continue
@@ -310,7 +336,9 @@ func (p *parser) subSearch() *ast.Pipeline {
 	return p.bracketed(func() *ast.Pipeline { return p.pipeline(false) })
 }
 
-func (p *parser) sourceCommand() ast.Command {
+// sourceCommand parses the command that opens a pipeline; a search that
+// names no source reads def, or fails when def is empty.
+func (p *parser) sourceCommand(def string) ast.Command {
 	t := p.peek()
 	switch {
 	case t.Is("describe"):
@@ -334,7 +362,7 @@ func (p *parser) sourceCommand() ast.Command {
 		p.skipToPipe()
 		return &ast.UnsupportedCommand{Base: ast.Base{Span: p.span(start)}, Command: "graphlookup"}
 	}
-	return p.search()
+	return p.search(def)
 }
 
 // atSourceCommand reports whether the next tokens start a command that may

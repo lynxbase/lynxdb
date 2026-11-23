@@ -111,7 +111,7 @@ func benchStages(b *testing.B, srcs []string) {
 	})
 	b.Run("Compile", func(b *testing.B) {
 		per(b, func(s stageInput) {
-			if _, err := compile(s.src); err != nil {
+			if _, err := compile(s.src, Options{}); err != nil {
 				b.Fatal(err)
 			}
 		})

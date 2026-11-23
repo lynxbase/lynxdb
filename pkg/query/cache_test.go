@@ -38,20 +38,38 @@ func TestPlanCacheReturnsIndependentResults(t *testing.T) {
 }
 
 func TestPlanCacheEvictsLeastRecentlyUsed(t *testing.T) {
-	c := &planCache{entries: map[string]*list.Element{}, max: 2}
+	c := &planCache{entries: map[planKey]*list.Element{}, max: 2}
 	for _, src := range []string{"a", "b", "a", "c"} {
-		if _, ok := c.get(src); !ok {
-			c.put(src, &Compiled{Source: src})
+		if _, ok := c.get(planKey{src: src}); !ok {
+			c.put(planKey{src: src}, &Compiled{Source: src})
 		}
 	}
 	for src, want := range map[string]bool{"a": true, "b": false, "c": true} {
-		if _, ok := c.get(src); ok != want {
+		if _, ok := c.get(planKey{src: src}); ok != want {
 			t.Errorf("%s cached = %v, want %v", src, ok, want)
 		}
 	}
-	c.put(strings.Repeat("x", planCacheMaxQuery+1), &Compiled{})
+	c.put(planKey{src: strings.Repeat("x", planCacheMaxQuery+1)}, &Compiled{})
 	if c.order.Len() != 2 {
 		t.Errorf("a long query was cached")
+	}
+}
+
+// TestPlanCacheKeysByOptions pins that a plan compiled with a default source
+// is not reused for the same text without one, nor the other way around.
+func TestPlanCacheKeysByOptions(t *testing.T) {
+	const q = "where status >= 500 | stats count()"
+	for i := 0; i < 2; i++ {
+		if _, err := Compile(q); err == nil {
+			t.Fatalf("%s compiled without a default source", q)
+		}
+		c, err := CompileWith(q, Options{DefaultSource: "main"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(c.Sources) != 1 || c.Sources[0] != "main" {
+			t.Fatalf("sources = %v, want [main]", c.Sources)
+		}
 	}
 }
 

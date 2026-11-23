@@ -31,8 +31,11 @@ type Result struct {
 }
 
 // Compile parses and compiles a PPL query.
-func Compile(src string) (*Result, error) {
-	q, err := parser.Parse(src)
+func Compile(src string) (*Result, error) { return CompileWith(src, parser.Options{}) }
+
+// CompileWith parses a PPL query with opts and compiles it.
+func CompileWith(src string, opts parser.Options) (*Result, error) {
+	q, err := parser.ParseWith(src, opts)
 	if err != nil {
 		if pe, ok := AsError(err); ok {
 			return nil, pe

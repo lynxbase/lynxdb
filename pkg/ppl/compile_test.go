@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/lynxbase/lynxdb/pkg/ir"
+	"github.com/lynxbase/lynxdb/pkg/ppl/parser"
 )
 
 var update = flag.Bool("update", false, "rewrite golden files")
@@ -135,5 +136,53 @@ func TestCompileErrors(t *testing.T) {
 		if pe.Pos.Line < 1 || pe.Pos.Col < 1 {
 			t.Errorf("%q: missing position in %v", c.q, pe)
 		}
+	}
+}
+
+// TestDefaultSource pins that a query naming no source compiles with a
+// default source as the query that names it, and that errors keep their
+// positions in the text as written.
+func TestDefaultSource(t *testing.T) {
+	opts := parser.Options{DefaultSource: "main"}
+	for q, same := range map[string]string{
+		"where status >= 500 | stats count()":       "source=main | where status >= 500 | stats count()",
+		"| where status >= 500":                     "source=main | where status >= 500",
+		"grace ERROR | stats count()":               "search source=main grace ERROR | stats count()",
+		"search grace":                              "search source=main grace",
+		"status=500 | head 1":                       "search source=main status=500 | head 1",
+		"top=5":                                     "search source=main top=5",
+		"source=web | head 1":                       "source=web | head 1",
+		"explain where x > 1":                       "explain source=main | where x > 1",
+		"head 3":                                    "source=main | head 3",
+		"union [search source=a] [search source=b]": "union [search source=a] [search source=b]",
+	} {
+		got, err := CompileWith(q, opts)
+		if err != nil {
+			t.Errorf("%s: %v", q, err)
+			continue
+		}
+		want, err := Compile(same)
+		if err != nil {
+			t.Fatalf("%s: %v", same, err)
+		}
+		if ir.Render(got.Plan) != ir.Render(want.Plan) || got.Explain != want.Explain {
+			t.Errorf("%s compiles to\n%s\nwant the plan of %s:\n%s", q, ir.Render(got.Plan), same, ir.Render(want.Plan))
+		}
+	}
+	for q, msg := range map[string]string{
+		"where status >":                   "line 1, column 15: expected an expression",
+		"| tstats count":                   `line 1, column 3: unknown command "tstats"`,
+		"| stats count() by":               "line 1, column 19",
+		"":                                 "expected a query",
+		"where x > 1 | search y":           "search can only be the first command",
+		"x | where exists [ where y > 1 ]": "missing source",
+	} {
+		_, err := CompileWith(q, opts)
+		if err == nil || !strings.Contains(err.Error(), msg) {
+			t.Errorf("%q: got %v, want an error containing %q", q, err, msg)
+		}
+	}
+	if _, err := Compile("where x > 1"); err == nil || !strings.Contains(err.Error(), "missing source") {
+		t.Errorf("without a default source: got %v, want a missing source error", err)
 	}
 }

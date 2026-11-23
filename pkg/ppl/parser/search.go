@@ -10,7 +10,7 @@ import (
 // Search expressions bind NOT tightest, then OR, then AND; adjacent terms
 // are joined by an implicit AND, as in the official grammar.
 
-func (p *parser) search() ast.Command {
+func (p *parser) search(def string) ast.Command {
 	start := p.peek().Pos
 	explicit := p.acceptKw("search")
 	cmd := &ast.SearchCommand{}
@@ -35,10 +35,13 @@ func (p *parser) search() ast.Command {
 		terms = append(terms, p.searchOr())
 	}
 	if !haveSource {
-		if !explicit && len(terms) == 0 {
+		switch {
+		case !explicit && len(terms) == 0:
 			p.fail(p.peek(), "expected a query", "source=<index>", "search")
+		case def == "":
+			p.failAt(start, missingSource)
 		}
-		p.failAt(start, missingSource)
+		cmd.Sources = defaultSearch(start, def).Sources
 	}
 	for _, t := range terms {
 		if cmd.Filter == nil {
@@ -49,6 +52,13 @@ func (p *parser) search() ast.Command {
 	}
 	cmd.Span = p.span(start)
 	return cmd
+}
+
+// defaultSearch is the search of the default source def that a query naming
+// no source starts with; it spans no text, at pos.
+func defaultSearch(pos lexer.Pos, def string) *ast.SearchCommand {
+	sp := ast.Base{Span: ast.Span{Start: pos, End: pos}}
+	return &ast.SearchCommand{Base: sp, Sources: []ast.SourceRef{{Base: sp, Name: def}}}
 }
 
 func (p *parser) sourceClause(cmd *ast.SearchCommand) {

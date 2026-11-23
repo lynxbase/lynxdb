@@ -11,6 +11,7 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/ir/opt"
 	"github.com/lynxbase/lynxdb/pkg/ppl"
+	"github.com/lynxbase/lynxdb/pkg/ppl/parser"
 	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
@@ -31,19 +32,30 @@ type Compiled struct {
 	Sources []string
 }
 
+// Options changes how CompileWith reads query text.
+type Options struct {
+	// DefaultSource is the index a query reads when it names none; with it,
+	// a query may start with a command or with search terms.
+	DefaultSource string
+}
+
 // Compile parses, analyzes and optimizes a PPL query. Plans of recent
 // queries are reused; each call returns its own Compiled, whose plans are
 // immutable and may be shared.
-func Compile(src string) (*Compiled, error) {
-	c, ok := plans.get(src)
+func Compile(src string) (*Compiled, error) { return CompileWith(src, Options{}) }
+
+// CompileWith is Compile with opts.
+func CompileWith(src string, opts Options) (*Compiled, error) {
+	key := planKey{src: src, opts: opts}
+	c, ok := plans.get(key)
 	if !ok {
 		var err error
-		if c, err = compile(src); err != nil {
+		if c, err = compile(src, opts); err != nil {
 			return nil, err
 		}
 		c.Applied = c.Applied[:len(c.Applied):len(c.Applied)]
 		c.Sources = c.Sources[:len(c.Sources):len(c.Sources)]
-		plans.put(src, c)
+		plans.put(key, c)
 	}
 	return c.copy(), nil
 }
@@ -56,8 +68,8 @@ func (c *Compiled) copy() *Compiled {
 	return &cp
 }
 
-func compile(src string) (*Compiled, error) {
-	res, err := ppl.Compile(src)
+func compile(src string, opts Options) (*Compiled, error) {
+	res, err := ppl.CompileWith(src, parser.Options{DefaultSource: opts.DefaultSource})
 	if err != nil {
 		return nil, err
 	}
