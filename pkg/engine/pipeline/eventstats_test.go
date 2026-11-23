@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 )
 
 func TestEventStatsEnrichesRows(t *testing.T) {
@@ -20,9 +22,12 @@ func TestEventStatsEnrichesRows(t *testing.T) {
 
 	child := NewRowScanIterator(rows, 64)
 	aggs := []AggFunc{
-		{Name: "count", Alias: "cnt"},
+		{Alias: "cnt", Agg: exec.RowAgg{Func: exec.Count, Rows: true}, Kind: ir.KindInt},
 	}
-	iter := NewEventStatsIterator(child, aggs, []string{"group"}, 128)
+	iter, err := NewEventStatsIterator(child, aggs, []string{"group"}, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	ctx := context.Background()
 	if err := iter.Init(ctx); err != nil {

@@ -1,75 +1,76 @@
 package physical
 
 import (
-	"context"
 	"regexp"
-	"sort"
-	"strings"
-	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
+	"github.com/lynxbase/lynxdb/pkg/colstore/exec/irplan"
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ir"
-	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
-// aggregateNames maps IR aggregates onto the pipeline's aggregate functions.
-var aggregateNames = map[string]string{
-	"count": "count", "sum": "sum", "avg": "avg", "min": "min", "max": "max",
-	"var_samp": "var", "var_pop": "varp", "stddev_samp": "stdev", "stddev_pop": "stdevp",
-	"distinct_count": "dc", "distinct_count_approx": "dc", "percentile": "perc",
-	"earliest": "earliest", "latest": "latest", "first": "first", "last": "last",
-	"list": "list", "values": "values", "take": "list",
-}
-
-func (b *builder) aggFuncs(aggs []ir.NamedAgg) ([]pipeline.AggFunc, []ir.Assign, error) {
+// aggFuncs prepares the aggregates of rows.
+func (b *builder) aggFuncs(aggs []ir.NamedAgg) ([]pipeline.AggFunc, error) {
 	out := make([]pipeline.AggFunc, len(aggs))
-	var post []ir.Assign
 	for i, a := range aggs {
-		name, ok := aggregateNames[a.Agg.Func.Name]
+		call := a.Agg
+		fn, ok := irplan.AggFunc(call.Func.Name)
 		if !ok {
-			return nil, nil, unsupported("aggregate %s", a.Agg.Func.Name)
+			return nil, unsupported("aggregate %s", call.Func.Name)
 		}
-		f := pipeline.AggFunc{Name: name, Alias: a.Name}
-		if len(a.Agg.Args) > 0 {
-			arg := a.Agg.Args[0]
-			if fr, ok := arg.(*ir.FieldRef); ok {
-				f.Field = fr.Name
-			} else {
-				prog, err := b.compile(arg)
-				if err != nil {
-					return nil, nil, err
-				}
-				f.Program = prog
-			}
-		}
-		switch a.Agg.Func.Name {
+		f := pipeline.AggFunc{Alias: a.Name, Agg: exec.RowAgg{Func: fn}, Kind: call.Type().Kind}
+		args := call.Args
+		switch call.Func.Name {
 		case "percentile":
-			lit := a.Agg.Args[1].(*ir.Literal)
-			p, _ := lit.V.(float64)
-			f.Quantile = p / 100
+			lit, _ := args[1].(*ir.Literal)
+			switch p := lit.V.(type) {
+			case int64:
+				f.Agg.P = float64(p)
+			case float64:
+				f.Agg.P = p
+			}
+			args = args[:1]
+		case "take":
+			lit, _ := args[1].(*ir.Literal)
+			n, _ := lit.V.(int64)
+			f.Agg.Size = int(n)
+			args = args[:1]
 		case "earliest", "latest":
-			if len(a.Agg.Args) > 1 {
-				if fr, ok := a.Agg.Args[1].(*ir.FieldRef); !ok || fr.Name != ir.TimeColumn {
-					return nil, nil, unsupported("%s ordered by a column other than %s", a.Agg.Func.Name, ir.TimeColumn)
+			if len(args) > 1 {
+				if fr, ok := args[1].(*ir.FieldRef); !ok || fr.Name != ir.TimeColumn {
+					return nil, unsupported("%s ordered by a column other than %s", call.Func.Name, ir.TimeColumn)
+				}
+				args = args[:1]
+			}
+		}
+		if len(args) == 0 {
+			f.Agg.Rows = true
+		} else {
+			e, err := b.compile(args[0])
+			if err != nil {
+				return nil, err
+			}
+			f.Arg = e
+		}
+		if call.Filter != nil {
+			cond, err := b.cond(call.Filter)
+			if err != nil {
+				return nil, err
+			}
+			f.Cond = cond
+			if f.Agg.Rows {
+				// A count of the rows where the condition holds counts a
+				// value in each of them.
+				f.Agg.Rows, f.Arg = false, nil
+				if f.Arg, err = b.compile(ir.BoolLit(true)); err != nil {
+					return nil, err
 				}
 			}
-		case "take":
-			n := a.Agg.Args[1].(*ir.Literal).V.(int64)
-			ref := &ir.FieldRef{Name: a.Name, T: ir.ArrayOf(ir.Any)}
-			post = append(post, ir.Assign{Name: a.Name, Expr: &ir.Call{Func: ir.MustFunc("mvindex"),
-				Args: []ir.Expr{ref, ir.IntLit(0), ir.IntLit(n - 1)}, T: ir.Any}})
-		}
-		if a.Agg.Filter != nil {
-			prog, err := b.compile(a.Agg.Filter)
-			if err != nil {
-				return nil, nil, err
-			}
-			f.CondProgram = prog
 		}
 		out[i] = f
 	}
-	return out, post, nil
+	return out, nil
 }
 
 func (b *builder) aggregate(x *ir.Aggregate) (pipeline.Iterator, error) {
@@ -79,16 +80,13 @@ func (b *builder) aggregate(x *ir.Aggregate) (pipeline.Iterator, error) {
 	}
 	var temps []ir.Assign
 	groupBy := make([]string, len(x.Groups))
+	kinds := make([]ir.Kind, len(x.Groups))
 	var renames []ir.Rename
 	var nullChecks []ir.Expr
 	for i, g := range x.Groups {
+		kinds[i] = g.Expr.Type().Kind
 		if fr, ok := g.Expr.(*ir.FieldRef); ok && fr.Name == g.Name {
 			groupBy[i] = g.Name
-		} else if field, span, ok := fixedTimeBucket(g.Expr); ok {
-			t := b.temp()
-			child = pipeline.NewBinIterator(child, field, t, span)
-			groupBy[i] = t
-			renames = append(renames, ir.Rename{From: t, To: g.Name})
 		} else {
 			t := b.temp()
 			temps = append(temps, ir.Assign{Name: t, Expr: g.Expr})
@@ -107,101 +105,23 @@ func (b *builder) aggregate(x *ir.Aggregate) (pipeline.Iterator, error) {
 		}
 	}
 	if len(nullChecks) > 0 {
-		prog, err := b.compile(ir.And(nullChecks...))
+		cond, err := b.cond(ir.And(nullChecks...))
 		if err != nil {
 			return nil, err
 		}
-		it = pipeline.NewFilterIterator(it, prog)
+		it = pipeline.NewFilterIterator(it, cond)
 	}
-	aggs, post, err := b.aggFuncs(x.Aggs)
+	aggs, err := b.aggFuncs(x.Aggs)
 	if err != nil {
 		return nil, err
 	}
-	it = pipeline.NewAggregateIterator(it, aggs, groupBy)
+	if it, err = pipeline.NewAggregateIterator(it, aggs, groupBy, kinds); err != nil {
+		return nil, err
+	}
 	if len(renames) > 0 {
 		it = newRenameIterator(it, renames)
 	}
-	if arrays := arrayAggregates(x.Aggs); len(arrays) > 0 {
-		it = &arrayAggIterator{Iterator: it, columns: arrays}
-	}
-	if len(post) > 0 {
-		return b.compute(it, post)
-	}
 	return it, nil
-}
-
-// arrayAggregates maps the output columns of list, values and take to
-// whether their elements are sorted and distinct.
-func arrayAggregates(aggs []ir.NamedAgg) map[string]bool {
-	out := map[string]bool{}
-	for _, a := range aggs {
-		switch a.Agg.Func.Name {
-		case "values":
-			out[a.Name] = true
-		case "list", "take":
-			out[a.Name] = false
-		}
-	}
-	return out
-}
-
-// arrayAggIterator turns the pipeline's joined string form of list and
-// values results into arrays of strings.
-type arrayAggIterator struct {
-	pipeline.Iterator
-	columns map[string]bool
-}
-
-func (a *arrayAggIterator) Next(ctx context.Context) (*pipeline.Batch, error) {
-	batch, err := a.Iterator.Next(ctx)
-	if err != nil || batch == nil {
-		return batch, err
-	}
-	for name, sorted := range a.columns {
-		col := batch.Columns[name]
-		for i := range col {
-			if col[i].Type() != event.FieldTypeString {
-				continue
-			}
-			var parts []string
-			if s := col[i].AsString(); s != "" {
-				parts = strings.Split(s, "|||")
-			}
-			if sorted {
-				sort.Strings(parts)
-			}
-			elems := make([]event.Value, len(parts))
-			for j, p := range parts {
-				elems[j] = event.StringValue(p)
-			}
-			col[i] = event.ArrayValue(elems)
-		}
-	}
-	return batch, nil
-}
-
-var bucketUnits = map[string]time.Duration{
-	"ms": time.Millisecond, "s": time.Second, "m": time.Minute, "h": time.Hour, "d": 24 * time.Hour, "w": 7 * 24 * time.Hour,
-}
-
-// fixedTimeBucket recognizes time_bucket over a timestamp column with a
-// fixed-length unit, which the pipeline's bin operator computes directly.
-func fixedTimeBucket(e ir.Expr) (string, time.Duration, bool) {
-	c, ok := e.(*ir.Call)
-	if !ok || c.Func.Name != "time_bucket" {
-		return "", 0, false
-	}
-	f, ok := c.Args[0].(*ir.FieldRef)
-	if !ok || f.T.Kind != ir.KindTimestamp {
-		return "", 0, false
-	}
-	n, ok1 := c.Args[1].(*ir.Literal).V.(int64)
-	unit, ok2 := c.Args[2].(*ir.Literal).V.(string)
-	d, ok3 := bucketUnits[unit]
-	if !ok1 || !ok2 || !ok3 || n <= 0 {
-		return "", 0, false
-	}
-	return f.Name, time.Duration(n) * d, true
 }
 
 func (b *builder) window(x *ir.Window) (pipeline.Iterator, error) {
@@ -232,20 +152,19 @@ func (b *builder) window(x *ir.Window) (pipeline.Iterator, error) {
 			return nil, err
 		}
 	}
-	aggs, post, err := b.aggFuncs(x.Funcs)
+	aggs, err := b.aggFuncs(x.Funcs)
 	if err != nil {
 		return nil, err
 	}
 	if x.Frame.Kind == ir.FramePartition {
-		it = pipeline.NewEventStatsIterator(it, aggs, groupBy, b.batchSize())
+		it, err = pipeline.NewEventStatsIterator(it, aggs, groupBy, b.batchSize())
 	} else {
-		it = pipeline.NewStreamStatsIterator(it, aggs, groupBy, x.Frame.Rows, !x.Frame.ExcludeCurrent)
+		it, err = pipeline.NewStreamStatsIterator(it, aggs, groupBy, x.Frame.Rows, !x.Frame.ExcludeCurrent)
 	}
-	it = dropTemps(it, temps)
-	if len(post) > 0 {
-		return b.compute(it, post)
+	if err != nil {
+		return nil, err
 	}
-	return it, nil
+	return dropTemps(it, temps), nil
 }
 
 func (b *builder) dedup(x *ir.Dedup) (pipeline.Iterator, error) {
@@ -253,13 +172,13 @@ func (b *builder) dedup(x *ir.Dedup) (pipeline.Iterator, error) {
 	if err != nil {
 		return nil, err
 	}
-	progs := make([]*vm.Program, len(x.Keys))
+	keys := make([]*pipeline.Expr, len(x.Keys))
 	for i, k := range x.Keys {
-		if progs[i], err = b.compile(k); err != nil {
+		if keys[i], err = b.compile(k); err != nil {
 			return nil, err
 		}
 	}
-	return newDedupIterator(child, progs, x.Count, x.KeepNull, x.Consecutive, b.batchSize()), nil
+	return newDedupIterator(child, keys, x.Count, x.KeepNull, x.Consecutive, b.batchSize()), nil
 }
 
 func (b *builder) join(x *ir.Join) (pipeline.Iterator, error) {
@@ -287,7 +206,7 @@ func (b *builder) join(x *ir.Join) (pipeline.Iterator, error) {
 		j.rightKeys = append(j.rightKeys, p)
 	}
 	if x.Cond != nil {
-		if j.cond, err = b.compile(x.Cond); err != nil {
+		if j.cond, err = b.cond(x.Cond); err != nil {
 			return nil, err
 		}
 	}
@@ -310,27 +229,19 @@ func (b *builder) extract(x *ir.Extract) (pipeline.Iterator, error) {
 	return newMapIterator(child, b.batchSize(), regexExtractor(src, re, x)), nil
 }
 
-func regexExtractor(src *vm.Program, re *regexp.Regexp, x *ir.Extract) func(map[string]event.Value) []map[string]event.Value {
+func regexExtractor(src *pipeline.Expr, re *regexp.Regexp, x *ir.Extract) func(map[string]event.Value) []map[string]event.Value {
 	groups := map[string]int{}
 	for i, n := range re.SubexpNames() {
 		if n != "" {
 			groups[n] = i
 		}
 	}
-	var machine vm.VM
 	noMatch := event.NullValue()
 	if x.NoMatchEmpty {
 		noMatch = event.StringValue("")
 	}
 	return func(row map[string]event.Value) []map[string]event.Value {
-		v, err := machine.Execute(src, row)
-		text, ok := "", false
-		if err == nil && !v.IsNull() {
-			text, ok = v.String(), true
-			if v.Type() == event.FieldTypeString {
-				text = v.AsString()
-			}
-		}
+		text, ok := textOf(src, row)
 		if x.MaxMatches > 1 {
 			var all [][]string
 			if ok {
@@ -377,15 +288,10 @@ func (b *builder) patterns(x *ir.Patterns) (pipeline.Iterator, error) {
 	if err != nil {
 		return nil, err
 	}
-	var machine vm.VM
 	label := func(row map[string]event.Value) (string, string, bool) {
-		v, err := machine.Execute(src, row)
-		if err != nil || v.IsNull() {
+		text, ok := textOf(src, row)
+		if !ok {
 			return "", "", false
-		}
-		text := v.String()
-		if v.Type() == event.FieldTypeString {
-			text = v.AsString()
 		}
 		return re.ReplaceAllString(text, "<*>"), text, true
 	}
@@ -399,10 +305,10 @@ func (b *builder) patterns(x *ir.Patterns) (pipeline.Iterator, error) {
 			return []map[string]event.Value{row}
 		}), nil
 	}
-	groupProgs := make([]*vm.Program, len(x.GroupBy))
+	groupExprs := make([]*pipeline.Expr, len(x.GroupBy))
 	groupNames := make([]string, len(x.GroupBy))
 	for i, g := range x.GroupBy {
-		if groupProgs[i], err = b.compile(g); err != nil {
+		if groupExprs[i], err = b.compile(g); err != nil {
 			return nil, err
 		}
 		if fr, ok := g.(*ir.FieldRef); ok {
@@ -422,14 +328,13 @@ func (b *builder) patterns(x *ir.Patterns) (pipeline.Iterator, error) {
 			if !ok {
 				continue
 			}
-			key := p
-			groupVals := make([]event.Value, len(groupProgs))
-			for i, gp := range groupProgs {
-				gv, _ := machine.Execute(gp, r)
-				groupVals[i] = gv
-				key += "\x00" + gv.String()
+			key := []byte(p)
+			groupVals := make([]event.Value, len(groupExprs))
+			for i, ge := range groupExprs {
+				key = exec.AppendKey(key, ge.Exec(r))
+				groupVals[i], _ = ge.Value(r)
 			}
-			a, ok := index[key]
+			a, ok := index[string(key)]
 			if !ok {
 				out := map[string]event.Value{x.Output: event.StringValue(p)}
 				for i, n := range groupNames {
@@ -438,8 +343,8 @@ func (b *builder) patterns(x *ir.Patterns) (pipeline.Iterator, error) {
 					}
 				}
 				a = &agg{row: out}
-				index[key] = a
-				order = append(order, key)
+				index[string(key)] = a
+				order = append(order, string(key))
 			}
 			a.count++
 			if len(a.samples) < x.MaxSamples {
@@ -455,4 +360,17 @@ func (b *builder) patterns(x *ir.Patterns) (pipeline.Iterator, error) {
 		}
 		return out
 	}), nil
+}
+
+// textOf returns the text of the value of src for row, false for a null or
+// a field the row does not hold.
+func textOf(src *pipeline.Expr, row map[string]event.Value) (string, bool) {
+	v, ok := src.Value(row)
+	if !ok || v.IsNull() {
+		return "", false
+	}
+	if v.Type() == event.FieldTypeString {
+		return v.AsString(), true
+	}
+	return v.String(), true
 }

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // DefaultMaxSortRows is the maximum number of rows that SortIterator will
@@ -20,10 +20,27 @@ const DefaultMaxSortRows = 10_000_000
 // per-query limit; match with errors.Is.
 var ErrSortLimitExceeded = errors.New("sort: row limit exceeded")
 
-// SortField describes a sort key.
+// SortField describes a sort key: a column in the order of exec.Compare,
+// with its nulls last or, with NullsFirst, first.
 type SortField struct {
-	Name string
-	Desc bool
+	Name       string
+	Desc       bool
+	NullsFirst bool
+}
+
+// compareRows orders two rows by the sort fields; buf serves the values
+// that the comparison converts, and is returned for the next call.
+func compareRows(fields []SortField, a, b map[string]event.Value, buf []byte) (int, []byte) {
+	for _, f := range fields {
+		var x, y exec.Value
+		x, buf = ExecValue(a[f.Name], buf[:0])
+		y, buf = ExecValue(b[f.Name], buf)
+		if c := exec.Compare(x, y, f.Desc, f.NullsFirst); c != 0 {
+			return c, buf
+		}
+	}
+
+	return 0, buf
 }
 
 // SortIterator fully materializes input, sorts, then streams output. It
@@ -39,11 +56,6 @@ type SortIterator struct {
 
 	mergedBatch   *Batch // accumulated columnar data from child batches
 	sortedIndices []int  // permutation index after sort
-
-	// tiebreakCols is the sorted list of column names NOT in the sort fields.
-	// Used as a deterministic tiebreaker when all explicit sort keys are equal.
-	// Computed lazily on first use.
-	tiebreakCols []string
 }
 
 // NewSortIterator creates a full-materialization sort operator.
@@ -127,6 +139,9 @@ func (s *SortIterator) sortColumnar(ctx context.Context) error {
 
 	var canceled bool
 	var comparisons int64
+	var buf []byte
+	a := make(map[string]event.Value, len(s.fields))
+	b := make(map[string]event.Value, len(s.fields))
 	sort.SliceStable(s.sortedIndices, func(i, j int) bool {
 		if canceled {
 			return false
@@ -141,86 +156,18 @@ func (s *SortIterator) sortColumnar(ctx context.Context) error {
 			default:
 			}
 		}
-		for _, sf := range s.fields {
-			a := s.mergedBatch.Value(sf.Name, s.sortedIndices[i])
-			b := s.mergedBatch.Value(sf.Name, s.sortedIndices[j])
-			cmp := vm.CompareValues(a, b)
-			if cmp == 0 {
-				continue
-			}
-			if sf.Desc {
-				return cmp > 0
-			}
-
-			return cmp < 0
+		for _, f := range s.fields {
+			a[f.Name] = s.mergedBatch.Value(f.Name, s.sortedIndices[i])
+			b[f.Name] = s.mergedBatch.Value(f.Name, s.sortedIndices[j])
 		}
+		var c int
+		c, buf = compareRows(s.fields, a, b, buf)
 
-		// Tiebreaker: all explicit sort keys are equal.
-		return s.tiebreakColumnarLess(s.sortedIndices[i], s.sortedIndices[j])
+		return c < 0
 	})
 	if canceled {
 		return ctx.Err()
 	}
 
 	return nil
-}
-
-func (s *SortIterator) buildTiebreakColsFromBatch() {
-	sortSet := make(map[string]bool, len(s.fields))
-	for _, sf := range s.fields {
-		sortSet[sf.Name] = true
-	}
-	s.tiebreakCols = make([]string, 0, len(s.mergedBatch.Columns))
-	for k := range s.mergedBatch.Columns {
-		if !sortSet[k] {
-			s.tiebreakCols = append(s.tiebreakCols, k)
-		}
-	}
-	sort.Strings(s.tiebreakCols)
-}
-
-// tiebreakMapLess is a standalone tiebreaker for row maps used by both
-// SortIterator and TopNIterator. It compares all columns NOT in sortFields,
-// in alphabetical column-name order, ascending by value.
-func tiebreakMapLess(a, b map[string]event.Value, sortFields []SortField) bool {
-	// Build sorted list of non-sort column names from the row.
-	sortSet := make(map[string]bool, len(sortFields))
-	for _, sf := range sortFields {
-		sortSet[sf.Name] = true
-	}
-	cols := make([]string, 0, len(a))
-	for k := range a {
-		if !sortSet[k] {
-			cols = append(cols, k)
-		}
-	}
-	sort.Strings(cols)
-
-	for _, col := range cols {
-		cmp := vm.CompareValues(a[col], b[col])
-		if cmp != 0 {
-			return cmp < 0
-		}
-	}
-
-	return false
-}
-
-// tiebreakColumnarLess compares two rows (by index) in the columnar
-// batch using non-sort columns. Same logic as tiebreakRowLess but
-// operates on the columnar fast path.
-func (s *SortIterator) tiebreakColumnarLess(i, j int) bool {
-	if s.tiebreakCols == nil {
-		s.buildTiebreakColsFromBatch()
-	}
-	for _, col := range s.tiebreakCols {
-		a := s.mergedBatch.Value(col, i)
-		b := s.mergedBatch.Value(col, j)
-		cmp := vm.CompareValues(a, b)
-		if cmp != 0 {
-			return cmp < 0
-		}
-	}
-
-	return false
 }

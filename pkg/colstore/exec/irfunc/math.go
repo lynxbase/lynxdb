@@ -3,8 +3,11 @@ package irfunc
 import (
 	"hash/crc32"
 	"math"
+	"math/rand/v2"
 	"strconv"
 	"strings"
+
+	"github.com/lynxbase/lynxdb/pkg/ir"
 )
 
 func floatFn(f func(float64) float64) impl {
@@ -260,4 +263,27 @@ func init() {
 		}
 		return floatVal(math.Floor(x/w) * w)
 	}))
+}
+
+func init() {
+	// A seed makes the numbers of one computation of the call repeat from
+	// query to query; without one, they come from the shared source.
+	def("rand", func(call *ir.Call) (func() impl, error) {
+		seed, seeded := constInt(call, 0)
+
+		return func() impl {
+			var r *rand.Rand
+			if seeded {
+				r = rand.New(rand.NewPCG(uint64(seed), uint64(seed)))
+			}
+
+			return func(*ctx, []val) val {
+				if r != nil {
+					return floatVal(r.Float64())
+				}
+
+				return floatVal(rand.Float64())
+			}
+		}, nil
+	})
 }

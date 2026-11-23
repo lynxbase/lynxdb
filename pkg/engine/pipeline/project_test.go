@@ -67,6 +67,8 @@ func TestProjectIterator_KeepExact(t *testing.T) {
 	}
 }
 
+// TestProjectIterator_KeepExactMissingField requires that a named field the
+// rows do not hold stays absent from them.
 func TestProjectIterator_KeepExactMissingField(t *testing.T) {
 	batch := makeBatch(map[string][]event.Value{
 		"host": {event.StringValue("web-01")},
@@ -83,18 +85,11 @@ func TestProjectIterator_KeepExactMissingField(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Columns) != 2 {
-		t.Fatalf("columns: got %d, want 2", len(out.Columns))
+	if len(out.Columns) != 1 {
+		t.Fatalf("columns: got %d, want 1", len(out.Columns))
 	}
-	col, ok := out.Columns["_sourcetype"]
-	if !ok {
-		t.Fatal("expected explicit missing _sourcetype column")
-	}
-	if len(col) != 1 {
-		t.Fatalf("_sourcetype values: got %d, want 1", len(col))
-	}
-	if !col[0].IsNull() {
-		t.Fatalf("_sourcetype value: got %v, want null", col[0])
+	if _, ok := out.Columns["_sourcetype"]; ok {
+		t.Fatal("a field the rows lack is a column")
 	}
 }
 

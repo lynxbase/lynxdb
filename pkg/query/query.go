@@ -5,14 +5,14 @@ package query
 import (
 	"fmt"
 	"strings"
-	"sync"
+	"time"
 
+	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/ir/opt"
 	"github.com/lynxbase/lynxdb/pkg/ppl"
 	"github.com/lynxbase/lynxdb/pkg/ppl/parser"
-	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // Compiled is an optimized plan ready for execution.
@@ -81,26 +81,17 @@ func compile(src string, opts Options) (*Compiled, error) {
 		Explain: res.Explain, ExplainMode: res.ExplainMode, Sources: res.Sources}, nil
 }
 
-// foldVMs recycles the VM Fold runs on; a VM is several kilobytes.
-var foldVMs = sync.Pool{New: func() any { return new(vm.VM) }}
-
-// Fold evaluates a constant expression with the VM.
+// Fold computes a constant expression as the executor computes it.
 func Fold(e ir.Expr) (*ir.Literal, bool) {
-	prog, err := vm.CompileExpr(e, vm.CompileOptions{})
+	x, err := pipeline.NewExpr(e, time.Time{})
 	if err != nil {
 		return nil, false
 	}
-	m := foldVMs.Get().(*vm.VM)
-	// A VM caches per-program state that is not keyed by program, so a
-	// recycled one starts from zero.
-	*m = vm.VM{}
-	v, err := m.Execute(prog, nil)
-	var lit *ir.Literal
-	ok := err == nil
-	if ok {
-		lit, ok = Literal(v)
+	v, present := x.Value(nil)
+	if !present {
+		return nil, false
 	}
-	foldVMs.Put(m)
+	lit, ok := Literal(v)
 	if !ok {
 		return nil, false
 	}

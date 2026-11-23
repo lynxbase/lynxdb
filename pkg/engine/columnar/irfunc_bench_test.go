@@ -95,9 +95,8 @@ func benchArg(e ir.Expr) *exec.Expr {
 	panic(fmt.Sprintf("benchArg %T", e))
 }
 
-// BenchmarkFunctions counts the rows where a function gives a value, with
-// the function native and through the bridge to the row engine. Run it with
-// -cpu 1; cpu-ns/row is the process's CPU time per row.
+// BenchmarkFunctions counts the rows where a function gives a value. Run it
+// with -cpu 1; cpu-ns/row is the process's CPU time per row.
 func BenchmarkFunctions(b *testing.B) {
 	snap := benchTableOf(b).Snapshot()
 	defer snap.Release()
@@ -138,28 +137,18 @@ func BenchmarkFunctions(b *testing.B) {
 		plan := &exec.Aggregate{Input: &exec.Scan{}, Aggs: []exec.Agg{{Name: "n", Func: exec.Count, Arg: e}}}
 		b.Run(name, func(b *testing.B) { run(b, plan) })
 	}
-	bridge := opaque(testNow)
 	for _, c := range cases {
 		args := make([]*exec.Expr, len(c.call.Args))
-		var fields []*ir.FieldRef
-		var fieldArgs []*exec.Expr
 		for i, a := range c.call.Args {
 			args[i] = benchArg(a)
-			if f, ok := a.(*ir.FieldRef); ok {
-				fields = append(fields, f)
-				fieldArgs = append(fieldArgs, args[i])
-			}
 		}
 		ways := map[string]*exec.Expr{}
-		if newFunc, ok := bridge(c.call, fields); ok {
-			ways["bridge"] = exec.Call(newFunc, fieldArgs...)
-		}
 		if build, ok := irfunc.Lookup(c.call.Func.Name); ok {
 			if newFunc, err := build(c.call, irfunc.Env{Now: testNow}); err == nil {
 				ways["native"] = exec.Call(newFunc, args...)
 			}
 		}
-		for _, way := range []string{"native", "bridge"} {
+		for _, way := range []string{"native"} {
 			e, ok := ways[way]
 			if !ok {
 				continue

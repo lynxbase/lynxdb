@@ -243,7 +243,7 @@ func TestExecute(t *testing.T) {
 		{"makeresults format=json data='[{\"a\":1},{\"a\":2}]' | stats sum(a) as total",
 			"total=3"},
 		{"makeresults format=json data='[{\"x\":1},{\"x\":1.0},{\"x\":\"1\"},{\"x\":2}]' | stats dc(x) as d, distinct_count_approx(x) as a",
-			"a=2 d=2"},
+			"a=3 d=3"},
 		{"source=logs | replace 'web-*' WITH 'host-*' IN host | dedup host | sort host | fields host",
 			"host=\"host-1\"\nhost=\"host-2\"\nhost=\"host-3\""},
 		{"source=logs | eval b = tostring(bytes) | convert num(b) as n | where n > 60 | fields n",

@@ -588,3 +588,7 @@ func init() {
 		return func() impl { return first(g) }, nil
 	})
 }
+
+func init() {
+	fixed("sysdate", func(*ctx, []val) val { return timeVal(time.Now().UTC()) })
+}

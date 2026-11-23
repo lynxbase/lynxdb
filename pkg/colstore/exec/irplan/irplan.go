@@ -30,23 +30,45 @@ type Options struct {
 	// Now is the time that relative times count from; the zero time means
 	// the time of the call.
 	Now time.Time
-	// Opaque, when set, is asked for a function that computes an expression
-	// which the executor has no operations for: the function takes the
-	// values of fields, in their order, in one row. It returns false for an
-	// expression that it does not compute either.
-	Opaque func(e ir.Expr, fields []*ir.FieldRef) (func() exec.Func, bool)
 }
 
 func unsupported(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrUnsupported, fmt.Sprintf(format, args...))
 }
 
-// Plan returns the executor's plan for p.
-func Plan(p *ir.Plan, opts Options) (exec.Node, error) {
-	t := &translator{now: opts.Now, opaque: opts.Opaque, env: map[string]*exec.Expr{}}
+// newTranslator returns a translator of the operators of one plan.
+func newTranslator(opts Options) *translator {
+	t := &translator{now: opts.Now, env: map[string]*exec.Expr{}, params: map[*ir.LambdaParam]string{}}
 	if t.now.IsZero() {
 		t.now = time.Now()
 	}
+
+	return t
+}
+
+// Expr returns the executor's expression for a value over the fields of a
+// row, which an exec.RowExpr computes row by row: a field is the column of
+// its name, read whatever kinds it holds, and the time is in nanoseconds.
+// It fails for an expression that is not valid.
+func Expr(e ir.Expr, opts Options) (*exec.Expr, error) {
+	t := newTranslator(opts)
+	t.rows = true
+
+	return t.expr(e)
+}
+
+// Cond is Expr for a condition, which exec.RowExpr.True tests as the
+// filter of a scan would.
+func Cond(e ir.Expr, opts Options) (*exec.Expr, error) {
+	t := newTranslator(opts)
+	t.rows = true
+
+	return t.pred(e, false)
+}
+
+// Plan returns the executor's plan for p.
+func Plan(p *ir.Plan, opts Options) (exec.Node, error) {
+	t := newTranslator(opts)
 	// The operators from the scan upwards.
 	var chain []ir.Node
 	for n := p.Root; n != nil; {
@@ -75,10 +97,7 @@ func Plan(p *ir.Plan, opts Options) (exec.Node, error) {
 // of them than its limit. The conditions it leaves out are for the operators
 // above the scan, which hold them all.
 func Rows(scan *ir.Scan, opts Options) (exec.Node, error) {
-	t := &translator{now: opts.Now, opaque: opts.Opaque, env: map[string]*exec.Expr{}}
-	if t.now.IsZero() {
-		t.now = time.Now()
-	}
+	t := newTranslator(opts)
 	if err := t.node(&ir.Scan{Time: scan.Time}); err != nil {
 		return nil, err
 	}
@@ -108,9 +127,13 @@ func Rows(scan *ir.Scan, opts Options) (exec.Node, error) {
 // upwards.
 type translator struct {
 	now time.Time
-	// opaque computes the expressions that the executor has no operations
-	// for, when the caller gave a way to.
-	opaque func(e ir.Expr, fields []*ir.FieldRef) (func() exec.Func, bool)
+	// rows is set for an expression computed one row at a time, in the
+	// order the rows come, which a function that gives another value each
+	// time it is called needs.
+	rows bool
+	// params maps the parameters of the lambdas that the expressions hold
+	// to the columns that stand for them.
+	params map[*ir.LambdaParam]string
 	filter []*exec.Expr
 	// env maps the name of a computed or renamed column to its expression:
 	// over the table's paths below an aggregate, over the aggregate's
@@ -502,6 +525,14 @@ var aggFuncs = map[string]exec.AggFunc{
 	"distinct_count": exec.CountDistinct, "distinct_count_approx": exec.ApproxDistinct,
 	"percentile": exec.Percentile,
 	"earliest":   exec.Earliest, "latest": exec.Latest, "first": exec.First, "last": exec.Last,
+	"list": exec.List, "take": exec.Take, "values": exec.Values,
+}
+
+// AggFunc returns the executor's function of the IR's aggregate of a name.
+func AggFunc(name string) (exec.AggFunc, bool) {
+	fn, ok := aggFuncs[name]
+
+	return fn, ok
 }
 
 func (t *translator) aggregate(n *ir.Aggregate) error {
@@ -543,7 +574,8 @@ func (t *translator) aggCall(a ir.NamedAgg) (exec.Agg, error) {
 	call := a.Agg
 	refused := unsupported("the aggregate %s", call)
 	fn, ok := aggFuncs[call.Func.Name]
-	if !ok {
+	if !ok || fn == exec.List || fn == exec.Take || fn == exec.Values {
+		// The arrays of values are an Accumulator's.
 		return exec.Agg{}, refused
 	}
 	out := exec.Agg{Name: a.Name, Func: fn}
@@ -799,50 +831,8 @@ var scalarCalls = map[string]exec.Op{
 	"coalesce": exec.OpCoalesce, "num_bucket": exec.OpBin,
 }
 
-// expr translates a value expression: into the operations of the executor,
-// or else into a function of the fields that the expression reads.
-func (t *translator) expr(e ir.Expr) (*exec.Expr, error) {
-	out, err := t.operations(e)
-	if err == nil || t.opaque == nil || !errors.Is(err, ErrUnsupported) {
-		return out, err
-	}
-	var fields []*ir.FieldRef
-	whole := true
-	ir.WalkExpr(e, func(x ir.Expr) bool {
-		switch x := x.(type) {
-		case *ir.Subquery:
-			whole = false
-		case *ir.FieldRef:
-			if !slices.ContainsFunc(fields, func(f *ir.FieldRef) bool { return f.Name == x.Name }) {
-				fields = append(fields, x)
-			}
-		}
-
-		return whole
-	})
-	if !whole {
-		return nil, err
-	}
-	// A function takes an argument: a constant stands in for one that
-	// reads no field.
-	args := []*exec.Expr{exec.Bool(true)}
-	if len(fields) != 0 {
-		args = args[:0]
-	}
-	for _, f := range fields {
-		arg, failed := t.field(f.Name)
-		if failed != nil {
-			return nil, failed
-		}
-		args = append(args, arg)
-	}
-	newFunc, ok := t.opaque(e, fields)
-	if !ok {
-		return nil, err
-	}
-
-	return exec.Call(newFunc, args...), nil
-}
+// expr translates a value expression into the operations of the executor.
+func (t *translator) expr(e ir.Expr) (*exec.Expr, error) { return t.operations(e) }
 
 // operations translates a value expression into the operations of the
 // executor.
@@ -852,6 +842,15 @@ func (t *translator) operations(e ir.Expr) (*exec.Expr, error) {
 		return literal(e)
 	case *ir.FieldRef:
 		return t.field(e.Name)
+	case *ir.LambdaParam:
+		path, ok := t.params[e]
+		if !ok {
+			return nil, fmt.Errorf("irplan: the lambda parameter %s outside its lambda", e.Name)
+		}
+
+		return exec.Col(path, exec.KindAny), nil
+	case *ir.Index:
+		return t.native(irfunc.Index(e), []ir.Expr{e.X, e.Key})
 	case *ir.RelativeTime:
 		return exec.Int(e.Bound.Resolve(t.now).UnixNano()), nil
 	case *ir.Unary:
@@ -865,6 +864,18 @@ func (t *translator) operations(e ir.Expr) (*exec.Expr, error) {
 
 		return exec.Sub(exec.Int(0), a), nil
 	case *ir.Binary:
+		if e.Op == ir.OpXor {
+			a, err := t.expr(e.L)
+			if err != nil {
+				return nil, err
+			}
+			b, err := t.expr(e.R)
+			if err != nil {
+				return nil, err
+			}
+
+			return exec.Or(exec.And(a, exec.Not(b)), exec.And(exec.Not(a), b)), nil
+		}
 		op, ok := binaryOps[e.Op]
 		if !ok {
 			return nil, unsupported("the operator %s", e.Op)
@@ -932,6 +943,14 @@ func text(e ir.Expr) (string, bool) {
 // call translates a call into the executor's operations, or else into the
 // native implementation of its function.
 func (t *translator) call(c *ir.Call) (*exec.Expr, error) {
+	if c.Func.Volatile && !t.rows {
+		// The executor may compute a function once for the rows whose
+		// arguments are alike, and on several goroutines.
+		return nil, unsupported("the function %s, which gives another value each time", c.Func.Name)
+	}
+	if slices.ContainsFunc(c.Args, func(a ir.Expr) bool { _, ok := a.(*ir.Lambda); return ok }) {
+		return t.lambdaCall(c)
+	}
 	out, err := t.operationCall(c)
 	if err == nil || !errors.Is(err, ErrUnsupported) {
 		return out, err
@@ -940,9 +959,9 @@ func (t *translator) call(c *ir.Call) (*exec.Expr, error) {
 	if !ok {
 		return nil, err
 	}
-	newFunc, buildErr := b(c, irfunc.Env{Now: t.now})
-	if buildErr != nil {
-		return nil, err
+	newFunc, err := b(c, irfunc.Env{Now: t.now})
+	if err != nil {
+		return nil, fmt.Errorf("irplan: %s: %w", c, err)
 	}
 
 	return t.native(newFunc, c.Args)
@@ -973,13 +992,11 @@ func (t *translator) operationCall(c *ir.Call) (*exec.Expr, error) {
 	case name == "now" && len(c.Args) == 0:
 		return exec.Int(t.now.UnixNano()), nil
 	case name == "timestamp" && len(c.Args) == 1:
+		// Other forms of a time are the native function's to read.
 		if s, ok := text(c.Args[0]); ok {
-			at, err := time.Parse(time.RFC3339Nano, s)
-			if err != nil {
-				return nil, fmt.Errorf("irplan: %q is not a timestamp", s)
+			if at, err := time.Parse(time.RFC3339Nano, s); err == nil {
+				return exec.Int(at.UnixNano()), nil
 			}
-
-			return exec.Int(at.UnixNano()), nil
 		}
 
 		return nil, refused

@@ -10,13 +10,12 @@ import (
 	"strings"
 
 	"github.com/lynxbase/lynxdb/pkg/event"
-	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
+// FilterIterator keeps the rows that pass a condition.
 type FilterIterator struct {
 	child     Iterator
-	predicate *vm.Program
-	vmInst    vm.VM
+	predicate *Expr
 }
 
 func (f *FilterIterator) Init(ctx context.Context) error { return f.child.Init(ctx) }
@@ -32,13 +31,9 @@ func (f *FilterIterator) Next(ctx context.Context) (*Batch, error) {
 		mask := make([]bool, batch.Len)
 		matchCount := 0
 		for i := 0; i < batch.Len; i++ {
-			row := batch.Row(i)
-			if f.predicate != nil {
-				result, _ := f.vmInst.Execute(f.predicate, row)
-				if result.Type() == event.FieldTypeBool && result.AsBool() {
-					mask[i] = true
-					matchCount++
-				}
+			if f.predicate.True(batch.Row(i)) {
+				mask[i] = true
+				matchCount++
 			}
 		}
 		if matchCount == 0 {
@@ -52,7 +47,8 @@ func (f *FilterIterator) Next(ctx context.Context) (*Batch, error) {
 }
 func (f *FilterIterator) Close() error { return f.child.Close() }
 
-func NewFilterIterator(child Iterator, predicate *vm.Program) *FilterIterator {
+// NewFilterIterator returns the rows of child that pass predicate.
+func NewFilterIterator(child Iterator, predicate *Expr) *FilterIterator {
 	return &FilterIterator{child: child, predicate: predicate}
 }
 
@@ -91,23 +87,16 @@ func (p *ProjectIterator) applyKeep(batch *Batch) *Batch {
 		} else {
 			// A field that is an object has no column of its own: its
 			// members are columns named after it.
-			members := false
 			for col, vals := range batch.Columns {
 				if len(col) > len(f) && col[len(f)] == '.' && strings.HasPrefix(col, f) {
 					out.Columns[col] = vals
 					copyPresenceColumn(out, batch, col)
-					members = true
 				}
 			}
+			// A row without the field does not hold it.
 			if vals, ok := batch.Columns[f]; ok {
 				out.Columns[f] = vals
 				copyPresenceColumn(out, batch, f)
-			} else if !members {
-				nulls := make([]event.Value, batch.Len)
-				for i := range nulls {
-					nulls[i] = event.NullValue()
-				}
-				out.Columns[f] = nulls
 			}
 		}
 	}

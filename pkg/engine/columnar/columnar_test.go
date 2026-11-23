@@ -300,8 +300,8 @@ func TestValuesCollectedFromCounts(t *testing.T) {
 			`{"levels":["error","warn"],"n":2,"top":503,"lo":0.25,"total":2.75,"tagged":0,"host":"b"}`,
 		`source=logs | stats values(level) as levels`:                                            `{"levels":["error","info","warn"]}`,
 		"source=logs | stats values(`http.path`) as paths, count() as n by host | sort host":     `{"paths":[],"n":3,"host":"a"} {"paths":["/x"],"n":2,"host":"b"}`,
-		`source=logs | stats values(status) as codes by level | sort level`:                      `{"codes":["500","503"],"level":"error"} {"codes":["200"],"level":"info"} {"codes":["404"],"level":"warn"}`,
-		`source=logs | stats values(dur) as durs by host | sort host`:                            `{"durs":["0.5","1","1.5"],"host":"a"} {"durs":["0.25","2.5"],"host":"b"}`,
+		`source=logs | stats values(status) as codes by level | sort level`:                      `{"codes":[500,503],"level":"error"} {"codes":[200],"level":"info"} {"codes":[404],"level":"warn"}`,
+		`source=logs | stats values(dur) as durs by host | sort host`:                            `{"durs":[0.5,1,1.5],"host":"a"} {"durs":[0.25,2.5],"host":"b"}`,
 		`source=logs | stats values(nope) as none, count() as n by host | sort host`:             `{"none":[],"n":3,"host":"a"} {"none":[],"n":2,"host":"b"}`,
 		`source=logs, logs-old | stats values(host) as hosts by level | sort level`:              `{"hosts":["a","b","c"],"level":"error"} {"hosts":["a"],"level":"info"} {"hosts":["b"],"level":"warn"}`,
 		`source=nope | stats values(level) as levels`:                                            `{"levels":[]}`,
@@ -418,7 +418,7 @@ func TestBooleanArgumentsOfAggregates(t *testing.T) {
 		{`source=logs | eval r = rand() | where r >= 0 | stats count(status > 300) as n`, "n=5", false},
 		{`source=logs | stats count(status > 300) as n by host | sort host`, "host=a n=3; host=b n=2", true},
 		{`source=logs | eval r = rand() | where r >= 0 | stats count(status > 300) as n, dc(status > 300) as d, ` +
-			`values(status > 300) as v by host | sort host`, `d=2 host=a n=3 v=["false","true"]; d=1 host=b n=2 v=["true"]`, false},
+			`values(status > 300) as v by host | sort host`, `d=2 host=a n=3 v=[false,true]; d=1 host=b n=2 v=[true]`, false},
 		{`source=logs | eval r = rand() | where r >= 0 | sort _time | eventstats count(status > 300) as n by host | ` +
 			`stats max(n) as n by host | sort host`, "host=a n=3; host=b n=2", false},
 	} {

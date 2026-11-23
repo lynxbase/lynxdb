@@ -13,7 +13,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
 	"github.com/lynxbase/lynxdb/pkg/colstore/shred"
-	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/ppl"
 	"github.com/lynxbase/lynxdb/pkg/vec"
 )
@@ -346,45 +345,21 @@ func TestNativeFunctions(t *testing.T) {
 	}
 }
 
-// TestOpaqueExpressions requires that an expression without operations of
-// the executor is computed by the function the caller gives for it, from
-// the fields it reads, and that the plan is refused without one.
-func TestOpaqueExpressions(t *testing.T) {
+// TestLambdas requires that a function of a lambda computes the lambda for
+// every element, with the fields of the row that it reads.
+func TestLambdas(t *testing.T) {
 	snap := testSnapshot(t)
-	asked := 0
-	opaque := func(e ir.Expr, fields []*ir.FieldRef) (func() exec.Func, bool) {
-		call, ok := e.(*ir.Call)
-		if !ok || call.Func.Name != "reduce" || len(fields) != 1 {
-			return nil, false
-		}
-		asked++
-
-		return func() exec.Func {
-			return func(args []exec.Value, buf []byte) (exec.Value, []byte) {
-				if args[0].Kind != vec.KindString {
-					return exec.Value{Kind: vec.KindNull}, buf
-				}
-				for i := len(args[0].Bytes) - 1; i >= 0; i-- {
-					buf = append(buf, args[0].Bytes[i])
-				}
-
-				return exec.Value{Kind: vec.KindString, Bytes: buf}, buf
-			}
-		}, true
-	}
 	for text, want := range map[string]string{
 		`source=logs | eval r = upper(reduce(split(level, ''), '', (acc, x) -> concat(x, acc))) | stats count() as n by r | sort r`:             "1 NRAW; 2 OFNI; 2 RORRE",
 		`source=logs | where reduce(split(level, ''), '', (acc, x) -> concat(x, acc)) = 'nraw' | stats count() as n`:                            "1",
 		`source=logs | stats count() as n by level | eval r = reduce(split(level, ''), '', (acc, x) -> concat(x, acc)) | sort level | fields r`: "rorre; ofni; nraw",
+		`source=logs | eval r = array_length(filter(split(level, ''), x -> x != substring(level, 1, 1))) | stats count() as n by r | sort r`:    "3 3; 2 4",
 	} {
 		res, err := ppl.Compile(text)
 		if err != nil {
 			t.Fatalf("%s: %v", text, err)
 		}
-		if _, err := Plan(res.Plan, Options{Now: testNow}); !errors.Is(err, ErrUnsupported) {
-			t.Errorf("%s without a function: %v", text, err)
-		}
-		plan, err := Plan(res.Plan, Options{Now: testNow, Opaque: opaque})
+		plan, err := Plan(res.Plan, Options{Now: testNow})
 		if err != nil {
 			t.Fatalf("%s: %v", text, err)
 		}
@@ -407,9 +382,6 @@ func TestOpaqueExpressions(t *testing.T) {
 		if got := strings.Join(rows, "; "); got != want {
 			t.Errorf("%s\n got  %s\n want %s", text, got, want)
 		}
-	}
-	if asked == 0 {
-		t.Error("no expression was asked for")
 	}
 }
 

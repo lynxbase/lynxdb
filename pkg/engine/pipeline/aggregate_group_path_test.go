@@ -4,7 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 	"github.com/lynxbase/lynxdb/pkg/event"
+	"github.com/lynxbase/lynxdb/pkg/ir"
 )
 
 func TestAggregateGroupByObjectPath(t *testing.T) {
@@ -20,8 +22,11 @@ func TestAggregateGroupByObjectPath(t *testing.T) {
 		{"commit.collection": event.StringValue("flat"), "commit": commit("ignored")},
 	}
 
-	iter := NewAggregateIterator(NewRowScanIterator(rows, 4),
-		[]AggFunc{{Name: "count", Alias: "n"}}, []string{"commit.collection"})
+	iter, err := NewAggregateIterator(NewRowScanIterator(rows, 4),
+		[]AggFunc{{Alias: "n", Agg: exec.RowAgg{Func: exec.Count, Rows: true}, Kind: ir.KindInt}}, []string{"commit.collection"}, []ir.Kind{ir.KindAny})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	ctx := context.Background()
 	if err := iter.Init(ctx); err != nil {

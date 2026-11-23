@@ -7,9 +7,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"reflect"
-	"runtime"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,23 +15,17 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec/irfunc"
 	"github.com/lynxbase/lynxdb/pkg/colstore/variant"
-	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ir"
 	"github.com/lynxbase/lynxdb/pkg/vec"
-	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
-// notNative lists the scalar functions without a native implementation and
-// why: they stay with the bridge to the row engine or with the row
-// operators.
+// notNative lists the scalar functions without a builder of irfunc and why.
 var notNative = map[string]string{
-	"sysdate":   "volatile: the executor computes a function once per distinct argument",
-	"rand":      "volatile: the executor computes a function once per distinct argument",
-	"forall":    "takes a lambda",
-	"exists":    "takes a lambda",
-	"filter":    "takes a lambda",
-	"transform": "takes a lambda",
-	"reduce":    "takes a lambda",
+	"forall":    "takes a lambda, which irplan computes",
+	"exists":    "takes a lambda, which irplan computes",
+	"filter":    "takes a lambda, which irplan computes",
+	"transform": "takes a lambda, which irplan computes",
+	"reduce":    "takes a lambda, which irplan computes",
 }
 
 func strValue(s string) exec.Value { return exec.Value{Kind: vec.KindString, Bytes: []byte(s)} }
@@ -249,23 +241,6 @@ func literalType(v any) ir.Type {
 	return ir.Null
 }
 
-// rowValue is a value of the executor as the row engine holds it, with the
-// field's IR type telling a time or a duration from an integer.
-func rowValue(v exec.Value, t ir.Type) (event.Value, bool) {
-	switch {
-	case v.Kind == exec.KindAny:
-		return event.Value{}, false
-	case v.Kind == vec.KindNull:
-		return event.NullValue(), true
-	case v.Kind == vec.KindInt && t.Kind == ir.KindTimestamp:
-		return event.TimestampValue(time.Unix(0, v.Int).UTC()), true
-	case v.Kind == vec.KindInt && t.Kind == ir.KindDuration:
-		return event.DurationValue(time.Duration(v.Int)), true
-	}
-
-	return valueOf(v), true
-}
-
 // sameValue compares results, objects by content.
 func sameValue(a, b exec.Value) bool {
 	if a.Kind == exec.KindAny {
@@ -464,30 +439,6 @@ func tuples(s shape, limit int, r *rand.Rand) [][]exec.Value {
 	return out
 }
 
-// rowEngineBugs lists where the row engine departs from the IR's
-// documentation and whether the native functions do the same.
-var rowEngineBugs = []struct {
-	function, input, rowEngine, documented, native string
-}{
-	{"parse_json", "an array or object argument holding integers", "every integer inside becomes null",
-		"the value the JSON denotes, with objects and arrays as nested values", "the same, for the conformance test"},
-	{"substring", "a length that overflows int64 when added to the start", "fails, so the bridge gives null",
-		"at most length characters: the rest of the string", "the same, for the conformance test"},
-	{"regexp_extract", "a negative group", "fails, so the bridge gives null", "the text of the group, or NULL",
-		"the same: NULL"},
-	{"every conversion of a float to an integer", "a float beyond int64 or NaN, also inside ceil, floor, round, " +
-		"sec_to_time, makedate, maketime, from_unixtime, strftime, ctime and casts",
-		"the processor's conversion: saturated on arm64, MinInt64 on amd64", "not stated",
-		"saturates to MaxInt64 or MinInt64 by sign and gives 0 for NaN, as arm64 does; " +
-			"the conformance test compares these inputs only on arm64"},
-	{"wildcard_replace", "a constant pattern with invalid UTF-8", "the compiler panics",
-		"the pattern replaced in the text", "the builder refuses it"},
-	{"json_extract", "a path with a wildcard over an object", "the members in random order",
-		"the values at the path", "the members in key order; the conformance test compares them in any order"},
-	{"json_extract", "an array or object argument and a path to an integer", "null",
-		"the value at the path", "the same, for the conformance test"},
-}
-
 // sameInAnyOrder compares JSON texts with the elements of every array in
 // any order.
 func sameInAnyOrder(a, b exec.Value) bool {
@@ -540,73 +491,25 @@ func wildcard(call *ir.Call, args []exec.Value) bool {
 	return false
 }
 
-// convertsByProcessor reports arguments of no declared type that may reach
-// a conversion of a float beyond int64, which the row engine leaves to the
-// processor.
-func convertsByProcessor(s shape, args []exec.Value) bool {
-	for i, v := range args {
-		if !s.isLit[i] && s.types[i].Kind != ir.KindAny {
-			continue
-		}
-		var f float64
-		switch v.Kind {
-		case vec.KindInt:
-			f = float64(v.Int)
-		case vec.KindFloat:
-			f = v.Float
-		case vec.KindString:
-			parsed, err := strconv.ParseFloat(strings.TrimSpace(string(v.Bytes)), 64)
-			if err != nil {
-				continue
-			}
-			f = parsed
-		default:
-			continue
-		}
-		if f != f || math.Abs(f) >= 300 {
-			return true
-		}
-	}
-
-	return false
-}
-
-// against compares the native function of a call with the row engine's
-// value of the call over argument tuples and returns the first difference.
-func against(t testing.TB, call *ir.Call, b irfunc.Builder, s shape, rows [][]exec.Value) (string, bool) {
+// against computes the native function of a call over argument tuples by
+// two instances of it and returns the first tuple they give different
+// values for: a function gives the same value for the same arguments, and
+// keeps no memory between calls that changes it.
+func against(_ testing.TB, call *ir.Call, b irfunc.Builder, s shape, rows [][]exec.Value) (string, bool) {
 	newFunc, err := b(call, irfunc.Env{Now: testNow})
 	if err != nil {
 		return "", false
 	}
-	prog, err := vm.CompileExpr(call, vm.CompileOptions{Now: testNow})
-	if err != nil {
-		t.Logf("%s: the row engine does not compile it: %v", call, err)
+	if call.Func.Volatile {
 		return "", true
 	}
-	native := newFunc()
-	var machine vm.VM
-	row := map[string]event.Value{}
-	var buf []byte
+	one, two := newFunc(), newFunc()
+	var buf1, buf2 []byte
 	for _, args := range rows {
-		if runtime.GOARCH != "arm64" && convertsByProcessor(s, args) {
-			continue
-		}
-		clear(row)
-		for i, v := range args {
-			if s.isLit[i] {
-				continue
-			}
-			if ev, ok := rowValue(v, s.types[i]); ok {
-				row[fmt.Sprintf("a%d", i)] = ev
-			}
-		}
-		want := exec.Value{Kind: vec.KindNull}
-		if out, err := machine.Execute(prog, row); err == nil {
-			want, _ = executorValue(out, nil)
-		}
-		var got exec.Value
-		got, buf = native(args, buf[:0])
-		if sameValue(got, want) || (wildcard(call, args) && sameInAnyOrder(got, want)) {
+		var x, y exec.Value
+		x, buf1 = one(args, buf1[:0])
+		y, buf2 = two(args, buf2[:0])
+		if sameValue(x, y) || (wildcard(call, args) && sameInAnyOrder(x, y)) {
 			continue
 		}
 		in := make([]string, len(args))
@@ -616,21 +519,10 @@ func against(t testing.TB, call *ir.Call, b irfunc.Builder, s shape, rows [][]ex
 				in[i] += " as " + s.types[i].String()
 			}
 		}
-		return fmt.Sprintf("%s(%s): native %s, row engine %s", call.Func.Name, strings.Join(in, ", "), show(got), show(want)), true
+		return fmt.Sprintf("%s(%s): %s, then %s", call.Func.Name, strings.Join(in, ", "), show(y), show(x)), true
 	}
 
 	return "", true
-}
-
-// TestRowEngineBugs requires that the bugs listed name functions that
-// exist, so the list follows the registry.
-func TestRowEngineBugs(t *testing.T) {
-	for _, b := range rowEngineBugs {
-		name, _, _ := strings.Cut(b.function, " ")
-		if _, ok := ir.LookupFunc(name); !ok && name != "every" {
-			t.Errorf("%s is not a function", b.function)
-		}
-	}
 }
 
 func TestNativeFunctions(t *testing.T) {
@@ -679,27 +571,12 @@ func TestNativeCasts(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				prog, err := vm.CompileExpr(cast, vm.CompileOptions{Now: testNow})
-				if err != nil {
-					t.Fatal(err)
-				}
-				native := newFunc()
-				var machine vm.VM
+				one, two := newFunc(), newFunc()
 				for _, v := range valuesFor(from) {
-					arg := shape{types: []ir.Type{from}, consts: []any{nil}, isLit: []bool{false}}
-					if runtime.GOARCH != "arm64" && convertsByProcessor(arg, []exec.Value{v}) {
-						continue
-					}
-					row := map[string]event.Value{}
-					if ev, ok := rowValue(v, from); ok {
-						row["a0"] = ev
-					}
-					want := exec.Value{Kind: vec.KindNull}
-					if out, err := machine.Execute(prog, row); err == nil {
-						want, _ = executorValue(out, nil)
-					}
-					if got, _ := native([]exec.Value{v}, nil); !sameValue(got, want) {
-						t.Fatalf("CAST(%s AS %s): native %s, row engine %s", show(v), to, show(got), show(want))
+					x, _ := one([]exec.Value{v}, nil)
+					y, _ := two([]exec.Value{v}, nil)
+					if !sameValue(x, y) {
+						t.Fatalf("CAST(%s AS %s): %s, then %s", show(v), to, show(x), show(y))
 					}
 				}
 			})

@@ -6,9 +6,7 @@
 package columnar
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -19,7 +17,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 	"github.com/lynxbase/lynxdb/pkg/colstore/exec/irplan"
 	"github.com/lynxbase/lynxdb/pkg/colstore/part"
-	"github.com/lynxbase/lynxdb/pkg/colstore/variant"
 	"github.com/lynxbase/lynxdb/pkg/engine/physical"
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
@@ -100,7 +97,6 @@ func Run(ctx context.Context, plan *ir.Plan, tables Tables, opts Options) (*Resu
 		Describe:  r.describe,
 		BatchSize: opts.BatchSize,
 		Now:       opts.Now,
-		Context:   ctx,
 	})
 	if err != nil {
 		return nil, err
@@ -203,7 +199,7 @@ func (r *run) columnar(n ir.Node, root bool) (*pushed, error) {
 			at = ins[0]
 		}
 	}
-	plan, err := irplan.Plan(&ir.Plan{Root: n}, irplan.Options{Now: r.opts.Now, Opaque: opaque(r.opts.Now)})
+	plan, err := irplan.Plan(&ir.Plan{Root: n}, irplan.Options{Now: r.opts.Now})
 	if err != nil {
 		// What the planner does not take, or takes for an error, is for the
 		// row operators to run or to refuse.
@@ -293,7 +289,7 @@ func (r *run) source(scan *ir.Scan) (pipeline.Iterator, error) {
 			return pipeline.NewRowScanIterator(rowsOf(part.table, part.schema), r.opts.BatchSize), nil
 		}
 	}
-	plan, err := irplan.Rows(scan, irplan.Options{Now: r.opts.Now, Opaque: opaque(r.opts.Now)})
+	plan, err := irplan.Rows(scan, irplan.Options{Now: r.opts.Now})
 	if err != nil {
 		return nil, err
 	}
@@ -402,8 +398,7 @@ func batchOf(res *exec.Result, schema ir.Schema) *pipeline.Batch {
 	batch := &pipeline.Batch{Columns: make(map[string][]event.Value, len(res.Columns)), Len: res.Rows}
 	for c := range res.Columns {
 		name := res.Columns[c].Name
-		col, listed := schema.Lookup(name)
-		at := name == ir.TimeColumn || (listed && col.Type.Kind == ir.KindTimestamp)
+		kind := kindOf(schema, name)
 		vals := make([]event.Value, res.Rows)
 		var present []bool
 		for i := range vals {
@@ -418,12 +413,8 @@ func batchOf(res *exec.Result, schema ir.Schema) *pipeline.Batch {
 				}
 
 				continue
-			case v.IsNull():
-				vals[i] = event.NullValue()
-			case at && v.Kind == vec.KindInt:
-				vals[i] = event.TimestampValue(time.Unix(0, v.Int).UTC())
 			default:
-				vals[i] = valueOf(v)
+				vals[i] = pipeline.RowValue(v, kind)
 			}
 			if present != nil {
 				present[i] = true
@@ -541,18 +532,10 @@ func rowsOf(res *exec.Result, schema ir.Schema) []map[string]event.Value {
 	}
 	for c := range res.Columns {
 		name := res.Columns[c].Name
-		col, listed := schema.Lookup(name)
-		at := name == ir.TimeColumn || (listed && col.Type.Kind == ir.KindTimestamp)
+		kind := kindOf(schema, name)
 		for i := range rows {
-			v := res.Value(i, c)
-			switch {
-			case v.Kind == exec.KindAny && res.Columns[c].Field:
-			case v.IsNull():
-				rows[i][name] = event.NullValue()
-			case at && v.Kind == vec.KindInt:
-				rows[i][name] = event.TimestampValue(time.Unix(0, v.Int).UTC())
-			default:
-				rows[i][name] = valueOf(v)
+			if v := res.Value(i, c); v.Kind != exec.KindAny || !res.Columns[c].Field {
+				rows[i][name] = pipeline.RowValue(v, kind)
 			}
 		}
 	}
@@ -560,65 +543,15 @@ func rowsOf(res *exec.Result, schema ir.Schema) []map[string]event.Value {
 	return rows
 }
 
-func valueOf(v exec.Value) event.Value {
-	switch v.Kind {
-	case vec.KindBool:
-		return event.BoolValue(v.Bool)
-	case vec.KindInt:
-		return event.IntValue(v.Int)
-	case vec.KindFloat:
-		return event.FloatValue(v.Float)
-	case vec.KindString:
-		return event.StringValue(string(v.Bytes))
-	case vec.KindVariant:
-		text, err := variant.AppendJSON(nil, v.Bytes)
-		if err != nil {
-			return event.NullValue()
-		}
-		dec := json.NewDecoder(bytes.NewReader(text))
-		dec.UseNumber()
-		var decoded any
-		if dec.Decode(&decoded) != nil {
-			return event.NullValue()
-		}
-
-		return decodedValue(decoded)
+// kindOf returns the IR kind of the values of a column: that of the time
+// for the time, and that which schema gives a column it lists.
+func kindOf(schema ir.Schema, name string) ir.Kind {
+	if name == ir.TimeColumn {
+		return ir.KindTimestamp
+	}
+	if col, listed := schema.Lookup(name); listed {
+		return col.Type.Kind
 	}
 
-	return event.NullValue()
-}
-
-// decodedValue turns a decoded JSON value into a value of a row.
-func decodedValue(v any) event.Value {
-	switch v := v.(type) {
-	case bool:
-		return event.BoolValue(v)
-	case string:
-		return event.StringValue(v)
-	case json.Number:
-		if n, err := v.Int64(); err == nil {
-			return event.IntValue(n)
-		}
-		if f, err := v.Float64(); err == nil {
-			return event.FloatValue(f)
-		}
-
-		return event.StringValue(v.String())
-	case []any:
-		elems := make([]event.Value, len(v))
-		for i, e := range v {
-			elems[i] = decodedValue(e)
-		}
-
-		return event.ArrayValue(elems)
-	case map[string]any:
-		fields := make(map[string]event.Value, len(v))
-		for k, e := range v {
-			fields[k] = decodedValue(e)
-		}
-
-		return event.ObjectValue(fields)
-	}
-
-	return event.NullValue()
+	return ir.KindAny
 }

@@ -1,20 +1,20 @@
-// Package physical plans the execution of canonical IR plans: it turns each
-// logical operator into pipeline iterators, compiles IR expressions to VM
-// bytecode, and evaluates uncorrelated subqueries before the operators that
-// use them. Storage access goes through the Source hook, which receives the
-// IR scan with its pruning hints.
+// Package physical plans the execution of canonical IR plans as row
+// operators: it turns each logical operator into pipeline iterators whose
+// expressions, comparisons and aggregates are those of the columnar
+// executor. A plan reaches it with its subqueries answered. Storage access
+// goes through the Source hook, which receives the IR scan with its pruning
+// hints.
 package physical
 
 import (
-	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ir"
-	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // Options configures Build.
@@ -27,8 +27,6 @@ type Options struct {
 	BatchSize int
 	// Now is the query's reference time; zero means the time of Build.
 	Now time.Time
-	// Context bounds subquery evaluation during Build.
-	Context context.Context
 }
 
 // UnsupportedError reports an IR construct this engine cannot execute.
@@ -49,17 +47,13 @@ func Build(plan *ir.Plan, opts Options) (pipeline.Iterator, error) {
 	if opts.Now.IsZero() {
 		opts.Now = time.Now()
 	}
-	if opts.Context == nil {
-		opts.Context = context.Background()
-	}
-	b := &builder{opts: opts, subqueries: map[*ir.Subquery]*vm.SubqueryResult{}}
+	b := &builder{opts: opts}
 	return b.node(plan.Root)
 }
 
 type builder struct {
-	opts       Options
-	subqueries map[*ir.Subquery]*vm.SubqueryResult
-	temps      int
+	opts  Options
+	temps int
 }
 
 func (b *builder) batchSize() int {
@@ -74,61 +68,14 @@ func (b *builder) temp() string {
 	return "__t" + strconv.Itoa(b.temps)
 }
 
-// compile resolves the subqueries of e and compiles it to bytecode.
-func (b *builder) compile(e ir.Expr) (*vm.Program, error) {
-	if err := b.resolveSubqueries(e); err != nil {
-		return nil, err
-	}
-	return vm.CompileExpr(e, vm.CompileOptions{Now: b.opts.Now, Subqueries: b.subqueries})
+// compile prepares a value expression for the rows.
+func (b *builder) compile(e ir.Expr) (*pipeline.Expr, error) {
+	return pipeline.NewExpr(e, b.opts.Now)
 }
 
-func (b *builder) resolveSubqueries(e ir.Expr) error {
-	var firstErr error
-	ir.WalkExpr(e, func(x ir.Expr) bool {
-		sq, ok := x.(*ir.Subquery)
-		if !ok || firstErr != nil {
-			return firstErr == nil
-		}
-		if _, done := b.subqueries[sq]; done {
-			return true
-		}
-		res, err := b.runSubquery(sq)
-		if err != nil {
-			firstErr = err
-			return false
-		}
-		b.subqueries[sq] = res
-		return true
-	})
-	return firstErr
-}
-
-func (b *builder) runSubquery(sq *ir.Subquery) (*vm.SubqueryResult, error) {
-	plan := sq.Plan
-	if sq.Mode == ir.SubqueryExists {
-		plan = &ir.Limit{Input: plan, Count: 1}
-	}
-	iter, err := b.node(plan)
-	if err != nil {
-		return nil, fmt.Errorf("subquery: %w", err)
-	}
-	rows, err := pipeline.CollectAll(b.opts.Context, iter)
-	if err != nil {
-		return nil, fmt.Errorf("subquery: %w", err)
-	}
-	names := sq.Plan.Schema().Names()
-	if sq.Mode != ir.SubqueryExists && len(names) == 0 {
-		return nil, unsupported("a subquery whose columns are not known before execution; end it with fields or stats")
-	}
-	res := &vm.SubqueryResult{Rows: make([][]event.Value, len(rows))}
-	for i, r := range rows {
-		vals := make([]event.Value, len(names))
-		for j, n := range names {
-			vals[j] = r[n]
-		}
-		res.Rows[i] = vals
-	}
-	return res, nil
+// cond prepares a condition for the rows.
+func (b *builder) cond(e ir.Expr) (*pipeline.Expr, error) {
+	return pipeline.NewCond(e, b.opts.Now)
 }
 
 func (b *builder) input(n ir.Node) (pipeline.Iterator, error) {
@@ -162,11 +109,11 @@ func (b *builder) node(n ir.Node) (pipeline.Iterator, error) {
 		if err != nil {
 			return nil, err
 		}
-		prog, err := b.compile(x.Cond)
+		cond, err := b.cond(x.Cond)
 		if err != nil {
 			return nil, err
 		}
-		return pipeline.NewFilterIterator(child, prog), nil
+		return pipeline.NewFilterIterator(child, cond), nil
 	case *ir.Compute:
 		child, err := b.input(x)
 		if err != nil {
@@ -290,21 +237,21 @@ func (b *builder) timeFilter(it pipeline.Iterator, tr *ir.TimeRange) (pipeline.I
 	if tr.Latest != nil {
 		conds = append(conds, &ir.Binary{Op: ir.OpLt, L: ts, R: &ir.RelativeTime{Bound: tr.Latest}, T: ir.Bool})
 	}
-	prog, err := b.compile(ir.And(conds...))
+	cond, err := b.cond(ir.And(conds...))
 	if err != nil {
 		return nil, err
 	}
-	return pipeline.NewFilterIterator(it, prog), nil
+	return pipeline.NewFilterIterator(it, cond), nil
 }
 
 func (b *builder) compute(child pipeline.Iterator, assigns []ir.Assign) (pipeline.Iterator, error) {
 	out := make([]pipeline.EvalAssignment, len(assigns))
 	for i, a := range assigns {
-		prog, err := b.compile(a.Expr)
+		e, err := b.compile(a.Expr)
 		if err != nil {
 			return nil, fmt.Errorf("eval %s: %w", a.Name, err)
 		}
-		out[i] = pipeline.EvalAssignment{Field: a.Name, Program: prog}
+		out[i] = pipeline.EvalAssignment{Field: a.Name, Expr: e}
 	}
 	return pipeline.NewEvalIterator(child, out), nil
 }
@@ -319,7 +266,7 @@ func (b *builder) values(x *ir.Values) (pipeline.Iterator, error) {
 			if !ok {
 				return nil, fmt.Errorf("physical: values row %d holds a non-literal", i)
 			}
-			row[names[j]] = vm.LiteralValue(lit.V)
+			row[names[j]] = literalValue(lit.V)
 		}
 		rows[i] = row
 	}
@@ -345,13 +292,7 @@ func (b *builder) sort(input ir.Node, keys []ir.SortKey, count, offset int64, to
 	var temps []ir.Assign
 	fields := make([]pipeline.SortField, 0, len(keys))
 	for _, k := range keys {
-		// The pipeline sorts NULLs first ascending and last descending; the
-		// other placement sorts by is_null(key) first.
-		if k.NullsFirst == k.Desc {
-			isNull := &ir.Call{Func: ir.MustFunc("is_null"), Args: []ir.Expr{k.Expr}, T: ir.Bool}
-			fields = append(fields, pipeline.SortField{Name: b.fieldOrTemp(isNull, &temps), Desc: k.NullsFirst})
-		}
-		fields = append(fields, pipeline.SortField{Name: b.fieldOrTemp(k.Expr, &temps), Desc: k.Desc})
+		fields = append(fields, pipeline.SortField{Name: b.fieldOrTemp(k.Expr, &temps), Desc: k.Desc, NullsFirst: k.NullsFirst})
 	}
 	var it pipeline.Iterator = child
 	if len(temps) > 0 {
@@ -360,6 +301,15 @@ func (b *builder) sort(input ir.Node, keys []ir.SortKey, count, offset int64, to
 		}
 	}
 	if top {
+		// The first rows of groups break ties by their other columns, as
+		// the columnar executor does: groups come in no order of their own.
+		if aggregated(input) && !input.Schema().Open {
+			for _, name := range input.Schema().Names() {
+				if !slices.ContainsFunc(fields, func(f pipeline.SortField) bool { return f.Name == name }) {
+					fields = append(fields, pipeline.SortField{Name: name})
+				}
+			}
+		}
 		it = pipeline.NewTopNIterator(it, fields, int(count+offset), b.batchSize())
 		if offset > 0 {
 			it = pipeline.NewOffsetIterator(it, int(offset))
@@ -398,7 +348,7 @@ func (b *builder) fillNull(x *ir.FillNull) (pipeline.Iterator, error) {
 	if !ok {
 		return nil, unsupported("fillnull over all fields with a non-constant value")
 	}
-	v := vm.LiteralValue(lit.V)
+	v := literalValue(lit.V)
 	return newMapIterator(child, b.batchSize(), func(row map[string]event.Value) []map[string]event.Value {
 		for k, val := range row {
 			if val.IsNull() {
@@ -407,4 +357,38 @@ func (b *builder) fillNull(x *ir.FillNull) (pipeline.Iterator, error) {
 		}
 		return []map[string]event.Value{row}
 	}), nil
+}
+
+// literalValue returns the value of a literal of a plan as one of a row.
+func literalValue(v any) event.Value {
+	switch v := v.(type) {
+	case bool:
+		return event.BoolValue(v)
+	case int64:
+		return event.IntValue(v)
+	case float64:
+		return event.FloatValue(v)
+	case string:
+		return event.StringValue(v)
+	case time.Time:
+		return event.TimestampValue(v)
+	case time.Duration:
+		return event.DurationValue(v)
+	}
+	return event.NullValue()
+}
+
+// aggregated reports whether the rows of n are groups of an aggregate,
+// computed or chosen among after it.
+func aggregated(n ir.Node) bool {
+	for {
+		switch n.(type) {
+		case *ir.Aggregate:
+			return true
+		case *ir.Compute, *ir.Project, *ir.Filter, *ir.RenameColumns:
+			n = n.Inputs()[0]
+		default:
+			return false
+		}
+	}
 }

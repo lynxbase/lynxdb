@@ -6,10 +6,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/lynxbase/lynxdb/pkg/colstore/exec"
 	"github.com/lynxbase/lynxdb/pkg/engine/pipeline"
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ir"
-	"github.com/lynxbase/lynxdb/pkg/vm"
 )
 
 // mapIterator streams rows through f, which returns zero or more rows per
@@ -89,7 +89,9 @@ func (b *blockingIterator) Next(ctx context.Context) (*pipeline.Batch, error) {
 
 func sortByTimeDesc(rows []map[string]event.Value) []map[string]event.Value {
 	sort.SliceStable(rows, func(i, j int) bool {
-		return vm.CompareValues(rows[i][ir.TimeColumn], rows[j][ir.TimeColumn]) > 0
+		a, _ := pipeline.ExecValue(rows[i][ir.TimeColumn], nil)
+		b, _ := pipeline.ExecValue(rows[j][ir.TimeColumn], nil)
+		return exec.Compare(a, b, true, false) < 0
 	})
 	return rows
 }
@@ -189,29 +191,26 @@ func (z *zipIterator) Next(ctx context.Context) (*pipeline.Batch, error) {
 	return b, nil
 }
 
-// keyOf evaluates programs into a grouping key; null reports a NULL part.
-func keyOf(machine *vm.VM, progs []*vm.Program, row map[string]event.Value) (string, bool) {
-	var b strings.Builder
-	for _, p := range progs {
-		v, err := machine.Execute(p, row)
-		if err != nil || v.IsNull() {
+// keyOf returns the key of the values of exprs for row, which two rows
+// share when the values group alike; null reports a null value.
+func keyOf(exprs []*pipeline.Expr, row map[string]event.Value) (string, bool) {
+	var key []byte
+	for _, e := range exprs {
+		v := e.Exec(row)
+		if v.IsNull() {
 			return "", true
 		}
-		b.WriteString(v.Type().String())
-		b.WriteByte(':')
-		b.WriteString(v.String())
-		b.WriteByte(0)
+		key = exec.AppendKey(key, v)
 	}
-	return b.String(), false
+	return string(key), false
 }
 
-func newDedupIterator(child pipeline.Iterator, keys []*vm.Program, count int64, keepNull, consecutive bool, batch int) pipeline.Iterator {
-	var machine vm.VM
+func newDedupIterator(child pipeline.Iterator, keys []*pipeline.Expr, count int64, keepNull, consecutive bool, batch int) pipeline.Iterator {
 	seen := map[string]int64{}
 	last := ""
 	run := int64(0)
 	return newMapIterator(child, batch, func(row map[string]event.Value) []map[string]event.Value {
-		k, null := keyOf(&machine, keys, row)
+		k, null := keyOf(keys, row)
 		if null {
 			if keepNull {
 				return []map[string]event.Value{row}
@@ -242,11 +241,10 @@ func newDedupIterator(child pipeline.Iterator, keys []*vm.Program, count int64, 
 type joinIterator struct {
 	left, right         pipeline.Iterator
 	spec                *ir.Join
-	leftKeys, rightKeys []*vm.Program
-	cond                *vm.Program
+	leftKeys, rightKeys []*pipeline.Expr
+	cond                *pipeline.Expr
 	batch               int
 
-	machine  vm.VM
 	table    map[string][]int
 	rows     []map[string]event.Value
 	matched  []bool
@@ -278,7 +276,7 @@ func (j *joinIterator) build(ctx context.Context) error {
 	j.matched = make([]bool, len(rows))
 	j.table = make(map[string][]int, len(rows))
 	for i, r := range rows {
-		k, null := keyOf(&j.machine, j.rightKeys, r)
+		k, null := keyOf(j.rightKeys, r)
 		if null {
 			continue
 		}
@@ -316,8 +314,7 @@ func (j *joinIterator) condTrue(row map[string]event.Value) bool {
 	if j.cond == nil {
 		return true
 	}
-	v, err := j.machine.Execute(j.cond, row)
-	return err == nil && v.Type() == event.FieldTypeBool && v.AsBool()
+	return j.cond.True(row)
 }
 
 func (j *joinIterator) candidates(l map[string]event.Value) []int {
@@ -328,7 +325,7 @@ func (j *joinIterator) candidates(l map[string]event.Value) []int {
 		}
 		return all
 	}
-	k, null := keyOf(&j.machine, j.leftKeys, l)
+	k, null := keyOf(j.leftKeys, l)
 	if null {
 		return nil
 	}
@@ -511,14 +508,13 @@ func transposeRows(x *ir.Transpose) func([]map[string]event.Value) []map[string]
 	}
 }
 
+// numeric returns the number that a value is or, as a string, holds.
 func numeric(v event.Value) (float64, bool) {
-	switch v.Type() {
-	case event.FieldTypeInt:
-		return float64(v.AsInt()), true
-	case event.FieldTypeFloat:
-		return v.AsFloat(), true
+	x, _ := pipeline.ExecValue(v, nil)
+	if x.Kind == exec.KindAny || v.Type() == event.FieldTypeTimestamp || v.Type() == event.FieldTypeDuration {
+		return 0, false
 	}
-	return 0, false
+	return exec.Number(x)
 }
 
 func totalsRows(x *ir.Totals) func([]map[string]event.Value) []map[string]event.Value {
@@ -629,7 +625,7 @@ func combineRows(field string) func([]map[string]event.Value) []map[string]event
 // holds its full row count.
 func (b *builder) movingAverages(child pipeline.Iterator, x *ir.Window) (pipeline.Iterator, error) {
 	type state struct {
-		prog *vm.Program
+		arg  *pipeline.Expr
 		ring []float64
 		name string
 		wma  bool
@@ -640,15 +636,14 @@ func (b *builder) movingAverages(child pipeline.Iterator, x *ir.Window) (pipelin
 		if err != nil {
 			return nil, err
 		}
-		states[i] = &state{prog: p, name: f.Name, wma: f.Agg.Func.Name == "weighted_moving_avg"}
+		states[i] = &state{arg: p, name: f.Name, wma: f.Agg.Func.Name == "weighted_moving_avg"}
 	}
 	n := x.Frame.Rows
-	var machine vm.VM
 	return newMapIterator(child, b.batchSize(), func(row map[string]event.Value) []map[string]event.Value {
 		for _, s := range states {
-			v, err := machine.Execute(s.prog, row)
+			v, _ := s.arg.Value(row)
 			f, ok := numeric(v)
-			if err != nil || !ok {
+			if !ok {
 				row[s.name] = event.NullValue()
 				continue
 			}
