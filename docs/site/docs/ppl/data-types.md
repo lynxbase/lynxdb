@@ -100,8 +100,8 @@ defines them:
 
 ## Order of values
 
-`sort`, `min`, `max` and `values` order the values of one
-field in one order, whatever their types:
+`sort` and `values` order the values of one field in one order, whatever
+their types, and `min` and `max` follow it over numbers and strings:
 
 1. booleans, FALSE before TRUE;
 2. numbers and the strings that hold a number, by the number; a number
