@@ -55,7 +55,7 @@ func (x *execution) countParts(snap *colstore.Snapshot) *countedParts {
 		c.blocks += int64(h.NumBlocks())
 		a.w.blocks += int64(h.NumBlocks())
 		a.w.matched += int64(h.Rows)
-		// A counted path holds no null, so the other rows miss the key.
+		// The rows that a counted path does not hold have the null key.
 		missing := h.Rows
 		if counts != nil {
 			missing -= counts.Held
@@ -65,7 +65,7 @@ func (x *execution) countParts(snap *colstore.Snapshot) *countedParts {
 			}
 		}
 		if missing != 0 {
-			a.s.key = append(a.s.key[:0], tagMissing)
+			a.s.key = append(a.s.key[:0], tagNull)
 			a.addRows(a.s.key, missing)
 		}
 	}

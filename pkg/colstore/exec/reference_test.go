@@ -749,15 +749,12 @@ func cmpInt(a, b int64) int {
 // refKey renders a value so that equal values of equal kinds, and only
 // those, render alike.
 // refKeyValue returns the value of a group key and what tells its group
-// apart: a null and a missing key form two groups with a null key each.
+// apart: a null and a missing key form one group with a null key.
 func refKeyValue(e *exec.Expr, row refRow) (exec.Value, string) {
 	if e.Op == exec.OpColumn {
 		v, ok := row[e.Path]
-		switch {
-		case ok && e.Kind == exec.KindAny && v.Kind == vec.KindNull:
+		if !ok || v.Kind == vec.KindNull || (e.Kind != exec.KindAny && v.Kind != e.Kind) {
 			return exec.Value{}, "null"
-		case !ok || (e.Kind != exec.KindAny && v.Kind != e.Kind):
-			return exec.Value{}, "missing"
 		}
 
 		v = refWhole(v)

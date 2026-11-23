@@ -19,11 +19,10 @@
 // Inside a scalar function, comparisons, And, Or and Not are three-valued:
 // they give no value where the outcome depends on a value that is not there.
 //
-// Group keys keep the kind of every value, so 1 and "1" form two groups. The
-// rows where a key is null and the rows where it is missing form two more
-// groups, whose keys are both null in the result: a reference of KindAny is
-// null where the path holds a JSON null, a function is null where it gives
-// no value, and anything else without a value is missing.
+// Group keys keep the kind of every value, so 1 and "1" form two groups,
+// while a number is one key whether it is stored as an integer or a float.
+// The rows where a key is null or missing form one more group, whose key is
+// null.
 //
 // Aggregates: Count without an argument counts rows; with one it counts the
 // rows where the argument has a value. CountDistinct counts the distinct

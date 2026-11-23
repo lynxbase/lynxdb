@@ -8,9 +8,10 @@ import (
 )
 
 // A group key is encoded as one tagged value per key expression: the tag
-// alone for a null, a missing key or a boolean, eight little-endian bytes for an
-// integer or a float, and the bytes of a string or variant, preceded by
-// their length as a varint unless the value is the last of the key.
+// alone for a null, which a missing key is too, or a boolean, eight
+// little-endian bytes for an integer or a float, and the bytes of a string
+// or variant, preceded by their length as a varint unless the value is the
+// last of the key.
 const (
 	tagNull byte = iota
 	tagFalse
@@ -19,7 +20,6 @@ const (
 	tagFloat
 	tagString
 	tagVariant
-	tagMissing
 	tagCount
 )
 

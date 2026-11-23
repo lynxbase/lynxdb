@@ -184,7 +184,7 @@ func TestNullAndMissingKeys(t *testing.T) {
 		plan exec.Node
 		want string
 	}{
-		{"a path", &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("k"), Aggs: count}, `["a" | 200 null | 300 null | 400]`},
+		{"a path", &exec.Aggregate{Input: &exec.Scan{}, Keys: keys("k"), Aggs: count}, `["a" | 200 null | 700]`},
 		{"a path as strings", &exec.Aggregate{Input: &exec.Scan{}, Keys: []exec.Named{named("k", str("k"))}, Aggs: count}, `["a" | 200 null | 700]`},
 		{"a function", &exec.Aggregate{Input: &exec.Scan{}, Keys: []exec.Named{named("k", upper)}, Aggs: count}, `["A" | 200 null | 700]`},
 		{"null function", &exec.Aggregate{Input: &exec.Scan{Filter: exec.IsNull(upper)}, Aggs: count}, `[700]`},

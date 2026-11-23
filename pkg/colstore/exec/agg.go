@@ -350,7 +350,8 @@ func (a *aggWorker) classifyKey(e *sexpr, p *keyPart, n int, idx []uint32) error
 	w := a.w
 	p.mode, p.col, p.val, p.card, p.nullable, p.one, p.valid, p.dense, p.computed = partRows, nil, nil, 1, false, false, nil, false, false
 	p.counts = p.counts[:0]
-	p.step, p.absent = 1, tagMissing
+	// Rows without a value, null or missing, have the null key.
+	p.step, p.absent = 1, tagNull
 	if e.op != OpColumn {
 		return a.classifyComputed(e, p, n, idx)
 	}
@@ -366,30 +367,16 @@ func (a *aggWorker) classifyKey(e *sexpr, p *keyPart, n int, idx []uint32) error
 		found = 1
 	}
 	p.kind = kind
-	// Rows without a value hold a null where the path has one, and are
-	// missing otherwise; a block with both is read row by row.
-	both := false
-	if nulls := w.ref(e.path, vec.KindNull); nulls != nil && e.kind == KindAny {
-		held := nulls.Count
-		for k := vec.KindBool; k <= vec.KindVariant; k++ {
-			if ref := w.ref(e.path, k); ref != nil {
-				held += ref.Count
-			}
-		}
-		if p.absent = tagNull; held < w.rows {
-			p.absent, both = tagMissing, true
-		}
-	}
 	switch {
-	case found == 0 && !both:
+	case found == 0:
 		p.mode = partNull
 
 		return nil
-	case found > 1 || both:
+	case found > 1:
 		p.mode = partRows
 		for k := vec.KindNull; k <= vec.KindVariant; k++ {
 			p.cols[k] = nil
-			if k == vec.KindNull && !both {
+			if k == vec.KindNull {
 				continue
 			}
 			c, err := w.column(e.path, k)
@@ -516,7 +503,7 @@ func (a *aggWorker) classifyOperand(e *sexpr, o *operand, p *keyPart) {
 			}
 		}
 		if (uint64(hi)-uint64(lo))/uint64(p.step) >= maxCodes {
-			p.step, p.absent = 1, tagMissing
+			p.step = 1
 
 			return
 		}
@@ -945,9 +932,6 @@ func appendRowKey(dst []byte, p *keyPart, j, r int, last bool) []byte {
 		}
 
 		return appendKeyBytes(dst, bytesTag(kind), c.Bytes(r), last)
-	}
-	if c := p.cols[vec.KindNull]; c != nil && c.IsValid(r) {
-		return append(dst, tagNull)
 	}
 
 	return append(dst, p.absent)
