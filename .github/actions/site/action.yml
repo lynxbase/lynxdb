@@ -1,0 +1,45 @@
+name: Publish the download site
+description: Builds the download site from every published release and uploads it to the R2 bucket that serves it. Needs the tools of mise.
+
+inputs:
+  r2-account-id:
+    description: Cloudflare account that owns the bucket
+    required: true
+  r2-access-key-id:
+    description: Access key of an R2 API token that may write the objects of the bucket
+    required: true
+  r2-secret-access-key:
+    description: Secret of that access key
+    required: true
+  tag:
+    description: Tag of a release the site has to hold, for a caller that has just published it
+    required: false
+
+outputs:
+  releases:
+    description: Directory that holds the files of every published release, one directory per tag
+    value: ${{ runner.temp }}/releases
+
+runs:
+  using: composite
+  steps:
+    - name: Build the site
+      shell: sh
+      env:
+        GH_TOKEN: ${{ github.token }}
+        GH_REPO: ${{ github.repository }}
+        TAG: ${{ inputs.tag }}
+      run: |
+        tools/release/fetch.sh "$RUNNER_TEMP/releases"
+        if [ -n "$TAG" ] && [ ! -d "$RUNNER_TEMP/releases/$TAG" ]; then
+            echo "::error::$TAG is not among the published releases yet; run the job again"
+            exit 1
+        fi
+        tools/release/site.sh "$RUNNER_TEMP/releases" "$RUNNER_TEMP/site"
+    - name: Upload the site
+      shell: sh
+      env:
+        R2_ACCOUNT_ID: ${{ inputs.r2-account-id }}
+        R2_ACCESS_KEY_ID: ${{ inputs.r2-access-key-id }}
+        R2_SECRET_ACCESS_KEY: ${{ inputs.r2-secret-access-key }}
+      run: tools/release/deploy.sh "$RUNNER_TEMP/site"

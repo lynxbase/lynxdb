@@ -1,0 +1,32 @@
+name: Download site
+
+# Rebuilds the download site from the published releases and uploads it, for
+# when a release could not or the bucket has to be restored.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: $/.github/actions/mise
+        with:
+          go-cache: false
+      - uses: $/.github/actions/site
+        with:
+          r2-account-id: ${{ secrets.CF_ACCOUNT_ID }}
+          r2-access-key-id: ${{ secrets.R2_ACCESS_KEY_ID }}
+          r2-secret-access-key: ${{ secrets.R2_SECRET_ACCESS_KEY }}
