@@ -347,50 +347,46 @@ func TestServer_IngestAndQuery(t *testing.T) {
 	}
 }
 
-func TestServer_IngestKeepsMalformedLineAsText(t *testing.T) {
+func TestServer_IngestRejectsLinesThatAreNotObjects(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
-	body := "{\"event\":\"line one\"}\n{\"event\":\"line two\"}\n{\"event\":"
-	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/ingest", srv.Addr()), "application/x-ndjson", bytes.NewBufferString(body))
-	if err != nil {
-		t.Fatalf("POST ingest: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		raw, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status: got %d, want 200, body: %s", resp.StatusCode, string(raw))
-	}
-
-	var result map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-
-	data := result["data"].(map[string]interface{})
-	if got := int(data["accepted"].(float64)); got != 3 {
-		t.Fatalf("accepted: got %d, want 3", got)
-	}
-	if got := int(data["failed"].(float64)); got != 0 {
-		t.Fatalf("failed: got %d, want 0", got)
-	}
-
-	events := queryEvents(t, srv.Addr(), `{"q":"source=main"}`)
-	if len(events) != 3 {
-		t.Fatalf("query count: got %d, want 3", len(events))
-	}
-	var objects, texts int
-	for _, ev := range events {
-		switch {
-		case ev["event"] != nil:
-			objects++
-		case ev["_raw"] == `{"event":`:
-			texts++
+	post := func(body string) (int, map[string]interface{}) {
+		t.Helper()
+		resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/ingest", srv.Addr()), "application/x-ndjson", bytes.NewBufferString(body))
+		if err != nil {
+			t.Fatalf("POST ingest: %v", err)
 		}
+		defer resp.Body.Close()
+		var result map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+
+		return resp.StatusCode, result
 	}
-	if objects != 2 || texts != 1 {
-		t.Fatalf("events = %v, want two objects and the malformed line as _raw", events)
+
+	status, result := post("{\"event\":\"line one\"}\nplain text\n[1,2,3]\n{\"event\":\"line two\"}\n{\"event\":")
+	if status != http.StatusOK {
+		t.Fatalf("status: got %d, want 200, body: %v", status, result)
+	}
+	data := result["data"].(map[string]interface{})
+	if got := int(data["accepted"].(float64)); got != 2 {
+		t.Fatalf("accepted: got %d, want 2", got)
+	}
+	if got := int(data["failed"].(float64)); got != 3 {
+		t.Fatalf("failed: got %d, want 3", got)
+	}
+	if events := queryEvents(t, srv.Addr(), `{"q":"source=main"}`); len(events) != 2 {
+		t.Fatalf("stored %v, want the two objects", events)
+	}
+
+	status, result = post("plain text\nmore text\n")
+	if status != http.StatusBadRequest {
+		t.Fatalf("a body without an object: status %d, want 400, body: %v", status, result)
+	}
+	if events := queryEvents(t, srv.Addr(), `{"q":"source=main"}`); len(events) != 2 {
+		t.Fatalf("stored %v after the refused body, want the two objects", events)
 	}
 }
 

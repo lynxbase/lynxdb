@@ -672,7 +672,8 @@ paths:
       summary: Ingest NDJSON events
       description: |
         Appends the lines of the body, unchanged, to one index: the `index` query parameter, else the
-        `X-Index` header, else `main`. A line that is not a JSON object becomes an event holding the text in `_raw`.
+        `X-Index` header, else `main`. A line that is not a JSON object is not stored and counts as failed;
+        a body without one JSON object answers `400`.
         The event time comes from the first of `storage.time_fields` an event holds, else the time of arrival.
         Needs `ingest` scope.
       parameters:

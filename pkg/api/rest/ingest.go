@@ -201,10 +201,11 @@ func fillPieces(r io.Reader, free chan *[]byte, full chan<- piece, stop <-chan s
 	}
 }
 
-// handleIngestEvents takes NDJSON, one event per line, and appends it to an
-// index as it is. The body is appended as it is read, so the lines before a
-// body turns out too large, cut short or not to decode are taken, and the
-// error says how many.
+// handleIngestEvents takes NDJSON, one JSON object per line, and appends it
+// to an index as it is; a line that is not a JSON object is counted as
+// failed, and a body without one object is refused. The body is appended as
+// it is read, so the lines before a body turns out too large, cut short or
+// not to decode are taken, and the error says how many.
 func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeIngest) {
 		return
@@ -214,7 +215,7 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	size := 0
 	var appendErr error
 	readErr := readLines(r.Body, func(lines []byte) error {
-		done, err := s.db.AppendLines(index, lines)
+		done, err := s.db.AppendObjects(index, lines)
 		accepted, rejected, size = accepted+done.Rows, rejected+done.Rejected, size+len(lines)
 		appendErr = err
 
@@ -244,6 +245,12 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 			respondError(w, ErrCodeInvalidRequest, http.StatusBadRequest,
 				"request body is cut short or does not decode"+linesTaken(accepted+rejected, "that"))
 		}
+		return
+	}
+	if accepted == 0 && rejected > 0 {
+		respondError(w, ErrCodeInvalidRequest, http.StatusBadRequest,
+			fmt.Sprintf("none of the %d lines is a JSON object", rejected),
+			WithSuggestion("Send one JSON object per line, or send log text to /api/v1/ingest/raw."))
 		return
 	}
 	respondData(w, http.StatusOK, map[string]interface{}{
