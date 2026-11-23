@@ -1450,6 +1450,67 @@ func TestQuery_FormatValidation(t *testing.T) {
 	})
 }
 
+func TestJobs_GetAnsweredJob(t *testing.T) {
+	srv, cleanup := startTestServer(t)
+	defer cleanup()
+
+	ingestTestEvents(t, srv.Addr(), 10, 2)
+
+	// A sync query: its request takes the whole answer, and the job keeps
+	// none of it.
+	resp, err := http.Post(fmt.Sprintf("http://%s/api/v1/query", srv.Addr()), "application/json",
+		strings.NewReader(`{"q":"source=main | head 5"}`))
+	if err != nil {
+		t.Fatalf("POST query: %v", err)
+	}
+	var sync struct {
+		Meta struct {
+			QueryID string `json:"query_id"`
+		} `json:"meta"`
+	}
+	err = json.NewDecoder(resp.Body).Decode(&sync)
+	resp.Body.Close()
+	if err != nil || resp.StatusCode != http.StatusOK || sync.Meta.QueryID == "" {
+		t.Fatalf("sync query: status %d, meta %+v, err %v", resp.StatusCode, sync.Meta, err)
+	}
+	jobID := sync.Meta.QueryID
+
+	resp, err = http.Get(fmt.Sprintf("http://%s/api/v1/query/jobs", srv.Addr()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if !strings.Contains(string(listed), jobID) {
+		t.Fatalf("jobs = %s, want %s listed", listed, jobID)
+	}
+
+	resp, err = http.Get(fmt.Sprintf("http://%s/api/v1/query/jobs/%s", srv.Addr(), jobID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("GET job: status %d, body %s", resp.StatusCode, b)
+	}
+	var job struct {
+		Data map[string]json.RawMessage `json:"data"`
+		Meta struct {
+			Rows int `json:"rows"`
+		} `json:"meta"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&job); err != nil {
+		t.Fatal(err)
+	}
+	if string(job.Data["status"]) != `"done"` || job.Data["completed_at"] == nil || job.Meta.Rows != 5 {
+		t.Errorf("job = %+v, want done with completed_at and 5 rows", job)
+	}
+	if _, ok := job.Data["results"]; ok {
+		t.Errorf("job has results %s, want none", job.Data["results"])
+	}
+}
+
 func TestJobs_StreamRouteIsGone(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()

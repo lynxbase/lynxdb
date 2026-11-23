@@ -54,6 +54,8 @@ func jobError(err error) map[string]interface{} {
 }
 
 // handleGetJob returns the state of a job and, once it is done, its result.
+// A job whose request took the whole answer keeps no result; it is
+// reported done without one.
 func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 	if !s.requireScope(w, r, auth.ScopeQuery) {
 		return
@@ -85,12 +87,10 @@ func (s *Server) handleGetJob(w http.ResponseWriter, r *http.Request) {
 		data["error"] = jobError(st.Err)
 		respondData(w, http.StatusOK, data, WithQueryID(st.ID), WithTook(st.Elapsed))
 	default:
-		res, _ := job.Result()
-		results := appendResultData(nil, res, jobResultType(job), s.jobResultLimit(), 0)
 		data["completed_at"] = st.Started.Add(st.Elapsed).UTC()
-		data["results"] = json.RawMessage(results)
 		meta := []MetaOpt{WithTook(st.Elapsed), WithQueryID(st.ID), WithRows(st.Rows)}
-		if res != nil {
+		if res, _ := job.Result(); res != nil {
+			data["results"] = json.RawMessage(appendResultData(nil, res, jobResultType(job), s.jobResultLimit(), 0))
 			meta = append(meta, WithWarnings(res.Warnings))
 		}
 		respondData(w, http.StatusOK, data, meta...)

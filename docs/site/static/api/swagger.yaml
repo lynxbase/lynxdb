@@ -381,7 +381,8 @@ paths:
       tags: [Query]
       summary: State and result of a job
       description: |
-        A running job carries `progress`; a done job carries `results`, limited to `query.default_result_limit` rows;
+        A running job carries `progress`; a done job carries `results`, limited to `query.default_result_limit` rows,
+        unless its own request took the whole answer (a sync or hybrid query answered in time), when it keeps none;
         a failed or canceled job carries `error`. Needs `query` scope.
       responses:
         '200':

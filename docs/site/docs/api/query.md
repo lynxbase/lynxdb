@@ -489,6 +489,8 @@ Done: `results` holds the same object as `data` of a sync response, with at most
 }
 ```
 
+A job whose own request took the whole answer, a sync or hybrid query answered in time, keeps no rows: it is listed and reads back `done` with `completed_at` and `meta.rows`, without `results`.
+
 Failed or canceled: `error` holds `code` and `message`.
 
 ```json
