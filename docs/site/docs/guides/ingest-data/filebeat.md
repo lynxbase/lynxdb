@@ -45,6 +45,19 @@ setup.template.enabled: false
 setup.ilm.enabled: false
 ```
 
+## With authentication on
+
+Give Filebeat a key with the `ingest` scope in `api_key`, as `id:token`;
+Filebeat sends it as `Authorization: ApiKey`. `lynxdb auth create --name
+filebeat --scope ingest` prints this block with the key filled in:
+
+```yaml
+output.elasticsearch:
+  hosts: ["http://lynxdb:3100"]
+  api_key: "ak_apc9c7MczIzS:lynx_ak_apc9c7MczIzS_hGAkWvj7FAc9QeWJKY40uvSwMFLZDe1f"
+  allow_older_versions: true
+```
+
 ## Where the events go
 
 LynxDB accepts `POST /_bulk`, `POST /<index>/_bulk` and the setup requests

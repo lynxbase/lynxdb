@@ -25,7 +25,8 @@ const (
 type Scope string
 
 const (
-	// ScopeIngest allows POST to ingest endpoints (_bulk, /ingest/*, /otlp/*).
+	// ScopeIngest allows sending events: /ingest/*, the Elasticsearch bulk and
+	// document routes, Splunk HEC and the OTLP listeners.
 	ScopeIngest Scope = "ingest"
 	// ScopeQuery allows running queries and reading their jobs.
 	ScopeQuery Scope = "query"

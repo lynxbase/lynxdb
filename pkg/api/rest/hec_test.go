@@ -67,7 +67,7 @@ func TestIntegration_HEC_Health_Returns200(t *testing.T) {
 	}
 }
 
-func TestIntegration_HEC_CanonicalRequiresSplunkToken(t *testing.T) {
+func TestIntegration_HEC_AuthOffAcceptsMissingToken(t *testing.T) {
 	srv, cleanup := startHECTestServer(t)
 	defer cleanup()
 
@@ -81,10 +81,11 @@ func TestIntegration_HEC_CanonicalRequiresSplunkToken(t *testing.T) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusUnauthorized {
+	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status = %d, want 401, body=%s", resp.StatusCode, body)
+		t.Fatalf("status = %d, want 200, body=%s", resp.StatusCode, body)
 	}
+	requireSingleEvent(t, srv, "hello")
 }
 
 func TestIntegration_HEC_CanonicalIngestsWithSplunkToken(t *testing.T) {
@@ -140,27 +141,6 @@ func TestIntegration_HEC_CompressedBodies_Decoded(t *testing.T) {
 			requireSingleEvent(t, srv, "hello compressed")
 		})
 	}
-}
-
-func TestIntegration_HEC_LegacyAlias_StillWorksWithoutSplunkToken(t *testing.T) {
-	srv, cleanup := startHECTestServer(t)
-	defer cleanup()
-
-	resp, err := http.Post(
-		fmt.Sprintf("http://%s/api/v1/ingest/hec", srv.Addr()),
-		"application/json",
-		bytes.NewBufferString(`{"event":"hello legacy","index":"legacy"}`),
-	)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("status = %d, want 200, body=%s", resp.StatusCode, body)
-	}
-	requireSingleEvent(t, srv, "hello legacy")
 }
 
 func TestIntegration_HEC_AckMode_RoundTrip(t *testing.T) {

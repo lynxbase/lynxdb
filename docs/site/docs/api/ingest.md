@@ -1,7 +1,7 @@
 ---
 sidebar_position: 2
 title: Ingest
-description: NDJSON event ingest, raw log text ingest, Splunk HEC and Elasticsearch bulk ingest, and the calls that create, describe and list indexes.
+description: NDJSON event ingest, raw log text ingest, and the calls that create, describe and list indexes.
 ---
 
 # Ingest API
@@ -10,7 +10,6 @@ description: NDJSON event ingest, raw log text ingest, Splunk HEC and Elasticsea
 |---|---|---|
 | `POST /api/v1/ingest` | Structured events | NDJSON, one JSON object per line |
 | `POST /api/v1/ingest/raw` | Log files and streams | Log text, one event per line |
-| `POST /api/v1/ingest/hec` | Splunk HEC senders | One HEC event object per line |
 
 Shippers that speak Elasticsearch, Splunk HEC or OTLP can also use the [compatibility endpoints](./compatibility.md). When authentication is on, the ingest endpoints need a key with `ingest` scope.
 
@@ -131,21 +130,6 @@ kubectl logs deploy/api --since=1h | \
 ```
 
 When the body is cut off, by `ingest.max_body_size` or by a line over 1 MiB, after some events were stored, the response is `200` with `truncated: true` and a `warning`. When nothing was stored, it answers `400 INVALID_REQUEST`.
-
-## POST /ingest/hec
-
-Splunk HEC event ingest. Each line of the body is one HEC event object; lines that are not valid JSON are skipped and counted in `skipped_lines`.
-
-```bash
-curl -s -X POST localhost:3100/api/v1/ingest/hec \
-  -d '{"event": "via api", "host": "web-02"}'
-```
-
-```json
-{"code": 0, "text": "Success"}
-```
-
-This path authenticates like every other `/api/v1` endpoint and does not read `Authorization: Splunk` tokens. It accepts events whatever `ingest.splunk_hec.enabled` says. Shippers configured for Splunk usually point at `/services/collector`; see [Splunk HEC](./compatibility.md#splunk-hec) for those routes, acknowledgements and the mapping of HEC fields to events.
 
 ## GET /indexes
 

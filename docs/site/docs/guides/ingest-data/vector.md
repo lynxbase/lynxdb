@@ -40,6 +40,23 @@ sinks:
 # LynxDB's bulk endpoint accepts zstd-compressed requests.
 ```
 
+## With authentication on
+
+Send a key with the `ingest` scope as the Basic password; LynxDB ignores the
+user name:
+
+```yaml
+sinks:
+  lynxdb:
+    type: elasticsearch
+    endpoints: ["http://lynxdb:3100"]
+    mode: bulk
+    auth:
+      strategy: basic
+      user: lynxdb
+      password: "${LYNXDB_INGEST_KEY}"
+```
+
 ## Where the events go
 
 Each event is stored in the LynxDB index named by the sink's `bulk.index`

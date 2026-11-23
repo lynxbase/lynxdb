@@ -15,8 +15,9 @@ header.
 +http://lynxdb:3100/services/collector/event
 ```
 
-LynxDB accepts any non-empty Splunk token. A request without the header is
-rejected.
+With authentication off, LynxDB accepts every request, with or without a
+token. With it on, the token is a LynxDB API key with the `ingest` scope;
+create one with `lynxdb auth create --name hec --scope ingest`.
 
 ## Full annotated request
 
@@ -84,5 +85,4 @@ reports as committed is written to disk. HEC routes can be turned off with
 Supported: `/services/collector/event`, `/services/collector`,
 `/services/collector/raw`, `/services/collector/ack`,
 `/services/collector/health`, gzip and zstd request bodies, and the
-`Authorization: Splunk <token>` header. `/api/v1/ingest/hec` accepts the same
-events under LynxDB's own authentication.
+`Authorization: Splunk <token>` header.

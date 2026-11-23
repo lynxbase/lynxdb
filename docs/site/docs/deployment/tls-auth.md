@@ -117,13 +117,13 @@ lynxdb auth rotate-root
 
 | Scope | Allows |
 |-------|--------|
-| `ingest` | `/api/v1/ingest`, `/api/v1/ingest/raw`, `/api/v1/ingest/hec`, and the `/api/v1/es/` bulk and document routes |
+| `ingest` | `/api/v1/ingest`, `/api/v1/ingest/raw`, OTLP logs on the OTLP listeners, the Elasticsearch bulk and document routes, and the Splunk HEC routes |
 | `query` | `GET` and `POST /api/v1/query`, `/api/v1/query/stream`, `/api/v1/query/explain`, listing, reading and streaming jobs, index and field listings, field values, histogram, stats |
 | `admin` | Cancelling jobs, `GET /api/v1/config`, stats, the pprof endpoints |
 | `full` | Everything a scoped key can do |
 | root key | Everything, plus key management and `PATCH /api/v1/config` |
 
-The PPL catalog and `/api/v1/status` accept any valid key regardless of scope.
+The PPL catalog, `/api/v1/status` and the Elasticsearch handshake and stubs accept any valid key regardless of scope.
 
 ### Sending keys over HTTP
 
@@ -142,16 +142,19 @@ curl -s https://lynxdb.example.com/api/v1/query \
 
 The server reads keys only from the `Authorization` header.
 
-### Routes outside API key authentication
+### Routes and listeners
 
-API key checks apply to paths under `/api/`. The other routes behave as follows when auth is on:
+With auth on, every route on the API port needs a key, unknown paths included, except these:
 
 | Route | Behavior |
 |-------|----------|
 | `/health`, `/metrics` | Open, for probes and Prometheus. |
-| `/_bulk`, `/{index}/_bulk` and other root-level Elasticsearch routes | Bulk requests are rejected with `401`; point shippers at `/api/v1/es/_bulk` with a key. |
-| `/services/collector*` (Splunk HEC) | Not checked against API keys: any non-empty `Authorization: Splunk <token>` is accepted. Use `/api/v1/ingest/hec` for authenticated HEC ingest, or block these paths at a proxy. |
-| OTLP listener (`ingest.otlp.http_listen`, `grpc_listen`) | Separate plain listeners without auth or TLS. Disable them or keep them on a private network. |
+| `/services/collector/health` | Open, as in Splunk. |
+| `/services/collector`, `/event`, `/raw`, `/ack` (Splunk HEC) | Take the key as `Authorization: Splunk <key>`; it needs the `ingest` scope. A missing header answers `401` with code `2`, an unknown key `401` with code `3`, a key without the scope `403` with code `1`. |
+
+The Elasticsearch routes at the root (`/`, `/_bulk`, `/{index}/_bulk`, `/{index}/_doc`, `/_data_stream/{name}/_bulk`, `HEAD /{index}` and the stubs) read the three schemes above; shippers point `hosts` at the server root. Without a valid key they answer `401` with an Elasticsearch `security_exception` and `WWW-Authenticate` challenges for `Basic` and `ApiKey`.
+
+The OTLP listeners (`ingest.otlp.http_listen`, `grpc_listen`) need a key with the `ingest` scope: `Authorization: Bearer <key>` on OTLP/HTTP, the `authorization` metadata on OTLP/gRPC. Without one, OTLP/HTTP answers `401` and OTLP/gRPC `UNAUTHENTICATED`; a key without the scope gets `403` and `PERMISSION_DENIED`. They serve plain HTTP and gRPC without TLS, so keep them on `localhost` or a private network.
 
 ## TLS and Auth Together
 
@@ -191,7 +194,7 @@ export LYNXDB_PROFILE=prod
 - [ ] `auth.enabled: true` with a persistent `data_dir`
 - [ ] Root key stored in a secrets manager; rotated with `lynxdb auth rotate-root` after setup
 - [ ] One key per shipper and user, with the narrowest scope
-- [ ] OTLP listeners disabled or on a private network; `/services/collector` blocked if HEC is not used
+- [ ] OTLP listeners disabled or on a private network, since they have no TLS
 - [ ] Firewall limited to the ports in use
 
 ## Next Steps

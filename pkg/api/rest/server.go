@@ -49,6 +49,7 @@ type Server struct {
 	esHandshake      *eshttp.Handshake
 	esStubs          *eshttp.Stubs
 	promMetrics      *PrometheusMetrics
+	splunkAuth       splunkhec.AuthConfig
 	splunkAckStore   *splunkhec.AckStore
 	levelVar         *slog.LevelVar
 	logger           *slog.Logger
@@ -145,6 +146,10 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 		logger:          cfg.Logger,
 	}
 
+	if s.keyStore != nil {
+		s.splunkAuth.Check = s.checkSplunkToken
+	}
+
 	promMetrics := NewPrometheusMetrics()
 	promMetrics.CountExpired(db.Expired)
 	s.promMetrics = promMetrics
@@ -172,14 +177,18 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 	}
 
 	if cfg.Ingest.OTLP.HTTPListen != "" {
-		otlpReceiver, err := otlphttp.New(
-			otlphttp.Config{
-				Listen: cfg.Ingest.OTLP.HTTPListen,
-				Limits: limits.Config{
-					MaxCompressedBytes:   int64(cfg.Ingest.Limits.MaxCompressedBodyBytes),
-					MaxDecompressedBytes: int64(cfg.Ingest.Limits.MaxDecompressedBodyBytes),
-				},
+		otlpCfg := otlphttp.Config{
+			Listen: cfg.Ingest.OTLP.HTTPListen,
+			Limits: limits.Config{
+				MaxCompressedBytes:   int64(cfg.Ingest.Limits.MaxCompressedBodyBytes),
+				MaxDecompressedBytes: int64(cfg.Ingest.Limits.MaxDecompressedBodyBytes),
 			},
+		}
+		if s.keyStore != nil {
+			otlpCfg.Middleware = s.otlpHTTPAuth
+		}
+		otlpReceiver, err := otlphttp.New(
+			otlpCfg,
 			s.submitPipelineEvents,
 			cfg.Logger,
 			promMetrics,
@@ -190,11 +199,15 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 		s.otlpHTTPReceiver = otlpReceiver
 	}
 	if cfg.Ingest.OTLP.GRPCListen != "" {
+		otlpCfg := otlpgrpc.Config{
+			Listen:       cfg.Ingest.OTLP.GRPCListen,
+			MaxRecvBytes: int(cfg.Ingest.OTLP.GRPCMaxRecvBytes),
+		}
+		if s.keyStore != nil {
+			otlpCfg.UnaryInterceptor = s.otlpGRPCAuth
+		}
 		otlpReceiver, err := otlpgrpc.New(
-			otlpgrpc.Config{
-				Listen:       cfg.Ingest.OTLP.GRPCListen,
-				MaxRecvBytes: int(cfg.Ingest.OTLP.GRPCMaxRecvBytes),
-			},
+			otlpCfg,
 			s.submitPipelineEvents,
 			cfg.Logger,
 			promMetrics,
@@ -266,7 +279,6 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 
 	mux.HandleFunc("POST /api/v1/ingest", s.handleIngestEvents)
 	mux.HandleFunc("POST /api/v1/ingest/raw", s.handleIngestRaw)
-	mux.HandleFunc("POST /api/v1/ingest/hec", s.handleIngestHEC)
 	mux.HandleFunc("POST /services/collector/event", s.handleSplunkHECEvent)
 	mux.HandleFunc("POST /services/collector", s.handleSplunkHECEvent)
 	mux.HandleFunc("POST /services/collector/raw", s.handleSplunkHECRaw)
@@ -306,35 +318,7 @@ func newServer(cfg Config, db *database.DB) (*Server, error) {
 	mux.HandleFunc("POST /_bulk", s.handleESBulk)
 	mux.HandleFunc("POST /_data_stream/{data_stream}/_bulk", s.handleESBulk)
 	mux.HandleFunc("POST /{index}/_bulk", s.handleESBulk)
-	mux.HandleFunc("POST /api/v1/es/_bulk", s.handleESBulk)
-	mux.HandleFunc("POST /api/v1/es/_data_stream/{data_stream}/_bulk", s.handleESBulk)
-	mux.HandleFunc("POST /api/v1/es/{index}/_doc", s.handleESIndexDoc)
-	mux.HandleFunc("GET /api/v1/es/", s.handleESClusterInfo)
-	mux.HandleFunc("GET /api/v1/es", s.handleESClusterInfo)
-
-	// The same Elasticsearch stubs under the /api/v1/es prefix.
-	esStub := s.handleESStub
-	mux.Handle("GET /api/v1/es/_xpack", s.esCompatibilityHandler("xpack", http.HandlerFunc(esStubs.XPackInfo)))
-	mux.Handle("GET /api/v1/es/_xpack/license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
-	mux.Handle("GET /api/v1/es/_license", s.esCompatibilityHandler("license", http.HandlerFunc(esStubs.XPackLicense)))
-	mux.Handle("GET /api/v1/es/_cat/templates", s.esCompatibilityHandler("templates", http.HandlerFunc(esStubs.EmptyArray)))
-	mux.Handle("GET /api/v1/es/_cat/indices", s.esCompatibilityHandler("cat_indices", http.HandlerFunc(esStubs.EmptyArray)))
-	mux.Handle("GET /api/v1/es/_cluster/health", s.esCompatibilityHandler("cluster_health", http.HandlerFunc(esStubs.ClusterHealth)))
-	mux.Handle("GET /api/v1/es/_ilm/policy/{name...}", s.esCompatibilityHandler("ilm", http.HandlerFunc(esStubs.NotFound)))
-	mux.HandleFunc("PUT /api/v1/es/_ilm/policy/{name...}", esStub)
-	mux.Handle("GET /api/v1/es/_index_template/{name...}", s.esCompatibilityHandler("template", http.HandlerFunc(esStubs.IndexTemplates)))
-	mux.Handle("PUT /api/v1/es/_index_template/{name...}", s.esCompatibilityHandler("template", http.HandlerFunc(esStubs.Acknowledged)))
-	mux.Handle("GET /api/v1/es/_ingest/pipeline/{name...}", s.esCompatibilityHandler("pipeline", http.HandlerFunc(esStubs.NotFound)))
-	mux.HandleFunc("PUT /api/v1/es/_ingest/pipeline/{name...}", esStub)
-	mux.Handle("GET /api/v1/es/_nodes/{path...}", s.esCompatibilityHandler("nodes", http.HandlerFunc(esStubs.NodesHTTP)))
-	mux.Handle("GET /api/v1/es/_data_stream/{name...}", s.esCompatibilityHandler("datastream", http.HandlerFunc(esStubs.EmptyDataStreams)))
-	mux.Handle("PUT /api/v1/es/_data_stream/{name...}", s.esCompatibilityHandler("datastream", http.HandlerFunc(esStubs.Acknowledged)))
-	mux.Handle("GET /api/v1/es/_alias", s.esCompatibilityHandler("alias", http.HandlerFunc(esStubs.EmptyAliases)))
-	mux.Handle("GET /api/v1/es/_search", s.esCompatibilityHandler("search", http.HandlerFunc(esStubs.EmptySearch)))
-	mux.Handle("POST /api/v1/es/_security/user/_authenticate", s.esCompatibilityHandler("security", http.HandlerFunc(esStubs.Authenticated)))
-	// PUT /{index} must be registered after underscore-prefixed paths
-	// to avoid Go 1.22+ ServeMux wildcard-vs-specific conflicts.
-	mux.HandleFunc("PUT /api/v1/es/{index}", esStub)
+	mux.HandleFunc("POST /{index}/_doc", s.handleESIndexDoc)
 
 	mux.HandleFunc("GET /api/v1/status", s.handleStatus)
 
@@ -391,9 +375,6 @@ func (s *Server) esIndexHeadMiddleware(next http.Handler) http.Handler {
 }
 
 func isESIndexHeadProbe(path string) bool {
-	if rest, ok := strings.CutPrefix(path, "/api/v1/es/"); ok {
-		return rest != "" && !strings.Contains(rest, "/") && !strings.HasPrefix(rest, "_")
-	}
 	trimmed := strings.Trim(path, "/")
 	if trimmed == "health" || trimmed == "metrics" {
 		return false
@@ -571,14 +552,24 @@ func (s *Server) submitPipelineEvents(ctx context.Context, events []*event.Event
 	return s.submitEvents(ctx, processed)
 }
 
-func (s *Server) splunkHECHandler(requireSplunkAuth bool) *splunkhec.Handler {
-	ingestCfg := s.currentIngestConfig()
-	authCfg := splunkhec.AuthConfig{
-		Enabled:      requireSplunkAuth,
-		RequireToken: ingestCfg.SplunkHEC.RequireToken,
+// checkSplunkToken accepts a Splunk HEC token that is an API key with the
+// ingest scope.
+func (s *Server) checkSplunkToken(token string) error {
+	info := s.keyStore.Verify(token)
+	if info == nil {
+		return splunkhec.ErrInvalidToken
 	}
+	if !info.Allows(auth.ScopeIngest) {
+		return splunkhec.ErrForbidden
+	}
+
+	return nil
+}
+
+func (s *Server) splunkHECHandler() *splunkhec.Handler {
+	ingestCfg := s.currentIngestConfig()
 	return splunkhec.NewHandler(splunkhec.Config{
-		Auth:               authCfg,
+		Auth:               s.splunkAuth,
 		MaxBatchSize:       ingestCfg.MaxBatchSize,
 		MaxLineBytes:       ingestCfg.MaxLineBytes,
 		AckStore:           s.splunkAckStore,
@@ -592,7 +583,7 @@ func (s *Server) handleSplunkHECEvent(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusNotFound, map[string]interface{}{"text": "HEC is disabled", "code": 4})
 		return
 	}
-	s.splunkHECHandler(true).HandleEvent(w, r)
+	s.splunkHECHandler().HandleEvent(w, r)
 }
 
 func (s *Server) handleSplunkHECRaw(w http.ResponseWriter, r *http.Request) {
@@ -600,7 +591,7 @@ func (s *Server) handleSplunkHECRaw(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusNotFound, map[string]interface{}{"text": "HEC is disabled", "code": 4})
 		return
 	}
-	s.splunkHECHandler(true).HandleRaw(w, r)
+	s.splunkHECHandler().HandleRaw(w, r)
 }
 
 func (s *Server) handleSplunkHECHealth(w http.ResponseWriter, r *http.Request) {
@@ -608,7 +599,7 @@ func (s *Server) handleSplunkHECHealth(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusNotFound, map[string]interface{}{"text": "HEC is disabled", "code": 4})
 		return
 	}
-	s.splunkHECHandler(false).HandleHealth(w, r)
+	s.splunkHECHandler().HandleHealth(w, r)
 }
 
 func (s *Server) handleSplunkHECAck(w http.ResponseWriter, r *http.Request) {
@@ -616,7 +607,7 @@ func (s *Server) handleSplunkHECAck(w http.ResponseWriter, r *http.Request) {
 		respondJSON(w, http.StatusNotFound, map[string]interface{}{"text": "HEC is disabled", "code": 4})
 		return
 	}
-	s.splunkHECHandler(true).HandleAck(w, r)
+	s.splunkHECHandler().HandleAck(w, r)
 }
 
 // WaitReady blocks until the server has completed initialization and is ready.

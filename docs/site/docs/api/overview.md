@@ -68,7 +68,7 @@ Compatibility endpoints answer in the format of the protocol they implement (Ela
 
 ## Authentication and scopes
 
-Authentication is off by default (`lynxdb server --auth` turns it on). When it is on, every route under `/api/` needs credentials. `GET /health`, `GET /metrics` and the routes outside `/api/` are not checked by the API key middleware.
+Authentication is off by default (`lynxdb server --auth` turns it on). When it is on, every route on the API port needs credentials, the Elasticsearch routes at the root and unknown paths included, except `GET /health`, `GET /metrics` and `GET /services/collector/health`. The Splunk HEC routes take the key in their own `Authorization: Splunk <key>` header, and the OTLP listeners as `Authorization: Bearer <key>` or the gRPC `authorization` metadata.
 
 Accepted `Authorization` schemes:
 
@@ -80,13 +80,13 @@ Keys have one of four scopes: `ingest`, `query`, `admin`, `full`. Root keys and 
 
 | Endpoints | Required |
 |---|---|
-| `POST /ingest`, `/ingest/raw`, `/ingest/hec`, `/es/_bulk`, `/es/_data_stream/{name}/_bulk`, `/es/{index}/_doc` | `ingest` |
+| `POST /ingest`, `/ingest/raw`; at the root `/_bulk`, `/{index}/_bulk`, `/_data_stream/{name}/_bulk`, `/{index}/_doc` and the Splunk HEC routes; the OTLP listeners | `ingest` |
 | `POST` and `GET /query`, `POST /query/stream`, `GET /query/jobs`, `GET /query/jobs/{id}`, `GET /query/jobs/{id}/stream` | `query` |
 | `DELETE /query/jobs/{id}`, `GET /config` | `admin` |
 | `PATCH /config`, `/auth/...` | a root key |
-| Everything else under `/api/` | any valid key |
+| Everything else, including the Elasticsearch handshake and stubs | any valid key |
 
-The Elasticsearch bulk routes at the root (`/_bulk`, `/{index}/_bulk`, `/_data_stream/{name}/_bulk`) also check for an `ingest` key, but the middleware does not read credentials outside `/api/`, so with authentication on they answer `401`. Point shippers at `/api/v1/es` instead. The Splunk HEC routes under `/services/collector` check their own `Authorization: Splunk <token>` header.
+Outside `/api/`, a request without a valid key gets `401` in the Elasticsearch format (`security_exception`) with `WWW-Authenticate` challenges for `Basic` and `ApiKey`.
 
 See [TLS & Authentication](../deployment/tls-auth.md) for setup and [`lynxdb auth`](../cli/auth.md) for key management from the CLI.
 
@@ -154,11 +154,10 @@ Paths below are relative to `/api/v1` unless they start with `/health`, `/metric
 | `GET` | `/fields/{name}/values` | Top values of a field | [Fields](./fields.md#get-fieldsnamevalues) |
 | `POST` | `/ingest` | Ingest NDJSON events | [Ingest](./ingest.md) |
 | `POST` | `/ingest/raw` | Ingest log text | [Ingest](./ingest.md#post-ingestraw) |
-| `POST` | `/ingest/hec` | Ingest Splunk HEC events | [Ingest](./ingest.md#post-ingesthec) |
 | `GET` | `/indexes` | List indexes | [Ingest](./ingest.md#get-indexes) |
-| `POST` | `/es/_bulk`, `/_bulk`, `/{index}/_bulk` | Elasticsearch bulk ingest | [Compatibility](./compatibility.md) |
-| `POST` | `/es/{index}/_doc` | Elasticsearch single-document ingest | [Compatibility](./compatibility.md#post-apiv1esindex_doc) |
-| `GET` | `/`, `/es`, `/es/` | Elasticsearch handshake | [Compatibility](./compatibility.md#handshake-and-setup-probes) |
+| `POST` | `/_bulk`, `/{index}/_bulk`, `/_data_stream/{name}/_bulk` | Elasticsearch bulk ingest | [Compatibility](./compatibility.md) |
+| `POST` | `/{index}/_doc` | Elasticsearch single-document ingest | [Compatibility](./compatibility.md#post-index_doc) |
+| `GET` | `/` | Elasticsearch handshake | [Compatibility](./compatibility.md#handshake-and-setup-probes) |
 | `POST` | `/services/collector`, `/services/collector/event`, `/services/collector/raw` | Splunk HEC ingest | [Compatibility](./compatibility.md#splunk-hec) |
 | `POST` | `/services/collector/ack` | Splunk HEC acknowledgements | [Compatibility](./compatibility.md#splunk-hec) |
 | `GET` | `/services/collector/health` | Splunk HEC health | [Compatibility](./compatibility.md#splunk-hec) |

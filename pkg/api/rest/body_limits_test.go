@@ -46,7 +46,7 @@ func TestNativeIngestTakesBodiesUpToMaxBodySize(t *testing.T) {
 	if code, out := post("/api/v1/ingest?index=web", between); code != http.StatusOK || !strings.Contains(out, `"accepted":1000`) {
 		t.Fatalf("native ingest: %d %s", code, out)
 	}
-	if code, out := post("/api/v1/es/_bulk", between); code != http.StatusRequestEntityTooLarge || !strings.Contains(out, "ingest.limits.max_compressed_body_bytes") {
+	if code, out := post("/_bulk", between); code != http.StatusRequestEntityTooLarge || !strings.Contains(out, "ingest.limits.max_compressed_body_bytes") {
 		t.Fatalf("bulk ingest: %d %s", code, out)
 	}
 	if code, out := post("/api/v1/ingest", ndjsonBody(30000)); code != http.StatusRequestEntityTooLarge || !strings.Contains(out, "ingest.max_body_size") {

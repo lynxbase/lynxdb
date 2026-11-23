@@ -35,6 +35,8 @@ type Metrics interface {
 type Config struct {
 	Listen string
 	Limits limits.Config
+	// Middleware, when set, wraps every request before its body is read.
+	Middleware func(http.Handler) http.Handler
 }
 
 type Receiver struct {
@@ -71,6 +73,9 @@ func New(cfg Config, submit SubmitFunc, logger *slog.Logger, metrics Metrics) (*
 	// reports the data it could not send.
 	mux.HandleFunc("POST /v1/logs", r.handleLogs)
 	handler := limits.DualLimitMiddleware(cfg.Limits, metrics)(mux)
+	if cfg.Middleware != nil {
+		handler = cfg.Middleware(handler)
+	}
 	r.server = &http.Server{Addr: cfg.Listen, Handler: handler}
 	return r, nil
 }

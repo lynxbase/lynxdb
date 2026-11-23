@@ -70,11 +70,10 @@ lynxdb query 'source=main level=ERROR | stats count() by host'
 | `LYNXDB_INGEST_ES_COMPAT_ENABLED` | `ingest.es_compat.enabled` | `true` |
 | `LYNXDB_INGEST_ES_COMPAT_ADVERTISED_VERSION` | `ingest.es_compat.advertised_version` | `8.15.0` |
 | `LYNXDB_INGEST_ES_COMPAT_CLUSTER_NAME` | `ingest.es_compat.cluster_name` | `lynxdb` |
-| `LYNXDB_INGEST_OTLP_HTTP_LISTEN` | `ingest.otlp.http_listen` | `0.0.0.0:4318` |
+| `LYNXDB_INGEST_OTLP_HTTP_LISTEN` | `ingest.otlp.http_listen` | `localhost:4318` |
 | `LYNXDB_INGEST_OTLP_GRPC_LISTEN` | `ingest.otlp.grpc_listen` | empty |
 | `LYNXDB_INGEST_OTLP_GRPC_MAX_RECV_BYTES` | `ingest.otlp.grpc_max_recv_bytes` | `16mb` |
 | `LYNXDB_INGEST_SPLUNK_HEC_ENABLED` | `ingest.splunk_hec.enabled` | `true` |
-| `LYNXDB_INGEST_SPLUNK_HEC_REQUIRE_TOKEN` | `ingest.splunk_hec.require_token` | `false` |
 
 ### HTTP, TLS, Auth
 

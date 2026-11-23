@@ -150,6 +150,9 @@ only needs LynxDB's address:
 | [OpenTelemetry Collector](./ingest-data/opentelemetry.md) | OTLP/HTTP, OTLP/gRPC | `http://lynxdb:4318`; gRPC on the address set with `--otlp-grpc-listen` |
 | [Splunk HEC senders](./ingest-data/splunk-hec.md) | HTTP Event Collector | `http://lynxdb:3100/services/collector/event` |
 
+With authentication on, each shipper needs a key with the `ingest` scope;
+the guides show where it goes.
+
 ### Elasticsearch bulk API
 
 Tools that write to Elasticsearch with `_bulk` can point at LynxDB:
@@ -175,11 +178,12 @@ request's `_index`. A document without one goes to the index in the URL
 (`POST /<index>/_bulk`, `POST /_data_stream/<name>/_bulk`), otherwise to
 `main`. Query it with `source=<index>`, or `source=filebeat-*` for a family
 of indexes; `lynxdb indexes` lists the names. `POST /_bulk`,
-`POST /<index>/_bulk` and `/api/v1/es/_bulk` all accept bulk requests. See the [compatibility API](../api/compatibility.md).
+`POST /<index>/_bulk` and `POST /_data_stream/<name>/_bulk` all accept bulk requests. See the [compatibility API](../api/compatibility.md).
 
 ### OpenTelemetry (OTLP)
 
-The OTLP/HTTP receiver listens on `0.0.0.0:4318` by default. OTLP/gRPC is
+The OTLP/HTTP receiver listens on `localhost:4318` by default;
+`--otlp-http-listen 0.0.0.0:4318` takes OTLP from other hosts. OTLP/gRPC is
 off until `--otlp-grpc-listen` (or `ingest.otlp.grpc_listen`) sets an
 address.
 

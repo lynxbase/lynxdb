@@ -336,10 +336,3 @@ func (s *Server) handleIngestRaw(w http.ResponseWriter, r *http.Request) {
 	}
 	respondData(w, http.StatusOK, resp)
 }
-
-func (s *Server) handleIngestHEC(w http.ResponseWriter, r *http.Request) {
-	if !s.requireScope(w, r, auth.ScopeIngest) {
-		return
-	}
-	s.splunkHECHandler(false).HandleEvent(w, r)
-}

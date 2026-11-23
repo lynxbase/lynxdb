@@ -18,6 +18,14 @@ import (
 func startAuthServer(t *testing.T) (*Server, *auth.KeyStore, string, func()) {
 	t.Helper()
 
+	return startAuthServerWithConfig(t, Config{})
+}
+
+// startAuthServerWithConfig starts a server with auth on and returns it with
+// its key store and the token of its root key.
+func startAuthServerWithConfig(t *testing.T, cfg Config) (*Server, *auth.KeyStore, string, func()) {
+	t.Helper()
+
 	dir := t.TempDir()
 
 	ks, err := auth.OpenKeyStore(dir)
@@ -36,10 +44,9 @@ func startAuthServer(t *testing.T) (*Server, *auth.KeyStore, string, func()) {
 		t.Fatal(err)
 	}
 
-	srv, cleanup := startTestServerWithConfig(t, Config{
-		DataDir:  dir,
-		KeyStore: ks,
-	})
+	cfg.DataDir = dir
+	cfg.KeyStore = ks
+	srv, cleanup := startTestServerWithConfig(t, cfg)
 
 	return srv, ks, root.Token, cleanup
 }
@@ -763,7 +770,7 @@ func TestAuth_ScopeQuery_CannotESBulk(t *testing.T) {
 {"message":"test"}
 `
 	req, _ := http.NewRequest("POST",
-		fmt.Sprintf("http://%s/api/v1/es/_bulk", srv.Addr()),
+		fmt.Sprintf("http://%s/_bulk", srv.Addr()),
 		strings.NewReader(body),
 	)
 	req.Header.Set("Authorization", "Bearer "+queryKey.Token)

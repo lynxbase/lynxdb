@@ -128,7 +128,7 @@ Applied on reload:
 - `query.sync_timeout`, `query.default_result_limit`, `query.max_result_limit`, `query.max_query_length`
 - `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`
 - `ingest.es_compat.enabled`
-- `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`
+- `ingest.splunk_hec.enabled`
 - `http.shutdown_timeout`
 - `syslog.index`, `syslog.sourcetype`, `syslog.default_timezone`, `syslog.default_hostname`, `syslog.batch_size`, `syslog.batch_timeout`
 

@@ -44,7 +44,7 @@ The server loads its config file (see [config](./config-cmd.md) for the search o
 | `--syslog-tls` | `false` | Wrap TCP syslog in the server's TLS |
 | `--syslog-parser` | | `auto`, `rfc5424`, `rfc3164` or `raw` |
 | `--syslog-index` | | Index for syslog events |
-| `--otlp-http-listen` | `0.0.0.0:4318` | OTLP/HTTP logs listener address; empty disables |
+| `--otlp-http-listen` | `localhost:4318` | OTLP/HTTP logs listener address; empty disables |
 | `--otlp-grpc-listen` | | OTLP/gRPC logs listener address; empty disables |
 | `--otlp-grpc-max-recv-bytes` | | Largest OTLP/gRPC message |
 | `--ingest-es-enabled` | `true` | Serve the Elasticsearch-compatible `_bulk` endpoint |
@@ -146,7 +146,7 @@ A reload reads the config file and the environment again; it does not re-apply t
 - `log_level`
 - `query.sync_timeout`, `query.default_result_limit`, `query.max_result_limit`, `query.max_query_length`
 - `ingest.mode`, `ingest.max_batch_size`, `ingest.max_line_bytes`
-- `ingest.es_compat.enabled`, `ingest.splunk_hec.enabled`, `ingest.splunk_hec.require_token`
+- `ingest.es_compat.enabled`, `ingest.splunk_hec.enabled`
 - `http.shutdown_timeout`
 - `syslog.index`, `syslog.sourcetype`, `syslog.default_timezone`, `syslog.default_hostname`, `syslog.batch_size`, `syslog.batch_timeout`
 

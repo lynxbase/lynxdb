@@ -10,7 +10,7 @@ LynxDB accepts logs over three shipper protocols, so existing Filebeat, Logstash
 
 | Protocol | Endpoint | Typical senders |
 |---|---|---|
-| Elasticsearch bulk | `http://lynxdb:3100` (or `/api/v1/es`) | Filebeat, Logstash, Vector, Fluent Bit, Fluentd |
+| Elasticsearch bulk | `http://lynxdb:3100` | Filebeat, Logstash, Vector, Fluent Bit, Fluentd |
 | Splunk HEC | `http://lynxdb:3100/services/collector` | Splunk forwarders, HEC clients |
 | OTLP/HTTP | `http://lynxdb:4318/v1/logs` | OpenTelemetry Collector and SDKs |
 
@@ -28,9 +28,9 @@ curl -s localhost:3100/api/v1/query \
 
 | Route | Index of an action without `_index` |
 |---|---|
-| `POST /_bulk`, `POST /api/v1/es/_bulk` | `main` |
+| `POST /_bulk` | `main` |
 | `POST /{index}/_bulk` | `{index}` |
-| `POST /_data_stream/{name}/_bulk`, `POST /api/v1/es/_data_stream/{name}/_bulk` | `{name}` |
+| `POST /_data_stream/{name}/_bulk` | `{name}` |
 
 The body is Elasticsearch bulk NDJSON: an action line followed by a document line. An action's `_index` always wins over the index of the URL.
 
@@ -73,12 +73,12 @@ A failed item carries `status` and `error: {"type", "reason"}`, and the top-leve
 
 Index names on these routes use lowercase letters, digits, `.`, `_` and `-`, do not start with `-`, `_`, `+` or `.`, hold no `..`, and are at most 255 bytes. Responses carry the `X-Elastic-Product: Elasticsearch` header that Elasticsearch clients check.
 
-### POST /api/v1/es/\{index\}/_doc
+### POST /\{index\}/_doc
 
 Appends one JSON object to `{index}`:
 
 ```bash
-curl -s -X POST localhost:3100/api/v1/es/logs/_doc \
+curl -s -X POST localhost:3100/logs/_doc \
   -H 'Content-Type: application/json' \
   -d '{"message": "single event", "@timestamp": "2026-11-17T09:00:02Z", "level": "info"}'
 ```
@@ -91,7 +91,7 @@ It answers `201`. A body that is not a JSON object answers `400 mapper_parsing_e
 
 ### Handshake and setup probes
 
-Shippers probe the server before sending. `GET /`, `GET /api/v1/es` and `GET /api/v1/es/` return an Elasticsearch-style cluster description:
+Shippers probe the server before sending. `GET /` returns an Elasticsearch-style cluster description:
 
 ```json
 {
@@ -113,15 +113,17 @@ Shippers probe the server before sending. `GET /`, `GET /api/v1/es` and `GET /ap
 }
 ```
 
-The advertised version and cluster name come from `ingest.es_compat.advertised_version` and `ingest.es_compat.cluster_name`. LynxDB also answers the license, `_cat`, cluster health, index template, ILM, ingest pipeline, nodes, alias, data stream, `_search`, security and `HEAD /{index}` probes with fixed responses; [Elasticsearch compatibility stubs](../architecture/es-stubs.md) lists each route and response. These stubs store nothing. `PUT` requests for ILM policies, ingest pipelines and indexes under `/api/v1/es` answer `501`:
-
-```json
-{"error": "unsupported Elasticsearch management endpoint", "status": 501}
-```
+The advertised version and cluster name come from `ingest.es_compat.advertised_version` and `ingest.es_compat.cluster_name`. LynxDB also answers the license, `_cat`, cluster health, index template, ILM, ingest pipeline, nodes, alias, data stream, `_search`, security and `HEAD /{index}` probes with fixed responses; [Elasticsearch compatibility stubs](../architecture/es-stubs.md) lists each route and response. These stubs store nothing.
 
 ### Authentication
 
-The root routes (`/_bulk`, `/{index}/_bulk`, `/_data_stream/...`) sit outside `/api/`, where the API key middleware does not read credentials. With authentication on, they answer `401 AUTH_REQUIRED`. Point shippers at `http://lynxdb:3100/api/v1/es` instead and give them a key with `ingest` scope, sent as `Authorization: ApiKey <base64(id:token)>` (the `api_key` value returned at key creation), `Bearer` or `Basic`.
+With authentication on, every Elasticsearch route needs a key, sent as `Authorization: ApiKey <base64(id:token)>` (the `api_key` value returned at key creation), `Bearer <token>` or `Basic <base64(user:token)>`. The bulk and `_doc` routes need the `ingest` scope; the handshake, `HEAD /{index}` and the stubs take any valid key. Without a valid key they answer `401` with an Elasticsearch error and `WWW-Authenticate` challenges for `Basic` and `ApiKey`:
+
+```json
+{"error": {"type": "security_exception", "reason": "authentication required"}, "status": 401}
+```
+
+A key without the `ingest` scope gets `403` with `security_exception` on the bulk and `_doc` routes.
 
 Setting `ingest.es_compat.enabled: false` turns the bulk and `_doc` routes off; they then answer `503` with `{"error": {"type": "unavailable", "reason": "Elasticsearch compatibility ingest is disabled"}, "status": 503}`.
 
@@ -157,13 +159,12 @@ See the [Filebeat](../guides/ingest-data/filebeat.md), [Vector](../guides/ingest
 | `POST /services/collector/raw` | Raw text, one event per line |
 | `POST /services/collector/ack` | `{"acks": [1, 2]}` |
 | `GET /services/collector/health` | |
-| `POST /api/v1/ingest/hec` | HEC event objects, authenticated with a LynxDB API key |
 
-The `/services/collector` routes, except `health`, need an `Authorization: Splunk <token>` header with a non-empty token; a missing token answers `401` with `{"text": "Token is required", "code": 2}`. They sit outside `/api/` and do not check LynxDB API keys. LynxDB keeps no list of HEC tokens, so with `ingest.splunk_hec.require_token: true` every token is refused with `{"text": "Invalid token", "code": 3}`. Setting `ingest.splunk_hec.enabled: false` turns these routes off (`404`, `{"text": "HEC is disabled", "code": 4}`).
+With authentication off, the routes accept every request. With it on, the `/services/collector` routes, except `health`, need `Authorization: Splunk <key>` with a LynxDB API key that has the `ingest` scope: a missing header answers `401` with `{"text": "Token is required", "code": 2}`, a token that is not a key `401` with `{"text": "Invalid token", "code": 3}`, and a key without the scope `403` with `{"text": "Token may not send events", "code": 1}`. Setting `ingest.splunk_hec.enabled: false` turns these routes off (`404`, `{"text": "HEC is disabled", "code": 4}`).
 
 ```bash
 curl -s -X POST localhost:3100/services/collector/event \
-  -H 'Authorization: Splunk my-token' \
+  -H "Authorization: Splunk $LYNXDB_INGEST_KEY" \
   -d '{"event": "user login succeeded", "time": 1763370000, "host": "web-01", "source": "auth-service", "sourcetype": "json", "fields": {"level": "info"}}'
 ```
 
@@ -205,20 +206,22 @@ Events are written in batches of `ingest.max_batch_size`. A line longer than `in
 
 ### OTLP listener
 
-The OTLP/HTTP listener runs on its own port, `ingest.otlp.http_listen` (default `0.0.0.0:4318`; empty turns it off). It does not check API keys.
+The OTLP/HTTP listener runs on its own port, `ingest.otlp.http_listen` (default `localhost:4318`; empty turns it off). With authentication on, it needs `Authorization: Bearer <key>` with a key that has the `ingest` scope; without a valid key it answers `401`, and with a key that lacks the scope `403`.
 
 | Route | Behavior |
 |---|---|
 | `POST /v1/logs` | Stores log records. Protobuf (`application/x-protobuf`) or OTLP/JSON (`application/json`); any other content type answers `415`. The answer is an `ExportLogsServiceResponse` in the encoding of the request |
 | `POST /v1/traces`, `POST /v1/metrics` | `404`; LynxDB stores logs only |
 
-An OTLP/gRPC listener runs when `ingest.otlp.grpc_listen` is set (empty by default). It serves the logs service only; a trace or metrics export fails with `Unimplemented`. Requests are limited by `ingest.limits` and `ingest.otlp.grpc_max_recv_bytes`.
+An OTLP/gRPC listener runs when `ingest.otlp.grpc_listen` is set (empty by default). It serves the logs service only; a trace or metrics export fails with `Unimplemented`. With authentication on, it reads the key from the `authorization` metadata, as `Bearer <key>`, and answers `UNAUTHENTICATED` or `PERMISSION_DENIED` like the HTTP listener. Requests are limited by `ingest.limits` and `ingest.otlp.grpc_max_recv_bytes`.
 
 ```yaml
 # otel-collector-config.yaml
 exporters:
   otlphttp:
     endpoint: http://lynxdb:4318
+    headers: # with authentication on
+      Authorization: "Bearer ${env:LYNXDB_INGEST_KEY}"
 
 service:
   pipelines:

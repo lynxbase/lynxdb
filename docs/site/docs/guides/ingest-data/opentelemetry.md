@@ -8,8 +8,9 @@ description: Send OpenTelemetry Collector logs to LynxDB using OTLP HTTP or OTLP
 ## If you already run the Collector
 
 Point the OTLP/HTTP exporter at LynxDB. The server's OTLP/HTTP receiver
-listens on `0.0.0.0:4318` by default (`--otlp-http-listen` or
-`ingest.otlp.http_listen` changes it).
+listens on `localhost:4318` by default; to take OTLP from other hosts, start
+the server with `--otlp-http-listen 0.0.0.0:4318` (or set
+`ingest.otlp.http_listen`).
 
 ```diff
  exporters:
@@ -51,6 +52,25 @@ service:
     logs:
       receivers: [filelog]
       exporters: [otlphttp/lynxdb]
+```
+
+## With authentication on
+
+Both receivers need a key with the `ingest` scope, sent as a header by the
+exporter:
+
+```yaml
+exporters:
+  otlphttp/lynxdb:
+    endpoint: "http://lynxdb:4318"
+    headers:
+      Authorization: "Bearer ${env:LYNXDB_INGEST_KEY}"
+  otlp/lynxdb:
+    endpoint: "lynxdb:4317"
+    tls:
+      insecure: true
+    headers:
+      authorization: "Bearer ${env:LYNXDB_INGEST_KEY}"
 ```
 
 ## How records are stored

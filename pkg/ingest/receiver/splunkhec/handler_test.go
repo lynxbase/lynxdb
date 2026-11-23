@@ -13,7 +13,7 @@ import (
 )
 
 func TestHandler_EventRequiresSplunkToken(t *testing.T) {
-	h := NewHandler(Config{Auth: AuthConfig{Enabled: true}}, func(context.Context, []*event.Event) error { return nil })
+	h := NewHandler(Config{Auth: AuthConfig{Check: acceptAll}}, func(context.Context, []*event.Event) error { return nil })
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/services/collector/event", strings.NewReader(`{"event":"hello"}`))
 
@@ -26,7 +26,7 @@ func TestHandler_EventRequiresSplunkToken(t *testing.T) {
 
 func TestHandler_Raw_LinePerEvent_AllParsed(t *testing.T) {
 	var submitted int
-	h := NewHandler(Config{Auth: AuthConfig{Enabled: true}}, func(_ context.Context, events []*event.Event) error {
+	h := NewHandler(Config{Auth: AuthConfig{Check: acceptAll}}, func(_ context.Context, events []*event.Event) error {
 		submitted += len(events)
 		return nil
 	})
@@ -47,7 +47,7 @@ func TestHandler_Raw_LinePerEvent_AllParsed(t *testing.T) {
 func TestHandler_EventSubmitError_UsesConfiguredResponder(t *testing.T) {
 	submitErr := errors.New("backpressure")
 	h := NewHandler(Config{
-		Auth: AuthConfig{Enabled: true},
+		Auth: AuthConfig{Check: acceptAll},
 		RespondIngestError: func(w http.ResponseWriter, err error) {
 			if !errors.Is(err, submitErr) {
 				t.Fatalf("err = %v, want submitErr", err)
@@ -76,7 +76,7 @@ func TestHandler_AckRoundTrip(t *testing.T) {
 	store := NewAckStore(10)
 	var flushed bool
 	h := NewHandler(Config{
-		Auth:     AuthConfig{Enabled: true},
+		Auth:     AuthConfig{Check: acceptAll},
 		AckStore: store,
 		AckFlush: func(context.Context) error {
 			flushed = true
@@ -127,7 +127,7 @@ func TestHandler_AckRoundTrip(t *testing.T) {
 }
 
 func TestHandler_AckDisabled_ReturnsFalseAcks(t *testing.T) {
-	h := NewHandler(Config{Auth: AuthConfig{Enabled: true}}, func(context.Context, []*event.Event) error { return nil })
+	h := NewHandler(Config{Auth: AuthConfig{Check: acceptAll}}, func(context.Context, []*event.Event) error { return nil })
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/services/collector/ack", strings.NewReader(`{"acks":[1,2]}`))
 	req.Header.Set("Authorization", "Splunk token")
@@ -152,7 +152,7 @@ func TestHandler_AckDisabled_ReturnsFalseAcks(t *testing.T) {
 func TestHandler_AckFlushError_UsesConfiguredResponder(t *testing.T) {
 	flushErr := errors.New("flush failed")
 	h := NewHandler(Config{
-		Auth:     AuthConfig{Enabled: true},
+		Auth:     AuthConfig{Check: acceptAll},
 		AckStore: NewAckStore(10),
 		AckFlush: func(context.Context) error {
 			return flushErr

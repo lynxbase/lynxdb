@@ -9,32 +9,24 @@ import (
 var (
 	ErrMissingToken = errors.New("splunk token is required")
 	ErrInvalidToken = errors.New("splunk token is invalid")
+	ErrForbidden    = errors.New("splunk token may not send events")
 )
 
+// AuthConfig checks the Authorization: Splunk <token> header of requests.
 type AuthConfig struct {
-	Enabled      bool
-	RequireToken bool
-	Tokens       map[string]struct{}
+	// Check decides whether a token may send events and returns nil,
+	// ErrInvalidToken or ErrForbidden. A nil Check accepts every request.
+	Check func(token string) error
 }
 
 func (a AuthConfig) Authorize(r *http.Request) error {
-	if !a.Enabled {
+	if a.Check == nil {
 		return nil
 	}
-	const prefix = "Splunk "
-	h := r.Header.Get("Authorization")
-	if !strings.HasPrefix(h, prefix) {
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Splunk ")
+	token = strings.TrimSpace(token)
+	if !ok || token == "" {
 		return ErrMissingToken
 	}
-	token := strings.TrimSpace(strings.TrimPrefix(h, prefix))
-	if token == "" {
-		return ErrMissingToken
-	}
-	if !a.RequireToken {
-		return nil
-	}
-	if _, ok := a.Tokens[token]; !ok {
-		return ErrInvalidToken
-	}
-	return nil
+	return a.Check(token)
 }

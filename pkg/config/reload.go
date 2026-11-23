@@ -23,7 +23,6 @@ var hotReloadableExactFields = map[string]struct{}{
 	"ingest.limits.max_compressed_body_bytes":   {},
 	"ingest.limits.max_decompressed_body_bytes": {},
 	"ingest.splunk_hec.enabled":                 {},
-	"ingest.splunk_hec.require_token":           {},
 	"http.shutdown_timeout":                     {},
 	"syslog.index":                              {},
 	"syslog.sourcetype":                         {},

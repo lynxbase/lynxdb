@@ -18,8 +18,10 @@ info:
 
     ## Authentication
 
-    Off by default. When on, every `/api/...` route needs `Authorization: Bearer <token>`,
-    `ApiKey <base64(id:token)>` or `Basic <base64(user:token)>`. `/health`, `/metrics` and routes outside `/api/` are not checked by the API key middleware.
+    Off by default. When on, every route on the API port needs `Authorization: Bearer <token>`,
+    `ApiKey <base64(id:token)>` or `Basic <base64(user:token)>`, the Elasticsearch routes at the root included,
+    except `/health`, `/metrics` and `/services/collector/health`. The Splunk HEC routes take the key as
+    `Authorization: Splunk <token>`, and the OTLP listeners as `Authorization: Bearer <token>`.
 
     ## Bodies
 
@@ -769,26 +771,6 @@ paths:
         '503':
           $ref: '#/components/responses/ShuttingDown'
 
-  /api/v1/ingest/hec:
-    post:
-      operationId: ingestHEC
-      tags: [Ingest, Splunk HEC]
-      summary: Ingest Splunk HEC events with a LynxDB key
-      description: |
-        The Splunk HEC event handler, authenticated with a LynxDB key of `ingest` scope instead of a Splunk token.
-        Events go to the `main` index.
-      parameters:
-        - $ref: '#/components/parameters/SplunkChannel'
-      requestBody:
-        $ref: '#/components/requestBodies/HECEvents'
-      responses:
-        '200':
-          $ref: '#/components/responses/HECSuccess'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-
   # SERVER
 
   /health:
@@ -1019,14 +1001,17 @@ paths:
       description: |
         `index` and `create` actions append their document line unchanged to the action's `_index`, else `main`.
         `update` and `delete` actions fail per item. The documents are durable before the response.
-        Outside `/api/`, so with authentication on it answers `401`; use `/api/v1/es/_bulk`.
-      security: []
+        With authentication on, needs a key with `ingest` scope.
       requestBody:
         $ref: '#/components/requestBodies/ESBulk'
       responses:
         '200':
           $ref: '#/components/responses/ESBulkResult'
         '400':
+          $ref: '#/components/responses/ESError'
+        '401':
+          $ref: '#/components/responses/ESError'
+        '403':
           $ref: '#/components/responses/ESError'
         '413':
           $ref: '#/components/responses/ESError'
@@ -1039,7 +1024,6 @@ paths:
       tags: [Elasticsearch]
       summary: Elasticsearch bulk ingest into an index
       description: Same as `/_bulk`, with `{index}` for actions that name no `_index`.
-      security: []
       parameters:
         - $ref: '#/components/parameters/ESIndex'
       requestBody:
@@ -1056,7 +1040,6 @@ paths:
       tags: [Elasticsearch]
       summary: Elasticsearch bulk ingest into a data stream
       description: Same as `/_bulk`, with the data stream name for actions that name no `_index`.
-      security: []
       parameters:
         - $ref: '#/components/parameters/DataStream'
       requestBody:
@@ -1067,49 +1050,12 @@ paths:
         '400':
           $ref: '#/components/responses/ESError'
 
-  /api/v1/es/_bulk:
-    post:
-      operationId: esPrefixedBulk
-      tags: [Elasticsearch]
-      summary: Elasticsearch bulk ingest under /api/v1/es
-      description: Same as `/_bulk`, authenticated with an `ingest` key.
-      requestBody:
-        $ref: '#/components/requestBodies/ESBulk'
-      responses:
-        '200':
-          $ref: '#/components/responses/ESBulkResult'
-        '400':
-          $ref: '#/components/responses/ESError'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-        '403':
-          $ref: '#/components/responses/Forbidden'
-        '413':
-          $ref: '#/components/responses/ESError'
-        '503':
-          $ref: '#/components/responses/ESError'
-
-  /api/v1/es/_data_stream/{data_stream}/_bulk:
-    post:
-      operationId: esPrefixedDataStreamBulk
-      tags: [Elasticsearch]
-      summary: Elasticsearch data stream bulk ingest under /api/v1/es
-      parameters:
-        - $ref: '#/components/parameters/DataStream'
-      requestBody:
-        $ref: '#/components/requestBodies/ESBulk'
-      responses:
-        '200':
-          $ref: '#/components/responses/ESBulkResult'
-        '400':
-          $ref: '#/components/responses/ESError'
-
-  /api/v1/es/{index}/_doc:
+  /{index}/_doc:
     post:
       operationId: esIndexDoc
       tags: [Elasticsearch]
       summary: Elasticsearch single-document ingest
-      description: Appends one JSON object to `{index}`. Needs `ingest` scope.
+      description: Appends one JSON object to `{index}`. With authentication on, needs a key with `ingest` scope.
       parameters:
         - $ref: '#/components/parameters/ESIndex'
       requestBody:
@@ -1131,6 +1077,10 @@ paths:
                 $ref: '#/components/schemas/ESIndexDocResponse'
         '400':
           $ref: '#/components/responses/ESError'
+        '401':
+          $ref: '#/components/responses/ESError'
+        '403':
+          $ref: '#/components/responses/ESError'
         '503':
           $ref: '#/components/responses/ESError'
 
@@ -1139,20 +1089,7 @@ paths:
       operationId: esHandshake
       tags: [Elasticsearch]
       summary: Elasticsearch cluster handshake
-      security: []
-      responses:
-        '200':
-          description: Cluster description
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ESClusterInfo'
-
-  /api/v1/es:
-    get:
-      operationId: esPrefixedHandshake
-      tags: [Elasticsearch]
-      summary: Elasticsearch cluster handshake under /api/v1/es (also with a trailing slash)
+      description: With authentication on, needs a valid key of any scope, since the answer names the host and process ID.
       responses:
         '200':
           description: Cluster description
@@ -1166,31 +1103,18 @@ paths:
       operationId: esIndexHead
       tags: [Elasticsearch]
       summary: Index existence probe
-      description: Answers `200` for any index name; `HEAD /api/v1/es/{index}` answers the same.
-      security: []
+      description: Answers `200` for any index name.
       parameters:
         - $ref: '#/components/parameters/ESIndex'
       responses:
         '200':
           description: Present
 
-  /api/v1/es/{index}:
-    put:
-      operationId: esCreateIndex
-      tags: [Elasticsearch]
-      summary: Index creation (not supported)
-      parameters:
-        - $ref: '#/components/parameters/ESIndex'
-      responses:
-        '501':
-          $ref: '#/components/responses/ESUnsupported'
-
   /_xpack:
     get:
       operationId: esXPack
       tags: [Elasticsearch]
-      summary: X-Pack feature summary stub (also under /api/v1/es)
-      security: []
+      summary: X-Pack feature summary stub
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
@@ -1199,8 +1123,7 @@ paths:
     get:
       operationId: esXPackLicense
       tags: [Elasticsearch]
-      summary: License stub (also /_license, and both under /api/v1/es)
-      security: []
+      summary: License stub (also /_license)
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
@@ -1209,8 +1132,7 @@ paths:
     get:
       operationId: esCatTemplates
       tags: [Elasticsearch]
-      summary: Empty template list (also under /api/v1/es)
-      security: []
+      summary: Empty template list
       responses:
         '200':
           $ref: '#/components/responses/ESEmptyArray'
@@ -1219,8 +1141,7 @@ paths:
     get:
       operationId: esCatIndices
       tags: [Elasticsearch]
-      summary: Empty index list (also under /api/v1/es)
-      security: []
+      summary: Empty index list
       responses:
         '200':
           $ref: '#/components/responses/ESEmptyArray'
@@ -1229,8 +1150,7 @@ paths:
     get:
       operationId: esClusterHealth
       tags: [Elasticsearch]
-      summary: Green single-node health (also under /api/v1/es)
-      security: []
+      summary: Green single-node health
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
@@ -1241,16 +1161,14 @@ paths:
     get:
       operationId: esGetIndexTemplate
       tags: [Elasticsearch]
-      summary: Empty index template list (also under /api/v1/es)
-      security: []
+      summary: Empty index template list
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
     put:
       operationId: esPutIndexTemplate
       tags: [Elasticsearch]
-      summary: Acknowledges and stores nothing (also under /api/v1/es)
-      security: []
+      summary: Acknowledges and stores nothing
       responses:
         '200':
           $ref: '#/components/responses/ESAcknowledged'
@@ -1259,8 +1177,7 @@ paths:
     get:
       operationId: esGetILMPolicy
       tags: [Elasticsearch]
-      summary: No ILM policies (also under /api/v1/es); PUT under /api/v1/es answers 501
-      security: []
+      summary: No ILM policies
       parameters:
         - $ref: '#/components/parameters/StubName'
       responses:
@@ -1271,8 +1188,7 @@ paths:
     get:
       operationId: esGetIngestPipeline
       tags: [Elasticsearch]
-      summary: No ingest pipelines (also under /api/v1/es); PUT under /api/v1/es answers 501
-      security: []
+      summary: No ingest pipelines
       parameters:
         - $ref: '#/components/parameters/StubName'
       responses:
@@ -1283,8 +1199,7 @@ paths:
     get:
       operationId: esNodes
       tags: [Elasticsearch]
-      summary: Minimal node HTTP info (also under /api/v1/es)
-      security: []
+      summary: Minimal node HTTP info
       parameters:
         - name: path
           in: path
@@ -1299,8 +1214,7 @@ paths:
     get:
       operationId: esAlias
       tags: [Elasticsearch]
-      summary: Empty aliases (also under /api/v1/es)
-      security: []
+      summary: Empty aliases
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
@@ -1311,16 +1225,14 @@ paths:
     get:
       operationId: esGetDataStream
       tags: [Elasticsearch]
-      summary: Empty data stream list (also under /api/v1/es)
-      security: []
+      summary: Empty data stream list
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
     put:
       operationId: esPutDataStream
       tags: [Elasticsearch]
-      summary: Acknowledges and stores nothing (also under /api/v1/es)
-      security: []
+      summary: Acknowledges and stores nothing
       responses:
         '200':
           $ref: '#/components/responses/ESAcknowledged'
@@ -1329,8 +1241,7 @@ paths:
     get:
       operationId: esSearch
       tags: [Elasticsearch]
-      summary: Empty hits (also under /api/v1/es)
-      security: []
+      summary: Empty hits
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
@@ -1339,8 +1250,7 @@ paths:
     post:
       operationId: esAuthenticate
       tags: [Elasticsearch]
-      summary: Authenticated user stub (also under /api/v1/es)
-      security: []
+      summary: Authenticated user stub
       responses:
         '200':
           $ref: '#/components/responses/ESStub'
@@ -1354,7 +1264,7 @@ paths:
       summary: Splunk HEC event ingest
       description: |
         One HEC event object per line; lines that are not valid JSON are skipped and counted in `skipped_lines`.
-        Events go to the `main` index. Needs `Authorization: Splunk <token>` with a non-empty token.
+        Events go to the `main` index. With authentication on, needs `Authorization: Splunk <token>` with a key of `ingest` scope.
         `/services/collector/event` is the same route.
       security:
         - SplunkToken: []
@@ -1367,6 +1277,8 @@ paths:
           $ref: '#/components/responses/HECSuccess'
         '401':
           $ref: '#/components/responses/HECUnauthorized'
+        '403':
+          $ref: '#/components/responses/HECForbidden'
         '404':
           $ref: '#/components/responses/HECDisabled'
 
@@ -1386,6 +1298,8 @@ paths:
           $ref: '#/components/responses/HECSuccess'
         '401':
           $ref: '#/components/responses/HECUnauthorized'
+        '403':
+          $ref: '#/components/responses/HECForbidden'
         '404':
           $ref: '#/components/responses/HECDisabled'
 
@@ -1426,6 +1340,8 @@ paths:
           $ref: '#/components/responses/HECSuccess'
         '401':
           $ref: '#/components/responses/HECUnauthorized'
+        '403':
+          $ref: '#/components/responses/HECForbidden'
         '404':
           $ref: '#/components/responses/HECDisabled'
 
@@ -1469,6 +1385,8 @@ paths:
           description: '`{"text": "Invalid ack request", "code": 5}`'
         '401':
           $ref: '#/components/responses/HECUnauthorized'
+        '403':
+          $ref: '#/components/responses/HECForbidden'
         '404':
           $ref: '#/components/responses/HECDisabled'
 
@@ -1498,8 +1416,12 @@ paths:
       operationId: otlpLogs
       tags: [OTLP]
       summary: OTLP/HTTP logs
-      description: Protobuf or OTLP/JSON. Records go to the `main` index; records with an empty body are dropped.
-      security: []
+      description: |
+        Protobuf or OTLP/JSON. Records go to the `main` index; records with an empty body are dropped.
+        With authentication on, needs `Authorization: Bearer <token>` with a key of `ingest` scope.
+      security:
+        - BearerAuth: []
+        - {}
       requestBody:
         required: true
         content:
@@ -1515,6 +1437,10 @@ paths:
           description: An empty `ExportLogsServiceResponse`
         '400':
           description: The body does not decode
+        '401':
+          description: No valid key
+        '403':
+          description: The key lacks the `ingest` scope
         '415':
           description: Unsupported content type
         '503':
@@ -1539,7 +1465,7 @@ components:
       type: apiKey
       in: header
       name: Authorization
-      description: '`Splunk <token>`'
+      description: '`Splunk <token>`, with an API key of `ingest` scope'
 
   parameters:
     From:
@@ -1764,12 +1690,6 @@ components:
             properties:
               acknowledged:
                 type: boolean
-    ESUnsupported:
-      description: '`{"error": "unsupported Elasticsearch management endpoint", "status": 501}`'
-      content:
-        application/json:
-          schema:
-            type: object
     HECSuccess:
       description: The events are stored
       content:
@@ -1781,6 +1701,12 @@ components:
             text: Success
     HECUnauthorized:
       description: '`{"text": "Token is required", "code": 2}` or `{"text": "Invalid token", "code": 3}`'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/HECResponse'
+    HECForbidden:
+      description: 'The key lacks the `ingest` scope: `{"text": "Token may not send events", "code": 1}`'
       content:
         application/json:
           schema:

@@ -13,8 +13,8 @@ The `ingest` section controls the HTTP ingest endpoints and the shipper-compatib
 |----------|--------|-----------|
 | `POST /api/v1/ingest` | NDJSON, one event per line | Each line unchanged |
 | `POST /api/v1/ingest/raw` | Log lines | JSON object lines unchanged; any other line as an event with `_raw`, its timestamp and its `key=value` fields |
-| `POST /api/v1/ingest/hec`, `POST /services/collector`, `/services/collector/event`, `/services/collector/raw` | Splunk HEC | One flat JSON object per event |
-| `POST /api/v1/es/_bulk`, `POST /_bulk`, `POST /{index}/_bulk` | Elasticsearch bulk API | Each document line unchanged |
+| `POST /services/collector`, `/services/collector/event`, `/services/collector/raw` | Splunk HEC | One flat JSON object per event |
+| `POST /_bulk`, `POST /{index}/_bulk`, `POST /_data_stream/{name}/_bulk` | Elasticsearch bulk API | Each document line unchanged |
 | `POST /v1/logs` on `ingest.otlp.http_listen` | OTLP/HTTP logs, protobuf or JSON | One flat JSON object per log record |
 | `ingest.otlp.grpc_listen` | OTLP/gRPC logs | One flat JSON object per log record |
 
@@ -51,19 +51,18 @@ See [Ingest API](../api/ingest.md) and [Compatibility API](../api/compatibility.
 | Key | Env var | Default | Description |
 |-----|---------|---------|-------------|
 | `ingest.splunk_hec.enabled` | `LYNXDB_INGEST_SPLUNK_HEC_ENABLED` | `true` | Serve the `/services/collector` routes. When off they answer `404`. |
-| `ingest.splunk_hec.require_token` | `LYNXDB_INGEST_SPLUNK_HEC_REQUIRE_TOKEN` | `false` | With `false`, the `/services/collector` routes accept any non-empty `Authorization: Splunk <token>` header. With `true`, the token must be on a configured list, and the server configures no tokens, so every request is rejected. |
 
-`POST /api/v1/ingest/hec` sits under `/api/` and uses API key authentication when auth is on.
+With auth off, the `/services/collector` routes accept every request. With auth on, `Authorization: Splunk <token>` must carry an API key with the `ingest` scope.
 
 ## OTLP
 
 | Key | Flag | Env var | Default | Description |
 |-----|------|---------|---------|-------------|
-| `ingest.otlp.http_listen` | `--otlp-http-listen` | `LYNXDB_INGEST_OTLP_HTTP_LISTEN` | `0.0.0.0:4318` | Separate OTLP/HTTP listener (`POST /v1/logs`). Empty disables it. |
+| `ingest.otlp.http_listen` | `--otlp-http-listen` | `LYNXDB_INGEST_OTLP_HTTP_LISTEN` | `localhost:4318` | Separate OTLP/HTTP listener (`POST /v1/logs`). Empty disables it. |
 | `ingest.otlp.grpc_listen` | `--otlp-grpc-listen` | `LYNXDB_INGEST_OTLP_GRPC_LISTEN` | empty | OTLP/gRPC listener. Empty disables it. |
 | `ingest.otlp.grpc_max_recv_bytes` | `--otlp-grpc-max-recv-bytes` | `LYNXDB_INGEST_OTLP_GRPC_MAX_RECV_BYTES` | `16mb` | Largest gRPC message. Minimum `1mb`. |
 
-The OTLP listeners serve plain HTTP and gRPC without API key checks, and the HTTP listener binds all interfaces by default. On a shared network, restrict port 4318 with a firewall or bind it to a private address.
+The OTLP/HTTP listener binds `localhost` by default; set `http_listen: "0.0.0.0:4318"` to take OTLP from other hosts. Both listeners serve plain HTTP and gRPC without TLS. With auth on they need a key with the `ingest` scope, as `Authorization: Bearer <key>` on OTLP/HTTP and as the `authorization` metadata on OTLP/gRPC.
 
 ## Complete Example
 

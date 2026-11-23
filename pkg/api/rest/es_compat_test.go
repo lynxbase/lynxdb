@@ -16,7 +16,7 @@ import (
 func postESBulk(t *testing.T, addr, body string) *http.Response {
 	t.Helper()
 	resp, err := http.Post(
-		fmt.Sprintf("http://%s/api/v1/es/_bulk", addr),
+		fmt.Sprintf("http://%s/_bulk", addr),
 		"application/x-ndjson",
 		strings.NewReader(body),
 	)
@@ -117,30 +117,6 @@ func TestESBulk_DurableBeforeSuccess(t *testing.T) {
 	}
 	if n := queryEventCount(t, srv.Addr(), `{"q":"source=logs"}`); n != 1 {
 		t.Fatalf("logs events immediately after bulk: got %d, want 1", n)
-	}
-}
-
-func TestESBulk_UnprefixedRoute(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	resp, err := http.Post(
-		fmt.Sprintf("http://%s/_bulk", srv.Addr()),
-		"application/x-ndjson",
-		strings.NewReader("{\"index\":{\"_index\":\"logs\"}}\n{\"message\":\"drop in\"}\n"),
-	)
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	result := decodeESBulkResponse(t, resp)
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status: %d", resp.StatusCode)
-	}
-	if result.Errors || len(result.Items) != 1 {
-		t.Fatalf("unexpected result: %+v", result)
-	}
-	if result.Items[0].Index.Index != "logs" {
-		t.Fatalf("_index = %q, want logs", result.Items[0].Index.Index)
 	}
 }
 
@@ -826,7 +802,7 @@ func TestESIndexDoc_Basic(t *testing.T) {
   "level": "info"
 }`
 	resp, err := http.Post(
-		fmt.Sprintf("http://%s/api/v1/es/logs/_doc", srv.Addr()),
+		fmt.Sprintf("http://%s/logs/_doc", srv.Addr()),
 		"application/json",
 		strings.NewReader(body),
 	)
@@ -866,7 +842,7 @@ func TestESIndexDoc_InvalidJSON(t *testing.T) {
 	defer cleanup()
 
 	resp, err := http.Post(
-		fmt.Sprintf("http://%s/api/v1/es/logs/_doc", srv.Addr()),
+		fmt.Sprintf("http://%s/logs/_doc", srv.Addr()),
 		"application/json",
 		strings.NewReader("not-json"),
 	)
@@ -885,7 +861,7 @@ func TestESIndexDoc_InvalidIndexName(t *testing.T) {
 	defer cleanup()
 
 	resp, err := http.Post(
-		fmt.Sprintf("http://%s/api/v1/es/BadName/_doc", srv.Addr()),
+		fmt.Sprintf("http://%s/BadName/_doc", srv.Addr()),
 		"application/json",
 		strings.NewReader(`{"message":"invalid index"}`),
 	)
@@ -917,7 +893,7 @@ func TestESIndexDoc_PathIndex(t *testing.T) {
 
 	body := `{"message":"myapp event"}`
 	resp, err := http.Post(
-		fmt.Sprintf("http://%s/api/v1/es/myapp/_doc", srv.Addr()),
+		fmt.Sprintf("http://%s/myapp/_doc", srv.Addr()),
 		"application/json",
 		strings.NewReader(body),
 	)
@@ -943,7 +919,7 @@ func TestESClusterInfo_Basic(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/es/", srv.Addr()))
+	resp, err := http.Get(fmt.Sprintf("http://%s/", srv.Addr()))
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
@@ -951,6 +927,9 @@ func TestESClusterInfo_Basic(t *testing.T) {
 
 	if resp.StatusCode != 200 {
 		t.Fatalf("status: %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("X-Elastic-Product"); got != "Elasticsearch" {
+		t.Fatalf("X-Elastic-Product: got %q, want Elasticsearch", got)
 	}
 
 	var result esClusterInfo
@@ -969,53 +948,7 @@ func TestESClusterInfo_Basic(t *testing.T) {
 	}
 }
 
-func TestESClusterInfo_NoTrailingSlash(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/es", srv.Addr()))
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != 200 {
-		t.Fatalf("status: %d", resp.StatusCode)
-	}
-
-	var result esClusterInfo
-	json.NewDecoder(resp.Body).Decode(&result)
-	if !strings.HasPrefix(result.Name, "lynxdb-") {
-		t.Fatalf("name: %q", result.Name)
-	}
-}
-
-func TestESClusterInfo_UnprefixedRoot(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	resp, err := http.Get(fmt.Sprintf("http://%s/", srv.Addr()))
-	if err != nil {
-		t.Fatalf("GET: %v", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status: %d", resp.StatusCode)
-	}
-	if got := resp.Header.Get("X-Elastic-Product"); got != "Elasticsearch" {
-		t.Fatalf("X-Elastic-Product: got %q, want Elasticsearch", got)
-	}
-	var result esClusterInfo
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if result.Version.Number != "8.15.0" {
-		t.Fatalf("version.number: %q", result.Version.Number)
-	}
-}
-
-func TestESClusterInfo_UnprefixedHead(t *testing.T) {
+func TestESClusterInfo_Head(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
@@ -1077,7 +1010,7 @@ func TestESBulk_GzipCompressed(t *testing.T) {
 	gz.Close()
 
 	req, err := http.NewRequest("POST",
-		fmt.Sprintf("http://%s/api/v1/es/_bulk", srv.Addr()),
+		fmt.Sprintf("http://%s/_bulk", srv.Addr()),
 		&buf,
 	)
 	if err != nil {
@@ -1165,7 +1098,7 @@ func TestESBulk_InvalidGzip(t *testing.T) {
 	defer cleanup()
 
 	req, _ := http.NewRequest("POST",
-		fmt.Sprintf("http://%s/api/v1/es/_bulk", srv.Addr()),
+		fmt.Sprintf("http://%s/_bulk", srv.Addr()),
 		strings.NewReader("not-gzip-data"),
 	)
 	req.Header.Set("Content-Encoding", "gzip")
@@ -1185,7 +1118,7 @@ func TestESStub_ILMPolicy(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/es/_ilm/policy/filebeat", srv.Addr()))
+	resp, err := http.Get(fmt.Sprintf("http://%s/_ilm/policy/filebeat", srv.Addr()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1210,7 +1143,7 @@ func TestESStub_IndexTemplate(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/es/_index_template/filebeat-8.11.0", srv.Addr()))
+	resp, err := http.Get(fmt.Sprintf("http://%s/_index_template/filebeat-8.11.0", srv.Addr()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1243,8 +1176,6 @@ func TestESStub_ExpandedProbeRoutes(t *testing.T) {
 		{http.MethodPut, "/_data_stream/logs-generic-default", http.StatusOK},
 		{http.MethodHead, "/logs-generic-default", http.StatusOK},
 		{http.MethodPost, "/_security/user/_authenticate", http.StatusOK},
-		{http.MethodGet, "/api/v1/es/_cluster/health", http.StatusOK},
-		{http.MethodHead, "/api/v1/es/logs-generic-default", http.StatusOK},
 	}
 
 	for _, tt := range tests {
@@ -1291,7 +1222,7 @@ func TestESStub_IngestPipeline(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
 
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/es/_ingest/pipeline/filebeat-test", srv.Addr()))
+	resp, err := http.Get(fmt.Sprintf("http://%s/_ingest/pipeline/filebeat-test", srv.Addr()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1389,40 +1320,6 @@ func TestESBulk_DisabledByReload_Returns503(t *testing.T) {
 	}
 }
 
-func TestESStub_PutIndex(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	req, _ := http.NewRequest("PUT",
-		fmt.Sprintf("http://%s/api/v1/es/myindex", srv.Addr()),
-		strings.NewReader(`{"settings":{}}`),
-	)
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusNotImplemented {
-		t.Fatalf("status: %d, want %d", resp.StatusCode, http.StatusNotImplemented)
-	}
-}
-
-func TestESClusterInfo_XElasticProductHeader(t *testing.T) {
-	srv, cleanup := startTestServer(t)
-	defer cleanup()
-
-	resp, err := http.Get(fmt.Sprintf("http://%s/api/v1/es/", srv.Addr()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-
-	if h := resp.Header.Get("X-Elastic-Product"); h != "Elasticsearch" {
-		t.Fatalf("X-Elastic-Product: got %q, want Elasticsearch", h)
-	}
-}
-
 func TestESIndexDoc_GzipCompressed(t *testing.T) {
 	srv, cleanup := startTestServer(t)
 	defer cleanup()
@@ -1434,7 +1331,7 @@ func TestESIndexDoc_GzipCompressed(t *testing.T) {
 	gz.Close()
 
 	req, _ := http.NewRequest("POST",
-		fmt.Sprintf("http://%s/api/v1/es/logs/_doc", srv.Addr()),
+		fmt.Sprintf("http://%s/logs/_doc", srv.Addr()),
 		&buf,
 	)
 	req.Header.Set("Content-Type", "application/json")

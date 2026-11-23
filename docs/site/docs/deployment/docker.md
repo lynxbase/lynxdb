@@ -85,7 +85,7 @@ Publish only the listeners you use:
 | Port | Listener | Setting |
 |------|----------|---------|
 | 3100 | HTTP API | `listen` |
-| 4318 | OTLP/HTTP, on by default inside the container | `ingest.otlp.http_listen` |
+| 4318 | OTLP/HTTP; it listens on `localhost` inside the container unless the server runs with `--otlp-http-listen 0.0.0.0:4318` | `ingest.otlp.http_listen` |
 | 5514, 6514 | Syslog | `syslog.udp`, `syslog.tcp` |
 
 ## Docker Compose
@@ -125,7 +125,7 @@ The health check runs the `lynxdb` binary itself, since the image has no shell o
 
 ### Log shippers
 
-Shippers such as Filebeat, Fluent Bit and Vector send to the Elasticsearch bulk API (`http://lynxdb:3100/api/v1/es/_bulk`), Splunk HEC or OTLP. See the [Ingest Data guides](../guides/ingest-data.md) for shipper configs.
+Shippers such as Filebeat, Fluent Bit and Vector send to the Elasticsearch bulk API at the server root (`http://lynxdb:3100`), Splunk HEC or OTLP; with `--auth` they need a key with the `ingest` scope. See the [Ingest Data guides](../guides/ingest-data.md) for shipper configs.
 
 ## Custom Image
 

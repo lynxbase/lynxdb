@@ -151,7 +151,7 @@ func printFilebeatSnippet(t *ui.Theme, created *client.AuthCreatedKey) {
 		t.Dim.Render("───"),
 		t.Dim.Render("─────────────────────────────────────────"))
 
-	host := strings.TrimRight(globalServer, "/") + "/api/v1/es"
+	host := strings.TrimRight(globalServer, "/")
 
 	fmt.Fprintf(os.Stderr, "  output.elasticsearch:\n")
 	fmt.Fprintf(os.Stderr, "    hosts: [\"%s\"]\n", host)

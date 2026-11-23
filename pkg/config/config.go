@@ -117,8 +117,7 @@ type OTLPConfig struct {
 }
 
 type SplunkHECConfig struct {
-	Enabled      bool `yaml:"enabled" json:"enabled"`
-	RequireToken bool `yaml:"require_token" json:"require_token"`
+	Enabled bool `yaml:"enabled" json:"enabled"`
 }
 
 // SyslogConfig configures the native syslog TCP/UDP receiver.
@@ -188,13 +187,12 @@ func DefaultConfig() *Config {
 				ClusterName:       "lynxdb",
 			},
 			OTLP: OTLPConfig{
-				HTTPListen:       "0.0.0.0:4318",
+				HTTPListen:       "localhost:4318",
 				GRPCListen:       "",
 				GRPCMaxRecvBytes: 16 * MB,
 			},
 			SplunkHEC: SplunkHECConfig{
-				Enabled:      true,
-				RequireToken: false,
+				Enabled: true,
 			},
 			Limits: IngestLimitsConfig{
 				MaxCompressedBodyBytes:   32 * MB,

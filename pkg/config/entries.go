@@ -108,7 +108,6 @@ func EntriesWithCLI(configPath string, cli []CLIOverride) []Entry {
 	add("ingest.otlp.grpc_listen", cfg.Ingest.OTLP.GRPCListen, dflt.Ingest.OTLP.GRPCListen, fileCfg.Ingest.OTLP.GRPCListen, LYNXDB_INGEST_OTLP_GRPC_LISTEN)
 	add("ingest.otlp.grpc_max_recv_bytes", cfg.Ingest.OTLP.GRPCMaxRecvBytes.String(), dflt.Ingest.OTLP.GRPCMaxRecvBytes.String(), fileCfg.Ingest.OTLP.GRPCMaxRecvBytes.String(), LYNXDB_INGEST_OTLP_GRPC_MAX_RECV_BYTES)
 	add("ingest.splunk_hec.enabled", strconv.FormatBool(cfg.Ingest.SplunkHEC.Enabled), strconv.FormatBool(dflt.Ingest.SplunkHEC.Enabled), strconv.FormatBool(fileCfg.Ingest.SplunkHEC.Enabled), LYNXDB_INGEST_SPLUNK_HEC_ENABLED)
-	add("ingest.splunk_hec.require_token", strconv.FormatBool(cfg.Ingest.SplunkHEC.RequireToken), strconv.FormatBool(dflt.Ingest.SplunkHEC.RequireToken), strconv.FormatBool(fileCfg.Ingest.SplunkHEC.RequireToken), LYNXDB_INGEST_SPLUNK_HEC_REQUIRE_TOKEN)
 	add("ingest.limits.max_compressed_body_bytes", cfg.Ingest.Limits.MaxCompressedBodyBytes.String(), dflt.Ingest.Limits.MaxCompressedBodyBytes.String(), fileCfg.Ingest.Limits.MaxCompressedBodyBytes.String(), LYNXDB_INGEST_LIMITS_MAX_COMPRESSED_BODY_BYTES)
 	add("ingest.limits.max_decompressed_body_bytes", cfg.Ingest.Limits.MaxDecompressedBodyBytes.String(), dflt.Ingest.Limits.MaxDecompressedBodyBytes.String(), fileCfg.Ingest.Limits.MaxDecompressedBodyBytes.String(), LYNXDB_INGEST_LIMITS_MAX_DECOMPRESSED_BODY_BYTES)
 	add("ingest.mode", cfg.Ingest.Mode, dflt.Ingest.Mode, fileCfg.Ingest.Mode, LYNXDB_INGEST_MODE)

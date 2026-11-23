@@ -43,6 +43,22 @@ Keep the `es` output and change only the host and port.
 # LynxDB echoes generated IDs in bulk responses; storage stays append-only.
 ```
 
+## With authentication on
+
+Send a key with the `ingest` scope as the HTTP password; LynxDB ignores the
+user name:
+
+```ini
+[OUTPUT]
+    Name es
+    Match *
+    Host lynxdb
+    Port 3100
+    HTTP_User lynxdb
+    HTTP_Passwd ${LYNXDB_INGEST_KEY}
+    Suppress_Type_Name On
+```
+
 ## Where the events go
 
 The `es` output sends NDJSON bulk requests. LynxDB stores the events in the

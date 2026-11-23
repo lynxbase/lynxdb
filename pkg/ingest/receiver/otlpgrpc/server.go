@@ -32,6 +32,8 @@ type Metrics interface {
 type Config struct {
 	Listen       string
 	MaxRecvBytes int
+	// UnaryInterceptor, when set, runs before every call.
+	UnaryInterceptor grpc.UnaryServerInterceptor
 }
 
 type Receiver struct {
@@ -66,7 +68,11 @@ func New(cfg Config, submit SubmitFunc, logger *slog.Logger, metrics Metrics) (*
 		metrics: metrics,
 		ready:   make(chan struct{}),
 	}
-	r.server = grpc.NewServer(grpc.MaxRecvMsgSize(cfg.MaxRecvBytes))
+	opts := []grpc.ServerOption{grpc.MaxRecvMsgSize(cfg.MaxRecvBytes)}
+	if cfg.UnaryInterceptor != nil {
+		opts = append(opts, grpc.UnaryInterceptor(cfg.UnaryInterceptor))
+	}
+	r.server = grpc.NewServer(opts...)
 	// Only the logs service is registered: an export of traces or metrics
 	// fails with Unimplemented.
 	logscollector.RegisterLogsServiceServer(r.server, &logsService{receiver: r})

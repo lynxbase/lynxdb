@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -214,7 +213,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 	if s.esIngestDisabled(w) {
 		return
 	}
-	if !s.requireScope(w, r, auth.ScopeIngest) {
+	if !s.requireESIngestKey(w, r) {
 		return
 	}
 	contentType := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
@@ -387,6 +386,20 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// requireESIngestKey answers 403 in the Elasticsearch format unless auth is
+// off or the key of the request has the ingest scope.
+func (s *Server) requireESIngestKey(w http.ResponseWriter, r *http.Request) bool {
+	if s.keyStore == nil {
+		return true
+	}
+	if info := auth.KeyInfoFromContext(r.Context()); info != nil && info.Allows(auth.ScopeIngest) {
+		return true
+	}
+	respondESError(w, http.StatusForbidden, "security_exception", "the API key lacks the ingest scope")
+
+	return false
+}
+
 func (s *Server) recordESBulkItem(action, result string) {
 	s.promMetrics.RecordESBulkItem(action, result)
 }
@@ -435,7 +448,7 @@ func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 	if s.esIngestDisabled(w) {
 		return
 	}
-	if !s.requireScope(w, r, auth.ScopeIngest) {
+	if !s.requireESIngestKey(w, r) {
 		return
 	}
 
@@ -487,32 +500,9 @@ func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) handleESClusterInfo(w http.ResponseWriter, r *http.Request) {
-	s.promMetrics.RecordESHandshake("cluster")
-	if s.esHandshake == nil {
-		respondInternalError(w, "elasticsearch compatibility handshake is not initialized")
-		return
-	}
-	s.esHandshake.ServeHTTP(w, r)
-}
-
 func (s *Server) esCompatibilityHandler(kind string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.promMetrics.RecordESHandshake(kind)
 		next.ServeHTTP(w, r)
-	})
-}
-
-// handleESStub is a catch-all handler for ES management endpoints that Filebeat
-// calls during startup (ILM policies, index templates, ingest pipelines, etc.).
-// LynxDB does not implement these APIs and must not acknowledge them as successful.
-func (s *Server) handleESStub(w http.ResponseWriter, r *http.Request) {
-	slog.Warn("unsupported elasticsearch management endpoint",
-		"method", r.Method,
-		"path", r.URL.Path)
-	setESHeaders(w)
-	respondJSON(w, http.StatusNotImplemented, map[string]interface{}{
-		"error":  "unsupported Elasticsearch management endpoint",
-		"status": http.StatusNotImplemented,
 	})
 }

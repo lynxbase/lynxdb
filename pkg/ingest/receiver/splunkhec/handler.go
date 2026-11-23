@@ -171,6 +171,8 @@ func respondAuthError(w http.ResponseWriter, err error) {
 		respond(w, http.StatusUnauthorized, "Token is required", 2)
 	case errors.Is(err, ErrInvalidToken):
 		respond(w, http.StatusUnauthorized, "Invalid token", 3)
+	case errors.Is(err, ErrForbidden):
+		respond(w, http.StatusForbidden, "Token may not send events", 1)
 	default:
 		respond(w, http.StatusUnauthorized, "Unauthorized", 2)
 	}

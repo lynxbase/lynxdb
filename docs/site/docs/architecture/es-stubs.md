@@ -16,9 +16,7 @@ The ingest routes take documents while `ingest.es_compat.enabled` is on (the def
 | `POST /_bulk` | Bulk ingest into the index each action names |
 | `POST /{index}/_bulk` | Same, with `{index}` for actions that name no `_index` |
 | `POST /_data_stream/{name}/_bulk` | Same, with the data stream `{name}` for actions that name no `_index` |
-| `POST /api/v1/es/_bulk` | Prefixed bulk alias |
-| `POST /api/v1/es/_data_stream/{name}/_bulk` | Prefixed data stream bulk alias |
-| `POST /api/v1/es/{index}/_doc` | Single-document ingest into `{index}` |
+| `POST /{index}/_doc` | Single-document ingest into `{index}` |
 
 A bulk body is NDJSON with `application/x-ndjson` or `application/json` as its content type, optionally gzip-compressed. Each document line is appended, as it is, to the index named by the action's `_index`, else by the `{index}` or data stream of the URL, else to `main`:
 
@@ -64,9 +62,9 @@ The document keeps its fields; nested objects are read as paths such as `host.na
 | `POST /_security/user/_authenticate` | Authenticated user stub |
 | `HEAD /{index}` | Empty `200 OK` index probe for shipper health checks |
 
-Every unprefixed probe above has a matching `/api/v1/es/...` alias. Drop-in shipper configs should use the unprefixed routes.
+## Authentication
 
-Under the `/api/v1/es/` prefix, `PUT /api/v1/es/_ilm/policy/{name}`, `PUT /api/v1/es/_ingest/pipeline/{name}` and `PUT /api/v1/es/{index}` answer `501` with `{"error":"unsupported Elasticsearch management endpoint","status":501}` and log a warning with the method and path.
+With authentication on, every route above needs an API key, as `Authorization: ApiKey <base64(id:token)>`, `Bearer <token>` or `Basic <base64(user:token)>`. The ingest routes need the `ingest` scope; the handshake and the stubs take any valid key, since the handshake discloses the host name and process ID. Without a valid key a route answers `401` with `{"error":{"type":"security_exception","reason":...},"status":401}`, `X-Elastic-Product: Elasticsearch` and `WWW-Authenticate` challenges for `Basic` and `ApiKey`.
 
 ## Explicit non-goals
 

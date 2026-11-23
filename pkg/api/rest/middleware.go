@@ -2,7 +2,9 @@ package rest
 
 import (
 	"container/heap"
+	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -12,6 +14,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 
 	"github.com/lynxbase/lynxdb/pkg/auth"
 )
@@ -91,8 +98,9 @@ func RequestIDMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// KeyAuthMiddleware checks for authentication on all routes (except /health)
-// when a KeyStore is provided. Supports three auth schemes:
+// KeyAuthMiddleware checks the API key of every request when a KeyStore is
+// provided, except on /health, /metrics and the Splunk HEC routes, which
+// check their own Authorization: Splunk header. Supports three schemes:
 //
 //   - Bearer <token>          — standard LynxDB token
 //   - ApiKey <base64(id:secret)> — Elasticsearch/Filebeat compatible
@@ -108,40 +116,122 @@ func KeyAuthMiddleware(ks *auth.KeyStore, next http.Handler) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// /health, /metrics and non-API paths are exempt from auth.
-		if r.URL.Path == "/health" || r.URL.Path == "/metrics" || !strings.HasPrefix(r.URL.Path, "/api/") {
+		if keyAuthExempt(r.URL.Path) {
 			next.ServeHTTP(w, r)
 
 			return
 		}
 
-		header := r.Header.Get("Authorization")
-		if header == "" {
-			respondError(w, ErrCodeAuthRequired, http.StatusUnauthorized,
-				"Authentication required. Provide: Authorization: Bearer <key>",
-				WithSuggestion("Run 'lynxdb login' or set LYNXDB_TOKEN environment variable"))
+		info, err := authenticate(ks, r.Header.Get("Authorization"))
+		if err != nil {
+			respondAuthError(w, r, err)
 
 			return
 		}
 
-		keyID, token, ok := extractToken(header)
-		if !ok {
-			respondError(w, ErrCodeInvalidToken, http.StatusUnauthorized, "Invalid Authorization header format")
-
-			return
-		}
-
-		info := ks.Verify(token)
-		if info == nil || (keyID != "" && keyID != info.ID) {
-			respondError(w, ErrCodeInvalidToken, http.StatusUnauthorized, "Invalid API key")
-
-			return
-		}
-
-		// Attach authenticated key info to context.
 		ctx := auth.WithKeyInfo(r.Context(), info)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// keyAuthExempt reports whether a path is served without an API key: the
+// probes, and the Splunk HEC routes, whose handlers check the key in the
+// Authorization: Splunk header. Every other path, including unknown ones,
+// needs a key.
+func keyAuthExempt(path string) bool {
+	switch path {
+	case "/health", "/metrics",
+		"/services/collector", "/services/collector/event", "/services/collector/raw",
+		"/services/collector/ack", "/services/collector/health":
+		return true
+	}
+
+	return false
+}
+
+var (
+	errNoCredentials  = errors.New("authentication required")
+	errBadCredentials = errors.New("invalid Authorization header format")
+	errInvalidKey     = errors.New("invalid API key")
+)
+
+// authenticate returns the key named by the value of an Authorization header.
+func authenticate(ks *auth.KeyStore, header string) (*auth.KeyInfo, error) {
+	if header == "" {
+		return nil, errNoCredentials
+	}
+	keyID, token, ok := extractToken(header)
+	if !ok {
+		return nil, errBadCredentials
+	}
+	info := ks.Verify(token)
+	if info == nil || (keyID != "" && keyID != info.ID) {
+		return nil, errInvalidKey
+	}
+
+	return info, nil
+}
+
+// respondAuthError answers a request without a valid key. Outside /api/ the
+// routes serve Elasticsearch clients, which get the error and the challenges
+// Elasticsearch sends; some clients send Basic credentials only after one.
+func respondAuthError(w http.ResponseWriter, r *http.Request, err error) {
+	if !strings.HasPrefix(r.URL.Path, "/api/") {
+		setESHeaders(w)
+		w.Header().Add("WWW-Authenticate", `Basic realm="lynxdb", charset="UTF-8"`)
+		w.Header().Add("WWW-Authenticate", "ApiKey")
+		respondESError(w, http.StatusUnauthorized, "security_exception", err.Error())
+
+		return
+	}
+	switch {
+	case errors.Is(err, errNoCredentials):
+		respondError(w, ErrCodeAuthRequired, http.StatusUnauthorized,
+			"Authentication required. Provide: Authorization: Bearer <key>",
+			WithSuggestion("Run 'lynxdb login' or set LYNXDB_TOKEN environment variable"))
+	case errors.Is(err, errBadCredentials):
+		respondError(w, ErrCodeInvalidToken, http.StatusUnauthorized, "Invalid Authorization header format")
+	default:
+		respondError(w, ErrCodeInvalidToken, http.StatusUnauthorized, "Invalid API key")
+	}
+}
+
+// otlpHTTPAuth requires a key with the ingest scope on the OTLP/HTTP listener.
+func (s *Server) otlpHTTPAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		info, err := authenticate(s.keyStore, r.Header.Get("Authorization"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusUnauthorized)
+
+			return
+		}
+		if !info.Allows(auth.ScopeIngest) {
+			http.Error(w, "the API key lacks the ingest scope", http.StatusForbidden)
+
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// otlpGRPCAuth requires a key with the ingest scope, in the authorization
+// metadata, on the OTLP/gRPC listener.
+func (s *Server) otlpGRPCAuth(ctx context.Context, req any, _ *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
+	var header string
+	if md, ok := metadata.FromIncomingContext(ctx); ok {
+		if v := md.Get("authorization"); len(v) > 0 {
+			header = v[0]
+		}
+	}
+	info, err := authenticate(s.keyStore, header)
+	if err != nil {
+		return nil, status.Error(codes.Unauthenticated, err.Error())
+	}
+	if !info.Allows(auth.ScopeIngest) {
+		return nil, status.Error(codes.PermissionDenied, "the API key lacks the ingest scope")
+	}
+
+	return handler(ctx, req)
 }
 
 // extractToken parses the Authorization header and returns (keyID, token, ok).

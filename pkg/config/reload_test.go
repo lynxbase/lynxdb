@@ -13,7 +13,6 @@ func TestClassifyReloadChanges(t *testing.T) {
 	newCfg.Query.MaxQueryLength = 256
 	newCfg.Ingest.Mode = "lightweight"
 	newCfg.Ingest.SplunkHEC.Enabled = false
-	newCfg.Ingest.SplunkHEC.RequireToken = true
 	newCfg.HTTP.ReadHeaderTimeout = 15 * time.Second
 	newCfg.HTTP.RateLimit = 250
 	newCfg.TLS.Enabled = true
@@ -27,7 +26,6 @@ func TestClassifyReloadChanges(t *testing.T) {
 	assertContains(t, changes.HotReloaded, "query.max_query_length")
 	assertContains(t, changes.HotReloaded, "ingest.mode")
 	assertContains(t, changes.HotReloaded, "ingest.splunk_hec.enabled")
-	assertContains(t, changes.HotReloaded, "ingest.splunk_hec.require_token")
 
 	assertContains(t, changes.RestartRequired, "http.read_header_timeout")
 	assertContains(t, changes.RestartRequired, "http.rate_limit")

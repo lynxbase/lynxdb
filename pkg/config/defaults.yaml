@@ -39,12 +39,11 @@
 #     advertised_version: 8.15.0     # Version shown to Filebeat/Fluent Bit/Vector
 #     cluster_name: lynxdb           # Cluster name in Elasticsearch handshake
 #   otlp:
-#     http_listen: 0.0.0.0:4318      # Canonical OTLP/HTTP listen address (empty = disabled)
+#     http_listen: localhost:4318    # Canonical OTLP/HTTP listen address (empty = disabled)
 #     grpc_listen:                   # OTLP/gRPC listen address (empty = disabled)
 #     grpc_max_recv_bytes: 16mb      # OTLP/gRPC max receive message size
 #   splunk_hec:
 #     enabled: true                  # Enable Splunk HEC-compatible routes
-#     require_token: false           # false accepts any non-empty Splunk token
 #   limits:
 #     max_compressed_body_bytes: 32mb   # Max compressed shipper request body
 #     max_decompressed_body_bytes: 256mb # Max decoded shipper request body

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lynxbase/lynxdb/pkg/api/rest"
+	"github.com/lynxbase/lynxdb/pkg/auth"
 	"github.com/lynxbase/lynxdb/pkg/client"
 	"github.com/lynxbase/lynxdb/pkg/config"
 	container "github.com/moby/moby/api/types/container"
@@ -28,12 +29,28 @@ type TestRig struct {
 	OTLPPort int
 	OTLPGRPC int
 	DataDir  string
+	// IngestKey is a key with the ingest scope when auth is on.
+	IngestKey *auth.CreatedKey
 
 	cancel    context.CancelFunc
 	startDone chan struct{}
 }
 
 func StartLynxDB(t *testing.T) *TestRig {
+	t.Helper()
+
+	return startLynxDB(t, false)
+}
+
+// StartLynxDBWithAuth starts a server with auth on; the rig queries it with
+// a root key and holds a key with the ingest scope for the shippers.
+func StartLynxDBWithAuth(t *testing.T) *TestRig {
+	t.Helper()
+
+	return startLynxDB(t, true)
+}
+
+func startLynxDB(t *testing.T, withAuth bool) *TestRig {
 	t.Helper()
 
 	cfg := config.DefaultConfig()
@@ -43,10 +60,33 @@ func StartLynxDB(t *testing.T) *TestRig {
 	cfg.Ingest.OTLP.HTTPListen = listenHost + ":0"
 	cfg.Ingest.OTLP.GRPCListen = listenHost + ":0"
 
+	var keyStore *auth.KeyStore
+	var rootToken string
+	var ingestKey *auth.CreatedKey
+	if withAuth {
+		cfg.Auth.Enabled = true
+		var err error
+		keyStore, err = auth.OpenKeyStore(cfg.DataDir)
+		if err != nil {
+			t.Fatalf("open key store: %v", err)
+		}
+		t.Cleanup(func() { _ = keyStore.Close() })
+		root, err := keyStore.CreateKey("root", true)
+		if err != nil {
+			t.Fatalf("create root key: %v", err)
+		}
+		rootToken = root.Token
+		ingestKey, err = keyStore.CreateKeyWithOpts(auth.CreateKeyOpts{Name: "shipper", Scope: auth.ScopeIngest})
+		if err != nil {
+			t.Fatalf("create ingest key: %v", err)
+		}
+	}
+
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	srv, err := rest.NewServer(rest.Config{
 		Addr:          cfg.Listen,
 		DataDir:       cfg.DataDir,
+		KeyStore:      keyStore,
 		Logger:        logger,
 		RuntimeConfig: cfg,
 		Ingest:        cfg.Ingest,
@@ -58,7 +98,7 @@ func StartLynxDB(t *testing.T) *TestRig {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	rig := &TestRig{Server: srv, DataDir: cfg.DataDir, cancel: cancel, startDone: make(chan struct{})}
+	rig := &TestRig{Server: srv, DataDir: cfg.DataDir, IngestKey: ingestKey, cancel: cancel, startDone: make(chan struct{})}
 	go func() {
 		defer close(rig.startDone)
 		if err := srv.Start(ctx); err != nil && ctx.Err() == nil {
@@ -85,6 +125,7 @@ func StartLynxDB(t *testing.T) *TestRig {
 	rig.Client = client.NewClient(
 		client.WithBaseURL("http://127.0.0.1:"+fmt.Sprint(esPort)),
 		client.WithTimeout(60*time.Second),
+		client.WithAuthToken(rootToken),
 	)
 
 	t.Cleanup(func() {

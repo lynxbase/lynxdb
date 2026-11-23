@@ -63,7 +63,7 @@ lynxdb auth create --name <name> [--scope <scope>] [--expires <duration>] [--des
 
 | Scope | Allows |
 |-------|--------|
-| `ingest` | Ingest endpoints: `/api/v1/ingest`, `/api/v1/ingest/raw`, `/api/v1/ingest/hec`, Elasticsearch `_bulk` |
+| `ingest` | Ingest endpoints: `/api/v1/ingest`, `/api/v1/ingest/raw`, Elasticsearch `_bulk` and `_doc`, Splunk HEC, the OTLP listeners |
 | `query` | Queries, query streams and job status |
 | `admin` | Canceling jobs, reading the server config |
 | `full` | Everything except the key API and config changes, which take the root key |
@@ -92,7 +92,7 @@ lynxdb auth create --name web-01 --scope ingest --format json | jq -r .token
 
   ─── filebeat.yml ─────────────────────────────────────────
   output.elasticsearch:
-    hosts: ["https://logs.example.com/api/v1/es"]
+    hosts: ["https://logs.example.com"]
     api_key: "ak_apc9c7MczIzS:lynx_ak_apc9c7MczIzS_hGAkWvj7FAc9QeWJKY40uvSwMFLZDe1f"
     allow_older_versions: true
 

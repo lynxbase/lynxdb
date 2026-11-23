@@ -131,7 +131,7 @@ Notes:
 - Every index lives in its own directory on the volume; the server opens them all at startup.
 - On the first start with auth on, the root key is printed once to the pod log. Keys live in the volume under `/data/auth`.
 - The image has no shell. Use `kubectl -n lynxdb exec lynxdb-0 -- lynxdb health` or `kubectl -n lynxdb port-forward svc/lynxdb 3100` to reach the server.
-- The OTLP listener has no auth; drop the `otlp-http` port, or keep it on an internal Service only, if the cluster network is shared.
+- With auth on, the OTLP listener needs a key with the `ingest` scope, sent as `Authorization: Bearer <key>`. It has no TLS; keep the `otlp-http` port on an internal Service if the cluster network is shared, or drop it with `http_listen: ""`.
 
 ### Ingress
 

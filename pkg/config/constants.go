@@ -54,14 +54,11 @@ const (
 	// YAML key: ingest.otlp.grpc_max_recv_bytes. Default: 16mb.
 	LYNXDB_INGEST_OTLP_GRPC_MAX_RECV_BYTES = "LYNXDB_INGEST_OTLP_GRPC_MAX_RECV_BYTES"
 	// LYNXDB_INGEST_OTLP_HTTP_LISTEN is the canonical OTLP/HTTP listen address (empty = disabled).
-	// YAML key: ingest.otlp.http_listen. Default: 0.0.0.0:4318.
+	// YAML key: ingest.otlp.http_listen. Default: localhost:4318.
 	LYNXDB_INGEST_OTLP_HTTP_LISTEN = "LYNXDB_INGEST_OTLP_HTTP_LISTEN"
 	// LYNXDB_INGEST_SPLUNK_HEC_ENABLED is the enable Splunk HEC-compatible routes.
 	// YAML key: ingest.splunk_hec.enabled. Default: true.
 	LYNXDB_INGEST_SPLUNK_HEC_ENABLED = "LYNXDB_INGEST_SPLUNK_HEC_ENABLED"
-	// LYNXDB_INGEST_SPLUNK_HEC_REQUIRE_TOKEN is the require valid Splunk token for HEC requests.
-	// YAML key: ingest.splunk_hec.require_token. Default: false.
-	LYNXDB_INGEST_SPLUNK_HEC_REQUIRE_TOKEN = "LYNXDB_INGEST_SPLUNK_HEC_REQUIRE_TOKEN"
 	// LYNXDB_LISTEN is the listen address for the HTTP API server.
 	// YAML key: listen. Default: localhost:3100.
 	LYNXDB_LISTEN = "LYNXDB_LISTEN"
