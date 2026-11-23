@@ -47,9 +47,9 @@ func TestAppendQuery(t *testing.T) {
 {"timestamp":"2026-01-01T01:00:00Z","level":"info","n":2}
 plain text line
 `
-	rejected, err := db.Append("", []byte(lines))
-	if err != nil || rejected != 0 {
-		t.Fatalf("append: %d %v", rejected, err)
+	done, err := db.AppendLines("", []byte(lines))
+	if err != nil || done.Rejected != 0 {
+		t.Fatalf("append: %+v %v", done, err)
 	}
 	if err := db.Sync(); err != nil {
 		t.Fatal(err)
@@ -80,7 +80,7 @@ func TestQueryTimeRange(t *testing.T) {
 {"_time":"2026-01-02T00:00:00Z","n":2}
 {"_time":"2026-01-03T00:00:00Z","n":3}
 `
-	if _, err := db.Append("web", []byte(lines)); err != nil {
+	if _, err := db.AppendLines("web", []byte(lines)); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Sync(); err != nil {
@@ -104,10 +104,10 @@ func TestQueryTimeRangeSubquery(t *testing.T) {
 {"_time":"2026-01-02T02:00:00Z","n":2}
 {"_time":"2026-01-02T03:00:00Z","n":3}
 `
-	if _, err := db.Append("web", []byte(web)); err != nil {
+	if _, err := db.AppendLines("web", []byte(web)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Append("ids", []byte(ids)); err != nil {
+	if _, err := db.AppendLines("ids", []byte(ids)); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Sync(); err != nil {
@@ -131,7 +131,7 @@ func TestRetention(t *testing.T) {
 	lines := `{"_time":"` + now.Add(-10*24*time.Hour).Format(time.RFC3339) + `"}
 {"_time":"` + now.Format(time.RFC3339) + `"}
 `
-	if _, err := db.Append("main", []byte(lines)); err != nil {
+	if _, err := db.AppendLines("main", []byte(lines)); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Sync(); err != nil {
@@ -151,7 +151,7 @@ func TestRetention(t *testing.T) {
 
 func TestJobs(t *testing.T) {
 	db := openTest(t, Config{MaxConcurrent: 1})
-	if _, err := db.Append("main", []byte(`{"a":1}`+"\n")); err != nil {
+	if _, err := db.AppendLines("main", []byte(`{"a":1}`+"\n")); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Sync(); err != nil {
@@ -187,7 +187,7 @@ func TestJobs(t *testing.T) {
 // the last of such jobs to stay, however many queries were answered.
 func TestAnsweredJobsAreFewAndHoldNoRows(t *testing.T) {
 	db := openTest(t, Config{})
-	if _, err := db.Append("main", []byte(`{"a":1}`+"\n"+`{"a":2}`+"\n")); err != nil {
+	if _, err := db.AppendLines("main", []byte(`{"a":1}`+"\n"+`{"a":2}`+"\n")); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Sync(); err != nil {

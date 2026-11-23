@@ -68,7 +68,7 @@ func loadLogDB(path, source string) (*database.DB, error) {
 	}
 	conv.Source = source
 	if err := conv.Read(f, func(b []byte) error {
-		_, err := db.Append(database.DefaultSource, b)
+		_, err := db.AppendLines(database.DefaultSource, b)
 		return err
 	}); err != nil {
 		return nil, err

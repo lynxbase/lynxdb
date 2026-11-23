@@ -24,9 +24,6 @@ type StoreOptions struct {
 	// there; shred.Options says which values are times.
 	TimeField  string
 	TimeFields []string
-	// KeepText keeps a line that is not a JSON object as a row holding its
-	// text; without it such a line is rejected.
-	KeepText bool
 	// BlockRows is the number of rows per block; zero means 16384.
 	BlockRows int
 	// BufferBytes is the input that the buffers of Append hold together
@@ -314,9 +311,8 @@ type appendShard struct {
 const appendPiece = 4 << 20
 
 // Append buffers the documents of lines, one per line, and returns the
-// number of lines that are not JSON objects. It is safe for concurrent use;
-// the rows become durable and visible within the flush interval, or as soon
-// as the buffers are full, or on Sync.
+// number of lines that are not JSON objects; AppendRows says when the rows
+// become durable.
 func (s *Store) Append(lines []byte) (rejected int64, err error) {
 	return s.AppendAt(lines, 0)
 }
@@ -324,22 +320,46 @@ func (s *Store) Append(lines []byte) (rejected int64, err error) {
 // AppendAt is Append for lines that arrived at the time at, in unix
 // nanoseconds, which becomes the time of every row that carries none.
 func (s *Store) AppendAt(lines []byte, at int64) (rejected int64, err error) {
-	_, rejected, err = s.AppendRows(lines, at)
+	done, err := s.AppendRows(lines, at, Intake{})
 
-	return rejected, err
+	return done.Rejected, err
 }
 
-// AppendRows is AppendAt that also returns the number of rows the lines
-// became, which with the rejected lines makes every line that holds more
-// than blanks.
-func (s *Store) AppendRows(lines []byte, at int64) (rows, rejected int64, err error) {
+// Intake says what AppendRows does with the lines it does not keep as rows
+// of their own.
+type Intake struct {
+	// Text keeps a line that is not a JSON object as a row holding its
+	// text; without it such a line is rejected.
+	Text bool
+	// Since drops the rows of the partitions that end at or before it, in
+	// unix nanoseconds: the rows that DropBefore(Since) would remove at
+	// once. Zero keeps every row.
+	Since int64
+}
+
+// Appended counts what AppendRows did with the lines of a call: Rows became
+// rows, Rejected are not JSON objects and were not kept as text, and Expired
+// were dropped for Intake.Since. Together they are every line that holds
+// more than blanks.
+type Appended struct {
+	Rows, Rejected, Expired int64
+}
+
+// AppendRows buffers the documents of lines, one per line, that arrived at
+// the time at, in unix nanoseconds, which becomes the time of every row that
+// carries none. It is safe for concurrent use; the rows become durable and
+// visible within the flush interval, or as soon as the buffers are full, or
+// on Sync.
+func (s *Store) AppendRows(lines []byte, at int64, in Intake) (Appended, error) {
+	var done Appended
 	// Close waits for the calls under way, so that it writes all the rows
 	// of a call or refuses the call whole.
 	s.appending.RLock()
 	defer s.appending.RUnlock()
 	if s.closed.Load() {
-		return 0, 0, ErrClosed
+		return done, ErrClosed
 	}
+	how := shred.Intake{Text: in.Text, Since: s.partitionStart(in.Since)}
 	for len(lines) > 0 {
 		// Full buffers, or rows that a failed flush left, are written
 		// before more lines are taken, so that a caller told of a failure
@@ -347,7 +367,7 @@ func (s *Store) AppendRows(lines []byte, at int64) (rows, rejected int64, err er
 		room := s.room()
 		if room <= 0 {
 			if err := s.makeRoom(); err != nil {
-				return rows, rejected, err
+				return done, err
 			}
 
 			continue
@@ -359,9 +379,10 @@ func (s *Store) AppendRows(lines []byte, at int64) (rows, rejected int64, err er
 				piece = piece[:at+nl+1]
 			}
 		}
-		taken, n := s.appendPiece(piece, at)
-		rows += taken
-		rejected += n
+		taken := s.appendPiece(piece, at, how)
+		done.Rows += taken.Rows
+		done.Rejected += taken.Rejected
+		done.Expired += taken.Expired
 		lines = lines[len(piece):]
 	}
 	// Full buffers are written by the flusher; the caller does not wait.
@@ -369,7 +390,23 @@ func (s *Store) AppendRows(lines []byte, at int64) (rows, rejected int64, err er
 		s.askFlush()
 	}
 
-	return rows, rejected, nil
+	return done, nil
+}
+
+// partitionStart returns the start of the partition that holds t, or zero
+// for a store that is not partitioned by time or for a zero t: the rows
+// before it are those of the partitions that end at or before t.
+func (s *Store) partitionStart(t int64) int64 {
+	width := int64(s.opts.Partition)
+	if width <= 0 || t == 0 {
+		return 0
+	}
+	start := t - t%width
+	if t < 0 && t%width != 0 {
+		start -= width
+	}
+
+	return start
 }
 
 // askFlush has the flusher write the buffers that are full.
@@ -417,7 +454,7 @@ func (s *Store) makeRoom() error {
 	return nil
 }
 
-func (s *Store) appendPiece(lines []byte, at int64) (rows, rejected int64) {
+func (s *Store) appendPiece(lines []byte, at int64, in shred.Intake) Appended {
 	var sh *appendShard
 	// The first free buffer in a fixed order, so that a light load fills
 	// one buffer and not all of them.
@@ -438,7 +475,8 @@ func (s *Store) appendPiece(lines []byte, at int64) (rows, rejected int64) {
 		sh.batch.Reserve(sh.sizes)
 	}
 	before := sh.batch.Rows
-	sh.errs = sh.batch.AddNDJSON(lines, at, sh.errs[:0])
+	var expired int
+	sh.errs, expired = sh.batch.AddNDJSON(lines, at, in, sh.errs[:0])
 	if sh.buffered == 0 {
 		sh.since = time.Now()
 	}
@@ -446,7 +484,7 @@ func (s *Store) appendPiece(lines []byte, at int64) (rows, rejected int64) {
 	s.buffered.Add(int64(len(lines)))
 	s.appended.Add(1)
 
-	return int64(sh.batch.Rows - before), int64(len(sh.errs))
+	return Appended{Rows: int64(sh.batch.Rows - before), Rejected: int64(len(sh.errs)), Expired: int64(expired)}
 }
 
 // spareBatches keeps batches between the uses a store has for them. The
@@ -512,7 +550,7 @@ func (s *Store) dropSpare() {
 }
 
 func (s *Store) shredOptions() shred.Options {
-	return shred.Options{TimeField: s.opts.TimeField, TimeFields: s.opts.TimeFields, KeepText: s.opts.KeepText}
+	return shred.Options{TimeField: s.opts.TimeField, TimeFields: s.opts.TimeFields}
 }
 
 // Sync writes everything Append has buffered and returns once it is durable.
@@ -1677,7 +1715,7 @@ func (w *Writer) add(lines []byte, at int64) error {
 			}
 		}
 		lines = lines[len(chunk):]
-		w.errs = w.batch.AddNDJSON(chunk, at, w.errs[:0])
+		w.errs, _ = w.batch.AddNDJSON(chunk, at, shred.Intake{}, w.errs[:0])
 		w.Rejected += int64(len(w.errs))
 		if w.buffered += len(chunk); w.buffered >= w.s.opts.FlushBytes {
 			if err := w.flush(); err != nil {

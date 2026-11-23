@@ -45,7 +45,7 @@ func blueskyRuns(b *testing.B, rows, runs, blockRows int) []*Part {
 		}
 		lines = g.Append(lines[:0], n)
 		all := shred.NewBatch(shred.Options{TimeField: "time_us"})
-		if errs := all.AddNDJSON(lines, 0, nil); len(errs) > 0 {
+		if errs, _ := all.AddNDJSON(lines, 0, shred.Intake{}, nil); len(errs) > 0 {
 			b.Fatal(errs[0])
 		}
 		all.SortBy(blueskyKey)

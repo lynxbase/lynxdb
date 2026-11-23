@@ -33,7 +33,6 @@ func BenchmarkLoadMemory(b *testing.B) {
 	opts := StoreOptions{
 		TimeFields: []string{"time_us"},
 		SortKey:    []string{"kind", "commit.operation", "commit.collection", "did"},
-		KeepText:   true,
 		Partition:  24 * time.Hour,
 		MergeFanIn: -1,
 		FlushLevel: part.LevelFastest,

@@ -202,7 +202,7 @@ func TestTimedColumnsFollowEachOther(t *testing.T) {
 	data := benchdata.New(2, 3000).Append(nil, 30000)
 	key := []string{"kind", "commit.operation", "commit.collection", "did"}
 	batch := shred.NewBatch(shred.Options{TimeField: "time_us"})
-	if errs := batch.AddNDJSON(data, 0, nil); len(errs) != 0 {
+	if errs, _ := batch.AddNDJSON(data, 0, shred.Intake{}, nil); len(errs) != 0 {
 		t.Fatal(errs[0].Err)
 	}
 	batch.SortBy(key)

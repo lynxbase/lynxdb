@@ -95,7 +95,6 @@ func Open(cfg Config) (*DB, error) {
 	core, err := columnar.Open(columnar.Config{Dir: cfg.Dir, Store: colstore.StoreOptions{
 		TimeFields:    cfg.TimeFields,
 		SortKey:       cfg.SortKey,
-		KeepText:      true,
 		Partition:     cfg.Partition,
 		FlushInterval: cfg.FlushInterval,
 		// Merges rewrite flushed runs soon, at the level of merged parts.
@@ -115,23 +114,25 @@ func Open(cfg Config) (*DB, error) {
 	return db, nil
 }
 
-// Append adds the events of ndjson, one JSON object per line, to an index;
-// a line that is not a JSON object becomes an event holding the text in
-// _raw. It returns the number of lines rejected.
-func (db *DB) Append(index string, ndjson []byte) (int64, error) {
-	_, rejected, err := db.AppendRows(index, ndjson)
-
-	return rejected, err
+// AppendObjects adds the events of ndjson, one JSON object per line, to an
+// index and returns what became of the lines; a line that is not a JSON
+// object is rejected.
+func (db *DB) AppendObjects(index string, ndjson []byte) (colstore.Appended, error) {
+	return db.appendRows(index, ndjson, colstore.Intake{})
 }
 
-// AppendRows is Append that also returns the number of events the lines
-// became.
-func (db *DB) AppendRows(index string, ndjson []byte) (rows, rejected int64, err error) {
+// AppendLines is AppendObjects that keeps a line that is not a JSON object
+// as an event holding the text in _raw.
+func (db *DB) AppendLines(index string, lines []byte) (colstore.Appended, error) {
+	return db.appendRows(index, lines, colstore.Intake{Text: true})
+}
+
+func (db *DB) appendRows(index string, lines []byte, in colstore.Intake) (colstore.Appended, error) {
 	if index == "" {
 		index = DefaultSource
 	}
 
-	return db.core.AppendRows(index, ndjson)
+	return db.core.AppendRows(index, lines, in)
 }
 
 // Sync makes the events appended so far durable and visible.

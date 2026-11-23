@@ -25,7 +25,7 @@ func (db *DB) AppendEvents(events []*event.Event) error {
 	}
 	var errs []error
 	for _, index := range order {
-		if _, err := db.Append(index, byIndex[index]); err != nil {
+		if _, err := db.AppendLines(index, byIndex[index]); err != nil {
 			errs = append(errs, err)
 		}
 	}

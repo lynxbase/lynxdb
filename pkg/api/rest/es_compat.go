@@ -338,7 +338,7 @@ func (s *Server) handleESBulk(w http.ResponseWriter, r *http.Request) {
 	appended := 0
 	for _, index := range order {
 		d := byIndex[index]
-		_, err := s.db.Append(index, d.docs)
+		_, err := s.db.AppendLines(index, d.docs)
 		if err == nil {
 			appended += len(d.items)
 			s.promMetrics.RecordIngest(len(d.items), len(d.docs))
@@ -473,7 +473,7 @@ func (s *Server) handleESIndexDoc(w http.ResponseWriter, r *http.Request) {
 	}
 	line.WriteByte('\n')
 
-	if _, err := s.db.Append(indexName, line.Bytes()); err != nil {
+	if _, err := s.db.AppendLines(indexName, line.Bytes()); err != nil {
 		s.promMetrics.RecordIngestError()
 		respondIngestError(w, err)
 		return

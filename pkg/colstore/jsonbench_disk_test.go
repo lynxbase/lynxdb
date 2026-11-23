@@ -60,7 +60,7 @@ func loadToDir(t testing.TB, d *Dir, data []byte, parts, blockRows int, key []st
 				for len(chunk) > 0 {
 					var lines []byte
 					lines, chunk = shred.SplitLines(chunk, blockRows)
-					errs = batch.AddNDJSON(lines, 0, errs[:0])
+					errs, _ = batch.AddNDJSON(lines, 0, shred.Intake{}, errs[:0])
 					count.Add(int64(len(errs)))
 					if err := out.WriteBatch(batch); err != nil {
 						t.Error(err)

@@ -20,7 +20,6 @@ func timeCountStore(t *testing.T) *colstore.Store {
 	s, err := colstore.OpenStore(t.TempDir(), colstore.StoreOptions{
 		SortKey:       []string{"kind", "commit.operation", "commit.collection", "did"},
 		TimeFields:    []string{"time_us"},
-		KeepText:      true,
 		Partition:     24 * time.Hour,
 		BlockRows:     1024,
 		MergeFanIn:    -1,

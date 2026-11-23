@@ -18,7 +18,7 @@ func TestDictionaryEntriesAreReadWithoutTheCodes(t *testing.T) {
 	for _, users := range []int{1024, 4096, 8192} {
 		g := benchdata.New(1, users)
 		all := shred.NewBatch(shred.Options{TimeField: "time_us"})
-		if errs := all.AddNDJSON(g.Append(nil, 1<<17), 0, nil); len(errs) > 0 {
+		if errs, _ := all.AddNDJSON(g.Append(nil, 1<<17), 0, shred.Intake{}, nil); len(errs) > 0 {
 			t.Fatal(errs[0])
 		}
 		all.SortBy(blueskyKey)
@@ -107,7 +107,7 @@ func TestDictionaryEntriesAreReadWithoutTheCodes(t *testing.T) {
 func TestDamageToADictionaryOrItsCodesIsFound(t *testing.T) {
 	g := benchdata.New(1, 1024)
 	all := shred.NewBatch(shred.Options{TimeField: "time_us"})
-	all.AddNDJSON(g.Append(nil, 16384), 0, nil)
+	all.AddNDJSON(g.Append(nil, 16384), 0, shred.Intake{}, nil)
 	all.SortBy(blueskyKey)
 	var buf bytes.Buffer
 	w := NewWriter(&buf, Options{Ordered: true, SortKey: blueskyKey})

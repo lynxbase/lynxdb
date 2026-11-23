@@ -89,7 +89,7 @@ func benchNDJSON(b *testing.B, add func(batch *Batch, chunk []byte)) {
 }
 
 func BenchmarkAddNDJSON(b *testing.B) {
-	benchNDJSON(b, func(batch *Batch, chunk []byte) { batch.AddNDJSON(chunk, 0, nil) })
+	benchNDJSON(b, func(batch *Batch, chunk []byte) { batch.AddNDJSON(chunk, 0, Intake{}, nil) })
 }
 
 // blueskyLines returns n generated events, one per line.
@@ -111,7 +111,7 @@ func BenchmarkShredBluesky(b *testing.B) {
 			if nl := bytes.LastIndexByte(piece, '\n'); nl >= 0 && len(piece) < len(rest) {
 				piece = piece[:nl+1]
 			}
-			if errs := batch.AddNDJSON(piece, 0, nil); len(errs) != 0 {
+			if errs, _ := batch.AddNDJSON(piece, 0, Intake{}, nil); len(errs) != 0 {
 				b.Fatal(errs[0].Err)
 			}
 			rest = rest[len(piece):]
@@ -131,7 +131,7 @@ func BenchmarkSortCutBluesky(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		b.StopTimer()
 		batch.Reset()
-		batch.AddNDJSON(data, 0, nil)
+		batch.AddNDJSON(data, 0, Intake{}, nil)
 		b.StartTimer()
 		batch.SortBy(key)
 		for from := 0; from < batch.Rows; from += 16384 {

@@ -15,7 +15,7 @@ func sortedBlocks(t testing.TB, events, blockRows int) []*shred.Batch {
 	t.Helper()
 	key := []string{"kind", "commit.operation", "commit.collection", "did"}
 	all := shred.NewBatch(shred.Options{TimeField: "time_us"})
-	if errs := all.AddNDJSON(benchdata.New(3, 300000).Append(nil, events), 0, nil); len(errs) != 0 {
+	if errs, _ := all.AddNDJSON(benchdata.New(3, 300000).Append(nil, events), 0, shred.Intake{}, nil); len(errs) != 0 {
 		t.Fatal(errs[0].Err)
 	}
 	all.SortBy(key)

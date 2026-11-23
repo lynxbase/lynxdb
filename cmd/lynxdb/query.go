@@ -202,7 +202,7 @@ func loadLocal(db *database.DB, r io.Reader, source, sourcetype, format string) 
 	conv.Source, conv.SourceType = source, sourcetype
 
 	return conv.Read(r, func(b []byte) error {
-		_, err := db.Append(database.DefaultSource, b)
+		_, err := db.AppendLines(database.DefaultSource, b)
 		return err
 	})
 }

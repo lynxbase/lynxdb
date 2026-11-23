@@ -42,7 +42,7 @@ func executeDB(t *testing.T) *DB {
 		ev("users", 0, "", map[string]event.Value{"host": s("web-2"), "owner": s("dev")}),
 	}
 	for _, e := range events {
-		if _, err := db.Append(e.Index, append(ndjson.AppendEvent(nil, e), '\n')); err != nil {
+		if _, err := db.AppendLines(e.Index, append(ndjson.AppendEvent(nil, e), '\n')); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -104,7 +104,7 @@ func TestProjectingEventColumnsKeepsOnlyThem(t *testing.T) {
 	db := openTest(t, Config{})
 	e := ev("logs", 0, "GET /health 200", map[string]event.Value{"host": s("web-1")})
 	e.Source, e.SourceType = "access.log", "nginx"
-	if _, err := db.Append("logs", append(ndjson.AppendEvent(nil, e), '\n')); err != nil {
+	if _, err := db.AppendLines("logs", append(ndjson.AppendEvent(nil, e), '\n')); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Sync(); err != nil {

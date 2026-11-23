@@ -45,7 +45,7 @@ func writeNDJSON(t testing.TB, w *Writer, data []byte, blockRows int, timeField 
 	for len(data) > 0 {
 		var chunk []byte
 		chunk, data = shred.SplitLines(data, blockRows)
-		if errs := batch.AddNDJSON(chunk, 0, nil); len(errs) != 0 {
+		if errs, _ := batch.AddNDJSON(chunk, 0, shred.Intake{}, nil); len(errs) != 0 {
 			t.Fatalf("line %d: %v", errs[0].Line, errs[0].Err)
 		}
 		if err := w.WriteBatch(batch); err != nil {

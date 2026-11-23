@@ -117,7 +117,7 @@ func TestGroupsHaveTheStripesThatSuitTheirBlocks(t *testing.T) {
 		for _, n := range sizes {
 			var chunk []byte
 			chunk, rest = shred.SplitLines(rest, n)
-			if errs := batch.AddNDJSON(chunk, 0, nil); len(errs) != 0 {
+			if errs, _ := batch.AddNDJSON(chunk, 0, shred.Intake{}, nil); len(errs) != 0 {
 				t.Fatal(errs[0].Err)
 			}
 			if err := w.WriteBatch(batch); err != nil {

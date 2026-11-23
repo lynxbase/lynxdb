@@ -3,6 +3,7 @@ package shred
 import (
 	"bytes"
 	"errors"
+	"math"
 	"slices"
 
 	"github.com/lynxbase/lynxdb/pkg/colstore/variant"
@@ -37,14 +38,22 @@ type Options struct {
 	// MaxColumns bounds the columns of one batch; members beyond it are
 	// kept in the RestPath column.
 	MaxColumns int
-	// KeepText makes AddNDJSON keep a line that is not a JSON object as a
-	// row of text instead of reporting it.
-	KeepText bool
 }
 
 func (o Options) same(other Options) bool {
-	return o.TimeField == other.TimeField && o.MaxColumns == other.MaxColumns && o.KeepText == other.KeepText &&
+	return o.TimeField == other.TimeField && o.MaxColumns == other.MaxColumns &&
 		slices.Equal(o.TimeFields, other.TimeFields)
+}
+
+// Intake says what AddNDJSON does with the lines it does not keep as rows of
+// their own.
+type Intake struct {
+	// Text keeps a line that is not a JSON object as a row of text instead
+	// of reporting it.
+	Text bool
+	// Since is the least time of a row that is kept, in unix nanoseconds;
+	// an older row is dropped and counted. Zero keeps every row.
+	Since int64
 }
 
 // Batch is an append-only columnar buffer; one written as a block of a part
@@ -345,6 +354,15 @@ func (b *Batch) child(n *node, key []byte, hint *int) *node {
 
 // AddText appends a row holding text in the RawPath column.
 func (b *Batch) AddText(text []byte, ts int64) {
+	b.addText(text, ts, math.MinInt64)
+}
+
+// addText is AddText that reports false, and appends nothing, for a row
+// before since.
+func (b *Batch) addText(text []byte, ts, since int64) bool {
+	if ts < since {
+		return false
+	}
 	b.seq++
 	c := b.put(b.pathCols(RawPath), RawPath, vec.KindString)
 	c.Data = append(c.Data, text...)
@@ -352,6 +370,8 @@ func (b *Batch) AddText(text []byte, ts int64) {
 	b.Times = append(b.Times, ts)
 	b.Bytes += len(text)
 	b.Rows++
+
+	return true
 }
 
 // ErrNotObject reports a document whose top-level value is not an object.
@@ -361,11 +381,19 @@ var ErrNotObject = errors.New("shred: document is not a JSON object")
 // Options.TimeField when the document carries it, and leaves the batch
 // unchanged on error.
 func (b *Batch) AddJSON(doc []byte, ts int64) error {
+	_, err := b.addJSON(doc, ts, math.MinInt64)
+
+	return err
+}
+
+// addJSON is AddJSON that reports false, and leaves the batch unchanged, for
+// a row whose time is before since.
+func (b *Batch) addJSON(doc []byte, ts, since int64) (bool, error) {
 	b.src, b.pos = doc, 0
 	b.seq++
 	b.skipSpace()
 	if b.pos >= len(doc) || doc[b.pos] != '{' {
-		return ErrNotObject
+		return false, ErrNotObject
 	}
 	b.pos++
 	err := b.object(b.root, 0)
@@ -378,15 +406,25 @@ func (b *Batch) AddJSON(doc []byte, ts int64) error {
 	if err != nil {
 		b.rollback()
 
-		return err
+		return false, err
 	}
-	b.endRow(ts, len(doc))
 
-	return nil
+	return b.endRow(ts, since, len(doc)), nil
 }
 
-// endRow completes the row whose values were just appended.
-func (b *Batch) endRow(ts int64, size int) {
+// endRow completes the row whose values were just appended, or takes them
+// back and reports false when the time of the row is before since.
+func (b *Batch) endRow(ts, since int64, size int) bool {
+	if b.opts.TimeField != "" || len(b.opts.TimeFields) != 0 {
+		if t, ok := b.rowTime(); ok {
+			ts = t
+		}
+	}
+	if ts < since {
+		b.rollback()
+
+		return false
+	}
 	if b.restMark != 0 {
 		b.rest = variant.End(b.rest, b.restMark)
 		c := b.put(b.pathCols(RestPath), RestPath, vec.KindVariant)
@@ -394,14 +432,11 @@ func (b *Batch) endRow(ts int64, size int) {
 		c.Ends = append(c.Ends, uint32(len(c.Data)))
 		b.rest, b.restMark = b.rest[:0], 0
 	}
-	if b.opts.TimeField != "" || len(b.opts.TimeFields) != 0 {
-		if t, ok := b.rowTime(); ok {
-			ts = t
-		}
-	}
 	b.Times = append(b.Times, ts)
 	b.Bytes += size
 	b.Rows++
+
+	return true
 }
 
 func (b *Batch) rollback() {

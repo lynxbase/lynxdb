@@ -900,7 +900,7 @@ func loadNDJSON(t testing.TB, data []byte, workers, blockRows int, opts part.Opt
 			for len(chunk) > 0 {
 				var lines []byte
 				lines, chunk = shred.SplitLines(chunk, blockRows)
-				errs = batch.AddNDJSON(lines, 0, errs[:0])
+				errs, _ = batch.AddNDJSON(lines, 0, shred.Intake{}, errs[:0])
 				rejected.Add(int64(len(errs)))
 				if err := w.WriteBatch(batch); err != nil {
 					t.Error(err)

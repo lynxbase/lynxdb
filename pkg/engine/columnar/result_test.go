@@ -112,7 +112,7 @@ func TestResultAsJSON(t *testing.T) {
 // holds and null only where the event holds null or the plan computed it,
 // whichever engine ran the plan.
 func TestRowsHoldOnlyTheirFields(t *testing.T) {
-	db, err := Open(Config{Dir: t.TempDir(), Store: colstore.StoreOptions{TimeFields: []string{"ts"}, KeepText: true}})
+	db, err := Open(Config{Dir: t.TempDir(), Store: colstore.StoreOptions{TimeFields: []string{"ts"}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -123,7 +123,7 @@ func TestRowsHoldOnlyTheirFields(t *testing.T) {
 {"ts":1700000002,"other":"c"}
 plain text line
 `
-	if _, err := db.Append("t", []byte(events)); err != nil {
+	if _, err := db.AppendRows("t", []byte(events), colstore.Intake{Text: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Sync(); err != nil {
@@ -207,7 +207,7 @@ func TestANumberIsOneValueWhateverItsKind(t *testing.T) {
 		`{"ts":1700000000,"n":1}` + "\n" + `{"ts":1700000001,"n":1.0}` + "\n" + `{"ts":1700000002,"n":1.5}` + "\n",
 		`{"ts":1700000003,"n":2.0}` + "\n" + `{"ts":1700000004,"n":2}` + "\n" + `{"ts":1700000005,"n":1.0}` + "\n",
 	} {
-		if _, err := db.Append("t", []byte(events)); err != nil {
+		if _, err := appendTo(db, "t", []byte(events)); err != nil {
 			t.Fatal(err)
 		}
 		if err := db.Sync(); err != nil {

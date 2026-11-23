@@ -29,7 +29,7 @@ func TestAddNDJSONMatchesPerDocumentShredding(t *testing.T) {
 	chunk := []byte(strings.Join(ndjsonDocs, "\n") + "\n\n")
 
 	got := NewBatch(Options{TimeField: "n"})
-	if errs := got.AddNDJSON(chunk, 5, nil); len(errs) != 0 {
+	if errs, _ := got.AddNDJSON(chunk, 5, Intake{}, nil); len(errs) != 0 {
 		t.Fatalf("AddNDJSON: %v", errs)
 	}
 	if !reflect.DeepEqual(rowsOf(t, got), rowsOf(t, want)) || !reflect.DeepEqual(got.Times, want.Times) {
@@ -40,7 +40,7 @@ func TestAddNDJSONMatchesPerDocumentShredding(t *testing.T) {
 func TestAddNDJSONReportsBadLinesAndKeepsGoodOnes(t *testing.T) {
 	chunk := []byte("{\"a\":1}\n{\"a\":\n\n[1,2]\n{\"a\":4}")
 	b := NewBatch(Options{})
-	errs := b.AddNDJSON(chunk, 0, nil)
+	errs, _ := b.AddNDJSON(chunk, 0, Intake{}, nil)
 	if len(errs) != 2 || errs[0].Line != 1 || errs[1].Line != 2 {
 		t.Fatalf("errs = %+v", errs)
 	}
@@ -52,8 +52,8 @@ func TestAddNDJSONReportsBadLinesAndKeepsGoodOnes(t *testing.T) {
 
 func TestAddNDJSONKeepsLinesThatAreNotObjectsAsText(t *testing.T) {
 	chunk := []byte("{\"a\":1}\nMar  2 06:00:01 node-1 sshd[411]: Failed password\r\n{\"a\":\n\n[1,2]\n{\"a\":4}")
-	b := NewBatch(Options{KeepText: true})
-	if errs := b.AddNDJSON(chunk, 42, nil); len(errs) != 0 {
+	b := NewBatch(Options{})
+	if errs, _ := b.AddNDJSON(chunk, 42, Intake{Text: true}, nil); len(errs) != 0 {
 		t.Fatalf("errs = %+v", errs)
 	}
 	want := []map[string]any{

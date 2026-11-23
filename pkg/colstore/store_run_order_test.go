@@ -23,10 +23,10 @@ func TestRunPartsTakeTheRowsOfTheirBatchesInTheOrderOfAllOfThemSorted(t *testing
 	all := shred.NewBatch(s.shredOptions())
 	for i := range 5 {
 		b := shred.NewBatch(s.shredOptions())
-		if errs := b.AddNDJSON(runDocs(i*3000, 3000), 0, nil); len(errs) != 0 {
+		if errs, _ := b.AddNDJSON(runDocs(i*3000, 3000), 0, shred.Intake{}, nil); len(errs) != 0 {
 			t.Fatal(errs[0].Err)
 		}
-		if errs := b.AddNDJSON(runDocs(0, 200), 0, nil); len(errs) != 0 {
+		if errs, _ := b.AddNDJSON(runDocs(0, 200), 0, shred.Intake{}, nil); len(errs) != 0 {
 			t.Fatal(errs[0].Err)
 		}
 		b.CopyRows(all, 0, b.Rows)

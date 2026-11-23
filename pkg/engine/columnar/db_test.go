@@ -48,11 +48,11 @@ func TestDatabaseKeepsIndexesAcrossOpens(t *testing.T) {
 		t.Fatal(err)
 	}
 	for index, n := range map[string]int{"web": 300, "db": 200} {
-		if rejected, err := db.Append(index, append(lines(index, 0, n), "not json\n"...)); err != nil || rejected != 1 {
+		if rejected, err := appendTo(db, index, append(lines(index, 0, n), "not json\n"...)); err != nil || rejected != 1 {
 			t.Fatalf("append to %s: %d rejected, %v", index, rejected, err)
 		}
 	}
-	if _, err := db.Append("../escape", lines("x", 0, 1)); !errors.Is(err, ErrIndexName) {
+	if _, err := appendTo(db, "../escape", lines("x", 0, 1)); !errors.Is(err, ErrIndexName) {
 		t.Fatalf("an index name that is a path: %v", err)
 	}
 	if err := db.Sync(); err != nil {
@@ -80,7 +80,7 @@ func TestDatabaseKeepsIndexesAcrossOpens(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Append("web", lines("web", 0, 1)); !errors.Is(err, ErrClosed) {
+	if _, err := appendTo(db, "web", lines("web", 0, 1)); !errors.Is(err, ErrClosed) {
 		t.Fatalf("append after close: %v", err)
 	}
 
@@ -127,7 +127,7 @@ func TestDatabaseTakesAppendsAndQueriesAtOnce(t *testing.T) {
 		go func(w int) {
 			defer wg.Done()
 			for i := 0; i < 20; i++ {
-				if _, err := db.Append(fmt.Sprintf("i%d", w%3), lines("x", w*1000+i*10, 10)); err != nil {
+				if _, err := appendTo(db, fmt.Sprintf("i%d", w%3), lines("x", w*1000+i*10, 10)); err != nil {
 					t.Error(err)
 				}
 				if i%5 == 0 {
@@ -149,4 +149,12 @@ func TestDatabaseTakesAppendsAndQueriesAtOnce(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// appendTo appends lines of JSON objects to an index and returns the number
+// of lines rejected.
+func appendTo(db *DB, index string, lines []byte) (int64, error) {
+	done, err := db.AppendRows(index, lines, colstore.Intake{})
+
+	return done.Rejected, err
 }

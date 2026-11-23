@@ -193,25 +193,17 @@ func (db *DB) store(index string, create bool) (*colstore.Store, error) {
 	return db.create(index, Settings{})
 }
 
-// Append adds the events of lines, one JSON object per line, to an index
-// and returns the number of lines it rejected. An event that carries no
-// time gets the time of the call. The events are durable after Sync or the
-// flush interval of the store.
-func (db *DB) Append(index string, lines []byte) (rejected int64, err error) {
-	_, rejected, err = db.AppendRows(index, lines)
-
-	return rejected, err
-}
-
-// AppendRows is Append that also returns the number of events the lines
-// became.
-func (db *DB) AppendRows(index string, lines []byte) (rows, rejected int64, err error) {
+// AppendRows adds the events of lines, one per line, to an index, which it
+// creates when there is none, and returns what became of the lines; in says
+// which lines are kept. An event that carries no time gets the time of the
+// call. The events are durable after Sync or the flush interval of the store.
+func (db *DB) AppendRows(index string, lines []byte, in colstore.Intake) (colstore.Appended, error) {
 	s, err := db.store(index, true)
 	if err != nil {
-		return 0, 0, err
+		return colstore.Appended{}, err
 	}
 
-	return s.AppendRows(lines, time.Now().UnixNano())
+	return s.AppendRows(lines, time.Now().UnixNano(), in)
 }
 
 // Sync makes the events appended so far durable.

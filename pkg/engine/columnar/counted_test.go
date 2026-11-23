@@ -18,7 +18,7 @@ func TestCountByAFieldReadsNoBlockOfAPartThatKnowsIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if _, err := db.Append("web", lines("web", 0, 900)); err != nil {
+	if _, err := appendTo(db, "web", lines("web", 0, 900)); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Sync(); err != nil {

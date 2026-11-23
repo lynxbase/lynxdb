@@ -46,7 +46,6 @@ func blueskyFrom(b testing.TB, dir string, rows int, g *benchdata.Generator, par
 	s, err := colstore.OpenStore(dir, colstore.StoreOptions{
 		SortKey:    []string{"kind", "commit.operation", "commit.collection", "did"},
 		TimeFields: []string{"time_us"},
-		KeepText:   true,
 		Partition:  partition,
 		FlushLevel: part.LevelFastest,
 	})

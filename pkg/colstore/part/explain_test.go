@@ -40,7 +40,7 @@ func TestExplainColumnReadsBlocksOfEveryLayout(t *testing.T) {
 			nd = append(append(nd, line...), '\n')
 		}
 		batch := shred.NewBatch(shred.Options{TimeField: "time_us"})
-		if errs := batch.AddNDJSON(nd, 0, nil); len(errs) != 0 {
+		if errs, _ := batch.AddNDJSON(nd, 0, shred.Intake{}, nil); len(errs) != 0 {
 			t.Fatal(errs[0].Err)
 		}
 		if err := w.WriteBatch(batch); err != nil {

@@ -65,14 +65,14 @@ Mar  2 06:00:01 node-1 sshd[411]: Failed password for invalid user admin` + "\r\
 `
 
 func TestStoreKeepsLinesThatAreNotObjectsAsText(t *testing.T) {
-	s, err := OpenStore(t.TempDir(), StoreOptions{TimeField: "ts", KeepText: true, FlushInterval: -1})
+	s, err := OpenStore(t.TempDir(), StoreOptions{TimeField: "ts", FlushInterval: -1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	rejected, err := s.AppendAt([]byte(mixedLines), 42)
-	if err != nil || rejected != 0 {
-		t.Fatalf("rejected %d lines, error %v", rejected, err)
+	done, err := s.AppendRows([]byte(mixedLines), 42, Intake{Text: true})
+	if err != nil || done.Rejected != 0 || done.Rows != 5 {
+		t.Fatalf("appended %+v, error %v", done, err)
 	}
 	if err := s.Sync(); err != nil {
 		t.Fatal(err)

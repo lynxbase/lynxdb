@@ -214,8 +214,8 @@ func (s *Server) handleIngestEvents(w http.ResponseWriter, r *http.Request) {
 	size := 0
 	var appendErr error
 	readErr := readLines(r.Body, func(lines []byte) error {
-		rows, failed, err := s.db.AppendRows(index, lines)
-		accepted, rejected, size = accepted+rows, rejected+failed, size+len(lines)
+		done, err := s.db.AppendLines(index, lines)
+		accepted, rejected, size = accepted+done.Rows, rejected+done.Rejected, size+len(lines)
 		appendErr = err
 
 		return err
@@ -287,14 +287,14 @@ func (s *Server) handleIngestRaw(w http.ResponseWriter, r *http.Request) {
 	accepted, failed := 0, 0
 	var appendErr error
 	readErr := conv.Read(r.Body, func(chunk []byte) error {
-		rows, rejected, err := s.db.AppendRows(index, chunk)
+		done, err := s.db.AppendLines(index, chunk)
 		if err != nil {
 			appendErr = err
 			return err
 		}
-		accepted += int(rows)
-		failed += int(rejected)
-		s.promMetrics.RecordIngest(int(rows), len(chunk))
+		accepted += int(done.Rows)
+		failed += int(done.Rejected)
+		s.promMetrics.RecordIngest(int(done.Rows), len(chunk))
 		return nil
 	})
 	if appendErr != nil {

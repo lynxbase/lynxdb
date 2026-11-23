@@ -55,10 +55,10 @@ func TestCreateGivesAnIndexSettingsOfItsOwnThatOutliveTheConfig(t *testing.T) {
 			t.Fatalf("create %+v over other settings: %+v, %v", other, got, err)
 		}
 	}
-	if _, err := db.Append("bench", lines("bench", 0, 50)); err != nil {
+	if _, err := appendTo(db, "bench", lines("bench", 0, 50)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.Append("web", lines("web", 0, 50)); err != nil {
+	if _, err := appendTo(db, "web", lines("web", 0, 50)); err != nil {
 		t.Fatal(err)
 	}
 	if keys := sortKeysOf(t, db, "bench"); !reflect.DeepEqual(keys, [][]string{{"n"}}) {
@@ -83,13 +83,13 @@ func TestCreateGivesAnIndexSettingsOfItsOwnThatOutliveTheConfig(t *testing.T) {
 			t.Fatalf("%s after reopening: %+v, %v", index, st.Settings, ok)
 		}
 	}
-	if _, err := db.Append("bench", lines("bench", 50, 50)); err != nil {
+	if _, err := appendTo(db, "bench", lines("bench", 50, 50)); err != nil {
 		t.Fatal(err)
 	}
 	if keys := sortKeysOf(t, db, "bench"); !reflect.DeepEqual(keys, [][]string{{"n"}}) {
 		t.Fatalf("bench is written with the sort keys %v after reopening", keys)
 	}
-	if _, err := db.Append("new", lines("new", 0, 10)); err != nil {
+	if _, err := appendTo(db, "new", lines("new", 0, 10)); err != nil {
 		t.Fatal(err)
 	}
 	if st, _ := db.Index("new"); !reflect.DeepEqual(st.Settings, Settings{SortKey: []string{"level"}, TimeFields: []string{"time"}, Partition: 2 * time.Hour}) {

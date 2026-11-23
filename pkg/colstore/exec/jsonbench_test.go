@@ -303,7 +303,7 @@ func loadArrival(t testing.TB, data []byte, workers int) *colstore.Table {
 			for len(chunk) > 0 {
 				var lines []byte
 				lines, chunk = shred.SplitLines(chunk, benchBlockRows)
-				batch.AddNDJSON(lines, 0, nil)
+				batch.AddNDJSON(lines, 0, shred.Intake{}, nil)
 				if err := w.WriteBatch(batch); err != nil {
 					t.Error(err)
 				}
@@ -374,7 +374,7 @@ func mergedTable(t testing.TB, data []byte, parts int, key []string, timeField s
 		go func(i int, chunk []byte) {
 			defer wg.Done()
 			all := shred.NewBatch(shred.Options{TimeField: timeField})
-			all.AddNDJSON(chunk, 0, nil)
+			all.AddNDJSON(chunk, 0, shred.Intake{}, nil)
 			all.SortBy(key)
 			var buf bytes.Buffer
 			w := part.NewWriter(&buf, opts)

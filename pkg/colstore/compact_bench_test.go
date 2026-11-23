@@ -98,7 +98,6 @@ func blueskyStoreOptions(b *testing.B) StoreOptions {
 	opts := StoreOptions{
 		SortKey:     []string{"kind", "commit.operation", "commit.collection", "did"},
 		TimeFields:  []string{"time_us"},
-		KeepText:    true,
 		Partition:   24 * time.Hour,
 		FlushLevel:  part.LevelFastest,
 		MergeBlocks: envInt(b, "LYNXDB_BENCH_MERGE_BLOCKS", 0),
