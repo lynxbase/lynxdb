@@ -138,7 +138,7 @@ and how a release is cut.
 
 - `cmd/lynxdb/` -- CLI entry point.
 - `pkg/` -- Core packages: PPL frontend (`pkg/ppl`), IR and optimizer
-  (`pkg/ir`), execution (`pkg/engine`, `pkg/vm`), storage, ingest, API.
+  (`pkg/ir`), execution (`pkg/engine`, `pkg/colstore/exec`), storage, ingest, API.
 - `internal/` -- Packages not meant for import outside the module.
 
 See the [project structure guide](docs/site/docs/contributing/project-structure.md).
