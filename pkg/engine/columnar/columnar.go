@@ -46,6 +46,9 @@ type Options struct {
 	// BatchSize is the number of rows the row operators take at a time;
 	// zero means their default.
 	BatchSize int
+	// rows leaves every operator above the scans to the row operators, for
+	// the tests that require both ways of running a plan to agree.
+	rows bool
 }
 
 // Result is the rows of a query. Maps gives them as maps and AppendJSON as
@@ -187,6 +190,9 @@ func (r *run) push(n ir.Node, root bool) (ir.Node, error) {
 // gives rows as it scans them is left to hand them over block by block;
 // anything else runs here.
 func (r *run) columnar(n ir.Node, root bool) (*pushed, error) {
+	if r.opts.rows {
+		return nil, nil
+	}
 	var scan *ir.Scan
 	for at := n; scan == nil; {
 		ins := at.Inputs()

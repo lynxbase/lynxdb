@@ -1,0 +1,339 @@
+# Queries that both executors must answer alike. Indexes: ssh and openstack hold
+# the lines of testdata/logs, text holds lines of text, events JSON events of
+# every kind (see agree_test.go).
+
+# test/e2e/query_correctness_test.go
+source=ssh | stats count() as count
+source=openstack | stats count() as count
+source=ssh | head 10
+source=ssh | head 1
+source=ssh | head 5000
+search source=ssh "Failed password" | stats count() as count
+search source=ssh "failed password" | stats count() as count
+search source=ssh "BREAK-IN ATTEMPT" | stats count() as count
+search source=ssh "Failed password" root | stats count() as count
+search source=ssh "session opened" OR "session closed" | stats count() as count
+search source=ssh "Failed password" NOT root | stats count() as count
+source=ssh | where regexp_match(_raw, "(?i)Invalid user.*from") | stats count() as count
+search source=openstack "VM Started" | stats count() as count
+search source=openstack WARNING | stats count() as count
+search source=openstack "Lifecycle Event" | stats count() as count
+search source=ssh ("Failed password" OR "Invalid user") "173.234.31.186" | stats count() as count
+search source=ssh NONEXISTENT_STRING_12345 | stats count() as count
+source=ssh | rex field=_raw "sshd\[(?<pid>\d+)\]" | where pid = "24200" | stats count() as count
+source=ssh | rex field=_raw "Failed password for (?<target_user>\w+)" | where isnotnull(target_user) | stats count() as count
+source=ssh | rex field=_raw "Failed password for (?<target_user>\w+)" | where isnull(target_user) | stats count() as count
+source=ssh | where regexp_match(_raw, "173\.234\.31\.186") | stats count() as count
+source=ssh | rex field=_raw "port (?<port>\d+)" | where isnotnull(port) and regexp_match(_raw, "root") | stats count() as count
+source=openstack | where regexp_match(_raw, "VM Started") or regexp_match(_raw, "VM Stopped") | stats count() as count
+source=openstack | rex field=_raw "status: (?<status>\d+)" | where isnotnull(status) | where cast(status as int) >= 400 | stats count() as count
+source=ssh | where regexp_match(_raw, "^Dec 10 09:") | stats count() as count
+source=ssh | where 1 = 1 | stats count() as count
+source=ssh | rex field=_raw "(?<ip_addr>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip_addr) | stats dc(ip_addr) as unique_ips
+source=ssh | rex field=_raw "sshd\[(?<pid>\d+)\]" | where isnotnull(pid) | stats dc(pid) as unique_pids
+source=ssh | rex field=_raw "Invalid user (?<username>\w+) from" | where isnotnull(username) | stats count() as count by username | sort -count | head 3
+source=ssh | rex field=_raw "port (?<port>\d+)" | where isnotnull(port) | stats count() as count
+source=ssh | rex field=_raw "Failed password for (?:invalid user )?(?<target>\w+) from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(target) and isnotnull(src_ip) | stats dc(target) as unique_targets, dc(src_ip) as unique_ips
+source=openstack | rex field=_raw "\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ \d+ (?<log_level>\w+)" | stats count() as count by log_level | sort log_level
+source=openstack | rex field=_raw "status: (?<http_status>\d+)" | where isnotnull(http_status) | stats count() as count by http_status | sort -count
+source=openstack | rex field=_raw "(?<http_method>GET|POST|PUT|DELETE|PATCH) /" | where isnotnull(http_method) | stats count() as count by http_method | sort -count
+source=openstack | rex field=_raw "\[instance: (?<instance_id>[a-f0-9-]+)\]" | where isnotnull(instance_id) | stats dc(instance_id) as unique_instances
+source=openstack | rex field=_raw "time: (?<resp_time>[0-9.]+)" | where isnotnull(resp_time) | eval resp_ms = cast(resp_time as double) * 1000 | stats count() as count, avg(resp_ms) as avg_ms
+source=ssh | rex field=_raw "NONEXISTENT_PATTERN_(?<captured>\w+)" | stats count(captured) as matched
+source=openstack | rex field=_raw "nova\.(?<nova_subsystem>[\w.]+)" | where isnotnull(nova_subsystem) | stats dc(nova_subsystem) as unique_subsystems
+source=ssh | eval source_type = "ssh_log" | head 1 | fields source_type
+source=ssh | rex field=_raw "(?<ip_addr>\d+\.\d+\.\d+\.\d+)" | eval ip_class = if(regexp_match(ip_addr, "^10\."), "private", "public") | where isnotnull(ip_addr) | stats count() as count by ip_class
+source=ssh | eval raw_len = length(_raw) | stats avg(raw_len) as avg_length, max(raw_len) as max_length, min(raw_len) as min_length
+source=openstack | rex field=_raw "\d+ (?<level>[A-Z]+) " | eval level_lower = lower(level) | stats count() as count by level_lower
+source=openstack | eval log_source = substring(_raw, 1, 10) | stats dc(log_source) as unique_prefixes
+source=openstack | rex field=_raw "status: (?<status>\d+)" | where isnotnull(status) | stats count() as count by status | sort -count
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | stats dc(ip) as unique_ips
+source=openstack | rex field=_raw "(?<method>GET|POST|PUT|DELETE) /" | where isnotnull(method) | stats values(method) as methods
+source=openstack | rex field=_raw "len: (?<resp_len>\d+)" | where isnotnull(resp_len) | eval resp_len_num = cast(resp_len as double) | stats sum(resp_len_num) as total_bytes, avg(resp_len_num) as avg_bytes
+source=openstack | rex field=_raw "time: (?<resp_time>[0-9.]+)" | where isnotnull(resp_time) | eval rt = cast(resp_time as double) | stats min(rt) as min_time, max(rt) as max_time
+source=ssh | stats earliest(_time) as first_event, latest(_time) as last_event
+source=ssh | rex field=_raw "Invalid user (?<username>\w+)" | where isnotnull(username) | stats count() as count by username | sort -count | head 5
+source=ssh | bin _time span=1h as hour_bucket | stats count() as count by hour_bucket | sort hour_bucket
+source=openstack | bin _time span=5m as time_bucket | stats count() as count by time_bucket | sort time_bucket
+source=ssh | bin _time span=1m as minute_bucket | stats count() as count by minute_bucket | sort -count | head 5
+source=openstack | bin _time span=1m as bucket | stats dc(bucket) as num_buckets
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | stats count() as count by ip | sort count | head 3
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | stats count() as count by ip | sort -count | head 1
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | stats count() as count by ip | sort count | stats count() as count
+source=ssh | rex field=_raw "Invalid user (?<username>\w+)" | where isnotnull(username) | stats count() as count by username | sort username | head 3
+source=ssh | head 3 | fields _raw
+source=ssh | eventstats count() as total | stats count() as count
+source=ssh | streamstats count() as row_num | where row_num <= 10 | fields row_num
+search source=ssh Failed* | stats count() as count
+search source=ssh Received disconnect* | stats count() as count
+search source=ssh *preauth | stats count() as count
+search source=ssh authentication *failure | stats count() as count
+search source=ssh *password* | stats count() as count
+search source=ssh *preauth* | stats count() as count
+search source=ssh "173.234.31.186" | stats count() as count
+source=ssh | where regexp_match(_raw, "Failed.*from.*port") | stats count() as count
+source=ssh | where regexp_match(_raw, "Failed.*invalid.*from") | stats count() as count
+source=ssh | where regexp_match(_raw, "password.*root.*port.*ssh2") | stats count() as count
+search source=ssh * | stats count() as count
+search source=ssh Failed* root | stats count() as count
+search source=ssh Failed* OR Invalid* | stats count() as count
+search source=ssh NOT *root* | stats count() as count
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | where like(ip, "173.234.%") | stats count() as count
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | where like(ip, "%253") | stats count() as count
+source=openstack | rex field=_raw "(?<method>GET|POST|PUT|DELETE|PATCH) /" | where isnotnull(method) | where like(method, "G%") or like(method, "P%") | stats count() as count
+source=openstack | where regexp_match(_raw, "VM.*Event") | stats count() as count
+source=openstack | where regexp_match(_raw, "(?i)nova.*instance") | stats count() as count
+
+# test/regression/query_correctness_test.go
+source=ssh | stats count() as count
+source=ssh | head 10
+source=ssh | head 5000
+search source=ssh "Failed password" | stats count() as count
+search source=ssh "failed password" | stats count() as count
+search source=ssh "BREAK-IN ATTEMPT" | stats count() as count
+search source=ssh "Failed password" root | stats count() as count
+search source=ssh "session opened" OR "session closed" | stats count() as count
+search source=ssh "Failed password" NOT root | stats count() as count
+source=ssh | where regexp_match(_raw, "(?i)Invalid user.*from") | stats count() as count
+search source=ssh NONEXISTENT_STRING_12345 | stats count() as count
+source=ssh | rex field=_raw "Failed password for (?<target_user>\w+)" | where isnotnull(target_user) | stats count() as count
+source=ssh | rex field=_raw "Failed password for (?<target_user>\w+)" | where isnull(target_user) | stats count() as count
+source=ssh | where regexp_match(_raw, "173\.234\.31\.186") | stats count() as count
+source=ssh | where regexp_match(_raw, "^Dec 10 09:") | stats count() as count
+source=ssh | where 1 = 1 | stats count() as count
+source=ssh | rex field=_raw "(?<ip_addr>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip_addr) | stats dc(ip_addr) as unique_ips
+source=ssh | rex field=_raw "Invalid user (?<username>\w+) from" | where isnotnull(username) | stats count() as count by username | sort - count | head 3
+source=ssh | rex field=_raw "port (?<port>\d+)" | where isnotnull(port) | stats count() as count
+source=ssh | rex field=_raw "Failed password for (?:invalid user )?(?<target>\w+) from (?<src_ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(target) and isnotnull(src_ip) | stats dc(target) as unique_targets, dc(src_ip) as unique_ips
+source=ssh | rex field=_raw "NONEXISTENT_PATTERN_(?<captured>\w+)" | stats count(captured) as matched
+source=ssh | eval source_type = "ssh_log" | head 1 | fields source_type
+source=ssh | rex field=_raw "(?<ip_addr>\d+\.\d+\.\d+\.\d+)" | eval ip_class = if(regexp_match(ip_addr, "^10\."), "private", "public") | where isnotnull(ip_addr) | stats count() as count by ip_class
+source=ssh | eval raw_len = length(_raw) | stats avg(raw_len) as avg_length, max(raw_len) as max_length, min(raw_len) as min_length
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | stats dc(ip) as unique_ips
+source=ssh | rex field=_raw "Invalid user (?<username>\w+)" | where isnotnull(username) | stats count() as count by username | sort - count | head 5
+source=ssh | stats earliest(_time) as first_event, latest(_time) as last_event
+source=ssh | bin _time span=1h as hour_bucket | stats count() as count by hour_bucket | sort hour_bucket
+source=ssh | bin _time span=1m as minute_bucket | stats count() as count by minute_bucket | sort - count | head 5
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | stats count() as count by ip | sort count | head 3
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | stats count() as count by ip | sort - count | head 1
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | stats count() as count by ip | sort count | stats count() as count
+source=ssh | rex field=_raw "Invalid user (?<username>\w+)" | where isnotnull(username) | stats count() as count by username | sort username | head 3
+source=ssh | head 3 | fields _raw
+source=ssh | eventstats count() as total | stats count() as count
+source=ssh | streamstats count() as row_num | where row_num <= 10 | fields row_num
+search source=ssh Failed* | stats count() as count
+search source=ssh *preauth | stats count() as count
+source=ssh | where _raw contains "password" | stats count() as count
+source=ssh | where regexp_match(_raw, "(?i)Failed.*from.*port") | stats count() as count
+search source=ssh * | stats count() as count
+search source=ssh Failed* root | stats count() as count
+search source=ssh Failed* OR Invalid* | stats count() as count
+source=ssh | where not _raw contains "root" | stats count() as count
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | where like(ip, "173.234.%") | stats count() as count
+source=ssh | sort _time | stats count() as count
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | sort _time | stats dc(ip) as unique_ips
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | sort _time | dedup ip | stats count() as count
+source=ssh | sort _time | eval x = 1 | stats count() as count
+source=ssh | sort _time | head 5
+source=ssh | sort _time | streamstats count() as row_num | where row_num <= 10 | stats count() as count
+source=ssh | sort _time | sort -_time | stats count() as count
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | sort _time | stats count() as count by ip | sort -count | head 1
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | where isnotnull(ip) | stats count() as count by ip | sort count | head 5
+source=openstack | stats count() as count
+search source=openstack "VM Started" | stats count() as count
+search source=openstack WARNING | stats count() as count
+search source=openstack "Lifecycle Event" | stats count() as count
+source=openstack | where regexp_match(_raw, "VM Started") OR regexp_match(_raw, "VM Stopped") | stats count() as count
+source=openstack | rex field=_raw "status: (?<status>\d+)" | where isnotnull(status) | where cast(status as double) >= 400 | stats count() as count
+source=openstack | rex field=_raw "\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d+ \d+ (?<log_level>\w+)" | stats count() as count by log_level | sort log_level
+source=openstack | rex field=_raw "status: (?<http_status>\d+)" | where isnotnull(http_status) | stats count() as count by http_status | sort - count
+source=openstack | rex field=_raw "(?<http_method>GET|POST|PUT|DELETE|PATCH) /" | where isnotnull(http_method) | stats count() as count by http_method | sort - count
+source=openstack | rex field=_raw "\[instance: (?<instance_id>[a-f0-9-]+)\]" | where isnotnull(instance_id) | stats dc(instance_id) as unique_instances
+source=openstack | rex field=_raw "\d+ (?<level>[A-Z]+) " | eval level_lower = lower(level) | stats count() as count by level_lower
+source=openstack | eval log_source = substring(_raw, 1, 10) | stats dc(log_source) as unique_prefixes
+source=openstack | rex field=_raw "status: (?<status>\d+)" | where isnotnull(status) | stats count() as count by status | sort - count
+source=openstack | rex field=_raw "time: (?<resp_time>[0-9.]+)" | where isnotnull(resp_time) | eval rt = cast(resp_time as double) | stats min(rt) as min_time, max(rt) as max_time
+source=openstack | rex field=_raw "len: (?<resp_len>\d+)" | where isnotnull(resp_len) | eval resp_len_num = cast(resp_len as double) | stats sum(resp_len_num) as total_bytes, avg(resp_len_num) as avg_bytes
+source=openstack | bin _time span=5m as time_bucket | stats count() as count by time_bucket | sort time_bucket
+source=openstack | bin _time span=1m as bucket | stats dc(bucket) as num_buckets
+source=openstack | where _raw contains "Lifecycle Event" | stats count() as count
+source=openstack | where regexp_match(_raw, "(?i)VM.*Event") | stats count() as count
+source=openstack | where regexp_match(_raw, "(?i)nova.*instance") | stats count() as count
+
+# Numbers held as text.
+source=events | eval x = s + 1 | fields k, x
+source=events | eval x = s * 2, y = s - n, z = s / 2, w = s % 2 | fields k, x, y, z, w
+source=events | eval x = ms + ms, y = ms + 1 | fields k, x, y
+source=events | stats sum(s) as x
+source=events | stats sum(s) as a, avg(s) as b, min(s) as c, max(s) as d, var_samp(s) as e, stddev_pop(s) as f
+source=events | stats sum(ms) as a, avg(ms) as b, min(ms) as c, max(ms) as d by level
+source=events | where s > 9 | fields k, s
+source=events | where s = 10 | fields k, s
+source=events | where s < '9' | fields k, s
+source=events | where 9 < s | fields k, s
+source=events | where s >= 2.5 and s <= 100 | fields k, s
+source=events | where v = 1 | fields k, v
+source=events | where v != 1 | fields k, v
+source=events | where v = '1' | fields k, v
+source=events | where ms > 9 | stats count() as c
+source=events | eval y = if(s > 9, 'big', 'small') | fields k, y
+source=text | rex field=_raw "took (?<ms>\d+)ms" | stats avg(ms) as a, sum(ms) as b, max(ms) as c
+source=text | rex field=_raw "took (?<ms>\d+)ms" | where ms > 9 | fields ms
+source=text | rex field=_raw "took (?<ms>\d+)ms" | eval z = ms * 2 | fields z
+source=text | rex field=_raw "took (?<ms>\d+)ms" | sort ms | fields ms
+source=text | parse _raw "req took (?<ms>\d+)ms.*" | stats avg(ms) as a
+source=events | eval x = 'a' + 'b', y = s + '1', z = 1 + '2' | fields k, x, y, z
+
+# Order.
+source=events | sort s | fields s
+source=events | sort - s | fields s
+source=events | sort v | fields k, v
+source=events | sort - v | fields k, v
+source=events | sort a, k | fields k, a
+source=events | sort - a, k | fields k, a
+source=events | sort ms | fields k, ms
+source=events | sort f, k | fields k, f
+source=events | sort host | fields host
+source=events | sort ok, k | fields k, ok
+source=events | sort http.status, k | fields k, http.status
+source=events | sort s | head 3 | fields s
+source=events | sort - s | head 2 | fields s
+source=events | stats min(v) as a, max(v) as b
+source=events | stats min(host) as a, max(host) as b, min(msg) as c
+source=events | eval x = s | sort x | fields x
+source=events | top 3 v
+source=events | rare v
+source=events | top 2 level by host
+
+# Groups.
+source=events | stats count() as c by a
+source=events | stats count() as c by v
+source=events | stats count() as c by s
+source=events | stats count() as c by f
+source=events | stats count() as c by ok
+source=events | stats count() as c by tags
+source=events | stats count() as c by http.status
+source=events | stats count() as c, sum(n) as t by a, level
+source=events | stats count(a) as c, count(v) as d, count() as e
+source=events | stats count() as c by nothing
+source=events | dedup v | fields k, v
+source=events | dedup a | fields k, a
+source=events | dedup a keepempty=true | fields k, a
+source=events | dedup 2 level | fields k, level
+source=events | dedup level consecutive=true | fields k, level
+source=events | stats dc(v) as a, dc(s) as b, dc(a) as c, dc(host) as d, distinct_count_approx(v) as e
+source=events | stats dc(f) as a by level
+source=events | eventstats count() as c by a | fields k, a, c
+source=events | eventstats count() as c by v | fields k, v, c
+source=events | eventstats dc(v) as d, sum(s) as t | fields k, d, t
+source=events | streamstats count() as c by a | fields k, a, c
+
+# Distinct counts and percentiles.
+source=ssh | rex field=_raw "(?<ip>\d+\.\d+\.\d+\.\d+)" | stats dc(ip) as a, distinct_count_approx(ip) as b
+source=openstack | rex field=_raw "len: (?<len>\d+)" | stats percentile(len, 50) as a, percentile(len, 90) as b, percentile(len, 99) as c, median(len) as d
+source=openstack | rex field=_raw "time: (?<t>[0-9.]+)" | stats percentile(t, 25) as a, percentile(t, 95) as b
+source=events | stats percentile(f, 50) as a, percentile(n, 90) as b, percentile(s, 50) as c
+source=events | stats var_samp(f) as a, var_pop(f) as b, stddev_samp(f) as c, stddev_pop(f) as d
+
+# Arrays out of aggregates.
+source=events | stats list(host) as a, values(host) as b, take(host, 2) as c
+source=events | stats list(n) as a, values(v) as b by level
+source=events | stats values(s) as a
+source=events | eventstats list(k) as a, values(level) as b | fields k, a, b
+source=events | eventstats take(k, 2) as a by host | fields k, a
+source=events | streamstats list(k) as a, values(level) as b | fields k, a, b
+source=events | streamstats take(n, 2) as a | fields k, a
+source=events | eval h = 'a|||b' | stats list(h) as a, values(h) as b
+source=events | stats first(s) as a, last(s) as b, earliest(s) as c, latest(s) as d
+source=events | stats first(a) as a1, last(a) as a2 by level
+
+# Free text.
+source=events fused
+source=events *fused
+source=events fus*
+source=events f*d
+source=events *use*
+source=events Disk
+source=events disk full
+source=events 404
+source=events "disk fused"
+source=events web-01
+source=events NOT fused
+source=events fused OR refused
+source=text fused
+source=text *fused
+source=text fus*
+source=text *used*
+source=text took
+source=text 503
+source=ssh *preauth*
+source=ssh Failed* OR Invalid*
+source=events host=web-*
+source=events host=web-01 level=error
+source=events level!=error
+source=events v=1
+source=events s>9
+
+# Text and functions.
+source=events | where like(host, 'web%') | fields k
+source=events | where host LIKE 'WEB%' | fields k
+source=events | where contains(msg, 'fused') | fields k
+source=events | where regexp_match(msg, '^[dD]isk') | fields k
+source=events | where match(msg, 'fused') | fields k
+source=events | where msg CONTAINS 'Full' | fields k
+source=events | eval x = upper(host), y = length(msg), z = substring(msg, 1, 4) | fields k, x, y, z
+source=events | eval x = split(msg, ' ') | eval y = array_length(x) | fields k, y
+source=events | eval x = transform(tags, t -> upper(t)) | fields k, x
+source=events | eval x = filter(tags, t -> t = 'x') | fields k, x
+source=events | eval x = reduce(tags, '', (acc, t) -> concat(acc, t)) | fields k, x
+source=events | eval x = forall(tags, t -> t != 'z'), y = exists(tags, t -> t = 'z') | fields k, x, y
+source=events | eval x = tags[0] | fields k, x
+source=events | eval x = json_extract(json_object('a', n), '$.a') | fields k, x
+source=events | eval x = typeof(v), y = typeof(a), z = typeof(nothing) | fields k, x, y, z
+source=events | eval x = coalesce(a, v, 'none') | fields k, x
+source=events | eval x = case(n > 5, 'big', n > 2, 'mid' else 'small') | fields k, x
+source=events | eval x = n > 1 XOR f > 1 | fields k, x
+source=events | eval x = cast(s as int), y = cast(s as double), z = cast(v as string) | fields k, x, y, z
+source=events | eval x = tonumber(s), y = tostring(f) | fields k, x, y
+source=events | where isnull(a) | fields k
+source=events | where isnotnull(a) | fields k
+source=events | where a IS NULL | fields k
+source=events | where v IN (1, 'x', true) | fields k
+source=events | where v NOT IN (1, 'x') | fields k
+source=events | where n BETWEEN 2 AND 7 | fields k
+source=events | eval t = _time + INTERVAL 1 HOUR | where t > _time | stats count() as c
+source=events | where _time >= '2023-11-14 22:13:23' | fields k
+source=events | eval d = date_format(_time, '%Y-%m-%d %H:%i') | fields k, d
+source=events | fillnull with 0 | fields k, a, v, n
+source=events | fillnull with 'z' in a, v | fields k, a, v
+source=events | flatten http | fields k, path, status
+source=events | fields k, http
+source=events | rename host as h | fields k, h
+source=events | where k = 1 | fields - ts, _time
+source=events | head 3 | fields k
+source=events | reverse | head 2 | fields k
+source=events | sort k | streamstats count() as i | fields k, i
+source=events | stats count() as c by span(_time, 2s)
+source=events | timechart span=5s count() as c
+source=events | bin n span=2 | stats count() as c by n
+source=events | stats count() as c by host | eval h = md5(host) | sort host | fields h, c
+source=events | stats count() as c by level | where c > 1 | sort level
+source=events | stats count() as c by level | stats sum(c) as t
+source=events | eval r = rand() | where r >= 0 | stats count() as c
+source=events | where k in [ source=events | where level = 'error' | fields k ] | fields k
+source=events | where exists [ source=events | where level = 'debug' ] | stats count() as c
+source=events | eval m = [ source=events | stats max(n) as m ] | fields k, m
+source=events | join left=l right=r ON l.k = r.k [ source=events | stats count() as c by k ] | fields k, c
+source=events | lookup events k OUTPUT level as lv | fields k, lv
+source=events | append [ source=text | fields _raw ] | stats count() as c
+source=events | addtotals n, f | fields k, Total
+source=events | stats count() as c by level | sort level | transpose
+source=events | trendline sma(2, n) as t | fields k, t
+source=events | patterns msg | stats count() as c by patterns_field
+source=events | mvexpand tags | fields k, tags
+source=events | stats sum(n) as t by level | eventstats sum(t) as all | fields level, t, all
+source=events | where k = [ source=events | stats min(k) as m ] | fields k
+
+# Indexes that are not there.
+source=nope | stats count() as c
+source=events | lookup nope k OUTPUT level | fields k
