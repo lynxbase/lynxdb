@@ -34,7 +34,7 @@ type StoreOptions struct {
 	// and the runs being written take about twice this input in memory,
 	// and sorting and encoding the runs on many cores about as much again.
 	BufferBytes int
-	// FlushBytes is the input a writer buffers before it writes a run;
+	// FlushBytes sets BufferBytes when that is zero, to eight times it;
 	// zero means 128 MiB.
 	FlushBytes int
 	// MergeFanIn is the number of runs of one tier that are merged into a
@@ -68,8 +68,8 @@ type StoreOptions struct {
 	// bound by throughput the bytes decide how long a scan of cold text
 	// and a load take.
 	Part part.Options
-	// FlushLevel is the compression effort of the runs writers flush, which
-	// merges replace by parts of Part.Level.
+	// FlushLevel is the compression effort of the runs that flushes write,
+	// which merges replace by parts of Part.Level.
 	FlushLevel part.Level
 }
 
@@ -96,9 +96,9 @@ const (
 	defaultMergeBacklog = 64
 )
 
-// Store keeps a table in a directory, takes documents through writers that
-// each turn their buffer into a sorted run, and merges runs in the
-// background so that queries meet few of them.
+// Store keeps a table in a directory, takes documents into buffers that
+// flushes turn into sorted runs, and merges runs in the background so that
+// queries meet few of them.
 type Store struct {
 	dir  *Dir
 	opts StoreOptions
@@ -268,10 +268,10 @@ func (s *Store) Written() (flushed, merged int64) { return s.dir.Written() }
 func (s *Store) ReleasePages() { s.dir.ReleasePages() }
 
 // Close writes what Append buffered, stops the merger and closes the
-// directory; writers must be closed first. Rows of an Append that returned
-// nil are written, and from then on the store returns ErrClosed. Merges under
-// way give up their output and leave their runs as they were. Closing again
-// returns what the first Close returned.
+// directory. Rows of an Append that returned nil are written, and from then
+// on the store returns ErrClosed. Merges under way give up their output and
+// leave their runs as they were. Closing again returns what the first Close
+// returned.
 func (s *Store) Close() error {
 	s.closing.Do(func() {
 		s.closed.Store(true)
@@ -1661,162 +1661,3 @@ func (s *Store) giveWay() error {
 
 	return nil
 }
-
-// Writer buffers documents and writes them to the store as sorted runs. It
-// is not safe for concurrent use; a store takes any number of writers.
-type Writer struct {
-	// Rejected counts the lines that were not JSON objects.
-	Rejected int64
-
-	s        *Store
-	batch    *shred.Batch
-	part     *part.Writer // reused from run to run for its buffers
-	buffered int          // input bytes in batch
-	buckets  []shred.TimeBucket
-	errs     []shred.LineError
-}
-
-// NewWriter returns a writer with an empty buffer.
-func (s *Store) NewWriter() *Writer {
-	return &Writer{
-		s:     s,
-		batch: shred.NewBatch(s.shredOptions()),
-	}
-}
-
-// AddNDJSON buffers the documents of lines, one per line, and writes a run
-// each time the buffer has grown to the store's flush size.
-func (w *Writer) AddNDJSON(lines []byte) error { return w.AddNDJSONAt(lines, 0) }
-
-// AddNDJSONAt is AddNDJSON for lines that arrived at the time at, in unix
-// nanoseconds, which becomes the time of every row that carries none.
-func (w *Writer) AddNDJSONAt(lines []byte, at int64) error {
-	if w.s.closed.Load() {
-		return ErrClosed
-	}
-
-	return w.add(lines, at)
-}
-
-func (w *Writer) add(lines []byte, at int64) error {
-	for len(lines) > 0 {
-		// A buffer that a failed flush left full takes no line before it is
-		// written, so that a caller told of the failure can send all again.
-		if w.buffered >= w.s.opts.FlushBytes {
-			if err := w.flush(); err != nil {
-				return err
-			}
-		}
-		chunk := lines
-		if room := w.s.opts.FlushBytes - w.buffered; room < len(chunk) {
-			// The buffer takes whole lines, so the cut moves to a line end.
-			if nl := bytes.IndexByte(chunk[max(room, 0):], '\n'); nl >= 0 {
-				chunk = chunk[:max(room, 0)+nl+1]
-			}
-		}
-		lines = lines[len(chunk):]
-		w.errs, _ = w.batch.AddNDJSON(chunk, at, shred.Intake{}, w.errs[:0])
-		w.Rejected += int64(len(w.errs))
-		if w.buffered += len(chunk); w.buffered >= w.s.opts.FlushBytes {
-			if err := w.flush(); err != nil {
-				return err
-			}
-		}
-	}
-
-	return nil
-}
-
-// Flush writes the buffered rows as one run per partition they fall in;
-// when it returns nil they are durable and visible to new snapshots.
-func (w *Writer) Flush() error {
-	if w.batch.Rows > 0 && w.s.closed.Load() {
-		return ErrClosed
-	}
-
-	return w.flush()
-}
-
-func (w *Writer) flush() error {
-	files, err := w.write()
-	if err != nil || len(files) == 0 {
-		return err
-	}
-	if _, err := w.s.dir.Commit(files, nil); err != nil {
-		return err
-	}
-	w.s.noteArrival(files)
-	w.s.countRuns()
-	w.committed()
-	w.s.kick()
-
-	return nil
-}
-
-// write writes the buffered rows as one run per partition they fall in and
-// returns the files, which the caller commits; the rows stay buffered until
-// committed is called.
-func (w *Writer) write() ([]*PartFile, error) {
-	if w.batch.Rows == 0 {
-		return nil, nil
-	}
-	s := w.s
-	w.buckets = w.buckets[:0]
-	if s.opts.Partition > 0 {
-		w.buckets = w.batch.SortByTimeBuckets(w.buckets, int64(s.opts.Partition), s.opts.SortKey)
-	} else {
-		w.batch.SortBy(s.opts.SortKey)
-		w.buckets = append(w.buckets, shred.TimeBucket{Rows: w.batch.Rows})
-	}
-	flushed := s.opts.Part
-	flushed.Level = s.opts.FlushLevel
-	// The buffer that blocks are cut into is needed only during a flush,
-	// so writers share a few of them instead of holding one each.
-	block := s.cut.take(shred.Options{})
-	defer s.cut.keep(block, runtime.GOMAXPROCS(0))
-	files := make([]*PartFile, 0, len(w.buckets))
-	abort := func(err error) ([]*PartFile, error) {
-		for _, pf := range files {
-			pf.Abort()
-		}
-
-		return nil, err
-	}
-	from := 0
-	for _, bucket := range w.buckets {
-		pf, err := s.dir.Create()
-		if err != nil {
-			return abort(err)
-		}
-		pf.Meta.Partition = bucket.ID
-		files = append(files, pf)
-		pw := w.part
-		if pw == nil {
-			pw = part.NewWriter(pf, flushed)
-			w.part = pw
-		} else {
-			pw.Reset(pf, flushed)
-		}
-		for end := from + bucket.Rows; from < end; from += min(s.opts.BlockRows, end-from) {
-			block.Reset()
-			w.batch.CopyRows(block, from, min(from+s.opts.BlockRows, end))
-			if err := pw.WriteBatch(block); err != nil {
-				return abort(err)
-			}
-		}
-		if err := pw.Close(); err != nil {
-			return abort(err)
-		}
-	}
-
-	return files, nil
-}
-
-// committed empties the buffer once the files written from it are durable.
-func (w *Writer) committed() {
-	w.batch.Reset()
-	w.buffered = 0
-}
-
-// Close flushes the buffer.
-func (w *Writer) Close() error { return w.Flush() }
