@@ -13,12 +13,19 @@ import (
 // Only a subset of settings relevant to local CLI usage are supported —
 // server settings like listen, data_dir, retention are not allowed here.
 type ProjectRC struct {
-	Server        string `yaml:"server"`         // default --server URL
 	DefaultSince  string `yaml:"default_since"`  // default --since value
 	DefaultFormat string `yaml:"default_format"` // default --format value
 	DefaultSource string `yaml:"default_source"` // default source metadata
 	Profile       string `yaml:"profile"`        // default --profile name
+
+	// Ignored lists the keys of the file that a .lynxdbrc may not set. A
+	// .lynxdbrc is found by walking up from the working directory, so it
+	// may not choose the server that the API key is sent to.
+	Ignored []string `yaml:"-"`
 }
+
+// ignoredRCKeys are the keys a .lynxdbrc may not set.
+var ignoredRCKeys = []string{"server"}
 
 // LoadProjectRC walks up from cwd to find the nearest .lynxdbrc file
 // and loads it. Returns nil with no error if no .lynxdbrc is found.
@@ -60,6 +67,15 @@ func loadRCFile(path string) (*ProjectRC, error) {
 	var rc ProjectRC
 	if err := yaml.Unmarshal(data, &rc); err != nil {
 		return nil, err
+	}
+	var keys map[string]any
+	if err := yaml.Unmarshal(data, &keys); err != nil {
+		return nil, err
+	}
+	for _, key := range ignoredRCKeys {
+		if _, ok := keys[key]; ok {
+			rc.Ignored = append(rc.Ignored, key)
+		}
 	}
 
 	return &rc, nil

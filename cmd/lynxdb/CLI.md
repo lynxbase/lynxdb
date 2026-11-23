@@ -51,19 +51,20 @@ Persistent flags on the root command (`root.go`):
 
 ## Connection settings
 
-Server address, first match wins: `--server`, the URL of the selected profile, `server` in `.lynxdbrc`, `LYNXDB_SERVER`, `http://localhost:3100`.
+Server address, first match wins: `--server`, the URL of the selected profile, `LYNXDB_SERVER`, `http://localhost:3100`.
 
 API key: `--token`, then `LYNXDB_TOKEN`, then the credentials file written by `lynxdb login` (`<user config dir>/lynxdb/credentials.yaml`, keyed by server URL).
 
 `.lynxdbrc` (nearest one in the current directory or a parent) sets client defaults that apply when the flag is absent:
 
 ```yaml
-server: https://logs.example.com
 profile: prod
 default_format: table
 default_since: 6h         # lynxdb query --since, server queries
 default_source: web       # --source on query, ingest
 ```
+
+A `server` key in `.lynxdbrc` is ignored with a warning on stderr: the file can come with any directory, and the API key goes to the server.
 
 ## Root command
 

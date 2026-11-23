@@ -164,7 +164,6 @@ The CLI walks up from the current directory to the nearest `.lynxdbrc` and appli
 
 ```yaml
 # .lynxdbrc
-server: https://dev-logs.example.com
 profile: dev
 default_format: table
 default_since: 6h
@@ -173,7 +172,6 @@ default_source: web
 
 | Key | Default for |
 |-----|-------------|
-| `server` | `--server` |
 | `profile` | `--profile` |
 | `default_format` | `--format` |
 | `default_since` | `--since` on `lynxdb query` |

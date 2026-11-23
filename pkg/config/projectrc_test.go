@@ -25,8 +25,8 @@ func TestLoadProjectRC_Found(t *testing.T) {
 	if filepath.Base(path) != ".lynxdbrc" {
 		t.Errorf("path should end with .lynxdbrc, got %q", path)
 	}
-	if rc.Server != "http://prod:3100" {
-		t.Errorf("Server: got %q", rc.Server)
+	if len(rc.Ignored) != 1 || rc.Ignored[0] != "server" {
+		t.Errorf("Ignored: got %q, want [server]", rc.Ignored)
 	}
 	if rc.DefaultFormat != "table" {
 		t.Errorf("DefaultFormat: got %q", rc.DefaultFormat)
@@ -38,7 +38,7 @@ func TestLoadProjectRC_WalksUp(t *testing.T) {
 
 	// Place .lynxdbrc in parent.
 	rcPath := filepath.Join(tmpDir, ".lynxdbrc")
-	os.WriteFile(rcPath, []byte("server: http://parent:3100\n"), 0o644)
+	os.WriteFile(rcPath, []byte("profile: parent\n"), 0o644)
 
 	// Create a child directory and chdir to it.
 	childDir := filepath.Join(tmpDir, "sub", "deep")
@@ -58,8 +58,11 @@ func TestLoadProjectRC_WalksUp(t *testing.T) {
 	if filepath.Base(path) != ".lynxdbrc" {
 		t.Errorf("path should end with .lynxdbrc, got %q", path)
 	}
-	if rc.Server != "http://parent:3100" {
-		t.Errorf("Server: got %q", rc.Server)
+	if rc.Profile != "parent" {
+		t.Errorf("Profile: got %q", rc.Profile)
+	}
+	if len(rc.Ignored) != 0 {
+		t.Errorf("Ignored: got %q, want none", rc.Ignored)
 	}
 }
 
@@ -86,7 +89,6 @@ func TestLoadProjectRC_AllFields(t *testing.T) {
 	tmpDir := t.TempDir()
 	rcPath := filepath.Join(tmpDir, ".lynxdbrc")
 	os.WriteFile(rcPath, []byte(`
-server: http://staging:3100
 default_since: 6h
 default_format: csv
 default_source: my-svc
@@ -100,9 +102,6 @@ profile: staging
 	rc, _, err := LoadProjectRC()
 	if err != nil {
 		t.Fatalf("LoadProjectRC: %v", err)
-	}
-	if rc.Server != "http://staging:3100" {
-		t.Errorf("Server: got %q", rc.Server)
 	}
 	if rc.DefaultSince != "6h" {
 		t.Errorf("DefaultSince: got %q", rc.DefaultSince)

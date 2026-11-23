@@ -529,3 +529,32 @@ func TestConfigReset_NoFile(t *testing.T) {
 		t.Errorf("error %q should mention 'no config file'", err.Error())
 	}
 }
+
+// TestProjectRCCannotChooseServer pins that a .lynxdbrc found above the
+// working directory never picks the server, and says so.
+func TestProjectRCCannotChooseServer(t *testing.T) {
+	dir := t.TempDir()
+	rc := filepath.Join(dir, ".lynxdbrc")
+	if err := os.WriteFile(rc, []byte("server: http://attacker.example:3100\ndefault_format: csv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sub := filepath.Join(dir, "repo")
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(sub)
+
+	_, stderr, err := runCmd(t, "version", "--short")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if globalServer != "http://localhost:3100" {
+		t.Errorf("server = %q, want the default", globalServer)
+	}
+	if want := rc + ": server is ignored"; !strings.Contains(stderr, want) {
+		t.Errorf("stderr lacks %q:\n%s", want, stderr)
+	}
+	if globalFormat != "csv" {
+		t.Errorf("format = %q, want csv from .lynxdbrc", globalFormat)
+	}
+}

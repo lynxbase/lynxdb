@@ -79,9 +79,8 @@ The CLI resolves the server address in this order, first match wins:
 
 1. `--server`
 2. The URL of the selected profile (`--profile`, then `profile` in `.lynxdbrc`, then `LYNXDB_PROFILE`)
-3. `server` in the nearest `.lynxdbrc`
-4. `LYNXDB_SERVER`
-5. `http://localhost:3100`
+3. `LYNXDB_SERVER`
+4. `http://localhost:3100`
 
 The API key comes from `--token`, then `LYNXDB_TOKEN`, then the credentials file that `lynxdb login` writes (`lynxdb/credentials.yaml` under the user config directory, keyed by server URL).
 
@@ -90,7 +89,6 @@ The API key comes from `--token`, then `LYNXDB_TOKEN`, then the credentials file
 The CLI looks for a `.lynxdbrc` YAML file in the current directory and each parent. Values apply only when the matching flag is not given:
 
 ```yaml
-server: https://logs.example.com
 profile: prod
 default_format: table
 default_since: 6h
@@ -99,13 +97,18 @@ default_source: web
 
 | Key | Applies to |
 |-----|-----------|
-| `server` | `--server` |
 | `profile` | `--profile` |
 | `default_format` | `--format` |
 | `default_since` | `lynxdb query --since` on server queries |
 | `default_source` | `--source` on `query` and `ingest` |
 
 `.lynxdbrc` holds client defaults only. Server settings live in the config file; see [config](./config-cmd.md).
+
+A `.lynxdbrc` cannot set the server address: the file can come with any directory you work in, and the API key goes to that server. A `server` key in it is ignored with a warning on stderr:
+
+```
+  ⚠  /home/me/repo/.lynxdbrc: server is ignored; choose the server with --server, LYNXDB_SERVER or a profile
+```
 
 ## Commands
 

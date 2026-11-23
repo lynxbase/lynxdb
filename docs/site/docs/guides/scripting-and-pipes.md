@@ -217,8 +217,8 @@ export LYNXDB_PROFILE=production
 ```
 
 A `.lynxdbrc` file in the working directory or a parent sets project
-defaults (`server`, `profile`, `default_format`, `default_since`,
-`default_source`). See [CLI overview](../cli/overview.md) and
+defaults (`profile`, `default_format`, `default_since`, `default_source`);
+it cannot set the server. See [CLI overview](../cli/overview.md) and
 [Environment variables](../configuration/environment-variables.md).
 
 ## Examples

@@ -111,18 +111,18 @@ func initTheme() {
 // flag-specific defaults (--since, --source) for flags that are not
 // persistent on the root command.
 func applyProjectRC() {
-	rc, _, err := config.LoadProjectRC()
+	rc, path, err := config.LoadProjectRC()
 	if err != nil || rc == nil {
 		return
 	}
 
 	projectRC = rc
+	for _, key := range rc.Ignored {
+		printWarning("%s: %s is ignored; choose the server with --server, LYNXDB_SERVER or a profile", path, key)
+	}
 
 	pf := rootCmd.PersistentFlags()
 
-	if rc.Server != "" && !pf.Changed("server") {
-		globalServer = rc.Server
-	}
 	if rc.DefaultFormat != "" && !pf.Changed("format") {
 		globalFormat = rc.DefaultFormat
 	}
