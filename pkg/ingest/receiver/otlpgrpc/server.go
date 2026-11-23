@@ -1,4 +1,4 @@
-// Package otlpgrpc implements the canonical OTLP/gRPC log receiver.
+// Package otlpgrpc implements the OTLP/gRPC log receiver.
 package otlpgrpc
 
 import (
@@ -13,8 +13,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/event"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/otlpcommon"
 	logscollector "go.opentelemetry.io/proto/otlp/collector/logs/v1"
-	metricscollector "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
-	tracecollector "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	_ "google.golang.org/grpc/encoding/gzip"
@@ -69,9 +67,9 @@ func New(cfg Config, submit SubmitFunc, logger *slog.Logger, metrics Metrics) (*
 		ready:   make(chan struct{}),
 	}
 	r.server = grpc.NewServer(grpc.MaxRecvMsgSize(cfg.MaxRecvBytes))
+	// Only the logs service is registered: an export of traces or metrics
+	// fails with Unimplemented.
 	logscollector.RegisterLogsServiceServer(r.server, &logsService{receiver: r})
-	tracecollector.RegisterTraceServiceServer(r.server, traceService{})
-	metricscollector.RegisterMetricsServiceServer(r.server, metricsService{})
 	return r, nil
 }
 
@@ -157,22 +155,6 @@ func (s *logsService) Export(ctx context.Context, req *logscollector.ExportLogsS
 	}
 	s.receiver.recordRequest("logs", "protobuf", "success", 0)
 	return &logscollector.ExportLogsServiceResponse{}, nil
-}
-
-type traceService struct {
-	tracecollector.UnimplementedTraceServiceServer
-}
-
-func (traceService) Export(context.Context, *tracecollector.ExportTraceServiceRequest) (*tracecollector.ExportTraceServiceResponse, error) {
-	return &tracecollector.ExportTraceServiceResponse{}, nil
-}
-
-type metricsService struct {
-	metricscollector.UnimplementedMetricsServiceServer
-}
-
-func (metricsService) Export(context.Context, *metricscollector.ExportMetricsServiceRequest) (*metricscollector.ExportMetricsServiceResponse, error) {
-	return &metricscollector.ExportMetricsServiceResponse{}, nil
 }
 
 func (r *Receiver) recordRequest(signal, encoding, result string, bytes int) {

@@ -1525,30 +1525,6 @@ paths:
         '503':
           description: The events could not be stored
 
-  /v1/traces:
-    servers:
-      - url: http://localhost:4318
-    post:
-      operationId: otlpTraces
-      tags: [OTLP]
-      summary: Accepted and discarded
-      security: []
-      responses:
-        '200':
-          description: An empty `ExportTraceServiceResponse`
-
-  /v1/metrics:
-    servers:
-      - url: http://localhost:4318
-    post:
-      operationId: otlpMetrics
-      tags: [OTLP]
-      summary: Accepted and discarded
-      security: []
-      responses:
-        '200':
-          description: An empty `ExportMetricsServiceResponse`
-
 components:
 
   securitySchemes:

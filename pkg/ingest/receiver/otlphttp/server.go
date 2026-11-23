@@ -18,8 +18,6 @@ import (
 	"github.com/lynxbase/lynxdb/pkg/ingest/limits"
 	"github.com/lynxbase/lynxdb/pkg/ingest/receiver/otlpcommon"
 	logscollector "go.opentelemetry.io/proto/otlp/collector/logs/v1"
-	metricscollector "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
-	tracecollector "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	logspb "go.opentelemetry.io/proto/otlp/logs/v1"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -69,9 +67,9 @@ func New(cfg Config, submit SubmitFunc, logger *slog.Logger, metrics Metrics) (*
 		ready:   make(chan struct{}),
 	}
 	mux := http.NewServeMux()
+	// Only logs are served: an exporter of traces or metrics gets 404 and
+	// reports the data it could not send.
 	mux.HandleFunc("POST /v1/logs", r.handleLogs)
-	mux.HandleFunc("POST /v1/traces", r.handleTraces)
-	mux.HandleFunc("POST /v1/metrics", r.handleMetrics)
 	handler := limits.DualLimitMiddleware(cfg.Limits, metrics)(mux)
 	r.server = &http.Server{Addr: cfg.Listen, Handler: handler}
 	return r, nil
@@ -157,18 +155,6 @@ func (r *Receiver) handleLogs(w http.ResponseWriter, req *http.Request) {
 	}
 	r.recordRequest("logs", encoding, "success", bytes)
 	writeProtoResponse(w, encoding, &logscollector.ExportLogsServiceResponse{})
-}
-
-func (r *Receiver) handleTraces(w http.ResponseWriter, req *http.Request) {
-	encoding := requestEncoding(req)
-	r.recordRequest("traces", encoding, "success", 0)
-	writeProtoResponse(w, encoding, &tracecollector.ExportTraceServiceResponse{})
-}
-
-func (r *Receiver) handleMetrics(w http.ResponseWriter, req *http.Request) {
-	encoding := requestEncoding(req)
-	r.recordRequest("metrics", encoding, "success", 0)
-	writeProtoResponse(w, encoding, &metricscollector.ExportMetricsServiceResponse{})
 }
 
 func decodeRequest(w http.ResponseWriter, req *http.Request, msg proto.Message) (string, int, bool) {

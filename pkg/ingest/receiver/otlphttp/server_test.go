@@ -144,3 +144,17 @@ func TestHandler_LogsRefusesOtherContentTypes(t *testing.T) {
 		}
 	}
 }
+
+func TestHandler_TracesAndMetricsAreNotFound(t *testing.T) {
+	for _, path := range []string{"/v1/traces", "/v1/metrics"} {
+		for _, contentType := range []string{"application/x-protobuf", "application/json"} {
+			r := newTestReceiver(t, new([]*event.Event))
+
+			rr := post(r, path, contentType, []byte(`{}`))
+
+			if rr.Code != http.StatusNotFound {
+				t.Errorf("%s (%s): status = %d, want 404", path, contentType, rr.Code)
+			}
+		}
+	}
+}

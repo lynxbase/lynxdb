@@ -49,16 +49,18 @@ func TestReceiver_ExportLogs_InternalError(t *testing.T) {
 	}
 }
 
-func TestReceiver_TracesAndMetrics_ReturnEmptyResponses(t *testing.T) {
+func TestReceiver_TracesAndMetrics_AreUnimplemented(t *testing.T) {
 	r := startTestReceiver(t, func(context.Context, []*event.Event) error { return nil })
 	conn := dialReceiver(t, r)
 	defer conn.Close()
 
-	if _, err := tracecollector.NewTraceServiceClient(conn).Export(context.Background(), &tracecollector.ExportTraceServiceRequest{}); err != nil {
-		t.Fatalf("trace Export: %v", err)
+	_, err := tracecollector.NewTraceServiceClient(conn).Export(context.Background(), &tracecollector.ExportTraceServiceRequest{})
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("trace Export: code %v, want Unimplemented; err=%v", status.Code(err), err)
 	}
-	if _, err := metricscollector.NewMetricsServiceClient(conn).Export(context.Background(), &metricscollector.ExportMetricsServiceRequest{}); err != nil {
-		t.Fatalf("metrics Export: %v", err)
+	_, err = metricscollector.NewMetricsServiceClient(conn).Export(context.Background(), &metricscollector.ExportMetricsServiceRequest{})
+	if status.Code(err) != codes.Unimplemented {
+		t.Fatalf("metrics Export: code %v, want Unimplemented; err=%v", status.Code(err), err)
 	}
 }
 

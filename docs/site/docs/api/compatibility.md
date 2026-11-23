@@ -210,9 +210,9 @@ The OTLP/HTTP listener runs on its own port, `ingest.otlp.http_listen` (default 
 | Route | Behavior |
 |---|---|
 | `POST /v1/logs` | Stores log records. Protobuf (`application/x-protobuf`) or OTLP/JSON (`application/json`); any other content type answers `415`. The answer is an `ExportLogsServiceResponse` in the encoding of the request |
-| `POST /v1/traces`, `POST /v1/metrics` | Accepted and discarded, so mixed pipelines do not fail |
+| `POST /v1/traces`, `POST /v1/metrics` | `404`; LynxDB stores logs only |
 
-An OTLP/gRPC listener runs when `ingest.otlp.grpc_listen` is set (empty by default). Requests are limited by `ingest.limits` and `ingest.otlp.grpc_max_recv_bytes`.
+An OTLP/gRPC listener runs when `ingest.otlp.grpc_listen` is set (empty by default). It serves the logs service only; a trace or metrics export fails with `Unimplemented`. Requests are limited by `ingest.limits` and `ingest.otlp.grpc_max_recv_bytes`.
 
 ```yaml
 # otel-collector-config.yaml

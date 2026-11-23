@@ -91,4 +91,7 @@ plaintext listener. Large gRPC batches are limited by
 Supported: OTLP/HTTP with JSON or protobuf, OTLP/gRPC with protobuf, gzip
 compression, and partial-success export responses.
 
-Not supported: OTLP traces and metrics. LynxDB accepts log records only.
+Not supported: OTLP traces and metrics. The OTLP/HTTP listener answers
+`404` to `/v1/traces` and `/v1/metrics`, and the gRPC listener answers
+`Unimplemented`, so an exporter that sends them reports the data as not
+sent. Point only logs pipelines at LynxDB.
