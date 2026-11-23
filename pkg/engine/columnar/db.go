@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -252,9 +253,68 @@ func (db *DB) Names() []string {
 	return names
 }
 
-// Query runs a plan over the indexes.
+// Query runs a plan over the indexes. It first writes what was appended to
+// the indexes the plan reads, so that the query sees every event taken
+// before it; an index whose events could not be written is read as it is on
+// disk, and the result says so in a warning.
 func (db *DB) Query(ctx context.Context, plan *ir.Plan, opts Options) (*Result, error) {
-	return Run(ctx, plan, db, opts)
+	behind := db.syncSources(plan, opts.DefaultSource)
+	res, err := Run(ctx, plan, db, opts)
+	if err != nil {
+		return nil, err
+	}
+	res.Warnings = append(behind, res.Warnings...)
+
+	return res, nil
+}
+
+// syncSources syncs the indexes that plan reads, those of its subqueries
+// included, and returns a warning for every one that failed.
+func (db *DB) syncSources(plan *ir.Plan, defaultSource string) []string {
+	var warnings []string
+	var done []string
+	sync := func(name string) {
+		if slices.Contains(done, name) {
+			return
+		}
+		done = append(done, name)
+		s, err := db.store(name, false)
+		if err != nil || s == nil {
+			return
+		}
+		if err := s.Sync(); err != nil {
+			warnings = append(warnings, fmt.Sprintf("index %s: its latest events are not searchable yet: %v", name, err))
+		}
+	}
+	source := func(src ir.Source) {
+		if !src.Pattern && src.Name != "*" {
+			sync(src.Name)
+
+			return
+		}
+		for _, name := range db.Names() {
+			if src.Name == "*" || ir.MatchName(src.Name, name) {
+				sync(name)
+			}
+		}
+	}
+	ir.WalkPlan(plan.Root, func(n ir.Node) bool {
+		switch x := n.(type) {
+		case *ir.Scan:
+			if len(x.Sources) == 0 {
+				sync(defaultSource)
+			}
+			for _, src := range x.Sources {
+				source(src)
+			}
+		case *ir.SourceSchema:
+			source(x.Source)
+		}
+
+		return true
+	})
+
+	return warnings
 }
 
 // IndexStats describes what an index holds.

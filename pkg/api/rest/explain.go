@@ -64,10 +64,6 @@ func (s *Server) handleQueryExplain(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Query().Get("analyze") == "true" {
 		runStart := time.Now()
-		if err := s.db.Sync(); err != nil {
-			respondQueryFailure(w, err)
-			return
-		}
 		res, err := s.db.Query(r.Context(), c, opts)
 		if err != nil {
 			respondQueryFailure(w, err)

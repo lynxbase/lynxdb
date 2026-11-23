@@ -32,9 +32,6 @@ func (s *Server) runInternalQuery(r *http.Request, src string, from, to time.Tim
 	if err != nil {
 		return nil, err
 	}
-	if err := s.db.Sync(); err != nil {
-		return nil, err
-	}
 	opts, _ := queryTimeRange("", "")
 	opts.From, opts.To = from, to
 

@@ -101,10 +101,6 @@ func (s *Server) handleQueryStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	if err := s.db.Sync(); err != nil {
-		respondQueryFailure(w, err)
-		return
-	}
 	res, err := s.db.Query(r.Context(), cq.c, cq.opts)
 	took := time.Since(start)
 	errType := ""

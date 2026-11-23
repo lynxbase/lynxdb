@@ -158,3 +158,36 @@ func appendTo(db *DB, index string, lines []byte) (int64, error) {
 
 	return done.Rejected, err
 }
+
+// TestQuerySyncsOnlyTheIndexesItReads requires a query to see every event
+// appended to its indexes before it, and to leave the events buffered for
+// the other indexes unwritten.
+func TestQuerySyncsOnlyTheIndexesItReads(t *testing.T) {
+	db, err := Open(testConfig(t.TempDir()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	for _, index := range []string{"web", "db", "web-eu"} {
+		if _, err := appendTo(db, index, lines(index, 0, 40)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	parts := func(index string) int {
+		st, _ := db.Index(index)
+
+		return st.Parts
+	}
+	if got := ask(t, db, "source=web | stats count() as n"); got != "n=40" {
+		t.Fatalf("a query after an append saw %s", got)
+	}
+	if parts("web") == 0 || parts("db") != 0 || parts("web-eu") != 0 {
+		t.Fatalf("parts after a query of web: web %d, db %d, web-eu %d", parts("web"), parts("db"), parts("web-eu"))
+	}
+	if got := ask(t, db, "source=`web*` | where host in [ source=db | fields host ] | stats count() as n"); got != "n=80" {
+		t.Fatalf("a query with a subquery saw %s", got)
+	}
+	if parts("db") == 0 || parts("web-eu") == 0 {
+		t.Fatalf("parts after a query of all three: db %d, web-eu %d", parts("db"), parts("web-eu"))
+	}
+}

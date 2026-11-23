@@ -52,13 +52,8 @@ func queryTimeRange(from, to string) (database.QueryOptions, error) {
 	return database.QueryOptions{From: tr.Earliest, To: tr.Latest, Now: now}, nil
 }
 
-// submit starts a query as a job and records its duration when it ends. It
-// syncs the database first, so that a query sees every event ingested before
-// it.
+// submit starts a query as a job and records its duration when it ends.
 func (s *Server) submit(cq *compiledQuery) (*database.Job, error) {
-	if err := s.db.Sync(); err != nil {
-		return nil, err
-	}
 	job, err := s.db.Submit(cq.c, cq.src, cq.opts)
 	if err != nil {
 		return nil, err
