@@ -1187,6 +1187,28 @@ func quoteMeta(s string) string {
 	return s
 }
 
+// globRegexp returns the regular expression that matches, in any case, a
+// run of tokens that a wildcard pattern matches from its start to its end:
+// a star stands for any letters and digits, a question mark for one.
+func globRegexp(glob string) string {
+	const token, boundary = `[\pL\pN]`, `[^\pL\pN]`
+	var b strings.Builder
+	b.WriteString("(?i)(?:^|" + boundary + ")")
+	for _, r := range glob {
+		switch r {
+		case '*':
+			b.WriteString(token + "*")
+		case '?':
+			b.WriteString(token)
+		default:
+			b.WriteString(regexp.QuoteMeta(string(r)))
+		}
+	}
+	b.WriteString("(?:$|" + boundary + ")")
+
+	return b.String()
+}
+
 // search translates a search of text: of one column, or of every string of
 // the row when it names none.
 func (t *translator) search(s *ir.Search) (*exec.Expr, error) {
@@ -1211,11 +1233,16 @@ func (t *translator) search(s *ir.Search) (*exec.Expr, error) {
 		}
 		patterns = append(patterns, p)
 	case ir.SearchGlob:
-		prefix, star := strings.CutSuffix(s.Pattern, "*")
-		if !star || prefix == "" || strings.ContainsAny(prefix, "*?") {
-			return nil, unsupported("%s; a wildcard is taken at the end of a word", s)
+		if prefix, star := strings.CutSuffix(s.Pattern, "*"); star && prefix != "" && !strings.ContainsAny(prefix, "*?") {
+			patterns = append(patterns, fold(tokenfilter.Prefix(prefix)))
+
+			break
 		}
-		patterns = append(patterns, fold(tokenfilter.Prefix(prefix)))
+		p, err := tokenfilter.Regexp(globRegexp(s.Pattern))
+		if err != nil {
+			return nil, fmt.Errorf("irplan: %s: %w", s, err)
+		}
+		patterns = append(patterns, p)
 	}
 	if len(patterns) == 0 {
 		return nil, unsupported("%s", s)
